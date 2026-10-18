@@ -23,17 +23,18 @@ int usage() {
                  "  ou-asset sections <gameDir> <drm>\n"
                  "  ou-asset textures <gameDir> <drm>\n"
                  "  ou-asset dump-texture <gameDir> <drm> <textureId> -o out.tga|out.dds\n"
-                 "  ou-asset dump-mesh <gameDir> <drm> -o out.obj [--textures]   (writes .mtl + tex_<id>.tga)\n"
-                 "  ou-asset stats <gameDir> <drm>\n"
-                 "  ou-asset render <gameDir> <drm> -o out.ppm [--view top|front|side] [--size N] [--textured]\n"
+                 "  ou-asset dump-mesh <gameDir> <drm> -o out.obj [--textures] [--level|--deps]  (writes .mtl + tex_<id>.tga)\n"
+                 "  ou-asset stats <gameDir> <drm> [--level|--deps]\n"
+                 "  ou-asset render <gameDir> <drm> -o out.ppm [--view top|front|side] [--size N] [--textured] [--level|--deps]\n"
+                 "--level loads a unit DRM as a whole level (stream groups, IMFs, intros; transforms baked).\n"
                  "<drm> is a bigfile path such as pc-w\\lara.drm; ids accept 0x prefix.\n";
     return 2;
 }
 
-cdc::Drm loadDrm(const cdc::Bigfile& bf, const std::string& path) {
-    const auto rec = bf.find(path);
-    if (!rec) throw cdc::FormatError("not in bigfile: " + path);
-    return cdc::parseDrm(bf.read(*rec));
+cdc::Drm loadDrm(const cdc::BigfileSet& bf, const std::string& path) {
+    auto bytes = bf.read(path);
+    if (!bytes) throw cdc::FormatError("not in bigfile: " + path);
+    return cdc::parseDrm(std::move(*bytes));
 }
 
 const char* formatName(scene::PixelFormat f) {
@@ -209,7 +210,7 @@ int main(int argc, char** argv) try {
     std::vector<std::string> a(argv + 1, argv + argc);
     std::string out, view = "front";
     int size = 1024;
-    bool textured = false, deps = false;
+    bool textured = false, deps = false, level = false;
     std::vector<std::string> pos;
     for (size_t i = 0; i < a.size(); ++i) {
         if (a[i] == "-o" && i + 1 < a.size()) out = a[++i];
@@ -217,11 +218,28 @@ int main(int argc, char** argv) try {
         else if (a[i] == "--size" && i + 1 < a.size()) size = std::stoi(a[++i]);
         else if (a[i] == "--textured" || a[i] == "--textures") textured = true;
         else if (a[i] == "--deps") deps = true;
+        else if (a[i] == "--level") level = true;
         else pos.push_back(a[i]);
     }
     if (pos.size() < 3) return usage();
     const std::string& cmd = pos[0];
-    const cdc::Bigfile bf(fs::path(pos[1]) / "bigfile.000");
+    const cdc::BigfileSet bf(pos[1]);
+    // The CPU tools work in world space: bake MeshData::transform (instances) into the vertices.
+    auto scene = [&] {
+        auto sc = level ? formats::loadLevelScene(bf, pos[2]) : formats::loadDrmScene(bf, pos[2], deps);
+        for (auto& m : sc.meshes)
+            for (auto& v : m.vertices) {
+                const float* t = m.transform;
+                float p[3], n[3];
+                for (int r = 0; r < 3; ++r) {
+                    p[r] = t[r] * v.position[0] + t[4 + r] * v.position[1] + t[8 + r] * v.position[2] + t[12 + r];
+                    n[r] = t[r] * v.normal[0] + t[4 + r] * v.normal[1] + t[8 + r] * v.normal[2];
+                }
+                const float len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                for (int r = 0; r < 3; ++r) v.position[r] = p[r], v.normal[r] = len > 0 ? n[r] / len : n[r];
+            }
+        return sc;
+    };
     const std::string& path = pos[2];
 
     if (cmd == "sections") {
@@ -254,7 +272,7 @@ int main(int argc, char** argv) try {
         else writeTga(out, t->mips[0].width, t->mips[0].height, formats::toRgba8(t->format, t->mips[0].width, t->mips[0].height, t->mips[0].data));
     } else if (cmd == "dump-mesh") {
         if (out.empty()) return usage();
-        const auto sc = formats::loadDrmScene(bf, path, deps);
+        const auto sc = scene();
         const fs::path obj(out), mtl = fs::path(out).replace_extension(".mtl");
         std::ofstream o(obj), mo(mtl);
         o << "# " << path << "\nmtllib " << mtl.filename().string() << "\n";
@@ -289,12 +307,12 @@ int main(int argc, char** argv) try {
         for (const auto& w : sc.warnings) std::cerr << "warning: " << w << '\n';
         std::printf("%zu meshes, %zu textures, %zu warnings\n", sc.meshes.size(), sc.textures.size(), sc.warnings.size());
     } else if (cmd == "stats") {
-        const auto sc = formats::loadDrmScene(bf, path, deps);
+        const auto sc = scene();
         printStats(sc.meshes);
         for (const auto& w : sc.warnings) std::printf("warning: %s\n", w.c_str());
     } else if (cmd == "render") {
         if (out.empty()) return usage();
-        const auto sc = formats::loadDrmScene(bf, path, deps);
+        const auto sc = scene();
         render(sc, view, size, textured, out);
     } else {
         return usage();

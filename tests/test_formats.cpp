@@ -178,8 +178,8 @@ void checkMeshes(const scene::SceneData& sc) {
 TEST(RealData, LaraTexturesAndModel) {
     const char* g = gameDir();
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::Bigfile bf(std::filesystem::path(g) / "bigfile.000");
-    const auto drm = cdc::parseDrm(bf.read(*bf.find("pc-w\\lara.drm")));
+    const cdc::BigfileSet bf(g);
+    const auto drm = cdc::parseDrm(*bf.read("pc-w\\lara.drm"));
     int ok = 0;
     for (const auto& s : drm.sections)
         if (s.type == cdc::SectionType::Texture) {
@@ -202,7 +202,7 @@ TEST(RealData, LaraTexturesAndModel) {
 TEST(RealData, UnitTerrain) {
     const char* g = gameDir();
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::Bigfile bf(std::filesystem::path(g) / "bigfile.000");
+    const cdc::BigfileSet bf(g);
     const auto sc = formats::loadDrmScene(bf, "pc-w\\l4_pool.drm");
     size_t terrain = 0;
     for (const auto& m : sc.meshes) terrain += m.origin.find("terrain") != std::string::npos;
@@ -216,8 +216,8 @@ TEST(RealData, UnitTerrain) {
 TEST(RealData, Bgra8ChannelOrder) {
     const char* g = gameDir();
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::Bigfile bf(std::filesystem::path(g) / "bigfile.000");
-    const auto drm = cdc::parseDrm(bf.read(*bf.find("pc-w\\streamgroups\\l2_maproom_second_maproom.drm")));
+    const cdc::BigfileSet bf(g);
+    const auto drm = cdc::parseDrm(*bf.read("pc-w\\streamgroups\\l2_maproom_second_maproom.drm"));
     // Texture 0xcb3 is a 1024x1024 A8R8G8B8 tangent-space normal map: mean must be blue (~127,128,240).
     for (const auto& s : drm.sections)
         if (s.type == cdc::SectionType::Texture && s.id == 0xcb3) {
@@ -234,4 +234,173 @@ TEST(RealData, Bgra8ChannelOrder) {
             return;
         }
     FAIL() << "texture 0xcb3 not found";
+}
+
+// ---- Levels ---------------------------------------------------------------------------
+namespace {
+struct Ext { uint32_t patch, section, target; };
+// Relocation table: internal {patch -> target}, external, and type-5 resource refs {patch, type}.
+std::vector<uint8_t> relocs(std::vector<std::pair<uint32_t, uint32_t>> in, std::vector<Ext> ex = {},
+                            std::vector<std::pair<uint32_t, uint32_t>> res = {}) {
+    std::vector<uint8_t> v;
+    put32(v, uint32_t(in.size())); put32(v, uint32_t(ex.size())); put32(v, 0); put32(v, 0); put32(v, uint32_t(res.size()));
+    for (auto [p, t] : in) { put32(v, p); put32(v, t); }
+    for (auto e : ex) { put32(v, e.section | (e.patch / 4 & 0x3FFFF) << 14); put32(v, (e.patch / 4 >> 18) | e.target << 6); }
+    for (auto [p, type] : res) put32(v, p / 4 | type << 25);
+    return v;
+}
+void setf(std::vector<uint8_t>& v, size_t off, float f) { uint32_t u; std::memcpy(&u, &f, 4); set32(v, off, u); }
+} // namespace
+
+TEST(Level, ParseUnitIntrosStreamGroupsImfs) {
+    // Section 0: Level (+0x74 -> unit data, +0x90 -> cell group data).
+    std::vector<uint8_t> level(0x94), unitData(0x30 + 2 * 0x90), cells(0x110);
+    const auto levelRel = relocs({}, {{0x74, 1, 0}, {0x90, 2, 0}});
+    // Unit data: 2 intros at 0x30 (first list), second list empty.
+    set32(unitData, 0x0C, 2);
+    for (int k = 0; k < 2; ++k) {
+        const size_t b = 0x30 + 0x90 * k;
+        setf(unitData, b + 8, 1.5f * k);                    // rotation z
+        setf(unitData, b + 0x10, 100.f + k);                // position x
+        setf(unitData, b + 0x18, -50.f);                    // position z
+        for (int i = 0; i < 3; ++i) setf(unitData, b + 0x40 + 4 * i, 2.f);
+        unitData[b + 0x50] = uint8_t(k ? 0xFA : 3), unitData[b + 0x51] = uint8_t(k ? 0xFF : 0); // 3, marker
+        set32(unitData, b + 0x58, 5000 + k);
+        unitData[b + 0x71] = k ? 0x10 : 0;
+    }
+    const auto unitRel = relocs({{0x10, 0x30}});
+    // Cell group: header @0x20 (2 stream groups, 1 IMF), stream groups @0x40, IMF @0x80, strings @0xF0.
+    set32(cells, 0x20 + 0x0C, 2);
+    set32(cells, 0x20 + 0x1C, 1);
+    for (int i = 0; i < 4; ++i) setf(cells, 0x80 + 4 * (5 * i), 1.f); // identity
+    setf(cells, 0x80 + 0x30, 10.f), setf(cells, 0x80 + 0x34, 20.f), setf(cells, 0x80 + 0x38, 30.f);
+    set32(cells, 0x80 + 0x48, 77);
+    std::memcpy(&cells[0xF0], "unit_group_a", 13);
+    std::memcpy(&cells[0x100], "bush", 5);
+    const auto cellRel = relocs({{0x00, 0x20}, {0x08, 0x40}, {0x18, 0x80}, {0x40 + 20 + 12, 0xF0}, {0x80 + 0x44, 0x100}});
+
+    cdc::Drm d;
+    d.sections = {section(cdc::SectionType::General, 0, level, levelRel), section(cdc::SectionType::DtpData, 9, unitData, unitRel),
+                  section(cdc::SectionType::General, 0, cells, cellRel)};
+    const auto u = formats::parseUnit(d);
+    ASSERT_EQ(u.intros.size(), 2u);
+    EXPECT_EQ(u.intros[0].objectId, 3u);
+    EXPECT_EQ(u.intros[1].objectId, formats::kMarkerObjectId);
+    EXPECT_EQ(u.intros[1].uniqueId, 5001);
+    EXPECT_FLOAT_EQ(u.intros[1].position[0], 101.f);
+    EXPECT_FLOAT_EQ(u.intros[1].position[2], -50.f);
+    EXPECT_FLOAT_EQ(u.intros[1].rotation[2], 1.5f);
+    EXPECT_FALSE(u.intros[0].scaled());
+    EXPECT_TRUE(u.intros[1].scaled());
+    EXPECT_EQ(u.streamGroups, (std::vector<std::string>{"unit_group_a"})); // entry 0 has no stream file
+    ASSERT_EQ(u.imfs.size(), 1u);
+    EXPECT_EQ(u.imfs[0].dtpId, 77u);
+    EXPECT_EQ(u.imfs[0].name, "bush");
+    EXPECT_FLOAT_EQ(u.imfs[0].matrix[0], 1.f);
+    EXPECT_FLOAT_EQ(u.imfs[0].matrix[13], 20.f); // D3D row 3 = column-major translation
+
+    // Missing Level pointers and truncated intro arrays are errors, not garbage.
+    d.sections[0] = section(cdc::SectionType::General, 0, level);
+    EXPECT_THROW(formats::parseUnit(d), cdc::FormatError);
+    d.sections[0] = section(cdc::SectionType::General, 0, level, levelRel);
+    set32(unitData, 0x0C, 3);
+    EXPECT_THROW(formats::parseUnit(d), cdc::FormatError);
+}
+
+TEST(Level, ObjectRenderModelsFollowsObjectBase) {
+    constexpr uint32_t kDtp = 7, kRender = 12;
+    std::vector<uint8_t> object(0x8C), root(0xB8), model(0x68), modelNoRender(0x68);
+    set32(object, 0, 10);
+    root[0xA0] = 2;
+    set32(root, 0xB0, 11), set32(root, 0xB4, 12);
+    set32(model, 0x64, 500);
+    cdc::Drm d;
+    const auto objRel = relocs({}, {}, {{0, kDtp}}), rootRel = relocs({{0xA4, 0xB0}}, {}, {{0xB0, kDtp}, {0xB4, kDtp}}),
+               modelRel = relocs({}, {}, {{0x64, kRender}});
+    d.sections = {section(cdc::SectionType::Object, 572, object, objRel), section(cdc::SectionType::DtpData, 10, root, rootRel),
+                  section(cdc::SectionType::DtpData, 11, model, modelRel), section(cdc::SectionType::DtpData, 12, modelNoRender)};
+    EXPECT_EQ(formats::objectRenderModels(d), (std::vector<uint32_t>{500, 0}));
+    d.sections.erase(d.sections.begin());
+    EXPECT_TRUE(formats::objectRenderModels(d).empty()); // no object section
+}
+
+TEST(Level, IntroMatrixMatchesExeOrder) {
+    formats::Intro in{};
+    in.rotation[0] = float(M_PI / 2), in.rotation[2] = float(M_PI / 2);
+    in.position[0] = 1, in.position[1] = 2, in.position[2] = 3;
+    in.scale[0] = in.scale[1] = in.scale[2] = 3;
+    float m[16];
+    formats::introMatrix(in, m);
+    // Rz first (+X -> +Y), then Rx (+Y -> +Z): column 0 = +Z. Scale ignored without flag 0x10.
+    EXPECT_NEAR(m[0], 0, 1e-6); EXPECT_NEAR(m[1], 0, 1e-6); EXPECT_NEAR(m[2], 1, 1e-6);
+    EXPECT_FLOAT_EQ(m[12], 1); EXPECT_FLOAT_EQ(m[14], 3); EXPECT_FLOAT_EQ(m[15], 1);
+    in.flags[1] = 0x10;
+    formats::introMatrix(in, m);
+    EXPECT_NEAR(m[2], 3, 1e-5);
+}
+
+TEST(Level, ObjectList) {
+    const auto l = formats::parseObjectList("3\r\n1,generalbank\r\n8,Lara\r\n567,ca_skydome_a\r\n");
+    ASSERT_EQ(l.size(), 3u);
+    EXPECT_EQ(l.at(8), "lara");
+    EXPECT_EQ(l.at(567), "ca_skydome_a");
+}
+
+TEST(RealData, PatchOverridesBigfile) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    ASSERT_TRUE(bf.hasPatch());
+    EXPECT_EQ(bf.read("pc-w\\l2_puzzleroom.drm")->size(), 13751556u); // patch.000 copy
+}
+
+TEST(RealData, LevelL4PoolInstancesOnTerrain) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto u = formats::parseUnit(cdc::parseDrm(*bf.read("pc-w\\l4_pool.drm")));
+    EXPECT_EQ(u.intros.size(), 174u);
+    EXPECT_TRUE(u.streamGroups.empty());
+    EXPECT_TRUE(u.imfs.empty());
+
+    const auto sc = formats::loadLevelScene(bf, "pc-w\\l4_pool.drm");
+    checkMeshes(sc);
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    size_t placed = 0;
+    for (const auto& m : sc.meshes) {
+        if (m.origin.find("terrain") != std::string::npos)
+            for (const auto& v : m.vertices)
+                for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], v.position[k]), hi[k] = std::max(hi[k], v.position[k]);
+        placed += m.origin.find("@intro") != std::string::npos;
+    }
+    EXPECT_GT(placed, 50u);
+    // Observed: 161/173 object intros lie inside the terrain box; the rest are cinematic props
+    // parked at (0, 0, -11542) and one trigger volume. Markers (object -6) are not counted.
+    size_t inside = 0, objects = 0;
+    for (const auto& in : u.intros) {
+        bool in3 = true;
+        for (int k = 0; k < 3; ++k) {
+            ASSERT_TRUE(std::isfinite(in.position[k]) && std::isfinite(in.rotation[k])) << in.uniqueId;
+            in3 = in3 && in.position[k] >= lo[k] - 500.f && in.position[k] <= hi[k] + 500.f;
+        }
+        if (in.objectId == formats::kMarkerObjectId) continue;
+        ++objects;
+        inside += in3;
+    }
+    EXPECT_GE(inside, objects * 9 / 10) << inside << "/" << objects;
+}
+
+TEST(RealData, LevelBallcourtStreamGroupsAndImfs) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto u = formats::parseUnit(cdc::parseDrm(*bf.read("pc-w\\l4_ballcourt.drm")));
+    EXPECT_EQ(u.intros.size(), 483u);
+    EXPECT_EQ(u.streamGroups.size(), 8u); // 10 groups, 2 without a stream DRM
+    EXPECT_EQ(u.imfs.size(), 3293u);
+    for (const auto& sg : u.streamGroups) EXPECT_TRUE(bf.read("pc-w\\streamgroups\\" + sg + ".drm")) << sg;
+    for (const auto& p : u.imfs) {
+        for (float f : p.matrix) ASSERT_TRUE(std::isfinite(f));
+        EXPECT_FLOAT_EQ(p.matrix[15], 1.f);
+    }
 }

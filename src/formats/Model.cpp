@@ -325,23 +325,33 @@ std::vector<MaterialTexture> materialTextures(const cdc::Section& material) {
     return out;
 }
 
-std::vector<scene::MeshData> decodeModels(const cdc::Drm& drm, std::vector<std::string>& warnings,
-                                          std::string_view origin) {
+std::map<uint32_t, std::vector<scene::MeshData>> decodeRenderResources(const cdc::Drm& drm, std::vector<std::string>& warnings,
+                                                                       std::string_view origin) {
     Ctx c{{}, warnings, std::string(origin)};
     for (const auto& s : drm.sections)
         if (s.type == cdc::SectionType::Material) c.materials[s.id] = &s;
-    std::vector<scene::MeshData> out;
+    std::map<uint32_t, std::vector<scene::MeshData>> out;
     for (const auto& s : drm.sections) {
         if (s.type != cdc::SectionType::RenderResource) continue;
+        auto& meshes = out[s.id];
         try {
-            if (s.resourceType() == kResourceModel) decodeModel(c, s, out);
-            else if (s.resourceType() == kResourceTerrain) decodeTerrain(c, s, out);
+            if (s.resourceType() == kResourceModel) decodeModel(c, s, meshes);
+            else if (s.resourceType() == kResourceTerrain) decodeTerrain(c, s, meshes);
             else warnings.push_back(c.origin + "#section " + std::to_string(s.id) + ": unsupported render resource type " +
                                     std::to_string(s.resourceType()));
         } catch (const FormatError& e) {
+            meshes.clear();
             warnings.push_back(c.origin + "#section " + std::to_string(s.id) + ": " + e.what());
         }
     }
+    return out;
+}
+
+std::vector<scene::MeshData> decodeModels(const cdc::Drm& drm, std::vector<std::string>& warnings,
+                                          std::string_view origin) {
+    std::vector<scene::MeshData> out;
+    for (auto& [id, meshes] : decodeRenderResources(drm, warnings, origin))
+        for (auto& m : meshes) out.push_back(std::move(m));
     return out;
 }
 

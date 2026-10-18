@@ -7,6 +7,7 @@
 #include "scene/Assets.hpp"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -45,6 +46,9 @@ std::vector<uint8_t> toRgba8(scene::PixelFormat f, uint32_t width, uint32_t heig
 // and material textures (occlusion/fog volumes, hypothesis) are skipped with a warning.
 std::vector<scene::MeshData> decodeModels(const cdc::Drm& drm, std::vector<std::string>& warnings,
                                           std::string_view origin = {});
+// Same meshes keyed by render-resource section id (failed/skipped resources map to no meshes).
+std::map<uint32_t, std::vector<scene::MeshData>> decodeRenderResources(const cdc::Drm& drm, std::vector<std::string>& warnings,
+                                                                       std::string_view origin = {});
 
 // Texture ids of a material section (type 10), in reference order, with their category.
 struct MaterialTexture { uint32_t textureId, category, slot; };
@@ -55,7 +59,51 @@ std::vector<MaterialTexture> materialTextures(const cdc::Section& material);
 // ("pc-w\\<name>.drm") when `withDependencies` (all placed at the origin), decodes every model and every texture of
 // the loaded DRMs that a submesh references. Missing/unsupported data → warnings.
 // Throws cdc::FormatError if `drmPath` itself is not in the bigfile.
-scene::SceneData loadDrmScene(const cdc::Bigfile& bigfile, std::string_view drmPath,
+scene::SceneData loadDrmScene(const cdc::BigfileSet& bigfile, std::string_view drmPath,
                               bool withDependencies = false);
+
+// ---- Levels (unit DRMs). Layouts and evidence: docs/formats/LEVELS.md ----------------
+// One intro (placed object instance) of a unit: 0x90-byte record.
+struct Intro {
+    float rotation[3]; // Euler radians; matrix = Rx(x) * Ry(y) * Rz(z) (cdc_Matrix_Build_XYZOrder 0x49D500)
+    float position[3];
+    float scale[3];    // only applied when (flags[1] & 0x10), else 1 (INSTANCE_IntroduceInstance 0x5BCC30)
+    uint16_t objectId; // objectlist.txt id; 0xFFFA (-6) = marker, no object
+    int32_t uniqueId;
+    uint8_t flags[4];  // bytes +0x70..+0x73
+    bool scaled() const { return flags[1] & 0x10; }
+};
+inline constexpr uint16_t kMarkerObjectId = 0xFFFA;
+
+// Instanced static mesh ("IMF") placement from the unit's cell group data: 0x70-byte record.
+struct ImfPlacement {
+    float matrix[16];  // column-major model matrix (stored D3D row-major, row 3 = translation)
+    uint32_t dtpId;    // DTPDATA section {?, renderModel id @+4}
+    std::string name;
+};
+
+struct Unit {
+    std::vector<Intro> intros;
+    std::vector<std::string> streamGroups; // stream DRM base names ("pc-w\\streamgroups\\<name>.drm")
+    std::vector<ImfPlacement> imfs;
+};
+// Parses the level struct (section 0) of a unit DRM. Throws cdc::FormatError on layout mismatch.
+Unit parseUnit(const cdc::Drm& unit);
+
+// objectlist.txt ("count\r\n" then "id,name" lines) -> id → lower-case name.
+std::map<uint16_t, std::string> parseObjectList(std::string_view text);
+
+// Render-model resource ids of an object DRM's models, in Object model-list order (0 = no render
+// model). Object section (type 11) +0 → ObjectBase DTP; +0xA0 u16 numModels, +0xA4 Model**;
+// Model DTP +0x64 → render model. Empty if the DRM has no object section.
+std::vector<uint32_t> objectRenderModels(const cdc::Drm& object);
+
+// Column-major T * Rx * Ry * Rz * S, as tru.exe builds instance matrices.
+void introMatrix(const Intro& in, float out[16]);
+
+// Whole level: unit terrain, stream-group DRM terrain, IMF placements and intro instances
+// (model 0 of each object, placed with the intro transform). Textures as loadDrmScene.
+// Unresolved objects, missing DRMs and objects without a model are reported as warnings.
+scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view unitPath);
 
 } // namespace ou::formats
