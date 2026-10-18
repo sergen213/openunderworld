@@ -3,7 +3,12 @@
 #include <gtest/gtest.h>
 #include <zlib.h>
 
+#include <unistd.h>
+
+#include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 
 using namespace ou::cdc;
 
@@ -97,4 +102,75 @@ TEST(Drm, RejectsBadVersionAndTruncation) {
     EXPECT_THROW(parseDrm(bad), FormatError);
     for (size_t cut = 0; cut < raw.size(); cut += 7)
         EXPECT_THROW(parseDrm(std::vector<uint8_t>(raw.begin(), raw.begin() + cut)), FormatError) << cut;
+}
+
+namespace {
+struct Rec { std::string path; uint32_t specMask; std::string payload; };
+// Single-part bigfile; records sorted by hash, stable for equal hashes (stored order kept).
+void writeBigfile(const std::filesystem::path& file, std::vector<Rec> recs) {
+    std::ranges::stable_sort(recs, {}, [](const Rec& r) { return pathHash(r.path); });
+    std::vector<uint8_t> v;
+    put32(v, uint32_t(recs.size()));
+    for (const auto& r : recs) put32(v, pathHash(r.path));
+    uint32_t sector = uint32_t((4 + 20 * recs.size() + 2047) / 2048);
+    for (const auto& r : recs) {
+        put32(v, uint32_t(r.payload.size())); put32(v, sector); put32(v, r.specMask); put32(v, 0);
+        sector += uint32_t((r.payload.size() + 2047) / 2048);
+    }
+    for (const auto& r : recs) {
+        v.resize((v.size() + 2047) / 2048 * 2048);
+        v.insert(v.end(), r.payload.begin(), r.payload.end());
+    }
+    std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char*>(v.data()), std::streamsize(v.size()));
+}
+std::string str(const std::optional<std::vector<uint8_t>>& b) { return b ? std::string(b->begin(), b->end()) : "<none>"; }
+} // namespace
+
+TEST(Bigfile, SpecMaskNeedsAllBitsLikeTheExe) {
+    const auto dir = std::filesystem::temp_directory_path() / ("ou_cdc_spec_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    // Stored order: French first, as for many real voice files; then Dutch-style (no bit 0), then English.
+    writeBigfile(dir / "bigfile.000", {{"v.mul", 0xFFFFE002, "fr"}, {"v.mul", 0xFFFFFFE0, "nl"},
+                                       {"v.mul", 0xFFFFFFE1, "en"}, {"all.drm", 0xFFFFFFFF, "all"}});
+    const Bigfile bf(dir / "bigfile.000");
+    EXPECT_EQ(str(bf.read(*bf.find("v.mul"))), "en"); // default = kSpecEnglish
+    EXPECT_EQ(str(bf.read(*bf.find("v.mul", kSpecFrench))), "fr");
+    EXPECT_EQ(str(bf.read(*bf.find("v.mul", 1u << 11))), "nl"); // only 0xFFFFFFE0 has bit 11
+    EXPECT_FALSE(bf.find("v.mul", kSpecEnglish | kSpecFrench)); // no record has both bits
+    EXPECT_EQ(str(bf.read(*bf.find("all.drm", kSpecSpanish))), "all");
+    EXPECT_FALSE(bf.find("missing.drm"));
+
+    // patch.000 is looked up first; a path only in bigfile still resolves; language applies to both.
+    BigfileSet noPatch(dir);
+    EXPECT_FALSE(noPatch.hasPatch());
+    EXPECT_EQ(str(noPatch.read("all.drm")), "all");
+    writeBigfile(dir / "patch.000", {{"all.drm", 0xFFFFFFFF, "patched"}, {"v.mul", 0xFFFFE002, "fr2"}});
+    const BigfileSet en(dir), fr(dir, kSpecFrench);
+    EXPECT_TRUE(en.hasPatch());
+    EXPECT_EQ(str(en.read("all.drm")), "patched");
+    EXPECT_EQ(str(en.read("v.mul")), "en"); // patch has no English variant
+    EXPECT_EQ(str(fr.read("v.mul")), "fr2");
+    EXPECT_EQ(str(en.read("missing.drm")), "<none>");
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Drm, SectionPointersInternalAndExternal) {
+    // Two general sections; section 1 has one internal (0 -> 8) and one external pointer
+    // (patch 4 -> section 0 offset 12).
+    std::vector<uint8_t> v;
+    put32(v, 19); put32(v, 0); put32(v, 0); put32(v, 0); put32(v, 0); put32(v, 2);
+    put32(v, 16); put32(v, 0); put32(v, 0); put32(v, 0); put32(v, 0);
+    put32(v, 16); put32(v, 0); put32(v, 36u << 8); put32(v, 0); put32(v, 0);
+    v.resize(v.size() + 16); // section 0 data
+    put32(v, 1); put32(v, 1); put32(v, 0); put32(v, 0); put32(v, 0);
+    put32(v, 0); put32(v, 8);
+    const uint32_t patchWords = 4 / 4;
+    put32(v, 0 | (patchWords & 0x3FFFF) << 14); put32(v, (patchWords >> 18) | 12u << 6);
+    v.resize(v.size() + 16); // section 1 data
+    const auto d = parseDrm(v);
+    const auto p = sectionPointers(d, 1);
+    ASSERT_EQ(p.size(), 2u);
+    EXPECT_EQ(p.at(0).section, 1u); EXPECT_EQ(p.at(0).offset, 8u);
+    EXPECT_EQ(p.at(4).section, 0u); EXPECT_EQ(p.at(4).offset, 12u);
+    EXPECT_TRUE(sectionPointers(d, 0).empty());
 }

@@ -80,7 +80,18 @@ std::span<const BigfileRecord> Bigfile::find(uint32_t hash) const {
 
 std::optional<BigfileRecord> Bigfile::find(std::string_view path, uint32_t specMask) const {
     for (const auto& r : find(pathHash(path)))
-        if (r.specMask & specMask) return r;
+        if ((r.specMask & specMask) == specMask) return r;
+    return std::nullopt;
+}
+
+BigfileSet::BigfileSet(const std::filesystem::path& gameDir, uint32_t specMask) : specMask_(specMask) {
+    if (std::filesystem::exists(gameDir / "patch.000")) archives_.emplace_back(gameDir / "patch.000");
+    archives_.emplace_back(gameDir / "bigfile.000");
+}
+
+std::optional<std::vector<uint8_t>> BigfileSet::read(std::string_view path) const {
+    for (const auto& a : archives_)
+        if (const auto r = a.find(path, specMask_)) return a.read(*r);
     return std::nullopt;
 }
 
@@ -189,6 +200,23 @@ std::optional<uint32_t> internalPointer(const Section& s, uint32_t offset) {
             return rd<uint32_t>(s.relocations, 24 + 8 * size_t(i));
     }
     return std::nullopt;
+}
+
+std::unordered_map<uint32_t, Pointer> sectionPointers(const Drm& drm, uint32_t index) {
+    std::unordered_map<uint32_t, Pointer> out;
+    const auto r = drm.sections.at(index).relocations;
+    if (r.size() < 20) return out;
+    const auto internal = rd<uint32_t>(r, 0), external = rd<uint32_t>(r, 4);
+    size_t p = 20;
+    for (uint32_t i = 0; i < internal; ++i, p += 8) out[rd<uint32_t>(r, p)] = {index, rd<uint32_t>(r, p + 4)};
+    // External: {lo: section:14 | patch/4 low 18}, {hi: patch/4 high 6 | target:26} (0x54EC60).
+    for (uint32_t i = 0; i < external; ++i, p += 8) {
+        const auto lo = rd<uint32_t>(r, p), hi = rd<uint32_t>(r, p + 4);
+        const uint32_t section = lo & 0x3FFF;
+        if (section >= drm.sections.size()) throw FormatError("external relocation to section " + std::to_string(section));
+        out[((lo >> 14) | (hi & 0x3F) << 18) * 4] = {section, hi >> 6};
+    }
+    return out;
 }
 
 } // namespace ou::cdc

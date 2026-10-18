@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace ou::cdc {
@@ -30,6 +31,11 @@ struct BigfileRecord {
     uint32_t compressedSize; // 0 in every observed TRU PC record
 };
 
+// Specialisation (language) masks. tru.exe opens archives with mask 1 (InitArchive 0x473840) and
+// then sets 1 << Language for every mounted archive (0x49A900); bits 0-4 = EN FR DE IT ES.
+inline constexpr uint32_t kSpecEnglish = 1u << 0, kSpecFrench = 1u << 1, kSpecGerman = 1u << 2,
+                          kSpecItalian = 1u << 3, kSpecSpanish = 1u << 4;
+
 class Bigfile {
 public:
     // `firstPart` is e.g. ".../bigfile.000". Split parts are found by replacing the extension.
@@ -40,8 +46,9 @@ public:
     const std::vector<BigfileRecord>& records() const { return records_; }
     // All records with this hash (several specialisations may share one hash).
     std::span<const BigfileRecord> find(uint32_t hash) const;
-    // First record matching `specMask` bits (records with mask 0xFFFFFFFF always match).
-    std::optional<BigfileRecord> find(std::string_view path, uint32_t specMask = 0xFFFFFFFF) const;
+    // First record whose mask contains every bit of `specMask`, as ArchiveFileSystem_FindEntry
+    // 0x4726E0 does: (record.specMask & specMask) == specMask.
+    std::optional<BigfileRecord> find(std::string_view path, uint32_t specMask = kSpecEnglish) const;
 
     std::vector<uint8_t> read(const BigfileRecord& r) const;
     std::filesystem::path partPath(uint32_t part) const;
@@ -51,6 +58,22 @@ private:
     std::filesystem::path first_;
     uint64_t alignment_;
     std::vector<BigfileRecord> records_; // sorted by hash (as stored)
+};
+
+// The archives the game mounts: patch.000 (if present) in front of bigfile.000, so a path present
+// in both comes from the patch (InitPatchArchive 0x478930 adds at the front; the multi-FS lookup
+// 0x472B70 takes the first archive that has the file). The exe aborts without patch.000; we accept
+// installs without it.
+class BigfileSet {
+public:
+    explicit BigfileSet(const std::filesystem::path& gameDir, uint32_t specMask = kSpecEnglish);
+    std::optional<std::vector<uint8_t>> read(std::string_view path) const;
+    bool hasPatch() const { return archives_.size() > 1; }
+    uint32_t specMask() const { return specMask_; }
+
+private:
+    std::vector<Bigfile> archives_; // lookup order
+    uint32_t specMask_;
 };
 
 // ---- CDRM: zlib block container wrapping DRM files ------------------------------------
@@ -93,5 +116,10 @@ Drm parseDrm(std::vector<uint8_t> bytes);
 // Resolve a 32-bit pointer stored at `offset` inside section `s` via its internal
 // relocation table. Returns the target offset within the same section's data if relocated.
 std::optional<uint32_t> internalPointer(const Section& s, uint32_t offset);
+
+// Internal and external relocations of `drm.sections[index]`: patch offset -> target
+// {section index in drm.sections, offset in its data}.
+struct Pointer { uint32_t section, offset; };
+std::unordered_map<uint32_t, Pointer> sectionPointers(const Drm& drm, uint32_t index);
 
 } // namespace ou::cdc
