@@ -38,10 +38,11 @@ std::vector<uint8_t> toRgba8(scene::PixelFormat f, uint32_t width, uint32_t heig
                              std::span<const uint8_t> data);
 
 // ---- Models (section type 12, resource type 26, "Mesh") -------------------------------
-// Decodes every render model of the DRM. Vertices are converted to scene::Vertex (skinning
-// data dropped; skinned meshes are returned in bind pose). One MeshData per model batch.
-// SubMesh::textureId = diffuse texture section id from the primgroup's material (hypothesis,
-// see MESHES.md) or 0.
+// Decodes every render model and terrain of the DRM. Vertices are converted to scene::Vertex
+// (skinning data dropped; skinned meshes are returned in bind pose). One MeshData per model
+// batch / terrain vertex buffer. SubMesh::textureId = the material's category-1 (diffuse)
+// texture, else its category-0 slot-0 texture (heuristic), else 0. Batches without texcoords
+// and material textures (occlusion/fog volumes, hypothesis) are skipped with a warning.
 std::vector<scene::MeshData> decodeModels(const cdc::Drm& drm, std::vector<std::string>& warnings,
                                           std::string_view origin = {});
 
