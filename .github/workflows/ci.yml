@@ -14,7 +14,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed git base-devel cmake ninja sdl3 glm libepoxy zlib openssl \
-            nlohmann-json gtest libsodium curl qt6-base vulkan-headers vulkan-icd-loader shaderc
+            nlohmann-json gtest libsodium curl qt6-base vulkan-headers vulkan-icd-loader shaderc ffmpeg sdl3_ttf
       - uses: actions/checkout@v4
       - name: Configure (Debug, sanitizers)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOU_SANITIZE=ON

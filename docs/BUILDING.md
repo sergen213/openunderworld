@@ -6,6 +6,8 @@
 `vulkan-headers vulkan-icd-loader shaderc` (glslc) for the Vulkan backend.
 `openssl nlohmann-json` (importer), `libsodium curl` (updater, `ou-sign`), `qt6-base` (`ou-launcher`;
 skipped with a CMake notice if Qt 6 is missing). Launcher and updater: `docs/LAUNCHER.md`, `docs/UPDATES.md`.
+`ffmpeg` (libavformat/libavcodec/libswscale/libswresample: `ou-movie`, `ou_video`) and optionally
+`sdl3_ttf` (movie subtitles in a system font, else SDL's ASCII debug font; `docs/formats/VIDEO.md`).
 A GPU/driver with OpenGL 4.5+ core (4.6 requested; developed on Mesa radeonsi); Vulkan 1.3
 for `--renderer vulkan` (see "Vulkan backend" below).
 

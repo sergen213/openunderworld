@@ -33,6 +33,9 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 | Signed updater + ou-sign | Tested | Ed25519 (libsodium), stage + RENAME_EXCHANGE swap, journal recovery (docs/UPDATES.md) | `ou_update_tests` (12, file-backed transport) | Live HTTPS server untested; no release server yet |
 | Packaging / CI | Implemented | install rules, .desktop, icon, PKGBUILD (local `makepkg -f` built + 71/71 check), Arch CI workflow | — | CI never run on GitHub |
 | Vulkan 1.3 renderer | Tested | Placeholder, lara.drm, l4_pool.drm match GL (mean abs diff ≤ 0.015/255); validation layer clean (docs/RENDERING.md) | `viewer_vulkan_*`, `VulkanRenderer.*` | No enhanced mode, RT detected only; interactive drag-resize not hand-tested |
+| Movies (Bink via libav) + `ou-movie` | Tested | All 5 `Movies/*.bik` probed; intro.bik frame 300 screenshot viewed; 10 s A/V drift mean 10.6 ms, max 21 ms, no growth; German prevontr track bit-identical to ffmpeg CLI; exe track rule (id = language, else first) (docs/formats/VIDEO.md) | `VideoRealData.*`, `movie_intro_screenshot` | System TTF font instead of the game font; skip key not auto-tested; no side-by-side with the original |
+| Localized text (locals.bin) + `ou-text` | Tested | All 6 variants decode (5136 ids, 1448 non-empty, strict UTF-8); exe getter semantics (out of range / empty / invalid UTF-8); id sources traced in exe (docs/formats/TEXT.md) | `Strings.*`, `LocaleRealData.AllLocalsBinVariantsDecode` | Game font / button-glyph rendering not implemented |
+| Subtitles: movie `.sch` + cinstream `.mul` | Tested | prevontr.sch rendered in ou-movie (EN, RU screenshots viewed); CINE stream header/frames parse in all 53 cinematics, 3253 subtitle entries; exe two-line ticker ported | `MovieSchema.*`, `Subtitles.*`, `Cine.*`, `LocaleRealData.*` | Cinematic channel data (animation/camera) not decoded; ticker not shown in-game yet |
 | Everything gameplay | Research Required | — | — | — |
 
 ## Principles

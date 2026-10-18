@@ -182,6 +182,37 @@ else()
   message(STATUS "Qt6 Widgets not found: ou-launcher not built")
 endif()
 
+# ---- ou_locale (locals.bin, .sch, cinstream subtitles), ou_video (Bink via libav), ou-movie, ou-text ----
+# docs/formats/TEXT.md, docs/formats/VIDEO.md
+add_library(ou_locale STATIC src/locale/Locale.cpp)
+target_link_libraries(ou_locale PUBLIC ou_cdc)
+add_executable(ou-text tools/ou-text/main.cpp)
+target_link_libraries(ou-text PRIVATE ou_locale)
+pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavformat libavcodec libswscale libswresample libavutil)
+find_package(SDL3_ttf CONFIG)
+add_library(ou_video STATIC src/video/Movie.cpp src/video/Player.cpp)
+target_link_libraries(ou_video PUBLIC ou_locale SDL3::SDL3 PRIVATE PkgConfig::LIBAV)
+if(TARGET SDL3_ttf::SDL3_ttf)
+  target_link_libraries(ou_video PRIVATE SDL3_ttf::SDL3_ttf)
+  target_compile_definitions(ou_video PRIVATE OU_HAVE_TTF)
+else()
+  message(STATUS "SDL3_ttf not found: movie subtitles use SDL's ASCII debug font")
+endif()
+add_executable(ou-movie tools/ou-movie/main.cpp)
+target_link_libraries(ou-movie PRIVATE ou_video)
+install(TARGETS ou-movie ou-text)
+if(OU_BUILD_TESTS)
+  add_executable(ou_locale_tests tests/test_locale.cpp)
+  target_link_libraries(ou_locale_tests PRIVATE ou_locale ou_video GTest::gtest_main)
+  gtest_discover_tests(ou_locale_tests DISCOVERY_TIMEOUT 30)
+  # Plays 30 frames of intro.bik into a window and writes a PPM; 77 = skipped (no OU_GAME_DIR or display).
+  add_test(NAME movie_intro_screenshot
+           COMMAND sh -c "[ -n \"$OU_GAME_DIR\" ] || exit 77; exec \"$<TARGET_FILE:ou-movie>\" \"$OU_GAME_DIR/Movies/intro.bik\" --frames 30 --screenshot ${CMAKE_CURRENT_BINARY_DIR}/movie_intro.ppm")
+  # SDL_Renderer may pick its Vulkan backend: same RADV leak as the Vulkan tests.
+  set_tests_properties(movie_intro_screenshot PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT
+                       "LSAN_OPTIONS=fast_unwind_on_malloc=0:suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan_vulkan.supp")
+endif()
+
 include(GNUInstallDirs)
 install(TARGETS ou-viewer ou-asset ou-import ou-sign RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(TARGET ou-launcher)

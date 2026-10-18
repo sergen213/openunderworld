@@ -383,7 +383,7 @@ Source: `docs/features.md` plus the module registration in `src/Hook.cpp:128-152
   - 5835 `.mul` MultiplexStream records (1029 voice lines × 5 dubs: EN/FR/DE/IT/ES)
   - 75 `FSB4` banks (header version `0x40000`), each stored next to a `Mus!` music script
   - 40783 WAVE sections inside DRMs (FSB per cdcEngineTools)
-- **Video:** Bink, through the 12 imported `_Bink*` calls listed in [§1.1](#11-truexe). PCGW says Bink **1.5.21.0** [W]. Movies are in `Movies/*.bik` [V]. Subtitles for movies use cdc "SchemaFile" `.sch` text (cdcResearch `files/schemafile.md`) [S]; whether this applies to TR8 is ?.
+- **Video:** Bink, through the 12 imported `_Bink*` calls listed in [§1.1](#11-truexe). PCGW says Bink **1.5.21.0** [W]. Movies are in `Movies/*.bik` [V]. Movie subtitles are cdc "SchemaFile" `.sch` text (cdcResearch `files/schemafile.md`) [S]; TR8 loads `\tr8\local\localization\movies\<name>.sch` (only `prevontr.sch` exists) and in-engine cinematics carry subtitles inside their cinstream `.mul` [V] ([VIDEO.md](formats/VIDEO.md), [TEXT.md](formats/TEXT.md)).
 - **Rendering:** Direct3D 9.0c (`d3d9.dll` loaded dynamically) [V]. Shaders are precompiled in `.shad` and in `SHADERLIB` sections [V], [S]. ATI Fetch4 shadow path [V].
 - **Other middleware:**
   - NavPower AI navigation [V]

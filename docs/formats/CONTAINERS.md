@@ -237,6 +237,7 @@ UTF-8 NUL-terminated strings
 - The `language` header value order (IT = 2, DE = 3) **differs** from the specMask bit order (DE = bit 2, IT = bit 3). [V-data]
 - Yura's `LocaleFile.cs` layout (`language, numStrings, offsets`) matches [S], but its `Language` enum (German 2, Italian 3, …) does not match TR8's header values. [V-data]
 - `patch.000` carries updated copies of all six (§2).
+- Loader/getter semantics, id ranges and where ids come from: [TEXT.md §1](TEXT.md#1-pc-wlocallocalsbin).
 
 ---
 
