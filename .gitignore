@@ -1,0 +1,14 @@
+/build*/
+/out/
+*.user
+compile_commands.json
+.cache/
+# Never commit original game data or proprietary-derived exports
+*.drm
+*.000
+*.001
+*.002
+*.003
+*.exe
+*.dll
+/local/
