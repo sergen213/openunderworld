@@ -92,7 +92,25 @@ Heavy steps run under `systemd-run --user --scope -p MemoryMax=6G` when availabl
 
 **Releases are normal GitHub releases marked "experimental" in the title and notes, not GitHub pre-releases.** `releases/latest/download/…` (the launcher's default manifest URL) never resolves to a pre-release. Observed: a repo with only pre-releases answers `/releases/latest` with a redirect to `/releases`, and the API returns 404.
 
+### v0.1.0 (2026-10-18)
+
+- [O] `OU_GAME_DIR="/mnt/1st4TB/Tomb Raider Underworld" tools/release.sh`:
+  - ctest 122/122 passed on a clean worktree of `8b36983`;
+  - built `OpenUnderworld-0.1.0-x86_64.AppImage` (90 098 168 bytes, sha256 `3c76f545…a99a133`);
+  - signed and verified the manifest, then published <https://github.com/sergen213/openunderworld/releases/tag/v0.1.0> with the AppImage, `.sha256`, `.zsync`, `manifest.json` and `manifest.json.sig`;
+  - the download-back check passed.
+
+  The whole run took 104 s. A `--dry-run` before it passed the same way.
+- [O] Assets downloaded again with `gh release download` into a fresh 0700 `/tmp` dir and run under `env -i`:
+  - `sha256sum -c` OK; `OpenUnderworld-0.1.0-x86_64.AppImage sign verify manifest.json` → `OK: version 0.1.0, channel stable, 1 files`;
+  - `game … --level 'pc-w\l4_pool.drm' --frames 30 --screenshot`: Lara on the l4_pool stairs, screenshot viewed;
+  - `viewer … --renderer vulkan`: the level renders on RADV, screenshot viewed;
+  - `--self-test` passes both with `--appimage-extract-and-run` (offscreen) and on Wayland.
+- [O] Self-update over the live release: see `docs/UPDATES.md` ("Live verification").
+
 ## CI
 
 - `.github/workflows/ci.yml`: Arch container, Debug + ASan/UBSan, ctest, makepkg.
 - `.github/workflows/appimage.yml`: on pushes to main, `v*` tags and manual dispatch. It runs `build-appimage.sh` in an Arch container, smoke-tests `--self-test`/`--version` offscreen with extract-and-run, and uploads `build-appimage/out/*` as the artifact `OpenUnderworld-AppImage-<sha>`. These AppImages are **unsigned test builds**: there is no manifest and no GitHub release. Download one from the run page (Actions → appimage → Artifacts) or with `gh run download`.
+
+[O] The first push of these workflows (`8b36983`) was green: `ci` in 3m42s and `appimage` in 1m55s. The CI AppImage `OpenUnderworld-0.1.0-git.8b36983-x86_64.AppImage` is 79 MB; it is smaller than the local build because the Arch container lacks some optional ffmpeg dependencies [I]. Its smoke step printed `ou-launcher 0.1.0`, and the artifact was uploaded (81.6 MB).

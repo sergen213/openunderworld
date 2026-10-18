@@ -120,7 +120,7 @@ Every crash point has a test in `InterruptedSwapRecovery` (observed): before any
 
 ## Tests
 
-`ou_update_tests`: 13 tests, all passing under ASan/UBSan on 2026-10-18 [O].
+`ou_update_tests`: 14 tests, all passing under ASan/UBSan on 2026-10-18 [O].
 
 - No network. A test-only transport maps `https://updates.test/<rel>` to `file://<tmp>/srv/<rel>`, so the `https://` rules stay in force.
 - Coverage: good signature; bad signature (wrong key, truncated signature, no payload fetched); tampered manifest (field edit, bit flip); size too small and too large; hash mismatch; rollback attempt (older, signed, via both `update` and `install`); `min_version`; user rollback; interrupted-swap recovery; disable switch (config and environment, transport never called); unsafe paths, game-data paths, non-https URLs, duplicates, foreign root, game-dir overlap.
@@ -132,7 +132,19 @@ Every crash point has a test in `InterruptedSwapRecovery` (observed): before any
   - `rollbackAppImage` swaps;
   - a manifest without an AppImage is refused.
 - `HttpsTransportRefusesOtherSchemes` checks that the libcurl transport rejects `http://`, `file://` and `ftp://` before connecting.
-- The live HTTPS path against GitHub releases: see `docs/RELEASING.md` and the v0.1.0 verification below.
+- The live HTTPS path against GitHub releases: see the v0.1.0 verification below.
+
+### Live verification against the v0.1.0 GitHub release (2026-10-18)
+
+- [O] `curl -I …/releases/latest/download/manifest.json` → 302 to `…/releases/download/v0.1.0/manifest.json` → 302 to `release-assets.githubusercontent.com` (https all the way, within the 5-redirect cap).
+- [O] The published AppImage, run with the default config (`env -i`, fresh `HOME`): `--check-update` and `--update` both print `Up to date (0.1.0).` The signature was verified over real HTTPS with libcurl.
+- [O] End-to-end self-update from an older AppImage. Built from the v0.1.0 tree with only `project(VERSION)` changed to 0.0.9, in a throwaway worktree, never committed:
+  - copied to `<tmp>/apps/OpenUnderworld.AppImage`; `--version` printed `ou-launcher 0.0.9`;
+  - `--check-update` printed `Signed update 0.1.0 available.`;
+  - `--update`, running from the FUSE mount, so it replaced its own running file: it downloaded the 90 098 168-byte AppImage and printed `Installed 0.1.0 into …/OpenUnderworld.AppImage (old one kept as .bak)`;
+  - afterwards `OpenUnderworld.AppImage --version` printed `0.1.0` and `OpenUnderworld.AppImage.bak --version` printed `0.0.9`. The SHA-256 of the replaced file equals the published `.sha256` (`3c76f545…a99a133`), and a second `--update` reports up to date.
+- [O] `ou-sign verify manifest.json` on the downloaded release assets: `OK: version 0.1.0, channel stable, 1 files`.
+- [U] The launcher GUI buttons (Check / Download & install / Roll back) in AppImage mode were not clicked; they call the same `updateOptions` → `update`/`rollbackAppImage` code paths as the CLI [I].
 
 ## Release key ceremony
 
