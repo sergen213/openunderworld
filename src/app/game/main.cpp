@@ -59,6 +59,8 @@ struct Options {
     std::string loadSlot; // --load SLOT: start from $XDG_DATA_HOME/openunderworld/saves/SLOT.ousave
     double die = -1;      // --die SECONDS: Lara dies then (death clip) and respawns at the last checkpoint
     std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
+    ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr/--rt/--rt-quality (or --config)
+    ou::config::GraphicsSettings gfx;    // resolved
 };
 
 void usage() {
@@ -68,7 +70,8 @@ void usage() {
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--show-collision] [--show-triggers] [--show-enemies]\n"
-                 "               [--config config.json]\n"
+                 "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
+                 "               [--rt off|shadows|full] [--rt-quality low|medium|high] [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
                  "          F draw/holster, mouse left fire, right aim/lock, Q switch target, mouse look;\n"
@@ -86,7 +89,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         try {
             const auto c = ou::config::load(argv[i + 1]);
             o.gameDir = c.gameDir, o.renderer = c.renderer, o.width = c.width, o.height = c.height;
-            o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen;
+            o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen, o.graphics = c.graphics;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "--config: %s\n", e.what());
             return false;
@@ -107,6 +110,12 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         const char* v = argv[++i];
         if (a == "--config") continue;
+        try {
+            if (ou::config::applyGraphicsFlag(o.graphics, a, v)) continue;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "%s\n", e.what());
+            return false;
+        }
         if (a == "--game-dir") o.gameDir = v;
         else if (a == "--level") o.level = v;
         else if (a == "--chapter") o.chapter = std::atoi(v);
@@ -139,6 +148,12 @@ bool parseArgs(int argc, char** argv, Options& o) {
     if (o.width <= 0 || o.height <= 0 || o.fov <= 1.0f || o.fov >= 179.0f || o.frames < 0 || o.renderHz < 0 ||
         o.chapter >= int(ou::game::kChapters.size())) {
         std::fprintf(stderr, "invalid --width/--height/--fov/--frames/--render-hz/--chapter\n");
+        return false;
+    }
+    try {
+        o.gfx = ou::config::resolve(o.graphics);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "%s\n", e.what());
         return false;
     }
     if (!o.screenshot.empty() && o.frames == 0) o.frames = 1;
@@ -1061,6 +1076,7 @@ int main(int argc, char** argv) {
             lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS | tick %llu%s%s", world->currentUnit().data.name.c_str(), fps,
                                 (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
             lines.push_back(renderer->description());
+            lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));
             lines.push_back(fmt("lara %s | clip %s t %.2f | pos %.0f %.0f %.0f | yaw %.0f", std::string(ou::game::stateName(s.state)).c_str(),
                                 s.clip.c_str(), s.clipTime, s.pos.x, s.pos.y, s.pos.z, glm::degrees(s.yaw)));
             lines.push_back(fmt("unit %s (%zu loaded) | checkpoint %d | chapter %d | found %d/%d/%d | music %s",
@@ -1099,6 +1115,8 @@ int main(int argc, char** argv) {
         combat.lines(*world, c, world->fovDeg, w, h, frameLines);
         ou::render::FrameOptions fo{true, true, lines, frameLines};
         fo.ui = canvas.vertices;
+        fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
+        fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {

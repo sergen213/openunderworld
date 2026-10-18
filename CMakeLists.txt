@@ -53,12 +53,21 @@ find_package(Vulkan REQUIRED COMPONENTS glslc)
 set(OU_VK_SPV_DIR ${CMAKE_CURRENT_BINARY_DIR}/vk_shaders)
 file(MAKE_DIRECTORY ${OU_VK_SPV_DIR})
 set(OU_VK_SPV)
-foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.vert shadow.frag post.vert post.frag)
+foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.vert shadow.frag post.vert post.frag
+        prepass.vert prepass.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
                      DEPENDS ${src} VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
+endforeach()
+# Ray-traced scene variant (-DOU_RT: ray queries against the scene TLAS); only loaded on RT-capable devices.
+foreach(stage vert frag)
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/scene.${stage})
+  add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/scene_rt.${stage}.inc
+                     COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -DOU_RT -fshader-stage=${stage} -o ${OU_VK_SPV_DIR}/scene_rt.${stage}.inc ${src}
+                     DEPENDS ${src} VERBATIM)
+  list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/scene_rt.${stage}.inc)
 endforeach()
 add_library(ou_render_vk STATIC src/render/vk/VkRenderer.cpp ${OU_VK_SPV})
 target_include_directories(ou_render_vk PRIVATE ${OU_VK_SPV_DIR})

@@ -143,4 +143,17 @@ glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene
     return glm::ortho(c.x - radius, c.x + radius, c.y - radius, c.y + radius, -zMax - 1.0f, -zMin + 1.0f) * lightView;
 }
 
+std::string rtSummary(const RtStatus& s, RayTracing requested, int rays) {
+    static constexpr const char* kModes[] = {"off", "shadows", "full (shadows + water reflections)"};
+    std::string line = std::string("RT ") + kModes[size_t(requested)];
+    if (!s.supported)
+        return line + " | unsupported" + (s.reason.empty() ? "" : " (" + s.reason + ")") +
+               (requested != RayTracing::Off ? " -> shadow map" : "");
+    if (requested != RayTracing::Off) line += " | " + std::to_string(rays) + " ray(s)/px" + (s.active ? "" : " | NOT ACTIVE");
+    return line + " | " + std::to_string(s.blas) + " BLAS, " + std::to_string(s.geometries) + " geometries, " +
+           std::to_string(s.instances) + " instances (" + std::to_string(s.waterInstances) + " water) | TLAS builds " +
+           std::to_string(s.tlasBuilds) + " updates " + std::to_string(s.tlasUpdates) + " | BLAS refits " +
+           std::to_string(s.blasRefits) + " rebuilds " + std::to_string(s.blasRebuilds);
+}
+
 } // namespace ou::render

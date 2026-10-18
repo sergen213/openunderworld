@@ -3,6 +3,8 @@
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+
 #include "render/Renderer.hpp"
 #include "scene/Placeholder.hpp"
 
@@ -15,7 +17,140 @@ size_t nonClearPixels(const ou::render::Image& img) {
     return n;
 }
 
+double meanAbsDiff(const ou::render::Image& a, const ou::render::Image& b) {
+    if (a.rgb.size() != b.rgb.size() || a.rgb.empty()) return 1e9;
+    double s = 0;
+    for (size_t i = 0; i < a.rgb.size(); ++i) s += std::abs(int(a.rgb[i]) - int(b.rgb[i]));
+    return s / double(a.rgb.size());
+}
+
+size_t brightness(const ou::render::Image& img) {
+    size_t s = 0;
+    for (uint8_t v : img.rgb) s += v;
+    return s;
+}
+
+// A 320x240 Vulkan window + renderer; `ok` false = skip (no display / no Vulkan 1.3).
+struct VkWindow {
+    std::unique_ptr<ou::render::Renderer> r = ou::render::createVulkanRenderer();
+    SDL_Window* w = nullptr;
+    std::string skip;
+    ou::render::Camera cam;
+    VkWindow() {
+        if (!SDL_Init(SDL_INIT_VIDEO)) { skip = std::string("no display: ") + SDL_GetError(); return; }
+        std::string err;
+        if (!r->preWindowSetup(err)) { skip = "Vulkan unavailable: " + err; return; }
+        w = SDL_CreateWindow("ou vk rt test", 320, 240, SDL_WindowFlags(r->windowFlags()));
+        if (!w || !r->init(w, err)) { skip = "init: " + err; return; }
+        cam.position = {-1100.0f, -1300.0f, 700.0f};
+        cam.lookAt({0.0f, 0.0f, 100.0f});
+    }
+    ~VkWindow() {
+        r->shutdown();
+        if (w) SDL_DestroyWindow(w);
+        SDL_Quit();
+    }
+    ou::render::Image frame(const ou::render::FrameOptions& o) {
+        int pw = 0, ph = 0;
+        SDL_GetWindowSizeInPixels(w, &pw, &ph);
+        r->drawFrame(cam, {pw, ph}, o);
+        ou::render::Image img = r->readBackbuffer({pw, ph});
+        r->present();
+        return img;
+    }
+};
+
+ou::render::FrameOptions enhanced(ou::render::RayTracing rt = ou::render::RayTracing::Off) {
+    ou::render::FrameOptions o;
+    o.msaa = 4, o.shadows = true, o.rt = rt;
+    return o;
+}
+
 } // namespace
+
+// Ray tracing on a capable device: acceleration structures for the scene (built by the first RT
+// frame), counts, BLAS rebuild/refit on updateVertices + TLAS update, shading close to the shadow
+// map, RT off unchanged, teardown. Skips without RT support.
+TEST(VulkanRenderer, RayTracingBuildsUpdatesAndTearsDown) {
+    using ou::render::RayTracing;
+    VkWindow v;
+    if (!v.skip.empty()) GTEST_SKIP() << v.skip;
+    if (!v.r->rtStatus().supported) GTEST_SKIP() << "no ray tracing: " << v.r->rtStatus().reason;
+
+    ou::scene::SceneData scene = ou::scene::makePlaceholderScene();
+    uint32_t traced = 0, geometries = 0; // meshes / submeshes that cast shadows (Opaque + Alpha blends)
+    for (const auto& m : scene.meshes) {
+        uint32_t n = 0;
+        for (const auto& s : m.submeshes) n += s.blend == ou::scene::Blend::Opaque || s.blend == ou::scene::Blend::Alpha;
+        traced += n > 0, geometries += n;
+    }
+    ASSERT_GT(traced, 0u);
+    EXPECT_TRUE(v.r->upload(scene).empty());
+    const ou::render::Image offBefore = v.frame(enhanced());
+    EXPECT_EQ(v.r->rtStatus().blas, 0u); // nothing built while RT is off
+    EXPECT_FALSE(v.r->rtStatus().active);
+
+    const ou::render::Image rt = v.frame(enhanced(RayTracing::Shadows));
+    auto st = v.r->rtStatus();
+    EXPECT_TRUE(st.active);
+    EXPECT_EQ(st.blas, traced);
+    EXPECT_EQ(st.instances, traced);
+    EXPECT_EQ(st.geometries, geometries);
+    EXPECT_EQ(st.waterInstances, 0u);
+    EXPECT_EQ(st.tlasBuilds, 1u);
+    EXPECT_EQ(st.tlasUpdates, 0u);
+    // RT shadows darken like the shadow map and land close to it (same sun, same casters).
+    ou::render::FrameOptions unshadowed = enhanced();
+    unshadowed.shadows = false;
+    EXPECT_LT(brightness(rt), brightness(v.frame(unshadowed)));
+    EXPECT_LT(meanAbsDiff(rt, offBefore), 3.0);
+    EXPECT_GT(meanAbsDiff(rt, offBefore), 0.0); // but traced, not the map
+
+    // Non-skinned mesh changed: full BLAS rebuild, then one TLAS update on the next RT frame.
+    EXPECT_TRUE(v.r->updateVertices(0, scene.meshes[0].vertices));
+    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 1u);
+    v.frame(enhanced(RayTracing::Full));
+    EXPECT_EQ(v.r->rtStatus().tlasUpdates, 1u);
+    v.frame(enhanced(RayTracing::Full));
+    EXPECT_EQ(v.r->rtStatus().tlasUpdates, 1u); // clean TLAS: no update
+
+    // RT off again renders exactly what it did before any acceleration structure existed.
+    EXPECT_EQ(meanAbsDiff(v.frame(enhanced()), offBefore), 0.0);
+
+    // Skinned mesh: refit (ALLOW_UPDATE BLAS) instead of rebuild.
+    scene.meshes[0].skin.assign(scene.meshes[0].vertices.size(), {});
+    EXPECT_TRUE(v.r->upload(scene).empty());
+    v.frame(enhanced(RayTracing::Shadows));
+    EXPECT_EQ(v.r->rtStatus().tlasBuilds, 2u);
+    std::vector<ou::scene::Vertex> moved = scene.meshes[0].vertices;
+    for (auto& p : moved) p.position[2] += 50.0f;
+    EXPECT_TRUE(v.r->updateVertices(0, moved));
+    EXPECT_EQ(v.r->rtStatus().blasRefits, 1u);
+    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 1u);
+    v.frame(enhanced(RayTracing::Shadows));
+    EXPECT_EQ(v.r->rtStatus().tlasUpdates, 2u);
+}
+
+// OU_VK_NO_RT=1 simulates a device without ray queries: RT requests fall back to the shadow map.
+TEST(VulkanRenderer, RayTracingFallsBackToShadowMap) {
+    using ou::render::RayTracing;
+    setenv("OU_VK_NO_RT", "1", 1);
+    VkWindow v;
+    unsetenv("OU_VK_NO_RT");
+    if (!v.skip.empty()) GTEST_SKIP() << v.skip;
+    const auto st = v.r->rtStatus();
+    EXPECT_FALSE(st.supported);
+    EXPECT_EQ(st.reason, "OU_VK_NO_RT=1");
+    EXPECT_TRUE(v.r->upload(ou::scene::makePlaceholderScene()).empty());
+    const ou::render::Image map = v.frame(enhanced());
+    const ou::render::Image fallback = v.frame(enhanced(RayTracing::Full));
+    EXPECT_FALSE(v.r->rtStatus().active);
+    EXPECT_GT(nonClearPixels(fallback), fallback.rgb.size() / 30);
+    EXPECT_EQ(meanAbsDiff(fallback, map), 0.0);
+    ou::render::FrameOptions noShadows = enhanced(RayTracing::Shadows);
+    noShadows.shadows = false; // a requested RT mode still shadows (via the map)
+    EXPECT_EQ(meanAbsDiff(v.frame(noShadows), map), 0.0);
+}
 
 TEST(VulkanRenderer, ResizeRecreatesSwapchain) {
     if (!SDL_Init(SDL_INIT_VIDEO)) GTEST_SKIP() << "no display: " << SDL_GetError();

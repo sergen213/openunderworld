@@ -31,7 +31,26 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     s.shadows = g.shadows.value_or(s.shadows);
     s.fxaa = g.fxaa.value_or(s.fxaa);
     s.hdr = g.hdr.value_or(s.hdr);
+    if (g.rt == "shadows") s.rt = 1;
+    else if (g.rt == "full") s.rt = 2;
+    else if (g.rt != "off") throw std::runtime_error("rt must be off, shadows or full, got " + g.rt);
+    if (s.rt && g.preset != "enhanced") throw std::runtime_error("rt needs the enhanced preset");
+    if (g.rtQuality == "low") s.rtRays = 1;
+    else if (g.rtQuality == "high") s.rtRays = 4;
+    else if (g.rtQuality != "medium") throw std::runtime_error("rt quality must be low, medium or high, got " + g.rtQuality);
     return s;
+}
+
+bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value) {
+    if (flag == "--shadows" || flag == "--fxaa" || flag == "--hdr") {
+        if (value != "on" && value != "off") throw std::runtime_error(std::string(flag) + " wants on or off");
+        (flag == "--shadows" ? g.shadows : flag == "--fxaa" ? g.fxaa : g.hdr) = value == "on";
+    } else if (flag == "--preset") g.preset = value;
+    else if (flag == "--msaa") g.msaa = std::atoi(std::string(value).c_str());
+    else if (flag == "--rt") g.rt = value;
+    else if (flag == "--rt-quality") g.rtQuality = value;
+    else return false;
+    return true;
 }
 
 Config load(const fs::path& path) {
@@ -61,6 +80,8 @@ Config load(const fs::path& path) {
             c.graphics.msaa = g->value("msaa", c.graphics.msaa);
             for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
                 if (g->contains(key)) *field = g->at(key).get<bool>();
+            c.graphics.rt = g->value("rt", c.graphics.rt);
+            c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
         }
     } catch (const std::exception& e) {
         throw std::runtime_error(path.string() + ": " + e.what());
@@ -81,7 +102,8 @@ void save(const fs::path& path, const Config& c) {
         {"height", c.height}, {"fullscreen", c.fullscreen}, {"fov", c.fov}, {"vsync", c.vsync},
         {"updates", {{"enabled", c.updatesEnabled}, {"channel", c.updateChannel}, {"manifest_url", c.updateManifestUrl}}},
     };
-    auto& g = j["graphics"] = {{"preset", c.graphics.preset}, {"msaa", c.graphics.msaa}};
+    auto& g = j["graphics"] = {{"preset", c.graphics.preset}, {"msaa", c.graphics.msaa}, {"rt", c.graphics.rt},
+                               {"rt_quality", c.graphics.rtQuality}};
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
     if (path.has_parent_path()) fs::create_directories(path.parent_path());

@@ -30,6 +30,9 @@ struct TextVertex {
     uint32_t color;   // RGBA8
 };
 
+// Optional hardware ray tracing (Vulkan ray queries, Enhanced only). Full = shadows + water reflections.
+enum class RayTracing : uint8_t { Off, Shadows, Full };
+
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
     bool cullBackFaces = true;              // front = counter-clockwise (cdc meshes are CCW)
@@ -43,7 +46,21 @@ struct FrameOptions {
     bool fxaa = false;     // FXAA on the resolved image
     bool hdr = false;      // RGBA16F scene target + ACES tonemap
     std::span<const TextVertex> ui = {}; // screen-space triangle list (src/ui menus, HUD), drawn before the overlay
+    // Replaces the sun shadow map when the backend supports it; otherwise the shadow map is used.
+    RayTracing rt = RayTracing::Off;
+    int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)
 };
+
+// Ray-tracing state for diagnostics and tests.
+struct RtStatus {
+    bool supported = false;   // device + driver can (and may: OU_VK_NO_RT unset) do ray queries
+    bool active = false;      // the last frame traced rays
+    uint32_t blas = 0, instances = 0, geometries = 0, waterInstances = 0; // current scene
+    uint32_t tlasBuilds = 0, tlasUpdates = 0, blasRefits = 0, blasRebuilds = 0; // since init
+    std::string reason; // why unsupported
+};
+// One overlay line: requested mode, whether it is traced or falls back to the shadow map, scene counts.
+std::string rtSummary(const RtStatus& s, RayTracing requested, int rays);
 
 struct Image {
     int width = 0, height = 0;
@@ -71,6 +88,7 @@ public:
     virtual void present() = 0;
     virtual bool setVsync(bool enabled) = 0;
     virtual std::string description() const = 0;  // device / API version for diagnostics
+    virtual RtStatus rtStatus() const { return {}; } // backends without ray tracing: unsupported
     virtual void shutdown() = 0;
 };
 

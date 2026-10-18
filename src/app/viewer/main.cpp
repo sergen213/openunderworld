@@ -56,7 +56,7 @@ void usage() {
                  "                 [--renderer opengl|vulkan] [--no-overlay] [--fullscreen]\n"
                  "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list] [--show-collision]\n"
                  "                 [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off]\n"
-                 "                 [--hdr on|off]\n"
+                 "                 [--hdr on|off] [--rt off|shadows|full] [--rt-quality low|medium|high]\n"
                  "                 [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
@@ -88,21 +88,13 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--help" || a == "-h") return false;
         if (!(v = next())) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         if (a == "--config") continue; // applied above
-        auto onOff = [&](std::optional<bool>& out) {
-            if (std::strcmp(v, "on") && std::strcmp(v, "off")) return false;
-            out = std::strcmp(v, "on") == 0;
-            return true;
-        };
-        if (a == "--shadows" || a == "--fxaa" || a == "--hdr") {
-            if (!onOff(a == "--shadows" ? o.graphics.shadows : a == "--fxaa" ? o.graphics.fxaa : o.graphics.hdr)) {
-                std::fprintf(stderr, "%s wants on or off\n", a.c_str());
-                return false;
-            }
-            continue;
+        try {
+            if (ou::config::applyGraphicsFlag(o.graphics, a, v)) continue;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "%s\n", e.what());
+            return false;
         }
-        if (a == "--preset") o.graphics.preset = v;
-        else if (a == "--msaa") o.graphics.msaa = std::atoi(v);
-        else if (a == "--game-dir") o.gameDir = v;
+        if (a == "--game-dir") o.gameDir = v;
         else if (a == "--drm") o.drm = v;
         else if (a == "--renderer") o.renderer = v;
         else if (a == "--width") o.width = std::atoi(v);
@@ -482,6 +474,7 @@ int main(int argc, char** argv) {
                                 opt.gfx.msaa, opt.gfx.shadows ? "on" : "off", opt.gfx.fxaa ? "on" : "off",
                                 opt.gfx.hdr ? "on" : "off"));
             lines.push_back(renderer->description());
+            lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));
             lines.push_back(fmt("%dx%d aspect %.3f | vFOV %.1f hFOV %.1f (Hor+)", w, h, aspect, cam.verticalFovDeg,
                                 glm::degrees(ou::render::horizontalFov(glm::radians(cam.verticalFovDeg), aspect))));
             lines.push_back(fmt("cam %.1f %.1f %.1f | yaw %.1f pitch %.1f | speed %.0f/s | tick %llu%s",
@@ -500,6 +493,7 @@ int main(int argc, char** argv) {
         }
         ou::render::FrameOptions fo{lighting, cull, lines, debugLines};
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
+        fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         renderer->drawFrame(cam, {w, h}, fo);
         if (frame == kTimingWarmup) timingStart = SDL_GetTicksNS();
         ++frame;

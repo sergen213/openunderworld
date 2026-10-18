@@ -390,17 +390,39 @@ TEST(Config, GraphicsPresets) {
     EXPECT_EQ(resolve(g("original", 8, true)), (GraphicsSettings{8, true, false, false}));
     EXPECT_THROW(resolve(g("ultra")), std::runtime_error);
     EXPECT_THROW(resolve(g("original", 3)), std::runtime_error);
+    // Ray tracing: enhanced only; quality = shadow rays per pixel.
+    auto rt = [&](std::string preset, std::string mode, std::string quality = "medium") {
+        auto c = g(std::move(preset));
+        c.rt = std::move(mode), c.rtQuality = std::move(quality);
+        return c;
+    };
+    EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2}));
+    EXPECT_EQ(resolve(rt("enhanced", "full", "high")), (GraphicsSettings{4, true, false, false, 2, 4}));
+    EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1}));
+    EXPECT_THROW(resolve(rt("original", "shadows")), std::runtime_error);
+    EXPECT_THROW(resolve(rt("enhanced", "on")), std::runtime_error);
+    EXPECT_THROW(resolve(rt("enhanced", "full", "ultra")), std::runtime_error);
+    ou::config::GraphicsConfig flags;
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--rt", "full"));
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--rt-quality", "low"));
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--shadows", "off"));
+    EXPECT_FALSE(ou::config::applyGraphicsFlag(flags, "--level", "x"));
+    EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--fxaa", "yes"), std::runtime_error);
+    EXPECT_EQ(flags.rt, "full");
+    EXPECT_EQ(flags.rtQuality, "low");
+    EXPECT_EQ(flags.shadows, std::optional<bool>(false));
 
     fs::path p = fs::temp_directory_path() / ("ou_config_gfx_" + std::to_string(::getpid()) + "/config.json");
     ou::config::Config c;
     c.graphics = g("enhanced", 2, std::nullopt, true);
+    c.graphics.rt = "shadows", c.graphics.rtQuality = "high";
     ou::config::save(p, c);
     const auto d = ou::config::load(p).graphics;
     EXPECT_EQ(d.preset, "enhanced");
     EXPECT_EQ(d.msaa, 2);
     EXPECT_FALSE(d.shadows.has_value()); // unset stays unset: the preset decides
     EXPECT_EQ(d.fxaa, std::optional<bool>(true));
-    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false}));
+    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false, 1, 4}));
     std::ofstream(p) << R"({"graphics":{"preset":"enhanced","msaa":5}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
     fs::remove_all(p.parent_path());

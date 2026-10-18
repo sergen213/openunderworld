@@ -35,6 +35,7 @@ render/RenderCommon.*  ->  backend-free helpers shared by both (font atlas, over
 | Sun shadow map | off | 2048² depth, ortho fitted to the view slice [near, 8000] with texel snapping, depth spanning the scene; slope-scaled bias (2, 2); 3x3 hardware-PCF taps; opaque + alpha-blended (cut at 50 %) casters | `--shadows on/off`, `graphics.shadows` |
 | FXAA | off | off (optional) | `--fxaa on/off`, `graphics.fxaa` |
 | HDR | off | off (framework: RGBA16F target + ACES tonemap in the post pass) | `--hdr on/off`, `graphics.hdr` |
+| Ray tracing (Vulkan) | off (not allowed) | off (optional, see "Ray tracing") | `--rt off/shadows/full`, `--rt-quality low/medium/high`, `graphics.rt`, `graphics.rt_quality` |
 
 `--preset original|enhanced` / `graphics.preset` picks the defaults; explicit settings override
 (`Config.GraphicsPresets`). Anisotropic filtering (max supported) is on in both. [I] The original
@@ -81,17 +82,56 @@ VK 1.66 ms); FXAA + HDR add ≤ 0.07 ms. GL is CPU/draw-call bound (one draw per
 | Memory | `LinearAllocator`: bump allocation inside 64 MiB `VkDeviceMemory` blocks per memory type, aligned to `max(alignment, bufferImageGranularity)`, host-visible blocks persistently mapped. Arenas: static (font, white, overlay buffers), scene (released on every `upload()`), and exact-size single-resource arenas for depth, staging, readback and the per-frame debug-line buffers. No per-object free. |
 | Uploads | one staging buffer per batch sized to the sum of all regions (16-byte aligned for BCn), one command buffer with sync2 barriers, waited on a fence. |
 | Textures | `VK_FORMAT_BC1_RGBA_UNORM_BLOCK` (DXT1 with 1-bit alpha, as D3D9), `BC2_UNORM`, `BC3_UNORM`, `R8G8B8A8_UNORM`, `B8G8R8A8_UNORM`; full validated mip chains (`usableMips`). One combined-image-sampler descriptor set per texture from a per-scene pool; one repeat/linear/trilinear sampler with max anisotropy. |
-| Shaders | GLSL in `src/render/vk/shaders/`, compiled by `glslc --target-env=vulkan1.3 -O -mfmt=num` at build time into `build/vk_shaders/*.inc`, `#include`d as `uint32_t[]`. Push constants: scene/shadow `{mat4 viewProj, model, lightViewProj; int lighting, shadows; float alphaRef}` (204 B, checked against `maxPushConstantsSize`), overlay `{vec2 screen}`, post `{int fxaa, hdr}`. Pipelines: one per `scene::Blend` + lines (rebuilt with the MSAA count / HDR format), shadow (depth only, depth bias), post and overlay (swapchain format). `shaderDemoteToHelperInvocation` enabled for `discard`. |
+| Shaders | GLSL in `src/render/vk/shaders/`, compiled by `glslc --target-env=vulkan1.3 -O -mfmt=num` at build time into `build/vk_shaders/*.inc`, `#include`d as `uint32_t[]`; `scene.vert/frag` a second time with `-DOU_RT` (`scene_rt.*.inc`). Push constants: scene/shadow `{mat4 viewProj, model, lightViewProj; int lighting, shadows; float alphaRef; int rt; vec4 eye}` (224 B, checked against `maxPushConstantsSize`), overlay `{vec2 screen}`, post `{int fxaa, hdr}`. Pipelines: one per `scene::Blend` + lines (rebuilt with the MSAA count / HDR format / RT on-off), shadow (depth only, depth bias), RT depth pre-pass, post and overlay (swapchain format). `shaderDemoteToHelperInvocation` enabled for `discard`. |
 | Pipeline cache | loaded from / saved to `$XDG_CACHE_HOME/openunderworld/vk_pipeline_cache.bin` (fallback `~/.cache/...`); drivers ignore incompatible blobs. |
 | Screenshot | after `drawFrame`, a one-shot copy PRESENT_SRC → TRANSFER_SRC → buffer → PRESENT_SRC, BGRA swizzled to RGB. |
 | CPU skinning | `updateVertices(meshIndex, vertices)`: scene-mesh → GPU-slot map, vertex count checked, staged copy into the device-local vertex buffer behind a write-after-read barrier, waited on a fence (one queue round-trip per call). |
 | Debug lines | `FrameOptions::debugLines`: expanded to `{vec3, unorm4}` vertices in a per-frame host-coherent buffer (grown to the next power of two), `LINE_LIST` pipeline after the scene, depth test LEQUAL without depth writes, `z -= 0.5e-4·w` (the GL backend's `1e-4·w` in GL's [-w, w] clip range), unlit. |
-| Ray tracing | detection only: `VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, `VK_KHR_ray_tracing_pipeline` are reported in `description()` / the overlay. Nothing is enabled. **Observed** on RX 7900 XTX / RADV: all three present. |
+| Ray tracing | optional, see "Ray tracing" below: `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` (+ `deferred_host_operations`), `bufferDeviceAddress`, descriptor indexing, `shaderInt64` enabled when all are present. `VK_KHR_ray_tracing_pipeline` is not used. |
 
 Known limits (deliberate):
 - `upload()` and swapchain recreation call `vkDeviceWaitIdle`; fine for a viewer, not for streaming.
 - Readback stalls the queue; it is a debugging/testing path.
 - No sRGB; no light maps, fog, wind or per-shader material tints (MATERIALS.md).
+
+## Ray tracing (Vulkan, Enhanced, optional)
+
+`--rt shadows` traces the sun shadow; `--rt full` also mirrors the scene in water. Needs `--preset
+enhanced` (`config::resolve` rejects RT with `original`); default off. `--rt-quality low|medium|high`
+= 1 / 2 / 4 shadow rays per pixel. The overlay line `RT ...` shows the mode, whether rays are
+traced, BLAS / geometry / instance counts (water instances), TLAS builds / updates and BLAS refits /
+rebuilds (`Renderer::rtStatus()`, `rtSummary`).
+
+| Piece | Choice |
+|---|---|
+| Support | `probeRayTracing()`: the extensions + features above and ≥ 4098 sampled images per stage. Anything missing (or `OU_VK_NO_RT=1`, the simulated-unsupported switch) leaves the device without RT: `rtStatus().supported = false` with the reason, and a requested RT mode renders with the shadow map (`--rt` never fails). The GL backend reports unsupported. |
+| Acceleration structures | Built by the first frame that asks for RT after `upload()` (nothing is built while RT is off). One BLAS per mesh with one triangle geometry per submesh that casts in the shadow map too (`Blend::Opaque` + `Blend::Alpha`; Additive / Average neither cast nor reflect), vertex/index buffers used in place via buffer device addresses. Static BLASes `PREFER_FAST_TRACE`; skinned meshes (`MeshData::skin`) `ALLOW_UPDATE + PREFER_FAST_BUILD`. One TLAS instance per BLAS with the mesh's model matrix (static: `GpuMesh::model` never changes), both faces (`TRIANGLE_FACING_CULL_DISABLE`), custom index = first geometry record; mask 2 for water, 1 otherwise. TLAS `ALLOW_UPDATE + PREFER_FAST_TRACE`. Upload builds are batched into ≤ 64 MiB of shared scratch. |
+| Dynamic meshes | `updateVertices()` records the BLAS work into the copy's own submission: refit (mode UPDATE) for skinned meshes (Lara, enemies), full in-place rebuild for others (pistols in ou-game are rigid and rebuilt). The next RT frame updates the TLAS in place once (not rebuilt). Choice [I]: refits keep the bind-pose BVH topology, so traversal degrades with large poses but stays correct. |
+| Geometry records | storage buffer, one `{vertex address, index address, first index, texture slot, alpha ref}` per geometry, indexed by `instanceCustomIndex + geometryIndex` in the shader. |
+| Alpha test (any-hit equivalent) | Non-opaque geometries (alpha ref ≠ 0: `Blend::Alpha` cut at 50 % as the shadow map, or an alpha-tested opaque material) are tested in the `rayQueryProceedEXT` loop: barycentric UV from the index/vertex buffers, `textureLod(..., 0)` of the bindless texture array (set 2, 4096 slots, partially bound), texture alpha only (as `shadow.frag`); candidates that pass are confirmed. |
+| Shadows | `scene_rt.frag`: N rays per pixel toward the sun inside a cone of tan 0.012 (golden-angle spiral rotated per pixel by interleaved gradient noise), `TerminateOnFirstHit`, origin offset along the normal by 2 + 2e-4 · distance units. Spatial denoise: the visibility is averaged over the lanes of the 2x2 pixel quad that trace (fine derivatives; quads never span primitives, so no bleeding across edges); helper lanes, alpha-discarded lanes and lanes facing away from the sun trace nothing. No temporal accumulation (no history buffer / TAA yet): the per-pixel noise is fixed, so still frames are stable. |
+| Overdraw | RT adds a depth pre-pass over opaque submeshes (`prepass.vert/frag`: same alpha test, `invariant gl_Position` as `scene_rt.vert`); the opaque colour pass then tests LEQUAL without writes, so each visible opaque pixel traces once. Blended submeshes (no depth writes, drawn layer over layer) keep sampling the shadow map, which is still rendered in RT mode: tracing them cost ~10 of 15 ms in the ballcourt foliage (measured). |
+| Reflections (`full`) | Draws of water meshes trace one mirror ray (mask 1: water never reflects itself) with closest hit, alpha-tested like shadows, and shade the hit with texture × vertex colour × the raster lambert (no shadow ray at the hit; misses = clear colour), mixed in by Schlick Fresnel with F0 = 0.02 (alpha raised by the same factor). Water = meshes whose origin names a `*watersurface*` object [I] (l4_pool: `ca_goo_pool_watersurface`, the surface intro of the pool's `watervolume`, GAMEPLAY.md "Water"). No roughness: TRU's material blobs give none we decode [U], so water is a perfect mirror and wet surfaces get no reflections. |
+| Not done | 1-bounce GI / AO (not started); temporal denoise; merged static BLASes (traversal cost); ray cones for reflection mip selection (mip from hit distance only). |
+
+Verification [O] (RX 7900 XTX, RADV Mesa 26.2.4, 2026-10-18):
+- Validation layer clean (`OU_VK_VALIDATION=1`): `ou_vk_tests`, `ou-viewer --level` l4_ballcourt / l4_pool with `--rt shadows/full`, and `ou-game` l4_pool `--rt full` for 60 frames (Lara skinned: 638 BLAS refits, 116 rigid rebuilds, 57 TLAS updates, 2 TLAS builds across a unit stream-in).
+- Screenshots viewed: l4_ballcourt court (`--cam -3000,26000,9000,-100,-35`): the crenellated court wall, platforms and statues cast soft shadows on the court floor and stairs that the shadow map misses (it ends 8000 units from the camera); `player` start: same plants/shadows as the map. l4_pool (`--cam -700,-1400,2950,90,-8`): the pool mirrors the rocks, the yellow posts, the red markers and the cyan slab, strongest at grazing angles (Fresnel); RT off shows only the water texture.
+- RT off is the previous Enhanced output: l4_ballcourt Enhanced + FXAA + HDR byte-identical to the pre-RT build; l4_pool identical to one of the pre-RT build's own run-to-run variants (that build is not deterministic there either).
+- `OU_VK_NO_RT=1 --rt full` renders the shadow-map image (`VulkanRenderer.RayTracingFallsBackToShadowMap`).
+
+**Observed** frame times (`ou-viewer --level --renderer vulkan --preset enhanced --no-vsync --no-overlay
+--frames 600`, Release, 1792x1008, RX 7900 XTX / RADV, average after 11 warm-up frames, 2026-10-18):
+
+| Scene (`--cam`) | shadow map | `--rt shadows` low | medium | high | `--rt full` medium | `OU_VK_NO_RT=1 --rt full` |
+|---|---|---|---|---|---|---|
+| l4_ballcourt `player` start | 1.87 ms | 6.17 ms | 9.86 ms | 17.12 ms | 9.87 ms | 1.88 ms |
+| l4_ballcourt court | 1.81 ms | 5.71 ms | 8.83 ms | 14.95 ms | 8.83 ms | 1.79 ms |
+| l4_pool water (`-700,-1400,2950,90,-8`) | 0.27 ms | 0.51 ms | 0.78 ms | 1.29 ms | 1.04 ms | 0.25 ms |
+
+Cost scales with rays per pixel; in the jungle it is dominated by alpha-tested casters (measured on
+the `player` start at 1 ray: 6.2 ms, 3.4 ms with the alpha test forced to pass). Before the depth
+pre-pass and the shadow-map fallback for blended receivers the same view took 22 ms at 1 ray.
 
 ## Original Fidelity vs Enhanced (plan)
 
@@ -109,10 +149,9 @@ Two render modes share the scene graph and simulation; only the backend's frame 
 
 **Enhanced** (opt-in, Vulkan only)
 - Linear-space lighting, higher-precision shadows, MSAA/TAA, SSAO, HDR output.
-- Optional ray tracing on hardware exposing `VK_KHR_ray_query` + `VK_KHR_acceleration_structure`
-  (detected today, unused): RT shadows / AO / reflections via ray queries in the raster
-  pipeline, with the raster path as fallback. Requires BLAS/TLAS management fed from
-  `scene::SceneData` and skinned-vertex updates [inferred design, not started].
+- Optional ray tracing on hardware exposing `VK_KHR_ray_query` + `VK_KHR_acceleration_structure`:
+  RT sun shadows and water reflections via ray queries in the raster pipeline, shadow map as
+  fallback (implemented, "Ray tracing" above); RT AO / GI not started.
 - Any enhancement must be switchable per feature so a difference can be traced back to it.
 
 The OpenGL backend stays the portability/reference path for Original Fidelity; Enhanced
