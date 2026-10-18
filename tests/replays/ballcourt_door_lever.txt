@@ -1,0 +1,8 @@
+# l4_ballcourt: --spawn -20066,14150,3540,0 (next to pole lever 6502, facing +x).
+# Use the lever: door 6505 swings open on its hinge; run east to the passage, turn into it and run through.
+0.3 interact 1
+0.4 interact 0
+0.6 forward 1
+1.75 forward 0
+1.8 right 1
+5.0 right 0

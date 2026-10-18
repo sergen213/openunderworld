@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -178,7 +179,7 @@ template <class Visit> void CollisionMesh::overlap(vec3 lo, vec3 hi, Visit&& vis
     }
 }
 
-std::optional<Hit> CollisionMesh::raycast(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const {
+std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const {
     const float len = glm::length(dir);
     if (len <= 0 || nodes_.empty()) return std::nullopt;
     const vec3 d = dir / len;
@@ -220,7 +221,8 @@ std::optional<Hit> CollisionMesh::raycast(vec3 origin, vec3 dir, float maxDist, 
     return best;
 }
 
-std::optional<Hit> CollisionMesh::sweepCapsule(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask) const {
+std::optional<Hit> CollisionMesh::sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask) const {
+    if (nodes_.empty()) return std::nullopt;
     const vec3 lo = glm::min(glm::min(a, b), glm::min(a, b) + delta) - radius,
                hi = glm::max(glm::max(a, b), glm::max(a, b) + delta) + radius;
     constexpr float kEps = 1e-3f; // contact tolerance, game units
@@ -253,11 +255,47 @@ std::optional<Hit> CollisionMesh::sweepCapsule(vec3 a, vec3 b, float radius, vec
     return best;
 }
 
+template <class Local> std::optional<Hit> CollisionMesh::withDynamics(std::optional<Hit> best, Local&& local) const {
+    for (size_t i = 0; i < dynamics.size(); ++i) {
+        const Dynamic& d = dynamics[i];
+        if (!d.shape) continue;
+        const glm::mat4 inv = glm::inverse(d.transform);
+        auto h = local(*d.shape, inv);
+        if (!h || (best && h->t >= best->t)) continue;
+        h->point = vec3(d.transform * glm::vec4(h->point, 1));
+        h->normal = glm::mat3(d.transform) * h->normal;
+        h->dynamic = int32_t(i);
+        best = h;
+    }
+    return best;
+}
+
+// Rigid transforms keep distances, so local t values compare directly with terrain ones.
+std::optional<Hit> CollisionMesh::raycast(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const {
+    auto best = rayFaces(origin, dir, maxDist, mask);
+    return withDynamics(best, [&](const CollisionMesh& s, const glm::mat4& inv) {
+        return s.rayFaces(vec3(inv * glm::vec4(origin, 1)), glm::mat3(inv) * dir, best ? best->t : maxDist, mask);
+    });
+}
+
+std::optional<Hit> CollisionMesh::sweepCapsule(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask) const {
+    return withDynamics(sweepFaces(a, b, radius, delta, mask), [&](const CollisionMesh& s, const glm::mat4& inv) {
+        return s.sweepFaces(vec3(inv * glm::vec4(a, 1)), vec3(inv * glm::vec4(b, 1)), radius, glm::mat3(inv) * delta, mask);
+    });
+}
+
 std::optional<Hit> CollisionMesh::sweepSphere(vec3 center, float radius, vec3 delta, uint8_t mask) const {
     return sweepCapsule(center, center, radius, delta, mask);
 }
 
 std::optional<Hit> CollisionMesh::closestPoint(vec3 p, float maxDist, uint8_t mask) const {
+    auto best = closestFaces(p, maxDist, mask);
+    return withDynamics(best, [&](const CollisionMesh& s, const glm::mat4& inv) {
+        return s.closestFaces(vec3(inv * glm::vec4(p, 1)), best ? best->t : maxDist, mask);
+    });
+}
+
+std::optional<Hit> CollisionMesh::closestFaces(vec3 p, float maxDist, uint8_t mask) const {
     if (nodes_.empty()) return std::nullopt;
     std::optional<Hit> best;
     float best2 = maxDist * maxDist;
@@ -285,6 +323,22 @@ std::optional<Hit> CollisionMesh::closestPoint(vec3 p, float maxDist, uint8_t ma
         }
     }
     return best;
+}
+
+void addBox(CollisionMesh& m, const glm::mat4& frame, vec3 size, uint8_t mask) {
+    const auto base = uint32_t(m.vertices.size());
+    for (int i = 0; i < 8; ++i)
+        m.vertices.push_back(vec3(frame * glm::vec4((i & 1 ? 0.5f : -0.5f) * size.x, (i & 2 ? 0.5f : -0.5f) * size.y,
+                                                    (i & 4 ? 0.5f : -0.5f) * size.z, 1)));
+    // Two CCW (outward) triangles per side; corner index bits: 1 = +x, 2 = +y, 4 = +z.
+    static constexpr uint8_t kQuads[6][4] = {{0, 4, 6, 2}, {1, 3, 7, 5}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 2, 3, 1}, {4, 5, 7, 6}};
+    for (const auto& q : kQuads)
+        for (const auto& t : {std::array{q[0], q[1], q[2]}, std::array{q[0], q[2], q[3]}}) {
+            Face f;
+            for (int k = 0; k < 3; ++k) f.v[k] = base + t[k];
+            f.mask = mask;
+            m.faces.push_back(f);
+        }
 }
 
 } // namespace ou::collision

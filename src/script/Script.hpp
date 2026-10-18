@@ -67,6 +67,9 @@ inline constexpr uint32_t kInstanceRefType = 51; // script id of native "instanc
 // (Enter 54 / Exit 55 are called natively, they call OnFirstIn/OnIn and OnOut). Plane cross and switch
 // use: [I] the slots almost every triggerplane / switch intro script overrides.
 inline constexpr int16_t kVtOnIn = 70, kVtOnOut = 71, kVtOnFirstIn = 72, kVtPlaneCross = 54, kVtSwitchUsed = 55;
+// Pole levers (`*phole_lever*`): their script polls the lever's own multibody joint and calls vt 54 whenever it
+// moved (l4_ballcourt 6502 fn 2 -> fn 3, which sets door 6505's joint limit) [O]; using one fires that slot [I].
+inline constexpr int16_t kVtLeverMoved = 54;
 
 // Intro unique ids a function dereferences: PUSHSA of an instanceref member, in bytecode order, including
 // the targets of non-virtual functions of the same type it calls (CALLn to one of their prototypes).
@@ -118,6 +121,7 @@ struct Object {
     double t = 0;           // seconds into the current clip
     bool inside = false, firstIn = false;
     vec3 offset{0};         // Block displacement
+    glm::mat4 body{1};      // Door: model-space rigid transform set by src/physics (physics doors), identity = at rest
 };
 
 struct UnitRef {
@@ -137,6 +141,7 @@ class Runtime {
 public:
     // objectlist.txt and object DRMs (animations). Without it units load no objects.
     void setBigfile(const cdc::BigfileSet* bigfile) { bigfile_ = bigfile; }
+    const cdc::BigfileSet* bigfile() const { return bigfile_; }
     // Keeps objects of units still present, adds new units, drops missing ones. Throws cdc::FormatError.
     void setUnits(const std::vector<UnitRef>& units);
     void addObject(Object o); // setUnits and tests; applies pending restored state
@@ -148,9 +153,10 @@ public:
     bool holding() const { return holding_; }  // last tick: Lara grips a push block (interact held next to it)
     vec3 carried() const { return carried_; }  // last tick: displacement of the gripped block; move Lara by it
     uint64_t ticks() const { return tick_; }
-    // Model-space bone palette of a posed object (animated Switch/Door; a displaced Block gets one matrix
-    // for every vertex). nullopt = bind pose.
+    // Model-space bone palette of a posed object (animated Switch/Door; a displaced Block or a moved physics door
+    // gets one matrix for every vertex). nullopt = bind pose.
     std::optional<std::vector<glm::mat4>> pose(const Object& o) const;
+    void setBody(int32_t uid, const glm::mat4& model); // physics door transform (Object::body); unknown uids ignored
     // Volume and plane outlines, world frame, ABGR colour (render::DebugLine).
     std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> debugLines() const;
 

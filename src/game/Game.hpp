@@ -5,6 +5,7 @@
 
 #include "anim/Anim.hpp"
 #include "collision/Collision.hpp"
+#include "physics/Physics.hpp"
 #include "formats/Formats.hpp"
 #include "game/Combat.hpp"
 #include "game/Progress.hpp"
@@ -166,6 +167,7 @@ public:
     void tick(vec2 move, const Actions& a, float dt);
     const PlayerState& state() const { return s_; }
     const Tuning& tuning() const { return t_; }
+    void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
     void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0) const;
@@ -286,6 +288,9 @@ public:
     // the single-mesh constructor has no units: give it them with script().setUnits.
     script::Runtime& script() { return script_; }
     const script::Runtime& script() const { return script_; }
+    // Object collision and physics doors (src/physics, docs/formats/PHYSICS.md): the solid primitives of script()'s
+    // doors and push blocks are collision().dynamics (following their pose); rigid-body doors swing on a hinge.
+    const physics::Scene& physics() const { return physics_; }
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
@@ -346,6 +351,8 @@ private:
     void streamAround(size_t center); // load portal neighbours of units_[center], unload the rest
     void rebuildCollision();
     void crossPortals(vec3 from, vec3 to);
+    void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
+    void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
     void touchCheckpoints();
     void tickCombat(const Actions& a, float dt);
     void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // pistol upper body over `local`
@@ -373,6 +380,12 @@ private:
     script::Runtime script_;
     ai::Enemies enemies_{&targets};
     uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
+    size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
+    // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()).
+    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
+    std::vector<ObjectCollider> colliders_;
+    std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
+    physics::Scene physics_;
     Health health_;
     CombatState combat_;
     double aimTime_ = 0; // pose clips' clock

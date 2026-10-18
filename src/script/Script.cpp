@@ -392,7 +392,7 @@ void Runtime::fire(EventKind k, Object& o) {
     case EventKind::In: vt = kVtOnIn; break;
     case EventKind::Out: vt = kVtOnOut; break;
     case EventKind::Cross: vt = kVtPlaneCross; break;
-    case EventKind::Use: vt = kVtSwitchUsed; break;
+    case EventKind::Use: vt = contains(o.name, "phole_lever") ? kVtLeverMoved : kVtSwitchUsed; break;
     default: return;
     }
     const auto it = o.links.find(vt);
@@ -457,8 +457,9 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             vec3 axis = std::abs(fwd.x) > std::abs(fwd.y) ? vec3(fwd.x > 0 ? 1 : -1, 0, 0) : vec3(0, fwd.y > 0 ? 1 : -1, 0);
             if (in.move.y < 0) axis = -axis;
             const float step = float(kBlockSpeed * kDt);
-            if (col && col->raycast(c + vec3(0, 0, 20), axis, glm::dot(o.half, glm::abs(axis)) + step)) break;
-            if (col && in.move.y < 0 && col->raycast(in.pos + vec3(0, 0, 100), axis, 100 + step)) break;
+            // Terrain only (mask 0x0F): the block's own collision box is a dynamic of the same mesh (src/physics).
+            if (col && col->raycast(c + vec3(0, 0, 20), axis, glm::dot(o.half, glm::abs(axis)) + step, 0x0F)) break;
+            if (col && in.move.y < 0 && col->raycast(in.pos + vec3(0, 0, 100), axis, 100 + step, 0x0F)) break;
             o.offset += axis * step;
             carried_ = axis * step;
             break;
@@ -478,10 +479,15 @@ std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
         // Meshes are placed with T*R(intro): a world displacement d is R^-1 d in model space.
         return std::vector<glm::mat4>{glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset)};
     }
+    if (o.body != glm::mat4(1)) return std::vector<glm::mat4>{o.body};
     if (!o.clips || !o.skeleton || o.state == 0) return std::nullopt;
     const auto& clip = (*o.clips)[o.state == 1 ? 0 : 1];
     const auto world = anim::worldMatrices(*o.skeleton, anim::sample(clip, *o.skeleton, o.t, o.state == 2));
     return anim::skinPalette(*o.skeleton, world);
+}
+
+void Runtime::setBody(int32_t uid, const glm::mat4& model) {
+    if (Object* o = findMut(uid)) o->body = model;
 }
 
 std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> Runtime::debugLines() const {

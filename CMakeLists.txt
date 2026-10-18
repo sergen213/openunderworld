@@ -137,6 +137,15 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_collision_tests DISCOVERY_TIMEOUT 30)
 endif()
 
+# ---- ou_physics: object collision primitives, rigid bodies, hinges, movers (docs/formats/PHYSICS.md) ----
+add_library(ou_physics STATIC src/physics/Physics.cpp)
+target_link_libraries(ou_physics PUBLIC ou_collision ou_formats glm::glm)
+if(OU_BUILD_TESTS)
+  add_executable(ou_physics_tests tests/test_physics.cpp)
+  target_link_libraries(ou_physics_tests PRIVATE ou_physics GTest::gtest_main)
+  gtest_discover_tests(ou_physics_tests DISCOVERY_TIMEOUT 30)
+endif()
+
 # ---- ou_audio: IMA ADPCM, FSB4, Wave sections, .mul streams; SDL3 mixer; ou-audio CLI (docs/formats/AUDIO.md) ----
 add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Mixer.cpp src/audio/Mus.cpp)
 target_link_libraries(ou_audio PUBLIC ou_cdc glm::glm PRIVATE SDL3::SDL3)
@@ -262,6 +271,9 @@ target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script o
 add_library(ou_save STATIC src/save/Save.cpp)
 target_include_directories(ou_save PUBLIC src)
 target_link_libraries(ou_save PUBLIC ou_game nlohmann_json::nlohmann_json PRIVATE ou_config ZLIB::ZLIB)
+# ou_game's object collision + physics doors (src/game/Objects.cpp, src/physics)
+target_sources(ou_game PRIVATE src/game/Objects.cpp)
+target_link_libraries(ou_game PUBLIC ou_physics)
 # ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
 add_library(ou_ui STATIC src/ui/Ui.cpp)
 target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale)

@@ -27,21 +27,6 @@ struct Reader {
     uint8_t u8(size_t o) const { return at<uint8_t>(o); }
 };
 
-// Resource relocations (5th relocation table): {offset/4 : 25 bits, section type : 7 bits}.
-// Returns the section type referenced at `offset`, or -1.
-int resourceRefType(const cdc::Section& s, uint32_t offset) {
-    const Reader r{s.relocations};
-    if (r.d.size() < 20) return -1;
-    uint32_t c[5];
-    for (int i = 0; i < 5; ++i) c[i] = r.u32(4 * size_t(i));
-    const size_t t5 = 20 + 8 * size_t(c[0]) + 8 * size_t(c[1]) + 4 * size_t(c[2]) + 4 * size_t(c[3]);
-    for (uint32_t k = 0; k < c[4]; ++k) {
-        const uint32_t v = r.u32(t5 + 4 * size_t(k));
-        if ((v & 0x1FFFFFF) * 4 == offset) return int(v >> 25);
-    }
-    return -1;
-}
-
 uint32_t pointer(const cdc::Section& s, uint32_t offset) {
     const auto p = cdc::internalPointer(s, offset);
     if (!p) throw FormatError("missing relocated pointer at " + std::to_string(offset));
@@ -97,7 +82,7 @@ std::vector<scene::Skeleton> decodeSkeletons(const cdc::Drm& drm, std::vector<st
     std::vector<scene::Skeleton> out;
     for (const auto& s : drm.sections) {
         if (s.type != cdc::SectionType::DtpData ||
-            resourceRefType(s, kModelRenderMesh) != int(cdc::SectionType::RenderResource))
+            cdc::resourceRefType(s, kModelRenderMesh) != int(cdc::SectionType::RenderResource))
             continue;
         scene::Skeleton sk;
         sk.origin = "dtp section " + std::to_string(s.id);
@@ -244,7 +229,7 @@ std::vector<AnimEntry> animList(const cdc::Drm& drm) {
     // The Object section (type 11) names its object DTP through the resource relocation at +0.
     const cdc::Section* object = nullptr;
     for (const auto& s : drm.sections)
-        if (s.type == cdc::SectionType::Object && resourceRefType(s, 0) == int(cdc::SectionType::DtpData) && s.data.size() >= 4) {
+        if (s.type == cdc::SectionType::Object && cdc::resourceRefType(s, 0) == int(cdc::SectionType::DtpData) && s.data.size() >= 4) {
             const uint32_t id = Reader{s.data}.u32(0);
             for (const auto& d : drm.sections)
                 if (d.type == cdc::SectionType::DtpData && d.id == id) { object = &d; break; }

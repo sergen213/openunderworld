@@ -195,6 +195,7 @@ void World::tick(const Actions& a) {
     }
     script_.tick({player_.state().pos, player_.state().yaw, a.move, a.interact}, &col_);
     collectPickups(a.interact && !interactHeld_);
+    tickObjects(dt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
     if (const vec3 d = script_.carried(); d != vec3(0)) { // Lara follows the block she pushes/pulls
         auto s = player_.state();

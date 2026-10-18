@@ -116,6 +116,9 @@ Drm parseDrm(std::vector<uint8_t> bytes);
 // Resolve a 32-bit pointer stored at `offset` inside section `s` via its internal
 // relocation table. Returns the target offset within the same section's data if relocated.
 std::optional<uint32_t> internalPointer(const Section& s, uint32_t offset);
+// Resource relocations (5th relocation table): {offset/4 : 25 bits, section type : 7 bits}. Returns the
+// section type referenced at `offset` (the id stays in the data), or -1.
+int resourceRefType(const Section& s, uint32_t offset);
 
 // Internal and external relocations of `drm.sections[index]`: patch offset -> target
 // {section index in drm.sections, offset in its data}.

@@ -202,6 +202,18 @@ std::optional<uint32_t> internalPointer(const Section& s, uint32_t offset) {
     return std::nullopt;
 }
 
+int resourceRefType(const Section& s, uint32_t offset) {
+    if (s.relocations.size() < 20) return -1;
+    uint32_t c[5];
+    for (int i = 0; i < 5; ++i) c[i] = rd<uint32_t>(s.relocations, 4 * size_t(i));
+    const size_t t5 = 20 + 8 * size_t(c[0]) + 8 * size_t(c[1]) + 4 * size_t(c[2]) + 4 * size_t(c[3]);
+    for (uint32_t k = 0; k < c[4]; ++k) {
+        const uint32_t v = rd<uint32_t>(s.relocations, t5 + 4 * size_t(k));
+        if ((v & 0x1FFFFFF) * 4 == offset) return int(v >> 25);
+    }
+    return -1;
+}
+
 std::unordered_map<uint32_t, Pointer> sectionPointers(const Drm& drm, uint32_t index) {
     std::unordered_map<uint32_t, Pointer> out;
     const auto r = drm.sections.at(index).relocations;

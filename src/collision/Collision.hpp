@@ -5,9 +5,11 @@
 
 #include "cdc/Cdc.hpp"
 
+#include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -43,7 +45,18 @@ struct Hit {
     float t = 0;      // raycast/closestPoint: distance; sweeps: fraction of `delta` travelled
     vec3 point{};     // contact point on the surface
     vec3 normal{};    // unit, facing the query (ray origin / swept shape)
-    uint32_t face = 0;
+    uint32_t face = 0; // terrain: index into faces; dynamic: index into that body's shape faces
+    int32_t dynamic = -1; // index into CollisionMesh::dynamics, -1 = terrain
+};
+
+class CollisionMesh;
+// A moving solid queried together with the terrain (doors, push blocks, physics bodies; src/physics): `shape`
+// in its own frame, placed by the rigid `transform` (rotation + translation only). Its faces' masks filter
+// it like terrain faces.
+struct Dynamic {
+    int32_t id = 0; // owner (intro unique id)
+    std::shared_ptr<const CollisionMesh> shape;
+    glm::mat4 transform{1};
 };
 
 class CollisionMesh {
@@ -51,6 +64,7 @@ public:
     std::vector<vec3> vertices;
     std::vector<Face> faces;
     std::vector<Markup> markup;
+    std::vector<Dynamic> dynamics; // queried with the faces by raycast/sweeps/closestPoint (not by build)
 
     // (Re)builds the BVH over `faces`. Queries need it; loadLevelCollision calls it.
     void build();
@@ -76,6 +90,12 @@ private:
         uint32_t first = 0, count = 0; // count > 0: leaf over order_[first, first+count); else children first, first+1
     };
     template <class Visit> void overlap(vec3 lo, vec3 hi, Visit&& visit) const;
+    // Terrain faces only; the public queries add `dynamics`.
+    std::optional<Hit> rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const;
+    std::optional<Hit> sweepFaces(vec3 a, vec3 b, float radius, vec3 delta, uint8_t mask) const;
+    std::optional<Hit> closestFaces(vec3 p, float maxDist, uint8_t mask) const;
+    // Runs `local(shape, inverse transform)` on every dynamic and keeps the smallest t (hits mapped back).
+    template <class Local> std::optional<Hit> withDynamics(std::optional<Hit> best, Local&& local) const;
     std::vector<Node> nodes_;
     std::vector<uint32_t> order_;
 };
@@ -84,5 +104,9 @@ private:
 // polylines of a unit DRM. Throws cdc::FormatError if the DRM has no unit Level root.
 // Unsupported parts are reported in `warnings`.
 CollisionMesh loadLevelCollision(const cdc::Drm& drm, std::vector<std::string>* warnings = nullptr);
+
+// Appends a box of full side lengths `size`, centred at the origin of `frame` (rigid), as 12 triangles with
+// the given face mask. For object collision primitives (src/physics).
+void addBox(CollisionMesh& m, const glm::mat4& frame, vec3 size, uint8_t mask = 0xFF);
 
 } // namespace ou::collision
