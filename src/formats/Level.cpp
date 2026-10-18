@@ -2,6 +2,7 @@
 // Evidence and offsets: docs/formats/LEVELS.md.
 #include "formats/Formats.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -114,12 +115,16 @@ Unit parseUnit(const cdc::Drm& d) {
     }
 
     // Unit data +0x00 numLights, +0x04 -> pointers to 0xE0-byte light records {+0x00 matrix rows X, Y, Z = direction,
-    // pos; +0x48 light DTP; +0x4C/+0x50 intensity override; +0x51..+0x54 colour override}. Light DTP: +0x00 u8 type
-    // (2 = sun), +0x08 intensity, +0x18 u8 rgb (tru.exe 0x5CEC60, 0x5C6530, 0x50B910). Only the sun is used.
+    // pos; +0x48 light DTP; +0x4C intensity (if +0x50); +0x51..+0x53 colour (if +0x54); +0x58 radius (if +0x5C)}.
+    // The light DTP is copied to PCLightResource +0x42C (0x50A000): +0x00 u32 type (0 point, 1 spot, 2 sun),
+    // +0x04 radius, +0x08 intensity, +0x0C/+0x10 spot cone angles, +0x14 spot near width, +0x18 u8 rgb,
+    // +0x1C f32[255] falloff curve, +0x41C flicker flag, +0x420 period, +0x424 f32[256] flicker curve,
+    // +0x824 cookie flag, +0x828 cookie texture, +0x82C scale, +0x830 rotation, +0x834 scroll, +0x144C shadows
+    // (tru.exe 0x5CEC60, 0x5C6530, 0x50A3C0, 0x50AFB0, 0x50B910; LEVELS.md "Lights").
     if (const auto n = ud.at<uint32_t>(up.offset); n && ud.ptrs.count(up.offset + 4)) {
         const auto lp = ud.ptr(up.offset + 4, "unit light list");
         const View ll(d, lp.section);
-        for (uint32_t k = 0; k < n && !u.environment.sun; ++k) {
+        for (uint32_t k = 0; k < n; ++k) {
             const auto rp = ll.ptrs.find(uint32_t(lp.offset + 4 * k));
             if (rp == ll.ptrs.end()) continue;
             const View rec(d, rp->second.section);
@@ -129,16 +134,52 @@ Unit parseUnit(const cdc::Drm& d) {
             const uint32_t dtpId = resourceId(d.sections[rp->second.section], r + 0x48, cdc::SectionType::DtpData);
             if (!dtpId || !findSection(d, cdc::SectionType::DtpData, dtpId, &dtpIndex)) continue;
             const View dtp(d, dtpIndex);
-            const uint32_t o = 0;
-            if (dtp.at<uint8_t>(o) != 2) continue;
-            auto& e = u.environment;
-            const float intensity = rec.at<uint8_t>(r + 0x50) ? rec.at<float>(r + 0x4C) : dtp.at<float>(o + 0x08);
+            const uint32_t type = dtp.at<uint32_t>(0);
+            const float intensity = rec.at<uint8_t>(r + 0x50) ? rec.at<float>(r + 0x4C) : dtp.at<float>(0x08);
             const bool colourOverride = rec.at<uint8_t>(r + 0x54) != 0;
-            for (int c = 0; c < 3; ++c) {
-                e.sunDirection[c] = rec.at<float>(r + 0x20 + 4 * c);
-                e.sunColor[c] = intensity * (colourOverride ? rec.at<uint8_t>(r + 0x51 + c) : dtp.at<uint8_t>(o + 0x18 + c)) / 255.0f;
+            float color[3];
+            for (int c = 0; c < 3; ++c)
+                color[c] = intensity * (colourOverride ? rec.at<uint8_t>(r + 0x51 + c) : dtp.at<uint8_t>(0x18 + c)) / 255.0f;
+            auto& e = u.environment;
+            if (type == 2) {
+                if (e.sun) continue; // first sun wins
+                for (int c = 0; c < 3; ++c) {
+                    e.sunDirection[c] = rec.at<float>(r + 0x20 + 4 * c);
+                    e.sunColor[c] = color[c];
+                    e.sunAxes[0][c] = rec.at<float>(r + 4 * c);
+                    e.sunAxes[1][c] = rec.at<float>(r + 0x10 + 4 * c);
+                    e.sunOrigin[c] = rec.at<float>(r + 0x30 + 4 * c);
+                }
+                e.sun = true;
+                if (dtp.at<uint8_t>(0x824))
+                    e.sunCookie = resourceId(d.sections[dtpIndex], 0x828, cdc::SectionType::Texture);
+                e.cookieScale = dtp.at<float>(0x82C);
+                e.cookieRotation = dtp.at<float>(0x830);
+                e.cookieScroll[0] = dtp.at<float>(0x834), e.cookieScroll[1] = dtp.at<float>(0x838);
+                continue;
             }
-            e.sun = true;
+            if (type > 1) continue;
+            scene::Light l;
+            l.type = uint8_t(type);
+            l.shadow = dtp.at<uint8_t>(0x144C) != 0;
+            for (int c = 0; c < 3; ++c) {
+                l.position[c] = rec.at<float>(r + 0x30 + 4 * c);
+                l.direction[c] = rec.at<float>(r + 0x20 + 4 * c);
+                l.color[c] = color[c];
+            }
+            l.radius = rec.at<uint8_t>(r + 0x5C) && rec.at<float>(r + 0x58) > 0 ? rec.at<float>(r + 0x58) : dtp.at<float>(0x04);
+            l.coneInner = dtp.at<float>(0x0C), l.coneOuter = dtp.at<float>(0x10);
+            l.nearWidth = dtp.at<float>(0x14);
+            // AttenuationSampler row: texel k = round(curve[k] * 255) in R for k < 255, texel 255 = 0 (0x50AFB0).
+            l.falloff.assign(256, 0);
+            for (int t = 0; t < 255; ++t)
+                l.falloff[t] = uint8_t(std::lround(std::clamp(dtp.at<float>(0x1C + 4 * t), 0.0f, 1.0f) * 255.0f));
+            if (dtp.at<uint8_t>(0x41C) && dtp.at<float>(0x420) > 0) {
+                l.flickerPeriod = dtp.at<float>(0x420);
+                l.flicker.resize(256);
+                for (int t = 0; t < 256; ++t) l.flicker[t] = dtp.at<float>(0x424 + 4 * t);
+            }
+            e.lights.push_back(std::move(l));
         }
     }
 

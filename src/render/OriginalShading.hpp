@@ -20,19 +20,32 @@ namespace ou::render::original {
 // D3D-convention view-projection (clip z in [0, w]) of `camera`: the WorldViewProject / ViewProject the shaders expect.
 glm::mat4 viewProjD3D(const Camera& camera, float aspect);
 
-// Frame registers: transforms, time, fog, ambient, lights (FrameBlock layout: ShaderTranslate.hpp).
+// Frame registers: transforms, time, fog, ambient, sun, sun cookie, light table (FrameBlock layout: ShaderTranslate.hpp).
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float timeSeconds, const scene::Environment& env);
+// The point/spot light table (FrameBlock::lights, first kMaxLights of env.lights) at time t (flicker); part of fillFrame.
+void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds);
 // Material registers: MaterialParams, InstanceParams (zero, as tru.exe's default 0x848F78), AlphaThreshold, opacity.
 void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene::SubMesh& sub);
-// Object registers: WorldViewProject (c0-3) and World (c4-7), as matrix columns.
-void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProjD3D, const glm::mat4& model);
+// Light set of one object: env.lights indices for PS light slots 0-5, one byte each (0xFF = empty).
+struct LightSet { uint32_t packed[2] = {~0u, ~0u}; };
+// The strongest lights whose radius reaches the world-space sphere (center, radius).
+LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius);
+// World-space bounding sphere (xyz centre, w radius) of vertices under `model` (lightSet input; skinned meshes
+// recompute it in updateVertices).
+glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat4& model);
+// Object registers: WorldViewProject (c0-3) and World (c4-7), as matrix columns, and the object's light set.
+void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProjD3D, const glm::mat4& model, LightSet lights = {});
+// AttenuationSampler row of each env.lights entry (distinct falloff curves share rows 0-95).
+std::vector<int> falloffRows(const scene::Environment& env);
 
 // Engine-owned textures bound to the high samplers when no material entry claims them.
-inline constexpr int kAttenuationSampler = 15, kShadowMapSampler = 14;
+// s11 = sun cookie (Environment::sunCookie, else white); s12/s13 spot cookies stay white (not bound per object).
+inline constexpr int kAttenuationSampler = 15, kShadowMapSampler = 14, kSunCookieSampler = 11;
 struct EngineTexture { int width = 0, height = 0; std::vector<uint8_t> rgba; };
 // AttenuationSampler (s15): 256x128 curve atlas (tru.exe PCLightManager, filled by 0x504A60): rows 0-95 light
-// falloff curves (R), rows 96+ fog (R fog curve, G height-fog curve); v = (row + 0.5) / 128.
-EngineTexture attenuationLut();
+// falloff curves (R, one per distinct env.lights curve), rows 96+ fog (R fog curve, G height-fog curve);
+// v = (row + 0.5) / 128. Per scene: backends rebuild it in upload().
+EngineTexture attenuationLut(const scene::Environment& env = {});
 
 // Translated programs of a scene. `materialProgram`: material id -> programs index (-1 / absent = generic path).
 struct Program {

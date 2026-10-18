@@ -69,7 +69,7 @@ Renderbuffer newRenderbuffer(GLsizei samples, GLenum format, int w, int h) {
 }
 
 // Scene shading (kept in step with src/render/vk/shaders/scene.*): texture, alpha test against the
-// material threshold, fixed sun lambert with two-sided normals, optional 3x3 PCF sun shadow.
+// material threshold, sun lambert with two-sided normals, sun shadow from the cascaded map (render/sun.glsl).
 // Vertex colour is still multiplied (placeholder tints; cdc meshes leave it white).
 const char* kSceneVs = R"(#version 460 core
 layout(location = 0) in vec3 aPos;
@@ -78,42 +78,32 @@ layout(location = 2) in vec2 aUv;
 layout(location = 3) in vec4 aColor;
 layout(location = 0) uniform mat4 uViewProj;
 layout(location = 1) uniform mat4 uModel;
-layout(location = 5) uniform mat4 uLightViewProj;
-out vec3 vNormal; out vec2 vUv; out vec4 vColor; out vec4 vLight;
+out vec3 vNormal; out vec2 vUv; out vec4 vColor; out vec3 vWorld;
 void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal; // ponytail: no inverse-transpose; fine without non-uniform scale
     vUv = aUv; vColor = aColor;
-    vLight = uLightViewProj * world;
+    vWorld = world.xyz;
     gl_Position = uViewProj * world;
 })";
 
-const char* kSceneFs = R"(#version 460 core
-in vec3 vNormal; in vec2 vUv; in vec4 vColor; in vec4 vLight;
+// Fragment shader = kSceneFsHead + sunGlsl() + kSceneFsMain.
+const char* kSceneFsHead = R"(#version 460 core
+in vec3 vNormal; in vec2 vUv; in vec4 vColor; in vec3 vWorld;
 layout(location = 2) uniform int uLighting;
 layout(location = 3) uniform float uAlphaRef;
-layout(location = 4) uniform int uShadows;
 layout(binding = 0) uniform sampler2D uTex;
-layout(binding = 1) uniform sampler2DShadow uShadowMap;
 out vec4 oColor;
-float sunVisibility() {
-    vec3 p = vLight.xyz / vLight.w * 0.5 + 0.5;
-    if (any(lessThan(p, vec3(0.0))) || any(greaterThan(p, vec3(1.0)))) return 1.0;
-    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
-    float s = 0.0;
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x) s += texture(uShadowMap, vec3(p.xy + vec2(x, y) * texel, p.z));
-    return s / 9.0;
-}
+)";
+const char* kSceneFsMain = R"(
 void main() {
     vec4 c = texture(uTex, vUv) * vColor;
     if (c.a < uAlphaRef) discard;
     float len = length(vNormal);
     if (uLighting != 0 && len > 1e-6) {
         vec3 n = (gl_FrontFacing ? 1.0 : -1.0) * vNormal / len; // two-sided materials light both faces
-        float ndl = max(dot(n, normalize(vec3(-0.4, -0.5, 0.75))), 0.0); // RenderCommon kSunDirection
-        if (uShadows != 0 && ndl > 0.0) ndl *= sunVisibility();
-        c.rgb *= 0.45 + 0.55 * ndl;
+        float ndl = max(dot(n, ouShadow.sun.xyz), 0.0);
+        c.rgb *= 0.45 + 0.55 * ndl * ouSunVisibility(vWorld, n, ndl > 0.0, false);
     }
     oColor = c; // alpha matters for blended submeshes only
 })";
@@ -146,6 +136,7 @@ const char* kPostFs = R"(#version 460 core
 in vec2 vUv;
 layout(location = 0) uniform int uFxaa;
 layout(location = 1) uniform int uHdr;
+layout(location = 2) uniform float uBrightness; // display gamma (1 = neutral), as the original's brightness option
 layout(binding = 0) uniform sampler2D uScene;
 out vec4 oColor;
 vec3 fetch(vec2 uv) {
@@ -168,7 +159,7 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
     float lb = luma(b);
     return (lb < lo || lb > hi) ? a : b;
 }
-void main() { oColor = vec4(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), 1.0); })";
+void main() { oColor = vec4(pow(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vec3(1.0 / uBrightness)), 1.0); })";
 
 
 const char* kTextVs = R"(#version 460 core
@@ -265,7 +256,8 @@ struct GpuMesh {
     std::vector<GLintptr> materialOffset;
     std::vector<std::array<GLuint, 16>> samplers;
     glm::mat4 model;
-    glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting)
+    glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
+    float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
     size_t source = 0, vertexCount = 0; // SceneData::meshes index, vertex count
 };
 
@@ -286,6 +278,7 @@ struct Resources {
     // 1 material, 2 object; ShaderTranslate.hpp), objects rewritten per frame.
     std::vector<Program> originals;
     Buffer frameUbo, materialUbo, objectUbo;
+    Buffer shadowUbo; // render/sun.glsl OuShadow (UBO binding 3); the shadow map is texture unit 16
     GLint uboAlign = 256;
     Framebuffer shadowFbo;
     VertexArray textVao, lineVao, emptyVao;
@@ -344,7 +337,8 @@ public:
         }
 
         Resources& r = res_.emplace();
-        r.sceneProgram = linkProgram(kSceneVs, kSceneFs, error);
+        const std::string sceneFs = std::string(kSceneFsHead) + sunGlsl() + kSceneFsMain;
+        r.sceneProgram = linkProgram(kSceneVs, sceneFs.c_str(), error);
         if (!r.sceneProgram.get()) return false;
         r.textProgram = linkProgram(kTextVs, kTextFs, error);
         if (!r.textProgram.get()) return false;
@@ -382,10 +376,10 @@ public:
         attrib(vao, 1, 2, GL_FLOAT, GL_FALSE, offsetof(TextVertex, u));
         attrib(vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(TextVertex, color));
 
-        // Sun shadow map: always allocated (16 MiB) so the scene shader's shadow sampler is complete.
+        // Sun shadow atlas (kShadowCascades tiles side by side): always allocated so the shadow sampler is complete.
         r.shadowMap = newTexture();
         GLuint sm = r.shadowMap.get();
-        glTextureStorage2D(sm, 1, GL_DEPTH_COMPONENT32F, kShadowMapSize, kShadowMapSize);
+        glTextureStorage2D(sm, 1, GL_DEPTH_COMPONENT32F, kShadowCascades * kShadowMapSize, kShadowMapSize);
         glTextureParameteri(sm, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTextureParameteri(sm, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTextureParameteri(sm, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -413,6 +407,8 @@ public:
         glTextureSubImage3D(cube, 0, 0, 0, 0, 1, 1, 6, GL_RGBA, GL_UNSIGNED_BYTE, black);
         r.frameUbo = newBuffer();
         glNamedBufferStorage(r.frameUbo.get(), sizeof(sm3::FrameBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        r.shadowUbo = newBuffer();
+        glNamedBufferStorage(r.shadowUbo.get(), sizeof(SunShadowBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
         return true;
     }
 
@@ -431,6 +427,9 @@ public:
             if (tex.get()) r.textures[t.id] = std::move(tex);
         }
         environment_ = scene.environment;
+        // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
+        const auto lut = original::attenuationLut(environment_);
+        glTextureSubImage2D(r.attenuation.get(), 0, 0, 0, lut.width, lut.height, GL_RGBA, GL_UNSIGNED_BYTE, lut.rgba.data());
         prepareOriginals(scene, warnings);
         for (size_t i = 0; i < scene.meshes.size(); ++i) uploadMesh(scene.meshes[i], i, warnings);
         finishOriginals();
@@ -440,10 +439,12 @@ public:
     }
 
     bool updateVertices(size_t meshIndex, std::span<const scene::Vertex> vertices) override {
-        for (const auto& g : res_->meshes)
+        for (auto& g : res_->meshes)
             if (g.source == meshIndex) {
                 if (g.vertexCount != vertices.size()) return false;
                 glNamedBufferSubData(g.vbo.get(), 0, GLsizeiptr(vertices.size_bytes()), vertices.data());
+                const glm::vec4 sphere = original::boundingSphere(vertices, g.model); // skinned: follows the pose
+                g.center = glm::vec3(sphere), g.radius = sphere.w;
                 return true;
             }
         return false;
@@ -458,11 +459,13 @@ public:
         const float aspect = float(vp.width) / float(vp.height);
         const glm::mat4 viewProj = camera.projection(aspect) * camera.view();
         drawOrder(r.meshes, camera.position, r.order);
-        glm::mat4 lightViewProj(1.0f);
-        if (options.shadows) {
-            lightViewProj = shadowViewProj(camera, aspect, r.bounds);
-            drawShadowMap(lightViewProj);
-        }
+        // No ray tracing here: a requested RT mode renders with the shadow map (as Vulkan without RT support).
+        const bool shadows = options.shadows || options.rt != RayTracing::Off;
+        const SunShadow sun = sunShadow(camera, vp, r.bounds, sunToward(environment_), false, shadows, 0, 0);
+        if (shadows) drawShadowMap(sun);
+        glNamedBufferSubData(r.shadowUbo.get(), 0, sizeof sun.block, &sun.block);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 3, r.shadowUbo.get());
+        glBindTextureUnit(16, r.shadowMap.get());
 
         glBindFramebuffer(GL_FRAMEBUFFER, r.targets.scene.get());
         glViewport(0, 0, vp.width, vp.height);
@@ -472,10 +475,7 @@ public:
         glEnable(GL_DEPTH_TEST);
         glUseProgram(r.sceneProgram.get());
         glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj));
-        glUniformMatrix4fv(5, 1, GL_FALSE, glm::value_ptr(lightViewProj));
         glUniform1i(2, options.lighting ? 1 : 0);
-        glUniform1i(4, options.shadows ? 1 : 0);
-        glBindTextureUnit(1, r.shadowMap.get());
         glBlendColor(0.5f, 0.5f, 0.5f, 0.5f); // Blend::Average = D3DBLEND_BLENDFACTOR 0x80808080
         const bool originals = options.originalShaders && !r.originals.empty();
         if (originals) beginOriginals(camera, vp, options);
@@ -509,7 +509,6 @@ public:
                 continue;
             }
             glUniform1f(3, s.alphaRef / 255.0f);
-            if (program < 0 && originals) glBindTextureUnit(1, r.shadowMap.get()); // originals rebind unit 1
             drawSubmesh(s);
         }
         setBlend(int(scene::Blend::Opaque));
@@ -526,6 +525,7 @@ public:
         glUseProgram(r.postProgram.get());
         glUniform1i(0, options.fxaa ? 1 : 0);
         glUniform1i(1, options.hdr ? 1 : 0);
+        glUniform1f(2, options.brightness);
         glBindTextureUnit(0, t.color.get());
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -619,12 +619,12 @@ private:
                        reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
     }
 
-    // Opaque and alpha-blended surfaces cast (blended ones alpha-tested at 50 %); additive/average
-    // effects do not. Both faces, slope-scaled bias.
-    void drawShadowMap(const glm::mat4& lightViewProj) {
+    // One atlas tile per cascade. Opaque and alpha-blended surfaces cast (blended ones alpha-tested at 50 %);
+    // additive/average effects do not. Both faces, slope-scaled bias.
+    // ponytail: every mesh is drawn into every cascade; cull by mesh bounds per cascade if the GL path gets CPU bound.
+    void drawShadowMap(const SunShadow& sun) {
         Resources& r = *res_;
         glBindFramebuffer(GL_FRAMEBUFFER, r.shadowFbo.get());
-        glViewport(0, 0, kShadowMapSize, kShadowMapSize);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
         glDepthMask(GL_TRUE);
@@ -634,14 +634,17 @@ private:
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(2.0f, 2.0f);
         glUseProgram(r.shadowProgram.get());
-        glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(lightViewProj));
-        for (const auto& m : r.meshes) {
-            glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
-            glBindVertexArray(m.vao.get());
-            for (const auto& s : m.submeshes) {
-                if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
-                glUniform1f(3, (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f);
-                drawSubmesh(s);
+        for (int c = 0; c < kShadowCascades; ++c) {
+            glViewport(c * kShadowMapSize, 0, kShadowMapSize, kShadowMapSize);
+            glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(sun.lightViewProj[c]));
+            for (const auto& m : r.meshes) {
+                glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
+                glBindVertexArray(m.vao.get());
+                for (const auto& s : m.submeshes) {
+                    if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
+                    glUniform1f(3, (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f);
+                    drawSubmesh(s);
+                }
             }
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -710,8 +713,8 @@ private:
         }
         if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
         g.model = glm::make_mat4(m.transform);
-        const Bounds b = meshBounds(m);
-        g.center = (b.lo + b.hi) * 0.5f;
+        const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
+        g.center = glm::vec3(sphere), g.radius = sphere.w;
         g.source = source;
         g.vertexCount = m.vertices.size();
         g.vao = newVertexArray();
@@ -750,7 +753,8 @@ private:
         for (auto& w : prepared_.warnings) warnings.push_back(std::move(w));
         for (const auto& p : prepared_.programs) {
             std::string error;
-            r.originals.push_back(linkProgram(p.vsGlsl.source.c_str(), p.psGlsl.source.c_str(), error));
+            const std::string ps = originalPixelSource(p.psGlsl.source, false, false); // + cascaded sun shadow
+            r.originals.push_back(linkProgram(p.vsGlsl.source.c_str(), ps.c_str(), error));
             if (!r.originals.back().get())
                 warnings.push_back("original program vs " + hex(p.vs) + " ps " + hex(p.ps) + ": " + error);
         }
@@ -783,6 +787,9 @@ private:
             const bool cube = prog.psGlsl.samplerType[n] == 3;
             GLuint tex = cube ? r.blackCube.get() : r.white.get();
             if (n == original::kAttenuationSampler && !cube) tex = r.attenuation.get();
+            if (n == original::kSunCookieSampler && !cube && environment_.sunCookie)
+                if (auto it = r.textures.find(environment_.sunCookie); it != r.textures.end() && !cubes_.contains(it->first))
+                    tex = it->second.get();
             if (const uint32_t id = original::samplerTexture(mat, s.instanceTextures, n))
                 if (auto it = r.textures.find(id); it != r.textures.end() && cubes_.contains(id) == cube) tex = it->second.get();
             g.samplers.back()[size_t(n)] = tex;
@@ -814,7 +821,8 @@ private:
         const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
         objectScratch_.assign(r.meshes.size() * size_t(objectStride()), 0);
         for (size_t i = 0; i < r.meshes.size(); ++i)
-            original::fillObject(*reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * size_t(objectStride())]), vpD3D, r.meshes[i].model);
+            original::fillObject(*reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * size_t(objectStride())]), vpD3D, r.meshes[i].model,
+                                 original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius));
         if (r.objectUbo.get())
             glNamedBufferSubData(r.objectUbo.get(), 0, GLsizeiptr(objectScratch_.size()), objectScratch_.data());
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());

@@ -90,6 +90,7 @@ void loadTextures(scene::SceneData& sc, const Drms& drms) {
     for (const auto& m : sc.materials)
         for (const auto& t : m.samplers)
             if (t.textureId) wanted.insert(t.textureId);
+    if (sc.environment.sunCookie) wanted.insert(sc.environment.sunCookie);
     for (const auto& t : sc.textures) wanted.erase(t.id);
     for (const uint32_t id : wanted) {
         const std::string* from = nullptr;

@@ -66,7 +66,58 @@ ou::render::FrameOptions enhanced(ou::render::RayTracing rt = ou::render::RayTra
     return o;
 }
 
+// Backend whose preWindowSetup succeeds or fails on demand (selectRenderer logic, no GPU).
+struct FakeRenderer final : ou::render::Renderer {
+    bool vulkan, usable;
+    FakeRenderer(bool vk, bool ok) : vulkan(vk), usable(ok) {}
+    uint64_t windowFlags() const override { return 0; }
+    bool preWindowSetup(std::string& e) override {
+        if (!usable) e = vulkan ? "no Vulkan 1.3 device" : "no GL";
+        return usable;
+    }
+    bool init(SDL_Window*, std::string&) override { return true; }
+    std::vector<std::string> upload(const ou::scene::SceneData&) override { return {}; }
+    bool updateVertices(size_t, std::span<const ou::scene::Vertex>) override { return false; }
+    void resize(ou::render::Viewport) override {}
+    void drawFrame(const ou::render::Camera&, ou::render::Viewport, const ou::render::FrameOptions&) override {}
+    ou::render::Image readBackbuffer(ou::render::Viewport) override { return {}; }
+    void present() override {}
+    bool setVsync(bool) override { return true; }
+    std::string description() const override { return vulkan ? "fake vulkan" : "fake gl"; }
+    void shutdown() override {}
+};
+
 } // namespace
+
+// "auto" prefers Vulkan and falls back to OpenGL with a note; explicit backends never fall back.
+TEST(RendererSelect, AutoFallsBackToOpenGl) {
+    auto pick = [](std::string_view name, bool vulkanOk, bool glOk, std::string& chosen, std::string& note, std::string& err) {
+        return ou::render::selectRenderer(
+            name, [&](bool vk) { return std::make_unique<FakeRenderer>(vk, vk ? vulkanOk : glOk); }, chosen, note, err);
+    };
+    std::string chosen, note, err;
+    auto r = pick("auto", true, true, chosen, note, err);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(chosen, "vulkan");
+    EXPECT_EQ(r->description(), "fake vulkan");
+    EXPECT_TRUE(note.empty());
+    r = pick("auto", false, true, chosen, note, err);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(chosen, "opengl");
+    EXPECT_EQ(note, "Vulkan unavailable (no Vulkan 1.3 device), falling back to OpenGL");
+    EXPECT_TRUE(err.empty());
+    note.clear();
+    EXPECT_FALSE(pick("vulkan", false, true, chosen, note, err)); // explicit: no fallback
+    EXPECT_EQ(err, "no Vulkan 1.3 device");
+    EXPECT_TRUE(note.empty());
+    err.clear();
+    r = pick("opengl", true, true, chosen, note, err);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(chosen, "opengl");
+    EXPECT_FALSE(pick("auto", false, false, chosen, note, err));
+    EXPECT_FALSE(pick("d3d9", true, true, chosen, note, err));
+    EXPECT_EQ(err, "renderer must be auto, opengl or vulkan, got d3d9");
+}
 
 // Ray tracing on a capable device: acceleration structures for the scene (built by the first RT
 // frame), counts, BLAS rebuild/refit on updateVertices + TLAS update, shading close to the shadow

@@ -5,23 +5,23 @@ Status labels: **observed** = run and seen; **inferred** = from the code, not ex
 
 ## What it does
 
-The launcher is one window with six tabs and a bottom bar with **Save settings** and **Launch**.
+The launcher is one window with six tabs and a bottom bar with **Save settings**, **Viewer** and **Play** (the default button).
 
 | Tab | Function | Status |
 |---|---|---|
 | Game | Pick the game directory. Run the `ou_importer` scan in a worker thread, optionally hashing every file against the GOG hashdb. Show the detected build, `tru.exe` sha256/version, archive record counts and errors, hashdb results, and a verdict. Writes the full scan JSON to `$XDG_DATA_HOME/openunderworld/manifests/<exe-sha-prefix>.json`. | observed against the real GOG install (below) |
-| Graphics | Renderer (OpenGL/Vulkan), resolution plus presets, fullscreen, FOV, vsync, start level (`drm`). | UI observed; values reach the viewer through config (observed via `ou-viewer --config`, below) |
+| Graphics | Renderer (Auto = Vulkan, else OpenGL / Vulkan / OpenGL 4.6), resolution plus presets, fullscreen, FOV, vsync, start level (`drm`, viewer only). Graphics: preset (Enhanced / Original (purist)), ray tracing (Auto: shadows on capable GPUs / Off / Shadows / Shadows + water reflections), RT quality (1/2/4 rays per pixel), MSAA (preset default/1x/2x/4x/8x), sun shadows (preset default/on/off), shaders (original TRU / generic), brightness (0.50–2.00, 1.00 = neutral; like the original game's brightness option). The RT widgets are disabled with the Original preset (RT needs Enhanced; `rt` is then saved as `auto`, which resolves to off). Save validates the graphics block with `ou::config::resolve` and shows the error instead of saving a config the apps would reject. | UI observed (offscreen grab); values reach the apps through config |
 | Controllers | SDL3 gamepad list (`SDL_GetGamepads`: name, type, GUID) with Refresh. | observed with no pad connected ("No gamepads detected"); listing a real pad: unknown, none attached |
 | Saves | Back up `$XDG_DATA_HOME/openunderworld/saves` to `save-backups/<timestamp>/`. Restore a backup after first backing up the current saves as `<timestamp>-before-restore`. Open folder. | UI observed; backup/restore code inferred. `ou-game` writes `<slot>.ousave` and `<slot>.ousave.bak` there (docs/SAVES.md) |
-| Diagnostics | Report with versions (launcher, Qt, SDL), OS/session, viewer path, updater state, config, last scan summary, and the last 60 lines of the newest viewer log. Export to a text file. | report observed |
+| Diagnostics | Report with versions (launcher, Qt, SDL), OS/session, game and viewer paths, updater state, config, last scan summary, and the last 60 lines of the newest game/viewer log. Export to a text file. | report observed |
 | Version & Updates | Version, updater-managed install, whether a release key is compiled in, changelog, enable switch, channel, manifest URL, Check / Download & install / Roll back. See `docs/UPDATES.md`. | UI observed; live HTTPS update unknown (no server) |
 
-**Launch** saves the config, then starts `ou-viewer --config <config.json>` detached. stdout and stderr go to `$XDG_STATE_HOME/openunderworld/logs/viewer-<timestamp>.log`. The viewer is looked up in this order:
-1. `install/current/bin/ou-viewer` (the updater-managed copy)
-2. `ou-viewer` next to the launcher binary
+**Play** saves the config, then starts `ou-game --config <config.json>` detached; it refuses to start until a game directory is set. Without `--level`, ou-game opens the main menu, where New Game starts chapter 0. **Viewer** does the same with `ou-viewer --config <config.json>` (debug fly camera over `drm`). stdout and stderr go to `$XDG_STATE_HOME/openunderworld/logs/game-<timestamp>.log` / `viewer-<timestamp>.log`. Each binary is looked up in this order:
+1. `install/current/bin/ou-game` / `ou-viewer` (the updater-managed copy; skipped inside the AppImage)
+2. next to the launcher binary
 3. `$PATH`
 
-Clicking Launch inside the GUI was not exercised: the computer-use helper sees no windows on this Wayland session, so no clicks could be scripted (inferred).
+Clicking Play/Viewer inside the GUI was not exercised: the computer-use helper sees no windows on this Wayland session, so no clicks could be scripted (inferred).
 
 Startup runs `ou::update::recover()` on the install root, so an interrupted update swap is repaired before anything else happens.
 
@@ -35,17 +35,20 @@ Never touched: the game directory (the scan is read-only) and the original game'
 {
   "game_dir": "/path/to/Tomb Raider Underworld",
   "drm": "pc-w\\lara.drm",
-  "renderer": "opengl",
+  "renderer": "auto",
   "width": 1280, "height": 720, "fullscreen": false, "fov": 60.0, "vsync": true,
-  "updates": {"enabled": true, "channel": "stable", "manifest_url": "https://github.com/sergen213/openunderworld/releases/latest/download/manifest.json"}
+  "updates": {"enabled": true, "channel": "stable", "manifest_url": "https://github.com/sergen213/openunderworld/releases/latest/download/manifest.json"},
+  "graphics": {"preset": "enhanced", "msaa": 0, "rt": "auto", "rt_quality": "medium", "brightness": 1.0}
 }
 ```
 
 Loading rules:
 - Unknown keys are ignored, and missing keys keep their defaults.
-- A bad `renderer`, size or FOV is an error.
+- A bad `renderer` (`auto` | `opengl` | `vulkan`), size, FOV or graphics value is an error.
 
-`ou-viewer --config FILE` applies the file first, wherever the flag appears, so explicit flags such as `--width` override it. `--fullscreen` was added at the same time. Both are covered by the `Config.RoundTripAndDefaults` test.
+Defaults (best look out of the box): `renderer` `auto` = Vulkan, falling back to OpenGL with a note on stderr when Vulkan is unavailable; preset `enhanced` = 4x MSAA + sun shadow map + TRU's translated shaders, FXAA and HDR off (the HDR tonemap compresses the original shaders' LDR output); `rt` `auto` = ray-traced sun shadows on Vulkan devices with ray queries (off with the `original` preset); `brightness` 1.0 = neutral (post-pass gamma `out = in^(1/brightness)`, 0.5–2.0). `msaa` 0 and absent `shadows`/`fxaa`/`hdr`/`original_shaders` mean "preset default". The `original` preset is the purist option: no MSAA, no shadow map, no post, no RT.
+
+`ou-game --config FILE` and `ou-viewer --config FILE` apply the file first, wherever the flag appears, so explicit flags such as `--width`, `--renderer`, `--preset`, `--rt` or `--brightness` override it. Covered by the `Config.RoundTripAndDefaults` and `Config.GraphicsPresets` tests.
 
 ## Command line
 
@@ -59,7 +62,7 @@ ou-launcher [--config FILE] [--game-dir DIR] [--tab N] [--scan] [--grab out.png]
 - `--self-test`: builds the UI, processes events once and exits. It is the ctest `launcher_self_test`, run with `QT_QPA_PLATFORM=offscreen`.
 - `--check-update` / `--update`: headless updater using the config's update settings. Prints one result line and exits 0, or prints `Update failed: …` and exits 1. `--check-update` never writes anything. Inside an AppImage, `--update` replaces the AppImage itself (docs/UPDATES.md). Without a display, set `QT_QPA_PLATFORM=offscreen`.
 
-When run from the AppImage (`$APPIMAGE` set), the Version & Updates tab updates and rolls back the AppImage file. **Launch** starts the bundled `ou-viewer` and ignores the install root.
+When run from the AppImage (`$APPIMAGE` set), the Version & Updates tab updates and rolls back the AppImage file. **Play** and **Viewer** start the bundled `ou-game` / `ou-viewer` and ignore the install root.
 
 ## Verification (2026-10-18)
 

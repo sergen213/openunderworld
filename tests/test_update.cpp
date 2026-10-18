@@ -356,6 +356,7 @@ TEST(UpdateCore, HttpsTransportRefusesOtherSchemes) {
 TEST(Config, RoundTripAndDefaults) {
     fs::path p = fs::temp_directory_path() / ("ou_config_" + std::to_string(::getpid()) + "/config.json");
     EXPECT_EQ(ou::config::load(p).width, 1280); // missing -> defaults
+    EXPECT_EQ(ou::config::Config{}.renderer, "auto");
     EXPECT_EQ(ou::config::load(p).updateManifestUrl,
               "https://github.com/sergen213/openunderworld/releases/latest/download/manifest.json");
     ou::config::Config c;
@@ -374,6 +375,8 @@ TEST(Config, RoundTripAndDefaults) {
     EXPECT_EQ(d.updateManifestUrl, c.updateManifestUrl);
     std::ofstream(p) << R"({"renderer":"d3d9"})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
+    std::ofstream(p) << R"({"renderer":"auto"})";
+    EXPECT_EQ(ou::config::load(p).renderer, "auto");
     fs::remove_all(p.parent_path());
 }
 
@@ -384,10 +387,12 @@ TEST(Config, GraphicsPresets) {
     auto g = [](std::string preset, int msaa = 0, Opt shadows = {}, Opt fxaa = {}, Opt hdr = {}) {
         return ou::config::GraphicsConfig{std::move(preset), msaa, shadows, fxaa, hdr};
     };
-    EXPECT_EQ(resolve({}), (GraphicsSettings{1, false, false, false}));                // original
-    EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false}));    // 4x MSAA + shadows
-    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true})); // overrides
-    EXPECT_EQ(resolve(g("original", 8, true)), (GraphicsSettings{8, true, false, false}));
+    // Default = enhanced: 4x MSAA + shadows + rt auto -> shadows, 2 rays, original shaders, neutral brightness.
+    EXPECT_EQ(resolve({}), (GraphicsSettings{4, true, false, false, 1, 2, true, 1.0f}));
+    EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false, 1, 2}));
+    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true, 1, 2})); // overrides
+    EXPECT_EQ(resolve(g("original")), (GraphicsSettings{1, false, false, false, 0})); // purist: rt auto -> off
+    EXPECT_EQ(resolve(g("original", 8, true)), (GraphicsSettings{8, true, false, false, 0}));
     EXPECT_THROW(resolve(g("ultra")), std::runtime_error);
     EXPECT_THROW(resolve(g("original", 3)), std::runtime_error);
     // Ray tracing: enhanced only; quality = shadow rays per pixel.
@@ -400,6 +405,16 @@ TEST(Config, GraphicsPresets) {
     EXPECT_EQ(resolve(rt("enhanced", "full", "high")), (GraphicsSettings{4, true, false, false, 2, 4}));
     EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1}));
     EXPECT_THROW(resolve(rt("original", "shadows")), std::runtime_error);
+    EXPECT_THROW(resolve(rt("original", "full")), std::runtime_error);
+    EXPECT_EQ(resolve(rt("original", "auto")).rt, 0);
+    EXPECT_EQ(resolve(rt("enhanced", "auto", "high")), (GraphicsSettings{4, true, false, false, 1, 4}));
+    auto bright = g("enhanced");
+    bright.brightness = 0.2f;
+    EXPECT_THROW(resolve(bright), std::runtime_error);
+    bright.brightness = 2.5f;
+    EXPECT_THROW(resolve(bright), std::runtime_error);
+    bright.brightness = 1.5f;
+    EXPECT_FLOAT_EQ(resolve(bright).brightness, 1.5f);
     EXPECT_THROW(resolve(rt("enhanced", "on")), std::runtime_error);
     EXPECT_THROW(resolve(rt("enhanced", "full", "ultra")), std::runtime_error);
     ou::config::GraphicsConfig flags;
@@ -407,6 +422,8 @@ TEST(Config, GraphicsPresets) {
     EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--rt-quality", "low"));
     EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--shadows", "off"));
     EXPECT_FALSE(ou::config::applyGraphicsFlag(flags, "--level", "x"));
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--brightness", "1.25"));
+    EXPECT_FLOAT_EQ(flags.brightness, 1.25f);
     EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--fxaa", "yes"), std::runtime_error);
     EXPECT_EQ(flags.rt, "full");
     EXPECT_EQ(flags.rtQuality, "low");
@@ -415,14 +432,17 @@ TEST(Config, GraphicsPresets) {
     fs::path p = fs::temp_directory_path() / ("ou_config_gfx_" + std::to_string(::getpid()) + "/config.json");
     ou::config::Config c;
     c.graphics = g("enhanced", 2, std::nullopt, true);
-    c.graphics.rt = "shadows", c.graphics.rtQuality = "high";
+    c.graphics.rt = "shadows", c.graphics.rtQuality = "high", c.graphics.brightness = 0.75f;
     ou::config::save(p, c);
     const auto d = ou::config::load(p).graphics;
     EXPECT_EQ(d.preset, "enhanced");
     EXPECT_EQ(d.msaa, 2);
     EXPECT_FALSE(d.shadows.has_value()); // unset stays unset: the preset decides
     EXPECT_EQ(d.fxaa, std::optional<bool>(true));
-    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false, 1, 4}));
+    EXPECT_FLOAT_EQ(d.brightness, 0.75f);
+    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false, 1, 4, true, 0.75f}));
+    std::ofstream(p) << R"({"graphics":{"brightness":0.2}})";
+    EXPECT_THROW(ou::config::load(p), std::runtime_error);
     std::ofstream(p) << R"({"graphics":{"preset":"enhanced","msaa":5}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
     fs::remove_all(p.parent_path());

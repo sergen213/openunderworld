@@ -56,10 +56,13 @@ PS samplers: 49 933 2D + 1 205 cube declarations. Full opcode / declaration / CT
   (−0.5, y flipped in GL), `vFace` = ±1 from `gl_FrontFacing`, `dsy` sign-corrected per API.
 - Clip space: shaders get D3D-convention matrices (z ∈ [0, w], `perspectiveRH_ZO`); GL remaps z, Vulkan keeps it and
   flips y with the existing negative-height viewport. Fixed-function alpha test (`ALPHAREF`, GREATEREQUAL) is appended.
-- Register files (std140): **frame** (`vs[256]`, `ps[224]`, int/bool registers, screen), **material**
-  (VS c25–c64, PS c100–c139, `fixed` = c2 `AlphaThreshold`, c98 `MaterialOpacity`, alpha ref, flags), **object**
-  (VS c0–c7 = `WorldViewProject`, `World`; GL UBO, Vulkan push constants). VS c22 is read only for fogged materials
-  (flags 0x04, 0x5068E6), PS c0 `FogColor` is 0 for blend modes 5/6 (0x5066A0).
+- Register files (std140): **frame** (`vs[256]`, `ps[224]`, int/bool registers, screen, `lights[64 × 5]` = the scene's
+  point/spot light registers), **material** (VS c25–c64, PS c100–c139, `fixed` = c2 `AlphaThreshold`, c98
+  `MaterialOpacity`, alpha ref, flags), **object** (VS c0–c7 = `WorldViewProject`, `World`, `uvec4 lightSet` = one
+  light-table index per PS light slot 0–5, 0xFF empty; GL UBO, Vulkan push constants). PS c178–c207 (5 registers per
+  slot) read `frame.lights[lightSet slot]` and b0–b5 test the slot, so each object gets its own light set as tru.exe
+  binds one per drawable (0x5042B0). VS c22 is read only for fogged materials (flags 0x04, 0x5068E6), PS c0
+  `FogColor` is 0 for blend modes 5/6 (0x5066A0).
 - Gated test `Sm3Real.EveryInstallShaderTranslates`: all 5 594 programs parse, translate and compile to SPIR-V for both
   Vulkan 1.3 and OpenGL 4.5 (libshaderc), 0 failures [O].
 
@@ -74,17 +77,20 @@ PS samplers: 49 933 2D + 1 205 cube declarations. Full opcode / declaration / CT
 | VS c22 `fogScaleAndOffset` | (−n/(f−n), 1/(f−n), 0, f) from the unit render settings | 0x514680 [O] |
 | PS c0 `FogColor`, c15 `g_Ambient` | unit render settings (Level+0x70 DTP: fog rgb +0x18, near +0x40, far +0x3C/+0x38; ambient rgb +0x1E4 × +0x1E8 / 255) | 0x5C7CA0, 0x5CAFF0 [O]; neighbour-unit blending not done |
 | PS c54 `HeightFogParams` | (0, 0, (96 + 0.5)/128, 0): no fog volumes | 0x514680 [O] |
-| s15 `AttenuationSampler` | 256×128: row 96 = identity fog ramp (R, G) as the engine default curve; light rows 0–95 linear [I] | 0x504A60, 0x512CF0 [O] |
+| s15 `AttenuationSampler` | 256×128, rebuilt per scene: rows 0–95 = the distinct light falloff curves (light DTP +0x1C, texel k = curve[k]·255 in R, texel 255 = 0; LEVELS.md "Lights"), row 96 = identity fog ramp (R, G) as the engine default curve | 0x504A60, 0x50AFB0, 0x512CF0 [O] |
 | PS c148/c149 `GlobalParams` light-map scales | (1, 1, 1, 1) (engine default; scripts fade them) | 0x7731B0 [O] |
 | PS c140–c146 player/bone positions | far away (no foliage interaction) | 0x773A70 [O] / ours [I] |
-| PS c208–c212 `SunLight`, b6 | the unit's type-2 light record (unit data +0x04 list, record row 2 = direction, DTP +0x08 intensity, +0x18 colour); only l4_ballcourt has one: dir (−0.544, −0.351, −0.762), colour (0.82, 0.96, 1.20) | 0x5C6530, 0x50B910 [O]; cookie s11 not reproduced |
+| PS c208–c212 `SunLight`, b6 | the unit's type-2 light record (unit data +0x04 list, record row 2 = direction, DTP +0x08 intensity, +0x18 colour); 23 units have one, e.g. l4_ballcourt dir (−0.544, −0.351, −0.762), colour (0.82, 0.96, 1.20) | 0x5C6530, 0x50B910 [O] |
+| PS c176/c177 `WorldToModulationMapSun`, s11 | sun cookie (DTP +0x828 texture, 11 units): uv = (record row 0 / row 1 · (p − position)) · 0.5 / (scale · 1000) + 0.5 + scroll·t, axes rotated by rotation·t deg; white without a cookie | 0x50B910 type 2 [O]; scroll/rotation time base and sign [I] |
+| PS c178–c207 `ShadowLights` / `NonShadowLights`, b0–b5 | per light (0x50B910 → 0x50A5F0 `c178 + 5·slot`): R0 position (spots: moved back to the cone apex by width / tan(outer/2)), R1 direction, R2 (1/radius, 0, −apex/radius, (falloff row + 0.5)/128), R3 (cone scale, cone bias, apex plane, 0) — points (0, 1, −radius − 1), R4 colour × intensity × flicker (w = 0.3r + 0.6g + 0.1b). PS: attenuation = LUT((d − apex)/radius) · sat(cos·scale + bias), zero behind the apex plane | [O] register fill and PS math; spot cone scale/bias from 0x50A280 with [I] half angles |
+| light set per object (slots 0–5) | the 6 strongest lights (luminance × (1 − distance / radius)) whose radius reaches the object's bounding sphere, in slot order (the PS nests slot n + 1 in slot n). tru.exe puts shadow casters with cookies in slots 0–2 (s12/s13 cookie, `WorldToShadowMap`) and the rest in 3–5; we bind no spot cookies / light shadow maps, so both groups compute alike (c172/c175 = (0, 0, 0, 1), s12/s13 white) | slot rule 0x5042B0 [O]; selection and receiver masks [I] |
+| PS c70–c76 `IrradianceState` (dynamic objects) | c76 `Base` = g_Ambient, other terms 0: the SH tru.exe builds from the ambient alone (0x507D60: L00 = ambient · 1.128) converted by 0x508570 (Red0/Green0/Blue0 = xy, xz, yz, zz; Red1.. = x, y, z, x²−y²; Base = 0.886·L00 − 0.248·L20). Which lights the engine adds as SH terms [U]; ours reach characters through their light set | 0x507D60, 0x508570 [O] |
 | instance textures (classes 1–4) | terrain group +0x10..+0x1C / model primgroup +0x2C..+0x38 indices into the resource texture list; IMF +0x4C..+0x58 overrides. Class 1 = light map (sampled at texcoord1), class 3 = "Setup" blend masks | 0x510780, 0x50EB30, 0x5B5160 [O] |
 | cube samplers | cube maps decoded (TEXTURES.md); missing ones read black | [O] |
 
-Not fed yet [U/I]: point/spot lights (slots 0–5, b0–b5; unit light records and their masks are known, receiver masks
-are not), light-curve rows, sun cookie, **IrradianceState c70–c76** (dynamic objects: SH from the unit's irradiance
-volume, conversion 0x508570) — programs that read it stay on the generic shading, PSSM shadows, global textures
-(class 9 back buffer, class 10 depth buffer → white), per-instance params / opacity fades (zero / 1).
+Not fed yet [U/I]: spot-light cookies (s12/s13, 63 spots) and light shadow maps (slots 0–2), receiver masks, directional
+SH terms of IrradianceState, lights of object intros and cinematic light rigs, PSSM shadows, global textures (class 9 back
+buffer, class 10 depth buffer → white), per-instance params / opacity fades (zero / 1).
 
 ## Fidelity (2026-10-18, viewed screenshots) [O]
 
@@ -92,7 +98,9 @@ volume, conversion 0x508570) — programs that read it stay on the generic shadi
   maps, unit ambient and fog: noticeably darker and moodier than the generic lambert, with the original's layer blending
   (ballcourt path sand/rock/moss), water swirl shading in l4_pool and wind on foliage. The ballcourt court is lit by the
   unit sun (bluish).
-- Missing vs the original: dynamic point/spot lights (interiors such as l3_main_bedroom stay light-map + ambient only),
-  the sun cookie dappling, PSSM shadows, dynamic objects (Lara, enemies, actors) on generic shading.
+- Point/spot lights (2026-10-18, viewed l3_main_bedroom): the torch lights reach the walls around their holders as an
+  orange, flickering falloff; dynamic objects (Lara, enemies, cutscene actors) now use their own translated programs
+  (IrradianceState ambient + their light set + sun) with CPU-skinned normals/tangents.
+- Missing vs the original: spot cookies, light and PSSM shadows, directional SH terms on characters.
 - No original-game screenshot of the same views was available for a pixel comparison (PCGamingWiki's TRU page only has
   settings-menu images); comparison is against our previous renders.

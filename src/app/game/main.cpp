@@ -45,7 +45,7 @@ struct Options {
     std::filesystem::path gameDir;
     std::string level; // empty (and no --chapter/--load): start at the main menu
     int chapter = -1;  // --chapter N: start chapter N (game::kChapters)
-    std::string renderer = "opengl";
+    std::string renderer = ou::config::Config{}.renderer; // auto | opengl | vulkan
     int width = 1280, height = 720;
     float fov = 60.0f;
     bool vsync = true, fullscreen = false, noOverlay = false, showCollision = false, showTriggers = false, showEnemies = false;
@@ -69,7 +69,7 @@ struct Options {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer opengl|vulkan]\n"
+                 "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer auto|opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
@@ -77,7 +77,8 @@ void usage() {
                  "               [--show-collision] [--show-triggers] [--show-enemies]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
                  "               [--shaders original|generic]\n"
-                 "               [--rt off|shadows|full] [--rt-quality low|medium|high] [--config config.json]\n"
+                 "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0]\n"
+                 "               [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
                  "          F draw/holster, mouse left fire, right aim/lock, Q switch target, X switch weapon, H health pack,\n"
@@ -158,7 +159,10 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return false; }
     }
     if (o.gameDir.empty()) { std::fprintf(stderr, "--game-dir is required\n"); return false; }
-    if (o.renderer != "opengl" && o.renderer != "vulkan") { std::fprintf(stderr, "--renderer wants opengl or vulkan\n"); return false; }
+    if (o.renderer != "auto" && o.renderer != "opengl" && o.renderer != "vulkan") {
+        std::fprintf(stderr, "--renderer wants auto, opengl or vulkan\n");
+        return false;
+    }
     if (o.width <= 0 || o.height <= 0 || o.fov <= 1.0f || o.fov >= 179.0f || o.frames < 0 || o.renderHz < 0 ||
         o.chapter >= int(ou::game::kChapters.size())) {
         std::fprintf(stderr, "invalid --width/--height/--fov/--frames/--render-hz/--chapter\n");
@@ -199,15 +203,8 @@ struct LaraMeshes {
               ou::render::Renderer& r) {
         const auto palette = ou::anim::skinPalette(world.anims().skeleton, world.pose(alpha));
         const glm::mat4 m = world.player().modelMatrix(s.pos, s.yaw, s.pitch);
-        const glm::mat3 n(m);
         for (const size_t i : meshIndices) {
-            ou::anim::skinVertices(scene.meshes[i], palette, scratch);
-            for (auto& v : scratch) {
-                const glm::vec3 p = glm::vec3(m * glm::vec4(v.position[0], v.position[1], v.position[2], 1));
-                const glm::vec3 q = n * glm::vec3(v.normal[0], v.normal[1], v.normal[2]);
-                v.position[0] = p.x, v.position[1] = p.y, v.position[2] = p.z;
-                v.normal[0] = q.x, v.normal[1] = q.y, v.normal[2] = q.z;
-            }
+            ou::anim::skinVertices(scene.meshes[i], palette, scratch, m);
             r.updateVertices(i, scratch);
         }
     }
@@ -249,16 +246,8 @@ struct ScriptedMeshes {
             if (palette) posed.insert(o.uid);
             for (const size_t i : it->second) {
                 const auto& m = s.meshes[i];
-                if (palette && !m.skin.empty() && palette->size() > 1) {
-                    ou::anim::skinVertices(m, *palette, scratch);
-                } else {
-                    scratch = m.vertices;
-                    if (palette)
-                        for (auto& v : scratch) {
-                            const glm::vec3 p((*palette)[0] * glm::vec4(v.position[0], v.position[1], v.position[2], 1));
-                            v.position[0] = p.x, v.position[1] = p.y, v.position[2] = p.z;
-                        }
-                }
+                if (palette && !m.skin.empty() && palette->size() > 1) ou::anim::skinVertices(m, *palette, scratch);
+                else ou::anim::skinVertices(m, {}, scratch, palette ? (*palette)[0] : glm::mat4(1.0f)); // rigid: bone 0
                 r.updateVertices(i, scratch);
             }
         }
@@ -355,15 +344,8 @@ struct EnemyMeshes {
             const auto s = e.interpolated(alpha);
             const auto palette = ou::anim::skinPalette(e.type().skeleton, e.pose(alpha));
             const glm::mat4 m = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip);
-            const glm::mat3 n(m);
             for (const size_t i : meshIndices[k]) {
-                ou::anim::skinVertices(scene.meshes[i], palette, scratch);
-                for (auto& v : scratch) {
-                    const glm::vec3 p = glm::vec3(m * glm::vec4(v.position[0], v.position[1], v.position[2], 1));
-                    const glm::vec3 q = n * glm::vec3(v.normal[0], v.normal[1], v.normal[2]);
-                    v.position[0] = p.x, v.position[1] = p.y, v.position[2] = p.z;
-                    v.normal[0] = q.x, v.normal[1] = q.y, v.normal[2] = q.z;
-                }
+                ou::anim::skinVertices(scene.meshes[i], palette, scratch, m);
                 r.updateVertices(i, scratch);
             }
         }
@@ -439,17 +421,12 @@ struct CombatView {
         const auto bones = w.pose(alpha);
         for (size_t h = 0; h < gunIndices.size() && h < gunSlots.size(); ++h) {
             const auto mount = w.gunMount(gunSlots[h].first, gunSlots[h].second);
-            scratch = scene.meshes[gunIndices[h]].vertices;
             if (!mount || size_t(mount->first) >= bones.size()) {
+                scratch = scene.meshes[gunIndices[h]].vertices;
                 for (auto& v : scratch) v.position[0] = v.position[1] = v.position[2] = 0;
             } else {
                 const glm::mat4 m = w.player().modelMatrix(s.pos, s.yaw, s.pitch) * bones[size_t(mount->first)] * mount->second;
-                const glm::mat3 n(m);
-                for (auto& v : scratch) {
-                    const glm::vec3 p(m * glm::vec4(v.position[0], v.position[1], v.position[2], 1)), q = glm::normalize(n * glm::vec3(v.normal[0], v.normal[1], v.normal[2]));
-                    v.position[0] = p.x, v.position[1] = p.y, v.position[2] = p.z;
-                    v.normal[0] = q.x, v.normal[1] = q.y, v.normal[2] = q.z;
-                }
+                ou::anim::skinVertices(scene.meshes[gunIndices[h]], {}, scratch, m);
             }
             r.updateVertices(gunIndices[h], scratch);
         }
@@ -584,7 +561,16 @@ struct StreamedScene {
                 if (materialIds.insert(m.id).second) out.materials.push_back(m);
             for (const auto& c : s.shaders)
                 if (shaderIds.insert(c.hash).second) out.shaders.push_back(c);
-            if (!out.environment.valid) out.environment = s.environment;
+            // First unit's render settings; every unit's point/spot lights, moved by its stream offset.
+            if (!out.environment.valid && s.environment.valid) {
+                out.environment = s.environment;
+                out.environment.lights.clear();
+                for (int c = 0; c < 3; ++c) out.environment.sunOrigin[c] += offset[c];
+            }
+            for (auto l : s.environment.lights) {
+                for (int c = 0; c < 3; ++c) l.position[c] += offset[c];
+                out.environment.lights.push_back(std::move(l));
+            }
         };
         for (const auto& u : w.units()) {
             auto it = units.find(u.data.name);
@@ -880,9 +866,10 @@ int main(int argc, char** argv) {
         }
     }
     ou::platform::WindowPtr window; // before the renderer: GL context / VkSurface die first
-    auto renderer = opt.renderer == "vulkan" ? ou::render::createVulkanRenderer() : ou::render::createGlRenderer();
-    std::string error;
-    if (!renderer->preWindowSetup(error)) {
+    std::string chosen, note, error;
+    auto renderer = ou::render::selectRenderer(opt.renderer, ou::render::createBackend, chosen, note, error);
+    if (!note.empty()) std::fprintf(stderr, "ou-game: %s\n", note.c_str());
+    if (!renderer) {
         std::fprintf(stderr, "ou-game: %s renderer unavailable: %s; skipping\n", opt.renderer.c_str(), error.c_str());
         return kExitSkip;
     }
@@ -990,7 +977,7 @@ int main(int argc, char** argv) {
         v.renderHz = opt.renderHz;
         v.frame.msaa = opt.gfx.msaa, v.frame.shadows = opt.gfx.shadows, v.frame.fxaa = opt.gfx.fxaa, v.frame.hdr = opt.gfx.hdr;
         v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
-        v.frame.originalShaders = opt.gfx.originalShaders;
+        v.frame.originalShaders = opt.gfx.originalShaders, v.frame.brightness = opt.gfx.brightness;
         v.overlay = !opt.noOverlay;
         v.musicVolume = float(menus.musicVolume) / 10;
         return v;
@@ -1253,6 +1240,7 @@ int main(int argc, char** argv) {
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
+        fo.brightness = opt.gfx.brightness;
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {

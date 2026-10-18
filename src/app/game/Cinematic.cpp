@@ -197,17 +197,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
             const auto palette = a.skeleton ? anim::skinPalette(*a.skeleton, bones) : std::vector<glm::mat4>{};
             for (const size_t i : a.meshes) {
                 const auto& m = sc.meshes[i];
-                if (a.skeleton && !m.skin.empty()) {
-                    anim::skinVertices(m, palette, scratch);
-                } else { // rigid: model space = bone 0
-                    scratch = m.vertices;
-                    const glm::mat4 b0 = bones[0];
-                    for (auto& vx : scratch) {
-                        const glm::vec3 p(b0 * glm::vec4(vx.position[0], vx.position[1], vx.position[2], 1));
-                        const glm::vec3 n(glm::mat3(b0) * glm::vec3(vx.normal[0], vx.normal[1], vx.normal[2]));
-                        std::copy_n(&p.x, 3, vx.position), std::copy_n(&n.x, 3, vx.normal);
-                    }
-                }
+                if (a.skeleton && !m.skin.empty()) anim::skinVertices(m, palette, scratch);
+                else anim::skinVertices(m, {}, scratch, bones[0]); // rigid: model space = bone 0
                 v.renderer.updateVertices(i, scratch);
             }
         }

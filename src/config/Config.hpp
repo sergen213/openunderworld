@@ -1,5 +1,5 @@
 // Shared user configuration ($XDG_CONFIG_HOME/openunderworld/config.json), written by ou-launcher
-// and read by ou-viewer --config. Unknown keys are ignored; missing keys keep their defaults.
+// and read by ou-game/ou-viewer --config. Unknown keys are ignored; missing keys keep their defaults.
 #pragma once
 
 #include <filesystem>
@@ -11,15 +11,19 @@ namespace ou::config {
 
 namespace fs = std::filesystem;
 
-// Graphics preset plus per-feature overrides. "original" = as close to tru.exe as evidence allows
-// (no MSAA, no shadow map, no post); "enhanced" = 4x MSAA + directional shadow map.
+// Graphics preset plus per-feature overrides. "enhanced" (default) = 4x MSAA + directional sun shadows + TRU's
+// translated shaders, plus ray-traced sun shadows where the Vulkan device supports ray queries (rt "auto");
+// FXAA and HDR stay off because the HDR tonemap compresses the original shaders' LDR output.
+// "original" = purist, as close to tru.exe as evidence allows (no MSAA, no shadow map, no post, no RT).
 struct GraphicsConfig {
-    std::string preset = "original";        // "original" | "enhanced"
+    std::string preset = "enhanced";       // "enhanced" | "original"
     int msaa = 0;                           // 0 = preset default, else 1, 2, 4 or 8 samples
     std::optional<bool> shadows, fxaa, hdr; // unset = preset default
-    std::string rt = "off";                 // "off" | "shadows" | "full" (Vulkan ray queries; enhanced only)
+    std::string rt = "auto";                // "auto" (enhanced -> shadows, original -> off) | "off" | "shadows" | "full"
+                                            // (Vulkan ray queries; explicit shadows/full need the enhanced preset)
     std::string rtQuality = "medium";       // "low" | "medium" | "high": 1, 2, 4 shadow rays per pixel
     std::optional<bool> originalShaders;    // TRU's translated shaders (docs/formats/SHADERS.md); unset = preset default (on)
+    float brightness = 1.0f;                // 0.5..2.0, post-pass gamma (out = in^(1/brightness)); 1 = neutral
 };
 struct GraphicsSettings {
     int msaa = 1;
@@ -27,19 +31,21 @@ struct GraphicsSettings {
     int rt = 0;     // 0 off, 1 shadows, 2 full (= render::RayTracing)
     int rtRays = 2;
     bool originalShaders = true; // TRU's translated shaders (docs/formats/SHADERS.md)
+    float brightness = 1.0f;
     bool operator==(const GraphicsSettings&) const = default;
 };
-// Throws std::runtime_error on an unknown preset, msaa, rt or rtQuality value, or rt without the enhanced preset.
+// Throws std::runtime_error on an unknown preset, msaa, rt or rtQuality value, explicit rt without the enhanced
+// preset, or brightness outside [0.5, 2.0].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
-// --rt, --rt-quality.
+// --rt, --rt-quality, --brightness.
 // false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 
 struct Config {
     std::string gameDir;
     std::string drm;                // start level, e.g. "pc-w\\lara.drm"; empty = placeholder scene
-    std::string renderer = "opengl"; // "opengl" | "vulkan"
+    std::string renderer = "auto"; // "auto" (Vulkan, else OpenGL) | "opengl" | "vulkan"
     int width = 1280, height = 720;
     bool fullscreen = false;
     float fov = 60.0f;

@@ -14,13 +14,14 @@ Every release ships an AppImage: [latest release](https://github.com/sergen213/o
 chmod +x OpenUnderworld-*-x86_64.AppImage
 sha256sum -c OpenUnderworld-*-x86_64.AppImage.sha256
 
-./OpenUnderworld-*-x86_64.AppImage            # launcher: pick the game directory, validate it, launch
-./OpenUnderworld-*-x86_64.AppImage game --game-dir "/path/to/Tomb Raider Underworld"            # play l4_pool
-./OpenUnderworld-*-x86_64.AppImage viewer --game-dir "/path/to/Tomb Raider Underworld" --level --drm 'pc-w\l4_pool.drm' --renderer vulkan
+./OpenUnderworld-*-x86_64.AppImage            # launcher: pick the game directory, validate it, Play (main menu)
+./OpenUnderworld-*-x86_64.AppImage game --game-dir "/path/to/Tomb Raider Underworld"            # main menu, New Game = chapter 0
+./OpenUnderworld-*-x86_64.AppImage viewer --game-dir "/path/to/Tomb Raider Underworld" --level --drm 'pc-w\l4_pool.drm'
 ./OpenUnderworld-*-x86_64.AppImage tools     # list the bundled tools (game viewer movie audio import asset text sign)
 ```
 
 - Controls in `game`: WASD/arrows move, Shift walk, Space jump/climb, Ctrl or C drop, mouse look, gamepad supported, Esc quits.
+- Graphics defaults: Vulkan (OpenGL fallback), Enhanced preset (4x MSAA, sun shadows, TRU's translated shaders) and ray-traced sun shadows where the GPU supports ray queries. Override with the launcher's Graphics tab or `--renderer auto|opengl|vulkan`, `--preset enhanced|original` (purist), `--rt auto|off|shadows|full`, `--brightness 0.5..2.0` ([docs/LAUNCHER.md](docs/LAUNCHER.md)).
 - Updates: the launcher's **Version & Updates** tab (or `--update`) replaces the AppImage in place with the newest signed release and keeps the old one as `.bak`. The manifest is signed with the project's Ed25519 key ([docs/UPDATES.md](docs/UPDATES.md)).
 - Requirements: x86_64 Linux with a current glibc/libstdc++ (built on Arch Linux), an OpenGL 4.6 or Vulkan 1.3 driver (Mesa works), and FUSE (or add `--appimage-extract-and-run`).
 - Unsigned test AppImages of every commit on main are available as artifacts of the `appimage` workflow on GitHub Actions.

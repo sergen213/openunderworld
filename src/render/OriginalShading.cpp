@@ -1,11 +1,13 @@
 #include "render/OriginalShading.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <map>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace ou::render::original {
 namespace {
@@ -49,16 +51,20 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     if (env.valid) put(f.ps, 15, env.ambient[0], env.ambient[1], env.ambient[2], 0); // g_Ambient
     put(f.ps, 53, time, dt, 0, 0);                   // TimeVectorPS
     put(f.ps, 54, 0, 0, (kFogRow + 0.5f) / kLutRows, 0); // HeightFogParams: no fog volumes -> (0, 0, fog row)
-    // IrradianceState (dynamic objects' SH ambient, c70-c76) [U: volumes not decoded]: constant term = g_Ambient.
-    for (int c = 0; c < 3; ++c) put(f.ps, 70 + 2 * c, 0, 0, 0, env.valid ? env.ambient[c] : 0);
+    // IrradianceState (dynamic objects' SH, c70-c76 = tru.exe 0x508570's layout: Red0/Green0/Blue0 = xy, xz, yz, zz
+    // terms, Red1.. = x, y, z, x²-y² terms, Base = constant). The engine builds the SH from the ambient (L00 =
+    // ambient · 1.128, 0x507D60) plus directional terms of lights it selects [U]; with the ambient alone the
+    // conversion leaves Base = ambient and every other term 0. The point/spot lights reach dynamic objects through
+    // their light set (slots 0-5) as on level geometry.
+    if (env.valid) put(f.ps, 76, env.ambient[0], env.ambient[1], env.ambient[2], 0);
     // GlobalParams: c140-c146 player position / bones (foliage interaction; unknown here, so far away),
     // c148/c149 light-map scale sets (default 1, 0x7731B0).
     for (int r = 140; r < 147; ++r) put(f.ps, r, 0, 0, -1e9f, 1); // ponytail: no player -> no foliage bending
     put(f.ps, 148, 1, 1, 1, 1);
     put(f.ps, 149, 1, 1, 1, 1);
     f.bools[0] = 0; // vs b0-15
-    // Sun = light slot 6 (c208 + 5*6): c209 direction, c212 colour (w = luminance), b6 (0x50A5F0, 0x5042B0). Its cookie
-    // (s11 via c176/c177) is not reproduced: white. Point/spot lights (slots 0-5, b0-b5) stay off [U placement masks].
+    // Sun = light slot 6 (c208 + 5*6): c209 direction, c212 colour (w = luminance), b6 (0x50A5F0, 0x5042B0).
+    fillLights(f, env, t);
     f.bools[1] = 0;
     if (env.valid && env.sun) {
         const float* c = env.sunColor;
@@ -66,14 +72,24 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
         put(f.ps, 212, c[0], c[1], c[2], 0.3f * c[0] + 0.6f * c[1] + 0.1f * c[2]);
         f.bools[1] |= 1u << 6;
     }
+    // WorldToModulationMapSun c176/c177 (sun cookie s11, 0x50B910 type 2): uv = light-space xy · 0.5 / (scale · 1000)
+    // + 0.5 + scroll, light space from the record's rows (X, Y) about its origin, rotated by rotation deg/s [I signs].
+    if (env.valid && env.sun && env.sunCookie) {
+        const float s = 0.5f / std::max(env.cookieScale * 1000.0f, 1e-3f);
+        const float a = glm::radians(env.cookieRotation * t), ca = std::cos(a), sa = std::sin(a);
+        const glm::vec3 x0 = glm::make_vec3(env.sunAxes[0]), y0 = glm::make_vec3(env.sunAxes[1]), o = glm::make_vec3(env.sunOrigin);
+        const glm::vec3 x = ca * x0 + sa * y0, y = ca * y0 - sa * x0;
+        put(f.ps, 176, s * x.x, s * x.y, s * x.z, -s * glm::dot(x, o) + 0.5f + std::fmod(env.cookieScroll[0] * t, 1.0f));
+        put(f.ps, 177, s * y.x, s * y.y, s * y.z, -s * glm::dot(y, o) + 0.5f + std::fmod(env.cookieScroll[1] * t, 1.0f));
+    }
     f.screen[0] = float(vp.width), f.screen[1] = float(vp.height);
     f.screen[2] = vp.width ? 1.0f / float(vp.width) : 0.0f, f.screen[3] = vp.height ? 1.0f / float(vp.height) : 0.0f;
 }
 
 void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene::SubMesh& sub) {
     std::memset(&m, 0, sizeof m);
-    std::memcpy(m.vs, mat.vsParams.data(), std::min(mat.vsParams.size(), size_t(4 * sm3::kMaterialVs)) * sizeof(float));
-    std::memcpy(m.ps, mat.psParams.data(), std::min(mat.psParams.size(), size_t(4 * sm3::kMaterialPs)) * sizeof(float));
+    std::copy_n(mat.vsParams.begin(), std::min(mat.vsParams.size(), size_t(4 * sm3::kMaterialVs)), &m.vs[0][0]);
+    std::copy_n(mat.psParams.begin(), std::min(mat.psParams.size(), size_t(4 * sm3::kMaterialPs)), &m.ps[0][0]);
     // PCStateManager_SetBlendMode 0x527A80 -> 0x527940 writes |ref| / 255 to c2: mode 1 the material threshold,
     // modes 2-6 ref 1, others 0. The fixed-function alpha test (ALPHAFUNC GREATEREQUAL) follows SubMesh::alphaRef.
     const int ref = mat.blendMode == 1 ? mat.alphaThreshold : (mat.blendMode >= 2 && mat.blendMode <= 6) ? 1 : 0;
@@ -84,19 +100,114 @@ void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene
     m.fixed[3] = float(((mat.flags & 4) ? 1 : 0) | ((mat.blendMode == 5 || mat.blendMode == 6) ? 2 : 0));
 }
 
-void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProj, const glm::mat4& model) {
+void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProj, const glm::mat4& model, LightSet lights) {
     putMatrix(o.v, 0, viewProj * model);
     putMatrix(o.v, 4, model);
+    o.lightSet[0] = lights.packed[0], o.lightSet[1] = lights.packed[1], o.lightSet[2] = o.lightSet[3] = ~0u;
 }
 
-EngineTexture attenuationLut() {
+std::vector<int> falloffRows(const scene::Environment& env) {
+    std::vector<int> rows;
+    std::map<std::vector<uint8_t>, int> unique;
+    for (const auto& l : env.lights) {
+        auto [it, fresh] = unique.try_emplace(l.falloff, int(unique.size()));
+        if (it->second >= kFogRow) it->second = 0; // ponytail: > 96 distinct curves share row 0
+        rows.push_back(l.falloff.size() == 256 ? it->second : -1);
+    }
+    return rows;
+}
+
+void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float t) {
+    // Light table: ShadowLights/NonShadowLights registers per light (PCRenderLight 0x50B910, uploaded per slot by
+    // 0x50A5F0): R0 position (spots: moved back to the cone apex), R1 direction, R2 (1/radius, 0, -apex/radius,
+    // falloff row v) -> AttenuationSampler u = (d - apex) / radius, R3 (cone scale, cone bias, apex plane, 0),
+    // R4 colour x intensity (w = luminance). Points: cone (0, 1) and apex plane -radius - 1 = never clipped.
+    const std::vector<int> rows = falloffRows(env);
+    const size_t n = std::min(env.lights.size(), size_t(sm3::kMaxLights)); // ponytail: first 64 lights of the scene
+    for (size_t i = 0; i < n; ++i) {
+        const scene::Light& l = env.lights[i];
+        float (*r)[4] = f.lights + i * sm3::kLightRegs;
+        const glm::vec3 dir = glm::make_vec3(l.direction);
+        const float radius = std::max(l.radius, 1.0f);
+        float apex = 0, scale = 0, bias = 1, plane = -radius - 1;
+        if (l.type == 1) {
+            // 0x50A280: scale = 1 / (cos(inner/2) - cos(outer/2)), bias = -cos(outer/2) · scale [I half angles];
+            // apex offset = near width / tan(outer/2) (0x50B910).
+            const float ci = std::cos(l.coneInner * 0.5f), co = std::cos(l.coneOuter * 0.5f);
+            scale = 1.0f / std::max(ci - co, 1e-4f), bias = -co * scale;
+            apex = l.nearWidth / std::max(std::tan(l.coneOuter * 0.5f), 1e-4f);
+            plane = apex;
+        }
+        // Flicker: intensity x curve[phase · 255] lerped, phase = frac(t / period) (0x50A500).
+        float k = 1;
+        if (l.flickerPeriod > 0 && l.flicker.size() == 256) {
+            const float p = std::fmod(t / l.flickerPeriod, 1.0f) * 255.0f;
+            const int i0 = int(p);
+            k = glm::mix(l.flicker[size_t(i0)], l.flicker[size_t(std::min(i0 + 1, 255))], p - float(i0));
+        }
+        const glm::vec3 pos = glm::make_vec3(l.position) - apex * dir, c = glm::make_vec3(l.color) * k;
+        const int row = rows[i] < 0 ? kLightRow : rows[i];
+        put(r, 0, pos.x, pos.y, pos.z, 1);
+        put(r, 1, dir.x, dir.y, dir.z, 0);
+        put(r, 2, 1.0f / radius, 0, -apex / radius, (float(row) + 0.5f) / kLutRows);
+        put(r, 3, scale, bias, plane, 0);
+        put(r, 4, c.x, c.y, c.z, 0.3f * c.x + 0.6f * c.y + 0.1f * c.z);
+    }
+    // WorldToModulationMapSpot c170-c175 (slots 0/1 cookies s12/s13, white: not bound per object): third row
+    // (0, 0, 0, 1) so the projective lookup divides by 1.
+    put(f.ps, 172, 0, 0, 0, 1);
+    put(f.ps, 175, 0, 0, 0, 1);
+}
+
+LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius) {
+    // tru.exe binds per drawable up to 3 shadow lights (slots 0-2, cookie + shadow map) and 3 others (3-5) (0x5042B0).
+    // Without spot cookies / light shadow maps both slot groups compute the same, so the strongest lights whose
+    // sphere reaches the object fill slots 0..5 in order (the PS nests slot n + 1 inside slot n) [I: the engine's
+    // selection rule and receiver masks (record +0x8C..+0xB7) are not decoded].
+    std::array<std::pair<float, int>, sm3::kLightSlots> best;
+    best.fill({0.0f, 255});
+    const size_t n = std::min(env.lights.size(), size_t(sm3::kMaxLights));
+    for (size_t i = 0; i < n; ++i) {
+        const scene::Light& l = env.lights[i];
+        const float d = glm::distance(glm::make_vec3(l.position), center) - radius;
+        if (d >= l.radius) continue;
+        const float w = (0.3f * l.color[0] + 0.6f * l.color[1] + 0.1f * l.color[2]) * (1.0f - std::max(d, 0.0f) / l.radius) + 1e-6f;
+        if (w <= best.back().first) continue;
+        best.back() = {w, int(i)};
+        std::sort(best.begin(), best.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    }
+    LightSet s{{~0u, ~0u}};
+    for (int k = 0; k < sm3::kLightSlots; ++k) {
+        s.packed[k >> 2] &= ~(0xFFu << (8 * (k & 3)));
+        s.packed[k >> 2] |= uint32_t(best[size_t(k)].second) << (8 * (k & 3));
+    }
+    return s;
+}
+
+glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat4& model) {
+    glm::vec3 lo(1e30f), hi(-1e30f);
+    for (const auto& v : vertices) {
+        const glm::vec3 p(model * glm::vec4(v.position[0], v.position[1], v.position[2], 1.0f));
+        lo = glm::min(lo, p), hi = glm::max(hi, p);
+    }
+    if (vertices.empty()) return glm::vec4(0);
+    return glm::vec4((lo + hi) * 0.5f, glm::length(hi - lo) * 0.5f);
+}
+
+EngineTexture attenuationLut(const scene::Environment& env) {
     EngineTexture t{kLutWidth, kLutRows, std::vector<uint8_t>(size_t(kLutWidth) * kLutRows * 4, 0)};
+    std::vector<const std::vector<uint8_t>*> curves(kFogRow, nullptr);
+    const std::vector<int> rows = falloffRows(env);
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (rows[i] >= 0) curves[size_t(rows[i])] = &env.lights[i].falloff;
     for (int y = 0; y < kLutRows; ++y)
         for (int x = 0; x < kLutWidth; ++x) {
             uint8_t* p = &t.rgba[(size_t(y) * kLutWidth + x) * 4];
             // Fog row: the engine's default curve is the identity ramp k -> k in R and G (0x512CF0): linear fog.
-            // Light rows: falloff curves per light resource (lightRes+0x448) [U]; a linear falloff stands in.
-            const int v = y == kFogRow ? x : y >= kLightRow && y < kFogRow ? 255 - x : 0;
+            // Light rows: each distinct light falloff curve (Light::falloff, 0x50AFB0); unused rows linear.
+            int v = 0;
+            if (y == kFogRow) v = x;
+            else if (y < kFogRow) v = curves[size_t(y)] ? (*curves[size_t(y)])[size_t(x)] : 255 - x;
             p[0] = p[1] = uint8_t(v);
             p[3] = 255;
         }
@@ -115,10 +226,7 @@ Prepared prepare(const scene::SceneData& scene, bool vulkan) {
         sm3::Glsl g;
         try {
             const auto prog = formats::d3d9::parse(std::span<const uint8_t>(c->second->bytecode));
-            // Dynamic-object lighting (IrradianceState SH from irradiance volumes + the unit/cinematic light rig) is not
-            // fed yet: such materials (Lara, enemies, cutscene actors) would render near black, so they stay generic.
-            if (prog.constant("IrradianceStateBase")) g.error = "needs irradiance-volume lighting (not decoded)";
-            else g = sm3::translate(prog, vulkan);
+            g = sm3::translate(prog, vulkan);
         } catch (const std::exception& e) {
             g.error = e.what();
         }

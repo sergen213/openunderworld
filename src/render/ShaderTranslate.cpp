@@ -28,13 +28,15 @@ const char* kPrelude = R"(#version 450
 #define OU_SAMPLER(n) layout(binding = n)
 #define OU_DFDY_SIGN -1.0
 #endif
-OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; } ouFrame;
+OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[320]; } ouFrame;
 OU_UBO(1, 0, 1) uniform OuMaterial { vec4 vs[40]; vec4 ps[40]; vec4 fixedParams; } ouMat;
 #ifdef OU_VULKAN
-layout(push_constant) uniform OuObject { vec4 v[8]; } ouObj;
+layout(push_constant) uniform OuObject { vec4 v[8]; uvec4 lightSet; } ouObj;
 #else
-layout(std140, binding = 2) uniform OuObject { vec4 v[8]; } ouObj;
+layout(std140, binding = 2) uniform OuObject { vec4 v[8]; uvec4 lightSet; } ouObj;
 #endif
+// Light table index of PS light slot s (0-5), 255 = slot empty.
+#define OU_LIGHT(s) ((ouObj.lightSet[(s) >> 2] >> (8u * uint((s) & 3))) & 255u)
 )";
 
 std::string flt(uint32_t bits) {
@@ -118,6 +120,8 @@ public:
         // Stage interface.
         std::string pre, post;
         if (!p_.pixel) {
+            // The RT depth pre-pass and the colour pass run this program in two pipelines (equal depth required).
+            h += "invariant gl_Position;\n";
             for (const auto& [n, d] : inputs_) {
                 const int loc = attributeLocation(d->usage, d->usageIndex);
                 if (loc >= 0) {
@@ -156,9 +160,13 @@ public:
                        "(OU_DFDY_SIGN > 0.0 ? gl_FragCoord.y : ouFrame.screen.y - gl_FragCoord.y) - 0.5, 0.0, 0.0);\n";
             if (misc_.count(1)) pre += "    vec4 vFace = vec4(gl_FrontFacing ? 1.0 : -1.0);\n";
             h += "layout(location = 0) out vec4 ouColor;\n";
+            // Sun shadow / RT hooks (render/sun.glsl, defined by the backend with OU_SUN): first thing in main and before
+            // the alpha test; SunLight colour reads (c212) are scaled by the visibility.
+            h += "#ifdef OU_SUN\nfloat ouSunBegin(bool sunLit);\nvec4 ouSunEnd(vec4 c);\n#endif\n";
             for (unsigned n = 0; n < std::max(colorOuts_, 1u); ++n) pre += "    vec4 oC" + std::to_string(n) + " = vec4(0.0);\n";
             if (depthOut_) pre += "    vec4 oDepth = vec4(gl_FragCoord.z);\n";
             post += "    ouColor = oC0;\n"
+                    "#ifdef OU_SUN\n    ouColor = ouSunEnd(ouColor);\n#endif\n"
                     "    if (ouMat.fixedParams.z >= 0.0 && ouColor.a < ouMat.fixedParams.z) discard; // D3DRS_ALPHAREF test\n";
             if (depthOut_) post += "    gl_FragDepth = oDepth.x;\n";
         }
@@ -185,6 +193,9 @@ public:
             body += ind + line + "\n";
             if (in.op == If || in.op == IfC || in.op == Loop || in.op == Rep || in.op == Else) ++depth;
         }
+        if (p_.pixel) // after the body: statement() set out_.sunLit
+            pre = std::string("#ifdef OU_SUN\n    float ouSunVis = ouSunBegin(") + (out_.sunLit ? "true" : "false") +
+                  ");\n#else\n    const float ouSunVis = 1.0;\n#endif\n" + pre;
         return h + "void main() {\n" + pre + body + post + "}\n";
     }
 
@@ -212,8 +223,16 @@ private:
         if (n >= unsigned(kMaterialPsBase) && n < unsigned(kMaterialPsBase + kMaterialPs))
             return "ouMat.ps[" + std::to_string(n - kMaterialPsBase) + "]";
         if (n >= unsigned(kFramePs)) throw Fail("PS constant out of range");
+        // Shadow/NonShadowLights: 5 registers per slot from the object's light set (ShaderTranslate.hpp).
+        if (n >= unsigned(kLightSlotBase) && n < unsigned(kLightSlotBase + kLightSlots * kLightRegs)) {
+            const unsigned k = n - kLightSlotBase;
+            return "ouFrame.lights[min(OU_LIGHT(" + std::to_string(k / kLightRegs) + "), " + std::to_string(kMaxLights - 1) +
+                   "u) * 5u + " + std::to_string(k % kLightRegs) + "u]";
+        }
         // FogColor: 0 for the additive blend modes 5/6 (tru.exe 0x5066A0).
         if (n == 0) return "((int(ouMat.fixedParams.w) & 2) != 0 ? vec4(0.0) : ouFrame.ps[0])";
+        // SunLight colour (slot 6, c208 + 4): times the sun visibility (shadow map / rays) of OU_SUN builds.
+        if (n == 212) return out_.sunLit = true, "(ouFrame.ps[212] * ouSunVis)";
         return "ouFrame.ps[" + std::to_string(n) + "]";
     }
 
@@ -257,6 +276,7 @@ private:
 
     std::string boolExpr(unsigned n) const {
         if (const auto it = boolDefs_.find(n); it != boolDefs_.end()) return it->second->value[0] ? "true" : "false";
+        if (p_.pixel && n < unsigned(kLightSlots)) return "OU_LIGHT(" + std::to_string(n) + ") != 255u";
         return std::string("((ouFrame.bools.") + (p_.pixel ? "y" : "x") + " >> " + std::to_string(n) + "u) & 1u) != 0u";
     }
 

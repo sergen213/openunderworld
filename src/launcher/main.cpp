@@ -1,5 +1,6 @@
 // ou-launcher: Qt 6 Widgets front end. Writes $XDG_CONFIG_HOME/openunderworld/config.json and starts
-// ou-viewer --config <that file>. Reads the game directory only (ou_importer); never writes to it.
+// ou-game --config <that file> (Play: main menu, New Game = chapter 0) or ou-viewer --config <that file> (Viewer).
+// Reads the game directory only (ou_importer); never writes to it.
 // No Q_OBJECT classes (lambdas only), so no moc. Notes: docs/LAUNCHER.md.
 #include "config/Config.hpp"
 #include "importer/Importer.hpp"
@@ -53,6 +54,20 @@ QString q(const std::string& s) { return QString::fromStdString(s); }
 QString q(const fs::path& p) { return QString::fromStdString(p.string()); }
 QString q(const char* t) { return QString::fromUtf8(t); }
 std::string s(const QString& t) { return t.toStdString(); }
+
+// "Preset default" / "On" / "Off" for an optional<bool> override.
+QComboBox* overrideCombo(std::optional<bool> v) {
+    auto* c = new QComboBox;
+    c->addItem("Preset default", QVariant());
+    c->addItem("On", true);
+    c->addItem("Off", false);
+    c->setCurrentIndex(!v ? 0 : *v ? 1 : 2);
+    return c;
+}
+std::optional<bool> overrideValue(const QComboBox* c) {
+    QVariant d = c->currentData();
+    return d.isValid() ? std::optional(d.toBool()) : std::nullopt;
+}
 
 struct Paths {
     fs::path config = ou::config::defaultConfigPath();
@@ -154,16 +169,25 @@ public:
         tabs_->addTab(updatesPage(), "Version && Updates");
 
         auto* save = new QPushButton("Save settings");
-        auto* launch = new QPushButton("Launch");
-        launch->setDefault(true);
+        auto* viewer = new QPushButton("Viewer");
+        viewer->setToolTip("Start ou-viewer (debug fly camera over the start level / DRM)");
+        auto* play = new QPushButton("Play");
+        play->setToolTip("Start ou-game at the main menu (New Game starts chapter 0)");
+        play->setDefault(true);
         status_ = new QLabel;
         status_->setWordWrap(true);
         connect(save, &QPushButton::clicked, this, [this] { saveConfig(); });
-        connect(launch, &QPushButton::clicked, this, [this] { launchViewer(); });
+        connect(viewer, &QPushButton::clicked, this, [this] { launch("ou-viewer"); });
+        connect(play, &QPushButton::clicked, this, [this] {
+            collect();
+            if (cfg_.gameDir.empty()) { status_->setText("Pick the game directory on the Game tab first."); return; }
+            launch("ou-game");
+        });
         auto* bar = new QHBoxLayout;
         bar->addWidget(status_, 1);
         bar->addWidget(save);
-        bar->addWidget(launch);
+        bar->addWidget(viewer);
+        bar->addWidget(play);
         auto* lay = new QVBoxLayout(this);
         lay->addWidget(tabs_);
         lay->addLayout(bar);
@@ -189,9 +213,9 @@ private:
     QCheckBox *hashFiles_, *fullscreen_, *vsync_, *updatesEnabled_;
     QPushButton* scanBtn_;
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
-    QComboBox *renderer_, *channel_;
+    QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
     QSpinBox *width_, *height_;
-    QDoubleSpinBox* fov_;
+    QDoubleSpinBox *fov_, *brightness_;
     QListWidget *pads_, *backups_;
     QLabel *updateStatus_, *versionLabel_;
 
@@ -260,9 +284,47 @@ private:
     QWidget* graphicsPage() {
         auto* w = new QWidget;
         renderer_ = new QComboBox;
-        renderer_->addItem("OpenGL 4.6", "opengl");
+        renderer_->addItem("Auto (Vulkan, else OpenGL)", "auto");
         renderer_->addItem("Vulkan", "vulkan");
+        renderer_->addItem("OpenGL 4.6", "opengl");
         renderer_->setCurrentIndex(std::max(0, renderer_->findData(q(cfg_.renderer))));
+        const auto& g = cfg_.graphics;
+        gfxPreset_ = new QComboBox;
+        gfxPreset_->addItem("Enhanced", "enhanced");
+        gfxPreset_->addItem("Original (purist)", "original");
+        gfxPreset_->setCurrentIndex(std::max(0, gfxPreset_->findData(q(g.preset))));
+        rt_ = new QComboBox;
+        rt_->addItem("Auto: shadows on capable GPUs", "auto");
+        rt_->addItem("Off", "off");
+        rt_->addItem("Shadows", "shadows");
+        rt_->addItem("Shadows + water reflections", "full");
+        rt_->setCurrentIndex(std::max(0, rt_->findData(q(g.rt))));
+        rtQuality_ = new QComboBox;
+        rtQuality_->addItem("Low (1 ray/pixel)", "low");
+        rtQuality_->addItem("Medium (2 rays/pixel)", "medium");
+        rtQuality_->addItem("High (4 rays/pixel)", "high");
+        rtQuality_->setCurrentIndex(std::max(0, rtQuality_->findData(q(g.rtQuality))));
+        auto rtEnable = [this] { // RT needs the enhanced preset
+            bool on = gfxPreset_->currentData().toString() == "enhanced";
+            rt_->setEnabled(on);
+            rtQuality_->setEnabled(on);
+        };
+        connect(gfxPreset_, &QComboBox::currentIndexChanged, this, rtEnable);
+        rtEnable();
+        msaa_ = new QComboBox;
+        msaa_->addItem("Preset default", 0);
+        for (int n : {1, 2, 4, 8}) msaa_->addItem(QString("%1x").arg(n), n);
+        msaa_->setCurrentIndex(std::max(0, msaa_->findData(g.msaa)));
+        shadows_ = overrideCombo(g.shadows);
+        shaders_ = new QComboBox;
+        shaders_->addItem("Original TRU shaders");
+        shaders_->addItem("Generic");
+        shaders_->setCurrentIndex(g.originalShaders == std::optional(false) ? 1 : 0);
+        brightness_ = new QDoubleSpinBox;
+        brightness_->setRange(0.5, 2.0);
+        brightness_->setSingleStep(0.05);
+        brightness_->setDecimals(2);
+        brightness_->setValue(g.brightness);
         width_ = new QSpinBox;
         height_ = new QSpinBox;
         width_->setRange(320, 16384);
@@ -299,6 +361,15 @@ private:
         f->addRow("Field of view", fov_);
         f->addRow("", vsync_);
         f->addRow("Start level (DRM)", drm_);
+        f->addRow(new QLabel("<b>Graphics</b>"));
+        f->addRow("Preset", gfxPreset_);
+        f->addRow("Ray tracing", rt_);
+        f->addRow("RT quality", rtQuality_);
+        f->addRow("MSAA", msaa_);
+        f->addRow("Sun shadows", shadows_);
+        f->addRow("Shaders", shaders_);
+        f->addRow("Brightness", brightness_);
+        f->addRow("", new QLabel("Like the original game's brightness option; 1.00 = neutral."));
         return w;
     }
 
@@ -436,19 +507,21 @@ private:
                  .arg(SDL_VERSIONNUM_MAJOR(SDL_GetVersion())).arg(SDL_VERSIONNUM_MINOR(SDL_GetVersion())).arg(SDL_VERSIONNUM_MICRO(SDL_GetVersion()));
         r << "OS: " + QSysInfo::prettyProductName() + ", kernel " + QSysInfo::kernelVersion() + ", " + QSysInfo::currentCpuArchitecture();
         r << "Session: " + qEnvironmentVariable("XDG_SESSION_TYPE") + " / " + QGuiApplication::platformName();
-        r << "Viewer: " + q(viewerPath());
+        r << "Game: " + q(toolPath("ou-game"));
+        r << "Viewer: " + q(toolPath("ou-viewer"));
         r << "Updater: installed " + q(ou::update::installedVersion(paths_.installRoot).value_or("none")) + " at " + q(paths_.installRoot) +
                  (ou::update::releasePublicKey() ? ", release key compiled in" : ", NO release key compiled in");
         r << "\n--- config (" + q(paths_.config) + ") ---";
         std::ifstream cf(paths_.config);
         r << (cf ? QString::fromStdString(std::string(std::istreambuf_iterator<char>(cf), {})) : QString("(not saved yet)"));
         r << "--- last import scan ---" << (lastScanSummary_.isEmpty() ? "(none this session)" : lastScanSummary_);
-        // Newest viewer log, last 60 lines.
+        // Newest game/viewer log, last 60 lines.
         fs::path newest;
         std::error_code ec;
         for (const auto& e : fs::directory_iterator(paths_.logs, ec))
-            if (e.path().extension() == ".log" && (newest.empty() || e.path().filename() > newest.filename())) newest = e.path();
-        r << "--- newest viewer log: " + (newest.empty() ? QString("(none)") : q(newest)) + " ---";
+            if (e.path().extension() == ".log" && (newest.empty() || e.last_write_time(ec) > fs::last_write_time(newest, ec)))
+                newest = e.path();
+        r << "--- newest log: " + (newest.empty() ? QString("(none)") : q(newest)) + " ---";
         if (!newest.empty()) {
             std::ifstream lf(newest);
             QStringList lines;
@@ -561,10 +634,25 @@ private:
         cfg_.updatesEnabled = updatesEnabled_->isChecked();
         cfg_.updateChannel = s(channel_->currentText().trimmed());
         cfg_.updateManifestUrl = s(manifestUrl_->text().trimmed());
+        auto& g = cfg_.graphics;
+        g.preset = s(gfxPreset_->currentData().toString());
+        // RT needs the enhanced preset: "auto" resolves to off for original, so resolve() never throws.
+        g.rt = rt_->isEnabled() ? s(rt_->currentData().toString()) : "auto";
+        g.rtQuality = s(rtQuality_->currentData().toString());
+        g.msaa = msaa_->currentData().toInt();
+        g.shadows = overrideValue(shadows_);
+        g.originalShaders = shaders_->currentIndex() == 1 ? std::optional(false) : std::nullopt; // unset = original
+        g.brightness = float(brightness_->value());
     }
 
     bool saveConfig() {
         collect();
+        try {
+            ou::config::resolve(cfg_.graphics); // the apps reject what this rejects
+        } catch (const std::exception& e) {
+            status_->setText("Not saved: " + q(e.what()));
+            return false;
+        }
         try {
             ou::config::save(paths_.config, cfg_);
             status_->setText("Saved " + q(paths_.config));
@@ -576,25 +664,27 @@ private:
     }
 
     // Updater-managed copy first (not when running as an AppImage), then the binary next to this launcher, then $PATH.
-    fs::path viewerPath() const {
-        fs::path managed = paths_.appImage.empty() ? paths_.installRoot / "current/bin/ou-viewer" : fs::path();
-        for (fs::path p : {managed, fs::path(s(QCoreApplication::applicationDirPath())) / "ou-viewer"})
+    fs::path toolPath(const char* name) const {
+        fs::path managed = paths_.appImage.empty() ? paths_.installRoot / "current/bin" / name : fs::path();
+        for (fs::path p : {managed, fs::path(s(QCoreApplication::applicationDirPath())) / name})
             if (!p.empty() && ::access(p.c_str(), X_OK) == 0) return p;
-        return "ou-viewer";
+        return name;
     }
 
-    void launchViewer() {
+    // Saves the config, then starts `name` (ou-game / ou-viewer) --config <it>, logging to logs/<game|viewer>-<time>.log.
+    void launch(const char* name) {
         if (!saveConfig()) return;
         fs::create_directories(paths_.logs);
-        fs::path log = paths_.logs / s("viewer-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".log");
+        fs::path log = paths_.logs / s(q(name).mid(3) + "-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".log");
+        const fs::path bin = toolPath(name);
         QProcess p;
-        p.setProgram(q(viewerPath()));
+        p.setProgram(q(bin));
         p.setArguments({"--config", q(paths_.config)});
         p.setStandardOutputFile(q(log));
         p.setStandardErrorFile(q(log));
         qint64 pid = 0;
-        if (p.startDetached(&pid)) status_->setText(QString("Started ou-viewer (pid %1), log %2").arg(pid).arg(q(log)));
-        else status_->setText("Could not start " + q(viewerPath()));
+        if (p.startDetached(&pid)) status_->setText(QString("Started %1 (pid %2), log %3").arg(name).arg(pid).arg(q(log)));
+        else status_->setText("Could not start " + q(bin));
     }
 };
 

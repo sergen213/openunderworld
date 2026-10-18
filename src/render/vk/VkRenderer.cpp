@@ -92,13 +92,14 @@ void check(VkResult r, const char* what) {
 #define VK_CHECK(x) check((x), #x)
 
 struct ScenePush {
-    glm::mat4 viewProj, model, lightViewProj;
-    int32_t lighting, shadows;
+    glm::mat4 viewProj, model;
+    int32_t lighting;
     float alphaRef;
-    int32_t rt;     // scene.frag: bit 0 RT sun shadows, bit 1 reflective draw, bits 8-15 rays per pixel
-    glm::vec4 eye;  // camera position (RT reflections)
+    int32_t rt; // scene.frag: bit 0 RT sun shadows, bit 1 reflective draw (sun, eye, rays: sun.glsl OuShadow)
+    int32_t pad;
 };
-static_assert(offsetof(ScenePush, eye) == 208, "std430 push block: vec4 at 16-byte offset");
+static_assert(sizeof(ScenePush) == 144);
+static_assert(sizeof(scene::Vertex) == 18 * 4, "render/sun.glsl kOuVertexWords (ray-traced vertex fetches)");
 
 // scene.frag `Geom`: one per BLAS geometry, indexed by instance custom index + geometry index.
 struct RtGeometry {
@@ -221,7 +222,8 @@ struct GpuMesh {
     std::vector<scene::SubMesh> submeshes;
     size_t vertexCount = 0;
     glm::mat4 model;
-    glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting)
+    glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting; light sets with `radius`)
+    float radius = 0.0f;    // world-space bounding-sphere radius (original::lightSet)
     // Ray tracing (empty without RT support): one BLAS geometry per traced submesh (Opaque + Alpha
     // blends, as the shadow map). Skinned meshes are refitted, others rebuilt, on updateVertices.
     bool skinned = false, water = false;
@@ -416,8 +418,8 @@ public:
             // [I] Water surfaces are objects named *watersurface* (l4_pool: ca_goo_pool_watersurface, the
             // surface intro of its watervolume, docs/GAMEPLAY.md "Water"); their meshes get RT reflections.
             g.water = m.origin.find("watersurface") != std::string::npos;
-            const Bounds b = meshBounds(m);
-            g.center = (b.lo + b.hi) * 0.5f;
+            const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
+            g.center = glm::vec3(sphere), g.radius = sphere.w;
             const VkDeviceSize vb = m.vertices.size() * sizeof(scene::Vertex), ib = m.indices.size() * sizeof(uint32_t);
             const VkBufferUsageFlags rtInput = rtStatus_.supported ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
                                                                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
@@ -432,6 +434,9 @@ public:
             meshSlot_[mi] = meshes_.size();
             meshes_.push_back(std::move(g));
         }
+        // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
+        const auto lut = original::attenuationLut(scene.environment);
+        batch.images.push_back({attenuation_.image, {{lut.rgba.data(), lut.rgba.size(), uint32_t(lut.width), uint32_t(lut.height)}}});
         flush(batch);
         uploadOriginals(scene, warnings);
         bounds_ = sceneBounds(scene);
@@ -448,6 +453,8 @@ public:
         GpuMesh& g = meshes_[meshSlot_[meshIndex]];
         if (vertices.size() != g.vertexCount) return false;
         UploadBatch batch;
+        const glm::vec4 sphere = original::boundingSphere(vertices, g.model); // skinned: follows the pose
+        g.center = glm::vec3(sphere), g.radius = sphere.w;
         batch.buffers.push_back({g.vertices.buffer, {vertices.data(), vertices.size_bytes(), 0, 0}});
         // Ray tracing: the BLAS follows in the same submission (refit when skinned, else rebuilt); the
         // TLAS is updated once per frame in drawFrame.
@@ -490,16 +497,15 @@ public:
         const bool rtOn = rtPipelines_ && tlas_ && options.rt != RayTracing::Off;
         const bool shadowMap = options.shadows || options.rt != RayTracing::Off;
         rtStatus_.active = rtOn;
-        ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), glm::mat4(1),
-                       options.lighting ? 1 : 0, shadowMap ? 1 : 0, 0.0f,
-                       rtOn ? 1 | std::clamp(options.rtRays, 1, 64) << 8 : 0, glm::vec4(camera.position, 1.0f)};
+        ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0, 0.0f, 0, 0};
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         drawOrder(meshes_, camera.position, order_);
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
-        if (shadowMap) {
-            push.lightViewProj = zRemap * shadowViewProj(camera, aspect, bounds_);
-            recordShadowPass(cmd, push.lightViewProj);
-        }
+        // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
+        const SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
+                                        shadowMap, rtOn ? (options.rt == RayTracing::Full ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
+        std::memcpy(shadowUbo_[frameIndex_].mapped, &sun.block, sizeof sun.block); // host-coherent
+        if (shadowMap) recordShadowPass(cmd, sun, zRemap);
 
         const VkImage target = swapImages_[imageIndex_];
         constexpr VkPipelineStageFlags2 kDepthStages =
@@ -562,11 +568,55 @@ public:
             vkCmdBindIndexBuffer(cmd, meshes_[mesh].indices.buffer, 0, VK_INDEX_TYPE_UINT32);
             boundMesh = mesh;
         };
+        // Original Fidelity: translated TRU shaders where a submesh's material has them, with the sun shadow / RT hooks.
+        const bool originals = options.originalShaders && !origPrograms_.empty();
+        const glm::mat4 viewProjD3D = original::viewProjD3D(camera, aspect);
+        if (originals) {
+            sm3::FrameBlock fb;
+            original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_);
+            std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
+        }
+        // Sets shared by every draw of a pipeline layout (binding with the other layout disturbs them).
+        enum class Bound { None, Generic, Original } layout = Bound::None;
+        auto useGeneric = [&] {
+            if (layout == Bound::Generic) return;
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 1, 1, &shadowSets_[frameIndex_], 0, nullptr);
+            if (rtOn) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 2, 1, &rtSet_, 0, nullptr);
+            layout = Bound::Generic;
+        };
+        auto drawOriginal = [&](const DrawRef& d, const OrigDraw& od, VkPipeline p) {
+            if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
+            if (layout != Bound::Original) {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 0, 1, &origFrameSet_[frameIndex_], 0, nullptr);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 2, 1, &shadowSets_[frameIndex_], 0, nullptr);
+                if (rtOn) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 3, 1, &rtSet_, 0, nullptr);
+                layout = Bound::Original;
+            }
+            const GpuMesh& m = meshes_[d.mesh];
+            const scene::SubMesh& s = m.submeshes[d.sub];
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 1, 1, &od.set, 0, nullptr);
+            sm3::ObjectBlock ob;
+            original::fillObject(ob, viewProjD3D, m.model, original::lightSet(environment_, m.center, m.radius));
+            vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
+            bindMesh(d.mesh);
+            vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+        };
+        auto origDraw = [&](const DrawRef& d) -> const OrigDraw* {
+            const OrigDraw* od = originals ? &origDraws_[d.mesh][d.sub] : nullptr;
+            return od && od->program >= 0 ? od : nullptr;
+        };
         if (rtPipelines_) { // RT depth pre-pass over the opaque submeshes (they are first in order_)
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = prepassPipeline_);
             for (const DrawRef& d : order_) {
                 const scene::SubMesh& s = meshes_[d.mesh].submeshes[d.sub];
                 if (s.blend != scene::Blend::Opaque) break;
+                // Translated programs pre-pass with their own (invariant) VS and plain PS (its alpha test, no sun term).
+                if (const OrigDraw* od = origDraw(d)) {
+                    drawOriginal(d, *od, origPipeline(od->program, kOrigPrepass, s.blend));
+                    continue;
+                }
+                if (prepassPipeline_ != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = prepassPipeline_);
+                layout = Bound::None; // set 0 of sceneLayout_ below disturbs the translated programs' sets
                 bindMesh(d.mesh);
                 push.model = meshes_[d.mesh].model;
                 push.alphaRef = s.alphaRef / 255.0f;
@@ -577,52 +627,23 @@ public:
                 vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
             }
         }
-        auto bindGenericSets = [&] {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 1, 1, &shadowSet_, 0, nullptr);
-            if (rtPipelines_ && tlas_) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 2, 1, &rtSet_, 0, nullptr);
-        };
-        bindGenericSets();
-        // Original Fidelity: translated TRU shaders where a submesh's material has them (not with the RT pre-pass).
-        const bool originals = options.originalShaders && !rtPipelines_ && !origPrograms_.empty();
-        const glm::mat4 viewProjD3D = original::viewProjD3D(camera, aspect);
-        if (originals) {
-            sm3::FrameBlock fb;
-            original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_);
-            std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
-        }
-        bool genericBound = true; // sceneLayout_ sets 1-2 bound (switching layouts disturbs them)
-        const int32_t rtFlags = push.rt;
         for (const DrawRef& d : order_) {
             const GpuMesh& m = meshes_[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
-            if (originals) {
-                const OrigDraw& od = origDraws_[d.mesh][d.sub];
-                if (const VkPipeline op = od.program >= 0 ? origPipeline(od.program, s.blend) : VK_NULL_HANDLE) {
-                    if (op != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = op);
-                    if (genericBound) {
-                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 0, 1, &origFrameSet_[frameIndex_], 0, nullptr);
-                        genericBound = false;
-                    }
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 1, 1, &od.set, 0, nullptr);
-                    sm3::ObjectBlock ob;
-                    original::fillObject(ob, viewProjD3D, m.model);
-                    vkCmdPushConstants(cmd, origLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof ob, &ob);
-                    bindMesh(d.mesh);
-                    vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
-                    vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
-                    continue;
-                }
+            // Rays on opaque surfaces (pre-passed: each visible pixel traces once) and on water for reflections.
+            const bool reflective = rtOn && m.water && options.rt == RayTracing::Full;
+            const bool rays = rtOn && (s.blend == scene::Blend::Opaque || reflective);
+            if (const OrigDraw* od = origDraw(d)) {
+                drawOriginal(d, *od, origPipeline(od->program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, s.blend));
+                continue;
             }
-            if (!genericBound) {
-                bindGenericSets();
-                genericBound = true;
-            }
+            useGeneric();
             const VkPipeline p = scenePipelines_[size_t(s.blend)];
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             bindMesh(d.mesh);
             push.model = m.model;
             push.alphaRef = s.alphaRef / 255.0f;
-            push.rt = (s.blend == scene::Blend::Opaque ? rtFlags : 0) | (rtOn && m.water && options.rt == RayTracing::Full ? 2 : 0);
+            push.rt = (rtOn && s.blend == scene::Blend::Opaque ? 1 : 0) | (reflective ? 2 : 0);
             vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
             vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
             const VkDescriptorSet set = textureSet(s.textureId);
@@ -673,9 +694,9 @@ public:
         const VkViewport upright{0, 0, float(extent_.width), float(extent_.height), 0, 1};
         vkCmdSetViewport(cmd, 0, 1, &upright);
         vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
-        const int32_t post[2] = {options.fxaa ? 1 : 0, options.hdr ? 1 : 0};
+        struct { int32_t fxaa, hdr; float brightness; } post{options.fxaa ? 1 : 0, options.hdr ? 1 : 0, options.brightness};
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeline_);
-        vkCmdPushConstants(cmd, postLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof post, post);
+        vkCmdPushConstants(cmd, postLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof post, &post);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 0, 1, &postSet_, 0, nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
 
@@ -811,6 +832,7 @@ public:
             destroyImage(attenuation_);
             destroyImage(blackCube_);
             for (auto& b : origFrameUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
+            for (auto& b : shadowUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             vkDestroyDescriptorPool(device_, std::exchange(origStaticPool_, VK_NULL_HANDLE), nullptr);
             vkDestroyPipelineLayout(device_, std::exchange(origLayout_, VK_NULL_HANDLE), nullptr);
             for (VkDescriptorSetLayout* l : {&origFrameLayout_, &origMatLayout_})
@@ -821,6 +843,7 @@ public:
             for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
             for (auto& m : lineMemory_) m.reset();
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
+            vkDestroyDescriptorSetLayout(device_, std::exchange(shadowSetLayout_, VK_NULL_HANDLE), nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(rtSetLayout_, VK_NULL_HANDLE), nullptr);
             for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_}) vkDestroySampler(device_, s, nullptr);
             vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
@@ -847,24 +870,39 @@ public:
 
 private:
     // ---- Original Fidelity (translated TRU shaders, docs/formats/SHADERS.md) ----
+    // Pixel shader variants: plain (no sun term; RT depth pre-pass), cascaded shadow map, ray-traced sun + water
+    // reflections (render/sun.glsl via originalPixelSource). Pipelines: [variant][scene::Blend], pre-pass at [kOrigPrepass][0].
+    enum OrigVariant { kOrigPlain, kOrigShadowMap, kOrigRays, kOrigPrepass };
     struct OrigProgram {
-        std::vector<uint32_t> vs, ps;        // SPIR-V (libshaderc at upload)
-        uint8_t attributes = 0;              // vertex attribute locations the VS reads
-        std::array<VkPipeline, 4> pipelines{}; // by scene::Blend, created on first use
+        std::vector<uint32_t> vs;                  // SPIR-V (libshaderc at upload)
+        std::string psGlsl;                        // translated pixel shader
+        std::array<std::vector<uint32_t>, 3> ps;   // per OrigVariant (plain at upload, the others on first use)
+        uint8_t attributes = 0;                    // vertex attribute locations the VS reads
+        std::array<std::array<VkPipeline, 4>, 4> pipelines{}; // created on first use
     };
     struct OrigDraw {
         int program = -1; // origPrograms_ index, -1 = generic shading
         VkDescriptorSet set = VK_NULL_HANDLE;
     };
 
-    VkPipeline origPipeline(int program, scene::Blend blend) {
-        VkPipeline& p = origPrograms_[size_t(program)].pipelines[size_t(blend)];
+    VkPipeline origPipeline(int program, OrigVariant variant, scene::Blend blend) {
+        OrigProgram& o = origPrograms_[size_t(program)];
+        VkPipeline& p = o.pipelines[variant][variant == kOrigPrepass ? 0 : size_t(blend)];
         if (!p) {
-            const OrigProgram& o = origPrograms_[size_t(program)];
+            const int v = variant == kOrigPrepass ? kOrigPlain : variant;
+            if (o.ps[size_t(v)].empty()) {
+                std::string error;
+                o.ps[size_t(v)] = sm3::compileSpirv(originalPixelSource(o.psGlsl, true, v == kOrigRays), true, true, error);
+                if (o.ps[size_t(v)].empty()) { // keep drawing without the sun term
+                    std::fprintf(stderr, "[vk] original pixel shader with sun term: %s\n", error.c_str());
+                    o.ps[size_t(v)] = o.ps[kOrigPlain];
+                }
+            }
             std::vector<VkVertexInputAttributeDescription> attrs; // only consumed locations (validation-clean)
             for (const auto& a : kOriginalAttrs)
                 if (o.attributes >> a.location & 1) attrs.push_back(a);
-            p = createPipeline(o.vs, o.ps, origLayout_, &kSceneBinding, attrs, PipelineKind(blend), samples_, sceneFormat_,
+            p = createPipeline(o.vs, o.ps[size_t(v)], origLayout_, &kSceneBinding, attrs,
+                               variant == kOrigPrepass ? PipelineKind::Prepass : PipelineKind(blend), samples_, sceneFormat_,
                                depthFormat_);
         }
         return p;
@@ -872,7 +910,8 @@ private:
 
     void destroyOriginalPipelines() {
         for (auto& o : origPrograms_)
-            for (VkPipeline& p : o.pipelines) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
+            for (auto& byBlend : o.pipelines)
+                for (VkPipeline& p : byBlend) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
     }
 
     void destroyOriginalScene() {
@@ -895,8 +934,9 @@ private:
             OrigProgram o;
             o.attributes = p.vsGlsl.attributes;
             o.vs = sm3::compileSpirv(p.vsGlsl.source, false, true, error);
-            if (!o.vs.empty()) o.ps = sm3::compileSpirv(p.psGlsl.source, true, true, error);
-            ok.push_back(!o.ps.empty());
+            o.psGlsl = p.psGlsl.source;
+            if (!o.vs.empty()) o.ps[kOrigPlain] = sm3::compileSpirv(o.psGlsl, true, true, error);
+            ok.push_back(!o.ps[kOrigPlain].empty());
             if (!ok.back()) warnings.push_back("original program: " + error);
             origPrograms_.push_back(std::move(o));
         }
@@ -908,6 +948,7 @@ private:
             int program;
             uint32_t material, inst[4];
             uint8_t alphaRef;
+            bool water; // RT reflections (MaterialBlock::fixed[3] bit 2, sun.glsl ouSunEnd)
             auto operator<=>(const Key&) const = default;
         };
         std::map<Key, size_t> keys;
@@ -922,7 +963,7 @@ private:
                 size_t k = SIZE_MAX;
                 if (d.program >= 0) {
                     const Key key{d.program, s.materialId, {s.instanceTextures[0], s.instanceTextures[1], s.instanceTextures[2],
-                                                            s.instanceTextures[3]}, s.alphaRef};
+                                                            s.instanceTextures[3]}, s.alphaRef, meshes_[mi].water};
                     const auto [it, fresh] = keys.try_emplace(key, unique.size());
                     if (fresh) unique.push_back({key, &s});
                     k = it->second;
@@ -945,7 +986,9 @@ private:
         for (size_t u = 0; u < unique.size(); ++u) {
             const auto& [key, sub] = unique[u];
             const scene::Material& mat = *prep.materials.at(key.material);
-            original::fillMaterial(*reinterpret_cast<sm3::MaterialBlock*>(origMaterialUbo_.mapped + stride * u), mat, *sub);
+            auto& block = *reinterpret_cast<sm3::MaterialBlock*>(origMaterialUbo_.mapped + stride * u);
+            original::fillMaterial(block, mat, *sub);
+            if (key.water) block.fixed[3] = float(int(block.fixed[3]) | 4);
             const VkDescriptorBufferInfo bi{origMaterialUbo_.buffer, stride * u, sizeof(sm3::MaterialBlock)};
             std::array<VkDescriptorImageInfo, 16> ii;
             const sm3::Glsl& ps = prep.programs[size_t(key.program)].psGlsl;
@@ -955,6 +998,9 @@ private:
                 ii[size_t(n)] = {sceneSampler_, cube ? blackCube_.view : white_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
                 if (n == original::kAttenuationSampler && !cube)
                     ii[size_t(n)] = {postSampler_, attenuation_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                if (n == original::kSunCookieSampler && !cube && environment_.sunCookie)
+                    if (const auto it = textures_.find(environment_.sunCookie); it != textures_.end() && !it->second.cube)
+                        ii[size_t(n)].imageView = it->second.view;
                 if (const uint32_t id = original::samplerTexture(mat, sub->instanceTextures, n))
                     if (const auto it = textures_.find(id); it != textures_.end() && it->second.cube == cube)
                         ii[size_t(n)].imageView = it->second.view;
@@ -1005,9 +1051,9 @@ private:
         vkDestroyPipeline(device_, std::exchange(linePipeline_, VK_NULL_HANDLE), nullptr);
     }
 
-    // Sun shadow map: opaque and alpha-blended submeshes (the latter alpha-tested at 50 %), both
-    // faces, slope-scaled bias baked into the pipeline. Upright viewport: uv = ndc * 0.5 + 0.5.
-    void recordShadowPass(VkCommandBuffer cmd, const glm::mat4& lightViewProj) {
+    // Sun shadow atlas, one tile per cascade: opaque and alpha-blended submeshes (the latter alpha-tested at 50 %),
+    // both faces, slope-scaled bias baked into the pipeline. Upright viewport: uv = ndc * 0.5 + 0.5.
+    void recordShadowPass(VkCommandBuffer cmd, const SunShadow& sun, const glm::mat4& zRemap) {
         constexpr VkPipelineStageFlags2 kDepthStages =
             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
         // WAR against the previous frame's sampling; contents are cleared.
@@ -1024,29 +1070,34 @@ private:
         depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth.clearValue.depthStencil = {1.0f, 0};
         VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-        ri.renderArea = {{0, 0}, {uint32_t(kShadowMapSize), uint32_t(kShadowMapSize)}};
+        ri.renderArea = {{0, 0}, {uint32_t(kShadowCascades * kShadowMapSize), uint32_t(kShadowMapSize)}};
         ri.layerCount = 1;
         ri.pDepthAttachment = &depth;
         vkCmdBeginRendering(cmd, &ri);
-        const VkViewport viewport{0, 0, float(kShadowMapSize), float(kShadowMapSize), 0, 1};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &ri.renderArea);
         vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
-        ScenePush push{lightViewProj, glm::mat4(1), glm::mat4(1), 0, 0, 0.0f, 0, glm::vec4(0.0f)};
-        for (const auto& m : meshes_) {
-            const VkDeviceSize zero = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
-            vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-            push.model = m.model;
-            for (const auto& s : m.submeshes) {
-                if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
-                push.alphaRef = (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f;
-                vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof push, &push);
-                const VkDescriptorSet set = textureSet(s.textureId);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
-                vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+        ScenePush push{};
+        for (int c = 0; c < kShadowCascades; ++c) {
+            const VkViewport viewport{float(c * kShadowMapSize), 0, float(kShadowMapSize), float(kShadowMapSize), 0, 1};
+            const VkRect2D tile{{c * kShadowMapSize, 0}, {uint32_t(kShadowMapSize), uint32_t(kShadowMapSize)}};
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &tile);
+            push.viewProj = zRemap * sun.lightViewProj[c];
+            // ponytail: every mesh into every cascade; cull by mesh bounds per cascade if the shadow pass shows up.
+            for (const auto& m : meshes_) {
+                const VkDeviceSize zero = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
+                vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                push.model = m.model;
+                for (const auto& s : m.submeshes) {
+                    if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
+                    push.alphaRef = (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f;
+                    vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                       sizeof push, &push);
+                    const VkDescriptorSet set = textureSet(s.textureId);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
+                    vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+                }
             }
         }
         vkCmdEndRendering(cmd);
@@ -1249,8 +1300,15 @@ private:
                                              nullptr};
         VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 1, &binding};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &dl, nullptr, &setLayout_));
-        // Scene: set 0 = material texture, set 1 = sun shadow map (comparison sampler), set 2 (RT devices
-        // only, used by scene_rt.frag) = TLAS, geometry records, bindless textures (partially bound).
+        // Scene: set 0 = material texture, set 1 = sun shadow (render/sun.glsl: atlas with comparison sampler + OuShadow
+        // UBO, per frame in flight), set 2 (RT devices only, used by scene_rt.frag) = TLAS, geometry records, bindless
+        // textures (partially bound).
+        const VkDescriptorSetLayoutBinding sb[2] = {
+            {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        };
+        VkDescriptorSetLayoutCreateInfo sl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, sb};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &sl, nullptr, &shadowSetLayout_));
         if (rtStatus_.supported) {
             constexpr VkShaderStageFlags fs = VK_SHADER_STAGE_FRAGMENT_BIT;
             const VkDescriptorSetLayoutBinding rb[3] = {
@@ -1264,10 +1322,10 @@ private:
             VkDescriptorSetLayoutCreateInfo rl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags, 0, 3, rb};
             VK_CHECK(vkCreateDescriptorSetLayout(device_, &rl, nullptr, &rtSetLayout_));
         }
-        const VkDescriptorSetLayout sceneSets[3] = {setLayout_, setLayout_, rtSetLayout_};
+        const VkDescriptorSetLayout sceneSets[3] = {setLayout_, shadowSetLayout_, rtSetLayout_};
         VkPushConstantRange scenePush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ScenePush)};
         VkPushConstantRange textPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(float)};
-        VkPushConstantRange postPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 2 * sizeof(int32_t)};
+        VkPushConstantRange postPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 2 * sizeof(int32_t) + sizeof(float)};
         VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 3u : 2u,
                                       sceneSets, 1, &scenePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &sceneLayout_));
@@ -1296,7 +1354,7 @@ private:
                                          PipelineKind::Shadow, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_UNDEFINED, shadowFormat_);
 
         // Original Fidelity register files (ShaderTranslate.hpp): set 0 = frame UBO, set 1 = material UBO + s0-s15,
-        // push constants = object block (vertex stage).
+        // set 2 = sun shadow (as the scene's set 1), set 3 = ray tracing (RT devices); push constants = object block.
         constexpr VkShaderStageFlags vf = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         const VkDescriptorSetLayoutBinding fb{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, vf, nullptr};
         VkDescriptorSetLayoutCreateInfo fl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 1, &fb};
@@ -1306,9 +1364,10 @@ private:
         for (uint32_t n = 0; n < 16; ++n) mb[n + 1] = {1 + n, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         VkDescriptorSetLayoutCreateInfo ml{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, uint32_t(mb.size()), mb.data()};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &ml, nullptr, &origMatLayout_));
-        const VkDescriptorSetLayout origSets[2] = {origFrameLayout_, origMatLayout_};
-        VkPushConstantRange objectPush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(sm3::ObjectBlock)};
-        VkPipelineLayoutCreateInfo ol{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 2, origSets, 1, &objectPush};
+        const VkDescriptorSetLayout origSets[4] = {origFrameLayout_, origMatLayout_, shadowSetLayout_, rtSetLayout_};
+        VkPushConstantRange objectPush{vf, 0, sizeof(sm3::ObjectBlock)};
+        VkPipelineLayoutCreateInfo ol{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 4u : 3u, origSets, 1,
+                                      &objectPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &ol, nullptr, &origLayout_));
     }
 
@@ -1447,15 +1506,33 @@ private:
         sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &shadowSampler_));
 
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
-        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 4, 1, &ps};
+        // post, white, font + the per-frame sun shadow sets (atlas + OuShadow UBO).
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 + kFramesInFlight},
+                                            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 3 + kFramesInFlight, 2, ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &staticPool_));
 
-        // Sun shadow map: always allocated so the scene pipelines' set 1 is valid; kept in
+        // Sun shadow atlas (kShadowCascades tiles side by side): always allocated so the shadow sets are valid; kept in
         // SHADER_READ_ONLY_OPTIMAL outside the shadow pass.
-        shadow_ = createImage(staticMemory_, shadowFormat_, kShadowMapSize, kShadowMapSize, 1,
+        shadow_ = createImage(staticMemory_, shadowFormat_, kShadowCascades * kShadowMapSize, kShadowMapSize, 1,
                               VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-        shadowSet_ = allocateSet(staticPool_, shadow_.view, shadowSampler_);
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            shadowUbo_[i] = createBuffer(staticMemory_, sizeof(SunShadowBlock), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VkDescriptorSetAllocateInfo sai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, staticPool_, 1, &shadowSetLayout_};
+            VK_CHECK(vkAllocateDescriptorSets(device_, &sai, &shadowSets_[i]));
+            const VkDescriptorImageInfo ii{shadowSampler_, shadow_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkDescriptorBufferInfo bi{shadowUbo_[i].buffer, 0, sizeof(SunShadowBlock)};
+            VkWriteDescriptorSet w[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+            w[0].dstSet = w[1].dstSet = shadowSets_[i];
+            w[0].descriptorCount = w[1].descriptorCount = 1;
+            w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w[0].pImageInfo = &ii;
+            w[1].dstBinding = 1;
+            w[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            w[1].pBufferInfo = &bi;
+            vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
+        }
         oneShot([&](VkCommandBuffer cmd) {
             const auto b = imageBarrier(shadow_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                         VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -1670,8 +1747,9 @@ private:
         if (!f12.bufferDeviceAddress || !f12.runtimeDescriptorArray || !f12.descriptorBindingPartiallyBound ||
             !f12.shaderSampledImageArrayNonUniformIndexing || !f.features.shaderInt64)
             return "missing bufferDeviceAddress/descriptor indexing/shaderInt64";
-        if (limits.maxPerStageDescriptorSampledImages < kMaxRtTextures + 2 || limits.maxPerStageDescriptorSamplers < kMaxRtTextures + 2 ||
-            limits.maxDescriptorSetSampledImages < kMaxRtTextures + 2 || limits.maxBoundDescriptorSets < 3)
+        // Translated programs: 16 material samplers + the shadow atlas next to the bindless array; 4 sets.
+        if (limits.maxPerStageDescriptorSampledImages < kMaxRtTextures + 18 || limits.maxPerStageDescriptorSamplers < kMaxRtTextures + 18 ||
+            limits.maxDescriptorSetSampledImages < kMaxRtTextures + 18 || limits.maxBoundDescriptorSets < 4)
             return "descriptor limits below " + std::to_string(kMaxRtTextures) + " textures";
         VkPhysicalDeviceAccelerationStructurePropertiesKHR ap{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
         VkPhysicalDeviceProperties2 p{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &ap};
@@ -2091,7 +2169,10 @@ private:
               postSampler_ = VK_NULL_HANDLE;
     VkDescriptorPool staticPool_ = VK_NULL_HANDLE, scenePool_ = VK_NULL_HANDLE;
     GpuImage white_, font_, shadow_;
-    VkDescriptorSet shadowSet_ = VK_NULL_HANDLE, postSet_ = VK_NULL_HANDLE;
+    VkDescriptorSet postSet_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout shadowSetLayout_ = VK_NULL_HANDLE;           // sun.glsl: atlas + OuShadow UBO
+    std::array<Buffer, kFramesInFlight> shadowUbo_{};                 // OuShadow, host-coherent
+    std::array<VkDescriptorSet, kFramesInFlight> shadowSets_{};
     Bounds bounds_;
     std::vector<DrawRef> order_;
 

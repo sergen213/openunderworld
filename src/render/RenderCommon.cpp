@@ -106,18 +106,25 @@ Bounds sceneBounds(const scene::SceneData& scene) {
     return b;
 }
 
-glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene, float shadowDistance) {
+glm::vec3 sunToward(const scene::Environment& env) {
+    const glm::vec3 d(env.sunDirection[0], env.sunDirection[1], env.sunDirection[2]);
+    return env.valid && env.sun && glm::dot(d, d) > 1e-12f ? -glm::normalize(d) : kSunDirection;
+}
+
+glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene, glm::vec3 toSun, float sliceNear, float sliceFar) {
     // Bounding sphere of the view frustum slice; a sphere keeps the box size fixed while the camera
     // turns, which together with texel snapping keeps shadow edges stable.
-    const glm::mat4 invViewProj = glm::inverse(camera.projection(aspect) * camera.view());
-    const float farZ = std::min(camera.farZ, shadowDistance);
-    // NDC z of the slice end: perspective depth of view distance farZ.
-    const glm::vec4 farClip = camera.projection(aspect) * glm::vec4(0, 0, -farZ, 1);
-    const float zFar = farClip.z / farClip.w;
+    const glm::mat4 proj = camera.projection(aspect);
+    const glm::mat4 invViewProj = glm::inverse(proj * camera.view());
+    auto ndcZ = [&](float d) { // perspective depth of view distance d
+        const glm::vec4 c = proj * glm::vec4(0, 0, -std::clamp(d, camera.nearZ, camera.farZ), 1);
+        return c.z / c.w;
+    };
+    const float z0 = ndcZ(sliceNear), z1 = ndcZ(sliceFar);
     glm::vec3 corners[8];
     glm::vec3 center(0.0f);
     for (int i = 0; i < 8; ++i) {
-        const glm::vec4 p = invViewProj * glm::vec4(i & 1 ? 1 : -1, i & 2 ? 1 : -1, i & 4 ? zFar : -1, 1);
+        const glm::vec4 p = invViewProj * glm::vec4(i & 1 ? 1 : -1, i & 2 ? 1 : -1, i & 4 ? z1 : z0, 1);
         corners[i] = glm::vec3(p) / p.w;
         center += corners[i] / 8.0f;
     }
@@ -125,8 +132,8 @@ glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene
     for (const auto& c : corners) radius = std::max(radius, glm::length(c - center));
     radius = std::ceil(radius);
 
-    const glm::vec3 up = std::abs(kSunDirection.z) > 0.99f ? glm::vec3(1, 0, 0) : glm::vec3(0, 0, 1);
-    const glm::mat4 lightView = glm::lookAt(glm::vec3(0), -kSunDirection, up);
+    const glm::vec3 up = std::abs(toSun.z) > 0.99f ? glm::vec3(1, 0, 0) : glm::vec3(0, 0, 1);
+    const glm::mat4 lightView = glm::lookAt(glm::vec3(0), -toSun, up);
     glm::vec3 c = glm::vec3(lightView * glm::vec4(center, 1));
     const float texel = 2 * radius / float(kShadowMapSize);
     c.x = std::floor(c.x / texel) * texel;
@@ -143,6 +150,49 @@ glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene
     return glm::ortho(c.x - radius, c.x + radius, c.y - radius, c.y + radius, -zMax - 1.0f, -zMin + 1.0f) * lightView;
 }
 
+SunShadow sunShadow(const Camera& camera, Viewport vp, const Bounds& scene, glm::vec3 toSun, bool vulkanY, bool shadows,
+                    int rtMode, int rays) {
+    SunShadow s;
+    const float aspect = vp.height > 0 ? float(vp.width) / float(vp.height) : 1.0f;
+    // GL clip -> [0, 1]^3: tile uv (both APIs render the map with an upright viewport) and depth.
+    const glm::mat4 bias = glm::translate(glm::mat4(1), glm::vec3(0.5f)) * glm::scale(glm::mat4(1), glm::vec3(0.5f));
+    for (int c = 0; c < kShadowCascades; ++c) {
+        s.lightViewProj[c] = shadowViewProj(camera, aspect, scene, toSun, c ? kCascadeEnd[c - 1] : camera.nearZ, kCascadeEnd[c]);
+        s.block.cascade[c] = bias * s.lightViewProj[c];
+    }
+    // Camera ray through window uv: view depth w (= 1 / gl_FragCoord.w) times right/up/forward offsets.
+    const glm::mat4 invView = glm::inverse(camera.view());
+    const glm::vec3 right(invView[0]), up(invView[1]), forward = -glm::vec3(invView[2]);
+    const float tanY = std::tan(glm::radians(camera.verticalFovDeg) * 0.5f), tanX = tanY * aspect, sy = vulkanY ? -1.0f : 1.0f;
+    // ndc x = 2u - 1, ndc y = sy (2v - 1)
+    s.block.rayBase = glm::vec4(forward - tanX * right - sy * tanY * up, 0);
+    s.block.rayU = glm::vec4(2 * tanX * right, 0);
+    s.block.rayV = glm::vec4(2 * sy * tanY * up, 0);
+    s.block.sun = glm::vec4(toSun, shadows ? 1.0f : 0.0f);
+    s.block.eye = glm::vec4(camera.position, float(rays));
+    s.block.screen = glm::vec4(vp.width ? 1.0f / float(vp.width) : 0.0f, vp.height ? 1.0f / float(vp.height) : 0.0f, float(rtMode), 0);
+    return s;
+}
+
+const char* sunGlsl() {
+    return
+#include "sun_glsl.inc"
+        ;
+}
+
+std::string originalPixelSource(const std::string& translated, bool vulkan, bool rt) {
+    std::string head = "#define OU_SUN 1\n";
+    if (vulkan) head += "#define OU_SHADOW_SET 2\n";
+    if (rt)
+        head += "#extension GL_EXT_ray_query : require\n#extension GL_EXT_buffer_reference : require\n"
+                "#extension GL_EXT_nonuniform_qualifier : require\n"
+                "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n#define OU_RT 1\n#define OU_RT_SET 3\n";
+    std::string s = translated;
+    if (rt && s.starts_with("#version 450")) s.replace(9, 3, "460"); // GL_EXT_ray_query needs GLSL 4.60
+    s.insert(s.find('\n') + 1, head); // after #version
+    return s + sunGlsl();
+}
+
 std::string rtSummary(const RtStatus& s, RayTracing requested, int rays) {
     static constexpr const char* kModes[] = {"off", "shadows", "full (shadows + water reflections)"};
     std::string line = std::string("RT ") + kModes[size_t(requested)];
@@ -154,6 +204,28 @@ std::string rtSummary(const RtStatus& s, RayTracing requested, int rays) {
            std::to_string(s.instances) + " instances (" + std::to_string(s.waterInstances) + " water) | TLAS builds " +
            std::to_string(s.tlasBuilds) + " updates " + std::to_string(s.tlasUpdates) + " | BLAS refits " +
            std::to_string(s.blasRefits) + " rebuilds " + std::to_string(s.blasRebuilds);
+}
+
+std::unique_ptr<Renderer> selectRenderer(std::string_view name, const std::function<std::unique_ptr<Renderer>(bool)>& create,
+                                         std::string& chosen, std::string& note, std::string& error) {
+    if (name != "auto" && name != "opengl" && name != "vulkan") {
+        error = "renderer must be auto, opengl or vulkan, got " + std::string(name);
+        return nullptr;
+    }
+    if (name != "opengl") {
+        auto r = create(true);
+        if (r && r->preWindowSetup(error)) {
+            chosen = "vulkan";
+            return r;
+        }
+        if (name == "vulkan") return nullptr;
+        note = "Vulkan unavailable (" + error + "), falling back to OpenGL";
+        error.clear();
+    }
+    auto r = create(false);
+    if (!r || !r->preWindowSetup(error)) return nullptr;
+    chosen = "opengl";
+    return r;
 }
 
 } // namespace ou::render

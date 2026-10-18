@@ -3,11 +3,14 @@
 #include "formats/Shader.hpp"
 #include "formats/Formats.hpp"
 #include "render/OriginalShading.hpp"
+#include "render/RenderCommon.hpp"
 #include "render/ShaderTranslate.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -66,7 +69,7 @@ std::vector<uint32_t> syntheticVs() {
     return t;
 }
 
-// ps_3_0: texld, texkill, cmp on vFace, MaterialParams c100 tint, fog lerp.
+// ps_3_0: texld, texkill, cmp on vFace, MaterialParams c100 tint, fog lerp, a NonShadowLight slot (b3, colour c197).
 std::vector<uint32_t> syntheticPs() {
     std::vector<uint32_t> t{0xFFFF0300};
     t.insert(t.end(), {ins(Dcl, 2), 0x80000000u | 5, dst(Reg::Input, 0, 0x3)});
@@ -79,6 +82,9 @@ std::vector<uint32_t> syntheticPs() {
     t.insert(t.end(), {ins(Mul, 3), dst(Reg::Temp, 0, 0x7), src(Reg::Temp, 0), src(Reg::Temp, 2)});
     t.insert(t.end(), {ins(Lrp, 4), dst(Reg::ColorOut, 0, 0x7), src(Reg::Const, 54, 0xAA), src(Reg::Const, 0), src(Reg::Temp, 0)});
     t.insert(t.end(), {ins(Mul, 3), dst(Reg::ColorOut, 0, 0x8), src(Reg::Temp, 0, 0xFF), src(Reg::Const, 98, 0x00)});
+    t.insert(t.end(), {ins(If, 1), src(Reg::ConstBool, 3)});
+    t.insert(t.end(), {ins(Add, 3), dst(Reg::ColorOut, 0, 0x7), src(Reg::Temp, 0), src(Reg::Const, 197)});
+    t.insert(t.end(), {ins(EndIf, 0)});
     t.push_back(0x0000FFFF);
     return t;
 }
@@ -126,7 +132,7 @@ TEST(Sm3Parser, RejectsMalformed) {
     t.pop_back(); // no end token
     EXPECT_THROW(parse(std::span<const uint32_t>(t)), cdc::FormatError);
     auto u = syntheticPs();
-    u[u.size() - 5] = ins(Mul, 9); // last instruction's length runs past the end
+    u[u.size() - 6] = ins(Add, 9); // the last arithmetic instruction's length runs past the end
     EXPECT_THROW(parse(std::span<const uint32_t>(u)), cdc::FormatError);
     const uint32_t sm1[] = {0xFFFE0101, 0xFFFF};
     EXPECT_THROW(parse(std::span<const uint32_t>(sm1)), cdc::FormatError);
@@ -174,7 +180,15 @@ TEST(Sm3Translate, SyntheticProgramsCompile) {
                 EXPECT_NE(g.source.find("ouMat.ps[0]"), std::string::npos);        // c100 -> material
                 EXPECT_NE(g.source.find("ouMat.fixedParams.x"), std::string::npos); // c2 AlphaThreshold
                 EXPECT_NE(g.source.find("discard"), std::string::npos);
+                // Light slot 3 reads the object's light set: b3 and c197 = slot 3 register 4 (colour).
+                EXPECT_NE(g.source.find("if (OU_LIGHT(3) != 255u)"), std::string::npos);
+                EXPECT_NE(g.source.find("ouFrame.lights[min(OU_LIGHT(3), 63u) * 5u + 4u]"), std::string::npos);
                 EXPECT_NE(g.source.find("gl_FrontFacing"), std::string::npos);
+                // Sun shadow / RT hooks: the program compiles with render/sun.glsl as the backends build it.
+                EXPECT_FALSE(g.sunLit); // no SunLight colour (c212) read
+                EXPECT_NE(g.source.find("ouSunEnd(ouColor)"), std::string::npos);
+                for (bool rt : {false, vk})
+                    EXPECT_FALSE(render::sm3::compileSpirv(render::originalPixelSource(g.source, vk, rt), true, vk, err).empty()) << err;
             } else {
                 EXPECT_EQ(g.attributes, (1u << render::sm3::kAttrPosition) | (1u << render::sm3::kAttrTexcoord1));
                 EXPECT_NE(g.source.find("ouObj.v[0]"), std::string::npos);     // WorldViewProject -> object block
@@ -208,6 +222,12 @@ TEST(Sm3Real, EveryInstallShaderTranslates) {
                     std::string err;
                     if (render::sm3::compileSpirv(t.source, p.pixel, vk, err).empty()) {
                         why = std::string(vk ? "vulkan" : "opengl") + " compile: " + err.substr(0, 160);
+                        break;
+                    }
+                    // With the sun shadow / RT hooks (render/sun.glsl) as the backends compile them (Vulkan ray-traced, GL
+                    // map); sun-lit programs only (the hooks of the rest differ only in the constant argument).
+                    if (t.sunLit && render::sm3::compileSpirv(render::originalPixelSource(t.source, vk, vk), true, vk, err).empty()) {
+                        why = std::string(vk ? "vulkan" : "opengl") + " sun compile: " + err.substr(0, 160);
                         break;
                     }
                 }
@@ -244,6 +264,11 @@ TEST(Sm3Real, LevelEnvironmentAndMaterials) {
     EXPECT_NEAR(bed.environment.fogFar, 63211.1f, 1.0f);
     EXPECT_NEAR(bed.environment.ambient[2], 0.05f, 1e-3);
     EXPECT_FALSE(bed.environment.sun);
+    // 18 light records (LEVELS.md "Lights"): torches are orange point lights (record colour override 246,154,36).
+    EXPECT_EQ(bed.environment.lights.size(), 18u);
+    size_t torches = 0;
+    for (const auto& l : bed.environment.lights) torches += l.type == 0 && l.color[0] > 1.5f * l.color[2] && l.flickerPeriod > 0;
+    EXPECT_GT(torches, 0u);
     size_t withPrograms = 0, lightMapped = 0;
     for (const auto& m : bed.materials) withPrograms += m.vertexShader && m.pixelShader;
     for (const auto& m : bed.meshes)
@@ -251,12 +276,76 @@ TEST(Sm3Real, LevelEnvironmentAndMaterials) {
     EXPECT_GT(withPrograms, bed.materials.size() * 9 / 10);
     EXPECT_GT(lightMapped, 100u);
     const auto prepared = render::original::prepare(bed, true);
-    // Programs needing irradiance-volume lighting stay generic (SHADERS.md); the rest translate.
+    // Every material with composite programs translates (irradiance-lit dynamic-object programs included).
     EXPECT_EQ(prepared.translated + prepared.fallback, bed.materials.size());
-    EXPECT_GT(prepared.translated, withPrograms / 2);
+    EXPECT_EQ(prepared.translated, withPrograms);
     const auto bc = formats::loadLevelScene(bf, "pc-w\\l4_ballcourt.drm");
     ASSERT_TRUE(bc.environment.sun);
     EXPECT_NEAR(bc.environment.sunDirection[0], -0.54406f, 1e-3);
     EXPECT_NEAR(bc.environment.sunDirection[2], -0.76227f, 1e-3);
     EXPECT_NEAR(bc.environment.sunColor[2], 1.2f, 1e-3);
+    EXPECT_EQ(bc.environment.sunCookie, 0x131Du); // sun DTP +0x828, loaded with the level textures
+    EXPECT_TRUE(std::any_of(bc.textures.begin(), bc.textures.end(), [](const auto& t) { return t.id == 0x131D; }));
+}
+
+// Character programs (Lara: IrradianceState SH + light slots, skinned VS variants unused: CPU skinning) translate and
+// compile for both APIs.
+TEST(Sm3Real, CharacterProgramsCompile) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto lara = formats::loadDrmScene(bf, "pc-w\\lara.drm", true);
+    for (bool vk : {true, false}) {
+        const auto prep = render::original::prepare(lara, vk);
+        size_t withPrograms = 0, irradiance = 0;
+        for (const auto& m : lara.materials) withPrograms += m.vertexShader && m.pixelShader;
+        EXPECT_GT(withPrograms, 5u);
+        EXPECT_EQ(prep.translated, withPrograms);
+        for (const auto& p : prep.programs) {
+            irradiance += p.psGlsl.source.find("ouFrame.ps[76]") != std::string::npos;
+            std::string err;
+            EXPECT_FALSE(render::sm3::compileSpirv(p.vsGlsl.source, false, vk, err).empty()) << err;
+            EXPECT_FALSE(render::sm3::compileSpirv(p.psGlsl.source, true, vk, err).empty()) << err;
+        }
+        EXPECT_GT(irradiance, 0u);
+    }
+}
+
+// Light registers and light sets (render/OriginalShading, SHADERS.md "Engine inputs").
+TEST(OriginalShading, LightTableAndSets) {
+    scene::Environment env;
+    env.valid = true;
+    scene::Light point;
+    point.position[0] = 1000, point.radius = 500, point.color[0] = point.color[1] = point.color[2] = 2;
+    point.falloff.assign(256, 0);
+    for (int i = 0; i < 255; ++i) point.falloff[size_t(i)] = uint8_t(255 - i);
+    scene::Light spot = point;
+    spot.type = 1, spot.position[0] = 0, spot.direction[2] = -1, spot.coneInner = 1.0f, spot.coneOuter = 2.0f, spot.nearWidth = 100;
+    spot.falloff[10] = 7; // a second distinct curve
+    env.lights = {point, spot};
+    render::sm3::FrameBlock f{};
+    render::original::fillLights(f, env, 0);
+    // Point: (1/r, 0, 0, row), cone (0, 1), apex plane -r - 1, colour w = luminance.
+    EXPECT_FLOAT_EQ(f.lights[2][0], 1 / 500.f);
+    EXPECT_FLOAT_EQ(f.lights[3][1], 1.f);
+    EXPECT_FLOAT_EQ(f.lights[3][2], -501.f);
+    EXPECT_FLOAT_EQ(f.lights[4][3], 2.f);
+    // Spot: apex moved back along the direction by nearWidth / tan(outer / 2); u offset -apex / r.
+    const float apex = 100 / std::tan(1.0f);
+    EXPECT_NEAR(f.lights[5 + 0][2], apex, 1e-3);
+    EXPECT_NEAR(f.lights[5 + 2][2], -apex / 500, 1e-6);
+    EXPECT_NEAR(f.lights[5 + 3][0] * std::cos(0.5f) + f.lights[5 + 3][1], 1.f, 1e-4); // inner edge = 1
+    EXPECT_NEAR(f.lights[5 + 3][0] * std::cos(1.0f) + f.lights[5 + 3][1], 0.f, 1e-4); // outer edge = 0
+    EXPECT_NE(f.lights[2][3], f.lights[5 + 2][3]); // distinct falloff rows
+    const auto lut = render::original::attenuationLut(env);
+    const int row1 = int(f.lights[5 + 2][3] * 128);
+    EXPECT_EQ(lut.rgba[(size_t(row1) * 256 + 10) * 4], 7);
+    // Light sets: only lights whose radius reaches the sphere, strongest first, unused slots 0xFF.
+    const auto near = render::original::lightSet(env, {900, 0, 0}, 10);
+    EXPECT_EQ(near.packed[0] & 0xFF, 0u);                 // the point light (spot is 900 away, radius 500)
+    EXPECT_EQ(near.packed[0] >> 8 & 0xFF, 0xFFu);
+    EXPECT_EQ(near.packed[1], ~0u);
+    const auto both = render::original::lightSet(env, {500, 0, 0}, 100);
+    EXPECT_NE(both.packed[0] >> 8 & 0xFF, 0xFFu);
+    EXPECT_EQ(render::original::lightSet(env, {5000, 0, 0}, 10).packed[0], ~0u);
 }

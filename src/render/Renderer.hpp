@@ -2,9 +2,11 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "render/Camera.hpp"
@@ -53,6 +55,7 @@ struct FrameOptions {
     // Replaces the sun shadow map when the backend supports it; otherwise the shadow map is used.
     RayTracing rt = RayTracing::Off;
     int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)
+    float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
 };
 
 // Ray-tracing state for diagnostics and tests.
@@ -98,5 +101,12 @@ public:
 
 std::unique_ptr<Renderer> createGlRenderer();
 std::unique_ptr<Renderer> createVulkanRenderer(); // Vulkan 1.3, dynamic rendering
+inline std::unique_ptr<Renderer> createBackend(bool vulkan) { return vulkan ? createVulkanRenderer() : createGlRenderer(); }
+
+// Backend by config name: "opengl", "vulkan", or "auto" = Vulkan when its preWindowSetup succeeds, else OpenGL with
+// `note` saying why. Explicit names never fall back. Returns a renderer whose preWindowSetup succeeded (`chosen` = its
+// name), or null with `error`. `create(vulkan)` makes a backend (createBackend; tests inject fakes).
+std::unique_ptr<Renderer> selectRenderer(std::string_view name, const std::function<std::unique_ptr<Renderer>(bool)>& create,
+                                         std::string& chosen, std::string& note, std::string& error);
 
 } // namespace ou::render

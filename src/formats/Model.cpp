@@ -213,10 +213,14 @@ struct Ctx {
         sm.blend = st.blend, sm.alphaRef = st.alphaRef, sm.doubleSided = st.doubleSided;
         sm.materialId = matIds[index];
         // Category 1 = diffuse (verified visually on Lara's face/teeth textures); materials
-        // without one (e.g. hair, all categories 0) use the slot-0 texture (heuristic).
+        // without one (e.g. hair, all categories 0) use the slot-0 texture (heuristic). Of several
+        // category-1 entries the lowest sampler slot wins: the co_natla / co_amanda skin material has its
+        // albedo in s0 and a green detail normal map (texture 296) in s5, also category 1 [O: PS disassembly].
         const auto texs = materialTextures(*it->second);
+        const MaterialTexture* best = nullptr;
         for (const auto& t : texs)
-            if (t.category == 1) { sm.textureId = t.textureId; return sm; }
+            if (t.category == 1 && (!best || t.slot < best->slot)) best = &t;
+        if (best) { sm.textureId = best->textureId; return sm; }
         for (const auto& t : texs)
             if (t.category == 0 && t.slot == 0) { sm.textureId = t.textureId; return sm; }
         return sm;

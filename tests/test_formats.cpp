@@ -315,6 +315,75 @@ TEST(Level, ParseUnitIntrosStreamGroupsImfs) {
     EXPECT_THROW(formats::parseUnit(d), cdc::FormatError);
 }
 
+// Unit lights (LEVELS.md "Lights"): records at unit data +0x04 with a light DTP (+0x48 resource reference).
+TEST(Level, ParseUnitLights) {
+    std::vector<uint8_t> level(0x94), unitData(0x400), cells(0x40);
+    const auto levelRel = relocs({}, {{0x74, 1, 0}, {0x90, 2, 0}});
+    set32(unitData, 0x00, 3);                          // numLights
+    std::vector<std::pair<uint32_t, uint32_t>> in{{0x04, 0x40}}, res;
+    for (uint32_t k = 0; k < 3; ++k) {
+        const uint32_t r = 0x100 + 0xE0 * k;
+        in.push_back({0x40 + 4 * k, r});
+        for (int i = 0; i < 3; ++i) setf(unitData, r + 4 * (5 * i), 1.f); // rows X, Y, Z = identity
+        setf(unitData, r + 0x30, 100.f * k), setf(unitData, r + 0x38, 50.f);
+        set32(unitData, r + 0x48, 101 + k);
+        res.push_back({r + 0x48, uint32_t(cdc::SectionType::DtpData)});
+    }
+    // Light 0: colour + intensity + radius overrides on the record.
+    unitData[0x100 + 0x50] = 1, setf(unitData, 0x100 + 0x4C, 2.f);
+    unitData[0x100 + 0x51] = 255, unitData[0x100 + 0x52] = 0, unitData[0x100 + 0x53] = 51, unitData[0x100 + 0x54] = 1;
+    setf(unitData, 0x100 + 0x58, 1234.f), unitData[0x100 + 0x5C] = 1;
+    std::vector<std::vector<uint8_t>> dtps(3, std::vector<uint8_t>(0x14E4));
+    for (uint32_t k = 0; k < 3; ++k) {
+        auto& t = dtps[k];
+        set32(t, 0, k);                                // 0 point, 1 spot, 2 sun
+        setf(t, 0x04, 3000.f), setf(t, 0x08, 1.f), setf(t, 0x0C, 1.0f), setf(t, 0x10, 1.5f), setf(t, 0x14, 200.f);
+        t[0x18] = t[0x19] = t[0x1A] = 255;
+        for (int i = 0; i < 255; ++i) setf(t, 0x1C + 4 * i, 1.f - i / 255.f);
+    }
+    dtps[1][0x41C] = 1, setf(dtps[1], 0x420, 0.5f);    // spot flickers
+    for (int i = 0; i < 256; ++i) setf(dtps[1], 0x424 + 4 * i, 0.5f);
+    dtps[2][0x824] = 1, set32(dtps[2], 0x828, 0x77), setf(dtps[2], 0x82C, 12.f); // sun cookie texture 0x77
+    set32(cells, 0x20 + 0x0C, 0), set32(cells, 0x20 + 0x1C, 0);
+    // section() keeps spans: the relocation tables must outlive parseUnit.
+    const auto unitRel = relocs(in, {}, res), cellRel = relocs({{0x00, 0x20}});
+    std::vector<std::vector<uint8_t>> dtpRel;
+    for (uint32_t k = 0; k < 3; ++k)
+        dtpRel.push_back(k == 2 ? relocs({}, {}, {{0x828, uint32_t(cdc::SectionType::Texture)}}) : relocs({}));
+    cdc::Drm d;
+    d.sections = {section(cdc::SectionType::General, 0, level, levelRel), section(cdc::SectionType::DtpData, 9, unitData, unitRel),
+                  section(cdc::SectionType::General, 0, cells, cellRel)};
+    for (uint32_t k = 0; k < 3; ++k) d.sections.push_back(section(cdc::SectionType::DtpData, 101 + k, dtps[k], dtpRel[k]));
+    const auto u = formats::parseUnit(d);
+    const auto& e = u.environment;
+    ASSERT_EQ(e.lights.size(), 2u);
+    const auto& p = e.lights[0];
+    EXPECT_EQ(p.type, 0);
+    EXPECT_FLOAT_EQ(p.radius, 1234.f);
+    EXPECT_FLOAT_EQ(p.color[0], 2.f);
+    EXPECT_FLOAT_EQ(p.color[2], 2.f * 51 / 255.f);
+    EXPECT_FLOAT_EQ(p.position[2], 50.f);
+    ASSERT_EQ(p.falloff.size(), 256u);
+    EXPECT_EQ(p.falloff[0], 255);
+    EXPECT_EQ(p.falloff[128], 127); // round((1 - 128/255) * 255)
+    EXPECT_EQ(p.falloff[255], 0);
+    EXPECT_TRUE(p.flicker.empty());
+    const auto& s = e.lights[1];
+    EXPECT_EQ(s.type, 1);
+    EXPECT_FLOAT_EQ(s.radius, 3000.f);
+    EXPECT_FLOAT_EQ(s.position[0], 100.f);
+    EXPECT_FLOAT_EQ(s.direction[2], 1.f);
+    EXPECT_FLOAT_EQ(s.coneOuter, 1.5f);
+    EXPECT_FLOAT_EQ(s.nearWidth, 200.f);
+    EXPECT_FLOAT_EQ(s.flickerPeriod, 0.5f);
+    ASSERT_EQ(s.flicker.size(), 256u);
+    EXPECT_TRUE(e.sun);
+    EXPECT_EQ(e.sunCookie, 0x77u);
+    EXPECT_FLOAT_EQ(e.cookieScale, 12.f);
+    EXPECT_FLOAT_EQ(e.sunOrigin[0], 200.f);
+    EXPECT_FLOAT_EQ(e.sunAxes[1][1], 1.f);
+}
+
 TEST(Level, ObjectRenderModelsFollowsObjectBase) {
     constexpr uint32_t kDtp = 7, kRender = 12;
     std::vector<uint8_t> object(0x8C), root(0xB8), model(0x68), modelNoRender(0x68);
@@ -459,4 +528,42 @@ TEST(RealData, LevelBallcourtStreamGroupsAndImfs) {
     EXPECT_GT(blended, 0u);
     EXPECT_GT(alphaTested, 0u);
     EXPECT_GT(twoSided, 0u);
+}
+
+// Every unit's light records decode: counts of the install (LEVELS.md "Lights", 2026-10-18 survey).
+TEST(RealData, UnitLightsAllUnits) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list);
+    const std::string text(list->begin(), list->end());
+    size_t units = 0, points = 0, spots = 0, suns = 0, cookies = 0, flicker = 0, shadow = 0, maxPerUnit = 0;
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty()) continue;
+        const auto bytes = bf.read("pc-w\\" + line.substr(line.rfind('\\') + 1) + ".drm");
+        if (!bytes) continue;
+        ++units;
+        const auto u = formats::parseUnit(cdc::parseDrm(*bytes));
+        const auto& e = u.environment;
+        suns += e.sun, cookies += e.sunCookie != 0;
+        maxPerUnit = std::max(maxPerUnit, e.lights.size());
+        for (const auto& l : e.lights) {
+            (l.type ? spots : points)++;
+            flicker += !l.flicker.empty(), shadow += l.shadow;
+            EXPECT_GT(l.radius, 0.f) << line;
+            for (float c : l.color) EXPECT_TRUE(std::isfinite(c) && c >= 0.f) << line;
+            EXPECT_EQ(l.falloff.size(), 256u);
+        }
+    }
+    std::printf("%zu units: %zu point + %zu spot lights (%zu flicker, %zu shadow), %zu suns (%zu cookies), max %zu per unit\n",
+                units, points, spots, flicker, shadow, suns, cookies, maxPerUnit);
+    EXPECT_EQ(points, 218u);
+    EXPECT_EQ(spots, 342u);
+    EXPECT_EQ(suns, 23u);
+    EXPECT_EQ(maxPerUnit, 28u);
 }

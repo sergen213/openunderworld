@@ -25,22 +25,56 @@ render/RenderCommon.*  ->  backend-free helpers shared by both (font atlas, over
   ambient and two-sided normals, per-submesh material state (alpha test, blend mode, cull; see
   docs/formats/MATERIALS.md): opaque first (LESS + depth writes), then blended submeshes back to
   front per mesh (LEQUAL, no writes), debug lines, then a fullscreen post pass to the back buffer
-  and the overlay. Gamma-space (UNORM) textures and targets.
+  and the overlay. Gamma-space (UNORM) textures and targets, as tru.exe (see "Colour space" below).
 
-## Graphics presets (`ou::config::GraphicsConfig`, `FrameOptions::{msaa, shadows, fxaa, hdr}`)
+## Graphics presets (`ou::config::GraphicsConfig`, `FrameOptions::{msaa, shadows, fxaa, hdr, rt, brightness}`)
 
-| Setting | Original Fidelity (default) | Enhanced | Flag / config key |
+Defaults (no config, no flags): renderer `auto` = Vulkan when a Vulkan 1.3 device is usable, else OpenGL with the reason
+logged (`render::selectRenderer`, test `RendererSelect.AutoFallsBackToOpenGl`); preset `enhanced`; `rt auto` = sun
+shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the original TRU shaders in both presets.
+
+| Setting | Original Fidelity (purist) | Enhanced (default) | Flag / config key |
 |---|---|---|---|
 | MSAA | 1x | 4x (GL: MS renderbuffers + blit resolve; VK: dynamic-rendering resolve) | `--msaa 1/2/4/8`, `graphics.msaa` |
-| Sun shadow map | off | 2048² depth, ortho fitted to the view slice [near, 8000] with texel snapping, depth spanning the scene; slope-scaled bias (2, 2); 3x3 hardware-PCF taps; opaque + alpha-blended (cut at 50 %) casters | `--shadows on/off`, `graphics.shadows` |
+| Sun shadows | off | cascaded shadow map ("Sun shadows" below), or rays (`rt`) | `--shadows on/off`, `graphics.shadows` |
 | FXAA | off | off (optional) | `--fxaa on/off`, `graphics.fxaa` |
-| HDR | off | off (framework: RGBA16F target + ACES tonemap in the post pass) | `--hdr on/off`, `graphics.hdr` |
-| Ray tracing (Vulkan) | off (not allowed) | off (optional, see "Ray tracing") | `--rt off/shadows/full`, `--rt-quality low/medium/high`, `graphics.rt`, `graphics.rt_quality` |
+| HDR | off | off: the original shaders write LDR gamma-space colour; the ACES tonemap (RGBA16F target) only compresses it | `--hdr on/off`, `graphics.hdr` |
+| Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `graphics.rt`, `graphics.rt_quality` |
+| Brightness | 1.0 | 1.0 | `--brightness 0.5-2.0`, `graphics.brightness` |
 
 `--preset original|enhanced` / `graphics.preset` picks the defaults; explicit settings override
-(`Config.GraphicsPresets`). Anisotropic filtering (max supported) is on in both. [I] The original
+(`Config.GraphicsPresets`). Anisotropic filtering (max supported: 16x on RADV) is on in both. [I] The original
 game also renders sun shadows (its vertex shaders output `WorldToPSSM0` coordinates, MATERIALS.md),
 so `--preset original --shadows on` is allowed, but our shadow map is not a reproduction of its PSSM.
+
+Brightness is a display gamma in the post pass (`out = in^(1 / brightness)`, after tonemap/FXAA), standing in for the
+original's Brightness option (tru.exe stores it as registry `Brightness` × 1000, clamped to [0, 0.1], 0x51E3xx [O];
+how the engine applies it is [U]).
+
+Colour space [O]: tru.exe's sampler-state manager only sets address/filter/anisotropy states (5-8, 10, 1-3; decomp
+around 0x5274xx) and never `D3DSAMP_SRGBTEXTURE` (11) or `D3DRS_SRGBWRITEENABLE` (194): the original samples, shades and
+writes in gamma space. Both backends match that: UNORM textures, UNORM scene targets and swapchain (SRGB_NONLINEAR
+colour space, no sRGB view), no conversion anywhere. Washed-out/dark differences are lighting, not gamma.
+
+## Sun shadows (`render/sun.glsl`, `RenderCommon sunShadow`)
+
+One GLSL library serves the generic scene shaders (GL `kSceneFs`, `vk/shaders/scene.frag`, `#include`d by glslc) and
+the translated original pixel shaders (embedded as `sun_glsl.inc` and appended by `originalPixelSource`):
+
+- Sun direction: the unit's sun (`Environment::sunDirection`, c209, negated) when it has one, else `kSunDirection`;
+  the generic lambert uses the same direction, so shading and shadows agree.
+- Cascaded shadow map: 3 cascades over the view distances [near, 1500], [1500, 5000], [5000, 16000], each a 2048²
+  tile of one 6144×2048 depth atlas; per cascade an ortho fitted to the slice's bounding sphere with texel snapping,
+  depth spanning the whole scene; slope-scaled bias (2, 2); opaque + alpha-blended (cut at 50 %) casters. Lookup: the
+  finest cascade whose tile holds the point, 3x3 hardware-PCF taps.
+- Per-frame `OuShadow` UBO (cascade matrices, sun, eye, camera ray basis, RT mode): GL binding 3 + texture unit 16;
+  Vulkan set 1 (generic) / set 2 (translated), one set + host-coherent buffer per frame in flight.
+- Translated shaders (`ShaderTranslate`): reads of the SunLight colour c212 become `c212 * ouSunVis`, so the shadow
+  scales the sun's diffuse and specular only (light maps, ambient, point lights untouched). `ouSunVis` is computed first
+  thing in `main()` (uniform control flow) from the fragment's world position — camera ray × view depth
+  `1 / gl_FragCoord.w`, exact to float precision — and the face normal from its derivatives. `ouSunEnd` mixes in RT
+  water reflections. Programs without c212 call nothing.
+
 
 **Observed** GL vs Vulkan parity (`ou-imgdiff`, 1792x1008, RADV/radeonsi, 2026-10-18):
 
@@ -82,7 +116,7 @@ VK 1.66 ms); FXAA + HDR add ≤ 0.07 ms. GL is CPU/draw-call bound (one draw per
 | Memory | `LinearAllocator`: bump allocation inside 64 MiB `VkDeviceMemory` blocks per memory type, aligned to `max(alignment, bufferImageGranularity)`, host-visible blocks persistently mapped. Arenas: static (font, white, overlay buffers), scene (released on every `upload()`), and exact-size single-resource arenas for depth, staging, readback and the per-frame debug-line buffers. No per-object free. |
 | Uploads | one staging buffer per batch sized to the sum of all regions (16-byte aligned for BCn), one command buffer with sync2 barriers, waited on a fence. |
 | Textures | `VK_FORMAT_BC1_RGBA_UNORM_BLOCK` (DXT1 with 1-bit alpha, as D3D9), `BC2_UNORM`, `BC3_UNORM`, `R8G8B8A8_UNORM`, `B8G8R8A8_UNORM`; full validated mip chains (`usableMips`). One combined-image-sampler descriptor set per texture from a per-scene pool; one repeat/linear/trilinear sampler with max anisotropy. |
-| Shaders | GLSL in `src/render/vk/shaders/`, compiled by `glslc --target-env=vulkan1.3 -O -mfmt=num` at build time into `build/vk_shaders/*.inc`, `#include`d as `uint32_t[]`; `scene.vert/frag` a second time with `-DOU_RT` (`scene_rt.*.inc`). Push constants: scene/shadow `{mat4 viewProj, model, lightViewProj; int lighting, shadows; float alphaRef; int rt; vec4 eye}` (224 B, checked against `maxPushConstantsSize`), overlay `{vec2 screen}`, post `{int fxaa, hdr}`. Pipelines: one per `scene::Blend` + lines (rebuilt with the MSAA count / HDR format / RT on-off), shadow (depth only, depth bias), RT depth pre-pass, post and overlay (swapchain format). `shaderDemoteToHelperInvocation` enabled for `discard`. |
+| Shaders | GLSL in `src/render/vk/shaders/`, compiled by `glslc --target-env=vulkan1.3 -O -mfmt=num` at build time into `build/vk_shaders/*.inc`, `#include`d as `uint32_t[]`; `scene.vert/frag` a second time with `-DOU_RT` (`scene_rt.*.inc`). Push constants: scene/shadow `{mat4 viewProj, model; int lighting; float alphaRef; int rt, pad}` (144 B, checked against `maxPushConstantsSize`; sun/eye/rays live in the `OuShadow` UBO), overlay `{vec2 screen}`, post `{int fxaa, hdr; float brightness}`. Pipelines: one per `scene::Blend` + lines (rebuilt with the MSAA count / HDR format / RT on-off), shadow (depth only, depth bias), RT depth pre-pass, post and overlay (swapchain format). `shaderDemoteToHelperInvocation` enabled for `discard`. |
 | Pipeline cache | loaded from / saved to `$XDG_CACHE_HOME/openunderworld/vk_pipeline_cache.bin` (fallback `~/.cache/...`); drivers ignore incompatible blobs. |
 | Screenshot | after `drawFrame`, a one-shot copy PRESENT_SRC → TRANSFER_SRC → buffer → PRESENT_SRC, BGRA swizzled to RGB. |
 | CPU skinning | `updateVertices(meshIndex, vertices)`: scene-mesh → GPU-slot map, vertex count checked, staged copy into the device-local vertex buffer behind a write-after-read barrier, waited on a fence (one queue round-trip per call). |
@@ -92,12 +126,13 @@ VK 1.66 ms); FXAA + HDR add ≤ 0.07 ms. GL is CPU/draw-call bound (one draw per
 Known limits (deliberate):
 - `upload()` and swapchain recreation call `vkDeviceWaitIdle`; fine for a viewer, not for streaming.
 - Readback stalls the queue; it is a debugging/testing path.
-- No sRGB. Light maps, fog, wind and material tints come from the original shaders (SHADERS.md).
+- No sRGB, as tru.exe ("Colour space" above). Light maps, fog, wind and material tints come from the original shaders (SHADERS.md).
 
 ## Ray tracing (Vulkan, Enhanced, optional)
 
 `--rt shadows` traces the sun shadow; `--rt full` also mirrors the scene in water. Needs `--preset
-enhanced` (`config::resolve` rejects RT with `original`); default off. `--rt-quality low|medium|high`
+enhanced` (`config::resolve` rejects RT with `original`); default `auto` = shadows. Works inside the original
+translated shaders ("Sun shadows": the traced visibility scales c212) and the generic ones alike. `--rt-quality low|medium|high`
 = 1 / 2 / 4 shadow rays per pixel. The overlay line `RT ...` shows the mode, whether rays are
 traced, BLAS / geometry / instance counts (water instances), TLAS builds / updates and BLAS refits /
 rebuilds (`Renderer::rtStatus()`, `rtSummary`).
@@ -110,7 +145,7 @@ rebuilds (`Renderer::rtStatus()`, `rtSummary`).
 | Geometry records | storage buffer, one `{vertex address, index address, first index, texture slot, alpha ref}` per geometry, indexed by `instanceCustomIndex + geometryIndex` in the shader. |
 | Alpha test (any-hit equivalent) | Non-opaque geometries (alpha ref ≠ 0: `Blend::Alpha` cut at 50 % as the shadow map, or an alpha-tested opaque material) are tested in the `rayQueryProceedEXT` loop: barycentric UV from the index/vertex buffers, `textureLod(..., 0)` of the bindless texture array (set 2, 4096 slots, partially bound), texture alpha only (as `shadow.frag`); candidates that pass are confirmed. |
 | Shadows | `scene_rt.frag`: N rays per pixel toward the sun inside a cone of tan 0.012 (golden-angle spiral rotated per pixel by interleaved gradient noise), `TerminateOnFirstHit`, origin offset along the normal by 2 + 2e-4 · distance units. Spatial denoise: the visibility is averaged over the lanes of the 2x2 pixel quad that trace (fine derivatives; quads never span primitives, so no bleeding across edges); helper lanes, alpha-discarded lanes and lanes facing away from the sun trace nothing. No temporal accumulation (no history buffer / TAA yet): the per-pixel noise is fixed, so still frames are stable. |
-| Overdraw | RT adds a depth pre-pass over opaque submeshes (`prepass.vert/frag`: same alpha test, `invariant gl_Position` as `scene_rt.vert`); the opaque colour pass then tests LEQUAL without writes, so each visible opaque pixel traces once. Blended submeshes (no depth writes, drawn layer over layer) keep sampling the shadow map, which is still rendered in RT mode: tracing them cost ~10 of 15 ms in the ballcourt foliage (measured). |
+| Overdraw | RT adds a depth pre-pass over opaque submeshes (`prepass.vert/frag`: same alpha test, `invariant gl_Position` as `scene_rt.vert`; translated programs pre-pass with their own invariant VS and the plain PS, i.e. their own alpha test and no sun term); the opaque colour pass then tests LEQUAL without writes, so each visible opaque pixel traces once. Blended submeshes (no depth writes, drawn layer over layer) keep sampling the shadow map, which is still rendered in RT mode: tracing them cost ~10 of 15 ms in the ballcourt foliage (measured). |
 | Reflections (`full`) | Draws of water meshes trace one mirror ray (mask 1: water never reflects itself) with closest hit, alpha-tested like shadows, and shade the hit with texture × vertex colour × the raster lambert (no shadow ray at the hit; misses = clear colour), mixed in by Schlick Fresnel with F0 = 0.02 (alpha raised by the same factor). Water = meshes whose origin names a `*watersurface*` object [I] (l4_pool: `ca_goo_pool_watersurface`, the surface intro of the pool's `watervolume`, GAMEPLAY.md "Water"). No roughness: TRU's material blobs give none we decode [U], so water is a perfect mirror and wet surfaces get no reflections. |
 | Not done | 1-bounce GI / AO (not started); temporal denoise; merged static BLASes (traversal cost); ray cones for reflection mip selection (mip from hit distance only). |
 
@@ -139,8 +174,10 @@ Materials draw with TRU's own D3D9 SM3 programs translated to GLSL (`render/Shad
 Vulkan compiles it to SPIR-V with libshaderc at `upload()`) fed with the engine's register files (`render/OriginalShading`,
 shared): frame UBO, material UBO + 16 samplers, object block (GL UBO range / Vulkan push constants). Programs that need
 irradiance-volume lighting (dynamic objects), and materials without composite programs, keep the generic shading below.
-Not with the RT depth pre-pass (RT keeps the generic pipelines). Details, survey and evidence: docs/formats/SHADERS.md.
-Vulkan: one pipeline per (program, blend) created on first use, one descriptor set per distinct (program, material,
+With RT: depth pre-pass, then opaque draws use the ray-traced pixel-shader variant (water: + reflections), blended ones
+the shadow-map variant. Details, survey and evidence: docs/formats/SHADERS.md.
+Vulkan: one pipeline per (program, pixel-shader variant plain / shadow map / rays, blend) created on first use (variants
+compiled on first use), one descriptor set per distinct (program, material,
 instance textures, alpha ref), only consumed vertex attributes declared (validation-clean).
 
 **Observed** GL vs Vulkan (`ou-imgdiff`, 1792x1008, original shaders, 2026-10-18): l4_ballcourt `player` start 0.025/255

@@ -13,16 +13,21 @@ namespace ou::render::sm3 {
 
 // Register files the backends provide (std140 blocks; see kGlslInterface in the .cpp, mirrored here):
 //   frame   (VK set 0 binding 0, GL UBO binding 0): vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16];
-//                                                  uvec4 bools (x = vs b0-15, y = ps b0-15); vec4 screen (w, h, 1/w, 1/h)
+//                                                  uvec4 bools (x = vs b0-15, y = ps b0-15); vec4 screen (w, h, 1/w, 1/h);
+//                                                  vec4 lights[64 * 5]: the scene's point/spot light registers
 //   material (VK set 1 binding 0, GL UBO binding 1): vec4 vs[40] = c25..c64; vec4 ps[40] = c100..c139;
 //                                                  vec4 fixed = (c2 AlphaThreshold, c98 MaterialOpacity, alphaRef,
 //                                                  flags: 1 = fogged (VS c22 live), 2 = additive (PS c0 FogColor = 0))
-//   object  (VK push constant, GL UBO binding 2): vec4 v[8] = vs c0..c7 (WorldViewProject, World columns)
+//   object  (VK push constant, GL UBO binding 2): vec4 v[8] = vs c0..c7 (WorldViewProject, World columns);
+//                                                  uvec4 lightSet: the object's light set (tru.exe 0x5042B0), one byte
+//                                                  per PS light slot 0-5 (x: slots 0-3, y: 4-5), 0xFF = empty
 //   samplers s0..s15: VK set 1 binding 1 + n, GL texture unit n.
 // Register -> block: VS c0-7 object, c25-64 material (MaterialParams + InstanceParams c57), else frame; PS c2/c98 material.fixed, c100-139 material (MaterialParams + InstanceParams c132),
-// else frame. `def` constants shadow every block (D3D9 semantics).
+// PS c178-c207 (Shadow/NonShadowLights, 5 per slot) frame.lights[lightSet slot], b0-b5 = slot used, else frame.
+// `def` constants shadow every block (D3D9 semantics).
 inline constexpr int kFrameVs = 256, kFramePs = 224, kMaterialVsBase = 25, kMaterialVs = 40, kMaterialPsBase = 100,
-                     kMaterialPs = 40, kObjectVs = 8;
+                     kMaterialPs = 40, kObjectVs = 8, kMaxLights = 64, kLightRegs = 5, kLightSlots = 6,
+                     kLightSlotBase = 178;
 struct FrameBlock {
     float vs[kFrameVs][4];
     float ps[kFramePs][4];
@@ -30,14 +35,18 @@ struct FrameBlock {
     int32_t psI[16][4];
     uint32_t bools[4];
     float screen[4];
+    float lights[kMaxLights * kLightRegs][4];
 };
 struct MaterialBlock {
     float vs[kMaterialVs][4];
     float ps[kMaterialPs][4];
     float fixed[4]; // AlphaThreshold (c2), MaterialOpacity (c98), fixed-function alpha ref (<0 = off), flags (see above)
 };
-struct ObjectBlock { float v[kObjectVs][4]; };
-static_assert(sizeof(FrameBlock) == (kFrameVs + kFramePs + 16 + 16 + 1 + 1) * 16);
+struct ObjectBlock {
+    float v[kObjectVs][4];
+    uint32_t lightSet[4] = {~0u, ~0u, ~0u, ~0u};
+};
+static_assert(sizeof(FrameBlock) == (kFrameVs + kFramePs + 16 + 16 + 1 + 1 + kMaxLights * kLightRegs) * 16);
 static_assert(sizeof(MaterialBlock) == (kMaterialVs + kMaterialPs + 1) * 16);
 
 // Vertex attribute locations of translated vertex shaders (by D3DDECLUSAGE); unlisted inputs read (0, 0, 0, 1).
@@ -50,6 +59,7 @@ struct Glsl {
     uint16_t samplers = 0;       // bit n: s<n> is sampled
     uint8_t samplerType[16] = {}; // D3DSAMPLER_TEXTURE_TYPE >> 27 (2 = 2D, 3 = cube, 4 = volume)
     uint8_t attributes = 0;      // bit n: location n read (VS)
+    bool sunLit = false;         // PS reads the SunLight colour c212 (scaled by ouSunVis, render/sun.glsl)
 };
 
 // `vulkan` only selects the #define in the prelude; the body is identical.

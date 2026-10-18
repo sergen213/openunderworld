@@ -38,7 +38,7 @@ struct Options {
     std::filesystem::path screenshot;
     bool vsync = true;
     std::optional<std::array<float, 5>> cam; // x y z yawDeg pitchDeg
-    std::string renderer = "opengl";         // opengl | vulkan
+    std::string renderer = ou::config::Config{}.renderer; // auto | opengl | vulkan
     bool noOverlay = false;
     bool fullscreen = false;
     std::string anim;      // --anim: anim id, #listIndex or name (clips of --drm)
@@ -53,11 +53,11 @@ void usage() {
     std::fprintf(stderr,
                  "usage: ou-viewer [--game-dir DIR] [--drm pc-w\\\\x.drm] [--width W --height H] [--fov DEG]\n"
                  "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH] [--level]\n"
-                 "                 [--renderer opengl|vulkan] [--no-overlay] [--fullscreen]\n"
+                 "                 [--renderer auto|opengl|vulkan] [--no-overlay] [--fullscreen]\n"
                  "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list] [--show-collision]\n"
                  "                 [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off]\n"
-                 "                 [--hdr on|off] [--shaders original|generic] [--rt off|shadows|full] [--rt-quality low|medium|high]\n"
-                 "                 [--config config.json]  (launcher settings; later flags override)\n"
+                 "                 [--hdr on|off] [--shaders original|generic] [--rt auto|off|shadows|full] [--rt-quality low|medium|high]\n"
+                 "                 [--brightness 0.5..2.0] [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
 }
@@ -114,8 +114,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return false; }
     }
-    if (o.renderer != "opengl" && o.renderer != "vulkan") {
-        std::fprintf(stderr, "--renderer wants opengl or vulkan\n");
+    if (o.renderer != "auto" && o.renderer != "opengl" && o.renderer != "vulkan") {
+        std::fprintf(stderr, "--renderer wants auto, opengl or vulkan\n");
         return false;
     }
     if (o.width <= 0 || o.height <= 0 || o.fov <= 1.0f || o.fov >= 179.0f || o.frames < 0) {
@@ -304,12 +304,14 @@ int main(int argc, char** argv) {
     }
 
     ou::platform::WindowPtr window; // declared before the renderer: GL context / VkSurface die first
-    auto renderer = opt.renderer == "vulkan" ? ou::render::createVulkanRenderer() : ou::render::createGlRenderer();
-    std::string error;
-    if (!renderer->preWindowSetup(error)) { // backend unavailable on this system (no loader / device)
+    std::string chosen, note, error;
+    auto renderer = ou::render::selectRenderer(opt.renderer, ou::render::createBackend, chosen, note, error);
+    if (!note.empty()) std::fprintf(stderr, "ou-viewer: %s\n", note.c_str());
+    if (!renderer) { // backend unavailable on this system (no loader / device)
         std::fprintf(stderr, "ou-viewer: %s renderer unavailable: %s; skipping\n", opt.renderer.c_str(), error.c_str());
         return kExitSkip;
     }
+    opt.renderer = chosen;
     window.reset(SDL_CreateWindow(
         "OpenUnderworld viewer", opt.width, opt.height,
         SDL_WindowFlags(renderer->windowFlags()) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
@@ -470,9 +472,10 @@ int main(int argc, char** argv) {
             lines.push_back(scene.placeholder ? "!" + source : "source: " + source);
             lines.push_back(fmt("OpenUnderworld ou-viewer | %.1f FPS (%.2f ms) | vsync %s | %s | cull %s", fps,
                                 frameMs, vsync ? "on" : "off", lighting ? "lambert" : "unlit", cull ? "on" : "off"));
-            lines.push_back(fmt("preset %s | msaa %dx | shadows %s | fxaa %s | hdr %s | shaders %s", opt.graphics.preset.c_str(),
-                                opt.gfx.msaa, opt.gfx.shadows ? "on" : "off", opt.gfx.fxaa ? "on" : "off",
-                                opt.gfx.hdr ? "on" : "off", opt.gfx.originalShaders ? "original" : "generic"));
+            lines.push_back(fmt("%s | preset %s | msaa %dx | shadows %s | fxaa %s | hdr %s | shaders %s | brightness %.2f",
+                                opt.renderer.c_str(), opt.graphics.preset.c_str(), opt.gfx.msaa,
+                                opt.gfx.shadows ? "on" : "off", opt.gfx.fxaa ? "on" : "off", opt.gfx.hdr ? "on" : "off",
+                                opt.gfx.originalShaders ? "original" : "generic", opt.gfx.brightness));
             lines.push_back(renderer->description());
             lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));
             lines.push_back(fmt("%dx%d aspect %.3f | vFOV %.1f hFOV %.1f (Hor+)", w, h, aspect, cam.verticalFovDeg,
@@ -495,6 +498,7 @@ int main(int argc, char** argv) {
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
+        fo.brightness = opt.gfx.brightness;
         renderer->drawFrame(cam, {w, h}, fo);
         if (frame == kTimingWarmup) timingStart = SDL_GetTicksNS();
         ++frame;

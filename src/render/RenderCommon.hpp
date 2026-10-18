@@ -27,10 +27,13 @@ size_t blockBytes(scene::PixelFormat format);
 // Number of leading mips forming a valid chain (0 = unusable). `problem` describes any defect.
 uint32_t usableMips(const scene::TextureData& t, std::string& problem);
 
-// Fixed key light ("sun"), unit vector from the surface toward the light. Both the lambert term
-// and the Enhanced shadow map use it.
+// Fallback key light ("sun"), unit vector from the surface toward the light, for scenes whose unit has no sun light.
 inline const glm::vec3 kSunDirection = glm::normalize(glm::vec3(-0.4f, -0.5f, 0.75f));
-constexpr int kShadowMapSize = 2048;
+// Toward the unit's sun (Environment::sunDirection is the direction the light travels, c209) or kSunDirection.
+glm::vec3 sunToward(const scene::Environment& env);
+constexpr int kShadowMapSize = 2048;   // one cascade tile; the atlas is kShadowCascades tiles side by side
+constexpr int kShadowCascades = 3;
+inline constexpr float kCascadeEnd[kShadowCascades] = {1500.0f, 5000.0f, 16000.0f}; // view distance each cascade covers
 
 struct Bounds {
     glm::vec3 lo{1e30f}, hi{-1e30f};
@@ -41,10 +44,31 @@ Bounds sceneBounds(const scene::SceneData& scene);
 // Bounds of mesh `m` in world space.
 Bounds meshBounds(const scene::MeshData& m);
 
-// Orthographic sun view-projection (GL clip convention, z in [-w, w]) fitted to the camera frustum
-// slice [near, shadowDistance], texel-snapped against shimmering; depth spans the whole scene so
-// off-screen casters still cast.
-glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene, float shadowDistance = 8000.0f);
+// Orthographic sun view-projection (GL clip convention, z in [-w, w]) fitted to the camera frustum slice
+// [sliceNear, sliceFar], texel-snapped against shimmering; depth spans the whole scene so off-screen casters still cast.
+glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene, glm::vec3 toSun, float sliceNear, float sliceFar);
+
+// std140 `OuShadow` block of src/render/sun.glsl (keep in step).
+struct SunShadowBlock {
+    glm::mat4 cascade[kShadowCascades]; // world -> tile uv (xy) + depth (z), [0, 1]
+    glm::vec4 rayBase, rayU, rayV;      // fragment world = eye + (rayBase + u rayU + v rayV) / gl_FragCoord.w
+    glm::vec4 sun;                      // toward the sun; w 1 = sun shadows on
+    glm::vec4 eye;                      // camera position; w = shadow rays per pixel
+    glm::vec4 screen;                   // 1 / width, 1 / height, ray tracing mode (0, 1 shadows, 2 full), 0
+};
+static_assert(sizeof(SunShadowBlock) == kShadowCascades * 64 + 6 * 16);
+struct SunShadow {
+    glm::mat4 lightViewProj[kShadowCascades]; // per cascade tile, GL clip convention (backends remap z as needed)
+    SunShadowBlock block;
+};
+// Cascaded sun shadow of a frame. `vulkanY`: gl_FragCoord.y runs down (Vulkan with the negative-height viewport).
+SunShadow sunShadow(const Camera& camera, Viewport vp, const Bounds& scene, glm::vec3 toSun, bool vulkanY, bool shadows,
+                    int rtMode, int rays);
+
+// sun.glsl source, and a translated pixel shader (ShaderTranslate) with its OU_SUN hooks wired to it: Vulkan puts
+// OuShadow in set 2 and (`rt`) the ray-tracing set in set 3; GL uses UBO binding 3 / texture unit 16.
+const char* sunGlsl();
+std::string originalPixelSource(const std::string& translated, bool vulkan, bool rt);
 
 // Draw order: opaque submeshes in mesh order, then blended ones back to front by mesh centre
 // distance from `eye` (the original game sorts its translucent pass; per-mesh granularity here).

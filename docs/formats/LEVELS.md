@@ -78,6 +78,47 @@ Frame [O]: intros are in the **render-terrain frame**. They need no `Level+0x80`
 - `loadLevelScene` draws the first non-zero render model. [I] The exe picks the model per instance (LOD,
   `modelNum` arguments). That choice is not reversed.
 
+### Lights (unit data +0x00 / +0x04)
+
+Code: `formats::parseUnit` → `scene::Environment::{lights, sun*}`; tests `Level.ParseUnitLights`,
+`RealData.UnitLightsAllUnits`. Render use: SHADERS.md "Engine inputs".
+
+[O] Unit data `+0x00` u32 numLights, `+0x04` → array of pointers to 0xE0-byte light records. tru.exe 0x5CEC60 creates
+a scene light per record from its light DTP, 0x5C6530 applies the record's overrides.
+
+| record off | meaning | evidence |
+|---|---|---|
+| +0x00 / +0x10 / +0x20 / +0x30 | matrix rows X, Y, Z (= the way a spot points), position; same frame as the intros | [O] 0x5C6530 copies 16 floats; l3_main_bedroom torch light on the torch-holder wall in our render |
+| +0x48 | light DTP (resource reference, type 7, resolved in the unit DRM) | [O] |
+| +0x4C / +0x50 | intensity override / flag | [O] SceneLight vfunc 0x20 → PCRenderLight +0xB0 (0x50A1F0) |
+| +0x51..+0x53 / +0x54 | colour override u8 rgb / flag (bedroom torches 246,154,36) | [O] vfunc 0x24 |
+| +0x58 / +0x5C | radius override / flag (0 → DTP radius) | [O] SceneLight 0x5742B0 |
+| +0x5D, +0x60..+0x68 | vfunc 0x48 (PCRenderLight +0x10C..+0x114, default (1.5e-5, 2.2, 0)) | [O] write; meaning [U] |
+| +0x6C, +0x70..+0x78 | vfunc 0x68: fade/LOD distances (bedroom 2000/4000/8000) [I] | [O] write |
+| +0x88 / +0x89 / +0x8F / +0xA6 / +0xA7 / +0xC4..+0xD0 | render-light flag bits, shadow mode, misc | [O] writes; meaning [U] |
+| +0x8C..+0xB7 | two 32-bit receiver masks built from bytes (vfuncs 0x6C / 0x74) | [O] build; receiver side [U] (not applied) |
+
+The light DTP (0x14E4 bytes) is copied to `PCLightResource +0x42C` (0x50A000; getter 0x50A030), so DTP offset d is
+resource `+0x42C + d` [O]:
+
+| DTP off | meaning | evidence |
+|---|---|---|
+| +0x00 | u32 type: 0 point, 1 spot, 2 sun (directional) | [O] 0x5042B0 slot choice, 0x50B910 |
+| +0x04 / +0x08 | radius / intensity | [O] defaults via 0x50A3C0 bits 4 / 1 |
+| +0x0C / +0x10 | spot cone angles (full, radians; bedroom 1.14 / 1.66) | [O] 0x50A3C0 bit 8 → 0x50A280 (cos of each, scale/bias); [I] half angles enter the cos |
+| +0x14 | spot width at the light: apex moved back by it / tan(outer/2) | [O] 0x50B910 |
+| +0x18 | u8 rgb colour | [O] 0x50AFB0 |
+| +0x1C | f32[255] falloff curve over d / radius → AttenuationSampler row (texel k = curve[k]·255 in R, texel 255 = 0) | [O] 0x50AFB0, 0x50A050 |
+| +0x41C / +0x420 / +0x424 | flicker flag, period, f32[256] intensity curve | [O] 0x50AFB0, 0x50A500 |
+| +0x824 / +0x828 / +0x82C..+0x838 | cookie flag, cookie texture (type-5 ref), scale, rotation, scroll | [O] 0x50AFB0, 0x50B910 |
+| +0x144C | casts shadows (shadow-light slot) | [O] 0x50A080 |
+
+Survey (`RealData.UnitLightsAllUnits`, 2026-10-18) [O]: 82 units, 218 point + 342 spot lights (106 flicker, 271 shadow
+casters), 23 units with a sun (11 with a cookie), at most 28 lights per unit (l1_ship_sinking_hall). 347 of 586 records
+use a non-linear falloff curve. l3_main_bedroom: 18 lights, its torches are flickering orange point lights.
+Not decoded: lights owned by object intros (torch objects) or cinematic light rigs (`co_light_rig*`, CINE light
+channels).
+
 ### Cell group data (Level+0x90)
 
 | Offset | Meaning | Evidence |

@@ -340,28 +340,33 @@ std::vector<glm::mat4> skinPalette(const scene::Skeleton& sk, std::span<const gl
     return out;
 }
 
-void skinVertices(const scene::MeshData& mesh, std::span<const glm::mat4> palette, std::vector<scene::Vertex>& out) {
+void skinVertices(const scene::MeshData& mesh, std::span<const glm::mat4> palette, std::vector<scene::Vertex>& out,
+                  const glm::mat4& world) {
     out = mesh.vertices;
-    if (mesh.skin.size() != mesh.vertices.size()) return;
+    const bool skinned = mesh.skin.size() == mesh.vertices.size();
+    // Normals and the tangent frame the original shaders' normal maps need follow the same rotation.
+    auto rotate = [](float* d, const glm::mat3& r) {
+        glm::vec3 n = r * glm::vec3(d[0], d[1], d[2]);
+        if (const float len = glm::length(n); len > 0.0f) n /= len;
+        d[0] = n.x, d[1] = n.y, d[2] = n.z;
+    };
     for (size_t v = 0; v < out.size(); ++v) {
-        const auto& in = mesh.vertices[v];
-        const auto& s = mesh.skin[v];
         glm::mat4 m(0.0f);
         float total = 0.0f;
-        for (int k = 0; k < 4; ++k)
-            if (s.weight[k] && s.bone[k] < palette.size()) {
-                m += palette[s.bone[k]] * (s.weight[k] / 255.0f);
-                total += s.weight[k] / 255.0f;
-            }
-        if (total <= 0.0f) continue;
-        m /= total;
-        const glm::vec3 p(m * glm::vec4(in.position[0], in.position[1], in.position[2], 1.0f));
-        glm::vec3 n = glm::mat3(m) * glm::vec3(in.normal[0], in.normal[1], in.normal[2]);
-        const float len = glm::length(n);
-        if (len > 0.0f) n /= len;
+        if (skinned) {
+            const auto& s = mesh.skin[v];
+            for (int k = 0; k < 4; ++k)
+                if (s.weight[k] && s.bone[k] < palette.size()) {
+                    m += palette[s.bone[k]] * (s.weight[k] / 255.0f);
+                    total += s.weight[k] / 255.0f;
+                }
+        }
+        m = total > 0.0f ? world * (m / total) : world;
         auto& o = out[v];
+        const glm::vec3 p(m * glm::vec4(o.position[0], o.position[1], o.position[2], 1.0f));
         o.position[0] = p.x, o.position[1] = p.y, o.position[2] = p.z;
-        o.normal[0] = n.x, o.normal[1] = n.y, o.normal[2] = n.z;
+        const glm::mat3 r(m);
+        rotate(o.normal, r), rotate(o.tangent, r), rotate(o.binormal, r);
     }
 }
 

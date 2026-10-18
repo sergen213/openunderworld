@@ -66,8 +66,10 @@ std::vector<glm::mat4> worldMatrices(const scene::Skeleton& skeleton, std::span<
 std::vector<glm::vec3> bindPositions(const scene::Skeleton& skeleton);
 // Skin matrices: world[i] * T(-bindPosition[i]).
 std::vector<glm::mat4> skinPalette(const scene::Skeleton& skeleton, std::span<const glm::mat4> world);
-// Linear blend skinning of mesh.vertices (bind pose) into `out` (resized to match).
-void skinVertices(const scene::MeshData& mesh, std::span<const glm::mat4> palette, std::vector<scene::Vertex>& out);
+// Linear blend skinning of mesh.vertices (bind pose) into `out` (resized to match), then `world`; meshes without
+// skin (or vertices without usable weights) only get `world`. Normals, tangents and binormals follow (normalised).
+void skinVertices(const scene::MeshData& mesh, std::span<const glm::mat4> palette, std::vector<scene::Vertex>& out,
+                  const glm::mat4& world = glm::mat4(1.0f));
 
 // ---- blending (docs/formats/ANIMATION.md "Transitions") ------------------------------------------
 // Rotation: quaternion slerp of the axis-angle vectors (shortest arc); scale and translation: lerp.

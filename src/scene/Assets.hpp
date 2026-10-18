@@ -82,16 +82,38 @@ struct Material {
     uint32_t flags = 0;           // blob +0x40 (0x04 = fogged: the VS gets fogScaleAndOffset)
 };
 
+// Point / spot light of a unit (0xE0-byte record + light DTP, tru.exe 0x5C6530 / PCRenderLight 0x50B910).
+struct Light {
+    uint8_t type = 0;            // 0 point, 1 spot
+    bool shadow = false;         // DTP +0x144C: the engine binds it to a shadow-light slot (0-2)
+    float position[3] = {};      // record row 3
+    float direction[3] = {};     // record row 2: the way a spot points
+    float color[3] = {};         // colour x intensity (record overrides +0x51 / +0x4C, else DTP +0x18 / +0x08)
+    float radius = 0;            // record +0x58 when +0x5C, else DTP +0x04
+    float coneInner = 0, coneOuter = 0; // spot: full cone angles, radians (DTP +0x0C / +0x10)
+    float nearWidth = 0;         // spot: DTP +0x14, cone radius at the light position (apex moved back)
+    std::vector<uint8_t> falloff; // 256 AttenuationSampler texels (R) over d / radius: DTP +0x1C floats x 255, last 0
+    float flickerPeriod = 0;     // DTP +0x420 seconds when DTP +0x41C is set, else 0 (steady)
+    std::vector<float> flicker;  // DTP +0x424: 256 intensity multipliers over one period
+};
+
 // Per-unit render settings (unit DTP at Level+0x70; SHADERS.md "Engine inputs"). valid = false: none loaded.
 struct Environment {
     bool valid = false;
     float fogColor[3] = {};   // 0..1 (U+0x18 bytes)
     float fogNear = 0, fogFar = 0; // U+0x40, U+0x3C (0 -> U+0x38)
     float ambient[3] = {};    // g_Ambient: U+0x1E4 bytes x U+0x1E8 / 255
-    // Sun: the unit's directional (type 2) light record (unit data +0x04 list; SHADERS.md). Only l4_ballcourt has one.
+    // Sun: the unit's directional (type 2) light record (unit data +0x04 list; SHADERS.md, LEVELS.md "Lights").
     bool sun = false;
     float sunDirection[3] = {}; // record matrix row 2: the direction light travels (PS SunLight c209)
     float sunColor[3] = {};     // intensity x colour (c212)
+    // Sun cookie ("modulation map", s11 via WorldToModulationMapSun c176/c177): texture id (0 = none), projected
+    // along the sun's record rows 0/1 (sunAxes) from sunOrigin; DTP +0x82C scale, +0x830 rotation (deg/s),
+    // +0x834/+0x838 scroll (1/s).
+    uint32_t sunCookie = 0;
+    float sunAxes[2][3] = {}, sunOrigin[3] = {};
+    float cookieScale = 1, cookieRotation = 0, cookieScroll[2] = {};
+    std::vector<Light> lights; // point and spot lights (type 0/1 records), unit frame
 };
 
 // Optional skinning. Up to 4 influences per vertex; `bone` indexes Skeleton::bones.
