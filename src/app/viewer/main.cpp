@@ -16,6 +16,7 @@
 
 #include "anim/Anim.hpp"
 #include "cdc/Cdc.hpp"
+#include "collision/Collision.hpp"
 #include "config/Config.hpp"
 #include "engine/FrameClock.hpp"
 #include "formats/Formats.hpp"
@@ -43,6 +44,7 @@ struct Options {
     std::string anim;      // --anim: anim id, #listIndex or name (clips of --drm)
     bool animList = false; // --anim-list: print the object's animations and exit
     double animTime = 0.0; // --anim-time: start time in seconds
+    bool showCollision = false; // --show-collision: collision wireframe + markup of --drm (unit DRMs)
 };
 
 void usage() {
@@ -50,7 +52,7 @@ void usage() {
                  "usage: ou-viewer [--game-dir DIR] [--drm pc-w\\\\x.drm] [--width W --height H] [--fov DEG]\n"
                  "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH] [--level]\n"
                  "                 [--renderer opengl|vulkan] [--no-overlay] [--fullscreen]\n"
-                 "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list]\n"
+                 "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list] [--show-collision]\n"
                  "                 [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
@@ -78,6 +80,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--fullscreen") { o.fullscreen = true; continue; }
         if (a == "--level") { o.level = true; continue; }
         if (a == "--anim-list") { o.animList = true; continue; }
+        if (a == "--show-collision") { o.showCollision = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (!(v = next())) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         if (a == "--config") continue; // applied above
@@ -233,6 +236,32 @@ std::string fmt(const char* f, A... a) {
     return buf;
 }
 
+// Collision wireframe (red: terrain group 0, magenta: other groups, grey: faces tru.exe queries skip)
+// and markup polylines (yellow: ledgegrab, cyan: balance beam, orange: other) with point ticks.
+std::vector<ou::render::DebugLine> collisionLines(const Options& o, std::string& summary, std::vector<std::string>& warnings) {
+    std::vector<ou::render::DebugLine> out;
+    try {
+        const ou::cdc::BigfileSet bigfile(o.gameDir);
+        auto bytes = bigfile.read(o.drm);
+        if (!bytes) throw ou::cdc::FormatError("not in bigfile");
+        const auto col = ou::collision::loadLevelCollision(ou::cdc::parseDrm(std::move(*bytes)), &warnings);
+        auto line = [&](glm::vec3 a, glm::vec3 b, uint32_t c) { out.push_back({{a.x, a.y, a.z}, {b.x, b.y, b.z}, c}); };
+        for (const auto& f : col.faces) {
+            const uint32_t c = (f.flags & 0x40) ? 0xFF808080 : f.group ? 0xFFFF00FF : 0xFF2020FF;
+            for (int k = 0; k < 3; ++k) line(col.vertices[f.v[k]], col.vertices[f.v[(k + 1) % 3]], c);
+        }
+        for (const auto& m : col.markup) {
+            const uint32_t c = m.type == 1 ? 0xFF00FFFF : m.type == 14 ? 0xFFFFFF00 : 0xFF0080FF;
+            for (size_t i = 0; i + 1 < m.points.size(); ++i) line(m.points[i], m.points[i + 1], c);
+            for (const auto& p : m.points) line(p, p + glm::vec3(0, 0, 40), c);
+        }
+        summary = fmt("collision: %zu faces, %zu markup polylines", col.faces.size(), col.markup.size());
+    } catch (const std::exception& e) {
+        warnings.push_back("--show-collision: " + o.drm + ": " + e.what());
+    }
+    return out;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -283,6 +312,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "ou-viewer: %s | %zu meshes, %zu textures (rgba8 %zu, bgra8 %zu, bc1 %zu, bc2 %zu, bc3 %zu)\n",
                  source.c_str(), scene.meshes.size(), scene.textures.size(), perFormat[0], perFormat[1],
                  perFormat[2], perFormat[3], perFormat[4]);
+    std::string collisionSummary;
+    const auto debugLines = opt.showCollision && !opt.drm.empty() ? collisionLines(opt, collisionSummary, warnings)
+                                                                  : std::vector<ou::render::DebugLine>{};
+    if (!collisionSummary.empty()) std::fprintf(stderr, "ou-viewer: %s\n", collisionSummary.c_str());
     for (const auto& w : warnings) std::fprintf(stderr, "ou-viewer: warning: %s\n", w.c_str());
     double animTime = opt.animTime;
     std::vector<ou::scene::Vertex> skinScratch;
@@ -431,11 +464,12 @@ int main(int argc, char** argv) {
             if (clip)
                 lines.push_back(fmt("%s | %u keys | t %.2f / %.2f s (looping)", clipLabel.c_str(), clip->keyCount,
                                     std::fmod(animTime, clip->durationSeconds()), clip->durationSeconds()));
+            if (!collisionSummary.empty()) lines.push_back(collisionSummary);
             for (size_t i = 0; i < warnings.size() && i < 8; ++i) lines.push_back("!warning: " + warnings[i]);
             if (warnings.size() > 8) lines.push_back(fmt("!... %zu more warnings on stderr", warnings.size() - 8));
             lines.push_back("hold RMB look | WASD/QE move | Shift fast | wheel speed | V vsync | L light | C cull | F1 overlay");
         }
-        renderer->drawFrame(cam, {w, h}, {lighting, cull, lines});
+        renderer->drawFrame(cam, {w, h}, {lighting, cull, lines, debugLines});
         ++frame;
         if (opt.frames && frame >= opt.frames) {
             running = false;

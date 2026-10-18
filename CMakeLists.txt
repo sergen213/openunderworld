@@ -115,6 +115,16 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_formats_tests)
 endif()
 
+# ---- ou_collision: unit collision meshes + markup, BVH, queries ---------------------------
+add_library(ou_collision STATIC src/collision/Collision.cpp src/collision/LevelCollision.cpp)
+target_link_libraries(ou_collision PUBLIC ou_cdc glm::glm)
+target_link_libraries(ou-viewer PRIVATE ou_collision)
+if(OU_BUILD_TESTS)
+  add_executable(ou_collision_tests tests/test_collision.cpp)
+  target_link_libraries(ou_collision_tests PRIVATE ou_collision ou_formats GTest::gtest_main)
+  gtest_discover_tests(ou_collision_tests DISCOVERY_TIMEOUT 30)
+endif()
+
 # ---- ou-import: read-only installation importer ----------------------------------------
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json REQUIRED CONFIG)

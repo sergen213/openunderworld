@@ -103,6 +103,27 @@ void main() {
     oColor = vec4(vColor.rgb, vColor.a * a);
 })";
 
+const char* kLineVs = R"(#version 460 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec4 aColor;
+layout(location = 0) uniform mat4 uViewProj;
+out vec4 vColor;
+void main() {
+    vColor = aColor;
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+    gl_Position.z -= 1e-4 * gl_Position.w; // win depth ties against the surface the line lies on
+})";
+
+const char* kLineFs = R"(#version 460 core
+in vec4 vColor;
+out vec4 oColor;
+void main() { oColor = vec4(vColor.rgb, 1.0); })";
+
+struct LineVertex {
+    float pos[3];
+    uint32_t color;
+};
+
 GLuint compileShader(GLenum type, const char* src, std::string& error) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, nullptr);
@@ -155,10 +176,12 @@ struct GpuMesh {
 };
 
 struct Resources {
-    Program sceneProgram, textProgram;
+    Program sceneProgram, textProgram, lineProgram;
     Texture white, font;
-    VertexArray textVao;
-    Buffer textVbo;
+    VertexArray textVao, lineVao;
+    Buffer textVbo, lineVbo;
+    const DebugLine* lineSource = nullptr; // cached upload of FrameOptions::debugLines
+    size_t lineCount = 0;
     std::unordered_map<uint32_t, Texture> textures;
     std::vector<GpuMesh> meshes;
 };
@@ -212,6 +235,11 @@ public:
         if (!r.sceneProgram.get()) return false;
         r.textProgram = linkProgram(kTextVs, kTextFs, error);
         if (!r.textProgram.get()) return false;
+        r.lineProgram = linkProgram(kLineVs, kLineFs, error);
+        if (!r.lineProgram.get()) return false;
+        r.lineVao = newVertexArray();
+        attrib(r.lineVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(LineVertex, pos));
+        attrib(r.lineVao.get(), 1, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(LineVertex, color));
 
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -287,6 +315,7 @@ public:
                                reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
             }
         }
+        drawLines(viewProj, options.debugLines);
         drawOverlay(vp, options.overlay);
     }
 
@@ -397,6 +426,34 @@ private:
         attrib(vao, 2, 2, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, uv));
         attrib(vao, 3, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(scene::Vertex, color));
         res_->meshes.push_back(std::move(g));
+    }
+
+    void drawLines(const glm::mat4& viewProj, std::span<const DebugLine> lines) {
+        if (lines.empty()) return;
+        Resources& r = *res_;
+        if (lines.data() != r.lineSource || lines.size() != r.lineCount) {
+            std::vector<LineVertex> v;
+            v.reserve(2 * lines.size());
+            for (const auto& l : lines) {
+                v.push_back({{l.a[0], l.a[1], l.a[2]}, l.color});
+                v.push_back({{l.b[0], l.b[1], l.b[2]}, l.color});
+            }
+            r.lineVbo = newBuffer(); // immutable storage: new buffer per change
+            glNamedBufferStorage(r.lineVbo.get(), GLsizeiptr(v.size() * sizeof(LineVertex)), v.data(), 0);
+            glVertexArrayVertexBuffer(r.lineVao.get(), 0, r.lineVbo.get(), 0, sizeof(LineVertex));
+            r.lineSource = lines.data();
+            r.lineCount = lines.size();
+        }
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_BLEND);
+        glUseProgram(r.lineProgram.get());
+        glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj));
+        glBindVertexArray(r.lineVao.get());
+        glDrawArrays(GL_LINES, 0, GLsizei(2 * lines.size()));
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
     }
 
     void drawOverlay(Viewport vp, std::span<const std::string> lines) {

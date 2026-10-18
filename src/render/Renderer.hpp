@@ -18,10 +18,19 @@ struct Viewport {
     int width = 0, height = 0; // drawable size in pixels
 };
 
+// World-space line segment for debug overlays (collision, markup).
+struct DebugLine {
+    float a[3], b[3];
+    uint32_t color = 0xFFFFFFFF; // RGBA8, little-endian (as scene::Vertex::color)
+};
+
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
     bool cullBackFaces = true;              // front = counter-clockwise (cdc meshes are CCW)
     std::span<const std::string> overlay;   // diagnostic text lines, top-left; leading '!' = highlight
+    // Drawn after the scene, depth-tested (biased slightly toward the camera), unlit. Backends may
+    // cache the upload while the span's data pointer and size stay the same.
+    std::span<const DebugLine> debugLines;
 };
 
 struct Image {
