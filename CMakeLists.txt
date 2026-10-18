@@ -41,12 +41,33 @@ pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
 add_library(ou_placeholder STATIC src/scene/Placeholder.cpp)
 target_include_directories(ou_placeholder PUBLIC src)
 
+add_library(ou_render_common STATIC src/render/RenderCommon.cpp)
+target_include_directories(ou_render_common PUBLIC src)
+target_link_libraries(ou_render_common PUBLIC SDL3::SDL3 glm::glm)
+
 add_library(ou_render_gl STATIC src/render/gl/GlRenderer.cpp)
-target_include_directories(ou_render_gl PUBLIC src)
-target_link_libraries(ou_render_gl PUBLIC SDL3::SDL3 glm::glm PRIVATE PkgConfig::EPOXY)
+target_link_libraries(ou_render_gl PUBLIC ou_render_common PRIVATE PkgConfig::EPOXY)
+
+# ---- ou_render_vk: Vulkan 1.3 backend; SPIR-V compiled at build time by glslc and embedded ----
+find_package(Vulkan REQUIRED COMPONENTS glslc)
+set(OU_VK_SPV_DIR ${CMAKE_CURRENT_BINARY_DIR}/vk_shaders)
+file(MAKE_DIRECTORY ${OU_VK_SPV_DIR})
+set(OU_VK_SPV)
+foreach(s scene.vert scene.frag text.vert text.frag)
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/${s})
+  add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
+                     COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
+                     DEPENDS ${src} VERBATIM)
+  list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
+endforeach()
+add_library(ou_render_vk STATIC src/render/vk/VkRenderer.cpp ${OU_VK_SPV})
+target_include_directories(ou_render_vk PRIVATE ${OU_VK_SPV_DIR})
+target_link_libraries(ou_render_vk PUBLIC ou_render_common PRIVATE Vulkan::Vulkan)
+target_compile_options(ou_render_vk PRIVATE -Wno-missing-field-initializers) # Vk{sType} init idiom
 
 add_executable(ou-viewer src/app/viewer/main.cpp)
-target_link_libraries(ou-viewer PRIVATE ou_render_gl ou_placeholder ou_formats)
+target_link_libraries(ou-viewer PRIVATE ou_render_gl ou_render_vk ou_placeholder ou_formats)
+add_executable(ou-imgdiff tools/ou-imgdiff/main.cpp)
 
 if(OU_BUILD_TESTS)
   add_executable(ou_viewer_tests tests/test_viewer.cpp)
@@ -56,10 +77,25 @@ if(OU_BUILD_TESTS)
   add_test(NAME viewer_placeholder_screenshot
            COMMAND ou-viewer --frames 5 --screenshot ${CMAKE_CURRENT_BINARY_DIR}/viewer_placeholder.ppm)
   set_tests_properties(viewer_placeholder_screenshot PROPERTIES SKIP_RETURN_CODE 77)
+  # Same, Vulkan backend; exits 77 (skip) without a display or a usable Vulkan 1.3 device.
+  add_test(NAME viewer_vulkan_placeholder_screenshot
+           COMMAND ou-viewer --renderer vulkan --frames 5 --screenshot ${CMAKE_CURRENT_BINARY_DIR}/viewer_vulkan_placeholder.ppm)
+  # GL vs Vulkan placeholder frames without overlay must be near-identical (mean |diff| <= 2/255).
+  set(_v $<TARGET_FILE:ou-viewer>)
+  set(_d ${CMAKE_CURRENT_BINARY_DIR})
+  add_test(NAME viewer_vulkan_matches_gl
+           COMMAND sh -ec "\"${_v}\" --no-overlay --frames 3 --screenshot ${_d}/cmp_gl.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --screenshot ${_d}/cmp_vk.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl.ppm ${_d}/cmp_vk.ppm 2")
+  add_executable(ou_vk_tests tests/test_vk_renderer.cpp)
+  target_link_libraries(ou_vk_tests PRIVATE ou_render_vk ou_placeholder GTest::gtest_main)
+  # Mesa RADV leaks 256 bytes per process (see tests/lsan_vulkan.supp).
+  set(OU_VK_TEST_ENV "LSAN_OPTIONS=fast_unwind_on_malloc=0:suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan_vulkan.supp")
+  gtest_discover_tests(ou_vk_tests PROPERTIES ENVIRONMENT "${OU_VK_TEST_ENV}")
+  set_tests_properties(viewer_vulkan_placeholder_screenshot viewer_vulkan_matches_gl PROPERTIES
+                       SKIP_RETURN_CODE 77 ENVIRONMENT "${OU_VK_TEST_ENV}")
 endif()
 
 # ---- ou_formats: PCD9 textures, render models, terrain -> ou::scene; ou-asset CLI ----------
-add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/formats/Scene.cpp src/formats/Level.cpp)
+add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/formats/Scene.cpp)
 target_link_libraries(ou_formats PUBLIC ou_cdc)
 add_executable(ou-asset tools/ou-asset/main.cpp)
 target_link_libraries(ou-asset PRIVATE ou_formats)

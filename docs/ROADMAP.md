@@ -12,7 +12,7 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 | 3 | Native rendering: SDL3 + OpenGL viewer of original assets, debug camera | In progress |
 | 4 | Engine foundations: scene/streaming, animation, collision, character control | Research Required |
 | 5 | Playable section: traversal, puzzles, combat, saving | Research Required |
-| 6 | Vulkan backend, enhanced rendering, optional RT | Research Required |
+| 6 | Vulkan backend, enhanced rendering, optional RT | In progress (Vulkan 1.3 backend at GL parity; RT detection only) |
 | 7 | Qt launcher, packaging, CI, signed updates | In progress |
 | 8 | Edition compatibility, fidelity verification, release | Research Required |
 
@@ -29,6 +29,7 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 | Launcher (Qt 6) + shared config | Implemented | Live Wayland screenshot with real import result (docs/LAUNCHER.md) | `launcher_self_test` (offscreen), `Config.*` | Launch button / save restore not GUI-exercised |
 | Signed updater + ou-sign | Tested | Ed25519 (libsodium), stage + RENAME_EXCHANGE swap, journal recovery (docs/UPDATES.md) | `ou_update_tests` (12, file-backed transport) | Live HTTPS server untested; no release server yet |
 | Packaging / CI | Implemented | install rules, .desktop, icon, PKGBUILD (local `makepkg -f` built + 71/71 check), Arch CI workflow | — | CI never run on GitHub |
+| Vulkan 1.3 renderer | Tested | Placeholder, lara.drm, l4_pool.drm match GL (mean abs diff ≤ 0.015/255); validation layer clean (docs/RENDERING.md) | `viewer_vulkan_*`, `VulkanRenderer.*` | No enhanced mode, RT detected only; interactive drag-resize not hand-tested |
 | Everything gameplay | Research Required | — | — | — |
 
 ## Principles

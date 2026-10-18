@@ -3,9 +3,11 @@
 ## Dependencies (Arch / CachyOS package names)
 
 `cmake ninja gcc` (or clang), `zlib-ng-compat`, `sdl3`, `libepoxy`, `glm`, `gtest`,
+`vulkan-headers vulkan-icd-loader shaderc` (glslc) for the Vulkan backend.
 `openssl nlohmann-json` (importer), `libsodium curl` (updater, `ou-sign`), `qt6-base` (`ou-launcher`;
 skipped with a CMake notice if Qt 6 is missing). Launcher and updater: `docs/LAUNCHER.md`, `docs/UPDATES.md`.
-A GPU/driver with OpenGL 4.5+ core (4.6 requested; developed on Mesa radeonsi).
+A GPU/driver with OpenGL 4.5+ core (4.6 requested; developed on Mesa radeonsi); Vulkan 1.3
+for `--renderer vulkan` (see "Vulkan backend" below).
 
 No vendored libraries: OpenGL entry points come from libepoxy, the overlay font is SDL3's
 built-in 8x8 debug font (`SDL_RenderDebugText`) rasterised once into a texture atlas.
@@ -46,6 +48,8 @@ build/ou-viewer --frames 5 --screenshot out.ppm   # render N frames, save PPM, e
 | `--screenshot FILE` | after the last frame, save the back buffer as binary PPM (implies `--frames 1`) |
 | `--no-vsync` | start with vsync off |
 | `--cam X,Y,Z,YAW,PITCH` | initial camera position (game units) and yaw/pitch in degrees |
+| `--renderer opengl\|vulkan` | render backend (default `opengl`); unavailable backend → exit 77 |
+| `--no-overlay` | start with the diagnostics overlay hidden (used for GL/Vulkan image diffs) |
 | `--fullscreen` | start fullscreen |
 | `--config FILE` | launcher config JSON (`docs/LAUNCHER.md`), applied first; other flags override |
 
@@ -102,3 +106,64 @@ Observed:
 
 Not exercised: interactive window resize (viewport is set from the pixel size every
 frame), gamepad input (no pad attached), runtime `V` toggle.
+
+## Vulkan backend
+
+`build/ou-viewer --renderer vulkan [...]` selects the Vulkan 1.3 backend
+(`src/render/vk/`, architecture in [RENDERING.md](RENDERING.md)). Build requirements:
+`vulkan-headers`, `vulkan-icd-loader` (linked as `libvulkan`; no volk) and `glslc` (package
+`shaderc`). The four GLSL shaders in `src/render/vk/shaders/` are compiled at build time into
+`build/vk_shaders/*.inc` and embedded; editing a shader rebuilds only the backend.
+
+Runtime:
+- Needs a Vulkan 1.3 device with a graphics+present queue and `VK_KHR_swapchain`. If the
+  loader, an ICD or such a device is missing, `ou-viewer` prints "vulkan renderer unavailable"
+  and exits 77 (ctest skip); `VK_DRIVER_FILES=/nonexistent.json` reproduces it.
+- Validation: `VK_LAYER_KHRONOS_validation` is enabled automatically in Debug builds when it is
+  installed (`OU_VK_VALIDATION=0` disables, `=1` enables in Release). Messages of warning
+  severity and above, from the layer and from the loader, go through a `VK_EXT_debug_utils`
+  messenger to stderr as `[vk warn]` / `[vk error]`. If the layer is not installed, only loader
+  messages appear; install `vulkan-validation-layers` and rerun the tests below once to validate.
+  Loader errors about third-party implicit layers (e.g. `liblsfg-vk-layer.so`) come from the
+  local layer setup, not from this project; `VK_LOADER_LAYERS_DISABLE='~implicit~'` silences them.
+- Pipeline cache: `$XDG_CACHE_HOME/openunderworld/vk_pipeline_cache.bin` (default
+  `~/.cache/...`), written at shutdown.
+- The overlay line `RT detected: ...` reports `VK_KHR_acceleration_structure`,
+  `VK_KHR_ray_query` and `VK_KHR_ray_tracing_pipeline`; ray tracing is not used yet.
+
+Tests (all skip without a display or a usable Vulkan device):
+- `viewer_vulkan_placeholder_screenshot`: 5 frames + PPM, like the GL test.
+- `viewer_vulkan_matches_gl`: renders the placeholder with both backends (`--no-overlay`) and
+  requires `ou-imgdiff` mean |Δ| ≤ 2/255.
+- `VulkanRenderer.ResizeRecreatesSwapchain` (`ou_vk_tests`): draws, resizes the SDL window
+  320x240 → 640x200, feeds `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED` into `resize()` as the viewer
+  does, checks the read-back size and content on the new swapchain; also checks re-upload and
+  `updateVertices`.
+
+`ou-imgdiff a.ppm b.ppm [MAX_MEAN]` prints mean absolute channel error, the share of pixels
+off by more than 16 and PSNR; exit 1 above `MAX_MEAN` (default 4).
+
+ASan note: Mesa RADV 26.2.4 leaks one 256-byte `pthread_once` allocation per process (a bare
+`vkCreateInstance`/`vkDestroyInstance` program reproduces it). The Vulkan tests run with
+`LSAN_OPTIONS=fast_unwind_on_malloc=0:suppressions=tests/lsan_vulkan.supp`; use the same for
+manual ASan runs. With `SDL_VIDEO_DRIVER=x11` (XWayland) the Vulkan viewer additionally reports
+~50 KB of leaks whose stacks all start in `SDL_Init` (none in project code); Wayland, the
+default here, is clean.
+
+### Vulkan verification status (2026-10-18, RX 7900 XTX, RADV Mesa 26.2.4, KDE Wayland)
+
+Observed (Debug + ASan/UBSan, Khronos validation layer 1.4.363 active):
+- Placeholder scene and `pc-w\lara.drm` render the same as GL. Without the overlay the
+  1792x1008 frames differ from GL by mean |Δ| 0.001/255, 0.001 % pixels > 16, PSNR 61 dB
+  (lara) and 0.015/255, PSNR 50 dB (`pc-w\l4_pool.drm`, 18 BC1 textures); with the overlay
+  the description line differs (0.5/255). BC1, BC3 and BGRA8 (lara) and RGBA8 (placeholder)
+  upload with full mip chains.
+- `--width/--height` 800x600, 2560x720 (32:9), 333x777 and an XWayland 1000x500 run render
+  at the matching HiDPI pixel sizes; the runtime resize test passes.
+- Zero validation messages and, with the RADV suppression, zero LSan/UBSan reports in these
+  runs; clean shutdown (all child objects destroyed before `vkDestroyDevice`, checked by the
+  layer).
+- Exit 77 with no display (`env -u WAYLAND_DISPLAY -u DISPLAY`) and with no ICD.
+
+Not exercised: interactive mouse-drag resize and minimise, the `V` vsync toggle at runtime
+(both go through the same recreate path as the tested resize), non-AMD drivers, BC2 data.

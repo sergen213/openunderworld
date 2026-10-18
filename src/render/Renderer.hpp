@@ -35,11 +35,18 @@ public:
 
     // SDL_WindowFlags the window must be created with (e.g. SDL_WINDOW_OPENGL).
     virtual uint64_t windowFlags() const = 0;
-    // Called before window creation (e.g. GL attributes). Returns false + error on failure.
+    // Called before window creation (e.g. GL attributes, Vulkan instance + device probe).
+    // Returns false + error when the backend is unavailable on this system (apps treat it as skip).
     virtual bool preWindowSetup(std::string& error) = 0;
     virtual bool init(SDL_Window* window, std::string& error) = 0;
     // Replaces all GPU resources. Returns warnings (unsupported formats etc.).
     virtual std::vector<std::string> upload(const scene::SceneData& scene) = 0;
+    // Replaces the vertices of uploaded mesh `meshIndex` (index into the last upload's SceneData::meshes;
+    // same vertex count). Used for CPU skinning. false = unsupported here (caller re-uploads instead).
+    virtual bool updateVertices(size_t meshIndex, std::span<const scene::Vertex> vertices) {
+        (void)meshIndex, (void)vertices;
+        return false;
+    }
     virtual void resize(Viewport viewport) = 0;
     virtual void drawFrame(const Camera& camera, Viewport viewport, const FrameOptions& options) = 0;
     virtual Image readBackbuffer(Viewport viewport) = 0; // after drawFrame, before present
@@ -50,5 +57,6 @@ public:
 };
 
 std::unique_ptr<Renderer> createGlRenderer();
+std::unique_ptr<Renderer> createVulkanRenderer(); // Vulkan 1.3, dynamic rendering
 
 } // namespace ou::render

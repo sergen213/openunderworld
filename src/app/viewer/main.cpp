@@ -29,21 +29,23 @@ constexpr int kExitSkip = 77; // ctest SKIP_RETURN_CODE: no display available
 struct Options {
     std::filesystem::path gameDir;
     std::string drm;
-    bool level = false; // --level: load --drm as a whole unit (formats::loadLevelScene)
     int width = 1280, height = 720;
     float fov = 60.0f;
     int frames = 0; // 0 = run until closed
     std::filesystem::path screenshot;
     bool vsync = true;
     std::optional<std::array<float, 5>> cam; // x y z yawDeg pitchDeg
+    std::string renderer = "opengl";         // opengl | vulkan
+    bool noOverlay = false;
     bool fullscreen = false;
 };
 
 void usage() {
     std::fprintf(stderr,
                  "usage: ou-viewer [--game-dir DIR] [--drm pc-w\\\\x.drm] [--width W --height H] [--fov DEG]\n"
-                 "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH] [--level]\n"
-                 "                 [--fullscreen] [--config config.json]  (launcher settings; later flags override)\n"
+                 "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH]\n"
+                 "                 [--renderer opengl|vulkan] [--no-overlay] [--fullscreen]\n"
+                 "                 [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
 }
@@ -54,7 +56,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (std::string(argv[i]) != "--config") continue;
         try {
             auto c = ou::config::load(argv[i + 1]);
-            o.gameDir = c.gameDir, o.drm = c.drm, o.width = c.width, o.height = c.height;
+            o.gameDir = c.gameDir, o.drm = c.drm, o.renderer = c.renderer, o.width = c.width, o.height = c.height;
             o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "--config: %s\n", e.what());
@@ -66,13 +68,14 @@ bool parseArgs(int argc, char** argv, Options& o) {
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
         const char* v = nullptr;
         if (a == "--no-vsync") { o.vsync = false; continue; }
-        if (a == "--level") { o.level = true; continue; }
+        if (a == "--no-overlay") { o.noOverlay = true; continue; }
         if (a == "--fullscreen") { o.fullscreen = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (!(v = next())) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         if (a == "--config") continue; // applied above
         if (a == "--game-dir") o.gameDir = v;
         else if (a == "--drm") o.drm = v;
+        else if (a == "--renderer") o.renderer = v;
         else if (a == "--width") o.width = std::atoi(v);
         else if (a == "--height") o.height = std::atoi(v);
         else if (a == "--fov") o.fov = float(std::atof(v));
@@ -87,6 +90,10 @@ bool parseArgs(int argc, char** argv, Options& o) {
             o.cam = c;
         }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return false; }
+    }
+    if (o.renderer != "opengl" && o.renderer != "vulkan") {
+        std::fprintf(stderr, "--renderer wants opengl or vulkan\n");
+        return false;
     }
     if (o.width <= 0 || o.height <= 0 || o.fov <= 1.0f || o.fov >= 179.0f || o.frames < 0) {
         std::fprintf(stderr, "invalid --width/--height/--fov/--frames\n");
@@ -107,8 +114,8 @@ ou::scene::SceneData loadScene(const Options& o, std::string& source) {
         failure = "--drm needs --game-dir";
     } else {
         try {
-            const ou::cdc::BigfileSet bigfile(o.gameDir);
-            ou::scene::SceneData s = o.level ? ou::formats::loadLevelScene(bigfile, o.drm) : ou::formats::loadDrmScene(bigfile, o.drm);
+            ou::cdc::Bigfile bigfile(o.gameDir / "bigfile.000");
+            ou::scene::SceneData s = ou::formats::loadDrmScene(bigfile, o.drm);
             if (!s.meshes.empty()) {
                 source = o.drm + " (original game assets" + (s.placeholder ? ", partly placeholder)" : ")");
                 return s;
@@ -160,10 +167,13 @@ int main(int argc, char** argv) {
         return kExitSkip;
     }
 
-    ou::platform::WindowPtr window; // declared before the renderer: GL context dies first
-    auto renderer = ou::render::createGlRenderer();
+    ou::platform::WindowPtr window; // declared before the renderer: GL context / VkSurface die first
+    auto renderer = opt.renderer == "vulkan" ? ou::render::createVulkanRenderer() : ou::render::createGlRenderer();
     std::string error;
-    if (!renderer->preWindowSetup(error)) { std::fprintf(stderr, "ou-viewer: %s\n", error.c_str()); return 1; }
+    if (!renderer->preWindowSetup(error)) { // backend unavailable on this system (no loader / device)
+        std::fprintf(stderr, "ou-viewer: %s renderer unavailable: %s; skipping\n", opt.renderer.c_str(), error.c_str());
+        return kExitSkip;
+    }
     window.reset(SDL_CreateWindow(
         "OpenUnderworld viewer", opt.width, opt.height,
         SDL_WindowFlags(renderer->windowFlags()) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
@@ -222,7 +232,7 @@ int main(int argc, char** argv) {
     ou::platform::GamepadPtr pad;
     ou::engine::FrameClock clock; // 60 Hz fixed simulation tick
     glm::vec3 simPrev = cam.position, simCur = cam.position;
-    bool running = true, relative = false, overlay = true, lighting = true, cull = true;
+    bool running = true, relative = false, overlay = !opt.noOverlay, lighting = true, cull = true;
     uint64_t last = SDL_GetTicksNS(), fpsStart = last;
     int frame = 0, fpsFrames = 0;
     double fps = 0.0, frameMs = 0.0;

@@ -1,0 +1,5 @@
+# LeakSanitizer suppressions for tests that load a Vulkan ICD.
+# Mesa RADV 26.2.4 leaks one 256-byte pthread_once allocation per process (reproduced with a bare
+# vkCreateInstance/vkDestroyInstance); the ICD is dlclose()d, so only the pthread_once frame is
+# symbolised. Needs LSAN_OPTIONS=fast_unwind_on_malloc=0 to see that frame.
+leak:pthread_once
