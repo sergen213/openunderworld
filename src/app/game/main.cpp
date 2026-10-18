@@ -169,7 +169,7 @@ struct LaraMeshes {
     void pose(const ou::game::World& world, const ou::game::PlayerState& s, double alpha, const ou::scene::SceneData& scene,
               ou::render::Renderer& r) {
         const auto palette = ou::anim::skinPalette(world.anims().skeleton, world.pose(alpha));
-        const glm::mat4 m = world.player().modelMatrix(s.pos, s.yaw);
+        const glm::mat4 m = world.player().modelMatrix(s.pos, s.yaw, s.pitch);
         const glm::mat3 n(m);
         for (const size_t i : meshIndices) {
             ou::anim::skinVertices(scene.meshes[i], palette, scratch);

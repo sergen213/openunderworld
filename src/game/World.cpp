@@ -36,6 +36,13 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ledgeb_right", 3, 3}, {"ledgeb_climbup_fast", 6, 6}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
         {"swim_climbout", 12, 6}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
         {"swim_surfaceidle", 8, 6}, {"swim_jump_land", 6, 6}, {"swim_submerged_idle", 10, 10},
+        // traversal (requests most often used for each clip)
+        {"bbeam_walk", 5, 5}, {"bbeam_idle", 6, 6}, {"bbeam_walk_attach", 7, 1}, {"bbeam_jumpland", 5, 5},
+        {"bbeam_walk_turn180", 5, 5}, {"drop_to_ledgeb", 3, 3}, {"ledgeb_jump_up", 8, 4}, {"ledgeb_jump_back", 5, 0},
+        {"ledgeb_jump_right", 3, 1}, {"ledgeb_attach_U", 4, 4}, {"ledgeb_attach_S", 4, 4}, {"ledgeb_attach_F", 4, 4},
+        {"HPole_idleHangPerp", 0, 0}, {"Hpole_perp_attach_M", 2, 4}, {"HPole_StartSwing", 4, 4}, {"HPole_swing", 1, 1},
+        {"hpole_perp_fling", 1, 1}, {"crouch_Idle", 6, 6}, {"crouch_idleToCrouch", 4, 6}, {"Crouch_Front", 6, 3},
+        {"ng_roll_front", 3, 1}, {"slope_slidefront", 6, 1},
     };
     Row r{to, 3, 0};
     for (const auto& k : kRows)
@@ -86,6 +93,10 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ng_generic_land_forwards", "ng_running_land", "ledgeb_attach_M", "ledgeb_idle", "ledgeb_right",
     "ledgeb_climbup_fast", "swim_jump_land", "swim_surfaceidle", "swim_surface", "swim_surfaceidle_to_swim",
     "swim_surfacedive", "swim_submerged_idle", "swim_sub", "swim_sub_up", "swim_sub_down", "swim_climbout",
+    "bbeam_walk", "bbeam_idle", "bbeam_walk_attach", "bbeam_jumpland", "bbeam_walk_turn180", "drop_to_ledgeb",
+    "ledgeb_jump_up", "ledgeb_jump_back", "ledgeb_jump_right", "ledgeb_attach_U", "ledgeb_attach_S", "ledgeb_attach_F",
+    "HPole_idleHangPerp", "Hpole_perp_attach_M", "HPole_StartSwing", "HPole_swing", "Hpole_swingstopA", "hpole_perp_fling",
+    "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
     "death_fall_normal", "death_toknee", // combat (Combat.cpp)
 };
 
@@ -129,6 +140,7 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile) {
     if (auto w = loadWeapon(bigfile, "wp_handgun")) lib.pistols = *w;
     // Hands (bones 55, 80: the last segment of each arm chain before the fingers) in the hang pose.
     if (auto h = lib.handsAt(*lib.find("ledgeb_idle"), 0)) lib.hangHandOffset = *h;
+    if (auto h = lib.handsAt(*lib.find("HPole_idleHangPerp"), 0)) lib.poleHandOffset = *h;
     // Swim speed: mean root speed of the clips that start swimming (their loops have no root motion).
     float dist = 0;
     double secs = 0;
@@ -217,6 +229,7 @@ PlayerState World::interpolated(double alpha) const {
     PlayerState s = player_.state();
     s.pos = glm::mix(prev_.pos, s.pos, t);
     s.yaw = lerpAngle(prev_.yaw, s.yaw, t);
+    s.pitch = glm::mix(prev_.pitch, s.pitch, t);
     if (prev_.clip == s.clip) s.clipTime = prev_.clipTime + (s.clipTime - prev_.clipTime) * alpha;
     return s;
 }
@@ -250,7 +263,7 @@ void World::updatePose(float dt, bool reset) {
     aimLayer(local, reset ? 0 : dt);
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(anims_.skeleton.bones[0].pivot)}; // root motion is in pos
     auto m = anim::worldMatrices(anims_.skeleton, local);
-    const glm::mat4 toWorld = player_.modelMatrix(s.pos, s.yaw);
+    const glm::mat4 toWorld = player_.modelMatrix(s.pos, s.yaw, s.pitch);
     if (reset) hair_.reset(m, toWorld);
     else hair_.step(m, toWorld, dt);
     hair_.apply(m, toWorld);

@@ -86,7 +86,7 @@ Unit data (Level+0x74) `+0x2C` count, `+0x30` pointer array of 0xB0-byte items, 
 
 | off | meaning |
 |-----|---------|
-| 0x00 | 4×4 matrix, rows = basis, row 3 = translation; identity in every item seen [O]. Points are transformed by it (0x49BA20) [I: row-vector convention] |
+| 0x00 | 4×4 matrix, rows = basis, row 3 = translation; identity in l4_pool, a half turn + translation on l4_traprooms' poles [O]. Points are transformed by it (0x49BA20); row-vector convention confirmed by the poles landing on their bars [O] |
 | 0x48 | u16 id (copied to MarkUp+0x2E) |
 | 0x4A | u16 (copied to MarkUp+0x2C) |
 | 0x4C | u8 kind (0 → flags from type; 1 → +0x98 byte copied) |
@@ -105,7 +105,7 @@ Type → MUD flags = `switch 0x5D6F90 | switch 0x5D70A0` [O] (names from the TR8
 | 3 | 0x10000000 | enemydropdown | | 13 | 0x20000 | perch |
 | 4 | 0x8000000 | pole | | 14 | 0x10000 | balancebeam |
 | 5 | 0x4000000 | vertpole | | 15 | 0x10 | pillar |
-| 6 | 0x2000000 | horizpole | | 16–20 | 0x4000…0x400, plus 0x8000 | unnamed [U] |
+| 6 | 0x2000000 | horizpole | | 16–20 | 0x4000…0x400, plus 0x8000 | 0x8000 = CONSTRAINEDGROUND (TRLAU-menu-hook TR8 names); the sub-bits are unnamed [U] |
 | 7 | 0x1000000 | zipline | | 10 | 0x100000 | water (volume path: no polyline bit) |
 | 8 | 0x800000 | railslide | | other | 0x80000000 | disabled |
 | 9 | 0x400000 | ladder | | | | |
@@ -116,6 +116,25 @@ the two switches are the MarkupManager virtuals at vt+0x1C/+0x20 called there (a
 l4_pool: 73 items: 61 ledgegrab, 10 balancebeam, 2 jumplanding [O]. All ledge points lie within 16 units of collision
 geometry (`CollisionRealData` test), and in the `--show-collision` screenshot the yellow ledge lines run exactly along
 the edges of the protruding ledge stones [O].
+
+Markup types in all units (2026-10-18, throwaway survey over the markup2 item type bytes) [O]: 1 227 ledgegrab, 14
+jumplanding, 25 pole (4), 0 vertpole, 3 horizpole, 2 railslide, 7 ladder, 34 perch, 94 balancebeam, 29 pillar, 74 / 82 /
+55 / 93 / 34 of types 16–20, 6 of type 0; no zipline, rope or cover items. Units with traversal markup:
+
+| type | units (count) |
+|---|---|
+| 2 jumplanding | l2_maproom 5, l7_helheim01 3, l4_pool 2, l2_junglehub 2, l2_cliffclimb 1, l5_valaskjalf 1 |
+| 4 pole | l4_traprooms 15, l5_valaskjalf 6, l2_junglehub 2, l3_main_hall 1, l4_temple 1 |
+| 6 horizpole | l2_upperhallway 2, l2_junglehub 1 |
+| 9 ladder | l7_arctic_sea 4, l1_ship_sinking_hall 3 |
+| 14 balancebeam | l3_chapel 13, l2_hubhall 10, l4_pool 10, l5_valaskjalf 8, l2_junglehub 6, l2_norsehall 6, l7_arctic_sea 6, l2_towerconnector 6, l2_towerroom 5, l4_temple 5, + 10 units with 1–3 |
+| 16–20 | l2_norsehub, l7_yggdrasil_end, l2_cliffclimb, l2_puzzleroom, l4_traprooms, l1_baldrsstairs_a, l1_ship_sinking_hall, l4_temple |
+
+The item matrix is not always identity: l4_traprooms' poles carry a translation and a half turn about Z (pole 1336:
+points (11061.8, 632.1, 777.5)… with translation (25284.1, −20223.3, 6355.0) → (14222, −20855, 7133)); after the
+transform every pole axis lies 11 units under the collision surface of its bar [O], which confirms the row-vector
+convention. Balance beam lines lie on the beam's collision top (±0) [O]. l4_pool's ledge 1253 runs up to ~180 units
+inside the collision top of its rock [O].
 
 The 0x5C-byte "markup items" at Level+0x08/+0x0C (FUN_005CE4F0; MarkUp+0x58 → PolyLine `{int n; pad; float4 points[n]}`)
 are not decoded: the count is 0 in all 82 units [O]. Object DRMs pass their own markup lists (FUN_005D0610) [O]; not decoded.

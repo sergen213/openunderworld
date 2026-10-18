@@ -22,8 +22,10 @@ opens the game window; `--intro-frames N` stops it after N frames. [O] `--intro-
 level loaded (log only; the movie frames themselves are verified in VIDEO.md). Under ASan, SDL's renderer may pick
 Vulkan, so the RADV 256-byte leak needs `tests/lsan_vulkan.supp`.
 
-Controls: WASD/arrows move relative to the camera, Shift walks, Space jumps (and climbs up while hanging), Ctrl or C
-lets go of a ledge, E uses switches / pushes and pulls blocks (with forward/back held), mouse orbits the camera.
+Controls: WASD/arrows move relative to the camera, Shift walks, Space jumps (while hanging: climbs up, or with the
+stick jumps up/sideways/back to another ledge; on a pole: flings), Ctrl or C lets go of a ledge/pole and on the ground
+crouches (held), rolls (running) or drops into a hang at an edge, E uses switches / pushes and pulls blocks (with
+forward/back held), mouse orbits the camera.
 Gamepad: left stick, right stick, South = jump/climb, East = drop, West = use, left shoulder = walk. F1 toggles the
 overlay, Esc / pad Start opens the pause menu ("Progression" below; without `--level`/`--chapter`/`--load` ou-game
 starts at the main menu). `--fov` / the launcher config set the vertical FOV. Switches, doors, trigger volumes/planes and
@@ -84,13 +86,31 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | (swim speed source) | `swim_surfaceidle_to_swim` (385) | 5, 0.37 s | −Y 206.1 | — |
 | SwimDive | `swim_surfacedive` (382) | 18, 1.20 s | (5.0, −112.3, −666.8) | no |
 | SwimUnder idle | `swim_submerged_idle` (199) | 47, 1.57 s | none | yes |
-| SwimUnder | `swim_sub` (370) / `swim_sub_up` (373) / `swim_sub_down` (371) by pitch, Surfacing = `swim_sub_up` | 21, 1.40 s | none | yes |
+| SwimUnder | `swim_sub` (370) at every pitch (the model is pitched); Surfacing = `swim_sub_up` (373) | 21, 1.40 s | none; body pitch 8.8° (`swim_sub_up` 44.1°, `swim_sub_down` −30.6°) | yes |
 | SwimClimbOut | `swim_climbout` (368) | 47, 1.57 s | (0, −308.7, 172.8) | no |
+| Crouch (enter) | `crouch_idleToCrouch` (55) | 10, 0.33 s | none | no |
+| Crouch | `crouch_Idle` (54) / `Crouch_Front` (53) moving | 30, 2.0 s / 31, 1.03 s | none / −Y 11.3 → 350.2: **328 units/s** | yes |
+| Roll | `ng_roll_front` (1254) | 25, 0.83 s | −Y 63.7 → 1200.3 (1364 units/s) | no |
+| Slide | `slope_slidefront` (358) | 37, 2.47 s | none | yes |
+| Beam (get on) | `bbeam_walk_attach` (767), from the air `bbeam_jumpland` (722) | 5, 0.33 s / 23, 1.56 s | −Y 63.8 / none | no |
+| Beam | `bbeam_idle` (721) / `bbeam_walk` (468) | 50, 3.37 s / 53, 3.57 s | none / −Y 4.7 → 505.8: **140 units/s** | yes |
+| Beam turn | `bbeam_walk_turn180` (469) | 7, 0.47 s | root rot Z 0 → −π (drives the yaw); −Y 46.4 not applied | no |
+| DropToHang | `drop_to_ledgeb` (1559) | 31, 1.03 s | (11.0, −218.8, −502.2), root rot Z 0 → π | no |
+| HangJump up / back / side | `ledgeb_jump_up` (905) / `ledgeb_jump_back` (903) / `ledgeb_jump_right` (894) | 5, 0.37 s / 7, 0.23 s / 5, 0.17 s | not applied (ballistic flight); `_back` root rot Z −π drives the yaw | no |
+| Hang (after a jump) | `ledgeb_attach_U` (213) / `_F` (208) / `_S` (210) | 8 / 8 / 9 keys | ignored (end pose = hang pose) | no |
+| PoleHang (grab) | `Hpole_perp_attach_M` (1541) | 45, 1.5 s | ignored | no |
+| PoleHang | `HPole_idleHangPerp` (127); swing `HPole_StartSwing` (143) → `HPole_swing` (146); stop `Hpole_swingstopA` (152) | 30, 1.0 s; 70, 2.33 s → 41, 1.37 s; 41, 1.37 s | none | idle/swing yes |
+| Pole fling | `hpole_perp_fling` (423) | 7, 0.5 s | (−1.1, −382.6, 69.5) not applied (ballistic flight) | no |
 
 - [O] No exe string names these clips; they are the TR8 anim-list debug names in lara.drm. The state → clip choice is
   ours [I]. `ledgeb_*` (braced: feet on the wall) was chosen over `ledgeu_*` (free hang) [I].
-- [O] The air clips have no root motion: flight is physics-driven (below). There is no `ledgeb_left`; [I] the game
-  probably mirrors `ledgeb_right`.
+- [O] The air clips have no root motion: flight is physics-driven (below). There is no `ledgeb_left` or
+  `ledgeb_jump_left`; [I] the game probably mirrors the right clips. We play the right clips for both sides.
+- Clips whose root rotates (`drop_to_ledgeb`, `bbeam_walk_turn180`, `ledgeb_jump_back`, `ng_turn_center`) turn the
+  heading by the root's Z rotation each tick; their root translation is applied in the frame the clip started in
+  (`Player::advanceRoot`), since the pose is rendered with the root at bind.
+- Pole hand anchor [O]: hands (bones 55, 80) in `HPole_idleHangPerp` at t = 0: (−3.4, 17.0, 619.4) — above and
+  slightly behind the root; placed on the pole axis.
 - [O] The swim loops have no root motion: swimming is code-driven in the original. Only the one-shots
   (`swim_surfaceidle_to_swim`, `swim_surfacedive`, `swim_climbout`) move the root.
 - Hand anchor [O]: bones 55 and 80 (last arm segments before the fingers) in `ledgeb_idle` at t = 0 sit at
@@ -114,9 +134,17 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Standing forward jump speed | 637 units/s (= run / 2) | [I] guess, no evidence |
 | Capsule | radius 100, height **512** | radius [I] from the player physics proxy 0x7018E0 → `FUN_0049a410(inst, 100.0, …)` (capsule volume code 0x4EE310); height [O] player data +0x10 = 512.01 (used as Lara's height: ×0.5 centre, ×0.75 head, capsule test `FUN_007144b0(pos, height, …)`), TRLAU-menu-hook `GeneralAttributes.height` [I name] |
 | Step up / down | 70 / 70 units | [I] ours; [U] no step height found in the player data |
-| Walkable slope | normal z ≥ 0.7 (≈ 45.6°) | [I] ours |
+| Walkable slope | normal z ≥ 0.7 (≈ 45.6°); a steeper face is still stood on when one of four probes 60 units around the root finds a walkable face within 20 units of its height (bumps, seams: l4_ragnarok_room's 0.6-normal floor strips) | [I] ours |
+| Slide | floors with 0.3 ≤ normal z < 0.7 under an unsupported root: down the fall line at +2500 units/s² up to 1400 units/s | [I] ours; [O] the exe has `SlopeSlideState` / `SkiSlopeSlideState` / `SlideState` (RTTI) whose virtuals are all the empty 0x7987B0: the state chart drives them |
+| Edge slide-off | a capsule resting on an edge corner (floor-like contact, no floor under the root) gets ≥ 200 units/s outwards | [I] ours (fixes the Fall/Land alternation walking slowly off a ledge) |
+| Crouch capsule height | **260** | [O] player data +0x14 |
 | Turn rate (walk/run steering, swimming) | 6 rad/s | [I] from `ng_turn_center`; turning in place uses the clip's root rotation instead (above) |
-| Ledge grab | hands within 60 units horizontally, ledge between hand height −40 and +10, falling, facing the ledge (cos ≥ 0.5), **−2232.5 ≤ zVel ≤ 1545.6 units/s** | zVel window [O]: 0x759260 allows a grab when `−byte[data+0x834]·5.72443 ≤ zVel ≤ byte[data+0x833]·5.72443` (units per 30 Hz frame); the bytes are 13 and 9. Geometry [I] ours: the exe probes along the swept anchor at +63 (int data+0x824) and −158 (+0x828) units, needs no floor within 31 (+0x82C) below, and a reach ≤ 951.3 (float +0x838); which anchor (instance matrix +0x90 → +0x70) is [U], so these are not used |
+| Ledge grab | hands within 60 units horizontally, ledge between hand height −40 and +10, falling, facing the ledge (cos ≥ 0.5), **−2232.5 ≤ zVel ≤ 1545.6 units/s** | zVel window [O]: 0x759260 allows a grab when `−byte[data+0x834]·5.72443 ≤ zVel ≤ byte[data+0x833]·5.72443` (units per 30 Hz frame); the bytes are 13 and 9. Geometry [I] ours. What the exe does with the other bytes [O read, I meaning]: 0x759260 / 0x7594C0 get two anchor positions from 0x758DD0 (anchor selector byte +0x820 = 0, resp. +0x821 = 3), raise both by int +0x824 (**+63**) and sweep the segment between them with collision query 0x4935F0 (mask 0x2C19E7); a hit of kind 3 or 5 accepted by 0x5D3BA0/0x758F70 is repeated at int +0x828 (**−158**): the ledge face must span 158 below to 63 above the anchor. 0x7591E0: a probe from the root down int +0x82C (**31**) must find no floor. 0x758B00: the grab point must lie within float +0x838 (**951.3**) horizontally of a position stored at player-state +0x9C0 ([U] probably the take-off point). Which bone/point the anchor is is [U], so these are not used |
+| Ledge targets (drop to hang, hang jumps) | the hang side must drop > 200 within 240 units of the ledge line | [I] ours; l4_pool's ledge 1253 sits up to ~180 inside the collision top, so a fixed 60-unit probe misses the drop |
+| Balance beam | root within 30 (x/y and z) of a type-14 line, heading within 45° of it from the ground (any heading from the air); walk 140 units/s (clip) | [I] attach distances ours; [O] markup type 14 = MUD 0x10000 BALANCEBEAM |
+| Jump assist | at take-off, of the jump-landing (2) and beam (14) lines the point nearest the natural landing (at its height) within **300** becomes the landing: horizontal velocity = Δxy / flight time, vertical unchanged | [O] solver 0x73EDC0: `v = (target − pos − ½·g·t²) / t` with g = −5.72443/frame², re-aimed every frame with the remaining time (0x751D10, player-state +0x77C) at the markup in +0xA64 whose MUD flags match 0x20830000 (jump landing, rail slide, perch, balance beam); speed cap player data +0xC10 = 18963 (never reached). [I] the 300 radius and solving once at take-off |
+| Hang jumps | from a hang: up (stick forward/neutral, no top to climb): hands 150..700 above, ±100 aside; side: 150..800 aside, ±150 in/out, ±400 height; back: 200..1200 behind, ±200 aside, −700..+200 height, turning round. Target nearest to 400 up / 400 aside / 700 back + 100 down. Flight rises 60 above the higher end and lands exactly on the target's hang pose | [I] ours (the exe's ranges are in the state chart) |
+| Poles | types 4 (`pole`) and 6 (`horizpole`); falling hands (pole pose) within 60 of the axis, same zVel/height window as ledges, facing across it (cos ≥ 0.5). Fling: to the pole 300..1800 ahead (±300 aside, ±500 height), else a leap at run-jump speeds | [I] ours; l4_traprooms' poles are 1264 apart; [O] the markup's matrix carries real translations there (COLLISION.md) |
 | Water probe | box ±221 × ±221 × ±572 centred 320 above the feet | [O] shorts data+0xC3E/+0xC40/+0xC42 (221, 572, 320), box overlap against each water volume box in 0x710A20; the highest surface wins |
 | Swim speed | **562 units/s** (surface and under water) | [I] mean root speed of the one-shots that start swimming: `swim_surfaceidle_to_swim` 206 units / 0.367 s, `swim_surfacedive` 676 units / 1.2 s (562 and 563 each); [U] the exe's swim speed |
 | Swim depth | water ≥ 400 under the surface is swum, shallower walked | [I] ours (tread pose feet at −352) |
@@ -143,10 +171,16 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 
 - Ground: each tick the current clip's root delta (rotated by heading) is the desired move. A capsule from
   `feet + stepUp` to the head is swept and slid along walls (up to 4 iterations, contact normals flattened), then a ray
-  from `feet + stepUp` down `stepUp + stepDown` snaps to the floor. Nothing under her, or a floor steeper than the
-  slope limit, starts a fall with the last horizontal velocity.
-- Air: exact constant-acceleration step, full capsule sweep; contacts clip the velocity. Landing = a floor contact or a
-  floor within a few units below the capsule while falling. Running landing keeps running if the stick is held.
+  from `feet + stepUp` down `stepUp + stepDown` snaps to the floor. A floor steeper than the slope limit still counts
+  when a walkable face lies within 20 units of its height 60 units to a side (`Player::standable`: floor bumps, seams;
+  the l4_ragnarok_room Fall/Run flicker at tick 127 of `tests/replays/pool_to_ragnarok.txt` came from 0.6-normal
+  strips 0.5 units high). Nothing under her starts a fall with the last horizontal velocity; an unsupported floor with
+  normal z 0.3..0.7 starts a slide.
+- Air: exact constant-acceleration step, full capsule sweep; contacts clip the velocity. Landing = a floor-like
+  contact with a standable floor under the root, or such a floor within a few units below the capsule while falling.
+  A capsule resting on an edge's corner with nothing under the root (walking slowly off a ledge) does not land: it
+  slides off with at least 200 units/s outwards (this used to alternate Fall/Land every tick). Running landing keeps
+  running if the stick is held. `land()` sets `fallHeight` (Combat's fall damage).
 - Ledges: markup type 1 (`ledgegrab`) polylines. While falling, the hand anchor (rotated by heading) must pass the
   ledge height within reach of a segment, with Lara facing it. She is then placed so the anchor lies on the ledge,
   facing across it. Shimmy moves along the polyline by the shimmy clip's root motion projected on the segment, crosses
@@ -157,7 +191,35 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   On ledge 1253 the remaining snap is 8.7 units, the rock top sitting 9 above the ledge markup (it was ~150 before).
 - Turn in place: the yaw advances by the change of `ng_turn_center`'s root Z rotation each tick (7.85 rad/s looped),
   towards the stick direction, clamped to the remaining angle.
-- Interpolation: position, heading and clip time are blended between the last two ticks.
+- Interpolation: position, heading, swim pitch and clip time are blended between the last two ticks.
+- Crouch (drop held on the ground): `crouch_idleToCrouch` → `crouch_Idle` / `Crouch_Front` (328 units/s root
+  motion), capsule height 260 (player data +0x14); releasing drop stands up only with headroom (a capsule sweep up to
+  512). Drop pressed while running: `ng_roll_front` (1364 units/s root motion), then run or idle.
+- Slide: down the fall line of the floor under the root (heading = downhill), accelerating at 2500 units/s² to 1400;
+  a standable floor ends it through `land()`, no floor below falls, jump leaps off with the slide velocity + 1803 up.
+- Balance beams (markup 14, MUD BALANCEBEAM): from the ground, the root within 30 of the line (x/y and height, within
+  the line's extent) heading along it (cos ≥ 0.7) gets on with `bbeam_walk_attach`; falling through the line from above
+  lands on it with `bbeam_jumpland` (any heading). On the beam the root is pinned to the polyline: the stick along the
+  walking direction plays `bbeam_walk`, whose forward root motion moves her along the line (joints followed); against it
+  `bbeam_walk_turn180` turns her round by its root rotation. At an end: another beam ending within 60 takes over (she
+  turns onto it), a standable floor 80 beyond is stepped onto (Walk; 0.5 s before a beam can catch her again), else she
+  stops. Jump = standing jump (the assist below puts the landing back on the line), drop = falls off to her right [I].
+- Jump assist: at take-off the landing is pulled onto the nearest jump-landing (2) or beam (14) line point within 300 of
+  the natural landing (Numbers).
+- Drop to hang: drop pressed standing within 200 of a ledge line at floor height (±40) whose far side drops away plays
+  `drop_to_ledgeb`; her yaw and root are set so the clip (start frame 3, half turn) ends exactly on the hang pose of the
+  nearest ledge point, root motion and turn played without collision, then Hang.
+- Hang jumps: jump while hanging — stick neutral/forward climbs up when a walkable top lies within 150 above the ledge,
+  else jumps up to a ledge above; stick sideways jumps to a ledge to that side; stick back jumps to a ledge behind
+  (turning round with `ledgeb_jump_back`'s root rotation), or with nothing in reach leaps off backwards. Targets
+  (Numbers) exclude the ledge she hangs on (that is shimmying) and ledges whose hang side has floor (platform edges
+  hung from the platform). Flight: ballistic with the exe gravity, rising 60 above the higher end, timed to arrive
+  exactly on the target's hang pose; then `ledgeb_attach_U/S/F`.
+- Poles (markup 4 / 6): grabbed like ledges while falling, squared to the pole; forward held swings
+  (`HPole_StartSwing` → `HPole_swing`, root fixed), letting go stops; jump flings to the next pole ahead (same flight
+  solver as hang jumps) or leaps off at run-jump speeds; drop lets go.
+- Under water the model is pitched by the swim pitch about the root (`Player::modelMatrix(pos, yaw, pitch)`), and
+  treading/surface swimming levels it back at turnRate.
 
 ## Water
 
@@ -178,9 +240,9 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   at turnRate; drop = SwimDive (`swim_surfacedive` root motion, 667 down); jump facing a wall whose top is 50..400
   above the water = SwimClimbOut; floor within 400 below = stand up (Idle).
 - Under water (SwimUnder): stick swims horizontally, jump / drop held swim up / down; the swim direction's pitch turns
-  towards the wish at turnRate; the clip follows the pitch (`swim_sub_up` > 0.35 rad, `swim_sub_down` < −0.35). No
-  input: `swim_submerged_idle`, no drift. Reaching the surface = SwimTread. Movement is a sphere (r 100) swept around
-  the root, slid along contacts and clamped to the surface.
+  towards the wish at turnRate and pitches the model; the clip is `swim_sub` (level stroke) at every pitch. No input:
+  `swim_submerged_idle`, no drift. Reaching the surface = SwimTread. Movement is a sphere (r 100) swept around the
+  root, slid along contacts and clamped to the surface.
 - Climb out: a sphere sweep 300 forward must hit a wall (|n.z| ≤ 0.5, facing it); a ray 50 past the contact finds the
   top. The root is placed so the clip's hands (at its start time) reach the contact and its root ends on the top
   (`top − rise`); the clip's root motion then plays without collision and the end snaps to the floor.
@@ -298,12 +360,29 @@ places a 700-hp dummy capsule.
   surface, swim across, climb out onto the far walkway exactly at its height; dive, swim down (pitch < −1.2), no drift
   when idle, swim up to the surface at swim speed; a swim script at 30/60/144 Hz is bit-identical. Turning in place
   follows a synthetic turn clip's root rotation (π − 0.2 rad in 0.375 s, not the 6 rad/s fallback).
+- Bugs: `WalkingSlowlyOffEdgeFallsOnce` (one Fall, one Land, Land only on the ground below) and
+  `RunsOverSteepSliverWithoutFalling` (a 20-wide 0.6-normal strip: never Fall/Slide) both fail with the previous
+  landing/floor rules; `UnderwaterModelFollowsSwimPitch` (model forward = (cos pitch · heading, sin pitch), interpolated
+  pitch, levelled at the surface). Traversal (synthetic geometry and clips): `BalanceBeamWalkTurnStepOff` (on, 3 s at
+  the clip speed pinned to the line, turn round, step off onto the far platform), `FallingOntoBeamCatchesIt`
+  (fallHeight 400), `AssistedJumpLandsOnJumpLandingMarkup` (lands at the markup ± 2 vs. 446 unassisted),
+  `DropToHangFromEdge` (synthetic `drop_to_ledgeb` with translation + half turn: no step > 25 units, hands exactly on
+  the ledge, facing the wall), `HangJumpsUpRightAndBack` (three targeted jumps, hands exactly on each target, no snap),
+  `PoleGrabSwingFlingDrop`, `TraversalIndependentOfRenderRate` (pole grab/fling/drop script bit-identical at
+  30/60/144 Hz), `CrouchUnderSlabAndRoll` (crawls under a 350-high slab, stays crouched under it, stands past it; roll
+  root motion), `SlidesDownSteepSlope` (normal z 0.45: slides > 1000 units/s, stops on the flat).
 - `GameReal.*` (gated by `OU_GAME_DIR`): the clips load, `ng_run` root speed 1274 ± 5 units/s, hand anchor; l4_pool:
   `'player'` spawn, 1.5 s run replay never below the floor and covers 50–105 % of the same replay on a flat floor; jump
   from the lower floor grabs ledge 1253 (hands at z 3562) and climbs onto the rock top (z 3571 ± 1, end snap < 10).
   `PoolSwimReplay`: `findWater` gives one box (id 5608, surface 2699.3 ± 0.5); from the west walkway (−6000, 0, 2844.4)
   Lara runs into the goo, swims east 2 s (> 80 % of 2 s × swim speed), dives below surface − 600, swims up to tread,
   swims back west and climbs out (720 ticks) onto a pool rock at (−4190, −183, 2864.9), standing on its floor.
+- Traversal, real data: `TempleBalanceBeamWalkAndJump` (l4_temple beam 1079: on it from a spawn on the beam, 5 s walk
+  within ±1 of the line, a standing jump lands back on it 300+ ahead, then walks to its far end x −3986 and stops);
+  `TempleLedgeJumpsUpAndBack` (from the floor: grab 1187, jump up to 1162; grab 1158, jump back to 1159 turning round;
+  hands on the targets ± 1); `PoolSideJump` (1250 → 1251, set up hanging via `World::restore`); `PoolDropToHang` (grab
+  and climb 1253, drop back into the hang, hands at 3562 ± 1); `TrapRoomsPoleFling` (l4_traprooms: standing jump onto
+  pole 1336 from 345 short, swing, fling 1264 to pole 1337).
 
 ## Verification (viewed screenshots, 2026-10-18) [O]
 
@@ -318,20 +397,48 @@ All on `pc-w\l4_pool.drm`, 1792×1008, GL unless noted:
   -6000,0,2900,0`, frame 230), rising after the splash (only the hair bun above the goo, frame 150), and swimming down
   under the goo between the submerged pillars (`swim_sub_down`, z 1822, frame 330, drop held from 4.0 s).
 
+Traversal (`ou-game --input-script … --frames N --screenshot`, GL, 1792×1008, viewed; scripts and PNGs kept privately):
+
+- balance beam, l4_temple beam 1079 (`--spawn -5500,-8099,3100,0`, `0 forward 0.3`): walking along it arms out
+  (`bbeam_walk`, frame 200, pos y −8099 z 3061); standing on it seen from the side (`bbeam_idle`, camera turned); a
+  standing jump along it in the air above the line (frame 256, y −8099);
+- ledge to ledge, l4_temple: mid-air between ledges 1187 and 1162 on the stone wall (`ledgeb_jump_up`, `--spawn
+  -8771.2,-9922.7,2600,0`, frame 108) and hanging on the upper ledge with both hands on it (frame 170); a back jump
+  from 1158, turned round mid-air (frame 112) and hanging on the pillar ledge 1159 behind (frame 200);
+- drop to hang, l4_pool rock 1253: dropping off the top edge (`drop_to_ledgeb` t 0.28, frame 205) and hanging on it
+  (frame 280);
+- poles, l4_traprooms (`--spawn 14300,-21200,6400,90`): hanging from pole 1336, swinging with the legs over the bar
+  (`HPole_StartSwing`, frame 280), mid-fling between the poles (frame 345) and hanging from pole 1337 (frame 400);
+- crouch-walking (`Crouch_Front`) and rolling (`ng_roll_front` t 0.33) at the l4_pool intro; sliding down the l4_temple
+  slope at (−2103, −10850) (`slope_slidefront`, frame 22);
+- swimming down at a pitch under the goo, the model tilted head-down (`swim_sub`, z 1310, camera above, frame 330).
+
 No side-by-side comparison with the original game was made.
 
 ## Deviations and open questions
 
-- Jump velocities, step limits, swim speed, camera distance/height are inferred; they are not in Lara's player data
-  block (Numbers) [U]. The grab zVel window, height and water probe are taken from it.
-- No blending between clips (pops at state changes).
-- Swimming: the model is not pitched (only the clip choice follows the pitch); no oxygen, drowning, wading clip
-  (`swim_wading`), surface turn clips, underwater fast/sprint, or swim damage; the water surface is static (scripted level
-  changes not run); the water box is sized from the surface model, not the exe's component.
-- Edge teetering: walking slowly off a ledge can alternate Fall/Land on the edge corner (the capsule lands on the
-  corner while the floor probe under the root misses); running off works.
-- Missing: crouch, roll, sprint, slopes/sliding, wall/poles/beams, hit reactions, adrenaline, weapons other than
-  the pistols, state-chart conditions (`PlayerSC_*`, `PSCCF_*`). Saves do not store health (a load restores full).
+- Jump velocities, step limits, swim speed, camera distance/height, all traversal reach boxes and the jump-assist radius
+  are inferred; they are not in Lara's player data block (Numbers) [U]. The grab zVel window, height, crouch height and
+  water probe are taken from it.
+- Swimming: no oxygen, drowning, wading clip (`swim_wading`), surface turn clips, underwater fast/sprint, or swim
+  damage; the water surface is static (scripted level changes not run); the water box is sized from the surface model,
+  not the exe's component.
+- Traversal: no balance wobble/unbalance (`bbeam_unbalance_*`, `bbeam_aboutfall_*`), beam sprint, catching the beam
+  when falling off it (`bbeam_fall_right_catch`), pole shimmy/parallel hang (`HPole_ParaForward`, `hpole_IdleHangPara`)
+  or swing physics (the swing is the clip; fling ignores its phase), no mirrored left-side clips, no `ledgeu_*` free
+  hang, hurdles/vaults, ladders (markup 9), perches (13), pillars (15), ropes, zip lines, rail slides, cover, or
+  `Wall_Hug_*`. Root motion of the jump, attach and fling clips is not applied (the flight is ballistic), so their
+  poses can sit off the computed path.
+- Free climbing (`DICE_*` clips) is not implemented: no markup type marks climbable walls (types 16–20 are the five
+  CONSTRAINEDGROUND sub-flags 0x4000..0x400 + 0x8000 [O], not climb surfaces) and how the exe finds climbable faces
+  (collision material/face flags?) is [U].
+- Grapple is not implemented. Found [O]: object `g_grapple` (objectlist id 46) and `pr_grapplinghook` (77); targets are
+  object intros `*_ei_grapple_ceiling` / `_wall` / `_post` / `_mounted` (ids 151, 155, 340, 349, 363, 390, 410, 454,
+  624, 661, 662, …), not markup; the exe's grapple logic is state-chart conditions (`PlayerSC_Grapple::IsBelowAttachPoint`,
+  `WallDetected`, `RappelSpeed`, … 0x739C80..0x73C330) plus `[GrappleRope]` rope bodies, and 180+ `grapple_*` clips
+  exist in lara.drm. Needs an input action and a rope simulation.
+- Missing: sprint, hit reactions, adrenaline, weapons other than the pistols, state-chart conditions (`PlayerSC_*`,
+  `PSCCF_*`). Saves do not store health (a load restores full).
 - Collision: no depenetration pass (an already-touching contact being left is ignored); query mask 0xFF.
 - Live keyboard/mouse/gamepad play was not exercised by any recorded run: every screenshot is a scripted replay.
 - Hair is rigid; editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).

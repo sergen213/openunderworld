@@ -109,7 +109,7 @@ void decodeMarkup(Unit& u, Pointer level, CollisionMesh& out, std::vector<std::s
         if (n) {
             const Pointer pts = u.need({item->section, item->offset + 0xA0}, "markup points");
             u.need(pts, 32 * size_t(n), "markup points");
-            // 4x4 matrix, rows = basis vectors, row 3 = translation (identity in every unit observed).
+            // 4x4 matrix, rows = basis vectors, row 3 = translation (identity in l4_pool; l4_traprooms' poles are turned + moved).
             const vec3 r0 = vec(u, *item, 0), r1 = vec(u, *item, 16), r2 = vec(u, *item, 32), r3 = vec(u, *item, 48);
             for (uint32_t k = 0; k < n; ++k) {
                 const vec3 p = vec(u, pts, 32 * size_t(k)); // +16: (0,0,1000,0) in every point seen, unknown

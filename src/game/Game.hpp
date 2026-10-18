@@ -39,7 +39,7 @@ struct Actions {
     vec2 look{0};      // camera orbit rate, rad/s: x = yaw (positive turns the camera left), y = pitch
     bool walk = false; // walk modifier
     bool jump = false; // held; the controller reacts to the press edge
-    bool drop = false; // held; let go of a ledge
+    bool drop = false; // held; let go of a ledge / pole; on the ground: crouch (held), roll (running), drop to hang
     bool interact = false; // held; switches/levers react to the press edge, push blocks while held (src/script)
     bool save = false, load = false; // held; ou-game quicksaves / quickloads on the press edge (F5 / F9)
     // combat (Combat.cpp): draw toggles pistols on the press edge; fire held (draws first); aim held = hard
@@ -56,6 +56,8 @@ struct AnimLibrary {
     // Hands (bones 55 and 80) relative to the root in the ledgeb_idle pose, model space; places the
     // root under a grabbed ledge.
     vec3 hangHandOffset{6.3f, -141.7f, 495.6f};
+    // Hands relative to the root hanging from a horizontal pole (HPole_idleHangPerp at t = 0).
+    vec3 poleHandOffset{-3.4f, 17.0f, 619.4f};
     // Swim speed, units/s: mean root speed of the two one-shot clips that start swimming,
     // swim_surfaceidle_to_swim (206 units / 0.367 s) and swim_surfacedive (676 units / 1.2 s). The swim
     // loops have no root motion.
@@ -95,6 +97,10 @@ enum class State {
     // SwimClimbOutState; RTTI)
     SwimSplash, SwimTread, SwimSurface, SwimDive, SwimUnder, Surfacing, SwimClimbOut,
     Dead, // death clip, no control; World respawns (Combat.cpp)
+    // traversal (tru.exe CrouchState, RollState, SlopeSlideState; the rest are state-chart driven):
+    // Beam = balance beam (markup 14), DropToHang = drop_to_ledgeb off an edge, HangJump = targeted
+    // jump from a ledge/pole to another ledge/pole, PoleHang = hanging/swinging on a horizontal pole.
+    Crouch, Roll, Slide, Beam, DropToHang, HangJump, PoleHang,
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -116,6 +122,15 @@ struct Tuning {
     float waterProbeCenterZ = 320.0f;
     float swimDepth = 400.0f;   // water at least this deep under the surface is swum, shallower walked
     float swimRadius = 100.0f;  // sphere around the swimming root
+    float crouchHeight = 260.0f; // capsule while crouched/rolling: player data +0x14
+    float slideMinNormalZ = 0.3f; // floors between this and minFloorNormalZ are slid down
+    float slideAccel = 2500.0f, slideMaxSpeed = 1400.0f; // units/s^2, units/s down the slope
+    float beamAttach = 30.0f;   // root within this of a balance beam (x/y, and z) gets on it
+    float poleReach = 60.0f;    // hands to pole axis, horizontal
+    float assistRadius = 300.0f; // jump-landing / beam markup this close to the natural landing pulls the jump onto it
+    float hangJumpApex = 60.0f;  // targeted jumps rise this far above the higher of start and target
+    // Reach of targeted jumps from a hang (hands to target hands): up, sideways, back (away from the wall).
+    float hangJumpUp = 700.0f, hangJumpSide = 800.0f, hangJumpBack = 1200.0f, poleFlingReach = 1800.0f;
 };
 Tuning defaultTuning();
 
@@ -128,14 +143,17 @@ struct PlayerState {
     double clipTime = 0; // unbounded for looping clips (anim time = fmod(clipTime, duration))
     float clipRate = 1;
     bool loop = true;
-    // ledge (Hang / Shimmy / ClimbUp): markup polyline, segment, and position along it
+    // attached markup (index into collision().markup): ledge while hanging, balance beam, pole; while a
+    // HangJump flies, the target. Segment, position along it, and side: ledges/poles = which side of the
+    // polyline Lara hangs on, beams = walking direction (+1 along the points).
     int ledge = -1, ledgeSeg = 0;
     float ledgeT = 0;     // distance from the segment start
-    float ledgeSide = 1;  // which side of the polyline Lara hangs on
+    float ledgeSide = 1;
     bool runJump = false; // JumpPrep: take-off from a run
     float regrabCooldown = 0;
     int water = -1;  // swimming: index of the water markup (type 10) in collision().markup
-    float pitch = 0; // under water: swim direction pitch, rad (+ = up)
+    float pitch = 0; // under water: swim direction pitch, rad (+ = up); the model is pitched by it
+    float flight = 0; // HangJump: seconds left until the target is reached
     float fallStartZ = 0; // z when Lara last became airborne (tru.exe player +0x6DC, set on FallState entry 0x75C550)
     float fallHeight = 0; // set by land(): fallStartZ - pos.z; 0 on every other tick
 };
@@ -149,8 +167,8 @@ public:
     const PlayerState& state() const { return s_; }
     const Tuning& tuning() const { return t_; }
     void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
-    // World-space model matrix (root at pos; model -Y = forward).
-    glm::mat4 modelMatrix(vec3 pos, float yaw) const;
+    // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root).
+    glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0) const;
     void face(float yaw) { s_.yaw = yaw; } // combat: turn toward a locked target
     void die(std::string_view clip);       // State::Dead playing `clip` once
 
@@ -158,13 +176,26 @@ private:
     void play(std::string_view clip, bool loop, float rate = 1);
     bool clipDone() const;
     vec3 advanceClip(float dt); // returns the model-space root delta
+    vec3 advanceRoot(float dt); // world root delta; the clip's root Z rotation turns the yaw
     vec3 forward() const;
     vec3 toWorld(vec3 model) const; // model-space vector -> world, by yaw
+    float capHeight() const;        // capsule height (crouched or standing)
+    bool standable(vec3 p, const collision::Hit& g) const; // floor hit under p supports standing
     void groundMove(vec3 delta, float dt);
     void airMove(float dt, vec2 move);
     vec3 slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) const;
+    void startFall(vec3 vel);
+    void startSlide(vec3 vel);
     bool tryGrab(vec3 prevPos);
-    void placeOnLedge();
+    bool tryGrabPole(vec3 prevPos);
+    bool tryBeam(std::string_view clip, bool anyHeading);
+    bool tryDropToHang();
+    bool canClimbUp() const;
+    bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge); 3 pole fling
+    void assistJump();
+    void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
+    std::pair<vec3, float> attachPose(int markup, int seg, float t, float side) const; // root, yaw
+    void beam(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     // water: volume overlapping the water probe box at `feet` (index into col_.markup), its surface z
     int waterAt(vec3 feet) const;
     float surfaceZ() const;

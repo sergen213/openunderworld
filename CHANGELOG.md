@@ -11,6 +11,11 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - New Game plays `explode.bik` and starts the prologue in Croft Manor; the original chapter sequence (Mediterranean Sea … Arctic Sea) with title cards, `--chapter N`, and level-to-level transitions at each chapter's closing cinematic.
 - Treasures, relics and health packs can be picked up (E / pad West) with an on-screen notification; collected items, found counts and the chapter are saved.
 - Music: the `.mus` sequencer is decoded and mixes the music stems; the track changes with the unit and with sound volumes; `--music-wav` captures the mix.
+- Traversal: balance beams (walk, turn round, jump along, step off), jumps pulled onto jump-landing and beam markup as the original's jump-to-target solver does, dropping off an edge into a hang (Ctrl/C), jumping from ledge to ledge (stick + Space: up, sideways, back), horizontal poles (grab, swing, fling to the next pole), crouch/crawl and roll (Ctrl/C), sliding down steep slopes.
+
+### Fixed
+- Walking slowly off an edge no longer flickers between falling and landing; small steep floor bumps (e.g. `l4_ragnarok_room`) no longer interrupt running with a fall.
+- Lara's body now tilts with the swim direction under water.
 
 ## [0.2.0] - 2026-10-18
 
