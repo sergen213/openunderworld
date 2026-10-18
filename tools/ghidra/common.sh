@@ -14,8 +14,8 @@ EXPORT_DIR="$GHIDRA_WORK/exports"
 LOG_DIR="$GHIDRA_WORK/logs"
 ANALYZED_STAMP="$GHIDRA_WORK/.analyzed"
 
-# Headless default heap is 2G; tru.exe analysis + decompilation benefits from more.
-export GHIDRA_HEADLESS_MAXMEM="${GHIDRA_HEADLESS_MAXMEM:-8G}"
+# Headless default heap is 2G; tru.exe decompilation needs more. Keep <=4G: several JVMs + ASan builds OOM the host.
+export GHIDRA_HEADLESS_MAXMEM="${GHIDRA_HEADLESS_MAXMEM:-4G}"
 
 [[ -x "$HEADLESS" ]] || { echo "analyzeHeadless not found at $HEADLESS (set GHIDRA_HOME)" >&2; exit 1; }
 
@@ -25,4 +25,20 @@ esac
 
 program_exists() {
     [[ -f "$ANALYZED_STAMP" && -f "$PROJECT_DIR/$PROJECT_NAME.gpr" ]]
+}
+
+# Run analyzeHeadless; if another process holds the project lock, wait and retry (max ~5 min).
+headless() {
+    local out rc=0 try
+    out="$(mktemp)"
+    for try in $(seq 1 60); do
+        rc=0
+        "$HEADLESS" "$@" >"$out" 2>&1 || rc=$?
+        grep -q "Unable to lock project" "$out" || break
+        echo "[ghidra] project locked by another process; retry $try/60" >&2
+        sleep 5
+    done
+    cat "$out"
+    rm -f "$out"
+    return $rc
 }

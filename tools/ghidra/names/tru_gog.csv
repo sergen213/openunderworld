@@ -1,0 +1,183 @@
+address,name,confidence,evidence
+# tru.exe GOG build, sha256 1fdbd34560ffe6b5fa959666e023e405d6f3166ce3b63b0ae16a6aa4121d1011.
+# confidence: high = our own decompile shows the behaviour (strings/imports/structure);
+# medium = TRLAU-menu-hook TR8 address that is a function entry here and whose decompile is consistent,
+#          or own analysis with a plausible but unconfirmed role; low = role guessed from context.
+# Evidence is the last column and may contain commas. Applied by scripts/ApplyNames.java (analyze.sh).
+#
+# --- startup / main loop
+0x818421,entry,high,PE AddressOfEntryPoint (MSVC CRT WinMainCRTStartup)
+0x47a280,WinMain,high,called by ___tmainCRTStartup with (0x400000 0 cmdline wShowWindow); calls Win32_GameMain
+0x479c80,Win32_GameMain,high,parses -setup/-config/-relaunchmce via strstr; InitArchive; InitPatchArchive(PATCH.000); CreateMutexW TRUMUTEX; EnumWindows TOMBRAIDER8; SetThreadAffinityMask(main thread 1); CreateGameWindow; MainG2
+0x47b530,ShowSetupDialogIfNeeded,medium,loads display settings; runs PCSetupDialog_Run when -setup/-config or no valid settings; saves registry
+0x51fbb0,PCSetupDialog_Run,medium,DialogBoxParamW launcher dialog over settings block 0x890388
+0x4790a0,CreateGameWindow,high,RegisterClassW TOMBRAIDER8 + CreateWindowExW(WS_POPUP|WS_SYSMENU) Tomb Raider: Underworld
+0x478bc0,MainWndProc,high,lpfnWndProc of class TOMBRAIDER8
+0x47ac30,PumpWindowMessages,high,PeekMessageW/GetMessageW/Translate/Dispatch; Sleep(100) + device-lost/minimized handling
+0x478640,Win32_InitRenderDevice,medium,called by Win32_GameMain after CreateGameWindow; g_pcDeviceManager vt+0 (hwnd settings 0x890388); installs DeviceCallback; returns 0 on failure (setup dialog shown again)
+0x4a12b0,MOVIE_Play,low,Bink playback loop (callee _BinkClose; Sleep(100)); calls MainG2_PlatformUpdate/GAMELOOP_UpdateTime per frame
+0x47afd0,MainG2_PlatformUpdate,medium,per-frame: sound/stream updates with dt=gameTracker+0x10C/30 s; input; job sync; PumpWindowMessages; returns false on quit
+0x5e0190,MainG2,high,loop { ...; MAIN_ProcessMainState(mainTracker 0xE7ED60 gameTracker 0xE7F088); STREAM_PollLoadQueue; MainG2_PlatformUpdate } until mainTracker+0xC (0xE7ED6C) set
+0x5df390,MainG2_InitEngine,high,logs build date Dec 16 2008 18:30:39; RESOLVE_Init; registers PDAMapSection as section type 13; calls MAIN_DoMainInit
+0x5e0090,MAIN_ProcessMainState,medium,switch on mainTracker->mainState (1 = play game -> MAIN_PlayGame; 2..10 other states)
+0x5e0050,MAIN_PlayGame,low,mainState 1 handler; calls GAMELOOP_Frame unless gameTracker+0xB8 is set (then 0x5DAB40)
+0x5dffe0,GAMELOOP_Frame,medium,GAMELOOP_Process; STREAM_PollLoadQueue; GAMELOOP_DrawFrame; GAMELOOP_UpdateTime; gameTracker+0x24 frame counter++
+0x5da1c0,GAMELOOP_DrawFrame,low,called once per frame after GAMELOOP_Process; ends with Font flush 0x5C5A30
+0x5da230,GAMELOOP_UpdateTime,high,TIMER_GetTimeMicroseconds; 6-frame moving average of frame delta; clamp 66666us; timeMult = dt/33333.33 * scale (gameTracker+0x100)
+0x5d3cf0,GAMELOOP_InitTimeFields,medium,writes gameTracker timing defaults (+0xC8 variable-step=1; +0x120 lock=1; +0x148 scale=1.0; +0x11C 0x1000; +0x10C 1.0)
+0x5dddf0,MainG2_LoadingFrame,low,per-frame update used inside loading wait loops (Sleep(5) loops)
+0x596cb0,ERROR_Fatal,high,vsnprintf to 0xCD98A0 then MainG2_ErrorHandler + int3; used for Unable to open bigfile / Wrong DRM version
+0x6457a0,DEBUG_PrintfStub,high,empty function called with printf-style debug strings (stripped logging)
+# --- timing
+0x597ee0,TIMER_Init,high,QueryPerformanceFrequency*1e-6 -> 0xCD9CA0; base time -> 0xCDB4E0
+0x597e90,TIMER_SampleMicroseconds,high,QueryPerformanceCounter*1000000/QueryPerformanceFrequency -> 0xCDB520 (u64)
+0x597f10,TIMER_GetTimeMicroseconds,high,monotonic u64 microseconds (accumulates only positive deltas in 0xCDB4D8)
+0x597f70,TIMER_GetTimeMilliseconds,high,TIMER_GetTimeMicroseconds/1000
+0x598090,TIMER_MeasureTSCRate,medium,rdtsc delta across a QPC busy-wait
+0x428600,bfx_Stopwatch_Start,medium,QPC into this+8 and running flag (bfx third-party library code range)
+0x428630,bfx_Stopwatch_Stop,medium,accumulates QPC delta into this+0x10
+0x428660,bfx_Stopwatch_GetMicroseconds,medium,accumulated ticks*1e6/QPF
+0x4a21d0,CPUCount,medium,TRLAU-menu-hook Patches.cpp (TR8); uses SetThreadAffinityMask/Sleep
+0x4a2680,cdc_JobChainImplWithThreads_StartSystem,medium,TRLAU-menu-hook Patches.cpp; creates N worker threads via _beginthreadex
+0x492b80,PHYSICS_StepWorld,medium,called by GAMELOOP_Process with timeMult; dt=min(timeMult 2.0); two half-steps for 90 units after a frame >1.1538; x0.05 when gameTracker+0x1C bit 8; -> 0x4F1900 -> 0x4F0AB0
+0x4f0ab0,MultibodySystem_Step,low,physics world step; callees reach Multibody Contact Cache Full! (0x4EA810)
+0x489c30,bfx_UpdateWorld,low,called by GAMELOOP_Process with timeMult*0.033 (seconds); calls 0x42A890 (bfx code range)
+0x5b3090,INSTANCE_ProcessAll,medium,walks g_instanceList calling instance+0x118 process fn; restores gameTracker_timeMult from +0x110 before each instance
+0x5b6dc0,INSTANCE_PreProcessAll,low,walks g_instanceList saving positions (+0x20.. -> +0xC0..) and resetting timeMult per instance
+0x7ce8d7,FMOD_OS_Time_GetUs,low,QPC*1e6/QPF with timeGetTime*1000 fallback; inside statically linked FMOD Ex range
+0x7ce92e,FMOD_OS_Time_GetMs,low,timeGetTime; inside statically linked FMOD Ex range
+# --- menu-hook anchors (TRLAU-menu-hook TR8 addresses; entries verified as function starts in this exe)
+0x5def70,MAIN_DoMainInit,medium,TRLAU-menu-hook Patches.cpp; called from MainG2_InitEngine
+0x478b00,MainG2_ErrorHandler,medium,TRLAU-menu-hook Patches.cpp; called by ERROR_Fatal
+0x5dfbe0,GAMELOOP_Process,high,TRLAU-menu-hook GameLoop.cpp; own decompile: per-frame game update passing timeMult and timeMult/30 to subsystems
+0x52e880,GAMELOOP_IsWipeDone,medium,TRLAU-menu-hook Game.cpp
+0x52e8b0,GAMELOOP_SetScreenWipe,medium,TRLAU-menu-hook Game.cpp
+0x5df8c0,GAMELOOP_RequestLevelChangeByName,medium,TRLAU-menu-hook Game.cpp
+0x5c17d0,STREAM_GetObjectTrackerByName,high,TRLAU-menu-hook Stream.cpp; string Unable to get ID for object: %s
+0x5c1da0,STREAM_PollLoadQueue,medium,TRLAU-menu-hook Stream.cpp; called every MainG2 iteration
+0x5bf770,OBTABLE_GetObjectID,high,TRLAU-menu-hook Game.cpp; stricmp over objectList 0xDB94D0 names returning index+1
+0x5b1ea0,G2EmulationInstanceSetAnimation,medium,TRLAU-menu-hook Animation.cpp
+0x5b1f50,G2EmulationInstanceSetMode,medium,TRLAU-menu-hook Animation.cpp
+0x5b1fc0,G2EmulationInstanceQueryAnimation,medium,TRLAU-menu-hook Animation.cpp
+0x5b3750,INSTANCE_Post,medium,TRLAU-menu-hook Instance.cpp
+0x5b3dd0,INSTANCE_HideUnhideDrawGroup,medium,TRLAU-menu-hook Instance.cpp
+0x5bc4e0,INSTANCE_ReallyRemoveInstance,medium,TRLAU-menu-hook Instance.cpp
+0x5bd0f0,INSTANCE_BirthObjectNoParent,medium,TRLAU-menu-hook Instance.cpp
+0x5c39d0,MarkUpBox_GetSegmentPos,medium,TRLAU-menu-hook Markup.cpp
+0x5f39f0,CAMERA_SetMode,medium,TRLAU-menu-hook Camera.cpp (TR8 block)
+0x5edf50,CameraManager_ToggleMode,low,TRLAU-menu-hook camera/Underworld.cpp thiscall on 0xE804F0
+0x75aa50,DeathState_Entry,medium,TRLAU-menu-hook Patches.cpp
+0x75af90,DeathState_Process,medium,TRLAU-menu-hook Patches.cpp; Ghidra had not made a function here
+0x79db50,PLAYER_DebugSwitchPlayerCharacter,low,TRLAU-menu-hook NtUnlockableCostume.cpp (small jmp thunk here)
+0x474c90,Font_SetCursor,medium,TRLAU-menu-hook Font.cpp
+0x474cb0,Font_GetCursor,medium,TRLAU-menu-hook Font.cpp
+0x474d50,Font_SetScale,medium,TRLAU-menu-hook Font.cpp
+0x475870,Font_GetHeight,medium,TRLAU-menu-hook Font.cpp
+0x4758c0,Font_GetTextWidth,medium,TRLAU-menu-hook Font.cpp
+0x476bc0,Font_PrintFormatted,medium,TRLAU-menu-hook Font.cpp
+0x5c5a30,Font_Flush,medium,TRLAU-menu-hook Font.cpp (hooked as flush point)
+0x480e50,InputSystem_GetAxisValue,medium,TRLAU-menu-hook Input.cpp
+0x48a450,TRANS_TransToDrawVertex,medium,TRLAU-menu-hook Draw.cpp
+0x49be10,cdc_OrthonormalInverse3x4,medium,TRLAU-menu-hook Math.cpp
+0x49d500,cdc_Matrix_Build_XYZOrder,medium,TRLAU-menu-hook Matrix.cpp
+0x49dd70,cdc_Matrix_Build,medium,TRLAU-menu-hook Matrix.cpp
+0x49f630,TRANS_RotTransPersVectorf,medium,TRLAU-menu-hook Draw.cpp
+0x49f990,TRANS_TransToDrawVertexV4f,medium,TRLAU-menu-hook Draw.cpp
+0x5bfa40,DRAW_DrawTriangles,medium,TRLAU-menu-hook Draw.cpp
+0x5bfb20,DRAW_DrawQuads,medium,TRLAU-menu-hook Draw.cpp
+0x5bfcd0,DRAW_DrawLines,medium,TRLAU-menu-hook Draw.cpp
+0x5150e0,PCScene_Draw,medium,TRLAU-menu-hook Render.cpp (TR8 branch)
+0x502b70,PCStateManager_SetRenderState,high,TRLAU-menu-hook PCStateManager.cpp; caches state at this+0x168 and calls IDirect3DDevice9 vt+0xE4 (SetRenderState)
+0x4a3200,ScriptLogInt,medium,TRLAU-menu-hook ScriptLog.cpp (TR8-only module)
+0x4a3240,ScriptLogFloat,medium,TRLAU-menu-hook ScriptLog.cpp
+0x4a3280,ScriptPrintInt,high,TRLAU-menu-hook ScriptLog.cpp; sprintf %i into stack buffer
+0x4a32c0,ScriptPrintFloat,medium,TRLAU-menu-hook ScriptLog.cpp
+0x795db0,NsCoreBase_PrintString,low,TRLAU-menu-hook ScriptLog.cpp (one of two overloads)
+0x795e30,NsCoreBase_PrintString_2,low,TRLAU-menu-hook ScriptLog.cpp (second overload)
+0x57b380,cdc_ScriptObject_CallFunction,low,TRLAU-menu-hook ScriptObject.cpp
+# --- file system
+0x473840,InitArchive,high,TRLAU-menu-hook ModLoader.cpp; own: creates MultiFileSystem + ArchiveFileSystem; opens BIGFILE.DAT; Unable to open bigfile BIGFILE.DAT!
+0x4730b0,ArchiveFileSystem_Open,high,logs Opening distributed archive %s... / Unable to open bigfile: %s
+0x4737f0,MultiFileSystem_ctor,high,stores MultiFileSystem vftable; 0x23 mount slots
+0x478930,InitPatchArchive,high,TRLAU-menu-hook ModLoader.cpp; own: called with PATCH.000 from Win32_GameMain
+0x472b50,GetFS,high,TRLAU-menu-hook FileSystem.cpp; returns g_fileSystem 0x9CE278
+0x472b60,GetDiskFS,high,returns g_diskFileSystem 0x9CE27C
+0x472670,ArchiveFileSystem_CalculateHash,high,copies + _strlwr path then ArchiveFileSystem_CRC32
+0x4725c0,ArchiveFileSystem_CRC32,high,MSB-first CRC32 poly 0x04C11DB7 init ~0 (bigfile path hash)
+0x477970,LOAD_UnitFileName,high,TRLAU-menu-hook Game.cpp; sprintf %s%s.drm
+0x477990,LOAD_StreamGroupFileName,high,sprintf %sStreamGroups\%s.drm
+0x54f430,LOAD_ImageFile,medium,cdc::ImageLoader receiver + Cannot open image: %s
+0x4726e0,ArchiveFileSystem_FindEntry,high,CalculateHash then binary search of sorted hashes; first record with (specMask & fs+8)==fs+8; * Archived file '%s' NOT found *
+0x472890,ArchiveFileSystem_RequestRead,medium,vftable slot 0; part=sector*0x800/0x7FF00000; Can't open file %s
+0x473020,ArchiveFileSystem_OpenFile,medium,vftable slot 1; allocates ArchiveFile {vftable record part offset}
+0x472920,ArchiveFileSystem_FileExists,medium,vftable slot 2; FindEntry != NULL
+0x472940,ArchiveFileSystem_GetFileSize,medium,vftable slot 3; returns record.size
+0x552bf0,ResolveDecompressor_ParseCdrm,medium,CDRM header/block-table/data state machine; CDRM file corrupt
+0x552fc0,ResolveDecompressor_Receiver_ReceiveData,medium,peeks first 16 bytes for CDRM magic; passes non-CDRM data through
+# --- DRM resolve / sections
+0x552560,RESOLVE_Init,high,RESOLVE_InitSectionHandlers + SoundResourceType + LightResourceType handlers
+0x551ff0,RESOLVE_InitSectionHandlers,high,news Generic/Empty/Animation/Wave/DTPData/Script/Object/ShaderLib/Material/RenderResource(x2) into g_sectionHandlers by section type
+0x54f1b0,RESOLVE_RegisterSectionHandler,medium,called (13 PDAMapSection) from MainG2_InitEngine
+0x54f9b0,ResolveReceiver_ReceiveData,high,DRM stream state machine; Wrong DRM version data %x code %x (0x13); copies 20-byte section headers; dispatches per section type
+0x54ec60,ResolveSection_ApplyRelocations,high,applies the 5 DRM relocation kinds; Resource %d (type %d file %s) can't find resource %d (type %d)
+0x551f30,RenderResourceSection_AllocateResource,high,switch on resource type 5 texture / 24 terrain / 26 render model via PCRenderDevice vt+0xA4/0xB4/0xAC; m_renderResourceDB grew string
+0x550c70,RenderResourceSection_HandleResourceData,medium,forwards streamed section bytes to resource vfunc+8
+# --- render resources
+0x5071b0,PCRenderDevice_CreateTexture,high,allocates 0x28 bytes and PCTexture_ctor
+0x507270,PCRenderDevice_CreateRenderModel,high,allocates 0x48 bytes and PCRenderModel_ctor
+0x507330,PCRenderDevice_CreateRenderTerrain,high,allocates 0xE0 bytes and PCRenderTerrain_ctor
+0x515d60,PCTexture_ctor,high,stores cdc::PCTexture vftables
+0x515b40,PCTexture_ReceiveData,high,checks PCD9 magic (Corrupt texture data passed into PCTexture constructor!); 0x18-byte header; creates device (cube if flags&0x8000) texture; streams mips
+0x51ffc0,PCTexture_GetMipByteSize,high,size by D3DFORMAT (DXT1 8B/block; DXT2-5 16B/block; 0x15/0x16 4Bpp; 16bpp; 8bpp)
+0x523d70,PCDeviceTexture_Create,medium,(w h format levels 0 0x12) from PCTexture_ReceiveData
+0x520fa0,PCDeviceCubeTexture_Create,medium,(edge format levels 0 0x12) when PCD9 flags&0x8000
+0x50ea80,PCRenderModel_ctor,high,stores cdc::RenderMesh then cdc::PCRenderModel vftables
+0x50eb30,PCRenderModel_Finalize,high,checks Mesh magic (Corrupt mesh data passed into PCRenderMesh constructor!); patches primgroup material/texture ids; creates static VBs/IB
+0x511240,PCRenderTerrain_ctor,high,stores cdc::IRenderTerrain / cdc::PCRenderTerrain vftables
+0x529020,PCStreamDecl_CreateFromVertexDecl,medium,matches shader input elements to VertexDecl attribute hashes; builds D3DVERTEXELEMENT9 list (sorted; D3DDECL_END)
+0x528db0,PCStreamDecl_CreateD3DResource,high,IDirect3DDevice9 vt+0x158 CreateVertexDeclaration
+0x5289d0,VertexFormatToD3DDeclType,high,switch format byte -> D3DDECLTYPE (0..3 FLOATn; 4-7 D3DCOLOR; 8 UBYTE4; 9/0x13 SHORT2; 10/0x14 SHORT4; ...)
+0x528a90,VertexKindToD3DDeclUsage,medium,switch attribute kind -> (usage usageIndex) pairs
+0x4f3fa0,VertexDecl_FindAttribute,high,linear search of u32 attribute hashes at VertexDecl+0x10 (8-byte elems; count u16 at +8)
+0x528760,PCStaticVertexBuffer_ctor,high,stores cdc::PCStaticVertexBuffer vftables
+0x528720,PCStaticVertexBuffer_Init,medium,(data stride count) then registers resource
+0x528110,PCStaticIndexBuffer_ctor,high,stores cdc::PCStaticIndexBuffer vftables
+0x5280f0,PCStaticIndexBuffer_Init,medium,(data count) then registers resource
+# --- D3D9 device
+0x5239c0,PCDeviceManager_Create,high,LoadLibraryA d3d9.dll; GetProcAddress Direct3DCreate9(0x20 = D3D_SDK_VERSION)
+0x523810,PCDeviceManager_ctor,medium,reads SOFTWARE\Microsoft\Direct3D LoadDebugRuntime
+0x522580,PCDeviceManager_CreateDevice,high,PCDeviceManager: CreateDevice() failed strings; IDirect3D9 vt+0x38 GetDeviceCaps and vt+0x40 CreateDevice
+0x522060,PCDeviceManager_BuildPresentParams,high,fills D3DPRESENT_PARAMETERS at this+0x208: PresentationInterval TWO/ONE/IMMEDIATE from settings; BackBufferCount 2 if triple buffer
+0x522900,PCDeviceManager_HandleDeviceLost,high,TestCooperativeLevel D3DERR_DEVICELOST/D3DERR_DEVICENOTRESET then Reset (vt+0x40 on device)
+0x522a10,PCDeviceManager_ResetDevice,medium,--- ResetDevice : Create Resources --- / --- Init and Reset --- strings (vftable slot 0)
+# --- settings / registry
+0x4791d0,Registry_LoadSettings,high,SOFTWARE\Crystal Dynamics\Tomb Raider: Underworld values SfxVolume MusicVolume ... LanguageString FullInstall SKUType
+0x4796b0,Registry_SaveSettings,high,RegCreateKeyExW/RegSetValueEx of the same values
+0x477ea0,Registry_LoadOptions,medium,reads AimYInverted ... Vibration Language SubtitleLanguage
+0x478010,Registry_SaveOptions,medium,writes AimYInverted ... SubtitleLanguage
+0x51e120,PCDisplaySettings_LoadFromRegistry,high,Graphics key: Fullscreen EnableVSync PresentationIntervalTwo AntiAliasing AdapterID ...
+0x51da80,PCDisplaySettings_SaveToRegistry,high,writes the same Graphics values
+# --- globals (data labels)
+0xe7f088,gameTracker,high,TRLAU-menu-hook Game.cpp; own: time fields at +0xC8..+0x148 written by GAMELOOP_UpdateTime
+0xe7ed60,mainTracker,medium,MAIN_ProcessMainState switch value; +0xC quit flag tested by MainG2
+0xe7f188,gameTracker_timeMult,high,gameTracker+0x100 float; 1.0 == 33333us (one 30 Hz frame); read by >100 functions
+0xe7f194,gameTracker_timeMultUnscaled,high,gameTracker+0x10C float; dt/33333.33 before time scale; MainG2_PlatformUpdate argument
+0xe7f170,gameTracker_frameTimeUs,high,gameTracker+0xE8 averaged frame delta in microseconds (clamped 1000000)
+0xe7f1a8,gameTracker_frameRateLock,high,gameTracker+0x120; 1=30 2=20 3=60 fps fixed step; debug menu Frame Rate Lock entry at 0x8AAD34
+0xe7f150,gameTracker_variableTimestep,high,gameTracker+0xC8; set to 1 by GAMELOOP_InitTimeFields (never cleared in exe)
+0xe7f160,gameTracker_frameTimeMs,high,gameTracker+0xD8 int step in ms; accumulated into +0xCC
+0xe7f164,gameTracker_timeMultFixed,high,gameTracker+0xDC = timeMult*4096
+0xe7f198,gameTracker_timeMultSaved,high,gameTracker+0x110; per-instance loops restore timeMult from it
+0xe7f1d0,gameTracker_timeScale,high,gameTracker+0x148 default 1.0; multiplies timeMult in GAMELOOP_UpdateTime
+0xe7ee10,g_frameDeltaRing,high,6 u32 raw frame deltas (us) averaged by GAMELOOP_UpdateTime; index at 0xE7EDC4
+0xe7ee38,g_lastFrameTimeUs,high,u64 TIMER_GetTimeMicroseconds at previous GAMELOOP_UpdateTime
+0xc56fc8,g_sectionHandlers,high,array of ResolveSection* indexed by DRM section type 0..13
+0x9ce278,g_fileSystem,high,TRLAU-menu-hook ModLoader.cpp; own: InitArchive stores MultiFileSystem here
+0x9ce27c,g_diskFileSystem,high,TRLAU-menu-hook ModLoader.cpp; own: GetDiskFS
+0xad75e4,g_pcDeviceManager,high,PCDeviceManager_Create singleton
+0xa1407c,g_pcRenderDevice,medium,render device whose vt+0xA4/0xAC/0xB4 create textures/models/terrain
+0xdbab40,g_streamTracker,medium,TRLAU-menu-hook Game.cpp (STracker)
+0xd98d54,g_instanceList,medium,TRLAU-menu-hook Instances.cpp; GAMELOOP_Process walks it via +8 next
+0xdb94d0,g_objectList,high,TRLAU-menu-hook Game.cpp; own: OBTABLE_GetObjectID reads count+names
+0xe80534,g_camera,low,TRLAU-menu-hook Camera.cpp (TR8 branch)
+0x8a6ebc,g_materialTable,low,TRLAU-menu-hook Materials.cpp (cdc::HashTable)
