@@ -115,12 +115,13 @@ Header fields used (u32, offsets relative to Header) [O]:
   | 0x8317902A | texcoord 0 | [O] SHORT2 ÷ 2048. v = 0 is texture row 0 (D3D convention, no flip). Verified by textured CPU renders of Lara (face and clothing land exactly) and of l4_pool |
   | 0x7E7DD623 | colour | [I] colour, copied to `Vertex::color` |
   | 0x8E54B6F3 | second texcoord | [O] SHORT2, present on Lara (offset 28) and on terrain. [U] Its purpose (lightmap or blend UV?); ignored |
-  | 0x48E691C0 / 0x5156D8D3 | Lara formats 6 and 7 (D3DCOLOR) at +16 and +20 | [I] skin weights and indices; ignored |
+  | 0x48E691C0 / 0x5156D8D3 | skin weights / bone-palette indices, formats 6 and 7 (D3DCOLOR) at +16 and +20 | [O] decoded into `MeshData::skin`; see ANIMATION.md |
   | 0x64A86F01 / 0xF1ED11C3 | D3DCOLOR at +36 and +40 | [I] tangent and binormal; ignored |
 
   Lara batch 0's decl is observed as stride 44 with 9 attributes in the order: pos, normal, 6, 7, uv, uv2, colour, tangent?, binormal?.
   The names come from DXHR's VertexElem constants [I]. The hash values are not immediates in tru.exe.
-- [I] Skinned meshes come out in bind pose (Lara's T-pose observed) because the skin attributes are dropped.
+- [O] Vertices are stored in the bind pose (Lara's T-pose). Skin influences, the batch bone palette (Mesh flags bit 0:
+  batch +0x0C count, +0x10 offset) and the skeleton are documented in [ANIMATION.md](ANIMATION.md).
 - [O] Axes: Z-up and game units (Lara is about 511 tall). Front faces wind CCW: 99–100 % of vertex normals agree with
   `(b−a)×(c−a)` on Lara and on terrain.
 
@@ -184,8 +185,7 @@ Verified paths: `pc-w\lara.drm` (7 meshes, 24 textures), `pc-w\l4_pool.drm` (8 t
 ## Open questions
 
 - Placement of objects in units is solved in [LEVELS.md](LEVELS.md) (`loadLevelScene`). `loadDrmScene(…, withDependencies)` still stacks the models at the origin.
-- [U] Skinning, bones and animation.
 - [U] Primgroup texture indices +0x2C..0x38; the second terrain UV.
-- [U] The Mesh flags bit 0 path (batch +0x10, header +0x74).
+- [U] Mesh header +0x74 (an identity `0, 1, 2, …` table on Lara); batch +0x10 is the bone palette (ANIMATION.md).
 - [U] The terrain node tree.
 - [U] Cube-map texture use.

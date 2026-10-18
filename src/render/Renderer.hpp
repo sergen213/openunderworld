@@ -42,11 +42,8 @@ public:
     // Replaces all GPU resources. Returns warnings (unsupported formats etc.).
     virtual std::vector<std::string> upload(const scene::SceneData& scene) = 0;
     // Replaces the vertices of uploaded mesh `meshIndex` (index into the last upload's SceneData::meshes;
-    // same vertex count). Used for CPU skinning. false = unsupported here (caller re-uploads instead).
-    virtual bool updateVertices(size_t meshIndex, std::span<const scene::Vertex> vertices) {
-        (void)meshIndex, (void)vertices;
-        return false;
-    }
+    // same vertex count). Used for CPU skinning. false = no such mesh or vertex count mismatch.
+    virtual bool updateVertices(size_t meshIndex, std::span<const scene::Vertex> vertices) = 0;
     virtual void resize(Viewport viewport) = 0;
     virtual void drawFrame(const Camera& camera, Viewport viewport, const FrameOptions& options) = 0;
     virtual Image readBackbuffer(Viewport viewport) = 0; // after drawFrame, before present

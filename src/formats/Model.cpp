@@ -34,6 +34,9 @@ struct Reader {
 // usage of each is confirmed by the shader input specs stored in TRU material sections).
 constexpr uint32_t kPosition = 0xD2F7D823, kNormal = 0x36F5E414, kTerrainNormal = 0x09B1D4EA,
                    kTexcoord1 = 0x8317902A, kColor1 = 0x7E7DD623;
+// Skin attributes (D3DCOLOR). Byte k of the weights pairs with byte k of the indices; indices
+// address the batch bone palette (docs/formats/ANIMATION.md).
+constexpr uint32_t kSkinWeights = 0x48E691C0, kSkinIndices = 0x5156D8D3;
 
 constexpr uint32_t kResourceTerrain = 24, kResourceModel = 26;
 constexpr uint32_t kMeshMagic = 0x6873654D; // "Mesh"
@@ -146,6 +149,28 @@ std::vector<scene::Vertex> readVertices(const Reader& r, size_t off, uint32_t co
     return out;
 }
 
+// Skin influences of `count` vertices; empty when the declaration has no skin attributes.
+std::vector<scene::SkinInfluence> readSkin(const Reader& r, size_t off, uint32_t count, const Decl& decl,
+                                           const std::vector<uint32_t>& palette) {
+    const Elem *w = nullptr, *ix = nullptr;
+    for (const auto& e : decl.elems) {
+        if (e.hash == kSkinWeights && e.format >= 4 && e.format <= 8) w = &e;
+        else if (e.hash == kSkinIndices && e.format >= 4 && e.format <= 8) ix = &e;
+    }
+    if (!w || !ix) return {};
+    std::vector<scene::SkinInfluence> out(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint8_t* v = r.d.data() + off + size_t(i) * decl.stride;
+        for (int k = 0; k < 4; ++k) {
+            const uint8_t idx = v[ix->offset + k];
+            if (!palette.empty() && idx >= palette.size()) throw FormatError("skin index outside bone palette");
+            out[i].weight[k] = v[w->offset + k];
+            out[i].bone[k] = uint16_t(palette.empty() ? idx : palette[idx]);
+        }
+    }
+    return out;
+}
+
 // {u32 count, u32 ids[count]} list addressed by a relocated pointer at `ptrOffset`.
 std::vector<uint32_t> idList(const cdc::Section& s, uint32_t ptrOffset) {
     const auto p = cdc::internalPointer(s, ptrOffset);
@@ -236,6 +261,15 @@ void decodeModel(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& ou
         m.origin = where;
         m.vertices = readVertices(r, M + vtxOff, numVerts, decl, c.warnings, where);
         if (m.vertices.empty()) { pg += batchPgs; continue; }
+        // Mesh flags bit 0: batch +0x0C/+0x10 = bone palette {count, offset of u32 bone indices}.
+        std::vector<uint32_t> palette;
+        if ((r.u32(M + 0x04) & 1) &&
+            std::any_of(decl.elems.begin(), decl.elems.end(), [](const Elem& e) { return e.hash == kSkinIndices; })) {
+            const uint32_t n = r.u32(B + 0x0C), po = r.u32(B + 0x10);
+            r.need(M + po, 4 * size_t(n));
+            for (uint32_t i = 0; i < n; ++i) palette.push_back(r.u32(M + po + 4 * size_t(i)));
+        }
+        m.skin = readSkin(r, M + vtxOff, numVerts, decl, palette);
         for (uint32_t i = 0; i < batchPgs; ++i, ++pg) {
             const size_t P = M + pgOff + 0x40 * size_t(pg);
             const uint32_t first = r.u32(P + 0x10), tris = r.u32(P + 0x14);

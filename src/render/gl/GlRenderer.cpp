@@ -151,6 +151,7 @@ struct GpuMesh {
     Buffer vbo, ebo;
     std::vector<scene::SubMesh> submeshes;
     glm::mat4 model;
+    size_t source = 0, vertexCount = 0; // SceneData::meshes index, vertex count
 };
 
 struct Resources {
@@ -246,8 +247,18 @@ public:
             Texture tex = uploadTexture(t, warnings);
             if (tex.get()) r.textures[t.id] = std::move(tex);
         }
-        for (const auto& m : scene.meshes) uploadMesh(m, warnings);
+        for (size_t i = 0; i < scene.meshes.size(); ++i) uploadMesh(scene.meshes[i], i, warnings);
         return warnings;
+    }
+
+    bool updateVertices(size_t meshIndex, std::span<const scene::Vertex> vertices) override {
+        for (const auto& g : res_->meshes)
+            if (g.source == meshIndex) {
+                if (g.vertexCount != vertices.size()) return false;
+                glNamedBufferSubData(g.vbo.get(), 0, GLsizeiptr(vertices.size_bytes()), vertices.data());
+                return true;
+            }
+        return false;
     }
 
     void resize(Viewport) override {} // GL default framebuffer follows the window; viewport set per frame
@@ -356,7 +367,7 @@ private:
         return tex;
     }
 
-    void uploadMesh(const scene::MeshData& m, std::vector<std::string>& warnings) {
+    void uploadMesh(const scene::MeshData& m, size_t source, std::vector<std::string>& warnings) {
         auto warn = [&](const std::string& w) { warnings.push_back("mesh (" + m.origin + "): " + w); };
         if (m.vertices.empty() || m.indices.empty()) { warn("empty"); return; }
         if (std::any_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i >= m.vertices.size(); })) {
@@ -370,10 +381,13 @@ private:
         }
         if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
         g.model = glm::make_mat4(m.transform);
+        g.source = source;
+        g.vertexCount = m.vertices.size();
         g.vao = newVertexArray();
         g.vbo = newBuffer();
         g.ebo = newBuffer();
-        glNamedBufferStorage(g.vbo.get(), GLsizeiptr(m.vertices.size() * sizeof(scene::Vertex)), m.vertices.data(), 0);
+        glNamedBufferStorage(g.vbo.get(), GLsizeiptr(m.vertices.size() * sizeof(scene::Vertex)), m.vertices.data(),
+                             GL_DYNAMIC_STORAGE_BIT); // updateVertices (CPU skinning)
         glNamedBufferStorage(g.ebo.get(), GLsizeiptr(m.indices.size() * sizeof(uint32_t)), m.indices.data(), 0);
         GLuint vao = g.vao.get();
         glVertexArrayVertexBuffer(vao, 0, g.vbo.get(), 0, sizeof(scene::Vertex));

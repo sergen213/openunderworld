@@ -34,18 +34,39 @@ struct SubMesh {
     uint32_t textureId = 0;    // TextureData::id; 0 = untextured
 };
 
+// Optional skinning. Up to 4 influences per vertex; `bone` indexes Skeleton::bones.
+struct SkinInfluence {
+    uint16_t bone[4] = {};
+    uint8_t weight[4] = {};    // sum 255; 0 = unused slot
+};
+
+// Bind pose has no rotations: a bone's bind position is the sum of the pivots up its chain.
+struct Bone {
+    int32_t parent = -1;       // index into Skeleton::bones, -1 = root
+    float pivot[3] = {};       // bind offset from the parent
+};
+
+struct Skeleton {
+    std::vector<Bone> bones;   // parents come before children
+    uint32_t renderModelId = 0; // cdc render-model section the skeleton deforms
+    std::string origin;
+};
+
 struct MeshData {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices; // triangle list
     std::vector<SubMesh> submeshes;
     float transform[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; // column-major model matrix
     std::string origin;        // provenance, as for TextureData::origin
+    std::vector<SkinInfluence> skin; // empty, or one per vertex (vertices are the bind pose)
+    int32_t skeleton = -1;     // SceneData::skeletons index when skinned
 };
 
 // A loaded set ready for rendering. `placeholder` = true when any content is synthetic.
 struct SceneData {
     std::vector<MeshData> meshes;
     std::vector<TextureData> textures;
+    std::vector<Skeleton> skeletons;
     bool placeholder = false;
     std::vector<std::string> warnings; // unsupported / failed resources, shown in diagnostics
 };

@@ -94,9 +94,19 @@ if(OU_BUILD_TESTS)
                        SKIP_RETURN_CODE 77 ENVIRONMENT "${OU_VK_TEST_ENV}")
 endif()
 
+# ---- ou_anim: skeletons, animation clips, pose sampling, CPU skinning (docs/formats/ANIMATION.md) ----
+add_library(ou_anim STATIC src/anim/Anim.cpp)
+target_include_directories(ou_anim PUBLIC src)
+target_link_libraries(ou_anim PUBLIC ou_cdc glm::glm)
+if(OU_BUILD_TESTS)
+  add_executable(ou_anim_tests tests/test_anim.cpp)
+  target_link_libraries(ou_anim_tests PRIVATE ou_anim ou_formats GTest::gtest_main)
+  gtest_discover_tests(ou_anim_tests)
+endif()
+
 # ---- ou_formats: PCD9 textures, render models, terrain -> ou::scene; ou-asset CLI ----------
 add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/formats/Scene.cpp src/formats/Level.cpp)
-target_link_libraries(ou_formats PUBLIC ou_cdc)
+target_link_libraries(ou_formats PUBLIC ou_cdc ou_anim)
 add_executable(ou-asset tools/ou-asset/main.cpp)
 target_link_libraries(ou-asset PRIVATE ou_formats)
 if(OU_BUILD_TESTS)

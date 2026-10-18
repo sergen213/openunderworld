@@ -1,5 +1,7 @@
 #include "formats/Formats.hpp"
 
+#include "anim/Anim.hpp"
+
 #include <cstring>
 #include <deque>
 #include <map>
@@ -83,7 +85,15 @@ scene::SceneData loadDrmScene(const cdc::BigfileSet& bigfile, std::string_view d
         }
     }
     for (const auto& [path, drm] : drms) {
-        for (auto& m : decodeModels(drm, sc.warnings, path)) sc.meshes.push_back(std::move(m));
+        // Skinned models: link each mesh to the skeleton deforming its render model (docs/formats/ANIMATION.md).
+        const size_t base = sc.skeletons.size();
+        for (auto& s : anim::decodeSkeletons(drm, sc.warnings)) sc.skeletons.push_back(std::move(s));
+        for (auto& [id, meshes] : decodeRenderResources(drm, sc.warnings, path))
+            for (auto& m : meshes) {
+                for (size_t k = base; k < sc.skeletons.size(); ++k)
+                    if (!m.skin.empty() && sc.skeletons[k].renderModelId == id) m.skeleton = int32_t(k);
+                sc.meshes.push_back(std::move(m));
+            }
         warnUnusedSections(sc, path, drm);
     }
     loadTextures(sc, drms);

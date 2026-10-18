@@ -14,6 +14,7 @@
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 
+#include "anim/Anim.hpp"
 #include "cdc/Cdc.hpp"
 #include "config/Config.hpp"
 #include "engine/FrameClock.hpp"
@@ -39,6 +40,9 @@ struct Options {
     std::string renderer = "opengl";         // opengl | vulkan
     bool noOverlay = false;
     bool fullscreen = false;
+    std::string anim;      // --anim: anim id, #listIndex or name (clips of --drm)
+    bool animList = false; // --anim-list: print the object's animations and exit
+    double animTime = 0.0; // --anim-time: start time in seconds
 };
 
 void usage() {
@@ -46,6 +50,7 @@ void usage() {
                  "usage: ou-viewer [--game-dir DIR] [--drm pc-w\\\\x.drm] [--width W --height H] [--fov DEG]\n"
                  "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH] [--level]\n"
                  "                 [--renderer opengl|vulkan] [--no-overlay] [--fullscreen]\n"
+                 "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list]\n"
                  "                 [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
@@ -72,6 +77,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--no-overlay") { o.noOverlay = true; continue; }
         if (a == "--fullscreen") { o.fullscreen = true; continue; }
         if (a == "--level") { o.level = true; continue; }
+        if (a == "--anim-list") { o.animList = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (!(v = next())) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         if (a == "--config") continue; // applied above
@@ -83,6 +89,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--fov") o.fov = float(std::atof(v));
         else if (a == "--frames") o.frames = std::atoi(v);
         else if (a == "--screenshot") o.screenshot = v;
+        else if (a == "--anim") o.anim = v;
+        else if (a == "--anim-time") o.animTime = std::atof(v);
         else if (a == "--cam") {
             std::array<float, 5> c{};
             if (std::sscanf(v, "%f,%f,%f,%f,%f", &c[0], &c[1], &c[2], &c[3], &c[4]) != 5) {
@@ -102,6 +110,51 @@ bool parseArgs(int argc, char** argv, Options& o) {
         return false;
     }
     if (!o.screenshot.empty() && o.frames == 0) o.frames = 1;
+    return true;
+}
+
+// Animation clips of --drm (object DRMs such as pc-w\lara.drm). --anim-list prints the object's list;
+// --anim selects one clip. Returns false after printing a message when nothing usable was selected.
+bool loadClip(const Options& o, std::optional<ou::anim::Clip>& clip, std::string& label) {
+    const ou::cdc::BigfileSet bigfile(o.gameDir);
+    auto bytes = bigfile.read(o.drm);
+    if (!bytes) { std::fprintf(stderr, "ou-viewer: %s not in bigfile\n", o.drm.c_str()); return false; }
+    const ou::cdc::Drm drm = ou::cdc::parseDrm(std::move(*bytes));
+    const auto list = ou::anim::animList(drm);
+    auto section = [&](uint32_t id) -> const ou::cdc::Section* {
+        for (const auto& s : drm.sections)
+            if (s.type == ou::cdc::SectionType::Animation && s.id == id) return &s;
+        return nullptr;
+    };
+    if (o.animList) {
+        std::printf("index\tid\tkeys\tseconds\tname\n");
+        for (size_t i = 0; i < list.size(); ++i) {
+            const auto* s = section(list[i].animId);
+            try {
+                const auto c = s ? ou::anim::decodeClip(s->data) : ou::anim::Clip{};
+                std::printf("#%zu\t%u\t%u\t%.2f\t%s\n", i, list[i].animId, c.keyCount, c.durationSeconds(), list[i].name.c_str());
+            } catch (const std::exception& e) {
+                std::printf("#%zu\t%u\t-\t-\t%s (%s)\n", i, list[i].animId, list[i].name.c_str(), e.what());
+            }
+        }
+        return true;
+    }
+    uint32_t id = 0;
+    std::string name;
+    if (o.anim[0] == '#') {
+        const size_t i = size_t(std::atoll(o.anim.c_str() + 1));
+        if (i >= list.size()) { std::fprintf(stderr, "ou-viewer: --anim %s: list has %zu entries\n", o.anim.c_str(), list.size()); return false; }
+        id = list[i].animId, name = list[i].name;
+    } else if (o.anim.find_first_not_of("0123456789") == std::string::npos) {
+        id = uint32_t(std::atol(o.anim.c_str()));
+        for (const auto& e : list) if (e.animId == id) { name = e.name; break; }
+    } else {
+        for (const auto& e : list) if (e.name == o.anim) { id = e.animId, name = e.name; break; }
+    }
+    const auto* s = section(id);
+    if (!s) { std::fprintf(stderr, "ou-viewer: --anim %s: no such animation in %s\n", o.anim.c_str(), o.drm.c_str()); return false; }
+    clip = ou::anim::decodeClip(s->data);
+    label = "anim " + std::to_string(id) + (name.empty() ? "" : " '" + name + "'");
     return true;
 }
 
@@ -147,6 +200,29 @@ bool writePpm(const std::filesystem::path& path, const ou::render::Image& img) {
     return bool(f);
 }
 
+// CPU-skins every mesh that has a skeleton with `clip` at `seconds` (looping) and uploads the vertices.
+// Played in place: segment 0 carries root motion (ng_run moves it ~800 units per cycle) and is reset to
+// bind. Returns the number of meshes posed.
+size_t poseSkinnedMeshes(const ou::anim::Clip& clip, double seconds, const ou::scene::SceneData& scene,
+                         ou::render::Renderer& renderer, std::vector<ou::scene::Vertex>& scratch) {
+    std::vector<std::vector<glm::mat4>> palettes(scene.skeletons.size());
+    size_t posed = 0;
+    for (size_t i = 0; i < scene.meshes.size(); ++i) {
+        const auto& m = scene.meshes[i];
+        if (m.skin.empty() || m.skeleton < 0 || size_t(m.skeleton) >= scene.skeletons.size()) continue;
+        const auto& sk = scene.skeletons[size_t(m.skeleton)];
+        auto& palette = palettes[size_t(m.skeleton)];
+        if (palette.empty()) {
+            auto local = ou::anim::sample(clip, sk, seconds, true);
+            local[0] = ou::anim::bindPose(sk)[0];
+            palette = ou::anim::skinPalette(sk, ou::anim::worldMatrices(sk, local));
+        }
+        ou::anim::skinVertices(m, palette, scratch);
+        posed += renderer.updateVertices(i, scratch);
+    }
+    return posed;
+}
+
 float deadzone(float v) { return std::abs(v) < 0.15f ? 0.0f : (v - std::copysign(0.15f, v)) / 0.85f; }
 float axis(SDL_Gamepad* g, SDL_GamepadAxis a) { return g ? deadzone(SDL_GetGamepadAxis(g, a) / 32767.0f) : 0.0f; }
 
@@ -162,6 +238,19 @@ std::string fmt(const char* f, A... a) {
 int main(int argc, char** argv) {
     Options opt;
     if (!parseArgs(argc, argv, opt)) { usage(); return 2; }
+
+    std::optional<ou::anim::Clip> clip;
+    std::string clipLabel;
+    if (opt.animList || !opt.anim.empty()) {
+        if (opt.gameDir.empty() || opt.drm.empty()) { std::fprintf(stderr, "ou-viewer: --anim/--anim-list need --game-dir and --drm\n"); return 2; }
+        try {
+            if (!loadClip(opt, clip, clipLabel)) return 2;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-viewer: --anim: %s\n", e.what());
+            return 1;
+        }
+        if (opt.animList) return 0;
+    }
 
     ou::platform::SdlInit sdl(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD);
     if (!sdl.ok) {
@@ -195,6 +284,12 @@ int main(int argc, char** argv) {
                  source.c_str(), scene.meshes.size(), scene.textures.size(), perFormat[0], perFormat[1],
                  perFormat[2], perFormat[3], perFormat[4]);
     for (const auto& w : warnings) std::fprintf(stderr, "ou-viewer: warning: %s\n", w.c_str());
+    double animTime = opt.animTime;
+    std::vector<ou::scene::Vertex> skinScratch;
+    if (clip && poseSkinnedMeshes(*clip, animTime, scene, *renderer, skinScratch) == 0) {
+        warnings.push_back("--anim: no skinned mesh with a skeleton in this scene");
+        clip.reset();
+    }
 
     // Initial framing: fixed pose for the placeholder, scene bounds otherwise.
     ou::render::Camera cam;
@@ -298,10 +393,13 @@ int main(int argc, char** argv) {
         if (glm::length(move) > 1.0f) move = glm::normalize(move);
         const float boost = (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]) ? 4.0f : 1.0f;
 
-        for (int n = clock.advance(dt); n > 0; --n) {
+        const int ticks = clock.advance(dt);
+        for (int n = ticks; n > 0; --n) {
             simPrev = simCur;
             simCur += move * speed * boost * float(clock.step());
+            if (clip) animTime += clock.step(); // animation advances on the fixed tick
         }
+        if (clip && ticks > 0) poseSkinnedMeshes(*clip, animTime, scene, *renderer, skinScratch);
         cam.position = glm::mix(simPrev, simCur, float(clock.alpha()));
 
         ++fpsFrames;
@@ -330,6 +428,9 @@ int main(int argc, char** argv) {
                                 pad ? " | gamepad" : ""));
             lines.push_back(fmt("meshes %zu | textures %zu | placeholder %s | warnings %zu", scene.meshes.size(),
                                 scene.textures.size(), scene.placeholder ? "YES" : "no", warnings.size()));
+            if (clip)
+                lines.push_back(fmt("%s | %u keys | t %.2f / %.2f s (looping)", clipLabel.c_str(), clip->keyCount,
+                                    std::fmod(animTime, clip->durationSeconds()), clip->durationSeconds()));
             for (size_t i = 0; i < warnings.size() && i < 8; ++i) lines.push_back("!warning: " + warnings[i]);
             if (warnings.size() > 8) lines.push_back(fmt("!... %zu more warnings on stderr", warnings.size() - 8));
             lines.push_back("hold RMB look | WASD/QE move | Shift fast | wheel speed | V vsync | L light | C cull | F1 overlay");

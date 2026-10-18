@@ -51,6 +51,9 @@ build/ou-viewer --frames 5 --screenshot out.ppm   # render N frames, save PPM, e
 | `--renderer opengl\|vulkan` | render backend (default `opengl`); unavailable backend → exit 77 |
 | `--no-overlay` | start with the diagnostics overlay hidden (used for GL/Vulkan image diffs) |
 | `--fullscreen` | start fullscreen |
+| `--anim ID\|#INDEX\|NAME` | play a clip of `--drm` on its skinned meshes (anim id, anim-list index or name), looping on the 60 Hz tick, in place (`docs/formats/ANIMATION.md`) |
+| `--anim-time SECONDS` | start time of `--anim` (deterministic screenshots with `--frames 1`) |
+| `--anim-list` | print the object's animation list (index, id, keys, seconds, name) and exit; no window |
 | `--config FILE` | launcher config JSON (`docs/LAUNCHER.md`), applied first; other flags override |
 
 Controls: hold the right mouse button for mouse look (relative mouse mode); WASD move, Q/E
