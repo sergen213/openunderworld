@@ -238,7 +238,7 @@ std::pair<int, glm::mat4> World::gunMount(int hand) const {
     m[0] = glm::vec4(1, 0, 0, 0);
     m[1] = glm::vec4(0, 0, 1, 0);
     m[2] = glm::vec4(0, -1, 0, 0);
-    m[3] = glm::vec4(side * 22.0f, 0, -60.0f, 1);
+    m[3] = glm::vec4(side * 24.0f, 8.0f, -22.0f, 1);
     return {kThighBone[hand], m};
 }
 

@@ -309,3 +309,56 @@ TEST(CombatReal, WeaponData) {
     for (const auto n : game::kPistolClipNames) EXPECT_TRUE(anims.find(n)) << n;
     EXPECT_EQ(anims.find("combat_pistol_RfireE")->durationSeconds(), 10.0 / 30.0);
 }
+
+// l4_pool, on the stairs below the player intro (floor z 4721.2): a 1800-unit drop hurts, 2900 kills, the death
+// clip plays and she respawns; then pistols lock onto a dummy down the stairs and hit it.
+TEST(CombatReal, PoolFallDamageDeathAndPistols) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto anims = game::loadLaraAnims(bf);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const float floorZ = 4721.2f;
+    {
+        game::World w(loader, "l4_pool", anims, game::Spawn{{-14885, -42, floorZ + 1800}, 0});
+        for (int i = 0; i < 120; ++i) w.tick({});
+        EXPECT_NEAR(w.player().state().pos.z, floorZ, 1);
+        EXPECT_NEAR(w.health().value(), 1000 - 500 * (1800 - 1280.03f) / (1817.32f - 1280.03f), 2);
+        EXPECT_NE(w.player().state().state, State::Dead);
+    }
+    game::World w(loader, "l4_pool", anims, game::Spawn{{-14885, -42, floorZ + 2900}, 0});
+    int diedAt = -1, respawnedAt = -1;
+    for (int i = 0; i < 300 && respawnedAt < 0; ++i) {
+        w.tick({});
+        const bool dead = w.player().state().state == State::Dead;
+        if (dead && diedAt < 0) {
+            diedAt = i;
+            EXPECT_EQ(w.player().state().clip, "death_fall_normal");
+            EXPECT_NEAR(w.player().state().pos.z, floorZ, 1);
+        }
+        if (!dead && diedAt >= 0) respawnedAt = i;
+    }
+    ASSERT_GE(diedAt, 0);
+    ASSERT_GE(respawnedAt, 0);
+    // death_fall_normal is 1.067 s; respawn 1 s after it ends
+    EXPECT_NEAR(respawnedAt - diedAt, std::lround((anims.find("death_fall_normal")->durationSeconds() + 1.0) * 60), 2);
+    EXPECT_EQ(w.health().value(), 1000);
+
+    game::World p(loader, "l4_pool", anims);
+    game::DummyTarget t;
+    t.pos = {-13385, -600, 4500};
+    p.targets.push_back(&t);
+    for (int i = 0; i < 120; ++i) p.tick(guns(i >= 12));
+    EXPECT_EQ(p.combat().target, &t);
+    EXPECT_TRUE(p.combat().locked);
+    EXPECT_GE(p.combat().shotsFired, 4u);
+    EXPECT_EQ(t.hits, int(p.combat().shotsFired));
+    EXPECT_LT(t.hp, 700 - 4 * 30);
+    // the aim layer put the hands at shoulder height, pointing at the target
+    const auto pose = p.pose(1);
+    const auto& s = p.player().state();
+    const glm::vec3 hand(p.player().modelMatrix(s.pos, s.yaw) * pose[80][3]);
+    EXPECT_NEAR(hand.z - s.pos.z, 400, 60);
+    const glm::vec3 toTarget = glm::normalize(t.aimPoint() - (s.pos + vec3(0, 0, 418)));
+    EXPECT_GT(glm::dot(glm::normalize(hand - (s.pos + vec3(0, 0, 418))), toTarget), 0.8f);
+}

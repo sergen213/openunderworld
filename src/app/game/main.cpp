@@ -50,7 +50,8 @@ struct Options {
     int introFrames = -1; // --intro-frames N: stop the intro after N frames
     bool noAudio = false;
     std::string loadSlot; // --load SLOT: start from $XDG_DATA_HOME/openunderworld/saves/SLOT.ousave
-    double die = -1;      // --die SECONDS: Lara dies then and respawns at the last checkpoint
+    double die = -1;      // --die SECONDS: Lara dies then (death clip) and respawns at the last checkpoint
+    std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
 };
 
 void usage() {
@@ -59,11 +60,14 @@ void usage() {
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-audio]\n"
-                 "               [--load SLOT] [--die SECONDS] [--show-collision] [--show-triggers] [--show-enemies] [--config config.json]\n"
+                 "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--show-collision] [--show-triggers] [--show-enemies]\n"
+                 "               [--config config.json]\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push,\n"
-                 "          mouse look; gamepad: left stick, right stick, A jump, B drop, X use, LB walk; F1 overlay, Esc quit\n"
-                 "          F5 quicksave, F9 quickload (slot 'quick')\n"
-                 "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|lookx|looky> [value]\n");
+                 "          F draw/holster, mouse left fire, right aim/lock, Q switch target, mouse look;\n"
+                 "          gamepad: left stick, right stick, A jump, B drop, X use, Y draw, RT fire, LT lock, R3 switch, LB walk;\n"
+                 "          F1 overlay, Esc quit, F5 quicksave, F9 quickload (slot 'quick')\n"
+                 "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|lookx|looky>\n"
+                 "                    [value]\n");
 }
 
 bool parseArgs(int argc, char** argv, Options& o) {
@@ -110,6 +114,11 @@ bool parseArgs(int argc, char** argv, Options& o) {
         }
         else if (a == "--load") o.loadSlot = v;
         else if (a == "--die") o.die = std::atof(v);
+        else if (a == "--target") {
+            std::array<float, 3> t{};
+            if (std::sscanf(v, "%f,%f,%f", &t[0], &t[1], &t[2]) != 3) { std::fprintf(stderr, "--target wants X,Y,Z\n"); return false; }
+            o.targets.push_back(t);
+        }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return false; }
     }
     if (o.gameDir.empty()) { std::fprintf(stderr, "--game-dir is required\n"); return false; }
@@ -297,6 +306,129 @@ struct EnemyMeshes {
     }
 };
 
+// Combat (src/game/Combat.*): pistol models on Lara's hand / holster bones, --target dummies, muzzle flashes,
+// tracers, impacts, the HUD (health bar, lock reticle or free-aim cross: screen-space lines just past the
+// near plane) and the pistol waves of wp_handgun.drm. [I] the exe's flash/impact FX objects are not decoded.
+struct CombatView {
+    std::vector<ou::scene::Vertex> scratch;
+    std::vector<std::unique_ptr<ou::game::DummyTarget>> dummies;
+    struct Fx { ou::game::Shot shot; uint64_t tick; };
+    std::vector<Fx> fx;
+    std::vector<uint32_t> shotWaves; // 'HG1_shot_c_*'
+    uint32_t unholster = 0, magOut = 0, magIn = 0, next = 0;
+    bool drawn = false, reloading = false, dead = false;
+
+    void addWaves(const ou::cdc::Drm& drm) {
+        for (const auto& s : drm.sections) {
+            if (s.type != ou::cdc::SectionType::Wave) continue;
+            const auto w = ou::audio::parseWave(s.data);
+            if (w.bank.samples.empty()) continue;
+            const std::string& n = w.bank.samples[0].name;
+            if (n.starts_with("HG1_shot_c")) shotWaves.push_back(s.id);
+            else if (n.starts_with("hg1_unholster") && !unholster) unholster = s.id;
+            else if (n.starts_with("HG1_mag_release") && !magOut) magOut = s.id;
+            else if (n.starts_with("HG1_mag_in") && !magIn) magIn = s.id;
+        }
+    }
+
+    void tick(const ou::game::World& w, ou::audio::Mixer* mix) {
+        const auto& c = w.combat();
+        const auto& s = w.player().state();
+        for (const auto& shot : c.shots) {
+            fx.push_back({shot, w.ticks()});
+            if (mix && !shotWaves.empty()) mix->play(shotWaves[next++ % shotWaves.size()], {.volume = 0.8f, .position = shot.from});
+            std::fprintf(stderr, "ou-game: tick %llu shot %s hand %.0f %.0f %.0f -> %.0f %.0f %.0f%s damage %.1f\n",
+                         (unsigned long long)w.ticks(), shot.hand ? "left" : "right", shot.from.x, shot.from.y, shot.from.z, shot.to.x,
+                         shot.to.y, shot.to.z, shot.target ? " TARGET" : shot.hit ? " wall" : "", shot.damage);
+        }
+        std::erase_if(fx, [&](const Fx& f) { return w.ticks() - f.tick > 20; });
+        if (mix && c.drawn && !drawn && unholster) mix->play(unholster, {.volume = 0.7f});
+        if (mix && c.reload > 0 && !reloading && magOut) mix->play(magOut, {.volume = 0.7f});
+        if (mix && c.reload <= 0 && reloading && magIn) mix->play(magIn, {.volume = 0.7f});
+        if ((s.state == ou::game::State::Dead) != dead)
+            std::fprintf(stderr, "ou-game: tick %llu %s (health %.0f, clip %s)\n", (unsigned long long)w.ticks(),
+                         dead ? "respawned" : "died", w.health().value(), s.clip.c_str());
+        drawn = c.drawn, reloading = c.reload > 0, dead = s.state == ou::game::State::Dead;
+    }
+
+    // Guns: world-space vertices from Lara's interpolated pose.
+    void pose(const ou::game::World& w, const ou::game::PlayerState& s, double alpha, const ou::scene::SceneData& scene,
+              const std::vector<size_t>& gunIndices, ou::render::Renderer& r) {
+        const auto bones = w.pose(alpha);
+        for (size_t h = 0; h < gunIndices.size() && h < 2; ++h) {
+            const auto [bone, offset] = w.gunMount(int(h));
+            if (size_t(bone) >= bones.size()) continue;
+            const glm::mat4 m = w.player().modelMatrix(s.pos, s.yaw) * bones[size_t(bone)] * offset;
+            const glm::mat3 n(m);
+            scratch = scene.meshes[gunIndices[h]].vertices;
+            for (auto& v : scratch) {
+                const glm::vec3 p(m * glm::vec4(v.position[0], v.position[1], v.position[2], 1)), q = glm::normalize(n * glm::vec3(v.normal[0], v.normal[1], v.normal[2]));
+                v.position[0] = p.x, v.position[1] = p.y, v.position[2] = p.z;
+                v.normal[0] = q.x, v.normal[1] = q.y, v.normal[2] = q.z;
+            }
+            r.updateVertices(gunIndices[h], scratch);
+        }
+    }
+
+    void lines(const ou::game::World& w, const ou::game::CameraState& cam, float fovDeg, int width, int height,
+               std::vector<ou::render::DebugLine>& out) const {
+        auto line = [&](glm::vec3 a, glm::vec3 b, uint32_t col) { out.push_back({{a.x, a.y, a.z}, {b.x, b.y, b.z}, col}); };
+        for (const auto& d : dummies) { // capsule wireframe: red alive, grey dead
+            const uint32_t col = d->alive() ? 0xFF3030FF : 0xFF808080;
+            for (int k = 0; k < 12; ++k) {
+                const float a0 = float(k) / 12 * 6.2832f, a1 = float(k + 1) / 12 * 6.2832f;
+                const glm::vec3 p0(std::cos(a0) * d->r, std::sin(a0) * d->r, 0), p1(std::cos(a1) * d->r, std::sin(a1) * d->r, 0);
+                for (const float z : {d->r, d->h * 0.5f, d->h - d->r}) line(d->pos + p0 + glm::vec3(0, 0, z), d->pos + p1 + glm::vec3(0, 0, z), col);
+                if (k % 3 == 0) line(d->pos + p0 + glm::vec3(0, 0, d->r), d->pos + p0 + glm::vec3(0, 0, d->h - d->r), col);
+            }
+            line(d->pos, d->pos + glm::vec3(0, 0, d->h), col);
+        }
+        for (const auto& f : fx) {
+            const uint64_t age = w.ticks() - f.tick;
+            if (age <= 2) // muzzle flash star
+                for (const glm::vec3 d : {glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1), glm::vec3(0.7f, 0.7f, 0), glm::vec3(0.7f, -0.7f, 0),
+                                          glm::vec3(0, 0.7f, 0.7f), glm::vec3(0.7f, 0, -0.7f)})
+                    line(f.shot.from - d * 30.0f, f.shot.from + d * 30.0f, 0xFF40D0FF);
+            if (age <= 4) line(f.shot.from, f.shot.to, 0xFF90F0FF); // tracer
+            if (f.shot.hit)
+                for (const glm::vec3 d : {glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)})
+                    line(f.shot.to - d * 15.0f, f.shot.to + d * 15.0f, f.shot.target ? 0xFF2020FF : 0xFFC0C0C0);
+        }
+        // HUD: pixel (x, y) from the top-left -> a point 10 units in front of the camera
+        const glm::vec3 fwd = glm::normalize(cam.target - cam.position), right = glm::normalize(glm::cross(fwd, glm::vec3(0, 0, 1))),
+                        up = glm::cross(right, fwd);
+        const float ty = std::tan(glm::radians(fovDeg) * 0.5f), tx = ty * float(width) / float(height), d = 10.0f;
+        auto px = [&](float x, float y) {
+            return cam.position + fwd * d + right * ((2 * x / float(width) - 1) * d * tx) + up * ((1 - 2 * y / float(height)) * d * ty);
+        };
+        auto hline = [&](float x0, float x1, float y, uint32_t col) { line(px(x0, y), px(x1, y), col); };
+        const float hp = std::clamp(w.health().value() / w.health().max(), 0.0f, 1.0f);
+        const float x0 = 40, bw = 300, y0 = float(height) - 64;
+        for (int y = -1; y <= 13; ++y) hline(x0 - 2, x0 + bw + 2, y0 + float(y), y == -1 || y == 13 ? 0xFF000000 : 0xFF303030);
+        const uint32_t barCol = hp > 0.5f ? 0xFF40D040 : hp > 0.25f ? 0xFF20C0E0 : 0xFF2020E0;
+        for (int y = 1; y <= 11; ++y) hline(x0, x0 + bw * hp, y0 + float(y), barCol);
+        const auto& c = w.combat();
+        if (!c.drawn) return;
+        auto toScreen = [&](glm::vec3 p) -> std::optional<glm::vec2> {
+            const glm::vec3 v = p - cam.position;
+            const float z = glm::dot(v, fwd);
+            if (z <= 1) return std::nullopt;
+            return glm::vec2((glm::dot(v, right) / (z * tx) + 1) * 0.5f * float(width), (1 - glm::dot(v, up) / (z * ty)) * 0.5f * float(height));
+        };
+        const auto s = c.target ? toScreen(c.target->aimPoint()) : std::optional(glm::vec2(width, height) * 0.5f);
+        if (!s) return;
+        const uint32_t col = c.target ? (c.locked ? 0xFF2020FF : 0xFFFFFFFF) : 0xC0FFFFFF;
+        const float r = c.target ? 22.0f : 8.0f;
+        if (c.target) { // diamond + corner ticks
+            const glm::vec2 q[4] = {{0, -r}, {r, 0}, {0, r}, {-r, 0}};
+            for (int k = 0; k < 4; ++k) line(px(s->x + q[k].x, s->y + q[k].y), px(s->x + q[(k + 1) % 4].x, s->y + q[(k + 1) % 4].y), col);
+        } else { // free-aim cross
+            line(px(s->x - r, s->y), px(s->x + r, s->y), col);
+            line(px(s->x, s->y - r), px(s->x, s->y + r), col);
+        }
+    }
+};
+
 // Debug lines (--show-enemies): body capsule (colour by mode: idle green, alert yellow, chase orange, attack red,
 // hit magenta, dead grey) and the line of sight to Lara while it perceives her.
 void appendEnemyLines(const ou::game::World& w, std::vector<ou::render::DebugLine>& out) {
@@ -319,12 +451,13 @@ void appendEnemyLines(const ou::game::World& w, std::vector<ou::render::DebugLin
             line(s.pos + glm::vec3(0, 0, h * 0.8f), lara.pos + glm::vec3(0, 0, lara.height * 0.75f), 0xFF00FFFF);
     }
 }
-
 // Render scene of the streamed units: each loaded unit's level scene (cached while it stays loaded) moved by
 // its stream offset, then Lara's skinned meshes. Rebuilt and re-uploaded when World::unitsVersion changes.
 struct StreamedScene {
     std::map<std::string, ou::scene::SceneData> units; // unit frame
     ou::scene::SceneData lara;                         // Lara's skinned meshes, skeletons, textures
+    ou::scene::SceneData guns;                         // pistol model twice: right, left (CombatView::pose)
+    std::vector<size_t> gunIndices;
     uint64_t version = ~0ull, enemyVersion = ~0ull;
 
     ou::scene::SceneData build(const ou::cdc::BigfileSet& bf, const ou::game::World& w, LaraMeshes& laraMeshes,
@@ -366,6 +499,8 @@ struct StreamedScene {
             enemyMeshes.meshIndices.emplace_back();
             append(enemyMeshes.type(bf, e->type().name, warnings), glm::vec3(0), &enemyMeshes.meshIndices.back());
         }
+        gunIndices.clear();
+        append(guns, glm::vec3(0), &gunIndices);
         version = w.unitsVersion();
         enemyVersion = w.enemies().version();
         return out;
@@ -420,6 +555,7 @@ int main(int argc, char** argv) {
     EnemyMeshes enemyMeshes;
     ScriptedMeshes objects;
     std::vector<std::string> warnings;
+    CombatView combat;
     bool spawnFromIntro = false;
     try {
         if (!opt.inputScript.empty()) script = ou::game::InputScript::load(opt.inputScript);
@@ -444,6 +580,24 @@ int main(int argc, char** argv) {
         for (auto& m : laraScene.meshes)
             if (m.skeleton >= 0 && !m.indices.empty()) streamed.lara.meshes.push_back(std::move(m)); // skinned body only
         for (auto& w : laraScene.warnings) warnings.push_back(std::move(w));
+        // Pistols: wp_handgun's first mesh (the gun; the others are a low-detail copy and a small part), once per
+        // hand, posed in model space on the CPU (CombatView::pose).
+        auto gunScene = ou::formats::loadDrmScene(bf, "pc-w\\wp_handgun.drm");
+        if (!gunScene.meshes.empty()) {
+            streamed.guns.textures = std::move(gunScene.textures);
+            streamed.guns.meshes = {gunScene.meshes[0], gunScene.meshes[0]};
+            for (auto& m : streamed.guns.meshes) { // CPU-posed in world space: identity transform, no skin
+                m.skeleton = -1, m.skin.clear();
+                for (int i = 0; i < 16; ++i) m.transform[i] = i % 5 == 0 ? 1.0f : 0.0f;
+            }
+        } else {
+            warnings.push_back("pc-w\\wp_handgun.drm: no mesh decoded");
+        }
+        for (const auto& t : opt.targets) {
+            auto& d = combat.dummies.emplace_back(std::make_unique<ou::game::DummyTarget>());
+            d->pos = glm::vec3(t[0], t[1], t[2]) + world->currentUnit().offset;
+            world->targets.push_back(d.get());
+        }
         scene = streamed.build(bf, *world, lara, enemyMeshes, warnings);
         if (lara.meshIndices.empty()) warnings.push_back("pc-w\\lara.drm: no skinned mesh decoded");
     } catch (const std::exception& e) {
@@ -480,6 +634,11 @@ int main(int argc, char** argv) {
         try {
             const ou::cdc::BigfileSet bigfile(opt.gameDir);
             if (auto lara = bigfile.read("pc-w\\lara.drm")) mixer.addWaves(ou::cdc::parseDrm(std::move(*lara)));
+            if (auto gun = bigfile.read("pc-w\\wp_handgun.drm")) { // pistol shots, holster, magazine waves
+                const auto drm = ou::cdc::parseDrm(std::move(*gun));
+                mixer.addWaves(drm);
+                combat.addWaves(drm);
+            }
             // [I] music file naming seen in the bigfile (pc-w\music\<unit>_mus_01\...); how the game picks a track is unknown.
             std::string unit = opt.level.substr(opt.level.find_last_of('\\') + 1);
             unit = unit.substr(0, unit.rfind(".drm"));
@@ -511,6 +670,7 @@ int main(int argc, char** argv) {
     objects.index(scene);
     for (const auto& w : warnings) std::fprintf(stderr, "ou-game: warning: %s\n", w.c_str());
     auto debugLines = opt.showCollision ? collisionLines(world->collision()) : std::vector<ou::render::DebugLine>{};
+    std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
     const auto& sp = world->player().state();
     std::fprintf(stderr, "ou-game: %s | spawn %s at %.1f %.1f %.1f yaw %.1f\n", opt.level.c_str(),
                  !opt.loadSlot.empty() ? "--load" : opt.spawn ? "--spawn" : spawnFromIntro ? "'player' intro" : "first intro (no 'player' intro)",
@@ -564,7 +724,9 @@ int main(int argc, char** argv) {
         last = now;
 
         for (int n = clock.advance(dt); n > 0; --n) {
-            ou::game::Actions a = script ? script->at(world->ticks()) : ou::game::readDevices(SDL_GetKeyboardState(nullptr), pad.get());
+            ou::game::Actions a = script ? script->at(world->ticks())
+                                         : ou::game::readDevices(SDL_GetKeyboardState(nullptr), pad.get(),
+                                                                 interactive ? SDL_GetMouseState(nullptr, nullptr) : 0);
             // Mouse motion since the last tick, as a rate over this tick.
             a.look -= mouse * kMouseSensitivity / float(ou::game::kTickSeconds);
             mouse = glm::vec2(0);
@@ -572,10 +734,11 @@ int main(int argc, char** argv) {
             if (a.load && !held.load) quickLoad(*world, "quick");
             held = a;
             if (world->ticks() == dieTick) {
-                world->respawn();
-                logState("died, respawned", *world);
+                world->kill(); // death clip, then World respawns her at the last checkpoint
+                logState("killed (--die)", *world);
             }
             world->tick(a);
+            combat.tick(*world, audioOn ? &mixer : nullptr);
             for (const auto& e : world->script().events()) {
                 const auto* src = world->script().find(e.source);
                 const auto* dst = world->script().find(e.target);
@@ -618,6 +781,7 @@ int main(int argc, char** argv) {
         lara.pose(*world, s, clock.alpha(), scene, *renderer);
         enemyMeshes.pose(*world, clock.alpha(), scene, *renderer);
         objects.pose(world->script(), scene, *renderer);
+        combat.pose(*world, s, clock.alpha(), scene, streamed.gunIndices, *renderer);
         ou::render::Camera cam;
         cam.verticalFovDeg = world->fovDeg;
         cam.nearZ = 5.0f;
@@ -651,11 +815,25 @@ int main(int argc, char** argv) {
                                     near->type().name.c_str(), near->uid(), std::string(ou::game::ai::modeName(near->state().mode)).c_str(),
                                     near->health(), near->type().tuning.health, glm::distance(near->position(), s.pos)));
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
-            lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push | mouse look | F5 save | F9 load | F1 overlay | Esc quit");
+            lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push | F draw | LMB fire | RMB lock | Q switch | "
+                            "mouse look | F5 save | F9 load | F1 overlay | Esc quit");
         }
-        auto frameLines = debugLines;
+        { // combat HUD text (always shown)
+            const auto& cs = world->combat();
+            std::string t = fmt("health %.0f/%.0f", world->health().value(), world->health().max());
+            if (cs.drawn)
+                t += fmt(" | pistols %d+%d%s | %s", cs.clip[0], cs.clip[1], cs.reload > 0 ? " RELOADING" : "",
+                         cs.target ? (cs.locked ? "LOCKED" : "target") : "free aim");
+            for (const auto& d : combat.dummies) t += fmt(" | dummy %.0f hp", d->hp);
+            lines.push_back(t);
+        }
+        // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these
+        // lines change every frame (HUD, effects), so consecutive frames must never share a pointer.
+        auto& frameLines = lineBuffers[frame & 1];
+        frameLines.assign(debugLines.begin(), debugLines.end());
         if (opt.showTriggers) appendTriggerLines(world->script(), frameLines);
         if (opt.showEnemies) appendEnemyLines(*world, frameLines);
+        combat.lines(*world, c, world->fovDeg, w, h, frameLines);
         renderer->drawFrame(cam, {w, h}, {true, true, lines, frameLines});
         ++frame;
         if (opt.frames && frame >= opt.frames) {

@@ -121,7 +121,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Swim depth | water ≥ 400 under the surface is swum, shallower walked | [I] ours (tread pose feet at −352) |
 | Water drag (splash) | velocity × e^(−3 t) | [I] ours |
 | Buoyancy, air/oxygen | none | [U] no buoyancy or air timer found (only `death_drown` exists); not implemented |
-| Fall damage thresholds | 1280.0 / 1817.3 / 2215.6 | [O] floats data+0x4C/+0x50/+0x54; no damage system yet |
+| Fall damage | 0 up to **1280.03**, linear to 500 at **1817.32**, linear to 1000 (= death) at **2215.55**, death above | [O] floats data+0x4C/+0x50/+0x54 and the curve 0x6F1790; height = z on becoming airborne (player +0x6DC, set on FallState entry 0x75C550) − landing z; applied on landing (0x75D080 → 0x702FC0), never scaled by difficulty (Combat below) |
 | Camera | orbit 700 units behind a point 450 above the feet, pitch −1.2..0.7 rad, sphere-swept (r 20) pull-in | [I] ours. [O] LaraCamera (vtable 0x880574) clamps distance at 1000 and has a 300-unit floor in its collision pull-in; defaults are data-driven (`ExplorationCameraResource`) [U] |
 | FOV | config / `--fov` (default 60° vertical, Hor+) | [O] BaseCamera ctor 0x5E1B60 defaults fov to π/2; the game's exploration FOV is data-driven [U] |
 
@@ -243,6 +243,51 @@ Not done: behaviour trees (search, flank, cover, taunt, jump/vault, nap), ranged
 (warned and not spawned), navmesh/routing, enemy sounds, respawn reset on Lara's death, generator spawns kept across
 streaming (their generator stays fired).
 
+## Combat (src/game/Combat.*)
+
+Health [O] (player globals `DAT_00fadb58`: health +0x628, regen clock +0x630/+0x634, invulnerability +0x638, last
+damage type +0x63C):
+- Max health = Lara data +0x44 (1000) × generalbank difficulty table (object data +0x24, 0x18-byte entries: Easy
+  1.3 / Normal 1.0 / Hard 0.8 at +0x08; damage multiplier 0.5 / 1.0 / 1.3 at +0x0C; ours: Normal) [O values, I labels].
+- Damage `0x6F5030(amount, type, msg)`: scaled by the damage multiplier unless type 8 (absolute); after a hit Lara is
+  invulnerable for data+0x60 = 30 frames, during which only a type of higher priority (table `DAT_0085de28`
+  {0,1,2,4,3,5,4,4,5,4,4}) or type 5 hurts. Enemy hit message 0x11C: types 1 light / 2 heavy. Message 4 kills
+  (type 6, amount = health). Fall damage (above) bypasses the window and records type 8.
+- Regeneration `0x6F5160`: below data+0x70 = 25 % of max, 45 frames (+0x78) after the last damage, health rises over
+  400 frames (+0x74) along `0x6E79D0`: base + cap·((1−e)t + e·t³), e = +0x7C = 0.7, capped at 25 %. Above max (health
+  packs with overheal) it decays from data+0x80 = 1.4 × max to max over +0x84 = 900 frames. Health packs (heal
+  `0x6F4EF0`) are Progression's pickups; `Health::heal` is the hook.
+- Death [I]: at health ≤ 0 on the ground, `death_fall_normal` (fall) or `death_toknee` (other damage) plays; 1 s
+  after it ends World::respawn (last checkpoint, full health as `0x700060`). Hit reactions are not played [U].
+
+Pistols [O] (wp_handgun data = ObjectBase+0xC8; stats block S = data+0xE0, read by fire `0x6C9E50`; `loadWeapon`):
+clip S+0x0B = 12 per gun, S+0x88 flags 0x80 infinite reserve / 0x20 dual, 1 pellet, spread S+0x1C = 1°, short range
+S+0x20 = 4000, max range S+0x18 = 6500. Damage from the ammo object `pr_handgunbullet` (id S+0x06) record +0x18:
+hitscan, 40 at 0 → 30 at 4000 → 20 at 6500 units. Uzi/shotgun/rifle blocks decode the same way (tests) but only
+the pistols are wired. Fire rate [I]: the exe fires on an animation event (0x75) of Lara's per-hand fire clip; we
+fire one shot per `combat_pistol_[RL]fireE` length (10 frames), hands alternating; reload 0.7 s
+(`combat_pistols_reload`). Hitscan from the gun muzzle to the aim point vs collision and target capsules, spread via
+a 32-bit LCG (deterministic replays).
+
+Upper body: Lara's pistol clips live in wp_handgun.drm. The 3×3 aim grid `combat_pistol_poseA..I` (measured: columns
++109° / 0 / −104°, rows +40° / 0 / −57°) is blended bilinearly by the aim yaw/pitch over the subtree of spine
+segment 14, the fire clip's motion relative to its first frame is added for recoil, faded in over 0.2 s
+(equip clip length) and out over 0.633 s. Guns ride bones 80/55 (hands) when drawn, thighs 9/4 when holstered;
+mount offsets fitted on screenshots [I] (the data's attach segments data+0xB8..+0xBB = 7,6,5,4 index an unknown
+list [U]).
+
+Targeting [O data, I use] (Lara data +0x480 / +0x470, criteria records {u16 type, u16 mode, f threshold, axis}):
+hard lock (aim held) tries tiers in order: nearest within 1264 (3D), then the smallest camera angle among targets
+within 8000 and ≤ 90° from the camera axis, then within 8000 and ≤ 90° from Lara's facing; soft target (drawn,
+aim not held): nearest within 5000 (2D) and 27.5° of her facing. LOS from 375 above the feet (+0x48C) is required.
+Switch target cycles through the hard-lock order [I]. Locked and standing, Lara turns toward the target [I]. No
+target: free aim along the camera ray. Adrenaline (meter +0x3C, slow motion) is not implemented [U].
+
+Input: F draw/holster (fire also draws), LMB fire, RMB aim/lock, Q switch; pad Y / RT / LT / R3; input scripts
+`draw`, `fire`, `aim`, `switch`. HUD (ou-game): health bar, lock reticle / free-aim cross, clip counts; muzzle
+flash, tracer and impact lines; `HG1_shot_c_*`, unholster and magazine waves from wp_handgun.drm. `--target X,Y,Z`
+places a 700-hp dummy capsule.
+
 ## Tests
 
 - `Game.*` (synthetic collision + synthetic clips with the measured root speeds): loop-seam root motion, wall slide,
@@ -284,8 +329,8 @@ No side-by-side comparison with the original game was made.
   changes not run); the water box is sized from the surface model, not the exe's component.
 - Edge teetering: walking slowly off a ledge can alternate Fall/Land on the edge corner (the capsule lands on the
   corner while the floor probe under the root misses); running off works.
-- Missing: crouch, roll, sprint, slopes/sliding, wall/poles/beams, combat, damage, fall damage (thresholds above),
-  state-chart conditions (`PlayerSC_*`, `PSCCF_*`).
+- Missing: crouch, roll, sprint, slopes/sliding, wall/poles/beams, hit reactions, adrenaline, weapons other than
+  the pistols, state-chart conditions (`PlayerSC_*`, `PSCCF_*`). Saves do not store health (a load restores full).
 - Collision: no depenetration pass (an already-touching contact being left is ignored); query mask 0xFF.
 - Live keyboard/mouse/gamepad play was not exercised by any recorded run: every screenshot is a scripted replay.
 - Hair is rigid; editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).
