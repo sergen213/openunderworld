@@ -185,6 +185,18 @@ std::vector<uint32_t> objectRenderModels(const cdc::Drm& d) {
     return out;
 }
 
+uint32_t objectFlags(const cdc::Drm& d) {
+    for (const auto& s : d.sections) {
+        if (s.type != cdc::SectionType::Object) continue;
+        uint32_t rootIndex = 0;
+        const uint32_t rootId = resourceId(s, 0, cdc::SectionType::DtpData);
+        if (!rootId || !findSection(d, cdc::SectionType::DtpData, rootId, &rootIndex))
+            throw FormatError("object section without its ObjectBase DTP");
+        return View(d, rootIndex).at<uint32_t>(0);
+    }
+    return 0;
+}
+
 void introMatrix(const Intro& in, float out[16]) {
     const float sx = std::sin(in.rotation[0]), cx = std::cos(in.rotation[0]), sy = std::sin(in.rotation[1]),
                 cy = std::cos(in.rotation[1]), sz = std::sin(in.rotation[2]), cz = std::cos(in.rotation[2]);

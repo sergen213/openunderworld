@@ -3,11 +3,27 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace ou::config {
 
 namespace fs = std::filesystem;
+
+// Graphics preset plus per-feature overrides. "original" = as close to tru.exe as evidence allows
+// (no MSAA, no shadow map, no post); "enhanced" = 4x MSAA + directional shadow map.
+struct GraphicsConfig {
+    std::string preset = "original";        // "original" | "enhanced"
+    int msaa = 0;                           // 0 = preset default, else 1, 2, 4 or 8 samples
+    std::optional<bool> shadows, fxaa, hdr; // unset = preset default
+};
+struct GraphicsSettings {
+    int msaa = 1;
+    bool shadows = false, fxaa = false, hdr = false;
+    bool operator==(const GraphicsSettings&) const = default;
+};
+// Throws std::runtime_error on an unknown preset or msaa value.
+GraphicsSettings resolve(const GraphicsConfig& g);
 
 struct Config {
     std::string gameDir;
@@ -20,6 +36,7 @@ struct Config {
     bool updatesEnabled = true;
     std::string updateChannel = "stable";
     std::string updateManifestUrl;  // empty = no update source configured
+    GraphicsConfig graphics;
 };
 
 fs::path configHome(); // $XDG_CONFIG_HOME or ~/.config

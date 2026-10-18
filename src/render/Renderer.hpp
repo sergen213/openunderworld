@@ -31,6 +31,11 @@ struct FrameOptions {
     // Drawn after the scene, depth-tested (biased slightly toward the camera), unlit. Backends may
     // cache the upload while the span's data pointer and size stay the same.
     std::span<const DebugLine> debugLines;
+    // Graphics settings (presets: ou::config::resolve). Changing them rebuilds render targets.
+    int msaa = 1;          // 1, 2, 4, 8 samples
+    bool shadows = false;  // sun shadow map (RenderCommon shadowViewProj), PCF 3x3
+    bool fxaa = false;     // FXAA on the resolved image
+    bool hdr = false;      // RGBA16F scene target + ACES tonemap
 };
 
 struct Image {

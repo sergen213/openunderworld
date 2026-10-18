@@ -45,6 +45,8 @@ struct Options {
     bool animList = false; // --anim-list: print the object's animations and exit
     double animTime = 0.0; // --anim-time: start time in seconds
     bool showCollision = false; // --show-collision: collision wireframe + markup of --drm (unit DRMs)
+    ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr (or --config)
+    ou::config::GraphicsSettings gfx;    // resolved
 };
 
 void usage() {
@@ -53,6 +55,8 @@ void usage() {
                  "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH] [--level]\n"
                  "                 [--renderer opengl|vulkan] [--no-overlay] [--fullscreen]\n"
                  "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list] [--show-collision]\n"
+                 "                 [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off]\n"
+                 "                 [--hdr on|off]\n"
                  "                 [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
@@ -65,7 +69,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         try {
             auto c = ou::config::load(argv[i + 1]);
             o.gameDir = c.gameDir, o.drm = c.drm, o.renderer = c.renderer, o.width = c.width, o.height = c.height;
-            o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen;
+            o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen, o.graphics = c.graphics;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "--config: %s\n", e.what());
             return false;
@@ -84,7 +88,21 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--help" || a == "-h") return false;
         if (!(v = next())) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         if (a == "--config") continue; // applied above
-        if (a == "--game-dir") o.gameDir = v;
+        auto onOff = [&](std::optional<bool>& out) {
+            if (std::strcmp(v, "on") && std::strcmp(v, "off")) return false;
+            out = std::strcmp(v, "on") == 0;
+            return true;
+        };
+        if (a == "--shadows" || a == "--fxaa" || a == "--hdr") {
+            if (!onOff(a == "--shadows" ? o.graphics.shadows : a == "--fxaa" ? o.graphics.fxaa : o.graphics.hdr)) {
+                std::fprintf(stderr, "%s wants on or off\n", a.c_str());
+                return false;
+            }
+            continue;
+        }
+        if (a == "--preset") o.graphics.preset = v;
+        else if (a == "--msaa") o.graphics.msaa = std::atoi(v);
+        else if (a == "--game-dir") o.gameDir = v;
         else if (a == "--drm") o.drm = v;
         else if (a == "--renderer") o.renderer = v;
         else if (a == "--width") o.width = std::atoi(v);
@@ -113,6 +131,12 @@ bool parseArgs(int argc, char** argv, Options& o) {
         return false;
     }
     if (!o.screenshot.empty() && o.frames == 0) o.frames = 1;
+    try {
+        o.gfx = ou::config::resolve(o.graphics);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "%s\n", e.what());
+        return false;
+    }
     return true;
 }
 
@@ -366,6 +390,8 @@ int main(int argc, char** argv) {
     uint64_t last = SDL_GetTicksNS(), fpsStart = last;
     int frame = 0, fpsFrames = 0;
     double fps = 0.0, frameMs = 0.0;
+    constexpr int kTimingWarmup = 10;
+    uint64_t timingStart = 0;
 
     while (running) {
         SDL_Event e;
@@ -452,6 +478,9 @@ int main(int argc, char** argv) {
             lines.push_back(scene.placeholder ? "!" + source : "source: " + source);
             lines.push_back(fmt("OpenUnderworld ou-viewer | %.1f FPS (%.2f ms) | vsync %s | %s | cull %s", fps,
                                 frameMs, vsync ? "on" : "off", lighting ? "lambert" : "unlit", cull ? "on" : "off"));
+            lines.push_back(fmt("preset %s | msaa %dx | shadows %s | fxaa %s | hdr %s", opt.graphics.preset.c_str(),
+                                opt.gfx.msaa, opt.gfx.shadows ? "on" : "off", opt.gfx.fxaa ? "on" : "off",
+                                opt.gfx.hdr ? "on" : "off"));
             lines.push_back(renderer->description());
             lines.push_back(fmt("%dx%d aspect %.3f | vFOV %.1f hFOV %.1f (Hor+)", w, h, aspect, cam.verticalFovDeg,
                                 glm::degrees(ou::render::horizontalFov(glm::radians(cam.verticalFovDeg), aspect))));
@@ -469,7 +498,10 @@ int main(int argc, char** argv) {
             if (warnings.size() > 8) lines.push_back(fmt("!... %zu more warnings on stderr", warnings.size() - 8));
             lines.push_back("hold RMB look | WASD/QE move | Shift fast | wheel speed | V vsync | L light | C cull | F1 overlay");
         }
-        renderer->drawFrame(cam, {w, h}, {lighting, cull, lines, debugLines});
+        ou::render::FrameOptions fo{lighting, cull, lines, debugLines};
+        fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
+        renderer->drawFrame(cam, {w, h}, fo);
+        if (frame == kTimingWarmup) timingStart = SDL_GetTicksNS();
         ++frame;
         if (opt.frames && frame >= opt.frames) {
             running = false;
@@ -485,6 +517,10 @@ int main(int argc, char** argv) {
     }
     std::fprintf(stderr, "ou-viewer: %d frames, %llu ticks, %llu clock drops\n", frame,
                  (unsigned long long)clock.ticks(), (unsigned long long)clock.droppedFrames());
+    if (frame > kTimingWarmup + 1) // --frames N --no-vsync: average wall time per frame after warm-up
+        std::fprintf(stderr, "ou-viewer: frame time %.3f ms avg over %d frames (after %d warm-up)\n",
+                     double(SDL_GetTicksNS() - timingStart) * 1e-6 / (frame - kTimingWarmup - 1),
+                     frame - kTimingWarmup - 1, kTimingWarmup + 1);
     renderer->shutdown();
     return 0;
 }

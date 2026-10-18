@@ -152,7 +152,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
     if (!listBytes) sc.warnings.push_back("\\tr8\\pc-w\\objectlist.txt not in bigfile: intros not placed");
     const auto objectNames = listBytes ? parseObjectList({reinterpret_cast<const char*>(listBytes->data()), listBytes->size()})
                                        : std::map<uint16_t, std::string>{};
-    struct ObjectMeshes { std::string name; std::vector<scene::MeshData> meshes; size_t intros = 0; std::string problem; };
+    struct ObjectMeshes { std::string name; std::vector<scene::MeshData> meshes; size_t intros = 0; std::string problem; bool hidden = false; };
     std::map<uint16_t, ObjectMeshes> objects;
     for (const auto& in : u.intros) {
         if (!listBytes || in.objectId == kMarkerObjectId) continue;
@@ -170,6 +170,8 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
                     const auto* d = loadInto(drms, bigfile, path);
                     if (!d) {
                         o.problem = path + " not in bigfile";
+                    } else if (objectFlags(*d) & kObjectHiddenAtBirth) {
+                        o.hidden = true; // trigger/sound volumes, camera anchors, dispatchers, ...
                     } else {
                         uint32_t model = 0;
                         for (const uint32_t id : objectRenderModels(*d))
@@ -183,6 +185,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
                 }
             }
         }
+        if (o.hidden) continue;
         float m[16];
         introMatrix(in, m);
         place(sc, o.meshes, m, " @intro " + std::to_string(in.uniqueId));

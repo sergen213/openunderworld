@@ -142,11 +142,20 @@ All 82 present units:
 
 Known deviations [O]:
 
-- Editor proxy meshes are drawn: plain yellow and red cubes and red/blue striped boxes. [I] They are trigger volumes,
-  generators, `floater_goo` markers, etc. The game hides them by a mechanism not yet reversed (candidates: ObjectBase
-  `+0` flag bits, the instance `+0x14 & 0x800` path).
-- Some foliage renders black. [I] Two-sided leaves lit from the back face by the viewer's lambert shading. This is a
-  renderer limitation, not a placement error.
+- Editor objects are no longer drawn: `INSTANCE_IntroduceInstance` (0x5BCC30) sets instance flag `0x800` when the
+  object's ObjectBase `+0` flags ("oflags") have bit `0x800000` [O], and 0x540B80, a per-instance routine that also does
+  the bounding-sphere visibility test, jumps to its end for `0x800` [O; that this is the draw path is I].
+  `loadLevelScene` skips those objects (`formats::objectFlags`). The 31 such objects in `objectlist.txt` are mostly
+  volumes/markers (`triggervolume`, `soundvolume`, `triggerplane`, `cameraanchor_object`, `cinematic_object`,
+  `dispatcher`, `reveal_object`, `watervolume`, `particle`, `sound_source`, …) plus a few props/gear (`co_rock*`,
+  `g_lighter`, `ma_dungeon_watersurfaces`, `wp_natla_fireball`) [O] that game code presumably shows later [I].
+  In l4_ballcourt this removes 6 objects (camera anchors, dispatchers, reveal objects, sound volumes, trigger
+  planes/volumes) [O]. Still drawn [U]:
+  `co_monitor_frame` (marker texture 372, oflags 0x90000014) and the 24-vertex `fx_*` effect proxies (oflags bit
+  `0x40000000`, set on 279 objects incl. many visible ones, so not used as a filter). Intro flag `+0x72 & 0x10` also
+  hides an instance when a callback refuses it [O]; the callback is not reversed, so such intros are still drawn.
+- Foliage renders correctly since materials carry blend/alpha-test/two-sided state (MATERIALS.md); the black ground
+  plants came from the `COLOR0` attribute (0 on them) being used as a colour.
 - The unit's dependency objects (`ca_skydome_a`, the `g_*`/`wp_*` gear) are not placed.
 
 `loadLevelScene` warnings on these two units:
@@ -158,7 +167,8 @@ Known deviations [O]:
 
 ## Open questions
 
-- [U] Which model an instance uses (LOD/`modelNum`), and how editor-only objects are hidden.
+- [U] Which model an instance uses (LOD/`modelNum`); whether `co_monitor_frame` / `fx_*` proxies are hidden by script,
+  the effect system or the intro `+0x72 & 0x10` callback.
 - [U] Intro `+0x52`, `+0x70..0x73` flags, intro data at `+0x78`, the second intro list's role (l4_pool: 1 entry).
 - [U] IMF `+0x40`, `+0x4C`, `+0x60`; cell BSP and portals; cell group `+0x14`/`+0x1C`.
 - [U] Why `Level+0x80` exists if intros and terrain already share a frame (collision only?).

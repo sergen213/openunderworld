@@ -40,10 +40,12 @@ std::vector<uint8_t> toRgba8(scene::PixelFormat f, uint32_t width, uint32_t heig
 
 // ---- Models (section type 12, resource type 26, "Mesh") -------------------------------
 // Decodes every render model and terrain of the DRM. Vertices are converted to scene::Vertex
-// (skinning data dropped; skinned meshes are returned in bind pose). One MeshData per model
-// batch / terrain vertex buffer. SubMesh::textureId = the material's category-1 (diffuse)
-// texture, else its category-0 slot-0 texture (heuristic), else 0. Batches without texcoords
-// and material textures (occlusion/fog volumes, hypothesis) are skipped with a warning.
+// (skinning data dropped; skinned meshes are returned in bind pose; the cdc colour attribute is a
+// baked-lighting input, not albedo, and is not copied). One MeshData per model batch / terrain
+// vertex buffer. SubMesh::textureId = the material's category-1 (diffuse) texture, else its
+// category-0 slot-0 texture (heuristic), else 0; blend/alphaRef/doubleSided = materialState().
+// Batches without texcoords and material textures (occlusion/fog volumes, hypothesis) are
+// skipped with a warning.
 std::vector<scene::MeshData> decodeModels(const cdc::Drm& drm, std::vector<std::string>& warnings,
                                           std::string_view origin = {});
 // Same meshes keyed by render-resource section id (failed/skipped resources map to no meshes).
@@ -53,6 +55,10 @@ std::map<uint32_t, std::vector<scene::MeshData>> decodeRenderResources(const cdc
 // Texture ids of a material section (type 10), in reference order, with their category.
 struct MaterialTexture { uint32_t textureId, category, slot; };
 std::vector<MaterialTexture> materialTextures(const cdc::Section& material);
+// Pass state of a material section: blob +0x38 blend mode, +0x40 flags (0x80 = two-sided),
+// +0x4C alpha threshold, applied as PCStateManager_SetBlendMode (tru.exe 0x527A80) does.
+struct MaterialState { scene::Blend blend = scene::Blend::Opaque; uint8_t alphaRef = 0; bool doubleSided = false; };
+MaterialState materialState(const cdc::Section& material);
 
 // ---- Scene ----------------------------------------------------------------------------
 // Loads `drmPath` (e.g. "pc-w\\lara.drm", "pc-w\\l4_pool.drm"), its object dependencies
@@ -97,13 +103,18 @@ std::map<uint16_t, std::string> parseObjectList(std::string_view text);
 // model). Object section (type 11) +0 → ObjectBase DTP; +0xA0 u16 numModels, +0xA4 Model**;
 // Model DTP +0x64 → render model. Empty if the DRM has no object section.
 std::vector<uint32_t> objectRenderModels(const cdc::Drm& object);
+// ObjectBase +0 flags ("oflags") of an object DRM; 0 if it has no object section.
+// INSTANCE_IntroduceInstance (0x5BCC30) sets instance flag 0x800 (not drawn) for kObjectHiddenAtBirth.
+uint32_t objectFlags(const cdc::Drm& object);
+inline constexpr uint32_t kObjectHiddenAtBirth = 0x800000;
 
 // Column-major T * Rx * Ry * Rz * S, as tru.exe builds instance matrices.
 void introMatrix(const Intro& in, float out[16]);
 
 // Whole level: unit terrain, stream-group DRM terrain, IMF placements and intro instances
-// (model 0 of each object, placed with the intro transform). Textures as loadDrmScene.
-// Unresolved objects, missing DRMs and objects without a model are reported as warnings.
+// (model 0 of each object, placed with the intro transform). Objects hidden at birth
+// (objectFlags & kObjectHiddenAtBirth: trigger/sound volumes, markers) are skipped. Textures as
+// loadDrmScene. Unresolved objects, missing DRMs and objects without a model are reported as warnings.
 scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view unitPath);
 
 } // namespace ou::formats

@@ -320,8 +320,41 @@ TEST(Level, ObjectRenderModelsFollowsObjectBase) {
     d.sections = {section(cdc::SectionType::Object, 572, object, objRel), section(cdc::SectionType::DtpData, 10, root, rootRel),
                   section(cdc::SectionType::DtpData, 11, model, modelRel), section(cdc::SectionType::DtpData, 12, modelNoRender)};
     EXPECT_EQ(formats::objectRenderModels(d), (std::vector<uint32_t>{500, 0}));
+    set32(root, 0, 0x10801004); // triggervolume's oflags
+    d.sections[1].data = root;
+    EXPECT_EQ(formats::objectFlags(d), 0x10801004u);
+    EXPECT_TRUE(formats::objectFlags(d) & formats::kObjectHiddenAtBirth);
     d.sections.erase(d.sections.begin());
     EXPECT_TRUE(formats::objectRenderModels(d).empty()); // no object section
+    EXPECT_EQ(formats::objectFlags(d), 0u);
+}
+
+TEST(Model, MaterialStateFromBlob) {
+    // blob +0x38 blend mode, +0x40 flags, +0x4C alpha threshold (PCStateManager_SetBlendMode 0x527A80).
+    auto state = [](uint32_t mode, uint32_t flags, uint8_t ref) {
+        std::vector<uint8_t> blob(0x60);
+        set32(blob, 0x38, mode), set32(blob, 0x40, flags);
+        blob[0x4C] = ref;
+        return formats::materialState(section(cdc::SectionType::Material, 1, blob));
+    };
+    auto s = state(0, 0x1024, 127);
+    EXPECT_EQ(s.blend, scene::Blend::Opaque);
+    EXPECT_EQ(s.alphaRef, 0);       // mode 0: no alpha test
+    EXPECT_FALSE(s.doubleSided);
+    s = state(1, 0x10a5, 127);      // alpha-tested foliage (ballcourt 13395)
+    EXPECT_EQ(s.blend, scene::Blend::Opaque);
+    EXPECT_EQ(s.alphaRef, 127);
+    EXPECT_TRUE(s.doubleSided);     // flags 0x80
+    s = state(2, 0x10bc, 127);      // blended leaves (ballcourt 13393)
+    EXPECT_EQ(s.blend, scene::Blend::Alpha);
+    EXPECT_EQ(s.alphaRef, 1);
+    EXPECT_EQ(state(4, 0, 0).blend, scene::Blend::Alpha);
+    EXPECT_EQ(state(5, 0, 0).blend, scene::Blend::Additive);
+    EXPECT_EQ(state(8, 0, 0).blend, scene::Blend::Average);
+    EXPECT_EQ(state(8, 0, 0).alphaRef, 0);
+    EXPECT_TRUE(state(0, 0x800, 0).doubleSided); // "render twice"
+    EXPECT_EQ(formats::materialState(section(cdc::SectionType::Material, 1, std::vector<uint8_t>(8))).blend,
+              scene::Blend::Opaque); // too short: defaults
 }
 
 TEST(Level, IntroMatrixMatchesExeOrder) {
@@ -403,4 +436,19 @@ TEST(RealData, LevelBallcourtStreamGroupsAndImfs) {
         for (float f : p.matrix) ASSERT_TRUE(std::isfinite(f));
         EXPECT_FLOAT_EQ(p.matrix[15], 1.f);
     }
+    // Editor objects hidden at birth (oflags 0x800000) are not placed; foliage carries blend state.
+    const auto sc = formats::loadLevelScene(bf, "pc-w\\l4_ballcourt.drm");
+    size_t blended = 0, alphaTested = 0, twoSided = 0;
+    for (const auto& m : sc.meshes) {
+        EXPECT_EQ(m.origin.find("triggervolume.drm"), std::string::npos) << m.origin;
+        EXPECT_EQ(m.origin.find("cameraanchor_object.drm"), std::string::npos) << m.origin;
+        for (const auto& s : m.submeshes) {
+            blended += s.blend == scene::Blend::Alpha;
+            alphaTested += s.alphaRef > 1;
+            twoSided += s.doubleSided;
+        }
+    }
+    EXPECT_GT(blended, 0u);
+    EXPECT_GT(alphaTested, 0u);
+    EXPECT_GT(twoSided, 0u);
 }

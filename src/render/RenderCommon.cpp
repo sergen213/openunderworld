@@ -1,9 +1,12 @@
 #include "render/RenderCommon.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <string_view>
 
 #include <SDL3/SDL.h>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace ou::render {
 
@@ -80,6 +83,64 @@ uint32_t usableMips(const scene::TextureData& t, std::string& problem) {
     else if (levels < t.mips.size())
         problem = "using " + std::to_string(levels) + " of " + std::to_string(t.mips.size()) + " mips (bad chain)";
     return levels;
+}
+
+Bounds meshBounds(const scene::MeshData& m) {
+    const glm::mat4 t = glm::make_mat4(m.transform);
+    Bounds b;
+    for (const auto& v : m.vertices) {
+        const glm::vec3 p(t * glm::vec4(v.position[0], v.position[1], v.position[2], 1.0f));
+        b.lo = glm::min(b.lo, p);
+        b.hi = glm::max(b.hi, p);
+    }
+    return b;
+}
+
+Bounds sceneBounds(const scene::SceneData& scene) {
+    Bounds b;
+    for (const auto& m : scene.meshes) {
+        const Bounds mb = meshBounds(m);
+        b.lo = glm::min(b.lo, mb.lo);
+        b.hi = glm::max(b.hi, mb.hi);
+    }
+    return b;
+}
+
+glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene, float shadowDistance) {
+    // Bounding sphere of the view frustum slice; a sphere keeps the box size fixed while the camera
+    // turns, which together with texel snapping keeps shadow edges stable.
+    const glm::mat4 invViewProj = glm::inverse(camera.projection(aspect) * camera.view());
+    const float farZ = std::min(camera.farZ, shadowDistance);
+    // NDC z of the slice end: perspective depth of view distance farZ.
+    const glm::vec4 farClip = camera.projection(aspect) * glm::vec4(0, 0, -farZ, 1);
+    const float zFar = farClip.z / farClip.w;
+    glm::vec3 corners[8];
+    glm::vec3 center(0.0f);
+    for (int i = 0; i < 8; ++i) {
+        const glm::vec4 p = invViewProj * glm::vec4(i & 1 ? 1 : -1, i & 2 ? 1 : -1, i & 4 ? zFar : -1, 1);
+        corners[i] = glm::vec3(p) / p.w;
+        center += corners[i] / 8.0f;
+    }
+    float radius = 0;
+    for (const auto& c : corners) radius = std::max(radius, glm::length(c - center));
+    radius = std::ceil(radius);
+
+    const glm::vec3 up = std::abs(kSunDirection.z) > 0.99f ? glm::vec3(1, 0, 0) : glm::vec3(0, 0, 1);
+    const glm::mat4 lightView = glm::lookAt(glm::vec3(0), -kSunDirection, up);
+    glm::vec3 c = glm::vec3(lightView * glm::vec4(center, 1));
+    const float texel = 2 * radius / float(kShadowMapSize);
+    c.x = std::floor(c.x / texel) * texel;
+    c.y = std::floor(c.y / texel) * texel;
+    // Depth range: the whole scene along the light, plus the slice itself.
+    float zMin = c.z - radius, zMax = c.z + radius;
+    if (!scene.empty())
+        for (int i = 0; i < 8; ++i) {
+            const glm::vec3 p(i & 1 ? scene.hi.x : scene.lo.x, i & 2 ? scene.hi.y : scene.lo.y, i & 4 ? scene.hi.z : scene.lo.z);
+            const float z = (lightView * glm::vec4(p, 1)).z;
+            zMin = std::min(zMin, z), zMax = std::max(zMax, z);
+        }
+    // View space looks down -z: near = -zMax, far = -zMin.
+    return glm::ortho(c.x - radius, c.x + radius, c.y - radius, c.y + radius, -zMax - 1.0f, -zMin + 1.0f) * lightView;
 }
 
 } // namespace ou::render

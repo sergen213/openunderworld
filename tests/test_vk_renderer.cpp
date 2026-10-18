@@ -75,6 +75,19 @@ TEST(VulkanRenderer, ResizeRecreatesSwapchain) {
     EXPECT_EQ(red(frame()), 0u);
     EXPECT_GT(red(frame(withLines)), size_t(b.width)); // 11 lines, each a few hundred pixels long
 
+    // Enhanced settings rebuild targets/pipelines (4x MSAA, shadow map, FXAA, HDR) and back again.
+    ou::render::FrameOptions enhanced = withLines;
+    enhanced.msaa = 4, enhanced.shadows = true, enhanced.fxaa = true, enhanced.hdr = true;
+    ou::render::Image e = frame(enhanced);
+    EXPECT_GT(nonClearPixels(e), e.rgb.size() / 30);
+    EXPECT_GT(red(frame(withLines)), size_t(b.width));
+    // Shadows only darken: the plain frame is at least as bright overall as the shadowed one.
+    ou::render::FrameOptions shadowed;
+    shadowed.shadows = true;
+    auto sum = [](const ou::render::Image& img) { size_t s = 0; for (uint8_t v : img.rgb) s += v; return s; };
+    const size_t lit = sum(frame()), dark = sum(frame(shadowed));
+    EXPECT_LT(dark, lit);
+
     r->shutdown();
     SDL_DestroyWindow(w);
     SDL_Quit();

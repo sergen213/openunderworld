@@ -113,8 +113,8 @@ Header fields used (u32, offsets relative to Header) [O]:
   | 0x36F5E414 | model normal | [O] D3DCOLOR (B,G,R,A); the shader applies `*2−1` |
   | 0x09B1D4EA | terrain normal | [O] SHORT4, normalized by us |
   | 0x8317902A | texcoord 0 | [O] SHORT2 ÷ 2048. v = 0 is texture row 0 (D3D convention, no flip). Verified by textured CPU renders of Lara (face and clothing land exactly) and of l4_pool |
-  | 0x7E7DD623 | colour | [I] colour, copied to `Vertex::color` |
-  | 0x8E54B6F3 | second texcoord | [O] SHORT2, present on Lara (offset 28) and on terrain. [U] Its purpose (lightmap or blend UV?); ignored |
+  | 0x7E7DD623 | colour (`COLOR0`) | [O] baked-lighting input of the pixel shaders, lerped with a light map per material ([MATERIALS.md](MATERIALS.md)); often not a colour (0 on ballcourt ground plants). Not copied to `Vertex::color` |
+  | 0x8E54B6F3 | second texcoord | [O] SHORT2, present on Lara (offset 28) and on terrain; the light-map UV of the foliage shaders (MATERIALS.md). Light maps not loaded; ignored |
   | 0x48E691C0 / 0x5156D8D3 | skin weights / bone-palette indices, formats 6 and 7 (D3DCOLOR) at +16 and +20 | [O] decoded into `MeshData::skin`; see ANIMATION.md |
   | 0x64A86F01 / 0xF1ED11C3 | D3DCOLOR at +36 and +40 | [I] tangent and binormal; ignored |
 
@@ -137,7 +137,8 @@ Header fields used (u32, offsets relative to Header) [O]:
   - [I] categories 2, 5, 7 and 0 are grey detail, AO-like, mask and noise maps respectively.
 - [I] Fallback: a material with no category-1 entry (e.g. Lara's hair, where every entry is category 0) uses its category-0 slot-0
   texture. This is visually right for the hair; it is a heuristic.
-- `SubMesh::textureId` = the selected texture id, or 0 when there is none.
+- `SubMesh::textureId` = the selected texture id, or 0 when there is none. `SubMesh::blend/alphaRef/doubleSided` come from
+  the material blob (+0x38 blend mode, +0x40 flags, +0x4C alpha threshold), see [MATERIALS.md](MATERIALS.md).
 - [O] Skipped batches: a model batch that has no texcoord attribute **and** no material texture references is not emitted. It produces the
   warning `…: skipped (no texcoords, no material textures)`. All 259 such batches in the survey are unit models
   that use material 0xd78 (e.g. `l4_pool` sections 13938/13941/13944). They are boxes enclosing whole terrain blocks.

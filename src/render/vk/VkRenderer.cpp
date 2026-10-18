@@ -15,6 +15,7 @@
 #include <functional>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 #include <SDL3/SDL.h>
 #include <vulkan/vulkan.h> // before SDL_vulkan.h so SDL uses the real handle types
@@ -42,8 +43,21 @@ const uint32_t kLineVert[] = {
 const uint32_t kLineFrag[] = {
 #include "line.frag.inc"
 };
+const uint32_t kShadowVert[] = {
+#include "shadow.vert.inc"
+};
+const uint32_t kShadowFrag[] = {
+#include "shadow.frag.inc"
+};
+const uint32_t kPostVert[] = {
+#include "post.vert.inc"
+};
+const uint32_t kPostFrag[] = {
+#include "post.frag.inc"
+};
 
-enum class PipelineKind { Scene, Lines, Overlay };
+// Scene pipelines exist per scene::Blend (blend state is baked into Vulkan pipelines).
+enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Lines, Overlay, Post };
 
 struct LineVertex {
     float pos[3];
@@ -60,8 +74,22 @@ void check(VkResult r, const char* what) {
 #define VK_CHECK(x) check((x), #x)
 
 struct ScenePush {
-    glm::mat4 viewProj, model;
-    int32_t lighting;
+    glm::mat4 viewProj, model, lightViewProj;
+    int32_t lighting, shadows;
+    float alphaRef;
+};
+
+const VkVertexInputBindingDescription kSceneBinding{0, sizeof(scene::Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
+const VkVertexInputAttributeDescription kSceneAttrs[] = {
+    {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
+    {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, normal)},
+    {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv)},
+    {3, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(scene::Vertex, color)},
+};
+// Shadow pass reads position and uv only.
+const VkVertexInputAttributeDescription kShadowAttrs[] = {
+    {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
+    {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv)},
 };
 
 // Bump allocator over 64 MiB VkDeviceMemory blocks, one chain per memory type. Nothing is freed
@@ -141,6 +169,7 @@ struct GpuMesh {
     std::vector<scene::SubMesh> submeshes;
     size_t vertexCount = 0;
     glm::mat4 model;
+    glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting)
 };
 
 struct Frame {
@@ -275,6 +304,8 @@ public:
             auto warn = [&](const std::string& w) {
                 warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): " + w);
             };
+            // First id wins (as formats::loadTextures); replacing would free an image still queued in `batch`.
+            if (textures_.contains(t.id)) { warn("duplicate texture id, first one wins"); continue; }
             VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
             switch (t.format) {
             case scene::PixelFormat::RGBA8: break;
@@ -295,8 +326,7 @@ public:
             for (uint32_t i = 0; i < levels; ++i)
                 job.mips.push_back({t.mips[i].data.data(), t.mips[i].data.size(), t.mips[i].width, t.mips[i].height});
             batch.images.push_back(std::move(job));
-            auto [it, fresh] = textures_.emplace(t.id, img);
-            if (!fresh) { destroyImage(it->second); it->second = img; warn("duplicate texture id, last one wins"); }
+            textures_.emplace(t.id, img);
         }
         meshSlot_.assign(scene.meshes.size(), SIZE_MAX);
         for (size_t mi = 0; mi < scene.meshes.size(); ++mi) {
@@ -314,6 +344,8 @@ public:
             }
             if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
             g.model = glm::make_mat4(m.transform);
+            const Bounds b = meshBounds(m);
+            g.center = (b.lo + b.hi) * 0.5f;
             const VkDeviceSize vb = m.vertices.size() * sizeof(scene::Vertex), ib = m.indices.size() * sizeof(uint32_t);
             g.vertices = createBuffer(sceneMemory_, vb, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -326,6 +358,7 @@ public:
             meshes_.push_back(std::move(g));
         }
         flush(batch);
+        bounds_ = sceneBounds(scene);
         return warnings;
     }
 
@@ -348,6 +381,7 @@ public:
         frameActive_ = false;
         if (vp.width <= 0 || vp.height <= 0) return; // minimised
         if (vp.width != requested_.width || vp.height != requested_.height) swapchainDirty_ = true;
+        applySettings(options);
         Frame& f = frames_[frameIndex_];
         VK_CHECK(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX));
         for (int attempt = 0;; ++attempt) {
@@ -367,28 +401,50 @@ public:
                                     VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr};
         VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
 
+        // GL clip z in [-w, w] → Vulkan [0, w]; same depth precision as the GL path.
+        const glm::mat4 zRemap(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5f, 0, 0, 0, 0.5f, 1);
+        const float aspect = float(extent_.width) / float(extent_.height);
+        ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), glm::mat4(1),
+                       options.lighting ? 1 : 0, options.shadows ? 1 : 0, 0.0f};
+        constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        drawOrder(meshes_, camera.position, order_);
+        if (options.shadows) {
+            push.lightViewProj = zRemap * shadowViewProj(camera, aspect, bounds_);
+            recordShadowPass(cmd, push.lightViewProj);
+        }
+
         const VkImage target = swapImages_[imageIndex_];
         constexpr VkPipelineStageFlags2 kDepthStages =
             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-        const VkImageMemoryBarrier2 begin[] = {
-            // Chained to the acquire semaphore wait (same COLOR_ATTACHMENT_OUTPUT stage); old contents discarded.
-            imageBarrier(target, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
-                         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT),
-            // Depth is shared by both frames in flight: order against the previous frame's depth writes.
+        constexpr VkPipelineStageFlags2 kColorOut = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        std::vector<VkImageMemoryBarrier2> begin = {
+            // Scene targets are shared by both frames in flight: order against the previous frame's
+            // writes (depth, colour) and its post-pass read of the resolved colour.
             imageBarrier(depth_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, kDepthStages,
                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kDepthStages,
                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                          VK_IMAGE_ASPECT_DEPTH_BIT),
+            imageBarrier(sceneColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         kColorOut | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                         kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT),
         };
+        if (msColor_.image)
+            begin.push_back(imageBarrier(msColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                         kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kColorOut,
+                                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT));
         barriers(cmd, begin);
 
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-        color.imageView = swapViews_[imageIndex_];
+        color.imageView = msColor_.image ? msColor_.view : sceneColor_.view;
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color.storeOp = msColor_.image ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
         color.clearValue.color = {{0.08f, 0.09f, 0.11f, 1.0f}};
+        if (msColor_.image) {
+            color.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+            color.resolveImageView = sceneColor_.view;
+            color.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
         VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         depth.imageView = depth_.view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -404,30 +460,32 @@ public:
         vkCmdBeginRendering(cmd, &ri);
 
         // Negative height flips Y so GL-convention clip space and CCW front faces carry over unchanged.
-        VkViewport viewport{0, float(extent_.height), float(extent_.width), -float(extent_.height), 0, 1};
-        VkRect2D scissor{{0, 0}, extent_};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        const VkViewport flipped{0, float(extent_.height), float(extent_.width), -float(extent_.height), 0, 1};
+        const VkRect2D scissor{{0, 0}, extent_};
+        vkCmdSetViewport(cmd, 0, 1, &flipped);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        // GL clip z in [-w, w] → Vulkan [0, w]; same depth precision as the GL path.
-        const glm::mat4 zRemap(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5f, 0, 0, 0, 0.5f, 1);
-        const float aspect = float(extent_.width) / float(extent_.height);
-        ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0};
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, scenePipeline_);
-        vkCmdSetCullMode(cmd, options.cullBackFaces ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
-        for (const auto& m : meshes_) {
-            push.model = m.model;
-            vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof push, &push);
-            const VkDeviceSize zero = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
-            vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-            for (const auto& s : m.submeshes) {
-                auto it = textures_.find(s.textureId);
-                VkDescriptorSet set = it != textures_.end() ? it->second.set : white_.set;
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
-                vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+        VkPipeline bound = VK_NULL_HANDLE;
+        uint32_t boundMesh = UINT32_MAX;
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 1, 1, &shadowSet_, 0, nullptr);
+        for (const DrawRef& d : order_) {
+            const GpuMesh& m = meshes_[d.mesh];
+            const scene::SubMesh& s = m.submeshes[d.sub];
+            const VkPipeline p = scenePipelines_[size_t(s.blend)];
+            if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
+            if (d.mesh != boundMesh) {
+                const VkDeviceSize zero = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
+                vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                boundMesh = d.mesh;
             }
+            push.model = m.model;
+            push.alphaRef = s.alphaRef / 255.0f;
+            vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
+            vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+            const VkDescriptorSet set = textureSet(s.textureId);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
+            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
         }
 
         if (!options.debugLines.empty()) {
@@ -450,15 +508,43 @@ public:
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines.buffer, &zero);
             vkCmdDraw(cmd, uint32_t(options.debugLines.size() * 2), 1, 0, 0);
         }
+        vkCmdEndRendering(cmd);
+
+        // Post pass: resolved scene → swapchain (tonemap / FXAA), then the overlay on top.
+        const VkImageMemoryBarrier2 toPost[] = {
+            imageBarrier(sceneColor_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+            // Chained to the acquire semaphore wait (same COLOR_ATTACHMENT_OUTPUT stage); old contents discarded.
+            imageBarrier(target, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kColorOut, 0,
+                         kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT),
+        };
+        barriers(cmd, toPost);
+        VkRenderingAttachmentInfo swap{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        swap.imageView = swapViews_[imageIndex_];
+        swap.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        swap.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; // the fullscreen triangle covers every pixel
+        swap.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        ri.pColorAttachments = &swap;
+        ri.pDepthAttachment = nullptr;
+        vkCmdBeginRendering(cmd, &ri);
+        const VkViewport upright{0, 0, float(extent_.width), float(extent_.height), 0, 1};
+        vkCmdSetViewport(cmd, 0, 1, &upright);
+        vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+        const int32_t post[2] = {options.fxaa ? 1 : 0, options.hdr ? 1 : 0};
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeline_);
+        vkCmdPushConstants(cmd, postLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof post, post);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 0, 1, &postSet_, 0, nullptr);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
 
         if (!options.overlay.empty()) {
+            vkCmdSetViewport(cmd, 0, 1, &flipped);
             std::vector<TextVertex> v = buildOverlayVertices({int(extent_.width), int(extent_.height)}, options.overlay);
             const uint32_t count = std::min<uint32_t>(uint32_t(v.size()), kMaxTextVertices);
             std::memcpy(f.text.mapped, v.data(), count * sizeof(TextVertex)); // host-coherent, per-frame buffer
             const float screen[2] = {float(extent_.width), float(extent_.height)};
             const VkDeviceSize zero = 0;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textPipeline_);
-            vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
             vkCmdPushConstants(cmd, textLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof screen, screen);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout_, 0, 1, &font_.set, 0, nullptr);
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.text.buffer, &zero);
@@ -576,12 +662,14 @@ public:
             }
             destroyImage(white_);
             destroyImage(font_);
+            destroyImage(shadow_);
             vkDestroyDescriptorPool(device_, staticPool_, nullptr);
-            for (VkPipeline p : {scenePipeline_, textPipeline_, linePipeline_}) vkDestroyPipeline(device_, p, nullptr);
-            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
+            destroyScenePipelines();
+            for (VkPipeline p : {textPipeline_, shadowPipeline_, postPipeline_}) vkDestroyPipeline(device_, p, nullptr);
+            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
             for (auto& m : lineMemory_) m.reset();
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
-            for (VkSampler s : {sceneSampler_, fontSampler_}) vkDestroySampler(device_, s, nullptr);
+            for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_}) vkDestroySampler(device_, s, nullptr);
             vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
             vkDestroyCommandPool(device_, uploadPool_, nullptr);
             staticMemory_.reset();
@@ -605,6 +693,84 @@ public:
     }
 
 private:
+    VkDescriptorSet textureSet(uint32_t id) const {
+        auto it = textures_.find(id);
+        return it != textures_.end() ? it->second.set : white_.set;
+    }
+
+    // MSAA sample count / HDR target format are baked into the scene pipelines and targets: rebuild
+    // both when they change (device idle; a settings change is rare).
+    void applySettings(const FrameOptions& o) {
+        VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+        for (int s = std::clamp(o.msaa, 1, 8); s > 1; s >>= 1)
+            if (supportedSamples_ & VkSampleCountFlags(s)) { samples = VkSampleCountFlagBits(s); break; }
+        const VkFormat format = o.hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+        if (samples == samples_ && format == sceneFormat_ && scenePipelines_[0]) return;
+        vkDeviceWaitIdle(device_);
+        samples_ = samples;
+        sceneFormat_ = format;
+        destroyScenePipelines();
+        createScenePipelines();
+        swapchainDirty_ = true; // targets follow the new sample count / format
+    }
+
+    void destroyScenePipelines() {
+        for (VkPipeline& p : scenePipelines_) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipeline(device_, std::exchange(linePipeline_, VK_NULL_HANDLE), nullptr);
+    }
+
+    // Sun shadow map: opaque and alpha-blended submeshes (the latter alpha-tested at 50 %), both
+    // faces, slope-scaled bias baked into the pipeline. Upright viewport: uv = ndc * 0.5 + 0.5.
+    void recordShadowPass(VkCommandBuffer cmd, const glm::mat4& lightViewProj) {
+        constexpr VkPipelineStageFlags2 kDepthStages =
+            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        // WAR against the previous frame's sampling; contents are cleared.
+        const VkImageMemoryBarrier2 toDepth = imageBarrier(
+            shadow_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, kDepthStages,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_IMAGE_ASPECT_DEPTH_BIT);
+        barriers(cmd, {&toDepth, 1});
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = shadow_.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil = {1.0f, 0};
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {uint32_t(kShadowMapSize), uint32_t(kShadowMapSize)}};
+        ri.layerCount = 1;
+        ri.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &ri);
+        const VkViewport viewport{0, 0, float(kShadowMapSize), float(kShadowMapSize), 0, 1};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &ri.renderArea);
+        vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+        ScenePush push{lightViewProj, glm::mat4(1), glm::mat4(1), 0, 0, 0.0f};
+        for (const auto& m : meshes_) {
+            const VkDeviceSize zero = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
+            vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+            push.model = m.model;
+            for (const auto& s : m.submeshes) {
+                if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
+                push.alphaRef = (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f;
+                vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof push, &push);
+                const VkDescriptorSet set = textureSet(s.textureId);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
+                vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+            }
+        }
+        vkCmdEndRendering(cmd);
+        const VkImageMemoryBarrier2 toRead = imageBarrier(
+            shadow_.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kDepthStages,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        barriers(cmd, {&toRead, 1});
+    }
+
     void createInstance() {
         uint32_t loaderVersion = VK_API_VERSION_1_0;
         vkEnumerateInstanceVersion(&loaderVersion);
@@ -714,6 +880,7 @@ private:
         VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
         f13.dynamicRendering = VK_TRUE;
         f13.synchronization2 = VK_TRUE;
+        f13.shaderDemoteToHelperInvocation = VK_TRUE; // required in 1.3; glslc emits it for `discard` (alpha test)
         VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f13};
         f2.features.textureCompressionBC = supported.textureCompressionBC;
         f2.features.samplerAnisotropy = supported.samplerAnisotropy;
@@ -738,6 +905,17 @@ private:
             if (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) { depthFormat_ = f; break; }
         }
         if (depthFormat_ == VK_FORMAT_UNDEFINED) throw std::runtime_error("no depth attachment format");
+        constexpr VkFormatFeatureFlags kShadowFeatures =
+            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        for (VkFormat f : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM}) {
+            VkFormatProperties fp;
+            vkGetPhysicalDeviceFormatProperties(gpu_, f, &fp);
+            if ((fp.optimalTilingFeatures & kShadowFeatures) == kShadowFeatures) { shadowFormat_ = f; break; }
+        }
+        if (shadowFormat_ == VK_FORMAT_UNDEFINED) throw std::runtime_error("no filterable depth format for the shadow map");
+        const auto& limits = props.properties.limits;
+        supportedSamples_ = limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts;
 
         VkCommandPoolCreateInfo cpi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
                                     VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamily_};
@@ -774,50 +952,64 @@ private:
                                              nullptr};
         VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 1, &binding};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &dl, nullptr, &setLayout_));
+        // Scene: set 0 = material texture, set 1 = sun shadow map (comparison sampler).
+        const VkDescriptorSetLayout sceneSets[2] = {setLayout_, setLayout_};
         VkPushConstantRange scenePush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ScenePush)};
         VkPushConstantRange textPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(float)};
-        VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &setLayout_, 1, &scenePush};
+        VkPushConstantRange postPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 2 * sizeof(int32_t)};
+        VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 2, sceneSets, 1, &scenePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &sceneLayout_));
+        pl.setLayoutCount = 1;
+        pl.pSetLayouts = &setLayout_;
         pl.pPushConstantRanges = &textPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &textLayout_));
+        pl.pPushConstantRanges = &postPush;
+        VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &postLayout_));
         VkPushConstantRange linePush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
         VkPipelineLayoutCreateInfo ll{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &linePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &ll, nullptr, &lineLayout_));
 
-        const VkVertexInputBindingDescription sceneBinding{0, sizeof(scene::Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
-        const VkVertexInputAttributeDescription sceneAttrs[] = {
-            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
-            {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, normal)},
-            {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv)},
-            {3, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(scene::Vertex, color)},
-        };
         const VkVertexInputBindingDescription textBinding{0, sizeof(TextVertex), VK_VERTEX_INPUT_RATE_VERTEX};
         const VkVertexInputAttributeDescription textAttrs[] = {
             {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(TextVertex, x)},
             {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(TextVertex, u)},
             {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(TextVertex, color)},
         };
+        const VkFormat swap = surfaceFormat_.format;
+        textPipeline_ = createPipeline(kTextVert, kTextFrag, textLayout_, &textBinding, textAttrs, PipelineKind::Overlay,
+                                       VK_SAMPLE_COUNT_1_BIT, swap, VK_FORMAT_UNDEFINED);
+        postPipeline_ = createPipeline(kPostVert, kPostFrag, postLayout_, nullptr, {}, PipelineKind::Post,
+                                       VK_SAMPLE_COUNT_1_BIT, swap, VK_FORMAT_UNDEFINED);
+        shadowPipeline_ = createPipeline(kShadowVert, kShadowFrag, sceneLayout_, &kSceneBinding, kShadowAttrs,
+                                         PipelineKind::Shadow, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_UNDEFINED, shadowFormat_);
+    }
+
+    // One pipeline per scene::Blend plus the debug lines, at the current MSAA count and scene format.
+    void createScenePipelines() {
+        for (size_t b = 0; b < scenePipelines_.size(); ++b)
+            scenePipelines_[b] = createPipeline(kSceneVert, kSceneFrag, sceneLayout_, &kSceneBinding, kSceneAttrs,
+                                                PipelineKind(b), samples_, sceneFormat_, depthFormat_);
         const VkVertexInputBindingDescription lineBinding{0, sizeof(LineVertex), VK_VERTEX_INPUT_RATE_VERTEX};
         const VkVertexInputAttributeDescription lineAttrs[] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LineVertex, pos)},
             {1, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(LineVertex, color)},
         };
-        scenePipeline_ = createPipeline(kSceneVert, kSceneFrag, sceneLayout_, sceneBinding, sceneAttrs, PipelineKind::Scene);
-        linePipeline_ = createPipeline(kLineVert, kLineFrag, lineLayout_, lineBinding, lineAttrs, PipelineKind::Lines);
-        textPipeline_ = createPipeline(kTextVert, kTextFrag, textLayout_, textBinding, textAttrs, PipelineKind::Overlay);
+        linePipeline_ = createPipeline(kLineVert, kLineFrag, lineLayout_, &lineBinding, lineAttrs, PipelineKind::Lines,
+                                       samples_, sceneFormat_, depthFormat_);
     }
 
+    // `binding` null = no vertex input (fullscreen triangle). colorFormat UNDEFINED = depth-only.
     VkPipeline createPipeline(std::span<const uint32_t> vs, std::span<const uint32_t> fs, VkPipelineLayout layout,
-                              const VkVertexInputBindingDescription& binding,
-                              std::span<const VkVertexInputAttributeDescription> attrs, PipelineKind kind) {
-        const bool overlay = kind == PipelineKind::Overlay;
+                              const VkVertexInputBindingDescription* binding,
+                              std::span<const VkVertexInputAttributeDescription> attrs, PipelineKind kind,
+                              VkSampleCountFlagBits samples, VkFormat colorFormat, VkFormat depthFormat) {
         VkShaderModule v = shaderModule(vs), f = shaderModule(fs);
         VkPipelineShaderStageCreateInfo stages[2] = {
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, v, "main", nullptr},
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, f, "main", nullptr},
         };
-        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, nullptr, 0, 1,
-                                                &binding, uint32_t(attrs.size()), attrs.data()};
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, nullptr, 0,
+                                                binding ? 1u : 0u, binding, uint32_t(attrs.size()), attrs.data()};
         VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, nullptr, 0,
                                                   kind == PipelineKind::Lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
                                                                               : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
@@ -828,31 +1020,43 @@ private:
         rs.cullMode = VK_CULL_MODE_NONE; // dynamic
         rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rs.lineWidth = 1.0f;
+        if (kind == PipelineKind::Shadow) { // = GL glPolygonOffset(2, 2)
+            rs.depthBiasEnable = VK_TRUE;
+            rs.depthBiasConstantFactor = 2.0f;
+            rs.depthBiasSlopeFactor = 2.0f;
+        }
         VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        ms.rasterizationSamples = samples;
         VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        ds.depthTestEnable = overlay ? VK_FALSE : VK_TRUE;
-        ds.depthWriteEnable = kind == PipelineKind::Scene ? VK_TRUE : VK_FALSE;
-        // GL default LESS for the scene; debug lines use LEQUAL plus a small z bias (as the GL backend).
-        ds.depthCompareOp = kind == PipelineKind::Lines ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
+        const bool writesDepth = kind == PipelineKind::Opaque || kind == PipelineKind::Shadow;
+        ds.depthTestEnable = depthFormat != VK_FORMAT_UNDEFINED;
+        ds.depthWriteEnable = writesDepth;
+        // As GL: LESS for depth writers; blended submeshes (translucent pass) and debug lines LEQUAL.
+        ds.depthCompareOp = writesDepth ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
         VkPipelineColorBlendAttachmentState blend{};
         blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
                                VK_COLOR_COMPONENT_A_BIT;
-        if (overlay) {
+        blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_ADD;
+        auto factors = [&](VkBlendFactor src, VkBlendFactor dst) {
             blend.blendEnable = VK_TRUE;
-            blend.srcColorBlendFactor = blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-            blend.dstColorBlendFactor = blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_ADD;
-        }
+            blend.srcColorBlendFactor = blend.srcAlphaBlendFactor = src;
+            blend.dstColorBlendFactor = blend.dstAlphaBlendFactor = dst;
+        };
+        if (kind == PipelineKind::Alpha || kind == PipelineKind::Overlay)
+            factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+        else if (kind == PipelineKind::Additive) factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE);
+        else if (kind == PipelineKind::Average) factors(VK_BLEND_FACTOR_CONSTANT_COLOR, VK_BLEND_FACTOR_CONSTANT_COLOR);
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        cb.attachmentCount = 1;
+        const bool hasColor = colorFormat != VK_FORMAT_UNDEFINED;
+        cb.attachmentCount = hasColor ? 1 : 0;
         cb.pAttachments = &blend;
+        for (float& c : cb.blendConstants) c = 0.5f; // Blend::Average = D3DBLEND_BLENDFACTOR 0x80808080
         const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE};
         VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0, 3, dyn};
         VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        rendering.colorAttachmentCount = 1;
-        rendering.pColorAttachmentFormats = &surfaceFormat_.format;
-        rendering.depthAttachmentFormat = depthFormat_;
+        rendering.colorAttachmentCount = hasColor ? 1 : 0;
+        rendering.pColorAttachmentFormats = &colorFormat;
+        rendering.depthAttachmentFormat = depthFormat;
         VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
         ci.stageCount = 2;
         ci.pStages = stages;
@@ -901,10 +1105,29 @@ private:
         sci.maxAnisotropy = 1.0f;
         sci.maxLod = 0.0f;
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &fontSampler_));
+        sci.magFilter = sci.minFilter = VK_FILTER_LINEAR; // post: FXAA taps between texels
+        VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &postSampler_));
+        sci.compareEnable = VK_TRUE; // shadow map: hardware 2x2 PCF per tap (GL_COMPARE_REF_TO_TEXTURE, LEQUAL)
+        sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &shadowSampler_));
 
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
-        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 2, 1, &ps};
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 4, 1, &ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &staticPool_));
+
+        // Sun shadow map: always allocated so the scene pipelines' set 1 is valid; kept in
+        // SHADER_READ_ONLY_OPTIMAL outside the shadow pass.
+        shadow_ = createImage(staticMemory_, shadowFormat_, kShadowMapSize, kShadowMapSize, 1,
+                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        shadowSet_ = allocateSet(staticPool_, shadow_.view, shadowSampler_);
+        oneShot([&](VkCommandBuffer cmd) {
+            const auto b = imageBarrier(shadow_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                        VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+            barriers(cmd, {&b, 1});
+        });
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, staticPool_, 1, &setLayout_};
+        VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &postSet_)); // written per swapchain (recreateSwapchain)
 
         const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         white_ = createImage(staticMemory_, VK_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, usage, VK_IMAGE_ASPECT_COLOR_BIT);
@@ -932,14 +1155,14 @@ private:
     }
 
     GpuImage createImage(LinearAllocator& mem, VkFormat format, uint32_t w, uint32_t h, uint32_t levels,
-                      VkImageUsageFlags usage, VkImageAspectFlags aspect) {
+                      VkImageUsageFlags usage, VkImageAspectFlags aspect, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) {
         VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ci.imageType = VK_IMAGE_TYPE_2D;
         ci.format = format;
         ci.extent = {w, h, 1};
         ci.mipLevels = levels;
         ci.arrayLayers = 1;
-        ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        ci.samples = samples;
         ci.tiling = VK_IMAGE_TILING_OPTIMAL;
         ci.usage = usage;
         ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -968,6 +1191,11 @@ private:
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, pool, 1, &setLayout_};
         VkDescriptorSet set;
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &set));
+        writeSet(set, view, sampler);
+        return set;
+    }
+
+    void writeSet(VkDescriptorSet set, VkImageView view, VkSampler sampler) {
         VkDescriptorImageInfo ii{sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         w.dstSet = set;
@@ -975,7 +1203,6 @@ private:
         w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         w.pImageInfo = &ii;
         vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
-        return set;
     }
 
     // Records, submits and waits for one command buffer (uploads, readback). Not for per-frame work.
@@ -1137,9 +1364,18 @@ private:
             VK_CHECK(vkCreateSemaphore(device_, &sci, nullptr, &s));
             presentReady_.push_back(s);
         }
-        swapMemory_.init(device_, gpu_, 0); // depth: own allocator, released with the swapchain
+        // Scene targets: own allocator, released with the swapchain. MSAA renders into msColor_ and
+        // resolves into sceneColor_, which the post pass samples.
+        swapMemory_.init(device_, gpu_, 0);
         depth_ = createImage(swapMemory_, depthFormat_, extent.width, extent.height, 1,
-                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, samples_);
+        sceneColor_ = createImage(swapMemory_, sceneFormat_, extent.width, extent.height, 1,
+                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        if (samples_ != VK_SAMPLE_COUNT_1_BIT)
+            msColor_ = createImage(swapMemory_, sceneFormat_, extent.width, extent.height, 1,
+                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                                   VK_IMAGE_ASPECT_COLOR_BIT, samples_);
+        writeSet(postSet_, sceneColor_.view, postSampler_);
     }
 
     // Destroys the per-swapchain objects (views, semaphores, depth) and `chain` itself. Device must be idle.
@@ -1149,7 +1385,8 @@ private:
         swapViews_.clear();
         presentReady_.clear();
         swapImages_.clear();
-        if (depth_.image) destroyImage(depth_);
+        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_})
+            if (img->image) destroyImage(*img);
         swapMemory_.reset();
         vkDestroySwapchainKHR(device_, chain, nullptr);
     }
@@ -1190,16 +1427,26 @@ private:
     std::vector<VkImage> swapImages_;
     std::vector<VkImageView> swapViews_;
     std::vector<VkSemaphore> presentReady_;
-    GpuImage depth_;
+    GpuImage depth_, sceneColor_, msColor_; // msColor_ only with MSAA
+    VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
+    VkSampleCountFlags supportedSamples_ = VK_SAMPLE_COUNT_1_BIT;
+    VkFormat sceneFormat_ = VK_FORMAT_R8G8B8A8_UNORM, shadowFormat_ = VK_FORMAT_UNDEFINED;
 
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout setLayout_ = VK_NULL_HANDLE;
-    VkPipelineLayout sceneLayout_ = VK_NULL_HANDLE, textLayout_ = VK_NULL_HANDLE, lineLayout_ = VK_NULL_HANDLE;
-    VkPipeline scenePipeline_ = VK_NULL_HANDLE, textPipeline_ = VK_NULL_HANDLE, linePipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout sceneLayout_ = VK_NULL_HANDLE, textLayout_ = VK_NULL_HANDLE, lineLayout_ = VK_NULL_HANDLE,
+                     postLayout_ = VK_NULL_HANDLE;
+    std::array<VkPipeline, 4> scenePipelines_{}; // indexed by scene::Blend
+    VkPipeline textPipeline_ = VK_NULL_HANDLE, linePipeline_ = VK_NULL_HANDLE, shadowPipeline_ = VK_NULL_HANDLE,
+               postPipeline_ = VK_NULL_HANDLE;
     std::array<LinearAllocator, kFramesInFlight> lineMemory_;
-    VkSampler sceneSampler_ = VK_NULL_HANDLE, fontSampler_ = VK_NULL_HANDLE;
+    VkSampler sceneSampler_ = VK_NULL_HANDLE, fontSampler_ = VK_NULL_HANDLE, shadowSampler_ = VK_NULL_HANDLE,
+              postSampler_ = VK_NULL_HANDLE;
     VkDescriptorPool staticPool_ = VK_NULL_HANDLE, scenePool_ = VK_NULL_HANDLE;
-    GpuImage white_, font_;
+    GpuImage white_, font_, shadow_;
+    VkDescriptorSet shadowSet_ = VK_NULL_HANDLE, postSet_ = VK_NULL_HANDLE;
+    Bounds bounds_;
+    std::vector<DrawRef> order_;
 
     LinearAllocator staticMemory_, sceneMemory_, swapMemory_;
     std::unordered_map<uint32_t, GpuImage> textures_;

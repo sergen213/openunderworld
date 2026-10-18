@@ -29,9 +29,17 @@ struct Vertex {
     uint32_t color = 0xFFFFFFFF; // RGBA8, little-endian
 };
 
+// Pass/blend state of a cdc material (blob +0x38, see docs/formats/MATERIALS.md). Alpha covers cdc
+// modes 2-4 (SRCALPHA/INVSRCALPHA), Additive mode 5 (SRCALPHA/ONE), Average mode 8 (0.5/0.5 blend
+// factor). Blended submeshes are drawn after opaque ones without depth writes.
+enum class Blend : uint8_t { Opaque, Alpha, Additive, Average };
+
 struct SubMesh {
     uint32_t firstIndex = 0, indexCount = 0;
     uint32_t textureId = 0;    // TextureData::id; 0 = untextured
+    Blend blend = Blend::Opaque;
+    uint8_t alphaRef = 0;      // alpha test: keep texels with alpha >= alphaRef / 255; 0 = off
+    bool doubleSided = false;  // draw back faces too
 };
 
 // Optional skinning. Up to 4 influences per vertex; `bone` indexes Skeleton::bones.

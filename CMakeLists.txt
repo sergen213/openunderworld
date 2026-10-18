@@ -53,7 +53,7 @@ find_package(Vulkan REQUIRED COMPONENTS glslc)
 set(OU_VK_SPV_DIR ${CMAKE_CURRENT_BINARY_DIR}/vk_shaders)
 file(MAKE_DIRECTORY ${OU_VK_SPV_DIR})
 set(OU_VK_SPV)
-foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag)
+foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.vert shadow.frag post.vert post.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
@@ -85,12 +85,15 @@ if(OU_BUILD_TESTS)
   set(_d ${CMAKE_CURRENT_BINARY_DIR})
   add_test(NAME viewer_vulkan_matches_gl
            COMMAND sh -ec "\"${_v}\" --no-overlay --frames 3 --screenshot ${_d}/cmp_gl.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --screenshot ${_d}/cmp_vk.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl.ppm ${_d}/cmp_vk.ppm 2")
+  # Same with the Enhanced preset (4x MSAA + sun shadow map) plus FXAA and HDR tonemap.
+  add_test(NAME viewer_vulkan_matches_gl_enhanced
+           COMMAND sh -ec "\"${_v}\" --no-overlay --frames 3 --preset enhanced --fxaa on --hdr on --screenshot ${_d}/cmp_gl_enh.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --preset enhanced --fxaa on --hdr on --screenshot ${_d}/cmp_vk_enh.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl_enh.ppm ${_d}/cmp_vk_enh.ppm 2")
   add_executable(ou_vk_tests tests/test_vk_renderer.cpp)
   target_link_libraries(ou_vk_tests PRIVATE ou_render_vk ou_placeholder GTest::gtest_main)
   # Mesa RADV leaks 256 bytes per process (see tests/lsan_vulkan.supp).
   set(OU_VK_TEST_ENV "LSAN_OPTIONS=fast_unwind_on_malloc=0:suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan_vulkan.supp")
   gtest_discover_tests(ou_vk_tests PROPERTIES ENVIRONMENT "${OU_VK_TEST_ENV}")
-  set_tests_properties(viewer_vulkan_placeholder_screenshot viewer_vulkan_matches_gl PROPERTIES
+  set_tests_properties(viewer_vulkan_placeholder_screenshot viewer_vulkan_matches_gl viewer_vulkan_matches_gl_enhanced PROPERTIES
                        SKIP_RETURN_CODE 77 ENVIRONMENT "${OU_VK_TEST_ENV}")
 endif()
 

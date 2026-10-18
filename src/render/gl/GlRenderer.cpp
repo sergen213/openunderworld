@@ -19,6 +19,8 @@ void delTexture(GLuint id) { glDeleteTextures(1, &id); }
 void delBuffer(GLuint id) { glDeleteBuffers(1, &id); }
 void delVertexArray(GLuint id) { glDeleteVertexArrays(1, &id); }
 void delProgram(GLuint id) { glDeleteProgram(id); }
+void delFramebuffer(GLuint id) { glDeleteFramebuffers(1, &id); }
+void delRenderbuffer(GLuint id) { glDeleteRenderbuffers(1, &id); }
 
 template <void (*Delete)(GLuint)>
 class GlHandle {
@@ -49,11 +51,23 @@ using Texture = GlHandle<delTexture>;
 using Buffer = GlHandle<delBuffer>;
 using VertexArray = GlHandle<delVertexArray>;
 using Program = GlHandle<delProgram>;
+using Framebuffer = GlHandle<delFramebuffer>;
+using Renderbuffer = GlHandle<delRenderbuffer>;
 
 Texture newTexture() { GLuint id = 0; glCreateTextures(GL_TEXTURE_2D, 1, &id); return Texture(id); }
 Buffer newBuffer() { GLuint id = 0; glCreateBuffers(1, &id); return Buffer(id); }
 VertexArray newVertexArray() { GLuint id = 0; glCreateVertexArrays(1, &id); return VertexArray(id); }
+Framebuffer newFramebuffer() { GLuint id = 0; glCreateFramebuffers(1, &id); return Framebuffer(id); }
+Renderbuffer newRenderbuffer(GLsizei samples, GLenum format, int w, int h) {
+    GLuint id = 0;
+    glCreateRenderbuffers(1, &id);
+    glNamedRenderbufferStorageMultisample(id, samples > 1 ? samples : 0, format, w, h);
+    return Renderbuffer(id);
+}
 
+// Scene shading (kept in step with src/render/vk/shaders/scene.*): texture, alpha test against the
+// material threshold, fixed sun lambert with two-sided normals, optional 3x3 PCF sun shadow.
+// Vertex colour is still multiplied (placeholder tints; cdc meshes leave it white).
 const char* kSceneVs = R"(#version 460 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
@@ -61,27 +75,98 @@ layout(location = 2) in vec2 aUv;
 layout(location = 3) in vec4 aColor;
 layout(location = 0) uniform mat4 uViewProj;
 layout(location = 1) uniform mat4 uModel;
-out vec3 vNormal; out vec2 vUv; out vec4 vColor;
+layout(location = 5) uniform mat4 uLightViewProj;
+out vec3 vNormal; out vec2 vUv; out vec4 vColor; out vec4 vLight;
 void main() {
+    vec4 world = uModel * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal; // ponytail: no inverse-transpose; fine without non-uniform scale
     vUv = aUv; vColor = aColor;
-    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
+    vLight = uLightViewProj * world;
+    gl_Position = uViewProj * world;
 })";
 
 const char* kSceneFs = R"(#version 460 core
-in vec3 vNormal; in vec2 vUv; in vec4 vColor;
+in vec3 vNormal; in vec2 vUv; in vec4 vColor; in vec4 vLight;
 layout(location = 2) uniform int uLighting;
+layout(location = 3) uniform float uAlphaRef;
+layout(location = 4) uniform int uShadows;
 layout(binding = 0) uniform sampler2D uTex;
+layout(binding = 1) uniform sampler2DShadow uShadowMap;
 out vec4 oColor;
+float sunVisibility() {
+    vec3 p = vLight.xyz / vLight.w * 0.5 + 0.5;
+    if (any(lessThan(p, vec3(0.0))) || any(greaterThan(p, vec3(1.0)))) return 1.0;
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float s = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) s += texture(uShadowMap, vec3(p.xy + vec2(x, y) * texel, p.z));
+    return s / 9.0;
+}
 void main() {
     vec4 c = texture(uTex, vUv) * vColor;
+    if (c.a < uAlphaRef) discard;
     float len = length(vNormal);
     if (uLighting != 0 && len > 1e-6) {
-        float ndl = max(dot(vNormal / len, normalize(vec3(-0.4, -0.5, 0.75))), 0.0);
-        c.rgb *= 0.45 + 0.55 * ndl; // fixed key light from the default camera side
+        vec3 n = (gl_FrontFacing ? 1.0 : -1.0) * vNormal / len; // two-sided materials light both faces
+        float ndl = max(dot(n, normalize(vec3(-0.4, -0.5, 0.75))), 0.0); // RenderCommon kSunDirection
+        if (uShadows != 0 && ndl > 0.0) ndl *= sunVisibility();
+        c.rgb *= 0.45 + 0.55 * ndl;
     }
-    oColor = vec4(c.rgb, 1.0); // alpha ignored: cdc alpha channels are often masks, not opacity [INFERENCE]
+    oColor = c; // alpha matters for blended submeshes only
 })";
+
+// Shadow map: depth only, alpha-tested like the scene.
+const char* kShadowVs = R"(#version 460 core
+layout(location = 0) in vec3 aPos;
+layout(location = 2) in vec2 aUv;
+layout(location = 0) uniform mat4 uViewProj;
+layout(location = 1) uniform mat4 uModel;
+out vec2 vUv;
+void main() { vUv = aUv; gl_Position = uViewProj * uModel * vec4(aPos, 1.0); })";
+
+const char* kShadowFs = R"(#version 460 core
+in vec2 vUv;
+layout(location = 3) uniform float uAlphaRef;
+layout(binding = 0) uniform sampler2D uTex;
+void main() { if (texture(uTex, vUv).a < uAlphaRef) discard; })";
+
+// Final pass: resolved scene -> default framebuffer; optional ACES tonemap (HDR) and FXAA.
+const char* kPostVs = R"(#version 460 core
+out vec2 vUv;
+void main() {
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); // fullscreen triangle
+    vUv = p;
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+})";
+
+const char* kPostFs = R"(#version 460 core
+in vec2 vUv;
+layout(location = 0) uniform int uFxaa;
+layout(location = 1) uniform int uHdr;
+layout(binding = 0) uniform sampler2D uScene;
+out vec4 oColor;
+vec3 fetch(vec2 uv) {
+    vec3 c = textureLod(uScene, uv, 0.0).rgb;
+    if (uHdr != 0) c = clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0); // ACES (Narkowicz)
+    return c;
+}
+float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal taps
+    vec2 rcp = 1.0 / vec2(textureSize(uScene, 0));
+    vec3 m = fetch(uv);
+    float nw = luma(fetch(uv + vec2(-1.0, -1.0) * rcp)), ne = luma(fetch(uv + vec2(1.0, -1.0) * rcp));
+    float sw = luma(fetch(uv + vec2(-1.0, 1.0) * rcp)), se = luma(fetch(uv + vec2(1.0, 1.0) * rcp)), lm = luma(m);
+    float lo = min(lm, min(min(nw, ne), min(sw, se))), hi = max(lm, max(max(nw, ne), max(sw, se)));
+    vec2 dir = vec2(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
+    float reduce = max((nw + ne + sw + se) * (0.25 / 8.0), 1.0 / 128.0);
+    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), -8.0, 8.0) * rcp;
+    vec3 a = 0.5 * (fetch(uv + dir * (1.0 / 3.0 - 0.5)) + fetch(uv + dir * (2.0 / 3.0 - 0.5)));
+    vec3 b = a * 0.5 + 0.25 * (fetch(uv - dir * 0.5) + fetch(uv + dir * 0.5));
+    float lb = luma(b);
+    return (lb < lo || lb > hi) ? a : b;
+}
+void main() { oColor = vec4(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), 1.0); })";
+
 
 const char* kTextVs = R"(#version 460 core
 layout(location = 0) in vec2 aPos;
@@ -172,18 +257,33 @@ struct GpuMesh {
     Buffer vbo, ebo;
     std::vector<scene::SubMesh> submeshes;
     glm::mat4 model;
+    glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting)
     size_t source = 0, vertexCount = 0; // SceneData::meshes index, vertex count
 };
 
+// Offscreen scene target (MSAA renderbuffers + single-sample resolve texture), rebuilt on size or
+// settings change. msaa == 1 renders straight into `color`.
+struct Targets {
+    int width = 0, height = 0, msaa = 0;
+    bool hdr = false;
+    Framebuffer scene, resolve;
+    Renderbuffer msColor, depth;
+    Texture color; // sampled by the post pass
+};
+
 struct Resources {
-    Program sceneProgram, textProgram, lineProgram;
-    Texture white, font;
-    VertexArray textVao, lineVao;
+    Program sceneProgram, textProgram, lineProgram, shadowProgram, postProgram;
+    Texture white, font, shadowMap;
+    Framebuffer shadowFbo;
+    VertexArray textVao, lineVao, emptyVao;
     Buffer textVbo, lineVbo;
     const DebugLine* lineSource = nullptr; // cached upload of FrameOptions::debugLines
     size_t lineCount = 0;
     std::unordered_map<uint32_t, Texture> textures;
     std::vector<GpuMesh> meshes;
+    Bounds bounds;
+    Targets targets;
+    std::vector<DrawRef> order;
 };
 
 class GlRenderer final : public Renderer {
@@ -237,6 +337,11 @@ public:
         if (!r.textProgram.get()) return false;
         r.lineProgram = linkProgram(kLineVs, kLineFs, error);
         if (!r.lineProgram.get()) return false;
+        r.shadowProgram = linkProgram(kShadowVs, kShadowFs, error);
+        if (!r.shadowProgram.get()) return false;
+        r.postProgram = linkProgram(kPostVs, kPostFs, error);
+        if (!r.postProgram.get()) return false;
+        r.emptyVao = newVertexArray();
         r.lineVao = newVertexArray();
         attrib(r.lineVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(LineVertex, pos));
         attrib(r.lineVao.get(), 1, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(LineVertex, color));
@@ -263,6 +368,20 @@ public:
         attrib(vao, 0, 2, GL_FLOAT, GL_FALSE, offsetof(TextVertex, x));
         attrib(vao, 1, 2, GL_FLOAT, GL_FALSE, offsetof(TextVertex, u));
         attrib(vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(TextVertex, color));
+
+        // Sun shadow map: always allocated (16 MiB) so the scene shader's shadow sampler is complete.
+        r.shadowMap = newTexture();
+        GLuint sm = r.shadowMap.get();
+        glTextureStorage2D(sm, 1, GL_DEPTH_COMPONENT32F, kShadowMapSize, kShadowMapSize);
+        glTextureParameteri(sm, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(sm, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(sm, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(sm, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(sm, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTextureParameteri(sm, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        r.shadowFbo = newFramebuffer();
+        glNamedFramebufferTexture(r.shadowFbo.get(), GL_DEPTH_ATTACHMENT, sm, 0);
+        glNamedFramebufferDrawBuffer(r.shadowFbo.get(), GL_NONE);
         return true;
     }
 
@@ -272,10 +391,15 @@ public:
         r.textures.clear();
         r.meshes.clear();
         for (const auto& t : scene.textures) {
+            if (r.textures.contains(t.id)) { // first id wins, as formats::loadTextures and the Vulkan backend
+                warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): duplicate texture id, first one wins");
+                continue;
+            }
             Texture tex = uploadTexture(t, warnings);
             if (tex.get()) r.textures[t.id] = std::move(tex);
         }
         for (size_t i = 0; i < scene.meshes.size(); ++i) uploadMesh(scene.meshes[i], i, warnings);
+        r.bounds = sceneBounds(scene);
         return warnings;
     }
 
@@ -293,29 +417,62 @@ public:
 
     void drawFrame(const Camera& camera, Viewport vp, const FrameOptions& options) override {
         Resources& r = *res_;
+        if (vp.width <= 0 || vp.height <= 0) return;
+        ensureTargets(vp, options);
+        const float aspect = float(vp.width) / float(vp.height);
+        const glm::mat4 viewProj = camera.projection(aspect) * camera.view();
+        drawOrder(r.meshes, camera.position, r.order);
+        glm::mat4 lightViewProj(1.0f);
+        if (options.shadows) {
+            lightViewProj = shadowViewProj(camera, aspect, r.bounds);
+            drawShadowMap(lightViewProj);
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, r.targets.scene.get());
         glViewport(0, 0, vp.width, vp.height);
         glClearColor(0.08f, 0.09f, 0.11f, 1.0f);
+        glDepthMask(GL_TRUE);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
-
-        float aspect = vp.height > 0 ? float(vp.width) / float(vp.height) : 1.0f;
-        glm::mat4 viewProj = camera.projection(aspect) * camera.view();
         glUseProgram(r.sceneProgram.get());
         glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj));
+        glUniformMatrix4fv(5, 1, GL_FALSE, glm::value_ptr(lightViewProj));
         glUniform1i(2, options.lighting ? 1 : 0);
-        if (options.cullBackFaces) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
-        for (const auto& m : r.meshes) {
-            glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
-            glBindVertexArray(m.vao.get());
-            for (const auto& s : m.submeshes) {
-                auto it = r.textures.find(s.textureId);
-                glBindTextureUnit(0, it != r.textures.end() ? it->second.get() : r.white.get());
-                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
-                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+        glUniform1i(4, options.shadows ? 1 : 0);
+        glBindTextureUnit(1, r.shadowMap.get());
+        glBlendColor(0.5f, 0.5f, 0.5f, 0.5f); // Blend::Average = D3DBLEND_BLENDFACTOR 0x80808080
+        uint32_t boundMesh = UINT32_MAX;
+        int state = -1;
+        for (const DrawRef& d : r.order) {
+            const GpuMesh& m = r.meshes[d.mesh];
+            const scene::SubMesh& s = m.submeshes[d.sub];
+            if (d.mesh != boundMesh) {
+                glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
+                glBindVertexArray(m.vao.get());
+                boundMesh = d.mesh;
             }
+            if (int(s.blend) != state) setBlend(state = int(s.blend));
+            if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+            glUniform1f(3, s.alphaRef / 255.0f);
+            drawSubmesh(s);
         }
+        setBlend(int(scene::Blend::Opaque));
         drawLines(viewProj, options.debugLines);
+
+        Targets& t = r.targets;
+        if (t.msaa > 1)
+            glBlitNamedFramebuffer(t.scene.get(), t.resolve.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
+                                   GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, vp.width, vp.height);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glUseProgram(r.postProgram.get());
+        glUniform1i(0, options.fxaa ? 1 : 0);
+        glUniform1i(1, options.hdr ? 1 : 0);
+        glBindTextureUnit(0, t.color.get());
+        glBindVertexArray(r.emptyVao.get());
+        glDrawArrays(GL_TRIANGLES, 0, 3);
         drawOverlay(vp, options.overlay);
     }
 
@@ -354,6 +511,83 @@ private:
         glEnableVertexArrayAttrib(vao, index);
         glVertexArrayAttribFormat(vao, index, size, type, norm, GLuint(offset));
         glVertexArrayAttribBinding(vao, index, 0);
+    }
+
+    void ensureTargets(Viewport vp, const FrameOptions& o) {
+        Targets& t = res_->targets;
+        const int msaa = std::max(1, o.msaa);
+        if (t.width == vp.width && t.height == vp.height && t.msaa == msaa && t.hdr == o.hdr) return;
+        t = {};
+        t.width = vp.width, t.height = vp.height, t.msaa = msaa, t.hdr = o.hdr;
+        const GLenum format = o.hdr ? GL_RGBA16F : GL_RGBA8;
+        t.color = newTexture();
+        glTextureStorage2D(t.color.get(), 1, format, vp.width, vp.height);
+        glTextureParameteri(t.color.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR); // FXAA taps between texels
+        glTextureParameteri(t.color.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(t.color.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(t.color.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        t.depth = newRenderbuffer(msaa, GL_DEPTH_COMPONENT32F, vp.width, vp.height);
+        t.scene = newFramebuffer();
+        if (msaa > 1) {
+            t.msColor = newRenderbuffer(msaa, format, vp.width, vp.height);
+            glNamedFramebufferRenderbuffer(t.scene.get(), GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, t.msColor.get());
+            t.resolve = newFramebuffer();
+            glNamedFramebufferTexture(t.resolve.get(), GL_COLOR_ATTACHMENT0, t.color.get(), 0);
+        } else {
+            glNamedFramebufferTexture(t.scene.get(), GL_COLOR_ATTACHMENT0, t.color.get(), 0);
+        }
+        glNamedFramebufferRenderbuffer(t.scene.get(), GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth.get());
+        if (glCheckNamedFramebufferStatus(t.scene.get(), GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            std::fprintf(stderr, "[gl] scene framebuffer incomplete (msaa %d)\n", msaa);
+    }
+
+    // Opaque: depth write, LESS. Blended (the original's translucent pass 0x5066A0): no depth
+    // write, LEQUAL, blend per cdc mode.
+    static void setBlend(int blend) {
+        const auto b = scene::Blend(blend);
+        const bool opaque = b == scene::Blend::Opaque;
+        glDepthMask(opaque ? GL_TRUE : GL_FALSE);
+        glDepthFunc(opaque ? GL_LESS : GL_LEQUAL);
+        if (opaque) { glDisable(GL_BLEND); return; }
+        glEnable(GL_BLEND);
+        if (b == scene::Blend::Additive) glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        else if (b == scene::Blend::Average) glBlendFunc(GL_CONSTANT_COLOR, GL_CONSTANT_COLOR);
+        else glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
+
+    void drawSubmesh(const scene::SubMesh& s) {
+        auto it = res_->textures.find(s.textureId);
+        glBindTextureUnit(0, it != res_->textures.end() ? it->second.get() : res_->white.get());
+        glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
+                       reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+    }
+
+    // Opaque and alpha-blended surfaces cast (blended ones alpha-tested at 50 %); additive/average
+    // effects do not. Both faces, slope-scaled bias.
+    void drawShadowMap(const glm::mat4& lightViewProj) {
+        Resources& r = *res_;
+        glBindFramebuffer(GL_FRAMEBUFFER, r.shadowFbo.get());
+        glViewport(0, 0, kShadowMapSize, kShadowMapSize);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(2.0f, 2.0f);
+        glUseProgram(r.shadowProgram.get());
+        glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(lightViewProj));
+        for (const auto& m : r.meshes) {
+            glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
+            glBindVertexArray(m.vao.get());
+            for (const auto& s : m.submeshes) {
+                if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
+                glUniform1f(3, (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f);
+                drawSubmesh(s);
+            }
+        }
+        glDisable(GL_POLYGON_OFFSET_FILL);
     }
 
     Texture uploadTexture(const scene::TextureData& t, std::vector<std::string>& warnings) {
@@ -410,6 +644,8 @@ private:
         }
         if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
         g.model = glm::make_mat4(m.transform);
+        const Bounds b = meshBounds(m);
+        g.center = (b.lo + b.hi) * 0.5f;
         g.source = source;
         g.vertexCount = m.vertices.size();
         g.vao = newVertexArray();

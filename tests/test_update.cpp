@@ -324,4 +324,33 @@ TEST(Config, RoundTripAndDefaults) {
     fs::remove_all(p.parent_path());
 }
 
+TEST(Config, GraphicsPresets) {
+    using ou::config::GraphicsSettings;
+    using ou::config::resolve;
+    using Opt = std::optional<bool>;
+    auto g = [](std::string preset, int msaa = 0, Opt shadows = {}, Opt fxaa = {}, Opt hdr = {}) {
+        return ou::config::GraphicsConfig{std::move(preset), msaa, shadows, fxaa, hdr};
+    };
+    EXPECT_EQ(resolve({}), (GraphicsSettings{1, false, false, false}));                // original
+    EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false}));    // 4x MSAA + shadows
+    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true})); // overrides
+    EXPECT_EQ(resolve(g("original", 8, true)), (GraphicsSettings{8, true, false, false}));
+    EXPECT_THROW(resolve(g("ultra")), std::runtime_error);
+    EXPECT_THROW(resolve(g("original", 3)), std::runtime_error);
+
+    fs::path p = fs::temp_directory_path() / ("ou_config_gfx_" + std::to_string(::getpid()) + "/config.json");
+    ou::config::Config c;
+    c.graphics = g("enhanced", 2, std::nullopt, true);
+    ou::config::save(p, c);
+    const auto d = ou::config::load(p).graphics;
+    EXPECT_EQ(d.preset, "enhanced");
+    EXPECT_EQ(d.msaa, 2);
+    EXPECT_FALSE(d.shadows.has_value()); // unset stays unset: the preset decides
+    EXPECT_EQ(d.fxaa, std::optional<bool>(true));
+    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false}));
+    std::ofstream(p) << R"({"graphics":{"preset":"enhanced","msaa":5}})";
+    EXPECT_THROW(ou::config::load(p), std::runtime_error);
+    fs::remove_all(p.parent_path());
+}
+
 } // namespace
