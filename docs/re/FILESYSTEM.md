@@ -51,10 +51,10 @@ patch archive overrides the base one [INF: mount order + TRLAU-menu-hook ModLoad
 * Among equal hashes it returns the first record with `(record.specMask & fs.specMask) == fs.specMask`. It scans both directions, so this is how language/SKU variants of the same path are selected.
 * Miss: debug "* Archived file '%s' NOT found *" and returns NULL.
 
-Our `src/cdc` matches this. [INF] We pick the first hash match, so we can pick the wrong
-variant when several records share a hash. The exe picks by specMask; `InitArchive` hard-codes
-specMask = 1. [?] Whether other bits get OR-ed in later for the
-language: the setter (vtable slot 4, 0x472990, stores this+8) has no direct caller.
+Our `src/cdc` matches this: `Bigfile::find(path, specMask = kSpecEnglish)` uses the same superset
+test, and `BigfileSet` puts patch.000 in front. [OBS] The language bits are set after startup:
+`0x49A900(language)` calls `0x54F2E0(1 << language)`, which reaches every mounted archive through the
+multi-FS setter `0x472D80` (vtable +0x10). Details are in docs/formats/LEVELS.md.
 
 Other ArchiveFileSystem slots:
 

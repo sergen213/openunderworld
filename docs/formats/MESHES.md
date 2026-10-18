@@ -183,7 +183,7 @@ Verified paths: `pc-w\lara.drm` (7 meshes, 24 textures), `pc-w\l4_pool.drm` (8 t
 
 ## Open questions
 
-- [U] Placement of objects in units. Instances are not decoded, so `withDependencies` stacks every model at the origin.
+- Placement of objects in units is solved in [LEVELS.md](LEVELS.md) (`loadLevelScene`). `loadDrmScene(…, withDependencies)` still stacks the models at the origin.
 - [U] Skinning, bones and animation.
 - [U] Primgroup texture indices +0x2C..0x38; the second terrain UV.
 - [U] The Mesh flags bit 0 path (batch +0x10, header +0x74).

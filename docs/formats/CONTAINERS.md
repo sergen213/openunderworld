@@ -53,7 +53,7 @@ struct { u32 size; u32 sector; u32 specMask; u32 compressedSize; } record[count]
 
 **Selection rule** [V-exe]: a record matches when `(record.specMask & fs.specMask) == fs.specMask`, i.e. the record's mask must contain **all** bits of the file system's current mask (`FUN_004726e0`). The archive file system's mask is initialised to `1` (`DAT_009ce288[2] = 1` in `InitArchive`, `0x473840`) and later changed through the `SetSpecialisationMask` vtable slot. DRM sections use the same superset rule (§4.4).
 
-> Note for `ou::cdc::Bigfile::find(path, specMask)`: it currently tests `r.specMask & specMask` (any common bit). That is equivalent only for single-bit query masks.
+> `ou::cdc::Bigfile::find(path, specMask)` implements this rule (default mask `kSpecEnglish` = 1); `ou::cdc::BigfileSet` puts patch.000 first (§2).
 
 Observed masks [V-data]:
 
@@ -209,7 +209,7 @@ u32 { offset:25, sectionType:7 }                        resource16[count[4]]
 | All 677085 extern `sectionIndex` values are `< numSections` of the same DRM. This supports "index into this DRM's section list". | [V-data], [I] for the meaning |
 | The semantics of kind2/resource16 (which resource, which table, meaning of 16 vs 32) | ? |
 
-`ou::cdc::internalPointer()` implements only the intern kind.
+`ou::cdc::internalPointer()` implements the intern kind; `ou::cdc::sectionPointers()` resolves intern and extern (`lo & 0x3FFF` = section index, patch = `((lo >> 14) | (hi & 0x3F) << 18) * 4`, target = `hi >> 6`, per `ResolveSection_ApplyRelocations` 0x54EC60). The extern layout is verified by the level structures in [LEVELS.md](LEVELS.md).
 
 Templates' `SECT` magic (`0x54434553`) belongs to a tool export header, not to on-disk data. [V-data]: none of the 226122 on-disk section payloads starts with it.
 
