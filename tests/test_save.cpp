@@ -322,6 +322,26 @@ TEST(Stream, SaveMoveLoadLandsOnSameState) {
     EXPECT_GT(w.player().state().pos.x, expect.pos.x); // and it keeps running
 }
 
+// Health survives save -> load (it used to load at full); saves without it load at full; bad values are rejected.
+TEST(Save, HealthRoundTrip) {
+    game::World w(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    w.damageLara(337.25f, vec3(0), game::kDamageAbsolute);
+    w.tick({});
+    const float hp = w.health().value();
+    ASSERT_LT(hp, 1000.0f);
+    const auto bytes = save::serialize(save::capture(w));
+    EXPECT_EQ(*save::parse(bytes).health, hp);
+    w.damageLara(100, vec3(0), game::kDamageAbsolute);
+    save::apply(save::parse(bytes), w);
+    EXPECT_EQ(w.health().value(), hp);
+    auto old = save::parse(bytes);
+    old.health.reset();
+    save::apply(save::parse(save::serialize(old)), w);
+    EXPECT_EQ(w.health().value(), w.health().max());
+    EXPECT_THROW(save::parse(withHeader(2, R"({"unit":"a","player":{"state":"idle","pos":[0,0,0],"yaw":0},"health":-5})")),
+                 save::SaveError);
+}
+
 // ---- real data (OU_GAME_DIR) -------------------------------------------------------------------
 namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }

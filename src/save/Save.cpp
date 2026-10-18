@@ -58,6 +58,7 @@ json toJson(const SaveGame& s) {
         {"collected", s.collected},
         {"chapter", s.chapter},
         {"found", s.found},
+        {"health", s.health ? json(*s.health) : json(nullptr)},
         {"script", s.script},
     };
 }
@@ -109,6 +110,10 @@ SaveGame fromJson(const json& j) {
     s.collected = j.value("collected", std::set<int32_t>{});
     s.chapter = j.value("chapter", std::max(0, game::chapterOfUnit(s.unit)));
     s.found = j.value("found", std::array<int, 3>{});
+    if (const auto h = j.find("health"); h != j.end() && !h->is_null()) {
+        s.health = h->get<float>();
+        if (!(*s.health > 0 && *s.health < 1e6f)) throw SaveError("bad health " + h->dump());
+    }
     if (s.chapter < 0 || s.chapter >= int(game::kChapters.size())) throw SaveError("bad chapter " + std::to_string(s.chapter));
     s.script = j.value("script", json::object());
     if (!s.script.is_object()) throw SaveError("script state is not an object");
@@ -142,6 +147,7 @@ SaveGame capture(const game::World& world) {
     s.collected = world.collected;
     s.chapter = world.chapter;
     s.found = world.found;
+    if (!world.health().dead()) s.health = world.health().value(); // [I] a save taken while dead loads at full
     s.script = world.script().serialize();
     s.ticks = world.ticks();
     return s;
@@ -164,6 +170,7 @@ void apply(const SaveGame& save, game::World& world) {
     world.chapter = save.chapter;
     world.found = save.found;
     world.script().restore(save.script);
+    if (save.health) world.setHealth(*save.health);
 }
 
 std::string serialize(const SaveGame& save) {

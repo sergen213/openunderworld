@@ -70,7 +70,8 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `checkpoint` | null or `{unit, id}` | last checkpoint: intro unique id in `unit` |
 | `collected` | [int] | intro unique ids of picked-up rewards (`World::collected`, src/game/Progress.hpp) |
 | `chapter` | int | `game::kChapters` index; missing (older saves) = the unit's `l<N>_` prefix, else 0 |
-| `found` | [int, int, int] | rewards collected per kind: treasures, relics, health packs (PDA counts); missing = 0s |
+| `found` | [int, int, int] | rewards collected per kind: treasures, relics, health packs (PDA counts; health packs = carried, a use takes one); missing = 0s |
+| `health` | number or null | Lara's health (`World::health`); missing/null (older saves, or saved while dead) = full; must be > 0 |
 | `script` | object | `script::Runtime::serialize()` (src/script): per-intro trigger/switch/door/block state, opaque here |
 
 Ledge and water indices are stored as (unit, index within that unit), not as indices into the merged collision mesh.
@@ -102,7 +103,8 @@ Saves are always written as the current version. Newer versions are rejected, ne
 2. Maps ledge/water back to merged-mesh indices.
 3. `World::restore` sets the full player state and the camera. It does not blend from the previous frame; the
    animation pose is reset.
-4. Restores the checkpoint, the collected items and the script state.
+4. Restores the checkpoint, the collected items, the script state and Lara's health (`World::setHealth`;
+   `Save.HealthRoundTrip`).
 
 The simulation then continues exactly. `StreamReal.PoolToRagnarokOnFootThenSaveLoad` saves in `l4_ragnarok_room`
 (streamed in from `l4_pool` at offset (−20475.4, −2872.2, 12591.4)) and runs 40 more ticks. It then loads, which puts
@@ -125,8 +127,14 @@ ragnarok at offset 0, and runs the same 40 ticks again. States and clips match o
   heading = rotation z − 90° (as the player intro). When Lara's feet come within 250 units horizontally and 400
   vertically of one, `World::checkpoint()` becomes {unit, id}. l4_pool has 12 checkpoints and l4_ragnarok_room 2.
 - `World::respawn()` (death) calls `enterUnit(checkpoint unit)` and places Lara at the checkpoint intro, or at the
-  start unit's spawn if no checkpoint was touched. There is no death detection yet; `ou-game --die SECONDS` triggers
-  it.
+  start unit's spawn if no checkpoint was touched, at full health. Death comes from Combat (health ≤ 0 on the
+  ground); `ou-game --die SECONDS` forces it.
+- [I] Enemies are reset with it (`ai::Enemies::reset`): when a new checkpoint is touched the enemies dead at that
+  moment are remembered (`Enemies::checkpoint`); on respawn those stay dead and every other enemy returns to its
+  placement at full health, generator spawns are removed and their generators re-armed. tru.exe restores the
+  checkpoint save (`0x556E90`), which holds per-intro instance state; that path was not traced, so which enemies the
+  original keeps dead is inferred. Enemy state is not written to our save files: a load keeps the enemies of units
+  that stay loaded as they are and spawns the others from their intros (or their streamed-out state) [deviation].
 
 ## ou-game
 

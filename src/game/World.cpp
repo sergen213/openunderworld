@@ -98,12 +98,9 @@ const std::vector<std::string_view> kLaraClipNames = {
     "HPole_idleHangPerp", "Hpole_perp_attach_M", "HPole_StartSwing", "HPole_swing", "Hpole_swingstopA", "hpole_perp_fling",
     "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
     "death_fall_normal", "death_toknee", // combat (Combat.cpp)
-};
-
-const std::vector<std::string_view> kPistolClipNames = {
-    "combat_pistol_poseA", "combat_pistol_poseB", "combat_pistol_poseC", "combat_pistol_poseD", "combat_pistol_poseE",
-    "combat_pistol_poseF", "combat_pistol_poseG", "combat_pistol_poseH", "combat_pistol_poseI", "combat_pistol_RfireE",
-    "combat_pistol_LfireE", "combat_pistols_reload",
+    "hit_light_front", "hit_light_back", "hit_light_side", "hit_mediumfront", "hit_mediumback", "hit_mediumright",
+    "hit_light_front_swim", "hit_light_back_swim", "hit_light_side_swim", "hit_mediumfront_swim", "hit_mediumback_swim",
+    "hit_mediumright_swim",
 };
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
@@ -120,24 +117,28 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile) {
     lib.skeleton = std::move(*std::max_element(skeletons.begin(), skeletons.end(), [](const auto& a, const auto& b) {
         return a.bones.size() < b.bones.size();
     }));
-    const auto loadClips = [&](const cdc::Drm& d, const std::vector<std::string_view>& names, const char* file) {
+    const auto loadClips = [&](const cdc::Drm& d, const std::vector<std::string_view>& names, const std::string& file,
+                               const std::string& prefix) {
         const auto list = anim::animList(d);
         for (const auto name : names) {
             const auto e = std::find_if(list.begin(), list.end(), [&](const anim::AnimEntry& x) { return x.name == name; });
-            if (e == list.end()) throw std::runtime_error(std::string(file) + ": animation '" + std::string(name) + "' not in the list");
+            if (e == list.end()) throw std::runtime_error(file + ": animation '" + std::string(name) + "' not in the list");
             const auto s = std::find_if(d.sections.begin(), d.sections.end(), [&](const cdc::Section& x) {
                 return x.type == cdc::SectionType::Animation && x.id == e->animId;
             });
-            if (s == d.sections.end()) throw std::runtime_error(std::string(file) + ": no section for '" + std::string(name) + "'");
-            lib.clips.emplace(std::string(name), anim::decodeClip(s->data));
+            if (s == d.sections.end()) throw std::runtime_error(file + ": no section for '" + std::string(name) + "'");
+            lib.clips.emplace(prefix + std::string(name), anim::decodeClip(s->data));
         }
     };
-    loadClips(drm, kLaraClipNames, "lara.drm");
-    // Lara's pistol clips live in the weapon's DRM (they animate her skeleton).
-    auto gun = bigfile.read("pc-w\\wp_handgun.drm");
-    if (!gun) throw std::runtime_error("pc-w\\wp_handgun.drm not in bigfile");
-    loadClips(cdc::parseDrm(std::move(*gun)), kPistolClipNames, "wp_handgun.drm");
-    if (auto w = loadWeapon(bigfile, "wp_handgun")) lib.pistols = *w;
+    loadClips(drm, kLaraClipNames, "lara.drm", "");
+    // Lara's weapon clips live in each weapon's DRM (they animate her skeleton); stats from its data.
+    for (int i = 0; i < kWeaponCount; ++i) {
+        const std::string object(weaponObject(Weapon(i))), file = "pc-w\\" + object + ".drm";
+        auto gun = bigfile.read(file);
+        if (!gun) throw std::runtime_error(file + " not in bigfile");
+        loadClips(cdc::parseDrm(std::move(*gun)), weaponClipNames(Weapon(i)), file, object + ":");
+        if (auto w = loadWeapon(bigfile, object)) lib.weapons[size_t(i)] = *w;
+    }
     // Hands (bones 55, 80: the last segment of each arm chain before the fingers) in the hang pose.
     if (auto h = lib.handsAt(*lib.find("ledgeb_idle"), 0)) lib.hangHandOffset = *h;
     if (auto h = lib.handsAt(*lib.find("HPole_idleHangPerp"), 0)) lib.poleHandOffset = *h;
@@ -181,6 +182,7 @@ void World::tick(const Actions& a) {
     vec2 move = right * a.move.x + fwd * a.move.y;
     if (glm::length(move) > 1) move = glm::normalize(move);
     if (script_.holding()) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
+    if (combat_.slowMo > 0) move = vec2(0); // [I] adrenaline window: the stick steers the pip (Combat.cpp)
     player_.tick(move, a, dt);
     if (!units_.empty()) { // streaming world (src/game/Stream.cpp)
         crossPortals(prev_.pos, player_.state().pos);
@@ -203,7 +205,7 @@ void World::tick(const Actions& a) {
         player_.restore(s);
     }
     enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height},
-                  [this](float damage, vec3 from) { damageLara(damage, from); }, dt);
+                  [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, dt * combat_.timeScale);
     updateCamera(a, dt);
     tickCombat(a, dt); // after the camera: free aim follows it
     updatePose(dt, false);

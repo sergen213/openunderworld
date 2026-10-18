@@ -124,7 +124,7 @@ std::string_view stateName(State s) {
                                              "fall", "land", "hang", "shimmy", "climbup", "swimsplash",
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
-                                             "hangjump", "polehang"};
+                                             "hangjump", "polehang", "hit"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -220,6 +220,13 @@ void Player::spawn(vec3 feet, float yaw) {
 void Player::die(std::string_view clip) {
     s_.state = State::Dead;
     s_.vel = vec3(0);
+    play(clip, false);
+}
+
+void Player::hitReact(std::string_view clip) {
+    s_.state = State::Hit;
+    s_.vel = vec3(0);
+    s_.clip.clear(); // restart even when the same reaction is playing
     play(clip, false);
 }
 
@@ -874,6 +881,18 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Surfacing:
     case State::SwimClimbOut:
         swim(move, a, jumpPressed, dropPressed, dt);
+        break;
+    case State::Hit: // hit reaction clip with its root motion, then back to idle / the swim state
+        if (s_.water >= 0) {
+            s_.pos = swimSlide(s_.pos, toWorld(advanceClip(dt)));
+            if (clipDone()) {
+                s_.state = s_.pos.z < surfaceZ() - 1 ? State::SwimUnder : State::SwimTread;
+                play(s_.state == State::SwimUnder ? "swim_submerged_idle" : "swim_surfaceidle", true);
+            }
+        } else {
+            groundMove(toWorld(advanceClip(dt)), dt);
+            if (s_.state == State::Hit && clipDone()) { s_.state = State::Idle; play("ng_idle", true); }
+        }
         break;
     case State::Dead: // the death clip plays out where she fell; World respawns her (Combat.cpp)
         advanceClip(dt);

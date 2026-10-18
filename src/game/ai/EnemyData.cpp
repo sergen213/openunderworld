@@ -42,19 +42,32 @@ std::optional<cdc::Pointer> ptrAt(const cdc::Drm& d, uint32_t section, uint32_t 
     return it == p.end() ? std::nullopt : std::optional(it->second);
 }
 
+float deg(int16_t d) { return float(d) * kPi / 180.0f; }
+
+// Senses record (layout: Senses in Enemy.hpp).
+Senses readSenses(const cdc::Section& s, uint32_t o) {
+    const auto cone = [&](uint32_t c) { return Cone{float(read<int16_t>(s, c)), deg(read<int16_t>(s, c + 2)), deg(read<int16_t>(s, c + 4))}; };
+    Senses r;
+    r.body = {cone(o + 4), cone(o + 0xA)};
+    const auto pick = [&](uint32_t k) { const int16_t v = read<int16_t>(s, o + 0x10 + k); return v >= 0 ? v : read<int16_t>(s, o + 4 + k); };
+    r.eye = {float(pick(0)), deg(pick(2)), deg(pick(4))};
+    r.ray = read<uint8_t>(s, o + 0x44) == 0;
+    r.loseTrack = read<float>(s, o + 0x20);
+    return r;
+}
 } // namespace
 
-// Cats (cat_panther, panther_thrall, tiger), thralls, spiders / tarantulas. Bats (flight clips only) and soldiers
-// (guns) get no Run / Attack and are not spawned.
+// Clip names tried per role, first match wins: cats / thralls / spiders, soldiers (poacher, merc), bats. Fire, reload
+// and death clips come from the enemy data records instead.
 const std::array<std::vector<std::string_view>, size_t(Role::Count)> kRoleCandidates = {{
-    {"passive_idle", "idle"},                                       // Idle
-    {"attack_idle", "idle_aggresive"},                              // Alert
-    {"walk_forward_2", "walk"},                                     // Walk
-    {"run_forward_2", "run"},                                       // Run
-    {"simple_attack_static1", "simple_attack", "slash_attack", "slash"}, // Attack
+    {"passive_idle", "idle_passive", "idle"},                                         // Idle
+    {"attack_idle", "idle_aggresive", "idle_combat_stand"},                           // Alert
+    {"walk_forward_2", "walk", "combat_walk_forward", "bat_fly_passive"},             // Walk
+    {"run_forward_2", "run", "combat_run_forward", "bat_fly_aggressive"},             // Run
+    {"simple_attack_static1", "rifle_bash", "attack_bite", "simple_attack", "slash_attack", "slash"}, // Attack
     {"hitreact_medium_front", "hitreact_medium", "hit_front", "hit_react_light_front", "hit_react_medium"}, // Hit
-    {"death_static", "death", "damage_front_death"},                // Death
-    {"spawn_from_pool"},                                            // Spawn
+    {"death_static", "death_shot", "death", "damage_front_death"},                    // Death
+    {"spawn_from_pool"},                                                              // Spawn
 }};
 
 bool isEnemyObject(const cdc::BigfileSet& bigfile, const std::string& name) {
@@ -78,19 +91,59 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
     const uint32_t o = data->offset;
     if (read<uint32_t>(ed, o) != kEnemyDataMagic) throw cdc::FormatError(name + ": enemy data magic mismatch");
     t->enemyClass = int32_t(read<uint32_t>(ed, o + 4));
+    t->behaviour = read<uint8_t>(ed, o + 0xC);
     t->tuning.radius = read<float>(ed, o + 0x2C);
-    // Hit points: the first node of the enemy data's list (+0x20, next +0x1C) with a health block at +0x3C,
-    // {easy, normal, hard} floats; tru.exe 0x63C190 -> 0x620CC0 -> 0x6E77B0 picks by difficulty (non-positive ->
-    // normal) into the health object at comp+0x2C64. We play Normal.
-    auto node = ptrAt(*drm, data->section, o + 0x20);
-    for (int hop = 0; node && hop < 16; ++hop, node = ptrAt(*drm, node->section, node->offset + 0x1C))
-        if (const auto h = ptrAt(*drm, node->section, node->offset + 0x3C)) {
-            t->tuning.health = read<float>(drm->sections[h->section], h->offset + 4);
-            // [I] block +0xC (cats 80, thralls 0), copied to comp+0x2C6C next to the health object: read as the
-            // damage it takes to stagger (EnemyHealth::m_damageSinceMove, TRLAU-menu-hook) — unconfirmed.
-            t->tuning.staggerDamage = read<float>(drm->sections[h->section], h->offset + 0xC);
-            break;
+    // Component list (+0x20, next +0x1C): each field is read from the first node where it is non-null (getters
+    // 0x614400..0x614940).
+    const auto field = [&](uint32_t off) -> std::optional<cdc::Pointer> {
+        auto node = ptrAt(*drm, data->section, o + 0x20);
+        for (int hop = 0; node && hop < 16; ++hop, node = ptrAt(*drm, node->section, node->offset + 0x1C))
+            if (const auto p = ptrAt(*drm, node->section, node->offset + off)) return p;
+        return std::nullopt;
+    };
+    // Hit points: node +0x3C health block {easy, normal, hard} floats; tru.exe 0x63C190 -> 0x620CC0 -> 0x6E77B0 picks by
+    // difficulty (non-positive -> normal) into the health object at comp+0x2C64. We play Normal.
+    if (const auto h = field(0x3C)) {
+        t->tuning.health = read<float>(drm->sections[h->section], h->offset + 4);
+        // [I] block +0xC (cats 80, thralls 0), copied to comp+0x2C6C next to the health object: read as the damage it
+        // takes to stagger (EnemyHealth::m_damageSinceMove, TRLAU-menu-hook) — unconfirmed.
+        t->tuning.staggerDamage = read<float>(drm->sections[h->section], h->offset + 0xC);
+    }
+    if (const auto s = field(0x30)) t->tuning.senses = t->tuning.combatSenses = readSenses(drm->sections[s->section], s->offset);
+    if (const auto s = field(0x38)) t->tuning.combatSenses = readSenses(drm->sections[s->section], s->offset);
+    if (const auto w = field(0x20)) t->weapon = read<uint16_t>(drm->sections[w->section], w->offset + 2); // 0x614400 -> 0x614950 attaches it
+
+    // Clip refs {s16 type, s16 idx}: type 1 -> ObjectBase +0x60 table (count +0x5C, 0x24-byte entries), entry +4 -> s16
+    // animation-list index (FUN_00626F10 / FUN_004325d0). Type 2 (anim requests) is not resolved: "".
+    const auto list = anim::animList(*drm);
+    const auto table = ptrAt(*drm, *base, 0x60);
+    const uint32_t tableCount = read<uint32_t>(drm->sections[*base], 0x5C);
+    const auto clipRef = [&](const cdc::Section& s, uint32_t off) -> std::string {
+        const int16_t type = read<int16_t>(s, off), idx = read<int16_t>(s, off + 2);
+        if (type != 1 || idx < 0 || uint32_t(idx) >= tableCount || !table) return {};
+        const auto e = ptrAt(*drm, table->section, table->offset + 0x24 * uint32_t(idx) + 4);
+        if (!e) return {};
+        const int16_t a = read<int16_t>(drm->sections[e->section], e->offset);
+        return a >= 0 && size_t(a) < list.size() ? list[size_t(a)].name : std::string();
+    };
+    for (uint32_t off = 0x68; off <= 0x9C; off += 4) {
+        const auto p = field(off);
+        if (!p) continue;
+        const cdc::Section& s = drm->sections[p->section];
+        const uint32_t r = p->offset;
+        t->tuning.attacks.push_back({off, clipRef(s, r + 0x78), clipRef(s, r + 0x7C), clipRef(s, r + 0x84),
+                                     read<float>(s, r + 0x154), int(read<uint32_t>(s, r + 0x158)), read<int16_t>(s, r + 0x13E),
+                                     read<int16_t>(s, r + 0x144), read<int16_t>(s, r + 0x13A), float(read<uint32_t>(s, r + 0x34)) / 1000.0f,
+                                     deg(read<uint8_t>(s, r + 0x1F0))});
+    }
+    if (const auto p = field(0x64)) {
+        const cdc::Section& s = drm->sections[p->section];
+        const uint32_t n = std::min(read<uint32_t>(s, p->offset + 0xC8), 32u);
+        for (uint32_t k = 0; k < n; ++k) {
+            const uint32_t e = p->offset + 0xCC + 0x14 * k;
+            t->tuning.deaths.push_back({clipRef(s, e), int(read<uint32_t>(s, e + 0xC)), read<uint8_t>(s, e + 0x10)});
         }
+    }
 
     // Model-0 skeleton and the role clips.
     uint32_t model = 0;
@@ -104,19 +157,58 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
     for (const vec3 p : anim::bindPositions(t->skeleton)) top = std::max(top, p.z);
     if (top > t->tuning.radius) t->tuning.height = top; // [I] capsule up to the highest bind-pose bone
 
-    const auto list = anim::animList(*drm);
+    const auto loadClip = [&](std::string_view want) {
+        if (want.empty() || t->clips.count(want)) return !want.empty();
+        const auto e = std::find_if(list.begin(), list.end(), [&](const anim::AnimEntry& x) { return x.name == want; });
+        if (e == list.end()) return false;
+        const auto s = std::find_if(drm->sections.begin(), drm->sections.end(), [&](const cdc::Section& x) {
+            return x.type == cdc::SectionType::Animation && x.id == e->animId;
+        });
+        if (s == drm->sections.end()) return false;
+        t->clips.emplace(std::string(want), anim::decodeClip(s->data));
+        return true;
+    };
     for (size_t r = 0; r < size_t(Role::Count); ++r)
-        for (const auto want : kRoleCandidates[r]) {
-            const auto e = std::find_if(list.begin(), list.end(), [&](const anim::AnimEntry& x) { return x.name == want; });
-            if (e == list.end()) continue;
-            const auto s = std::find_if(drm->sections.begin(), drm->sections.end(), [&](const cdc::Section& x) {
-                return x.type == cdc::SectionType::Animation && x.id == e->animId;
-            });
-            if (s == drm->sections.end()) continue;
-            t->clips.emplace(std::string(want), anim::decodeClip(s->data));
-            t->roles[r] = std::string(want);
-            break;
-        }
+        for (const auto want : kRoleCandidates[r])
+            if (loadClip(want)) {
+                t->roles[r] = std::string(want);
+                break;
+            }
+    for (const auto& a : t->tuning.attacks)
+        for (const auto* c : {&a.clip, &a.shotClip, &a.followClip}) loadClip(*c);
+    for (const auto& d : t->tuning.deaths) loadClip(d.clip);
+
+    // Melee damage per blow: the record whose clip is our attack clip (panther simple_attack_static1 -> +0x88, 50);
+    // [I] a single melee record otherwise (bat +0x80 attach_bite_loop while we play attack_bite). No record (thralls):
+    // the [I] 120 default.
+    std::vector<const Attack*> melee;
+    for (const auto& a : t->tuning.attacks)
+        if (!a.ranged() && !a.clip.empty()) melee.push_back(&a);
+    const auto m = std::find_if(melee.begin(), melee.end(), [&](const Attack* a) { return a->clip == t->roles[size_t(Role::Attack)]; });
+    if (const Attack* a = m != melee.end() ? *m : melee.size() == 1 ? melee[0] : nullptr) {
+        t->tuning.attackDamage = a->damage;
+        t->tuning.attackType = a->type == 2 ? kDamageHeavy : kDamageLight;
+    }
+    if (t->flyer()) { // [I] bites from just outside its radius, one per 1.5 s (the latch record's 10 s cooldown is unused)
+        t->tuning.attackRange = t->tuning.radius + 150.0f;
+        t->tuning.attackReach = t->tuning.radius + 250.0f;
+        t->tuning.attackCooldown = 1.5f;
+    }
+
+    // Death clips that end lying down: the last frame's median bone height under a third of the bind pose's (the
+    // median, as helper bones such as the dropped rifle fly far off).
+    const auto median = [](std::vector<float> z) {
+        std::nth_element(z.begin(), z.begin() + long(z.size() / 2), z.end());
+        return z.empty() ? 0.0f : z[z.size() / 2];
+    };
+    std::vector<float> bind;
+    for (const vec3 p : anim::bindPositions(t->skeleton)) bind.push_back(p.z);
+    for (const auto& [n, c] : t->clips) {
+        if (n.find("death") == std::string::npos && n.find("hitreact_thrown") == std::string::npos) continue;
+        std::vector<float> z;
+        for (const auto& b : anim::worldMatrices(t->skeleton, anim::sample(c, t->skeleton, c.durationSeconds(), false))) z.push_back(b[3].z);
+        if (median(z) < median(bind) / 3) t->lyingDeaths.insert(n);
+    }
     return t;
 }
 
@@ -126,8 +218,8 @@ std::shared_ptr<const EnemyType> Enemies::typeOf(const std::string& name) {
     if (!bigfile_) return nullptr;
     try {
         t = loadEnemyType(*bigfile_, name);
-        if (!t->melee()) {
-            warnings.push_back("enemy " + name + ": no idle/run/attack/death clip set (ranged and flying enemies are not implemented); not spawned");
+        if (!t->spawnable()) {
+            warnings.push_back("enemy " + name + ": no idle/run/death clip with an attack clip or fire record (sharks are not implemented); not spawned");
             t = nullptr;
         }
     } catch (const std::exception& e) {
@@ -148,11 +240,9 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
     const size_t before = enemies_.size();
     std::erase_if(enemies_, [&](const auto& e) {
         if (e->unit.empty() || loaded(e->unit)) return false;
-        if (!e->generator) { // ponytail: generator spawns are not kept; their generator stays fired
-            EnemyState s = e->state();
-            s.pos -= offsets_[e->unit], s.lastSeen -= offsets_[e->unit];
-            stash_[e->uid()] = s;
-        }
+        EnemyState s = e->state();
+        s.pos -= offsets_[e->unit], s.lastSeen -= offsets_[e->unit];
+        stash_[e->uid()] = s; // generator spawns: uid = their generator's, re-spawned with it below
         return true;
     });
     std::erase_if(generators_, [&](const Generator& g) {
@@ -185,8 +275,17 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
                         if (const auto b = formats::objectBaseSection(*d))
                             if (const auto it = objectNames_.find(read<uint16_t>(d->sections[*b], 0xDE)); it != objectNames_.end())
                                 spawned = it->second;
-                if (!spawned.empty())
-                    generators_.push_back({in.uniqueId, u.name, spawned, pos, yaw, 2528.45f, firedGenerators_.contains(in.uniqueId)});
+                if (spawned.empty()) continue;
+                const bool fired = firedGenerators_.contains(in.uniqueId);
+                generators_.push_back({in.uniqueId, u.name, spawned, pos, yaw, 2528.45f, fired});
+                if (const auto s = stash_.find(in.uniqueId); fired && s != stash_.end())
+                    if (auto type = typeOf(spawned)) {
+                        auto& e = add(std::move(type), in.uniqueId, pos, yaw);
+                        e.unit = u.name, e.generator = in.uniqueId;
+                        EnemyState st = s->second;
+                        st.pos += u.offset, st.lastSeen += u.offset;
+                        e.restore(st);
+                    }
                 continue;
             }
             auto& isEnemy = enemyObjects_.try_emplace(n->second, -1).first->second;

@@ -173,7 +173,7 @@ TEST(Combat, PistolsLockFireAndHit) {
     EXPECT_LE(c.shotsFired, 4u);
     EXPECT_EQ(t.hits, int(c.shotsFired));
     const float dist = glm::length(t.aimPoint() - vec3(0, 0, 418)); // roughly from the gun
-    EXPECT_NEAR(t.hp, 700 - float(t.hits) * w->anims().pistols.damageAt(dist), 3.0f * float(t.hits));
+    EXPECT_NEAR(t.hp, 700 - float(t.hits) * w->anims().weapons[0].damageAt(dist), 3.0f * float(t.hits));
 
     // a wall between: no lock-on, free aim along the camera, shots stop at the wall
     CollisionMesh walled = m;
@@ -238,8 +238,8 @@ TEST(Combat, AmmoClipsAndReload) {
     for (int i = 0; i < 60 * 12; ++i) { // 12 s of fire
         w->tick(guns(true));
         const auto& c = w->combat();
-        EXPECT_GE(c.clip[0], 0);
-        EXPECT_GE(c.clip[1], 0);
+        EXPECT_GE(c.clip[0][0], 0);
+        EXPECT_GE(c.clip[0][1], 0);
         reloads += c.reload > 0 && !wasReloading;
         wasReloading = c.reload > 0;
     }
@@ -270,13 +270,218 @@ TEST(Combat, FireIndependentOfRenderRate) {
     EXPECT_GT(std::get<0>(a), 5u);
 }
 
+TEST(Combat, HealthPacks) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    w->damageLara(800, {}, game::kDamageBypass);
+    w->found[2] = 2;
+    Actions heal;
+    heal.heal = true;
+    w->tick(heal);
+    EXPECT_NEAR(w->health().value(), 840, 1e-3); // 200 + 640
+    EXPECT_EQ(w->found[2], 1);
+    w->tick({});
+    w->tick(heal); // within the 60-frame cooldown: nothing
+    EXPECT_NEAR(w->health().value(), 840, 1e-3);
+    EXPECT_EQ(w->found[2], 1);
+    for (int i = 0; i < 120; ++i) w->tick({});
+    w->tick(heal);
+    EXPECT_EQ(w->health().value(), 1000); // clamped at max, the pack is used anyway (0x6CBB20 does not check)
+    EXPECT_EQ(w->found[2], 0);
+    w->damageLara(500, {}, game::kDamageBypass);
+    for (int i = 0; i < 130; ++i) w->tick({});
+    w->tick(heal); // none left
+    EXPECT_NEAR(w->health().value(), 500, 1e-3);
+    EXPECT_EQ(w->combat().healthPacksUsed, 2);
+}
+
+TEST(Combat, WeaponSwitchKeepsRoundsAndReloadsFromReserve) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget t;
+    t.pos = {1500, 0, 0}, t.hp = 1e9f;
+    w->targets.push_back(&t);
+    w->giveWeapon(game::Weapon::Uzi, 1000);
+    EXPECT_EQ(w->combat().reserve[1], 240); // capped at the max reserve
+    w->giveWeapon(game::Weapon::Uzi, 100);
+    EXPECT_EQ(w->combat().reserve[1], 100);
+    for (int i = 0; i < 60; ++i) w->tick(guns(true)); // pistols: draw, a few shots
+    const int pistols0 = w->combat().clip[0][0], pistols1 = w->combat().clip[0][1];
+    EXPECT_LT(pistols0 + pistols1, 24);
+    Actions sw = guns(false);
+    sw.weapon = true;
+    w->tick(sw);
+    EXPECT_EQ(w->combat().weapon, game::Weapon::Pistols); // the pistols holster first (unequip 0.633 s)
+    for (int i = 0; i < 60; ++i) w->tick(guns(false));
+    EXPECT_EQ(w->combat().weapon, game::Weapon::Uzi);
+    EXPECT_EQ(w->combat().previous, game::Weapon::Pistols);
+    EXPECT_TRUE(w->combat().drawn); // drawn again after the switch
+    const uint64_t before = w->combat().shotsFired;
+    for (int i = 0; i < 60; ++i) w->tick(guns(true)); // 1 s of uzi: one shot per 5/30 s, hands alternate
+    EXPECT_GE(w->combat().shotsFired - before, 5u);
+    EXPECT_EQ(w->combat().clip[0][0], pistols0); // the pistols kept their rounds
+    EXPECT_EQ(w->combat().clip[0][1], pistols1);
+    for (int i = 0; i < 60 * 16 && w->combat().reload <= 0; ++i) w->tick(guns(true)); // empty both clips (80 rounds, 6 / s)
+    ASSERT_GT(w->combat().reload, 0);
+    EXPECT_EQ(w->combat().clip[1][0] + w->combat().clip[1][1], 0);
+    for (int i = 0; i < 60; ++i) w->tick(guns(false)); // reload 0.7 s: 80 rounds from the 100 spare
+    EXPECT_EQ(w->combat().clip[1][0], 40);
+    EXPECT_EQ(w->combat().clip[1][1], 40);
+    EXPECT_EQ(w->combat().reserve[1], 20);
+    w->tick(sw);
+    for (int i = 0; i < 90; ++i) w->tick(guns(false));
+    EXPECT_EQ(w->combat().weapon, game::Weapon::Pistols);
+    EXPECT_EQ(w->combat().clip[1][0], 40); // and the uzi keeps its own
+    EXPECT_EQ(w->combat().reserve[1], 20);
+}
+
+TEST(Combat, ShotgunPelletsInTheCone) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget t;
+    t.pos = {1000, 0, 0}, t.hp = 1e9f, t.r = 300; // wide enough for the whole cone
+    w->targets.push_back(&t);
+    w->giveWeapon(game::Weapon::Shotgun, 10);
+    Actions sw;
+    sw.weapon = true;
+    w->tick(sw);
+    EXPECT_EQ(w->combat().weapon, game::Weapon::Shotgun); // holstered: switches at once
+    for (int i = 0; i < 120 && w->combat().shots.empty(); ++i) w->tick(guns(true));
+    const auto& c = w->combat();
+    ASSERT_EQ(c.shots.size(), 7u); // one trigger pull, 7 pellets (wp_shotgun S+5)
+    EXPECT_EQ(c.shotsFired, 1u);
+    EXPECT_EQ(c.clip[2][0], 5);
+    int hits = 0;
+    for (const auto& s : c.shots) {
+        const vec3 d = glm::normalize(s.to - s.from), aim = glm::normalize(c.aimPoint - s.from);
+        EXPECT_LE(glm::degrees(std::acos(std::min(1.0f, glm::dot(d, aim)))), 7.5f * 1.4143f); // within +-7.5 deg yaw and pitch
+        hits += s.target == &t;
+    }
+    EXPECT_EQ(t.hits, hits);
+    EXPECT_EQ(hits, 7);
+    // next shot only after the fire clip + pump (38/30 s)
+    int ticks = 0;
+    for (; ticks < 120 && w->combat().shotsFired == 1; ++ticks) w->tick(guns(true));
+    EXPECT_NEAR(ticks, 76, 2);
+}
+
+TEST(Combat, HitReactionPlaysAndReturns) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    m.build();
+    game::AnimLibrary a;
+    a.skeleton.bones.resize(1);
+    anim::Clip still, hit;
+    still.keyCount = hit.keyCount = 10, still.timePerKey = hit.timePerKey = 100; // 1/3 s
+    still.tracks.resize(1), hit.tracks.resize(1);
+    for (int i = 0; i < 10; ++i) hit.tracks[0][anim::TransY].push_back(10.0f * float(i)); // pushed back (+Y model = backward)
+    a.clips["ng_idle"] = still;
+    for (const char* n : {"hit_light_front", "hit_light_back", "hit_light_side", "hit_mediumfront", "hit_mediumback", "hit_mediumright"}) a.clips[n] = hit;
+    game::World w(std::move(m), std::move(a), game::Spawn{{0, 0, 0}, 0}); // facing +X
+    w.tick(guns(true)); // draws the pistols
+    w.damageLara(100, {500, 0, 0}, game::kDamageLight); // in front
+    EXPECT_EQ(w.player().state().state, State::Hit);
+    EXPECT_EQ(w.player().state().clip, "hit_light_front");
+    w.damageLara(100, {500, 0, 0}, game::kDamageLight); // ignored inside the invulnerability window: no restart
+    EXPECT_EQ(w.health().value(), 900);
+    for (int i = 0; i < 10; ++i) w.tick(guns(false));
+    EXPECT_EQ(w.player().state().state, State::Hit);
+    EXPECT_TRUE(w.combat().drawn); // the guns stay out
+    for (int i = 0; i < 20; ++i) w.tick({});
+    EXPECT_EQ(w.player().state().state, State::Idle);
+    EXPECT_NEAR(w.player().state().pos.x, -90, 1); // root motion: 90 units back
+    for (int i = 0; i < 60; ++i) w.tick({});
+    w.damageLara(100, {-500, 0, 0}, game::kDamageHeavy); // behind, heavy
+    EXPECT_EQ(w.player().state().clip, "hit_mediumback");
+    for (int i = 0; i < 90; ++i) w.tick({});
+    w.damageLara(100, w.player().state().pos + vec3(0, -500, 0), game::kDamageLight); // her right
+    EXPECT_EQ(w.player().state().clip, "hit_light_side");
+    for (int i = 0; i < 90; ++i) w.tick({});
+    w.damageLara(100, {}, game::kDamageBypass); // other damage types: no reaction
+    EXPECT_EQ(w.player().state().state, State::Idle);
+    EXPECT_EQ(game::stateName(State::Hit), "hit");
+}
+
+TEST(Combat, AdrenalineHeadShot) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget t;
+    t.pos = {900, 0, 0}, t.hp = 5000;
+    w->targets.push_back(&t);
+    for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true)); // fill by damage dealt
+    ASSERT_EQ(w->combat().adrenaline, 1);
+    EXPECT_NEAR(5000 - t.hp, 1000, 45); // 1000 damage fills it [I]
+    Actions lock = guns(false), go = guns(false);
+    go.interact = true;
+    w->tick(lock);
+    w->tick(go); // full + locked + close + interact: the window opens
+    ASSERT_GT(w->combat().slowMo, 0);
+    for (int i = 0; i < 15; ++i) w->tick(lock);
+    EXPECT_NEAR(w->combat().timeScale, 0.2f, 1e-4); // eased down in 0.25 s
+    const vec3 at = w->player().state().pos;
+    for (int i = 0; i < 120 && glm::length(w->combat().pip) > 0.3f; ++i) { // steer the pip into the reticle
+        Actions steer = lock;
+        steer.move = -glm::normalize(w->combat().pip);
+        w->tick(steer);
+    }
+    EXPECT_EQ(w->player().state().pos, at); // the stick steers the pip, not Lara
+    ASSERT_LE(glm::length(w->combat().pip), 1);
+    const float hp = t.hp;
+    Actions shoot = lock;
+    shoot.fire = true;
+    w->tick(shoot);
+    EXPECT_FALSE(t.alive()); // head shot: damage = its remaining health
+    ASSERT_FALSE(w->combat().shots.empty());
+    EXPECT_EQ(w->combat().shots.back().damage, hp);
+    EXPECT_EQ(w->combat().slowMo, 0);
+    EXPECT_EQ(w->combat().adrenaline, 0);
+    for (int i = 0; i < 16; ++i) w->tick({});
+    EXPECT_EQ(w->combat().timeScale, 1); // time scale restored
+}
+
+TEST(Combat, ReplayWithSwitchingIndependentOfRenderRate) {
+    const auto script = game::InputScript::parse("0 aim 1\n0.1 fire 1\n1.0 weapon 1\n1.1 weapon 0\n2.5 right 1\n3.0 weapon 1\n"
+                                                 "3.1 weapon 0\n3.5 right 0\n4.0 heal 1\n4.1 heal 0\n");
+    auto run = [&](double hz) {
+        CollisionMesh m;
+        addFloor(m, -5000, -5000, 5000, 5000, 0);
+        auto w = makeWorld(m, {0, 0, 0});
+        game::DummyTarget t;
+        t.pos = {2000, 600, 0}, t.hp = 1e6f;
+        w->targets.push_back(&t);
+        w->giveWeapon(game::Weapon::Shotgun, 20);
+        w->found[2] = 1;
+        w->damageLara(300, {}, game::kDamageBypass);
+        engine::FrameClock clock(game::kTickSeconds);
+        while (w->ticks() < 300)
+            for (int n = clock.advance(1.0 / hz); n > 0 && w->ticks() < 300; --n) w->tick(script.at(w->ticks()));
+        w->targets.clear();
+        const auto& c = w->combat();
+        return std::tuple(c.shotsFired, t.hp, c.rng, w->player().state().pos, c.weapon, c.clip[2][0], c.reserve[2], c.clip[0][0],
+                          w->health().value(), w->found[2]);
+    };
+    const auto a = run(30), b = run(60), c = run(144);
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(a, c);
+    EXPECT_EQ(std::get<4>(a), game::Weapon::Pistols); // switched to the shotgun and back
+    EXPECT_LT(std::get<5>(a), 6);                     // the shotgun fired
+    EXPECT_EQ(std::get<9>(a), 0);                     // the health pack was used
+}
+
 TEST(Combat, InputScriptCombatActions) {
-    const auto s = game::InputScript::parse("0 draw\n0.1 draw 0\n0.2 aim 1\n0.3 fire 1\n0.4 switch 1\n");
+    const auto s = game::InputScript::parse("0 draw\n0.1 draw 0\n0.2 aim 1\n0.3 fire 1\n0.4 switch 1\n0.5 weapon 1\n0.6 heal 1\n");
     EXPECT_TRUE(s.at(0).draw);
     EXPECT_FALSE(s.at(6).draw);
     EXPECT_TRUE(s.at(12).aim);
     EXPECT_TRUE(s.at(18).fire);
     EXPECT_TRUE(s.at(24).switchTarget);
+    EXPECT_FALSE(s.at(29).weapon);
+    EXPECT_TRUE(s.at(30).weapon);
+    EXPECT_TRUE(s.at(36).heal);
 }
 
 // ---- real data (OU_GAME_DIR) --------------------------------------------------------------------
@@ -284,30 +489,45 @@ TEST(CombatReal, WeaponData) {
     const char* dir = std::getenv("OU_GAME_DIR");
     if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(dir);
-    const auto p = game::loadWeapon(bf, "wp_handgun");
-    ASSERT_TRUE(p);
-    const game::WeaponDef def; // documented defaults = decoded pistols
-    EXPECT_EQ(p->ammo, "pr_handgunbullet");
-    EXPECT_EQ(p->clip, def.clip);
-    EXPECT_EQ(p->pellets, 1);
-    EXPECT_TRUE(p->infinite);
-    EXPECT_TRUE(p->dual);
-    EXPECT_EQ(p->mode, 1);
-    EXPECT_EQ(p->shortRange, def.shortRange);
-    EXPECT_EQ(p->maxRange, def.maxRange);
-    EXPECT_EQ(p->spreadDeg, def.spreadDeg);
-    for (int i = 0; i < 3; ++i) EXPECT_EQ(p->damage[i], def.damage[i]);
-    const auto uzi = game::loadWeapon(bf, "wp_uzi"), shotgun = game::loadWeapon(bf, "wp_shotgun");
-    ASSERT_TRUE(uzi && shotgun);
-    EXPECT_EQ(uzi->ammo, "pr_uzibullet");
-    EXPECT_EQ(uzi->clip, 40);
-    EXPECT_FALSE(uzi->infinite);
-    EXPECT_TRUE(uzi->dual);
-    EXPECT_EQ(shotgun->pellets, 7);
-    EXPECT_EQ(shotgun->spreadDeg, 15);
+    for (int i = 0; i < game::kWeaponCount; ++i) { // decoded = the documented defaults
+        const auto wpn = game::Weapon(i);
+        const auto p = game::loadWeapon(bf, game::weaponObject(wpn));
+        ASSERT_TRUE(p) << game::weaponName(wpn);
+        const game::WeaponDef def = game::weaponDefaults(wpn);
+        SCOPED_TRACE(def.object);
+        EXPECT_EQ(p->ammo, def.ammo);
+        EXPECT_EQ(p->ammoSlot, def.ammoSlot);
+        EXPECT_EQ(p->maxReserve, def.maxReserve);
+        EXPECT_EQ(p->clip, def.clip);
+        EXPECT_EQ(p->pellets, def.pellets);
+        EXPECT_EQ(p->infinite, def.infinite);
+        EXPECT_EQ(p->dual, def.dual);
+        EXPECT_EQ(p->mode, def.mode);
+        EXPECT_EQ(p->shortRange, def.shortRange);
+        EXPECT_EQ(p->maxRange, def.maxRange);
+        EXPECT_EQ(p->spreadDeg, def.spreadDeg);
+        EXPECT_EQ(p->maxSpreadDeg, def.maxSpreadDeg);
+        EXPECT_EQ(p->spreadPerShot, def.spreadPerShot);
+        EXPECT_FLOAT_EQ(p->spreadRecovery, def.spreadRecovery);
+        for (int k = 0; k < 3; ++k) EXPECT_EQ(p->damage[k], def.damage[k]);
+    }
+    // Lara's clips of every weapon load (loadLaraAnims throws on a missing one), with the lengths Combat.cpp times by
     const auto anims = game::loadLaraAnims(bf);
-    for (const auto n : game::kPistolClipNames) EXPECT_TRUE(anims.find(n)) << n;
-    EXPECT_EQ(anims.find("combat_pistol_RfireE")->durationSeconds(), 10.0 / 30.0);
+    for (int i = 0; i < game::kWeaponCount; ++i)
+        for (const auto n : game::weaponClipNames(game::Weapon(i))) EXPECT_TRUE(anims.weaponClip(game::Weapon(i), n)) << n;
+    const auto len = [&](game::Weapon w, const char* n) { return anims.weaponClip(w, n)->durationSeconds(); };
+    EXPECT_EQ(len(game::Weapon::Pistols, "combat_pistol_RfireE"), 10.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Pistols, "combat_pistols_equip"), 6.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Uzi, "combat_pistols_equip"), 15.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Uzi, "combat_pistols_reload"), 21.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Shotgun, "combat_shotgun_fire_F"), 13.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Shotgun, "combat_shotgun_pump"), 25.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Shotgun, "combat_shotgun_reload"), 117.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Shotgun, "combat_shotgun_equip"), 24.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Speargun, "combat_speargun_reload"), 31.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Speargun, "combat_shotgun_equip_submerged"), 17.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Speargun, "combat_shotgun_unequip_submerged"), 19.0 / 30.0);
+    for (const char* n : {"hit_light_front", "hit_mediumback", "hit_light_side_swim"}) EXPECT_TRUE(anims.find(n)) << n;
 }
 
 // l4_pool, on the stairs below the player intro (floor z 4721.2): a 1800-unit drop hurts, 2900 kills, the death
@@ -361,4 +581,39 @@ TEST(CombatReal, PoolFallDamageDeathAndPistols) {
     EXPECT_NEAR(hand.z - s.pos.z, 400, 60);
     const glm::vec3 toTarget = glm::normalize(t.aimPoint() - (s.pos + vec3(0, 0, 418)));
     EXPECT_GT(glm::dot(glm::normalize(hand - (s.pos + vec3(0, 0, 418))), toTarget), 0.8f);
+}
+
+// l4_pool's goo is water (surface 2699.3): under water the pistols stay holstered, the speargun draws and fires, and
+// each shot is followed by a reload from the reserve.
+TEST(CombatReal, PoolSpeargunUnderWater) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l4_pool", game::loadLaraAnims(bf), game::Spawn{{-4000, 0, 2000}, 0});
+    w.tick({});
+    Actions dive;
+    dive.drop = true;
+    w.tick(dive); // surfacing -> under water
+    for (int i = 0; i < 10; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().state, State::SwimUnder);
+    for (int i = 0; i < 60; ++i) w.tick(guns(true)); // pistols: holstered under water
+    EXPECT_FALSE(w.combat().drawn);
+    EXPECT_EQ(w.combat().shotsFired, 0u);
+    game::DummyTarget t;
+    t.pos = w.player().state().pos + vec3(900, 0, -250);
+    w.targets.push_back(&t);
+    w.giveWeapon(game::Weapon::Speargun, 5);
+    Actions sw;
+    sw.weapon = true;
+    w.tick(sw);
+    EXPECT_EQ(w.combat().weapon, game::Weapon::Speargun);
+    for (int i = 0; i < 150; ++i) w.tick(guns(true)); // equip 17/30 s, then shot, reload 31/30 s, shot
+    EXPECT_TRUE(w.combat().drawn);
+    EXPECT_EQ(w.player().state().state, State::SwimUnder);
+    EXPECT_EQ(w.combat().shotsFired, 2u);
+    EXPECT_EQ(t.hits, 2);
+    EXPECT_EQ(t.hp, 700 - 2 * 250);
+    EXPECT_LE(w.combat().reserve[3], 4);
+    w.targets.clear();
 }

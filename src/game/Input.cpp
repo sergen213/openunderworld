@@ -37,12 +37,14 @@ Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
     a.fire = (mouseButtons & SDL_BUTTON_LMASK) || axis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.5f;
     a.aim = (mouseButtons & SDL_BUTTON_RMASK) || axis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 0.5f;
     a.switchTarget = keys[SDL_SCANCODE_Q] || button(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+    a.weapon = keys[SDL_SCANCODE_X] || button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+    a.heal = keys[SDL_SCANCODE_H] || button(SDL_GAMEPAD_BUTTON_DPAD_UP);
     return a;
 }
 
 InputScript InputScript::parse(std::string_view text) {
-    static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact",
-                                                    "save", "load", "draw", "fire", "aim", "switch", "pause"};
+    static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact", "save",
+                                                    "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause"};
     InputScript s;
     std::istringstream in{std::string(text)};
     std::string line;
@@ -89,6 +91,8 @@ Actions InputScript::at(uint64_t tick) const {
         else if (e.action == "fire") a.fire = e.value != 0;
         else if (e.action == "aim") a.aim = e.value != 0;
         else if (e.action == "switch") a.switchTarget = e.value != 0;
+        else if (e.action == "weapon") a.weapon = e.value != 0;
+        else if (e.action == "heal") a.heal = e.value != 0;
         else if (e.action == "pause") a.pause = e.value != 0;
         else if (e.action == "lookx") a.look.x = e.value;
         else a.look.y = e.value;

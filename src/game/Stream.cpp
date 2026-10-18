@@ -121,6 +121,7 @@ void World::respawn() {
     }
     health_.reset(); // tru.exe 0x700060 on the restored player
     combat_ = {};
+    enemies_.reset();
 }
 
 // tru.exe STREAM_LevelLoadAdjacentUnits (0x5D2940) keeps the portal neighbours of the player's unit loaded;
@@ -210,8 +211,11 @@ void World::touchCheckpoints() {
     for (const auto& u : units_)
         for (const auto& c : u.data.checkpoints) {
             const vec3 w = c.pos + u.offset;
-            if (glm::length(vec2(p - w)) < kCheckpointRadius && std::abs(p.z - w.z) < kCheckpointHeight)
+            if (glm::length(vec2(p - w)) < kCheckpointRadius && std::abs(p.z - w.z) < kCheckpointHeight &&
+                checkpoint_ != CheckpointRef{u.data.name, c.id}) {
                 checkpoint_ = CheckpointRef{u.data.name, c.id};
+                enemies_.checkpoint();
+            }
         }
 }
 
@@ -278,7 +282,7 @@ int World::markupIndex(const std::string& unit, int local) const {
 
 void World::restore(const PlayerState& s, float camYaw, float camPitch) {
     player_.restore(s);
-    health_.reset(); // [I] a loaded save starts at full health (saves do not store it)
+    health_.reset(); // full; save::apply then sets the saved health (setHealth)
     prev_ = s;
     cam_.yaw = camYaw;
     cam_.pitch = camPitch;

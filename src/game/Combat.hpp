@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -21,6 +22,7 @@ struct Hit {
     glm::vec3 point{0}; // world impact point
     glm::vec3 dir{0};   // unit direction the shot / blow travelled
     Team source = Team::Neutral;
+    bool headshot = false; // adrenaline head shot (kills; the enemy may pick a special death clip)
 };
 
 // Anything Lara can target and shoot. Enemies (src/game/ai) implement it and register the pointer in
@@ -101,6 +103,7 @@ public:
     void heal(float amount, bool overheal = false); // 0x6F4EF0
     void tick(float dt);                            // 0x6F5160: regeneration, overheal decay, window
     void reset();                                   // 0x700060: full health (level start / respawn)
+    void set(float v) { reset(), value_ = v, regenBase_ = v; } // saves: restored health, window/regen clocks idle
 
 private:
     void hurt(float amount, int type); // common tail of damage()/fall()
@@ -113,23 +116,40 @@ private:
 };
 
 // ---- weapons ----------------------------------------------------------------------------------
+// Lara's weapon set: the dual pistols plus one secondary (weapon object data +0xDC = 1; picking up another
+// replaces it). Grenades (g_grenade_thrower) are not implemented: pr_grenade's projectile record is not
+// decoded (docs/GAMEPLAY.md "Combat").
+enum class Weapon { Pistols, Uzi, Shotgun, Speargun };
+inline constexpr int kWeaponCount = 4;
+std::string_view weaponObject(Weapon w);         // "wp_handgun", "wp_uzi", "wp_shotgun", "wp_speargun"
+std::string_view weaponName(Weapon w);           // "pistols", "uzi", "shotgun", "speargun"
+std::optional<Weapon> weaponByName(std::string_view name); // weaponName inverse
+
 // A weapon object's stats block S (object data +0xE0) and its ammo object's fire-mode record (ammo
 // object data +0x18), as tru.exe's fire function 0x6C9E50 / hitscan 0x6C64D0 read them. Defaults: the
 // dual pistols (wp_handgun + pr_handgunbullet) [O].
 struct WeaponDef {
     std::string object = "wp_handgun", ammo = "pr_handgunbullet";
+    int ammoSlot = -1;            // S+0x04 (0xFF none): live count fadb58+0x51C + 2 slot, max-reserve table index
+    int maxReserve = 0;           // Lara data +0x87C + 2 slot (the Normal column [I], 0x6EEAE0); 0 without a slot
     int pellets = 1;              // S+0x05
     int clip = 12;                // S+0x0B, rounds per gun
     bool infinite = true, dual = true; // S+0x88 bits 0x80 / 0x20
     float shortRange = 4000.0f;   // S+0x20: damage knee, targeting range
     float maxRange = 6500.0f;     // S+0x18: damage falloff end; [I] no hit past it
     float spreadDeg = 1.0f, maxSpreadDeg = 1.0f, spreadPerShot = 0.0f; // S+0x1C / +0x2C / +0x30
+    float spreadRecovery = 0.0f;  // S+0x34, degrees per 30 Hz frame [I unit]
     int mode = 1;                 // record +0: 1 hitscan, 2 projectile
-    float damage[3] = {40.0f, 30.0f, 20.0f}; // record +4 / +0x10 / +0x14: at 0, shortRange, maxRange
+    // Hitscan: record +4 / +0x10 / +0x14 = damage at 0, shortRange, maxRange. Projectile (mode 2, pr_spear): the
+    // record's +0x1C (250) for all three [I]; we fire projectiles as hitscan (the projectile record is not decoded).
+    float damage[3] = {40.0f, 30.0f, 20.0f};
     float damageAt(float dist) const;        // linear between the three
 };
-// Decodes `object` (pc-w\<object>.drm) and its ammo object; nullopt if a DRM or block is missing.
+// Decodes `object` (pc-w\<object>.drm) and its ammo object, and the max reserve from Lara's data (pc-w\lara.drm);
+// nullopt if a DRM or block is missing.
 std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bigfile, std::string_view object);
+// The decoded values for each weapon (what loadWeapon returns for the game's data; tests check it).
+WeaponDef weaponDefaults(Weapon w);
 
 // One bullet, for effects/tests.
 struct Shot {
@@ -142,13 +162,19 @@ struct Shot {
 
 // Lara's weapon/target state, advanced by World every tick.
 struct CombatState {
-    bool drawn = false;       // guns in hand (or being drawn)
+    Weapon weapon = Weapon::Pistols;    // in hand or holstered ready (inventory +0x134)
+    Weapon previous = Weapon::Pistols;  // inventory +0x138
+    Weapon secondary = Weapon::Pistols; // carried secondary (World::giveWeapon); Pistols = none
+    Weapon want = Weapon::Pistols;      // switch target: the drawn weapon holsters, then this one is drawn
+    bool drawn = false;       // weapon in hand (or being drawn)
+    bool redraw = false;      // switching: draw `want` once the current one is holstered
     float drawT = 0;          // upper-body layer: 0 holstered .. 1 aiming (equip / unequip clips)
     Damageable* target = nullptr;
     bool locked = false;      // hard lock (aim held), else soft target
     glm::vec2 aim{0};         // yaw (+ = Lara's left), pitch (+ = up) of the aim, rad, relative to her heading
     glm::vec3 aimPoint{0};
-    int clip[2] = {12, 12};   // rounds in the right / left gun
+    int clip[kWeaponCount][2] = {}; // rounds per weapon in the right / left gun (two-handed: [0]); World fills them
+    int reserve[kWeaponCount] = {}; // spare rounds per weapon (pistols: infinite)
     float reload = 0;         // seconds left of a reload
     float cooldown = 0;       // seconds until the next shot
     int hand = 0;             // next hand to fire: 0 right, 1 left
@@ -157,8 +183,18 @@ struct CombatState {
     std::vector<Shot> shots;  // fired this tick
     uint64_t shotsFired = 0, rng = 0x2545F491u;
     float deathTime = -1;     // seconds since death; -1 alive
-    bool drawHeld = false, switchHeld = false;
+    bool drawHeld = false, switchHeld = false, weaponHeld = false, healHeld = false, interactHeld = false, fireHeld = false;
+    float healCooldown = 0;   // seconds until the next health pack (g_healthpack data +0xEA: 60 frames)
+    int healthPacksUsed = 0;  // count, for logs
+    // Adrenaline (head shot): meter filled by damage dealt; full + hard lock + close + interact opens a window of
+    // slowed world time in which the move stick steers the pip into the reticle and fire kills.
+    float adrenaline = 0;     // meter 0..1
+    float slowMo = 0;         // real seconds left of the head-shot window; 0 = closed
+    glm::vec2 pip{0};         // pip offset from the reticle, reticle radii (inside 1 = on target)
+    float timeScale = 1;      // world (enemy) time scale; adrenaline slows it, Lara keeps real time (tru.exe 0x622418)
 };
+// A fresh state with every weapon's clips full (reserves empty).
+CombatState fullClips(const std::array<WeaponDef, kWeaponCount>& weapons);
 
 // Lara's targeting sets in her player data (+0x480: acquisition tiers, +0x470: soft target), criteria
 // 0x712090. Flags 0xBC000000 on both: line of sight from Lara + data+0x48C (375) required.

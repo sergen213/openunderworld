@@ -43,9 +43,10 @@ struct Actions {
     bool drop = false; // held; let go of a ledge / pole; on the ground: crouch (held), roll (running), drop to hang
     bool interact = false; // held; switches/levers react to the press edge, push blocks while held (src/script)
     bool save = false, load = false; // held; ou-game quicksaves / quickloads on the press edge (F5 / F9)
-    // combat (Combat.cpp): draw toggles pistols on the press edge; fire held (draws first); aim held = hard
-    // lock-on; switchTarget press edge cycles the lock
-    bool draw = false, fire = false, aim = false, switchTarget = false;
+    // combat (Combat.cpp): draw toggles the weapon on the press edge; fire held (draws first); aim held = hard
+    // lock-on; switchTarget press edge cycles the lock; weapon press edge swaps pistols <-> the secondary; heal
+    // press edge uses a health pack. Adrenaline: interact while the meter is full and close to a hard lock.
+    bool draw = false, fire = false, aim = false, switchTarget = false, weapon = false, heal = false;
     bool pause = false; // held; ou-game opens the pause menu on the press edge (Esc / pad Start; scripts: "pause")
 };
 
@@ -64,26 +65,27 @@ struct AnimLibrary {
     // loops have no root motion.
     float swimSpeed = 562.0f;
     anim::HairRig hair; // Lara's hair particles + constraints (anim::decodeHair); empty = rigid hair
-    // Dual pistols: wp_handgun stats (loadWeapon) and Lara's pistol clips from pc-w\wp_handgun.drm
-    // (kPistolClipNames, in `clips`). Defaults keep synthetic libraries usable without them.
-    WeaponDef pistols;
+    // Weapons (index = Weapon): stats (loadWeapon) and Lara's clips from each weapon's DRM (weaponClipNames), kept in
+    // `clips` as "<object>:<clip>" (the DRMs reuse names). Defaults keep synthetic libraries usable without them.
+    std::array<WeaponDef, kWeaponCount> weapons{weaponDefaults(Weapon::Pistols), weaponDefaults(Weapon::Uzi),
+                                                weaponDefaults(Weapon::Shotgun), weaponDefaults(Weapon::Speargun)};
 
     const anim::Clip* find(std::string_view name) const;
+    const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")
     // Mean of the hand bones (55, 80) relative to the root segment in `clip` at `t` (model space, root
     // translation removed); nullopt without a full skeleton.
     std::optional<vec3> handsAt(const anim::Clip& clip, double t) const;
 };
 // Names the controller requests; loadLaraAnims loads exactly these.
 extern const std::vector<std::string_view> kLaraClipNames;
-// Lara's pistol clips in pc-w\wp_handgun.drm: the 3x3 aim grid (combat_pistol_poseA..I), the centre
-// right/left fire clips and the reload.
-extern const std::vector<std::string_view> kPistolClipNames;
+// Lara's clips in weapon w's DRM: aim grid, fire, reload, equip/unequip (+ shotgun pump, speargun submerged).
+const std::vector<std::string_view>& weaponClipNames(Weapon w);
 // How the original fades `to` in after `from`: crossfade length and start time (seconds) from lara.drm's
 // anim requests. Player::play starts clips at startSeconds; World crossfades over blendSeconds.
 struct ClipBlend { float blendSeconds; double startSeconds; };
 ClipBlend clipBlend(std::string_view from, std::string_view to);
-// Skeleton + kLaraClipNames clips from pc-w\lara.drm, kPistolClipNames + pistols from wp_handgun.
-// Throws cdc::FormatError / std::runtime_error.
+// Skeleton + kLaraClipNames clips from pc-w\lara.drm, each weapon's weaponClipNames + stats. Throws
+// cdc::FormatError / std::runtime_error.
 AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile);
 
 // Segment-0 (root) translation of `clip` at unbounded time `t` seconds. Looping clips are unwrapped:
@@ -102,6 +104,7 @@ enum class State {
     // Beam = balance beam (markup 14), DropToHang = drop_to_ledgeb off an edge, HangJump = targeted
     // jump from a ledge/pole to another ledge/pole, PoleHang = hanging/swinging on a horizontal pole.
     Crouch, Roll, Slide, Beam, DropToHang, HangJump, PoleHang,
+    Hit, // hit reaction clip once with root motion (ground or swimming), then Idle / the swim state (World::damageLara)
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -173,6 +176,7 @@ public:
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0) const;
     void face(float yaw) { s_.yaw = yaw; } // combat: turn toward a locked target
     void die(std::string_view clip);       // State::Dead playing `clip` once
+    void hitReact(std::string_view clip);  // State::Hit playing `clip` once (restarts it)
 
 private:
     void play(std::string_view clip, bool loop, float rate = 1);
@@ -337,12 +341,17 @@ public:
     void damageLara(float amount, vec3 from, int type = kDamageLight); // enemy blows, hazards (tru.exe 0x6F5030)
     void kill();                                                      // message 4: damage = current health
     const Health& health() const { return health_; }
+    void setHealth(float v) { health_.set(v); } // saves (after restore(), which heals fully)
     const CombatState& combat() const { return combat_; }
     TargetingTuning targeting;
-    // Gun `hand` (0 right, 1 left): Lara bone it rides on (hand while drawn, thigh holster otherwise) and the
-    // gun model's matrix in that bone's frame. World matrix = modelMatrix * pose[bone] * offset.
-    std::pair<int, glm::mat4> gunMount(int hand) const;
-    vec3 muzzle(int hand) const; // world, this tick's pose
+    // Weapon w's model `hand` (0 right / the two-handed gun, 1 left): Lara bone it rides on (hands while drawn,
+    // thigh / back holster otherwise) and its matrix in that bone's frame; nullopt when it is not shown (not
+    // carried, a two-handed weapon's hand 1, the uzi out of hand). World matrix = modelMatrix * pose[bone] * offset.
+    std::optional<std::pair<int, glm::mat4>> gunMount(Weapon w, int hand) const;
+    vec3 muzzle(int hand) const; // current weapon, world, this tick's pose
+    // Carries `w` as the secondary (replacing the previous one; Pistols: none), full clip, `reserve` spare rounds
+    // capped at its max reserve (ou-game --weapon; the original gets them from pickups).
+    void giveWeapon(Weapon w, int reserve);
 
 private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
@@ -355,9 +364,10 @@ private:
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
     void touchCheckpoints();
     void tickCombat(const Actions& a, float dt);
-    void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // pistol upper body over `local`
+    void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // weapon upper body over `local`
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order
     void fire(int hand);
+    void reloadWeapon(); // refill the current weapon's clips from its reserve
     void collectPickups(bool pressed);
     void checkLevelEnd(); // script Activate of a cinematic_object -> onCinematic; a level end's -> startChapter(next)
 
@@ -387,7 +397,7 @@ private:
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     physics::Scene physics_;
     Health health_;
-    CombatState combat_;
+    CombatState combat_ = fullClips(anims_.weapons);
     double aimTime_ = 0; // pose clips' clock
     bool interactHeld_ = true;     // no press edge on the first tick
     std::vector<Pickup> pickedUp_;
@@ -405,14 +415,15 @@ std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const c
 // Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions.
 // Mouse look is added by the app: it accumulates relative motion per frame and feeds it to the next tick as
 // a rate (see ou-game). Keys: WASD/arrows move, Shift walk, Space jump, Ctrl/C drop, E interact, F5/F9
-// save/load, F draw/holster, Q switch target; mouse left fire, right aim/lock. Pad: left stick move, right
-// stick look, South jump, East drop, West interact, left shoulder walk, North draw, right trigger fire, left
-// trigger aim/lock, right stick click switch target.
+// save/load, F draw/holster, Q switch target, X switch weapon, H health pack; mouse left fire, right aim/lock.
+// Pad: left stick move, right stick look, South jump, East drop, West interact, left shoulder walk, North draw,
+// right trigger fire, left trigger aim/lock, right stick click switch target, d-pad right switch weapon, d-pad up
+// health pack (locals.bin 1298 / 1291 glyphs U+180A / U+1808 [I button order]).
 Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons = 0);
 
 // Scripted input for deterministic replays. Text, one event per line: `<seconds> <action> [value]`.
-// Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load, draw, fire, aim, switch
-// (0/1), lookx, looky (rad/s).
+// Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load, draw, fire, aim, switch,
+// weapon, heal (0/1), lookx, looky (rad/s).
 // A value persists until changed; times map to tick round(seconds * 60). '#' starts a comment.
 class InputScript {
 public:

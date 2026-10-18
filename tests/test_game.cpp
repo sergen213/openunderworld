@@ -294,7 +294,9 @@ TEST(GameReal, LaraClipsAndRootMotion) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     const auto anims = game::loadLaraAnims(bf);
-    EXPECT_EQ(anims.clips.size(), game::kLaraClipNames.size() + game::kPistolClipNames.size());
+    size_t weaponClips = 0;
+    for (int i = 0; i < game::kWeaponCount; ++i) weaponClips += game::weaponClipNames(game::Weapon(i)).size();
+    EXPECT_EQ(anims.clips.size(), game::kLaraClipNames.size() + weaponClips);
     EXPECT_GE(anims.skeleton.bones.size(), 116u);
     // ng_run: root moves -Y 806.9 units over 19 key intervals, 20 keys per 0.667 s cycle -> ~1274 units/s.
     const auto* run = anims.find("ng_run");

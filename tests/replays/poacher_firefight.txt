@@ -1,0 +1,5 @@
+# l4_ballcourt: --spawn 17520,10383,2650,180. Poacher 6541 (1500 ahead) fires bursts at Lara, panthers 6531/6533 charge; Lara draws, locks on and shoots.
+0.3 draw 1
+0.4 draw 0
+0.5 aim 1
+0.6 fire 1

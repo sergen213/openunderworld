@@ -1,0 +1,5 @@
+# l4_temple: --spawn -5096,-10909,1800,-90. Bats 5250..5254 (z 1043, below the platform) notice Lara, fly up at her head and bite; at 3.5 s she draws, locks on and shoots them; they drop into the pit.
+3.5 draw 1
+3.6 draw 0
+3.7 aim 1
+3.8 fire 1

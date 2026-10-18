@@ -252,16 +252,20 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy
 registers in `World::targets` (Combat's `Damageable`) and hurts Lara through `World::damageLara`. ou-game draws them
 CPU-skinned (model 0) instead of their static intro meshes; `--show-enemies` draws capsules (colour = mode), heading
-and line of sight; the overlay shows the nearest enemy; mode changes and blows are logged to stderr.
+and line of sight; the overlay shows the nearest enemy; mode changes (with the clip) and blows are logged to stderr.
+Enemy shots (`Enemies::shots`, this tick's) are logged (`enemy N shot hits Lara / misses from … to …`) and drawn as
+0.2 s tracers (yellow = hit Lara, white = miss / stopped by a wall).
 
 ### Survey (intros per unit) [O]
 
 - Mexico: `cat_panther` ×13 (ballcourt 4, temple 5, templepath 1, trailstart 3), `panther_thrall` ×1 (l4_pool 5645),
   `mayan_thrall_pool_generator` ×13 (l4_pool), `poacher` ×12 / `poacher_long_range` ×4 (ballcourt, temple),
-  `bat_enemy` ×5 + `small_albino_spider` ×22 (temple), `giant_albino_tarantula` ×13 + `small_albino_spider_generator`
-  ×9 (traprooms), `giant_tarantula_generator` ×3 (staircase_xibalba). Thailand: `tiger` ×8, spiders, bats.
+  `bat_enemy` ×5 (temple 5250..5254, z 1043) + `small_albino_spider` ×22 (temple), `giant_albino_tarantula` ×13 +
+  `small_albino_spider_generator` ×9 (traprooms), `giant_tarantula_generator` ×3 (staircase_xibalba). Thailand: `tiger`
+  ×8, spiders, 15 bats. Sharks: `shark_blueshark` (l1_seafloor 980..985, l2_cliffclimb 4020..4023), `shark_greenland`
+  (l7_arctic_sea 9125..9133).
 - Enemy objects: ObjectBase oflags2 (+4) bit 0x400000 selects the "enemy" object family (tru.exe 0x5BF0E0 → family
-  table 0x8ABA28 entry 14: init 0x63C190 (via 0x63C530), message 0x6164D0 (via 0x6187C0)).
+  table 0x8ABA28 entry 14: init 0x63C190 (via 0x63C530), message 0x6164D0 (via 0x6187C0)). Sharks are in it too.
 - Generators: ObjectBase +0xDE u16 = spawned object (mayan_thrall_pool_generator → 600 `mayan_thrall`, others → bats,
   spiders, tarantulas).
 
@@ -271,40 +275,132 @@ and line of sight; the overlay shows the nearest enemy; mode changes and blows a
 |---|---|---|
 | +0x00 | magic 0xDAF00018 | [O] 0x63C190 bails without it |
 | +0x04 | class: 1 bats/sharks, 3 cats, 4 soldiers, 7 spiders, 8 thralls | [O] values; meaning [I] |
-| +0x0C | byte: behaviour-tree vtable choice (0x8ACF90..A8) | [O] 0x63C190 |
-| +0x20 | component list node (next +0x1C); node +0x3C → health block {easy, normal, hard, +0xC} | [O] 0x620CC0 → 0x6E77B0 by difficulty 0x6E7710 (≤ 0 → normal) into comp+0x2C64 |
+| +0x0C | byte: behaviour-tree vtable choice (0x8ACF90..A8): 0 soldiers, 1 cats, 2 bats + sharks (flyer: EnemyState_FlyerMove RTTI), 3 thralls | [O] 0x63C190, values |
+| +0x20 | component list head (next +0x1C); each field below is read from the first node where it is non-null | [O] getters 0x614400..0x614940 |
 | +0x2C | 94.8 (0.3 m) on all types | [O] value; [I] body radius |
 | +0x3C, +0xA0 | 1264 (4 m), 60° | [O] used as a vertical tolerance (0x6497C0, 0x67B610) and a tilt limit (0x620500) |
+| node +0x20 | weapon `{u16 +2 object, s16 +8, f +0x10}`: poacher/long_range 114 `wp_akrifle`, −75, 100 | [O] 0x614400 → 0x614950 attaches it |
+| node +0x30 / +0x34 / +0x38 | senses: default / mode 2 / combat (layout below) | [O] 0x614490/0x6144C0/0x6144F0, modes FUN_0063F7F0 |
+| node +0x3C | health block {easy, normal, hard, +0xC} | [O] 0x620CC0 → 0x6E77B0 by difficulty 0x6E7710 (≤ 0 → normal) into comp+0x2C64 |
+| node +0x44 / +0x4C | pointers to sleep / investigate senses | [O] |
+| node +0x64 | death record (below) | [O] 0x614610, EnemyState_Death 0x66C500 |
+| node +0x68..+0x9C | attack records (below) | [O] 0x642D80, EnemyState_Fire 0x666D10/0x666EB0 |
+| node +0xE4 | `"Sidestep"` behaviour parameters `{300, ptr, 948.2/790.1, 60/100, …}` — not senses | [O] FUN_00623000 |
 
-Normal hit points [O]: cat_panther / panther_thrall 700, tiger / poacher / giant_albino_tarantula / viking_thrall 500,
-merc 450, mayan_thrall 350, yeti_thrall 1100, bat / small spiders 2. Distances in the data are multiples of 31.6056
-(316.056 units = 1 m, consistent with the hair constants).
+Clip refs in the records are `{s16 type, s16 idx}`: type 1 → ObjectBase +0x60 table (count +0x5C, 0x24-byte entries),
+entry +4 → s16 animation-list index (FUN_00626F10, FUN_004325d0) [O]; type 2 refs (anim requests) are not resolved [U].
+
+Senses record [O] (EnemySense 0x664E80 → 0x664B20): seen = inside the eye cone (s16 range/yaw°/pitch° at +0x10/+0x12/
++0x14, each falling back to +4/+6/+8 when negative; FUN_0064CF10) **or** a body cone (+4/+6/+8, +0xA/+0xC/+0xE;
+0x60DBA0), then a line-of-sight ray (0x493330, mask 0x42C13AB) unless byte +0x44 is set. +0x20 = lose-track distance
+(2528), +0x24 awareness falloff [I], +0x3A..+0x40 [U]. Combat enter (0x610430) switches to the combat record, exit
+(0x610470) back.
+
+| Type, record | Eye cone | Body cone A | Body cone B | No ray |
+|---|---|---|---|---|
+| poacher default / combat | 5720 / 45° / 30° | 5689 / 10° / 25° | 3792 / 180° / 30° (combat 45°) | no |
+| poacher_long_range default / combat | 6637 / 6321, 45° / 30° | 9481 / 7901, 10° / 30° | 3792 / 180° | no |
+| cat_panther (tiger eye 15802) | 11061 / 120° / 60° | 9481 / 60° / 30° | 2370 / 180° / 90° | yes |
+| bat_enemy default / combat | 6321 / 4740, 180° / 90° | 3792 / 4740, 180° / 90° | — | yes |
+| shark_blueshark default | 11378 / 180° / 180° | 6321 / 180° / 90° | 2370 / 180° / 90° | yes |
+
+Attack record [O]: clip refs +0x78 (blow), +0x7C (per-shot), +0x84 (follow-up); damage +0x154 × 0x6460C0 [I ≈ 1] with
+type +0x158 (second hit +0x164/+0x168, unused by our types); s16 +0x13E shots per burst, +0x144 gap, +0x13A start delay
+(enemy-clock counts, unit not found: [I] 1/30 s); +0x34 cooldown ([I] ms); byte +0x1F0 maximum yaw (°) before turning.
+Poacher: +0x68 fire 75 × 3, gap 5, delay 30, 7000, `combat_stand_burstfire_2` → `reload2`, yaw 10°; +0x6C (type-2 shot
+ref); +0x70 fire 75 × 3, gap 5, delay 5, 8000, `combat_crouch_burstfire` → `reload2`; melee +0x80 `kick_forward`,
++0x84 `rifle_bash`, +0x88 `rifle_bash_b`, 100 type 1. Panther: +0x80/+0x84 `simple_attack_90_right` 100 type 1,
++0x88 `simple_attack_static1` **50** type 1, +0x8C `simple_attack_static2` 100, +0x90 `simple_attack_moveto` 125
+type 2, +0x94 `lunge_attack_forward` 125 type 2, +0x98 `stun_attack2` 100 type 2, +0x9C `attack_overcover_high` 150
+type 2. Bat: +0x80 `attach_bite_loop` 75 type 0, cooldown 10000. Thralls: none. Sharks: none.
+
+Death record [O] (node +0x64; poacher and panther identical apart from the clips): timer s16 +0x1C = 120, +0x46,
++0x4C impulse; count +0xC8 of 0x14-byte entries at +0xCC `{clip ref, ?, ?, category, flag}`. FUN_00642210 takes the
+attacker's angle relative to the heading: category 1 front (±45°), 3 left, 5 back, 7 right; falls back to front/back
+by ±90°, then front; picks randomly among matching entries with the requested flag (FUN_00642170) and turns the heading
+for 3/5/7 (a − 90°, a + 180°, a + 90°). Poacher: 3/7 `death_shot_3`, 5 `death_shot_back`, 1 a type-2 ref, flag 3
+`death_placed_shot`, flag 7 `hosted_enemy_vault`. Panther: 5 `hitreact_thrown_forward`, 1 a type-2 ref, flag 3
+`death_adren`, flag 5 `death_running`, flag 7 `hitreact_thrown_forward`. Bat: 1 `death`. After the timer the exe
+hands the body to physics (0x696F90 budget check → impulse 0x696A60) [I: ragdoll].
+
+Normal hit points [O]: cat_panther / panther_thrall 700, tiger / poacher / giant_albino_tarantula / viking_thrall /
+shark_blueshark 500, merc 450, mayan_thrall 350, shark_greenland 800, yeti_thrall 1100, bat / small spiders 2.
+Distances in the data are multiples of 31.6056 (316.056 units = 1 m, consistent with the hair constants).
 
 ### Behaviour (ours) and numbers
 
-Modes idle → alert (0.4 s, turn) → chase (run clip root motion, turn 5 rad/s) → attack (one blow in the hit window)
-→ chase; hit reaction; death (holds the last frame); spawning (generator clip). Clips by role, first present name:
-idle `passive_idle`/`idle`, alert `attack_idle`/`idle_aggresive`, run `run_forward_2`/`run`, attack
-`simple_attack_static1`/`simple_attack`/`slash_attack`/`slash`, hit `hitreact_medium_front`/…, death
-`death_static`/`death`/`damage_front_death`, spawn `spawn_from_pool`. Movement: capsule collide-and-slide, ground
-snap 70 up / 140 down, gravity, ledge avoidance (no step leaving > 300 of drop ahead); never closer to Lara than
-radius + 100. Panther `run_forward_2` root speed 2323 units/s [O].
+Modes idle → alert (0.4 s, turn) → chase → attack (one blow in the hit window) / fire → reload → chase; hit
+reaction; death; spawning (generator clip). Perception uses the decoded senses (the combat record once out of idle):
+eye or body cone from the eye (0.8 h; [I] body cones are measured from the eye too) to Lara's chest (0.75 of 512),
+then the ray unless the record says no ray (cats, bats, sharks see through walls inside their cones). Unseen Lara
+closer than the lose-track distance is still tracked [I]; chasing enemies that reach her last seen spot wait there;
+4 s unseen [I] → idle. Clips by role, first present name: idle `passive_idle`/`idle_passive`/`idle`, alert
+`attack_idle`/`idle_aggresive`/`idle_combat_stand`, walk `walk_forward_2`/`walk`/`combat_walk_forward`/
+`bat_fly_passive`, run `run_forward_2`/`run`/`combat_run_forward`/`bat_fly_aggressive`, attack
+`simple_attack_static1`/`rifle_bash`/`attack_bite`/`simple_attack`/`slash_attack`/`slash`, hit
+`hitreact_medium_front`/…, death `death_static`/`death_shot`/`death`/`damage_front_death`, spawn `spawn_from_pool`;
+fire, reload and directional death clips come from the records. Ground movement: capsule collide-and-slide, ground
+snap 70 up / 140 down (a floor inside the lower half of the body lifts it: ballcourt poacher 6541's intro is 96 under
+its floor [O]) [I], gravity, ledge avoidance (no step leaving > 300 of drop ahead); never closer to Lara than both
+radii. Panther `run_forward_2` root speed 2323 units/s [O].
+
+- Soldiers (armed: node +0x20 weapon, a fire record with a resolved shot clip; poacher, poacher_long_range, merc):
+  seeing Lara inside the combat eye range (poacher 5720) they stand (`idle_combat_stand`), turn to her and, within the
+  record's max yaw, enter fire: wait the start delay, start the per-shot clip and fire the burst's shots `gap` apart;
+  then the follow-up clip (`reload2`) and the record's cooldown, rotating through the fire records (poacher +0x68,
+  +0x70). Each shot is a ray from the muzzle (eye height, one radius ahead) [I] at Lara's chest; [I] 35 % of shots
+  (per-enemy LCG seeded by uid) aim 1.5–3 of her radii aside; it stops at the first wall (line of fire: no damage) or
+  Lara's capsule (cylinder), which takes rec+0x154 (75, light). Lara out of range or out of sight: they run
+  (`combat_run_forward`) to where she was; within 474 [I]: the melee blow (`rifle_bash`, 100). No cover: the
+  EnemyBehavior_*Cover RTTI classes and `cover_*` clips exist, cover markup was not looked for [U]. The rifle
+  (`wp_akrifle`) is not drawn: model 0 has no gun, the skeleton's bones are unnamed and the hand bone was not found [U].
+- Flyers (behaviour 2): bats hover where placed (root motion dropped), fly in 3D (sphere of the body radius, slid along
+  walls) at 700 units/s [I] towards Lara's head (0.85 of her height) until within 0.8 × (radius + 150); bite
+  (`attack_bite`) within radius + 150, hitting within radius + 250, damage of the bat record (75) once per 1.5 s [I]
+  (the latch `attach_bite_loop` and its 10 s cooldown are not used); dead: `death` then gravity to the floor.
+  EnemyState_FlyerMove's numbers were not read.
+- Death clip as FUN_00642210 (above) with flag 3 on a head shot (`Hit::headshot`), 5 when hit while running, else 0
+  [I]; first matching entry instead of a random one; type-2 entries are skipped, so a plain front kill plays the role
+  clip (`death_static`, `death_shot`). No ragdoll: the clip's last frame is held. Clips whose last frame has its median
+  bone under a third of the bind pose's median count as lying (panther `death_static` 37 vs 306, `death_running` 47,
+  `death_adren` 53; poacher `death_shot` 55 vs 473, `death_shot_3` 40, `death_shot_back` 69; not `death_placed_shot`
+  178) [O measured]; others tip onto their side over 0.5 s about the forward axis at the feet [I] (flyers do not).
 
 | Quantity | Value | Provenance |
 |---|---|---|
 | Hit points | data (above) | [O] |
-| Radius / height | +0x2C / highest bind-pose bone (panther 344.6) | [O] / [I] |
-| Sight | 3160.6 (10 m), ±60°, raycast eye (0.8 h) → Lara (0.75 of 512) | [I] the exe's senses (EnemySensesPositionUpdate 0x659FA0) not decoded |
-| Sense radius (any direction) | 790.1 (2.5 m) | [I]; +0xE4 list holds {300, ptr, 948.2/790.1, 60/100, 60/100} records [O], meaning [U] |
-| Attack start / reach | 474 / 632 | [I] (+0x7C/+0x80 = 474, +0x88 = 632 are candidates) |
-| Blow damage | 120 Lara hp (light) | [I]. Melee hits post msg 0x11C via 0x63A810 with `0x6460C0(...) * desc[+0x50]` (0x65E1B0, 0x667AB0); the desc layout is [U]; panther attack records (list node +0x80..+0x9C, 0x220 bytes) hold 12/10 at +0x40/+0x44 |
-| Hit window | 35–60 % of the attack clip, 0.5 s cooldown | [I] |
+| Radius / height | +0x2C / highest bind-pose bone (panther 344.6, poacher 596.2) | [O] / [I] |
+| Sight | senses records (above); thralls have none: eye 3160.6 (10 m) ±60°, 790.1 (2.5 m) all round | [O] / thralls [I] |
+| Attack start / reach | 474 / 632; flyers radius + 150 / + 250 | [I] |
+| Blow damage | the record whose clip we play: panther 50 (`simple_attack_static1`), poacher 100 (`rifle_bash`), bat 75; type 2 → heavy, else light | [O]; thralls 120 [I] |
+| Hit window | 35–60 % of the attack clip, 0.5 s cooldown (bats 1.5 s); the records' +0x34 cooldowns are used for fire only, as we play one melee attack | [I] |
+| Shots | rec+0x154 per hit; shots/gap/start delay from the record in 1/30 s; cooldown rec+0x34 ms | [O] values; units [I] |
 | Stagger | after `block +0xC` damage (panther 80, thralls 0 = every hit) | [I] |
 | Generator trigger | Lara within 2528 (8 m), ±2000 z, once | [I] the real trigger is scripted/EnemySpawnData 0x614FB0 [U] |
 
-Not done: behaviour trees (search, flank, cover, taunt, jump/vault, nap), ranged soldiers, flying bats, sharks
-(warned and not spawned), navmesh/routing, enemy sounds, respawn reset on Lara's death, generator spawns kept across
-streaming (their generator stays fired).
+Checkpoints and streaming: `Enemies::checkpoint()` snapshots the dead uids when a new checkpoint is touched;
+`World::respawn` → `Enemies::reset()`: enemies dead at the checkpoint stay dead, the others are back at their placement
+with full health (`Enemy::start()`), generator spawns are removed and their generators re-armed [I: tru.exe restores
+the checkpoint save; the restore path was not traced]. Generator spawns are stashed with their generator's uid when
+their unit streams out and re-spawned when it streams back in.
+
+Sharks [O]: enemy family, class 1, behaviour 2 (the bats' flyer tree), health 500 / 800, senses above, death record
+with four type-2 entries, no attack records (damage [U]); clips `swim_forward_slow/medium/fast`, `burst_attack`,
+`bite_2` (blueshark), `death` (8 s), `death_float_loop`. Not spawned (warned): their units have no `watervolume` intro
+that `findWater` turns into a water box, so there is no volume to keep them in.
+
+Not done: behaviour trees (search, flank, cover, taunt, dodge, jump/vault, nap), merc / long-range specifics beyond
+their records, rifle mesh, bat latch, sharks, wall-hung spiders (they drop), navmesh/routing, enemy sounds, ragdoll.
+
+Verification [O] (ou-game, GL, 1792×1008, ASan debug build; screenshots viewed, kept privately): replay
+`tests/replays/poacher_firefight.txt` (l4_ballcourt, `--spawn 17520,10383,2650,180`): poachers 6540/6541 alert at tick
+1, fire at tick 26, first shots at tick 87 (start delay 60 ticks), bursts of 3 ten ticks apart, hits and misses
+logged, `reload2` at tick 127; frame 99 shows the yellow (hit) and white (miss) tracers from the poacher on the temple
+stairs to Lara while panthers 6531/6533 attack (50 per blow). Replay `tests/replays/bat_attack.txt` (l4_temple,
+`--spawn -5096,-10909,1800,-90`): the five bats alert at tick 1 and fly up from z 1043 towards the platform at 1725
+(with Lara drawing at once, her pistols killed all five by tick 117 as they climbed; the delayed-draw version that
+lets them bite was not rendered). Death poses, the bat bite in a real unit and the poacher bursts are covered by
+`AiReal.*` instead of screenshots; the panther's `death_static` end pose was not re-viewed.
 
 ## Combat (src/game/Combat.*)
 
@@ -317,39 +413,120 @@ damage type +0x63C):
   {0,1,2,4,3,5,4,4,5,4,4}) or type 5 hurts. Enemy hit message 0x11C: types 1 light / 2 heavy. Message 4 kills
   (type 6, amount = health). Fall damage (above) bypasses the window and records type 8.
 - Regeneration `0x6F5160`: below data+0x70 = 25 % of max, 45 frames (+0x78) after the last damage, health rises over
-  400 frames (+0x74) along `0x6E79D0`: base + cap·((1−e)t + e·t³), e = +0x7C = 0.7, capped at 25 %. Above max (health
-  packs with overheal) it decays from data+0x80 = 1.4 × max to max over +0x84 = 900 frames. Health packs (heal
-  `0x6F4EF0`) are Progression's pickups; `Health::heal` is the hook.
+  400 frames (+0x74) along `0x6E79D0`: base + cap·((1−e)t + e·t³), e = +0x7C = 0.7, capped at 25 %. Above max
+  (overheal, only from the reward path 0x5DB6A0 `heal(…, 1)`) it decays from data+0x80 = 1.4 × max to max over +0x84 =
+  900 frames.
+- Health packs [O] (g_healthpack data; use = gadget table 0x8AFC70 entry 2 "Healthpack", fnC 0x6CBB20, on the input
+  message 0x800003F): only with the cooldown at 0, a pack carried (count s16) and Lara alive; cooldown = data+0xEA = 60
+  frames (2 s [I 30 Hz]); count − 1; message 5 → `heal(data+0xF0 = 640, 0)` = 0x6F4EF0, clamped to max (no overheal).
+  The exe does not check full health: a pack used at full health is spent. Ours: `Actions::heal` (H, pad d-pad up:
+  locals 1291 "Press U+1808 to use a health pack", U+1808 = d-pad up [I TR7 button order]; script `heal`); the carried
+  count is `World::found[2]` (picked-up `ca_rw_shard` packs, saved) and drops by one per use. Lara has no use clip
+  [O]: g_healthpack.drm's `use` (1.03 s) animates the pack object, so nothing plays on her. Max carried 100 (+0xE2..E6)
+  and +1 per pickup (+0xE8) are not enforced (Progression counts pickups).
 - Death [I]: at health ≤ 0 on the ground, `death_fall_normal` (fall) or `death_toknee` (other damage) plays; 1 s
-  after it ends World::respawn (last checkpoint, full health as `0x700060`). Hit reactions are not played [U].
+  after it ends World::respawn (last checkpoint, full health as `0x700060`). The weapons, clips and reserves are kept.
+- Hit reactions: the exe turns an accepted enemy hit (message 0x11C → 0x719DD0 → 0x6F5030) into a reaction by type
+  (0x6EB590: type 1 light → state value +0x204, type 2 heavy → +0x208) and writes the attacker's angle from Lara's heading
+  into the anim graph (0x6EB250; mirror flag 0x20 when positive), which picks the clip; the graph's thresholds are
+  [U]. Ours (`World::damageLara` → `Player::hitReact`, state `Hit`, saved as "hit"): only when `Health::damage`
+  accepted the hit and Lara is on the ground (idle/walk/run/stop/turn/land/hit) or swimming; light = `hit_light_{front,
+  back,side}`, heavy = `hit_medium{front,back,right}` (lara.drm, 0.33 / 0.70 s [O]); front within ±45° of her heading,
+  back beyond ±135°, else side [I]; no mirroring: the side / right clip plays for both sides; swimming the `*_swim`
+  variants. The clip plays once with its root motion (ground: collide-and-slide, water: the swim sphere), then idle /
+  tread or submerged idle. Guns stay drawn and fire during it [I].
 
-Pistols [O] (wp_handgun data = ObjectBase+0xC8; stats block S = data+0xE0, read by fire `0x6C9E50`; `loadWeapon`):
-clip S+0x0B = 12 per gun, S+0x88 flags 0x80 infinite reserve / 0x20 dual, 1 pellet, spread S+0x1C = 1°, short range
-S+0x20 = 4000, max range S+0x18 = 6500. Damage from the ammo object `pr_handgunbullet` (id S+0x06) record +0x18:
-hitscan, 40 at 0 → 30 at 4000 → 20 at 6500 units. Uzi/shotgun/rifle blocks decode the same way (tests) but only
-the pistols are wired. Fire rate [I]: the exe fires on an animation event (0x75) of Lara's per-hand fire clip; we
-fire one shot per `combat_pistol_[RL]fireE` length (10 frames), hands alternating; reload 0.7 s
-(`combat_pistols_reload`). Hitscan from the gun muzzle to the aim point vs collision and target capsules, spread via
-a 32-bit LCG (deterministic replays).
+Weapons [O] (object data = ObjectBase+0xC8; stats block S = data+0xE0, read by fire `0x6C9E50`; `loadWeapon`, values
+= `weaponDefaults`, checked by `CombatReal.WeaponData`): Lara carries the pistols plus one secondary (data+0xDC: 0
+pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary replaces the old one).
 
-Upper body: Lara's pistol clips live in wp_handgun.drm. The 3×3 aim grid `combat_pistol_poseA..I` (measured: columns
-+109° / 0 / −104°, rows +40° / 0 / −57°) is blended bilinearly by the aim yaw/pitch over the subtree of spine
-segment 14, the fire clip's motion relative to its first frame is added for recoil, faded in over 0.2 s
-(equip clip length) and out over 0.633 s. Guns ride bones 80/55 (hands) when drawn, thighs 9/4 when holstered;
-mount offsets fitted on screenshots [I] (the data's attach segments data+0xB8..+0xBB = 7,6,5,4 index an unknown
-list [U]).
+| | pistols (wp_handgun) | uzi | shotgun | speargun |
+|---|---|---|---|---|
+| ammo object (S+6), mode | pr_handgunbullet, hitscan | pr_uzibullet, hitscan | pr_shotgunbullet, hitscan | pr_spear, projectile (2) |
+| damage at 0 / short / max range | 40 / 30 / 20 | 25 / 25 / 10 | 50 / 50 / 40 per pellet | 250 [I] |
+| short / max range (S+0x20 / +0x18) | 4000 / 6500 | 2000 / 4500 | 2000 / 3000 | 2500 / 5000 |
+| clip (S+0xB), dual (S+0x88 0x20) | 12 per gun, dual | 40 per gun, dual | 6 | 1 |
+| pellets (S+5), spread / max (S+0x1C / +0x2C) | 1, 1° / 1° | 1, 1° / 5° | 7, 15° / 15° | 1, 1° / 1° |
+| spread per shot / recovery (S+0x30 / +0x34) | 0 / 0 | 1° / 0.1° per frame [I unit] | 0 / 0 | 0 / 0 |
+| ammo slot (S+4), max reserve | none (S+0x88 0x80: infinite) | 0, 240 | 1, 72 | 4, 25 |
+| refire [I] | `combat_pistol_[RL]fireE` 10 keys, hands alternate | the uzi's own `fire` clip, 5 keys, alternate | `combat_shotgun_fire_*` 13 + `pump` 25 keys | 13 keys, then reload |
+| equip / unequip / reload | 6 / 19 / 21 keys | 15 / 15 / 21 (wp_uzi's own) | 24 / 24 / 117 | 24 / 24 / 31; under water 17 / 19 / 31 |
+
+- Max reserve: Lara data u16 tables at +0x868 / +0x872 / +0x87C (slot × 2; uzi, shotgun, rifle, tranq, spear =
+  400/90/300/25/40, 160/42/120/10/15, 240/72/210/15/25) picked by `0x3efa0` = 0 / 2 / other (0x6EEAE0) [O]; we use
+  +0x87C, taking `other` (1) to be Normal [I]. Live counts sit at `fadb58+0x51C` + 2·slot [O]. Reloads move rounds
+  from the reserve into each gun's clip; the pistols' reserve is infinite; a secondary out of rounds and reserve falls
+  back to the pistols [I].
+- The speargun's pr_spear record is a projectile (mode 2, 0x6C95F0 → 0x6C9300; its fields +0x34 = 250, +0x38 = 100,
+  +0x50 = 10000, +0x54 = 45 are not decoded): we fire it as hitscan with 250 damage [I].
+- Spread: per pellet, yaw and pitch offsets within ±spread/2 (0x69E300) from a 32-bit LCG (deterministic replays);
+  grows per shot to the max, recovers per frame, resets on draw (0x6E6C60).
+- Switching (`Actions::weapon`: X, pad d-pad right [I U+180A per locals 1298]; script `weapon`): pistols ↔ the secondary
+  (exe current / previous weapon at inventory +0x134 / +0x138 [O] = `CombatState::weapon` / `previous`); the weapon in
+  hand plays its unequip clip, then the other its equip clip; each keeps its own clip and reserve. Under water only the
+  speargun can be drawn and fired (the others holster): which weapons the exe allows submerged is [U] (every wp_* has
+  `fire_submerged` / `combat_water_submerged_equip`, the speargun alone has submerged reload clips).
+- Pickups [O]: no ammo objects exist (all `pu_*` are puzzle items); ammo comes from picking up a weapon (0x70E530 →
+  0x6F5E70: the intro's property 0x55 added to the slot, capped by the max reserve). A survey of every unit's intros
+  finds no uzi / shotgun / speargun / grenade pickups (only `wp_akrifle` in l1, `wp_handgun` in l3_main_hall,
+  `wp_thorhammer` and `wp_natla_fireball(_adren)` in l7_yggdrasil_end, `co_wp_*` cinematic props): the secondaries
+  come from scripts / enemy drops not decoded [U]. `ou-game --weapon uzi|shotgun|speargun` gives one with its max
+  reserve for testing (`World::giveWeapon`).
+- Grenades (g_grenade_thrower: gadget slot 4, max 4 / 6 / 10, +1 per pickup, cooldown 20 frames, projectile +0xF0 =
+  pr_grenade, locals 1309 "Press U+1806 to throw a sticky grenade" = RB [I]) are not implemented: pr_grenade's record
+  is mode 2 with an explosion sub-record (+0x44 = 2, then 1000, 1100, 200, 70, 300, 100, …, +0x80 = 120) whose fields
+  (damage, radius, fuse?) are [U].
+
+Upper body (subtree of spine segment 14; Lara's weapon clips live in each wp_* DRM and are kept as
+`"<object>:<clip>"` because the DRMs reuse names): the aim grid is blended bilinearly by the aim yaw/pitch. Pistols /
+uzi: 3×3 `combat_pistol_poseA..I` (each DRM's own), columns measured from the shoulder→hand directions +109° / 0 /
+−104°, rows +40° / 0 / −57°; the hand that fired adds its `combat_pistol_[RL]fireE` motion relative to its first
+frame. Shotgun / speargun: 3×5 `combat_shotgun_aim_{U,,D}{R,FR,F,FL,L}`, columns measured from the barrel line (rear
+left hand 55 → front right hand 80) relative to `_F`: −90° / −47° / 0 / +58° / +90°, rows +45° / −39° (row means;
+`_UFR` is a copy of `_FR` in the data); for 13 keys after a shot the matching `combat_shotgun_fire_*` cells replace the
+aim cells, then the shotgun adds `combat_shotgun_pump`. The reload clip replaces the layer while reloading. Drawing /
+holstering play the weapon's equip / unequip clip while `drawT` ramps over its length, blended into the aim pose over
+the last / first 30 % of the ramp, the layer fading in / out over 0.1 s at the holstered end [I]; the gun moves
+between holster and hand half way through [I]. Mounts [I, fitted on screenshots]: pistols / uzi on hand bones 80/55,
+pistols in thigh holsters 9/4 (the uzi is not shown out of hand); shotgun / speargun with the grip in the left hand
+along the line to the right hand, on the back (spine 14) when holstered.
 
 Targeting [O data, I use] (Lara data +0x480 / +0x470, criteria records {u16 type, u16 mode, f threshold, axis}):
 hard lock (aim held) tries tiers in order: nearest within 1264 (3D), then the smallest camera angle among targets
 within 8000 and ≤ 90° from the camera axis, then within 8000 and ≤ 90° from Lara's facing; soft target (drawn,
 aim not held): nearest within 5000 (2D) and 27.5° of her facing. LOS from 375 above the feet (+0x48C) is required.
 Switch target cycles through the hard-lock order [I]. Locked and standing, Lara turns toward the target [I]. No
-target: free aim along the camera ray. Adrenaline (meter +0x3C, slow motion) is not implemented [U].
+target: free aim along the camera ray.
 
-Input: F draw/holster (fire also draws), LMB fire, RMB aim/lock, Q switch; pad Y / RT / LT / R3; input scripts
-`draw`, `fire`, `aim`, `switch`. HUD (ou-game): health bar, lock reticle / free-aim cross, clip counts; muzzle
-flash, tracer and impact lines; `HG1_shot_c_*`, unholster and magazine waves from wp_handgun.drm. `--target X,Y,Z`
-places a 700-hp dummy capsule.
+Adrenaline [O strings, I numbers]: locals 1310 "Build up adrenaline for combat by damaging enemies", 1333–1335 "When
+the adrenaline meter is full … hold LT to lock on, get close, and press X … Steer the pip into the target reticle and
+then press RT for a Headshot". The world time scale `_DAT_00e7f1a0` (setter 0x4A3DC0; eased by the script natives
+0x776030 / 0x78C4E0) multiplies `gameTracker_timeMult`, and Lara's update divides it back out (0x622418), so she runs
+at real time while the world slows [O]. The fill rate, the slow-motion factor, the window length and the pip
+behaviour are not in the data we decoded [U]. Ours: every hit fills the meter by damage / 1000 [I]; full meter + hard
+lock + target within 1264 of her eye (the close lock tier [I]) + interact press opens a 3 s window (real time) [I]:
+`CombatState::timeScale` eases to 0.2 over 0.25 s [I] (enemies tick with dt·timeScale), Lara stands still, the pip
+starts 2.5 reticle radii off in a random (LCG) direction and the move stick steers it at 2 radii/s [I]; fire with
+the pip inside the reticle hits with `Hit::headshot` and damage = the target's health; any fire press or the window's
+end spends the meter and time eases back.
+
+Input: F draw/holster (fire also draws), LMB fire, RMB aim/lock, Q switch target, X switch weapon, H health pack, E
+adrenaline; pad Y / RT / LT / R3 / d-pad right / d-pad up / X; input scripts `draw`, `fire`, `aim`, `switch`, `weapon`,
+`heal`, `interact`. HUD (ou-game): health bar, adrenaline meter, lock reticle / free-aim cross, head-shot pip, text
+line (health, packs, adrenaline, weapon clip / reserve, carried secondary); muzzle flash, tracer and impact lines;
+shot / reload waves per weapon (`HG1_shot_c_*`, `MP5_shot_*`, `SG1_shot_*`, `speargun_shot_b_*`; HG1 magazine,
+`SG1_reload`, `speargun_cock_a_*`). `--target X,Y,Z` places a 700-hp dummy capsule.
+
+Tests (`tests/test_combat.cpp`): `Combat.HealthPacks` (640 heal, clamp, 2 s cooldown, count, none left),
+`WeaponSwitchKeepsRoundsAndReloadsFromReserve` (uzi given with a capped reserve, holster → switch → draw, per-weapon
+clips, reload of 80 rounds from 100 spare), `ShotgunPelletsInTheCone` (7 pellets within ±7.5°, next shot after fire +
+pump), `HitReactionPlaysAndReturns` (front / back heavy / side clips, invulnerable re-hit ignored, root motion, back to
+idle, guns stay out), `AdrenalineHeadShot` (meter from 1000 damage, window, time scale 0.2, pip steered in, kill, time
+scale restored), `ReplayWithSwitchingIndependentOfRenderRate` (pistols → shotgun → pistols + a health pack, 30/60/144 Hz
+bit-identical); `CombatReal.WeaponData` (all four weapons decode to `weaponDefaults`, every weapon clip loads, clip
+lengths). Viewed (l4_pool, GL, 1792×1008, 2026-10-18; openunderworld-work/screens/combatextra): `--weapon uzi` dual uzis
+on the hands firing at a `--target` dummy (pistols in the thigh holsters), `--weapon shotgun` firing 7 tracers into the
+dummy from the hip hold, and a health pack picked up after an 1800-unit drop (517 hp) and used: 1000 hp, packs 1 → 0.
 
 ## Tests
 
@@ -437,8 +614,12 @@ No side-by-side comparison with the original game was made.
   624, 661, 662, …), not markup; the exe's grapple logic is state-chart conditions (`PlayerSC_Grapple::IsBelowAttachPoint`,
   `WallDetected`, `RappelSpeed`, … 0x739C80..0x73C330) plus `[GrappleRope]` rope bodies, and 180+ `grapple_*` clips
   exist in lara.drm. Needs an input action and a rope simulation.
-- Missing: sprint, hit reactions, adrenaline, weapons other than the pistols, state-chart conditions (`PlayerSC_*`,
-  `PSCCF_*`). Saves do not store health (a load restores full).
+- Missing: sprint, state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenades (pr_grenade record [U]), the
+  assault rifle / tranquilizer / Thor's hammer, projectile flight for the speargun (hitscan), mirrored side hit
+  reactions, thrown / knock-down reactions (`Hit_Thrown*`, `hitReact_*`, types 7/9/10/12/15), hit reactions while
+  hanging/crouching, weapon and ammo pickups (none of uzi / shotgun / speargun in any intro), aiming from ledges /
+  poles / ladders (the `combat_pistol_ledgeb_*`, `_hpole_*` … sets), the adrenaline numbers (fill, slow factor,
+  window) and the exe's anim-graph hit-reaction thresholds. Saves do not store weapons, clips or reserves.
 - Collision: no depenetration pass (an already-touching contact being left is ignored); query mask 0xFF.
 - Live keyboard/mouse/gamepad play was not exercised by any recorded run: every screenshot is a scripted replay.
 - Hair is rigid; editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).
