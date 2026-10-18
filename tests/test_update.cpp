@@ -194,6 +194,57 @@ TEST_F(UpdateTest, UserRollbackToPrevious) {
     EXPECT_EQ(versionOf(root / "previous"), "0.3.0");
 }
 
+TEST_F(UpdateTest, AppImageSelfUpdate) {
+    const fs::path app = tmp / "apps/OpenUnderworld.AppImage", bak = app.string() + ".bak", stg = app.string() + ".new";
+    writeAll(app, bytes("appimage 0.1.0"));
+    fs::permissions(app, fs::perms(0755));
+    auto appOpts = [&](const std::string& v, const std::string& running) {
+        Options o = publish(v, release(v, {{"OpenUnderworld-" + v + "-x86_64.AppImage", "appimage " + v}}));
+        o.appImage = app;
+        o.runningVersion = running;
+        return o;
+    };
+    EXPECT_EQ(check(appOpts("0.1.0", "0.1.0")).status, Status::UpToDate);
+    EXPECT_THROW(check(appOpts("0.0.9", "0.1.0")), Error); // signed but older: rollback refused
+
+    // Hash mismatch: the running AppImage stays, no staging file is left.
+    Options bad = appOpts("0.2.0", "0.1.0");
+    writeAll(srv / "0.2.0/OpenUnderworld-0.2.0-x86_64.AppImage", bytes("APPIMAGE 0.2.0"));
+    EXPECT_THROW(update(bad), Error);
+    EXPECT_EQ(text(app), "appimage 0.1.0");
+    EXPECT_FALSE(fs::exists(stg));
+
+    // Good update: atomic replace, old file kept as .bak, install root never created.
+    writeAll(stg, bytes("stale partial download"));
+    Result r = update(appOpts("0.2.0", "0.1.0"));
+    EXPECT_EQ(r.status, Status::Installed);
+    EXPECT_EQ(r.installedVersion, "0.1.0");
+    EXPECT_EQ(text(app), "appimage 0.2.0");
+    EXPECT_NE(fs::status(app).permissions() & fs::perms::owner_exec, fs::perms::none);
+    EXPECT_EQ(text(bak), "appimage 0.1.0");
+    EXPECT_FALSE(fs::exists(stg));
+    EXPECT_FALSE(fs::exists(root));
+
+    // A symlink to the AppImage updates the real file and keeps the link.
+    fs::create_symlink(app, tmp / "link.AppImage");
+    Options viaLink = appOpts("0.3.0", "0.2.0");
+    viaLink.appImage = tmp / "link.AppImage";
+    EXPECT_EQ(update(viaLink).status, Status::Installed);
+    EXPECT_TRUE(fs::is_symlink(tmp / "link.AppImage"));
+    EXPECT_EQ(text(app), "appimage 0.3.0");
+
+    rollbackAppImage(app);
+    EXPECT_EQ(text(app), "appimage 0.2.0");
+    EXPECT_EQ(text(bak), "appimage 0.3.0");
+
+    // A manifest without an AppImage entry is refused in AppImage mode.
+    Options noApp = publish("0.4.0", release("0.4.0", {{"bin/ou-viewer", "viewer"}}));
+    noApp.appImage = app;
+    noApp.runningVersion = "0.2.0";
+    EXPECT_THROW(update(noApp), Error);
+    EXPECT_EQ(text(app), "appimage 0.2.0");
+}
+
 TEST_F(UpdateTest, InterruptedSwapRecovery) {
     // Crash after staging + journal, before anything moved: roll forward.
     fakeRoot();
@@ -292,7 +343,7 @@ TEST(UpdateCore, VersionsAndKeys) {
     EXPECT_THROW(compareVersions("", "1"), Error);
     EXPECT_FALSE(parsePublicKeyHex("abc"));
     EXPECT_TRUE(parsePublicKeyHex(std::string(64, 'a')));
-    if (auto k = releasePublicKey()) EXPECT_NE(*k, PublicKey{});
+    if (auto k = releasePublicKey()) { EXPECT_NE(*k, PublicKey{}); }
 }
 
 TEST(UpdateCore, HttpsTransportRefusesOtherSchemes) {
@@ -305,6 +356,8 @@ TEST(UpdateCore, HttpsTransportRefusesOtherSchemes) {
 TEST(Config, RoundTripAndDefaults) {
     fs::path p = fs::temp_directory_path() / ("ou_config_" + std::to_string(::getpid()) + "/config.json");
     EXPECT_EQ(ou::config::load(p).width, 1280); // missing -> defaults
+    EXPECT_EQ(ou::config::load(p).updateManifestUrl,
+              "https://github.com/sergen213/openunderworld/releases/latest/download/manifest.json");
     ou::config::Config c;
     c.gameDir = "/games/tru";
     c.renderer = "vulkan";

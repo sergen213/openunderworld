@@ -199,7 +199,7 @@ Result fetchVerified(const Options& opt, Bytes& manifestBytes, Bytes& sig) {
     r.manifest = verifyAndParse(manifestBytes, sig, opt.key);
     if (r.manifest.channel != opt.channel)
         throw Error("manifest channel '" + r.manifest.channel + "' != configured '" + opt.channel + "'");
-    r.installedVersion = installedVersion(opt.root);
+    r.installedVersion = opt.appImage.empty() ? installedVersion(opt.root) : std::optional(opt.runningVersion);
     r.status = Status::Available;
     if (r.installedVersion) {
         int c = compareVersions(r.manifest.version, *r.installedVersion);
@@ -372,7 +372,8 @@ Result update(const Options& opt) {
     Bytes mb, sig;
     Result r = fetchVerified(opt, mb, sig);
     if (r.status != Status::Available) return r;
-    install(opt.root, r.manifest, mb, sig, opt.fetch, opt.forbiddenRoots, opt.progress);
+    if (opt.appImage.empty()) install(opt.root, r.manifest, mb, sig, opt.fetch, opt.forbiddenRoots, opt.progress);
+    else installAppImage(opt.appImage, r.manifest, opt.fetch, opt.progress);
     r.status = Status::Installed;
     return r;
 }
@@ -429,6 +430,51 @@ std::string recover(const fs::path& root) {
     if (!fs::exists(root / kMarker)) return {};
     Lock lock(root);
     return recoverLocked(root);
+}
+
+void installAppImage(const fs::path& appImage, const Manifest& m, const Fetch& fetch,
+                     const std::function<void(const std::string&)>& progress) {
+    const fs::path target = fs::canonical(appImage); // a symlinked AppImage: replace the real file
+    if (!fs::is_regular_file(target)) throw Error(target.string() + " is not a regular file");
+    auto it = std::find_if(m.files.begin(), m.files.end(),
+                           [](const FileEntry& f) { return f.path.ends_with(".AppImage") && f.path.find('/') == std::string::npos; });
+    if (it == m.files.end()) throw Error("manifest lists no AppImage");
+    // Lock the AppImage itself (no extra files next to it); a second launcher fails fast.
+    int fd = ::open(target.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0 || ::flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        if (fd >= 0) ::close(fd);
+        throw Error(target.string() + " is locked by another update");
+    }
+    std::unique_ptr<int, void (*)(int*)> unlock(&fd, [](int* f) { ::close(*f); });
+    const fs::path stg = target.string() + ".new", bak = target.string() + ".bak";
+    fs::remove(stg); // leftover of an interrupted download
+    say(progress, "downloading " + it->path);
+    // ponytail: whole AppImage buffered in memory (~100 MB); stream to disk if it grows much larger.
+    Bytes data = fetch(it->url, it->size);
+    if (data.size() != it->size)
+        throw Error(it->path + ": size mismatch (" + std::to_string(data.size()) + " != " + std::to_string(it->size) + ")");
+    if (sha256Hex(data) != it->sha256) throw Error(it->path + ": sha256 mismatch");
+    try {
+        writeFileSync(stg, data, 0755);
+        fs::remove(bak);
+        std::error_code ec;
+        fs::create_hard_link(target, bak, ec); // same inode, no copy; falls back to a copy (e.g. FAT)
+        if (ec) fs::copy_file(target, bak);
+        say(progress, "replacing " + target.string());
+        fs::rename(stg, target); // atomic: the old inode lives on as .bak (and for the running process)
+    } catch (...) {
+        std::error_code ec;
+        fs::remove(stg, ec);
+        throw;
+    }
+    fsyncDir(target.parent_path());
+}
+
+void rollbackAppImage(const fs::path& appImage) {
+    const fs::path target = fs::canonical(appImage), bak = target.string() + ".bak";
+    if (!fs::is_regular_file(bak)) throw Error("no " + bak.string() + " to roll back to");
+    exchange(bak, target);
+    fsyncDir(target.parent_path());
 }
 
 } // namespace ou::update

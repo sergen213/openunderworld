@@ -1,0 +1,43 @@
+# Unsigned test AppImage for every push to main and every tag, uploaded as a workflow artifact.
+# CI holds no signing key: official signed releases (manifest.json + .sig, GitHub release) are made
+# locally with tools/release.sh. See docs/RELEASING.md.
+name: appimage
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git base-devel cmake ninja sdl3 glm libepoxy zlib openssl \
+            nlohmann-json gtest libsodium curl qt6-base qt6-wayland qt6-svg vulkan-headers vulkan-icd-loader \
+            shaderc ffmpeg sdl3_ttf
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags for git describe
+      - name: Build AppImage
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          OU_JOBS=4 packaging/appimage/build-appimage.sh build-appimage/out
+      - name: Smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OU_DISABLE_UPDATES: "1"
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          app=$(ls build-appimage/out/*.AppImage)
+          "$app" --self-test
+          "$app" --version
+          "$app" sign verify --help >/dev/null 2>&1 || [ $? -lt 128 ]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenUnderworld-AppImage-${{ github.sha }}
+          path: build-appimage/out/*
+          if-no-files-found: error

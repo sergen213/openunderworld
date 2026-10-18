@@ -78,6 +78,10 @@ struct Options {
     bool enabled = true;                  // config switch; OU_DISABLE_UPDATES=1 also disables
     std::vector<fs::path> forbiddenRoots; // e.g. the game directory: the root may not overlap it
     std::function<void(const std::string&)> progress;
+    // AppImage mode (set when running as one, i.e. $APPIMAGE): root is ignored; the version is compared
+    // against runningVersion and update() replaces this file with the manifest's *.AppImage entry.
+    fs::path appImage;
+    std::string runningVersion;
 };
 
 enum class Status { Disabled, UpToDate, Available, Installed };
@@ -100,5 +104,13 @@ std::string rollback(const fs::path& root);  // swap current <-> previous; retur
 std::string recover(const fs::path& root);   // repair an interrupted swap; "" if nothing to do
 std::optional<std::string> installedVersion(const fs::path& root);
 std::optional<std::string> versionOf(const fs::path& versionDir);
+
+// AppImage self-update: download the manifest's single top-level *.AppImage entry to <appImage>.new
+// (same directory, so the rename is atomic), check size + SHA-256, hard-link the running file to
+// <appImage>.bak, then rename .new over appImage. The manifest must already be signature-verified.
+void installAppImage(const fs::path& appImage, const Manifest& m, const Fetch& fetch,
+                     const std::function<void(const std::string&)>& progress = {});
+// Exchanges <appImage>.bak and appImage (pressing it again re-applies the newer one).
+void rollbackAppImage(const fs::path& appImage);
 
 } // namespace ou::update

@@ -37,7 +37,7 @@ Never touched: the game directory (the scan is read-only) and the original game'
   "drm": "pc-w\\lara.drm",
   "renderer": "opengl",
   "width": 1280, "height": 720, "fullscreen": false, "fov": 60.0, "vsync": true,
-  "updates": {"enabled": true, "channel": "stable", "manifest_url": ""}
+  "updates": {"enabled": true, "channel": "stable", "manifest_url": "https://github.com/sergen213/openunderworld/releases/latest/download/manifest.json"}
 }
 ```
 
@@ -50,13 +50,16 @@ Loading rules:
 ## Command line
 
 ```
-ou-launcher [--config FILE] [--game-dir DIR] [--tab N] [--scan] [--grab out.png] [--self-test]
+ou-launcher [--config FILE] [--game-dir DIR] [--tab N] [--scan] [--grab out.png] [--self-test] [--check-update] [--update]
 ```
 
 - `--game-dir`: overrides the configured directory for this session only; it is saved only by Save settings.
 - `--scan`: starts the import scan immediately.
 - `--grab`: saves a PNG of the window (after the scan, if `--scan` is given) and quits.
 - `--self-test`: builds the UI, processes events once and exits. It is the ctest `launcher_self_test`, run with `QT_QPA_PLATFORM=offscreen`.
+- `--check-update` / `--update`: headless updater using the config's update settings. Prints one result line and exits 0, or prints `Update failed: …` and exits 1. `--check-update` never writes anything. Inside an AppImage, `--update` replaces the AppImage itself (docs/UPDATES.md). Without a display, set `QT_QPA_PLATFORM=offscreen`.
+
+When run from the AppImage (`$APPIMAGE` set), the Version & Updates tab updates and rolls back the AppImage file. **Launch** starts the bundled `ou-viewer` and ignores the install root.
 
 ## Verification (2026-10-18)
 

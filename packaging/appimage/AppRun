@@ -1,0 +1,17 @@
+#!/bin/sh
+# OpenUnderworld AppImage entry point.
+#   OpenUnderworld.AppImage [launcher options]     -> ou-launcher
+#   OpenUnderworld.AppImage <tool> [options]       -> ou-<tool>   (game viewer movie audio import asset text sign)
+HERE="$(dirname "$(readlink -f "$0")")"
+case "$1" in
+  game|viewer|movie|audio|import|asset|text|sign)
+    tool="ou-$1"; shift
+    exec "$HERE/usr/bin/$tool" "$@" ;;
+  launcher)
+    shift ;;
+  tools|--tools)
+    echo "usage: ${ARGV0:-OpenUnderworld.AppImage} [launcher] [launcher options]"
+    echo "       ${ARGV0:-OpenUnderworld.AppImage} game|viewer|movie|audio|import|asset|text|sign [options]"
+    exit 0 ;;
+esac
+exec "$HERE/usr/bin/ou-launcher" "$@"

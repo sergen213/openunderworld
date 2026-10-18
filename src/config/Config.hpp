@@ -35,7 +35,8 @@ struct Config {
     bool vsync = true;
     bool updatesEnabled = true;
     std::string updateChannel = "stable";
-    std::string updateManifestUrl;  // empty = no update source configured
+    // Signed manifest of the newest GitHub release (manifest.json.sig next to it); empty = no update source.
+    std::string updateManifestUrl = "https://github.com/sergen213/openunderworld/releases/latest/download/manifest.json";
     GraphicsConfig graphics;
 };
 

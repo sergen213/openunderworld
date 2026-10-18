@@ -33,6 +33,8 @@
 #include <QVBoxLayout>
 #include <QtConcurrent>
 
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <unistd.h>
 
@@ -58,7 +60,35 @@ struct Paths {
     fs::path backups = ou::config::dataHome() / "openunderworld" / "save-backups";
     fs::path logs = ou::config::stateHome() / "openunderworld" / "logs";
     fs::path installRoot = ou::config::dataHome() / "openunderworld" / "install"; // updater-managed copy
+    fs::path appImage = [] { const char* a = std::getenv("APPIMAGE"); return fs::path(a ? a : ""); }(); // set by the AppImage runtime
 };
+
+// Update options from config; AppImage mode replaces $APPIMAGE itself instead of the install root.
+ou::update::Options updateOptions(const Paths& paths, const ou::config::Config& c) {
+    auto key = ou::update::releasePublicKey();
+    if (!key) throw std::runtime_error("this build has no release key compiled in; updates are unavailable");
+    ou::update::Options o;
+    o.root = paths.installRoot;
+    o.appImage = paths.appImage;
+    o.runningVersion = OU_VERSION;
+    o.manifestUrl = c.updateManifestUrl;
+    o.channel = c.updateChannel;
+    o.key = *key;
+    o.fetch = ou::update::httpsFetch();
+    o.enabled = c.updatesEnabled;
+    if (!c.gameDir.empty()) o.forbiddenRoots = {c.gameDir};
+    return o;
+}
+
+QString describe(const ou::update::Result& r, const Paths& paths) {
+    using S = ou::update::Status;
+    if (r.status == S::Disabled) return "Updates are disabled.";
+    if (r.status == S::UpToDate) return "Up to date (" + q(r.manifest.version) + ").";
+    if (r.status == S::Available) return "Signed update " + q(r.manifest.version) + " available.";
+    if (!paths.appImage.empty())
+        return "Installed " + q(r.manifest.version) + " into " + q(paths.appImage) + " (old one kept as .bak); restart to use it.";
+    return "Installed " + q(r.manifest.version) + "; previous version kept for rollback.";
+}
 
 // Human summary + verdict of an ou_importer scan.
 QString summarize(const json& m, bool& ok) {
@@ -450,8 +480,14 @@ private:
         connect(checkBtn, &QPushButton::clicked, this, [this] { runUpdate(false); });
         connect(installBtn, &QPushButton::clicked, this, [this] { runUpdate(true); });
         connect(rollbackBtn, &QPushButton::clicked, this, [this] {
-            try { updateStatus_->setText("Rolled back; active version " + q(ou::update::rollback(paths_.installRoot))); }
-            catch (const std::exception& e) { updateStatus_->setText("Rollback failed: " + q(e.what())); }
+            try {
+                if (!paths_.appImage.empty()) {
+                    ou::update::rollbackAppImage(paths_.appImage);
+                    updateStatus_->setText("Swapped " + q(paths_.appImage) + " with its .bak; restart to use it.");
+                } else {
+                    updateStatus_->setText("Rolled back; active version " + q(ou::update::rollback(paths_.installRoot)));
+                }
+            } catch (const std::exception& e) { updateStatus_->setText("Rollback failed: " + q(e.what())); }
             refreshVersion();
         });
         auto* f = new QFormLayout;
@@ -476,8 +512,11 @@ private:
 
     void refreshVersion() {
         auto inst = ou::update::installedVersion(paths_.installRoot);
-        versionLabel_->setText(QString("<b>OpenUnderworld %1</b> (this launcher)<br>Updater-managed install: %2<br>%3")
-                                   .arg(OU_VERSION).arg(inst ? q(*inst) + " in " + q(paths_.installRoot) : QString("none"))
+        QString managed = !paths_.appImage.empty() ? "AppImage " + q(paths_.appImage) + " (updated in place)"
+                          : inst                   ? "install " + q(*inst) + " in " + q(paths_.installRoot)
+                                                   : QString("none");
+        versionLabel_->setText(QString("<b>OpenUnderworld %1</b> (this launcher)<br>Updater-managed: %2<br>%3")
+                                   .arg(OU_VERSION).arg(managed)
                                    .arg(ou::update::releasePublicKey() ? "Release signing key compiled in." : "No release key compiled in: updates unavailable."));
         std::ifstream mf(paths_.installRoot / "current" / ou::update::kManifestName);
         try {
@@ -487,16 +526,9 @@ private:
     }
 
     void runUpdate(bool install) {
-        auto key = ou::update::releasePublicKey();
-        if (!key) { updateStatus_->setText("This build has no release key compiled in; updates are unavailable."); return; }
+        collect();
         ou::update::Options o;
-        o.root = paths_.installRoot;
-        o.manifestUrl = s(manifestUrl_->text().trimmed());
-        o.channel = s(channel_->currentText().trimmed());
-        o.key = *key;
-        o.fetch = ou::update::httpsFetch();
-        o.enabled = updatesEnabled_->isChecked();
-        if (!gameDir_->text().isEmpty()) o.forbiddenRoots = {s(gameDir_->text())};
+        try { o = updateOptions(paths_, cfg_); } catch (const std::exception& e) { updateStatus_->setText(q(e.what())); return; }
         updateStatus_->setText(install ? "Downloading…" : "Checking…");
         auto* watcher = new QFutureWatcher<QString>(this);
         connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher] {
@@ -507,13 +539,11 @@ private:
         watcher->setFuture(QtConcurrent::run([o, install, this]() -> QString {
             try {
                 auto r = install ? ou::update::update(o) : ou::update::check(o);
-                using S = ou::update::Status;
-                if (r.status == S::Disabled) return "Updates are disabled.";
-                QString cl = q(r.manifest.changelog);
-                QMetaObject::invokeMethod(changelog_, [this, cl] { changelog_->setPlainText(cl); });
-                if (r.status == S::UpToDate) return "Up to date (" + q(r.manifest.version) + ").";
-                if (r.status == S::Available) return "Signed update " + q(r.manifest.version) + " available.";
-                return "Installed " + q(r.manifest.version) + "; previous version kept for rollback.";
+                if (r.status != ou::update::Status::Disabled) {
+                    QString cl = q(r.manifest.changelog);
+                    QMetaObject::invokeMethod(changelog_, [this, cl] { changelog_->setPlainText(cl); });
+                }
+                return describe(r, paths_);
             } catch (const std::exception& e) { return QString("Update failed: ") + e.what(); }
         }));
     }
@@ -545,10 +575,11 @@ private:
         }
     }
 
-    // Updater-managed copy first, then the binary next to this launcher, then $PATH.
+    // Updater-managed copy first (not when running as an AppImage), then the binary next to this launcher, then $PATH.
     fs::path viewerPath() const {
-        for (fs::path p : {paths_.installRoot / "current/bin/ou-viewer", fs::path(s(QCoreApplication::applicationDirPath())) / "ou-viewer"})
-            if (::access(p.c_str(), X_OK) == 0) return p;
+        fs::path managed = paths_.appImage.empty() ? paths_.installRoot / "current/bin/ou-viewer" : fs::path();
+        for (fs::path p : {managed, fs::path(s(QCoreApplication::applicationDirPath())) / "ou-viewer"})
+            if (!p.empty() && ::access(p.c_str(), X_OK) == 0) return p;
         return "ou-viewer";
     }
 
@@ -584,13 +615,29 @@ int main(int argc, char** argv) {
     QCommandLineOption scan("scan", "Run the import scan on start.");
     QCommandLineOption selfTest("self-test", "Build the UI, process events once and exit (CI smoke).");
     QCommandLineOption grab("grab", "Save a PNG of the window (after --scan finishes) and exit.", "file");
-    cli.addOptions({config, gameDir, tab, scan, selfTest, grab});
+    QCommandLineOption checkUpdate("check-update", "Check the configured signed manifest, print the result and exit.");
+    QCommandLineOption doUpdate("update", "Check and install a newer signed release (the AppImage itself when run as one), then exit.");
+    cli.addOptions({config, gameDir, tab, scan, selfTest, grab, checkUpdate, doUpdate});
+    cli.process(app);
+
+    Paths paths;
+    if (cli.isSet(config)) paths.config = s(cli.value(config));
+    if (cli.isSet(checkUpdate) || cli.isSet(doUpdate)) {
+        try {
+            auto o = updateOptions(paths, ou::config::load(paths.config));
+            o.progress = [](const std::string& m) { std::fprintf(stderr, "update: %s\n", m.c_str()); };
+            auto r = cli.isSet(doUpdate) ? ou::update::update(o) : ou::update::check(o);
+            std::printf("%s\n", s(describe(r, paths)).c_str());
+            return 0;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "Update failed: %s\n", e.what());
+            return 1;
+        }
+    }
     cli.process(app);
 
     // Gamepad listing only; the viewer owns its own SDL instance.
     SDL_Init(SDL_INIT_GAMEPAD);
-    Paths paths;
-    if (cli.isSet(config)) paths.config = s(cli.value(config));
     Launcher w(paths, cli.value(gameDir));
     w.tabs()->setCurrentIndex(cli.value(tab).toInt());
     w.show();
