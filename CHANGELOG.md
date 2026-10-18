@@ -6,7 +6,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-18
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
 ### Added
+- Health and damage from the original data: 1000 max health, fall-damage curve (safe below 1280 units, lethal at 2215), hit invulnerability, regeneration to 25%, death animation and checkpoint respawn.
+- Dual pistols with original stats (12-round clips, range-dependent damage), upper-body aim poses, lock-on and soft targeting, target switching, reload, HUD (health bar, reticle, ammo). F draw, LMB fire, RMB aim, Q switch.
+- Enemy AI: panthers, thralls, tigers, spiders spawn from level intros and pool generators with original hit points; sight/chase/attack/hit-reaction/death; `--show-enemies`.
 - Main menu (START NEW GAME / LOAD GAME / GAME OPTIONS / QUIT GAME, original strings), pause menu (Esc / pad Start), load menu listing saves, options (SFX / music volume), PDA page with treasures/relics/health packs found; keyboard and gamepad navigation.
 - New Game plays `explode.bik` and starts the prologue in Croft Manor; the original chapter sequence (Mediterranean Sea … Arctic Sea) with title cards, `--chapter N`, and level-to-level transitions at each chapter's closing cinematic.
 - Treasures, relics and health packs can be picked up (E / pad West) with an on-screen notification; collected items, found counts and the chapter are saved.
@@ -49,6 +56,7 @@ First experimental build. Requires your own legally owned copy of Tomb Raider: U
 - Signed updater (Ed25519, staged swap with journal recovery, anti-rollback) and `ou-sign`.
 - AppImage packaging (`packaging/appimage/build-appimage.sh`), AppImage self-update in the launcher (`--check-update`, `--update`), local signed release script `tools/release.sh`, CI AppImage artifact.
 
-[Unreleased]: https://github.com/sergen213/openunderworld/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sergen213/openunderworld/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sergen213/openunderworld/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sergen213/openunderworld/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sergen213/openunderworld/releases/tag/v0.1.0
