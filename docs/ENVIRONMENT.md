@@ -20,18 +20,18 @@ python 3.14.8, JDK 27 (default `java-27-openjdk`), ghidra 12.1.2 (`/opt/ghidra`)
 Libraries: sdl3 3.4.18, qt6-base/tools/declarative 6.12.0, vulkan-headers/icd-loader 1.4.363, shaderc (glslc), glslang, spirv-tools,
 glm 1.0.3, zlib-ng-compat 2.3.3, zstd, lz4, openssl 3.6.5, libsodium 1.0.22, gtest 1.18, nlohmann-json 3.12, libepoxy 1.5.10, glew 2.3.1.
 
-## Missing, proposed (not installed — awaiting approval)
+## Optional packages (installed by the user 2026-10-18 11:55, per pacman.log)
 
 ```sh
 sudo pacman -S --needed vulkan-validation-layers volk stb minisign
 ```
 
-| Package | Needed for | Blocks now? |
-|---|---|---|
-| vulkan-validation-layers | Vulkan backend debugging (milestone 6) | No |
-| volk | Vulkan function loading (optional; can load via `vkGetInstanceProcAddr`) | No |
-| stb | PNG dumps / image IO in tools (TGA/PPM used meanwhile) | No |
-| minisign | Manual signing of release manifests (libsodium covers verification in-app) | No |
+| Package | Used for |
+|---|---|
+| vulkan-validation-layers 1.4.363 | Vulkan validation, on by default in Debug (`OU_VK_VALIDATION=0/1`) |
+| volk | not used (backend loads via `vkGetInstanceProcAddr`) |
+| stb | not used yet |
+| minisign | not used (signing via `tools/ou-sign`, libsodium Ed25519) |
 
 Not available in repos: imgui, vulkan-memory-allocator (diagnostics overlay is self-written; VMA can be vendored later if needed).
 
