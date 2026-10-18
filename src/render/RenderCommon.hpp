@@ -18,12 +18,9 @@ constexpr int kGlyph = 8, kAtlasCols = 16, kAtlasRows = 6;
 constexpr int kAtlasW = kGlyph * kAtlasCols, kAtlasH = kGlyph * kAtlasRows;
 std::vector<uint8_t> buildFontAtlas();
 
-struct TextVertex {
-    float x, y, u, v; // pixels from top-left; u < 0 = solid background quad
-    uint32_t color;   // RGBA8
-};
-// Triangle list for the diagnostics overlay (leading '!' = highlighted line).
-std::vector<TextVertex> buildOverlayVertices(Viewport vp, std::span<const std::string> lines);
+// Triangle list of the text pass: `ui` (FrameOptions::ui) first, then the diagnostics overlay (leading '!' =
+// highlighted line) on top.
+std::vector<TextVertex> buildOverlayVertices(Viewport vp, std::span<const std::string> lines, std::span<const TextVertex> ui = {});
 
 // Bytes per 4x4 block for BCn formats, 0 for uncompressed 4-byte-per-pixel formats.
 size_t blockBytes(scene::PixelFormat format);

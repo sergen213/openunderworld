@@ -56,6 +56,8 @@ json toJson(const SaveGame& s) {
         {"camera", {{"yaw", s.cameraYaw}, {"pitch", s.cameraPitch}}},
         {"checkpoint", cp},
         {"collected", s.collected},
+        {"chapter", s.chapter},
+        {"found", s.found},
         {"script", s.script},
     };
 }
@@ -105,6 +107,9 @@ SaveGame fromJson(const json& j) {
     if (const auto c = j.find("checkpoint"); c != j.end() && !c->is_null())
         s.checkpoint = game::CheckpointRef{c->at("unit").get<std::string>(), c->at("id").get<int32_t>()};
     s.collected = j.value("collected", std::set<int32_t>{});
+    s.chapter = j.value("chapter", std::max(0, game::chapterOfUnit(s.unit)));
+    s.found = j.value("found", std::array<int, 3>{});
+    if (s.chapter < 0 || s.chapter >= int(game::kChapters.size())) throw SaveError("bad chapter " + std::to_string(s.chapter));
     s.script = j.value("script", json::object());
     if (!s.script.is_object()) throw SaveError("script state is not an object");
     return s;
@@ -135,6 +140,8 @@ SaveGame capture(const game::World& world) {
     s.cameraPitch = world.camera().pitch;
     s.checkpoint = world.checkpoint();
     s.collected = world.collected;
+    s.chapter = world.chapter;
+    s.found = world.found;
     s.script = world.script().serialize();
     s.ticks = world.ticks();
     return s;
@@ -154,6 +161,8 @@ void apply(const SaveGame& save, game::World& world) {
     world.restore(p, save.cameraYaw, save.cameraPitch);
     world.setCheckpoint(save.checkpoint);
     world.collected = save.collected;
+    world.chapter = save.chapter;
+    world.found = save.found;
     world.script().restore(save.script);
 }
 

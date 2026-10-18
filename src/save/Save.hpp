@@ -30,7 +30,9 @@ struct SaveGame {
     int waterIndex = -1;       // water markup index within waterUnit
     float cameraYaw = 0, cameraPitch = -0.25f;
     std::optional<game::CheckpointRef> checkpoint;
-    std::set<int32_t> collected;
+    std::set<int32_t> collected; // World::collected (pickup intro ids)
+    int chapter = 0; // game::kChapters index; saves without it: chapterOfUnit(unit), else 0
+    std::array<int, 3> found{}; // World::found (per PickupKind)
     nlohmann::json script = nlohmann::json::object(); // trigger/puzzle state (src/script), opaque here
     uint64_t ticks = 0;        // simulation ticks played when saved (informational)
 };

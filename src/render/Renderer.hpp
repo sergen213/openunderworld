@@ -24,6 +24,12 @@ struct DebugLine {
     uint32_t color = 0xFFFFFFFF; // RGBA8, little-endian (as scene::Vertex::color)
 };
 
+// Screen-space quad vertex of the text/UI pass (font atlas: RenderCommon kGlyph/kAtlas*).
+struct TextVertex {
+    float x, y, u, v; // pixels from top-left; u < 0 = solid quad
+    uint32_t color;   // RGBA8
+};
+
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
     bool cullBackFaces = true;              // front = counter-clockwise (cdc meshes are CCW)
@@ -36,6 +42,7 @@ struct FrameOptions {
     bool shadows = false;  // sun shadow map (RenderCommon shadowViewProj), PCF 3x3
     bool fxaa = false;     // FXAA on the resolved image
     bool hdr = false;      // RGBA16F scene target + ACES tonemap
+    std::span<const TextVertex> ui = {}; // screen-space triangle list (src/ui menus, HUD), drawn before the overlay
 };
 
 struct Image {

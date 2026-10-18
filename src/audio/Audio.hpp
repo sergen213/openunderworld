@@ -100,4 +100,74 @@ inline constexpr size_t kMulHeaderSize = 0x800;
 MulHeader parseMulHeader(std::span<const uint8_t> d);
 Mul decodeMul(std::span<const uint8_t> d);
 
+// ---- Mus! music script (.mus): an AAD-style instrument bank + MIDI-like sequence whose meta
+// events drive the gains of the .mul stems from global music variables. AUDIO.md §5.
+inline constexpr uint32_t kMusVersion = 0x114;
+struct MusSample {             // 0x34 bytes; offset/size address the .sam bank
+    std::string name;
+    uint32_t samOffset = 0, size = 0;
+};
+struct MusKeyRange {           // tone layer -> sample index; program zone -> tone index
+    uint8_t keyLo = 0, keyHi = 0, velLo = 0, velHi = 0;
+    uint32_t index = 0;
+};
+struct MusTone { std::string name; std::vector<MusKeyRange> layers; };
+struct MusProgram { std::string name; uint32_t bank = 0, program = 0; std::vector<MusKeyRange> zones; };
+struct MusStem {               // one per .mul channel group (0x58 bytes)
+    uint32_t sampleRate = 0, channels = 0, frames = 0;
+    uint32_t unknown14 = 0;    // 10..24 [U]
+    uint32_t msPerBeat = 0;    // fade time unit (500 in every retail file)
+    float volume = 1, fade = 1, mute = 1, pan = 0.5f; // initial gain factors
+};
+inline constexpr uint8_t kMusMeta = 0xFF; // MusEvent::status of a meta event
+struct MusEvent {
+    uint32_t offset = 0;       // of the delta VLQ, from track start (label/jump target space)
+    uint32_t delta = 0;        // ticks
+    uint8_t status = 0;        // 0x80..0xEF channel message, 0xF0 sysex, 0xFF meta
+    uint8_t meta = 0;          // meta command (status 0xFF)
+    std::vector<uint8_t> data;
+};
+struct MusSequence {           // "QSMa"
+    uint32_t id = 0, tempo = 0; // tempo: microseconds per quarter note
+    uint16_t ppqn = 0, unknown0a = 0;
+    std::vector<std::vector<MusEvent>> tracks; // decoded up to the end-of-track meta 0x44
+};
+struct MusFile {
+    uint32_t header04 = 0, version = 0, header20 = 0; // header04 = first sequence offset - 8 [I]
+    std::vector<MusSequence> sequences;
+    std::vector<MusStem> stems;
+    std::vector<uint32_t> labels; // track byte offsets by label number
+    std::vector<MusSample> samples;
+    std::vector<MusTone> tones;
+    std::vector<MusProgram> programs;
+};
+// Throws FormatError on bad magic/version, truncation, undecodable events, or operands of the
+// commands MusSequencer executes that are out of range (stem, label).
+MusFile parseMus(std::span<const uint8_t> d);
+
+// The exe's music sequencer (0x5950A0 tick, 0x594520 track loop, 0x580F80 meta dispatch, stem
+// fades 0x5891B0), reduced to what drives stem gains: variables, branches/gotos, end of track,
+// stem volume/fade/tempo. Other commands (channel/slot/loop/substitution/mute-ramp) are ignored;
+// no retail file uses them. Keeps a reference to `f`.
+class MusSequencer {
+public:
+    explicit MusSequencer(const MusFile& f, size_t sequence = 0);
+    // Ramps fades by `seconds`, advances the tempo clock and runs due events against the global
+    // music variables (exe byte array 0xCCB560). A taken jump ends that track's frame, so scripts
+    // poll their variables once per update.
+    void update(float seconds, std::span<uint8_t, 256> vars);
+    std::vector<float> stemGains() const; // per stem: volume * fade * mute (0x5864E0)
+    bool finished() const;                // every track hit meta 0x44
+
+private:
+    struct Track { size_t pos = 0; uint64_t time = 0; bool active = true; };
+    struct Fade { float target = 0, rate = 0, left = 0; bool on = false; };
+    const MusFile& f_;
+    const MusSequence& seq_;
+    std::vector<Track> tracks_;
+    std::vector<MusStem> stems_;
+    std::vector<Fade> fades_;
+    double seconds_ = 0;
+};
+
 } // namespace ou::audio

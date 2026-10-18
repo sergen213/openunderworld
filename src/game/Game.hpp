@@ -7,6 +7,7 @@
 #include "collision/Collision.hpp"
 #include "formats/Formats.hpp"
 #include "game/Combat.hpp"
+#include "game/Progress.hpp"
 #include "script/Script.hpp"
 #include "game/ai/Enemy.hpp"
 
@@ -44,6 +45,7 @@ struct Actions {
     // combat (Combat.cpp): draw toggles pistols on the press edge; fire held (draws first); aim held = hard
     // lock-on; switchTarget press edge cycles the lock
     bool draw = false, fire = false, aim = false, switchTarget = false;
+    bool pause = false; // held; ou-game opens the pause menu on the press edge (Esc / pad Start; scripts: "pause")
 };
 
 // ---- animations -------------------------------------------------------------------------------
@@ -207,6 +209,13 @@ struct UnitData {
     std::vector<Checkpoint> checkpoints;
     std::optional<Spawn> spawn; // findSpawn
     std::shared_ptr<const cdc::Drm> drm;
+    // Progression (src/game/Progress.hpp): reward intros; cinematic intros whose script names chapter start
+    // units (level ends); intros whose script names a music track (pc-w\music\<name>\<name>.mus exists),
+    // first one; the unit's own track "<name>_mus_01" when it exists, else empty [I].
+    std::vector<Pickup> pickups;
+    std::map<int32_t, std::vector<std::string>> chapterLinks;
+    std::map<int32_t, std::string> musicByIntro;
+    std::string music;
 };
 // Throws cdc::FormatError if pc-w\<name>.drm is missing or not a unit.
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name);
@@ -270,7 +279,12 @@ public:
     void respawn();
     const std::optional<CheckpointRef>& checkpoint() const { return checkpoint_; }
     void setCheckpoint(std::optional<CheckpointRef> c) { checkpoint_ = std::move(c); }
-    std::set<int32_t> collected; // intro ids of picked-up items; saved, nothing collects yet
+    std::set<int32_t> collected; // intro ids of picked-up items (Pickup::id); saved
+    std::array<int, 3> found{};  // pickups collected per PickupKind (PDA counts); saved
+    int chapter = 0;             // kChapters index being played; saved
+    // Starts chapter `n` (kChapters) at its start unit's player intro; respawns fall back there. Throws as enterUnit.
+    void startChapter(int n);
+    const std::vector<Pickup>& pickedUp() const { return pickedUp_; } // last tick (world-frame positions)
 
     // Save/load helpers. Markup index <-> (unit, index in that unit); -1 / nullopt when not loaded.
     std::optional<std::pair<std::string, int>> markupOwner(int index) const;
@@ -302,6 +316,8 @@ private:
     void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // pistol upper body over `local`
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order
     void fire(int hand);
+    void collectPickups(bool pressed);
+    void checkLevelEnd(); // script Activate of a level-end cinematic -> startChapter(next)
 
     collision::CollisionMesh col_;
     AnimLibrary anims_;
@@ -325,6 +341,8 @@ private:
     Health health_;
     CombatState combat_;
     double aimTime_ = 0; // pose clips' clock
+    bool interactHeld_ = true;     // no press edge on the first tick
+    std::vector<Pickup> pickedUp_;
 };
 
 // The unit's `player` intro (objectlist.txt name), else the first intro; nullopt if the unit has none.

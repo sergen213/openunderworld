@@ -25,7 +25,8 @@ Vulkan, so the RADV 256-byte leak needs `tests/lsan_vulkan.supp`.
 Controls: WASD/arrows move relative to the camera, Shift walks, Space jumps (and climbs up while hanging), Ctrl or C
 lets go of a ledge, E uses switches / pushes and pulls blocks (with forward/back held), mouse orbits the camera.
 Gamepad: left stick, right stick, South = jump/climb, East = drop, West = use, left shoulder = walk. F1 toggles the
-overlay, Esc quits. `--fov` / the launcher config set the vertical FOV. Switches, doors, trigger volumes/planes and
+overlay, Esc / pad Start opens the pause menu ("Progression" below; without `--level`/`--chapter`/`--load` ou-game
+starts at the main menu). `--fov` / the launcher config set the vertical FOV. Switches, doors, trigger volumes/planes and
 blocks: `src/script`, docs/formats/SCRIPTS.md; script events are logged to stderr.
 
 Input scripts: one event per line, `<seconds> <action> [value]`, `#` comments. Actions `forward`, `right` (stick
@@ -334,3 +335,54 @@ No side-by-side comparison with the original game was made.
 - Collision: no depenetration pass (an already-touching contact being left is ignored); query mask 0xFF.
 - Live keyboard/mouse/gamepad play was not exercised by any recorded run: every screenshot is a scripted replay.
 - Hair is rigid; editor proxy meshes (yellow/red boxes) are drawn (LEVELS.md).
+
+## Progression: chapters, level ends, pickups, menus, music
+
+Code: `src/game/Progress.{hpp,cpp}` (tables, `scriptStrings`), `World::startChapter/collectPickups/checkLevelEnd`
+(`Stream.cpp`), `src/ui/Ui.{hpp,cpp}` (menus, PDA page, HUD as `FrameOptions::ui` quads), `ou-game` (`src/app/game/main.cpp`).
+Tests `tests/test_progress.cpp`; replays `tests/replays/menu_new_game.txt`, `pool_pickup.txt`.
+
+**Chapter sequence** [O]: `pc-w\generalbank.drm` script section 6 lists the chapter start units at 0xF920..0xF9C0:
+`l3_main_bedroom` (prologue), `l1_seatop`, `l2_cliffclimb`, `l3_caverns_start`, `l4_trailstart`, `l5_startsnow`,
+`l6_ship_exterior`, `l7_thin_ice`, `l7_himalaya_end`; generalbank DTP 2 holds `chapter0` + `l3_main_bedroom` (New Game).
+The cinstream headers place the prologue cinematics (001_pro_corridor, 010_pro_surprise) in l3_main_bedroom / l3_main_hall
+and 030_med_yacht in l1_seatop [O]. `FUN_005de2b0` special-cases `l1_seatop` (wetsuit) [O]. Chapter names: locals.bin
+52..58 in that order [I mapping]; prologue = 54 CROFT MANOR [I]; "ONE WEEK EARLIER..." (1307) is shown under the chapter-1
+title after the prologue [I placement]. New Game: frontend state 8 "PlayNewGameMovie" plays `explode.bik`
+(`0x5DB110`, state names `0x77CB20`) [O], then chapter 0. The original main menu plays `medsea_loop.bik` behind it [O];
+ours draws the chapter-0 unit dimmed instead.
+
+**Level ends** [O data, I trigger]: the script of exactly one `cinematic_object` per chapter end names the next chapter's
+start unit: l3_main_hall 4106 (prologue → 1), l1_cine_ship_sinking 1005, l2_cliffclimb 2565, l3_mansion_exterior_afterburn
+4070, l4_ballcourt 5483, l5_valaskjalf 6846, l6_ship_natla_room 1387. l3_main_hall's script also names
+`l3_caverns_start`, so the target is the lowest-numbered start unit after the current chapter. Trigger volumes link to
+these cinematics (l2 2564, l3_main_hall 4129, l4 5468/6407, l5 6866/6872); in our runtime the Activate of such a
+cinematic starts the next chapter at once (the cinematic itself is not played). The l1/l6/afterburn cinematics are only
+reached through unit scripts or other cinematics, which do not run yet [U]; `--chapter N` starts any chapter.
+
+**Pickups** [O names/counts, I roles]: `*_rw_artifact` (7..22 per chapter) = treasures, `*_rw_treasure` (one per
+chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot
+natives). All share base script 3674 (playersensor, "popUpTitleMessageChannel", hint_14). Ours: interact press within
+200 units horizontally / 250 vertically of the reward intro picks up the nearest one [I]; it joins `World::collected`,
+`World::found` counts it, the mesh is hidden and the HUD shows `TREASURES|RELICS|HEALTH PACKS` (1251/1252/1274) with the
+count [I format]. Saved (docs/SAVES.md). Health packs are not yet usable (Combat).
+
+**Menus** [I layout, O strings]: Main 51 title, 124 START NEW GAME, 126 LOAD GAME, 125 GAME OPTIONS, 131 QUIT GAME;
+Pause 1049 PAUSE, 122 RESUME GAME, 127 SAVE GAME (slot `save-<date>`), 126, 1050 ACCESS PDA, 125, 1062 BACK TO MENU;
+Load lists `saveDir()/*.ousave` newest first (456 "Unavailable" if none); Options 491: 487 SFX VOLUME, 488 IN-GAME MUSIC
+VOLUME (mixer bus volumes); PDA page: chapter name, 1075 AREA INFO, 1073/1072/1274 with the found counts. Objective text is
+not mapped [U]. Keys: arrows/WASD, Enter/Space/E accept, Esc/Backspace back; pad d-pad, South, East/Start. Replays drive
+menus with `forward`/`right` ±1, `jump`/`interact` (accept), `drop`/`pause` (back); the script clock keeps running in menus.
+Text uses the renderer's 8×8 ASCII atlas: button glyphs U+1800.. are dropped, accents removed.
+
+**Music** (docs/formats/AUDIO.md §5): one track, `pc-w\music\<name>\<name>.mul` with its `.mus` sequencer setting the
+stem gains every tick (variables all 0: writers of e.g. 0x7D are [U]). The track changes (2 s crossfade) when the current
+unit has a `<unit>_mus_01` track [I naming] and when Lara enters a volume whose intro script names a track
+(184 `soundvolume`, 24 `soundtriggervolume` intros; soundvolume derives from triggervolumebase, soundvolume.drm 3485 →
+3516 → 3515 [O]). [O] `--chapter 1 --music-wav`: tick 1 l1_seatop_mus_01 (unit), tick 100 l1_seafloor_mus_01 (Lara fell
+into l1_seafloor), tick 105 l1_seatop_mus_01 (volume 927), tick 181 l4_pool_mus_01 after a quickload; 0.5 s RMS
+0.084 → 0.043 across the crossfade, then 0.08–0.11 (WAV in openunderworld-work/screens/progression, not listened to).
+
+Verified [O] (2026-10-18, GL, screenshots viewed): main menu over the dimmed bedroom; `menu_new_game.txt` → explode.bik
+(45 frames) → "CROFT MANOR" card, Lara walking in l3_main_bedroom; `pool_pickup.txt` in l4_pool with `--spawn
+-6045,-6100,2844,-90` → treasure 5489, "TREASURES 1".

@@ -42,7 +42,7 @@ Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
 
 InputScript InputScript::parse(std::string_view text) {
     static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact",
-                                                    "save", "load", "draw", "fire", "aim", "switch"};
+                                                    "save", "load", "draw", "fire", "aim", "switch", "pause"};
     InputScript s;
     std::istringstream in{std::string(text)};
     std::string line;
@@ -89,6 +89,7 @@ Actions InputScript::at(uint64_t tick) const {
         else if (e.action == "fire") a.fire = e.value != 0;
         else if (e.action == "aim") a.aim = e.value != 0;
         else if (e.action == "switch") a.switchTarget = e.value != 0;
+        else if (e.action == "pause") a.pause = e.value != 0;
         else if (e.action == "lookx") a.look.x = e.value;
         else a.look.y = e.value;
     }

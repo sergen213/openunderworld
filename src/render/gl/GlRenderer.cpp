@@ -473,7 +473,7 @@ public:
         glBindTextureUnit(0, t.color.get());
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        drawOverlay(vp, options.overlay);
+        drawOverlay(vp, options.overlay, options.ui);
     }
 
     Image readBackbuffer(Viewport vp) override {
@@ -692,9 +692,9 @@ private:
         glDepthFunc(GL_LESS);
     }
 
-    void drawOverlay(Viewport vp, std::span<const std::string> lines) {
-        if (lines.empty()) return;
-        std::vector<TextVertex> v = buildOverlayVertices(vp, lines);
+    void drawOverlay(Viewport vp, std::span<const std::string> lines, std::span<const TextVertex> ui) {
+        if (lines.empty() && ui.empty()) return;
+        std::vector<TextVertex> v = buildOverlayVertices(vp, lines, ui);
         Resources& r = *res_;
         glNamedBufferData(r.textVbo.get(), GLsizeiptr(v.size() * sizeof(TextVertex)), v.data(), GL_STREAM_DRAW);
         glDisable(GL_DEPTH_TEST);

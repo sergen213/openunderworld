@@ -1,0 +1,3 @@
+# l4_pool: press interact next to treasure 5488 (ca_rw_artifact)
+0.5 interact 1
+0.6 interact 0

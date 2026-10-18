@@ -537,9 +537,9 @@ public:
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 0, 1, &postSet_, 0, nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
 
-        if (!options.overlay.empty()) {
+        if (!options.overlay.empty() || !options.ui.empty()) {
             vkCmdSetViewport(cmd, 0, 1, &flipped);
-            std::vector<TextVertex> v = buildOverlayVertices({int(extent_.width), int(extent_.height)}, options.overlay);
+            std::vector<TextVertex> v = buildOverlayVertices({int(extent_.width), int(extent_.height)}, options.overlay, options.ui);
             const uint32_t count = std::min<uint32_t>(uint32_t(v.size()), kMaxTextVertices);
             std::memcpy(f.text.mapped, v.data(), count * sizeof(TextVertex)); // host-coherent, per-frame buffer
             const float screen[2] = {float(extent_.width), float(extent_.height)};

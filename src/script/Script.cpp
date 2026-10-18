@@ -86,7 +86,9 @@ bool endsWith(const std::string& s, const char* suf) {
 
 // [I] behaviour classes by objectlist.txt name (the exe binds C++ object types per object; not decoded).
 std::optional<Kind> classify(const std::string& n) {
-    if (endsWith(n, "triggervolume")) return Kind::Volume; // triggervolume, soundtriggervolume, firetriggervolume, ...
+    // triggervolume, soundtriggervolume, firetriggervolume, ...; soundvolume's script derives from
+    // triggervolumebase too (soundvolume.drm 3485 -> 3516 -> 3515) [O]
+    if (endsWith(n, "triggervolume") || n == "soundvolume") return Kind::Volume;
     if (n == "triggerplane") return Kind::Plane;
     if (contains(n, "cheat")) return std::nullopt;
     if (contains(n, "switch") || contains(n, "lever")) return Kind::Switch;

@@ -20,6 +20,15 @@ constexpr float kPortalProbeHeight = 250.0f, kPortalMargin = 50.0f;
 constexpr float kCheckpointRadius = 250.0f, kCheckpointHeight = 400.0f;
 
 vec3 v3(const float* f) { return {f[0], f[1], f[2]}; }
+
+// Does pc-w\music\<name>\<name>.mus exist? Cached: the same names recur in every unit of a chapter.
+// ponytail: process-wide cache keyed by name, not per bigfile (one install per process).
+bool isMusic(const cdc::BigfileSet& bigfile, const std::string& name) {
+    static std::map<std::string, bool> cache;
+    const auto it = cache.find(name);
+    if (it != cache.end()) return it->second;
+    return cache[name] = bigfile.read("pc-w\\music\\" + name + "\\" + name + ".mus").has_value();
+}
 } // namespace
 
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
@@ -40,9 +49,23 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
                             : std::map<uint16_t, std::string>{};
     for (const auto& in : unit.intros) {
         const auto n = names.find(in.objectId);
-        if (n != names.end() && (n->second == "checkpoint" || n->second == "invis_checkpoint"))
+        if (n == names.end()) continue;
+        if (n->second == "checkpoint" || n->second == "invis_checkpoint")
             u.checkpoints.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2}); // heading as findSpawn
+        if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position)});
+        if (!in.scriptId) continue;
+        const auto strings = scriptStrings(*drm, in.scriptId);
+        std::vector<std::string> starts;
+        for (const auto& s : strings)
+            if (chapterIndex(s) >= 0) starts.push_back(s);
+        if (!starts.empty() && n->second == "cinematic_object") u.chapterLinks[in.uniqueId] = std::move(starts);
+        for (const auto& s : strings)
+            if (isMusic(bigfile, s)) {
+                u.musicByIntro[in.uniqueId] = s;
+                break;
+            }
     }
+    if (isMusic(bigfile, name + "_mus_01")) u.music = name + "_mus_01";
     u.spawn = findSpawn(bigfile, *drm);
     u.drm = std::move(drm);
     return u;
@@ -187,6 +210,50 @@ void World::touchCheckpoints() {
             if (glm::length(vec2(p - w)) < kCheckpointRadius && std::abs(p.z - w.z) < kCheckpointHeight)
                 checkpoint_ = CheckpointRef{u.data.name, c.id};
         }
+}
+
+void World::startChapter(int n) {
+    const auto unit = std::string(kChapters.at(size_t(n)).unit);
+    enterUnit(unit, std::nullopt); // throws before anything changes
+    chapter = n;
+    startUnit_ = unit, startSpawn_.reset();
+    checkpoint_.reset();
+    health_.reset(); // [I] a chapter starts at full health, as a respawn (tru.exe 0x700060)
+}
+
+void World::collectPickups(bool pressed) {
+    pickedUp_.clear();
+    if (!pressed) return;
+    const vec3 p = player_.state().pos;
+    const Pickup* best = nullptr;
+    vec3 bestPos{0};
+    float bestD = kPickupRadius;
+    for (const auto& u : units_)
+        for (const auto& k : u.data.pickups) {
+            const vec3 w = k.pos + u.offset;
+            const float d = glm::length(vec2(p - w));
+            if (d < bestD && std::abs(p.z - w.z) < kPickupHeight && !collected.contains(k.id)) best = &k, bestPos = w, bestD = d;
+        }
+    if (!best) return;
+    collected.insert(best->id);
+    ++found[size_t(best->kind)];
+    pickedUp_.push_back({best->id, best->kind, bestPos});
+}
+
+void World::checkLevelEnd() {
+    for (const auto& e : script_.events()) {
+        if (e.kind != script::EventKind::Activate) continue;
+        for (const auto& u : units_)
+            if (const auto it = u.data.chapterLinks.find(e.target); it != u.data.chapterLinks.end())
+                if (const auto next = nextChapter(chapter, it->second)) {
+                    try {
+                        startChapter(*next);
+                    } catch (const std::exception& ex) {
+                        warnings.push_back(std::string("level end -> chapter ") + std::to_string(*next) + ": " + ex.what());
+                    }
+                    return;
+                }
+    }
 }
 
 std::optional<std::pair<std::string, int>> World::markupOwner(int index) const {

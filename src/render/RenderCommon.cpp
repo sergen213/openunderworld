@@ -33,10 +33,10 @@ std::vector<uint8_t> buildFontAtlas() {
     return out;
 }
 
-std::vector<TextVertex> buildOverlayVertices(Viewport vp, std::span<const std::string> lines) {
+std::vector<TextVertex> buildOverlayVertices(Viewport vp, std::span<const std::string> lines, std::span<const TextVertex> ui) {
     const float scale = float(std::max(1, vp.height / 800)); // 2x glyphs on 1440p+ / 4K
     const float g = kGlyph * scale, lineH = g + 2 * scale, pad = 4 * scale;
-    std::vector<TextVertex> v;
+    std::vector<TextVertex> v(ui.begin(), ui.end());
     auto quad = [&](float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t c) {
         v.insert(v.end(), {{x0, y0, u0, v0, c}, {x1, y0, u1, v0, c}, {x1, y1, u1, v1, c},
                            {x0, y0, u0, v0, c}, {x1, y1, u1, v1, c}, {x0, y1, u0, v1, c}});

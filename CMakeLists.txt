@@ -129,7 +129,7 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_audio: IMA ADPCM, FSB4, Wave sections, .mul streams; SDL3 mixer; ou-audio CLI (docs/formats/AUDIO.md) ----
-add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Mixer.cpp)
+add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Mixer.cpp src/audio/Mus.cpp)
 target_link_libraries(ou_audio PUBLIC ou_cdc glm::glm PRIVATE SDL3::SDL3)
 add_executable(ou-audio tools/ou-audio/main.cpp)
 target_link_libraries(ou-audio PRIVATE ou_audio SDL3::SDL3)
@@ -238,14 +238,17 @@ endif()
 
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp
-  src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp)
+  src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)
 target_include_directories(ou_save PUBLIC src)
 target_link_libraries(ou_save PUBLIC ou_game nlohmann_json::nlohmann_json PRIVATE ou_config ZLIB::ZLIB)
+# ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
+add_library(ou_ui STATIC src/ui/Ui.cpp)
+target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale)
 add_executable(ou-game src/app/game/main.cpp)
-target_link_libraries(ou-game PRIVATE ou_game ou_save ou_render_gl ou_render_vk ou_config ou_video ou_audio)
+target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio)
 if(OU_BUILD_TESTS)
   add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp)
   target_link_libraries(ou_game_tests PRIVATE ou_game GTest::gtest_main)
@@ -256,6 +259,9 @@ if(OU_BUILD_TESTS)
   add_executable(ou_save_tests tests/test_save.cpp)
   target_link_libraries(ou_save_tests PRIVATE ou_save GTest::gtest_main)
   gtest_discover_tests(ou_save_tests DISCOVERY_TIMEOUT 60)
+  add_executable(ou_progress_tests tests/test_progress.cpp)
+  target_link_libraries(ou_progress_tests PRIVATE ou_ui ou_game ou_save ZLIB::ZLIB GTest::gtest_main)
+  gtest_discover_tests(ou_progress_tests DISCOVERY_TIMEOUT 60)
 endif()
 
 include(GNUInstallDirs)

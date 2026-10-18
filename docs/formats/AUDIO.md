@@ -2,8 +2,8 @@
 
 Labels: **[V-data]** observed in the retail GOG data; **[V-exe]** read in the tru.exe decompilation;
 **[S]** from a third-party source; **[I]** inference; **[U]** unknown.
-Code: `src/audio/Audio.{hpp,cpp}` (decoders), `src/audio/Mixer.{hpp,cpp}` (SDL3 mixer) and
-`tools/ou-audio` (CLI).
+Code: `src/audio/Audio.{hpp,cpp}` (decoders), `src/audio/Mus.cpp` (`.mus` parser + stem-gain
+sequencer), `src/audio/Mixer.{hpp,cpp}` (SDL3 mixer) and `tools/ou-audio` (CLI).
 
 ## 0. Where audio lives
 
@@ -218,17 +218,134 @@ otherwise it reports "Cannot load music files for the '%s' music! Please rebuild
     (RMS 0.30 and 0.33 over the first 30 s).
 - **`.sam`**: an FSB4 bank. In all 75 retail records it holds one 64-sample silent `temp.wav` [V-data].
   It is apparently the instrument sample bank of a build where no instrument samples were used [I].
-- **`.mus` (`Mus!`)** [V-data] layout:
-  - `"Mus!"`, then `u32` (0x2560 in `l4_pool_mus_01`, = offset of the sequence chunk minus 8), then
-    `u32 0x114` (version? The exe has "The musicfile %s has an incorrect version!") [I].
-  - Then instrument/tone definitions with names such as `Sine_440`, `Brass Piccolo …`, `Atk 11`,
-    `Rel 5`, `Sus 75`, `Decay 1`.
-  - Then a `"QSMa"` chunk (`aMSQ` stored reversed). It holds the source path
-    `e:\tr8\audio\music\L4_pool_mus_01\L4_pool_mus_01Ctl.txt`.
-  - Then MIDI-like `0xFF xx len …` events (0xF1 4-byte markers, 0x31/0x33/0x3B/0x3C/0x60/0x62 …).
-  - These look like Crystal Dynamics' AAD sound-font/sequence formats [I]. Event semantics are [U].
-  - The sequencer is not implemented. **Deviation:** `Mixer::playMusic` plays the `.mul` with
-    per-stem gains chosen by the caller, instead of the script-driven stem mix.
+- **`.mus` (`Mus!`)**: an AAD-style (Crystal Dynamics' sequencer lineage [I]) instrument bank plus
+  one MIDI-like sequence whose meta events set the `.mul` stem gains from global music variables.
+  `parseMus` / `MusSequencer` (§6). Survey of all 75 retail files below.
+
+### 5.1 `.mus` layout [V-data, V-exe]
+
+All offsets are file offsets; slot load `0x580E20` relocates them in place.
+
+| Offset | Type | Field |
+|---|---|---|
+| 0x00 | char[4] | `"Mus!"` |
+| 0x04 | u32 | 0x2560 in all 75 = first sequence offset − 8 [I]; unused by `0x580E20` |
+| 0x08 | u32 | version. `0x580E20` only warns "The musicfile %s has an incorrect version! (rebuild music)" if ≠ 0x114; all 75 are 0x114. `parseMus` throws on other values |
+| 0x0C–0x17 | u32×3 | 0 in all 75 [U] |
+| 0x18 | u32 | sequence count (1 in all 75) |
+| 0x1C | u32 | stem count (1–3; 137 in total) |
+| 0x20 | u32 | 120 in all 75 [U] |
+| 0x24 | u32 | offset of the stem records (0x58 bytes each) |
+| 0x28 / 0x2C | u32 | label count (11–20) / offset of the label table (u32 track offsets) |
+| 0x30 / 0x34 / 0x38 | u32 | sample / tone / program counts (4 / 52 / 50 in all 75) |
+| 0x3C | {u32 id, u32 offset}×n | sequence table (id 0 in all 75) |
+| then | u32×tones, u32×programs | tone and program offsets; the 0x34-byte sample records follow |
+
+- **Instrument bank** (used by the note-on path `0x5930A0`):
+  - Sample (0x34): `name[0x14]` (NUL optional, uninitialised bytes after it), +0x14 offset and
+    +0x1C size in the `.sam` bank (loaded by `0x588DF0`), +0x30 runtime pointer.
+  - Tone (0x18 + 0x68·n): `name[0x14]`, u32 layer count, layers of 0x68 bytes; layer +0x40
+    `{keyLo, keyHi, velLo, velHi}`, +0x44 sample index. The other layer bytes are envelope/pitch
+    floats [U].
+  - Program (0x20 + 0xC·n): `name[0x14]`, +0x14 bank, +0x18 program, +0x1C zone count; zone =
+    `{s32 (−1 in all 75) [U], keyLo, keyHi, velLo, velHi, u32 tone index}`. Channel bank/program
+    (channel bytes 0x111/0x110) select the program.
+  - The bank bytes (0x3C–0x2568) are identical in all 75 files, and no file has a channel
+    (note) event, so the bank is unused in retail [V-data]; this matches the placeholder `.sam`.
+- **Stem** (0x58, one per `.mul` channel group): +0x00 sample rate, +0x08 channels, +0x10 frames,
+  +0x14 small id (10–24) [U], +0x18 milliseconds per beat (fade time unit), +0x1C volume, +0x20
+  fade gain, +0x24/+0x28/+0x2C/+0x30 fade target/rate/seconds left/active, +0x34 mute gain, +0x38
+  mute ramp step, +0x3C pan, +0x40–+0x4C pan fade, +0x50 runtime channel pointer. +0x04 and +0x0C
+  hold uninitialised build-tool bytes in a few files.
+  - In all 137 stems: channels 2, 500 ms/beat, volume = fade = mute = 1.0, pan 0.5.
+  - In 74 of 75 files Σ stem channels = `.mul` channels and frames/rate equal the `.mul`
+    numSamples/rate. `l1_intro` says 2 513 664 frames against 2 514 944 in the `.mul`.
+  - The `.mus` encodes no stream loop points. The `.mul` loops from frame 0 (§4); no retail script
+    uses the loop meta commands.
+- **Sequence** (`0x588F10`): `"QSMa"`, u32 tempo (µs per quarter note), u16 PPQN, u16 [U], u16
+  track count, u16, u32 track offsets relative to the sequence. All 75: tempo 600 000 (100 BPM),
+  480 PPQN, +0x0A = 0x0106, one track.
+- **Track events** (`0x594520`): VLQ delta ticks, optional status byte (running status), then
+  - 0x8n/0x9n/0xAn/0xBn/0xEn: 2 data bytes; 0xCn/0xDn: 1. The usual MIDI channel messages
+    (note off/on → `0x580450`/`0x593C40`, program → channel byte 0x110, pitch bend, ...).
+  - 0xF0: VLQ length + data, skipped.
+  - 0xFF: `{u8 cmd, u8 len, data}` dispatched through the 256-entry table at `0x8A7B10`
+    (`0x580F80`). Any other 0xF1–0xFE status makes the exe parse garbage; `parseMus` throws.
+  - A track ends at meta 0x44. Labels and jumps address byte offsets from the track start.
+
+### 5.2 Meta commands [V-exe; names of slot/channel commands [I]]
+
+Operands `a0 a1 a2 …`; `var[x]` = global music variable byte array at `0xCCB560` (256 bytes).
+A taken jump sets track flag 4, which ends that track's processing for the frame, so the polling
+loops in the scripts re-evaluate their variables once per frame.
+
+| Cmd | Handler | Meaning |
+|---|---|---|
+| 0x00 / 0x01 / 0x02 | 0x5810D0 / 0x5810F0 / 0x591E10 | select channel (a0 − 1) / select slot (0x7F = own) / assign sequence |
+| 0x05 / 0x06 / 0x07 | 0x581120 / 0x581170 / 0x5811C0 | slot ms/beat = 24-bit µs / 1000 / tempo of sequence id a0 / ms/beat × 100 / a0 |
+| 0x08, 0x0B / 0x09 / 0x0A | 0x581210 / 0x591E60 / 0x5811F0 | start / stop / pause slot [I] |
+| 0x0E / 0x0F | 0x581250 / 0x581290 | slot volume / pan = a0 / 127 |
+| 0x10 / 0x11 | 0x5812C0 / 0x5812F0 | channel volume / pan byte |
+| 0x12–0x15, 0x4B–0x4D | 0x581300 … 0x5813F0, 0x581CE0 … 0x581DC0 | channel mute/unmute (single, 16-bit mask, deferred mask) |
+| 0x16–0x19 | 0x581510 … 0x5815A0 | channel / slot volume or pan fade |
+| 0x1A, 0x1C–0x1E | 0x5815D0 … 0x581620 | channel byte 0x80, 0x88, flag 2 set/clear |
+| 0x22–0x29, 0x2C | 0x581630 … 0x581860 | copy slot/channel state into `var[a0]` |
+| 0x2E / 0x2F / 0x30 | 0x5818B0 / 0x581930 / 0x581970 | loop start (a0 times, 0 = forever) / loop end / break to 24-bit offset |
+| 0x31 | none | define label a0: no-op at run time; the label table holds its offset (571 uses) |
+| 0x32, 0x48 | 0x5819B0 | goto label a0 |
+| 0x33 / 0x34 | 0x5819E0 / 0x581A00 | `var[a1] = a0` / `var[a1] = var[a0]` |
+| 0x35 / 0x36 / 0x50 / 0x51 | 0x581A20 / 0x581A40 / 0x581F70 / 0x581F90 | `var[a1]` += / −= / ×= / ÷= a0 |
+| 0x37 / 0x38 | 0x581A60 / 0x581A80 | `var[a1]` \|= a0 / &= ~a0 |
+| 0x39–0x3E | 0x581AA0 … 0x581BE0 | if `var[a0]` ==, ≠, <, >, ≤, ≥ a1 (unsigned): goto label a2 |
+| 0x3F / 0x40 | 0x581C20 / 0x581C60 | if `var[a0] & a1` ≠ 0 / = 0: goto label a2 |
+| 0x41 / 0x42 / 0x43 | 0x581CA0 … 0x581CC0 | the next meta's operand 0/1/2 is replaced by `var[operand]` |
+| 0x44 | 0x581CD0 | end of track |
+| 0x4E / 0x4F | 0x581E90 / 0x581F00 | per-channel flag 0xAC = 0 / 1 for a 16-bit mask |
+| 0x60 | 0x5865A0 | stem a0 volume (+0x1C) = a1 / 127; cancels the fade |
+| 0x61 | 0x5865F0 | stem a0 pan (+0x3C) = a1 / 127 (0.5 if a2 = 0x40) |
+| 0x62 / 0x66 | 0x5866B0 / 0x586720 | stem a0 fade (+0x20) to a2 / 127 over a1 beats (0x66: a1 / 32 beats), seconds = a1 × ms/beat × 0.001. Below 1 ms the gain is set at once (`0x586650`) |
+| 0x63 / 0x67 | 0x581FC0 / 0x582040 | stem a0 pan fade, same timing |
+| 0x64 / 0x65 | 0x5820C0 / 0x582110 | stem a0 ms/beat = 24-bit µs / 1000, or tempo of sequence id a1 / 1000 |
+| 0x68 / 0x69 | 0x582160 / 0x582180 | stem a0 mute ramp −0.2 / +0.2 per update, clamped to 0..1 (`0x5891B0`) |
+| 0xF0 / 0xF1 | 0x6457A0 (`ret`) | source path text (`…\<name>Ctl.txt`) / 4-byte sequential marker: no-ops |
+
+Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494, 0x33 228,
+0x60 137, 0x32 79, 0xF0 75, 0x44 75, 0x39 13, 0x3A 6 [V-data].
+
+### 5.3 Run time [V-exe unless tagged]
+
+- Each frame `0x5950A0` advances the slot clock and runs every track (`0x594520`). `0x5891B0`
+  ramps stem fade and mute by the frame time. `0x5864E0` then sets each stem's stream volume to
+  `fade × volume × mute × slot master (slot +0x38)`; pan goes to the stream only for mono stems.
+- Clock: with the `.mul` stream attached (normal play: loader `0x58BD50` → `0x593B70`),
+  ticks = `(stream +0x20 (u64) × PPQN) >> 8`. What stream +0x20 counts is [U]. Without a stream,
+  beats += dt × 1000 / (tempo / 1000), ticks = beats × PPQN.
+- The scripts are polling state machines. In 72 of 75 files every delta is 0. Example
+  `l4_pool_mus_01`: reset `var[0x7F]`, `var[0x0E]`, `var[0x0F]` to 0, set both stem volumes to
+  0x28, fade both to 0 at once, then labels L0–L8 = intensity level `var[0x7D]`. Each level
+  branches to its neighbours with 0x3B/0x3C and re-issues its fades every frame (level 0: stem 0 →
+  0x7F over 2 beats, stem 1 → 0x5F over 3; level 7: both → 5; level 8: both → 0x7F).
+  - Re-issuing a fade each frame restarts it from the current gain, so the gain approaches the
+    target exponentially with a time constant of the fade length [I].
+- Timed scripts: `l2_waters_of_thailand`, `l4_escaping_mexico_mus_01` and `l4_laras_new_bike` fade
+  stems at 2400–26 880 ticks.
+- Variables read by branches: `var[0x7D]` in 51 files, `0x7C` in 2, `0x7B` in 1, `0x0D` in 2. 21
+  files have no branch (one-shot pieces such as `l1_intro`). Scripts write `0x7F`, `0x0E`, `0x0F`
+  (all files) and `0x0D` (3 files), always 0.
+- Who writes the variables (get/set `0x583D40`/`0x583D30`):
+  - `0x618910` each update: `0x32` = enemies counted, `0x33` = those with flag 0x84 bit 0,
+    `0x37` = bit 6, `0x34` = distance to the nearest one (0xFF beyond 40 800 units). These are the
+    "Show Monster Music Vars" set [I]; no retail script reads them.
+  - Engine code writes vars 0–2 (`0x721A30`, `0x52E130`, `0x539EF0`, `0x53AB30`, …); meaning [U].
+  - Data-driven writes with any index: animation command 0x66 (`0x5B69C0`), instance event data
+    (`0x5D2CA0`: +0x24 index, +0x28 value), trigger actions 2/3/4 = set/add/subtract
+    (`0x594870`), and get/set/add/subtract helpers `0x4A3E00`/`10`/`30`/`50` [I: script natives].
+  - No engine code writes `0x7D` with a constant index, so the intensity level comes from level
+    data or scripts [I]. Which objects set it, and when, is [U].
+- **`MusSequencer`** models the no-stream clock, variable ops, branches, gotos, end of track and
+  stem volume/fade/tempo (0x32–0x40, 0x44, 0x48, 0x50, 0x51, 0x60, 0x62, 0x64–0x66). Commands
+  absent from retail data (channel/slot/loop/substitution/pan/mute ramp) are ignored. Callers feed
+  `stemGains()` to `Mixer::setMusicStemGains` each frame.
 
 ## 6. `ou_audio` API (implemented)
 
@@ -236,6 +353,10 @@ otherwise it reports "Cannot load music files for the '%s' music! Please rebuild
   - `decodeMul(bytes)` → `{header, Pcm (interleaved s16, loopStart, volLeft/volRight), subtitles}`.
   - `parseFsb4` / `decodeFsb4` handle IMA mono and PCM16. `decodeWave(sectionData)` returns PCM at
     the Wave rate with its loop points.
+  - `parseMus(bytes)` → `MusFile {sequences (tracks of MusEvent {offset, delta, status, meta,
+    data}), stems, labels, samples, tones, programs}`.
+  - `MusSequencer(file).update(seconds, vars[256])` runs the script; `stemGains()` returns
+    volume × fade × mute per stem.
   - All decoders throw `cdc::FormatError` on truncated or inconsistent data.
 - **`Mixer`** renders stereo float32 at 48 kHz and streams it to the default playback device through
   an SDL3 audio stream callback (`openDevice`). `mix()` also works without a device (tests).
@@ -252,7 +373,8 @@ otherwise it reports "Cannot load music files for the '%s' music! Please rebuild
 - **Deviations from the original** [I]
   - No FMOD effects or reverb (`reverbVol` and the Wave byte 0x0C are unused).
   - Linear resampling.
-  - No Mus! sequencer.
+  - Mus! scripts run on `MusSequencer`. It uses the tempo clock instead of the stream-synced one
+    (§5.3) and ignores pan and mute ramps. Nothing in `src/game` drives the music variables yet.
   - Voice-line subtitles are exposed, but nothing displays them yet.
 
 ## 7. Verification log
@@ -276,7 +398,8 @@ mixing and the exact FMOD IMA rounding.
 ## 8. Open questions
 
 1. FMOD's IMA expansion inside tru.exe: is it Xbox-IMA rounding, or does it share the cdc MMX decoder?
-2. Mus! event semantics; how the sequencer drives `.mul` stems and loop points.
+2. Mus! clock: what the attached stream's +0x20 counter measures (§5.3). Which level data sets
+   music variable 0x7D (and 0x7B/0x7C/0x0D), and when.
 3. The Wave header byte 0x0C (10 / 100): volume or priority? `.mul` header fields 0x30/0x34.
 4. Where the FSB sync points (mode 0x80004000) are stored.
 5. The sound-plex layer (`cdc::SoundPlex*` RTTI, DTP data): how game objects and materials map to

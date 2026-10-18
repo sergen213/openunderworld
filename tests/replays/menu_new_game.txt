@@ -1,0 +1,6 @@
+# ou-game without --level: main menu -> START NEW GAME (jump accepts; script time runs in menus), then Lara walks.
+0.5 jump 1
+0.6 jump 0
+1.0 forward 1
+1.0 walk 1
+3.0 forward 0

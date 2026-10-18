@@ -5,8 +5,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -25,10 +27,12 @@
 #include "engine/FrameClock.hpp"
 #include "formats/Formats.hpp"
 #include "game/Game.hpp"
+#include "locale/Locale.hpp"
 #include "platform/Sdl.hpp"
 #include "save/Save.hpp"
 #include "render/Renderer.hpp"
 #include "video/Player.hpp"
+#include "ui/Ui.hpp"
 
 namespace {
 
@@ -37,7 +41,8 @@ constexpr float kMouseSensitivity = 0.0025f; // rad per pixel
 
 struct Options {
     std::filesystem::path gameDir;
-    std::string level = "pc-w\\l4_pool.drm";
+    std::string level; // empty (and no --chapter/--load): start at the main menu
+    int chapter = -1;  // --chapter N: start chapter N (game::kChapters)
     std::string renderer = "opengl";
     int width = 1280, height = 720;
     float fov = 60.0f;
@@ -47,8 +52,10 @@ struct Options {
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
     bool intro = false;  // --intro: play Movies/intro.bik first (skippable)
-    int introFrames = -1; // --intro-frames N: stop the intro after N frames
+    int introFrames = -1; // --intro-frames N: stop the intro / the New Game movie after N frames
+    bool noMovies = false; // --no-movies: New Game skips Movies/explode.bik
     bool noAudio = false;
+    std::filesystem::path musicWav; // --music-wav FILE: no device; every tick's mixer output goes to a WAV
     std::string loadSlot; // --load SLOT: start from $XDG_DATA_HOME/openunderworld/saves/SLOT.ousave
     double die = -1;      // --die SECONDS: Lara dies then (death clip) and respawns at the last checkpoint
     std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
@@ -56,18 +63,21 @@ struct Options {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm] [--renderer opengl|vulkan]\n"
+                 "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay]\n"
-                 "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-audio]\n"
+                 "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--show-collision] [--show-triggers] [--show-enemies]\n"
                  "               [--config config.json]\n"
-                 "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push,\n"
+                 "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
+                 "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
                  "          F draw/holster, mouse left fire, right aim/lock, Q switch target, mouse look;\n"
-                 "          gamepad: left stick, right stick, A jump, B drop, X use, Y draw, RT fire, LT lock, R3 switch, LB walk;\n"
-                 "          F1 overlay, Esc quit, F5 quicksave, F9 quickload (slot 'quick')\n"
-                 "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|lookx|looky>\n"
-                 "                    [value]\n");
+                 "          gamepad: left stick, right stick, A jump, B drop, X use, Y draw, RT fire, LT lock, R3 switch, LB walk,\n"
+                 "          Start pause; Esc pause menu, F1 overlay, F5 quicksave, F9 quickload (slot 'quick')\n"
+                 "menus: arrows/WASD or d-pad navigate, Enter/Space/E or A accept, Esc/Backspace or B back\n"
+                 "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|pause|lookx|looky>\n"
+                 "                    [value]  (in menus forward/right +-1 navigate, jump or interact accepts, drop goes back;\n"
+                 "                    script time runs on while paused)\n");
 }
 
 bool parseArgs(int argc, char** argv, Options& o) {
@@ -92,12 +102,15 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--show-enemies") { o.showEnemies = true; continue; }
         if (a == "--intro") { o.intro = true; continue; }
         if (a == "--no-audio") { o.noAudio = true; continue; }
+        if (a == "--no-movies") { o.noMovies = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         const char* v = argv[++i];
         if (a == "--config") continue;
         if (a == "--game-dir") o.gameDir = v;
         else if (a == "--level") o.level = v;
+        else if (a == "--chapter") o.chapter = std::atoi(v);
+        else if (a == "--music-wav") o.musicWav = v;
         else if (a == "--renderer") o.renderer = v;
         else if (a == "--width") o.width = std::atoi(v);
         else if (a == "--height") o.height = std::atoi(v);
@@ -123,8 +136,9 @@ bool parseArgs(int argc, char** argv, Options& o) {
     }
     if (o.gameDir.empty()) { std::fprintf(stderr, "--game-dir is required\n"); return false; }
     if (o.renderer != "opengl" && o.renderer != "vulkan") { std::fprintf(stderr, "--renderer wants opengl or vulkan\n"); return false; }
-    if (o.width <= 0 || o.height <= 0 || o.fov <= 1.0f || o.fov >= 179.0f || o.frames < 0 || o.renderHz < 0) {
-        std::fprintf(stderr, "invalid --width/--height/--fov/--frames/--render-hz\n");
+    if (o.width <= 0 || o.height <= 0 || o.fov <= 1.0f || o.fov >= 179.0f || o.frames < 0 || o.renderHz < 0 ||
+        o.chapter >= int(ou::game::kChapters.size())) {
+        std::fprintf(stderr, "invalid --width/--height/--fov/--frames/--render-hz/--chapter\n");
         return false;
     }
     if (!o.screenshot.empty() && o.frames == 0) o.frames = 1;
@@ -175,13 +189,27 @@ struct LaraMeshes {
 struct ScriptedMeshes {
     std::map<int32_t, std::vector<size_t>> meshes; // intro unique id -> scene mesh indices
     std::set<int32_t> posed;                       // uploaded with a non-bind pose
+    std::set<int32_t> hidden;                      // collected pickups, uploaded collapsed to a point
     std::vector<ou::scene::Vertex> scratch;
 
     void index(const ou::scene::SceneData& s) {
-        meshes.clear(), posed.clear();
+        meshes.clear(), posed.clear(), hidden.clear();
         for (size_t i = 0; i < s.meshes.size(); ++i)
             if (const auto at = s.meshes[i].origin.rfind(" @intro "); at != std::string::npos)
                 meshes[std::atoi(s.meshes[i].origin.c_str() + at + 8)].push_back(i);
+    }
+    // Picked-up rewards vanish: their meshes degenerate to one point (no scene rebuild).
+    void hide(const std::set<int32_t>& ids, const ou::scene::SceneData& s, ou::render::Renderer& r) {
+        for (const int32_t id : ids) {
+            const auto it = meshes.find(id);
+            if (it == meshes.end() || !hidden.insert(id).second) continue;
+            for (const size_t i : it->second) {
+                scratch = s.meshes[i].vertices;
+                if (scratch.empty()) continue;
+                for (auto& v : scratch) std::copy_n(scratch[0].position, 3, v.position);
+                r.updateVertices(i, scratch);
+            }
+        }
     }
     void pose(const ou::script::Runtime& rt, const ou::scene::SceneData& s, ou::render::Renderer& r) {
         for (const auto& o : rt.objects()) {
@@ -539,16 +567,121 @@ bool quickLoad(ou::game::World& w, const std::string& slot) {
     }
 }
 
+// Music (docs/formats/AUDIO.md §5, GAMEPLAY.md "Music"): one track at a time, pc-w\music\<name>\<name>.mul
+// streamed with the stem gains its .mus script computes (audio::MusSequencer). Tracks change when the current
+// unit changes (the unit's own "<unit>_mus_01") and when Lara enters a volume whose script names a track
+// (soundvolume/soundtriggervolume intros, UnitData::musicByIntro) [I]. The music variables stay at 0: who
+// writes them (e.g. intensity 0x7D) is not decoded [U].
+struct Music {
+    std::string current;
+    std::unique_ptr<ou::audio::MusFile> mus; // the sequencer keeps a reference to it
+    std::unique_ptr<ou::audio::MusSequencer> seq;
+    std::array<uint8_t, 256> vars{};
+
+    bool play(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer, const std::string& name, const std::string& why, uint64_t tick) {
+        if (name.empty() || name == current) return false;
+        const std::string base = "pc-w\\music\\" + name + "\\" + name;
+        try {
+            auto mul = bf.read(base + ".mul");
+            if (!mul) throw ou::cdc::FormatError(base + ".mul not in bigfile");
+            auto pcm = std::make_shared<ou::audio::Pcm>(ou::audio::decodeMul(*mul).pcm);
+            seq.reset(), mus.reset();
+            if (auto m = bf.read(base + ".mus")) {
+                mus = std::make_unique<ou::audio::MusFile>(ou::audio::parseMus(*m));
+                seq = std::make_unique<ou::audio::MusSequencer>(*mus);
+                seq->update(0, vars);
+            }
+            mixer.playMusic(std::move(pcm), current.empty() ? 1.0f : 2.0f, seq ? seq->stemGains() : std::vector<float>{});
+            std::fprintf(stderr, "ou-game: tick %llu music %s (%s)%s\n", (unsigned long long)tick, name.c_str(), why.c_str(),
+                         seq ? "" : " no .mus");
+            current = name;
+            return true;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: music %s: %s\n", name.c_str(), e.what());
+            current = name; // do not retry every tick
+            return false;
+        }
+    }
+    void tick(ou::audio::Mixer& mixer, float dt) {
+        if (!seq) return;
+        seq->update(dt, vars);
+        mixer.setMusicStemGains(seq->stemGains());
+    }
+};
+
+// 16-bit stereo PCM WAV of interleaved float frames.
+bool writeWav(const std::filesystem::path& path, const std::vector<float>& lr, uint32_t rate) {
+    std::ofstream f(path, std::ios::binary);
+    auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto u16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+    const auto bytes = uint32_t(lr.size() * 2);
+    f.write("RIFF", 4), u32(36 + bytes), f.write("WAVEfmt ", 8), u32(16), u16(1), u16(2), u32(rate), u32(rate * 4), u16(4), u16(16);
+    f.write("data", 4), u32(bytes);
+    for (const float s : lr) u16(uint16_t(int16_t(std::lround(std::clamp(s, -1.0f, 1.0f) * 32767))));
+    return bool(f);
+}
+
+// Save slots in saveDir(), newest first.
+std::vector<std::string> listSaves() {
+    std::vector<std::pair<std::filesystem::file_time_type, std::string>> v;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(ou::save::saveDir(), ec))
+        if (e.path().extension() == ".ousave") v.emplace_back(e.last_write_time(ec), e.path().stem().string());
+    std::sort(v.begin(), v.end(), std::greater<>());
+    std::vector<std::string> out;
+    for (auto& [t, s] : v) out.push_back(std::move(s));
+    return out;
+}
+
+// Menu navigation from replay actions (press edges): forward/right +-1 move, jump/interact accept, drop back.
+std::optional<ou::ui::Nav> scriptNav(const ou::game::Actions& a, const ou::game::Actions& was) {
+    using ou::ui::Nav;
+    auto edge = [](bool now, bool before) { return now && !before; };
+    if (edge(a.move.y > 0.5f, was.move.y > 0.5f)) return Nav::Up;
+    if (edge(a.move.y < -0.5f, was.move.y < -0.5f)) return Nav::Down;
+    if (edge(a.move.x > 0.5f, was.move.x > 0.5f)) return Nav::Right;
+    if (edge(a.move.x < -0.5f, was.move.x < -0.5f)) return Nav::Left;
+    if (edge(a.jump, was.jump) || edge(a.interact, was.interact)) return Nav::Accept;
+    if (edge(a.drop, was.drop) || edge(a.pause, was.pause)) return Nav::Back;
+    return std::nullopt;
+}
+std::optional<ou::ui::Nav> keyNav(SDL_Keycode k) {
+    using ou::ui::Nav;
+    switch (k) {
+    case SDLK_UP: case SDLK_W: return Nav::Up;
+    case SDLK_DOWN: case SDLK_S: return Nav::Down;
+    case SDLK_LEFT: case SDLK_A: return Nav::Left;
+    case SDLK_RIGHT: case SDLK_D: return Nav::Right;
+    case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: case SDLK_E: return Nav::Accept;
+    case SDLK_ESCAPE: case SDLK_BACKSPACE: return Nav::Back;
+    default: return std::nullopt;
+    }
+}
+std::optional<ou::ui::Nav> padNav(uint8_t b) {
+    using ou::ui::Nav;
+    switch (b) {
+    case SDL_GAMEPAD_BUTTON_DPAD_UP: return Nav::Up;
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return Nav::Down;
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return Nav::Left;
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return Nav::Right;
+    case SDL_GAMEPAD_BUTTON_SOUTH: return Nav::Accept;
+    case SDL_GAMEPAD_BUTTON_EAST: case SDL_GAMEPAD_BUTTON_START: return Nav::Back;
+    default: return std::nullopt;
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     Options opt;
     if (!parseArgs(argc, argv, opt)) { usage(); return 2; }
+    const bool menuStart = opt.level.empty() && opt.chapter < 0 && opt.loadSlot.empty();
 
     // ---- load: simulation data first (no window needed to fail early) ----
     std::optional<ou::game::InputScript> script;
     std::unique_ptr<const ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
     std::unique_ptr<ou::game::World> world;
+    std::optional<ou::locale::Strings> strings;
     ou::scene::SceneData scene;
     StreamedScene streamed;
     LaraMeshes lara;
@@ -561,9 +694,13 @@ int main(int argc, char** argv) {
         if (!opt.inputScript.empty()) script = ou::game::InputScript::load(opt.inputScript);
         bigfile = std::make_unique<const ou::cdc::BigfileSet>(opt.gameDir);
         const auto& bf = *bigfile;
-        // "pc-w\\l4_pool.drm" -> unit "l4_pool"; its portal neighbours stream in with it (World, LEVELS.md).
+        strings = ou::locale::loadStrings(opt.gameDir, ou::locale::Language::English);
+        if (!strings) throw std::runtime_error("pc-w\\local\\locals.bin not in bigfile");
+        // "pc-w\\l4_pool.drm" -> unit "l4_pool"; its portal neighbours stream in with it (World, LEVELS.md). The main
+        // menu shows (and New Game starts) chapter 0's unit.
         std::string unit = opt.level.substr(opt.level.find_last_of('\\') + 1);
         if (unit.ends_with(".drm")) unit.resize(unit.size() - 4);
+        if (opt.level.empty()) unit = std::string(ou::game::kChapters[size_t(std::max(opt.chapter, 0))].unit);
         std::optional<ou::game::Spawn> spawn;
         if (opt.spawn) spawn = ou::game::Spawn{{(*opt.spawn)[0], (*opt.spawn)[1], (*opt.spawn)[2]}, glm::radians((*opt.spawn)[3])};
         world = std::make_unique<ou::game::World>([&bf](const std::string& n) { return ou::game::loadUnitData(bf, n); }, unit,
@@ -571,6 +708,7 @@ int main(int argc, char** argv) {
         world->fovDeg = opt.fov;
         world->script().setBigfile(&bf);
         world->enemies().setBigfile(&bf);
+        world->chapter = opt.level.empty() ? std::max(opt.chapter, 0) : std::max(0, ou::game::chapterOfUnit(unit));
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
         if (!opt.loadSlot.empty() && !quickLoad(*world, opt.loadSlot)) return 1;
 
@@ -612,42 +750,38 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "ou-game: SDL_Init failed (%s); no display, skipping\n", SDL_GetError());
         return kExitSkip;
     }
-    if (opt.intro) {
-        // Own plain window: the movie player needs one without a GL/Vulkan context.
-        if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) std::fprintf(stderr, "ou-game: no audio (%s); intro plays silent\n", SDL_GetError());
+    // Movies get their own plain window: the movie player needs one without a GL/Vulkan context.
+    auto playMovie = [&](const char* file) {
+        if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) std::fprintf(stderr, "ou-game: no audio (%s); %s plays silent\n", SDL_GetError(), file);
         ou::platform::WindowPtr movieWindow(SDL_CreateWindow("OpenUnderworld", opt.width, opt.height, opt.fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
         try {
             ou::video::PlayOptions po;
             po.maxFrames = opt.introFrames;
-            const auto st = ou::video::playMovie(movieWindow.get(), opt.gameDir / "Movies" / "intro.bik", po);
-            std::fprintf(stderr, "ou-game: intro %d frames%s\n", st.frames, st.skipped ? " (skipped)" : "");
+            const auto st = ou::video::playMovie(movieWindow.get(), opt.gameDir / "Movies" / file, po);
+            std::fprintf(stderr, "ou-game: movie %s %d frames%s\n", file, st.frames, st.skipped ? " (skipped)" : "");
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "ou-game: intro: %s\n", e.what());
+            std::fprintf(stderr, "ou-game: movie %s: %s\n", file, e.what());
         }
-    }
+    };
+    if (opt.intro) playMovie("intro.bik");
 
-    // ---- audio (ou_audio): Lara's Wave sections for footsteps/landings, the unit's music track ----
+    // ---- audio (ou_audio): Lara's Wave sections for footsteps/landings, music per unit / sound volume ----
     ou::audio::Mixer mixer; // after SdlInit: closes its device before SDL_Quit
     Footsteps steps;
+    Music music;
+    std::vector<float> wav; // --music-wav capture
     bool audioOn = false;
     if (!opt.noAudio) {
         try {
-            const ou::cdc::BigfileSet bigfile(opt.gameDir);
-            if (auto lara = bigfile.read("pc-w\\lara.drm")) mixer.addWaves(ou::cdc::parseDrm(std::move(*lara)));
-            if (auto gun = bigfile.read("pc-w\\wp_handgun.drm")) { // pistol shots, holster, magazine waves
+            if (auto laraDrm = bigfile->read("pc-w\\lara.drm")) mixer.addWaves(ou::cdc::parseDrm(std::move(*laraDrm)));
+            if (auto gun = bigfile->read("pc-w\\wp_handgun.drm")) { // pistol shots, holster, magazine waves
                 const auto drm = ou::cdc::parseDrm(std::move(*gun));
                 mixer.addWaves(drm);
                 combat.addWaves(drm);
             }
-            // [I] music file naming seen in the bigfile (pc-w\music\<unit>_mus_01\...); how the game picks a track is unknown.
-            std::string unit = opt.level.substr(opt.level.find_last_of('\\') + 1);
-            unit = unit.substr(0, unit.rfind(".drm"));
-            const std::string musicPath = "pc-w\\music\\" + unit + "_mus_01\\" + unit + "_mus_01.mul";
-            auto music = bigfile.read(musicPath);
-            audioOn = mixer.openDevice();
+            audioOn = !opt.musicWav.empty() || mixer.openDevice();
             if (!audioOn) std::fprintf(stderr, "ou-game: no audio device (%s)\n", SDL_GetError());
-            else if (music) mixer.playMusic(std::make_shared<ou::audio::Pcm>(ou::audio::decodeMul(*music).pcm), 1.0f);
-            std::fprintf(stderr, "ou-game: audio %s, music %s\n", audioOn ? "on" : "off", music ? musicPath.c_str() : "none");
+            std::fprintf(stderr, "ou-game: audio %s\n", !opt.musicWav.empty() ? "to WAV" : audioOn ? "on" : "off");
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: audio: %s\n", e.what());
         }
@@ -672,7 +806,8 @@ int main(int argc, char** argv) {
     auto debugLines = opt.showCollision ? collisionLines(world->collision()) : std::vector<ou::render::DebugLine>{};
     std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
     const auto& sp = world->player().state();
-    std::fprintf(stderr, "ou-game: %s | spawn %s at %.1f %.1f %.1f yaw %.1f\n", opt.level.c_str(),
+    std::fprintf(stderr, "ou-game: %s | chapter %d | spawn %s at %.1f %.1f %.1f yaw %.1f\n", world->currentUnit().data.name.c_str(),
+                 world->chapter,
                  !opt.loadSlot.empty() ? "--load" : opt.spawn ? "--spawn" : spawnFromIntro ? "'player' intro" : "first intro (no 'player' intro)",
                  sp.pos.x, sp.pos.y, sp.pos.z, glm::degrees(sp.yaw));
     auto logUnits = [&] {
@@ -683,31 +818,109 @@ int main(int argc, char** argv) {
     };
     logUnits();
     const auto dieTick = opt.die >= 0 ? uint64_t(std::llround(opt.die / ou::game::kTickSeconds)) : ~0ull;
-    ou::game::Actions held; // previous tick's actions: save/load react to the press edge
-    std::string unitName = world->currentUnit().data.name;
+    ou::game::Actions held, menuHeld; // previous tick's actions: save/load/pause and menu input react to press edges
+    std::string unitName;             // music follows the current unit
+    // Title card when the chapter changes (-2: not until New Game; --level/--load start without one).
+    int shownChapter = menuStart ? -2 : opt.chapter >= 0 ? -1 : world->chapter;
+
+    // ---- UI (src/ui): menus, PDA page, pickup notifications, chapter titles ----
+    ou::ui::Menus menus;
+    ou::ui::Hud hud;
+    auto applyVolumes = [&] {
+        mixer.setBusVolume(ou::audio::Bus::Music, float(menus.musicVolume) / 10);
+        mixer.setBusVolume(ou::audio::Bus::Sfx, float(menus.sfxVolume) / 10);
+    };
+    applyVolumes();
+    auto chapterName = [&](int c) { return std::string(strings->get(ou::game::kChapters[size_t(c)].nameId)); };
+    auto openPause = [&] {
+        menus.pda = {ou::game::kChapters[size_t(world->chapter)].nameId, world->found[0], world->found[1], world->found[2]};
+        menus.saves = listSaves();
+        menus.open(ou::ui::Screen::Pause);
+        std::fprintf(stderr, "ou-game: tick %llu pause menu\n", (unsigned long long)world->ticks());
+    };
+    bool running = true;
+    auto act = [&](ou::ui::Action action) {
+        using ou::ui::Action;
+        switch (action) {
+        case Action::None: return;
+        case Action::NewGame:
+            std::fprintf(stderr, "ou-game: new game\n");
+            if (!opt.noMovies) { // frontend state 8 PlayNewGameMovie (tru.exe 0x5DB110)
+                SDL_GLContext gl = SDL_GL_GetCurrentContext(); // the movie's SDL_Renderer may switch contexts
+                playMovie("explode.bik");
+                if (gl) SDL_GL_MakeCurrent(window.get(), gl);
+            }
+            try {
+                world->collected.clear(), world->found = {};
+                world->script().restore(nlohmann::json::object());
+                world->startChapter(0);
+                shownChapter = -1;
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "ou-game: new game: %s\n", e.what());
+            }
+            break;
+        case Action::Resume: break;
+        case Action::Save: {
+            char slot[40];
+            const std::time_t t = std::time(nullptr);
+            std::strftime(slot, sizeof slot, "save-%Y%m%d-%H%M%S", std::localtime(&t));
+            hud.notify(std::string(strings->get(quickSave(*world, slot) ? 18 : 5)), 2.0); // "Save Successful" / "Save failed."
+            menus.saves = listSaves();
+            break;
+        }
+        case Action::Load:
+            if (!quickLoad(*world, menus.selectedSave())) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
+            shownChapter = world->chapter;
+            break;
+        case Action::QuitToMenu:
+            menus.close();
+            menus.saves = listSaves();
+            menus.open(ou::ui::Screen::Main);
+            shownChapter = -2;
+            break;
+        case Action::Quit: running = false; break;
+        }
+        std::fprintf(stderr, "ou-game: tick %llu menu action %d\n", (unsigned long long)world->ticks(), int(action));
+    };
+    auto nav = [&](ou::ui::Nav n) {
+        const auto a = menus.input(n);
+        applyVolumes();
+        act(a);
+    };
+    if (menuStart) {
+        menus.saves = listSaves();
+        menus.open(ou::ui::Screen::Main);
+    }
 
     const bool interactive = !script;
-    SDL_SetWindowRelativeMouseMode(window.get(), interactive);
+    SDL_SetWindowRelativeMouseMode(window.get(), interactive && !menuStart);
     ou::platform::GamepadPtr pad;
     ou::engine::FrameClock clock(ou::game::kTickSeconds);
     glm::vec2 mouse(0);
-    bool running = true, overlay = !opt.noOverlay;
-    uint64_t last = SDL_GetTicksNS(), fpsStart = last;
+    bool overlay = !opt.noOverlay;
+    uint64_t last = SDL_GetTicksNS(), fpsStart = last, appTicks = 0; // appTicks: script time, runs on in menus
     int frame = 0, fpsFrames = 0;
     double fps = 0;
 
     while (running) {
+        const bool inMenu = menus.screen() != ou::ui::Screen::None;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
             case SDL_EVENT_QUIT: running = false; break;
             case SDL_EVENT_KEY_DOWN:
-                if (e.key.repeat) break;
-                if (e.key.key == SDLK_ESCAPE) running = false;
-                else if (e.key.key == SDLK_F1) overlay = !overlay;
+                if (e.key.key == SDLK_F1 && !e.key.repeat) overlay = !overlay;
+                else if (menus.screen() != ou::ui::Screen::None) {
+                    if (const auto n = keyNav(e.key.key)) nav(*n);
+                } else if (e.key.key == SDLK_ESCAPE && !e.key.repeat) openPause();
+                break;
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                if (menus.screen() != ou::ui::Screen::None) {
+                    if (const auto n = padNav(e.gbutton.button)) nav(*n);
+                } else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) openPause();
                 break;
             case SDL_EVENT_MOUSE_MOTION:
-                if (interactive) mouse += glm::vec2(e.motion.xrel, e.motion.yrel);
+                if (interactive && !inMenu) mouse += glm::vec2(e.motion.xrel, e.motion.yrel);
                 break;
             case SDL_EVENT_GAMEPAD_ADDED:
                 if (!pad) pad.reset(SDL_OpenGamepad(e.gdevice.which));
@@ -719,19 +932,39 @@ int main(int argc, char** argv) {
             default: break;
             }
         }
+        if (interactive) SDL_SetWindowRelativeMouseMode(window.get(), menus.screen() == ou::ui::Screen::None);
         const uint64_t now = SDL_GetTicksNS();
         const double dt = opt.renderHz > 0 ? 1.0 / opt.renderHz : double(now - last) * 1e-9;
         last = now;
 
-        for (int n = clock.advance(dt); n > 0; --n) {
-            ou::game::Actions a = script ? script->at(world->ticks())
+        for (int n = clock.advance(dt); n > 0 && running; --n) {
+            ou::game::Actions a = script ? script->at(appTicks)
                                          : ou::game::readDevices(SDL_GetKeyboardState(nullptr), pad.get(),
                                                                  interactive ? SDL_GetMouseState(nullptr, nullptr) : 0);
+            ++appTicks;
+            if (!opt.musicWav.empty()) { // a tick of mixer output (also while paused)
+                const size_t frames = mixer.outputRate() / 60, at = wav.size();
+                wav.resize(at + 2 * frames);
+                mixer.mix(wav.data() + at, frames);
+            }
+            if (menus.screen() != ou::ui::Screen::None) { // paused: the world does not tick
+                if (script)
+                    if (const auto n = scriptNav(a, menuHeld)) nav(*n);
+                menuHeld = a, held = a;
+                mouse = glm::vec2(0);
+                continue;
+            }
+            menuHeld = a;
+            if (a.pause && !held.pause) {
+                openPause();
+                held = a;
+                continue;
+            }
             // Mouse motion since the last tick, as a rate over this tick.
             a.look -= mouse * kMouseSensitivity / float(ou::game::kTickSeconds);
             mouse = glm::vec2(0);
             if (a.save && !held.save) quickSave(*world, "quick");
-            if (a.load && !held.load) quickLoad(*world, "quick");
+            if (a.load && !held.load) quickLoad(*world, "quick"), shownChapter = world->chapter;
             held = a;
             if (world->ticks() == dieTick) {
                 world->kill(); // death clip, then World respawns her at the last checkpoint
@@ -739,6 +972,7 @@ int main(int argc, char** argv) {
             }
             world->tick(a);
             combat.tick(*world, audioOn ? &mixer : nullptr);
+            const auto tick = (unsigned long long)world->ticks();
             for (const auto& e : world->script().events()) {
                 const auto* src = world->script().find(e.source);
                 const auto* dst = world->script().find(e.target);
@@ -755,11 +989,34 @@ int main(int argc, char** argv) {
                                  s.pos.x, s.pos.y, s.pos.z, s.health, world->player().state().pos.x, world->player().state().pos.y,
                                  world->player().state().pos.z);
             }
-            if (audioOn) steps.tick(*world, mixer);
+            for (const auto& p : world->pickedUp()) {
+                const std::string text = std::string(strings->get(ou::game::pickupStringId(p.kind))) + "  " +
+                                         std::to_string(world->found[size_t(p.kind)]);
+                hud.notify(text);
+                std::fprintf(stderr, "ou-game: tick %llu pickup %s %d (%s)\n", tick, ou::game::pickupKindName(p.kind), p.id, text.c_str());
+            }
+            if (world->chapter != shownChapter && shownChapter != -2) {
+                const bool flashback = shownChapter == 0 && world->chapter == 1; // prologue -> one week earlier
+                hud.title(chapterName(world->chapter), flashback ? std::string(strings->get(ou::game::kStringOneWeekEarlier)) : "");
+                std::fprintf(stderr, "ou-game: tick %llu chapter %d %s (%s)\n", tick, world->chapter, chapterName(world->chapter).c_str(),
+                             world->currentUnit().data.name.c_str());
+                shownChapter = world->chapter;
+            }
             if (world->currentUnit().data.name != unitName) {
                 unitName = world->currentUnit().data.name;
                 logUnits();
+                if (audioOn) music.play(*bigfile, mixer, world->currentUnit().data.music, "unit " + unitName, tick);
             }
+            if (audioOn) {
+                for (const auto& e : world->script().events())
+                    if (e.kind == ou::script::EventKind::Enter)
+                        for (const auto& u : world->units())
+                            if (const auto it = u.data.musicByIntro.find(e.source); it != u.data.musicByIntro.end())
+                                music.play(*bigfile, mixer, it->second, "volume " + std::to_string(e.source), tick);
+                music.tick(mixer, float(ou::game::kTickSeconds));
+                steps.tick(*world, mixer);
+            }
+            hud.tick(ou::game::kTickSeconds);
         }
         if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion) {
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
@@ -782,6 +1039,7 @@ int main(int argc, char** argv) {
         enemyMeshes.pose(*world, clock.alpha(), scene, *renderer);
         objects.pose(world->script(), scene, *renderer);
         combat.pose(*world, s, clock.alpha(), scene, streamed.gunIndices, *renderer);
+        objects.hide(world->collected, scene, *renderer);
         ou::render::Camera cam;
         cam.verticalFovDeg = world->fovDeg;
         cam.nearZ = 5.0f;
@@ -800,13 +1058,15 @@ int main(int argc, char** argv) {
         SDL_GetWindowSizeInPixels(window.get(), &w, &h);
         std::vector<std::string> lines;
         if (overlay) {
-            lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS | tick %llu%s%s", opt.level.c_str(), fps,
+            lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS | tick %llu%s%s", world->currentUnit().data.name.c_str(), fps,
                                 (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
             lines.push_back(renderer->description());
             lines.push_back(fmt("lara %s | clip %s t %.2f | pos %.0f %.0f %.0f | yaw %.0f", std::string(ou::game::stateName(s.state)).c_str(),
                                 s.clip.c_str(), s.clipTime, s.pos.x, s.pos.y, s.pos.z, glm::degrees(s.yaw)));
-            lines.push_back(fmt("unit %s (%zu loaded) | checkpoint %d", world->currentUnit().data.name.c_str(), world->units().size(),
-                                world->checkpoint() ? world->checkpoint()->id : 0));
+            lines.push_back(fmt("unit %s (%zu loaded) | checkpoint %d | chapter %d | found %d/%d/%d | music %s",
+                                world->currentUnit().data.name.c_str(), world->units().size(), world->checkpoint() ? world->checkpoint()->id : 0,
+                                world->chapter, world->found[0], world->found[1], world->found[2],
+                                music.current.empty() ? "-" : music.current.c_str()));
             const ou::game::ai::Enemy* near = nullptr; // nearest living enemy
             for (const auto& e : world->enemies().all())
                 if (e->alive() && (!near || glm::distance(e->position(), s.pos) < glm::distance(near->position(), s.pos))) near = e.get();
@@ -815,8 +1075,8 @@ int main(int argc, char** argv) {
                                     near->type().name.c_str(), near->uid(), std::string(ou::game::ai::modeName(near->state().mode)).c_str(),
                                     near->health(), near->type().tuning.health, glm::distance(near->position(), s.pos)));
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
-            lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push | F draw | LMB fire | RMB lock | Q switch | "
-                            "mouse look | F5 save | F9 load | F1 overlay | Esc quit");
+            lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push/pick up | F draw | LMB fire | RMB lock | "
+                            "Q switch | mouse look | F5 save | F9 load | F1 overlay | Esc menu");
         }
         { // combat HUD text (always shown)
             const auto& cs = world->combat();
@@ -827,6 +1087,9 @@ int main(int argc, char** argv) {
             for (const auto& d : combat.dummies) t += fmt(" | dummy %.0f hp", d->hp);
             lines.push_back(t);
         }
+        ou::ui::Canvas canvas(w, h);
+        hud.draw(canvas);
+        menus.draw(canvas, *strings);
         // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these
         // lines change every frame (HUD, effects), so consecutive frames must never share a pointer.
         auto& frameLines = lineBuffers[frame & 1];
@@ -834,14 +1097,16 @@ int main(int argc, char** argv) {
         if (opt.showTriggers) appendTriggerLines(world->script(), frameLines);
         if (opt.showEnemies) appendEnemyLines(*world, frameLines);
         combat.lines(*world, c, world->fovDeg, w, h, frameLines);
-        renderer->drawFrame(cam, {w, h}, {true, true, lines, frameLines});
+        ou::render::FrameOptions fo{true, true, lines, frameLines};
+        fo.ui = canvas.vertices;
+        renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {
             running = false;
-            std::fprintf(stderr, "ou-game: final tick %llu unit %s checkpoint %d state %s pos %.1f %.1f %.1f yaw %.1f clip %s\n",
-                         (unsigned long long)world->ticks(), world->currentUnit().data.name.c_str(),
-                         world->checkpoint() ? world->checkpoint()->id : 0, std::string(ou::game::stateName(s.state)).c_str(), s.pos.x,
-                         s.pos.y, s.pos.z, glm::degrees(s.yaw), s.clip.c_str());
+            std::fprintf(stderr, "ou-game: final tick %llu unit %s chapter %d checkpoint %d found %d/%d/%d state %s pos %.1f %.1f %.1f yaw %.1f clip %s\n",
+                         (unsigned long long)world->ticks(), world->currentUnit().data.name.c_str(), world->chapter,
+                         world->checkpoint() ? world->checkpoint()->id : 0, world->found[0], world->found[1], world->found[2],
+                         std::string(ou::game::stateName(s.state)).c_str(), s.pos.x, s.pos.y, s.pos.z, glm::degrees(s.yaw), s.clip.c_str());
             if (!opt.screenshot.empty()) {
                 if (!writePpm(opt.screenshot, renderer->readBackbuffer({w, h}))) {
                     std::fprintf(stderr, "ou-game: cannot write %s\n", opt.screenshot.string().c_str());
@@ -853,6 +1118,10 @@ int main(int argc, char** argv) {
         renderer->present();
     }
     std::fprintf(stderr, "ou-game: %u footstep/landing sounds\n", steps.plays);
+    if (!opt.musicWav.empty()) {
+        if (!writeWav(opt.musicWav, wav, mixer.outputRate())) std::fprintf(stderr, "ou-game: cannot write %s\n", opt.musicWav.string().c_str());
+        else std::fprintf(stderr, "ou-game: wrote %s (%.2f s)\n", opt.musicWav.string().c_str(), double(wav.size() / 2) / mixer.outputRate());
+    }
     renderer->shutdown();
     return 0;
 }

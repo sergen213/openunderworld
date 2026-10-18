@@ -6,9 +6,11 @@
 #include <chrono>
 #include <thread>
 
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 
 using namespace ou::audio;
@@ -262,6 +264,124 @@ TEST(Mul, TruncationAndCorruptionThrow) {
     EXPECT_THROW(decodeMul(ch), FormatError);
 }
 
+// ---- Mus! ------------------------------------------------------------------------------------
+namespace {
+void putName(std::vector<uint8_t>& v, const char* s) {
+    char n[0x14] = {};
+    std::strncpy(n, s, sizeof n);
+    v.insert(v.end(), n, n + sizeof n);
+}
+
+// One sequence (tempo 500000 us, 480 ppqn), 1 tone/program/sample, one stereo stem, 2 labels.
+// Script: volume 64, fade 0 now; L0: if var[0x7D] > 0 goto L1; fade to 127 over 2 beats;
+// goto L0. L1: var[0x0E] = 5; note on + running-status note; 480 ticks later end of track.
+std::vector<uint8_t> makeMus(uint8_t gotoLabel = 0) {
+    std::vector<uint8_t> t; // track
+    auto ev = [&](std::initializer_list<uint8_t> b) { t.insert(t.end(), b); return uint32_t(t.size()); };
+    ev({0x00, 0xFF, 0xF0, 3, 'a', 'b', 'c'});
+    ev({0x00, 0xFF, 0x60, 2, 0, 64});
+    ev({0x00, 0xFF, 0x62, 3, 0, 0, 0});
+    const uint32_t l0 = ev({0x00, 0xFF, 0x31, 1, 0});
+    ev({0x00, 0xFF, 0x3C, 3, 0x7D, 0, 1});
+    ev({0x00, 0xFF, 0x62, 3, 0, 2, 0x7F});
+    const uint32_t l1 = ev({0x00, 0xFF, 0x32, 1, gotoLabel});
+    ev({0x00, 0xFF, 0x33, 2, 5, 0x0E});
+    ev({0x00, 0x90, 0x3C, 0x40});
+    ev({0x00, 0x3C, 0x00});
+    ev({0x83, 0x60, 0xFF, 0x44, 0});
+
+    std::vector<uint8_t> v{'M', 'u', 's', '!'};
+    const uint32_t stems = 0x12C, labels = stems + 0x58, seq = labels + 8;
+    for (uint32_t x : {seq - 8, kMusVersion, 0u, 0u, 0u, 1u, 1u, 120u, stems, 2u, labels, 1u, 1u, 1u}) put32(v, x);
+    put32(v, 0); put32(v, seq);                   // sequence table {id, offset}
+    put32(v, 0x80);                               // tone offsets
+    put32(v, 0x100);                              // program offsets
+    putName(v, "Sine_440"); put32(v, 0x40); put32(v, 0); put32(v, 0xC0); v.resize(0x80, 0); // sample
+    putName(v, "Atk 11"); put32(v, 1);            // tone: 1 layer of 0x68 bytes
+    v.resize(0x80 + 0x18 + 0x40, 0);
+    v.insert(v.end(), {0, 0x7F, 0, 0x7F}); put32(v, 0); v.resize(0x100, 0);
+    putName(v, "Rel 1"); put32(v, 2); put32(v, 5); put32(v, 1); // program: bank 2, program 5
+    put32(v, 0xFFFFFFFF); v.insert(v.end(), {10, 20, 0, 0x7F}); put32(v, 0);
+    for (uint32_t x : {44100u, 0u, 2u, 0u, 1000u, 7u, 500u}) put32(v, x); // stem
+    for (float x : {1.f, 1.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.5f, 0.5f}) putf(v, x);
+    v.resize(labels, 0);
+    put32(v, l0); put32(v, l1);
+    v.insert(v.end(), {'Q', 'S', 'M', 'a'});
+    put32(v, 500000); put16(v, 480); put16(v, 0x106); put16(v, 1); put16(v, 0); put32(v, 0x14);
+    v.insert(v.end(), t.begin(), t.end());
+    return v;
+}
+} // namespace
+
+TEST(Mus, ParsesSyntheticScript) {
+    const auto f = parseMus(makeMus());
+    EXPECT_EQ(f.version, kMusVersion);
+    EXPECT_EQ(f.header20, 120u);
+    ASSERT_EQ(f.samples.size(), 1u);
+    EXPECT_EQ(f.samples[0].name, "Sine_440");
+    EXPECT_EQ(f.samples[0].samOffset, 0x40u);
+    EXPECT_EQ(f.samples[0].size, 0xC0u);
+    ASSERT_EQ(f.tones.size(), 1u);
+    EXPECT_EQ(f.tones[0].name, "Atk 11");
+    ASSERT_EQ(f.tones[0].layers.size(), 1u);
+    EXPECT_EQ(f.tones[0].layers[0].keyHi, 0x7F);
+    ASSERT_EQ(f.programs.size(), 1u);
+    EXPECT_EQ(f.programs[0].bank, 2u);
+    EXPECT_EQ(f.programs[0].program, 5u);
+    ASSERT_EQ(f.programs[0].zones.size(), 1u);
+    EXPECT_EQ(f.programs[0].zones[0].keyLo, 10);
+    EXPECT_EQ(f.programs[0].zones[0].keyHi, 20);
+    ASSERT_EQ(f.stems.size(), 1u);
+    EXPECT_EQ(f.stems[0].channels, 2u);
+    EXPECT_EQ(f.stems[0].frames, 1000u);
+    EXPECT_EQ(f.stems[0].msPerBeat, 500u);
+    EXPECT_FLOAT_EQ(f.stems[0].pan, 0.5f);
+    ASSERT_EQ(f.sequences.size(), 1u);
+    const auto& s = f.sequences[0];
+    EXPECT_EQ(s.tempo, 500000u);
+    EXPECT_EQ(s.ppqn, 480u);
+    ASSERT_EQ(s.tracks.size(), 1u);
+    const auto& e = s.tracks[0];
+    ASSERT_EQ(e.size(), 11u);
+    EXPECT_EQ(e[0].meta, 0xF0);
+    EXPECT_EQ(std::string(e[0].data.begin(), e[0].data.end()), "abc");
+    EXPECT_EQ(e[3].offset, f.labels[0] - 5);
+    EXPECT_EQ(e[4].offset, f.labels[0]);
+    EXPECT_EQ(e[8].status, 0x90);
+    EXPECT_EQ(e[9].status, 0x90); // running status
+    EXPECT_EQ(e[9].data, (std::vector<uint8_t>{0x3C, 0}));
+    EXPECT_EQ(e[10].delta, 480u);
+    EXPECT_EQ(e[10].meta, 0x44);
+}
+
+TEST(Mus, TruncationAndBadDataThrow) {
+    const auto v = makeMus();
+    for (size_t n = 0; n < v.size(); ++n) EXPECT_THROW(parseMus(std::span(v.data(), n)), FormatError) << n;
+    auto ver = v;
+    ver[8] = 0x13;
+    EXPECT_THROW(parseMus(ver), FormatError);
+    EXPECT_THROW(parseMus(makeMus(2)), FormatError); // goto past the label table
+}
+
+TEST(Mus, SequencerDrivesStemGainsFromVariables) {
+    const auto f = parseMus(makeMus());
+    MusSequencer q(f);
+    std::array<uint8_t, 256> vars{};
+    const float vol = 64 / 127.0f;
+    q.update(0, vars); // volume 64, fade 0, start fade to 1 over 2 * 500 ms, goto L0 (yield)
+    EXPECT_FLOAT_EQ(q.stemGains()[0], 0);
+    q.update(0.25f, vars); // ramp to 0.25; L0 re-issues the fade from there
+    EXPECT_NEAR(q.stemGains()[0], vol * 0.25f, 1e-6);
+    vars[0x7D] = 1;
+    q.update(0, vars); // branch to L1 (yield)
+    q.update(0, vars); // var[0x0E] = 5; end of track waits for tick 480 (0.5 s)
+    EXPECT_EQ(vars[0x0E], 5);
+    EXPECT_FALSE(q.finished());
+    q.update(0.25f, vars);
+    EXPECT_TRUE(q.finished());
+    EXPECT_NEAR(q.stemGains()[0], vol * (0.25f + 0.75f * 0.25f), 1e-6);
+}
+
 // ---- Mixer -----------------------------------------------------------------------------------
 TEST(Mixer, MonoCentreIsEqualPower) {
     Mixer m;
@@ -426,4 +546,55 @@ TEST(AudioReal, LevelWavesAndMusic) {
     EXPECT_EQ(music.pcm.loopStart, 0);
     EXPECT_EQ(music.pcm.frames(), 5767168u);
     EXPECT_EQ(music.pcm.volLeft, (std::vector<float>{1, 0, 1, 0}));
+}
+
+TEST(AudioReal, MusParsesAll75) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    // Bigfile records are hashed, so scan the small ones for the magic (retail .mus are
+    // 9996..12176 bytes; patch.000 holds none).
+    const ou::cdc::Bigfile big(std::filesystem::path(gameDir()) / "bigfile.000");
+    size_t files = 0, events = 0, stems = 0;
+    for (const auto& r : big.records()) {
+        if (r.size < 4 || r.size > 0x10000) continue;
+        const auto d = big.read(r);
+        if (std::memcmp(d.data(), "Mus!", 4) != 0) continue;
+        ++files;
+        SCOPED_TRACE(r.hash);
+        const auto f = parseMus(d);
+        EXPECT_EQ(f.samples.size(), 4u);
+        EXPECT_EQ(f.tones.size(), 52u);
+        EXPECT_EQ(f.programs.size(), 50u);
+        EXPECT_FALSE(f.stems.empty());
+        ASSERT_EQ(f.sequences.size(), 1u);
+        ASSERT_EQ(f.sequences[0].tracks.size(), 1u);
+        EXPECT_GT(f.sequences[0].tracks[0].size(), 4u);
+        events += f.sequences[0].tracks[0].size();
+        stems += f.stems.size();
+    }
+    EXPECT_EQ(files, 75u);
+    EXPECT_EQ(stems, 137u);
+    EXPECT_EQ(events, 8462u);
+}
+
+TEST(AudioReal, MusPoolStemGainsFollowVariable7D) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    const auto d = bf.read("pc-w\\music\\l4_pool_mus_01\\l4_pool_mus_01.mus");
+    ASSERT_TRUE(d);
+    const auto f = parseMus(*d);
+    ASSERT_EQ(f.stems.size(), 2u); // the .mul's two stereo stems
+    EXPECT_EQ(f.stems[0].frames, 5767168u);
+    const auto gains = [&](uint8_t level) {
+        MusSequencer q(f);
+        std::array<uint8_t, 256> v{};
+        v[0x7D] = level;
+        for (int i = 0; i < 300; ++i) q.update(1 / 30.0f, v);
+        return q.stemGains();
+    };
+    const float base = 0x28 / 127.0f; // meta 0x60 volume; levels select the fade targets
+    const auto g0 = gains(0), g7 = gains(7), g8 = gains(8);
+    EXPECT_NEAR(g0[0], base, 0.005);
+    EXPECT_NEAR(g0[1], base * 0x5F / 127, 0.005);
+    EXPECT_NEAR(g7[0], base * 5 / 127, 0.005);
+    EXPECT_NEAR(g8[1], base, 0.005);
 }

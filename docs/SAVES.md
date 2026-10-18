@@ -68,7 +68,9 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `player.runJump`, `regrabCooldown` | | controller details |
 | `camera.yaw`, `camera.pitch` | number | follow-camera orbit |
 | `checkpoint` | null or `{unit, id}` | last checkpoint: intro unique id in `unit` |
-| `collected` | [int] | intro unique ids of picked-up items. **Nothing collects items yet**; the field round-trips |
+| `collected` | [int] | intro unique ids of picked-up rewards (`World::collected`, src/game/Progress.hpp) |
+| `chapter` | int | `game::kChapters` index; missing (older saves) = the unit's `l<N>_` prefix, else 0 |
+| `found` | [int, int, int] | rewards collected per kind: treasures, relics, health packs (PDA counts); missing = 0s |
 | `script` | object | `script::Runtime::serialize()` (src/script): per-intro trigger/switch/door/block state, opaque here |
 
 Ledge and water indices are stored as (unit, index within that unit), not as indices into the merged collision mesh.
