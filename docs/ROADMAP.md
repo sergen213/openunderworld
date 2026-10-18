@@ -13,7 +13,7 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 | 4 | Engine foundations: scene/streaming, animation, collision, character control | Research Required |
 | 5 | Playable section: traversal, puzzles, combat, saving | Research Required |
 | 6 | Vulkan backend, enhanced rendering, optional RT | Research Required |
-| 7 | Qt launcher, packaging, CI, signed updates | Research Required |
+| 7 | Qt launcher, packaging, CI, signed updates | In progress |
 | 8 | Edition compatibility, fidelity verification, release | Research Required |
 
 ## Compatibility matrix
@@ -26,6 +26,9 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 | DRM v19 sections/relocs | Tested | Reloc table sizes match on all 1396 reloc-bearing sections of lara.drm | `test_cdc` | extern/resource reloc semantics unverified |
 | Textures (PCD9) | Research Required | Header observed | — | — |
 | Meshes / terrain | Research Required | — | — | — |
+| Launcher (Qt 6) + shared config | Implemented | Live Wayland screenshot with real import result (docs/LAUNCHER.md) | `launcher_self_test` (offscreen), `Config.*` | Launch button / save restore not GUI-exercised |
+| Signed updater + ou-sign | Tested | Ed25519 (libsodium), stage + RENAME_EXCHANGE swap, journal recovery (docs/UPDATES.md) | `ou_update_tests` (12, file-backed transport) | Live HTTPS server untested; no release server yet |
+| Packaging / CI | Implemented | install rules, .desktop, icon, PKGBUILD, Arch CI workflow | — | CI never run on GitHub; makepkg not run |
 | Everything gameplay | Research Required | — | — | — |
 
 ## Principles

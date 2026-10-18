@@ -12,3 +12,11 @@ compile_commands.json
 *.exe
 *.dll
 /local/
+# Signing keys never live in the repo (ou-sign keeps them in ~/.config/openunderworld-signing)
+*.key
+release.key
+# makepkg output
+/packaging/src/
+/packaging/pkg/
+/packaging/*.pkg.tar*
+/packaging/*.log

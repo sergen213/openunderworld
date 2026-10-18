@@ -15,6 +15,7 @@
 #include <glm/glm.hpp>
 
 #include "cdc/Cdc.hpp"
+#include "config/Config.hpp"
 #include "engine/FrameClock.hpp"
 #include "formats/Formats.hpp"
 #include "platform/Sdl.hpp"
@@ -34,24 +35,40 @@ struct Options {
     std::filesystem::path screenshot;
     bool vsync = true;
     std::optional<std::array<float, 5>> cam; // x y z yawDeg pitchDeg
+    bool fullscreen = false;
 };
 
 void usage() {
     std::fprintf(stderr,
                  "usage: ou-viewer [--game-dir DIR] [--drm pc-w\\\\x.drm] [--width W --height H] [--fov DEG]\n"
                  "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH]\n"
+                 "                 [--fullscreen] [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
 }
 
 bool parseArgs(int argc, char** argv, Options& o) {
+    // --config first, wherever it appears, so explicit flags override it.
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) != "--config") continue;
+        try {
+            auto c = ou::config::load(argv[i + 1]);
+            o.gameDir = c.gameDir, o.drm = c.drm, o.width = c.width, o.height = c.height;
+            o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "--config: %s\n", e.what());
+            return false;
+        }
+    }
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
         const char* v = nullptr;
         if (a == "--no-vsync") { o.vsync = false; continue; }
+        if (a == "--fullscreen") { o.fullscreen = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (!(v = next())) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
+        if (a == "--config") continue; // applied above
         if (a == "--game-dir") o.gameDir = v;
         else if (a == "--drm") o.drm = v;
         else if (a == "--width") o.width = std::atoi(v);
@@ -147,7 +164,8 @@ int main(int argc, char** argv) {
     if (!renderer->preWindowSetup(error)) { std::fprintf(stderr, "ou-viewer: %s\n", error.c_str()); return 1; }
     window.reset(SDL_CreateWindow(
         "OpenUnderworld viewer", opt.width, opt.height,
-        SDL_WindowFlags(renderer->windowFlags()) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY));
+        SDL_WindowFlags(renderer->windowFlags()) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+            (opt.fullscreen ? SDL_WINDOW_FULLSCREEN : 0)));
     if (!window) { std::fprintf(stderr, "ou-viewer: SDL_CreateWindow: %s\n", SDL_GetError()); return 1; }
     if (!renderer->init(window.get(), error)) { std::fprintf(stderr, "ou-viewer: %s\n", error.c_str()); return 1; }
     bool vsync = renderer->setVsync(opt.vsync) && opt.vsync;

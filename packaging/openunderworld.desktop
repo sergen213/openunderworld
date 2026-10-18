@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OpenUnderworld
+GenericName=Game engine reimplementation launcher
+Comment=Native Linux reimplementation of Tomb Raider: Underworld (requires your own copy of the game)
+Exec=ou-launcher
+Icon=openunderworld
+Terminal=false
+Categories=Game;ActionGame;
+Keywords=tomb;raider;underworld;cdc;
+StartupWMClass=ou-launcher

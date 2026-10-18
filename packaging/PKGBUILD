@@ -1,0 +1,40 @@
+# Local Arch package of the working tree: cd packaging && makepkg  (install yourself with pacman -U).
+# Contains only OpenUnderworld's own binaries; no game data.
+pkgname=openunderworld-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Native Linux reimplementation of Tomb Raider: Underworld (requires your own copy of the game)"
+arch=('x86_64')
+url="https://github.com/sergen213/openunderworld"
+license=('GPL-3.0-or-later')
+depends=('sdl3' 'libepoxy' 'zlib' 'openssl' 'libsodium' 'curl' 'qt6-base' 'vulkan-icd-loader')
+makedepends=('cmake' 'ninja' 'glm' 'nlohmann-json' 'gtest' 'vulkan-headers' 'shaderc')
+checkdepends=()
+provides=('openunderworld')
+conflicts=('openunderworld')
+options=('!debug')
+
+_srcroot="$(realpath "$startdir/..")"
+
+pkgver() {
+  cd "$_srcroot"
+  printf "0.1.0.r%s.g%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cmake -S "$_srcroot" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DOU_SANITIZE=OFF
+  cmake --build build
+}
+
+check() {
+  # Real-data tests skip without OU_GAME_DIR; display tests skip without a display.
+  QT_QPA_PLATFORM=offscreen OU_DISABLE_UPDATES=1 ctest --test-dir build --output-on-failure
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "$_srcroot/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

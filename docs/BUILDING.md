@@ -2,7 +2,9 @@
 
 ## Dependencies (Arch / CachyOS package names)
 
-`cmake ninja gcc` (or clang), `zlib-ng-compat`, `sdl3`, `libepoxy`, `glm`, `gtest`.
+`cmake ninja gcc` (or clang), `zlib-ng-compat`, `sdl3`, `libepoxy`, `glm`, `gtest`,
+`openssl nlohmann-json` (importer), `libsodium curl` (updater, `ou-sign`), `qt6-base` (`ou-launcher`;
+skipped with a CMake notice if Qt 6 is missing). Launcher and updater: `docs/LAUNCHER.md`, `docs/UPDATES.md`.
 A GPU/driver with OpenGL 4.5+ core (4.6 requested; developed on Mesa radeonsi).
 
 No vendored libraries: OpenGL entry points come from libepoxy, the overlay font is SDL3's
@@ -44,6 +46,8 @@ build/ou-viewer --frames 5 --screenshot out.ppm   # render N frames, save PPM, e
 | `--screenshot FILE` | after the last frame, save the back buffer as binary PPM (implies `--frames 1`) |
 | `--no-vsync` | start with vsync off |
 | `--cam X,Y,Z,YAW,PITCH` | initial camera position (game units) and yaw/pitch in degrees |
+| `--fullscreen` | start fullscreen |
+| `--config FILE` | launcher config JSON (`docs/LAUNCHER.md`), applied first; other flags override |
 
 Controls: hold the right mouse button for mouse look (relative mouse mode); WASD move, Q/E
 down/up, Shift ×4 speed, mouse wheel scales speed; gamepad left stick move, right stick

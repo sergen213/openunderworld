@@ -1,0 +1,611 @@
+// ou-launcher: Qt 6 Widgets front end. Writes $XDG_CONFIG_HOME/openunderworld/config.json and starts
+// ou-viewer --config <that file>. Reads the game directory only (ou_importer); never writes to it.
+// No Q_OBJECT classes (lambdas only), so no moc. Notes: docs/LAUNCHER.md.
+#include "config/Config.hpp"
+#include "importer/Importer.hpp"
+#include "update/Update.hpp"
+
+#include <SDL3/SDL.h>
+
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QCommandLineParser>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QDoubleSpinBox>
+#include <QFileDialog>
+#include <QFormLayout>
+#include <QFutureWatcher>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QProcess>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QSysInfo>
+#include <QTabWidget>
+#include <QTimer>
+#include <QUrl>
+#include <QVBoxLayout>
+#include <QtConcurrent>
+
+#include <fstream>
+#include <unistd.h>
+
+#include <functional>
+
+namespace fs = std::filesystem;
+using nlohmann::json;
+
+#ifndef OU_VERSION
+#define OU_VERSION "0.0.0"
+#endif
+
+namespace {
+
+QString q(const std::string& s) { return QString::fromStdString(s); }
+QString q(const fs::path& p) { return QString::fromStdString(p.string()); }
+QString q(const char* t) { return QString::fromUtf8(t); }
+std::string s(const QString& t) { return t.toStdString(); }
+
+struct Paths {
+    fs::path config = ou::config::defaultConfigPath();
+    fs::path saves = ou::config::dataHome() / "openunderworld" / "saves";
+    fs::path backups = ou::config::dataHome() / "openunderworld" / "save-backups";
+    fs::path logs = ou::config::stateHome() / "openunderworld" / "logs";
+    fs::path installRoot = ou::config::dataHome() / "openunderworld" / "install"; // updater-managed copy
+};
+
+// Human summary + verdict of an ou_importer scan.
+QString summarize(const json& m, bool& ok) {
+    QStringList out, problems, warnings;
+    const json& ex = m.value("exe", json::object());
+    out << "Game directory: " + q(m.value("game_dir", ""));
+    if (ex.contains("error")) problems << "tru.exe: " + q(ex["error"].get<std::string>());
+    else {
+        out << "Detected build: " + q(ex.value("build", "unknown"));
+        out << "tru.exe sha256: " + q(ex.value("sha256", ""));
+        if (ex.contains("version_resource") && ex["version_resource"].is_object())
+            out << "File version: " + q(ex["version_resource"].value("fixed_file_version", "?"));
+        if (ex.contains("pe")) out << "PE timestamp: " + q(ex["pe"].value("timestamp_utc", "?"));
+        if (ex.value("build", "unknown") == "unknown") problems << "tru.exe is not a known build (unsupported edition?)";
+    }
+    out << QString("Files: %1").arg(m.value("files", json::array()).size());
+    for (const auto& a : m.value("archives", json::array())) {
+        QString name = q(a.value("name", "?"));
+        if (a.contains("error")) { problems << name + ": " + q(a["error"].get<std::string>()); continue; }
+        out << QString("%1: %2 records in %3 parts, %4 record errors, names %5%")
+                   .arg(name).arg(a.value("record_count", 0)).arg(a.value("parts", json::array()).size())
+                   .arg(a.value("record_errors", 0)).arg(a.value("name_coverage_pct", 0.0), 0, 'f', 1);
+        if (!a.value("missing_parts", json::array()).empty()) problems << name + ": missing parts " + q(a["missing_parts"].dump());
+        if (a.value("record_errors", 0) > 0) problems << name + ": record errors";
+    }
+    for (const auto& h : m.value("gog_hashdb", json::array())) {
+        if (h.contains("error")) { problems << q(h.value("file", "")) + ": " + q(h["error"].get<std::string>()); continue; }
+        const auto& sm = h["summary"];
+        out << QString("GOG hashdb %1: %2 ok, %3 mismatch, %4 missing")
+                   .arg(q(h.value("file", ""))).arg(sm.value("ok", 0)).arg(sm.value("mismatch", 0)).arg(sm.value("missing", 0));
+        if (sm.value("mismatch", 0)) problems << "GOG hashdb: files differ from the GOG release";
+        for (const auto& e : h.value("entries", json::array()))
+            if (e.value("status", "") == "missing") warnings << "GOG hashdb lists a file that is absent: " + q(e.value("path", ""));
+        if (!sm.value("ok", 0) && !sm.value("mismatch", 0)) out << "  (file hashes not checked; enable \"Hash every file\")";
+    }
+    if (m.contains("runtime_seconds")) out << QString("Scan time: %1 s").arg(m["runtime_seconds"].value("total", 0.0), 0, 'f', 1);
+    ok = problems.empty();
+    QString head = ok ? "VALIDATION: OK" : "VALIDATION: PROBLEMS\n  - " + problems.join("\n  - ");
+    if (!warnings.empty()) head += "\nWarnings:\n  - " + warnings.join("\n  - ");
+    out.prepend(head);
+    return out.join('\n');
+}
+
+void copyTree(const fs::path& from, const fs::path& to) {
+    fs::create_directories(to);
+    fs::copy(from, to, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+}
+
+class Launcher : public QWidget {
+public:
+    Launcher(Paths paths, const QString& gameDirOverride) : paths_(std::move(paths)) {
+        setWindowTitle("OpenUnderworld Launcher");
+        setWindowIcon(QIcon::fromTheme("openunderworld"));
+        try { cfg_ = ou::config::load(paths_.config); } catch (const std::exception& e) { startupNote_ = "config ignored: " + q(e.what()); }
+        if (!gameDirOverride.isEmpty()) cfg_.gameDir = s(gameDirOverride);
+
+        tabs_ = new QTabWidget;
+        tabs_->addTab(gamePage(), "Game");
+        tabs_->addTab(graphicsPage(), "Graphics");
+        tabs_->addTab(controllersPage(), "Controllers");
+        tabs_->addTab(savesPage(), "Saves");
+        tabs_->addTab(diagnosticsPage(), "Diagnostics");
+        tabs_->addTab(updatesPage(), "Version && Updates");
+
+        auto* save = new QPushButton("Save settings");
+        auto* launch = new QPushButton("Launch");
+        launch->setDefault(true);
+        status_ = new QLabel;
+        status_->setWordWrap(true);
+        connect(save, &QPushButton::clicked, this, [this] { saveConfig(); });
+        connect(launch, &QPushButton::clicked, this, [this] { launchViewer(); });
+        auto* bar = new QHBoxLayout;
+        bar->addWidget(status_, 1);
+        bar->addWidget(save);
+        bar->addWidget(launch);
+        auto* lay = new QVBoxLayout(this);
+        lay->addWidget(tabs_);
+        lay->addLayout(bar);
+        resize(900, 640);
+
+        try {
+            if (auto r = ou::update::recover(paths_.installRoot); !r.empty()) startupNote_ += " update recovery: " + q(r);
+        } catch (const std::exception& e) { startupNote_ += " update recovery failed: " + q(e.what()); }
+        status_->setText(startupNote_.isEmpty() ? "Config: " + q(paths_.config) : startupNote_);
+    }
+
+    QTabWidget* tabs() { return tabs_; }
+    void startScan() { scan(); }
+    std::function<void()> onScanDone; // used by --grab
+
+private:
+    Paths paths_;
+    ou::config::Config cfg_;
+    QString startupNote_, lastScanSummary_;
+    QTabWidget* tabs_;
+    QLabel* status_;
+    QLineEdit *gameDir_, *drm_, *manifestUrl_;
+    QCheckBox *hashFiles_, *fullscreen_, *vsync_, *updatesEnabled_;
+    QPushButton* scanBtn_;
+    QPlainTextEdit *scanOut_, *diag_, *changelog_;
+    QComboBox *renderer_, *channel_;
+    QSpinBox *width_, *height_;
+    QDoubleSpinBox* fov_;
+    QListWidget *pads_, *backups_;
+    QLabel *updateStatus_, *versionLabel_;
+
+    // ---------------------------------------------------------------------------------------
+    QWidget* gamePage() {
+        auto* w = new QWidget;
+        gameDir_ = new QLineEdit(q(cfg_.gameDir));
+        gameDir_->setPlaceholderText("Tomb Raider: Underworld install directory (contains tru.exe, bigfile.000)");
+        auto* browse = new QPushButton("Browse…");
+        connect(browse, &QPushButton::clicked, this, [this] {
+            QString d = QFileDialog::getExistingDirectory(this, "Game directory", gameDir_->text());
+            if (!d.isEmpty()) gameDir_->setText(d);
+        });
+        hashFiles_ = new QCheckBox("Hash every file and check the GOG hashdb (slow: reads the whole install)");
+        scanBtn_ = new QPushButton("Scan / validate");
+        connect(scanBtn_, &QPushButton::clicked, this, [this] { scan(); });
+        scanOut_ = new QPlainTextEdit;
+        scanOut_->setReadOnly(true);
+        scanOut_->setPlaceholderText("Scan the install to detect the build and validate the archives. Read-only: nothing in the game directory is modified.");
+        auto* row = new QHBoxLayout;
+        row->addWidget(gameDir_, 1);
+        row->addWidget(browse);
+        auto* lay = new QVBoxLayout(w);
+        lay->addWidget(new QLabel("<b>Install / import</b> — OpenUnderworld reads your own legally obtained copy of the game."));
+        lay->addLayout(row);
+        lay->addWidget(hashFiles_);
+        lay->addWidget(scanBtn_);
+        lay->addWidget(scanOut_, 1);
+        return w;
+    }
+
+    void scan() {
+        fs::path dir = s(gameDir_->text().trimmed());
+        if (dir.empty()) { scanOut_->setPlainText("Pick the game directory first."); return; }
+        ou::importer::ScanOptions opt;
+        opt.hashFiles = hashFiles_->isChecked();
+        scanBtn_->setEnabled(false);
+        scanOut_->setPlainText("Scanning " + q(dir) + " …");
+        auto* watcher = new QFutureWatcher<std::pair<json, std::string>>(this);
+        connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, dir] {
+            auto [m, err] = watcher->result();
+            watcher->deleteLater();
+            scanBtn_->setEnabled(true);
+            if (!err.empty()) { scanOut_->setPlainText("Scan failed: " + q(err)); return; }
+            bool ok = false;
+            QString text = summarize(m, ok);
+            if (auto sha = m["exe"].value("sha256", ""); !sha.empty()) {
+                fs::path out = ou::importer::defaultManifestPath(sha);
+                std::error_code ec;
+                fs::create_directories(out.parent_path(), ec);
+                std::ofstream(out) << m.dump(1);
+                text += "\nFull manifest: " + q(out);
+            }
+            if (ok) cfg_.gameDir = dir.string();
+            lastScanSummary_ = text;
+            if (onScanDone) QTimer::singleShot(100, this, onScanDone);
+            scanOut_->setPlainText(text);
+            status_->setText(ok ? "Install validated; Save settings to keep this game directory." : "Install has problems; see the Game tab.");
+        });
+        watcher->setFuture(QtConcurrent::run([dir, opt]() -> std::pair<json, std::string> {
+            try { return {ou::importer::scan(dir, opt), {}}; } catch (const std::exception& e) { return {json(), e.what()}; }
+        }));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    QWidget* graphicsPage() {
+        auto* w = new QWidget;
+        renderer_ = new QComboBox;
+        renderer_->addItem("OpenGL 4.6", "opengl");
+        renderer_->addItem("Vulkan", "vulkan");
+        renderer_->setCurrentIndex(std::max(0, renderer_->findData(q(cfg_.renderer))));
+        width_ = new QSpinBox;
+        height_ = new QSpinBox;
+        width_->setRange(320, 16384);
+        height_->setRange(200, 16384);
+        width_->setValue(cfg_.width);
+        height_->setValue(cfg_.height);
+        auto* preset = new QComboBox;
+        preset->addItem("Presets…");
+        for (auto [pw, ph] : {std::pair{1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3840, 2160}})
+            preset->addItem(QString("%1 × %2").arg(pw).arg(ph), QSize(pw, ph));
+        connect(preset, &QComboBox::activated, this, [this, preset](int i) {
+            if (QSize sz = preset->itemData(i).toSize(); sz.isValid()) { width_->setValue(sz.width()); height_->setValue(sz.height()); }
+        });
+        fullscreen_ = new QCheckBox("Fullscreen");
+        fullscreen_->setChecked(cfg_.fullscreen);
+        fov_ = new QDoubleSpinBox;
+        fov_->setRange(30, 120);
+        fov_->setSuffix("°");
+        fov_->setValue(cfg_.fov);
+        vsync_ = new QCheckBox("VSync");
+        vsync_->setChecked(cfg_.vsync);
+        drm_ = new QLineEdit(q(cfg_.drm));
+        drm_->setPlaceholderText("e.g. pc-w\\lara.drm or pc-w\\l4_pool.drm (empty: placeholder scene)");
+        auto* res = new QHBoxLayout;
+        res->addWidget(width_);
+        res->addWidget(new QLabel("×"));
+        res->addWidget(height_);
+        res->addWidget(preset);
+        res->addStretch();
+        auto* f = new QFormLayout(w);
+        f->addRow("Renderer", renderer_);
+        f->addRow("Resolution", res);
+        f->addRow("", fullscreen_);
+        f->addRow("Field of view", fov_);
+        f->addRow("", vsync_);
+        f->addRow("Start level (DRM)", drm_);
+        return w;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    QWidget* controllersPage() {
+        auto* w = new QWidget;
+        pads_ = new QListWidget;
+        auto* refresh = new QPushButton("Refresh");
+        connect(refresh, &QPushButton::clicked, this, [this] { listPads(); });
+        auto* lay = new QVBoxLayout(w);
+        lay->addWidget(new QLabel("Gamepads seen by SDL3 (the viewer uses the first one):"));
+        lay->addWidget(pads_, 1);
+        lay->addWidget(refresh, 0, Qt::AlignLeft);
+        listPads();
+        return w;
+    }
+
+    void listPads() {
+        pads_->clear();
+        if (!SDL_WasInit(SDL_INIT_GAMEPAD)) { pads_->addItem(QString("SDL gamepad subsystem unavailable: ") + SDL_GetError()); return; }
+        SDL_UpdateJoysticks();
+        int n = 0;
+        SDL_JoystickID* ids = SDL_GetGamepads(&n);
+        for (int i = 0; i < n; ++i) {
+            char guid[64];
+            SDL_GUIDToString(SDL_GetJoystickGUIDForID(ids[i]), guid, sizeof guid);
+            const char* name = SDL_GetGamepadNameForID(ids[i]);
+            pads_->addItem(QString("%1  [%2]  guid %3").arg(name ? name : "unnamed")
+                               .arg(SDL_GetGamepadStringForType(SDL_GetGamepadTypeForID(ids[i]))).arg(guid));
+        }
+        SDL_free(ids);
+        if (n == 0) pads_->addItem("No gamepads detected. Connect one and press Refresh.");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    QWidget* savesPage() {
+        auto* w = new QWidget;
+        backups_ = new QListWidget;
+        auto* backup = new QPushButton("Back up now");
+        auto* restore = new QPushButton("Restore selected…");
+        auto* open = new QPushButton("Open save folder");
+        connect(backup, &QPushButton::clicked, this, [this] { backupSaves(); });
+        connect(restore, &QPushButton::clicked, this, [this] { restoreSaves(); });
+        connect(open, &QPushButton::clicked, this, [this] {
+            fs::create_directories(paths_.saves);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(q(paths_.saves)));
+        });
+        auto* row = new QHBoxLayout;
+        row->addWidget(backup);
+        row->addWidget(restore);
+        row->addWidget(open);
+        row->addStretch();
+        auto* lay = new QVBoxLayout(w);
+        lay->addWidget(new QLabel("Save directory: " + q(paths_.saves) + "\nBackups: " + q(paths_.backups) +
+                                  "\n(OpenUnderworld's own saves; the original game's saves are never touched.)"));
+        lay->addWidget(backups_, 1);
+        lay->addLayout(row);
+        listBackups();
+        return w;
+    }
+
+    void listBackups() {
+        backups_->clear();
+        std::vector<std::string> names;
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(paths_.backups, ec))
+            if (e.is_directory()) names.push_back(e.path().filename().string());
+        std::sort(names.rbegin(), names.rend());
+        for (const auto& n : names) backups_->addItem(q(n));
+        if (names.empty()) backups_->addItem("(no backups yet)");
+    }
+
+    void backupSaves(const QString& suffix = {}) {
+        std::error_code ec;
+        if (!fs::exists(paths_.saves) || fs::is_empty(paths_.saves, ec)) { status_->setText("Nothing to back up: save directory is empty."); return; }
+        fs::path dst = paths_.backups / s(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + suffix);
+        try {
+            copyTree(paths_.saves, dst);
+            status_->setText("Saves backed up to " + q(dst));
+        } catch (const std::exception& e) { status_->setText("Backup failed: " + q(e.what())); }
+        listBackups();
+    }
+
+    void restoreSaves() {
+        auto* item = backups_->currentItem();
+        fs::path src = item ? paths_.backups / s(item->text()) : fs::path();
+        if (!item || !fs::is_directory(src)) { status_->setText("Select a backup first."); return; }
+        if (QMessageBox::question(this, "Restore saves", "Replace the current saves with backup " + item->text() +
+                                  "?\nThe current saves are backed up first.") != QMessageBox::Yes) return;
+        try {
+            backupSaves("-before-restore");
+            fs::remove_all(paths_.saves);
+            copyTree(src, paths_.saves);
+            status_->setText("Restored saves from " + item->text());
+        } catch (const std::exception& e) { status_->setText("Restore failed: " + q(e.what())); }
+        listBackups();
+    }
+
+    // ---------------------------------------------------------------------------------------
+    QWidget* diagnosticsPage() {
+        auto* w = new QWidget;
+        diag_ = new QPlainTextEdit;
+        diag_->setReadOnly(true);
+        auto* refresh = new QPushButton("Refresh");
+        auto* exportBtn = new QPushButton("Export report…");
+        auto* logs = new QPushButton("Open logs folder");
+        connect(refresh, &QPushButton::clicked, this, [this] { diag_->setPlainText(report()); });
+        connect(exportBtn, &QPushButton::clicked, this, [this] {
+            QString f = QFileDialog::getSaveFileName(this, "Export diagnostic report",
+                                                     "openunderworld-report-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".txt");
+            if (f.isEmpty()) return;
+            std::ofstream(s(f)) << s(report());
+            status_->setText("Report written to " + f);
+        });
+        connect(logs, &QPushButton::clicked, this, [this] {
+            fs::create_directories(paths_.logs);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(q(paths_.logs)));
+        });
+        auto* row = new QHBoxLayout;
+        row->addWidget(refresh);
+        row->addWidget(exportBtn);
+        row->addWidget(logs);
+        row->addStretch();
+        auto* lay = new QVBoxLayout(w);
+        lay->addWidget(diag_, 1);
+        lay->addLayout(row);
+        QTimer::singleShot(0, this, [this] { diag_->setPlainText(report()); });
+        return w;
+    }
+
+    QString report() {
+        QStringList r;
+        r << "OpenUnderworld diagnostic report, " + QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        r << QString("Launcher %1, Qt %2, SDL %3.%4.%5").arg(OU_VERSION).arg(qVersion())
+                 .arg(SDL_VERSIONNUM_MAJOR(SDL_GetVersion())).arg(SDL_VERSIONNUM_MINOR(SDL_GetVersion())).arg(SDL_VERSIONNUM_MICRO(SDL_GetVersion()));
+        r << "OS: " + QSysInfo::prettyProductName() + ", kernel " + QSysInfo::kernelVersion() + ", " + QSysInfo::currentCpuArchitecture();
+        r << "Session: " + qEnvironmentVariable("XDG_SESSION_TYPE") + " / " + QGuiApplication::platformName();
+        r << "Viewer: " + q(viewerPath());
+        r << "Updater: installed " + q(ou::update::installedVersion(paths_.installRoot).value_or("none")) + " at " + q(paths_.installRoot) +
+                 (ou::update::releasePublicKey() ? ", release key compiled in" : ", NO release key compiled in");
+        r << "\n--- config (" + q(paths_.config) + ") ---";
+        std::ifstream cf(paths_.config);
+        r << (cf ? QString::fromStdString(std::string(std::istreambuf_iterator<char>(cf), {})) : QString("(not saved yet)"));
+        r << "--- last import scan ---" << (lastScanSummary_.isEmpty() ? "(none this session)" : lastScanSummary_);
+        // Newest viewer log, last 60 lines.
+        fs::path newest;
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(paths_.logs, ec))
+            if (e.path().extension() == ".log" && (newest.empty() || e.path().filename() > newest.filename())) newest = e.path();
+        r << "--- newest viewer log: " + (newest.empty() ? QString("(none)") : q(newest)) + " ---";
+        if (!newest.empty()) {
+            std::ifstream lf(newest);
+            QStringList lines;
+            for (std::string l; std::getline(lf, l);) lines << q(l);
+            r << lines.mid(std::max<qsizetype>(0, lines.size() - 60));
+        }
+        return r.join('\n');
+    }
+
+    // ---------------------------------------------------------------------------------------
+    QWidget* updatesPage() {
+        auto* w = new QWidget;
+        versionLabel_ = new QLabel;
+        changelog_ = new QPlainTextEdit;
+        changelog_->setReadOnly(true);
+        updatesEnabled_ = new QCheckBox("Enable updates (OU_DISABLE_UPDATES=1 also disables)");
+        updatesEnabled_->setChecked(cfg_.updatesEnabled);
+        channel_ = new QComboBox;
+        channel_->setEditable(true);
+        channel_->addItems({"stable", "beta"});
+        channel_->setCurrentText(q(cfg_.updateChannel));
+        manifestUrl_ = new QLineEdit(q(cfg_.updateManifestUrl));
+        manifestUrl_->setPlaceholderText("https://…/manifest.json (signature: manifest.json.sig)");
+        updateStatus_ = new QLabel;
+        updateStatus_->setWordWrap(true);
+        auto* checkBtn = new QPushButton("Check for updates");
+        auto* installBtn = new QPushButton("Download && install");
+        auto* rollbackBtn = new QPushButton("Roll back to previous");
+        connect(checkBtn, &QPushButton::clicked, this, [this] { runUpdate(false); });
+        connect(installBtn, &QPushButton::clicked, this, [this] { runUpdate(true); });
+        connect(rollbackBtn, &QPushButton::clicked, this, [this] {
+            try { updateStatus_->setText("Rolled back; active version " + q(ou::update::rollback(paths_.installRoot))); }
+            catch (const std::exception& e) { updateStatus_->setText("Rollback failed: " + q(e.what())); }
+            refreshVersion();
+        });
+        auto* f = new QFormLayout;
+        f->addRow("", updatesEnabled_);
+        f->addRow("Channel", channel_);
+        f->addRow("Manifest URL", manifestUrl_);
+        auto* row = new QHBoxLayout;
+        row->addWidget(checkBtn);
+        row->addWidget(installBtn);
+        row->addWidget(rollbackBtn);
+        row->addStretch();
+        auto* lay = new QVBoxLayout(w);
+        lay->addWidget(versionLabel_);
+        lay->addWidget(new QLabel("Changelog:"));
+        lay->addWidget(changelog_, 1);
+        lay->addLayout(f);
+        lay->addLayout(row);
+        lay->addWidget(updateStatus_);
+        refreshVersion();
+        return w;
+    }
+
+    void refreshVersion() {
+        auto inst = ou::update::installedVersion(paths_.installRoot);
+        versionLabel_->setText(QString("<b>OpenUnderworld %1</b> (this launcher)<br>Updater-managed install: %2<br>%3")
+                                   .arg(OU_VERSION).arg(inst ? q(*inst) + " in " + q(paths_.installRoot) : QString("none"))
+                                   .arg(ou::update::releasePublicKey() ? "Release signing key compiled in." : "No release key compiled in: updates unavailable."));
+        std::ifstream mf(paths_.installRoot / "current" / ou::update::kManifestName);
+        try {
+            if (mf) changelog_->setPlainText(q(json::parse(mf).value("changelog", "")));
+        } catch (const std::exception&) {}
+        if (changelog_->toPlainText().isEmpty()) changelog_->setPlaceholderText("No changelog: no updater-managed version installed yet.");
+    }
+
+    void runUpdate(bool install) {
+        auto key = ou::update::releasePublicKey();
+        if (!key) { updateStatus_->setText("This build has no release key compiled in; updates are unavailable."); return; }
+        ou::update::Options o;
+        o.root = paths_.installRoot;
+        o.manifestUrl = s(manifestUrl_->text().trimmed());
+        o.channel = s(channel_->currentText().trimmed());
+        o.key = *key;
+        o.fetch = ou::update::httpsFetch();
+        o.enabled = updatesEnabled_->isChecked();
+        if (!gameDir_->text().isEmpty()) o.forbiddenRoots = {s(gameDir_->text())};
+        updateStatus_->setText(install ? "Downloading…" : "Checking…");
+        auto* watcher = new QFutureWatcher<QString>(this);
+        connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher] {
+            updateStatus_->setText(watcher->result());
+            watcher->deleteLater();
+            refreshVersion();
+        });
+        watcher->setFuture(QtConcurrent::run([o, install, this]() -> QString {
+            try {
+                auto r = install ? ou::update::update(o) : ou::update::check(o);
+                using S = ou::update::Status;
+                if (r.status == S::Disabled) return "Updates are disabled.";
+                QString cl = q(r.manifest.changelog);
+                QMetaObject::invokeMethod(changelog_, [this, cl] { changelog_->setPlainText(cl); });
+                if (r.status == S::UpToDate) return "Up to date (" + q(r.manifest.version) + ").";
+                if (r.status == S::Available) return "Signed update " + q(r.manifest.version) + " available.";
+                return "Installed " + q(r.manifest.version) + "; previous version kept for rollback.";
+            } catch (const std::exception& e) { return QString("Update failed: ") + e.what(); }
+        }));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    void collect() {
+        cfg_.gameDir = s(gameDir_->text().trimmed());
+        cfg_.drm = s(drm_->text().trimmed());
+        cfg_.renderer = s(renderer_->currentData().toString());
+        cfg_.width = width_->value();
+        cfg_.height = height_->value();
+        cfg_.fullscreen = fullscreen_->isChecked();
+        cfg_.fov = float(fov_->value());
+        cfg_.vsync = vsync_->isChecked();
+        cfg_.updatesEnabled = updatesEnabled_->isChecked();
+        cfg_.updateChannel = s(channel_->currentText().trimmed());
+        cfg_.updateManifestUrl = s(manifestUrl_->text().trimmed());
+    }
+
+    bool saveConfig() {
+        collect();
+        try {
+            ou::config::save(paths_.config, cfg_);
+            status_->setText("Saved " + q(paths_.config));
+            return true;
+        } catch (const std::exception& e) {
+            status_->setText("Saving config failed: " + q(e.what()));
+            return false;
+        }
+    }
+
+    // Updater-managed copy first, then the binary next to this launcher, then $PATH.
+    fs::path viewerPath() const {
+        for (fs::path p : {paths_.installRoot / "current/bin/ou-viewer", fs::path(s(QCoreApplication::applicationDirPath())) / "ou-viewer"})
+            if (::access(p.c_str(), X_OK) == 0) return p;
+        return "ou-viewer";
+    }
+
+    void launchViewer() {
+        if (!saveConfig()) return;
+        fs::create_directories(paths_.logs);
+        fs::path log = paths_.logs / s("viewer-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".log");
+        QProcess p;
+        p.setProgram(q(viewerPath()));
+        p.setArguments({"--config", q(paths_.config)});
+        p.setStandardOutputFile(q(log));
+        p.setStandardErrorFile(q(log));
+        qint64 pid = 0;
+        if (p.startDetached(&pid)) status_->setText(QString("Started ou-viewer (pid %1), log %2").arg(pid).arg(q(log)));
+        else status_->setText("Could not start " + q(viewerPath()));
+    }
+};
+
+} // namespace
+
+int main(int argc, char** argv) {
+    QApplication app(argc, argv);
+    QApplication::setApplicationName("ou-launcher");
+    QApplication::setApplicationVersion(OU_VERSION);
+    QApplication::setDesktopFileName("openunderworld");
+    QCommandLineParser cli;
+    cli.setApplicationDescription("OpenUnderworld launcher");
+    cli.addHelpOption();
+    cli.addVersionOption();
+    QCommandLineOption config("config", "Config file (default $XDG_CONFIG_HOME/openunderworld/config.json).", "file");
+    QCommandLineOption gameDir("game-dir", "Game directory for this session (saved only via Save settings).", "dir");
+    QCommandLineOption tab("tab", "Open on tab index.", "n", "0");
+    QCommandLineOption scan("scan", "Run the import scan on start.");
+    QCommandLineOption selfTest("self-test", "Build the UI, process events once and exit (CI smoke).");
+    QCommandLineOption grab("grab", "Save a PNG of the window (after --scan finishes) and exit.", "file");
+    cli.addOptions({config, gameDir, tab, scan, selfTest, grab});
+    cli.process(app);
+
+    // Gamepad listing only; the viewer owns its own SDL instance.
+    SDL_Init(SDL_INIT_GAMEPAD);
+    Paths paths;
+    if (cli.isSet(config)) paths.config = s(cli.value(config));
+    Launcher w(paths, cli.value(gameDir));
+    w.tabs()->setCurrentIndex(cli.value(tab).toInt());
+    w.show();
+    if (cli.isSet(grab)) {
+        auto save = [&w, file = cli.value(grab)] { w.grab().save(file); QApplication::quit(); };
+        if (cli.isSet(scan)) w.onScanDone = save;
+        else QTimer::singleShot(500, &w, save);
+    }
+    if (cli.isSet(scan)) w.startScan();
+    if (cli.isSet(selfTest)) {
+        QApplication::processEvents();
+        SDL_Quit();
+        return 0;
+    }
+    int rc = app.exec();
+    SDL_Quit();
+    return rc;
+}

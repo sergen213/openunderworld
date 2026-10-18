@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OpenUnderworld icon. Original artwork made for this project; GPL-3.0-or-later like the code. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b6f8a"/>
+      <stop offset="1" stop-color="#06202e"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.5">
+      <stop offset="0" stop-color="#ffe9a8"/>
+      <stop offset="1" stop-color="#d98b1c"/>
+    </radialGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="url(#sea)"/>
+  <!-- stepped ruin silhouette -->
+  <path d="M16 104 V84 H30 V70 H46 V56 H82 V70 H98 V84 H112 V104 Z" fill="#0b141a" opacity="0.85"/>
+  <!-- doorway with light -->
+  <path d="M54 104 V76 a10 10 0 0 1 20 0 V104 Z" fill="url(#glow)"/>
+  <!-- ring/compass glyph above the ruin -->
+  <circle cx="64" cy="34" r="16" fill="none" stroke="#ffe9a8" stroke-width="5"/>
+  <path d="M64 14 V54 M44 34 H84" stroke="#ffe9a8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M16 104 H112" stroke="#ffe9a8" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+</svg>

@@ -1,0 +1,32 @@
+# Build + tests in an Arch Linux container, with ASan/UBSan. No game data in CI: real-data tests
+# GTEST_SKIP without OU_GAME_DIR, and window/Vulkan tests exit 77 (skip) without a display.
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  arch:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git base-devel cmake ninja sdl3 glm libepoxy zlib openssl \
+            nlohmann-json gtest libsodium curl qt6-base vulkan-headers vulkan-icd-loader shaderc
+      - uses: actions/checkout@v4
+      - name: Configure (Debug, sanitizers)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOU_SANITIZE=ON
+      - name: Build
+        run: cmake --build build -j4
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OU_DISABLE_UPDATES: "1"
+          ASAN_OPTIONS: detect_leaks=1
+        run: ctest --test-dir build --output-on-failure
+      - name: Package build (no install)
+        run: |
+          useradd -m builder && chown -R builder: .
+          su builder -c 'cd packaging && makepkg --nodeps --noconfirm --nocheck'
