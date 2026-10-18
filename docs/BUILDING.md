@@ -50,9 +50,8 @@ down/up, Shift ×4 speed, mouse wheel scales speed; gamepad left stick move, rig
 look, triggers up/down; `V` vsync, `L` lambert/unlit, `C` backface culling, `F1` overlay,
 `Esc` quit.
 
-Without `--cam` the camera frames the bounds of all meshes from outside. For levels this
-can leave the camera outside large untextured hull boxes the loader currently emits
-(see status below); use `--cam` to start inside.
+Without `--cam` the camera frames the bounds of all meshes from outside; use `--cam` to
+start inside a level.
 
 What is shown:
 - no `--drm`, or loading fails → **PLACEHOLDER SCENE** (checker cubes; RGBA8, BGRA8 and a
@@ -89,10 +88,11 @@ Observed:
 - `--width 2560 --height 720 --fov 50` (32:9) gives hFOV 117.8°, undistorted (Hor+).
 - `--drm 'pc-w\lara.drm'`: 7 meshes, 24 textures (18 BC1, 5 BC3, 1 BGRA8); Lara in bind
   pose, fully textured, correct Z-up orientation.
-- `--drm 'pc-w\l4_pool.drm' --cam -3595,-160,9000,53,-35`: 11 meshes, 18 BC1 textures;
-  textured stone pillars, floor tiles and walls. From the default framing, untextured grey
-  boxes enclosing the level hide it (loader emits them; likely occlusion/bounds volumes
-  [INFERENCE]).
+- `--drm 'pc-w\l4_pool.drm'`: 8 meshes, 18 BC1 textures. Default framing shows the whole
+  textured level block (walls, pillars, tiled floor, lower colonnade); with
+  `--cam -3595,-160,9000,53,-35` the interior shows textured stone pillars, floor tiles and
+  walls. The loader skips 3 untextured batches (no texcoords, depth/fog-only material;
+  likely occlusion/fog volumes [INFERENCE]) that otherwise enclosed and hid the level.
 - Fixed tick: 240 vsync'd frames → 88 ticks over ~1.5 s (~60 Hz); `--no-vsync` raises FPS.
 - No ASan/LSan reports and no `KHR_debug` messages in these runs.
 
