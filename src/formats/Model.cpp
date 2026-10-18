@@ -143,7 +143,8 @@ std::vector<scene::Vertex> readVertices(const Reader& r, size_t off, uint32_t co
     return out;
 }
 
-// Skin influences of `count` vertices; empty when the declaration has no skin attributes.
+// Skin influences of `count` vertices; empty when the declaration has no skin indices. Indices without
+// weights (rigid multi-bone objects: doors, switches) bind each vertex fully to the bone of index byte 0 [I].
 std::vector<scene::SkinInfluence> readSkin(const Reader& r, size_t off, uint32_t count, const Decl& decl,
                                            const std::vector<uint32_t>& palette) {
     const Elem *w = nullptr, *ix = nullptr;
@@ -151,14 +152,17 @@ std::vector<scene::SkinInfluence> readSkin(const Reader& r, size_t off, uint32_t
         if (e.hash == kSkinWeights && e.format >= 4 && e.format <= 8) w = &e;
         else if (e.hash == kSkinIndices && e.format >= 4 && e.format <= 8) ix = &e;
     }
-    if (!w || !ix) return {};
+    if (!ix) return {};
     std::vector<scene::SkinInfluence> out(count);
     for (uint32_t i = 0; i < count; ++i) {
         const uint8_t* v = r.d.data() + off + size_t(i) * decl.stride;
-        for (int k = 0; k < 4; ++k) {
+        for (int k = 0; k < (w ? 4 : 1); ++k) {
             const uint8_t idx = v[ix->offset + k];
-            if (!palette.empty() && idx >= palette.size()) throw FormatError("skin index outside bone palette");
-            out[i].weight[k] = v[w->offset + k];
+            if (!palette.empty() && idx >= palette.size()) {
+                if (!w) return {}; // [I] not a rigid binding after all: leave the batch unskinned
+                throw FormatError("skin index outside bone palette");
+            }
+            out[i].weight[k] = w ? v[w->offset + k] : 255;
             out[i].bone[k] = uint16_t(palette.empty() ? idx : palette[idx]);
         }
     }

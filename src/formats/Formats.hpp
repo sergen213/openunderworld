@@ -77,6 +77,8 @@ struct Intro {
     uint16_t objectId; // objectlist.txt id; 0xFFFA (-6) = marker, no object
     int32_t uniqueId;
     uint8_t flags[4];  // bytes +0x70..+0x73
+    std::optional<cdc::Pointer> data; // +0x78 intro data (trigger shapes etc., docs/formats/SCRIPTS.md); none if null
+    uint32_t scriptId = 0;             // +0x7C intro script: type-8 section id in the unit DRM, 0 = none
     bool scaled() const { return flags[1] & 0x10; }
 };
 inline constexpr uint16_t kMarkerObjectId = 0xFFFA;

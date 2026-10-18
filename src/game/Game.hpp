@@ -32,6 +32,7 @@ struct Actions {
     bool walk = false; // walk modifier
     bool jump = false; // held; the controller reacts to the press edge
     bool drop = false; // held; let go of a ledge
+    bool interact = false; // held; switches/levers react to the press edge, push blocks while held (src/script)
 };
 
 // ---- animations -------------------------------------------------------------------------------
@@ -183,12 +184,12 @@ std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& u
 // ---- input ------------------------------------------------------------------------------------
 // Keyboard (SDL_GetKeyboardState) + optional gamepad -> actions. Mouse look is added by the app: it
 // accumulates relative motion per frame and feeds it to the next tick as a rate (see ou-game).
-// Keys: WASD/arrows move, Shift walk, Space jump, Ctrl/C drop. Pad: left stick move, right stick
-// look, South jump, East drop, left shoulder walk.
+// Keys: WASD/arrows move, Shift walk, Space jump, Ctrl/C drop, E interact. Pad: left stick move, right stick
+// look, South jump, East drop, West interact, left shoulder walk.
 Actions readDevices(const bool* keys, SDL_Gamepad* pad);
 
 // Scripted input for deterministic replays. Text, one event per line: `<seconds> <action> [value]`.
-// Actions: forward, right (stick axes -1..1), walk, jump, drop (0/1), lookx, looky (rad/s).
+// Actions: forward, right (stick axes -1..1), walk, jump, drop, interact (0/1), lookx, looky (rad/s).
 // A value persists until changed; times map to tick round(seconds * 60). '#' starts a comment.
 class InputScript {
 public:

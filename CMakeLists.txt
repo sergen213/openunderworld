@@ -227,6 +227,15 @@ if(OU_BUILD_TESTS)
                        "LSAN_OPTIONS=fast_unwind_on_malloc=0:suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan_vulkan.supp")
 endif()
 
+# ---- ou_script: script types, trigger volumes/planes, switches, doors, blocks (docs/formats/SCRIPTS.md) ----
+add_library(ou_script STATIC src/script/Script.cpp)
+target_link_libraries(ou_script PUBLIC ou_formats ou_anim ou_collision glm::glm nlohmann_json::nlohmann_json)
+if(OU_BUILD_TESTS)
+  add_executable(ou_script_tests tests/test_script.cpp)
+  target_link_libraries(ou_script_tests PRIVATE ou_script GTest::gtest_main)
+  gtest_discover_tests(ou_script_tests DISCOVERY_TIMEOUT 30)
+endif()
+
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats glm::glm PRIVATE SDL3::SDL3)

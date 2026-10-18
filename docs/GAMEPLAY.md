@@ -14,6 +14,7 @@ ou-game --game-dir DIR --renderer vulkan --level 'pc-w\l4_ballcourt.drm'
 ou-game --game-dir DIR --input-script run.txt --frames 100 --screenshot run.ppm   # deterministic replay
 ou-game --game-dir DIR --spawn -4291,4225.6,3100,-157.9          # X,Y,Z,yaw-degrees override (l4_pool ledge 1253)
 ou-game --game-dir DIR --intro                                   # Movies/intro.bik first (ou_video, skippable)
+ou-game --game-dir DIR --show-triggers                           # trigger volumes (orange, green inside) and planes
 ```
 
 `--intro` plays the movie in its own plain window (the movie player needs a window without a GL/Vulkan context), then
@@ -22,11 +23,13 @@ level loaded (log only; the movie frames themselves are verified in VIDEO.md). U
 Vulkan, so the RADV 256-byte leak needs `tests/lsan_vulkan.supp`.
 
 Controls: WASD/arrows move relative to the camera, Shift walks, Space jumps (and climbs up while hanging), Ctrl or C
-lets go of a ledge, mouse orbits the camera. Gamepad: left stick, right stick, South = jump/climb, East = drop,
-left shoulder = walk. F1 toggles the overlay, Esc quits. `--fov` / the launcher config set the vertical FOV.
+lets go of a ledge, E uses switches / pushes and pulls blocks (with forward/back held), mouse orbits the camera.
+Gamepad: left stick, right stick, South = jump/climb, East = drop, West = use, left shoulder = walk. F1 toggles the
+overlay, Esc quits. `--fov` / the launcher config set the vertical FOV. Switches, doors, trigger volumes/planes and
+blocks: `src/script`, docs/formats/SCRIPTS.md; script events are logged to stderr.
 
 Input scripts: one event per line, `<seconds> <action> [value]`, `#` comments. Actions `forward`, `right` (stick
-axes −1..1), `walk`, `jump`, `drop` (0/1, default value 1), `lookx`, `looky` (camera rate, rad/s). A value holds
+axes −1..1), `walk`, `jump`, `drop`, `interact` (0/1, default value 1), `lookx`, `looky` (camera rate, rad/s). A value holds
 until changed; an event at `t` applies from tick `round(t · 60)`. With `--input-script` each rendered frame advances
 `1/--render-hz` seconds (default 60), so `--frames N` screenshots are reproducible.
 

@@ -107,6 +107,8 @@ Unit parseUnit(const cdc::Drm& d) {
             in.objectId = il.at<uint16_t>(b + 0x50);
             in.uniqueId = il.at<int32_t>(b + 0x58);
             for (int i = 0; i < 4; ++i) in.flags[i] = il.at<uint8_t>(b + 0x70 + i);
+            if (const auto it = il.ptrs.find(uint32_t(b + 0x78)); it != il.ptrs.end()) in.data = it->second;
+            in.scriptId = il.at<uint32_t>(b + 0x7C);
             u.intros.push_back(in);
         }
     }
