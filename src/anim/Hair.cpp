@@ -66,7 +66,6 @@ void HairSim::reset(std::span<const glm::mat4> bones, const glm::mat4& toWorld) 
 void HairSim::step(std::span<const glm::mat4> bones, const glm::mat4& toWorld, float dt) {
     if (empty()) return;
     if (pos_.size() != rig_.particles.size()) reset(bones, toWorld);
-    const glm::vec3 g(0, 0, -p_.gravity * dt * dt);
     for (size_t i = 0; i < pos_.size(); ++i) {
         const glm::vec3 target(toWorld * bones[rig_.particles[i].bone][3]);
         const glm::vec3 carried = (target - target_[i]) * p_.follow; // moved with the body, no velocity change
@@ -75,11 +74,11 @@ void HairSim::step(std::span<const glm::mat4> bones, const glm::mat4& toWorld, f
             prev_[i] = pos_[i] = target;
             continue;
         }
-        const glm::vec3 v = (pos_[i] - prev_[i]) * (1 - p_.damping);
+        const HairGroupParams& gp = p_.group(rig_.particles[i].group);
+        const glm::vec3 v = (pos_[i] - prev_[i]) * (1 - gp.damping);
         prev_[i] = pos_[i] + carried;
-        pos_[i] += carried + v + g;
-        const uint8_t grp = rig_.particles[i].group;
-        pos_[i] += (target - pos_[i]) * (grp < p_.groupStiffness.size() ? p_.groupStiffness[grp] : p_.stiffness);
+        pos_[i] += carried + v + glm::vec3(0, 0, -gp.gravity * dt * dt);
+        pos_[i] += (target - pos_[i]) * gp.stiffness;
     }
     std::vector<std::pair<glm::vec3, glm::vec3>> caps;
     for (const auto& c : p_.body)

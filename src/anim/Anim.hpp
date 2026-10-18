@@ -120,14 +120,18 @@ struct HairRig {
 HairRig decodeHair(const cdc::Drm& drm, const scene::Skeleton& skeleton);
 
 struct HairCapsule { uint32_t boneA = 0, boneB = 0; glm::vec3 offsetB{0}; float radius = 0; }; // offsetB: in boneB's frame
-struct HairParams {
-    float gravity = 5.72443f * 900.0f; // units/s^2 (Lara's gravity, tru.exe 5.72443 per 30 Hz frame^2)
+struct HairGroupParams {
+    float gravity = 5.72443f * 900.0f; // units/s^2 (default: Lara's gravity, tru.exe 5.72443 per 30 Hz frame^2)
     float damping = 0.08f;             // velocity fraction lost per tick
     float stiffness = 0.04f;           // pull toward the animated (rigid) position per tick
-    std::vector<float> groupStiffness; // per chain group, overrides `stiffness` where present
+};
+struct HairParams {
+    HairGroupParams defaults;
+    std::vector<HairGroupParams> groups; // per chain group, overriding `defaults` where present
     float follow = 0.0f;               // fraction of the animated motion carried over without inertia
     int iterations = 4;
     std::vector<HairCapsule> body;     // radii are clamped so no bind-pose particle starts inside
+    const HairGroupParams& group(size_t g) const { return g < groups.size() ? groups[g] : defaults; }
 };
 
 // Verlet chains in world space on the caller's fixed tick; deterministic for identical inputs.

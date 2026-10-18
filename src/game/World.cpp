@@ -51,10 +51,12 @@ namespace {
 anim::HairParams laraHair() {
     anim::HairParams p;
     p.body = {{14, 16, {0, 0, -20}, 38.0f}, {17, 17, {0, 0, 40}, 30.0f}};
-    // The ponytail (group 0) is bound sticking straight back, so it must not be pulled toward its bind
-    // shape: it hangs freely. The front strands (groups 1, 2) are bound hanging and keep their shape.
-    p.groupStiffness = {0.0f, 0.15f, 0.15f};
-    p.damping = 0.1f;
+    // lara.drm cloth parameter set mode 0 (object DTP 0x27420 / 0x274BC, docs/formats/ANIMATION.md "Hair"):
+    // ponytail (group 0) gravity 12 m/s^2, damping 0.1; front strands (1, 2) 12 m/s^2, damping 0.25; target
+    // drive 0 (nothing pulls the hair back to its bind shape). m/s^2 -> units/s^2: * 100 * 3.1605. Damping
+    // is per 30 Hz frame [I]; per 60 Hz tick: 1 - (1 - d)^0.5.
+    constexpr float kG = 12.0f * 100.0f * 3.1605f;
+    p.groups = {{kG, 1 - std::sqrt(0.9f), 0}, {kG, 1 - std::sqrt(0.75f), 0}, {kG, 1 - std::sqrt(0.75f), 0}};
     p.iterations = 16;
     p.follow = 0.8f; // [I] keeps the short strands from lagging the run/jump root motion by whole segment lengths
     return p;

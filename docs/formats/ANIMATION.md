@@ -182,7 +182,7 @@ palette and CPU-skins every mesh linked to a skeleton (`MeshData::skeleton`), th
 - [O] `ng_idle` (id 6) at 0.3 and 1.2 s: relaxed standing stance, arms down, feet apart.
 - [O] `ng_running_land_stumble` (id 260) at 0.4 s: bent-over landing pose; `Combat_walkfront` (id 13) at
   0.5 s: upright walking stride.
-- Known deviations: the ponytail and front strands are rigid (no hair simulation); clips play in place
+- Known deviations (viewer only; ou-game crossfades and simulates hair, below): the ponytail and front strands are rigid; clips play in place
   (segment 0 root motion reset), so jumps and landings float above the ground. No side-by-side comparison
   with the running game has been made.
 
@@ -192,5 +192,83 @@ palette and CPU-skins every mesh linked to a skeleton (`MeshData::skeleton`), th
 - [U] Extra channels; multi-section clips (none in Lara's DRM).
 - [U] Scale composition order.
 - [U] Root-motion extraction (which segment, and how the game applies it).
-- [U] Hair simulation parameters (group fields, segment fields other than the position).
+- [U] Hair: group u32 at +16 (7, 5, 5), segment +0x10/+0x14/+0x18 on roots; parameter fields [5], [6], [8]; which cloth mode is active when (mode 1 is [I] underwater).
+- [U] Pose-blend space of the original (axis-angle lerp vs quaternion); per-request fields +0x16..+0x18, +0x1B..+0x20 beyond those named below.
 - [U] Segment bounding data (+0x00..0x1B) and +0x34.
+
+## Transitions (code: `src/anim/Blend.cpp`, `game::clipBlend` in `src/game/World.cpp`)
+
+**Lara has no anim state graph.** Object DTP +0x6C/+0x70 (tru.exe 0x453100 reads `hasAnimGraph` / graph at
+code offsets +0x64/+0x68 of the object data) are 0 in lara.drm; a scan for dtp `AnimStateGraph` layouts (tru.exe
+0x452E70: +4 states, +8 state*, +0xC edges, +0x10 edge* of 0x30 bytes, edge +0x18 = blend frames) finds none
+[O]. Her clips are played through **anim requests** [O]:
+
+| Where | Layout |
+|---|---|
+| object DTP +0x5C / +0x60 | count (1502) / table of 0x24-byte requests |
+| request +0x0C, +0x10 | `{u16 anim-list index, u8 primary}` × count (multi-clip = blend space, e.g. ng_run with lean/stairs variants) |
+| +0x16 | play mode: 0 hold, 1 once, 2 loop (tru.exe 0x4428A0) |
+| +0x19 | **crossfade length in 30 Hz frames**: weight step `1/frames` per frame (0x4428A0 `param_1[0x2A] = 1/frames`; 0 = cut) |
+| +0x1A | **start frame**: start time `frame·100` anim units passed to 0x441FB0 (if `blend > 0 && timePerKey > 100 && start < timePerKey`: `start = timePerKey`, blend extended — not ported) |
+| +0x1B | interp override for the *next* request (−1 none) |
+
+Interp frame histogram over the 1502 requests: 3 (365), 1 (275), 4 (195), 8 (176), 5 (157), 6 (135) … [O]. Other
+clips of one request are time-synced to the first by normalised phase (0x4428A0: `t_i = t_0/len_0 · len_i`) [O].
+The generic interp node (`cdc::AnimInterpNode` 0x4490F0/0x44B020) also fades linearly and weights its inputs
+`(1−w)` / `w` [O]. Several requests name each clip; `clipBlend` picks the locomotion one [I], e.g. ng_idle 4/4,
+ng_walk 4/1, ng_run 4/4 (2/14 after ng_run_start, request 730), ng_running_stop 4/4, ng_standing_jump 6/6,
+ledgeb_idle 8/4, swim_climbout 12/6 (blend/start frames; full table in World.cpp). `ng_turn_center` has no request:
+default 3/0. ledgeb_climbup_fast's start frame is held at 0 until the climb root-motion alignment lands [I].
+
+Ours: `AnimController::play(clip, blendSeconds, loop, rate, start)` pushes a layer whose weight rises linearly over
+`blendSeconds`; older layers keep playing until a newer one reaches weight 1 (max 4 layers). Pose blend: per-bone
+quaternion slerp of the axis-angle rotations (shortest arc), lerp of scale/translation [I: the original's blend
+space is not decoded]. `World` watches `PlayerState` (clip/loop/rate change or restart) and fades with
+`clipBlend(from, to).blendSeconds`; `Player::play` starts at `startSeconds`, except loop→loop swaps inside
+{ng_walk, ng_run} and {swim_sub, _up, _down}, which keep the stride phase (`anim::syncedStartTime`; ng_walk and
+ng_run have the left/right foot offset in phase at phase 0, cross-correlation peak at offset 0.99 ≈ 0) [O]. Root
+motion still comes from the newest clip only (the original also blends root deltas, 0x44B020) [deviation].
+`World::pose(alpha)` interpolates per-bone matrices between ticks (slerp + lerp).
+
+**Measured pops** (`GameReal.TransitionsReducePops`, flat floor, 560-tick replay: run, run→walk→run, stop, walk,
+standing jump, run, running jump; per-tick change of a bone's model-space orientation; at each clip change raw =
+jump on the switch tick rendering only the player's clip, blended = largest jump over the fade window) [O]:
+
+| | all skinned body bones | major bones (pelvis, spine, head, legs, arms) |
+|---|---|---|
+| worst transition, raw clip switch | 179.6° | 118.9° |
+| worst transition, crossfaded | 71.0° | 35.3° |
+
+e.g. run→stop 165.8/118.9° → 23.0/17.0°, walk→run 175.1/115.9° → 31.4/20.3°, idle→walk 67.1° → 9.6°. The remaining
+blended maxima are fingers/helper bones whose two poses differ by ~180° and short (2-frame) fades; some clips
+also jump at their own loop seam (ng_run bone 73: 53.6° both ways).
+
+## Hair (code: `src/anim/Hair.cpp`, `anim::decodeHair`; Lara's params in `laraHair`, World.cpp)
+
+Render-model chain groups (above) are **cloth** [O]: group +4 → `{f32 rest, u16 a, u16 b}` distance constraints,
+count = group u16 at +14 (6, 36, 36; rest = bind distance within 0.01); segment +0x1C bit 0 = pinned (7 roots:
+ponytail 1, front groups 3 strands each); +0x20 = index along the strand. tru.exe simulates them in
+`JobClothSimulate` (0x460200 → 0x4601C0, substeps → 0x45FAB0): particles {pos, vel, target, invMass}, velocity
+damping, gravity on z, sequential-impulse distance constraints on velocities, collision shapes (sphere/capsule
+kinds 0/1), integrate, position correction passes, optional drive toward the animated target (`param[0x19]`) [O].
+Parameter sets (13 × 4 bytes, applied by the function at decomp line ~73478: `[0]` gravity m/s² → `−g·100·3.1605/30²`
+units/frame², `[1]` → +0x6C, `[2..5]` ints, `[6]`, `[7]` target drive, `[8]`, `[9]` count + `[10]` group byte
+list) live in lara.drm object DTP 0x27420..0x274EC, selected by a 2-mode table at 0x273F0 [O]:
+
+| mode | set | groups | gravity m/s² | +0x6C (damping [I]) | ints [2..5] | [6] | drive [7] |
+|---|---|---|---|---|---|---|---|
+| 0 | 0x27420 | 0 (ponytail) | 12 | 0.1 | 4, 2, 5, 3 | 0.5 | 0 |
+| 0 | 0x274BC | 1, 2 (front) | 12 | 0.25 | 4, 2, 5, 3 | 0.5 | 0 |
+| 1 | 0x27454 | 0 | 0.1 | 0.25 | 2, 6, 5, 1 | 1.0 | 0 |
+| 1 | 0x27488 | 1, 2 | 9.8 | 0.25 | 4, 2, 5, 3 | 0.5 | 0 |
+
+[I] ints = velocity iterations, position iterations, ?, substep factor; mode 1 (near-zero ponytail gravity) is
+underwater. Ours: position-based Verlet in world space on the 60 Hz tick (deterministic), the same particles,
+pinned roots and constraints, mode 0 gravity (3793 units/s²) and damping (per 30 Hz frame [I] → per tick
+`1−(1−d)^0.5`), drive 0, 16 projection iterations, two body capsules (spine 14→16, head 17; radii [I], clamped so
+no bind particle starts inside), plus `follow` 0.8 [I, ours]: 80 % of the animated motion is carried without
+inertia so 6–8-unit strand segments do not stretch under Lara's 1274 units/s root motion. Bone orientation =
+animated orientation swung onto the simulated segment (to the child; tips: from the predecessor).
+Checks [O]: settles under gravity, finite under teleports/spins, deterministic (`Anim.HairChain…`); in the replay
+the largest constraint strain is 14 %. Screenshots (not committed): at rest the ponytail hangs down the back;
+after a stop it swings out behind the head; rising in a standing jump it trails downward.
