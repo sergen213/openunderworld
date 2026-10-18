@@ -98,7 +98,7 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_anim: skeletons, animation clips, pose sampling, CPU skinning (docs/formats/ANIMATION.md) ----
-add_library(ou_anim STATIC src/anim/Anim.cpp)
+add_library(ou_anim STATIC src/anim/Anim.cpp src/anim/Blend.cpp src/anim/Hair.cpp)
 target_include_directories(ou_anim PUBLIC src)
 target_link_libraries(ou_anim PUBLIC ou_cdc glm::glm)
 if(OU_BUILD_TESTS)

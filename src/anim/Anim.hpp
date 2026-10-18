@@ -5,6 +5,7 @@
 #include "cdc/Cdc.hpp"
 #include "scene/Assets.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <span>
@@ -67,5 +68,89 @@ std::vector<glm::vec3> bindPositions(const scene::Skeleton& skeleton);
 std::vector<glm::mat4> skinPalette(const scene::Skeleton& skeleton, std::span<const glm::mat4> world);
 // Linear blend skinning of mesh.vertices (bind pose) into `out` (resized to match).
 void skinVertices(const scene::MeshData& mesh, std::span<const glm::mat4> palette, std::vector<scene::Vertex>& out);
+
+// ---- blending (docs/formats/ANIMATION.md "Transitions") ------------------------------------------
+// Rotation: quaternion slerp of the axis-angle vectors (shortest arc); scale and translation: lerp.
+// w = 0 gives `a`, w = 1 gives `b`.
+LocalTransform blend(const LocalTransform& a, const LocalTransform& b, float w);
+void blendPoses(std::span<const LocalTransform> a, std::span<const LocalTransform> b, float w, std::span<LocalTransform> out);
+// Phase sync for looping locomotion: the time in `to` at the same cycle fraction as `fromTime` in `from`.
+double syncedStartTime(const Clip& from, double fromTime, const Clip& to);
+
+// Crossfading player. Each play() fades the new clip in over `blendSeconds` (linear weight, as tru.exe's
+// anim request: weight += 1/interpFrames per 30 Hz frame) on top of whatever was showing; older layers keep
+// playing until a newer one reaches full weight.
+class AnimController {
+public:
+    explicit AnimController(const scene::Skeleton& skeleton);
+    // `clip` may be null (bind pose). `startTime` in seconds; looping clips may pass unbounded times.
+    void play(const Clip* clip, float blendSeconds, bool loop, float rate = 1, double startTime = 0);
+    void update(double dt);                // advances every layer and the fades
+    void setTime(double seconds);          // newest layer's time (when the caller owns the clock)
+    std::vector<LocalTransform> pose() const;
+    float weight() const;                  // newest layer's fade-in weight, 1 = no blend in progress
+    size_t layers() const { return layers_.size(); }
+
+private:
+    struct Layer {
+        const Clip* clip;
+        double time;
+        float rate, fade, elapsed;
+        bool loop;
+        float weight() const { return fade <= 0 ? 1.0f : std::min(1.0f, elapsed / fade); }
+    };
+    std::vector<LocalTransform> sampleLayer(const Layer& l) const;
+    const scene::Skeleton* skeleton_;
+    std::vector<Layer> layers_; // oldest first
+};
+
+// ---- hair (render-model cloth chains, docs/formats/ANIMATION.md "Hair") ----------------------------
+struct HairRig {
+    struct Particle {
+        uint32_t bone = 0;  // skeleton bone (116.. for Lara)
+        int32_t pred = -1;  // strand predecessor particle (orientation reference), -1 for roots
+        bool pinned = false; // segment flags bit 0: follows the animation rigidly
+        uint8_t group = 0;   // chain group of the render model
+    };
+    struct Link { uint32_t a = 0, b = 0; float rest = 0; }; // particle indices, rest length (units)
+    std::vector<Particle> particles;
+    std::vector<Link> links;
+};
+// Particles and distance constraints of every chain group of the skeleton's render model.
+HairRig decodeHair(const cdc::Drm& drm, const scene::Skeleton& skeleton);
+
+struct HairCapsule { uint32_t boneA = 0, boneB = 0; glm::vec3 offsetB{0}; float radius = 0; }; // offsetB: in boneB's frame
+struct HairParams {
+    float gravity = 5.72443f * 900.0f; // units/s^2 (Lara's gravity, tru.exe 5.72443 per 30 Hz frame^2)
+    float damping = 0.08f;             // velocity fraction lost per tick
+    float stiffness = 0.04f;           // pull toward the animated (rigid) position per tick
+    std::vector<float> groupStiffness; // per chain group, overrides `stiffness` where present
+    float follow = 0.0f;               // fraction of the animated motion carried over without inertia
+    int iterations = 4;
+    std::vector<HairCapsule> body;     // radii are clamped so no bind-pose particle starts inside
+};
+
+// Verlet chains in world space on the caller's fixed tick; deterministic for identical inputs.
+class HairSim {
+public:
+    HairSim() = default;
+    HairSim(const HairRig& rig, const scene::Skeleton& skeleton, HairParams params);
+    bool empty() const { return rig_.particles.empty(); }
+    // `bones`: animated model-space matrices (worldMatrices); `toWorld`: model -> world.
+    void reset(std::span<const glm::mat4> bones, const glm::mat4& toWorld);
+    void step(std::span<const glm::mat4> bones, const glm::mat4& toWorld, float dt);
+    // Replaces the hair bones of `bones` (model space) with the simulated ones.
+    void apply(std::span<glm::mat4> bones, const glm::mat4& toWorld) const;
+    const std::vector<glm::vec3>& positions() const { return pos_; } // world space, per particle
+    const HairParams& params() const { return p_; }
+
+private:
+    glm::vec3 capsulePoint(const HairCapsule& c, std::span<const glm::mat4> bones, const glm::mat4& toWorld, bool end) const;
+    HairRig rig_;
+    HairParams p_;
+    std::vector<glm::vec3> bind_; // bind position per skeleton bone
+    std::vector<glm::vec3> pos_, prev_, target_; // target_: last animated position per particle
+    std::vector<int32_t> child_;  // per particle: first particle whose pred it is, -1 at strand tips
+};
 
 } // namespace ou::anim

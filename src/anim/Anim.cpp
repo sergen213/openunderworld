@@ -125,6 +125,49 @@ std::vector<scene::Skeleton> decodeSkeletons(const cdc::Drm& drm, std::vector<st
     return out;
 }
 
+// Chain groups as in appendChains, plus group +4 -> {f32 rest, u16 child, u16 parent} constraint records
+// (count = group u16 at +14), segment +0x1C flags bit 0 = pinned, +0x20 = index along the strand.
+HairRig decodeHair(const cdc::Drm& drm, const scene::Skeleton& sk) {
+    HairRig rig;
+    const cdc::Section* rm = nullptr;
+    for (const auto& s : drm.sections)
+        if (s.type == cdc::SectionType::RenderResource && s.resourceType() == kResourceModel && s.id == sk.renderModelId) rm = &s;
+    if (!rm) return rig;
+    const auto head = cdc::internalPointer(*rm, 12);
+    if (!head) return rig;
+    const Reader r{rm->data};
+    const auto groups = cdc::internalPointer(*rm, *head);
+    const uint32_t numGroups = r.u32(*head + 4);
+    if (!groups || numGroups > 64) return rig;
+    for (uint32_t g = 0; g < numGroups; ++g) {
+        const uint32_t G = *groups + 20 * g;
+        const uint32_t segs = pointer(*rm, G), count = r.u16(G + 12), numLinks = r.u16(G + 14);
+        const auto links = cdc::internalPointer(*rm, G + 4);
+        const auto base = uint32_t(rig.particles.size());
+        std::vector<uint32_t> strandIndex(count);
+        for (uint32_t j = 0; j < count; ++j) {
+            const uint32_t S = segs + 48 * j, packed = r.u32(S + 0x1C);
+            if ((packed >> 16) >= sk.bones.size()) throw FormatError("hair segment bone out of range");
+            rig.particles.push_back({packed >> 16, -1, (packed & 1) != 0, uint8_t(g)});
+            strandIndex[j] = r.u32(S + 0x20);
+        }
+        std::vector<float> best(count, 1e30f);
+        for (uint32_t k = 0; links && k < numLinks; ++k) {
+            const uint32_t L = *links + 8 * k, a = r.u16(L + 4), b = r.u16(L + 6);
+            if (a >= count || b >= count) throw FormatError("hair link index out of range");
+            const float rest = r.f32(L);
+            rig.links.push_back({base + a, base + b, rest});
+            // Orientation reference: the shortest link to the previous segment of the same strand.
+            for (const auto [c, p] : {std::pair{a, b}, std::pair{b, a}})
+                if (strandIndex[c] == strandIndex[p] + 1 && rest < best[c]) {
+                    best[c] = rest;
+                    rig.particles[base + c].pred = int32_t(base + p);
+                }
+        }
+    }
+    return rig;
+}
+
 Clip decodeClip(std::span<const uint8_t> data) {
     const Reader r{data};
     Clip c;

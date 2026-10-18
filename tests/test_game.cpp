@@ -2,10 +2,13 @@
 
 #include "cdc/Cdc.hpp"
 #include "engine/FrameClock.hpp"
+#include "formats/Formats.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 
@@ -334,4 +337,87 @@ TEST(GameReal, PoolLedgeGrabAndClimb) {
     for (int i = 0; i < 90; ++i) w.tick(i == 5 ? jump : Actions{});
     EXPECT_EQ(w.player().state().state, State::Idle);
     EXPECT_NEAR(w.player().state().pos.z, 3571, 15); // rock top
+}
+
+// Animation pops: per-tick change of the bones' model-space orientations over a scripted run / walk / stop /
+// jump replay, rendering the raw player clip (no blending: the pre-AnimController path) vs World::pose
+// (crossfades + phase sync). At each clip change: raw = the jump on the switch tick; blended = the largest
+// jump over the fade window. Bones: every skinned body bone, and the major ones (pelvis, spine, head, legs,
+// arms; fingers and face excluded). Numbers are reported in docs/formats/ANIMATION.md.
+TEST(GameReal, TransitionsReducePops) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    CollisionMesh flat;
+    addFloor(flat, -20000, -20000, 20000, 20000, 0);
+    flat.build();
+    game::World w(std::move(flat), game::loadLaraAnims(bf), {{0, 0, 0}, 0});
+    const auto& sk = w.anims().skeleton;
+    ASSERT_GT(sk.bones.size(), 152u);
+    // Bones that move vertices (some helper bones flip by ~180 degrees between clips but deform nothing).
+    std::vector<bool> skinned(sk.bones.size()), major(sk.bones.size());
+    for (const auto& m : formats::loadDrmScene(bf, "pc-w\\lara.drm").meshes)
+        for (const auto& v : m.skin)
+            for (int k = 0; k < 4; ++k)
+                if (v.weight[k] && v.bone[k] < skinned.size()) skinned[v.bone[k]] = true;
+    for (size_t b = 1; b < 116; ++b) major[b] = skinned[b] && (b <= 18 || (b >= 52 && b <= 55) || (b >= 77 && b <= 80));
+    auto rot = [](const glm::mat4& m) { return glm::mat3(glm::normalize(glm::vec3(m[0])), glm::normalize(glm::vec3(m[1])), glm::normalize(glm::vec3(m[2]))); };
+    auto angle = [&](const glm::mat4& a, const glm::mat4& b) {
+        const glm::mat3 r = glm::transpose(rot(a)) * rot(b);
+        return glm::degrees(std::acos(std::clamp((r[0][0] + r[1][1] + r[2][2] - 1) * 0.5f, -1.0f, 1.0f)));
+    };
+    auto jump = [&](const std::vector<glm::mat4>& a, const std::vector<glm::mat4>& b, const std::vector<bool>& set) {
+        float m = 0;
+        for (size_t i = 1; i < 116; ++i)
+            if (set[i]) m = std::max(m, angle(a[i], b[i]));
+        return m;
+    };
+    auto raw = [&] {
+        const auto& s = w.player().state();
+        auto local = anim::sample(*w.anims().find(s.clip), sk, s.clipTime, s.loop);
+        local[0] = anim::bindPose(sk)[0];
+        return anim::worldMatrices(sk, local);
+    };
+    struct Transition { std::string name; int end; float raw[2], blended[2]; };
+    std::vector<Transition> tr;
+    std::vector<glm::mat4> prevRaw = raw(), prevPose = w.pose(1);
+    const auto& hair = w.anims().hair;
+    ASSERT_EQ(hair.particles.size(), 37u);
+    float hairStrain = 0; // largest relative length error of a hair constraint
+    for (int t = 0; t < 560; ++t) {
+        Actions a;
+        if (t < 90 || (t >= 140 && t < 170) || (t >= 320 && t < 460)) a.move.y = 1; // run, walk, run
+        a.walk = (t >= 140 && t < 170) || (t >= 50 && t < 70);                       // + run -> walk -> run
+        a.jump = t == 200 || t == 420;                                                 // standing, running jump
+        const std::string before = w.player().state().clip;
+        w.tick(a);
+        const auto& s = w.player().state();
+        const auto r = raw(), p = w.pose(1);
+        if (s.clip != before)
+            tr.push_back({before + " -> " + s.clip, t + int(std::ceil(game::clipBlend(before, s.clip).blendSeconds * 60)),
+                          {jump(prevRaw, r, skinned), jump(prevRaw, r, major)}, {0, 0}});
+        if (!tr.empty() && t <= tr.back().end) {
+            tr.back().blended[0] = std::max(tr.back().blended[0], jump(prevPose, p, skinned));
+            tr.back().blended[1] = std::max(tr.back().blended[1], jump(prevPose, p, major));
+        }
+        for (size_t b = 116; b < p.size(); ++b)
+            ASSERT_TRUE(std::isfinite(p[b][3].x) && std::isfinite(p[b][3].y) && std::isfinite(p[b][3].z)) << t;
+        for (const auto& l : hair.links) {
+            const float d = glm::distance(glm::vec3(p[hair.particles[l.a].bone][3]), glm::vec3(p[hair.particles[l.b].bone][3]));
+            hairStrain = std::max(hairStrain, std::abs(d - l.rest) / l.rest);
+        }
+        prevRaw = r;
+        prevPose = p;
+    }
+    float worst[2][2] = {};
+    for (const auto& x : tr) {
+        std::printf("%-58s raw %6.1f / %5.1f deg   blended %6.1f / %5.1f deg (skinned / major)\n", x.name.c_str(), x.raw[0], x.raw[1],
+                    x.blended[0], x.blended[1]);
+        for (int k = 0; k < 2; ++k) worst[0][k] = std::max(worst[0][k], x.raw[k]), worst[1][k] = std::max(worst[1][k], x.blended[k]);
+    }
+    std::printf("worst transition: raw %.1f / %.1f deg, blended %.1f / %.1f deg\n", worst[0][0], worst[0][1], worst[1][0], worst[1][1]);
+    EXPECT_GE(tr.size(), 12u);
+    EXPECT_LT(worst[1][1], 0.5f * worst[0][1]);
+    EXPECT_LT(worst[1][0], worst[0][0]);
+    std::printf("hair: largest constraint strain %.1f %%\n", 100 * hairStrain);
+    EXPECT_LT(hairStrain, 0.35f);
 }

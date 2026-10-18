@@ -42,11 +42,16 @@ struct AnimLibrary {
     // Hands (bones 55 and 80) relative to the root in the ledgeb_idle pose, model space; places the
     // root under a grabbed ledge.
     vec3 hangHandOffset{6.3f, -141.7f, 495.6f};
+    anim::HairRig hair; // Lara's hair particles + constraints (anim::decodeHair); empty = rigid hair
 
     const anim::Clip* find(std::string_view name) const;
 };
 // Names the controller requests; loadLaraAnims loads exactly these.
 extern const std::vector<std::string_view> kLaraClipNames;
+// How the original fades `to` in after `from`: crossfade length and start time (seconds) from lara.drm's
+// anim requests. Player::play starts clips at startSeconds; World crossfades over blendSeconds.
+struct ClipBlend { float blendSeconds; double startSeconds; };
+ClipBlend clipBlend(std::string_view from, std::string_view to);
 // Skeleton + kLaraClipNames clips from pc-w\lara.drm. Throws cdc::FormatError / std::runtime_error.
 AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile);
 
@@ -153,14 +158,21 @@ public:
     // State blended between the last two ticks (alpha in [0,1]).
     PlayerState interpolated(double alpha) const;
     CameraState interpolatedCamera(double alpha) const;
+    // Lara's model-space bone matrices (crossfaded clips + simulated hair), blended between the last two
+    // ticks; skin with anim::skinPalette and place with Player::modelMatrix(interpolated(alpha)).
+    std::vector<glm::mat4> pose(double alpha) const;
 
 private:
+    void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
     void updateCamera(const Actions& a, float dt);
 
     collision::CollisionMesh col_;
     AnimLibrary anims_;
     Player player_;
     PlayerState prev_;
+    anim::AnimController anim_{anims_.skeleton};
+    anim::HairSim hair_;
+    std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
     uint64_t ticks_ = 0;
 };

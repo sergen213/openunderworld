@@ -127,19 +127,15 @@ std::string fmt(const char* f, A... a) {
     return buf;
 }
 
-// Lara's skinned meshes: CPU-skinned in model space (root segment held at bind; its motion is already in
-// the player position), then moved to the world by the player matrix.
+// Lara's skinned meshes: CPU-skinned in model space from World::pose (crossfaded clips + simulated hair;
+// root segment held at bind, its motion is in the player position), then moved to the world.
 struct LaraMeshes {
     std::vector<size_t> meshIndices; // into the uploaded scene
     std::vector<ou::scene::Vertex> scratch;
 
-    void pose(const ou::game::World& world, const ou::game::PlayerState& s, const ou::scene::SceneData& scene,
+    void pose(const ou::game::World& world, const ou::game::PlayerState& s, double alpha, const ou::scene::SceneData& scene,
               ou::render::Renderer& r) {
-        const auto& anims = world.anims();
-        const ou::anim::Clip* clip = anims.find(s.clip);
-        auto local = clip ? ou::anim::sample(*clip, anims.skeleton, s.clipTime, s.loop) : ou::anim::bindPose(anims.skeleton);
-        local[0] = ou::anim::bindPose(anims.skeleton)[0];
-        const auto palette = ou::anim::skinPalette(anims.skeleton, ou::anim::worldMatrices(anims.skeleton, local));
+        const auto palette = ou::anim::skinPalette(world.anims().skeleton, world.pose(alpha));
         const glm::mat4 m = world.player().modelMatrix(s.pos, s.yaw);
         const glm::mat3 n(m);
         for (const size_t i : meshIndices) {
@@ -362,7 +358,7 @@ int main(int argc, char** argv) {
 
         const auto s = world->interpolated(clock.alpha());
         const auto c = world->interpolatedCamera(clock.alpha());
-        lara.pose(*world, s, scene, *renderer);
+        lara.pose(*world, s, clock.alpha(), scene, *renderer);
         ou::render::Camera cam;
         cam.verticalFovDeg = world->fovDeg;
         cam.nearZ = 5.0f;

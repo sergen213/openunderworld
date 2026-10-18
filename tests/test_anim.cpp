@@ -3,6 +3,9 @@
 
 #include <gtest/gtest.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -267,4 +270,161 @@ TEST(AnimReal, LaraSceneLinksSkeletonAndBindPoseIsIdentity) {
         EXPECT_LT(worst, 1e-3f) << m.origin;
     }
     EXPECT_EQ(linked, 7u);
+}
+
+// ---- blending, controller, hair ------------------------------------------------------------
+namespace {
+// Angle between two axis-angle rotations.
+float angleBetween(glm::vec3 a, glm::vec3 b) {
+    const glm::mat3 r = glm::transpose(anim::rotationFromVector(a)) * anim::rotationFromVector(b);
+    return std::acos(std::clamp((r[0][0] + r[1][1] + r[2][2] - 1) * 0.5f, -1.0f, 1.0f));
+}
+anim::Clip constantClip(glm::vec3 rot1, int keys = 10) {
+    anim::Clip c;
+    c.keyCount = uint16_t(keys);
+    c.timePerKey = 100;
+    c.tracks.resize(2);
+    for (int a = 0; a < 3; ++a) c.tracks[1][size_t(anim::RotX + a)] = std::vector<float>(size_t(keys), rot1[a]);
+    return c;
+}
+} // namespace
+
+TEST(Anim, BlendIdentityEndpointsAndContinuity) {
+    const anim::LocalTransform a{{0.3f, -1.2f, 2.9f}, {1, 1, 1}, {1, 2, 3}}, b{{-2.5f, 0.4f, -1.0f}, {1, 2, 1}, {-4, 0, 9}};
+    for (float w : {0.0f, 0.25f, 0.5f, 1.0f}) {
+        const auto s = anim::blend(a, a, w);
+        EXPECT_LT(angleBetween(s.rot, a.rot), 1e-3f) << w;
+        EXPECT_LT(glm::length(s.trans - a.trans), 1e-5f);
+    }
+    EXPECT_LT(angleBetween(anim::blend(a, b, 0).rot, a.rot), 1e-5f);
+    EXPECT_LT(angleBetween(anim::blend(a, b, 1).rot, b.rot), 1e-5f);
+    EXPECT_LT(glm::length(anim::blend(a, b, 1).trans - b.trans), 1e-5f);
+    EXPECT_LT(glm::length(anim::blend(a, b, 0.5f).scale - glm::vec3(1, 1.5f, 1)), 1e-5f);
+    // Continuous: small weight steps give small rotation steps, and the path is the short arc.
+    const float total = angleBetween(a.rot, b.rot);
+    float prevRot = 0;
+    glm::vec3 prev = a.rot;
+    for (int i = 1; i <= 1000; ++i) {
+        const auto s = anim::blend(a, b, float(i) / 1000);
+        const float step = angleBetween(prev, s.rot);
+        EXPECT_LT(step, total / 1000 * 1.05f + 1e-4f) << i;
+        prevRot += step;
+        prev = s.rot;
+    }
+    EXPECT_NEAR(prevRot, total, 1e-2f);
+    // Rotations near +pi and -pi about the same axis are neighbours, not a full turn apart.
+    const auto n = anim::blend({{0, 0, 3.1f}}, {{0, 0, -3.1f}}, 0.5f);
+    EXPECT_NEAR(angleBetween(n.rot, {0, 0, 3.14159265f}), 0, 1e-3f);
+}
+
+TEST(Anim, ControllerCrossfadeTiming) {
+    scene::Skeleton sk;
+    sk.bones = {{-1, {0, 0, 0}}, {0, {0, 0, 10}}};
+    const anim::Clip idle = constantClip({0, 0, 0}), bend = constantClip({1, 0, 0});
+    anim::AnimController c(sk);
+    c.play(&idle, 0.2f, true);
+    EXPECT_EQ(c.weight(), 1.0f); // the first clip never fades in
+    const double dt = 1.0 / 60;
+    c.update(dt);
+    c.play(&bend, 0.1f, true); // 3 frames at 30 Hz = 6 ticks
+    for (int k = 0; k <= 8; ++k) {
+        const float w = std::min(1.0f, float(k) / 6);
+        EXPECT_NEAR(c.weight(), w, 1e-4f) << k;
+        EXPECT_NEAR(c.pose()[1].rot.x, w, 1e-4f) << k; // same axis: slerp is linear in the angle
+        EXPECT_EQ(c.layers(), k >= 6 ? 1u : 2u) << k;
+        c.update(dt);
+    }
+    // A new transition mid-blend starts from the blended pose (no jump).
+    c.play(&idle, 0.1f, true);
+    c.update(dt * 3);
+    const float mid = c.pose()[1].rot.x;
+    c.play(&bend, 0.1f, true);
+    EXPECT_NEAR(c.pose()[1].rot.x, mid, 1e-5f);
+    // Phase sync: same cycle fraction.
+    const anim::Clip a = constantClip({}, 20), b = constantClip({}, 30);
+    EXPECT_NEAR(anim::syncedStartTime(a, a.durationSeconds() * 2.25, b), b.durationSeconds() * 0.25, 1e-9);
+}
+
+TEST(Anim, HairChainIsStableAndSettlesUnderGravity) {
+    // Root bone, pinned anchor at z 100, then 6 free segments sticking out horizontally along +Y.
+    scene::Skeleton sk;
+    sk.bones = {{-1, {0, 0, 0}}, {0, {0, 0, 100}}};
+    anim::HairRig rig;
+    rig.particles.push_back({1, -1, true});
+    for (int i = 0; i < 6; ++i) {
+        sk.bones.push_back({int32_t(sk.bones.size() - 1), {0, 10, 0}});
+        rig.particles.push_back({uint32_t(sk.bones.size() - 1), int32_t(i), false});
+        rig.links.push_back({uint32_t(i), uint32_t(i + 1), 10.0f});
+    }
+    anim::HairParams p;
+    p.body.push_back({0, 1, {0, 0, -30}, 25.0f}); // capsule along the "neck", below the anchor
+    anim::HairSim sim(rig, sk, p);
+    ASSERT_FALSE(sim.empty());
+    auto bones = anim::worldMatrices(sk, anim::bindPose(sk));
+    glm::mat4 toWorld(1);
+    sim.reset(bones, toWorld);
+    auto check = [&](int tick) {
+        for (const auto& q : sim.positions()) ASSERT_TRUE(std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z)) << tick;
+        for (const auto& l : rig.links)
+            ASSERT_NEAR(glm::length(sim.positions()[l.b] - sim.positions()[l.a]), l.rest, 0.5f) << tick;
+    };
+    // Violent root motion (teleport-sized jumps and spins) stays finite with bounded stretch.
+    for (int t = 0; t < 240; ++t) {
+        toWorld = glm::rotate(glm::translate(glm::mat4(1), glm::vec3(t % 2 ? 300 : -300, 0, 0)), float(t), glm::vec3(0, 0, 1));
+        sim.step(bones, toWorld, 1.0f / 60);
+        for (const auto& q : sim.positions()) ASSERT_TRUE(std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z)) << t;
+    }
+    // Then rest: still body, 20 s.
+    toWorld = glm::mat4(1);
+    std::vector<glm::vec3> last;
+    for (int t = 0; t < 1200; ++t) {
+        last = sim.positions();
+        sim.step(bones, toWorld, 1.0f / 60);
+    }
+    check(1200);
+    float motion = 0;
+    for (size_t i = 0; i < last.size(); ++i) motion = std::max(motion, glm::length(sim.positions()[i] - last[i]));
+    EXPECT_LT(motion, 1e-3f);
+    const auto& q = sim.positions();
+    EXPECT_LT(q.back().z, q.front().z - 20); // hangs down under gravity
+    for (size_t i = 1; i < q.size(); ++i) // outside the clamped body capsule
+        EXPECT_GE(glm::length(q[i] - glm::vec3(0, 0, std::clamp(q[i].z, 0.0f, 70.0f))), sim.params().body[0].radius - 0.5f) << i;
+    // Applied bones follow the particles and keep the segment direction.
+    sim.apply(bones, toWorld);
+    for (size_t i = 0; i < q.size(); ++i) EXPECT_LT(glm::length(glm::vec3(bones[rig.particles[i].bone][3]) - q[i]), 1e-3f);
+    const glm::vec3 seg = glm::normalize(q[4] - q[3]), boneY = glm::normalize(glm::vec3(bones[rig.particles[3].bone][1]));
+    EXPECT_GT(glm::dot(seg, boneY), 0.999f); // its bind segment (to the child) ran along +Y
+    // Deterministic: same inputs, same result.
+    anim::HairSim a(rig, sk, p), b(rig, sk, p);
+    a.reset(bones, glm::mat4(1));
+    b.reset(bones, glm::mat4(1));
+    for (int t = 0; t < 100; ++t) {
+        const glm::mat4 m = glm::translate(glm::mat4(1), glm::vec3(t * 7.0f, 0, 0));
+        a.step(bones, m, 1.0f / 60);
+        b.step(bones, m, 1.0f / 60);
+    }
+    EXPECT_EQ(std::memcmp(a.positions().data(), b.positions().data(), a.positions().size() * sizeof(glm::vec3)), 0);
+}
+
+TEST(AnimReal, LaraHairRig) {
+    const Lara* l = lara();
+    if (!l) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const scene::Skeleton* sk = nullptr;
+    for (const auto& s : l->skeletons)
+        if (s.renderModelId == 2366) sk = &s;
+    ASSERT_NE(sk, nullptr);
+    const auto rig = anim::decodeHair(l->drm, *sk);
+    ASSERT_EQ(rig.particles.size(), 37u);
+    EXPECT_EQ(rig.links.size(), 6u + 36u + 36u);
+    const auto bind = anim::bindPositions(*sk);
+    size_t pinned = 0;
+    for (size_t i = 0; i < rig.particles.size(); ++i) {
+        EXPECT_EQ(rig.particles[i].bone, 116 + i);
+        pinned += rig.particles[i].pinned;
+        if (!rig.particles[i].pinned) { EXPECT_GE(rig.particles[i].pred, 0) << i; }
+    }
+    EXPECT_EQ(pinned, 7u); // ponytail root + 3 strand roots per front group
+    // Rest lengths are the bind-pose distances.
+    for (const auto& k : rig.links)
+        EXPECT_NEAR(glm::length(bind[rig.particles[k.a].bone] - bind[rig.particles[k.b].bone]), k.rest, 0.01f);
 }

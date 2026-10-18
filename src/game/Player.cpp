@@ -82,10 +82,22 @@ vec3 Player::toWorld(vec3 m) const {
 
 void Player::play(std::string_view clip, bool loop, float rate) {
     if (s_.clip == clip && s_.loop == loop && s_.clipRate == rate) return;
+    // A new clip starts at the original request's start frame (clipBlend); swapping between the looping
+    // gaits of one blend space keeps the stride phase instead (walk and run line up at phase 0).
+    double t = 0;
+    if (s_.clip != clip) {
+        const auto gait = [](std::string_view n) {
+            return n == "ng_walk" || n == "ng_run" ? 1 : n == "swim_sub" || n == "swim_sub_up" || n == "swim_sub_down" ? 2 : 0;
+        };
+        const anim::Clip *from = anims_.find(s_.clip), *to = anims_.find(clip);
+        t = from && to && s_.loop && loop && gait(clip) && gait(clip) == gait(s_.clip)
+                ? anim::syncedStartTime(*from, s_.clipTime, *to)
+                : clipBlend(s_.clip, clip).startSeconds;
+    }
     s_.clip = clip;
     s_.loop = loop;
     s_.clipRate = rate;
-    s_.clipTime = 0;
+    s_.clipTime = t;
 }
 
 bool Player::clipDone() const {
