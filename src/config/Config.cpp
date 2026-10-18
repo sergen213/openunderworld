@@ -31,6 +31,7 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     s.shadows = g.shadows.value_or(s.shadows);
     s.fxaa = g.fxaa.value_or(s.fxaa);
     s.hdr = g.hdr.value_or(s.hdr);
+    s.originalShaders = g.originalShaders.value_or(s.originalShaders);
     if (g.rt == "shadows") s.rt = 1;
     else if (g.rt == "full") s.rt = 2;
     else if (g.rt != "off") throw std::runtime_error("rt must be off, shadows or full, got " + g.rt);
@@ -45,6 +46,9 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     if (flag == "--shadows" || flag == "--fxaa" || flag == "--hdr") {
         if (value != "on" && value != "off") throw std::runtime_error(std::string(flag) + " wants on or off");
         (flag == "--shadows" ? g.shadows : flag == "--fxaa" ? g.fxaa : g.hdr) = value == "on";
+    } else if (flag == "--shaders") {
+        if (value != "original" && value != "generic") throw std::runtime_error("--shaders wants original or generic");
+        g.originalShaders = value == "original";
     } else if (flag == "--preset") g.preset = value;
     else if (flag == "--msaa") g.msaa = std::atoi(std::string(value).c_str());
     else if (flag == "--rt") g.rt = value;
@@ -82,6 +86,7 @@ Config load(const fs::path& path) {
                 if (g->contains(key)) *field = g->at(key).get<bool>();
             c.graphics.rt = g->value("rt", c.graphics.rt);
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
+            if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
         }
     } catch (const std::exception& e) {
         throw std::runtime_error(path.string() + ": " + e.what());
@@ -106,6 +111,7 @@ void save(const fs::path& path, const Config& c) {
                                {"rt_quality", c.graphics.rtQuality}};
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
+    if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;
     if (path.has_parent_path()) fs::create_directories(path.parent_path());
     fs::path tmp = path;
     tmp += ".tmp";

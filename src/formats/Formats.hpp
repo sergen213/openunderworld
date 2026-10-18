@@ -29,9 +29,8 @@ struct PcdHeader {
 };
 std::optional<PcdHeader> parsePcdHeader(std::span<const uint8_t> sectionData);
 
-// Decodes a type-5 section. BCn stays compressed; 0x15 is returned as BGRA8.
-// Returns nullopt for non-PCD9 data, unknown formats, inconsistent sizes and cube maps
-// (scene::TextureData has no cube support; see `why`).
+// Decodes a type-5 section. BCn stays compressed; 0x15 is returned as BGRA8; cube maps (flags 0x8000) set
+// TextureData::cube. Returns nullopt for non-PCD9 data, unknown formats and inconsistent sizes (see `why`).
 std::optional<scene::TextureData> decodeTexture(const cdc::Section& s, std::string* why = nullptr);
 
 // CPU decode of one mip level to RGBA8 (for dumps/tests). Supports all scene formats.
@@ -59,6 +58,11 @@ std::vector<MaterialTexture> materialTextures(const cdc::Section& material);
 // +0x4C alpha threshold, applied as PCStateManager_SetBlendMode (tru.exe 0x527A80) does.
 struct MaterialState { scene::Blend blend = scene::Blend::Opaque; uint8_t alphaRef = 0; bool doubleSided = false; };
 MaterialState materialState(const cdc::Section& material);
+// Shader-relevant material data (docs/formats/SHADERS.md): constants, sampler entries, blend mode. The composite
+// pass programs are in the ShaderLib sections `libs` names (vertex = blob +0x34, pixel = blob +0x30); the caller
+// resolves them (loadDrmScene / loadLevelScene fill Material::{vertex,pixel}Shader and SceneData::shaders).
+struct MaterialShaderLibs { uint32_t vertex = 0, pixel = 0; };
+scene::Material decodeMaterial(const cdc::Section& material, MaterialShaderLibs* libs = nullptr);
 
 // ---- Scene ----------------------------------------------------------------------------
 // Loads `drmPath` (e.g. "pc-w\\lara.drm", "pc-w\\l4_pool.drm"), its object dependencies
@@ -88,6 +92,7 @@ struct ImfPlacement {
     float matrix[16];  // column-major model matrix (stored D3D row-major, row 3 = translation)
     uint32_t dtpId;    // DTPDATA section {?, renderModel id @+4}
     std::string name;
+    uint32_t textures[4] = {}; // +0x4C..+0x58 instance textures (classes 1-4; light map) overriding the model's, 0 = none
 };
 
 // Stream-unit portal: 0x100-byte record at Terrain +0x04 (count: i16 at Terrain +0x02). Coordinates are stored
@@ -108,6 +113,7 @@ struct Unit {
     std::vector<std::string> streamGroups; // stream DRM base names ("pc-w\\streamgroups\\<name>.drm")
     std::vector<ImfPlacement> imfs;
     std::vector<Portal> portals;
+    scene::Environment environment; // Level+0x70 render settings (fog, ambient)
 };
 // Parses the level struct (section 0) of a unit DRM. Throws cdc::FormatError on layout mismatch.
 Unit parseUnit(const cdc::Drm& unit);

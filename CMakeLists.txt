@@ -41,9 +41,12 @@ pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
 add_library(ou_placeholder STATIC src/scene/Placeholder.cpp)
 target_include_directories(ou_placeholder PUBLIC src)
 
-add_library(ou_render_common STATIC src/render/RenderCommon.cpp)
+# RenderCommon + the D3D9 SM3 -> GLSL translator of the Original Fidelity path (docs/formats/SHADERS.md).
+add_library(ou_render_common STATIC src/render/RenderCommon.cpp src/render/ShaderTranslate.cpp src/render/OriginalShading.cpp)
 target_include_directories(ou_render_common PUBLIC src)
-target_link_libraries(ou_render_common PUBLIC SDL3::SDL3 glm::glm)
+# libshaderc compiles translated TRU shaders to SPIR-V at load time (Vulkan backend, shader tests).
+pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
+target_link_libraries(ou_render_common PUBLIC SDL3::SDL3 glm::glm ou_formats PRIVATE PkgConfig::SHADERC)
 
 add_library(ou_render_gl STATIC src/render/gl/GlRenderer.cpp)
 target_link_libraries(ou_render_gl PUBLIC ou_render_common PRIVATE PkgConfig::EPOXY)
@@ -104,6 +107,9 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_vk_tests PROPERTIES ENVIRONMENT "${OU_VK_TEST_ENV}")
   set_tests_properties(viewer_vulkan_placeholder_screenshot viewer_vulkan_matches_gl viewer_vulkan_matches_gl_enhanced PROPERTIES
                        SKIP_RETURN_CODE 77 ENVIRONMENT "${OU_VK_TEST_ENV}")
+  add_executable(ou_shader_tests tests/test_shaders.cpp)
+  target_link_libraries(ou_shader_tests PRIVATE ou_render_common GTest::gtest_main)
+  gtest_discover_tests(ou_shader_tests DISCOVERY_TIMEOUT 30 PROPERTIES TIMEOUT 600)
 endif()
 
 # ---- ou_anim: skeletons, animation clips, pose sampling, CPU skinning (docs/formats/ANIMATION.md) ----
@@ -117,7 +123,8 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_formats: PCD9 textures, render models, terrain -> ou::scene; ou-asset CLI ----------
-add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/formats/Scene.cpp src/formats/Level.cpp)
+add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/formats/Scene.cpp src/formats/Level.cpp
+            src/formats/Shader.cpp)
 target_link_libraries(ou_formats PUBLIC ou_cdc ou_anim)
 add_executable(ou-asset tools/ou-asset/main.cpp)
 target_link_libraries(ou-asset PRIVATE ou_formats)

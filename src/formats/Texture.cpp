@@ -82,20 +82,29 @@ std::optional<scene::TextureData> decodeTexture(const cdc::Section& s, std::stri
     case kDxt5: t.format = scene::PixelFormat::BC3; break;
     default: return fail("unknown PCD9 format " + std::to_string(h->format));
     }
-    if (h->cube()) return fail("cube map (unsupported by scene::TextureData)");
     if (h->paletteSize) return fail("palettised texture");
     if (h->dataSize > s.data.size() - 24) return fail("pixel data exceeds section");
-    size_t off = 24;
-    uint32_t w = h->width, hh = h->height;
-    for (int i = 0; i <= h->mipCount; ++i) {
-        const uint32_t n = levelBytes(t.format, w, hh);
-        if (off + n > 24 + size_t(h->dataSize)) return fail("mip chain exceeds dataSize");
-        t.mips.push_back({w, hh, {s.data.begin() + off, s.data.begin() + off + n}});
-        off += n;
-        w = std::max(1u, w / 2);
-        hh = std::max(1u, hh / 2);
+    // Cube maps store 6 complete mip chains face after face (dataSize = 6 x chain [O]; face-major as D3D surfaces [I]);
+    // scene::TextureData keeps the faces of one level together.
+    const int faces = h->cube() ? 6 : 1;
+    t.cube = h->cube();
+    size_t chain = 0;
+    {
+        uint32_t w = h->width, hh = h->height;
+        for (int i = 0; i <= h->mipCount; ++i, w = std::max(1u, w / 2), hh = std::max(1u, hh / 2)) {
+            t.mips.push_back({w, hh, {}});
+            chain += levelBytes(t.format, w, hh);
+        }
     }
-    if (off != 24 + size_t(h->dataSize)) return fail("mip chain does not match dataSize");
+    if (size_t(faces) * chain != h->dataSize) return fail("mip chain does not match dataSize");
+    for (int f = 0; f < faces; ++f) {
+        size_t off = 24 + chain * size_t(f);
+        for (auto& m : t.mips) {
+            const uint32_t n = levelBytes(t.format, m.width, m.height);
+            m.data.insert(m.data.end(), s.data.begin() + ptrdiff_t(off), s.data.begin() + ptrdiff_t(off + n));
+            off += n;
+        }
+    }
     return t;
 }
 

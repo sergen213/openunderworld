@@ -56,7 +56,7 @@ void usage() {
                  "                 [--renderer opengl|vulkan] [--no-overlay] [--fullscreen]\n"
                  "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list] [--show-collision]\n"
                  "                 [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off]\n"
-                 "                 [--hdr on|off] [--rt off|shadows|full] [--rt-quality low|medium|high]\n"
+                 "                 [--hdr on|off] [--shaders original|generic] [--rt off|shadows|full] [--rt-quality low|medium|high]\n"
                  "                 [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
@@ -470,9 +470,9 @@ int main(int argc, char** argv) {
             lines.push_back(scene.placeholder ? "!" + source : "source: " + source);
             lines.push_back(fmt("OpenUnderworld ou-viewer | %.1f FPS (%.2f ms) | vsync %s | %s | cull %s", fps,
                                 frameMs, vsync ? "on" : "off", lighting ? "lambert" : "unlit", cull ? "on" : "off"));
-            lines.push_back(fmt("preset %s | msaa %dx | shadows %s | fxaa %s | hdr %s", opt.graphics.preset.c_str(),
+            lines.push_back(fmt("preset %s | msaa %dx | shadows %s | fxaa %s | hdr %s | shaders %s", opt.graphics.preset.c_str(),
                                 opt.gfx.msaa, opt.gfx.shadows ? "on" : "off", opt.gfx.fxaa ? "on" : "off",
-                                opt.gfx.hdr ? "on" : "off"));
+                                opt.gfx.hdr ? "on" : "off", opt.gfx.originalShaders ? "original" : "generic"));
             lines.push_back(renderer->description());
             lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));
             lines.push_back(fmt("%dx%d aspect %.3f | vFOV %.1f hFOV %.1f (Hor+)", w, h, aspect, cam.verticalFovDeg,
@@ -494,6 +494,7 @@ int main(int argc, char** argv) {
         ou::render::FrameOptions fo{lighting, cull, lines, debugLines};
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
+        fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
         renderer->drawFrame(cam, {w, h}, fo);
         if (frame == kTimingWarmup) timingStart = SDL_GetTicksNS();
         ++frame;

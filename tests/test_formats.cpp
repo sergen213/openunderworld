@@ -66,11 +66,19 @@ TEST(Texture, Bgra8SwizzleAndBc3Alpha) {
     EXPECT_EQ(rgba[3], 0);
 }
 
-TEST(Texture, RejectsCubeAndBadSizes) {
-    std::vector<uint8_t> px(6 * 8, 0);
+TEST(Texture, CubeFacesAndBadSizes) {
+    // 4x4 DXT1 cube, 2 mips per face (8 + 8 bytes), faces stored one after another; face f filled with f.
+    std::vector<uint8_t> px;
+    for (uint8_t f = 0; f < 6; ++f) px.insert(px.end(), 16, f);
+    const auto cube = formats::decodeTexture(section(cdc::SectionType::Texture, 1, pcd(0x31545844, 4, 4, 1, 0x8003, px)));
+    ASSERT_TRUE(cube);
+    EXPECT_TRUE(cube->cube);
+    ASSERT_EQ(cube->mips.size(), 2u);
+    ASSERT_EQ(cube->mips[1].data.size(), 6u * 8);
+    EXPECT_EQ(cube->mips[1].data[5 * 8], 5); // level 1 of face 5
     std::string why;
-    EXPECT_FALSE(formats::decodeTexture(section(cdc::SectionType::Texture, 1, pcd(0x31545844, 4, 4, 0, 0x8003, px)), &why));
-    EXPECT_NE(why.find("cube"), std::string::npos);
+    px.pop_back();
+    EXPECT_FALSE(formats::decodeTexture(section(cdc::SectionType::Texture, 1, pcd(0x31545844, 4, 4, 1, 0x8003, px)), &why));
     EXPECT_FALSE(formats::decodeTexture(section(cdc::SectionType::Texture, 1, pcd(0x31545844, 4, 4, 0, 0, std::vector<uint8_t>(9)))));
     EXPECT_FALSE(formats::decodeTexture(section(cdc::SectionType::Texture, 1, {1, 2, 3})));
 }
@@ -185,7 +193,7 @@ TEST(RealData, LaraTexturesAndModel) {
         if (s.type == cdc::SectionType::Texture) {
             std::string why;
             const bool decoded = formats::decodeTexture(s, &why).has_value();
-            EXPECT_TRUE(decoded || why.find("cube") != std::string::npos) << s.id << ": " << why;
+            EXPECT_TRUE(decoded) << s.id << ": " << why;
             ok += decoded;
         }
     EXPECT_GT(ok, 150);

@@ -2,6 +2,7 @@
 // device-memory allocator (no VMA), staging uploads, SPIR-V embedded at build time (glslc).
 // Entry points come straight from the linked loader (libvulkan); extension functions via
 // vkGetInstanceProcAddr. Output is meant to match the GL backend pixel-for-pixel modulo rasterisation.
+#include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
@@ -114,6 +116,16 @@ const VkVertexInputAttributeDescription kSceneAttrs[] = {
     {3, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(scene::Vertex, color)},
 };
 // Shadow pass reads position and uv only.
+// Translated original vertex shaders (sm3::Attr locations; docs/formats/SHADERS.md).
+const VkVertexInputAttributeDescription kOriginalAttrs[] = {
+    {sm3::kAttrPosition, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
+    {sm3::kAttrNormal, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, normal)},
+    {sm3::kAttrTexcoord0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv)},
+    {sm3::kAttrColor0, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(scene::Vertex, color0)},
+    {sm3::kAttrTexcoord1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv1)},
+    {sm3::kAttrTangent, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, tangent)},
+    {sm3::kAttrBinormal, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, binormal)},
+};
 const VkVertexInputAttributeDescription kShadowAttrs[] = {
     {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
     {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv)},
@@ -201,6 +213,7 @@ struct GpuImage {
     VkImageView view = VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE; // sampled images only
     uint32_t slot = 0;                    // index in the RT bindless texture array (0 = white)
+    bool cube = false;                    // 6-layer cube view
 };
 
 struct GpuMesh {
@@ -237,7 +250,8 @@ struct UploadBatch {
     };
     struct ImageJob {
         VkImage image;
-        std::vector<Region> mips;
+        std::vector<Region> mips; // cube maps: each region holds the 6 faces back to back
+        uint32_t layers = 1;
     };
     std::vector<std::pair<VkBuffer, Region>> buffers;
     std::vector<ImageJob> images;
@@ -255,7 +269,7 @@ VkImageMemoryBarrier2 imageBarrier(VkImage image, VkImageLayout from, VkImageLay
     b.newLayout = to;
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.image = image;
-    b.subresourceRange = {aspect, 0, VK_REMAINING_MIP_LEVELS, 0, 1};
+    b.subresourceRange = {aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
     return b;
 }
 
@@ -366,14 +380,17 @@ public:
             if (!problem.empty()) warn(problem);
             if (levels == 0) continue;
             GpuImage img = createImage(sceneMemory_, fmt, t.mips[0].width, t.mips[0].height, levels,
-                                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-            img.set = allocateSet(scenePool_, img.view, sceneSampler_);
-            img.slot = uint32_t(textures_.size() + 1);
+                                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                                    VK_SAMPLE_COUNT_1_BIT, t.cube);
+            // Cube maps (environment reflections of the original shaders) never feed the 2D generic / RT paths.
+            img.cube = t.cube;
+            img.set = t.cube ? white_.set : allocateSet(scenePool_, img.view, sceneSampler_);
+            img.slot = t.cube ? 0 : uint32_t(textures_.size() + 1);
             if (rtStatus_.supported && img.slot >= kMaxRtTextures) {
                 warn("beyond the " + std::to_string(kMaxRtTextures) + " ray-traced textures: rays see it white");
                 img.slot = 0;
             }
-            UploadBatch::ImageJob job{img.image, {}};
+            UploadBatch::ImageJob job{img.image, {}, t.cube ? 6u : 1u};
             for (uint32_t i = 0; i < levels; ++i)
                 job.mips.push_back({t.mips[i].data.data(), t.mips[i].data.size(), t.mips[i].width, t.mips[i].height});
             batch.images.push_back(std::move(job));
@@ -416,6 +433,7 @@ public:
             meshes_.push_back(std::move(g));
         }
         flush(batch);
+        uploadOriginals(scene, warnings);
         bounds_ = sceneBounds(scene);
         return warnings; // acceleration structures: built by the first frame that asks for RT
     }
@@ -559,12 +577,46 @@ public:
                 vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
             }
         }
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 1, 1, &shadowSet_, 0, nullptr);
-        if (rtPipelines_ && tlas_) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 2, 1, &rtSet_, 0, nullptr);
+        auto bindGenericSets = [&] {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 1, 1, &shadowSet_, 0, nullptr);
+            if (rtPipelines_ && tlas_) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 2, 1, &rtSet_, 0, nullptr);
+        };
+        bindGenericSets();
+        // Original Fidelity: translated TRU shaders where a submesh's material has them (not with the RT pre-pass).
+        const bool originals = options.originalShaders && !rtPipelines_ && !origPrograms_.empty();
+        const glm::mat4 viewProjD3D = original::viewProjD3D(camera, aspect);
+        if (originals) {
+            sm3::FrameBlock fb;
+            original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_);
+            std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
+        }
+        bool genericBound = true; // sceneLayout_ sets 1-2 bound (switching layouts disturbs them)
         const int32_t rtFlags = push.rt;
         for (const DrawRef& d : order_) {
             const GpuMesh& m = meshes_[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
+            if (originals) {
+                const OrigDraw& od = origDraws_[d.mesh][d.sub];
+                if (const VkPipeline op = od.program >= 0 ? origPipeline(od.program, s.blend) : VK_NULL_HANDLE) {
+                    if (op != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = op);
+                    if (genericBound) {
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 0, 1, &origFrameSet_[frameIndex_], 0, nullptr);
+                        genericBound = false;
+                    }
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 1, 1, &od.set, 0, nullptr);
+                    sm3::ObjectBlock ob;
+                    original::fillObject(ob, viewProjD3D, m.model);
+                    vkCmdPushConstants(cmd, origLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof ob, &ob);
+                    bindMesh(d.mesh);
+                    vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+                    vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+                    continue;
+                }
+            }
+            if (!genericBound) {
+                bindGenericSets();
+                genericBound = true;
+            }
             const VkPipeline p = scenePipelines_[size_t(s.blend)];
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             bindMesh(d.mesh);
@@ -756,6 +808,13 @@ public:
             destroyImage(white_);
             destroyImage(font_);
             destroyImage(shadow_);
+            destroyImage(attenuation_);
+            destroyImage(blackCube_);
+            for (auto& b : origFrameUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
+            vkDestroyDescriptorPool(device_, std::exchange(origStaticPool_, VK_NULL_HANDLE), nullptr);
+            vkDestroyPipelineLayout(device_, std::exchange(origLayout_, VK_NULL_HANDLE), nullptr);
+            for (VkDescriptorSetLayout* l : {&origFrameLayout_, &origMatLayout_})
+                vkDestroyDescriptorSetLayout(device_, std::exchange(*l, VK_NULL_HANDLE), nullptr);
             vkDestroyDescriptorPool(device_, staticPool_, nullptr);
             destroyScenePipelines();
             for (VkPipeline p : {textPipeline_, shadowPipeline_, postPipeline_}) vkDestroyPipeline(device_, p, nullptr);
@@ -787,6 +846,135 @@ public:
     }
 
 private:
+    // ---- Original Fidelity (translated TRU shaders, docs/formats/SHADERS.md) ----
+    struct OrigProgram {
+        std::vector<uint32_t> vs, ps;        // SPIR-V (libshaderc at upload)
+        uint8_t attributes = 0;              // vertex attribute locations the VS reads
+        std::array<VkPipeline, 4> pipelines{}; // by scene::Blend, created on first use
+    };
+    struct OrigDraw {
+        int program = -1; // origPrograms_ index, -1 = generic shading
+        VkDescriptorSet set = VK_NULL_HANDLE;
+    };
+
+    VkPipeline origPipeline(int program, scene::Blend blend) {
+        VkPipeline& p = origPrograms_[size_t(program)].pipelines[size_t(blend)];
+        if (!p) {
+            const OrigProgram& o = origPrograms_[size_t(program)];
+            std::vector<VkVertexInputAttributeDescription> attrs; // only consumed locations (validation-clean)
+            for (const auto& a : kOriginalAttrs)
+                if (o.attributes >> a.location & 1) attrs.push_back(a);
+            p = createPipeline(o.vs, o.ps, origLayout_, &kSceneBinding, attrs, PipelineKind(blend), samples_, sceneFormat_,
+                               depthFormat_);
+        }
+        return p;
+    }
+
+    void destroyOriginalPipelines() {
+        for (auto& o : origPrograms_)
+            for (VkPipeline& p : o.pipelines) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
+    }
+
+    void destroyOriginalScene() {
+        destroyOriginalPipelines();
+        origPrograms_.clear();
+        origDraws_.clear();
+        vkDestroyBuffer(device_, std::exchange(origMaterialUbo_, {}).buffer, nullptr); // memory: sceneMemory_
+        vkDestroyDescriptorPool(device_, std::exchange(origScenePool_, VK_NULL_HANDLE), nullptr);
+    }
+
+    // Translates and compiles each material's programs, then one material UBO block + descriptor set per distinct
+    // (program, material, instance textures, alpha ref) of the uploaded submeshes.
+    void uploadOriginals(const scene::SceneData& scene, std::vector<std::string>& warnings) {
+        environment_ = scene.environment;
+        const original::Prepared prep = original::prepare(scene, true);
+        for (const auto& w : prep.warnings) warnings.push_back(w);
+        std::vector<bool> ok;
+        for (const auto& p : prep.programs) {
+            std::string error;
+            OrigProgram o;
+            o.attributes = p.vsGlsl.attributes;
+            o.vs = sm3::compileSpirv(p.vsGlsl.source, false, true, error);
+            if (!o.vs.empty()) o.ps = sm3::compileSpirv(p.psGlsl.source, true, true, error);
+            ok.push_back(!o.ps.empty());
+            if (!ok.back()) warnings.push_back("original program: " + error);
+            origPrograms_.push_back(std::move(o));
+        }
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(gpu_, &props);
+        const VkDeviceSize align = std::max<VkDeviceSize>(props.limits.minUniformBufferOffsetAlignment, 16);
+        const VkDeviceSize stride = (sizeof(sm3::MaterialBlock) + align - 1) / align * align;
+        struct Key {
+            int program;
+            uint32_t material, inst[4];
+            uint8_t alphaRef;
+            auto operator<=>(const Key&) const = default;
+        };
+        std::map<Key, size_t> keys;
+        std::vector<std::pair<Key, const scene::SubMesh*>> unique;
+        std::vector<std::vector<size_t>> slot(meshes_.size());
+        origDraws_.assign(meshes_.size(), {});
+        for (size_t mi = 0; mi < meshes_.size(); ++mi)
+            for (const auto& s : meshes_[mi].submeshes) {
+                OrigDraw d;
+                d.program = prep.program(s.materialId);
+                if (d.program >= 0 && !ok[size_t(d.program)]) d.program = -1;
+                size_t k = SIZE_MAX;
+                if (d.program >= 0) {
+                    const Key key{d.program, s.materialId, {s.instanceTextures[0], s.instanceTextures[1], s.instanceTextures[2],
+                                                            s.instanceTextures[3]}, s.alphaRef};
+                    const auto [it, fresh] = keys.try_emplace(key, unique.size());
+                    if (fresh) unique.push_back({key, &s});
+                    k = it->second;
+                }
+                origDraws_[mi].push_back(d);
+                slot[mi].push_back(k);
+            }
+        if (unique.empty()) return;
+        origMaterialUbo_ = createBuffer(sceneMemory_, stride * unique.size(), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, uint32_t(unique.size())},
+                                               {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, uint32_t(16 * unique.size())}};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, uint32_t(unique.size()), 2, sizes};
+        VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &origScenePool_));
+        std::vector<VkDescriptorSet> sets(unique.size());
+        std::vector<VkDescriptorSetLayout> layouts(unique.size(), origMatLayout_);
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, origScenePool_, uint32_t(sets.size()),
+                                       layouts.data()};
+        VK_CHECK(vkAllocateDescriptorSets(device_, &ai, sets.data()));
+        for (size_t u = 0; u < unique.size(); ++u) {
+            const auto& [key, sub] = unique[u];
+            const scene::Material& mat = *prep.materials.at(key.material);
+            original::fillMaterial(*reinterpret_cast<sm3::MaterialBlock*>(origMaterialUbo_.mapped + stride * u), mat, *sub);
+            const VkDescriptorBufferInfo bi{origMaterialUbo_.buffer, stride * u, sizeof(sm3::MaterialBlock)};
+            std::array<VkDescriptorImageInfo, 16> ii;
+            const sm3::Glsl& ps = prep.programs[size_t(key.program)].psGlsl;
+            for (int n = 0; n < 16; ++n) {
+                // The view type must match the shader's sampler: unbound cube samplers read black (as D3D9), others white.
+                const bool cube = ps.samplerType[n] == 3;
+                ii[size_t(n)] = {sceneSampler_, cube ? blackCube_.view : white_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                if (n == original::kAttenuationSampler && !cube)
+                    ii[size_t(n)] = {postSampler_, attenuation_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                if (const uint32_t id = original::samplerTexture(mat, sub->instanceTextures, n))
+                    if (const auto it = textures_.find(id); it != textures_.end() && it->second.cube == cube)
+                        ii[size_t(n)].imageView = it->second.view;
+            }
+            VkWriteDescriptorSet w[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+            w[0].dstSet = w[1].dstSet = sets[u];
+            w[0].descriptorCount = 1;
+            w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            w[0].pBufferInfo = &bi;
+            w[1].dstBinding = 1;
+            w[1].descriptorCount = 16;
+            w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w[1].pImageInfo = ii.data();
+            vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
+        }
+        for (size_t mi = 0; mi < meshes_.size(); ++mi)
+            for (size_t si = 0; si < slot[mi].size(); ++si)
+                if (slot[mi][si] != SIZE_MAX) origDraws_[mi][si].set = sets[slot[mi][si]];
+    }
+
     VkDescriptorSet textureSet(uint32_t id) const {
         auto it = textures_.find(id);
         return it != textures_.end() ? it->second.set : white_.set;
@@ -806,6 +994,7 @@ private:
         sceneFormat_ = format;
         rtPipelines_ = rt;
         destroyScenePipelines();
+        destroyOriginalPipelines(); // recreated on demand at the new sample count / format
         createScenePipelines();
         swapchainDirty_ = true; // targets follow the new sample count / format
     }
@@ -1105,6 +1294,22 @@ private:
                                        VK_SAMPLE_COUNT_1_BIT, swap, VK_FORMAT_UNDEFINED);
         shadowPipeline_ = createPipeline(kShadowVert, kShadowFrag, sceneLayout_, &kSceneBinding, kShadowAttrs,
                                          PipelineKind::Shadow, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_UNDEFINED, shadowFormat_);
+
+        // Original Fidelity register files (ShaderTranslate.hpp): set 0 = frame UBO, set 1 = material UBO + s0-s15,
+        // push constants = object block (vertex stage).
+        constexpr VkShaderStageFlags vf = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        const VkDescriptorSetLayoutBinding fb{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, vf, nullptr};
+        VkDescriptorSetLayoutCreateInfo fl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 1, &fb};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &fl, nullptr, &origFrameLayout_));
+        std::array<VkDescriptorSetLayoutBinding, 17> mb{};
+        mb[0] = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, vf, nullptr};
+        for (uint32_t n = 0; n < 16; ++n) mb[n + 1] = {1 + n, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo ml{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, uint32_t(mb.size()), mb.data()};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &ml, nullptr, &origMatLayout_));
+        const VkDescriptorSetLayout origSets[2] = {origFrameLayout_, origMatLayout_};
+        VkPushConstantRange objectPush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(sm3::ObjectBlock)};
+        VkPipelineLayoutCreateInfo ol{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 2, origSets, 1, &objectPush};
+        VK_CHECK(vkCreatePipelineLayout(device_, &ol, nullptr, &origLayout_));
     }
 
     // One pipeline per scene::Blend plus the debug lines, at the current MSAA count and scene format.
@@ -1270,7 +1475,32 @@ private:
         UploadBatch batch;
         batch.images.push_back({white_.image, {{&white, 4, 1, 1}}});
         batch.images.push_back({font_.image, {{atlas.data(), atlas.size(), uint32_t(kAtlasW), uint32_t(kAtlasH)}}});
+        // Original Fidelity: AttenuationSampler (s15) curve atlas and one frame UBO + set per frame in flight.
+        blackCube_ = createImage(staticMemory_, VK_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, usage, VK_IMAGE_ASPECT_COLOR_BIT,
+                                 VK_SAMPLE_COUNT_1_BIT, true);
+        static const uint32_t black[6] = {0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000};
+        batch.images.push_back({blackCube_.image, {{black, sizeof black, 1, 1}}, 6});
+        const auto lut = original::attenuationLut();
+        attenuation_ = createImage(staticMemory_, VK_FORMAT_R8G8B8A8_UNORM, uint32_t(lut.width), uint32_t(lut.height), 1, usage,
+                                   VK_IMAGE_ASPECT_COLOR_BIT);
+        batch.images.push_back({attenuation_.image, {{lut.rgba.data(), lut.rgba.size(), uint32_t(lut.width), uint32_t(lut.height)}}});
         flush(batch);
+        VkDescriptorPoolSize ups{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight};
+        VkDescriptorPoolCreateInfo upci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, kFramesInFlight, 1, &ups};
+        VK_CHECK(vkCreateDescriptorPool(device_, &upci, nullptr, &origStaticPool_));
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            origFrameUbo_[i] = createBuffer(staticMemory_, sizeof(sm3::FrameBlock), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VkDescriptorSetAllocateInfo fai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, origStaticPool_, 1, &origFrameLayout_};
+            VK_CHECK(vkAllocateDescriptorSets(device_, &fai, &origFrameSet_[i]));
+            const VkDescriptorBufferInfo bi{origFrameUbo_[i].buffer, 0, sizeof(sm3::FrameBlock)};
+            VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            w.dstSet = origFrameSet_[i];
+            w.descriptorCount = 1;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            w.pBufferInfo = &bi;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+        }
     }
 
     Buffer createBuffer(LinearAllocator& mem, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props) {
@@ -1286,13 +1516,15 @@ private:
     }
 
     GpuImage createImage(LinearAllocator& mem, VkFormat format, uint32_t w, uint32_t h, uint32_t levels,
-                      VkImageUsageFlags usage, VkImageAspectFlags aspect, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) {
+                      VkImageUsageFlags usage, VkImageAspectFlags aspect, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
+                      bool cube = false) {
         VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ci.flags = cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
         ci.imageType = VK_IMAGE_TYPE_2D;
         ci.format = format;
         ci.extent = {w, h, 1};
         ci.mipLevels = levels;
-        ci.arrayLayers = 1;
+        ci.arrayLayers = cube ? 6 : 1;
         ci.samples = samples;
         ci.tiling = VK_IMAGE_TILING_OPTIMAL;
         ci.usage = usage;
@@ -1305,9 +1537,9 @@ private:
         VK_CHECK(vkBindImageMemory(device_, img.image, a.memory, a.offset));
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = img.image;
-        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.viewType = cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
         vi.format = format;
-        vi.subresourceRange = {aspect, 0, levels, 0, 1};
+        vi.subresourceRange = {aspect, 0, levels, 0, cube ? 6u : 1u};
         VK_CHECK(vkCreateImageView(device_, &vi, nullptr, &img.view));
         return img;
     }
@@ -1398,7 +1630,7 @@ private:
                     std::memcpy(src.mapped + off, r.src, r.size);
                     VkBufferImageCopy copy{};
                     copy.bufferOffset = off;
-                    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+                    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, job.layers};
                     copy.imageExtent = {r.width, r.height, 1};
                     vkCmdCopyBufferToImage(cmd, src.buffer, job.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
                     off += aligned(r.size);
@@ -1693,6 +1925,7 @@ private:
     }
 
     void destroySceneResources() {
+        destroyOriginalScene();
         for (auto& [_, img] : textures_) destroyImage(img);
         textures_.clear();
         for (auto& m : meshes_) {
@@ -1866,6 +2099,18 @@ private:
     std::unordered_map<uint32_t, GpuImage> textures_;
     std::vector<GpuMesh> meshes_;
     std::vector<size_t> meshSlot_; // last upload()'s SceneData::meshes index -> meshes_ index (SIZE_MAX = skipped)
+
+    // Original Fidelity (translated TRU shaders).
+    VkDescriptorSetLayout origFrameLayout_ = VK_NULL_HANDLE, origMatLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout origLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool origStaticPool_ = VK_NULL_HANDLE, origScenePool_ = VK_NULL_HANDLE;
+    std::array<Buffer, kFramesInFlight> origFrameUbo_{};
+    std::array<VkDescriptorSet, kFramesInFlight> origFrameSet_{};
+    GpuImage attenuation_, blackCube_;
+    std::vector<OrigProgram> origPrograms_;
+    std::vector<std::vector<OrigDraw>> origDraws_; // meshes_ index -> per submesh
+    Buffer origMaterialUbo_;
+    scene::Environment environment_;
 
     // Ray tracing.
     RtStatus rtStatus_;

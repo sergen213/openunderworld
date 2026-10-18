@@ -1,6 +1,7 @@
 #include "formats/Formats.hpp"
 
 #include "anim/Anim.hpp"
+#include "formats/Shader.hpp"
 
 #include <cstring>
 #include <deque>
@@ -21,7 +22,7 @@ const cdc::Drm* loadInto(Drms& drms, const cdc::BigfileSet& bigfile, const std::
 void warnUnusedSections(scene::SceneData& sc, const std::string& path, const cdc::Drm& drm) {
     std::map<cdc::SectionType, int> skipped;
     for (const auto& s : drm.sections)
-        if (s.type != cdc::SectionType::Texture && s.type != cdc::SectionType::Material &&
+        if (s.type != cdc::SectionType::Texture && s.type != cdc::SectionType::Material && s.type != cdc::SectionType::ShaderLib &&
             s.type != cdc::SectionType::RenderResource)
             ++skipped[s.type];
     for (const auto& [t, n] : skipped)
@@ -29,20 +30,70 @@ void warnUnusedSections(scene::SceneData& sc, const std::string& path, const cdc
                               " section(s) not used by the scene loader");
 }
 
-// Textures referenced by submeshes; the first loaded DRM containing an id wins.
-void loadTextures(scene::SceneData& sc, const Drms& drms) {
+const cdc::Section* findSection(const Drms& drms, cdc::SectionType type, uint32_t id, const std::string** from = nullptr) {
+    for (const auto& [path, drm] : drms)
+        for (const auto& s : drm.sections)
+            if (s.type == type && s.id == id) {
+                if (from) *from = &path;
+                return &s;
+            }
+    return nullptr;
+}
+
+// Materials referenced by submeshes with their composite-pass programs (docs/formats/SHADERS.md): VS slot 0x20
+// (composite, unskinned; the renderer feeds float normals with NormalScaleOffset (1, 0)) else 0xA0, PS slot 0
+// (no PSSM receive, no fade variant). The first loaded DRM containing a section id wins.
+void loadMaterials(scene::SceneData& sc, const Drms& drms) {
     std::set<uint32_t> wanted;
     for (const auto& m : sc.meshes)
         for (const auto& s : m.submeshes)
-            if (s.textureId) wanted.insert(s.textureId);
-    for (const uint32_t id : wanted) {
-        const cdc::Section* sec = nullptr;
-        const std::string* from = nullptr;
-        for (const auto& [path, drm] : drms) {
-            for (const auto& s : drm.sections)
-                if (s.type == cdc::SectionType::Texture && s.id == id) { sec = &s; from = &path; break; }
-            if (sec) break;
+            if (s.materialId) wanted.insert(s.materialId);
+    std::set<uint64_t> have;
+    for (const auto& c : sc.shaders) have.insert(c.hash);
+    auto program = [&](uint32_t libId, std::initializer_list<uint32_t> slots) -> uint64_t {
+        const cdc::Section* lib = libId ? findSection(drms, cdc::SectionType::ShaderLib, libId) : nullptr;
+        if (!lib) return 0;
+        try {
+            const auto parsed = d3d9::parseShaderLib(lib->data);
+            for (const uint32_t slot : slots)
+                if (const auto* e = parsed.find(slot)) {
+                    if (have.insert(e->hash).second)
+                        sc.shaders.push_back({e->hash, parsed.pixel, {e->bytecode.begin(), e->bytecode.end()}});
+                    return e->hash;
+                }
+        } catch (const cdc::FormatError& e) {
+            sc.warnings.push_back("shader lib " + std::to_string(libId) + ": " + e.what());
         }
+        return 0;
+    };
+    for (const uint32_t id : wanted) {
+        const cdc::Section* sec = findSection(drms, cdc::SectionType::Material, id);
+        if (!sec) continue;
+        MaterialShaderLibs libs;
+        auto m = decodeMaterial(*sec, &libs);
+        m.vertexShader = program(libs.vertex, {0x20, 0xA0});
+        m.pixelShader = program(libs.pixel, {0});
+        sc.materials.push_back(std::move(m));
+    }
+}
+
+// Textures referenced by submeshes, materials and instances; the first loaded DRM containing an id wins.
+void loadTextures(scene::SceneData& sc, const Drms& drms) {
+    std::set<uint32_t> wanted;
+    for (const auto& m : sc.meshes) {
+        for (const auto& s : m.submeshes) {
+            if (s.textureId) wanted.insert(s.textureId);
+            for (const uint32_t t : s.instanceTextures)
+                if (t) wanted.insert(t);
+        }
+    }
+    for (const auto& m : sc.materials)
+        for (const auto& t : m.samplers)
+            if (t.textureId) wanted.insert(t.textureId);
+    for (const auto& t : sc.textures) wanted.erase(t.id);
+    for (const uint32_t id : wanted) {
+        const std::string* from = nullptr;
+        const cdc::Section* sec = findSection(drms, cdc::SectionType::Texture, id, &from);
         if (!sec) {
             sc.warnings.push_back("texture " + std::to_string(id) + " not found in loaded DRMs");
             continue;
@@ -59,11 +110,17 @@ void loadTextures(scene::SceneData& sc, const Drms& drms) {
 }
 
 // Copy of `meshes` with `matrix` as model transform.
-void place(scene::SceneData& sc, const std::vector<scene::MeshData>& meshes, const float matrix[16], const std::string& tag) {
+// `textures`: per-placement instance textures (IMF +0x4C..) replacing the primgroup defaults where non-zero.
+void place(scene::SceneData& sc, const std::vector<scene::MeshData>& meshes, const float matrix[16], const std::string& tag,
+           const uint32_t* textures = nullptr) {
     for (const auto& m : meshes) {
         auto& p = sc.meshes.emplace_back(m);
         std::copy(matrix, matrix + 16, p.transform);
         p.origin += tag;
+        if (textures)
+            for (auto& s : p.submeshes)
+                for (int k = 0; k < 4; ++k)
+                    if (textures[k]) s.instanceTextures[k] = textures[k];
     }
 }
 
@@ -96,6 +153,7 @@ scene::SceneData loadDrmScene(const cdc::BigfileSet& bigfile, std::string_view d
             }
         warnUnusedSections(sc, path, drm);
     }
+    loadMaterials(sc, drms);
     loadTextures(sc, drms);
     return sc;
 }
@@ -107,6 +165,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
     const cdc::Drm* unit = loadInto(drms, bigfile, unitName);
     if (!unit) throw cdc::FormatError("not in bigfile: " + unitName);
     const Unit u = parseUnit(*unit);
+    sc.environment = u.environment;
 
     // Level geometry: the unit plus its stream-group DRMs. Terrain and cell meshes are in world
     // space; models referenced by IMF DTPs are placed per IMF record instead.
@@ -141,7 +200,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
     for (const auto& p : u.imfs) {
         const auto it = levelModels.find(imfModel[p.dtpId]);
         if (it == levelModels.end()) { ++unresolvedImf[p.dtpId]; continue; }
-        place(sc, it->second, p.matrix, " @imf " + p.name);
+        place(sc, it->second, p.matrix, " @imf " + p.name, p.textures);
     }
     for (const auto& [dtp, n] : unresolvedImf)
         sc.warnings.push_back(unitName + ": " + std::to_string(n) + " IMF placement(s) of DTP " + std::to_string(dtp) +
@@ -195,6 +254,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
             sc.warnings.push_back(unitName + ": object " + std::to_string(id) + (o.name.empty() ? "" : " (" + o.name + ")") +
                                   ", " + std::to_string(o.intros) + " intro(s) not drawn: " + o.problem);
 
+    loadMaterials(sc, drms);
     loadTextures(sc, drms);
     return sc;
 }

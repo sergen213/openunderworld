@@ -32,7 +32,8 @@ Labels: **[O]** observed in game data or tru.exe, **[I]** inference, **[U]** unk
   The sum of all levels equals the header data size exactly, which we check on every decode.
 - [O] Cube maps (flags & 0x8000): the data size is 6 × (one full mip chain).
   This was observed on 349 textures. **[I]** We assume the faces are stored face-major.
-  The decoder rejects cube maps, because `scene::TextureData` has no cube support.
+  Cube maps (flags 0x8000) store six complete mip chains one face after another (dataSize = 6 × chain [O]); the decoder
+  sets `TextureData::cube` and keeps the six faces of each level together, in D3D face order [I].
 
 ## Survey (C++ decoder, 2026-10-18)
 
@@ -57,6 +58,6 @@ No DXT3 texture was seen, so the BC2 path is untested. No size or mip-chain erro
 ## Open questions
 
 - [U] What flags bits 0/1 mean. They are common (25 511 textures have flags = 3).
-- [U] The cube face order. No cube maps are decoded yet.
+- [U] The cube face order (assumed D3D +X −X +Y −Y +Z −Z; used by the original shaders' environment reflections).
 - [I] There are many small white 32bpp textures with low alpha, e.g. `co_satchel` 0x1850. They are probably
   alpha/specular masks. Material category semantics are discussed in MESHES.md.

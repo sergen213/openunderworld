@@ -84,6 +84,9 @@ Survey of all 1057 DRMs in the bigfile (2248 distinct materials) [O]: mode 0 ×1
 
 ## What the renderers implement
 
+With `--shaders original` (default) materials whose composite programs translate use them (docs/formats/SHADERS.md); the
+list below describes the generic fallback.
+
 - Original Fidelity: texture × fixed sun lambert (0.45 ambient), alpha test at the material threshold, per-material
   blend mode and cull mode, two-sided lighting via `gl_FrontFacing` for two-sided materials.
 - Not reproduced (deviations): the per-shader colour tints/params, light maps, vertex-colour baked lighting, fog,
@@ -95,4 +98,4 @@ Survey of all 1057 DRMs in the bigfile (2248 distinct materials) [O]: mode 0 ×1
 
 - [U] Flags `0x1000`, `0x04`, `0x20`, `0x40` and the remaining blob fields; which pass list a material joins.
 - [U] Light-map source for IMFs and terrain (IMF +0x4C?), and the `COLOR0` meaning for objects whose shaders use it.
-- [U] Shader translation (D3D9 SM3 → SPIR-V/GLSL) for full fidelity: tints, fog, wind, PSSM.
+- Shader translation, light maps, fog, instance textures: done, see docs/formats/SHADERS.md (PSSM and dynamic lights still open).

@@ -33,7 +33,8 @@ struct Reader {
 // Vertex attribute name hashes (same values as cdc VertexElem constants in DXHR; the
 // usage of each is confirmed by the shader input specs stored in TRU material sections).
 constexpr uint32_t kPosition = 0xD2F7D823, kNormal = 0x36F5E414, kTerrainNormal = 0x09B1D4EA,
-                   kTexcoord1 = 0x8317902A;
+                   kTexcoord1 = 0x8317902A, kTexcoord2 = 0x8E54B6F3, kColor1 = 0x7E7DD623, kTangent = 0xF1ED11C3,
+                   kBinormal = 0x64A86F01;
 // Skin attributes (D3DCOLOR). Byte k of the weights pairs with byte k of the indices; indices
 // address the batch bone palette (docs/formats/ANIMATION.md).
 constexpr uint32_t kSkinWeights = 0x48E691C0, kSkinIndices = 0x5156D8D3;
@@ -105,15 +106,19 @@ std::vector<scene::Vertex> readVertices(const Reader& r, size_t off, uint32_t co
     r.need(off, size_t(count) * decl.stride);
     for (const auto& e : decl.elems)
         if (size_t(e.offset) + attrSize(e.format) > decl.stride) throw FormatError("vertex element outside stride");
-    const Elem *pos = nullptr, *nrm = nullptr, *uv = nullptr;
+    const Elem *pos = nullptr, *nrm = nullptr, *uv = nullptr, *uv1 = nullptr, *col = nullptr, *tan = nullptr, *bin = nullptr;
     for (const auto& e : decl.elems) {
         if (e.hash == kPosition) pos = &e;
         else if (e.hash == kNormal || e.hash == kTerrainNormal) nrm = &e;
         else if (e.hash == kTexcoord1) uv = &e;
+        else if (e.hash == kTexcoord2) uv1 = &e;
+        else if (e.hash == kColor1) col = &e;
+        else if (e.hash == kTangent) tan = &e;
+        else if (e.hash == kBinormal) bin = &e;
     }
     if (!pos) throw FormatError("vertex declaration without position");
     float tmp[4];
-    for (const Elem* e : {pos, nrm, uv})
+    for (const Elem* e : {pos, nrm, uv, uv1, col, tan, bin})
         if (e && !readAttr(r.d.data() + off + e->offset, e->format, tmp)) {
             warnings.push_back(where + ": unsupported vertex format " + std::to_string(e->format));
             if (e == pos) return {};
@@ -133,12 +138,24 @@ std::vector<scene::Vertex> readVertices(const Reader& r, size_t off, uint32_t co
             if (len > 0) for (int k = 0; k < 3; ++k) o.normal[k] = tmp[k] / len;
         }
         o.uv[0] = o.uv[1] = 0;
-        if (uv && readAttr(v + uv->offset, uv->format, tmp)) {
-            // SHORT2/SHORT4 texcoords are scaled by 1/2048 (constant at 0x84ba10 in tru.exe)
-            const float s = (uv->format == 0x13 || uv->format == 0x14) ? 1.f / 2048.f : 1.f;
-            o.uv[0] = tmp[0] * s;
-            o.uv[1] = tmp[1] * s;
-        }
+        // SHORT2/SHORT4 texcoords are scaled by 1/2048 (constant at 0x84ba10 in tru.exe; the shaders' TexcoordScales c254)
+        auto texcoord = [&](const Elem* e, float out2[2]) {
+            if (!e || !readAttr(v + e->offset, e->format, tmp)) return;
+            const float s = (e->format == 0x13 || e->format == 0x14) ? 1.f / 2048.f : 1.f;
+            out2[0] = tmp[0] * s;
+            out2[1] = tmp[1] * s;
+        };
+        texcoord(uv, o.uv);
+        texcoord(uv1, o.uv1);
+        if (col && readAttr(v + col->offset, col->format, tmp)) // as the vertex shader sees it, repacked R,G,B,A
+            for (int k = 0; k < 4; ++k) o.color0 |= uint32_t(std::lround(std::clamp(tmp[k], 0.f, 1.f) * 255.f)) << (8 * k);
+        // Tangent frame: same packing as the normal (NormalScaleOffset c21 applies to all three in the shaders).
+        auto frame = [&](const Elem* e, float out3[3]) {
+            if (!e || !readAttr(v + e->offset, e->format, tmp)) return;
+            for (int k = 0; k < 3; ++k) out3[k] = (e->format >= 4 && e->format <= 7) ? tmp[k] * 2 - 1 : tmp[k];
+        };
+        frame(tan, o.tangent);
+        frame(bin, o.binormal);
     }
     return out;
 }
@@ -194,6 +211,7 @@ struct Ctx {
         if (it == materials.end()) return sm;
         const MaterialState st = materialState(*it->second);
         sm.blend = st.blend, sm.alphaRef = st.alphaRef, sm.doubleSided = st.doubleSided;
+        sm.materialId = matIds[index];
         // Category 1 = diffuse (verified visually on Lara's face/teeth textures); materials
         // without one (e.g. hair, all categories 0) use the slot-0 texture (heuristic).
         const auto texs = materialTextures(*it->second);
@@ -202,6 +220,13 @@ struct Ctx {
         for (const auto& t : texs)
             if (t.category == 0 && t.slot == 0) { sm.textureId = t.textureId; return sm; }
         return sm;
+    }
+    // Four i32 indices into a resource's texture list (-1 = none) -> SubMesh::instanceTextures (texture ids).
+    static void instanceTextures(scene::SubMesh& sm, const Reader& r, size_t at, const std::vector<uint32_t>& texIds) {
+        for (int k = 0; k < 4; ++k) {
+            const auto i = int32_t(r.u32(at + 4 * size_t(k)));
+            if (i >= 0 && size_t(i) < texIds.size()) sm.instanceTextures[k] = texIds[size_t(i)];
+        }
     }
     bool hasTextures(const std::vector<uint32_t>& matIds, uint32_t index) {
         if (index >= matIds.size()) return false;
@@ -223,7 +248,8 @@ void appendIndices(scene::MeshData& m, const Reader& r, size_t indexBase, uint32
     }
     auto& b = m.submeshes;
     if (!b.empty() && b.back().textureId == sm.textureId && b.back().blend == sm.blend &&
-        b.back().alphaRef == sm.alphaRef && b.back().doubleSided == sm.doubleSided &&
+        b.back().alphaRef == sm.alphaRef && b.back().doubleSided == sm.doubleSided && b.back().materialId == sm.materialId &&
+        std::equal(sm.instanceTextures, sm.instanceTextures + 4, b.back().instanceTextures) &&
         b.back().firstIndex + b.back().indexCount == sm.firstIndex)
         b.back().indexCount += count;
     else
@@ -236,7 +262,7 @@ void decodeModel(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& ou
     const auto mesh = cdc::internalPointer(s, 0);
     if (!mesh || r.u32(*mesh) != kMeshMagic) throw FormatError("no Mesh header");
     const size_t M = *mesh;
-    const auto matIds = idList(s, 8);
+    const auto matIds = idList(s, 8), texIds = idList(s, 4);
     const uint32_t numIndices = r.u32(M + 0x0C);
     const uint32_t pgOff = r.u32(M + 0x6C), batchOff = r.u32(M + 0x70), idxOff = r.u32(M + 0x78);
     const uint16_t numPg = r.u16(M + 0x7C), numBatches = r.u16(M + 0x7E);
@@ -279,7 +305,10 @@ void decodeModel(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& ou
             const size_t P = M + pgOff + 0x40 * size_t(pg);
             const uint32_t first = r.u32(P + 0x10), tris = r.u32(P + 0x14);
             if (first + 3ull * tris > numIndices) throw FormatError("primgroup outside index buffer");
-            appendIndices(m, r, indexBase, first, 3 * tris, numVerts, c.material(matIds, r.u32(P + 0x28)));
+            // Primgroup +0x2C..+0x38: default instance textures (PCRenderModel_Finalize 0x50EB30).
+            scene::SubMesh sm = c.material(matIds, r.u32(P + 0x28));
+            Ctx::instanceTextures(sm, r, P + 0x2C, texIds);
+            appendIndices(m, r, indexBase, first, 3 * tris, numVerts, sm);
         }
         out.push_back(std::move(m));
     }
@@ -291,7 +320,7 @@ void decodeTerrain(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& 
     const auto hdr = cdc::internalPointer(s, 4);
     if (!hdr) throw FormatError("no terrain header pointer");
     const size_t H = *hdr;
-    const auto matIds = idList(s, 12);
+    const auto matIds = idList(s, 12), texIds = idList(s, 8);
     const uint32_t nodeCount = r.u32(H + 0x24), groupOff = r.u32(H + 0x28), groupCount = r.u32(H + 0x2C),
                    declOff = r.u32(H + 0x30), declCount = r.u32(H + 0x34), vbOff = r.u32(H + 0x3C),
                    vbCount = r.u32(H + 0x40), geomOff = r.u32(H + 0x44), idxOff = r.u32(H + 0x50),
@@ -306,6 +335,8 @@ void decodeTerrain(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& 
     for (uint32_t g = 0; g < groupCount; ++g) {
         const size_t G = H + groupOff + 0x20 * size_t(g);
         groups.push_back({r.u32(G + 4), c.material(matIds, r.u32(G))});
+        // Group +0x10..+0x1C: instance textures (light map class 1, blend masks class 3; terrain construct 0x510780).
+        Ctx::instanceTextures(groups.back().material, r, G + 0x10, texIds);
         if (groups.back().vb >= vbCount) throw FormatError("terrain group vertex buffer out of range");
     }
     // Collect chunks per (vertex buffer, group).
@@ -384,6 +415,45 @@ MaterialState materialState(const cdc::Section& material) {
     // front) is approximated as two-sided too.
     st.doubleSided = (r.u32(0x40) & 0x880) != 0;
     return st;
+}
+
+scene::Material decodeMaterial(const cdc::Section& material, MaterialShaderLibs* libs) {
+    scene::Material m;
+    m.id = material.id;
+    const Reader r{material.data};
+    if (r.d.size() < 0x74) return m;
+    m.blendMode = uint8_t(r.u32(0x38));
+    m.alphaThreshold = r.at<uint8_t>(0x4C);
+    m.flags = r.u32(0x40);
+    if (libs) *libs = {r.u32(0x34), r.u32(0x30)}; // resource ids (type-9 relocations), patched to PCShaderLib* at load
+    // Constants: PS {u32 count +0x58, ptr +0x5C} -> c100, VS {u16 count +0x68, ptr +0x6C} -> c25 (0x505A90, 0x505C00).
+    auto consts = [&](uint32_t count, uint32_t ptrOff, std::vector<float>& out) {
+        const auto p = cdc::internalPointer(material, ptrOff);
+        if (!count || !p) return;
+        r.need(*p, 16 * size_t(count));
+        out.resize(4 * size_t(count));
+        std::memcpy(out.data(), r.d.data() + *p, 16 * size_t(count));
+    };
+    consts(r.u32(0x58), 0x5C, m.psParams);
+    consts(r.u16(0x68), 0x6C, m.vsParams);
+    // Texture entries {u32 id, f32 lodBias, u32 category, u8 class, u8 sampler, u16 filter} at *(+0x54): [0, n51)
+    // material, [n51, n52) engine-global table by class, [n52, n52 + n50) per-instance by class (0x505A90).
+    const uint8_t nInst = r.at<uint8_t>(0x50), nMat = r.at<uint8_t>(0x51), nGlobal = r.at<uint8_t>(0x52);
+    if (const auto p = cdc::internalPointer(material, 0x54); p && nGlobal >= nMat) {
+        const size_t n = size_t(nGlobal) + nInst;
+        r.need(*p, 16 * n);
+        for (size_t i = 0; i < n; ++i) {
+            const size_t e = *p + 16 * i;
+            scene::MaterialSampler t;
+            t.textureId = r.u32(e);
+            t.cls = r.at<uint8_t>(e + 12);
+            t.reg = r.at<uint8_t>(e + 13);
+            t.filter = r.u16(e + 14);
+            t.source = i < nMat ? 0 : i < nGlobal ? 1 : 2;
+            m.samplers.push_back(t);
+        }
+    }
+    return m;
 }
 
 std::map<uint32_t, std::vector<scene::MeshData>> decodeRenderResources(const cdc::Drm& drm, std::vector<std::string>& warnings,

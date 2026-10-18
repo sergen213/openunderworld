@@ -19,17 +19,20 @@ struct GraphicsConfig {
     std::optional<bool> shadows, fxaa, hdr; // unset = preset default
     std::string rt = "off";                 // "off" | "shadows" | "full" (Vulkan ray queries; enhanced only)
     std::string rtQuality = "medium";       // "low" | "medium" | "high": 1, 2, 4 shadow rays per pixel
+    std::optional<bool> originalShaders;    // TRU's translated shaders (docs/formats/SHADERS.md); unset = preset default (on)
 };
 struct GraphicsSettings {
     int msaa = 1;
     bool shadows = false, fxaa = false, hdr = false;
     int rt = 0;     // 0 off, 1 shadows, 2 full (= render::RayTracing)
     int rtRays = 2;
+    bool originalShaders = true; // TRU's translated shaders (docs/formats/SHADERS.md)
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt or rtQuality value, or rt without the enhanced preset.
 GraphicsSettings resolve(const GraphicsConfig& g);
-// Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --rt, --rt-quality.
+// Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
+// --rt, --rt-quality.
 // false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 

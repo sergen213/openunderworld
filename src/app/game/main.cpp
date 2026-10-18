@@ -74,6 +74,7 @@ void usage() {
                  "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--show-collision] [--show-triggers] [--show-enemies]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
+                 "               [--shaders original|generic]\n"
                  "               [--rt off|shadows|full] [--rt-quality low|medium|high] [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
@@ -513,7 +514,8 @@ struct StreamedScene {
             return std::none_of(w.units().begin(), w.units().end(), [&](const auto& u) { return u.data.name == kv.first; });
         });
         ou::scene::SceneData out;
-        std::set<uint32_t> textureIds; // cdc section ids, unique across DRMs
+        std::set<uint32_t> textureIds, materialIds; // cdc section ids, unique across DRMs
+        std::set<uint64_t> shaderIds;
         std::set<int32_t> enemyIntros; // drawn posed by EnemyMeshes instead
         for (const auto& e : w.enemies().all())
             if (!e->generator) enemyIntros.insert(e->uid());
@@ -530,6 +532,12 @@ struct StreamedScene {
             }
             for (const auto& t : s.textures)
                 if (textureIds.insert(t.id).second) out.textures.push_back(t);
+            // Original-shader inputs (docs/formats/SHADERS.md): section / program ids are global, first one wins.
+            for (const auto& m : s.materials)
+                if (materialIds.insert(m.id).second) out.materials.push_back(m);
+            for (const auto& c : s.shaders)
+                if (shaderIds.insert(c.hash).second) out.shaders.push_back(c);
+            if (!out.environment.valid) out.environment = s.environment;
         };
         for (const auto& u : w.units()) {
             auto it = units.find(u.data.name);
@@ -740,6 +748,8 @@ int main(int argc, char** argv) {
         auto laraScene = ou::formats::loadDrmScene(bf, "pc-w\\lara.drm");
         streamed.lara.skeletons = std::move(laraScene.skeletons);
         streamed.lara.textures = std::move(laraScene.textures);
+        streamed.lara.materials = std::move(laraScene.materials);
+        streamed.lara.shaders = std::move(laraScene.shaders);
         for (auto& m : laraScene.meshes)
             if (m.skeleton >= 0 && !m.indices.empty()) streamed.lara.meshes.push_back(std::move(m)); // skinned body only
         for (auto& w : laraScene.warnings) warnings.push_back(std::move(w));
@@ -748,6 +758,8 @@ int main(int argc, char** argv) {
         auto gunScene = ou::formats::loadDrmScene(bf, "pc-w\\wp_handgun.drm");
         if (!gunScene.meshes.empty()) {
             streamed.guns.textures = std::move(gunScene.textures);
+            streamed.guns.materials = std::move(gunScene.materials);
+            streamed.guns.shaders = std::move(gunScene.shaders);
             streamed.guns.meshes = {gunScene.meshes[0], gunScene.meshes[0]};
             for (auto& m : streamed.guns.meshes) { // CPU-posed in world space: identity transform, no skin
                 m.skeleton = -1, m.skin.clear();
@@ -922,6 +934,7 @@ int main(int argc, char** argv) {
         v.renderHz = opt.renderHz;
         v.frame.msaa = opt.gfx.msaa, v.frame.shadows = opt.gfx.shadows, v.frame.fxaa = opt.gfx.fxaa, v.frame.hdr = opt.gfx.hdr;
         v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
+        v.frame.originalShaders = opt.gfx.originalShaders;
         v.overlay = !opt.noOverlay;
         v.musicVolume = float(menus.musicVolume) / 10;
         return v;
@@ -1169,6 +1182,7 @@ int main(int argc, char** argv) {
         fo.ui = canvas.vertices;
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
+        fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {

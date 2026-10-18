@@ -92,7 +92,7 @@ VK 1.66 ms); FXAA + HDR add ≤ 0.07 ms. GL is CPU/draw-call bound (one draw per
 Known limits (deliberate):
 - `upload()` and swapchain recreation call `vkDeviceWaitIdle`; fine for a viewer, not for streaming.
 - Readback stalls the queue; it is a debugging/testing path.
-- No sRGB; no light maps, fog, wind or per-shader material tints (MATERIALS.md).
+- No sRGB. Light maps, fog, wind and material tints come from the original shaders (SHADERS.md).
 
 ## Ray tracing (Vulkan, Enhanced, optional)
 
@@ -132,6 +132,28 @@ Verification [O] (RX 7900 XTX, RADV Mesa 26.2.4, 2026-10-18):
 Cost scales with rays per pixel; in the jungle it is dominated by alpha-tested casters (measured on
 the `player` start at 1 ray: 6.2 ms, 3.4 ms with the alpha test forced to pass). Before the depth
 pre-pass and the shadow-map fallback for blended receivers the same view took 22 ms at 1 ray.
+
+## Original shaders (`--shaders original|generic`, `graphics.original_shaders`; default original)
+
+Materials draw with TRU's own D3D9 SM3 programs translated to GLSL (`render/ShaderTranslate`; GL compiles the GLSL,
+Vulkan compiles it to SPIR-V with libshaderc at `upload()`) fed with the engine's register files (`render/OriginalShading`,
+shared): frame UBO, material UBO + 16 samplers, object block (GL UBO range / Vulkan push constants). Programs that need
+irradiance-volume lighting (dynamic objects), and materials without composite programs, keep the generic shading below.
+Not with the RT depth pre-pass (RT keeps the generic pipelines). Details, survey and evidence: docs/formats/SHADERS.md.
+Vulkan: one pipeline per (program, blend) created on first use, one descriptor set per distinct (program, material,
+instance textures, alpha ref), only consumed vertex attributes declared (validation-clean).
+
+**Observed** GL vs Vulkan (`ou-imgdiff`, 1792x1008, original shaders, 2026-10-18): l4_ballcourt `player` start 0.025/255
+(58.7 dB), court 0.085 (51.5 dB), l4_pool (`--cam -700,-1400,2950,90,-8`) 1.34 (40.1 dB), l3_main_bedroom ou-game start
+1.56 (HUD/overlay included).
+
+**Observed** frame times (`ou-viewer --no-vsync --no-overlay --frames 600`, Release, 1792x1008, RX 7900 XTX, l4_ballcourt
+court camera): GL 2.69 ms generic → 4.32 ms original; Vulkan 1.18 → 1.97 ms (the original pixel shaders average 270
+instructions vs our 20-line lambert).
+
+Viewed: ballcourt path/court show light-mapped multi-layer terrain, sun-lit court, foliage with wind; l4_pool water uses
+the original swirl shader; the l3_main_bedroom corridor is light-map + ambient only (its torch lights are not fed) and so
+much darker than the generic lambert; the 060_med_natla cutscene keeps Lara/actors on generic shading.
 
 ## Original Fidelity vs Enhanced (plan)
 

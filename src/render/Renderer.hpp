@@ -45,6 +45,10 @@ struct FrameOptions {
     bool shadows = false;  // sun shadow map (RenderCommon shadowViewProj), PCF 3x3
     bool fxaa = false;     // FXAA on the resolved image
     bool hdr = false;      // RGBA16F scene target + ACES tonemap
+    // Materials draw with TRU's own shaders translated from D3D9 SM3 (docs/formats/SHADERS.md) where they translate;
+    // others (and lines, overlay, shadow map) use the generic shading. `time` (seconds) feeds TimeVector (wind).
+    bool originalShaders = false;
+    float time = 0.0f;
     std::span<const TextVertex> ui = {}; // screen-space triangle list (src/ui menus, HUD), drawn before the overlay
     // Replaces the sun shadow map when the backend supports it; otherwise the shadow map is used.
     RayTracing rt = RayTracing::Off;

@@ -1,5 +1,6 @@
 // ou-asset: inspect and dump TRU assets (sections, textures, meshes) from the bigfile.
 #include "formats/Formats.hpp"
+#include "formats/Shader.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +10,9 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <array>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -26,6 +29,8 @@ int usage() {
                  "  ou-asset dump-mesh <gameDir> <drm> -o out.obj [--textures] [--level|--deps]  (writes .mtl + tex_<id>.tga)\n"
                  "  ou-asset stats <gameDir> <drm> [--level|--deps]\n"
                  "  ou-asset render <gameDir> <drm> -o out.ppm [--view top|front|side] [--size N] [--textured] [--level|--deps]\n"
+                 "  ou-asset shaders <gameDir> all|<drm>        survey ShaderLib (type 9) D3D9 shaders: counts, opcodes, registers\n"
+                 "  ou-asset shader-dis <gameDir> <drm> <libId> [slot]   disassemble a ShaderLib section\n"
                  "--level loads a unit DRM as a whole level (stream groups, IMFs, intros; transforms baked).\n"
                  "<drm> is a bigfile path such as pc-w\\lara.drm; ids accept 0x prefix.\n";
     return 2;
@@ -204,6 +209,71 @@ void render(const scene::SceneData& sc, const std::string& view, int size, bool 
     o.write(reinterpret_cast<const char*>(img.data()), std::streamsize(img.size()));
 }
 
+// Survey of D3D9 shaders (docs/formats/SHADERS.md).
+void shaderSurvey(const std::vector<formats::d3d9::InstallShader>& shaders) {
+    using namespace formats::d3d9;
+    struct Stat { size_t n = 0, ins = 0, minIns = SIZE_MAX, maxIns = 0, maxTemp = 0, rel = 0, pred = 0, flow = 0, failed = 0; };
+    Stat st[2];
+    std::map<std::string, std::array<size_t, 2>> ops, decls, consts;
+    std::map<std::string, size_t> unsupported;
+    for (const auto& sh : shaders) {
+        Stat& s = st[sh.pixel];
+        Program p;
+        try {
+            p = parse(std::span<const uint8_t>(sh.bytecode));
+        } catch (const std::exception& e) {
+            ++s.failed;
+            std::printf("parse failure %016llx: %s\n", (unsigned long long)sh.hash, e.what());
+            continue;
+        }
+        ++s.n;
+        size_t n = 0;
+        std::set<std::string> usedOps;
+        bool rel = false, pred = false, flow = false;
+        for (const auto& in : p.instructions) {
+            if (in.op == Dcl) {
+                std::string d = format(in.dst);
+                if (in.dst.type == Reg::Sampler) d = in.textureType == 3 ? "sampler cube" : in.textureType == 4 ? "sampler volume" : "sampler 2d";
+                else if (in.dst.type == Reg::Misc) d = in.dst.num ? "vFace" : "vPos";
+                else {
+                    static const char* u[] = {"position", "blendweight", "blendindices", "normal", "psize", "texcoord", "tangent",
+                                              "binormal", "tessfactor", "positiont", "color", "fog", "depth", "sample"};
+                    d = std::string(in.dst.type == Reg::Output ? "out " : "in ") + u[size_t(in.usage) % 14] + std::to_string(in.usageIndex);
+                }
+                ++decls[d][sh.pixel];
+                continue;
+            }
+            if (in.op == Def || in.op == DefI || in.op == DefB) continue;
+            ++n;
+            usedOps.insert(opName(in.op));
+            if (!opSupported(in.op)) ++unsupported[opName(in.op)];
+            if (in.hasDst && in.dst.type == Reg::Temp) s.maxTemp = std::max<size_t>(s.maxTemp, in.dst.num + 1);
+            for (const auto& x : in.src) rel |= x.relative;
+            pred |= in.predicated;
+            flow |= in.op == If || in.op == IfC || in.op == Loop || in.op == Rep || in.op == Call || in.op == CallNZ;
+        }
+        for (const auto& o : usedOps) ++ops[o][sh.pixel];
+        for (const auto& c : p.constants)
+            ++consts[c.name + " " + "bics"[c.registerSet & 3] + std::to_string(c.registerIndex) + "[" + std::to_string(c.registerCount) + "]"][sh.pixel];
+        s.ins += n, s.minIns = std::min(s.minIns, n), s.maxIns = std::max(s.maxIns, n);
+        s.rel += rel, s.pred += pred, s.flow += flow;
+    }
+    for (int k = 0; k < 2; ++k)
+        std::printf("%s: %zu shaders (%zu failed), instructions min %zu avg %.1f max %zu, max temps %zu, relative addressing %zu, "
+                    "predication %zu, flow control %zu\n",
+                    k ? "ps_3_0" : "vs_3_0", st[k].n, st[k].failed, st[k].n ? st[k].minIns : 0, st[k].n ? double(st[k].ins) / st[k].n : 0.0,
+                    st[k].maxIns, st[k].maxTemp, st[k].rel, st[k].pred, st[k].flow);
+    auto table = [](const char* title, const std::map<std::string, std::array<size_t, 2>>& m) {
+        std::printf("\n%s (shaders using it: vs ps)\n", title);
+        for (const auto& [k, v] : m) std::printf("  %-48s %6zu %6zu\n", k.c_str(), v[0], v[1]);
+    };
+    table("opcodes", ops);
+    table("declarations", decls);
+    table("constants (CTAB)", consts);
+    std::printf("\nunsupported opcodes:%s\n", unsupported.empty() ? " none" : "");
+    for (const auto& [k, v] : unsupported) std::printf("  %s %zu\n", k.c_str(), v);
+}
+
 } // namespace
 
 int main(int argc, char** argv) try {
@@ -314,6 +384,43 @@ int main(int argc, char** argv) try {
         if (out.empty()) return usage();
         const auto sc = scene();
         render(sc, view, size, textured, out);
+    } else if (cmd == "shaders") {
+        using namespace formats::d3d9;
+        std::vector<InstallShader> shaders;
+        if (path == "all") {
+            auto all = collectInstallShaders(pos[1]);
+            std::printf("%zu DRMs, %zu ShaderLib sections, %zu entries, %zu distinct shaders, %zu hash mismatches, %zu lib errors\n",
+                        all.drms, all.libs, all.entries, all.shaders.size(), all.hashMismatches, all.errors.size());
+            for (const auto& e : all.errors) std::printf("  %s\n", e.c_str());
+            shaders = std::move(all.shaders);
+        } else {
+            const auto drm = loadDrm(bf, path);
+            std::set<std::pair<bool, uint64_t>> seen;
+            for (const auto& s : drm.sections) {
+                if (s.type != cdc::SectionType::ShaderLib) continue;
+                const auto lib = parseShaderLib(s.data);
+                for (const auto& e : lib.entries)
+                    if (seen.insert({lib.pixel, e.hash}).second)
+                        shaders.push_back({lib.pixel, e.hash, {e.bytecode.begin(), e.bytecode.end()}, s.id, e.index});
+            }
+        }
+        shaderSurvey(shaders);
+    } else if (cmd == "shader-dis") {
+        using namespace formats::d3d9;
+        if (pos.size() < 4) return usage();
+        const auto drm = loadDrm(bf, path);
+        const uint32_t id = uint32_t(std::stoul(pos[3], nullptr, 0));
+        const int want = pos.size() > 4 ? std::stoi(pos[4], nullptr, 0) : -1;
+        for (const auto& s : drm.sections) {
+            if (s.type != cdc::SectionType::ShaderLib || s.id != id) continue;
+            const auto lib = parseShaderLib(s.data);
+            std::printf("shader lib %u: %s, %u slots, %zu present\n", id, lib.pixel ? "pixel" : "vertex", lib.slots, lib.entries.size());
+            for (const auto& e : lib.entries) {
+                if (want >= 0 && int(e.index) != want) continue;
+                std::printf("== slot %u hash %016llx (%zu bytes)\n%s", e.index, (unsigned long long)e.hash, e.bytecode.size(),
+                            disassemble(parse(e.bytecode)).c_str());
+            }
+        }
     } else {
         return usage();
     }

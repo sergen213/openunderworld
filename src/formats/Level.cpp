@@ -113,6 +113,51 @@ Unit parseUnit(const cdc::Drm& d) {
         }
     }
 
+    // Unit data +0x00 numLights, +0x04 -> pointers to 0xE0-byte light records {+0x00 matrix rows X, Y, Z = direction,
+    // pos; +0x48 light DTP; +0x4C/+0x50 intensity override; +0x51..+0x54 colour override}. Light DTP: +0x00 u8 type
+    // (2 = sun), +0x08 intensity, +0x18 u8 rgb (tru.exe 0x5CEC60, 0x5C6530, 0x50B910). Only the sun is used.
+    if (const auto n = ud.at<uint32_t>(up.offset); n && ud.ptrs.count(up.offset + 4)) {
+        const auto lp = ud.ptr(up.offset + 4, "unit light list");
+        const View ll(d, lp.section);
+        for (uint32_t k = 0; k < n && !u.environment.sun; ++k) {
+            const auto rp = ll.ptrs.find(uint32_t(lp.offset + 4 * k));
+            if (rp == ll.ptrs.end()) continue;
+            const View rec(d, rp->second.section);
+            const uint32_t r = rp->second.offset;
+            // +0x48 is a type-7 resource reference (id in the data), resolved within the unit DRM.
+            uint32_t dtpIndex = 0;
+            const uint32_t dtpId = resourceId(d.sections[rp->second.section], r + 0x48, cdc::SectionType::DtpData);
+            if (!dtpId || !findSection(d, cdc::SectionType::DtpData, dtpId, &dtpIndex)) continue;
+            const View dtp(d, dtpIndex);
+            const uint32_t o = 0;
+            if (dtp.at<uint8_t>(o) != 2) continue;
+            auto& e = u.environment;
+            const float intensity = rec.at<uint8_t>(r + 0x50) ? rec.at<float>(r + 0x4C) : dtp.at<float>(o + 0x08);
+            const bool colourOverride = rec.at<uint8_t>(r + 0x54) != 0;
+            for (int c = 0; c < 3; ++c) {
+                e.sunDirection[c] = rec.at<float>(r + 0x20 + 4 * c);
+                e.sunColor[c] = intensity * (colourOverride ? rec.at<uint8_t>(r + 0x51 + c) : dtp.at<uint8_t>(o + 0x18 + c)) / 255.0f;
+            }
+            e.sun = true;
+        }
+    }
+
+    // Level+0x70 -> render-settings DTP: fog colour u8[3] +0x18, far plane +0x38, fog far +0x3C (0 = far plane),
+    // fog near +0x40, ambient u8[3] +0x1E4 x f32 +0x1E8 (tru.exe 0x5C7CA0, 0x5CAFF0; SHADERS.md).
+    if (const auto it = level.ptrs.find(0x70); it != level.ptrs.end()) {
+        const View rs(d, it->second.section);
+        const uint32_t o = it->second.offset;
+        auto& e = u.environment;
+        for (int k = 0; k < 3; ++k) {
+            e.fogColor[k] = rs.at<uint8_t>(o + 0x18 + k) / 255.0f;
+            e.ambient[k] = rs.at<uint8_t>(o + 0x1E4 + k) * rs.at<float>(o + 0x1E8) / 255.0f;
+        }
+        e.fogNear = rs.at<float>(o + 0x40);
+        e.fogFar = rs.at<float>(o + 0x3C);
+        if (e.fogFar == 0) e.fogFar = rs.at<float>(o + 0x38);
+        e.valid = true;
+    }
+
     // Level+0x90 -> cell group data {header*, ?, streamGroups*, symbols*, cells*, ?, imfs*}.
     const auto cp = level.ptr(0x90, "Level.cellGroupData");
     const View cg(d, cp.section);
@@ -138,6 +183,9 @@ Unit parseUnit(const cdc::Drm& d) {
             ImfPlacement p{};
             for (int i = 0; i < 16; ++i) p.matrix[i] = im.at<float>(b + 4 * i);
             p.dtpId = im.at<uint32_t>(b + 0x48);
+            // +0x4C..+0x58: instance textures (classes 1-4, light map in +0x4C) for every primgroup (IMFObjectDrawable 0x5B5160).
+            for (int t = 0; t < 4; ++t)
+                p.textures[t] = resourceId(d.sections[ip.section], uint32_t(b + 0x4C + 4 * t), cdc::SectionType::Texture);
             if (const auto it = im.ptrs.find(uint32_t(b + 0x44)); it != im.ptrs.end()) p.name = im.str(it->second);
             u.imfs.push_back(std::move(p));
         }

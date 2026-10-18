@@ -1,11 +1,14 @@
 // OpenGL 4.6 core backend (DSA), loaded through libepoxy.
+#include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdio>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <SDL3/SDL.h>
@@ -256,6 +259,11 @@ struct GpuMesh {
     VertexArray vao;
     Buffer vbo, ebo;
     std::vector<scene::SubMesh> submeshes;
+    // Original Fidelity: per submesh translated program (Resources::originals index, -1 = generic), material-block
+    // offset in Resources::materialUbo and textures for samplers s0-s15 (0 = engine default).
+    std::vector<int> program;
+    std::vector<GLintptr> materialOffset;
+    std::vector<std::array<GLuint, 16>> samplers;
     glm::mat4 model;
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting)
     size_t source = 0, vertexCount = 0; // SceneData::meshes index, vertex count
@@ -273,7 +281,12 @@ struct Targets {
 
 struct Resources {
     Program sceneProgram, textProgram, lineProgram, shadowProgram, postProgram;
-    Texture white, font, shadowMap;
+    Texture white, font, shadowMap, attenuation, blackCube;
+    // Original Fidelity (docs/formats/SHADERS.md): translated programs, register-file UBOs (bindings 0 frame,
+    // 1 material, 2 object; ShaderTranslate.hpp), objects rewritten per frame.
+    std::vector<Program> originals;
+    Buffer frameUbo, materialUbo, objectUbo;
+    GLint uboAlign = 256;
     Framebuffer shadowFbo;
     VertexArray textVao, lineVao, emptyVao;
     Buffer textVbo, lineVbo;
@@ -382,6 +395,24 @@ public:
         r.shadowFbo = newFramebuffer();
         glNamedFramebufferTexture(r.shadowFbo.get(), GL_DEPTH_ATTACHMENT, sm, 0);
         glNamedFramebufferDrawBuffer(r.shadowFbo.get(), GL_NONE);
+
+        const auto lut = original::attenuationLut();
+        r.attenuation = newTexture();
+        glTextureStorage2D(r.attenuation.get(), 1, GL_RGBA8, lut.width, lut.height);
+        glTextureSubImage2D(r.attenuation.get(), 0, 0, 0, lut.width, lut.height, GL_RGBA, GL_UNSIGNED_BYTE, lut.rgba.data());
+        glTextureParameteri(r.attenuation.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(r.attenuation.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(r.attenuation.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(r.attenuation.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &r.uboAlign);
+        GLuint cube = 0;
+        glCreateTextures(GL_TEXTURE_CUBE_MAP, 1, &cube);
+        r.blackCube = Texture(cube);
+        const uint32_t black[6] = {0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000};
+        glTextureStorage2D(cube, 1, GL_RGBA8, 1, 1);
+        glTextureSubImage3D(cube, 0, 0, 0, 0, 1, 1, 6, GL_RGBA, GL_UNSIGNED_BYTE, black);
+        r.frameUbo = newBuffer();
+        glNamedBufferStorage(r.frameUbo.get(), sizeof(sm3::FrameBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
         return true;
     }
 
@@ -390,6 +421,7 @@ public:
         Resources& r = *res_;
         r.textures.clear();
         r.meshes.clear();
+        cubes_.clear();
         for (const auto& t : scene.textures) {
             if (r.textures.contains(t.id)) { // first id wins, as formats::loadTextures and the Vulkan backend
                 warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): duplicate texture id, first one wins");
@@ -398,7 +430,11 @@ public:
             Texture tex = uploadTexture(t, warnings);
             if (tex.get()) r.textures[t.id] = std::move(tex);
         }
+        environment_ = scene.environment;
+        prepareOriginals(scene, warnings);
         for (size_t i = 0; i < scene.meshes.size(); ++i) uploadMesh(scene.meshes[i], i, warnings);
+        finishOriginals();
+        prepared_ = {};
         r.bounds = sceneBounds(scene);
         return warnings;
     }
@@ -441,19 +477,39 @@ public:
         glUniform1i(4, options.shadows ? 1 : 0);
         glBindTextureUnit(1, r.shadowMap.get());
         glBlendColor(0.5f, 0.5f, 0.5f, 0.5f); // Blend::Average = D3DBLEND_BLENDFACTOR 0x80808080
-        uint32_t boundMesh = UINT32_MAX;
-        int state = -1;
+        const bool originals = options.originalShaders && !r.originals.empty();
+        if (originals) beginOriginals(camera, vp, options);
+        uint32_t boundMesh = UINT32_MAX, boundObject = UINT32_MAX;
+        int state = -1, program = -1; // -1 = generic scene program
         for (const DrawRef& d : r.order) {
             const GpuMesh& m = r.meshes[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
+            const int p = originals ? m.program[d.sub] : -1;
+            if (p != program) {
+                glUseProgram(p < 0 ? r.sceneProgram.get() : r.originals[size_t(p)].get());
+                if (p < 0) boundMesh = UINT32_MAX; // re-send uModel to the generic program
+                program = p;
+            }
+            if (d.mesh != boundMesh && p < 0) glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
             if (d.mesh != boundMesh) {
-                glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
                 glBindVertexArray(m.vao.get());
                 boundMesh = d.mesh;
             }
             if (int(s.blend) != state) setBlend(state = int(s.blend));
             if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+            if (p >= 0) {
+                if (d.mesh != boundObject) {
+                    glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));
+                    boundObject = d.mesh;
+                }
+                glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
+                glBindTextures(0, 16, m.samplers[d.sub].data());
+                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
+                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+                continue;
+            }
             glUniform1f(3, s.alphaRef / 255.0f);
+            if (program < 0 && originals) glBindTextureUnit(1, r.shadowMap.get()); // originals rebind unit 1
             drawSubmesh(s);
         }
         setBlend(int(scene::Blend::Opaque));
@@ -557,7 +613,8 @@ private:
 
     void drawSubmesh(const scene::SubMesh& s) {
         auto it = res_->textures.find(s.textureId);
-        glBindTextureUnit(0, it != res_->textures.end() ? it->second.get() : res_->white.get());
+        const bool usable = it != res_->textures.end() && !cubes_.contains(s.textureId);
+        glBindTextureUnit(0, usable ? it->second.get() : res_->white.get());
         glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
                        reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
     }
@@ -610,22 +667,31 @@ private:
         if (levels == 0) return {};
         const uint32_t w0 = t.mips[0].width, h0 = t.mips[0].height;
 
-        Texture tex = newTexture();
-        GLuint id = tex.get();
+        GLuint id = 0;
+        glCreateTextures(t.cube ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D, 1, &id);
+        Texture tex(id);
         glTextureStorage2D(id, levels, internal, GLsizei(w0), GLsizei(h0));
+        const GLsizei depth = t.cube ? 6 : 1; // cube faces = layers of a DSA cube map, in the scene's +X -X +Y -Y +Z -Z order
         for (GLsizei i = 0; i < levels; ++i) {
             const auto& m = t.mips[size_t(i)];
-            if (compressed)
+            if (t.cube && compressed)
+                glCompressedTextureSubImage3D(id, i, 0, 0, 0, GLsizei(m.width), GLsizei(m.height), depth, internal,
+                                              GLsizei(m.data.size()), m.data.data());
+            else if (t.cube)
+                glTextureSubImage3D(id, i, 0, 0, 0, GLsizei(m.width), GLsizei(m.height), depth, pixelFormat, GL_UNSIGNED_BYTE,
+                                    m.data.data());
+            else if (compressed)
                 glCompressedTextureSubImage2D(id, i, 0, 0, GLsizei(m.width), GLsizei(m.height), internal,
                                               GLsizei(m.data.size()), m.data.data());
             else
                 glTextureSubImage2D(id, i, 0, 0, GLsizei(m.width), GLsizei(m.height), pixelFormat, GL_UNSIGNED_BYTE,
                                     m.data.data());
         }
+        if (t.cube) cubes_.insert(t.id);
         glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, levels > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTextureParameteri(id, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTextureParameteri(id, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTextureParameteri(id, GL_TEXTURE_WRAP_S, t.cube ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+        glTextureParameteri(id, GL_TEXTURE_WRAP_T, t.cube ? GL_CLAMP_TO_EDGE : GL_REPEAT);
         if (maxAniso_ > 1.0f) glTextureParameterf(id, GL_TEXTURE_MAX_ANISOTROPY, maxAniso_);
         return tex;
     }
@@ -661,7 +727,97 @@ private:
         attrib(vao, 1, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, normal));
         attrib(vao, 2, 2, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, uv));
         attrib(vao, 3, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(scene::Vertex, color));
+        // Translated original vertex shaders (sm3::Attr locations).
+        attrib(vao, sm3::kAttrColor0, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(scene::Vertex, color0));
+        attrib(vao, sm3::kAttrTexcoord1, 2, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, uv1));
+        attrib(vao, sm3::kAttrTangent, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, tangent));
+        attrib(vao, sm3::kAttrBinormal, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, binormal));
+        for (const auto& s : g.submeshes) addOriginal(g, s);
         res_->meshes.push_back(std::move(g));
+    }
+
+    // ---- Original Fidelity (translated TRU shaders, docs/formats/SHADERS.md) ----
+    GLintptr objectStride() const {
+        const GLintptr a = res_->uboAlign;
+        return (GLintptr(sizeof(sm3::ObjectBlock)) + a - 1) / a * a;
+    }
+
+    void prepareOriginals(const scene::SceneData& scene, std::vector<std::string>& warnings) {
+        Resources& r = *res_;
+        r.originals.clear();
+        materialBlocks_.clear();
+        prepared_ = original::prepare(scene, false);
+        for (auto& w : prepared_.warnings) warnings.push_back(std::move(w));
+        for (const auto& p : prepared_.programs) {
+            std::string error;
+            r.originals.push_back(linkProgram(p.vsGlsl.source.c_str(), p.psGlsl.source.c_str(), error));
+            if (!r.originals.back().get())
+                warnings.push_back("original program vs " + hex(p.vs) + " ps " + hex(p.ps) + ": " + error);
+        }
+    }
+
+    static std::string hex(uint64_t v) {
+        char b[24];
+        std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(v));
+        return b;
+    }
+
+    // Per submesh: program, material block (appended to materialBlocks_) and sampler textures.
+    void addOriginal(GpuMesh& g, const scene::SubMesh& s) {
+        Resources& r = *res_;
+        int p = prepared_.program(s.materialId);
+        if (p >= 0 && !r.originals[size_t(p)].get()) p = -1;
+        g.program.push_back(p);
+        g.materialOffset.push_back(0);
+        g.samplers.emplace_back();
+        if (p < 0) return;
+        const scene::Material& mat = *prepared_.materials.at(s.materialId);
+        const auto stride = size_t(objectStrideFor(sizeof(sm3::MaterialBlock)));
+        g.materialOffset.back() = GLintptr(materialBlocks_.size());
+        materialBlocks_.resize(materialBlocks_.size() + stride);
+        original::fillMaterial(*reinterpret_cast<sm3::MaterialBlock*>(&materialBlocks_[size_t(g.materialOffset.back())]), mat, s);
+        const auto& prog = prepared_.programs[size_t(p)];
+        for (int n = 0; n < 16; ++n) {
+            if (!(prog.psGlsl.samplers >> n & 1)) continue;
+            // Unbound cube samplers read black (D3D9 without a texture), others white; the type must match the sampler.
+            const bool cube = prog.psGlsl.samplerType[n] == 3;
+            GLuint tex = cube ? r.blackCube.get() : r.white.get();
+            if (n == original::kAttenuationSampler && !cube) tex = r.attenuation.get();
+            if (const uint32_t id = original::samplerTexture(mat, s.instanceTextures, n))
+                if (auto it = r.textures.find(id); it != r.textures.end() && cubes_.contains(id) == cube) tex = it->second.get();
+            g.samplers.back()[size_t(n)] = tex;
+        }
+    }
+    GLintptr objectStrideFor(size_t bytes) const {
+        const GLintptr a = res_->uboAlign;
+        return (GLintptr(bytes) + a - 1) / a * a;
+    }
+
+    void finishOriginals() {
+        Resources& r = *res_;
+        r.materialUbo = {};
+        r.objectUbo = {};
+        if (materialBlocks_.empty()) return;
+        r.materialUbo = newBuffer();
+        glNamedBufferStorage(r.materialUbo.get(), GLsizeiptr(materialBlocks_.size()), materialBlocks_.data(), 0);
+        r.objectUbo = newBuffer();
+        glNamedBufferStorage(r.objectUbo.get(), GLsizeiptr(r.meshes.size()) * objectStride(), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        materialBlocks_.clear();
+        materialBlocks_.shrink_to_fit();
+    }
+
+    void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o) {
+        Resources& r = *res_;
+        sm3::FrameBlock f;
+        original::fillFrame(f, camera, vp, o.time, environment_);
+        glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
+        const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
+        objectScratch_.assign(r.meshes.size() * size_t(objectStride()), 0);
+        for (size_t i = 0; i < r.meshes.size(); ++i)
+            original::fillObject(*reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * size_t(objectStride())]), vpD3D, r.meshes[i].model);
+        if (r.objectUbo.get())
+            glNamedBufferSubData(r.objectUbo.get(), 0, GLsizeiptr(objectScratch_.size()), objectScratch_.data());
+        glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());
     }
 
     void drawLines(const glm::mat4& viewProj, std::span<const DebugLine> lines) {
@@ -711,6 +867,11 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_GLContext context_ = nullptr;
     std::optional<Resources> res_;
+    original::Prepared prepared_;         // during upload()
+    scene::Environment environment_;
+    std::unordered_set<uint32_t> cubes_; // texture ids uploaded as cube maps
+    std::vector<uint8_t> materialBlocks_; // during upload()
+    std::vector<uint8_t> objectScratch_;
     bool s3tc_ = false, debug_ = false;
     float maxAniso_ = 1.0f;
 };

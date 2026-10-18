@@ -80,8 +80,11 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
     const auto objectNames = list ? formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})
                                   : std::map<uint16_t, std::string>{};
     scene::SceneData sc = v.scene;
-    std::set<uint32_t> textureIds;
+    std::set<uint32_t> textureIds, materialIds;
+    std::set<uint64_t> shaderIds;
     for (const auto& t : sc.textures) textureIds.insert(t.id);
+    for (const auto& m : sc.materials) materialIds.insert(m.id);
+    for (const auto& c : sc.shaders) shaderIds.insert(c.hash);
     std::vector<Actor> actors;
     std::set<int32_t> actorIntros;
     for (const auto& inst : h.instances) {
@@ -125,6 +128,10 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         }
         for (auto& t : s.textures)
             if (textureIds.insert(t.id).second) sc.textures.push_back(std::move(t));
+        for (auto& m : s.materials) // original shaders (docs/formats/SHADERS.md)
+            if (materialIds.insert(m.id).second) sc.materials.push_back(std::move(m));
+        for (auto& c : s.shaders)
+            if (shaderIds.insert(c.hash).second) sc.shaders.push_back(std::move(c));
         actors.push_back(std::move(a));
     }
     // Pointers into sc.skeletons only now that it no longer grows.

@@ -75,7 +75,7 @@ uint32_t usableMips(const scene::TextureData& t, std::string& problem) {
     uint32_t levels = 0;
     for (const auto& m : t.mips) {
         uint32_t w = std::max(1u, w0 >> levels), h = std::max(1u, h0 >> levels);
-        size_t expect = block ? size_t((w + 3) / 4) * ((h + 3) / 4) * block : size_t(w) * h * 4;
+        size_t expect = (block ? size_t((w + 3) / 4) * ((h + 3) / 4) * block : size_t(w) * h * 4) * (t.cube ? 6 : 1);
         if (m.width != w || m.height != h || m.data.size() != expect) break;
         ++levels;
     }
