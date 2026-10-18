@@ -6,6 +6,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-18
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included. Now defaults to Vulkan + original shaders + ray-traced sun shadows + 4x MSAA.
+
 ### Added
 - Original Fidelity shading: level geometry now draws with Tomb Raider: Underworld's own shaders, translated from the game's Direct3D 9 shader bytecode to OpenGL and Vulkan at load time — baked light maps, the original multi-layer terrain blending, fog, the level's ambient and sun light, wind-animated foliage and environment reflections. Choose with `--shaders original|generic` or `graphics.original_shaders` (original is the default). Cube-map textures now load. `ou-asset shaders` surveys and `ou-asset shader-dis` disassembles the game's shader libraries.
 - Object collision and physics doors: doors and push blocks now block Lara (and enemies and the camera) with their original collision boxes, and stop blocking once they open; the Mexico ballcourt's lever-driven door swings open on its hinge when Lara uses the pole lever; Lara is carried by objects she stands on.
@@ -73,7 +77,8 @@ First experimental build. Requires your own legally owned copy of Tomb Raider: U
 - Signed updater (Ed25519, staged swap with journal recovery, anti-rollback) and `ou-sign`.
 - AppImage packaging (`packaging/appimage/build-appimage.sh`), AppImage self-update in the launcher (`--check-update`, `--update`), local signed release script `tools/release.sh`, CI AppImage artifact.
 
-[Unreleased]: https://github.com/sergen213/openunderworld/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/sergen213/openunderworld/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/sergen213/openunderworld/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sergen213/openunderworld/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sergen213/openunderworld/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sergen213/openunderworld/releases/tag/v0.1.0
