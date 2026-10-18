@@ -288,10 +288,11 @@ CineInfo parseCineStream(std::span<const uint8_t> cine) {
     info.channels = int(channels);
 
     // Frames (0x457100): u32 size; i32 frame (-1 ends); per channel a run-length coded float;
-    // u32 subtitle length + bytes; pad to 16.
+    // u32 subtitle length + bytes; pad to 16. Voice-line .mul streams (0 channels) have no -1
+    // terminator and simply end at a frame boundary.
     struct Run { uint32_t left = 0; bool animated = false; };
     std::vector<Run> runs(channels);
-    for (;;) {
+    while (r.p < cine.size()) {
         const size_t start = r.p;
         const uint32_t size = r.u32();
         const int32_t frame = int32_t(r.u32());

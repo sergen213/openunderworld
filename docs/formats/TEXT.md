@@ -145,6 +145,11 @@ subtitle entries all have `hasSubtitles = 0`. Channel semantics (bone transforms
 decoded here. ?
 Voice variants: subtitled cinematics have 5 records (one per voice language, e.g. `0xFFFFE010` Spanish);
 the English- and Spanish-voice records of `060_med_natla` both carry every language's text. [V-data]
+Voice-line `.mul` files (`pc-w\audio\streams\vo\…`, e.g. `lara\sc_04_01_answer.mul`) use the same CINE
+stream with a scene-less header (headerSize 0x60, all counts 0 → 0 channels); frame 0 carries the line in
+every language (the same text as the matching locals.bin hint string) and the stream ends without a −1
+frame. `parseCineStream` accepts the end of data at a frame boundary for this. [V-run] (reported by the
+Audio work, `src/audio` `decodeMul`, which extracts these too.)
 
 ## 4. Subtitle display [V-exe]
 

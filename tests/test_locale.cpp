@@ -296,6 +296,15 @@ TEST(LocaleRealData, CinematicSubtitles) {
         }
     }
     EXPECT_GT(english, 10u);
+
+    // Voice-line streams: scene-less CINE header (0 channels), no -1 terminator.
+    const auto vo = ou::cdc::BigfileSet(gameDir()).read("pc-w\\audio\\streams\\vo\\lara\\sc_04_01_answer.mul");
+    ASSERT_TRUE(vo);
+    const CineInfo voInfo = parseCineStream(mulCinematicStream(*vo));
+    EXPECT_EQ(voInfo.channels, 0);
+    ASSERT_FALSE(voInfo.subtitles.empty());
+    EXPECT_EQ(voInfo.subtitles[0].language, 0);
+    EXPECT_EQ(voInfo.subtitles[0].text, "\"I need to find an ancient Mayan Ball Court.\"");
 }
 
 TEST(VideoRealData, DecodesBinkVideoAndAudio) {
