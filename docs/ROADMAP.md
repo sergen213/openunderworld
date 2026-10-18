@@ -28,7 +28,7 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 | Meshes / terrain | Research Required | — | — | — |
 | Launcher (Qt 6) + shared config | Implemented | Live Wayland screenshot with real import result (docs/LAUNCHER.md) | `launcher_self_test` (offscreen), `Config.*` | Launch button / save restore not GUI-exercised |
 | Signed updater + ou-sign | Tested | Ed25519 (libsodium), stage + RENAME_EXCHANGE swap, journal recovery (docs/UPDATES.md) | `ou_update_tests` (12, file-backed transport) | Live HTTPS server untested; no release server yet |
-| Packaging / CI | Implemented | install rules, .desktop, icon, PKGBUILD, Arch CI workflow | — | CI never run on GitHub; makepkg not run |
+| Packaging / CI | Implemented | install rules, .desktop, icon, PKGBUILD (local `makepkg -f` built + 71/71 check), Arch CI workflow | — | CI never run on GitHub |
 | Everything gameplay | Research Required | — | — | — |
 
 ## Principles
