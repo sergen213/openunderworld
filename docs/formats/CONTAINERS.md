@@ -78,7 +78,7 @@ Interpretation:
 
 | Kind | Count | Identification |
 |---|---|---|
-| `.mul` | 5835 | No magic. 16-byte header `{u32 sampleRate, i32 loopStart, u32 numSamples, u32 channels}`, matches vgmstream `mul.c` [S, web]. Rates 31874–48011 (mostly ~44100 ± a few Hz); channels 1 (5260), 2 (524), 4 (40), 6 (11); loopStart = −1 in 5739. Codec: ? |
+| `.mul` | 5835 | No magic. 16-byte header `{u32 sampleRate, i32 loopStart, u32 numSamples, u32 channels}`, matches vgmstream `mul.c` [S, web]. Rates 31874–48011 (mostly ~44100 ± a few Hz); channels 1 (5260), 2 (524), 4 (40), 6 (11); loopStart = −1 in 5739. Codec: cdc IMA ADPCM in sound packets, see [AUDIO.md](AUDIO.md) [V-exe, V-data] |
 | `CDRM` | 1056 | Compressed DRM, §3 |
 | `!WAR` | 270 | cdc "RAW!" image (magic stored byte-reversed). Example header: `!WAR`, 0x80, 0, size 0x12C000, 3, 0x10, width 640, height 480: a 640×480×4 loading screen [V-data]; field semantics per cdcengine.re `/docs/files/image/` [S, web] |
 | `FSB4` | 75 | FMOD Sound Bank 4: header version `0x40000`, header mode `0x22` in all 75; first sample mode `0x400020` in all 75 (probably IMA ADPCM mono, from FMOD's FSB4 flag values) [I] |
@@ -246,6 +246,6 @@ UTF-8 NUL-terminated strings
 1. `hdr[2]`/`hdr[3]`/`hdr[4]` semantics (padding vs second dependency list; the flag bit 0 alignment rule).
 2. kind2 / resource16 / resource32 relocation semantics: needed for material, object and render-resource linking.
 3. DTPDATA `resourceType` sub-ids (0–34): which DTP schema each one is.
-4. `.mul` codec and `Mus!` structure; FSB4 sample-mode confirmation.
+4. `Mus!` sequence semantics (`.mul` codec and FSB4 sample mode: [AUDIO.md](AUDIO.md)).
 5. Names for the 20 "other" payloads and for hashes not in any public file list.
 6. Runtime spec mask actually used per language (bits beyond 0–4 and 11); whether bit 31 is ever cleared.

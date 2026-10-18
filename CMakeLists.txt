@@ -125,6 +125,17 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_collision_tests DISCOVERY_TIMEOUT 30)
 endif()
 
+# ---- ou_audio: IMA ADPCM, FSB4, Wave sections, .mul streams; SDL3 mixer; ou-audio CLI (docs/formats/AUDIO.md) ----
+add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Mixer.cpp)
+target_link_libraries(ou_audio PUBLIC ou_cdc glm::glm PRIVATE SDL3::SDL3)
+add_executable(ou-audio tools/ou-audio/main.cpp)
+target_link_libraries(ou-audio PRIVATE ou_audio SDL3::SDL3)
+if(OU_BUILD_TESTS)
+  add_executable(ou_audio_tests tests/test_audio.cpp)
+  target_link_libraries(ou_audio_tests PRIVATE ou_audio SDL3::SDL3 GTest::gtest_main)
+  gtest_discover_tests(ou_audio_tests DISCOVERY_TIMEOUT 30)
+endif()
+
 # ---- ou-import: read-only installation importer ----------------------------------------
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json REQUIRED CONFIG)
@@ -229,5 +240,6 @@ install(TARGETS ou-viewer ou-game ou-asset ou-import ou-sign RUNTIME DESTINATION
 if(TARGET ou-launcher)
   install(TARGETS ou-launcher RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
+install(TARGETS ou-audio RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/openunderworld.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES packaging/openunderworld.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
