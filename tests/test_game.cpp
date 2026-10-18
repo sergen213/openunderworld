@@ -67,7 +67,23 @@ game::AnimLibrary syntheticAnims() {
     shimmy.tracks[0][anim::TransX].clear();
     for (int i = 0; i < 21; ++i) shimmy.tracks[0][anim::TransX].push_back(-9.8f * float(i + 1));
     a.clips["ledgeb_right"] = shimmy;
+    anim::Clip climbOut = rootClip(47, 0);     // swim_climbout: root ends 308.7 forward, 172.8 up
+    for (int i = 0; i < 47; ++i) {
+        climbOut.tracks[0][anim::TransY].push_back(-308.7f * float(i) / 46);
+        climbOut.tracks[0][anim::TransZ].push_back(172.8f * float(i) / 46);
+    }
+    a.clips["swim_climbout"] = climbOut;
     return a;
+}
+
+// Pool: walkways (z 0) at x < 0 and x > 2000, a 3000-deep pit between, water surface at z -150.
+CollisionMesh poolMesh() {
+    CollisionMesh m;
+    addBox(m, {-3000, -3000, -3000}, {0, 3000, 0});
+    addBox(m, {2000, -3000, -3000}, {5000, 3000, 0});
+    addFloor(m, 0, -3000, 2000, 3000, -3000);
+    m.markup.push_back({10, 1, {{-10000, -10000, -100150}, {10000, 10000, -150}}});
+    return m;
 }
 
 std::unique_ptr<game::World> makeWorld(CollisionMesh m, vec3 spawn, float yaw = 0) {
@@ -334,9 +350,18 @@ TEST(GameReal, PoolLedgeGrabAndClimb) {
     EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1253);
     const vec3 hands = vec3(w.player().modelMatrix(s.pos, s.yaw) * glm::vec4(w.anims().hangHandOffset, 1));
     EXPECT_NEAR(hands.z, 3562, 1);
-    for (int i = 0; i < 90; ++i) w.tick(i == 5 ? jump : Actions{});
-    EXPECT_EQ(w.player().state().state, State::Idle);
-    EXPECT_NEAR(w.player().state().pos.z, 3571, 15); // rock top
+    float lastClimbZ = 0, snap = -1;
+    for (int i = 0; i < 90; ++i) {
+        w.tick(i == 5 ? jump : Actions{});
+        if (s.state == State::ClimbUp) lastClimbZ = s.pos.z;
+        else if (snap < 0 && lastClimbZ != 0) snap = std::abs(s.pos.z - lastClimbZ);
+    }
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.z, 3571, 1); // rock top
+    // The climb starts where ledgeb_climbup_fast expects the ledge, so its root motion ends on the ledge
+    // height; the remaining snap is the rock top (3571) sitting 9 above the ledge markup (3562). Played from
+    // the hang root the clip ended ~150 above the ledge.
+    EXPECT_LT(snap, 10);
 }
 
 // Animation pops: per-tick change of the bones' model-space orientations over a scripted run / walk / stop /
@@ -420,4 +445,154 @@ TEST(GameReal, TransitionsReducePops) {
     EXPECT_LT(worst[1][0], worst[0][0]);
     std::printf("hair: largest constraint strain %.1f %%\n", 100 * hairStrain);
     EXPECT_LT(hairStrain, 0.35f);
+}
+
+// ---- swimming / turning (synthetic) ----------------------------------------------------------
+
+// Run off the west walkway into the pool, splash, tread at the surface, swim across, climb out east.
+TEST(Game, SwimEnterCrossClimbOut) {
+    auto w = makeWorld(poolMesh(), {-400, 0, 0});
+    const auto& s = w->player().state();
+    bool splashed = false, swam = false;
+    for (int i = 0; i < 60 * 12 && s.state != State::SwimClimbOut; ++i) {
+        Actions a = forward();
+        a.jump = s.state == State::SwimSurface && s.pos.x > 1500 && i % 20 == 0; // presses at the far wall
+        w->tick(a);
+        splashed |= s.state == State::SwimSplash;
+        if (s.state == State::SwimTread || s.state == State::SwimSurface) {
+            swam |= s.state == State::SwimSurface;
+            ASSERT_NEAR(s.pos.z, -150, 1e-3) << i; // treading / surface swimming: root on the water surface
+            ASSERT_LT(s.pos.x, 2000 - w->player().tuning().swimRadius + 0.01f) << i;
+        }
+        ASSERT_GE(s.pos.z, -3000) << i;
+    }
+    EXPECT_TRUE(splashed);
+    EXPECT_TRUE(swam);
+    ASSERT_EQ(s.state, State::SwimClimbOut);
+    for (int i = 0; i < 120; ++i) w->tick({});
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_EQ(s.water, -1);
+    EXPECT_NEAR(s.pos.z, 0, 1e-3); // the clip's rise ends exactly on the walkway
+    EXPECT_GT(s.pos.x, 2000 + 50);
+}
+
+TEST(Game, DiveSwimDownAndSurface) {
+    auto w = makeWorld(poolMesh(), {-200, 0, 0});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 240 && s.state != State::SwimTread && s.state != State::SwimSurface; ++i) w->tick(forward());
+    for (int i = 0; i < 60; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::SwimTread);
+    Actions drop;
+    drop.drop = true;
+    w->tick(drop);
+    EXPECT_EQ(s.state, State::SwimDive);
+    for (int i = 0; i < 60; ++i) w->tick(drop); // held: swim down
+    EXPECT_EQ(s.state, State::SwimUnder);
+    EXPECT_LT(s.pitch, -1.2f);
+    EXPECT_LT(s.pos.z, -150 - 300);
+    const float z = s.pos.z;
+    for (int i = 0; i < 30; ++i) w->tick({}); // no buoyancy evidence: she stays put
+    EXPECT_NEAR(s.pos.z, z, 1e-3);
+    EXPECT_EQ(s.clip, "swim_submerged_idle");
+    Actions up;
+    up.jump = true;
+    int ticks = 0;
+    for (; ticks < 300 && s.state != State::SwimTread; ++ticks) w->tick(up);
+    EXPECT_EQ(s.state, State::SwimTread);
+    EXPECT_NEAR(s.pos.z, -150, 1e-3);
+    EXPECT_NEAR(ticks / 60.0, (-150 - z) / w->anims().swimSpeed, 0.4); // rise at swim speed (+ pitch-up time)
+}
+
+TEST(Game, SwimSimulationIndependentOfRenderRate) {
+    const auto script = game::InputScript::parse("0 forward 1\n1.5 forward 0\n2 drop 1\n2.6 drop 0\n2.7 right 1\n3.2 jump 1\n");
+    auto run = [&](double renderHz) {
+        auto w = makeWorld(poolMesh(), {-300, 0, 0});
+        engine::FrameClock clock(game::kTickSeconds);
+        while (w->ticks() < 240)
+            for (int n = clock.advance(1.0 / renderHz); n > 0 && w->ticks() < 240; --n) w->tick(script.at(w->ticks()));
+        return w->player().state();
+    };
+    const auto a = run(30), b = run(60), c = run(144);
+    for (const auto& o : {b, c}) {
+        EXPECT_EQ(a.pos, o.pos);
+        EXPECT_EQ(a.state, o.state);
+        EXPECT_EQ(a.pitch, o.pitch);
+    }
+    EXPECT_NE(a.water, -1);
+}
+
+// Turning in place follows the turn clip's root rotation: 1.57 rad over 3 of 4 keys (ng_turn_center).
+TEST(Game, TurnInPlaceUsesClipRootRotation) {
+    game::AnimLibrary anims = syntheticAnims();
+    anim::Clip turn;
+    turn.keyCount = 4;
+    turn.timePerKey = 200;
+    turn.tracks.resize(1);
+    turn.tracks[0][anim::RotZ] = {0, -0.52f, -1.05f, -1.57f};
+    anims.clips["ng_turn_center"] = turn;
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    m.build();
+    game::World w(std::move(m), std::move(anims), {{0, 0, 0}, 0});
+    int ticks = 0;
+    for (; ticks < 120; ++ticks) {
+        w.tick(forward(-1)); // camera faces +X: turn to -X
+        if (w.player().state().state != State::Turn && ticks > 0) break;
+    }
+    // Looping clip: 2.09 rad per 0.267 s cycle = 7.85 rad/s; pi - 0.2 rad -> 0.375 s (fixed turnRate 6: 0.49 s).
+    EXPECT_NEAR(ticks / 60.0, (3.14159 - 0.2) / 7.85, 3.0 / 60);
+}
+
+// ---- swimming (real data) ---------------------------------------------------------------------
+
+// l4_pool: the watervolume intro is linked to the goo surface (ca_goo_pool_watersurface, z 2699.3). Lara
+// runs off the west walkway (z 2844.4) into the goo, swims east, dives, surfaces, swims back and climbs out.
+TEST(GameReal, PoolSwimReplay) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto bytes = bf.read("pc-w\\l4_pool.drm");
+    ASSERT_TRUE(bytes);
+    const auto unit = cdc::parseDrm(std::move(*bytes));
+    auto col = collision::loadLevelCollision(unit);
+    const auto water = game::findWater(bf, unit);
+    ASSERT_EQ(water.size(), 1u);
+    EXPECT_EQ(water[0].type, 10);
+    EXPECT_EQ(water[0].id, 5608);
+    EXPECT_NEAR(water[0].points[1].z, 2699.3f, 0.5f);
+    EXPECT_LT(water[0].points[0].x, -5000);
+    EXPECT_GT(water[0].points[1].x, 1000);
+    col.markup.insert(col.markup.end(), water.begin(), water.end());
+    col.build();
+    game::World w(std::move(col), game::loadLaraAnims(bf), {{-6000, 0, 2900}, 0});
+    const auto& s = w.player().state();
+    EXPECT_NEAR(s.pos.z, 2844.4f, 1);
+    const float surf = water[0].points[1].z;
+    int t = 0;
+    auto runUntil = [&](auto&& actions, auto&& done, int maxTicks) {
+        for (int i = 0; i < maxTicks && !done(); ++i, ++t) w.tick(actions(i));
+        return done();
+    };
+    auto inState = [&](State x) { return [&s, x] { return s.state == x; }; };
+    ASSERT_TRUE(runUntil([](int) { return forward(); }, inState(State::SwimSurface), 360)) << game::stateName(s.state);
+    EXPECT_NEAR(s.pos.z, surf, 1e-3);
+    const float entryX = s.pos.x;
+    runUntil([](int) { return forward(); }, [] { return false; }, 120); // swim east 2 s
+    EXPECT_GT(s.pos.x, entryX + 0.8f * 2 * w.anims().swimSpeed);
+    Actions drop;
+    drop.drop = true;
+    runUntil([&](int) { return drop; }, [] { return false; }, 90); // dive, swim down
+    EXPECT_EQ(s.state, State::SwimUnder);
+    EXPECT_LT(s.pos.z, surf - 600);
+    Actions up;
+    up.jump = true;
+    ASSERT_TRUE(runUntil([&](int) { return up; }, inState(State::SwimTread), 600));
+    // Back west; jump presses climb out at the first wall with a top 50..350 above the goo.
+    ASSERT_TRUE(runUntil([&](int i) { Actions a = forward(-1); a.jump = i % 20 == 19; return a; }, inState(State::SwimClimbOut), 900))
+        << game::stateName(s.state) << " at " << s.pos.x;
+    ASSERT_TRUE(runUntil([](int) { return Actions{}; }, inState(State::Idle), 240));
+    const auto floor = w.collision().groundProbe(s.pos + vec3(0, 0, 10), 20);
+    ASSERT_TRUE(floor);
+    EXPECT_NEAR(s.pos.z, floor->point.z, 1e-3);
+    EXPECT_GT(s.pos.z, surf + 100);
+    std::printf("pool swim replay: %d ticks, climbed out at (%.1f, %.1f, %.1f)\n", t, s.pos.x, s.pos.y, s.pos.z);
 }

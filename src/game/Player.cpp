@@ -24,27 +24,15 @@ float approachAngle(float from, float to, float maxStep) {
 }
 vec2 xy(vec3 v) { return {v.x, v.y}; }
 
-} // namespace
-
-std::string_view stateName(State s) {
-    static constexpr std::string_view k[] = {"idle", "walk", "run", "stop", "turn", "jumpprep",
-                                             "jump", "fall", "land", "hang", "shimmy", "climbup"};
-    return k[size_t(s)];
-}
-
-const anim::Clip* AnimLibrary::find(std::string_view name) const {
-    const auto it = clips.find(name);
-    return it == clips.end() ? nullptr : &it->second;
-}
-
-vec3 rootTranslation(const anim::Clip& c, double t, bool loop) {
+// Root segment channels [first, first + 3) of `c` at unbounded time `t` (see rootTranslation).
+vec3 rootChannels(const anim::Clip& c, double t, bool loop, int first) {
     if (c.tracks.empty() || c.keyCount == 0 || c.timePerKey == 0) return vec3(0);
     const auto& tr = c.tracks[0];
     const int n = c.keyCount;
     auto key = [&](int i) {
         vec3 v(0);
         for (int a = 0; a < 3; ++a)
-            if (!tr[anim::TransX + a].empty()) v[a] = tr[anim::TransX + a][size_t(i)];
+            if (!tr[size_t(first + a)].empty()) v[a] = tr[size_t(first + a)][size_t(i)];
         return v;
     };
     const double dur = c.durationSeconds();
@@ -55,15 +43,42 @@ vec3 rootTranslation(const anim::Clip& c, double t, bool loop) {
     } else {
         t = std::clamp(t, 0.0, dur);
     }
-    const vec3 first = key(0), last = key(n - 1);
+    const vec3 first0 = key(0), last = key(n - 1);
     // Cycle displacement: n key intervals per loop (the seam interval runs last -> first), each the average step.
-    const vec3 cycle = n > 1 ? (last - first) * (float(n) / float(n - 1)) : vec3(0);
+    const vec3 cycle = n > 1 ? (last - first0) * (float(n) / float(n - 1)) : vec3(0);
     const double u = t * anim::kTimeUnitsPerSecond / c.timePerKey;
     const int k = int(std::floor(u));
     if (k >= n) return last + cycle * float(cycles);
-    const vec3 b = key(k), a = k > 0 ? key(k - 1) : loop ? last - cycle : first;
+    const vec3 b = key(k), a = k > 0 ? key(k - 1) : loop ? last - cycle : first0;
     return glm::mix(a, b, float(u - k)) + cycle * float(cycles);
 }
+// Root yaw (segment 0 axis-angle Z; turn clips rotate about Z only) at unbounded time `t`.
+float rootYaw(const anim::Clip& c, double t, bool loop) { return rootChannels(c, t, loop, anim::RotX).z; }
+
+} // namespace
+
+std::string_view stateName(State s) {
+    static constexpr std::string_view k[] = {"idle", "walk", "run", "stop", "turn", "jumpprep", "jump",
+                                             "fall", "land", "hang", "shimmy", "climbup", "swimsplash",
+                                             "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
+                                             "swimclimbout"};
+    return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
+}
+
+const anim::Clip* AnimLibrary::find(std::string_view name) const {
+    const auto it = clips.find(name);
+    return it == clips.end() ? nullptr : &it->second;
+}
+
+std::optional<vec3> AnimLibrary::handsAt(const anim::Clip& clip, double t) const {
+    if (skeleton.bones.size() <= 80) return std::nullopt;
+    auto local = anim::sample(clip, skeleton, t, false);
+    local[0] = anim::bindPose(skeleton)[0]; // as rendered: root motion lives in the player position
+    const auto w = anim::worldMatrices(skeleton, local);
+    return (vec3(w[55][3]) + vec3(w[80][3])) * 0.5f;
+}
+
+vec3 rootTranslation(const anim::Clip& c, double t, bool loop) { return rootChannels(c, t, loop, anim::TransX); }
 
 Player::Player(const collision::CollisionMesh& col, const AnimLibrary& anims, Tuning tuning)
     : col_(col), anims_(anims), t_(tuning) {}
@@ -211,7 +226,7 @@ void Player::airMove(float dt, vec2 move) {
 // Ledge grab: markup type 1 ("ledgegrab") polylines. The hands (hang pose) must pass the ledge height
 // while falling, within grabReach horizontally, with Lara facing the ledge.
 bool Player::tryGrab(vec3 prevPos) {
-    if (s_.regrabCooldown > 0) return false;
+    if (s_.regrabCooldown > 0 || s_.vel.z < t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
     const vec3 hand = s_.pos + toWorld(anims_.hangHandOffset), prevHand = prevPos + toWorld(anims_.hangHandOffset);
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
@@ -272,6 +287,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Stop:
     case State::Turn:
     case State::Land: {
+        if (enterWater()) break; // standing in water deeper than swimDepth
         if (jumpPressed && s_.state != State::Land) {
             s_.runJump = s_.state == State::Run;
             s_.state = State::JumpPrep; // launch velocity is set when the take-off clip ends
@@ -286,8 +302,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             else if (wantsWalk) { s_.state = State::Walk; play("ng_walk", true); }
             else { s_.state = State::Run; play("ng_run_start", false); }
             break;
-        case State::Turn:
-            s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
+        case State::Turn: // yaw follows the turn clip's root rotation (applied after the clip advances)
             if (!wantsMove) { s_.state = State::Idle; play("ng_idle", true); }
             else if (diff < 0.2f) { s_.state = State::Idle; play("ng_idle", true); }
             break;
@@ -311,7 +326,17 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             break;
         default: break;
         }
-        groundMove(toWorld(advanceClip(dt)), dt);
+        const double t0 = s_.clipTime;
+        const vec3 d = advanceClip(dt);
+        if (s_.state == State::Turn) {
+            // ng_turn_center: root Z rotation 0 -> -1.57 rad (a quarter turn right) over its keys; played
+            // either way, the rotation magnitude per tick is the turn rate. Without the clip: turnRate.
+            const float rest = wrapAngle(target - s_.yaw);
+            const anim::Clip* c = anims_.find(s_.clip);
+            const float step = c ? std::abs(rootYaw(*c, s_.clipTime, s_.loop) - rootYaw(*c, t0, s_.loop)) : t_.turnRate * dt;
+            s_.yaw = wrapAngle(s_.yaw + std::copysign(std::min(step, std::abs(rest)), rest));
+        }
+        groundMove(toWorld(d), dt);
         break;
     }
     case State::JumpPrep: {
@@ -333,6 +358,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             play(s_.clip == "NG_InAir_Feet_Forward_stage2" ? "NG_InAir_Feet_Forward_stage3" : "NG_InAir_Feet_Forward_stage2",
                  s_.clip == "NG_InAir_Feet_Forward_stage2");
         airMove(dt, move);
+        if ((s_.state == State::Jump || s_.state == State::Fall) && s_.vel.z <= 0) enterWater();
         break;
     case State::Hang:
     case State::Shimmy: {
@@ -349,6 +375,14 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (jumpPressed) {
             s_.state = State::ClimbUp;
             play("ledgeb_climbup_fast", false);
+            // Start where the clip expects the ledge: its hands (at the start time) on the ledge in x/y, and
+            // its root at the clip end on the ledge top (end - start rise); nothing to snap at the end.
+            const anim::Clip* c = anims_.find(s_.clip);
+            if (const auto h = c ? anims_.handsAt(*c, s_.clipTime) : std::nullopt) {
+                const float rise = rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z;
+                const vec3 hang = anims_.hangHandOffset;
+                s_.pos += toWorld({hang.x - h->x, hang.y - h->y, hang.z - rise});
+            }
             break;
         }
         if (s_.state == State::Hang && s_.clip == "ledgeb_attach_M" && !clipDone()) { advanceClip(dt); break; }
@@ -397,6 +431,175 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             }
         }
         break;
+    case State::SwimSplash:
+    case State::SwimTread:
+    case State::SwimSurface:
+    case State::SwimDive:
+    case State::SwimUnder:
+    case State::Surfacing:
+    case State::SwimClimbOut:
+        swim(move, a, jumpPressed, dropPressed, dt);
+        break;
+    }
+}
+
+// ---- water ----------------------------------------------------------------------------------
+// tru.exe 0x710A20: the player's probe box against every water volume box; of the overlapping volumes the
+// one with the highest surface wins (the exe first compares a priority short we do not have).
+int Player::waterAt(vec3 feet) const {
+    const vec3 c = feet + vec3(0, 0, t_.waterProbeCenterZ), h = t_.waterProbeHalf;
+    int best = -1;
+    for (size_t i = 0; i < col_.markup.size(); ++i) {
+        const auto& m = col_.markup[i];
+        if (m.type != 10 || m.points.size() != 2) continue;
+        if (glm::any(glm::greaterThan(c - h, m.points[1])) || glm::any(glm::lessThan(c + h, m.points[0]))) continue;
+        if (best < 0 || m.points[1].z > col_.markup[size_t(best)].points[1].z) best = int(i);
+    }
+    return best;
+}
+
+float Player::surfaceZ() const { return col_.markup[size_t(s_.water)].points[1].z; }
+
+bool Player::enterWater() {
+    const int w = waterAt(s_.pos);
+    if (w < 0) return false;
+    const float surf = col_.markup[size_t(w)].points[1].z;
+    if (s_.pos.z > surf) return false;
+    if (auto floor = col_.groundProbe(vec3(s_.pos.x, s_.pos.y, surf), t_.swimDepth); floor) return false; // shallow: walk
+    const bool airborne = s_.state == State::Jump || s_.state == State::Fall;
+    s_.water = w;
+    s_.pitch = 0;
+    s_.ledge = -1;
+    if (airborne) { // keep the plunge velocity; water drag stops it
+        s_.state = State::SwimSplash;
+        play("swim_jump_land", false);
+    } else {
+        s_.vel = vec3(0);
+        s_.state = State::Surfacing;
+        play("swim_sub_up", true);
+    }
+    return true;
+}
+
+// Sphere (swimRadius) around the swimming root, slid along contacts; never above the water surface.
+vec3 Player::swimSlide(vec3 pos, vec3 delta) const {
+    for (int iter = 0; iter < 4 && glm::dot(delta, delta) > 1e-8f; ++iter) {
+        const auto hit = col_.sweepSphere(pos, t_.swimRadius, delta);
+        if (!hit || (hit->t == 0 && glm::dot(delta, hit->normal) >= 0)) { pos += delta; break; }
+        pos += delta * hit->t + hit->normal * kSkin;
+        const vec3 rest = delta * (1 - hit->t);
+        delta = rest - hit->normal * std::min(0.0f, glm::dot(rest, hit->normal));
+    }
+    pos.z = std::min(pos.z, surfaceZ());
+    return pos;
+}
+
+// At the surface, facing a wall whose top is 50..400 above the water: swim_climbout. Its root rises 172.8
+// and moves 308.7 forward; the start is placed so its hands (at the start time) reach the edge and its
+// root ends on the top.
+bool Player::tryClimbOut() {
+    const anim::Clip* c = anims_.find("swim_climbout");
+    if (!c) return false;
+    const float surf = surfaceZ(), reach = 300.0f;
+    const auto wall = col_.sweepSphere(s_.pos, t_.swimRadius, forward() * reach);
+    if (!wall || std::abs(wall->normal.z) > 0.5f || glm::dot(xy(wall->normal), xy(forward())) > -0.5f) return false;
+    const vec3 edge = wall->point;
+    const auto top = col_.groundProbe(vec3(xy(edge) + xy(forward()) * 50.0f, surf + 400.0f), 400.0f);
+    if (!top || top->normal.z < t_.minFloorNormalZ || top->point.z - surf < 50.0f) return false;
+    play("swim_climbout", false);
+    const vec3 hands = anims_.handsAt(*c, s_.clipTime).value_or(vec3(0, -205.4f, 164.1f));
+    const float rise = rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z;
+    s_.pos = vec3(xy(edge) - xy(forward()) * -hands.y, top->point.z - rise);
+    s_.state = State::SwimClimbOut;
+    s_.vel = vec3(0);
+    return true;
+}
+
+void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt) {
+    const float mag = std::min(1.0f, glm::length(move));
+    const bool wantsMove = mag > 0.1f;
+    const float target = wantsMove ? std::atan2(move.y, move.x) : s_.yaw;
+    auto standUp = [&](float floorZ) {
+        s_.pos.z = floorZ;
+        s_.water = -1;
+        s_.pitch = 0;
+        s_.vel = vec3(0);
+        s_.state = State::Idle;
+        play("ng_idle", true);
+    };
+    const float surf = surfaceZ();
+    switch (s_.state) {
+    case State::SwimSplash: { // tru.exe SwimSplashDownState; drag constant [I]
+        advanceClip(dt);
+        s_.vel *= std::exp(-3.0f * dt);
+        s_.pos = swimSlide(s_.pos, s_.vel * dt);
+        if (clipDone() || glm::length(s_.vel) < 50.0f) {
+            s_.vel = vec3(0);
+            s_.state = s_.pos.z < surf - 1 ? State::Surfacing : State::SwimTread;
+            play(s_.state == State::Surfacing ? "swim_sub_up" : "swim_surfaceidle", true);
+        }
+        break;
+    }
+    case State::Surfacing: // rise straight up at swim speed; drop takes control under water
+        advanceClip(dt);
+        s_.pos = swimSlide(s_.pos, vec3(0, 0, anims_.swimSpeed * dt));
+        if (s_.pos.z >= surf) { s_.state = State::SwimTread; play("swim_surfaceidle", true); }
+        else if (dropPressed) { s_.state = State::SwimUnder; }
+        break;
+    case State::SwimTread:
+    case State::SwimSurface: {
+        s_.pos.z = surf;
+        if (jumpPressed && tryClimbOut()) break;
+        if (dropPressed) { s_.state = State::SwimDive; play("swim_surfacedive", false); break; }
+        if (wantsMove) {
+            s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
+            if (s_.state == State::SwimTread) { s_.state = State::SwimSurface; play("swim_surface", true); }
+        } else if (s_.state == State::SwimSurface) {
+            s_.state = State::SwimTread;
+            play("swim_surfaceidle", true);
+        }
+        advanceClip(dt);
+        if (s_.state == State::SwimSurface) s_.pos = swimSlide(s_.pos, forward() * (anims_.swimSpeed * mag * dt));
+        s_.pos.z = surf;
+        // Shallow water: stand on the floor.
+        if (auto floor = col_.groundProbe(s_.pos, t_.swimDepth); floor && floor->normal.z >= t_.minFloorNormalZ) standUp(floor->point.z);
+        break;
+    }
+    case State::SwimDive: // swim_surfacedive root motion: 112 forward, 667 down
+        s_.pos = swimSlide(s_.pos, toWorld(advanceClip(dt)));
+        if (clipDone()) { s_.state = State::SwimUnder; s_.pitch = 0; play("swim_submerged_idle", true); }
+        break;
+    case State::SwimUnder: {
+        // Stick swims horizontally (camera-relative), jump / drop held swim up / down; the swim direction's
+        // pitch turns towards the wish at turnRate. [I] the original's under-water control scheme.
+        const float h = wantsMove ? mag : 0.0f, v = float(a.jump) - float(a.drop);
+        if (h > 0 || v != 0) {
+            if (wantsMove) s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
+            const float wish = std::atan2(v, h);
+            s_.pitch += std::clamp(wish - s_.pitch, -t_.turnRate * dt, t_.turnRate * dt);
+            const vec3 dir = forward() * std::cos(s_.pitch) + vec3(0, 0, std::sin(s_.pitch));
+            s_.pos = swimSlide(s_.pos, dir * (anims_.swimSpeed * std::min(1.0f, std::hypot(h, v)) * dt));
+            play(s_.pitch > 0.35f ? "swim_sub_up" : s_.pitch < -0.35f ? "swim_sub_down" : "swim_sub", true);
+        } else {
+            s_.pitch += std::clamp(-s_.pitch, -t_.turnRate * dt, t_.turnRate * dt);
+            play("swim_submerged_idle", true);
+        }
+        advanceClip(dt);
+        if (s_.pos.z >= surf) {
+            s_.pitch = 0;
+            s_.state = State::SwimTread;
+            play("swim_surfaceidle", true);
+        }
+        break;
+    }
+    case State::SwimClimbOut: // full root motion, no collision (as ClimbUp)
+        s_.pos += toWorld(advanceClip(dt));
+        if (clipDone()) {
+            if (auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown)) standUp(g->point.z);
+            else standUp(s_.pos.z);
+        }
+        break;
+    default: break;
     }
 }
 

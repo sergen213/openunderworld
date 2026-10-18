@@ -33,7 +33,7 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ng_standing_jump", 6, 6}, {"ng_running_jump_forwards", 2, 1}, {"NG_InAir_Feet_Forward_stage1_standing", 2, 2},
         {"NG_InAir_Feet_Forward_stage1", 5, 1}, {"NG_InAir_Feet_Forward_stage2", 3, 3}, {"NG_InAir_Feet_Forward_stage3", 5, 1},
         {"ng_generic_land_forwards", 3, 3}, {"ng_running_land", 2, 1}, {"ledgeb_attach_M", 4, 4}, {"ledgeb_idle", 8, 4},
-        {"ledgeb_right", 3, 3}, {"ledgeb_climbup_fast", 6, 0}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
+        {"ledgeb_right", 3, 3}, {"ledgeb_climbup_fast", 6, 6}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
         {"swim_climbout", 12, 6}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
         {"swim_surfaceidle", 8, 6}, {"swim_jump_land", 6, 6}, {"swim_submerged_idle", 10, 10},
     };
@@ -84,7 +84,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ng_standing_jump", "ng_running_jump_forwards", "NG_InAir_Feet_Forward_stage1_standing",
     "NG_InAir_Feet_Forward_stage1", "NG_InAir_Feet_Forward_stage2", "NG_InAir_Feet_Forward_stage3",
     "ng_generic_land_forwards", "ng_running_land", "ledgeb_attach_M", "ledgeb_idle", "ledgeb_right",
-    "ledgeb_climbup_fast",
+    "ledgeb_climbup_fast", "swim_jump_land", "swim_surfaceidle", "swim_surface", "swim_surfaceidle_to_swim",
+    "swim_surfacedive", "swim_submerged_idle", "swim_sub", "swim_sub_up", "swim_sub_down", "swim_climbout",
 };
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
@@ -112,10 +113,16 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile) {
         lib.clips.emplace(std::string(name), anim::decodeClip(s->data));
     }
     // Hands (bones 55, 80: the last segment of each arm chain before the fingers) in the hang pose.
-    if (lib.skeleton.bones.size() > 80) {
-        const auto w = anim::worldMatrices(lib.skeleton, anim::sample(*lib.find("ledgeb_idle"), lib.skeleton, 0, true));
-        lib.hangHandOffset = (vec3(w[55][3]) + vec3(w[80][3])) * 0.5f;
+    if (auto h = lib.handsAt(*lib.find("ledgeb_idle"), 0)) lib.hangHandOffset = *h;
+    // Swim speed: mean root speed of the clips that start swimming (their loops have no root motion).
+    float dist = 0;
+    double secs = 0;
+    for (const char* n : {"swim_surfaceidle_to_swim", "swim_surfacedive"}) {
+        const anim::Clip& c = *lib.find(n);
+        dist += glm::length(rootTranslation(c, c.durationSeconds(), false) - rootTranslation(c, 0, false));
+        secs += c.durationSeconds();
     }
+    lib.swimSpeed = dist / float(secs);
     lib.hair = anim::decodeHair(drm, lib.skeleton);
     return lib;
 }
@@ -231,6 +238,48 @@ std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& u
     // Intro rotation z is the model yaw; model -Y is forward, so heading = rot.z - 90 degrees.
     return Spawn{{pick->position[0], pick->position[1], pick->position[2]}, pick->rotation[2] - kPi / 2,
                  names.count(pick->objectId) && names.at(pick->objectId) == "player"};
+}
+
+// tru.exe: a water volume instance (object `watervolume`) gets a type-10 markup box (0x5D7130, MUD flag
+// 0x100000); the player tests its water probe box against those (0x710A20). The volume's intro data holds
+// the unique id of its water-surface intro at +0x12 (l4_pool: 5608 -> ca_goo_pool_watersurface 5607) [O].
+// The box bounds come from a component we have not decoded [U]; we use the surface model's bounds (x/y,
+// surface = top) and let the box reach 100 000 units down [I].
+std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit) {
+    const auto u = formats::parseUnit(unit);
+    const auto listBytes = bigfile.read("\\tr8\\pc-w\\objectlist.txt");
+    if (!listBytes) return {};
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(listBytes->data()), listBytes->size()});
+    std::vector<collision::Markup> out;
+    for (const auto& vol : u.intros) {
+        const auto n = names.find(vol.objectId);
+        if (n == names.end() || n->second != "watervolume" || !vol.data) continue;
+        const auto& bytes = unit.sections.at(vol.data->section).data;
+        if (vol.data->offset + 0x14 > bytes.size()) continue;
+        const uint16_t surfaceId = uint16_t(bytes[vol.data->offset + 0x12] | bytes[vol.data->offset + 0x13] << 8);
+        const auto s = std::find_if(u.intros.begin(), u.intros.end(), [&](const formats::Intro& i) { return i.uniqueId == surfaceId; });
+        if (s == u.intros.end() || !names.count(s->objectId)) continue;
+        scene::SceneData model;
+        try {
+            model = formats::loadDrmScene(bigfile, "pc-w\\" + names.at(s->objectId) + ".drm");
+        } catch (const std::exception&) {
+            continue;
+        }
+        float im[16];
+        formats::introMatrix(*s, im);
+        const glm::mat4 intro = glm::make_mat4(im);
+        vec3 lo(1e30f), hi(-1e30f);
+        for (const auto& mesh : model.meshes) {
+            const glm::mat4 m = intro * glm::make_mat4(mesh.transform);
+            for (const auto& v : mesh.vertices) {
+                const vec3 p(m * glm::vec4(v.position[0], v.position[1], v.position[2], 1));
+                lo = glm::min(lo, p), hi = glm::max(hi, p);
+            }
+        }
+        if (lo.x > hi.x) continue;
+        out.push_back({10, uint16_t(vol.uniqueId), {{lo.x, lo.y, hi.z - 100000.0f}, hi}});
+    }
+    return out;
 }
 
 } // namespace ou::game
