@@ -29,6 +29,7 @@ constexpr int kExitSkip = 77; // ctest SKIP_RETURN_CODE: no display available
 struct Options {
     std::filesystem::path gameDir;
     std::string drm;
+    bool level = false; // --level: load --drm as a whole unit (formats::loadLevelScene)
     int width = 1280, height = 720;
     float fov = 60.0f;
     int frames = 0; // 0 = run until closed
@@ -43,7 +44,7 @@ struct Options {
 void usage() {
     std::fprintf(stderr,
                  "usage: ou-viewer [--game-dir DIR] [--drm pc-w\\\\x.drm] [--width W --height H] [--fov DEG]\n"
-                 "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH]\n"
+                 "                 [--frames N] [--screenshot out.ppm] [--no-vsync] [--cam X,Y,Z,YAW,PITCH] [--level]\n"
                  "                 [--renderer opengl|vulkan] [--no-overlay] [--fullscreen]\n"
                  "                 [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
@@ -70,6 +71,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--no-vsync") { o.vsync = false; continue; }
         if (a == "--no-overlay") { o.noOverlay = true; continue; }
         if (a == "--fullscreen") { o.fullscreen = true; continue; }
+        if (a == "--level") { o.level = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (!(v = next())) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         if (a == "--config") continue; // applied above
@@ -114,8 +116,8 @@ ou::scene::SceneData loadScene(const Options& o, std::string& source) {
         failure = "--drm needs --game-dir";
     } else {
         try {
-            ou::cdc::Bigfile bigfile(o.gameDir / "bigfile.000");
-            ou::scene::SceneData s = ou::formats::loadDrmScene(bigfile, o.drm);
+            const ou::cdc::BigfileSet bigfile(o.gameDir);
+            ou::scene::SceneData s = o.level ? ou::formats::loadLevelScene(bigfile, o.drm) : ou::formats::loadDrmScene(bigfile, o.drm);
             if (!s.meshes.empty()) {
                 source = o.drm + " (original game assets" + (s.placeholder ? ", partly placeholder)" : ")");
                 return s;
