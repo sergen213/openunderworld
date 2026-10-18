@@ -122,6 +122,9 @@ std::vector<uint32_t> objectRenderModels(const cdc::Drm& object);
 // ObjectBase +0 flags ("oflags") of an object DRM; 0 if it has no object section.
 // INSTANCE_IntroduceInstance (0x5BCC30) sets instance flag 0x800 (not drawn) for kObjectHiddenAtBirth.
 uint32_t objectFlags(const cdc::Drm& object);
+// Section index of the ObjectBase DTP (object section +0 resource reference); nullopt without an object section.
+// Throws cdc::FormatError when the reference does not resolve.
+std::optional<uint32_t> objectBaseSection(const cdc::Drm& object);
 inline constexpr uint32_t kObjectHiddenAtBirth = 0x800000;
 
 // Column-major T * Rx * Ry * Rz * S, as tru.exe builds instance matrices.

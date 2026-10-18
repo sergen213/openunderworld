@@ -41,7 +41,7 @@ struct Options {
     std::string renderer = "opengl";
     int width = 1280, height = 720;
     float fov = 60.0f;
-    bool vsync = true, fullscreen = false, noOverlay = false, showCollision = false, showTriggers = false;
+    bool vsync = true, fullscreen = false, noOverlay = false, showCollision = false, showTriggers = false, showEnemies = false;
     int frames = 0; // 0 = until closed
     std::filesystem::path screenshot, inputScript;
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script
@@ -59,7 +59,7 @@ void usage() {
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-audio]\n"
-                 "               [--load SLOT] [--die SECONDS] [--show-collision] [--show-triggers] [--config config.json]\n"
+                 "               [--load SLOT] [--die SECONDS] [--show-collision] [--show-triggers] [--show-enemies] [--config config.json]\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push,\n"
                  "          mouse look; gamepad: left stick, right stick, A jump, B drop, X use, LB walk; F1 overlay, Esc quit\n"
                  "          F5 quicksave, F9 quickload (slot 'quick')\n"
@@ -85,6 +85,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--no-overlay") { o.noOverlay = true; continue; }
         if (a == "--show-collision") { o.showCollision = true; continue; }
         if (a == "--show-triggers") { o.showTriggers = true; continue; }
+        if (a == "--show-enemies") { o.showEnemies = true; continue; }
         if (a == "--intro") { o.intro = true; continue; }
         if (a == "--no-audio") { o.noAudio = true; continue; }
         if (a == "--help" || a == "-h") return false;
@@ -250,24 +251,98 @@ struct Footsteps {
     }
 };
 
+// Enemies (src/game/ai): each enemy's model-0 skinned meshes, CPU-skinned from Enemy::pose and placed in the
+// world like Lara's. Their intro meshes in the level scene are left out (StreamedScene::build).
+struct EnemyMeshes {
+    std::map<std::string, ou::scene::SceneData> types; // object name -> model-0 skinned meshes + textures
+    std::vector<std::vector<size_t>> meshIndices;       // per World::enemies().all() entry
+    std::vector<ou::scene::Vertex> scratch;
+
+    const ou::scene::SceneData& type(const ou::cdc::BigfileSet& bf, const std::string& name, std::vector<std::string>& warnings) {
+        auto it = types.find(name);
+        if (it != types.end()) return it->second;
+        ou::scene::SceneData s;
+        try {
+            s = ou::formats::loadDrmScene(bf, "pc-w\\" + name + ".drm");
+            uint32_t model = 0;
+            if (auto bytes = bf.read("pc-w\\" + name + ".drm"))
+                for (const uint32_t id : ou::formats::objectRenderModels(ou::cdc::parseDrm(std::move(*bytes))))
+                    if ((model = id)) break;
+            std::erase_if(s.meshes, [&](const auto& m) { return m.skeleton < 0 || s.skeletons[size_t(m.skeleton)].renderModelId != model; });
+            if (s.meshes.empty()) warnings.push_back("pc-w\\" + name + ".drm: no skinned model-0 mesh");
+        } catch (const std::exception& e) {
+            warnings.push_back(name + ": " + e.what());
+        }
+        return types.emplace(name, std::move(s)).first->second;
+    }
+    void pose(const ou::game::World& w, double alpha, const ou::scene::SceneData& scene, ou::render::Renderer& r) {
+        const auto& all = w.enemies().all();
+        for (size_t k = 0; k < all.size() && k < meshIndices.size(); ++k) {
+            const auto& e = *all[k];
+            const auto s = e.interpolated(alpha);
+            const auto palette = ou::anim::skinPalette(e.type().skeleton, e.pose(alpha));
+            const glm::mat4 m = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw);
+            const glm::mat3 n(m);
+            for (const size_t i : meshIndices[k]) {
+                ou::anim::skinVertices(scene.meshes[i], palette, scratch);
+                for (auto& v : scratch) {
+                    const glm::vec3 p = glm::vec3(m * glm::vec4(v.position[0], v.position[1], v.position[2], 1));
+                    const glm::vec3 q = n * glm::vec3(v.normal[0], v.normal[1], v.normal[2]);
+                    v.position[0] = p.x, v.position[1] = p.y, v.position[2] = p.z;
+                    v.normal[0] = q.x, v.normal[1] = q.y, v.normal[2] = q.z;
+                }
+                r.updateVertices(i, scratch);
+            }
+        }
+    }
+};
+
+// Debug lines (--show-enemies): body capsule (colour by mode: idle green, alert yellow, chase orange, attack red,
+// hit magenta, dead grey) and the line of sight to Lara while it perceives her.
+void appendEnemyLines(const ou::game::World& w, std::vector<ou::render::DebugLine>& out) {
+    using ou::game::ai::Mode;
+    auto line = [&](glm::vec3 a, glm::vec3 b, uint32_t c) { out.push_back({{a.x, a.y, a.z}, {b.x, b.y, b.z}, c}); };
+    const ou::game::ai::Target lara{w.player().state().pos, true, w.player().tuning().height};
+    for (const auto& e : w.enemies().all()) {
+        const auto& s = e->state();
+        static constexpr uint32_t kColour[] = {0xFF00FF00, 0xFF00FFFF, 0xFF0080FF, 0xFF0000FF, 0xFFFF00FF, 0xFF808080, 0xFFFFFF00};
+        const uint32_t c = kColour[size_t(s.mode)];
+        const float r = e->radius(), h = e->height();
+        for (int k = 0; k < 16; ++k) {
+            const float a0 = float(k) * 0.3927f, a1 = float(k + 1) * 0.3927f;
+            for (const float z : {0.0f, h})
+                line(s.pos + glm::vec3(r * std::cos(a0), r * std::sin(a0), z), s.pos + glm::vec3(r * std::cos(a1), r * std::sin(a1), z), c);
+        }
+        line(s.pos, s.pos + glm::vec3(0, 0, h), c);
+        line(s.pos + glm::vec3(0, 0, h * 0.8f), s.pos + glm::vec3(0, 0, h * 0.8f) + glm::vec3(std::cos(s.yaw), std::sin(s.yaw), 0) * 300.0f, c);
+        if (s.mode != Mode::Dead && e->perceives(w.collision(), lara))
+            line(s.pos + glm::vec3(0, 0, h * 0.8f), lara.pos + glm::vec3(0, 0, lara.height * 0.75f), 0xFF00FFFF);
+    }
+}
+
 // Render scene of the streamed units: each loaded unit's level scene (cached while it stays loaded) moved by
 // its stream offset, then Lara's skinned meshes. Rebuilt and re-uploaded when World::unitsVersion changes.
 struct StreamedScene {
     std::map<std::string, ou::scene::SceneData> units; // unit frame
     ou::scene::SceneData lara;                         // Lara's skinned meshes, skeletons, textures
-    uint64_t version = ~0ull;
+    uint64_t version = ~0ull, enemyVersion = ~0ull;
 
     ou::scene::SceneData build(const ou::cdc::BigfileSet& bf, const ou::game::World& w, LaraMeshes& laraMeshes,
-                               std::vector<std::string>& warnings) {
+                               EnemyMeshes& enemyMeshes, std::vector<std::string>& warnings) {
         std::erase_if(units, [&](const auto& kv) {
             return std::none_of(w.units().begin(), w.units().end(), [&](const auto& u) { return u.data.name == kv.first; });
         });
         ou::scene::SceneData out;
         std::set<uint32_t> textureIds; // cdc section ids, unique across DRMs
+        std::set<int32_t> enemyIntros; // drawn posed by EnemyMeshes instead
+        for (const auto& e : w.enemies().all())
+            if (!e->generator) enemyIntros.insert(e->uid());
         auto append = [&](const ou::scene::SceneData& s, glm::vec3 offset, std::vector<size_t>* indices) {
             const auto skelBase = int32_t(out.skeletons.size());
             out.skeletons.insert(out.skeletons.end(), s.skeletons.begin(), s.skeletons.end());
             for (auto m : s.meshes) {
+                if (const auto at = m.origin.rfind(" @intro "); at != std::string::npos && enemyIntros.contains(std::atoi(m.origin.c_str() + at + 8)))
+                    continue;
                 m.transform[12] += offset.x, m.transform[13] += offset.y, m.transform[14] += offset.z;
                 if (m.skeleton >= 0) m.skeleton += skelBase;
                 if (indices) indices->push_back(out.meshes.size());
@@ -286,7 +361,13 @@ struct StreamedScene {
         }
         laraMeshes.meshIndices.clear();
         append(lara, glm::vec3(0), &laraMeshes.meshIndices);
+        enemyMeshes.meshIndices.clear();
+        for (const auto& e : w.enemies().all()) {
+            enemyMeshes.meshIndices.emplace_back();
+            append(enemyMeshes.type(bf, e->type().name, warnings), glm::vec3(0), &enemyMeshes.meshIndices.back());
+        }
         version = w.unitsVersion();
+        enemyVersion = w.enemies().version();
         return out;
     }
 };
@@ -336,6 +417,7 @@ int main(int argc, char** argv) {
     ou::scene::SceneData scene;
     StreamedScene streamed;
     LaraMeshes lara;
+    EnemyMeshes enemyMeshes;
     ScriptedMeshes objects;
     std::vector<std::string> warnings;
     bool spawnFromIntro = false;
@@ -352,6 +434,7 @@ int main(int argc, char** argv) {
                                                   ou::game::loadLaraAnims(bf), spawn);
         world->fovDeg = opt.fov;
         world->script().setBigfile(&bf);
+        world->enemies().setBigfile(&bf);
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
         if (!opt.loadSlot.empty() && !quickLoad(*world, opt.loadSlot)) return 1;
 
@@ -361,7 +444,7 @@ int main(int argc, char** argv) {
         for (auto& m : laraScene.meshes)
             if (m.skeleton >= 0 && !m.indices.empty()) streamed.lara.meshes.push_back(std::move(m)); // skinned body only
         for (auto& w : laraScene.warnings) warnings.push_back(std::move(w));
-        scene = streamed.build(bf, *world, lara, warnings);
+        scene = streamed.build(bf, *world, lara, enemyMeshes, warnings);
         if (lara.meshIndices.empty()) warnings.push_back("pc-w\\lara.drm: no skinned mesh decoded");
     } catch (const std::exception& e) {
         std::fprintf(stderr, "ou-game: %s\n", e.what());
@@ -500,15 +583,25 @@ int main(int argc, char** argv) {
                              ou::script::eventName(e.kind), e.source, src ? src->name.c_str() : "?", e.target,
                              dst ? dst->name.c_str() : "untracked");
             }
+            for (const auto& e : world->enemies().all()) { // enemy mode changes and blows, for replays
+                const auto &p = e->previous(), &s = e->state();
+                if (p.mode != s.mode || (s.blowLanded && !p.blowLanded))
+                    std::fprintf(stderr, "ou-game: tick %llu enemy %d (%s) %s%s pos %.0f %.0f %.0f hp %.0f | lara %.0f %.0f %.0f\n",
+                                 (unsigned long long)world->ticks(), e->uid(), e->type().name.c_str(),
+                                 std::string(ou::game::ai::modeName(s.mode)).c_str(), s.blowLanded && !p.blowLanded ? " blow lands" : "",
+                                 s.pos.x, s.pos.y, s.pos.z, s.health, world->player().state().pos.x, world->player().state().pos.y,
+                                 world->player().state().pos.z);
+            }
             if (audioOn) steps.tick(*world, mixer);
             if (world->currentUnit().data.name != unitName) {
                 unitName = world->currentUnit().data.name;
                 logUnits();
             }
         }
-        if (world->unitsVersion() != streamed.version) { // streamed in/out, loaded or respawned: new render scene
+        if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion) {
+            // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {
-                scene = streamed.build(*bigfile, *world, lara, warnings);
+                scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings);
                 for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
                 objects.index(scene);
             } catch (const std::exception& e) {
@@ -523,6 +616,7 @@ int main(int argc, char** argv) {
         const auto s = world->interpolated(clock.alpha());
         const auto c = world->interpolatedCamera(clock.alpha());
         lara.pose(*world, s, clock.alpha(), scene, *renderer);
+        enemyMeshes.pose(*world, clock.alpha(), scene, *renderer);
         objects.pose(world->script(), scene, *renderer);
         ou::render::Camera cam;
         cam.verticalFovDeg = world->fovDeg;
@@ -549,11 +643,19 @@ int main(int argc, char** argv) {
                                 s.clip.c_str(), s.clipTime, s.pos.x, s.pos.y, s.pos.z, glm::degrees(s.yaw)));
             lines.push_back(fmt("unit %s (%zu loaded) | checkpoint %d", world->currentUnit().data.name.c_str(), world->units().size(),
                                 world->checkpoint() ? world->checkpoint()->id : 0));
+            const ou::game::ai::Enemy* near = nullptr; // nearest living enemy
+            for (const auto& e : world->enemies().all())
+                if (e->alive() && (!near || glm::distance(e->position(), s.pos) < glm::distance(near->position(), s.pos))) near = e.get();
+            if (near)
+                lines.push_back(fmt("enemies %zu | nearest %s %d %s | hp %.0f/%.0f | %.0f units", world->enemies().all().size(),
+                                    near->type().name.c_str(), near->uid(), std::string(ou::game::ai::modeName(near->state().mode)).c_str(),
+                                    near->health(), near->type().tuning.health, glm::distance(near->position(), s.pos)));
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
             lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push | mouse look | F5 save | F9 load | F1 overlay | Esc quit");
         }
         auto frameLines = debugLines;
         if (opt.showTriggers) appendTriggerLines(world->script(), frameLines);
+        if (opt.showEnemies) appendEnemyLines(*world, frameLines);
         renderer->drawFrame(cam, {w, h}, {true, true, lines, frameLines});
         ++frame;
         if (opt.frames && frame >= opt.frames) {

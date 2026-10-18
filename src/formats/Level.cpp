@@ -211,16 +211,21 @@ std::vector<uint32_t> objectRenderModels(const cdc::Drm& d) {
     return out;
 }
 
-uint32_t objectFlags(const cdc::Drm& d) {
+std::optional<uint32_t> objectBaseSection(const cdc::Drm& d) {
     for (const auto& s : d.sections) {
         if (s.type != cdc::SectionType::Object) continue;
         uint32_t rootIndex = 0;
         const uint32_t rootId = resourceId(s, 0, cdc::SectionType::DtpData);
         if (!rootId || !findSection(d, cdc::SectionType::DtpData, rootId, &rootIndex))
             throw FormatError("object section without its ObjectBase DTP");
-        return View(d, rootIndex).at<uint32_t>(0);
+        return rootIndex;
     }
-    return 0;
+    return std::nullopt;
+}
+
+uint32_t objectFlags(const cdc::Drm& d) {
+    const auto base = objectBaseSection(d);
+    return base ? View(d, *base).at<uint32_t>(0) : 0;
 }
 
 void introMatrix(const Intro& in, float out[16]) {

@@ -1,0 +1,7 @@
+# l4_ballcourt: --spawn 18126,8700,2800,0. Panther 6531 notices Lara, charges and attacks; Lara draws, locks on and shoots it dead.
+0 lookx 1.5
+0.4 lookx 0
+0.5 draw 1
+0.6 draw 0
+0.7 aim 1
+0.8 fire 1

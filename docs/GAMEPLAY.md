@@ -184,6 +184,65 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   top. The root is placed so the clip's hands (at its start time) reach the contact and its root ends on the top
   (`top − rise`); the clip's root motion then plays without collision and the end snaps to the floor.
 
+## Enemies
+
+Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy
+registers in `World::targets` (Combat's `Damageable`) and hurts Lara through `World::damageLara`. ou-game draws them
+CPU-skinned (model 0) instead of their static intro meshes; `--show-enemies` draws capsules (colour = mode), heading
+and line of sight; the overlay shows the nearest enemy; mode changes and blows are logged to stderr.
+
+### Survey (intros per unit) [O]
+
+- Mexico: `cat_panther` ×13 (ballcourt 4, temple 5, templepath 1, trailstart 3), `panther_thrall` ×1 (l4_pool 5645),
+  `mayan_thrall_pool_generator` ×13 (l4_pool), `poacher` ×12 / `poacher_long_range` ×4 (ballcourt, temple),
+  `bat_enemy` ×5 + `small_albino_spider` ×22 (temple), `giant_albino_tarantula` ×13 + `small_albino_spider_generator`
+  ×9 (traprooms), `giant_tarantula_generator` ×3 (staircase_xibalba). Thailand: `tiger` ×8, spiders, bats.
+- Enemy objects: ObjectBase oflags2 (+4) bit 0x400000 selects the "enemy" object family (tru.exe 0x5BF0E0 → family
+  table 0x8ABA28 entry 14: init 0x63C190 (via 0x63C530), message 0x6164D0 (via 0x6187C0)).
+- Generators: ObjectBase +0xDE u16 = spawned object (mayan_thrall_pool_generator → 600 `mayan_thrall`, others → bats,
+  spiders, tarantulas).
+
+### Enemy data (ObjectBase +0xC8, the instance+0x50 block 0x63C190 reads)
+
+| Offset | Meaning | Evidence |
+|---|---|---|
+| +0x00 | magic 0xDAF00018 | [O] 0x63C190 bails without it |
+| +0x04 | class: 1 bats/sharks, 3 cats, 4 soldiers, 7 spiders, 8 thralls | [O] values; meaning [I] |
+| +0x0C | byte: behaviour-tree vtable choice (0x8ACF90..A8) | [O] 0x63C190 |
+| +0x20 | component list node (next +0x1C); node +0x3C → health block {easy, normal, hard, +0xC} | [O] 0x620CC0 → 0x6E77B0 by difficulty 0x6E7710 (≤ 0 → normal) into comp+0x2C64 |
+| +0x2C | 94.8 (0.3 m) on all types | [O] value; [I] body radius |
+| +0x3C, +0xA0 | 1264 (4 m), 60° | [O] used as a vertical tolerance (0x6497C0, 0x67B610) and a tilt limit (0x620500) |
+
+Normal hit points [O]: cat_panther / panther_thrall 700, tiger / poacher / giant_albino_tarantula / viking_thrall 500,
+merc 450, mayan_thrall 350, yeti_thrall 1100, bat / small spiders 2. Distances in the data are multiples of 31.6056
+(316.056 units = 1 m, consistent with the hair constants).
+
+### Behaviour (ours) and numbers
+
+Modes idle → alert (0.4 s, turn) → chase (run clip root motion, turn 5 rad/s) → attack (one blow in the hit window)
+→ chase; hit reaction; death (holds the last frame); spawning (generator clip). Clips by role, first present name:
+idle `passive_idle`/`idle`, alert `attack_idle`/`idle_aggresive`, run `run_forward_2`/`run`, attack
+`simple_attack_static1`/`simple_attack`/`slash_attack`/`slash`, hit `hitreact_medium_front`/…, death
+`death_static`/`death`/`damage_front_death`, spawn `spawn_from_pool`. Movement: capsule collide-and-slide, ground
+snap 70 up / 140 down, gravity, ledge avoidance (no step leaving > 300 of drop ahead); never closer to Lara than
+radius + 100. Panther `run_forward_2` root speed 2323 units/s [O].
+
+| Quantity | Value | Provenance |
+|---|---|---|
+| Hit points | data (above) | [O] |
+| Radius / height | +0x2C / highest bind-pose bone (panther 344.6) | [O] / [I] |
+| Sight | 3160.6 (10 m), ±60°, raycast eye (0.8 h) → Lara (0.75 of 512) | [I] the exe's senses (EnemySensesPositionUpdate 0x659FA0) not decoded |
+| Sense radius (any direction) | 790.1 (2.5 m) | [I]; +0xE4 list holds {300, ptr, 948.2/790.1, 60/100, 60/100} records [O], meaning [U] |
+| Attack start / reach | 474 / 632 | [I] (+0x7C/+0x80 = 474, +0x88 = 632 are candidates) |
+| Blow damage | 120 Lara hp (light) | [I]. Melee hits post msg 0x11C via 0x63A810 with `0x6460C0(...) * desc[+0x50]` (0x65E1B0, 0x667AB0); the desc layout is [U]; panther attack records (list node +0x80..+0x9C, 0x220 bytes) hold 12/10 at +0x40/+0x44 |
+| Hit window | 35–60 % of the attack clip, 0.5 s cooldown | [I] |
+| Stagger | after `block +0xC` damage (panther 80, thralls 0 = every hit) | [I] |
+| Generator trigger | Lara within 2528 (8 m), ±2000 z, once | [I] the real trigger is scripted/EnemySpawnData 0x614FB0 [U] |
+
+Not done: behaviour trees (search, flank, cover, taunt, jump/vault, nap), ranged soldiers, flying bats, sharks
+(warned and not spawned), navmesh/routing, enemy sounds, respawn reset on Lara's death, generator spawns kept across
+streaming (their generator stays fired).
+
 ## Tests
 
 - `Game.*` (synthetic collision + synthetic clips with the measured root speeds): loop-seam root motion, wall slide,

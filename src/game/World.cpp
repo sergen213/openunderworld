@@ -178,6 +178,7 @@ void World::tick(const Actions& a) {
         std::vector<script::UnitRef> refs;
         for (const auto& u : units_) refs.push_back({u.data.name, u.data.drm, u.offset});
         script_.setUnits(refs);
+        enemies_.setUnits(refs);
         scriptUnits_ = unitsVersion_;
     }
     script_.tick({player_.state().pos, player_.state().yaw, a.move, a.interact}, &col_);
@@ -186,6 +187,8 @@ void World::tick(const Actions& a) {
         s.pos += d;
         player_.restore(s);
     }
+    enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height},
+                  [this](float damage, vec3 from) { damageLara(damage, from); }, dt);
     updateCamera(a, dt);
     tickCombat(a, dt); // after the camera: free aim follows it
     updatePose(dt, false);

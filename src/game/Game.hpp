@@ -8,6 +8,7 @@
 #include "formats/Formats.hpp"
 #include "game/Combat.hpp"
 #include "script/Script.hpp"
+#include "game/ai/Enemy.hpp"
 
 #include <glm/glm.hpp>
 
@@ -244,6 +245,10 @@ public:
     // the single-mesh constructor has no units: give it them with script().setUnits.
     script::Runtime& script() { return script_; }
     const script::Runtime& script() const { return script_; }
+    // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
+    // before ticking (as script()).
+    ai::Enemies& enemies() { return enemies_; }
+    const ai::Enemies& enemies() const { return enemies_; }
     float fovDeg = 60.0f; // vertical FOV, from config
 
     // State blended between the last two ticks (alpha in [0,1]).
@@ -315,6 +320,7 @@ private:
     std::optional<Spawn> startSpawn_;
     std::optional<CheckpointRef> checkpoint_;
     script::Runtime script_;
+    ai::Enemies enemies_{&targets};
     uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
     Health health_;
     CombatState combat_;
