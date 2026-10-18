@@ -247,6 +247,7 @@ struct UnitData {
     std::map<int32_t, std::vector<std::string>> chapterLinks;
     std::map<int32_t, std::string> musicByIntro;
     std::string music;
+    std::map<int32_t, std::string> cinematics; // cinematic_object intro -> the stream it plays (cine::introCinematic)
 };
 // Throws cdc::FormatError if pc-w\<name>.drm is missing or not a unit.
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name);
@@ -315,6 +316,9 @@ public:
     int chapter = 0;             // kChapters index being played; saved
     // Starts chapter `n` (kChapters) at its start unit's player intro; respawns fall back there. Throws as enterUnit.
     void startChapter(int n);
+    // Called when a script activates a cinematic_object that has a stream (UnitData::cinematics), before a level
+    // end's chapter change (`levelEnd`). ou-game plays the cutscene here (src/app/game/Cinematic.*); unset = skipped.
+    std::function<void(const std::string& cinematic, bool levelEnd)> onCinematic;
     const std::vector<Pickup>& pickedUp() const { return pickedUp_; } // last tick (world-frame positions)
 
     // Save/load helpers. Markup index <-> (unit, index in that unit); -1 / nullopt when not loaded.
@@ -348,7 +352,7 @@ private:
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order
     void fire(int hand);
     void collectPickups(bool pressed);
-    void checkLevelEnd(); // script Activate of a level-end cinematic -> startChapter(next)
+    void checkLevelEnd(); // script Activate of a cinematic_object -> onCinematic; a level end's -> startChapter(next)
 
     collision::CollisionMesh col_;
     AnimLibrary anims_;

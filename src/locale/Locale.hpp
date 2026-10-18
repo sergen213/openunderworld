@@ -64,24 +64,14 @@ struct Cue {
 std::vector<Cue> parseMovieSchema(std::string_view sch, Language lang);
 std::string movieSchemaPath(std::string_view movieStem); // "\\tr8\\local\\localization\\movies\\x.sch"
 
-// ---- Cinematic subtitles inside pc-w\cinstream\*.mul ----------------------------------------
-// Concatenated payloads of the .mul's cinematic packets (type 1), i.e. the "CINE" stream.
-std::vector<uint8_t> mulCinematicStream(std::span<const uint8_t> mul);
-
+// ---- Cinematic subtitles (per frame inside the CINE stream, src/cine) ----------------------------
 struct CineSubtitle {
     int frame = 0;      // cinematic frame (30 per second)
     int language = 0;   // Language index
     std::string text;   // as stored ('\n' separated lines, "Speaker: " prefixes kept)
 };
-struct CineInfo {
-    std::string unitName;
-    int channels = 0;   // per-frame float channels derived from the header
-    int frames = 0;     // frames before the -1 terminator
-    std::vector<CineSubtitle> subtitles;
-};
-// Parses the CINE header (to get the channel count) and walks every frame. Throws cdc::FormatError
-// on a malformed stream.
-CineInfo parseCineStream(std::span<const uint8_t> cine);
+// One frame's subtitle blob (0x4538D0): repeated "<language>\r<text>\r", text cut at 255 bytes.
+void appendCineSubtitles(std::string_view blob, int frame, std::vector<CineSubtitle>& out);
 
 // ---- On-screen subtitle state, as tru.exe's two-line ticker (0x583D50/0x583DB0/0x583E20) ----
 // A pushed line goes to the bottom slot (the previous bottom line moves up); every 90 ticks

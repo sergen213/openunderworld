@@ -106,29 +106,11 @@ In-engine cutscenes stream from `pc-w\cinstream\<nnn_name>.mul` (MultiplexStream
 loopStart, u32 loopEnd/samples, u32 channels, …, u32 hasCinematic @0x20, u32 hasSubtitles @0x24, …`), then
 packets `{u32 type (0 sound, 1 cinematic, 2 padding), u32 size, u32 pad[2], size bytes}`. Sound packets
 start with their own 16-byte header (inside `size`). Concatenating the type-1 payloads gives the CINE
-stream (`ou::locale::mulCinematicStream`).
+stream (`ou::cine::demux`).
 
-**CINE stream** [V-exe] `0x4537A0` + `0x456580` (header), `0x457100` (frames), `0x4538D0` (subtitles):
-
-```
-char  magic[4] = "ENIC"; u32 version (9); u32 headerSize    // bytes after magic+version
-char  unitName[64]                                        // e.g. "l1_ship_natla_room"
-u32   ?; u32 nA; 12 bytes × nA                            // +9 channels each
-u32   nInstances; per instance:
-        u32 id, u32 ?, u32 bones, u32 ?, 64-byte matrix × bones   // +14·bones+3 channels
-        u32 nC, u32 ?, 24 bytes × nC                         // +10 channels each
-        u32 nD, u32 ?                                       // +nD channels
-u32   nE; u32 × nE                                         // +16 channels each
-u32   ?; u32 nF; 8 bytes × nF                              // +1 channel each
-u32   ?
-if (pos < headerSize) 7 × u32 per instance
-frames:
-  u32 size (bytes after this field); i32 frame (-1 = end)
-  per channel: when its run is exhausted, u32 (bits 28-31 animated flag, 0-27 run length) + f32;
-               otherwise an f32 only if the run is animated
-  u32 subtitleLength; subtitleLength bytes
-  pad to 16
-```
+**CINE stream** [V-exe] `0x4537A0` + `0x456580` (header), `0x457100` (frames), `0x4538D0` (subtitles). The
+header, the run-length coded per-frame channels and their meaning (camera, actors, markers) are in
+[CINEMATICS.md](CINEMATICS.md); every frame ends with `u32 subtitleLength; subtitleLength bytes`, then padding to 16.
 
 Subtitle bytes: repeated `<language index>\r<text>\r`; `\n` inside text separates lines. The exe shows
 entries whose number equals the subtitle language (or, with subtitle language −1, the game language);
@@ -136,19 +118,18 @@ each line loses everything up to its first `": "` (speaker names) and is pushed 
 Text is cut at 255 bytes; blobs ≥ 4095 bytes print "bad subtitle data". Frames run at 30 per second
 (the debug overlay prints `frame / 30` as mm:ss). [V-exe]
 
-**Verified** [V-run] with `ou::locale::parseCineStream` (`ou-text cine <name> --lang all`) on all 53
+**Verified** [V-run] with `ou::cine::scan` (`ou-text cine <name> --lang all`) on all 53
 cinstream .mul files (English-voice record where several exist): every header size and every frame `size`
 field matches, frames are numbered 0…n−1 before the −1 terminator; 845 frames carry 3253 subtitle entries.
 `060_med_natla` (also a test): 3181 frames (106 s), 6933 channels, 258 entries; English
 starts at frame 109 "Damn, it's too small..."; all entries strict UTF-8. The 12 cinematics without
-subtitle entries all have `hasSubtitles = 0`. Channel semantics (bone transforms, camera, …) are not
-decoded here. ?
+subtitle entries all have `hasSubtitles = 0`. The English lines start with the voice (CINEMATICS.md §5).
 Voice variants: subtitled cinematics have 5 records (one per voice language, e.g. `0xFFFFE010` Spanish);
 the English- and Spanish-voice records of `060_med_natla` both carry every language's text. [V-data]
 Voice-line `.mul` files (`pc-w\audio\streams\vo\…`, e.g. `lara\sc_04_01_answer.mul`) use the same CINE
 stream with a scene-less header (headerSize 0x60, all counts 0 → 0 channels); frame 0 carries the line in
 every language (the same text as the matching locals.bin hint string) and the stream ends without a −1
-frame. `parseCineStream` accepts the end of data at a frame boundary for this. [V-run] (reported by the
+frame. `cine::scan` accepts the end of data at a frame boundary for this. [V-run] (reported by the
 Audio work, `src/audio` `decodeMul`, which extracts these too.)
 
 ## 4. Subtitle display [V-exe]
@@ -159,12 +140,12 @@ Each frame both slots are drawn (virtual 640×480, y 352 and 374, font scale 0.6
 third argument), then the timer drops by `gameTracker_timeMult` (1.0 per 1/30 s); at ≤ 0 the bottom
 line moves up, the bottom is cleared and the timer restarts at 90. Pushes are ignored in game modes 6
 and 10 (`DAT_00e7f143`). `ou::locale::SubtitleTicker` implements push/advance; `ou-movie` renders it
-(VIDEO §3).
+(VIDEO §3), ou-game renders it during cutscenes (CINEMATICS.md §6).
 
 ## 5. Tests
 
 `tests/test_locale.cpp`: synthetic tables (exe getter semantics, truncation), exe UTF-8 check, language
-parsing, `.sch` parsing, ticker scrolling, speaker stripping, a synthetic CINE stream through a .mul
-(including truncation). Gated on `OU_GAME_DIR`: all six locals.bin variants (5136 strings, header values,
-1448 non-empty, strict UTF-8), `prevontr.sch` cues per language, `060_med_natla.mul` subtitles,
-Bink decode and track selection.
+parsing, `.sch` parsing, ticker scrolling, speaker stripping, cinematic subtitle blobs. Gated on
+`OU_GAME_DIR`: all six locals.bin variants (5136 strings, header values, 1448 non-empty, strict UTF-8),
+`prevontr.sch` cues per language, Bink decode and track selection. CINE streams (synthetic, truncation,
+`060_med_natla` subtitles, all 53 streams): `tests/test_cine.cpp`.

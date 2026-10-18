@@ -16,12 +16,13 @@ struct Camera {
     float pitch = 0.0f;  // radians, clamped to +-89 deg by users
     float verticalFovDeg = 60.0f;
     float nearZ = 1.0f, farZ = 100000.0f;
+    glm::vec3 up{0.0f, 0.0f, 1.0f}; // view up; cinematic cameras roll
 
     glm::vec3 forward() const {
         return {std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), std::sin(pitch)};
     }
     glm::vec3 right() const { return {std::sin(yaw), -std::cos(yaw), 0.0f}; }
-    glm::mat4 view() const { return glm::lookAt(position, position + forward(), glm::vec3(0, 0, 1)); }
+    glm::mat4 view() const { return glm::lookAt(position, position + forward(), up); }
     glm::mat4 projection(float aspect) const {
         return glm::perspective(glm::radians(verticalFovDeg), aspect, nearZ, farZ);
     }

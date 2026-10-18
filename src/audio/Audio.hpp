@@ -94,7 +94,7 @@ struct Mul {
     std::vector<Subtitle> subtitles;
     uint32_t cinematicPackets = 0;
     bool sceneFrames = false; // cinstream: frames carry scene channels; subtitles not extracted here
-                              // (locale::parseCineStream handles those)
+                              // (cine::scan / cine::Player handle those)
 };
 inline constexpr size_t kMulHeaderSize = 0x800;
 MulHeader parseMulHeader(std::span<const uint8_t> d);

@@ -18,10 +18,12 @@
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 
+#include "app/game/Cinematic.hpp"
 #include "anim/Anim.hpp"
 #include "audio/Audio.hpp"
 #include "audio/Mixer.hpp"
 #include "cdc/Cdc.hpp"
+#include "cine/Cine.hpp"
 #include "collision/Collision.hpp"
 #include "config/Config.hpp"
 #include "engine/FrameClock.hpp"
@@ -57,6 +59,7 @@ struct Options {
     bool noAudio = false;
     std::filesystem::path musicWav; // --music-wav FILE: no device; every tick's mixer output goes to a WAV
     std::string loadSlot; // --load SLOT: start from $XDG_DATA_HOME/openunderworld/saves/SLOT.ousave
+    std::string cine;     // --cine NAME: play pc-w\cinstream\NAME.mul in its unit (--frames/--screenshot apply), then exit
     double die = -1;      // --die SECONDS: Lara dies then (death clip) and respawns at the last checkpoint
     std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
     ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr/--rt/--rt-quality (or --config)
@@ -67,7 +70,7 @@ void usage() {
     std::fprintf(stderr,
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
-                 "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay]\n"
+                 "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--show-collision] [--show-triggers] [--show-enemies]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
@@ -136,6 +139,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         }
         else if (a == "--load") o.loadSlot = v;
         else if (a == "--die") o.die = std::atof(v);
+        else if (a == "--cine") o.cine = v;
         else if (a == "--target") {
             std::array<float, 3> t{};
             if (std::sscanf(v, "%f,%f,%f", &t[0], &t[1], &t[2]) != 3) { std::fprintf(stderr, "--target wants X,Y,Z\n"); return false; }
@@ -690,7 +694,7 @@ std::optional<ou::ui::Nav> padNav(uint8_t b) {
 int main(int argc, char** argv) {
     Options opt;
     if (!parseArgs(argc, argv, opt)) { usage(); return 2; }
-    const bool menuStart = opt.level.empty() && opt.chapter < 0 && opt.loadSlot.empty();
+    const bool menuStart = opt.level.empty() && opt.chapter < 0 && opt.loadSlot.empty() && opt.cine.empty();
 
     // ---- load: simulation data first (no window needed to fail early) ----
     std::optional<ou::game::InputScript> script;
@@ -716,6 +720,12 @@ int main(int argc, char** argv) {
         std::string unit = opt.level.substr(opt.level.find_last_of('\\') + 1);
         if (unit.ends_with(".drm")) unit.resize(unit.size() - 4);
         if (opt.level.empty()) unit = std::string(ou::game::kChapters[size_t(std::max(opt.chapter, 0))].unit);
+        if (!opt.cine.empty()) { // the cinematic's own unit (CINE header)
+            const auto mul = bf.read("pc-w\\cinstream\\" + opt.cine + ".mul");
+            if (!mul) throw std::runtime_error("pc-w\\cinstream\\" + opt.cine + ".mul not in bigfile");
+            unit = ou::cine::parseHeader(ou::cine::demux(*mul)).unitName;
+            std::transform(unit.begin(), unit.end(), unit.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+        }
         std::optional<ou::game::Spawn> spawn;
         if (opt.spawn) spawn = ou::game::Spawn{{(*opt.spawn)[0], (*opt.spawn)[1], (*opt.spawn)[2]}, glm::radians((*opt.spawn)[3])};
         world = std::make_unique<ou::game::World>([&bf](const std::string& n) { return ou::game::loadUnitData(bf, n); }, unit,
@@ -906,6 +916,48 @@ int main(int argc, char** argv) {
         menus.saves = listSaves();
         menus.open(ou::ui::Screen::Main);
     }
+    // ---- cinematics (src/cine, app/game/Cinematic.*): --cine, and the cinematic_objects scripts activate (level ends) ----
+    auto cineView = [&] {
+        ou::app::CineView v{*bigfile, *world, *renderer, window.get(), audioOn ? &mixer : nullptr, scene, lara.meshIndices, streamed.gunIndices};
+        v.renderHz = opt.renderHz;
+        v.frame.msaa = opt.gfx.msaa, v.frame.shadows = opt.gfx.shadows, v.frame.fxaa = opt.gfx.fxaa, v.frame.hdr = opt.gfx.hdr;
+        v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
+        v.overlay = !opt.noOverlay;
+        v.musicVolume = float(menus.musicVolume) / 10;
+        return v;
+    };
+    if (!opt.cine.empty()) {
+        auto v = cineView();
+        v.maxFrames = opt.frames;
+        try {
+            const auto r = ou::app::playCinematic(opt.cine, v);
+            if (r.lastImage && !opt.screenshot.empty()) {
+                if (!writePpm(opt.screenshot, *r.lastImage)) return 1;
+                std::fprintf(stderr, "ou-game: wrote %s (%dx%d)\n", opt.screenshot.string().c_str(), r.lastImage->width, r.lastImage->height);
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: --cine: %s\n", e.what());
+            return 1;
+        }
+        renderer->shutdown();
+        return 0;
+    }
+    std::set<std::string> playedCines; // [I] each plays once per session
+    world->onCinematic = [&](const std::string& name, bool levelEnd) {
+        if (!playedCines.insert(name).second) return;
+        try {
+            const auto r = ou::app::playCinematic(name, cineView());
+            if (r.quit) running = false;
+            if (!levelEnd && r.laraPos) { // the stream leaves Lara where it ends (0x455D90)
+                auto s = world->player().state();
+                s.pos = *r.laraPos, s.yaw = r.laraYaw, s.vel = glm::vec3(0);
+                world->restore(s, world->camera().yaw, world->camera().pitch);
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: cinematic %s: %s\n", name.c_str(), e.what());
+        }
+        streamed.version = ~0ull; // re-upload the game scene
+    };
 
     const bool interactive = !script;
     SDL_SetWindowRelativeMouseMode(window.get(), interactive && !menuStart);

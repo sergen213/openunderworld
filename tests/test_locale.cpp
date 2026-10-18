@@ -153,86 +153,19 @@ TEST(Subtitles, CineLinesDropSpeaker) {
     EXPECT_EQ(cineSubtitleLines("Odd: "), (std::vector<std::string>{"Odd: "}));
 }
 
-namespace {
-
-// CINE stream: 1 "A" entry (9 channels), 1 instance with 1 bone (17) and 2 extra channels, 2 frames.
-std::vector<uint8_t> syntheticCine(int frames, std::string_view subtitle) {
-    std::vector<uint8_t> b;
-    putStr(b, "ENIC");
-    put32(b, 9);
-    put32(b, 0); // header size, patched below
-    std::string name = "l1_test";
-    name.resize(64);
-    putStr(b, name);
-    put32(b, 0x2C);
-    put32(b, 1);
-    b.resize(b.size() + 12);
-    put32(b, 1);                                  // instances
-    put32(b, 7); put32(b, ~0u); put32(b, 1); put32(b, 0);
-    b.resize(b.size() + 64);                      // bone matrix
-    put32(b, 0); put32(b, 0);                     // nC
-    put32(b, 2); put32(b, 0);                     // nD channels
-    put32(b, 0);                                  // nE
-    put32(b, 0); put32(b, 0);                     // nF
-    put32(b, 0);
-    b.resize(b.size() + 28);                      // instance dwords
-    set32(b, 8, uint32_t(b.size() - 8));
-    const int channels = 9 + 14 + 3 + 2;
-    for (int f = 0; f < frames; ++f) {
-        const size_t start = b.size();
-        put32(b, 0);
-        put32(b, uint32_t(f));
-        for (int c = 0; c < channels; ++c) {
-            const bool animated = c % 2;
-            if (f == 0) put32(b, uint32_t(frames) | (animated ? 0x10000000u : 0));
-            if (f == 0 || animated) put32(b, 0x3F800000);
-        }
-        const std::string_view sub = f == 0 ? subtitle : "";
-        put32(b, uint32_t(sub.size()));
-        putStr(b, sub);
-        b.resize((b.size() + 15) / 16 * 16);
-        set32(b, start, uint32_t(b.size() - start - 4));
-    }
-    put32(b, 0);
-    put32(b, ~0u);
-    return b;
-}
-
-} // namespace
-
-TEST(Cine, ParsesSyntheticStreamThroughMul) {
-    const auto cine = syntheticCine(2, "0\rLara: Hello\r1\rBonjour\r");
-    // .mul: 2048-byte header, cinematic stream split over two type-1 packets around a sound packet.
-    std::vector<uint8_t> mul(2048);
-    auto packet = [&](uint32_t type, std::span<const uint8_t> data) {
-        put32(mul, type);
-        put32(mul, uint32_t(data.size()));
-        put32(mul, 0);
-        put32(mul, 0);
-        mul.insert(mul.end(), data.begin(), data.end());
-    };
-    packet(1, std::span(cine).first(100));
-    packet(0, std::vector<uint8_t>(48, 0x55));
-    packet(1, std::span(cine).subspan(100));
-    EXPECT_EQ(mulCinematicStream(mul), cine);
-
-    const CineInfo info = parseCineStream(cine);
-    EXPECT_EQ(info.unitName, "l1_test");
-    EXPECT_EQ(info.channels, 28);
-    EXPECT_EQ(info.frames, 2);
-    ASSERT_EQ(info.subtitles.size(), 2u);
-    EXPECT_EQ(info.subtitles[0].frame, 0);
-    EXPECT_EQ(info.subtitles[0].language, 0);
-    EXPECT_EQ(info.subtitles[0].text, "Lara: Hello");
-    EXPECT_EQ(info.subtitles[1].language, 1);
-    EXPECT_EQ(info.subtitles[1].text, "Bonjour");
-
-    EXPECT_THROW(parseCineStream(std::span(cine).first(cine.size() - 6)), FormatError);
-    auto bad = cine;
-    bad[0] = 'X';
-    EXPECT_THROW(parseCineStream(bad), FormatError);
-    mul.resize(mul.size() - 1);
-    EXPECT_THROW(mulCinematicStream(mul), FormatError);
+TEST(Subtitles, CineBlobHasEveryLanguage) {
+    std::vector<CineSubtitle> out;
+    appendCineSubtitles(" 0\rLara: Hello\r1\rBonjour\r", 7, out);
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_EQ(out[0].frame, 7);
+    EXPECT_EQ(out[0].language, 0);
+    EXPECT_EQ(out[0].text, "Lara: Hello");
+    EXPECT_EQ(out[1].language, 1);
+    EXPECT_EQ(out[1].text, "Bonjour");
+    out.clear();
+    appendCineSubtitles("0\r" + std::string(300, 'x') + "\r", 0, out); // cut at 255 bytes
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].text.size(), 255u);
 }
 
 // ---- Real data (skipped without OU_GAME_DIR) -------------------------------------------
@@ -277,34 +210,6 @@ TEST(LocaleRealData, PrevontrMovieSubtitles) {
         const bool present = lang != Language::Japanese && lang != Language::Portuguese && lang != Language::UkEnglish;
         EXPECT_EQ(!parseMovieSchema(text, lang).empty(), present) << languageName(lang);
     }
-}
-
-TEST(LocaleRealData, CinematicSubtitles) {
-    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const auto mul = ou::cdc::BigfileSet(gameDir()).read("pc-w\\cinstream\\060_med_natla.mul");
-    ASSERT_TRUE(mul);
-    const CineInfo info = parseCineStream(mulCinematicStream(*mul));
-    EXPECT_EQ(info.unitName, "l1_ship_natla_room");
-    EXPECT_EQ(info.frames, 3181);
-    EXPECT_EQ(info.channels, 6933);
-    size_t english = 0;
-    for (const auto& s : info.subtitles) {
-        EXPECT_TRUE(strictUtf8(s.text));
-        if (s.language == 0 && english++ == 0) {
-            EXPECT_EQ(s.frame, 109);
-            EXPECT_EQ(s.text, "Damn, it's too small...");
-        }
-    }
-    EXPECT_GT(english, 10u);
-
-    // Voice-line streams: scene-less CINE header (0 channels), no -1 terminator.
-    const auto vo = ou::cdc::BigfileSet(gameDir()).read("pc-w\\audio\\streams\\vo\\lara\\sc_04_01_answer.mul");
-    ASSERT_TRUE(vo);
-    const CineInfo voInfo = parseCineStream(mulCinematicStream(*vo));
-    EXPECT_EQ(voInfo.channels, 0);
-    ASSERT_FALSE(voInfo.subtitles.empty());
-    EXPECT_EQ(voInfo.subtitles[0].language, 0);
-    EXPECT_EQ(voInfo.subtitles[0].text, "\"I need to find an ancient Mayan Ball Court.\"");
 }
 
 TEST(VideoRealData, DecodesBinkVideoAndAudio) {

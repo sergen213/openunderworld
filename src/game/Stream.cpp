@@ -3,6 +3,7 @@
 #include "game/Game.hpp"
 
 #include "cdc/Cdc.hpp"
+#include "cine/Cine.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -59,6 +60,8 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
         for (const auto& s : strings)
             if (chapterIndex(s) >= 0) starts.push_back(s);
         if (!starts.empty() && n->second == "cinematic_object") u.chapterLinks[in.uniqueId] = std::move(starts);
+        if (n->second == "cinematic_object")
+            if (auto c = cine::introCinematic(*drm, in.scriptId); !c.empty()) u.cinematics[in.uniqueId] = std::move(c);
         for (const auto& s : strings)
             if (isMusic(bigfile, s)) {
                 u.musicByIntro[in.uniqueId] = s;
@@ -243,16 +246,20 @@ void World::collectPickups(bool pressed) {
 void World::checkLevelEnd() {
     for (const auto& e : script_.events()) {
         if (e.kind != script::EventKind::Activate) continue;
-        for (const auto& u : units_)
-            if (const auto it = u.data.chapterLinks.find(e.target); it != u.data.chapterLinks.end())
-                if (const auto next = nextChapter(chapter, it->second)) {
-                    try {
-                        startChapter(*next);
-                    } catch (const std::exception& ex) {
-                        warnings.push_back(std::string("level end -> chapter ") + std::to_string(*next) + ": " + ex.what());
-                    }
-                    return;
+        for (const auto& u : units_) {
+            const auto it = u.data.chapterLinks.find(e.target);
+            const auto next = it != u.data.chapterLinks.end() ? nextChapter(chapter, it->second) : std::nullopt;
+            if (const auto c = u.data.cinematics.find(e.target); c != u.data.cinematics.end() && onCinematic)
+                onCinematic(c->second, next.has_value()); // before the chapter change: it plays in this unit
+            if (next) {
+                try {
+                    startChapter(*next);
+                } catch (const std::exception& ex) {
+                    warnings.push_back(std::string("level end -> chapter ") + std::to_string(*next) + ": " + ex.what());
                 }
+                return;
+            }
+        }
     }
 }
 

@@ -8,6 +8,7 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ### Added
 - Optional hardware ray tracing in the Vulkan renderer (Enhanced preset): `--rt shadows` for soft ray-traced sun shadows (alpha-tested foliage included, no distance limit), `--rt full` adds water reflections; `--rt-quality low|medium|high`, config keys `graphics.rt` / `graphics.rt_quality`, status in the overlay. Falls back to the shadow map on GPUs without ray queries. `ou-game` now takes the graphics flags too (`--preset`, `--msaa`, `--shadows`, `--fxaa`, `--hdr`, `--rt`, `--rt-quality`).
+- In-engine cutscenes: the 53 cinematic streams are decoded (camera with field of view and cuts, Lara's and the other actors' animation) and play in `ou-game` with their sound track and subtitles; chapter-closing cinematics play before the next chapter, script-triggered ones where the level activates them; Esc skips; `--cine NAME` plays one cutscene.
 
 ## [0.3.0] - 2026-10-18
 

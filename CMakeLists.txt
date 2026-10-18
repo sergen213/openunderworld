@@ -210,7 +210,7 @@ endif()
 add_library(ou_locale STATIC src/locale/Locale.cpp)
 target_link_libraries(ou_locale PUBLIC ou_cdc)
 add_executable(ou-text tools/ou-text/main.cpp)
-target_link_libraries(ou-text PRIVATE ou_locale)
+target_link_libraries(ou-text PRIVATE ou_locale ou_cine)
 pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavformat libavcodec libswscale libswresample libavutil)
 find_package(SDL3_ttf CONFIG)
 add_library(ou_video STATIC src/video/Movie.cpp src/video/Player.cpp)
@@ -245,10 +245,19 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_script_tests DISCOVERY_TIMEOUT 30)
 endif()
 
+# ---- ou_cine: in-engine cutscene streams (cinstream .mul), camera/actor playback (docs/formats/CINEMATICS.md) ----
+add_library(ou_cine STATIC src/cine/Cine.cpp)
+target_link_libraries(ou_cine PUBLIC ou_script ou_locale glm::glm)
+if(OU_BUILD_TESTS)
+  add_executable(ou_cine_tests tests/test_cine.cpp)
+  target_link_libraries(ou_cine_tests PRIVATE ou_cine GTest::gtest_main)
+  gtest_discover_tests(ou_cine_tests DISCOVERY_TIMEOUT 30)
+endif()
+
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp
   src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp)
-target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script glm::glm PRIVATE SDL3::SDL3)
+target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)
 target_include_directories(ou_save PUBLIC src)
@@ -256,7 +265,7 @@ target_link_libraries(ou_save PUBLIC ou_game nlohmann_json::nlohmann_json PRIVAT
 # ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
 add_library(ou_ui STATIC src/ui/Ui.cpp)
 target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale)
-add_executable(ou-game src/app/game/main.cpp)
+add_executable(ou-game src/app/game/main.cpp src/app/game/Cinematic.cpp)
 target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio)
 if(OU_BUILD_TESTS)
   add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp)

@@ -179,7 +179,7 @@ u32 0
   - Frame 0 carries the text. Every later frame is `{12, n, 0, 0}`, one per 30 Hz frame [V-data,
     all 2485].
   - cinstream files carry scene channels in their frames. `ou_audio` flags them (`sceneFrames`) and
-    leaves them to `locale::parseCineStream` ([TEXT.md](TEXT.md)).
+    leaves them to `src/cine` ([CINEMATICS.md](CINEMATICS.md)).
 - **Padding.** Type 3 appears once: 1456 bytes in `naga_combat_loop_with_intro(1).mul`, ending
   exactly at the 0x15000 loop packet. Type 2 is TR7's `kPaddingPacket` [S]; it is not seen in TRU.
 

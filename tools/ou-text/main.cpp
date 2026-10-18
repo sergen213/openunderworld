@@ -4,6 +4,7 @@
 #include <string>
 
 #include "cdc/Cdc.hpp"
+#include "cine/Cine.hpp"
 #include "locale/Locale.hpp"
 
 namespace fs = std::filesystem;
@@ -80,9 +81,9 @@ int main(int argc, char** argv) try {
     } else if (cmd == "cine" && pos.size() >= 2) {
         auto mul = cdc::BigfileSet(game, locale::specMask(lang)).read("pc-w\\cinstream\\" + pos[1] + ".mul");
         if (!mul) throw std::runtime_error("no pc-w\\cinstream\\" + pos[1] + ".mul");
-        const auto info = locale::parseCineStream(locale::mulCinematicStream(*mul));
-        std::printf("# unit %s, %d frames (%.2f s at 30 fps), %d channels, %zu subtitle entries\n", info.unitName.c_str(),
-                    info.frames, info.frames / 30.0, info.channels, info.subtitles.size());
+        const auto info = cine::scan(cine::demux(*mul));
+        std::printf("# unit %s, %d frames (%.2f s at 30 fps), %u channels, %zu subtitle entries\n", info.header.unitName.c_str(),
+                    info.frames, info.frames / 30.0, info.header.channels, info.subtitles.size());
         for (const auto& s : info.subtitles)
             if (allLangs || s.language == static_cast<int>(lang))
                 std::printf("%6d\t%8.3f\t%2d\t%s\n", s.frame, s.frame / 30.0, s.language, escaped(s.text).c_str());

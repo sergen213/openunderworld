@@ -193,39 +193,9 @@ std::vector<std::string> cineSubtitleLines(std::string_view text) {
     return out;
 }
 
-// ---- Cinematic streams ----------------------------------------------------------------------
+// ---- Cinematic subtitles ---------------------------------------------------------------------
 
-std::vector<uint8_t> mulCinematicStream(std::span<const uint8_t> mul) {
-    // MultiplexStream: 2048-byte header, then packets {u32 type, u32 size, u32 pad[2], size bytes}.
-    // Type 0 = sound, 1 = cinematic, 2 = padding.
-    if (mul.size() < 2048) throw FormatError("mul: truncated header");
-    std::vector<uint8_t> out;
-    for (size_t o = 2048; o + 16 <= mul.size();) {
-        const uint32_t type = rd32(mul, o), size = rd32(mul, o + 4);
-        if (size > mul.size() - o - 16) throw FormatError("mul: truncated packet");
-        if (type == 1) out.insert(out.end(), mul.begin() + o + 16, mul.begin() + o + 16 + size);
-        o += 16 + size;
-    }
-    return out;
-}
-
-namespace {
-
-struct Reader {
-    std::span<const uint8_t> b;
-    size_t p = 0;
-    void need(size_t n) const {
-        if (n > b.size() - p) throw FormatError("cine: truncated at " + std::to_string(p));
-    }
-    uint32_t u32() { need(4); uint32_t v = rd32(b, p); p += 4; return v; }
-    void skip(uint64_t n) {
-        if (n > b.size() - p) throw FormatError("cine: truncated at " + std::to_string(p));
-        p += n;
-    }
-};
-
-// One subtitle blob (0x4538D0): repeated "<lang>\r<text>\r", text cut at 255 bytes.
-void parseSubtitleBlob(std::string_view s, int frame, std::vector<CineSubtitle>& out) {
+void appendCineSubtitles(std::string_view s, int frame, std::vector<CineSubtitle>& out) {
     auto skipSpace = [&](size_t& i) { while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i; };
     size_t i = 0;
     skipSpace(i);
@@ -240,85 +210,6 @@ void parseSubtitleBlob(std::string_view s, int frame, std::vector<CineSubtitle>&
         out.push_back({frame, lang, std::move(text)});
         skipSpace(i);
     }
-}
-
-} // namespace
-
-CineInfo parseCineStream(std::span<const uint8_t> cine) {
-    // Header as read by 0x4537A0 + 0x456580; the channel count is their running total (+0xCC).
-    Reader r{cine};
-    r.need(12);
-    if (std::memcmp(cine.data(), "ENIC", 4) != 0) throw FormatError("cine: bad magic");
-    r.p = 8;
-    const uint32_t headerSize = r.u32(); // bytes after the magic + version
-    CineInfo info;
-    r.need(64);
-    info.unitName.assign(reinterpret_cast<const char*>(cine.data() + r.p), strnlen(reinterpret_cast<const char*>(cine.data() + r.p), 64));
-    r.p += 64;
-    r.u32();
-    uint64_t channels = 0;
-    const uint32_t nA = r.u32();
-    r.skip(12ull * nA);
-    channels += 9ull * nA;
-    const uint32_t nInstances = r.u32();
-    for (uint32_t i = 0; i < nInstances; ++i) {
-        r.u32(); r.u32();
-        const uint32_t bones = r.u32();
-        r.u32();
-        r.skip(64ull * bones); // 4x4 float matrices (0x453630)
-        channels += 14ull * bones + 3;
-        const uint32_t nC = r.u32();
-        r.u32();
-        r.skip(24ull * nC);
-        channels += 10ull * nC;
-        channels += r.u32();
-        r.u32();
-    }
-    const uint32_t nE = r.u32();
-    r.skip(4ull * nE);
-    channels += 16ull * nE;
-    r.u32();
-    const uint32_t nF = r.u32();
-    r.skip(8ull * nF);
-    channels += nF;
-    r.skip(4);
-    if (r.p < headerSize) r.skip(28ull * nInstances); // per-instance 7 dwords
-    if (r.p != uint64_t(headerSize) + 8) throw FormatError("cine: header size mismatch");
-    if (channels > (1u << 20)) throw FormatError("cine: implausible channel count");
-    info.channels = int(channels);
-
-    // Frames (0x457100): u32 size; i32 frame (-1 ends); per channel a run-length coded float;
-    // u32 subtitle length + bytes; pad to 16. Voice-line .mul streams (0 channels) have no -1
-    // terminator and simply end at a frame boundary.
-    struct Run { uint32_t left = 0; bool animated = false; };
-    std::vector<Run> runs(channels);
-    while (r.p < cine.size()) {
-        const size_t start = r.p;
-        const uint32_t size = r.u32();
-        const int32_t frame = int32_t(r.u32());
-        if (frame == -1) break;
-        if (frame != info.frames) throw FormatError("cine: frame " + std::to_string(frame) + " out of sequence");
-        for (Run& run : runs) {
-            if (run.left == 0) {
-                const uint32_t v = r.u32();
-                run.left = v & 0x0FFFFFFF;
-                run.animated = (v & 0xF0000000) != 0;
-                r.skip(4); // first value of the run
-            } else if (run.animated) {
-                r.skip(4);
-            }
-            --run.left; // wraps for an (unobserved) zero-length run, as the exe's counter
-        }
-        const uint32_t subLen = r.u32();
-        r.need(subLen);
-        if (subLen && subLen < 0xFFF) // longer blobs: the exe shows "bad subtitle data" (none observed)
-            parseSubtitleBlob({reinterpret_cast<const char*>(cine.data() + r.p), subLen}, frame, info.subtitles);
-        r.p += subLen;
-        r.skip((16 - r.p % 16) % 16);
-        if (r.p - start != uint64_t(size) + 4) throw FormatError("cine: frame size mismatch at frame " + std::to_string(frame));
-        ++info.frames;
-    }
-    return info;
 }
 
 } // namespace ou::locale
