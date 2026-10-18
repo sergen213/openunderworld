@@ -5,12 +5,17 @@
 
 #include "anim/Anim.hpp"
 #include "collision/Collision.hpp"
+#include "formats/Formats.hpp"
+#include "script/Script.hpp"
 
 #include <glm/glm.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,6 +38,7 @@ struct Actions {
     bool jump = false; // held; the controller reacts to the press edge
     bool drop = false; // held; let go of a ledge
     bool interact = false; // held; switches/levers react to the press edge, push blocks while held (src/script)
+    bool save = false, load = false; // held; ou-game quicksaves / quickloads on the press edge (F5 / F9)
 };
 
 // ---- animations -------------------------------------------------------------------------------
@@ -125,6 +131,7 @@ public:
     void tick(vec2 move, const Actions& a, float dt);
     const PlayerState& state() const { return s_; }
     const Tuning& tuning() const { return t_; }
+    void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
     // World-space model matrix (root at pos; model -Y = forward).
     glm::mat4 modelMatrix(vec3 pos, float yaw) const;
 
@@ -168,9 +175,43 @@ struct Spawn {
     bool fromIntro = false;
 };
 
+// ---- units, streaming, checkpoints (docs/formats/LEVELS.md "Streaming", docs/SAVES.md) -------
+// A `checkpoint` / `invis_checkpoint` intro: respawn transform in its unit's frame (tru.exe 0x5D40C0).
+struct Checkpoint {
+    int32_t id = 0; // intro unique id
+    vec3 pos{0};
+    float yaw = 0;
+};
+// One unit's gameplay data in its own (render-terrain) frame.
+struct UnitData {
+    std::string name; // base name, "l4_pool" (pc-w\<name>.drm)
+    collision::CollisionMesh col; // BVH not built; World merges the loaded units
+    std::vector<formats::Portal> portals;
+    std::vector<Checkpoint> checkpoints;
+    std::optional<Spawn> spawn; // findSpawn
+    std::shared_ptr<const cdc::Drm> drm;
+};
+// Throws cdc::FormatError if pc-w\<name>.drm is missing or not a unit.
+UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name);
+using UnitLoader = std::function<UnitData(const std::string& name)>;
+struct LoadedUnit {
+    UnitData data;
+    vec3 offset{0};        // world = unit frame + offset (portal relocation, tru.exe 0x5D13E0)
+    size_t markupBase = 0; // first index of this unit's markup in World::collision().markup
+};
+struct CheckpointRef {
+    std::string unit;
+    int32_t id = 0;
+    bool operator==(const CheckpointRef&) const = default;
+};
+
 class World {
 public:
     World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tuning tuning = defaultTuning());
+    // Streaming world: `unit` at offset 0 plus its portal neighbours; Lara at `spawn` (unit frame), else
+    // at the unit's player intro. Throws what `loader` throws for `unit`; failing neighbours are warnings.
+    World(UnitLoader loader, const std::string& unit, AnimLibrary anims, std::optional<Spawn> spawn = {},
+          Tuning tuning = defaultTuning());
     World(const World&) = delete;
     World& operator=(const World&) = delete;
 
@@ -183,6 +224,10 @@ public:
     const CameraState& camera() const { return cam_; }
     const CameraState& previousCamera() const { return prevCam_; }
     uint64_t ticks() const { return ticks_; }
+    // Switches, doors, trigger volumes/planes, push blocks (src/script). Set its bigfile before ticking;
+    // the single-mesh constructor has no units: give it them with script().setUnits.
+    script::Runtime& script() { return script_; }
+    const script::Runtime& script() const { return script_; }
     float fovDeg = 60.0f; // vertical FOV, from config
 
     // State blended between the last two ticks (alpha in [0,1]).
@@ -192,9 +237,34 @@ public:
     // ticks; skin with anim::skinPalette and place with Player::modelMatrix(interpolated(alpha)).
     std::vector<glm::mat4> pose(double alpha) const;
 
+    // Streaming (empty units() for the single-mesh constructor).
+    const std::vector<LoadedUnit>& units() const { return units_; }
+    const LoadedUnit& currentUnit() const { return units_.at(current_); } // the unit Lara is in
+    uint64_t unitsVersion() const { return unitsVersion_; } // bumped whenever units() changes
+    std::vector<std::string> warnings;                      // streaming problems (missing neighbours, ...)
+    // Drops every unit, loads `unit` at offset 0 + neighbours, spawns Lara (unit frame) at `spawn`, else
+    // at checkpoint `checkpointId` of that unit, else at its player intro.
+    void enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32_t checkpointId = 0);
+    // Respawn after death: last checkpoint, else the start unit's spawn (tru.exe restores the checkpoint save).
+    void respawn();
+    const std::optional<CheckpointRef>& checkpoint() const { return checkpoint_; }
+    void setCheckpoint(std::optional<CheckpointRef> c) { checkpoint_ = std::move(c); }
+    std::set<int32_t> collected; // intro ids of picked-up items; saved, nothing collects yet
+
+    // Save/load helpers. Markup index <-> (unit, index in that unit); -1 / nullopt when not loaded.
+    std::optional<std::pair<std::string, int>> markupOwner(int index) const;
+    int markupIndex(const std::string& unit, int local) const;
+    // Replaces Lara's state (world frame) and the camera orbit; no interpolation across the jump.
+    void restore(const PlayerState& s, float camYaw, float camPitch);
+
 private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
     void updateCamera(const Actions& a, float dt);
+    LoadedUnit* findUnit(const std::string& name);
+    void streamAround(size_t center); // load portal neighbours of units_[center], unload the rest
+    void rebuildCollision();
+    void crossPortals(vec3 from, vec3 to);
+    void touchCheckpoints();
 
     collision::CollisionMesh col_;
     AnimLibrary anims_;
@@ -205,6 +275,15 @@ private:
     std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
     uint64_t ticks_ = 0;
+    UnitLoader loader_;
+    std::vector<LoadedUnit> units_;
+    size_t current_ = 0;
+    uint64_t unitsVersion_ = 0;
+    std::string startUnit_;
+    std::optional<Spawn> startSpawn_;
+    std::optional<CheckpointRef> checkpoint_;
+    script::Runtime script_;
+    uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
 };
 
 // The unit's `player` intro (objectlist.txt name), else the first intro; nullopt if the unit has none.
@@ -218,12 +297,12 @@ std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const c
 // ---- input ------------------------------------------------------------------------------------
 // Keyboard (SDL_GetKeyboardState) + optional gamepad -> actions. Mouse look is added by the app: it
 // accumulates relative motion per frame and feeds it to the next tick as a rate (see ou-game).
-// Keys: WASD/arrows move, Shift walk, Space jump, Ctrl/C drop, E interact. Pad: left stick move, right stick
+// Keys: WASD/arrows move, Shift walk, Space jump, Ctrl/C drop, E interact, F5/F9 save/load. Pad: left stick move, right stick
 // look, South jump, East drop, West interact, left shoulder walk.
 Actions readDevices(const bool* keys, SDL_Gamepad* pad);
 
 // Scripted input for deterministic replays. Text, one event per line: `<seconds> <action> [value]`.
-// Actions: forward, right (stick axes -1..1), walk, jump, drop, interact (0/1), lookx, looky (rad/s).
+// Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load (0/1), lookx, looky (rad/s).
 // A value persists until changed; times map to tick round(seconds * 60). '#' starts a comment.
 class InputScript {
 public:

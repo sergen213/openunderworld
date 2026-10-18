@@ -152,7 +152,24 @@ void World::tick(const Actions& a) {
     const vec2 fwd(std::cos(cam_.yaw), std::sin(cam_.yaw)), right(std::sin(cam_.yaw), -std::cos(cam_.yaw));
     vec2 move = right * a.move.x + fwd * a.move.y;
     if (glm::length(move) > 1) move = glm::normalize(move);
+    if (script_.holding()) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
     player_.tick(move, a, dt);
+    if (!units_.empty()) { // streaming world (src/game/Stream.cpp)
+        crossPortals(prev_.pos, player_.state().pos);
+        touchCheckpoints();
+    }
+    if (!units_.empty() && scriptUnits_ != unitsVersion_) { // scripted objects follow the loaded units
+        std::vector<script::UnitRef> refs;
+        for (const auto& u : units_) refs.push_back({u.data.name, u.data.drm, u.offset});
+        script_.setUnits(refs);
+        scriptUnits_ = unitsVersion_;
+    }
+    script_.tick({player_.state().pos, player_.state().yaw, a.move, a.interact}, &col_);
+    if (const vec3 d = script_.carried(); d != vec3(0)) { // Lara follows the block she pushes/pulls
+        auto s = player_.state();
+        s.pos += d;
+        player_.restore(s);
+    }
     updateCamera(a, dt);
     updatePose(dt, false);
     ++ticks_;

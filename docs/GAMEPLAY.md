@@ -29,7 +29,8 @@ overlay, Esc quits. `--fov` / the launcher config set the vertical FOV. Switches
 blocks: `src/script`, docs/formats/SCRIPTS.md; script events are logged to stderr.
 
 Input scripts: one event per line, `<seconds> <action> [value]`, `#` comments. Actions `forward`, `right` (stick
-axes −1..1), `walk`, `jump`, `drop`, `interact` (0/1, default value 1), `lookx`, `looky` (camera rate, rad/s). A value holds
+axes −1..1), `walk`, `jump`, `drop`, `interact`, `save`, `load` (0/1, default value 1; `save`/`load` = F5 quicksave /
+F9 quickload, docs/SAVES.md), `lookx`, `looky` (camera rate, rad/s). A value holds
 until changed; an event at `t` applies from tick `round(t · 60)`. With `--input-script` each rendered frame advances
 `1/--render-hz` seconds (default 60), so `--frames N` screenshots are reproducible.
 

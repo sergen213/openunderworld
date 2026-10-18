@@ -1,0 +1,7 @@
+# Quicksave in l4_ragnarok_room, keep running, quickload: the 'loaded' log line must equal the 'saved' one
+# (docs/SAVES.md). ou-game --level 'pc-w\l4_pool.drm' --frames 240
+0 forward -1
+2.0 save 1
+2.1 save 0
+3.5 load 1
+3.6 load 0

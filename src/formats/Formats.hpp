@@ -90,10 +90,24 @@ struct ImfPlacement {
     std::string name;
 };
 
+// Stream-unit portal: 0x100-byte record at Terrain +0x04 (count: i16 at Terrain +0x02). Coordinates are stored
+// relative to Level+0x80 like the collision meshes; parseUnit adds it (render-terrain frame).
+// Fields per tru.exe 0x5D13E0 (signal hook-up) and 0x5D2AA0 (portal hit); LEVELS.md "Streaming".
+struct Portal {
+    std::string toUnit;     // +0x00 char[128], unit base name ("l4_ragnarok_room")
+    int16_t toSignal = 0;   // +0x80 signal id of the matching portal in toUnit
+    int16_t signal = 0;     // +0x82 this portal's signal id
+    int16_t toStreamId = 0; // +0x84 stream unit id of toUnit
+    float min[3], max[3];   // +0x90, +0xA0 bounds; min is the relocation anchor
+    float quad[4][3];       // +0xB0 corners (float4 each)
+    float normal[3];        // +0xF0
+};
+
 struct Unit {
     std::vector<Intro> intros;
     std::vector<std::string> streamGroups; // stream DRM base names ("pc-w\\streamgroups\\<name>.drm")
     std::vector<ImfPlacement> imfs;
+    std::vector<Portal> portals;
 };
 // Parses the level struct (section 0) of a unit DRM. Throws cdc::FormatError on layout mismatch.
 Unit parseUnit(const cdc::Drm& unit);

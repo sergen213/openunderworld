@@ -142,6 +142,30 @@ Unit parseUnit(const cdc::Drm& d) {
             u.imfs.push_back(std::move(p));
         }
     }
+    // Level+0 -> Terrain {i16 ?, i16 numPortals, StreamUnitPortal*, ...}; portals are 0x100 bytes, stored like
+    // the collision meshes relative to the Level+0x80 offset, which we add (LEVELS.md "Streaming").
+    if (!level.ptrs.count(0)) return u; // no Terrain (synthetic levels): no portals
+    const auto tp = level.ptr(0, "Level.terrain");
+    const View tv(d, tp.section);
+    const float frame[3] = {level.at<float>(0x80), level.at<float>(0x84), level.at<float>(0x88)};
+    if (const auto n = tv.at<int16_t>(tp.offset + 2); n > 0) {
+        const auto pp = tv.ptr(tp.offset + 4, "stream unit portals");
+        const View pv(d, pp.section);
+        for (int16_t k = 0; k < n; ++k) {
+            const size_t b = pp.offset + 0x100 * size_t(k);
+            Portal p{};
+            pv.at<float>(b + 0xFC); // bounds check of the whole record
+            p.toUnit = pv.str({pp.section, uint32_t(b)});
+            if (p.toUnit.size() >= 128) throw FormatError("portal unit name not terminated");
+            p.toSignal = pv.at<int16_t>(b + 0x80), p.signal = pv.at<int16_t>(b + 0x82), p.toStreamId = pv.at<int16_t>(b + 0x84);
+            for (int i = 0; i < 3; ++i) {
+                p.min[i] = pv.at<float>(b + 0x90 + 4 * i) + frame[i], p.max[i] = pv.at<float>(b + 0xA0 + 4 * i) + frame[i];
+                p.normal[i] = pv.at<float>(b + 0xF0 + 4 * i);
+                for (int c = 0; c < 4; ++c) p.quad[c][i] = pv.at<float>(b + 0xB0 + 16 * c + 4 * i) + frame[i];
+            }
+            u.portals.push_back(std::move(p));
+        }
+    }
     return u;
 }
 

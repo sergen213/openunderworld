@@ -30,11 +30,13 @@ Actions readDevices(const bool* keys, SDL_Gamepad* pad) {
     a.drop = keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_RCTRL] || keys[SDL_SCANCODE_C] ||
              (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST));
     a.interact = keys[SDL_SCANCODE_E] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST));
+    a.save = keys[SDL_SCANCODE_F5];
+    a.load = keys[SDL_SCANCODE_F9];
     return a;
 }
 
 InputScript InputScript::parse(std::string_view text) {
-    static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact"};
+    static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact", "save", "load"};
     InputScript s;
     std::istringstream in{std::string(text)};
     std::string line;
@@ -75,6 +77,8 @@ Actions InputScript::at(uint64_t tick) const {
         else if (e.action == "jump") a.jump = e.value != 0;
         else if (e.action == "drop") a.drop = e.value != 0;
         else if (e.action == "interact") a.interact = e.value != 0;
+        else if (e.action == "save") a.save = e.value != 0;
+        else if (e.action == "load") a.load = e.value != 0;
         else if (e.action == "lookx") a.look.x = e.value;
         else a.look.y = e.value;
     }

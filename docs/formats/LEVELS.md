@@ -31,9 +31,9 @@ Every unit DRM begins with a general section: the **Level** struct. [O] in all 8
 |---|---|---|
 | +0x00 | `Terrain*` (24-byte section: portals, collision terrain groups) | [O] reloc; matches TRLAU-menu-hook TR8 `Terrain` |
 | +0x74 | unit data (DTPDATA section) | [O] `FUN_005B3860` reads intros from `Level+0x74` |
-| +0x80 | float3 offset between the collision and render frames | [O] reported by the Collision agent. Intros do **not** need it (see below) |
+| +0x80 | float3 offset between the collision and render frames | [O] reported by the Collision agent. Collision meshes **and portals** are stored relative to it; intros do **not** need it (see below and "Streaming") |
 | +0x90 | cell group data (general section) | [O] reloc; field layout matches DXHR `CellGroupData`, reordered |
-| +0x94… | stream-unit portals (`tolevelname[128]` …) | [O] e.g. "l4_ragnarok_room" in l4_pool |
+| +0xA0 (l4_pool) | stream-unit portal array, reached through `Terrain+0x04` (see "Streaming"); its position in section 0 varies (ballcourt: +0x2260) | [O] |
 
 ### Intros (placed instances)
 
@@ -111,6 +111,96 @@ Frame [O]: intros are in the **render-terrain frame**. They need no `Level+0x80`
 
   Column-major memory of a D3D row-major matrix is the same transform, so the matrix is copied as-is. Ballcourt's 3293
   IMFs reference 16 DTPs, all inside the unit DRM.
+
+## Streaming: portals, unit transitions
+
+Code: `formats::Portal` / `parseUnit` (Level.cpp), `game::loadUnitData` and `World` streaming in
+`src/game/Stream.cpp`. Tests: `Stream.*` (synthetic units) and `StreamReal.*` in `tests/test_save.cpp`. Replay:
+`tests/replays/pool_to_ragnarok.txt`.
+
+### Portal records [O]
+
+The Terrain record (`Level+0`, 24 bytes) starts `{i16 ?, i16 numPortals, StreamUnitPortal* portals, i32
+numTerrainGroups, TerrainGroup*, signalTerrainGroup*, ?}`. This matches the TR8 branch of TRLAU-menu-hook `Level.h`.
+Portals are 0x100 bytes:
+
+| Offset | Meaning | Evidence |
+|---|---|---|
+| +0x00 | `char[128]` target unit base name | [O] e.g. "l4_ragnarok_room" |
+| +0x80 | i16 **toSignal**: signal id of the matching portal in the target unit | [O] `0x5D13E0` compares it with the other unit's +0x82 |
+| +0x82 | i16 **signal**: this portal's own signal id | [O] same |
+| +0x84 | i16 **toStreamId**: stream-unit id of the target | [O] `0x5D13E0` / `0x5D2AA0` compare it with `StreamUnit.id` |
+| +0x86..+0x8E | i16s (0/1, 16384, 17692, 0, …) | [U] |
+| +0x8C | runtime `StreamUnit*` of the target (written by `0x5D13E0`) | [O] |
+| +0x90 / +0xA0 | min / max, float4 | [O] |
+| +0xB0 | quad[4], float4 each | [O] |
+| +0xF0 | normal, float4 | [O] axis-aligned in the units checked |
+
+Frame [O]: portal coordinates are relative to `Level+0x80`, like the collision vertices. `parseUnit` adds the
+offset. Evidence:
+
+- With the offset, l4_pool's portal is the 3792 × 4424 doorway at x = −16434. Its floor (z 4741) is exactly the
+  `player` intro's height, and it is centred on y = 0.
+- l4_ragnarok_room's back portal lands next to its checkpoint 5669 (z −7850 vs −7851).
+- Without the offset, both portals float in empty space: no collision anywhere near them.
+
+Survey (82 units, `scratch/portalsurvey.py`) [O]:
+
+- 158 portals, all targets exist.
+- 156 pair with a back portal by signal (`back.signal == toSignal`); 152 of these have equal extents within 2 units,
+  the other 4 differ by 30–35 units in one axis (ballcourt↔trailtube, valgrind↔valgrind_tunnel).
+- `l2_cliffhall_b` ↔ `l2_hubhall` do **not** pair: cliffhall_b has to 74 / signal 78, hubhall has to 75 /
+  signal 73. [I] tru.exe would hit its "Can't find signal%d in unit %s" error there. We log a warning and do not
+  stream that neighbour.
+
+### How tru.exe streams [O]
+
+- `STREAM_LevelLoadAdjacentUnits` (0x5D2940) keeps the portal neighbours of the player's unit loaded.
+- When a unit loads, `0x5D13E0` hooks it to the loaded units. For each portal P of the new unit N whose
+  `toStreamId` is a loaded unit L, it finds the portal Q of L with `Q.signal == P.toSignal` and relocates N by
+  `Q.min − P.min`. This goes through `0x5D10D0`, which calls RelocateUnit 0x5C6210 ("RelocateUnit (%s, (%g, %g,
+  %g))") and shifts terrain groups, instances, markup, sounds, etc. Only the first match relocates.
+- So every streamed unit is moved into the frame of the unit that was loaded first. Moving into a new unit
+  (`0x5B3A20`) only sets the instance's unit id (`instance+0xE0`). It does **not** move coordinates.
+- Crossing: when an instance's collision hits a signal of the unit's signal terrain group, `0x5D2CA0` calls
+  `0x5D2AA0` ("Hit stream portal in %s to %s") with the portal index at signal `+0x14`.
+  - If the target unit is loaded, the instance moves into it.
+  - If not, and the instance is the player, the game loads it synchronously (a `Sleep(5)` poll loop) and then moves.
+  - Other instances that reach an unloaded unit get instance flag 0x20 and `0x556680` is called. Their meaning is
+    [U]; [I] they are parked until the unit loads.
+
+### Ours [I unless marked]
+
+- `World(UnitLoader, unit, …)` loads `unit` at offset 0 plus every portal target. Each target goes at the offset
+  computed exactly as `0x5D13E0` does.
+- Collision: the loaded units' meshes and markup are merged into one `CollisionMesh` in the world frame, and its BVH
+  is rebuilt on every change. Ledge and water markup indices in Lara's state are remapped across the rebuild.
+- Crossing: each tick, Lara's path at mid-body height (feet + 250) is tested against the planes of the current
+  unit's portals, inside their bounds ± 50. Crossing one makes its target the current unit. Then the target's
+  neighbours are loaded and every unit that is neither current nor adjacent is dropped. This replaces the signal
+  faces; the signal terrain group is not decoded.
+- A neighbour that failed to load is retried on crossing. Loads are synchronous, as in tru.exe.
+- Rendering (`ou-game`): each loaded unit's level scene, moved by its offset, is re-uploaded when the unit set
+  changes. Unit music stays the start unit's. Script objects follow the unit set (src/script).
+
+### Verification
+
+- [O] `StreamReal.PoolToRagnarokOnFootThenSaveLoad`:
+  - from l4_pool's `player` intro, Lara runs west; l4_ragnarok_room is already loaded at offset
+    (−20475.4, −2872.2, 12591.4);
+  - she crosses into ragnarok (tick 104 in the ou-game replay) without falling; her z stays within 80 of the start
+    (floors: pool 4721, ragnarok 4741);
+  - l4_staircase_mictlan streams in at (−20475, −5295, 12591).
+- [O] `ou-game` replay `pool_to_ragnarok.txt`, 2026-10-18: logged `tick 104 in unit l4_ragnarok_room | loaded:
+  l4_pool l4_ragnarok_room l4_staircase_mictlan`. The final screenshot (tick 180) shows Lara in the ragnarok
+  corridor with l4_pool's water and statue visible through the doorway, aligned.
+- [O] A ground probe across the doorway hits ragnarok's floor up to x −16500 and pool's from −16250 on (scratch
+  probe). The collision is continuous across the portal.
+- [O] `Stream.*`: neighbours load and old units unload, relocation offsets, no fall across the seam, a missing
+  neighbour gives a warning, markup index mapping.
+
+Open [U]: signal faces and the `Signal` records; portal +0x86..+0x8E; the unpaired l2 portals; whether tru.exe ever
+re-bases coordinates when the player moves far from the first unit.
 
 ## Survey (Python cross-check of the C++ layouts, 2026-10-18) [O]
 

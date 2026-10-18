@@ -1,0 +1,3 @@
+# l4_pool: from the player intro run west, out through the doorway portal into l4_ragnarok_room
+# (unit transition; docs/formats/LEVELS.md "Streaming"). ou-game --level 'pc-w\l4_pool.drm' --frames 180
+0 forward -1
