@@ -15,6 +15,8 @@
 #include <glm/glm.hpp>
 
 #include "anim/Anim.hpp"
+#include "audio/Audio.hpp"
+#include "audio/Mixer.hpp"
 #include "cdc/Cdc.hpp"
 #include "collision/Collision.hpp"
 #include "config/Config.hpp"
@@ -23,6 +25,7 @@
 #include "game/Game.hpp"
 #include "platform/Sdl.hpp"
 #include "render/Renderer.hpp"
+#include "video/Player.hpp"
 
 namespace {
 
@@ -40,6 +43,9 @@ struct Options {
     std::filesystem::path screenshot, inputScript;
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
+    bool intro = false;  // --intro: play Movies/intro.bik first (skippable)
+    int introFrames = -1; // --intro-frames N: stop the intro after N frames
+    bool noAudio = false;
 };
 
 void usage() {
@@ -47,7 +53,7 @@ void usage() {
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm] [--renderer opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay]\n"
-                 "               [--spawn X,Y,Z,YAWDEG]\n"
+                 "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-audio]\n"
                  "               [--show-collision] [--config config.json]\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop,\n"
                  "          mouse look; gamepad: left stick, right stick, A jump, B drop, LB walk; F1 overlay, Esc quit\n"
@@ -72,6 +78,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--fullscreen") { o.fullscreen = true; continue; }
         if (a == "--no-overlay") { o.noOverlay = true; continue; }
         if (a == "--show-collision") { o.showCollision = true; continue; }
+        if (a == "--intro") { o.intro = true; continue; }
+        if (a == "--no-audio") { o.noAudio = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         const char* v = argv[++i];
@@ -86,6 +94,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--input-script") o.inputScript = v;
         else if (a == "--render-hz") o.renderHz = std::atof(v);
+        else if (a == "--intro-frames") o.intro = true, o.introFrames = std::atoi(v);
         else if (a == "--spawn") {
             std::array<float, 4> s{};
             if (std::sscanf(v, "%f,%f,%f,%f", &s[0], &s[1], &s[2], &s[3]) != 4) { std::fprintf(stderr, "--spawn wants X,Y,Z,YAWDEG\n"); return false; }
@@ -158,6 +167,42 @@ std::vector<ou::render::DebugLine> collisionLines(const ou::collision::Collision
     return out;
 }
 
+// Footstep and landing sounds from the simulated pose. [I] A foot (bones 8, 13; z ~0 when standing in
+// ng_idle) dropping below 12 units in model space during walk/run/stop plays a heel wave; leaving the air
+// plays a landing wave. Waves are lara.drm Wave sections, stone variants only: the game's surface-material
+// to sound mapping is not decoded (AUDIO.md).
+struct Footsteps {
+    static constexpr uint32_t kHeel = 0x11A; // 'fst_boot_stone_b_heel_01' .. _10
+    static constexpr uint32_t kLand = 0x1D3; // 'fst_boot_stone_a_land_01' .. _05
+    bool down[2] = {true, true};
+    ou::game::State last = ou::game::State::Idle;
+    unsigned next = 0, plays = 0;
+
+    void tick(const ou::game::World& w, ou::audio::Mixer& mix) {
+        using ou::game::State;
+        const auto& s = w.player().state();
+        const bool wasAir = last == State::Jump || last == State::Fall, inAir = s.state == State::Jump || s.state == State::Fall;
+        if (wasAir && !inAir && s.state != State::Hang) plays += mix.play(kLand + next++ % 5, {.volume = 0.9f}) != 0;
+        last = s.state;
+        const ou::anim::Clip* clip = w.anims().find(s.clip);
+        if ((s.state != State::Walk && s.state != State::Run && s.state != State::Stop) || !clip) {
+            down[0] = down[1] = true;
+            return;
+        }
+        const auto& sk = w.anims().skeleton;
+        const auto m = ou::anim::worldMatrices(sk, ou::anim::sample(*clip, sk, s.clipTime, s.loop));
+        for (int f = 0; f < 2; ++f) {
+            const float z = m[f ? 13 : 8][3].z;
+            if (!down[f] && z < 12.0f) {
+                down[f] = true;
+                plays += mix.play(kHeel + next++ % 10, {.volume = s.state == State::Walk ? 0.5f : 0.8f}) != 0;
+            } else if (z > 25.0f) {
+                down[f] = false;
+            }
+        }
+    }
+};
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -211,6 +256,41 @@ int main(int argc, char** argv) {
     if (!sdl.ok) {
         std::fprintf(stderr, "ou-game: SDL_Init failed (%s); no display, skipping\n", SDL_GetError());
         return kExitSkip;
+    }
+    if (opt.intro) {
+        // Own plain window: the movie player needs one without a GL/Vulkan context.
+        if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) std::fprintf(stderr, "ou-game: no audio (%s); intro plays silent\n", SDL_GetError());
+        ou::platform::WindowPtr movieWindow(SDL_CreateWindow("OpenUnderworld", opt.width, opt.height, opt.fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
+        try {
+            ou::video::PlayOptions po;
+            po.maxFrames = opt.introFrames;
+            const auto st = ou::video::playMovie(movieWindow.get(), opt.gameDir / "Movies" / "intro.bik", po);
+            std::fprintf(stderr, "ou-game: intro %d frames%s\n", st.frames, st.skipped ? " (skipped)" : "");
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: intro: %s\n", e.what());
+        }
+    }
+
+    // ---- audio (ou_audio): Lara's Wave sections for footsteps/landings, the unit's music track ----
+    ou::audio::Mixer mixer; // after SdlInit: closes its device before SDL_Quit
+    Footsteps steps;
+    bool audioOn = false;
+    if (!opt.noAudio) {
+        try {
+            const ou::cdc::BigfileSet bigfile(opt.gameDir);
+            if (auto lara = bigfile.read("pc-w\\lara.drm")) mixer.addWaves(ou::cdc::parseDrm(std::move(*lara)));
+            // [I] music file naming seen in the bigfile (pc-w\music\<unit>_mus_01\...); how the game picks a track is unknown.
+            std::string unit = opt.level.substr(opt.level.find_last_of('\\') + 1);
+            unit = unit.substr(0, unit.rfind(".drm"));
+            const std::string musicPath = "pc-w\\music\\" + unit + "_mus_01\\" + unit + "_mus_01.mul";
+            auto music = bigfile.read(musicPath);
+            audioOn = mixer.openDevice();
+            if (!audioOn) std::fprintf(stderr, "ou-game: no audio device (%s)\n", SDL_GetError());
+            else if (music) mixer.playMusic(std::make_shared<ou::audio::Pcm>(ou::audio::decodeMul(*music).pcm), 1.0f);
+            std::fprintf(stderr, "ou-game: audio %s, music %s\n", audioOn ? "on" : "off", music ? musicPath.c_str() : "none");
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: audio: %s\n", e.what());
+        }
     }
     ou::platform::WindowPtr window; // before the renderer: GL context / VkSurface die first
     auto renderer = opt.renderer == "vulkan" ? ou::render::createVulkanRenderer() : ou::render::createGlRenderer();
@@ -277,6 +357,7 @@ int main(int argc, char** argv) {
             a.look -= mouse * kMouseSensitivity / float(ou::game::kTickSeconds);
             mouse = glm::vec2(0);
             world->tick(a);
+            if (audioOn) steps.tick(*world, mixer);
         }
 
         const auto s = world->interpolated(clock.alpha());
@@ -288,6 +369,7 @@ int main(int argc, char** argv) {
         cam.farZ = 200000.0f;
         cam.position = c.position;
         cam.lookAt(c.target);
+        if (audioOn) mixer.setListener({c.position, glm::normalize(c.target - c.position), {0, 0, 1}});
 
         ++fpsFrames;
         if (now - fpsStart >= 500'000'000ull) {
@@ -324,6 +406,7 @@ int main(int argc, char** argv) {
         }
         renderer->present();
     }
+    std::fprintf(stderr, "ou-game: %u footstep/landing sounds\n", steps.plays);
     renderer->shutdown();
     return 0;
 }

@@ -13,7 +13,13 @@ ou-game --game-dir "/path/to/Tomb Raider Underworld"            # pc-w\l4_pool.d
 ou-game --game-dir DIR --renderer vulkan --level 'pc-w\l4_ballcourt.drm'
 ou-game --game-dir DIR --input-script run.txt --frames 100 --screenshot run.ppm   # deterministic replay
 ou-game --game-dir DIR --spawn -4291,4225.6,3100,-157.9          # X,Y,Z,yaw-degrees override (l4_pool ledge 1253)
+ou-game --game-dir DIR --intro                                   # Movies/intro.bik first (ou_video, skippable)
 ```
+
+`--intro` plays the movie in its own plain window (the movie player needs a window without a GL/Vulkan context), then
+opens the game window; `--intro-frames N` stops it after N frames. [O] `--intro-frames 60` played 60 frames, then the
+level loaded (log only; the movie frames themselves are verified in VIDEO.md). Under ASan, SDL's renderer may pick
+Vulkan, so the RADV 256-byte leak needs `tests/lsan_vulkan.supp`.
 
 Controls: WASD/arrows move relative to the camera, Shift walks, Space jumps (and climbs up while hanging), Ctrl or C
 lets go of a ledge, mouse orbits the camera. Gamepad: left stick, right stick, South = jump/climb, East = drop,
@@ -23,6 +29,14 @@ Input scripts: one event per line, `<seconds> <action> [value]`, `#` comments. A
 axes −1..1), `walk`, `jump`, `drop` (0/1, default value 1), `lookx`, `looky` (camera rate, rad/s). A value holds
 until changed; an event at `t` applies from tick `round(t · 60)`. With `--input-script` each rendered frame advances
 `1/--render-hz` seconds (default 60), so `--frames N` screenshots are reproducible.
+
+Audio (`ou_audio`, docs/formats/AUDIO.md; `--no-audio` turns it off): lara.drm Wave sections are registered and the
+unit's music stream `pc-w\music\<unit>_mus_01\<unit>_mus_01.mul` loops (all stems at gain 1; [I] the naming is seen
+in the bigfile, how the game's Mus! sequencer picks and mixes tracks is [U]). Footsteps [I]: during walk/run/stop a
+foot (bones 8 and 13) dropping below 12 units in model space plays `fst_boot_stone_b_heel_01..10` (Wave 0x11A..0x123);
+leaving the air plays `fst_boot_stone_a_land_01..05` (0x1D3..0x1D7). Stone only: the surface-material → sound mapping
+is not decoded. [O] A 5.5 s replay (run, running jump, walk) opened the SDL device, played l4_pool_mus_01 and 11
+footstep/landing sounds without errors; the result was not listened to or captured.
 
 ## Structure
 
