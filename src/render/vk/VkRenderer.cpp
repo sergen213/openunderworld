@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,19 @@ const uint32_t kTextVert[] = {
 const uint32_t kTextFrag[] = {
 #include "text.frag.inc"
 };
+const uint32_t kLineVert[] = {
+#include "line.vert.inc"
+};
+const uint32_t kLineFrag[] = {
+#include "line.frag.inc"
+};
+
+enum class PipelineKind { Scene, Lines, Overlay };
+
+struct LineVertex {
+    float pos[3];
+    uint32_t color; // RGBA8
+};
 
 constexpr uint32_t kFramesInFlight = 2;
 constexpr uint32_t kMaxTextVertices = 6 * 8192; // whole quads; longer overlays are truncated
@@ -61,8 +75,10 @@ public:
         uint8_t* mapped = nullptr; // host-visible allocations stay persistently mapped
     };
 
-    void init(VkDevice device, VkPhysicalDevice gpu) {
+    // blockSize 0 = blocks sized exactly to each request (single-resource arenas: staging, depth, ...).
+    void init(VkDevice device, VkPhysicalDevice gpu, VkDeviceSize blockSize = kBlockSize) {
         device_ = device;
+        blockSize_ = blockSize;
         vkGetPhysicalDeviceMemoryProperties(gpu, &props_);
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(gpu, &p);
@@ -82,7 +98,7 @@ public:
             it->used = off + req.size;
             return {it->memory, off, it->mapped ? it->mapped + off : nullptr};
         }
-        Block b{VK_NULL_HANDLE, std::max(kBlockSize, req.size), req.size, type, nullptr};
+        Block b{VK_NULL_HANDLE, std::max(blockSize_, req.size), req.size, type, nullptr};
         VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, b.size, type};
         VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &b.memory));
         if (want & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
@@ -105,7 +121,7 @@ private:
     };
     VkDevice device_ = VK_NULL_HANDLE;
     VkPhysicalDeviceMemoryProperties props_{};
-    VkDeviceSize granularity_ = 1;
+    VkDeviceSize granularity_ = 1, blockSize_ = kBlockSize;
     std::vector<Block> blocks_;
 };
 
@@ -133,6 +149,8 @@ struct Frame {
     VkFence fence = VK_NULL_HANDLE;
     VkSemaphore acquired = VK_NULL_HANDLE;
     Buffer text;
+    Buffer lines; // debug lines, grown on demand in lineMemory_[frame]
+    VkDeviceSize lineCapacity = 0;
 };
 
 // Staged copies recorded into one command buffer. Sources must outlive flush().
@@ -412,6 +430,27 @@ public:
             }
         }
 
+        if (!options.debugLines.empty()) {
+            const VkDeviceSize bytes = options.debugLines.size() * 2 * sizeof(LineVertex);
+            if (bytes > f.lineCapacity) { // this frame's fence was waited above: its old buffer is idle
+                vkDestroyBuffer(device_, f.lines.buffer, nullptr);
+                lineMemory_[frameIndex_].reset();
+                f.lineCapacity = std::bit_ceil(std::max<VkDeviceSize>(bytes, 64 << 10));
+                f.lines = createBuffer(lineMemory_[frameIndex_], f.lineCapacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            }
+            auto* out = reinterpret_cast<LineVertex*>(f.lines.mapped);
+            for (const DebugLine& l : options.debugLines) { // ponytail: re-expanded every frame, cache if it shows up
+                *out++ = {{l.a[0], l.a[1], l.a[2]}, l.color};
+                *out++ = {{l.b[0], l.b[1], l.b[2]}, l.color};
+            }
+            const VkDeviceSize zero = 0;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipeline_);
+            vkCmdPushConstants(cmd, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &push.viewProj);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &f.lines.buffer, &zero);
+            vkCmdDraw(cmd, uint32_t(options.debugLines.size() * 2), 1, 0, 0);
+        }
+
         if (!options.overlay.empty()) {
             std::vector<TextVertex> v = buildOverlayVertices({int(extent_.width), int(extent_.height)}, options.overlay);
             const uint32_t count = std::min<uint32_t>(uint32_t(v.size()), kMaxTextVertices);
@@ -455,7 +494,7 @@ public:
             return {vp.width, vp.height, std::vector<uint8_t>(size_t(std::max(0, vp.width)) * std::max(0, vp.height) * 3)};
         const uint32_t w = extent_.width, h = extent_.height;
         LinearAllocator temp;
-        temp.init(device_, gpu_);
+        temp.init(device_, gpu_, 0);
         Buffer buf = createBuffer(temp, VkDeviceSize(w) * h * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         const VkImage target = swapImages_[imageIndex_];
@@ -532,13 +571,15 @@ public:
                 vkDestroyFence(device_, f.fence, nullptr);
                 vkDestroySemaphore(device_, f.acquired, nullptr);
                 vkDestroyBuffer(device_, f.text.buffer, nullptr);
+                vkDestroyBuffer(device_, f.lines.buffer, nullptr);
                 f = {};
             }
             destroyImage(white_);
             destroyImage(font_);
             vkDestroyDescriptorPool(device_, staticPool_, nullptr);
-            for (VkPipeline p : {scenePipeline_, textPipeline_}) vkDestroyPipeline(device_, p, nullptr);
-            for (VkPipelineLayout l : {sceneLayout_, textLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
+            for (VkPipeline p : {scenePipeline_, textPipeline_, linePipeline_}) vkDestroyPipeline(device_, p, nullptr);
+            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
+            for (auto& m : lineMemory_) m.reset();
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
             for (VkSampler s : {sceneSampler_, fontSampler_}) vkDestroySampler(device_, s, nullptr);
             vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
@@ -689,6 +730,7 @@ private:
         vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
         staticMemory_.init(device_, gpu_);
         sceneMemory_.init(device_, gpu_);
+        for (auto& m : lineMemory_) m.init(device_, gpu_, 0);
 
         for (VkFormat f : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D16_UNORM}) {
             VkFormatProperties fp;
@@ -738,6 +780,9 @@ private:
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &sceneLayout_));
         pl.pPushConstantRanges = &textPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &textLayout_));
+        VkPushConstantRange linePush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
+        VkPipelineLayoutCreateInfo ll{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &linePush};
+        VK_CHECK(vkCreatePipelineLayout(device_, &ll, nullptr, &lineLayout_));
 
         const VkVertexInputBindingDescription sceneBinding{0, sizeof(scene::Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
         const VkVertexInputAttributeDescription sceneAttrs[] = {
@@ -752,13 +797,20 @@ private:
             {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(TextVertex, u)},
             {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(TextVertex, color)},
         };
-        scenePipeline_ = createPipeline(kSceneVert, kSceneFrag, sceneLayout_, sceneBinding, sceneAttrs, false);
-        textPipeline_ = createPipeline(kTextVert, kTextFrag, textLayout_, textBinding, textAttrs, true);
+        const VkVertexInputBindingDescription lineBinding{0, sizeof(LineVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+        const VkVertexInputAttributeDescription lineAttrs[] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LineVertex, pos)},
+            {1, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(LineVertex, color)},
+        };
+        scenePipeline_ = createPipeline(kSceneVert, kSceneFrag, sceneLayout_, sceneBinding, sceneAttrs, PipelineKind::Scene);
+        linePipeline_ = createPipeline(kLineVert, kLineFrag, lineLayout_, lineBinding, lineAttrs, PipelineKind::Lines);
+        textPipeline_ = createPipeline(kTextVert, kTextFrag, textLayout_, textBinding, textAttrs, PipelineKind::Overlay);
     }
 
     VkPipeline createPipeline(std::span<const uint32_t> vs, std::span<const uint32_t> fs, VkPipelineLayout layout,
                               const VkVertexInputBindingDescription& binding,
-                              std::span<const VkVertexInputAttributeDescription> attrs, bool overlay) {
+                              std::span<const VkVertexInputAttributeDescription> attrs, PipelineKind kind) {
+        const bool overlay = kind == PipelineKind::Overlay;
         VkShaderModule v = shaderModule(vs), f = shaderModule(fs);
         VkPipelineShaderStageCreateInfo stages[2] = {
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, v, "main", nullptr},
@@ -767,7 +819,9 @@ private:
         VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, nullptr, 0, 1,
                                                 &binding, uint32_t(attrs.size()), attrs.data()};
         VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, nullptr, 0,
-                                                  VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE};
+                                                  kind == PipelineKind::Lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
+                                                                              : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                                                  VK_FALSE};
         VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, nullptr, 0, 1, nullptr, 1, nullptr};
         VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         rs.polygonMode = VK_POLYGON_MODE_FILL;
@@ -777,8 +831,10 @@ private:
         VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        ds.depthTestEnable = ds.depthWriteEnable = overlay ? VK_FALSE : VK_TRUE;
-        ds.depthCompareOp = VK_COMPARE_OP_LESS; // GL default
+        ds.depthTestEnable = overlay ? VK_FALSE : VK_TRUE;
+        ds.depthWriteEnable = kind == PipelineKind::Scene ? VK_TRUE : VK_FALSE;
+        // GL default LESS for the scene; debug lines use LEQUAL plus a small z bias (as the GL backend).
+        ds.depthCompareOp = kind == PipelineKind::Lines ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
         VkPipelineColorBlendAttachmentState blend{};
         blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
                                VK_COLOR_COMPONENT_A_BIT;
@@ -956,7 +1012,7 @@ private:
             for (const auto& r : job.mips) total += aligned(r.size);
         if (total == 0) return;
         LinearAllocator staging;
-        staging.init(device_, gpu_);
+        staging.init(device_, gpu_, 0);
         Buffer src = createBuffer(staging, total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         oneShot([&](VkCommandBuffer cmd) {
@@ -1081,7 +1137,7 @@ private:
             VK_CHECK(vkCreateSemaphore(device_, &sci, nullptr, &s));
             presentReady_.push_back(s);
         }
-        swapMemory_.init(device_, gpu_); // depth: own allocator, released with the swapchain
+        swapMemory_.init(device_, gpu_, 0); // depth: own allocator, released with the swapchain
         depth_ = createImage(swapMemory_, depthFormat_, extent.width, extent.height, 1,
                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
     }
@@ -1138,8 +1194,9 @@ private:
 
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout setLayout_ = VK_NULL_HANDLE;
-    VkPipelineLayout sceneLayout_ = VK_NULL_HANDLE, textLayout_ = VK_NULL_HANDLE;
-    VkPipeline scenePipeline_ = VK_NULL_HANDLE, textPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout sceneLayout_ = VK_NULL_HANDLE, textLayout_ = VK_NULL_HANDLE, lineLayout_ = VK_NULL_HANDLE;
+    VkPipeline scenePipeline_ = VK_NULL_HANDLE, textPipeline_ = VK_NULL_HANDLE, linePipeline_ = VK_NULL_HANDLE;
+    std::array<LinearAllocator, kFramesInFlight> lineMemory_;
     VkSampler sceneSampler_ = VK_NULL_HANDLE, fontSampler_ = VK_NULL_HANDLE;
     VkDescriptorPool staticPool_ = VK_NULL_HANDLE, scenePool_ = VK_NULL_HANDLE;
     GpuImage white_, font_;

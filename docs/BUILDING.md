@@ -141,7 +141,7 @@ Tests (all skip without a display or a usable Vulkan device):
 - `VulkanRenderer.ResizeRecreatesSwapchain` (`ou_vk_tests`): draws, resizes the SDL window
   320x240 → 640x200, feeds `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED` into `resize()` as the viewer
   does, checks the read-back size and content on the new swapchain; also checks re-upload and
-  `updateVertices`.
+  `updateVertices`, and that red `debugLines` appear only when passed.
 
 `ou-imgdiff a.ppm b.ppm [MAX_MEAN]` prints mean absolute channel error, the share of pixels
 off by more than 16 and PSNR; exit 1 above `MAX_MEAN` (default 4).
@@ -167,6 +167,10 @@ Observed (Debug + ASan/UBSan, Khronos validation layer 1.4.363 active):
   runs; clean shutdown (all child objects destroyed before `vkDestroyDevice`, checked by the
   layer).
 - Exit 77 with no display (`env -u WAYLAND_DISPLAY -u DISPLAY`) and with no ICD.
+- `--show-collision` on `pc-w\l4_pool.drm` (6043 collision faces, 73 markup polylines as
+  debug lines): GL vs Vulkan mean |Δ| 0.009/255, PSNR 49 dB. `--anim '#0' --anim-time 0.5` on
+  `pc-w\lara.drm` (CPU skinning via `updateVertices`): mean |Δ| 0.001/255, PSNR 66 dB; both
+  screenshots viewed (lines over the level, Lara posed).
 
 Not exercised: interactive mouse-drag resize and minimise, the `V` vsync toggle at runtime
 (both go through the same recreate path as the tested resize), non-AMD drivers, BC2 data.

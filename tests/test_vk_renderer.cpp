@@ -38,13 +38,13 @@ TEST(VulkanRenderer, ResizeRecreatesSwapchain) {
     ou::render::Camera cam;
     cam.position = {-1100.0f, -1300.0f, 700.0f};
     cam.lookAt({0.0f, 0.0f, 100.0f});
-    auto frame = [&] {
+    auto frame = [&](const ou::render::FrameOptions& options = {}) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) // same wiring as ou-viewer
             if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) r->resize({e.window.data1, e.window.data2});
         int pw = 0, ph = 0;
         SDL_GetWindowSizeInPixels(w, &pw, &ph);
-        r->drawFrame(cam, {pw, ph}, {});
+        r->drawFrame(cam, {pw, ph}, options);
         ou::render::Image img = r->readBackbuffer({pw, ph});
         r->present();
         EXPECT_EQ(img.width, pw);
@@ -60,6 +60,20 @@ TEST(VulkanRenderer, ResizeRecreatesSwapchain) {
     EXPECT_GT(b.width, b.height); // 640x200 logical, any HiDPI scale
     EXPECT_GT(nonClearPixels(a), a.rgb.size() / 30);
     EXPECT_GT(nonClearPixels(b), b.rgb.size() / 30);
+
+    // Debug lines: pure red segments floating above the ground must show up (and nothing red without them).
+    std::vector<ou::render::DebugLine> lines;
+    for (int i = -5; i <= 5; ++i)
+        lines.push_back({{-600.0f, i * 100.0f, 300.0f}, {600.0f, i * 100.0f, 300.0f}, 0xFF0000FFu});
+    auto red = [](const ou::render::Image& img) {
+        size_t n = 0;
+        for (size_t i = 0; i + 2 < img.rgb.size(); i += 3) n += img.rgb[i] > 250 && img.rgb[i + 1] < 5 && img.rgb[i + 2] < 5;
+        return n;
+    };
+    ou::render::FrameOptions withLines;
+    withLines.debugLines = lines;
+    EXPECT_EQ(red(frame()), 0u);
+    EXPECT_GT(red(frame(withLines)), size_t(b.width)); // 11 lines, each a few hundred pixels long
 
     r->shutdown();
     SDL_DestroyWindow(w);

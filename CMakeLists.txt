@@ -53,7 +53,7 @@ find_package(Vulkan REQUIRED COMPONENTS glslc)
 set(OU_VK_SPV_DIR ${CMAKE_CURRENT_BINARY_DIR}/vk_shaders)
 file(MAKE_DIRECTORY ${OU_VK_SPV_DIR})
 set(OU_VK_SPV)
-foreach(s scene.vert scene.frag text.vert text.frag)
+foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
