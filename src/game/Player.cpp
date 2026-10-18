@@ -61,7 +61,7 @@ std::string_view stateName(State s) {
     static constexpr std::string_view k[] = {"idle", "walk", "run", "stop", "turn", "jumpprep", "jump",
                                              "fall", "land", "hang", "shimmy", "climbup", "swimsplash",
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
-                                             "swimclimbout"};
+                                             "swimclimbout", "dead"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -135,7 +135,14 @@ void Player::spawn(vec3 feet, float yaw) {
     s_.pos = feet;
     s_.yaw = yaw;
     if (auto g = col_.groundProbe(feet + vec3(0, 0, t_.stepUp), t_.stepUp + 1000.0f)) s_.pos.z = g->point.z;
+    s_.fallStartZ = s_.pos.z;
     play("ng_idle", true);
+}
+
+void Player::die(std::string_view clip) {
+    s_.state = State::Dead;
+    s_.vel = vec3(0);
+    play(clip, false);
 }
 
 // Collide-and-slide of a capsule [pos + bottom + r, pos + height - r]. `horizontalNormals` flattens
@@ -173,12 +180,14 @@ void Player::groundMove(vec3 delta, float dt) {
     s_.pos = p; // walked off an edge (or onto a slope too steep to stand on)
     s_.vel = vec3(xy(delta) / dt, 0);
     s_.state = State::Fall;
+    s_.fallStartZ = s_.pos.z;
     play("NG_InAir_Feet_Forward_stage3", true);
 }
 
 void Player::land(vec2 move) {
     const float speed = glm::length(xy(s_.vel));
     s_.vel = vec3(0);
+    s_.fallHeight = s_.fallStartZ - s_.pos.z;
     if (speed > 600.0f && glm::length(move) > 0.5f) {
         s_.state = State::Run;
         play("ng_running_land", false);
@@ -276,6 +285,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     jumpHeld_ = a.jump;
     dropHeld_ = a.drop;
     s_.regrabCooldown = std::max(0.0f, s_.regrabCooldown - dt);
+    s_.fallHeight = 0;
     const float mag = std::min(1.0f, glm::length(move));
     const float target = mag > 0.1f ? std::atan2(move.y, move.x) : s_.yaw;
     const bool wantsMove = mag > 0.1f, wantsWalk = a.walk || mag < 0.5f;
@@ -348,6 +358,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (wantsMove && !running) s_.yaw = target;
         s_.vel = forward() * h + vec3(0, 0, running ? t_.runJumpVz : t_.jumpVz);
         s_.state = State::Jump;
+        s_.fallStartZ = s_.pos.z;
         play(running ? "NG_InAir_Feet_Forward_stage1" : "NG_InAir_Feet_Forward_stage1_standing", false);
         break;
     }
@@ -366,6 +377,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         const float lateral = glm::dot(move, right);
         if (dropPressed) {
             s_.state = State::Fall;
+            s_.fallStartZ = s_.pos.z;
             s_.pos -= forward() * 20.0f; // off the wall
             s_.ledge = -1;
             s_.regrabCooldown = 0.4f;
@@ -426,6 +438,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 play("ng_idle", true);
             } else {
                 s_.state = State::Fall;
+                s_.fallStartZ = s_.pos.z;
                 s_.vel = vec3(0);
                 play("NG_InAir_Feet_Forward_stage3", true);
             }
@@ -439,6 +452,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Surfacing:
     case State::SwimClimbOut:
         swim(move, a, jumpPressed, dropPressed, dt);
+        break;
+    case State::Dead: // the death clip plays out where she fell; World respawns her (Combat.cpp)
+        advanceClip(dt);
         break;
     }
 }

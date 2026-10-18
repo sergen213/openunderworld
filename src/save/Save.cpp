@@ -52,7 +52,7 @@ json toJson(const SaveGame& s) {
         {"player", {{"state", std::string(game::stateName(p.state))}, {"pos", vec(p.pos)}, {"yaw", p.yaw}, {"vel", vec(p.vel)},
                     {"clip", p.clip}, {"clipTime", p.clipTime}, {"clipRate", p.clipRate}, {"loop", p.loop},
                     {"ledge", ledge}, {"runJump", p.runJump}, {"regrabCooldown", p.regrabCooldown},
-                    {"water", water}, {"pitch", p.pitch}}},
+                    {"water", water}, {"pitch", p.pitch}, {"fallStartZ", p.fallStartZ}}},
         {"camera", {{"yaw", s.cameraYaw}, {"pitch", s.cameraPitch}}},
         {"checkpoint", cp},
         {"collected", s.collected},
@@ -86,6 +86,7 @@ SaveGame fromJson(const json& j) {
     ps.runJump = p.value("runJump", false);
     ps.regrabCooldown = p.value("regrabCooldown", 0.0f);
     ps.pitch = p.value("pitch", 0.0f);
+    ps.fallStartZ = p.value("fallStartZ", ps.pos.z); // older saves: falls count from where she stands
     if (const auto w = p.find("water"); w != p.end() && !w->is_null())
         s.waterUnit = w->at("unit").get<std::string>(), s.waterIndex = w->at("index").get<int>();
     if (const auto l = p.find("ledge"); l != p.end() && !l->is_null()) {
@@ -126,6 +127,7 @@ SaveGame capture(const game::World& world) {
     s.unit = unit.data.name;
     s.player = world.player().state();
     s.player.pos -= unit.offset;
+    s.player.fallStartZ -= unit.offset.z;
     if (const auto owner = world.markupOwner(s.player.ledge)) s.ledgeUnit = owner->first, s.ledgeIndex = owner->second;
     if (const auto owner = world.markupOwner(s.player.water)) s.waterUnit = owner->first, s.waterIndex = owner->second;
     s.player.ledge = s.player.water = -1;

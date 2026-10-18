@@ -84,8 +84,17 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
 }
 
 void World::respawn() {
-    if (checkpoint_) enterUnit(checkpoint_->unit, std::nullopt, checkpoint_->id);
-    else enterUnit(startUnit_, startSpawn_);
+    if (units_.empty()) { // single-mesh world: back to its spawn
+        player_.spawn(startSpawn_->pos, startSpawn_->yaw);
+        prev_ = player_.state();
+        updatePose(0, true);
+    } else if (checkpoint_) {
+        enterUnit(checkpoint_->unit, std::nullopt, checkpoint_->id);
+    } else {
+        enterUnit(startUnit_, startSpawn_);
+    }
+    health_.reset(); // tru.exe 0x700060 on the restored player
+    combat_ = {};
 }
 
 // tru.exe STREAM_LevelLoadAdjacentUnits (0x5D2940) keeps the portal neighbours of the player's unit loaded;
@@ -195,6 +204,7 @@ int World::markupIndex(const std::string& unit, int local) const {
 
 void World::restore(const PlayerState& s, float camYaw, float camPitch) {
     player_.restore(s);
+    health_.reset(); // [I] a loaded save starts at full health (saves do not store it)
     prev_ = s;
     cam_.yaw = camYaw;
     cam_.pitch = camPitch;

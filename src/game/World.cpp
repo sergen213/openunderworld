@@ -86,6 +86,13 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ng_generic_land_forwards", "ng_running_land", "ledgeb_attach_M", "ledgeb_idle", "ledgeb_right",
     "ledgeb_climbup_fast", "swim_jump_land", "swim_surfaceidle", "swim_surface", "swim_surfaceidle_to_swim",
     "swim_surfacedive", "swim_submerged_idle", "swim_sub", "swim_sub_up", "swim_sub_down", "swim_climbout",
+    "death_fall_normal", "death_toknee", // combat (Combat.cpp)
+};
+
+const std::vector<std::string_view> kPistolClipNames = {
+    "combat_pistol_poseA", "combat_pistol_poseB", "combat_pistol_poseC", "combat_pistol_poseD", "combat_pistol_poseE",
+    "combat_pistol_poseF", "combat_pistol_poseG", "combat_pistol_poseH", "combat_pistol_poseI", "combat_pistol_RfireE",
+    "combat_pistol_LfireE", "combat_pistols_reload",
 };
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
@@ -102,16 +109,24 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile) {
     lib.skeleton = std::move(*std::max_element(skeletons.begin(), skeletons.end(), [](const auto& a, const auto& b) {
         return a.bones.size() < b.bones.size();
     }));
-    const auto list = anim::animList(drm);
-    for (const auto name : kLaraClipNames) {
-        const auto e = std::find_if(list.begin(), list.end(), [&](const anim::AnimEntry& x) { return x.name == name; });
-        if (e == list.end()) throw std::runtime_error("lara.drm: animation '" + std::string(name) + "' not in the list");
-        const auto s = std::find_if(drm.sections.begin(), drm.sections.end(), [&](const cdc::Section& x) {
-            return x.type == cdc::SectionType::Animation && x.id == e->animId;
-        });
-        if (s == drm.sections.end()) throw std::runtime_error("lara.drm: no section for '" + std::string(name) + "'");
-        lib.clips.emplace(std::string(name), anim::decodeClip(s->data));
-    }
+    const auto loadClips = [&](const cdc::Drm& d, const std::vector<std::string_view>& names, const char* file) {
+        const auto list = anim::animList(d);
+        for (const auto name : names) {
+            const auto e = std::find_if(list.begin(), list.end(), [&](const anim::AnimEntry& x) { return x.name == name; });
+            if (e == list.end()) throw std::runtime_error(std::string(file) + ": animation '" + std::string(name) + "' not in the list");
+            const auto s = std::find_if(d.sections.begin(), d.sections.end(), [&](const cdc::Section& x) {
+                return x.type == cdc::SectionType::Animation && x.id == e->animId;
+            });
+            if (s == d.sections.end()) throw std::runtime_error(std::string(file) + ": no section for '" + std::string(name) + "'");
+            lib.clips.emplace(std::string(name), anim::decodeClip(s->data));
+        }
+    };
+    loadClips(drm, kLaraClipNames, "lara.drm");
+    // Lara's pistol clips live in the weapon's DRM (they animate her skeleton).
+    auto gun = bigfile.read("pc-w\\wp_handgun.drm");
+    if (!gun) throw std::runtime_error("pc-w\\wp_handgun.drm not in bigfile");
+    loadClips(cdc::parseDrm(std::move(*gun)), kPistolClipNames, "wp_handgun.drm");
+    if (auto w = loadWeapon(bigfile, "wp_handgun")) lib.pistols = *w;
     // Hands (bones 55, 80: the last segment of each arm chain before the fingers) in the hang pose.
     if (auto h = lib.handsAt(*lib.find("ledgeb_idle"), 0)) lib.hangHandOffset = *h;
     // Swim speed: mean root speed of the clips that start swimming (their loops have no root motion).
@@ -136,6 +151,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
           }
           return tuning;
       }()) {
+    startSpawn_ = spawn; // respawn target without units
     player_.spawn(spawn.pos, spawn.yaw);
     prev_ = player_.state();
     cam_.yaw = player_.state().yaw;
@@ -171,6 +187,7 @@ void World::tick(const Actions& a) {
         player_.restore(s);
     }
     updateCamera(a, dt);
+    tickCombat(a, dt); // after the camera: free aim follows it
     updatePose(dt, false);
     ++ticks_;
 }
@@ -224,6 +241,7 @@ void World::updatePose(float dt, bool reset) {
             anim_.setTime(s.clipTime); // the player's clock is authoritative (root motion comes from it)
     }
     auto local = anim_.pose();
+    aimLayer(local, reset ? 0 : dt);
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(anims_.skeleton.bones[0].pivot)}; // root motion is in pos
     auto m = anim::worldMatrices(anims_.skeleton, local);
     const glm::mat4 toWorld = player_.modelMatrix(s.pos, s.yaw);

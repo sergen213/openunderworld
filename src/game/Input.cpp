@@ -17,7 +17,7 @@ float axis(SDL_Gamepad* g, SDL_GamepadAxis a) { return g ? deadzone(SDL_GetGamep
 constexpr float kPadLookRate = 2.5f; // rad/s at full deflection
 } // namespace
 
-Actions readDevices(const bool* keys, SDL_Gamepad* pad) {
+Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
     Actions a;
     a.move.y = float((keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP]) - (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN])) -
                axis(pad, SDL_GAMEPAD_AXIS_LEFTY);
@@ -32,11 +32,17 @@ Actions readDevices(const bool* keys, SDL_Gamepad* pad) {
     a.interact = keys[SDL_SCANCODE_E] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST));
     a.save = keys[SDL_SCANCODE_F5];
     a.load = keys[SDL_SCANCODE_F9];
+    const auto button = [&](SDL_GamepadButton b) { return pad && SDL_GetGamepadButton(pad, b); };
+    a.draw = keys[SDL_SCANCODE_F] || button(SDL_GAMEPAD_BUTTON_NORTH);
+    a.fire = (mouseButtons & SDL_BUTTON_LMASK) || axis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.5f;
+    a.aim = (mouseButtons & SDL_BUTTON_RMASK) || axis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 0.5f;
+    a.switchTarget = keys[SDL_SCANCODE_Q] || button(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
     return a;
 }
 
 InputScript InputScript::parse(std::string_view text) {
-    static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact", "save", "load"};
+    static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact",
+                                                    "save", "load", "draw", "fire", "aim", "switch"};
     InputScript s;
     std::istringstream in{std::string(text)};
     std::string line;
@@ -79,6 +85,10 @@ Actions InputScript::at(uint64_t tick) const {
         else if (e.action == "interact") a.interact = e.value != 0;
         else if (e.action == "save") a.save = e.value != 0;
         else if (e.action == "load") a.load = e.value != 0;
+        else if (e.action == "draw") a.draw = e.value != 0;
+        else if (e.action == "fire") a.fire = e.value != 0;
+        else if (e.action == "aim") a.aim = e.value != 0;
+        else if (e.action == "switch") a.switchTarget = e.value != 0;
         else if (e.action == "lookx") a.look.x = e.value;
         else a.look.y = e.value;
     }

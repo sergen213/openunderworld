@@ -237,7 +237,7 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
-add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp)
+add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)
@@ -246,7 +246,7 @@ target_link_libraries(ou_save PUBLIC ou_game nlohmann_json::nlohmann_json PRIVAT
 add_executable(ou-game src/app/game/main.cpp)
 target_link_libraries(ou-game PRIVATE ou_game ou_save ou_render_gl ou_render_vk ou_config ou_video ou_audio)
 if(OU_BUILD_TESTS)
-  add_executable(ou_game_tests tests/test_game.cpp)
+  add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp)
   target_link_libraries(ou_game_tests PRIVATE ou_game GTest::gtest_main)
   gtest_discover_tests(ou_game_tests DISCOVERY_TIMEOUT 30)
   add_executable(ou_save_tests tests/test_save.cpp)
