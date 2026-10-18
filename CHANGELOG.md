@@ -6,6 +6,20 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-18
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+### Added
+- Swimming: surface swim, tread, dive, underwater swim, surfacing and climb-out, using the level's water volumes (`l4_pool`).
+- Original Lara tuning read from `lara.drm` (capsule, ledge-grab speeds, water test box); turning in place follows the clip's root rotation.
+- Animation crossfades driven by the original anim-request table (fade lengths, start frames, walk/run phase matching); simulated hair cloth from `lara.drm` parameters.
+- Level streaming across unit portals (e.g. `l4_pool` → `l4_ragnarok_room`), checkpoints/respawn, versioned atomic saves with F5/F9 quicksave/quickload and `--load`.
+- Script runtime: trigger volumes and planes, switches (E / pad West), animated doors, push blocks, script state saved with the game; `--show-triggers`.
+
+### Fixed
+- Ledge climb-up no longer snaps ~150 units at the end (now under 10).
+
 ## [0.1.0] - 2026-10-18
 
 First experimental build. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build, `tru.exe` 1.1.0.0); no game data is included.
@@ -24,5 +38,6 @@ First experimental build. Requires your own legally owned copy of Tomb Raider: U
 - Signed updater (Ed25519, staged swap with journal recovery, anti-rollback) and `ou-sign`.
 - AppImage packaging (`packaging/appimage/build-appimage.sh`), AppImage self-update in the launcher (`--check-update`, `--update`), local signed release script `tools/release.sh`, CI AppImage artifact.
 
-[Unreleased]: https://github.com/sergen213/openunderworld/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/sergen213/openunderworld/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sergen213/openunderworld/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sergen213/openunderworld/releases/tag/v0.1.0
