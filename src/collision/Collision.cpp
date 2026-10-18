@@ -61,10 +61,12 @@ void closestSegSeg(vec3 p1, vec3 q1, vec3 p2, vec3 q2, vec3& c1, vec3& c2) {
 }
 
 // Ray (origin o, direction d) vs triangle, double-sided; returns parametric t or -1.
+// Rays within ~1e-5 rad of the triangle plane count as parallel (det = -d.(e1 x e2)): an in-plane ray
+// would otherwise "hit" a wall at every point along it.
 float rayTri(vec3 o, vec3 d, const Tri& t) {
     const vec3 e1 = t.b - t.a, e2 = t.c - t.a, p = cross(d, e2);
     const float det = dot(e1, p);
-    if (std::abs(det) < 1e-12f) return -1;
+    if (std::abs(det) <= 1e-5f * glm::length(d) * glm::length(cross(e1, e2))) return -1;
     const float inv = 1 / det;
     const vec3 s = o - t.a;
     const float u = dot(s, p) * inv;

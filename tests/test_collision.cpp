@@ -195,7 +195,9 @@ Agreement probeAgreement(const Unit& u) {
     for (float x = lo.x + 50; x < hi.x; x += 100)
         for (float y = lo.y + 50; y < hi.y; y += 100) {
             ++a.probes;
-            for (float z = hi.z + 10; auto c = u.col.groundProbe({x, y, z}, z - lo.z + 10, 0x0F); z = c->point.z - 0.01f) {
+            // Step below each hit; at |z| ~ 5e5 (l1_seatop) a fixed 0.01 rounds back to the same float.
+            for (float z = hi.z + 10; auto c = u.col.groundProbe({x, y, z}, z - lo.z + 10, 0x0F);
+                 z = c->point.z - std::max(0.01f, std::abs(c->point.z) * 1e-6f)) {
                 if (u.col.faceNormal(c->face).z <= 0.7f) continue;
                 ++a.floorHits;
                 const auto r = u.render.raycast({x, y, c->point.z + 64}, {0, 0, -1}, 128);
