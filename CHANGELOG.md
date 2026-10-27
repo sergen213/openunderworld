@@ -6,6 +6,15 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-27
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included. Enhanced water is now on by default (Vulkan or OpenGL).
+
+### Added
+- Enhanced water shading in both renderers (`--water original|enhanced`, `graphics.water`; the enhanced preset uses it, the original preset keeps TRU's own water shaders): animated waves, screen-space refraction with depth-based absorption, screen-space reflections with Fresnel, sun glints, shoreline and crest foam, caustics on the pool floor, and an underwater fog/caustics view. Written for this project (no third-party water shaders).
+- Water reacts to the world: a deterministic ripple simulation spreads rings from Lara diving in, her surface swimming and wading, nearby enemies and moving objects, and gunshots hitting the surface, with ballistic splash droplets. Original water rendering is unchanged.
+- Oxygen: an air meter while Lara's head is under water (AIR bar next to the HUD), refilling at the surface; when it runs out she takes drowning damage until she surfaces or dies. Rates are inferred (45 s of breath), not yet read from the original executable.
+
 ## [0.4.0] - 2026-10-18
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included. Now defaults to Vulkan + original shaders + ray-traced sun shadows + 4x MSAA.
