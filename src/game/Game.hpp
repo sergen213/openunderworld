@@ -48,6 +48,8 @@ struct Actions {
     // press edge uses a health pack. Adrenaline: interact while the meter is full and close to a hard lock.
     bool draw = false, fire = false, aim = false, switchTarget = false, weapon = false, heal = false;
     bool pause = false; // held; ou-game opens the pause menu on the press edge (Esc / pad Start; scripts: "pause")
+    bool grapple = false; // held; the grapple reacts to the press edge (G / pad right shoulder; scripts: "grapple")
+    bool sprint = false;  // held (Left Alt / pad left stick click; scripts: "sprint")
 };
 
 // ---- animations -------------------------------------------------------------------------------

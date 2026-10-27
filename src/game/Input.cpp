@@ -39,6 +39,8 @@ Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
     a.switchTarget = keys[SDL_SCANCODE_Q] || button(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
     a.weapon = keys[SDL_SCANCODE_X] || button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
     a.heal = keys[SDL_SCANCODE_H] || button(SDL_GAMEPAD_BUTTON_DPAD_UP);
+    a.grapple = keys[SDL_SCANCODE_G] || button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    a.sprint = keys[SDL_SCANCODE_LALT] || button(SDL_GAMEPAD_BUTTON_LEFT_STICK);
     return a;
 }
 
@@ -94,6 +96,8 @@ Actions InputScript::at(uint64_t tick) const {
         else if (e.action == "weapon") a.weapon = e.value != 0;
         else if (e.action == "heal") a.heal = e.value != 0;
         else if (e.action == "pause") a.pause = e.value != 0;
+        else if (e.action == "grapple") a.grapple = e.value != 0;
+        else if (e.action == "sprint") a.sprint = e.value != 0;
         else if (e.action == "lookx") a.look.x = e.value;
         else a.look.y = e.value;
     }

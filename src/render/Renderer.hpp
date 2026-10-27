@@ -35,6 +35,24 @@ struct TextVertex {
 // Optional hardware ray tracing (Vulkan ray queries, Enhanced only). Full = shadows + water reflections.
 enum class RayTracing : uint8_t { Off, Shadows, Full };
 
+// ---- water (docs/RENDERING.md "Water") ----
+// Water surface meshes draw with TRU's own shaders (Original) or with our water shading (Enhanced: waves, refraction,
+// depth absorption, shore foam, reflections, interactive ripples, caustics). Written from scratch for this project.
+enum class WaterQuality : uint8_t { Original, Enhanced };
+// Interactive ripple height field on one water surface around Lara (game::WaterSim), sampled by Enhanced water.
+struct WaterRipples {
+    float originX = 0, originY = 0; // world x, y of the corner of texel (0, 0)
+    float cellSize = 0;             // world units per texel; 0 = no field
+    float surfaceZ = 0;             // world z of the surface the field rides on
+    int size = 0;                   // texels per side; heights.size() == size * size, row-major, x fastest
+    std::span<const float> heights; // world units above the rest surface
+    uint64_t version = 0;           // changes whenever heights change; backends re-upload only then
+};
+// Water volume: world AABB, max[2] = surface z (game water markup, type 10). Underwater post and caustics.
+struct WaterVolume { float min[3], max[3]; };
+// Splash / spray droplet: world position, radius (world units), opacity 0..1; drawn as a camera-facing soft disc.
+struct WaterParticle { float pos[3]; float radius; float alpha; };
+
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
     bool cullBackFaces = true;              // front = counter-clockwise (cdc meshes are CCW)
@@ -56,6 +74,10 @@ struct FrameOptions {
     RayTracing rt = RayTracing::Off;
     int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)
     float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
+    WaterQuality water = WaterQuality::Original;  // ou::config presets choose (Enhanced by default)
+    WaterRipples ripples;                          // empty = calm (procedural waves only)
+    std::span<const WaterVolume> waterVolumes;     // loaded units' water volumes
+    std::span<const WaterParticle> splashes;       // drawn blended after the water surfaces
 };
 
 // Ray-tracing state for diagnostics and tests.
