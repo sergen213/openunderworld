@@ -42,7 +42,8 @@ add_library(ou_placeholder STATIC src/scene/Placeholder.cpp)
 target_include_directories(ou_placeholder PUBLIC src)
 
 # RenderCommon + the D3D9 SM3 -> GLSL translator of the Original Fidelity path (docs/formats/SHADERS.md).
-add_library(ou_render_common STATIC src/render/RenderCommon.cpp src/render/ShaderTranslate.cpp src/render/OriginalShading.cpp)
+add_library(ou_render_common STATIC src/render/RenderCommon.cpp src/render/ShaderTranslate.cpp src/render/OriginalShading.cpp
+  src/render/Water.cpp)
 target_include_directories(ou_render_common PUBLIC src)
 # libshaderc compiles translated TRU shaders to SPIR-V at load time (Vulkan backend, shader tests).
 pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
@@ -53,6 +54,14 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${OU_SUN_GLSL_SRC
 file(READ ${OU_SUN_GLSL_SRC} OU_SUN_GLSL)
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gen/sun_glsl.inc CONTENT "R\"ouglsl(@OU_SUN_GLSL@)ouglsl\"" @ONLY)
 target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
+
+# Enhanced water / splash / underwater-post GLSL shared by GL (runtime compile) and Vulkan (glslc).
+foreach(s water.vert water.frag splash.vert splash.frag underwater.glsl)
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${src})
+  file(READ ${src} OU_WATER_SRC)
+  file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gen/${s}.inc CONTENT "R\"ouwater(@OU_WATER_SRC@)ouwater\"" @ONLY)
+endforeach()
 
 add_library(ou_render_gl STATIC src/render/gl/GlRenderer.cpp)
 target_link_libraries(ou_render_gl PUBLIC ou_render_common PRIVATE PkgConfig::EPOXY)
@@ -70,6 +79,16 @@ foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.v
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
+# Enhanced water + splash (shared GLSL with GL, -DVULKAN=1 selects the descriptor syntax).
+foreach(s water.vert water.frag splash.vert splash.frag)
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
+  add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
+                     COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
+                     DEPENDS ${src} VERBATIM)
+  list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
+endforeach()
+# post.frag includes shaders/underwater.glsl.
+set_property(SOURCE ${OU_VK_SPV_DIR}/post.frag.inc APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl)
 # Ray-traced scene variant (-DOU_RT: ray queries against the scene TLAS); only loaded on RT-capable devices.
 foreach(stage vert frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/scene.${stage})
@@ -278,7 +297,7 @@ endif()
 
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp
-  src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp)
+  src/game/Water.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)

@@ -208,6 +208,8 @@ void World::tick(const Actions& a) {
                   [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, dt * combat_.timeScale);
     updateCamera(a, dt);
     tickCombat(a, dt); // after the camera: free aim follows it
+    tickAir(dt);
+    water_.tick(*this, dt); // after combat: this tick's shots make rings
     updatePose(dt, false);
     ++ticks_;
     if (!units_.empty()) checkLevelEnd(); // last: a chapter change re-spawns Lara (enterUnit)
@@ -225,6 +227,30 @@ void World::updateCamera(const Actions& a, float dt) {
     float f = 1;
     if (auto h = col_.sweepSphere(cam_.target, kProbeRadius, back)) f = std::max(0.0f, h->t - 2.0f / kDistance);
     cam_.position = cam_.target + back * f;
+}
+
+// Oxygen: the head is under water in the submerged swim states (root + 150 = head height [I]).
+// At 0 air Lara takes max/6 health per second until she surfaces or dies [I rates].
+void World::tickAir(float dt) {
+    const PlayerState& ps = player_.state();
+    submerged_ = false;
+    if (ps.water >= 0 && size_t(ps.water) < col_.markup.size()) {
+        const float surf = col_.markup[size_t(ps.water)].points[1].z;
+        switch (ps.state) {
+        case State::SwimUnder:
+        case State::SwimDive:
+        case State::Surfacing:
+        case State::SwimSplash: submerged_ = ps.pos.z + 150.0f < surf; break;
+        default: break;
+        }
+    }
+    if (health_.dead()) { air_ = 1.0f; return; }
+    if (submerged_) {
+        air_ = std::max(0.0f, air_ - dt / kAirSeconds);
+        if (air_ <= 0.0f) damageLara(health_.max() / 6.0f * dt, ps.pos, kDamageBypass);
+    } else {
+        air_ = std::min(1.0f, air_ + dt / kAirRefillSeconds);
+    }
 }
 
 PlayerState World::interpolated(double alpha) const {

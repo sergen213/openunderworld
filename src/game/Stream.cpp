@@ -106,6 +106,8 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     cam_.pitch = CameraState{}.pitch;
     updateCamera({}, 0);
     prevCam_ = cam_;
+    water_.reset(); // no stale ripples across a teleport
+    air_ = 1.0f, submerged_ = false;
     updatePose(0, true);
 }
 
@@ -120,6 +122,7 @@ void World::respawn() {
         enterUnit(startUnit_, startSpawn_);
     }
     health_.reset(); // tru.exe 0x700060 on the restored player
+    air_ = 1.0f, submerged_ = false;
     combat_ = {};
     enemies_.reset();
 }

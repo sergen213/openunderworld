@@ -40,6 +40,10 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     if (g.rtQuality == "low") s.rtRays = 1;
     else if (g.rtQuality == "high") s.rtRays = 4;
     else if (g.rtQuality != "medium") throw std::runtime_error("rt quality must be low, medium or high, got " + g.rtQuality);
+    if (g.water == "enhanced") s.water = 1;
+    else if (g.water == "original") s.water = 0;
+    else if (g.water == "auto") s.water = g.preset == "enhanced" ? 1 : 0;
+    else throw std::runtime_error("water must be auto, original or enhanced, got " + g.water);
     if (!(g.brightness >= 0.5f && g.brightness <= 2.0f)) throw std::runtime_error("brightness must be within 0.5..2.0");
     s.brightness = g.brightness;
     return s;
@@ -55,6 +59,7 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     } else if (flag == "--preset") g.preset = value;
     else if (flag == "--msaa") g.msaa = std::atoi(std::string(value).c_str());
     else if (flag == "--rt") g.rt = value;
+    else if (flag == "--water") g.water = value;
     else if (flag == "--rt-quality") g.rtQuality = value;
     else if (flag == "--brightness") g.brightness = std::strtof(std::string(value).c_str(), nullptr);
     else return false;
@@ -89,6 +94,7 @@ Config load(const fs::path& path) {
             for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
                 if (g->contains(key)) *field = g->at(key).get<bool>();
             c.graphics.rt = g->value("rt", c.graphics.rt);
+            c.graphics.water = g->value("water", c.graphics.water);
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
             if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
             c.graphics.brightness = g->value("brightness", c.graphics.brightness);
@@ -114,6 +120,7 @@ void save(const fs::path& path, const Config& c) {
         {"updates", {{"enabled", c.updatesEnabled}, {"channel", c.updateChannel}, {"manifest_url", c.updateManifestUrl}}},
     };
     auto& g = j["graphics"] = {{"preset", c.graphics.preset}, {"msaa", c.graphics.msaa}, {"rt", c.graphics.rt},
+                               {"water", c.graphics.water},
                                {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness}};
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;

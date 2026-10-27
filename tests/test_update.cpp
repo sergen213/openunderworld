@@ -388,9 +388,9 @@ TEST(Config, GraphicsPresets) {
         return ou::config::GraphicsConfig{std::move(preset), msaa, shadows, fxaa, hdr};
     };
     // Default = enhanced: 4x MSAA + shadows + rt auto -> shadows, 2 rays, original shaders, neutral brightness.
-    EXPECT_EQ(resolve({}), (GraphicsSettings{4, true, false, false, 1, 2, true, 1.0f}));
-    EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false, 1, 2}));
-    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true, 1, 2})); // overrides
+    EXPECT_EQ(resolve({}), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f}));
+    EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1}));
+    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true, 1, 2, true, 1})); // overrides
     EXPECT_EQ(resolve(g("original")), (GraphicsSettings{1, false, false, false, 0})); // purist: rt auto -> off
     EXPECT_EQ(resolve(g("original", 8, true)), (GraphicsSettings{8, true, false, false, 0}));
     EXPECT_THROW(resolve(g("ultra")), std::runtime_error);
@@ -401,13 +401,13 @@ TEST(Config, GraphicsPresets) {
         c.rt = std::move(mode), c.rtQuality = std::move(quality);
         return c;
     };
-    EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2}));
-    EXPECT_EQ(resolve(rt("enhanced", "full", "high")), (GraphicsSettings{4, true, false, false, 2, 4}));
-    EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "full", "high")), (GraphicsSettings{4, true, false, false, 2, 4, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1, true, 1}));
     EXPECT_THROW(resolve(rt("original", "shadows")), std::runtime_error);
     EXPECT_THROW(resolve(rt("original", "full")), std::runtime_error);
     EXPECT_EQ(resolve(rt("original", "auto")).rt, 0);
-    EXPECT_EQ(resolve(rt("enhanced", "auto", "high")), (GraphicsSettings{4, true, false, false, 1, 4}));
+    EXPECT_EQ(resolve(rt("enhanced", "auto", "high")), (GraphicsSettings{4, true, false, false, 1, 4, true, 1}));
     auto bright = g("enhanced");
     bright.brightness = 0.2f;
     EXPECT_THROW(resolve(bright), std::runtime_error);
@@ -440,11 +440,33 @@ TEST(Config, GraphicsPresets) {
     EXPECT_FALSE(d.shadows.has_value()); // unset stays unset: the preset decides
     EXPECT_EQ(d.fxaa, std::optional<bool>(true));
     EXPECT_FLOAT_EQ(d.brightness, 0.75f);
-    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false, 1, 4, true, 0.75f}));
+    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false, 1, 4, true, 1, 0.75f}));
     std::ofstream(p) << R"({"graphics":{"brightness":0.2}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
     std::ofstream(p) << R"({"graphics":{"preset":"enhanced","msaa":5}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
+    fs::remove_all(p.parent_path());
+}
+
+TEST(Config, WaterQuality) {
+    using ou::config::resolve;
+    EXPECT_EQ(resolve({}).water, 1); // best-look default: enhanced water
+    auto orig = ou::config::GraphicsConfig{};
+    orig.preset = "original";
+    EXPECT_EQ(resolve(orig).water, 0); // purist keeps TRU's own water
+    auto c = ou::config::GraphicsConfig{};
+    c.water = "original";
+    EXPECT_EQ(resolve(c).water, 0);
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(c, "--water", "enhanced"));
+    EXPECT_EQ(resolve(c).water, 1);
+    c.water = "bogus";
+    EXPECT_THROW(resolve(c), std::runtime_error);
+
+    fs::path p = fs::temp_directory_path() / ("ou_config_water_" + std::to_string(::getpid()) + "/config.json");
+    ou::config::Config cfg;
+    cfg.graphics.water = "original";
+    ou::config::save(p, cfg);
+    EXPECT_EQ(ou::config::load(p).graphics.water, "original");
     fs::remove_all(p.parent_path());
 }
 

@@ -4,6 +4,7 @@
 // vkGetInstanceProcAddr. Output is meant to match the GL backend pixel-for-pixel modulo rasterisation.
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
+#include "render/Water.hpp"
 
 #include <algorithm>
 #include <array>
@@ -70,10 +71,22 @@ const uint32_t kPostVert[] = {
 const uint32_t kPostFrag[] = {
 #include "post.frag.inc"
 };
+const uint32_t kWaterVert[] = { // Enhanced water + splashes (shared GLSL, render/shaders)
+#include "water.vert.inc"
+};
+const uint32_t kWaterFrag[] = {
+#include "water.frag.inc"
+};
+const uint32_t kSplashVert[] = {
+#include "splash.vert.inc"
+};
+const uint32_t kSplashFrag[] = {
+#include "splash.frag.inc"
+};
 
 // Scene pipelines exist per scene::Blend (blend state is baked into Vulkan pipelines).
 // Prepass: RT depth pre-pass (depth only; the RT Opaque pipeline then tests LEQUAL without writes).
-enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Lines, Overlay, Post, Prepass };
+enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Lines, Overlay, Post, Prepass, Water, Splash };
 
 struct LineVertex {
     float pos[3];
@@ -417,7 +430,7 @@ public:
             g.skinned = !m.skin.empty();
             // [I] Water surfaces are objects named *watersurface* (l4_pool: ca_goo_pool_watersurface, the
             // surface intro of its watervolume, docs/GAMEPLAY.md "Water"); their meshes get RT reflections.
-            g.water = m.origin.find("watersurface") != std::string::npos;
+            g.water = isWaterSurface(m.origin);
             const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
             g.center = glm::vec3(sphere), g.radius = sphere.w;
             const VkDeviceSize vb = m.vertices.size() * sizeof(scene::Vertex), ib = m.indices.size() * sizeof(uint32_t);
@@ -498,6 +511,11 @@ public:
         const bool shadowMap = options.shadows || options.rt != RayTracing::Off;
         rtStatus_.active = rtOn;
         ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0, 0.0f, 0, 0};
+        const bool enhancedWater = options.water == WaterQuality::Enhanced;
+        WaterBlock wb = waterBlock(camera, {int(extent_.width), int(extent_.height)}, push.viewProj, environment_, options);
+        if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
+        std::memcpy(waterUbo_[frameIndex_].mapped, &wb, sizeof wb);
+        if (enhancedWater) updateRipples(options);
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         drawOrder(meshes_, camera.position, order_);
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
@@ -526,6 +544,12 @@ public:
             begin.push_back(imageBarrier(msColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                          kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kColorOut,
                                          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT));
+        if (enhancedWater && msColor_.image)
+            begin.push_back(imageBarrier(opaqueDepth_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                         kDepthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                         VK_IMAGE_ASPECT_DEPTH_BIT));
         barriers(cmd, begin);
 
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
@@ -543,7 +567,12 @@ public:
         depth.imageView = depth_.view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.storeOp = enhancedWater ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        if (enhancedWater && msColor_.image) { // water samples the opaque depth: resolve it (SAMPLE_ZERO)
+            depth.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+            depth.resolveImageView = opaqueDepth_.view;
+            depth.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        }
         depth.clearValue.depthStencil = {1.0f, 0};
         VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
         ri.renderArea = {{0, 0}, extent_};
@@ -610,6 +639,7 @@ public:
             for (const DrawRef& d : order_) {
                 const scene::SubMesh& s = meshes_[d.mesh].submeshes[d.sub];
                 if (s.blend != scene::Blend::Opaque) break;
+                if (enhancedWater && meshes_[d.mesh].water) continue;
                 // Translated programs pre-pass with their own (invariant) VS and plain PS (its alpha test, no sun term).
                 if (const OrigDraw* od = origDraw(d)) {
                     drawOriginal(d, *od, origPipeline(od->program, kOrigPrepass, s.blend));
@@ -630,6 +660,7 @@ public:
         for (const DrawRef& d : order_) {
             const GpuMesh& m = meshes_[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
+            if (enhancedWater && m.water) continue; // the water pass below draws them with the opaque copies
             // Rays on opaque surfaces (pre-passed: each visible pixel traces once) and on water for reflections.
             const bool reflective = rtOn && m.water && options.rt == RayTracing::Full;
             const bool rays = rtOn && (s.blend == scene::Blend::Opaque || reflective);
@@ -649,6 +680,56 @@ public:
             const VkDescriptorSet set = textureSet(s.textureId);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
             vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+        }
+
+        if (enhancedWater) { // second pass: water surfaces + splashes, then the debug lines below
+            vkCmdEndRendering(cmd);
+            recordWaterCopies(cmd);
+            VkRenderingAttachmentInfo wc = color;
+            wc.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            VkRenderingAttachmentInfo wd{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            wd.imageView = depth_.view;
+            wd.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            wd.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            wd.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            ri.pColorAttachments = &wc;
+            ri.pDepthAttachment = &wd;
+            vkCmdBeginRendering(cmd, &ri);
+            vkCmdSetViewport(cmd, 0, 1, &flipped);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE); // the surface also reads from below
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 0, 1, &waterSets_[frameIndex_], 0,
+                                    nullptr);
+            for (uint32_t mi = 0; mi < meshes_.size(); ++mi) {
+                const GpuMesh& m = meshes_[mi];
+                if (!m.water) continue;
+                bindMesh(mi);
+                vkCmdPushConstants(cmd, waterLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m.model);
+                for (const auto& s : m.submeshes) vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+            }
+            if (!options.splashes.empty()) {
+                const auto verts = splashVertices(camera, options.splashes);
+                const VkDeviceSize bytes = verts.size() * sizeof(SplashVertex);
+                if (bytes) {
+                    Frame& fr = frames_[frameIndex_];
+                    if (bytes > splashCapacity_[frameIndex_]) {
+                        vkDestroyBuffer(device_, splashBuffers_[frameIndex_].buffer, nullptr);
+                        splashMemory_[frameIndex_].reset();
+                        splashCapacity_[frameIndex_] = std::bit_ceil(std::max<VkDeviceSize>(bytes, 64 << 10));
+                        splashBuffers_[frameIndex_] =
+                            createBuffer(splashMemory_[frameIndex_], splashCapacity_[frameIndex_],
+                                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                    }
+                    std::memcpy(splashBuffers_[frameIndex_].mapped, verts.data(), bytes);
+                    const VkDeviceSize zero = 0;
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splashPipeline_);
+                    vkCmdBindVertexBuffers(cmd, 0, 1, &splashBuffers_[frameIndex_].buffer, &zero);
+                    vkCmdDraw(cmd, uint32_t(verts.size()), 1, 0, 0);
+                    (void)fr;
+                }
+            }
         }
 
         if (!options.debugLines.empty()) {
@@ -698,6 +779,8 @@ public:
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeline_);
         vkCmdPushConstants(cmd, postLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof post, &post);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 0, 1, &postSet_, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 1, 1, &postWaterSets_[frameIndex_], 0,
+                                nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
 
         if (!options.overlay.empty() || !options.ui.empty()) {
@@ -831,6 +914,14 @@ public:
             destroyImage(shadow_);
             destroyImage(attenuation_);
             destroyImage(blackCube_);
+            if (ripples_.image) destroyImage(ripples_);
+            for (auto& b : waterUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
+            for (auto& b : splashBuffers_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
+            for (auto& m : splashMemory_) m.reset();
+            vkDestroyDescriptorPool(device_, std::exchange(waterPool_, VK_NULL_HANDLE), nullptr);
+            vkDestroyPipelineLayout(device_, std::exchange(waterLayout_, VK_NULL_HANDLE), nullptr);
+            vkDestroyDescriptorSetLayout(device_, std::exchange(waterSetLayout_, VK_NULL_HANDLE), nullptr);
+            vkDestroyDescriptorSetLayout(device_, std::exchange(postWaterSetLayout_, VK_NULL_HANDLE), nullptr);
             for (auto& b : origFrameUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             for (auto& b : shadowUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             vkDestroyDescriptorPool(device_, std::exchange(origStaticPool_, VK_NULL_HANDLE), nullptr);
@@ -1049,6 +1140,8 @@ private:
         for (VkPipeline& p : scenePipelines_) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(prepassPipeline_, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(linePipeline_, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipeline(device_, std::exchange(waterPipeline_, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipeline(device_, std::exchange(splashPipeline_, VK_NULL_HANDLE), nullptr);
     }
 
     // Sun shadow atlas, one tile per cascade: opaque and alpha-blended submeshes (the latter alpha-tested at 50 %),
@@ -1246,6 +1339,7 @@ private:
         staticMemory_.init(device_, gpu_);
         sceneMemory_.init(device_, gpu_, kBlockSize, rtStatus_.supported);
         for (auto& m : lineMemory_) m.init(device_, gpu_, 0);
+        for (auto& m : splashMemory_) m.init(device_, gpu_, 0);
 
         for (VkFormat f : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D16_UNORM}) {
             VkFormatProperties fp;
@@ -1333,6 +1427,29 @@ private:
         pl.pSetLayouts = &setLayout_;
         pl.pPushConstantRanges = &textPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &textLayout_));
+        // Enhanced water: set 0 = WaterBlock UBO + opaque colour/depth + ripple field; splash uses the same layout.
+        const VkDescriptorSetLayoutBinding wb[4] = {
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        };
+        VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, wb};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &wl, nullptr, &waterSetLayout_));
+        // Post: set 1 = WaterBlock UBO + opaque depth (underwater).
+        const VkDescriptorSetLayoutBinding pb[2] = {
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        };
+        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, pb};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
+        VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
+        VkPipelineLayoutCreateInfo wpl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &waterSetLayout_, 1,
+                                       &modelPush};
+        VK_CHECK(vkCreatePipelineLayout(device_, &wpl, nullptr, &waterLayout_));
+        const VkDescriptorSetLayout postSets[2] = {setLayout_, postWaterSetLayout_};
+        pl.setLayoutCount = 2;
+        pl.pSetLayouts = postSets;
         pl.pPushConstantRanges = &postPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &postLayout_));
         VkPushConstantRange linePush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
@@ -1388,6 +1505,16 @@ private:
         };
         linePipeline_ = createPipeline(kLineVert, kLineFrag, lineLayout_, &lineBinding, lineAttrs, PipelineKind::Lines,
                                        samples_, sceneFormat_, depthFormat_);
+        waterPipeline_ = createPipeline(kWaterVert, kWaterFrag, waterLayout_, &kSceneBinding, kSceneAttrs, PipelineKind::Water,
+                                        samples_, sceneFormat_, depthFormat_);
+        const VkVertexInputBindingDescription splashBinding{0, sizeof(SplashVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+        const VkVertexInputAttributeDescription splashAttrs[] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SplashVertex, pos)},
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(SplashVertex, uv)},
+            {2, 0, VK_FORMAT_R32_SFLOAT, offsetof(SplashVertex, alpha)},
+        };
+        splashPipeline_ = createPipeline(kSplashVert, kSplashFrag, waterLayout_, &splashBinding, splashAttrs,
+                                         PipelineKind::Splash, samples_, sceneFormat_, depthFormat_);
     }
 
     // `binding` null = no vertex input (fullscreen triangle). colorFormat UNDEFINED = depth-only.
@@ -1437,7 +1564,7 @@ private:
             blend.srcColorBlendFactor = blend.srcAlphaBlendFactor = src;
             blend.dstColorBlendFactor = blend.dstAlphaBlendFactor = dst;
         };
-        if (kind == PipelineKind::Alpha || kind == PipelineKind::Overlay)
+        if (kind == PipelineKind::Alpha || kind == PipelineKind::Overlay || kind == PipelineKind::Splash)
             factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
         else if (kind == PipelineKind::Additive) factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE);
         else if (kind == PipelineKind::Average) factors(VK_BLEND_FACTOR_CONSTANT_COLOR, VK_BLEND_FACTOR_CONSTANT_COLOR);
@@ -1542,6 +1669,22 @@ private:
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, staticPool_, 1, &setLayout_};
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &postSet_)); // written per swapchain (recreateSwapchain)
 
+        // Enhanced water: one WaterBlock UBO and one water + post-water set per frame in flight.
+        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8},
+                                             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4}};
+        VkDescriptorPoolCreateInfo wpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 2 * kFramesInFlight, 2, wps};
+        VK_CHECK(vkCreateDescriptorPool(device_, &wpci, nullptr, &waterPool_));
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            waterUbo_[i] = createBuffer(staticMemory_, sizeof(WaterBlock), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VkDescriptorSetAllocateInfo wai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, waterPool_, 1,
+                                            &waterSetLayout_};
+            VK_CHECK(vkAllocateDescriptorSets(device_, &wai, &waterSets_[i]));
+            wai.pSetLayouts = &postWaterSetLayout_;
+            VK_CHECK(vkAllocateDescriptorSets(device_, &wai, &postWaterSets_[i]));
+        }
+        writeWaterSets();
+
         const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         white_ = createImage(staticMemory_, VK_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, usage, VK_IMAGE_ASPECT_COLOR_BIT);
         white_.set = allocateSet(staticPool_, white_.view, sceneSampler_);
@@ -1645,6 +1788,46 @@ private:
         vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
     }
 
+    // Water + post-water sets: UBO always; image bindings refreshed when the swapchain targets or the
+    // ripple field change. Until the first valid views exist (init), only the UBO is written.
+    void writeWaterSets() {
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            const VkDescriptorBufferInfo bi{waterUbo_[i].buffer, 0, sizeof(WaterBlock)};
+            VkWriteDescriptorSet u{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            u.dstSet = waterSets_[i];
+            u.descriptorCount = 1;
+            u.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            u.pBufferInfo = &bi;
+            vkUpdateDescriptorSets(device_, 1, &u, 0, nullptr);
+            u.dstSet = postWaterSets_[i];
+            vkUpdateDescriptorSets(device_, 1, &u, 0, nullptr);
+            if (!white_.view) continue;
+            const VkDescriptorImageInfo color{postSampler_, opaqueColor_.view ? opaqueColor_.view : white_.view,
+                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkDescriptorImageInfo depth{fontSampler_, opaqueDepth_.view ? opaqueDepth_.view : white_.view,
+                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkDescriptorImageInfo rip{postSampler_, ripples_.view ? ripples_.view : white_.view,
+                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkDescriptorImageInfo* imgs[3] = {&color, &depth, &rip};
+            for (int b = 0; b < 3; ++b) {
+                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w.dstSet = waterSets_[i];
+                w.dstBinding = uint32_t(b + 1);
+                w.descriptorCount = 1;
+                w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                w.pImageInfo = imgs[b];
+                vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+            }
+            VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            w.dstSet = postWaterSets_[i];
+            w.dstBinding = 1;
+            w.descriptorCount = 1;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w.pImageInfo = &depth;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+        }
+    }
+
     // Records, submits and waits for one command buffer (uploads, readback). Not for per-frame work.
     void oneShot(const std::function<void(VkCommandBuffer)>& record) {
         VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, uploadPool_,
@@ -1727,6 +1910,90 @@ private:
         });
         vkDestroyBuffer(device_, src.buffer, nullptr);
         staging.reset();
+    }
+
+    // Game ripple height field -> R32F texture, re-uploaded when its version changes (game::WaterSim).
+    void updateRipples(const FrameOptions& options) {
+        const auto& rip = options.ripples;
+        if (rip.cellSize <= 0 || rip.size <= 0 || rip.heights.empty()) return;
+        if (!ripples_.image || rippleSize_ != rip.size) {
+            if (ripples_.image) {
+                vkDeviceWaitIdle(device_);
+                destroyImage(ripples_);
+            }
+            ripples_ = createImage(sceneMemory_, VK_FORMAT_R32_SFLOAT, uint32_t(rip.size), uint32_t(rip.size), 1,
+                                   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+            rippleSize_ = rip.size;
+            rippleVersion_ = 0;
+        }
+        if (rippleVersion_ == rip.version) return;
+        UploadBatch batch;
+        batch.images.push_back({ripples_.image,
+                                {{rip.heights.data(), rip.heights.size_bytes(), uint32_t(rip.size), uint32_t(rip.size)}}});
+        flush(batch);
+        rippleVersion_ = rip.version;
+        writeWaterSets();
+    }
+
+    // Between the scene pass and the water pass: copy the resolved opaque colour (and depth, when
+    // there is no MSAA resolve) into the single-sample textures the water and post shaders sample.
+    void recordWaterCopies(VkCommandBuffer cmd) {
+        constexpr VkPipelineStageFlags2 kDepthStages =
+            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        std::vector<VkImageMemoryBarrier2> pre = {
+            imageBarrier(sceneColor_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT),
+            imageBarrier(opaqueColor_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT),
+        };
+        if (!msColor_.image) {
+            pre.push_back(imageBarrier(depth_.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, kDepthStages,
+                                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+                                       VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT));
+            pre.push_back(imageBarrier(opaqueDepth_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+                                       VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT));
+        }
+        barriers(cmd, pre);
+        VkImageCopy region{};
+        region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.dstSubresource = region.srcSubresource;
+        region.extent = {extent_.width, extent_.height, 1};
+        vkCmdCopyImage(cmd, sceneColor_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, opaqueColor_.image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        if (!msColor_.image) {
+            region.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+            region.dstSubresource = region.srcSubresource;
+            vkCmdCopyImage(cmd, depth_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, opaqueDepth_.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        }
+        std::vector<VkImageMemoryBarrier2> post = {
+            imageBarrier(opaqueColor_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+            imageBarrier(opaqueDepth_.image,
+                         msColor_.image ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                                        : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, msColor_.image ? kDepthStages : VK_PIPELINE_STAGE_2_COPY_BIT,
+                         msColor_.image ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                         VK_IMAGE_ASPECT_DEPTH_BIT),
+            imageBarrier(sceneColor_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT),
+        };
+        if (!msColor_.image)
+            post.push_back(imageBarrier(depth_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT,
+                                        VK_ACCESS_2_TRANSFER_READ_BIT, kDepthStages,
+                                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                        VK_IMAGE_ASPECT_DEPTH_BIT));
+        barriers(cmd, post);
     }
 
     // ---- Ray tracing (VK_KHR_acceleration_structure + VK_KHR_ray_query), RENDERING.md "Ray tracing" ----
@@ -2093,9 +2360,32 @@ private:
         // resolves into sceneColor_, which the post pass samples.
         swapMemory_.init(device_, gpu_, 0);
         depth_ = createImage(swapMemory_, depthFormat_, extent.width, extent.height, 1,
-                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, samples_);
+                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             VK_IMAGE_ASPECT_DEPTH_BIT, samples_);
         sceneColor_ = createImage(swapMemory_, sceneFormat_, extent.width, extent.height, 1,
-                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                  VK_IMAGE_ASPECT_COLOR_BIT);
+        opaqueColor_ = createImage(swapMemory_, sceneFormat_, extent.width, extent.height, 1,
+                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                       VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                   VK_IMAGE_ASPECT_COLOR_BIT);
+        opaqueDepth_ = createImage(swapMemory_, depthFormat_, extent.width, extent.height, 1,
+                                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                       VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                   VK_IMAGE_ASPECT_DEPTH_BIT);
+        oneShot([&](VkCommandBuffer cmd) { // valid sampled layouts from the start (post binds them always)
+            const VkImageMemoryBarrier2 b[2] = {
+                imageBarrier(opaqueColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+                imageBarrier(opaqueDepth_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT),
+            };
+            barriers(cmd, b);
+        });
+        writeWaterSets();
         if (samples_ != VK_SAMPLE_COUNT_1_BIT)
             msColor_ = createImage(swapMemory_, sceneFormat_, extent.width, extent.height, 1,
                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
@@ -2110,7 +2400,7 @@ private:
         swapViews_.clear();
         presentReady_.clear();
         swapImages_.clear();
-        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_})
+        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_, &opaqueColor_, &opaqueDepth_})
             if (img->image) destroyImage(*img);
         swapMemory_.reset();
         vkDestroySwapchainKHR(device_, chain, nullptr);
@@ -2153,6 +2443,10 @@ private:
     std::vector<VkImageView> swapViews_;
     std::vector<VkSemaphore> presentReady_;
     GpuImage depth_, sceneColor_, msColor_; // msColor_ only with MSAA
+    // Enhanced water: single-sample opaque copies (refraction etc.) and the game's ripple height field.
+    GpuImage opaqueColor_, opaqueDepth_, ripples_;
+    uint64_t rippleVersion_ = 0;
+    int rippleSize_ = 0;
     VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
     VkSampleCountFlags supportedSamples_ = VK_SAMPLE_COUNT_1_BIT;
     VkFormat sceneFormat_ = VK_FORMAT_R8G8B8A8_UNORM, shadowFormat_ = VK_FORMAT_UNDEFINED;
@@ -2164,6 +2458,15 @@ private:
     std::array<VkPipeline, 4> scenePipelines_{}; // indexed by scene::Blend
     VkPipeline textPipeline_ = VK_NULL_HANDLE, linePipeline_ = VK_NULL_HANDLE, shadowPipeline_ = VK_NULL_HANDLE,
                postPipeline_ = VK_NULL_HANDLE, prepassPipeline_ = VK_NULL_HANDLE;
+    VkPipeline waterPipeline_ = VK_NULL_HANDLE, splashPipeline_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout waterSetLayout_ = VK_NULL_HANDLE, postWaterSetLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout waterLayout_ = VK_NULL_HANDLE; // water + splashes: set 0 = WaterBlock + 3 textures, push model
+    VkDescriptorPool waterPool_ = VK_NULL_HANDLE;
+    std::array<Buffer, kFramesInFlight> waterUbo_{}; // WaterBlock, host-coherent
+    std::array<VkDescriptorSet, kFramesInFlight> waterSets_{}, postWaterSets_{};
+    std::array<LinearAllocator, kFramesInFlight> splashMemory_;
+    std::array<Buffer, kFramesInFlight> splashBuffers_{};
+    std::array<VkDeviceSize, kFramesInFlight> splashCapacity_{};
     std::array<LinearAllocator, kFramesInFlight> lineMemory_;
     VkSampler sceneSampler_ = VK_NULL_HANDLE, fontSampler_ = VK_NULL_HANDLE, shadowSampler_ = VK_NULL_HANDLE,
               postSampler_ = VK_NULL_HANDLE;

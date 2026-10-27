@@ -78,6 +78,7 @@ void usage() {
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
                  "               [--shaders original|generic]\n"
                  "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0]\n"
+                 "               [--water original|enhanced]\n"
                  "               [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
@@ -885,6 +886,8 @@ int main(int argc, char** argv) {
     for (const auto& w : warnings) std::fprintf(stderr, "ou-game: warning: %s\n", w.c_str());
     auto debugLines = opt.showCollision ? collisionLines(world->collision()) : std::vector<ou::render::DebugLine>{};
     std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
+    std::vector<ou::render::WaterVolume> waterVolumes;     // loaded units' water boxes, each frame
+    std::vector<ou::render::WaterParticle> splashParticles; // game::WaterSim droplets, each frame
     const auto& sp = world->player().state();
     std::fprintf(stderr, "ou-game: %s | chapter %d | spawn %s at %.1f %.1f %.1f yaw %.1f\n", world->currentUnit().data.name.c_str(),
                  world->chapter,
@@ -1205,6 +1208,8 @@ int main(int argc, char** argv) {
                                     near->type().name.c_str(), near->uid(), std::string(ou::game::ai::modeName(near->state().mode)).c_str(),
                                     near->health(), near->type().tuning.health, glm::distance(near->position(), s.pos)));
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
+            lines.push_back(fmt("water %s | ripples %s | splashes %zu", opt.gfx.water ? "enhanced" : "original",
+                                world->water().active() ? "active" : "-", world->water().drops().size()));
             lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push/pick up | F draw | LMB fire | RMB lock | "
                             "Q switch | X weapon | H health pack | mouse look | F5 save | F9 load | F1 overlay | Esc menu");
         }
@@ -1226,6 +1231,12 @@ int main(int argc, char** argv) {
         }
         ou::ui::Canvas canvas(w, h);
         hud.draw(canvas);
+        if (world->air() < 0.999f) { // breath bar while it is not full (under water / refilling)
+            const float u = canvas.unit(), bw = 160 * u, bh = 10 * u, x = 20 * u, y = 40 * u;
+            canvas.rect(x - 2 * u, y - 2 * u, bw + 4 * u, bh + 4 * u, ou::ui::kShade);
+            canvas.rect(x, y, bw * world->air(), bh, world->air() < 0.25f ? 0xFF0000FFu : 0xFFC0A040u);
+            canvas.text(x, y + 13 * u, 12 * u, "AIR", ou::ui::kWhite);
+        }
         menus.draw(canvas, *strings);
         // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these
         // lines change every frame (HUD, effects), so consecutive frames must never share a pointer.
@@ -1235,12 +1246,29 @@ int main(int argc, char** argv) {
         if (opt.showEnemies) appendEnemyLines(*world, frameLines);
         enemyMeshes.tracerLines(world->ticks(), frameLines);
         combat.lines(*world, c, world->fovDeg, w, h, frameLines);
-        ou::render::FrameOptions fo{true, true, lines, frameLines};
+        ou::render::FrameOptions fo{};
+        fo.lighting = true, fo.cullBackFaces = true;
+        fo.overlay = lines, fo.debugLines = frameLines;
         fo.ui = canvas.vertices;
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
         fo.brightness = opt.gfx.brightness;
+        fo.water = ou::render::WaterQuality(opt.gfx.water);
+        const auto& ws = world->water();
+        if (opt.gfx.water && ws.active())
+            fo.ripples = {ws.originX(), ws.originY(), ou::game::WaterSim::kCell, ws.surfaceZ(), ou::game::WaterSim::kSize,
+                          ws.heights(), ws.version()};
+        waterVolumes.clear();
+        for (const auto& m : world->collision().markup)
+            if (m.type == 10 && m.points.size() == 2)
+                waterVolumes.push_back({{m.points[0].x, m.points[0].y, m.points[0].z},
+                                        {m.points[1].x, m.points[1].y, m.points[1].z}});
+        fo.waterVolumes = waterVolumes;
+        splashParticles.clear();
+        if (opt.gfx.water)
+            for (const auto& d : ws.drops()) splashParticles.push_back({{d.pos.x, d.pos.y, d.pos.z}, d.radius, d.alpha()});
+        fo.splashes = splashParticles;
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {

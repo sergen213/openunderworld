@@ -9,6 +9,7 @@
 #include "formats/Formats.hpp"
 #include "game/Combat.hpp"
 #include "game/Progress.hpp"
+#include "game/Water.hpp"
 #include "script/Script.hpp"
 #include "game/ai/Enemy.hpp"
 
@@ -338,6 +339,14 @@ public:
     // Replaces Lara's state (world frame) and the camera orbit; no interpolation across the jump.
     void restore(const PlayerState& s, float camYaw, float camPitch);
 
+    // Interactive water (src/game/Water): ripple field + splash droplets around Lara, ticked with the world.
+    const WaterSim& water() const { return water_; }
+    // One-off splash on the active surface (shots, hazards, scripted impacts).
+    void splashWater(vec3 pos, float strength = 1.0f) { water_.splash(pos, strength); }
+    // Breath: 1 = full, 0 = drowning (kAirSeconds while the head is under water). [I] 45 s, refill 2 s.
+    float air() const { return air_; }
+    bool submerged() const { return submerged_; } // head under water this tick
+
     // ---- combat (Combat.cpp; docs/GAMEPLAY.md "Combat") ----
     std::vector<Damageable*> targets; // lock-on / hitscan targets, non-owning (src/game/ai registers its enemies)
     void damageLara(float amount, vec3 from, int type = kDamageLight); // enemy blows, hazards (tru.exe 0x6F5030)
@@ -371,6 +380,9 @@ private:
     void fire(int hand);
     void reloadWeapon(); // refill the current weapon's clips from its reserve
     void collectPickups(bool pressed);
+    void tickAir(float dt); // oxygen / drowning (World.cpp)
+    static constexpr float kAirSeconds = 45.0f;   // [I] no tru.exe number decoded yet
+    static constexpr float kAirRefillSeconds = 2.0f; // [I]
     void checkLevelEnd(); // script Activate of a cinematic_object -> onCinematic; a level end's -> startChapter(next)
 
     collision::CollisionMesh col_;
@@ -399,6 +411,9 @@ private:
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     physics::Scene physics_;
     Health health_;
+    WaterSim water_;
+    float air_ = 1.0f;
+    bool submerged_ = false;
     CombatState combat_ = fullClips(anims_.weapons);
     double aimTime_ = 0; // pose clips' clock
     bool interactHeld_ = true;     // no press edge on the first tick

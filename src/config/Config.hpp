@@ -23,6 +23,7 @@ struct GraphicsConfig {
                                             // (Vulkan ray queries; explicit shadows/full need the enhanced preset)
     std::string rtQuality = "medium";       // "low" | "medium" | "high": 1, 2, 4 shadow rays per pixel
     std::optional<bool> originalShaders;    // TRU's translated shaders (docs/formats/SHADERS.md); unset = preset default (on)
+    std::string water = "auto";             // "auto" (enhanced -> enhanced, original -> original) | "original" | "enhanced"
     float brightness = 1.0f;                // 0.5..2.0, post-pass gamma (out = in^(1/brightness)); 1 = neutral
 };
 struct GraphicsSettings {
@@ -31,6 +32,7 @@ struct GraphicsSettings {
     int rt = 0;     // 0 off, 1 shadows, 2 full (= render::RayTracing)
     int rtRays = 2;
     bool originalShaders = true; // TRU's translated shaders (docs/formats/SHADERS.md)
+    int water = 0;      // render::WaterQuality: 0 original (TRU's own water shaders), 1 enhanced (ours)
     float brightness = 1.0f;
     bool operator==(const GraphicsSettings&) const = default;
 };
@@ -38,7 +40,7 @@ struct GraphicsSettings {
 // preset, or brightness outside [0.5, 2.0].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
-// --rt, --rt-quality, --brightness.
+// --rt, --rt-quality, --water original|enhanced, --brightness.
 // false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 

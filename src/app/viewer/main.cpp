@@ -57,6 +57,7 @@ void usage() {
                  "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list] [--show-collision]\n"
                  "                 [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off]\n"
                  "                 [--hdr on|off] [--shaders original|generic] [--rt auto|off|shadows|full] [--rt-quality low|medium|high]\n"
+                 "                 [--water original|enhanced]\n"
                  "                 [--brightness 0.5..2.0] [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
@@ -499,6 +500,7 @@ int main(int argc, char** argv) {
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
         fo.brightness = opt.gfx.brightness;
+        fo.water = ou::render::WaterQuality(opt.gfx.water); // no ripple sim / volumes in the viewer
         renderer->drawFrame(cam, {w, h}, fo);
         if (frame == kTimingWarmup) timingStart = SDL_GetTicksNS();
         ++frame;

@@ -1,6 +1,7 @@
 // OpenGL 4.6 core backend (DSA), loaded through libepoxy.
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
+#include "render/Water.hpp"
 
 #include <algorithm>
 #include <array>
@@ -159,7 +160,13 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
     float lb = luma(b);
     return (lb < lo || lb > hi) ? a : b;
 }
-void main() { oColor = vec4(pow(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vec3(1.0 / uBrightness)), 1.0); })";
+)";
+// Underwater declarations/function (render/Water.cpp) go between kPostFs and kPostFsMain.
+const char* kPostFsMain = R"(
+void main() {
+    vec3 c = pow(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vec3(1.0 / uBrightness));
+    oColor = vec4(ouUnderwater(c, vUv), 1.0);
+})";
 
 
 const char* kTextVs = R"(#version 460 core
@@ -258,6 +265,7 @@ struct GpuMesh {
     glm::mat4 model;
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
+    bool water = false;                 // *watersurface* mesh (render/Water.hpp): Enhanced water draws it separately
     size_t source = 0, vertexCount = 0; // SceneData::meshes index, vertex count
 };
 
@@ -269,10 +277,21 @@ struct Targets {
     Framebuffer scene, resolve;
     Renderbuffer msColor, depth;
     Texture color; // sampled by the post pass
+    // Enhanced water: single-sample copies of the opaque scene (refraction, absorption, reflections,
+    // underwater fog). Blitted after the opaque/blended pass, before the water surfaces draw.
+    Texture opaqueColor, opaqueDepth;
+    Framebuffer opaqueColorFbo, opaqueDepthFbo;
 };
 
 struct Resources {
     Program sceneProgram, textProgram, lineProgram, shadowProgram, postProgram;
+    Program waterProgram, splashProgram; // Enhanced water (render/Water.cpp sources)
+    Buffer waterUbo;                     // WaterBlock, UBO binding 4 (water, splash, post)
+    Texture ripples;                     // R32F height field, game::WaterSim
+    uint64_t rippleVersion = 0;
+    int rippleSize = 0;
+    VertexArray splashVao;
+    Buffer splashVbo;
     Texture white, font, shadowMap, attenuation, blackCube;
     // Original Fidelity (docs/formats/SHADERS.md): translated programs, register-file UBOs (bindings 0 frame,
     // 1 material, 2 object; ShaderTranslate.hpp), objects rewritten per frame.
@@ -346,8 +365,23 @@ public:
         if (!r.lineProgram.get()) return false;
         r.shadowProgram = linkProgram(kShadowVs, kShadowFs, error);
         if (!r.shadowProgram.get()) return false;
-        r.postProgram = linkProgram(kPostVs, kPostFs, error);
+        const std::string postFs = std::string(kPostFs) + underwaterPostSource(false) + kPostFsMain;
+        r.postProgram = linkProgram(kPostVs, postFs.c_str(), error);
         if (!r.postProgram.get()) return false;
+        const std::string waterVs = waterVertexSource(false), waterFs = waterFragmentSource(false);
+        r.waterProgram = linkProgram(waterVs.c_str(), waterFs.c_str(), error);
+        if (!r.waterProgram.get()) return false;
+        const std::string splashVs = splashVertexSource(false), splashFs = splashFragmentSource(false);
+        r.splashProgram = linkProgram(splashVs.c_str(), splashFs.c_str(), error);
+        if (!r.splashProgram.get()) return false;
+        r.waterUbo = newBuffer();
+        glNamedBufferStorage(r.waterUbo.get(), sizeof(WaterBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        r.splashVao = newVertexArray();
+        r.splashVbo = newBuffer();
+        glVertexArrayVertexBuffer(r.splashVao.get(), 0, r.splashVbo.get(), 0, sizeof(SplashVertex));
+        attrib(r.splashVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, pos));
+        attrib(r.splashVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, uv));
+        attrib(r.splashVao.get(), 2, 1, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, alpha));
         r.emptyVao = newVertexArray();
         r.lineVao = newVertexArray();
         attrib(r.lineVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(LineVertex, pos));
@@ -458,6 +492,11 @@ public:
         ensureTargets(vp, options);
         const float aspect = float(vp.width) / float(vp.height);
         const glm::mat4 viewProj = camera.projection(aspect) * camera.view();
+        const bool enhancedWater = options.water == WaterQuality::Enhanced;
+        WaterBlock wb = waterBlock(camera, vp, viewProj, environment_, options);
+        if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
+        glNamedBufferSubData(r.waterUbo.get(), 0, sizeof wb, &wb);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 4, r.waterUbo.get());
         drawOrder(r.meshes, camera.position, r.order);
         // No ray tracing here: a requested RT mode renders with the shadow map (as Vulkan without RT support).
         const bool shadows = options.shadows || options.rt != RayTracing::Off;
@@ -484,6 +523,7 @@ public:
         for (const DrawRef& d : r.order) {
             const GpuMesh& m = r.meshes[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
+            if (enhancedWater && m.water) continue; // drawn by drawWater with the opaque copies
             const int p = originals ? m.program[d.sub] : -1;
             if (p != program) {
                 glUseProgram(p < 0 ? r.sceneProgram.get() : r.originals[size_t(p)].get());
@@ -512,6 +552,7 @@ public:
             drawSubmesh(s);
         }
         setBlend(int(scene::Blend::Opaque));
+        if (enhancedWater) drawWater(camera, vp, options);
         drawLines(viewProj, options.debugLines);
 
         Targets& t = r.targets;
@@ -527,6 +568,7 @@ public:
         glUniform1i(1, options.hdr ? 1 : 0);
         glUniform1f(2, options.brightness);
         glBindTextureUnit(0, t.color.get());
+        glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
         drawOverlay(vp, options.overlay, options.ui);
@@ -595,6 +637,23 @@ private:
         glNamedFramebufferRenderbuffer(t.scene.get(), GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth.get());
         if (glCheckNamedFramebufferStatus(t.scene.get(), GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             std::fprintf(stderr, "[gl] scene framebuffer incomplete (msaa %d)\n", msaa);
+        t.opaqueColor = newTexture();
+        glTextureStorage2D(t.opaqueColor.get(), 1, format, vp.width, vp.height);
+        glTextureParameteri(t.opaqueColor.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(t.opaqueColor.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(t.opaqueColor.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(t.opaqueColor.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        t.opaqueDepth = newTexture();
+        glTextureStorage2D(t.opaqueDepth.get(), 1, GL_DEPTH_COMPONENT32F, vp.width, vp.height);
+        glTextureParameteri(t.opaqueDepth.get(), GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(t.opaqueDepth.get(), GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(t.opaqueDepth.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(t.opaqueDepth.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        t.opaqueColorFbo = newFramebuffer();
+        glNamedFramebufferTexture(t.opaqueColorFbo.get(), GL_COLOR_ATTACHMENT0, t.opaqueColor.get(), 0);
+        t.opaqueDepthFbo = newFramebuffer();
+        glNamedFramebufferTexture(t.opaqueDepthFbo.get(), GL_DEPTH_ATTACHMENT, t.opaqueDepth.get(), 0);
+        glNamedFramebufferDrawBuffer(t.opaqueDepthFbo.get(), GL_NONE);
     }
 
     // Opaque: depth write, LESS. Blended (the original's translucent pass 0x5066A0): no depth
@@ -715,6 +774,7 @@ private:
         g.model = glm::make_mat4(m.transform);
         const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
         g.center = glm::vec3(sphere), g.radius = sphere.w;
+        g.water = isWaterSurface(m.origin);
         g.source = source;
         g.vertexCount = m.vertices.size();
         g.vao = newVertexArray();
@@ -826,6 +886,68 @@ private:
         if (r.objectUbo.get())
             glNamedBufferSubData(r.objectUbo.get(), 0, GLsizeiptr(objectScratch_.size()), objectScratch_.data());
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());
+    }
+
+    // Enhanced water: resolve the opaque scene into the copy textures, then draw the water surfaces
+    // with refraction/reflection/ripples and the splash droplets on top.
+    void drawWater(const Camera& camera, Viewport vp, const FrameOptions& options) {
+        Resources& r = *res_;
+        Targets& t = r.targets;
+        const auto& rip = options.ripples;
+        if (rip.cellSize > 0 && rip.size > 0 && !rip.heights.empty()) {
+            if (!r.ripples.get() || r.rippleSize != rip.size) {
+                r.ripples = newTexture();
+                glTextureStorage2D(r.ripples.get(), 1, GL_R32F, rip.size, rip.size);
+                glTextureParameteri(r.ripples.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTextureParameteri(r.ripples.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTextureParameteri(r.ripples.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTextureParameteri(r.ripples.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                r.rippleSize = rip.size;
+                r.rippleVersion = 0;
+            }
+            if (r.rippleVersion != rip.version) {
+                glTextureSubImage2D(r.ripples.get(), 0, 0, 0, rip.size, rip.size, GL_RED, GL_FLOAT, rip.heights.data());
+                r.rippleVersion = rip.version;
+            }
+        }
+        glBlitNamedFramebuffer(t.scene.get(), t.opaqueColorFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
+                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBlitNamedFramebuffer(t.scene.get(), t.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
+                               GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, t.scene.get());
+        glViewport(0, 0, vp.width, vp.height);
+        glBindTextureUnit(5, t.opaqueColor.get());
+        glBindTextureUnit(6, t.opaqueDepth.get());
+        glBindTextureUnit(7, r.ripples.get() ? r.ripples.get() : r.white.get());
+        glUseProgram(r.waterProgram.get());
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE); // the surface must also read from below
+        for (const auto& m : r.meshes) {
+            if (!m.water) continue;
+            glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(m.model));
+            glBindVertexArray(m.vao.get());
+            for (const auto& s : m.submeshes)
+                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
+                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+        }
+        if (!options.splashes.empty()) {
+            const auto verts = splashVertices(camera, options.splashes);
+            if (!verts.empty()) {
+                glNamedBufferData(r.splashVbo.get(), GLsizeiptr(verts.size() * sizeof(SplashVertex)), verts.data(),
+                                  GL_STREAM_DRAW);
+                glUseProgram(r.splashProgram.get());
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glBindVertexArray(r.splashVao.get());
+                glDrawArrays(GL_TRIANGLES, 0, GLsizei(verts.size()));
+                glDisable(GL_BLEND);
+            }
+        }
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
     }
 
     void drawLines(const glm::mat4& viewProj, std::span<const DebugLine> lines) {

@@ -27,7 +27,7 @@ render/RenderCommon.*  ->  backend-free helpers shared by both (font atlas, over
   front per mesh (LEQUAL, no writes), debug lines, then a fullscreen post pass to the back buffer
   and the overlay. Gamma-space (UNORM) textures and targets, as tru.exe (see "Colour space" below).
 
-## Graphics presets (`ou::config::GraphicsConfig`, `FrameOptions::{msaa, shadows, fxaa, hdr, rt, brightness}`)
+## Graphics presets (`ou::config::GraphicsConfig`, `FrameOptions::{msaa, shadows, fxaa, hdr, rt, brightness, water}`)
 
 Defaults (no config, no flags): renderer `auto` = Vulkan when a Vulkan 1.3 device is usable, else OpenGL with the reason
 logged (`render::selectRenderer`, test `RendererSelect.AutoFallsBackToOpenGl`); preset `enhanced`; `rt auto` = sun
@@ -40,6 +40,7 @@ shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the o
 | FXAA | off | off (optional) | `--fxaa on/off`, `graphics.fxaa` |
 | HDR | off | off: the original shaders write LDR gamma-space colour; the ACES tonemap (RGBA16F target) only compresses it | `--hdr on/off`, `graphics.hdr` |
 | Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `graphics.rt`, `graphics.rt_quality` |
+| Water | TRU's own water shaders | enhanced water ("Water" below): waves, refraction, SSR, ripples, splashes, underwater | `--water original/enhanced`, `graphics.water` |
 | Brightness | 1.0 | 1.0 | `--brightness 0.5-2.0`, `graphics.brightness` |
 
 `--preset original|enhanced` / `graphics.preset` picks the defaults; explicit settings override
@@ -192,6 +193,50 @@ Viewed: ballcourt path/court show light-mapped multi-layer terrain, sun-lit cour
 the original swirl shader; the l3_main_bedroom corridor is light-map + ambient only (its torch lights are not fed) and so
 much darker than the generic lambert; the 060_med_natla cutscene keeps Lara/actors on generic shading.
 
+## Water (Enhanced, GL + Vulkan; `graphics.water`, `--water original|enhanced`)
+
+Original (`water = 0`) draws water-surface meshes with TRU's own translated shaders, as before.
+Enhanced (`water = 1`, the enhanced-preset default) replaces them with our own water shading
+(`src/render/shaders/water.{vert,frag}`, shared by both backends; `src/render/Water.{hpp,cpp}`).
+Water surfaces are meshes whose object name contains `watersurface` [I], e.g.
+`ca_goo_pool_watersurface` in l4_pool; `render::isWaterSurface` is the shared test.
+
+Technique (written for this project, no third-party shader code):
+- Normals: four directional waves with analytic slopes, plus the game's ripple height field
+  (central differences). Procedural wave amplitudes are ours [I].
+- Refraction: a single-sample copy of the opaque scene colour + depth, distorted by the normal;
+  foreground pixels are rejected. Thickness drives Beer-Lambert absorption (red attenuates
+  fastest) into a blue-green tint, and caustics (animated ridged filaments) on the bottom.
+- Reflections: Schlick Fresnel (F0 0.02) with screen-space ray marching against the opaque
+  depth (20 steps, radial hit test), fog colour as the miss fallback. Sun glints from the unit's
+  sun. The Original RT water-reflection path is not used in Enhanced; Enhanced reflections are
+  screen-space in both backends.
+- Foam where the bottom is shallow (shore/intersection) and on ripple crests.
+- Splash droplets: camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
+- Underwater: when the camera is inside a `WaterVolume` below its surface, the post pass fogs
+  into the same tint by reconstructed depth and adds caustics; the surface seen from below is
+  tinted instead of mirrored. With `water = original` the post pass is byte-identical to before.
+
+Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the ripple field, splash
+droplets and the water volumes; ou-game fills `FrameOptions::{ripples, waterVolumes, splashes}`
+every frame. `render::WaterBlock` (UBO: camera, inverse view-projection, sun, fog, ripple
+transform, absorption) feeds the water, splash and post shaders.
+
+Backend plumbing: GL blits the scene colour/depth into `opaqueColor/opaqueDepth` after the scene
+pass (MSAA resolve included), then draws water + splashes into the same framebuffer. Vulkan
+splits dynamic rendering into two passes: pass 1 ends with a colour resolve and, with MSAA, a
+`SAMPLE_ZERO` depth resolve; without MSAA the depth is copied. Descriptors: water set 0 =
+UBO + 3 textures, post set 1 = UBO + depth. The ripple field uploads as R32F only when
+`WaterSim::version` changes.
+
+Measured (2026-10-27, l4_pool viewer, Vulkan, 1792x1008): Original 4.80 ms, Enhanced 5.01 ms
+average frame time over 49 frames. Viewed screenshots (GL and Vulkan, same camera): reflective,
+refractive pool with shore foam and caustics; Lara treading with a wake; underwater tint + AIR bar.
+
+Limits [I]: SSR misses off-screen geometry (fog fallback), one simulated surface (the one Lara
+is in or nearest), no water flow/buoyancy, procedural caustics are not light-accurate, foam noise
+is hashed cells, no ripples in ou-viewer (it has no simulation).
+
 ## Original Fidelity vs Enhanced (plan)
 
 Two render modes share the scene graph and simulation; only the backend's frame graph differs.
@@ -206,8 +251,10 @@ Two render modes share the scene graph and simulation; only the backend's frame 
 - Verification: frame captures from the original game under the same camera, compared with
   `ou-imgdiff`-style metrics plus side-by-side review.
 
-**Enhanced** (opt-in, Vulkan only)
+**Enhanced** (opt-in per feature, GL + Vulkan)
 - Linear-space lighting, higher-precision shadows, MSAA/TAA, SSAO, HDR output.
+- Enhanced water (both backends): waves, refraction, depth absorption, SSR reflections, foam,
+  caustics, interactive ripples and splashes, underwater fog ("Water" above).
 - Optional ray tracing on hardware exposing `VK_KHR_ray_query` + `VK_KHR_acceleration_structure`:
   RT sun shadows and water reflections via ray queries in the raster pipeline, shadow map as
   fallback (implemented, "Ray tracing" above); RT AO / GI not started.

@@ -246,6 +246,21 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 - Climb out: a sphere sweep 300 forward must hit a wall (|n.z| ≤ 0.5, facing it); a ray 50 past the contact finds the
   top. The root is placed so the clip's hands (at its start time) reach the contact and its root ends on the top
   (`top − rise`); the clip's root motion then plays without collision and the end snaps to the floor.
+- Oxygen (ours; no tru.exe number decoded yet, rates [I]): `World::tickAir` drains the meter over 45 s while the head
+  is under water (SwimUnder / SwimDive / Surfacing / SwimSplash with root + 150 below the surface) and refills it in
+  2 s at the surface. At 0, `damageLara(max / 6 per second, kDamageBypass)` until Lara surfaces or dies. ou-game draws
+  an AIR bar whenever the meter is not full. Air is not saved (a load starts at full health/air).
+- Interactive surface (`src/game/Water.{hpp,cpp}`, `World::water()`; technique and parameters [I], TRU does not
+  simulate ripples): a deterministic 256×256 damped wave-equation height field (28-unit cells, wave speed 420 units/s,
+  damping 0.994/tick) rides the surface Lara is in or nearest, follows her in whole cells and resets when the surface
+  changes. Impulses: entry splash (strength from the plunge speed), surface-swim wake and stroke pulses, tread rings,
+  near-surface under-water swimming, wading (feet below the surface but not swimming), climb-out drips, living enemies
+  and moving collision dynamics crossing the surface, and this tick's hitscan rays crossing it (`CombatState::shots`).
+  `World::splashWater` is the entry point for other impacts. Splash droplets are ballistic (gravity as Tuning, drag by
+  lifetime, capped at 256, xorshift RNG) and die on the surface or after 0.35–0.75 s. ou-game copies the field, water
+  volumes and droplets into `FrameOptions` for the Enhanced water shader (docs/RENDERING.md "Water"); Original water
+  does not use them. Tests `Game.Water*`; real-data l4_pool: entry rings, swim wake, AIR bar and drowning verified by
+  replay/screenshot (2026-10-27).
 
 ## Enemies
 
@@ -597,9 +612,10 @@ No side-by-side comparison with the original game was made.
 - Jump velocities, step limits, swim speed, camera distance/height, all traversal reach boxes and the jump-assist radius
   are inferred; they are not in Lara's player data block (Numbers) [U]. The grab zVel window, height, crouch height and
   water probe are taken from it.
-- Swimming: no oxygen, drowning, wading clip (`swim_wading`), surface turn clips, underwater fast/sprint, or swim
-  damage; the water surface is static (scripted level changes not run); the water box is sized from the surface model,
-  not the exe's component.
+- Swimming: oxygen/drowning are implemented with inferred rates (45 s / refill 2 s / max-per-6 s; no exe numbers).
+  Still missing: wading clip (`swim_wading`), surface turn clips, underwater fast/sprint, swim damage from other
+  sources; the water surface is static (scripted level changes not run); the water box is sized from the surface model,
+  not the exe's component. Ripple/caustic parameters are ours [I].
 - Traversal: no balance wobble/unbalance (`bbeam_unbalance_*`, `bbeam_aboutfall_*`), beam sprint, catching the beam
   when falling off it (`bbeam_fall_right_catch`), pole shimmy/parallel hang (`HPole_ParaForward`, `hpole_IdleHangPara`)
   or swing physics (the swing is the clip; fling ignores its phase), no mirrored left-side clips, no `ledgeu_*` free

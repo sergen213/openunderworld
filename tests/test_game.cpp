@@ -1096,3 +1096,69 @@ TEST(GameReal, TrapRoomsPoleFling) {
     EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1337);
     EXPECT_NEAR(handsOf(w, w.anims().poleHandOffset).y, -19591, 1);
 }
+
+// ---- interactive water (src/game/Water) ----
+namespace {
+float maxRipple(const game::WaterSim& ws) {
+    float m = 0;
+    for (float h : ws.heights()) m = std::max(m, std::abs(h));
+    return m;
+}
+} // namespace
+
+TEST(Game, WaterEntrySplashMakesRingsAndDrops) {
+    auto w = makeWorld(poolMesh(), {1000, 0, 400});
+    size_t maxDrops = 0;
+    float peak = 0;
+    for (int i = 0; i < 90; ++i) {
+        w->tick({});
+        maxDrops = std::max(maxDrops, w->water().drops().size());
+        peak = std::max(peak, maxRipple(w->water()));
+    }
+    ASSERT_TRUE(w->water().active());
+    ASSERT_EQ(w->player().state().state, State::SwimTread);
+    EXPECT_GT(peak, 1.0f) << "the entry must displace the surface";
+    EXPECT_GT(maxDrops, 0u) << "the entry must throw droplets";
+    for (int i = 0; i < 240; ++i) w->tick({});
+    EXPECT_LT(maxRipple(w->water()), peak * 0.6f) << "the rings decay";
+}
+
+TEST(Game, WaterExternalSplash) {
+    auto w = makeWorld(poolMesh(), {1000, 0, 400});
+    for (int i = 0; i < 90; ++i) w->tick({});
+    ASSERT_TRUE(w->water().active());
+    w->splashWater(w->player().state().pos, 1.5f); // as a shot / falling object impact
+    EXPECT_GT(maxRipple(w->water()), 5.0f);
+    EXPECT_FALSE(w->water().drops().empty());
+}
+
+TEST(Game, WaterWakeFollowsLara) {
+    auto w = makeWorld(poolMesh(), {1000, 0, 400});
+    for (int i = 0; i < 90; ++i) w->tick({});
+    const float ox = w->water().originX(), oy = w->water().originY();
+    for (int i = 0; i < 300; ++i) w->tick(forward());
+    EXPECT_GT(maxRipple(w->water()), 0.5f) << "surface swimming leaves a wake";
+    EXPECT_TRUE(w->water().originX() != ox || w->water().originY() != oy) << "the field follows Lara";
+    EXPECT_EQ(std::fmod(w->water().originX(), game::WaterSim::kCell), 0.0f);
+}
+
+TEST(Game, WaterAirDrainsRefillsAndDrowns) {
+    auto w = makeWorld(poolMesh(), {1000, 0, 400});
+    for (int i = 0; i < 90; ++i) w->tick({});
+    ASSERT_EQ(w->player().state().state, State::SwimTread);
+    EXPECT_NEAR(w->air(), 1.0f, 1e-3);
+    Actions dive;
+    dive.drop = true;
+    for (int i = 0; i < 120; ++i) w->tick(dive);
+    ASSERT_TRUE(w->submerged());
+    ASSERT_LT(w->air(), 1.0f);
+    const float low = w->air();
+    Actions up;
+    up.jump = true;
+    for (int i = 0; i < 300 && w->player().state().state != State::SwimTread; ++i) w->tick(up);
+    ASSERT_EQ(w->player().state().state, State::SwimTread);
+    EXPECT_GT(w->air(), low) << "surfacing refills the meter";
+    for (int i = 0; i < 60 * 50 && w->health().value() >= w->health().max(); ++i) w->tick(dive);
+    EXPECT_EQ(w->air(), 0.0f);
+    EXPECT_LT(w->health().value(), w->health().max()) << "an empty meter drowns Lara";
+}
