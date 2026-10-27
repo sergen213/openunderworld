@@ -1209,3 +1209,41 @@ TEST(Game, ClimbIgnoresUnflaggedWall) {
     w->tick(forward());
     EXPECT_NE(w->player().state().state, State::Climb) << "an unflagged wall is not climbable";
 }
+
+// ---- grapple (src/game/Grapple) ----
+TEST(Game, GrappleSwingAndRelease) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    w->attachGrapple({0, 0, 3000}, 1);
+    ASSERT_EQ(w->player().state().state, State::GrappleThrow);
+    for (int i = 0; i < 90; ++i) w->tick({});
+    ASSERT_EQ(w->player().state().state, State::GrappleSwing);
+    const float len = w->player().state().ropeLength;
+    EXPECT_GT(len, 2000.0f);
+    for (int i = 0; i < 120; ++i) {
+        w->tick(forward()); // pumping must never stretch the rope
+        const glm::vec3 hand = w->player().state().pos + glm::vec3(0, 0, 400);
+        EXPECT_LE(glm::distance(hand, w->player().state().grappleAnchor), len + 1.0f) << "tick " << i;
+    }
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Jump);
+    EXPECT_EQ(w->player().state().grappleUid, 0);
+}
+
+TEST(GameReal, PoolGrappleTargetAndSwing) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l4_pool",
+                  game::loadLaraAnims(bf), game::Spawn{{4362, -400, 2000}, 0});
+    w.restore(w.player().state(), 1.5707963f, 0.7f); // look up at the ceiling anchor
+    const auto t = w.grappleTarget();
+    ASSERT_TRUE(t) << "the pool's ceiling anchor is selectable";
+    EXPECT_EQ(t->uid, 5511);
+    w.attachGrapple(t->pos, t->uid);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    EXPECT_EQ(w.player().state().state, State::GrappleSwing);
+    EXPECT_EQ(w.player().state().grappleUid, 5511);
+}

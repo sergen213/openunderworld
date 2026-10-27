@@ -54,6 +54,13 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
         if (n->second == "checkpoint" || n->second == "invis_checkpoint")
             u.checkpoints.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2}); // heading as findSpawn
         if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position)});
+        if (n->second.find("_ei_grapple") != std::string::npos) {
+            const GrappleKind k = n->second.find("wall") != std::string::npos   ? GrappleKind::Wall
+                                  : n->second.find("post") != std::string::npos ? GrappleKind::Post
+                                  : n->second.find("ceiling") != std::string::npos ? GrappleKind::Ceiling
+                                                                                : GrappleKind::Mounted;
+            u.grapples.push_back({in.uniqueId, v3(in.position), k});
+        }
         if (!in.scriptId) continue;
         const auto strings = scriptStrings(*drm, in.scriptId);
         std::vector<std::string> starts;

@@ -108,6 +108,7 @@ enum class State {
     // jump from a ledge/pole to another ledge/pole, PoleHang = hanging/swinging on a horizontal pole.
     Crouch, Roll, Slide, Beam, DropToHang, HangJump, PoleHang,
     Climb, // free climbing on climbable rock faces (DICE clips; src/game/Climb.cpp)
+    GrappleThrow, GrappleSwing, // grapple attached: throw/jumpon clip, then pendulum on the rope (Grapple.cpp)
     Hit, // hit reaction clip once with root motion (ground or swimming), then Idle / the swim state (World::damageLara)
 };
 std::string_view stateName(State s); // "unknown" past the last state
@@ -167,6 +168,10 @@ struct PlayerState {
     // Free climbing (State::Climb): terrain face index + outward normal of the wall she is on.
     uint32_t climbFace = UINT32_MAX;
     vec3 climbNormal{0};
+    // Grapple (State::GrappleThrow/Swing): anchor intro unique id, world anchor, rope length at hand (root + 400).
+    int32_t grappleUid = 0;
+    vec3 grappleAnchor{0};
+    float ropeLength = 0;
 };
 
 class Player {
@@ -182,6 +187,8 @@ public:
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0) const;
     void face(float yaw) { s_.yaw = yaw; } // combat: turn toward a locked target
+    void attachGrapple(vec3 anchor, int32_t uid); // Grapple.cpp: throw the hook at a target
+    void releaseGrapple(bool jump);               // let go, keeping the swing's momentum
     void die(std::string_view clip);       // State::Dead playing `clip` once
     void hitReact(std::string_view clip);  // State::Hit playing `clip` once (restarts it)
 
@@ -219,6 +226,7 @@ private:
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
     bool tryClimb(bool fromAir);
     void climb(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp
     void land(vec2 move);
 
     const collision::CollisionMesh& col_;
@@ -242,6 +250,13 @@ struct Spawn {
 };
 
 // ---- units, streaming, checkpoints (docs/formats/LEVELS.md "Streaming", docs/SAVES.md) -------
+// Grapple-target intro (`*_ei_grapple_ceiling/_wall/_post` etc.): position in its unit's frame.
+enum class GrappleKind : uint8_t { Ceiling, Wall, Post, Mounted };
+struct GrappleTarget {
+    int32_t uid = 0;
+    vec3 pos{0};
+    GrappleKind kind = GrappleKind::Ceiling;
+};
 // A `checkpoint` / `invis_checkpoint` intro: respawn transform in its unit's frame (tru.exe 0x5D40C0).
 struct Checkpoint {
     int32_t id = 0; // intro unique id
@@ -254,6 +269,7 @@ struct UnitData {
     collision::CollisionMesh col; // BVH not built; World merges the loaded units
     std::vector<formats::Portal> portals;
     std::vector<Checkpoint> checkpoints;
+    std::vector<GrappleTarget> grapples; // *_ei_grapple_* intros, unit frame
     std::optional<Spawn> spawn; // findSpawn
     std::shared_ptr<const cdc::Drm> drm;
     // Progression (src/game/Progress.hpp): reward intros; cinematic intros whose script names chapter start
@@ -350,6 +366,10 @@ public:
     const WaterSim& water() const { return water_; }
     // One-off splash on the active surface (shots, hazards, scripted impacts).
     void splashWater(vec3 pos, float strength = 1.0f) { water_.splash(pos, strength); }
+    // Grapple: best target within range, aim cone and line of sight (World.cpp), for attach + the HUD marker.
+    std::optional<GrappleTarget> grappleTarget() const;
+    void attachGrapple(vec3 anchor, int32_t uid) { player_.attachGrapple(anchor, uid); }
+    void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath: 1 = full, 0 = drowning (kAirSeconds while the head is under water). [I] 45 s, refill 2 s.
     float air() const { return air_; }
     bool submerged() const { return submerged_; } // head under water this tick
@@ -424,6 +444,7 @@ private:
     CombatState combat_ = fullClips(anims_.weapons);
     double aimTime_ = 0; // pose clips' clock
     bool interactHeld_ = true;     // no press edge on the first tick
+    bool grappleHeld_ = true;      // no press edge on the first tick
     std::vector<Pickup> pickedUp_;
 };
 
@@ -439,7 +460,7 @@ std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const c
 // Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions.
 // Mouse look is added by the app: it accumulates relative motion per frame and feeds it to the next tick as
 // a rate (see ou-game). Keys: WASD/arrows move, Shift walk, Space jump, Ctrl/C drop, E interact, F5/F9
-// save/load, F draw/holster, Q switch target, X switch weapon, H health pack; mouse left fire, right aim/lock.
+// save/load, F draw/holster, Q switch target, X switch weapon, H health pack, G grapple (E ascend / Shift descend rope); mouse left fire, right aim/lock.
 // Pad: left stick move, right stick look, South jump, East drop, West interact, left shoulder walk, North draw,
 // right trigger fire, left trigger aim/lock, right stick click switch target, d-pad right switch weapon, d-pad up
 // health pack (locals.bin 1298 / 1291 glyphs U+180A / U+1808 [I button order]).
@@ -447,7 +468,7 @@ Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons = 
 
 // Scripted input for deterministic replays. Text, one event per line: `<seconds> <action> [value]`.
 // Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load, draw, fire, aim, switch,
-// weapon, heal (0/1), lookx, looky (rad/s).
+// weapon, heal, grapple, sprint (0/1), lookx, looky (rad/s).
 // A value persists until changed; times map to tick round(seconds * 60). '#' starts a comment.
 class InputScript {
 public:

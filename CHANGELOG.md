@@ -6,6 +6,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-27
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+### Added
+- Grapple: G (or the right shoulder button) throws at the original `*_ei_grapple_*` anchors — a crosshair marks a hookable target. Lara swings on the rope with stick pumping, climbs up/down it (E / Shift), and jumps off with her momentum (Space or G/Ctrl to let go). Rope and target rendering, line-of-sight and range checks. Wall-running and pulling objects are still to come.
+
 ## [0.6.0] - 2026-10-27
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

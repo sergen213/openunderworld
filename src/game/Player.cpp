@@ -124,7 +124,7 @@ std::string_view stateName(State s) {
                                              "fall", "land", "hang", "shimmy", "climbup", "swimsplash",
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
-                                             "hangjump", "polehang", "climb", "hit"};
+                                             "hangjump", "polehang", "climb", "grapplethrow", "grappleswing", "hit"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -728,6 +728,10 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         break;
     case State::Climb:
         climb(move, jumpPressed, dropPressed, dt);
+        break;
+    case State::GrappleThrow:
+    case State::GrappleSwing:
+        grapple(move, a, jumpPressed, dropPressed, dt);
         break;
     case State::DropToHang:
         s_.pos += advanceRoot(dt); // full root motion and turn, no collision (as ClimbUp)

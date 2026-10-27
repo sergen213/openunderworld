@@ -1210,7 +1210,8 @@ int main(int argc, char** argv) {
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
             lines.push_back(fmt("water %s | ripples %s | splashes %zu", opt.gfx.water ? "enhanced" : "original",
                                 world->water().active() ? "active" : "-", world->water().drops().size()));
-            lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push/pick up | F draw | LMB fire | RMB lock | "
+            lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push/pick up | G grapple (E/Shift rope) | "
+                            "F draw | LMB fire | RMB lock | "
                             "Q switch | X weapon | H health pack | mouse look | F5 save | F9 load | F1 overlay | Esc menu");
         }
         { // combat HUD text (always shown)
@@ -1246,6 +1247,16 @@ int main(int argc, char** argv) {
         if (opt.showEnemies) appendEnemyLines(*world, frameLines);
         enemyMeshes.tracerLines(world->ticks(), frameLines);
         combat.lines(*world, c, world->fovDeg, w, h, frameLines);
+        if (world->player().state().grappleUid) { // the rope from Lara's hand to the anchor
+            const glm::vec3 hand = s.pos + glm::vec3(0, 0, 400);
+            const glm::vec3 anchor = world->player().state().grappleAnchor;
+            frameLines.push_back({{hand.x, hand.y, hand.z}, {anchor.x, anchor.y, anchor.z}, 0xFF60A0C0});
+        } else if (const auto target = world->grappleTarget()) { // a hookable anchor in reach
+            const glm::vec3 p = target->pos;
+            frameLines.push_back({{p.x - 70, p.y, p.z}, {p.x + 70, p.y, p.z}, 0xFF40C0FF});
+            frameLines.push_back({{p.x, p.y - 70, p.z}, {p.x, p.y + 70, p.z}, 0xFF40C0FF});
+            frameLines.push_back({{p.x, p.y, p.z - 70}, {p.x, p.y, p.z + 70}, 0xFF40C0FF});
+        }
         ou::render::FrameOptions fo{};
         fo.lighting = true, fo.cullBackFaces = true;
         fo.overlay = lines, fo.debugLines = frameLines;

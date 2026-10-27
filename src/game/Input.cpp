@@ -46,7 +46,7 @@ Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
 
 InputScript InputScript::parse(std::string_view text) {
     static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact", "save",
-                                                    "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause"};
+                                                    "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint"};
     InputScript s;
     std::istringstream in{std::string(text)};
     std::string line;

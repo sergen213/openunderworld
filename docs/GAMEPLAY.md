@@ -283,6 +283,24 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   `ou-game --level 'pc-w\l1_baldrsstairs_a.drm' --spawn '-5294,-6455,2160,-90'` with forward held ends in
   `state climb`, `clip DICE_B_Settle_up` (screenshot viewed, Lara on the rock).
 
+## Grapple (src/game/Grapple.cpp)
+
+- Targets [O]: intros named `*_ei_grapple_*` (`ca_ei_grapple_post`, `sa_ei_grapple_ceiling(_invisible)`,
+  `ma_ei_grapple_ceiling`, `ca_ei_grapple_wall_a`, `tp_ei_grapple_wall`, `ar_ei_grapple_wall`, …), collected per
+  unit into `UnitData::grapples` (kind by name: wall/post/ceiling/mounted). l4_pool's ceiling anchor is uid 5511
+  at (4362, -70, 2607).
+- Selection (ours [I]): within 300..5000 units of Lara's eye (+375), inside a 60-degree cone of the camera,
+  clear line of sight (`World::grappleTarget`). Best by angle then distance; a crosshair marks it in ou-game.
+- G / pad right shoulder (`Actions::grapple`) throws (`grapple_rappel_free_jumpon`) and attaches; G again or
+  Ctrl/C releases. Space jumps off with the swing's momentum (`grapple_rappel_free_jumpoff`).
+- Swing (ours [I], no exe numbers): gravity + stick pumping (500 u/s²), a rope constraint at hand = root + 400
+  (outward radial velocity removed), light air drag. `grapple_rappel_free_swing_forward/backward` by travel
+  direction, `grapple_rappel_idle` otherwise. E ascends the rope, Shift descends (300 u/s, clamped 200..6000).
+- The rope is drawn from the hand to the anchor in ou-game. Tests `Game.GrappleSwingAndRelease`,
+  `GameReal.PoolGrappleTargetAndSwing` (anchor selected and attached).
+- Not yet: wall-running/rappel on walls, pulling mounted objects, rope-vs-world collision, hook model,
+  throwing while hanging from ledges. Rope length/physics are [I].
+
 ## Enemies
 
 Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy
@@ -643,11 +661,9 @@ No side-by-side comparison with the original game was made.
   cover, `Wall_Hug_*`, balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang,
   hurdles/vaults, mirrored left-side clips. Root motion of the jump, attach and fling clips is not applied
   (the flight is ballistic), so their poses can sit off the computed path.
-- Grapple is not implemented. Found [O]: object `g_grapple` (objectlist id 46) and `pr_grapplinghook` (77); targets are
-  object intros `*_ei_grapple_ceiling` / `_wall` / `_post` / `_mounted` (ids 151, 155, 340, 349, 363, 390, 410, 454,
-  624, 661, 662, …), not markup; the exe's grapple logic is state-chart conditions (`PlayerSC_Grapple::IsBelowAttachPoint`,
-  `WallDetected`, `RappelSpeed`, … 0x739C80..0x73C330) plus `[GrappleRope]` rope bodies, and 180+ `grapple_*` clips
-  exist in lara.drm. Needs an input action and a rope simulation.
+- Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
+  see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
+  model, ledge-grapple transitions, exe rappel speeds (ours are [I]).
 - Missing: sprint, state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenades (pr_grenade record [U]), the
   assault rifle / tranquilizer / Thor's hammer, projectile flight for the speargun (hitscan), mirrored side hit
   reactions, thrown / knock-down reactions (`Hit_Thrown*`, `hitReact_*`, types 7/9/10/12/15), hit reactions while

@@ -104,6 +104,10 @@ const std::vector<std::string_view> kLaraClipNames = {
     // free climbing (Climb.cpp): attach, idle, directional moves, jump off, drop
     "DICE_B_ground_attach", "DICE_B_air_attach_M", "DICE_B_Idle", "DICE_B_Settle_up", "DICE_B_Settle_down",
     "DICE_B_Settle_Left", "DICE_B_Settle_right", "DICE_B_Jump_Back", "DICE_B_Drop",
+    // grapple (Grapple.cpp)
+    "grapple_rappel_free_jumpon", "grapple_rappel_idle", "grapple_rappel_free_swing_forward",
+    "grapple_rappel_free_swing_backward", "grapple_rappel_free_ascend", "grapple_rappel_free_descend",
+    "grapple_rappel_free_jumpoff",
 };
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
@@ -186,6 +190,11 @@ void World::tick(const Actions& a) {
     if (glm::length(move) > 1) move = glm::normalize(move);
     if (script_.holding()) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
     if (combat_.slowMo > 0) move = vec2(0); // [I] adrenaline window: the stick steers the pip (Combat.cpp)
+    if (a.grapple && !grappleHeld_) {
+        if (player_.state().grappleUid) releaseGrapple(false);
+        else if (const auto t = grappleTarget()) attachGrapple(t->pos, t->uid);
+    }
+    grappleHeld_ = a.grapple;
     player_.tick(move, a, dt);
     if (!units_.empty()) { // streaming world (src/game/Stream.cpp)
         crossPortals(prev_.pos, player_.state().pos);
@@ -254,6 +263,32 @@ void World::tickAir(float dt) {
     } else {
         air_ = std::min(1.0f, air_ + dt / kAirRefillSeconds);
     }
+}
+
+// Grapple target: within 5000 units and a 60-degree cone of the camera, with clear line of sight
+// from Lara's eye (range and cone are ours [I]; the exe's state-chart conditions do not decode to a
+// single range check). Units contribute their intros in world frame.
+std::optional<GrappleTarget> World::grappleTarget() const {
+    if (player_.state().grappleUid) return std::nullopt;
+    const vec3 eye = player_.state().pos + vec3(0, 0, targeting.eyeHeight);
+    const vec3 fwd(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw),
+                   std::sin(cam_.pitch));
+    std::optional<GrappleTarget> best;
+    float bestScore = 1e30f;
+    for (const auto& u : units_)
+        for (const auto& g : u.data.grapples) {
+            GrappleTarget t = g;
+            t.pos += u.offset;
+            const vec3 d = t.pos - eye;
+            const float dist = glm::length(d);
+            if (dist < 300.0f || dist > 5000.0f) continue;
+            const float c = glm::dot(d / dist, fwd);
+            if (c < 0.5f) continue;
+            if (col_.raycast(eye, d / dist, dist - 60.0f)) continue; // something blocks the hook
+            const float score = (1.0f - c) * 2000.0f + dist * 0.2f;
+            if (score < bestScore) bestScore = score, best = t;
+        }
+    return best;
 }
 
 PlayerState World::interpolated(double alpha) const {
