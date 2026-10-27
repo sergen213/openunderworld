@@ -21,7 +21,7 @@ sha256sum -c OpenUnderworld-*-x86_64.AppImage.sha256
 ```
 
 - Controls in `game`: WASD/arrows move, Shift walk, Space jump/climb, Ctrl or C drop, mouse look, gamepad supported, Esc quits.
-- Graphics defaults: Vulkan (OpenGL fallback), Enhanced preset (4x MSAA, sun shadows, TRU's translated shaders) and ray-traced sun shadows where the GPU supports ray queries. Override with the launcher's Graphics tab or `--renderer auto|opengl|vulkan`, `--preset enhanced|original` (purist), `--rt auto|off|shadows|full`, `--brightness 0.5..2.0` ([docs/LAUNCHER.md](docs/LAUNCHER.md)).
+- Graphics defaults: Vulkan (OpenGL fallback), Enhanced preset (4x MSAA, sun shadows, TRU's translated shaders) and ray-traced sun shadows where the GPU supports ray queries. Enhanced water (waves, refraction, reflections, interactive ripples and splashes, underwater fog) is on by default in both renderers; `--water original` keeps TRU's own water shaders. Override with the launcher's Graphics tab or `--renderer auto|opengl|vulkan`, `--preset enhanced|original` (purist), `--rt auto|off|shadows|full`, `--water original|enhanced`, `--brightness 0.5..2.0` ([docs/LAUNCHER.md](docs/LAUNCHER.md)).
 - Updates: the launcher's **Version & Updates** tab (or `--update`) replaces the AppImage in place with the newest signed release and keeps the old one as `.bak`. The manifest is signed with the project's Ed25519 key ([docs/UPDATES.md](docs/UPDATES.md)).
 - Requirements: x86_64 Linux with a current glibc/libstdc++ (built on Arch Linux), an OpenGL 4.6 or Vulkan 1.3 driver (Mesa works), and FUSE (or add `--appimage-extract-and-run`).
 - Unsigned test AppImages of every commit on main are available as artifacts of the `appimage` workflow on GitHub Actions.
