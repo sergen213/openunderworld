@@ -137,7 +137,9 @@ convention. Balance beam lines lie on the beam's collision top (±0) [O]. l4_poo
 inside the collision top of its rock [O].
 
 The 0x5C-byte "markup items" at Level+0x08/+0x0C (FUN_005CE4F0; MarkUp+0x58 → PolyLine `{int n; pad; float4 points[n]}`)
-are not decoded: the count is 0 in all 82 units [O]. Object DRMs pass their own markup lists (FUN_005D0610) [O]; not decoded.
+are not decoded: the count is 0 in all 82 units [O]. FUN_005D0610 runs per object instance but parses that same
+global list from MarkupManager (its count/pointer are read from the manager, not from the object's DTP), so objects
+do not add their own traversal markup in this data [O: ca_pt_weightbreak_b's DTP+0x54/+0x58 is unrelated].
 
 ## Our implementation
 

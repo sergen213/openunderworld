@@ -1247,3 +1247,58 @@ TEST(GameReal, PoolGrappleTargetAndSwing) {
     EXPECT_EQ(w.player().state().state, State::GrappleSwing);
     EXPECT_EQ(w.player().state().grappleUid, 5511);
 }
+
+// ---- ladders / pillars / perches (src/game/Traverse) ----
+TEST(Game, LadderAttachClimbOffTop) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}}); // outward -X, toward Lara
+    auto w = makeWorld(std::move(m), {300, 0, 0});
+    w->tick(forward());
+    ASSERT_EQ(w->player().state().state, State::Ladder);
+    const float z0 = w->player().state().pos.z;
+    for (int i = 0; i < 60; ++i) w->tick(forward());
+    EXPECT_GT(w->player().state().pos.z, z0 + 100.0f);
+    for (int i = 0; i < 600 && w->player().state().state != State::Idle; ++i) w->tick(forward());
+    EXPECT_EQ(w->player().state().state, State::Idle);
+    EXPECT_NEAR(w->player().state().pos.z, 1200.0f, 1.0f);
+    EXPECT_NEAR(w->player().state().pos.x, 400.0f, 1.0f);
+}
+
+TEST(Game, PillarAttach) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    m.markup.push_back({15, 1, {{400, 0, 1600}, {400, 0, 0}, {242, 0, 0}}});
+    auto w = makeWorld(std::move(m), {300, 0, 0});
+    w->tick(forward());
+    ASSERT_EQ(w->player().state().state, State::Pillar);
+    Actions side;
+    side.move.x = 1.0f; // rotate around the shaft
+    const float x0 = w->player().state().pos.x;
+    for (int i = 0; i < 30; ++i) w->tick(side);
+    EXPECT_NE(w->player().state().pos.x, x0);
+}
+
+TEST(Game, PerchAttachAndJumpOff) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    m.markup.push_back({13, 1, {{400, -50, 500}, {400, 50, 500}}});
+    auto w = makeWorld(std::move(m), {350, 0, 400});
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    ASSERT_EQ(w->player().state().state, State::Perch);
+    for (int i = 0; i < 30; ++i) w->tick({});
+    EXPECT_EQ(w->player().state().state, State::Perch);
+    w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Jump);
+}
+
+TEST(GameReal, ShipSinkingHallLadder) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l1_ship_sinking_hall", {{1550, 29, 1000}, glm::radians(180.0f)});
+    for (int i = 0; i < 10 && w.player().state().state != State::Ladder; ++i) w.tick(forward());
+    ASSERT_EQ(w.player().state().state, State::Ladder);
+    EXPECT_EQ(w.collision().markup[size_t(w.player().state().ledge)].id, 234);
+}

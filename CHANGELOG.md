@@ -6,6 +6,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-27
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+### Added
+- Ladders, pillars and perches: Lara climbs ladders with the original animations (push into them, climb off at the top or bottom, jump off), rotates around pillars, and balances on perches before jumping off. Verified on the sinking ship's ladder in chapter 1. Object-DRM markup was investigated: no extra traversal markup exists in this data.
+
 ## [0.7.0] - 2026-10-27
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

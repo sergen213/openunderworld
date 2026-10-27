@@ -108,6 +108,7 @@ enum class State {
     // jump from a ledge/pole to another ledge/pole, PoleHang = hanging/swinging on a horizontal pole.
     Crouch, Roll, Slide, Beam, DropToHang, HangJump, PoleHang,
     Climb, // free climbing on climbable rock faces (DICE clips; src/game/Climb.cpp)
+    Ladder, Perch, Pillar, // markup 9 ladders, 13 perches, 15 pillars (src/game/Traverse.cpp)
     GrappleThrow, GrappleSwing, // grapple attached: throw/jumpon clip, then pendulum on the rope (Grapple.cpp)
     Hit, // hit reaction clip once with root motion (ground or swimming), then Idle / the swim state (World::damageLara)
 };
@@ -226,6 +227,11 @@ private:
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
     bool tryClimb(bool fromAir);
     void climb(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    // Ladders (markup 9), perches (13), pillars (15), src/game/Traverse.cpp. climbNormal = outward from the wall.
+    bool tryLadder(bool fromAir);
+    void ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    bool tryPerch(bool fromAir);
+    void perch(bool jumpPressed, bool dropPressed, float dt);
     void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp
     void land(vec2 move);
 

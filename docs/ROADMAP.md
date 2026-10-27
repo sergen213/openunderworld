@@ -59,6 +59,9 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 | Free climbing on flagged rock faces (`src/game/Climb.cpp`, DICE clips) | Tested | Climbable faces = terrain flags bits 0x01..0x20 [O], l2_cliffclimb's markup-16-20 walls vs ordinary flags-0 walls; attach from ground/air, stick climbing at 240 u/s [I], wall pinning + corners, top-out, jump-off/drop; ledge/pole grabs keep priority | `Game.ClimbAttachClimbUpTopOut`, `Game.ClimbJumpOff`, `Game.ClimbIgnoresUnflaggedWall`, existing `GameReal.PoolLedgeGrabAndClimb` | Direction-bit semantics [U]; no bad-attach/wrestle/DICE_L/R/LW/RW variants; top-out is a step onto the floor, not a clip |
 
 | Grapple (`src/game/Grapple.cpp`): target intros, throw, pendulum swing, rope ascend/descend, jump off with momentum, rope + target rendering | Tested | `*_ei_grapple_*` intros collected per unit; l4_pool anchor 5511 selected and attached in a real-data test; swing never exceeds rope length; G / pad RB, Space release, E/Shift rope length [I] | `Game.GrappleSwingAndRelease`, `GameReal.PoolGrappleTargetAndSwing` | No wall-running/rappel, mounted-object pulling, rope-vs-world collision, hook model; range/cone/physics [I] |
+| Ladders (markup 9), pillars (15), perches (13) (`src/game/Traverse.cpp`): attach from ground/air, climb + climb off top/bottom, pillar rotation, perch balance + jump off | Tested | lad_*/perch_* clips; real l1_ship_sinking_hall ladder 234 climbed; synthetic attach/climb-off/rotation/perch tests; object-DRM markup shown not to exist in this data (COLLISION.md) | `Game.LadderAttachClimbOffTop`, `Game.PillarAttach`, `Game.PerchAttachAndJumpOff`, `GameReal.ShipSinkingHallLadder` | Vertical poles (type 5) have no markup in any unit; no rung alignment, perch turning or pillar top clips beyond ClimbOffTop |
+
+| Other gameplay (puzzles) | Research Required | — | — | — |
 
 ## Principles
 

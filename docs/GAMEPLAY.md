@@ -301,6 +301,20 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 - Not yet: wall-running/rappel on walls, pulling mounted objects, rope-vs-world collision, hook model,
   throwing while hanging from ledges. Rope length/physics are [I].
 
+## Ladders, pillars, perches (src/game/Traverse.cpp)
+
+- Markup [O]: ladders (9) and pillars (15) have points `{top, bottom, bottom + outward hint}`; perches (13) are a
+  short ledge segment. `climbNormal` holds the outward direction (reused field).
+- Ladders/pillars: attach from the ground (push into them) or the air; stick into = up at 240 u/s [I],
+  `lad_climbup/_down`, `lad_Idle`; top = `lad_ClimbOffTop` onto the top point, bottom = `lad_ClimbOffBot`;
+  Space = `lad_detach` (out 500, up 900), Ctrl = `lad_detach_drop`. Pillars also rotate around the shaft with
+  the stick's sideways component. l1_ship_sinking_hall ladder 234 is climbed in a real-data test.
+- Perches: from the air or a standing jump next to the segment (`perch_attach_air/_ground`), balance on the
+  point with `perch_idle`, Space = `perch_jump_forward`, Ctrl = `perch_detach_drop`.
+- Tests `Game.LadderAttachClimbOffTop`, `Game.PillarAttach`, `Game.PerchAttachAndJumpOff`,
+  `GameReal.ShipSinkingHallLadder`. Object-DRM markup does not exist in this data (COLLISION.md), so all
+  traversal markup comes from the units.
+
 ## Enemies
 
 Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy
@@ -657,10 +671,11 @@ No side-by-side comparison with the original game was made.
   not the exe's component. Ripple/caustic parameters are ours [I].
 - Free climbing is implemented for flagged rock faces (see "Free climbing"): direction-bit semantics are
   [U], movement speed/reach are [I], no bad-attach/wrestle/corner-specific clips, no `DICE_L/R/LW/RW` wall
-  variants. Still missing: ladders (markup 9), perches (13), pillars (15), ropes, zip lines, rail slides,
-  cover, `Wall_Hug_*`, balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang,
-  hurdles/vaults, mirrored left-side clips. Root motion of the jump, attach and fling clips is not applied
-  (the flight is ballistic), so their poses can sit off the computed path.
+  variants. Ladders (9), perches (13) and pillars (15) work (see "Ladders, pillars, perches"); vertical poles
+  (type 5) have no markup in any unit. Still missing: ropes, zip lines, rail slides, cover, `Wall_Hug_*`,
+  balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang, hurdles/vaults,
+  mirrored left-side clips. Root motion of the jump, attach and fling clips is not applied (the flight is
+  ballistic), so their poses can sit off the computed path.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
   see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
   model, ledge-grapple transitions, exe rappel speeds (ours are [I]).

@@ -108,6 +108,10 @@ const std::vector<std::string_view> kLaraClipNames = {
     "grapple_rappel_free_jumpon", "grapple_rappel_idle", "grapple_rappel_free_swing_forward",
     "grapple_rappel_free_swing_backward", "grapple_rappel_free_ascend", "grapple_rappel_free_descend",
     "grapple_rappel_free_jumpoff",
+    // ladders / pillars / perches (Traverse.cpp)
+    "lad_attach_up", "lad_climbup", "lad_climbdown", "lad_Idle", "lad_detach", "lad_detach_drop",
+    "lad_ClimbOffTop", "lad_ClimbOffBot", "perch_attach_air", "perch_attach_ground", "perch_idle",
+    "perch_jump_forward", "perch_detach_drop",
 };
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"

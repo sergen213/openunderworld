@@ -124,7 +124,8 @@ std::string_view stateName(State s) {
                                              "fall", "land", "hang", "shimmy", "climbup", "swimsplash",
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
-                                             "hangjump", "polehang", "climb", "grapplethrow", "grappleswing", "hit"};
+                                             "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
+                                             "grappleswing", "hit"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -364,6 +365,8 @@ void Player::airMove(float dt, vec2 move) {
     }
     if (tryGrab(prevPos)) return;
     tryGrabPole(prevPos);
+    if (tryLadder(true)) return;
+    if (tryPerch(true)) return;
     tryClimb(true); // ledges and poles win over a rock face
 }
 
@@ -614,6 +617,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Land: {
         if (enterWater()) break; // standing in water deeper than swimDepth
         if (jumpPressed && s_.state != State::Land) {
+            if (tryPerch(false)) break; // a standing jump onto a perch balances there
             s_.runJump = s_.state == State::Run;
             s_.state = State::JumpPrep; // launch velocity is set when the take-off clip ends
             play(s_.runJump ? "ng_running_jump_forwards" : "ng_standing_jump", false);
@@ -673,7 +677,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop)
             tryBeam("bbeam_walk_attach", false);
         // Pushing into a climbable rock face starts climbing (a jump keeps its normal arc).
-        if (wantsMove && glm::dot(move, xy(forward())) > 0.5f) tryClimb(false);
+        if (wantsMove && glm::dot(move, xy(forward())) > 0.5f && !tryLadder(false)) tryClimb(false);
         break;
     }
     case State::Crouch: {
@@ -728,6 +732,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         break;
     case State::Climb:
         climb(move, jumpPressed, dropPressed, dt);
+        break;
+    case State::Ladder:
+    case State::Pillar:
+        ladder(move, jumpPressed, dropPressed, dt);
+        break;
+    case State::Perch:
+        perch(jumpPressed, dropPressed, dt);
         break;
     case State::GrappleThrow:
     case State::GrappleSwing:

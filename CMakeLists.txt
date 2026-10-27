@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(OpenUnderworld VERSION 0.7.0 LANGUAGES CXX)
+project(OpenUnderworld VERSION 0.8.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -297,7 +297,7 @@ endif()
 
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp
-  src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp)
+  src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)
