@@ -116,6 +116,22 @@ player every frame:
 
 Not a script VM. Links and handler slots come from the bytecode; behaviour is native C++:
 
+## Toward a bytecode VM (2026-10-27 findings)
+
+- `parseScriptType` already decodes every section: members with initial values, instanceref links,
+  functions with their prototype and vtable slot, and the instruction words (op, arg, operand
+  pointers, ISTYPE ref, PUSH immediate).
+- The exe's `FUN_00432B20` is only a small state-chart condition evaluator (PUSH/POP, float and
+  bool arithmetic, JMP/JMPF, CALLU, RET), not the full cdc script VM.
+- Native types seen in real scripts: `instance` (id 3, 72 prototypes), `multibody` (3566, 94),
+  `stickybool` (69), `globalsref` (81), `modifiable` (823), `instanceref` (51, 17). Native class
+  vftables are RCObject/lifetime methods, not these prototypes; the CALLU function tables are built
+  at runtime (static table memory is zero), so mapping `(type id, function index)` to an
+  implementation needs live observation (a Wine hook) or more decomp work.
+- cdcEngineDXHR/cdcScript/ByteCodeEnum.h has the opcode numbering; there is no interpreter in the
+  research clones. Next: implement the interpreter for common opcodes and map native calls by
+  observing them live.
+
 | Piece | Status |
 |---|---|
 | Volume box/sphere test, +200 test point, enter/exit, FirstIn once, dispatch order Enter → FirstIn → its calls → In → its calls; Exit → Out → its calls | [O] as above |

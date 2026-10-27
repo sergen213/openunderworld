@@ -10,8 +10,8 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 | 1 | Environment, project audit, research, repo + docs | In progress |
 | 2 | Original game analysis: inventory, Ghidra, verified parsers | In progress |
 | 3 | Native rendering: SDL3 + OpenGL viewer of original assets, debug camera | In progress |
-| 4 | Engine foundations: scene/streaming, animation, collision, character control | Research Required |
-| 5 | Playable section: traversal, puzzles, combat, saving | Research Required |
+| 4 | Engine foundations: scene/streaming, animation, collision, character control | In progress (streaming, animation, collision, controller, traversal implemented) |
+| 5 | Playable section: traversal, puzzles, combat, saving | In progress (traversal, combat, saving implemented; puzzles need the script VM) |
 | 6 | Vulkan backend, enhanced rendering, optional RT | In progress (Vulkan 1.3 backend at GL parity; RT sun shadows + water reflections via ray queries; no RT AO/GI) |
 | 7 | Qt launcher, packaging, CI, signed updates | In progress |
 | 8 | Edition compatibility, fidelity verification, release | Research Required |
