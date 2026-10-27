@@ -124,7 +124,7 @@ std::string_view stateName(State s) {
                                              "fall", "land", "hang", "shimmy", "climbup", "swimsplash",
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
-                                             "hangjump", "polehang", "hit"};
+                                             "hangjump", "polehang", "climb", "hit"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -364,6 +364,7 @@ void Player::airMove(float dt, vec2 move) {
     }
     if (tryGrab(prevPos)) return;
     tryGrabPole(prevPos);
+    tryClimb(true); // ledges and poles win over a rock face
 }
 
 // Ledge grab: markup type 1 ("ledgegrab") polylines. The hands (hang pose) must pass the ledge height
@@ -671,6 +672,8 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         groundMove(toWorld(d), dt);
         if (s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop)
             tryBeam("bbeam_walk_attach", false);
+        // Pushing into a climbable rock face starts climbing (a jump keeps its normal arc).
+        if (wantsMove && glm::dot(move, xy(forward())) > 0.5f) tryClimb(false);
         break;
     }
     case State::Crouch: {
@@ -722,6 +725,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     }
     case State::Beam:
         beam(move, jumpPressed, dropPressed, dt);
+        break;
+    case State::Climb:
+        climb(move, jumpPressed, dropPressed, dt);
         break;
     case State::DropToHang:
         s_.pos += advanceRoot(dt); // full root motion and turn, no collision (as ClimbUp)

@@ -1162,3 +1162,50 @@ TEST(Game, WaterAirDrainsRefillsAndDrowns) {
     EXPECT_EQ(w->air(), 0.0f);
     EXPECT_LT(w->health().value(), w->health().max()) << "an empty meter drowns Lara";
 }
+
+// ---- free climbing (src/game/Climb) ----
+namespace {
+// A climbable wall at x = 400 (z 0..1200) with a floor on top, and an unflagged twin for the negative case.
+CollisionMesh climbMesh(bool flagged) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1200}, {400, -2000, 1200});
+    addQuad(m, {400, -2000, 1200}, {2000, -2000, 1200}, {2000, 2000, 1200}, {400, 2000, 1200});
+    if (flagged)
+        for (auto& f : m.faces) f.flags = 0x3F;
+    return m;
+}
+} // namespace
+
+TEST(Game, ClimbAttachClimbUpTopOut) {
+    auto w = makeWorld(climbMesh(true), {300, 0, 0});
+    w->tick(forward()); // pushing into the rock attaches
+    ASSERT_EQ(w->player().state().state, State::Climb);
+    for (int i = 0; i < 120; ++i) w->tick({}); // the attach clip finishes
+    const float z0 = w->player().state().pos.z;
+    for (int i = 0; i < 90; ++i) w->tick(forward()); // into the wall = climb up
+    EXPECT_GT(w->player().state().pos.z, z0 + 200.0f);
+    EXPECT_NEAR(w->player().state().pos.x, 300.0f, 1.0f) << "pinned at capsule distance from the rock";
+    for (int i = 0; i < 1200 && w->player().state().state == State::Climb; ++i) w->tick(forward());
+    EXPECT_EQ(w->player().state().state, State::Idle);
+    EXPECT_NEAR(w->player().state().pos.z, 1200.0f, 1.0f) << "climbed onto the wall's top";
+}
+
+TEST(Game, ClimbJumpOff) {
+    auto w = makeWorld(climbMesh(true), {300, 0, 0});
+    w->tick(forward());
+    ASSERT_EQ(w->player().state().state, State::Climb);
+    for (int i = 0; i < 120; ++i) w->tick({});
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    EXPECT_EQ(w->player().state().state, State::Jump);
+    EXPECT_LT(w->player().state().vel.x, 0.0f) << "leaps away from the wall";
+    EXPECT_GT(w->player().state().vel.z, 0.0f);
+}
+
+TEST(Game, ClimbIgnoresUnflaggedWall) {
+    auto w = makeWorld(climbMesh(false), {300, 0, 0});
+    w->tick(forward());
+    EXPECT_NE(w->player().state().state, State::Climb) << "an unflagged wall is not climbable";
+}

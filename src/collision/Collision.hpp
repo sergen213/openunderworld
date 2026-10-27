@@ -30,6 +30,9 @@ struct Face {
 
 // tru.exe skips faces with flags bit 0x40 and faces whose mask shares no bit with the query mask.
 inline bool queryable(const Face& f, uint8_t mask) { return !(f.flags & 0x40) && (f.mask & mask); }
+// Free-climbable rock (DICE climbing): flagged climb walls in e.g. l2_cliffclimb (markup types 16-20 sit on
+// them); unflagged walls are not climbable. The direction bits' individual meanings are [U].
+inline bool climbable(const Face& f) { return (f.flags & 0x3F) != 0 && !(f.flags & 0x40); }
 
 // Markup polyline ("markup2" in tru.exe): ledges, landings, balance beams, ...
 struct Markup {

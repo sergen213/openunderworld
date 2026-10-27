@@ -180,5 +180,9 @@ Survey of all 82 unit DRMs (throwaway tool over `loadLevelCollision` + `formats:
 
 - [U] Meaning of face flags (+0x0C other than 0x40), clientFlags, material; TerrainGroupExtra flags.
 - [U] Level+0x80 in tru.exe; the second float4 of markup points; markup types 16–20.
+- Face flags byte (+0x0C) [O]: in l2_cliffclimb the walls carrying markup types 16-20 have flags with bits
+  0x01..0x20 set (0x3f/0x3b/0x3d/0x3e/0x37/0x2b/0x1b/0x29 etc.); ordinary walls/floors have 0. We treat
+  those faces as free-climbable rock (`collision::climbable`, GAMEPLAY.md "Free climbing"); the meaning of
+  each direction bit is [U].
 - [U] Moving terrain groups: which instance drives them, and their runtime transforms.
 - [U] Object-DRM markup and per-instance collision (not decoded).

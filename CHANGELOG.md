@@ -6,6 +6,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-27
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+### Added
+- Free climbing: Lara now climbs the original game's climbable rock faces (the walls whose collision faces carry the climb flags, e.g. the cliffs in `l2_cliffclimb` and `l1_baldrsstairs_a`) with the original DICE animations. Push into a wall to attach (or fall onto it), climb up/down/sideways with the stick, climb onto the top, jump off (Space) or let go (Ctrl/C). Ledge and pole grabs keep priority.
+
 ## [0.5.0] - 2026-10-27
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included. Enhanced water is now on by default (Vulkan or OpenGL).

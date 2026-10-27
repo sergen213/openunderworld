@@ -107,6 +107,7 @@ enum class State {
     // Beam = balance beam (markup 14), DropToHang = drop_to_ledgeb off an edge, HangJump = targeted
     // jump from a ledge/pole to another ledge/pole, PoleHang = hanging/swinging on a horizontal pole.
     Crouch, Roll, Slide, Beam, DropToHang, HangJump, PoleHang,
+    Climb, // free climbing on climbable rock faces (DICE clips; src/game/Climb.cpp)
     Hit, // hit reaction clip once with root motion (ground or swimming), then Idle / the swim state (World::damageLara)
 };
 std::string_view stateName(State s); // "unknown" past the last state
@@ -163,6 +164,9 @@ struct PlayerState {
     float flight = 0; // HangJump: seconds left until the target is reached
     float fallStartZ = 0; // z when Lara last became airborne (tru.exe player +0x6DC, set on FallState entry 0x75C550)
     float fallHeight = 0; // set by land(): fallStartZ - pos.z; 0 on every other tick
+    // Free climbing (State::Climb): terrain face index + outward normal of the wall she is on.
+    uint32_t climbFace = UINT32_MAX;
+    vec3 climbNormal{0};
 };
 
 class Player {
@@ -212,6 +216,9 @@ private:
     void swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt);
     vec3 swimSlide(vec3 pos, vec3 delta) const;
     bool tryClimbOut();
+    // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
+    bool tryClimb(bool fromAir);
+    void climb(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     void land(vec2 move);
 
     const collision::CollisionMesh& col_;

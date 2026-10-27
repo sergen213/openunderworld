@@ -262,6 +262,27 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   does not use them. Tests `Game.Water*`; real-data l4_pool: entry rings, swim wake, AIR bar and drowning verified by
   replay/screenshot (2026-10-27).
 
+## Free climbing (src/game/Climb.cpp)
+
+- Climbable faces [O]: terrain faces whose flags byte (+0x0C) has any of bits 0x01..0x20 set
+  (`collision::climbable`). In l2_cliffclimb the markup types 16-20 sit exactly on those walls; ordinary
+  walls have flags 0. The individual direction bits' meanings are [U]. Nearly vertical faces only
+  (|normal.z| ≤ 0.35), not dynamics.
+- Attach: pushing into such a wall from the ground (chest probe at +300, reach = capsule radius + 90,
+  facing it within ~53°) or falling onto it (after ledge/pole grabs, which win). `DICE_B_ground_attach` /
+  `DICE_B_air_attach_M` plays, then `DICE_B_Idle`.
+- Climbing: the stick's into-wall component climbs up (away = down), its along-wall component moves
+  sideways at 240 units/s [I]; the settle clips (`DICE_B_Settle_up/_down/_Left/_right`) have no root
+  motion [O], so the controller moves the root and pins it at capsule distance from the rock, following
+  the face (and around corners) with a back probe.
+- Top out: when the rock ends and a standable floor is within reach past the wall, Lara steps onto it
+  (Idle). Otherwise movement stops at the edge. Jump = `DICE_B_Jump_Back` + a leap away (700 out, 1400 up
+  [I]); drop = `DICE_B_Drop` and fall. Cooldown 0.4 s before re-attaching.
+- Tests `Game.ClimbAttachClimbUpTopOut`, `Game.ClimbJumpOff`, `Game.ClimbIgnoresUnflaggedWall`; real-data
+  check on l2_cliffclimb's flagged cliff (2026-10-27). Air-attach replay on l1_baldrsstairs_a:
+  `ou-game --level 'pc-w\l1_baldrsstairs_a.drm' --spawn '-5294,-6455,2160,-90'` with forward held ends in
+  `state climb`, `clip DICE_B_Settle_up` (screenshot viewed, Lara on the rock).
+
 ## Enemies
 
 Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy
@@ -616,15 +637,12 @@ No side-by-side comparison with the original game was made.
   Still missing: wading clip (`swim_wading`), surface turn clips, underwater fast/sprint, swim damage from other
   sources; the water surface is static (scripted level changes not run); the water box is sized from the surface model,
   not the exe's component. Ripple/caustic parameters are ours [I].
-- Traversal: no balance wobble/unbalance (`bbeam_unbalance_*`, `bbeam_aboutfall_*`), beam sprint, catching the beam
-  when falling off it (`bbeam_fall_right_catch`), pole shimmy/parallel hang (`HPole_ParaForward`, `hpole_IdleHangPara`)
-  or swing physics (the swing is the clip; fling ignores its phase), no mirrored left-side clips, no `ledgeu_*` free
-  hang, hurdles/vaults, ladders (markup 9), perches (13), pillars (15), ropes, zip lines, rail slides, cover, or
-  `Wall_Hug_*`. Root motion of the jump, attach and fling clips is not applied (the flight is ballistic), so their
-  poses can sit off the computed path.
-- Free climbing (`DICE_*` clips) is not implemented: no markup type marks climbable walls (types 16–20 are the five
-  CONSTRAINEDGROUND sub-flags 0x4000..0x400 + 0x8000 [O], not climb surfaces) and how the exe finds climbable faces
-  (collision material/face flags?) is [U].
+- Free climbing is implemented for flagged rock faces (see "Free climbing"): direction-bit semantics are
+  [U], movement speed/reach are [I], no bad-attach/wrestle/corner-specific clips, no `DICE_L/R/LW/RW` wall
+  variants. Still missing: ladders (markup 9), perches (13), pillars (15), ropes, zip lines, rail slides,
+  cover, `Wall_Hug_*`, balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang,
+  hurdles/vaults, mirrored left-side clips. Root motion of the jump, attach and fling clips is not applied
+  (the flight is ballistic), so their poses can sit off the computed path.
 - Grapple is not implemented. Found [O]: object `g_grapple` (objectlist id 46) and `pr_grapplinghook` (77); targets are
   object intros `*_ei_grapple_ceiling` / `_wall` / `_post` / `_mounted` (ids 151, 155, 340, 349, 363, 390, 410, 454,
   624, 661, 662, …), not markup; the exe's grapple logic is state-chart conditions (`PlayerSC_Grapple::IsBelowAttachPoint`,
