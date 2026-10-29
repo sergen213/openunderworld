@@ -390,3 +390,84 @@ TEST(FxReal, MaterialParticlesAndUnitPointSets) {
     s.build(cam, 16.0f / 9.0f, v, batches);
     EXPECT_TRUE(std::any_of(batches.begin(), batches.end(), [](const auto& x) { return x.softScale > 0 && x.blend == 1; }));
 }
+
+// Class-5 screen filters (EFFECTS.md "Screen filters"): weight = intensity x fades x (1 - d^2 / r^2), d from
+// mix(camera, player) to the owner; finish block sums clamp at 4 (blur) / 2 (amount, drawn x 0.5); stop fades out.
+TEST(Fx, ScreenFilterWeightsFadeAndStop) {
+    std::vector<uint8_t> res(0x31C0, 0);
+    for (int c = 0; c < 3; ++c)
+        for (int x = 0; x < 256; ++x) res[size_t(0x2640 + 4 * c * 256 + x)] = uint8_t(x); // identity finish curves
+    res[0x2640 + 0x909] = 1;
+    put<float>(res, 0x2640 + 0x900, 4.0f);
+    put<float>(res, 0x2640 + 0x904, 2.0f);
+    auto o = std::make_shared<fx::ObjectFx>();
+    fx::FilterDef f;
+    f.id = 10, f.fadeIn = 10, f.fadeOut = 5, f.hold = -1, f.intensity = 0.5f, f.radius = 1000, f.playerMix = 1;
+    f.resource = std::make_shared<const fx::FilterResource>(fx::parseFilterResource(res));
+    EXPECT_TRUE(f.resource->finish);
+    EXPECT_FALSE(f.resource->colorDof);
+    o->filters.push_back(f);
+    fx::System s;
+    const glm::vec3 cam(0, -3000, 0), player(0, 500, 0); // player 500 from the owner: weight x 0.75
+    render::ScreenFilter out;
+    EXPECT_TRUE(s.runCommand(o, {0xB, 0, 0, 0}, glm::mat4(1), 7));
+    EXPECT_FALSE(s.runCommand(o, {0xB, 0, 0, 0}, glm::mat4(1), 7, {}, true)); // birth: needs +1 & 1
+    for (int k = 0; k < 10; ++k) s.tick(cam); // halfway through the 20-tick fade-in
+    s.screenFilter(cam, player, out);
+    EXPECT_NEAR(out.blurC, 4.0f * 0.5f * 0.5f * 0.75f, 1e-4f);
+    EXPECT_NEAR(out.amountC, 2.0f * 0.5f * 0.5f * 0.75f * 0.5f, 1e-4f);
+    EXPECT_FALSE(out.finishMatrix);
+    for (int k = 0; k < 100; ++k) s.tick(cam);
+    s.screenFilter(cam, player, out);
+    EXPECT_NEAR(out.amountC, 2.0f * 0.5f * 0.75f * 0.5f, 1e-4f);
+    s.screenFilter(cam, {0, 2000, 0}, out); // outside the radius
+    EXPECT_FALSE(out.active());
+    s.runCommand(o, {0x1A, 10, 0, 0}, glm::mat4(1), 7); // fade out over 10 ticks
+    EXPECT_FALSE(s.hasOwner(7));
+    for (int k = 0; k < 5; ++k) s.tick(cam);
+    s.screenFilter(cam, player, out);
+    EXPECT_NEAR(out.amountC, 2.0f * 0.5f * 0.75f * 0.5f * 0.5f, 1e-4f);
+    for (int k = 0; k < 6; ++k) s.tick(cam);
+    EXPECT_EQ(s.filterCount(), 0u);
+    // The LUT keeps the identity where no curves run: row 6 (finish matrix, red input) texel 200 = (200, 0, 0).
+    s.runCommand(o, {0xB, 0, 0, 0}, glm::mat4(1), 7);
+    s.screenFilter(cam, player, out);
+    EXPECT_EQ(out.lut[(6 * 256 + 200) * 4], 200);
+    EXPECT_EQ(out.lut[(6 * 256 + 200) * 4 + 1], 0);
+}
+
+// The prologue corridor fire's point sets run fx_fire's class-5 record 0 (filter 4190: finish blur 4, amount 2,
+// intensity 0.625, radius 1580 around Lara): close to the rubble the bloom saturates; far up the corridor it is off.
+TEST(FxReal, PrologueFireScreenFilter) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto b = bf.read("pc-w\\l3_main_bedroom.drm");
+    ASSERT_TRUE(b);
+    const auto unit = cdc::parseDrm(std::move(*b));
+    const auto sets = fx::parsePointSets(unit);
+    const auto it = std::find_if(sets.begin(), sets.end(), [](const fx::PointSet& x) { return x.name == "FXPointSet50069"; });
+    ASSERT_NE(it, sets.end());
+    const auto& fire = *it->fx;
+    ASSERT_EQ(fire.filters.size(), 3u);
+    const auto& f = fire.filters[0];
+    ASSERT_TRUE(f.resource);
+    EXPECT_FLOAT_EQ(f.intensity, 0.625f);
+    EXPECT_FLOAT_EQ(f.radius, 1580.0f);
+    EXPECT_FLOAT_EQ(f.playerMix, 1.0f);
+    EXPECT_EQ(f.hold, -1);
+    EXPECT_TRUE(f.resource->finish);
+    EXPECT_FALSE(f.resource->colorDof);
+    EXPECT_FLOAT_EQ(f.resource->finishBlur, 4.0f);
+    EXPECT_FLOAT_EQ(f.resource->finishAmount, 2.0f);
+    EXPECT_TRUE(fire.filters[1].resource && fire.filters[1].resource->colorDof && fire.filters[1].resource->finishCurves);
+    fx::System s;
+    for (size_t i = 0; i < sets.size(); ++i) s.startPointSet(sets[i], glm::mat4(1), 0x40000000 | int32_t(i));
+    EXPECT_GT(s.filterCount(), 50u);
+    s.tick({0, 0, 0});
+    render::ScreenFilter out;
+    s.screenFilter({-4258, 2364, 661}, {-4263, 1109, 87}, out); // the fire_rubble_close view
+    EXPECT_FLOAT_EQ(out.blurC, 4.0f);
+    EXPECT_FLOAT_EQ(out.amountC, 1.0f);
+    s.screenFilter({-4257, 7552, 668}, {-4263, 6291, 87}, out); // fire_corridor_far: none
+    EXPECT_FALSE(out.active());
+}

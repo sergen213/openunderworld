@@ -48,6 +48,10 @@ shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the o
 game also renders sun shadows (its vertex shaders output `WorldToPSSM0` coordinates, MATERIALS.md),
 so `--preset original --shadows on` is allowed, but our shadow map is not a reproduction of its PSSM.
 
+The original's screen filters (class-5 effects: ColorDOF overlay / scene matrix and Finish bloom, docs/formats/EFFECTS.md
+"Screen filters") are applied in the post pass before the brightness gamma (`shaders/filter.glsl`, both renderers): blur
+levels are mips of a half-size copy of the resolved scene, taken only while a filter runs.
+
 Brightness is a display gamma in the post pass (`out = in^(1 / brightness)`, after tonemap/FXAA), standing in for the
 original's Brightness option (tru.exe stores it as registry `Brightness` × 1000, clamped to [0, 0.1], 0x51E3xx [O];
 how the engine applies it is [U]).

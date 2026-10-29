@@ -701,7 +701,9 @@ public:
         const bool screenReaders = options.originalShaders && !origPrograms_.empty() && !screenSets_.empty();
         // Material particles that refract / fade softly sample the same copies (FxBatch::screen).
         const bool fxScreen = std::any_of(options.fxBatches.begin(), options.fxBatches.end(), [](const FxBatch& b) { return b.screen(); });
-        const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f || screenReaders || fxScreen;
+        const bool filter = options.screenFilter && options.screenFilter->active(); // original screen filters (post)
+        const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f || screenReaders || fxScreen ||
+                               (filter && options.screenFilter->dof);
         for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         drawOrder(meshes_, camera.position, order_);
@@ -726,7 +728,8 @@ public:
                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                          VK_IMAGE_ASPECT_DEPTH_BIT),
             imageBarrier(sceneColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         kColorOut | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                         kColorOut | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT,
+                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                          kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT),
         };
         if (msColor_.image)
@@ -999,9 +1002,11 @@ public:
         // Post pass: resolved scene → swapchain (tonemap / FXAA), then the overlay on top. With FSR the post pass writes
         // fsrInput_ at the render resolution; FSR upscales it into the swapchain image(s), then the overlay.
         const VkImage postTarget = fsrOn ? fsrInput_.image : target;
+        if (filter) recordFilterBlur(cmd); // leaves sceneColor_ TRANSFER_SRC
         const VkImageMemoryBarrier2 toPost[] = {
-            imageBarrier(sceneColor_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            imageBarrier(sceneColor_.image, filter ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, filter ? VK_PIPELINE_STAGE_2_BLIT_BIT : kColorOut,
+                         filter ? VK_ACCESS_2_NONE : VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                          VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
             // Chained to the acquire semaphore wait (same COLOR_ATTACHMENT_OUTPUT stage); old contents discarded.
             imageBarrier(postTarget, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kColorOut, 0,
@@ -1385,7 +1390,7 @@ public:
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(shadowSetLayout_, VK_NULL_HANDLE), nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(rtSetLayout_, VK_NULL_HANDLE), nullptr);
-            for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_, biasedSampler_}) vkDestroySampler(device_, s, nullptr);
+            for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_, biasedSampler_, blurSampler_}) vkDestroySampler(device_, s, nullptr);
             vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
             vkDestroyCommandPool(device_, uploadPool_, nullptr);
             staticMemory_.reset();
@@ -2006,12 +2011,14 @@ private:
         };
         VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, wb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &wl, nullptr, &waterSetLayout_));
-        // Post: set 1 = WaterBlock UBO + opaque depth (underwater, atmosphere, weather); set 2 = the sun shadow set (shafts).
-        const VkDescriptorSetLayoutBinding pb[2] = {
+        // Post: set 1 = WaterBlock UBO + opaque depth (underwater, atmosphere, weather) + the screen filters' blur levels
+        // (filterBlur_); set 2 = the sun shadow set (shafts).
+        const VkDescriptorSetLayoutBinding pb[3] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         };
-        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, pb};
+        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
         VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
         VkPipelineLayoutCreateInfo wpl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &waterSetLayout_, 1,
@@ -2634,6 +2641,9 @@ private:
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &fontSampler_));
         sci.magFilter = sci.minFilter = VK_FILTER_LINEAR; // post: FXAA taps between texels
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &postSampler_));
+        sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR, sci.maxLod = VK_LOD_CLAMP_NONE; // screen-filter blur levels
+        VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &blurSampler_));
+        sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST, sci.maxLod = 0.0f;
         sci.compareEnable = VK_TRUE; // shadow map: hardware 2x2 PCF per tap (GL_COMPARE_REF_TO_TEXTURE, LEQUAL)
         sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &shadowSampler_));
@@ -2675,7 +2685,7 @@ private:
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &postSet_)); // written per swapchain (recreateSwapchain)
 
         // Enhanced water: one WaterBlock UBO and one water + post-water set per frame in flight.
-        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8},
+        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * kFramesInFlight},
                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4}};
         VkDescriptorPoolCreateInfo wpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 2 * kFramesInFlight, 2, wps};
         VK_CHECK(vkCreateDescriptorPool(device_, &wpci, nullptr, &waterPool_));
@@ -2830,6 +2840,11 @@ private:
             w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             w.pImageInfo = &depth;
             vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+            const VkDescriptorImageInfo blur{blurSampler_, filterBlur_.view ? filterBlur_.view : white_.view,
+                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            w.dstBinding = 2;
+            w.pImageInfo = &blur;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
         }
         writeScreenSets();
     }
@@ -2967,6 +2982,47 @@ private:
         flush(batch);
         rippleVersion_ = rip.version;
         writeWaterSets();
+    }
+
+    // Original screen filters: the resolved scene (sceneColor_, COLOR_ATTACHMENT) blitted to half size into filterBlur_
+    // mip 0, each further mip from the one above (linear); the blur levels the post pass samples (shaders/filter.glsl).
+    // Leaves sceneColor_ TRANSFER_SRC and filterBlur_ SHADER_READ_ONLY.
+    void recordFilterBlur(VkCommandBuffer cmd) {
+        constexpr VkPipelineStageFlags2 kBlit = VK_PIPELINE_STAGE_2_BLIT_BIT;
+        const VkImageMemoryBarrier2 pre[] = {
+            imageBarrier(sceneColor_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kBlit,
+                         VK_ACCESS_2_TRANSFER_READ_BIT),
+            imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_NONE, kBlit, VK_ACCESS_2_TRANSFER_WRITE_BIT),
+        };
+        barriers(cmd, pre);
+        const int32_t w0 = int32_t(std::max(1u, extent_.width / 2)), h0 = int32_t(std::max(1u, extent_.height / 2));
+        for (uint32_t level = 0; level < filterLevels_; ++level) {
+            VkImageBlit b{};
+            b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level ? level - 1 : 0, 0, 1};
+            b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+            b.srcOffsets[1] = level ? VkOffset3D{std::max(1, w0 >> (level - 1)), std::max(1, h0 >> (level - 1)), 1}
+                                    : VkOffset3D{int32_t(extent_.width), int32_t(extent_.height), 1};
+            b.dstOffsets[1] = {std::max(1, w0 >> level), std::max(1, h0 >> level), 1};
+            if (level) {
+                auto up = imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                       kBlit, VK_ACCESS_2_TRANSFER_WRITE_BIT, kBlit, VK_ACCESS_2_TRANSFER_READ_BIT);
+                up.subresourceRange.baseMipLevel = level - 1, up.subresourceRange.levelCount = 1;
+                barriers(cmd, {&up, 1});
+            }
+            vkCmdBlitImage(cmd, level ? filterBlur_.image : sceneColor_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           filterBlur_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
+        }
+        VkImageMemoryBarrier2 post[2] = {
+            imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kBlit,
+                         VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+            imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kBlit,
+                         VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+        };
+        post[0].subresourceRange.levelCount = filterLevels_ - 1;
+        post[1].subresourceRange.baseMipLevel = filterLevels_ - 1, post[1].subresourceRange.levelCount = 1;
+        barriers(cmd, {post + (filterLevels_ > 1 ? 0 : 1), size_t(filterLevels_ > 1 ? 2 : 1)});
     }
 
     // Between the scene pass and the water pass: copy the resolved opaque colour (and depth, when
@@ -3438,8 +3494,16 @@ private:
                                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                                        VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                    VK_IMAGE_ASPECT_DEPTH_BIT);
+        const uint32_t bw = std::max(1u, extent_.width / 2), bh = std::max(1u, extent_.height / 2);
+        filterLevels_ = std::min(6u, 1u + uint32_t(std::log2(float(std::max(bw, bh)))));
+        filterBlur_ = createImage(swapMemory_, sceneFormat_, bw, bh, filterLevels_,
+                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  VK_IMAGE_ASPECT_COLOR_BIT);
         oneShot([&](VkCommandBuffer cmd) { // valid sampled layouts from the start (post binds them always)
-            const VkImageMemoryBarrier2 b[2] = {
+            const VkImageMemoryBarrier2 b[3] = {
+                imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
                 imageBarrier(opaqueColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                              VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
@@ -3466,8 +3530,8 @@ private:
         swapViews_.clear();
         presentReady_.clear();
         swapImages_.clear();
-        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_, &opaqueColor_, &opaqueDepth_, &motion_, &reactive_, &fsrInput_,
-                              &fsrOutput_, &fsrGenerated_})
+        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_, &opaqueColor_, &opaqueDepth_, &filterBlur_, &motion_, &reactive_,
+                              &fsrInput_, &fsrOutput_, &fsrGenerated_})
             if (img->image) destroyImage(*img);
         swapMemory_.reset();
         vkDestroySwapchainKHR(device_, chain, nullptr);
@@ -3513,6 +3577,8 @@ private:
     GpuImage depth_, sceneColor_, msColor_; // msColor_ only with MSAA
     // Enhanced water: single-sample opaque copies (refraction etc.) and the game's ripple height field.
     GpuImage opaqueColor_, opaqueDepth_, ripples_;
+    GpuImage filterBlur_;        // screen filters: the half-size scene + mips (recordFilterBlur)
+    uint32_t filterLevels_ = 0;
     uint64_t rippleVersion_ = 0;
     int rippleSize_ = 0;
     VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
@@ -3542,7 +3608,8 @@ private:
     VkPipelineLayout fxLayout_ = VK_NULL_HANDLE;
     std::array<LinearAllocator, kFramesInFlight> lineMemory_;
     VkSampler sceneSampler_ = VK_NULL_HANDLE, fontSampler_ = VK_NULL_HANDLE, shadowSampler_ = VK_NULL_HANDLE,
-              postSampler_ = VK_NULL_HANDLE, biasedSampler_ = VK_NULL_HANDLE; // biasedSampler_: setMipBias
+              postSampler_ = VK_NULL_HANDLE, biasedSampler_ = VK_NULL_HANDLE, // biasedSampler_: setMipBias
+              blurSampler_ = VK_NULL_HANDLE; // screen-filter blur levels (trilinear)
     float mipBias_ = 0.0f;
     std::vector<std::pair<VkDescriptorSet, std::array<VkDescriptorImageInfo, 16>>> origMaterialImages_; // setMipBias
     VkDescriptorPool staticPool_ = VK_NULL_HANDLE, scenePool_ = VK_NULL_HANDLE;

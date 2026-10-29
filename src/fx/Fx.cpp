@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <limits>
 
 namespace ou::fx {
 
@@ -80,7 +81,33 @@ ParticleMaterial particleMaterial(const cdc::Drm& drm, uint32_t id) {
     return pm;
 }
 
+// Screen filter resource with this DTP id (records share them: parsed once per `cache`).
+std::shared_ptr<const FilterResource> filterResource(const cdc::Drm& drm, uint32_t id,
+                                                     std::map<uint32_t, std::shared_ptr<const FilterResource>>& cache) {
+    if (const auto it = cache.find(id); it != cache.end()) return it->second;
+    const int i = id ? dtpIndex(drm, id) : -1;
+    auto& r = cache[id];
+    if (i >= 0 && drm.sections[size_t(i)].data.size() >= 0x31C0)
+        r = std::make_shared<const FilterResource>(parseFilterResource(drm.sections[size_t(i)].data));
+    return r;
+}
+
 } // namespace
+
+FilterResource parseFilterResource(std::span<const uint8_t> d) {
+    FilterResource f;
+    auto tables = [&](FilterResource::Matrix& m, size_t off) { std::memcpy(m.data(), d.data() + off, m.size()); };
+    f.colorDof = rd<uint8_t>(d, 0x130E), f.dof = rd<uint8_t>(d, 0x130C), f.matrix1 = rd<uint8_t>(d, 0x130D);
+    f.blur = rd<float>(d, 0x1300), f.alpha = rd<float>(d, 0x1304), f.tint = rd<uint32_t>(d, 0x1308) & 0xFFFFFF;
+    f.dofNear = rd<float>(d, 0x1310), f.dofFar = rd<float>(d, 0x1314);
+    tables(f.m1, 0), tables(f.m2, 0x900);
+    std::memcpy(f.dofCurve.data(), d.data() + 0x1200, 256);
+    constexpr size_t c = 0x2640;
+    f.finish = rd<uint8_t>(d, c + 0x909), f.finishCurves = rd<uint8_t>(d, c + 0x90A), f.finishFull = rd<uint8_t>(d, c + 0x908);
+    f.finishBlur = rd<float>(d, c + 0x900), f.finishAmount = rd<float>(d, c + 0x904);
+    tables(f.mf, c);
+    return f;
+}
 
 ParticleDef parseParticleDef(std::span<const uint8_t> d) {
     ParticleDef p;
@@ -250,6 +277,16 @@ static ObjectFx parseFxSections(const cdc::Drm& drm, int ev, int gen, int base, 
                 if (const int i = dtpIndex(drm, id); i >= 0) l.dtp = formats::lightFromDtp(drm, uint32_t(i));
             fx.lights.push_back(std::move(l));
         });
+        std::map<uint32_t, std::shared_ptr<const FilterResource>> resources;
+        records(0x34, 0x38, 0x28, [&](std::span<const uint8_t> r, const auto&, uint32_t) {
+            FilterDef f;
+            f.birth = rd<uint8_t>(r, 1) & 1, f.fadeIn = rd<int16_t>(r, 2), f.rgba = rd<uint32_t>(r, 4);
+            f.id = rd<uint8_t>(r, 9), f.fadeOut = rd<int16_t>(r, 0x0A), f.hold = rd<int16_t>(r, 0x0C);
+            f.intensity = float(rd<int16_t>(r, 0x0E)) / 128.0f, f.radius = rd<uint16_t>(r, 0x10);
+            f.playerMix = float(rd<int16_t>(r, 0x12)) / 4096.0f, f.screen = rd<float>(r, 0x18), f.other = rd<uint32_t>(r, 0x1C);
+            f.resource = filterResource(drm, rd<uint32_t>(r, 0x14), resources); // plain DTP id
+            fx.filters.push_back(std::move(f));
+        });
         if (const auto it = ptrs.find(0x08); it != ptrs.end()) { // effect map: u16 n at +4, {u8 id, i8 class, u8 index, pad}
             const auto md = drm.sections[it->second.section].data;
             for (uint32_t k = 0, n = rd<uint16_t>(s.data, 4); k < n && k < 256; ++k)
@@ -412,6 +449,9 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
     auto light = [&](int i, int16_t s) {
         return size_t(i) < fx->lights.size() && (!birth || fx->lights[size_t(i)].birth) && startLight(fx, i, world, owner, s, bones);
     };
+    auto filter = [&](int i) { // 0x535CC0: at birth only records with +1 & 1 (none in the game data)
+        return size_t(i) < fx->filters.size() && (!birth || fx->filters[size_t(i)].birth) && startFilter(fx, i, world, owner, -126, bones);
+    };
     switch (c.type) {
     case 3: return start(fx, c.a1, world, owner, seg, int16_t(c.a3), bones); // particle (seg, seg2)
     case 0x1D: return start(fx, c.a1, world, owner, 0, 0, bones);           // particle, root
@@ -424,12 +464,14 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
     }
     case 6: return glow(c.a1, seg);
     case 0x11: return light(c.a1, seg);
+    case 0xB: return filter(c.a1);
     case 0x1C: case 0x2F: // effect map id a1 -> {class, index} (classes 1, 3-5, 7, 8: not implemented)
         for (const auto& m : fx->effectMap)
             if (m.id == c.a1) {
                 if (m.cls == 0) return start(fx, m.index, world, owner, 0, 0, bones);
                 if (m.cls == 2) return glow(m.index, 0);
                 if (m.cls == 6) return light(m.index, 0);
+                if (m.cls == 5) return filter(m.index);
                 return false;
             }
         return false;
@@ -442,8 +484,12 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
 int System::startPointSet(const PointSet& set, const glm::mat4& world, int32_t owner) {
     int n = 0;
     if (!set.fx) return 0;
+    // Class-5 screen filters run here although point sets start at birth (else none would: no record has the birth
+    // bit), centred on the first point [I: the exe's point-set starter is not traced].
     for (const auto& e : set.events)
-        if (e.effect() && e.event == 0 && !(e.info & 0x3F0)) n += runCommand(set.fx, e.cmd, world, owner, set.segments, true);
+        if (e.effect() && e.event == 0 && !(e.info & 0x3F0))
+            n += e.cmd.type == 0xB ? startFilter(set.fx, e.cmd.a1, world, owner, 1, set.segments)
+                                   : runCommand(set.fx, e.cmd, world, owner, set.segments, true);
     return n;
 }
 
@@ -505,6 +551,26 @@ void System::stopId(int32_t owner, int id, bool now) {
         if (g.owner == owner && (id < 0 || g.def->id == id) && g.fadeOut < 0) g.fadeOut = now ? 0 : 2 * g.def->fadeOut;
     for (auto& l : lights_)
         if (l.owner == owner && l.fadeOut < 0) l.fadeOut = now ? 0 : 2 * std::max<int16_t>(0, l.def->fadeOut);
+    // Filters (0x52F580 type 0x85): an endless one jumps to the end of its fade-in and fades out; timed ones run on.
+    for (auto& f : filters_)
+        if (f.owner == owner && (id < 0 || f.def->id == id)) {
+            if (now) f.age = std::numeric_limits<int32_t>::max() / 2, f.holdEnd = 0;
+            else if (f.holdEnd < 0) f.age = f.holdEnd = 2 * std::max<int16_t>(0, f.def->fadeIn);
+        }
+}
+
+bool System::startFilter(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
+                         int16_t segment, std::span<const glm::mat4> bones) {
+    if (!fx || def < 0 || size_t(def) >= fx->filters.size()) return false;
+    const FilterDef& d = fx->filters[size_t(def)];
+    if (!d.resource || d.screen != 0) return false; // tints / sun-glare filters: not drawn (EFFECTS.md "Screen filters")
+    Filter f;
+    f.fx = fx, f.def = &d, f.owner = owner;
+    f.pos = segment == -126 ? glm::vec3(world[3]) : glm::vec3((world * fx->frame(segment, bones))[3]); // the instance
+    const int32_t in = 2 * std::max<int16_t>(0, d.fadeIn);
+    f.holdEnd = d.hold >= 0 ? in + 2 * d.hold : owner < 0 ? in + 60 : -1; // transient owners: 1 s [I]
+    filters_.push_back(std::move(f));
+    return true;
 }
 
 int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
@@ -532,10 +598,13 @@ void System::stopOwner(int32_t owner) {
 bool System::hasOwner(int32_t owner) const {
     return std::any_of(emitters_.begin(), emitters_.end(), [&](const Emitter& e) { return e.owner == owner && !e.stopped; }) ||
            std::any_of(glows_.begin(), glows_.end(), [&](const Glow& g) { return g.owner == owner && g.fadeOut < 0; }) ||
-           std::any_of(lights_.begin(), lights_.end(), [&](const FxLight& l) { return l.owner == owner && l.fadeOut < 0; });
+           std::any_of(lights_.begin(), lights_.end(), [&](const FxLight& l) { return l.owner == owner && l.fadeOut < 0; }) ||
+           std::any_of(filters_.begin(), filters_.end(), [&](const Filter& f) { return f.owner == owner && f.holdEnd < 0; });
 }
 
-void System::clear() { emitters_.clear(), particles_.clear(), sequences_.clear(), glows_.clear(), lights_.clear(); }
+void System::clear() {
+    emitters_.clear(), particles_.clear(), sequences_.clear(), glows_.clear(), lights_.clear(), filters_.clear();
+}
 
 void System::spawn(Emitter& e, const glm::vec3& camera) {
     const ParticleDef& d = *e.def;
@@ -637,6 +706,8 @@ void System::tick(const glm::vec3& camera) {
         if (l.fadeOut > 0) --l.fadeOut;
     }
     std::erase_if(lights_, [](const FxLight& l) { return l.life == 0 || l.fadeOut == 0; });
+    for (auto& f : filters_) ++f.age;
+    std::erase_if(filters_, [](const Filter& f) { return f.holdEnd >= 0 && f.age >= f.holdEnd + 2 * std::max<int16_t>(0, f.def->fadeOut); });
     std::erase_if(emitters_, [&](const Emitter& e) {
         return e.stopped && std::none_of(particles_.begin(), particles_.end(), [&](const Particle& p) { return p.def == e.def && p.fx == e.fx; });
     });
@@ -817,6 +888,81 @@ void System::lights(std::vector<LiveLight>& out) const {
         else if (d.fadeOut > 0 && l.life >= 0 && l.life < 2 * d.fadeOut) k *= float(l.life) / float(2 * d.fadeOut);
         const float r = d.radius > 0 ? (d.radius2 > 0 ? glm::mix(d.radius, d.radius2, t) : d.radius) : d.dtp ? d.dtp->radius : 0;
         out.push_back({l.pos, l.dir, c * k, r, d.dtp ? &*d.dtp : nullptr, l.owner, l.life < 0});
+    }
+}
+
+void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out) const {
+    out = {};
+    if (filters_.empty()) return;
+    // tru.exe sums each running filter's resource x weight into the effects' accumulators (0x516E70 ColorDOF,
+    // 0x51AAB0 Finish; tables: + round(t x w), saturating at 255) and fills what the weights leave below 1 with the
+    // identity (0x517570, 0x51AE50).
+    using Acc = std::array<float, 256 * 9>;
+    Acc m1{}, m2{}, mf{};
+    std::array<float, 256> curve{};
+    float wA = 0, wM1 = 0, wDof = 0, wF = 0, dofNear = 0, dofFar = 0, blurA = 0, alphaA = 0, blurC = 0, amountC = 0;
+    glm::vec3 tint(0);
+    auto add = [](Acc& acc, const FilterResource::Matrix& m, float w) {
+        for (size_t i = 0; i < acc.size(); ++i) acc[i] += float(m[i]) * w;
+    };
+    auto identity = [](Acc& acc, float w) { // diagonal tables 0, 4, 8
+        if (w > 0)
+            for (int c = 0; c < 3; ++c)
+                for (int x = 0; x < 256; ++x) acc[size_t(4 * c * 256 + x)] += float(x) * w;
+    };
+    for (const auto& f : filters_) {
+        // Weight (0x5469A0): intensity x fade in / out x (1 - d^2 / radius^2), d from mix(camera, player) to the owner.
+        const FilterDef& d = *f.def;
+        const FilterResource& r = *d.resource;
+        const int32_t in = 2 * std::max<int16_t>(0, d.fadeIn), fade = 2 * std::max<int16_t>(0, d.fadeOut);
+        float w = d.intensity;
+        if (f.age < in) w *= float(f.age) / float(in);
+        else if (f.holdEnd >= 0 && f.age > f.holdEnd) w *= fade ? std::max(0.0f, 1.0f - float(f.age - f.holdEnd) / float(fade)) : 0.0f;
+        if (d.radius > 0) {
+            const glm::vec3 v = glm::mix(camera, player, d.playerMix) - f.pos;
+            w *= std::max(0.0f, 1.0f - glm::dot(v, v) / (d.radius * d.radius));
+        }
+        if (w <= 0) continue;
+        if (r.colorDof) {
+            wA += w, blurA += r.blur * w, alphaA += r.alpha * w;
+            tint += glm::vec3(float(r.tint & 0xFF), float((r.tint >> 8) & 0xFF), float((r.tint >> 16) & 0xFF)) * w;
+            add(m2, r.m2, w);
+            if (r.matrix1) wM1 += w, add(m1, r.m1, w);
+            if (r.dof) {
+                wDof += w, dofNear += r.dofNear * w, dofFar += r.dofFar * w;
+                for (size_t k = 0; k < 256; ++k) curve[k] += float(r.dofCurve[k]) * w;
+            }
+        }
+        if (r.finish) {
+            blurC += r.finishBlur * w, amountC += r.finishAmount * w;
+            if (r.finishCurves) {
+                wF += w;
+                if (r.finishFull) add(mf, r.mf, w);
+                else identity(mf, w);
+            }
+        }
+    }
+    identity(m1, 1.0f - wM1), identity(m2, 1.0f - wA), identity(mf, 1.0f - wF);
+    tint += glm::vec3(255.0f * std::max(0.0f, 1.0f - wA));
+    out.colourMatrix = wM1 > 0, out.dof = wDof > 0, out.finishMatrix = wF > 0;
+    out.alphaA = std::min(alphaA, 1.0f), out.blurA = std::min(blurA, 4.0f);
+    for (int c = 0; c < 3; ++c) out.tintA[c] = std::min(tint[c], 255.0f) / 255.0f;
+    if (wDof > 0 && dofFar != dofNear) { // DOF range: weighted mean (the scene's default range for the rest is [U])
+        out.dofScale = wDof / (dofFar - dofNear), out.dofBias = -dofNear / (dofFar - dofNear);
+    }
+    out.blurC = std::min(blurC, 4.0f), out.amountC = std::min(amountC, 2.0f) * 0.5f; // vertex alpha f x 127.5 (0x51AEF0)
+    auto byte = [](float v) { return uint8_t(std::clamp(std::lround(v), 0L, 255L)); };
+    const Acc* mats[3] = {&m1, &m2, &mf};
+    for (int m = 0; m < 3; ++m)
+        for (int c = 0; c < 3; ++c)
+            for (int x = 0; x < 256; ++x) {
+                uint8_t* p = &out.lut[size_t(((3 * m + c) * 256 + x) * 4)];
+                for (int o = 0; o < 3; ++o) p[o] = byte((*mats[m])[size_t((3 * c + o) * 256 + x)]);
+                p[3] = 255;
+            }
+    for (int x = 0; x < 256; ++x) {
+        uint8_t* p = &out.lut[size_t((9 * 256 + x) * 4)];
+        p[0] = p[1] = p[2] = byte(curve[size_t(x)]), p[3] = 255;
     }
 }
 

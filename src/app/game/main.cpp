@@ -934,9 +934,12 @@ struct EffectsView {
         for (const auto& t : library->textures())
             if (have.insert(t.id).second) scene.textures.push_back(t);
     }
-    void frame(const ou::render::Camera& cam, float aspect, ou::render::FrameOptions& fo) {
+    ou::render::ScreenFilter filter; // class-5 screen filters (docs/formats/EFFECTS.md "Screen filters")
+    void frame(const ou::render::Camera& cam, float aspect, glm::vec3 player, ou::render::FrameOptions& fo) {
         system.build(cam, aspect, vertices, batches);
         fo.fxVertices = vertices, fo.fxBatches = batches;
+        system.screenFilter(cam.position, player, filter);
+        fo.screenFilter = filter.active() ? &filter : nullptr;
     }
 };
 
@@ -1980,7 +1983,7 @@ int main(int argc, char** argv) {
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
-        if (!mainMenu) effects.frame(cam, float(w) / float(std::max(1, h)), fo);
+        if (!mainMenu) effects.frame(cam, float(w) / float(std::max(1, h)), world->player().state().pos, fo);
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;
         renderer->drawFrame(cam, {w, h}, fo);

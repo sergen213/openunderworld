@@ -28,8 +28,9 @@ vec3 fxaa(vec2 uv) {
 #define OU_SHADOW_SET 2
 #include "sun.glsl"
 #include "shaders/atmosphere.glsl"
+#include "shaders/filter.glsl"
 // Brightness: display gamma after tonemap / FXAA (1 = neutral), as the original game's brightness option.
 void main() {
-    vec3 c = pow(pc.fxaa != 0 ? fxaa(vUv) : fetch(vUv), vec3(1.0 / pc.brightness));
+    vec3 c = pow(ouScreenFilter(pc.fxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / pc.brightness));
     oColor = vec4(ouUnderwater(ouAtmosphere(c, vUv), vUv) * (1.0 - pc.fade), 1.0);
 }

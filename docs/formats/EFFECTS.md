@@ -31,7 +31,7 @@ Object section (type 11) +0 / +4 / +8 are DTP resource references: +0 ObjectBase
 | +0x1C / +0x20 | class 2 glows (prim 0x82) | 0x58 | 0x536B70, update 0x535FA0, draw 0x536280 — implemented, "Glows" |
 | +0x24 / +0x28 | class 3 | 0xB8 | 0x537230 [U] |
 | +0x2C / +0x30 | class 4 | 0x64 | 0x53D100 [U] |
-| +0x34 / +0x38 | class 5 (prim 0x85) | 0x28 | 0x535CC0, draw 0x5469A0: full-screen tint / textured overlay faded by Lara's distance (+0x10 radius) [O]; DTP rtype 16 at +0x14 (torches) [U] — not drawn |
+| +0x34 / +0x38 | class 5 screen filters (prim 0x85) | 0x28 | 0x535CC0, draw 0x5469A0 ("Screen filters" below) |
 | +0x3C / +0x40 | effect lights (prim 6) | 0x24 | 0x546710 → 0x5C35D0 — implemented, "Lights" |
 | +0x44 / +0x48 | class 7 | 0x0C | 0x52C920: instance fade (+0x1B4/+0x1B8, 4096 = 1) [O] — not implemented |
 | +0x54 / +0x58 | class 8 | 0x3C | 0x5310A0 |
@@ -165,16 +165,16 @@ Unit data (Level `+0x74`) `+0x120` u32 count, `+0x124` → 0x70-byte records (l3
 `+0x5C` float (12642 / 9482; cull distance [U]), `+0x60` u32 point count (2 in all), `+0x64` → points, 0x50 bytes
 `{D3D row-major matrix, u8 0xFF, …}`. The event list (DTP rtype 34) is `{u32 GenericFXObject DTP id, records as the
 object event list}`; the GenericFXObject (here fx_fire's 6702, its materials and textures) is bundled in the unit DRM.
-Records `cmd 3 (def, 1, 2)` run line emitters from point 0 (segment 1) to point 1 (segment 2); cmd 0xB is the class-5
-screen tint (not drawn). This is the burning-manor fire and heat haze of the prologue corridor (ours: `ou-game` starts
+Records `cmd 3 (def, 1, 2)` run line emitters from point 0 (segment 1) to point 1 (segment 2); cmd 0xB starts a class-5
+screen filter ("Screen filters"). This is the burning-manor fire and heat haze of the prologue corridor (ours: `ou-game` starts
 every loaded unit's sets at birth, owner `0x40000000 | id` [I]; the exe's starter is not traced). fx_fire's own flame
 defs are not in its birth list; it is the "Lara on fire" object (clips `fsfx_burn` / `fsfx_burst` = class-5 tints).
 
 Compared 2026-10-29 with the original (`screens/fxref/fire_rubble_close.png`, Wine; our view `--level
 'pc-w\l3_main_bedroom.drm' --spawn -4263,1109,87,-90 --camera -4258,2364,661,-4263,0,300`: the original's prologue
 coordinates are ours + (9621, 0, −2977), the original relocates the unit): flames now burn on the rubble in GL and
-Vulkan at the original's places, but smaller and dimmer, and the original's strong amber light pool on the walls and
-its bloom are missing (the fire's light is not an effect light; its source [U]).
+Vulkan at the original's places, but smaller and dimmer. The strong amber light on the walls and the large glow are the
+point sets' class-5 screen filter (finish bloom, "Screen filters"), drawn since.
 
 ## Glows (class 2) [O unless marked]
 
@@ -208,9 +208,49 @@ Viewed 2026-10-29 (GL + Vulkan `--rt off`, firefight replay frame 38 as above): 
 (texture 557/558, growing over 2 frames) and its warm muzzle light on the rocks. Vulkan with RT on loses the device at
 that spawn (also at the parent commit; RenderPerf investigating).
 
+## Screen filters (class 5) [O unless marked]
+
+Command 0xB (a1 index) or the effect map; at birth only records with `+1 & 1` (none in the game data). Record (0x28):
+`+0x02` fade-in, `+0x04` rgba, `+0x09` id (stop commands), `+0x0A` fade-out, `+0x0C` hold (−1 forever), `+0x0E` / 128
+intensity, `+0x10` radius, `+0x12` / 4096 player mix, `+0x14` filter-resource DTP id (plain), `+0x18` screen-centre
+term, `+0x1C` second effect (0x546340); 30 Hz frames. Prim type 0x85 on the 0xAE4D04 list, drawn by 0x548BF0 → 0x5469A0:
+weight = intensity × fade-in / hold / fade-out × (1 − d² / radius²) when radius ≠ 0, d from mix(camera, player instance
+0xE7F094, player mix) to the owner; `+0x18` ≠ 0 also scales by the owner's projected distance from the screen centre and
+an occlusion fade (sun glares). With a resource the weight goes to `0x52C480(resource, w)` → render device vfunc 0x5C
+(0x5074E0), which sums it into the device's effect accumulators; without one a full-screen colour quad (`0x52B860`,
+mode 1 when alpha = 0x80, else 2). A stop fades an endless filter out from the end of its fade-in (0x52F580 type 0x85).
+
+Filter resource (DTP rtype 16, 0x31C0 bytes; also 0x4547D0's cinematic tables, CINEMATICS.md): each block sums
+weight × value (tables + round(t × w), saturating) and is topped up with the identity for what the weights leave below
+1 (0x517570 / 0x51AE50). Curves are 9 tables of 256 bytes = a 3×3 matrix: `0x519470` packs tables 3c..3c+2 into one
+256×1 texture (R, G, B) per input channel c [I which channel].
+
+| block | effect | fields | drawn |
+|---|---|---|---|
+| +0x0000 | PCColorDOFEffect (sum 0x516E70, draw 0x5177E0) | `+0x130E` enable, `+0x130C` depth curve, `+0x130D` scene matrix, `+0x1300` blur (sum ≤ 4) × device +0x1330 [U, 1 here], `+0x1304` alpha (≤ 1), `+0x1308` tint RGB, `+0x1310` / `+0x1314` depth range (own with `+0x130F`, else the scene's [U]), `+0x0000` scene matrix, `+0x0900` overlay matrix, `+0x1200` depth curve | scene through the scene matrix; half-size copy through the overlay matrix [I: ours after the blur], blurred, × tint, blended over by alpha (× depth curve over the view distance [I: distance, not z]) |
+| +0x1320 | second ColorDOF accumulator | as above | not enabled by the data seen [U] |
+| +0x2640 | PCFinishEffect (sum 0x51AAB0, draw 0x51AEF0) | `+0x909` enable, `+0x900` blur (≤ 4), `+0x904` amount (≤ 2), `+0x90A` curves, `+0x908` all 9 tables (else the diagonal) | half-size copy blurred (0x519F20: down to level ceil(r), back up by 4-tap bilinear steps, the fraction blended), through the curves, added (SRCALPHA/ONE, alpha = amount × 127.5) |
+| +0x2F74 | PCFeedbackEffect (0x51A190) | 7 floats + colour, `+0x20` enable | not drawn |
+| +0x2F60 | PCNoiseEffect (0x51B110) | `+0x10` enable | not drawn |
+| +0x2FA4 | device 0x512D60 (always, fog-like [U]) | `+0` enable | not drawn |
+
+Ours: `fx::System::screenFilter` sums the running filters (camera, Lara) into `render::ScreenFilter`; the post pass
+(`shaders/filter.glsl`, GL + Vulkan) applies the scene matrix, the ColorDOF overlay and the finish bloom; blur level r =
+trilinear mip r of a half-size scene copy (GL glGenerateTextureMipmap, Vulkan blit chain). Point sets run class 5 at
+birth although no record has the birth bit, centred on the first point [I]; transient owners' endless filters last 1 s
+[I]; tints and `+0x18` filters are not started. Survey: 6145 records with a resource (Lara's death / damage clips,
+pickups, fire, explosions), 403 tints, 2 screen-centre filters.
+
+The prologue corridor fire's point sets run fx_fire 6702 record 0 (resource 4190: finish blur 4 / amount 2, intensity
+0.625, radius 1580 around Lara): the strong amber glow on the walls and Lara in the close capture, nothing in the near /
+far captures (Lara > 1580 from every set), as there. Compared 2026-10-29 (`fire_rubble_close.png` vs GL + Vulkan,
+`--fov 50`): the walls now glow as in the original; the flames stay smaller than its large white-hot tongues. Flame
+defs scale their rate by segment distance / def `+0x164` (3160 here; 0x543F70 → 0x5386F0 `rate × dist / v`); applied,
+the fire is ~5× sparser than the capture, so it is not applied pending the exe's point-set segments [U].
+
 ## Missing
 
-Classes 1 (0x545810, ribbon? [U]), 3 (0x537230), 4 (0x53D100), 5 (screen tints / overlays), 7 (instance fade), 8, 9,
+Classes 1 (0x545810, ribbon? [U]), 3 (0x537230), 4 (0x53D100), 5 tints / screen-centre / feedback / noise parts, 7 (instance fade), 8, 9,
 kind ≥ 2 beam glows (no data uses them), variant ≠ 0 clip records, script-played object clips (light fixtures'
 `on`/`off`), door / switch / breakable clip events (no breakables in game), lightning (Thor's hammer), decals (bullet
 holes, scorch: not in the effect commands; [U] where), lens-flare chains beyond the glare glows, skydomes
@@ -218,5 +258,5 @@ holes, scorch: not in the effect commands; [U] where), lens-flare chains beyond 
 depth bias, 0x505C80 — how the dome follows the camera is [U]), particles that follow their segment (mode 1), casing meshes,
 per-enemy hit materials (all bodies 23). UV-scrolling textures (waterfalls, water) are the translated original
 shaders' (TimeVector c23/c53); the l2_junglehub cascade (-29000..-32000, 14500, z 3500..12500) was not framed in a
-view. Fire light pool / bloom of the prologue fire (vs the Wine capture), waterfall and gunfire
-Wine captures, frame-time measurements in the heaviest units.
+view. Flame size / density of the prologue fire vs the Wine capture, waterfall and gunfire Wine captures, frame-time
+measurements in the heaviest units.

@@ -56,7 +56,7 @@ file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gen/sun_glsl.inc CONTENT "R\"o
 target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
 
 # Enhanced water / splash / underwater-post GLSL shared by GL (runtime compile) and Vulkan (glslc).
-foreach(s water.vert water.frag splash.vert splash.frag underwater.glsl atmosphere.glsl)
+foreach(s water.vert water.frag splash.vert splash.frag underwater.glsl atmosphere.glsl filter.glsl)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${src})
   file(READ ${src} OU_WATER_SRC)
@@ -77,7 +77,8 @@ foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.v
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl
-                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl VERBATIM)
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
 # Original particle effects (src/fx sprites).
@@ -96,9 +97,9 @@ foreach(s water.vert water.frag splash.vert splash.frag)
                      DEPENDS ${src} VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
-# post.frag includes shaders/underwater.glsl and shaders/atmosphere.glsl.
+# post.frag includes shaders/underwater.glsl, shaders/atmosphere.glsl and shaders/filter.glsl.
 set_property(SOURCE ${OU_VK_SPV_DIR}/post.frag.inc APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl
-             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl)
+             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl)
 # Ray-traced scene variant (-DOU_RT: ray queries against the scene TLAS); only loaded on RT-capable devices.
 foreach(stage vert frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/scene.${stage})

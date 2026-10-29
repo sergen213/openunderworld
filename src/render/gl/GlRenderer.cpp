@@ -166,7 +166,7 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
 // Underwater + atmosphere declarations/functions (render/Water.cpp) go between kPostFs and kPostFsMain.
 const char* kPostFsMain = R"(
 void main() {
-    vec3 c = pow(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vec3(1.0 / uBrightness));
+    vec3 c = pow(ouScreenFilter(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vUv), vec3(1.0 / uBrightness));
     oColor = vec4(ouUnderwater(ouAtmosphere(c, vUv), vUv) * (1.0 - uFade), 1.0);
 })";
 
@@ -328,6 +328,9 @@ struct Targets {
     // underwater fog). Blitted after the opaque/blended pass, before the water surfaces draw.
     Texture opaqueColor, opaqueDepth;
     Framebuffer opaqueColorFbo, opaqueDepthFbo;
+    // Original screen filters (FrameOptions::screenFilter): the half-size scene and its mip chain (blur levels).
+    Texture filterBlur;
+    Framebuffer filterFbo;
 };
 
 struct Resources {
@@ -629,6 +632,14 @@ public:
         if (t.msaa > 1)
             glBlitNamedFramebuffer(t.scene.get(), t.resolve.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
                                    GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        if (const ScreenFilter* sf = options.screenFilter; sf && sf->active()) { // half-size scene + mips: the blur levels
+            glBlitNamedFramebuffer(t.msaa > 1 ? t.resolve.get() : t.scene.get(), t.filterFbo.get(), 0, 0, vp.width, vp.height,
+                                   0, 0, std::max(1, vp.width / 2), std::max(1, vp.height / 2), GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glGenerateTextureMipmap(t.filterBlur.get());
+            if (sf->dof) // the DOF curve reads the scene depth
+                glBlitNamedFramebuffer(t.scene.get(), t.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width,
+                                       vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, vp.width, vp.height);
         glDisable(GL_DEPTH_TEST);
@@ -640,6 +651,7 @@ public:
         glUniform1f(3, std::clamp(options.screenFade, 0.0f, 1.0f));
         glBindTextureUnit(0, t.color.get());
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
+        glBindTextureUnit(7, t.filterBlur.get());  // screen filters (unused unless one runs)
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
         drawOverlay(vp, options.overlay, options.ui, options.uiImages);
@@ -756,6 +768,15 @@ private:
         t.opaqueDepthFbo = newFramebuffer();
         glNamedFramebufferTexture(t.opaqueDepthFbo.get(), GL_DEPTH_ATTACHMENT, t.opaqueDepth.get(), 0);
         glNamedFramebufferDrawBuffer(t.opaqueDepthFbo.get(), GL_NONE);
+        const int bw = std::max(1, vp.width / 2), bh = std::max(1, vp.height / 2);
+        t.filterBlur = newTexture();
+        glTextureStorage2D(t.filterBlur.get(), std::min(6, 1 + int(std::log2(float(std::max(bw, bh))))), format, bw, bh);
+        glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        t.filterFbo = newFramebuffer();
+        glNamedFramebufferTexture(t.filterFbo.get(), GL_COLOR_ATTACHMENT0, t.filterBlur.get(), 0);
     }
 
     // Opaque: depth write, LESS. Blended (the original's translucent pass 0x5066A0): no depth

@@ -72,6 +72,23 @@ struct FxBatch {
     float distort = 0, softScale = 0, softBias = 0;
     bool screen() const { return distort > 0 || softScale > 0; } // reads the scene colour / depth copies
 };
+// Original screen filters (class-5 effects with a 0x31C0 filter resource, docs/formats/EFFECTS.md "Screen filters"),
+// summed over the running ones by fx::System::screenFilter. Post pass, on the tonemapped scene:
+//   scene = M1(scene) when colourMatrix; scene = mix(scene, M2(blur(scene, blurA)) x tintA, alphaA [x DOF curve]);
+//   scene += MF(blur(scene, blurC)) x amountC.
+// blur(r): the half-resolution scene at mip level r (trilinear, as tru.exe's ceil(r) down/up chain with the fraction
+// blended). M = 3x3 matrix of 256-entry curves: lut row 3k + c, texel x = the curve input channel c's value, RGB = its
+// contributions (rows 0-2 M1, 3-5 M2, 6-8 MF, 9 the DOF curve in R over sat(view depth x dofScale + dofBias)).
+struct ScreenFilter {
+    static constexpr int kLutRows = 10;
+    bool colourMatrix = false, dof = false, finishMatrix = false;
+    float alphaA = 0, blurA = 0;           // ColorDOF overlay 0..1, blur 0..4
+    float tintA[3] = {1, 1, 1};
+    float dofScale = 0, dofBias = 0;
+    float amountC = 0, blurC = 0;          // Finish (bloom): additive 0..1, blur 0..4
+    std::array<uint8_t, 256 * kLutRows * 4> lut{}; // RGBA8, row-major
+    bool active() const { return colourMatrix || alphaA > 0 || amountC > 0; }
+};
 // ---- atmosphere + weather (docs/RENDERING.md "Atmosphere", "Weather"; Enhanced only, post pass) ----
 // Height fog (haze + ground mist) integrated along the view ray up to the scene or the nearest water surface,
 // plus screen-space sun shafts from Medium up. Off = the post pass leaves the image untouched.
@@ -137,6 +154,7 @@ struct FrameOptions {
     // Original effects, drawn after the water surfaces / splashes, depth-tested, no depth writes, batches in order.
     std::span<const FxVertex> fxVertices;
     std::span<const FxBatch> fxBatches;
+    const ScreenFilter* screenFilter = nullptr; // original class-5 screen filters (post pass); nullptr / inactive = none
 };
 
 // Ray-tracing state for diagnostics and tests.

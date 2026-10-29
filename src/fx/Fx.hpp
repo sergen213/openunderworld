@@ -118,6 +118,40 @@ struct LightDef {
     std::optional<scene::Light> dtp; // +0x20 light DTP: type, cone, falloff curve, flicker
 };
 
+// 0x31C0-byte screen filter resource (DTP rtype 16; EFFECTS.md "Screen filters"): the parts drawn. Curves are 9 tables
+// of 256 bytes, a 3x3 matrix: tables 3c..3c+2 = what input channel c adds to R, G, B.
+struct FilterResource {
+    using Matrix = std::array<uint8_t, 256 * 9>;
+    // PCColorDOFEffect block (+0x0000, accumulated by tru.exe 0x516E70, drawn by 0x5177E0)
+    bool colorDof = false, dof = false, matrix1 = false; // +0x130E enable, +0x130C depth curve, +0x130D scene matrix
+    float blur = 0, alpha = 0;                           // +0x1300 (sum <= 4), +0x1304 (sum <= 1)
+    uint32_t tint = 0xFFFFFF;                            // +0x1308 bytes R, G, B
+    float dofNear = 0, dofFar = 0;                       // +0x1310 / +0x1314
+    Matrix m1{}, m2{};                                   // +0x0000 scene matrix, +0x0900 overlay matrix
+    std::array<uint8_t, 256> dofCurve{};                 // +0x1200 overlay alpha over the depth range
+    // PCFinishEffect block (+0x2640, 0x51AAB0 / 0x51AEF0): the blurred scene added on top (bloom)
+    bool finish = false, finishCurves = false, finishFull = false; // +0x909, +0x90A, +0x908 (all 9 tables, else diagonal)
+    float finishBlur = 0, finishAmount = 0;              // +0x900 (sum <= 4), +0x904 (sum <= 2; drawn x 0.5)
+    Matrix mf{};                                         // +0x2640
+};
+FilterResource parseFilterResource(std::span<const uint8_t> data); // data.size() >= 0x31C0
+
+// Class 5 screen filter (GenericFXObject +0x34 / +0x38, 0x28 bytes; command 0xB, creator tru.exe 0x535CC0, per-frame
+// weight 0x5469A0). Times in 30 Hz frames.
+struct FilterDef {
+    bool birth = false;              // +0x01 & 1
+    int16_t fadeIn = 0;              // +0x02
+    uint32_t rgba = 0;               // +0x04 tint colour (filters without a resource: not drawn)
+    uint8_t id = 0;                  // +0x09 (stop commands)
+    int16_t fadeOut = 0, hold = -1;  // +0x0A / +0x0C (-1 forever)
+    float intensity = 0;             // +0x0E / 128
+    float radius = 0;                // +0x10: weight x (1 - d^2 / r^2), 0 = everywhere
+    float playerMix = 0;             // +0x12 / 4096: d measured from mix(camera, player, playerMix) to the owner
+    float screen = 0;                // +0x18 screen-centre term (sun glares) [not drawn]
+    uint32_t other = 0;              // +0x1C second effect (0x546340) [not drawn]
+    std::shared_ptr<const FilterResource> resource; // +0x14 DTP id
+};
+
 // Effect command (8 bytes at +8 of an event record, tru.exe 0x547B40): u16 type, then 3 u16 arguments.
 struct Command { uint16_t type = 0, a1 = 0, a2 = 0, a3 = 0; };
 // Object / animation event record {u16 info, u16 frame, u8 event, ...; command}, 8 + (info >> 12) * 4 bytes
@@ -138,6 +172,7 @@ struct ObjectFx {
     std::vector<ParticleDef> particles;
     std::vector<GlowDef> glows;          // class 2
     std::vector<LightDef> lights;        // class 6
+    std::vector<FilterDef> filters;      // class 5
     struct MapEntry { uint8_t id = 0; int8_t cls = -1; uint8_t index = 0; };
     std::vector<MapEntry> effectMap;     // +0x04 / +0x08 (commands 0x1C / 0x2F look effects up by id)
     std::vector<Event> events;           // object section +4 list
@@ -215,6 +250,9 @@ public:
         bool forever = false;                // no duration: a fixture (birth lights of placed objects)
     };
     void lights(std::vector<LiveLight>& out) const; // replaces out's contents
+    // The running screen filters at the camera / player, summed as tru.exe's PCColorDOF / PCFinish accumulators.
+    void screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out) const;
+    size_t filterCount() const { return filters_.size(); }
     size_t emitterCount() const { return emitters_.size(); }
     size_t particleCount() const { return particles_.size(); }
     size_t glowCount() const { return glows_.size(); }
@@ -244,6 +282,15 @@ private:
     bool startLight(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
                     int16_t segment, std::span<const glm::mat4> bones);
     void stopId(int32_t owner, int id, bool now); // commands 0x15 / 0x1A (fade) and 0x18 / 0x1B (now); id < 0 all
+    struct Filter {
+        std::shared_ptr<const ObjectFx> fx;
+        const FilterDef* def = nullptr;
+        glm::vec3 pos{0};
+        int32_t owner = 0, age = 0;  // ticks
+        int32_t holdEnd = -1;        // ticks; -1 forever (until stopped)
+    };
+    bool startFilter(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
+                     int16_t segment, std::span<const glm::mat4> bones);
     struct Emitter {
         std::shared_ptr<const ObjectFx> fx;
         const ParticleDef* def = nullptr;
@@ -283,6 +330,7 @@ private:
     std::vector<Sequence> sequences_;
     std::vector<Glow> glows_;
     std::vector<FxLight> lights_;
+    std::vector<Filter> filters_;
 };
 
 // Object DRM effects by object name, loaded once, with the decoded textures their particles use.

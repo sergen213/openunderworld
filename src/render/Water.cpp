@@ -8,6 +8,7 @@
 #include <glm/gtc/matrix_inverse.hpp>
 
 #include <algorithm>
+#include <cstring>
 
 namespace ou::render {
 
@@ -29,6 +30,9 @@ const char* kUnderwater =
     ;
 const char* kAtmosphere =
 #include "atmosphere.glsl.inc"
+    ;
+const char* kFilter =
+#include "filter.glsl.inc"
     ;
 } // namespace
 
@@ -56,6 +60,12 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     const glm::vec3 fog = env.valid ? glm::vec3(env.fogColor[0], env.fogColor[1], env.fogColor[2]) : glm::vec3(0.08f, 0.09f, 0.11f);
     w.fogColor = glm::vec4(fog, cameraUnderwater(camera, options.waterVolumes) ? 1.0f : 0.0f);
     w.fogRange = {env.valid ? env.fogNear : 1000.0f, env.valid && env.fogFar > env.fogNear ? env.fogFar : 30000.0f, 1.0f, 1.0f};
+    if (const ScreenFilter* f = options.screenFilter; f && f->active()) {
+        w.filter[0] = {f->alphaA, f->blurA, f->dof ? 1.0f : 0.0f, f->colourMatrix ? 1.0f : 0.0f};
+        w.filter[1] = {f->tintA[0], f->tintA[1], f->tintA[2], f->finishMatrix ? 1.0f : 0.0f};
+        w.filter[2] = {f->amountC, f->blurC, f->dofScale, f->dofBias};
+        std::memcpy(w.filterLut, f->lut.data(), sizeof w.filterLut);
+    }
     const auto& r = options.ripples;
     w.ripple = {r.originX, r.originY, r.cellSize, r.surfaceZ};
     w.rippleInfo = {float(r.size), r.cellSize > 0 && r.size > 0 && !r.heights.empty() ? 1.0f : 0.0f, 0, 0};
@@ -139,7 +149,7 @@ std::string splashVertexSource(bool vulkan) { return withVersion(kSplashVert, vu
 std::string splashFragmentSource(bool vulkan) { return withVersion(kSplashFrag, vulkan); }
 
 std::string underwaterPostSource(bool vulkan) {
-    return std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere;
+    return std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere + kFilter;
 }
 
 } // namespace ou::render
