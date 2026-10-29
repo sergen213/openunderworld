@@ -51,6 +51,9 @@ struct SubMesh {
     // Per-instance textures of material classes 1-4 (light map, "Setup" blend masks; SHADERS.md): terrain group
     // +0x10, model primgroup +0x2C, overridden by IMF placements (+0x4C). 0 = the material's own texture.
     uint32_t instanceTextures[4] = {};
+    // Model primgroup +0x20 draw group: 0 = always drawn, n = hidden while bit n-1 of the instance's hidden-group
+    // mask is set (tru.exe 0x4F50F0 / 0x5B4150; Lara's Thor gear: 10, 11 gauntlets, 12 belt).
+    uint8_t drawGroup = 0;
 };
 
 // One D3D9 SM3 program of a TRU ShaderLib (formats/Shader.hpp parses it).

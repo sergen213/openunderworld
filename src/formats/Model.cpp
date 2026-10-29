@@ -253,6 +253,7 @@ void appendIndices(scene::MeshData& m, const Reader& r, size_t indexBase, uint32
     auto& b = m.submeshes;
     if (!b.empty() && b.back().textureId == sm.textureId && b.back().blend == sm.blend &&
         b.back().alphaRef == sm.alphaRef && b.back().doubleSided == sm.doubleSided && b.back().materialId == sm.materialId &&
+        b.back().drawGroup == sm.drawGroup &&
         std::equal(sm.instanceTextures, sm.instanceTextures + 4, b.back().instanceTextures) &&
         b.back().firstIndex + b.back().indexCount == sm.firstIndex)
         b.back().indexCount += count;
@@ -312,6 +313,7 @@ void decodeModel(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& ou
             // Primgroup +0x2C..+0x38: default instance textures (PCRenderModel_Finalize 0x50EB30).
             scene::SubMesh sm = c.material(matIds, r.u32(P + 0x28));
             Ctx::instanceTextures(sm, r, P + 0x2C, texIds);
+            sm.drawGroup = uint8_t(r.u32(P + 0x20)); // hide/unhide group (DXHR PrimGroup dword20)
             appendIndices(m, r, indexBase, first, 3 * tris, numVerts, sm);
         }
         out.push_back(std::move(m));

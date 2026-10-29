@@ -217,6 +217,32 @@ outfit's skinned meshes and textures, re-rigs the pose skeleton, hair and hand o
 stay lara.drm's, identical) and adds its waves. Cutscenes pose the same meshes. Streaming into a neighbour keeps the
 outfit (the original only reads `+0x294` on a level load).
 
+## Thor's gear (draw groups)
+
+- [O] Every outfit model (all 8 Lara DRMs) carries Thor's gauntlets and belt as model primgroups with a draw group
+  (primgroup `+0x20`, DXHR `dword20`): 10 and 11 the two gauntlets (T-pose hands), 12 the belt; the wetsuits also
+  use 1-3 for diving gear. An instance hides group n while bit n-1 of its mask `+0x23C | +0x240` is set
+  (draw 0x5BBA90 -> 0x5B4150 -> PCRenderModelInstance vt 0x30 = 0x4F50F0); `+0x23C` is saved with the player.
+- [O] Script instance native 61 = HideUnhideDrawGroup(bit, show) (0x798F10 -> 0x5B3DD0). Lara's script type 205
+  (lara.drm) holds the group ids as INT member defaults stored inline in the member records `+40/+44/+48` = 10, 11, 12 and wraps them: vt 62-64
+  show one piece and set its stickybool (`+52/+80/+108`, ids 4033-4035), vt 65-67 hide it, but a show helper does
+  nothing unless Lara carries the piece's object (`g_gauntletleft`, `g_gauntletright`, `g_belt`: larabase 38
+  0x777E90); the equip helpers vt 59-61 attach (larabase 37) or drop (42) that object.
+- [O] Callers: Thor mechanisms show all three while Lara is at them and hide them after - trigger volumes
+  (l2_maproom 9632, l3_secretchamber 12379: OnIn/OnOut) and player sensors (Thor doors/pillars 9744, cog wheels
+  17325, rune switches 19581, l7_arctic_sea 19969: vt 14); l2_maproom 9626 shows the left gauntlet after its
+  cinematic. Equip calls come from per-chapter setup scripts (types 5789, 9502, 11733, 13929, 17775, 19515, 19597)
+  and l3_secretchamber 12371/12372 (right gauntlet).
+- Ours: `SubMesh::drawGroup`; `script::Runtime::playerHiddenGroups()` starts with groups 10-12 hidden
+  ([I]: the exe's instance mask starts at 0; nothing in the scripts hides them first, so where the original hides them
+  at birth is [U]); instance 61 on Lara's script changes it; larabase 37/38/42 track the carried `g_*` objects
+  (`playerObjects()`; 42 drops all three, its slot argument is not tracked [I]). Mask, objects and Lara's script
+  fields are saved (`script.player`); a chapter start without a save resets them. ou-game drops hidden groups'
+  submeshes from Lara's meshes when building the scene (gameplay and cutscenes, GL and Vulkan).
+- Not done: player sensors (vt 14) never fire, and the per-chapter equip scripts do not run in our runtime yet
+  (probe of 12 chapter units: no equip call), so the gear stays hidden outside a volume with carried objects. The
+  cinematic base type 3523's gear events 10-21 are never sent (no retail stream has events).
+
 ## Controls
 
 - Bindings live in `config.json` under `controls` (`bindings`: action → list of inputs; `mouse_sensitivity` 0.1..10,

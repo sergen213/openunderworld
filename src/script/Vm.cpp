@@ -105,7 +105,7 @@ std::shared_ptr<Instance> Program::instantiate(int32_t uid, uint32_t typeId) {
     for (auto it = chain.rbegin(); it != chain.rend(); ++it)
         for (const auto& m : (*it)->members) {
             const uint8_t base = m.type & 0x0F;
-            if (m.init && (base <= 4 || m.typeId == kInstanceRefType || !std::strcmp(nativeName(m.typeId), "messagechannel") ||
+            if (m.init && !m.inlineInit && (base <= 4 || m.typeId == kInstanceRefType || !std::strcmp(nativeName(m.typeId), "messagechannel") ||
                            !std::strcmp(nativeName(m.typeId), "terraingroup")))
                 out->fields[m.offset] = *m.init;
         }

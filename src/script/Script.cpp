@@ -166,6 +166,9 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
             } else {
                 m.init = iv.at<uint32_t>(ip->offset);
             }
+        } else if (const uint8_t base = m.type & 0x0F; !(m.type & 0x80) && base >= 1 && base <= 3) {
+            m.init = v.at<uint32_t>(b + 0x10); // BOOL/INT/FLOAT: the value itself (lara.drm 205 +40 = 10) [O]
+            m.inlineInit = true;
         }
         t.members.push_back(m);
     }
@@ -349,6 +352,8 @@ void applyState(Object& o, const nlohmann::json* s) {
 void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
     bigfile_ = bigfile;
     playerScript_.reset();
+    playerHiddenGroups_ = playerGearGroups_ = 0;
+    playerObjects_.clear();
     if (!bigfile_) return;
     const auto bytes = bigfile_->read("pc-w\\lara.drm");
     if (!bytes) return;
@@ -358,6 +363,15 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
         if (drm.sections[i].type == cdc::SectionType::Script) types.push_back(parseScriptType(drm, i));
     auto program = std::make_shared<vm::Program>(std::move(types));
     playerScript_ = program->instantiate(nextAuxiliaryUid_--, 205); // LaraBase player instance script
+    // Gear groups (type 205 ints +40/+44/+48, shown by its vt 62-64 / hidden by vt 65-67 through instance native 61)
+    // start hidden: Lara shows Thor's gauntlets and belt only where a script puts them on (GAMEPLAY.md "Thor's gear").
+    if (const ScriptType* lara = program->type(205))
+        for (const auto& m : lara->members) {
+            if (m.inlineInit) playerScript_->fields[m.offset] = playerScript_->initial[m.offset] = *m.init; // floats 1.0, gear ids
+            if ((m.offset == 40 || m.offset == 44 || m.offset == 48) && m.init && *m.init >= 1 && *m.init <= 32)
+                playerGearGroups_ |= 1u << (*m.init - 1);
+        }
+    playerHiddenGroups_ = playerGearGroups_;
 }
 
 void Runtime::setUnits(const std::vector<UnitRef>& units) {
@@ -604,6 +618,19 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 events_.push_back({EventKind::PlayerMessage, source, nc.function == 59 ? 0x1D5 : 0x1D6, tick_});
                 return true;
             }
+            // Thor's gear objects (g_gauntletleft / g_gauntletright / g_belt) Lara carries in her object slots, set by
+            // the type 205 equip helpers vt 59-61 that unit/chapter scripts call: larabase 38 (0x777E90: an object of
+            // that name is in one of her 15 slots), 37 (0x7161F0: attach it), 42 (0x6F5A10: drop a slot's object). The
+            // show helpers vt 62-64 only unhide a draw group while its object is carried. [I] our 42 drops every gear
+            // object (its slot argument is not tracked; the equip helpers call it together). 14 (0x7793F0: post
+            // 0x19B/0x146 to a slot) has nothing to stow.
+            if (!std::strcmp(name, "larabase") && (nc.function == 14 || nc.function == 37 || nc.function == 38 || nc.function == 42)) {
+                const auto text = std::find_if(nc.args.begin(), nc.args.end(), [](const vm::Value& a) { return a.text; });
+                if (nc.function == 37 && text != nc.args.end()) playerObjects_.insert(*text->text);
+                if (nc.function == 42) playerObjects_.clear();
+                nc.result = vm::Value::scalar(nc.function == 38 && text != nc.args.end() && playerObjects_.contains(*text->text));
+                return true;
+            }
             // Receiver-independent bindings whose side effects other engine systems own (sound: below, once bound).
             for (const char* passive : {"soundgroup", "music", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect"})
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
@@ -832,10 +859,20 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (!object->hidden) object->hidden = true, ++visibilityVersion_;
                 return true;
             }
+            if (!std::strcmp(name, "instance") && nc.function == 61 && nc.args.size() == 2) {
+                // HideUnhideDrawGroup(bit, show) (0x798F10 -> 0x5B3DD0): bit = draw group - 1 of the instance mask
+                // +0x23C. Only Lara's model is drawn per group here (SubMesh::drawGroup); other receivers are ignored [I].
+                if (self == playerScript_) {
+                    const uint32_t bit = 1u << (nc.args[0].bits & 31), mask = nc.args[1].bits & 0xFF
+                                                                                   ? playerHiddenGroups_ & ~bit
+                                                                                   : playerHiddenGroups_ | bit;
+                    if (mask != playerHiddenGroups_) playerHiddenGroups_ = mask, ++visibilityVersion_;
+                }
+                return true;
+            }
             if (!std::strcmp(name, "instance") &&
                 (nc.function == 4 || nc.function == 5 || nc.function == 6 || nc.function == 7 || nc.function == 8 ||
-                 nc.function == 9 || nc.function == 14 || nc.function == 15 || nc.function == 16 || nc.function == 26 || nc.function == 28 ||
-                 nc.function == 61)) {
+                 nc.function == 9 || nc.function == 14 || nc.function == 15 || nc.function == 16 || nc.function == 26 || nc.function == 28)) {
                 nc.result = vm::Value::object(self->uid); // native interface of this instance (multibody etc.)
                 return true;
             }
@@ -1074,6 +1111,13 @@ nlohmann::json Runtime::serialize() const {
         if (auto s = stateOf(o); !s.is_null()) j[std::to_string(o.uid)] = std::move(s);
         else j.erase(std::to_string(o.uid));
     }
+    // Lara's script (gear stickybools +52/+80/+108) and hidden draw groups.
+    nlohmann::json fields = nlohmann::json::object();
+    if (playerScript_)
+        for (const auto& [offset, value] : playerScript_->fields)
+            if (const auto it = playerScript_->initial.find(offset); it == playerScript_->initial.end() || it->second != value)
+                fields[std::to_string(offset)] = value;
+    j["player"] = {{"hiddenGroups", playerHiddenGroups_}, {"objects", playerObjects_}, {"scriptFields", std::move(fields)}};
     return j;
 }
 
@@ -1084,6 +1128,18 @@ void Runtime::restore(const nlohmann::json& j) {
             gameValues_[i] = j["gameValues"][i].get<uint8_t>();
     stash_ = j.is_object() ? j : nlohmann::json::object();
     stash_.erase("gameValues");
+    const nlohmann::json player = stash_.value("player", nlohmann::json::object());
+    stash_.erase("player");
+    if (const uint32_t mask = player.value("hiddenGroups", playerGearGroups_); mask != playerHiddenGroups_)
+        playerHiddenGroups_ = mask, ++visibilityVersion_;
+    playerObjects_ = player.value("objects", std::set<std::string>{});
+    if (playerScript_) {
+        playerScript_->fields = playerScript_->initial;
+        if (const auto f = player.find("scriptFields"); f != player.end() && f->is_object())
+            for (const auto& [key, value] : f->items())
+                if (value.is_number_unsigned() || value.is_number_integer())
+                    playerScript_->fields[uint32_t(std::stoul(key))] = value.get<uint32_t>();
+    }
     for (auto& o : objects_) {
         const auto key = std::to_string(o.uid);
         applyState(o, stash_.contains(key) ? &stash_[key] : nullptr);

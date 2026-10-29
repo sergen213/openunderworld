@@ -665,6 +665,10 @@ struct StreamedScene {
         }
         laraMeshes.meshIndices.clear();
         append(lara, glm::vec3(0), &laraMeshes.meshIndices);
+        for (const size_t i : laraMeshes.meshIndices) // draw groups the scripts hid (Thor's gear, GAMEPLAY.md)
+            std::erase_if(out.meshes[i].submeshes, [&](const ou::scene::SubMesh& s) {
+                return s.drawGroup && (w.script().playerHiddenGroups() >> ((s.drawGroup - 1) & 31) & 1);
+            });
         enemyMeshes.meshIndices.clear();
         for (const auto& e : w.enemies().all()) {
             enemyMeshes.meshIndices.emplace_back();

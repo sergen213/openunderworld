@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,6 +51,8 @@ struct Member {
     uint16_t offset = 0;    // byte offset in the object instance
     uint16_t name = 0;      // symbol id (the PC data has no member names)
     std::optional<uint32_t> init; // first u32 of the initial value (instanceref: target intro unique id)
+    bool inlineInit = false; // BOOL/INT/FLOAT default stored in the member record; not applied by instantiate [U: applying
+                             // all of them changes l1 kraken-room scripts (GameReal.KrakenRoomRappel)]
     std::optional<uint32_t> init2; // terraingroup: model index (init's low u16 is the stream unit id)
     std::optional<cdc::Pointer> initAt; // NATIVE/SCRIPT: where the initial value lives (sound: inline SoundPlex)
 };
@@ -208,6 +211,11 @@ public:
     const Object* find(int32_t uid) const;
     const std::vector<Event>& events() const { return events_; } // last tick, dispatch order
     uint64_t visibilityVersion() const { return visibilityVersion_; }
+    // Lara's hidden draw groups (Instance +0x23C, tru.exe 0x5B3DD0): bit n-1 hides model primgroups of group n
+    // (SubMesh::drawGroup). Changes bump visibilityVersion. Default: the Thor gear groups of lara.drm type 205
+    // (+40/+44/+48 = 10, 11 gauntlets, 12 belt) hidden; instance native 61 from scripts shows/hides them.
+    uint32_t playerHiddenGroups() const { return playerHiddenGroups_; }
+    const std::set<std::string>& playerObjects() const { return playerObjects_; } // carried gear (g_belt, ...)
     uint32_t unitEffect() const { return unitEffect_; }
     // globaleffect FadeOut/FadeIn screen wipe: 0 = clear, 1 = black; moves by 1/frames each tick.
     float screenFade() const { return fade_; }
@@ -261,6 +269,8 @@ private:
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;
     uint64_t visibilityVersion_ = 0;
+    uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
+    std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
     uint32_t unitEffect_ = 0;
     uint64_t tick_ = 0;
     std::map<std::pair<int32_t, std::string>, size_t> failures_;

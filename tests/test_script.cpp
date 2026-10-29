@@ -9,6 +9,7 @@
 
 #include <bit>
 #include <cstdlib>
+#include <set>
 #include <tuple>
 
 using namespace ou;
@@ -1018,4 +1019,55 @@ TEST(ScriptVm, BlockingNativeRetriesCall) {
     ASSERT_TRUE(machine.tick(0.1f));
     EXPECT_EQ(calls, 3);
     EXPECT_EQ(object->fields[4], 5u);
+}
+
+// Thor's gear (GAMEPLAY.md "Thor's gear"): outfit primgroups of draw groups 10/11 (gauntlets at the T-pose hands)
+// and 12 (belt) start hidden. l3_secretchamber volume 12379 calls Lara's show helpers (type 205 vt 62-64 -> instance
+// 61) on OnIn and the hide helpers on OnOut; a helper only shows a piece while Lara carries its g_* object (larabase
+// 38/37, given by the equip helpers vt 59-61). Mask, carried objects and the gear stickybools round-trip through saves.
+TEST(ScriptRealData, ThorGearDrawGroups) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    for (const char* outfit : {"lara", "lara_casual", "lara_wetsuit_warm", "lara_jungle_a", "lara_jungle_heavy",
+                               "lara_snow_heavy", "lara_jungle_b", "lara_wetsuit_cold"}) {
+        const auto sc = formats::loadDrmScene(bf, std::string("pc-w\\") + outfit + ".drm");
+        std::set<int> groups;
+        for (const auto& m : sc.meshes)
+            if (m.skeleton >= 0)
+                for (const auto& s : m.submeshes) groups.insert(s.drawGroup);
+        for (int gear : {10, 11, 12}) EXPECT_TRUE(groups.contains(gear)) << outfit << " group " << gear;
+    }
+    constexpr uint32_t kGear = 0x7u << 9; // groups 10, 11, 12
+    Runtime r;
+    r.setBigfile(&bf);
+    ASSERT_TRUE(r.playerScript());
+    EXPECT_EQ(r.playerHiddenGroups(), kGear);
+    auto bytes = bf.read("pc-w\\l3_secretchamber.drm");
+    ASSERT_TRUE(bytes);
+    r.setUnits({{"l3_secretchamber", std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*bytes))), {}}});
+    const Object* v = nullptr;
+    for (const auto& o : r.objects())
+        if (o.script && o.script->typeId == 12379) v = &o;
+    ASSERT_TRUE(v);
+    const vec3 inside = v->pos, outside = inside + vec3(0, 0, 20000);
+    auto visit = [&] { r.tick(at(outside)); r.tick(at(inside)); r.tick(at(inside)); };
+    visit();
+    EXPECT_EQ(r.playerHiddenGroups(), kGear); // nothing carried: nothing to show
+    auto state = r.serialize();
+    state["player"]["objects"] = {"g_belt", "g_gauntletleft", "g_gauntletright"};
+    r.restore(state);
+    visit();
+    EXPECT_EQ(r.playerHiddenGroups(), 0u);
+    EXPECT_EQ(r.playerScript()->fields.at(52), 1u); // stickybool: left gauntlet shown
+    const auto saved = r.serialize();
+    r.tick(at(outside));
+    r.tick(at(outside));
+    EXPECT_EQ(r.playerHiddenGroups(), kGear); // OnOut puts the gear away
+    r.restore(saved);
+    EXPECT_EQ(r.playerHiddenGroups(), 0u);
+    EXPECT_EQ(r.playerObjects().size(), 3u);
+    r.restore(nlohmann::json::object()); // chapter start without a save
+    EXPECT_EQ(r.playerHiddenGroups(), kGear);
+    EXPECT_TRUE(r.playerObjects().empty());
 }
