@@ -241,8 +241,15 @@ bool Machine::write(const Value& destination, const Value& source) {
 
 int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame& frame) {
     if (frame.stack.size() < size_t(f.argCount)) return 0;
-    if (receiver.kind == Value::Kind::Local) receiver = read(receiver); // object or native value held in a local
-    const std::vector<Value> args(frame.stack.end() - f.argCount, frame.stack.end());
+    // A local may hold the address of a caller's local (an argument passed by address): follow it to the value.
+    auto deref = [&](Value v) {
+        for (int i = 0; i < 4 && v.kind == Value::Kind::Local; ++i) v = read(v);
+        return v;
+    };
+    receiver = deref(receiver); // object or native value held in a local
+    std::vector<Value> args(frame.stack.end() - f.argCount, frame.stack.end());
+    if (f.native) // natives get values, not addresses of the caller's locals (a cameraspline argument held in a local)
+        for (Value& a : args) a = deref(a);
     // A caller that discards the result pushes no result address (l3_chapel soundvolume `globals.member12.vt19()`).
     const Value* slot = f.returnType && frame.stack.size() > f.argCount ? &*(frame.stack.end() - f.argCount - 1) : nullptr;
     const bool hasResult = slot && (slot->kind == Value::Kind::Local || slot->kind == Value::Kind::Member ||
@@ -367,8 +374,7 @@ Machine::Step Machine::step() {
         case 0x11: case 0x12: case 0x15: { // member of an object on the stack; a null object yields 0 (exe 0x57D040)
             Value v = pop(); auto o = resolveObject(v); if (!o) { pushScalar(0); ++pc; break; }
             const auto it = o->fields.find(arg);
-            if (in.op == 0x15 && it == o->fields.end() && o->typeId == 5) fr.stack.push_back(Value::object(o->uid));
-            else if (it == o->fields.end()) pushScalar(0);
+            if (it == o->fields.end()) pushScalar(0);
             else if (in.op == 0x11) pushScalar(it->second & 0xFF);
             else if (in.op == 0x12) pushScalar(it->second & 0xFFFF);
             else if (in.op == 0x15) fr.stack.push_back(Value::object(int32_t(it->second)));

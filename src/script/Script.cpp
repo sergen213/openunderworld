@@ -173,6 +173,9 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
         }
         t.members.push_back(m);
     }
+    // Prototypes: 0x1C bytes, +6 = i16 vtIndex (NsDispatcherBase bind 0x7B3E60 reads entries 7/8 by index).
+    if (const auto [pp, pn] = views.array(s, 0x34); pn)
+        for (uint32_t k = 0; k < pn; ++k) t.prototypes.push_back(views[pp.section].at<int16_t>(pp.offset + 0x1C * k + 6));
 
     // Functions: 0x1C bytes {Prototype*, ..., +0x18 code SArray of u32 words}; Prototype +6 = i16 vtIndex.
     const auto [fp, fn] = views.array(s, 0x38);
@@ -599,6 +602,49 @@ void Runtime::endCinematic(int32_t uid) {
     if (Object* object = findMut(uid)) fire(EventKind::CinematicEnd, *object);
 }
 
+uint32_t Runtime::cameraSplineValue(const vm::Value& v) {
+    if (v.kind != vm::Value::Kind::Member) return v.bits;
+    const auto holder = instance(v.uid);
+    if (!holder || !holder->program) return 0xFFFFFFFFu;
+    const Member* m = holder->program->member(holder->typeId, v.offset);
+    const auto field = holder->fields.find(v.offset);
+    if (field == holder->fields.end() && (!m || !m->init)) return 0xFFFFFFFFu;
+    // The unit is the owner's (0x775760); unit/global scripts (auxiliary instances) use the unit of their program.
+    const auto owner = std::find_if(objects_.begin(), objects_.end(), [&](const Object& o) {
+        return o.uid == holder->uid || (holder->uid < 0 && o.script && o.script->program == holder->program);
+    });
+    if (owner == objects_.end()) return 0xFFFFFFFFu;
+    auto unit = std::find(cameraUnits_.begin(), cameraUnits_.end(), owner->unit);
+    if (unit == cameraUnits_.end()) unit = cameraUnits_.insert(unit, owner->unit);
+    const uint32_t index = field != holder->fields.end() ? field->second : *m->init;
+    return uint32_t(unit - cameraUnits_.begin()) << 16 | (index & 0xFFFF);
+}
+
+void Runtime::callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args) {
+    const auto self = instance(uid);
+    if (!self || !self->program) return;
+    const auto& program = *self->program;
+    int16_t vt = -1;
+    for (const ScriptType* t = program.type(self->typeId); t; t = program.type(t->superId))
+        if (t->nativeName == base) { vt = t->prototypes.size() > prototype ? t->prototypes[prototype] : -1; break; }
+    const Function* f = vt >= 0 ? program.method(self->typeId, vt) : nullptr;
+    if (!f || f->native || f->wordCount <= 1) return; // not overridden: the base slot does nothing
+    const auto machine = makeMachine(uid);
+    Object* o = findMut(uid);
+    if (o && o->machine && o->machine->active()) o->fibers.push_back(std::move(o->machine));
+    if (o) o->machine = machine;
+    if (!machine->call(*self, vt, args)) recordFailure(uid, o ? o->name : "unit script", *machine);
+    else if (!o && machine->active()) threads_.emplace_back(uid, machine); // unit/global script: its own thread
+    adopt(machine);
+}
+
+void Runtime::cameraSplineDone(uint32_t value) {
+    std::vector<int32_t> uids;
+    for (const Object& o : objects_) uids.push_back(o.uid);
+    const vm::Value arg = vm::Value::scalar(value);
+    for (const int32_t uid : uids) callback(uid, "dispatcherbase", 7, std::span(&arg, 1));
+}
+
 // Runs the intro's real handler. If an unsupported opcode/binding stops it, the older static-link path is
 // retained; any activation already produced by the VM suppresses that fallback to avoid duplicate effects.
 void Runtime::fire(EventKind k, Object& o, bool announce) {
@@ -656,15 +702,30 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
     --fallbackDepth_;
 }
 
+// Unit/global script instances (unitref/globalsref Get), one per (program, type).
+std::shared_ptr<vm::Instance> Runtime::auxiliaryInstance(const std::shared_ptr<vm::Program>& program, uint32_t typeId) {
+    auto& slot = auxiliary_[std::make_pair(program.get(), typeId)];
+    if (slot) return slot;
+    const auto instance = slot = program->instantiate(nextAuxiliaryUid_--, typeId);
+    // The globals (gameglobalsbase) hold engine-created script objects in SCRIPT members that have no initial value
+    // (type 5 +4/+8/+12/+272/+356/+432/+436 -> types 76/75/74/72/73/60/77; l5 soundvolumes call `globals.member12`
+    // vt 20 of type 74) [O bytecode]; ours are auxiliary instances like the globals [I: the engine's construction].
+    for (const ScriptType* t = program->type(typeId); t; t = program->type(t->superId))
+        if (t->nativeName == "gameglobalsbase") {
+            for (const Member& m : program->type(typeId)->members)
+                if ((m.type & 0x8F) == 11 && m.typeId && !m.init && m.typeId != typeId)
+                    instance->fields[m.offset] = instance->initial[m.offset] = uint32_t(auxiliaryInstance(program, m.typeId)->uid);
+            break;
+        }
+    return instance;
+}
+
 // A VM thread whose natives act for `source` (the intro uid that owns the thread).
 std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
     {
         auto resolve = [this](int32_t uid) { return instance(uid); };
         auto auxiliary = [this](const std::shared_ptr<vm::Program>& program, uint32_t typeId) {
-            const auto key = std::make_pair(program.get(), typeId);
-            auto& instance = auxiliary_[key];
-            if (!instance) instance = program->instantiate(nextAuxiliaryUid_--, typeId);
-            return instance;
+            return auxiliaryInstance(program, typeId);
         };
         auto native = [this, source, resolve, auxiliary](vm::NativeContext& nc) -> bool {
             const char* name = nc.name;
@@ -693,6 +754,10 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(nc.function == 38 && text != nc.args.end() && playerObjects_.contains(*text->text));
                 return true;
             }
+            // microphone (bind 0x7AC8A0): the audio listener's placement between camera and Lara (1/2 two floats ->
+            // 0x5852F0 / 0x585320, 3-5 one float, 6 attach to an instance, 7 detach -> 0x585350). Ours: the listener
+            // stays on the camera [U: the blend].
+            if (!std::strcmp(name, "microphone") && nc.function >= 1 && nc.function <= 7) return true;
             // Receiver-independent bindings whose side effects other engine systems own (sound: below, once bound).
             for (const char* passive : {"soundgroup", "music", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect"})
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
@@ -713,9 +778,9 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             const uint32_t off = nc.receiver.offset;
             auto field = [&]() -> uint32_t& { return self->fields[off]; };
             if (!std::strcmp(name, "clock") && nc.receiver.kind == vm::Value::Kind::Member) {
-                Clock& c = clocks_[(uint64_t(uint32_t(self->uid)) << 32) | off]; // tru.exe 0x4A3450..0x4A34F0, update 0x4A3380
+                Clock& c = clocks_[(uint64_t(uint32_t(self->uid)) << 32) | off]; // tru.exe 0x4A3450..0x4A34F0, update 0x4A3960
                 switch (nc.function) {
-                case 0: if (c.state != 2) c = {2, 0, c.alarm}; return true;         // Start
+                case 0: if (c.state != 2) c = {2, 0, c.alarm, false}; return true;  // Start
                 case 1: c.state = 0; return true;                                    // Stop
                 case 2: if (c.state == 2) c.state = 1; return true;                  // Pause
                 case 3: if (c.state == 1) c.state = 2; return true;                  // Resume
@@ -724,7 +789,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 case 6: case 8: nc.result = vm::Value::scalar(std::bit_cast<uint32_t>(c.alarm)); return true;
                 case 9:                                                                // SetAlarm
                     if (nc.args.size() != 1) return false;
-                    c.alarm = std::bit_cast<float>(nc.args[0].bits);
+                    c.alarm = std::bit_cast<float>(nc.args[0].bits), c.fired = false;
                     return true;
                 case 10:                                                               // same clock
                     if (nc.args.size() != 1) return false;
@@ -894,11 +959,36 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             if (!std::strcmp(name, "modifiable") && nc.function == 1 && nc.args.size() == 2) return true;
             if (!std::strcmp(name, "unitref") && nc.function == 2 && nc.args.empty()) return true; // 0x79C670: returns 0
             if (!std::strcmp(name, "larabase") && (nc.function == 55 || nc.function == 56 || nc.function == 29) &&
-                nc.args.size() == 1)
+                nc.args.size() == 1) {
                 // 56 SetControlEnabled (0x777FC0: input flag 0x8AB4E6 that zeroes the move axes, "Lara.
-                // SetControlEnabledForReveal"), 55 weapons (0x777F70 holsters when false), 29 a global byte (0x698890)
-                // [U]. Not applied: the reveal cameras that would re-enable control are not implemented [I].
+                // SetControlEnabledForReveal"); World applies it only while a spline camera plays [I: safety]. 55
+                // weapons (0x777F70 holsters when false), 29 a global byte (0x698890) [U].
+                if (nc.function == 56) playerControl_ = (nc.args[0].bits & 0xFF) != 0;
                 return true;
+            }
+            if (!std::strcmp(name, "autosplinecamera") && nc.function == 0 && nc.args.size() == 1 && camera_) {
+                const uint32_t value = cameraSplineValue(nc.args[0]);
+                return value != 0xFFFFFFFFu && camera_(0, cameraUnits_[value >> 16], value & 0xFFFF, value);
+            }
+            if (!std::strcmp(name, "gamebase") && (nc.function == 52 || nc.function == 43) && nc.args.size() == 1 && camera_) {
+                const bool r = camera_(nc.function == 52 ? 1 : 2, {}, nc.args[0].bits, 0);
+                nc.result = vm::Value::scalar(r);
+                return nc.function == 43 || r;
+            }
+            // gamebase 30 (0x7761B0 -> 0x60F5B0): bool clears/sets game flag 0x4000 of 0xE7F0B4 and UI element 0xC
+            // (0x655280); reveal scripts call it with true after their camera [U: what the flag gates].
+            if (!std::strcmp(name, "gamebase") && nc.function == 30 && nc.args.size() == 1) return true;
+            // gamebase 2 / 24 set / ramp (target, seconds) the global time scale 0xE7F1D4, 23 ramps the second one
+            // 0xE7F1A0 (0x4A3DD0, 0x776090, 0x776030 -> ramp records read by 0x78C4E0); the game loop multiplies
+            // timeMult by both (reveal planes call 24(0, 0), adrenaline trackers 2). Ours keep one fixed
+            // tick rate [U: not applied; our adrenaline window is Combat.cpp's].
+            if (!std::strcmp(name, "gamebase") && ((nc.function == 2 && nc.args.size() == 1) ||
+                                                   ((nc.function == 23 || nc.function == 24) && nc.args.size() == 2)))
+                return true;
+            if (!std::strcmp(name, "cameraspline") && nc.function == 0 && nc.args.size() == 1) { // equal (0x775790)
+                nc.result = vm::Value::scalar(cameraSplineValue(nc.receiver) == cameraSplineValue(nc.args[0]));
+                return true;
+            }
             if (!std::strcmp(name, "larabase") && (nc.function == 25 || nc.function == 27) && nc.args.empty()) {
                 // 27 posts 0x10D (8) to Lara (0x777C90); 25 posts 0x156 to a global instance (0x777C10) [U].
                 if (nc.function == 27) events_.push_back({EventKind::PlayerMessage, source, 0x10D, tick_});
@@ -925,6 +1015,16 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                         target->t = 0;
                     }
                 }
+                return true;
+            }
+            if (!std::strcmp(name, "instance") && nc.function == 27 && nc.args.empty()) {
+                // GetUnit (thunk 0x7B2C20 -> 0x4B06F0): a 12-byte unitref of the instance's unit (+0xE0). Ours: the
+                // unit's ordinal + 1 as an identity (mercs pass it to enemybase 23 [U: what the AI does with it]).
+                const Object* object = findMut(self->uid);
+                if (!object) return false;
+                auto unit = std::find(cameraUnits_.begin(), cameraUnits_.end(), object->unit);
+                if (unit == cameraUnits_.end()) unit = cameraUnits_.insert(unit, object->unit);
+                nc.result = vm::Value::scalar(uint32_t(unit - cameraUnits_.begin()) + 1);
                 return true;
             }
             if (!std::strcmp(name, "instance") && nc.function == 25 && nc.args.empty()) {
@@ -1164,8 +1264,16 @@ std::string Runtime::helpCondition() const {
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     events_.clear();
     ++tick_;
-    for (auto& [key, c] : clocks_) // 0x4A3380; alarm callbacks (fn 11 handler) are not run [U]
-        if (c.state == 2) c.elapsed += float(kDt);
+    // Clocks (NtClockThread update 0x4A3960): a running clock reaching its alarm fires once (Start and SetAlarm re-arm
+    // it) and calls its owner's corebase prototype-25 slot with the clock (0x7961A0; NsCoreBase bind 0x7B3920).
+    std::vector<uint64_t> alarms;
+    for (auto& [key, c] : clocks_)
+        if (c.state == 2 && (c.elapsed += float(kDt)) >= c.alarm && !c.fired) c.fired = true, alarms.push_back(key);
+    for (const uint64_t key : alarms) {
+        vm::Value clock;
+        clock.kind = vm::Value::Kind::Member, clock.uid = int32_t(key >> 32), clock.offset = uint32_t(key);
+        callback(clock.uid, "corebase", 25, std::span(&clock, 1));
+    }
     fade_ = fade_ < fadeTarget_ ? std::min(fadeTarget_, fade_ + fadeStep_) : std::max(fadeTarget_, fade_ - fadeStep_);
     for (size_t i = 0; i < threads_.size(); ++i) { // copy: adopt may add or end threads
         const auto [uid, thread] = threads_[i];

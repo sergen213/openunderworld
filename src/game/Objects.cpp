@@ -222,6 +222,8 @@ void World::bindMarkup() {
 // behaviour list of the enemy data; 0x776F40 reads it back), 22 selects entry n of the current target's list and
 // posts 0xE1 (0x777010 -> 0x63AC40), 26 picks the MoveNav animation variant (0x7771E0, field 0x37C0 read by
 // 0x61B0C0). Ours keep the values for Get; our AI has no behaviour lists or variants [U: their effect on it].
+// 27 GuardNode(unitref, node, r1, r2) (0x777210 -> 0x61F7A0, mercs with radii 2500/4000): our AI guards no node [U].
+// 18 sets an AI byte (+0xC34, 0x776F70, then 0x63F7F0) [U]; kept like 16.
 // generatorbase (0x7B4B60) and health 1/2 on an enemy's own script go to ai::Enemies.
 void World::bindEnemies() {
     script_.setEnemyNative([this](int32_t uid, std::string_view type, uint32_t function,
@@ -232,10 +234,11 @@ void World::bindEnemies() {
             enemies_.damage(uid, float(int32_t(args[0].bits))); // [I] absolute, like Lara's; absent enemy: no-op
             return true;
         }
-        if ((function == 16 || function == 22 || function == 26) && args.size() == 1) {
+        if ((function == 16 || function == 18 || function == 22 || function == 26) && args.size() == 1) {
             enemyValues_[{uid, function}] = args[0].bits;
             return true;
         }
+        if (function == 27 && args.size() == 4) return true;
         if (function == 17 && args.empty()) {
             const auto it = enemyValues_.find({uid, 16});
             result = it == enemyValues_.end() ? 0 : it->second;

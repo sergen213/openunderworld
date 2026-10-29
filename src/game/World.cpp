@@ -264,6 +264,9 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     bindLightHealth();
     bindMarkup();
     bindEnemies();
+    script_.setCameraNative([this](int op, const std::string& unit, uint32_t index, uint32_t value) {
+        return cameraNative(op, unit, index, value);
+    });
     player_.spawn(spawn.pos, spawn.yaw);
     prev_ = player_.state();
     cam_.yaw = player_.state().yaw;
@@ -298,6 +301,7 @@ void World::tick(const Actions& input) {
     if (glm::length(move) > 1) move = glm::normalize(move);
     if (script_.holding()) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
     if (combat_.slowMo > 0) move = vec2(0); // [I] adrenaline window: the stick steers the pip (Combat.cpp)
+    if (splineCam_ && !script_.playerControl()) move = vec2(0); // reveal camera with control disabled (larabase 56)
     if (a.grapple && !grappleHeld_) {
         if (player_.state().grappleUid) releaseGrapple(false);
         else if (const auto t = grappleTarget()) attachGrapple(t->pos, t->uid, t->kind);
@@ -338,7 +342,8 @@ void World::tick(const Actions& input) {
     }
     enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height},
                   [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, dt * combat_.timeScale);
-    updateCamera(a, dt);
+    updateCamera(a, dt); // Camera.cpp: a playing spline camera, else the orbit camera
+    if (std::exchange(cameraCut_, false)) prevCam_ = cam_; // a spline camera cuts in
     tickCombat(a, dt); // after the camera: free aim follows it
     tickGadgets(a, dt); // flashlight, grenades (Gadgets.cpp)
     tickAir(dt);
@@ -350,7 +355,7 @@ void World::tick(const Actions& input) {
 
 // Orbit camera around a point above Lara's root; pulled in along the view ray when level geometry is
 // in the way. Distance/height/pitch limits are inferred (docs/GAMEPLAY.md).
-void World::updateCamera(const Actions& a, float dt) {
+void World::updateOrbitCamera(const Actions& a, float dt) {
     constexpr float kTargetHeight = 450.0f, kProbeRadius = 20.0f;
     const Bike* bike = ridden();
     const float kDistance = bike ? 950.0f : 700.0f; // [I] VehicleCamera pulls back on the bike
@@ -434,6 +439,8 @@ CameraState World::interpolatedCamera(double alpha) const {
     c.target = glm::mix(prevCam_.target, cam_.target, t);
     c.yaw = lerpAngle(prevCam_.yaw, cam_.yaw, t);
     c.pitch = glm::mix(prevCam_.pitch, cam_.pitch, t);
+    c.up = glm::normalize(glm::mix(prevCam_.up, cam_.up, t));
+    c.fovDeg = prevCam_.fovDeg > 0 && cam_.fovDeg > 0 ? glm::mix(prevCam_.fovDeg, cam_.fovDeg, t) : cam_.fovDeg;
     return c;
 }
 

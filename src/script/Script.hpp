@@ -81,6 +81,7 @@ struct ScriptType {
     std::vector<Function> functions;
     // +0x40 (count: u8 +0x3E): Function record run on entering state n (tru.exe 0x57B560; Run() enters state 0)
     std::vector<cdc::Pointer> states;
+    std::vector<int16_t> prototypes; // +0x34: declared prototypes' vtable slots (native types bind callbacks by index)
 };
 // Parses drm.sections[index] (type 8). Throws cdc::FormatError on layout mismatch or unknown opcodes.
 ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index);
@@ -216,6 +217,18 @@ public:
     using EnemyNative = std::function<bool(int32_t uid, std::string_view type, uint32_t function,
                                            std::span<const vm::Value> args, uint32_t& result)>;
     void setEnemyNative(EnemyNative native) { enemy_ = std::move(native); }
+    // Spline camera requests. op 0: autosplinecamera 0 (thunk 0x7B37D0 -> 0x7759F0 -> AutoSplineCamera 0x5E26F0)
+    // plays camera spline `index` of `unit` (the cameraspline value: {initial data, stream unit of the owner, data
+    // word 0}, 0x775760); `value` identifies it to cameraSplineDone. op 1: gamebase 52 (0x7767A0 -> CameraManager
+    // +0x50 0x5EDFC0) switches to camera type `index`: 8 = the AutoSplineCamera, 1 = gameplay. op 2: gamebase 43
+    // (0x776700) is camera type `index` the current one.
+    using CameraNative = std::function<bool(int op, const std::string& unit, uint32_t index, uint32_t value)>;
+    void setCameraNative(CameraNative native) { camera_ = std::move(native); }
+    // The spline camera finished (0x5E2CA0 -> 0x77A3D0): every dispatcher (NsDispatcherBase, bind 0x7B3E60) runs
+    // its prototype-7 slot with the cameraspline value.
+    void cameraSplineDone(uint32_t value);
+    // larabase 56 SetControlEnabledForReveal (0x777FC0: input flag 0x8AB4E6 zeroes the move axes).
+    bool playerControl() const { return playerControl_; }
     // gamebase natives 4-7 = the global music variables (0x4A3E00/10/30/50 -> 0x583D40/30, array 0xCCB560).
     std::array<uint8_t, 256>& gameValues() { return gameValues_; }
     // Help-on-demand condition ("hint_NN") a unit script last stored: unit vt 28 copies its string argument into a
@@ -272,6 +285,7 @@ private:
     void adopt(const std::shared_ptr<vm::Machine>& m);
     std::shared_ptr<vm::Instance> instance(int32_t uid) const; // object, Lara or unit/global script by uid
     std::shared_ptr<vm::Machine> makeMachine(int32_t source);
+    std::shared_ptr<vm::Instance> auxiliaryInstance(const std::shared_ptr<vm::Program>& program, uint32_t typeId);
     void tickSpline(Object& o);   // 0x5CF260: advance, clip / key / loop handling, range callbacks
     bool splineNative(Object& o, uint32_t function, std::span<const vm::Value> args, uint32_t& result);
     std::vector<std::pair<int32_t, std::shared_ptr<vm::Machine>>> threads_; // states entered from another object's call
@@ -286,6 +300,12 @@ private:
     HealthNative health_;
     MarkupNative markup_;
     SoundNative sound_;
+    CameraNative camera_;
+    std::vector<std::string> cameraUnits_; // unit names by cameraspline value high word
+    bool playerControl_ = true;
+    uint32_t cameraSplineValue(const vm::Value& v); // (unit ordinal << 16) | spline index; 0xFFFFFFFF = unknown
+    // Runs `uid`'s override of the prototype `prototype` of native base `base` (an engine callback) with `args`.
+    void callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args);
     EnemyNative enemy_;
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;
@@ -303,7 +323,7 @@ private:
     uint64_t tick_ = 0;
     std::map<std::pair<int32_t, std::string>, size_t> failures_;
     int fallbackDepth_ = 0;
-    struct Clock { int state = 0; float elapsed = 0, alarm = 0; }; // state 0 stopped, 1 paused, 2 running
+    struct Clock { int state = 0; float elapsed = 0, alarm = 0; bool fired = false; }; // state 0 stopped, 1 paused, 2 running
     std::map<uint64_t, Clock> clocks_; // (uid << 32) | member offset
     float fade_ = 0, fadeTarget_ = 0, fadeStep_ = 0;
     vec3 lastPos_{0};

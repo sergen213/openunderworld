@@ -264,6 +264,16 @@ re-bases coordinates when the player moves far from the first unit.
   uber elevator). `GameReal.SplineMoverFollowsItsPath`, `GameReal.SplineMoverCarriesLara` (real path on a real solid
   object).
 
+## Camera splines (unit data +0x68 count, +0x6C -> 0x60-byte records)
+
+- [O] Record: +0x30 offset (added with the unit offset to every key, 0x60A3A0), +0x40 name, +0x44 time mode (0 key
+  times, 2 constant speed over +0x48 s, 3 key times + ease), +0x4C FOV degrees, +0x50/+0x54 camera keys (0xC0:
+  +0x00 position, +0x10 quaternion xyzw, +0x20 tangent, +0x30 time s, +0x34 u16[64] ease, +0xB4/+0xB8 events
+  {type, arg}), +0x58 target track if +0x5C (mode +0x44: 0 speed, 1 times, 2 eased; 0xB0 keys: +0x00 position, +0x10
+  tangent, +0x20 time, +0x24 ease, +0xA4 follow Lara, +0xA8/+0xAC events {type, arg, arg2}), +0x5D target fitted to
+  the camera track's length (0x60A270). 82 units, events seen: 3 pause (148), 0 (84), 1 switch/FOV (28), 7 (8), 2 (2).
+  Player: GAMEPLAY.md "Cameras".
+
 ## Survey (Python cross-check of the C++ layouts, 2026-10-18) [O]
 
 All 82 present units:

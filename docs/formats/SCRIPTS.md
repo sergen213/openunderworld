@@ -173,8 +173,8 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   thunk)` per native function (rtti.tsv slots). Added bindings, by the thunks' targets:
   `instanceref` Get (7) returns null when unbound (0x4AC070) and WaitUntilLoaded/Birthed (3/6) **block** — the VM
   retries the call each tick (`NativeContext::wait`) until the target's unit is loaded; `clock` 0–10 (Start/Stop/
-  Pause/Resume/IsRunning/GetTime/GetAlarm/SetAlarm/same-clock, 0x4A3450..0x4A34F0, advanced per tick as 0x4A3380;
-  alarm callbacks [U]); `globaleffect` FadeOut/FadeIn (5/6, 0x4A4EB0/0x4A4EF0 screen wipe → `Runtime::screenFade`,
+  Pause/Resume/IsRunning/GetTime/GetAlarm/SetAlarm/same-clock, 0x4A3450..0x4A34F0, advanced per tick as 0x4A3960;
+  reaching the alarm fires once and calls the owner's corebase prototype-25 slot with the clock, 0x7961A0); `globaleffect` FadeOut/FadeIn (5/6, 0x4A4EB0/0x4A4EF0 screen wipe → `Runtime::screenFade`,
   not rendered yet); `larabase` 59/60 post messages 0x1D5/0x1D6 to Lara (`EventKind::PlayerMessage`, meaning [U]);
   `markup` SetEnabled/IsEnabled (0/1, 0x4A56B0: box flag bit 31) → `World` keeps disabled (unit, markup id) pairs and
   gives that markup type 0xFF so no traversal query matches it; `triggervolumebase` Add/Remove instance (0/1) accept
@@ -207,6 +207,7 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
 | After states/enemy natives | 314 | playersensor 0 (28), spline 5 (27, l7 `natla_end_mover`: intro +0x68 multispline not decoded), CALL5 0x6A (24, l5 soundvolumes), larabase 56 (20), generatorbase 3 (20: surveyed Worlds have no enemy bigfile, so no generators), modifiable 1 (15). Gone: enemybase 16/22/26, tentacle uber commands, l3_chapel 0x6A, uigamedata 1, modifiable 7, enemy health 1. State threads now run code the previous survey never reached. |
 | Baseline 2026-10-29 (state 0 startup reaches more code) | 472 | playersensor 0 (72), instance 27 (39), spline 5 (27), CALL5 0x6A (24), instance 21 (23), larabase 56 (20), generatorbase 3 (20), multibody 1 (18), modifiable 1 (15), instance 18 (15), unitref 2 (14), larabase 55 (14) |
 | After spline movers, argument offsets, sensor/instance/larabase natives, array/thread opcodes | 265 | instance 27 (39, mercs: returns a 12-byte unitref value), CALL5 0x6A (24: globals member 12 is an engine-created object of type 74 that we do not create, so the call dispatches on the globals object), generatorbase 3 (20, survey artifact), multibody 1 (18), autosplinecamera 0 (20, reveal cameras now reached), uberobjectbase 1 (11), plannerobstacle 1 (11). Gone: spline (all), playersensor 0/1, instance 18/21/23, larabase 25/27/29/55/56, modifiable 1, unitref 2. Static: DREF/BOUNDS and TSSTART/TPSTART/TEND now execute (no unsupported opcode left). |
+| After reveal cameras, globals engine objects, instance 27, clock alarms | 183 | generatorbase 3 (20, survey artifact), multibody 1 (18), uberobjectbase 1 (11), plannerobstacle 1 (11), gamebase 1 (10), generatorbase 4 (9), triggervolumebase 0 (8), camerashake 0 (8). Gone: autosplinecamera 0, CALL5 0x6A, instance 27, microphone 1, gamebase 23/24/30/52, enemybase 18/27, clock 10. |
 
 - [O] **Arguments** live in the callee's locals at the byte offsets of the prototype's argument records (prototype
   +0x0C: 0x14-byte records, u16 offset +0x0C), from 0, in declaration order, without a `this` local. Before this
@@ -223,8 +224,13 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
   whose enter/leave calls vt 40 / 41 (type 3 functions 53/54, 0x7120B0) with (spline, id, direction). Path decode
   and per-frame update: LEVELS.md "Spline movers".
 - [O] `playersensor` 0/1 Set/Get its enable byte (+0xF); `instance` 18/21/23, `modifiable` 1, `unitref` 2,
-  `larabase` 25/27/29/55/56 are accepted (effects [U]; 56 is Lara's input enable for reveal cameras, not applied
-  because those cameras are not implemented).
+  `larabase` 25/27/29/55 are accepted (effects [U]); 56 disables Lara's stick while a reveal camera plays
+  (GAMEPLAY.md "Cameras").
+
+- [O] Globals (gameglobalsbase type 5) SCRIPT members without initial values (+4/+8/+12/+272/+356/+432/+436 ->
+  types 76/75/74/72/73/60/77) are engine-created objects; ours instantiate them with the globals (l5 soundvolumes
+  call `globals.member12` type 74 vt 20). `instance` 27 GetUnit (0x4B06F0) returns a unitref (ours: a unit identity);
+  a local holding another local's address is followed to its value for receivers and native arguments.
 
 The survey also found a crash: cyclic static links (l2 planes) recursed forever in the legacy fallback; it is now
 bounded to depth 8. The three script-only chapter ends (l1_ship_sinking_hall plane 1074 / volume 1082 → 1005,

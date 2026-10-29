@@ -135,11 +135,44 @@ struct Portal {
     float normal[3];        // +0xF0
 };
 
+// Unit camera spline (reveal / scripted cameras): unit data +0x68 count, +0x6C -> 0x60-byte records, played by
+// tru.exe AutoSplineCamera (0x5E26F0 start, 0x5E2D90 update) through two CameraSpline players (0x60AC00 camera
+// track, 0x60ADA0 look-at target track). LEVELS.md "Camera splines".
+struct CameraSplineEvent {
+    int32_t type = 0; // camera: 1 switch to spline `arg`, 2 end, 3 pause `value` s; target: 1 FOV `value` deg over
+                      // `value2` s, 2 FOV back over `value` s, 3 pause; others [U]
+    uint32_t arg = 0;
+    float value = 0, value2 = 0; // arg as float; target events: third word
+};
+struct CameraSplineKey {
+    float pos[3] = {};
+    float tangent[3] = {};  // Hermite tangent (units per segment)
+    float rotation[4] = {0, 0, 0, 1}; // camera track: quaternion xyzw (local x right, y down, z forward)
+    float time = 0;         // seconds
+    uint16_t ease[64] = {}; // easing curve over the segment, 0..65535 (eased time mode)
+    bool followPlayer = false; // target track: Lara's position instead of `pos` (0x60A100)
+    std::vector<CameraSplineEvent> events; // run when the key is reached
+};
+struct CameraSplineTrack {
+    // 1 = by key times, 2 = constant speed over `duration`, 3 = by key times through the ease curves
+    int mode = 1;
+    float duration = 0;
+    std::vector<CameraSplineKey> keys;
+};
+struct CameraSpline {
+    float offset[3] = {}; // +0x30, added to every camera key (unit frame)
+    float fovDeg = 50;    // +0x4C
+    CameraSplineTrack camera;
+    std::optional<CameraSplineTrack> target; // +0x58 when +0x5C; else the camera keys' rotations aim it
+    bool targetFitsCamera = false; // +0x5D: target key times scaled to the camera track's length
+};
+
 struct Unit {
     std::vector<Intro> intros;
     std::vector<std::string> streamGroups; // stream DRM base names ("pc-w\\streamgroups\\<name>.drm")
     std::vector<ImfPlacement> imfs;
     std::vector<Portal> portals;
+    std::vector<CameraSpline> cameraSplines; // index = the cameraspline script value's first word
     scene::Environment environment; // Level+0x70 render settings (fog, ambient)
     // Level+0x70 DTP +0x294 u16: objectlist.txt id of the Lara outfit object the unit loads (tru.exe 0x5DE2B0,
     // 0x5D4340); 0 without a settings DTP. docs/GAMEPLAY.md "Outfits".

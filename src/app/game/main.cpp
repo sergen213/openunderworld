@@ -1725,11 +1725,12 @@ int main(int argc, char** argv) {
         gadgets.pose(*world, streamed, scene, *renderer);
         objects.hide(world->collected, scene, *renderer);
         ou::render::Camera cam;
-        cam.verticalFovDeg = world->fovDeg;
+        cam.verticalFovDeg = c.fovDeg > 0 ? c.fovDeg : world->fovDeg; // spline cameras have their own
         cam.nearZ = 5.0f;
         cam.farZ = 200000.0f;
         cam.position = c.position;
         cam.lookAt(c.target);
+        cam.up = c.up;
         if (opt.camera) cam.position = {(*opt.camera)[0], (*opt.camera)[1], (*opt.camera)[2]}, cam.lookAt({(*opt.camera)[3], (*opt.camera)[4], (*opt.camera)[5]});
         if (audioOn) mixer.setListener({c.position, glm::normalize(c.target - c.position), {0, 0, 1}});
 

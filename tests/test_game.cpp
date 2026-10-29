@@ -2129,6 +2129,53 @@ TEST(GameReal, ScriptedChapterEndChainsStartNextChapter) {
     }
 }
 
+// Reveal camera (docs/GAMEPLAY.md "Cameras"): l1_kraken_room plane 37 calls reveal_object 53, which disables Lara's
+// control (larabase 56) and plays camera spline 9 (autosplinecamera 0). The camera starts on the spline's first key,
+// Lara does not move while it plays, and when it ends the dispatchers' done callbacks run and the orbit camera returns.
+TEST(GameReal, RevealCameraPlaysUnitSpline) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l1_kraken_room",
+                  game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto* t = w.script().find(37);
+    ASSERT_TRUE(t && t->kind == script::Kind::Plane);
+    const glm::mat4 rot = glm::rotate(glm::mat4(1), t->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), t->rot.y, {0, 1, 0}) *
+                          glm::rotate(glm::mat4(1), t->rot.z, {0, 0, 1});
+    const vec3 n = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
+    const vec3 base = t->pos - vec3(0, 0, script::kTestPointHeight);
+    game::PlayerState s = w.player().state();
+    int started = -1;
+    for (const vec3 p : {base + n * 300.0f, base - n * 300.0f}) {
+        s.pos = p;
+        w.restore(s, 0, 0);
+        w.tick({});
+    }
+    for (int i = 0; i < 120 && started < 0; ++i, w.tick({}))
+        if (w.splineCameraActive()) started = i;
+    ASSERT_GE(started, 0) << "no spline camera";
+    const auto& spline = w.currentUnit().data.cameraSplines.at(9);
+    const auto& k0 = spline.camera.keys.front();
+    EXPECT_LT(glm::distance(w.camera().position, vec3(k0.pos[0], k0.pos[1], k0.pos[2]) + w.currentUnit().offset), 200.0f);
+    EXPECT_FALSE(w.script().playerControl());
+    const vec3 held = w.player().state().pos;
+    game::Actions forward;
+    forward.move = {0, 1};
+    for (int i = 0; i < 60; ++i) w.tick(forward);
+    EXPECT_LT(glm::distance(glm::vec2(w.player().state().pos), glm::vec2(held)), 5.0f) << "Lara moved during the reveal";
+    int ticks = 60;
+    while (w.splineCameraActive() && ticks < 60 * 30) w.tick({}), ++ticks;
+    EXPECT_FALSE(w.splineCameraActive());
+    // Camera track 9 lasts its last key's time plus the last key's hold events.
+    EXPECT_GE(ticks, int(spline.camera.keys.back().time * 60) - 2);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_TRUE(w.script().playerControl()) << "the done callback did not give control back";
+    for (const auto& [key, count] : w.script().failures()) EXPECT_NE(key.first, 53) << key.second;
+    std::printf("reveal: plane 37 base (%.0f %.0f %.0f) normal (%.2f %.2f %.2f) started +%d ticks, ended after %d\n",
+                base.x, base.y, base.z, n.x, n.y, n.z, started, ticks);
+}
+
 // Weather objects of every unit (docs/RENDERING.md "Weather"): the precipitation Enhanced weather shows per unit.
 TEST(GameReal, UnitWeatherSurvey) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

@@ -182,6 +182,81 @@ Unit parseUnit(const cdc::Drm& d) {
         }
     }
 
+    // Camera splines (LEVELS.md "Camera splines"): record +0x30 offset, +0x44 time mode, +0x48 duration, +0x4C FOV,
+    // +0x50 count / +0x54 -> 0xC0-byte camera keys, +0x58 -> target track, +0x5C has target, +0x5D target fits.
+    // Camera key: +0x00 position, +0x10 quaternion, +0x20 tangent, +0x30 time, +0x34 u16[64] ease, +0xB4 event
+    // count, +0xB8 -> 8-byte {type, arg}. Target track: +0x44 mode, +0x48 duration, +0x4C count / +0x50 -> 0xB0-byte
+    // keys {+0x00 position, +0x10 tangent, +0x20 time, +0x24 ease, +0xA4 follow Lara, +0xA8 count, +0xAC -> 12-byte
+    // {type, arg, arg2}}. Time modes map to the player's (0x60AC00: 0 -> 1, 2 -> 2, 3 -> 3; 0x60ADA0: 0 -> 2,
+    // 1 -> 1, 2 -> 3).
+    if (const auto n = ud.at<uint32_t>(up.offset + 0x68); n && ud.ptrs.count(up.offset + 0x6C)) {
+        const auto lp = ud.ptr(up.offset + 0x6C, "unit camera splines");
+        const View cl(d, lp.section);
+        auto events = [&](const View& kv, uint32_t countOff, uint32_t listOff, uint32_t stride) {
+            std::vector<CameraSplineEvent> out;
+            const auto it = kv.ptrs.find(listOff);
+            if (it == kv.ptrs.end()) return out;
+            const View ev(d, it->second.section);
+            for (uint32_t e = 0, ne = kv.at<uint32_t>(countOff); e < ne; ++e) {
+                const uint32_t b = it->second.offset + stride * e;
+                CameraSplineEvent x;
+                x.type = ev.at<int32_t>(b);
+                x.arg = ev.at<uint32_t>(b + 4);
+                x.value = ev.at<float>(b + 4);
+                if (stride == 12) x.value2 = ev.at<float>(b + 8);
+                out.push_back(x);
+            }
+            return out;
+        };
+        for (uint32_t k = 0; k < n; ++k) {
+            const uint32_t r = lp.offset + 0x60 * k;
+            CameraSpline s;
+            for (int c = 0; c < 3; ++c) s.offset[c] = cl.at<float>(r + 0x30 + 4 * c);
+            const uint32_t mode = cl.at<uint32_t>(r + 0x44);
+            s.camera.mode = mode == 2 ? 2 : mode == 3 ? 3 : 1;
+            s.camera.duration = cl.at<float>(r + 0x48);
+            s.fovDeg = cl.at<float>(r + 0x4C);
+            if (const auto it = cl.ptrs.find(r + 0x54); it != cl.ptrs.end()) {
+                const View kv(d, it->second.section);
+                for (uint32_t i = 0, nk = cl.at<uint32_t>(r + 0x50); i < nk; ++i) {
+                    const uint32_t b = it->second.offset + 0xC0 * i;
+                    CameraSplineKey key;
+                    for (int c = 0; c < 3; ++c) key.pos[c] = kv.at<float>(b + 4 * c), key.tangent[c] = kv.at<float>(b + 0x20 + 4 * c);
+                    for (int c = 0; c < 4; ++c) key.rotation[c] = kv.at<float>(b + 0x10 + 4 * c);
+                    key.time = kv.at<float>(b + 0x30);
+                    for (int c = 0; c < 64; ++c) key.ease[c] = kv.at<uint16_t>(b + 0x34 + 2 * c);
+                    key.events = events(kv, b + 0xB4, b + 0xB8, 8);
+                    s.camera.keys.push_back(std::move(key));
+                }
+            }
+            const auto tp = cl.ptrs.find(r + 0x58);
+            if (cl.at<uint8_t>(r + 0x5C) && tp != cl.ptrs.end()) {
+                const View tv(d, tp->second.section);
+                const uint32_t t = tp->second.offset;
+                CameraSplineTrack track;
+                const uint32_t tmode = tv.at<uint32_t>(t + 0x44);
+                track.mode = tmode == 0 ? 2 : tmode == 2 ? 3 : 1;
+                track.duration = tv.at<float>(t + 0x48);
+                if (const auto it = tv.ptrs.find(t + 0x50); it != tv.ptrs.end()) {
+                    const View kv(d, it->second.section);
+                    for (uint32_t i = 0, nk = tv.at<uint32_t>(t + 0x4C); i < nk; ++i) {
+                        const uint32_t b = it->second.offset + 0xB0 * i;
+                        CameraSplineKey key;
+                        for (int c = 0; c < 3; ++c) key.pos[c] = kv.at<float>(b + 4 * c), key.tangent[c] = kv.at<float>(b + 0x10 + 4 * c);
+                        key.time = kv.at<float>(b + 0x20);
+                        for (int c = 0; c < 64; ++c) key.ease[c] = kv.at<uint16_t>(b + 0x24 + 2 * c);
+                        key.followPlayer = kv.at<uint8_t>(b + 0xA4) != 0;
+                        key.events = events(kv, b + 0xA8, b + 0xAC, 12);
+                        track.keys.push_back(std::move(key));
+                    }
+                }
+                if (!track.keys.empty()) s.target = std::move(track);
+                s.targetFitsCamera = cl.at<uint8_t>(r + 0x5D) != 0;
+            }
+            u.cameraSplines.push_back(std::move(s));
+        }
+    }
+
     // Unit data +0x00 numLights, +0x04 -> pointers to 0xE0-byte light records {+0x00 matrix rows X, Y, Z = direction,
     // pos; +0x48 light DTP; +0x4C intensity (if +0x50); +0x51..+0x53 colour (if +0x54); +0x58 radius (if +0x5C)}.
     // The light DTP is copied to PCLightResource +0x42C (0x50A000): +0x00 u32 type (0 point, 1 spot, 2 sun),

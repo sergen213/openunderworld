@@ -279,7 +279,10 @@ private:
 struct CameraState {
     vec3 position{0}, target{0};
     float yaw = 0, pitch = -0.25f; // orbit angles; camera looks along yaw/pitch
+    vec3 up{0, 0, 1};              // spline cameras roll
+    float fovDeg = 0;              // vertical; 0 = World::fovDeg (spline cameras use their own)
 };
+struct SplineCamera; // a unit camera spline playing (Camera.cpp)
 
 // ---- world ------------------------------------------------------------------------------------
 struct Spawn {
@@ -309,6 +312,7 @@ struct UnitData {
     std::vector<Checkpoint> checkpoints;
     std::vector<GrappleTarget> grapples; // *_ei_grapple_* intros, unit frame
     std::optional<Spawn> spawn; // findSpawn
+    std::vector<formats::CameraSpline> cameraSplines; // formats::Unit::cameraSplines (reveal cameras)
     std::shared_ptr<const cdc::Drm> drm;
     // Progression (src/game/Progress.hpp): reward intros; cinematic intros whose script names chapter start
     // units (level ends); intros whose script names a music track (pc-w\music\<name>\<name>.mus exists),
@@ -373,6 +377,9 @@ public:
     void restoreEnemies(const nlohmann::json& j);
     const ai::Enemies& enemies() const { return enemies_; }
     float fovDeg = 60.0f; // vertical FOV, from config
+    // Scripted reveal camera (Camera.cpp, docs/GAMEPLAY.md "Cameras"): a unit camera spline replaces the orbit
+    // camera until it ends; Lara's stick is zeroed meanwhile when a script disabled her control (larabase 56).
+    bool splineCameraActive() const { return bool(splineCam_); }
 
     // State blended between the last two ticks (alpha in [0,1]).
     PlayerState interpolated(double alpha) const;
@@ -471,7 +478,11 @@ public:
 
 private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
-    void updateCamera(const Actions& a, float dt);
+    void updateCamera(const Actions& a, float dt); // Camera.cpp
+    void updateOrbitCamera(const Actions& a, float dt);
+    bool startSplineCamera(const std::string& unit, uint32_t index, uint32_t value); // autosplinecamera 0
+    bool cameraNative(int op, const std::string& unit, uint32_t index, uint32_t value); // script::Runtime::CameraNative
+    bool tickSplineCamera(float dt); // false once no spline camera plays (Camera.cpp)
     LoadedUnit* findUnit(const std::string& name);
     void streamAround(size_t center); // load portal neighbours of units_[center], unload the rest
     void rebuildCollision();
@@ -502,6 +513,10 @@ private:
     anim::HairSim hair_;
     std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
+    std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp
+    CameraState blendFrom_; // last spline camera pose, blended out of over kCameraBlendSeconds
+    float blendOut_ = 0;    // seconds of blend-out left
+    bool cameraCut_ = false; // the spline camera started this tick: no interpolation from the previous tick
     uint64_t ticks_ = 0;
     UnitLoader loader_;
     std::vector<LoadedUnit> units_;

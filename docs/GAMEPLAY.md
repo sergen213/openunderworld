@@ -942,6 +942,23 @@ dummy from the hip hold, and a health pack picked up after an 1800-unit drop (51
   live grenades with pr_grenade's mesh (5 at once, as tru.exe tracks 5 attached ones) and an orange flash light [I]
   for 0.3 s at each explosion.
 
+## Cameras (src/game/Camera.cpp)
+
+- Orbit camera: "Numbers" table. Scripted reveal cameras replace it while they play.
+- [O] `autosplinecamera` 0 (thunk 0x7B37D0 -> 0x7759F0) starts camera spline `n` of the owner's unit on the
+  AutoSplineCamera (camera type 8, 0x5E26F0); the cameraspline value is {initial data, owner's stream unit, data
+  word 0} (0x775760). `gamebase` 52 = CameraManager::Switch(type) (0x5EDFC0: 8 the spline camera, 1 gameplay),
+  43 = current type == n. Reveal objects: `larabase` 56(false), autosplinecamera 0, gamebase 52(8); in the
+  dispatchers' done slot (NsDispatcherBase prototype 7, 0x7B3E60, called by 0x5E2CA0 when the spline ends):
+  gamebase 52(1), gamebase 30(true), larabase 56(true).
+- [O] Tracks (LEVELS.md "Camera splines"): Hermite between keys (0x5F7340), by key times (0x60A950), through the
+  keys' 64-entry ease curves (mode 3, 0x60A880) or at constant speed (0x60A540); orientation = slerp of the keys'
+  quaternions (local x right, y down, z forward), or look-at the target track (0x5E2AB0). Key events: 1 switch
+  spline, 2 switch to gameplay, 3 pause n s; target events 1/2 FOV blend (0x5E25E0, 0x5E2950).
+- [I] ours: a spline camera cuts in, holds its last pose after finishing until a script switches (10 s safety), and
+  blends back to the orbit camera over 0.5 s. Lara's stick is zeroed only while a spline camera plays and control
+  is disabled (a reveal that never re-enables control cannot lock her). All per 60 Hz tick.
+
 ## Tests
 
 - `Game.*` (synthetic collision + synthetic clips with the measured root speeds): loop-seam root motion, wall slide,
