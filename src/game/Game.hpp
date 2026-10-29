@@ -91,6 +91,10 @@ struct AnimLibrary {
 };
 // Names the controller requests; loadLaraAnims loads exactly these.
 extern const std::vector<std::string_view> kLaraClipNames;
+// Free climbing (Climb.cpp): the hold-to-hold clip DICE_<from>_to_<to>_<dir> exactly as lara.drm names it, for stances
+// 0..4 (B / L / LW / R / RW) and a move `dir` (x right, y up on the wall); the nearest existing direction within 60
+// degrees when that one is missing, "" when lara.drm has no clip for the pair.
+std::string_view diceTransition(uint8_t from, uint8_t to, vec2 dir);
 // Lara's clips in weapon w's DRM: aim grid, fire, reload, equip/unequip (+ shotgun pump, speargun submerged).
 const std::vector<std::string_view>& weaponClipNames(Weapon w);
 // How the original fades `to` in after `from`: crossfade length and start time (seconds) from lara.drm's
@@ -128,6 +132,7 @@ enum class State {
     RailSlide, // markup 8 rail slide (src/game/Traverse.cpp)
     GrapplePull, // mounted target: pull the object instead of swinging (Grapple.cpp)
     Vehicle,     // on the motorcycle: mounting, riding, dismounting; World drives her from the bike (Vehicle.cpp)
+    GrappleRappel, // feet on a wall on the rope: rappel up/down, run along it (Grapple.cpp); climbNormal = the wall's
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -185,10 +190,13 @@ struct PlayerState {
     float flight = 0; // HangJump: seconds left until the target is reached
     float fallStartZ = 0; // z when Lara last became airborne (tru.exe player +0x6DC, set on FallState entry 0x75C550)
     float fallHeight = 0; // set by land(): fallStartZ - pos.z; 0 on every other tick
-    // Free climbing (State::Climb): terrain face index + outward normal of the wall she is on.
+    // Free climbing (State::Climb): terrain face index + outward normal of the wall she is on; the hold she is at
+    // (CollisionMesh::markup index, -1 none) and its hand stance (0..4 = DICE B / L / LW / R / RW, markup type - 16).
     uint32_t climbFace = UINT32_MAX;
     vec3 climbNormal{0};
-    // Grapple (State::GrappleThrow/Swing): anchor intro unique id, world anchor, rope length at hand (root + 400).
+    int32_t climbHold = -1;
+    uint8_t climbStance = 0;
+    // Grapple (State::GrappleThrow/Swing/Pull/Rappel): anchor intro unique id, world anchor, rope length at hand (root + 400).
     int32_t grappleUid = 0;
     vec3 grappleAnchor{0};
     float ropeLength = 0;
@@ -255,6 +263,9 @@ private:
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);
     void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp
+    void rappel(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    void rappelOnto(const collision::Hit& wall, vec3 vel, std::string_view clip);
+    void standUp(); // let go of the rope, standing
     void land(vec2 move);
 
     const collision::CollisionMesh& col_;
@@ -414,6 +425,7 @@ public:
     // Grapple: best target within range, aim cone and line of sight (World.cpp), for attach + the HUD marker.
     std::optional<GrappleTarget> grappleTarget() const;
     void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling) { player_.attachGrapple(anchor, uid, kind); }
+    int32_t lastPulled() const { return lastPulled_; } // grapple target whose pull handler ran last (World::tick), 0 = none
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath: 1 = full, 0 = drowning (kAirSeconds while the head is under water). [I] 45 s, refill 2 s.
     float air() const { return air_; }
@@ -508,6 +520,8 @@ private:
     void bindTerrain();
     void bindLightHealth();
     void bindMarkup();
+    void bindEnemies();
+    std::map<std::pair<int32_t, uint32_t>, uint32_t> enemyValues_; // (intro uid, enemybase setter fn) -> value
     std::set<std::pair<std::string, uint16_t>> disabledMarkup_; // (unit, markup id)
     const formats::UberObjectData* prepareUber(const script::Object& o);
     std::map<int32_t, float> multibodyLo_, multibodyHi_; // native limits issued before hinges exist
@@ -527,8 +541,6 @@ private:
     WaterSim water_;
     float air_ = 1.0f;
     bool submerged_ = false;
-    void bindEnemies();
-    std::map<std::pair<int32_t, uint32_t>, uint32_t> enemyValues_; // (intro uid, enemybase setter fn) -> value
     // gadgets (Gadgets.cpp)
     void tickGadgets(const Actions& a, float dt);
     void explode(vec3 at);
@@ -543,6 +555,8 @@ private:
     double aimTime_ = 0; // pose clips' clock
     bool interactHeld_ = true;     // no press edge on the first tick
     bool grappleHeld_ = true;      // no press edge on the first tick
+    float pullT_ = 0;              // seconds of heaving on a mounted grapple target
+    int32_t lastPulled_ = 0;
     std::vector<Pickup> pickedUp_;
     // motorcycle (Vehicle.cpp)
     bool tickVehicles(const Actions& a, float dt); // true while Lara is on a bike: Player::tick is skipped

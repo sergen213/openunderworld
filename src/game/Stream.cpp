@@ -4,6 +4,7 @@
 
 #include "cdc/Cdc.hpp"
 #include "cine/Cine.hpp"
+#include "script/Script.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,6 +22,30 @@ constexpr float kPortalProbeHeight = 250.0f, kPortalMargin = 50.0f;
 constexpr float kCheckpointRadius = 250.0f, kCheckpointHeight = 400.0f;
 
 vec3 v3(const float* f) { return {f[0], f[1], f[2]}; }
+
+// Does intro script type `id` derive from native "uberobjectbase"? Types live in the unit or the object's DRM.
+// [O] the movable grapple targets (levers, the naga statue, shiva arms, the grapple block, the snake head, the uber
+// wall slabs) are script type 3565's subclasses under uberobjectbase; the fixed anchors derive from type 3941.
+bool uberScript(const cdc::BigfileSet& bigfile, const cdc::Drm& unit, const std::string& object, uint32_t id) {
+    std::optional<cdc::Drm> objectDrm;
+    if (auto b = bigfile.read("pc-w\\" + object + ".drm")) objectDrm = cdc::parseDrm(std::move(*b));
+    for (int depth = 0; id && depth < 16; ++depth) {
+        bool found = false;
+        for (const cdc::Drm* d : std::initializer_list<const cdc::Drm*>{&unit, objectDrm ? &*objectDrm : nullptr}) {
+            if (!d) continue;
+            for (uint32_t i = 0; i < d->sections.size() && !found; ++i)
+                if (d->sections[i].type == cdc::SectionType::Script && d->sections[i].id == id) {
+                    script::ScriptType t;
+                    try { t = script::parseScriptType(*d, i); } catch (const cdc::FormatError&) { return false; }
+                    if (t.nativeName == "uberobjectbase") return true;
+                    id = t.superId, found = true;
+                }
+            if (found) break;
+        }
+        if (!found) return false;
+    }
+    return false;
+}
 
 // Does pc-w\music\<name>\<name>.mus exist? Cached: the same names recur in every unit of a chapter.
 // ponytail: process-wide cache keyed by name, not per bigfile (one install per process).
@@ -58,8 +83,9 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
             u.checkpoints.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2}); // heading as findSpawn
         if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position)});
         if (n->second == "motorcycle") u.vehicles.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2});
-        if (n->second.find("_grapple") != std::string::npos) {
-            const GrappleKind k = n->second.find("wall") != std::string::npos   ? GrappleKind::Wall
+        if (n->second.find("_grapple") != std::string::npos && !n->second.starts_with("fx_")) {
+            const GrappleKind k = in.scriptId && uberScript(bigfile, *drm, n->second, in.scriptId) ? GrappleKind::Mounted
+                                  : n->second.find("wall") != std::string::npos ? GrappleKind::Wall
                                   : n->second.find("post") != std::string::npos ? GrappleKind::Post
                                   : n->second.find("ceiling") != std::string::npos ? GrappleKind::Ceiling
                                                                                 : GrappleKind::Mounted;

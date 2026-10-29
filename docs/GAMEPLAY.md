@@ -422,30 +422,51 @@ outfit (the original only reads `+0x294` on a level load).
 - Our rule [I]: a nearly vertical terrain face (|normal.z| ≤ 0.35, not dynamics) is climbable where a hold's
   centroid lies within 350 of Lara's chest (root + 300) and within 120 of the face's plane (not a hold behind
   a thin wall). The original positions Lara per hold [O, 0x707C60] and so presumably moves hold to hold [I]; we
-  move freely inside the band the holds cover. Which hold type selects which `DICE_*` clip set is [U].
+  move freely inside the band the holds cover.
+- Hand stance [I, from the hold shapes]: the hold nearest the chest sets Lara's `DICE_*` clip set. Each hold is a
+  triangle; points 1 and 2 relative to point 0 (right, up along the rock, means over all 336 holds in the 8 units,
+  2026-10-29 survey) are 16: (−67, 144) (69, 174) both hands high → `B`; 17: (−75, 174) (41, 16) left high → `L`;
+  18: (−134, 143) (136, 16) left high, wide → `LW`; 19: (−72, 14) (70, 143) right high → `R`; 20: (−96, 20)
+  (125, 169) right high, wide → `RW`. tru.exe's own selection (state charts) is not traced [U].
 - Attach: pushing into such a wall from the ground (chest probe at +300, reach = capsule radius + 90,
-  facing it within ~53°) or falling onto it (after ledge/pole grabs, which win). `DICE_B_ground_attach` /
-  `DICE_B_air_attach_M` plays, then `DICE_B_Idle`.
+  facing it within ~53°) or falling onto it (after ledge/pole grabs, which win). The stance's ground attach
+  (`DICE_B_ground_attach`, `DICE_L_ground_attach`, …) / air attach (`DICE_B_air_attach_M`, `DICE_<L/LW/R/Rw>_air_attach_mid`)
+  plays, then its idle.
 - Climbing: the stick's into-wall component climbs up (away = down), its along-wall component moves
-  sideways at 240 units/s [I]; the settle clips (`DICE_B_Settle_up/_down/_Left/_right`) have no root
+  sideways at 240 units/s [I]; the stance's settle clips (`DICE_<s>_settle_up/_down/_left/_right`) have no root
   motion [O], so the controller moves the root and pins it at capsule distance from the rock, following
   the face (and around corners) with a back probe at chest height. Movement stops where no hold is in reach.
+- Hold to hold [I]: when the nearest hold changes while moving, its stance takes over and
+  `DICE_<from>_to_<to>_<dir>` plays once (its root motion not applied), then the new stance's settle clip. `<dir>`
+  is the move's direction in 30° steps clockwise from up: `Up`, `UpR`, `UpDiagR`, `Right`, `DownDiagR`, `DownR`,
+  `Down`, `DownL`, `DownDiagL`, `Left`, `UpDiagL`, `UpL` (the 12 suffixes lara.drm uses; the angles are ours). lara.drm
+  has 181 of the 300 combinations and spells the stances inconsistently (`Lw`/`LW`, `Rw`/`RW`, `Dice_L_attach_*`), so
+  `kLaraClipNames` lists every DICE clip exactly and `diceTransition` looks names up case-insensitively, falling
+  back to the nearest existing direction within 60° (none: no transition clip).
 - Top out: when no hold is in reach and a standable floor above Lara's feet is within reach past the wall,
-  Lara steps onto it (Idle). Otherwise movement stops at the edge. Jump = `DICE_B_Jump_Back` + a leap away
-  (700 out, 1400 up [I]); drop = `DICE_B_Drop` and fall. Cooldown 0.4 s before re-attaching.
+  Lara steps onto it (Idle). Otherwise movement stops at the edge. Jump = the stance's `jump_back` clip + a leap away
+  (700 out, 1400 up [I]); drop = its `drop` clip and fall. Cooldown 0.4 s before re-attaching.
 - Tests `Game.ClimbAttachClimbUpTopOut`, `Game.ClimbJumpOff`, `Game.ClimbNeedsHolds`, `Game.ClimbStaysWithinHolds`,
+  `Game.ClimbStanceFollowsHolds` (a column of 17/19/18/20/16 holds: L → R → LW → RW → B with `DICE_L_to_R_UpL`,
+  `DICE_R_to_LW_UpR`), `Game.DiceTransitionNames`, `GameReal.CliffclimbStances` (l2_cliffclimb hold field zig-zag:
+  3 stances, `DICE_L_to_B_Up`, `DICE_B_to_R_UpDiagR`, `DICE_R_to_L_UpDiagR`, every clip loaded; before 2026-10-29 the
+  climb's "right" was Lara's left, so the settle clips were mirrored),
   `GameReal.ClimbOnlyAtHolds` (12 reachable walls ≥ 1000 from any hold in each of l3_main_bedroom, l4_pool,
   l4_ballcourt, l2_hubhall, l2_cliffclimb, l1_baldrsstairs_a: 0 attach, the old rule attached 10-12 of 12;
   l2_cliffclimb hold 910 ground attach + climb up; l1_baldrsstairs_a air attach at hold 44). Hand test:
-  `ou-game --level 'pc-w\l2_cliffclimb.drm' --spawn '-23835,-3600,300,90'` and hold forward (climbs);
-  `ou-game --level 'pc-w\l3_main_bedroom.drm'` and run into any wall (no climb).
+  `ou-game --level 'pc-w\l2_cliffclimb.drm' --spawn '-23835,-3600,300,90'` and hold forward, then forward + left/right
+  (stance changes; F1 overlay shows the clip); `ou-game --level 'pc-w\l3_main_bedroom.drm'` and run into any wall (no climb).
 
 ## Grapple (src/game/Grapple.cpp)
 
 - Targets [O]: intros named `*_ei_grapple_*` (`ca_ei_grapple_post`, `sa_ei_grapple_ceiling(_invisible)`,
-  `ma_ei_grapple_ceiling`, `ca_ei_grapple_wall_a`, `tp_ei_grapple_wall`, `ar_ei_grapple_wall`, …), collected per
-  unit into `UnitData::grapples` (kind by name: wall/post/ceiling/mounted). l4_pool's ceiling anchor is uid 5511
-  at (4362, -70, 2607).
+  `ma_ei_grapple_ceiling`, `ca_ei_grapple_wall_a`, `tp_ei_grapple_wall`, `ar_ei_grapple_wall`, …; not
+  `fx_grapple_bling_*`), collected per unit into `UnitData::grapples`. Kind: Mounted when the intro's script type
+  derives from native `uberobjectbase` [O: the movable targets are script type 3565's subclasses — levers, the naga
+  statue, shiva arms, the grapple block, the snake head and the `sa_ei_grapple_wall` slabs (e.g. l2_towerconnector
+  2005/2042/2043, l2_norsehub 2383/2394/2395); fixed anchors derive from type 3941]; else wall/post/ceiling by name.
+  l4_pool's ceiling anchor is uid 5511 at (4362, -70, 2607). `sa_ei_grapple_wall_rigid_body` (l2_maproom 2676) is a
+  plain anchor (script type 4734); its attached-instance field is filled at run time [U].
 - Selection (ours [I]): within 300..5000 units of Lara's eye (+375), inside a 60-degree cone of the camera,
   clear line of sight (`World::grappleTarget`). Best by angle then distance; a crosshair marks it in ou-game.
 - G / pad right shoulder (`Actions::grapple`) throws (`grapple_rappel_free_jumpon`) and attaches; G again or
@@ -453,10 +474,43 @@ outfit (the original only reads `+0x294` on a level load).
 - Swing (ours [I], no exe numbers): gravity + stick pumping (500 u/s²), a rope constraint at hand = root + 400
   (outward radial velocity removed), light air drag. `grapple_rappel_free_swing_forward/backward` by travel
   direction, `grapple_rappel_idle` otherwise. E ascends the rope, Shift descends (300 u/s, clamped 200..6000).
+  Swinging down onto a floor (> 300 u/s down), or coming down just over a floor out at the end of the arc (more than
+  0.3 × rope from under the anchor), lands her: she lets go standing [I].
+- Pull (Mounted targets): `grapple_pull_<up/mid/down>_light_begin` then the loop by anchor height (±400) [I];
+  holding E: push blocks follow her (240 u/s [I]); other uber targets run their pull handler after a 1 s heave
+  (`script::Runtime::grapplePulled`: the first overridden void slot 55..60 that does more than return — levers 59/60,
+  shiva arms 55/56, walls and the naga statue 56/57, snake head 57 [O]; which slot tru.exe calls on a pull is [I]),
+  then she lets go standing; `World::lastPulled()` reports the target.
+- Rappel (`State::GrappleRappel`) [I]: a swing into a wall (|normal.z| ≤ 0.35) puts her feet on it,
+  `grapple_rappel_wall_land(_left/_right)` by sideways speed, facing the wall. Stick into the wall shortens the
+  rope (up, `grapple_rappel_up(_left/_right_45)`), away lengthens it (down, `grapple_rappel_down…`); gravity keeps
+  the pendulum in the wall plane; she follows wall steps up to 150 deep, else swings free again. Jump kicks off
+  (700 out, 200 up) into a swing, drop lets go; descending onto a floor ends it standing. Body angle: the rappel clips
+  carry it (feet on the wall, body out along the rope; viewed, below).
+- Wall run [I]: on the wall, a sideways stick runs along it (`grapple_rappel_left/right`, `grapple_rappel_walk_*`
+  below 0.6 deflection): the feet push her along the wall up to 700 u/s (2500 u/s², never braking), so she runs the
+  rope's arc down past the point below the anchor and up the other side. From the ground: roped to a Wall anchor, on
+  a floor with the anchor's wall (the surface closest to the anchor) within 400 of her capsule, a stick along that
+  wall toward the point below the anchor plays `ng_ground_to_wallrun_left/right` and starts the run (700 u/s, 350
+  up); while that clip plays or she runs downhill along a floor the rope reels in its slack. Use sites [O]: the Wall
+  anchors (name `*wall*`, not uber) — l1_kraken_room 326, l2_maproom 2676, l2_norsehub 2382, l2_puzzleroom 2974,
+  l4_traprooms 5752, l5_valaskjalf 6750/6751, l7_helheim01 8897, l7_yggdrasil_end 8165; no markup marks wall-run
+  walls (COLLISION.md types). l5_valaskjalf 6750 has ledges 1600 to either side of the anchor over a pit — the
+  wall run carries her from one to the other.
 - The rope is drawn from the hand to the anchor in ou-game. Tests `Game.GrappleSwingAndRelease`,
-  `GameReal.PoolGrappleTargetAndSwing` (anchor selected and attached).
-- Not yet: wall-running/rappel on walls, pulling mounted objects, rope-vs-world collision, hook model,
-  throwing while hanging from ledges. Rope length/physics are [I].
+  `Game.GrappleWallRunFromGround`, `GameReal.PoolGrappleTargetAndSwing`, `GameReal.MountedGrapplePullsBlockWithoutSwinging`,
+  `GameReal.GrapplePullsUberTargets` (replay `tests/replays/grapple_pull.txt` at l4_trailstart lever 6695,
+  l2_norsehall naga statue 2457, l2_puzzleroom shiva 2982), `GameReal.KrakenRoomRappel` (replay
+  `tests/replays/kraken_rappel.txt`: swing onto 326's wall, rappel down 460 and up 590, kick off),
+  `GameReal.ValaskjalfWallRun` (ledge → wall run 370 down through the arc → far ledge, standing). Replay
+  `tests/replays/valaskjalf_wallrun.txt` plays the wall run in ou-game.
+- Viewed (2026-10-29, GL + Vulkan identical): l1_kraken_room rappel at tick 300 from the side
+  (`--camera -2700,-13900,1450,-2980,-14862,1450`): feet on the wall, body out along the rope, roughly level; the
+  l5_valaskjalf wall run at tick 205 from the follow camera (`grapple_rappel_right`: crouched run on the wall facing
+  it, rope from the hand to the anchor). That shot first showed a bind pose: the run/walk clips were not loaded; the
+  replay tests now assert every clip they play is loaded.
+- Not yet: rope-vs-world collision, hook model, throwing while hanging from ledges, grapple combat
+  (`grapple_rappel_combat_*`), overhangs, exe rope/pull numbers. Rope length/physics are [I].
 
 ## Ladders, pillars, perches (src/game/Traverse.cpp)
 

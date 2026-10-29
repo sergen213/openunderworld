@@ -1,0 +1,12 @@
+# l1_kraken_room, spawn -2204,-15106,2212,180 (ledge east of wall anchor 326): throw the grapple at 326, swing off
+# the ledge onto its wall (grapple_rappel_wall_land*), rappel down, then up, then kick off the wall into a swing.
+# ou-game --level 'pc-w\l1_kraken_room.drm' --spawn -2204,-15106,2212,180 --input-script tests/replays/kraken_rappel.txt
+0.2 grapple 1
+0.3 grapple 0
+0.3 right 1
+3.0 right 0
+3.0 forward -1
+4.5 forward 1
+6.5 forward 0
+7.0 jump 1
+7.1 jump 0

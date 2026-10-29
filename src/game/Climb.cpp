@@ -1,11 +1,15 @@
-// Free climbing on climbable rock (lara.drm DICE_B_* clips): attach from the ground or the air,
+// Free climbing on climbable rock (lara.drm DICE_* clips): attach from the ground or the air,
 // climb with the stick, top out, jump off or drop. Rock is climbable only where the level places free-climb
 // holds (markup types 16-20, docs/GAMEPLAY.md "Free climbing"); speeds and reach are ours [I], the settle
-// clips have no root motion.
+// clips have no root motion. The hold nearest the chest sets the hand stance (B / L / LW / R / RW); moving
+// to another hold plays DICE_<from>_to_<to>_<dir> once.
 #include "game/Game.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
+#include <map>
 
 namespace ou::game {
 
@@ -16,19 +20,62 @@ constexpr float kSpeed = 240.0f;   // units/s along the wall [I]
 constexpr float kReach = 90.0f;    // probe past the capsule radius [I]
 constexpr float kHoldReach = 350.0f; // chest (root + 300) to hold centroid; holds sit 100-250 apart [I]
 
+// Hand stance per hold markup type 16..20 [I]: each hold is a triangle whose points 1 and 2 sit, relative to point 0,
+// (right, up) = 16: (-67, 144) (69, 174) both hands high; 17: (-75, 174) (41, 16) left high; 18: (-134, 143) (136, 16)
+// left high, wide; 19: (-72, 14) (70, 143) right high; 20: (-96, 20) (125, 169) right high, wide (means over all 336
+// holds in 8 units, 2026-10-29) -> DICE stances B, L, LW, R, RW.
+constexpr std::array<std::string_view, 5> kStance = {"b", "l", "lw", "r", "rw"};
+// Transition directions, clockwise from up in 30-degree steps [I: the 12 suffixes lara.drm uses].
+constexpr std::array<std::string_view, 12> kDir = {"up",    "upr",   "updiagr", "right", "downdiagr", "downr",
+                                                   "down",  "downl", "downdiagl", "left", "updiagl",  "upl"};
+
+// Exact DICE clip name (kLaraClipNames spells them as lara.drm does) for a lower-case key, or "" if lara.drm has none.
+std::string_view dice(const std::string& key) {
+    static const std::map<std::string, std::string_view> table = [] {
+        std::map<std::string, std::string_view> t;
+        for (const auto n : kLaraClipNames) {
+            std::string k(n);
+            for (char& c : k) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (k.starts_with("dice_")) t.emplace(std::move(k), n);
+        }
+        return t;
+    }();
+    const auto it = table.find(key);
+    return it == table.end() ? std::string_view{} : it->second;
+}
+std::string_view stanceClip(uint8_t stance, std::string_view what) {
+    if (what == "air_attach") what = stance == 0 ? "air_attach_m" : "air_attach_mid";
+    return dice("dice_" + std::string(kStance[stance]) + "_" + std::string(what));
+}
+
 // Free-climb holds [O]: markup types 16-20 (MUD 0x8000 + one of 0x4000..0x400), 3-point triangles 20-35
 // units off the rock. tru.exe disables 0x8000 markup unless it has exactly 3 points (0x5D6F00) and places
 // Lara at point 0 - 158.025 z when attaching to one (0x707C60). A hold counts when it is within reach of the
-// chest and on this wall (near the plane through `wall` with normal `n`), not one behind a thin wall.
-bool holdNear(const collision::CollisionMesh& col, vec3 chest, vec3 wall, vec3 n) {
-    for (const auto& m : col.markup) {
+// chest and on this wall (near the plane through `wall` with normal `n`), not one behind a thin wall; the
+// nearest one is returned (markup index), -1 if none.
+int32_t nearestHold(const collision::CollisionMesh& col, vec3 chest, vec3 wall, vec3 n) {
+    int32_t best = -1;
+    float bestD = kHoldReach;
+    for (size_t i = 0; i < col.markup.size(); ++i) {
+        const auto& m = col.markup[i];
         if (m.type < 16 || m.type > 20 || m.points.size() != 3) continue;
         const vec3 c = (m.points[0] + m.points[1] + m.points[2]) / 3.0f;
-        if (std::abs(glm::dot(c - wall, n)) < 120.0f && glm::length(c - chest) < kHoldReach) return true;
+        if (const float d = glm::length(c - chest); std::abs(glm::dot(c - wall, n)) < 120.0f && d < bestD) best = int32_t(i), bestD = d;
     }
-    return false;
+    return best;
 }
 } // namespace
+
+// DICE_<from>_to_<to>_<dir> for a move along `dir` (x right, y up on the wall), as lara.drm names it; the nearest
+// existing direction within 60 degrees when that exact one is missing; "" if none.
+std::string_view diceTransition(uint8_t from, uint8_t to, vec2 dir) {
+    const float a = std::atan2(dir.x, dir.y); // clockwise from up
+    const int k = (int(std::lround(a / (3.14159265f / 6))) + 12) % 12;
+    const std::string prefix = "dice_" + std::string(kStance[from]) + "_to_" + std::string(kStance[to]) + "_";
+    for (const int off : {0, 1, -1, 2, -2})
+        if (const auto n = dice(prefix + std::string(kDir[size_t((k + off + 12) % 12)])); !n.empty()) return n;
+    return {};
+}
 
 // Attach to a climbable wall ahead of Lara (chest-height probe, facing it, nearly vertical).
 bool Player::tryClimb(bool fromAir) {
@@ -51,10 +98,13 @@ bool Player::tryClimb(bool fromAir) {
     const vec3 fwd = forward();
     const auto h = col_.raycast(s_.pos + vec3(0, 0, 300), fwd, t_.radius + kReach);
     if (!h || h->dynamic >= 0) return false;
-    if (std::abs(h->normal.z) > 0.35f || !holdNear(col_, s_.pos + vec3(0, 0, 300), h->point, h->normal)) return false;
-    if (glm::dot(fwd, -h->normal) < 0.6f) return false;
+    if (std::abs(h->normal.z) > 0.35f || glm::dot(fwd, -h->normal) < 0.6f) return false;
+    const int32_t hold = nearestHold(col_, s_.pos + vec3(0, 0, 300), h->point, h->normal);
+    if (hold < 0) return false;
     s_.climbFace = h->face;
     s_.climbNormal = h->normal;
+    s_.climbHold = hold;
+    s_.climbStance = uint8_t(col_.markup[size_t(hold)].type - 16);
     s_.yaw = yawOf(xy(-h->normal));
     s_.vel = vec3(0);
     s_.ledge = -1;
@@ -62,7 +112,7 @@ bool Player::tryClimb(bool fromAir) {
     vec3 p = h->point + h->normal * t_.radius;
     p.z = s_.pos.z; // the attach clip supplies the rise
     s_.pos = p;
-    play(fromAir ? "DICE_B_air_attach_M" : "DICE_B_ground_attach", false);
+    play(stanceClip(s_.climbStance, fromAir ? "air_attach" : "ground_attach"), false);
     return true;
 }
 
@@ -70,43 +120,47 @@ void Player::climb(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (s_.climbFace == UINT32_MAX || s_.climbFace >= col_.faces.size()) { startFall(s_.vel); return; }
     const vec3 n = s_.climbNormal;
     const vec3 fwd = -n; // into the wall
-    const bool attaching = s_.clip == "DICE_B_air_attach_M" || s_.clip == "DICE_B_ground_attach";
+    const uint8_t stance = s_.climbStance;
+    const bool attaching = s_.clip == stanceClip(stance, "air_attach") || s_.clip == stanceClip(stance, "ground_attach");
+    const bool moving = s_.clip.find("_to_") != std::string::npos && !clipDone(); // a hold-to-hold transition
     if (!attaching && jumpPressed) { // leap away from the wall
         s_.climbFace = UINT32_MAX;
         s_.state = State::Jump;
         s_.vel = n * 700.0f + vec3(0, 0, 1400.0f);
         s_.fallStartZ = s_.pos.z;
         s_.regrabCooldown = 0.4f;
-        play("DICE_B_Jump_Back", false);
+        play(stanceClip(stance, "jump_back"), false);
         return;
     }
     if (!attaching && dropPressed) {
         s_.climbFace = UINT32_MAX;
         s_.regrabCooldown = 0.4f;
-        play("DICE_B_Drop", false);
+        play(stanceClip(stance, "drop"), false);
         startFall(n * 150.0f);
         return;
     }
 
     const vec3 prev = s_.pos;
     vec3 delta(0);
+    // The stick is a world-space horizontal wish (as on the ground): its component into the wall
+    // climbs up (away = down), its component along the wall moves sideways.
+    const vec3 right = glm::normalize(glm::cross(fwd, vec3(0, 0, 1))); // Lara's right (was her left before 2026-10-29)
+    const vec3 wish(move.x, move.y, 0);
+    const float side = glm::dot(wish, right), up = glm::dot(wish, fwd);
     if (attaching) {
         delta = toWorld(advanceClip(dt));
-        if (clipDone()) play("DICE_B_Idle", true);
+        if (clipDone()) play(stanceClip(stance, "idle"), true);
     } else {
-        // The stick is a world-space horizontal wish (as on the ground): its component into the wall
-        // climbs up (away = down), its component along the wall moves sideways.
-        const vec3 right = glm::normalize(glm::cross(vec3(0, 0, 1), fwd));
-        const vec3 wish(move.x, move.y, 0);
-        const float side = glm::dot(wish, right), up = glm::dot(wish, fwd);
         delta = right * (side * kSpeed * dt) + vec3(0, 0, up * kSpeed * dt);
-        if (std::abs(up) >= std::abs(side) && std::abs(up) > 0.1f)
-            play(up > 0 ? "DICE_B_Settle_up" : "DICE_B_Settle_down", true);
+        if (moving)
+            ; // the transition plays out while she moves [I]
+        else if (std::abs(up) >= std::abs(side) && std::abs(up) > 0.1f)
+            play(stanceClip(stance, up > 0 ? "settle_up" : "settle_down"), true);
         else if (std::abs(side) > 0.1f)
-            play(side > 0 ? "DICE_B_Settle_right" : "DICE_B_Settle_Left", true);
+            play(stanceClip(stance, side > 0 ? "settle_right" : "settle_left"), true);
         else
-            play("DICE_B_Idle", true);
-        advanceClip(dt); // the settle clips have no root motion; kSpeed moves the root
+            play(stanceClip(stance, "idle"), true);
+        advanceClip(dt); // the settle/transition clips' root motion is not applied; kSpeed moves the root
     }
     s_.pos = slide(s_.pos, delta, t_.stepUp, true);
 
@@ -114,12 +168,20 @@ void Player::climb(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     // it (also around corners) while holds are in reach, or top out.
     const vec3 chest = s_.pos + vec3(0, 0, 300);
     const auto h = col_.raycast(chest + n * 20.0f, -n, t_.radius + kReach + 40.0f);
-    if (h && h->dynamic < 0 && std::abs(h->normal.z) <= 0.35f && holdNear(col_, chest, h->point, h->normal)) {
+    if (const int32_t hold = h && h->dynamic < 0 && std::abs(h->normal.z) <= 0.35f ? nearestHold(col_, chest, h->point, h->normal) : -1;
+        hold >= 0) {
         s_.climbFace = h->face;
         s_.climbNormal = h->normal;
         s_.yaw = yawOf(xy(-h->normal));
         const vec3 p = h->point + h->normal * t_.radius;
         s_.pos.x = p.x, s_.pos.y = p.y; // pinned at capsule distance from the rock
+        if (hold != s_.climbHold && !attaching) { // reached the next hold: its stance, via the matching transition [I]
+            const auto to = uint8_t(col_.markup[size_t(hold)].type - 16);
+            if (const auto clip = diceTransition(stance, to, {side, up}); !clip.empty() && glm::length(vec2(side, up)) > 0.1f)
+                play(clip, false);
+            s_.climbHold = hold;
+            s_.climbStance = to;
+        }
         return;
     }
     // No holds here: a standable floor above the feet, just into the wall = climb onto it (not the floor at the
@@ -128,6 +190,7 @@ void Player::climb(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         top && top->normal.z >= t_.minFloorNormalZ && top->point.z > prev.z + 10.0f) {
         s_.pos = top->point + n * t_.radius;
         s_.climbFace = UINT32_MAX;
+        s_.climbHold = -1;
         s_.state = State::Idle;
         play("ng_idle", true);
         return;

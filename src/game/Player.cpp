@@ -125,7 +125,7 @@ std::string_view stateName(State s) {
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
                                              "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
-                                             "grappleswing", "hit", "railslide", "grapplepull", "vehicle"};
+                                             "grappleswing", "hit", "railslide", "grapplepull", "vehicle", "grapplerappel"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -747,6 +747,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::GrappleThrow:
     case State::GrapplePull:
     case State::GrappleSwing:
+    case State::GrappleRappel:
         grapple(move, a, jumpPressed, dropPressed, dt);
         break;
     case State::DropToHang:

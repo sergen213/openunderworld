@@ -103,13 +103,65 @@ const std::vector<std::string_view> kLaraClipNames = {
     "hit_light_front", "hit_light_back", "hit_light_side", "hit_mediumfront", "hit_mediumback", "hit_mediumright",
     "hit_light_front_swim", "hit_light_back_swim", "hit_light_side_swim", "hit_mediumfront_swim", "hit_mediumback_swim",
     "hit_mediumright_swim",
-    // free climbing (Climb.cpp): attach, idle, directional moves, jump off, drop
+    // free climbing (Climb.cpp), one set per hand stance B / L / LW / R / RW (the hold's markup type 16-20): attach,
+    // idle, directional moves, jump off, drop; then every hold-to-hold transition DICE_<from>_to_<to>_<dir> as lara.drm
+    // spells it (stance capitalisation varies: Lw/LW, Rw/RW; Climb.cpp looks them up case-insensitively)
     "DICE_B_ground_attach", "DICE_B_air_attach_M", "DICE_B_Idle", "DICE_B_Settle_up", "DICE_B_Settle_down",
     "DICE_B_Settle_Left", "DICE_B_Settle_right", "DICE_B_Jump_Back", "DICE_B_Drop",
+    "DICE_L_air_attach_mid", "DICE_L_drop", "DICE_L_ground_attach", "DICE_L_Idle", "DICE_L_jump_back",
+    "DICE_L_settle_down", "DICE_L_settle_left", "DICE_L_settle_right", "DICE_L_settle_up", "DICE_LW_air_attach_mid",
+    "DICE_LW_drop", "DICE_LW_ground_attach", "DICE_LW_Idle", "DICE_LW_jump_back", "DICE_LW_settle_down",
+    "DICE_LW_settle_left", "DICE_LW_settle_right", "DICE_LW_settle_up", "DICE_R_air_attach_mid", "DICE_R_drop",
+    "DICE_R_ground_attach", "DICE_R_Idle", "DICE_R_jump_back", "DICE_R_settle_down", "DICE_R_settle_left",
+    "DICE_R_settle_right", "DICE_R_settle_up", "DICE_Rw_air_attach_mid", "DICE_Rw_drop", "DICE_Rw_ground_attach",
+    "DICE_RW_Idle", "DICE_Rw_Jump_Back", "DICE_RW_Settle_down", "DICE_Rw_Settle_Left", "DICE_Rw_Settle_right",
+    "DICE_Rw_Settle_up",
+    "DICE_B_to_B_DownDiagR", "DICE_B_to_B_DownR", "DICE_B_to_B_Left", "DICE_B_to_B_Right", "DICE_B_to_B_Up",
+    "DICE_B_to_B_UpDiagL", "DICE_B_to_B_UpDiagR", "DICE_B_to_L_DownDiagL", "DICE_B_to_L_DownDiagR",
+    "DICE_B_to_L_DownR", "DICE_B_to_L_Right", "DICE_B_to_L_Up", "DICE_B_to_L_UpDiagL", "DICE_B_to_Lw_DownDiagL",
+    "DICE_B_to_Lw_DownDiagR", "DICE_B_to_Lw_DownL", "DICE_B_to_Lw_DownR", "DICE_B_to_Lw_Left", "DICE_B_to_Lw_Right",
+    "DICE_B_to_Lw_UpDiagL", "DICE_B_to_Lw_UpDiagR", "DICE_B_to_Lw_UpL", "DICE_B_to_Lw_UpR", "DICE_B_to_R_DownDiagL",
+    "DICE_B_to_R_DownDiagR", "DICE_B_to_R_DownR", "DICE_B_to_R_Left", "DICE_B_to_R_Right", "DICE_B_to_R_UpDiagL",
+    "DICE_B_to_R_UpDiagR", "DICE_B_to_Rw_DownL", "DICE_B_to_Rw_DownR", "DICE_B_to_Rw_Left", "DICE_B_to_Rw_Right",
+    "DICE_B_to_Rw_UpL", "DICE_B_to_Rw_UpR", "DICE_L_to_B_DownDiagR", "DICE_L_to_B_DownR", "DICE_L_to_B_Left",
+    "DICE_L_to_B_Right", "DICE_L_to_B_Up", "DICE_L_to_B_UpDiagL", "DICE_L_to_B_UpDiagR", "DICE_L_to_L_DownDiagL",
+    "DICE_L_to_L_DownDiagR", "DICE_L_to_L_DownR", "DICE_L_to_L_Left", "DICE_L_to_L_Right", "DICE_L_to_L_Up",
+    "DICE_L_to_L_UpDiagL", "DICE_L_to_L_UpDiagR", "DICE_L_to_LW_DownDiagR", "DICE_L_to_LW_DownL",
+    "DICE_L_to_LW_DownR", "DICE_L_to_LW_Right", "DICE_L_to_LW_UpDiagL", "DICE_L_to_LW_UpDiagR", "DICE_L_to_LW_UpL",
+    "DICE_L_to_LW_UpR", "DICE_L_to_R_DownDiagL", "DICE_L_to_R_DownDiagR", "DICE_L_to_R_DownR", "DICE_L_to_R_Left",
+    "DICE_L_to_R_Right", "DICE_L_to_R_UpDiagL", "DICE_L_to_R_UpDiagR", "DICE_L_to_R_UpL", "DICE_L_to_Rw_DownDiagL",
+    "DICE_L_to_Rw_DownDiagR", "DICE_L_to_Rw_DownL", "DICE_L_to_Rw_DownR", "DICE_L_to_Rw_Left", "DICE_L_to_Rw_Right",
+    "DICE_L_to_Rw_UpDiagL", "DICE_L_to_Rw_UpDiagR", "DICE_L_to_Rw_UpL", "DICE_L_to_Rw_UpR", "DICE_Lw_to_B_DownDiagL",
+    "DICE_Lw_to_B_DownDiagR", "DICE_Lw_to_B_DownL", "DICE_Lw_to_B_DownR", "DICE_Lw_to_B_Left", "DICE_Lw_to_B_Right",
+    "DICE_Lw_to_B_UpDiagL", "DICE_Lw_to_B_UpDiagR", "DICE_Lw_to_B_UpL", "DICE_Lw_to_B_UpR", "DICE_LW_to_L_DownDiagL",
+    "DICE_LW_to_L_DownDiagR", "DICE_LW_to_L_DownL", "DICE_LW_to_L_DownR", "DICE_LW_to_L_Left", "DICE_LW_to_L_Right",
+    "DICE_LW_to_L_UpDiagL", "DICE_LW_to_L_UpDiagR", "DICE_LW_to_L_UpL", "DICE_LW_to_L_UpR",
+    "DICE_LW_to_LW_DownDiagL", "DICE_LW_to_LW_DownR", "DICE_LW_to_LW_UpDiagR", "DICE_LW_to_LW_UpL",
+    "DICE_LW_to_R_DownDiagL", "DICE_LW_to_R_DownDiagR", "DICE_LW_to_R_DownR", "DICE_LW_to_R_Left",
+    "DICE_LW_to_R_Right", "DICE_LW_to_R_UpDiagL", "DICE_LW_to_R_UpL", "DICE_LW_to_R_UpR", "DICE_Lw_to_Rw_DownDiagL",
+    "DICE_Lw_to_Rw_DownR", "DICE_Lw_to_Rw_Left", "DICE_Lw_to_Rw_UpDiagL", "DICE_Lw_to_Rw_UpDiagR",
+    "DICE_Lw_to_Rw_UpL", "DICE_R_to_B_DownDiagL", "DICE_R_to_B_DownDiagR", "DICE_R_to_B_Left", "DICE_R_to_B_Right",
+    "DICE_R_to_B_Up", "DICE_R_to_B_UpDiagL", "DICE_R_to_B_UpDiagR", "DICE_R_to_L_Down", "DICE_R_to_L_DownDiagL",
+    "DICE_R_to_L_DownDiagR", "DICE_R_to_L_Left", "DICE_R_to_L_Right", "DICE_R_to_L_Up", "DICE_R_to_L_UpDiagL",
+    "DICE_R_to_L_UpDiagR", "DICE_R_to_LW_DownDiagR", "DICE_R_to_LW_DownL", "DICE_R_to_LW_DownR", "DICE_R_to_LW_Left",
+    "DICE_R_to_LW_Right", "DICE_R_to_LW_UpDiagL", "DICE_R_to_LW_UpL", "DICE_R_to_LW_UpR", "DICE_R_to_R_DownDiagL",
+    "DICE_R_to_R_DownDiagR", "DICE_R_to_R_DownR", "DICE_R_to_R_Left", "DICE_R_to_R_Right", "DICE_R_to_R_UpDiagL",
+    "DICE_R_to_R_UpDiagR", "DICE_R_to_R_UpL", "DICE_R_to_Rw_DownL", "DICE_R_to_Rw_DownR", "DICE_R_to_Rw_Left",
+    "DICE_R_to_Rw_Right", "DICE_R_to_Rw_UpDiagR", "DICE_R_to_Rw_UpL", "DICE_R_to_Rw_UpR", "DICE_Rw_to_B_DownDiagR",
+    "DICE_Rw_to_B_DownL", "DICE_Rw_to_B_DownR", "DICE_Rw_to_B_Left", "DICE_Rw_to_B_Right", "DICE_Rw_to_B_UpDiagL",
+    "DICE_Rw_to_B_UpL", "DICE_Rw_to_B_UpR", "DICE_Rw_to_L_DownDiagL", "DICE_Rw_to_L_DownL", "DICE_Rw_to_L_UpR",
+    "DICE_Rw_to_Lw_Down", "DICE_Rw_to_Lw_DownDiagL", "DICE_Rw_to_Lw_Right", "DICE_Rw_to_Lw_UpDiagR",
+    "DICE_Rw_to_Lw_UpL", "DICE_Rw_to_R_DownDiagL", "DICE_Rw_to_R_DownDiagR", "DICE_Rw_to_R_DownL",
+    "DICE_Rw_to_R_DownR", "DICE_Rw_to_R_Left", "DICE_Rw_to_R_Right", "DICE_Rw_to_R_UpDiagL", "DICE_Rw_to_R_UpDiagR",
+    "DICE_Rw_to_R_UpL", "DICE_Rw_to_R_UpR", "DICE_Rw_to_Rw_DownL", "DICE_Rw_to_Rw_UpR",
     // grapple (Grapple.cpp)
     "grapple_rappel_free_jumpon", "grapple_rappel_idle", "grapple_rappel_free_swing_forward",
     "grapple_rappel_free_swing_backward", "grapple_rappel_free_ascend", "grapple_rappel_free_descend",
     "grapple_rappel_free_jumpoff",
+    "grapple_rappel_wall_land", "grapple_rappel_wall_land_left", "grapple_rappel_wall_land_right", "grapple_rappel_up",
+    "grapple_rappel_up_left_45", "grapple_rappel_up_right_45", "grapple_rappel_down", "grapple_rappel_down_left_45",
+    "grapple_rappel_down_right_45", "ng_ground_to_wallrun_left", "ng_ground_to_wallrun_right", "grapple_rappel_left",
+    "grapple_rappel_right", "grapple_rappel_walk_left", "grapple_rappel_walk_right",
     // ladders / pillars / perches (Traverse.cpp)
     "lad_attach_up", "lad_climbup", "lad_climbdown", "lad_Idle", "lad_detach", "lad_detach_drop",
     "lad_ClimbOffTop", "lad_ClimbOffBot", "perch_attach_air", "perch_attach_ground", "perch_idle",
@@ -211,13 +263,13 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     bindTerrain();
     bindLightHealth();
     bindMarkup();
+    bindEnemies();
     player_.spawn(spawn.pos, spawn.yaw);
     prev_ = player_.state();
     cam_.yaw = player_.state().yaw;
     updateCamera({}, 0);
     prevCam_ = cam_;
     updatePose(0, true);
-    bindEnemies();
 }
 
 std::vector<script::UnitRef> World::unitRefs() const {
@@ -252,13 +304,18 @@ void World::tick(const Actions& input) {
     }
     grappleHeld_ = a.grapple;
     if (!onBike) player_.tick(move, a, dt);
-    if (player_.state().state == State::GrapplePull && a.interact)
-        if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid));
-            target && target->kind == script::Kind::Block) {
-            vec3 delta = player_.state().pos - (target->pos + target->offset);
-            delta.z = 0;
-            if (const float distance = glm::length(delta); distance > 1.0f)
-                target->offset += delta * std::min(240.0f * float(dt), distance) / distance; // [I] braced pull speed
+    if (player_.state().state != State::GrapplePull) pullT_ = 0;
+    else if (a.interact)
+        if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid)); target) {
+            if (target->kind == script::Kind::Block) {
+                vec3 delta = player_.state().pos - (target->pos + target->offset);
+                delta.z = 0;
+                if (const float distance = glm::length(delta); distance > 1.0f)
+                    target->offset += delta * std::min(240.0f * float(dt), distance) / distance; // [I] braced pull speed
+            } else if ((pullT_ += dt) >= 1.0f) { // [I] a one-second heave runs the target's pull handler, then lets go
+                if (script_.grapplePulled(target->uid)) lastPulled_ = target->uid;
+                player_.releaseGrapple(false);
+            }
         }
     if (!units_.empty()) { // streaming world (src/game/Stream.cpp)
         crossPortals(prev_.pos, player_.state().pos);

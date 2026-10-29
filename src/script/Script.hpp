@@ -225,6 +225,11 @@ public:
     void setUnits(const std::vector<UnitRef>& units);
     void addObject(Object o, bool start = true); // setUnits and tests; applies pending restored state
     void endCinematic(int32_t uid); // run the object's non-virtual post-stream helper
+    // Lara pulled grapple target `uid` (an uber grapple target, script type 3565's subclasses). They override slots
+    // 55..60 with handlers that send their uberobjectcommand members (levers 59/60, shiva arms 55/56, uber walls and
+    // the naga statue 56/57, the snake head 57) [O]; which slot the exe calls on a pull is [I]: the first overridden
+    // void one that does more than return runs, as its own thread. False if none ran to completion.
+    bool grapplePulled(int32_t uid);
     void tick(const TickInput& in, const collision::CollisionMesh* col = nullptr);
 
     const std::vector<Object>& objects() const { return objects_; }

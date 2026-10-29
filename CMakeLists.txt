@@ -343,6 +343,7 @@ target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_rend
 if(OU_BUILD_TESTS)
   add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp)
   target_link_libraries(ou_game_tests PRIVATE ou_game GTest::gtest_main)
+  target_compile_definitions(ou_game_tests PRIVATE OU_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   gtest_discover_tests(ou_game_tests DISCOVERY_TIMEOUT 30)
   add_executable(ou_ai_tests tests/test_ai.cpp)
   # The ballcourt lever replay at 30 Hz and 240 Hz render rates (360 ticks each) must end on the same simulated state

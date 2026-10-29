@@ -1,0 +1,17 @@
+# l5_valaskjalf, spawn 6981,-91555,-11378,-90 (ledge beside wall anchor 6750, facing its wall): look up-left at the
+# anchor, throw the grapple, turn the camera back behind Lara and hold right: she runs onto the wall
+# (ng_ground_to_wallrun_right), wall-runs down and up the rope's arc over the pit (grapple_rappel_right) and lands
+# on the far ledge.
+# ou-game --level 'pc-w\l5_valaskjalf.drm' --spawn 6981,-91555,-11378,-90 --input-script tests/replays/valaskjalf_wallrun.txt
+0.1 lookx -1.5
+0.1 looky 0.9
+1.1 lookx 0
+1.1 looky 0
+1.1 grapple 1
+1.2 grapple 0
+1.2 lookx 1.5
+1.2 looky -0.5
+2.2 lookx 0
+2.2 looky 0
+2.2 right 1
+6.0 right 0

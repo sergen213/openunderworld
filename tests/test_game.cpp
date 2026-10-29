@@ -1325,6 +1325,79 @@ TEST(Game, ClimbStaysWithinHolds) {
     EXPECT_LT(std::abs(w->player().state().pos.y), 360.0f) << "stops where the holds end";
 }
 
+// Hand stance from the nearest hold's markup type (16..20 = B / L / LW / R / RW); climbing to a hold of another type
+// plays that pair's DICE_<from>_to_<to>_<dir> once, then that stance's settle clip.
+TEST(Game, ClimbStanceFollowsHolds) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1200}, {400, -2000, 1200});
+    addQuad(m, {400, -2000, 1200}, {2000, -2000, 1200}, {2000, 2000, 1200}, {400, 2000, 1200});
+    const uint8_t types[] = {17, 19, 18, 20, 16};
+    for (int i = 0; i < 5; ++i) {
+        const float z = 450 + 160.0f * float(i);
+        m.markup.push_back({types[i], uint16_t(z), {{380, -60, z - 40}, {380, 60, z - 40}, {380, 0, z + 60}}});
+    }
+    auto w = makeWorld(std::move(m), {300, 0, 0});
+    w->tick(forward());
+    ASSERT_EQ(w->player().state().state, State::Climb);
+    EXPECT_EQ(w->player().state().climbStance, 1); // hold 0 (type 17) is nearest the chest
+    EXPECT_EQ(w->player().state().clip, "DICE_L_ground_attach");
+    for (int i = 0; i < 120; ++i) w->tick({});
+    EXPECT_EQ(w->player().state().clip, "DICE_L_Idle");
+    std::vector<std::string> clips;
+    std::vector<int> stances{1};
+    for (int i = 0; i < 300 && w->player().state().state == State::Climb; ++i) {
+        w->tick(forward());
+        const auto& s = w->player().state();
+        if (clips.empty() || clips.back() != s.clip) clips.push_back(s.clip);
+        if (stances.back() != s.climbStance) stances.push_back(s.climbStance);
+    }
+    EXPECT_EQ(stances, (std::vector<int>{1, 3, 2, 4, 0})) << "L, R, LW, RW, B going up the column";
+    for (const char* c : {"DICE_L_settle_up", "DICE_L_to_R_UpL", "DICE_R_settle_up", "DICE_R_to_LW_UpR", "DICE_LW_settle_up"})
+        EXPECT_NE(std::find(clips.begin(), clips.end(), c), clips.end()) << c;
+}
+
+// The exact-name table: lara.drm's capitalisation (Lw/LW, Rw/RW), and the nearest direction it has.
+TEST(Game, DiceTransitionNames) {
+    EXPECT_EQ(game::diceTransition(2, 0, {-1, 0}), "DICE_Lw_to_B_Left");
+    EXPECT_EQ(game::diceTransition(1, 2, {1, 0}), "DICE_L_to_LW_Right");
+    EXPECT_EQ(game::diceTransition(4, 3, {-0.866f, 0.5f}), "DICE_Rw_to_R_UpDiagL");
+    EXPECT_EQ(game::diceTransition(4, 4, {0, 1}), "DICE_Rw_to_Rw_UpR") << "no straight Up: nearest is UpR";
+    EXPECT_EQ(game::diceTransition(4, 4, {1, -0.5f}), "") << "Rw->Rw has only DownL and UpR, both > 60 degrees off";
+    int names = 0;
+    for (const auto n : game::kLaraClipNames) names += n.find("_to_") != std::string_view::npos && n.substr(0, 4) == "DICE";
+    EXPECT_EQ(names, 181);
+}
+
+// l2_cliffclimb's hold field (the ClimbOnlyAtHolds wall): climbing up crosses holds of several types, so the stance
+// changes through real transition clips, each one loaded from lara.drm.
+TEST(GameReal, CliffclimbStances) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    auto col = collision::loadLevelCollision(cdc::parseDrm(std::move(*bf.read("pc-w\\l2_cliffclimb.drm"))));
+    col.build();
+    game::World w(std::move(col), anims, {{-23835, -3600, 300}, glm::radians(90.0f)});
+    for (int t = 0; t < 60 && w.player().state().state != State::Climb; ++t) w.tick(forward());
+    ASSERT_EQ(w.player().state().state, State::Climb);
+    std::set<int> stances;
+    std::vector<std::string> transitions;
+    for (int t = 0; t < 600 && w.player().state().state == State::Climb; ++t) {
+        Actions a = forward();
+        a.move.x = (t / 90) % 2 ? 0.5f : -0.5f; // zig-zag up through the field
+        w.tick(a);
+        const auto& s = w.player().state();
+        stances.insert(s.climbStance);
+        EXPECT_NE(anims.find(s.clip), nullptr) << s.clip;
+        if (s.clip.find("_to_") != std::string::npos && (transitions.empty() || transitions.back() != s.clip)) transitions.push_back(s.clip);
+    }
+    std::printf("cliffclimb: %zu stances, transitions:", stances.size());
+    for (const auto& c : transitions) std::printf(" %s", c.c_str());
+    std::printf("\n");
+    EXPECT_GE(stances.size(), 3u);
+    EXPECT_GE(transitions.size(), 3u);
+}
+
 namespace {
 // Pushes Lara into up to `limit` walls of `unit` she can walk up to (a floor 250-700 below the face centre 250 in
 // front of it, a wall at chest height), skipping walls with a free-climb hold (markup 16-20) within 1000.
@@ -1466,6 +1539,152 @@ TEST(GameReal, MountedGrapplePullsBlockWithoutSwinging) {
     for (int i = 0; i < 60; ++i) w.tick(pull);
     EXPECT_NE(w.player().state().state, State::GrappleSwing);
     EXPECT_GT(glm::length(block->offset - initial), 100.0f);
+}
+
+// Wall run [I]: roped to a wall anchor from a ledge beside its wall, a sideways stick toward the anchor runs onto the
+// wall (ng_ground_to_wallrun_*), then along it (grapple_rappel_right) in a pendulum arc over the pit, onto the far
+// ledge, where she stands.
+TEST(Game, GrappleWallRunFromGround) {
+    CollisionMesh m;
+    addFloor(m, -1000, 1000, 500, 2000, 0);   // start ledge
+    addFloor(m, -1000, -2000, 500, -1000, 0); // far ledge
+    addFloor(m, -1000, -1000, 500, 1000, -3000); // pit
+    addBox(m, {500, -3000, -3000}, {800, 3000, 3000}); // wall face x = 500, facing -X
+    auto w = makeWorld(std::move(m), {400, 1500, 0}, 0); // facing the wall; stick right runs along -Y
+    w->attachGrapple({480, 0, 1500}, 1, game::GrappleKind::Wall);
+    Actions run;
+    run.move.x = 1;
+    for (int i = 0; i < 90 && w->player().state().state != State::GrappleRappel; ++i) w->tick(run);
+    ASSERT_EQ(w->player().state().state, State::GrappleRappel);
+    EXPECT_EQ(w->player().state().clip, "ng_ground_to_wallrun_right");
+    float minZ = 0;
+    bool ran = false;
+    for (int i = 0; i < 240 && w->player().state().state == State::GrappleRappel; ++i) {
+        w->tick(run);
+        const auto& s = w->player().state();
+        if (s.state != State::GrappleRappel) break;
+        ran |= s.clip == "grapple_rappel_right";
+        EXPECT_NEAR(s.pos.x, 400.0f, 2.0f) << "feet on the wall, tick " << i;
+        EXPECT_NEAR(std::cos(s.yaw), 1.0f, 1e-3f) << "facing the wall";
+        EXPECT_LE(glm::distance(s.pos + vec3(0, 0, 400), s.grappleAnchor), s.ropeLength + 1.0f);
+        minZ = std::min(minZ, s.pos.z);
+    }
+    EXPECT_TRUE(ran);
+    EXPECT_LT(minZ, -300.0f) << "swung down through the arc";
+    EXPECT_LT(w->player().state().pos.y, -1000.0f) << "reached the far ledge";
+    EXPECT_NEAR(w->player().state().pos.z, 0.0f, 1.0f);
+    EXPECT_NE(w->player().state().state, State::GrappleRappel);
+    EXPECT_EQ(w->player().state().grappleUid, 0) << "stands on the far ledge";
+}
+
+// The same at l5_valaskjalf's wall anchor 6750 (tests/replays/valaskjalf_wallrun.txt): from the ledge 1600 to its side
+// over the pit below it, onto the ledge 1600 to its other side.
+TEST(GameReal, ValaskjalfWallRun) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l5_valaskjalf", game::loadLaraAnims(bf), game::Spawn{{6981, -91555, -11378}, -1.5707963f});
+    w.script().setBigfile(&bf);
+    const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/valaskjalf_wallrun.txt");
+    bool started = false, ran = false;
+    float minX = 1e9f, minZ = 0;
+    for (uint64_t i = 0; i < 6 * 60; ++i) {
+        if (i == 66) { // just before the throw (1.1 s)
+            const auto t = w.grappleTarget();
+            ASSERT_TRUE(t);
+            EXPECT_EQ(t->uid, 6750);
+            EXPECT_EQ(t->kind, game::GrappleKind::Wall);
+        }
+        w.tick(replay.at(i));
+        const auto& s = w.player().state();
+        if (std::getenv("OU_GRAPPLE_TRACE") && i % 10 == 0)
+            std::printf("tick %3llu %s %s pos %.0f %.0f %.0f vel %.0f %.0f %.0f rope %.0f\n", (unsigned long long)i,
+                        std::string(game::stateName(s.state)).c_str(), s.clip.c_str(), s.pos.x, s.pos.y, s.pos.z, s.vel.x,
+                        s.vel.y, s.vel.z, s.ropeLength);
+        started |= s.clip == "ng_ground_to_wallrun_right";
+        ran |= s.clip == "grapple_rappel_right";
+        EXPECT_NE(w.anims().find(s.clip), nullptr) << s.clip << " not loaded (bind pose)";
+        if (s.grappleUid) minX = std::min(minX, s.pos.x), minZ = std::min(minZ, s.pos.z);
+    }
+    const auto& s = w.player().state();
+    std::printf("valaskjalf wall run: min x %.0f min z %.0f, ends %s at %.0f %.0f %.0f\n", minX, minZ,
+                std::string(game::stateName(s.state)).c_str(), s.pos.x, s.pos.y, s.pos.z);
+    EXPECT_TRUE(started && ran);
+    EXPECT_LT(minZ, -11378.0f - 300.0f) << "down through the arc";
+    EXPECT_LT(minX, 4200.0f) << "across the pit (the far ledge ends at x 4150)";
+    EXPECT_EQ(s.grappleUid, 0) << "let go, standing on the far ledge";
+    EXPECT_NEAR(s.pos.z, -11378.0f, 5.0f);
+    EXPECT_LT(s.pos.x, 4200.0f);
+}
+
+// Uber grapple targets (script type 3565's subclasses), tests/replays/grapple_pull.txt from a spot facing each: look
+// up, throw, hold E for a second, and the target's pull handler runs (World::lastPulled); Lara lets go standing.
+TEST(GameReal, GrapplePullsUberTargets) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/grapple_pull.txt");
+    struct Case { const char* unit; int32_t uid; vec3 spawn; float yawDeg; } cases[] = {
+        {"l4_trailstart", 6695, {61161, -42611, 4948}, -11}, // ca_ei_lever_grapple_post
+        {"l2_norsehall", 2457, {381, -1901, -1279}, 180},     // sa_ei_grapple_wall_naga_statue
+        {"l2_puzzleroom", 2982, {-23353, 42001, 1149}, -67},  // sa_ei_grapple_shiva
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.unit);
+        game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), c.unit,
+                      anims, game::Spawn{c.spawn, glm::radians(c.yawDeg)});
+        w.script().setBigfile(&bf);
+        bool braced = false;
+        for (uint64_t i = 0; i < 5 * 60; ++i) {
+            if (i == 72) { // just before the throw (1.2 s)
+                const auto t = w.grappleTarget();
+                ASSERT_TRUE(t);
+                EXPECT_EQ(t->uid, c.uid);
+                EXPECT_EQ(t->kind, game::GrappleKind::Mounted);
+            }
+            w.tick(replay.at(i));
+            braced |= w.player().state().state == State::GrapplePull && w.player().state().grappleUid == c.uid;
+        }
+        EXPECT_TRUE(braced);
+        EXPECT_EQ(w.lastPulled(), c.uid);
+        EXPECT_EQ(w.player().state().grappleUid, 0);
+        EXPECT_EQ(w.player().state().state, State::Idle);
+    }
+}
+
+// l1_kraken_room wall anchor 326: jump-on from the ledge east of it, swing onto its wall (grapple_rappel_wall_land*),
+// rappel down and back up with the stick, kick off (jump) into a swing. tests/replays/kraken_rappel.txt plays it.
+TEST(GameReal, KrakenRoomRappel) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l1_kraken_room", game::loadLaraAnims(bf), game::Spawn{{-2204, -15106, 2212}, 3.1415927f});
+    w.script().setBigfile(&bf);
+    const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/kraken_rappel.txt");
+    bool landed = false, down = false, up = false;
+    float zLanded = 0, zLow = 1e9f, zHigh = -1e9f;
+    for (uint64_t i = 0; i < 8 * 60; ++i) {
+        w.tick(replay.at(i));
+        const auto& s = w.player().state();
+        if (std::getenv("OU_GRAPPLE_TRACE") && i % 15 == 0)
+            std::printf("tick %3llu %s %s pos %.0f %.0f %.0f uid %d rope %.0f\n", (unsigned long long)i,
+                        std::string(game::stateName(s.state)).c_str(), s.clip.c_str(), s.pos.x, s.pos.y, s.pos.z, s.grappleUid, s.ropeLength);
+        if (s.state != State::GrappleRappel) continue;
+        EXPECT_EQ(s.grappleUid, 326);
+        if (!landed) landed = true, zLanded = s.pos.z;
+        down |= s.clip.starts_with("grapple_rappel_down");
+        up |= s.clip.starts_with("grapple_rappel_up");
+        EXPECT_NE(w.anims().find(s.clip), nullptr) << s.clip;
+        zLow = std::min(zLow, s.pos.z), zHigh = std::max(zHigh, s.pos.z);
+        EXPECT_NEAR(std::abs(std::cos(s.yaw)), 1.0f, 0.05f) << "facing the wall (x = -3161)";
+        EXPECT_LE(glm::distance(s.pos + vec3(0, 0, 400), s.grappleAnchor), s.ropeLength + 1.0f);
+    }
+    std::printf("kraken rappel: landed z %.0f, low %.0f, high %.0f, ends %s\n", zLanded, zLow, zHigh,
+                std::string(game::stateName(w.player().state().state)).c_str());
+    EXPECT_TRUE(landed && down && up);
+    EXPECT_LT(zLow, zLanded - 200.0f);
+    EXPECT_GT(zHigh, zLow + 200.0f);
+    EXPECT_EQ(w.player().state().state, State::GrappleSwing) << "kicked off the wall";
 }
 
 // ---- ladders / pillars / perches (src/game/Traverse) ----

@@ -1,0 +1,11 @@
+# Pull an uber grapple target: spawn facing it, look up at it, throw the grapple, hold E (use) for a second: the
+# target's pull handler runs (World::lastPulled), then Lara lets go standing. Three sites (GameReal.GrapplePullsUberTargets):
+# ou-game --level 'pc-w\l4_trailstart.drm' --spawn 61161,-42611,4948,-11 --input-script tests/replays/grapple_pull.txt   (lever 6695)
+# ou-game --level 'pc-w\l2_norsehall.drm' --spawn 381,-1901,-1279,180 --input-script tests/replays/grapple_pull.txt      (naga statue 2457)
+# ou-game --level 'pc-w\l2_puzzleroom.drm' --spawn -23353,42001,1149,-67 --input-script tests/replays/grapple_pull.txt   (shiva 2982)
+0.1 looky 0.9
+1.1 looky 0
+1.2 grapple 1
+1.3 grapple 0
+2.5 interact 1
+4.5 interact 0

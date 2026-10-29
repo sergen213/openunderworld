@@ -578,6 +578,23 @@ void Runtime::adopt(const std::shared_ptr<vm::Machine>& m) {
     }
 }
 
+bool Runtime::grapplePulled(int32_t uid) {
+    Object* o = findMut(uid);
+    if (!o || !o->script) return false;
+    for (int16_t vt = 55; vt <= 60; ++vt) {
+        const Function* f = o->script->program->method(o->script->typeId, vt);
+        if (!f || f->native || f->returnType || f->wordCount <= 1) continue;
+        if (o->machine && o->machine->active()) o->fibers.push_back(std::move(o->machine));
+        const auto machine = makeMachine(uid);
+        o->machine = machine;
+        const bool completed = machine->call(*o->script, vt);
+        if (!completed) recordFailure(uid, o->name, *machine);
+        adopt(machine);
+        return completed;
+    }
+    return false;
+}
+
 void Runtime::endCinematic(int32_t uid) {
     if (Object* object = findMut(uid)) fire(EventKind::CinematicEnd, *object);
 }
