@@ -542,9 +542,9 @@ TEST(RealData, UberObjectCommandsDecode) {
         const auto data = formats::loadUberObject(cdc::parseDrm(*bf.read("pc-w\\" + std::string(name) + ".drm")));
         ASSERT_TRUE(data) << name;
         EXPECT_EQ(data->objectClass, 79);
-        ASSERT_EQ(data->sectionModels.size(), sections) << name;
+        ASSERT_EQ(data->sections.size(), sections) << name;
         ASSERT_FALSE(data->commands.empty()) << name;
-        std::fprintf(stderr, "%s: %zu sections, %zu commands\n", name, data->sectionModels.size(), data->commands.size());
+        std::fprintf(stderr, "%s: %zu sections, %zu commands\n", name, data->sections.size(), data->commands.size());
         for (const auto& command : data->commands) {
             std::fprintf(stderr, "  command %u:", command.id);
             for (const auto& target : command.targets)

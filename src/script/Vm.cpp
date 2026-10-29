@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
-#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -108,6 +107,10 @@ std::shared_ptr<Instance> Program::instantiate(int32_t uid, uint32_t typeId) {
             const bool channel = !std::strcmp(nativeName(m.typeId), "messagechannel");
             if (m.init && (base <= 4 || m.typeId == kInstanceRefType || channel || !std::strcmp(nativeName(m.typeId), "terraingroup")))
                 out->fields[m.offset] = channel && !m.initText.empty() ? channelId(m.initText) : *m.init;
+            // uberobjectcommand / uberobjectevent: {uber object DTP id, command / event index}
+            if (m.init && m.init2 && (!std::strcmp(nativeName(m.typeId), "uberobjectcommand") ||
+                                      !std::strcmp(nativeName(m.typeId), "uberobjectevent")))
+                out->fields[m.offset] = *m.init, out->fields[m.offset + 4u] = *m.init2;
         }
     out->initial = out->fields;
     out->initialStrings = out->strings;
@@ -292,7 +295,11 @@ int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame&
         return 1; // the exe reports a null script receiver and continues the caller
     }
     if (event_ && event_(*target, f.vtIndex)) return 1;
-    return push(*target, f, args) ? 2 : 0;
+    if (!push(*target, f, args)) return 0;
+    // A function with a return value writes it through local 0, the caller's result address (l3_chapel ignitable 12855
+    // vt 54: PUSHL32 0 ... MOVE8); its arguments follow it.
+    if (hasResult && (!f.argCount || (!f.argOffsets.empty() && f.argOffsets[0] >= 4))) frames_.back().locals[0] = resultAddress;
+    return 2;
 }
 
 Machine::Step Machine::step() {
@@ -374,7 +381,8 @@ Machine::Step Machine::step() {
         case 0x07: pushLocal(arg, 0xFFFF); ++pc; break;
         case 0x08: { // PUSHL32; a string argument stays a string (unit hint handlers compare and store it: EQC / MOVEC)
             const Value v = read(local(frames_.size() - 1, arg));
-            if (v.kind == Value::Kind::Constant) fr.stack.push_back(v);
+            if (v.kind == Value::Kind::Constant || v.kind == Value::Kind::Local || v.kind == Value::Kind::Member)
+                fr.stack.push_back(v); // a string, or an address held in the local (the result address)
             else pushLocal(arg);
             ++pc; break;
         }

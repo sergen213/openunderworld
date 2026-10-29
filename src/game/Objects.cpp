@@ -96,28 +96,151 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
     if (drm->second) {
         try { data = formats::loadUberObject(*drm->second); } catch (const cdc::FormatError&) { return nullptr; }
         if (data) {
-            uberStates_[o.uid].assign(data->sectionModels.size(), 0);
             if (const auto motion = uberMotion(*drm->second, o.name))
                 uberMotion_[o.uid] = {motion->delta, motion->rotation, motion->duration, 0, false, motion->clip};
+            auto& rt = uberRuntime_[o.uid];
+            rt.sections.assign(data->sections.size(), {});
+            // Transition animations: the object's animation list by index (transition +0x2A).
+            for (const auto& e : anim::animList(*drm->second)) {
+                float length = 0;
+                for (const auto& sec : drm->second->sections)
+                    if (sec.type == cdc::SectionType::Animation && sec.id == e.animId) length = float(anim::decodeClip(sec.data).durationSeconds());
+                rt.animLength.push_back(length);
+            }
         }
     }
     const auto [it, inserted] = uberData_.emplace(o.uid, std::move(data));
     (void)inserted;
+    if (it->second) { // sections start in their default state (0x4D7550 flag 1 -> 0x4D7440)
+        uberStates_[o.uid].assign(it->second->sections.size(), 0xFFFFFFFFu);
+        for (size_t i = 0; i < it->second->sections.size(); ++i)
+            if (!it->second->sections[i].stateOut.empty()) uberEnter(o.uid, i, it->second->sections[i].defaultState);
+    }
     return it->second ? &*it->second : nullptr;
 }
 
+bool World::uberHolds(int32_t uid, const std::vector<formats::UberCondition>& conditions) const {
+    const auto rt = uberRuntime_.find(uid);
+    if (rt == uberRuntime_.end() || conditions.empty()) return false;
+    for (const auto& c : conditions) { // 0x4D1360
+        const bool present = c.section >= 0 && size_t(c.section) < rt->second.sections.size();
+        if (c.kind == 1 ? !present || rt->second.sections[size_t(c.section)].state != int32_t(c.value) : c.kind != 2 || present)
+            return false;
+    }
+    return true;
+}
+
+// Events of section `section` doing `kind` with `value` (0x4D3F60 / 0x4D3FF0 / 0x4D4080 / 0x4D4110 -> 0x4D3EC0):
+// queued for the script's vt 54 (uberobjectevent members compare the event index).
+void World::uberFire(int32_t uid, size_t section, uint32_t kind, uint32_t value) {
+    const auto data = uberData_.find(uid);
+    if (data == uberData_.end() || !data->second) return;
+    auto& rt = uberRuntime_[uid];
+    const auto& events = data->second->events;
+    for (size_t i = 0; i < events.size(); ++i) {
+        const auto& e = events[i];
+        if (e.section != int32_t(section) || e.kind != kind || e.value != value) continue;
+        if (e.once && i < 64 && (rt.fired >> i & 1)) continue;
+        if (!std::all_of(e.conditions.begin(), e.conditions.end(), [&](const auto& c) { return uberHolds(uid, c); })) continue;
+        if (e.once && i < 64) rt.fired |= uint64_t(1) << i;
+        uberEvents_.push_back({uid, uint32_t(i)});
+    }
+}
+
+// Enter state `state` (0x4D7440): finishes the running transition (event 4), then the state's events (1).
+void World::uberEnter(int32_t uid, size_t section, uint32_t state) {
+    auto& rt = uberRuntime_[uid];
+    auto& s = rt.sections[section];
+    if (s.state == int32_t(state)) return;
+    const int32_t finished = s.transition;
+    s.state = int32_t(state), s.transition = -1, s.time = 0, s.length = 0;
+    uberStates_[uid][section] = state;
+    if (finished >= 0) uberFire(uid, section, 4, uint32_t(finished));
+    uberFire(uid, section, 1, state);
+}
+
+// Start transition `transition` (0x4D4A00): leaves the state (event 2), starts the transition (3). With flags 1 + 2
+// and an animation it lasts the clip, else it ends on the next update.
+void World::uberBegin(int32_t uid, size_t section, uint32_t transition) {
+    const auto& data = *uberData_.at(uid);
+    const auto& t = data.sections[section].transitions[transition];
+    auto& rt = uberRuntime_[uid];
+    auto& s = rt.sections[section];
+    const int32_t left = s.state;
+    s.state = -1, s.transition = int32_t(transition), s.time = 0;
+    s.length = (t.flags & 3) == 3 && t.anim >= 0 && size_t(t.anim) < rt.animLength.size() ? rt.animLength[size_t(t.anim)] : 0.0f;
+    uberStates_[uid][section] = 0xFFFFFFFFu;
+    if (left >= 0) uberFire(uid, section, 2, uint32_t(left));
+    uberFire(uid, section, 3, transition);
+}
+
+// Section updates (0x4D7550): a running transition ends into its target state; otherwise the state's automatic
+// transitions (0x4D31E0: 1 after `param` seconds, 3 always, 9 when its condition list holds) start. Then the queued
+// events run the uber scripts' vt 54.
+void World::tickUber(float dt) {
+    for (auto& [uid, rt] : uberRuntime_) {
+        const auto data = uberData_.find(uid);
+        if (data == uberData_.end() || !data->second) continue;
+        for (size_t i = 0; i < rt.sections.size(); ++i) {
+            auto& s = rt.sections[i];
+            const auto& sec = data->second->sections[i];
+            if (s.transition >= 0) {
+                if ((s.time += dt) >= s.length) uberEnter(uid, i, sec.transitions[size_t(s.transition)].to);
+                continue;
+            }
+            if (s.state < 0 || size_t(s.state) >= sec.stateOut.size()) continue;
+            s.time += dt;
+            for (const uint32_t ti : sec.stateOut[size_t(s.state)]) {
+                const auto& t = sec.transitions[ti];
+                // ponytail: probability (flags 0x10, tru.exe's LCG 0x8A9788) ignored; no state machine uses it on the route.
+                // ponytail: triggers 15 / 14 come from the section's physics joint reaching / leaving a limit (action 0x14
+                // registers 0x4D5B10 -> 0x4D5A50 with the physics system). We have no uber joints: 15 fires after 1 s in a
+                // state that drives its joint (action 13), 14 after 1 s in any state (kraken entrance locks, l4 ramps).
+                const auto& actions = sec.stateActions[size_t(s.state)];
+                const bool drives = std::find(actions.begin(), actions.end(), 13u) != actions.end();
+                const bool go = t.trigger == 3 || (t.trigger == 1 && s.time > std::bit_cast<float>(t.param) - 0.001f) ||
+                                (t.trigger == 9 && uberHolds(uid, t.conditions)) ||
+                                (s.time >= 1.0f && (t.trigger == 14 || (t.trigger == 15 && drives)));
+                if (go) { uberBegin(uid, i, ti); break; }
+            }
+        }
+    }
+    for (size_t i = 0; i < uberEvents_.size(); ++i) { // handlers may send commands that queue more events
+        const auto [uid, event] = uberEvents_[i];
+        script_.uberEvent(uid, event);
+    }
+    uberEvents_.clear();
+}
+
+// One command table entry (0x4D77A0 -> 0x4D7680 per target): 1 sets the section's state, 2 starts the state's
+// transition whose trigger is the payload, 3 / 4 the one with trigger 0xD / 0x10 and that parameter.
 bool World::sendUberCommand(int32_t uid, uint32_t commandIndex) {
     const auto* object = script_.find(uid);
     if (!object) return false;
     const auto* data = prepareUber(*object);
     if (!data || commandIndex >= data->commands.size()) return false;
-    auto& states = uberStates_[uid];
+    auto& rt = uberRuntime_[uid];
     for (const auto& target : data->commands[commandIndex].targets) {
-        if (target.type == 0 || target.section < 0 || size_t(target.section) >= states.size()) continue;
-        states[size_t(target.section)] = target.payload;
+        if (target.type == 0 || target.section < 0 || size_t(target.section) >= rt.sections.size()) continue;
+        const size_t i = size_t(target.section);
+        const auto& sec = data->sections[i];
+        if (target.type == 1) {
+            if (target.payload < sec.stateOut.size()) uberEnter(uid, i, target.payload), rt.commanded = true;
+            continue;
+        }
+        const auto& s = rt.sections[i];
+        if (s.transition >= 0 || s.state < 0 || size_t(s.state) >= sec.stateOut.size()) continue; // busy (0x4D4BE0)
+        for (const uint32_t ti : sec.stateOut[size_t(s.state)]) {
+            const auto& t = sec.transitions[ti];
+            const bool match = target.type == 2 ? t.trigger == target.payload
+                                                : t.trigger == (target.type == 3 ? 0xDu : 0x10u) && t.param == target.payload;
+            if (match) {
+                uberBegin(uid, i, ti), rt.commanded = true;
+                break;
+            }
+        }
     }
-    if (const auto motion = uberMotion_.find(uid); motion != uberMotion_.end())
-        motion->second.active = std::any_of(states.begin(), states.end(), [](uint32_t state) { return state != 0; });
+    if (const auto motion = uberMotion_.find(uid); motion != uberMotion_.end() && rt.commanded) motion->second.active = true;
     return true;
 }
 
@@ -140,27 +263,23 @@ std::vector<glm::mat4> World::objectBones(int32_t uid) const {
 }
 
 void World::bindUber() {
-    script_.setUberNative([this](int32_t uid, uint32_t function, uint32_t command, uint32_t commandIndex,
+    script_.setUberNative([this](int32_t uid, uint32_t function, uint32_t command, uint32_t,
                                  std::span<const script::vm::Value>, uint32_t& result) {
         const auto* object = script_.find(uid);
         if (!object) return false;
         const auto* data = prepareUber(*object);
         if (!data) return false;
-        auto& states = uberStates_[uid];
         if (function == 5) return true; // initialize the command-driven section state machine
-        if (function == 2) {
-            result = std::any_of(states.begin(), states.end(), [](uint32_t state) { return state != 0; });
+        if (function == 2) { // [I] some section away from its default state
+            const auto& rt = uberRuntime_[uid];
+            result = false;
+            for (size_t i = 0; i < rt.sections.size(); ++i)
+                result |= rt.sections[i].state != int32_t(data->sections[i].defaultState);
             return true;
         }
         if (function != 1) return false;
-        // The command member is {uber object id, command word}: the word names its table entry [I: by ordinal and
-        // id when they agree, else as the table index, else as the id].
-        const auto commandIt = commandIndex < data->commands.size() && data->commands[commandIndex].id == command
-            ? data->commands.begin() + commandIndex
-            : command < data->commands.size() ? data->commands.begin() + command
-            : std::find_if(data->commands.begin(), data->commands.end(), [&](const auto& c) { return c.id == command; });
-        if (commandIt == data->commands.end()) return false;
-        if (!sendUberCommand(uid, uint32_t(commandIt - data->commands.begin()))) return false;
+        // The command member is {uber object id, command word}; the word indexes the command table (0x4D77A0).
+        if (command >= data->commands.size() || !sendUberCommand(uid, command)) return false;
         result = 1;
         return true;
     });
@@ -380,6 +499,7 @@ void World::tickObjects(float dt) {
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
         lateColliders(script_) != syncedPlates_)
         syncObjects();
+    tickUber(dt);
     for (auto& [uid, motion] : uberMotion_) {
         const float target = motion.active ? motion.duration : 0.0f;
         motion.t = std::clamp(motion.t + (target > motion.t ? dt : -dt), 0.0f, motion.duration);
@@ -388,9 +508,8 @@ void World::tickObjects(float dt) {
         if (c.hinge >= 0) {
             const auto* o = script_.find(c.uid);
             auto& hinge = physics_.hinges[c.hinge];
-            const auto states = uberStates_.find(c.uid);
-            const bool uberOpen = states != uberStates_.end() &&
-                                  std::any_of(states->second.begin(), states->second.end(), [](uint32_t state) { return state != 0; });
+            const auto rt = uberRuntime_.find(c.uid);
+            const bool uberOpen = rt != uberRuntime_.end() && rt->second.commanded;
             if (uberOpen)
                 hinge.target = kDoorOpen;
             else if (o && o->kind == script::Kind::Door && o->state != 2 && hinge.hi > glm::radians(2.01f))

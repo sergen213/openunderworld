@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <deque>
 #include <map>
@@ -457,8 +458,8 @@ TEST(ProgressionReal, DumpScripts) {
                 if (const auto* f = program->method(t->states[i])) std::printf("  state %zu -> fn %u\n", i, program->functionIndex(f));
             for (const auto& m : t->members)
                 std::printf("  member +%u type %u ref %u(%s)%s%s%s\n", m.offset, m.type, m.typeId, program->nativeName(m.typeId),
-                            m.init ? (" init " + std::to_string(int32_t(*m.init))).c_str() : "", m.initText.empty() ? "" : " text ",
-                            m.initText.c_str());
+                            m.init ? (" init " + std::to_string(int32_t(*m.init)) + (m.init2 ? " " + std::to_string(int32_t(*m.init2)) : "")).c_str() : "",
+                            m.initText.empty() ? "" : " text ", m.initText.c_str());
             for (size_t f = 0; f < t->functions.size(); ++f) {
                 const auto& fn = t->functions[f];
                 std::printf("  fn %zu vt %d args %u locals %u%s\n", f, fn.vtIndex, fn.argCount, fn.localCount, fn.native ? " native" : "");
@@ -521,6 +522,10 @@ TEST(ProgressionReal, CriticalGates) {
         {2, {"l2_flushtunnel", 2564, Action::Enter, {}, 3, {{2542, Action::Enter}}}}, // BeatLevel plane, then the boat
         {3, {"l3_chapel", 4832, Action::Step, {4830}}},                  // press plate -> gate
         {3, {"l3_chapel", 4833, Action::Step, {4831, 4836}}},            // press plate -> gate, gold reward
+        // shadow pillars (uber 4837): switches 4819 (section 1, c -> d -> a) and 4822 (section 2, b -> c -> d -> a) line
+        // them up, then the plate lights fire 4818 and the pillars' check opens shadow door 4835
+        {3, {"l3_chapel", 4834, Action::Step, {4835}, -1, {{4819, Action::Use}, {4819, Action::Use}, {4822, Action::Use},
+                                                         {4822, Action::Use}, {4822, Action::Use}}}},
         {3, {"l3_chamberrockhall", 4617, Action::Use, {4528}}},          // electric switch -> secret door
         {3, {"l3_main_hall", 4128, Action::Enter, {}, 4}},               // 160_man_shot, 170_man_exit -> chapter 4
         {4, {"l4_ballcourt", 6502, Action::Use, {6505}}},                // pole lever -> door joint
@@ -553,4 +558,83 @@ TEST(ProgressionReal, ChapterSixShipDoorsOpen) {
             EXPECT_EQ(d->state, 2) << unit << " door " << uid;
         }
     }
+}
+
+// Research: hex dump of an object DRM's ObjectBase section (`*` = relocated pointer), OU_UBER_DUMP=<object>.
+TEST(ProgressionReal, UberDump) {
+    const char* name = std::getenv("OU_UBER_DUMP");
+    if (!gameDir() || !name) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const auto drm = cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm"));
+    const auto& ob = drm.sections[*formats::objectBaseSection(drm)];
+    std::printf("size %zu rec %u ptr50 %d\n", ob.data.size(), cdc::internalPointer(ob, 0xC8).value_or(0), int(cdc::internalPointer(ob, 0x50).value_or(-1)));
+    for (uint32_t o = 0; o + 4 <= ob.data.size(); o += 4) {
+        uint32_t v;
+        std::memcpy(&v, ob.data.data() + o, 4);
+        const auto p = cdc::internalPointer(ob, o);
+        if (o % 32 == 0) std::printf("\n%05X:", o);
+        if (p) std::printf(" *%05X", *p);
+        else std::printf(" %08X", v);
+    }
+    std::printf("\n");
+}
+
+// Research: a script object's fields after its first tick, OU_OBJ_FIELDS=<unit>:<uid>.
+TEST(ProgressionReal, ObjectFields) {
+    const char* spec = std::getenv("OU_OBJ_FIELDS");
+    if (!gameDir() || !spec) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const std::string s(spec);
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), s.substr(0, s.find(':')), anims);
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto* o = w.script().find(std::stoi(s.substr(s.find(':') + 1)));
+    ASSERT_TRUE(o);
+    for (const auto& [k, v] : o->script->fields) std::printf("+%u %08X\n", k, v);
+}
+
+// l3_chapel shadow pillars (uber 4837, docs/PROGRESSION.md): wall switches turn pillar sections 0-3 through positions
+// a -> b -> c -> d; the solver section 4 follows them by condition lists; lined up (all at a) it reaches "solved", whose
+// event makes the pillars' script open the shadow door 4835.
+TEST(ProgressionReal, ChapelShadowPillars) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l3_chapel", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 300; ++i) w.tick({}); // the pillars rise (command 4): sections at a, c, b, a
+    const auto* u = w.uberState(4837);
+    ASSERT_TRUE(u);
+    ASSERT_EQ(u->size(), 6u);
+    EXPECT_EQ(*u, (std::vector<uint32_t>{0, 2, 1, 0, 0, 1}));
+    const auto use = [&](int32_t sw) {
+        const auto* o = w.script().find(sw);
+        place(w, o->pos, 0);
+        game::Actions a;
+        a.interact = true;
+        for (int i = 0; i < 10; ++i) w.tick(a);
+        for (int i = 0; i < 300; ++i) w.tick({});
+    };
+    const auto* door = w.script().find(4835);
+    ASSERT_TRUE(door);
+    const glm::mat4 closed = door->body;
+    for (const int32_t sw : {4819, 4819}) use(sw); // section 1: c -> d -> a
+    EXPECT_EQ((*u)[1], 0u);
+    EXPECT_EQ((*u)[4], 2u); // sections 1 and 3 lined up: "left solved"
+    for (const int32_t sw : {4822, 4822, 4822}) use(sw); // section 2: b -> c -> d -> a
+    EXPECT_EQ(*u, (std::vector<uint32_t>{0, 0, 0, 0, 1, 1}));
+    EXPECT_FALSE(moved(door->body, closed)); // the shadows only count in the fire's light
+    place(w, w.script().find(4834)->pos + vec3(0, 0, 30), 0); // the plate lights fire 4818: its vt 55 checks the pillars
+    for (int i = 0; i < 600; ++i) w.tick({});
+    EXPECT_TRUE(door->state != 0 || moved(door->body, closed));
+}
+
+// Research: an object's animation list, OU_ANIM_NAMES=<object>.
+TEST(ProgressionReal, AnimNames) {
+    const char* name = std::getenv("OU_ANIM_NAMES");
+    if (!gameDir() || !name) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    for (const auto& e : anim::animList(cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm")))) std::printf("%s %u\n", e.name.c_str(), e.animId);
 }

@@ -23,6 +23,18 @@ void bounded(uint32_t n, uint32_t offset, size_t stride, size_t bytes) {
         (!n && offset > bytes))
         throw FormatError("uber: nested array outside object section");
 }
+// Condition list {?, count, entries}: entries {section, kind, value} (0x4D1360).
+std::vector<UberCondition> conditionList(const cdc::Section& ob, uint32_t list) {
+    std::vector<UberCondition> out;
+    const uint32_t n = at<uint32_t>(ob, list + 4);
+    if (!n) return out;
+    const uint32_t entries = ptr(ob, list + 8);
+    bounded(n, entries, 0x0C, ob.data.size());
+    for (uint32_t i = 0; i < n; ++i)
+        out.push_back({at<int32_t>(ob, entries + 0x0C * i), at<uint32_t>(ob, entries + 0x0C * i + 4), at<uint32_t>(ob, entries + 0x0C * i + 8)});
+    return out;
+}
+
 } // namespace
 
 std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
@@ -36,18 +48,66 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
     const uint32_t rec = *p;
     UberObjectData out;
     out.objectClass = objectClass;
-    const uint32_t ns = at<uint32_t>(ob, rec + 8), nc = at<uint32_t>(ob, rec + 0x10);
-    const uint32_t sections = ptr(ob, rec + 0x0C), commands = nc ? ptr(ob, rec + 0x14) : 0;
-    // Section records are 0x140 apart; the last may end early in the section (ms_uo_kraken_door_oil: 2096 + 0x140 >
-    // 2400), so each read is bounds-checked on its own.
-    if (ns > 4096) throw FormatError("uber: section count");
+    const uint32_t ns = at<uint32_t>(ob, rec + 8), nc = at<uint32_t>(ob, rec + 0x10), ne = at<uint32_t>(ob, rec + 0x18);
+    const uint32_t sections = ns ? ptr(ob, rec + 0x0C) : 0, commands = nc ? ptr(ob, rec + 0x14) : 0,
+                   events = ne ? ptr(ob, rec + 0x1C) : 0;
+    // Section records are 0x54 apart (the section component's +0x78; states 0x1C, transitions 0x38: 0x4D4BE0, 0x4D4A00).
+    bounded(ns, sections, 0x54, ob.data.size());
     bounded(nc, commands, 0x0C, ob.data.size());
-    for (uint32_t i = 0; i < ns; ++i) out.sectionModels.push_back(at<uint8_t>(ob, sections + 0x140 * i + 0x28));
+    bounded(ne, events, 0x1C, ob.data.size());
+    for (uint32_t i = 0; i < ns; ++i) {
+        const uint32_t sec = sections + 0x54 * i;
+        UberSection section;
+        const uint32_t nst = at<uint32_t>(ob, sec + 4), ntr = at<uint32_t>(ob, sec + 0x0C);
+        const uint32_t states = nst ? ptr(ob, sec + 8) : 0, transitions = ntr ? ptr(ob, sec + 0x10) : 0;
+        bounded(nst, states, 0x1C, ob.data.size());
+        bounded(ntr, transitions, 0x38, ob.data.size());
+        section.defaultState = at<uint32_t>(ob, sec + 0x14);
+        section.model = at<uint32_t>(ob, sec + 0x18);
+        for (uint32_t t = 0; t < ntr; ++t) {
+            const uint32_t tr = transitions + 0x38 * t;
+            UberTransition x;
+            x.from = at<uint32_t>(ob, tr), x.to = at<uint32_t>(ob, tr + 4);
+            x.trigger = at<uint32_t>(ob, tr + 0x18), x.param = at<uint32_t>(ob, tr + 0x1C);
+            if (x.trigger == 9)
+                if (const auto list = cdc::internalPointer(ob, tr + 0x1C)) x.conditions = conditionList(ob, *list);
+            const uint16_t anim = at<uint16_t>(ob, tr + 0x2A);
+            x.anim = anim == 0xFFFF ? -1 : anim;
+            x.probability = at<uint32_t>(ob, tr + 0x2C), x.flags = at<uint32_t>(ob, tr + 0x34);
+            if (x.to >= nst) throw FormatError("uber: transition target state");
+            section.transitions.push_back(std::move(x));
+        }
+        for (uint32_t s = 0; s < nst; ++s) {
+            const uint32_t st = states + 0x1C * s;
+            const uint32_t nout = at<uint32_t>(ob, st + 0x0C);
+            std::vector<uint32_t> out;
+            if (nout) {
+                const uint32_t list = ptr(ob, st + 0x10);
+                bounded(nout, list, 4, ob.data.size());
+                for (uint32_t k = 0; k < nout; ++k) {
+                    const uint32_t tr = ptr(ob, list + 4 * k);
+                    if (tr < transitions || (tr - transitions) % 0x38 || (tr - transitions) / 0x38 >= ntr)
+                        throw FormatError("uber: state transition outside its section");
+                    out.push_back((tr - transitions) / 0x38);
+                }
+            }
+            section.stateOut.push_back(std::move(out));
+            std::vector<uint32_t> actions; // {type, value, ...} records 0x10 apart (0x4D5C60)
+            if (const uint32_t na = at<uint32_t>(ob, st + 0x14)) {
+                const uint32_t list = ptr(ob, st + 0x18);
+                bounded(na, list, 0x10, ob.data.size());
+                for (uint32_t k = 0; k < na; ++k) actions.push_back(at<uint32_t>(ob, list + 0x10 * k));
+            }
+            section.stateActions.push_back(std::move(actions));
+        }
+        if (nst && section.defaultState >= nst) throw FormatError("uber: default state");
+        out.sections.push_back(std::move(section));
+    }
     for (uint32_t i = 0; i < nc; ++i) {
         const uint32_t c = commands + 0x0C * i;
         UberCommand command;
         command.id = at<uint32_t>(ob, c);
-        const uint32_t count = at<uint32_t>(ob, c + 4), targets = ptr(ob, c + 8);
+        const uint32_t count = at<uint32_t>(ob, c + 4), targets = count ? ptr(ob, c + 8) : 0;
         bounded(count, targets, 0x0C, ob.data.size());
         for (uint32_t j = 0; j < count; ++j) {
             const uint32_t t = targets + 0x0C * j;
@@ -59,6 +119,19 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
             command.targets.push_back({section, type, at<uint32_t>(ob, t + 8)});
         }
         out.commands.push_back(std::move(command));
+    }
+    for (uint32_t i = 0; i < ne; ++i) {
+        const uint32_t e = events + 0x1C * i;
+        UberEvent event;
+        event.section = at<int32_t>(ob, e + 0x0C), event.kind = at<uint32_t>(ob, e + 0x10), event.value = at<uint32_t>(ob, e + 0x14);
+        event.once = at<uint8_t>(ob, e + 0x18) != 0;
+        const uint32_t nl = at<uint32_t>(ob, e + 4);
+        if (nl) {
+            const uint32_t lists = ptr(ob, e + 8);
+            bounded(nl, lists, 4, ob.data.size());
+            for (uint32_t k = 0; k < nl; ++k) event.conditions.push_back(conditionList(ob, ptr(ob, lists + 4 * k)));
+        }
+        out.events.push_back(std::move(event));
     }
     return out;
 }

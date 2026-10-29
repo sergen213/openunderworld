@@ -16,6 +16,8 @@ Tools (`tests/test_gates.cpp`, `ou_gates_tests`):
   handler stop]`. `OU_PROGRESSION_UNIT`, `OU_PROGRESSION_GATE`, `OU_PROGRESSION_TRACE` narrow / trace it.
 - `OU_PROGRESSION_DUMP="unit:uid,…"` (or `unit:*`): bytecode of intro scripts down to the native base (states,
   prototypes, members, calls resolved). The analyses below were read from it.
+- `OU_UBER_DUMP=<object>` (`UberDump`: ObjectBase hex, `*` = pointer), `OU_OBJ_FIELDS=<unit>:<uid>` (`ObjectFields`),
+  `OU_ANIM_NAMES=<object>` (`AnimNames`): data research for uber records, script fields and animation lists.
 
 Sweep 2026-10-29: 116 / 289 candidate gates pass. The sweep over-counts failures: preload volumes (they only call
 cinematic vt 63, see below), sound volumes whose links are conditions, and handlers that need an earlier step all
@@ -59,7 +61,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 2 | l2_maproom | volumes 2637/2638 | thor bridge 2667 + cinematics | pass |
 | 2 | l2_flushtunnel | switch 2543 (use) | flush gate 2541 | pass |
 | 2 | l2_flushtunnel → l2_cliffclimb | plane 2542, then volume 2564 | 2565 → chapter 3 | pass (new gate test) |
-| 3 | l3_chapel | wall switches 4819-4822 (use) | shadow pillars 4837 | **fail**: command runs; uber section state graphs (type 2 = trigger a transition, tru.exe 0x4D7680 → 0x4D4BE0) not modelled |
+| 3 | l3_chapel | wall switches 4819-4822 (use), then plate 4834 (fire 4818) | shadow pillars 4837 sections, shadow door 4835 | pass (uber section state machines; `ChapelShadowPillars`) |
 | 3 | l3_chapel | press plates 4832-4834 | gates 4830/4831, gold reward 4836 | pass |
 | 3 | l3_chamberrockhall | switch 4617 (use) | secret door 4528 | pass |
 | 3 | l3_secretchamber | volumes 4666/4669 | gauntlet cinematic 4654 | pass |
@@ -109,7 +111,7 @@ Portal order from the start unit; level changes not made by portals are named.
   targets fall (Object::loose), `portablebase` objects are carried (interact) and set down. [I] no Havok mass/tumbling.
 - VM fixes found here: START with a function word calls it; CALL3 is virtual; inline member defaults applied (ship doors:
   modifiable 1 opens, 2/3 close [I]; house door 0 opens / 1 closes).
-- Uber section state graphs (chapel shadow pillars 4819-4822: commands of type 2 trigger transitions; section record stride / layout beyond the first section [U]); VM opcode 0x34 DBOUNDS (l2_norsehub
+- VM opcode 0x34 DBOUNDS (l2_norsehub
   2393); levers / switches whose handlers run but change nothing visible (l1 57, l4 5469, l5 7188/7189, l7 9103);
   l4_traprooms seal 5701 (both plates held: one weight source missing).
 - Chapter 7 → 8 has no scripted level end in the data we decoded [U]; the ending (7996, credits) is not run.

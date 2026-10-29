@@ -555,11 +555,28 @@ void Runtime::addUnit(const UnitRef& u) {
                             }
                     }
                     if (set->skeleton && clips->size() == 2) set->clips = std::move(clips), set->names = std::move(names);
+                    // [O] Switch reset: physical-class record (object base +0xC8) +0x34 -> its first state record: +4 flags
+                    // (bit 0 one-way: ms_ei_switch_oneway_wall, ma_ei_wall_switch_electric), +0xC reset delay in frames
+                    // (ma_ei_switch_wall_chapel 1, ca_ei_switch_wall_autoreset 60, ms_ei_resetting_switch 150) [I: units].
+                    if (const auto base = formats::objectBaseSection(drm); base && o.kind == Kind::Switch) {
+                        const auto& ob = drm.sections[*base];
+                        const auto rec = cdc::internalPointer(ob, 0xC8);
+                        const auto list = rec ? cdc::internalPointer(ob, *rec + 0x34) : std::nullopt;
+                        const auto first = list ? cdc::internalPointer(ob, *list) : std::nullopt;
+                        if (first && *first + 0x10 <= ob.data.size()) {
+                            uint32_t flags;
+                            float delay;
+                            std::memcpy(&flags, ob.data.data() + *first + 4, 4);
+                            std::memcpy(&delay, ob.data.data() + *first + 0xC, 4);
+                            if (!(flags & 1) && delay > 0) set->resetAfter = delay / 30.0f;
+                        }
+                    }
                 }
             }
             o.skeleton = set->skeleton;
             o.clips = set->clips;
             o.clipNames = set->names;
+            o.resetAfter = set->resetAfter;
         }
         // [I] Ship hall doors without a script (chapter 6's l6_ship_upper_hallway_a/b copies of the l1 doors): their
         // volumes' door calls ISTYPE-fail on them, so nothing can open them, yet chapter 6 walks through. They stand
@@ -683,6 +700,11 @@ uint32_t Runtime::cameraSplineValue(const vm::Value& v) {
     if (unit == cameraUnits_.end()) unit = cameraUnits_.insert(unit, owner->unit);
     const uint32_t index = field != holder->fields.end() ? field->second : *m->init;
     return uint32_t(unit - cameraUnits_.begin()) << 16 | (index & 0xFFFF);
+}
+
+void Runtime::uberEvent(int32_t uid, uint32_t event) {
+    const auto arg = vm::Value::scalar(event);
+    callback(uid, "uberobjectbase", 6, std::span(&arg, 1)); // prototype 6 = vt 54
 }
 
 void Runtime::callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args) {
@@ -889,6 +911,15 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // gamebase 32 (0x797E50 -> 0x714DE0) frees a global effect list at a cinematic's start (cinematic_object base
             // vt 45 event 0); no effect on play.
             if (!std::strcmp(name, "gamebase") && nc.function == 32 && nc.args.empty()) return true;
+            // uberobjectevent 0 (CALLU: receiver = the event vt 54 got, its index; argument = the member {object, index}):
+            // does the event name this member's event?
+            if (!std::strcmp(name, "uberobjectevent") && nc.function == 0 && nc.args.size() == 1 &&
+                nc.args[0].kind == vm::Value::Kind::Member) {
+                const auto holder = resolve(nc.args[0].uid);
+                const auto f = holder ? holder->fields.find(nc.args[0].offset + 4) : decltype(holder->fields.end()){};
+                nc.result = vm::Value::scalar(holder && f != holder->fields.end() && f->second == nc.receiver.bits);
+                return true;
+            }
             // Receivers: a member address (object uid + offset), an object, or a native value held in a local.
             auto self = resolve(nc.receiver.uid);
             // An instanceref held in a local may also be an object value (instance 14/15 GetInstanceRef results).
@@ -1618,6 +1649,9 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
                 if (o.kind == Kind::Switch) fire(EventKind::Use, o);
             } else if (o.state == 2) {
                 o.t += kDt;
+                // A resetting switch returns to idle after its delay (resetAfter) and can be used again.
+                if (o.kind == Kind::Switch && o.resetAfter >= 0 && o.t >= o.resetAfter)
+                    o.state = 0, o.t = 0;
             }
             if (o.kind == Kind::Switch && o.state == 0 && pressed) {
                 const float d = glm::length(vec2(o.pos - in.pos));

@@ -378,7 +378,8 @@ public:
     // doors and push blocks are collision().dynamics (following their pose); rigid-body doors swing on a hinge.
     const physics::Scene& physics() const { return physics_; }
     bool sendUberCommand(int32_t uid, uint32_t commandIndex);
-    // Section states of uber object `uid` (UberObjectData::sectionModels order; 0 = initial), null before its first use.
+    // Section states of uber object `uid` (UberObjectData::sections order; 0xFFFFFFFF = in a transition), null before its
+    // first use.
     const std::vector<uint32_t>* uberState(int32_t uid) const {
         const auto it = uberStates_.find(uid);
         return it == uberStates_.end() ? nullptr : &it->second;
@@ -619,7 +620,18 @@ private:
     std::map<int32_t, float> multibodyLo_, multibodyHi_; // native limits issued before hinges exist
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
-    std::map<int32_t, std::vector<uint32_t>> uberStates_;
+    std::map<int32_t, std::vector<uint32_t>> uberStates_; // per section: current state, 0xFFFFFFFF in a transition
+    // Section components (tru.exe 0x4D7550 update): current state (+0x84) or running transition (+0x80), seconds in the
+    // state (+0x88) / transition; events fired once (+0x60); commanded: a command changed a section (travel latch).
+    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0; };
+    struct UberRuntime { std::vector<UberSectionState> sections; std::vector<float> animLength; uint64_t fired = 0; bool commanded = false; };
+    std::map<int32_t, UberRuntime> uberRuntime_;
+    std::vector<std::pair<int32_t, uint32_t>> uberEvents_; // (uid, event index) for the script's vt 54
+    void uberEnter(int32_t uid, size_t section, uint32_t state);
+    void uberBegin(int32_t uid, size_t section, uint32_t transition);
+    void uberFire(int32_t uid, size_t section, uint32_t kind, uint32_t value);
+    bool uberHolds(int32_t uid, const std::vector<formats::UberCondition>& conditions) const;
+    void tickUber(float dt);
     struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; std::string clip; };
     std::map<int32_t, UberMotion> uberMotion_;
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;

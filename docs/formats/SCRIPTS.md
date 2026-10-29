@@ -105,9 +105,43 @@ player every frame:
 - [O] Door objects carry their own clips, e.g. `ms_ani_tombdoor`: `idle_door_closed`, `doors_opening`,
   `idle_door_open`; `ma_ei_house_door`: `0_idle`, `10_opening`, `20_idle_open`, `30_closing`; `sa_uo_flush_gate`:
   `gate_closed`, `gate_opening`, `gate_open`.
-- [O] Uber objects keep a section table in the ObjectBase DTP (`ms_ani_tombdoor` 5130: "closed", "open";
-  `sa_uo_flush_gate`: "initial", "open") plus an animation state graph. [U] how commands (e.g. 176) and
-  `modifiable` values select sections and clips.
+- [O] Switch reset: the object's physical-class record (ObjectBase +0xC8) +0x34 points at its state records; the
+  first has flags at +4 (bit 0 = one-way: `ms_ei_switch_oneway_wall`, `ma_ei_wall_switch_electric`,
+  `ar_ei_switch_oneway`) and a reset delay at +0xC (`ma_ei_switch_wall_chapel` 1, `ca_ei_switch_wall_autoreset` 60,
+  `ms_ei_resetting_switch` 150; [I] frames at 30 per second). Resetting switches return to idle after it and can be used
+  again (`Object::resetAfter`).
+
+### Uber objects
+
+[O] The class-79 record (ObjectBase +0xC8, `formats::loadUberObject`): +8/+0xC sections (0x54 each), +0x10/+0x14
+commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state machine run by its component
+(tru.exe 0x4D7550): +0x78 → its record, +0x84 current state (−1 while in a transition), +0x80 running transition,
++0x88 seconds in the state, +0x60 bits of events already fired.
+
+| record | fields |
+|---|---|
+| section (0x54) | +4/+8 states, +0xC/+0x10 transitions, +0x14 default state, +0x18 model, +0x28 float angle (0x4D3050) |
+| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, value; 0x4D86A0: 2/3 play an animation, 9/12/13 physics joints, 0x14 joint-limit callbacks) |
+| transition (0x38) | +0 from, +4 to, +8 float, +0x18 trigger, +0x1C parameter, +0x2A animation-list index (0xFFFF none), +0x2C probability, +0x30 effect, +0x34 flags (1 play the animation, 2 wait for its end, 0x10 random) |
+| command (0xC) | +0 id (0 in every object seen), +4/+8 targets {section, type, payload} |
+| event (0x1C) | +4/+8 condition lists, +0xC section, +0x10 kind, +0x14 value, +0x18 once, +0x1A script event id |
+| condition list | +4/+8 entries {section, kind, value}: kind 1 = section in state `value`, 2 = section missing (0x4D1360) |
+
+- Commands (0x4D77A0): the command member's word (`uberobjectcommand` {object DTP id, index}) indexes the table; each
+  target (0x4D7680): type 1 sets the section's state, 2 starts the current state's transition whose trigger equals the
+  payload (0x4D4BE0), 3 / 4 the one with trigger 0xD / 0x10 and that parameter. A section in a transition ignores
+  them.
+- Automatic transitions (0x4D4B60 → 0x4D31E0): trigger 1 after `parameter` seconds in the state, 3 at once, 9 when
+  its condition list holds, 0xB/0xC on the section's facing flags (not modelled). 15 / 14 are physics joint limit
+  callbacks (0x4D7380 → 0x4D5A50); [I] ours fire 15 after 1 s in a state with a drive action (13) and 14 after 1 s.
+- A transition with flags 1 + 2 and an animation lasts the clip; then the target state is entered (0x4D7440).
+  Events: kind 2 leaving a state, 3 starting a transition (0x4D4A00), 4 finishing one, 1 entering a state; a match
+  (all condition lists holding) runs the object script's vt 54 with the event index, which `uberobjectevent` 0
+  compares with its member's index (CALLU: the event is the receiver, the member the argument).
+- l3_chapel shadow pillars `ma_uo_shadow_pillars` (4837): sections 0-3 are pillars turning a → b → c → d (trigger 2),
+  rising from "lowered" into a, c, b, a; section 4 is the solver (conditions "sections 1 and 3 at a" → left solved,
+  "0 and 2" → right solved, all four → solved); its events 2 / 3 / 0 are the script's members +44 / +56 / +68. The fire
+  4818 (lit by plate 4834) calls the pillars' vt 60, which opens shadow door 4835 when both halves are solved.
 - [O] Rigid multi-bone models (doors, switches) have skin indices but no weights in their vertex declaration;
   palette e.g. {0, 1} for the house door's 2-bone skeleton. [I] each vertex follows the bone of index byte 0
   (`formats::readSkin`); confirmed visually by the house door opening on its hinge bone.
@@ -138,12 +172,13 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   4525 → 12131 → 4520 → 12126 → 12171 runs its real bytecode: `stickybool(+8).Set(true)` and
   `modifiable(+4).Set(0)`. The ballcourt lever's polling loop drives its door at twice the lever angle.
   Unsupported bindings stop execution and use the old static-link fallback unless the VM already activated something.
-- [O] Uber object section/command tables are decoded from the class-79 ObjectBase record. `uberobjectbase` commands
-  dispatch by receiving command-member ordinal (numeric IDs can repeat), and function 5 initializes the command-driven
-  state machine. Command targets update section state, open the associated hinge, and drive moving collision from
-  actual travel clips, including translation and axis-angle rotation. Unit constructors start after all intros are
-  registered, so forward `instanceref` links (including the l2 elevator chain) resolve. The l1 kraken tomb door,
-  l2 `sa_uo_elevator_adrenaline`, and l4 `ca_rb_hallway_ramps_b` `raising` travel are covered by real-data tests.
+- [O] Uber objects run their section state machines (see "Uber objects" above); command targets drive the
+  associated hinge and moving collision from actual travel clips, including translation and axis-angle rotation. Unit
+  constructors start after all intros are registered, so forward `instanceref` links (including the l2 elevator chain)
+  resolve. The l1 kraken tomb door, l2 `sa_uo_elevator_adrenaline`, l4 `ca_rb_hallway_ramps_b` and the l3 chapel
+  pillars are covered by real-data tests.
+- [O] A script function with a return value writes it through local 0, which holds the caller's result address
+  (l3_chapel 12855 vt 54: `PUSHL32 0 … MOVE8`); PUSHL32 of a local holding an address pushes the address.
 - [I] Unit/global script objects live for the runtime; sound/music/UI natives on the proven bedroom path return
   zero without new side effects. Function 0 runs as the constructor when its slot is −1 or 20; function 2 starts
   when it is a WAIT-based multibody polling loop. START starts a fresh fiber at the first instruction at or beyond

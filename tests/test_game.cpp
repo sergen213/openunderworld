@@ -1819,7 +1819,8 @@ TEST(GameReal, RampUberCommandMovesCollision) {
     });
     ASSERT_NE(it, w.collision().dynamics.end());
     const glm::mat4 initial = it->transform;
-    ASSERT_TRUE(w.sendUberCommand(6045, 1)); // second command with the same numeric ID: raise, not lower
+    for (int i = 0; i < 30; ++i) w.tick({}); // section 0 settles in its rest state 1 (0 -> 1 is automatic)
+    ASSERT_TRUE(w.sendUberCommand(6045, 1)); // command 1 (trigger 16, 1): 1 -> 6, raise
     for (int i = 0; i < 120; ++i) w.tick({});
     EXPECT_NE(it->transform, initial);
 }

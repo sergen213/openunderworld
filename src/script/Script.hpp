@@ -156,6 +156,7 @@ struct Object {
     std::shared_ptr<const scene::Skeleton> skeleton;
     std::shared_ptr<const std::vector<anim::Clip>> clips; // [0] transition (pulling/opening), [1] held idle
     std::shared_ptr<const std::vector<std::string>> clipNames; // animation-list names of `clips` (clip effects)
+    float resetAfter = -1; // switches: seconds in the used state before they return to idle; < 0 one-way
     vec3 half{100};         // Block: half size [I]
     // Runtime state (saved).
     int state = 0;          // Door: 0 closed, 1 opening, 2 open; Switch: 0 idle, 1 pulling, 2 used
@@ -224,6 +225,8 @@ public:
     using UberNative = std::function<bool(int32_t uid, uint32_t function, uint32_t command, uint32_t commandIndex,
                                          std::span<const vm::Value> args, uint32_t& result)>;
     void setUberNative(UberNative native) { uber_ = std::move(native); }
+    // An uber object event (formats::UberEvent index) for uid's script: its vt 54 override.
+    void uberEvent(int32_t uid, uint32_t event);
     using TerrainNative = std::function<bool(int32_t uid, uint16_t streamUnitId, uint32_t modelIndex, uint32_t function,
                                              std::span<const vm::Value> args, uint32_t& result)>;
     void setTerrainNative(TerrainNative native) { terrain_ = std::move(native); }
@@ -376,7 +379,7 @@ private:
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;
     struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips;
-                    std::shared_ptr<const std::vector<std::string>> names; };
+                    std::shared_ptr<const std::vector<std::string>> names; float resetAfter = -1; };
     std::map<std::string, std::shared_ptr<AnimSet>> animSets_; // object name -> skeleton + clips
     std::vector<Object> objects_;
     std::map<std::pair<const vm::Program*, uint32_t>, std::shared_ptr<vm::Instance>> auxiliary_; // unit/global scripts
