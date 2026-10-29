@@ -395,7 +395,7 @@ struct EnemyMeshes {
                     continue;
             }
             palettes.push_back(ou::anim::skinPalette(e.type().skeleton, e.pose(alpha)));
-            const glm::mat4 m = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip);
+            const glm::mat4 m = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip, s.tilt);
             for (const size_t i : meshIndices[k]) jobs.push_back({i, palettes.size() - 1, m});
         }
         if (outs.size() < jobs.size()) outs.resize(jobs.size());
@@ -924,7 +924,7 @@ struct EffectsView {
             const auto it = e->type().clips.find(s.clip);
             if (it == e->type().clips.end()) continue;
             const auto fx = library->get(e->type().name);
-            const glm::mat4 model = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip);
+            const glm::mat4 model = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip, s.tilt);
             std::vector<glm::mat4> pose;
             if (follows(fx)) pose = e->pose(1.0), system.track(enemyOwner(e->uid()), model, pose);
             clipEvents(fx, s.clip, p.clip, p.clipTime, s.clipTime, it->second.durationSeconds(), floorMaterial(s.pos), model,

@@ -575,6 +575,8 @@ TEST(CombatReal, WeaponData) {
         EXPECT_FLOAT_EQ(p->spreadRecovery, def.spreadRecovery);
         for (int k = 0; k < 3; ++k) EXPECT_EQ(p->damage[k], def.damage[k]);
         for (int k = 0; k < 3; ++k) EXPECT_EQ(p->wetDamage[k], def.wetDamage[k]);
+        EXPECT_EQ(p->hitClass, def.hitClass);
+        EXPECT_EQ(p->hitType, def.hitType);
     }
     // Lara's clips of every weapon load (loadLaraAnims throws on a missing one), with the lengths Combat.cpp times by
     const auto anims = game::loadLaraAnims(bf);

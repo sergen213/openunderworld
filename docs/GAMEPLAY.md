@@ -690,12 +690,26 @@ Enemy shots (`Enemies::shots`, this tick's) are logged (`enemy N shot hits Lara 
 
 ### Survey (intros per unit) [O]
 
-- Mexico: `cat_panther` ×13 (ballcourt 4, temple 5, templepath 1, trailstart 3), `panther_thrall` ×1 (l4_pool 5645),
-  `mayan_thrall_pool_generator` ×13 (l4_pool), `poacher` ×12 / `poacher_long_range` ×4 (ballcourt, temple),
-  `bat_enemy` ×5 (temple 5250..5254, z 1043) + `small_albino_spider` ×22 (temple), `giant_albino_tarantula` ×13 +
-  `small_albino_spider_generator` ×9 (traprooms), `giant_tarantula_generator` ×3 (staircase_xibalba). Thailand: `tiger`
-  ×8, spiders, 15 bats. Sharks: `shark_blueshark` (l1_seafloor 980..985, l2_cliffclimb 4020..4023), `shark_greenland`
-  (l7_arctic_sea 9125..9133).
+Every unit of unitlist.txt (`OU_AI_SURVEY=1 ou_ai_tests --gtest_filter=AiReal.Survey`; `OU_AI_SURVEY_POS=1` adds
+positions). Placed enemy intros, generators (→ spawned object) and the tilted crawler intros that cling:
+
+| Chapter | Enemies |
+|---|---|
+| 1 Mediterranean | `shark_blueshark` ×6 (l1_seafloor); ship: `merc` ×9 + `merc_deux` ×3 + 8 `merc_generator_run` intros (l1_ship_exterior), `merc_generator_run` in the upper hallways and engine hall |
+| 2 Thailand | `tiger` ×6 (junglehub) + ×2 (towerroom); `naga_green` ×5 / `naga_red` ×6 (norsehub, 7 clinging), ×12 / ×4 (puzzleroom, 4 clinging); `small_albino_spider` ×6 hubhall (all on a pillar), ×19 maproom (16 on walls), ×14 shrineroom (all on walls); `small_brown_spider` ×11 + `_no_jump` ×5 (cliffclimb, 6 clinging); `bat_enemy` ×12 maproom, ×9 puzzleroom, ×15 towerroom; bat / spider generators; `shark_blueshark` ×4 (cliffclimb) |
+| 3 Croft Manor | `panther_thrall` ×2 (secretchamber); `small_brown_spider` ×38 chapel (27 on walls / ceiling) + 7 generators, ×11 stairhall (8 on walls); bats in the chapel |
+| 4 Mexico | `cat_panther` ×13, `poacher` ×12, `poacher_long_range` ×4, `bat_enemy` ×5, `small_albino_spider` ×22 (temple, 17 on walls), `giant_albino_tarantula` ×13 (traprooms), `panther_thrall` ×1 + 13 `mayan_thrall_pool_generator` (pool), tarantula / spider generators |
+| 5 Jan Mayen | `viking_thrall` ×7 entry, ×7 entryb, ×12 valgrind, ×4 + 2 pool generators valaskjalf; `yeti_thrall` ×1 valaskjalf; `giant_albino_tarantula` ×14; `small_albino_spider` ×10 (entryb, all on walls); bats ×35 |
+| 6 Andaman Sea | `merc` ×2, `merc_deux` ×3, `merc_generator_run` ×23 + 6 `merc_generator` (→ `merc_generator_run`) |
+| 7 Arctic Sea | `shark_greenland` ×8 (arctic_sea); `viking_thrall` ×12 + 10 generators, `yeti_thrall` ×11 + pool / plain generators (helheim01/03, yggdrasil_hall01/02, yggdrasil_end) |
+
+- Not enemies (no oflags2 0x400000) [O]: the Kraken (`ms_ani_kraken_body`, `ms_ani_tentacle_*` hazards/door/gears/
+  pillar/platform, `co_kraken_*`: animated scene objects driven by the l1_kraken_room scripts and uber commands),
+  Natla's end (`natla_end` ×6 and `natla_end_mover` ×82 in l7_yggdrasil_end: physical script objects / spline movers,
+  `wp_natla_fireball(_adren)` ×17 physical projectiles), `amanda` (2 clips; l1_cine_ship_sinking, l6_ship_natla_room,
+  l7_thin_ice, l7_yggdrasil_end) and the doppelganger (`co_doppelganger` cinematic props only; no `lara_doppelganger`
+  object exists, tru.exe only names it as a costume string). So there is no doppelganger or Amanda fight, and the
+  Kraken / Natla encounters are scripted set pieces (docs/PROGRESSION.md), not enemy AI.
 - Enemy objects: ObjectBase oflags2 (+4) bit 0x400000 selects the "enemy" object family (tru.exe 0x5BF0E0 → family
   table 0x8ABA28 entry 14: init 0x63C190 (via 0x63C530), message 0x6164D0 (via 0x6187C0)). Sharks are in it too.
 - Generators: ObjectBase +0xDE u16 = spawned object (mayan_thrall_pool_generator → 600 `mayan_thrall`, others → bats,
@@ -715,7 +729,7 @@ Enemy shots (`Enemies::shots`, this tick's) are logged (`enemy N shot hits Lara 
 | node +0x30 / +0x34 / +0x38 | senses: default / mode 2 / combat (layout below) | [O] 0x614490/0x6144C0/0x6144F0, modes FUN_0063F7F0 |
 | node +0x3C | health block {easy, normal, hard, +0xC} | [O] 0x620CC0 → 0x6E77B0 by difficulty 0x6E7710 (≤ 0 → normal) into comp+0x2C64 |
 | node +0x44 / +0x4C | pointers to sleep / investigate senses | [O] |
-| node +0x64 | death record (below) | [O] 0x614610, EnemyState_Death 0x66C500 |
+| node +0x64 | death record (below), with the regenerate fields | [O] 0x614610, EnemyState_Death 0x66C500, 0x67ED20 |
 | node +0x68..+0x9C | attack records (below) | [O] 0x642D80, EnemyState_Fire 0x666D10/0x666EB0 |
 | node +0xE4 | `"Sidestep"` behaviour parameters `{300, ptr, 948.2/790.1, 60/100, …}` — not senses | [O] FUN_00623000 |
 
@@ -755,6 +769,22 @@ for 3/5/7 (a − 90°, a + 180°, a + 90°). Poacher: 3/7 `death_shot_3`, 5 `dea
 `death_adren`, flag 5 `death_running`, flag 7 `hitreact_thrown_forward`. Bat: 1 `death`. After the timer the exe
 hands the body to physics (0x696F90 budget check → impulse 0x696A60) [I: ragdoll].
 
+Regenerate (death record +0x20..+0x70; tru.exe EnemyRegenerateData 0x67ED20, decision 0x620380, hit filter
+0x682490) [O]: +0x20 / +0x24 clip refs (fall, get up), +0x28 time (counts; [I] 1/30 s), +0x64 count of 0xC-byte
+entries at +0x68 `{class (-1 any), type (0 any), flag}`. A lethal hit whose message +0x50 class / +0x64 type matches an
+entry (0x67F040; needs a ref at +0x22 or +0x26) enters the regenerate state: full health at once (0x620CC0 →
+0x637850), the fall clip, lying, then the get-up clip; any other lethal hit kills. While down, matching hits are
+absorbed (0x682490 → 0x613BE0 only posts 0x3E to its attachments); others damage the full-health body normally.
+Hit class / type come from Lara's ammo record +0x20 / +0x24 (0x6C64D0 → 0x63C9B0): pr_handgun / uzi / akrifle bullet
+0 / 1, pr_shotgunbullet 2 / 1, pr_thorbolt 13 / 3.
+
+| Type | Fall → get up | Time | Entries | So |
+|---|---|---|---|---|
+| viking_thrall, mayan_thrall | `death` → `death_reanimate` (5.4 s) | 450 (15 s) | {any, 1}, {1}, {2}, {10} | bullets, blows, [I] grenades knock down; Mjolnir kills |
+| yeti_thrall | `death_standing` → `regenerate_01` | 210 (7 s) | {any, 1}, {1}, {2} | as above, but grenades kill [I] |
+| panther_thrall | type-2 ref (ours: role `death_static`) → `death_thrall_regen` | 400 (13.3 s) | {any, 1}, {1}, {2} | as viking |
+| others | none (+0x28 = 150 unused) | | | die |
+
 Normal hit points [O]: cat_panther / panther_thrall 700, tiger / poacher / giant_albino_tarantula / viking_thrall /
 shark_blueshark 500, merc 450, mayan_thrall 350, shark_greenland 800, yeti_thrall 1100, bat / small spiders 2.
 Distances in the data are multiples of 31.6056 (316.056 units = 1 m, consistent with the hair constants).
@@ -786,6 +816,22 @@ radii. Panther `run_forward_2` root speed 2323 units/s [O].
   (`combat_run_forward`) to where she was; within 474 [I]: the melee blow (`rifle_bash`, 100). No cover: the
   EnemyBehavior_*Cover RTTI classes and `cover_*` clips exist, cover markup was not looked for [U]. The rifle
   (`wp_akrifle`) is not drawn: model 0 has no gun, the skeleton's bones are unnamed and the hand bone was not found [U].
+- Crawlers (enemy data class 5 `naga_red`, 6 `naga_green`, 7 spiders): an intro whose rotated up axis has z < 0.5
+  (Rx(x) Ry(y), [I] 60° from vertical) clings to its wall or ceiling (`Mode::Cling`; drawn with the intro's tilt, idle
+  clip, no gravity) [O: ~130 such spiders and 11 nagas, see Survey]. It notices Lara by eye range and ray only [I: on a
+  wall the cones' heading means nothing], or when shot, and drops (`Mode::Drop`): a radius off its wall, upright,
+  falling with `fall_loop` / `falling_loop`, landing with `jump_end` / `fall_land_front`, then hunts. A crawler killed
+  on the wall falls off it. ponytail: the original walks the walls (EnemyState_Corner*, `concave_*` / `convex_*`
+  clips) instead of dropping; wall walking and the spiders' lairs (`idle_lair` / `exit_lair`) are not modelled.
+- Nagas [O data]: roles `idle_passive`, `idle_aggressive`, `walk_forward1`, `run_forward2`, `simple_attack1` (red
+  175, green 125: their +0x80 records), `hit_react_medium_front`, `dead_shot_front`; tranquilizer sleep
+  `tranq_sleep_start` / `tranq_sleep_loop`, waking with `rest_to_idle` [I: no sleep end clip]. The green naga's +0x88
+  record (`spit_attack`, 150, type 15) is a ranged blow [I]: out of melee reach and within 2528 units (8 m, the
+  lose-track distance) with Lara in sight, once per its record cooldown; it hits in the clip's hit window if she is
+  still in sight and range (no projectile).
+- Thralls (behaviour 3) regenerate as above (`Mode::Down`, `Mode::Rise`; down time and clips from the record); after
+  getting up they hunt again. Their stagger damage is 0: [I] 0 means no full hit reaction (they have additive
+  `hitreact_*_add` clips; reacting to every pistol round pushed them back for good).
 - Flyers (behaviour 2): bats hover where placed (root motion dropped), fly in 3D (sphere of the body radius, slid along
   walls) at 700 units/s [I] towards Lara's head (0.85 of her height) until within 0.8 × (radius + 150); bite
   (`attack_bite`) within radius + 150, hitting within radius + 250, damage of the bat record (75) once per 1.5 s [I]
@@ -807,7 +853,7 @@ radii. Panther `run_forward_2` root speed 2323 units/s [O].
 | Blow damage | the record whose clip we play: panther 50 (`simple_attack_static1`), poacher 100 (`rifle_bash`), bat 75; type 2 → heavy, else light | [O]; thralls 120 [I] |
 | Hit window | 35–60 % of the attack clip, 0.5 s cooldown (bats 1.5 s); the records' +0x34 cooldowns are used for fire only, as we play one melee attack | [I] |
 | Shots | rec+0x154 per hit; shots/gap/start delay from the record in 1/30 s; cooldown rec+0x34 ms | [O] values; units [I] |
-| Stagger | after `block +0xC` damage (panther 80, thralls 0 = every hit) | [I] |
+| Stagger | after `block +0xC` damage (panther 80); 0 (thralls, spiders, sharks) = never; a reaction is not restarted by hits during it | [I] |
 | Generator trigger | Lara within 2528 (8 m), ±2000 z, once | [I] the real trigger is scripted/EnemySpawnData 0x614FB0 [U] |
 
 Checkpoints and streaming: `Enemies::checkpoint()` snapshots the dead uids when a new checkpoint is touched;
@@ -822,16 +868,40 @@ with four type-2 entries, no attack records (bite damage stays at the inferred 1
 chase with 3D clip-driven swimming and sphere collision, bite, and die into the floating loop. Type-10 boxes confine
 swimming when present; the real shark units expose none, so their live behavior uses collision-based free swimming.
 `AiReal.SharksSpawnSwimBiteAndDie` verifies populations and shark 4020 chasing, biting and dying.
+`AiReal.NagasClingDropBiteSpitAndDie`, `AiReal.SpidersClingDropAndBite` and `AiReal.ThrallsGetUpUnlessMjolnir`
+cover the crawlers and thralls (spawn counts, clinging, drop / land in l2_norsehub and l2_hubhall, bites, the green
+spit, sleep, the regenerate record, knock-down / get-up timing, Mjolnir kills, cling saved).
 Sharks sense Lara only while she swims (`Target::inWater` = `PlayerState::water >= 0`) [I]: l2_cliffclimb's placed
 sharks 4021-4023 (1100-1900 below the start boat) used to see her on the deck, chase her out of the sea and land on it;
 the original's chapter-2 start (Wine capture, "Chapter starts") has no shark in sight. Out of their medium they stay
 idle (`Ai.SharkIgnoresLaraOutOfWater`, `StreamReal.ChapterStartEnemiesStayInTheirMedium`: no hunting enemy and no
 shark above a dry Lara 5 s into any chapter start).
 
-Not done: behaviour trees (search, flank, cover, taunt, dodge, jump/vault, nap), merc / long-range specifics beyond
-their records, rifle mesh, bat latch, wall-hung spiders (they drop), navmesh/routing, enemy sounds, ragdoll.
+Not done: behaviour trees (search, flank, cover, taunt, dodge, jump/vault), merc / long-range specifics beyond
+their records, rifle mesh, bat latch, wall walking (crawlers drop instead), navmesh/routing, ragdoll.
+- Mercs [U]: scripts call enemybase 27 `GuardNode(unitref member, node, r1, r2)` (l1_ship_exterior: node 1 with
+  2500/4000, 3000/4500, 1400/2800, 1250/500 per merc; 0x777210 → 0x61F7A0 stores up to six zones {point, inner, outer =
+  max(r1, r2)}; 0x61F810 tests a point within 320 vertically and the radius horizontally). The zone point comes from
+  0x5C8EA0: unit data (Level+0x74) +0x118 count / +0x11C 0x60-byte records whose +0x50 points at 0x60-byte node
+  matrices (l1_ship_exterior: one record, nodes on the deck at z 5706). Which record / node the script's `1` picks
+  was not settled (merc 1650 stands 8 000 units from node 1), so ours guard no zone; cover (`cover_*` clips,
+  EnemyBehavior_*Cover), patrol paths (EnemyPatrolPath) and the merc chatter line (one `vo\enemy\merc` sound per
+  ship unit, not tied to the AI) are not modelled.
+- Enemy behaviour index (enemybase 16/17, 0x62DE00 selects the n-th behaviour-list node of the enemy data) and 22 /
+  26 are kept for scripts but do not change our AI [U].
 
-Verification [O] (ou-game, GL, 1792×1008, ASan debug build; screenshots viewed, kept privately): replay
+Verification [O] (ou-game, Vulkan, 1280×720, invisible KWin; screenshots viewed, kept privately; 2026-10-29):
+replay `tests/replays/thrall_regenerate.txt` (l7_yggdrasil_hall01, `--spawn 1000,0,0,90`): viking 8833 charges, bites,
+goes down to the pistols at tick 369 (full health), lies (tick 600 frame, fixed camera: on the floor beside Lara),
+rises with `death_reanimate` at tick 1270 (15 s; frame 1400 mid-rise), attacks again; after X to Mjolnir a bolt kills
+it for good (tick 1802); yeti 8831 down 7 s, then killed by the hammer. `tests/replays/naga_drop.txt` (l2_norsehub,
+`--spawn -20348,27300,-4494,90`): red naga 2417 drops at tick 1, lands, bites at tick 159 (175), dies to the pistols
+at tick 497; fixed-camera frames (`--camera -20900,26200,-3900,-20348,28200,-3700`) show it clinging head-up on the
+wall (Lara spawned out of sight), falling at tick 25 and on the floor at tick 60. `tests/replays/spider_drop.txt`
+(l2_hubhall, `--spawn -19231,32752,5216,-90`): the six albino spiders on the pillar, dropped at its foot (tick 40),
+running in and slashing (tick 120); Lara shoots them.
+
+Earlier verification [O] (ou-game, GL, 1792×1008, ASan debug build; screenshots viewed, kept privately): replay
 `tests/replays/poacher_firefight.txt` (l4_ballcourt, `--spawn 17520,10383,2650,180`): poachers 6540/6541 alert at tick
 1, fire at tick 26, first shots at tick 87 (start delay 60 ticks), bursts of 3 ten ticks apart, hits and misses
 logged, `reload2` at tick 127; frame 99 shows the yellow (hit) and white (miss) tracers from the poacher on the temple
@@ -905,8 +975,8 @@ pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary re
 
 - Rifle and tranquilizer upper body: each DRM's own 3×5 `combat_rifle_aim_*` / `combat_rifle_fire_*` grid, blended with the
   shotgun grid's columns / rows [I: not measured separately]; muzzles [I] from the mesh bounds.
-- Tranquilizer darts (`Hit::tranq`): animals with `sleep_start` / `sleep_loop` / `sleep_end` (cats; tru.exe
-  EnemyBehavior_Nap / EnemyState_Nap) add the 500 dose instead of damage and fall asleep once the dose reaches their
+- Tranquilizer darts (`Hit::tranq`): animals with `sleep_start` / `sleep_loop` / `sleep_end` (cats; nagas'
+  `tranq_sleep_start` / `_loop`, waking with `rest_to_idle` [I]; tru.exe EnemyBehavior_Nap / EnemyState_Nap) add the 500 dose instead of damage and fall asleep once the dose reaches their
   health (`ai::Mode::Sleep`, saved): sleep_start, sleep_loop for 20 s [I], sleep_end, then alert. Other enemies take the
   dose as damage [I]. Panther (700): two darts.
 - Chapter loadout (`chapterSecondary`, `World::chapterLoadout` on a chapter start and for saves without combat state)

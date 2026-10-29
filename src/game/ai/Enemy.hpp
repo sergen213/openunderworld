@@ -62,6 +62,15 @@ struct DeathClip {
     int category = 1;
     int flag = 0;     // 0 plain, 3 adrenaline / head shot, 5 running, 7 special (vault, thrown)
 };
+// Regenerate (death record +0x20..+0x70, tru.exe EnemyRegenerateData 0x67ED20 / hit filter 0x682490): a body with
+// time > 0 lies down for that long and gets back up at full health (thralls), unless a hit matching one of `kills`
+// lands while it is down (0x67F040: source -1 = any, type 0 = any, flag bit 0 = the hit's +0x6E byte).
+struct Regenerate {
+    std::string clip, up; // +0x20 clip ref: falls (played on entering, 0x67ED20); +0x24: gets back up
+    float time = 0;    // +0x28 s down ([I] 30 Hz counts); used only with a clip (0x67F040: ref +0x22 or +0x26 set)
+    struct Kill { int32_t source = -1, type = 0; bool flag = false; };
+    std::vector<Kill> kills; // count +0x64, 0xC-byte entries at +0x68
+};
 
 // Numbers per enemy type. Provenance ([O] observed / [I] inferred) in docs/GAMEPLAY.md "Enemies".
 struct EnemyTuning {
@@ -71,7 +80,7 @@ struct EnemyTuning {
     // Health block {CASUAL, TOMB RAIDER, MASTER} picked by Tailoring::enemyHealth; non-positive -> `health` (0x6E77B0).
     std::array<float, 3> healthLevels{};
     float healthAt(int level) const { return level >= 0 && level < 3 && healthLevels[size_t(level)] > 0 ? healthLevels[size_t(level)] : health; }
-    float staggerDamage = 0;       // damage that plays a hit reaction (accumulated since the last one)
+    float staggerDamage = 0;       // damage that plays a hit reaction (accumulated since the last one); 0 never [I]
     Senses senses, combatSenses;   // idle / once alerted
     float attackRange = 474.08f;   // starts an attack when Lara is this close (centre to centre)
     float attackReach = 632.11f;   // a blow lands if Lara is inside this during the hit window
@@ -88,6 +97,7 @@ struct EnemyTuning {
     float flySpeed = 700.0f;       // [I] flyers, units/s
     std::vector<Attack> attacks;   // every record, node order
     std::vector<DeathClip> deaths;
+    Regenerate regenerate;
 };
 
 struct EnemyType {
@@ -104,7 +114,13 @@ struct EnemyType {
     const std::string& clipName(Role r) const { return roles[size_t(r)]; }
     uint16_t weapon = 0;     // list node +0x20 weapon record u16 +2: weapon object id (poacher 114 wp_akrifle); 0 none
     std::string weaponObject; // its objectlist name ("wp_akrifle"): Lara picks it up from the body (World::enemyDrops)
-    bool sleeps = false;     // has sleep_start / sleep_loop / sleep_end: tranquilizer darts put it to sleep (cats)
+    bool sleeps = false;     // has sleepClips: tranquilizer darts put it to sleep (cats, nagas)
+    std::array<std::string, 3> sleepClips; // start, loop, wake: sleep_start/_loop/_end or tranq_sleep_start/_loop, rest_to_idle [I]
+    std::string fallClip, landClip; // dropping off a wall (Mode::Drop): fall_loop / falling_loop, jump_end / fall_land_front
+    int spit = -1;           // attacks[] index of a ranged spit (green naga +0x88 spit_attack), -1 none
+    // Wall crawlers (enemy data class 5 / 6 nagas, 7 spiders): their tilted intros cling to walls and ceilings.
+    bool crawler() const { return enemyClass == 5 || enemyClass == 6 || enemyClass == 7; }
+    bool regenerates() const { return !tuning.regenerate.clip.empty() || !tuning.regenerate.up.empty(); }
     bool flyer() const { return behaviour == 2; }
     // The shared flyer behaviour tree also drives sharks; their animation set selects the aquatic controller.
     bool aquatic() const { return flyer() && clipName(Role::Run).starts_with("swim_"); }
@@ -123,7 +139,9 @@ extern const std::array<std::vector<std::string_view>, size_t(Role::Count)> kRol
 bool isEnemyObject(const cdc::BigfileSet& bigfile, const std::string& name);
 
 // Sleep: knocked out by tranquilizer darts (EnemyBehavior_Nap / EnemyState_Nap in tru.exe; docs/GAMEPLAY.md "Combat").
-enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep };
+// Cling / Drop: a crawler on a wall or ceiling, dropping to the floor. Down / Rise: a thrall's regenerate (lying, then
+// getting back up at full health).
+enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep, Cling, Drop, Down, Rise };
 std::string_view modeName(Mode m);
 
 // What enemies hunt: Lara's feet and whether she can still be hurt.
@@ -165,12 +183,17 @@ struct EnemyState {
     float tip = 0;           // dead: rad the body has tipped over onto its side (clips ending upright)
     float sleep = 0;         // Sleep: seconds left in sleep_loop
     float drowsy = 0;        // tranquilizer dose since it last woke (sleeps at its health)
+    glm::vec2 tilt{0};       // Cling: the intro's rotation x / y (R = Rx Ry Rz(yaw + 90°)); 0 upright
+    float down = 0;          // Down: seconds left lying
+    int melee = -1;          // Attack: tuning.attacks index of the blow (-1: the role clip's record)
 };
 
 class Enemy final : public Damageable {
 public:
     // `healthLevel`: Tailoring::enemyHealth (EnemyTuning::healthAt).
-    Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false, int healthLevel = 1);
+    // `tilt`: a crawler's intro rotation x / y (clings when the intro is not upright).
+    Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false, int healthLevel = 1,
+          glm::vec2 tilt = {});
 
     // Appends this tick's shots to `shots` (may be null).
     void tick(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, float dt, std::vector<Shot>* shots = nullptr);
@@ -197,7 +220,8 @@ public:
     EnemyState interpolated(double alpha) const;
     // Model-space bone matrices blended between the last two ticks; skin with anim::skinPalette.
     std::vector<glm::mat4> pose(double alpha) const;
-    static glm::mat4 modelMatrix(vec3 pos, float yaw, float tip = 0); // root at pos, model -Y = heading; tip: rolled onto its side
+    // Root at pos, model -Y = heading; tip: rolled onto its side; tilt: clinging (Rx(x) Ry(y) before the heading).
+    static glm::mat4 modelMatrix(vec3 pos, float yaw, float tip = 0, glm::vec2 tilt = {});
 
 private:
     void setMode(Mode m);
@@ -210,6 +234,8 @@ private:
     void move(const collision::CollisionMesh& col, vec3 delta, float dt);
     void fly(const collision::CollisionMesh& col, vec3 delta);
     void die(const Hit& hit);
+    bool getsUp(const Hit& hit) const; // Regenerate::kills match (0x67F040)
+    vec3 up() const;                    // body up axis (tilted while clinging)
     int readyFire() const; // first fire record off cooldown, -1 none
     void shoot(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, std::vector<Shot>* shots);
     void updatePose(float dt, bool reset);
@@ -219,6 +245,7 @@ private:
     EnemyState s_, prev_, start_;
     anim::AnimController anim_;
     std::vector<glm::mat4> bones_, prevBones_;
+    uint32_t clipSerial_ = 0, poseSerial_ = 0; // playClip count; the one anim_ plays
 };
 
 // A spawn generator intro (objectlist "*_generator"): spawns its object (generator ObjectBase +0xDE) once.
@@ -244,7 +271,7 @@ public:
     void setHealthLevel(int level) { healthLevel_ = level; } // Tailoring::enemyHealth for enemies added from now on
     // Spawns the enemies and generators of newly loaded units; drops (and remembers) those of unloaded ones.
     void setUnits(const std::vector<script::UnitRef>& units);
-    Enemy& add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false);
+    Enemy& add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false, glm::vec2 tilt = {});
     void addGenerator(Generator g) { generators_.push_back(std::move(g)); }
     void addType(std::shared_ptr<const EnemyType> t) { types_[t->name] = std::move(t); } // spawnable by name without a bigfile
     // A checkpoint was reached: remembers which enemies (by uid; generator spawns by their generator's) are dead.

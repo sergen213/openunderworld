@@ -9,8 +9,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <set>
 
 using namespace ou;
@@ -74,6 +76,7 @@ std::shared_ptr<const game::ai::EnemyType> syntheticType() {
         t->clips[t->roles[size_t(r)]] = c;
     }
     t->tuning.health = 700;
+    t->tuning.staggerDamage = 1; // reacts to every hit
     return t;
 }
 
@@ -860,5 +863,332 @@ TEST(AiReal, PoachersFireAndBatsBite) {
             EXPECT_GE(batBites, 1);
         }
         for (const float d : hurt) EXPECT_TRUE(d == 75 || d == 50 || d == 100) << d; // shot / bite, panther, bash
+    }
+}
+
+namespace {
+game::Hit gunHit(vec3 dir, float damage) { // Lara's bullets: pr_*bullet class 0 / type 1
+    game::Hit h{damage, {}, dir, game::Team::Player};
+    h.damageType = 1;
+    return h;
+}
+game::Hit boltHit(vec3 dir) { // Mjolnir: pr_thorbolt 1000, class 13 / type 3
+    game::Hit h{1000, {}, dir, game::Team::Player};
+    h.damageClass = 13, h.damageType = 3;
+    return h;
+}
+// A spot for Lara in view of a clinging crawler: off its wall along its up axis, dropped to the floor below.
+std::optional<vec3> floorInFront(const CollisionMesh& col, const game::ai::Enemy& e, float out) {
+    const vec3 up = vec3(game::ai::Enemy::modelMatrix({}, e.state().yaw, 0, e.state().tilt) * glm::vec4(0, 0, 1, 0));
+    vec3 p = e.state().pos + up * out;
+    const auto g = col.groundProbe(p + vec3(0, 0, 300), 8000);
+    if (!g) return std::nullopt;
+    return g->point;
+}
+// Ticks until `done` (true) or `ticks` run out; returns the tick or -1.
+template <class F>
+int tickUntil(game::ai::Enemies& es, const CollisionMesh& col, const game::ai::Target& lara, const game::ai::HurtFn& hurt, int ticks, F done) {
+    for (int i = 0; i < ticks; ++i) {
+        es.tick(col, lara, hurt, kDt);
+        if (done()) return i;
+    }
+    return -1;
+}
+} // namespace
+
+// Thailand's nagas (naga_green class 6, naga_red class 5) spawn in l2_norsehub / l2_puzzleroom; tilted intros cling to
+// the walls and ceilings. A clinging naga notices Lara below, drops (falling_loop), lands (fall_land_front), closes in
+// and bites (simple_attack1, red 175 / green 125 per record); a green naga spits (spit_attack, 150) from out of reach;
+// tranquilizer darts send it to sleep (tranq_sleep_start / _loop); bullets kill it (dead_shot_front).
+TEST(AiReal, NagasClingDropBiteSpitAndDie) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const auto& [unit, green, red, cling] : {std::tuple{"l2_norsehub", 5, 6, 7}, std::tuple{"l2_puzzleroom", 12, 4, 4}}) {
+        auto u = game::loadUnitData(bf, unit);
+        game::ai::Enemies es;
+        es.setBigfile(&bf);
+        es.setUnits({{u.name, u.drm, vec3(0)}});
+        int g = 0, r = 0, c = 0;
+        for (const auto& e : es.all()) {
+            g += e->type().name == "naga_green", r += e->type().name == "naga_red";
+            c += e->type().name.starts_with("naga_") && e->state().mode == Mode::Cling;
+        }
+        EXPECT_EQ(g, green) << unit;
+        EXPECT_EQ(r, red) << unit;
+        EXPECT_EQ(c, cling) << unit;
+    }
+    const auto red = game::ai::loadEnemyType(bf, "naga_red"), green = game::ai::loadEnemyType(bf, "naga_green");
+    for (const auto& t : {red, green}) {
+        EXPECT_TRUE(t->spawnable()) << t->name;
+        EXPECT_TRUE(t->crawler());
+        EXPECT_EQ(t->clipName(Role::Attack), "simple_attack1");
+        EXPECT_EQ(t->clipName(Role::Death), "dead_shot_front");
+        EXPECT_EQ(t->fallClip, "falling_loop");
+        EXPECT_EQ(t->landClip, "fall_land_front");
+        EXPECT_TRUE(t->sleeps);
+        EXPECT_EQ(t->sleepClips[0], "tranq_sleep_start");
+    }
+    EXPECT_EQ(red->tuning.attackDamage, 175);
+    EXPECT_EQ(green->tuning.attackDamage, 125);
+    ASSERT_GE(green->spit, 0);
+    EXPECT_EQ(green->tuning.attacks[size_t(green->spit)].clip, "spit_attack");
+    EXPECT_EQ(red->spit, -1);
+
+    // Real geometry: red naga 2417 on an l2_norsehub wall.
+    auto u = game::loadUnitData(bf, "l2_norsehub");
+    u.col.build();
+    game::ai::Enemies es;
+    es.setBigfile(&bf);
+    es.setUnits({{u.name, u.drm, vec3(0)}});
+    const auto it = std::find_if(es.all().begin(), es.all().end(), [](const auto& e) { return e->uid() == 2417; });
+    ASSERT_NE(it, es.all().end());
+    auto& naga = **it;
+    ASSERT_EQ(naga.state().mode, Mode::Cling);
+    const vec3 wall = naga.state().pos;
+    const auto spot = floorInFront(u.col, naga, 900);
+    ASSERT_TRUE(spot);
+    const game::ai::Target lara{*spot};
+    std::vector<float> bites; // this naga's (the unit's spider generator and bats hunt Lara too)
+    const auto hurt = [&](float d, vec3 from, int) { if (glm::distance(from, naga.state().pos) < 1) bites.push_back(d); };
+    ASSERT_GE(tickUntil(es, u.col, {*spot + vec3(0, 0, 20000)}, hurt, 120, [&] { return naga.state().mode != Mode::Cling; }), -1);
+    EXPECT_EQ(naga.state().mode, Mode::Cling); // Lara out of its sight: holds on
+    EXPECT_EQ(naga.state().pos, wall);
+    const int dropped = tickUntil(es, u.col, lara, hurt, 60, [&] { return naga.state().mode == Mode::Drop; });
+    ASSERT_GE(dropped, 0);
+    EXPECT_EQ(naga.state().tilt, glm::vec2(0));
+    EXPECT_EQ(naga.state().clip, "falling_loop");
+    const int landed = tickUntil(es, u.col, lara, hurt, 300, [&] { return naga.state().clip == "fall_land_front"; });
+    ASSERT_GE(landed, 0);
+    EXPECT_LT(naga.state().pos.z, wall.z - 100); // on the floor below its wall
+    ASSERT_GE(tickUntil(es, u.col, lara, hurt, 900, [&] { return !bites.empty(); }), 0);
+    EXPECT_EQ(bites[0], 175);
+    std::fprintf(stderr, "naga 2417: wall (%.0f %.0f %.0f), Lara (%.0f %.0f %.0f), drop tick %d, lands %d, bites at (%.0f %.0f %.0f)\n",
+                 wall.x, wall.y, wall.z, spot->x, spot->y, spot->z, dropped, landed, naga.state().pos.x, naga.state().pos.y, naga.state().pos.z);
+    for (int i = 0; i < 50 && naga.alive(); ++i) naga.onHit(gunHit({1, 0, 0}, 40));
+    EXPECT_EQ(naga.state().mode, Mode::Dead);
+
+    // Green naga spit, on a flat floor: Lara 1500 away (out of reach, in its sight).
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    const auto col = built(m);
+    game::ai::Enemies flat;
+    auto& spitter = flat.add(green, 1, {0, 0, 0}, 0);
+    std::vector<std::pair<float, std::string>> hits;
+    const int spat = tickUntil(flat, col, {{1500, 0, 0}}, [&](float d, vec3, int) { hits.push_back({d, spitter.state().clip}); }, 600,
+                               [&] { return !hits.empty(); });
+    ASSERT_GE(spat, 0);
+    EXPECT_EQ(hits[0].first, 150);
+    EXPECT_EQ(hits[0].second, "spit_attack");
+    EXPECT_LT(spitter.state().pos.x, 1500 - green->tuning.attackRange); // spat from out of reach
+    // Darts: the dose reaches its health -> asleep.
+    game::Hit dart{500, {}, {-1, 0, 0}, game::Team::Player};
+    dart.tranq = true;
+    spitter.onHit(dart);
+    EXPECT_EQ(spitter.state().mode, Mode::Sleep);
+    EXPECT_EQ(spitter.state().clip, "tranq_sleep_start");
+}
+
+// Spiders (class 7) on l2_hubhall's wall and l2_maproom's walls cling; a dropped spider lands and bites; a spider shot
+// on the wall falls off it dead; clinging survives a save round trip.
+TEST(AiReal, SpidersClingDropAndBite) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto u = game::loadUnitData(bf, "l2_hubhall");
+    u.col.build();
+    game::ai::Enemies es;
+    es.setBigfile(&bf);
+    es.setUnits({{u.name, u.drm, vec3(0)}});
+    std::vector<game::ai::Enemy*> spiders;
+    for (const auto& e : es.all())
+        if (e->uid() >= 3155 && e->uid() <= 3160) spiders.push_back(e.get());
+    ASSERT_EQ(spiders.size(), 6u);
+    for (const auto* s : spiders) EXPECT_EQ(s->state().mode, Mode::Cling) << s->uid();
+    // Save round trip keeps them on the wall.
+    game::ai::Enemies loaded;
+    loaded.setBigfile(&bf);
+    loaded.restore(nlohmann::json::parse(es.serialize().dump()));
+    loaded.setUnits({{u.name, u.drm, vec3(0)}});
+    for (const auto& e : loaded.all())
+        if (e->uid() == 3155) {
+            EXPECT_EQ(e->state().tilt, spiders[0]->state().tilt);
+            EXPECT_EQ(e->state().mode, Mode::Cling);
+        }
+
+    auto& spider = *spiders[0];
+    const vec3 wall = spider.state().pos;
+    const auto spot = floorInFront(u.col, spider, 700);
+    ASSERT_TRUE(spot);
+    std::vector<float> bites;
+    const game::ai::Target lara{*spot};
+    ASSERT_GE(tickUntil(es, u.col, lara, [&](float d, vec3, int) { bites.push_back(d); }, 60, [&] { return spider.state().mode == Mode::Drop; }), 0);
+    ASSERT_GE(tickUntil(es, u.col, lara, [&](float d, vec3, int) { bites.push_back(d); }, 300, [&] { return spider.state().clip == "jump_end"; }), 0);
+    EXPECT_LT(spider.state().pos.z, wall.z - 100);
+    ASSERT_GE(tickUntil(es, u.col, lara, [&](float d, vec3, int) { bites.push_back(d); }, 900, [&] { return !bites.empty(); }), 0);
+    EXPECT_EQ(bites[0], spider.type().tuning.attackDamage);
+    std::fprintf(stderr, "spider 3155: wall (%.0f %.0f %.0f) -> floor %.0f, bite %.0f\n", wall.x, wall.y, wall.z, spider.state().pos.z, bites[0]);
+    // Shot on the wall: dies and falls off it.
+    game::ai::Enemies fresh;
+    fresh.setBigfile(&bf);
+    fresh.setUnits({{u.name, u.drm, vec3(0)}});
+    auto& other = **std::find_if(fresh.all().begin(), fresh.all().end(), [](const auto& e) { return e->uid() == 3156; });
+    ASSERT_EQ(other.state().mode, Mode::Cling);
+    const float z0 = other.state().pos.z;
+    other.onHit(gunHit({1, 0, 0}, 40));
+    EXPECT_EQ(other.state().mode, Mode::Dead);
+    EXPECT_EQ(other.state().tilt, glm::vec2(0));
+    for (int i = 0; i < 240; ++i) fresh.tick(u.col, {{0, 0, -100000}, false}, {}, kDt);
+    EXPECT_LT(other.state().pos.z, z0 - 100);
+}
+
+// Thralls' regenerate record (death record +0x20..+0x70): bullets, blows and explosions only knock viking / mayan
+// thralls down for 15 s (450 counts) and yetis for 7 s; they get back up at full health (death_reanimate /
+// regenerate_01). Hits while down are absorbed, except Mjolnir's, which finishes them; a bolt on a standing thrall
+// kills it outright. Panther thralls (l3_secretchamber, l4_pool) fall with their role death clip and get up after
+// 13.3 s (death_thrall_regen).
+TEST(AiReal, ThrallsGetUpUnlessMjolnir) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    {
+        auto u = game::loadUnitData(bf, "l5_valaskjalf_entry");
+        game::ai::Enemies es;
+        es.setBigfile(&bf);
+        es.setUnits({{u.name, u.drm, vec3(0)}});
+        EXPECT_EQ(std::count_if(es.all().begin(), es.all().end(), [](const auto& e) { return e->type().name == "viking_thrall"; }), 7);
+    }
+    const auto viking = game::ai::loadEnemyType(bf, "viking_thrall"), yeti = game::ai::loadEnemyType(bf, "yeti_thrall"),
+               mayan = game::ai::loadEnemyType(bf, "mayan_thrall"), panther = game::ai::loadEnemyType(bf, "panther_thrall");
+    EXPECT_EQ(viking->tuning.regenerate.clip, "death");
+    EXPECT_EQ(viking->tuning.regenerate.up, "death_reanimate");
+    EXPECT_FLOAT_EQ(viking->tuning.regenerate.time, 15);
+    EXPECT_EQ(mayan->tuning.regenerate.up, "death_reanimate");
+    EXPECT_EQ(yeti->tuning.regenerate.up, "regenerate_01");
+    EXPECT_FLOAT_EQ(yeti->tuning.regenerate.time, 7);
+    EXPECT_TRUE(panther->tuning.regenerate.clip.empty()); // a type-2 ref: the role death clip
+    EXPECT_EQ(panther->tuning.regenerate.up, "death_thrall_regen");
+    EXPECT_NEAR(panther->tuning.regenerate.time, 400 / 30.0f, 1e-4f);
+    ASSERT_EQ(viking->tuning.regenerate.kills.size(), 4u); // {any, type 1}, classes 1, 2, 10
+    EXPECT_EQ(yeti->tuning.regenerate.kills.size(), 3u);   // no class 10
+
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    const auto col = built(m);
+    const game::ai::Target far{{4000, 4000, 0}};
+    for (const auto& type : {viking, yeti, panther}) {
+        SCOPED_TRACE(type->name);
+        game::ai::Enemies es;
+        auto& t = es.add(type, 1, {0, 0, 0}, 0);
+        const float full = t.health();
+        for (int i = 0; i < 50 && t.state().mode != Mode::Down; ++i) t.onHit(gunHit({1, 0, 0}, 100));
+        ASSERT_EQ(t.state().mode, Mode::Down);
+        EXPECT_EQ(t.health(), full);
+        EXPECT_EQ(t.state().clip, type->tuning.regenerate.clip.empty() ? type->clipName(Role::Death) : type->tuning.regenerate.clip);
+        t.onHit(gunHit({1, 0, 0}, 5000)); // absorbed while down
+        EXPECT_EQ(t.state().mode, Mode::Down);
+        EXPECT_EQ(t.health(), full);
+        const int rose = tickUntil(es, col, far, {}, 2000, [&] { return t.state().mode == Mode::Rise; });
+        EXPECT_NEAR(rose * kDt, type->tuning.regenerate.time, 2 * kDt);
+        EXPECT_EQ(t.state().clip, type->tuning.regenerate.up);
+        ASSERT_GE(tickUntil(es, col, far, {}, 600, [&] { return t.state().mode == Mode::Chase; }), 0);
+        // Down again, then Mjolnir finishes it.
+        for (int i = 0; i < 50 && t.state().mode != Mode::Down; ++i) t.onHit(gunHit({1, 0, 0}, 300));
+        for (int i = 0; i < 5 && t.alive(); ++i) t.onHit(boltHit({1, 0, 0}));
+        EXPECT_EQ(t.state().mode, Mode::Dead);
+        for (int i = 0; i < 1200; ++i) es.tick(col, far, {}, kDt);
+        EXPECT_EQ(t.state().mode, Mode::Dead); // for good
+    }
+    { // a bolt on a standing viking: dead at once
+        game::ai::Enemies es;
+        auto& t = es.add(viking, 1, {0, 0, 0}, 0);
+        t.onHit(boltHit({1, 0, 0}));
+        EXPECT_EQ(t.state().mode, Mode::Dead);
+        // grenades (class 10) knock a viking down, not a yeti
+        auto& v = es.add(viking, 2, {1000, 0, 0}, 0);
+        game::Hit blast{5000, {}, {1, 0, 0}, game::Team::Player};
+        blast.damageClass = 10;
+        v.onHit(blast);
+        EXPECT_EQ(v.state().mode, Mode::Down);
+        auto& y = es.add(yeti, 3, {2000, 0, 0}, 0);
+        y.onHit(blast);
+        EXPECT_EQ(y.state().mode, Mode::Dead);
+    }
+}
+
+// Survey (OU_AI_SURVEY=1): every enemy intro and generator spawn of every unit, and each enemy type's data and clips.
+TEST(AiReal, Survey) {
+    if (!gameDir() || !std::getenv("OU_AI_SURVEY")) GTEST_SKIP() << "OU_GAME_DIR / OU_AI_SURVEY not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    const auto ul = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    const std::string text(ul->begin(), ul->end());
+    std::vector<std::string> units;
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (!line.empty()) units.push_back(line.substr(line.rfind('\\') + 1));
+    }
+    std::map<std::string, bool> enemy;
+    std::set<std::string> types;
+    const char* keys[] = {"natla", "amanda", "dopp", "kraken", "tentacle", "boss", "jorm", "thrall", "merc", "spider", "yeti",
+                          "guard", "lara_", "shadow", "rutland", "zip", "winston", "alister"};
+    for (const auto& u : units) {
+        const auto bytes = bf.read("pc-w\\" + u + ".drm");
+        if (!bytes) continue;
+        const auto drm = cdc::parseDrm(*bytes);
+        std::map<std::string, std::vector<int>> found;
+        for (const auto& in : formats::parseUnit(drm).intros) {
+            const auto n = names.find(in.objectId);
+            if (n == names.end()) continue;
+            auto [it, fresh] = enemy.try_emplace(n->second, false);
+            if (fresh) it->second = game::ai::isEnemyObject(bf, n->second);
+            bool hit = it->second || n->second.ends_with("_generator");
+            for (const char* k : keys) hit |= n->second.find(k) != std::string::npos;
+            if (hit) found[n->second].push_back(in.uniqueId);
+            if (it->second && std::getenv("OU_AI_SURVEY_POS"))
+                std::fprintf(stderr, "POS %s %s %d %.0f %.0f %.0f\n", u.c_str(), n->second.c_str(), in.uniqueId, in.position[0], in.position[1], in.position[2]);
+            if (it->second && (std::abs(in.rotation[0]) > 0.05f || std::abs(in.rotation[1]) > 0.05f))
+                std::fprintf(stderr, "TILTED %s %s %d rot %.2f %.2f %.2f pos %.0f %.0f %.0f flags %02x %02x %02x %02x\n", u.c_str(), n->second.c_str(),
+                             in.uniqueId, in.rotation[0], in.rotation[1], in.rotation[2], in.position[0], in.position[1], in.position[2],
+                             in.flags[0], in.flags[1], in.flags[2], in.flags[3]);
+            if (it->second) types.insert(n->second);
+        }
+        for (const auto& [n, ids] : found) {
+            std::fprintf(stderr, "UNIT %s %s x%zu:", u.c_str(), n.c_str(), ids.size());
+            for (int id : ids) std::fprintf(stderr, " %d", id);
+            std::fprintf(stderr, "\n");
+            if (n.ends_with("_generator"))
+                if (const auto d = bf.read("pc-w\\" + n + ".drm")) {
+                    const auto gd = cdc::parseDrm(*d);
+                    if (const auto b = formats::objectBaseSection(gd)) {
+                        uint16_t id;
+                        std::memcpy(&id, gd.sections[*b].data.data() + 0xDE, 2);
+                        if (names.count(id)) types.insert(names.at(id)), std::fprintf(stderr, "  -> spawns %s\n", names.at(id).c_str());
+                    }
+                }
+        }
+    }
+    for (const auto& n : types) {
+        try {
+            const auto t = game::ai::loadEnemyType(bf, n);
+            std::fprintf(stderr, "TYPE %s class %d beh %d hp %.0f/%.0f/%.0f stagger %.0f r %.0f h %.0f weapon %u spawnable %d attacks %zu\n", n.c_str(),
+                         t->enemyClass, t->behaviour, t->tuning.healthLevels[0], t->tuning.health, t->tuning.healthLevels[2],
+                         t->tuning.staggerDamage, t->tuning.radius, t->tuning.height, t->weapon, t->spawnable(), t->tuning.attacks.size());
+            const auto& rg = t->tuning.regenerate;
+            std::fprintf(stderr, "  regen clip '%s' up '%s' time %.2f kills", rg.clip.c_str(), rg.up.c_str(), rg.time);
+            for (const auto& k : rg.kills) std::fprintf(stderr, " {src %d type %d flag %d}", k.source, k.type, k.flag);
+            std::fprintf(stderr, "\n  deaths");
+            for (const auto& d : t->tuning.deaths) std::fprintf(stderr, " %s/%d/%d", d.clip.c_str(), d.category, d.flag);
+            std::fprintf(stderr, "\n");
+            for (const auto& a : t->tuning.attacks)
+                std::fprintf(stderr, "  atk +%X clip %s shot %s follow %s dmg %.0f type %d\n", a.node, a.clip.c_str(), a.shotClip.c_str(),
+                             a.followClip.c_str(), a.damage, a.type);
+        } catch (const std::exception& e) { std::fprintf(stderr, "TYPE %s error %s\n", n.c_str(), e.what()); }
+        const auto d = bf.read("pc-w\\" + n + ".drm");
+        if (!d) continue;
+        std::fprintf(stderr, "  CLIPS");
+        for (const auto& a : anim::animList(cdc::parseDrm(*d))) std::fprintf(stderr, " %s", a.name.c_str());
+        std::fprintf(stderr, "\n");
     }
 }

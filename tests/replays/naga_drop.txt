@@ -1,0 +1,5 @@
+# l2_norsehub: --spawn -20348,27300,-4494,90. Red naga 2417 clings to the wall ahead; it sees Lara, drops (falling_loop), lands (fall_land_front) and bites (175); Lara draws, locks on and shoots it dead.
+0.5 draw 1
+0.6 draw 0
+1.5 aim 1
+1.6 fire 1

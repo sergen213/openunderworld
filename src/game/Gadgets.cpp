@@ -139,7 +139,9 @@ void World::explode(vec3 at) {
         const float d = glm::distance(at, p);
         if (d >= g.radius) continue;
         const vec3 dir = d > 1e-3f ? (p - at) / d : vec3(0, 0, 1);
-        t->onHit({glm::mix(g.damage, g.edgeDamage, falloff(d)), p, dir, Team::Player});
+        Hit hit{glm::mix(g.damage, g.edgeDamage, falloff(d)), p, dir, Team::Player};
+        hit.damageClass = 10; // [I] explosion: the class viking / mayan thralls get up from (ai::Regenerate::kills)
+        t->onHit(hit);
     }
     const vec3 chest = player_.state().pos + vec3(0, 0, targeting.eyeHeight);
     if (const float d = glm::distance(at, chest); d < g.radius) damageLara(glm::mix(g.damage, g.edgeDamage, falloff(d)), at, kDamageHeavy);

@@ -253,6 +253,7 @@ WeaponDef weaponDefaults(Weapon w) {
         d.infinite = d.dual = false, d.shortRange = 2000, d.maxRange = 3000, d.spreadDeg = d.maxSpreadDeg = 15;
         d.damage[0] = 50, d.damage[1] = 50, d.damage[2] = 40;
         d.wetDamage[0] = 50, d.wetDamage[1] = 50, d.wetDamage[2] = 40;
+        d.hitClass = 2;
         break;
     case Weapon::Speargun:
         d.object = "wp_speargun", d.ammo = "pr_spear", d.ammoSlot = 4, d.maxReserve = {40, 25, 15}, d.clip = 1, d.infinite = d.dual = false;
@@ -263,6 +264,7 @@ WeaponDef weaponDefaults(Weapon w) {
         d.object = "wp_thorhammer", d.ammo = "pr_thorbolt", d.clip = -1, d.dual = false, d.shortRange = 1000, d.maxRange = 8000;
         d.damage[0] = d.damage[1] = d.damage[2] = 1000;
         d.wetDamage[0] = 1000, d.wetDamage[1] = 400, d.wetDamage[2] = 100;
+        d.hitClass = 13, d.hitType = 3;
         break;
     case Weapon::AssaultRifle: // pr_akriflebullet (as wp_akrifle, the poachers' gun)
         d.object = "wp_assault_rifle", d.ammo = "pr_akriflebullet", d.ammoSlot = 2, d.maxReserve = {300, 210, 120}, d.clip = 30;
@@ -386,6 +388,7 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     def.shortRange = *shortRange, def.maxRange = *maxRange;
     def.spreadDeg = *spread, def.maxSpreadDeg = *maxSpread, def.spreadPerShot = *perShot, def.spreadRecovery = *recovery;
     def.mode = *mode;
+    if (*mode == 1) def.hitClass = ammo->at<int32_t>(R + 8).value_or(0), def.hitType = ammo->at<int32_t>(R + 0xC).value_or(1);
     def.damage[0] = *d0, def.damage[1] = *d1, def.damage[2] = *d2;
     if (wetScan) def.wetDamage[0] = *w0, def.wetDamage[1] = *w1, def.wetDamage[2] = *w2;
     else std::copy(def.damage, def.damage + 3, def.wetDamage);
@@ -717,6 +720,7 @@ void World::fire(int hand) {
             shot.damage = w.damageAt(best, submerged());
             Hit hit{shot.damage, shot.to, dir, Team::Player};
             hit.tranq = c.weapon == Weapon::Tranquilizer; // pr_tranquilizerdart: the damage is its dose
+            hit.damageClass = w.hitClass, hit.damageType = w.hitType;
             struck->onHit(hit);
             c.adrenaline = std::min(1.0f, c.adrenaline + shot.damage / kAdrenalineFill); // "damaging enemies" (locals 1310)
         }
@@ -733,7 +737,9 @@ void World::groundPound() {
         if (!t || !t->alive() || t->team() != Team::Enemy) continue;
         const vec3 d = t->position() - p;
         if (glm::length(vec2(d)) > kPoundRadius + t->radius() || std::abs(d.z) > kPoundRadius) continue;
-        t->onHit({0, t->aimPoint(), glm::normalize(vec3(vec2(d), 0) + vec3(1e-4f, 0, 0)), Team::Player, false, true});
+        Hit hit{0, t->aimPoint(), glm::normalize(vec3(vec2(d), 0) + vec3(1e-4f, 0, 0)), Team::Player, false, true};
+        hit.damageClass = 13, hit.damageType = 3; // [I] as pr_thorbolt: Mjolnir's blows finish thralls
+        t->onHit(hit);
     }
 }
 
@@ -880,7 +886,9 @@ void World::tickCombat(const Actions& a, float dt) {
             if (glm::length(c.pip) <= 1) { // Hit::headshot, damage = the target's remaining health
                 const vec3 from = muzzle(hand), to = c.target->aimPoint();
                 const Shot shot{from, to, hand, true, c.target, c.target->health()};
-                c.target->onHit({shot.damage, to, glm::normalize(to - from + vec3(1e-6f, 0, 0)), Team::Player, true});
+                Hit hit{shot.damage, to, glm::normalize(to - from + vec3(1e-6f, 0, 0)), Team::Player, true};
+                hit.damageClass = anims_.weapons[size_t(c.weapon)].hitClass, hit.damageType = anims_.weapons[size_t(c.weapon)].hitType;
+                c.target->onHit(hit);
                 c.shots.push_back(shot);
                 c.sinceShot[hand] = 0;
                 ++c.shotsFired;

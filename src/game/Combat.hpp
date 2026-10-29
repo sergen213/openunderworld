@@ -47,6 +47,10 @@ struct Hit {
     bool headshot = false; // adrenaline head shot (kills; the enemy may pick a special death clip)
     bool knock = false;    // knocked off balance whatever the damage (Mjolnir's ground pound)
     bool tranq = false;    // tranquilizer dart: animals with sleep clips are dosed instead of hurt (ai::Mode::Sleep)
+    // tru.exe hit message 0x11C (built by 0x63C9B0): +0x50 damage class, +0x64 damage type. Lara's bullets: the ammo
+    // record's +0x20 / +0x24 (pr_*bullet 0 / 1, pr_shotgunbullet 2 / 1, pr_thorbolt 13 / 3); 0 / 0 raw (the bike's ram,
+    // 0x6AE240). Thralls pick get-up or death by them (ai::Regenerate::kills).
+    int damageClass = 0, damageType = 0;
 };
 
 // Anything Lara can target and shoot. Enemies (src/game/ai) implement it and register the pointer in
@@ -186,6 +190,8 @@ struct WeaponDef {
     // The ammo's second fire record (+0x84), which 0x69E770 picks while instance +0x131 is set: [I] under water (its hit
     // object +0xA8 is the *_underwater one). Mjolnir 1000 / 400 / 100.
     float wetDamage[3] = {40.0f, 40.0f, 20.0f};
+    // Hit class / type (record +8 / +0xC, the hit message's +0x50 / +0x64: 0x6C64D0); projectiles (not decoded) [I] as bullets.
+    int hitClass = 0, hitType = 1;
     float damageAt(float dist, bool wet = false) const; // linear between the three
 };
 // Decodes `object` (pc-w\<object>.drm) and its ammo object, and the max reserve from Lara's data (pc-w\lara.drm);

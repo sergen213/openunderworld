@@ -62,12 +62,14 @@ Senses readSenses(const cdc::Section& s, uint32_t o) {
 // and death clips come from the enemy data records instead.
 const std::array<std::vector<std::string_view>, size_t(Role::Count)> kRoleCandidates = {{
     {"passive_idle", "idle_passive", "idle"},                                         // Idle
-    {"attack_idle", "idle_aggresive", "idle_combat_stand", "swim_forward_medium"},   // Alert
-    {"walk_forward_2", "walk", "combat_walk_forward", "bat_fly_passive", "swim_forward_slow"}, // Walk
-    {"run_forward_2", "run", "combat_run_forward", "bat_fly_aggressive", "swim_forward_fast", "swim_forward_medium"}, // Run
-    {"simple_attack_static1", "rifle_bash", "attack_bite", "simple_attack", "slash_attack", "slash", "bite_2", "burst_attack"}, // Attack
-    {"hitreact_medium_front", "hitreact_medium", "hit_front", "hit_react_light_front", "hit_react_medium", "hit"}, // Hit
-    {"death_static", "death_shot", "death", "damage_front_death"},                    // Death
+    {"attack_idle", "idle_aggresive", "idle_aggressive", "idle_combat_stand", "swim_forward_medium"}, // Alert
+    {"walk_forward_2", "walk", "combat_walk_forward", "bat_fly_passive", "swim_forward_slow", "walk_forward1"}, // Walk
+    {"run_forward_2", "run", "combat_run_forward", "bat_fly_aggressive", "swim_forward_fast", "swim_forward_medium", "run_forward2"}, // Run
+    {"simple_attack_static1", "rifle_bash", "attack_bite", "simple_attack", "slash_attack", "slash", "bite_2", "burst_attack",
+     "simple_attack1"},                                                                // Attack
+    {"hitreact_medium_front", "hitreact_medium", "hit_front", "hit_react_light_front", "hit_react_medium", "hit",
+     "hit_react_medium_front"},                                                        // Hit
+    {"death_static", "death_shot", "death", "damage_front_death", "dead_shot_front"}, // Death
     {"spawn_from_pool"},                                                              // Spawn
 }};
 
@@ -149,6 +151,15 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
             const uint32_t e = p->offset + 0xCC + 0x14 * k;
             t->tuning.deaths.push_back({clipRef(s, e), int(read<uint32_t>(s, e + 0xC)), read<uint8_t>(s, e + 0x10)});
         }
+        auto& rg = t->tuning.regenerate;
+        rg.clip = clipRef(s, p->offset + 0x20);
+        rg.up = clipRef(s, p->offset + 0x24);
+        rg.time = read<float>(s, p->offset + 0x28) * (1.0f / 30.0f);
+        const uint32_t kills = std::min(read<uint32_t>(s, p->offset + 0x64), 16u);
+        for (uint32_t k = 0; k < kills; ++k) {
+            const uint32_t e = p->offset + 0x68 + 0xC * k;
+            rg.kills.push_back({read<int32_t>(s, e), read<int32_t>(s, e + 4), (read<uint32_t>(s, e + 8) & 1) != 0});
+        }
     }
 
     // Model-0 skeleton and the role clips.
@@ -211,8 +222,23 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
         }
         loadClip("death_float_loop");
     }
-    // Tranquilizer naps (EnemyBehavior_Nap; cats' sleep_start / sleep_loop / sleep_end).
-    t->sleeps = loadClip("sleep_start") && loadClip("sleep_loop") && loadClip("sleep_end");
+    // Tranquilizer naps (EnemyBehavior_Nap): cats' sleep_start / sleep_loop / sleep_end; nagas' tranq_sleep_start /
+    // tranq_sleep_loop, waking with rest_to_idle [I: they have no sleep end clip].
+    for (const auto& c : {std::array<std::string, 3>{"sleep_start", "sleep_loop", "sleep_end"},
+                          std::array<std::string, 3>{"tranq_sleep_start", "tranq_sleep_loop", "rest_to_idle"}})
+        if (loadClip(c[0]) && loadClip(c[1]) && loadClip(c[2])) {
+            t->sleeps = true, t->sleepClips = c;
+            break;
+        }
+    // Crawlers' drop off a wall [I: the original crawls down the wall instead, EnemyState_Corner*].
+    for (const char* c : {"fall_loop", "falling_loop", "jump_loop"})
+        if (loadClip(c)) { t->fallClip = c; break; }
+    for (const char* c : {"jump_end", "fall_land_front", "fall_land"})
+        if (loadClip(c)) { t->landClip = c; break; }
+    // A spit record (green naga +0x88 spit_attack, 150): a ranged blow [I].
+    for (size_t i = 0; i < t->tuning.attacks.size(); ++i)
+        if (t->tuning.attacks[i].clip.find("spit") != std::string::npos && t->clips.count(t->tuning.attacks[i].clip)) t->spit = int(i);
+    loadClip(t->tuning.regenerate.clip), loadClip(t->tuning.regenerate.up);
 
     // Death clips that end lying down: the last frame's median bone height under a third of the bind pose's (the
     // median, as helper bones such as the dropped rifle fly far off).
@@ -312,7 +338,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
             if (!isEnemy) continue;
             auto type = typeOf(n->second);
             if (!type) continue;
-            auto& e = add(std::move(type), in.uniqueId, pos, yaw);
+            auto& e = add(std::move(type), in.uniqueId, pos, yaw, false, {in.rotation[0], in.rotation[1]});
             e.unit = u.name;
             if (const auto s = stash_.find(in.uniqueId); s != stash_.end()) {
                 EnemyState st = s->second;
@@ -332,13 +358,14 @@ nlohmann::json toJson(const EnemyState& s) {
             {"loop", s.loop}, {"health", s.health}, {"modeTime", s.modeTime}, {"unseenTime", s.unseenTime},
             {"cooldown", s.cooldown}, {"blowLanded", s.blowLanded}, {"damageSinceReaction", s.damageSinceReaction},
             {"lastSeen", vec(s.lastSeen)}, {"fire", s.fire}, {"shotsLeft", s.shotsLeft}, {"shotTimer", s.shotTimer},
-            {"fireCooldown", s.fireCooldown}, {"rng", s.rng}, {"tip", s.tip}, {"sleep", s.sleep}, {"drowsy", s.drowsy}};
+            {"fireCooldown", s.fireCooldown}, {"rng", s.rng}, {"tip", s.tip}, {"sleep", s.sleep}, {"drowsy", s.drowsy},
+            {"tilt", {s.tilt.x, s.tilt.y}}, {"down", s.down}, {"melee", s.melee}};
 }
 
 EnemyState stateFromJson(const nlohmann::json& j) {
     EnemyState s;
     const int mode = j.at("mode").get<int>();
-    if (mode < 0 || mode > int(Mode::Sleep)) throw std::runtime_error("enemy mode " + std::to_string(mode));
+    if (mode < 0 || mode > int(Mode::Rise)) throw std::runtime_error("enemy mode " + std::to_string(mode));
     s.mode = Mode(mode);
     s.pos = vec(j.at("pos")), s.yaw = j.at("yaw"), s.vz = j.at("vz"), s.clip = j.at("clip"), s.clipTime = j.at("clipTime");
     s.loop = j.at("loop"), s.health = j.at("health"), s.modeTime = j.at("modeTime"), s.unseenTime = j.at("unseenTime");
@@ -346,6 +373,8 @@ EnemyState stateFromJson(const nlohmann::json& j) {
     s.lastSeen = vec(j.at("lastSeen")), s.fire = j.at("fire"), s.shotsLeft = j.at("shotsLeft"), s.shotTimer = j.at("shotTimer");
     s.fireCooldown = j.at("fireCooldown"), s.rng = j.at("rng"), s.tip = j.at("tip");
     s.sleep = j.value("sleep", 0.0f), s.drowsy = j.value("drowsy", 0.0f); // older saves: awake
+    if (const auto t = j.find("tilt"); t != j.end()) s.tilt = {t->at(0).get<float>(), t->at(1).get<float>()};
+    s.down = j.value("down", 0.0f), s.melee = j.value("melee", -1);
     return s;
 }
 } // namespace

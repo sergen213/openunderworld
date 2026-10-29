@@ -1,0 +1,11 @@
+# l7_yggdrasil_hall01: --spawn 1000,0,0,90. Pistols knock viking thrall 8833 (tick ~700) and yeti 8831 down; they lie 15 s / 7 s and get back up (death_reanimate / regenerate_01) at full health; then X cycles to Mjolnir, whose bolts kill them for good.
+0.5 draw 1
+0.6 draw 0
+1.6 aim 1
+1.8 fire 1
+28.0 fire 0
+28.2 weapon 1
+28.3 weapon 0
+28.6 weapon 1
+28.7 weapon 0
+29.5 fire 1

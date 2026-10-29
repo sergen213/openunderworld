@@ -1,0 +1,5 @@
+# l2_hubhall: --spawn -19231,32752,5216,-90. Spiders 3155-3160 cling to the pillar ahead, drop off it (fall_loop, jump_end) when they see Lara and run in to bite; Lara shoots them.
+1.0 draw 1
+1.1 draw 0
+1.6 aim 1
+1.7 fire 1

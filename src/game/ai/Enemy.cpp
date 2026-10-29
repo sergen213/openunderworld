@@ -24,6 +24,12 @@ constexpr float kCount = 1.0f / 30.0f; // [I] s per record timer count (enemy cl
 constexpr float kMissChance = 0.35f;  // [I] fraction of enemy shots aimed off Lara
 constexpr float kShotRange = 12000.0f; // [I] a shot travels this far past nothing
 constexpr float kTipSeconds = 0.5f;   // [I] a body whose death clip ends upright tips onto its side this fast
+constexpr float kClingUpZ = 0.5f;     // [I] crawler intros whose up axis is flatter than 60° from vertical cling
+constexpr float kSpitRange = 2528.45f; // [I] a spit reaches as far as the lose-track distance (8 m)
+
+glm::mat3 tiltMatrix(glm::vec2 tilt) { // Rx(x) * Ry(y), as formats::introMatrix before the heading
+    return glm::mat3(glm::rotate(glm::rotate(glm::mat4(1), tilt.x, vec3(1, 0, 0)), tilt.y, vec3(0, 1, 0)));
+}
 
 float wrapAngle(float a) {
     a = std::fmod(a + kPi, 2 * kPi);
@@ -59,11 +65,12 @@ const anim::Clip* EnemyType::clip(Role r) const {
 }
 
 std::string_view modeName(Mode m) {
-    static constexpr std::string_view k[] = {"idle", "alert", "chase", "attack", "hit", "dead", "spawning", "fire", "reload", "sleep"};
+    static constexpr std::string_view k[] = {"idle", "alert", "chase", "attack", "hit", "dead", "spawning", "fire", "reload", "sleep",
+                                             "cling", "drop", "down", "rise"};
     return size_t(m) < std::size(k) ? k[size_t(m)] : "unknown";
 }
 
-Enemy::Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning, int healthLevel)
+Enemy::Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning, int healthLevel, glm::vec2 tilt)
     : type_(std::move(type)), uid_(uid), anim_(type_->skeleton) {
     s_.pos = pos;
     s_.yaw = yaw;
@@ -75,13 +82,14 @@ Enemy::Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float
         play(Role::Spawn, false);
     } else {
         play(Role::Idle, true);
+        if (type_->crawler() && (tiltMatrix(tilt) * vec3(0, 0, 1)).z < kClingUpZ) s_.mode = Mode::Cling, s_.tilt = tilt;
     }
     prev_ = start_ = s_;
     updatePose(0, true);
 }
 
-glm::mat4 Enemy::modelMatrix(vec3 pos, float yaw, float tip) {
-    const glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1), pos), yaw + kPi / 2, vec3(0, 0, 1));
+glm::mat4 Enemy::modelMatrix(vec3 pos, float yaw, float tip, glm::vec2 tilt) {
+    const glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1), pos) * glm::mat4(tiltMatrix(tilt)), yaw + kPi / 2, vec3(0, 0, 1));
     return tip == 0 ? m : glm::rotate(m, tip, vec3(0, 1, 0)); // rolls about the model's forward axis, at the feet
 }
 
@@ -93,6 +101,7 @@ void Enemy::play(Role r, bool loop) {
 
 void Enemy::playClip(const std::string& name, bool loop) {
     if (s_.clip == name && s_.loop == loop && loop) return;
+    ++clipSerial_; // updatePose restarts the controller (onHit changes clips between ticks, after prev_ was taken)
     s_.clip = name;
     s_.loop = loop;
     s_.clipTime = 0;
@@ -123,7 +132,11 @@ void Enemy::setMode(Mode m) {
     case Mode::Idle: play(Role::Idle, true); break;
     case Mode::Alert: play(Role::Alert, true); break;
     case Mode::Chase: play(Role::Run, true); break;
-    case Mode::Attack: s_.blowLanded = false; play(Role::Attack, false); break;
+    case Mode::Attack:
+        s_.blowLanded = false;
+        if (s_.melee >= 0) playClip(type_->tuning.attacks[size_t(s_.melee)].clip, false);
+        else play(Role::Attack, false);
+        break;
     case Mode::Hit: play(Role::Hit, false); break;
     case Mode::Dead: play(Role::Death, false); break;
     case Mode::Spawning: play(Role::Spawn, false); break;
@@ -135,8 +148,32 @@ void Enemy::setMode(Mode m) {
         break;
     }
     case Mode::Reload: playClip(type_->tuning.attacks[size_t(s_.fire)].followClip, false); break;
-    case Mode::Sleep: s_.sleep = kSleepSeconds, s_.drowsy = 0, playClip("sleep_start", false); break;
+    case Mode::Sleep: s_.sleep = kSleepSeconds, s_.drowsy = 0, playClip(type_->sleepClips[0], false); break;
+    case Mode::Cling: play(Role::Idle, true); break;
+    case Mode::Drop: // lets go of the wall: off it by a radius, upright, falling
+        s_.pos += up() * type_->tuning.radius;
+        s_.tilt = glm::vec2(0), s_.vz = 0;
+        if (!type_->fallClip.empty()) playClip(type_->fallClip, true);
+        break;
+    case Mode::Down: { // 0x67ED20: full health at once, the fall clip, then lies for the record's time
+        const Regenerate& r = type_->tuning.regenerate;
+        s_.health = start_.health, s_.damageSinceReaction = 0, s_.down = r.time;
+        if (r.clip.empty()) play(Role::Death, false);
+        else playClip(r.clip, false);
+        break;
     }
+    case Mode::Rise: s_.unseenTime = 0, playClip(type_->tuning.regenerate.up, false); break; // hunts on afterwards
+    }
+}
+
+vec3 Enemy::up() const { return tiltMatrix(s_.tilt) * vec3(0, 0, 1); }
+
+// 0x67F040: an entry {class (-1 any), type (0 any), flag} matching the hit message's +0x50 / +0x64 / +0x6E.
+// ponytail: flag bit 0 compared with false (our hits never set +0x6E).
+bool Enemy::getsUp(const Hit& hit) const {
+    for (const auto& k : type_->tuning.regenerate.kills)
+        if ((k.source == -1 || k.source == hit.damageClass) && (k.type == 0 || k.type == hit.damageType) && !k.flag) return true;
+    return false;
 }
 
 void Enemy::turnTowards(vec3 p, float dt) {
@@ -152,7 +189,15 @@ bool Enemy::perceives(const collision::CollisionMesh& col, const Target& lara) c
     // sharks swim under the start boat; the original leaves them there).
     if (type_->aquatic() && !lara.inWater) return false;
     const Senses& se = senses();
-    const vec3 eye = s_.pos + vec3(0, 0, type_->tuning.height * 0.8f), at = lara.pos + vec3(0, 0, lara.height * 0.75f);
+    const vec3 at = lara.pos + vec3(0, 0, lara.height * 0.75f);
+    if (s_.mode == Mode::Cling) { // [I] on a wall or ceiling the cones' heading means nothing: eye range and the ray
+        const vec3 eye = s_.pos + up() * (type_->tuning.radius * 2);
+        const float d = glm::length(at - eye);
+        if (d > se.eye.range) return false;
+        const auto hit = d < 1 ? std::nullopt : col.raycast(eye, (at - eye) / d, d);
+        return !hit || hit->t >= d - 1.0f;
+    }
+    const vec3 eye = s_.pos + vec3(0, 0, type_->tuning.height * 0.8f);
     // [I] body cones measured from the eye too (the exe's 0x60DBA0 uses the body matrix)
     if (!inCone(se.eye, eye, s_.yaw, at) && !inCone(se.body[0], eye, s_.yaw, at) && !inCone(se.body[1], eye, s_.yaw, at)) return false;
     const float d = glm::length(at - eye);
@@ -165,6 +210,11 @@ void Enemy::onHit(const Hit& hit) {
     if (!alive()) return;
     s_.lastSeen = s_.pos - hit.dir * 1000.0f; // [I] turns towards where the shot came from
     s_.unseenTime = 0;
+    if (s_.mode == Mode::Down || s_.mode == Mode::Rise) { // 0x682490: hits it would get up from are absorbed
+        if (getsUp(hit)) return;
+        if ((s_.health -= hit.damage) <= 0) die(hit); // anything else (Mjolnir) hurts the full-health body
+        return;
+    }
     if (hit.tranq && type_->sleeps) { // darts dose the animal instead of hurting it; asleep at its health [I]
         if (s_.mode == Mode::Sleep) return;
         if ((s_.drowsy += hit.damage) >= s_.health) setMode(Mode::Sleep);
@@ -174,8 +224,15 @@ void Enemy::onHit(const Hit& hit) {
     s_.health -= hit.damage;
     s_.damageSinceReaction += hit.damage;
     if (s_.health <= 0) {
-        die(hit);
-    } else if (hit.knock || s_.damageSinceReaction >= type_->tuning.staggerDamage) {
+        // 0x620380: a lethal hit the regenerate record lists (guns, blows, explosions) only knocks a thrall down
+        if (type_->regenerates() && getsUp(hit)) setMode(Mode::Down);
+        else die(hit);
+    } else if (s_.mode == Mode::Cling) {
+        setMode(Mode::Drop); // [I] shot on the wall: lets go
+    } else if (hit.knock || (type_->tuning.staggerDamage > 0 && s_.damageSinceReaction >= type_->tuning.staggerDamage &&
+                             s_.mode != Mode::Hit)) {
+        // [I] stagger 0 (thralls, spiders, sharks): no reaction (thralls have additive hitreact_*_add clips; a full
+        // one per pistol round pushed them back for good); a reaction plays out, hits during it add up
         s_.damageSinceReaction = 0;
         setMode(Mode::Hit);
     } else if (s_.mode == Mode::Idle) {
@@ -190,6 +247,7 @@ void Enemy::onHit(const Hit& hit) {
 // usable (type-2 refs): the role death clip.
 void Enemy::die(const Hit& hit) {
     const bool running = s_.clip == type_->clipName(Role::Run) && s_.mode == Mode::Chase;
+    if (s_.tilt != glm::vec2(0)) s_.pos += up() * type_->tuning.radius, s_.tilt = glm::vec2(0); // falls off the wall
     setMode(Mode::Dead);
     const float a = std::atan2(-hit.dir.y, -hit.dir.x), rel = wrapAngle(a - s_.yaw); // bearing to the attacker
     const int quadrant = std::abs(rel) <= kPi / 4 ? 1 : std::abs(rel) > 3 * kPi / 4 ? 5 : rel > 0 ? 3 : 7;
@@ -336,6 +394,27 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     vec3 flight = aquatic ? delta : vec3(0); // aquatic clips keep their 3D root motion; bats hover except when chasing
 
     switch (s_.mode) {
+    case Mode::Cling: // holds on, no gravity, until it notices Lara
+        if (sees) setMode(Mode::Drop);
+        updatePose(dt, false);
+        return;
+    case Mode::Drop: // falls (fall clip) to the floor, lands (land clip), hunts
+        delta = vec3(0);
+        if (!type_->landClip.empty() && s_.clip == type_->landClip) {
+            if (clipDone()) setMode(Mode::Chase);
+        } else if (s_.vz == 0 && s_.modeTime > dt) {
+            if (type_->landClip.empty()) setMode(Mode::Chase);
+            else playClip(type_->landClip, false);
+        }
+        break;
+    case Mode::Down: // lies for the record's time, then gets up (0x682510 counts it down)
+        delta = vec3(0);
+        if ((s_.down -= dt) <= 0) setMode(type_->tuning.regenerate.up.empty() ? Mode::Chase : Mode::Rise);
+        break;
+    case Mode::Rise:
+        delta = vec3(0);
+        if (clipDone()) setMode(Mode::Chase);
+        break;
     case Mode::Spawning:
         if (clipDone()) setMode(Mode::Chase);
         break;
@@ -353,6 +432,12 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         if (!lara.alive || s_.unseenTime > t.loseTime) {
             setMode(Mode::Idle);
         } else if (sees && dist <= t.attackRange && facing && s_.cooldown <= 0 && type_->clip(Role::Attack)) {
+            s_.melee = -1;
+            setMode(Mode::Attack);
+        } else if (type_->spit >= 0 && sees && dist > t.attackRange && dist <= kSpitRange && facing && s_.cooldown <= 0 &&
+                   s_.fireCooldown[0] <= 0) { // [I] spits at Lara out of reach (its record's cooldown)
+            s_.melee = type_->spit;
+            s_.fireCooldown[0] = t.attacks[size_t(type_->spit)].cooldown;
             setMode(Mode::Attack);
         } else if (sees && (dist <= t.attackRange || (type_->ranged() && dist <= senses().eye.range))) {
             play(Role::Alert, true); // in reach, or in rifle range with a clear line: stand (and aim)
@@ -377,12 +462,15 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         break;
     }
     case Mode::Attack: {
-        const anim::Clip* c = type_->clip(Role::Attack);
-        const double f = c ? s_.clipTime / c->durationSeconds() : 1.0;
+        const auto ci = type_->clips.find(s_.clip);
+        const double f = ci != type_->clips.end() ? s_.clipTime / ci->second.durationSeconds() : 1.0;
+        const Attack* rec = s_.melee >= 0 ? &t.attacks[size_t(s_.melee)] : nullptr;
+        const bool spit = rec && s_.melee == type_->spit; // reaches as far as it sees
         if (f < t.hitStart) turnTowards(lara.pos, dt);
-        if (!s_.blowLanded && lara.alive && f >= t.hitStart && f <= t.hitEnd && dist <= t.attackReach && aimError(lara.pos) <= kBlowCone) {
+        if (!s_.blowLanded && lara.alive && f >= t.hitStart && f <= t.hitEnd && dist <= (spit ? kSpitRange : t.attackReach) &&
+            aimError(lara.pos) <= kBlowCone && (!spit || sees)) {
             s_.blowLanded = true;
-            if (hurt) hurt(t.attackDamage, s_.pos, t.attackType);
+            if (hurt) hurt(rec ? rec->damage : t.attackDamage, s_.pos, rec ? (rec->type == 2 ? kDamageHeavy : kDamageLight) : t.attackType);
         }
         if (clipDone()) {
             s_.cooldown = t.attackCooldown;
@@ -457,13 +545,14 @@ void Enemy::updatePose(float dt, bool reset) {
         anim_.play(type_->clips.count(s_.clip) ? &type_->clips.find(s_.clip)->second : nullptr, 0, s_.loop, 1, s_.clipTime);
     } else {
         anim_.update(dt);
-        if (s_.clip != prev_.clip || s_.loop != prev_.loop || s_.clipTime < prev_.clipTime) {
+        if (clipSerial_ != poseSerial_) {
             const auto it = type_->clips.find(s_.clip);
             anim_.play(it == type_->clips.end() ? nullptr : &it->second, 0.1f, s_.loop, 1, s_.clipTime); // [I] 3-frame fade (Lara's default)
         } else {
             anim_.setTime(s_.clipTime);
         }
     }
+    poseSerial_ = clipSerial_;
     auto local = anim_.pose();
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(type_->skeleton.bones[0].pivot)}; // root motion is in pos
     auto m = anim::worldMatrices(type_->skeleton, local);
@@ -480,8 +569,8 @@ std::vector<glm::mat4> Enemy::pose(double alpha) const {
 
 // ---- Enemies ----------------------------------------------------------------------------------
 
-Enemy& Enemies::add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning) {
-    enemies_.push_back(std::make_unique<Enemy>(std::move(type), uid, pos, yaw, spawning, healthLevel_));
+Enemy& Enemies::add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning, glm::vec2 tilt) {
+    enemies_.push_back(std::make_unique<Enemy>(std::move(type), uid, pos, yaw, spawning, healthLevel_, tilt));
     ++version_;
     sync();
     return *enemies_.back();
