@@ -134,7 +134,7 @@ if(OU_BUILD_TESTS)
                        SKIP_RETURN_CODE 77 ENVIRONMENT "${OU_VK_TEST_ENV}")
   add_executable(ou_shader_tests tests/test_shaders.cpp)
   target_link_libraries(ou_shader_tests PRIVATE ou_render_common GTest::gtest_main)
-  gtest_discover_tests(ou_shader_tests DISCOVERY_TIMEOUT 30 PROPERTIES TIMEOUT 600)
+  gtest_discover_tests(ou_shader_tests DISCOVERY_TIMEOUT 30 PROPERTIES TIMEOUT 1200) # every-shader sweep: ~570 s under ASan
 endif()
 
 # ---- ou_anim: skeletons, animation clips, pose sampling, CPU skinning (docs/formats/ANIMATION.md) ----
