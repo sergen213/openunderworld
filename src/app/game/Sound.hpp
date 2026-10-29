@@ -39,6 +39,7 @@ private:
         std::vector<audio::SfxMarker> markers;
         audio::SfxMarkerTriggers triggers;
         std::map<std::pair<size_t, size_t>, audio::SoundPlayer::Handle> handles; // (marker, sound)
+        std::map<std::string, std::vector<uint32_t>> barks; // enemy chatter DTPs by category ("vo\\enemy\\merc\\b_M11_ADV_g_01": ADV)
     };
     void syncUnits(const game::World& world);
     const cdc::BigfileSet& bf_;

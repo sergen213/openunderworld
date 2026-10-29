@@ -1441,7 +1441,15 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             if (enemy_ && (!std::strcmp(name, "enemybase") || !std::strcmp(name, "generatorbase") ||
                            (!std::strcmp(name, "health") && self != playerScript_))) {
                 uint32_t result = 0;
-                if (!enemy_(self->uid, name, nc.function, nc.args, result)) return false;
+                // GuardNode's noderef is a native member {record, node} (scripts never write it [I]): its declared value
+                std::vector<vm::Value> args(nc.args.begin(), nc.args.end());
+                if (!std::strcmp(name, "enemybase") && nc.function == 27 && args.size() == 4 && args[1].kind == vm::Value::Kind::Member) {
+                    const vm::Instance* owner = args[1].uid == self->uid ? self.get() : nullptr;
+                    const Member* m = owner ? owner->program->member(owner->typeId, args[1].offset) : nullptr;
+                    if (!m || !m->init || !m->init2) return false;
+                    args[1] = vm::Value::scalar(*m->init << 16 | (*m->init2 & 0xFFFF));
+                }
+                if (!enemy_(self->uid, name, nc.function, args, result)) return false;
                 nc.result = vm::Value::scalar(result);
                 return true;
             }

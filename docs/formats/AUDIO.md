@@ -554,3 +554,11 @@ slot 0 (3 s), 0x7D 0 -> 8 — the original switches there, not on the unit chang
 `l1_ship_engine_room_mus_01` (slot 1). 0x7B / 0x0D writers were not reached in a replay. Natives on a null receiver are
 skipped as the exe does (soundvolume 1002 stickybool 2), messagechannel Send without subscribers is a no-op.
 Cinematics mute the Music and Sfx buses while their stream plays and restore the menu volumes after (logged) [I].
+
+### 9.10 Enemy chatter [V-data; I: categories]
+
+The l1 / l6 ship units (exterior, upper hallways, engine halls) hold the merc lines as DTPs, each one graph over 5–10
+streams `vo\enemy\merc\b_<voice>_<CAT>_<g|s>_NN` (voices M02 / M10 / M11; categories EVG, EAR, FDY, ADV, FLK, CBR,
+INV, SWP, GAT; `s` = FDY). tru.exe paces them through the `bark` native script type and a BarkTimer (not decoded).
+Ours: `GameSound::syncUnits` files each unit's chatter DTPs by category; `ai::Enemies::barks` (EAR spotted, CBR cover,
+FDY squad mate down, SWP lost her; GAMEPLAY.md "Mercs") start a random DTP of that category at the soldier.

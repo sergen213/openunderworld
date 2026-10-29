@@ -182,6 +182,27 @@ Unit parseUnit(const cdc::Drm& d) {
         }
     }
 
+    // Planner nodes (0x5C8EA0 / 0x669D00): +0x118 count, +0x11C -> 0x60-byte records {matrix, +0x4C node count,
+    // +0x50 -> 0x60-byte nodes {matrix, ...}}; a node's point = record matrix * node translation. Scripts name one
+    // as a noderef {record, node} (enemybase 27 GuardNode).
+    if (const auto n = ud.at<uint32_t>(up.offset + 0x118); n && ud.ptrs.count(up.offset + 0x11C)) {
+        const auto rp = ud.ptr(up.offset + 0x11C, "unit planner records");
+        const View rv(d, rp.section);
+        for (uint32_t r = 0; r < n; ++r) {
+            const size_t b = rp.offset + 0x60 * size_t(r);
+            glm::mat4 rm;
+            for (int i = 0; i < 16; ++i) rm[i / 4][i % 4] = rv.at<float>(b + 4 * i);
+            auto& nodes = u.plannerNodes.emplace_back();
+            const auto np = rv.ptrs.find(uint32_t(b + 0x50));
+            if (np == rv.ptrs.end()) continue;
+            const View nv(d, np->second.section);
+            for (uint32_t k = 0, nk = rv.at<uint32_t>(b + 0x4C); k < nk; ++k) {
+                const size_t q = np->second.offset + 0x60 * size_t(k);
+                nodes.push_back(glm::vec3(rm * glm::vec4(nv.at<float>(q + 0x30), nv.at<float>(q + 0x34), nv.at<float>(q + 0x38), 1)));
+            }
+        }
+    }
+
     // Camera splines (LEVELS.md "Camera splines"): record +0x30 offset, +0x44 time mode, +0x48 duration, +0x4C FOV,
     // +0x50 count / +0x54 -> 0xC0-byte camera keys, +0x58 -> target track, +0x5C has target, +0x5D target fits.
     // Camera key: +0x00 position, +0x10 quaternion, +0x20 tangent, +0x30 time, +0x34 u16[64] ease, +0xB4 event

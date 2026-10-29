@@ -26,6 +26,13 @@ constexpr float kShotRange = 12000.0f; // [I] a shot travels this far past nothi
 constexpr float kTipSeconds = 0.5f;   // [I] a body whose death clip ends upright tips onto its side this fast
 constexpr float kClingUpZ = 0.5f;     // [I] crawler intros whose up axis is flatter than 60° from vertical cling
 constexpr float kSpitRange = 2528.45f; // [I] a spit reaches as far as the lose-track distance (8 m)
+constexpr float kZoneHeight = 320.0f;  // [O] 0x61F810: a zone holds points within 320 along the up axis
+constexpr float kZoneClamp = 0.8f;     // [O] 0x61F990 callers: goals pulled to 0.8 x the outer radius
+constexpr float kCoverReach = 1500.0f; // [I] cover nodes this close (flat) are considered
+constexpr float kCoverLow = 150.0f;    // [I] crouched eye height: its ray to Lara must hit the cover
+constexpr float kCoverSeconds = 2.5f;  // [I] crouched behind cover before standing up to fire
+constexpr float kCoverRest = 6.0f;     // [I] s before seeking cover again
+constexpr float kCoverRunSeconds = 4.0f; // [I] gives up a cover it has not reached by then
 
 glm::mat3 tiltMatrix(glm::vec2 tilt) { // Rx(x) * Ry(y), as formats::introMatrix before the heading
     return glm::mat3(glm::rotate(glm::rotate(glm::mat4(1), tilt.x, vec3(1, 0, 0)), tilt.y, vec3(0, 1, 0)));
@@ -66,7 +73,7 @@ const anim::Clip* EnemyType::clip(Role r) const {
 
 std::string_view modeName(Mode m) {
     static constexpr std::string_view k[] = {"idle", "alert", "chase", "attack", "hit", "dead", "spawning", "fire", "reload", "sleep",
-                                             "cling", "drop", "down", "rise"};
+                                             "cling", "drop", "down", "rise", "return", "cover", "crawl"};
     return size_t(m) < std::size(k) ? k[size_t(m)] : "unknown";
 }
 
@@ -163,7 +170,109 @@ void Enemy::setMode(Mode m) {
         break;
     }
     case Mode::Rise: s_.unseenTime = 0, playClip(type_->tuning.regenerate.up, false); break; // hunts on afterwards
+    case Mode::Return: play(Role::Walk, true); break;
+    case Mode::Cover: play(Role::Run, true); break;
+    case Mode::Crawl: play(Role::Run, true); break;
     }
+}
+
+bool GuardZone::contains(vec3 p, bool outerRadius) const {
+    return std::abs(p.z - point.z) < kZoneHeight && flatDist(p, point) < (outerRadius ? outer : inner);
+}
+
+vec3 Enemy::zoneGoal(vec3 p) const {
+    if (zones.empty()) return p;
+    const GuardZone& z = zones[0];
+    const vec3 d = p - z.point;
+    const float l = glm::length(d);
+    return l > z.outer ? z.point + d * (z.outer * kZoneClamp / l) : p;
+}
+
+bool Enemy::inZone(bool outerRadius) const {
+    return zones.empty() || std::any_of(zones.begin(), zones.end(), [&](const GuardZone& z) { return z.contains(s_.pos, outerRadius); });
+}
+
+// [I] the spotter barks (combat_bark_01 / _02; the line itself: Enemies::barks); squad mates alerted by it do not.
+void Enemy::notice() {
+    setMode(Mode::Alert);
+    const char* bark = (lcg(s_.rng) >> 16) & 1 ? "combat_bark_02" : "combat_bark_01";
+    if (type_->clips.count(bark)) playClip(bark, false);
+}
+
+void Enemy::alert(vec3 at) {
+    if (s_.mode != Mode::Idle && s_.mode != Mode::Return) return;
+    s_.lastSeen = at, s_.unseenTime = 0;
+    setMode(Mode::Alert);
+}
+
+// [I] EnemyBehavior_Cover picks the AI's current planner node +0x4E68 with cover flags (+0x84 bits 6 / 12..14) that
+// tru.exe derives from 14 probes of 200 around each node (0x669D00); ours: the nearest planner node within reach (and
+// the guard zone), not towards her, reachable in a straight run, where a crouched body's view of Lara is blocked. It stands up after a while and
+// hunts on (a tall cover: it steps out, as AtCoverStepOutOfCover).
+bool Enemy::seekCover(const collision::CollisionMesh& col, const Target& lara) {
+    if (s_.coverCooldown > 0 || coverNodes.empty() || !type_->clips.count("combat_idle_crouch")) return false;
+    const vec3 chest = lara.pos + vec3(0, 0, lara.height * 0.6f);
+    const auto clear = [&](vec3 from) {
+        const float d = glm::length(chest - from);
+        const auto hit = d < 1 ? std::nullopt : col.raycast(from, (chest - from) / d, d);
+        return !hit || hit->t >= d - 1.0f;
+    };
+    const vec3* best = nullptr;
+    float bestDist = kCoverReach;
+    for (const vec3& n : coverNodes) {
+        const float d = flatDist(s_.pos, n);
+        if (d >= bestDist || d < type_->tuning.radius || std::abs(n.z - s_.pos.z) >= kZoneHeight) continue;
+        if (!zones.empty() && !std::any_of(zones.begin(), zones.end(), [&](const GuardZone& z) { return z.contains(n, true); })) continue;
+        if (flatDist(n, lara.pos) < flatDist(s_.pos, lara.pos) * 0.5f) continue; // not towards her
+        if (clear(n + vec3(0, 0, kCoverLow))) continue;
+        const vec3 knee = s_.pos + vec3(0, 0, type_->tuning.stepUp + type_->tuning.radius), to = n + vec3(0, 0, type_->tuning.stepUp + type_->tuning.radius);
+        if (col.raycast(knee, glm::normalize(to - knee), glm::distance(knee, to))) continue; // [I] a straight run there
+        best = &n, bestDist = d;
+    }
+    if (!best) return false;
+    s_.cover = *best;
+    setMode(Mode::Cover);
+    return true;
+}
+
+// [I] wall walking (tru.exe EnemyState_CornerWalk* / the spiders' concave_* / convex_* clips walk the planner mesh's
+// wall faces; not decoded): the crawler walks its run clip's root speed along its surface, down a wall (towards Lara
+// sideways) or across a ceiling towards her, held on by a ray along -up. It stands up on the floor at a wall's foot,
+// lets go above Lara on a ceiling, and drops when the surface ends or after 8 s. False: drop now.
+bool Enemy::crawl(const collision::CollisionMesh& col, const Target& lara, float step) {
+    const EnemyTuning& t = type_->tuning;
+    const vec3 n = up();
+    if (s_.modeTime > 8.0f) return false;
+    vec3 along = lara.pos - s_.pos;
+    along -= n * glm::dot(along, n);
+    vec3 dir;
+    if (n.z < -0.5f) { // ceiling: to above her, then lets go
+        if (flatDist(s_.pos, lara.pos) < t.radius * 2) return false;
+        dir = along;
+    } else { // wall: downwards, drifting towards her
+        vec3 down = vec3(0, 0, -1) - n * -n.z;
+        const float dl = glm::length(down);
+        if (dl < 1e-3f) return false; // a floor-like surface: stands up through Drop
+        down /= dl;
+        const float al = glm::length(along - down * glm::dot(along, down));
+        dir = down + (al > 1 ? (along - down * glm::dot(along, down)) / al * 0.5f : vec3(0));
+        // the foot of the wall: a floor within a body radius of where it stands off the wall
+        if (const auto g = col.groundProbe(s_.pos + n * (t.radius * 2), t.radius * 3); g && g->normal.z >= t.minFloorNormalZ) {
+            s_.pos = g->point, s_.tilt = glm::vec2(0), s_.vz = 0;
+            setMode(Mode::Chase);
+            return true;
+        }
+    }
+    const float l = glm::length(dir);
+    if (l < 1e-3f) return true;
+    dir /= l;
+    const vec3 local = glm::transpose(tiltMatrix(s_.tilt)) * dir; // heading so the body faces where it walks
+    s_.yaw = std::atan2(local.y, local.x);
+    const vec3 next = s_.pos + dir * std::max(step, 1.0f);
+    const auto hold = col.raycast(next + n * t.radius, -n, t.radius * 2);
+    if (!hold) return false;
+    s_.pos = hold->point;
+    return true;
 }
 
 vec3 Enemy::up() const { return tiltMatrix(s_.tilt) * vec3(0, 0, 1); }
@@ -190,7 +299,7 @@ bool Enemy::perceives(const collision::CollisionMesh& col, const Target& lara) c
     if (type_->aquatic() && !lara.inWater) return false;
     const Senses& se = senses();
     const vec3 at = lara.pos + vec3(0, 0, lara.height * 0.75f);
-    if (s_.mode == Mode::Cling) { // [I] on a wall or ceiling the cones' heading means nothing: eye range and the ray
+    if (s_.mode == Mode::Cling || s_.mode == Mode::Crawl) { // [I] on a wall or ceiling the cones' heading means nothing: eye range and the ray
         const vec3 eye = s_.pos + up() * (type_->tuning.radius * 2);
         const float d = glm::length(at - eye);
         if (d > se.eye.range) return false;
@@ -227,7 +336,7 @@ void Enemy::onHit(const Hit& hit) {
         // 0x620380: a lethal hit the regenerate record lists (guns, blows, explosions) only knocks a thrall down
         if (type_->regenerates() && getsUp(hit)) setMode(Mode::Down);
         else die(hit);
-    } else if (s_.mode == Mode::Cling) {
+    } else if (s_.mode == Mode::Cling || s_.mode == Mode::Crawl) {
         setMode(Mode::Drop); // [I] shot on the wall: lets go
     } else if (hit.knock || (type_->tuning.staggerDamage > 0 && s_.damageSinceReaction >= type_->tuning.staggerDamage &&
                              s_.mode != Mode::Hit)) {
@@ -235,7 +344,7 @@ void Enemy::onHit(const Hit& hit) {
         // one per pistol round pushed them back for good); a reaction plays out, hits during it add up
         s_.damageSinceReaction = 0;
         setMode(Mode::Hit);
-    } else if (s_.mode == Mode::Idle) {
+    } else if (s_.mode == Mode::Idle || s_.mode == Mode::Return) {
         setMode(Mode::Alert); // shot from out of sight: turns to the shooter
     }
 }
@@ -379,6 +488,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     s_.modeTime += dt;
     s_.cooldown = std::max(0.0f, s_.cooldown - dt);
     for (float& c : s_.fireCooldown) c = std::max(0.0f, c - dt);
+    s_.coverCooldown = std::max(0.0f, s_.coverCooldown - dt);
     const bool sees = s_.mode != Mode::Dead && lara.alive && perceives(col, lara);
     if (sees) {
         s_.unseenTime = 0, s_.lastSeen = lara.pos;
@@ -394,8 +504,12 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     vec3 flight = aquatic ? delta : vec3(0); // aquatic clips keep their 3D root motion; bats hover except when chasing
 
     switch (s_.mode) {
-    case Mode::Cling: // holds on, no gravity, until it notices Lara
-        if (sees) setMode(Mode::Drop);
+    case Mode::Cling: // holds on, no gravity, until it notices Lara, then crawls (or lets go)
+        if (sees) setMode(Mode::Crawl);
+        updatePose(dt, false);
+        return;
+    case Mode::Crawl:
+        if (!crawl(col, lara, glm::length(delta))) setMode(Mode::Drop);
         updatePose(dt, false);
         return;
     case Mode::Drop: // falls (fall clip) to the floor, lands (land clip), hunts
@@ -419,14 +533,51 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         if (clipDone()) setMode(Mode::Chase);
         break;
     case Mode::Idle:
-        if (sees) setMode(Mode::Alert);
+        if (sees) {
+            notice();
+        } else if (!inZone(false)) {
+            setMode(Mode::Return);
+        }
+        break;
+    case Mode::Return: // EnemyBehavior_MoveToGuardZone: walks back to zone 0 until inside 0.8 x its inner radius
+        if (sees) {
+            notice();
+            break;
+        }
+        play(Role::Walk, true);
+        turnTowards(zones.empty() ? s_.pos : zones[0].point, dt);
+        if (zones.empty() || flatDist(s_.pos, zones[0].point) < zones[0].inner * kZoneClamp) setMode(Mode::Idle);
         break;
     case Mode::Alert:
         turnTowards(s_.lastSeen, dt);
-        if (s_.modeTime >= kAlertSeconds) setMode(lara.alive ? Mode::Chase : Mode::Idle);
+        if (s_.modeTime >= kAlertSeconds && (s_.loop || clipDone())) setMode(lara.alive ? Mode::Chase : Mode::Idle);
         break;
+    case Mode::Cover: {
+        const vec3 run = delta; // this tick's root motion: kept only while running there
+        delta = vec3(0);
+        s_.unseenTime = 0; // [I] hidden on purpose: still knows where she is (lastSeen stays)
+        if (s_.clip == "combat_stand_to_crouch") {
+            turnTowards(lara.pos, dt);
+            if (clipDone()) playClip("combat_idle_crouch", true), s_.modeTime = 0;
+        } else if (s_.clip == "combat_idle_crouch") {
+            turnTowards(lara.pos, dt);
+            if (s_.modeTime >= kCoverSeconds) playClip(type_->clips.count("combat_crouch_to_stand") ? "combat_crouch_to_stand" : type_->clipName(Role::Alert), false);
+        } else if (s_.clip == "combat_crouch_to_stand" || s_.modeTime >= kCoverRunSeconds) {
+            if (s_.clip != "combat_crouch_to_stand" || clipDone()) s_.coverCooldown = kCoverRest, setMode(Mode::Chase);
+        } else if (flatDist(s_.pos, s_.cover) < t.radius) { // arrived: crouches (reloaded meanwhile [I])
+            playClip(type_->clips.count("combat_stand_to_crouch") ? "combat_stand_to_crouch" : "combat_idle_crouch", false);
+            for (float& c : s_.fireCooldown) c = 0;
+        } else { // runs there
+            play(Role::Run, true);
+            turnTowards(s_.cover, dt);
+            delta = run;
+        }
+        break;
+    }
     case Mode::Chase: {
-        turnTowards(s_.lastSeen, dt);
+        const vec3 goal = zoneGoal(s_.lastSeen); // the guard zone bounds the chase (0x61F990)
+        const bool held = flatDist(s_.pos, goal) < t.radius; // at the last seen spot, or the zone's edge
+        turnTowards(sees || held ? s_.lastSeen : goal, dt);
         const bool facing = aimError(lara.pos) < kFaceToAttack;
         const int fire = type_->ranged() ? readyFire() : -1;
         if (!lara.alive || s_.unseenTime > t.loseTime) {
@@ -447,8 +598,8 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
                 s_.fire = fire;
                 setMode(Mode::Fire);
             }
-        } else if (!sees && flatDist(s_.pos, s_.lastSeen) < t.radius) {
-            play(Role::Alert, true); // at the last seen spot: waits
+        } else if (held) {
+            play(Role::Alert, true); // waits there
             delta = vec3(0);
             flight = vec3(0);
         } else {
@@ -492,7 +643,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         }
         if (s_.shotsLeft == 0 && clipDone()) {
             s_.fireCooldown[size_t(s_.fire)] = a.cooldown;
-            setMode(type_->clips.count(a.followClip) ? Mode::Reload : Mode::Chase);
+            if (!seekCover(col, lara)) setMode(type_->clips.count(a.followClip) ? Mode::Reload : Mode::Chase);
         }
         break;
     }
@@ -610,7 +761,64 @@ void Enemies::tick(const collision::CollisionMesh& col, const Target& lara, cons
         if (!g.fired && g.enabled && flatDist(g.pos, lara.pos) <= g.range && std::abs(g.pos.z - lara.pos.z) <= 2000.0f)
             spawn(g);
     shots.clear();
-    for (auto& e : enemies_) e->tick(col, lara, hurt, dt, &shots);
+    for (auto& e : enemies_) {
+        if (const auto g = guards_.find(e->uid()); g != guards_.end() && e->zones.size() != g->second.size()) resolveZones(*e);
+        e->coverNodes = worldNodes_;
+        e->tick(col, lara, hurt, dt, &shots);
+    }
+    // [I] EnemyFireTeam (0x62E590) links soldiers; ours: a soldier that spots Lara alerts the idle soldiers within
+    // kSquadRadius of it. Barks (the ship units' vo\enemy\merc lines, category = the file names' third token) on
+    // spotting her (EAR), taking cover (CBR), a squad mate's death (FDY) and losing her (SWP) [I: the categories'
+    // meaning; tru.exe's BarkTimer / NtBark choice is not decoded]; one at a time, kBarkGap apart.
+    constexpr float kSquadRadius = 3000.0f, kBarkGap = 4.0f;
+    barkWait_ = std::max(0.0f, barkWait_ - dt);
+    barks.clear();
+    const auto bark = [&](const Enemy& e, const char* category) {
+        if (barkWait_ > 0) return;
+        barks.push_back({e.uid(), category, e.position()});
+        barkWait_ = kBarkGap;
+    };
+    std::vector<const Enemy*> spotters; // alerted by their own senses this tick (not by a squad mate)
+    for (const auto& e : enemies_) {
+        if (!e->type().ranged()) continue;
+        const Mode was = e->previous().mode, now = e->state().mode;
+        if (now == Mode::Alert && (was == Mode::Idle || was == Mode::Return)) {
+            if (!e->state().loop) bark(*e, "EAR"); // the spotter (its bark clip)
+            spotters.push_back(e.get());
+        } else if (now == Mode::Cover && was != Mode::Cover) {
+            bark(*e, "CBR");
+        } else if (now == Mode::Idle && was == Mode::Chase) {
+            bark(*e, "SWP");
+        } else if (now == Mode::Dead && was != Mode::Dead) {
+            for (const auto& o : enemies_)
+                if (o != e && o->alive() && o->type().ranged() && glm::distance(o->position(), e->position()) < kSquadRadius) {
+                    bark(*o, "FDY");
+                    break;
+                }
+        }
+    }
+    for (const Enemy* e : spotters)
+        for (auto& o : enemies_)
+            if (o.get() != e && o->type().ranged() && glm::distance(o->position(), e->position()) < kSquadRadius) o->alert(e->state().lastSeen);
+}
+
+void Enemies::guard(int32_t uid, uint32_t record, uint32_t node, float r1, float r2) {
+    auto& g = guards_[uid];
+    const Guard z{record, node, r1, std::max(r1, r2)};
+    if (g.size() < 6 && std::find(g.begin(), g.end(), z) == g.end()) g.push_back(z);
+    for (auto& e : enemies_)
+        if (e->uid() == uid) resolveZones(*e);
+}
+
+void Enemies::resolveZones(Enemy& e) const {
+    e.zones.clear();
+    const auto g = guards_.find(e.uid());
+    const auto n = nodes_.find(e.unit);
+    const auto o = offsets_.find(e.unit);
+    if (g == guards_.end() || n == nodes_.end() || o == offsets_.end()) return;
+    for (const Guard& z : g->second)
+        if (z.record < n->second.size() && z.node < n->second[z.record].size())
+            e.zones.push_back({n->second[z.record][z.node] + o->second, z.inner, z.outer});
 }
 
 void Enemies::spawn(Generator& g) {

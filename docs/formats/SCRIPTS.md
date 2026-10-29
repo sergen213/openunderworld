@@ -227,6 +227,9 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
 - [O] More bindings: `enemybase` (bind 0x7B4060) 16/17 Set/Get the AI behaviour index (0x776F10 → 0x62DE00),
   22 selects list entry n and posts 0xE1 (0x777010 → 0x63AC40), 26 the MoveNav animation variant (0x7771E0, field
   0x37C0 read by 0x61B0C0) — ours keep the values (`World::enemyValues_`), their AI effect is [U];
+  27 GuardNode(unitref, noderef, r1, r2) (0x777210 → 0x004AAF20 → 0x5C8EA0 → 0x61F7A0): the noderef is a type-57
+  native member {record, node} (its declared value; Script passes it to the World as record << 16 | node) naming a
+  planner node of the unit (LEVELS.md "Planner nodes") → `ai::Enemies::guard` (GAMEPLAY.md "Mercs");
   `generatorbase` (0x7B4B60) 1/2 Spawn, 3 Enable / 4 Disable (generator flag 0x84 bit 0, read by the update 0x781510),
   5 kill spawns, 6 spawn count → `ai::Enemies::generatorNative`; `health` 1/2 on an enemy's own script damage it;
   `modifiable` 7 (Post 0x2E, receivers [U]); `uigamedata` 1 (0x60D630 returns 0) and 14 (a UI byte).

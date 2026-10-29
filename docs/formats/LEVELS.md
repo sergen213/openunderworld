@@ -281,6 +281,15 @@ re-bases coordinates when the player moves far from the first unit.
   the camera track's length (0x60A270). 82 units, events seen: 3 pause (148), 0 (84), 1 switch/FOV (28), 7 (8), 2 (2).
   Player: GAMEPLAY.md "Cameras".
 
+## Planner nodes (unit data +0x118 count, +0x11C -> 0x60-byte records)
+
+- [O] Record (0x5C8EA0, 0x669D00): +0x00 matrix, +0x4C node count, +0x50 -> 0x60-byte nodes {+0x00 matrix, +0x40 u8
+  0xFF, +0x44 f angle (≤ 85 used), +0x48 / +0x4C f distances, +0x50 bit 0 copied to the planner}. A node's point =
+  record matrix × node translation + the unit offset. l1_ship_exterior: one record of 187 nodes (deck z 5706, aft
+  deck 3809, lower deck ~2556); l6_ship_exterior 184; l4_ballcourt 28. tru.exe builds its planner graph from them
+  (0x669D00: 14 probes of radius 200 per node) [O]; scripts name one as a noderef {record, node} (enemybase 27
+  GuardNode). `formats::Unit::plannerNodes`. Their +0x44..+0x4C meaning is [U].
+
 ## Survey (Python cross-check of the C++ layouts, 2026-10-18) [O]
 
 All 82 present units:

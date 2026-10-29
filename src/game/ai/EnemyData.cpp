@@ -235,6 +235,9 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
         if (loadClip(c)) { t->fallClip = c; break; }
     for (const char* c : {"jump_end", "fall_land_front", "fall_land"})
         if (loadClip(c)) { t->landClip = c; break; }
+    // Soldiers' barks and cover (Enemy: the spotter's bark, Mode::Cover); absent for the others.
+    for (const char* c : {"combat_bark_01", "combat_bark_02", "combat_stand_to_crouch", "combat_idle_crouch", "combat_crouch_to_stand"})
+        loadClip(c);
     // A spit record (green naga +0x88 spit_attack, 150): a ranged blow [I].
     for (size_t i = 0; i < t->tuning.attacks.size(); ++i)
         if (t->tuning.attacks[i].clip.find("spit") != std::string::npos && t->clips.count(t->tuning.attacks[i].clip)) t->spit = int(i);
@@ -286,7 +289,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
     std::erase_if(enemies_, [&](const auto& e) {
         if (e->unit.empty() || loaded(e->unit)) return false;
         EnemyState s = e->state();
-        s.pos -= offsets_[e->unit], s.lastSeen -= offsets_[e->unit];
+        s.pos -= offsets_[e->unit], s.lastSeen -= offsets_[e->unit], s.cover -= offsets_[e->unit];
         stash_[e->uid()] = s; // generator spawns: uid = their generator's, re-spawned with it below
         return true;
     });
@@ -297,6 +300,14 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
     });
     if (enemies_.size() != before) ++version_, sync();
     std::erase_if(units_, [&](const std::string& n) { return !loaded(n); });
+    std::erase_if(nodes_, [&](const auto& kv) { return !loaded(kv.first); });
+    const auto rebuildNodes = [&] {
+        worldNodes_.clear();
+        for (const auto& [name, records] : nodes_)
+            for (const auto& r : records)
+                for (const vec3& p : r) worldNodes_.push_back(p + offsets_[name]);
+    };
+    rebuildNodes();
     if (!bigfile_) return;
     for (const auto& u : units) {
         if (!u.drm || std::find(units_.begin(), units_.end(), u.name) != units_.end()) continue;
@@ -307,7 +318,10 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
             if (!list) throw cdc::FormatError("\\tr8\\pc-w\\objectlist.txt not in bigfile");
             objectNames_ = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
         }
-        for (const auto& in : formats::parseUnit(*u.drm).intros) {
+        const formats::Unit parsed = formats::parseUnit(*u.drm);
+        nodes_[u.name] = parsed.plannerNodes;
+        rebuildNodes();
+        for (const auto& in : parsed.intros) {
             const auto n = objectNames_.find(in.objectId);
             if (n == objectNames_.end()) continue;
             const vec3 pos = vec3(in.position[0], in.position[1], in.position[2]) + u.offset;
@@ -328,7 +342,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
                         auto& e = add(std::move(type), in.uniqueId, pos, yaw);
                         e.unit = u.name, e.generator = in.uniqueId;
                         EnemyState st = s->second;
-                        st.pos += u.offset, st.lastSeen += u.offset;
+                        st.pos += u.offset, st.lastSeen += u.offset, st.cover += u.offset;
                         e.restore(st);
                     }
                 continue;
@@ -342,7 +356,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
             e.unit = u.name;
             if (const auto s = stash_.find(in.uniqueId); s != stash_.end()) {
                 EnemyState st = s->second;
-                st.pos += u.offset, st.lastSeen += u.offset;
+                st.pos += u.offset, st.lastSeen += u.offset, st.cover += u.offset;
                 e.restore(st);
             }
         }
@@ -359,13 +373,14 @@ nlohmann::json toJson(const EnemyState& s) {
             {"cooldown", s.cooldown}, {"blowLanded", s.blowLanded}, {"damageSinceReaction", s.damageSinceReaction},
             {"lastSeen", vec(s.lastSeen)}, {"fire", s.fire}, {"shotsLeft", s.shotsLeft}, {"shotTimer", s.shotTimer},
             {"fireCooldown", s.fireCooldown}, {"rng", s.rng}, {"tip", s.tip}, {"sleep", s.sleep}, {"drowsy", s.drowsy},
-            {"tilt", {s.tilt.x, s.tilt.y}}, {"down", s.down}, {"melee", s.melee}};
+            {"tilt", {s.tilt.x, s.tilt.y}}, {"down", s.down}, {"melee", s.melee}, {"cover", vec(s.cover)},
+            {"coverCooldown", s.coverCooldown}};
 }
 
 EnemyState stateFromJson(const nlohmann::json& j) {
     EnemyState s;
     const int mode = j.at("mode").get<int>();
-    if (mode < 0 || mode > int(Mode::Rise)) throw std::runtime_error("enemy mode " + std::to_string(mode));
+    if (mode < 0 || mode > int(Mode::Crawl)) throw std::runtime_error("enemy mode " + std::to_string(mode));
     s.mode = Mode(mode);
     s.pos = vec(j.at("pos")), s.yaw = j.at("yaw"), s.vz = j.at("vz"), s.clip = j.at("clip"), s.clipTime = j.at("clipTime");
     s.loop = j.at("loop"), s.health = j.at("health"), s.modeTime = j.at("modeTime"), s.unseenTime = j.at("unseenTime");
@@ -375,6 +390,8 @@ EnemyState stateFromJson(const nlohmann::json& j) {
     s.sleep = j.value("sleep", 0.0f), s.drowsy = j.value("drowsy", 0.0f); // older saves: awake
     if (const auto t = j.find("tilt"); t != j.end()) s.tilt = {t->at(0).get<float>(), t->at(1).get<float>()};
     s.down = j.value("down", 0.0f), s.melee = j.value("melee", -1);
+    if (const auto c = j.find("cover"); c != j.end()) s.cover = vec(*c);
+    s.coverCooldown = j.value("coverCooldown", 0.0f);
     return s;
 }
 } // namespace
@@ -387,14 +404,19 @@ nlohmann::json Enemies::serialize() const {
         EnemyState s = e->state();
         const auto off = offsets_.find(e->unit);
         const vec3 o = off == offsets_.end() ? vec3(0) : off->second;
-        s.pos -= o, s.lastSeen -= o;
+        s.pos -= o, s.lastSeen -= o, s.cover -= o;
         states[e->uid()] = s;
     }
     for (const auto& g : generators_)
         if (g.fired) fired.insert(g.uid);
     nlohmann::json st = nlohmann::json::object();
     for (const auto& [uid, s] : states) st[std::to_string(uid)] = toJson(s);
-    return {{"states", st}, {"firedGenerators", fired}, {"deadAtCheckpoint", deadAtCheckpoint_}};
+    nlohmann::json guards = nlohmann::json::object();
+    for (const auto& [uid, g] : guards_) {
+        auto& a = guards[std::to_string(uid)] = nlohmann::json::array();
+        for (const Guard& z : g) a.push_back({z.record, z.node, z.inner, z.outer});
+    }
+    return {{"states", st}, {"firedGenerators", fired}, {"deadAtCheckpoint", deadAtCheckpoint_}, {"guards", guards}};
 }
 
 void Enemies::restore(const nlohmann::json& j) {
@@ -404,6 +426,11 @@ void Enemies::restore(const nlohmann::json& j) {
         for (const auto& [uid, s] : j.at("states").items()) states[std::stoi(uid)] = stateFromJson(s);
         fired = j.at("firedGenerators").get<std::set<int32_t>>();
         dead = j.at("deadAtCheckpoint").get<std::set<int32_t>>();
+        guards_.clear(); // older saves: none (the intro scripts' constructors set them again)
+        if (const auto g = j.find("guards"); g != j.end())
+            for (const auto& [uid, a] : g->items())
+                for (const auto& z : a)
+                    guards_[std::stoi(uid)].push_back({z.at(0).get<uint32_t>(), z.at(1).get<uint32_t>(), z.at(2).get<float>(), z.at(3).get<float>()});
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("enemy state: ") + e.what());
     }

@@ -6,6 +6,8 @@
 #include "cdc/Cdc.hpp"
 #include "scene/Assets.hpp"
 
+#include <glm/glm.hpp>
+
 #include <array>
 #include <cstdint>
 #include <map>
@@ -173,6 +175,7 @@ struct Unit {
     std::vector<ImfPlacement> imfs;
     std::vector<Portal> portals;
     std::vector<CameraSpline> cameraSplines; // index = the cameraspline script value's first word
+    std::vector<std::vector<glm::vec3>> plannerNodes; // [record][node] unit-frame points (noderef {record, node})
     scene::Environment environment; // Level+0x70 render settings (fog, ambient)
     // Level+0x70 DTP +0x294 u16: objectlist.txt id of the Lara outfit object the unit loads (tru.exe 0x5DE2B0,
     // 0x5D4340); 0 without a settings DTP. docs/GAMEPLAY.md "Outfits".

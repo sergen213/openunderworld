@@ -143,10 +143,29 @@ void GameSound::syncUnits(const game::World& world) {
             mixer_.addWaves(*u.data.drm);
             auto markers = audio::parseSfxMarkers(*u.data.drm);
             audio::SfxMarkerTriggers triggers(markers);
-            units_.emplace(u.data.name, UnitSfx{u.data.drm, std::move(markers), std::move(triggers), {}});
+            UnitSfx& us = units_.emplace(u.data.name, UnitSfx{u.data.drm, std::move(markers), std::move(triggers), {}, {}}).first->second;
+            // Enemy chatter: single DTPs whose streams are vo\enemy\<who>\b_<voice>_<category>_<g|s>_NN (AUDIO.md §9.10)
+            const auto stream = [](const auto& self, const audio::Plex& p) -> std::string {
+                if (p.type == audio::PlexType::Stream) return p.stream;
+                for (const auto& c : p.children)
+                    if (auto s = self(self, c); !s.empty()) return s;
+                return {};
+            };
+            for (const auto& sec : u.data.drm->sections) {
+                if (sec.type != cdc::SectionType::DtpData) continue;
+                const audio::Plex* p = bank_.find(sec.id);
+                const std::string path = p ? stream(stream, *p) : std::string();
+                if (!path.starts_with("vo\\enemy\\")) continue;
+                const std::string file = path.substr(path.rfind('\\') + 1);
+                const size_t a = file.find('_', file.find('_') + 1), b = a == std::string::npos ? a : file.find('_', a + 1);
+                if (b == std::string::npos) continue;
+                std::string category = file.substr(a + 1, b - a - 1);
+                for (char& c : category) c = char(std::toupper(static_cast<unsigned char>(c)));
+                us.barks[category].push_back(sec.id);
+            }
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: sfxmarkers of %s: %s\n", u.data.name.c_str(), e.what());
-            units_.emplace(u.data.name, UnitSfx{u.data.drm, {}, audio::SfxMarkerTriggers({}), {}});
+            units_.emplace(u.data.name, UnitSfx{u.data.drm, {}, audio::SfxMarkerTriggers({}), {}, {}});
         }
     }
     for (auto it = units_.begin(); it != units_.end();) { // streamed out: their sounds end
@@ -160,6 +179,14 @@ void GameSound::tick(game::World& world) {
     const auto tick = (unsigned long long)world.ticks();
     if (world.unitsVersion() != unitsVersion_) syncUnits(world), unitsVersion_ = world.unitsVersion();
     const glm::vec3 lara = world.player().state().pos;
+    for (const auto& b : world.enemies().barks) { // a line of that category from the loaded units, at the soldier
+        std::vector<uint32_t> lines;
+        for (const auto& [name, us] : units_)
+            if (const auto it = us.barks.find(b.category); it != us.barks.end()) lines.insert(lines.end(), it->second.begin(), it->second.end());
+        if (lines.empty()) continue;
+        if (const audio::Plex* p = bank_.find(lines[rng_() % lines.size()])) player_.start(*p, b.pos);
+        std::fprintf(stderr, "ou-game: tick %llu enemy %d bark %s\n", tick, b.uid, b.category.c_str());
+    }
     for (const auto& u : world.units()) {
         const auto it = units_.find(u.data.name);
         if (it == units_.end()) continue;

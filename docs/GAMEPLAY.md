@@ -813,16 +813,24 @@ radii. Panther `run_forward_2` root speed 2323 units/s [O].
   +0x70). Each shot is a ray from the muzzle (eye height, one radius ahead) [I] at Lara's chest; [I] 35 % of shots
   (per-enemy LCG seeded by uid) aim 1.5–3 of her radii aside; it stops at the first wall (line of fire: no damage) or
   Lara's capsule (cylinder), which takes rec+0x154 (75, light). Lara out of range or out of sight: they run
-  (`combat_run_forward`) to where she was; within 474 [I]: the melee blow (`rifle_bash`, 100). No cover: the
-  EnemyBehavior_*Cover RTTI classes and `cover_*` clips exist, cover markup was not looked for [U]. The rifle
-  (`wp_akrifle`) is not drawn: model 0 has no gun, the skeleton's bones are unnamed and the hand bone was not found [U].
+  (`combat_run_forward`) to where she was; within 474 [I]: the melee blow (`rifle_bash`, 100). Mercs: guard zones,
+  cover, squad alerts and barks below. The rifle (`wp_akrifle`) is not drawn: model 0 has no gun, the skeleton's bones
+  are unnamed and the hand bone was not found [U]; it is attached by an EnemyWeapon process (3 per enemy, plus one
+  EnemyHealthPack; 0x634020 → 0x616FE0 / 0x617040; update 0x62E3E0 births object +0x28 at marker +0x2C through 0x622BF0
+  and posts 0x17B) [O], and a dead soldier's body gives its rounds (World::collectPickups, the 0x6F5E70 below-max
+  rule) [I: our pickup at the body]. No grenades: no merc / poacher has a throw clip or a grenade record; their
+  grenade classes are reactions to Lara's (EnemyBehavior_ReactGrenadeAttach, `hitreact_stickygrenade`) [O].
 - Crawlers (enemy data class 5 `naga_red`, 6 `naga_green`, 7 spiders): an intro whose rotated up axis has z < 0.5
   (Rx(x) Ry(y), [I] 60° from vertical) clings to its wall or ceiling (`Mode::Cling`; drawn with the intro's tilt, idle
   clip, no gravity) [O: ~130 such spiders and 11 nagas, see Survey]. It notices Lara by eye range and ray only [I: on a
-  wall the cones' heading means nothing], or when shot, and drops (`Mode::Drop`): a radius off its wall, upright,
-  falling with `fall_loop` / `falling_loop`, landing with `jump_end` / `fall_land_front`, then hunts. A crawler killed
-  on the wall falls off it. ponytail: the original walks the walls (EnemyState_Corner*, `concave_*` / `convex_*`
-  clips) instead of dropping; wall walking and the spiders' lairs (`idle_lair` / `exit_lair`) are not modelled.
+  wall the cones' heading means nothing], then walks its surface (`Mode::Crawl`) [I]: the run clip's root speed along
+  the surface, down a wall (drifting sideways towards her) or across a ceiling towards her, held on by a ray along its
+  up axis, heading the way it walks; at a wall's foot (a floor within 3 radii, 2 radii off the wall) it stands upright
+  and hunts; above Lara on a ceiling, where the surface ends, after 8 s, or when shot it lets go (`Mode::Drop`: a
+  radius off its surface, upright, falling with `fall_loop` / `falling_loop`, landing with `jump_end` /
+  `fall_land_front`). A crawler killed on the wall falls off it. The original walks the planner mesh's wall faces
+  (EnemyState_CornerWalk* / CornerJump*, the spiders' `concave_*` / `convex_*` transition clips), not decoded; ours
+  plays no transition clip. The spiders' lairs (`idle_lair` / `exit_lair`) are not modelled.
 - Nagas [O data]: roles `idle_passive`, `idle_aggressive`, `walk_forward1`, `run_forward2`, `simple_attack1` (red
   175, green 125: their +0x80 records), `hit_react_medium_front`, `dead_shot_front`; tranquilizer sleep
   `tranq_sleep_start` / `tranq_sleep_loop`, waking with `rest_to_idle` [I: no sleep end clip]. The green naga's +0x88
@@ -869,37 +877,66 @@ chase with 3D clip-driven swimming and sphere collision, bite, and die into the 
 swimming when present; the real shark units expose none, so their live behavior uses collision-based free swimming.
 `AiReal.SharksSpawnSwimBiteAndDie` verifies populations and shark 4020 chasing, biting and dying.
 `AiReal.NagasClingDropBiteSpitAndDie`, `AiReal.SpidersClingDropAndBite` and `AiReal.ThrallsGetUpUnlessMjolnir`
-cover the crawlers and thralls (spawn counts, clinging, drop / land in l2_norsehub and l2_hubhall, bites, the green
-spit, sleep, the regenerate record, knock-down / get-up timing, Mjolnir kills, cling saved).
+cover the crawlers and thralls (spawn counts, clinging, walking down the wall / pillar to the floor in l2_norsehub and
+l2_hubhall, bites, the green spit, sleep, the regenerate record, knock-down / get-up timing, Mjolnir kills, cling
+saved); `AiReal.MercsGuardZonesCoverAndAlert` the mercs (below).
 Sharks sense Lara only while she swims (`Target::inWater` = `PlayerState::water >= 0`) [I]: l2_cliffclimb's placed
 sharks 4021-4023 (1100-1900 below the start boat) used to see her on the deck, chase her out of the sea and land on it;
 the original's chapter-2 start (Wine capture, "Chapter starts") has no shark in sight. Out of their medium they stay
 idle (`Ai.SharkIgnoresLaraOutOfWater`, `StreamReal.ChapterStartEnemiesStayInTheirMedium`: no hunting enemy and no
 shark above a dry Lara 5 s into any chapter start).
 
-Not done: behaviour trees (search, flank, cover, taunt, dodge, jump/vault), merc / long-range specifics beyond
-their records, rifle mesh, bat latch, wall walking (crawlers drop instead), navmesh/routing, ragdoll.
-- Mercs [U]: scripts call enemybase 27 `GuardNode(unitref member, node, r1, r2)` (l1_ship_exterior: node 1 with
-  2500/4000, 3000/4500, 1400/2800, 1250/500 per merc; 0x777210 → 0x61F7A0 stores up to six zones {point, inner, outer =
-  max(r1, r2)}; 0x61F810 tests a point within 320 vertically and the radius horizontally). The zone point comes from
-  0x5C8EA0: unit data (Level+0x74) +0x118 count / +0x11C 0x60-byte records whose +0x50 points at 0x60-byte node
-  matrices (l1_ship_exterior: one record, nodes on the deck at z 5706). Which record / node the script's `1` picks
-  was not settled (merc 1650 stands 8 000 units from node 1), so ours guard no zone; cover (`cover_*` clips,
-  EnemyBehavior_*Cover), patrol paths (EnemyPatrolPath) and the merc chatter line (one `vo\enemy\merc` sound per
-  ship unit, not tied to the AI) are not modelled.
+Mercs (l1 / l6 ship units: `merc`, `merc_deux`, `merc_generator_run`):
+- Guard zones [O]: each merc intro's own script type (l1_ship_exterior 7780 for 1650, ...) has a native member of
+  type 57 at +24, a noderef {record, node} (its declared value: 1650 {0, 127}, 1651 {0, 129}, 1652 {0, 168}, 1653 {0, 8},
+  1654 {0, 14}, 1655 {0, 91}, 1656 {0, 75}, 1657 {0, 72}, 1660 {0, 77}, 1667 {0, 98}, 1668 {0, 42}, 1669 {0, 41}); the constructor calls enemybase 27
+  `GuardNode(instance.GetUnit(), noderef, r1, r2)` (1650: 2500 / 4000; 1651 3000 / 4500; 1652 1400 / 2800; 1653..1657
+  and the generator spawn 1658 500 / 1250; 1660 2000 / 3500; merc_deux 1668 / 1669 re-guard with 800 / 3500 and 600 / 3500 in a vt-62 handler,
+  not run by ours). 0x777210 → 0x004AAF20 → 0x5C8EA0: the point = planner record `record`'s matrix × node `node`'s
+  translation + the unit's offset (unit data +0x118 count / +0x11C 0x60-byte records, +0x4C node count, +0x50 →
+  0x60-byte nodes: LEVELS.md "Planner nodes"); 0x61F7A0 keeps up to six {point, inner r1, outer max(r1, r2)}. (The
+  earlier reading "node 1" was the script constant of another call.) Placed mercs stand inside or near their zone
+  (1650 2 700 from node 127). Ours (`Enemy::zones`, `Enemies::guard`, saved as "guards"): 0x61F810 holds a point within
+  320 along the up axis and within the radius across it; a merc idle outside its inner radius walks back
+  (EnemyBehavior_MoveToGuardZone; `Mode::Return`, walk clip) until within 0.8 × inner [I: the stop]; a chase goal
+  outside zone 0's outer radius is pulled to 0.8 × outer from the point (0x61F990, called with factor 0.8 by
+  PatrolMove / InvestigateMove / SearchToLastKnownPos / Close) and the merc holds there facing her (and fires when it
+  sees her). Patrol paths: no merc script or intro sets one (EnemyPatrolPath is unused on the ships) [I].
+- Cover [I]: tru.exe's EnemyBehavior_Cover / AtCover* use the AI's planner node (+0x4E68) with cover flags (+0x84
+  bits 6, 12..14) derived at load from 14 probes of radius 200 around each node (0x669D00; node +0x44 angle ≤ 85,
+  +0x48 / +0x4C distances 316 / 284 / 474 on about half the ship's nodes, meaning [U]). Ours: after a burst a soldier
+  with crouch clips picks the nearest planner node within 1500 (flat), within 320 in height and its zone's outer
+  radius, not more than halfway towards Lara, reachable by a straight ray at knee height, from which a crouched eye
+  (150) cannot see her chest; it runs there (`Mode::Cover`; gives up after 4 s), `combat_stand_to_crouch`,
+  `combat_idle_crouch` for 2.5 s (reloaded), `combat_crouch_to_stand`, then hunts on (it keeps tracking her while
+  hidden) and seeks cover again 6 s later. The `cover_enter_*` / `cover_exit_*` clips are not used.
+- Alerts [I]: three EnemyFireTeam processes link soldiers (0x6170A0, update 0x62E590, team at +0x2C) [O]; ours: a
+  soldier that notices Lara itself (idle or returning) plays `combat_bark_01` / `_02` (alert ends with the clip) and
+  every other idle soldier within 3000 turns to where she was and hunts.
+- Chatter [I categories]: the ship units hold the merc lines as DTPs of 5–10 streams each,
+  `vo\enemy\merc\b_<voice>_<CAT>_<g|s>_NN` (voices M02 / M10 / M11, categories EVG, EAR, FDY, ADV, FLK, CBR, INV,
+  SWP, GAT; AUDIO.md §9.10), and the `bark` native script type (generalbank game script, 3 functions) plus a BarkTimer
+  pace them [O]; `combat_bark_*` clips carry no sound events [O]. Ours (`Enemies::barks`, played by GameSound from the
+  loaded units' DTPs of that category at the soldier): EAR on spotting her, CBR on taking cover, FDY by the nearest
+  squad mate on a death, SWP on losing her; one per 4 s.
 - Enemy behaviour index (enemybase 16/17, 0x62DE00 selects the n-th behaviour-list node of the enemy data) and 22 /
   26 are kept for scripts but do not change our AI [U].
+
+Not done: behaviour trees (search, flank, taunt, dodge, jump/vault), long-range specifics beyond their records, rifle
+mesh, bat latch, the original's wall-walking transitions, navmesh/routing, ragdoll.
 
 Verification [O] (ou-game, Vulkan, 1280×720, invisible KWin; screenshots viewed, kept privately; 2026-10-29):
 replay `tests/replays/thrall_regenerate.txt` (l7_yggdrasil_hall01, `--spawn 1000,0,0,90`): viking 8833 charges, bites,
 goes down to the pistols at tick 369 (full health), lies (tick 600 frame, fixed camera: on the floor beside Lara),
 rises with `death_reanimate` at tick 1270 (15 s; frame 1400 mid-rise), attacks again; after X to Mjolnir a bolt kills
 it for good (tick 1802); yeti 8831 down 7 s, then killed by the hammer. `tests/replays/naga_drop.txt` (l2_norsehub,
-`--spawn -20348,27300,-4494,90`): red naga 2417 drops at tick 1, lands, bites at tick 159 (175), dies to the pistols
-at tick 497; fixed-camera frames (`--camera -20900,26200,-3900,-20348,28200,-3700`) show it clinging head-up on the
-wall (Lara spawned out of sight), falling at tick 25 and on the floor at tick 60. `tests/replays/spider_drop.txt`
-(l2_hubhall, `--spawn -19231,32752,5216,-90`): the six albino spiders on the pillar, dropped at its foot (tick 40),
-running in and slashing (tick 120); Lara shoots them.
+`--spawn -20348,27300,-4494,90`): red naga 2417 sees Lara at tick 1 and walks down its wall; fixed-camera frames
+(`--camera -20900,26200,-3900,-20348,28200,-3700`) show it on the wall at tick 12 and standing up at its foot (tick 28),
+biting Lara at tick 40. `tests/replays/spider_drop.txt` (l2_hubhall, `--spawn -19231,32752,5216,-90`): the six albino
+spiders walk down the pillar and reach its foot at ticks 38..63 (log), then run in. `tests/replays/merc_squad.txt`
+(l1_ship_exterior, `--spawn 3222,13593,3809,90`): merc 1650 spots Lara and barks (`combat_bark_01`, frame 60, fixed
+camera `3000,15300,4500,4100,17500,4000`), fires from tick 122, takes cover at tick 223 and kneels behind it (frame 420,
+camera `4900,18300,4250,4192,17669,4000`), stands up and fires again at tick 528.
 
 Earlier verification [O] (ou-game, GL, 1792×1008, ASan debug build; screenshots viewed, kept privately): replay
 `tests/replays/poacher_firefight.txt` (l4_ballcourt, `--spawn 17520,10383,2650,180`): poachers 6540/6541 alert at tick

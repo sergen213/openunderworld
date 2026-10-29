@@ -140,8 +140,10 @@ bool isEnemyObject(const cdc::BigfileSet& bigfile, const std::string& name);
 
 // Sleep: knocked out by tranquilizer darts (EnemyBehavior_Nap / EnemyState_Nap in tru.exe; docs/GAMEPLAY.md "Combat").
 // Cling / Drop: a crawler on a wall or ceiling, dropping to the floor. Down / Rise: a thrall's regenerate (lying, then
-// getting back up at full health).
-enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep, Cling, Drop, Down, Rise };
+// getting back up at full health). Return: walking back into its guard zone (EnemyBehavior_MoveToGuardZone).
+// Cover: running to a cover node, crouched behind it, standing up (EnemyBehavior_Cover / AtCover*).
+// Crawl: a clinging crawler walking along its wall or ceiling towards Lara.
+enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep, Cling, Drop, Down, Rise, Return, Cover, Crawl };
 std::string_view modeName(Mode m);
 
 // What enemies hunt: Lara's feet and whether she can still be hurt.
@@ -186,6 +188,16 @@ struct EnemyState {
     glm::vec2 tilt{0};       // Cling: the intro's rotation x / y (R = Rx Ry Rz(yaw + 90°)); 0 upright
     float down = 0;          // Down: seconds left lying
     int melee = -1;          // Attack: tuning.attacks index of the blow (-1: the role clip's record)
+    vec3 cover{0};           // Cover: the node it hides at
+    float coverCooldown = 0; // s before it seeks cover again
+};
+
+// A guard zone (enemybase 27 GuardNode, tru.exe 0x61F7A0: up to six {point, inner, outer = max(r1, r2)}).
+struct GuardZone {
+    vec3 point{0};
+    float inner = 0, outer = 0;
+    // 0x61F810: within 320 along the up axis and within the radius across it
+    bool contains(vec3 p, bool outerRadius) const;
 };
 
 class Enemy final : public Damageable {
@@ -214,6 +226,9 @@ public:
     const EnemyState& previous() const { return prev_; }
     std::string unit;     // owning unit (streaming); "" = added by hand
     int32_t generator = 0; // spawned by this generator intro (0 = placed)
+    std::vector<GuardZone> zones;     // world frame; empty: guards nothing
+    std::span<const vec3> coverNodes; // planner nodes of the loaded units (world frame), set by Enemies each tick
+    void alert(vec3 at);              // a squad mate saw Lara at `at` (idle / returning: turns, then hunts)
 
     void restore(const EnemyState& s); // streamed back in / loaded: no interpolation, no blend
     const EnemyState& start() const { return start_; } // as constructed (placement, full health)
@@ -239,6 +254,11 @@ private:
     int readyFire() const; // first fire record off cooldown, -1 none
     void shoot(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, std::vector<Shot>* shots);
     void updatePose(float dt, bool reset);
+    void notice(); // saw Lara itself: alert (and bark)
+    vec3 zoneGoal(vec3 p) const;   // 0x61F990: p pulled inside zone 0 (0.8 x outer)
+    bool inZone(bool outerRadius) const;
+    bool seekCover(const collision::CollisionMesh& col, const Target& lara);
+    bool crawl(const collision::CollisionMesh& col, const Target& lara, float dt);
 
     std::shared_ptr<const EnemyType> type_;
     int32_t uid_ = 0;
@@ -273,6 +293,9 @@ public:
     void setUnits(const std::vector<script::UnitRef>& units);
     Enemy& add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false, glm::vec2 tilt = {});
     void addGenerator(Generator g) { generators_.push_back(std::move(g)); }
+    // enemybase 27 GuardNode(unitref, noderef {record, node}, r1, r2) on the intro `uid` (resolved against its unit's
+    // planner nodes once the enemy exists; at most six, repeats ignored).
+    void guard(int32_t uid, uint32_t record, uint32_t node, float r1, float r2);
     void addType(std::shared_ptr<const EnemyType> t) { types_[t->name] = std::move(t); } // spawnable by name without a bigfile
     // A checkpoint was reached: remembers which enemies (by uid; generator spawns by their generator's) are dead.
     void checkpoint();
@@ -288,6 +311,8 @@ public:
     // Ticks every enemy; `shots` then holds this tick's enemy shots.
     void tick(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, float dt);
     std::vector<Shot> shots;
+    struct Bark { int32_t uid = 0; std::string category; vec3 pos{0}; }; // a soldier's chatter line this tick
+    std::vector<Bark> barks;
     const std::vector<std::unique_ptr<Enemy>>& all() const { return enemies_; }
     const std::vector<Generator>& generators() const { return generators_; }
     // Script natives on an enemy or generator intro (tru.exe NsEnemyBase / NsGeneratorBase bind tables 0x7B4060,
@@ -313,12 +338,18 @@ private:
     std::set<int32_t> deadAtCheckpoint_;  // checkpoint()
     std::vector<std::string> units_;      // units whose intros were spawned
     std::map<std::string, glm::vec3> offsets_; // their stream offsets
+    std::map<std::string, std::vector<std::vector<vec3>>> nodes_; // their planner nodes (unit frame)
+    std::vector<vec3> worldNodes_;                                // all of them, world frame
+    struct Guard { uint32_t record = 0, node = 0; float inner = 0, outer = 0; auto operator<=>(const Guard&) const = default; };
+    std::map<int32_t, std::vector<Guard>> guards_; // by intro uid; saved
+    void resolveZones(Enemy& e) const;
     std::map<std::string, std::string> generatorObjects_; // generator object -> spawned object
     std::map<std::string, int> enemyObjects_;              // object -> 1 enemy, 0 not
     std::vector<Damageable*>* targets_ = nullptr;
     std::vector<Damageable*> registered_; // our entries in *targets_
     uint64_t version_ = 0;
     int healthLevel_ = 1;
+    float barkWait_ = 0; // s until the next bark
 };
 
 } // namespace ou::game::ai

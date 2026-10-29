@@ -897,7 +897,7 @@ int tickUntil(game::ai::Enemies& es, const CollisionMesh& col, const game::ai::T
 } // namespace
 
 // Thailand's nagas (naga_green class 6, naga_red class 5) spawn in l2_norsehub / l2_puzzleroom; tilted intros cling to
-// the walls and ceilings. A clinging naga notices Lara below, drops (falling_loop), lands (fall_land_front), closes in
+// the walls and ceilings. A clinging naga notices Lara below, walks down its wall, stands up at its foot, closes in
 // and bites (simple_attack1, red 175 / green 125 per record); a green naga spits (spit_attack, 150) from out of reach;
 // tranquilizer darts send it to sleep (tranq_sleep_start / _loop); bullets kill it (dead_shot_front).
 TEST(AiReal, NagasClingDropBiteSpitAndDie) {
@@ -953,16 +953,16 @@ TEST(AiReal, NagasClingDropBiteSpitAndDie) {
     ASSERT_GE(tickUntil(es, u.col, {*spot + vec3(0, 0, 20000)}, hurt, 120, [&] { return naga.state().mode != Mode::Cling; }), -1);
     EXPECT_EQ(naga.state().mode, Mode::Cling); // Lara out of its sight: holds on
     EXPECT_EQ(naga.state().pos, wall);
-    const int dropped = tickUntil(es, u.col, lara, hurt, 60, [&] { return naga.state().mode == Mode::Drop; });
+    const int dropped = tickUntil(es, u.col, lara, hurt, 60, [&] { return naga.state().mode == Mode::Crawl; });
     ASSERT_GE(dropped, 0);
-    EXPECT_EQ(naga.state().tilt, glm::vec2(0));
-    EXPECT_EQ(naga.state().clip, "falling_loop");
-    const int landed = tickUntil(es, u.col, lara, hurt, 300, [&] { return naga.state().clip == "fall_land_front"; });
+    EXPECT_NE(naga.state().tilt, glm::vec2(0)); // walks down its wall
+    const int landed = tickUntil(es, u.col, lara, hurt, 300, [&] { return naga.state().tilt == glm::vec2(0); });
     ASSERT_GE(landed, 0);
+    EXPECT_EQ(naga.state().mode, Mode::Chase); // stood up at the foot of the wall (no fall)
     EXPECT_LT(naga.state().pos.z, wall.z - 100); // on the floor below its wall
     ASSERT_GE(tickUntil(es, u.col, lara, hurt, 900, [&] { return !bites.empty(); }), 0);
     EXPECT_EQ(bites[0], 175);
-    std::fprintf(stderr, "naga 2417: wall (%.0f %.0f %.0f), Lara (%.0f %.0f %.0f), drop tick %d, lands %d, bites at (%.0f %.0f %.0f)\n",
+    std::fprintf(stderr, "naga 2417: wall (%.0f %.0f %.0f), Lara (%.0f %.0f %.0f), crawls at tick %d, on the floor %d, bites at (%.0f %.0f %.0f)\n",
                  wall.x, wall.y, wall.z, spot->x, spot->y, spot->z, dropped, landed, naga.state().pos.x, naga.state().pos.y, naga.state().pos.z);
     for (int i = 0; i < 50 && naga.alive(); ++i) naga.onHit(gunHit({1, 0, 0}, 40));
     EXPECT_EQ(naga.state().mode, Mode::Dead);
@@ -988,7 +988,7 @@ TEST(AiReal, NagasClingDropBiteSpitAndDie) {
     EXPECT_EQ(spitter.state().clip, "tranq_sleep_start");
 }
 
-// Spiders (class 7) on l2_hubhall's wall and l2_maproom's walls cling; a dropped spider lands and bites; a spider shot
+// Spiders (class 7) on l2_hubhall's wall and l2_maproom's walls cling; a spider that sees Lara walks down and bites; a spider shot
 // on the wall falls off it dead; clinging survives a save round trip.
 TEST(AiReal, SpidersClingDropAndBite) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -1020,8 +1020,10 @@ TEST(AiReal, SpidersClingDropAndBite) {
     ASSERT_TRUE(spot);
     std::vector<float> bites;
     const game::ai::Target lara{*spot};
-    ASSERT_GE(tickUntil(es, u.col, lara, [&](float d, vec3, int) { bites.push_back(d); }, 60, [&] { return spider.state().mode == Mode::Drop; }), 0);
-    ASSERT_GE(tickUntil(es, u.col, lara, [&](float d, vec3, int) { bites.push_back(d); }, 300, [&] { return spider.state().clip == "jump_end"; }), 0);
+    ASSERT_GE(tickUntil(es, u.col, lara, [&](float d, vec3, int) { bites.push_back(d); }, 60, [&] { return spider.state().mode == Mode::Crawl; }), 0);
+    ASSERT_GE(tickUntil(es, u.col, lara, [&](float d, vec3, int) { bites.push_back(d); }, 300, [&] {
+        return spider.state().tilt == glm::vec2(0) && (spider.state().mode == Mode::Chase || spider.state().clip == "jump_end");
+    }), 0); // walked down its pillar, or let go where the surface ended and landed
     EXPECT_LT(spider.state().pos.z, wall.z - 100);
     ASSERT_GE(tickUntil(es, u.col, lara, [&](float d, vec3, int) { bites.push_back(d); }, 900, [&] { return !bites.empty(); }), 0);
     EXPECT_EQ(bites[0], spider.type().tuning.attackDamage);
@@ -1111,6 +1113,160 @@ TEST(AiReal, ThrallsGetUpUnlessMjolnir) {
         y.onHit(blast);
         EXPECT_EQ(y.state().mode, Mode::Dead);
     }
+}
+
+// l1_ship_exterior's mercs: each intro script's constructor calls enemybase 27 GuardNode(GetUnit(), noderef, r1, r2)
+// with its own planner node {0, n} (1650: node 127, 2500 / 4000); a merc outside its zone walks back into it, a chase
+// stops at 0.8 x the outer radius; the first to see Lara barks and alerts the soldiers around it; after a burst a merc
+// runs to a planner node that hides it crouched and crouches there; a dead merc's rifle gives ammo (Stream.cpp).
+TEST(AiReal, MercsGuardZonesCoverAndAlert) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto u = game::loadUnitData(bf, "l1_ship_exterior");
+    const auto nodes = formats::parseUnit(*u.drm).plannerNodes;
+    ASSERT_EQ(nodes.size(), 1u);
+    ASSERT_EQ(nodes[0].size(), 187u);
+    EXPECT_NEAR(nodes[0][127].x, 4260.1f, 0.5f);
+    EXPECT_NEAR(nodes[0][127].y, 15066.9f, 0.5f);
+
+    // The scripts' GuardNode calls, through the World.
+    {
+        game::World w(game::UnitLoader([&bf](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_ship_exterior",
+                      game::loadLaraAnims(bf), game::Spawn{{-71, 9794, 5706}, 0});
+        w.script().setBigfile(&bf);
+        w.enemies().setBigfile(&bf);
+        for (int i = 0; i < 3; ++i) w.tick({});
+        const std::map<int32_t, std::tuple<int, float, float>> expected{
+            {1650, {127, 2500, 4000}}, {1651, {129, 3000, 4500}}, {1652, {168, 1400, 2800}}, {1653, {8, 500, 1250}}, {1660, {77, 2000, 3500}}};
+        int seen = 0;
+        for (const auto& e : w.enemies().all()) {
+            const auto it = expected.find(e->uid());
+            if (it == expected.end()) continue;
+            ++seen;
+            const auto [node, inner, outer] = it->second;
+            ASSERT_EQ(e->zones.size(), 1u) << e->uid();
+            EXPECT_LT(glm::distance(e->zones[0].point, nodes[0][size_t(node)]), 1.0f) << e->uid(); // the start unit sits at offset 0
+            EXPECT_EQ(e->zones[0].inner, inner) << e->uid();
+            EXPECT_EQ(e->zones[0].outer, outer) << e->uid();
+            std::fprintf(stderr, "merc %d at (%.0f %.0f %.0f): zone node %d (%.0f %.0f %.0f) %.0f / %.0f\n", e->uid(), e->position().x,
+                         e->position().y, e->position().z, node, e->zones[0].point.x, e->zones[0].point.y, e->zones[0].point.z, inner, outer);
+        }
+        EXPECT_EQ(seen, 5);
+        // saved with the enemies
+        const auto j = w.enemies().serialize();
+        EXPECT_EQ(j.at("guards").at("1650").at(0).at(1).get<int>(), 127);
+    }
+
+    u.col.build();
+    const auto fresh = [&] {
+        auto es = std::make_unique<game::ai::Enemies>();
+        es->setBigfile(&bf);
+        es->setUnits({{u.name, u.drm, vec3(0)}});
+        return es;
+    };
+    const auto find = [](game::ai::Enemies& es, int32_t uid) -> game::ai::Enemy& {
+        return **std::find_if(es.all().begin(), es.all().end(), [&](const auto& e) { return e->uid() == uid; });
+    };
+    const game::ai::Target away{{0, 0, -50000}};
+    // Back into its zone: 1650 stands 2 700 from node 127 (inner 2 500).
+    {
+        auto es = fresh();
+        es->guard(1650, 0, 127, 2500, 4000);
+        auto& m = find(*es, 1650);
+        const vec3 node = nodes[0][127];
+        EXPECT_GT(glm::length(glm::vec2(m.position() - node)), 2500);
+        bool returned = false;
+        for (int i = 0; i < 1200; ++i) {
+            es->tick(u.col, away, {}, kDt);
+            returned |= m.state().mode == Mode::Return;
+        }
+        EXPECT_TRUE(returned);
+        EXPECT_EQ(m.state().mode, Mode::Idle);
+        EXPECT_LT(glm::length(glm::vec2(m.position() - node)), 2000 + 50);
+        std::fprintf(stderr, "merc 1650 back in its zone at (%.0f %.0f), %.0f from node 127\n", m.position().x, m.position().y,
+                     glm::length(glm::vec2(m.position() - node)));
+    }
+    // A chase stops at the zone's edge: Lara last seen 9 000 beyond node 8 (outer 1 250).
+    {
+        auto es = fresh();
+        es->guard(1653, 0, 8, 500, 1250);
+        auto& m = find(*es, 1653);
+        const vec3 node = nodes[0][8], far = node + vec3(0, -9000, 0);
+        m.alert(far);
+        float maxOut = 0;
+        for (int i = 0; i < 600; ++i) {
+            es->tick(u.col, {far}, {}, kDt);
+            maxOut = std::max(maxOut, glm::length(glm::vec2(m.position() - node)));
+        }
+        EXPECT_LT(maxOut, 1250 * 0.8f + m.radius() + 20);
+        EXPECT_GT(maxOut, 1250 * 0.8f - 2 * m.radius());
+        std::fprintf(stderr, "merc 1653 chase held %.0f from node 8 (outer 1250)\n", maxOut);
+    }
+    // Spotting, barking, alerting the squad; then cover. Lara stands on a planner node that one merc sees, a squad mate
+    // within 3 000 does not, and from which a node near the spotter is hidden at crouch height.
+    {
+        auto es = fresh();
+        const auto hidden = [&](vec3 from, vec3 at) {
+            const vec3 chest = at + vec3(0, 0, 512 * 0.6f), low = from + vec3(0, 0, 150);
+            return u.col.raycast(low, glm::normalize(chest - low), glm::distance(chest, low)).has_value();
+        };
+        game::ai::Enemy* spotter = nullptr;
+        std::optional<vec3> spot;
+        for (const auto& m : es->all()) {
+            if (!m->type().ranged()) continue;
+            for (const vec3& n : nodes[0]) {
+                const float d = glm::length(glm::vec2(n - m->position()));
+                if (d < 1500 || d > 4000 || std::abs(n.z - m->position().z) > 200 || !m->perceives(u.col, {n})) continue;
+                const bool cover = std::any_of(nodes[0].begin(), nodes[0].end(), [&](const vec3& c) {
+                    const float dc = glm::length(glm::vec2(c - m->position()));
+                    return dc > 95 && dc < 1500 && std::abs(c.z - m->position().z) < 320 &&
+                           glm::length(glm::vec2(c - n)) >= 0.5f * d && hidden(c, n);
+                });
+                const bool squad = std::any_of(es->all().begin(), es->all().end(), [&](const auto& o) {
+                    return o != m && o->type().ranged() && glm::distance(o->position(), m->position()) < 3000 && !o->perceives(u.col, {n});
+                });
+                if (cover && squad) { spotter = m.get(), spot = n; break; }
+            }
+            if (spotter) break;
+        }
+        ASSERT_TRUE(spot);
+        const game::ai::Target lara{*spot};
+        std::vector<game::ai::Enemy*> blind;
+        for (const auto& e : es->all())
+            if (e.get() != spotter && e->type().ranged() && glm::distance(e->position(), spotter->position()) < 3000 && !e->perceives(u.col, lara))
+                blind.push_back(e.get());
+        es->tick(u.col, lara, {}, kDt);
+        EXPECT_EQ(spotter->state().mode, Mode::Alert);
+        EXPECT_TRUE(spotter->state().clip.starts_with("combat_bark_0")) << spotter->state().clip;
+        ASSERT_EQ(es->barks.size(), 1u);
+        EXPECT_EQ(es->barks[0].category, "EAR");
+        EXPECT_EQ(es->barks[0].uid, spotter->uid());
+        for (const auto* b : blind) EXPECT_EQ(b->state().mode, Mode::Alert) << b->uid(); // told by the spotter
+        std::fprintf(stderr, "merc %d spots Lara at (%.0f %.0f %.0f): %zu squad mates who cannot see her alerted\n", spotter->uid(),
+                     spot->x, spot->y, spot->z, blind.size());
+        int hurt = 0;
+        game::ai::Enemy* covering = nullptr;
+        for (int i = 0; i < 3600 && !covering; ++i) {
+            es->tick(u.col, lara, [&](float, vec3, int) { ++hurt; }, kDt);
+            for (const auto& e : es->all())
+                if (e->state().mode == Mode::Cover) covering = e.get();
+        }
+        ASSERT_NE(covering, nullptr);
+        EXPECT_GT(hurt, 0);
+        const vec3 cover = covering->state().cover;
+        const vec3 chest = lara.pos + vec3(0, 0, lara.height * 0.6f);
+        const vec3 low = cover + vec3(0, 0, 150);
+        EXPECT_TRUE(u.col.raycast(low, glm::normalize(chest - low), glm::distance(chest, low)).has_value());
+        bool crouched = false;
+        for (int i = 0; i < 600 && covering->state().mode == Mode::Cover; ++i) {
+            es->tick(u.col, lara, {}, kDt);
+            crouched |= covering->state().clip == "combat_idle_crouch";
+        }
+        EXPECT_TRUE(crouched);
+        std::fprintf(stderr, "merc %d took cover at (%.0f %.0f %.0f)\n", covering->uid(), cover.x, cover.y, cover.z);
+    }
+    // Their guns: wp_akrifle (the body's rounds, World::collectPickups).
+    EXPECT_EQ(find(*fresh(), 1650).type().weaponObject, "wp_akrifle");
 }
 
 // Survey (OU_AI_SURVEY=1): every enemy intro and generator spawn of every unit, and each enemy type's data and clips.

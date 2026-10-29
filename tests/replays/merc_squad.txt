@@ -1,0 +1,7 @@
+# l1_ship_exterior: --spawn 3222,13593,3809,90 (the aft deck below the bridge). Merc 1650 (guard zone node 127, 2500 / 4000)
+# sees Lara, barks (combat_bark_0x, an EAR line) and alerts the soldiers within 3 000; they fire bursts, then run to a planner node
+# of their zone the deck hides at crouch height and crouch there (combat_idle_crouch); Lara draws, locks on and shoots back.
+6.0 draw 1
+6.1 draw 0
+7.0 aim 1
+7.2 fire 1
