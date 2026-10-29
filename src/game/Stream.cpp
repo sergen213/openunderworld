@@ -100,11 +100,6 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
         if (!starts.empty() && n->second == "cinematic_object") u.chapterLinks[in.uniqueId] = std::move(starts);
         if (n->second == "cinematic_object")
             if (auto c = cine::introCinematic(*drm, in.scriptId); !c.empty()) u.cinematics[in.uniqueId] = std::move(c);
-        for (const auto& s : strings)
-            if (isMusic(bigfile, s)) {
-                u.musicByIntro[in.uniqueId] = s;
-                break;
-            }
     }
     if (isMusic(bigfile, name + "_mus_01")) u.music = name + "_mus_01";
     u.spawn = findSpawn(bigfile, *drm);

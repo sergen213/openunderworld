@@ -2,6 +2,7 @@
 #include "audio/SoundPlex.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <glm/geometric.hpp>
 
@@ -92,7 +93,57 @@ struct Reader {
                     for (size_t k = 0; k < x.children.size(); ++k)
                         x.delays.emplace_back(f32(at(*dl, uint32_t(8 * k))), f32(at(*dl, uint32_t(8 * k + 4))));
             break;
-        default: break; // MaterialList, Selector, Oscillator: unused by the retail graphs we play
+        case PlexType::MaterialList: // {f32, u32 n, {u32 DTP, u16 material, u16}[n]} (0x583960)
+        case PlexType::Selector: {   // {u32 n, {u32 DTP, u32 key}[n]} (0x583490)
+            const uint32_t base = x.type == PlexType::MaterialList ? 4 : 0, n = u32(at(*d, base));
+            if (n > 1024) throw FormatError("soundplex: list count " + std::to_string(n));
+            for (uint32_t k = 0; k < n; ++k) {
+                Plex ref;
+                ref.type = PlexType::Reference, ref.id = u32(at(*d, base + 4 + 8 * k));
+                x.children.push_back(ref);
+                const uint32_t key = u32(at(*d, base + 8 + 8 * k));
+                x.keys.push_back(x.type == PlexType::MaterialList ? key & 0xFFFF : key);
+            }
+            break;
+        }
+        default: break; // Oscillator
+        }
+        if (x.type == PlexType::Envelope) { // {Plex*, u32 n, Curve** } Curve {u16 param, u16, Keys*}; Keys {i32 loop start,
+            const uint32_t n = u32(at(*d, 4));  // i32 loop end, u32 count, {f32 time, f32 value, u32 flags}[count]}
+            if (n > 64) throw FormatError("soundplex: envelope curves " + std::to_string(n));
+            const auto arr = n ? ptr(at(*d, 8)) : std::nullopt;
+            for (uint32_t k = 0; arr && k < n; ++k) {
+                const auto c = ptr(at(*arr, 4 * k));
+                const auto keys = c ? ptr(at(*c, 4)) : std::nullopt;
+                if (!keys) continue;
+                Plex::Curve cv;
+                cv.param = uint16_t(u32(*c));
+                const uint32_t count = u32(at(*keys, 8));
+                if (count > 1024) throw FormatError("soundplex: envelope keys");
+                for (uint32_t i = 0; i < count; ++i) cv.keys.emplace_back(f32(at(*keys, 12 + 12 * i)), f32(at(*keys, 16 + 12 * i)));
+                x.curves.push_back(std::move(cv));
+            }
+        }
+        if (x.type == PlexType::Reaction) { // {Plex*, u8 flags, u8 n, Map*}; Map 0x1C {u16 map, u16 flags, f32 in min / max,
+            const uint32_t n = u8(at(*d, 5));   // f32 out min / max, u32 n, {f32 x, f32 y}*}
+            const auto arr = n ? ptr(at(*d, 8)) : std::nullopt;
+            for (uint32_t k = 0; arr && k < n; ++k) {
+                const auto r = at(*arr, 0x1C * k);
+                const uint32_t bits = u32(r);
+                if (bits >> 16 & 1) continue; // disabled
+                Plex::Map m;
+                m.random = (bits & 0xFF) == 0xFF;
+                m.input = uint8_t(bits & 0xF), m.output = uint8_t(bits >> 8 & 0xF), m.add = m.output == 1;
+                m.absolute = (bits >> 12 & 3) == 0;
+                if ((bits >> 12 & 3) == 2) m.absolute = false, m.negate = true;
+                m.zeroBelow = bits & 0x4000, m.zeroAbove = bits & 0x8000;
+                m.inMin = f32(at(r, 4)), m.inMax = f32(at(r, 8)), m.outMin = f32(at(r, 12)), m.outMax = f32(at(r, 16));
+                const uint32_t count = u32(at(r, 20));
+                if (count > 1024) throw FormatError("soundplex: reaction keys");
+                if (const auto keys = count ? ptr(at(r, 24)) : std::nullopt)
+                    for (uint32_t i = 0; i < count; ++i) m.keys.emplace_back(f32(at(*keys, 8 * i)), f32(at(*keys, 8 * i + 4)));
+                x.maps.push_back(std::move(m));
+            }
         }
         return x;
     }
@@ -207,19 +258,24 @@ float SoundPlayer::vary(float v, float var) { // 0x582D50: v ± var, clamped at 
     return std::max(0.0f, v + std::uniform_real_distribution<float>(-var, var)(rng_));
 }
 
-double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, int depth) {
+double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, const Mods& mods, int depth) {
     if (depth > 32) return 0;
     PlayParams pp{.volume = volume, .position = in.position};
+    auto play = [&](VoiceId v) {
+        if (!v) return;
+        in.voices.push_back({v, volume * (p.type == PlexType::Stream ? p.volume : 1), mods});
+        apply(in, in.voices.back());
+    };
     switch (p.type) {
     case PlexType::Silence: return p.delay;
     case PlexType::Reference:
-        if (const Plex* q = resolve_ ? resolve_(p.id) : nullptr) return fire(in, *q, volume, at, depth + 1);
+        if (const Plex* q = resolve_ ? resolve_(p.id) : nullptr) return fire(in, *q, volume, at, mods, depth + 1);
         return 0;
     case PlexType::Wave: {
         const auto pcm = mixer_.sound(p.id);
         if (!pcm || !pcm->sampleRate) return 0;
         pp.loop = pcm->loopEnd > 0; // Wave sections with loop points loop until stopped [I]
-        if (const VoiceId v = mixer_.play(p.id, pp)) in.voices.push_back(v);
+        play(mixer_.play(p.id, pp));
         waves.push_back(std::to_string(p.id));
         return pp.loop ? 1e9 : double(pcm->frames()) / pcm->sampleRate;
     }
@@ -227,7 +283,7 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, i
         const auto mul = stream_ ? stream_(p.stream) : nullptr;
         if (!mul || !mul->pcm.sampleRate) return 0;
         pp.volume *= p.volume, pp.bus = Bus::Voice;
-        if (const VoiceId v = mixer_.play(std::make_shared<Pcm>(mul->pcm), pp)) in.voices.push_back(v);
+        play(mixer_.play(std::make_shared<Pcm>(mul->pcm), pp));
         std::string text;
         for (const auto& s : mul->subtitles) text += std::string(s.text(0));
         lines.push_back({p.stream, std::move(text)});
@@ -238,13 +294,28 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, i
         const float v = volume * vary(p.volume, p.volumeVar), d = vary(p.delay, p.delayVar);
         if (p.maxDistance > 0 && in.position) pp.maxDistance = p.maxDistance;
         if (d > 0) { // SoundPlexTimeIn before the child
-            in.pending.push_back({at + d, &p.children[0], v, SIZE_MAX});
+            in.pending.push_back({at + d, &p.children[0], v, SIZE_MAX, mods});
             return d;
         }
-        return fire(in, p.children[0], v, at, depth + 1);
+        return fire(in, p.children[0], v, at, mods, depth + 1);
     }
-    case PlexType::Envelope: case PlexType::Reaction: case PlexType::Effect:
-        return p.children.empty() ? 0 : fire(in, p.children[0], volume, at, depth + 1);
+    case PlexType::Envelope: case PlexType::Reaction: {
+        if (p.children.empty()) return 0;
+        Mods m = mods;
+        if (!p.curves.empty() || !p.maps.empty()) m.push_back({&p, at});
+        return fire(in, p.children[0], volume, at, m, depth + 1);
+    }
+    case PlexType::Effect:
+        return p.children.empty() ? 0 : fire(in, p.children[0], volume, at, mods, depth + 1);
+    case PlexType::MaterialList: case PlexType::Selector: { // the entry for the key, else the default (material 0 / key -1)
+        const uint32_t want = p.type == PlexType::MaterialList ? in.material : 0, def = p.type == PlexType::MaterialList ? 0 : ~0u;
+        size_t pick = SIZE_MAX;
+        for (size_t k = 0; k < p.keys.size(); ++k) {
+            if (p.keys[k] == want) { pick = k; break; }
+            if (p.keys[k] == def && pick == SIZE_MAX) pick = k;
+        }
+        return pick == SIZE_MAX ? 0 : fire(in, p.children[pick], volume, at, mods, depth + 1);
+    }
     case PlexType::ChoiceList: {
         const uint32_t n = uint32_t(p.children.size());
         if (!n) return 0;
@@ -263,20 +334,20 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, i
         case 3: pick = p.counter % n; p.counter = pick + 1 == n ? 0 : pick + 1; break;
         default: pick = rnd(n); break;
         }
-        return fire(in, p.children[pick], volume, at, depth + 1);
+        return fire(in, p.children[pick], volume, at, mods, depth + 1);
     }
     case PlexType::Sequence: {
         if (p.children.empty()) return 0;
-        const double d = fire(in, p.children[0], volume, at, depth + 1);
-        if (p.children.size() > 1) in.pending.push_back({at + d, &p, volume, 1});
+        const double d = fire(in, p.children[0], volume, at, mods, depth + 1);
+        if (p.children.size() > 1) in.pending.push_back({at + d, &p, volume, 1, mods});
         return d; // [I] the rest follows; total length unknown up front
     }
     case PlexType::Overlap: {
         double longest = 0;
         for (size_t k = 0; k < p.children.size(); ++k) {
             const float d = k < p.delays.size() ? vary(p.delays[k].first, p.delays[k].second) : 0;
-            if (d > 0) in.pending.push_back({at + d, &p.children[k], volume, SIZE_MAX}), longest = std::max(longest, double(d));
-            else longest = std::max(longest, fire(in, p.children[k], volume, at, depth + 1));
+            if (d > 0) in.pending.push_back({at + d, &p.children[k], volume, SIZE_MAX, mods}), longest = std::max(longest, double(d));
+            else longest = std::max(longest, fire(in, p.children[k], volume, at, mods, depth + 1));
         }
         return longest;
     }
@@ -284,11 +355,60 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, i
     }
 }
 
-SoundPlayer::Handle SoundPlayer::start(const Plex& p, std::optional<glm::vec3> position, float volume) {
+// 0x587FF0: the input normalised into [inMin, inMax], through the piecewise-linear keys (0x587F10), scaled to the output.
+float SoundPlayer::mapValue(const Plex::Map& m, float x) {
+    if (m.random) return std::uniform_real_distribution<float>(m.outMin, m.outMax)(rng_);
+    if ((m.absolute && x < 0) || m.negate) x = -x;
+    if (x < 0 || (x < m.inMin && m.zeroBelow) || (x > m.inMax && m.zeroAbove)) return 0;
+    float u = x <= m.inMin ? 0 : x >= m.inMax ? 1 : (x - m.inMin) / (m.inMax - m.inMin);
+    if (m.keys.size() >= 2) {
+        size_t k = 0;
+        while (k + 2 < m.keys.size() && m.keys[k + 1].first <= u) ++k;
+        const auto a = m.keys[k], b = m.keys[k + 1];
+        const float f = u <= a.first ? 0 : u >= b.first || b.first <= a.first ? 1 : (u - a.first) / (b.first - a.first);
+        u = a.second + (b.second - a.second) * f;
+    }
+    return m.outMin + (m.outMax - m.outMin) * u;
+}
+
+// Envelope volume curves (param 0) at the node's age: linear from the previous key; past the last key it holds, and a
+// last key of 0 ends the voice (0x587A90). Reaction maps: output 0 multiplies the volume, output 1 adds semitones.
+bool SoundPlayer::apply(Instance& in, Voice& v) {
+    float gain = 1, semitones = 0;
+    bool pitch = false;
+    for (const Mod& mod : v.mods) {
+        for (const Plex::Curve& c : mod.plex->curves) {
+            if (c.param != 0 || c.keys.empty()) continue;
+            const float t = float(now_ - mod.start);
+            float g = c.keys.back().second;
+            if (t >= c.keys.back().first) {
+                if (g <= 0) return false;
+            } else {
+                for (size_t k = 0; k < c.keys.size(); ++k)
+                    if (t < c.keys[k].first) {
+                        const auto a = k ? c.keys[k - 1] : std::pair<float, float>{0, c.keys[0].second}, b = c.keys[k];
+                        g = a.second + (b.second - a.second) * (b.first > a.first ? (t - a.first) / (b.first - a.first) : 1);
+                        break;
+                    }
+            }
+            gain *= std::max(0.0f, g);
+        }
+        for (const Plex::Map& m : mod.plex->maps) {
+            const float y = mapValue(m, in.params[m.input]);
+            if (m.output == 0) gain *= y;
+            else if (m.output == 1) semitones += y, pitch = true;
+        }
+    }
+    mixer_.setVolume(v.id, v.volume * gain);
+    if (pitch) mixer_.setPitch(v.id, std::exp2(semitones / 12.0f));
+    return true;
+}
+
+SoundPlayer::Handle SoundPlayer::start(const Plex& p, std::optional<glm::vec3> position, float volume, uint16_t material) {
     const Handle h = next_++;
     Instance& in = instances_[h];
-    in.position = position;
-    fire(in, p, volume, now_);
+    in.position = position, in.material = material;
+    fire(in, p, volume, now_, {});
     if (in.voices.empty() && in.pending.empty()) { instances_.erase(h); return 0; }
     return h;
 }
@@ -296,11 +416,22 @@ SoundPlayer::Handle SoundPlayer::start(const Plex& p, std::optional<glm::vec3> p
 void SoundPlayer::stop(Handle h, float fade) {
     const auto it = instances_.find(h);
     if (it == instances_.end()) return;
-    for (const VoiceId v : it->second.voices) mixer_.stop(v, fade);
+    for (const Voice& v : it->second.voices) mixer_.stop(v.id, fade);
     instances_.erase(it);
 }
 
 bool SoundPlayer::active(Handle h) const { return instances_.contains(h); }
+
+void SoundPlayer::setParam(Handle h, size_t index, float value) {
+    if (const auto it = instances_.find(h); it != instances_.end() && index < it->second.params.size()) it->second.params[index] = value;
+}
+
+void SoundPlayer::setPosition(Handle h, glm::vec3 position) {
+    const auto it = instances_.find(h);
+    if (it == instances_.end() || !it->second.position) return;
+    it->second.position = position;
+    for (const Voice& v : it->second.voices) mixer_.setPosition(v.id, position);
+}
 
 void SoundPlayer::update(double seconds) {
     now_ += seconds;
@@ -312,16 +443,21 @@ void SoundPlayer::update(double seconds) {
                 if (in.pending[i].at <= now_) {
                     const Pending p = in.pending[i];
                     in.pending.erase(in.pending.begin() + std::ptrdiff_t(i));
-                    if (p.index == SIZE_MAX) fire(in, *p.plex, p.volume, p.at);
+                    if (p.index == SIZE_MAX) fire(in, *p.plex, p.volume, p.at, p.mods);
                     else { // Sequence step
-                        const double d = fire(in, p.plex->children[p.index], p.volume, p.at);
-                        if (p.index + 1 < p.plex->children.size()) in.pending.push_back({p.at + d, p.plex, p.volume, p.index + 1});
+                        const double d = fire(in, p.plex->children[p.index], p.volume, p.at, p.mods);
+                        if (p.index + 1 < p.plex->children.size()) in.pending.push_back({p.at + d, p.plex, p.volume, p.index + 1, p.mods});
                     }
                     again = true;
                     break;
                 }
         }
-        std::erase_if(in.voices, [&](VoiceId v) { return !mixer_.playing(v); });
+        std::erase_if(in.voices, [&](Voice& v) {
+            if (!mixer_.playing(v.id)) return true;
+            if (v.mods.empty() || apply(in, v)) return false;
+            mixer_.stop(v.id, 0.02f);
+            return true;
+        });
         it = in.voices.empty() && in.pending.empty() ? instances_.erase(it) : std::next(it);
     }
 }

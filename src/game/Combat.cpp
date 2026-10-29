@@ -727,6 +727,17 @@ void World::tickCombat(const Actions& a, float dt) {
 
 // Upper body while a weapon is out (subtree of spine segment 14): its aim grid blended bilinearly by the aim
 // angles; pistols / uzi add the fire clip of the hand that just fired (its motion relative to its first frame),
+std::pair<std::string, double> World::combatLayerClip() const {
+    const CombatState& c = combat_;
+    const WeaponInfo& in = info(c.weapon);
+    const bool sub = player_.state().water >= 0 && c.weapon == Weapon::Speargun;
+    if (c.drawT <= 0) return {};
+    if (c.reload > 0) return {sub ? "combat_speargun_reload_submerged" : std::string(in.reloadClip), in.reload - c.reload};
+    if (c.drawT >= 1) return {};
+    const float dur = c.drawn ? (sub ? kSubEquip : in.equip) : (sub ? kSubUnequip : in.unequip);
+    return {std::string(c.drawn ? in.equipClip : in.unequipClip) + (sub ? "_submerged" : ""), (c.drawn ? c.drawT : 1 - c.drawT) * dur};
+}
+
 // rifles show the fire_* grid for the shot and the shotgun adds its pump; the reload clip replaces it while
 // reloading. Drawing / holstering play the equip / unequip clip while drawT ramps, blended into the aim pose over
 // the last / first 30 % of the ramp, the layer fading in / out over 0.1 s at the holstered end [I].

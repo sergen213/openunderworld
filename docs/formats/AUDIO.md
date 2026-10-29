@@ -444,9 +444,13 @@ variation record:
 | 2 | Wave | u32 Wave section id, u32 (30 seen), 8 bytes | `Mixer::play`; Waves with loop points loop until stopped [I] |
 | 3 | Stream | `char*` path (no `.mul`), u8, u8, u16 volume % [I] | `pc-w\audio\streams\<path>.mul`, Voice bus, subtitles |
 | 4 | Assignment (0x590970) | [0] child, [1..2] delay, [3..4] volume, each value ± variance (`0x582D50`, clamped ≥ 0), [14] f32 distance [I], byte 0x44 max instances | volume, delay, max distance |
-| 5 / 9 / 12 | Envelope / Reaction / Effect | child at data +0 | child only (envelope/effect ignored) |
+| 5 | Envelope (0x590CE0 / 0x587A90) | {Plex*, u32 n, Curve**}; Curve {u16 param, u16, Keys*}; Keys {i32 loop start, i32 loop end, u32 count, {f32 time, f32 value, u32 flags}[count]} | param 0 = volume over the node's age, linear between keys; a last key of 0 ends the voice [I: param meaning from shapes]; other params and loops ignored |
+| 9 | Reaction (0x590F30 / 0x592640) | {Plex*, u8 flags, u8 n, Map*}; Map 0x1C {u16 map (low nibble input game parameter, 0xFF random; bits 8-11 output: 0 volume ×, 1 pitch semitones +; bits 12-13 sign mode; 0x4000 / 0x8000 zero below / above), u16 flags (bit 0 off), f32 in min/max, f32 out min/max, u32 n, {f32 x, f32 y}* curve} (0x587FF0 / 0x587F10) | per voice: Σ/Π of the maps on `SoundPlayer::setParam` inputs (sound instance +0x28) |
+| 12 | Effect | child at data +0 | child only (effect ignored) |
 | 6 | ChoiceList (0x587920) | {n, Plex**, Plex*, i8 mode, i8, u32 counter} | mode 0 random, 1 no repeat, 2 shuffle (n ≤ 32), 3 in order |
-| 7 / 8 / 13 | MaterialList / Selector / Oscillator | — | not used by the graphs below |
+| 7 | MaterialList (0x58DFC0 / 0x583960) | {f32, u32 n, {u32 DTP, u16 material, u16}[n]} | the entry for the instance material (+0x44), else material 0 (DTP 0 = silent) |
+| 8 | Selector (0x583490) | {u32 n, {u32 DTP, u32 key}[n]} | key 0 [I: the exe's key is a list index from 0x583440], else key -1 |
+| 13 | Oscillator (0x587C60) | FMOD tone DSP {f32 rate, …, i8 type} [I] | not played: no reached graph uses it |
 | 10 | Sequence (0x58E070) | {n, Plex**, …} | children one after the other |
 | 11 | Overlap (0x58B570) | {n, Plex**, …, +0x14 has delays, +0x18 {value, variance}[n]} | all children |
 
@@ -513,3 +517,40 @@ reaches 0 and again while it stays 0 [I: lara.drm DTPs 1014/1020 hold 2315 in re
 stream subtitles (English) go to `locale::SubtitleTicker`, drawn by `ui::Hud::subtitles` (also used by cutscenes).
 Replays: l2_cliffclimb starts 12 ambient sounds at tick 1, l7_arctic_sea 12, l3_main_bedroom marker 1 at tick 171
 after a 2 s walk [O, logs; not listened to].
+
+### 9.7 Animation-event sounds [V-exe 0x5BA000 / 0x5BA0D0 -> 0x5B9F70]
+
+Event records (EFFECTS.md) dispatch on `info & 3`: 0 sound (0x5B99C0), 1 effect, 2 camera / pad (0x5B69C0), 3 weighted
+sound pick (0x5B2820). Sound command (record +8): kind 0 `{u8 0, u8 flags (bit 0 follow segment), i16 segment, Plex*}` — a
+SoundPlex inside the list's own DTP (lara.drm: 10 666, almost all Assignment -> Reference); kind 1 `{u8 1, u8 segment,
+i16, u8 volume, u8 variance, u32 DTP, f32 pitch?, f32 var, f32 delay, f32 var}` [U: the volume byte / pitch floats]; type 3
+`{i16, u8 weight[3], volumes, u32 DTP[3] at +0xC, …}` (rand() % Σweights). Position: segment > 0 bone, < 0 HInfo marker,
+0 the instance (0x5875A0); material = the instance's surface material (sound instance +0x44, MaterialList input).
+Lists run in ou-game (`fx::System::sound` -> `GameSound::animSound`, logged `anim sound <object> frame f DTP d material m`):
+Lara's clips (footsteps / efforts by MaterialList), the combat layer clip (`World::combatLayerClip`: reload / equip /
+unequip run Lara's and the weapon object's lists, e.g. wp_handgun `reload`), vehicle clips (`motorcycle:<clip>` use
+motorcycle.drm), enemy clips (cat_panther, poacher, panther_thrall vocals), weapon `fire` and ammo hit objects
+(`bullet_hit` idle at the impact material), script objects' clips (`World::objectClips`). The old hard-coded
+footstep / shot / reload waves are gone. Replays [O, logs]: panther_fight 254 wp_handgun, 89 cat_panther, 42 bullet_hit,
+40 lara, 24 poacher sounds; pool_to_ragnarok lara footsteps DTP 953/954/956 at material 17, panther_thrall DTP 12660.
+
+### 9.8 Bike engine [V-data; I: inputs]
+
+motorcycle.drm DTP 13589 = Overlap of five layers (SV650 low 05, mid 03, a Sequence, mid 16, mid 15), each
+Assignment -> Reaction -> Envelope -> Wave; the Reactions map parameter 2 (rpm, 1500..8000/10000: volume crossfade band,
+pitch -1..+5 semitones), 5 (0..700) and 0 (0..50). The Bike class's feeding of the parameters is not traced; ours: rpm
+1500 + 8500 · speed / max speed, parameter 5 = acceleration as throttle (0..700), 0 = 0, started while `Ride`, moving with
+Lara. Replay bike_ride: tick 66 `bike engine start`, rpm 4252 / 7224 / 8822 at ticks 120-240, stop at 379 [O, logs].
+
+### 9.9 Music requests, cinematics [V-exe]
+
+`music` natives (bind 0x7ACB40) work on a value `{char* track, i32 slot}`: 1 Play(fade s) (0x5942F0), 2 Play(fade s,
+fade-out s) (0x594320), 3 Stop(fade s) — 0x593EB0 with a null name fades that slot out. Slot = player 0xCC5260 + slot ×
+0x528. `music` locals start at their initial value (Vm), `script::Runtime::takeMusicRequests` hands them to ou-game's
+Music (one voice: a request crossfades, a stop fades only the slot holding the playing track). Unit music follows the
+scripts; `<unit>_mus_01` only plays while no request has started a track [I]. Replay pool_to_ragnarok [O]: tick 1
+l4_pool_mus_01; tick 101 soundvolume 5674 vt 58 -> unit script 14147 vt 25 -> `l4_staircase_upper_mus_01` (slot 1), stop
+slot 0 (3 s), 0x7D 0 -> 8 — the original switches there, not on the unit change. l1_ship_lower_hallway: tick 1
+`l1_ship_engine_room_mus_01` (slot 1). 0x7B / 0x0D writers were not reached in a replay. Natives on a null receiver are
+skipped as the exe does (soundvolume 1002 stickybool 2), messagechannel Send without subscribers is a no-op.
+Cinematics mute the Music and Sfx buses while their stream plays and restore the menu volumes after (logged) [I].

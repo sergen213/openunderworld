@@ -210,14 +210,27 @@ struct Command { uint16_t type = 0, a1 = 0, a2 = 0, a3 = 0; };
 // Object / animation event record {u16 info, u16 frame, u8 event, ...; command}, 8 + (info >> 12) * 4 bytes
 // (tru.exe 0x5BA000). info & 3 kind (1 effect callback), & 4 disabled, & 0x3F0 surface-material filter (0 any,
 // else the instance material, tru.exe 0x5BBFD0 / instance +0x186), & 0xC00 variant (matched against 0).
+// Sound record payload (info & 3 == 0: tru.exe 0x5B99C0, == 3: 0x5B2820; AUDIO.md §9.7).
+struct SoundCall {
+    uint8_t kind = 0xFF;       // 0 SoundPlex in the list's DRM (`plex`), 1 SoundPlex DTP `dtp[0]`, 3 weighted pick of dtp[0..2]
+    bool follow = false;       // kind 0 flags bit 0: the sound follows its segment [I: 0x582EA0 stores it]
+    int16_t segment = 0;       // >0 segment, <0 HInfo marker, 0 the instance position (0x5875A0)
+    cdc::Pointer plex{~0u, 0}; // kind 0
+    uint32_t dtp[3] = {};
+    uint8_t weight[3] = {};    // kind 3 rand() % sum picks
+};
 struct Event {
     uint16_t info = 0, frame = 0; // frame: 30 Hz animation frame (anim lists)
     uint8_t event = 0;
     Command cmd;
+    SoundCall sound;              // kind 0xFF unless this is a sound record
     bool effect() const { return (info & 3) == 1 && !(info & 4); } // effect callback, not disabled
+    bool isSound() const { return sound.kind != 0xFF && !(info & 4); }
     uint8_t material() const { return uint8_t((info & 0x3F0) >> 4); }
+    bool matches(uint8_t mat) const { return !(info & 0xC00) && (!material() || material() == mat); }
     // Anim-list record that runs on an instance standing on / hit at `material`.
-    bool runsOn(uint8_t mat) const { return effect() && !(info & 0xC00) && (!material() || material() == mat); }
+    bool runsOn(uint8_t mat) const { return effect() && matches(mat); }
+    bool soundOn(uint8_t mat) const { return isSound() && matches(mat); }
 };
 
 struct ObjectFx {
@@ -231,6 +244,8 @@ struct ObjectFx {
     struct MapEntry { uint8_t id = 0; int8_t cls = -1; uint8_t index = 0; };
     std::vector<MapEntry> effectMap;     // +0x04 / +0x08 (commands 0x1C / 0x2F look effects up by id)
     std::vector<Event> events;           // object section +4 list
+    std::string name;                    // object name (Library::get)
+    std::shared_ptr<const cdc::Drm> drm; // the object DRM (sound records' SoundPlex graphs); set by Library::get
     // Animation list (ObjectBase +0x54 / +0x58 {i16 anim, i16, u32 event-list DTP, char* name}) -> that clip's
     // event list (DTP rtype 19: u32 header, then records as `events`). Only clips with an event list.
     std::map<std::string, std::vector<Event>> clips;
@@ -282,7 +297,8 @@ public:
     bool runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command& c, const glm::mat4& world, int32_t owner,
                     std::span<const glm::mat4> bones = {}, bool birth = false);
     // Animation events: the records of `events` (an fx->clips list) at 30 Hz frames in [from, to) that run on
-    // `material` (Event::runsOn). Returns the commands that started something.
+    // `material` (Event::runsOn). Returns the commands that started something. Sound records in the range that run on
+    // `material` (Event::soundOn) go to `sound` at their segment's world position.
     int runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
                   int32_t owner, uint8_t material, float from, float to, std::span<const glm::mat4> bones = {});
     // A one-shot instance playing `events` from frame 0 at a fixed `world` as the game ticks (bullet hits, weapon
@@ -294,6 +310,7 @@ public:
     // (class 3) follow their owner's segments. Poses are dropped after tick(); a ribbon whose owner is not tracked
     // stops adding quads (its quads fade on).
     void track(int32_t owner, const glm::mat4& world, std::span<const glm::mat4> bones);
+    std::function<void(const ObjectFx&, const Event&, glm::vec3 position, uint8_t material)> sound;
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     bool hasOwner(int32_t owner) const;
     void clear();

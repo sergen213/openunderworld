@@ -753,3 +753,70 @@ TEST(AudioReal, SfxMarkersAllUnits) {
     EXPECT_EQ(musicActions, 0u); // retail sfxmarkers never set music variables
     EXPECT_EQ(unresolved, 0u);   // every referenced DTP lives in the same unit DRM
 }
+
+// Reaction: game parameter 2 mapped onto volume; Envelope: a volume curve ending at 0 ends the voice (AUDIO.md §9.7).
+TEST(SoundPlex, ReactionAndEnvelopeShapeVolume) {
+    Mixer m;
+    m.addSound(7, constant(1, {16384}, 48000));
+    Plex wave;
+    wave.type = PlexType::Wave, wave.id = 7;
+    Plex react;
+    react.type = PlexType::Reaction, react.children = {wave};
+    Plex::Map map;
+    map.input = 2, map.inMin = 0, map.inMax = 100, map.keys = {{0, 0}, {1, 1}};
+    react.maps = {map};
+    SoundPlayer sp(m, nullptr, nullptr);
+    const auto h = sp.start(react);
+    ASSERT_NE(h, 0u);
+    const float full = 0.5f * std::sqrt(0.5f);
+    EXPECT_NEAR(run(m, 4)[0], 0, 1e-4); // parameter 0 -> silent
+    sp.setParam(h, 2, 50);
+    sp.update(0);
+    EXPECT_NEAR(run(m, 4)[0], 0.5f * full, 1e-3);
+    Plex env;
+    env.type = PlexType::Envelope, env.children = {wave}, env.curves = {{0, {{0.1f, 1}, {0.2f, 0}}}};
+    const auto e = sp.start(env);
+    EXPECT_TRUE(sp.active(e));
+    sp.update(0.25);
+    EXPECT_FALSE(sp.active(e));
+}
+
+// Lara's footsteps: Selector -> MaterialList picks a different graph per surface material; the bike engine is an
+// Overlap of loops under Reactions on parameter 2 (rpm).
+TEST(AudioReal, MaterialListAndEngineReaction) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    auto lara = std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\lara.drm")));
+    auto bike = std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\motorcycle.drm")));
+    PlexBank bank;
+    bank.add(lara), bank.add(bike);
+    Mixer m;
+    m.addWaves(*lara), m.addWaves(*bike);
+    SoundPlayer sp(m, [&](uint32_t id) { return bank.find(id); }, nullptr);
+    const Plex* step = bank.find(953);
+    ASSERT_TRUE(step);
+    EXPECT_EQ(step->type, PlexType::Selector);
+    sp.start(*step, glm::vec3(0), 1, 27);
+    sp.update(1);
+    const auto a = sp.waves;
+    sp.waves.clear();
+    sp.start(*step, glm::vec3(0), 1, 17);
+    sp.update(1);
+    ASSERT_FALSE(a.empty());
+    ASSERT_FALSE(sp.waves.empty());
+    EXPECT_NE(a, sp.waves);
+    const Plex* engine = bank.find(13589);
+    ASSERT_TRUE(engine);
+    ASSERT_EQ(engine->type, PlexType::Overlap);
+    ASSERT_EQ(engine->children.size(), 5u);
+    const Plex& r = engine->children[0].children[0];
+    ASSERT_EQ(r.type, PlexType::Reaction);
+    ASSERT_EQ(r.maps.size(), 4u);
+    EXPECT_EQ(r.maps[0].input, 2);
+    EXPECT_EQ(r.maps[0].output, 0);
+    EXPECT_FLOAT_EQ(r.maps[0].inMin, 1500);
+    EXPECT_FLOAT_EQ(r.maps[0].inMax, 8000);
+    EXPECT_TRUE(r.maps[0].zeroAbove);
+    EXPECT_EQ(r.maps[1].output, 1);
+    EXPECT_TRUE(r.maps[1].add);
+}

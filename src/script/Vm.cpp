@@ -171,11 +171,15 @@ bool Machine::push(Instance& object, const Function& f, std::span<const Value> a
     if (!f.argCount) fr.locals[0] = Value::object(object.uid); // no argument occupies offset 0 (missing ones read 0)
     // `symbol` locals start at their declared value (function local records, DXHR cdc::Function +0x0C): the property
     // names passed to instanceref Get/SetProperty, e.g. l3_main_bedroom 12059 vt 28 local +5 = 10814.
-    for (const Member& l : f.locals)
-        if (l.init && !std::strcmp(object.program->nativeName(l.typeId), "symbol")) {
-            if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
-            fr.locals[l.offset] = Value::scalar(*l.init);
-        }
+    // `music` locals hold their initial {char* track, i32 slot}: the slot as the value, the track as its text.
+    for (const Member& l : f.locals) {
+        const char* type = object.program->nativeName(l.typeId);
+        const bool symbol = l.init && !std::strcmp(type, "symbol"), music = l.initAt && !std::strcmp(type, "music");
+        if (!symbol && !music) continue;
+        if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
+        fr.locals[l.offset] = Value::scalar(symbol ? *l.init : l.init2.value_or(0));
+        if (music) fr.locals[l.offset].text = &l.initText;
+    }
     for (size_t i = 0; i < args.size(); ++i) { // locals are addressed by byte offset; arguments start at 0
         const size_t off = i < f.argOffsets.size() ? f.argOffsets[i] : 4 * i;
         if (off >= fr.locals.size()) fr.locals.resize(off + 1);
@@ -253,6 +257,9 @@ int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame&
         for (int i = 0; i < 4 && v.kind == Value::Kind::Local; ++i) v = read(v);
         return v;
     };
+    // A native whose receiver address is null (a member of a null object, 0x11/0x12/0x15) is skipped by the exe
+    // (0x57CE50 native call: the prototype's receiver flag set and a null receiver -> next instruction).
+    const bool nullNative = f.native && receiver.kind == Value::Kind::Scalar && receiver.bits == 0 && !receiver.text;
     receiver = deref(receiver); // object or native value held in a local
     std::vector<Value> args(frame.stack.end() - f.argCount, frame.stack.end());
     if (f.native) // natives get values, not addresses of the caller's locals (a cameraspline argument held in a local)
@@ -263,6 +270,10 @@ int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame&
                                      (slot->kind == Value::Kind::Scalar && slot->bits == 0));
     const Value resultAddress = hasResult ? *slot : Value{};
     Value result;
+    if (nullNative) {
+        frame.stack.resize(frame.stack.size() - f.argCount - hasResult);
+        return hasResult && !write(resultAddress, Value::scalar(0)) ? 0 : 1;
+    }
     if (f.native) {
         NativeContext nc{current.program->owner(&f), current.program->functionIndex(&f), receiver, args, {}};
         nc.name = current.program->nativeName(nc.typeId);

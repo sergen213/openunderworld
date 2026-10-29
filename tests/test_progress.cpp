@@ -409,7 +409,6 @@ TEST(ChaptersReal, PickupsAndMusic) {
     EXPECT_EQ(pool.music, "l4_pool_mus_01");
     const auto seatop = game::loadUnitData(bf, "l1_seatop");
     EXPECT_EQ(seatop.music, "l1_seatop_mus_01");
-    EXPECT_EQ(seatop.musicByIntro.count(997), 1u); // cinematic 997's script names l1_seatop_mus_01
 }
 
 // The PDA's per-chapter reward table matches the units' reward intros (survey in chapterRewards).

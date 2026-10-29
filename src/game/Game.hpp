@@ -322,11 +322,10 @@ struct UnitData {
     std::vector<formats::CameraSpline> cameraSplines; // formats::Unit::cameraSplines (reveal cameras)
     std::shared_ptr<const cdc::Drm> drm;
     // Progression (src/game/Progress.hpp): reward intros; cinematic intros whose script names chapter start
-    // units (level ends); intros whose script names a music track (pc-w\music\<name>\<name>.mus exists),
-    // first one; the unit's own track "<name>_mus_01" when it exists, else empty [I].
+    // units (level ends); the unit's own track "<name>_mus_01" when it exists, else empty [I: played only while no
+    // script `music` request has started a track; AUDIO.md §9.4].
     std::vector<Pickup> pickups;
     std::map<int32_t, std::vector<std::string>> chapterLinks;
-    std::map<int32_t, std::string> musicByIntro;
     std::string music;
     std::map<int32_t, std::string> cinematics; // cinematic_object intro -> the stream it plays (cine::introCinematic)
     std::string playerObject; // Lara outfit object of this unit (formats::Unit::playerObjectId name); empty if none
@@ -467,6 +466,9 @@ public:
     const Health& health() const { return health_; }
     void setHealth(float v) { health_.set(v); } // saves (after restore(), which heals fully)
     const CombatState& combat() const { return combat_; }
+    // The upper-body combat clip aimLayer plays now (reload, equip / unequip) and its time; empty name when none.
+    // Lara's and the weapon object's animation event lists for that clip name run on it (sounds, AUDIO.md §9.7).
+    std::pair<std::string, double> combatLayerClip() const;
     TargetingTuning targeting;
     // Weapon w's model `hand` (0 right / the two-handed gun, 1 left): Lara bone it rides on (hands while drawn,
     // thigh / back holster otherwise) and its matrix in that bone's frame; nullopt when it is not shown (not

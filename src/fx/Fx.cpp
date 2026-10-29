@@ -166,14 +166,35 @@ ParticleDef parseParticleDef(std::span<const uint8_t> d) {
 }
 
 // Records until 0xFFFF, 8 + (info >> 12) * 4 bytes each, from `o`.
-static std::vector<Event> parseEvents(std::span<const uint8_t> d, size_t o) {
+// Sound records (AUDIO.md §9.7): info & 3 == 0 command {u8 kind, u8 flags, i16 segment, Plex* (kind 0) | u8 ... u32 DTP
+// at +8 (kind 1)}; == 3 {i16, u8 weight[3], volumes, u32 DTP[3] at +0xC}.
+static std::vector<Event> parseEvents(const cdc::Drm& drm, size_t section, size_t o) {
+    const auto d = std::span<const uint8_t>(drm.sections[section].data);
+    std::unordered_map<uint32_t, cdc::Pointer> ptrs;
+    bool havePtrs = false;
     std::vector<Event> out;
     while (o + 2 <= d.size()) {
         const auto info = rd<uint16_t>(d, o);
         if (info == 0xFFFF) break;
-        out.push_back({info, rd<uint16_t>(d, o + 2), rd<uint8_t>(d, o + 4),
-                       {rd<uint16_t>(d, o + 8), rd<uint16_t>(d, o + 10), rd<uint16_t>(d, o + 12), rd<uint16_t>(d, o + 14)}});
-        o += 8 + size_t(info >> 12) * 4;
+        const size_t size = 8 + size_t(info >> 12) * 4;
+        Event e{info, rd<uint16_t>(d, o + 2), rd<uint8_t>(d, o + 4),
+                {rd<uint16_t>(d, o + 8), rd<uint16_t>(d, o + 10), rd<uint16_t>(d, o + 12), rd<uint16_t>(d, o + 14)}};
+        const size_t c = o + 8;
+        if ((info & 3) == 0 && size >= 16 && o + size <= d.size()) {
+            const uint8_t kind = d[c];
+            if (kind == 0) {
+                if (!havePtrs) ptrs = cdc::sectionPointers(drm, uint32_t(section)), havePtrs = true;
+                if (const auto it = ptrs.find(uint32_t(c + 4)); it != ptrs.end())
+                    e.sound = {0, bool(d[c + 1] & 1), rd<int16_t>(d, c + 2), it->second};
+            } else if (kind == 1 && size >= 20) {
+                e.sound = {1, false, int16_t(int8_t(d[c + 1])), {~0u, 0}, {rd<uint32_t>(d, c + 8)}};
+            }
+        } else if ((info & 3) == 3 && size >= 8 + 0x18 && o + size <= d.size()) {
+            e.sound = {3, false, 0, {~0u, 0}, {rd<uint32_t>(d, c + 0xC), rd<uint32_t>(d, c + 0x10), rd<uint32_t>(d, c + 0x14)},
+                       {d[c + 2], d[c + 3], d[c + 4]}};
+        }
+        out.push_back(e);
+        o += size;
     }
     return out;
 }
@@ -181,7 +202,7 @@ static std::vector<Event> parseEvents(std::span<const uint8_t> d, size_t o) {
 // Event list `ev`, GenericFXObject `gen` and ObjectBase `base` (section indices, -1 = none) of `drm`.
 static ObjectFx parseFxSections(const cdc::Drm& drm, int ev, int gen, int base, std::vector<std::string>* warnings) {
     ObjectFx fx;
-    if (ev >= 0) fx.events = parseEvents(drm.sections[size_t(ev)].data, 0);
+    if (ev >= 0) fx.events = parseEvents(drm, size_t(ev), 0);
     if (base >= 0) { // animation list: {i16 anim, i16, u32 event-list DTP id, char* name}
         const auto& s = drm.sections[size_t(base)];
         const auto ptrs = cdc::sectionPointers(drm, uint32_t(base));
@@ -194,8 +215,8 @@ static ObjectFx parseFxSections(const cdc::Drm& drm, int ev, int gen, int base, 
                 if (name == ptrs.end() || list19 < 0 || name->second.section != uint32_t(base)) continue;
                 std::string nm;
                 for (size_t k = name->second.offset; k < s.data.size() && s.data[k]; ++k) nm += char(s.data[k]);
-                auto events = parseEvents(drm.sections[size_t(list19)].data, 4); // u32 header
-                if (std::any_of(events.begin(), events.end(), [](const Event& x) { return x.effect(); }))
+                auto events = parseEvents(drm, size_t(list19), 4); // u32 header
+                if (std::any_of(events.begin(), events.end(), [](const Event& x) { return x.effect() || x.isSound(); }))
                     fx.clips.emplace(std::move(nm), std::move(events));
             }
     }
@@ -392,7 +413,7 @@ std::vector<PointSet> parsePointSets(const cdc::Drm& unit, std::vector<std::stri
             for (size_t i = nm->second.offset; i < unit.sections[nm->second.section].data.size() && unit.sections[nm->second.section].data[i]; ++i)
                 ps.name += char(unit.sections[nm->second.section].data[i]);
         ps.fx = fx;
-        ps.events = parseEvents(ld, 4);
+        ps.events = parseEvents(unit, size_t(list), 4);
         ps.distance = rd<float>(as.data, r + 0x5C);
         glm::mat4 m;
         std::memcpy(&m[0][0], as.data.data() + r, sizeof m); // D3D row-major = column-major memory (LEVELS.md IMFs)
@@ -691,8 +712,12 @@ bool System::startFilter(const std::shared_ptr<const ObjectFx>& fx, int def, con
 int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
                       int32_t owner, uint8_t material, float from, float to, std::span<const glm::mat4> bones) {
     int n = 0;
-    for (const auto& e : events)
-        if (e.runsOn(material) && float(e.frame) >= from && float(e.frame) < to) n += runCommand(fx, e.cmd, world, owner, bones);
+    for (const auto& e : events) {
+        if (float(e.frame) < from || float(e.frame) >= to) continue;
+        if (e.runsOn(material)) n += runCommand(fx, e.cmd, world, owner, bones);
+        else if (sound && fx && e.soundOn(material))
+            sound(*fx, e, glm::vec3((world * (e.sound.kind == 3 ? glm::mat4(1) : fx->frame(e.sound.segment, bones)))[3]), material);
+    }
     return n;
 }
 
@@ -1291,7 +1316,8 @@ std::shared_ptr<const ObjectFx> Library::get(const std::string& name, std::vecto
     auto bytes = bigfile_.read("pc-w\\" + name + ".drm");
     if (!bytes) return nullptr;
     try {
-        const auto drm = cdc::parseDrm(std::move(*bytes));
+        const auto shared = std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*bytes)));
+        const cdc::Drm& drm = *shared;
         e.flags = formats::objectFlags(drm);
         // Object data block (object section +0 -> ObjectBase, +0xC8 -> data, as game::loadWeapon reads it).
         if (const auto obj = std::find_if(drm.sections.begin(), drm.sections.end(), [](const auto& s) { return s.type == cdc::SectionType::Object; });
@@ -1309,6 +1335,7 @@ std::shared_ptr<const ObjectFx> Library::get(const std::string& name, std::vecto
         loadTextures(drm, name, fx->textureIds(), warnings);
         if (fx->usesGlowTexture() && !textureIds_.contains(kRibbonTexture)) // particle.drm: always loaded by the exe (0x5D4090)
             if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture, kRibbonTexture}, warnings);
+        fx->drm = shared, fx->name = name;
         e.fx = std::make_shared<const ObjectFx>(std::move(*fx));
     } catch (const std::exception& ex) {
         if (warnings) warnings->push_back("pc-w\\" + name + ".drm effects: " + ex.what());

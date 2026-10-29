@@ -6,6 +6,7 @@
 
 #include <glm/vec3.hpp>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -32,10 +33,28 @@ struct Plex {
     uint8_t mode = 0;       // ChoiceList pick: 0 random, 1 random without repeat, 2 shuffle, 3 in order (0x587920)
     std::vector<Plex> children;
     std::vector<std::pair<float, float>> delays; // Overlap per-child start delay {value, variance}
+    // MaterialList (0x583960) / Selector (0x583490): children are References to DTP ids, picked by key (surface
+    // material; Selector: 0xFFFFFFFF = default entry).
+    std::vector<uint32_t> keys;
+    // Envelope (0x590CE0 / 0x587A90): curves of {time s, value} keys over the node's age; param 0 = volume [I: shape].
+    struct Curve { uint16_t param = 0; std::vector<std::pair<float, float>> keys; };
+    std::vector<Curve> curves;
+    // Reaction (0x590F30 / 0x592640 / 0x587FF0): game parameters (SoundPlayer::setParam) mapped onto the child's
+    // volume (output 0) / pitch in semitones (output 1): x in [inMin, inMax] -> normalised -> piecewise-linear curve ->
+    // outMin + (outMax - outMin) * y; `add` combines additively (map bit 0x100), else multiplies.
+    struct Map {
+        uint8_t input = 0, output = 0;
+        bool add = false, random = false; // random: input byte 0xFF, a uniform pick in [outMin, outMax]
+        bool absolute = true, negate = false; // map bits 12-13: 0 negative inputs use |x|, 2 always negated
+        bool zeroBelow = false, zeroAbove = false; // map bits 0x4000 / 0x8000: 0 outside [inMin, inMax]
+        float inMin = 0, inMax = 1, outMin = 0, outMax = 1;
+        std::vector<std::pair<float, float>> keys;
+    };
+    std::vector<Map> maps;
     mutable uint32_t counter = 0; // ChoiceList state (last pick / shuffle mask), as data +0x10 in the exe
 };
-// Node {i32 type, ptr data} at `offset` of drm.sections[section]. Types the exe can create but no retail
-// sfxmarker/voice graph uses (MaterialList, Selector, Oscillator) parse without children. Throws FormatError.
+// Node {i32 type, ptr data} at `offset` of drm.sections[section]. Oscillator (an FMOD tone DSP, 0x587C60) parses
+// without data: no retail graph reached from markers or animation events uses it. Throws FormatError.
 Plex parsePlex(const cdc::Drm& drm, uint32_t section, uint32_t offset);
 
 // DTP id -> SoundPlex graph at offset 0 of that DTP section, parsed on first use.
@@ -85,18 +104,32 @@ public:
     SoundPlayer(Mixer& mixer, Resolve resolve, LoadStream stream) : mixer_(mixer), resolve_(std::move(resolve)),
                                                                  stream_(std::move(stream)) {}
     using Handle = uint32_t; // 0 = nothing started
-    Handle start(const Plex& p, std::optional<glm::vec3> position = {}, float volume = 1);
+    // `material`: the surface material MaterialList nodes pick by (sound instance +0x44, AUDIO.md §9.7).
+    Handle start(const Plex& p, std::optional<glm::vec3> position = {}, float volume = 1, uint16_t material = 0);
     void stop(Handle h, float fadeSeconds = 0.2f);
     bool active(Handle h) const; // a voice still plays or a delayed/sequenced part is pending
+    void setParam(Handle h, size_t index, float value); // Reaction input (game parameter) of a running sound
+    void setPosition(Handle h, glm::vec3 position);     // a 3D sound's emitter moved
     void update(double seconds);
     // Started streams (voice lines): path plus its English subtitle text, oldest first; cleared by the caller.
     struct Line { std::string path, subtitle; };
     std::vector<Line> lines;
     std::vector<std::string> waves; // "0x<id>" of every wave started, for logs; cleared by the caller
 private:
-    struct Pending { double at; const Plex* plex; float volume; size_t index; };
-    struct Instance { std::optional<glm::vec3> position; std::vector<VoiceId> voices; std::vector<Pending> pending; };
-    double fire(Instance& in, const Plex& p, float volume, double at, int depth = 0); // returns the duration
+    struct Mod { const Plex* plex; double start; }; // an Envelope / Reaction above a voice and when it started
+    using Mods = std::vector<Mod>;
+    struct Pending { double at; const Plex* plex; float volume; size_t index; Mods mods; };
+    struct Voice { VoiceId id; float volume; Mods mods; };
+    struct Instance {
+        std::optional<glm::vec3> position;
+        uint16_t material = 0;
+        std::array<float, 16> params{};  // Reaction inputs (sound instance +0x28)
+        std::vector<Voice> voices;
+        std::vector<Pending> pending;
+    };
+    bool apply(Instance& in, Voice& v); // the voice's Envelope / Reaction volume and pitch; false when an envelope ended
+    float mapValue(const Plex::Map& m, float x);
+    double fire(Instance& in, const Plex& p, float volume, double at, const Mods& mods, int depth = 0); // returns the duration
     float vary(float v, float var);
     Mixer& mixer_;
     Resolve resolve_;

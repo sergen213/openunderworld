@@ -1,6 +1,7 @@
 // ou-game: playable Lara in a real unit. Simulation (src/game) runs on a fixed 60 Hz tick; rendering
 // interpolates between the last two ticks. Docs: docs/GAMEPLAY.md.
 #include <algorithm>
+#include <bit>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -33,6 +34,7 @@
 #include "formats/Formats.hpp"
 #include "fx/Fx.hpp"
 #include "game/Game.hpp"
+#include "script/Vm.hpp"
 #include "game/Weather.hpp"
 #include "locale/Locale.hpp"
 #include "platform/Sdl.hpp"
@@ -321,42 +323,6 @@ std::vector<ou::render::DebugLine> collisionLines(const ou::collision::Collision
     return out;
 }
 
-// Footstep and landing sounds from the simulated pose. [I] A foot (bones 8, 13; z ~0 when standing in
-// ng_idle) dropping below 12 units in model space during walk/run/stop plays a heel wave; leaving the air
-// plays a landing wave. Waves are lara.drm Wave sections, stone variants only: the game's surface-material
-// to sound mapping is not decoded (AUDIO.md).
-struct Footsteps {
-    static constexpr uint32_t kHeel = 0x11A; // 'fst_boot_stone_b_heel_01' .. _10
-    static constexpr uint32_t kLand = 0x1D3; // 'fst_boot_stone_a_land_01' .. _05
-    bool down[2] = {true, true};
-    ou::game::State last = ou::game::State::Idle;
-    unsigned next = 0, plays = 0;
-
-    void tick(const ou::game::World& w, ou::audio::Mixer& mix) {
-        using ou::game::State;
-        const auto& s = w.player().state();
-        const bool wasAir = last == State::Jump || last == State::Fall, inAir = s.state == State::Jump || s.state == State::Fall;
-        if (wasAir && !inAir && s.state != State::Hang) plays += mix.play(kLand + next++ % 5, {.volume = 0.9f}) != 0;
-        last = s.state;
-        const ou::anim::Clip* clip = w.anims().find(s.clip);
-        if ((s.state != State::Walk && s.state != State::Run && s.state != State::Stop) || !clip) {
-            down[0] = down[1] = true;
-            return;
-        }
-        const auto& sk = w.anims().skeleton;
-        const auto m = ou::anim::worldMatrices(sk, ou::anim::sample(*clip, sk, s.clipTime, s.loop));
-        for (int f = 0; f < 2; ++f) {
-            const float z = m[f ? 13 : 8][3].z;
-            if (!down[f] && z < 12.0f) {
-                down[f] = true;
-                plays += mix.play(kHeel + next++ % 10, {.volume = s.state == State::Walk ? 0.5f : 0.8f}) != 0;
-            } else if (z > 25.0f) {
-                down[f] = false;
-            }
-        }
-    }
-};
-
 // Enemies (src/game/ai): each enemy's model-0 skinned meshes, CPU-skinned from Enemy::pose and placed in the
 // world like Lara's. Their intro meshes in the level scene are left out (StreamedScene::build). Enemy shots are
 // drawn as tracers (yellow hit, white miss) for 0.2 s.
@@ -446,50 +412,23 @@ std::optional<glm::vec2> toScreen(const ou::game::CameraState& cam, float fovDeg
 }
 
 // Combat (src/game/Combat.*): weapon models on Lara's hand / holster bones, --target dummies, the HUD state and reticle
-// (ui::Hud) and each weapon's shot / reload waves. Muzzle flashes and impacts are the original effects (EffectsView).
+// (ui::Hud). Muzzle flashes, impacts and weapon sounds are the original animation events (EffectsView, GameSound).
 struct CombatView {
     std::vector<ou::scene::Vertex> scratch;
     std::vector<std::unique_ptr<ou::game::DummyTarget>> dummies;
-    struct Waves { std::vector<uint32_t> shots; uint32_t reloadStart = 0, reloadEnd = 0; };
-    std::array<Waves, ou::game::kWeaponCount> waves; // by weapon
-    uint32_t unholster = 0, next = 0;
-    bool drawn = false, reloading = false, dead = false, slowMo = false;
+    bool dead = false, slowMo = false;
     int healthPacksUsed = 0;
     ou::game::Weapon weapon = ou::game::Weapon::Pistols;
 
-    // Shots: HG1_shot_c (handgun), MP5_shot (uzi), SG1_shot (shotgun), speargun_shot_b; reload: the HG1 magazine
-    // release / insert (handgun, uzi), SG1_reload, speargun_cock_a.
-    void addWaves(const ou::cdc::Drm& drm, ou::game::Weapon wpn) {
-        static constexpr std::string_view kShot[] = {"HG1_shot_c", "MP5_shot", "SG1_shot", "speargun_shot_b"};
-        static constexpr std::string_view kReload[] = {"HG1_mag_release", "HG1_mag_release", "SG1_reload", "speargun_cock_a_0"};
-        auto& wv = waves[size_t(wpn)];
-        for (const auto& s : drm.sections) {
-            if (s.type != ou::cdc::SectionType::Wave) continue;
-            const auto w = ou::audio::parseWave(s.data);
-            if (w.bank.samples.empty()) continue;
-            const std::string& n = w.bank.samples[0].name;
-            if (n.starts_with(kShot[size_t(wpn)])) wv.shots.push_back(s.id);
-            else if (n.starts_with(kReload[size_t(wpn)]) && !wv.reloadStart) wv.reloadStart = s.id;
-            else if (n.starts_with("HG1_mag_in") && !wv.reloadEnd && wpn <= ou::game::Weapon::Uzi) wv.reloadEnd = s.id;
-            else if (n.starts_with("hg1_unholster") && !unholster) unholster = s.id;
-        }
-    }
-
-    void tick(const ou::game::World& w, ou::audio::Mixer* mix) {
+    void tick(const ou::game::World& w) {
         const auto& c = w.combat();
         const auto& s = w.player().state();
         const auto tick = (unsigned long long)w.ticks();
-        const auto& wv = waves[size_t(c.weapon)];
         for (const auto& shot : c.shots) {
-            if (mix && !wv.shots.empty() && (&shot == &c.shots.front()))
-                mix->play(wv.shots[next++ % wv.shots.size()], {.volume = 0.8f, .position = shot.from});
             std::fprintf(stderr, "ou-game: tick %llu shot %s %s %.0f %.0f %.0f -> %.0f %.0f %.0f%s damage %.1f\n", tick,
                          std::string(ou::game::weaponName(c.weapon)).c_str(), shot.hand ? "left" : "right", shot.from.x, shot.from.y,
                          shot.from.z, shot.to.x, shot.to.y, shot.to.z, shot.target ? " TARGET" : shot.hit ? " wall" : "", shot.damage);
         }
-        if (mix && c.drawn && !drawn && unholster) mix->play(unholster, {.volume = 0.7f});
-        if (mix && c.reload > 0 && !reloading && wv.reloadStart) mix->play(wv.reloadStart, {.volume = 0.7f});
-        if (mix && c.reload <= 0 && reloading && wv.reloadEnd) mix->play(wv.reloadEnd, {.volume = 0.7f});
         if ((s.state == ou::game::State::Dead) != dead)
             std::fprintf(stderr, "ou-game: tick %llu %s (health %.0f, clip %s)\n", tick, dead ? "respawned" : "died", w.health().value(), s.clip.c_str());
         if (c.healthPacksUsed != healthPacksUsed)
@@ -498,7 +437,7 @@ struct CombatView {
         if ((c.slowMo > 0) != slowMo) std::fprintf(stderr, "ou-game: tick %llu adrenaline window %s\n", tick, c.slowMo > 0 ? "open" : "closed");
         if (s.state == ou::game::State::Hit && w.previous().clip != s.clip)
             std::fprintf(stderr, "ou-game: tick %llu hit reaction %s (health %.0f)\n", tick, s.clip.c_str(), w.health().value());
-        drawn = c.drawn, reloading = c.reload > 0, dead = s.state == ou::game::State::Dead, slowMo = c.slowMo > 0;
+        dead = s.state == ou::game::State::Dead, slowMo = c.slowMo > 0;
         healthPacksUsed = c.healthPacksUsed, weapon = c.weapon;
     }
 
@@ -880,6 +819,8 @@ struct EffectsView {
             if (const auto h = w.collision().raycast(from, dir, len + 20.0f)) at = h->point, normal = h->normal, mat = material(w.collision(), *h);
         system.play(fx, *idle, frameAlong(at, normal, 2), -1, mat);
     }
+    std::string layerClip; // last tick's combat layer clip (World::combatLayerClip)
+    double layerTime = 0;
     // Clip events of one animated instance between the last tick and this one (30 Hz frames, looping clips wrap).
     void clipEvents(const std::shared_ptr<const ou::fx::ObjectFx>& fx, const std::string& clip, const std::string& prevClip,
                     double prevT, double t, double duration, uint8_t mat, const glm::mat4& world,
@@ -893,7 +834,9 @@ struct EffectsView {
         if (f0 < 0 && f1 <= 0) spans = {{-1.0f, 0.5f}};  // just started
         std::vector<glm::mat4> b;
         for (const auto& [a, z] : spans)
-            if (std::any_of(ev->begin(), ev->end(), [&](const auto& e) { return e.runsOn(mat) && float(e.frame) >= a && float(e.frame) < z; })) {
+            if (std::any_of(ev->begin(), ev->end(), [&](const auto& e) {
+                    return (e.runsOn(mat) || e.soundOn(mat)) && float(e.frame) >= a && float(e.frame) < z;
+                })) {
                 if (b.empty()) b = bones();
                 system.runEvents(fx, *ev, world, owner, mat, a, z, b);
             }
@@ -919,17 +862,28 @@ struct EffectsView {
             return h ? material(w.collision(), *h) : 0;
         };
         const auto &ps = w.player().state(), &pp = w.previous();
-        if (ps.clip.find(':') == std::string::npos) // weapon / vehicle clips ("object:clip") belong to other objects
-            if (const auto* clip = w.anims().find(ps.clip)) {
-                // Lara's material (0x6F06B0): the floor face's, 2 with the feet under a water surface [I: swimming], 3 under water [I].
-                const uint8_t mat = w.submerged() ? 3 : ps.water >= 0 ? 2 : floorMaterial(ps.pos);
-                const auto lara = library->get("lara");
-                const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
-                std::vector<glm::mat4> pose;
-                if (follows(lara)) pose = w.pose(1.0), system.track(kLaraOwner, model, pose);
-                clipEvents(lara, ps.clip, pp.clip, pp.clipTime, ps.clipTime, clip->durationSeconds(), mat, model,
-                           [&] { return pose.empty() ? w.pose(1.0) : pose; }, kLaraOwner);
-            }
+        if (const auto* clip = w.anims().find(ps.clip)) {
+            // Lara's material (0x6F06B0): the floor face's, 2 with the feet under a water surface [I: swimming], 3 under water [I].
+            const uint8_t mat = w.submerged() ? 3 : ps.water >= 0 ? 2 : floorMaterial(ps.pos);
+            // Vehicle clips ("object:clip", e.g. motorcycle mount / dismount) run that object's lists.
+            const auto colon = ps.clip.find(':');
+            const auto split = [&](const std::string& c) { return c.find(':') == std::string::npos ? c : c.substr(c.find(':') + 1); };
+            const auto lara = library->get(colon == std::string::npos ? "lara" : ps.clip.substr(0, colon));
+            const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+            std::vector<glm::mat4> pose;
+            if (follows(lara)) pose = w.pose(1.0), system.track(kLaraOwner, model, pose);
+            clipEvents(lara, split(ps.clip), pp.clip.substr(0, pp.clip.find(':')) == ps.clip.substr(0, colon) ? split(pp.clip) : std::string(),
+                       pp.clipTime, ps.clipTime, clip->durationSeconds(), mat, model, [&] { return pose.empty() ? w.pose(1.0) : pose; },
+                       kLaraOwner);
+        }
+        // The combat upper-body clip (reload / equip / unequip): Lara's and the weapon object's lists for that clip
+        // name (tru.exe keeps weapon-handling sounds in the weapon object's lists, e.g. wp_handgun "reload").
+        if (auto [name, t] = w.combatLayerClip(); !name.empty() || !layerClip.empty()) {
+            const auto m = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+            for (const auto& obj : {std::string("lara"), std::string(ou::game::weaponObject(c.weapon))})
+                clipEvents(library->get(obj), name, layerClip, layerTime, t, 1e9, 0, m, [&] { return w.pose(1.0); });
+            layerClip = std::move(name), layerTime = t;
+        }
         for (const auto& e : w.enemies().all()) {
             const auto &s = e->state(), &p = e->previous();
             const auto it = e->type().clips.find(s.clip);
@@ -1098,18 +1052,23 @@ bool quickLoad(ou::game::World& w, const std::string& slot) {
 }
 
 // Music (docs/formats/AUDIO.md §5, GAMEPLAY.md "Music"): one track at a time, pc-w\music\<name>\<name>.mul
-// streamed with the stem gains its .mus script computes (audio::MusSequencer). Tracks change when the current
-// unit changes (the unit's own "<unit>_mus_01") and when Lara enters a volume whose script names a track
-// (soundvolume/soundtriggervolume intros, UnitData::musicByIntro) [I]. The music variables are the script runtime's
-// gamebase values (tru.exe keeps one array, 0xCCB560, for scripts and the sequencer; AUDIO.md §5.3, §9.4).
+// streamed with the stem gains its .mus script computes (audio::MusSequencer). Scripts request tracks with `music`
+// natives (script::Runtime::MusicRequest: unit scripts called from soundvolumes, cinematics); the exe has two slots
+// (0xCC5260 + slot * 0x528) that fade independently, ours one voice: a request in another slot crossfades, a stop
+// fades out only the slot that holds the playing track. Without any request the unit's own "<unit>_mus_01" plays [I].
+// The music variables are the script runtime's gamebase values (tru.exe keeps one array, 0xCCB560, for scripts and
+// the sequencer; AUDIO.md §5.3, §9.4).
 struct Music {
     std::string current;
+    int slot = 0; // the slot the playing track was requested in
     std::unique_ptr<ou::audio::MusFile> mus; // the sequencer keeps a reference to it
     std::unique_ptr<ou::audio::MusSequencer> seq;
     std::array<uint8_t, 256>* vars = nullptr; // world->script().gameValues()
 
-    bool play(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer, const std::string& name, const std::string& why, uint64_t tick) {
+    bool play(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer, const std::string& name, const std::string& why, uint64_t tick,
+              float fade = 2, int inSlot = 0) {
         if (name.empty() || name == current) return false;
+        slot = inSlot;
         const std::string base = "pc-w\\music\\" + name + "\\" + name;
         try {
             auto mul = bf.read(base + ".mul");
@@ -1121,7 +1080,7 @@ struct Music {
                 seq = std::make_unique<ou::audio::MusSequencer>(*mus);
                 seq->update(0, *vars);
             }
-            mixer.playMusic(std::move(pcm), current.empty() ? 1.0f : 2.0f, seq ? seq->stemGains() : std::vector<float>{});
+            mixer.playMusic(std::move(pcm), current.empty() ? 1.0f : fade, seq ? seq->stemGains() : std::vector<float>{});
             std::fprintf(stderr, "ou-game: tick %llu music %s (%s)%s\n", (unsigned long long)tick, name.c_str(), why.c_str(),
                          seq ? "" : " no .mus");
             current = name;
@@ -1131,6 +1090,12 @@ struct Music {
             current = name; // do not retry every tick
             return false;
         }
+    }
+    void stop(ou::audio::Mixer& mixer, float fade, const std::string& why, uint64_t tick, int inSlot = -1) {
+        if (current.empty() || (inSlot >= 0 && inSlot != slot)) return;
+        mixer.stopMusic(fade);
+        std::fprintf(stderr, "ou-game: tick %llu music %s stops (%s, %.1f s fade)\n", (unsigned long long)tick, current.c_str(), why.c_str(), fade);
+        current.clear(), seq.reset(), mus.reset();
     }
     void tick(ou::audio::Mixer& mixer, float dt) {
         if (!seq) return;
@@ -1362,9 +1327,8 @@ int main(int argc, char** argv) {
     };
     if (opt.intro) playMovie("intro.bik");
 
-    // ---- audio (ou_audio): Lara's Wave sections for footsteps/landings, music per unit / sound volume ----
+    // ---- audio (ou_audio): music per unit / sound volume; sound events (GameSound) ----
     ou::audio::Mixer mixer; // after SdlInit: closes its device before SDL_Quit
-    Footsteps steps;
     Music music;
     music.vars = &world->script().gameValues();
     std::optional<ou::app::GameSound> sound; // sfxmarkers, script sounds, drowning, voice subtitles
@@ -1373,12 +1337,6 @@ int main(int argc, char** argv) {
     if (!opt.noAudio) {
         try {
             if (auto laraDrm = bigfile->read("pc-w\\" + world->outfit + ".drm")) mixer.addWaves(ou::cdc::parseDrm(std::move(*laraDrm)));
-            for (int i = 0; i < ou::game::kWeaponCount; ++i) // shots, holster, reload waves
-                if (auto gun = bigfile->read("pc-w\\" + std::string(ou::game::weaponObject(ou::game::Weapon(i))) + ".drm")) {
-                    const auto drm = ou::cdc::parseDrm(std::move(*gun));
-                    mixer.addWaves(drm);
-                    combat.addWaves(drm, ou::game::Weapon(i));
-                }
             audioOn = !opt.musicWav.empty() || mixer.openDevice();
             if (!audioOn) std::fprintf(stderr, "ou-game: no audio device (%s)\n", SDL_GetError());
             std::fprintf(stderr, "ou-game: audio %s\n", !opt.musicWav.empty() ? "to WAV" : audioOn ? "on" : "off");
@@ -1388,6 +1346,13 @@ int main(int argc, char** argv) {
         try {
             sound.emplace(*bigfile, mixer);
             sound->attach(*world);
+            if (effects.library) // Lara's and the weapons' sounds decoded up front (not on the first step / shot)
+                for (int i = -1; i < ou::game::kWeaponCount; ++i)
+                    if (const auto fx = effects.library->get(i < 0 ? "lara" : std::string(ou::game::weaponObject(ou::game::Weapon(i)))))
+                        sound->addObject(*fx);
+            effects.system.sound = [&](const ou::fx::ObjectFx& fx, const ou::fx::Event& e, glm::vec3 at, uint8_t mat) {
+                sound->animSound(fx, e, at, mat, world->ticks());
+            };
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: sound events: %s\n", e.what());
         }
@@ -1619,7 +1584,7 @@ int main(int argc, char** argv) {
         v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
         v.frame.originalShaders = opt.gfx.originalShaders, v.frame.brightness = opt.gfx.brightness;
         v.overlay = !opt.noOverlay;
-        v.musicVolume = float(menus.cinematicVolume) / 10;
+        v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
         return v;
     };
     if (!opt.cine.empty()) {
@@ -1745,7 +1710,7 @@ int main(int argc, char** argv) {
                 logState("killed (--die)", *world);
             }
             world->tick(a);
-            combat.tick(*world, audioOn ? &mixer : nullptr);
+            combat.tick(*world);
             gadgets.tick(*world);
             effects.events(*world);
             // The emitters' camera-range gate uses the tick's camera, not the last rendered (interpolated) one: spawns and
@@ -1810,16 +1775,17 @@ int main(int argc, char** argv) {
             if (world->currentUnit().data.name != unitName) {
                 unitName = world->currentUnit().data.name;
                 logUnits();
-                if (audioOn) music.play(*bigfile, mixer, world->currentUnit().data.music, "unit " + unitName, tick);
+                if (audioOn && music.current.empty()) music.play(*bigfile, mixer, world->currentUnit().data.music, "unit " + unitName, tick);
             }
-            if (audioOn) {
-                for (const auto& e : world->script().events())
-                    if (e.kind == ou::script::EventKind::Enter)
-                        for (const auto& u : world->units())
-                            if (const auto it = u.data.musicByIntro.find(e.source); it != u.data.musicByIntro.end())
-                                music.play(*bigfile, mixer, it->second, "volume " + std::to_string(e.source), tick);
-                music.tick(mixer, float(ou::game::kTickSeconds));
-                steps.tick(*world, mixer);
+            if (audioOn) music.tick(mixer, float(ou::game::kTickSeconds));
+            for (const auto& r : world->script().takeMusicRequests()) { // script `music` natives
+                const auto* o = world->script().find(r.owner);
+                const std::string why = "script " + (o ? o->name : std::string("unit")) + " " + std::to_string(r.owner) + " music " +
+                                        std::to_string(r.function) + " slot " + std::to_string(r.slot);
+                const float fade = r.fade > 0 && r.fade < 120 ? r.fade : 0.05f;
+                if (!audioOn) std::fprintf(stderr, "ou-game: tick %llu music request %s (%s)\n", tick, r.function == 3 ? "stop" : r.track.c_str(), why.c_str());
+                else if (r.function == 3) music.stop(mixer, fade, why, tick, r.slot);
+                else music.play(*bigfile, mixer, r.track, why, tick, fade, std::max(0, r.slot));
             }
             if (sound) sound->tick(*world);
             hud.tick(ou::game::kTickSeconds);
@@ -2047,7 +2013,6 @@ int main(int argc, char** argv) {
         }
         renderer->present();
     }
-    std::fprintf(stderr, "ou-game: %u footstep/landing sounds\n", steps.plays);
     if (!opt.musicWav.empty()) {
         if (!writeWav(opt.musicWav, wav, mixer.outputRate())) std::fprintf(stderr, "ou-game: cannot write %s\n", opt.musicWav.string().c_str());
         else std::fprintf(stderr, "ou-game: wrote %s (%.2f s)\n", opt.musicWav.string().c_str(), double(wav.size() / 2) / mixer.outputRate());

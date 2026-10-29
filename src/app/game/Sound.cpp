@@ -1,6 +1,7 @@
 // ou-game sound events. Evidence: docs/formats/AUDIO.md §9.
 #include "app/game/Sound.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -9,6 +10,9 @@
 namespace ou::app {
 namespace {
 constexpr uint32_t kLaraDrown = 2315; // lara.drm DTP: ChoiceList of lara_drown_01..08 (AUDIO.md §8.1)
+// motorcycle.drm DTP: Overlap of the SV650 engine loops, each under a Reaction on game parameters 2 (rpm, 1500..10000),
+// 5 (0..700) and 0 (0..50) (AUDIO.md §9.8). [I] What the Bike class feeds them is not traced: rpm follows the speed.
+constexpr uint32_t kBikeEngine = 13589;
 std::shared_ptr<const cdc::Drm> load(const cdc::BigfileSet& bf, const std::string& path) {
     auto d = bf.read(path);
     return d ? std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*d))) : nullptr;
@@ -87,6 +91,48 @@ bool GameSound::playHelp(const game::World& world, bool answer) {
     return true;
 }
 
+void GameSound::addObject(const fx::ObjectFx& fx) {
+    if (fx.drm && eventDrms_.insert(fx.drm.get()).second) bank_.add(fx.drm), mixer_.addWaves(*fx.drm);
+}
+
+void GameSound::animSound(const fx::ObjectFx& fx, const fx::Event& e, glm::vec3 position, uint8_t material, uint64_t tick) {
+    if (!fx.drm) return;
+    addObject(fx);
+    const audio::Plex* p = nullptr;
+    uint32_t dtp = 0;
+    const auto& s = e.sound;
+    if (s.kind == 0) {
+        auto& slot = eventPlex_[{fx.drm.get(), s.plex.section, s.plex.offset}];
+        if (!slot) {
+            try {
+                slot = std::make_unique<audio::Plex>(audio::parsePlex(*fx.drm, s.plex.section, s.plex.offset));
+            } catch (const std::exception& ex) {
+                std::fprintf(stderr, "ou-game: %s sound record: %s\n", fx.name.c_str(), ex.what());
+                slot = std::make_unique<audio::Plex>(); // silence: do not retry
+            }
+        }
+        p = slot.get();
+    } else {
+        dtp = s.dtp[0];
+        if (s.kind == 3) { // 0x5B2820: rand() % (w0 + w1 + w2) picks one of three DTPs
+            const int sum = s.weight[0] + s.weight[1] + s.weight[2];
+            if (!sum) return;
+            int r = std::uniform_int_distribution<int>(0, sum - 1)(rng_);
+            int k = 0;
+            while (k < 2 && r >= s.weight[k]) r -= s.weight[k++];
+            dtp = s.dtp[k];
+        }
+        p = bank_.find(dtp);
+    }
+    if (!p) return;
+    const auto h = player_.start(*p, position, 1, material);
+    // Root Assignments wrap a Reference: log the DTP it names.
+    if (!dtp && p->type == audio::PlexType::Assignment && !p->children.empty() && p->children[0].type == audio::PlexType::Reference)
+        dtp = p->children[0].id;
+    std::fprintf(stderr, "ou-game: tick %llu anim sound %s frame %u DTP %u material %u%s\n", (unsigned long long)tick, fx.name.c_str(),
+                 e.frame, dtp, material, h ? "" : " (silent)");
+}
+
 void GameSound::syncUnits(const game::World& world) {
     std::set<std::string> present;
     for (const auto& u : world.units()) {
@@ -153,6 +199,25 @@ void GameSound::tick(game::World& world) {
             drown_ = player_.start(*p, lara);
             std::fprintf(stderr, "ou-game: tick %llu drowning: Lara sound DTP %u\n", tick, kLaraDrown);
         }
+
+    if (const auto* b = world.ridden(); b && b->phase == game::BikePhase::Ride) {
+        if (!engine_) {
+            if (!bank_.find(kBikeEngine))
+                if (auto drm = load(bf_, "pc-w\\motorcycle.drm")) mixer_.addWaves(*drm), bank_.add(std::move(drm));
+            if (const audio::Plex* p = bank_.find(kBikeEngine)) engine_ = player_.start(*p, lara);
+            std::fprintf(stderr, "ou-game: tick %llu bike engine %s (DTP %u)\n", tick, engine_ ? "start" : "missing", kBikeEngine);
+        }
+        // [I] rpm 1500 at rest to 10000 at the top speed; parameter 5 = throttle as acceleration (0..700), 0 = 0.
+        const float speed = std::abs(b->speed), rpm = 1500 + 8500 * std::min(1.0f, speed / game::BikeTuning{}.maxSpeed);
+        const float throttle = std::clamp((speed - bikeSpeed_) / float(game::kTickSeconds) / game::BikeTuning{}.accel, 0.0f, 1.0f) * 700;
+        bikeSpeed_ = speed;
+        player_.setPosition(engine_, lara);
+        player_.setParam(engine_, 2, rpm), player_.setParam(engine_, 5, throttle), player_.setParam(engine_, 0, 0);
+        if (tick % 60 == 0) std::fprintf(stderr, "ou-game: tick %llu bike engine rpm %.0f throttle %.0f\n", tick, rpm, throttle);
+    } else if (engine_) {
+        player_.stop(engine_, 0.5f), engine_ = 0;
+        std::fprintf(stderr, "ou-game: tick %llu bike engine stop\n", tick);
+    }
 
     player_.update(game::kTickSeconds);
     for (const auto& l : player_.lines) {

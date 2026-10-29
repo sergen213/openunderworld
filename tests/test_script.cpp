@@ -1090,3 +1090,29 @@ TEST(ScriptRealData, SeafloorVolumeSetsHelpCondition) {
     EXPECT_TRUE(r.find(972)->inside);
     EXPECT_EQ(r.helpCondition(), "hint_05");
 }
+
+// Entering soundvolume 5674 (l4_ragnarok_room) runs unit script 14147 vt 25: `music` 2 requests
+// l4_staircase_upper_mus_01 in slot 1 and stops slot 0 from a music local; music variable 0x7D = 8 (AUDIO.md §9.4).
+TEST(ScriptRealData, RagnarokVolumeRequestsStaircaseMusic) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    Runtime r;
+    r.setBigfile(&bf);
+    r.setUnits({{"l4_pool", std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l4_pool.drm"))), {}},
+                {"l4_ragnarok_room", std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l4_ragnarok_room.drm"))),
+                 {-20475, -2872, 12591}}});
+    r.tick(at({0, 0, 0}));
+    r.takeMusicRequests();
+    const Object* v = r.find(5674);
+    ASSERT_TRUE(v);
+    r.tick(at(v->pos));
+    const auto req = r.takeMusicRequests();
+    ASSERT_GE(req.size(), 2u);
+    EXPECT_EQ(req[0].function, 2u);
+    EXPECT_EQ(req[0].track, "l4_staircase_upper_mus_01");
+    EXPECT_EQ(req[0].slot, 1);
+    EXPECT_EQ(req[1].function, 3u);
+    EXPECT_EQ(req[1].slot, 0);
+    EXPECT_EQ(r.gameValues()[0x7D], 8);
+}

@@ -158,7 +158,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
     if (v.mixer) {
         try {
             auto pcm = std::make_shared<const audio::Pcm>(audio::decodeMul(*mul).pcm);
-            v.mixer->setBusVolume(audio::Bus::Music, 0);
+            v.mixer->setBusVolume(audio::Bus::Music, 0), v.mixer->setBusVolume(audio::Bus::Sfx, 0); // [I] gameplay audio paused
             voice = v.mixer->playVoice(pcm);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: cinematic %s audio: %s\n", name.c_str(), e.what());
@@ -239,7 +239,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
     }
     if (v.mixer) {
         if (voice) v.mixer->stop(voice, 0.3f);
-        v.mixer->setBusVolume(audio::Bus::Music, v.musicVolume);
+        v.mixer->setBusVolume(audio::Bus::Music, v.musicVolume), v.mixer->setBusVolume(audio::Bus::Sfx, v.sfxVolume);
+        std::fprintf(stderr, "ou-game: cinematic %s ends: music / sfx buses back to %.1f / %.1f\n", name.c_str(), v.musicVolume, v.sfxVolume);
     }
     // Where Lara stands afterwards: tail position + the marker intro of her unit, heading from the tail rotation.
     for (const auto& inst : h.instances)

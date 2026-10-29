@@ -56,6 +56,7 @@ struct Member {
                              // all of them changes l1 kraken-room scripts (GameReal.KrakenRoomRappel)]
     std::optional<uint32_t> init2; // terraingroup: model index (init's low u16 is the stream unit id)
     std::optional<cdc::Pointer> initAt; // NATIVE/SCRIPT: where the initial value lives (sound: inline SoundPlex)
+    std::string initText;   // NATIVE/SCRIPT: a C string the value's first word points to (music: the track name)
 };
 
 struct Function {
@@ -216,6 +217,17 @@ public:
     // initial value (an inline SoundPlex node in the owner's unit DRM); anchor = intro uid for 3D plays, 0 for 2D.
     using SoundNative = std::function<bool(int32_t owner, uint32_t member, cdc::Pointer plex, uint32_t function, int32_t anchor)>;
     void setSoundNative(SoundNative native) { sound_ = std::move(native); }
+    // `music` natives (bind 0x7ACB40) on a value {char* track, i32 slot}: 1 Play(fade s) (0x5942F0), 2 Play(fade s,
+    // fade-out s) (0x594320), 3 Stop(fade s): the slot fades out (0x593EB0 with a null name). Slot = music player
+    // 0xCC5260 + slot * 0x528 (AUDIO.md §9.4). Queued in call order; the music player takes them each tick.
+    struct MusicRequest {
+        int32_t owner = 0;
+        uint32_t function = 0;
+        std::string track;  // empty for 3
+        int32_t slot = -1;  // -1: the value is not known (a local whose initial value is not decoded)
+        float fade = 0;     // args[0], seconds
+    };
+    std::vector<MusicRequest> takeMusicRequests() { return std::exchange(musicRequests_, {}); }
     // enemybase / generatorbase natives and health 1/2 on a non-player script, on the intro `uid` (World -> ai::Enemies).
     using EnemyNative = std::function<bool(int32_t uid, std::string_view type, uint32_t function,
                                            std::span<const vm::Value> args, uint32_t& result)>;
@@ -303,6 +315,7 @@ private:
     HealthNative health_;
     MarkupNative markup_;
     SoundNative sound_;
+    std::vector<MusicRequest> musicRequests_;
     CameraNative camera_;
     std::vector<std::string> cameraUnits_; // unit names by cameraspline value high word
     bool playerControl_ = true;

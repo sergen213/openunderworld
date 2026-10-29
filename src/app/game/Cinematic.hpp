@@ -29,7 +29,7 @@ struct CineView {
     render::FrameOptions frame{};      // graphics settings
     double renderHz = 0;               // > 0: fixed frame time (replays, screenshots)
     int maxFrames = 0;                 // > 0: stop after this many frames and keep the last image
-    float musicVolume = 1;             // Music bus volume restored afterwards (muted while playing)
+    float musicVolume = 1, sfxVolume = 1; // Music / Sfx bus volumes restored afterwards (muted while playing)
     bool overlay = false;
 };
 

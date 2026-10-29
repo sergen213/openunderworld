@@ -158,6 +158,11 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
                 if (const auto vp = iv.ptr(ip->offset)) {
                     m.init = views[vp->section].at<uint32_t>(vp->offset);
                     m.initAt = *vp;
+                    if (const auto tp = views[vp->section].ptr(vp->offset); tp && tp->section < drm.sections.size()) {
+                        const auto& d = drm.sections[tp->section].data;
+                        for (size_t i = tp->offset; i < d.size() && d[i] >= 0x20 && d[i] < 0x7F && m.initText.size() < 256; ++i)
+                            m.initText += char(d[i]);
+                    }
                     if (vp->offset <= drm.sections[vp->section].data.size() &&
                         drm.sections[vp->section].data.size() - vp->offset >= 8)
                         m.init2 = views[vp->section].at<uint32_t>(vp->offset + 4);
@@ -784,7 +789,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // Receiver-independent bindings whose side effects other engine systems own (sound: below, once bound).
             // reverb 1 (0x4AA750 -> 0x582B70) copies its 13 settings words into the audio environment: our mixer has no
             // reverb, so it is passive too.
-            for (const char* passive : {"soundgroup", "music", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect", "reverb"})
+            for (const char* passive : {"soundgroup", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect", "reverb"})
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
             // Receivers: a member address (object uid + offset), an object, or a native value held in a local.
             auto self = resolve(nc.receiver.uid);
@@ -799,6 +804,21 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                     return true;
                 }
                 if ((nc.function == 3 || nc.function == 6) && nc.args.empty()) { nc.wait = !target; return true; }
+            }
+            if (!std::strcmp(name, "music") && nc.function >= 1 && nc.function <= 3) {
+                MusicRequest r{self ? self->uid : 0, nc.function, {}, -1, nc.args.empty() ? 0.0f : std::bit_cast<float>(nc.args[0].bits)};
+                if (self && self->program && nc.receiver.kind == vm::Value::Kind::Member) {
+                    if (const Member* m = self->program->member(self->typeId, nc.receiver.offset)) {
+                        if (nc.function != 3) r.track = m->initText;
+                        if (m->init2) r.slot = int32_t(*m->init2);
+                    }
+                } else if (nc.receiver.kind == vm::Value::Kind::Scalar && nc.receiver.text) { // a music local (Machine::call)
+                    if (nc.function != 3) r.track = *nc.receiver.text;
+                    r.slot = int32_t(nc.receiver.bits);
+                }
+                if (nc.function == 3 || !r.track.empty()) musicRequests_.push_back(std::move(r));
+                nc.result = vm::Value::scalar(0);
+                return true;
             }
             if (!self || !self->program) return false;
             const auto program = self->program;
@@ -895,9 +915,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return false;
             }
             if (!std::strcmp(name, "messagechannel") && (nc.function == 0 || nc.function == 1)) return true; // debug stubs
-            if (!std::strcmp(name, "messagechannel") && nc.function == 2 && nc.args.size() == 2 &&
-                nc.args[1].kind == vm::Value::Kind::Constant && nc.args[1].text && message_)
-                return message_(field(), nc.args[0].bits, *nc.args[1].text); // Send (tru.exe 0x4A2E70)
+            // Send (tru.exe 0x4A2E70): delivered to the channel's native subscribers; none registered = nothing happens.
+            if (!std::strcmp(name, "messagechannel") && nc.function == 2 && nc.args.size() == 2) {
+                const std::string* text = nc.args[1].text;
+                return !message_ || message_(field(), nc.args[0].bits, text ? *text : std::string());
+            }
             if (!std::strcmp(name, "modifiable") && nc.function == 3 && nc.args.size() == 2) {
                 const auto value = resolve(nc.args[0].uid);
                 if (!value) return false;

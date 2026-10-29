@@ -4,6 +4,7 @@
 #pragma once
 
 #include "audio/SoundPlex.hpp"
+#include "fx/Fx.hpp"
 #include "game/Game.hpp"
 #include "locale/Locale.hpp"
 #include "ui/Ui.hpp"
@@ -11,6 +12,8 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <random>
+#include <set>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -26,6 +29,9 @@ public:
     // Help on demand (PDA Hint / Answer): plays vo\lara\sc_<level>_<NN>_hint|answer for the unit script's current
     // "hint_NN" condition (script::Runtime::helpCondition); false (and a log line) when there is none.
     bool playHelp(const game::World& world, bool answer);
+    // A sound record of an animation / one-shot event list (fx::System::sound; AUDIO.md §9.7) at a world position.
+    void addObject(const fx::ObjectFx& fx); // its DTPs join the bank, its Waves the mixer (once; animSound does it too)
+    void animSound(const fx::ObjectFx& fx, const fx::Event& e, glm::vec3 position, uint8_t material, uint64_t tick);
 
 private:
     struct UnitSfx {
@@ -45,11 +51,16 @@ private:
     std::map<std::tuple<std::string, uint32_t, uint32_t>, std::unique_ptr<audio::Plex>> scriptPlex_; // inline graphs
     uint64_t unitsVersion_ = ~0ull;
     audio::SoundPlayer::Handle drown_ = 0;
+    audio::SoundPlayer::Handle engine_ = 0; // the bike's engine graph while ridden
+    float bikeSpeed_ = 0;
     std::array<uint8_t, 256> lastVars_{};
     locale::SubtitleTicker ticker_;
     std::map<std::string, uint32_t> helpLines_; // generalbank stream path -> its DTP
     audio::SoundPlayer::Handle help_ = 0;
     std::string lastCondition_;
+    std::map<std::tuple<const cdc::Drm*, uint32_t, uint32_t>, std::unique_ptr<audio::Plex>> eventPlex_; // kind-0 graphs
+    std::set<const cdc::Drm*> eventDrms_; // object DRMs whose DTPs / Waves joined the bank and the mixer
+    std::mt19937 rng_{0x5B28}; // kind-3 weighted picks (fixed seed: replays repeat)
 };
 
 // The two-line subtitle ticker (cutscenes and gameplay voice lines), drawn by ui::Hud::subtitles.
