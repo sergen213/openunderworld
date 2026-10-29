@@ -15,16 +15,20 @@ public:
 
     // Adds real elapsed time; returns the number of fixed ticks due now. When more than
     // maxStepsPerFrame ticks are due (hitch, debugger pause) the excess time is dropped so
-    // the simulation slows down instead of spiralling.
+    // the simulation slows down instead of spiralling. Dropping never changes what a tick computes:
+    // every tick is the same fixed step fed that tick's input, so dropped time only delays the
+    // world against the wall clock (docs/GAMEPLAY.md "Timing").
     int advance(double realDeltaSeconds) {
         accumulator_ += std::max(0.0, realDeltaSeconds);
-        int steps = static_cast<int>(accumulator_ / step_);
+        // A billionth of a tick of slack: render rates dividing the tick rate (240 Hz = 4 frames a tick) land on
+        // the tick instead of a frame late through the rounding of 1/240 + 1/240 + ...
+        int steps = static_cast<int>(accumulator_ / step_ + 1e-9);
         if (steps > maxSteps_) {
             steps = maxSteps_;
             accumulator_ = 0.0;
             dropped_ += 1;
         } else {
-            accumulator_ -= steps * step_;
+            accumulator_ = std::max(0.0, accumulator_ - steps * step_);
         }
         ticks_ += static_cast<uint64_t>(steps);
         return steps;

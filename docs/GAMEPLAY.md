@@ -60,6 +60,49 @@ footstep/landing sounds without errors; the result was not listened to or captur
   (−14885.4, −42.6, 4721.2) with rotation z = 0, at the top of the entrance stairs. Heading = rotation z − 90°
   because the model's forward is −Y ([O] all locomotion root motion is along −Y). The spawn snaps to the floor below.
 
+## Timing
+
+Rule: everything that can change gameplay runs in fixed 1/60 s ticks (`game::kTickSeconds`), fed that tick's input;
+the render rate only chooses how many ticks a frame runs (`engine::FrameClock::advance`) and how far between the last
+two ticks it draws (`alpha`). Puzzles therefore play out identically at 30, 60, 144, 240+ Hz, without vsync and with
+FSR frame generation (generated frames are made inside the Vulkan renderer from presented images; nothing in the
+renderer calls back into the game). A frame with more than 8 ticks due (hitch, debugger, a blocking cinematic) drops
+the excess time: the world falls behind the wall clock, but no tick is shortened or merged, so outcomes are unchanged.
+Render rates dividing 60 Hz land on the tick exactly (a 1e-9 tick slack in `advance` against 1/240 rounding).
+
+Audit (2026-10-29; path → tick-based? evidence):
+
+| Path | Tick-based | Evidence |
+|---|---|---|
+| `World::tick` (src/game/World.cpp) | yes | `dt = kTickSeconds`; no time parameter at all; everything below is called from it |
+| Player controller, climbing, grapple, ladders/rails, swimming (`Player::tick`, Climb/Grapple/Traverse.cpp) | yes | dt from `World::tick` only |
+| Bike (Vehicle.cpp) | yes | `tickVehicles(input, dt)` from `World::tick` |
+| Objects, physics doors, uber/multibody, terrain groups (`tickObjects`) | yes | `physics_.step(dt)` once per tick; `Scene::step` fixed iterations, no substeps by time |
+| Spline movers (`Object::spline`) | yes | advanced in `script::Runtime::tick` by kDt (30 frames per 60 ticks; `GameReal.SplineMoverFollowsItsPath`) |
+| Script VM: SLEEP/WAIT, fibers, clocks (src/script) | yes | `Machine::tick(kDt)`, clock natives `elapsed += kDt` (Script.cpp `Runtime::tick`) |
+| Enemies (src/game/ai) | yes | `enemies_.tick(..., dt * timeScale)`; the head-shot slow-mo scales the tick's dt, not the frame's |
+| Combat, health regen, gadgets, oxygen, ripples/splash sim (Combat/Gadgets/World/Water.cpp) | yes | dt from `World::tick` |
+| Camera orbit and collision pull-in | yes | `updateCamera(a, dt)` in the tick; rendering blends `interpolatedCamera(alpha)` |
+| Mouse look | yes | motion summed per frame, applied as a rate over the next tick (no motion lost at > 60 Hz) |
+| Particle effects (src/fx) | yes, fixed | `System::tick` per tick with its own LCG; the emitter camera-range gate read the last *rendered* (interpolated) camera, so spawns and the shared random stream depended on the frame rate. Now the tick camera (`World::camera()`, or the `--camera` eye) |
+| Sound triggers writing music variables (sfxmarkers, Sound.cpp) | yes | `GameSound::tick` once per tick on Lara's tick position |
+| Music sequencer | yes | `seq->update(kTickSeconds, vars)` per tick |
+| Menus / pause | yes | menu open: the world is not ticked; input-script time (`appTicks`) still counts ticks |
+| Cinematics → gameplay | yes | played inside the tick by `onCinematic` (own wall-clock movie loop); Lara is left at the stream's tail position from the file, independent of how many frames played |
+| Rendering, HUD toasts, menu animation, weather shelter fade, menu movie | render rate (no gameplay) | `menus.tick(dt)`, `shelter` (now `1 - exp(-3 dt)`: same fade at any rate), `MenuMovie` wall clock |
+| FSR frame generation | never ticks | VkRenderer present path only |
+| Enemy skinning culled by the view (ou-game `EnemyMeshes::pose`: off-cone and > 1500 units keep their last upload) | render only | shots hit `Damageable` capsules from the tick state (Combat.cpp `rayCapsule`), AI reads its tick `anim_`; animation-event effects take bones from `Enemy::pose(1.0)` / `World::pose(1.0)` for every enemy each tick, never the skinned vertices. The test reads a frame-dependent subset of enemy poses |
+| Input sampling | per frame | devices are polled once per frame; every tick of a frame sees that frame's input (replays index input by tick) |
+
+Tests: `Game.SimulationIndependentOfRenderRate`, `Game.SwimSimulationIndependentOfRenderRate`,
+`Ai.SimulationIndependentOfRenderRate`, `Game.FrameClockTickAlignedAndHitchCap`, and on real data
+`GameReal.{BallcourtLever,BallcourtWithEnemies,ElevatorUber,PushBlock,SplineMover}IndependentOfRenderRate`: the same input script at render
+rates 24, 30, 60, 75, 144, 240, 1000 Hz and irregular 1–50 ms frames with 250 ms hitches, with ou-game's render-path
+reads between frames, must give a bit-identical `World::stateHash` (Lara, camera, bones, rigid bodies, object
+collision, script objects and fields, enemies) after every tick. ou-game's `final tick` line prints the simulated
+state, `sim <stateHash>` and the particle count: `--render-hz 30 --frames 180` and `--render-hz 240 --frames 1440`
+give the same line (ctest `game_render_rate_smoke`).
+
 ## Animation mapping (pc-w\lara.drm) [O]
 
 Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Model space: −Y forward, −X right.

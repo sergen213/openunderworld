@@ -345,6 +345,17 @@ if(OU_BUILD_TESTS)
   target_link_libraries(ou_game_tests PRIVATE ou_game GTest::gtest_main)
   gtest_discover_tests(ou_game_tests DISCOVERY_TIMEOUT 30)
   add_executable(ou_ai_tests tests/test_ai.cpp)
+  # The ballcourt lever replay at 30 Hz and 240 Hz render rates (360 ticks each) must end on the same simulated state
+  # (docs/GAMEPLAY.md "Timing"); 77 = skipped (no OU_GAME_DIR or display).
+  add_test(NAME game_render_rate_smoke COMMAND sh -c [=[
+    [ -n "$OU_GAME_DIR" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || exit 77
+    game=$0 replay=$1
+    run() { "$game" --game-dir "$OU_GAME_DIR" --renderer opengl --level 'pc-w\l4_ballcourt.drm' --spawn -20066,14150,3540,0 \
+              --input-script "$replay" --no-audio --no-movies --no-overlay --width 320 --height 240 --render-hz "$1" --frames "$2" 2>&1 |
+            grep 'final tick'; }
+    a=$(run 30 180); b=$(run 240 1440); echo "30 Hz:  $a"; echo "240 Hz: $b"
+    [ -n "$a" ] && [ "$a" = "$b" ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays/ballcourt_door_lever.txt)
+  set_tests_properties(game_render_rate_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   target_link_libraries(ou_ai_tests PRIVATE ou_game GTest::gtest_main)
   gtest_discover_tests(ou_ai_tests DISCOVERY_TIMEOUT 30)
   add_executable(ou_save_tests tests/test_save.cpp)

@@ -88,6 +88,11 @@ type 2, is [I].
   anchor point (3 rows), axis alignment (2), motor (clamped by `maxTorque·dt`), limits; tru.exe gravity
   5.72443 units/frame². Deterministic: same ticks ⇒ bit-identical bodies at 30/60/144 Hz render rates
   (`Physics.DeterministicAcrossRenderRates`).
+- Timing rule: physics, movers, uber/multibody commands and the scripts driving them advance only in
+  `World::tick` (one `Scene::step(kTickSeconds)` per 60 Hz tick, no time-based substeps); the render rate, vsync and
+  FSR frame generation never step them (docs/GAMEPLAY.md "Timing", audit table). Real puzzles are checked
+  bit-identical tick by tick at 24–1000 Hz and irregular frames: `GameReal.{BallcourtLever,ElevatorUber,PushBlock,
+  SplineMover}IndependentOfRenderRate`.
 - `Mover`: kinematic ping-pong path for platforms; no moving platform object was identified yet [U], so World does
   not create any.
 

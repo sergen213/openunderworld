@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <set>
 
 using namespace ou;
 using collision::CollisionMesh;
@@ -276,6 +277,23 @@ TEST(Game, SimulationIndependentOfRenderRate) {
         EXPECT_EQ(a.clip, o.clip);
     }
     EXPECT_GT(glm::length(glm::vec2(a.pos)), 500); // it actually moved
+}
+
+// Render rates dividing 60 Hz tick on exactly every n-th frame (no frame late through 1/240 rounding); a hitch beyond
+// 8 ticks drops the excess time instead of running more ticks.
+TEST(Game, FrameClockTickAlignedAndHitchCap) {
+    for (const int hz : {120, 240, 300, 600, 1200}) {
+        engine::FrameClock clock(game::kTickSeconds);
+        for (int f = 1; f <= 10 * hz; ++f) {
+            clock.advance(1.0 / hz);
+            ASSERT_EQ(clock.ticks(), uint64_t(f * 60 / hz)) << hz << " Hz frame " << f;
+        }
+    }
+    engine::FrameClock clock(game::kTickSeconds);
+    EXPECT_EQ(clock.advance(1.0), 8);
+    EXPECT_EQ(clock.droppedFrames(), 1u);
+    EXPECT_EQ(clock.alpha(), 0.0);
+    EXPECT_EQ(clock.advance(game::kTickSeconds), 1);
 }
 
 TEST(Game, InputScriptParse) {
@@ -1919,4 +1937,160 @@ TEST(GameReal, UnitWeatherSurvey) {
         got += u + (w.kind == game::Precipitation::Snow ? " snow " : " rain ") + std::to_string(int(w.intensity * 100)) + "\n";
     EXPECT_EQ(got, "l5_startsnow snow 100\nl5_valaskjalf snow 55\nl5_valgrind snow 55\nl6_ship_exterior rain 80\n"
                    "l7_himalaya_end snow 100\nl7_monastery snow 55\nl7_thin_ice snow 100\n");
+}
+
+// ---- render-rate independence of real puzzles (docs/GAMEPLAY.md "Timing") ----------------------------------------
+namespace {
+using MakeWorld = std::function<std::unique_ptr<game::World>()>;
+
+// `ticks` ticks of make()'s world fed `input` (indexed by tick since the start), paced by frames of frameDt(f) seconds
+// through the FrameClock as in ou-game, with ou-game's render-path reads (interpolation, pose, grapple target,
+// flashlight) between frames. Returns World::stateHash after every tick.
+std::vector<uint64_t> digestsAtRate(const MakeWorld& make, const game::InputScript& input, int ticks,
+                                    const std::function<double(int)>& frameDt, std::unique_ptr<game::World>* owner = nullptr) {
+    auto w = make();
+    const uint64_t start = w->ticks();
+    engine::FrameClock clock(game::kTickSeconds);
+    std::vector<uint64_t> out;
+    for (int f = 0; int(out.size()) < ticks; ++f) {
+        for (int n = clock.advance(frameDt(f)); n > 0 && int(out.size()) < ticks; --n) {
+            w->tick(input.at(w->ticks() - start));
+            out.push_back(w->stateHash());
+        }
+        const double a = clock.alpha();
+        (void)w->interpolated(a), (void)w->interpolatedCamera(a), (void)w->pose(a), (void)w->grappleTarget(), (void)w->flashlightPose(a);
+        size_t k = 0; // enemy skinning is culled by the view (ou-game EnemyMeshes::pose): a frame-dependent subset
+        for (const auto& e : w->enemies().all())
+            if ((size_t(f) + k++) % 3 == 0) (void)e->interpolated(a), (void)e->pose(a);
+    }
+    if (owner) *owner = std::move(w);
+    return out;
+}
+
+// The digest after every tick is bit-identical at render rates 24..1000 Hz and at irregular frame times with hitches
+// (dropped time); returns the 60 Hz world for the caller's puzzle checks.
+std::unique_ptr<game::World> expectRateIndependent(const MakeWorld& make, const game::InputScript& input, int ticks) {
+    std::unique_ptr<game::World> ref;
+    const auto expected = digestsAtRate(make, input, ticks, [](int) { return game::kTickSeconds; }, &ref);
+    EXPECT_GT(std::set<uint64_t>(expected.begin(), expected.end()).size(), size_t(ticks / 2)) << "the state changes";
+    auto check = [&](const std::string& label, const std::function<double(int)>& dt) {
+        const auto got = digestsAtRate(make, input, ticks, dt);
+        const auto bad = std::mismatch(expected.begin(), expected.end(), got.begin());
+        EXPECT_TRUE(bad.first == expected.end()) << label << ": diverges at tick " << (bad.first - expected.begin());
+    };
+    for (const double hz : {24.0, 30.0, 75.0, 144.0, 240.0, 1000.0})
+        check(std::to_string(int(hz)) + " Hz", [hz](int) { return 1.0 / hz; });
+    check("irregular", [](int f) { // 1..50 ms frames, every 37th a 250 ms hitch (more than 8 ticks: time dropped)
+        uint32_t x = uint32_t(f) * 2654435761u;
+        x ^= x >> 15;
+        return f % 37 == 36 ? 0.25 : 0.001 + double(x % 1000) * 0.049 / 1000.0;
+    });
+    return ref;
+}
+
+MakeWorld worldMaker(const cdc::BigfileSet& bf, std::string unit, std::optional<game::Spawn> spawn, bool enemies = false) {
+    return [&bf, unit, spawn, enemies] {
+        auto w = std::make_unique<game::World>(game::UnitLoader([&bf](const std::string& n) { return game::loadUnitData(bf, n); }),
+                                               unit, game::loadLaraAnims(bf), spawn);
+        w->script().setBigfile(&bf);
+        if (enemies) w->enemies().setBigfile(&bf);
+        return w;
+    };
+}
+} // namespace
+
+// l4_ballcourt: pole lever 6502 drives door 6505's hinge (multibody natives), Lara runs through the passage.
+TEST(GameReal, BallcourtLeverIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n0.6 forward 1\n1.75 forward 0\n1.8 right 1\n5.0 right 0\n");
+    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}), input, 360);
+    ASSERT_EQ(w->physics().hinges.size(), 2u);
+    EXPECT_GT(std::abs(w->physics().angle(1)), 0.1f);
+    EXPECT_GT(w->player().state().pos.x, -18520.0f);
+}
+
+// The same with l4_ballcourt's enemies live, as in ou-game (poacher fire and hit reactions interrupt the run): AI,
+// shots and hit capsules stay tick-based while their skinning is culled per frame by the view.
+TEST(GameReal, BallcourtWithEnemiesIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n0.6 forward 1\n1.75 forward 0\n1.8 right 1\n5.0 right 0\n");
+    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true), input, 360);
+    EXPECT_FALSE(w->enemies().all().empty());
+}
+
+// l2_puzzleroom: switch 2961 starts elevator 2973's uber command chain; the platform's collision moves.
+TEST(GameReal, ElevatorUberIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    vec3 at(0);
+    for (const auto& in : formats::parseUnit(*game::loadUnitData(bf, "l2_puzzleroom").drm).intros)
+        if (in.uniqueId == 2961) at = {in.position[0], in.position[1], in.position[2]};
+    const auto input = game::InputScript::parse("1.0 interact 1\n1.5 interact 0\n");
+    const auto w = expectRateIndependent(worldMaker(bf, "l2_puzzleroom", game::Spawn{at, 0}), input, 300);
+    const auto& d = w->collision().dynamics;
+    const auto it = std::find_if(d.begin(), d.end(), [](const auto& x) { return x.id == 2973; });
+    ASSERT_NE(it, d.end());
+    const auto fresh = worldMaker(bf, "l2_puzzleroom", game::Spawn{at, 0})();
+    fresh->tick({});
+    const auto& d0 = fresh->collision().dynamics;
+    const auto it0 = std::find_if(d0.begin(), d0.end(), [](const auto& x) { return x.id == 2973; });
+    ASSERT_NE(it0, d0.end());
+    EXPECT_NE(it->transform, it0->transform) << "the elevator moved";
+}
+
+// l4_traprooms push block 5884: Lara grips it and pushes it along the floor.
+TEST(GameReal, PushBlockIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto unit = game::loadUnitData(bf, "l4_traprooms");
+    const auto g = std::find_if(unit.grapples.begin(), unit.grapples.end(), [](const auto& t) { return t.uid == 5884; });
+    ASSERT_NE(g, unit.grapples.end());
+    const auto base = worldMaker(bf, "l4_traprooms", game::Spawn{g->pos + vec3(-1000, 0, 0), 0});
+    const MakeWorld make = [&] {
+        auto w = base();
+        w->tick({});
+        const auto* block = w->script().find(5884);
+        game::PlayerState s;
+        s.pos = block->pos + block->offset - vec3(block->half.x + 60, 0, 0); // west face, facing +X
+        if (const auto floor = w->collision().groundProbe(s.pos + vec3(0, 0, 200), 600, 0x0F)) s.pos.z = floor->point.z;
+        w->restore(s, 0, -0.25f);
+        return w;
+    };
+    const auto input = game::InputScript::parse("0.2 interact 1\n0.3 forward 1\n2.5 forward 0\n2.6 interact 0\n");
+    const auto w = expectRateIndependent(make, input, 180);
+    const auto* block = w->script().find(5884);
+    ASSERT_TRUE(block);
+    EXPECT_GT(glm::length(block->offset), 100.0f) << "the block was pushed";
+}
+
+// l7_yggdrasil_end: spline mover 8404's path on a solid stone (as GameReal.SplineMoverCarriesLara), Lara riding it.
+TEST(GameReal, SplineMoverIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto base = worldMaker(bf, "l7_yggdrasil_end", game::loadUnitData(bf, "l7_yggdrasil_end").spawn);
+    const MakeWorld make = [&] {
+        auto w = base();
+        w->tick({});
+        const auto* mover = w->script().find(8404);
+        script::Object rock;
+        rock.uid = 990001, rock.unit = "l7_yggdrasil_end", rock.name = "ar_rw_shard", rock.kind = script::Kind::Scripted;
+        rock.spline = mover->spline;
+        rock.spline->t = 0, rock.spline->playing = true;
+        const auto& path = *rock.spline->path;
+        const auto p0 = formats::evalSpline(*path.position, 0, false);
+        rock.pos = vec3(p0[0], p0[1], p0[2]) + vec3(path.origin[0], path.origin[1], path.origin[2]);
+        w->script().addObject(std::move(rock), false);
+        w->tick({});
+        const auto& col = w->collision();
+        const auto d = std::find_if(col.dynamics.begin(), col.dynamics.end(), [](const auto& x) { return x.id == 990001; });
+        game::PlayerState stand;
+        if (const auto top = col.groundProbe(vec3(d->transform[3]) + vec3(0, 0, 3000), 6000)) stand.pos = top->point + vec3(0, 0, 1);
+        w->restore(stand, 0, -0.25f);
+        return w;
+    };
+    const auto input = game::InputScript::parse("0.5 forward 0.4\n1.0 forward 0\n1.5 lookx 1\n2.0 lookx 0\n");
+    const auto w = expectRateIndependent(make, input, 180);
+    EXPECT_GT(w->script().find(990001)->spline->t, 60.0f) << "the stone travelled";
 }

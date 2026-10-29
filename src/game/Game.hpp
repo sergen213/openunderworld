@@ -355,6 +355,9 @@ public:
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
+    // FNV-1a digest of the simulated state (Lara, camera, health/air, rigid bodies, object collision, script objects
+    // and their fields, enemies): equal digests at a tick = the same simulation (render-rate tests, ou-game log).
+    uint64_t stateHash() const;
     // Save games (src/save): ai::Enemies::restore, then the loaded units' enemies come back from it at once.
     void restoreEnemies(const nlohmann::json& j);
     const ai::Enemies& enemies() const { return enemies_; }

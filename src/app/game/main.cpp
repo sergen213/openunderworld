@@ -705,7 +705,6 @@ struct EffectsView {
     std::map<std::string, std::vector<int32_t>> unitOwners; // loaded unit -> its intros with running effects
     std::vector<ou::render::FxVertex> vertices;
     std::vector<ou::render::FxBatch> batches;
-    glm::vec3 camera{0};
 
     void sync(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
         if (!library) {
@@ -843,7 +842,6 @@ struct EffectsView {
             if (have.insert(t.id).second) scene.textures.push_back(t);
     }
     void frame(const ou::render::Camera& cam, float aspect, ou::render::FrameOptions& fo) {
-        camera = cam.position;
         system.build(cam, aspect, vertices, batches);
         fo.fxVertices = vertices, fo.fxBatches = batches;
     }
@@ -1589,7 +1587,9 @@ int main(int argc, char** argv) {
             combat.tick(*world, audioOn ? &mixer : nullptr);
             gadgets.tick(*world);
             effects.events(*world);
-            effects.system.tick(effects.camera);
+            // The emitters' camera-range gate uses the tick's camera, not the last rendered (interpolated) one: spawns and
+            // the shared random stream must not depend on the render rate.
+            effects.system.tick(opt.camera ? glm::vec3((*opt.camera)[0], (*opt.camera)[1], (*opt.camera)[2]) : world->camera().position);
             if (const auto* b = world->ridden(); b || bikePhase != "parked") { // bike phase changes + 1 Hz while riding
                 const std::string phase(b ? ou::game::bikePhaseName(b->phase) : "parked");
                 if (b && (phase != bikePhase || world->ticks() % 60 == 0)) {
@@ -1846,7 +1846,7 @@ int main(int argc, char** argv) {
                 uw = it->second;
             }
             const bool roof = world->collision().raycast(cam.position, {0, 0, 1}, 3000.0f).has_value();
-            shelter += (float(roof) - shelter) * std::min(1.0f, float(dt) * 3.0f);
+            shelter += (float(roof) - shelter) * (1.0f - std::exp(-3.0f * float(dt))); // same fade at any render rate
             fo.weather.kind = uw.kind == P::Rain ? ou::render::Weather::Kind::Rain
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
@@ -1857,10 +1857,12 @@ int main(int argc, char** argv) {
         ++frame;
         if (opt.frames && frame >= opt.frames) {
             running = false;
-            std::fprintf(stderr, "ou-game: final tick %llu unit %s chapter %d checkpoint %d found %d/%d/%d state %s pos %.1f %.1f %.1f yaw %.1f clip %s\n",
+            const auto& fs = world->player().state(); // the simulated tick, not the interpolated frame: rate-independent
+            std::fprintf(stderr, "ou-game: final tick %llu unit %s chapter %d checkpoint %d found %d/%d/%d state %s pos %.1f %.1f %.1f yaw %.1f clip %s sim %016llx fx %zu\n",
                          (unsigned long long)world->ticks(), world->currentUnit().data.name.c_str(), world->chapter,
                          world->checkpoint() ? world->checkpoint()->id : 0, world->found[0], world->found[1], world->found[2],
-                         std::string(ou::game::stateName(s.state)).c_str(), s.pos.x, s.pos.y, s.pos.z, glm::degrees(s.yaw), s.clip.c_str());
+                         std::string(ou::game::stateName(fs.state)).c_str(), fs.pos.x, fs.pos.y, fs.pos.z, glm::degrees(fs.yaw), fs.clip.c_str(),
+                         (unsigned long long)world->stateHash(), effects.system.particleCount());
             if (!opt.screenshot.empty()) {
                 if (!writePpm(opt.screenshot, renderer->readBackbuffer({w, h}))) {
                     std::fprintf(stderr, "ou-game: cannot write %s\n", opt.screenshot.string().c_str());

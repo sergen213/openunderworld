@@ -76,6 +76,9 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 ## Principles
 
 - Fixed-step simulation (60 Hz initial hypothesis, to be verified against the original main loop) with render interpolation.
+  Nothing that can change gameplay may read frame time or the rendered camera: physics, movers, scripts, AI and effects
+  tick at 60 Hz only (audit table: docs/GAMEPLAY.md "Timing"; real-puzzle tests bit-identical tick by tick at 24–1000 Hz,
+  irregular frames, and ctest `game_render_rate_smoke`).
 - Gameplay/simulation independent of the render backend; both renderers consume `src/scene/Assets.hpp` data.
 - Original Fidelity and Enhanced rendering modes; ray tracing optional with raster fallback.
 - Original installation is read-only; no copyrighted data in the repo or releases.
