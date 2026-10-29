@@ -13,6 +13,7 @@
 #include "game/Combat.hpp"
 #include "game/Progress.hpp"
 #include "game/Water.hpp"
+#include "game/Vehicle.hpp"
 #include "script/Script.hpp"
 #include "game/ai/Enemy.hpp"
 
@@ -79,6 +80,7 @@ struct AnimLibrary {
     const anim::Clip* find(std::string_view name) const;
     const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")
     // Mean of the hand bones (55, 80) relative to the root segment in `clip` at `t` (model space, root
+    BikeTuning bike; // motorcycle.drm (loadBikeTuning); its riding clips are in `clips` as "motorcycle:<name>"
     // translation removed); nullopt without a full skeleton.
     std::optional<vec3> handsAt(const anim::Clip& clip, double t) const;
 };
@@ -124,6 +126,7 @@ enum class State {
 std::string_view stateName(State s); // "unknown" past the last state
 
 // Controller constants. Provenance ([O] observed / [I] inferred) is listed in docs/GAMEPLAY.md.
+    Vehicle,     // on the motorcycle: mounting, riding, dismounting; World drives her from the bike (Vehicle.cpp)
 struct Tuning {
     float radius = 100.0f, height = 512.0f;    // capsule; feet at the root. height: lara.drm player data +0x10
     float stepUp = 70.0f, stepDown = 70.0f;    // ground snap window
@@ -304,6 +307,7 @@ struct UnitData {
 // Throws cdc::FormatError if pc-w\<name>.drm is missing or not a unit.
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name);
 using UnitLoader = std::function<UnitData(const std::string& name)>;
+    std::vector<VehicleIntro> vehicles; // `motorcycle` intros (unit frame)
 struct LoadedUnit {
     UnitData data;
     vec3 offset{0};        // world = unit frame + offset (portal relocation, tru.exe 0x5D13E0)
@@ -427,6 +431,17 @@ private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
     void updateCamera(const Actions& a, float dt);
     LoadedUnit* findUnit(const std::string& name);
+    // ---- motorcycle (Vehicle.cpp; docs/GAMEPLAY.md "Motorcycle") ----
+    // Every bike of the units loaded so far (by intro uid), kept across streaming; positions in their unit's frame.
+    const std::map<int32_t, Bike>& bikes() const { return bikes_; }
+    // World model matrix of a bike (model -Y forward) blended between the last two ticks; nullopt when its unit is
+    // not loaded.
+    std::optional<glm::mat4> bikeMatrix(int32_t uid, double alpha) const;
+    const Bike* ridden() const; // the bike Lara is mounting, riding or leaving; null on foot
+    int bikeMounts = 0;         // mounts so far (ou-game starts l4_laras_new_bike on the first)
+    nlohmann::json serializeVehicles() const;
+    void restoreVehicles(const nlohmann::json& j); // throws std::runtime_error on a malformed state
+
     void streamAround(size_t center); // load portal neighbours of units_[center], unload the rest
     void rebuildCollision();
     void crossPortals(vec3 from, vec3 to);
@@ -502,6 +517,16 @@ private:
 
 // The unit's `player` intro (objectlist.txt name), else the first intro; nullopt if the unit has none.
 std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
+    // motorcycle (Vehicle.cpp)
+    bool tickVehicles(const Actions& a, float dt); // true while Lara is on a bike: Player::tick is skipped
+    void syncVehicles();                           // register the loaded units' bike intros (after streaming)
+    void driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt);
+    void ramEnemies(Bike& b);
+    vec3 bikeOffset(const Bike& b) const;          // its unit's stream offset (0 when not loaded)
+    std::map<int32_t, Bike> bikes_;
+    int32_t riding_ = 0;                           // uid of the bike Lara is on, 0 = none
+    bool bikeInteractHeld_ = true, bikeJumpHeld_ = true;
+    std::map<const Damageable*, uint64_t> rammed_; // target -> tick of the last ram (one hit per contact)
 // Water volumes of a unit as type-10 ("water", MUD flag 0x100000) markup boxes, as tru.exe builds them
 // for each water volume instance (0x5D7130): points = {min, max}, surface = max.z. One per `watervolume`
 // intro whose intro data (+0x12) names its water-surface intro; x/y and the surface come from that

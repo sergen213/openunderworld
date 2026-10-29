@@ -300,7 +300,8 @@ endif()
 
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp
-  src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp)
+  src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp
+  src/game/Vehicle.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine ou_input glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)
@@ -326,6 +327,10 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_save_tests DISCOVERY_TIMEOUT 60)
   add_executable(ou_progress_tests tests/test_progress.cpp)
   target_link_libraries(ou_progress_tests PRIVATE ou_ui ou_game ou_save ZLIB::ZLIB GTest::gtest_main)
+  add_executable(ou_vehicle_tests tests/test_vehicle.cpp)
+  target_link_libraries(ou_vehicle_tests PRIVATE ou_save GTest::gtest_main)
+  target_compile_definitions(ou_vehicle_tests PRIVATE OU_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  gtest_discover_tests(ou_vehicle_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 900)
   gtest_discover_tests(ou_progress_tests DISCOVERY_TIMEOUT 60)
 endif()
 

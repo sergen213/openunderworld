@@ -164,6 +164,12 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         loadClips(cdc::parseDrm(std::move(*gun)), weaponClipNames(Weapon(i)), file, object + ":");
         if (auto w = loadWeapon(bigfile, object)) lib.weapons[size_t(i)] = *w;
     }
+    // The motorcycle: Lara's riding clips and the bike's tuning (Vehicle.cpp).
+    if (auto bike = bigfile.read("pc-w\\motorcycle.drm")) {
+        const cdc::Drm bd = cdc::parseDrm(std::move(*bike));
+        loadClips(bd, kBikeClipNames, "pc-w\\motorcycle.drm", "motorcycle:");
+        lib.bike = loadBikeTuning(bd);
+    }
     rigOutfit(lib, drm);
     // Swim speed: mean root speed of the clips that start swimming (their loops have no root motion).
     float dist = 0;
@@ -217,10 +223,14 @@ void World::restoreEnemies(const nlohmann::json& j) {
     if (!units_.empty()) enemies_.setUnits(unitRefs());
 }
 
-void World::tick(const Actions& a) {
+void World::tick(const Actions& input) {
     prev_ = player_.state();
     prevCam_ = cam_;
     const float dt = float(kTickSeconds);
+    // On the motorcycle the bike drives Lara (Vehicle.cpp); weapons, use and the grapple wait until she is off it.
+    const bool onBike = tickVehicles(input, dt);
+    Actions a = input;
+    if (onBike) a.move = vec2(0), a.jump = a.drop = a.interact = a.draw = a.fire = a.aim = a.switchTarget = a.weapon = a.grapple = false;
     // Stick is camera-relative.
     const vec2 fwd(std::cos(cam_.yaw), std::sin(cam_.yaw)), right(std::sin(cam_.yaw), -std::cos(cam_.yaw));
     vec2 move = right * a.move.x + fwd * a.move.y;
@@ -232,7 +242,7 @@ void World::tick(const Actions& a) {
         else if (const auto t = grappleTarget()) attachGrapple(t->pos, t->uid, t->kind);
     }
     grappleHeld_ = a.grapple;
-    player_.tick(move, a, dt);
+    if (!onBike) player_.tick(move, a, dt);
     if (player_.state().state == State::GrapplePull && a.interact)
         if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid));
             target && target->kind == script::Kind::Block) {
@@ -274,8 +284,13 @@ void World::tick(const Actions& a) {
 // Orbit camera around a point above Lara's root; pulled in along the view ray when level geometry is
 // in the way. Distance/height/pitch limits are inferred (docs/GAMEPLAY.md).
 void World::updateCamera(const Actions& a, float dt) {
-    constexpr float kTargetHeight = 450.0f, kDistance = 700.0f, kProbeRadius = 20.0f;
+    constexpr float kTargetHeight = 450.0f, kProbeRadius = 20.0f;
+    const Bike* bike = ridden();
+    const float kDistance = bike ? 950.0f : 700.0f; // [I] VehicleCamera pulls back on the bike
     cam_.yaw += a.look.x * dt;
+    // [I] riding without looking: swing behind the bike, faster the faster it goes
+    if (bike && bike->phase == BikePhase::Ride && a.look.x == 0 && bike->speed > 0)
+        cam_.yaw = lerpAngle(cam_.yaw, bike->yaw, std::min(1.0f, dt * 3.0f * std::min(1.0f, bike->speed / 1500.0f)));
     cam_.pitch = std::clamp(cam_.pitch + a.look.y * dt, -1.2f, 0.7f);
     cam_.target = player_.state().pos + vec3(0, 0, kTargetHeight);
     const vec3 dir(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw), std::sin(cam_.pitch));

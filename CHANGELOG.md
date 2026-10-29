@@ -13,6 +13,7 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - More level scripts run as in the original: timers (clocks), screen fades, death volumes and kill planes that hurt Lara, ledges that scripts switch off, objects scripts remove, triggers that wait for another area to load, and scripts that touch objects not loaded yet. The three chapter ends that only scripts reach (the sinking ship, the Croft Manor fire, the Natla ship) now run their real trigger scripts. Fixed a hang when two triggers linked to each other.
 
 ## [0.9.0] - 2026-10-28
+- Lara's motorcycle: the bike waits where the original parks it (Mexico's trail start, Jan Mayen). Press E beside it to get on with the original mount animation, then ride with the move stick (forward throttle, back brake/reverse, left/right steer) and Space to hop; slopes, steps, ramps and jumps follow the terrain, big drops hurt as in the original (its fall-damage numbers), and riding into enemies knocks them down. E near standstill gets off. Steering and top speed come from the bike's own data; acceleration and braking are approximations. Wheels spin and the handlebars turn, the camera follows behind the bike, the first ride in Mexico plays "Lara's new bike", and saves keep the bike and whether Lara is on it.
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
 

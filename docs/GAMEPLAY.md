@@ -391,6 +391,81 @@ outfit (the original only reads `+0x294` on a level load).
 
 ## Enemies
 
+## Motorcycle (src/game/Vehicle.*)
+
+Lara mounts the bike with E (interact) next to its left side, rides it with the move stick (forward = throttle, back =
+brake then reverse, left/right = steer; raw stick, not camera-relative), hops with Space and gets off with E once it is
+almost stopped. While she is on it, `World::tick` skips `Player::tick`, drives her from the bike and masks move, jump,
+drop, use, weapons and the grapple; the camera pulls back and swings behind the moving bike. No new bindable actions.
+
+Evidence:
+
+- Intros [V-data] (survey of every unit DRM against objectlist.txt): `motorcycle` (object 540) in `l4_trailstart` 5482
+  at (38051, -51966, 1463) rot z 0.93, `l5_startsnow` 7528, `l5_valgrind_tunnel` 7229; `revisit_motorcycle_spawner`
+  (657) in `l4_trailstart` 6699 and `l5_valgrind_tunnel` 6715; `co_motorcycle` (641, a cinematic copy) in
+  `l4_ballcourt` 6403 and `l7_thin_ice` 9078. No Thailand (l2) unit places a bike. `UnitData::vehicles` keeps the
+  `motorcycle` intros; spawners and cinematic copies are not instantiated [U: the spawner's script for revisits].
+- Classes [V-exe] RTTI `Bike : Vehicle` (vtables 0x886064 / 0x8860E4), `VehicleCamera`, `NtMotor_ScriptType`; state-chart
+  conditions `PSCCF_Vehicle_SteerDirection/StuntDirection/IdlePose/DismountClearance/State`. 0x6AB960 creates the Bike
+  (0x790 bytes, ctor 0x78EDA0) when the instance's vehicle data (+0x50 = ObjectBase +0xC8) has `+8 == 1`, with the tuning
+  record `+0x10`; 0x793680 is its per-frame update (throttle, steering, gear/torque 0x791D10, Havok wheel forces 0x792900,
+  fall damage).
+- Vehicle data [V-data] motorcycle.drm ObjectBase +0xC8 (section 13582 +0x1160): `u16 +4 = 0xB00B`, class 0x40,
+  `+8 = 1` (Bike), four 0x20C-byte tuning records at +0xB0 (count +0x6C), default `+0x10` = record 2.
+- Speed unit [V-exe]: 0x105B30C = 0.1071429 (3/28) * 2.237 is applied to the body velocity (0x795560): the record's
+  speeds are mph with 280 game units per metre (Lara's 512-unit height ≈ 1.83 m).
+- Riding clips [V-data] motorcycle.drm's animation list (Lara's 113-segment skeleton): `motorcycle_mount_cycle`,
+  `_dismount_cycle`, `_idle_foot_down*`, `_ride_slow/_fast`, `_accelerate(_loop)`, `_braking`, `_hard_brake`,
+  `_lean_left/right`, `_reverse_left/right`, `_jump`, `_jump_inair`, `_jump_land`, `_air_tilt_left/right`,
+  `_power_skid_*`, `_donut_*`, `_wheelie`, `_crash_brace_*`, `_fall_to_death`, `_jump_dismount(_leapover)`,
+  `_mount_cycle_jump`, `_dismount_front/back`, PDA equip; plus 1-segment `vehicle*Anim` clips. Riding clips have no root
+  motion: Lara's root is the bike's origin. `motorcycle_mount_cycle` ends with her root at (180.1, -124.9) turned +90°,
+  so she starts at bike-model (124.9, 180.1) — the bike's left, behind the seat — facing it; `motorcycle_dismount_cycle`
+  ends at (158.3, 52.1) turned +90°. Their root yaw passes ±180° (axis-angle sign flip): Vehicle.cpp unwraps the keys.
+- Weapons on the bike [V-data]: `wp_handgun`/`wp_uzi` carry `combat_pistol_motorcycle_*` (arm, disarm, reload,
+  switch hands, a left-side aim grid straight/front/side/back × level/up/down) and lara.drm `hit_motorcycle_*` hit
+  reactions. Not implemented: weapons are holstered on mount and stay holstered [I].
+- Skeleton [V-data] 19 bones: front wheel 5 (axle (0, -206.6, 104.1)), rear wheel 8 ((0, 256.8, 98.8)), fork/bars 3-4,
+  swingarm 7, frame 17. ou-game spins 5 and 8 about model X and turns 3 about the steering head axis [I].
+- Collision: every l4 unit's faces use mask 3 like Lara's; no bike-only faces or markup were found [U how the original
+  keeps the bike on its paths beyond terrain].
+- Music: `l4_laras_new_bike` is named by script 13918 (in every l4 unit and `revisit_motorcycle`); ou-game starts it on
+  the first mount in an l4 unit [I trigger].
+
+Numbers (default tuning record):
+
+| Value | Ours | Source |
+|---|---|---|
+| top speed | 40 mph = 5008 units/s (asymptote of the throttle curve) | record +0x00 [V-data]; mph per 0x105B30C [V-exe] |
+| front wheel limit | 30° at low speed → 10° at top speed, blended over [0.3, 1] × top speed | +0x10 / +0x14 / +0x1C, 0x793680 [V-exe] |
+| steering rate | 95°/s → 75°/s, same blend | +0x18 / +0x1B4, 0x793680 [V-exe] |
+| heading | bicycle model `v / wheelbase · tan(steer)`, wheelbase 463.4 | [I]; wheelbase from bones 5/8 [V-data] |
+| fall damage | drop ≥ 3792.67: (drop−3792.67)/(4819.85−3792.67)·95; > 4819.85: 95 + clamp(…/(4977.88−4819.85))·1550; in the air ≥ 4977.88: 1650 (lethal), type 8 | +0x184..+0x198, 0x793680 [V-exe] |
+| acceleration / brake / coast | 2400 · throttle · (1 − (v/top)²) / 5000 / 600 units/s² | [I] (original: gears +0x54.., rpm 1000/10000/18000 +0x78.., torque 30/20/20 +0x90.., Havok wheels) |
+| reverse | 700 units/s, 900 units/s² | [I] |
+| hop | 1100 units/s up | [I] |
+| gravity | 5.72443 units per 30 Hz frame² (Lara's) | [V-exe] Lara, [I] for the bike |
+| terrain | two wheel probes (axles) set height and pitch; > 43° up stops it; no ground under a wheel = airborne with the slope velocity; walls: axle capsule sweep + body-sphere push-out at 200 units up (rolls up ~120-unit steps) | [I] |
+| mount / dismount | E within 250 units of the mount spot; off below 200 units/s | [I] |
+| ramming | enemies touched at > 800 units/s take 0.5 health per unit/s, the bike loses 30 % speed, one hit per contact | [I] |
+| camera | 950 units back (700 on foot), yaw follows the heading at up to 3/s × min(1, v/1500) | [I] (`VehicleCamera` data not decoded) |
+
+Saves: `vehicles` (docs/SAVES.md) keeps every bike (unit, unit-frame position, heading, pitch, speed, steer, air state,
+phase) and the ridden one; Lara's state `vehicle` + clip are in `player`.
+
+Tests: `VehicleReal.BikeIntrosTuningAndClips`, `VehicleReal.TrailstartRideReplay` (replay `tests/replays/bike_ride.txt`:
+mount, 4429 units/s top speed down the trail, left curve up the steps, hop, brake, dismount; bike parked 8 300 units
+away, no damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide`.
+
+Verification [O] (ou-game, Vulkan, 1280×720, the replay with `--spawn 37981,-51758,1463,-126.7`; screenshots viewed,
+kept privately): frame 40 Lara swings her leg over the bike's left side (mount clip), 200 leaning into the left curve
+towards the steps, 262 in the hop clip over the stones at the top, 420 stepping off beside the bike parked nose-down on
+the slope; wheels and Lara stay on the bike through slope pitch. One OpenGL frame (200) matched.
+
+Not done [U/I]: gears, engine/skid/landing sounds, wheelies, power slides, donuts, crash braces and crashes, the jump
+dismounts, PDA on the bike, shooting from the bike, hit reactions while riding (damage applies without a clip), dismount
+clearance checks (`PSCCF_Vehicle_DismountClearance`), the revisit spawner, water.
+
 Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy
 registers in `World::targets` (Combat's `Damageable`) and hurts Lara through `World::damageLara`. ou-game draws them
 CPU-skinned (model 0) instead of their static intro meshes; `--show-enemies` draws capsules (colour = mode), heading

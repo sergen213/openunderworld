@@ -125,7 +125,7 @@ std::string_view stateName(State s) {
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
                                              "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
-                                             "grappleswing", "hit", "railslide", "grapplepull"};
+                                             "grappleswing", "hit", "railslide", "grapplepull", "vehicle"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -922,6 +922,8 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         break;
     case State::Dead: // the death clip plays out where she fell; World respawns her (Combat.cpp)
         advanceClip(dt);
+        break;
+    case State::Vehicle: // World drives her from the bike (Vehicle.cpp) and does not tick the player
         break;
     }
 }

@@ -1,0 +1,14 @@
+# l4_trailstart: mount Lara's motorcycle (uid 5482), ride down the trail and up its steps (left curve), hop off the top,
+# brake against the stones, dismount.
+# ou-game --level 'pc-w\l4_trailstart.drm' --spawn 37981,-51758,1463,-126.7 --input-script tests/replays/bike_ride.txt
+0.3 interact 1
+0.4 interact 0
+1.3 forward 1
+3.0 right -0.6
+3.8 right 0
+4.2 jump 1
+4.3 jump 0
+5.0 forward -1
+5.3 forward 0
+6.3 interact 1
+6.4 interact 0

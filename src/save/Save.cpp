@@ -62,6 +62,7 @@ json toJson(const SaveGame& s) {
         {"health", s.health ? json(*s.health) : json(nullptr)},
         {"script", s.script},
         {"enemies", s.enemies},
+        {"vehicles", s.vehicles},
     };
 }
 
@@ -124,6 +125,8 @@ SaveGame fromJson(const json& j) {
     if (!s.script.is_object()) throw SaveError("script state is not an object");
     s.enemies = j.value("enemies", json(nullptr));
     if (!s.enemies.is_null() && !s.enemies.is_object()) throw SaveError("enemy state is not an object");
+    s.vehicles = j.value("vehicles", json(nullptr));
+    if (!s.vehicles.is_null() && !s.vehicles.is_object()) throw SaveError("vehicle state is not an object");
     return s;
 }
 
@@ -158,6 +161,7 @@ SaveGame capture(const game::World& world) {
     if (!world.health().dead()) s.health = world.health().value(); // [I] a save taken while dead loads at full
     s.script = world.script().serialize();
     s.enemies = world.enemies().serialize();
+    s.vehicles = world.serializeVehicles();
     s.ticks = world.ticks();
     return s;
 }
@@ -186,6 +190,13 @@ void apply(const SaveGame& save, game::World& world) {
             world.restoreEnemies(save.enemies);
         } catch (const std::runtime_error& e) {
             throw SaveError(e.what());
+        }
+    }
+    if (!save.vehicles.is_null()) {
+        try {
+            world.restoreVehicles(save.vehicles);
+        } catch (const std::exception& e) {
+            throw SaveError(std::string("vehicles: ") + e.what());
         }
     }
     if (save.health) world.setHealth(*save.health);

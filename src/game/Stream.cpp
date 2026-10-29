@@ -56,6 +56,7 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
         if (n->second == "checkpoint" || n->second == "invis_checkpoint")
             u.checkpoints.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2}); // heading as findSpawn
         if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position)});
+        if (n->second == "motorcycle") u.vehicles.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2});
         if (n->second.find("_grapple") != std::string::npos) {
             const GrappleKind k = n->second.find("wall") != std::string::npos   ? GrappleKind::Wall
                                   : n->second.find("post") != std::string::npos ? GrappleKind::Post
@@ -191,6 +192,7 @@ void World::streamAround(size_t center) {
     s.water = waterOwner ? markupIndex(waterOwner->first, waterOwner->second) : -1; // its unit is Lara's or a neighbour: kept
     if (s.ledge < 0 && (s.state == State::Hang || s.state == State::Shimmy || s.state == State::ClimbUp)) s.state = State::Fall;
     player_.restore(s);
+    syncVehicles();
     ++unitsVersion_;
 }
 
