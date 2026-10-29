@@ -41,6 +41,7 @@ std::vector<uint8_t> flameDef() {
     put<int16_t>(d, 0xD0, 66);
     for (int k = 0; k < 4; ++k) put<float>(d, 0xE0 + 4 * k, 1.0f);
     d[0x11C] = 2;                         // additive
+    d[4] = 1;                             // starts at birth (0x543F70: +4 & 1)
     put<uint32_t>(d, 0x110, 766);
     return d;
 }
@@ -244,7 +245,7 @@ TEST(FxReal, EveryFxObjectParses) {
     EXPECT_EQ(objects, 205);  // fx* objects with an event list or GenericFXObject
     EXPECT_EQ(defs, 2011);    // particle definitions
     EXPECT_EQ(birth, 389);    // enabled event-0 effect records
-    EXPECT_EQ(textured, 2264); // per-object distinct particle (incl. material) + glow textures, all in the object DRM
+    EXPECT_EQ(textured, 2266); // per-object distinct particle (incl. material) + glow / ribbon / lightning textures, all in the DRM
 }
 
 // Hitscan impacts: the ammo object names its hit objects (data +0x3C above water, +0xA8 under water; tru.exe 0x6C64D0
@@ -470,4 +471,36 @@ TEST(FxReal, PrologueFireScreenFilter) {
     EXPECT_FLOAT_EQ(out.amountC, 1.0f);
     s.screenFilter({-4257, 7552, 668}, {-4263, 6291, 87}, out); // fire_corridor_far: none
     EXPECT_FALSE(out.active());
+}
+
+// Class 1 ribbons follow their tracked owner's two segments: one quad per tick, fading over the face life; class 3
+// lightning draws two bands of `segments` quads and ends with its life.
+TEST(Fx, RibbonsTrailTrackedSegmentsAndBoltsExpire) {
+    auto o = std::make_shared<fx::ObjectFx>();
+    o->segments = {glm::mat4(1), glm::translate(glm::mat4(1), glm::vec3(0, 0, 100))};
+    fx::RibbonDef r;
+    r.segment = 0, r.segment2 = 1, r.life = -1, r.faceLife = 10, r.rgba = r.rgba2 = 0x80808080u;
+    o->ribbons.push_back(r);
+    fx::LightningDef l;
+    l.life = 5, l.segment = 0, l.segment2 = 1, l.segments = 4, l.width = l.width2 = 10, l.glow = l.glow2 = 20;
+    l.core = l.core2 = l.outer = l.outer2 = 0x80808080u;
+    o->bolts.push_back(l);
+    fx::System s;
+    auto at = [](float x) { return glm::translate(glm::mat4(1), glm::vec3(x, 2000, 0)); };
+    ASSERT_TRUE(s.runCommand(o, {5, 0, 0, 1}, at(0), -2));
+    ASSERT_TRUE(s.runCommand(o, {9, 0, 0, 1}, at(0), -2));
+    for (int t = 0; t < 8; ++t) s.track(-2, at(float(t) * 10), {}), s.tick({0, 0, 0});
+    EXPECT_EQ(s.ribbonCount(), 1u);
+    EXPECT_EQ(s.faceCount(), 7u); // a quad per tick after the first pair
+    EXPECT_EQ(s.boltCount(), 1u); // life 5 frames = 10 ticks
+    render::Camera cam;
+    cam.lookAt({0, 2000, 50});
+    std::vector<render::FxVertex> v;
+    std::vector<render::FxBatch> b;
+    s.build(cam, 1.0f, v, b);
+    EXPECT_EQ(v.size(), (7u + 2u * 4u) * 6u); // ribbon quads + glow and core bands of 4 steps
+    for (int t = 0; t < 30; ++t) s.tick({0, 0, 0}); // owner no longer tracked: the ribbon ends, its quads fade out
+    EXPECT_EQ(s.ribbonCount(), 0u);
+    EXPECT_EQ(s.faceCount(), 0u);
+    EXPECT_EQ(s.boltCount(), 0u);
 }

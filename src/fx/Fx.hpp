@@ -6,13 +6,14 @@
 #include "render/Renderer.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
 #include <optional>
 #include <span>
 #include <string>
-#include <vector>
+#include <unordered_map>
 
 #include <glm/glm.hpp>
 
@@ -67,6 +68,7 @@ struct ParticleDef {
     float rot0 = 0, rotRange = 0, spin = 0, spinRange = 0; // degrees, degrees per 30 Hz frame
     uint32_t texture = 0;                  // +0x110 texture section id, 0 = none
     int16_t depthBias = 0;                 // +0x15E view-depth offset (< 0 = toward the camera)
+    int16_t rateLength = 0;                // +0x164: rate x |segment2 - segment| / this (0x543F70 -> 0x5386F0); 0 = off
     std::vector<uint32_t> textures;        // +0x114 -> {u32 n, ids[n]} (wins over +0x110)
     uint8_t atlasCols = 0, atlasRows = 0, atlasFrames = 0, atlasFirst = 0; // +0x174..+0x177
     std::vector<ParticleMaterial> materials; // +0x168 / +0x16C (wins over the textures)
@@ -102,8 +104,50 @@ struct GlowDef {
     uint16_t fadeFar = 0, fadeNear = 0; // +0x4E / +0x50 camera-distance fade band
     bool alphaBlend() const { return (flags >> 6) == 1; } // draw mode 2 (alpha fades); else 1 (RGB fades: additive) [I]
 };
-// Glows without a texture draw particle.drm model 0's first animated texture (0x52B0B0(0x8AA77C, 0, 0)).
+// Glows without a texture draw particle.drm model 0's animated texture frame 3 (0x52B0B0(0x8AA77C, 0, 3); list 127..133).
 inline constexpr uint32_t kGlowTexture = 130;
+// Ribbons and lightning without a texture draw particle.drm model 0's frame 4 (0x52B0B0(0x8AA77C, 0, 4)).
+inline constexpr uint32_t kRibbonTexture = 131;
+
+// Class 1 ribbon (GenericFXObject +0x14 / +0x18, 0x2C bytes; command 5 / 0x16; tru.exe 0x545810 -> 0x545570, update
+// 0x539500, faces 0x52DBC0): every frame one quad between the last and the current positions of two segments; each
+// quad fades from `startFade` to clear over `faceLife`. Times in 30 Hz frames.
+struct RibbonDef {
+    uint8_t id = 0;                  // +0x00 prim id (stop commands)
+    bool birth = false;              // +0x01 & 1
+    bool alphaBlend = false;         // +0x01 >> 6 == 1 (face prim +0x30 mode 1); default 2 = additive [I]
+    std::optional<ParticleMaterial> material; // +0x04 material (face +0xC0), else `texture`
+    int16_t segment = 0, segment2 = 0; // +0x08 / +0x0A (command a2 / a3 win)
+    uint8_t kind = 0;                // +0x0C: 1 = a chain of segments [U, no data]
+    int16_t life = -1;               // +0x0E ribbon life, -1 until its owner goes
+    int16_t faceLife = 1;            // +0x10
+    float startFade = 0;             // +0x12 x 2 / 0x2000: fade of a new quad (0 = opaque)
+    uint32_t rgba = 0, rgba2 = 0;    // +0x14 / +0x18 bytes R,G,B,A (0x80 = 1): new -> old quad colour [I]
+    uint32_t texture = 0;            // +0x20 (0 = kRibbonTexture)
+    uint8_t fadeIn = 0, fadeOut = 0; // +0x25 / +0x26 ribbon fade in / out (frames)
+};
+
+// Class 3 lightning / beam (GenericFXObject +0x24 / +0x28, 0xB8 bytes; command 9 / 0x19; tru.exe 0x537230, update
+// 0x5370C0, draw 0x53F8C0 -> 0x531770, prim type 0x84). A strip of `segments` steps from the start segment to the
+// end segment, two camera-facing bands (core and glow), jittered across the view every frame.
+struct LightningDef {
+    uint8_t id = 0;                  // +0x4D prim id (stop commands)
+    uint8_t kind = 0;                // +0x00: 0 bolt (constant colours), 2 colours along, 3 beam (colours + widths along)
+    bool birth = false;              // +0x4C & 1
+    bool alphaBlend = false;         // +0x4C >> 6 == 1 (blend 2), else additive
+    int16_t life = 1;                // +0x02 frames
+    int16_t segment = 0, segment2 = 0; // +0x16 / +0x20 (command a2 / a3 win); -100: the shot's end [I]
+    glm::vec3 offset{0}, offset2{0}; // +0x10 / +0x18 s16 x3 in the segments' frames
+    float spread = 0, spread2 = 0;   // +0x6C / +0x6E random end offsets (+-)
+    int segments = 1;                // +0x22
+    float width = 0, width2 = 0;     // +0x24 / +0x52 core width at start / end
+    float glow = 0, glow2 = 0;       // +0x26 / +0x54 glow width
+    float wave = 0, jag = 0;         // +0x28 / +0x2A amplitudes
+    uint32_t core = 0, core2 = 0, outer = 0, outer2 = 0; // +0x2C / +0x30 / +0x34 / +0x38 rgba, start / end
+    int16_t fadeIn = 0, fadeOut = 0; // +0x56 / +0x58
+    float speed = 0, length = 0;     // +0xA8 / +0xAA moving section (tracers): head speed per frame, length
+    uint32_t texture = 0, texture2 = 0; // +0x64 core / +0x68 glow (0 = kRibbonTexture)
+};
 
 // Class 6 effect light (GenericFXObject +0x3C / +0x40, 0x24 bytes; tru.exe 0x546710 -> 0x5C35D0).
 struct LightDef {
@@ -133,6 +177,15 @@ struct FilterResource {
     bool finish = false, finishCurves = false, finishFull = false; // +0x909, +0x90A, +0x908 (all 9 tables, else diagonal)
     float finishBlur = 0, finishAmount = 0;              // +0x900 (sum <= 4), +0x904 (sum <= 2; drawn x 0.5)
     Matrix mf{};                                         // +0x2640
+    // PCFeedbackEffect block (+0x2F74, sum 0x51A190, draw 0x51A530): floats keep (<= 1), amount (<= 1), blur (<= 4),
+    // zoom x / y (<= 4), angles (+-1), colour, `+0x20` enable
+    bool feedback = false;
+    float fbKeep = 0, fbAmount = 0, fbBlur = 0, fbZoomX = 0, fbZoomY = 0, fbAngle = 0, fbAngle2 = 0;
+    uint32_t fbColour = 0;                               // +0x1C bytes R, G, B
+    // PCNoiseEffect block (+0x2F60, sum 0x51B110, draw 0x51B1D0): colour, alpha (<= 255), cells (<= 255), +0x0C [U]
+    bool noise = false;                                  // +0x10
+    uint32_t noiseColour = 0;
+    float noiseAlpha = 0, noiseCells = 0;
 };
 FilterResource parseFilterResource(std::span<const uint8_t> data); // data.size() >= 0x31C0
 
@@ -173,6 +226,8 @@ struct ObjectFx {
     std::vector<GlowDef> glows;          // class 2
     std::vector<LightDef> lights;        // class 6
     std::vector<FilterDef> filters;      // class 5
+    std::vector<RibbonDef> ribbons;      // class 1
+    std::vector<LightningDef> bolts;     // class 3
     struct MapEntry { uint8_t id = 0; int8_t cls = -1; uint8_t index = 0; };
     std::vector<MapEntry> effectMap;     // +0x04 / +0x08 (commands 0x1C / 0x2F look effects up by id)
     std::vector<Event> events;           // object section +4 list
@@ -204,7 +259,7 @@ struct PointSet {
     std::string name;                   // +0x40, e.g. "FXPointSet50069", "fx_heat_haze50001"
     std::shared_ptr<const ObjectFx> fx; // the list's GenericFXObject (bundled in the unit DRM)
     std::vector<Event> events;          // +0x58 list
-    std::vector<glm::mat4> segments;    // 0 = the record's matrix, then the +0x64 points (0x50 bytes, matrix first)
+    std::vector<glm::mat4> segments;    // 0 = the points' mean (0x53F430), then the +0x64 points (0x50 bytes, matrix first)
     float distance = 0;                 // +0x5C [U: cull distance]
 };
 std::vector<PointSet> parsePointSets(const cdc::Drm& unit, std::vector<std::string>* warnings = nullptr);
@@ -232,8 +287,13 @@ public:
                   int32_t owner, uint8_t material, float from, float to, std::span<const glm::mat4> bones = {});
     // A one-shot instance playing `events` from frame 0 at a fixed `world` as the game ticks (bullet hits, weapon
     // fire: tru.exe births the hit object, whose clip events filter on its material, 0x6B7030).
+    // `target`: the shot's end, the position of segment -100 (lightning tracers: wp_* `fire` class 3 records) [I].
     void play(std::shared_ptr<const ObjectFx> fx, const std::vector<Event>& events, const glm::mat4& world, int32_t owner,
-              uint8_t material);
+              uint8_t material, std::optional<glm::vec3> target = std::nullopt);
+    // Current pose of an animated owner (Lara, enemies, script objects) for this tick: ribbons (class 1) and lightning
+    // (class 3) follow their owner's segments. Poses are dropped after tick(); a ribbon whose owner is not tracked
+    // stops adding quads (its quads fade on).
+    void track(int32_t owner, const glm::mat4& world, std::span<const glm::mat4> bones);
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     bool hasOwner(int32_t owner) const;
     void clear();
@@ -250,8 +310,14 @@ public:
         bool forever = false;                // no duration: a fixture (birth lights of placed objects)
     };
     void lights(std::vector<LiveLight>& out) const; // replaces out's contents
-    // The running screen filters at the camera / player, summed as tru.exe's PCColorDOF / PCFinish accumulators.
-    void screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out) const;
+    // The running screen filters at the camera / player, summed as tru.exe's PCColorDOF / PCFinish / PCFeedback /
+    // PCNoise accumulators plus the tints. `viewProj` + `visible` (owner point not occluded): screen-centre filters
+    // (sun glares, record +0x18); without them those filters are skipped.
+    void screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out,
+                      const glm::mat4* viewProj = nullptr, const std::function<bool(const glm::vec3&)>& visible = {}) const;
+    size_t ribbonCount() const { return ribbons_.size(); }
+    size_t faceCount() const { return faces_.size(); }
+    size_t boltCount() const { return bolts_.size(); }
     size_t filterCount() const { return filters_.size(); }
     size_t emitterCount() const { return emitters_.size(); }
     size_t particleCount() const { return particles_.size(); }
@@ -288,6 +354,7 @@ private:
         glm::vec3 pos{0};
         int32_t owner = 0, age = 0;  // ticks
         int32_t holdEnd = -1;        // ticks; -1 forever (until stopped)
+        mutable float hidden = 0;    // screen-centre filters: occlusion fade 0..1 (0x5469A0 prim +0x48, 0.25 / frame)
     };
     bool startFilter(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
                      int16_t segment, std::span<const glm::mat4> bones);
@@ -299,6 +366,7 @@ private:
         int32_t owner = 0;
         int32_t ticksLeft = -1; // -1 forever
         float accum = 0;
+        float rateScale = 1; // def +0x164: |origin2 - origin| / +0x164 (0x5386F0)
         bool burst = false, stopped = false;
         uint32_t persistent = 0; // mode 2: id + 1 of its particle
     };
@@ -318,7 +386,38 @@ private:
         glm::mat4 world{1};
         int32_t owner = 0, age = 0; // ticks
         uint8_t material = 0;
+        std::optional<glm::vec3> target;
     };
+    struct Pose { glm::mat4 world{1}; std::vector<glm::mat4> bones; };
+    // World frame of `segment` of `fx` on a tracked owner, else at `world` / `bones` (segment -100: target_).
+    glm::mat4 segmentFrame(const ObjectFx& fx, int16_t segment, const glm::mat4& world, std::span<const glm::mat4> bones) const;
+    struct Ribbon {
+        std::shared_ptr<const ObjectFx> fx;
+        const RibbonDef* def = nullptr;
+        int32_t owner = 0, age = 0, left = -1; // ticks; left -1 until the owner goes
+        int16_t segment = 0, segment2 = 0;
+        bool havePrev = false;
+        glm::vec3 prev[2]{};
+        float prevFade = 0;                   // fade of the last quad's newer edge (0 opaque .. 1 clear)
+    };
+    struct Face { // one ribbon quad (0x52DBC0: a type-3 particle with 4 corners)
+        std::shared_ptr<const ObjectFx> fx;
+        const RibbonDef* def = nullptr;
+        glm::vec3 p[4]{};                     // old a, old b, new b, new a
+        float fadeOld = 0, fadeNew = 0, step = 0; // fades of both edges, + step per tick
+        int32_t age = 0, life = 1;
+    };
+    struct Bolt {
+        std::shared_ptr<const ObjectFx> fx;
+        const LightningDef* def = nullptr;
+        int32_t owner = 0, age = 0, left = 1, fadeOut = -1;
+        int16_t segment = 0, segment2 = 0;
+        glm::vec3 a{0}, b{0}, jitterA{0}, jitterB{0};
+        uint32_t id = 0;
+    };
+    bool startRibbon(const std::shared_ptr<const ObjectFx>& fx, int def, int32_t owner, int16_t s1, int16_t s2);
+    bool startBolt(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner, int16_t s1,
+                   int16_t s2, std::span<const glm::mat4> bones);
     uint32_t rand15(); // tru.exe LCG 0x41C64E6D / 0x3039, bits 16..30
     float rand01() { return float(rand15()) / 32768.0f; }
     float randSigned() { return float(int(rand15() & 0x1FFF) - 0xFFF) / 4096.0f; }
@@ -331,6 +430,11 @@ private:
     std::vector<Glow> glows_;
     std::vector<FxLight> lights_;
     std::vector<Filter> filters_;
+    std::vector<Ribbon> ribbons_;
+    std::vector<Face> faces_;
+    std::vector<Bolt> bolts_;
+    std::unordered_map<int32_t, Pose> poses_;
+    std::optional<glm::vec3> target_; // segment -100 while a sequence with a target runs its events
 };
 
 // Object DRM effects by object name, loaded once, with the decoded textures their particles use.

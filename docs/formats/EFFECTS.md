@@ -230,15 +230,15 @@ weight × value (tables + round(t × w), saturating) and is topped up with the i
 | +0x0000 | PCColorDOFEffect (sum 0x516E70, draw 0x5177E0) | `+0x130E` enable, `+0x130C` depth curve, `+0x130D` scene matrix, `+0x1300` blur (sum ≤ 4) × device +0x1330 [U, 1 here], `+0x1304` alpha (≤ 1), `+0x1308` tint RGB, `+0x1310` / `+0x1314` depth range (own with `+0x130F`, else the scene's [U]), `+0x0000` scene matrix, `+0x0900` overlay matrix, `+0x1200` depth curve | scene through the scene matrix; half-size copy through the overlay matrix [I: ours after the blur], blurred, × tint, blended over by alpha (× depth curve over the view distance [I: distance, not z]) |
 | +0x1320 | second ColorDOF accumulator | as above | not enabled by the data seen [U] |
 | +0x2640 | PCFinishEffect (sum 0x51AAB0, draw 0x51AEF0) | `+0x909` enable, `+0x900` blur (≤ 4), `+0x904` amount (≤ 2), `+0x90A` curves, `+0x908` all 9 tables (else the diagonal) | half-size copy blurred (0x519F20: down to level ceil(r), back up by 4-tap bilinear steps, the fraction blended), through the curves, added (SRCALPHA/ONE, alpha = amount × 127.5) |
-| +0x2F74 | PCFeedbackEffect (0x51A190) | 7 floats + colour, `+0x20` enable | not drawn |
-| +0x2F60 | PCNoiseEffect (0x51B110) | `+0x10` enable | not drawn |
+| +0x2F74 | PCFeedbackEffect (sum 0x51A190, draw 0x51A530) | floats keep (<= 1), amount (<= 1), blur (<= 4), zoom x / y (<= 4), two angles; `+0x1C` colour, `+0x20` enable | scene x keep, + the (blurred, zoomed / turned) previous frame x colour x amount; ours feeds back the current frame's blur [I] |
+| +0x2F60 | PCNoiseEffect (sum 0x51B110, draw 0x51B1D0) | `+0` colour, `+4` alpha (<= 255), `+8` cells (<= 255), `+0xC` [U], `+0x10` enable | 10 x 8 quads of a noise texture at random offsets, alpha-blended; ours: hash noise |
 | +0x2FA4 | device 0x512D60 (always, fog-like [U]) | `+0` enable | not drawn |
 
 Ours: `fx::System::screenFilter` sums the running filters (camera, Lara) into `render::ScreenFilter`; the post pass
 (`shaders/filter.glsl`, GL + Vulkan) applies the scene matrix, the ColorDOF overlay and the finish bloom; blur level r =
 trilinear mip r of a half-size scene copy (GL glGenerateTextureMipmap, Vulkan blit chain). Point sets run class 5 at
 birth although no record has the birth bit, centred on the first point [I]; transient owners' endless filters last 1 s
-[I]; tints and `+0x18` filters are not started. Survey: 6145 records with a resource (Lara's death / damage clips,
+[I]; tints and the `+0x18` sun-glare filters run (below). Survey: 6145 records with a resource (Lara's death / damage clips,
 pickups, fire, explosions), 403 tints, 2 screen-centre filters.
 
 The prologue corridor fire's point sets run fx_fire 6702 record 0 (resource 4190: finish blur 4 / amount 2, intensity
@@ -246,17 +246,91 @@ The prologue corridor fire's point sets run fx_fire 6702 record 0 (resource 4190
 far captures (Lara > 1580 from every set), as there. Compared 2026-10-29 (`fire_rubble_close.png` vs GL + Vulkan,
 `--fov 50`): the walls now glow as in the original; the flames stay smaller than its large white-hot tongues. Flame
 defs scale their rate by segment distance / def `+0x164` (3160 here; 0x543F70 → 0x5386F0 `rate × dist / v`); applied,
-the fire is ~5× sparser than the capture, so it is not applied pending the exe's point-set segments [U].
+the fire is ~5× sparser than the capture. Resolved: 0x53F430 / 0x53F200 build each point set as an instance of the particle object whose segments 1.. are the points (segment 0 at their mean) and run its list as an event sequence (0x535EB0, not a birth), so the factor is the line length / 3160 as applied now (`Emitter::rateScale`); the remaining density difference is not in the rate rule [U].
+
+Tints (no resource, 0x5469A0 -> 0x52B860): the record colour over the screen, added when its alpha is 0x80 (mode 1),
+else blended by alpha / 128; faded in / out; intensity and radius do not apply. Sun glares (`+0x18` = s): weight x max(0,
+1 - (r / 0.65) / s), r = the owner's distance from the screen centre in half-screens (x / 512, y / 448), x an occlusion
+fade moving 0.25 per frame (0x535C50; ours: a collision ray from the camera [I]).
+
+## Commands (0x547B40) and classes [O]
+
+Every command type the switch dispatches; "used" = records in object birth / animation lists (survey of every object
+DRM, `scratch/cmdsurvey.py`). Classes by GenericFXObject list:
+
+| cmd | target | used | ours |
+|---|---|---|---|
+| 1 / 2 | 0x536070 / 0x536250 glow prims from a global colour table | 0 | — |
+| 3, 0x1D, 0x20, 4 | particles (0x543F70) | 32 512 | yes |
+| 5, 0x16 | class 1 ribbons (0x545810) | 107 (Lara birth, tiger / merc / tentacle clips) | yes ("Ribbons") |
+| 6 | class 2 glows | 563 | yes |
+| 7 / 8 | 0x52E130 / 0x53AB30 (global switches) [U] | 0 | — |
+| 9, 0x19 | class 3 lightning / beams (0x537230) | 100 | yes ("Lightning") |
+| 0xA, 0xC | class 4 (0x53D100, 0x64 bytes; prim with own segments) [U: blast ring] | 0 (only particle.drm has records) | no |
+| 0xB | class 5 screen filters | 369 | yes |
+| 0xD | sound 0x481B50 | 931 | audio (AUDIO.md) |
+| 0xE / 0xF / 0x10 | pad rumble 0x481CC0 / 0x481CF0, distance-scaled (0x10) | 175 / 322 / 11 | no (no rumble output) |
+| 0x11 | class 6 lights | 73 | yes |
+| 0x12, 0x1F | debug print | 35 | — |
+| 0x15 / 0x1A, 0x18 / 0x1B | fade / remove prims by id (self, +0x218, 0x5B36F0, parent) | 467 / 13 | yes (own instance) |
+| 0x17 | 0x5B3EC0 instance model switch [I] | 41 | no |
+| 0x1C, 0x2F | effect map id -> class 0..8 | 220 (Lara) | yes, classes 0-3, 5, 6 |
+| 0x1E | clears 0xAE5144 (weather lightning timer, 0x545950) | 0 | — |
+| 0x21 / 0x22 / 0x23 | instance fades: 0x52C890, class 7 (0x52C920: alpha from +0 to +2 over +4 frames, 0x0C bytes), 0x52B2C0 | 0 / 122 (pickups, Lara) / 0 | no: needs per-instance alpha in the renderers |
+| 0x25 | class 8 (0x5310A0, 0x3C bytes): per-vertex burn map on the instance mesh (instance +0x1B0) [I: BurnFX] | 0 (particle.drm records only) | no |
+| 0x26 | class 9 (0x5471A0, 0x10 bytes) | 0 (no records) | no |
+| 0x27 / 0x28 / 0x29 / 0x2B / 0x2C / 0x2D / 0x2E | 0x531510, 0x531430, 0x52B5C0, 0x52CE90, 0x52CF30, 0x53B780 (Lara, x a3), 0x53B650 [U] | 0x2C 18, 0x2D 250 | no |
+| 0x32 | event sequence 0x535EB0 | 1 | no |
+| 0x34 | global float 0xAE3C90 eased over a frames (Lara clips; read by the sound code 0x5B?) [U] | 40 | no |
+
+Scripts: the native type `effect` (NtEffect, tru.exe 0x705871) is never referenced by any script in the data (survey of
+every unit and object DRM); script objects reach effects only through their animation clips (below).
+
+Decals: tru.exe has none — no decal / footprint / bullet-hole code, RTTI or strings, and no such textures in the data;
+impacts are the hit objects' particles, glows and lights. Not implemented by design.
+
+## Ribbons (class 1) [O unless marked]
+
+Record 0x2C: `+0` id, `+1` flags (1 birth, `>> 6` face blend: 1 alpha, else additive [I]), `+4` material (face
+`+0xC0`; spears, tentacles, Natla, Amanda), `+8 / +0xA` segments (command a2 / a3 win), `+0xC` kind (1 = chain of
+segments, unused), `+0xD` owner select, `+0xE` ribbon life (-1 endless), `+0x10` face life, `+0x12` start fade (x2,
+0x2000 = clear), `+0x14 / +0x18` colours, `+0x1C` subdivision (spline 0x52DA30 between frames: not done), `+0x20`
+texture (0: particle.drm model 0 frame 4 = texture 131), `+0x25 / +0x26` fade in / out frames. 0x539500 per frame:
+records both segment positions; with the last pair a quad 0x52DBC0 (a type-3 particle) whose edges fade from the start
+fade to clear over the face life; the colour goes to `+0x18` [I]. Not added while the owner is hidden (flags 0x800 /
++0x18 & 0x4000000).
+
+Ours: `fx::System` ribbons need their owner tracked every tick (`System::track`; ou-game tracks Lara, enemies and script
+objects that have ribbons / lightning). Tiger and merc attack clips leave their claw / blade trails. Lara's birth list
+starts four endless arm / leg ribbons (segments 4-6, 11-9, 87-79, 62-54, gold to black): they are not started — the
+instance bit that gates them (+0x18 & 0x4000000) is [U] and drawn always they would trail every move.
+
+## Lightning and beams (class 3) [O unless marked]
+
+Record 0xB8 (0x537230 -> prim 0x84, update 0x5370C0, draw 0x53F8C0 -> 0x531770): `+0` kind (0 bolt, 2 colours along
+the bolt, 3 beam: colours and widths along), `+1` owner select, `+2` life, `+4` wave phase (-1 random), `+0x10 / +0x16`
+start offset / segment, `+0x18 / +0x20` end offset / segment (-100: the runtime marker list, the shot's end for
+weapons [I]), `+0x22` steps, `+0x24 / +0x52` core width start / end, `+0x26 / +0x54` glow width, `+0x28` wave and
+`+0x2A` jag amplitude, `+0x2C..+0x38` core / glow colours start / end, `+0x4C` flags (1 birth, 0xC0 == 0x40 alpha
+blend), `+0x4D` id, `+0x56 / +0x58` fade in / out, `+0x64 / +0x68` core / glow textures (0: texture 131), `+0x6C /
++0x6E` random end offsets, `+0xA8 / +0xAA` moving section (speed per frame, length; handgun tracers 1300 / 1200).
+0x531770 steps the line, jitters each point across the view (random jag x a sine envelope, wave) every frame and draws
+two camera-facing bands; alpha fades below 896 units of view depth.
+
+Ours: `LightningDef`, drawn as quads in the effect pass (hash-random jitter per 30 Hz frame [I: the exe's sine-table
+indexing]). Users: weapon tracers (`wp_handgun` / `wp_uzi` / `wp_akrifle` `fire`), Thor's hammer (`wp_thorhammer`
+melee / fire, `co_fx_val_hammer`), Valaskjalf door beam (`fx_beam_val_door_unlock`), light shafts (`sa_uo_light_beams`,
+`fx_glare_*`, `fx_light_ray_*`), cinematic lightning (`fx_cine_lightning`). Mjolnir itself is not a player weapon yet.
+
+## Script-object clip events
+
+ou-game runs the clip events of switches / doors (their pull / open and held idle clips, `World::objectClips`) and of
+uber objects while their travel clip runs, as the characters' (owner = intro uid). Light fixtures switched by script
+clips (`on` / `off`) still do not run: those clips are played by natives not tracked.
 
 ## Missing
 
-Classes 1 (0x545810, ribbon? [U]), 3 (0x537230), 4 (0x53D100), 5 tints / screen-centre / feedback / noise parts, 7 (instance fade), 8, 9,
-kind ≥ 2 beam glows (no data uses them), variant ≠ 0 clip records, script-played object clips (light fixtures'
-`on`/`off`), door / switch / breakable clip events (no breakables in game), lightning (Thor's hammer), decals (bullet
-holes, scorch: not in the effect commands; [U] where), lens-flare chains beyond the glare glows, skydomes
-(`*_skydome_*` unit dependencies are never placed; the instance flag 0x20000000 from oflags 0x04000000 only sets a
-depth bias, 0x505C80 — how the dome follows the camera is [U]), particles that follow their segment (mode 1), casing meshes,
-per-enemy hit materials (all bodies 23). UV-scrolling textures (waterfalls, water) are the translated original
-shaders' (TimeVector c23/c53); the l2_junglehub cascade (-29000..-32000, 14500, z 3500..12500) was not framed in a
-view. Flame size / density of the prologue fire vs the Wine capture, waterfall and gunfire Wine captures, frame-time
-measurements in the heaviest units.
+Classes 4, 7 (instance fades), 8, 9 (above); ribbon subdivision; lightning's exact jitter tables; the feedback filter
+uses the current frame's blur instead of the previous frame; noise uses a hash, not the device texture; skydomes,
+particles that follow their segment (mode 1), casing meshes, per-enemy hit materials, the line emitters' view-angle
+density rule (def `+0x8C / +0x90`, 0x5386F0 second branch: no data sets it in the fire defs checked).

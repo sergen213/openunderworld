@@ -23,6 +23,7 @@ glm::mat4 introModel(const script::Object& o) { // T * Rx * Ry * Rz, as the intr
 struct UberMotionSample {
     vec3 delta{0}, rotation{0};
     float duration = 1;
+    std::string clip; // animation-list name
 };
 
 std::optional<UberMotionSample> uberMotion(const cdc::Drm& drm, std::string_view name) {
@@ -41,6 +42,7 @@ std::optional<UberMotionSample> uberMotion(const cdc::Drm& drm, std::string_view
         if (s.type == cdc::SectionType::Animation && s.id == entry->animId) {
             const auto clip = anim::decodeClip(s.data);
             UberMotionSample motion;
+            motion.clip = entry->name;
             motion.duration = float(clip.durationSeconds());
             motion.delta = rootTranslation(clip, clip.durationSeconds(), false) - rootTranslation(clip, 0, false);
             for (const auto& track : clip.tracks) {
@@ -82,7 +84,7 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
         if (data) {
             uberStates_[o.uid].assign(data->sectionModels.size(), 0);
             if (const auto motion = uberMotion(*drm->second, o.name))
-                uberMotion_[o.uid] = {motion->delta, motion->rotation, motion->duration, 0, false};
+                uberMotion_[o.uid] = {motion->delta, motion->rotation, motion->duration, 0, false, motion->clip};
         }
     }
     const auto [it, inserted] = uberData_.emplace(o.uid, std::move(data));
@@ -103,6 +105,24 @@ bool World::sendUberCommand(int32_t uid, uint32_t commandIndex) {
     if (const auto motion = uberMotion_.find(uid); motion != uberMotion_.end())
         motion->second.active = std::any_of(states.begin(), states.end(), [](uint32_t state) { return state != 0; });
     return true;
+}
+
+std::vector<World::ObjectClip> World::objectClips() const {
+    std::vector<ObjectClip> out;
+    for (const auto& o : script_.objects()) {
+        if (o.clips && o.clipNames && o.clipNames->size() == 2 && o.state != 0)
+            out.push_back({o.uid, o.name, (*o.clipNames)[o.state == 1 ? 0 : 1], o.t, (*o.clips)[o.state == 1 ? 0 : 1].durationSeconds(),
+                           o.state == 2, introModel(o)});
+        else if (const auto m = uberMotion_.find(o.uid); m != uberMotion_.end() && m->second.active && m->second.t < m->second.duration)
+            out.push_back({o.uid, o.name, m->second.clip, m->second.t, m->second.duration, false, introModel(o)});
+    }
+    return out;
+}
+
+std::vector<glm::mat4> World::objectBones(int32_t uid) const {
+    const auto* o = script_.find(uid);
+    if (!o || !o->clips || !o->skeleton || o->state == 0) return {};
+    return anim::worldMatrices(*o->skeleton, anim::sample((*o->clips)[o->state == 1 ? 0 : 1], *o->skeleton, o->t, o->state == 2));
 }
 
 void World::bindUber() {

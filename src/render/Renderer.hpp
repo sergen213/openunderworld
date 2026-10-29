@@ -75,7 +75,11 @@ struct FxBatch {
 // Original screen filters (class-5 effects with a 0x31C0 filter resource, docs/formats/EFFECTS.md "Screen filters"),
 // summed over the running ones by fx::System::screenFilter. Post pass, on the tonemapped scene:
 //   scene = M1(scene) when colourMatrix; scene = mix(scene, M2(blur(scene, blurA)) x tintA, alphaA [x DOF curve]);
-//   scene += MF(blur(scene, blurC)) x amountC.
+//   scene += MF(blur(scene, blurC)) x amountC;
+//   scene = scene x feedbackKeep + blur(scene, feedbackBlur) zoomed / turned about the centre x feedbackColour x
+//   feedbackAmount (PCFeedbackEffect); scene += tintAdd; scene = mix(scene, tintMix.rgb, tintMix.a);
+//   scene = mix(scene, noiseColour x noise, noiseAlpha) (PCNoiseEffect: 10 x 8 cells of `noiseCells` / 64 of a noise
+//   texture at random offsets, `noiseSeed` per frame).
 // blur(r): the half-resolution scene at mip level r (trilinear, as tru.exe's ceil(r) down/up chain with the fraction
 // blended). M = 3x3 matrix of 256-entry curves: lut row 3k + c, texel x = the curve input channel c's value, RGB = its
 // contributions (rows 0-2 M1, 3-5 M2, 6-8 MF, 9 the DOF curve in R over sat(view depth x dofScale + dofBias)).
@@ -86,8 +90,16 @@ struct ScreenFilter {
     float tintA[3] = {1, 1, 1};
     float dofScale = 0, dofBias = 0;
     float amountC = 0, blurC = 0;          // Finish (bloom): additive 0..1, blur 0..4
+    float feedbackKeep = 1, feedbackAmount = 0, feedbackBlur = 0, feedbackZoom[2] = {1, 1}, feedbackAngle = 0;
+    float feedbackColour[3] = {1, 1, 1};
+    float tintAdd[3] = {0, 0, 0}, tintMix[4] = {0, 0, 0, 0};
+    float noiseAlpha = 0, noiseCells = 0, noiseColour[3] = {1, 1, 1}, noiseSeed = 0;
     std::array<uint8_t, 256 * kLutRows * 4> lut{}; // RGBA8, row-major
-    bool active() const { return colourMatrix || alphaA > 0 || amountC > 0; }
+    bool feedback() const { return feedbackAmount > 0 || feedbackKeep < 1; }
+    bool active() const {
+        return colourMatrix || alphaA > 0 || amountC > 0 || feedback() || noiseAlpha > 0 || tintMix[3] > 0 ||
+               tintAdd[0] + tintAdd[1] + tintAdd[2] > 0;
+    }
 };
 // ---- atmosphere + weather (docs/RENDERING.md "Atmosphere", "Weather"; Enhanced only, post pass) ----
 // Height fog (haze + ground mist) integrated along the view ray up to the scene or the nearest water surface,

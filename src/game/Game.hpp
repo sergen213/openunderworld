@@ -374,6 +374,18 @@ public:
     // doors and push blocks are collision().dynamics (following their pose); rigid-body doors swing on a hinge.
     const physics::Scene& physics() const { return physics_; }
     bool sendUberCommand(int32_t uid, uint32_t commandIndex);
+    // Script objects playing an animation-list clip this tick (switches / doors: their pull / open and held idle
+    // clips; uber objects: their travel clip while it runs forward): for their clip effect events (EFFECTS.md).
+    struct ObjectClip {
+        int32_t uid = 0;
+        std::string object, clip; // objectlist name, animation-list name
+        double t = 0, duration = 0; // seconds into the clip, its length
+        bool loop = false;
+        glm::mat4 model{1};       // intro frame
+    };
+    std::vector<ObjectClip> objectClips() const;
+    // Posed segment frames (object frame) of a switch / door at its clip time; empty = bind pose.
+    std::vector<glm::mat4> objectBones(int32_t uid) const;
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
@@ -559,7 +571,7 @@ private:
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
     std::map<int32_t, std::vector<uint32_t>> uberStates_;
-    struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; };
+    struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; std::string clip; };
     std::map<int32_t, UberMotion> uberMotion_;
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;
     uint64_t lightsVersion_ = 0;

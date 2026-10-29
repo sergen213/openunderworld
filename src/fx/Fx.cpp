@@ -106,6 +106,13 @@ FilterResource parseFilterResource(std::span<const uint8_t> d) {
     f.finish = rd<uint8_t>(d, c + 0x909), f.finishCurves = rd<uint8_t>(d, c + 0x90A), f.finishFull = rd<uint8_t>(d, c + 0x908);
     f.finishBlur = rd<float>(d, c + 0x900), f.finishAmount = rd<float>(d, c + 0x904);
     tables(f.mf, c);
+    constexpr size_t fb = 0x2F74, nz = 0x2F60;
+    f.feedback = rd<uint8_t>(d, fb + 0x20);
+    f.fbKeep = rd<float>(d, fb), f.fbAmount = rd<float>(d, fb + 4), f.fbBlur = rd<float>(d, fb + 8);
+    f.fbZoomX = rd<float>(d, fb + 0xC), f.fbZoomY = rd<float>(d, fb + 0x10);
+    f.fbAngle = rd<float>(d, fb + 0x14), f.fbAngle2 = rd<float>(d, fb + 0x18), f.fbColour = rd<uint32_t>(d, fb + 0x1C);
+    f.noise = rd<uint8_t>(d, nz + 0x10), f.noiseColour = rd<uint32_t>(d, nz);
+    f.noiseAlpha = float(rd<int32_t>(d, nz + 4)), f.noiseCells = float(rd<int32_t>(d, nz + 8));
     return f;
 }
 
@@ -128,7 +135,7 @@ ParticleDef parseParticleDef(std::span<const uint8_t> d) {
     p.rot0 = rd<int16_t>(d, 0xF4), p.rotRange = rd<int16_t>(d, 0xF6);
     p.spin = rd<float>(d, 0xF8), p.spinRange = rd<float>(d, 0xFC);
     p.texture = rd<uint32_t>(d, 0x110);
-    p.depthBias = rd<int16_t>(d, 0x15E);
+    p.depthBias = rd<int16_t>(d, 0x15E), p.rateLength = rd<int16_t>(d, 0x164);
     p.atlasCols = rd<uint8_t>(d, 0x174), p.atlasRows = rd<uint8_t>(d, 0x175);
     p.atlasFrames = rd<uint8_t>(d, 0x176), p.atlasFirst = rd<uint8_t>(d, 0x177);
     // Keys (0x544078..0x5442B9): key 0 always; middle keys when their colour is set or their size is >= 0; last key.
@@ -287,6 +294,37 @@ static ObjectFx parseFxSections(const cdc::Drm& drm, int ev, int gen, int base, 
             f.resource = filterResource(drm, rd<uint32_t>(r, 0x14), resources); // plain DTP id
             fx.filters.push_back(std::move(f));
         });
+        records(0x14, 0x18, 0x2C, [&](std::span<const uint8_t> r, const auto&, uint32_t) {
+            RibbonDef b;
+            b.id = rd<uint8_t>(r, 0);
+            b.birth = rd<uint8_t>(r, 1) & 1, b.alphaBlend = (rd<uint8_t>(r, 1) >> 6) == 1;
+            if (const uint32_t mat = rd<uint32_t>(r, 4)) // material id (face +0xC0)
+                if (std::any_of(drm.sections.begin(), drm.sections.end(),
+                                [&](const cdc::Section& x) { return x.type == cdc::SectionType::Material && x.id == mat; }))
+                    b.material = particleMaterial(drm, mat);
+            b.segment = rd<int16_t>(r, 8), b.segment2 = rd<int16_t>(r, 0x0A), b.kind = rd<uint8_t>(r, 0x0C);
+            b.life = rd<int16_t>(r, 0x0E), b.faceLife = std::max<int16_t>(1, rd<int16_t>(r, 0x10));
+            b.startFade = std::clamp(float(rd<int16_t>(r, 0x12)) * 2.0f / 8192.0f, 0.0f, 1.0f);
+            b.rgba = rd<uint32_t>(r, 0x14), b.rgba2 = rd<uint32_t>(r, 0x18), b.texture = rd<uint32_t>(r, 0x20);
+            b.fadeIn = rd<uint8_t>(r, 0x25), b.fadeOut = rd<uint8_t>(r, 0x26);
+            fx.ribbons.push_back(std::move(b));
+        });
+        records(0x24, 0x28, 0xB8, [&](std::span<const uint8_t> r, const auto&, uint32_t) {
+            LightningDef l;
+            auto v3 = [&](size_t o) { return glm::vec3(rd<int16_t>(r, o), rd<int16_t>(r, o + 2), rd<int16_t>(r, o + 4)); };
+            l.id = rd<uint8_t>(r, 0x4D), l.kind = rd<uint8_t>(r, 0), l.life = rd<int16_t>(r, 2);
+            l.birth = rd<uint8_t>(r, 0x4C) & 1, l.alphaBlend = (rd<uint8_t>(r, 0x4C) & 0xC0) == 0x40;
+            l.offset = v3(0x10), l.segment = rd<int16_t>(r, 0x16), l.offset2 = v3(0x18), l.segment2 = rd<int16_t>(r, 0x20);
+            l.segments = std::max(1, int(rd<uint8_t>(r, 0x22)));
+            l.width = rd<int16_t>(r, 0x24), l.width2 = rd<int16_t>(r, 0x52), l.glow = rd<int16_t>(r, 0x26), l.glow2 = rd<int16_t>(r, 0x54);
+            l.wave = rd<int16_t>(r, 0x28), l.jag = rd<int16_t>(r, 0x2A);
+            l.core = rd<uint32_t>(r, 0x2C), l.core2 = rd<uint32_t>(r, 0x30), l.outer = rd<uint32_t>(r, 0x34), l.outer2 = rd<uint32_t>(r, 0x38);
+            l.fadeIn = rd<int16_t>(r, 0x56), l.fadeOut = rd<int16_t>(r, 0x58);
+            l.texture = rd<uint32_t>(r, 0x64), l.texture2 = rd<uint32_t>(r, 0x68);
+            l.spread = rd<uint16_t>(r, 0x6C), l.spread2 = rd<uint16_t>(r, 0x6E);
+            l.speed = rd<int16_t>(r, 0xA8), l.length = rd<int16_t>(r, 0xAA);
+            fx.bolts.push_back(std::move(l));
+        });
         if (const auto it = ptrs.find(0x08); it != ptrs.end()) { // effect map: u16 n at +4, {u8 id, i8 class, u8 index, pad}
             const auto md = drm.sections[it->second.section].data;
             for (uint32_t k = 0, n = rd<uint16_t>(s.data, 4); k < n && k < 256; ++k)
@@ -367,6 +405,11 @@ std::vector<PointSet> parsePointSets(const cdc::Drm& unit, std::vector<std::stri
                 ps.segments.push_back(m);
             }
         }
+        if (ps.segments.size() > 1) { // the exe's set instance sits at the mean of the points (0x53F430 -> record +0x30)
+            glm::vec3 c(0);
+            for (size_t i = 1; i < ps.segments.size(); ++i) c += glm::vec3(ps.segments[i][3]);
+            ps.segments[0][3] = glm::vec4(c / float(ps.segments.size() - 1), 1);
+        }
         out.push_back(std::move(ps));
     }
     return out;
@@ -396,13 +439,21 @@ std::vector<uint32_t> ObjectFx::textureIds() const {
         out.insert(out.end(), g.textures.begin(), g.textures.end());
         if (g.texture) out.push_back(g.texture);
     }
+    for (const auto& r : ribbons) {
+        if (r.material) for (const uint32_t id : {r.material->texture, r.material->normal}) if (id) out.push_back(id);
+        if (r.texture) out.push_back(r.texture);
+    }
+    for (const auto& b : bolts)
+        for (const uint32_t id : {b.texture, b.texture2}) if (id) out.push_back(id);
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
 }
 
 bool ObjectFx::usesGlowTexture() const {
-    return std::any_of(glows.begin(), glows.end(), [](const GlowDef& g) { return !g.texture && g.textures.empty(); });
+    return std::any_of(glows.begin(), glows.end(), [](const GlowDef& g) { return !g.texture && g.textures.empty(); }) ||
+           std::any_of(ribbons.begin(), ribbons.end(), [](const RibbonDef& r) { return !r.texture && !r.material; }) ||
+           std::any_of(bolts.begin(), bolts.end(), [](const LightningDef& b) { return !b.texture || !b.texture2; });
 }
 
 Blend blendFor(uint8_t keyBlend) {
@@ -424,13 +475,16 @@ bool System::start(std::shared_ptr<const ObjectFx> fx, int def, const glm::mat4&
                    int16_t segment2, std::span<const glm::mat4> bones) {
     if (!fx || def < 0 || size_t(def) >= fx->particles.size()) return false;
     const auto& d = fx->particles[size_t(def)];
-    auto at = [&](int16_t s) { return world * fx->frame(s, bones); };
+    auto at = [&](int16_t s) { return segmentFrame(*fx, s, world, bones); };
     Emitter e;
     e.def = &d, e.owner = owner;
     const int16_t s1 = segment ? segment : d.segment, s2 = segment2 ? segment2 : d.segment2;
     e.origin = at(s1)[3], e.origin2 = d.shape == 7 && s2 != kNoSegment ? glm::vec3(at(s2)[3]) : e.origin;
     if (d.velocitySegment != kNoSegment) e.velocityFrame = glm::mat3(at(d.velocitySegment));
     if (d.offsetSegment != kNoSegment) e.offsetFrame = glm::mat3(at(d.offsetSegment));
+    // 0x543F70 -> 0x5386F0: def +0x164 scales the rate by the distance between the emitter's two segments (the second
+    // = the first when none: no emission) over +0x164, i.e. +0x164 units of line per authored rate.
+    if (d.rateLength) e.rateScale = glm::length(glm::vec3(at(s2 == kNoSegment ? s1 : s2)[3]) - glm::vec3(at(s1)[3])) / float(d.rateLength);
     e.burst = d.duration == 0;
     e.ticksLeft = d.duration < 0 ? -1 : 2 * d.duration;
     e.fx = std::move(fx);
@@ -438,11 +492,53 @@ bool System::start(std::shared_ptr<const ObjectFx> fx, int def, const glm::mat4&
     return true;
 }
 
+glm::mat4 System::segmentFrame(const ObjectFx& fx, int16_t s, const glm::mat4& world, std::span<const glm::mat4> bones) const {
+    if (s == -100 && target_) return glm::translate(glm::mat4(1), *target_); // 0x46DA20 runtime marker list [I: the shot]
+    return world * fx.frame(s, bones);
+}
+
+void System::track(int32_t owner, const glm::mat4& world, std::span<const glm::mat4> bones) {
+    auto& p = poses_[owner];
+    p.world = world, p.bones.assign(bones.begin(), bones.end());
+}
+
+bool System::startRibbon(const std::shared_ptr<const ObjectFx>& fx, int def, int32_t owner, int16_t s1, int16_t s2) {
+    const RibbonDef& d = fx->ribbons[size_t(def)];
+    if (d.kind == 1 || !d.faceLife) return false; // 0x545570: chains [U, unused]; no face life: nothing
+    Ribbon r;
+    r.fx = fx, r.def = &d, r.owner = owner;
+    r.segment = s1 || s2 ? s1 : d.segment, r.segment2 = s1 || s2 ? s2 : d.segment2;
+    r.left = d.life < 0 ? -1 : 2 * std::max<int16_t>(1, d.life);
+    ribbons_.push_back(std::move(r));
+    return true;
+}
+
+bool System::startBolt(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
+                       int16_t s1, int16_t s2, std::span<const glm::mat4> bones) {
+    const LightningDef& d = fx->bolts[size_t(def)];
+    if (!d.life) return false; // 0x537230: +2 == 0 starts nothing
+    Bolt b;
+    b.fx = fx, b.def = &d, b.owner = owner, b.id = nextId_++;
+    b.segment = s1 ? s1 : d.segment, b.segment2 = s2 ? s2 : d.segment2;
+    b.left = d.life < 0 ? -1 : 2 * d.life;
+    // +0x6C / +0x6E: random end offsets, fixed for the bolt's life (0x537230 rand & 0x1FFF - 0x1000) / 4096 x range.
+    auto jitter = [&](float r) { return r ? glm::vec3(randSigned(), randSigned(), randSigned()) * r : glm::vec3(0); };
+    b.jitterA = jitter(d.spread), b.jitterB = jitter(d.spread2);
+    b.a = glm::vec3(segmentFrame(*fx, b.segment, world, bones) * glm::vec4(d.offset, 1)) + b.jitterA;
+    b.b = glm::vec3(segmentFrame(*fx, b.segment2, world, bones) * glm::vec4(d.offset2, 1)) + b.jitterB;
+    bolts_.push_back(std::move(b));
+    return true;
+}
+
 bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command& c, const glm::mat4& world, int32_t owner,
                         std::span<const glm::mat4> bones, bool birth) {
-    // a2 = segment (0xFF: the record's own), a3 = second segment (0x547B40). At birth glows / lights need their
-    // record's birth bit (0x536B70 +0 & 1, 0x546710 +0x11 & 1).
+    // a2 = segment (0xFF: the record's own), a3 = second segment (0x547B40). At birth particles / glows / lights /
+    // ribbons / lightning need their record's birth bit (0x543F70 +4 & 1, 0x536B70 +0 & 1, 0x546710 +0x11 & 1,
+    // 0x545810 +1 & 1, 0x537230 +0x4C & 1).
     const int16_t seg = int16_t(c.a2 == 0xFF ? 0 : c.a2);
+    auto particle = [&](int i, int16_t s, int16_t s2) {
+        return size_t(i) < fx->particles.size() && (!birth || fx->particles[size_t(i)].flags4 & 1) && start(fx, i, world, owner, s, s2, bones);
+    };
     auto glow = [&](int i, int16_t s) {
         return size_t(i) < fx->glows.size() && (!birth || fx->glows[size_t(i)].flags & 1) && startGlow(fx, i, world, owner, s, bones);
     };
@@ -452,24 +548,38 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
     auto filter = [&](int i) { // 0x535CC0: at birth only records with +1 & 1 (none in the game data)
         return size_t(i) < fx->filters.size() && (!birth || fx->filters[size_t(i)].birth) && startFilter(fx, i, world, owner, -126, bones);
     };
+    auto ribbon = [&](int i, int16_t s, int16_t s2) {
+        if (size_t(i) >= fx->ribbons.size() || (birth && !fx->ribbons[size_t(i)].birth)) return false;
+        track(owner, world, bones); // its first pair: where the owner is now
+        return startRibbon(fx, i, owner, s, s2);
+    };
+    auto bolt = [&](int i, int16_t s, int16_t s2) {
+        return size_t(i) < fx->bolts.size() && (!birth || fx->bolts[size_t(i)].birth) && startBolt(fx, i, world, owner, s, s2, bones);
+    };
     switch (c.type) {
-    case 3: return start(fx, c.a1, world, owner, seg, int16_t(c.a3), bones); // particle (seg, seg2)
-    case 0x1D: return start(fx, c.a1, world, owner, 0, 0, bones);           // particle, root
-    case 0x20: return start(fx, c.a1, world, owner, 0, 0, bones);
+    case 3: return particle(c.a1, seg, int16_t(c.a3)); // particle (seg, seg2)
+    case 0x1D: return particle(c.a1, 0, 0);           // particle, root
+    case 0x20: return particle(c.a1, 0, 0);
     case 4: { // the particle on every segment from a2 (0x547C8E)
         bool any = false;
         const int n = c.a3 ? c.a3 : int(fx->segments.size());
-        for (int s = c.a2; s < n; ++s) any |= start(fx, c.a1, world, owner, int16_t(s), 0, bones);
+        for (int s = c.a2; s < n; ++s) any |= particle(c.a1, int16_t(s), 0);
         return any;
     }
+    case 5: return ribbon(c.a1, seg, int16_t(c.a3));   // 0x545810 (a1, seg, seg2)
+    case 0x16: return ribbon(c.a1, int16_t(c.a2), int16_t(c.a3)); // 0x545810 with its own life a2 [I] / face life a3
     case 6: return glow(c.a1, seg);
+    case 9: return bolt(c.a1, seg, int16_t(c.a3));     // 0x537230 (a1, seg, seg2)
+    case 0x19: return bolt(c.a1, 0, 0);
     case 0x11: return light(c.a1, seg);
     case 0xB: return filter(c.a1);
-    case 0x1C: case 0x2F: // effect map id a1 -> {class, index} (classes 1, 3-5, 7, 8: not implemented)
+    case 0x1C: case 0x2F: // effect map id a1 -> {class, index} (classes 4, 7, 8: not implemented, EFFECTS.md)
         for (const auto& m : fx->effectMap)
             if (m.id == c.a1) {
-                if (m.cls == 0) return start(fx, m.index, world, owner, 0, 0, bones);
+                if (m.cls == 0) return particle(m.index, 0, 0);
+                if (m.cls == 1) return ribbon(m.index, 0, 0);
                 if (m.cls == 2) return glow(m.index, 0);
+                if (m.cls == 3) return bolt(m.index, 0, 0);
                 if (m.cls == 6) return light(m.index, 0);
                 if (m.cls == 5) return filter(m.index);
                 return false;
@@ -477,19 +587,19 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
         return false;
     case 0x15: case 0x1A: stopId(owner, int16_t(c.a1), false); return false; // 0x53D070: prims with id a1 fade out
     case 0x18: case 0x1B: stopId(owner, int16_t(c.a1), true); return false;  // 0x52F4D0: removed
-    default: return false; // other effect classes: docs/formats/EFFECTS.md "Missing"
+    default: return false; // the other commands: docs/formats/EFFECTS.md "Commands"
     }
 }
 
 int System::startPointSet(const PointSet& set, const glm::mat4& world, int32_t owner) {
     int n = 0;
     if (!set.fx) return 0;
-    // Class-5 screen filters run here although point sets start at birth (else none would: no record has the birth
-    // bit), centred on the first point [I: the exe's point-set starter is not traced].
+    // 0x53F430 -> 0x53F200: an instance of the particle object with the points as segments 1.., at their mean (segment
+    // 0), plays the list as an event sequence (0x535EB0, not a birth: no birth bits).
     for (const auto& e : set.events)
         if (e.effect() && e.event == 0 && !(e.info & 0x3F0))
-            n += e.cmd.type == 0xB ? startFilter(set.fx, e.cmd.a1, world, owner, 1, set.segments)
-                                   : runCommand(set.fx, e.cmd, world, owner, set.segments, true);
+            n += e.cmd.type == 0xB ? startFilter(set.fx, e.cmd.a1, world, owner, 0, set.segments)
+                                   : runCommand(set.fx, e.cmd, world, owner, set.segments, false);
     return n;
 }
 
@@ -557,13 +667,18 @@ void System::stopId(int32_t owner, int id, bool now) {
             if (now) f.age = std::numeric_limits<int32_t>::max() / 2, f.holdEnd = 0;
             else if (f.holdEnd < 0) f.age = f.holdEnd = 2 * std::max<int16_t>(0, f.def->fadeIn);
         }
+    // Ribbons stop adding quads (their quads fade on); lightning fades over its fade-out (0x53D070 / 0x52F4D0).
+    for (auto& r : ribbons_)
+        if (r.owner == owner && (id < 0 || r.def->id == id)) r.left = 0;
+    for (auto& b : bolts_)
+        if (b.owner == owner && (id < 0 || b.def->id == id) && b.fadeOut < 0) b.fadeOut = now ? 0 : 2 * std::max<int16_t>(0, b.def->fadeOut);
 }
 
 bool System::startFilter(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
                          int16_t segment, std::span<const glm::mat4> bones) {
     if (!fx || def < 0 || size_t(def) >= fx->filters.size()) return false;
     const FilterDef& d = fx->filters[size_t(def)];
-    if (!d.resource || d.screen != 0) return false; // tints / sun-glare filters: not drawn (EFFECTS.md "Screen filters")
+    if (!d.resource && !(d.rgba & 0xFFFFFF)) return false; // neither a filter resource nor a tint colour
     Filter f;
     f.fx = fx, f.def = &d, f.owner = owner;
     f.pos = segment == -126 ? glm::vec3(world[3]) : glm::vec3((world * fx->frame(segment, bones))[3]); // the instance
@@ -582,10 +697,12 @@ int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vect
 }
 
 void System::play(std::shared_ptr<const ObjectFx> fx, const std::vector<Event>& events, const glm::mat4& world, int32_t owner,
-                  uint8_t material) {
+                  uint8_t material, std::optional<glm::vec3> target) {
     if (!fx) return;
-    Sequence s{std::move(fx), &events, world, owner, 0, material};
+    Sequence s{std::move(fx), &events, world, owner, 0, material, target};
+    target_ = target;
     runEvents(s.fx, events, world, owner, material, 0.0f, 0.5f); // frame 0 now, later frames as ticks pass
+    target_.reset();
     sequences_.push_back(std::move(s));
 }
 
@@ -599,11 +716,14 @@ bool System::hasOwner(int32_t owner) const {
     return std::any_of(emitters_.begin(), emitters_.end(), [&](const Emitter& e) { return e.owner == owner && !e.stopped; }) ||
            std::any_of(glows_.begin(), glows_.end(), [&](const Glow& g) { return g.owner == owner && g.fadeOut < 0; }) ||
            std::any_of(lights_.begin(), lights_.end(), [&](const FxLight& l) { return l.owner == owner && l.fadeOut < 0; }) ||
-           std::any_of(filters_.begin(), filters_.end(), [&](const Filter& f) { return f.owner == owner && f.holdEnd < 0; });
+           std::any_of(filters_.begin(), filters_.end(), [&](const Filter& f) { return f.owner == owner && f.holdEnd < 0; }) ||
+           std::any_of(ribbons_.begin(), ribbons_.end(), [&](const Ribbon& r) { return r.owner == owner && r.left != 0; }) ||
+           std::any_of(bolts_.begin(), bolts_.end(), [&](const Bolt& b) { return b.owner == owner && b.fadeOut < 0; });
 }
 
 void System::clear() {
     emitters_.clear(), particles_.clear(), sequences_.clear(), glows_.clear(), lights_.clear(), filters_.clear();
+    ribbons_.clear(), faces_.clear(), bolts_.clear(), poses_.clear();
 }
 
 void System::spawn(Emitter& e, const glm::vec3& camera) {
@@ -657,8 +777,10 @@ void System::spawn(Emitter& e, const glm::vec3& camera) {
 void System::tick(const glm::vec3& camera) {
     for (auto& s : sequences_) { // frame f fires at tick 2f (30 Hz authoring)
         ++s.age;
+        target_ = s.target;
         runEvents(s.fx, *s.events, s.world, s.owner, s.material, 0.5f * float(s.age), 0.5f * float(s.age + 1));
     }
+    target_.reset();
     std::erase_if(sequences_, [](const Sequence& s) {
         return std::none_of(s.events->begin(), s.events->end(), [&](const Event& e) { return 2 * int(e.frame) > s.age; });
     });
@@ -681,7 +803,8 @@ void System::tick(const glm::vec3& camera) {
             int n = 0;
             if (e.burst) n = std::max(1, int(d.rate)), e.stopped = true;
             else {
-                const float rate = d.rate < 0 ? 0.5f / -d.rate : d.rate * 0.5f; // emitter +0x34 (0x5446EB)
+                // emitter +0x34 (0x5446EB), x the +0x164 line-length factor (0x5386F0)
+                const float rate = (d.rate < 0 ? 0.5f / -d.rate : d.rate * 0.5f) * e.rateScale;
                 if (rate >= 0.5f) {
                     const float a = e.accum + rate;
                     n = int(a), e.accum = a - float(n);
@@ -708,6 +831,43 @@ void System::tick(const glm::vec3& camera) {
     std::erase_if(lights_, [](const FxLight& l) { return l.life == 0 || l.fadeOut == 0; });
     for (auto& f : filters_) ++f.age;
     std::erase_if(filters_, [](const Filter& f) { return f.holdEnd >= 0 && f.age >= f.holdEnd + 2 * std::max<int16_t>(0, f.def->fadeOut); });
+    // Ribbons (0x539500): the segment pair now; with the last pair a quad (0x52DBC0) whose newer edge has the ribbon's
+    // fade (start fade, eased from clear over the ribbon's fade-in / out frames, prim +0x4E / +0x4F) and whose older
+    // edge continues the last quad's; both edges fade toward clear (0x2000) by (0x2000 - start) / face life per frame.
+    for (auto& f : faces_) ++f.age, f.fadeOld += f.step, f.fadeNew += f.step;
+    std::erase_if(faces_, [](const Face& f) { return f.age >= f.life; });
+    for (auto& r : ribbons_) {
+        const auto pose = poses_.find(r.owner);
+        if (pose == poses_.end()) { r.left = 0; continue; } // the owner is gone: no more quads
+        if (r.left == 0) continue;
+        const RibbonDef& d = *r.def;
+        const glm::vec3 a = segmentFrame(*r.fx, r.segment, pose->second.world, pose->second.bones)[3];
+        const glm::vec3 b = segmentFrame(*r.fx, r.segment2, pose->second.world, pose->second.bones)[3];
+        float fade = d.startFade;
+        if (r.age < 2 * d.fadeIn) fade = glm::mix(1.0f, d.startFade, float(r.age) / float(2 * d.fadeIn));
+        else if (r.left >= 0 && r.left < 2 * d.fadeOut) fade = glm::mix(1.0f, d.startFade, float(r.left) / float(2 * d.fadeOut));
+        if (r.havePrev) {
+            const float step = (1.0f - d.startFade) / float(2 * d.faceLife);
+            faces_.push_back({r.fx, &d, {r.prev[0], r.prev[1], b, a}, r.prevFade + step, fade, step, 0, 2 * d.faceLife});
+        }
+        r.prev[0] = a, r.prev[1] = b, r.prevFade = fade, r.havePrev = true;
+        ++r.age;
+        if (r.left > 0) --r.left;
+    }
+    std::erase_if(ribbons_, [](const Ribbon& r) { return r.left == 0; });
+    for (auto& b : bolts_) { // 0x5370C0: life / fade; endpoints follow a tracked owner (0x53F8C0 reads the segments)
+        ++b.age;
+        if (b.left > 0) --b.left;
+        if (b.fadeOut > 0) --b.fadeOut;
+        if (const auto pose = poses_.find(b.owner); pose != poses_.end()) {
+            const auto& p = pose->second;
+            b.a = glm::vec3(segmentFrame(*b.fx, b.segment, p.world, p.bones) * glm::vec4(b.def->offset, 1)) + b.jitterA;
+            if (b.segment2 != -100)
+                b.b = glm::vec3(segmentFrame(*b.fx, b.segment2, p.world, p.bones) * glm::vec4(b.def->offset2, 1)) + b.jitterB;
+        }
+    }
+    std::erase_if(bolts_, [](const Bolt& b) { return b.left == 0 || b.fadeOut == 0; });
+    poses_.clear();
     std::erase_if(emitters_, [&](const Emitter& e) {
         return e.stopped && std::none_of(particles_.begin(), particles_.end(), [&](const Particle& p) { return p.def == e.def && p.fx == e.fx; });
     });
@@ -717,7 +877,8 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
                    std::vector<render::FxBatch>& batches) const {
     vertices.clear(), batches.clear();
     struct Sprite { float depth; glm::vec3 c; float hw, hh, rot; uint32_t rgba, tex; float u0, v0, u1, v1; uint8_t blend; float pull;
-                    const ParticleMaterial* mat = nullptr; };
+                    const ParticleMaterial* mat = nullptr;
+                    bool quad = false; glm::vec3 q[4]{}; uint32_t corner[4]{}; }; // quad: world corners + colours (ribbons, bolts)
     std::vector<Sprite> sprites;
     sprites.reserve(particles_.size());
     const glm::vec3 fwd = camera.forward(), right = camera.right(), up = glm::cross(right, fwd);
@@ -842,12 +1003,106 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         sp.tex = !d.textures.empty() ? d.textures[g.frame % d.textures.size()] : d.texture ? d.texture : kGlowTexture;
         sprites.push_back(sp);
     }
+    auto lerpRgba = [](uint32_t a, uint32_t b, float f) {
+        uint32_t o = 0;
+        for (int k = 0; k < 32; k += 8)
+            o |= uint32_t(std::lround(float((a >> k) & 0xFF) * (1 - f) + float((b >> k) & 0xFF) * f)) << k;
+        return o;
+    };
+    auto scaleRgba = [](uint32_t c, float k, bool alpha) { // alpha blend: fade alpha; additive: fade RGB
+        uint32_t o = 0;
+        for (int i = 0; i < 4; ++i) {
+            const float v = float((c >> (8 * i)) & 0xFF) * ((i == 3) == alpha ? std::clamp(k, 0.0f, 1.0f) : 1.0f);
+            o |= uint32_t(std::lround(v)) << (8 * i);
+        }
+        return o;
+    };
+    // Ribbon quads (0x52DBC0 type-3 particles): colour new -> old over the fade [I], 1 - fade = opacity.
+    for (const auto& f : faces_) {
+        const RibbonDef& d = *f.def;
+        Sprite sp{};
+        sp.quad = true, sp.pull = 1, sp.u1 = sp.v1 = 1;
+        sp.q[0] = f.p[0], sp.q[1] = f.p[3], sp.q[2] = f.p[2], sp.q[3] = f.p[1]; // u: old -> new, v: a -> b
+        const glm::vec3 mid = 0.25f * (f.p[0] + f.p[1] + f.p[2] + f.p[3]);
+        sp.depth = glm::dot(mid - camera.position, fwd);
+        if (sp.depth < 16.0f) continue;
+        sp.mat = d.material ? &*d.material : nullptr;
+        sp.tex = sp.mat ? sp.mat->texture : d.texture ? d.texture : kRibbonTexture;
+        const bool alpha = sp.mat ? (sp.mat->distort || !sp.mat->additive) : d.alphaBlend;
+        sp.blend = uint8_t(alpha ? Blend::Alpha : Blend::Additive);
+        auto edge = [&](float fade) {
+            const float span = std::max(1e-3f, 1.0f - d.startFade);
+            return scaleRgba(lerpRgba(d.rgba, d.rgba2, std::clamp((fade - d.startFade) / span, 0.0f, 1.0f)), 1.0f - fade, alpha);
+        };
+        sp.corner[0] = sp.corner[3] = edge(f.fadeOld), sp.corner[1] = sp.corner[2] = edge(f.fadeNew);
+        sprites.push_back(sp);
+    }
+    // Lightning / beams (0x531770): `segments` steps from a to b; per step the core and glow colours / widths (constant
+    // for kind 0, along the bolt for 2, colours and widths along for 3), points jittered across the view by the jag
+    // (random, re-drawn every frame) and wave amplitudes under a sine envelope [I: the exe's sine-table indexing];
+    // camera-facing bands, glow under core; faded by life, fade in / out and below 896 units of view depth (0x531B40).
+    auto hash = [](uint32_t x) { x ^= x >> 16, x *= 0x7FEB352Du, x ^= x >> 15, x *= 0x846CA68Bu, x ^= x >> 16; return x; };
+    for (const auto& bt : bolts_) {
+        const LightningDef& d = *bt.def;
+        glm::vec3 a = bt.a, b = bt.b;
+        const float len = glm::length(b - a);
+        if (len < 1) continue;
+        if (d.speed > 0) { // moving section (prim +0x70 / +0x72, flag 0x200): tracers
+            const float head = d.speed * 0.5f * float(bt.age), tail = std::max(0.0f, head - d.length);
+            if (tail >= len) continue;
+            const glm::vec3 dir = (b - a) / len;
+            b = a + dir * std::min(head, len), a += dir * tail;
+        }
+        float k = 1;
+        if (bt.age < 2 * d.fadeIn) k = float(bt.age) / float(2 * d.fadeIn);
+        else if (bt.fadeOut >= 0) k = d.fadeOut ? float(bt.fadeOut) / float(2 * d.fadeOut) : 0.0f;
+        else if (bt.left >= 0 && bt.left < 2 * d.fadeOut) k = float(bt.left) / float(2 * d.fadeOut);
+        if (k <= 0) continue;
+        const int n = d.segments;
+        const uint32_t frame = uint32_t(bt.age / 2), phase = hash(bt.id);
+        std::vector<glm::vec3> pts(size_t(n) + 1);
+        for (int i = 0; i <= n; ++i) {
+            const float t = float(i) / float(n), env = std::sin(3.14159265f * t);
+            const uint32_t h = hash(bt.id * 7919u + frame * 131u + uint32_t(i));
+            const float jx = (float(h & 0xFFFF) / 65535.0f - 0.5f) * d.jag, jy = (float(h >> 16) / 65535.0f - 0.5f) * d.jag;
+            const float wv = d.wave * std::sin(6.2831853f * (t + float(phase & 0xFFF) / 4096.0f + 0.05f * float(bt.age)));
+            pts[size_t(i)] = glm::mix(a, b, t) + (right * (jx + wv) + up * jy) * env;
+        }
+        auto zfade = [&](const glm::vec3& p) { return std::clamp((glm::dot(p - camera.position, fwd) * 16.0f - 6144.0f) / 8192.0f, 0.0f, 1.0f); };
+        for (int band = 0; band < 2; ++band) { // 0 glow (outer), 1 core
+            const uint32_t c0 = band ? d.core : d.outer, c1 = d.kind ? (band ? d.core2 : d.outer2) : c0;
+            const float w0 = band ? d.width : d.glow, w1 = d.kind == 3 ? (band ? d.width2 : d.glow2) : w0;
+            if (w0 <= 0 && w1 <= 0) continue;
+            const uint32_t tex = band ? (d.texture ? d.texture : kRibbonTexture) : (d.texture2 ? d.texture2 : kRibbonTexture);
+            for (int i = 0; i < n; ++i) {
+                const glm::vec3 p0 = pts[size_t(i)], p1 = pts[size_t(i) + 1];
+                const glm::vec3 mid = 0.5f * (p0 + p1);
+                const float depth = glm::dot(mid - camera.position, fwd);
+                if (depth < 16.0f) continue;
+                glm::vec3 side = glm::cross(p1 - p0, mid - camera.position);
+                if (glm::dot(side, side) < 1e-6f) continue;
+                side = glm::normalize(side) * 0.5f;
+                const float t0 = float(i) / float(n), t1 = float(i + 1) / float(n);
+                Sprite sp{};
+                sp.quad = true, sp.pull = 1, sp.u1 = sp.v1 = 1, sp.tex = tex;
+                sp.depth = depth - float(band); // core drawn after (over) the glow
+                sp.blend = uint8_t(d.alphaBlend ? Blend::Alpha : Blend::Additive);
+                const float wa = glm::mix(w0, w1, t0), wb = glm::mix(w0, w1, t1);
+                sp.q[0] = p0 - side * wa, sp.q[1] = p1 - side * wb, sp.q[2] = p1 + side * wb, sp.q[3] = p0 + side * wa;
+                const uint32_t ca = scaleRgba(lerpRgba(c0, c1, t0), k * zfade(p0), d.alphaBlend);
+                const uint32_t cb = scaleRgba(lerpRgba(c0, c1, t1), k * zfade(p1), d.alphaBlend);
+                sp.corner[0] = sp.corner[3] = ca, sp.corner[1] = sp.corner[2] = cb;
+                sprites.push_back(sp);
+            }
+        }
+    }
     std::sort(sprites.begin(), sprites.end(), [](const Sprite& a, const Sprite& b) { return a.depth > b.depth; });
     vertices.reserve(sprites.size() * 6);
     for (const auto& s : sprites) {
         const float cs = std::cos(s.rot), sn = std::sin(s.rot);
         const glm::vec3 rx = (right * cs + up * sn) * s.hw, ry = (up * cs - right * sn) * s.hh;
         glm::vec3 q[4] = {s.c - rx - ry, s.c + rx - ry, s.c + rx + ry, s.c - rx + ry};
+        if (s.quad) std::copy(std::begin(s.q), std::end(s.q), q);
         if (s.pull != 1.0f)
             for (auto& v : q) v = camera.position + (v - camera.position) * s.pull;
         const float uv[4][2] = {{s.u0, s.v1}, {s.u1, s.v1}, {s.u1, s.v0}, {s.u0, s.v0}};
@@ -858,7 +1113,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         if (batches.empty() || l.textureId != b.textureId || l.blend != b.blend || l.normalId != b.normalId ||
             l.distort != b.distort || l.softScale != b.softScale || l.softBias != b.softBias)
             batches.push_back(b);
-        for (int i : {0, 1, 2, 0, 2, 3}) vertices.push_back({{q[i].x, q[i].y, q[i].z}, {uv[i][0], uv[i][1]}, s.rgba});
+        for (int i : {0, 1, 2, 0, 2, 3}) vertices.push_back({{q[i].x, q[i].y, q[i].z}, {uv[i][0], uv[i][1]}, s.quad ? s.corner[i] : s.rgba});
         batches.back().count += 6;
     }
 }
@@ -891,7 +1146,8 @@ void System::lights(std::vector<LiveLight>& out) const {
     }
 }
 
-void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out) const {
+void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out,
+                          const glm::mat4* viewProj, const std::function<bool(const glm::vec3&)>& visible) const {
     out = {};
     if (filters_.empty()) return;
     // tru.exe sums each running filter's resource x weight into the effects' accumulators (0x516E70 ColorDOF,
@@ -901,7 +1157,9 @@ void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, rend
     Acc m1{}, m2{}, mf{};
     std::array<float, 256> curve{};
     float wA = 0, wM1 = 0, wDof = 0, wF = 0, dofNear = 0, dofFar = 0, blurA = 0, alphaA = 0, blurC = 0, amountC = 0;
-    glm::vec3 tint(0);
+    float wFb = 0, fbKeep = 0, fbAmount = 0, fbBlur = 0, fbZoomX = 0, fbZoomY = 0, fbAngle = 0, noiseAlpha = 0, noiseCells = 0, wN = 0;
+    glm::vec3 tint(0), fbColour(0), noiseColour(0);
+    auto rgb = [](uint32_t c) { return glm::vec3(float(c & 0xFF), float((c >> 8) & 0xFF), float((c >> 16) & 0xFF)) / 255.0f; };
     auto add = [](Acc& acc, const FilterResource::Matrix& m, float w) {
         for (size_t i = 0; i < acc.size(); ++i) acc[i] += float(m[i]) * w;
     };
@@ -913,16 +1171,45 @@ void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, rend
     for (const auto& f : filters_) {
         // Weight (0x5469A0): intensity x fade in / out x (1 - d^2 / radius^2), d from mix(camera, player) to the owner.
         const FilterDef& d = *f.def;
-        const FilterResource& r = *d.resource;
         const int32_t in = 2 * std::max<int16_t>(0, d.fadeIn), fade = 2 * std::max<int16_t>(0, d.fadeOut);
-        float w = d.intensity;
-        if (f.age < in) w *= float(f.age) / float(in);
-        else if (f.holdEnd >= 0 && f.age > f.holdEnd) w *= fade ? std::max(0.0f, 1.0f - float(f.age - f.holdEnd) / float(fade)) : 0.0f;
+        float k = 1; // fade in / out
+        if (f.age < in) k = float(f.age) / float(in);
+        else if (f.holdEnd >= 0 && f.age > f.holdEnd) k = fade ? std::max(0.0f, 1.0f - float(f.age - f.holdEnd) / float(fade)) : 0.0f;
+        if (!d.resource) { // a tint (0x52B860): the record colour over the screen, mode 1 (alpha 0x80) added, else blended
+            const float a = float(d.rgba >> 24) / 128.0f * k;
+            if ((d.rgba >> 24) == 0x80) {
+                const glm::vec3 c = rgb(d.rgba) * a;
+                for (int i = 0; i < 3; ++i) out.tintAdd[i] += c[i];
+            } else if (a > 0) { // successive alpha tints compose over each other
+                const glm::vec3 c = rgb(d.rgba);
+                const float keep = 1 - std::min(a, 1.0f);
+                for (int i = 0; i < 3; ++i) out.tintMix[i] = out.tintMix[i] * keep + c[i] * std::min(a, 1.0f);
+                out.tintMix[3] = 1 - (1 - out.tintMix[3]) * keep;
+            }
+            continue;
+        }
+        const FilterResource& r = *d.resource;
+        float w = d.intensity * k;
         if (d.radius > 0) {
             const glm::vec3 v = glm::mix(camera, player, d.playerMix) - f.pos;
             w *= std::max(0.0f, 1.0f - glm::dot(v, v) / (d.radius * d.radius));
         }
+        if (d.screen != 0) { // sun glares (record +0x18): by the owner's distance from the screen centre, occlusion-faded
+            if (!viewProj) continue;
+            const glm::vec4 clip = *viewProj * glm::vec4(f.pos, 1);
+            if (clip.w <= 16.0f) continue;
+            const float r2 = glm::length(glm::vec2(clip) / clip.w); // x / 512, y / 448 of the 1024 x 896 screen
+            w *= std::max(0.0f, 1.0f - r2 / 0.65f / d.screen);
+            const bool seen = !visible || visible(f.pos); // 0x535C50; the fade moves 0.25 per 30 Hz frame [I: 60 fps]
+            f.hidden = std::clamp(f.hidden + (seen ? -0.125f : 0.125f), 0.0f, 1.0f);
+            w *= 1 - f.hidden;
+        }
         if (w <= 0) continue;
+        if (r.feedback) { // 0x51A190
+            wFb += w, fbKeep += r.fbKeep * w, fbAmount += r.fbAmount * w, fbBlur += r.fbBlur * w;
+            fbZoomX += r.fbZoomX * w, fbZoomY += r.fbZoomY * w, fbAngle += r.fbAngle * w, fbColour += rgb(r.fbColour) * w;
+        }
+        if (r.noise) wN += w, noiseAlpha += r.noiseAlpha * w, noiseCells += r.noiseCells * w, noiseColour += rgb(r.noiseColour) * w; // 0x51B110
         if (r.colorDof) {
             wA += w, blurA += r.blur * w, alphaA += r.alpha * w;
             tint += glm::vec3(float(r.tint & 0xFF), float((r.tint >> 8) & 0xFF), float((r.tint >> 16) & 0xFF)) * w;
@@ -951,6 +1238,21 @@ void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, rend
         out.dofScale = wDof / (dofFar - dofNear), out.dofBias = -dofNear / (dofFar - dofNear);
     }
     out.blurC = std::min(blurC, 4.0f), out.amountC = std::min(amountC, 2.0f) * 0.5f; // vertex alpha f x 127.5 (0x51AEF0)
+    if (wFb > 0) { // the rest of the weight keeps the scene as it is [I: the exe's accumulators start at 0]
+        const float rest = std::max(0.0f, 1.0f - wFb);
+        out.feedbackKeep = std::min(fbKeep + rest, 1.0f), out.feedbackAmount = std::min(fbAmount, 1.0f);
+        out.feedbackBlur = std::min(fbBlur, 4.0f);
+        out.feedbackZoom[0] = std::min(fbZoomX + rest, 4.0f), out.feedbackZoom[1] = std::min(fbZoomY + rest, 4.0f);
+        out.feedbackAngle = std::clamp(fbAngle, -1.0f, 1.0f);
+        const glm::vec3 c = fbColour / wFb;
+        for (int i = 0; i < 3; ++i) out.feedbackColour[i] = c[i];
+    }
+    if (noiseAlpha > 0) {
+        out.noiseAlpha = std::min(noiseAlpha, 255.0f) / 255.0f, out.noiseCells = std::min(noiseCells, 255.0f);
+        const glm::vec3 c = noiseColour / wN;
+        for (int i = 0; i < 3; ++i) out.noiseColour[i] = std::min(c[i], 1.0f);
+        out.noiseSeed = float(filters_.front().age % 997); // 0x51B1D0 re-rolls every frame
+    }
     auto byte = [](float v) { return uint8_t(std::clamp(std::lround(v), 0L, 255L)); };
     const Acc* mats[3] = {&m1, &m2, &mf};
     for (int m = 0; m < 3; ++m)
@@ -1005,8 +1307,8 @@ std::shared_ptr<const ObjectFx> Library::get(const std::string& name, std::vecto
         if (!fx || (fx->particles.empty() && fx->glows.empty() && fx->lights.empty() && fx->events.empty() && fx->clips.empty()))
             return nullptr;
         loadTextures(drm, name, fx->textureIds(), warnings);
-        if (fx->usesGlowTexture() && !textureIds_.contains(kGlowTexture)) // particle.drm: always loaded by the exe (0x5D4090)
-            if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture}, warnings);
+        if (fx->usesGlowTexture() && !textureIds_.contains(kRibbonTexture)) // particle.drm: always loaded by the exe (0x5D4090)
+            if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture, kRibbonTexture}, warnings);
         e.fx = std::make_shared<const ObjectFx>(std::move(*fx));
     } catch (const std::exception& ex) {
         if (warnings) warnings->push_back("pc-w\\" + name + ".drm effects: " + ex.what());
@@ -1023,8 +1325,8 @@ const std::vector<PointSet>& Library::pointSets(const cdc::Drm& unit, const std:
     for (const auto& s : sets)
         if (seen.insert(s.fx.get()).second) {
             loadTextures(unit, unitName, s.fx->textureIds(), warnings);
-            if (s.fx->usesGlowTexture() && !textureIds_.contains(kGlowTexture))
-                if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture}, warnings);
+            if (s.fx->usesGlowTexture() && !textureIds_.contains(kRibbonTexture))
+                if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture, kRibbonTexture}, warnings);
         }
     return sets;
 }

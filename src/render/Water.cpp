@@ -64,7 +64,15 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
         w.filter[0] = {f->alphaA, f->blurA, f->dof ? 1.0f : 0.0f, f->colourMatrix ? 1.0f : 0.0f};
         w.filter[1] = {f->tintA[0], f->tintA[1], f->tintA[2], f->finishMatrix ? 1.0f : 0.0f};
         w.filter[2] = {f->amountC, f->blurC, f->dofScale, f->dofBias};
+        w.filter[3] = {f->tintAdd[0], f->tintAdd[1], f->tintAdd[2], 0};
+        w.filter[4] = {f->tintMix[0], f->tintMix[1], f->tintMix[2], f->tintMix[3]};
+        w.filter[5] = {f->feedbackKeep, f->feedbackAmount, f->feedbackBlur, f->feedbackZoom[0]};
+        w.filter[6] = {f->feedbackColour[0], f->feedbackColour[1], f->feedbackColour[2], f->feedbackAngle};
+        w.filter[7] = {f->feedbackZoom[1], f->noiseAlpha, f->noiseCells, 0};
+        w.filter[8] = {f->noiseColour[0], f->noiseColour[1], f->noiseColour[2], f->noiseSeed};
         std::memcpy(w.filterLut, f->lut.data(), sizeof w.filterLut);
+    } else {
+        w.filter[5] = {1, 0, 0, 1}, w.filter[7] = {1, 0, 0, 0}; // feedback off: keep the scene
     }
     const auto& r = options.ripples;
     w.ripple = {r.originX, r.originY, r.cellSize, r.surfaceZ};

@@ -145,6 +145,7 @@ struct Object {
     // Animation (Switch/Door): skeleton of the object's render model + the clips its states play.
     std::shared_ptr<const scene::Skeleton> skeleton;
     std::shared_ptr<const std::vector<anim::Clip>> clips; // [0] transition (pulling/opening), [1] held idle
+    std::shared_ptr<const std::vector<std::string>> clipNames; // animation-list names of `clips` (clip effects)
     vec3 half{100};         // Block: half size [I]
     // Runtime state (saved).
     int state = 0;          // Door: 0 closed, 1 opening, 2 open; Switch: 0 idle, 1 pulling, 2 used
@@ -311,7 +312,8 @@ private:
     EnemyNative enemy_;
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;
-    struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips; };
+    struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips;
+                    std::shared_ptr<const std::vector<std::string>> names; };
     std::map<std::string, std::shared_ptr<AnimSet>> animSets_; // object name -> skeleton + clips
     std::vector<Object> objects_;
     std::map<std::pair<const vm::Program*, uint32_t>, std::shared_ptr<vm::Instance>> auxiliary_; // unit/global scripts

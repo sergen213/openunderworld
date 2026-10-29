@@ -40,11 +40,13 @@ struct WaterBlock {
     glm::vec4 weather;     // x kind (0 none, 1 rain, 2 snow), y intensity, zw wind xy
     glm::vec4 volumes[16]; // water volumes: [2i] min, [2i + 1] max (max.z = surface), nearest first
     // Original screen filters (FrameOptions::screenFilter; post pass, shaders/filter.glsl): [0] (alphaA, blurA, dof,
-    // colourMatrix), [1] (tintA rgb, finishMatrix), [2] (amountC, blurC, dofScale, dofBias); all 0 = off.
-    glm::vec4 filter[3];
+    // colourMatrix), [1] (tintA rgb, finishMatrix), [2] (amountC, blurC, dofScale, dofBias), [3] additive tint, [4] alpha
+    // tint, [5] (feedback keep, amount, blur, zoom x), [6] (feedback rgb, angle), [7] (zoom y, noise alpha, noise cells),
+    // [8] (noise rgb, seed); off = all 0 except feedback keep / zoom 1.
+    glm::vec4 filter[9];
     glm::uvec4 filterLut[ScreenFilter::kLutRows * 64]; // ScreenFilter::lut, 4 RGBA8 texels per element
 };
-static_assert(sizeof(WaterBlock) == 2 * 64 + 10 * 16 + 28 * 16 + 3 * 16 + ScreenFilter::kLutRows * 1024);
+static_assert(sizeof(WaterBlock) == 2 * 64 + 10 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024);
 inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes);

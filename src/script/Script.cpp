@@ -515,19 +515,21 @@ void Runtime::addUnit(const UnitRef& u) {
                         });
                     }
                     auto clips = std::make_shared<std::vector<anim::Clip>>();
+                    auto names = std::make_shared<std::vector<std::string>>();
                     for (const auto* e : {tr, hold}) {
                         if (!e) break;
                         for (const auto& s : drm.sections)
                             if (s.type == cdc::SectionType::Animation && s.id == e->animId) {
-                                clips->push_back(anim::decodeClip(s.data));
+                                clips->push_back(anim::decodeClip(s.data)), names->push_back(e->name);
                                 break;
                             }
                     }
-                    if (set->skeleton && clips->size() == 2) set->clips = std::move(clips);
+                    if (set->skeleton && clips->size() == 2) set->clips = std::move(clips), set->names = std::move(names);
                 }
             }
             o.skeleton = set->skeleton;
             o.clips = set->clips;
+            o.clipNames = set->names;
         }
         addObject(std::move(o), false);
     }

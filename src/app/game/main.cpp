@@ -866,7 +866,7 @@ struct EffectsView {
         const glm::vec3 dir = d / len;
         if (const auto gun = library->get(weapon))
             if (const auto* fire = gun->clip(wet ? "fire_submerged" : "fire"); fire || (fire = gun->clip("fire")))
-                system.play(gun, *fire, frameAlong(from, -dir, 1) * glm::inverse(gun->frame(-10)), -1, 0);
+                system.play(gun, *fire, frameAlong(from, -dir, 1) * glm::inverse(gun->frame(-10)), -1, 0, to); // tracers end at -100 [I]
         if (!hit) return;
         const auto ammo = names.find(library->dataU16(weapon, 0xE6)); // weapon data +0xE6: ammo object (game::loadWeapon)
         if (ammo == names.end()) return;
@@ -883,7 +883,7 @@ struct EffectsView {
     // Clip events of one animated instance between the last tick and this one (30 Hz frames, looping clips wrap).
     void clipEvents(const std::shared_ptr<const ou::fx::ObjectFx>& fx, const std::string& clip, const std::string& prevClip,
                     double prevT, double t, double duration, uint8_t mat, const glm::mat4& world,
-                    const std::function<std::vector<glm::mat4>()>& bones) {
+                    const std::function<std::vector<glm::mat4>()>& bones, int32_t owner = -1) {
         const auto* ev = fx ? fx->clip(clip) : nullptr;
         if (!ev || duration <= 0) return;
         const float f1 = float(std::fmod(t, duration) * 30.0);
@@ -895,9 +895,15 @@ struct EffectsView {
         for (const auto& [a, z] : spans)
             if (std::any_of(ev->begin(), ev->end(), [&](const auto& e) { return e.runsOn(mat) && float(e.frame) >= a && float(e.frame) < z; })) {
                 if (b.empty()) b = bones();
-                system.runEvents(fx, *ev, world, -1, mat, a, z, b);
+                system.runEvents(fx, *ev, world, owner, mat, a, z, b);
             }
     }
+    // Owners of animated instances whose ribbons / lightning follow their segments (fx::System::track): Lara, enemies
+    // (transient: < 0) and script objects (their intro uid, as their birth effects).
+    static constexpr int32_t kLaraOwner = -2;
+    static int32_t enemyOwner(int32_t uid) { return -(0x10000000 | (uid & 0x0FFFFFFF)); }
+    static bool follows(const std::shared_ptr<const ou::fx::ObjectFx>& fx) { return fx && (!fx->ribbons.empty() || !fx->bolts.empty()); }
+    std::map<int32_t, std::pair<std::string, double>> objectClipAt; // script object uid -> last clip, time
     void events(const ou::game::World& w) {
         if (!library) return;
         const auto& c = w.combat();
@@ -917,16 +923,40 @@ struct EffectsView {
             if (const auto* clip = w.anims().find(ps.clip)) {
                 // Lara's material (0x6F06B0): the floor face's, 2 with the feet under a water surface [I: swimming], 3 under water [I].
                 const uint8_t mat = w.submerged() ? 3 : ps.water >= 0 ? 2 : floorMaterial(ps.pos);
-                clipEvents(library->get("lara"), ps.clip, pp.clip, pp.clipTime, ps.clipTime, clip->durationSeconds(), mat,
-                           w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch), [&] { return w.pose(1.0); });
+                const auto lara = library->get("lara");
+                const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+                std::vector<glm::mat4> pose;
+                if (follows(lara)) pose = w.pose(1.0), system.track(kLaraOwner, model, pose);
+                clipEvents(lara, ps.clip, pp.clip, pp.clipTime, ps.clipTime, clip->durationSeconds(), mat, model,
+                           [&] { return pose.empty() ? w.pose(1.0) : pose; }, kLaraOwner);
             }
         for (const auto& e : w.enemies().all()) {
             const auto &s = e->state(), &p = e->previous();
             const auto it = e->type().clips.find(s.clip);
             if (it == e->type().clips.end()) continue;
-            clipEvents(library->get(e->type().name), s.clip, p.clip, p.clipTime, s.clipTime, it->second.durationSeconds(),
-                       floorMaterial(s.pos), ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip), [&] { return e->pose(1.0); });
+            const auto fx = library->get(e->type().name);
+            const glm::mat4 model = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip);
+            std::vector<glm::mat4> pose;
+            if (follows(fx)) pose = e->pose(1.0), system.track(enemyOwner(e->uid()), model, pose);
+            clipEvents(fx, s.clip, p.clip, p.clipTime, s.clipTime, it->second.durationSeconds(), floorMaterial(s.pos), model,
+                       [&] { return pose.empty() ? e->pose(1.0) : pose; }, enemyOwner(e->uid()));
         }
+        // Script objects (switches, doors, uber objects): their clips' events as the characters' (tru.exe runs every
+        // instance's animation events, 0x5BA0D0), owner = intro uid.
+        std::map<int32_t, std::pair<std::string, double>> seen;
+        for (const auto& oc : w.objectClips()) {
+            const auto fx = library->get(oc.object);
+            const auto* ev = fx ? fx->clip(oc.clip) : nullptr;
+            const auto last = objectClipAt.find(oc.uid);
+            seen[oc.uid] = {oc.clip, oc.t};
+            if (!ev) continue;
+            std::vector<glm::mat4> pose;
+            if (follows(fx)) pose = w.objectBones(oc.uid), system.track(oc.uid, oc.model, pose);
+            const bool same = last != objectClipAt.end() && last->second.first == oc.clip;
+            clipEvents(fx, oc.clip, same ? oc.clip : std::string(), same ? last->second.second : 0.0, oc.t,
+                       oc.loop ? std::max(oc.duration, 1e-3) : 1e9, 0, oc.model, [&] { return pose.empty() ? w.objectBones(oc.uid) : pose; }, oc.uid);
+        }
+        objectClipAt = std::move(seen);
     }
     // Particle textures the level scene does not already hold (renderers look textures up by id).
     void addTextures(ou::scene::SceneData& scene) const {
@@ -937,10 +967,16 @@ struct EffectsView {
             if (have.insert(t.id).second) scene.textures.push_back(t);
     }
     ou::render::ScreenFilter filter; // class-5 screen filters (docs/formats/EFFECTS.md "Screen filters")
-    void frame(const ou::render::Camera& cam, float aspect, glm::vec3 player, ou::render::FrameOptions& fo) {
+    void frame(const ou::render::Camera& cam, float aspect, const ou::game::World& w, ou::render::FrameOptions& fo) {
         system.build(cam, aspect, vertices, batches);
         fo.fxVertices = vertices, fo.fxBatches = batches;
-        system.screenFilter(cam.position, player, filter);
+        // Sun-glare filters fade while the owner point is occluded (0x535C50): a collision ray from the camera [I].
+        const glm::mat4 viewProj = cam.projection(aspect) * cam.view();
+        system.screenFilter(cam.position, w.player().state().pos, filter, &viewProj, [&](const glm::vec3& p) {
+            const glm::vec3 d = p - cam.position;
+            const float len = glm::length(d);
+            return len < 1 || !w.collision().raycast(cam.position, d / len, len - 1.0f).has_value();
+        });
         fo.screenFilter = filter.active() ? &filter : nullptr;
     }
 };
@@ -1986,7 +2022,7 @@ int main(int argc, char** argv) {
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
-        if (!mainMenu) effects.frame(cam, float(w) / float(std::max(1, h)), world->player().state().pos, fo);
+        if (!mainMenu) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;
         renderer->drawFrame(cam, {w, h}, fo);

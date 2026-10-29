@@ -48,7 +48,7 @@ shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the o
 game also renders sun shadows (its vertex shaders output `WorldToPSSM0` coordinates, MATERIALS.md),
 so `--preset original --shadows on` is allowed, but our shadow map is not a reproduction of its PSSM.
 
-The original's screen filters (class-5 effects: ColorDOF overlay / scene matrix and Finish bloom, docs/formats/EFFECTS.md
+The original's screen filters (class-5 effects: ColorDOF overlay / scene matrix, Finish bloom, Feedback, Noise and tints, docs/formats/EFFECTS.md
 "Screen filters") are applied in the post pass before the brightness gamma (`shaders/filter.glsl`, both renderers): blur
 levels are mips of a half-size copy of the resolved scene, taken only while a filter runs.
 
