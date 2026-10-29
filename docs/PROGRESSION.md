@@ -111,7 +111,12 @@ Portal order from the start unit; level changes not made by portals are named.
   targets fall (Object::loose), `portablebase` objects are carried (interact) and set down. [I] no Havok mass/tumbling.
 - VM fixes found here: START with a function word calls it; CALL3 is virtual; inline member defaults applied (ship doors:
   modifiable 1 opens, 2/3 close [I]; house door 0 opens / 1 closes).
-- VM opcode 0x34 DBOUNDS (l2_norsehub
+- (2026-10-29, gates 3) l2_norsehub 2393's op 0x34 is MOVEU of a getter's return value; it runs since script returns
+  work, and 2393 turns out to be only a camera-anchor helper (its instanceref +20 is unset), not a gate. The no-change handlers:
+  l1 57 is the "attempt" reaction until the column (gear 32 section 12, physics-limit trigger 15 when shot) has fallen
+  [shooting uber physics not modelled]; l4 5469 is the Xibalba-exit reopening (sticky 300), which drives `ca_ani_*`
+  modifiable / stimulus animations [not modelled]; l5 7188 / 7189 need switch 7192 pulled first; l7 9103's message reaches
+  the unit script and commands drawbridge 9116 [I: the sweep still shows no change, unresolved]. Previously listed as: VM opcode 0x34 DBOUNDS (l2_norsehub
   2393); levers / switches whose handlers run but change nothing visible (l1 57, l4 5469, l5 7188/7189, l7 9103);
   l4_traprooms seal 5701 (both plates held: one weight source missing).
 - Chapter 7 → 8 has no scripted level end in the data we decoded [U]; the ending (7996, credits) is not run.

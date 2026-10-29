@@ -154,6 +154,7 @@ void World::uberEnter(int32_t uid, size_t section, uint32_t state) {
     if (s.state == int32_t(state)) return;
     const int32_t finished = s.transition;
     s.state = int32_t(state), s.transition = -1, s.time = 0, s.length = 0;
+    if (finished < 0) s.carried = false; // set directly (command type 1, default state)
     uberStates_[uid][section] = state;
     if (finished >= 0) uberFire(uid, section, 4, uint32_t(finished));
     uberFire(uid, section, 1, state);
@@ -167,6 +168,8 @@ void World::uberBegin(int32_t uid, size_t section, uint32_t transition) {
     auto& rt = uberRuntime_[uid];
     auto& s = rt.sections[section];
     const int32_t left = s.state;
+    const auto& actions = data.sections[section].stateActions;
+    s.carried = left >= 0 && size_t(left) < actions.size() && std::ranges::find(actions[size_t(left)], 13u) != actions[size_t(left)].end();
     s.state = -1, s.transition = int32_t(transition), s.time = 0;
     s.length = (t.flags & 3) == 3 && t.anim >= 0 && size_t(t.anim) < rt.animLength.size() ? rt.animLength[size_t(t.anim)] : 0.0f;
     uberStates_[uid][section] = 0xFFFFFFFFu;
@@ -195,12 +198,13 @@ void World::tickUber(float dt) {
                 // ponytail: probability (flags 0x10, tru.exe's LCG 0x8A9788) ignored; no state machine uses it on the route.
                 // ponytail: triggers 15 / 14 come from the section's physics joint reaching / leaving a limit (action 0x14
                 // registers 0x4D5B10 -> 0x4D5A50 with the physics system). We have no uber joints: 15 fires after 1 s in a
-                // state that drives its joint (action 13), 14 after 1 s in any state (kraken entrance locks, l4 ramps).
+                // state that drives its joint (action 13), 14 after 1 s when the state was left by a driving one (the
+                // joint still moving: kraken entrance locks, l4 ramps); Lara-moved joints (levers) never fire them.
                 const auto& actions = sec.stateActions[size_t(s.state)];
-                const bool drives = std::find(actions.begin(), actions.end(), 13u) != actions.end();
+                const bool drives = std::ranges::find(actions, 13u) != actions.end();
                 const bool go = t.trigger == 3 || (t.trigger == 1 && s.time > std::bit_cast<float>(t.param) - 0.001f) ||
                                 (t.trigger == 9 && uberHolds(uid, t.conditions)) ||
-                                (s.time >= 1.0f && (t.trigger == 14 || (t.trigger == 15 && drives)));
+                                (s.time >= 1.0f && ((t.trigger == 14 && s.carried) || (t.trigger == 15 && drives)));
                 if (go) { uberBegin(uid, i, ti); break; }
             }
         }

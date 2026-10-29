@@ -913,12 +913,29 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             if (!std::strcmp(name, "gamebase") && nc.function == 32 && nc.args.empty()) return true;
             // uberobjectevent 0 (CALLU: receiver = the event vt 54 got, its index; argument = the member {object, index}):
             // does the event name this member's event?
-            if (!std::strcmp(name, "uberobjectevent") && nc.function == 0 && nc.args.size() == 1 &&
-                nc.args[0].kind == vm::Value::Kind::Member) {
-                const auto holder = resolve(nc.args[0].uid);
-                const auto f = holder ? holder->fields.find(nc.args[0].offset + 4) : decltype(holder->fields.end()){};
-                nc.result = vm::Value::scalar(holder && f != holder->fields.end() && f->second == nc.receiver.bits);
+            // A local event member arrives as its index (vm::Machine::push).
+            if (!std::strcmp(name, "uberobjectevent") && nc.function == 0 && nc.args.size() == 1) {
+                uint32_t index = nc.args[0].bits;
+                if (nc.args[0].kind == vm::Value::Kind::Member) {
+                    const auto holder = resolve(nc.args[0].uid);
+                    const auto f = holder ? holder->fields.find(nc.args[0].offset + 4) : decltype(holder->fields.end()){};
+                    index = holder && f != holder->fields.end() ? f->second : 0xFFFFFFFFu;
+                }
+                nc.result = vm::Value::scalar(index == nc.receiver.bits);
                 return true;
+            }
+            // uberobjectbase 1 on a command held in a local (its index, vm::Machine::push), as the receiver or the argument
+            // of the object (l7_arctic_sea 9115's constructor: `PUSHLA 0; CALL1`).
+            if (!std::strcmp(name, "uberobjectbase") && nc.function == 1 && uber_) {
+                const bool local = nc.receiver.kind == vm::Value::Kind::Scalar && nc.args.empty();
+                const bool argument = nc.args.size() == 1 && nc.args[0].kind == vm::Value::Kind::Scalar;
+                const int32_t uid = nc.receiver.kind == vm::Value::Kind::Object ? nc.receiver.uid : source;
+                if ((local || argument) && find(uid)) {
+                    uint32_t result = 0;
+                    if (!uber_(uid, 1, local ? nc.receiver.bits : nc.args[0].bits, 0, nc.args, result)) return false;
+                    nc.result = vm::Value::scalar(result);
+                    return true;
+                }
             }
             // Receivers: a member address (object uid + offset), an object, or a native value held in a local.
             auto self = resolve(nc.receiver.uid);

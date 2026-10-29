@@ -623,7 +623,7 @@ private:
     std::map<int32_t, std::vector<uint32_t>> uberStates_; // per section: current state, 0xFFFFFFFF in a transition
     // Section components (tru.exe 0x4D7550 update): current state (+0x84) or running transition (+0x80), seconds in the
     // state (+0x88) / transition; events fired once (+0x60); commanded: a command changed a section (travel latch).
-    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0; };
+    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0; bool carried = false; };
     struct UberRuntime { std::vector<UberSectionState> sections; std::vector<float> animLength; uint64_t fired = 0; bool commanded = false; };
     std::map<int32_t, UberRuntime> uberRuntime_;
     std::vector<std::pair<int32_t, uint32_t>> uberEvents_; // (uid, event index) for the script's vt 54
