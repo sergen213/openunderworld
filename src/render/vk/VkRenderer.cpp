@@ -708,9 +708,9 @@ public:
             vkCmdSetViewport(cmd, 0, 1, &flipped);
             vkCmdSetScissor(cmd, 0, 1, &scissor);
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE); // the surface also reads from below
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
         }
         if (enhancedWater) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 0, 1, &waterSets_[frameIndex_], 0,
                                     nullptr);
             for (uint32_t mi = 0; mi < meshes_.size(); ++mi) {
@@ -793,8 +793,8 @@ public:
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 0, 1, &postSet_, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 1, 1, &postWaterSets_[frameIndex_], 0,
                                 nullptr);
-        vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 2, 1, &shadowSets_[frameIndex_], 0, nullptr);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
 
         if (!options.overlay.empty() || !options.ui.empty()) {
             vkCmdSetViewport(cmd, 0, 1, &flipped);

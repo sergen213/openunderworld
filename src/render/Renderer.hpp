@@ -55,8 +55,6 @@ struct WaterRipples {
 struct WaterVolume { float min[3], max[3]; };
 // Splash / spray droplet: world position, radius (world units), opacity 0..1; drawn as a camera-facing soft disc.
 struct WaterParticle { float pos[3]; float radius; float alpha; };
-
-struct RgbaImage {
 // ---- atmosphere + weather (docs/RENDERING.md "Atmosphere", "Weather"; Enhanced only, post pass) ----
 // Height fog (haze + ground mist) integrated along the view ray up to the scene or the nearest water surface,
 // plus screen-space sun shafts from Medium up. Off = the post pass leaves the image untouched.
@@ -67,6 +65,8 @@ struct Weather {
     float intensity = 0; // 0..1, already reduced where the camera is sheltered
     float wind[2] = {0.25f, 0.1f}; // world xy drift per unit of fall
 };
+
+struct RgbaImage {
     std::span<const uint8_t> rgba; // tightly packed RGBA8, top row first
     int width = 0, height = 0;
     uint64_t version = 0; // backends upload only when this changes
@@ -100,6 +100,11 @@ struct FrameOptions {
     WaterRipples ripples;                          // empty = calm (procedural waves only)
     std::span<const WaterVolume> waterVolumes;     // loaded units' water volumes
     std::span<const WaterParticle> splashes;       // drawn blended after the water surfaces
+    bool waterDetail = false; // Enhanced water extras: swell, flow, glitter, shadowed sun path, thickness SSR, lamps
+    int waterDebug = 0;       // Enhanced water debug view (render/Water.hpp kWaterDebugViews); 0 = off
+    Atmosphere atmosphere = Atmosphere::Off;
+    bool lightShafts = true;  // sun shafts of Atmosphere Medium / High
+    Weather weather;
 };
 
 // Ray-tracing state for diagnostics and tests.
@@ -108,11 +113,6 @@ struct RtStatus {
     bool active = false;      // the last frame traced rays
     uint32_t blas = 0, instances = 0, geometries = 0, waterInstances = 0; // current scene
     uint32_t tlasBuilds = 0, tlasUpdates = 0, blasRefits = 0, blasRebuilds = 0; // since init
-    bool waterDetail = false; // Enhanced water extras: swell, flow, glitter, shadowed sun path, thickness SSR, lamps
-    int waterDebug = 0;       // Enhanced water debug view (render/Water.hpp kWaterDebugViews); 0 = off
-    Atmosphere atmosphere = Atmosphere::Off;
-    bool lightShafts = true;  // sun shafts of Atmosphere Medium / High
-    Weather weather;
     std::string reason; // why unsupported
 };
 // One overlay line: requested mode, whether it is traced or falls back to the shadow map, scene counts.

@@ -559,10 +559,10 @@ public:
         }
         setBlend(int(scene::Blend::Opaque));
         if (enhancedWater) drawWater(camera, vp, options);
-        drawLines(viewProj, options.debugLines);
         else if (wb.haze.w > 0.5f || wb.weather.x > 0.5f) // atmosphere / weather read the scene depth in the post pass
             glBlitNamedFramebuffer(r.targets.scene.get(), r.targets.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0,
                                    vp.width, vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        drawLines(viewProj, options.debugLines);
 
         Targets& t = r.targets;
         if (t.msaa > 1)

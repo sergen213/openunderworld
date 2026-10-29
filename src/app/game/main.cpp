@@ -1013,6 +1013,13 @@ int main(int argc, char** argv) {
     std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
     std::vector<ou::render::WaterVolume> waterVolumes;     // loaded units' water boxes, each frame
     std::vector<ou::render::WaterParticle> splashParticles; // game::WaterSim droplets, each frame
+    // Enhanced weather (graphics.weather): the unit's own rain / snow objects (game::unitWeather), eased out while a
+    // roof is above the camera.
+    std::map<uint16_t, std::string> objectNames;
+    if (const auto list = bigfile->read("\\tr8\\pc-w\\objectlist.txt"))
+        objectNames = ou::formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    std::map<std::string, ou::game::UnitWeather> unitWeathers;
+    float shelter = 0;
     const auto& sp = world->player().state();
     std::fprintf(stderr, "ou-game: %s | chapter %d | spawn %s at %.1f %.1f %.1f yaw %.1f\n", world->currentUnit().data.name.c_str(),
                  world->chapter,
@@ -1107,13 +1114,6 @@ int main(int argc, char** argv) {
         using ou::ui::Action;
         switch (action) {
         case Action::None: return;
-    // Enhanced weather (graphics.weather): the unit's own rain / snow objects (game::unitWeather), eased out while a
-    // roof is above the camera.
-    std::map<uint16_t, std::string> objectNames;
-    if (const auto list = bigfile->read("\\tr8\\pc-w\\objectlist.txt"))
-        objectNames = ou::formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
-    std::map<std::string, ou::game::UnitWeather> unitWeathers;
-    float shelter = 0;
         case Action::Continue: // PLAY GAME: the newest save, else a new game
             if (!menus.saves.empty()) {
                 showLoading(saveChapter(menus.saves.front()));
@@ -1250,6 +1250,7 @@ int main(int argc, char** argv) {
             case SDL_EVENT_QUIT: running = false; break;
             case SDL_EVENT_KEY_DOWN:
                 if (e.key.key == SDLK_F1 && !e.key.repeat) overlay = !overlay;
+                else if (e.key.key == SDLK_F7 && !e.key.repeat) opt.waterDebug = (opt.waterDebug + 1) % ou::render::kWaterDebugViews;
                 else if (menus.screen() != ou::ui::Screen::None) {
                     if (const auto n = keyNav(e.key.key)) nav(*n);
                 } else if (e.key.key == SDLK_ESCAPE && !e.key.repeat) openPause();
@@ -1344,7 +1345,6 @@ int main(int argc, char** argv) {
             for (const auto& e : world->script().events()) {
                 const auto* src = world->script().find(e.source);
                 const auto* dst = world->script().find(e.target);
-                else if (e.key.key == SDLK_F7 && !e.key.repeat) opt.waterDebug = (opt.waterDebug + 1) % ou::render::kWaterDebugViews;
                 std::fprintf(stderr, "ou-game: tick %llu script %s %d (%s) -> %d (%s)\n", (unsigned long long)e.tick,
                              ou::script::eventName(e.kind), e.source, src ? src->name.c_str() : "?", e.target,
                              dst ? dst->name.c_str() : "untracked");
@@ -1549,6 +1549,24 @@ int main(int argc, char** argv) {
         if (opt.gfx.water && !mainMenu)
             for (const auto& d : ws.drops()) splashParticles.push_back({{d.pos.x, d.pos.y, d.pos.z}, d.radius, d.alpha()});
         fo.splashes = splashParticles;
+        fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
+        fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;
+        if (opt.gfx.weather && !mainMenu) {
+            using P = ou::game::Precipitation;
+            ou::game::UnitWeather uw{opt.gfx.weather == 2 ? P::Rain : P::Snow, opt.gfx.weather == 2 ? 0.8f : 1.0f};
+            if (opt.gfx.weather == 1) {
+                const auto& u = world->currentUnit().data;
+                auto it = unitWeathers.find(u.name);
+                if (it == unitWeathers.end())
+                    it = unitWeathers.emplace(u.name, u.drm ? ou::game::unitWeather(objectNames, *u.drm) : ou::game::UnitWeather{}).first;
+                uw = it->second;
+            }
+            const bool roof = world->collision().raycast(cam.position, {0, 0, 1}, 3000.0f).has_value();
+            shelter += (float(roof) - shelter) * std::min(1.0f, float(dt) * 3.0f);
+            fo.weather.kind = uw.kind == P::Rain ? ou::render::Weather::Kind::Rain
+                              : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
+            fo.weather.intensity = uw.intensity * (1.0f - shelter);
+        }
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {
@@ -1575,21 +1593,3 @@ int main(int argc, char** argv) {
     renderer->shutdown();
     return 0;
 }
-        fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
-        fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;
-        if (opt.gfx.weather && !mainMenu) {
-            using P = ou::game::Precipitation;
-            ou::game::UnitWeather uw{opt.gfx.weather == 2 ? P::Rain : P::Snow, opt.gfx.weather == 2 ? 0.8f : 1.0f};
-            if (opt.gfx.weather == 1) {
-                const auto& u = world->currentUnit().data;
-                auto it = unitWeathers.find(u.name);
-                if (it == unitWeathers.end())
-                    it = unitWeathers.emplace(u.name, u.drm ? ou::game::unitWeather(objectNames, *u.drm) : ou::game::UnitWeather{}).first;
-                uw = it->second;
-            }
-            const bool roof = world->collision().raycast(cam.position, {0, 0, 1}, 3000.0f).has_value();
-            shelter += (float(roof) - shelter) * std::min(1.0f, float(dt) * 3.0f);
-            fo.weather.kind = uw.kind == P::Rain ? ou::render::Weather::Kind::Rain
-                              : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
-            fo.weather.intensity = uw.intensity * (1.0f - shelter);
-        }
