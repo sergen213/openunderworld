@@ -145,6 +145,9 @@ uint32_t objectFlags(const cdc::Drm& object);
 // Throws cdc::FormatError when the reference does not resolve.
 std::optional<uint32_t> objectBaseSection(const cdc::Drm& object);
 inline constexpr uint32_t kObjectHiddenAtBirth = 0x800000;
+// Effect-only objects (fx_* proxies, bullet hits, squibs, camera anchors, ...): cdc::InstanceDrawable returns no draw
+// flags (tru.exe 0x5B5CA0) and no bounds (0x5B5BE0) for oflags bit 0x40000000, so their models are never drawn.
+inline constexpr uint32_t kObjectNoInstanceDraw = 0x40000000;
 
 // Column-major T * Rx * Ry * Rz * S, as tru.exe builds instance matrices.
 void introMatrix(const Intro& in, float out[16]);

@@ -57,6 +57,12 @@ struct WaterRipples {
 struct WaterVolume { float min[3], max[3]; };
 // Splash / spray droplet: world position, radius (world units), opacity 0..1; drawn as a camera-facing soft disc.
 struct WaterParticle { float pos[3]; float radius; float alpha; };
+// ---- original particle effects (src/fx, docs/formats/EFFECTS.md) ----
+// Camera-facing sprite corner; colour bytes R,G,B,A with 0x80 = 1.0 (shaders scale by 2), drawn tex * colour.
+struct FxVertex { float pos[3]; float uv[2]; uint32_t rgba; };
+// `count` vertices (triangle list) from `first`; textureId = SceneData texture id (0 = white); blend:
+// 0 alpha (SRCALPHA/INVSRCALPHA), 1 additive (SRCALPHA/ONE), 2 subtract (REVSUBTRACT), 3 multiply (DESTCOLOR/SRCALPHA).
+struct FxBatch { uint32_t first = 0, count = 0, textureId = 0; uint8_t blend = 0; };
 // ---- atmosphere + weather (docs/RENDERING.md "Atmosphere", "Weather"; Enhanced only, post pass) ----
 // Height fog (haze + ground mist) integrated along the view ray up to the scene or the nearest water surface,
 // plus screen-space sun shafts from Medium up. Off = the post pass leaves the image untouched.
@@ -119,6 +125,9 @@ struct FrameOptions {
     int fsrQuality = 1;           // 0 native AA, 1 quality (1.5x), 2 balanced (1.7x), 3 performance (2x), 4 ultra (3x)
     float sharpness = 0.5f;       // FSR sharpening (RCAS) 0..1, 0 = off
     bool frameGeneration = false;
+    // Original effects, drawn after the water surfaces / splashes, depth-tested, no depth writes, batches in order.
+    std::span<const FxVertex> fxVertices;
+    std::span<const FxBatch> fxBatches;
 };
 
 // Ray-tracing state for diagnostics and tests.

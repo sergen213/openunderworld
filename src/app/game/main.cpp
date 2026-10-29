@@ -29,6 +29,7 @@
 #include "config/Config.hpp"
 #include "engine/FrameClock.hpp"
 #include "formats/Formats.hpp"
+#include "fx/Fx.hpp"
 #include "game/Game.hpp"
 #include "game/Weather.hpp"
 #include "locale/Locale.hpp"
@@ -59,6 +60,7 @@ struct Options {
     std::filesystem::path screenshot, inputScript;
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
+    std::optional<std::array<float, 6>> camera; // --camera X,Y,Z,TX,TY,TZ: fixed view (eye, target) for screenshots
     bool intro = false;  // --intro: play Movies/intro.bik first (skippable)
     int introFrames = -1; // --intro-frames N: stop the intro / the New Game movie after N frames
     bool noMovies = false; // --no-movies: New Game skips Movies/explode.bik
@@ -79,7 +81,7 @@ void usage() {
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer auto|opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
-                 "               [--spawn X,Y,Z,YAWDEG] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
+                 "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
@@ -159,6 +161,11 @@ bool parseArgs(int argc, char** argv, Options& o) {
             std::array<float, 4> s{};
             if (std::sscanf(v, "%f,%f,%f,%f", &s[0], &s[1], &s[2], &s[3]) != 4) { std::fprintf(stderr, "--spawn wants X,Y,Z,YAWDEG\n"); return false; }
             o.spawn = s;
+        }
+        else if (a == "--camera") {
+            std::array<float, 6> c{};
+            if (std::sscanf(v, "%f,%f,%f,%f,%f,%f", &c[0], &c[1], &c[2], &c[3], &c[4], &c[5]) != 6) { std::fprintf(stderr, "--camera wants X,Y,Z,TX,TY,TZ\n"); return false; }
+            o.camera = c;
         }
         else if (a == "--load") o.loadSlot = v;
         else if (a == "--die") o.die = std::atof(v);
@@ -683,6 +690,61 @@ struct StreamedScene {
     }
 };
 
+// Original particle effects (src/fx, docs/formats/EFFECTS.md): every loaded unit's intros run their object's birth
+// effects (enabled event-0 records, tru.exe 0x5BA480), simulated each game tick, drawn as sprites. Owner = intro uid.
+struct EffectsView {
+    std::optional<ou::fx::Library> library;
+    std::map<uint16_t, std::string> names;
+    ou::fx::System system;
+    std::map<std::string, std::vector<int32_t>> unitOwners; // loaded unit -> its intros with running effects
+    std::vector<ou::render::FxVertex> vertices;
+    std::vector<ou::render::FxBatch> batches;
+    glm::vec3 camera{0};
+
+    void sync(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
+        if (!library) {
+            library.emplace(bf);
+            if (const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt"))
+                names = ou::formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+        }
+        auto loaded = [&](const std::string& n) {
+            return std::any_of(w.units().begin(), w.units().end(), [&](const auto& u) { return u.data.name == n; });
+        };
+        for (auto it = unitOwners.begin(); it != unitOwners.end();) {
+            if (loaded(it->first)) { ++it; continue; }
+            for (const int32_t uid : it->second) system.stopOwner(uid); // streamed out: emitters stop, particles finish
+            it = unitOwners.erase(it);
+        }
+        for (const auto& u : w.units()) {
+            if (unitOwners.contains(u.data.name) || !u.data.drm) continue;
+            auto& owners = unitOwners[u.data.name];
+            for (const auto& in : ou::formats::parseUnit(*u.data.drm).intros) {
+                const auto n = names.find(in.objectId);
+                if (n == names.end()) continue;
+                const auto fx = library->get(n->second, &warnings);
+                if (!fx || (library->flags(n->second) & ou::fx::kObjectNoBirthEffects)) continue;
+                glm::mat4 m;
+                ou::formats::introMatrix(in, &m[0][0]);
+                m[3] += glm::vec4(u.offset, 0);
+                if (system.startBirth(fx, m, in.uniqueId)) owners.push_back(in.uniqueId);
+            }
+        }
+    }
+    // Particle textures the level scene does not already hold (renderers look textures up by id).
+    void addTextures(ou::scene::SceneData& scene) const {
+        if (!library) return;
+        std::set<uint32_t> have;
+        for (const auto& t : scene.textures) have.insert(t.id);
+        for (const auto& t : library->textures())
+            if (have.insert(t.id).second) scene.textures.push_back(t);
+    }
+    void frame(const ou::render::Camera& cam, float aspect, ou::render::FrameOptions& fo) {
+        camera = cam.position;
+        system.build(cam, aspect, vertices, batches);
+        fo.fxVertices = vertices, fo.fxBatches = batches;
+    }
+};
+
 // Gadgets (GAMEPLAY.md "Flashlight", "Grenades"): g_personal_light's effect lights (its spot and omni) plus an explosion
 // flash [I] are the scene's first environment lights (StreamedScene::reservedLights), moved every frame through
 // FrameOptions::dynamicLights; pr_grenade's mesh is posed at the live grenades. Logs toggles, throws and explosions.
@@ -967,6 +1029,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> warnings;
     CombatView combat;
     GadgetView gadgets;
+    EffectsView effects;
     bool spawnFromIntro = false;
     try {
         if (!opt.inputScript.empty()) script = ou::game::InputScript::load(opt.inputScript);
@@ -1029,7 +1092,9 @@ int main(int argc, char** argv) {
         if (opt.weapon) // testing: the original gets its secondary and rounds from pickups
             world->giveWeapon(*opt.weapon, world->anims().weapons[size_t(*opt.weapon)].maxReserve);
         gadgets.load(bf, streamed, warnings);
+        effects.sync(bf, *world, warnings);
         scene = streamed.build(bf, *world, lara, enemyMeshes, warnings);
+        effects.addTextures(scene);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "ou-game: %s\n", e.what());
         return 1;
@@ -1418,6 +1483,7 @@ int main(int argc, char** argv) {
             world->tick(a);
             combat.tick(*world, audioOn ? &mixer : nullptr);
             gadgets.tick(*world);
+            effects.system.tick(effects.camera);
             if (const auto* b = world->ridden(); b || bikePhase != "parked") { // bike phase changes + 1 Hz while riding
                 const std::string phase(b ? ou::game::bikePhaseName(b->phase) : "parked");
                 if (b && (phase != bikePhase || world->ticks() % 60 == 0)) {
@@ -1505,7 +1571,9 @@ int main(int argc, char** argv) {
             world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion) {
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {
+                effects.sync(*bigfile, *world, warnings);
                 scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings);
+                effects.addTextures(scene);
                 for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
                 objects.index(scene);
             } catch (const std::exception& e) {
@@ -1532,6 +1600,7 @@ int main(int argc, char** argv) {
         cam.farZ = 200000.0f;
         cam.position = c.position;
         cam.lookAt(c.target);
+        if (opt.camera) cam.position = {(*opt.camera)[0], (*opt.camera)[1], (*opt.camera)[2]}, cam.lookAt({(*opt.camera)[3], (*opt.camera)[4], (*opt.camera)[5]});
         if (audioOn) mixer.setListener({c.position, glm::normalize(c.target - c.position), {0, 0, 1}});
 
         ++fpsFrames;
@@ -1565,6 +1634,8 @@ int main(int argc, char** argv) {
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
             lines.push_back(fmt("water %s | ripples %s | splashes %zu", opt.gfx.water ? "enhanced" : "original",
                                 world->water().active() ? "active" : "-", world->water().drops().size()));
+            lines.push_back(fmt("effects: %zu emitters | %zu particles | %zu sprite batches", effects.system.emitterCount(),
+                                effects.system.particleCount(), effects.batches.size()));
             lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push/pick up | G grapple (E/Shift rope) | "
                             "F draw | LMB fire | RMB lock | "
                             "Q switch | X weapon | H health pack | mouse look | F5 save | F9 load | F1 overlay | Esc menu");
@@ -1668,6 +1739,7 @@ int main(int argc, char** argv) {
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
+        if (!mainMenu) effects.frame(cam, float(w) / float(std::max(1, h)), fo);
         fo.dynamicLights = gadgets.update(*world, clock.alpha());
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;

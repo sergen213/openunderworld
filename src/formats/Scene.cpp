@@ -230,8 +230,8 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
                     const auto* d = loadInto(drms, bigfile, path);
                     if (!d) {
                         o.problem = path + " not in bigfile";
-                    } else if (objectFlags(*d) & kObjectHiddenAtBirth) {
-                        o.hidden = true; // trigger/sound volumes, camera anchors, dispatchers, ...
+                    } else if (objectFlags(*d) & (kObjectHiddenAtBirth | kObjectNoInstanceDraw)) {
+                        o.hidden = true; // trigger/sound volumes, camera anchors, dispatchers, fx_* effect proxies, ...
                     } else {
                         uint32_t model = 0;
                         for (const uint32_t id : objectRenderModels(*d))

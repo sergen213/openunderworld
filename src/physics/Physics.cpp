@@ -31,7 +31,7 @@ mat3 diag(float a, float b, float c) { return mat3(a, 0, 0, 0, b, 0, 0, 0, c); }
 // HInfo (segment +0x3C): {u32 count, ptr list} pairs; slot 0 spheres, 1 boxes, 2 markers, 3 capsules.
 constexpr uint32_t kSphereStride = 0x20, kBoxStride = 0x50, kCapsuleStride = 0x40;
 
-void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>& out) {
+void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>& out, std::vector<HMarker>& markers) {
     auto list = [&](int slot, uint32_t stride, auto&& one) {
         const uint32_t n = at<uint32_t>(m, h + 8 * slot);
         const auto p = cdc::internalPointer(m, h + 8 * slot + 4);
@@ -65,6 +65,13 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
         p.id = at<uint16_t>(m, o + 0x24), p.radius = at<uint16_t>(m, o + 0x26), p.length = at<uint16_t>(m, o + 0x28);
         p.mass = at<uint16_t>(m, o + 0x2A);
     });
+    // Slot 2 markers (tru.exe 0x46DA20, HInfo primitive type 8): +4 u16 id, +8 float3 position, +0x14 float3 Euler.
+    const uint32_t nm = at<uint32_t>(m, h + 16);
+    if (const auto p = cdc::internalPointer(m, h + 20); nm && p && nm <= 4096)
+        for (uint32_t i = 0; i < nm; ++i) {
+            const uint32_t o = *p + 0x20 * i;
+            markers.push_back({segment, at<uint16_t>(m, o + 4), vec(m, o + 8), vec(m, o + 0x14)});
+        }
 }
 
 } // namespace
@@ -97,7 +104,7 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d) {
         const int32_t parent = at<int32_t>(*m, s + 0x38);
         if (parent >= int32_t(k)) throw FormatError("physics: segment parent out of order");
         o.segments.push_back((parent >= 0 ? o.segments[parent] : mat4(1)) * glm::translate(mat4(1), vec(*m, s + 0x20)));
-        if (const auto h = cdc::internalPointer(*m, s + 0x3C)) readHInfo(*m, *h, int(k), o.prims);
+        if (const auto h = cdc::internalPointer(*m, s + 0x3C)) readHInfo(*m, *h, int(k), o.prims, o.hmarkers);
     }
     const uint32_t nm = at<uint32_t>(*m, 0x38);
     if (const auto mk = cdc::internalPointer(*m, 0x3C); mk && nm < 4096)

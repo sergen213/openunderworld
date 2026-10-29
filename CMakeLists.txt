@@ -80,6 +80,14 @@ foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.v
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
+# Original particle effects (src/fx sprites).
+foreach(s fx.vert fx.frag)
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/${s})
+  add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
+                     COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
+                     DEPENDS ${src} VERBATIM)
+  list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
+endforeach()
 # Enhanced water + splash (shared GLSL with GL, -DVULKAN=1 selects the descriptor syntax).
 foreach(s water.vert water.frag splash.vert splash.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
@@ -153,6 +161,15 @@ if(OU_BUILD_TESTS)
   add_executable(ou_anim_tests tests/test_anim.cpp)
   target_link_libraries(ou_anim_tests PRIVATE ou_anim ou_formats GTest::gtest_main)
   gtest_discover_tests(ou_anim_tests)
+endif()
+
+# ---- ou_fx: original particle effects (GenericFXObject), deterministic sim, sprites (docs/formats/EFFECTS.md) ----
+add_library(ou_fx STATIC src/fx/Fx.cpp)
+target_link_libraries(ou_fx PUBLIC ou_formats ou_physics glm::glm)
+if(OU_BUILD_TESTS)
+  add_executable(ou_fx_tests tests/test_fx.cpp)
+  target_link_libraries(ou_fx_tests PRIVATE ou_fx ou_formats GTest::gtest_main)
+  gtest_discover_tests(ou_fx_tests DISCOVERY_TIMEOUT 30)
 endif()
 
 # ---- ou_formats: PCD9 textures, render models, terrain -> ou::scene; ou-asset CLI ----------
@@ -322,7 +339,7 @@ target_link_libraries(ou_game PUBLIC ou_physics)
 add_library(ou_ui STATIC src/ui/Ui.cpp src/ui/Hud.cpp src/ui/Art.cpp)
 target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale ou_formats)
 add_executable(ou-game src/app/game/main.cpp src/app/game/Cinematic.cpp src/app/game/Sound.cpp)
-target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio)
+target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio ou_fx)
 if(OU_BUILD_TESTS)
   add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp)
   target_link_libraries(ou_game_tests PRIVATE ou_game GTest::gtest_main)

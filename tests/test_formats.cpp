@@ -484,7 +484,7 @@ TEST(RealData, LevelL4PoolInstancesOnTerrain) {
                 for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], v.position[k]), hi[k] = std::max(hi[k], v.position[k]);
         placed += m.origin.find("@intro") != std::string::npos;
     }
-    EXPECT_GT(placed, 50u);
+    EXPECT_GT(placed, 40u); // fx_* proxies (oflags 0x40000000, never drawn by tru.exe 0x5B5CA0) are not placed
     // Observed: 161/173 object intros lie inside the terrain box; the rest are cinematic props
     // parked at (0, 0, -11542) and one trigger volume. Markers (object -6) are not counted.
     size_t inside = 0, objects = 0;

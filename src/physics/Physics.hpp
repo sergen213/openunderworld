@@ -43,12 +43,20 @@ struct Marker {
     uint32_t kind = 0;   // +0x20; 2 on ca_rb_wall_hpole_door ([I] its joint type: 2 = cylindrical in tru.exe)
     int32_t link = -1;   // +0x24
 };
+// HInfo slot-2 marker (0x20 bytes): an effect / attach point in its segment's frame, found by id (tru.exe 0x46DA20;
+// effect definitions name it with a negative segment, -id).
+struct HMarker {
+    int segment = 0;
+    uint16_t id = 0;
+    vec3 pos{0}, rot{0}; // segment frame; Euler radians, R = Rx * Ry * Rz [I] (cdc_Matrix_Build_XYZOrder)
+};
 struct ObjectPhysics {
     uint32_t oflags = 0;   // ObjectBase +0; bit 0x80000000 = "physical" object family (tru.exe 0x5BF0E0)
     int physClass = -1;    // physical data class (ObjectBase+0xC8: u16 +2 when u16 +4 == 0xB00B), 34 = rigid body
     std::vector<mat4> segments; // bind-pose model-space frame of each segment (pivots accumulated down the parents)
     std::vector<Prim> prims;
     std::vector<Marker> markers;
+    std::vector<HMarker> hmarkers;
 };
 inline constexpr int kClassRigidBody = 34; // tru.exe 0x6BA570 (0x6D00E0 dispatch); 28 objects, the "*_rb_*" ones
 // Model 0 of an object DRM. Empty without an object section or model; throws cdc::FormatError on bad layouts.

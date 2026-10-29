@@ -94,10 +94,17 @@ const uint32_t kFsrMaskFrag[] = {
 const uint32_t kFsrCameraFrag[] = {
 #include "fsr_camera.frag.inc"
 };
+const uint32_t kFxVert[] = { // original particle effects (src/fx)
+#include "fx.vert.inc"
+};
+const uint32_t kFxFrag[] = {
+#include "fx.frag.inc"
+};
 
 // Scene pipelines exist per scene::Blend (blend state is baked into Vulkan pipelines).
 // Prepass: RT depth pre-pass (depth only; the RT Opaque pipeline then tests LEQUAL without writes).
-enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Lines, Overlay, Post, Prepass, Water, Splash };
+enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Lines, Overlay, Post, Prepass, Water, Splash,
+                          FxAlpha, FxAdditive, FxSubtract, FxMultiply }; // Fx*: FxBatch::blend order
 
 struct LineVertex {
     float pos[3];
@@ -815,6 +822,31 @@ public:
             }
         }
 
+        if (!options.fxBatches.empty() && !options.fxVertices.empty()) { // original effects: after water, before lines
+            const VkDeviceSize bytes = options.fxVertices.size_bytes();
+            if (bytes > fxCapacity_[frameIndex_]) { // this frame's fence was waited above: its old buffer is idle
+                vkDestroyBuffer(device_, fxBuffers_[frameIndex_].buffer, nullptr);
+                fxMemory_[frameIndex_].reset();
+                fxCapacity_[frameIndex_] = std::bit_ceil(std::max<VkDeviceSize>(bytes, 64 << 10));
+                fxBuffers_[frameIndex_] = createBuffer(fxMemory_[frameIndex_], fxCapacity_[frameIndex_], VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            }
+            std::memcpy(fxBuffers_[frameIndex_].mapped, options.fxVertices.data(), bytes);
+            const VkDeviceSize zero = 0;
+            vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &fxBuffers_[frameIndex_].buffer, &zero);
+            VkPipeline fxBound = VK_NULL_HANDLE;
+            for (const auto& b : options.fxBatches) {
+                const VkPipeline p = fxPipelines_[std::min<size_t>(b.blend, fxPipelines_.size() - 1)];
+                if (p != fxBound) {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxBound = p);
+                    vkCmdPushConstants(cmd, fxLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &push.viewProj);
+                }
+                const VkDescriptorSet set = textureSet(b.textureId);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxLayout_, 0, 1, &set, 0, nullptr);
+                vkCmdDraw(cmd, b.count, 1, b.first, 0);
+            }
+        }
         if (!options.debugLines.empty()) {
             const VkDeviceSize bytes = options.debugLines.size() * 2 * sizeof(LineVertex);
             if (bytes > f.lineCapacity) { // this frame's fence was waited above: its old buffer is idle
@@ -1121,6 +1153,8 @@ public:
             for (auto& b : waterUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             for (auto& b : splashBuffers_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             for (auto& m : splashMemory_) m.reset();
+            for (auto& b : fxBuffers_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
+            for (auto& m : fxMemory_) m.reset();
             vkDestroyDescriptorPool(device_, std::exchange(waterPool_, VK_NULL_HANDLE), nullptr);
             vkDestroyPipelineLayout(device_, std::exchange(waterLayout_, VK_NULL_HANDLE), nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(waterSetLayout_, VK_NULL_HANDLE), nullptr);
@@ -1135,7 +1169,7 @@ public:
             destroyScenePipelines();
             destroyFsr();
             for (VkPipeline p : {textPipeline_, shadowPipeline_, postPipeline_}) vkDestroyPipeline(device_, p, nullptr);
-            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
+            for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_, fxLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
             for (auto& m : lineMemory_) m.reset();
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(shadowSetLayout_, VK_NULL_HANDLE), nullptr);
@@ -1384,6 +1418,7 @@ private:
         vkDestroyPipeline(device_, std::exchange(linePipeline_, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(waterPipeline_, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(splashPipeline_, VK_NULL_HANDLE), nullptr);
+        for (VkPipeline& p : fxPipelines_) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
     }
 
     // Sun shadow atlas, one tile per cascade: opaque and alpha-blended submeshes (the latter alpha-tested at 50 %),
@@ -1597,6 +1632,7 @@ private:
         sceneMemory_.init(device_, gpu_, kBlockSize, rtStatus_.supported);
         for (auto& m : lineMemory_) m.init(device_, gpu_, 0);
         for (auto& m : splashMemory_) m.init(device_, gpu_, 0);
+        for (auto& m : fxMemory_) m.init(device_, gpu_, 0);
 
         for (VkFormat f : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D16_UNORM}) {
             VkFormatProperties fp;
@@ -1716,6 +1752,8 @@ private:
         VkPushConstantRange linePush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
         VkPipelineLayoutCreateInfo ll{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &linePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &ll, nullptr, &lineLayout_));
+        VkPipelineLayoutCreateInfo fxl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &setLayout_, 1, &linePush};
+        VK_CHECK(vkCreatePipelineLayout(device_, &fxl, nullptr, &fxLayout_)); // set 0 = the sprite texture
 
         const VkVertexInputBindingDescription textBinding{0, sizeof(TextVertex), VK_VERTEX_INPUT_RATE_VERTEX};
         const VkVertexInputAttributeDescription textAttrs[] = {
@@ -1777,6 +1815,15 @@ private:
         };
         splashPipeline_ = createPipeline(kSplashVert, kSplashFrag, waterLayout_, &splashBinding, splashAttrs,
                                          PipelineKind::Splash, samples_, sceneFormat_, depthFormat_);
+        const VkVertexInputBindingDescription fxBinding{0, sizeof(FxVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+        const VkVertexInputAttributeDescription fxAttrs[] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FxVertex, pos)},
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(FxVertex, uv)},
+            {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(FxVertex, rgba)},
+        };
+        for (size_t b = 0; b < fxPipelines_.size(); ++b)
+            fxPipelines_[b] = createPipeline(kFxVert, kFxFrag, fxLayout_, &fxBinding, fxAttrs,
+                                             PipelineKind(size_t(PipelineKind::FxAlpha) + b), samples_, sceneFormat_, depthFormat_);
     }
 
     // `binding` null = no vertex input (fullscreen triangle). colorFormat UNDEFINED = depth-only.
@@ -1830,6 +1877,11 @@ private:
             factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
         else if (kind == PipelineKind::Additive) factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE);
         else if (kind == PipelineKind::Average) factors(VK_BLEND_FACTOR_CONSTANT_COLOR, VK_BLEND_FACTOR_CONSTANT_COLOR);
+        else if (kind == PipelineKind::FxAlpha) factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+        else if (kind == PipelineKind::FxAdditive || kind == PipelineKind::FxSubtract) {
+            factors(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE);
+            if (kind == PipelineKind::FxSubtract) blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_REVERSE_SUBTRACT;
+        } else if (kind == PipelineKind::FxMultiply) factors(VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_SRC_ALPHA);
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         const bool hasColor = colorFormat != VK_FORMAT_UNDEFINED;
         cb.attachmentCount = hasColor ? 1 : 0;
@@ -3082,6 +3134,11 @@ private:
     std::array<LinearAllocator, kFramesInFlight> splashMemory_;
     std::array<Buffer, kFramesInFlight> splashBuffers_{};
     std::array<VkDeviceSize, kFramesInFlight> splashCapacity_{};
+    std::array<LinearAllocator, kFramesInFlight> fxMemory_; // original effects (FrameOptions::fxVertices)
+    std::array<Buffer, kFramesInFlight> fxBuffers_{};
+    std::array<VkDeviceSize, kFramesInFlight> fxCapacity_{};
+    std::array<VkPipeline, 4> fxPipelines_{}; // FxBatch::blend: alpha, additive, subtract, multiply
+    VkPipelineLayout fxLayout_ = VK_NULL_HANDLE;
     std::array<LinearAllocator, kFramesInFlight> lineMemory_;
     VkSampler sceneSampler_ = VK_NULL_HANDLE, fontSampler_ = VK_NULL_HANDLE, shadowSampler_ = VK_NULL_HANDLE,
               postSampler_ = VK_NULL_HANDLE;

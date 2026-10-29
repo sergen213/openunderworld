@@ -215,6 +215,24 @@ struct LineVertex {
     uint32_t color;
 };
 
+// Original particle effects (FrameOptions::fxVertices): texture x colour, colour bytes 0x80 = 1.0.
+const char* kFxVs = R"(#version 460 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec2 aUv;
+layout(location = 2) in vec4 aColor;
+layout(location = 0) uniform mat4 uViewProj;
+out vec2 vUv; out vec4 vColor;
+void main() {
+    vUv = aUv;
+    vColor = min(aColor * 2.0, vec4(2.0, 2.0, 2.0, 1.0));
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+})";
+const char* kFxFs = R"(#version 460 core
+in vec2 vUv; in vec4 vColor;
+layout(binding = 0) uniform sampler2D uTex;
+out vec4 oColor;
+void main() { oColor = texture(uTex, vUv) * vColor; })";
+
 GLuint compileShader(GLenum type, const char* src, std::string& error) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, nullptr);
@@ -299,6 +317,9 @@ struct Resources {
     int rippleSize = 0;
     VertexArray splashVao;
     Buffer splashVbo;
+    Program fxProgram; // original effects
+    VertexArray fxVao;
+    Buffer fxVbo;
     Texture white, font, shadowMap, attenuation, blackCube;
     struct Streamed { Texture tex; uint64_t version = 0; int width = 0, height = 0; };
     std::array<Streamed, 2> uiImages; // FrameOptions::uiImages
@@ -391,6 +412,14 @@ public:
         attrib(r.splashVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, pos));
         attrib(r.splashVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, uv));
         attrib(r.splashVao.get(), 2, 1, GL_FLOAT, GL_FALSE, offsetof(SplashVertex, alpha));
+        r.fxProgram = linkProgram(kFxVs, kFxFs, error);
+        if (!r.fxProgram.get()) return false;
+        r.fxVao = newVertexArray();
+        r.fxVbo = newBuffer();
+        glVertexArrayVertexBuffer(r.fxVao.get(), 0, r.fxVbo.get(), 0, sizeof(FxVertex));
+        attrib(r.fxVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(FxVertex, pos));
+        attrib(r.fxVao.get(), 1, 2, GL_FLOAT, GL_FALSE, offsetof(FxVertex, uv));
+        attrib(r.fxVao.get(), 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(FxVertex, rgba));
         r.emptyVao = newVertexArray();
         r.lineVao = newVertexArray();
         attrib(r.lineVao.get(), 0, 3, GL_FLOAT, GL_FALSE, offsetof(LineVertex, pos));
@@ -571,6 +600,7 @@ public:
         else if (wb.haze.w > 0.5f || wb.weather.x > 0.5f) // atmosphere / weather read the scene depth in the post pass
             glBlitNamedFramebuffer(r.targets.scene.get(), r.targets.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0,
                                    vp.width, vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        drawFx(viewProj, options);
         drawLines(viewProj, options.debugLines);
 
         Targets& t = r.targets;
@@ -1017,6 +1047,35 @@ private:
                 glDisable(GL_BLEND);
             }
         }
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
+    }
+
+    // Original particle effects: depth-tested, no depth writes, batches in the given (back-to-front) order.
+    void drawFx(const glm::mat4& viewProj, const FrameOptions& options) {
+        if (options.fxVertices.empty() || options.fxBatches.empty()) return;
+        Resources& r = *res_;
+        glNamedBufferData(r.fxVbo.get(), GLsizeiptr(options.fxVertices.size_bytes()), options.fxVertices.data(), GL_STREAM_DRAW);
+        glVertexArrayVertexBuffer(r.fxVao.get(), 0, r.fxVbo.get(), 0, sizeof(FxVertex));
+        glUseProgram(r.fxProgram.get());
+        glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj));
+        glBindVertexArray(r.fxVao.get());
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND);
+        for (const auto& b : options.fxBatches) {
+            const auto it = r.textures.find(b.textureId);
+            glBindTextureUnit(0, it != r.textures.end() ? it->second.get() : r.white.get());
+            glBlendEquation(b.blend == 2 ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);
+            if (b.blend == 0) glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            else if (b.blend == 3) glBlendFunc(GL_DST_COLOR, GL_SRC_ALPHA);
+            else glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glDrawArrays(GL_TRIANGLES, GLint(b.first), GLsizei(b.count));
+        }
+        glBlendEquation(GL_FUNC_ADD);
+        glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);
     }
