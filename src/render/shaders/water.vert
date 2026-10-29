@@ -8,6 +8,7 @@ layout(binding = 4) uniform Water {
     mat4 viewProj; mat4 invViewProj;
     vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
     vec4 ripple; vec4 rippleInfo; vec4 absorb; vec4 shallow;
+    vec4 detail; vec4 lamps[4]; vec4 lampColor[4]; vec4 haze; vec4 mist; vec4 weather; vec4 volumes[16];
 } w;
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
@@ -30,6 +31,13 @@ void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal;
 #endif
+    // Water detail: geometry swell, the long waves of water.frag's swell layer as a height (amplitude detail.z);
+    // only visible where the surface mesh has interior vertices (TRU's are mostly coarse).
+    if (w.detail.z > 0.0) {
+        float t = w.eye.w;
+        world.z += w.detail.z * (sin(dot(world.xy, vec2(0.0021, 0.0013)) + t * 0.7) +
+                                 0.6 * sin(dot(world.xy, vec2(-0.0017, 0.0026)) - t * 0.55));
+    }
     vWorld = world.xyz;
     vUv = aUv; vColor = aColor;
     gl_Position = w.viewProj * world;

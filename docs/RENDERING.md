@@ -237,6 +237,91 @@ Limits [I]: SSR misses off-screen geometry (fog fallback), one simulated surface
 is in or nearest), no water flow/buoyancy, procedural caustics are not light-accurate, foam noise
 is hashed cells, no ripples in ou-viewer (it has no simulation).
 
+### Water detail, debug views (`graphics.water_detail`, `--water-detail`, `--water-debug`, F7)
+
+`water_detail = high` (the enhanced-preset default with Enhanced water; `FrameOptions::waterDetail`,
+`WaterBlock::detail`) adds, in the same shaders: a swell layer (two broad value-noise layers with
+analytic gradients drifting apart) and a flow layer domain-warped by the swell and counter-rotated
+against a second layer, faded where it would alias (`fwidth`); a geometry swell in `water.vert`
+(±10 units, only where the mesh has interior vertices); a sun glint made of a broad sheen, a sharp
+sparkle modulated by the wave noise and a broken "glitter path", hidden where an 8-step march toward
+the sun through the opaque depth hits an occluder; thickness-tested SSR (24 steps, hit only when the
+ray passes behind the depth buffer by less than 40 + 0.1·t units, 4 bisection steps, confidence
+faded at the screen border and with distance) blended into an environment colour (fog colour, a
+brighter sky term and a sun lobe) instead of a hard fog fallback; open water with no floor in the
+depth buffer is treated as deep instead of refracting the sky; reflections of the four lamps
+nearest the camera (unit point/spot lights, Schlick-weighted specular); crest foam from the wave
+noise. `standard` is the v0.5 water unchanged.
+
+Debug views (`--water-debug N` in ou-game / ou-viewer, F7 cycles in ou-game; `WaterBlock::detail.y`):
+1 wave normals, 2 water mask (magenta, shallow) to depth (blue, deep), 3 SSR hit (green) vs
+environment fallback (red), 4 sun glint (white) and its sun occlusion (blue), 5 Fresnel term.
+
+Water surface for the atmosphere: the Enhanced water pass does not write depth, so the post pass
+intersects the view ray with the tops of the eight nearest `WaterVolume`s (`WaterBlock::volumes`,
+surface = max.z) and ends the fog / shaft medium there, not at the sea bed.
+
+## Atmosphere (Enhanced, GL + Vulkan; `graphics.atmosphere`, `--atmosphere`, `graphics.light_shafts`, `--shafts`)
+
+Post pass (`src/render/shaders/atmosphere.glsl`, included after `underwater.glsl`; applied after tonemap /
+brightness, before the underwater effect, which owns the submerged view). `off` returns the input unchanged.
+- `low`: height fog along the view ray up to the scene, the water surface (above) or 60000 units:
+  a haze layer (1/60000 per unit, falloff 1/2200) and a ground mist (1/30000, falloff 1/300) based
+  at the nearest water surface or 250 units below the camera, constant below their base so pits stay
+  finite (closed-form integral, no marching). In-scattering = the unit's fog colour plus
+  Henyey-Greenstein (g 0.6) forward scattering of the unit's sun.
+- `medium` (enhanced default): + sun shafts for units with a sun: 24 taps from the pixel toward the
+  sun's screen position (jittered), open where the depth is beyond 0.6 of the medium range (sky),
+  weighted by a 0.965 decay, HG (g 0.8) and the air in front of the pixel; fades as the sun leaves
+  the screen. `high`: 48 taps. `light_shafts = false` keeps the fog only.
+Values are ours [I]. Screen-space shafts miss off-screen occluders.
+
+## Weather (Enhanced, GL + Vulkan; `graphics.weather`, `--weather auto|off|rain|snow`)
+
+`auto` (enhanced default) shows the precipitation the original places in the unit: survey of all
+units (`GameReal.UnitWeatherSurvey`, `game::unitWeather`): snow where there are `fx_snow_blizzard_*`
+/ `fx_snow_white_out` (l5_startsnow, l7_thin_ice, l7_himalaya_end; intensity 1) or
+`fx_snow_falling_*` (l5_valaskjalf, l5_valgrind, l7_monastery; 0.55); rain where `rainfx` is placed
+(l6_ship_exterior; 0.8; `rainfx_mex` is in no unit). Rain sheets / gutters (water pouring through
+openings, Kraken rooms, Mexico temples) and cinematic-only effects are local effects, not weather.
+The original's own particle effects are not reimplemented. ou-game eases the intensity to 0 while
+collision lies within 3000 units above the camera (roofs, caves).
+Post pass, same file: four layers on camera-centred cylinders (radius 110, 240, 500, 1000), anchored
+in azimuth and world height so turning does not drag them; each layer is skipped where the scene is
+nearer (depth-tested against walls and roofs). Rain: thin wind-slanted streaks falling 1100 units/s,
+antialiased with `fwidth`; snow: soft flakes falling 85 units/s with a sinusoidal drift. Rain also
+darkens upward-facing surfaces (normals from depth derivatives; water surfaces from the volume
+intersection) and draws expanding splash rings on them. Skipped [I]: lens droplets, wet specular,
+snow accumulation.
+
+Gap list against modern-wow-renderer (read for techniques only, no code; RESEARCH.md §8.6):
+
+| Technique there | Before (v0.5 Enhanced water) | Now |
+|---|---|---|
+| Noise swell, warped/counter-rotated flow normals | four sine waves + ripple field | water detail: swell + flow layers |
+| Geometry waves | none | water detail: vertex swell (coarse meshes show little) |
+| Sun glint: broad + sparkle, glitter variation, sun path | one specular lobe | water detail |
+| Glint occluded by depth-buffer march toward the sun | none | water detail (8 steps) |
+| Thickness-tested SSR, border fade, environment fallback | radial hit test, fog fallback | water detail (24 steps + bisection) |
+| Open water without floor = deep | sky colour refracted | water detail |
+| Fresnel, depth colour, shore / crest foam | yes | + noise crest foam |
+| Local light reflections on water | none | water detail: 4 nearest lamps |
+| Water mask + surface depth for the atmosphere | none | water volume tops intersected in the post pass |
+| Water diagnostics / highlight views | none | `--water-debug`, F7: 5 views |
+| Two-layer analytic height fog, HG lobe, rolling noise | none | atmosphere low+ (no noise layer) |
+| Sun shafts (screen-space radial there) | none | shadow-map ray march, medium/high (handles off-screen occluders) |
+| Low-res atmosphere + temporal reprojection, local fog field, contact shadows | none | skipped (full-res single pass is cheap enough; no temporal history) |
+| Depth-tested rain / snow layers, roof occlusion | none | weather: 4 layers, depth test, camera shelter ray |
+| Surface splashes, wetness | none | rain rings + darkening |
+| Lens droplets, sandstorm, weather audio | none | skipped (TRU has no sandstorm; lens/audio not requested by data) |
+
+Cost (2026-10-28, RX 7900 XTX, 1280x720, ou-viewer frame-time average over 289 frames in an invisible KWin):
+l4_pool water view 4.98 ms standard water, 4.82 ms water detail, 4.83 ms detail + rain; l4_ballcourt foliage
+view 124 / 112 / 114 / 111 ms for atmosphere off / low / medium / high (that view is CPU-bound; differences are
+run-to-run noise). No cost is measurable above the noise of these runs; GPU timestamps were not taken.
+
+Techniques credited in docs/RESEARCH.md §8.6 (modern-wow-renderer: inspiration only, no code).
+
 ## Original Fidelity vs Enhanced (plan)
 
 Two render modes share the scene graph and simulation; only the backend's frame graph differs.

@@ -9,6 +9,7 @@ layout(binding = 4) uniform Water {
     mat4 viewProj; mat4 invViewProj;
     vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
     vec4 ripple; vec4 rippleInfo; vec4 absorb; vec4 shallow;
+    vec4 detail; vec4 lamps[4]; vec4 lampColor[4]; vec4 haze; vec4 mist; vec4 weather; vec4 volumes[16];
 } w;
 #ifdef VULKAN
 layout(set = 1, binding = 1) uniform sampler2D uDepth;

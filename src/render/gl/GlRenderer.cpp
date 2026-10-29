@@ -161,11 +161,11 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
     return (lb < lo || lb > hi) ? a : b;
 }
 )";
-// Underwater declarations/function (render/Water.cpp) go between kPostFs and kPostFsMain.
+// Underwater + atmosphere declarations/functions (render/Water.cpp) go between kPostFs and kPostFsMain.
 const char* kPostFsMain = R"(
 void main() {
     vec3 c = pow(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vec3(1.0 / uBrightness));
-    oColor = vec4(ouUnderwater(c, vUv), 1.0);
+    oColor = vec4(ouUnderwater(ouAtmosphere(c, vUv), vUv), 1.0);
 })";
 
 
@@ -371,7 +371,7 @@ public:
         if (!r.lineProgram.get()) return false;
         r.shadowProgram = linkProgram(kShadowVs, kShadowFs, error);
         if (!r.shadowProgram.get()) return false;
-        const std::string postFs = std::string(kPostFs) + underwaterPostSource(false) + kPostFsMain;
+        const std::string postFs = std::string(kPostFs) + sunGlsl() + underwaterPostSource(false) + kPostFsMain; // sun: shafts
         r.postProgram = linkProgram(kPostVs, postFs.c_str(), error);
         if (!r.postProgram.get()) return false;
         const std::string waterVs = waterVertexSource(false), waterFs = waterFragmentSource(false);
@@ -560,6 +560,9 @@ public:
         setBlend(int(scene::Blend::Opaque));
         if (enhancedWater) drawWater(camera, vp, options);
         drawLines(viewProj, options.debugLines);
+        else if (wb.haze.w > 0.5f || wb.weather.x > 0.5f) // atmosphere / weather read the scene depth in the post pass
+            glBlitNamedFramebuffer(r.targets.scene.get(), r.targets.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0,
+                                   vp.width, vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
 
         Targets& t = r.targets;
         if (t.msaa > 1)

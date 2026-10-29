@@ -30,10 +30,12 @@
 #include "engine/FrameClock.hpp"
 #include "formats/Formats.hpp"
 #include "game/Game.hpp"
+#include "game/Weather.hpp"
 #include "locale/Locale.hpp"
 #include "platform/Sdl.hpp"
 #include "save/Save.hpp"
 #include "render/Renderer.hpp"
+#include "render/Water.hpp"
 #include "video/Player.hpp"
 #include "video/Movie.hpp"
 #include "ui/Art.hpp"
@@ -53,6 +55,7 @@ struct Options {
     float fov = 60.0f;
     bool vsync = true, fullscreen = false, noOverlay = false, showCollision = false, showTriggers = false, showEnemies = false;
     int frames = 0; // 0 = until closed
+    int waterDebug = 0; // Enhanced water debug view (render::kWaterDebugViews; F7 cycles)
     std::filesystem::path screenshot, inputScript;
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
@@ -82,7 +85,8 @@ void usage() {
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
                  "               [--shaders original|generic]\n"
                  "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0]\n"
-                 "               [--water original|enhanced]\n"
+                 "               [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
+                 "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
                  "               [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
@@ -90,7 +94,7 @@ void usage() {
                  "          E with a full adrenaline meter + lock close by: head-shot window, mouse look;\n"
                  "          gamepad: left stick, right stick, A jump, B drop, X use, Y draw, RT fire, LT lock, R3 switch, LB walk,\n"
                  "          d-pad right switch weapon, d-pad up health pack,\n"
-                 "          Start pause; Esc pause menu, F1 overlay, F5 quicksave, F9 quickload (slot 'quick')\n"
+                 "          Start pause; Esc pause menu, F1 overlay, F5 quicksave, F9 quickload (slot 'quick'), F7 water debug view\n"
                  "motorcycle: E beside it gets on / off (almost stopped); forward throttle, back brake/reverse, left/right steer,\n"
                  "          Space hop\n"
                  "menus: arrows/WASD or d-pad navigate, Enter/Space or A accept, E or X alt (PDA task), Esc or B back,\n"
@@ -144,6 +148,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--height") o.height = std::atoi(v);
         else if (a == "--fov") o.fov = float(std::atof(v));
         else if (a == "--frames") o.frames = std::atoi(v);
+        else if (a == "--water-debug") o.waterDebug = std::atoi(v);
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--input-script") o.inputScript = v;
         else if (a == "--render-hz") o.renderHz = std::atof(v);
@@ -1102,6 +1107,13 @@ int main(int argc, char** argv) {
         using ou::ui::Action;
         switch (action) {
         case Action::None: return;
+    // Enhanced weather (graphics.weather): the unit's own rain / snow objects (game::unitWeather), eased out while a
+    // roof is above the camera.
+    std::map<uint16_t, std::string> objectNames;
+    if (const auto list = bigfile->read("\\tr8\\pc-w\\objectlist.txt"))
+        objectNames = ou::formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    std::map<std::string, ou::game::UnitWeather> unitWeathers;
+    float shelter = 0;
         case Action::Continue: // PLAY GAME: the newest save, else a new game
             if (!menus.saves.empty()) {
                 showLoading(saveChapter(menus.saves.front()));
@@ -1332,6 +1344,7 @@ int main(int argc, char** argv) {
             for (const auto& e : world->script().events()) {
                 const auto* src = world->script().find(e.source);
                 const auto* dst = world->script().find(e.target);
+                else if (e.key.key == SDLK_F7 && !e.key.repeat) opt.waterDebug = (opt.waterDebug + 1) % ou::render::kWaterDebugViews;
                 std::fprintf(stderr, "ou-game: tick %llu script %s %d (%s) -> %d (%s)\n", (unsigned long long)e.tick,
                              ou::script::eventName(e.kind), e.source, src ? src->name.c_str() : "?", e.target,
                              dst ? dst->name.c_str() : "untracked");
@@ -1562,3 +1575,21 @@ int main(int argc, char** argv) {
     renderer->shutdown();
     return 0;
 }
+        fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
+        fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;
+        if (opt.gfx.weather && !mainMenu) {
+            using P = ou::game::Precipitation;
+            ou::game::UnitWeather uw{opt.gfx.weather == 2 ? P::Rain : P::Snow, opt.gfx.weather == 2 ? 0.8f : 1.0f};
+            if (opt.gfx.weather == 1) {
+                const auto& u = world->currentUnit().data;
+                auto it = unitWeathers.find(u.name);
+                if (it == unitWeathers.end())
+                    it = unitWeathers.emplace(u.name, u.drm ? ou::game::unitWeather(objectNames, *u.drm) : ou::game::UnitWeather{}).first;
+                uw = it->second;
+            }
+            const bool roof = world->collision().raycast(cam.position, {0, 0, 1}, 3000.0f).has_value();
+            shelter += (float(roof) - shelter) * std::min(1.0f, float(dt) * 3.0f);
+            fo.weather.kind = uw.kind == P::Rain ? ou::render::Weather::Kind::Rain
+                              : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
+            fo.weather.intensity = uw.intensity * (1.0f - shelter);
+        }

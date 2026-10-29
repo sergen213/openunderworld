@@ -1,4 +1,5 @@
 #include "game/Game.hpp"
+#include "game/Weather.hpp"
 
 #include "cdc/Cdc.hpp"
 #include "engine/FrameClock.hpp"
@@ -1705,4 +1706,33 @@ TEST(GameReal, ScriptedChapterEndChainsStartNextChapter) {
         EXPECT_EQ(w.chapter, c.next) << c.unit;
         EXPECT_FALSE(played.empty()) << c.unit;
     }
+}
+
+// Weather objects of every unit (docs/RENDERING.md "Weather"): the precipitation Enhanced weather shows per unit.
+TEST(GameReal, UnitWeatherSurvey) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto objects = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(objects && list);
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(objects->data()), objects->size()});
+    const std::string text(list->begin(), list->end());
+    std::map<std::string, game::UnitWeather> weather;
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty()) continue;
+        const std::string name = line.substr(line.rfind('\\') + 1);
+        const auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        const auto drm = cdc::parseDrm(*bytes);
+        if (const auto w = game::unitWeather(names, drm); w.kind != game::Precipitation::None) weather[name] = w;
+    }
+    std::string got;
+    for (const auto& [u, w] : weather)
+        got += u + (w.kind == game::Precipitation::Snow ? " snow " : " rain ") + std::to_string(int(w.intensity * 100)) + "\n";
+    EXPECT_EQ(got, "l5_startsnow snow 100\nl5_valaskjalf snow 55\nl5_valgrind snow 55\nl6_ship_exterior rain 80\n"
+                   "l7_himalaya_end snow 100\nl7_monastery snow 55\nl7_thin_ice snow 100\n");
 }

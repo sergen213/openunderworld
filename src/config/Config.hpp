@@ -26,6 +26,13 @@ struct GraphicsConfig {
     std::string rtQuality = "medium";       // "low" | "medium" | "high": 1, 2, 4 shadow rays per pixel
     std::optional<bool> originalShaders;    // TRU's translated shaders (docs/formats/SHADERS.md); unset = preset default (on)
     std::string water = "auto";             // "auto" (enhanced -> enhanced, original -> original) | "original" | "enhanced"
+    // Enhanced water / atmosphere / weather (docs/RENDERING.md); "auto" = on for the enhanced preset, off for original.
+    std::string waterDetail = "auto";       // "auto" | "standard" | "high" (swell, flow, glitter, sun-occluded glint,
+                                            // thickness-tested reflections, lamp reflections, geometry swell)
+    std::string atmosphere = "auto";        // "auto" (enhanced -> medium) | "off" | "low" (height fog) | "medium"
+                                            // (+ sun shafts, 24 taps) | "high" (48 taps)
+    std::optional<bool> lightShafts;        // sun shafts of medium / high; unset = on
+    std::string weather = "auto";           // "auto" (enhanced -> the unit's own rain / snow) | "off" | "rain" | "snow"
     float brightness = 1.0f;                // 0.5..2.0, post-pass gamma (out = in^(1/brightness)); 1 = neutral
 };
 struct GraphicsSettings {
@@ -36,13 +43,17 @@ struct GraphicsSettings {
     bool originalShaders = true; // TRU's translated shaders (docs/formats/SHADERS.md)
     int water = 0;      // render::WaterQuality: 0 original (TRU's own water shaders), 1 enhanced (ours)
     float brightness = 1.0f;
+    bool waterDetail = false;
+    int atmosphere = 0; // render::Atmosphere: 0 off .. 3 high
+    bool lightShafts = true;
+    int weather = 0;    // 0 off, 1 the unit's weather (game::unitWeather), 2 rain, 3 snow
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt or rtQuality value, explicit rt without the enhanced
 // preset, or brightness outside [0.5, 2.0].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
-// --rt, --rt-quality, --water original|enhanced, --brightness.
+// --rt, --rt-quality, --water original|enhanced, --water-detail, --atmosphere, --shafts on|off, --weather, --brightness.
 // false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 

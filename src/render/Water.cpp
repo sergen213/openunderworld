@@ -7,6 +7,8 @@
 
 #include <glm/gtc/matrix_inverse.hpp>
 
+#include <algorithm>
+
 namespace ou::render {
 
 namespace {
@@ -24,6 +26,9 @@ const char* kSplashFrag =
     ;
 const char* kUnderwater =
 #include "underwater.glsl.inc"
+    ;
+const char* kAtmosphere =
+#include "atmosphere.glsl.inc"
     ;
 } // namespace
 
@@ -57,6 +62,48 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     // TRU's seas and pools read blue-green; absorption removes red first (Beer-Lambert). [I]
     w.absorb = {0.045f, 0.22f, 0.27f, 1.0f / 2600.0f};
     w.shallow = {0.30f, 0.62f, 0.62f, 110.0f};
+
+    const glm::vec3 eye = camera.position;
+    // Water volumes, nearest first (box distance): the atmosphere ends its rays on their surfaces (the Enhanced
+    // water pass does not write depth) and the debug view marks them.
+    std::vector<std::pair<float, const WaterVolume*>> vols;
+    for (const auto& v : options.waterVolumes) {
+        const glm::vec3 lo(v.min[0], v.min[1], v.min[2]), hi(v.max[0], v.max[1], v.max[2]);
+        vols.push_back({glm::distance(glm::clamp(eye, lo, hi), eye), &v});
+    }
+    std::sort(vols.begin(), vols.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    const size_t nv = std::min<size_t>(vols.size(), 8);
+    for (size_t i = 0; i < nv; ++i) {
+        w.volumes[2 * i] = {vols[i].second->min[0], vols[i].second->min[1], vols[i].second->min[2], 0};
+        w.volumes[2 * i + 1] = {vols[i].second->max[0], vols[i].second->max[1], vols[i].second->max[2], 0};
+    }
+    const float debug = float(std::clamp(options.waterDebug, 0, kWaterDebugViews - 1));
+    w.detail = {options.waterDetail ? 1.0f : 0.0f, debug, options.waterDetail ? 6.0f : 0.0f, float(nv)};
+    if (options.waterDetail) { // the four lamps nearest the camera, reflected by the water [I radius cut]
+        std::vector<std::pair<float, const scene::Light*>> lamps;
+        for (const auto& l : env.lights)
+            if (l.radius > 0) lamps.push_back({glm::distance(glm::vec3(l.position[0], l.position[1], l.position[2]), eye), &l});
+        std::sort(lamps.begin(), lamps.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (size_t i = 0; i < std::min<size_t>(lamps.size(), 4); ++i) {
+            const auto& l = *lamps[i].second;
+            w.lamps[i] = {l.position[0], l.position[1], l.position[2], l.radius};
+            w.lampColor[i] = {l.color[0], l.color[1], l.color[2], 0};
+        }
+    }
+    // Atmosphere [I values, tuned on l2 jungle / l5 Jan Mayen / l4 pool]: haze over the whole view thinning with
+    // height above the camera's floor, plus a denser ground mist hugging the lowest water surface or the ground.
+    const int level = int(options.atmosphere);
+    if (level > 0) {
+        const float floorZ = nv ? std::min(eye.z, w.volumes[1].z) : eye.z - 250.0f;
+        w.haze = {1.0f / 60000.0f, 1.0f / 2200.0f, floorZ, float(level)};
+        const bool sun = env.valid && env.sun; // mist.w: 0 no sun, 1 sun scattering, 2 + shafts
+        const float flags = !sun ? 0.0f : options.lightShafts && level >= 2 ? 2.0f : 1.0f;
+        w.mist = {1.0f / 30000.0f, 1.0f / 300.0f, floorZ, flags};
+    }
+    using K = Weather::Kind;
+    if (options.weather.kind != K::None && options.weather.intensity > 0)
+        w.weather = {options.weather.kind == K::Rain ? 1.0f : 2.0f, std::clamp(options.weather.intensity, 0.0f, 1.0f),
+                     options.weather.wind[0], options.weather.wind[1]};
     return w;
 }
 
@@ -92,7 +139,7 @@ std::string splashVertexSource(bool vulkan) { return withVersion(kSplashVert, vu
 std::string splashFragmentSource(bool vulkan) { return withVersion(kSplashFrag, vulkan); }
 
 std::string underwaterPostSource(bool vulkan) {
-    return std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater;
+    return std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere;
 }
 
 } // namespace ou::render

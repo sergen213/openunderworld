@@ -44,15 +44,31 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     else if (g.water == "original") s.water = 0;
     else if (g.water == "auto") s.water = g.preset == "enhanced" ? 1 : 0;
     else throw std::runtime_error("water must be auto, original or enhanced, got " + g.water);
+    const bool enhanced = g.preset == "enhanced";
+    if (g.waterDetail == "high") s.waterDetail = true;
+    else if (g.waterDetail == "auto") s.waterDetail = enhanced && s.water == 1;
+    else if (g.waterDetail != "standard") throw std::runtime_error("water detail must be auto, standard or high, got " + g.waterDetail);
+    if (g.atmosphere == "auto") s.atmosphere = enhanced ? 2 : 0;
+    else if (g.atmosphere == "off") s.atmosphere = 0;
+    else if (g.atmosphere == "low") s.atmosphere = 1;
+    else if (g.atmosphere == "medium") s.atmosphere = 2;
+    else if (g.atmosphere == "high") s.atmosphere = 3;
+    else throw std::runtime_error("atmosphere must be auto, off, low, medium or high, got " + g.atmosphere);
+    s.lightShafts = g.lightShafts.value_or(true);
+    if (g.weather == "auto") s.weather = enhanced ? 1 : 0;
+    else if (g.weather == "off") s.weather = 0;
+    else if (g.weather == "rain") s.weather = 2;
+    else if (g.weather == "snow") s.weather = 3;
+    else throw std::runtime_error("weather must be auto, off, rain or snow, got " + g.weather);
     if (!(g.brightness >= 0.5f && g.brightness <= 2.0f)) throw std::runtime_error("brightness must be within 0.5..2.0");
     s.brightness = g.brightness;
     return s;
 }
 
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value) {
-    if (flag == "--shadows" || flag == "--fxaa" || flag == "--hdr") {
+    if (flag == "--shadows" || flag == "--fxaa" || flag == "--hdr" || flag == "--shafts") {
         if (value != "on" && value != "off") throw std::runtime_error(std::string(flag) + " wants on or off");
-        (flag == "--shadows" ? g.shadows : flag == "--fxaa" ? g.fxaa : g.hdr) = value == "on";
+        (flag == "--shadows" ? g.shadows : flag == "--fxaa" ? g.fxaa : flag == "--hdr" ? g.hdr : g.lightShafts) = value == "on";
     } else if (flag == "--shaders") {
         if (value != "original" && value != "generic") throw std::runtime_error("--shaders wants original or generic");
         g.originalShaders = value == "original";
@@ -60,6 +76,9 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     else if (flag == "--msaa") g.msaa = std::atoi(std::string(value).c_str());
     else if (flag == "--rt") g.rt = value;
     else if (flag == "--water") g.water = value;
+    else if (flag == "--water-detail") g.waterDetail = value;
+    else if (flag == "--atmosphere") g.atmosphere = value;
+    else if (flag == "--weather") g.weather = value;
     else if (flag == "--rt-quality") g.rtQuality = value;
     else if (flag == "--brightness") g.brightness = std::strtof(std::string(value).c_str(), nullptr);
     else return false;
@@ -68,7 +87,8 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
 
 const std::vector<std::string>& bindableActions() {
     static const std::vector<std::string> a = {"forward", "back", "left", "right", "walk", "sprint", "jump", "drop", "interact",
-                                               "draw", "fire", "aim", "switch", "weapon", "heal", "grapple", "save", "load", "hint", "answer", "pda"};
+                                               "draw", "fire", "aim", "switch", "weapon", "heal", "grapple", "save", "load", "hint", "answer", "pda",
+                                               "light", "grenade"};
     return a;
 }
 
@@ -94,7 +114,11 @@ InputConfig::InputConfig()
                {"load", {"F9"}},
                {"hint", {"T"}},    // PDA Hint / Answer (help on demand, locals.bin 168/169); keys are ours [I]
                {"answer", {"Y"}},
-               {"pda", {"1"}}} {} // tru.exe default: 1 opens the PDA [O]
+               {"pda", {"1"}},     // tru.exe default: 1 opens the PDA [O]
+               // tru.exe 0x487700 default keys: T = action 13, R = action 15, on pad d-pad left / down, the HUD's light /
+               // grenade items [I action order]; T is taken by "hint", so the light defaults to L.
+               {"light", {"L", "Pad dpleft"}},
+               {"grenade", {"R", "Pad dpdown"}}} {}
 
 Config load(const fs::path& path) {
     Config c;
@@ -125,6 +149,10 @@ Config load(const fs::path& path) {
                 if (g->contains(key)) *field = g->at(key).get<bool>();
             c.graphics.rt = g->value("rt", c.graphics.rt);
             c.graphics.water = g->value("water", c.graphics.water);
+            c.graphics.waterDetail = g->value("water_detail", c.graphics.waterDetail);
+            c.graphics.atmosphere = g->value("atmosphere", c.graphics.atmosphere);
+            c.graphics.weather = g->value("weather", c.graphics.weather);
+            if (g->contains("light_shafts")) c.graphics.lightShafts = g->at("light_shafts").get<bool>();
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
             if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
             c.graphics.brightness = g->value("brightness", c.graphics.brightness);
@@ -161,11 +189,13 @@ void save(const fs::path& path, const Config& c) {
         {"updates", {{"enabled", c.updatesEnabled}, {"channel", c.updateChannel}, {"manifest_url", c.updateManifestUrl}}},
     };
     auto& g = j["graphics"] = {{"preset", c.graphics.preset}, {"msaa", c.graphics.msaa}, {"rt", c.graphics.rt},
-                               {"water", c.graphics.water},
+                               {"water", c.graphics.water}, {"water_detail", c.graphics.waterDetail},
+                               {"atmosphere", c.graphics.atmosphere}, {"weather", c.graphics.weather},
                                {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness}};
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
     if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;
+    if (c.graphics.lightShafts) g["light_shafts"] = *c.graphics.lightShafts;
     j["controls"] = {{"mouse_sensitivity", c.controls.mouseSensitivity}, {"invert_y", c.controls.invertY},
                      {"bindings", c.controls.bindings}};
     if (path.has_parent_path()) fs::create_directories(path.parent_path());

@@ -524,6 +524,8 @@ public:
         std::memcpy(waterUbo_[frameIndex_].mapped, &wb, sizeof wb);
         if (enhancedWater) updateRipples(options);
         for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
+        // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water.
+        const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f;
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         drawOrder(meshes_, camera.position, order_);
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
@@ -552,7 +554,7 @@ public:
             begin.push_back(imageBarrier(msColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                          kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kColorOut,
                                          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT));
-        if (enhancedWater && msColor_.image)
+        if (needDepth && msColor_.image)
             begin.push_back(imageBarrier(opaqueDepth_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -575,8 +577,8 @@ public:
         depth.imageView = depth_.view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth.storeOp = enhancedWater ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        if (enhancedWater && msColor_.image) { // water samples the opaque depth: resolve it (SAMPLE_ZERO)
+        depth.storeOp = needDepth ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        if (needDepth && msColor_.image) { // water samples the opaque depth: resolve it (SAMPLE_ZERO)
             depth.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
             depth.resolveImageView = opaqueDepth_.view;
             depth.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -690,7 +692,7 @@ public:
             vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
         }
 
-        if (enhancedWater) { // second pass: water surfaces + splashes, then the debug lines below
+        if (needDepth) { // second pass: water surfaces + splashes (Enhanced water), then the debug lines below
             vkCmdEndRendering(cmd);
             recordWaterCopies(cmd);
             VkRenderingAttachmentInfo wc = color;
@@ -707,6 +709,8 @@ public:
             vkCmdSetScissor(cmd, 0, 1, &scissor);
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE); // the surface also reads from below
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
+        }
+        if (enhancedWater) {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 0, 1, &waterSets_[frameIndex_], 0,
                                     nullptr);
             for (uint32_t mi = 0; mi < meshes_.size(); ++mi) {
@@ -790,6 +794,7 @@ public:
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 1, 1, &postWaterSets_[frameIndex_], 0,
                                 nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 2, 1, &shadowSets_[frameIndex_], 0, nullptr);
 
         if (!options.overlay.empty() || !options.ui.empty()) {
             vkCmdSetViewport(cmd, 0, 1, &flipped);
@@ -1452,7 +1457,7 @@ private:
         };
         VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, wb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &wl, nullptr, &waterSetLayout_));
-        // Post: set 1 = WaterBlock UBO + opaque depth (underwater).
+        // Post: set 1 = WaterBlock UBO + opaque depth (underwater, atmosphere, weather); set 2 = the sun shadow set (shafts).
         const VkDescriptorSetLayoutBinding pb[2] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
@@ -1463,8 +1468,8 @@ private:
         VkPipelineLayoutCreateInfo wpl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &waterSetLayout_, 1,
                                        &modelPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &wpl, nullptr, &waterLayout_));
-        const VkDescriptorSetLayout postSets[2] = {setLayout_, postWaterSetLayout_};
-        pl.setLayoutCount = 2;
+        const VkDescriptorSetLayout postSets[3] = {setLayout_, postWaterSetLayout_, shadowSetLayout_}; // 2: sun shafts
+        pl.setLayoutCount = 3;
         pl.pSetLayouts = postSets;
         pl.pPushConstantRanges = &postPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &postLayout_));

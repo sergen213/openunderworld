@@ -1,5 +1,5 @@
 #version 460
-// Same as GL kPostFs: optional ACES tonemap (HDR) and classic FXAA, then the underwater effect.
+// Same as GL kPostFs: optional ACES tonemap (HDR) and classic FXAA, then the atmosphere / weather and the underwater effect.
 layout(location = 0) in vec2 vUv;
 layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; } pc;
 layout(set = 0, binding = 0) uniform sampler2D uScene;
@@ -25,8 +25,11 @@ vec3 fxaa(vec2 uv) {
     return (lb < lo || lb > hi) ? a : b;
 }
 #include "shaders/underwater.glsl"
+#define OU_SHADOW_SET 2
+#include "sun.glsl"
+#include "shaders/atmosphere.glsl"
 // Brightness: display gamma after tonemap / FXAA (1 = neutral), as the original game's brightness option.
 void main() {
     vec3 c = pow(pc.fxaa != 0 ? fxaa(vUv) : fetch(vUv), vec3(1.0 / pc.brightness));
-    oColor = vec4(ouUnderwater(c, vUv), 1.0);
+    oColor = vec4(ouUnderwater(ouAtmosphere(c, vUv), vUv), 1.0);
 }

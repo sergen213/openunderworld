@@ -411,9 +411,9 @@ TEST(Config, GraphicsPresets) {
         return ou::config::GraphicsConfig{std::move(preset), msaa, shadows, fxaa, hdr};
     };
     // Default = enhanced: 4x MSAA + shadows + rt auto -> shadows, 2 rays, original shaders, neutral brightness.
-    EXPECT_EQ(resolve({}), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f}));
-    EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1}));
-    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true, 1, 2, true, 1})); // overrides
+    EXPECT_EQ(resolve({}), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true, 1, 2, true, 1, 1.0f, true, 2, true, 1})); // overrides
     EXPECT_EQ(resolve(g("original")), (GraphicsSettings{1, false, false, false, 0})); // purist: rt auto -> off
     EXPECT_EQ(resolve(g("original", 8, true)), (GraphicsSettings{8, true, false, false, 0}));
     EXPECT_THROW(resolve(g("ultra")), std::runtime_error);
@@ -424,13 +424,13 @@ TEST(Config, GraphicsPresets) {
         c.rt = std::move(mode), c.rtQuality = std::move(quality);
         return c;
     };
-    EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1}));
-    EXPECT_EQ(resolve(rt("enhanced", "full", "high")), (GraphicsSettings{4, true, false, false, 2, 4, true, 1}));
-    EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "full", "high")), (GraphicsSettings{4, true, false, false, 2, 4, true, 1, 1.0f, true, 2, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1, true, 1, 1.0f, true, 2, true, 1}));
     EXPECT_THROW(resolve(rt("original", "shadows")), std::runtime_error);
     EXPECT_THROW(resolve(rt("original", "full")), std::runtime_error);
     EXPECT_EQ(resolve(rt("original", "auto")).rt, 0);
-    EXPECT_EQ(resolve(rt("enhanced", "auto", "high")), (GraphicsSettings{4, true, false, false, 1, 4, true, 1}));
+    EXPECT_EQ(resolve(rt("enhanced", "auto", "high")), (GraphicsSettings{4, true, false, false, 1, 4, true, 1, 1.0f, true, 2, true, 1}));
     auto bright = g("enhanced");
     bright.brightness = 0.2f;
     EXPECT_THROW(resolve(bright), std::runtime_error);
@@ -456,6 +456,7 @@ TEST(Config, GraphicsPresets) {
     ou::config::Config c;
     c.graphics = g("enhanced", 2, std::nullopt, true);
     c.graphics.rt = "shadows", c.graphics.rtQuality = "high", c.graphics.brightness = 0.75f;
+    c.graphics.atmosphere = "high", c.graphics.lightShafts = false;
     ou::config::save(p, c);
     const auto d = ou::config::load(p).graphics;
     EXPECT_EQ(d.preset, "enhanced");
@@ -463,12 +464,25 @@ TEST(Config, GraphicsPresets) {
     EXPECT_FALSE(d.shadows.has_value()); // unset stays unset: the preset decides
     EXPECT_EQ(d.fxaa, std::optional<bool>(true));
     EXPECT_FLOAT_EQ(d.brightness, 0.75f);
-    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false, 1, 4, true, 1, 0.75f}));
+    EXPECT_EQ(d.atmosphere, "high");
+    EXPECT_EQ(d.lightShafts, std::optional<bool>(false));
+    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false, 1, 4, true, 1, 0.75f, true, 3, false, 1}));
     std::ofstream(p) << R"({"graphics":{"brightness":0.2}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
     std::ofstream(p) << R"({"graphics":{"preset":"enhanced","msaa":5}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
     fs::remove_all(p.parent_path());
+    // Water detail, atmosphere, weather: auto = on for enhanced (medium atmosphere, the unit's weather), off for original.
+    auto fx = g("enhanced");
+    fx.waterDetail = "standard", fx.atmosphere = "high", fx.lightShafts = false, fx.weather = "snow";
+    EXPECT_EQ(resolve(fx), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, false, 3, false, 3}));
+    fx.atmosphere = "thick";
+    EXPECT_THROW(resolve(fx), std::runtime_error);
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--atmosphere", "low"));
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--weather", "off"));
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--water-detail", "high"));
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--shafts", "off"));
+    EXPECT_EQ(flags.lightShafts, std::optional<bool>(false));
 }
 
 TEST(Config, WaterQuality) {

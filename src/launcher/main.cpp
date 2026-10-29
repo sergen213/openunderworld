@@ -287,6 +287,7 @@ private:
     QPushButton* scanBtn_;
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
+    QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_;
     QSpinBox *width_, *height_;
     QDoubleSpinBox *fov_, *brightness_;
     QListWidget *pads_, *backups_;
@@ -396,6 +397,20 @@ private:
         shaders_->addItem("Original TRU shaders");
         shaders_->addItem("Generic");
         shaders_->setCurrentIndex(g.originalShaders == std::optional(false) ? 1 : 0);
+        // Enhanced water / atmosphere / weather (docs/RENDERING.md); "auto" follows the preset.
+        auto choice = [](std::initializer_list<std::pair<const char*, const char*>> items, const std::string& v) {
+            auto* c = new QComboBox;
+            for (auto [label, data] : items) c->addItem(label, data);
+            c->setCurrentIndex(std::max(0, c->findData(q(v))));
+            return c;
+        };
+        water_ = choice({{"Preset default", "auto"}, {"Enhanced", "enhanced"}, {"Original", "original"}}, g.water);
+        waterDetail_ = choice({{"Preset default (high)", "auto"}, {"High", "high"}, {"Standard", "standard"}}, g.waterDetail);
+        atmosphere_ = choice({{"Preset default (medium)", "auto"}, {"Off", "off"}, {"Low: height fog", "low"},
+                              {"Medium: + sun shafts", "medium"}, {"High: finer shafts", "high"}}, g.atmosphere);
+        shafts_ = overrideCombo(g.lightShafts);
+        weather_ = choice({{"Preset default (level's rain / snow)", "auto"}, {"Off", "off"}, {"Always rain", "rain"},
+                           {"Always snow", "snow"}}, g.weather);
         brightness_ = new QDoubleSpinBox;
         brightness_->setRange(0.5, 2.0);
         brightness_->setSingleStep(0.05);
@@ -444,6 +459,11 @@ private:
         f->addRow("MSAA", msaa_);
         f->addRow("Sun shadows", shadows_);
         f->addRow("Shaders", shaders_);
+        f->addRow("Water", water_);
+        f->addRow("Water detail", waterDetail_);
+        f->addRow("Atmosphere", atmosphere_);
+        f->addRow("Sun shafts", shafts_);
+        f->addRow("Weather", weather_);
         f->addRow("Brightness", brightness_);
         f->addRow("", new QLabel("Like the original game's brightness option; 1.00 = neutral."));
         return w;
@@ -777,6 +797,11 @@ private:
         g.shadows = overrideValue(shadows_);
         g.originalShaders = shaders_->currentIndex() == 1 ? std::optional(false) : std::nullopt; // unset = original
         g.brightness = float(brightness_->value());
+        g.water = s(water_->currentData().toString());
+        g.waterDetail = s(waterDetail_->currentData().toString());
+        g.atmosphere = s(atmosphere_->currentData().toString());
+        g.lightShafts = overrideValue(shafts_);
+        g.weather = s(weather_->currentData().toString());
         const auto& actions = ou::config::bindableActions();
         for (int i = 0; i < int(actions.size()); ++i) {
             auto& names = cfg_.controls.bindings[actions[i]];

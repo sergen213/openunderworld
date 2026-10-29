@@ -451,6 +451,20 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
 - [V] Everything except the tool-only `magic` field matches all 1056 DRMs in our install ([CONTAINERS §4](formats/CONTAINERS.md#4-drm-version-19)).
 - The `tr7ae_*` templates (object, mul, wave, raw image, fxanim) document the LAU predecessors of TR8 formats. Use them as hints only.
 
+### 8.6 modern-wow-renderer (no licence) — inspiration only
+
+- https://github.com/Corfirean/modern-wow-renderer (read 2026-10-28): a D3D9 proxy renderer for the WoW 3.3.5
+  client. It has **no licence file, so all rights are reserved**: no code, shader text or parameter tables were
+  copied. Its headers (`WaterEffect.h`, `WaterHighlight.h`, `WaterReflection.h`, `WaterDiagnostics.h`,
+  `WeatherVisuals.h`, `VolumeEffects.h`, `VolumeIntegration.h`, `WEATHER-VISUALS-PLAN.md`, `docs/`) were read only
+  to list the techniques it implements; ours are written independently ([RENDERING](RENDERING.md) "Water detail",
+  "Atmosphere", "Weather", where the gap list compares the two).
+- Techniques taken as ideas: noise-based swell and counter-rotated flow normals, sun glint with glitter variation
+  and screen-space sun occlusion, thickness-tested SSR with border fade and an environment fallback, open water
+  without a floor treated as deep, direct reflections of local lights, a water mask / surface depth so the
+  atmosphere stops at the water surface, water debug views, analytic two-layer height fog with a
+  Henyey-Greenstein lobe, screen-space sun shafts, depth-tested precipitation layers, rain splashes.
+
 ---
 
 ## Open questions

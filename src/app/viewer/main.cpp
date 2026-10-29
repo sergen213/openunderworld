@@ -47,6 +47,7 @@ struct Options {
     bool showCollision = false; // --show-collision: collision wireframe + markup of --drm (unit DRMs)
     ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr (or --config)
     ou::config::GraphicsSettings gfx;    // resolved
+    int waterDebug = 0; // --water-debug: Enhanced water debug view (render::kWaterDebugViews)
 };
 
 void usage() {
@@ -57,7 +58,8 @@ void usage() {
                  "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list] [--show-collision]\n"
                  "                 [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off]\n"
                  "                 [--hdr on|off] [--shaders original|generic] [--rt auto|off|shadows|full] [--rt-quality low|medium|high]\n"
-                 "                 [--water original|enhanced]\n"
+                 "                 [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
+                 "                 [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather off|rain|snow]\n"
                  "                 [--brightness 0.5..2.0] [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
@@ -102,6 +104,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--height") o.height = std::atoi(v);
         else if (a == "--fov") o.fov = float(std::atof(v));
         else if (a == "--frames") o.frames = std::atoi(v);
+        else if (a == "--water-debug") o.waterDebug = std::atoi(v);
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--anim") o.anim = v;
         else if (a == "--anim-time") o.animTime = std::atof(v);
@@ -503,6 +506,11 @@ int main(int argc, char** argv) {
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
         fo.brightness = opt.gfx.brightness;
         fo.water = ou::render::WaterQuality(opt.gfx.water); // no ripple sim / volumes in the viewer
+        fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
+        fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;
+        if (opt.gfx.weather >= 2) // the viewer has no unit weather: only an explicit --weather rain|snow
+            fo.weather = {opt.gfx.weather == 2 ? ou::render::Weather::Kind::Rain : ou::render::Weather::Kind::Snow,
+                          opt.gfx.weather == 2 ? 0.8f : 1.0f};
         renderer->drawFrame(cam, {w, h}, fo);
         if (frame == kTimingWarmup) timingStart = SDL_GetTicksNS();
         ++frame;
