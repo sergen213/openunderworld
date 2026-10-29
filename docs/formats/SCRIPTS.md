@@ -239,7 +239,7 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   planner node of the unit (LEVELS.md "Planner nodes") → `ai::Enemies::guard` (GAMEPLAY.md "Mercs");
   `generatorbase` (0x7B4B60) 1/2 Spawn, 3 Enable / 4 Disable (generator flag 0x84 bit 0, read by the update 0x781510),
   5 kill spawns, 6 spawn count → `ai::Enemies::generatorNative`; `health` 1/2 on an enemy's own script damage it;
-  `modifiable` 7 (Post 0x2E, receivers [U]); `uigamedata` 1 (0x60D630 returns 0) and 14 (a UI byte).
+  `modifiable` 7 (Post 0x2E: enter an anim graph state, docs/formats/ANIMGRAPH.md); `uigamedata` 1 (0x60D630 returns 0) and 14 (a UI byte).
   `uberobjectbase` 1 takes the command member as its argument (thunk 0x79D070); a command member is {object id,
   command word}. Uber command targets of type 0 are no-ops (switch 0x4D7680), which the l1 Kraken tentacles use.
 - [O] A caller that discards a return value pushes no result address (l3_chapel soundvolumes calling

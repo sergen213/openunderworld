@@ -352,7 +352,8 @@ nlohmann::json stateOf(const Object& o) {
         }
     }
     if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && !o.dead && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline &&
-        (!o.joint || o.joint->position == 0) && !o.loose) return nullptr; // birth state
+        (!o.joint || o.joint->position == 0) && !o.loose && (!o.graph || (o.graph->state == o.graph->initial && o.graph->transition < 0)))
+        return nullptr; // birth state
     nlohmann::json out = {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
             {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"dead", o.dead}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
             {"scriptStrings", std::move(strings)}, {"scriptProperties", std::move(properties)}};
@@ -360,6 +361,7 @@ nlohmann::json stateOf(const Object& o) {
         out["spline"] = {s->t, s->dir, s->mode, s->playing, s->toKey, s->clip, s->target, s->from, s->to, s->count};
     if (o.joint && o.joint->position != 0) out["joint"] = o.joint->position;
     if (o.loose) out["loose"] = true;
+    if (const auto& g = o.graph) out["graph"] = {g->state, g->transition, g->frames, g->clip, g->t, g->loop};
     return out;
 }
 void applyState(Object& o, const nlohmann::json* s) {
@@ -376,6 +378,20 @@ void applyState(Object& o, const nlohmann::json* s) {
         auto& j = o.joint ? *o.joint : o.joint.emplace();
         j.position = p;
         for (auto& r : j.ranges) r.inside = r.lo <= p && p <= r.hi;
+    }
+    if (auto& g = o.graph) { // the intro's state (Runtime::addUnit), or the saved one
+        g->state = g->initial, g->transition = -1, g->frames = 0, g->clip = -1, g->t = 0, g->loop = false;
+        const auto* G = g->set->graph ? &*g->set->graph : nullptr;
+        if (const auto a = s && s->is_object() ? s->find("graph") : nlohmann::json::const_iterator{}; s && s->is_object() && a != s->end() &&
+            a->is_array() && a->size() == 6 && G) {
+            const int state = (*a)[0], transition = (*a)[1], clip = (*a)[3];
+            if (state >= 0 && size_t(state) < G->states.size()) g->state = state;
+            if (transition >= 0 && size_t(transition) < G->transitions.size()) g->transition = transition;
+            g->frames = (*a)[2], g->t = (*a)[4], g->loop = (*a)[5];
+            if (clip >= 0 && size_t(clip) < g->set->clips.size()) g->clip = clip;
+        } else if (G && G->states[size_t(g->state)].anim >= 0) {
+            g->clip = G->states[size_t(g->state)].anim, g->loop = G->states[size_t(g->state)].flags & 2;
+        }
     }
     if (!s || !s->is_object()) return;
     o.state = s->value("state", 0), o.t = s->value("t", 0.0);
@@ -579,6 +595,32 @@ void Runtime::addUnit(const UnitRef& u) {
             o.clips = set->clips;
             o.clipNames = set->names;
             o.resetAfter = set->resetAfter;
+        }
+        // Objects whose scripts reach their anim component (a `modifiable` / `animated` member) run its state graph
+        // (docs/formats/ANIMGRAPH.md). [O] The intro's physob data word 15 picks the initial state (record index; <= 0:
+        // the first), 0x6B5890 message 0x23 -> 0x6B4440 -> 0x6A5660; its vt 20 is not sent [I: no script yet].
+        if (o.kind == Kind::Scripted && o.script) {
+            bool uses = false;
+            for (const ScriptType* t = program->type(o.script->typeId); t && !uses; t = program->type(t->superId))
+                for (const Member& m : t->members) {
+                    const char* native = program->nativeName(m.typeId);
+                    uses |= !std::strcmp(native, "modifiable") || !std::strcmp(native, "animated");
+                }
+            if (const auto set = uses ? graphSet(o.name) : nullptr) {
+                auto& g = o.graph.emplace();
+                g.set = set;
+                if (set->graph && in.data) {
+                    const auto& d = u.drm->sections.at(in.data->section).data;
+                    int32_t first = 0;
+                    if (in.data->offset + 0x40 <= d.size()) std::memcpy(&first, d.data() + in.data->offset + 0x3C, 4);
+                    if (first > 0 && size_t(first) < set->graph->states.size()) g.initial = first;
+                }
+                g.state = g.initial;
+                if (set->graph && set->graph->states[size_t(g.state)].anim >= 0) {
+                    const auto& s = set->graph->states[size_t(g.state)];
+                    g.clip = s.anim, g.loop = s.flags & 2;
+                }
+            }
         }
         // [I] Ship hall doors without a script (chapter 6's l6_ship_upper_hallway_a/b copies of the l1 doors): their
         // volumes' door calls ISTYPE-fail on them, so nothing can open them, yet chapter 6 walks through. They stand
@@ -924,10 +966,8 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             // unlockable (bind 0x7AD470): 1 IsUnlocked (0x5DB8A0), 2 Unlock (0x5D6600) the extras item; ours has no extras.
-            // animated 1(animation): plays a decorative object's animation member (l4_traprooms plate 5717 -> glyph 5724);
-            // not drawn [I].
             for (const char* passive : {"soundgroup", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect", "reverb",
-                                        "unlockable", "animated"})
+                                        "unlockable"})
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
             // gamebase 32 (0x797E50 -> 0x714DE0) frees a global effect list at a cinematic's start (cinematic_object base
             // vt 45 event 0); no effect on play.
@@ -1016,10 +1056,69 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(0);
                 return true;
             }
+            if ((!self || !self->program) && !std::strcmp(name, "animated")) { nc.result = vm::Value::scalar(0); return true; }
             if (!self || !self->program) return false;
             const auto program = self->program;
             const uint32_t off = nc.receiver.offset;
             auto field = [&]() -> uint32_t& { return self->fields[off]; };
+            // modifiable (bind 0x7AC970) / animated on an object with an anim graph: the member is its owner's anim
+            // component (Instance +0x294; docs/formats/ANIMGRAPH.md). 0 same component (0x4A52E0), 1 post 0x30 (two
+            // floats, not modelled), 2 the state's flag 0x40 (query 0xED), 3 stimulus(stimulus, value) (0x4AC390:
+            // message 0x33, value < 0 = any), 4 start transition by id (0x32), 5 / 6 running transition id or -1 (0xE9),
+            // 7 enter state by id (0x2E), 8 state id (0xE8). animated 1(animation {object, list index}) plays the clip.
+            if (Object* owner = (!std::strcmp(name, "modifiable") || !std::strcmp(name, "animated")) ? findMut(self->uid) : nullptr;
+                owner && owner->graph && (owner->graph->set->graph || name[0] == 'a')) {
+                auto& g = *owner->graph;
+                const auto memberValue = [&](const vm::Value& v, bool second) -> std::optional<uint32_t> {
+                    if (v.kind != vm::Value::Kind::Member) return v.bits;
+                    const auto holder = resolve(v.uid);
+                    if (!holder || !holder->program) return std::nullopt;
+                    if (const auto f = holder->fields.find(v.offset + (second ? 4 : 0)); f != holder->fields.end()) return f->second;
+                    const Member* m = holder->program->member(holder->typeId, v.offset);
+                    return m ? (second ? m->init2 : m->init) : std::nullopt;
+                };
+                if (name[0] == 'a') {
+                    if (nc.function != 1 || nc.args.size() != 1) return false;
+                    const auto index = memberValue(nc.args[0], true);
+                    if (index && *index < g.set->clips.size()) g.clip = int(*index), g.t = 0, g.loop = false;
+                    return true;
+                }
+                const auto& G = *g.set->graph;
+                switch (nc.function) {
+                case 0:
+                    if (nc.args.size() != 1) return false;
+                    nc.result = vm::Value::scalar(nc.args[0].kind == vm::Value::Kind::Member && nc.args[0].uid == self->uid);
+                    return true;
+                case 1: return true;
+                case 2: nc.result = vm::Value::scalar((G.states[size_t(g.state)].flags & 0x40) != 0); return true;
+                case 3: {
+                    if (nc.args.size() != 2) return false;
+                    const auto mask = memberValue(nc.args[0], false);
+                    if (!mask) return false;
+                    const int32_t value = int32_t(nc.args[1].bits);
+                    graphStimulus(owner->uid, *mask, value < 0 ? -1.0f : float(value));
+                    return true;
+                }
+                case 4: case 7: {
+                    if (nc.args.size() != 1) return false;
+                    const int i = nc.function == 4 ? G.transitionById(int32_t(nc.args[0].bits)) : G.stateById(int32_t(nc.args[0].bits));
+                    if (i >= 0) nc.function == 4 ? graphBegin(owner->uid, i) : graphEnter(owner->uid, i);
+                    return true;
+                }
+                case 5: case 6:
+                    nc.result = vm::Value::scalar(uint32_t(g.transition >= 0 ? int32_t(G.transitions[size_t(g.transition)].index) : -1));
+                    return true;
+                case 8: { // [I] a running transition reports its target (the exe: the state it left, query 0xE8 = comp
+                    // +4); l3_chapel's plate lights fire 4818 and checks it in the same handler (vt 55 -> pillars vt 60)
+                    const int t = g.transition >= 0 ? G.transitions[size_t(g.transition)].target : -1;
+                    nc.result = vm::Value::scalar(uint32_t(int32_t(G.states[size_t(t >= 0 ? t : g.state)].index)));
+                    return true;
+                }
+                default: return false;
+                }
+            }
+            // animated 1 on an object without clips (no skeleton) plays nothing.
+            if (!std::strcmp(name, "animated")) { nc.result = vm::Value::scalar(0); return true; }
             if (!std::strcmp(name, "clock") && nc.receiver.kind == vm::Value::Kind::Member) {
                 Clock& c = clocks_[(uint64_t(uint32_t(self->uid)) << 32) | off]; // tru.exe 0x4A3450..0x4A34F0, update 0x4A3960
                 switch (nc.function) {
@@ -1559,6 +1658,99 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
     }
 }
 
+// Anim state graph and clips of an object (Object::GraphSet), parsed once per object name. Null without a skeleton.
+std::shared_ptr<const Object::GraphSet> Runtime::graphSet(const std::string& name) {
+    if (const auto it = graphSets_.find(name); it != graphSets_.end()) return it->second;
+    auto& slot = graphSets_[name];
+    auto bytes = bigfile_ ? bigfile_->read("pc-w\\" + name + ".drm") : std::nullopt;
+    if (!bytes) return slot;
+    const auto drm = cdc::parseDrm(std::move(*bytes));
+    auto set = std::make_shared<Object::GraphSet>();
+    try { set->graph = formats::loadAnimGraph(drm); } catch (const FormatError& e) {
+        std::fprintf(stderr, "script: %s anim graph: %s\n", name.c_str(), e.what());
+    }
+    uint32_t model = 0;
+    for (const uint32_t id : formats::objectRenderModels(drm))
+        if ((model = id)) break;
+    std::vector<std::string> warnings;
+    for (auto& sk : anim::decodeSkeletons(drm, warnings))
+        if (model && sk.renderModelId == model) set->skeleton = std::make_shared<scene::Skeleton>(std::move(sk));
+    if (!set->skeleton) return slot;
+    for (const auto& e : anim::animList(drm)) {
+        auto& clip = set->clips.emplace_back();
+        for (const auto& s : drm.sections)
+            if (s.type == cdc::SectionType::Animation && s.id == e.animId) {
+                try { clip = anim::decodeClip(s.data); } catch (const FormatError&) {}
+                break;
+            }
+    }
+    return slot = std::move(set);
+}
+
+// 0x6A5660: the state's clip starts (once, or looping with flag 2; none keeps the pose), its timer restarts, then the
+// script's vt 20 (instance prototype 33, 0x799060) gets the state id.
+void Runtime::graphEnter(int32_t uid, int state) {
+    Object* o = findMut(uid);
+    if (!o || !o->graph || !o->graph->set->graph) return;
+    auto& g = *o->graph;
+    const auto& s = g.set->graph->states[size_t(state)];
+    g.state = state, g.transition = -1, g.frames = 0;
+    if (s.anim >= 0) g.clip = s.anim, g.t = 0, g.loop = s.flags & 2;
+    const auto arg = vm::Value::scalar(uint32_t(int32_t(s.index)));
+    callback(uid, "instance", 33, std::span(&arg, 1));
+}
+
+// 0x6A5C50 / 0x6B3DD0: the transition's clip plays once (its end enters the target, World ticks: tickGraph); vt 19
+// (instance prototype 32, 0x799020) gets its id. Without a clip the target is entered at once.
+void Runtime::graphBegin(int32_t uid, int transition) {
+    Object* o = findMut(uid);
+    if (!o || !o->graph || !o->graph->set->graph) return;
+    auto& g = *o->graph;
+    const auto& t = g.set->graph->transitions[size_t(transition)];
+    g.transition = transition;
+    if (t.anim >= 0) g.clip = t.anim, g.t = 0, g.loop = false;
+    const auto arg = vm::Value::scalar(uint32_t(int32_t(t.index)));
+    callback(uid, "instance", 32, std::span(&arg, 1));
+    o = findMut(uid);
+    if (o && o->graph && o->graph->transition == transition && t.anim < 0) graphEnter(uid, t.target < 0 ? o->graph->state : t.target);
+}
+
+// 0x6B3DD0: only between transitions (the accepted mask is cleared while one runs); the first of the state's
+// transitions whose mask matches and whose threshold the value reached starts. ponytail: the exe draws among several
+// eligible ones with its LCG (0x48CA30) and has a second window (+0x10) no route data uses; ours takes the first.
+bool Runtime::graphStimulus(int32_t uid, uint32_t mask, float value) {
+    const Object* o = find(uid);
+    if (!o || !o->graph || !o->graph->set->graph || o->graph->transition >= 0) return false;
+    const auto& G = *o->graph->set->graph;
+    for (const uint32_t ti : G.states[size_t(o->graph->state)].out) {
+        const auto& t = G.transitions[ti];
+        if ((t.mask & mask) && t.events.empty() && (value < 0 || value >= t.after)) {
+            graphBegin(uid, int(ti));
+            return true;
+        }
+    }
+    return false;
+}
+
+// Per tick: the clip advances; a transition ends with its clip; else the timer stimulus (0x8000) carries the frames
+// spent in the state (0x6B4390).
+void Runtime::tickGraph(int32_t uid) {
+    Object* o = findMut(uid);
+    if (!o || !o->graph) return;
+    auto& g = *o->graph;
+    const auto& clips = g.set->clips;
+    if (g.clip >= 0) g.t += kDt;
+    if (!g.set->graph) return;
+    if (g.transition >= 0) {
+        const bool done = g.clip < 0 || size_t(g.clip) >= clips.size() || g.t >= clips[size_t(g.clip)].durationSeconds();
+        const int target = g.set->graph->transitions[size_t(g.transition)].target;
+        if (done) graphEnter(uid, target < 0 ? g.state : target);
+        return;
+    }
+    g.frames += float(kDt * 30);
+    graphStimulus(uid, formats::kStimulusTimer, g.frames);
+}
+
 // 0x5CF260 at 60 Hz: time advances dir * 30 frames/s (timeMult); a key target (flag 1) stops there, the clip range
 // (flag 2, else the whole path) ends per mode: once stops, loop wraps, loop-count wraps `count` times, ping-pong
 // turns. Then 0x5CC8F0 calls vt 40 (entered) / vt 41 (left) for each range of fn 19 the time crossed, with the
@@ -1717,6 +1909,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     std::erase_if(threads_, [&](const auto& t) { return !t.second->active() || !instance(t.first); });
     for (auto& o : objects_) {
         if (o.spline) tickSpline(o);
+        if (o.graph) tickGraph(o.uid);
         for (size_t i = 0; i < o.fibers.size(); ++i) { // copy: a STATE may end the object's threads
             const auto fiber = o.fibers[i];
             if (!fiber->tick(float(kDt))) recordFailure(o.uid, o.name, *fiber);
@@ -1795,14 +1988,37 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             break;
         }
         case Kind::Scripted:
+            // Lara uses an anim-graph object whose state leaves by the use stimulus (buttress mounts; tru.exe messages
+            // 0x166 / 0x168 -> 0x6B4090 mask 1) [I: reach as switches', measured from any bone's bind position].
+            if (pressed && o.graph && o.graph->set->graph && o.graph->transition < 0 && !o.hidden) {
+                const auto& G = *o.graph->set->graph;
+                const bool usable = std::ranges::any_of(G.states[size_t(o.graph->state)].out,
+                                                        [&](uint32_t ti) { return G.transitions[ti].mask & formats::kStimulusUse; });
+                for (const vec3 q : usable ? usePoints(o) : std::vector<vec3>{})
+                    if (const float d = glm::length(vec2(q - in.pos)); d < best && std::abs(q.z - in.pos.z) < kReachHeight)
+                        best = d, useSwitch = &o;
+            }
             break;
         }
     }
-    if (useSwitch) {
+    if (useSwitch && useSwitch->graph) {
+        graphStimulus(useSwitch->uid, formats::kStimulusUse, 0);
+    } else if (useSwitch) {
         useSwitch->state = useSwitch->clips ? 1 : 2, useSwitch->t = 0;
         if (useSwitch->state == 2) fire(EventKind::Use, *useSwitch);
     }
     hasLast_ = true, lastPos_ = in.pos, interactHeld_ = in.interact;
+}
+
+std::vector<vec3> Runtime::usePoints(const Object& o) {
+    std::vector<vec3> out;
+    if (!o.graph || !o.graph->set->skeleton) return out;
+    std::vector<vec3> bind;
+    for (const auto& b : o.graph->set->skeleton->bones) {
+        bind.push_back(vec3(b.pivot[0], b.pivot[1], b.pivot[2]) + (b.parent >= 0 ? bind[size_t(b.parent)] : vec3(0)));
+        out.push_back(o.pos + rotation(o.rot) * bind.back());
+    }
+    return out;
 }
 
 std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
@@ -1814,6 +2030,12 @@ std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
     if (o.offset != vec3(0)) // a fallen or carried body: world displacement in model space, as a block
         return std::vector<glm::mat4>{glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset) * o.body};
     if (o.body != glm::mat4(1)) return std::vector<glm::mat4>{o.body};
+    if (o.graph) {
+        const auto& g = *o.graph;
+        if (g.clip < 0 || size_t(g.clip) >= g.set->clips.size() || !g.set->clips[size_t(g.clip)].keyCount) return std::nullopt;
+        const auto& sk = *g.set->skeleton;
+        return anim::skinPalette(sk, anim::worldMatrices(sk, anim::sample(g.set->clips[size_t(g.clip)], sk, g.t, g.loop)));
+    }
     if (!o.clips || !o.skeleton || o.state == 0) return std::nullopt;
     const auto& clip = (*o.clips)[o.state == 1 ? 0 : 1];
     const auto world = anim::worldMatrices(*o.skeleton, anim::sample(clip, *o.skeleton, o.t, o.state == 2));

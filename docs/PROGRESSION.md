@@ -70,7 +70,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 3 | l3_main_hall | plane 4128 (cross) | 160 + 170 → chapter 4 | pass |
 | 4 | l4_trailstart | grapple lever post 6695 (pull) | lever | **fail** in the sweep (handler runs, nothing visible changes) |
 | 4 | l4_ballcourt | pole lever 6502 (use), block 6504 (push) | door joint 6505, block | pass |
-| 4 | l4_ballcourt | autoreset switch 5469 (use) | temple reveal 5464 | **fail** (no visible change) |
+| 4 | l4_ballcourt | autoreset switch 5469 (use) | temple reveal 5464 | pass (`ProgressionReal.TempleRevealReopens`: anim graph states 0 → 3 → 5 → 6 → 7, docs/formats/ANIMGRAPH.md) |
 | 4 | l4_staircase_upper/xibalba | volumes/planes 6046, 6076, 6078, 6039 | hallway ramps 6045/6036, trap door 5702 | pass |
 | 4 | l4_traprooms | plates 5717/5718 (stand on / scepter weight 5883) | seal 5701 | pass (`ProgressionReal.TraproomsSeal`, after the trap rooms: sticky +268 raised, int +240 = 4): each plate's vt 6 sticky notification counts it on the seal (+304), both held run vt 58 |
 | 4 | l4_traprooms | block 5884 (push), planes 5900/5901/5904/5914/5915 | block, thrones, door 5702 | pass |
@@ -86,7 +86,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 7 | l7_arctic_sea | switch 9103 (use) | seafloor drawbridge 9116 | pass (uber transition 0 starts; was lowered at load by puzzle_cheat_button 9279) |
 | 7 | l7_helheim01 | rune switches 8993-8995 | dispatcher 8997 | not asserted (dispatcher only) |
 | 7 | l7_yggdrasil(_end) | volumes 8804, 8303/8312, 8323-8329 | cinematics 8773/8261, spline mover 8404 | pass |
-| 7 | l7_yggdrasil_end | buttresses A (8360 vt 62) / B-D (mounts 8362-8364 vt 54), each revealed by 8296-8298 | 330_hel_thralls (C), 340_hel_endgame (last) → l7_monastery 342_hel_endgame → end game save, credits movie | pass (`ProgressionReal.EndgameCredits`; the breaks are called directly: the mounts break on their modifiable reaching 3 (vt 20), set by the endgame gun's anim graph [U]) |
+| 7 | l7_yggdrasil_end | buttresses A (8360 vt 62) / B-D (mounts 8362-8364 vt 54), each revealed by 8296-8298 | 330_hel_thralls (C), 340_hel_endgame (last) → l7_monastery 342_hel_endgame → end game save, credits movie | pass (`ProgressionReal.EndgameCredits`, played: arena volume 8303 → 320_hel_boss breaks A and locks the mounts (anim graph state 2); Lara's use breaks each mount (stimulus 1 → state 3, vt 20); no handler called directly) |
 | 1 | l1_kraken_room | column (gear 32 section 12, shot) then switch 57 (use) | column falls (trigger 15), gear 32 turns | pass (`ProgressionReal.KrakenColumnShot`; World::uberShot) |
 
 ## Fixes in this pass (each covered by `CriticalGates` / `ChaptersReal`)
@@ -119,7 +119,7 @@ Portal order from the start unit; level changes not made by portals are named.
   work, and 2393 turns out to be only a camera-anchor helper (its instanceref +20 is unset), not a gate. The no-change handlers:
   l1 57 is the "attempt" reaction until the column (gear 32 section 12, physics-limit trigger 15 when shot) has fallen
   [shooting uber physics not modelled]; l4 5469 is the Xibalba-exit reopening (sticky 300), which drives `ca_ani_*`
-  modifiable / stimulus animations [not modelled]; l5 7188 / 7189 need switch 7192 pulled first; l7 9103's message reaches
+  anim graph stimuli (now modelled, below); l5 7188 / 7189 need switch 7192 pulled first; l7 9103's message reaches
   the unit script and commands drawbridge 9116 [I: the sweep still shows no change, unresolved]. Previously listed as: VM opcode 0x34 DBOUNDS (l2_norsehub
   2393); levers / switches whose handlers run but change nothing visible (l1 57, l4 5469, l5 7188/7189, l7 9103);
   l4_traprooms seal 5701 (both plates held: one weight source missing). (gates 4) Solved: sticky Set notifications
@@ -130,19 +130,20 @@ Portal order from the start unit; level changes not made by portals are named.
   and `unlockablemovie` 3 "credits" (0x79DE20 -> 0x778F50 -> 0x5D6A80: Movies\credits.bik, then the frontend);
   Runtime::takeMovies -> ou-game plays it, marks the game finished and opens the main menu (TREASURE HUNT). Bound on the
   way: `larabase` 31 / 61 (0x776EF0 INSTANCE message 0xC / 0x778060 Lara clock fields), `cinematic` 1 (Play, 0x4ADB50),
-  `hudscreenmgr` 4, `uigamedata` 43 (debug print), `uisavemenu` 9 (save header byte +0x1F9). Open: what breaks the
-  buttresses in play: the mounts' vt 20 / 19 run when their `modifiable` reaches 3, which the endgame gun 8401 / its
-  messages (gun_state_message_channel, `modifiable` 3 / 7 = INSTANCE messages 0x33 stimulus / 0x2E to the anim graph) set
-  [U: anim graphs not modelled]; 320_hel_boss (8261) by the unit script on entering.
+  `hudscreenmgr` 4, `uigamedata` 43 (debug print), `uisavemenu` 9 (save header byte +0x1F9). Buttresses in play
+  (anim graphs, below): arena volume 8303 plays 320_hel_boss, whose handler pushes the Thor towers; their events lock
+  mounts 8362-8364 (state 2); Lara's use breaks each (stimulus 1 → state 3, vt 20). The endgame gun 8401 only reacts
+  to broken mounts; it does not break them (the earlier [U] guess was wrong).
 - (ending) `uberobjectbase` 3 (0x79D0D0 -> 0x4A4490) = AttachTo(anchor value, two words): the uber instance goes to the
   anchor's vtable slot 6 (INSTANCE link 0x5B4DE0 at its marker); passive for us (one model per uber object). The ~30 l1
   ship props (life preservers, lockers, cases, powerbox) and the endgame gun now run their constructors to the end.
 - (ending) Shooting uber physics [I]: a bullet striking an uber object's collider (World::fire -> World::uberShot) starts
   the trigger-15 transition of every section resting in a state with action 20 (the physics-limit trigger, 0x4D5B10):
   l1 gear 32's column falls and switch 57 turns the gear. No Havok impulse.
-- (ending) `ca_ani_*` objects (l4 temple reveal 5464 behind switch 5469) are anim-graph objects, not uber: no uber record;
-  `modifiable` 3 (0x4AC390) / 7 (0x4A5A90) post INSTANCE messages 0x33 (stimulus) / 0x2E (value) to their animation state
-  graph (animation lists "LeftOpeningRightClosed", "RevealOpen", "Reset", ...). Not modelled [U: graph format], so 5469's
-  reopening still shows no change; the chapter 4 route passes without it (plane 6410, 5468).
+- (anim graphs) `ca_ani_*` objects, buttress mounts, flame traps and crates are anim-graph objects, not uber: physical
+  class 6's state machine (docs/formats/ANIMGRAPH.md; no object uses the cdc AnimGraph). States / transitions play
+  their clips, the timer stimulus runs each tick, Lara's use is stimulus 1, scripts hear vt 19 / 20; `modifiable` 0-8
+  and `animated` 1 are bound. 5469 now opens the temple (0 → 3 → 5 → 6 → 7). [I] modifiable 8 reports a running
+  transition's target (needed by l3_chapel fire 4818 / the shadow pillars).
 - GateSweep counts a target changed at any tick of its 600-tick window (a hazard's swing back to rest, l1_kraken_room
   tentacles 494-496, counted as unchanged before).

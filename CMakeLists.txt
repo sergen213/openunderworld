@@ -175,7 +175,7 @@ endif()
 
 # ---- ou_formats: PCD9 textures, render models, terrain -> ou::scene; ou-asset CLI ----------
 add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/formats/Scene.cpp src/formats/Level.cpp
-            src/formats/Shader.cpp src/formats/Uber.cpp)
+            src/formats/Shader.cpp src/formats/Uber.cpp src/formats/AnimGraph.cpp)
 target_link_libraries(ou_formats PUBLIC ou_cdc ou_anim)
 add_executable(ou-asset tools/ou-asset/main.cpp)
 target_link_libraries(ou-asset PRIVATE ou_formats)

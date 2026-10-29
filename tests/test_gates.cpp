@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <deque>
 #include <map>
+#include <ranges>
 #include <set>
 
 using namespace ou;
@@ -649,6 +650,49 @@ TEST(ProgressionReal, AnimNames) {
     for (const auto& e : anim::animList(cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm")))) std::printf("%s %u\n", e.name.c_str(), e.animId);
 }
 
+// Survey (OU_ANIMGRAPH_SURVEY=1, docs/formats/ANIMGRAPH.md): per unit, its scripted objects running an anim state graph
+// (Object::Graph): initial state, whether a clip poses them, state changes in 10 s idle.
+TEST(ProgressionReal, AnimGraphSurvey) {
+    if (!gameDir() || !std::getenv("OU_ANIMGRAPH_SURVEY")) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    std::set<int32_t> seen;
+    size_t objects = 0, graphs = 0, posed = 0, changed = 0;
+    std::map<std::string, std::array<size_t, 4>> byName; // instances, with a graph, posed, changed
+    for (const auto& unit : unitNames(bf)) {
+        std::unique_ptr<game::World> w;
+        try {
+            w = std::make_unique<game::World>(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), unit, anims);
+        } catch (const std::exception& e) { std::printf("%s: %s\n", unit.c_str(), e.what()); continue; }
+        w->script().setBigfile(&bf);
+        w->onCinematic = [](const std::string&, bool) {};
+        w->tick({});
+        std::map<int32_t, std::pair<int, bool>> start; // uid -> state, posed
+        for (const auto& o : w->script().objects())
+            if (o.graph && o.unit == unit) start[o.uid] = {o.graph->state, bool(w->script().pose(o))};
+        for (int i = 0; i < 600; ++i) {
+            w->tick({});
+            for (const auto& o : w->script().objects())
+                if (const auto it = start.find(o.uid); it != start.end() && !it->second.second && w->script().pose(o)) it->second.second = true;
+        }
+        for (const auto& o : w->script().objects()) {
+            if (o.unit != unit || !seen.insert(o.uid).second || o.kind != script::Kind::Scripted) continue;
+            ++objects;
+            auto& n = byName[o.name];
+            ++n[0];
+            if (!o.graph || !o.graph->set->graph) continue; // without a graph only `animated` 1 poses it
+            const auto& s = start[o.uid];
+            const bool ch = o.graph->state != s.first;
+            ++graphs, ++n[1], posed += s.second, n[2] += s.second, changed += ch, n[3] += ch;
+            std::printf("%s %d %s initial %d state %d posed %d\n", unit.c_str(), o.uid, o.name.c_str(), o.graph->initial,
+                        o.graph->state, int(s.second));
+        }
+    }
+    for (const auto& [name, n] : byName)
+        if (n[1]) std::printf("object %s instances %zu graph %zu posed %zu changed %zu\n", name.c_str(), n[0], n[1], n[2], n[3]);
+    std::printf("scripted objects %zu, with an anim graph %zu, posed by a clip %zu, changed state idle %zu\n", objects, graphs, posed, changed);
+}
+
 // l4_traprooms seal 5701: with the seal raised (sticky +268) and the four trap rooms done (sticky int +240 = 4), plates
 // 5717 / 5718 each set their sticky +124 and hear of it in vt 6 (sticky notification), which counts them on the seal
 // (+304) and runs its vt 58: both held opens it (seal sticky +20 of the unit's globals, modifiable +64). Lara stands on
@@ -691,7 +735,7 @@ TEST(ProgressionReal, TraproomsSeal) {
 // fight (A from 320_hel_boss's end, B / C / D from the buttress mounts' vt 54), each revealed by a camera; C's reveal plays
 // 330_hel_thralls, the last one runs vt 66 -> vt 67 "AllButtressesBroken_BreakGun" -> 340_hel_endgame; its end warps Lara
 // to l7_monastery (instance 26 on 8138) and plays 342_hel_endgame, whose end makes the end game save (uisavemenu 6) and
-// plays the credits movie (unlockablemovie 3): ou-game's ending.
+// plays the credits movie (unlockablemovie 3): ou-game's ending. Played as in the game: no handler is called directly.
 TEST(ProgressionReal, EndgameCredits) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -713,13 +757,35 @@ TEST(ProgressionReal, EndgameCredits) {
     };
     run(60);
     const uint32_t saves = w.autosaveRequests();
-    w.script().call(8360, 62); // buttress A
-    run(120);
-    for (const int32_t mount : {8362, 8363, 8364}) { // B, C, D; each reveal camera runs ~7 s
-        w.script().call(mount, 54);
-        run(900);
+    // Buttress A: Lara enters the arena volume 8303, whose vt 72 plays 320_hel_boss (8261); its end breaks A (8360
+    // vt 62). The fight's start locks the buttress mounts B-D (anim graph state 2: modifiable 7 (1), then the Thor
+    // towers' state 2 event's modifiable 4 (2)).
+    const auto* arena = w.script().find(8303);
+    ASSERT_TRUE(arena);
+    place(w, arena->pos, 0);
+    run(60 * 60);
+    const auto graphState = [&](int32_t uid) {
+        const auto* o = w.script().find(uid);
+        return o && o->graph && o->graph->set->graph ? int(o->graph->set->graph->states[size_t(o->graph->state)].index) : -1;
+    };
+    // B, C, D: Lara uses each locked mount at its outer end (bone 2, 8041 units out from the intro on the trunk;
+    // stimulus 1: transition 3 "break" -> state 3; vt 20 sends buttress_mount_broken and the mount's vt 54 tells
+    // dispatcher 8360). Each reveal camera runs ~7 s.
+    for (const int32_t mount : {8362, 8363, 8364}) {
+        const auto* m = w.script().find(mount);
+        ASSERT_TRUE(m && m->graph);
+        EXPECT_EQ(graphState(mount), 2) << "mount " << mount << " locked";
+        const auto points = script::Runtime::usePoints(*m);
+        ASSERT_EQ(points.size(), 3u);
+        EXPECT_GT(glm::length(glm::vec2(points[2] - m->pos)), 8000.0f) << "used at its end, not on the trunk";
+        place(w, points[2], 0);
+        game::Actions use;
+        use.interact = true;
+        w.tick(use);
+        run(1200);
+        EXPECT_EQ(graphState(mount), 3) << "mount " << mount << " broken";
     }
-    EXPECT_EQ(played, (std::vector<std::string>{"330_hel_thralls", "340_hel_endgame", "342_hel_endgame"}));
+    EXPECT_EQ(played, (std::vector<std::string>{"320_hel_boss", "330_hel_thralls", "340_hel_endgame", "342_hel_endgame"}));
     EXPECT_EQ(w.currentUnit().data.name, "l7_monastery");
     EXPECT_GT(w.autosaveRequests(), saves) << "the end game save";
     EXPECT_EQ(movies, std::vector<std::string>{"credits"});
@@ -756,4 +822,36 @@ TEST(ProgressionReal, KrakenColumnShot) {
     const auto fallen = *w.uberState(32);
     use();
     EXPECT_NE(*w.uberState(32), fallen) << "57 turns the gear";
+}
+
+// l4_ballcourt Xibalba exit switch 5469 reopens the temple (docs/formats/ANIMGRAPH.md): its vt 55 calls the temple
+// reveal 5464's vt 54 "ReopenFromXibalba": modifiable 7 enters state 3 (BothSidesOpen), the 0x20000 stimulus starts
+// transition 4 (TimerA) -> state 5, whose 300-frame timer plays TimerB -> 6 -> TimerB_Done -> 7.
+TEST(ProgressionReal, TempleRevealReopens) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l4_ballcourt", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 60; ++i) w.tick({});
+    const auto* temple = w.script().find(5464);
+    const auto* sw = w.script().find(5469);
+    ASSERT_TRUE(temple && temple->graph && temple->graph->set->graph && sw);
+    EXPECT_EQ(temple->graph->state, 0);
+    const auto closed = *w.script().pose(*temple);
+    place(w, sw->pos, 0);
+    game::Actions use;
+    use.interact = true;
+    w.tick(use);
+    std::vector<int> states{temple->graph->state};
+    for (int i = 0; i < 60 * 180 && states.back() != 7; ++i) {
+        w.tick({});
+        if (temple->graph->state != states.back()) states.push_back(temple->graph->state);
+    }
+    EXPECT_EQ(states, (std::vector<int>{0, 3, 5, 6, 7}));
+    const auto open = w.script().pose(*temple);
+    ASSERT_TRUE(open);
+    EXPECT_TRUE(std::ranges::any_of(std::views::iota(size_t(0), open->size()), [&](size_t i) { return moved((*open)[i], closed[i]); }))
+        << "the temple stands open";
 }

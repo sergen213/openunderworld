@@ -580,6 +580,7 @@ uint64_t World::stateHash() const {
         if (o.spline) add(o.spline->t), add(o.spline->dir), add(o.spline->playing);
         if (o.joint) add(o.joint->position);
         add(o.loose);
+        if (o.graph) add(o.graph->state), add(o.graph->transition), add(o.graph->frames), add(o.graph->clip), add(o.graph->t);
         if (o.script) {
             for (const auto& [k, v] : o.script->fields) add(k), add(v);
             for (const auto& [k, v] : o.script->properties) add(k), add(v);

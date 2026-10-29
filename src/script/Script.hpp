@@ -5,6 +5,7 @@
 
 #include "anim/Anim.hpp"
 #include "cdc/Cdc.hpp"
+#include "formats/AnimGraph.hpp"
 
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
@@ -198,6 +199,24 @@ struct Object {
         std::vector<Range> ranges;
     };
     std::optional<Joint> joint;
+    // Anim state graph (formats::AnimGraph, docs/formats/ANIMGRAPH.md) of a scripted object with a `modifiable` or
+    // `animated` member: its anim component (Instance +0x294) plays the state / transition clips; stimuli and the
+    // modifiable natives drive it, vt 19 / 20 hear of transitions / states. Without a graph only `animated` 1 plays.
+    struct GraphSet {
+        std::optional<formats::AnimGraph> graph;
+        std::shared_ptr<const scene::Skeleton> skeleton;
+        std::vector<anim::Clip> clips; // by animation-list index
+    };
+    struct Graph {
+        std::shared_ptr<const GraphSet> set;
+        int state = 0, initial = 0; // index into set->graph->states: the last entered one / the intro's
+        int transition = -1;        // running transition (index), -1 none
+        float frames = 0;           // 30 Hz frames in the state: the timer stimulus value (0x6B4390)
+        int clip = -1;              // playing animation-list index, -1 = bind pose
+        double t = 0;               // seconds into it
+        bool loop = false;
+    };
+    std::optional<Graph> graph; // saved: state, transition, frames, clip, t, loop
 };
 
 struct UnitRef {
@@ -335,6 +354,9 @@ public:
     // Model-space bone palette of a posed object (animated Switch/Door; a displaced Block or a moved physics door
     // gets one matrix for every vertex). nullopt = bind pose.
     std::optional<std::vector<glm::mat4>> pose(const Object& o) const;
+    // World points where Lara can use an anim-graph object: its bones' bind positions (the buttress mounts' end bone
+    // sits 8041 units out from their intro on Yggdrasil's trunk). Empty without a skeleton.
+    static std::vector<glm::vec3> usePoints(const Object& o);
     void setBody(int32_t uid, const glm::mat4& model); // physics door transform (Object::body); unknown uids ignored
     // Moves a joint object's prismatic position; each range newly entered runs vt 34 with its id, in range order.
     void setJointPosition(int32_t uid, float position);
@@ -358,6 +380,14 @@ private:
     std::shared_ptr<vm::Machine> makeMachine(int32_t source);
     std::shared_ptr<vm::Instance> auxiliaryInstance(const std::shared_ptr<vm::Program>& program, uint32_t typeId);
     void tickSpline(Object& o);   // 0x5CF260: advance, clip / key / loop handling, range callbacks
+    // Anim state graph (Object::Graph): 0x6A5660 enter a state, 0x6A5C50 / 0x6B3DD0 start a transition, a stimulus
+    // (mask, value; value < 0 = any, 0x6B3BD0) starts the current state's first matching transition.
+    void graphEnter(int32_t uid, int state);
+    void graphBegin(int32_t uid, int transition);
+    bool graphStimulus(int32_t uid, uint32_t mask, float value);
+    void tickGraph(int32_t uid);
+    std::shared_ptr<const Object::GraphSet> graphSet(const std::string& name);
+    std::map<std::string, std::shared_ptr<const Object::GraphSet>> graphSets_; // object name -> graph + clips
     bool splineNative(Object& o, uint32_t function, std::span<const vm::Value> args, uint32_t& result);
     std::vector<std::pair<int32_t, std::shared_ptr<vm::Machine>>> threads_; // states entered from another object's call
 
