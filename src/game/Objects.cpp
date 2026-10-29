@@ -111,12 +111,71 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
     }
     const auto [it, inserted] = uberData_.emplace(o.uid, std::move(data));
     (void)inserted;
-    if (it->second) { // sections start in their default state (0x4D7550 flag 1 -> 0x4D7440)
-        uberStates_[o.uid].assign(it->second->sections.size(), 0xFFFFFFFFu);
-        for (size_t i = 0; i < it->second->sections.size(); ++i)
-            if (!it->second->sections[i].stateOut.empty()) uberEnter(o.uid, i, it->second->sections[i].defaultState);
+    if (!it->second) return nullptr;
+    uberStates_[o.uid].assign(it->second->sections.size(), 0xFFFFFFFFu);
+    if (const auto saved = uberSaved_.find(o.uid); saved != uberSaved_.end()) { // a load: as saved, no events
+        auto& rt = uberRuntime_[o.uid];
+        const auto& j = saved->second;
+        const auto& s = j.at("sections");
+        if (s.size() == rt.sections.size()) {
+            for (size_t i = 0; i < s.size(); ++i) {
+                auto& sec = rt.sections[i];
+                sec.state = s[i].at(0), sec.transition = s[i].at(1), sec.time = s[i].at(2), sec.length = s[i].at(3), sec.carried = s[i].at(4);
+                if (sec.state >= 0) uberStates_[o.uid][i] = uint32_t(sec.state);
+            }
+            rt.fired = j.at("fired"), rt.commanded = j.at("commanded");
+            if (const auto m = uberMotion_.find(o.uid); m != uberMotion_.end() && j.contains("motion"))
+                m->second.t = j["motion"].at(0), m->second.active = j["motion"].at(1);
+            uberSaved_.erase(saved);
+            return &*it->second;
+        }
+        uberSaved_.erase(saved); // the object's data changed shape: start it afresh
     }
-    return it->second ? &*it->second : nullptr;
+    for (size_t i = 0; i < it->second->sections.size(); ++i) // sections start in their default state (0x4D7550 flag 1 -> 0x4D7440)
+        if (!it->second->sections[i].stateOut.empty()) uberEnter(o.uid, i, it->second->sections[i].defaultState);
+    return &*it->second;
+}
+
+nlohmann::json World::serializeObjects() const {
+    nlohmann::json uber = nlohmann::json::object();
+    for (const auto& [uid, j] : uberSaved_) uber[std::to_string(uid)] = j;
+    for (const auto& [uid, rt] : uberRuntime_) {
+        if (const auto d = uberData_.find(uid); d == uberData_.end() || !d->second) continue;
+        nlohmann::json sections = nlohmann::json::array();
+        for (const auto& s : rt.sections) sections.push_back({s.state, s.transition, s.time, s.length, s.carried});
+        nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded}};
+        if (const auto m = uberMotion_.find(uid); m != uberMotion_.end()) e["motion"] = {m->second.t, m->second.active};
+    }
+    return {{"uber", std::move(uber)}, {"held", held_}};
+}
+
+void World::restoreObjects(const nlohmann::json& j) {
+    std::map<int32_t, nlohmann::json> saved;
+    int32_t held = 0;
+    if (j.is_object()) {
+        try {
+            const nlohmann::json uber = j.value("uber", nlohmann::json::object());
+            for (const auto& [key, e] : uber.items()) {
+                const auto& s = e.at("sections");
+                for (const auto& sec : s) // validate the shape now: prepareUber reads it later
+                    if (!sec.is_array() || sec.size() != 5 || !sec[0].is_number_integer() || !sec[1].is_number_integer() ||
+                        !sec[2].is_number() || !sec[3].is_number() || !sec[4].is_boolean())
+                        throw std::runtime_error("bad uber section of " + key);
+                (void)e.at("fired").get<uint64_t>(), (void)e.at("commanded").get<bool>();
+                if (e.contains("motion")) (void)e["motion"].at(0).get<float>(), (void)e["motion"].at(1).get<bool>();
+                saved[std::stoi(key)] = e;
+            }
+            held = j.value("held", 0);
+        } catch (const nlohmann::json::exception& e) {
+            throw std::runtime_error(std::string("objects: ") + e.what());
+        } catch (const std::logic_error& e) {
+            throw std::runtime_error(std::string("objects: ") + e.what());
+        }
+    }
+    uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberMotion_.clear(), uberEvents_.clear();
+    uberSaved_ = std::move(saved);
+    held_ = held, fallSpeed_.clear();
+    syncedObjects_ = ~size_t(0); // prepare the loaded uber objects on the next tick
 }
 
 bool World::uberHolds(int32_t uid, const std::vector<formats::UberCondition>& conditions) const {
@@ -457,6 +516,7 @@ void World::syncObjects() {
     col_.dynamics.clear();
     physics_ = {};
     for (const auto& o : script_.objects()) {
+        if (uberSaved_.contains(o.uid)) prepareUber(o); // loaded: its constructor does not run again
         const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Block || o.kind == script::Kind::Switch;
         const formats::UberObjectData* uber = (ordinary || o.name.starts_with("ms_") || o.name.starts_with("sa_uo_") ||
                                                o.name.starts_with("ca_")) ? prepareUber(o) : nullptr;

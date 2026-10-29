@@ -586,6 +586,12 @@ uint64_t World::stateHash() const {
         const auto& es = e->state();
         add(e->uid()), add(es.mode), add(es.pos), add(es.yaw), add(es.clipTime), add(es.health), str(es.clip);
     }
+    for (const auto& [uid, rt] : uberRuntime_) {
+        add(uid), add(rt.fired), add(rt.commanded);
+        for (const auto& s : rt.sections) add(s.state), add(s.transition), add(s.time), add(s.length), add(s.carried);
+    }
+    for (const auto& [uid, m] : uberMotion_) add(uid), add(m.t), add(m.active);
+    add(held_);
     return h;
 }
 

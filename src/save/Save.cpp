@@ -75,6 +75,7 @@ json toJson(const SaveGame& s) {
         {"enemies", s.enemies},
         {"vehicles", s.vehicles},
         {"combat", s.combat},
+        {"objects", s.objects},
         {"reveal", reveal},
     };
 }
@@ -150,6 +151,8 @@ SaveGame fromJson(const json& j) {
     if (!s.vehicles.is_null() && !s.vehicles.is_object()) throw SaveError("vehicle state is not an object");
     s.combat = j.value("combat", json(nullptr));
     if (!s.combat.is_null() && !s.combat.is_object()) throw SaveError("combat state is not an object");
+    s.objects = j.value("objects", json(nullptr));
+    if (!s.objects.is_null() && !s.objects.is_object()) throw SaveError("object state is not an object");
     if (const auto r = j.find("reveal"); r != j.end() && r->is_object())
         for (const auto& [unit, points] : r->items())
             for (const auto& q : points) s.reveal[unit].push_back(vec(q));
@@ -191,6 +194,7 @@ SaveGame capture(const game::World& world) {
     s.enemies = world.enemies().serialize();
     s.vehicles = world.serializeVehicles();
     s.combat = world.serializeCombat();
+    s.objects = world.serializeObjects();
     s.reveal = world.mapReveal;
     s.ticks = world.ticks();
     return s;
@@ -238,6 +242,11 @@ void apply(const SaveGame& save, game::World& world) {
     if (save.combat.is_null()) world.chapterLoadout(save.chapter); // older saves: what the chapter starts with
     else world.restoreCombat(save.combat);
     world.mapReveal = save.reveal;
+    try {
+        world.restoreObjects(save.objects);
+    } catch (const std::runtime_error& e) {
+        throw SaveError(e.what());
+    }
     if (save.health) world.setHealth(*save.health);
 }
 

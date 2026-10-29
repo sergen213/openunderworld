@@ -617,3 +617,40 @@ TEST(StreamReal, ChapterOutfits) {
     EXPECT_EQ(w.anims().skeleton.bones.size(), 153u);
     EXPECT_EQ(w.pose(1).size(), 153u);
 }
+
+// Uber section state machines (the l3_chapel shadow pillars 4837) save and load mid-puzzle: the same states, no
+// default-state events re-run, timers running on alike after the load.
+TEST(StreamReal, UberStateSaveLoad) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    game::World w(load, "l3_chapel", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 300; ++i) w.tick({});
+    const auto* sw = w.script().find(4819);
+    ASSERT_TRUE(sw);
+    game::PlayerState s;
+    s.pos = sw->pos;
+    w.restore(s, 0, -0.25f);
+    game::Actions use;
+    use.interact = true;
+    for (int i = 0; i < 10; ++i) w.tick(use);
+    for (int i = 0; i < 300; ++i) w.tick({});
+    ASSERT_TRUE(w.uberState(4837));
+    const auto moved = *w.uberState(4837);
+    EXPECT_NE(moved, (std::vector<uint32_t>{0, 2, 1, 0, 0, 1})); // section 1 turned
+    const auto bytes = save::serialize(save::capture(w));
+    for (int i = 0; i < 20; ++i) w.tick({});
+    const auto expect = w.serializeObjects();
+
+    game::World fresh(load, "l3_chapel", anims);
+    fresh.script().setBigfile(&bf);
+    fresh.onCinematic = [](const std::string&, bool) {};
+    save::apply(save::parse(bytes), fresh);
+    for (int i = 0; i < 20; ++i) fresh.tick({});
+    ASSERT_TRUE(fresh.uberState(4837));
+    EXPECT_EQ(*fresh.uberState(4837), moved);
+    EXPECT_EQ(fresh.serializeObjects(), expect); // timers, once-events and travel ran on alike
+}

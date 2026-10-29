@@ -540,6 +540,10 @@ public:
     int bikeMounts = 0;         // mounts so far (ou-game starts l4_laras_new_bike on the first)
     nlohmann::json serializeVehicles() const;
     void restoreVehicles(const nlohmann::json& j); // throws std::runtime_error on a malformed state
+    // Uber section state machines (states, transitions, timers, once-events, travel) and the carried portable, for saves.
+    // restoreObjects replaces them all; objects not loaded yet take theirs when they stream in (no default-state events).
+    nlohmann::json serializeObjects() const;
+    void restoreObjects(const nlohmann::json& j); // throws std::runtime_error on a malformed state
 
 private:
     void updatePose(float dt, bool reset); // after the player moved; reset = spawn/teleport (no blends, hair at rest)
@@ -607,7 +611,7 @@ private:
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     std::map<int32_t, float> fallSpeed_; // loose rigid bodies: fall speed, units/s
-    int32_t held_ = 0;                   // portable object Lara carries (0 none) [I: not saved; a save drops it]
+    int32_t held_ = 0;                   // portable object Lara carries (0 none)
     void bindMultibody();
     void bindUber();
     void bindTerrain();
@@ -634,6 +638,7 @@ private:
     void tickUber(float dt);
     struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; std::string clip; };
     std::map<int32_t, UberMotion> uberMotion_;
+    std::map<int32_t, nlohmann::json> uberSaved_; // restored uber state of objects not prepared since (prepareUber applies it)
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;
     uint64_t lightsVersion_ = 0;
     // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()).
