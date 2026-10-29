@@ -37,6 +37,8 @@ struct TextVertex {
 
 // Optional hardware ray tracing (Vulkan ray queries, Enhanced only). Full = shadows + water reflections.
 enum class RayTracing : uint8_t { Off, Shadows, Full };
+// Temporal upscaler of the Vulkan backend.
+enum class Upscaler : uint8_t { Off, Fsr };
 
 // ---- water (docs/RENDERING.md "Water") ----
 // Water surface meshes draw with TRU's own shaders (Original) or with our water shading (Enhanced: waves, refraction,
@@ -109,6 +111,13 @@ struct FrameOptions {
     Atmosphere atmosphere = Atmosphere::Off;
     bool lightShafts = true;  // sun shafts of Atmosphere Medium / High
     Weather weather;
+    // AMD FSR (Vulkan only, docs/RENDERING.md "FSR"): the scene renders at the quality mode's resolution with sub-pixel
+    // jitter and FSR upscales it (MSAA and FXAA are then off); the UI is drawn after the upscale. frameGeneration also
+    // presents one generated frame between real ones. Backends without FSR ignore it (Renderer::upscalerSummary).
+    Upscaler upscaler = Upscaler::Off;
+    int fsrQuality = 1;           // 0 native AA, 1 quality (1.5x), 2 balanced (1.7x), 3 performance (2x), 4 ultra (3x)
+    float sharpness = 0.5f;       // FSR sharpening (RCAS) 0..1, 0 = off
+    bool frameGeneration = false;
 };
 
 // Ray-tracing state for diagnostics and tests.
@@ -149,6 +158,8 @@ public:
     virtual bool setVsync(bool enabled) = 0;
     virtual std::string description() const = 0;  // device / API version for diagnostics
     virtual RtStatus rtStatus() const { return {}; } // backends without ray tracing: unsupported
+    // One overlay line on upscaling: requested / active mode, resolutions, frame generation, or why not.
+    virtual std::string upscalerSummary() const { return "FSR: Vulkan only"; }
     virtual void shutdown() = 0;
 };
 

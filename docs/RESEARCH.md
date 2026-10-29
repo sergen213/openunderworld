@@ -132,6 +132,7 @@ Licences marked "none" mean all rights reserved: use the source as reference onl
 
 | Reference | URL | Licence | Covers (versions) | Confidence | What it tells us |
 |---|---|---|---|---|---|
+| AMD FSR SDK v2.4.0 @`7539ae8` (2026) | https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK | MIT for the vendored `Kits/FidelityFX` sources (`third_party/fidelityfx-sdk/LICENSE.txt`); `signedbin/*.dll` binary-only, not used | FSR 3.1.6 upscaler + frame generation, ffx-api, Vulkan backend | High | Vendored subset built from source (`third_party/fidelityfx-sdk/README.md`); FSR 4 exists only as signed Windows DLLs. Shaders compiled with DirectXShaderCompiler v1.9.2609 (LLVM/NCSA, build-time download, not shipped) |
 | TRLAU-menu-hook @`3892806` (2026-10-04); latest release v2.6, 2026-10-12 | https://github.com/TheIndra55/TRLAU-menu-hook | GPL-3.0 | TR7 Legend, TRAE Anniversary, TR8 Underworld (Steam/GOG 1.1) | High; addresses verified against our exe | Runtime structures, function addresses, debug features, patches; see [§5](#5-trlau-menu-hook-findings) |
 | ModLoader @`19357b6` | https://github.com/TombRaiderModding/ModLoader | GPL-3.0 | TR7, TRAE, TR8, LCGoL | High (patterns match) | File-system hook points; Underworld `InitPatchArchive`/diskFS patterns |
 | BigfileLogger @`fade60a` | https://github.com/TombRaiderModding/BigfileLogger | MIT | TR7…TR2013+; Wii/PS2 TR8 codes | High (pattern match) | `ArchiveFileSystem::CalculateHash` location; Wii EU / PS2 TR8 cheat codes (`wii/tr8.*`, `ps2/tr8.s`) |

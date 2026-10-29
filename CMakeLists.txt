@@ -72,7 +72,7 @@ set(OU_VK_SPV_DIR ${CMAKE_CURRENT_BINARY_DIR}/vk_shaders)
 file(MAKE_DIRECTORY ${OU_VK_SPV_DIR})
 set(OU_VK_SPV)
 foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.vert shadow.frag post.vert post.frag
-        prepass.vert prepass.frag)
+        prepass.vert prepass.frag fsr_mask.vert fsr_mask.frag fsr_camera.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
@@ -99,7 +99,13 @@ foreach(stage vert frag)
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/scene_rt.${stage}.inc)
 endforeach()
-add_library(ou_render_vk STATIC src/render/vk/VkRenderer.cpp ${OU_VK_SPV})
+# AMD FSR 3.1.6 upscaling + frame generation (FidelityFX SDK 2.4.0 ffx-api, third_party/fidelityfx-sdk; sets OU_HAS_FSR).
+add_subdirectory(third_party/fidelityfx-sdk)
+add_library(ou_render_vk STATIC src/render/vk/VkRenderer.cpp src/render/vk/VkFsr.cpp ${OU_VK_SPV})
+target_compile_definitions(ou_render_vk PRIVATE OU_HAS_FSR=$<BOOL:${OU_HAS_FSR}>)
+if(OU_HAS_FSR)
+  target_link_libraries(ou_render_vk PRIVATE ou_ffx)
+endif()
 target_include_directories(ou_render_vk PRIVATE ${OU_VK_SPV_DIR})
 target_link_libraries(ou_render_vk PUBLIC ou_render_common PRIVATE Vulkan::Vulkan)
 target_compile_options(ou_render_vk PRIVATE -Wno-missing-field-initializers) # Vk{sType} init idiom

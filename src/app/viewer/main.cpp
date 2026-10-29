@@ -482,6 +482,7 @@ int main(int argc, char** argv) {
                                 opt.gfx.originalShaders ? "original" : "generic", opt.gfx.brightness));
             lines.push_back(renderer->description());
             lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));
+            lines.push_back(renderer->upscalerSummary());
             lines.push_back(fmt("%dx%d aspect %.3f | vFOV %.1f hFOV %.1f (Hor+)", w, h, aspect, cam.verticalFovDeg,
                                 glm::degrees(ou::render::horizontalFov(glm::radians(cam.verticalFovDeg), aspect))));
             lines.push_back(fmt("cam %.1f %.1f %.1f | yaw %.1f pitch %.1f | speed %.0f/s | tick %llu%s",
@@ -505,6 +506,8 @@ int main(int argc, char** argv) {
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
         fo.brightness = opt.gfx.brightness;
+        fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;
+        fo.fsrQuality = opt.gfx.fsrQuality, fo.sharpness = opt.gfx.sharpness, fo.frameGeneration = opt.gfx.frameGeneration;
         fo.water = ou::render::WaterQuality(opt.gfx.water); // no ripple sim / volumes in the viewer
         fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
         fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;

@@ -34,6 +34,13 @@ struct GraphicsConfig {
     std::optional<bool> lightShafts;        // sun shafts of medium / high; unset = on
     std::string weather = "auto";           // "auto" (enhanced -> the unit's own rain / snow) | "off" | "rain" | "snow"
     float brightness = 1.0f;                // 0.5..2.0, post-pass gamma (out = in^(1/brightness)); 1 = neutral
+    // AMD FSR (Vulkan only, docs/RENDERING.md "FSR"): temporal upscaling from a lower render resolution (MSAA / FXAA off),
+    // optionally with frame generation (one generated frame between real ones).
+    std::string upscaler = "off";           // "off" | "fsr"
+    std::string fsrQuality = "quality";     // "native" (AA only) | "quality" (1.5x) | "balanced" (1.7x) | "performance" (2x)
+                                            // | "ultra_performance" (3x)
+    float sharpness = 0.5f;                 // FSR sharpening 0..1, 0 = off
+    bool frameGeneration = false;           // needs upscaler "fsr"
 };
 struct GraphicsSettings {
     int msaa = 1;
@@ -47,13 +54,18 @@ struct GraphicsSettings {
     int atmosphere = 0; // render::Atmosphere: 0 off .. 3 high
     bool lightShafts = true;
     int weather = 0;    // 0 off, 1 the unit's weather (game::unitWeather), 2 rain, 3 snow
+    bool fsr = false;
+    int fsrQuality = 1; // 0 native .. 4 ultra performance (= render::FrameOptions::fsrQuality)
+    float sharpness = 0.5f;
+    bool frameGeneration = false;
     bool operator==(const GraphicsSettings&) const = default;
 };
-// Throws std::runtime_error on an unknown preset, msaa, rt or rtQuality value, explicit rt without the enhanced
-// preset, or brightness outside [0.5, 2.0].
+// Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without
+// the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
-// --rt, --rt-quality, --water original|enhanced, --water-detail, --atmosphere, --shafts on|off, --weather, --brightness.
+// --rt, --rt-quality, --water original|enhanced, --water-detail, --atmosphere, --shafts on|off, --weather, --brightness,
+// --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off.
 // false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 

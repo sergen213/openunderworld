@@ -87,6 +87,8 @@ void usage() {
                  "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0]\n"
                  "               [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
+                 "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"
+                 "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only)\n"
                  "               [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
@@ -1546,6 +1548,7 @@ int main(int argc, char** argv) {
                                 (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
             lines.push_back(renderer->description());
             lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));
+            lines.push_back(renderer->upscalerSummary());
             lines.push_back(fmt("lara %s | clip %s t %.2f | pos %.0f %.0f %.0f | yaw %.0f", std::string(ou::game::stateName(s.state)).c_str(),
                                 s.clip.c_str(), s.clipTime, s.pos.x, s.pos.y, s.pos.z, glm::degrees(s.yaw)));
             lines.push_back(fmt("unit %s (%zu loaded) | checkpoint %d | chapter %d | found %d/%d/%d | music %s",
@@ -1630,6 +1633,8 @@ int main(int argc, char** argv) {
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
         fo.brightness = opt.gfx.brightness;
+        fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;
+        fo.fsrQuality = opt.gfx.fsrQuality, fo.sharpness = opt.gfx.sharpness, fo.frameGeneration = opt.gfx.frameGeneration;
         fo.water = ou::render::WaterQuality(opt.gfx.water);
         const auto& ws = world->water();
         if (opt.gfx.water && ws.active())

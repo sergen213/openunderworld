@@ -25,7 +25,7 @@ constexpr int kLutWidth = 256, kLutRows = 128, kFogRow = 96, kLightRow = 0;
 } // namespace
 
 glm::mat4 viewProjD3D(const Camera& camera, float aspect) {
-    return glm::perspectiveRH_ZO(glm::radians(camera.verticalFovDeg), aspect, camera.nearZ, camera.farZ) * camera.view();
+    return camera.jittered(glm::perspectiveRH_ZO(glm::radians(camera.verticalFovDeg), aspect, camera.nearZ, camera.farZ)) * camera.view();
 }
 
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env) {

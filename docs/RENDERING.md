@@ -347,3 +347,39 @@ Two render modes share the scene graph and simulation; only the backend's frame 
 
 The OpenGL backend stays the portability/reference path for Original Fidelity; Enhanced
 features land in Vulkan first.
+
+## FSR upscaling + frame generation (Vulkan only; `graphics.upscaler off|fsr`, `--upscaler`)
+
+AMD FSR SDK **2.4.0** (ffx-api) built from source (`third_party/fidelityfx-sdk/README.md`): FSR 3.1.6 upscaler and
+FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL ignores it ("FSR: Vulkan only" in F1).
+
+- **Why not FSR 4 / the 2.4.0 binaries**: FSR 4.1.2 ML upscaling, FSR 4.0.x frame generation and the ffx loader ship
+  only as signed Windows DLLs (`signedbin/amd_fidelityfx_{loader,upscaler,framegeneration}_vk.dll`, PE, binary-only
+  licence forbidding reverse engineering) — they cannot load in a native Linux process. The open part has no build
+  system, no shader permutation headers / generator and HLSL-only shaders; we build it with our CMake and DXC
+  (`tools/ffx_shaders.py`). The Vulkan frame-generation swapchain is Win32-bound, so presentation is ours.
+- **Settings**: `graphics.fsr_quality` / `--fsr-quality native|quality|balanced|performance|ultra_performance` (render
+  scale 1, 1/1.5, 1/1.7, 1/2, 1/3), `graphics.sharpness` / `--sharpness 0..1` (RCAS, default 0.5),
+  `graphics.frame_generation` / `--frame-generation on|off` (needs FSR). Launcher: Graphics page. With FSR on, MSAA and
+  FXAA are off (FSR anti-aliases). `OU_VK_NO_FSR=1` disables it.
+- **Frame**: the scene (all passes incl. water, fx, post: fog, underwater, tonemap, brightness) renders at the render
+  resolution with FSR's Halton jitter (`Camera::jitter`, applied to the generic and the translated programs'
+  projections). Then a mask pass (`fsr_camera.frag`, `fsr_mask.*`) writes motion vectors (UV, previous − current,
+  unjittered; RG16F): camera motion of every pixel from depth, overwritten for meshes moved by `updateVertices`
+  (CPU-skinned characters, animated objects; previous pose kept per mesh) — and reactivity (R8): blended submeshes
+  0.9 × alpha, Enhanced water 0.6. The post pass writes `fsrInput_` (LDR, display-referred), FSR upscales into an RGBA8
+  image, which is blitted into the swapchain; the UI / HUD / overlay is drawn after the upscale at display resolution.
+  Depth is standard (0 near, 1 far, finite far plane). Exposure 1 (input already tonemapped). Camera cuts
+  (> 500 units or > 45°) reset the history.
+- **Frame generation**: per frame, FSR FG prepares from depth + motion and interpolates between the previous and this
+  frame's HUD-less upscaled image; the UI is drawn on both. `present()` presents the generated image, then the real one
+  half the measured frame interval later (0.9/0.1 moving average; the render thread sleeps). The swapchain gets
+  minImageCount + 2 images. Each frame thus shows the previous real frame's successor half a frame late (latency +½ frame).
+- **Diagnostics**: F1 line `FSR 3.1.6 quality 1280x720 -> 1920x1080 | frame generation on, FG 3.1.6 (N generated)`.
+  `OU_VK_PRESENT_STATS=1` prints presented images/s and present spacing at exit; `OU_VK_CAPTURE_DIR=dir` writes every
+  presented image (`NNNNNN-real.ppm`, `NNNNNN-gen.ppm`).
+- **Known gaps**: splashes and original fx billboards are not in the reactive mask (can ghost briefly); rain/snow are
+  drawn in the post pass without motion; translated vertex animation (wind) has no motion vectors. Khronos validation
+  reports one upstream issue: the FG pass writes a 3-component texel to the RGBA8 output (`VUID-vkCmdDispatch-OpImageWrite-08795`,
+  harmless on RADV). Unsupported devices (no formatless storage images, compute derivatives, independent blend,
+  subgroup ops) or a build without DXC fall back to native rendering with the reason in F1.

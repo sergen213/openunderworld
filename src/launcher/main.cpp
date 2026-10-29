@@ -287,7 +287,9 @@ private:
     QPushButton* scanBtn_;
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
-    QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_;
+    QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_, *upscaler_, *fsrQuality_;
+    QCheckBox* frameGeneration_;
+    QDoubleSpinBox* sharpness_;
     QSpinBox *width_, *height_;
     QDoubleSpinBox *fov_, *brightness_;
     QListWidget *pads_, *backups_;
@@ -416,6 +418,22 @@ private:
         brightness_->setSingleStep(0.05);
         brightness_->setDecimals(2);
         brightness_->setValue(g.brightness);
+        // AMD FSR (Vulkan only, docs/RENDERING.md "FSR").
+        upscaler_ = choice({{"Off (native)", "off"}, {"AMD FSR 3.1 (Vulkan)", "fsr"}}, g.upscaler);
+        fsrQuality_ = choice({{"Native AA", "native"}, {"Quality (1.5x)", "quality"}, {"Balanced (1.7x)", "balanced"},
+                              {"Performance (2x)", "performance"}, {"Ultra performance (3x)", "ultra_performance"}}, g.fsrQuality);
+        sharpness_ = new QDoubleSpinBox;
+        sharpness_->setRange(0.0, 1.0);
+        sharpness_->setSingleStep(0.05);
+        sharpness_->setValue(g.sharpness);
+        frameGeneration_ = new QCheckBox("Frame generation");
+        frameGeneration_->setChecked(g.frameGeneration);
+        auto fsrEnable = [this] {
+            const bool on = upscaler_->currentData().toString() == "fsr";
+            fsrQuality_->setEnabled(on), sharpness_->setEnabled(on), frameGeneration_->setEnabled(on);
+        };
+        connect(upscaler_, &QComboBox::currentIndexChanged, this, fsrEnable);
+        fsrEnable();
         width_ = new QSpinBox;
         height_ = new QSpinBox;
         width_->setRange(320, 16384);
@@ -465,6 +483,10 @@ private:
         f->addRow("Sun shafts", shafts_);
         f->addRow("Weather", weather_);
         f->addRow("Brightness", brightness_);
+        f->addRow("Upscaler", upscaler_);
+        f->addRow("FSR quality", fsrQuality_);
+        f->addRow("FSR sharpness", sharpness_);
+        f->addRow("", frameGeneration_);
         f->addRow("", new QLabel("Like the original game's brightness option; 1.00 = neutral."));
         return w;
     }
@@ -802,6 +824,10 @@ private:
         g.atmosphere = s(atmosphere_->currentData().toString());
         g.lightShafts = overrideValue(shafts_);
         g.weather = s(weather_->currentData().toString());
+        g.upscaler = s(upscaler_->currentData().toString());
+        g.fsrQuality = s(fsrQuality_->currentData().toString());
+        g.sharpness = float(sharpness_->value());
+        g.frameGeneration = g.upscaler == "fsr" && frameGeneration_->isChecked();
         const auto& actions = ou::config::bindableActions();
         for (int i = 0; i < int(actions.size()); ++i) {
             auto& names = cfg_.controls.bindings[actions[i]];

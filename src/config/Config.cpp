@@ -62,6 +62,17 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     else throw std::runtime_error("weather must be auto, off, rain or snow, got " + g.weather);
     if (!(g.brightness >= 0.5f && g.brightness <= 2.0f)) throw std::runtime_error("brightness must be within 0.5..2.0");
     s.brightness = g.brightness;
+    if (g.upscaler == "fsr") s.fsr = true;
+    else if (g.upscaler != "off") throw std::runtime_error("upscaler must be off or fsr, got " + g.upscaler);
+    static const std::string kFsrQuality[] = {"native", "quality", "balanced", "performance", "ultra_performance"};
+    const auto q = std::find(std::begin(kFsrQuality), std::end(kFsrQuality), g.fsrQuality);
+    if (q == std::end(kFsrQuality))
+        throw std::runtime_error("fsr quality must be native, quality, balanced, performance or ultra_performance, got " + g.fsrQuality);
+    s.fsrQuality = int(q - std::begin(kFsrQuality));
+    if (!(g.sharpness >= 0.0f && g.sharpness <= 1.0f)) throw std::runtime_error("sharpness must be within 0..1");
+    s.sharpness = g.sharpness;
+    if (g.frameGeneration && !s.fsr) throw std::runtime_error("frame generation needs upscaler fsr");
+    s.frameGeneration = g.frameGeneration;
     return s;
 }
 
@@ -81,6 +92,13 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     else if (flag == "--weather") g.weather = value;
     else if (flag == "--rt-quality") g.rtQuality = value;
     else if (flag == "--brightness") g.brightness = std::strtof(std::string(value).c_str(), nullptr);
+    else if (flag == "--upscaler") g.upscaler = value;
+    else if (flag == "--fsr-quality") g.fsrQuality = value;
+    else if (flag == "--sharpness") g.sharpness = std::strtof(std::string(value).c_str(), nullptr);
+    else if (flag == "--frame-generation") {
+        if (value != "on" && value != "off") throw std::runtime_error("--frame-generation wants on or off");
+        g.frameGeneration = value == "on";
+    }
     else return false;
     return true;
 }
@@ -156,6 +174,10 @@ Config load(const fs::path& path) {
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
             if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
             c.graphics.brightness = g->value("brightness", c.graphics.brightness);
+            c.graphics.upscaler = g->value("upscaler", c.graphics.upscaler);
+            c.graphics.fsrQuality = g->value("fsr_quality", c.graphics.fsrQuality);
+            c.graphics.sharpness = g->value("sharpness", c.graphics.sharpness);
+            c.graphics.frameGeneration = g->value("frame_generation", c.graphics.frameGeneration);
         }
         if (auto in = j.find("controls"); in != j.end()) {
             c.controls.mouseSensitivity = in->value("mouse_sensitivity", c.controls.mouseSensitivity);
@@ -191,7 +213,9 @@ void save(const fs::path& path, const Config& c) {
     auto& g = j["graphics"] = {{"preset", c.graphics.preset}, {"msaa", c.graphics.msaa}, {"rt", c.graphics.rt},
                                {"water", c.graphics.water}, {"water_detail", c.graphics.waterDetail},
                                {"atmosphere", c.graphics.atmosphere}, {"weather", c.graphics.weather},
-                               {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness}};
+                               {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness},
+                               {"upscaler", c.graphics.upscaler}, {"fsr_quality", c.graphics.fsrQuality},
+                               {"sharpness", c.graphics.sharpness}, {"frame_generation", c.graphics.frameGeneration}};
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
     if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;
