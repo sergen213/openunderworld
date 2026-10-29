@@ -875,35 +875,82 @@ natives). All share base script 3674 (playersensor, "popUpTitleMessageChannel", 
 `World::found` counts it, the mesh is hidden and the HUD shows `TREASURES|RELICS|HEALTH PACKS` (1251/1252/1274) with the
 count [I format]. Saved (docs/SAVES.md). Health packs are not yet usable (Combat).
 
-**Menus** [O layout/art/strings from tru.exe captures, I pause/submenus]: the main menu is the original's
+**Menus** [O layout/art/strings from tru.exe captures, I where marked]: the main menu is the original's
 `ScriptMainMenu` screen (cdc script UI `uimainmenu`, generalbank.drm script 8; the scripts themselves are not
 executed). Reference: tru.exe under Wine+DXVK (4 CPUs: its `CPUCount` 0x4A21D0 overflows the stack with 32) captured at
-1024×768 4:3 and 1920×1080 16:9 (openunderworld-work/screens/menu). Everything is in the 640×480 UI space at the window
-height's scale, centred horizontally (16:9 keeps the 4:3 layout in the middle). Art = generalbank.drm textures packed
-into one atlas (`ui::Art`, `FrameOptions::uiImages[0]`); font = DTP 46 (header and 12-byte glyph table over textures
-109/110, advance `(spacing + width) · scale − 1` as `Font_GetTextWidth` 0x4758C0; text scale 0.625 × the font's 0.5).
-Fitted layout: texture 17 glyph art 672² at (317.5, 242.25), ¾ opaque; texture 50 quarter ring 208² mirrored four
-times around the centre (320.3, 240.3); ring radius 136.8, 7 items from −90° in steps of 180°/7; discs (15) and icons
-(18–26) at 0.67 per texel, unselected icons tinted (50, 115, 185); the selected item: black disc 51 (×1.17 on the
-ring, ×1 in the centre), white icon (×1.125 ring), glow 11 (×1.22 ring / ×1.17 centre, 0.7 opaque), label fading in
-over ~0.5 s on bar 12 (centre, above) or 13 (ring, to the left, ink ending 53.6 left of the item centre); footer lines
-(texture 105, 686 wide at y 432 / 450.5) and the prompt string 120 with the key name "Return" in (99, 209, 247). The
-movie `medsea_loop.bik` is fitted to the window width, centred, at ~0.66 brightness. Items: centre 123 PLAY GAME
-(loads the newest save, else a new game), ring 124 START NEW GAME, 125 GAME OPTIONS, 126 LOAD GAME, 127 SAVE GAME (the
-original's message 161 "only … in gameplay mode" in box 106 with OK 383), 128 AUDIO/VISUAL (our Options), 129 EXTRAS
-(not ported: message 456 "Unavailable"), 131 QUIT GAME. Navigation as tru.exe: Left from the centre to the last ring
-item (first time SAVE GAME, the one level with the centre), Right back to the centre, Up/Down along the ring and off
-either end to the centre. Pause [I]: the same radial art with 122 RESUME GAME in the centre and 127 SAVE GAME (slot
-`save-<date>`), 126, 1050 ACCESS PDA, 125, 1062 BACK TO MENU on the ring. Load/Options/PDA are our panels in the 8×8
-atlas font [I].
-Load lists `saveDir()/*.ousave` newest first (456 "Unavailable" if none); Options 491: 487 SFX VOLUME, 488 IN-GAME MUSIC
-VOLUME (mixer bus volumes); PDA page: chapter name, 1075 AREA INFO, 1073/1072/1274 with the found counts. Objective text is
-not mapped [U]. Keys: arrows/WASD, Enter/Space/E accept, Esc/Backspace back; pad d-pad, South, East/Start. Replays drive
-menus with `forward`/`right` ±1, `jump`/`interact` (accept), `drop`/`pause` (back); the script clock keeps running in menus.
-The original's attract mode (intro.bik after ~1 min idle) and title music are not reproduced; the footer always names the
-keyboard key.
+1024×768 4:3 and 1920×1080 16:9 (openunderworld-work/screens/menu, screens/ui). Everything is in the 640×480 UI space at
+the window height's scale, centred horizontally (16:9 keeps the 4:3 layout in the middle). Art = generalbank.drm textures
+plus g_pda.drm 680–705 packed into one atlas (`ui::Art`, `FrameOptions::uiImages[0]`); full-screen backgrounds are
+`pc-w\image\*.raw` (`ui::loadRaw`: `!WAR`, u32 header size 0x80, u32 pixel bytes, 3, 0x10, width, height, row bytes;
+B,G,R,A pixels) in `uiImages[1]` (the menu movie in the main menu, else the PDA or loading background). Font = DTP 46
+(header and 12-byte glyph table over textures 109/110, advance `(spacing + width) · scale − 1` as `Font_GetTextWidth`
+0x4758C0; text scale 0.625 × the font's 0.5; glyphs sampled with a half-texel inset); text below is placed by its cap
+top (cell top + 4.52·scale, cap height 14·scale). Locals placeholders U+182A/182B/182C/1803/1801 draw as the key names
+Return/Escape/BackSpace/space/E in (99, 209, 247).
+- Radial ring: texture 17 glyph art 672² at (317.5, 242.25), ¾ opaque; texture 50 quarter ring 208² mirrored four times
+  around the centre (320.3, 240.3); ring radius 136.8, 7 items from −90° in steps of 180°/7; discs (15) and icons
+  (18–26) at 0.67 per texel, unselected icons tinted (50, 115, 185); the selected item: black disc 51 (×1.17 on the ring,
+  ×1 in the centre), white icon (×1.125 ring), glow 11 (×1.22 ring / ×1.17 centre, 0.7 opaque), label fading in over
+  ~0.5 s on bar 12 (centre, above) or 13 (ring, to the left, ink ending 53.6 left of the item centre); footer lines
+  (texture 105, 686 wide at y 432 / 450.5) and prompt 120. The movie `medsea_loop.bik` is fitted to the window width,
+  centred, at ~0.66 brightness. Items: centre 123 PLAY GAME (loads the newest save, else a new game), ring 124 START NEW
+  GAME (PLAYER TAILORING first), 125 GAME OPTIONS, 126 LOAD GAME, 127 SAVE GAME (main menu: message 161 "only … in
+  gameplay mode" in box 106 with OK 383), 128 AUDIO/VISUAL, 129 EXTRAS (not ported: message 456 "Unavailable"), 131
+  QUIT GAME. Navigation as tru.exe: Left from the centre to the last ring item (first time SAVE GAME, the one level with
+  the centre), Right back to the centre, Up/Down along the ring and off either end to the centre.
+- Pause [O]: the same ring with 122 RESUME GAME in the centre over the game dimmed to ~0.56 (HUD hidden); SAVE GAME opens
+  the Save screen, QUIT GAME returns to the main menu [I: no confirmation 494]. No PDA item: the `pda` action (key 1,
+  replays `pda`) opens the PDA.
+- LOAD / SAVE GAME [O empty slots]: the ring stays (the opened item: black disc ×1.17 with a white circle r 29.8, 1.3
+  wide; the centre label stays) and a mirrored ring (items 2..7 mirrored about x 320.3): page up 27, four slots, page
+  down 28, icons (114, 124, 165); empty slot 29, used slot 30 [I: filled slots were not captured], selection as on the
+  ring with the save name on the mirrored bar 13. Right/Accept enter the slots, Left leaves; Accept loads / saves
+  (an empty slot gets `save-<date>`, a used one is overwritten), Backspace / pad North deletes (11 / 9); footer string
+  121 split at its spaces, centres 193.6 / 433.3.
+- List screens (GAME OPTIONS 490/491, AUDIO/VISUAL 497/491, VOLUME SETTINGS 486/497) over the glyph art and ring shadow:
+  icon (20 / 23 / 32, 2/3 texel, white) centred (191, 88), white divider x 218 y 73.3–104, title 1 white at x 226.7 cap
+  75.1 scale 0.95, title 2 (110, 165, 200) at x 262.2 cap 91.6 scale 0.67; white line 105 409 wide at y 110 and under
+  the rows; black panel solid ±125 fading to ±181; rows cap 127.6 + 24·i (fewer than five rows: +8.4), scale 0.6, at
+  x 152.4 (VOLUME 164.4), selected white, others (129, 130, 131); values right-aligned at 498.7 (GAME OPTIONS) / 492.6;
+  bottom line 25.7 under the last row, at least at 246.7; selection bar (23, 69, 97) 15.5 tall, solid ±107.5 fading to
+  ±217.5; sliders: frame (5, 50, 80), fill (185, 230, 255), x 322.7–461.3, 7 tall, arrows 113/114 at 307.6 / 475.6 on
+  the selected row; footer 120 / 375 at 271.6 / 379. Rows and what they drive: COMBAT RETICLES (HUD reticle), HELPER
+  BUTTONS and TRAINING TEXT (stored only: ours has no helper buttons/training text toggles), GAMEPAD / CONTROL
+  CONFIGURATION and DISPLAY MODE / SETTINGS (message 456: the launcher configures them), VIEW AXIS INVERSION (ON/OFF
+  inline, mouse/stick Y [I: the original opens a 501–504 sub-screen, not captured]), PLAYER TAILORING; LANGUAGE (ENGLISH,
+  fixed), SUBTITLES ON / OFF, VOLUME SETTINGS, BRIGHTNESS (inline slider, graphics brightness 0.5·2^(v/5) [I: the
+  original opens a screen, not captured]); SFX / IN-GAME MUSIC / CINEMATIC VOLUME (mixer buses; cutscene audio).
+  Settings last for the session (not written to the config).
+- PLAYER TAILORING [O]: box 106 stretched to 672×237 at y 216 over the backdrop alone; title 484 cap 117.8 scale 0.8,
+  line under it (y 139.6, 190 wide); 481/482/483 centred at 176.9 + 28.9·i, scale 0.66, selected white on a (30, 90, 127)
+  bar (solid ±100, fading to ±182), others (203, 203, 203); footer line y 287 and prompts at 266.7 / 373.3 (scale 0.76).
+  Picking starts the game from START NEW GAME, or only sets the preset from GAME OPTIONS; the preset changes nothing
+  in ours yet (ammunition/damage/grab-time tailoring is not ported).
+- PDA [O]: `pda_bg_1280` (`_960` when the window is narrower than 1.556:1) fitted to the window height and centred; in
+  bg pixels (virtual = bg·2/3 − 106.7, bg·2/3, the same for both widths): items 1074 SONAR MAP, 1075 AREA INFO, 1076,
+  1077, 1078, 1081 / 1082 greyed (91, 91, 91, skipped), 122 RESUME GAME, right-aligned at 502.7, caps 173.3 + 43.3·i,
+  scale 0.605, a line 17.4 below each from x 251.3 ((46, 86, 121); selected 2 px (68, 130, 184)); the selected item in
+  (76, 139, 193) with arrow 114. Picture window (g_pda texture, tab bar included) at (544.7, 166) 1 px/texel, tab label
+  right-aligned at 994 cap 360.7 scale 0.57: SONAR 688 + prompt 1085 (Accept: 1093 "unavailable"); AREA INFO 680 +
+  chapter (680–687) and RELICS / TREASURES found/total at caps 442.7 / 478.7 scale 0.8 (x 602.7, values to 963.3) in a
+  black box from 405.3 (line (16, 60, 66)) to 525; WEAPON SELECTION 689 + 1086, INVENTORY 690 + 1087 (Accept: 456);
+  FIELD ASSISTANCE two boxes 155–344 / 357–544 with 1091 (Accept: hint) / 1092 (E / pad West: answer); prompts scale
+  0.63, wrapped at 300, centred on the pane; footer 375 at x 289.8 and 120 at 621.3 (not on AREA INFO), cap 600. Totals
+  come from `game::chapterRewards` [O survey of every l<N>_ unit's reward intros]: 10/22/7/10/10/0/19 treasures and one
+  relic for chapters 1–5 and 7; found = those ids in `World::collected`.
+- Loading screen [O]: `loading_bg_<area>` (640×360) covering the window, black 0.69 outside the band y 88.9–390.2 and
+  0.08 inside, white 0.3 band edges 2.2 tall, emblem 5 (345², 0.35); title 51 + chapter cap 220.4 scale 1.17, line 105
+  at 242.4, story 59 + chapter at scale 0.66 from cap 256.9 every 13.15, wrapped at 540. Image per chapter [I by area]:
+  mansion, medsea, thailand, dungeon (Croft Manor), mexico, snow (Jan Mayen), ship, arcticsea (and the epilogue). Shown
+  for one frame before New Game, PLAY GAME / LOAD (the save's chapter) and after a level end's cinematic (chapter + 1).
+Keys: arrows/WASD, Enter/Space accept, E = Alt (accept; PDA TASK), Esc back, Backspace/Delete delete; pad d-pad,
+South accept, West Alt, North delete, East/Start back. Replays drive menus with `forward`/`right` ±1, `jump` (accept),
+`interact` (Alt), `drop`/`pause` (back), `pda`; the script clock keeps running in menus. Not reproduced: the attract
+mode (intro.bik after ~1 min idle), title music, confirmation dialogs (154–160, 494), the decorative small text under
+the list panels, the PDA's sonar map / weapon / inventory / journal sub-screens, filled save slot details, and the
+footer always names the keyboard key.
 
-**Original UI reference (2026-10-28)** [O captures; HUD implemented, the rest not yet]: tru.exe captures at 1920×1080 (and
+**Original UI reference (2026-10-28)** [O captures; implemented: HUD below, menus/PDA/loading above]: tru.exe captures at 1920×1080 (and
 HUD at 1024×768) in openunderworld-work/screens/ui (`hud_weapon_*`, `hud_dpad_*`, `pause_*`, `game_options_1080`,
 `av_1080`, `av_volume_1080`, `load_game_1080`, `save_game_1080`, `panel_player_tailoring_1080`, `pda_*_1080`,
 `loading_1080`). Under Wine the paused game applies key presses several seconds late; wait ~4 s between keys.

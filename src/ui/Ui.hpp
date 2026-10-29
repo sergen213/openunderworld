@@ -1,8 +1,8 @@
-// Front-end and in-game UI: main/pause/load/options menus, the PDA page, pickup notifications and chapter
-// title cards. Renderer-agnostic: draws into render::TextVertex quads (FrameOptions::ui). Main and pause menus
-// are the original radial menu drawn with the game's own art and font (ui::Art, generalbank.drm) at the layout
-// measured from tru.exe captures, as are the HUD and subtitles (src/ui/Hud.cpp); submenus use the renderer's 8x8 atlas font. Text is the
-// original locals.bin strings. The original UI scripts are not executed. docs/GAMEPLAY.md "Menus".
+// Front-end and in-game UI: the menus (main/pause ring, save slots, option lists, player tailoring, message box),
+// the PDA, loading screens, the HUD, notifications and chapter title cards. Renderer-agnostic: draws into
+// render::TextVertex quads (FrameOptions::ui), all with the game's own art and font (ui::Art) at layouts measured from
+// tru.exe captures (the HUD in src/ui/Hud.cpp). Text is the original locals.bin strings. The original UI scripts are not
+// executed. docs/GAMEPLAY.md "Menus".
 #pragma once
 
 #include "render/Renderer.hpp"
@@ -62,32 +62,45 @@ public:
 };
 
 // ---- menus ------------------------------------------------------------------------------------------
-enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back };
-enum class Screen : uint8_t { None, Main, Pause, Load, Options, Pda, Message };
-// Continue: load the newest save (the app starts a new game when there is none).
-enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, QuitToMenu, Quit };
+// Delete: Backspace on the Save/Load slot ring. Alt: the second PDA prompt key (E: Field Assistance TASK); Accept
+// elsewhere.
+enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
+enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message };
+// Continue: load the newest save (the app starts a new game when there is none). Save/Load/Delete act on
+// selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
+enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer };
 
 struct Item {
     int16_t stringId = 0;  // locals.bin label; 0 = `label`
-    std::string label;     // save slot names
+    std::string label{};   // save slot names
     Action action = Action::None;
     Screen opens = Screen::None;
-    int* value = nullptr;  // Options sliders 0..10 (Left/Right)
-    uint32_t icon = 0;     // radial menus: generalbank texture id
+    int* value = nullptr;  // slider 0..10 (Left/Right)
+    uint32_t icon = 0;     // radial menus and save slots: generalbank texture id
     int16_t message = 0;   // opens Screen::Message with this locals.bin string
+    bool* toggle = nullptr; // Left/Right/Accept flip it; shows onId / offId (both, "ON / OFF", when `pair`)
+    int16_t onId = 0, offId = 0;
+    bool pair = false;
+    bool greyed = false;   // shown, never selected (PDA JOURNAL / REVISIT LOCATION)
 };
 
-// What the PDA page shows.
+// What the PDA shows: the chapter (kChapters index) and this chapter's relics/treasures found / in it.
 struct PdaInfo {
-    int16_t chapterNameId = 0;
-    int treasures = 0, relics = 0, healthPacks = 0; // collected so far (whole game)
+    int chapter = 0;
+    int relics = 0, relicsTotal = 0, treasures = 0, treasuresTotal = 0;
 };
 
-// Stack of screens; Back pops back to the item that opened the screen (from Pause it resumes; from Main it does
-// nothing). Accept on an item runs its action or opens its screen; the app executes actions. Main and Pause are
-// radial: item 0 sits in the centre, the others on the ring. As tru.exe: Left from the centre goes to the last
+// Loading screen background of a chapter (kChapters index): pc-w\image\<name>.raw [I mapping by area].
+std::string_view loadingImage(int chapter);
+// tru.exe loading screen: `image` = uiImages[1] (loadingImage), chapter title 51.. and story 59.. (docs "Menus").
+void drawLoading(Canvas& c, const locale::Strings& s, int chapter);
+
+// Stack of screens; Back pops back to the item that opened the screen (from Pause or the PDA it resumes; from Main
+// it does nothing). Accept on an item runs its action or opens its screen; the app executes actions. Main and Pause
+// are radial: item 0 sits in the centre, the others on the ring. As tru.exe: Left from the centre goes to the last
 // ring item (first time: the one level with the centre), Right returns to the centre, Up/Down step along the
-// ring and leave it at either end to the centre; Up/Down do nothing in the centre.
+// ring and leave it at either end to the centre; Up/Down do nothing in the centre. Load/Save keep the ring and add
+// a mirrored slot ring (page up, four slots, page down): Right/Accept enter it, Left leaves it.
 class Menus {
 public:
     Screen screen() const { return stack_.empty() ? Screen::None : stack_.back(); }
@@ -98,27 +111,36 @@ public:
     void tick(double seconds); // selection animation
     int cursor() const { return cursor_; }
     std::vector<Item> items(); // of the current screen
-    const std::string& selectedSave() const { return selected_; } // after Action::Load
+    const std::string& selectedSave() const { return selected_; } // after Action::Load / Save / Delete
 
-    std::vector<std::string> saves; // Load screen entries (slot names, newest first); set before opening it
-    int musicVolume = 8, sfxVolume = 8; // 0..10, Options
+    std::vector<std::string> saves; // Load/Save slot entries (slot names, newest first); set before opening them
+    int musicVolume = 8, sfxVolume = 8, cinematicVolume = 8; // 0..10, VOLUME SETTINGS
+    int brightness = 5;             // 0..10 (5 = neutral; the app maps it to graphics brightness)
+    bool reticles = true, helperButtons = true, trainingText = true, invertY = false, subtitles = true;
+    int tailoring = 1;              // PLAYER TAILORING preset: 0 casual explorer, 1 tomb raider, 2 master survivalist
     PdaInfo pda;
 
     // `keyName`: the key shown in the footer prompt (tru.exe shows the bound key's name, "Return").
     void draw(Canvas& c, const locale::Strings& s, std::string_view keyName = "Return");
 
 private:
-    void drawRadial(Canvas& c, const locale::Strings& s);
+    void drawRadial(Canvas& c, const locale::Strings& s, Screen ring, int cursor, bool opened);
+    void drawSlots(Canvas& c, const locale::Strings& s);
+    void drawList(Canvas& c, const locale::Strings& s);
+    void drawTailoring(Canvas& c, const locale::Strings& s);
+    void drawPda(Canvas& c, const locale::Strings& s);
     void drawMessage(Canvas& c, const locale::Strings& s);
+    std::vector<Item> itemsOf(Screen s);
     void back(); // pop, restoring the cursor of the screen below
     void select(int item);
 
     std::vector<Screen> stack_;
     std::vector<int> cursors_; // cursor of each screen below the top
     int cursor_ = 0, ring_ = -1; // ring_: last ring item (radial screens), -1 = none yet
+    int page_ = 0;               // Load/Save slot page (four slots each)
     int16_t message_ = 0;
     std::string selected_;
-    std::array<float, 8> grow_{}; // per radial item: 0 = idle .. 1 = selected (eased)
+    std::array<float, 8> grow_{}; // per radial / slot item: 0 = idle .. 1 = selected (eased)
     float label_ = 0;             // label fade-in of the selected radial item, 0..1
 };
 

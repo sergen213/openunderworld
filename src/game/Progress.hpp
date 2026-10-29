@@ -64,6 +64,15 @@ struct Pickup {
 // ... to pick up objects", lara_pickup_ground/crouch clips in the reward DTPs) within this cylinder.
 inline constexpr float kPickupRadius = 200.0f, kPickupHeight = 250.0f;
 
+// Treasure and relic intro ids per chapter (kChapters index; the epilogue shares the Arctic Sea's), for the PDA's
+// AREA INFO found/total [O survey: the reward intros of every pc-w\l<N>_*.drm unit; ids are unique game-wide; the
+// prologue and the Andaman Sea have none]. Totals: 10/22/7/10/10/0/19 treasures, one relic per chapter with any.
+struct ChapterRewards {
+    int32_t relic = 0; // 0 = none
+    std::vector<int32_t> treasures;
+};
+const ChapterRewards& chapterRewards(int chapter);
+
 // NUL-terminated identifiers ([A-Za-z0-9_], 4+ chars) in the data of the type-8 section with id
 // `sectionId`, lower-cased, in order: the string constants a script pushes (unit and music names).
 std::vector<std::string> scriptStrings(const cdc::Drm& drm, uint32_t sectionId);

@@ -13,6 +13,7 @@ namespace {
 constexpr uint32_t kFontDtp = 46;     // generalbank.drm DTP section of the game font
 constexpr uint32_t kMissingGlyph = 0x18AF;
 constexpr int kAtlasWidth = 2048, kGutter = 2; // gutter: edge texels repeated, so bilinear taps never cross textures
+constexpr uint32_t kPdaFirst = 680, kPdaLast = 705;
 
 template <class T> T rd(std::span<const uint8_t> d, size_t at) {
     T v;
@@ -74,13 +75,18 @@ std::optional<Art> loadArt(const cdc::BigfileSet& bigfile, std::string* why) {
 
     struct Pending { uint32_t id; int w, h; std::vector<uint8_t> rgba; };
     std::vector<Pending> list;
-    for (const auto& s : drm.sections) {
-        if (s.type != cdc::SectionType::Texture) continue;
-        const auto t = formats::decodeTexture(s);
-        if (!t || t->cube || t->mips.empty()) continue;
-        const auto& m = t->mips[0];
-        list.push_back({s.id, int(m.width), int(m.height), formats::toRgba8(t->format, m.width, m.height, m.data)});
-    }
+    auto add = [&](const cdc::Drm& d, uint32_t lo, uint32_t hi) {
+        for (const auto& s : d.sections) {
+            if (s.type != cdc::SectionType::Texture || s.id < lo || s.id > hi) continue;
+            const auto t = formats::decodeTexture(s);
+            if (!t || t->cube || t->mips.empty()) continue;
+            const auto& m = t->mips[0];
+            list.push_back({s.id, int(m.width), int(m.height), formats::toRgba8(t->format, m.width, m.height, m.data)});
+        }
+    };
+    add(drm, 0, ~0u);
+    // PDA picture windows (pc-w\g_pda.drm 680..705, ids clear of generalbank's 1..117); optional.
+    if (auto pda = bigfile.read("pc-w\\g_pda.drm")) add(cdc::parseDrm(std::move(*pda)), kPdaFirst, kPdaLast);
     std::stable_sort(list.begin(), list.end(), [](const Pending& a, const Pending& b) { return a.h > b.h; });
     // Shelf packing, tallest first.
     struct Place { int x, y; };
@@ -110,6 +116,20 @@ std::optional<Art> loadArt(const cdc::BigfileSet& bigfile, std::string* why) {
         return std::nullopt;
     }
     return art;
+}
+
+std::optional<Image> loadRaw(const cdc::BigfileSet& bigfile, std::string_view name) {
+    auto bytes = bigfile.read("pc-w\\image\\" + std::string(name) + ".raw");
+    if (!bytes) return std::nullopt;
+    const std::span<const uint8_t> d = *bytes;
+    // cdc RAW: "!WAR", u32 header size (0x80), u32 pixel bytes, u32 3, u32 0x10, u32 width, u32 height, u32 row
+    // bytes, ...; then B,G,R,A pixels, top row first.
+    if (d.size() < 32 || std::memcmp(d.data(), "!WAR", 4) != 0) return std::nullopt;
+    const uint32_t at = rd<uint32_t>(d, 4), size = rd<uint32_t>(d, 8), w = rd<uint32_t>(d, 20), h = rd<uint32_t>(d, 24);
+    if (w == 0 || h == 0 || w > 8192 || h > 8192 || size != w * h * 4 || at + size_t(size) > d.size()) return std::nullopt;
+    Image img{std::vector<uint8_t>(d.begin() + at, d.begin() + at + size), int(w), int(h)};
+    for (size_t i = 0; i < img.rgba.size(); i += 4) std::swap(img.rgba[i], img.rgba[i + 2]), img.rgba[i + 3] = 255;
+    return img;
 }
 
 std::u32string decodeUtf8(std::string_view s) {

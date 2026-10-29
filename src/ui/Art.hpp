@@ -1,6 +1,7 @@
-// Original front-end art from pc-w\generalbank.drm: every texture section packed into one RGBA atlas
-// (render::FrameOptions::uiImages[0]) and the game font (DTP section 46: glyph table over textures 109 and
-// 110). Layout and metrics: docs/GAMEPLAY.md "Menus".
+// Original front-end art from pc-w\generalbank.drm (plus the PDA picture windows 680..705 of pc-w\g_pda.drm): every
+// texture section packed into one RGBA atlas (render::FrameOptions::uiImages[0]) and the game font (DTP section 46:
+// glyph table over textures 109 and 110). Full-screen cdc RAW images (pc-w\image\*.raw: loading and PDA backgrounds)
+// load separately. Layout and metrics: docs/GAMEPLAY.md "Menus".
 #pragma once
 
 #include <cstdint>
@@ -50,6 +51,13 @@ struct Art {
 std::optional<Font> parseFont(const cdc::Drm& drm, uint32_t dtpId, std::string* why = nullptr);
 // Loads generalbank.drm: nullopt (with `why`) when it is missing or its font does not parse.
 std::optional<Art> loadArt(const cdc::BigfileSet& bigfile, std::string* why = nullptr);
+
+// A cdc RAW image, pc-w\image\<name>.raw ("!WAR" header, B,G,R,A pixels) as opaque RGBA8; nullopt if missing/bad.
+struct Image {
+    std::vector<uint8_t> rgba;
+    int width = 0, height = 0;
+};
+std::optional<Image> loadRaw(const cdc::BigfileSet& bigfile, std::string_view name);
 
 // UTF-8 to code points; invalid bytes become U+FFFD.
 std::u32string decodeUtf8(std::string_view s);

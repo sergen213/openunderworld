@@ -1,5 +1,5 @@
-// Menus, PDA page and HUD as quads: the original radial menu from ui::Art, the rest in the 8x8 atlas font.
-// Strings and ids, measured layout: docs/GAMEPLAY.md "Menus".
+// Menus, PDA and loading screen as quads, drawn with the original art and font (ui::Art) at the layout measured
+// from tru.exe captures. Strings and ids, measured layout: docs/GAMEPLAY.md "Menus".
 #include "ui/Ui.hpp"
 
 #include "locale/Locale.hpp"
@@ -102,7 +102,9 @@ float Canvas::fontText(float x, float y, float scale, std::string_view utf8, uin
             const float du = (p->u1 - p->u0) / float(p->width), dv = (p->v1 - p->v0) / float(p->height);
             const float u0 = p->u0 + float(g->x) * du, v0 = p->v0 + float(g->y) * dv;
             const float w = float(g->width) * f.scaleX * scale;
-            image(0, sx(x), sy(y), w * unit(), h * unit(), u0, v0, u0 + float(g->width) * du, v0 + float(f.cellHeight) * dv, c);
+            // Half-texel inset: bilinear taps at large scales would pick up the neighbouring glyphs' edges.
+            image(0, sx(x), sy(y), w * unit(), h * unit(), u0 + du / 2, v0 + dv / 2, u0 + (float(g->width) - 0.5f) * du,
+                  v0 + (float(f.cellHeight) - 0.5f) * dv, c);
         }
         x += float(f.spacing + g->width) * f.scaleX * scale - 1;
     }
@@ -133,9 +135,11 @@ namespace {
 
 // generalbank.drm texture section ids (ui::Art).
 constexpr uint32_t kGlow = 11, kBarCentre = 12, kBarLeft = 13, kDisc = 15, kFrontArt = 17, kRingShade = 50,
-                   kBlackDisc = 51, kDialog = 106, kLine = 105;
+                   kBlackDisc = 51, kDialog = 106, kLine = 105, kEmblem = 5, kArrowLeft = 113, kArrowRight = 114;
 constexpr uint32_t kIconPlay = 18, kIconNew = 19, kIconOptions = 20, kIconLoad = 21, kIconSave = 22, kIconAv = 23,
-                   kIconExtras = 24, kIconQuit = 26, kIconPda = 44;
+                   kIconExtras = 24, kIconQuit = 26, kIconPageUp = 27, kIconPageDown = 28, kIconSlotEmpty = 29,
+                   kIconSlotUsed = 30, kIconVolume = 32;
+constexpr uint32_t kPdaPicture = 680, kPdaSonar = 688, kPdaWeapons = 689, kPdaInventory = 690; // pc-w\g_pda.drm
 
 // Layout in the 640x480 virtual space, measured from tru.exe at 1024x768 (4:3) and 1920x1080 (16:9) with the
 // art textures fitted to the captures (docs/GAMEPLAY.md "Menus").
@@ -152,14 +156,40 @@ constexpr float kBarW = 189.4f, kBarH = 23.7f;        // centre label bar (textu
 constexpr float kSideBarW = 240.0f, kSideBarEnd = 16; // ring label bar (texture 13): width, right end under the disc
 constexpr float kTextScale = 0.625f;                  // x the font's 0.5: cap height 8.75
 constexpr float kCapMid = 7.2f;                       // cell top -> middle of the capitals at kTextScale
+constexpr float kCapTop = 4.52f, kCapHeight = 14.0f;  // per unit text scale: cell top -> cap top, cap height
 constexpr float kLabelGap = 53.6f;                    // ring label: right ink edge to the item centre
 constexpr float kFooterY = 434.1f, kFooterLine0 = 432.0f, kFooterLine1 = 450.5f; // prompt cell top, lines
 // Message box: texture 106 (its box covers texels 202..822 x 5..250), text at 0.74 with 16-pixel lines.
 constexpr float kDialogY = 214.7f, kDialogW = 672, kDialogH = 210, kDialogText = 0.74f, kDialogTop = 179.8f;
+// Load/Save slot ring: the main ring mirrored about x = kRingX (items 2..7: page up, four slots, page down).
+constexpr float kOpenedRing = 29.8f, kOpenedRingW = 1.3f; // white circle around the ring item that opened it
+constexpr float kSlotFooterL = 193.6f, kSlotFooterR = 433.3f; // "Return SELECT" / "BackSpace DELETE" centres
+// List screens (GAME OPTIONS, AUDIO/VISUAL, VOLUME SETTINGS).
+constexpr float kListIconX = 191, kListIconY = 88, kListDivX = 218, kListDivTop = 73.3f, kListDivBottom = 104;
+constexpr float kTitle1X = 226.7f, kTitle1Cap = 75.1f, kTitle1Scale = 0.95f;
+constexpr float kTitle2X = 262.2f, kTitle2Cap = 91.6f, kTitle2Scale = 0.67f;
+constexpr float kListLineTop = 110, kListLineW = 409, kListPanelSolid = 125, kListPanelFade = 181;
+constexpr float kRowCap = 127.6f, kRowStep = 24, kRowScale = 0.6f, kRowX = 152.4f, kRowXVolume = 164.4f;
+constexpr float kRowsBelow = 25.7f, kListMinBottom = 246.7f, kFewRowsDrop = 8.4f; // < 5 rows start lower
+constexpr float kSelBarH = 15.5f, kSelBarSolid = 107.5f, kSelBarFade = 217.5f;
+constexpr float kSliderX0 = 322.7f, kSliderX1 = 461.3f, kSliderH = 7, kSliderArrowL = 307.6f, kSliderArrowR = 475.6f;
+constexpr float kSliderArrow = 7.8f; // textures 113/114 (16x32, ink 9x18): a ~4.4 square triangle
+constexpr float kListFooterL = 271.6f, kListFooterR = 379.0f;
+// PLAYER TAILORING panel (texture 106 stretched).
+constexpr float kTailorY = 216, kTailorH = 237, kTailorTitleCap = 117.8f, kTailorTitleScale = 0.8f, kTailorLineY = 139.6f;
+constexpr float kTailorRow0 = 176.9f, kTailorStep = 28.9f, kTailorScale = 0.66f, kTailorBarSolid = 100, kTailorBarFade = 182;
+constexpr float kTailorFoot = 0.76f, kTailorFootLine = 287, kTailorFootY = 306.7f, kTailorFootL = 266.7f, kTailorFootR = 373.3f;
+// Loading screen.
+constexpr float kLoadBand0 = 88.9f, kLoadBand1 = 390.2f, kLoadTitleCap = 220.4f, kLoadTitleScale = 1.17f, kLoadLine = 242.4f;
+constexpr float kLoadTextCap = 256.9f, kLoadTextScale = 0.66f, kLoadTextStep = 13.15f, kLoadTextW = 540;
 
 constexpr uint32_t rgba(uint32_t r, uint32_t g, uint32_t b, uint32_t a = 255) { return r | g << 8 | b << 16 | a << 24; }
 constexpr uint32_t kIconBlue = rgba(50, 115, 185), kLabel = rgba(203, 203, 203), kKeyBlue = rgba(99, 209, 247),
-                   kLineBlue = rgba(43, 105, 140), kButtonBlue = rgba(25, 73, 103), kBlack = rgba(0, 0, 0);
+                   kLineBlue = rgba(43, 105, 140), kButtonBlue = rgba(25, 73, 103), kBlack = rgba(0, 0, 0),
+                   kSlotIcon = rgba(114, 124, 165), kTitleBlue = rgba(110, 165, 200), kRowGrey = rgba(129, 130, 131),
+                   kSelBar = rgba(23, 69, 97), kSliderFrame = rgba(5, 50, 80), kSliderFill = rgba(185, 230, 255),
+                   kTailorBar = rgba(30, 90, 127), kPdaSel = rgba(76, 139, 193), kPdaGrey = rgba(91, 91, 91),
+                   kPdaLine = rgba(46, 86, 121), kPdaSelLine = rgba(68, 130, 184), kPdaBoxLine = rgba(16, 60, 66);
 
 uint32_t withAlpha(uint32_t c, float a) { return (c & 0x00FFFFFFu) | uint32_t(std::clamp(a, 0.0f, 1.0f) * float(c >> 24)) << 24; }
 uint32_t mix(uint32_t a, uint32_t b, float t) {
@@ -169,11 +199,12 @@ uint32_t mix(uint32_t a, uint32_t b, float t) {
     return out;
 }
 
-// Ring position of radial item `i` (0 = centre).
-std::pair<float, float> radialPos(size_t i) {
+// Ring position of radial item `i` (0 = centre); `mirror`: the Load/Save slot ring.
+std::pair<float, float> radialPos(size_t i, bool mirror = false) {
     if (i == 0) return {kRingX, kRingY};
     const float a = (-90.0f - float(i - 1) * kRingStep) * 3.14159265359f / 180.0f;
-    return {kRingX + std::cos(a) * kRingRadius, kRingY + std::sin(a) * kRingRadius};
+    const float x = std::cos(a) * kRingRadius;
+    return {kRingX + (mirror ? -x : x), kRingY + std::sin(a) * kRingRadius};
 }
 
 // The ring item level with the centre: where Left goes first (tru.exe: SAVE GAME of the main menu).
@@ -184,26 +215,103 @@ int levelRingItem(size_t count) {
     return best;
 }
 
-// locals.bin prompts start with an action placeholder (U+1800..U+18FF) that the game replaces with the bound
-// control: here the key name in blue, then the rest in white. Draws centred on `cx`; returns nothing.
-void prompt(Canvas& c, float cx, float y, std::string_view key, std::string_view text) {
-    std::string rest(text);
-    if (rest.size() >= 3 && uint8_t(rest[0]) == 0xE1 && (uint8_t(rest[1]) == 0xA0 || uint8_t(rest[1]) == 0xA1)) rest.erase(0, 3);
-    const float w = c.fontWidth(key, kTextScale) + c.fontWidth(rest, kTextScale);
-    const float x = cx - w / 2;
-    c.fontText(x + c.fontText(x, y, kTextScale, key, kKeyBlue), y, kTextScale, rest, kWhite);
+// Solid quad between screen-pixel corners with per-corner colours (left/right): horizontal gradients.
+void hquad(Canvas& c, float x0, float y0, float x1, float y1, uint32_t left, uint32_t right) {
+    c.vertices.insert(c.vertices.end(), {{x0, y0, -1, -1, left}, {x1, y0, -1, -1, right}, {x1, y1, -1, -1, right},
+                                         {x0, y0, -1, -1, left}, {x1, y1, -1, -1, right}, {x0, y1, -1, -1, left}});
+}
+// Horizontal bar centred on virtual x 320: solid over +-solid, fading out to +-fade.
+void fadeBar(Canvas& c, float y, float h, float solid, float fade, uint32_t color, float cx = 320) {
+    const float y0 = c.sy(y), y1 = c.sy(y + h);
+    const uint32_t clear = withAlpha(color, 0);
+    hquad(c, c.sx(cx - fade), y0, c.sx(cx - solid), y1, clear, color);
+    hquad(c, c.sx(cx - solid), y0, c.sx(cx + solid), y1, color, color);
+    hquad(c, c.sx(cx + solid), y0, c.sx(cx + fade), y1, color, clear);
+}
+void vrect(Canvas& c, float x, float y, float w, float h, uint32_t color) { c.rect(c.sx(x), c.sy(y), w * c.unit(), h * c.unit(), color); }
+// Annulus (screen-space triangles) at virtual (cx, cy).
+void ring(Canvas& c, float cx, float cy, float r, float width, uint32_t color) {
+    constexpr int kSegments = 64;
+    for (int i = 0; i < kSegments; ++i) {
+        const float a0 = float(i) * 6.2831853f / kSegments, a1 = float(i + 1) * 6.2831853f / kSegments;
+        auto p = [&](float a, float rr) { return std::pair{c.sx(cx + std::cos(a) * rr), c.sy(cy + std::sin(a) * rr)}; };
+        const auto [ax, ay] = p(a0, r - width);
+        const auto [bx, by] = p(a0, r);
+        const auto [cx1, cy1] = p(a1, r);
+        const auto [dx, dy] = p(a1, r - width);
+        c.vertices.insert(c.vertices.end(), {{ax, ay, -1, -1, color}, {bx, by, -1, -1, color}, {cx1, cy1, -1, -1, color},
+                                             {ax, ay, -1, -1, color}, {cx1, cy1, -1, -1, color}, {dx, dy, -1, -1, color}});
+    }
 }
 
-void footer(Canvas& c, const locale::Strings& s, std::string_view key, bool back) {
+// Text placed by its cap top (the measured ink top of capitals).
+// `tracking`: extra advance per glyph (the PDA prompts are letter-spaced [O captures]).
+float capText(Canvas& c, float x, float capTop, float scale, std::string_view t, uint32_t color, float tracking = 0) {
+    if (tracking == 0) return c.fontText(x, capTop - kCapTop * scale, scale, t, color);
+    const float x0 = x;
+    for (size_t p = 0; p < t.size();) {
+        const uint8_t b = uint8_t(t[p]);
+        const size_t n = std::min(t.size() - p, size_t(b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4));
+        x += c.fontText(x, capTop - kCapTop * scale, scale, t.substr(p, n), color) + tracking;
+        p += n;
+    }
+    return x - x0;
+}
+float trackedWidth(const Canvas& c, std::string_view t, float scale, float tracking) {
+    return c.fontWidth(t, scale) + tracking * float(decodeUtf8(t).size());
+}
+
+// locals.bin prompts carry control placeholders (U+1800..U+18FF) that the game replaces with the bound control's
+// name, drawn in blue: the keyboard defaults as tru.exe shows them [O captures].
+std::string_view placeholderKey(char32_t cp, std::string_view select) {
+    switch (cp) {
+    case 0x182A: return select;      // SELECT
+    case 0x182B: return "Escape";    // BACK
+    case 0x182C: return "BackSpace"; // DELETE
+    case 0x1803: return "space";     // jump (PDA "PRESS ... TO")
+    case 0x1801: return "E";         // interact
+    default: return {};
+    }
+}
+struct Run { std::string text; bool key; };
+std::vector<Run> keyRuns(std::string_view utf8, std::string_view select) {
+    std::vector<Run> runs;
+    size_t p = 0;
+    while (p < utf8.size()) {
+        const uint8_t b = uint8_t(utf8[p]);
+        const size_t n = b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4;
+        const auto cps = decodeUtf8(utf8.substr(p, n));
+        const char32_t cp = cps.empty() ? 0 : cps[0];
+        if (cp >= 0x1800 && cp < 0x1900) {
+            if (const auto k = placeholderKey(cp, select); !k.empty()) runs.push_back({std::string(k), true});
+        } else {
+            if (runs.empty() || runs.back().key) runs.push_back({{}, false});
+            runs.back().text.append(utf8.substr(p, n));
+        }
+        p += n;
+    }
+    return runs;
+}
+float keyedWidth(const Canvas& c, std::string_view t, float scale, std::string_view select, float tracking = 0) {
+    float w = 0;
+    for (const auto& r : keyRuns(t, select)) w += trackedWidth(c, r.text, scale, tracking);
+    return w;
+}
+// Prompt text centred on `cx` (cap top `capTop`): placeholders as key names in blue, the rest in `color`.
+void keyed(Canvas& c, float cx, float capTop, float scale, std::string_view t, std::string_view select, float tracking = 0) {
+    float x = cx - keyedWidth(c, t, scale, select, tracking) / 2;
+    for (const auto& r : keyRuns(t, select)) x += capText(c, x, capTop, scale, r.text, r.key ? kKeyBlue : kWhite, tracking);
+}
+
+// Footer lines and prompts (centres in virtual x).
+void footer(Canvas& c, const locale::Strings& s, std::string_view key, std::initializer_list<std::pair<float, int16_t>> prompts) {
     c.sprite(kLine, 320, kFooterLine0, 1024 * kTexel, 1.8f, kLineBlue);
     c.sprite(kLine, 320, kFooterLine1, 1024 * kTexel, 1.8f, kLineBlue);
-    if (!back) return prompt(c, 320, kFooterY, key, s.get(120)); // "<select> SELECT"
-    prompt(c, 270, kFooterY, key, s.get(120));
-    prompt(c, 370, kFooterY, "Escape", s.get(375)); // "<back> BACK"
+    for (const auto& [cx, id] : prompts) keyed(c, cx, kFooterY + kCapTop * kTextScale, kTextScale, s.get(id), key);
 }
 
 // Breaks `text` (locals.bin "\n" escapes too) into lines no wider than `width` virtual pixels.
-std::vector<std::string> fontWrap(const Canvas& c, std::string_view text, float width, float scale) {
+std::vector<std::string> fontWrap(const Canvas& c, std::string_view text, float width, float scale, float tracking = 0) {
     std::vector<std::string> lines;
     for (const auto& para : wrap(text, 1u << 20)) {
         std::string line;
@@ -211,7 +319,7 @@ std::vector<std::string> fontWrap(const Canvas& c, std::string_view text, float 
             const size_t q = std::min(para.find(' ', p), para.size());
             const std::string word = para.substr(p, q - p);
             const std::string next = line.empty() ? word : line + ' ' + word;
-            if (!line.empty() && c.fontWidth(next, scale) > width) lines.push_back(line), line = word;
+            if (!line.empty() && trackedWidth(c, next, scale, tracking) > width) lines.push_back(line), line = word;
             else line = next;
             p = q + 1;
         }
@@ -220,14 +328,62 @@ std::vector<std::string> fontWrap(const Canvas& c, std::string_view text, float 
     return lines;
 }
 
+bool radial(Screen s) { return s == Screen::Main || s == Screen::Pause; }
+bool slots(Screen s) { return s == Screen::Load || s == Screen::Save; }
+
+// PDA pages (left list): SONAR MAP, AREA INFO, WEAPON SELECTION, INVENTORY, FIELD ASSISTANCE, JOURNAL and REVISIT
+// LOCATION (greyed: not ported, as on PC without them), RESUME GAME.
+enum PdaPage { kSonar, kAreaInfo, kWeapons, kInventory, kField, kJournal, kRevisit, kResume };
+// PDA geometry is in pda_bg_1280 pixels (720 high, fitted to the window height and centred; pda_bg_960 for narrow
+// windows has the same content 160 pixels further left): bg pixel -> virtual.
+constexpr float pdaX(float x) { return x * 2 / 3 - 320.0f / 3; }
+constexpr float pdaY(float y) { return y * 2 / 3; }
+constexpr float kPdaItemRight = 502.7f, kPdaItemCap = 173.3f, kPdaItemStep = 43.3f, kPdaItemScale = 0.605f;
+constexpr float kPdaLineX0 = 251.3f, kPdaLineBelow = 17.4f, kPdaArrowW = 10;
+constexpr float kPdaPicX = 544.7f, kPdaPicY = 166, kPdaPicRight = 1035, kPdaTabRight = 994, kPdaTabCap = 360.7f, kPdaSmall = 0.57f, kPdaTracking = 0.55f;
+constexpr float kPdaBoxTop = 405.3f, kPdaBoxBottom = 525, kPdaRowCap0 = 442.7f, kPdaRowCap1 = 478.7f, kPdaRowScale = 0.8f;
+constexpr float kPdaRowX = 602.7f, kPdaRowRight = 963.3f, kPdaPromptMid = 465, kPdaPromptStep = 19.3f, kPdaPromptW = 330;
+constexpr float kPdaFieldBox0 = 155, kPdaFieldBox1 = 344, kPdaFieldBox2 = 357, kPdaFieldBox3 = 544;
+constexpr float kPdaFootCap = 600, kPdaFootBack = 289.8f, kPdaFootSelect = 621.3f;
+
 } // namespace
+
+std::string_view loadingImage(int chapter) {
+    static constexpr std::string_view kImages[] = {"loading_bg_mansion", "loading_bg_medsea", "loading_bg_thailand",
+                                                   "loading_bg_dungeon", "loading_bg_mexico", "loading_bg_snow",
+                                                   "loading_bg_ship", "loading_bg_arcticsea", "loading_bg_arcticsea"};
+    return kImages[size_t(std::clamp(chapter, 0, 8))];
+}
+
+void drawLoading(Canvas& c, const locale::Strings& s, int chapter) {
+    const float w = float(c.width), h = float(c.height);
+    const float k = std::max(w / 640, h / 360); // 640x360 image, covering the window
+    c.image(1, (w - 640 * k) / 2, (h - 360 * k) / 2, 640 * k, 360 * k, 0, 0, 1, 1, kWhite);
+    const float b0 = c.sy(kLoadBand0), b1 = c.sy(kLoadBand1);
+    c.rect(0, 0, w, b0, withAlpha(kBlack, 0.69f)); // ~0.31 outside the band, ~0.92 inside [O captures]
+    c.rect(0, b1, w, h - b1, withAlpha(kBlack, 0.69f));
+    c.rect(0, b0, w, b1 - b0, withAlpha(kBlack, 0.08f));
+    c.rect(0, b0, w, 2.2f * c.unit(), withAlpha(kWhite, 0.3f));
+    c.rect(0, b1 - 2.2f * c.unit(), w, 2.2f * c.unit(), withAlpha(kWhite, 0.3f));
+    c.sprite(kEmblem, 320, 240, 345, 345, withAlpha(kWhite, 0.35f));
+    const int ch = std::clamp(chapter, 0, 7);
+    const std::string title(s.get(int16_t(51 + ch)));
+    capText(c, 320 - c.fontWidth(title, kLoadTitleScale) / 2, kLoadTitleCap, kLoadTitleScale, title, kWhite);
+    c.sprite(kLine, 320, kLoadLine, kListLineW, 1.8f, kWhite);
+    float y = kLoadTextCap;
+    for (const auto& l : fontWrap(c, s.get(int16_t(59 + ch)), kLoadTextW, kLoadTextScale))
+        capText(c, 320 - c.fontWidth(l, kLoadTextScale) / 2, y, kLoadTextScale, l, kWhite), y += kLoadTextStep;
+}
 
 void Menus::open(Screen s) {
     cursors_.push_back(cursor_);
     stack_.push_back(s);
-    cursor_ = 0, ring_ = -1, label_ = 0;
+    cursor_ = 0, ring_ = -1, label_ = 0, page_ = 0;
     grow_.fill(0);
-    if (s == Screen::Main || s == Screen::Pause) grow_[0] = 1;
+    if (radial(s)) grow_[0] = 1;
+    if (slots(s)) cursor_ = -1;          // focus stays on the ring item until Right / Accept
+    if (s == Screen::Pda) cursor_ = kAreaInfo;
+    if (s == Screen::Tailoring) cursor_ = tailoring;
 }
 
 void Menus::close() {
@@ -248,42 +404,80 @@ void Menus::select(int item) {
 }
 
 void Menus::tick(double seconds) {
-    const bool radial = screen() == Screen::Main || screen() == Screen::Pause;
+    const bool animated = radial(screen()) || slots(screen());
     for (size_t i = 0; i < grow_.size(); ++i) { // ~0.15 s to grow / shrink
-        const float target = radial && int(i) == cursor_ ? 1.0f : 0.0f;
+        const float target = animated && int(i) == cursor_ ? 1.0f : 0.0f;
         const float step = float(seconds) / 0.15f;
         grow_[i] = grow_[i] < target ? std::min(target, grow_[i] + step) : std::max(target, grow_[i] - step);
     }
     label_ = std::min(1.0f, label_ + float(seconds) / 0.5f); // label fades in over ~0.5 s
 }
 
-std::vector<Item> Menus::items() {
-    switch (screen()) {
+std::vector<Item> Menus::items() { return itemsOf(screen()); }
+
+std::vector<Item> Menus::itemsOf(Screen screen) {
+    const int16_t unavailable = 456; // "Unavailable": not ported (the launcher configures display and controls)
+    switch (screen) {
     case Screen::Main:
-        return {{123, {}, Action::Continue, Screen::None, nullptr, kIconPlay},
-                {124, {}, Action::NewGame, Screen::None, nullptr, kIconNew},
-                {125, {}, Action::None, Screen::Options, nullptr, kIconOptions},
-                {126, {}, Action::None, Screen::Load, nullptr, kIconLoad},
-                {127, {}, Action::None, Screen::Message, nullptr, kIconSave, 161}, // "only ... in gameplay mode"
-                {128, {}, Action::None, Screen::Options, nullptr, kIconAv},
-                {129, {}, Action::None, Screen::Message, nullptr, kIconExtras, 456}, // "Unavailable" (not ported)
-                {131, {}, Action::Quit, Screen::None, nullptr, kIconQuit}};
-    case Screen::Pause:
-        return {{122, {}, Action::Resume, Screen::None, nullptr, kIconPlay},
-                {127, {}, Action::Save, Screen::None, nullptr, kIconSave},
-                {126, {}, Action::None, Screen::Load, nullptr, kIconLoad},
-                {1050, {}, Action::None, Screen::Pda, nullptr, kIconPda},
-                {125, {}, Action::None, Screen::Options, nullptr, kIconOptions},
-                {1062, {}, Action::QuitToMenu, Screen::None, nullptr, kIconQuit}};
-    case Screen::Load: {
-        std::vector<Item> v;
-        for (const auto& s : saves) v.push_back({0, s, Action::Load});
-        v.push_back({469, {}});
+    case Screen::Pause: {
+        const bool pause = screen == Screen::Pause;
+        return {pause ? Item{.stringId = 122, .action = Action::Resume, .icon = kIconPlay}
+                      : Item{.stringId = 123, .action = Action::Continue, .icon = kIconPlay},
+                {.stringId = 124, .opens = Screen::Tailoring, .icon = kIconNew},
+                {.stringId = 125, .opens = Screen::GameOptions, .icon = kIconOptions},
+                {.stringId = 126, .opens = Screen::Load, .icon = kIconLoad},
+                pause ? Item{.stringId = 127, .opens = Screen::Save, .icon = kIconSave}
+                      : Item{.stringId = 127, .opens = Screen::Message, .icon = kIconSave, .message = 161}, // "only ... in gameplay mode"
+                {.stringId = 128, .opens = Screen::AudioVisual, .icon = kIconAv},
+                {.stringId = 129, .opens = Screen::Message, .icon = kIconExtras, .message = unavailable},
+                {.stringId = 131, .action = pause ? Action::QuitToMenu : Action::Quit, .icon = kIconQuit}};
+    }
+    case Screen::Load:
+    case Screen::Save: {
+        std::vector<Item> v{{.icon = kIconPageUp}};
+        for (int k = 0; k < 4; ++k) {
+            const size_t i = size_t(page_ * 4 + k);
+            v.push_back(i < saves.size() ? Item{.label = saves[i], .action = screen == Screen::Load ? Action::Load : Action::Save, .icon = kIconSlotUsed}
+                                         : Item{.action = screen == Screen::Load ? Action::None : Action::Save, .icon = kIconSlotEmpty});
+        }
+        v.push_back({.icon = kIconPageDown});
         return v;
     }
-    case Screen::Options: return {{487, {}, Action::None, Screen::None, &sfxVolume}, {488, {}, Action::None, Screen::None, &musicVolume}, {469, {}}};
-    case Screen::Pda: return {{469, {}}};
-    case Screen::Message: return {{383, {}}}; // OK
+    case Screen::GameOptions:
+        return {{.stringId = 132, .toggle = &reticles, .onId = 133, .offId = 134},
+                {.stringId = 135, .toggle = &helperButtons, .onId = 133, .offId = 134},
+                {.stringId = 136, .toggle = &trainingText, .onId = 133, .offId = 134},
+                {.stringId = 492, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 138, .toggle = &invertY, .onId = 45, .offId = 46, .pair = true},
+                {.stringId = 140, .opens = Screen::Tailoring},
+                {.stringId = 493, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 469}};
+    case Screen::AudioVisual:
+        return {{.stringId = 145, .onId = 110},
+                {.stringId = 144, .toggle = &subtitles, .onId = 45, .offId = 46, .pair = true},
+                {.stringId = 142, .opens = Screen::Volume},
+                {.stringId = 143, .value = &brightness},
+                {.stringId = 498, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 499, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 469}};
+    case Screen::Volume:
+        return {{.stringId = 487, .value = &sfxVolume}, {.stringId = 488, .value = &musicVolume},
+                {.stringId = 489, .value = &cinematicVolume}, {.stringId = 469}};
+    case Screen::Tailoring: { // from START NEW GAME it starts the game; from GAME OPTIONS it only sets the preset
+        const bool newGame = stack_.size() >= 2 && radial(stack_[stack_.size() - 2]);
+        const Action a = newGame ? Action::NewGame : Action::None;
+        return {{.stringId = 481, .action = a}, {.stringId = 482, .action = a}, {.stringId = 483, .action = a}};
+    }
+    case Screen::Pda:
+        return {{.stringId = 1074, .opens = Screen::Message, .message = 1093}, // "SONAR MAP IS CURRENTLY UNAVAILABLE"
+                {.stringId = 1075},
+                {.stringId = 1076, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 1077, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 1078, .action = Action::Hint},
+                {.stringId = 1081, .greyed = true},
+                {.stringId = 1082, .greyed = true},
+                {.stringId = 122, .action = Action::Resume}};
+    case Screen::Message: return {{.stringId = 383}}; // OK
     case Screen::None: break;
     }
     return {};
@@ -293,25 +487,67 @@ Action Menus::input(Nav n) {
     auto list = items();
     if (list.empty()) return Action::None;
     const int count = int(list.size());
-    const bool radial = screen() == Screen::Main || screen() == Screen::Pause;
+    const Screen scr = screen();
+    if (n == Nav::Alt) {
+        if (scr == Screen::Pda && cursor_ == kField) return Action::Answer;
+        n = Nav::Accept;
+    }
+    if (slots(scr)) { // the slot ring: -1 = focus on the ring item that opened the screen
+        auto page = [&](int d) {
+            const int pages = std::max(1, int(saves.size() + (scr == Screen::Save ? 4 : 3)) / 4);
+            page_ = std::clamp(page_ + d, 0, pages - 1);
+        };
+        switch (n) {
+        case Nav::Up: case Nav::Down:
+            if (cursor_ >= 0) select(std::clamp(cursor_ + (n == Nav::Up ? -1 : 1), 0, count - 1));
+            return Action::None;
+        case Nav::Right: if (cursor_ < 0) select(1); return Action::None;
+        case Nav::Left: if (cursor_ >= 0) cursor_ = -1, label_ = 0; return Action::None;
+        case Nav::Back: back(); return Action::None;
+        case Nav::Delete:
+            if (cursor_ < 1 || cursor_ > 4 || list[size_t(cursor_)].label.empty()) return Action::None;
+            selected_ = list[size_t(cursor_)].label;
+            return Action::Delete;
+        case Nav::Accept: {
+            if (cursor_ < 0) { select(1); return Action::None; }
+            if (cursor_ == 0 || cursor_ == count - 1) { page(cursor_ == 0 ? -1 : 1); return Action::None; }
+            const Item& it = list[size_t(cursor_)];
+            if (it.action == Action::None) return Action::None; // empty slot on Load
+            selected_ = it.label;
+            if (it.action == Action::Load) close();
+            return it.action;
+        }
+        default: return Action::None;
+        }
+    }
+    auto skip = [&](int c, int d) { // next selectable item
+        for (int i = 0; i < count; ++i) {
+            c = (c + d + count) % count;
+            if (!list[size_t(c)].greyed) return c;
+        }
+        return c;
+    };
     switch (n) {
     case Nav::Up:
     case Nav::Down:
-        if (!radial) select((cursor_ + (n == Nav::Up ? count - 1 : 1)) % count);
+        if (!radial(scr)) select(skip(cursor_, n == Nav::Up ? -1 : 1));
         else if (cursor_ > 0) select((cursor_ + (n == Nav::Up ? -1 : 1) + count) % count); // ring ends lead to the centre
         return Action::None;
     case Nav::Left:
     case Nav::Right:
-        if (radial) {
+        if (radial(scr)) {
             if (n == Nav::Left && cursor_ == 0) select(ring_ > 0 ? ring_ : levelRingItem(list.size()));
             else if (n == Nav::Right) select(0);
         } else if (int* v = list[size_t(cursor_)].value) *v = std::clamp(*v + (n == Nav::Right ? 1 : -1), 0, 10);
+        else if (bool* t = list[size_t(cursor_)].toggle) *t = !*t;
         return Action::None;
     case Nav::Back:
-        if (screen() == Screen::Main) return Action::None;
-        if (screen() == Screen::Pause) { close(); return Action::Resume; }
+        if (scr == Screen::Main) return Action::None;
+        if (stack_.size() == 1) { close(); return Action::Resume; } // Pause, PDA
         back();
         return Action::None;
+    case Nav::Delete: return Action::None;
+    case Nav::Alt:
     case Nav::Accept: {
         const Item& it = list[size_t(cursor_)];
         if (it.opens != Screen::None) {
@@ -319,51 +555,214 @@ Action Menus::input(Nav n) {
             open(it.opens);
             return Action::None;
         }
-        if (it.action == Action::None) { // BACK / OK / sliders
-            if (!it.value) return input(Nav::Back);
+        if (it.toggle) { *it.toggle = !*it.toggle; return Action::None; }
+        if (scr == Screen::Tailoring) {
+            tailoring = cursor_;
+            if (it.action == Action::None) { back(); return Action::None; }
+        }
+        if (it.action == Action::None) { // BACK / OK / sliders / PDA AREA INFO
+            if (!it.value && scr != Screen::Pda) return input(Nav::Back);
             return Action::None;
         }
-        if (it.action == Action::Load) selected_ = it.label;
-        if (it.action == Action::Resume || it.action == Action::NewGame || it.action == Action::Load || it.action == Action::Continue)
-            close();
+        if (it.action == Action::Hint) return Action::Hint;
+        if (it.action == Action::Resume || it.action == Action::NewGame || it.action == Action::Continue) close();
         return it.action;
     }
     }
     return Action::None;
 }
 
-void Menus::drawRadial(Canvas& c, const locale::Strings& s) {
+void Menus::drawRadial(Canvas& c, const locale::Strings& s, Screen screen, int cursor, bool opened) {
+    const auto list = itemsOf(screen);
+    // Unselected first, the growing/selected ones on top; the opened item (Load/Save beneath) keeps its ring.
+    std::vector<size_t> order(list.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    auto g = [&](size_t i) { return opened ? (i == 0 ? 1.0f : 0.0f) : grow_[i]; };
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return g(a) < g(b); });
+    for (const size_t i : order) {
+        const auto [x, y] = radialPos(i);
+        const float gi = g(i);
+        const float disc = 128 * kTexel, icon = 64 * kTexel;
+        const float sDisc = 1 + (i ? kSelDisc - 1 : 0) * gi, sIcon = 1 + (i ? kSelIcon - 1 : 0) * gi;
+        const float sGlow = i ? kGlowRing : kGlowCentre;
+        if (gi > 0) c.sprite(kGlow, x, y, disc * sGlow, disc * sGlow, withAlpha(kWhite, gi * kGlowAlpha));
+        const bool isOpened = opened && int(i) == cursor;
+        c.sprite(kDisc, x, y, disc * (isOpened ? kSelDisc : sDisc), disc * (isOpened ? kSelDisc : sDisc), kWhite);
+        if (gi > 0 || isOpened) c.sprite(kBlackDisc, x, y, disc * kSelDisc, disc * kSelDisc, withAlpha(kBlack, isOpened ? 1 : gi));
+        if (isOpened) ring(c, x, y, kOpenedRing, kOpenedRingW, kWhite);
+        c.sprite(list[i].icon, x, y, icon * sIcon, icon * sIcon, mix(kIconBlue, kWhite, gi));
+    }
+    if (cursor < 0 || size_t(cursor) >= list.size()) return;
+    const int labelled = opened ? 0 : cursor; // Load/Save: the centre label stays
+    const float alpha = opened ? 1 : label_;
+    const std::string label(s.get(list[size_t(labelled)].stringId));
+    const auto [x, y] = radialPos(size_t(labelled));
+    const uint32_t text = withAlpha(kLabel, alpha);
+    if (labelled == 0) {
+        c.sprite(kBarCentre, 320, 199.1f, kBarW, kBarH, withAlpha(kWhite, alpha));
+        c.fontText(320 - c.fontWidth(label, kTextScale) / 2, 192.4f, kTextScale, label, text);
+    } else {
+        c.sprite(kBarLeft, x - kSideBarEnd - kSideBarW / 2, y, kSideBarW, kBarH, withAlpha(kWhite, alpha));
+        c.fontText(x - kLabelGap - c.fontWidth(label, kTextScale), y - kCapMid, kTextScale, label, text);
+    }
+}
+
+void Menus::drawSlots(Canvas& c, const locale::Strings&) {
     const auto list = items();
-    c.sprite(kFrontArt, kArtX, kArtY, kArtSize, kArtSize, withAlpha(kWhite, kArtAlpha));
-    for (int q = 0; q < 4; ++q) // shadow ring behind the items: one quarter texture, mirrored
-        c.sprite(kRingShade, kRingX + (q & 1 ? 0.5f : -0.5f) * kShadeQuarter, kRingY + (q & 2 ? 0.5f : -0.5f) * kShadeQuarter,
-                 kShadeQuarter, kShadeQuarter, kWhite, q & 1, q & 2);
-    // Unselected first, the growing/selected ones on top.
     std::vector<size_t> order(list.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return grow_[a] < grow_[b]; });
     for (const size_t i : order) {
-        const auto [x, y] = radialPos(i);
-        const float g = grow_[i];
-        const float disc = 128 * kTexel, icon = 64 * kTexel;
-        const float sDisc = 1 + (i ? kSelDisc - 1 : 0) * g, sIcon = 1 + (i ? kSelIcon - 1 : 0) * g;
-        const float sGlow = i ? kGlowRing : kGlowCentre;
-        if (g > 0) c.sprite(kGlow, x, y, disc * sGlow, disc * sGlow, withAlpha(kWhite, g * kGlowAlpha));
+        const auto [x, y] = radialPos(i + 2, true);
+        const float g = grow_[i], disc = 128 * kTexel, icon = 64 * kTexel;
+        const float sDisc = 1 + (kSelDisc - 1) * g, sIcon = 1 + (kSelIcon - 1) * g;
+        if (g > 0) c.sprite(kGlow, x, y, disc * kGlowRing, disc * kGlowRing, withAlpha(kWhite, g * kGlowAlpha));
         c.sprite(kDisc, x, y, disc * sDisc, disc * sDisc, kWhite);
         if (g > 0) c.sprite(kBlackDisc, x, y, disc * sDisc, disc * sDisc, withAlpha(kBlack, g));
-        c.sprite(list[i].icon, x, y, icon * sIcon, icon * sIcon, mix(kIconBlue, kWhite, g));
+        c.sprite(list[i].icon, x, y, icon * sIcon, icon * sIcon, mix(kSlotIcon, kWhite, g));
     }
-    if (cursor_ < 0 || size_t(cursor_) >= list.size()) return;
-    const std::string label(s.get(list[size_t(cursor_)].stringId));
-    const auto [x, y] = radialPos(size_t(cursor_));
-    const uint32_t text = withAlpha(kLabel, label_);
-    if (cursor_ == 0) {
-        c.sprite(kBarCentre, 320, 199.1f, kBarW, kBarH, withAlpha(kWhite, label_));
-        c.fontText(320 - c.fontWidth(label, kTextScale) / 2, 192.4f, kTextScale, label, text);
-    } else {
-        c.sprite(kBarLeft, x - kSideBarEnd - kSideBarW / 2, y, kSideBarW, kBarH, withAlpha(kWhite, label_));
-        const float w = c.fontWidth(label, kTextScale);
-        c.fontText(x - kLabelGap - w, y - kCapMid, kTextScale, label, text);
+    // The selected used slot's name on the mirrored label bar [I: filled slots were not captured].
+    if (cursor_ < 1 || size_t(cursor_) >= list.size() || list[size_t(cursor_)].label.empty()) return;
+    const auto [x, y] = radialPos(size_t(cursor_) + 2, true);
+    const std::string& label = list[size_t(cursor_)].label;
+    c.sprite(kBarLeft, x + kSideBarEnd + kSideBarW / 2, y, kSideBarW, kBarH, withAlpha(kWhite, label_), true);
+    c.fontText(x + kLabelGap, y - kCapMid, kTextScale, label, withAlpha(kLabel, label_));
+}
+
+void Menus::drawList(Canvas& c, const locale::Strings& s) {
+    const Screen scr = screen();
+    const auto list = items();
+    const int n = int(list.size());
+    // Title: icon | white line 1 / blue line 2 (GAME OPTIONS, AUDIO/VISUAL OPTIONS, VOLUME SETTINGS AUDIO/VISUAL).
+    const uint32_t icon = scr == Screen::GameOptions ? kIconOptions : scr == Screen::AudioVisual ? kIconAv : kIconVolume;
+    const int16_t t1 = scr == Screen::GameOptions ? 490 : scr == Screen::AudioVisual ? 497 : 486;
+    const int16_t t2 = scr == Screen::Volume ? 497 : 491;
+    c.sprite(icon, kListIconX, kListIconY, 64 * kTexel, 64 * kTexel, kWhite);
+    vrect(c, kListDivX, kListDivTop, 0.9f, kListDivBottom - kListDivTop, kWhite);
+    capText(c, kTitle1X, kTitle1Cap, kTitle1Scale, s.get(t1), kWhite);
+    capText(c, kTitle2X, kTitle2Cap, kTitle2Scale, s.get(t2), kTitleBlue);
+    // Panel between the two lines; rows.
+    const float row0 = kRowCap + (n < 5 ? kFewRowsDrop : 0);
+    const float bottom = std::max(row0 + float(n - 1) * kRowStep + kRowsBelow, kListMinBottom);
+    const float top = c.sy(kListLineTop), bot = c.sy(bottom);
+    hquad(c, c.sx(320 - kListPanelFade), top, c.sx(320 - kListPanelSolid), bot, withAlpha(kBlack, 0), kBlack);
+    hquad(c, c.sx(320 - kListPanelSolid), top, c.sx(320 + kListPanelSolid), bot, kBlack, kBlack);
+    hquad(c, c.sx(320 + kListPanelSolid), top, c.sx(320 + kListPanelFade), bot, kBlack, withAlpha(kBlack, 0));
+    c.sprite(kLine, 320, kListLineTop + 0.65f, kListLineW, 1.8f, kWhite);
+    c.sprite(kLine, 320, bottom + 0.65f, kListLineW, 1.8f, kWhite);
+    const float labelX = scr == Screen::Volume ? kRowXVolume : kRowX;
+    const float valueRight = scr == Screen::GameOptions ? 498.7f : 492.6f;
+    const float capMid = kCapHeight * kRowScale / 2;
+    for (int i = 0; i < n; ++i) {
+        const Item& it = list[size_t(i)];
+        const float y = row0 + float(i) * kRowStep;
+        const bool sel = i == cursor_;
+        if (sel) fadeBar(c, y + capMid - kSelBarH / 2, kSelBarH, kSelBarSolid, kSelBarFade, kSelBar);
+        capText(c, labelX, y, kRowScale, s.get(it.stringId), sel ? kWhite : kRowGrey);
+        if (it.value) {
+            const float sy0 = y + capMid - kSliderH / 2;
+            vrect(c, kSliderX0, sy0, kSliderX1 - kSliderX0, kSliderH, kSliderFrame);
+            vrect(c, kSliderX0 + 1, sy0 + 1, (kSliderX1 - kSliderX0 - 2) * float(*it.value) / 10, kSliderH - 2, kSliderFill);
+            if (sel) {
+                c.sprite(kArrowLeft, kSliderArrowL, y + capMid, kSliderArrow, kSliderArrow, kWhite);
+                c.sprite(kArrowRight, kSliderArrowR, y + capMid, kSliderArrow, kSliderArrow, kWhite);
+            }
+        } else if (it.toggle && it.pair) { // "ON / OFF": the current one white
+            const std::string on(s.get(it.onId)), off(s.get(it.offId)), slash("   /   ");
+            float x = valueRight - c.fontWidth(on + slash + off, kRowScale);
+            x += capText(c, x, y, kRowScale, on, *it.toggle ? kWhite : kRowGrey);
+            x += capText(c, x, y, kRowScale, slash, kRowGrey);
+            capText(c, x, y, kRowScale, off, *it.toggle ? kRowGrey : kWhite);
+        } else if (it.onId) {
+            const std::string v(s.get(!it.toggle || *it.toggle ? it.onId : it.offId));
+            capText(c, valueRight - c.fontWidth(v, kRowScale), y, kRowScale, v, kWhite);
+        }
+    }
+}
+
+void Menus::drawTailoring(Canvas& c, const locale::Strings& s) {
+    c.sprite(kDialog, 320, kTailorY, kDialogW, kTailorH, kWhite);
+    const std::string title(s.get(484));
+    capText(c, 320 - c.fontWidth(title, kTailorTitleScale) / 2, kTailorTitleCap, kTailorTitleScale, title, kWhite);
+    c.sprite(kLine, 320, kTailorLineY, 190, 1.8f, kLineBlue);
+    const auto list = items();
+    for (size_t i = 0; i < list.size(); ++i) {
+        const float mid = kTailorRow0 + float(i) * kTailorStep;
+        const bool sel = int(i) == cursor_;
+        if (sel) fadeBar(c, mid - kSelBarH / 2, kSelBarH, kTailorBarSolid, kTailorBarFade, kTailorBar);
+        const std::string t(s.get(list[i].stringId));
+        capText(c, 320 - c.fontWidth(t, kTailorScale) / 2, mid - kCapHeight * kTailorScale / 2, kTailorScale, t, sel ? kWhite : kLabel);
+    }
+    c.sprite(kLine, 320, kTailorFootLine, 190, 1.8f, kLineBlue);
+    const float cap = kTailorFootY - kCapHeight * kTailorFoot / 2;
+    keyed(c, kTailorFootL, cap, kTailorFoot, s.get(120), "Return");
+    keyed(c, kTailorFootR, cap, kTailorFoot, s.get(375), "Return");
+}
+
+void Menus::drawPda(Canvas& c, const locale::Strings& s) {
+    // Background pc-w\image\pda_bg_1280 / _960 (uiImages[1], set by the app) fitted to the window height.
+    const float k = float(c.height) / 720, bw = (float(c.width) / float(c.height) < 1.556f ? 960 : 1280) * k;
+    c.image(1, (float(c.width) - bw) / 2, 0, bw, float(c.height), 0, 0, 1, 1, kWhite);
+    const auto list = items();
+    for (size_t i = 0; i < list.size(); ++i) {
+        const float cap = kPdaItemCap + float(i) * kPdaItemStep;
+        const bool sel = int(i) == cursor_;
+        const uint32_t col = list[i].greyed ? kPdaGrey : sel ? kPdaSel : kWhite;
+        const std::string t(s.get(list[i].stringId));
+        const float right = sel ? kPdaItemRight - kPdaArrowW - 3 : kPdaItemRight;
+        capText(c, pdaX(right) - c.fontWidth(t, kPdaItemScale), pdaY(cap), kPdaItemScale, t, col);
+        if (sel) // texture 114's ink (9x18 of 16x32 texels) drawn 10x12, tinted to the label's blue
+            c.sprite(kArrowRight, pdaX(kPdaItemRight - kPdaArrowW / 2), pdaY(cap + 6.3f), pdaY(17.8f), pdaY(21.3f), rgba(118, 168, 193));
+        vrect(c, pdaX(kPdaLineX0), pdaY(cap + kPdaLineBelow), (kPdaItemRight - kPdaLineX0) * 2 / 3, pdaY(sel ? 2 : 1),
+              sel ? kPdaSelLine : kPdaLine);
+    }
+    auto box = [&](float y0, float y1) {
+        vrect(c, pdaX(kPdaPicX), pdaY(y0), (kPdaPicRight - kPdaPicX) * 2 / 3, pdaY(1.4f), kPdaBoxLine);
+        vrect(c, pdaX(kPdaPicX), pdaY(y0 + 2), (kPdaPicRight - kPdaPicX) * 2 / 3, pdaY(y1 - y0 - 2), kBlack);
+    };
+    // Prompt lines ("PRESS <key> TO ...") centred on the right pane around `mid`.
+    auto prompt = [&](int16_t id, float mid) {
+        const auto lines = fontWrap(c, s.get(id), pdaX(kPdaPromptW) - pdaX(0), kPdaSmall, kPdaTracking);
+        float cap = mid - (float(lines.size()) * kPdaPromptStep - (kPdaPromptStep - 12)) / 2;
+        for (const auto& l : lines) keyed(c, pdaX((kPdaPicX + kPdaPicRight) / 2), pdaY(cap), kPdaSmall, l, "Return", kPdaTracking), cap += kPdaPromptStep;
+    };
+    auto picture = [&](uint32_t tex, int16_t tab) {
+        c.sprite(tex, pdaX(kPdaPicX + 256), pdaY(kPdaPicY + 128), pdaX(512) - pdaX(0), pdaY(256), kWhite);
+        const std::string t(s.get(tab));
+        capText(c, pdaX(kPdaTabRight) - c.fontWidth(t, kPdaSmall), pdaY(kPdaTabCap), kPdaSmall, t, kWhite);
+    };
+    switch (cursor_) {
+    case kSonar: picture(kPdaSonar, 1074), prompt(1085, kPdaPromptMid); break;
+    case kAreaInfo: {
+        picture(kPdaPicture + uint32_t(std::clamp(pda.chapter, 0, 7)), 1075);
+        box(kPdaBoxTop, kPdaBoxBottom);
+        const std::pair<int16_t, std::string> rows[] = {
+            {1072, std::to_string(pda.relics) + "/" + std::to_string(pda.relicsTotal)},
+            {1073, std::to_string(pda.treasures) + "/" + std::to_string(pda.treasuresTotal)}};
+        float cap = kPdaRowCap0;
+        for (const auto& [id, v] : rows) {
+            capText(c, pdaX(kPdaRowX), pdaY(cap), kPdaRowScale, s.get(id), kWhite);
+            capText(c, pdaX(kPdaRowRight) - c.fontWidth(v, kPdaRowScale), pdaY(cap), kPdaRowScale, v, kWhite);
+            cap = kPdaRowCap1;
+        }
+        break;
+    }
+    case kWeapons: picture(kPdaWeapons, 1076), box(kPdaBoxTop, kPdaBoxBottom), prompt(1086, kPdaPromptMid); break;
+    case kInventory: picture(kPdaInventory, 1077), box(kPdaBoxTop, kPdaBoxBottom), prompt(1087, kPdaPromptMid); break;
+    case kField:
+        box(kPdaFieldBox0, kPdaFieldBox1), box(kPdaFieldBox2, kPdaFieldBox3);
+        prompt(1091, (kPdaFieldBox0 + kPdaFieldBox1) / 2), prompt(1092, (kPdaFieldBox2 + kPdaFieldBox3) / 2);
+        break;
+    default: break;
+    }
+    {
+        const float cap = pdaY(kPdaFootCap);
+        auto left = [&](float x, int16_t id) { // left-aligned prompt
+            float px = pdaX(x);
+            for (const auto& r : keyRuns(s.get(id), "Return")) px += capText(c, px, cap, kPdaSmall, r.text, r.key ? kKeyBlue : kWhite, kPdaTracking);
+        };
+        left(kPdaFootBack, 375);
+        if (cursor_ != kAreaInfo) left(kPdaFootSelect, 120);
     }
 }
 
@@ -373,72 +772,39 @@ void Menus::drawMessage(Canvas& c, const locale::Strings& s) {
     for (const auto& l : fontWrap(c, s.get(message_), 320, kDialogText))
         c.fontText(320 - c.fontWidth(l, kDialogText) / 2, y, kDialogText, l, kWhite), y += 16;
     // OK button: a blue bar fading out at both ends.
-    const float x0 = c.sx(264), x1 = c.sx(286), x2 = c.sx(354), x3 = c.sx(376), y0 = c.sy(282.2f), y1 = c.sy(298.2f);
-    const uint32_t solid = kButtonBlue, clear = withAlpha(kButtonBlue, 0);
-    c.vertices.insert(c.vertices.end(), {{x0, y0, -1, -1, clear}, {x1, y0, -1, -1, solid}, {x1, y1, -1, -1, solid},
-                                         {x0, y0, -1, -1, clear}, {x1, y1, -1, -1, solid}, {x0, y1, -1, -1, clear}});
-    c.rect(x1, y0, x2 - x1, y1 - y0, solid);
-    c.vertices.insert(c.vertices.end(), {{x2, y0, -1, -1, solid}, {x3, y0, -1, -1, clear}, {x3, y1, -1, -1, clear},
-                                         {x2, y0, -1, -1, solid}, {x3, y1, -1, -1, clear}, {x2, y1, -1, -1, solid}});
+    fadeBar(c, 282.2f, 16, 34, 56, kButtonBlue);
     const std::string ok(s.get(383));
     c.fontText(320 - c.fontWidth(ok, kDialogText) / 2, 290.2f - kCapMid * kDialogText / kTextScale, kDialogText, ok, kWhite);
 }
 
 void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
-    if (screen() == Screen::None) return;
-    const float u = c.unit(), cx = float(c.width) / 2;
-    const float mid = std::round(10 * u), small = std::round(8 * u);
-    if (screen() == Screen::Main || screen() == Screen::Pause) {
-        if (screen() == Screen::Pause) c.rect(0, 0, float(c.width), float(c.height), 0x70000000u);
-        drawRadial(c, s);
-        footer(c, s, key, false);
-        return;
+    const Screen scr = screen();
+    if (scr == Screen::None) return;
+    if (scr == Screen::Pda) return drawPda(c, s);
+    if (!mainMenu()) c.rect(0, 0, float(c.width), float(c.height), 0x70000000u); // the paused game, dimmed
+    if (scr == Screen::Tailoring) return drawTailoring(c, s); // these two over the backdrop alone [O captures]
+    if (scr == Screen::Message) return drawMessage(c, s), footer(c, s, key, {{320, 120}});
+    // Backdrop of the ring and list screens: the glyph art and the ring's shadow.
+    c.sprite(kFrontArt, kArtX, kArtY, kArtSize, kArtSize, withAlpha(kWhite, kArtAlpha));
+    for (int q = 0; q < 4; ++q) // one quarter texture, mirrored
+        c.sprite(kRingShade, kRingX + (q & 1 ? 0.5f : -0.5f) * kShadeQuarter, kRingY + (q & 2 ? 0.5f : -0.5f) * kShadeQuarter,
+                 kShadeQuarter, kShadeQuarter, kWhite, q & 1, q & 2);
+    if (radial(scr)) {
+        drawRadial(c, s, scr, cursor_, false);
+        footer(c, s, key, {{320, 120}});
+    } else if (slots(scr)) {
+        drawRadial(c, s, stack_[stack_.size() - 2], cursors_.back(), true);
+        drawSlots(c, s);
+        footer(c, s, key, {});
+        const std::string both(s.get(121)); // "<select> SELECT      <delete> DELETE"
+        const size_t gap = both.find("  "), right = both.find_first_not_of(' ', gap);
+        const float cap = kFooterY + kCapTop * kTextScale;
+        keyed(c, kSlotFooterL, cap, kTextScale, std::string_view(both).substr(0, gap), key);
+        if (right != std::string::npos) keyed(c, kSlotFooterR, cap, kTextScale, std::string_view(both).substr(right), key);
+    } else {
+        drawList(c, s);
+        footer(c, s, key, {{kListFooterL, 120}, {kListFooterR, 375}});
     }
-    if (screen() == Screen::Message) {
-        drawMessage(c, s);
-        footer(c, s, key, false);
-        return;
-    }
-
-    const auto list = items();
-    const float panelX = cx - 205 * u, panelW = 410 * u;
-    c.rect(panelX, 66 * u, panelW, 320 * u, 0xD0000000u);
-    c.rect(panelX, 66 * u, panelW, 2 * u, kIconBlue);
-    c.rect(panelX, 384 * u, panelW, 2 * u, kIconBlue);
-    int16_t titleId = 0;
-    switch (screen()) {
-    case Screen::Load: titleId = 126; break;
-    case Screen::Options: titleId = 491; break;
-    case Screen::Pda: titleId = pda.chapterNameId; break;
-    default: break;
-    }
-    c.textCentered(cx, 86 * u, std::round(16 * u), s.get(titleId), kWhite);
-    c.rect(cx - 150 * u, 112 * u, 300 * u, std::max(1.0f, u), kIconBlue);
-    float y = 142 * u;
-    if (screen() == Screen::Pda) {
-        c.textCentered(cx, 124 * u, small, s.get(1075), kGrey); // AREA INFO
-        const std::pair<int16_t, int> rows[] = {{1073, pda.treasures}, {1072, pda.relics}, {1274, pda.healthPacks}};
-        for (const auto& [id, n] : rows) {
-            c.text(panelX + 35 * u, y, mid, s.get(id), kWhite);
-            const std::string v = std::to_string(n);
-            c.text(panelX + panelW - 35 * u - Canvas::textWidth(v, mid), y, mid, v, kWhite);
-            y += 28 * u;
-        }
-        y += 20 * u;
-    }
-    if (screen() == Screen::Load && saves.empty()) {
-        c.textCentered(cx, y, mid, s.get(456), kGrey), y += 28 * u; // Unavailable
-    }
-    for (size_t i = 0; i < list.size(); ++i) {
-        const auto& it = list[i];
-        std::string label = it.stringId ? std::string(s.get(it.stringId)) : it.label;
-        if (it.value) label += "  " + std::string(size_t(*it.value), '|') + std::string(size_t(10 - *it.value), '.');
-        const bool sel = int(i) == cursor_;
-        if (sel) c.rect(panelX + 12 * u, y - 5 * u, panelW - 24 * u, mid + 10 * u, 0xB0704020u);
-        c.text(panelX + 30 * u, y, mid, label, sel ? kWhite : kGrey);
-        y += 28 * u;
-    }
-    footer(c, s, key, true);
 }
 
 } // namespace ou::ui

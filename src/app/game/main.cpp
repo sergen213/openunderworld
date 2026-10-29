@@ -93,10 +93,11 @@ void usage() {
                  "          Start pause; Esc pause menu, F1 overlay, F5 quicksave, F9 quickload (slot 'quick')\n"
                  "motorcycle: E beside it gets on / off (almost stopped); forward throttle, back brake/reverse, left/right steer,\n"
                  "          Space hop\n"
-                 "menus: arrows/WASD or d-pad navigate, Enter/Space/E or A accept, Esc/Backspace or B back\n"
+                 "menus: arrows/WASD or d-pad navigate, Enter/Space or A accept, E or X alt (PDA task), Esc or B back,\n"
+                 "          Backspace or Y deletes a save slot; 1 opens the PDA\n"
                  "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|weapon|heal|pause|\n"
-                 "                    lookx|looky>\n"
-                 "                    [value]  (in menus forward/right +-1 navigate, jump or interact accepts, drop goes back;\n"
+                 "                    grapple|sprint|hint|answer|pda|lookx|looky>\n"
+                 "                    [value]  (in menus forward/right +-1 navigate, jump accepts, interact is alt, drop goes back;\n"
                  "                    script time runs on while paused)\n");
 }
 
@@ -773,7 +774,8 @@ std::optional<ou::ui::Nav> scriptNav(const ou::game::Actions& a, const ou::game:
     if (edge(a.move.y < -0.5f, was.move.y < -0.5f)) return Nav::Down;
     if (edge(a.move.x > 0.5f, was.move.x > 0.5f)) return Nav::Right;
     if (edge(a.move.x < -0.5f, was.move.x < -0.5f)) return Nav::Left;
-    if (edge(a.jump, was.jump) || edge(a.interact, was.interact)) return Nav::Accept;
+    if (edge(a.jump, was.jump)) return Nav::Accept;
+    if (edge(a.interact, was.interact)) return Nav::Alt;
     if (edge(a.drop, was.drop) || edge(a.pause, was.pause)) return Nav::Back;
     return std::nullopt;
 }
@@ -784,8 +786,10 @@ std::optional<ou::ui::Nav> keyNav(SDL_Keycode k) {
     case SDLK_DOWN: case SDLK_S: return Nav::Down;
     case SDLK_LEFT: case SDLK_A: return Nav::Left;
     case SDLK_RIGHT: case SDLK_D: return Nav::Right;
-    case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: case SDLK_E: return Nav::Accept;
-    case SDLK_ESCAPE: case SDLK_BACKSPACE: return Nav::Back;
+    case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: return Nav::Accept;
+    case SDLK_E: return Nav::Alt; // Accept except on the PDA's Field Assistance (TASK)
+    case SDLK_ESCAPE: return Nav::Back;
+    case SDLK_BACKSPACE: case SDLK_DELETE: return Nav::Delete; // Save/Load slots; Back elsewhere
     default: return std::nullopt;
     }
 }
@@ -797,6 +801,8 @@ std::optional<ou::ui::Nav> padNav(uint8_t b) {
     case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return Nav::Left;
     case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return Nav::Right;
     case SDL_GAMEPAD_BUTTON_SOUTH: return Nav::Accept;
+    case SDL_GAMEPAD_BUTTON_WEST: return Nav::Alt;
+    case SDL_GAMEPAD_BUTTON_NORTH: return Nav::Delete;
     case SDL_GAMEPAD_BUTTON_EAST: case SDL_GAMEPAD_BUTTON_START: return Nav::Back;
     default: return std::nullopt;
     }
@@ -1035,17 +1041,61 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "ou-game: main menu movie: %s\n", e.what());
         }
     };
+    // Menu settings with an equivalent here: volumes, mouse/stick Y inversion, brightness (0..10, 5 = neutral).
+    menus.invertY = opt.controls.invertY;
+    menus.brightness = std::clamp(int(std::lround(5 * std::log2(2 * opt.gfx.brightness))), 0, 10);
     auto applyVolumes = [&] {
         mixer.setBusVolume(ou::audio::Bus::Music, float(menus.musicVolume) / 10);
         mixer.setBusVolume(ou::audio::Bus::Sfx, float(menus.sfxVolume) / 10);
+        opt.controls.invertY = menus.invertY;
+        opt.gfx.brightness = 0.5f * std::exp2(float(menus.brightness) / 5);
     };
     applyVolumes();
     auto chapterName = [&](int c) { return std::string(strings->get(ou::game::kChapters[size_t(c)].nameId)); };
     auto openPause = [&] {
-        menus.pda = {ou::game::kChapters[size_t(world->chapter)].nameId, world->found[0], world->found[1], world->found[2]};
         menus.saves = listSaves();
         menus.open(ou::ui::Screen::Pause);
         std::fprintf(stderr, "ou-game: tick %llu pause menu\n", (unsigned long long)world->ticks());
+    };
+    auto openPda = [&] { // the chapter's relics/treasures found / in it (game::chapterRewards)
+        const auto& r = ou::game::chapterRewards(world->chapter);
+        const int treasures = int(std::count_if(r.treasures.begin(), r.treasures.end(), [&](int32_t id) { return world->collected.contains(id); }));
+        menus.pda = {world->chapter, r.relic && world->collected.contains(r.relic), r.relic ? 1 : 0, treasures, int(r.treasures.size())};
+        menus.open(ou::ui::Screen::Pda);
+        std::fprintf(stderr, "ou-game: tick %llu pda\n", (unsigned long long)world->ticks());
+    };
+    // Loading screen (pc-w\image\loading_bg_*, chapter title and story) shown for one frame before a load blocks.
+    ou::ui::Image screenImage; // uiImages[1] outside the main menu: the PDA background or a loading screen
+    uint64_t screenVersion = uint64_t(1) << 62;
+    std::string screenName;
+    auto useScreenImage = [&](std::string_view name) {
+        if (name == screenName) return;
+        screenName = name;
+        if (auto img = ou::ui::loadRaw(*bigfile, name)) screenImage = std::move(*img);
+        else screenImage = {}, std::fprintf(stderr, "ou-game: pc-w\\image\\%s.raw missing\n", screenName.c_str());
+        ++screenVersion;
+    };
+    auto showLoading = [&](int chapter) {
+        useScreenImage(ou::ui::loadingImage(chapter));
+        int w = 0, h = 0;
+        SDL_GetWindowSizeInPixels(window.get(), &w, &h);
+        ou::ui::Canvas cv(w, h, &*art);
+        cv.rect(0, 0, float(w), float(h), 0xFF000000u);
+        ou::ui::drawLoading(cv, *strings, chapter);
+        ou::render::FrameOptions fo{};
+        fo.ui = cv.vertices;
+        fo.uiImages = {ou::render::RgbaImage{art->rgba, art->width, art->height, art->version},
+                       ou::render::RgbaImage{screenImage.rgba, screenImage.width, screenImage.height, screenVersion}};
+        renderer->drawFrame(ou::render::Camera{}, {w, h}, fo);
+        renderer->present();
+        std::fprintf(stderr, "ou-game: loading screen chapter %d (%s)\n", chapter, screenName.c_str());
+    };
+    auto saveChapter = [&](const std::string& slot) { // for its loading screen
+        try {
+            return std::clamp(ou::save::readFile(ou::save::slotPath(slot)).chapter, 0, 8);
+        } catch (const std::exception&) {
+            return world->chapter;
+        }
     };
     bool running = true;
     auto act = [&](ou::ui::Action action) {
@@ -1054,6 +1104,7 @@ int main(int argc, char** argv) {
         case Action::None: return;
         case Action::Continue: // PLAY GAME: the newest save, else a new game
             if (!menus.saves.empty()) {
+                showLoading(saveChapter(menus.saves.front()));
                 if (!quickLoad(*world, menus.saves.front())) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
                 shownChapter = world->chapter;
                 break;
@@ -1066,6 +1117,7 @@ int main(int argc, char** argv) {
                 playMovie("explode.bik");
                 if (gl) SDL_GL_MakeCurrent(window.get(), gl);
             }
+            showLoading(0);
             try {
                 world->collected.clear(), world->found = {};
                 world->script().restore(nlohmann::json::object());
@@ -1076,15 +1128,28 @@ int main(int argc, char** argv) {
             }
             break;
         case Action::Resume: break;
-        case Action::Save: {
+        case Action::Save: { // a used slot is overwritten, an empty one gets a new name
             char slot[40];
             const std::time_t t = std::time(nullptr);
             std::strftime(slot, sizeof slot, "save-%Y%m%d-%H%M%S", std::localtime(&t));
-            hud.notify(std::string(strings->get(quickSave(*world, slot) ? 18 : 5)), 2.0); // "Save Successful" / "Save failed."
+            const std::string name = menus.selectedSave().empty() ? std::string(slot) : menus.selectedSave();
+            hud.notify(std::string(strings->get(quickSave(*world, name) ? 18 : 5)), 2.0); // "Save Successful" / "Save failed."
             menus.saves = listSaves();
             break;
         }
+        case Action::Delete: {
+            std::error_code ec;
+            const bool ok = std::filesystem::remove(ou::save::slotPath(menus.selectedSave()), ec);
+            hud.notify(std::string(strings->get(ok ? 11 : 9)), 2.0); // "Delete Successful." / "Delete Failed."
+            menus.saves = listSaves();
+            break;
+        }
+        case Action::Hint:
+        case Action::Answer:
+            if (sound) sound->playHelp(*world, action == Action::Answer);
+            break;
         case Action::Load:
+            showLoading(saveChapter(menus.selectedSave()));
             if (!quickLoad(*world, menus.selectedSave())) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
             shownChapter = world->chapter;
             break;
@@ -1117,7 +1182,7 @@ int main(int argc, char** argv) {
         v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
         v.frame.originalShaders = opt.gfx.originalShaders, v.frame.brightness = opt.gfx.brightness;
         v.overlay = !opt.noOverlay;
-        v.musicVolume = float(menus.musicVolume) / 10;
+        v.musicVolume = float(menus.cinematicVolume) / 10;
         return v;
     };
     if (!opt.cine.empty()) {
@@ -1150,6 +1215,7 @@ int main(int argc, char** argv) {
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: cinematic %s: %s\n", name.c_str(), e.what());
         }
+        if (levelEnd && running) showLoading(world->chapter + 1); // [I] the next chapter is the following one
         streamed.version = ~0ull; // re-upload the game scene
     };
 
@@ -1219,6 +1285,11 @@ int main(int argc, char** argv) {
             menuHeld = a;
             if (a.pause && !held.pause) {
                 openPause();
+                held = a;
+                continue;
+            }
+            if (a.pda && !held.pda) {
+                openPda();
                 held = a;
                 continue;
             }
@@ -1417,12 +1488,16 @@ int main(int argc, char** argv) {
         }
         if (!mainMenu) {
             hud.reticle = CombatView::reticle(*world, c, world->fovDeg, w, h);
+            if (!menus.reticles) hud.reticle = {}; // GAME OPTIONS > COMBAT RETICLES HIDDEN
             hud.grapple.reset();
             if (const auto target = world->grappleTarget(); target && !world->player().state().grappleUid)
                 if (const auto p = toScreen(c, world->fovDeg, w, h, target->pos)) hud.grapple = std::array{p->x, p->y};
-            hud.draw(canvas);
-            if (sound) ou::app::drawSubtitles(canvas, sound->subtitles());
+            if (menus.screen() == ou::ui::Screen::None) hud.draw(canvas); // menus hide the HUD [O pause captures]
+            if (sound && menus.subtitles) ou::app::drawSubtitles(canvas, sound->subtitles());
         }
+        if (menus.screen() == ou::ui::Screen::Pda) // pda_bg_960 for narrow windows (ui::Menus::drawPda)
+            useScreenImage(float(w) / float(std::max(1, h)) < 1.556f ? "pda_bg_960" : "pda_bg_1280");
+        if (!mainMenu) movieImage = {screenImage.rgba, screenImage.width, screenImage.height, screenVersion};
         menus.draw(canvas, *strings);
         // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these
         // lines change every frame (HUD, effects), so consecutive frames must never share a pointer.

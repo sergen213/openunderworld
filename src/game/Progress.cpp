@@ -41,6 +41,22 @@ int16_t pickupStringId(PickupKind k) {
     return 0;
 }
 
+const ChapterRewards& chapterRewards(int chapter) {
+    static const std::array<ChapterRewards, 8> kRewards{{
+        {},
+        {321, {312, 313, 678, 794, 848, 849, 850, 851, 852, 853}},
+        {2588, {1898, 1899, 2007, 2112, 2113, 2114, 2115, 2116, 2508, 2601, 2602, 2603, 2604, 2773, 2839, 2840, 3227,
+                3228, 3838, 3839, 3840, 3841}},
+        {4757, {4643, 4644, 4701, 4751, 4752, 4753, 4754}},
+        {5496, {5488, 5489, 5490, 5770, 5771, 5772, 5773, 5774, 5775, 5776}},
+        {7280, {6740, 6741, 6742, 7167, 7168, 7273, 7274, 7275, 7276, 7430}},
+        {},
+        {8936, {8931, 9138, 9139, 9140, 9141, 9164, 9165, 9198, 9199, 9200, 9201, 9202, 9203, 9204, 9205, 9206, 9207,
+                9208, 9209}},
+    }};
+    return kRewards[size_t(std::min(std::clamp(chapter, 0, 8), 7))]; // the epilogue (8) is the Arctic Sea's
+}
+
 const char* pickupKindName(PickupKind k) {
     switch (k) {
     case PickupKind::Treasure: return "treasure";

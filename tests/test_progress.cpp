@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdlib>
 
 #include <zlib.h>
@@ -175,51 +176,94 @@ TEST(Menus, MainMenuActionsAndScreens) {
     m.input(ui::Nav::Left), m.input(ui::Nav::Up), m.input(ui::Nav::Up); // SAVE GAME -> LOAD GAME -> GAME OPTIONS
     EXPECT_EQ(m.items()[size_t(m.cursor())].stringId, 125);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
-    ASSERT_EQ(m.screen(), ui::Screen::Options);
+    ASSERT_EQ(m.screen(), ui::Screen::GameOptions);
+    m.input(ui::Nav::Right); // COMBAT RETICLES: SHOWN -> HIDDEN
+    EXPECT_FALSE(m.reticles);
+    m.input(ui::Nav::Up); // wraps to BACK TO PREVIOUS MENU
+    EXPECT_EQ(m.items()[size_t(m.cursor())].stringId, 469);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::Main);
+    EXPECT_EQ(m.cursor(), 2); // back on GAME OPTIONS
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Down); // AUDIO/VISUAL
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::AudioVisual);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // SUBTITLES ON -> OFF
+    EXPECT_FALSE(m.subtitles);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // VOLUME SETTINGS
+    ASSERT_EQ(m.screen(), ui::Screen::Volume);
     m.input(ui::Nav::Down); // music volume
     m.input(ui::Nav::Right), m.input(ui::Nav::Right), m.input(ui::Nav::Right);
     EXPECT_EQ(m.musicVolume, 10); // clamped
     m.input(ui::Nav::Left);
     EXPECT_EQ(m.musicVolume, 9);
-    EXPECT_EQ(m.input(ui::Nav::Back), ui::Action::None);
+    m.input(ui::Nav::Back), m.input(ui::Nav::Back);
     EXPECT_EQ(m.screen(), ui::Screen::Main);
-    EXPECT_EQ(m.cursor(), 2); // back on GAME OPTIONS
-    m.input(ui::Nav::Down), m.input(ui::Nav::Down); // SAVE GAME: a message in the main menu
+    m.input(ui::Nav::Up); // SAVE GAME: a message in the main menu
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
     EXPECT_EQ(m.screen(), ui::Screen::Message);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // OK
     EXPECT_EQ(m.screen(), ui::Screen::Main);
     EXPECT_EQ(m.input(ui::Nav::Back), ui::Action::None); // Main stays
     EXPECT_EQ(m.screen(), ui::Screen::Main);
-    m.input(ui::Nav::Up), m.input(ui::Nav::Up), m.input(ui::Nav::Up); // START NEW GAME
+    m.input(ui::Nav::Up), m.input(ui::Nav::Up), m.input(ui::Nav::Up); // START NEW GAME: PLAYER TAILORING first
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    ASSERT_EQ(m.screen(), ui::Screen::Tailoring);
+    EXPECT_EQ(m.cursor(), 1); // TOMB RAIDER
+    m.input(ui::Nav::Down);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::NewGame);
+    EXPECT_EQ(m.tailoring, 2); // MASTER SURVIVALIST
     EXPECT_EQ(m.screen(), ui::Screen::None);
     m.open(ui::Screen::Main);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Continue); // PLAY GAME
     EXPECT_EQ(m.screen(), ui::Screen::None);
 }
 
-TEST(Menus, PauseLoadAndPda) {
+TEST(Menus, PauseSlotsAndPda) {
     ui::Menus m;
     m.open(ui::Screen::Pause);
-    EXPECT_EQ(m.items()[0].stringId, 122); // RESUME GAME, the centre
+    const auto ring = m.items();
+    ASSERT_EQ(ring.size(), 8u); // the main menu's ring (no PDA item: key 1 opens it)
+    EXPECT_EQ(ring[0].stringId, 122); // RESUME GAME, the centre
+    EXPECT_EQ(ring[7].stringId, 131);
     m.saves = {"quick", "save-1"};
-    m.input(ui::Nav::Left);
-    EXPECT_EQ(m.items()[size_t(m.cursor())].stringId, 125); // GAME OPTIONS: first of the two ring items level with the centre
-    m.input(ui::Nav::Up), m.input(ui::Nav::Up); // ACCESS PDA, LOAD GAME
+    m.input(ui::Nav::Left), m.input(ui::Nav::Up); // SAVE GAME -> LOAD GAME
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
     ASSERT_EQ(m.screen(), ui::Screen::Load);
-    ASSERT_EQ(m.items().size(), 3u); // two saves + BACK
+    EXPECT_EQ(m.cursor(), -1); // focus on the ring item until Right
+    const auto slotRing = m.items();
+    ASSERT_EQ(slotRing.size(), 6u); // page up, four slots, page down
+    EXPECT_EQ(slotRing[2].label, "save-1");
+    EXPECT_TRUE(slotRing[3].label.empty());
+    m.input(ui::Nav::Right), m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 2);
+    EXPECT_EQ(m.input(ui::Nav::Delete), ui::Action::Delete);
+    EXPECT_EQ(m.selectedSave(), "save-1");
     m.input(ui::Nav::Down);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // empty slot
+    m.input(ui::Nav::Up);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Load);
     EXPECT_EQ(m.selectedSave(), "save-1");
     EXPECT_EQ(m.screen(), ui::Screen::None);
     m.open(ui::Screen::Pause);
-    m.input(ui::Nav::Left), m.input(ui::Nav::Up); // ACCESS PDA
-    m.input(ui::Nav::Accept);
-    EXPECT_EQ(m.screen(), ui::Screen::Pda);
-    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // BACK TO PREVIOUS MENU
+    m.input(ui::Nav::Left), m.input(ui::Nav::Accept); // SAVE GAME
+    ASSERT_EQ(m.screen(), ui::Screen::Save);
+    m.input(ui::Nav::Accept), m.input(ui::Nav::Down), m.input(ui::Nav::Down); // first empty slot
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Save);
+    EXPECT_EQ(m.selectedSave(), ""); // a new save
+    EXPECT_EQ(m.screen(), ui::Screen::Save); // stays for the result
+    m.input(ui::Nav::Back);
     EXPECT_EQ(m.screen(), ui::Screen::Pause);
+    EXPECT_EQ(m.input(ui::Nav::Back), ui::Action::Resume);
+    m.open(ui::Screen::Pda);
+    EXPECT_EQ(m.cursor(), 1); // AREA INFO
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Down); // FIELD ASSISTANCE
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Hint);
+    EXPECT_EQ(m.input(ui::Nav::Alt), ui::Action::Answer);
+    m.input(ui::Nav::Down); // JOURNAL / REVISIT LOCATION are greyed: RESUME GAME
+    EXPECT_EQ(m.items()[size_t(m.cursor())].stringId, 122);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Resume);
+    EXPECT_EQ(m.screen(), ui::Screen::None);
+    m.open(ui::Screen::Pda);
     EXPECT_EQ(m.input(ui::Nav::Back), ui::Action::Resume);
     EXPECT_EQ(m.screen(), ui::Screen::None);
 }
@@ -287,6 +331,27 @@ TEST(MenusReal, ArtAndFontMetrics) {
     EXPECT_FLOAT_EQ(c.fontWidth("PLAY GAME", 0.625f), 66.0f);
 }
 
+// pc-w\image RAW backgrounds (loading screens, PDA frame) and the g_pda picture windows in the atlas.
+TEST(MenusReal, RawImagesAndPdaArt) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto art = ui::loadArt(bf);
+    ASSERT_TRUE(art);
+    for (uint32_t id = 680; id <= 694; ++id) EXPECT_EQ(art->find(id) ? art->find(id)->width : 0, 512) << id;
+    const std::pair<const char*, int> raws[] = {{"pda_bg_1280", 1280}, {"pda_bg_960", 960}, {"loading_bg_mansion", 640}};
+    for (const auto& [n, w] : raws) {
+        const auto img = ui::loadRaw(bf, n);
+        ASSERT_TRUE(img) << n;
+        EXPECT_EQ(img->width, w) << n;
+        EXPECT_EQ(img->rgba.size(), size_t(img->width) * size_t(img->height) * 4) << n;
+    }
+    for (int c = 0; c < 9; ++c) EXPECT_TRUE(ui::loadRaw(bf, ui::loadingImage(c))) << c;
+    const auto pda = ui::loadRaw(bf, "pda_bg_1280"); // the bezel is blue: B,G,R,A pixels
+    const uint8_t* bar = &pda->rgba[(size_t(600) * 1280 + 640) * 4];
+    EXPECT_GT(bar[2], bar[0]);
+    EXPECT_FALSE(ui::loadRaw(bf, "no_such_image"));
+}
+
 TEST(ChaptersReal, MediterraneanEndingRunsThroughTriggerScript) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -345,4 +410,24 @@ TEST(ChaptersReal, PickupsAndMusic) {
     const auto seatop = game::loadUnitData(bf, "l1_seatop");
     EXPECT_EQ(seatop.music, "l1_seatop_mus_01");
     EXPECT_EQ(seatop.musicByIntro.count(997), 1u); // cinematic 997's script names l1_seatop_mus_01
+}
+
+// The PDA's per-chapter reward table matches the units' reward intros (survey in chapterRewards).
+TEST(ChaptersReal, RewardTableMatchesUnits) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const std::pair<const char*, int> units[] = {{"l1_kraken_room", 1}, {"l2_maproom", 2}, {"l7_arctic_sea", 7}};
+    for (const auto& [name, chapter] : units) {
+        const auto& r = game::chapterRewards(chapter);
+        for (const auto& p : game::loadUnitData(bf, name).pickups) {
+            if (p.kind == game::PickupKind::Relic) {
+                EXPECT_EQ(p.id, r.relic) << name;
+            } else if (p.kind == game::PickupKind::Treasure) {
+                EXPECT_NE(std::find(r.treasures.begin(), r.treasures.end(), p.id), r.treasures.end()) << name << " " << p.id;
+            }
+        }
+    }
+    EXPECT_EQ(game::chapterRewards(2).treasures.size(), 22u);
+    EXPECT_EQ(game::chapterRewards(0).relic, 0);
+    EXPECT_EQ(&game::chapterRewards(8), &game::chapterRewards(7));
 }
