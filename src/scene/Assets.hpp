@@ -70,6 +70,7 @@ struct MaterialSampler {
     uint8_t reg = 0, source = 0, cls = 0;
     uint16_t filter = 0;  // cdc sampler/filter word (entry +0x0E) [U]
     uint32_t textureId = 0;
+    uint32_t category = 0; // entry +0x08: 3 = normal map (distortion particles) [I], 0 / 1 colour
 };
 
 // cdc material (section type 10) for the translated original shaders: composite-pass programs and

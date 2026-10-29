@@ -453,6 +453,7 @@ scene::Material decodeMaterial(const cdc::Section& material, MaterialShaderLibs*
             scene::MaterialSampler t;
             t.textureId = r.u32(e);
             t.cls = r.at<uint8_t>(e + 12);
+            t.category = r.u32(e + 8);
             t.reg = r.at<uint8_t>(e + 13);
             t.filter = r.u16(e + 14);
             t.source = i < nMat ? 0 : i < nGlobal ? 1 : 2;

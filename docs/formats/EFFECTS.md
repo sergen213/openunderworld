@@ -129,12 +129,52 @@ back-to-front, depth-tested without writes, `tex × colour × 2`.
   floor material / 2 swimming / 3 submerged [I]); `object:clip` clips (weapon, vehicle) are skipped.
 - Other commands in these lists: 6 glows and 0x11 lights (muzzle / metal-hit light), 0x15/0x1A/0x18/0x1B stops — see
   "Glows" / "Lights"; 9 (class 3), 0xD (0x481B50), 0xE/0xF (0x481CC0/CF0) — not implemented.
-- Model particles (def `+4 & 0x80`, e.g. casings) are drawn as 1.5-unit sprites in their key colour [I]. Defs with no
-  texture and no list name a resource at `+0x168` (wp_handgun def 25 → 2770; distortion / heat haze? [U]) and are
-  not drawn — drawn white they covered the shot line.
+- Model particles (def `+4 & 0x80`, e.g. casings) are drawn as 1.5-unit sprites in their key colour [I]. Defs with a
+  material (`+0x168`, or `+0x16C` list) are material particles — see "Material particles".
 - Viewed 2026-10-29 (GL + Vulkan, `tests/replays/poacher_firefight.txt`, l4_ballcourt `--spawn 17520,10383,2650,180`,
   frame 38 `--camera 17850,10550,3150,17620,10200,2980`): yellow muzzle flash + sparks at the pistol, blood mist and
   red streaks on the panther, smoke drifting. No Wine reference capture.
+
+## Material particles [O data, I reduction]
+
+`0x543F70` takes the material path when def `+0x168` (one material, resource relocation to a type-10 section) or
+`+0x16C` (pointer to `{u32 n, material ids[n]}`, picked per particle like a texture list; 993 defs) is set; `+0x110` /
+`+0x114` are then unused. Survey of every object: 1077 `+0x168` defs over ~25 material families. The material's own
+shaders draw the sprite; we reduce the composite pixel shaders (disassembled) to three cases:
+
+- **Refraction** (a material texture entry from the engine-global table class 9 `BackBufferTexture` plus a category-3
+  normal map; families 19–22 Lara / weapons ×431, 173–175 Thor's hammer ×81, 161–164 / 157–160 fireballs, 485–488,
+  1622–1625, 227–229 rain sheets, 165–168, 482–484): the scene copy sampled at `vPos · ScreenExtents + (n.x, n.y·n.a)·2−1
+  · mask alpha · scale`; alpha = mask alpha · colour alpha, blend SRCALPHA/INVSRCALPHA. Scale = the MaterialParams
+  float the shader multiplies with (`mad r.yz, n, c10x.s, screen uv`): lib 174 c100.x, 159/163 c101.z, 487/1624 c100.w,
+  others c100.z (e.g. wp_handgun 2770 = 0.3). The shaders' small tint toward the vertex colour (c100.x/y overlay) is
+  not reproduced. Back-buffer materials without a normal map (lib 16–18) only blend texture × colour: plain sprites.
+- **Soft sprites** (global class 10 `DepthBufferTexture`: fire 651–653, steam 657–659 / 628–630): texture × colour,
+  alpha × sat((scene view depth − sprite view depth − (1 − a)·c100.y) · s) with s = −(the negative MaterialParams
+  entry), e.g. fx_fire 6603 (2, 0, −0.01): fades over 100 units. Blend from the material (5 additive).
+- Others: the first non-normal-map texture × colour with the material's blend.
+
+Atlas fields `+0x174..+0x177` select the frame as for textures (fire flipbooks 1792–1794 / 2122 are 8×8). Both
+renderers copy the scene colour / depth once before the effects (GL `drawFx`; Vulkan through `recordWaterCopies`,
+before the water surfaces), so refraction does not see the sea or earlier sprites of the same frame [I].
+
+## FX point sets [O]
+
+Unit data (Level `+0x74`) `+0x120` u32 count, `+0x124` → 0x70-byte records (l3_main_bedroom: 230): `+0x00` matrix
+(identity seen), `+0x40` name* ("FXPointSet50069", "fx_heat_haze50001"), `+0x44` id, `+0x58` event-list DTP id,
+`+0x5C` float (12642 / 9482; cull distance [U]), `+0x60` u32 point count (2 in all), `+0x64` → points, 0x50 bytes
+`{D3D row-major matrix, u8 0xFF, …}`. The event list (DTP rtype 34) is `{u32 GenericFXObject DTP id, records as the
+object event list}`; the GenericFXObject (here fx_fire's 6702, its materials and textures) is bundled in the unit DRM.
+Records `cmd 3 (def, 1, 2)` run line emitters from point 0 (segment 1) to point 1 (segment 2); cmd 0xB is the class-5
+screen tint (not drawn). This is the burning-manor fire and heat haze of the prologue corridor (ours: `ou-game` starts
+every loaded unit's sets at birth, owner `0x40000000 | id` [I]; the exe's starter is not traced). fx_fire's own flame
+defs are not in its birth list; it is the "Lara on fire" object (clips `fsfx_burn` / `fsfx_burst` = class-5 tints).
+
+Compared 2026-10-29 with the original (`screens/fxref/fire_rubble_close.png`, Wine; our view `--level
+'pc-w\l3_main_bedroom.drm' --spawn -4263,1109,87,-90 --camera -4258,2364,661,-4263,0,300`: the original's prologue
+coordinates are ours + (9621, 0, −2977), the original relocates the unit): flames now burn on the rubble in GL and
+Vulkan at the original's places, but smaller and dimmer, and the original's strong amber light pool on the walls and
+its bloom are missing (the fire's light is not an effect light; its source [U]).
 
 ## Glows (class 2) [O unless marked]
 
@@ -175,8 +215,8 @@ kind ≥ 2 beam glows (no data uses them), variant ≠ 0 clip records, script-pl
 `on`/`off`), door / switch / breakable clip events (no breakables in game), lightning (Thor's hammer), decals (bullet
 holes, scorch: not in the effect commands; [U] where), lens-flare chains beyond the glare glows, skydomes
 (`*_skydome_*` unit dependencies are never placed; the instance flag 0x20000000 from oflags 0x04000000 only sets a
-depth bias, 0x505C80 — how the dome follows the camera is [U]), the `+0x168` material particles (type 10 rtype 18
-materials, e.g. wp_handgun 2770: distortion [U]), particles that follow their segment (mode 1), casing meshes,
+depth bias, 0x505C80 — how the dome follows the camera is [U]), particles that follow their segment (mode 1), casing meshes,
 per-enemy hit materials (all bodies 23). UV-scrolling textures (waterfalls, water) are the translated original
 shaders' (TimeVector c23/c53); the l2_junglehub cascade (-29000..-32000, 14500, z 3500..12500) was not framed in a
-view. No Wine reference capture and no frame-time measurements in the heaviest units yet.
+view. Fire light pool / bloom of the prologue fire (vs the Wine capture), waterfall and gunfire
+Wine captures, frame-time measurements in the heaviest units.

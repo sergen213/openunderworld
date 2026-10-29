@@ -244,7 +244,7 @@ TEST(FxReal, EveryFxObjectParses) {
     EXPECT_EQ(objects, 205);  // fx* objects with an event list or GenericFXObject
     EXPECT_EQ(defs, 2011);    // particle definitions
     EXPECT_EQ(birth, 389);    // enabled event-0 effect records
-    EXPECT_EQ(textured, 1957); // per-object distinct particle + glow textures, all present in the object DRM
+    EXPECT_EQ(textured, 2264); // per-object distinct particle (incl. material) + glow textures, all in the object DRM
 }
 
 // Hitscan impacts: the ammo object names its hit objects (data +0x3C above water, +0xA8 under water; tru.exe 0x6C64D0
@@ -343,4 +343,50 @@ TEST(FxReal, GlowsAndEffectLights) {
     EXPECT_FLOAT_EQ(lights[0].radius, 3792.0f);
     const auto& tex = lib.textures();
     EXPECT_TRUE(std::any_of(tex.begin(), tex.end(), [](const auto& t) { return t.id == 558; }));
+}
+
+// Material particles (+0x168 / +0x16C): fx_fire's flames are soft additive flipbooks (material 6603: shaders 651-653,
+// DepthBufferTexture, c100 = (2, 0, -0.01)); wp_handgun def 25 (material 2770) refracts the back buffer by c100.z.
+// The prologue corridor fire is unit FX point sets (unit data +0x120 / +0x124) running fx_fire's GenericFXObject.
+TEST(FxReal, MaterialParticlesAndUnitPointSets) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto fire = load(bf, "fx_fire");
+    ASSERT_TRUE(fire);
+    ASSERT_EQ(fire->particles[2].materials.size(), 1u);
+    const auto& m = fire->particles[2].materials[0];
+    EXPECT_EQ(m.id, 6603u);
+    EXPECT_EQ(m.texture, 1792u);
+    EXPECT_TRUE(m.additive);
+    EXPECT_FALSE(m.distort);
+    EXPECT_NEAR(m.softScale, 0.01f, 1e-6f);
+    const auto gun = load(bf, "wp_handgun");
+    ASSERT_TRUE(gun);
+    ASSERT_EQ(gun->particles[25].materials.size(), 1u);
+    const auto& d = gun->particles[25].materials[0];
+    EXPECT_TRUE(d.distort);
+    EXPECT_EQ(d.texture, 566u);
+    EXPECT_EQ(d.normal, 565u);
+    EXPECT_NEAR(d.distortScale, 0.3f, 1e-6f);
+
+    auto b = bf.read("pc-w\\l3_main_bedroom.drm");
+    ASSERT_TRUE(b);
+    const auto unit = cdc::parseDrm(std::move(*b));
+    const auto sets = fx::parsePointSets(unit);
+    ASSERT_EQ(sets.size(), 230u);
+    const auto it = std::find_if(sets.begin(), sets.end(), [](const fx::PointSet& s) { return s.name == "FXPointSet50069"; });
+    ASSERT_NE(it, sets.end());
+    ASSERT_EQ(it->segments.size(), 3u);
+    EXPECT_NEAR(it->segments[1][3].x, -4282.35f, 0.1f);
+    EXPECT_NEAR(it->segments[2][3].z, 952.39f, 0.1f);
+    fx::System s;
+    EXPECT_GT(s.startPointSet(*it, glm::mat4(1), 1), 0);
+    for (int k = 0; k < 60; ++k) s.tick({-4263, 1109, 300});
+    render::Camera cam;
+    cam.position = {-4258, 2364, 661};
+    std::vector<render::FxVertex> v;
+    std::vector<render::FxBatch> batches;
+    cam.yaw = -1.5707963f; // looking along -Y at the rubble
+    s.build(cam, 16.0f / 9.0f, v, batches);
+    EXPECT_TRUE(std::any_of(batches.begin(), batches.end(), [](const auto& x) { return x.softScale > 0 && x.blend == 1; }));
 }

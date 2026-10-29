@@ -699,7 +699,9 @@ public:
         // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water; translated
         // materials reading the back/depth buffer (the sea, OrigDraw::screen) draw in the second pass from the copies.
         const bool screenReaders = options.originalShaders && !origPrograms_.empty() && !screenSets_.empty();
-        const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f || screenReaders;
+        // Material particles that refract / fade softly sample the same copies (FxBatch::screen).
+        const bool fxScreen = std::any_of(options.fxBatches.begin(), options.fxBatches.end(), [](const FxBatch& b) { return b.screen(); });
+        const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f || screenReaders || fxScreen;
         for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         drawOrder(meshes_, camera.position, order_);
@@ -953,14 +955,20 @@ public:
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
             vkCmdBindVertexBuffers(cmd, 0, 1, &fxBuffers_[frameIndex_].buffer, &zero);
             VkPipeline fxBound = VK_NULL_HANDLE;
+            const float zn = camera.nearZ, zf = camera.farZ;
+            const glm::vec4 depthToW(-(zf - zn) / (zf * zn), 1.0f / zn, 0, 0); // OriginalShading c77
             for (const auto& b : options.fxBatches) {
                 const VkPipeline p = fxPipelines_[std::min<size_t>(b.blend, fxPipelines_.size() - 1)];
                 if (p != fxBound) {
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxBound = p);
-                    vkCmdPushConstants(cmd, fxLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &push.viewProj);
+                    vkCmdPushConstants(cmd, fxLayout_, kPushStages, 0, sizeof(glm::mat4), &push.viewProj);
+                    vkCmdPushConstants(cmd, fxLayout_, kPushStages, sizeof(glm::mat4) + sizeof(glm::vec4), sizeof depthToW, &depthToW);
                 }
-                const VkDescriptorSet set = textureSet(b.textureId);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxLayout_, 0, 1, &set, 0, nullptr);
+                const glm::vec4 params(b.distort, b.softScale, b.softBias, 0);
+                vkCmdPushConstants(cmd, fxLayout_, kPushStages, sizeof(glm::mat4), sizeof params, &params);
+                // Set 1 is the water set (the opaque copies, written by recordWaterCopies when FxBatch::screen asked).
+                const VkDescriptorSet sets[3] = {textureSet(b.textureId), waterSets_[frameIndex_], textureSet(b.normalId)};
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxLayout_, 0, 3, sets, 0, nullptr);
                 vkCmdDraw(cmd, b.count, 1, b.first, 0);
             }
         }
@@ -2018,8 +2026,11 @@ private:
         VkPushConstantRange linePush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
         VkPipelineLayoutCreateInfo ll{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 0, nullptr, 1, &linePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &ll, nullptr, &lineLayout_));
-        VkPipelineLayoutCreateInfo fxl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &setLayout_, 1, &linePush};
-        VK_CHECK(vkCreatePipelineLayout(device_, &fxl, nullptr, &fxLayout_)); // set 0 = the sprite texture
+        // set 0 = the sprite texture, 1 = the water set's opaque colour / depth copies, 2 = the normal map (FxBatch).
+        const VkDescriptorSetLayout fxSets[3] = {setLayout_, waterSetLayout_, setLayout_};
+        VkPushConstantRange fxPush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4) + 2 * sizeof(glm::vec4)};
+        VkPipelineLayoutCreateInfo fxl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 3, fxSets, 1, &fxPush};
+        VK_CHECK(vkCreatePipelineLayout(device_, &fxl, nullptr, &fxLayout_));
 
         const VkVertexInputBindingDescription textBinding{0, sizeof(TextVertex), VK_VERTEX_INPUT_RATE_VERTEX};
         const VkVertexInputAttributeDescription textAttrs[] = {

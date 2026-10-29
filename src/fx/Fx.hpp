@@ -30,6 +30,19 @@ struct Key {
     float yScale = 1;     // def +0xE0 + 4k: height / width
 };
 
+// Material particle (def +0x168 material or +0x16C list {u32 n, materials[n]}: 0x543F70 takes the material path when
+// either is set, the material's shaders then draw the sprite). Reduced to what the composite pixel shaders do (EFFECTS.md
+// "Material particles"): a colour texture times the vertex colour, a soft depth fade, or a screen-space refraction.
+struct ParticleMaterial {
+    uint32_t id = 0;
+    uint32_t texture = 0;     // first material texture that is not a normal map (category != 3); 0 = white
+    uint32_t normal = 0;      // category-3 texture: refraction offsets
+    bool additive = false;    // material blend mode 5 (SRCALPHA/ONE); else 2-4 SRCALPHA/INVSRCALPHA
+    bool distort = false;     // samples BackBufferTexture (global class 9): drawn as refraction of the scene
+    float distortScale = 0;   // screen-uv offset per unit of (normal.xy * mask alpha)
+    float softScale = 0, softBias = 0; // DepthBufferTexture (class 10): alpha *= sat((scene - z - (1 - a) bias) * scale)
+};
+
 // 0x17C-byte particle emitter definition (GenericFXObject +0x10 array).
 struct ParticleDef {
     float size0 = 0;
@@ -56,6 +69,7 @@ struct ParticleDef {
     int16_t depthBias = 0;                 // +0x15E view-depth offset (< 0 = toward the camera)
     std::vector<uint32_t> textures;        // +0x114 -> {u32 n, ids[n]} (wins over +0x110)
     uint8_t atlasCols = 0, atlasRows = 0, atlasFrames = 0, atlasFirst = 0; // +0x174..+0x177
+    std::vector<ParticleMaterial> materials; // +0x168 / +0x16C (wins over the textures)
     bool model() const { return flags4 & 0x80; } // model particles (casings, debris): drawn as small sprites [I]
 };
 
@@ -147,6 +161,19 @@ std::optional<ObjectFx> parseObjectFx(const cdc::Drm& object, std::vector<std::s
 // Decodes one particle definition from raw bytes (texture list resolved by the caller); for tests.
 ParticleDef parseParticleDef(std::span<const uint8_t> def);
 
+// Unit FX point sets (unit data +0x120 count, +0x124 -> 0x70-byte records; EFFECTS.md "FX point sets"): fires, heat
+// haze, smoke placed in the level without an object. Each runs an event list (DTP rtype 34: u32 GenericFXObject DTP id,
+// then event records) at birth with its two points as segments 1 and 2 (line emitters run between them).
+struct PointSet {
+    int32_t id = 0;                     // record +0x44
+    std::string name;                   // +0x40, e.g. "FXPointSet50069", "fx_heat_haze50001"
+    std::shared_ptr<const ObjectFx> fx; // the list's GenericFXObject (bundled in the unit DRM)
+    std::vector<Event> events;          // +0x58 list
+    std::vector<glm::mat4> segments;    // 0 = the record's matrix, then the +0x64 points (0x50 bytes, matrix first)
+    float distance = 0;                 // +0x5C [U: cull distance]
+};
+std::vector<PointSet> parsePointSets(const cdc::Drm& unit, std::vector<std::string>* warnings = nullptr);
+
 enum class Blend : uint8_t { Alpha, Additive, Subtract, Multiply };
 Blend blendFor(uint8_t keyBlend); // tru.exe 0x52AE60: 1 -> mode 4, 2 -> 5, 3 -> 0, 4 -> 6, 5 -> 7, else 5
 
@@ -159,6 +186,8 @@ public:
                int16_t segment = 0, int16_t segment2 = 0, std::span<const glm::mat4> bones = {});
     // Runs an instance's birth effects: enabled event-0 records of fx->events (tru.exe 0x5BA480 -> 0x5BA000).
     int startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat4& world, int32_t owner);
+    // A unit FX point set's birth records (as startBirth) with its points as the segments; `world` = the unit offset.
+    int startPointSet(const PointSet& set, const glm::mat4& world, int32_t owner);
     // `birth`: run from the birth list, where glows / lights also need their record's birth bit.
     bool runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command& c, const glm::mat4& world, int32_t owner,
                     std::span<const glm::mat4> bones = {}, bool birth = false);
@@ -266,6 +295,9 @@ public:
     uint32_t flags(const std::string& objectName) const;
     // u16 at `off` of the object data block (ObjectBase +0xC8), 0 when absent (loads the object like get()).
     uint16_t dataU16(const std::string& objectName, uint32_t off);
+    // A unit's FX point sets (parsed once per unit name) with their textures loaded from the unit DRM.
+    const std::vector<PointSet>& pointSets(const cdc::Drm& unit, const std::string& unitName,
+                                           std::vector<std::string>* warnings = nullptr);
     const std::vector<scene::TextureData>& textures() const { return textures_; }
 
 private:
@@ -274,6 +306,7 @@ private:
                       std::vector<std::string>* warnings);
     const cdc::BigfileSet& bigfile_;
     std::map<std::string, Entry> objects_;
+    std::map<std::string, std::vector<PointSet>> pointSets_;
     std::vector<scene::TextureData> textures_;
     std::set<uint32_t> textureIds_;
 };

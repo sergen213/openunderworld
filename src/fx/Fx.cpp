@@ -40,6 +40,46 @@ int objectDtp(const cdc::Drm& drm, const cdc::Section& obj, uint32_t off) {
 float frac(int16_t percent) { return std::clamp(float(percent) / 100.0f, 0.0f, 1.0f); }
 constexpr float kModelSprite = 1.5f; // half-size of a model particle's stand-in sprite, units [I]
 
+// MaterialParams float (c100 + i / 4) that scales the refraction offset, by composite pixel ShaderLib (material +0x30),
+// from the disassembled shaders' `mad r.yz, n, c10x.s, vPos * ScreenExtents`: lib 174 (Thor's hammer) c100.x, 159 / 163
+// (fireball, explosions) c101.z, 487 / 1624 (Amanda, thralls) c100.w, 21 / 167 / 228 / 483 c100.z. Others: c100.z [I].
+int distortParam(uint32_t pixelLib) {
+    switch (pixelLib) {
+    case 174: return 0;
+    case 159: case 163: return 6;
+    case 487: case 1624: return 3;
+    default: return 2;
+    }
+}
+
+ParticleMaterial particleMaterial(const cdc::Drm& drm, uint32_t id) {
+    ParticleMaterial pm;
+    pm.id = id;
+    const auto s = std::find_if(drm.sections.begin(), drm.sections.end(),
+                                [&](const cdc::Section& x) { return x.type == cdc::SectionType::Material && x.id == id; });
+    if (s == drm.sections.end()) return pm;
+    formats::MaterialShaderLibs libs;
+    const auto m = formats::decodeMaterial(*s, &libs);
+    pm.additive = m.blendMode == 5;
+    bool backBuffer = false, depth = false;
+    for (const auto& t : m.samplers) {
+        if (t.source == 1) backBuffer |= t.cls == 9, depth |= t.cls == 10; // engine-global targets (SHADERS.md)
+        else if (t.source == 0 && t.category == 3) pm.normal = pm.normal ? pm.normal : t.textureId;
+        else if (t.source == 0) pm.texture = pm.texture ? pm.texture : t.textureId;
+    }
+    const auto param = [&](size_t i) { return i < m.psParams.size() ? m.psParams[i] : 0.0f; };
+    // Without a normal map the back-buffer shaders (lib 17) only blend texture x colour over the scene: a plain sprite.
+    pm.distort = backBuffer && pm.normal;
+    if (pm.distort) pm.distortScale = param(size_t(distortParam(libs.pixel)));
+    // Soft shaders (651 fire, 657 steam, 628): the negative MaterialParams entry scales, c100.y biases by 1 - alpha.
+    if (depth && !pm.distort) {
+        float lo = 0;
+        for (size_t i = 0; i < 4; ++i) lo = std::min(lo, param(i));
+        pm.softScale = -lo, pm.softBias = param(1);
+    }
+    return pm;
+}
+
 } // namespace
 
 ParticleDef parseParticleDef(std::span<const uint8_t> d) {
@@ -104,10 +144,8 @@ static std::vector<Event> parseEvents(std::span<const uint8_t> d, size_t o) {
     return out;
 }
 
-std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::string>* warnings) {
-    const auto obj = std::find_if(drm.sections.begin(), drm.sections.end(), [](const auto& s) { return s.type == cdc::SectionType::Object; });
-    if (obj == drm.sections.end() || obj->data.size() < 12) return std::nullopt;
-    const int ev = objectDtp(drm, *obj, 4), gen = objectDtp(drm, *obj, 8), base = objectDtp(drm, *obj, 0);
+// Event list `ev`, GenericFXObject `gen` and ObjectBase `base` (section indices, -1 = none) of `drm`.
+static ObjectFx parseFxSections(const cdc::Drm& drm, int ev, int gen, int base, std::vector<std::string>* warnings) {
     ObjectFx fx;
     if (ev >= 0) fx.events = parseEvents(drm.sections[size_t(ev)].data, 0);
     if (base >= 0) { // animation list: {i16 anim, i16, u32 event-list DTP id, char* name}
@@ -127,7 +165,6 @@ std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::stri
                     fx.clips.emplace(std::move(nm), std::move(events));
             }
     }
-    if (ev < 0 && gen < 0 && fx.clips.empty()) return std::nullopt;
     if (gen >= 0) {
         const auto& s = drm.sections[size_t(gen)];
         const auto ptrs = cdc::sectionPointers(drm, uint32_t(gen));
@@ -146,6 +183,14 @@ std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::stri
                     const auto td = drm.sections[t->second.section].data;
                     const auto cnt = rd<uint32_t>(td, t->second.offset);
                     for (uint32_t i = 0; i < cnt && i < 256; ++i) def.textures.push_back(rd<uint32_t>(td, t->second.offset + 4 + 4 * i));
+                }
+                // Materials: +0x168 one, else +0x16C {u32 n, material ids[n]} picked per frame like a texture list.
+                if (cdc::resourceRefType(arr, uint32_t(off + 0x168)) == int(cdc::SectionType::Material))
+                    def.materials.push_back(particleMaterial(drm, rd<uint32_t>(arr.data, off + 0x168)));
+                else if (const auto t = aptrs.find(uint32_t(off + 0x16C)); t != aptrs.end()) {
+                    const auto td = drm.sections[t->second.section].data;
+                    for (uint32_t i = 0, cnt = rd<uint32_t>(td, t->second.offset); i < cnt && i < 256; ++i)
+                        def.materials.push_back(particleMaterial(drm, rd<uint32_t>(td, t->second.offset + 4 + 4 * i)));
                 }
                 fx.particles.push_back(std::move(def));
             }
@@ -212,7 +257,7 @@ std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::stri
                                         rd<uint8_t>(md, it->second.offset + 4 * k + 2)});
         }
     }
-    try {
+    if (base >= 0) try { // segments / HInfo markers of the object's model (unit FX point sets bring their own)
         const auto phys = physics::loadObjectPhysics(drm);
         fx.segments = phys.segments;
         for (const auto& m : phys.hmarkers) {
@@ -224,6 +269,70 @@ std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::stri
         if (warnings) warnings->push_back(std::string("effect segments: ") + e.what());
     }
     return fx;
+}
+
+std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::string>* warnings) {
+    const auto obj = std::find_if(drm.sections.begin(), drm.sections.end(), [](const auto& s) { return s.type == cdc::SectionType::Object; });
+    if (obj == drm.sections.end() || obj->data.size() < 12) return std::nullopt;
+    const int ev = objectDtp(drm, *obj, 4), gen = objectDtp(drm, *obj, 8), base = objectDtp(drm, *obj, 0);
+    auto fx = parseFxSections(drm, ev, gen, base, warnings);
+    if (ev < 0 && gen < 0 && fx.clips.empty()) return std::nullopt;
+    return fx;
+}
+
+std::vector<PointSet> parsePointSets(const cdc::Drm& unit, std::vector<std::string>* warnings) {
+    std::vector<PointSet> out;
+    if (unit.sections.empty()) return out;
+    const auto level = cdc::sectionPointers(unit, 0);
+    const auto ud = level.find(0x74); // Level+0x74 -> unit data (LEVELS.md)
+    if (ud == level.end()) return out;
+    const auto& us = unit.sections[ud->second.section];
+    const auto uptrs = cdc::sectionPointers(unit, ud->second.section);
+    const uint32_t n = rd<uint32_t>(us.data, ud->second.offset + 0x120);
+    const auto arr = uptrs.find(ud->second.offset + 0x124);
+    if (!n || n >= 65536 || arr == uptrs.end()) return out;
+    const auto& as = unit.sections[arr->second.section];
+    const auto aptrs = arr->second.section == ud->second.section ? uptrs : cdc::sectionPointers(unit, arr->second.section);
+    std::map<uint32_t, std::shared_ptr<const ObjectFx>> byGfx; // GenericFXObject DTP id -> parsed once
+    for (uint32_t k = 0; k < n; ++k) {
+        const uint32_t r = arr->second.offset + 0x70 * k;
+        if (r + 0x70 > as.data.size()) break;
+        const int list = dtpIndex(unit, rd<uint32_t>(as.data, r + 0x58));
+        if (list < 0) continue;
+        const auto ld = unit.sections[size_t(list)].data;
+        const uint32_t gfxId = rd<uint32_t>(ld, 0);
+        auto& fx = byGfx[gfxId];
+        if (!fx) {
+            const int gen = dtpIndex(unit, gfxId);
+            if (gen < 0) {
+                if (warnings) warnings->push_back("FX point set list " + std::to_string(unit.sections[size_t(list)].id) +
+                                                  ": GenericFXObject " + std::to_string(gfxId) + " not in the unit");
+                continue;
+            }
+            fx = std::make_shared<const ObjectFx>(parseFxSections(unit, -1, gen, -1, warnings));
+        }
+        PointSet ps;
+        ps.id = rd<int32_t>(as.data, r + 0x44);
+        if (const auto nm = aptrs.find(r + 0x40); nm != aptrs.end())
+            for (size_t i = nm->second.offset; i < unit.sections[nm->second.section].data.size() && unit.sections[nm->second.section].data[i]; ++i)
+                ps.name += char(unit.sections[nm->second.section].data[i]);
+        ps.fx = fx;
+        ps.events = parseEvents(ld, 4);
+        ps.distance = rd<float>(as.data, r + 0x5C);
+        glm::mat4 m;
+        std::memcpy(&m[0][0], as.data.data() + r, sizeof m); // D3D row-major = column-major memory (LEVELS.md IMFs)
+        ps.segments.push_back(m);
+        if (const auto pts = aptrs.find(r + 0x64); pts != aptrs.end()) {
+            const auto pd = unit.sections[pts->second.section].data;
+            for (uint32_t i = 0, cnt = rd<uint32_t>(as.data, r + 0x60); i < cnt && i < 64; ++i) {
+                if (pts->second.offset + 0x50 * (i + 1) > pd.size()) break;
+                std::memcpy(&m[0][0], pd.data() + pts->second.offset + 0x50 * i, sizeof m);
+                ps.segments.push_back(m);
+            }
+        }
+        out.push_back(std::move(ps));
+    }
+    return out;
 }
 
 glm::mat4 ObjectFx::frame(int16_t s, std::span<const glm::mat4> bones) const {
@@ -240,7 +349,10 @@ std::vector<uint32_t> ObjectFx::textureIds() const {
     std::vector<uint32_t> out;
     for (const auto& p : particles) {
         if (p.model()) continue;
-        if (!p.textures.empty()) out.insert(out.end(), p.textures.begin(), p.textures.end());
+        if (!p.materials.empty()) {
+            for (const auto& m : p.materials)
+                for (const uint32_t id : {m.texture, m.normal}) if (id) out.push_back(id);
+        } else if (!p.textures.empty()) out.insert(out.end(), p.textures.begin(), p.textures.end());
         else if (p.texture) out.push_back(p.texture);
     }
     for (const auto& g : glows) {
@@ -325,6 +437,14 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
     case 0x18: case 0x1B: stopId(owner, int16_t(c.a1), true); return false;  // 0x52F4D0: removed
     default: return false; // other effect classes: docs/formats/EFFECTS.md "Missing"
     }
+}
+
+int System::startPointSet(const PointSet& set, const glm::mat4& world, int32_t owner) {
+    int n = 0;
+    if (!set.fx) return 0;
+    for (const auto& e : set.events)
+        if (e.effect() && e.event == 0 && !(e.info & 0x3F0)) n += runCommand(set.fx, e.cmd, world, owner, set.segments, true);
+    return n;
 }
 
 int System::startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat4& world, int32_t owner) {
@@ -457,7 +577,8 @@ void System::spawn(Emitter& e, const glm::vec3& camera) {
     p.rot = (d.rot0 + (rand01() - 0.5f) * d.rotRange) * kDeg;
     p.spin = (d.spin + (rand01() - 0.5f) * d.spinRange) * kDeg * 0.5f; // [I] degrees per 30 Hz frame
     const size_t cells = size_t(d.atlasCols) * d.atlasRows;
-    const size_t frames = !d.textures.empty() ? d.textures.size() : cells ? (d.atlasFrames ? d.atlasFrames : cells) : 1;
+    const size_t list = d.materials.empty() ? d.textures.size() : d.materials.size() > 1 ? d.materials.size() : 0;
+    const size_t frames = list ? list : cells ? (d.atlasFrames ? d.atlasFrames : cells) : 1;
     p.frame = uint16_t(rand15() % frames);
     (void)camera;
     particles_.push_back(std::move(p));
@@ -524,7 +645,8 @@ void System::tick(const glm::vec3& camera) {
 void System::build(const render::Camera& camera, float aspect, std::vector<render::FxVertex>& vertices,
                    std::vector<render::FxBatch>& batches) const {
     vertices.clear(), batches.clear();
-    struct Sprite { float depth; glm::vec3 c; float hw, hh, rot; uint32_t rgba, tex; float u0, v0, u1, v1; uint8_t blend; float pull; };
+    struct Sprite { float depth; glm::vec3 c; float hw, hh, rot; uint32_t rgba, tex; float u0, v0, u1, v1; uint8_t blend; float pull;
+                    const ParticleMaterial* mat = nullptr; };
     std::vector<Sprite> sprites;
     sprites.reserve(particles_.size());
     const glm::vec3 fwd = camera.forward(), right = camera.right(), up = glm::cross(right, fwd);
@@ -534,9 +656,8 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         const ParticleDef& d = *p.def;
         const float depth = glm::dot(p.pos - camera.position, fwd);
         if (depth < 16.0f || d.keys.empty()) continue; // 0x54B0A0: 16 <= z
-        // No texture and no list: these defs name a resource at +0x168 instead (e.g. wp_handgun def 25 -> 2770; the
-        // exe's 0x543F70 takes another path for +0x168/+0x16C) [U: distortion / heat haze?]. Not drawn.
-        if (!d.model() && !d.texture && d.textures.empty()) continue;
+        // Neither texture, list nor material: nothing to draw.
+        if (!d.model() && !d.texture && d.textures.empty() && d.materials.empty()) continue;
         const float t = std::clamp(float(p.age) / float(p.life), 0.0f, 1.0f);
         size_t k = 0;
         while (k + 2 < d.keys.size() && t > d.keys[k + 1].time) ++k;
@@ -587,9 +708,14 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
             if (d.animRate == 255) return std::min(n - 1, size_t(t * float(n)));
             return (size_t(std::max<int>(0, d.animStart)) + size_t(p.age / (2 * d.animRate))) % n;
         };
-        if (!d.textures.empty()) sp.tex = d.textures[frameOf(d.textures.size())];
-        else {
-            sp.tex = d.model() ? 0 : d.texture;
+        if (!d.materials.empty()) { // material path: the material's blend, texture and screen reads; atlas UVs as below
+            sp.mat = &d.materials[d.materials.size() > 1 ? frameOf(d.materials.size()) : 0];
+            sp.tex = sp.mat->texture;
+            sp.blend = uint8_t(sp.mat->distort || !sp.mat->additive ? Blend::Alpha : Blend::Additive);
+        }
+        if (d.materials.empty() && !d.textures.empty()) sp.tex = d.textures[frameOf(d.textures.size())];
+        else if (d.materials.size() <= 1) {
+            if (d.materials.empty()) sp.tex = d.model() ? 0 : d.texture;
             if (d.atlasCols && d.atlasRows) {
                 const size_t cells = size_t(d.atlasCols) * d.atlasRows;
                 const size_t n = std::clamp<size_t>(d.atlasFrames ? d.atlasFrames : cells, 1, cells);
@@ -654,8 +780,13 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         if (s.pull != 1.0f)
             for (auto& v : q) v = camera.position + (v - camera.position) * s.pull;
         const float uv[4][2] = {{s.u0, s.v1}, {s.u1, s.v1}, {s.u1, s.v0}, {s.u0, s.v0}};
-        if (batches.empty() || batches.back().textureId != s.tex || batches.back().blend != s.blend)
-            batches.push_back({uint32_t(vertices.size()), 0, s.tex, s.blend});
+        render::FxBatch b{uint32_t(vertices.size()), 0, s.tex, s.blend};
+        if (s.mat && s.mat->distort) b.normalId = s.mat->normal, b.distort = s.mat->distortScale;
+        else if (s.mat) b.softScale = s.mat->softScale, b.softBias = s.mat->softBias;
+        const auto& l = batches.empty() ? b : batches.back();
+        if (batches.empty() || l.textureId != b.textureId || l.blend != b.blend || l.normalId != b.normalId ||
+            l.distort != b.distort || l.softScale != b.softScale || l.softBias != b.softBias)
+            batches.push_back(b);
         for (int i : {0, 1, 2, 0, 2, 3}) vertices.push_back({{q[i].x, q[i].y, q[i].z}, {uv[i][0], uv[i][1]}, s.rgba});
         batches.back().count += 6;
     }
@@ -735,6 +866,21 @@ std::shared_ptr<const ObjectFx> Library::get(const std::string& name, std::vecto
         if (warnings) warnings->push_back("pc-w\\" + name + ".drm effects: " + ex.what());
     }
     return e.fx;
+}
+
+const std::vector<PointSet>& Library::pointSets(const cdc::Drm& unit, const std::string& unitName,
+                                               std::vector<std::string>* warnings) {
+    if (const auto it = pointSets_.find(unitName); it != pointSets_.end()) return it->second;
+    auto& sets = pointSets_[unitName];
+    sets = parsePointSets(unit, warnings);
+    std::set<const ObjectFx*> seen;
+    for (const auto& s : sets)
+        if (seen.insert(s.fx.get()).second) {
+            loadTextures(unit, unitName, s.fx->textureIds(), warnings);
+            if (s.fx->usesGlowTexture() && !textureIds_.contains(kGlowTexture))
+                if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture}, warnings);
+        }
+    return sets;
 }
 
 uint32_t Library::flags(const std::string& name) const {

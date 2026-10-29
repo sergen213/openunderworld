@@ -288,7 +288,9 @@ units (`GameReal.UnitWeatherSurvey`, `game::unitWeather`): snow where there are 
 openings, Kraken rooms, Mexico temples) and cinematic-only effects are local effects, not weather.
 The original's own particle effects, glows and effect lights run separately (`src/fx`, docs/formats/EFFECTS.md;
 drawn in every preset; effect lights use 4 reserved environment-light slots after the gadget lights, linear
-falloff, and endless effect lights born with placed objects join the scene lights). ou-game eases the intensity to 0 while
+falloff, and endless effect lights born with placed objects join the scene lights; material particles read a
+single-sample copy of the scene colour / depth taken once before the effects — GL `drawFx`, Vulkan the second pass's
+`recordWaterCopies` — for refraction and soft depth fades, FxBatch::screen). ou-game eases the intensity to 0 while
 collision lies within 3000 units above the camera (roofs, caves).
 Post pass, same file: four layers on camera-centred cylinders (radius 110, 240, 500, 1000), anchored
 in azimuth and world height so turning does not drag them; each layer is skipped where the scene is

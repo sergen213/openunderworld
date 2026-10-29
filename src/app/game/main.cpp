@@ -811,6 +811,11 @@ struct EffectsView {
                 m[3] += glm::vec4(u.offset, 0);
                 if (system.startBirth(fx, m, in.uniqueId)) owners.push_back(in.uniqueId);
             }
+            // Unit FX point sets (fires, heat haze without an object): owners 0x40000000 | set id [I: ids beside intros'].
+            for (const auto& ps : library->pointSets(*u.data.drm, u.data.name, &warnings)) {
+                const int32_t owner = 0x40000000 | ps.id;
+                if (system.startPointSet(ps, glm::translate(glm::mat4(1), u.offset), owner)) owners.push_back(owner);
+            }
         }
         // Combat / animation-event objects, loaded now so their textures reach the scene (addTextures): every weapon's
         // ammo hit objects too (loaded lazily at the first shot, their sprites drew white until the next rebuild).

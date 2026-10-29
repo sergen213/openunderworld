@@ -228,11 +228,32 @@ void main() {
     vColor = min(aColor * 2.0, vec4(2.0, 2.0, 2.0, 1.0));
     gl_Position = uViewProj * vec4(aPos, 1.0);
 })";
+// Material particles (FxBatch): uParams x = refraction screen-uv scale (scene copy offset by the normal map's xy x the
+// texture's alpha; GL's v points up, D3D's down), y / z = soft fade scale / bias against the depth copy.
 const char* kFxFs = R"(#version 460 core
 in vec2 vUv; in vec4 vColor;
 layout(binding = 0) uniform sampler2D uTex;
+layout(binding = 5) uniform sampler2D uScene;
+layout(binding = 6) uniform sampler2D uDepth;
+layout(binding = 8) uniform sampler2D uNormal;
+layout(location = 1) uniform vec4 uParams;
+layout(location = 2) uniform vec2 uDepthToW;
 out vec4 oColor;
-void main() { oColor = texture(uTex, vUv) * vColor; })";
+float viewDepth(float d) { return 1.0 / max(d * uDepthToW.x + uDepthToW.y, 1e-6); }
+void main() {
+    vec4 t = texture(uTex, vUv);
+    vec2 suv = gl_FragCoord.xy / vec2(textureSize(uScene, 0));
+    if (uParams.x > 0.0) {
+        vec4 n = texture(uNormal, vUv);
+        vec2 off = (vec2(n.x, n.y * n.w) * 2.0 - 1.0) * t.a * uParams.x;
+        oColor = vec4(texture(uScene, suv + vec2(off.x, -off.y)).rgb, t.a * vColor.a);
+        return;
+    }
+    float a = 1.0;
+    if (uParams.y > 0.0)
+        a = clamp((viewDepth(texture(uDepth, suv).r) - viewDepth(gl_FragCoord.z) - (1.0 - t.a) * uParams.z) * uParams.y, 0.0, 1.0);
+    oColor = t * vColor * vec4(1.0, 1.0, 1.0, a);
+})";
 
 GLuint compileShader(GLenum type, const char* src, std::string& error) {
     GLuint s = glCreateShader(type);
@@ -601,7 +622,7 @@ public:
         else if (wb.haze.w > 0.5f || wb.weather.x > 0.5f) // atmosphere / weather read the scene depth in the post pass
             glBlitNamedFramebuffer(r.targets.scene.get(), r.targets.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0,
                                    vp.width, vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-        drawFx(viewProj, options);
+        drawFx(camera, vp, viewProj, options);
         drawLines(viewProj, options.debugLines);
 
         Targets& t = r.targets;
@@ -1064,23 +1085,41 @@ private:
         glDepthFunc(GL_LESS);
     }
 
-    // Original particle effects: depth-tested, no depth writes, batches in the given (back-to-front) order.
-    void drawFx(const glm::mat4& viewProj, const FrameOptions& options) {
+    // Original particle effects: depth-tested, no depth writes, batches in the given (back-to-front) order. Material
+    // particles that refract or fade softly read single-sample copies of the scene drawn before the effects.
+    void drawFx(const Camera& camera, Viewport vp, const glm::mat4& viewProj, const FrameOptions& options) {
         if (options.fxVertices.empty() || options.fxBatches.empty()) return;
         Resources& r = *res_;
+        Targets& t = r.targets;
+        if (std::any_of(options.fxBatches.begin(), options.fxBatches.end(), [](const FxBatch& b) { return b.screen(); })) {
+            glBlitNamedFramebuffer(t.scene.get(), t.opaqueColorFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width,
+                                   vp.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBlitNamedFramebuffer(t.scene.get(), t.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width,
+                                   vp.height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            glBindFramebuffer(GL_FRAMEBUFFER, t.scene.get());
+            glBindTextureUnit(5, t.opaqueColor.get());
+            glBindTextureUnit(6, t.opaqueDepth.get());
+        }
         glNamedBufferData(r.fxVbo.get(), GLsizeiptr(options.fxVertices.size_bytes()), options.fxVertices.data(), GL_STREAM_DRAW);
         glVertexArrayVertexBuffer(r.fxVao.get(), 0, r.fxVbo.get(), 0, sizeof(FxVertex));
         glUseProgram(r.fxProgram.get());
         glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj));
+        const float n = camera.nearZ, f = camera.farZ;
+        glUniform2f(2, -(f - n) / (f * n), 1.0f / n); // DepthToW (OriginalShading c77)
         glBindVertexArray(r.fxVao.get());
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
+        auto tex = [&](uint32_t id) {
+            const auto it = r.textures.find(id);
+            return it != r.textures.end() ? it->second.get() : r.white.get();
+        };
         for (const auto& b : options.fxBatches) {
-            const auto it = r.textures.find(b.textureId);
-            glBindTextureUnit(0, it != r.textures.end() ? it->second.get() : r.white.get());
+            glBindTextureUnit(0, tex(b.textureId));
+            glBindTextureUnit(8, tex(b.normalId));
+            glUniform4f(1, b.distort, b.softScale, b.softBias, 0.0f);
             glBlendEquation(b.blend == 2 ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);
             if (b.blend == 0) glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             else if (b.blend == 3) glBlendFunc(GL_DST_COLOR, GL_SRC_ALPHA);

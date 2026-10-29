@@ -62,7 +62,16 @@ struct WaterParticle { float pos[3]; float radius; float alpha; };
 struct FxVertex { float pos[3]; float uv[2]; uint32_t rgba; };
 // `count` vertices (triangle list) from `first`; textureId = SceneData texture id (0 = white); blend:
 // 0 alpha (SRCALPHA/INVSRCALPHA), 1 additive (SRCALPHA/ONE), 2 subtract (REVSUBTRACT), 3 multiply (DESTCOLOR/SRCALPHA).
-struct FxBatch { uint32_t first = 0, count = 0, textureId = 0; uint8_t blend = 0; };
+// Material particles (fx::ParticleMaterial): distort > 0 draws the scene copy offset by normalId's xy (lib-21 decode:
+// (x, y * a) * 2 - 1) x the texture's alpha x distort screen uv, alpha = texture alpha x colour alpha (blend 0);
+// softScale > 0 fades alpha by sat((scene view depth - fragment view depth - (1 - texture alpha) softBias) softScale).
+struct FxBatch {
+    uint32_t first = 0, count = 0, textureId = 0;
+    uint8_t blend = 0;
+    uint32_t normalId = 0;
+    float distort = 0, softScale = 0, softBias = 0;
+    bool screen() const { return distort > 0 || softScale > 0; } // reads the scene colour / depth copies
+};
 // ---- atmosphere + weather (docs/RENDERING.md "Atmosphere", "Weather"; Enhanced only, post pass) ----
 // Height fog (haze + ground mist) integrated along the view ray up to the scene or the nearest water surface,
 // plus screen-space sun shafts from Medium up. Off = the post pass leaves the image untouched.
