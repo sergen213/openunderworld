@@ -86,14 +86,30 @@ Instances of objects with oflags 0x40000000 (fx proxies, bullet hits, squibs, ca
 `InstanceDrawable` 0x5B5CA0 returns no draw flags [O] (`formats::kObjectNoInstanceDraw`). Sprites are camera-facing,
 back-to-front, depth-tested without writes, `tex × colour × 2`.
 
+- Depth bias [O]: def `+0x15E` (s16) → emitter `+0x10C` → particle `+0x28`, flag 0x200; the sprite draw (0x54B0E8)
+  uses `z + bias` (≥ 16) for fades and, with flag 0x400, as the projected depth. Torch flames use −158 (their origin
+  sits inside the sconce). We scale the quad about the eye by `(z + bias) / z`: same screen footprint, nearer depth [I].
+- Segment fields < 0 name HInfo markers (slot 2, 0x20 bytes: `+4` u16 id, `+8` float3 position, `+0x14` float3 Euler,
+  segment frame) by `-id` (0x46DA20; ids ≥ 100 come from a runtime list and −125 from 0x538570 [U], both fall back to
+  the root as the exe does when nothing matches). Splash edges emit along the line between markers −7 and −8 with
+  velocity/offset in marker −5's frame (`physics::HMarker`, `FxReal.MarkerSegmentsResolve`).
+
 ## Status / missing
 
 - Implemented: particle definitions, birth events, emission, shapes, velocity/accel, keys (colour/size/aspect/blend),
-  texture lists/atlases, fades, GL + Vulkan drawing, effect proxies hidden.
-- **Not verified visually**: in l1_baldrs_tomb (GL + Vulkan, 160 emitters / ~1450 particles alive) the torch sprites
-  were not visible from the hall; cause open (occlusion vs. a draw/size/unit bug). No comparison with original captures
-  yet (no Wine level reference in openunderworld-work/screens).
-- Missing: animation-event effects, combat effects (muzzle flash, impacts, blood, casings from weapon/bullet_hit
-  objects), classes 1–5/7–9 (ribbons, glows, lightning, …), lights from effects, attached/segment-following particles,
-  mesh/model particles, ribbons/trails, decals, lens flares, skydomes (`*_skydome_*` unit dependencies not placed),
-  UV scroll, screen effects, script `effect` natives (0x4ADC00 Start).
+  texture lists/atlases, fades, depth bias, marker segments, GL + Vulkan drawing, effect proxies hidden.
+- Viewed (2026-10-29, `ou-game --camera`): l1_baldrs_tomb torch 215 flame in GL + Vulkan
+  (`--spawn 0,-17200,2600,-90 --camera 1500,-18200,5000,2292,-19285,5300`); the hall view hides torches 214/215
+  behind the serpent heads, which was the earlier "invisible" report. l2_junglehub splash-edge foam faint but present.
+  Flames look thinner than remembered from the original: no Wine reference capture yet [U].
+- Combat findings [O], not implemented: weapons are `handgun_rbweapon`, `shotgun_rbweapon`, … in the global object
+  table 0x8AA768 (with `particle`, `bullet_hit`, `bullet_hit_shotgun`, `fx_grapple_bling`); `bullet_hit` holds 161
+  particle definitions grouped per surface (dust, sparks, water, blood-like dark red …) but only one event record, so
+  the surface → definition mapping lives in code or its DTPs (2493–2508) [U]. `wp_handgun` (27 defs) /
+  `wp_shotgun` (19) have no event list. Animation event lists are processed by 0x5BBFD0: records
+  `{u16 info, u16 frame, u32 instance ref +4, u16 +8, u8 +0xA, command +0xC}`, size `(info >> 12) * 4 + 0xC`; case 1
+  runs the command on the referenced instance's object (0x548850). Script `effect` markup Start is 0x4ADC00.
+- Missing: animation-event effects, combat effects (muzzle flash, impacts, blood, casings), classes 1–5/7–9
+  (ribbons, glows, lightning, …), lights from effects, attached/segment-following particles, mesh/model particles,
+  decals, lens flares, skydomes (`*_skydome_*` unit dependencies not placed), UV scroll, screen effects. Frame-time
+  cost not measured.
