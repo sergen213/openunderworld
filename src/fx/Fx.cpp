@@ -150,6 +150,67 @@ std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::stri
                 fx.particles.push_back(std::move(def));
             }
         }
+        // Records `size` bytes each of the array the pointer at +ptrOff names (count at +countOff): f(record, the
+        // array section's pointers, record offset).
+        auto records = [&](uint32_t countOff, uint32_t ptrOff, size_t size, auto&& f) {
+            const uint32_t n = rd<uint32_t>(s.data, countOff);
+            const auto it = ptrs.find(ptrOff);
+            if (!n || n >= 4096 || it == ptrs.end()) return;
+            const auto& arr = drm.sections[it->second.section];
+            const auto aptrs = it->second.section == uint32_t(gen) ? ptrs : cdc::sectionPointers(drm, it->second.section);
+            for (uint32_t k = 0; k < n && it->second.offset + size * (k + 1) <= arr.data.size(); ++k)
+                f(arr.data.subspan(it->second.offset + size * k, size), aptrs, uint32_t(it->second.offset + size * k));
+        };
+        auto list = [&](const std::unordered_map<uint32_t, cdc::Pointer>& p, uint32_t at) { // {u32 n, u32[n]} at a pointer
+            std::vector<uint32_t> out;
+            if (const auto t = p.find(at); t != p.end()) {
+                const auto td = drm.sections[t->second.section].data;
+                for (uint32_t i = 0, cnt = rd<uint32_t>(td, t->second.offset); i < cnt && i < 256; ++i)
+                    out.push_back(rd<uint32_t>(td, t->second.offset + 4 + 4 * i));
+            }
+            return out;
+        };
+        records(0x1C, 0x20, 0x58, [&](std::span<const uint8_t> r, const auto& p, uint32_t at) {
+            GlowDef g;
+            g.flags = rd<uint8_t>(r, 0), g.kind = rd<int8_t>(r, 1);
+            g.segment = rd<int16_t>(r, 2), g.segment2 = rd<int16_t>(r, 4);
+            g.colours = list(p, at + 8);
+            g.id = rd<uint8_t>(r, 0x0C), g.lifeVar = rd<uint8_t>(r, 0x0F);
+            g.period = std::max<int16_t>(1, rd<int16_t>(r, 0x10));
+            g.facing = float(rd<int16_t>(r, 0x12)) / 180.0f;
+            g.width = rd<uint16_t>(r, 0x14), g.height = rd<uint16_t>(r, 0x16);
+            g.endWidth = rd<int16_t>(r, 0x18), g.endHeight = rd<int16_t>(r, 0x1A);
+            g.life = rd<int32_t>(r, 0x1C);
+            g.fadeIn = rd<uint16_t>(r, 0x20), g.fadeOut = rd<uint16_t>(r, 0x22);
+            g.depthBias = rd<int16_t>(r, 0x24);
+            g.facingMode = int8_t(uint8_t(rd<uint8_t>(r, 0x26) << 4)) >> 4;
+            g.axisSegment = rd<int16_t>(r, 0x28), g.axisSegment2 = rd<int16_t>(r, 0x2A);
+            g.rot0 = rd<float>(r, 0x2C), g.rotRange = rd<float>(r, 0x30), g.spin = rd<float>(r, 0x34), g.spinRange = rd<float>(r, 0x38);
+            g.texRate = rd<uint8_t>(r, 0x3C), g.condition = rd<uint8_t>(r, 0x3D);
+            g.texture = rd<uint32_t>(r, 0x40);
+            g.textures = list(p, at + 0x44);
+            g.offset = {float(rd<int16_t>(r, 0x48)), float(rd<int16_t>(r, 0x4A)), float(rd<int16_t>(r, 0x4C))};
+            g.fadeFar = rd<uint16_t>(r, 0x4E), g.fadeNear = rd<uint16_t>(r, 0x50);
+            fx.glows.push_back(std::move(g));
+        });
+        records(0x3C, 0x40, 0x24, [&](std::span<const uint8_t> r, const auto&, uint32_t) {
+            LightDef l;
+            l.kind = rd<uint8_t>(r, 0), l.life = rd<int16_t>(r, 2), l.segment = rd<int16_t>(r, 6);
+            for (int c = 0; c < 3; ++c)
+                l.colour[c] = rd<uint8_t>(r, 0x0A + c) / 255.0f, l.colour2[c] = rd<uint8_t>(r, 0x0E + c) / 255.0f;
+            l.birth = rd<uint8_t>(r, 0x11) & 1;
+            l.radius = rd<uint16_t>(r, 0x12), l.radius2 = rd<uint16_t>(r, 0x14);
+            l.duration = rd<int16_t>(r, 0x16), l.fadeIn = rd<int16_t>(r, 0x18), l.fadeOut = rd<int16_t>(r, 0x1A);
+            if (const uint32_t id = rd<uint32_t>(r, 0x20); id) // plain DTP id (formats::objectLights)
+                if (const int i = dtpIndex(drm, id); i >= 0) l.dtp = formats::lightFromDtp(drm, uint32_t(i));
+            fx.lights.push_back(std::move(l));
+        });
+        if (const auto it = ptrs.find(0x08); it != ptrs.end()) { // effect map: u16 n at +4, {u8 id, i8 class, u8 index, pad}
+            const auto md = drm.sections[it->second.section].data;
+            for (uint32_t k = 0, n = rd<uint16_t>(s.data, 4); k < n && k < 256; ++k)
+                fx.effectMap.push_back({rd<uint8_t>(md, it->second.offset + 4 * k), rd<int8_t>(md, it->second.offset + 4 * k + 1),
+                                        rd<uint8_t>(md, it->second.offset + 4 * k + 2)});
+        }
     }
     try {
         const auto phys = physics::loadObjectPhysics(drm);
@@ -182,9 +243,17 @@ std::vector<uint32_t> ObjectFx::textureIds() const {
         if (!p.textures.empty()) out.insert(out.end(), p.textures.begin(), p.textures.end());
         else if (p.texture) out.push_back(p.texture);
     }
+    for (const auto& g : glows) {
+        out.insert(out.end(), g.textures.begin(), g.textures.end());
+        if (g.texture) out.push_back(g.texture);
+    }
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
+}
+
+bool ObjectFx::usesGlowTexture() const {
+    return std::any_of(glows.begin(), glows.end(), [](const GlowDef& g) { return !g.texture && g.textures.empty(); });
 }
 
 Blend blendFor(uint8_t keyBlend) {
@@ -221,10 +290,19 @@ bool System::start(std::shared_ptr<const ObjectFx> fx, int def, const glm::mat4&
 }
 
 bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command& c, const glm::mat4& world, int32_t owner,
-                        std::span<const glm::mat4> bones) {
+                        std::span<const glm::mat4> bones, bool birth) {
+    // a2 = segment (0xFF: the record's own), a3 = second segment (0x547B40). At birth glows / lights need their
+    // record's birth bit (0x536B70 +0 & 1, 0x546710 +0x11 & 1).
+    const int16_t seg = int16_t(c.a2 == 0xFF ? 0 : c.a2);
+    auto glow = [&](int i, int16_t s) {
+        return size_t(i) < fx->glows.size() && (!birth || fx->glows[size_t(i)].flags & 1) && startGlow(fx, i, world, owner, s, bones);
+    };
+    auto light = [&](int i, int16_t s) {
+        return size_t(i) < fx->lights.size() && (!birth || fx->lights[size_t(i)].birth) && startLight(fx, i, world, owner, s, bones);
+    };
     switch (c.type) {
-    case 3: return start(fx, c.a1, world, owner, int16_t(c.a2 == 0xFF ? 0 : c.a2), int16_t(c.a3), bones); // particle (seg, seg2)
-    case 0x1D: return start(fx, c.a1, world, owner, 0, 0, bones);                                          // particle, root
+    case 3: return start(fx, c.a1, world, owner, seg, int16_t(c.a3), bones); // particle (seg, seg2)
+    case 0x1D: return start(fx, c.a1, world, owner, 0, 0, bones);           // particle, root
     case 0x20: return start(fx, c.a1, world, owner, 0, 0, bones);
     case 4: { // the particle on every segment from a2 (0x547C8E)
         bool any = false;
@@ -232,6 +310,19 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
         for (int s = c.a2; s < n; ++s) any |= start(fx, c.a1, world, owner, int16_t(s), 0, bones);
         return any;
     }
+    case 6: return glow(c.a1, seg);
+    case 0x11: return light(c.a1, seg);
+    case 0x1C: case 0x2F: // effect map id a1 -> {class, index} (classes 1, 3-5, 7, 8: not implemented)
+        for (const auto& m : fx->effectMap)
+            if (m.id == c.a1) {
+                if (m.cls == 0) return start(fx, m.index, world, owner, 0, 0, bones);
+                if (m.cls == 2) return glow(m.index, 0);
+                if (m.cls == 6) return light(m.index, 0);
+                return false;
+            }
+        return false;
+    case 0x15: case 0x1A: stopId(owner, int16_t(c.a1), false); return false; // 0x53D070: prims with id a1 fade out
+    case 0x18: case 0x1B: stopId(owner, int16_t(c.a1), true); return false;  // 0x52F4D0: removed
     default: return false; // other effect classes: docs/formats/EFFECTS.md "Missing"
     }
 }
@@ -240,8 +331,60 @@ int System::startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat
     int n = 0;
     if (!fx) return 0;
     for (const auto& e : fx->events)
-        if (e.effect() && e.event == 0 && !(e.info & 0x3F0)) n += runCommand(fx, e.cmd, world, owner);
+        if (e.effect() && e.event == 0 && !(e.info & 0x3F0)) n += runCommand(fx, e.cmd, world, owner, {}, true);
     return n;
+}
+
+bool System::startGlow(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
+                       int16_t segment, std::span<const glm::mat4> bones) {
+    const GlowDef& d = fx->glows[size_t(def)];
+    if (d.kind != 1) return false;
+    auto at = [&](int16_t s) { return world * fx->frame(s, bones); };
+    Glow g;
+    g.fx = fx, g.def = &d, g.owner = owner;
+    const glm::mat4 m = at(segment ? segment : d.segment);
+    g.pos = glm::vec3(m * glm::vec4(d.offset, 1));
+    if (d.facingMode && d.facingMode != 4) { // 0x52F660: axis of axisSegment, or axisSegment -> axisSegment2
+        const glm::mat4 a = at(d.axisSegment);
+        g.axisFrom = a[3];
+        if (d.axisSegment == d.axisSegment2) g.axis = glm::vec3(a[std::abs(d.facingMode) - 1]) * (d.facingMode < 0 ? -1.0f : 1.0f);
+        else g.axis = glm::vec3(at(d.axisSegment2)[3]) - g.axisFrom;
+        if (glm::dot(g.axis, g.axis) > 0) g.axis = glm::normalize(g.axis);
+    }
+    g.period = d.period;
+    if (d.lifeVar) g.period = int16_t(std::max(1, int(d.period) + int(rand15() % (2u * d.lifeVar + 1u)) - d.lifeVar));
+    if (d.flags & 0x10) g.phase = uint16_t(rand15() & 0xFFF);
+    // Transient owners (< 0: one-shot sequences, characters) have no instance to outlive: endless glows last 1 s [I].
+    g.left = d.life > 0 ? 2 * d.life : owner < 0 ? 60 : -1;
+    // Size growth per tick: ((end / start) - 1) / life (0x536B70 -> prim +0x54 / +0x5C).
+    if (d.life > 0 && d.endWidth >= 0 && d.width > 0) g.growW = (d.endWidth / d.width - 1.0f) / float(g.left);
+    if (d.life > 0 && d.endHeight >= 0 && d.height > 0) g.growH = (d.endHeight / d.height - 1.0f) / float(g.left);
+    constexpr float kDeg = 3.14159265f / 180.0f;
+    g.rot = (d.rot0 + rand01() * d.rotRange - d.rotRange * 0.5f) * kDeg;
+    g.spin = (d.spin + rand01() * d.spinRange - d.spinRange * 0.5f) * kDeg * 0.5f;
+    if (!d.textures.empty() && !d.texRate) g.frame = uint16_t(rand15() % d.textures.size());
+    glows_.push_back(std::move(g));
+    return true;
+}
+
+bool System::startLight(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
+                        int16_t segment, std::span<const glm::mat4> bones) {
+    const LightDef& d = fx->lights[size_t(def)];
+    FxLight l;
+    l.fx = fx, l.def = &d, l.owner = owner;
+    const glm::mat4 m = world * fx->frame(segment ? segment : d.segment, bones);
+    l.pos = glm::vec3(m[3]), l.dir = glm::normalize(glm::vec3(m[1])); // spots point along the segment's Y [I]
+    const int frames = d.life ? d.life : d.duration; // timed prim (0x5463E0) or the attached light's duration
+    l.life = frames < 0 ? (owner < 0 ? 60 : -1) : 2 * std::max(1, frames);
+    lights_.push_back(std::move(l));
+    return true;
+}
+
+void System::stopId(int32_t owner, int id, bool now) {
+    for (auto& g : glows_)
+        if (g.owner == owner && (id < 0 || g.def->id == id) && g.fadeOut < 0) g.fadeOut = now ? 0 : 2 * g.def->fadeOut;
+    for (auto& l : lights_)
+        if (l.owner == owner && l.fadeOut < 0) l.fadeOut = now ? 0 : 2 * std::max<int16_t>(0, l.def->fadeOut);
 }
 
 int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
@@ -263,13 +406,16 @@ void System::play(std::shared_ptr<const ObjectFx> fx, const std::vector<Event>& 
 void System::stopOwner(int32_t owner) {
     for (auto& e : emitters_)
         if (e.owner == owner) e.stopped = true;
+    stopId(owner, -1, false);
 }
 
 bool System::hasOwner(int32_t owner) const {
-    return std::any_of(emitters_.begin(), emitters_.end(), [&](const Emitter& e) { return e.owner == owner && !e.stopped; });
+    return std::any_of(emitters_.begin(), emitters_.end(), [&](const Emitter& e) { return e.owner == owner && !e.stopped; }) ||
+           std::any_of(glows_.begin(), glows_.end(), [&](const Glow& g) { return g.owner == owner && g.fadeOut < 0; }) ||
+           std::any_of(lights_.begin(), lights_.end(), [&](const FxLight& l) { return l.owner == owner && l.fadeOut < 0; });
 }
 
-void System::clear() { emitters_.clear(), particles_.clear(), sequences_.clear(); }
+void System::clear() { emitters_.clear(), particles_.clear(), sequences_.clear(), glows_.clear(), lights_.clear(); }
 
 void System::spawn(Emitter& e, const glm::vec3& camera) {
     const ParticleDef& d = *e.def;
@@ -356,6 +502,20 @@ void System::tick(const glm::vec3& camera) {
         if (e.ticksLeft > 0 && --e.ticksLeft == 0) e.stopped = true;
     }
     std::erase_if(particles_, [](const Particle& p) { return p.age >= p.life; });
+    for (auto& g : glows_) { // 0x535FA0: age, spin, growth, life; 0x536280: texture-list step every texRate frames
+        ++g.age, g.rot += g.spin, g.scaleW += g.growW, g.scaleH += g.growH;
+        if (g.left > 0) --g.left;
+        if (g.fadeOut > 0) --g.fadeOut;
+        if (g.def->texRate && !g.def->textures.empty() && g.age % (2 * g.def->texRate) == 0)
+            g.frame = uint16_t((g.frame + 1) % g.def->textures.size());
+    }
+    std::erase_if(glows_, [](const Glow& g) { return g.left == 0 || g.fadeOut == 0; });
+    for (auto& l : lights_) {
+        ++l.age;
+        if (l.life > 0) --l.life;
+        if (l.fadeOut > 0) --l.fadeOut;
+    }
+    std::erase_if(lights_, [](const FxLight& l) { return l.life == 0 || l.fadeOut == 0; });
     std::erase_if(emitters_, [&](const Emitter& e) {
         return e.stopped && std::none_of(particles_.begin(), particles_.end(), [&](const Particle& p) { return p.def == e.def && p.fx == e.fx; });
     });
@@ -441,6 +601,50 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         }
         sprites.push_back(sp);
     }
+    // Glows (0x536280): one sprite each at the projected position, depth >= 20 after the bias.
+    for (const auto& g : glows_) {
+        const GlowDef& d = *g.def;
+        if (d.condition == 1) continue; // drawn only while 0x5EA390 (a camera mode [U]) is set: taken as unset
+        const float depth = glm::dot(g.pos - camera.position, fwd);
+        if (depth < 20.0f) continue;
+        // Colour: one, or the list cycled with `period` frames per entry, prev -> current lerp (0x548D40) [I: weights].
+        const size_t n = d.colours.size();
+        uint32_t c = n ? d.colours[0] : 0x80808080u;
+        if (n >= 2) {
+            const uint32_t per = uint32_t(g.period), f = g.phase + uint32_t(g.age / 2);
+            const uint32_t cur = (f + per) % uint32_t(n * per) / per % uint32_t(n), prev = (cur ? cur : uint32_t(n)) - 1;
+            const float w = float(f % per) / float(per);
+            c = 0;
+            for (int k = 0; k < 32; k += 8)
+                c |= uint32_t(std::lround(float((d.colours[prev] >> k) & 0xFF) * (1 - w) + float((d.colours[cur] >> k) & 0xFF) * w)) << k;
+        }
+        float fade = 1;
+        if (g.age < 2 * d.fadeIn) fade = float(g.age) / float(2 * d.fadeIn);
+        else if (g.fadeOut >= 0 && d.fadeOut) fade = float(g.fadeOut) / float(2 * d.fadeOut);
+        else if (g.left >= 0 && g.left < 2 * d.fadeOut) fade = float(g.left) / float(2 * d.fadeOut);
+        if (d.facingMode && d.facingMode != 4 && glm::dot(g.axis, g.axis) > 0) { // 0x52F660 facing threshold
+            const float t = glm::dot(glm::normalize(camera.position - g.axisFrom), g.axis) - 1.0f + d.facing;
+            if (t <= 0) continue;
+            fade *= std::min(1.0f, t / std::max(d.facing, 1e-3f)); // [I] the exe's scale (0x814D20) is not decoded
+        }
+        if (d.fadeFar > d.fadeNear && depth < d.fadeFar) { // prim +0x78 / +0x7A band
+            if (depth <= d.fadeNear) continue;
+            fade *= (depth - d.fadeNear) / float(d.fadeFar - d.fadeNear);
+        }
+        // Mode 1 fades RGB (0x52AE20; drawn additive), mode 2 alpha [I: which D3D blend each mode is].
+        float rgba[4];
+        for (int k = 0; k < 4; ++k) rgba[k] = float((c >> (8 * k)) & 0xFF);
+        if (d.alphaBlend()) rgba[3] *= fade;
+        else for (int k = 0; k < 3; ++k) rgba[k] *= fade;
+        if (rgba[3] < 0.5f || (!d.alphaBlend() && rgba[0] + rgba[1] + rgba[2] < 1.5f)) continue;
+        const float hw = d.width * g.scaleW, hh = d.height * g.scaleH;
+        if (hw <= 0 || hh <= 0) continue;
+        const float biased = std::max(20.0f, depth + float(d.depthBias));
+        Sprite sp{biased, g.pos, hw, hh, g.rot, 0, 0, 0, 0, 1, 1, uint8_t(d.alphaBlend() ? Blend::Alpha : Blend::Additive), biased / depth};
+        for (int k = 0; k < 4; ++k) sp.rgba |= uint32_t(std::clamp(std::lround(rgba[k]), 0L, 255L)) << (8 * k);
+        sp.tex = !d.textures.empty() ? d.textures[g.frame % d.textures.size()] : d.texture ? d.texture : kGlowTexture;
+        sprites.push_back(sp);
+    }
     std::sort(sprites.begin(), sprites.end(), [](const Sprite& a, const Sprite& b) { return a.depth > b.depth; });
     vertices.reserve(sprites.size() * 6);
     for (const auto& s : sprites) {
@@ -463,7 +667,26 @@ uint64_t System::checksum() const {
         for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const uint8_t*>(p)[i]) * 1099511628211ull;
     };
     for (const auto& p : particles_) mix(&p.pos, sizeof p.pos), mix(&p.age, sizeof p.age), mix(&p.frame, sizeof p.frame);
+    for (const auto& g : glows_) mix(&g.pos, sizeof g.pos), mix(&g.age, sizeof g.age), mix(&g.rot, sizeof g.rot);
+    for (const auto& l : lights_) mix(&l.pos, sizeof l.pos), mix(&l.age, sizeof l.age);
     return h;
+}
+
+void System::lights(std::vector<LiveLight>& out) const {
+    out.clear();
+    for (const auto& l : lights_) {
+        const LightDef& d = *l.def;
+        // Record colour / radius win over the DTP's (0x5C35D0 takes them as arguments); colour -> colour2 and radius ->
+        // radius2 over a timed light's life, fades by +0x18 / +0x1A frames [I: the timed update 0x5463E0 not decoded].
+        const float total = float(l.age + std::max(0, l.life)), t = l.life < 0 || total <= 0 ? 0.0f : float(l.age) / total;
+        glm::vec3 c = glm::mix(d.colour, d.colour2 != glm::vec3(0) ? d.colour2 : d.colour, t);
+        float k = 1;
+        if (d.fadeIn > 0 && l.age < 2 * d.fadeIn) k = float(l.age) / float(2 * d.fadeIn);
+        if (l.fadeOut >= 0) k *= d.fadeOut > 0 ? float(l.fadeOut) / float(2 * d.fadeOut) : 0.0f;
+        else if (d.fadeOut > 0 && l.life >= 0 && l.life < 2 * d.fadeOut) k *= float(l.life) / float(2 * d.fadeOut);
+        const float r = d.radius > 0 ? (d.radius2 > 0 ? glm::mix(d.radius, d.radius2, t) : d.radius) : d.dtp ? d.dtp->radius : 0;
+        out.push_back({l.pos, l.dir, c * k, r, d.dtp ? &*d.dtp : nullptr, l.owner, l.life < 0});
+    }
 }
 
 void Library::loadTextures(const cdc::Drm& drm, const std::string& name, const std::vector<uint32_t>& ids,
@@ -502,8 +725,11 @@ std::shared_ptr<const ObjectFx> Library::get(const std::string& name, std::vecto
                 }
             }
         auto fx = parseObjectFx(drm, warnings);
-        if (!fx || (fx->particles.empty() && fx->events.empty() && fx->clips.empty())) return nullptr;
+        if (!fx || (fx->particles.empty() && fx->glows.empty() && fx->lights.empty() && fx->events.empty() && fx->clips.empty()))
+            return nullptr;
         loadTextures(drm, name, fx->textureIds(), warnings);
+        if (fx->usesGlowTexture() && !textureIds_.contains(kGlowTexture)) // particle.drm: always loaded by the exe (0x5D4090)
+            if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture}, warnings);
         e.fx = std::make_shared<const ObjectFx>(std::move(*fx));
     } catch (const std::exception& ex) {
         if (warnings) warnings->push_back("pc-w\\" + name + ".drm effects: " + ex.what());

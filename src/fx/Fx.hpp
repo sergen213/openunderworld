@@ -59,6 +59,51 @@ struct ParticleDef {
     bool model() const { return flags4 & 0x80; } // model particles (casings, debris): drawn as small sprites [I]
 };
 
+// Class 2 glow (GenericFXObject +0x1C / +0x20, 0x58 bytes): creator tru.exe 0x536B70 -> 0x536070, update 0x535FA0,
+// draw 0x536280 (prim type 0x82, drawn from the 0xAE4D04 list by 0x548BF0). Times in 30 Hz frames.
+struct GlowDef {
+    uint8_t flags = 0;               // +0x00: 1 birth-enabled, 2 rotation jitter, 4 ignores instance fade,
+                                     // 0x10 random colour phase, 0x20 fixed at its start position; >> 6 == 1: alpha
+    int8_t kind = 1;                 // +0x01: 1 one sprite at `segment` (every record); >= 2 beams (0x5361E0): not drawn
+    int16_t segment = 0, segment2 = 0; // +0x02 / +0x04 (-126 = the instance origin)
+    std::vector<uint32_t> colours;   // +0x08 -> {u32 n, rgba[n]}; none = 0x80808080
+    uint8_t id = 0;                  // +0x0C prim id (stop commands 0x15 / 0x1A / 0x18 / 0x1B)
+    uint8_t lifeVar = 0;             // +0x0F +- period
+    int16_t period = 30;             // +0x10 colour cycle period (colours >= 2)
+    float facing = 1;                // +0x12 / 180: drawn while dot(axis, to camera) > 1 - facing
+    float width = 0, height = 0;     // +0x14 / +0x16 start half-size [I: world units]
+    float endWidth = -1, endHeight = -1; // +0x18 / +0x1A size at the end of `life` (< 0 = constant)
+    int32_t life = -1;               // +0x1C; <= 0 forever (until stopped)
+    uint16_t fadeIn = 0, fadeOut = 0; // +0x20 / +0x22
+    int16_t depthBias = 0;           // +0x24 view-depth offset (z >= 20 after it)
+    int8_t facingMode = 0;           // +0x26 low nibble, signed: +-1/2/3 = local +-X/Y/Z of axisSegment (or the
+                                     // axisSegment -> axisSegment2 vector when they differ), 4 distance [U], 0 none
+    int16_t axisSegment = 0, axisSegment2 = 0; // +0x28 / +0x2A
+    float rot0 = 0, rotRange = 0, spin = 0, spinRange = 0; // +0x2C.. degrees, degrees per 30 Hz frame [I]
+    uint8_t texRate = 0;             // +0x3C texture-list frames per step (0 = one random frame)
+    uint8_t condition = 0;           // +0x3D: 1 / 2 draw only when / unless 0x5EA390 (a camera mode [U]) is set
+    uint32_t texture = 0;            // +0x40; 0 = kGlowTexture
+    std::vector<uint32_t> textures;  // +0x44 -> {u32 n, ids[n]}
+    glm::vec3 offset{0};             // +0x48 s16 x3 in the segment's frame
+    uint16_t fadeFar = 0, fadeNear = 0; // +0x4E / +0x50 camera-distance fade band
+    bool alphaBlend() const { return (flags >> 6) == 1; } // draw mode 2 (alpha fades); else 1 (RGB fades: additive) [I]
+};
+// Glows without a texture draw particle.drm model 0's first animated texture (0x52B0B0(0x8AA77C, 0, 0)).
+inline constexpr uint32_t kGlowTexture = 130;
+
+// Class 6 effect light (GenericFXObject +0x3C / +0x40, 0x24 bytes; tru.exe 0x546710 -> 0x5C35D0).
+struct LightDef {
+    uint8_t kind = 0;                // +0x00 (1 = timed light prim)
+    int16_t life = 0;                // +0x02 timed prim life (0 = the +0x16 duration applies)
+    int16_t segment = 0;             // +0x06
+    glm::vec3 colour{0}, colour2{0}; // +0x0A / +0x0E rgb / 255; colour2 = end colour [I]
+    bool birth = false;              // +0x11 & 1
+    float radius = 0, radius2 = 0;   // +0x12 / +0x14 (radius2 0 = constant) [I]
+    int16_t duration = -1;           // +0x16, -1 forever
+    int16_t fadeIn = 0, fadeOut = 0; // +0x18 / +0x1A [I]
+    std::optional<scene::Light> dtp; // +0x20 light DTP: type, cone, falloff curve, flicker
+};
+
 // Effect command (8 bytes at +8 of an event record, tru.exe 0x547B40): u16 type, then 3 u16 arguments.
 struct Command { uint16_t type = 0, a1 = 0, a2 = 0, a3 = 0; };
 // Object / animation event record {u16 info, u16 frame, u8 event, ...; command}, 8 + (info >> 12) * 4 bytes
@@ -77,13 +122,18 @@ struct Event {
 struct ObjectFx {
     struct Marker { int segment = 0; glm::mat4 local{1}; }; // HInfo marker in its segment's frame
     std::vector<ParticleDef> particles;
+    std::vector<GlowDef> glows;          // class 2
+    std::vector<LightDef> lights;        // class 6
+    struct MapEntry { uint8_t id = 0; int8_t cls = -1; uint8_t index = 0; };
+    std::vector<MapEntry> effectMap;     // +0x04 / +0x08 (commands 0x1C / 0x2F look effects up by id)
     std::vector<Event> events;           // object section +4 list
     // Animation list (ObjectBase +0x54 / +0x58 {i16 anim, i16, u32 event-list DTP, char* name}) -> that clip's
     // event list (DTP rtype 19: u32 header, then records as `events`). Only clips with an event list.
     std::map<std::string, std::vector<Event>> clips;
     std::vector<glm::mat4> segments;     // bind frames of model 0's segments, object frame
     std::map<int, Marker> markers;       // HInfo marker id -> marker
-    std::vector<uint32_t> textureIds() const; // every texture a drawn particle references
+    std::vector<uint32_t> textureIds() const; // every texture a drawn particle or glow references (kGlowTexture apart)
+    bool usesGlowTexture() const;             // a glow without a texture of its own
     // Object-frame transform of a definition's segment field: >= 0 a segment, -id an HInfo marker (tru.exe 0x46DA20);
     // unknown ones are the root (as 0x46DA20's fallback). `bones` = posed segment frames (object frame); empty = bind.
     glm::mat4 frame(int16_t segment, std::span<const glm::mat4> bones = {}) const;
@@ -109,8 +159,9 @@ public:
                int16_t segment = 0, int16_t segment2 = 0, std::span<const glm::mat4> bones = {});
     // Runs an instance's birth effects: enabled event-0 records of fx->events (tru.exe 0x5BA480 -> 0x5BA000).
     int startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat4& world, int32_t owner);
+    // `birth`: run from the birth list, where glows / lights also need their record's birth bit.
     bool runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command& c, const glm::mat4& world, int32_t owner,
-                    std::span<const glm::mat4> bones = {});
+                    std::span<const glm::mat4> bones = {}, bool birth = false);
     // Animation events: the records of `events` (an fx->clips list) at 30 Hz frames in [from, to) that run on
     // `material` (Event::runsOn). Returns the commands that started something.
     int runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
@@ -119,18 +170,51 @@ public:
     // fire: tru.exe births the hit object, whose clip events filter on its material, 0x6B7030).
     void play(std::shared_ptr<const ObjectFx> fx, const std::vector<Event>& events, const glm::mat4& world, int32_t owner,
               uint8_t material);
-    void stopOwner(int32_t owner);  // emitters stop, live particles finish
+    void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     bool hasOwner(int32_t owner) const;
     void clear();
     void tick(const glm::vec3& camera); // one 60 Hz game tick
-    // Camera-facing sprites, back to front, batched by texture and blend.
+    // Camera-facing sprites (particles and glows), back to front, batched by texture and blend.
     void build(const render::Camera& camera, float aspect, std::vector<render::FxVertex>& vertices,
                std::vector<render::FxBatch>& batches) const;
+    // Live effect lights at their current colour / radius.
+    struct LiveLight {
+        glm::vec3 pos{0}, dir{0}, colour{0}; // colour: rgb x fades, 1 = full
+        float radius = 0;
+        const scene::Light* dtp = nullptr;   // the record's light DTP (type, cone, falloff, flicker) when it has one
+        int32_t owner = 0;
+        bool forever = false;                // no duration: a fixture (birth lights of placed objects)
+    };
+    void lights(std::vector<LiveLight>& out) const; // replaces out's contents
     size_t emitterCount() const { return emitters_.size(); }
     size_t particleCount() const { return particles_.size(); }
+    size_t glowCount() const { return glows_.size(); }
     uint64_t checksum() const; // positions + ages, for determinism tests
 
 private:
+    struct Glow {
+        std::shared_ptr<const ObjectFx> fx;
+        const GlowDef* def = nullptr;
+        glm::vec3 pos{0};
+        glm::vec3 axisFrom{0}, axis{0};      // facing test (facingMode != 0)
+        int32_t owner = 0, age = 0, left = -1; // ticks; left -1 forever
+        int32_t fadeOut = -1;                // ticks left of a stop fade (-1 not stopping)
+        float scaleW = 1, scaleH = 1, growW = 0, growH = 0, rot = 0, spin = 0;
+        int16_t period = 30;
+        uint16_t phase = 0, frame = 0;
+    };
+    struct FxLight {
+        std::shared_ptr<const ObjectFx> fx;
+        const LightDef* def = nullptr;
+        glm::vec3 pos{0}, dir{0, 1, 0};
+        int32_t owner = 0, age = 0, life = -1; // ticks, -1 forever
+        int32_t fadeOut = -1;
+    };
+    bool startGlow(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
+                   int16_t segment, std::span<const glm::mat4> bones);
+    bool startLight(const std::shared_ptr<const ObjectFx>& fx, int def, const glm::mat4& world, int32_t owner,
+                    int16_t segment, std::span<const glm::mat4> bones);
+    void stopId(int32_t owner, int id, bool now); // commands 0x15 / 0x1A (fade) and 0x18 / 0x1B (now); id < 0 all
     struct Emitter {
         std::shared_ptr<const ObjectFx> fx;
         const ParticleDef* def = nullptr;
@@ -168,6 +252,8 @@ private:
     std::vector<Emitter> emitters_;
     std::vector<Particle> particles_;
     std::vector<Sequence> sequences_;
+    std::vector<Glow> glows_;
+    std::vector<FxLight> lights_;
 };
 
 // Object DRM effects by object name, loaded once, with the decoded textures their particles use.

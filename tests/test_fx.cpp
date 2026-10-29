@@ -8,7 +8,10 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include <algorithm>
 #include <memory>
+
+#include <glm/gtc/type_ptr.hpp>
 
 using namespace ou;
 
@@ -138,6 +141,36 @@ TEST(Fx, AnimEventsFilterByMaterialAndPlayLater) {
     EXPECT_EQ(s.runEvents(o, ev, glm::mat4(1), 8, 1, 0, 1), 2); // material 1: unfiltered + its own
 }
 
+// Class 2 glows: growth (end / start - 1) / life per frame, fade-out over the last frames, kGlowTexture without a
+// texture, additive unless flags >> 6 == 1.
+TEST(Fx, GlowsGrowFadeAndDraw) {
+    auto o = std::make_shared<fx::ObjectFx>();
+    fx::GlowDef g;
+    g.flags = 0x01, g.width = g.height = 10, g.endWidth = g.endHeight = 30, g.life = 4, g.fadeOut = 2;
+    g.colours = {0x80808080};
+    o->glows.push_back(g);
+    o->events.push_back({0x2001, 0, 0, {6, 0, 0, 0}});
+    fx::System s;
+    EXPECT_EQ(s.startBirth(o, glm::mat4(1), 1), 1);
+    render::Camera cam;
+    cam.position = {-500, 0, 0};
+    std::vector<render::FxVertex> v;
+    std::vector<render::FxBatch> b;
+    s.build(cam, 1.0f, v, b);
+    ASSERT_EQ(b.size(), 1u);
+    EXPECT_EQ(b[0].textureId, fx::kGlowTexture);
+    EXPECT_EQ(b[0].blend, uint8_t(fx::Blend::Additive));
+    auto width = [&] { return glm::distance(glm::make_vec3(v[0].pos), glm::make_vec3(v[1].pos)); };
+    const float w0 = width();
+    for (int t = 0; t < 5; ++t) s.tick({-500, 0, 0});
+    s.build(cam, 1.0f, v, b);
+    ASSERT_EQ(b.size(), 1u);
+    EXPECT_NEAR(width() / w0, 2.25f, 0.05f);        // 5 of 8 ticks: 10 -> 22.5 of 30
+    EXPECT_LT(v[0].rgba & 0xFF, 0x80u);            // fading (RGB) in its last 2 frames
+    for (int t = 0; t < 3; ++t) s.tick({-500, 0, 0});
+    EXPECT_EQ(s.glowCount(), 0u);
+}
+
 // ---- Real data (skipped without OU_GAME_DIR) ---------------------------------------------------
 namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }
@@ -211,7 +244,7 @@ TEST(FxReal, EveryFxObjectParses) {
     EXPECT_EQ(objects, 205);  // fx* objects with an event list or GenericFXObject
     EXPECT_EQ(defs, 2011);    // particle definitions
     EXPECT_EQ(birth, 389);    // enabled event-0 effect records
-    EXPECT_EQ(textured, 1908); // per-object distinct particle textures, all present in the object DRM
+    EXPECT_EQ(textured, 1957); // per-object distinct particle + glow textures, all present in the object DRM
 }
 
 // Hitscan impacts: the ammo object names its hit objects (data +0x3C above water, +0xA8 under water; tru.exe 0x6C64D0
@@ -263,4 +296,51 @@ TEST(FxReal, WeaponFireEventsUseMuzzleMarkers) {
         ASSERT_TRUE(w) << name;
         EXPECT_TRUE(w->clip("fire")) << name;
     }
+}
+
+// Weapon fire: glow 1 at the flash marker (-23) cycling 3 colours, the muzzle light (marker -10, 300 units, 2 frames);
+// fx_light_chapel_fill: an endless birth light with its light DTP (fixture).
+TEST(FxReal, GlowsAndEffectLights) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    fx::Library lib(bf);
+    const auto gun = lib.get("wp_handgun");
+    ASSERT_TRUE(gun);
+    ASSERT_EQ(gun->glows.size(), 3u);
+    const auto& flash = gun->glows[1];
+    EXPECT_EQ(flash.segment, -23);
+    EXPECT_EQ(flash.colours.size(), 3u);
+    EXPECT_EQ(flash.life, 2);
+    EXPECT_FLOAT_EQ(flash.endWidth, 142.0f);
+    EXPECT_EQ(flash.texture, 558u);
+    ASSERT_EQ(gun->lights.size(), 1u);
+    EXPECT_EQ(gun->lights[0].segment, -10);
+    EXPECT_FLOAT_EQ(gun->lights[0].radius, 300.0f);
+    EXPECT_EQ(gun->lights[0].duration, 2);
+    EXPECT_NEAR(gun->lights[0].colour.g, 246 / 255.0f, 1e-6f);
+    fx::System s;
+    s.play(gun, *gun->clip("fire"), glm::mat4(1), -1, 0);
+    std::vector<fx::System::LiveLight> lights;
+    s.lights(lights);
+    EXPECT_EQ(s.glowCount(), 1u);
+    ASSERT_EQ(lights.size(), 1u);
+    EXPECT_FALSE(lights[0].forever);
+    for (int t = 0; t < 6; ++t) s.tick({0, -500, 0});
+    s.lights(lights);
+    EXPECT_EQ(s.glowCount(), 0u);
+    EXPECT_TRUE(lights.empty());
+    const auto fill = lib.get("fx_light_chapel_fill");
+    ASSERT_TRUE(fill);
+    fx::System f;
+    EXPECT_EQ(f.startBirth(fill, glm::mat4(1), 7), 0); // its birth record is disabled: scripts play "on" / "off"
+    ASSERT_TRUE(fill->clip("on")); // its records are variant 1 (info & 0xC00): run its light command directly
+    EXPECT_TRUE(f.runCommand(fill, {0x11, 1, 0, 0}, glm::mat4(1), 7));
+    f.lights(lights);
+    ASSERT_FALSE(lights.empty());
+    EXPECT_TRUE(lights[0].forever);
+    ASSERT_TRUE(lights[0].dtp);
+    EXPECT_EQ(lights[0].dtp->falloff.size(), 256u);
+    EXPECT_FLOAT_EQ(lights[0].radius, 3792.0f);
+    const auto& tex = lib.textures();
+    EXPECT_TRUE(std::any_of(tex.begin(), tex.end(), [](const auto& t) { return t.id == 558; }));
 }

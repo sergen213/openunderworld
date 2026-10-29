@@ -286,7 +286,9 @@ units (`GameReal.UnitWeatherSurvey`, `game::unitWeather`): snow where there are 
 `fx_snow_falling_*` (l5_valaskjalf, l5_valgrind, l7_monastery; 0.55); rain where `rainfx` is placed
 (l6_ship_exterior; 0.8; `rainfx_mex` is in no unit). Rain sheets / gutters (water pouring through
 openings, Kraken rooms, Mexico temples) and cinematic-only effects are local effects, not weather.
-The original's own particle effects are not reimplemented. ou-game eases the intensity to 0 while
+The original's own particle effects, glows and effect lights run separately (`src/fx`, docs/formats/EFFECTS.md;
+drawn in every preset; effect lights use 4 reserved environment-light slots after the gadget lights, linear
+falloff, and endless effect lights born with placed objects join the scene lights). ou-game eases the intensity to 0 while
 collision lies within 3000 units above the camera (roofs, caves).
 Post pass, same file: four layers on camera-centred cylinders (radius 110, 240, 500, 1000), anchored
 in azimuth and world height so turning does not drag them; each layer is skipped where the scene is

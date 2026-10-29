@@ -591,7 +591,8 @@ struct StreamedScene {
     std::vector<size_t> gunIndices;
     ou::scene::SceneData grenades;                     // GadgetView::kSlots copies of pr_grenade's mesh (GadgetView::pose)
     std::vector<size_t> grenadeIndices;
-    std::vector<ou::scene::Light> reservedLights;      // GadgetView::base: the first environment lights of every build
+    std::vector<ou::scene::Light> reservedLights;      // GadgetView::base + EffectsView slots: the first environment lights
+    std::vector<ou::scene::Light> fixtureLights;       // EffectsView::fixtures: appended to the environment lights
     BikeIndices bikeIndices;
     uint64_t version = ~0ull, enemyVersion = ~0ull, lightsVersion = ~0ull, visibilityVersion = ~0ull;
     std::string laraOutfit; // pc-w\<laraOutfit>.drm is in `lara` and rigs the world's pose skeleton
@@ -703,8 +704,12 @@ struct StreamedScene {
         append(guns, glm::vec3(0), &gunIndices);
         grenadeIndices.clear();
         append(grenades, glm::vec3(0), &grenadeIndices);
-        // GadgetView's moving lights take the first environment slots (OriginalShading uses the first 64 lights).
-        if (out.environment.valid) out.environment.lights.insert(out.environment.lights.begin(), reservedLights.begin(), reservedLights.end());
+        // GadgetView's and EffectsView's moving lights take the first environment slots (OriginalShading uses the first
+        // 64 lights); effect fixtures follow the units' lights.
+        if (out.environment.valid) {
+            out.environment.lights.insert(out.environment.lights.begin(), reservedLights.begin(), reservedLights.end());
+            out.environment.lights.insert(out.environment.lights.end(), fixtureLights.begin(), fixtureLights.end());
+        }
         version = w.unitsVersion();
         enemyVersion = w.enemies().version();
         lightsVersion = w.lightsVersion();
@@ -725,6 +730,53 @@ struct EffectsView {
     std::map<std::string, std::vector<int32_t>> unitOwners; // loaded unit -> its intros with running effects
     std::vector<ou::render::FxVertex> vertices;
     std::vector<ou::render::FxBatch> batches;
+    // Effect lights (class 6, docs/formats/EFFECTS.md "Lights"): fixtures (endless lights born with placed objects)
+    // join the scene's environment lights with their DTP falloff; the others (muzzle, impacts) take kLightSlots
+    // reserved environment slots, drawn with a linear falloff [I] (the attenuation LUT is built per upload).
+    static constexpr size_t kLightSlots = 4;
+    static ou::scene::Light slotLight() {
+        ou::scene::Light l;
+        l.falloff.resize(256);
+        for (int k = 0; k < 256; ++k) l.falloff[size_t(k)] = uint8_t(k < 255 ? 255 - k : 0);
+        l.position[0] = l.position[1] = l.position[2] = 1e9f, l.radius = 1;
+        return l;
+    }
+    void reserve(StreamedScene& s) const { s.reservedLights.insert(s.reservedLights.end(), kLightSlots, slotLight()); }
+    std::vector<ou::fx::System::LiveLight> live; // scratch, reused
+    // Fixtures for StreamedScene::fixtureLights: DTP type / cone / falloff / flicker, the record's colour and radius.
+    std::vector<ou::scene::Light> fixtures() {
+        std::vector<ou::scene::Light> out;
+        system.lights(live);
+        for (const auto& l : live) {
+            if (!l.forever || l.owner < 0) continue;
+            auto& s = out.emplace_back(slotLight());
+            if (l.dtp) {
+                s.type = l.dtp->type, s.coneInner = l.dtp->coneInner, s.coneOuter = l.dtp->coneOuter, s.nearWidth = l.dtp->nearWidth;
+                s.flickerPeriod = l.dtp->flickerPeriod, s.flicker = l.dtp->flicker;
+                if (l.dtp->falloff.size() == 256) s.falloff = l.dtp->falloff;
+            }
+            for (int i = 0; i < 3; ++i) s.position[i] = l.pos[i], s.direction[i] = l.dir[i], s.color[i] = l.colour[i];
+            s.radius = std::max(1.0f, l.radius);
+        }
+        return out;
+    }
+    // dyn = gadget lights, then the kLightSlots transient effect lights (unused slots dark, far away): the order of
+    // StreamedScene::reservedLights. Element-wise so the vectors' storage is reused frame to frame.
+    void lightSlots(const std::vector<ou::scene::Light>& gadget, std::vector<ou::scene::Light>& dyn) {
+        dyn.resize(gadget.size() + kLightSlots, slotLight());
+        std::copy(gadget.begin(), gadget.end(), dyn.begin());
+        system.lights(live);
+        size_t n = gadget.size();
+        for (const auto& l : live)
+            if (!(l.forever && l.owner >= 0) && n < dyn.size()) {
+                auto& s = dyn[n++];
+                for (int i = 0; i < 3; ++i) s.position[i] = l.pos[i], s.color[i] = l.colour[i];
+                s.radius = std::max(1.0f, l.radius);
+                if (l.dtp) s.flickerPeriod = l.dtp->flickerPeriod, s.flicker = l.dtp->flicker;
+                else s.flickerPeriod = 0;
+            }
+        for (; n < dyn.size(); ++n) dyn[n].position[0] = dyn[n].position[1] = dyn[n].position[2] = 1e9f, dyn[n].color[0] = dyn[n].color[1] = dyn[n].color[2] = 0;
+    }
 
     void sync(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
         if (!library) {
@@ -754,13 +806,19 @@ struct EffectsView {
                 if (system.startBirth(fx, m, in.uniqueId)) owners.push_back(in.uniqueId);
             }
         }
-        // Combat / animation-event objects, loaded now so their textures reach the scene (addTextures).
-        for (const char* n : {"lara", "bullet_hit", "bullet_hit_underwater", "bullet_hit_shotgun", "bullet_hit_shotgun_underwater"})
+        // Combat / animation-event objects, loaded now so their textures reach the scene (addTextures): every weapon's
+        // ammo hit objects too (loaded lazily at the first shot, their sprites drew white until the next rebuild).
+        library->get("lara", &warnings);
+        auto weapon = [&](const std::string& n) {
             library->get(n, &warnings);
-        for (int k = 0; k < ou::game::kWeaponCount; ++k) library->get(std::string(ou::game::weaponObject(ou::game::Weapon(k))), &warnings);
+            if (const auto ammo = names.find(library->dataU16(n, 0xE6)); ammo != names.end())
+                for (const uint32_t off : {0x3Cu, 0xA8u})
+                    if (const auto hit = names.find(library->dataU16(ammo->second, off)); hit != names.end()) library->get(hit->second, &warnings);
+        };
+        for (int k = 0; k < ou::game::kWeaponCount; ++k) weapon(std::string(ou::game::weaponObject(ou::game::Weapon(k))));
         for (const auto& e : w.enemies().all()) {
             library->get(e->type().name, &warnings);
-            if (const auto n = names.find(e->type().weapon); n != names.end()) library->get(n->second, &warnings);
+            if (const auto n = names.find(e->type().weapon); n != names.end()) weapon(n->second);
         }
     }
     // Rigid frame at p: muzzle (axis 1, -Y along the shot, Z up) or impact (axis 2, Z = surface normal).
@@ -1152,6 +1210,7 @@ int main(int argc, char** argv) {
     CombatView combat;
     GadgetView gadgets;
     EffectsView effects;
+    std::vector<ou::scene::Light> dynamicLights; // gadget + effect light slots, per frame
     bool spawnFromIntro = false;
     try {
         if (!opt.inputScript.empty()) script = ou::game::InputScript::load(opt.inputScript);
@@ -1215,7 +1274,9 @@ int main(int argc, char** argv) {
         if (opt.weapon) // testing: the original gets its secondary and rounds from pickups
             world->giveWeapon(*opt.weapon, world->anims().weapons[size_t(*opt.weapon)].maxReserve);
         gadgets.load(bf, streamed, warnings);
+        effects.reserve(streamed);
         effects.sync(bf, *world, warnings);
+        streamed.fixtureLights = effects.fixtures();
         scene = streamed.build(bf, *world, lara, enemyMeshes, warnings);
         effects.addTextures(scene);
     } catch (const std::exception& e) {
@@ -1698,6 +1759,7 @@ int main(int argc, char** argv) {
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {
                 effects.sync(*bigfile, *world, warnings);
+                streamed.fixtureLights = effects.fixtures();
                 scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings);
                 effects.addTextures(scene);
                 for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
@@ -1773,8 +1835,9 @@ int main(int argc, char** argv) {
             if (!warnings.empty()) lines.push_back(fmt("!%zu load warnings on stderr", warnings.size()));
             lines.push_back(fmt("water %s | ripples %s | splashes %zu", opt.gfx.water ? "enhanced" : "original",
                                 world->water().active() ? "active" : "-", world->water().drops().size()));
-            lines.push_back(fmt("effects: %zu emitters | %zu particles | %zu sprite batches", effects.system.emitterCount(),
-                                effects.system.particleCount(), effects.batches.size()));
+            lines.push_back(fmt("effects: %zu emitters | %zu particles | %zu glows | %zu fixture lights | %zu sprite batches",
+                                effects.system.emitterCount(), effects.system.particleCount(), effects.system.glowCount(),
+                                streamed.fixtureLights.size(), effects.batches.size()));
             lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push/pick up | G grapple (E/Shift rope) | "
                             "F draw | LMB fire | RMB lock | "
                             "Q switch | X weapon | H health pack | mouse look | F5 save | F9 load | F1 overlay | Esc menu");
@@ -1879,7 +1942,8 @@ int main(int argc, char** argv) {
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
         if (!mainMenu) effects.frame(cam, float(w) / float(std::max(1, h)), fo);
-        fo.dynamicLights = gadgets.update(*world, clock.alpha());
+        effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
+        fo.dynamicLights = dynamicLights;
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {

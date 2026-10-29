@@ -28,12 +28,12 @@ Object section (type 11) +0 / +4 / +8 are DTP resource references: +0 ObjectBase
 | +0x04 / +0x08 | effect map | u16 n, 4-byte `{id, class, index}` | case 0x2F |
 | +0x0C / +0x10 | particle emitters | 0x17C | 0x543F70 |
 | +0x14 / +0x18 | class 1 | 0x2C | 0x545810 [U: ribbon?] |
-| +0x1C / +0x20 | class 2 | 0x58 | 0x536B70 [U: glow?] |
+| +0x1C / +0x20 | class 2 glows (prim 0x82) | 0x58 | 0x536B70, update 0x535FA0, draw 0x536280 — implemented, "Glows" |
 | +0x24 / +0x28 | class 3 | 0xB8 | 0x537230 [U] |
 | +0x2C / +0x30 | class 4 | 0x64 | 0x53D100 [U] |
-| +0x34 / +0x38 | class 5 | 0x28 | 0x535CC0 (timed colour/intensity modifier) [I] |
-| +0x3C / +0x40 | lights | 0x24 | 0x546710 → 0x5C35D0 |
-| +0x44 / +0x48 | class 7 | 0x0C | 0x52C920 |
+| +0x34 / +0x38 | class 5 (prim 0x85) | 0x28 | 0x535CC0, draw 0x5469A0: full-screen tint / textured overlay faded by Lara's distance (+0x10 radius) [O]; DTP rtype 16 at +0x14 (torches) [U] — not drawn |
+| +0x3C / +0x40 | effect lights (prim 6) | 0x24 | 0x546710 → 0x5C35D0 — implemented, "Lights" |
+| +0x44 / +0x48 | class 7 | 0x0C | 0x52C920: instance fade (+0x1B4/+0x1B8, 4096 = 1) [O] — not implemented |
 | +0x54 / +0x58 | class 8 | 0x3C | 0x5310A0 |
 | +0x5C / +0x60 | class 9 | 0x10 | 0x5471A0 |
 | +0x64 / +0x68 | texture lists `{u32 n, ids[n]}` | | referenced by particle +0x114 |
@@ -127,8 +127,8 @@ back-to-front, depth-tested without writes, `tex × colour × 2`.
   (`EnemyType::weapon`, e.g. 114 `wp_akrifle`).
 - `ou-game` runs Lara's and every enemy's current clip events each tick on their posed bones (Lara: `lara` object,
   floor material / 2 swimming / 3 submerged [I]); `object:clip` clips (weapon, vehicle) are skipped.
-- Other commands in these lists: 6 (class 2, `0x536B70`, e.g. muzzle / impact flash) [U], 9, 0xD (0x481B50), 0xE/0xF
-  (0x481CC0/CF0), 0x11 light (0x546710, muzzle/metal-hit light), 0x15/0x1A — not implemented.
+- Other commands in these lists: 6 glows and 0x11 lights (muzzle / metal-hit light), 0x15/0x1A/0x18/0x1B stops — see
+  "Glows" / "Lights"; 9 (class 3), 0xD (0x481B50), 0xE/0xF (0x481CC0/CF0) — not implemented.
 - Model particles (def `+4 & 0x80`, e.g. casings) are drawn as 1.5-unit sprites in their key colour [I]. Defs with no
   texture and no list name a resource at `+0x168` (wp_handgun def 25 → 2770; distortion / heat haze? [U]) and are
   not drawn — drawn white they covered the shot line.
@@ -136,11 +136,47 @@ back-to-front, depth-tested without writes, `tex × colour × 2`.
   frame 38 `--camera 17850,10550,3150,17620,10200,2980`): yellow muzzle flash + sparks at the pistol, blood mist and
   red streaks on the panther, smoke drifting. No Wine reference capture.
 
+## Glows (class 2) [O unless marked]
+
+Command 6 (a1 index, a2 segment) or the effect map; at birth only records with `+0 & 1`. Record: `+0` flags (1 birth,
+2 rotation jitter, 4 ignores the instance fade, 0x10 random colour phase, 0x20 fixed start position, `>> 6 == 1`
+draw mode 2), `+1` kind (1 sprite; all 415 records), `+2` segment, `+8` → colour list `{n, rgba[n]}` cycled every
+`+0x10` frames (± `+0xF`) with a prev→cur lerp (0x548D40), `+0xC` id (stop commands), `+0x12`/180 facing threshold,
+`+0x14/+0x16` start size, `+0x18/+0x1A` end size (growth `(end/start − 1)/life` per frame), `+0x1C` life (≤ 0 forever),
+`+0x20/+0x22` fade in/out frames, `+0x24` depth bias (z ≥ 20), `+0x26` low nibble facing mode (±1/2/3 = local ±X/Y/Z of
+`+0x28`, or `+0x28 → +0x2A` vector; alpha × (dot − 1 + threshold) [I scale]), `+0x2C..+0x38` rotation / spin (degrees),
+`+0x3C` texture-list rate, `+0x3D` draw condition on 0x5EA390 (a camera mode [U]; 1 = never drawn by us), `+0x40`
+texture (0 → `particle.drm` texture 130, the 0x8AA77C model's first frame), `+0x44` texture list, `+0x48` offset,
+`+0x4E/+0x50` camera-distance fade band. Mode 1 fades RGB (0x52AE20) → drawn additive, mode 2 fades alpha → alpha
+[I: D3D states]. Sizes are taken as world half-sizes [I: the `*2/z` screen scale is not checked against a capture].
+Commands 0x15/0x1A fade out the instance's glows with id a1 (−1 all), 0x18/0x1B remove them. Glows of transient
+owners (shots, characters) with no life last 1 s [I]; positions are fixed at the start (no segment tracking).
+Used by: muzzle flashes (`wp_*` `fire`), impact flashes (`bullet_hit` `idle` by material), lamp glows
+(`fx_light_bulb_*`), sun glares (`fx_glare_*`), light rays (`fx_lightray_*`), vehicles, Lara's gear.
+
+## Lights (class 6) [O unless marked]
+
+Command 0x11 (a1 index, a2 segment). Record: `+0` kind, `+2` timed life, `+6` segment, `+0xA` rgb, `+0xE` rgb2,
+`+0x11 & 1` birth, `+0x12` radius, `+0x14` radius2, `+0x16` duration (−1 forever), `+0x18/+0x1A` fade in/out [I],
+`+0x20` light DTP id (type, cone, falloff, flicker; `formats::lightFromDtp`). Colour rgb/255 → rgb2 and radius →
+radius2 over a timed life [I]. ou-game: endless lights born with placed objects are scene lights with their DTP
+falloff; all others (muzzle 300 units / 2 frames, metal impacts 400) use 4 reserved slots (linear falloff, point) [I].
+Most fixtures (`fx_light_chapel_fill`, `fx_light_krak_ent_*`) are switched by script-played clips (`on`/`off`,
+variant-1 records), which do not run yet.
+
+Viewed 2026-10-29 (GL + Vulkan `--rt off`, firefight replay frame 38 as above): the pistol's star flash glow
+(texture 557/558, growing over 2 frames) and its warm muzzle light on the rocks. Vulkan with RT on loses the device at
+that spawn (also at the parent commit; RenderPerf investigating).
+
 ## Missing
 
-Command classes 1/2/4/5/7–9 (ribbons, flashes/glows, lightning …), effect lights (0x11, flicker), particles that
-follow their segment (mode 1), casing meshes and collision, the `+0x168` material particles, decals, lens flares,
-skydomes (`*_skydome_*` dependencies not placed), UV scroll, screen effects, uber-object / door / breakable clip
-events (script-driven objects' clips are not tracked), enemy textures for generator-spawned enemies before the next
-scene rebuild, per-enemy hit materials (all bodies 23), Wine reference comparisons, frame-time measurements in the
-heaviest units (not measured).
+Classes 1 (0x545810, ribbon? [U]), 3 (0x537230), 4 (0x53D100), 5 (screen tints / overlays), 7 (instance fade), 8, 9,
+kind ≥ 2 beam glows (no data uses them), variant ≠ 0 clip records, script-played object clips (light fixtures'
+`on`/`off`), door / switch / breakable clip events (no breakables in game), lightning (Thor's hammer), decals (bullet
+holes, scorch: not in the effect commands; [U] where), lens-flare chains beyond the glare glows, skydomes
+(`*_skydome_*` unit dependencies are never placed; the instance flag 0x20000000 from oflags 0x04000000 only sets a
+depth bias, 0x505C80 — how the dome follows the camera is [U]), the `+0x168` material particles (type 10 rtype 18
+materials, e.g. wp_handgun 2770: distortion [U]), particles that follow their segment (mode 1), casing meshes,
+per-enemy hit materials (all bodies 23). UV-scrolling textures (waterfalls, water) are the translated original
+shaders' (TimeVector c23/c53); the l2_junglehub cascade (-29000..-32000, 14500, z 3500..12500) was not framed in a
+view. No Wine reference capture and no frame-time measurements in the heaviest units yet.
