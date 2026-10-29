@@ -45,12 +45,12 @@ Portal order from the start unit; level changes not made by portals are named.
 | 0 | l3_bedroom_hall | push block 4363 (push) | block moves | pass |
 | 0 | l3_main_hall | plane 4129 (cross) | 010 → chapter 1 | pass (fixed) |
 | 1 | l1_seafloor | eye puzzle pieces 231-233 | puzzle reveal | not covered: pieces are physics objects [U interaction] |
-| 1 | l1_kraken_entrance | grooved plates 752/753 (stand on) | locks of gate 743, oil doors 754/755 | **fail**: physical pressure plates (below) |
-| 1 | l1_kraken_entrance | resetting switch 748 (use) | flints 746/747 light the grooves | **fail**: needs both plate stickies (+92) |
-| 1 | l1_kraken_entrance | snake head 751 (grapple pull) | squib plate 756 | **fail**: no pull handler result |
+| 1 | l1_kraken_entrance | grooved plates 752/753 (snake head 751 pulled down onto 752, weight 749/750 carried onto 753) | locks of gate 743, oil doors 754/755 | pass |
+| 1 | l1_kraken_entrance | resetting switch 748 (use, both plates down) | flints, torches, reveal 702 → cinematic 696, gate 743 | pass |
+| 1 | l1_kraken_entrance | snake head 751 (grapple pull) | falls onto plate 752 (loose rigid body) | pass (in the 748 gate) |
 | 1 | l1_kraken_room | switches 55 / 30 / 498 (use) | tentacle gear 36, sun-sphere platform 27, tomb door 497 | pass |
 | 1 | l1_kraken_room | switch 57 (use) | tentacle gear 32 | **fail** (no visible change [U]) |
-| 1 | l1_baldrs_tomb | press plates 219/221/222 (stand on) | tomb locks 69/70, gate 45, door 223 | **fail**: physical pressure plates |
+| 1 | l1_baldrs_tomb | press plates 219/221/222 (stand on) | door 223, gate 45 (locks 69/70: native `multibody` 89 [U]) | pass |
 | 1 | l1_ship_upper_hallway_a/b, upper_hallway, engine_hall | volumes 1531, 1492, 1465, 1436 | ship doors, cinematics 1453 / 1288 | pass (1531 in suite) |
 | 1 | l1_ship_sinking_hall | plane 1074 (cross) | 070_med_dive → chapter 2 | pass (fixed) |
 | 2 | l2_puzzleroom | elevator switch 2961, weight 2971 (push), shiva grapples 2982/2983 (pull) | elevator 2973, weight, shiva arms | pass |
@@ -59,8 +59,8 @@ Portal order from the start unit; level changes not made by portals are named.
 | 2 | l2_maproom | volumes 2637/2638 | thor bridge 2667 + cinematics | pass |
 | 2 | l2_flushtunnel | switch 2543 (use) | flush gate 2541 | pass |
 | 2 | l2_flushtunnel → l2_cliffclimb | plane 2542, then volume 2564 | 2565 → chapter 3 | pass (new gate test) |
-| 3 | l3_chapel | wall switches 4819-4822 (use) | shadow pillars 4837 | **fail**: `uberobjectbase` 1 rejects the command (handler stop) |
-| 3 | l3_chapel | press plates 4832-4834 | gates 4830/4831, gold reward 4836 | **fail**: physical pressure plates |
+| 3 | l3_chapel | wall switches 4819-4822 (use) | shadow pillars 4837 | **fail**: command runs; uber section state graphs (type 2 = trigger a transition, tru.exe 0x4D7680 → 0x4D4BE0) not modelled |
+| 3 | l3_chapel | press plates 4832-4834 | gates 4830/4831, gold reward 4836 | pass |
 | 3 | l3_chamberrockhall | switch 4617 (use) | secret door 4528 | pass |
 | 3 | l3_secretchamber | volumes 4666/4669 | gauntlet cinematic 4654 | pass |
 | 3 | l3_main_hall | plane 4128 (cross) | 160 + 170 → chapter 4 | pass |
@@ -68,7 +68,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 4 | l4_ballcourt | pole lever 6502 (use), block 6504 (push) | door joint 6505, block | pass |
 | 4 | l4_ballcourt | autoreset switch 5469 (use) | temple reveal 5464 | **fail** (no visible change) |
 | 4 | l4_staircase_upper/xibalba | volumes/planes 6046, 6076, 6078, 6039 | hallway ramps 6045/6036, trap door 5702 | pass |
-| 4 | l4_traprooms | plates 5717/5718 (stand on) | seal 5701 | **fail**: plate base not a 3938 plate [U] |
+| 4 | l4_traprooms | plates 5717/5718 (stand on) | seal 5701 | **fail**: plates press (base 3938 + `multibody` 79 range 56); 5701 counts both via stickies (needs both held) |
 | 4 | l4_traprooms | block 5884 (push), planes 5900/5901/5904/5914/5915 | block, thrones, door 5702 | pass |
 | 4 | l4_pool | volumes 5566/5624/5626 | snake heads, reveal cinematics | pass |
 | 4 | l4_ballcourt | volume 5468 | 5483 → chapter 5 | pass |
@@ -77,7 +77,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 5 | l5_valaskjalf_entryb | levers 7188/7189 (use) | reward doors 7187/7227 | **fail** (lever handlers change nothing visible) |
 | 5 | l5_valaskjalf | volumes 7025-7030 | gears / chains | pass |
 | 5 | l5_valaskjalf | volume 6866 | 6846 → chapter 6 | pass |
-| 6 | l6_ship_upper_hallway* | volumes 7622/7623/7644/7646 | ship doors 7621/7642/7643 | **fail** (same door type opens in l1) |
+| 6 | l6_ship_upper_hallway* | volumes 7622/7623/7644/7646 | ship doors 7621/7642/7643 have no script (the volumes' ISTYPE fails): they stand open | pass (`ChapterSixShipDoorsOpen`) |
 | 6 | l6_ship_engine_hall | plane 7565 (cross) | 270 → chapter 7 | pass |
 | 7 | l7_arctic_sea | switch 9103 (use) | seafloor drawbridge 9116 | **fail** |
 | 7 | l7_helheim01 | rune switches 8993-8995 | dispatcher 8997 | not asserted (dispatcher only) |
@@ -102,12 +102,14 @@ Portal order from the start unit; level changes not made by portals are named.
 
 ## Remaining blockers
 
-- Physical pressure plates (base type 3938, l1_kraken_entrance, l1_baldrs_tomb, l3_chapel): the constructor gets a
-  joint (`multibody` 1, `joint` 17) and registers limit ranges (`limit` 3: −60..−40 id 8 = pressed, −30..10 id 12 =
-  released); the engine calls vt 34(…, id) when the plate's prismatic joint enters a range, which sets the plate's
-  sticky +92 and calls vt 54 / 55. Ours has no prismatic joints and no limit callbacks: needs a weight model (Lara /
-  blocks on the plate) driving vt 34. Blocks chapter 1 (kraken gate, Baldr's tomb) and chapter 3 (chapel).
-- `uberobjectbase` 1 rejecting the chapel shadow-pillar command (4819-4822); VM opcode 0x34 DBOUNDS (l2_norsehub
+- Pressure plates (base 3938) [O bytecode / I weights]: constructor `multibody` 1, `joint` 17 (prismatic), `limit` 3
+  ranges (−60..−40 id 8 pressed, −30..10 id 12 released; subclasses add `multibody` 79 ranges). World::tickPlates moves the
+  joint at 120 units/s toward the lowest range while Lara, a push block or a loose rigid body rests on the plate's
+  footprint, else back to 0; entering a range runs vt 34(…, id) → sticky +92 and vt 54/55. Weights: pulled `*_rb_grapple*`
+  targets fall (Object::loose), `portablebase` objects are carried (interact) and set down. [I] no Havok mass/tumbling.
+- VM fixes found here: START with a function word calls it; CALL3 is virtual; inline member defaults applied (ship doors:
+  modifiable 1 opens, 2/3 close [I]; house door 0 opens / 1 closes).
+- Uber section state graphs (chapel shadow pillars 4819-4822: commands of type 2 trigger transitions; section record stride / layout beyond the first section [U]); VM opcode 0x34 DBOUNDS (l2_norsehub
   2393); levers / switches whose handlers run but change nothing visible (l1 57, l4 5469, l5 7188/7189, l7 9103);
-  l6 ship doors that open in l1 but not l6; l4_traprooms plates (another plate base).
+  l4_traprooms seal 5701 (both plates held: one weight source missing).
 - Chapter 7 → 8 has no scripted level end in the data we decoded [U]; the ending (7996, credits) is not run.

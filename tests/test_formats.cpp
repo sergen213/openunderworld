@@ -533,7 +533,7 @@ TEST(RealData, LevelBallcourtStreamGroupsAndImfs) {
     EXPECT_GT(twoSided, 0u);
 }
 
-TEST(RealData, UberObjectCommandsAndQueriesDecode) {
+TEST(RealData, UberObjectCommandsDecode) {
     const char* g = gameDir();
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(g);
@@ -544,8 +544,7 @@ TEST(RealData, UberObjectCommandsAndQueriesDecode) {
         EXPECT_EQ(data->objectClass, 79);
         ASSERT_EQ(data->sectionModels.size(), sections) << name;
         ASSERT_FALSE(data->commands.empty()) << name;
-        std::fprintf(stderr, "%s: %zu sections, %zu commands, %zu queries\n", name, data->sectionModels.size(),
-                     data->commands.size(), data->queries.size());
+        std::fprintf(stderr, "%s: %zu sections, %zu commands\n", name, data->sectionModels.size(), data->commands.size());
         for (const auto& command : data->commands) {
             std::fprintf(stderr, "  command %u:", command.id);
             for (const auto& target : command.targets)

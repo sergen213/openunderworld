@@ -105,7 +105,7 @@ std::shared_ptr<Instance> Program::instantiate(int32_t uid, uint32_t typeId) {
     for (auto it = chain.rbegin(); it != chain.rend(); ++it)
         for (const auto& m : (*it)->members) {
             const uint8_t base = m.type & 0x0F;
-            if (m.init && !m.inlineInit && (base <= 4 || m.typeId == kInstanceRefType || !std::strcmp(nativeName(m.typeId), "messagechannel") ||
+            if (m.init && (base <= 4 || m.typeId == kInstanceRefType || !std::strcmp(nativeName(m.typeId), "messagechannel") ||
                            !std::strcmp(nativeName(m.typeId), "terraingroup")))
                 out->fields[m.offset] = *m.init;
         }
@@ -526,7 +526,8 @@ Machine::Step Machine::step() {
             if (!callee) return fail();
             return called(callWith(*callee, receiver, true));
         }
-        case 0x66: case 0x67: case 0x68: return called(direct(false, false)); // this, direct/super
+        case 0x66: case 0x67: return called(direct(false, false)); // CALL1 static / CALL2 this, super (non-virtual)
+        case 0x68: return called(direct(false, true)); // CALL3: this, virtual (base 3586 fn 8 -> the reveal's vt 64)
         case 0x69: return called(direct(true, false));  // receiver, direct
         case 0x6A: return called(direct(true, true));   // receiver, virtual
         case 0x6B: case 0x6C: { // SSEQU / SSEQ1: replace this handler with the child sequence
@@ -552,6 +553,9 @@ Machine::Step Machine::step() {
         }
         case 0x7B: return done();
         case 0x77: { // START: replace this frame with a fresh fiber at the next statement boundary
+            // With a function word (0x57CE50 switch case 0x76 = op - 1: a non-null word is called on the object via
+            // 0x57AF00, then the thread goes on): plate subclasses' state 0 runs base 3938's constructor this way.
+            if (!in.ptrs.empty()) return called(direct(false, false));
             const uint32_t target = in.word + 1 + uint32_t(in.arg);
             fr.stack.clear();
             fr.locals.assign(std::max<uint32_t>(f.localCount, 1), Value{});

@@ -66,6 +66,20 @@ std::optional<UberMotionSample> uberMotion(const cdc::Drm& drm, std::string_view
     return std::nullopt;
 }
 
+// Carryable objects: native base `portablebase` (l1_kraken_entrance weights ms_pt_weight_c, base 3937 vt 20).
+bool portable(const script::Object& o) {
+    if (!o.script) return false;
+    for (const auto* t = o.script->program->type(o.script->typeId); t; t = o.script->program->type(t->superId))
+        if (!t->nativeName.empty()) return t->nativeName == "portablebase";
+    return false;
+}
+
+// Scripted objects that gain collision after their constructor / a pull: pressure plates and loose rigid bodies.
+bool lateCollider(const script::Object& o) { return (o.joint && o.joint->prismatic) || o.loose; }
+size_t lateColliders(const script::Runtime& rt) {
+    return size_t(std::count_if(rt.objects().begin(), rt.objects().end(), lateCollider));
+}
+
 } // namespace
 
 const formats::UberObjectData* World::prepareUber(const script::Object& o) {
@@ -319,7 +333,7 @@ void World::syncObjects() {
         const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Block || o.kind == script::Kind::Switch;
         const formats::UberObjectData* uber = (ordinary || o.name.starts_with("ms_") || o.name.starts_with("sa_uo_") ||
                                                o.name.starts_with("ca_")) ? prepareUber(o) : nullptr;
-        if (!ordinary && !uber && !o.spline) continue; // spline movers' collision follows Object::body (pose below)
+        if (!ordinary && !uber && !o.spline && !lateCollider(o)) continue; // spline movers' collision follows Object::body (pose below)
         if (o.kind == script::Kind::Switch && !uber &&
             (!o.script || !o.script->program->mainFunction(o.script->typeId))) continue;
         auto it = objectPhysics_.find(o.name);
@@ -358,11 +372,14 @@ void World::syncObjects() {
             }
     }
     syncedObjects_ = script_.objects().size();
+    syncedPlates_ = lateColliders(script_);
 }
 
 void World::tickObjects(float dt) {
     // Objects came or went, or the merged collision was rebuilt (streaming drops its dynamics).
-    if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
+    if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
+        lateColliders(script_) != syncedPlates_)
+        syncObjects();
     for (auto& [uid, motion] : uberMotion_) {
         const float target = motion.active ? motion.duration : 0.0f;
         motion.t = std::clamp(motion.t + (target > motion.t ? dt : -dt), 0.0f, motion.duration);
@@ -387,6 +404,8 @@ void World::tickObjects(float dt) {
     const auto ground = col_.groundProbe(feet + vec3(0, 0, 20), 60);
     const int under = ground ? ground->dynamic : -1;
     const glm::mat4 before = under >= 0 ? col_.dynamics[under].transform : glm::mat4(1);
+    tickLoose(dt);
+    tickPlates(dt);
     for (size_t i = 0; i < colliders_.size(); ++i) {
         const auto& c = colliders_[i];
         const auto* o = script_.find(c.uid);
@@ -408,6 +427,102 @@ void World::tickObjects(float dt) {
     if (under >= 0) {
         const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
         if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
+    }
+}
+
+// Portable objects (heavy weights): interact next to one picks it up, she carries it in front of her chest, interact
+// again sets it down in front of her feet, where it falls as a loose body (it weighs on pressure plates). [I] No carry
+// clips or walk-speed change; the script's vt 20 pick-up callback (sets its "touched" sticky) is not sent.
+void World::carryPortables(bool pressed) {
+    const auto& s = player_.state();
+    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
+    auto* held = held_ ? const_cast<script::Object*>(script_.find(held_)) : nullptr; // World owns object motion
+    if (held_ && !held) held_ = 0;
+    if (held && pressed) {
+        held->offset = s.pos + fwd * 90.0f + vec3(0, 0, 20) - held->pos;
+        held->loose = true;
+        held_ = 0;
+        return;
+    }
+    if (held) {
+        held->offset = s.pos + fwd * 60.0f + vec3(0, 0, 80) - held->pos;
+        return;
+    }
+    if (!pressed || s.state != State::Idle) return;
+    for (const auto& o : script_.objects()) {
+        const vec3 at = o.pos + o.offset;
+        if (portable(o) && glm::length(vec2(at - s.pos)) < 150.0f && std::abs(at.z - s.pos.z) < 100.0f) {
+            held_ = o.uid;
+            fallSpeed_.erase(o.uid);
+            const_cast<script::Object&>(o).loose = false;
+            return;
+        }
+    }
+}
+
+// Loose rigid bodies (Object::loose) fall under gravity until their collision rests on what is below (terrain, a
+// plate: they follow a sinking plate down). [I] No tumbling or sliding; tru.exe's Havok body does both.
+void World::tickLoose(float dt) {
+    for (const auto& o : script_.objects()) {
+        if (!o.loose) continue;
+        vec3 lo(1e30f), hi(-1e30f);
+        for (const auto& d : col_.dynamics)
+            if (d.id == o.uid)
+                for (const vec3& v : d.shape->vertices) {
+                    const vec3 p(d.transform * glm::vec4(v, 1));
+                    lo = glm::min(lo, p), hi = glm::max(hi, p);
+                }
+        if (lo.x > hi.x) lo = hi = o.pos + o.offset + vec3(0, 0, 1); // no collision: its origin is its base
+        const vec3 base((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, lo.z - 1.0f);
+        const auto ground = col_.groundProbe(base, 20000.0f);
+        float& v = fallSpeed_[o.uid];
+        const float gap = ground ? ground->t : 0.0f;
+        if (gap <= 0.0f) { v = 0; continue; }
+        v += Tuning{}.gravity * dt;
+        const float drop = std::min(gap, v * dt);
+        if (drop >= gap) v = 0;
+        const_cast<script::Object*>(&o)->offset.z -= drop; // World owns object motion as for pulled blocks
+    }
+}
+
+// Pressure plates (prismatic joints, Runtime::Object::Joint): weight on the plate — Lara standing on it, a push block
+// resting on it, a loose rigid body landed on it — drives the joint down to its lowest range; unloaded it rises back to 0. Entering a range runs the
+// plate's vt 34 (pressed / released ids). [I] The original simulates the joint and the weights in Havok; ours moves at
+// a fixed speed, and only Lara, push blocks and loose bodies weigh (other physics props do not).
+void World::tickPlates(float dt) {
+    constexpr float kSpeed = 120.0f; // joint units (model z) per second
+    const auto box = [&](int32_t uid) { // world AABB of an object's collision
+        vec3 lo(1e30f), hi(-1e30f);
+        for (const auto& d : col_.dynamics)
+            if (d.id == uid)
+                for (const vec3& v : d.shape->vertices) {
+                    const vec3 p(d.transform * glm::vec4(v, 1));
+                    lo = glm::min(lo, p), hi = glm::max(hi, p);
+                }
+        return std::pair(lo, hi);
+    };
+    const vec3 feet = player_.state().pos;
+    for (const auto& o : script_.objects()) {
+        if (!o.joint || !o.joint->prismatic || o.joint->ranges.empty()) continue;
+        const auto [lo, hi] = box(o.uid);
+        const auto on = [&](vec3 c, float bottom) { // over the plate's footprint, resting on its top
+            return c.x > lo.x && c.x < hi.x && c.y > lo.y && c.y < hi.y && bottom > hi.z - 30.0f && bottom < hi.z + 40.0f;
+        };
+        bool loaded = on(feet, feet.z);
+        for (const auto& b : script_.objects())
+            if ((b.kind == script::Kind::Block || b.loose) && !loaded) {
+                const auto [blo, bhi] = box(b.uid);
+                if (blo.x <= bhi.x) loaded = on((blo + bhi) * 0.5f, blo.z);
+                else if (b.loose) loaded = on(b.pos + b.offset, b.pos.z + b.offset.z); // no collision: origin = base
+            }
+        float bottom = 0;
+        for (const auto& r : o.joint->ranges) bottom = std::min(bottom, r.lo);
+        const float x = o.joint->position, target = loaded ? bottom : 0.0f;
+        if (x == target) continue;
+        const float next = target < x ? std::max(target, x - kSpeed * dt) : std::min(target, x + kSpeed * dt);
+        const int32_t uid = o.uid; // setJointPosition may run scripts
+        script_.setBody(uid, glm::translate(glm::mat4(1), vec3(0, 0, next)));
+        script_.setJointPosition(uid, next);
     }
 }
 

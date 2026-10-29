@@ -543,6 +543,9 @@ private:
     void crossPortals(vec3 from, vec3 to);
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
+    void tickPlates(float dt); // pressure-plate joints (Objects.cpp)
+    void tickLoose(float dt);  // loose rigid bodies fall (Objects.cpp)
+    void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
@@ -587,6 +590,9 @@ private:
     uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
     std::vector<script::UnitRef> unitRefs() const; // loaded units + cinematic objects, for script_/enemies_ setUnits
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
+    size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
+    std::map<int32_t, float> fallSpeed_; // loose rigid bodies: fall speed, units/s
+    int32_t held_ = 0;                   // portable object Lara carries (0 none) [I: not saved; a save drops it]
     void bindMultibody();
     void bindUber();
     void bindTerrain();

@@ -16,15 +16,10 @@ struct UberCommand {
     uint32_t id = 0;
     std::vector<UberTarget> targets;
 };
-struct UberQuery {
-    int32_t section = 0;
-    uint32_t kind = 0, value = 0;
-};
 struct UberObjectData {
     uint16_t objectClass = 0;
     std::vector<uint8_t> sectionModels;
     std::vector<UberCommand> commands;
-    std::vector<UberQuery> queries;
 };
 
 // nullopt for non-uber objects. Throws cdc::FormatError on malformed uber data.

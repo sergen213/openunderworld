@@ -36,12 +36,12 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
     const uint32_t rec = *p;
     UberObjectData out;
     out.objectClass = objectClass;
-    const uint32_t ns = at<uint32_t>(ob, rec + 8), nc = at<uint32_t>(ob, rec + 0x10), nq = at<uint32_t>(ob, rec + 0x28);
-    const uint32_t sections = ptr(ob, rec + 0x0C), commands = nc ? ptr(ob, rec + 0x14) : 0,
-                   queries = nq ? ptr(ob, rec + 0x2C) : 0;
-    bounded(ns, sections, 0x140, ob.data.size());
+    const uint32_t ns = at<uint32_t>(ob, rec + 8), nc = at<uint32_t>(ob, rec + 0x10);
+    const uint32_t sections = ptr(ob, rec + 0x0C), commands = nc ? ptr(ob, rec + 0x14) : 0;
+    // Section records are 0x140 apart; the last may end early in the section (ms_uo_kraken_door_oil: 2096 + 0x140 >
+    // 2400), so each read is bounds-checked on its own.
+    if (ns > 4096) throw FormatError("uber: section count");
     bounded(nc, commands, 0x0C, ob.data.size());
-    bounded(nq, queries, 0x0C, ob.data.size());
     for (uint32_t i = 0; i < ns; ++i) out.sectionModels.push_back(at<uint8_t>(ob, sections + 0x140 * i + 0x28));
     for (uint32_t i = 0; i < nc; ++i) {
         const uint32_t c = commands + 0x0C * i;
@@ -59,14 +59,6 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
             command.targets.push_back({section, type, at<uint32_t>(ob, t + 8)});
         }
         out.commands.push_back(std::move(command));
-    }
-    for (uint32_t i = 0; i < nq; ++i) {
-        const uint32_t q = queries + 0x0C * i;
-        const int32_t section = at<int32_t>(ob, q);
-        const uint32_t kind = at<uint32_t>(ob, q + 4);
-        if (section < 0 || uint32_t(section) >= ns || (kind != 1 && kind != 2))
-            throw FormatError("uber: invalid query target");
-        out.queries.push_back({section, kind, at<uint32_t>(ob, q + 8)});
     }
     return out;
 }

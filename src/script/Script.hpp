@@ -153,7 +153,10 @@ struct Object {
     double t = 0;           // seconds into the current clip
     bool inside = false, firstIn = false;
     bool tracksLara = false; // triggervolumebase Add(Lara): her enter/exit also call prototypes 10/11 (vt 58/59)
-    vec3 offset{0};         // Block displacement
+    vec3 offset{0};         // Block displacement; a loose rigid body's fall
+    // A rigid-body grapple target ("_rb_grapple") a pull knocked loose (Runtime::grapplePulled): it falls under gravity onto what is
+    // below (World::tickObjects; it weighs on pressure plates). [I] tru.exe's Havok body; saved.
+    bool loose = false;
     glm::mat4 body{1};      // Door: model-space rigid transform set by src/physics (physics doors), identity = at rest
     bool hidden = false;    // instance.fn60 visibility; saved
     int32_t engagement = -1; // instance.fn59 engagement-property selector; saved
@@ -172,6 +175,17 @@ struct Object {
         std::vector<std::array<int32_t, 3>> ranges; // fn 19: {from, to, id}; entering/leaving one calls vt 40 / 41
     };
     std::optional<Spline> spline;
+    // Prismatic multibody joint of a scripted rigid body (pressure plates, script base 3938): its constructor calls
+    // `multibody` 1 and `joint` 17, then `limit` 3 per position range {lo, hi, id} (subclasses also `multibody` 79
+    // with the same layout). The engine calls the object's vt 34(multibody, joint, id) when the joint position enters
+    // a range [O bytecode; when the engine calls it: I]. World moves `position` (Runtime::setJointPosition).
+    struct Joint {
+        struct Range { float lo, hi; int32_t id; bool inside; };
+        bool prismatic = false;
+        float position = 0; // saved
+        std::vector<Range> ranges;
+    };
+    std::optional<Joint> joint;
 };
 
 struct UnitRef {
@@ -288,6 +302,8 @@ public:
     // gets one matrix for every vertex). nullopt = bind pose.
     std::optional<std::vector<glm::mat4>> pose(const Object& o) const;
     void setBody(int32_t uid, const glm::mat4& model); // physics door transform (Object::body); unknown uids ignored
+    // Moves a joint object's prismatic position; each range newly entered runs vt 34 with its id, in range order.
+    void setJointPosition(int32_t uid, float position);
     // Volume and plane outlines, world frame, ABGR colour (render::DebugLine).
     std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> debugLines() const;
 

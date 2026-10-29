@@ -2129,9 +2129,10 @@ TEST(GameReal, ScriptedChapterEndChainsStartNextChapter) {
     }
 }
 
-// Reveal camera (docs/GAMEPLAY.md "Cameras"): l1_kraken_room plane 37 calls reveal_object 53, which disables Lara's
-// control (larabase 56) and plays camera spline 9 (autosplinecamera 0). The camera starts on the spline's first key,
-// Lara does not move while it plays, and when it ends the dispatchers' done callbacks run and the orbit camera returns.
+// Reveal camera (docs/GAMEPLAY.md "Cameras"): l1_kraken_room plane 37 calls reveal_object 53, which plays camera spline
+// 9 (autosplinecamera 0, camera switch gamebase 53). Its flag +42 = 1 (member default) skips the larabase 56 control
+// lock other reveals take. The camera starts on the spline's first key, and when it ends the dispatchers' done
+// callbacks run and the orbit camera returns.
 TEST(GameReal, RevealCameraPlaysUnitSpline) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -2158,13 +2159,7 @@ TEST(GameReal, RevealCameraPlaysUnitSpline) {
     const auto& spline = w.currentUnit().data.cameraSplines.at(9);
     const auto& k0 = spline.camera.keys.front();
     EXPECT_LT(glm::distance(w.camera().position, vec3(k0.pos[0], k0.pos[1], k0.pos[2]) + w.currentUnit().offset), 200.0f);
-    EXPECT_FALSE(w.script().playerControl());
-    const vec3 held = w.player().state().pos;
-    game::Actions forward;
-    forward.move = {0, 1};
-    for (int i = 0; i < 60; ++i) w.tick(forward);
-    EXPECT_LT(glm::distance(glm::vec2(w.player().state().pos), glm::vec2(held)), 5.0f) << "Lara moved during the reveal";
-    int ticks = 60;
+    int ticks = 0;
     while (w.splineCameraActive() && ticks < 60 * 30) w.tick({}), ++ticks;
     EXPECT_FALSE(w.splineCameraActive());
     // Camera track 9 lasts its last key's time plus the last key's hold events.
@@ -2284,6 +2279,21 @@ TEST(GameReal, BallcourtWithEnemiesIndependentOfRenderRate) {
     const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n0.6 forward 1\n1.75 forward 0\n1.8 right 1\n5.0 right 0\n");
     const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true), input, 360);
     EXPECT_FALSE(w->enemies().all().empty());
+}
+
+// l1_baldrs_tomb press plate 219 (prismatic joint, Objects.cpp tickPlates): Lara stands on it, it sinks to its pressed
+// range (vt 34 -> vt 54; door 223: ProgressionReal.CriticalGates), she walks off and it rises back.
+TEST(GameReal, PressurePlateIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    vec3 at(0);
+    for (const auto& in : formats::parseUnit(*game::loadUnitData(bf, "l1_baldrs_tomb").drm).intros)
+        if (in.uniqueId == 219) at = {in.position[0], in.position[1], in.position[2] + 30};
+    const auto input = game::InputScript::parse("1.5 forward 1\n2.5 forward 0\n");
+    const auto w = expectRateIndependent(worldMaker(bf, "l1_baldrs_tomb", game::Spawn{at, 0}), input, 300);
+    const auto* plate = w->script().find(219);
+    ASSERT_TRUE(plate && plate->joint);
+    EXPECT_EQ(plate->joint->position, 0.0f) << "the plate rose after Lara left it";
 }
 
 // l2_puzzleroom: switch 2961 starts elevator 2973's uber command chain; the platform's collision moves.

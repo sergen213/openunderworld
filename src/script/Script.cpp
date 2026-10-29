@@ -340,17 +340,20 @@ nlohmann::json stateOf(const Object& o) {
                 properties[std::to_string(key)] = value;
         }
     }
-    if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline) return nullptr; // birth state
+    if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline &&
+        (!o.joint || o.joint->position == 0) && !o.loose) return nullptr; // birth state
     nlohmann::json out = {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
             {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
             {"scriptStrings", std::move(strings)}, {"scriptProperties", std::move(properties)}};
     if (const auto& s = o.spline)
         out["spline"] = {s->t, s->dir, s->mode, s->playing, s->toKey, s->clip, s->target, s->from, s->to, s->count};
+    if (o.joint && o.joint->position != 0) out["joint"] = o.joint->position;
+    if (o.loose) out["loose"] = true;
     return out;
 }
 void applyState(Object& o, const nlohmann::json* s) {
     o.state = 0, o.t = 0, o.inside = o.firstIn = false, o.offset = vec3(0);
-    o.hidden = false, o.engagement = -1;
+    o.hidden = false, o.engagement = -1, o.loose = false;
     o.machine.reset();
     o.fibers.clear();
     if (o.script) {
@@ -358,10 +361,15 @@ void applyState(Object& o, const nlohmann::json* s) {
         o.script->strings = o.script->initialStrings;
         o.script->properties = o.script->initialProperties;
     }
+    if (const float p = s && s->is_object() ? s->value("joint", 0.0f) : 0.0f; o.joint || p != 0) {
+        auto& j = o.joint ? *o.joint : o.joint.emplace();
+        j.position = p;
+        for (auto& r : j.ranges) r.inside = r.lo <= p && p <= r.hi;
+    }
     if (!s || !s->is_object()) return;
     o.state = s->value("state", 0), o.t = s->value("t", 0.0);
     o.inside = s->value("inside", false), o.firstIn = s->value("firstIn", false);
-    o.hidden = s->value("hidden", false), o.engagement = s->value("engagement", -1);
+    o.hidden = s->value("hidden", false), o.engagement = s->value("engagement", -1), o.loose = s->value("loose", false);
     const auto off = s->value("offset", std::vector<float>{0, 0, 0});
     if (off.size() == 3) o.offset = {off[0], off[1], off[2]};
     if (o.script) {
@@ -544,7 +552,14 @@ void Runtime::addUnit(const UnitRef& u) {
             o.clips = set->clips;
             o.clipNames = set->names;
         }
+        // [I] Ship hall doors without a script (chapter 6's l6_ship_upper_hallway_a/b copies of the l1 doors): their
+        // volumes' door calls ISTYPE-fail on them, so nothing can open them, yet chapter 6 walks through. They stand
+        // open, as the l1 doors once opened.
+        const bool openDoor = o.kind == Kind::Door && !o.script && o.clipNames &&
+                              std::ranges::find(*o.clipNames, "idle_open") != o.clipNames->end();
+        const int32_t uid = o.uid;
         addObject(std::move(o), false);
+        if (Object* added = openDoor ? findMut(uid) : nullptr; added && added->state == 0) added->state = 2;
     }
     for (size_t i = firstNew; i < objects_.size(); ++i) {
         fire(EventKind::Start, objects_[i]);
@@ -628,6 +643,7 @@ bool Runtime::grapplePulled(int32_t uid) {
         const Function* f = o->script->program->method(o->script->typeId, vt);
         if (!f || f->native || f->returnType || f->wordCount <= 1) continue;
         if (o->machine && o->machine->active()) o->fibers.push_back(std::move(o->machine));
+        if (o->name.find("_rb_grapple") != std::string::npos) o->loose = true;
         const auto machine = makeMachine(uid);
         o->machine = machine;
         const bool completed = machine->call(*o->script, vt);
@@ -830,8 +846,10 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             // unlockable (bind 0x7AD470): 1 IsUnlocked (0x5DB8A0), 2 Unlock (0x5D6600) the extras item; ours has no extras.
+            // animated 1(animation): plays a decorative object's animation member (l4_traprooms plate 5717 -> glyph 5724);
+            // not drawn [I].
             for (const char* passive : {"soundgroup", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect", "reverb",
-                                        "unlockable"})
+                                        "unlockable", "animated"})
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
             // Receivers: a member address (object uid + offset), an object, or a native value held in a local.
             auto self = resolve(nc.receiver.uid);
@@ -1087,8 +1105,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const uint32_t value = cameraSplineValue(nc.args[0]);
                 return value != 0xFFFFFFFFu && camera_(0, cameraUnits_[value >> 16], value & 0xFFFF, value);
             }
-            if (!std::strcmp(name, "gamebase") && (nc.function == 52 || nc.function == 43) && nc.args.size() == 1 && camera_) {
-                const bool r = camera_(nc.function == 52 ? 1 : 2, {}, nc.args[0].bits, 0);
+            // gamebase 53 (0x7767C0) is 52 through CameraManager +0x54 instead of +0x50; reveals whose flag +44 is set
+            // (l1_kraken_room 53) use it [I: the same switch, +0x54's difference unknown].
+            if (!std::strcmp(name, "gamebase") && (nc.function == 52 || nc.function == 53 || nc.function == 43) &&
+                nc.args.size() == 1 && camera_) {
+                const bool r = camera_(nc.function == 43 ? 2 : 1, {}, nc.args[0].bits, 0);
                 nc.result = vm::Value::scalar(r);
                 return nc.function == 43 || r;
             }
@@ -1125,7 +1146,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const uint32_t value = nc.args[0].bits;
                 field() = value;
                 if (Object* target = findMut(self->uid); target && target->kind == Kind::Door) {
-                    const bool opens = value == 0, changes = opens ? target->state == 0 : target->state != 0;
+                    // [I] Values per door family: the house door (clips 0_idle, 10_opening, …) opens on 0 and closes on 1
+                    // (literals in its type 12171). Ship hall doors (clips open, idle_open, close, idle_close; type 6519
+                    // vt 54/55/56 = member defaults 1/2/3) open on 1 and close on 2/3.
+                    const bool ship = target->clipNames && std::ranges::find(*target->clipNames, "idle_open") != target->clipNames->end();
+                    const bool opens = ship ? value == 1 : value == 0, changes = opens ? target->state == 0 : target->state != 0;
                     if (changes) {
                         events_.push_back({EventKind::Activate, source, target->uid, tick_});
                         target->state = opens ? (target->clips ? 1 : 2) : 0;
@@ -1224,6 +1249,24 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (!uber_(object->uid, nc.function, command, commandIndex, nc.args, result)) return false;
                 nc.result = vm::Value::scalar(result);
                 return true;
+            }
+            // Pressure-plate joints (Object::Joint): multibody 1 (with the joint member and the body index), joint 17,
+            // limit 3 (1, lo, hi, id) and multibody 79 (joint 0, 1, lo, hi, id) record the plate's ranges.
+            if (Object* jo = findMut(self->uid); jo && ((!std::strcmp(name, "multibody") && (nc.function == 1 || nc.function == 79)) ||
+                                                        (!std::strcmp(name, "joint") && nc.function == 17) ||
+                                                        (!std::strcmp(name, "limit") && nc.function == 3))) {
+                if (!jo->joint) jo->joint.emplace();
+                auto& j = *jo->joint;
+                const auto range = [&](const vm::Value& lo, const vm::Value& hi, const vm::Value& id) {
+                    const float a = std::bit_cast<float>(lo.bits), b = std::bit_cast<float>(hi.bits);
+                    j.ranges.push_back({a, b, int32_t(id.bits), a <= j.position && j.position <= b});
+                };
+                if (!std::strcmp(name, "joint")) j.prismatic = true;
+                if (!std::strcmp(name, "limit") && nc.args.size() == 4) range(nc.args[1], nc.args[2], nc.args[3]);
+                const bool plateLimit = !std::strcmp(name, "multibody") && nc.function == 79 && nc.args.size() == 5;
+                if (plateLimit) range(nc.args[2], nc.args[3], nc.args[4]);
+                nc.result = vm::Value::scalar(0);
+                if (!plateLimit || !multibody_) return true;
             }
             if (!std::strcmp(name, "multibody") && multibody_) {
                 if (nc.function == 2) self->fields[1] = 1; // Enable sets the script object's state byte
@@ -1501,6 +1544,8 @@ std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
         // Meshes are placed with T*R(intro): a world displacement d is R^-1 d in model space.
         return std::vector<glm::mat4>{glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset)};
     }
+    if (o.offset != vec3(0)) // a fallen or carried body: world displacement in model space, as a block
+        return std::vector<glm::mat4>{glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset) * o.body};
     if (o.body != glm::mat4(1)) return std::vector<glm::mat4>{o.body};
     if (!o.clips || !o.skeleton || o.state == 0) return std::nullopt;
     const auto& clip = (*o.clips)[o.state == 1 ? 0 : 1];
@@ -1510,6 +1555,21 @@ std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
 
 void Runtime::setBody(int32_t uid, const glm::mat4& model) {
     if (Object* o = findMut(uid)) o->body = model;
+}
+
+void Runtime::setJointPosition(int32_t uid, float position) {
+    Object* o = findMut(uid);
+    if (!o || !o->joint) return;
+    o->joint->position = position;
+    std::vector<int32_t> entered;
+    for (auto& r : o->joint->ranges) {
+        const bool in = r.lo <= position && position <= r.hi;
+        if (in && !r.inside) entered.push_back(r.id);
+        r.inside = in;
+    }
+    // instance prototype 47 = vt 34 (type 3's prototype table); args (multibody, joint, range id) [I: the first two].
+    for (const int32_t id : entered)
+        callback(uid, "instance", 47, std::array{vm::Value::scalar(0), vm::Value::scalar(0), vm::Value::scalar(uint32_t(id))});
 }
 
 std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> Runtime::debugLines() const {

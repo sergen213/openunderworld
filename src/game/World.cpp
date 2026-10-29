@@ -379,6 +379,7 @@ void World::tick(const Actions& input) {
                 }
         }
     collectPickups(a.interact && !interactHeld_);
+    carryPortables(a.interact && !interactHeld_ && pickedUp_.empty());
     tickObjects(dt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
     if (const vec3 d = script_.carried(); d != vec3(0)) { // Lara follows the block she pushes/pulls
@@ -565,6 +566,8 @@ uint64_t World::stateHash() const {
     for (const auto& o : script_.objects()) {
         add(o.uid), add(o.state), add(o.t), add(o.pos), add(o.offset), add(o.body), add(o.inside), add(o.hidden);
         if (o.spline) add(o.spline->t), add(o.spline->dir), add(o.spline->playing);
+        if (o.joint) add(o.joint->position);
+        add(o.loose);
         if (o.script) {
             for (const auto& [k, v] : o.script->fields) add(k), add(v);
             for (const auto& [k, v] : o.script->properties) add(k), add(v);

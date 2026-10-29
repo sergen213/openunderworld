@@ -62,10 +62,11 @@ enum class Action : uint8_t {
     Push,   // push block: grip (interact held) and push (stick forward) from one of its four faces
     Pull,   // mounted grapple target: World's grapple pull runs its pull handler (Runtime::grapplePulled)
     Step,   // pressure plate: Lara stands on it
+    Weigh,  // pressure plate: Lara carries the nearest portable weight (*_pt_weight*) onto it and sets it down
     Enter,  // trigger volume: Lara walks into it; trigger plane: Lara crosses it
 };
 const char* actionName(Action a) {
-    constexpr const char* n[] = {"use", "push", "pull", "step", "enter"};
+    constexpr const char* n[] = {"use", "push", "pull", "step", "weigh", "enter"};
     return n[size_t(a)];
 }
 struct Gate {
@@ -193,6 +194,23 @@ GateResult runGate(const cdc::BigfileSet& bf, const game::UnitLoader& load, cons
         case Action::Step:
             place(w, at + vec3(0, 0, 30), 0);
             break;
+        case Action::Weigh: {
+            const script::Object* weight = nullptr;
+            for (const auto& o : w.script().objects())
+                if (o.name.find("_pt_weight") != std::string::npos && o.name.find("break") == std::string::npos &&
+                    (!weight || glm::length(o.pos + o.offset - at) < glm::length(weight->pos + weight->offset - at)) &&
+                    glm::length(glm::vec2(o.pos + o.offset - at)) > 300.0f)
+                    weight = &o;
+            if (!weight) return;
+            game::Actions press;
+            press.interact = true;
+            place(w, weight->pos + weight->offset, 0);
+            tick(press), tick({});
+            place(w, at - vec3(90, 0, -30), 0);
+            tick({});
+            tick(press), tick({});
+            break;
+        }
         case Action::Enter: {
             if (t->kind == script::Kind::Plane) {
                 const glm::mat4 rot = glm::rotate(glm::mat4(1), t->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), t->rot.y, {0, 1, 0}) *
@@ -381,7 +399,7 @@ TEST(ProgressionReal, Survey) {
                               o.name.find("plate") != std::string::npos || o.name.find("cinematic") != std::string::npos ||
                               o.name.find("grapple") != std::string::npos || o.name.find("_rb_") != std::string::npos ||
                               o.name.find("puzzle") != std::string::npos || o.name.find("door") != std::string::npos;
-            if (!gate) continue;
+            if (!gate && !std::getenv("OU_PROGRESSION_ALL")) continue; // OU_PROGRESSION_ALL: every scripted object
             std::printf("  %-8s %5d %-40s (%.0f %.0f %.0f)", kindName(o.kind), o.uid, o.name.c_str(), o.pos.x, o.pos.y, o.pos.z);
             for (const auto& [vt, ts] : o.links) {
                 std::printf(" vt%d:", vt);
@@ -488,6 +506,9 @@ TEST(ProgressionReal, CriticalGates) {
         {0, {"l3_main_bedroom", 4525, Action::Use, {4520}}},             // wall switch -> house door
         {0, {"l3_bedroom_hall", 4363, Action::Push, {}}},                // training push block
         {0, {"l3_main_hall", 4129, Action::Enter, {4106}, 1}},           // prologue end: cinematic 010 -> chapter 1
+        {1, {"l1_kraken_entrance", 748, Action::Use, {743}, -1, {{751, Action::Pull}, {753, Action::Weigh}}}}, // both locks
+        {1, {"l1_baldrs_tomb", 219, Action::Step, {223}}},               // press plate -> door
+        {1, {"l1_baldrs_tomb", 221, Action::Step, {45}}},                // press plate -> gate
         {1, {"l1_kraken_room", 498, Action::Use, {497}}},                // switch -> tomb door
         {1, {"l1_kraken_room", 30, Action::Use, {27}}},                  // switch -> sun-sphere platform
         {1, {"l1_ship_upper_hallway_a", 1531, Action::Enter, {1529}}},   // volume -> ship hall door
@@ -496,6 +517,8 @@ TEST(ProgressionReal, CriticalGates) {
         {2, {"l2_puzzleroom", 2982, Action::Pull, {}}},                  // shiva grapple pull
         {2, {"l2_flushtunnel", 2543, Action::Use, {2541}}},              // flush gate switch
         {2, {"l2_flushtunnel", 2564, Action::Enter, {}, 3, {{2542, Action::Enter}}}}, // BeatLevel plane, then the boat
+        {3, {"l3_chapel", 4832, Action::Step, {4830}}},                  // press plate -> gate
+        {3, {"l3_chapel", 4833, Action::Step, {4831, 4836}}},            // press plate -> gate, gold reward
         {3, {"l3_chamberrockhall", 4617, Action::Use, {4528}}},          // electric switch -> secret door
         {3, {"l3_main_hall", 4128, Action::Enter, {}, 4}},               // 160_man_shot, 170_man_exit -> chapter 4
         {4, {"l4_ballcourt", 6502, Action::Use, {6505}}},                // pole lever -> door joint
@@ -508,5 +531,24 @@ TEST(ProgressionReal, CriticalGates) {
     for (const auto& c : cases) {
         const auto r = runGate(bf, load, anims, c.gate, c.chapter);
         EXPECT_TRUE(r.pass) << c.gate.unit << " gate " << c.gate.trigger << " chapter " << r.chapter << " " << r.failure;
+    }
+}
+
+// Chapter 6's ship hall doors (l6_ship_upper_hallway_a/b) have no script, so their volumes' door calls do nothing (the
+// ISTYPE on the door fails); they stand open for the walk through the ship.
+TEST(ProgressionReal, ChapterSixShipDoorsOpen) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    for (const auto& [unit, doors] : {std::pair{"l6_ship_upper_hallway_a", std::vector{7642, 7643}},
+                                      std::pair{"l6_ship_upper_hallway_b", std::vector{7621}}}) {
+        game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), unit, anims);
+        w.script().setBigfile(&bf);
+        w.tick({});
+        for (const int32_t uid : doors) {
+            const auto* d = w.script().find(uid);
+            ASSERT_TRUE(d) << unit << " " << uid;
+            EXPECT_EQ(d->state, 2) << unit << " door " << uid;
+        }
     }
 }
