@@ -140,7 +140,7 @@ constexpr uint32_t kGlow = 11, kBarCentre = 12, kBarLeft = 13, kDisc = 15, kFron
                    kBlackDisc = 51, kDialog = 106, kLine = 105, kEmblem = 5, kArrowLeft = 113, kArrowRight = 114;
 constexpr uint32_t kIconPlay = 18, kIconNew = 19, kIconOptions = 20, kIconLoad = 21, kIconSave = 22, kIconAv = 23,
                    kIconExtras = 24, kIconQuit = 26, kIconPageUp = 27, kIconPageDown = 28, kIconSlotEmpty = 29,
-                   kIconSlotUsed = 30, kIconVolume = 32;
+                   kIconSlotUsed = 30, kIconVolume = 32, kIconTailor = 42;
 constexpr uint32_t kPdaPicture = 680, kPdaSonar = 688, kPdaWeapons = 689, kPdaInventory = 690, kPdaJournal = 693; // pc-w\g_pda.drm (694 REVISIT)
 constexpr uint32_t kPdaDoc = 698, kPdaButtons = 699, kPdaBackpack = 702; // title icon, window buttons, 702..705 categories
 
@@ -194,6 +194,9 @@ constexpr float kSelBarH = 15.5f, kSelBarSolid = 107.5f, kSelBarFade = 217.5f;
 constexpr float kSliderX0 = 322.7f, kSliderX1 = 461.3f, kSliderH = 7, kSliderArrowL = 307.6f, kSliderArrowR = 475.6f;
 constexpr float kSliderArrow = 7.8f; // textures 113/114 (16x32, ink 9x18): a ~4.4 square triangle
 constexpr float kListFooterL = 271.6f, kListFooterR = 379.0f;
+// GAME OPTIONS > PLAYER TAILORING [O tailor_*]: a list screen (icon 42, 366 / 125 GAME OPTIONS, rows from 164.4 tracked
+// 0.25), values right-aligned at 478.2; unselected rows and values dimmer, (78, 80, 81).
+constexpr float kTailorValueRight = 478.2f, kTailorTrack = 0.25f;
 // PLAYER TAILORING panel (texture 106 stretched).
 constexpr float kTailorY = 216, kTailorH = 237, kTailorTitleCap = 117.8f, kTailorTitleScale = 0.8f, kTailorLineY = 139.6f;
 constexpr float kTailorRow0 = 176.9f, kTailorStep = 28.9f, kTailorScale = 0.66f, kTailorBarSolid = 100, kTailorBarFade = 182;
@@ -449,6 +452,11 @@ bool unlocked(int code, const Unlocks& u) {
     return code == 11 ? u.finished : code == 12 ? u.treasures : code == 13 && u.relics;
 }
 
+int16_t tailoringValue(int level, bool reversed) {
+    static constexpr int16_t kIds[2][3] = {{376, 377, 378}, {379, 377, 380}};
+    return kIds[reversed][std::clamp(level, 0, 2)];
+}
+
 int journalEntries(int chapter) {
     static constexpr int kEnd[] = {0, 7, 14, 20, 31, 38, 39, 45}; // after Mediterranean Sea 1151, Thailand 1158, ...
     return kEnd[size_t(std::clamp(chapter, 0, 7))];
@@ -564,7 +572,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.stringId = 136, .toggle = &trainingText, .onId = 133, .offId = 134},
                 {.stringId = 492, .opens = Screen::Message, .message = unavailable},
                 {.stringId = 138, .toggle = &invertY, .onId = 45, .offId = 46, .pair = true},
-                {.stringId = 140, .opens = Screen::Tailoring},
+                {.stringId = 140, .opens = Screen::TailoringOptions},
                 {.stringId = 493, .opens = Screen::Message, .message = unavailable},
                 {.stringId = 469}};
     case Screen::AudioVisual:
@@ -578,6 +586,9 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
     case Screen::Volume:
         return {{.stringId = 487, .value = &sfxVolume}, {.stringId = 488, .value = &musicVolume},
                 {.stringId = 489, .value = &cinematicVolume}, {.stringId = 469}};
+    case Screen::TailoringOptions: // [O tailor_options]: 367 / 369 (training text, meta icons) are not on PC
+        return {{.stringId = 368, .level = &tailor[0]}, {.stringId = 370, .level = &tailor[1], .reversed = true},
+                {.stringId = 371, .level = &tailor[2]}, {.stringId = 372, .level = &tailor[3], .reversed = true}, {.stringId = 469}};
     case Screen::Tailoring: { // from START NEW GAME it starts the game; from GAME OPTIONS it only sets the preset
         const bool newGame = stack_.size() >= 2 && radial(stack_[stack_.size() - 2]);
         const Action a = newGame ? Action::NewGame : Action::None;
@@ -751,6 +762,7 @@ Action Menus::input(Nav n) {
             if (n == Nav::Left && cursor_ == 0) select(ring_ > 0 ? ring_ : levelRingItem(list.size()));
             else if (n == Nav::Right) select(0);
         } else if (int* v = list[size_t(cursor_)].value) *v = std::clamp(*v + (n == Nav::Right ? 1 : -1), 0, 10);
+        else if (int* l = list[size_t(cursor_)].level) *l = std::clamp(*l + (n == Nav::Right ? 1 : -1), 0, 2);
         else if (bool* t = list[size_t(cursor_)].toggle) *t = !*t;
         return Action::None;
     case Nav::Back:
@@ -785,7 +797,7 @@ Action Menus::activate(Item it) {
     }
     if (scr == Screen::PdaItems && cursor_ + 1 < int(items().size())) return Action::None; // an item: only shown
     if (it.action == Action::None) { // BACK / OK / sliders / PDA AREA INFO
-        if (!it.value && scr != Screen::Pda) return input(Nav::Back);
+        if (!it.value && !it.level && scr != Screen::Pda) return input(Nav::Back);
         return Action::None;
     }
     if (it.action == Action::Hint) return Action::Hint;
@@ -954,9 +966,10 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
     const auto list = items();
     const int n = int(list.size());
     // Title: icon | white line 1 / blue line 2 (GAME OPTIONS, AUDIO/VISUAL OPTIONS, VOLUME SETTINGS AUDIO/VISUAL).
-    const uint32_t icon = scr == Screen::GameOptions ? kIconOptions : scr == Screen::AudioVisual ? kIconAv : kIconVolume;
-    const int16_t t1 = scr == Screen::GameOptions ? 490 : scr == Screen::AudioVisual ? 497 : 486;
-    const int16_t t2 = scr == Screen::Volume ? 497 : 491;
+    const bool tailor = scr == Screen::TailoringOptions;
+    const uint32_t icon = scr == Screen::GameOptions ? kIconOptions : scr == Screen::AudioVisual ? kIconAv : tailor ? kIconTailor : kIconVolume;
+    const int16_t t1 = scr == Screen::GameOptions ? 490 : scr == Screen::AudioVisual ? 497 : tailor ? 366 : 486;
+    const int16_t t2 = scr == Screen::Volume ? 497 : tailor ? 125 : 491;
     c.sprite(icon, kListIconX, kListIconY, 64 * kTexel, 64 * kTexel, kWhite);
     vrect(c, kListDivX, kListDivTop, 0.9f, kListDivBottom - kListDivTop, kWhite);
     capText(c, kTitle1X, kTitle1Cap, kTitle1Scale, s.get(t1), kWhite);
@@ -970,15 +983,16 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
     hquad(c, c.sx(320 + kListPanelSolid), top, c.sx(320 + kListPanelFade), bot, kBlack, withAlpha(kBlack, 0));
     c.sprite(kLine, 320, kListLineTop + 0.65f, kListLineW, 1.8f, kWhite);
     c.sprite(kLine, 320, bottom + 0.65f, kListLineW, 1.8f, kWhite);
-    const float labelX = scr == Screen::Volume ? kRowXVolume : kRowX;
-    const float valueRight = scr == Screen::GameOptions ? 498.7f : 492.6f;
+    const float labelX = scr == Screen::Volume || tailor ? kRowXVolume : kRowX;
+    const float valueRight = scr == Screen::GameOptions ? 498.7f : tailor ? kTailorValueRight : 492.6f;
     const float capMid = kCapHeight * kRowScale / 2;
     for (int i = 0; i < n; ++i) {
         const Item& it = list[size_t(i)];
         const float y = row0 + float(i) * kRowStep;
         const bool sel = i == cursor_;
         if (sel) fadeBar(c, y + capMid - kSelBarH / 2, kSelBarH, kSelBarSolid, kSelBarFade, kSelBar);
-        capText(c, labelX, y, kRowScale, s.get(it.stringId), sel ? kWhite : kRowGrey);
+        const uint32_t grey = tailor ? rgba(78, 80, 81) : kRowGrey;
+        capText(c, labelX, y, kRowScale, s.get(it.stringId), sel ? kWhite : grey, tailor ? kTailorTrack : 0);
         if (it.value) {
             const float sy0 = y + capMid - kSliderH / 2;
             vrect(c, kSliderX0, sy0, kSliderX1 - kSliderX0, kSliderH, kSliderFrame);
@@ -987,6 +1001,9 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
                 c.sprite(kArrowLeft, kSliderArrowL, y + capMid, kSliderArrow, kSliderArrow, kWhite);
                 c.sprite(kArrowRight, kSliderArrowR, y + capMid, kSliderArrow, kSliderArrow, kWhite);
             }
+        } else if (it.level) {
+            const std::string v(s.get(tailoringValue(*it.level, it.reversed)));
+            capText(c, valueRight - c.fontWidth(v, kRowScale), y, kRowScale, v, sel ? kWhite : grey);
         } else if (it.toggle && it.pair) { // "ON / OFF": the current one white
             const std::string on(s.get(it.onId)), off(s.get(it.offId)), slash("   /   ");
             float x = valueRight - c.fontWidth(on + slash + off, kRowScale);

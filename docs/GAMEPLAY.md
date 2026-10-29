@@ -1392,9 +1392,13 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
 - PLAYER TAILORING [O]: box 106 stretched to 672×237 at y 216 over the backdrop alone; title 484 cap 117.8 scale 0.8,
   line under it (y 139.6, 190 wide); 481/482/483 centred at 176.9 + 28.9·i, scale 0.66, selected white on a (30, 90, 127)
   bar (solid ±100, fading to ±182), others (203, 203, 203); footer line y 287 and prompts at 266.7 / 373.3 (scale 0.76).
-  Picking starts the game from START NEW GAME, or sets the running game's levels from GAME OPTIONS (Combat "PLAYER
-  TAILORING"); the per-option screen (366–382: ENEMY HEALTH, AMMUNITION CAPACITY, DAMAGE TO LARA, TIME FOR SAVING GRABS,
-  LESS / NORMAL / EXTRA) is not ported.
+  Picking starts the game from START NEW GAME with every level at the preset (Combat "PLAYER TAILORING").
+- GAME OPTIONS > PLAYER TAILORING [O tailor_options, tailor_changed, tailor_changed2]: a list screen (icon 42, title 366 /
+  125 GAME OPTIONS, rows from 164.4 tracked 0.25, unselected rows and values (78, 80, 81)) of 368 ENEMY HEALTH, 370
+  AMMUNITION CAPACITY, 371 DAMAGE TO LARA, 372 TIME FOR SAVING GRABS and 469 BACK (367 / 369 are not on PC); Left / Right
+  step a level 0..2 (0 the lenient end), shown right-aligned at 478.2 as 376 LESS → / 377 ← NORMAL → / 378 ← EXTRA, or for
+  ammunition capacity and saving-grab time reversed 379 EXTRA → / 377 / 380 ← LESS (the arrows are U+180A / U+180B font
+  glyphs); each change sets that level of the running game (`World::setTailoring`, saved with it).
 - PDA [O]: `pda_bg_1280` (`_960` when the window is narrower than 1.556:1) fitted to the window height and centred; in
   bg pixels (virtual = bg·2/3 − 106.7, bg·2/3, the same for both widths): items 1074 SONAR MAP, 1075 AREA INFO, 1076,
   1077, 1078, 1081 JOURNAL / 1082 greyed (91, 91, 91, skipped; 1081 enabled with entries, 1082 in a Treasure Hunt), 122 RESUME GAME, right-aligned at 502.7, caps 173.3 + 43.3·i,

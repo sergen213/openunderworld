@@ -69,9 +69,11 @@ public:
 enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
 // Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item. Revisit / Journal:
 // the PDA's REVISIT LOCATION list (Treasure Hunt) and JOURNAL ENTRIES. Extras: the EXTRAS categories on a mirrored ring; ExtrasCategory: one's rewards
-// (Menus::rewards) with a preview; ExtrasView: an unlocked image full screen.
+// (Menus::rewards) with a preview; ExtrasView: an unlocked image full screen. TailoringOptions: GAME OPTIONS > PLAYER
+// TAILORING, its four levels one by one (Menus::tailor).
 enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
-                              PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit, Extras, ExtrasCategory, ExtrasView, Journal };
+                              PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit, Extras, ExtrasCategory, ExtrasView, Journal,
+                              TailoringOptions };
 // Continue: load the autosave, else the newest save (the app starts a new game when there is none). Save/Load/Delete act
 // on selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
 // Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW). TreasureHunt: the
@@ -86,6 +88,8 @@ struct Item {
     Action action = Action::None;
     Screen opens = Screen::None;
     int* value = nullptr;  // slider 0..10 (Left/Right)
+    int* level = nullptr;  // PLAYER TAILORING level 0..2 (Left/Right; 0 = the lenient end, tailoringValue)
+    bool reversed = false;
     uint32_t icon = 0;     // radial menus and save slots: generalbank texture id
     int16_t message = 0;   // opens Screen::Message with this locals.bin string
     bool* toggle = nullptr; // Left/Right/Accept flip it; shows onId / offId (both, "ON / OFF", when `pair`)
@@ -123,6 +127,10 @@ bool unlocked(int code, const Unlocks& u);
 // JOURNAL entries (locals.bin 1145.., text id + 45) available in chapter `chapter` (kChapters index) [I: the entries by
 // their topics up to that chapter's: 1145 Mediterranean Sea .. 1184..1189 Arctic Sea; tru.exe unlocks them by script].
 int journalEntries(int chapter);
+// PLAYER TAILORING value shown for `level` (0..2, Left = 0 the lenient end) [O tailor_* captures]: LESS -> / <- NORMAL -> /
+// <- EXTRA (376 / 377 / 378); `reversed` (AMMUNITION CAPACITY, TIME FOR SAVING GRABS): EXTRA -> / NORMAL / <- LESS (379 /
+// 377 / 380). The arrows are the strings' U+180A / U+180B font glyphs.
+int16_t tailoringValue(int level, bool reversed);
 
 // What the PDA shows: the chapter (kChapters index) and this chapter's relics/treasures found / in it; WEAPON
 // SELECTION rows (the secondaries, game::Weapon index in `weapon`); INVENTORY items per category (BACKPACK, GEAR,
@@ -192,6 +200,9 @@ public:
     int brightness = 5;             // 0..10 (5 = neutral; the app maps it to graphics brightness)
     bool reticles = true, helperButtons = true, trainingText = true, invertY = false, subtitles = true;
     int tailoring = 1;              // PLAYER TAILORING preset: 0 casual explorer, 1 tomb raider, 2 master survivalist
+    // GAME OPTIONS > PLAYER TAILORING levels 0..2 (game::Tailoring): enemy health, ammunition capacity, damage to Lara,
+    // time for saving grabs.
+    std::array<int, 4> tailor{1, 1, 1, 1};
     PdaInfo pda;
     int journal = 0;                // PDA JOURNAL entries available (journalEntries); 0 = greyed
     // The main menu's centre [O]: TREASURE HUNT (49) once the game is `finished`, else RESUME GAME (122) with an autosave

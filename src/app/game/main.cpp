@@ -1755,13 +1755,21 @@ int main(int argc, char** argv) {
     };
     auto nav = [&](ou::ui::Nav n) {
         const int tailoring = menus.tailoring;
+        const auto tailor = menus.tailor;
         const auto a = menus.input(n);
         applyVolumes();
-        // PLAYER TAILORING picked (START NEW GAME, or GAME OPTIONS in play): every level of its preset (game::Tailoring).
+        // PLAYER TAILORING: a preset picked (START NEW GAME) sets every level (game::Tailoring); GAME OPTIONS sets one.
         if (menus.tailoring != tailoring || a == ou::ui::Action::NewGame)
             world->setTailoring(ou::game::Tailoring::preset(menus.tailoring));
+        else if (menus.tailor != tailor) {
+            auto t = world->tailoring();
+            t.enemyHealth = menus.tailor[0], t.ammo = menus.tailor[1], t.laraHealth = menus.tailor[2], t.savingGrab = menus.tailor[3];
+            world->setTailoring(t);
+        }
         act(a);
-        if (const int p = world->tailoring().preset(); p >= 0) menus.tailoring = p; // a loaded save's
+        const auto& t = world->tailoring(); // a loaded save's
+        menus.tailor = {t.enemyHealth, t.ammo, t.laraHealth, t.savingGrab};
+        if (const int p = t.preset(); p >= 0) menus.tailoring = p;
     };
     if (menuStart) {
         menus.saves = listSaves();

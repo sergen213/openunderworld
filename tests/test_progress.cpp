@@ -545,6 +545,38 @@ TEST(Menus, PdaJournal) {
     EXPECT_EQ(m.cursor(), 5);
 }
 
+// GAME OPTIONS > PLAYER TAILORING [O tailor_options / tailor_changed*]: the four levels one by one, Left the lenient end;
+// AMMUNITION CAPACITY and TIME FOR SAVING GRABS read EXTRA .. LESS.
+TEST(Menus, PlayerTailoringOptions) {
+    EXPECT_EQ(ui::tailoringValue(0, false), 376); // LESS ->
+    EXPECT_EQ(ui::tailoringValue(1, false), 377); // <- NORMAL ->
+    EXPECT_EQ(ui::tailoringValue(2, false), 378); // <- EXTRA
+    EXPECT_EQ(ui::tailoringValue(0, true), 379);  // EXTRA ->
+    EXPECT_EQ(ui::tailoringValue(1, true), 377);
+    EXPECT_EQ(ui::tailoringValue(2, true), 380);  // <- LESS
+    ui::Menus m;
+    m.open(ui::Screen::GameOptions);
+    for (int i = 0; i < 5; ++i) m.input(ui::Nav::Down);
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::TailoringOptions);
+    const auto list = m.items();
+    ASSERT_EQ(list.size(), 5u);
+    EXPECT_EQ(list[0].stringId, 368);
+    EXPECT_FALSE(list[0].reversed);
+    EXPECT_EQ(list[1].stringId, 370);
+    EXPECT_TRUE(list[1].reversed);
+    EXPECT_EQ(list[3].stringId, 372);
+    EXPECT_TRUE(list[3].reversed);
+    m.input(ui::Nav::Right), m.input(ui::Nav::Right); // ENEMY HEALTH: <- EXTRA, clamped
+    m.input(ui::Nav::Down), m.input(ui::Nav::Left);   // AMMUNITION CAPACITY: EXTRA ->
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::TailoringOptions); // Return on a level does not leave
+    EXPECT_EQ(m.tailor, (std::array<int, 4>{2, 0, 1, 1}));
+    EXPECT_EQ(m.tailoring, 1); // the preset is untouched
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // BACK TO PREVIOUS MENU
+    EXPECT_EQ(m.screen(), ui::Screen::GameOptions);
+}
+
 // save::Profile (chapters ended, the ending, all treasures / relics) and a Treasure Hunt's save flag.
 TEST(Progress, ProfileAndTreasureHuntSave) {
     const auto dir = std::filesystem::temp_directory_path() / ("ou_profile_" + std::to_string(::getpid()));
