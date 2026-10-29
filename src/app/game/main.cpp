@@ -66,6 +66,7 @@ struct Options {
     bool intro = false;  // --intro: play Movies/intro.bik first (skippable)
     int introFrames = -1; // --intro-frames N: stop the intro / the New Game movie after N frames
     bool noMovies = false; // --no-movies: New Game skips Movies/explode.bik
+    bool drawLast = false; // --draw-last: with --frames, every frame runs its ticks but only the last is drawn (render-rate tests)
     bool noAudio = false;
     std::filesystem::path musicWav; // --music-wav FILE: no device; every tick's mixer output goes to a WAV
     std::string loadSlot; // --load SLOT: start from $XDG_DATA_HOME/openunderworld/saves/SLOT.ousave
@@ -85,7 +86,7 @@ void usage() {
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun]\n"
-                 "               [--show-collision] [--show-triggers] [--show-enemies]\n"
+                 "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
                  "               [--shaders original|generic]\n"
                  "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0]\n"
@@ -135,6 +136,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--intro") { o.intro = true; continue; }
         if (a == "--no-audio") { o.noAudio = true; continue; }
         if (a == "--no-movies") { o.noMovies = true; continue; }
+        if (a == "--draw-last") { o.drawLast = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
         const char* v = argv[++i];
@@ -1709,6 +1711,12 @@ int main(int argc, char** argv) {
             world->warnings.clear();
         }
 
+        // --draw-last: the frame pacing and ticks are those of the render rate, the drawing is skipped (simulation never
+        // reads it; ctest game_render_rate_smoke under ASan).
+        if (opt.drawLast && opt.frames && frame + 1 < opt.frames) {
+            ++frame;
+            continue;
+        }
         const auto s = world->interpolated(clock.alpha());
         const auto c = world->interpolatedCamera(clock.alpha());
         lara.pose(*world, s, clock.alpha(), scene, *renderer);

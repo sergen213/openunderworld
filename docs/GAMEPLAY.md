@@ -101,7 +101,8 @@ rates 24, 30, 60, 75, 144, 240, 1000 Hz and irregular 1–50 ms frames with 250 
 reads between frames, must give a bit-identical `World::stateHash` (Lara, camera, bones, rigid bodies, object
 collision, script objects and fields, enemies) after every tick. ou-game's `final tick` line prints the simulated
 state, `sim <stateHash>` and the particle count: `--render-hz 30 --frames 180` and `--render-hz 240 --frames 1440`
-give the same line (ctest `game_render_rate_smoke`).
+give the same line (ctest `game_render_rate_smoke`, l4_ballcourt lever replay). `--draw-last` keeps the render rate's
+frame pacing and ticks but draws only the final frame, so the smoke takes ~35 s under Debug+ASan.
 
 ## Animation mapping (pc-w\lara.drm) [O]
 
