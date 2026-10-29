@@ -451,6 +451,42 @@ uint64_t World::stateHash() const {
     auto str = [&](const std::string& s) { bytes(s.data(), s.size()), add(s.size()); };
     const PlayerState& s = player_.state();
     add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), add(s.ledge);
+    add(s.ledgeT), add(s.water), add(s.climbFace), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
+    add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch), add(health_.value()), add(air_);
+    for (const auto& m : bones_) add(m);
+    for (const auto& b : physics_.bodies) add(b.pos), add(b.rot), add(b.vel), add(b.angVel);
+    for (const auto& m : physics_.movers) add(m.s);
+    for (const auto& d : col_.dynamics) add(d.transform);
+    for (const auto& o : script_.objects()) {
+        add(o.uid), add(o.state), add(o.t), add(o.pos), add(o.offset), add(o.body), add(o.inside), add(o.hidden);
+        if (o.spline) add(o.spline->t), add(o.spline->dir), add(o.spline->playing);
+        if (o.script) {
+            for (const auto& [k, v] : o.script->fields) add(k), add(v);
+            for (const auto& [k, v] : o.script->properties) add(k), add(v);
+        }
+    }
+    for (const auto& e : enemies_.all()) {
+        const auto& es = e->state();
+        add(e->uid()), add(es.mode), add(es.pos), add(es.yaw), add(es.clipTime), add(es.health), str(es.clip);
+    }
+    return h;
+}
+
+uint64_t World::stateHash() const {
+    uint64_t h = 1469598103934665603ull;
+    auto bytes = [&](const void* p, size_t n) { // FNV-1a over 64-bit words, then the tail bytes
+        const auto* c = static_cast<const unsigned char*>(p);
+        for (; n >= 8; c += 8, n -= 8) {
+            uint64_t w;
+            std::memcpy(&w, c, 8);
+            h = (h ^ w) * 1099511628211ull;
+        }
+        for (; n; ++c, --n) h = (h ^ *c) * 1099511628211ull;
+    };
+    auto add = [&](const auto& v) { bytes(&v, sizeof v); }; // padding-free values only (scalars, glm types)
+    auto str = [&](const std::string& s) { bytes(s.data(), s.size()), add(s.size()); };
+    const PlayerState& s = player_.state();
+    add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), add(s.ledge);
     add(s.ledgeT), add(s.water), add(s.climbHold), add(s.grappleUid), add(s.ropeLength), str(s.clip);
     add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch), add(health_.value()), add(air_);
     for (const auto& m : bones_) add(m);
