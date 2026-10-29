@@ -73,6 +73,7 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     s.sharpness = g.sharpness;
     if (g.frameGeneration && !s.fsr) throw std::runtime_error("frame generation needs upscaler fsr");
     s.frameGeneration = g.frameGeneration;
+    s.effects = g.effects;
     return s;
 }
 
@@ -95,9 +96,9 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     else if (flag == "--upscaler") g.upscaler = value;
     else if (flag == "--fsr-quality") g.fsrQuality = value;
     else if (flag == "--sharpness") g.sharpness = std::strtof(std::string(value).c_str(), nullptr);
-    else if (flag == "--frame-generation") {
-        if (value != "on" && value != "off") throw std::runtime_error("--frame-generation wants on or off");
-        g.frameGeneration = value == "on";
+    else if (flag == "--frame-generation" || flag == "--fx") {
+        if (value != "on" && value != "off") throw std::runtime_error(std::string(flag) + " wants on or off");
+        (flag == "--fx" ? g.effects : g.frameGeneration) = value == "on";
     }
     else return false;
     return true;
@@ -178,6 +179,7 @@ Config load(const fs::path& path) {
             c.graphics.fsrQuality = g->value("fsr_quality", c.graphics.fsrQuality);
             c.graphics.sharpness = g->value("sharpness", c.graphics.sharpness);
             c.graphics.frameGeneration = g->value("frame_generation", c.graphics.frameGeneration);
+            c.graphics.effects = g->value("effects", c.graphics.effects);
         }
         if (auto in = j.find("controls"); in != j.end()) {
             c.controls.mouseSensitivity = in->value("mouse_sensitivity", c.controls.mouseSensitivity);
@@ -225,7 +227,8 @@ void save(const fs::path& path, const Config& c) {
                                {"atmosphere", c.graphics.atmosphere}, {"weather", c.graphics.weather},
                                {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness},
                                {"upscaler", c.graphics.upscaler}, {"fsr_quality", c.graphics.fsrQuality},
-                               {"sharpness", c.graphics.sharpness}, {"frame_generation", c.graphics.frameGeneration}};
+                               {"sharpness", c.graphics.sharpness}, {"frame_generation", c.graphics.frameGeneration},
+                               {"effects", c.graphics.effects}};
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
     if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;

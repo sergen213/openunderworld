@@ -42,6 +42,7 @@ shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the o
 | Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `graphics.rt`, `graphics.rt_quality` |
 | Water | TRU's own water shaders | enhanced water ("Water" below): waves, refraction, SSR, ripples, splashes, underwater | `--water original/enhanced`, `graphics.water` |
 | Brightness | 1.0 | 1.0 | `--brightness 0.5-2.0`, `graphics.brightness` |
+| Original effects (`src/fx`) | on | on (ou-game only; off = no particles / ribbons / lightning / glows / effect lights / screen filters; frame times in docs/formats/EFFECTS.md "Performance") | `--fx on/off`, `graphics.effects` |
 
 `--preset original|enhanced` / `graphics.preset` picks the defaults; explicit settings override
 (`Config.GraphicsPresets`). Anisotropic filtering (max supported: 16x on RADV) is on in both. [I] The original

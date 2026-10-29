@@ -255,6 +255,33 @@ else blended by alpha / 128; faded in / out; intensity and radius do not apply. 
 1 - (r / 0.65) / s), r = the owner's distance from the screen centre in half-screens (x / 512, y / 448), x an occlusion
 fade moving 0.25 per frame (0x535C50; ours: a collision ray from the camera [I]).
 
+Lara's death / damage filters: every `death_*` clip starts filter 1 at frame 0 (resource 858: fade in 80, hold 61,
+out 20 frames, intensity 70 / 128, player mix 1) and filter 2 at frame 20 (black tint `7f000000`, fade in 90, hold 120);
+the drowning / shot-under-water deaths use 4 + 5 instead. No hit-reaction clip of Lara's has a filter command (the only
+other is `shock_test`, filter 0), so being hit draws no filter from her lists [O]; filter 0 (resource 857, 2 + 8
+frames) has no starter found. Viewed `--die 1` in l4_ballcourt at tick 200 (2.3 s into `death_toknee`), GL + Vulkan
+alike: a heavily blurred, darkened warm-brown screen; `--fx off` the sharp scene. No Wine capture of a death to compare.
+
+Prologue corridor fire density (l3_main_bedroom vs `screens/fxref`): still sparser than the capture; not re-examined
+here, cause [U] (the rate rule above is applied).
+
+## Performance (`ou-game --fx on|off`, `graphics.effects`)
+
+`--fx off` starts no effect (particles, ribbons, lightning, glows, effect lights, screen filters; `fx::System::visuals`
+false) and skips the effect draw; instance fades (class 7, pickups vanishing) and the clips' sound records still run.
+Measured 2026-10-29: Release, 1920x1080, `--no-vsync --render-hz 60 --frames 1200 --no-overlay --no-audio`, default
+Enhanced preset (Vulkan with RT shadows), player start camera, invisible kwin, RX 7900 XTX; ou-game prints the wall time
+per frame (ticks + draw) after 30 warm-up frames; mean of 3 runs each (live effect count at the end in brackets):
+
+| Unit | Vulkan on | Vulkan off | GL on | GL off |
+|---|---|---|---|---|
+| l6_ship_exterior (1249) | 3.00 ms, p95 3.39 | 2.96 ms, p95 3.37 | 3.98 ms, p95 4.17 | 3.85 ms, p95 4.03 |
+| l5_valaskjalf (482) | 5.28 ms, p95 5.89 | 5.24 ms, p95 5.81 | 6.82 ms, p95 7.47 | 6.63 ms, p95 7.13 |
+| l2_junglehub (2072) | 11.45 ms, p95 12.54 | 11.23 ms, p95 12.33 | 8.15 ms, p95 8.34 (*) | 7.74 ms, p95 7.99 |
+
+(*) runs 1-2; run 3 was 10.66 / p95 15.11 (a stall in that run alone). The effects cost 0.04-0.2 ms on Vulkan and
+0.13-0.4 ms on GL ([I] GL is draw-call bound: one draw per effect batch).
+
 ## Commands (0x547B40) and classes [O]
 
 Every command type the switch dispatches; "used" = records in object birth / animation lists (survey of every object
@@ -304,16 +331,29 @@ fade to clear over the face life; the colour goes to `+0x18` [I]. Not added whil
 +0x18 & 0x4000000).
 
 Ours: `fx::System` ribbons need their owner tracked every tick (`System::track`; ou-game tracks Lara, enemies and script
-objects that have ribbons / lightning). Tiger and merc attack clips leave their claw / blade trails. Lara's birth list
-starts four endless arm / leg ribbons (segments 4-6, 11-9, 87-79, 62-54, gold to black): they are not started — the
-instance bit that gates them (+0x18 & 0x4000000) is [U] and drawn always they would trail every move.
+objects that have ribbons / lightning).
+
+Who starts ribbons (survey of every object's lists, `scratch/cmdsurvey.py` with commands 5 / 0x16 / 0x1C / 0x2F): the
+spears' and grenade's `fly` clips (`pr_spear*`, `pr_grenade`: projectile trails; ou-game runs neither projectile's clips
+yet), the tentacle hazards' `strike_a / b`, the small spiders' `jump_*`, `natla_end` `poof_out`, and Lara's object list.
+The panther / tiger (`cat_panther`, `tiger`: claws, segments 34-30 / 24-28) and merc / poacher (blades 31-41 / 11-21)
+have ribbon records, but no list of theirs starts one (their attack clips hold only sound records), so the original
+draws no claw or blade trails; viewed in the l4_ballcourt `panther_fight` replay (ticks 46 / 52, GL + Vulkan): none
+in ours either. Lara's four arm / leg ribbons (segments 4-6, 11-9, 87-79, 62-54, gold `3c476c7c` to black, additive,
+endless, face life 15) are on her object list's events 50 and 80 (with filter 8, a time-scale ease to 0.5 / 1.0 by
+command 0x34, stopped by events 51 / 81), not on its birth (event 0). tru.exe runs object-list events only through
+0x5BA000 / 0x5BA0D0 / 0x5BA1C0 (every caller in the binary: events 0 at birth, 9..0xE, 0x2E / 0x2F rain, 0x30, 0x77,
+0x78 / 0x79; 0x52B1E0's handler table holds only 0x77), so events 50 / 51 / 80 / 81 never fire and the original never
+shows these ribbons [O]. Ours: only event 0 is a birth, so they do not start either (`FxReal.LaraRibbonsAreOnUnfiredEventsAndVisualsOffStartsNothing`).
+The 0x539500 gate `+0x18 & 0x4000000` is never set by any code in tru.exe (no OR / write of that bit on instance +0x18).
 
 ## Lightning and beams (class 3) [O unless marked]
 
 Record 0xB8 (0x537230 -> prim 0x84, update 0x5370C0, draw 0x53F8C0 -> 0x531770): `+0` kind (0 bolt, 2 colours along
 the bolt, 3 beam: colours and widths along), `+1` owner select, `+2` life, `+4` wave phase (-1 random), `+0x10 / +0x16`
-start offset / segment, `+0x18 / +0x20` end offset / segment (-100: the runtime marker list, the shot's end for
-weapons [I]), `+0x22` steps, `+0x24 / +0x52` core width start / end, `+0x26 / +0x54` glow width, `+0x28` wave and
+start offset / segment, `+0x18 / +0x20` end offset / segment (0x46DA20: -100 - n = the n-th world-point entry, segment
+-1, of the instance's runtime marker list +0x160, its position at entry +8 [O]; for a weapon that point is the shot's
+end [I: the writer is not traced]), `+0x22` steps, `+0x24 / +0x52` core width start / end, `+0x26 / +0x54` glow width, `+0x28` wave and
 `+0x2A` jag amplitude, `+0x2C..+0x38` core / glow colours start / end, `+0x4C` flags (1 birth, 0xC0 == 0x40 alpha
 blend), `+0x4D` id, `+0x56 / +0x58` fade in / out, `+0x64 / +0x68` core / glow textures (0: texture 131), `+0x6C /
 +0x6E` random end offsets, `+0xA8 / +0xAA` moving section (speed per frame, length; handgun tracers 1300 / 1200).
@@ -324,6 +364,15 @@ Ours: `LightningDef`, drawn as quads in the effect pass (hash-random jitter per 
 indexing]). Users: weapon tracers (`wp_handgun` / `wp_uzi` / `wp_akrifle` `fire`), Thor's hammer (`wp_thorhammer`
 melee / fire, `co_fx_val_hammer`), Valaskjalf door beam (`fx_beam_val_door_unlock`), light shafts (`sa_uo_light_beams`,
 `fx_glare_*`, `fx_light_ray_*`), cinematic lightning (`fx_cine_lightning`). Mjolnir as Lara's weapon: GAMEPLAY.md "Mjolnir".
+
+Viewed 2026-10-29 (no original reference: no Wine capture of gunfire or of the door exists): handgun tracers in the
+l4_ballcourt `poacher_firefight` replay (tick 38, GL + Vulkan identical): two thin moving sections (bolt 0 blue-white
+`2a5480`, 1300 / frame; bolt 1 green `217f07`, 2212 / frame) from the muzzle toward the hit, faint as their 3 -> 15
+unit glow widths. Valaskjalf door beams (`fx_beam_val_door_unlock` x 4 in l5_valgrind, uids 7320 / 7324 / 7327 /
+7331): they start only from their `fx_on` clip (stopped by `fx_off`; no birth list), which a script plays — that native
+is not identified, so in ou-game the beams never appear. Played by hand (`fx_on` at birth, a local test patch) they
+draw as four pale blue vertical beams 8000 units tall with a visible seam at each of the 5 steps (width / colour
+change per step), GL and Vulkan alike.
 
 ## Script-object clip events
 

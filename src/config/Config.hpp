@@ -41,6 +41,8 @@ struct GraphicsConfig {
                                             // | "ultra_performance" (3x)
     float sharpness = 0.5f;                 // FSR sharpening 0..1, 0 = off
     bool frameGeneration = false;           // needs upscaler "fsr"
+    bool effects = true;                    // the original particle effects (src/fx: particles, ribbons, lightning,
+                                            // glows, effect lights, screen filters); false = none (sounds stay)
 };
 struct GraphicsSettings {
     int msaa = 1;
@@ -58,6 +60,7 @@ struct GraphicsSettings {
     int fsrQuality = 1; // 0 native .. 4 ultra performance (= render::FrameOptions::fsrQuality)
     float sharpness = 0.5f;
     bool frameGeneration = false;
+    bool effects = true;
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without
@@ -65,7 +68,7 @@ struct GraphicsSettings {
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
 // --rt, --rt-quality, --water original|enhanced, --water-detail, --atmosphere, --shafts on|off, --weather, --brightness,
-// --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off.
+// --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off.
 // false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 

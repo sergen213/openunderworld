@@ -98,7 +98,7 @@ void usage() {
                  "               [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
                  "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"
-                 "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only)\n"
+                 "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only) [--fx on|off]\n"
                  "               [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
@@ -1264,6 +1264,7 @@ int main(int argc, char** argv) {
     CombatView combat;
     GadgetView gadgets;
     EffectsView effects;
+    effects.system.visuals = opt.gfx.effects; // --fx off: no particles / ribbons / lightning / glows / lights / filters
     std::vector<ou::scene::Light> dynamicLights; // gadget + effect light slots, per frame
     bool spawnFromIntro = false;
     try {
@@ -1664,6 +1665,7 @@ int main(int argc, char** argv) {
     uint64_t last = SDL_GetTicksNS(), fpsStart = last, appTicks = 0; // appTicks: script time, runs on in menus
     int frame = 0, fpsFrames = 0;
     double fps = 0;
+    std::vector<double> frameMs; // --frames: wall frame times for the final report
 
     while (running) {
         const bool inMenu = menus.screen() != ou::ui::Screen::None;
@@ -1700,6 +1702,7 @@ int main(int argc, char** argv) {
         if (interactive) SDL_SetWindowRelativeMouseMode(window.get(), menus.screen() == ou::ui::Screen::None);
         const uint64_t now = SDL_GetTicksNS();
         const double dt = opt.renderHz > 0 ? 1.0 / opt.renderHz : double(now - last) * 1e-9;
+        if (opt.frames && frame > 30) frameMs.push_back(double(now - last) * 1e-6); // wall time, after 30 warm-up frames
         last = now;
 
         for (int n = clock.advance(dt); n > 0 && running; --n) {
@@ -2029,7 +2032,7 @@ int main(int argc, char** argv) {
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
-        if (!mainMenu) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
+        if (!mainMenu && opt.gfx.effects) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;
         renderer->drawFrame(cam, {w, h}, fo);
@@ -2044,6 +2047,14 @@ int main(int argc, char** argv) {
                          (unsigned long long)world->stateHash(), effects.system.particleCount());
             std::fprintf(stderr, "ou-game: %s\n",
                          ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays).c_str());
+            if (!frameMs.empty()) { // wall time per frame (ticks + draw), use with --no-vsync --render-hz 60
+                double sum = 0;
+                for (const double t : frameMs) sum += t;
+                auto sorted = frameMs;
+                std::sort(sorted.begin(), sorted.end());
+                std::fprintf(stderr, "ou-game: frame time mean %.3f ms p95 %.3f ms (%zu frames)\n", sum / double(sorted.size()),
+                             sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)], sorted.size());
+            }
             if (!opt.screenshot.empty()) {
                 if (!writePpm(opt.screenshot, renderer->readBackbuffer({w, h}))) {
                     std::fprintf(stderr, "ou-game: cannot write %s\n", opt.screenshot.string().c_str());

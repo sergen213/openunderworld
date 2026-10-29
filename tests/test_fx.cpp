@@ -553,3 +553,40 @@ TEST(FxReal, RewardPickupFadesOut) {
         EXPECT_FLOAT_EQ(s.fade(1), 1.0f) << name;
     }
 }
+
+// Lara's four arm / leg ribbons are on her object list's events 50 / 80 (stopped by 51 / 81), which tru.exe never
+// fires (0x5BA000 runs only events 0, 9..0xE, 0x2E / 0x2F, 0x30, 0x77, 0x78 / 0x79): her birth starts none.
+// With visuals off (ou-game --fx off) nothing starts at all.
+TEST(FxReal, LaraRibbonsAreOnUnfiredEventsAndVisualsOffStartsNothing) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto lara = load(bf, "lara");
+    ASSERT_TRUE(lara);
+    int ribbons = 0;
+    for (const auto& e : lara->events)
+        if (e.effect() && e.cmd.type == 5) {
+            EXPECT_TRUE(e.event == 50 || e.event == 80) << int(e.event);
+            ++ribbons;
+        }
+    EXPECT_EQ(ribbons, 8);
+    const auto fx = std::make_shared<const fx::ObjectFx>(*lara);
+    fx::System s;
+    s.startBirth(fx, glm::mat4(1), 1);
+    s.track(1, glm::mat4(1), {});
+    s.tick({0, 0, 0});
+    EXPECT_EQ(s.ribbonCount(), 0u);
+    EXPECT_GT(s.emitterCount() + s.glowCount(), 0u); // the birth's own particles run
+
+    const auto gun = load(bf, "wp_handgun");
+    ASSERT_TRUE(gun);
+    const auto g = std::make_shared<const fx::ObjectFx>(*gun);
+    fx::System off;
+    off.visuals = false;
+    int sounds = 0;
+    off.sound = [&](const fx::ObjectFx&, const fx::Event&, glm::vec3, uint8_t) { ++sounds; };
+    off.startBirth(fx, glm::mat4(1), 1);
+    off.play(g, *g->clip("fire"), glm::mat4(1), -1, 0, glm::vec3(0, 1000, 0));
+    for (int t = 0; t < 4; ++t) off.tick({0, 0, 0});
+    EXPECT_EQ(off.emitterCount() + off.particleCount() + off.glowCount() + off.boltCount() + off.ribbonCount() + off.filterCount(), 0u);
+    EXPECT_GT(sounds, 0); // the fire clip's sound record still plays
+}

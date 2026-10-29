@@ -560,6 +560,7 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
     // a2 = segment (0xFF: the record's own), a3 = second segment (0x547B40). At birth particles / glows / lights /
     // ribbons / lightning need their record's birth bit (0x543F70 +4 & 1, 0x536B70 +0 & 1, 0x546710 +0x11 & 1,
     // 0x545810 +1 & 1, 0x537230 +0x4C & 1).
+    if (!visuals && c.type != 0x21 && c.type != 0x22) return false; // --fx off: instance fades (pickups vanishing) stay
     const int16_t seg = int16_t(c.a2 == 0xFF ? 0 : c.a2);
     auto particle = [&](int i, int16_t s, int16_t s2) {
         return size_t(i) < fx->particles.size() && (!birth || fx->particles[size_t(i)].flags4 & 1) && start(fx, i, world, owner, s, s2, bones);
@@ -630,7 +631,7 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
 
 int System::startPointSet(const PointSet& set, const glm::mat4& world, int32_t owner) {
     int n = 0;
-    if (!set.fx) return 0;
+    if (!set.fx || !visuals) return 0;
     // 0x53F430 -> 0x53F200: an instance of the particle object with the points as segments 1.., at their mean (segment
     // 0), plays the list as an event sequence (0x535EB0, not a birth: no birth bits).
     for (const auto& e : set.events)

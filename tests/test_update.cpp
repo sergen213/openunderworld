@@ -483,6 +483,10 @@ TEST(Config, GraphicsPresets) {
     EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--water-detail", "high"));
     EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--shafts", "off"));
     EXPECT_EQ(flags.lightShafts, std::optional<bool>(false));
+    EXPECT_TRUE(ou::config::resolve(flags).effects); // the original effects default on
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--fx", "off"));
+    EXPECT_FALSE(ou::config::resolve(flags).effects);
+    EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--fx", "no"), std::runtime_error);
 }
 
 TEST(Config, WaterQuality) {

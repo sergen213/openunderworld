@@ -327,6 +327,7 @@ public:
     // stops adding quads (its quads fade on).
     void track(int32_t owner, const glm::mat4& world, std::span<const glm::mat4> bones);
     std::function<void(const ObjectFx&, const Event&, glm::vec3 position, uint8_t material)> sound;
+    bool visuals = true; // false (ou-game --fx off): commands start nothing but instance fades; sequences run for `sound`
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     bool hasOwner(int32_t owner) const;
     void clear();
