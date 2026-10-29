@@ -225,6 +225,13 @@ Survey (82 units, `scratch/portalsurvey.py`) [O]:
 - Rendering (`ou-game`): each loaded unit's level scene, moved by its offset, is re-uploaded when the unit set
   changes. Unit music stays the start unit's. Script objects follow the unit set (src/script).
 
+### Unit script
+
+- [O] Level+0x70 DTP +0x1C0 = the unit script's type id (type-8 section of the unit DRM, super type 4 `NsUnit` chain):
+  14/14 units checked (l3_main_bedroom 12059, l1_seafloor 5277, l2_cliffclimb 9502, ...). It has a state table;
+  ours creates it with the unit and runs state 0 as its own thread (`unitref.Get` returns it), ending it when the
+  unit streams out [I: created after the unit's intros].
+
 ### Verification
 
 - [O] `StreamReal.PoolToRagnarokOnFootThenSaveLoad`:

@@ -713,6 +713,7 @@ TEST(ScriptRealData, MessageChannelSendsReachNativeSubscribers) {
     r.setBigfile(&bf);
     size_t messages = 0;
     r.setMessageNative([&](uint32_t channel, uint32_t id, std::string_view payload) {
+        if (payload != "stopOthers") return true; // unit scripts also send their level's music/stream names ("l0")
         EXPECT_NE(channel, 0u);
         EXPECT_EQ(id, 0u);
         EXPECT_EQ(payload, "stopOthers");
@@ -1071,4 +1072,21 @@ TEST(ScriptRealData, ThorGearDrawGroups) {
     r.restore(nlohmann::json::object()); // chapter start without a save
     EXPECT_EQ(r.playerHiddenGroups(), kGear);
     EXPECT_TRUE(r.playerObjects().empty());
+}
+
+// Help on demand: a unit's trigger volume passes "hint_NN" to its unit script (l1_seafloor volume 972 OnFirstIn ->
+// unitref.Get -> unit script 5277 vt 26 stores it in member +228); the unit script itself starts with its unit.
+TEST(ScriptRealData, SeafloorVolumeSetsHelpCondition) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    Runtime r;
+    r.setBigfile(&bf);
+    r.setUnits({{"l1_seafloor", std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l1_seafloor.drm"))), {}}});
+    EXPECT_EQ(r.helpCondition(), "");
+    const Object* v = r.find(972);
+    ASSERT_TRUE(v);
+    r.tick(at(v->pos));
+    EXPECT_TRUE(r.find(972)->inside);
+    EXPECT_EQ(r.helpCondition(), "hint_05");
 }

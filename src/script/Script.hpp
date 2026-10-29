@@ -63,6 +63,7 @@ struct Function {
     int16_t vtIndex = -1; // prototype vtable slot; -1 = not virtual
     cdc::Pointer proto{}; // its prototype (CALLn operands point at prototypes)
     uint16_t argCount = 0, localCount = 0;
+    std::vector<Member> locals; // +0x0C: DataMember records (offset = byte offset in the frame, init = initial value)
     // Byte offset of each argument in the callee's locals (prototype +0x0C: 0x14-byte records, u16 +0x0C). Arguments
     // start at 0 in declaration order with their own sizes (natla_end_mover 19053 vt 0: native 20 bytes, int @20,
     // string @24); there is no `this` local.
@@ -149,6 +150,7 @@ struct Object {
     int state = 0;          // Door: 0 closed, 1 opening, 2 open; Switch: 0 idle, 1 pulling, 2 used
     double t = 0;           // seconds into the current clip
     bool inside = false, firstIn = false;
+    bool tracksLara = false; // triggervolumebase Add(Lara): her enter/exit also call prototypes 10/11 (vt 58/59)
     vec3 offset{0};         // Block displacement
     glm::mat4 body{1};      // Door: model-space rigid transform set by src/physics (physics doors), identity = at rest
     bool hidden = false;    // instance.fn60 visibility; saved
@@ -314,6 +316,7 @@ private:
     std::vector<Object> objects_;
     std::map<std::pair<const vm::Program*, uint32_t>, std::shared_ptr<vm::Instance>> auxiliary_; // unit/global scripts
     int32_t nextAuxiliaryUid_ = -1;
+    std::map<std::string, std::pair<const vm::Program*, uint32_t>> unitScripts_; // unit -> its NsUnit script instance key
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;
     uint64_t visibilityVersion_ = 0;

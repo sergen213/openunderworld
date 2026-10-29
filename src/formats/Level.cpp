@@ -328,6 +328,7 @@ Unit parseUnit(const cdc::Drm& d) {
         if (e.fogFar == 0) e.fogFar = rs.at<float>(o + 0x38);
         e.valid = true;
         u.playerObjectId = rs.at<uint16_t>(o + 0x294);
+        u.scriptId = rs.at<uint32_t>(o + 0x1C0);
         if (const auto f = rs.ptrs.find(o + 0x2B4); f != rs.ptrs.end())
             u.flashlightSpot = View(d, f->second.section).at<uint8_t>(f->second.offset + 0x0A) != 0;
     }

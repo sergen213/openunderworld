@@ -154,6 +154,13 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   version the streamed render scene so disabled unit lights are removed and re-enabled lights return.
   Collections, arrays/maps, object construction, other thread/PSEQ fibers and most native types
   are not implemented.
+- [O] Function local records (+0x0C, DataMember like members, DXHR `cdc::Function::m_locals`) carry initial values;
+  ours applies those of `symbol` locals (property names, e.g. 10814). PUSHL32 of a local holding a string keeps it a
+  string (unit hint handlers compare/store their argument). `instanceref` natives accept a ref held as an object value
+  (`instance` 14/15 return the intro id, 0x4AB400). `uiexperienceadjustmentmenu` 0–18 read 0 (fns 13–18 read the
+  options block [0xC59264]+0x3EF94..; no such menu in ours) [I]. [O] The exe's CALL2/CALL3 (cases 0x66/0x67 of
+  0x57CE50) look the callee up by vtable slot (virtual on `this`); ours keeps them direct because the virtual form
+  stops l3 switch 4525 at a null CALL5 (test BedroomSwitchOpensHouseDoor) [U].
 - cdcEngineDXHR/cdcScript/ByteCodeEnum.h supplies the opcode numbering; no interpreter exists in the research
   clones. No Wine process is needed for this implementation.
 - [O] Interpreter details read from 0x57CE50 (switch on opcode − 1): **SLEEP 0x7C** pops nothing and yields until

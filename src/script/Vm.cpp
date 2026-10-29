@@ -169,6 +169,13 @@ bool Machine::push(Instance& object, const Function& f, std::span<const Value> a
     fr.object = &object; fr.function = &f;
     fr.locals.resize(std::max<uint32_t>(f.localCount, 1));
     if (!f.argCount) fr.locals[0] = Value::object(object.uid); // no argument occupies offset 0 (missing ones read 0)
+    // `symbol` locals start at their declared value (function local records, DXHR cdc::Function +0x0C): the property
+    // names passed to instanceref Get/SetProperty, e.g. l3_main_bedroom 12059 vt 28 local +5 = 10814.
+    for (const Member& l : f.locals)
+        if (l.init && !std::strcmp(object.program->nativeName(l.typeId), "symbol")) {
+            if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
+            fr.locals[l.offset] = Value::scalar(*l.init);
+        }
     for (size_t i = 0; i < args.size(); ++i) { // locals are addressed by byte offset; arguments start at 0
         const size_t off = i < f.argOffsets.size() ? f.argOffsets[i] : 4 * i;
         if (off >= fr.locals.size()) fr.locals.resize(off + 1);
@@ -354,7 +361,12 @@ Machine::Step Machine::step() {
         }
         case 0x06: pushLocal(arg, 0xFF); ++pc; break;
         case 0x07: pushLocal(arg, 0xFFFF); ++pc; break;
-        case 0x08: pushLocal(arg); ++pc; break;
+        case 0x08: { // PUSHL32; a string argument stays a string (unit hint handlers compare and store it: EQC / MOVEC)
+            const Value v = read(local(frames_.size() - 1, arg));
+            if (v.kind == Value::Kind::Constant) fr.stack.push_back(v);
+            else pushLocal(arg);
+            ++pc; break;
+        }
         case 0x0A: {
             if (arg < fr.locals.size()) fr.stack.push_back(fr.locals[arg]);
             else pushScalar(0);

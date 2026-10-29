@@ -136,10 +136,8 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
     }
 
     // Members: 0x14-byte DataMember {DataType {u8 type, ..., +8 type ref or Compound*}, u16 offset, u16 name, init*}.
-    const auto [mp, mn] = views.array(s, 0x2C);
-    for (uint32_t k = 0; k < mn; ++k) {
-        const View& v = views[mp.section];
-        const uint32_t b = mp.offset + 0x14 * k;
+    // Function locals use the same record (DXHR cdc::Function +0x0C m_locals).
+    auto dataMember = [&](const View& v, uint32_t b) {
         Member m;
         m.type = v.at<uint8_t>(b);
         if (m.type & 0x80) { // Compound {A ref, DataType* B}
@@ -171,8 +169,10 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
             m.init = v.at<uint32_t>(b + 0x10); // BOOL/INT/FLOAT: the value itself (lara.drm 205 +40 = 10) [O]
             m.inlineInit = true;
         }
-        t.members.push_back(m);
-    }
+        return m;
+    };
+    const auto [mp, mn] = views.array(s, 0x2C);
+    for (uint32_t k = 0; k < mn; ++k) t.members.push_back(dataMember(views[mp.section], mp.offset + 0x14 * k));
     // Prototypes: 0x1C bytes, +6 = i16 vtIndex (NsDispatcherBase bind 0x7B3E60 reads entries 7/8 by index).
     if (const auto [pp, pn] = views.array(s, 0x34); pn)
         for (uint32_t k = 0; k < pn; ++k) t.prototypes.push_back(views[pp.section].at<int16_t>(pp.offset + 0x1C * k + 6));
@@ -185,7 +185,9 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
         Function f;
         f.self = {fp.section, b};
         f.native = (v.at<uint8_t>(b + 4) & 1) != 0;
-        f.localCount = views.array(v, b + 0x0C).second;
+        const auto [lp, ln] = views.array(v, b + 0x0C);
+        f.localCount = ln;
+        for (uint32_t l = 0; l < ln; ++l) f.locals.push_back(dataMember(views[lp.section], lp.offset + 0x14 * l));
         if (const auto pp = v.ptr(b)) {
             f.proto = *pp;
             const View& pv = views[pp->section];
@@ -416,6 +418,14 @@ void Runtime::setUnits(const std::vector<UnitRef>& units) {
         if (auto s = stateOf(o); !s.is_null()) stash_[std::to_string(o.uid)] = std::move(s); // kept for streaming back
         return true;
     });
+    for (auto it = unitScripts_.begin(); it != unitScripts_.end();) { // streamed out: the unit script ends with its unit
+        if (std::any_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == it->first; })) { ++it; continue; }
+        if (const auto a = auxiliary_.find(it->second); a != auxiliary_.end()) {
+            std::erase_if(threads_, [&](const auto& t) { return t.first == a->second->uid; });
+            auxiliary_.erase(a);
+        }
+        it = unitScripts_.erase(it);
+    }
     for (const auto& u : units)
         if (std::none_of(objects_.begin(), objects_.end(), [&](const Object& o) { return o.unit == u.name; })) addUnit(u);
 }
@@ -525,6 +535,17 @@ void Runtime::addUnit(const UnitRef& u) {
         fire(EventKind::Start, objects_[i]);
         objects_[i].mainPending = true;
         fire(EventKind::Main, objects_[i]);
+    }
+    // The unit script (Level+0x70 DTP +0x1C0, an NsUnit type; LEVELS.md "Unit script") is created with its unit and
+    // enters state 0 as its own thread (e.g. l3_main_bedroom: Run, then the hint_01 help condition via vt 28).
+    // unitref.Get returns the same instance. [I: started after the unit's intros so its instancerefs resolve]
+    if (const Function* f = program->type(unit.scriptId) ? program->startup(unit.scriptId) : nullptr) {
+        const auto self = auxiliaryInstance(program, unit.scriptId);
+        unitScripts_[u.name] = {program.get(), unit.scriptId};
+        const auto thread = makeMachine(self->uid);
+        if (!thread->start(*self, *f)) recordFailure(self->uid, u.name + " unit script", *thread);
+        if (thread->active()) threads_.push_back({self->uid, thread});
+        adopt(thread);
     }
 }
 
@@ -759,12 +780,16 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // stays on the camera [U: the blend].
             if (!std::strcmp(name, "microphone") && nc.function >= 1 && nc.function <= 7) return true;
             // Receiver-independent bindings whose side effects other engine systems own (sound: below, once bound).
-            for (const char* passive : {"soundgroup", "music", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect"})
+            // reverb 1 (0x4AA750 -> 0x582B70) copies its 13 settings words into the audio environment: our mixer has no
+            // reverb, so it is passive too.
+            for (const char* passive : {"soundgroup", "music", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect", "reverb"})
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
             // Receivers: a member address (object uid + offset), an object, or a native value held in a local.
             auto self = resolve(nc.receiver.uid);
-            const bool inLocal = nc.receiver.kind == vm::Value::Kind::Scalar;
-            uint32_t localValue = nc.receiver.bits;
+            // An instanceref held in a local may also be an object value (instance 14/15 GetInstanceRef results).
+            const bool refObject = nc.receiver.kind == vm::Value::Kind::Object && !std::strcmp(name, "instanceref");
+            const bool inLocal = nc.receiver.kind == vm::Value::Kind::Scalar || refObject;
+            uint32_t localValue = refObject ? uint32_t(nc.receiver.uid) : nc.receiver.bits;
             if (inLocal && !std::strcmp(name, "instanceref")) {
                 auto target = resolve(int32_t(localValue));
                 if (nc.function == 7 && nc.args.empty()) { // Get: null when unbound (0x4AC070)
@@ -835,7 +860,9 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                     const auto holder = resolve(a.uid);
                     uid = holder ? int32_t(holder->fields[a.offset]) : 0;
                 }
-                return uid == 0 || (playerScript_ && uid == playerScript_->uid);
+                if (uid != 0 && !(playerScript_ && uid == playerScript_->uid)) return false;
+                if (Object* o = uid ? findMut(self->uid) : nullptr) o->tracksLara = nc.function == 0;
+                return true;
             }
             if (!std::strcmp(name, "markup") && (nc.function == 0 || nc.function == 1) && markup_) {
                 const Member* m = program->member(self->typeId, off);
@@ -919,6 +946,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const Member* m = program->member(self->typeId, off);
                 if (!m || !m->argTypeId) return false;
                 nc.result = vm::Value::object(auxiliary(program, m->argTypeId)->uid);
+                return true;
+            }
+            // Experience-adjustment settings (registration 0x7AEDE0; fns 13-18 read the options block at
+            // [0xC59264]+0x3EF94..0x3EFAC, e.g. fn 17 -> +0x3EFAC that unit Run() compares with 2 "master
+            // survivalist"). We have no such menu: every setting reads 0 [I: the defaults].
+            if (!std::strcmp(name, "uiexperienceadjustmentmenu")) {
+                nc.result = vm::Value::scalar(0);
                 return true;
             }
             if (!std::strcmp(name, "checkpointbase") && nc.function == 3 && nc.args.empty()) {
@@ -1313,9 +1347,13 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
                 if (!o.firstIn) o.firstIn = true, fire(EventKind::FirstIn, o);
                 o.inside = true;
                 fire(EventKind::In, o);
+                // A tracked instance entering (0x5CD520 -> 0x5C8A40): Lara calls prototype 10 (vt 58) with reason 1
+                // [I: 2/3 = the first update / teleport cases, not distinguished]; soundvolumes set music variable 0x7D.
+                if (o.tracksLara) callback(o.uid, "triggervolumebase", 10, std::array{vm::Value::scalar(1)});
             } else if (!now && o.inside) { // Exit (vt 55)
                 o.inside = false;
                 fire(EventKind::Out, o);
+                if (o.tracksLara) callback(o.uid, "triggervolumebase", 11, std::array{vm::Value::scalar(1)});
             }
             break;
         }

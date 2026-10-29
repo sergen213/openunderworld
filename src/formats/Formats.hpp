@@ -180,6 +180,8 @@ struct Unit {
     // Level+0x70 DTP +0x2B4 -> byte +0x0A: the personal light also turns on its spot ("Both" mode) in this unit, else
     // only its omni light (tru.exe 0x5D3FF0 -> 0x698890 flag 0xED00AA, read by 0x6B17C0). docs/GAMEPLAY.md "Flashlight".
     bool flashlightSpot = false;
+    // Level+0x70 DTP +0x1C0: the unit script's type id (a type-8 section of the unit DRM), 0 = none. docs/formats/LEVELS.md "Unit script".
+    uint32_t scriptId = 0;
 };
 // Point/spot light from a light DTP (section `dtpIndex`): type, DTP radius, cone, near width, falloff curve, flicker,
 // shadow flag, colour = DTP intensity (+0x08) x rgb (+0x18) (LEVELS.md "Lights"); position/direction 0. nullopt for

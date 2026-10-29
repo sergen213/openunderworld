@@ -480,7 +480,13 @@ fn 1–4 (3D at the anchor intro) and stops on 5; the wait threads are not model
 
 `gamebase` natives 4/5/6/7 (thunks 0x797C10–0x797C70) call 0x4A3E00/10/30/50 = get / set / add / subtract on the
 music-variable array 0xCCB560 (§5.3). `script::Runtime::gameValues()` is that array; ou-game's `Music` sequencer
-reads it directly and logs every change (`music var 0xNN a -> b`). No idle replay so far changed one [O].
+reads it directly and logs every change (`music var 0xNN a -> b`). **Writers [V-data, V-exe]:** soundvolume scripts
+(soundvolume.drm 3485: state 0 adds Lara to the volume with `triggervolumebase` 0, `instance` 15 = her intro id) get
+`triggervolumebase` prototype 10 (vt 58, reason 1) when she enters and 11 (vt 59) when she leaves (0x5CD520 ->
+0x5C8A40); their vt 58 sets `0x7D` (gamebase 5, 0x7D, n; 384 volumes in the 82 units, values 0–19) and calls
+`reverb` 1 / `music` 2–3 (bus fades, passive in ours). `0x7B` is set by 28 scripted objects (l7 Yggdrasil vt 63/64,
+cinematic helpers), `0x0D` by the shared type 6516 vt 11/14. Replay `tests/replays/pool_to_ragnarok.txt`: tick 101
+enter soundvolume 5674 -> `music var 0x7D 0 -> 8` [O, log]. Unit music still switches by unit (§9.6).
 
 ### 9.5 Voice lines with subtitles = help on demand [V-data]
 
@@ -488,12 +494,16 @@ Only the generalbank `sc_CC_NN_hint|answer` lines carry subtitles among gameplay
 kraken and merc lines have none). generalbank script 201 (a `uiscreen`, "HelpOnDemandStrLib") holds them as 518
 sound members; the PDA strings are locals 168 "Hint" / 169 "Answer". Units send the current condition as a string:
 trigger volumes' OnFirstIn (vt 72) call the unit script's vt 28 with `"hint_NN"`, which stores it in a string member
-(l3_main_bedroom type 12059 +168) behind a gate on an `instanceref` (there: a `dispatcher` in l3_main_hall).
+(l3_main_bedroom type 12059 +168) behind a gate on an `instanceref` property (bedroom: symbol 10814 of dispatcher
+4086, set by l3_secretchamber). The handler's slot varies by unit (seafloor vt 26 +228, bedroom vt 28, cliffclimb vt 25
+shows tutorial popups instead); only 7 units store a condition. The unit script itself is the Level+0x70 DTP +0x1C0 type
+(LEVELS.md "Unit script") and starts with its unit.
 ou-game: T / Y (bindable `hint`/`answer`, keys ours [I]) play `vo\lara\sc_0<level>_<NN>_hint|answer` for
-`Runtime::helpCondition()` [I: CC = the unit's level digit; sc_04_01 = "Mayan Ball Court" fits l4]. In the replays
-tried (bedroom spawn, bedroom hint volume 4472, l3_main_hall, l4_ballcourt, l2_cliffclimb, l1_seafloor) the
-condition stayed empty: the unit vt 28 gate and the unit startup function (non-virtual, sets `hint_01`) do not
-pass/run yet [U].
+`Runtime::helpCondition()` [I: CC = the unit's level digit; sc_04_01 = "Mayan Ball Court" fits l4]. Verified
+(test `ScriptRealData.SeafloorVolumeSetsHelpCondition`; replay `--level l1_seafloor --spawn 7857,-805,-3402,0`, T at
+1 s): tick 1 `help condition hint_05`, T -> `voice vo\lara\sc_01_05_hint "The other two ornate disks are missing
+axles."` with the subtitle on screen, Y -> sc_01_05_answer [O]. The bedroom gate stays closed until its property is
+set (properties are per caller member in ours, global per target uid + symbol in the exe, 0x4B0690 [U: cross-object]).
 
 ### 9.6 ou-game
 
