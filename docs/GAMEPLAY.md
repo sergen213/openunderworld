@@ -825,6 +825,41 @@ menus with `forward`/`right` ±1, `jump`/`interact` (accept), `drop`/`pause` (ba
 The original's attract mode (intro.bik after ~1 min idle) and title music are not reproduced; the footer always names the
 keyboard key.
 
+**Original UI reference (2026-10-28)** [O captures, not yet implemented in ours]: tru.exe captures at 1920×1080 (and
+HUD at 1024×768) in openunderworld-work/screens/ui (`hud_weapon_*`, `hud_dpad_*`, `pause_*`, `game_options_1080`,
+`av_1080`, `av_volume_1080`, `load_game_1080`, `save_game_1080`, `panel_player_tailoring_1080`, `pda_*_1080`,
+`loading_1080`). Under Wine the paused game applies key presses several seconds late; wait ~4 s between keys.
+- Default keys [O]: R draws weapons (shows the HEALTH and WEAPONS groups), Q/F show the GEAR d-pad, 1 opens the PDA,
+  Esc pauses.
+- Pause [O]: the main menu's ring (124 START NEW GAME, 125, 126, 127, 128, 129, 131 QUIT GAME) with 122 RESUME GAME in
+  the centre; no PDA item. New Game first opens a PLAYER TAILORING list panel (CASUAL EXPLORER / TOMB RAIDER / MASTER
+  SURVIVALIST). LOAD/SAVE GAME keep the ring and add a mirrored ring on the right: arrow 27, four slot discs (29 empty
+  page), arrow 28; the opened item gets a white circle; footer `Return SELECT` left, `BackSpace DELETE` right.
+- HUD anchoring [O, both resolutions]: origin = (5 % W, 5 % H), 1 virtual unit = H/480, art 2/3 virtual per texel.
+  HEALTH group top-left: panel 78 at (−4.4, −2.7); silhouette 75 at (9.8, −2.7) tinted by health band (green
+  0,255,0 when full; bands 2000/1500/1000/500 from generalbank HUD script strings "Player health is between …");
+  bar 77 at (9.3, 16.4) over a green fill (x 15.6–22.7) = the adrenaline bar, which the script also uses as the breath
+  bar ("Showing adrenaline bar as breathbar"); mask 76 at (37.3, −2.7) over a yellow (255,255,0) fill = health meter
+  [I mapping]; weapon icon (96 pistols, 98 uzi, 99 shotgun, 100 rifle, 102 speargun [I]) at (61.8, −2.7); ammo pips
+  (8×8 textures 83–85, ~4 v) in rows at y 36.9 / 43.6 from x 64.4 every 6 v, 12 per row; magazine icons 81/82 at
+  y 52 from x 61.8 every 12 v. GEAR group bottom-left: cross centre (101.8, −71.6) from (5 % W, 95 % H), items at
+  ~0.47 v/texel: up 92 health packs with a count box, left 93 flashlight, right 94 weapon switch, down 95.
+- List screens (GAME OPTIONS, AUDIO/VISUAL, VOLUME SETTINGS), 4:3-centred virtual: icon (2/3 texel) centred
+  (191, 88), white divider x 220 y 73–104, title line 1 white at x 226.7 (font scale ~0.95), line 2 (110,165,200) at
+  x 262 (~0.67); white line 105 at y 110, centre 320, width 409; black panel solid ±125 v fading to ±181 v; rows 24 v
+  apart, labels scale ~0.57 at x 152–165, selected white, others (129,130,131); selection bar (23,69,97) 15.5 v tall,
+  centred, ~435 v wide with ~110 v fades; slider frame (5,50,80), fill (185,230,255), x 322.7–461.3, 7 v tall.
+- PDA [O]: pc-w\image\pda_bg_1280 (960 for 4:3, screen shifted −162 px) fitted to the window height; left items
+  1074/1075/1076/1077/1078 then 1081/1082 greyed and RESUME GAME, right-aligned at bg x 504, from y 178.7 every 43.3;
+  picture windows = g_pda.drm textures 680 + chapter (AREA INFO), 688 sonar, 689 weapons, 690 inventory, at bg
+  (544, 166) at 1 px/texel; RELICS/TREASURES `found/total` at bg y 450/485.
+- Loading screen [O]: pc-w\image\loading_bg_<area> full screen, darkened to ~0.31 outside the band and ~0.92 inside
+  (band edges at y 200/878 of 1080), chapter title (51 prologue, 52–58) at font scale ~1.2 centred at y ~220 v, the
+  description (59–66) below at ~0.45 in 13 v lines. `!WAR` pixels are B,G,R,A bytes (the PDA bezel is blue only when
+  decoded so).
+- Subtitles [V-exe, TEXT.md §4]: game font scale 0.6 at virtual y 352/374. Pickup toasts, "Save Successful", chapter
+  title animation, reticles and the air bar were not captured [U].
+
 **Music** (docs/formats/AUDIO.md §5): one track, `pc-w\music\<name>\<name>.mul` with its `.mus` sequencer setting the
 stem gains every tick (variables all 0: writers of e.g. 0x7D are [U]). The track changes (2 s crossfade) when the current
 unit has a `<unit>_mus_01` track [I naming] and when Lara enters a volume whose intro script names a track
