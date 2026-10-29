@@ -162,7 +162,11 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   +0x3E; inherited from the nearest super type that has one) as the object's new thread. Ours: in place when the
   machine belongs to that object, else as a separate runtime thread beside the caller, which resumes at once; the
   object's other threads end. Each event now runs as its own thread (a sleeping earlier handler keeps running).
-  State 0 (entered by Run) is not used as the startup function: doing so stops the l2 elevator chain [U]. PUSHM*/PUSHMA
+  State 0 (entered by Run) is the startup function when the type has a state table (`Program::startup`); the older
+  "function 0 with slot −1/20" rule remains for types without one. The old rule had run the l2 elevator switch's vt 20
+  at construction (elevator moved without a pull); a switch Use now calls vt 20 (argument 0) when the script overrides
+  vt 20 below the type defining vt 55 [I: state value] (switch base 3637: vt 20 dispatches state m+16 → vt 54,
+  m+20 → vt 55; those members are set natively [U]). Startup now reaches l2 `sa_uo_naga_statue` 2794's `instance` 21 (unbound). PUSHM*/PUSHMA
   on a null object push 0 and MOVE through a null address is skipped (no failure). Native receivers held in a
   local (e.g. `PUSHLA 0` for `this`) are dereferenced before the call.
 - [O] Native function tables: each `*_ScriptType` vtable slot 3 is a bind function calling `FUN_005768f0(index,

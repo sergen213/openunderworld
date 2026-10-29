@@ -533,8 +533,19 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
     case EventKind::In: vt = kVtOnIn; break;
     case EventKind::Out: vt = kVtOnOut; break;
     case EventKind::Cross: vt = kVtPlaneCross; break;
-    case EventKind::Use: vt = contains(o.name, "phole_lever") ? kVtLeverMoved : kVtSwitchUsed; break;
-    case EventKind::Start: vt = -2; break; // StartObject invokes the first function, not a fixed virtual slot
+    case EventKind::Use:
+        vt = contains(o.name, "phole_lever") ? kVtLeverMoved : kVtSwitchUsed;
+        // Switch bases (e.g. 3637) receive the state change in vt 20 and dispatch the used state to vt 55; a script that
+        // overrides vt 20 below the vt 55 definer handles the use there with state 0 (l2 elevator switch 10112: vt20(0)
+        // -> STATE 1 -> the elevator) [I: the state value; our machines start with zeroed arguments].
+        if (vt == kVtSwitchUsed && o.script && o.script->program)
+            for (const ScriptType* t = o.script->program->type(o.script->typeId); t; t = o.script->program->type(t->superId)) {
+                const auto has = [&](int16_t slot) { return std::ranges::any_of(t->functions, [&](const auto& f) { return f.vtIndex == slot; }); };
+                if (has(kVtSwitchUsed)) break;
+                if (has(20)) { vt = 20; break; }
+            }
+        break;
+    case EventKind::Start: vt = -2; break; // StartObject enters state 0 (Program::startup)
     case EventKind::Main: vt = -3; break;  // function 2 is the object's main/polling script
     case EventKind::CinematicEnd: vt = -1; break; // non-virtual post-stream helper
     default: return;

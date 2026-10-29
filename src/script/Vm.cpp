@@ -68,7 +68,9 @@ const Function* Program::state(uint32_t typeId, uint32_t n) const {
         if (!t->states.empty()) return n < t->states.size() ? method(t->states[n]) : nullptr;
     return nullptr;
 }
+// StartObject: Run enters state 0 of the type's state table (0x57B560); types without a table keep the older rule.
 const Function* Program::startup(uint32_t typeId) const {
+    if (const Function* s = state(typeId, 0)) return s;
     for (const ScriptType* t = type(typeId); t; t = type(t->superId))
         if (!t->functions.empty())
             return t->functions.front().vtIndex == -1 || t->functions.front().vtIndex == 20 ? &t->functions.front() : nullptr;

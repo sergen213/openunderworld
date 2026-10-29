@@ -138,6 +138,7 @@ in vec2 vUv;
 layout(location = 0) uniform int uFxaa;
 layout(location = 1) uniform int uHdr;
 layout(location = 2) uniform float uBrightness; // display gamma (1 = neutral), as the original's brightness option
+layout(location = 3) uniform float uFade;       // FrameOptions::screenFade (1 = black)
 layout(binding = 0) uniform sampler2D uScene;
 out vec4 oColor;
 vec3 fetch(vec2 uv) {
@@ -165,7 +166,7 @@ vec3 fxaa(vec2 uv) { // classic FXAA (Lottes), edge direction from 4 diagonal ta
 const char* kPostFsMain = R"(
 void main() {
     vec3 c = pow(uFxaa != 0 ? fxaa(vUv) : fetch(vUv), vec3(1.0 / uBrightness));
-    oColor = vec4(ouUnderwater(ouAtmosphere(c, vUv), vUv), 1.0);
+    oColor = vec4(ouUnderwater(ouAtmosphere(c, vUv), vUv) * (1.0 - uFade), 1.0);
 })";
 
 
@@ -284,6 +285,8 @@ struct Targets {
     // Enhanced water: single-sample copies of the opaque scene (refraction, absorption, reflections,
     // underwater fog). Blitted after the opaque/blended pass, before the water surfaces draw.
     Texture opaqueColor, opaqueDepth;
+    // original::screenSamplers per submesh: low 16 bits back buffer, high 16 depth buffer (drawn after the opaque copies).
+    std::vector<uint32_t> screenSamplers;
     Framebuffer opaqueColorFbo, opaqueDepthFbo;
 };
 
@@ -556,6 +559,7 @@ public:
                 continue;
             }
             glUniform1f(3, s.alphaRef / 255.0f);
+        deferred_.clear();
             drawSubmesh(s);
         }
         setBlend(int(scene::Blend::Opaque));
@@ -574,6 +578,10 @@ public:
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glUseProgram(r.postProgram.get());
+                if (m.screenSamplers[d.sub]) { // reads the scene drawn so far: after the loop, from the copies
+                    deferred_.push_back(d);
+                    continue;
+                }
         glUniform1i(0, options.fxaa ? 1 : 0);
         glUniform1i(1, options.hdr ? 1 : 0);
         glUniform1f(2, options.brightness);
@@ -587,6 +595,7 @@ public:
     // (Re)creates the texture on a size change and uploads when the version changes; empty images keep the old one.
     static void upload(Resources::Streamed& s, const RgbaImage& img) {
         if (img.rgba.empty()) return;
+        if (originals && !deferred_.empty()) drawScreenReaders(vp);
         if (s.width != img.width || s.height != img.height) {
             s.tex = newTexture();
             glTextureStorage2D(s.tex.get(), 1, GL_RGBA8, img.width, img.height);
@@ -607,6 +616,7 @@ public:
         Image img{vp.width, vp.height, std::vector<uint8_t>(size_t(vp.width) * vp.height * 3)};
         std::vector<uint8_t> raw(img.rgb.size());
         glReadBuffer(GL_BACK);
+        glUniform1f(3, std::clamp(options.screenFade, 0.0f, 1.0f));
         glReadPixels(0, 0, vp.width, vp.height, GL_RGB, GL_UNSIGNED_BYTE, raw.data());
         size_t row = size_t(vp.width) * 3;
         for (int y = 0; y < vp.height; ++y) // GL origin is bottom-left
@@ -893,6 +903,7 @@ private:
         Resources& r = *res_;
         r.materialUbo = {};
         r.objectUbo = {};
+        g.screenSamplers.push_back(0);
         if (materialBlocks_.empty()) return;
         r.materialUbo = newBuffer();
         glNamedBufferStorage(r.materialUbo.get(), GLsizeiptr(materialBlocks_.size()), materialBlocks_.data(), 0);
@@ -913,7 +924,39 @@ private:
             original::fillObject(*reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * size_t(objectStride())]), vpD3D, r.meshes[i].model,
                                  original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius));
         if (r.objectUbo.get())
+        g.screenSamplers.back() = original::screenSamplers(mat, s.instanceTextures, prog.psGlsl.readsDepth);
             glNamedBufferSubData(r.objectUbo.get(), 0, GLsizeiptr(objectScratch_.size()), objectScratch_.data());
+
+    // Submeshes whose materials sample the back / depth buffer (original::screenSamplers; the sea): copy the scene drawn
+    // so far into the single-sample textures, then draw them in draw order with those bound.
+    void drawScreenReaders(Viewport vp) {
+        Resources& r = *res_;
+        Targets& t = r.targets;
+        glBlitNamedFramebuffer(t.scene.get(), t.opaqueColorFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
+                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBlitNamedFramebuffer(t.scene.get(), t.opaqueDepthFbo.get(), 0, 0, vp.width, vp.height, 0, 0, vp.width, vp.height,
+                               GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        int state = -1;
+        for (const DrawRef& d : deferred_) {
+            const GpuMesh& m = r.meshes[d.mesh];
+            const scene::SubMesh& s = m.submeshes[d.sub];
+            glUseProgram(r.originals[size_t(m.program[d.sub])].get());
+            glBindVertexArray(m.vao.get());
+            if (int(s.blend) != state) setBlend(state = int(s.blend));
+            glDisable(GL_CULL_FACE); // the sea is also seen from below
+            glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));
+            glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
+            auto tex = m.samplers[d.sub];
+            for (int n = 0; n < 16; ++n) {
+                if (m.screenSamplers[d.sub] >> n & 1) tex[size_t(n)] = t.opaqueColor.get();
+                if (m.screenSamplers[d.sub] >> (16 + n) & 1) tex[size_t(n)] = t.opaqueDepth.get();
+            }
+            glBindTextures(0, 16, tex.data());
+            glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
+                           reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+        }
+    }
+
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());
     }
 
@@ -1045,3 +1088,4 @@ private:
 std::unique_ptr<Renderer> createGlRenderer() { return std::make_unique<GlRenderer>(); }
 
 } // namespace ou::render
+    std::vector<DrawRef> deferred_; // per frame: back/depth-buffer readers (drawScreenReaders)

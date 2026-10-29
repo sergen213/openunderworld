@@ -233,6 +233,7 @@ private:
         if (n == 0) return "((int(ouMat.fixedParams.w) & 2) != 0 ? vec4(0.0) : ouFrame.ps[0])";
         // SunLight colour (slot 6, c208 + 4): times the sun visibility (shadow map / rays) of OU_SUN builds.
         if (n == 212) return out_.sunLit = true, "(ouFrame.ps[212] * ouSunVis)";
+        if (n == 77) out_.readsDepth = true; // DepthToW: a depth-buffer reader (original::screenSamplers)
         return "ouFrame.ps[" + std::to_string(n) + "]";
     }
 

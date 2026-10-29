@@ -89,8 +89,16 @@ PS samplers: 49 933 2D + 1 205 cube declarations. Full opcode / declaration / CT
 | cube samplers | cube maps decoded (TEXTURES.md); missing ones read black | [O] |
 
 Not fed yet [U/I]: spot-light cookies (s12/s13, 63 spots) and light shadow maps (slots 0–2), receiver masks, directional
-SH terms of IrradianceState, lights of object intros and cinematic light rigs, PSSM shadows, global textures (class 9 back
-buffer, class 10 depth buffer → white), per-instance params / opacity fades (zero / 1).
+SH terms of IrradianceState, lights of object intros and cinematic light rigs, PSSM shadows, the global class-5 texture
+(l1_seatop sea reflection, default texture kept), per-instance params / opacity fades (zero / 1).
+
+Screen targets (`original::screenSamplers`, 2026-10-29): global class 9 `BackBufferTexture` / class 10
+`DepthBufferTexture` [O: CTAB names], and for water shaders reading `DepthToW` the unsupplied instance classes 2 / 3
+[I] (l1_seatop sea 5990) get single-sample copies of the scene drawn so far; those submeshes draw after the opaque and
+blended scene (GL: after the main loop; Vulkan: in the second pass after `recordWaterCopies`). Frame registers: c51
+`ScreenExtents` (0.5/w, 0.5/h, 1/w, 1/h; GL flips v) [I], c3 `DepthFactors` (0, 1, 0, 0), c77 `DepthToW`
+(−(f−n)/(fn), 1/n), c97 `CameraDirection`. Viewed: the sea at l1_seatop / l2_cliffclimb (was white) shows refraction,
+reflections and depth fade in GL and Vulkan.
 
 ## Fidelity (2026-10-18, viewed screenshots) [O]
 

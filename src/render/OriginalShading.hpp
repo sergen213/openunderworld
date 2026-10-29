@@ -21,7 +21,9 @@ namespace ou::render::original {
 glm::mat4 viewProjD3D(const Camera& camera, float aspect);
 
 // Frame registers: transforms, time, fog, ambient, sun, sun cookie, light table (FrameBlock layout: ShaderTranslate.hpp).
-void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float timeSeconds, const scene::Environment& env);
+// `flipY`: the backend's screen copies are stored bottom-up (GL), so ScreenExtents maps vPos.y to 1 - v.
+void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float timeSeconds, const scene::Environment& env,
+               bool flipY = false);
 // The point/spot light table (FrameBlock::lights, first kMaxLights of env.lights) at time t (flicker); part of fillFrame.
 void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds);
 // Material registers: MaterialParams, InstanceParams (zero, as tru.exe's default 0x848F78), AlphaThreshold, opacity.
@@ -68,5 +70,13 @@ Prepared prepare(const scene::SceneData& scene, bool vulkan);
 // Texture id for sampler register `reg` of a material, with a submesh's per-instance textures
 // (SubMesh::instanceTextures) applied; 0 when the material has no entry for `reg`.
 uint32_t samplerTexture(const scene::Material& mat, std::span<const uint32_t> instanceTextures, int reg);
+// Samplers that read engine render targets: low 16 bits = back buffer (the scene drawn so far), high 16 = depth buffer.
+// - Global table entries (texture entry source 1, FUN_00505A90's per-view table): class 9 = BackBufferTexture,
+//   class 10 = DepthBufferTexture [O: CTAB names] (l2_cliffclimb sea, the l1_seatop yacht's glass).
+// - Water drawables (PS reads DepthToW c77): instance entries (source 2) the submesh supplies no texture for, class 2 =
+//   back buffer, class 3 = depth [I: the l1_seatop sea material 5990 samples them at ScreenExtents coordinates and
+//   decodes class 3 with DepthFactors; which drawable passes the targets was not traced].
+// Their submeshes are drawn after the opaque scene from single-sample copies.
+uint32_t screenSamplers(const scene::Material& mat, std::span<const uint32_t> instanceTextures, bool readsDepth);
 
 } // namespace ou::render::original

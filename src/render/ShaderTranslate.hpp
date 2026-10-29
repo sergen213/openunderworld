@@ -60,6 +60,7 @@ struct Glsl {
     uint8_t samplerType[16] = {}; // D3DSAMPLER_TEXTURE_TYPE >> 27 (2 = 2D, 3 = cube, 4 = volume)
     uint8_t attributes = 0;      // bit n: location n read (VS)
     bool sunLit = false;         // PS reads the SunLight colour c212 (scaled by ouSunVis, render/sun.glsl)
+    bool readsDepth = false;     // PS reads DepthToW c77 (decodes the depth buffer; original::screenSamplers)
 };
 
 // `vulkan` only selects the #define in the prelude; the body is identical.

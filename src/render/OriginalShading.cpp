@@ -28,7 +28,7 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect) {
     return camera.jittered(glm::perspectiveRH_ZO(glm::radians(camera.verticalFovDeg), aspect, camera.nearZ, camera.farZ)) * camera.view();
 }
 
-void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env) {
+void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env, bool flipY) {
     std::memset(&f, 0, sizeof f);
     const float aspect = vp.height > 0 ? float(vp.width) / float(vp.height) : 1.0f;
     const glm::vec3 eye = camera.position;
@@ -84,6 +84,18 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     }
     f.screen[0] = float(vp.width), f.screen[1] = float(vp.height);
     f.screen[2] = vp.width ? 1.0f / float(vp.width) : 0.0f, f.screen[3] = vp.height ? 1.0f / float(vp.height) : 0.0f;
+    // Screen-space reads of the back/depth buffer copies (globalSamplers). ScreenExtents c51: uv = vPos · zw + xy with
+    // the D3D9 half-texel offset [I: the engine's values were not traced]; DepthFactors c3 dots the depth texel's .wxy
+    // (ours: R = window depth); DepthToW c77: 1 / view depth = d · x + y for our [0, 1] perspective depth;
+    // CameraDirection c97 (the PS dots it with the view vector).
+    const float iw = f.screen[2], ih = f.screen[3];
+    if (flipY) put(f.ps, 51, 0.5f * iw, 1.0f - 0.5f * ih, iw, -ih);
+    else put(f.ps, 51, 0.5f * iw, 0.5f * ih, iw, ih);
+    put(f.ps, 3, 0, 1, 0, 0);
+    const float n = camera.nearZ, fz = camera.farZ;
+    put(f.ps, 77, -(fz - n) / (fz * n), 1.0f / n, 0, 0);
+    const glm::vec3 fwd = camera.forward();
+    put(f.ps, 97, fwd.x, fwd.y, fwd.z, 0);
 }
 
 void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene::SubMesh& sub) {
@@ -261,6 +273,17 @@ uint32_t samplerTexture(const scene::Material& mat, std::span<const uint32_t> in
         return s.textureId;
     }
     return 0;
+}
+
+uint32_t screenSamplers(const scene::Material& mat, std::span<const uint32_t> inst, bool readsDepth) {
+    uint32_t mask = 0;
+    for (const auto& s : mat.samplers) {
+        if (s.reg >= 16) continue;
+        const bool unsupplied = s.source == 2 && s.cls >= 1 && (s.cls > inst.size() || !inst[s.cls - 1]);
+        if ((s.source == 1 && s.cls == 9) || (readsDepth && unsupplied && s.cls == 2)) mask |= 1u << s.reg;
+        if ((s.source == 1 && s.cls == 10) || (readsDepth && unsupplied && s.cls == 3)) mask |= 1u << (16 + s.reg);
+    }
+    return mask;
 }
 
 } // namespace ou::render::original
