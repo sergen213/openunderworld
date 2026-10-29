@@ -244,6 +244,15 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
     return lib;
 }
 
+// Wetsuit dive gear [O] (tru.exe under Wine): the player's hidden-group mask (+0x23C | +0x240) is 0xE03 | 2 on
+// l1_seatop's boat at the chapter start (groups 1 face mask + regulator and 2 hidden; 3, the harness, drawn) and
+// 0xE02 | 2 swimming in l7_arctic_sea (only 2 hidden). [I] swimming is what puts the mask on.
+uint32_t World::laraHiddenGroups() const {
+    const uint32_t m = script_.playerHiddenGroups();
+    if (!outfit.starts_with("lara_wetsuit")) return m;
+    return (m & ~3u) | (player_.state().water >= 0 ? 2u : 3u);
+}
+
 void World::setOutfitRig(const cdc::Drm& drm) {
     rigOutfit(anims_, drm); // in place: Player and AnimController keep referring to anims_
     updatePose(0, true);
@@ -343,7 +352,7 @@ void World::tick(const Actions& input) {
         s.pos += d;
         player_.restore(s);
     }
-    enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height},
+    enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height, player_.tuning().radius, player_.state().water >= 0},
                   [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, dt * combat_.timeScale);
     updateCamera(a, dt); // Camera.cpp: a playing spline camera, else the orbit camera
     if (std::exchange(cameraCut_, false)) prevCam_ = cam_; // a spline camera cuts in

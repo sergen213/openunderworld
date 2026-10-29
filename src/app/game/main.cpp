@@ -599,6 +599,7 @@ struct StreamedScene {
     std::vector<ou::scene::Light> fixtureLights;       // EffectsView::fixtures: appended to the environment lights
     BikeIndices bikeIndices;
     uint64_t version = ~0ull, enemyVersion = ~0ull, lightsVersion = ~0ull, visibilityVersion = ~0ull;
+    uint32_t hiddenGroups = 0; // World::laraHiddenGroups() the scene was built with
     std::string laraOutfit; // pc-w\<laraOutfit>.drm is in `lara` and rigs the world's pose skeleton
 
     // Lara's skinned meshes and pose rig from World::outfit's DRM (GAMEPLAY.md "Outfits") when it changed: level loads
@@ -687,14 +688,15 @@ struct StreamedScene {
             }
             append(it->second, u.offset, nullptr, &u.data.name);
         }
-        // Draw groups the scripts hid (Thor's gear, GAMEPLAY.md). Lara's meshes are the last block of `out` here, so the
-        // ones hideDrawGroups emptied are dropped in place.
+        // Draw groups hidden on Lara (Thor's gear, wetsuit dive gear; GAMEPLAY.md). Lara's meshes are the last block of
+        // `out` here, so the ones hideDrawGroups emptied are dropped in place.
+        hiddenGroups = w.laraHiddenGroups();
         laraMeshes.meshIndices.clear();
         const size_t laraFirst = out.meshes.size();
         append(lara, glm::vec3(0), nullptr);
         size_t kept = laraFirst;
         for (size_t i = laraFirst; i < out.meshes.size(); ++i) {
-            if (!ou::scene::hideDrawGroups(out.meshes[i], w.script().playerHiddenGroups())) continue;
+            if (!ou::scene::hideDrawGroups(out.meshes[i], hiddenGroups)) continue;
             if (kept != i) out.meshes[kept] = std::move(out.meshes[i]);
             laraMeshes.meshIndices.push_back(kept++);
         }
@@ -1797,7 +1799,8 @@ int main(int argc, char** argv) {
             streamed.laraOutfit = world->outfit; // keep the current meshes, do not retry every frame
         }
         if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion ||
-            world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion) {
+            world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion ||
+            world->laraHiddenGroups() != streamed.hiddenGroups) {
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {
                 effects.sync(*bigfile, *world, warnings);

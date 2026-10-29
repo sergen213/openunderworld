@@ -392,13 +392,26 @@ TEST(Ai, SharkStaysInsideWaterVolume) {
     const auto col = built(m);
     game::ai::Enemies es;
     auto& e = es.add(syntheticShark(), 1, {0, 0, 0}, 0);
-    for (int i = 0; i < 600; ++i) es.tick(col, {{3000, 0, 3000}}, {}, kDt);
+    for (int i = 0; i < 600; ++i) es.tick(col, {{3000, 0, 3000}, true, 512, 100, true}, {}, kDt); // swimming: sharks hunt her
     const float r = e.type().tuning.radius, half = e.type().tuning.height * 0.5f;
     EXPECT_GT(e.state().pos.x, 500); // pursued the visible target to the boundary
     EXPECT_LE(e.state().pos.x, 1000 - r + 1e-3f);
     EXPECT_LE(e.state().pos.z + half, 1000 - r + 1e-3f);
     EXPECT_EQ(e.state().mode, Mode::Chase); // swimming, not falling or walking on the floor below
     EXPECT_GT(e.state().pos.z, -1000 - half);
+}
+
+// [I] A shark does not sense Lara out of the water (on a deck above it): it never starts hunting her.
+TEST(Ai, SharkIgnoresLaraOutOfWater) {
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, -2000);
+    const auto col = built(m);
+    game::ai::Enemies es;
+    auto& e = es.add(syntheticShark(), 1, {0, 0, -1000}, 0);
+    for (int i = 0; i < 600; ++i) es.tick(col, {{1500, 0, 50}}, {}, kDt);
+    EXPECT_EQ(e.state().mode, Mode::Idle);
+    for (int i = 0; i < 60; ++i) es.tick(col, {{1500, 0, 50}, true, 512, 100, true}, {}, kDt);
+    EXPECT_NE(e.state().mode, Mode::Idle); // the same Lara swimming is seen
 }
 
 // Death clips as tru.exe FUN_00642210: by the attacker's quadrant (left -> category 3, behind -> 5) with the
@@ -691,7 +704,7 @@ TEST(AiReal, SharksSpawnSwimBiteAndDie) {
     ASSERT_NE(it, es.all().end());
     auto& shark = **it;
     const vec3 start = shark.state().pos;
-    const game::ai::Target lara{start + vec3(1200, 0, 0)};
+    const game::ai::Target lara{start + vec3(1200, 0, 0), true, 512, 100, true}; // swimming
     std::vector<float> damage;
     bool attacked = false;
     for (int i = 0; i < 900 && damage.empty(); ++i) {

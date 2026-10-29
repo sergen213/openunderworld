@@ -232,6 +232,14 @@ Selection rule (tru.exe 0x5DE2B0, run by the main-state level load 0x5DE7E0):
   [U] which scripts call them; the extras/PDA costume choice is not implemented, so the default rule always applies
   outside saves.
 
+- [O] Wine (2026-10-29, `GAMELOOP_RequestLevelChangeByName(unit, gameTracker, 4)` from a remote thread): a type-4 level
+  change keeps `+0x20C`, so jumping from a new game's prologue (its checkpoint save wrote 10, casual) into
+  l2_cliffclimb shows Lara in `lara_casual` - the outfit the earlier Thor's-gear captures showed there. With `+0x20C`
+  cleared first (as a new chapter starts: the reset 0x556940), the outfit id `0xE7F1C8` after each load is the start
+  unit's `+0x294` object: l1_seatop 19, l2_cliffclimb 12, l3_caverns_start 10, l4_trailstart 14, l5_startsnow 16,
+  l6_ship_exterior 13, l7_thin_ice (-> l7_arctic_sea) 18 - the table below, as ours (`StreamReal.ChapterOutfits`).
+  Level-change types 2/3/8/10 also zero `0xE7F1C8` (0x5DF760).
+
 Data (all 82 units of `unitlist.txt`, `RealData.UnitOutfitObjects`) [V-data]: one outfit per chapter.
 
 | Units | Outfit (objectlist id) |
@@ -285,11 +293,15 @@ outfit (the original only reads `+0x294` on a level load).
   submeshes from Lara's meshes when building the scene (gameplay and cutscenes, GL and Vulkan), and meshes left with
   none (`scene::hideDrawGroups`: lara_jungle_heavy's group-11 gauntlet is a mesh of its own; kept empty, the
   renderers drew it whole and untextured, a white hand).
-- [U] Wetsuit dive-gear groups (lara_wetsuit_warm/cold): 1 = mask on the face + regulator in the mouth, 2 = the same
-  gear stowed [I], 3 = tank and harness (warm only); all drawn by us. tru.exe sets these masks only from instance data
-  (`0x63C7A0` -> `0x698250`: visible-group bits of instance `+0x104` data; player intros have none), anim-effect
-  commands 0x17 / 0x22 (`0x547B40`; none in Lara's clip lists) and scripts. A Wine capture of treasure-hunt l1_seatop
-  shows Lara on the boat with none of the three; what hides them is not found.
+- Wetsuit dive gear (lara_wetsuit_warm/cold groups 1 = face mask + regulator, 2 = the same gear stowed [I], 3 = tank
+  and harness). [O] Wine, player mask `+0x23C` / `+0x240`: chapter-1 start on l1_seatop's boat `0xE03` / `2` (1 and 2
+  hidden, the harness drawn, as the capture shows), swimming at the l1_seafloor and l7_arctic_sea starts `0xE02` / `2`
+  (only 2 hidden: the mask is on); treasure-hunt l1_seatop `0xE07` (3 hidden too); `+0x240` is 2 in every capture.
+  tru.exe sets masks from instance data (`0x63C7A0` -> `0x698250`: visible-group bits of instance `+0x104` data;
+  player intros have none), anim-effect commands 0x17 / 0x22 (`0x547B40`; none in Lara's clip lists; `0x69EB50` is
+  registered in the table at `0xDA2024`) and scripts; what switches them on entering the water is not found [U].
+  Ours (`World::laraHiddenGroups`): wetsuits hide 2 always and 1 unless Lara swims [I: the switch point]; 3 follows the
+  scripts' mask.
 - [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic, volume 9628 takes it
   back; l3_secretchamber cinematic 4654 gives the right one at its end (vt 60), 4655 takes it at its start (vt 58);
   l5_startsnow's chapter-start cinematic 7530 takes both at its start and gives both at its end (also sets story
@@ -777,6 +789,11 @@ with four type-2 entries, no attack records (bite damage stays at the inferred 1
 chase with 3D clip-driven swimming and sphere collision, bite, and die into the floating loop. Type-10 boxes confine
 swimming when present; the real shark units expose none, so their live behavior uses collision-based free swimming.
 `AiReal.SharksSpawnSwimBiteAndDie` verifies populations and shark 4020 chasing, biting and dying.
+Sharks sense Lara only while she swims (`Target::inWater` = `PlayerState::water >= 0`) [I]: l2_cliffclimb's placed
+sharks 4021-4023 (1100-1900 below the start boat) used to see her on the deck, chase her out of the sea and land on it;
+the original's chapter-2 start (Wine capture, "Chapter starts") has no shark in sight. Out of their medium they stay
+idle (`Ai.SharkIgnoresLaraOutOfWater`, `StreamReal.ChapterStartEnemiesStayInTheirMedium`: no hunting enemy and no
+shark above a dry Lara 5 s into any chapter start).
 
 Not done: behaviour trees (search, flank, cover, taunt, dodge, jump/vault, nap), merc / long-range specifics beyond
 their records, rifle mesh, bat latch, wall-hung spiders (they drop), navmesh/routing, enemy sounds, ragdoll.
@@ -1105,6 +1122,28 @@ next chapter. The l1/l6/afterburn cinematics are reached through other scripts: 
 volume 1082 → 1005, l6_ship_engine_hall plane 7565 → 1387, and l3_main_hall volume 4128 → cinematic 4108, whose
 post-stream helper plays 4070 [O bytecode]; all run natively (docs/formats/SCRIPTS.md "Survey"). `--chapter N` starts
 any chapter, `--cine NAME` plays any cutscene.
+
+**Chapter starts vs the original** [O] (tru.exe under Wine, 2026-10-29: new game, then each start unit loaded by a
+type-4 level change with the outfit override `+0x20C` cleared; captures, side-by-sides with ours (`--chapter N`,
+Vulkan) and notes in openunderworld-work/screens/chapters):
+
+| ch | start unit | original after load | ours |
+|---|---|---|---|
+| 0 | l3_main_bedroom | casual, corridor facing the fire | same |
+| 1 | l1_seatop | wetsuit_warm on the boat deck, harness, no face mask | same (the face mask was drawn) |
+| 2 | l2_cliffclimb | jungle_a on the boat bow, no enemy in sight | same (sharks 4021-4023 left the sea and landed on the deck) |
+| 3 | l3_caverns_start | casual, cavern stairs | same |
+| 4 | l4_trailstart | jungle_heavy, **riding** the motorcycle on the trail | standing beside bike 5482 |
+| 5 | l5_startsnow | snow_heavy, after intro cinematic 7530 **riding** in l5_valgrind_tunnel | standing at the startsnow player intro, bike 7528 aside; her feet do not meet the snow there (render vs collision; she never stands there in the original) |
+| 6 | l6_ship_exterior | jungle_b on the deck | same |
+| 7 | l7_thin_ice | wetsuit_cold, after its intro the script changes level to l7_arctic_sea: **swimming** under water, mask on | standing on the ice at the thin_ice player intro |
+| 8 | l7_himalaya_end | ending cinematic, credits, main menu | the unit's player intro (no gameplay to compare) |
+
+Not done: starting mounted (ch4, ch5; what mounts her is [U]: no script failure at either start, the bike intros'
+scripts 13919/17208 run without one), the chapter-start intro cinematics and what follows them (7530 → valgrind
+tunnel; thin_ice's script naming l7_arctic_sea), and open-sea water (l2_cliffclimb and l7_arctic_sea have no
+`watervolume` intro, so Lara cannot swim there and falls through the arctic sea). Holstered back weapons (the
+speargun on her back in ch1, a rifle in ch6) are not drawn.
 
 **Pickups** [O names/counts, I roles]: `*_rw_artifact` (7..22 per chapter) = treasures, `*_rw_treasure` (one per
 chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot

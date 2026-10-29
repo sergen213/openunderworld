@@ -451,6 +451,31 @@ TEST(StreamReal, ChapterThorGear) {
     EXPECT_TRUE(w.script().playerObjects().empty());
 }
 
+// Every chapter start: after 5 s standing still no enemy is out of its medium. Sharks (aquatic) sense Lara only
+// while she swims, so l2_cliffclimb's three placed sharks stay under the start boat (they used to chase her onto the
+// deck); none is hunting at any start and every one stays below a Lara who is not in the water.
+TEST(StreamReal, ChapterStartEnemiesStayInTheirMedium) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    int sharks = 0;
+    for (int c = 0; c < int(game::kChapters.size()); ++c) {
+        w.startChapter(c);
+        for (int i = 0; i < 300; ++i) w.tick({});
+        const auto& lara = w.player().state();
+        for (const auto& e : w.enemies().all()) {
+            if (!e->type().aquatic()) continue;
+            if (c == 2) ++sharks;
+            const auto mode = e->state().mode;
+            EXPECT_TRUE(mode != game::ai::Mode::Chase && mode != game::ai::Mode::Attack) << c << " " << e->uid();
+            if (lara.water < 0) EXPECT_LT(e->state().pos.z + e->type().tuning.height, lara.pos.z) << c << " " << e->uid();
+        }
+    }
+    EXPECT_GE(sharks, 3); // l2_cliffclimb 4021-4023 are loaded at the start
+}
+
 TEST(StreamReal, ChapterOutfits) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -461,6 +486,8 @@ TEST(StreamReal, ChapterOutfits) {
     for (int c = 0; c < int(game::kChapters.size()); ++c) {
         w.startChapter(c);
         EXPECT_EQ(w.outfit, expect[c]) << c;
+        // On dry land the wetsuits hide the face mask and the stowed gear and keep the harness (original: 0xE03 | 2).
+        if (w.outfit.starts_with("lara_wetsuit") && w.player().state().water < 0) EXPECT_EQ(w.laraHiddenGroups() & 7u, 3u) << c;
     }
     w.startChapter(4);
     const auto saved = save::capture(w);

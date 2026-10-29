@@ -129,6 +129,7 @@ struct Target {
     bool alive = true;
     float height = 512.0f; // Lara's capsule; enemies look at pos + 0.75 height
     float radius = 100.0f; // game::Tuning::radius; enemy shots test this capsule
+    bool inWater = false;  // swimming (PlayerState::water >= 0): sharks only sense her then
 };
 // One enemy shot (this tick): muzzle -> where it stopped (Lara, a wall, or its range); hit = it hurt Lara.
 struct Shot {

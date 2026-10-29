@@ -414,6 +414,9 @@ public:
     // set by enterUnit), or a save's. Rendering follows it; setOutfitRig re-rigs the pose skeleton. Saved.
     std::string outfit = "lara";
     void setOutfitRig(const cdc::Drm& drm); // rigOutfit on the pose library, then a pose reset
+    // Lara's hidden draw groups (bit n-1 hides group n): the scripts' (script().playerHiddenGroups()) with the
+    // wetsuits' face mask (group 1) only while she swims and their stowed gear (2) never (GAMEPLAY.md "Thor's gear").
+    uint32_t laraHiddenGroups() const;
     // Starts chapter `n` (kChapters) at its start unit's player intro; respawns fall back there. Throws as enterUnit.
     void startChapter(int n);
     // Called when a script activates a cinematic_object that has a stream (UnitData::cinematics), before a level

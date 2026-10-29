@@ -146,6 +146,9 @@ void Enemy::turnTowards(vec3 p, float dt) {
 float Enemy::aimError(vec3 p) const { return std::abs(wrapAngle(bearing(s_.pos, p) - s_.yaw)); }
 
 bool Enemy::perceives(const collision::CollisionMesh& col, const Target& lara) const {
+    // [I] sharks hunt a swimming Lara only: on a deck or shore she is out of their medium (l2_cliffclimb's three
+    // sharks swim under the start boat; the original leaves them there).
+    if (type_->aquatic() && !lara.inWater) return false;
     const Senses& se = senses();
     const vec3 eye = s_.pos + vec3(0, 0, type_->tuning.height * 0.8f), at = lara.pos + vec3(0, 0, lara.height * 0.75f);
     // [I] body cones measured from the eye too (the exe's 0x60DBA0 uses the body matrix)
@@ -315,7 +318,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         s_.unseenTime = 0, s_.lastSeen = lara.pos;
     } else {
         s_.unseenTime += dt;
-        if (s_.mode != Mode::Idle && s_.mode != Mode::Dead && lara.alive && glm::distance(s_.pos, lara.pos) < senses().loseTrack)
+        if (s_.mode != Mode::Idle && s_.mode != Mode::Dead && lara.alive && (lara.inWater || !aquatic) && glm::distance(s_.pos, lara.pos) < senses().loseTrack)
             s_.lastSeen = lara.pos; // [I] senses +0x20: still tracked this close, unseen
     }
     // Ground enemies measure Lara flat, centre to centre; flyers from their centre to her head.
