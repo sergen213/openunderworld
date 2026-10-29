@@ -276,20 +276,37 @@ outfit (the original only reads `+0x294` on a level load).
   17325, rune switches 19581, l7_arctic_sea 19969: vt 14); l2_maproom 9626 shows the left gauntlet after its
   cinematic. Equip calls come from per-chapter setup scripts (types 5789, 9502, 11733, 13929, 17775, 19515, 19597)
   and l3_secretchamber 12371/12372 (right gauntlet).
-- Ours: `SubMesh::drawGroup`; `script::Runtime::playerHiddenGroups()` starts with groups 10-12 hidden
-  ([I]: the exe's instance mask starts at 0; nothing in the scripts hides them first, so where the original hides them
-  at birth is [U]); instance 61 on Lara's script changes it; larabase 37/38/42 track the carried `g_*` objects
+- Ours: `SubMesh::drawGroup`; `script::Runtime::playerHiddenGroups()` starts with groups 10-12 hidden (the
+  original's player mask reads `0xE03`/`0xE02` at every checked chapter start, below; where it is set at birth is
+  [U]); instance 61 on Lara's script changes it; larabase 37/38/42 track the carried `g_*` objects
   (`playerObjects()`; 42 drops all three, its slot argument is not tracked [I]). Mask, objects and Lara's script
   fields are saved (`script.player`); a chapter start without a save resets them. ou-game drops hidden groups'
   submeshes from Lara's meshes when building the scene (gameplay and cutscenes, GL and Vulkan).
 - [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic, volume 9628 takes it
   back; l3_secretchamber cinematic 4654 gives the right one at its end (vt 60), 4655 takes it at its start (vt 58);
   l5_startsnow's chapter-start cinematic 7530 takes both at its start and gives both at its end (also sets story
-  progress 5 via globals type 5 fn 4); l7_helheim01 8950 does the same. `g_belt` is only given in the chapter setup
-  scripts' `globals +16 stickyint > 7` (finished game) branches, which also give both gauntlets. Ours:
-  `game::chapterGear(n)` = what Lara carries entering chapter n (0-5 none, 6-8 both gauntlets), applied by
+  progress 5 via globals type 5 fn 4); l7_helheim01 8950 does the same. `g_belt`: the chapter setup scripts' `globals
+  +16 stickyint > 7` branches give it, but loading l5_startsnow also gives it (below). Ours: `game::chapterGear(n)` =
+  what Lara carries entering chapter n (0-4 none, 5-8 both gauntlets and the belt), applied by
   `World::startChapter`, `ou-game --chapter` and loads of saves without gear state (`StreamReal.ChapterThorGear`).
-  Chapter 5 itself gets them from cinematic 7530's end handler [I: only if our cinematic playback runs it].
+- [O] Checked in the original (tru.exe under Wine, 2026-10-29; chapters reached with GAMELOOP_RequestLevelChangeByName
+  0x5DF8C0(unit, gameTracker 0xE7F088, 4) from a remote thread; carried objects read from larabase 38's slots,
+  `*(*0xFADB58+0x500)+4+16i` = (instance, id) handle pairs left/right, name `*(instance+0x10)+0x60`; mask = player
+  `*(0xE7F094)` `+0x23C`). Carried / mask / visible:
+
+  | unit (state) | carried gear | `+0x23C` | on Lara |
+  |---|---|---|---|
+  | l3_main_bedroom (new game) | none | `0xE03` | nothing |
+  | l2_cliffclimb (load from the prologue) | none | `0xE03` | nothing |
+  | l4_trailstart (load) | none (a load drops what she carried) | `0xE03` | nothing |
+  | l5_startsnow (load, also from a fresh prologue) | both gauntlets + belt | `0xE03` | nothing (bare hands, gameplay) |
+  | l1_seatop (Treasure Hunt after the ending) | none | `0xE07` | nothing |
+  | l7_thin_ice → l7_arctic_sea (load) | both gauntlets + belt | `0xE02` | nothing (bare hands, wetsuit) |
+
+  So carrying is not wearing: outside the Thor-mechanism volumes/sensors the gear is never drawn, in any chapter.
+  l7_himalaya_end is the ending cinematic, credits, then the main menu (a GAME COMPLETE save, Treasure Hunt).
+  l6_ship_exterior did not finish loading by a level change (once a crash at 0x4A1720) and was not checked.
+  Captures: openunderworld-work/screens/gear (`orig_*`, `ours_*`, `side_*.png`).
 - Not done: player sensors (vt 14) never fire, and the per-chapter equip scripts do not run in our runtime yet
   (probe of 12 chapter units: no equip call), so the gear stays hidden outside a volume with carried objects. The
   cinematic base type 3523's gear events 10-21 are never sent (no retail stream has events).
