@@ -14,6 +14,10 @@ Labels: **[O]** observed in game data, in our tru.exe decompile (GOG v1.1.0.0 VA
 - One file per slot: `<slot>.ousave`. Slot names are 1–32 characters of `[A-Za-z0-9_-]`; anything else is rejected
   (no paths). `ou-game` uses the slot `quick`.
 - Backup slot: `<slot>.ousave.bak` is the previous content of the slot.
+- `autosave` is the slot ou-game autosaves into (chapter starts, checkpoints; GAMEPLAY.md "Menus"); the menus do not let a
+  save overwrite it.
+- `profile.json` (`save::Profile`, plain JSON written atomically like a slot): `chapters` (bit n = chapter n ended) and
+  `finished` (the ending played): the main menu's TREASURE HUNT and the EXTRAS unlocks. Missing or unreadable = nothing.
 
 ## Writing (atomic, with a backup)
 
@@ -73,6 +77,7 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `found` | [int, int, int] | rewards collected per kind: treasures, relics, health packs (PDA counts; health packs = carried, a use takes one); missing = 0s |
 | `grenades` | int or null | sticky grenades carried (`World::grenades`); missing / null = left as the world starts them (6) |
 | `flashlight` | bool | the personal light is on; missing = off |
+| `treasureHunt` | bool | a Treasure Hunt game (`World::treasureHunt`); missing = off |
 | `health` | number or null | Lara's health (`World::health`); missing/null (older saves, or saved while dead) = full; must be > 0 |
 | `script` | object | `script::Runtime::serialize()` (src/script): per-intro trigger/switch/door/block state, opaque here |
 | `enemies` | object or null | `ai::Enemies::serialize()`: `states` (intro uid → full enemy state in its unit's frame: mode, pos, yaw, clip + time, health, AI timers, aim RNG; generator spawns under their generator's uid; loaded and streamed-out enemies), `firedGenerators`, `deadAtCheckpoint`; missing/null (older saves) = enemies left as they are |

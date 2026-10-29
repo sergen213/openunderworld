@@ -20,6 +20,9 @@
 #include <cstdlib>
 
 #include <zlib.h>
+#include <unistd.h>
+
+#include <filesystem>
 
 using namespace ou;
 using game::vec3;
@@ -394,6 +397,58 @@ TEST(Menus, PdaWeaponsInventoryAndSonar) {
     EXPECT_EQ(m.pdaModel()->object, "pr_grenade");
     m.input(ui::Nav::Back);
     EXPECT_EQ(m.screen(), ui::Screen::PdaInventory);
+}
+
+// The main menu's centre [O mainmenu, e4/e5]: PLAY GAME, RESUME GAME with an autosave, TREASURE HUNT after the ending;
+// REVISIT LOCATION only in a Treasure Hunt.
+TEST(Menus, MainCentreTreasureHuntAndRevisit) {
+    ui::Menus m;
+    m.open(ui::Screen::Main);
+    EXPECT_EQ(m.items()[0].stringId, 123);
+    EXPECT_EQ(m.items()[1].confirm, 0);
+    m.saves = {{.slot = "autosave", .autosave = true}};
+    EXPECT_EQ(m.items()[0].stringId, 122);
+    EXPECT_EQ(m.items()[0].action, ui::Action::Continue);
+    EXPECT_EQ(m.items()[1].confirm, 157); // new autosaves overwrite it
+    m.finished = true;
+    EXPECT_EQ(m.items()[0].stringId, 49);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::TreasureHunt);
+    EXPECT_EQ(m.screen(), ui::Screen::None);
+    m.open(ui::Screen::Pda);
+    EXPECT_TRUE(m.items()[6].greyed);
+    m.close();
+    m.treasureHunt = true;
+    m.open(ui::Screen::Pda);
+    EXPECT_FALSE(m.items()[6].greyed);
+    for (int i = 0; i < 4; ++i) m.input(ui::Nav::Down); // AREA INFO .. FIELD ASSISTANCE, JOURNAL greyed: REVISIT LOCATION
+    EXPECT_EQ(m.cursor(), 6);
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::Revisit);
+    ASSERT_EQ(m.items().size(), 7u);
+    EXPECT_EQ(m.items()[0].stringId, 52);
+    for (int i = 0; i < 9; ++i) m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 6); // stops at the end
+    m.input(ui::Nav::Back);
+    EXPECT_EQ(m.screen(), ui::Screen::Pda);
+    m.input(ui::Nav::Accept), m.input(ui::Nav::Down);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Revisit);
+    EXPECT_EQ(m.revisitChapter(), 2);
+    EXPECT_EQ(m.screen(), ui::Screen::None);
+}
+
+// save::Profile (chapters ended, the ending) and a Treasure Hunt's save flag.
+TEST(Progress, ProfileAndTreasureHuntSave) {
+    const auto dir = std::filesystem::temp_directory_path() / ("ou_profile_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    EXPECT_EQ(save::readProfile(dir), save::Profile{});
+    save::writeProfile({0x7Fu, true}, dir);
+    EXPECT_EQ(save::readProfile(dir), (save::Profile{0x7Fu, true}));
+    std::filesystem::remove_all(dir);
+    save::SaveGame g;
+    g.unit = "l1_seatop", g.treasureHunt = true;
+    EXPECT_TRUE(save::parse(save::serialize(g)).treasureHunt);
+    g.treasureHunt = false;
+    EXPECT_FALSE(save::parse(save::serialize(g)).treasureHunt);
 }
 
 TEST(Menus, TextAndCanvas) {

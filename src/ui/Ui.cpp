@@ -211,7 +211,8 @@ constexpr uint32_t kIconBlue = rgba(50, 115, 185), kLabel = rgba(203, 203, 203),
                    kPdaLine = rgba(46, 86, 121), kPdaSelLine = rgba(68, 130, 184), kPdaBoxLine = rgba(16, 60, 66),
                    kSlotName = rgba(89, 168, 239), kSlotLine = rgba(72, 72, 72), kSlotRim = rgba(28, 92, 150),
                    kPdaHead = rgba(100, 170, 235), kPdaEquipped = rgba(245, 135, 25), kPdaTitleRule = rgba(40, 95, 120),
-                   kPdaValue = rgba(200, 200, 200), kPdaYes = rgba(40, 220, 40), kPdaNo = rgba(230, 25, 25);
+                   kPdaValue = rgba(200, 200, 200), kPdaYes = rgba(40, 220, 40), kPdaNo = rgba(230, 25, 25),
+                   kPdaRowLine = rgba(39, 72, 101);
 
 uint32_t withAlpha(uint32_t c, float a) { return (c & 0x00FFFFFFu) | uint32_t(std::clamp(a, 0.0f, 1.0f) * float(c >> 24)) << 24; }
 uint32_t mix(uint32_t a, uint32_t b, float t) {
@@ -352,8 +353,15 @@ std::vector<std::string> fontWrap(const Canvas& c, std::string_view text, float 
     return lines;
 }
 
+// Background pc-w\image\pda_bg_1280 / _960 (uiImages[1], set by the app) fitted to the window height.
+void pdaBackground(Canvas& c) {
+    const float k = float(c.height) / 720, bw = (float(c.width) / float(c.height) < 1.556f ? 960 : 1280) * k;
+    c.image(1, (float(c.width) - bw) / 2, 0, bw, float(c.height), 0, 0, 1, 1, kWhite);
+}
+
 bool radial(Screen s) { return s == Screen::Main || s == Screen::Pause; }
 bool slots(Screen s) { return s == Screen::Load || s == Screen::Save; }
+bool pdaList(Screen s) { return s == Screen::Revisit; }
 
 // PDA pages (left list): SONAR MAP, AREA INFO, WEAPON SELECTION, INVENTORY, FIELD ASSISTANCE, JOURNAL and REVISIT
 // LOCATION (greyed: not ported, as on PC without them), RESUME GAME.
@@ -377,6 +385,18 @@ constexpr float kPdaAmmoScale = 0.55f, kPdaAmmoTracking = 1.0f;
 constexpr float kPdaDescTop = 370, kPdaDescBottom = 544, kPdaDescX = 558, kPdaDescCap = 445, kPdaDescStep = 16.7f,
                 kPdaDescW = 462, kPdaDescScale = 0.58f; // [V inventory_view]
 constexpr int kWeaponPanel[4] = {573, 214, 422, 163}, kItemPanel[4] = {580, 193, 433, 167}; // x, y, w, h
+// PDA list pages (JOURNAL ENTRIES [O j3..j5]; REVISIT LOCATION [I] the same), bg pixels: header at x 243.3 cap 153.3 (0.605,
+// kPdaHead) over a line at 174 (x 242.7..505.3); nine rows right-aligned at 504.7, caps 185.3 + 40 i, scale 0.51, the
+// selected one kPdaHead, a line 33.4 below each (to 509.3); BACK TO PREVIOUS MENU (a label: Esc) right at 505.3 cap 551.3,
+// 0.57. Right pane: icon 698 centred (564, 168), title cap 162.7 at 583.3 (0.51, kPdaHead), window buttons 699 centred
+// (1017, 170.7), a line at 183.3 (548.7..1034.7), the text from cap 200.7 every 19.4 at 546, 0.57, wrapped at 484.
+constexpr int kPdaListRows = 9;
+constexpr float kPdaListX = 242.7f, kPdaListHeadX = 243.3f, kPdaHeadCap = 153.3f, kPdaHeadLine = 174, kPdaHeadRight = 505.3f;
+constexpr float kPdaListRight = 504.7f, kPdaListCap = 185.3f, kPdaListStep = 40, kPdaListScale = 0.51f, kPdaListLine = 33.4f,
+                kPdaListLineRight = 509.3f, kPdaListBackCap = 551.3f, kPdaListBackScale = 0.57f;
+constexpr float kPdaPaneX = 546, kPdaPaneTitleX = 583.3f, kPdaPaneTitleCap = 162.7f, kPdaPaneLine = 183.3f, kPdaPaneLineX = 548.7f,
+                kPdaPaneRight = 1034.7f, kPdaPaneCap = 200.7f, kPdaPaneStep = 19.4f, kPdaPaneScale = 0.57f, kPdaPaneW = 484;
+
 
 } // namespace
 
@@ -428,7 +448,7 @@ void drawLoading(Canvas& c, const locale::Strings& s, int chapter) {
 void Menus::open(Screen s) {
     cursors_.push_back(cursor_);
     stack_.push_back(s);
-    cursor_ = 0, ring_ = -1, label_ = 0, page_ = 0;
+    cursor_ = 0, ring_ = -1, label_ = 0, page_ = 0, top_ = 0;
     grow_.fill(0);
     if (radial(s)) grow_[0] = 1;
     if (slots(s)) cursor_ = -1;          // focus stays on the ring item until Right / Accept
@@ -472,9 +492,12 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
     case Screen::Main:
     case Screen::Pause: {
         const bool pause = screen == Screen::Pause;
-        return {pause ? Item{.stringId = 122, .action = Action::Resume, .icon = kIconPlay}
-                      : Item{.stringId = 123, .action = Action::Continue, .icon = kIconPlay},
-                {.stringId = 124, .opens = Screen::Tailoring, .icon = kIconNew, .confirm = int16_t(pause ? 154 : 0)},
+        const bool autosave = std::any_of(saves.begin(), saves.end(), [](const SaveSlot& v) { return v.autosave; });
+        return {pause      ? Item{.stringId = 122, .action = Action::Resume, .icon = kIconPlay}
+                : finished ? Item{.stringId = 49, .action = Action::TreasureHunt, .icon = kIconPlay}
+                           : Item{.stringId = int16_t(autosave ? 122 : 123), .action = Action::Continue, .icon = kIconPlay},
+                // new autosaves overwrite the old: 154 in the pause menu [O], 157 in the main menu with one [I]
+                {.stringId = 124, .opens = Screen::Tailoring, .icon = kIconNew, .confirm = int16_t(pause ? 154 : autosave ? 157 : 0)},
                 {.stringId = 125, .opens = Screen::GameOptions, .icon = kIconOptions},
                 {.stringId = 126, .opens = Screen::Load, .icon = kIconLoad},
                 pause ? Item{.stringId = 127, .opens = Screen::Save, .icon = kIconSave}
@@ -531,7 +554,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.stringId = 1077, .opens = Screen::PdaInventory},
                 {.stringId = 1078, .action = Action::Hint},
                 {.stringId = 1081, .greyed = true},
-                {.stringId = 1082, .greyed = true},
+                {.stringId = 1082, .opens = Screen::Revisit, .greyed = !treasureHunt},
                 {.stringId = 122, .action = Action::Resume}};
     case Screen::Message: return {{.stringId = 383}}; // OK
     case Screen::Confirm: return {{.stringId = 384}, {.stringId = 385}}; // YES / NO
@@ -551,6 +574,11 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         return v;
     }
     case Screen::PdaSonar: break;
+    case Screen::Revisit: { // the chapters by name (52..58), their loading-screen story beside [I: not captured]
+        std::vector<Item> v;
+        for (int16_t c = 1; c <= 7; ++c) v.push_back({.stringId = int16_t(51 + c), .action = Action::Revisit, .message = int16_t(59 + c)});
+        return v;
+    }
     case Screen::None: break;
     }
     return {};
@@ -576,6 +604,15 @@ Action Menus::input(Nav n) {
         const Item it = pending_;
         back();
         return yes ? activate(it) : Action::None;
+    }
+    if (pdaList(scr)) { // Up/Down stop at the ends, the rows scroll [O j4 / j5]
+        if (n == Nav::Up || n == Nav::Down) {
+            select(std::clamp(cursor_ + (n == Nav::Up ? -1 : 1), 0, count - 1));
+            top_ = std::clamp(top_, cursor_ - kPdaListRows + 1, cursor_);
+            return Action::None;
+        }
+        if (n == Nav::Back) { back(); return Action::None; }
+        return n == Nav::Accept ? activate(list[size_t(cursor_)]) : Action::None;
     }
     if (slots(scr)) { // the slot ring: -1 = focus on the ring item that opened the screen
         auto page = [&](int d) {
@@ -662,7 +699,9 @@ Action Menus::activate(Item it) {
     }
     if (it.action == Action::Hint) return Action::Hint;
     if (it.action == Action::Equip) equip_ = pda.weapons[size_t(cursor_)].weapon;
-    if (it.action == Action::Resume || it.action == Action::NewGame || it.action == Action::Continue || it.action == Action::Load)
+    if (it.action == Action::Revisit) revisit_ = cursor_ + 1;
+    if (it.action == Action::Resume || it.action == Action::NewGame || it.action == Action::Continue || it.action == Action::Load ||
+        it.action == Action::TreasureHunt || it.action == Action::Revisit)
         close();
     return it.action;
 }
@@ -830,9 +869,7 @@ void Menus::drawTailoring(Canvas& c, const locale::Strings& s) {
 }
 
 void Menus::drawPda(Canvas& c, const locale::Strings& s) {
-    // Background pc-w\image\pda_bg_1280 / _960 (uiImages[1], set by the app) fitted to the window height.
-    const float k = float(c.height) / 720, bw = (float(c.width) / float(c.height) < 1.556f ? 960 : 1280) * k;
-    c.image(1, (float(c.width) - bw) / 2, 0, bw, float(c.height), 0, 0, 1, 1, kWhite);
+    pdaBackground(c);
     const auto list = items();
     const Screen scr = screen();
     const bool sub = scr != Screen::Pda; // WEAPON SELECTION / INVENTORY pages: a header row above the list
@@ -1014,6 +1051,40 @@ std::optional<PdaModel> Menus::pdaModel() const {
     return std::nullopt;
 }
 
+void Menus::drawPdaList(Canvas& c, const locale::Strings& s) {
+    pdaBackground(c);
+    const Screen scr = screen();
+    const auto list = items();
+    auto line = [&](float x0, float x1, float y, uint32_t col) { vrect(c, pdaX(x0), pdaY(y), (x1 - x0) * 2 / 3, pdaY(1.3f), col); };
+    capText(c, pdaX(kPdaListHeadX), pdaY(kPdaHeadCap), kPdaItemScale, s.get(scr == Screen::Revisit ? 1082 : 1144), kPdaHead);
+    line(kPdaListX, kPdaHeadRight, kPdaHeadLine, kPdaHead);
+    for (int r = 0; r < kPdaListRows && top_ + r < int(list.size()); ++r) {
+        const float cap = kPdaListCap + kPdaListStep * float(r);
+        const std::string t(s.get(list[size_t(top_ + r)].stringId));
+        capText(c, pdaX(kPdaListRight) - c.fontWidth(t, kPdaListScale), pdaY(cap), kPdaListScale, t, top_ + r == cursor_ ? kPdaHead : kWhite);
+        line(kPdaListX, kPdaListLineRight, cap + kPdaListLine, kPdaRowLine);
+    }
+    const std::string back(s.get(469));
+    capText(c, pdaX(kPdaHeadRight) - c.fontWidth(back, kPdaListBackScale), pdaY(kPdaListBackCap), kPdaListBackScale, back, kWhite);
+    if (cursor_ >= 0 && cursor_ < int(list.size())) { // the selected entry
+        const Item& it = list[size_t(cursor_)];
+        c.sprite(kPdaDoc, pdaX(564), pdaY(168), pdaY(32), pdaY(32), kWhite);
+        c.sprite(kPdaButtons, pdaX(1017), pdaY(170.7f), pdaY(32), pdaY(16), kWhite);
+        capText(c, pdaX(kPdaPaneTitleX), pdaY(kPdaPaneTitleCap), kPdaListScale, s.get(it.stringId), kPdaHead);
+        line(kPdaPaneLineX, kPdaPaneRight, kPdaPaneLine, kPdaHead);
+        float cap = kPdaPaneCap;
+        for (const auto& l : fontWrap(c, s.get(it.message), pdaY(kPdaPaneW), kPdaPaneScale))
+            capText(c, pdaX(kPdaPaneX), pdaY(cap), kPdaPaneScale, l, kWhite), cap += kPdaPaneStep;
+    }
+    const float cap = pdaY(kPdaFootCap);
+    auto left = [&](float x, int16_t id) {
+        float px = pdaX(x);
+        for (const auto& r : keyRuns(s.get(id), "Return")) px += capText(c, px, cap, kPdaSmall, r.text, r.key ? kKeyBlue : kWhite, kPdaTracking);
+    };
+    left(kPdaFootBack, 375);
+    if (scr == Screen::Revisit) left(kPdaFootSelect, 120);
+}
+
 void Menus::drawMessage(Canvas& c, const locale::Strings& s) {
     c.sprite(kDialog, 320, kDialogY, kDialogW, kDialogH, kWhite);
     float y = kDialogTop;
@@ -1047,6 +1118,7 @@ void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
     if (scr == Screen::None) return;
     if (scr == Screen::Pda || scr == Screen::PdaWeapons || scr == Screen::PdaInventory || scr == Screen::PdaItems) return drawPda(c, s);
     if (scr == Screen::PdaSonar) return drawSonar(c, s);
+    if (pdaList(scr)) return drawPdaList(c, s);
     if (!mainMenu()) c.rect(0, 0, float(c.width), float(c.height), 0x70000000u); // the paused game, dimmed
     if (scr == Screen::Tailoring) return drawTailoring(c, s); // these two over the backdrop alone [O captures]
     if (scr == Screen::Message) return drawMessage(c, s), footer(c, s, key, {{320, 120}});

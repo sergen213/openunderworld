@@ -65,13 +65,16 @@ public:
 // Delete: Backspace on the Save/Load slot ring. Alt: the second PDA prompt key (E: Field Assistance TASK); Accept
 // elsewhere.
 enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
-// Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item.
+// Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item. Revisit: the PDA's
+// REVISIT LOCATION list (Treasure Hunt).
 enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
-                              PdaSonar, PdaWeapons, PdaInventory, PdaItems };
-// Continue: load the newest save (the app starts a new game when there is none). Save/Load/Delete act on
-// selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
-// Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW).
-enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer, Equip, SonarReset };
+                              PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit };
+// Continue: load the autosave, else the newest save (the app starts a new game when there is none). Save/Load/Delete act
+// on selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
+// Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW). TreasureHunt: the
+// main menu's centre after the ending. Revisit: start revisitChapter().
+enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer, Equip, SonarReset,
+                              TreasureHunt, Revisit };
 
 struct Item {
     int16_t stringId = 0;  // locals.bin label; 0 = `label`
@@ -161,6 +164,7 @@ public:
     const std::string& selectedSave() const { return selected_; } // after Action::Load / Save / Delete
     int equipWeapon() const { return equip_; }                     // after Action::Equip: PdaWeapon::weapon
     std::optional<PdaModel> pdaModel() const;                      // the model panel the current PDA page shows
+    int revisitChapter() const { return revisit_; }                 // after Action::Revisit: kChapters index 1..7
 
     std::vector<SaveSlot> saves;    // Load/Save slot entries (newest first); set before opening them
     int musicVolume = 8, sfxVolume = 8, cinematicVolume = 8; // 0..10, VOLUME SETTINGS
@@ -168,6 +172,9 @@ public:
     bool reticles = true, helperButtons = true, trainingText = true, invertY = false, subtitles = true;
     int tailoring = 1;              // PLAYER TAILORING preset: 0 casual explorer, 1 tomb raider, 2 master survivalist
     PdaInfo pda;
+    // The main menu's centre [O]: TREASURE HUNT (49) once the game is `finished`, else RESUME GAME (122) with an autosave
+    // in `saves`, else PLAY GAME (123). `treasureHunt`: the game being played is one (PDA REVISIT LOCATION).
+    bool finished = false, treasureHunt = false;
 
     // `keyName`: the key shown in the footer prompt (tru.exe shows the bound key's name, "Return").
     void draw(Canvas& c, const locale::Strings& s, std::string_view keyName = "Return");
@@ -181,6 +188,7 @@ private:
     void drawSonar(Canvas& c, const locale::Strings& s);
     void drawMessage(Canvas& c, const locale::Strings& s);
     void drawConfirm(Canvas& c, const locale::Strings& s);
+    void drawPdaList(Canvas& c, const locale::Strings& s);
     std::vector<Item> itemsOf(Screen s);
     Action activate(Item it); // Accept on `it` of the current screen
     void back(); // pop, restoring the cursor of the screen below
@@ -194,6 +202,8 @@ private:
     Item pending_;         // Screen::Confirm: the item YES runs
     int category_ = 0; // PdaItems: the INVENTORY category it shows
     int equip_ = 0;
+    int revisit_ = 1;
+    int top_ = 0;          // PDA list pages: first row shown
     std::string selected_;
     std::array<float, 8> grow_{}; // per radial / slot item: 0 = idle .. 1 = selected (eased)
     float label_ = 0;             // label fade-in of the selected radial item, 0..1

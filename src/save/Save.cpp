@@ -65,6 +65,7 @@ json toJson(const SaveGame& s) {
         {"found", s.found},
         {"grenades", s.grenades ? json(*s.grenades) : json(nullptr)},
         {"flashlight", s.flashlight},
+        {"treasureHunt", s.treasureHunt},
         {"outfit", s.outfit},
         {"health", s.health ? json(*s.health) : json(nullptr)},
         {"tailoring", s.tailoring ? json{s.tailoring->enemyHealth, s.tailoring->ammo, s.tailoring->laraHealth, s.tailoring->savingGrab,
@@ -127,6 +128,7 @@ SaveGame fromJson(const json& j) {
     s.found = j.value("found", std::array<int, 3>{});
     if (const auto g = j.find("grenades"); g != j.end() && !g->is_null()) s.grenades = std::max(0, g->get<int>());
     s.flashlight = j.value("flashlight", false);
+    s.treasureHunt = j.value("treasureHunt", false);
     s.outfit = j.value("outfit", std::string{});
     if (s.outfit.size() > 64 || s.outfit.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos)
         throw SaveError("bad outfit " + s.outfit);
@@ -181,7 +183,7 @@ SaveGame capture(const game::World& world) {
     s.collected = world.collected;
     s.chapter = world.chapter;
     s.found = world.found;
-    s.grenades = world.grenades, s.flashlight = world.flashlight;
+    s.grenades = world.grenades, s.flashlight = world.flashlight, s.treasureHunt = world.treasureHunt;
     s.outfit = world.outfit;
     if (!world.health().dead()) s.health = world.health().value(); // [I] a save taken while dead loads at full
     s.tailoring = world.tailoring();
@@ -213,6 +215,7 @@ void apply(const SaveGame& save, game::World& world) {
     world.found = save.found;
     if (save.grenades) world.grenades = *save.grenades;
     world.flashlight = save.flashlight;
+    world.treasureHunt = save.treasureHunt;
     // tru.exe 0x5DE2B0: a load keeps the saved outfit (game state +0x20C), except l1_seatop forces lara_wetsuit_warm.
     if (!save.outfit.empty()) world.outfit = save.unit == "l1_seatop" ? "lara_wetsuit_warm" : save.outfit;
     world.script().restore(save.script);
@@ -322,6 +325,21 @@ SaveGame readFile(const fs::path& path, bool* usedBackup) {
             throw SaveError(std::string(e.what()) + "; backup: " + e2.what());
         }
     }
+}
+
+Profile readProfile(const fs::path& dir) {
+    std::ifstream f(dir / "profile.json");
+    if (!f) return {};
+    try {
+        const json j = json::parse(f);
+        return {j.value("chapters", 0u), j.value("finished", false)};
+    } catch (const std::exception&) {
+        return {};
+    }
+}
+
+void writeProfile(const Profile& p, const fs::path& dir) {
+    writeFile(dir / "profile.json", json{{"chapters", p.chapters}, {"finished", p.finished}}.dump());
 }
 
 } // namespace ou::save

@@ -429,6 +429,7 @@ public:
     std::set<int32_t> collected; // intro ids of picked-up items (Pickup::id); saved
     std::array<int, 3> found{};  // pickups collected per PickupKind (PDA counts); saved
     int chapter = 0;             // kChapters index being played; saved
+    bool treasureHunt = false;   // Treasure Hunt (after the ending: revisiting chapters for what is left); saved
     // Lara's outfit object (objectlist.txt name, pc-w\<outfit>.drm): the level-load unit's (UnitData::playerObject,
     // set by enterUnit), or a save's. Rendering follows it; setOutfitRig re-rigs the pose skeleton. Saved.
     std::string outfit = "lara";

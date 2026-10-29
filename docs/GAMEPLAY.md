@@ -1235,11 +1235,21 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   ×1 in the centre), white icon (×1.125 ring), glow 11 (×1.22 ring / ×1.17 centre, 0.7 opaque), label fading in over
   ~0.5 s on bar 12 (centre, above) or 13 (ring, to the left, ink ending 53.6 left of the item centre); footer lines
   (texture 105, 686 wide at y 432 / 450.5) and prompt 120. The movie `medsea_loop.bik` is fitted to the window width,
-  centred, at ~0.66 brightness. Items: centre 123 PLAY GAME (loads the newest save, else a new game), ring 124 START NEW
-  GAME (PLAYER TAILORING first), 125 GAME OPTIONS, 126 LOAD GAME, 127 SAVE GAME (main menu: message 161 "only … in
+  centred, at ~0.66 brightness. Items: centre [O mainmenu, e4/e5] 49 TREASURE HUNT once the game is finished, else 122
+  RESUME GAME with an autosave, else 123 PLAY GAME (icon 18 for all; RESUME / PLAY load the autosave, else the newest
+  save, else start a new game), ring 124 START NEW GAME (PLAYER TAILORING first; with an autosave after 157 [I]), 125 GAME OPTIONS, 126 LOAD GAME, 127 SAVE GAME (main menu: message 161 "only … in
   gameplay mode" in box 106 with OK 383), 128 AUDIO/VISUAL, 129 EXTRAS (not ported: message 456 "Unavailable"), 131
   QUIT GAME. Navigation as tru.exe: Left from the centre to the last ring item (first time SAVE GAME, the one level with
   the centre), Right back to the centre, Up/Down along the ring and off either end to the centre.
+- Autosave and profile [I]: a game started from the main menu autosaves (slot `autosave`) at every chapter start and
+  checkpoint (key: chapter + checkpoint; loads do not re-save). `<saveDir>/profile.json` (`save::Profile`) keeps the
+  chapters ended (a level end's cinematic) and whether the ending played. The ending [O GAMEPLAY "Thor's gear"]: a
+  cinematic in chapter 8 (l7_himalaya_end) marks the game finished, autosaves what was found, plays `credits.bik` and
+  returns to the main menu, whose centre is then TREASURE HUNT.
+- Treasure Hunt [O start unit l1_seatop; I rules]: starts chapter 1 keeping the autosave's `collected` / `found` (what the
+  finished game picked up stays picked up), `World::treasureHunt` set and saved (its autosave reads "<AREA> - TREASURE
+  HUNT"); the PDA's REVISIT LOCATION is enabled only then and lists the chapters 52–58 (a PDA list page as JOURNAL
+  ENTRIES, the chapter's loading-screen story 59 + n beside [I: not captured]); Return starts that chapter, finds kept.
 - Pause [O]: the same ring with 122 RESUME GAME in the centre over the game dimmed to ~0.56 (HUD hidden); SAVE GAME opens
   the Save screen, QUIT GAME returns to the main menu (after 494 [I]). No PDA item: the `pda` action (key 1,
   replays `pda`) opens the PDA.
@@ -1292,7 +1302,7 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   LESS / NORMAL / EXTRA) is not ported.
 - PDA [O]: `pda_bg_1280` (`_960` when the window is narrower than 1.556:1) fitted to the window height and centred; in
   bg pixels (virtual = bg·2/3 − 106.7, bg·2/3, the same for both widths): items 1074 SONAR MAP, 1075 AREA INFO, 1076,
-  1077, 1078, 1081 / 1082 greyed (91, 91, 91, skipped), 122 RESUME GAME, right-aligned at 502.7, caps 173.3 + 43.3·i,
+  1077, 1078, 1081 / 1082 greyed (91, 91, 91, skipped; 1082 enabled in a Treasure Hunt), 122 RESUME GAME, right-aligned at 502.7, caps 173.3 + 43.3·i,
   scale 0.605, a line 17.4 below each from x 251.3 ((46, 86, 121); selected 2 px (68, 130, 184)); the selected item in
   (76, 139, 193) with arrow 114. Picture window (g_pda texture, tab bar included) at (544.7, 166) 1 px/texel, tab label
   right-aligned at 994 cap 360.7 scale 0.57: SONAR 688 + prompt 1085 (Accept: 1093 "unavailable"); AREA INFO 680 +

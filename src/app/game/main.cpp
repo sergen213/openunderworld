@@ -1152,7 +1152,8 @@ bool writeWav(const std::filesystem::path& path, const std::vector<float>& lr, u
 }
 
 // Save slots in saveDir(), newest first, with where and when each was saved (ui::SaveSlot). The autosave is named after
-// its place; "savegame-<n>" shows as "Savegame <n>" (the original's default name), other slots by their file name.
+// its place (a Treasure Hunt's "<AREA> - TREASURE HUNT"); "savegame-<n>" shows as "Savegame <n>" (the original's default
+// name), other slots by their file name.
 std::vector<ou::ui::SaveSlot> listSaves() {
     std::vector<std::pair<std::filesystem::file_time_type, std::string>> v;
     std::error_code ec;
@@ -1166,7 +1167,7 @@ std::vector<ou::ui::SaveSlot> listSaves() {
         try {
             const auto g = ou::save::readFile(ou::save::slotPath(s));
             const int c = std::clamp(g.chapter, 0, int(ou::game::kChapters.size()) - 1);
-            slot.area = ou::game::kChapters[size_t(c)].nameId, slot.title = ou::ui::levelTitle(c, g.unit);
+            slot.area = ou::game::kChapters[size_t(c)].nameId, slot.title = g.treasureHunt ? 49 : ou::ui::levelTitle(c, g.unit); // [I] "- TREASURE HUNT"
         } catch (const std::exception&) {
         }
         const std::time_t tt = std::chrono::system_clock::to_time_t(std::chrono::file_clock::to_sys(t));
@@ -1564,6 +1565,7 @@ int main(int argc, char** argv) {
     };
     auto openPda = [&] {
         fillPda();
+        menus.treasureHunt = world->treasureHunt; // REVISIT LOCATION
         menus.open(ou::ui::Screen::Pda);
         std::fprintf(stderr, "ou-game: tick %llu pda\n", (unsigned long long)world->ticks());
     };
@@ -1612,15 +1614,48 @@ int main(int argc, char** argv) {
         }
     };
     bool running = true;
+    // What the player reached across games (save::Profile): chapter ends and the ending (TREASURE HUNT, EXTRAS unlocks).
+    ou::save::Profile profile = ou::save::readProfile();
+    menus.finished = profile.finished;
+    auto reached = [&](uint32_t chapters, bool finished) {
+        const ou::save::Profile p{profile.chapters | chapters, profile.finished || finished};
+        if (p == profile) return;
+        profile = p, menus.finished = p.finished;
+        try {
+            ou::save::writeProfile(profile);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: profile: %s\n", e.what());
+        }
+    };
+    // Autosave (slot "autosave", ui::kAutosaveSlot) at every chapter start and checkpoint of a game started from the main
+    // menu [I: the original autosaves at checkpoints]; key = (chapter, checkpoint) last saved, -1 = save at the next tick.
+    const bool autosaves = menuStart && !script;
+    std::optional<std::pair<int, std::optional<ou::game::CheckpointRef>>> autoKey;
+    auto autosaveHere = [&] { autoKey = std::pair{world->chapter, world->checkpoint()}; };
+    auto startChapter = [&](int n, bool keepFinds) { // New Game / Treasure Hunt / REVISIT LOCATION
+        showLoading(n);
+        try {
+            if (!keepFinds) world->collected.clear(), world->found = {};
+            world->script().restore(nlohmann::json::object());
+            world->startChapter(n);
+            shownChapter = -1;
+            autoKey = std::pair{-1, std::optional<ou::game::CheckpointRef>{}};
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: chapter %d: %s\n", n, e.what());
+        }
+    };
     auto act = [&](ou::ui::Action action) {
         using ou::ui::Action;
         switch (action) {
         case Action::None: return;
-        case Action::Continue: // PLAY GAME: the newest save, else a new game
+        case Action::Continue: // PLAY GAME / RESUME GAME: the autosave, else the newest save, else a new game
             if (!menus.saves.empty()) {
-                showLoading(saveChapter(menus.saves.front().slot));
-                if (!quickLoad(*world, menus.saves.front().slot)) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
+                const auto it = std::find_if(menus.saves.begin(), menus.saves.end(), [](const auto& v) { return v.autosave; });
+                const std::string slot = (it != menus.saves.end() ? *it : menus.saves.front()).slot;
+                showLoading(saveChapter(slot));
+                if (!quickLoad(*world, slot)) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
                 shownChapter = world->chapter;
+                autosaveHere();
                 break;
             }
             [[fallthrough]];
@@ -1631,16 +1666,21 @@ int main(int argc, char** argv) {
                 playMovie("explode.bik");
                 if (gl) SDL_GL_MakeCurrent(window.get(), gl);
             }
-            showLoading(0);
-            try {
-                world->collected.clear(), world->found = {};
-                world->script().restore(nlohmann::json::object());
-                world->startChapter(0);
-                shownChapter = -1;
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "ou-game: new game: %s\n", e.what());
-            }
+            world->treasureHunt = false;
+            startChapter(0, false);
             break;
+        case Action::TreasureHunt: // [O] l1_seatop, keeping what the finished game found (its autosave)
+            try {
+                const auto g = ou::save::readFile(ou::save::slotPath(ou::ui::kAutosaveSlot));
+                world->collected = g.collected, world->found = g.found;
+            } catch (const std::exception& e) {
+                world->collected.clear(), world->found = {};
+                std::fprintf(stderr, "ou-game: treasure hunt without the autosave: %s\n", e.what());
+            }
+            world->treasureHunt = true;
+            startChapter(1, true);
+            break;
+        case Action::Revisit: startChapter(menus.revisitChapter(), true); break; // PDA REVISIT LOCATION (Treasure Hunt)
         case Action::Resume: break;
         case Action::Save: { // a used slot is overwritten, an empty one becomes the first free "savegame-<n>"
             std::string name = menus.selectedSave();
@@ -1666,6 +1706,7 @@ int main(int argc, char** argv) {
             showLoading(saveChapter(menus.selectedSave()));
             if (!quickLoad(*world, menus.selectedSave())) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
             shownChapter = world->chapter;
+            autosaveHere();
             break;
         case Action::QuitToMenu:
             menus.close();
@@ -1741,7 +1782,18 @@ int main(int argc, char** argv) {
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: cinematic %s: %s\n", name.c_str(), e.what());
         }
+        if (levelEnd) reached(1u << world->chapter, false); // before World::startChapter moves on
         if (levelEnd && running) showLoading(world->chapter + 1); // [I] the next chapter is the following one
+        if (!levelEnd && world->chapter == 8 && running) { // the ending [O]: credits, then the main menu with TREASURE HUNT
+            reached(1u << 7 | 1u << 8, true);
+            if (autosaves) quickSave(*world, std::string(ou::ui::kAutosaveSlot)); // what was found, for Treasure Hunt
+            if (!opt.noMovies) {
+                SDL_GLContext gl = SDL_GL_GetCurrentContext();
+                playMovie("credits.bik");
+                if (gl) SDL_GL_MakeCurrent(window.get(), gl);
+            }
+            act(ou::ui::Action::QuitToMenu);
+        }
         streamed.version = ~0ull; // re-upload the game scene
     };
 
@@ -1841,6 +1893,10 @@ int main(int argc, char** argv) {
                 logState("killed (--die)", *world);
             }
             world->tick(a);
+            if (autosaves && autoKey && !menus.mainMenu()) {
+                const std::pair key{world->chapter, world->checkpoint()};
+                if (key != *autoKey) quickSave(*world, std::string(ou::ui::kAutosaveSlot)), autoKey = key;
+            }
             combat.tick(*world);
             gadgets.tick(*world);
             effects.events(*world);
@@ -2065,7 +2121,7 @@ int main(int argc, char** argv) {
         }
         const ou::ui::Screen scr = menus.screen();
         const bool pdaPage = scr == ou::ui::Screen::Pda || scr == ou::ui::Screen::PdaWeapons || scr == ou::ui::Screen::PdaInventory ||
-                             scr == ou::ui::Screen::PdaItems;
+                             scr == ou::ui::Screen::PdaItems || scr == ou::ui::Screen::Revisit;
         if (scr == ou::ui::Screen::PdaSonar && shownScreen != scr) resetSonar(), shownSonarSize = {}; // opens behind Lara
         shownScreen = scr;
         if (pdaPage) // pda_bg_960 for narrow windows (ui::Menus::drawPda)

@@ -35,6 +35,7 @@ struct SaveGame {
     std::array<int, 3> found{}; // World::found (per PickupKind)
     std::optional<int> grenades; // World::grenades; missing (older saves) = left as it is
     bool flashlight = false;     // World::flashlight
+    bool treasureHunt = false;   // World::treasureHunt
     std::string outfit; // World::outfit (objectlist name, [a-z0-9_]); empty (older saves) = the unit's
     std::optional<float> health; // Lara's health (World::health); missing = full
     std::optional<game::Tailoring> tailoring; // World::tailoring (PLAYER TAILORING); missing (older saves) = left as it is
@@ -67,5 +68,15 @@ void writeFile(const std::filesystem::path& path, std::string_view bytes);
 // parse() of <path>; when it is missing or invalid, the backup <path>.bak (sets *usedBackup).
 // Throws SaveError naming both failures.
 SaveGame readFile(const std::filesystem::path& path, bool* usedBackup = nullptr);
+
+// What the player has reached across games (<saveDir>/profile.json, written whole): chapters completed (bit n = kChapters
+// index n ended) and the game finished (the ending played): the main menu's TREASURE HUNT and the EXTRAS unlocks.
+struct Profile {
+    uint32_t chapters = 0;
+    bool finished = false;
+    bool operator==(const Profile&) const = default;
+};
+Profile readProfile(const std::filesystem::path& dir = saveDir()); // missing / unreadable = nothing reached
+void writeProfile(const Profile& p, const std::filesystem::path& dir = saveDir()); // throws SaveError
 
 } // namespace ou::save
