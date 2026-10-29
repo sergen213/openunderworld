@@ -7,6 +7,7 @@ All notable changes to OpenUnderworld are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Original combat and animation-event effects: muzzle flashes from the weapon objects' `fire` clip events at their muzzle markers, bullet impacts from the ammo's hit object (`bullet_hit`, ...) picked by the hit surface's collision material (stone dust, sparks, water spray, blood on bodies), casings as small sprites, and Lara's / enemies' clip events (footstep dust, splashes) on their posed bones, GL + Vulkan; the placeholder line muzzle flashes/impacts are gone (docs/formats/EFFECTS.md "Animation events and combat").
 - Spline movers: intro +0x68 paths (Bezier/Hermite position, slerped rotation, 30 Hz keys) move their objects with the original play modes (once, loop, loop count, ping-pong, clip, play-to-key, key-range callbacks) and all `spline` script natives; moved objects with collision carry Lara. The l7_yggdrasil_end Natla movers and l1_seafloor fish now move.
 - Script VM: array opcodes (DREF/BOUNDS) and thread blocks (TSSTART/TPSTART/TEND, run inline); `playersensor`, `instance` 18/21/23, `modifiable` 1, `unitref` 2 and `larabase` 25/27/29/55/56 natives. Script survey stops 472 → 265 (with more code now reached).
 - Script function arguments are placed at their prototype byte offsets (from 0) instead of after a `this` slot; handlers that read their arguments (e.g. Lara's reveal control toggle, mover PlayFromKey) got the object's own id before.

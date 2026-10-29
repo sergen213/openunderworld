@@ -421,14 +421,11 @@ std::optional<glm::vec2> toScreen(const ou::game::CameraState& cam, float fovDeg
     return glm::vec2((glm::dot(v, right) / (z * tx) + 1) * 0.5f * float(width), (1 - glm::dot(v, up) / (z * ty)) * 0.5f * float(height));
 }
 
-// Combat (src/game/Combat.*): weapon models on Lara's hand / holster bones, --target dummies, muzzle flashes,
-// tracers, impacts, the HUD state and reticle (ui::Hud) and each weapon's shot / reload waves. [I] the exe's flash/impact FX
-// objects are not decoded.
+// Combat (src/game/Combat.*): weapon models on Lara's hand / holster bones, --target dummies, the HUD state and reticle
+// (ui::Hud) and each weapon's shot / reload waves. Muzzle flashes and impacts are the original effects (EffectsView).
 struct CombatView {
     std::vector<ou::scene::Vertex> scratch;
     std::vector<std::unique_ptr<ou::game::DummyTarget>> dummies;
-    struct Fx { ou::game::Shot shot; uint64_t tick; };
-    std::vector<Fx> fx;
     struct Waves { std::vector<uint32_t> shots; uint32_t reloadStart = 0, reloadEnd = 0; };
     std::array<Waves, ou::game::kWeaponCount> waves; // by weapon
     uint32_t unholster = 0, next = 0;
@@ -460,14 +457,12 @@ struct CombatView {
         const auto tick = (unsigned long long)w.ticks();
         const auto& wv = waves[size_t(c.weapon)];
         for (const auto& shot : c.shots) {
-            fx.push_back({shot, w.ticks()});
             if (mix && !wv.shots.empty() && (&shot == &c.shots.front()))
                 mix->play(wv.shots[next++ % wv.shots.size()], {.volume = 0.8f, .position = shot.from});
             std::fprintf(stderr, "ou-game: tick %llu shot %s %s %.0f %.0f %.0f -> %.0f %.0f %.0f%s damage %.1f\n", tick,
                          std::string(ou::game::weaponName(c.weapon)).c_str(), shot.hand ? "left" : "right", shot.from.x, shot.from.y,
                          shot.from.z, shot.to.x, shot.to.y, shot.to.z, shot.target ? " TARGET" : shot.hit ? " wall" : "", shot.damage);
         }
-        std::erase_if(fx, [&](const Fx& f) { return w.ticks() - f.tick > 20; });
         if (mix && c.drawn && !drawn && unholster) mix->play(unholster, {.volume = 0.7f});
         if (mix && c.reload > 0 && !reloading && wv.reloadStart) mix->play(wv.reloadStart, {.volume = 0.7f});
         if (mix && c.reload <= 0 && reloading && wv.reloadEnd) mix->play(wv.reloadEnd, {.volume = 0.7f});
@@ -500,7 +495,7 @@ struct CombatView {
         }
     }
 
-    void lines(const ou::game::World& w, std::vector<ou::render::DebugLine>& out) const {
+    void lines(const ou::game::World&, std::vector<ou::render::DebugLine>& out) const {
         auto line = [&](glm::vec3 a, glm::vec3 b, uint32_t col) { out.push_back({{a.x, a.y, a.z}, {b.x, b.y, b.z}, col}); };
         for (const auto& d : dummies) { // capsule wireframe: red alive, grey dead
             const uint32_t col = d->alive() ? 0xFF3030FF : 0xFF808080;
@@ -511,17 +506,6 @@ struct CombatView {
                 if (k % 3 == 0) line(d->pos + p0 + glm::vec3(0, 0, d->r), d->pos + p0 + glm::vec3(0, 0, d->h - d->r), col);
             }
             line(d->pos, d->pos + glm::vec3(0, 0, d->h), col);
-        }
-        for (const auto& f : fx) {
-            const uint64_t age = w.ticks() - f.tick;
-            if (age <= 2) // muzzle flash star
-                for (const glm::vec3 d : {glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1), glm::vec3(0.7f, 0.7f, 0), glm::vec3(0.7f, -0.7f, 0),
-                                          glm::vec3(0, 0.7f, 0.7f), glm::vec3(0.7f, 0, -0.7f)})
-                    line(f.shot.from - d * 30.0f, f.shot.from + d * 30.0f, 0xFF40D0FF);
-            if (age <= 4) line(f.shot.from, f.shot.to, 0xFF90F0FF); // tracer
-            if (f.shot.hit)
-                for (const glm::vec3 d : {glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)})
-                    line(f.shot.to - d * 15.0f, f.shot.to + d * 15.0f, f.shot.target ? 0xFF2020FF : 0xFFC0C0C0);
         }
     }
 
@@ -711,6 +695,9 @@ struct StreamedScene {
 
 // Original particle effects (src/fx, docs/formats/EFFECTS.md): every loaded unit's intros run their object's birth
 // effects (enabled event-0 records, tru.exe 0x5BA480), simulated each game tick, drawn as sprites. Owner = intro uid.
+// Combat: each shot plays its weapon object's "fire" clip events at the muzzle and its ammo's hit object (bullet_hit,
+// ...) "idle" clip events at the impact, filtered by the hit surface's material; Lara's and the enemies' clips run
+// their animation events (footstep dust, splashes, ...) on their posed bones. Owners < 0: transient.
 struct EffectsView {
     std::optional<ou::fx::Library> library;
     std::map<uint16_t, std::string> names;
@@ -747,6 +734,104 @@ struct EffectsView {
                 m[3] += glm::vec4(u.offset, 0);
                 if (system.startBirth(fx, m, in.uniqueId)) owners.push_back(in.uniqueId);
             }
+        }
+        // Combat / animation-event objects, loaded now so their textures reach the scene (addTextures).
+        for (const char* n : {"lara", "bullet_hit", "bullet_hit_underwater", "bullet_hit_shotgun", "bullet_hit_shotgun_underwater"})
+            library->get(n, &warnings);
+        for (int k = 0; k < ou::game::kWeaponCount; ++k) library->get(std::string(ou::game::weaponObject(ou::game::Weapon(k))), &warnings);
+        for (const auto& e : w.enemies().all()) {
+            library->get(e->type().name, &warnings);
+            if (const auto n = names.find(e->type().weapon); n != names.end()) library->get(n->second, &warnings);
+        }
+    }
+    // Rigid frame at p: muzzle (axis 1, -Y along the shot, Z up) or impact (axis 2, Z = surface normal).
+    static glm::mat4 frameAlong(glm::vec3 p, glm::vec3 d, int axis) {
+        const glm::vec3 up = std::abs(d.z) < 0.9f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0);
+        glm::mat4 m(1);
+        if (axis == 1) {
+            const glm::vec3 x = glm::normalize(glm::cross(d, up));
+            m[0] = glm::vec4(x, 0), m[1] = glm::vec4(d, 0), m[2] = glm::vec4(glm::cross(x, d), 0);
+        } else {
+            const glm::vec3 x = glm::normalize(glm::cross(up, d));
+            m[0] = glm::vec4(x, 0), m[1] = glm::vec4(glm::cross(d, x), 0), m[2] = glm::vec4(d, 0);
+        }
+        m[3] = glm::vec4(p, 1);
+        return m;
+    }
+    // Terrain material of the collision face under / at a hit (face +0x10; tru.exe copies it to instance +0x186).
+    static uint8_t material(const ou::collision::CollisionMesh& col, const ou::collision::Hit& h) {
+        return h.dynamic < 0 && h.face < col.faces.size() ? col.faces[h.face].material : 0;
+    }
+    // One bullet: the weapon's "fire" events with its muzzle marker (-10) on `from`, -Y along the shot (tru.exe weapon
+    // instance anim events), then the ammo's hit object (ammo data +0x3C, +0xA8 under water: 0x6C64D0 -> 0x6B7030)
+    // at the impact with Z on the normal, filtered by the surface material (bodies: 23, flesh / blood [I]).
+    void shot(const ou::game::World& w, const std::string& weapon, glm::vec3 from, glm::vec3 to, bool body, bool hit, bool wet) {
+        const glm::vec3 d = to - from;
+        const float len = glm::length(d);
+        if (len < 1) return;
+        const glm::vec3 dir = d / len;
+        if (const auto gun = library->get(weapon))
+            if (const auto* fire = gun->clip(wet ? "fire_submerged" : "fire"); fire || (fire = gun->clip("fire")))
+                system.play(gun, *fire, frameAlong(from, -dir, 1) * glm::inverse(gun->frame(-10)), -1, 0);
+        if (!hit) return;
+        const auto ammo = names.find(library->dataU16(weapon, 0xE6)); // weapon data +0xE6: ammo object (game::loadWeapon)
+        if (ammo == names.end()) return;
+        const auto obj = names.find(library->dataU16(ammo->second, wet ? 0xA8 : 0x3C));
+        const auto fx = obj == names.end() ? nullptr : library->get(obj->second);
+        const auto* idle = fx ? fx->clip("idle") : nullptr;
+        if (!idle) return;
+        glm::vec3 at = to, normal = -dir;
+        uint8_t mat = 23;
+        if (!body)
+            if (const auto h = w.collision().raycast(from, dir, len + 20.0f)) at = h->point, normal = h->normal, mat = material(w.collision(), *h);
+        system.play(fx, *idle, frameAlong(at, normal, 2), -1, mat);
+    }
+    // Clip events of one animated instance between the last tick and this one (30 Hz frames, looping clips wrap).
+    void clipEvents(const std::shared_ptr<const ou::fx::ObjectFx>& fx, const std::string& clip, const std::string& prevClip,
+                    double prevT, double t, double duration, uint8_t mat, const glm::mat4& world,
+                    const std::function<std::vector<glm::mat4>()>& bones) {
+        const auto* ev = fx ? fx->clip(clip) : nullptr;
+        if (!ev || duration <= 0) return;
+        const float f1 = float(std::fmod(t, duration) * 30.0);
+        float f0 = clip == prevClip ? float(std::fmod(prevT, duration) * 30.0) : -1.0f;
+        std::vector<std::pair<float, float>> spans{{f0, f1}};
+        if (f1 < f0) spans = {{f0, 1e9f}, {-1.0f, f1}}; // wrapped
+        if (f0 < 0 && f1 <= 0) spans = {{-1.0f, 0.5f}};  // just started
+        std::vector<glm::mat4> b;
+        for (const auto& [a, z] : spans)
+            if (std::any_of(ev->begin(), ev->end(), [&](const auto& e) { return e.runsOn(mat) && float(e.frame) >= a && float(e.frame) < z; })) {
+                if (b.empty()) b = bones();
+                system.runEvents(fx, *ev, world, -1, mat, a, z, b);
+            }
+    }
+    void events(const ou::game::World& w) {
+        if (!library) return;
+        const auto& c = w.combat();
+        const std::string gun(ou::game::weaponObject(c.weapon));
+        for (const auto& s : c.shots) shot(w, gun, s.from, s.to, s.target != nullptr, s.hit, w.submerged());
+        for (const auto& s : w.enemies().shots) {
+            const auto e = std::find_if(w.enemies().all().begin(), w.enemies().all().end(), [&](const auto& x) { return x->uid() == s.uid; });
+            const auto n = e == w.enemies().all().end() ? names.end() : names.find((*e)->type().weapon);
+            if (n != names.end()) shot(w, n->second, s.from, s.to, s.hit, true, false);
+        }
+        auto floorMaterial = [&](glm::vec3 p) -> uint8_t {
+            const auto h = w.collision().groundProbe(p + glm::vec3(0, 0, 50), 250);
+            return h ? material(w.collision(), *h) : 0;
+        };
+        const auto &ps = w.player().state(), &pp = w.previous();
+        if (ps.clip.find(':') == std::string::npos) // weapon / vehicle clips ("object:clip") belong to other objects
+            if (const auto* clip = w.anims().find(ps.clip)) {
+                // Lara's material (0x6F06B0): the floor face's, 2 with the feet under a water surface [I: swimming], 3 under water [I].
+                const uint8_t mat = w.submerged() ? 3 : ps.water >= 0 ? 2 : floorMaterial(ps.pos);
+                clipEvents(library->get("lara"), ps.clip, pp.clip, pp.clipTime, ps.clipTime, clip->durationSeconds(), mat,
+                           w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch), [&] { return w.pose(1.0); });
+            }
+        for (const auto& e : w.enemies().all()) {
+            const auto &s = e->state(), &p = e->previous();
+            const auto it = e->type().clips.find(s.clip);
+            if (it == e->type().clips.end()) continue;
+            clipEvents(library->get(e->type().name), s.clip, p.clip, p.clipTime, s.clipTime, it->second.durationSeconds(),
+                       floorMaterial(s.pos), ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip), [&] { return e->pose(1.0); });
         }
     }
     // Particle textures the level scene does not already hold (renderers look textures up by id).
@@ -1503,6 +1588,7 @@ int main(int argc, char** argv) {
             world->tick(a);
             combat.tick(*world, audioOn ? &mixer : nullptr);
             gadgets.tick(*world);
+            effects.events(*world);
             effects.system.tick(effects.camera);
             if (const auto* b = world->ridden(); b || bikePhase != "parked") { // bike phase changes + 1 Hz while riding
                 const std::string phase(b ? ou::game::bikePhaseName(b->phase) : "parked");
