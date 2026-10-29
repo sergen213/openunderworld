@@ -739,6 +739,76 @@ TEST(AiReal, PoolGeneratorSpawnsThrall) {
     EXPECT_EQ(es.all().size(), placed + 1); // generators fire once
 }
 
+// Save games: l4_pool with the thrall spawned by generator 5637 mid-chase and panther 5645 killed after the checkpoint.
+// serialize() through JSON text into fresh Enemies, with the unit at another stream offset: every enemy is back in
+// the same state (shifted by the offset), the generator stays fired, both runs tick on identically, and a respawn
+// reset still revives the panther (alive at the checkpoint) and removes the generator spawn.
+TEST(AiReal, EnemyStateSaveRestore) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto unit = game::loadUnitData(bf, "l4_pool");
+    unit.col.build();
+    game::ai::Enemies es;
+    es.setBigfile(&bf);
+    es.setUnits({{unit.name, unit.drm, vec3(0)}});
+    const auto g = std::find_if(es.generators().begin(), es.generators().end(), [](const auto& x) { return x.uid == 5637; });
+    ASSERT_NE(g, es.generators().end());
+    const vec3 lara = g->pos + vec3(1500, 0, 0);
+    es.checkpoint();
+    for (int i = 0; i < 8.0 / kDt; ++i) es.tick(unit.col, {lara}, {}, kDt);
+    game::ai::Enemy* panther = nullptr;
+    for (const auto& e : es.all())
+        if (e->uid() == 5645) panther = e.get();
+    ASSERT_TRUE(panther);
+    while (panther->alive()) panther->onHit(shotFrom({-1, 0, 0}, panther->health() + 1));
+    for (int i = 0; i < 30; ++i) es.tick(unit.col, {lara}, {}, kDt);
+    ASSERT_EQ(es.all().size(), 2u);
+
+    const vec3 offset(1000, -2000, 300);
+    game::ai::Enemies loaded;
+    loaded.setBigfile(&bf);
+    loaded.setUnits({{unit.name, unit.drm, offset}}); // a different stream: placements, then replaced below
+    loaded.restore(nlohmann::json::parse(es.serialize().dump()));
+    EXPECT_TRUE(loaded.all().empty());
+    loaded.setUnits({{unit.name, unit.drm, offset}});
+    ASSERT_EQ(loaded.all().size(), es.all().size());
+    const auto byUid = [](const game::ai::Enemies& s, int32_t uid) -> const game::ai::Enemy& {
+        for (const auto& e : s.all())
+            if (e->uid() == uid) return *e;
+        throw std::runtime_error("no enemy " + std::to_string(uid));
+    };
+    const auto same = [&](const game::ai::Enemies& other, int32_t uid, vec3 shift) {
+        const auto &a = byUid(es, uid).state(), &b = byUid(other, uid).state();
+        EXPECT_EQ(a.mode, b.mode) << uid;
+        EXPECT_NEAR(glm::distance(a.pos + shift, b.pos), 0, 0.01) << uid;
+        EXPECT_EQ(a.health, b.health) << uid;
+        EXPECT_EQ(a.clip, b.clip) << uid;
+        EXPECT_NEAR(a.clipTime, b.clipTime, 1e-9) << uid;
+        EXPECT_EQ(a.rng, b.rng) << uid;
+    };
+    same(loaded, 5645, offset);
+    same(loaded, 5637, offset);
+    EXPECT_EQ(byUid(loaded, 5637).generator, 5637);
+    EXPECT_EQ(byUid(loaded, 5645).state().mode, Mode::Dead);
+    for (const auto& gen : loaded.generators())
+        if (gen.uid == 5637) EXPECT_TRUE(gen.fired);
+    // Restored in place, the chase goes on exactly as the original.
+    game::ai::Enemies again;
+    again.setBigfile(&bf);
+    again.restore(es.serialize());
+    again.setUnits({{unit.name, unit.drm, vec3(0)}});
+    for (int i = 0; i < 120; ++i) {
+        es.tick(unit.col, {lara}, {}, kDt);
+        again.tick(unit.col, {lara}, {}, kDt);
+    }
+    same(again, 5637, vec3(0));
+    same(again, 5645, vec3(0));
+    loaded.reset(); // respawn at the checkpoint, where the panther was alive
+    EXPECT_EQ(loaded.all().size(), 1u);
+    EXPECT_EQ(byUid(loaded, 5645).state().mode, Mode::Idle);
+    EXPECT_THROW(loaded.restore(nlohmann::json{{"states", {{"1", {{"mode", 99}}}}}}), std::runtime_error);
+}
+
 // Real units: Lara standing 1500 in front of l4_ballcourt poacher 6541 (spot found with a line-of-sight probe) is shot
 // at in bursts of 3 with the decoded damage; on l4_temple's platform above bats 5250..5254 (z 1725 over their 1043) a
 // bat flies up and bites. No placed enemy falls through its floor (6541 stands 96 below it).

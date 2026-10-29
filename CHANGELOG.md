@@ -4,6 +4,12 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [Unreleased]
+
+### Added
+- Configurable controls: every gameplay action (move, walk, sprint, jump, drop, interact, draw, fire, aim, switch target, weapon, health pack, grapple, quick save/load) can be bound to any keys, mouse buttons, gamepad buttons or triggers in `config.json` (`controls`) or on the launcher's Controllers tab, which captures the pressed input. Also mouse sensitivity and inverted look. Defaults are unchanged.
+- Saves now include the enemies: every enemy's position, health, animation and AI state (also in streamed-out areas), fired spawn generators and the checkpoint's dead set. Loading no longer revives enemies you killed or resets ones mid-fight. Older saves still load (their enemies stay as they are).
+
 ## [0.9.0] - 2026-10-28
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

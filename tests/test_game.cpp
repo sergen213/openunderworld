@@ -287,6 +287,49 @@ TEST(Game, InputScriptParse) {
     EXPECT_THROW(game::InputScript::parse("zero forward\n"), std::runtime_error);
 }
 
+TEST(Game, ControlBindings) {
+    // Every default input name is known to SDL and round-trips through its canonical name.
+    const config::InputConfig defaults;
+    for (const auto& [action, names] : defaults.bindings)
+        for (const auto& n : names) {
+            const auto r = platform::parseInput(n);
+            ASSERT_TRUE(r) << action << ": " << n;
+            EXPECT_EQ(platform::parseInput(platform::inputName(*r)), r) << n;
+        }
+    EXPECT_EQ(platform::parseInput("left shift"), platform::parseInput("Left Shift")); // case-insensitive
+    EXPECT_FALSE(platform::parseInput("Pad leftx")); // sticks are not bindable
+    EXPECT_FALSE(platform::parseInput("Mouse Wheel"));
+
+    bool keys[512] = {};
+    const auto press = [&](const char* name, bool down) { keys[platform::parseInput(name)->code] = down; };
+    const game::Controls standard;
+    press("Space", true);
+    EXPECT_TRUE(game::readDevices(standard, keys, nullptr).jump);
+    press("Space", false);
+    EXPECT_TRUE(game::readDevices(standard, keys, nullptr, 1u << 2).aim); // SDL_BUTTON_RMASK
+    press("W", true);
+    EXPECT_EQ(game::readDevices(standard, keys, nullptr).move.y, 1);
+    press("Down", true); // forward and back cancel
+    EXPECT_EQ(game::readDevices(standard, keys, nullptr).move.y, 0);
+    press("W", false), press("Down", false);
+    press("F5", true); // each action maps to its own Actions field (enum order == bindableActions())
+    auto a = game::readDevices(standard, keys, nullptr);
+    EXPECT_TRUE(a.save);
+    EXPECT_FALSE(a.load || a.grapple || a.heal || a.jump);
+    press("F5", false);
+
+    config::InputConfig custom;
+    custom.bindings["jump"] = {"J"};
+    custom.bindings["grapple"] = {"Space"};
+    const game::Controls rebound(custom);
+    press("Space", true);
+    a = game::readDevices(rebound, keys, nullptr);
+    EXPECT_FALSE(a.jump);
+    EXPECT_TRUE(a.grapple);
+    custom.bindings["heal"] = {"Hyperspace"};
+    EXPECT_THROW(game::Controls{custom}, std::runtime_error);
+}
+
 // ---- real data (OU_GAME_DIR) ------------------------------------------------------------------
 namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }

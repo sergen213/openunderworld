@@ -6,6 +6,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <map>
+#include <vector>
 
 namespace ou::config {
 
@@ -44,6 +46,21 @@ GraphicsSettings resolve(const GraphicsConfig& g);
 // false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 
+// Control bindings: action -> inputs, any of which triggers it. Input names (case-insensitive): SDL scancode
+// names ("W", "Space", "Left Shift", "F5"), "Mouse Left" / "Mouse Right" / "Mouse Middle", or "Pad <button>"
+// with SDL gamepad button names ("Pad a", "Pad dpright", "Pad leftshoulder", "Pad leftstick") plus
+// "Pad lefttrigger" / "Pad righttrigger" (pressed past half). Sticks are fixed: left moves, right looks.
+// Names are checked by ou::platform::parseInput (SDL); this layer only stores them.
+struct InputConfig {
+    std::map<std::string, std::vector<std::string>> bindings; // every bindableActions() entry
+    float mouseSensitivity = 1.0f; // multiplier, 0.1..10
+    bool invertY = false;          // mouse and right stick
+    InputConfig();                 // default bindings
+};
+// Bindable actions in display order: forward, back, left, right, walk, sprint, jump, drop, interact, draw, fire,
+// aim, switch, weapon, heal, grapple, save, load.
+const std::vector<std::string>& bindableActions();
+
 struct Config {
     std::string gameDir;
     std::string drm;                // start level, e.g. "pc-w\\lara.drm"; empty = placeholder scene
@@ -57,6 +74,7 @@ struct Config {
     // Signed manifest of the newest GitHub release (manifest.json.sig next to it); empty = no update source.
     std::string updateManifestUrl = "https://github.com/sergen213/openunderworld/releases/latest/download/manifest.json";
     GraphicsConfig graphics;
+    InputConfig controls;
 };
 
 fs::path configHome(); // $XDG_CONFIG_HOME or ~/.config

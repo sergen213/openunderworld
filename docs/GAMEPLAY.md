@@ -169,6 +169,23 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 - [U] Jump take-off speeds, step heights and swim speeds were not found in this block; the swim loops and the air clips
   have no root motion either, so these stay inferred.
 
+## Controls
+
+- Bindings live in `config.json` under `controls` (`bindings`: action → list of inputs; `mouse_sensitivity` 0.1..10,
+  a multiplier on 0.0025 rad/pixel; `invert_y` for mouse and right stick). `ou-game --config` reads them; actions a
+  file omits keep their defaults, an unknown action or input name is an error. Edit them on the launcher's
+  Controllers tab (Add input… captures a key, mouse button, pad button or trigger; Esc cancels).
+- Actions: forward, back, left, right, walk, sprint, jump, drop, interact, draw, fire, aim, switch, weapon, heal,
+  grapple, save, load. Inputs: SDL scancode names (`W`, `Space`, `Left Shift`, `F5`), `Mouse Left/Right/Middle`,
+  `Pad <SDL button>` (`Pad a`, `Pad dpright`, `Pad leftshoulder`, `Pad leftstick`), `Pad lefttrigger/righttrigger`
+  (pressed past half). Case-insensitive.
+- Defaults: WASD/arrows, Shift walk, Alt sprint, Space jump, Ctrl/C drop, E interact, F draw, mouse left fire / right
+  aim, Q switch target, X weapon, H health pack, G grapple, F5/F9 quick save/load; pad South jump, East drop, West
+  interact, North draw, left shoulder walk, right shoulder grapple, triggers fire/aim, right stick click switch,
+  d-pad right weapon, d-pad up health pack, left stick click sprint.
+- Fixed: left stick moves, right stick looks (2.5 rad/s at full deflection, 0.15 dead zone), Esc / Start opens the
+  pause menu, F1 toggles the overlay, menu navigation (arrows / Return / Esc, d-pad / South / East).
+
 ## Controller
 
 - Ground: each tick the current clip's root delta (rotated by heading) is the desired move. A capsule from

@@ -380,6 +380,29 @@ TEST(Config, RoundTripAndDefaults) {
     fs::remove_all(p.parent_path());
 }
 
+TEST(Config, ControlsOverridePerActionAndRoundTrip) {
+    fs::path p = fs::temp_directory_path() / ("ou_config_ctl_" + std::to_string(::getpid()) + "/config.json");
+    fs::create_directories(p.parent_path());
+    const ou::config::InputConfig defaults;
+    // A file binding only `jump` keeps every other action's defaults.
+    std::ofstream(p) << R"({"controls":{"invert_y":true,"mouse_sensitivity":2.5,"bindings":{"jump":["J","Pad y"]}}})";
+    auto c = ou::config::load(p);
+    EXPECT_EQ(c.controls.bindings.at("jump"), (std::vector<std::string>{"J", "Pad y"}));
+    EXPECT_EQ(c.controls.bindings.at("drop"), defaults.bindings.at("drop"));
+    EXPECT_TRUE(c.controls.invertY);
+    EXPECT_FLOAT_EQ(c.controls.mouseSensitivity, 2.5f);
+    c.controls.bindings["save"] = {}; // unbound survives a save/load
+    ou::config::save(p, c);
+    const auto d = ou::config::load(p);
+    EXPECT_EQ(d.controls.bindings, c.controls.bindings);
+    EXPECT_TRUE(d.controls.bindings.at("save").empty());
+    std::ofstream(p) << R"({"controls":{"bindings":{"fly":["Space"]}}})";
+    EXPECT_THROW(ou::config::load(p), std::runtime_error);
+    std::ofstream(p) << R"({"controls":{"mouse_sensitivity":0}})";
+    EXPECT_THROW(ou::config::load(p), std::runtime_error);
+    fs::remove_all(p.parent_path());
+}
+
 TEST(Config, GraphicsPresets) {
     using ou::config::GraphicsSettings;
     using ou::config::resolve;

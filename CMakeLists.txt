@@ -210,6 +210,9 @@ find_package(CURL REQUIRED)
 add_library(ou_config STATIC src/config/Config.cpp)
 target_include_directories(ou_config PUBLIC src)
 target_link_libraries(ou_config PUBLIC nlohmann_json::nlohmann_json)
+# ---- ou_input: control binding names <-> SDL3 devices (ou-game, launcher) ----
+add_library(ou_input STATIC src/platform/Input.cpp)
+target_link_libraries(ou_input PUBLIC ou_config PRIVATE SDL3::SDL3)
 target_link_libraries(ou-viewer PRIVATE ou_config)
 
 # Release public key (hex). Default: packaging/release-pubkey.hex; empty = updates unavailable.
@@ -237,7 +240,7 @@ find_package(Qt6 6.5 COMPONENTS Widgets Concurrent)
 if(Qt6_FOUND)
   add_executable(ou-launcher src/launcher/main.cpp)
   target_compile_definitions(ou-launcher PRIVATE OU_VERSION="${PROJECT_VERSION}")
-  target_link_libraries(ou-launcher PRIVATE ou_config ou_update ou_importer SDL3::SDL3 Qt6::Widgets Qt6::Concurrent)
+  target_link_libraries(ou-launcher PRIVATE ou_config ou_input ou_update ou_importer SDL3::SDL3 Qt6::Widgets Qt6::Concurrent)
   if(OU_BUILD_TESTS)
     add_test(NAME launcher_self_test COMMAND ou-launcher --self-test --config ${CMAKE_CURRENT_BINARY_DIR}/launcher-test-config.json)
     set_tests_properties(launcher_self_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;OU_DISABLE_UPDATES=1")
@@ -298,7 +301,7 @@ endif()
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp
   src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp)
-target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine glm::glm PRIVATE SDL3::SDL3)
+target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine ou_input glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)
 target_include_directories(ou_save PUBLIC src)

@@ -66,6 +66,7 @@ struct Options {
     std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
     std::optional<ou::game::Weapon> weapon;    // --weapon uzi|shotgun|speargun: carried secondary with max reserve
     ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr/--rt/--rt-quality (or --config)
+    ou::game::Controls controls;         // --config "controls" (default bindings without it)
     ou::config::GraphicsSettings gfx;    // resolved
 };
 
@@ -103,6 +104,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
             const auto c = ou::config::load(argv[i + 1]);
             o.gameDir = c.gameDir, o.renderer = c.renderer, o.width = c.width, o.height = c.height;
             o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen, o.graphics = c.graphics;
+            o.controls = ou::game::Controls(c.controls);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "--config: %s\n", e.what());
             return false;
@@ -1139,7 +1141,7 @@ int main(int argc, char** argv) {
 
         for (int n = clock.advance(dt); n > 0 && running; --n) {
             ou::game::Actions a = script ? script->at(appTicks)
-                                         : ou::game::readDevices(SDL_GetKeyboardState(nullptr), pad.get(),
+                                         : ou::game::readDevices(opt.controls, SDL_GetKeyboardState(nullptr), pad.get(),
                                                                  interactive ? SDL_GetMouseState(nullptr, nullptr) : 0);
             ++appTicks;
             if (!opt.musicWav.empty()) { // a tick of mixer output (also while paused)
@@ -1161,7 +1163,8 @@ int main(int argc, char** argv) {
                 continue;
             }
             // Mouse motion since the last tick, as a rate over this tick.
-            a.look -= mouse * kMouseSensitivity / float(ou::game::kTickSeconds);
+            if (opt.controls.invertY) mouse.y = -mouse.y;
+            a.look -= mouse * kMouseSensitivity * opt.controls.mouseScale / float(ou::game::kTickSeconds);
             mouse = glm::vec2(0);
             if (a.save && !held.save) quickSave(*world, "quick");
             if (a.load && !held.load) quickLoad(*world, "quick"), shownChapter = world->chapter;

@@ -4,6 +4,7 @@
 // No Q_OBJECT classes (lambdas only), so no moc. Notes: docs/LAUNCHER.md.
 #include "config/Config.hpp"
 #include "importer/Importer.hpp"
+#include "platform/Input.hpp"
 #include "update/Update.hpp"
 
 #include <SDL3/SDL.h>
@@ -14,21 +15,27 @@
 #include <QCommandLineParser>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFutureWatcher>
+#include <QHeaderView>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QSysInfo>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -152,6 +159,72 @@ void copyTree(const fs::path& from, const fs::path& to) {
     fs::copy(from, to, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
 }
 
+// Modal "press an input" capture: a key, mouse button or gamepad button/trigger. Esc cancels. result = binding name.
+class CaptureDialog : public QDialog {
+public:
+    std::string result;
+    explicit CaptureDialog(QWidget* parent, const QString& action) : QDialog(parent) {
+        setWindowTitle("Bind " + action);
+        auto* lay = new QVBoxLayout(this);
+        lay->addWidget(new QLabel("Press a key, mouse button or gamepad button for <b>" + action + "</b>.<br>Esc cancels."));
+        lay->addWidget(status_);
+        int n = 0;
+        if (SDL_JoystickID* ids = SDL_GetGamepads(&n)) {
+            for (int i = 0; i < n; ++i)
+                if (SDL_Gamepad* g = SDL_OpenGamepad(ids[i])) pads_.push_back(g);
+            SDL_free(ids);
+        }
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {} // drop stale presses
+        auto* poll = new QTimer(this);
+        connect(poll, &QTimer::timeout, this, [this] {
+            SDL_Event e;
+            while (SDL_PollEvent(&e)) {
+                using K = ou::platform::InputRef::Kind;
+                if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) return take({K::PadButton, e.gbutton.button});
+                if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && e.gaxis.value > 16384 &&
+                    (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER))
+                    return take({K::PadTrigger, e.gaxis.axis});
+            }
+        });
+        poll->start(16);
+    }
+    ~CaptureDialog() override {
+        for (SDL_Gamepad* g : pads_) SDL_CloseGamepad(g);
+    }
+
+protected:
+    void keyPressEvent(QKeyEvent* e) override {
+        if (e->key() == Qt::Key_Escape) return reject();
+        // Left/right modifiers by XKB keycode (evdev + 8); Qt reports both sides as one key.
+        static const std::pair<quint32, const char*> kSided[] = {{50, "Left Shift"}, {62, "Right Shift"}, {37, "Left Ctrl"},
+                                                                 {105, "Right Ctrl"}, {64, "Left Alt"}, {108, "Right Alt"}};
+        for (auto [code, name] : kSided)
+            if (e->nativeScanCode() == code) return take(*ou::platform::parseInput(name));
+        static const std::pair<const char*, const char*> kQtToSdl[] = {{"Del", "Delete"}, {"Ins", "Insert"}, {"PgUp", "PageUp"},
+                                                                       {"PgDown", "PageDown"}, {"Enter", "Keypad Enter"}};
+        QString name = QKeySequence(e->key()).toString();
+        for (auto [qt, sdl] : kQtToSdl)
+            if (name == qt) name = sdl;
+        if (const auto r = ou::platform::parseInput(s(name))) return take(*r);
+        status_->setText("'" + name + "' has no SDL key name; try another key.");
+    }
+    void mousePressEvent(QMouseEvent* e) override {
+        using K = ou::platform::InputRef::Kind;
+        if (e->button() == Qt::LeftButton) take({K::Mouse, SDL_BUTTON_LEFT});
+        else if (e->button() == Qt::RightButton) take({K::Mouse, SDL_BUTTON_RIGHT});
+        else if (e->button() == Qt::MiddleButton) take({K::Mouse, SDL_BUTTON_MIDDLE});
+    }
+
+private:
+    std::vector<SDL_Gamepad*> pads_;
+    QLabel* status_ = new QLabel(this);
+    void take(const ou::platform::InputRef& r) {
+        result = ou::platform::inputName(r);
+        accept();
+    }
+};
+
 class Launcher : public QWidget {
 public:
     Launcher(Paths paths, const QString& gameDirOverride) : paths_(std::move(paths)) {
@@ -217,6 +290,9 @@ private:
     QSpinBox *width_, *height_;
     QDoubleSpinBox *fov_, *brightness_;
     QListWidget *pads_, *backups_;
+    QTableWidget* bindings_;
+    QDoubleSpinBox* mouseSensitivity_;
+    QCheckBox* invertY_;
     QLabel *updateStatus_, *versionLabel_;
 
     // ---------------------------------------------------------------------------------------
@@ -376,15 +452,73 @@ private:
     // ---------------------------------------------------------------------------------------
     QWidget* controllersPage() {
         auto* w = new QWidget;
+        // Bindings: one row per action, inputs comma-separated (editable; names in docs/GAMEPLAY.md "Controls").
+        const auto& actions = ou::config::bindableActions();
+        bindings_ = new QTableWidget(int(actions.size()), 1);
+        bindings_->setHorizontalHeaderLabels({"Inputs (comma-separated)"});
+        bindings_->horizontalHeader()->setStretchLastSection(true);
+        bindings_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        bindings_->setSelectionMode(QAbstractItemView::SingleSelection);
+        for (int i = 0; i < int(actions.size()); ++i) bindings_->setVerticalHeaderItem(i, new QTableWidgetItem(q(actions[i])));
+        showBindings(cfg_.controls);
+        auto* add = new QPushButton("Add input…");
+        auto* clear = new QPushButton("Clear");
+        auto* reset = new QPushButton("Reset all to defaults");
+        connect(add, &QPushButton::clicked, this, [this] {
+            const int row = bindings_->currentRow();
+            if (row < 0) { status_->setText("Select an action first."); return; }
+            CaptureDialog d(this, bindings_->verticalHeaderItem(row)->text());
+            if (d.exec() != QDialog::Accepted) return;
+            auto* item = bindings_->item(row, 0);
+            const QString cur = item->text().trimmed();
+            if (!splitInputs(cur).contains(q(d.result))) item->setText(cur.isEmpty() ? q(d.result) : cur + ", " + q(d.result));
+        });
+        connect(clear, &QPushButton::clicked, this, [this] {
+            if (const int row = bindings_->currentRow(); row >= 0) bindings_->item(row, 0)->setText({});
+        });
+        connect(reset, &QPushButton::clicked, this, [this] { showBindings({}); });
+        mouseSensitivity_ = new QDoubleSpinBox;
+        mouseSensitivity_->setRange(0.1, 10.0);
+        mouseSensitivity_->setSingleStep(0.1);
+        mouseSensitivity_->setValue(cfg_.controls.mouseSensitivity);
+        invertY_ = new QCheckBox("Invert look Y (mouse and right stick)");
+        invertY_->setChecked(cfg_.controls.invertY);
         pads_ = new QListWidget;
         auto* refresh = new QPushButton("Refresh");
         connect(refresh, &QPushButton::clicked, this, [this] { listPads(); });
+        auto* buttons = new QHBoxLayout;
+        for (auto* b : {add, clear, reset}) buttons->addWidget(b);
+        buttons->addStretch();
+        auto* mouse = new QHBoxLayout;
+        mouse->addWidget(new QLabel("Mouse sensitivity"));
+        mouse->addWidget(mouseSensitivity_);
+        mouse->addWidget(invertY_);
+        mouse->addStretch();
         auto* lay = new QVBoxLayout(w);
-        lay->addWidget(new QLabel("Gamepads seen by SDL3 (the viewer uses the first one):"));
+        lay->addWidget(new QLabel("Controls for ou-game (left stick moves and right stick looks on every gamepad):"));
+        lay->addWidget(bindings_, 3);
+        lay->addLayout(buttons);
+        lay->addLayout(mouse);
+        lay->addWidget(new QLabel("Gamepads seen by SDL3 (the game uses the first one):"));
         lay->addWidget(pads_, 1);
         lay->addWidget(refresh, 0, Qt::AlignLeft);
         listPads();
         return w;
+    }
+
+    static QStringList splitInputs(const QString& text) {
+        QStringList r;
+        for (const QString& p : text.split(',', Qt::SkipEmptyParts))
+            if (!p.trimmed().isEmpty()) r << p.trimmed();
+        return r;
+    }
+    void showBindings(const ou::config::InputConfig& c) {
+        const auto& actions = ou::config::bindableActions();
+        for (int i = 0; i < int(actions.size()); ++i) {
+            QStringList names;
+            for (const auto& n : c.bindings.at(actions[i])) names << q(n);
+            bindings_->setItem(i, 0, new QTableWidgetItem(names.join(", ")));
+        }
     }
 
     void listPads() {
@@ -643,12 +777,23 @@ private:
         g.shadows = overrideValue(shadows_);
         g.originalShaders = shaders_->currentIndex() == 1 ? std::optional(false) : std::nullopt; // unset = original
         g.brightness = float(brightness_->value());
+        const auto& actions = ou::config::bindableActions();
+        for (int i = 0; i < int(actions.size()); ++i) {
+            auto& names = cfg_.controls.bindings[actions[i]];
+            names.clear();
+            for (const QString& n : splitInputs(bindings_->item(i, 0)->text())) names.push_back(s(n));
+        }
+        cfg_.controls.mouseSensitivity = float(mouseSensitivity_->value());
+        cfg_.controls.invertY = invertY_->isChecked();
     }
 
     bool saveConfig() {
         collect();
         try {
             ou::config::resolve(cfg_.graphics); // the apps reject what this rejects
+            for (const auto& [action, names] : cfg_.controls.bindings)
+                for (const auto& n : names)
+                    if (!ou::platform::parseInput(n)) throw std::runtime_error("control " + action + ": unknown input '" + n + "'");
         } catch (const std::exception& e) {
             status_->setText("Not saved: " + q(e.what()));
             return false;

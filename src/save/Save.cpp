@@ -60,6 +60,7 @@ json toJson(const SaveGame& s) {
         {"found", s.found},
         {"health", s.health ? json(*s.health) : json(nullptr)},
         {"script", s.script},
+        {"enemies", s.enemies},
     };
 }
 
@@ -117,6 +118,8 @@ SaveGame fromJson(const json& j) {
     if (s.chapter < 0 || s.chapter >= int(game::kChapters.size())) throw SaveError("bad chapter " + std::to_string(s.chapter));
     s.script = j.value("script", json::object());
     if (!s.script.is_object()) throw SaveError("script state is not an object");
+    s.enemies = j.value("enemies", json(nullptr));
+    if (!s.enemies.is_null() && !s.enemies.is_object()) throw SaveError("enemy state is not an object");
     return s;
 }
 
@@ -149,6 +152,7 @@ SaveGame capture(const game::World& world) {
     s.found = world.found;
     if (!world.health().dead()) s.health = world.health().value(); // [I] a save taken while dead loads at full
     s.script = world.script().serialize();
+    s.enemies = world.enemies().serialize();
     s.ticks = world.ticks();
     return s;
 }
@@ -170,6 +174,13 @@ void apply(const SaveGame& save, game::World& world) {
     world.chapter = save.chapter;
     world.found = save.found;
     world.script().restore(save.script);
+    if (!save.enemies.is_null()) {
+        try {
+            world.restoreEnemies(save.enemies);
+        } catch (const std::runtime_error& e) {
+            throw SaveError(e.what());
+        }
+    }
     if (save.health) world.setHealth(*save.health);
 }
 

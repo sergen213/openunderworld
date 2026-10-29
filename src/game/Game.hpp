@@ -5,6 +5,8 @@
 
 #include "anim/Anim.hpp"
 #include "collision/Collision.hpp"
+#include "config/Config.hpp"
+#include "platform/Input.hpp"
 #include "physics/Physics.hpp"
 #include "formats/Formats.hpp"
 #include "formats/Uber.hpp"
@@ -338,6 +340,8 @@ public:
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
+    // Save games (src/save): ai::Enemies::restore, then the loaded units' enemies come back from it at once.
+    void restoreEnemies(const nlohmann::json& j);
     const ai::Enemies& enemies() const { return enemies_; }
     float fovDeg = 60.0f; // vertical FOV, from config
 
@@ -451,6 +455,7 @@ private:
     script::Runtime script_;
     ai::Enemies enemies_{&targets};
     uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
+    std::vector<script::UnitRef> unitRefs() const; // loaded units + cinematic objects, for script_/enemies_ setUnits
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     void bindMultibody();
     void bindUber();
@@ -490,14 +495,22 @@ std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& u
 std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
 
 // ---- input ------------------------------------------------------------------------------------
-// Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions.
-// Mouse look is added by the app: it accumulates relative motion per frame and feeds it to the next tick as
-// a rate (see ou-game). Keys: WASD/arrows move, Shift walk, Space jump, Ctrl/C drop, E interact, F5/F9
-// save/load, F draw/holster, Q switch target, X switch weapon, H health pack, G grapple (E ascend / Shift descend rope); mouse left fire, right aim/lock.
-// Pad: left stick move, right stick look, South jump, East drop, West interact, left shoulder walk, North draw,
-// right trigger fire, left trigger aim/lock, right stick click switch target, d-pad right switch weapon, d-pad up
-// health pack (locals.bin 1298 / 1291 glyphs U+180A / U+1808 [I button order]).
-Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons = 0);
+// Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions, through
+// the user's bindings (config::InputConfig; defaults: WASD/arrows move, Shift walk, Alt sprint, Space jump, Ctrl/C
+// drop, E interact, F draw/holster, Q switch target, X switch weapon, H health pack, G grapple, F5/F9 save/load,
+// mouse left fire, right aim/lock; pad South jump, East drop, West interact, North draw, left shoulder walk, right
+// shoulder grapple, triggers fire/aim, right stick click switch, d-pad right weapon, d-pad up health pack — locals.bin
+// 1298 / 1291 glyphs U+180A / U+1808 [I button order]). Sticks are fixed: left moves, right looks.
+// Mouse look is added by the app: it accumulates relative motion per frame and feeds it to the next tick as a rate
+// (see ou-game), scaled by mouseScale and flipped by invertY.
+struct Controls {
+    std::vector<std::vector<platform::InputRef>> actions; // per config::bindableActions() entry
+    float mouseScale = 1.0f;
+    bool invertY = false;
+    Controls() : Controls(config::InputConfig{}) {}
+    explicit Controls(const config::InputConfig& c); // throws std::runtime_error naming an unknown input
+};
+Actions readDevices(const Controls& controls, const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons = 0);
 
 // Scripted input for deterministic replays. Text, one event per line: `<seconds> <action> [value]`.
 // Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load, draw, fire, aim, switch,

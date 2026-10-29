@@ -316,4 +316,66 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
     }
 }
 
+namespace {
+nlohmann::json vec(vec3 v) { return {v.x, v.y, v.z}; }
+vec3 vec(const nlohmann::json& j) { return {j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>()}; }
+
+nlohmann::json toJson(const EnemyState& s) {
+    return {{"mode", int(s.mode)}, {"pos", vec(s.pos)}, {"yaw", s.yaw}, {"vz", s.vz}, {"clip", s.clip}, {"clipTime", s.clipTime},
+            {"loop", s.loop}, {"health", s.health}, {"modeTime", s.modeTime}, {"unseenTime", s.unseenTime},
+            {"cooldown", s.cooldown}, {"blowLanded", s.blowLanded}, {"damageSinceReaction", s.damageSinceReaction},
+            {"lastSeen", vec(s.lastSeen)}, {"fire", s.fire}, {"shotsLeft", s.shotsLeft}, {"shotTimer", s.shotTimer},
+            {"fireCooldown", s.fireCooldown}, {"rng", s.rng}, {"tip", s.tip}};
+}
+
+EnemyState stateFromJson(const nlohmann::json& j) {
+    EnemyState s;
+    const int mode = j.at("mode").get<int>();
+    if (mode < 0 || mode > int(Mode::Reload)) throw std::runtime_error("enemy mode " + std::to_string(mode));
+    s.mode = Mode(mode);
+    s.pos = vec(j.at("pos")), s.yaw = j.at("yaw"), s.vz = j.at("vz"), s.clip = j.at("clip"), s.clipTime = j.at("clipTime");
+    s.loop = j.at("loop"), s.health = j.at("health"), s.modeTime = j.at("modeTime"), s.unseenTime = j.at("unseenTime");
+    s.cooldown = j.at("cooldown"), s.blowLanded = j.at("blowLanded"), s.damageSinceReaction = j.at("damageSinceReaction");
+    s.lastSeen = vec(j.at("lastSeen")), s.fire = j.at("fire"), s.shotsLeft = j.at("shotsLeft"), s.shotTimer = j.at("shotTimer");
+    s.fireCooldown = j.at("fireCooldown"), s.rng = j.at("rng"), s.tip = j.at("tip");
+    return s;
+}
+} // namespace
+
+nlohmann::json Enemies::serialize() const {
+    std::map<int32_t, EnemyState> states = stash_; // streamed out; loaded ones overwrite below
+    std::set<int32_t> fired = firedGenerators_;
+    for (const auto& e : enemies_) {
+        if (e->unit.empty()) continue; // added by hand (tests), not from a unit
+        EnemyState s = e->state();
+        const auto off = offsets_.find(e->unit);
+        const vec3 o = off == offsets_.end() ? vec3(0) : off->second;
+        s.pos -= o, s.lastSeen -= o;
+        states[e->uid()] = s;
+    }
+    for (const auto& g : generators_)
+        if (g.fired) fired.insert(g.uid);
+    nlohmann::json st = nlohmann::json::object();
+    for (const auto& [uid, s] : states) st[std::to_string(uid)] = toJson(s);
+    return {{"states", st}, {"firedGenerators", fired}, {"deadAtCheckpoint", deadAtCheckpoint_}};
+}
+
+void Enemies::restore(const nlohmann::json& j) {
+    std::map<int32_t, EnemyState> states;
+    std::set<int32_t> fired, dead;
+    try {
+        for (const auto& [uid, s] : j.at("states").items()) states[std::stoi(uid)] = stateFromJson(s);
+        fired = j.at("firedGenerators").get<std::set<int32_t>>();
+        dead = j.at("deadAtCheckpoint").get<std::set<int32_t>>();
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("enemy state: ") + e.what());
+    }
+    std::erase_if(enemies_, [](const auto& e) { return !e->unit.empty(); });
+    generators_.clear();
+    units_.clear(); // setUnits() spawns every loaded unit again, from the restored stash
+    stash_ = std::move(states), firedGenerators_ = std::move(fired), deadAtCheckpoint_ = std::move(dead);
+    ++version_;
+    sync();
+}
+
 } // namespace ou::game::ai

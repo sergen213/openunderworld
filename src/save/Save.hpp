@@ -35,6 +35,7 @@ struct SaveGame {
     std::array<int, 3> found{}; // World::found (per PickupKind)
     std::optional<float> health; // Lara's health (World::health); missing = full
     nlohmann::json script = nlohmann::json::object(); // trigger/puzzle state (src/script), opaque here
+    nlohmann::json enemies; // ai::Enemies::serialize(), opaque here; null (older saves) = enemies left as they are
     uint64_t ticks = 0;        // simulation ticks played when saved (informational)
 };
 

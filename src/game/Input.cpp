@@ -17,30 +17,33 @@ float axis(SDL_Gamepad* g, SDL_GamepadAxis a) { return g ? deadzone(SDL_GetGamep
 constexpr float kPadLookRate = 2.5f; // rad/s at full deflection
 } // namespace
 
-Actions readDevices(const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
+Controls::Controls(const config::InputConfig& c) : mouseScale(c.mouseSensitivity), invertY(c.invertY) {
+    for (const auto& action : config::bindableActions()) {
+        auto& refs = actions.emplace_back();
+        if (const auto it = c.bindings.find(action); it != c.bindings.end())
+            for (const auto& name : it->second) {
+                const auto r = platform::parseInput(name);
+                if (!r) throw std::runtime_error("control '" + action + "': unknown input '" + name + "'");
+                refs.push_back(*r);
+            }
+    }
+}
+
+Actions readDevices(const Controls& c, const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
+    enum { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple, Save, Load };
+    const auto on = [&](int action) {
+        return std::any_of(c.actions[action].begin(), c.actions[action].end(),
+                           [&](const platform::InputRef& r) { return platform::pressed(r, keys, pad, mouseButtons); });
+    };
     Actions a;
-    a.move.y = float((keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP]) - (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN])) -
-               axis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-    a.move.x = float((keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT]) - (keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT])) +
-               axis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+    a.move.y = float(on(Forward) - on(Back)) - axis(pad, SDL_GAMEPAD_AXIS_LEFTY);
+    a.move.x = float(on(Right) - on(Left)) + axis(pad, SDL_GAMEPAD_AXIS_LEFTX);
     if (glm::length(a.move) > 1) a.move = glm::normalize(a.move);
     a.look = {-axis(pad, SDL_GAMEPAD_AXIS_RIGHTX) * kPadLookRate, -axis(pad, SDL_GAMEPAD_AXIS_RIGHTY) * kPadLookRate};
-    a.walk = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
-    a.jump = keys[SDL_SCANCODE_SPACE] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH));
-    a.drop = keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_RCTRL] || keys[SDL_SCANCODE_C] ||
-             (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST));
-    a.interact = keys[SDL_SCANCODE_E] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST));
-    a.save = keys[SDL_SCANCODE_F5];
-    a.load = keys[SDL_SCANCODE_F9];
-    const auto button = [&](SDL_GamepadButton b) { return pad && SDL_GetGamepadButton(pad, b); };
-    a.draw = keys[SDL_SCANCODE_F] || button(SDL_GAMEPAD_BUTTON_NORTH);
-    a.fire = (mouseButtons & SDL_BUTTON_LMASK) || axis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.5f;
-    a.aim = (mouseButtons & SDL_BUTTON_RMASK) || axis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 0.5f;
-    a.switchTarget = keys[SDL_SCANCODE_Q] || button(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
-    a.weapon = keys[SDL_SCANCODE_X] || button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
-    a.heal = keys[SDL_SCANCODE_H] || button(SDL_GAMEPAD_BUTTON_DPAD_UP);
-    a.grapple = keys[SDL_SCANCODE_G] || button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
-    a.sprint = keys[SDL_SCANCODE_LALT] || button(SDL_GAMEPAD_BUTTON_LEFT_STICK);
+    if (c.invertY) a.look.y = -a.look.y;
+    a.walk = on(Walk), a.sprint = on(Sprint), a.jump = on(Jump), a.drop = on(Drop), a.interact = on(Interact);
+    a.draw = on(Draw), a.fire = on(Fire), a.aim = on(Aim), a.switchTarget = on(Switch), a.weapon = on(Weapon);
+    a.heal = on(Heal), a.grapple = on(Grapple), a.save = on(Save), a.load = on(Load);
     return a;
 }
 

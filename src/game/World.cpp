@@ -192,6 +192,18 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     updatePose(0, true);
 }
 
+std::vector<script::UnitRef> World::unitRefs() const {
+    std::vector<script::UnitRef> refs;
+    for (const auto& u : units_) refs.push_back({u.data.name, u.data.drm, u.offset});
+    refs.insert(refs.end(), cinematicRefs_.begin(), cinematicRefs_.end());
+    return refs;
+}
+
+void World::restoreEnemies(const nlohmann::json& j) {
+    enemies_.restore(j);
+    if (!units_.empty()) enemies_.setUnits(unitRefs());
+}
+
 void World::tick(const Actions& a) {
     prev_ = player_.state();
     prevCam_ = cam_;
@@ -221,9 +233,7 @@ void World::tick(const Actions& a) {
         touchCheckpoints();
     }
     if (!units_.empty() && scriptUnits_ != unitsVersion_) { // scripted objects follow the loaded units
-        std::vector<script::UnitRef> refs;
-        for (const auto& u : units_) refs.push_back({u.data.name, u.data.drm, u.offset});
-        refs.insert(refs.end(), cinematicRefs_.begin(), cinematicRefs_.end());
+        const auto refs = unitRefs();
         script_.setUnits(refs);
         enemies_.setUnits(refs);
         scriptUnits_ = unitsVersion_;

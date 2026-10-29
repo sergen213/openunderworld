@@ -66,6 +66,33 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     return true;
 }
 
+const std::vector<std::string>& bindableActions() {
+    static const std::vector<std::string> a = {"forward", "back", "left", "right", "walk", "sprint", "jump", "drop", "interact",
+                                               "draw", "fire", "aim", "switch", "weapon", "heal", "grapple", "save", "load"};
+    return a;
+}
+
+// The hard-wired v0.9.0 layout (docs/GAMEPLAY.md "Controls").
+InputConfig::InputConfig()
+    : bindings{{"forward", {"W", "Up"}},
+               {"back", {"S", "Down"}},
+               {"left", {"A", "Left"}},
+               {"right", {"D", "Right"}},
+               {"walk", {"Left Shift", "Right Shift", "Pad leftshoulder"}},
+               {"sprint", {"Left Alt", "Pad leftstick"}},
+               {"jump", {"Space", "Pad a"}},
+               {"drop", {"Left Ctrl", "Right Ctrl", "C", "Pad b"}},
+               {"interact", {"E", "Pad x"}},
+               {"draw", {"F", "Pad y"}},
+               {"fire", {"Mouse Left", "Pad righttrigger"}},
+               {"aim", {"Mouse Right", "Pad lefttrigger"}},
+               {"switch", {"Q", "Pad rightstick"}},
+               {"weapon", {"X", "Pad dpright"}},
+               {"heal", {"H", "Pad dpup"}},
+               {"grapple", {"G", "Pad rightshoulder"}},
+               {"save", {"F5"}},
+               {"load", {"F9"}}} {}
+
 Config load(const fs::path& path) {
     Config c;
     std::ifstream f(path);
@@ -99,12 +126,23 @@ Config load(const fs::path& path) {
             if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
             c.graphics.brightness = g->value("brightness", c.graphics.brightness);
         }
+        if (auto in = j.find("controls"); in != j.end()) {
+            c.controls.mouseSensitivity = in->value("mouse_sensitivity", c.controls.mouseSensitivity);
+            c.controls.invertY = in->value("invert_y", c.controls.invertY);
+            if (auto b = in->find("bindings"); b != in->end())
+                for (const auto& [action, inputs] : b->items()) { // missing actions keep their defaults
+                    if (!c.controls.bindings.contains(action)) throw std::runtime_error("unknown control action " + action);
+                    c.controls.bindings[action] = inputs.get<std::vector<std::string>>();
+                }
+        }
     } catch (const std::exception& e) {
         throw std::runtime_error(path.string() + ": " + e.what());
     }
     if (c.renderer != "auto" && c.renderer != "opengl" && c.renderer != "vulkan")
         throw std::runtime_error(path.string() + ": renderer must be auto, opengl or vulkan");
     if (c.width <= 0 || c.height <= 0 || c.fov <= 1.0f || c.fov >= 179.0f) throw std::runtime_error(path.string() + ": bad width/height/fov");
+    if (!(c.controls.mouseSensitivity >= 0.1f && c.controls.mouseSensitivity <= 10.0f))
+        throw std::runtime_error(path.string() + ": controls.mouse_sensitivity must be 0.1..10");
     try {
         resolve(c.graphics);
     } catch (const std::exception& e) {
@@ -125,6 +163,8 @@ void save(const fs::path& path, const Config& c) {
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
     if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;
+    j["controls"] = {{"mouse_sensitivity", c.controls.mouseSensitivity}, {"invert_y", c.controls.invertY},
+                     {"bindings", c.controls.bindings}};
     if (path.has_parent_path()) fs::create_directories(path.parent_path());
     fs::path tmp = path;
     tmp += ".tmp";

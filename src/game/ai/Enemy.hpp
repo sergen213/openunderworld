@@ -240,6 +240,12 @@ public:
     // Lara respawned at that checkpoint [I]: enemies dead then stay dead (their generators stay fired); every
     // other enemy is back at its placement with full health, generator spawns are removed and generators re-armed.
     void reset();
+    // Save games: every unit-spawned enemy's full state in its unit's frame (loaded and streamed out; generator
+    // spawns by their generator's uid), fired generators and the checkpoint's dead set.
+    nlohmann::json serialize() const;
+    // Replaces all unit-spawned state with a serialize() result. The enemies come back from it on the next
+    // setUnits() (World::restoreEnemies calls it at once). Throws std::runtime_error on a malformed value.
+    void restore(const nlohmann::json& j);
     // Ticks every enemy; `shots` then holds this tick's enemy shots.
     void tick(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, float dt);
     std::vector<Shot> shots;

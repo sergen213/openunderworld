@@ -73,6 +73,7 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `found` | [int, int, int] | rewards collected per kind: treasures, relics, health packs (PDA counts; health packs = carried, a use takes one); missing = 0s |
 | `health` | number or null | Lara's health (`World::health`); missing/null (older saves, or saved while dead) = full; must be > 0 |
 | `script` | object | `script::Runtime::serialize()` (src/script): per-intro trigger/switch/door/block state, opaque here |
+| `enemies` | object or null | `ai::Enemies::serialize()`: `states` (intro uid → full enemy state in its unit's frame: mode, pos, yaw, clip + time, health, AI timers, aim RNG; generator spawns under their generator's uid; loaded and streamed-out enemies), `firedGenerators`, `deadAtCheckpoint`; missing/null (older saves) = enemies left as they are |
 
 Ledge and water indices are stored as (unit, index within that unit), not as indices into the merged collision mesh.
 That index depends on which units happen to be loaded and in what order.
@@ -103,8 +104,9 @@ Saves are always written as the current version. Newer versions are rejected, ne
 2. Maps ledge/water back to merged-mesh indices.
 3. `World::restore` sets the full player state and the camera. It does not blend from the previous frame; the
    animation pose is reset.
-4. Restores the checkpoint, the collected items, the script state and Lara's health (`World::setHealth`;
-   `Save.HealthRoundTrip`).
+4. Restores the checkpoint, the collected items, the script state, Lara's health (`World::setHealth`;
+   `Save.HealthRoundTrip`) and the enemies (`World::restoreEnemies`: every enemy of the loaded units is recreated
+   from the saved state or, if the save never saw it, from its intro; `AiReal.EnemyStateSaveRestore`).
 
 The simulation then continues exactly. `StreamReal.PoolToRagnarokOnFootThenSaveLoad` saves in `l4_ragnarok_room`
 (streamed in from `l4_pool` at offset (−20475.4, −2872.2, 12591.4)) and runs 40 more ticks. It then loads, which puts
@@ -133,8 +135,9 @@ ragnarok at offset 0, and runs the same 40 ticks again. States and clips match o
   moment are remembered (`Enemies::checkpoint`); on respawn those stay dead and every other enemy returns to its
   placement at full health, generator spawns are removed and their generators re-armed. tru.exe restores the
   checkpoint save (`0x556E90`), which holds per-intro instance state; that path was not traced, so which enemies the
-  original keeps dead is inferred. Enemy state is not written to our save files: a load keeps the enemies of units
-  that stay loaded as they are and spawns the others from their intros (or their streamed-out state) [deviation].
+  original keeps dead is inferred. Our saves hold every enemy's state and the dead-at-checkpoint set, so a load
+  restores enemies exactly; whether the original's save keeps mid-fight state (rather than checkpoint state) is
+  not traced [U].
 
 ## ou-game
 
