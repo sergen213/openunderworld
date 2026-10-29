@@ -628,6 +628,7 @@ public:
             glUniform2f(4, op, s.blend == scene::Blend::Opaque ? 1.0f : 0.0f);
             drawSubmesh(s);
         }
+        if (originals && !deferred_.empty()) drawScreenReaders(vp);
         setBlend(int(scene::Blend::Opaque));
         if (enhancedWater) drawWater(camera, vp, options);
         else if (wb.haze.w > 0.5f || wb.weather.x > 0.5f) // atmosphere / weather read the scene depth in the post pass
@@ -1041,7 +1042,7 @@ private:
     void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o) {
         Resources& r = *res_;
         sm3::FrameBlock f;
-        original::fillFrame(f, camera, vp, o.time, environment_);
+        original::fillFrame(f, camera, vp, o.time, environment_, true); // screen copies are bottom-up
         glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
         const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
         objectScratch_.assign(r.meshes.size() * size_t(objectStride()), 0);
