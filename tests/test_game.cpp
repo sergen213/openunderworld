@@ -1612,6 +1612,87 @@ TEST(GameReal, ElevatorUberCommandCreatesMovingCollision) {
     EXPECT_NE(it->transform, initial);
 }
 
+// l7_yggdrasil_end natla_end_mover 8404: intro +0x68 path (200 Bezier keys, loop from the start, 0x5BA280). Its world
+// position is the path value + Level+0x80 at the current frame (30 per second); the movers' scripts call the spline
+// natives without a stop.
+TEST(GameReal, SplineMoverFollowsItsPath) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto unit = game::loadUnitData(bf, "l7_yggdrasil_end");
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l7_yggdrasil_end", game::loadLaraAnims(bf), unit.spawn);
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto* mover = w.script().find(8404);
+    ASSERT_TRUE(mover && mover->spline);
+    EXPECT_EQ(mover->spline->mode, 2); // +0x64 = 2: loop
+    EXPECT_TRUE(mover->spline->playing);
+    const auto worldPos = [&](const script::Object& o) {
+        const glm::mat4 intro = glm::translate(glm::mat4(1), o.pos) * glm::rotate(glm::mat4(1), o.rot.x, {1, 0, 0}) *
+                                glm::rotate(glm::mat4(1), o.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), o.rot.z, {0, 0, 1});
+        return vec3((intro * o.body)[3]);
+    };
+    const vec3 start = worldPos(*mover);
+    const float t0 = mover->spline->t;
+    for (int i = 0; i < 60; ++i) w.tick({});
+    mover = w.script().find(8404);
+    const auto& path = *mover->spline->path;
+    EXPECT_NEAR(mover->spline->t - t0, 30.0f, 1e-3f); // 60 ticks at 60 Hz = 30 frames
+    const auto v = formats::evalSpline(*path.position, mover->spline->t, false);
+    const vec3 expected = vec3(v[0], v[1], v[2]) + vec3(path.origin[0], path.origin[1], path.origin[2]);
+    EXPECT_LT(glm::length(worldPos(*mover) - expected), 0.5f);
+    EXPECT_GT(glm::length(worldPos(*mover) - start), 500.0f);
+    // Between keys the Bezier segment interpolates (not a key value).
+    const auto k0 = formats::evalSpline(*path.position, 31.0f, false), k1 = formats::evalSpline(*path.position, 32.0f, false);
+    const auto mid = formats::evalSpline(*path.position, 31.5f, false);
+    EXPECT_GT(glm::length(vec3(mid[0], mid[1], mid[2]) - vec3(k0[0], k0[1], k0[2])), 1.0f);
+    EXPECT_GT(glm::length(vec3(mid[0], mid[1], mid[2]) - vec3(k1[0], k1[1], k1[2])), 1.0f);
+    for (const auto& [key, count] : w.script().failures())
+        EXPECT_EQ(key.second.find("native spline"), std::string::npos) << key.first << " " << key.second;
+}
+
+// No shipped spline mover has solid collision (natla_end_mover and fish_medsea carry render meshes only), so this puts
+// mover 8404's real path on a real solid object (ar_rw_shard, l7_yggdrasil_end): its collision follows the path and
+// carries Lara standing on it.
+TEST(GameReal, SplineMoverCarriesLara) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto unit = game::loadUnitData(bf, "l7_yggdrasil_end");
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l7_yggdrasil_end", game::loadLaraAnims(bf), unit.spawn);
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto* mover = w.script().find(8404);
+    ASSERT_TRUE(mover && mover->spline);
+    script::Object rock;
+    rock.uid = 990001, rock.unit = "l7_yggdrasil_end", rock.name = "ar_rw_shard", rock.kind = script::Kind::Scripted;
+    rock.spline = mover->spline;
+    rock.spline->t = 0, rock.spline->playing = false;
+    const auto& path = *rock.spline->path;
+    const auto p0 = formats::evalSpline(*path.position, 0, false);
+    rock.pos = vec3(p0[0], p0[1], p0[2]) + vec3(path.origin[0], path.origin[1], path.origin[2]);
+    w.script().addObject(std::move(rock), false);
+    w.tick({});
+    const auto& col = w.collision();
+    const auto d = std::find_if(col.dynamics.begin(), col.dynamics.end(), [](const auto& x) { return x.id == 990001; });
+    ASSERT_NE(d, col.dynamics.end()) << "ar_rw_shard solid shape";
+    const auto top = col.groundProbe(vec3(d->transform[3]) + vec3(0, 0, 3000), 6000);
+    ASSERT_TRUE(top && top->dynamic == int(d - col.dynamics.begin()));
+    game::PlayerState stand;
+    stand.pos = top->point + vec3(0, 0, 1);
+    w.restore(stand, 0, 0);
+    for (int i = 0; i < 10; ++i) w.tick({}); // settle on the stone
+    const size_t index = size_t(top->dynamic);
+    const vec3 feet = w.player().state().pos, stone = vec3(w.collision().dynamics[index].transform[3]);
+    const_cast<script::Object*>(w.script().find(990001))->spline->playing = true; // Play (spline fn 5)
+    for (int i = 0; i < 20; ++i) w.tick({});
+    const vec3 moved = vec3(w.collision().dynamics[index].transform[3]) - stone;
+    EXPECT_GT(glm::length(moved), 200.0f);
+    EXPECT_LT(glm::length((w.player().state().pos - feet) - moved), 0.1f * glm::length(moved));
+    const auto under = w.collision().groundProbe(w.player().state().pos + vec3(0, 0, 20), 60);
+    EXPECT_TRUE(under && under->dynamic == int(index)) << "Lara is still on the moving stone";
+}
+
 TEST(GameReal, ElevatorCarriesPlayer) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1689,8 +1770,8 @@ TEST(GameReal, ScriptSurvey) {
         if (bf.read("pc-w\\" + name + ".drm") && (!only || name.find(only) != std::string::npos)) units.push_back(name);
     }
     const auto implemented = [](uint8_t op) {
-        return op <= 0x15 || (op >= 0x2E && op <= 0x31) || op == 0x34 || (op >= 0x3D && op <= 0x6C) || op == 0x77 ||
-               (op >= 0x7B && op <= 0x7E) || op == 0x80;
+        return op <= 0x15 || (op >= 0x1D && op <= 0x22 && op != 0x1F) || (op >= 0x2E && op <= 0x31) || op == 0x34 ||
+               (op >= 0x3D && op <= 0x6C) || (op >= 0x77 && op <= 0x7E) || op == 0x80;
     };
     std::map<std::string, size_t> calls;
     std::map<uint8_t, size_t> missingOps;

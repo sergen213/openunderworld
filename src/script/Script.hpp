@@ -21,6 +21,7 @@
 #include <vector>
 
 namespace ou::collision { class CollisionMesh; }
+namespace ou::formats { struct MultiSpline; }
 
 namespace ou::script {
 
@@ -62,6 +63,10 @@ struct Function {
     int16_t vtIndex = -1; // prototype vtable slot; -1 = not virtual
     cdc::Pointer proto{}; // its prototype (CALLn operands point at prototypes)
     uint16_t argCount = 0, localCount = 0;
+    // Byte offset of each argument in the callee's locals (prototype +0x0C: 0x14-byte records, u16 +0x0C). Arguments
+    // start at 0 in declaration order with their own sizes (natla_end_mover 19053 vt 0: native 20 bytes, int @20,
+    // string @24); there is no `this` local.
+    std::vector<uint16_t> argOffsets;
     uint8_t returnType = 0; // DataType low nibble; zero = void
     bool native = false;
     uint32_t wordCount = 0;
@@ -147,6 +152,21 @@ struct Object {
     glm::mat4 body{1};      // Door: model-space rigid transform set by src/physics (physics doors), identity = at rest
     bool hidden = false;    // instance.fn60 visibility; saved
     int32_t engagement = -1; // instance.fn59 engagement-property selector; saved
+    // Spline mover (intro +0x68; tru.exe 0x5BA280 setup, 0x5CF260 per-frame update, `spline` natives 0x4AA8B0..):
+    // the path moves the object (`body`), so its collision carries Lara like any moved dynamic.
+    struct Spline {
+        std::shared_ptr<const formats::MultiSpline> path;
+        vec3 offset{0};          // unit streaming offset (world = path + MultiSpline::origin + offset)
+        float t = 0;             // 30 Hz frames
+        int dir = 1;             // +1 forward, -1 backward (0x5C7080)
+        uint8_t mode = 0;        // 0 none, 1 once, 2 loop, 3 loop `count` times, 4 ping-pong (0x5C7100)
+        bool playing = false;    // instance flag 0x2000000 (0x5C0950 / 0x5C0960)
+        bool toKey = false;      // flag 1: play until `target`, then stop (0x5CC760)
+        bool clip = false;       // flag 2: play range [from, to] (0x4AA930)
+        int16_t target = 0, from = 0, to = 0, count = 0;
+        std::vector<std::array<int32_t, 3>> ranges; // fn 19: {from, to, id}; entering/leaving one calls vt 40 / 41
+    };
+    std::optional<Spline> spline;
 };
 
 struct UnitRef {
@@ -216,7 +236,6 @@ public:
     // (+40/+44/+48 = 10, 11 gauntlets, 12 belt) hidden; instance native 61 from scripts shows/hides them.
     uint32_t playerHiddenGroups() const { return playerHiddenGroups_; }
     const std::set<std::string>& playerObjects() const { return playerObjects_; } // carried gear (g_belt, ...)
-    void setPlayerObjects(std::set<std::string> objects) { playerObjects_ = std::move(objects); } // chapter starts
     uint32_t unitEffect() const { return unitEffect_; }
     // globaleffect FadeOut/FadeIn screen wipe: 0 = clear, 1 = black; moves by 1/frames each tick.
     float screenFade() const { return fade_; }
@@ -247,6 +266,8 @@ private:
     void adopt(const std::shared_ptr<vm::Machine>& m);
     std::shared_ptr<vm::Instance> instance(int32_t uid) const; // object, Lara or unit/global script by uid
     std::shared_ptr<vm::Machine> makeMachine(int32_t source);
+    void tickSpline(Object& o);   // 0x5CF260: advance, clip / key / loop handling, range callbacks
+    bool splineNative(Object& o, uint32_t function, std::span<const vm::Value> args, uint32_t& result);
     std::vector<std::pair<int32_t, std::shared_ptr<vm::Machine>>> threads_; // states entered from another object's call
 
     const cdc::BigfileSet* bigfile_ = nullptr;

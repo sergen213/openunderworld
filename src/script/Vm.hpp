@@ -69,8 +69,8 @@ public:
     using Event = std::function<bool(Instance&, int16_t vt)>; // true = virtual handler consumed inline
     Machine(Resolve resolve, Native native, Event event = {}) : resolve_(std::move(resolve)), native_(std::move(native)),
         event_(std::move(event)) {}
-    bool call(Instance& object, int16_t vt); // false: unsupported opcode/call/binding or budget exceeded
-    bool start(Instance& object, const Function& f); // a new thread running f (entered state)
+    bool call(Instance& object, int16_t vt, std::span<const Value> args = {}); // false: unsupported opcode/call/binding or budget exceeded
+    bool start(Instance& object, const Function& f, std::span<const Value> args = {}); // a new thread running f (entered state)
     bool tick(float seconds);                // resume after SLEEP/WAIT; false on execution failure
     bool active() const { return !frames_.empty(); }
     const std::string& failure() const { return failure_; } // why the last call/tick failed ("op 0x78", "native x fn 3", ...)

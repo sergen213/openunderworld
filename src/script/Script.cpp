@@ -6,6 +6,7 @@
 #include "formats/Formats.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -186,7 +187,9 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
             f.proto = *pp;
             const View& pv = views[pp->section];
             f.vtIndex = pv.at<int16_t>(pp->offset + 6);
-            f.argCount = views.array(pv, pp->offset + 0x0C).second;
+            const auto [ap, an] = views.array(pv, pp->offset + 0x0C);
+            f.argCount = uint16_t(an);
+            for (uint32_t a = 0; a < an; ++a) f.argOffsets.push_back(views[ap.section].at<uint16_t>(ap.offset + 0x14 * a + 0x0C));
             f.returnType = pv.at<uint8_t>(pp->offset + 0x10) & 0x0F;
         }
         const auto [cp, cn] = views.array(v, b + 0x18);
@@ -291,6 +294,25 @@ bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b) {
 // ---- runtime ---------------------------------------------------------------------------------------
 
 namespace {
+// 0x5C0980 / 0x5C6F60: the path value at t is the instance's position and rotation; ours as Object::body (model space).
+void placeSpline(Object& o) {
+    const auto& s = *o.spline;
+    const auto& p = *s.path;
+    vec3 pos = o.pos;
+    glm::mat3 rot = rotation(o.rot);
+    if (p.position) {
+        const auto v = formats::evalSpline(*p.position, s.t, false);
+        pos = vec3(v[0], v[1], v[2]) + vec3(p.origin[0], p.origin[1], p.origin[2]) + s.offset;
+    }
+    if (p.rotation) {
+        const auto q = formats::evalSpline(*p.rotation, s.t, true);
+        rot = glm::mat3_cast(glm::quat(q[3], q[0], q[1], q[2])); // xyzw, same handedness as the intro Euler angles
+    }
+    glm::mat4 world(rot), intro(rotation(o.rot));
+    world[3] = glm::vec4(pos, 1), intro[3] = glm::vec4(o.pos, 1);
+    o.body = glm::inverse(intro) * world;
+}
+
 nlohmann::json stateOf(const Object& o) {
     nlohmann::json fields = nlohmann::json::object(), strings = nlohmann::json::object(), properties = nlohmann::json::object();
     if (o.script) {
@@ -308,10 +330,13 @@ nlohmann::json stateOf(const Object& o) {
                 properties[std::to_string(key)] = value;
         }
     }
-    if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty()) return nullptr; // birth state
-    return {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
+    if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline) return nullptr; // birth state
+    nlohmann::json out = {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
             {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
             {"scriptStrings", std::move(strings)}, {"scriptProperties", std::move(properties)}};
+    if (const auto& s = o.spline)
+        out["spline"] = {s->t, s->dir, s->mode, s->playing, s->toKey, s->clip, s->target, s->from, s->to, s->count};
+    return out;
 }
 void applyState(Object& o, const nlohmann::json* s) {
     o.state = 0, o.t = 0, o.inside = o.firstIn = false, o.offset = vec3(0);
@@ -346,6 +371,14 @@ void applyState(Object& o, const nlohmann::json* s) {
                     o.script->properties[uint64_t(std::stoull(key))] = value.get<uint32_t>();
     }
     if (o.state < 0 || o.state > 2 || (o.state == 1 && !o.clips)) o.state = 2;
+    if (const auto sp = s->find("spline"); o.spline && sp != s->end() && sp->is_array() && sp->size() == 10) {
+        auto& p = *o.spline;
+        const auto& a = *sp;
+        p.t = a[0].get<float>(), p.dir = a[1].get<int>() < 0 ? -1 : 1, p.mode = uint8_t(std::min(a[2].get<int>(), 4));
+        p.playing = a[3].get<bool>(), p.toKey = a[4].get<bool>(), p.clip = a[5].get<bool>();
+        p.target = a[6].get<int16_t>(), p.from = a[7].get<int16_t>(), p.to = a[8].get<int16_t>(), p.count = a[9].get<int16_t>();
+        placeSpline(o);
+    }
 }
 } // namespace
 
@@ -402,11 +435,23 @@ void Runtime::addUnit(const UnitRef& u) {
         const auto n = objectNames_.find(in.objectId);
         if (n == objectNames_.end()) continue;
         const auto kind = classify(n->second);
-        if (!kind && !in.scriptId) continue;
+        if (!kind && !in.scriptId && !in.spline) continue;
         Object o;
         o.uid = in.uniqueId, o.unit = u.name, o.name = n->second, o.kind = kind.value_or(Kind::Scripted);
         o.pos = vec3(in.position[0], in.position[1], in.position[2]) + u.offset;
         o.rot = {in.rotation[0], in.rotation[1], in.rotation[2]};
+        if (in.spline) { // 0x5BA280 (no saved spline state): key 0, then the intro's mode, direction, key / clip
+            Object::Spline s;
+            s.path = in.spline, s.offset = u.offset;
+            const uint32_t m = in.splineMode & 0xF;
+            s.mode = m == 1 ? 1 : m == 2 ? 2 : m == 4 ? 3 : m == 8 ? 4 : 0;
+            s.playing = s.mode != 0;
+            s.dir = in.flags[0] & 1 ? -1 : 1;
+            if (in.splineFlags & 1) s.toKey = s.playing = in.splineTo != 0, s.target = in.splineTo;
+            if (in.splineFlags & 2) s.clip = true, s.from = in.splineFrom, s.to = in.splineTo;
+            o.spline = std::move(s);
+            placeSpline(o);
+        }
         if (o.kind == Kind::Volume || o.kind == Kind::Plane) {
             if (!in.data) continue;
             const auto shape = parseShape(*u.drm, *in.data, o.kind == Kind::Plane);
@@ -805,6 +850,43 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             if (!std::strcmp(name, "playersensor") && nc.function == 2) return true; // void native sensor interface call
+            if (!std::strcmp(name, "playersensor") && (nc.function == 0 || nc.function == 1)) {
+                // SetEnabled / IsEnabled: byte +0xF of the sensor (thunks 0x7ACE40 / 0x7ACE60); what the sensor senses [U].
+                if (nc.function == 0 && nc.args.size() == 1) { field() = nc.args[0].bits & 0xFF; return true; }
+                if (nc.function == 1 && nc.args.empty()) { nc.result = vm::Value::scalar(field() & 0xFF); return true; }
+                return false;
+            }
+            if (!std::strcmp(name, "spline")) {
+                Object* object = findMut(self->uid);
+                if (!object || !object->spline) { // every thunk null-checks instance +0x284 (0x4AA8B0..)
+                    nc.result = vm::Value::scalar(nc.function == 3 ? 0xFFFFFFFFu : 0u);
+                    return true;
+                }
+                uint32_t result = 0;
+                if (!splineNative(*object, nc.function, nc.args, result)) return false;
+                nc.result = vm::Value::scalar(result);
+                return true;
+            }
+            // instance 21 (bool, 0x4A3FD0: clears/sets instance +0x1C flag 0x100), 18 (bool, 0x4A3F50: toggles the
+            // instance's +0x2D8 component via 0x5B5A60 / 0x5B5AB0) and 23 (calls vt +0x18 of a native object
+            // argument, 0x4A41D0): no modelled system reads them [U: their effect].
+            if (!std::strcmp(name, "instance") && (nc.function == 18 || nc.function == 21 || nc.function == 23) &&
+                nc.args.size() == 1)
+                return true;
+            // modifiable 1 (two floats, 0x4A59F0) posts message 0x30 to the instance like 7 does with 0x2E [U: receivers].
+            if (!std::strcmp(name, "modifiable") && nc.function == 1 && nc.args.size() == 2) return true;
+            if (!std::strcmp(name, "unitref") && nc.function == 2 && nc.args.empty()) return true; // 0x79C670: returns 0
+            if (!std::strcmp(name, "larabase") && (nc.function == 55 || nc.function == 56 || nc.function == 29) &&
+                nc.args.size() == 1)
+                // 56 SetControlEnabled (0x777FC0: input flag 0x8AB4E6 that zeroes the move axes, "Lara.
+                // SetControlEnabledForReveal"), 55 weapons (0x777F70 holsters when false), 29 a global byte (0x698890)
+                // [U]. Not applied: the reveal cameras that would re-enable control are not implemented [I].
+                return true;
+            if (!std::strcmp(name, "larabase") && (nc.function == 25 || nc.function == 27) && nc.args.empty()) {
+                // 27 posts 0x10D (8) to Lara (0x777C90); 25 posts 0x156 to a global instance (0x777C10) [U].
+                if (nc.function == 27) events_.push_back({EventKind::PlayerMessage, source, 0x10D, tick_});
+                return true;
+            }
             if (!std::strcmp(name, "stickybool") || !std::strcmp(name, "stickyint") || !std::strcmp(name, "stickyfloat")) {
                 if (nc.function == 0 && nc.args.size() == 1) { field() = nc.args[0].bits; return true; } // Set
                 if ((nc.function == 1 || nc.function == 2) && nc.args.empty()) {
@@ -953,6 +1035,108 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
     }
 }
 
+// 0x5CF260 at 60 Hz: time advances dir * 30 frames/s (timeMult); a key target (flag 1) stops there, the clip range
+// (flag 2, else the whole path) ends per mode: once stops, loop wraps, loop-count wraps `count` times, ping-pong
+// turns. Then 0x5CC8F0 calls vt 40 (entered) / vt 41 (left) for each range of fn 19 the time crossed, with the
+// arguments (spline handle, range id, direction). [O] callback slots: functions 53/54 of script type 3 (0x7120B0
+// reads their vt indices). Mode (vt 42), direction (vt 43) and wrap (vt 44) callbacks are not sent.
+void Runtime::tickSpline(Object& o) {
+    auto& s = *o.spline;
+    if (!s.playing) return;
+    const float end = s.path->end(), prev = s.t;
+    float t = prev + float(s.dir) * float(kDt) * 30.0f;
+    if (s.toKey && (s.dir > 0 ? prev <= s.target && s.target <= t : t <= s.target && s.target <= prev)) {
+        t = s.target, s.playing = s.toKey = false;
+    } else {
+        const float lo = s.clip ? std::clamp<float>(s.from, 0, end) : 0, hi = s.clip ? std::clamp<float>(s.to, lo, end) : end;
+        if (t > hi || t < lo) {
+            const bool high = t > hi;
+            if ((s.mode == 2 || (s.mode == 3 && s.count > 0)) && hi > lo) {
+                if (s.mode == 3) --s.count;
+                t = high ? lo + std::fmod(t - hi, hi - lo) : hi - std::fmod(lo - t, hi - lo);
+            } else if (s.mode == 4) {
+                t = high ? hi : lo, s.dir = -s.dir;
+            } else {
+                t = high ? hi : lo, s.playing = false;
+            }
+        }
+    }
+    s.t = t;
+    placeSpline(o);
+    for (const auto range : std::vector(s.ranges)) { // copy: a callback may remove ranges
+        const auto in = [&](float x) { return range[0] <= x && x <= range[1]; };
+        if (in(prev) == in(t) || !o.script) continue;
+        const vm::Value args[] = {vm::Value::scalar(0), vm::Value::scalar(uint32_t(range[2])), vm::Value::scalar(uint32_t(s.dir))};
+        if (o.machine && o.machine->active()) o.fibers.push_back(std::move(o.machine));
+        const auto machine = makeMachine(o.uid);
+        o.machine = machine;
+        if (!machine->call(*o.script, in(t) ? 40 : 41, args)) recordFailure(o.uid, o.name, *machine);
+        adopt(machine);
+    }
+}
+
+// `spline` natives (bind 0x7AD0D0, thunks 0x79C750..0x79C970) on the object's own path (instance +0x284).
+bool Runtime::splineNative(Object& o, uint32_t function, std::span<const vm::Value> args, uint32_t& result) {
+    auto& s = *o.spline;
+    const int32_t end = int32_t(std::lround(s.path->end())), now = int32_t(std::lround(s.t));
+    const auto arg = [&](size_t i) { return int32_t(args[i].bits); };
+    const auto need = [&](size_t n) { return args.size() == n; };
+    const auto playMode = [&](uint8_t mode, int32_t from, int32_t to) { // 0x4AA930
+        s.mode = mode;
+        if (from == 0 && to == -1) return;
+        s.clip = true, s.from = int16_t(from), s.to = int16_t(to == -1 ? end : to);
+    };
+    switch (function) {
+    case 0: result = uint32_t(end); return need(0);                                   // KeyCount (last key)
+    case 1: result = uint32_t(now); return need(0);                                   // CurrentKey
+    case 2:                                                                           // GoToKey (0x5C6F60)
+        if (!need(1)) return false;
+        s.t = arg(0) < 0 || arg(0) > end ? float(end) : float(arg(0));
+        placeSpline(o);
+        return true;
+    case 3: result = s.mode; return need(0);                                          // PlayMode
+    case 4: if (!need(3)) return false; playMode(uint8_t(std::clamp(arg(0), 0, 4)), arg(1), arg(2)); return true;
+    case 5: s.playing = true; return need(0);                                         // Play (0x5C0950)
+    case 6: s.playing = false; return need(0);                                        // Stop (0x5C0960)
+    case 7: result = s.playing; return need(0);                                       // IsPlaying
+    case 8: {                                                                         // PlayToKey(key, direction)
+        if (!need(2)) return false;
+        const int32_t key = arg(0), dir = arg(1);
+        if (now == key) { s.t = float(key), s.playing = false; placeSpline(o); return true; } // 0x5CC760 / 0x5CC830
+        s.toKey = s.playing = true, s.target = int16_t(key);
+        if (!dir) s.dir = key < now ? -1 : 1;
+        else if (s.dir = dir < 1 ? -1 : 1; (s.dir == 1) == (key < now)) s.mode = 2; // passes the end: loop round
+        return true;
+    }
+    case 9: result = uint32_t(s.dir); return need(0);                                 // Direction
+    case 10: if (!need(1)) return false; s.dir = arg(0) < 1 ? -1 : 1; return true;    // SetDirection (0x5C7080)
+    case 11: result = uint32_t(int32_t(s.count)); return need(0);                     // LoopCount
+    case 12: if (!need(1)) return false; s.count = int16_t(arg(0)); return true;
+    case 13: if (!need(2)) return false; playMode(2, arg(0), arg(1)); return true;     // Loop(from, to)
+    case 14: if (!need(3)) return false; playMode(3, arg(1), arg(2)); s.count = int16_t(arg(0)); return true;
+    case 15: s.mode = 1; return need(0);                                              // Once
+    case 16: if (!need(2)) return false; playMode(4, arg(0), arg(1)); return true;     // PingPong(from, to)
+    case 17: result = s.clip; return need(0);
+    case 18: s.clip = false; return need(0);
+    case 19: {                                                                        // AddRange(from, to, id) 0x5D12D0
+        if (!need(3)) return false;
+        const auto it = std::ranges::find_if(s.ranges, [&](const auto& r) { return r[2] == arg(2); });
+        if (it != s.ranges.end()) (*it)[0] = arg(0), (*it)[1] = arg(1);
+        else s.ranges.push_back({arg(0), arg(1), arg(2)});
+        return true;
+    }
+    case 20:                                                                          // HasRange(id) 0x5D1350
+        if (!need(1)) return false;
+        result = std::ranges::any_of(s.ranges, [&](const auto& r) { return r[2] == arg(0); });
+        return true;
+    case 21:                                                                          // RemoveRange(id) 0x5D1390
+        if (!need(1)) return false;
+        std::erase_if(s.ranges, [&](const auto& r) { return r[2] == arg(0); });
+        return true;
+    default: return false; // 22/23 create NtSplineSequence objects [U]
+    }
+}
+
 std::string Runtime::helpCondition() const {
     for (const auto& [key, instance] : auxiliary_)
         for (const auto& [offset, text] : instance->strings)
@@ -974,6 +1158,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     }
     std::erase_if(threads_, [&](const auto& t) { return !t.second->active() || !instance(t.first); });
     for (auto& o : objects_) {
+        if (o.spline) tickSpline(o);
         for (size_t i = 0; i < o.fibers.size(); ++i) { // copy: a STATE may end the object's threads
             const auto fiber = o.fibers[i];
             if (!fiber->tick(float(kDt))) recordFailure(o.uid, o.name, *fiber);

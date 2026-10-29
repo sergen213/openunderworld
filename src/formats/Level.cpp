@@ -81,7 +81,68 @@ uint32_t resourceId(const cdc::Section& s, uint32_t off, cdc::SectionType t) {
     return id;
 }
 
+std::shared_ptr<const MultiSpline> parseMultiSpline(const cdc::Drm& d, cdc::Pointer p) {
+    const View v(d, p.section);
+    auto out = std::make_shared<MultiSpline>();
+    const View level(d, 0);
+    for (int c = 0; c < 3; ++c) out->origin[c] = level.at<float>(0x80 + 4 * c);
+    for (const auto [off, rotation] : {std::pair{0x40u, false}, std::pair{0x44u, true}}) {
+        const auto it = v.ptrs.find(p.offset + off);
+        if (it == v.ptrs.end()) continue;
+        const View t(d, it->second.section);
+        const uint32_t base = it->second.offset;
+        SplineTrack track;
+        const uint16_t count = t.at<uint16_t>(base);
+        track.flags = t.at<uint8_t>(base + 3);
+        track.end = t.at<float>(base + 4);
+        const size_t stride = rotation ? 8 : 16;
+        if (!count) throw FormatError("spline track without keys");
+        track.keys.resize(stride * count);
+        for (size_t k = 0; k < track.keys.size(); ++k) track.keys[k] = t.at<float>(base + 0x10 + 4 * k);
+        (rotation ? out->rotation : out->position) = std::move(track);
+    }
+    return out;
+}
+
 } // namespace
+
+// Cursor 0x47D320 / 0x47D3B0 (segment = first key whose end time t1 >= t) and evaluation 0x47CD40 / 0x47D180.
+std::array<float, 4> evalSpline(const SplineTrack& track, float t, bool rotation) {
+    const size_t stride = rotation ? 8 : 16, count = track.keys.size() / stride;
+    t = std::clamp(t, 0.0f, track.end);
+    size_t i = 0;
+    while (i + 1 < count && t > track.keys[stride * i + (rotation ? 5 : 13)]) ++i;
+    const float* k = &track.keys[stride * i];
+    std::array<float, 4> out{k[0], k[1], k[2], k[3]};
+    if (i + 1 >= count) return out;
+    const float* n = k + stride;
+    const float u = (t - k[rotation ? 4 : 12]) * k[rotation ? 7 : 15];
+    if (u == 0) return out;
+    if (u == 1) return {n[0], n[1], n[2], n[3]};
+    if (rotation) { // slerp (FUN_0049D860), shortest arc
+        float dot = k[0] * n[0] + k[1] * n[1] + k[2] * n[2] + k[3] * n[3];
+        const float sign = dot < 0 ? -1.0f : 1.0f;
+        dot *= sign;
+        float a = 1 - u, b = u * sign;
+        if (dot < 0.9995f) {
+            const float th = std::acos(dot), s = std::sin(th);
+            a = std::sin((1 - u) * th) / s, b = std::sin(u * th) / s * sign;
+        }
+        float len = 0;
+        for (int c = 0; c < 4; ++c) out[c] = a * k[c] + b * n[c], len += out[c] * out[c];
+        for (auto& c : out) c /= std::sqrt(len);
+        return out;
+    }
+    const float u2 = u * u, u3 = u2 * u;
+    if (track.flags & 8) { // Bezier: key, its control [8..11], the next key's control [4..7], next key
+        const float v = 1 - u;
+        for (int c = 0; c < 4; ++c) out[c] = v * v * v * k[c] + 3 * u * v * v * k[8 + c] + 3 * v * u2 * n[4 + c] + u3 * n[c];
+    } else { // Hermite: out-tangent [4..7], the next key's in-tangent [8..11]
+        for (int c = 0; c < 4; ++c)
+            out[c] = (2 * u3 - 3 * u2 + 1) * k[c] + (u3 - 2 * u2 + u) * k[4 + c] + (3 * u2 - 2 * u3) * n[c] + (u3 - u2) * n[8 + c];
+    }
+    return out;
+}
 
 Unit parseUnit(const cdc::Drm& d) {
     if (d.sections.empty() || d.sections[0].type != cdc::SectionType::General)
@@ -111,6 +172,13 @@ Unit parseUnit(const cdc::Drm& d) {
             for (int i = 0; i < 4; ++i) in.flags[i] = il.at<uint8_t>(b + 0x70 + i);
             if (const auto it = il.ptrs.find(uint32_t(b + 0x78)); it != il.ptrs.end()) in.data = it->second;
             in.scriptId = il.at<uint32_t>(b + 0x7C);
+            if (const auto it = il.ptrs.find(uint32_t(b + 0x68)); it != il.ptrs.end()) {
+                in.spline = parseMultiSpline(d, it->second);
+                in.splineFlags = il.at<uint16_t>(b + 0x62);
+                in.splineMode = il.at<uint32_t>(b + 0x64);
+                in.splineFrom = il.at<int16_t>(b + 0x6C);
+                in.splineTo = il.at<int16_t>(b + 0x6E);
+            }
             u.intros.push_back(in);
         }
     }

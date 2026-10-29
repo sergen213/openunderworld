@@ -269,7 +269,6 @@ void World::startChapter(int n) {
     startUnit_ = unit, startSpawn_.reset();
     checkpoint_.reset();
     health_.reset(); // [I] a chapter starts at full health, as a respawn (tru.exe 0x700060)
-    script_.setPlayerObjects(chapterGear(n));
 }
 
 void World::collectPickups(bool pressed) {

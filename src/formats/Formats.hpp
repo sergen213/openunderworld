@@ -6,8 +6,10 @@
 #include "cdc/Cdc.hpp"
 #include "scene/Assets.hpp"
 
+#include <array>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -73,6 +75,25 @@ scene::SceneData loadDrmScene(const cdc::BigfileSet& bigfile, std::string_view d
                               bool withDependencies = false);
 
 // ---- Levels (unit DRMs). Layouts and evidence: docs/formats/LEVELS.md ----------------
+// Intro +0x68 MultiSpline (tru.exe 0x5D1290 binds it to instance +0x284; LEVELS.md "Spline movers"): +0x40 position
+// track, +0x44 rotation track (+0x48 a third vec4 track written to instance +0x80; no shipped intro has one).
+// Track: u16 key count +0, u8 flags +3 (8 = Bezier, else Hermite), f32 end time +4 (30 Hz frames), keys from +0x10.
+// Position key 0x40 bytes: value[0..3], Hermite out-tangent [4..7], Bezier control [8..11], t0 [12], t1 [13],
+// 1/(t1-t0) [15]; segment i ends at the next key (0x47CD40). Rotation key 0x20 bytes: quaternion xyzw [0..3], t0
+// [4], t1 [5], 1/(t1-t0) [7], slerped (0x47D180).
+struct SplineTrack {
+    uint8_t flags = 0;
+    float end = 0;
+    std::vector<float> keys; // 16 (position) or 8 (rotation) floats per key
+};
+struct MultiSpline {
+    std::optional<SplineTrack> position, rotation;
+    float origin[3] = {}; // Level+0x80: position values are stored relative to it, like collision (intro = value + origin)
+    float end() const { return position ? position->end : rotation ? rotation->end : 0.0f; } // 0x5C0870
+};
+// Track value at time t (clamped to [0, end]): position xyz w, or quaternion xyzw.
+std::array<float, 4> evalSpline(const SplineTrack& track, float t, bool rotation);
+
 // One intro (placed object instance) of a unit: 0x90-byte record.
 struct Intro {
     float rotation[3]; // Euler radians; matrix = Rx(x) * Ry(y) * Rz(z) (cdc_Matrix_Build_XYZOrder 0x49D500)
@@ -83,6 +104,12 @@ struct Intro {
     uint8_t flags[4];  // bytes +0x70..+0x73
     std::optional<cdc::Pointer> data; // +0x78 intro data (trigger shapes etc., docs/formats/SCRIPTS.md); none if null
     uint32_t scriptId = 0;             // +0x7C intro script: type-8 section id in the unit DRM, 0 = none
+    // Spline mover setup (0x5BA280): +0x62 flags (1 = play to key +0x6E, 2 = clip [+0x6C, +0x6E]), +0x64 low nibble
+    // 1/2/4/8 = play once/loop/loop count/ping-pong from the start (other: stopped), flags[0] bit 0 = backwards.
+    std::shared_ptr<const MultiSpline> spline; // +0x68, null = none
+    uint16_t splineFlags = 0;
+    uint32_t splineMode = 0;
+    int16_t splineFrom = 0, splineTo = 0;
     bool scaled() const { return flags[1] & 0x10; }
 };
 inline constexpr uint16_t kMarkerObjectId = 0xFFFA;

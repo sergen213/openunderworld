@@ -3,8 +3,6 @@
 #include "cdc/Cdc.hpp"
 
 #include <gtest/gtest.h>
-
-#include <set>
 #include <zlib.h>
 
 #include <cstdlib>
@@ -426,30 +424,6 @@ TEST(StreamReal, PoolToRagnarokOnFootThenSaveLoad) {
 
 // Level loads dress Lara in the unit's outfit object (GAMEPLAY.md "Outfits"); streaming keeps it; a load restores the
 // saved one (tru.exe 0x5DE2B0).
-// Thor's gear per chapter start (GAMEPLAY.md "Thor's gear"): carried g_* objects follow the story (both gauntlets
-// from Jan Mayen's start cinematic on), the gear draw groups 10-12 start hidden in every chapter, saves keep both.
-TEST(StreamReal, ChapterThorGear) {
-    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::BigfileSet bf(gameDir());
-    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
-    w.script().setBigfile(&bf);
-    const std::set<std::string> none, gauntlets{"g_gauntletleft", "g_gauntletright"};
-    for (int c = 0; c < int(game::kChapters.size()); ++c) {
-        w.startChapter(c);
-        EXPECT_EQ(w.script().playerObjects(), c >= 6 ? gauntlets : none) << c;
-        EXPECT_EQ(w.script().playerHiddenGroups(), 0x7u << 9) << c; // carried gear is still put away
-    }
-    w.startChapter(6);
-    auto saved = save::capture(w);
-    w.startChapter(2);
-    save::apply(saved, w);
-    EXPECT_EQ(w.script().playerObjects(), gauntlets);
-    saved.script.erase("player"); // a chapter-start slot written before gear state was saved
-    saved.chapter = 1;
-    save::apply(saved, w);
-    EXPECT_TRUE(w.script().playerObjects().empty());
-}
-
 TEST(StreamReal, ChapterOutfits) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());

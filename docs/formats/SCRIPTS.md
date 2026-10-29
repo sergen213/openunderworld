@@ -205,6 +205,26 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
 | Before (HEAD c3c69f2) | 1 390 | markup 0 (546), instanceref Get on unloaded target (232), SLEEP with empty stack (98), CALL5 (39), MOVE32 (34), music 2 (37, receiver in a local) |
 | After | 404 | enemybase 26/16/22 (80, AI), CALL5 0x6A (36, l3_chapel globals member 12 is not modelled), tentacle uber commands (31: `formats::loadUberObject` rejects their target types), spline 5 (27, l7 `natla_end_mover`), generatorbase 3/4 (22), uigamedata 1 (16), modifiable 7 (16) |
 | After states/enemy natives | 314 | playersensor 0 (28), spline 5 (27, l7 `natla_end_mover`: intro +0x68 multispline not decoded), CALL5 0x6A (24, l5 soundvolumes), larabase 56 (20), generatorbase 3 (20: surveyed Worlds have no enemy bigfile, so no generators), modifiable 1 (15). Gone: enemybase 16/22/26, tentacle uber commands, l3_chapel 0x6A, uigamedata 1, modifiable 7, enemy health 1. State threads now run code the previous survey never reached. |
+| Baseline 2026-10-29 (state 0 startup reaches more code) | 472 | playersensor 0 (72), instance 27 (39), spline 5 (27), CALL5 0x6A (24), instance 21 (23), larabase 56 (20), generatorbase 3 (20), multibody 1 (18), modifiable 1 (15), instance 18 (15), unitref 2 (14), larabase 55 (14) |
+| After spline movers, argument offsets, sensor/instance/larabase natives, array/thread opcodes | 265 | instance 27 (39, mercs: returns a 12-byte unitref value), CALL5 0x6A (24: globals member 12 is an engine-created object of type 74 that we do not create, so the call dispatches on the globals object), generatorbase 3 (20, survey artifact), multibody 1 (18), autosplinecamera 0 (20, reveal cameras now reached), uberobjectbase 1 (11), plannerobstacle 1 (11). Gone: spline (all), playersensor 0/1, instance 18/21/23, larabase 25/27/29/55/56, modifiable 1, unitref 2. Static: DREF/BOUNDS and TSSTART/TPSTART/TEND now execute (no unsupported opcode left). |
+
+- [O] **Arguments** live in the callee's locals at the byte offsets of the prototype's argument records (prototype
+  +0x0C: 0x14-byte records, u16 offset +0x0C), from 0, in declaration order, without a `this` local. Before this
+  fix our VM put argument i at local i+1, so every `PUSHL 0` of an argument read the object's own uid (e.g.
+  `Lara.SetControlEnabledForReveal(bool)`, natla_end_mover `PlayFromKey(key)`).
+- [O] **Arrays** (0x57CE50 cases 0x1C-0x21): DREF32 / DREFA index an element (operand = element size), BOUNDS n
+  nulls the address for index >= n, DREFD / DBOUNDS read a dynamic array's {data +0x20, count +0x18}. Ours: static
+  arrays address members/locals by offset; dynamic arrays are not modelled and read as empty [I].
+- [I] **Threads** TSSTART / TPSTART n / TEND (cases 0x77-0x79: a new exec context continues at the next word, the
+  parent skips n words; TEND parks the thread) run their block inline (only l7_yggdrasil_end type 18627 uses them).
+- [O] **Splines** (`spline` bind 0x7AD0D0): 0 last key, 1 current key, 2 GoToKey, 3 mode, 4 SetPlayMode(mode,
+  from, to), 5 Play / 6 Stop / 7 IsPlaying (instance flag 0x2000000), 8 PlayToKey(key, dir), 9/10 direction,
+  11/12 loop count, 13 loop / 14 loop-count / 16 ping-pong over a clip, 15 once, 17/18 clip flag, 19-21 key ranges
+  whose enter/leave calls vt 40 / 41 (type 3 functions 53/54, 0x7120B0) with (spline, id, direction). Path decode
+  and per-frame update: LEVELS.md "Spline movers".
+- [O] `playersensor` 0/1 Set/Get its enable byte (+0xF); `instance` 18/21/23, `modifiable` 1, `unitref` 2,
+  `larabase` 25/27/29/55/56 are accepted (effects [U]; 56 is Lara's input enable for reveal cameras, not applied
+  because those cameras are not implemented).
 
 The survey also found a crash: cyclic static links (l2 planes) recursed forever in the legacy fallback; it is now
 bounded to depth 8. The three script-only chapter ends (l1_ship_sinking_hall plane 1074 / volume 1082 → 1005,

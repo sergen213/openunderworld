@@ -11,8 +11,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <set>
-#include <string>
 #include <vector>
 
 namespace ou::game {
@@ -39,15 +37,6 @@ inline constexpr std::array<Chapter, 9> kChapters{{
     {"l7_himalaya_end", 58},  // 8 epilogue
 }};
 inline constexpr int16_t kStringOneWeekEarlier = 1307; // "ONE WEEK EARLIER..." (after the prologue) [I placement]
-// Thor's gear objects Lara carries entering chapter n (GAMEPLAY.md "Thor's gear"). [O] scripts: the left gauntlet
-// she gets in l2_maproom (volume 9626) is taken again there (9628); the right one from l3_secretchamber's cinematic
-// 4654 is taken by 4655; l5_startsnow's start cinematic 7530 gives both at its end and they stay to the end of the
-// story (l7_helheim01 8950 takes and re-gives them). g_belt is only given in the "progress > 7" (finished game)
-// branches of the chapter setup scripts. So chapters 0-5 start with none, 6-8 with both gauntlets.
-inline std::set<std::string> chapterGear(int chapter) {
-    if (chapter < 6) return {};
-    return {"g_gauntletleft", "g_gauntletright"};
-}
 int chapterIndex(std::string_view startUnit); // -1 if no chapter starts there
 // Chapter a unit belongs to when nothing else says (saves without a chapter): its l<N>_ prefix [I]; the
 // prologue shares Croft Manor units with chapter 3 and is never derived.

@@ -125,15 +125,15 @@ uint32_t Program::owner(const Function* f) const {
     return 0;
 }
 
-bool Machine::call(Instance& object, int16_t vt) {
+bool Machine::call(Instance& object, int16_t vt, std::span<const Value> args) {
     if (!object.program) return false;
     const Function* f = vt == -2 ? object.program->startup(object.typeId)
         : vt == -3 ? object.program->mainFunction(object.typeId) : object.program->method(object.typeId, vt);
-    return f ? start(object, *f) : true; // no handler: inherited empty
+    return f ? start(object, *f, args) : true; // no handler: inherited empty
 }
-bool Machine::start(Instance& object, const Function& f) {
+bool Machine::start(Instance& object, const Function& f, std::span<const Value> args) {
     frames_.clear(); steps_ = 0; wait_ = 0; failure_.clear();
-    if (!push(object, f)) return false;
+    if (!push(object, f, args)) return false;
     return run() != Step::Failed;
 }
 
@@ -167,9 +167,13 @@ bool Machine::push(Instance& object, const Function& f, std::span<const Value> a
     frames_.push_back({});
     Frame& fr = frames_.back();
     fr.object = &object; fr.function = &f;
-    fr.locals.resize(std::max<uint32_t>({f.localCount, 1, uint32_t(args.size() + 1)}));
-    fr.locals[0] = Value::object(object.uid);
-    for (size_t i = 0; i < args.size(); ++i) fr.locals[i + 1] = args[i];
+    fr.locals.resize(std::max<uint32_t>(f.localCount, 1));
+    if (!f.argCount) fr.locals[0] = Value::object(object.uid); // no argument occupies offset 0 (missing ones read 0)
+    for (size_t i = 0; i < args.size(); ++i) { // locals are addressed by byte offset; arguments start at 0
+        const size_t off = i < f.argOffsets.size() ? f.argOffsets[i] : 4 * i;
+        if (off >= fr.locals.size()) fr.locals.resize(off + 1);
+        fr.locals[off] = args[i];
+    }
     return true;
 }
 
@@ -523,7 +527,33 @@ Machine::Step Machine::step() {
             return pc < f.code.size() ? Step::Continue : done();
         }
         case 0x78: case 0x79: case 0x7A:
-            return done(); // other thread boundaries remain unsupported
+            // TSSTART / TPSTART n start a thread at the next word and skip the parent past the block; TEND parks the
+            // thread (0x57CE50 cases 0x77-0x79). Ours run the block inline in this thread [I] (one l7 type uses them).
+            ++pc; break;
+        case 0x1D: case 0x1E: { // DREF32 / DREFA: index on top, element 0 address below; null stays null
+            if (fr.stack.size() < 2) return fail();
+            const uint32_t index = pop().bits;
+            Value& a = fr.stack.back();
+            if (a.kind == Value::Kind::Local || a.kind == Value::Kind::Member) {
+                a.offset += (in.op == 0x1D ? 4u : uint32_t(in.arg) & 0xFFFFFFu) * index;
+                if (in.op == 0x1D) a = Value::scalar(load(a));
+            }
+            ++pc; break;
+        }
+        case 0x20: // DREFD: dynamic array -> {data, count}; dynamic arrays are not modelled and read as empty [I]
+            if (fr.stack.empty()) return fail();
+            fr.stack.back() = Value::scalar(0), pushScalar(0); ++pc; break;
+        case 0x21: // BOUNDS n: an index >= n nulls the address below it
+            if (fr.stack.size() < 2) return fail();
+            if (fr.stack.back().bits >= (uint32_t(in.arg) & 0xFFFFFFu)) fr.stack[fr.stack.size() - 2] = Value::scalar(0);
+            ++pc; break;
+        case 0x22: { // DBOUNDS: index on top, count below; out of range -> null data and index
+            if (fr.stack.size() < 3) return fail();
+            const uint32_t index = pop().bits;
+            if (index < fr.stack.back().bits) fr.stack.back() = Value::scalar(index);
+            else fr.stack.back() = Value::scalar(0), fr.stack[fr.stack.size() - 2] = Value::scalar(0);
+            ++pc; break;
+        }
         case 0x7C: wait_ = 0; ++pc; return suspend(); // SLEEP: yield until the next tick (exe case 0x7B pops nothing)
         case 0x80: { // WAIT seconds
             if (fr.stack.empty()) return fail();

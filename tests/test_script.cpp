@@ -327,8 +327,9 @@ TEST(ScriptRealData, MoveUClockMemberFromLocal) {
     auto object = program->instantiate(1, 13909);
     ASSERT_TRUE(object->program->type(125));
     vm::Machine machine([&](int32_t) { return object; }, [&](vm::NativeContext&) { return false; });
-    ASSERT_TRUE(machine.call(*object, 65));
-    EXPECT_EQ(object->fields.at(36), 1u); // local 0 is this object's reference in the VM
+    const vm::Value clock = vm::Value::scalar(1);
+    ASSERT_TRUE(machine.call(*object, 65, {&clock, 1})); // vt 65(clock): MOVEU member 36 <- argument at local 0
+    EXPECT_EQ(object->fields.at(36), 1u);
 }
 
 TEST(ScriptVm, SleepResumesNestedHandler) {

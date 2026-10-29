@@ -239,14 +239,6 @@ outfit (the original only reads `+0x294` on a level load).
   (`playerObjects()`; 42 drops all three, its slot argument is not tracked [I]). Mask, objects and Lara's script
   fields are saved (`script.player`); a chapter start without a save resets them. ou-game drops hidden groups'
   submeshes from Lara's meshes when building the scene (gameplay and cutscenes, GL and Vulkan).
-- [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic, volume 9628 takes it
-  back; l3_secretchamber cinematic 4654 gives the right one at its end (vt 60), 4655 takes it at its start (vt 58);
-  l5_startsnow's chapter-start cinematic 7530 takes both at its start and gives both at its end (also sets story
-  progress 5 via globals type 5 fn 4); l7_helheim01 8950 does the same. `g_belt` is only given in the chapter setup
-  scripts' `globals +16 stickyint > 7` (finished game) branches, which also give both gauntlets. Ours:
-  `game::chapterGear(n)` = what Lara carries entering chapter n (0-5 none, 6-8 both gauntlets), applied by
-  `World::startChapter`, `ou-game --chapter` and loads of saves without gear state (`StreamReal.ChapterThorGear`).
-  Chapter 5 itself gets them from cinematic 7530's end handler [I: only if our cinematic playback runs it].
 - Not done: player sensors (vt 14) never fire, and the per-chapter equip scripts do not run in our runtime yet
   (probe of 12 chapter units: no equip call), so the gear stays hidden outside a volume with carried objects. The
   cinematic base type 3523's gear events 10-21 are never sent (no retail stream has events).

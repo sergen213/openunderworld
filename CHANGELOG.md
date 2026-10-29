@@ -6,6 +6,11 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Spline movers: intro +0x68 paths (Bezier/Hermite position, slerped rotation, 30 Hz keys) move their objects with the original play modes (once, loop, loop count, ping-pong, clip, play-to-key, key-range callbacks) and all `spline` script natives; moved objects with collision carry Lara. The l7_yggdrasil_end Natla movers and l1_seafloor fish now move.
+- Script VM: array opcodes (DREF/BOUNDS) and thread blocks (TSSTART/TPSTART/TEND, run inline); `playersensor`, `instance` 18/21/23, `modifiable` 1, `unitref` 2 and `larabase` 25/27/29/55/56 natives. Script survey stops 472 → 265 (with more code now reached).
+- Script function arguments are placed at their prototype byte offsets (from 0) instead of after a `this` slot; handlers that read their arguments (e.g. Lara's reveal control toggle, mover PlayFromKey) got the object's own id before.
+
 ### Fixed
 - Lara no longer wears Thor's gauntlets and belt before she has them: the outfit models' gear primgroups (draw groups 10-12) start hidden and only Lara's own gear scripts (instance native 61, carried `g_*` objects) show them; state saved; a chapter start gives Lara the gauntlets she has by then (both from Jan Mayen on). Script INT/FLOAT/BOOL member defaults (stored inline in the member record) are now parsed; instances do not apply them yet.
 - The sea is no longer white at the l1_seatop and l2_cliffclimb starts (OpenGL and Vulkan): TRU's water materials read the back buffer and depth buffer, which are now copied after the opaque scene and fed to them, so the sea shows refraction, reflections and depth fade.

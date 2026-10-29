@@ -295,7 +295,7 @@ void World::syncObjects() {
         const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Block || o.kind == script::Kind::Switch;
         const formats::UberObjectData* uber = (ordinary || o.name.starts_with("ms_") || o.name.starts_with("sa_uo_") ||
                                                o.name.starts_with("ca_")) ? prepareUber(o) : nullptr;
-        if (!ordinary && !uber) continue;
+        if (!ordinary && !uber && !o.spline) continue; // spline movers' collision follows Object::body (pose below)
         if (o.kind == script::Kind::Switch && !uber &&
             (!o.script || !o.script->program->mainFunction(o.script->typeId))) continue;
         auto it = objectPhysics_.find(o.name);

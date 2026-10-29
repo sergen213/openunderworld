@@ -244,6 +244,26 @@ Survey (82 units, `scratch/portalsurvey.py`) [O]:
 Open [U]: signal faces and the `Signal` records; portal +0x86..+0x8E; the unpaired l2 portals; whether tru.exe ever
 re-bases coordinates when the player moves far from the first unit.
 
+## Spline movers (intro +0x68)
+
+- [O] `0x5BA280` binds intro `+0x68` (a MultiSpline) to instance `+0x284` (`0x5D1290`). MultiSpline `+0x40` position
+  track, `+0x44` rotation track, `+0x48` a vec4 track copied to instance `+0x80` (absent in all shipped intros), cursors
+  at `+0x4C/+0x54/+0x5C`. Track: u16 keys, u8 flags `+3` (bit 3 Bezier, else Hermite; bits 1/2 make the cursor wrap),
+  f32 end time `+4` (keys are 30 Hz frames; shipped paths have one key per frame), keys from `+0x10`: position 0x40
+  bytes {value, Hermite tangent, Bezier control, t0, t1, ?, 1/(t1-t0)} (`0x47CD40`), rotation 0x20 bytes {quaternion
+  xyzw, t0, t1, ?, 1/(t1-t0)}, slerped (`0x47D180`). Position values are relative to `Level+0x80`: value + it = the
+  intro position at key 0 (l7_yggdrasil_end movers, offset (-1512, -2621, -4106)). The quaternion matches the intro
+  Euler angles (Rx·Ry·Rz) as glm::quat(w, x, y, z).
+- [O] Setup: key 0; intro `+0x64` low nibble 1/2/4/8 = once / loop / loop-count / ping-pong and playing; intro byte
+  `+0x70` bit 0 = backwards; `+0x62` bit 0 = play to key `+0x6E`, bit 1 = clip [`+0x6C`, `+0x6E`]. Per frame
+  `0x5CF260` advances dir × timeMult (ours 0.5 frame per 60 Hz tick), stops at a target key, ends the clip per mode,
+  then reports key ranges entered/left (`0x5CC8F0`). Natives: SCRIPTS.md.
+- [O] Users: 70 `natla_end_mover` (l7_yggdrasil_end; Natla's flight paths, scripts forward to `natla_end` 8403) and 21
+  `fish_medsea` (l1_seafloor), all looping. Neither object has solid collision; ours moves them through
+  `Object::body` (render meshes and, for objects with solid shapes, their collision, which carries Lara like the
+  uber elevator). `GameReal.SplineMoverFollowsItsPath`, `GameReal.SplineMoverCarriesLara` (real path on a real solid
+  object).
+
 ## Survey (Python cross-check of the C++ layouts, 2026-10-18) [O]
 
 All 82 present units:
