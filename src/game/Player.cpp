@@ -373,8 +373,11 @@ void Player::airMove(float dt, vec2 move) {
 // Ledge grab: markup type 1 ("ledgegrab") polylines. The hands (hang pose) must pass the ledge height
 // while falling, within grabReach horizontally, with Lara facing the ledge.
 bool Player::tryGrab(vec3 prevPos) {
-    if (s_.regrabCooldown > 0 || s_.vel.z < t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
+    // Faster than grabMinVz (up to twice) only a saving grab holds [I]; the vertical window grows to one tick's fall.
+    if (s_.regrabCooldown > 0 || s_.vel.z < 2 * t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
+    const bool saving = s_.vel.z < t_.grabMinVz;
     const vec3 hand = s_.pos + toWorld(anims_.hangHandOffset), prevHand = prevPos + toWorld(anims_.hangHandOffset);
+    const float window = std::max(t_.grabWindow, prevHand.z - hand.z);
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
         if (m.type != 1) continue;
@@ -386,7 +389,7 @@ bool Player::tryGrab(vec3 prevPos) {
             const float u = std::clamp(glm::dot(xy(hand - p0), seg) / len2, 0.0f, 1.0f);
             const vec3 q = glm::mix(p0, p1, u);
             if (glm::length(xy(hand - q)) > t_.grabReach) continue;
-            if (hand.z > q.z + 10.0f || prevHand.z < q.z - t_.grabWindow || hand.z < q.z - t_.grabWindow) continue;
+            if (hand.z > q.z + 10.0f || prevHand.z < q.z - window || hand.z < q.z - window) continue;
             // Lara's side of the ledge: the wall is the other side; she must be facing it.
             const vec2 dir = seg / std::sqrt(len2);
             vec2 out(-dir.y, dir.x);
@@ -399,7 +402,8 @@ bool Player::tryGrab(vec3 prevPos) {
             s_.ledgeSide = side;
             s_.vel = vec3(0);
             s_.state = State::Hang;
-            play("ledgeb_attach_M", false);
+            s_.savingGrab = saving ? t_.savingGrabSeconds : 0.0f;
+            play(saving ? "ledgeb_bad_attach_M" : "ledgeb_attach_M", false);
             placeOnLedge();
             return true;
         }
@@ -806,6 +810,19 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Shimmy: {
         const vec2 right(std::sin(s_.yaw), -std::cos(s_.yaw));
         const float lateral = glm::dot(move, right);
+        if (s_.savingGrab > 0) { // one hand on the ledge: jump pulls up, else she slips off when the time runs out
+            s_.savingGrab = std::max(0.0f, s_.savingGrab - dt);
+            if (jumpPressed) s_.savingGrab = 0, play("ledgeb_bad_attach_recover", false);
+            else if (s_.savingGrab <= 0) {
+                s_.pos -= forward() * 20.0f;
+                s_.regrabCooldown = 0.4f;
+                startFall(vec3(0));
+                break;
+            }
+            if (!clipDone()) advanceClip(dt);
+            placeOnLedge();
+            break;
+        }
         if (dropPressed) {
             s_.pos -= forward() * 20.0f; // off the wall
             s_.regrabCooldown = 0.4f;
@@ -839,7 +856,10 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             } else if (kind == 0) climb();
             break;
         }
-        if (s_.state == State::Hang && s_.clip.starts_with("ledgeb_attach") && !clipDone()) { advanceClip(dt); break; }
+        if (s_.state == State::Hang && (s_.clip.starts_with("ledgeb_attach") || s_.clip.starts_with("ledgeb_bad_attach")) && !clipDone()) {
+            advanceClip(dt);
+            break;
+        }
         if (std::abs(lateral) > 0.3f) {
             s_.state = State::Shimmy;
             play("ledgeb_right", true, lateral > 0 ? 1.0f : -1.0f);

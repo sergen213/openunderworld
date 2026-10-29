@@ -102,10 +102,11 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
             if (const auto p = ptrAt(*drm, node->section, node->offset + off)) return p;
         return std::nullopt;
     };
-    // Hit points: node +0x3C health block {easy, normal, hard} floats; tru.exe 0x63C190 -> 0x620CC0 -> 0x6E77B0 picks by
-    // difficulty (non-positive -> normal) into the health object at comp+0x2C64. We play Normal.
+    // Hit points: node +0x3C health block {casual, tomb raider, master} floats; tru.exe 0x63C190 -> 0x620CC0 -> 0x6E77B0 picks
+    // by the enemy health tailoring level 0x6E7710 (non-positive -> the middle one) into the health object at comp+0x2C64.
     if (const auto h = field(0x3C)) {
-        t->tuning.health = read<float>(drm->sections[h->section], h->offset + 4);
+        for (uint32_t l = 0; l < 3; ++l) t->tuning.healthLevels[l] = read<float>(drm->sections[h->section], h->offset + 4 * l);
+        t->tuning.health = t->tuning.healthLevels[1];
         // [I] block +0xC (cats 80, thralls 0), copied to comp+0x2C6C next to the health object: read as the damage it
         // takes to stagger (EnemyHealth::m_damageSinceMove, TRLAU-menu-hook) — unconfirmed.
         t->tuning.staggerDamage = read<float>(drm->sections[h->section], h->offset + 0xC);

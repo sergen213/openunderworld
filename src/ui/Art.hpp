@@ -4,6 +4,7 @@
 // load separately. Layout and metrics: docs/GAMEPLAY.md "Menus".
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -58,6 +59,33 @@ struct Image {
     int width = 0, height = 0;
 };
 std::optional<Image> loadRaw(const cdc::BigfileSet& bigfile, std::string_view name);
+
+// PDA sonar map of a unit: pc-w\<unit>_map.drm, two pdamap sections. Section 0 +0 -> the map header in section 1:
+// bbox min, max (vec4 each), +0x30 vertices* (vec4, unit frame), +0x34 triangles* ({u32 a, b, c, u32 flags, u32}),
+// +0x38 kd nodes* (16 bytes), +0x40 u32 node / triangle / vertex counts [O l1_seafloor_map]. Section 0 also lists the
+// neighbouring units (not read). nullopt: the unit has no map.
+struct SonarMap {
+    std::vector<std::array<float, 3>> vertices;
+    std::vector<std::array<uint32_t, 3>> triangles;
+    std::array<float, 3> min{}, max{};
+};
+std::optional<SonarMap> loadSonarMap(const cdc::BigfileSet& bigfile, std::string_view unit);
+
+// EXTRAS rewards: pc-w\generalbank.drm DTP 36, a header of {u32 count, record*} lists [O]: 3 cinematics, 4 storyboards,
+// 5 character concepts, 6 environment concepts, 7 gear concepts (0x1C-byte records {u32 locals id, u32 unlock, u32,
+// char[] path*, char* image, char[]*, u32}), 9 trailers & credits, 8 outfits (not read). `unlock` codes [O values, I
+// meaning from the shipped game's rewards]: 3 Mediterranean Sea complete, 4 prologue, 5 Thailand, 6 Croft Manor, 7 Mexico,
+// 8 Jan Mayen, 9 Andaman Sea, 10 Arctic Sea (= chapter + 2, the prologue 4), 11 the game on Master Survivalist, 12 every
+// treasure, 13 every relic.
+struct Reward {
+    int16_t name = 0;  // locals.bin
+    int unlock = 0;
+    std::string image; // pc-w\image\<image>.raw
+};
+struct Rewards {
+    std::vector<Reward> environment, character, gear, storyboards; // EXTRAS 146..149 in that order
+};
+std::optional<Rewards> loadRewards(const cdc::BigfileSet& bigfile);
 
 // UTF-8 to code points; invalid bytes become U+FFFD.
 std::u32string decodeUtf8(std::string_view s);

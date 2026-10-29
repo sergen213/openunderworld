@@ -230,7 +230,7 @@ public:
     Launcher(Paths paths, const QString& gameDirOverride) : paths_(std::move(paths)) {
         setWindowTitle("OpenUnderworld Launcher");
         setWindowIcon(QIcon::fromTheme("openunderworld"));
-        try { cfg_ = ou::config::load(paths_.config); } catch (const std::exception& e) { startupNote_ = "config ignored: " + q(e.what()); }
+        try { cfg_ = written_ = ou::config::load(paths_.config); } catch (const std::exception& e) { startupNote_ = "config ignored: " + q(e.what()); }
         if (!gameDirOverride.isEmpty()) cfg_.gameDir = s(gameDirOverride);
 
         tabs_ = new QTabWidget;
@@ -278,7 +278,7 @@ public:
 
 private:
     Paths paths_;
-    ou::config::Config cfg_;
+    ou::config::Config cfg_, written_; // written_: as last loaded from / saved to paths_.config
     QString startupNote_, lastScanSummary_;
     QTabWidget* tabs_;
     QLabel* status_;
@@ -839,6 +839,14 @@ private:
     }
 
     bool saveConfig() {
+        // ou-game writes its menu settings into this file (config::GameConfig, look Y inversion, brightness): adopt what
+        // it changed since this launcher last loaded or saved it, so Play does not undo them.
+        try {
+            const auto disk = ou::config::load(paths_.config);
+            cfg_.game = disk.game;
+            if (disk.controls.invertY != written_.controls.invertY) invertY_->setChecked(disk.controls.invertY);
+            if (disk.graphics.brightness != written_.graphics.brightness) brightness_->setValue(disk.graphics.brightness);
+        } catch (const std::exception&) {} // unreadable: ours overwrites it
         collect();
         try {
             ou::config::resolve(cfg_.graphics); // the apps reject what this rejects
@@ -851,6 +859,7 @@ private:
         }
         try {
             ou::config::save(paths_.config, cfg_);
+            written_ = cfg_;
             status_->setText("Saved " + q(paths_.config));
             return true;
         } catch (const std::exception& e) {

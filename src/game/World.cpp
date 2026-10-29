@@ -99,6 +99,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ledgeb_jump_up", "ledgeb_jump_back", "ledgeb_jump_right", "ledgeb_attach_U", "ledgeb_attach_S", "ledgeb_attach_F",
     "HPole_idleHangPerp", "Hpole_perp_attach_M", "HPole_StartSwing", "HPole_swing", "Hpole_swingstopA", "hpole_perp_fling",
     "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
+    "ledgeb_bad_attach_M", "ledgeb_bad_attach_recover", // saving grab (Player::tryGrab)
     "death_fall_normal", "death_toknee", // combat (Combat.cpp)
     "hit_light_front", "hit_light_back", "hit_light_side", "hit_mediumfront", "hit_mediumback", "hit_mediumright",
     "hit_light_front_swim", "hit_light_back_swim", "hit_light_side_swim", "hit_mediumfront_swim", "hit_mediumback_swim",
@@ -230,6 +231,7 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         loadClips(cdc::parseDrm(std::move(*g)), {"combat_grenade_Throw1"}, "pc-w\\g_grenade_thrower.drm", "g_grenade_thrower:");
         if (auto t = loadGrenadeTuning(bigfile)) lib.grenade = *t;
     }
+    if (auto d = loadDifficulty(bigfile)) lib.difficulty = *d;
     // Swim speed: mean root speed of the clips that start swimming (their loops have no root motion).
     float dist = 0;
     double secs = 0;
@@ -257,13 +259,14 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
           return tuning;
       }()) {
     startSpawn_ = spawn; // respawn target without units
-    grenades = anims_.grenade.maxCarried; // [I] Lara carries the Normal maximum (no grenade pickups in any unit)
+    grenades = maxGrenades(); // [I] Lara carries the maximum (no grenade pickups in any unit)
     bindMultibody();
     bindUber();
     bindTerrain();
     bindLightHealth();
     bindMarkup();
     bindEnemies();
+    setTailoring(tailoring_);
     script_.setCameraNative([this](int op, const std::string& unit, uint32_t index, uint32_t value) {
         return cameraNative(op, unit, index, value);
     });

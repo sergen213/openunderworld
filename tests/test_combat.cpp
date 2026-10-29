@@ -649,13 +649,38 @@ TEST(Gadgets, FlashlightToggleCooldownAndPose) {
     EXPECT_NEAR(pos.x, 25, 1e-3);
 }
 
+// PLAYER TAILORING presets: Lara's max health keeps her health fraction, ammunition capacity caps reserves and grenades.
+TEST(Tailoring, PresetsScaleHealthAndCapacity) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    EXPECT_EQ(w->tailoring().preset(), 1);
+    w->giveWeapon(game::Weapon::Uzi, 1000);
+    EXPECT_EQ(w->combat().reserve[size_t(game::Weapon::Uzi)], 240);
+    w->setHealth(500);
+    w->setTailoring(game::Tailoring::preset(0)); // casual: 1.3x health, extra ammunition
+    EXPECT_FLOAT_EQ(w->health().max(), 1300);
+    EXPECT_FLOAT_EQ(w->health().value(), 650);
+    EXPECT_EQ(w->maxReserve(game::Weapon::Uzi), 400);
+    EXPECT_EQ(w->maxGrenades(), 10);
+    w->setTailoring(game::Tailoring::preset(2)); // master survivalist: 0.8x, less ammunition (excess dropped)
+    EXPECT_FLOAT_EQ(w->health().max(), 800);
+    EXPECT_EQ(w->combat().reserve[size_t(game::Weapon::Uzi)], 160);
+    EXPECT_EQ(w->grenades, 4);
+    EXPECT_FLOAT_EQ(w->player().tuning().savingGrabSeconds, 0.5f);
+    game::Tailoring custom;
+    custom.ammo = 0;
+    EXPECT_EQ(custom.preset(), -1);
+}
+
 // A grenade thrown at a locked dummy 800 ahead sticks to it, goes off after the fuse, kills it and hurts Lara.
 TEST(Gadgets, GrenadeKillsDummyAndHurtsLara) {
     CollisionMesh m;
     addFloor(m, -5000, -5000, 5000, 5000, 0);
     auto w = makeWorld(m, {0, 0, 0});
     const auto& g = w->anims().grenade;
-    ASSERT_EQ(w->grenades, g.maxCarried);
+    ASSERT_EQ(w->grenades, w->maxGrenades());
+    ASSERT_EQ(w->maxGrenades(), g.maxCarried[1]);
     game::DummyTarget t;
     t.pos = {800, 0, 0};
     w->targets.push_back(&t);
@@ -675,7 +700,7 @@ TEST(Gadgets, GrenadeKillsDummyAndHurtsLara) {
         if (!w->liveGrenades().empty() && w->liveGrenades()[0].stuck) EXPECT_EQ(w->liveGrenades()[0].target, &t);
     }
     ASSERT_GE(exploded, 0);
-    EXPECT_EQ(w->grenades, g.maxCarried - 1);
+    EXPECT_EQ(w->grenades, g.maxCarried[1] - 1);
     EXPECT_NEAR(exploded / 60.0, g.fuse + 0.3, 0.4); // release + flight, then the fuse
     EXPECT_FALSE(t.alive());
     EXPECT_LT(w->health().value(), 1000);
@@ -690,7 +715,7 @@ TEST(GadgetsReal, TuningLightsAndSpotUnits) {
     const cdc::BigfileSet bf(dir);
     const auto g = game::loadGrenadeTuning(bf);
     ASSERT_TRUE(g);
-    EXPECT_EQ(g->maxCarried, 6);
+    EXPECT_EQ(g->maxCarried, (std::array<int, 3>{10, 6, 4}));
     EXPECT_FLOAT_EQ(g->cooldown, 20 / 30.0f);
     EXPECT_FLOAT_EQ(g->minRange, 200);
     EXPECT_FLOAT_EQ(g->maxRange, 1000);

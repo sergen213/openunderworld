@@ -132,6 +132,72 @@ std::optional<Image> loadRaw(const cdc::BigfileSet& bigfile, std::string_view na
     return img;
 }
 
+std::optional<SonarMap> loadSonarMap(const cdc::BigfileSet& bigfile, std::string_view unit) {
+    auto bytes = bigfile.read("pc-w\\" + std::string(unit) + "_map.drm");
+    if (!bytes) return std::nullopt;
+    try {
+        const cdc::Drm drm = cdc::parseDrm(std::move(*bytes));
+        if (drm.sections.size() < 2 || drm.sections[0].type != cdc::SectionType::PdaMap) return std::nullopt;
+        const auto top = cdc::sectionPointers(drm, 0);
+        const auto head = top.find(0);
+        if (head == top.end()) return std::nullopt;
+        const uint32_t sec = head->second.section, h = head->second.offset;
+        const auto d = drm.sections[sec].data;
+        const auto ptrs = cdc::sectionPointers(drm, sec);
+        const auto verts = ptrs.find(h + 0x30), tris = ptrs.find(h + 0x34);
+        if (verts == ptrs.end() || tris == ptrs.end() || h + 0x4C > d.size()) return std::nullopt;
+        const uint32_t triCount = rd<uint32_t>(d, h + 0x44), vertCount = rd<uint32_t>(d, h + 0x48);
+        const uint32_t v0 = verts->second.offset, t0 = tris->second.offset;
+        if (size_t(v0) + size_t(vertCount) * 16 > d.size() || size_t(t0) + size_t(triCount) * 20 > d.size()) return std::nullopt;
+        SonarMap m;
+        for (int i = 0; i < 3; ++i) m.min[size_t(i)] = rd<float>(d, h + 4 * size_t(i)), m.max[size_t(i)] = rd<float>(d, h + 16 + 4 * size_t(i));
+        m.vertices.resize(vertCount);
+        for (uint32_t i = 0; i < vertCount; ++i)
+            for (int k = 0; k < 3; ++k) m.vertices[i][size_t(k)] = rd<float>(d, v0 + 16 * size_t(i) + 4 * size_t(k));
+        m.triangles.reserve(triCount);
+        for (uint32_t i = 0; i < triCount; ++i) {
+            const std::array<uint32_t, 3> t{rd<uint32_t>(d, t0 + 20 * size_t(i)), rd<uint32_t>(d, t0 + 20 * size_t(i) + 4),
+                                            rd<uint32_t>(d, t0 + 20 * size_t(i) + 8)};
+            if (t[0] < vertCount && t[1] < vertCount && t[2] < vertCount) m.triangles.push_back(t);
+        }
+        return m;
+    } catch (const cdc::FormatError&) {
+        return std::nullopt;
+    }
+}
+
+std::optional<Rewards> loadRewards(const cdc::BigfileSet& bigfile) {
+    auto bytes = bigfile.read("pc-w\\generalbank.drm");
+    if (!bytes) return std::nullopt;
+    const cdc::Drm drm = cdc::parseDrm(std::move(*bytes));
+    for (uint32_t i = 0; i < drm.sections.size(); ++i) {
+        const auto& s = drm.sections[i];
+        if (s.type != cdc::SectionType::DtpData || s.id != 36) continue;
+        const auto ptrs = cdc::sectionPointers(drm, i);
+        const auto string = [&](uint32_t at) -> std::string {
+            const auto p = ptrs.find(at);
+            if (p == ptrs.end() || p->second.section != i || p->second.offset >= s.data.size()) return {};
+            const auto* c = reinterpret_cast<const char*>(s.data.data()) + p->second.offset;
+            return std::string(c, strnlen(c, s.data.size() - p->second.offset));
+        };
+        const auto list = [&](uint32_t index) {
+            std::vector<Reward> out;
+            const auto base = ptrs.find(8 * index + 4);
+            if (base == ptrs.end()) return out;
+            const uint32_t count = rd<uint32_t>(s.data, 8 * index);
+            for (uint32_t k = 0; k < count && base->second.offset + 0x1C * size_t(k + 1) <= s.data.size(); ++k) {
+                const uint32_t at = base->second.offset + 0x1C * k;
+                out.push_back({int16_t(rd<uint32_t>(s.data, at)), int(rd<uint32_t>(s.data, at + 4)), string(at + 0x10)});
+            }
+            return out;
+        };
+        Rewards r{list(6), list(5), list(7), list(4)};
+        if (r.environment.empty() || r.character.empty() || r.gear.empty() || r.storyboards.empty()) return std::nullopt;
+        return r;
+    }
+    return std::nullopt;
+}
+
 std::u32string decodeUtf8(std::string_view s) {
     std::u32string out;
     for (size_t i = 0; i < s.size();) {

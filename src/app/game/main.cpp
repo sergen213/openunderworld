@@ -76,6 +76,9 @@ struct Options {
     std::optional<ou::game::Weapon> weapon;    // --weapon uzi|shotgun|speargun: carried secondary with max reserve
     ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr/--rt/--rt-quality (or --config)
     ou::game::Controls controls;         // --config "controls" (default bindings without it)
+    ou::config::GameConfig game;         // --config "game": in-game menu settings
+    std::filesystem::path configPath;    // --config FILE: the menus write their settings back to it
+    bool configInvertY = false;          // its controls.invert_y as last read / written
     ou::config::GraphicsSettings gfx;    // resolved
 };
 
@@ -119,6 +122,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
             const auto c = ou::config::load(argv[i + 1]);
             o.gameDir = c.gameDir, o.renderer = c.renderer, o.width = c.width, o.height = c.height;
             o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen, o.graphics = c.graphics;
+            o.game = c.game, o.configPath = argv[i + 1], o.configInvertY = c.controls.invertY;
             o.controls = ou::game::Controls(c.controls);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "--config: %s\n", e.what());
@@ -540,7 +544,7 @@ struct CombatView {
         h.clip[0] = c.clip[size_t(c.weapon)][0], h.clip[1] = c.clip[size_t(c.weapon)][1], h.clipSize = wd.clip, h.nextHand = c.hand;
         h.healthPacks = w.found[2];
         h.gearItem = c.healHeld ? 0 : c.weaponHeld || c.drawHeld ? 2 : -1;
-        h.flashlight = w.flashlight, h.grenades = w.grenades, h.grenadesMax = w.anims().grenade.maxCarried;
+        h.flashlight = w.flashlight, h.grenades = w.grenades, h.grenadesMax = w.maxGrenades();
         return h;
     }
 
@@ -1283,7 +1287,7 @@ int main(int argc, char** argv) {
             world->targets.push_back(d.get());
         }
         if (opt.weapon) // testing: the original gets its secondary and rounds from pickups
-            world->giveWeapon(*opt.weapon, world->anims().weapons[size_t(*opt.weapon)].maxReserve);
+            world->giveWeapon(*opt.weapon, world->maxReserve(*opt.weapon));
         gadgets.load(bf, streamed, warnings);
         effects.reserve(streamed);
         effects.sync(bf, *world, warnings);
@@ -1409,14 +1413,33 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "ou-game: main menu movie: %s\n", e.what());
         }
     };
-    // Menu settings with an equivalent here: volumes, mouse/stick Y inversion, brightness (0..10, 5 = neutral).
+    // Menu settings: volumes, subtitles, reticles, helper/training toggles (config "game"), mouse/stick Y inversion and
+    // brightness (0..10, 5 = neutral; graphics brightness 0.5 * 2^(v/5)). Changed ones go back to --config's file.
+    menus.sfxVolume = opt.game.sfxVolume, menus.musicVolume = opt.game.musicVolume, menus.cinematicVolume = opt.game.cinematicVolume;
+    menus.subtitles = opt.game.subtitles, menus.reticles = opt.game.reticles;
+    menus.helperButtons = opt.game.helperButtons, menus.trainingText = opt.game.trainingText;
     menus.invertY = opt.controls.invertY;
     menus.brightness = std::clamp(int(std::lround(5 * std::log2(2 * opt.gfx.brightness))), 0, 10);
+    int menuBrightness = menus.brightness; // the launcher's finer value stays until the slider moves
     auto applyVolumes = [&] {
         mixer.setBusVolume(ou::audio::Bus::Music, float(menus.musicVolume) / 10);
         mixer.setBusVolume(ou::audio::Bus::Sfx, float(menus.sfxVolume) / 10);
         opt.controls.invertY = menus.invertY;
-        opt.gfx.brightness = 0.5f * std::exp2(float(menus.brightness) / 5);
+        if (menus.brightness != menuBrightness) menuBrightness = menus.brightness, opt.gfx.brightness = 0.5f * std::exp2(float(menus.brightness) / 5);
+        const ou::config::GameConfig g{menus.sfxVolume, menus.musicVolume, menus.cinematicVolume, menus.subtitles,
+                                       menus.reticles, menus.helperButtons, menus.trainingText};
+        if (opt.configPath.empty() || (g == opt.game && opt.controls.invertY == opt.configInvertY && opt.gfx.brightness == opt.graphics.brightness))
+            return;
+        try { // re-read: the launcher may have changed other keys meanwhile
+            auto c = ou::config::load(opt.configPath);
+            c.game = opt.game = g;
+            c.controls.invertY = opt.configInvertY = opt.controls.invertY;
+            c.graphics.brightness = opt.graphics.brightness = opt.gfx.brightness;
+            ou::config::save(opt.configPath, c);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: saving settings to %s: %s\n", opt.configPath.string().c_str(), e.what());
+            opt.configPath.clear();
+        }
     };
     applyVolumes();
     auto chapterName = [&](int c) { return std::string(strings->get(ou::game::kChapters[size_t(c)].nameId)); };
@@ -1533,9 +1556,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "ou-game: tick %llu menu action %d\n", (unsigned long long)world->ticks(), int(action));
     };
     auto nav = [&](ou::ui::Nav n) {
+        const int tailoring = menus.tailoring;
         const auto a = menus.input(n);
         applyVolumes();
+        // PLAYER TAILORING picked (START NEW GAME, or GAME OPTIONS in play): every level of its preset (game::Tailoring).
+        if (menus.tailoring != tailoring || a == ou::ui::Action::NewGame)
+            world->setTailoring(ou::game::Tailoring::preset(menus.tailoring));
         act(a);
+        if (const int p = world->tailoring().preset(); p >= 0) menus.tailoring = p; // a loaded save's
     };
     if (menuStart) {
         menus.saves = listSaves();

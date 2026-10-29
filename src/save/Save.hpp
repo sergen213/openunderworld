@@ -37,6 +37,7 @@ struct SaveGame {
     bool flashlight = false;     // World::flashlight
     std::string outfit; // World::outfit (objectlist name, [a-z0-9_]); empty (older saves) = the unit's
     std::optional<float> health; // Lara's health (World::health); missing = full
+    std::optional<game::Tailoring> tailoring; // World::tailoring (PLAYER TAILORING); missing (older saves) = left as it is
     nlohmann::json script = nlohmann::json::object(); // trigger/puzzle state (src/script), opaque here
     nlohmann::json enemies; // ai::Enemies::serialize(), opaque here; null (older saves) = enemies left as they are
     nlohmann::json vehicles; // World::serializeVehicles() (bikes, the ridden one); null (older saves) = bikes left as they are

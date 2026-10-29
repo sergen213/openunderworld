@@ -795,8 +795,20 @@ lets them bite was not rendered). Death poses, the bat bite in a real unit and t
 
 Health [O] (player globals `DAT_00fadb58`: health +0x628, regen clock +0x630/+0x634, invulnerability +0x638, last
 damage type +0x63C):
-- Max health = Lara data +0x44 (1000) × generalbank difficulty table (object data +0x24, 0x18-byte entries: Easy
-  1.3 / Normal 1.0 / Hard 0.8 at +0x08; damage multiplier 0.5 / 1.0 / 1.3 at +0x0C; ours: Normal) [O values, I labels].
+- Max health = Lara data +0x44 (1000) × generalbank difficulty table (GlobalInfo = generalbank object data, +0x24:
+  three 0x18-byte entries) `+0x08` at the PLAYER TAILORING "DAMAGE TO LARA" level (1.3 / 1.0 / 0.8, 0x6E7960); a level
+  change keeps the health fraction (0x6F5160). The damage multiplier `+0x0C` (0.5 / 1.0 / 1.3) is read only at entry 1
+  (`0x5D9E50` = (int) 1.0f at 0x8AB648), so it is always 1.0 [O].
+- PLAYER TAILORING [O] (`game::Tailoring`, `World::setTailoring`, saved per game): levels 0..2 in game state
+  `DAT_00c59264` +0x3EF98 enemy health, +0x3EF9C ammunition capacity (copied to +0x3EFA0 at level load), +0x3EFA4 Lara's
+  health, +0x3EFA8 saving grabs, +0x3EFAC (no reader); `uiexperienceadjustmentmenu` natives 4..8; a preset (generalbank
+  script 132 fn 4, `SetPlayerTailoringLevel`) sets all five to 0 CASUAL EXPLORER / 1 TOMB RAIDER / 2 MASTER SURVIVALIST.
+  Enemy health = the enemy's health block [level] (0x6E77B0, ≤ 0 → [1]). Capacity: Lara data u16 columns +0x868 / +0x87C /
+  +0x872 per ammo slot (0x6EEAE0: uzi 400/240/160, shotgun 90/72/42, speargun 40/25/15), start amounts +0x848 / +0x85C /
+  +0x852 (0x6EE930, not used by ours), grenades g_grenade_thrower +0xE6 / +0xE4 / +0xE2 = 10 / 6 / 4 (0x6E7760).
+  Saving grabs [I]: difficulty `+0x14` frames 90 / 50 / 15 (TR7's savingGrabTime; no exe reader found, the getter
+  0x6E7740 is only reachable from scripts): ours catches a ledge one-handed (`ledgeb_bad_attach_M`) when falling up to
+  twice the grab limit (−13 → −26 units/frame [I]); jump plays `ledgeb_bad_attach_recover`, else she falls.
 - Damage `0x6F5030(amount, type, msg)`: scaled by the damage multiplier unless type 8 (absolute); after a hit Lara is
   invulnerable for data+0x60 = 30 frames, during which only a type of higher priority (table `DAT_0085de28`
   {0,1,2,4,3,5,4,4,5,4,4}) or type 5 hurts. Enemy hit message 0x11C: types 1 light / 2 heavy. Message 4 kills
@@ -1146,12 +1158,14 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   inline, mouse/stick Y [I: the original opens a 501–504 sub-screen, not captured]), PLAYER TAILORING; LANGUAGE (ENGLISH,
   fixed), SUBTITLES ON / OFF, VOLUME SETTINGS, BRIGHTNESS (inline slider, graphics brightness 0.5·2^(v/5) [I: the
   original opens a screen, not captured]); SFX / IN-GAME MUSIC / CINEMATIC VOLUME (mixer buses; cutscene audio).
-  Settings last for the session (not written to the config).
+  Changed settings are written back to the `--config` file (launcher config: `game` volumes/subtitles/reticles/helper
+  buttons/training text, `controls.invert_y`, `graphics.brightness`) and read at start.
 - PLAYER TAILORING [O]: box 106 stretched to 672×237 at y 216 over the backdrop alone; title 484 cap 117.8 scale 0.8,
   line under it (y 139.6, 190 wide); 481/482/483 centred at 176.9 + 28.9·i, scale 0.66, selected white on a (30, 90, 127)
   bar (solid ±100, fading to ±182), others (203, 203, 203); footer line y 287 and prompts at 266.7 / 373.3 (scale 0.76).
-  Picking starts the game from START NEW GAME, or only sets the preset from GAME OPTIONS; the preset changes nothing
-  in ours yet (ammunition/damage/grab-time tailoring is not ported).
+  Picking starts the game from START NEW GAME, or sets the running game's levels from GAME OPTIONS (Combat "PLAYER
+  TAILORING"); the per-option screen (366–382: ENEMY HEALTH, AMMUNITION CAPACITY, DAMAGE TO LARA, TIME FOR SAVING GRABS,
+  LESS / NORMAL / EXTRA) is not ported.
 - PDA [O]: `pda_bg_1280` (`_960` when the window is narrower than 1.556:1) fitted to the window height and centred; in
   bg pixels (virtual = bg·2/3 − 106.7, bg·2/3, the same for both widths): items 1074 SONAR MAP, 1075 AREA INFO, 1076,
   1077, 1078, 1081 / 1082 greyed (91, 91, 91, skipped), 122 RESUME GAME, right-aligned at 502.7, caps 173.3 + 43.3·i,

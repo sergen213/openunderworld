@@ -62,6 +62,9 @@ json toJson(const SaveGame& s) {
         {"flashlight", s.flashlight},
         {"outfit", s.outfit},
         {"health", s.health ? json(*s.health) : json(nullptr)},
+        {"tailoring", s.tailoring ? json{s.tailoring->enemyHealth, s.tailoring->ammo, s.tailoring->laraHealth, s.tailoring->savingGrab,
+                                         s.tailoring->unknown}
+                                  : json(nullptr)},
         {"script", s.script},
         {"enemies", s.enemies},
         {"vehicles", s.vehicles},
@@ -124,6 +127,11 @@ SaveGame fromJson(const json& j) {
         s.health = h->get<float>();
         if (!(*s.health > 0 && *s.health < 1e6f)) throw SaveError("bad health " + h->dump());
     }
+    if (const auto t = j.find("tailoring"); t != j.end() && !t->is_null()) { // levels: enemy health, ammo, Lara's health, grab, ?
+        const auto v = t->get<std::vector<int>>();
+        if (v.size() != 5 || std::any_of(v.begin(), v.end(), [](int l) { return l < 0 || l > 2; })) throw SaveError("bad tailoring " + t->dump());
+        s.tailoring = game::Tailoring{v[0], v[1], v[2], v[3], v[4]};
+    }
     if (s.chapter < 0 || s.chapter >= int(game::kChapters.size())) throw SaveError("bad chapter " + std::to_string(s.chapter));
     s.script = j.value("script", json::object());
     if (!s.script.is_object()) throw SaveError("script state is not an object");
@@ -164,6 +172,7 @@ SaveGame capture(const game::World& world) {
     s.grenades = world.grenades, s.flashlight = world.flashlight;
     s.outfit = world.outfit;
     if (!world.health().dead()) s.health = world.health().value(); // [I] a save taken while dead loads at full
+    s.tailoring = world.tailoring();
     s.script = world.script().serialize();
     s.enemies = world.enemies().serialize();
     s.vehicles = world.serializeVehicles();
@@ -172,6 +181,7 @@ SaveGame capture(const game::World& world) {
 }
 
 void apply(const SaveGame& save, game::World& world) {
+    if (save.tailoring) world.setTailoring(*save.tailoring); // first: the units' enemies spawn with its health level
     world.enterUnit(save.unit, game::Spawn{save.player.pos, save.player.yaw});
     game::PlayerState p = save.player; // enterUnit put the save's unit at offset 0: positions apply as-is
     auto markup = [&](const std::string& unit, int index, const char* what) {

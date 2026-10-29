@@ -188,6 +188,16 @@ Config load(const fs::path& path) {
                     c.controls.bindings[action] = inputs.get<std::vector<std::string>>();
                 }
         }
+        if (auto g = j.find("game"); g != j.end()) {
+            for (auto [key, field] : {std::pair{"sfx_volume", &c.game.sfxVolume}, std::pair{"music_volume", &c.game.musicVolume},
+                                      std::pair{"cinematic_volume", &c.game.cinematicVolume}}) {
+                *field = g->value(key, *field);
+                if (*field < 0 || *field > 10) throw std::runtime_error(std::string("game.") + key + " must be 0..10");
+            }
+            for (auto [key, field] : {std::pair{"subtitles", &c.game.subtitles}, std::pair{"reticles", &c.game.reticles},
+                                      std::pair{"helper_buttons", &c.game.helperButtons}, std::pair{"training_text", &c.game.trainingText}})
+                *field = g->value(key, *field);
+        }
     } catch (const std::exception& e) {
         throw std::runtime_error(path.string() + ": " + e.what());
     }
@@ -222,6 +232,9 @@ void save(const fs::path& path, const Config& c) {
     if (c.graphics.lightShafts) g["light_shafts"] = *c.graphics.lightShafts;
     j["controls"] = {{"mouse_sensitivity", c.controls.mouseSensitivity}, {"invert_y", c.controls.invertY},
                      {"bindings", c.controls.bindings}};
+    j["game"] = {{"sfx_volume", c.game.sfxVolume}, {"music_volume", c.game.musicVolume}, {"cinematic_volume", c.game.cinematicVolume},
+                 {"subtitles", c.game.subtitles}, {"reticles", c.game.reticles}, {"helper_buttons", c.game.helperButtons},
+                 {"training_text", c.game.trainingText}};
     if (path.has_parent_path()) fs::create_directories(path.parent_path());
     fs::path tmp = path;
     tmp += ".tmp";

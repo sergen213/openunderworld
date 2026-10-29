@@ -62,11 +62,11 @@ std::string_view modeName(Mode m) {
     return size_t(m) < std::size(k) ? k[size_t(m)] : "unknown";
 }
 
-Enemy::Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning)
+Enemy::Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning, int healthLevel)
     : type_(std::move(type)), uid_(uid), anim_(type_->skeleton) {
     s_.pos = pos;
     s_.yaw = yaw;
-    s_.health = type_->tuning.health;
+    s_.health = type_->tuning.healthAt(healthLevel);
     s_.lastSeen = pos;
     s_.rng = uint32_t(uid) * 2654435761u + 1u;
     if (spawning && type_->clip(Role::Spawn)) {
@@ -464,7 +464,7 @@ std::vector<glm::mat4> Enemy::pose(double alpha) const {
 // ---- Enemies ----------------------------------------------------------------------------------
 
 Enemy& Enemies::add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning) {
-    enemies_.push_back(std::make_unique<Enemy>(std::move(type), uid, pos, yaw, spawning));
+    enemies_.push_back(std::make_unique<Enemy>(std::move(type), uid, pos, yaw, spawning, healthLevel_));
     ++version_;
     sync();
     return *enemies_.back();

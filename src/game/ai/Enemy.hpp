@@ -67,7 +67,10 @@ struct DeathClip {
 struct EnemyTuning {
     float radius = 94.8167f;       // body capsule radius; [O] enemy data +0x2C (0.3 m of 316.056 units)
     float height = 300.0f;         // body capsule height; loadEnemyType: skeleton bind-pose top
-    float health = 200.0f;         // hit points, Lara's health scale
+    float health = 200.0f;         // hit points, Lara's health scale (TOMB RAIDER level)
+    // Health block {CASUAL, TOMB RAIDER, MASTER} picked by Tailoring::enemyHealth; non-positive -> `health` (0x6E77B0).
+    std::array<float, 3> healthLevels{};
+    float healthAt(int level) const { return level >= 0 && level < 3 && healthLevels[size_t(level)] > 0 ? healthLevels[size_t(level)] : health; }
     float staggerDamage = 0;       // damage that plays a hit reaction (accumulated since the last one)
     Senses senses, combatSenses;   // idle / once alerted
     float attackRange = 474.08f;   // starts an attack when Lara is this close (centre to centre)
@@ -160,7 +163,8 @@ struct EnemyState {
 
 class Enemy final : public Damageable {
 public:
-    Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false);
+    // `healthLevel`: Tailoring::enemyHealth (EnemyTuning::healthAt).
+    Enemy(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false, int healthLevel = 1);
 
     // Appends this tick's shots to `shots` (may be null).
     void tick(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, float dt, std::vector<Shot>* shots = nullptr);
@@ -231,6 +235,7 @@ public:
     Enemies(const Enemies&) = delete;
     Enemies& operator=(const Enemies&) = delete;
     void setBigfile(const cdc::BigfileSet* bigfile) { bigfile_ = bigfile; }
+    void setHealthLevel(int level) { healthLevel_ = level; } // Tailoring::enemyHealth for enemies added from now on
     // Spawns the enemies and generators of newly loaded units; drops (and remembers) those of unloaded ones.
     void setUnits(const std::vector<script::UnitRef>& units);
     Enemy& add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false);
@@ -280,6 +285,7 @@ private:
     std::vector<Damageable*>* targets_ = nullptr;
     std::vector<Damageable*> registered_; // our entries in *targets_
     uint64_t version_ = 0;
+    int healthLevel_ = 1;
 };
 
 } // namespace ou::game::ai

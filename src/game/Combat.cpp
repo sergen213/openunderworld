@@ -219,17 +219,17 @@ WeaponDef weaponDefaults(Weapon w) {
     switch (w) {
     case Weapon::Pistols: break;
     case Weapon::Uzi:
-        d.object = "wp_uzi", d.ammo = "pr_uzibullet", d.ammoSlot = 0, d.maxReserve = 240, d.clip = 40, d.infinite = false;
+        d.object = "wp_uzi", d.ammo = "pr_uzibullet", d.ammoSlot = 0, d.maxReserve = {400, 240, 160}, d.clip = 40, d.infinite = false;
         d.shortRange = 2000, d.maxRange = 4500, d.maxSpreadDeg = 5, d.spreadPerShot = 1, d.spreadRecovery = 0.1f;
         d.damage[0] = 25, d.damage[1] = 25, d.damage[2] = 10;
         break;
     case Weapon::Shotgun:
-        d.object = "wp_shotgun", d.ammo = "pr_shotgunbullet", d.ammoSlot = 1, d.maxReserve = 72, d.pellets = 7, d.clip = 6;
+        d.object = "wp_shotgun", d.ammo = "pr_shotgunbullet", d.ammoSlot = 1, d.maxReserve = {90, 72, 42}, d.pellets = 7, d.clip = 6;
         d.infinite = d.dual = false, d.shortRange = 2000, d.maxRange = 3000, d.spreadDeg = d.maxSpreadDeg = 15;
         d.damage[0] = 50, d.damage[1] = 50, d.damage[2] = 40;
         break;
     case Weapon::Speargun:
-        d.object = "wp_speargun", d.ammo = "pr_spear", d.ammoSlot = 4, d.maxReserve = 25, d.clip = 1, d.infinite = d.dual = false;
+        d.object = "wp_speargun", d.ammo = "pr_spear", d.ammoSlot = 4, d.maxReserve = {40, 25, 15}, d.clip = 1, d.infinite = d.dual = false;
         d.shortRange = 2500, d.maxRange = 5000, d.mode = 2, d.damage[0] = d.damage[1] = d.damage[2] = 250;
         break;
     }
@@ -304,11 +304,14 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     WeaponDef def;
     def.object = std::string(object), def.ammo = ammoName->second;
     def.ammoSlot = *slot == 0xFF ? -1 : *slot;
-    if (def.ammoSlot >= 0) { // Lara's max-reserve table (0x6EEAE0): u16 per slot, Normal column at data +0x87C [I column]
+    if (def.ammoSlot >= 0) { // Lara's max-reserve table (0x6EEAE0): u16 per slot, a column per ammunition capacity level
         const auto lara = objectData(bf, "lara");
-        const auto max = lara ? lara->at<uint16_t>(0x87C + 2 * uint32_t(def.ammoSlot)) : std::nullopt;
-        if (!max) return std::nullopt;
-        def.maxReserve = *max;
+        for (size_t l = 0; l < 3; ++l) {
+            constexpr uint32_t kColumn[3] = {0x868, 0x87C, 0x872};
+            const auto max = lara ? lara->at<uint16_t>(kColumn[l] + 2 * uint32_t(def.ammoSlot)) : std::nullopt;
+            if (!max) return std::nullopt;
+            def.maxReserve[l] = *max;
+        }
     }
     def.pellets = *pellets, def.clip = *clip;
     def.infinite = *flags & 0x80, def.dual = *flags & 0x20;
@@ -322,20 +325,43 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
 std::optional<GrenadeTuning> loadGrenadeTuning(const cdc::BigfileSet& bf) {
     const auto g = objectData(bf, "g_grenade_thrower"), p = objectData(bf, "pr_grenade");
     if (!g || !p) return std::nullopt;
-    const auto max = g->at<int16_t>(0xE4), cooldown = g->at<int16_t>(0xEA);
+    const auto max0 = g->at<int16_t>(0xE6), max1 = g->at<int16_t>(0xE4), max2 = g->at<int16_t>(0xE2), cooldown = g->at<int16_t>(0xEA);
     const auto vz = g->at<float>(0x10C), gravity = g->at<float>(0x110), lo = g->at<float>(0x134), hi = g->at<float>(0x138);
     // pr_grenade explosion record (+0x44 = 2): +0x48 damage, +0x4C radius, +0x50 edge damage, +0x58 / +0x5C knock speeds,
     // +0x80 frames (0x69F1E0 parameters [I mapping])
     const auto kind = p->at<int32_t>(0x44), fuse = p->at<int32_t>(0x80);
     const auto dmg = p->at<float>(0x48), radius = p->at<float>(0x4C), edge = p->at<float>(0x50);
     const auto imp = p->at<float>(0x58), edgeImp = p->at<float>(0x5C);
-    if (!max || !cooldown || !vz || !gravity || !lo || !hi || kind != 2 || !fuse || !dmg || !radius || !edge || !imp || !edgeImp)
+    if (!max0 || !max1 || !max2 || !cooldown || !vz || !gravity || !lo || !hi || kind != 2 || !fuse || !dmg || !radius || !edge || !imp || !edgeImp)
         return std::nullopt;
     GrenadeTuning t;
-    t.maxCarried = *max, t.cooldown = *cooldown / 30.0f;
+    t.maxCarried = {*max0, *max1, *max2}, t.cooldown = *cooldown / 30.0f;
     t.launchVz = *vz, t.gravity = *gravity, t.minRange = *lo, t.maxRange = *hi;
     t.damage = *dmg, t.radius = *radius, t.edgeDamage = *edge, t.impulse = *imp, t.edgeImpulse = *edgeImp;
     t.fuse = *fuse / 30.0f;
+    return t;
+}
+
+std::optional<DifficultyTable> loadDifficulty(const cdc::BigfileSet& bf) {
+    const auto g = objectData(bf, "generalbank"); // its object data is GlobalInfo (tru.exe DAT_00e7ee50)
+    if (!g) return std::nullopt;
+    const auto ptrs = cdc::sectionPointers(g->drm, g->section);
+    const auto table = ptrs.find(g->offset + 0x24);
+    if (table == ptrs.end()) return std::nullopt;
+    const auto& d = g->drm.sections[table->second.section].data;
+    auto at = [&](uint32_t level, uint32_t off) -> std::optional<float> {
+        const size_t o = table->second.offset + level * 0x18 + off;
+        if (o + 4 > d.size()) return std::nullopt;
+        float v;
+        std::memcpy(&v, d.data() + o, 4);
+        return v;
+    };
+    DifficultyTable t;
+    for (uint32_t l = 0; l < 3; ++l) {
+        const auto health = at(l, 0x08), grab = at(l, 0x14);
+        if (!health || !grab || !(*health > 0) || !(*grab > 0)) return std::nullopt;
+        t.healthScale[l] = *health, t.savingGrabSeconds[l] = *grab / 30.0f;
+    }
     return t;
 }
 
@@ -451,7 +477,19 @@ void World::giveWeapon(Weapon w, int reserve) {
     const WeaponDef& d = anims_.weapons[size_t(w)];
     const auto i = size_t(w);
     c.clip[i][0] = d.clip, c.clip[i][1] = d.dual ? d.clip : 0;
-    c.reserve[i] = std::clamp(reserve, 0, d.maxReserve > 0 ? d.maxReserve : reserve);
+    const int max = d.maxReserve[size_t(std::clamp(tailoring_.ammo, 0, 2))];
+    c.reserve[i] = std::clamp(reserve, 0, max > 0 ? max : reserve);
+}
+
+void World::setTailoring(const Tailoring& t) {
+    tailoring_ = t;
+    const auto level = [](int v) { return size_t(std::clamp(v, 0, 2)); };
+    health_.setMax(HealthTuning{}.max * anims_.difficulty.healthScale[level(t.laraHealth)]);
+    enemies_.setHealthLevel(int(level(t.enemyHealth)));
+    player_.setSavingGrabSeconds(anims_.difficulty.savingGrabSeconds[level(t.savingGrab)]);
+    for (int i = 0; i < kWeaponCount; ++i) // a smaller capacity drops what no longer fits
+        if (const int max = anims_.weapons[size_t(i)].maxReserve[level(t.ammo)]; max > 0) combat_.reserve[i] = std::min(combat_.reserve[i], max);
+    grenades = std::min(grenades, anims_.grenade.maxCarried[level(t.ammo)]);
 }
 
 void World::reloadWeapon() {

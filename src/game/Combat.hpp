@@ -15,6 +15,28 @@ namespace ou::cdc { class BigfileSet; }
 
 namespace ou::game {
 
+// ---- PLAYER TAILORING (docs/GAMEPLAY.md "Player tailoring") ------------------------------------------
+// tru.exe keeps five levels 0..2 in its game state (DAT_00c59264): +0x3EF98 enemy health ("EnemyHP"), +0x3EF9C
+// ammunition capacity ("AmmoAdj"), +0x3EFA4 Lara's health ("PlayerHP", DAMAGE TO LARA), +0x3EFA8 saving grab time
+// ("SavingGrabAdj"), +0x3EFAC (no reader in tru.exe [U]); defaults 1 (0x6E7500). uiexperienceadjustmentmenu natives 4..8
+// set them; a preset sets all five to its level: 0 CASUAL EXPLORER, 1 TOMB RAIDER, 2 MASTER SURVIVALIST [O generalbank
+// script 132 fn 4]. Level 0 is the lenient end of each.
+struct Tailoring {
+    int enemyHealth = 1, ammo = 1, laraHealth = 1, savingGrab = 1, unknown = 1;
+    static Tailoring preset(int level) { return {level, level, level, level, level}; }
+    int preset() const { return enemyHealth == ammo && ammo == laraHealth && laraHealth == savingGrab ? ammo : -1; } // -1 = custom
+    bool operator==(const Tailoring&) const = default;
+};
+// generalbank's difficulty table (GlobalInfo +0x24: three 0x18-byte entries by level) [O values]. +0x08 scales Lara's max
+// health by Tailoring::laraHealth (0x6E7960); +0x14 = saving grab frames (TR7 GameDifficulty::savingGrabTime), by
+// Tailoring::savingGrab [I: no exe reader of either]. The other fields are read only at entry 1 (0x5D9E50 returns 1):
+// +0 enemy accuracy, +4 enemy damage, +0x0C damage to Lara (HealthTuning::damageScale), +0x10 health pack drops.
+struct DifficultyTable {
+    std::array<float, 3> healthScale{1.3f, 1.0f, 0.8f};
+    std::array<float, 3> savingGrabSeconds{3.0f, 50 / 30.0f, 0.5f}; // 90 / 50 / 15 frames at 30 Hz
+};
+std::optional<DifficultyTable> loadDifficulty(const cdc::BigfileSet& bigfile); // nullopt: generalbank or table missing
+
 enum class Team { Player, Enemy, Neutral };
 
 struct Hit {
@@ -72,8 +94,8 @@ inline constexpr int kDamageAbsolute = 8; // not scaled by difficulty; fall dama
 // Lara's player data (lara.drm ObjectBase+0xC8 = DTP 850 + 0x28F80) and the generalbank difficulty
 // table (object data +0x24, 0x18-byte entries; Normal = entry 1). Seconds = 30 Hz frames / 30.
 struct HealthTuning {
-    float max = 1000.0f;                 // data +0x44 x difficulty +0x08 (Normal 1.0)
-    float damageScale = 1.0f;            // difficulty +0x0C (Easy 0.5, Normal 1.0, Hard 1.3)
+    float max = 1000.0f;                 // data +0x44; World::setTailoring scales it by DifficultyTable::healthScale
+    float damageScale = 1.0f;            // difficulty +0x0C, always entry 1 (0x5D9E50) = 1.0
     float fall[3] = {1280.03f, 1817.32f, 2215.55f}; // data +0x4C/+0x50/+0x54, fall heights (units)
     float invulnSeconds = 1.0f;          // data +0x60: 30 frames
     float regenCap = 0.25f;              // data +0x70: regenerates up to this fraction of max
@@ -104,6 +126,11 @@ public:
     void tick(float dt);                            // 0x6F5160: regeneration, overheal decay, window
     void reset();                                   // 0x700060: full health (level start / respawn)
     void set(float v) { reset(), value_ = v, regenBase_ = v; } // saves: restored health, window/regen clocks idle
+    // PLAYER TAILORING changed Lara's max (tru.exe 0x6F5160): health keeps its fraction of the max.
+    void setMax(float m) {
+        if (m == t_.max || !(m > 0)) return;
+        value_ *= m / t_.max, regenBase_ *= m / t_.max, t_.max = m;
+    }
 
 private:
     void hurt(float amount, int type); // common tail of damage()/fall()
@@ -130,7 +157,7 @@ std::optional<Weapon> weaponByName(std::string_view name); // weaponName inverse
 struct WeaponDef {
     std::string object = "wp_handgun", ammo = "pr_handgunbullet";
     int ammoSlot = -1;            // S+0x04 (0xFF none): live count fadb58+0x51C + 2 slot, max-reserve table index
-    int maxReserve = 0;           // Lara data +0x87C + 2 slot (the Normal column [I], 0x6EEAE0); 0 without a slot
+    std::array<int, 3> maxReserve{}; // Lara data +0x868 / +0x87C / +0x872 + 2 slot by Tailoring::ammo (0x6EEAE0); 0 without a slot
     int pellets = 1;              // S+0x05
     int clip = 12;                // S+0x0B, rounds per gun
     bool infinite = true, dual = true; // S+0x88 bits 0x80 / 0x20
@@ -198,7 +225,7 @@ struct CombatState {
 // +0x134/+0x138 range) and pr_grenade's explosion record (+0x44: 2, 1000, 1100, 200, 70, 300, 100, ..., +0x80 = 120)
 // as read by the area-damage function 0x69F1E0 [O values; field meanings I where marked in GAMEPLAY.md].
 struct GrenadeTuning {
-    int maxCarried = 6;         // +0xE4 (Easy / Normal / Hard = +0xE2 / +0xE4 / +0xE6: 4 / 6 / 10)
+    std::array<int, 3> maxCarried{10, 6, 4}; // +0xE6 / +0xE4 / +0xE2 by Tailoring::ammo (0x6E7760)
     float cooldown = 20 / 30.0f; // +0xEA frames
     float launchVz = 632.1f;    // +0x10C units/s [I meaning]
     float gravity = 4741.0f;    // +0x110 units/s^2 [I meaning]

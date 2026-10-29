@@ -84,6 +84,14 @@ struct InputConfig {
 // aim, switch, weapon, heal, grapple, save, load, hint, answer.
 const std::vector<std::string>& bindableActions();
 
+// In-game menu settings (ou-game GAME OPTIONS / AUDIO/VISUAL / VOLUME SETTINGS write them back to the config they were
+// started with). Y inversion is InputConfig::invertY, brightness GraphicsConfig::brightness.
+struct GameConfig {
+    int sfxVolume = 8, musicVolume = 8, cinematicVolume = 8; // 0..10
+    bool subtitles = true, reticles = true, helperButtons = true, trainingText = true;
+    bool operator==(const GameConfig&) const = default;
+};
+
 struct Config {
     std::string gameDir;
     std::string drm;                // start level, e.g. "pc-w\\lara.drm"; empty = placeholder scene
@@ -98,6 +106,7 @@ struct Config {
     std::string updateManifestUrl = "https://github.com/sergen213/openunderworld/releases/latest/download/manifest.json";
     GraphicsConfig graphics;
     InputConfig controls;
+    GameConfig game;
 };
 
 fs::path configHome(); // $XDG_CONFIG_HOME or ~/.config

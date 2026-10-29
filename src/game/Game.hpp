@@ -82,6 +82,7 @@ struct AnimLibrary {
                                                 weaponDefaults(Weapon::Shotgun), weaponDefaults(Weapon::Speargun)};
     BikeTuning bike; // motorcycle.drm (loadBikeTuning); its riding clips are in `clips` as "motorcycle:<name>"
     GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
+    DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
 
     const anim::Clip* find(std::string_view name) const;
     const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")
@@ -148,6 +149,10 @@ struct Tuning {
     float grabReach = 60.0f, grabWindow = 40.0f; // hand-to-ledge horizontal / vertical tolerance
     // Grab only while -13 <= zVel <= 9 units/frame * 5.72443 (30 Hz): player data bytes +0x834 / +0x833 (0x759260)
     float grabMinVz = -13 * 5.72443f * 30.0f, grabMaxVz = 9 * 5.72443f * 30.0f; // units/s
+    // Saving grab ("TIME FOR SAVING GRABS"): a ledge caught while falling up to twice as fast as grabMinVz [I] is held one
+    // handed (ledgeb_bad_attach_M) for this long; jump pulls her up (ledgeb_bad_attach_recover), else she falls.
+    // DifficultyTable::savingGrabSeconds by Tailoring::savingGrab (World::setTailoring).
+    float savingGrabSeconds = 50 / 30.0f;
     // Water test box (0x710A20): half extents player data shorts +0xC3E (x, y) / +0xC40 (z), centred
     // +0xC42 above the feet; overlapping a water volume puts Lara in it.
     vec3 waterProbeHalf{221.0f, 221.0f, 572.0f};
@@ -185,6 +190,7 @@ struct PlayerState {
     float ledgeSide = 1;
     bool runJump = false; // JumpPrep: take-off from a run
     float regrabCooldown = 0;
+    float savingGrab = 0; // Hang: seconds left of a saving grab (one hand); 0 = a firm hang
     int water = -1;  // swimming: index of the water markup (type 10) in collision().markup
     float pitch = 0; // under water: swim direction pitch, rad (+ = up); the model is pitched by it
     float flight = 0; // HangJump: seconds left until the target is reached
@@ -212,6 +218,7 @@ public:
     const PlayerState& state() const { return s_; }
     const Tuning& tuning() const { return t_; }
     void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
+    void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0) const;
@@ -454,6 +461,12 @@ public:
     // Carries `w` as the secondary (replacing the previous one; Pistols: none), full clip, `reserve` spare rounds
     // capped at its max reserve (ou-game --weapon; the original gets them from pickups).
     void giveWeapon(Weapon w, int reserve);
+    // PLAYER TAILORING (Combat.hpp): Lara's max health (keeping its fraction), enemy health on (re)spawn, saving grab
+    // window, ammunition capacity (reserves / grenades over the new capacity are dropped). Saved with the game.
+    void setTailoring(const Tailoring& t);
+    const Tailoring& tailoring() const { return tailoring_; }
+    int maxReserve(Weapon w) const { return anims_.weapons[size_t(w)].maxReserve[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
+    int maxGrenades() const { return anims_.grenade.maxCarried[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
 
     // ---- gadgets (Gadgets.cpp; docs/GAMEPLAY.md "Flashlight", "Grenades") ----
     bool flashlight = false;         // utility light on (Actions::light toggles it); saved
@@ -461,7 +474,7 @@ public:
     // Light origin (chest bone 15, 25 units forward [I]) and the torso's forward direction, world, blended between the
     // last two ticks; the app places the personal light's spot/omni there.
     std::pair<vec3, vec3> flashlightPose(double alpha) const;
-    int grenades = 0;                // carried; World starts with anims().grenade.maxCarried [I]; saved
+    int grenades = 0;                // carried; World starts with maxGrenades() [I]; saved
     const std::vector<Grenade>& liveGrenades() const { return grenades_; }
     const std::vector<vec3>& explosions() const { return explosions_; } // grenades that went off this tick
 
@@ -553,6 +566,7 @@ private:
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     physics::Scene physics_;
     Health health_;
+    Tailoring tailoring_;
     WaterSim water_;
     float air_ = 1.0f;
     bool submerged_ = false;
