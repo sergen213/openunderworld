@@ -339,6 +339,68 @@ TEST(Combat, WeaponSwitchKeepsRoundsAndReloadsFromReserve) {
     EXPECT_EQ(w->combat().reserve[1], 20);
 }
 
+// Mjolnir: Change Weapon cycles pistols -> secondary -> hammer (tru.exe 0x704930); fire swings and the bolt leaves at
+// frame 10 of the swing (1000 damage: a 700-hp target dies), no clip or reload; target lock + interact = the ground pound,
+// which knocks targets within its 948-unit reach at frame 12 and spares the rest.
+TEST(Combat, MjolnirCycleSwingAndGroundPound) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    w->giveWeapon(game::Weapon::Uzi, 100);
+    EXPECT_FALSE(w->hasHammer());
+    w->giveWeapon(game::Weapon::ThorHammer, 0);
+    EXPECT_TRUE(w->hasHammer());
+    EXPECT_EQ(w->combat().secondary, game::Weapon::Uzi); // her own slot: the secondary stays
+    Actions sw;
+    sw.weapon = true;
+    for (const auto want : {game::Weapon::Uzi, game::Weapon::ThorHammer, game::Weapon::Pistols, game::Weapon::Uzi, game::Weapon::ThorHammer}) {
+        w->tick(sw);
+        EXPECT_EQ(w->combat().want, want);
+        w->tick({});
+    }
+    game::DummyTarget t;
+    t.pos = {1500, 0, 0};
+    w->targets.push_back(&t);
+    Actions draw = guns(false);
+    draw.draw = true;
+    w->tick(draw);
+    for (int i = 0; i < 70; ++i) w->tick(guns(false)); // equip 26/30 s
+    ASSERT_EQ(w->combat().weapon, game::Weapon::ThorHammer);
+    ASSERT_EQ(w->combat().drawT, 1.0f);
+    w->tick(guns(true));
+    EXPECT_EQ(w->combat().hammer.clip, "ground_fire_idle");
+    int shotAt = -1;
+    for (int i = 1; i <= 30 && shotAt < 0; ++i) {
+        w->tick(guns(false));
+        if (!w->combat().shots.empty()) shotAt = i;
+    }
+    EXPECT_NEAR(shotAt, 20, 1); // frame 10 at 30 Hz
+    EXPECT_EQ(t.hits, 1);
+    EXPECT_FALSE(t.alive());
+    EXPECT_EQ(w->combat().clip[size_t(game::Weapon::ThorHammer)][0], -1); // no clip, no reload
+    EXPECT_EQ(w->combat().reload, 0);
+    for (int i = 0; i < 60; ++i) w->tick(guns(false));
+    EXPECT_TRUE(w->combat().hammer.clip.empty()); // the swing (29/30 s) is over
+
+    game::DummyTarget nearT, farT;
+    nearT.pos = {800, 0, 0}, nearT.hp = farT.hp = 1e9f;
+    farT.pos = {-1500, 0, 0};
+    w->targets = {&nearT, &farT};
+    for (int i = 0; i < 10; ++i) w->tick(guns(false)); // lock on
+    ASSERT_TRUE(w->combat().locked);
+    Actions pound = guns(false);
+    pound.interact = true;
+    w->tick(pound);
+    EXPECT_EQ(w->combat().hammer.clip, "ground_melee_idle");
+    for (int i = 0; i < 22; ++i) w->tick(guns(false));
+    EXPECT_EQ(nearT.hits, 0);
+    for (int i = 0; i < 3; ++i) w->tick(guns(false)); // frame 12
+    EXPECT_EQ(nearT.hits, 1);
+    EXPECT_EQ(nearT.hp, 1e9f); // knocked, not hurt [U damage]
+    EXPECT_EQ(farT.hits, 0);
+    w->targets.clear();
+}
+
 TEST(Combat, ShotgunPelletsInTheCone) {
     CollisionMesh m;
     addFloor(m, -5000, -5000, 5000, 5000, 0);
@@ -512,6 +574,7 @@ TEST(CombatReal, WeaponData) {
         EXPECT_EQ(p->spreadPerShot, def.spreadPerShot);
         EXPECT_FLOAT_EQ(p->spreadRecovery, def.spreadRecovery);
         for (int k = 0; k < 3; ++k) EXPECT_EQ(p->damage[k], def.damage[k]);
+        for (int k = 0; k < 3; ++k) EXPECT_EQ(p->wetDamage[k], def.wetDamage[k]);
     }
     // Lara's clips of every weapon load (loadLaraAnims throws on a missing one), with the lengths Combat.cpp times by
     const auto anims = game::loadLaraAnims(bf);
@@ -529,6 +592,9 @@ TEST(CombatReal, WeaponData) {
     EXPECT_EQ(len(game::Weapon::Speargun, "combat_speargun_reload"), 31.0 / 30.0);
     EXPECT_EQ(len(game::Weapon::Speargun, "combat_shotgun_equip_submerged"), 17.0 / 30.0);
     EXPECT_EQ(len(game::Weapon::Speargun, "combat_shotgun_unequip_submerged"), 19.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::ThorHammer, "ground_equip"), 26.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::ThorHammer, "ground_fire_idle"), 29.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::ThorHammer, "ground_melee_idle"), 61.0 / 30.0);
     for (const char* n : {"hit_light_front", "hit_mediumback", "hit_light_side_swim"}) EXPECT_TRUE(anims.find(n)) << n;
 }
 

@@ -269,6 +269,37 @@ outfit's skinned meshes and textures, re-rigs the pose skeleton, hair and hand o
 stay lara.drm's, identical) and adds its waves. Cutscenes pose the same meshes. Streaming into a neighbour keeps the
 outfit (the original only reads `+0x294` on a level load).
 
+## Mjolnir
+
+- [O] Object `wp_thorhammer` (objectlist 42), ammo `pr_thorbolt` (71): weapon data +0xDC = 2 (its own inventory slot
+  +0x24; player +0x50D = 2 selects it, the HUD names `wp_thorhammer`, icon 97). S block: no ammo slot, clip −1 (never
+  empties, no reload; the HUD clip fraction is 0, 0x6E8370), range 1000 / 8000, spread 1, flags 0xC8 (infinite, one
+  hand). pr_thorbolt record +0x18: hitscan, 1000 damage at every range (record +8 = 13, +0xC = 3 [U]); record +0x84
+  (0x69E770 picks it while instance +0x131 is set, [I] under water: its hit object is `bullet_hit_thor_underwater`)
+  1000 / 400 / 100. Hit object +0x3C `bullet_hit_thor`.
+- [O] Acquisition: l5_valaskjalf's level-end cinematic object 6846 (250_val_hammer), end handler: `larabase` 37
+  ("wp_thorhammer", 1, 1) on `playerref` 0 (0x7161F0 -> 0x716130: births the object, adds it to her inventory and posts
+  its max ammo), then `uigamedata` 27 "L6_ship_exterior". No other unit script names it (string survey of every DRM:
+  only l5_valaskjalf and generalbank's HUD); the `wp_thorhammer` intro in l7_yggdrasil_end and `co_thorhammer` are
+  cinematic props. Ours: "wp_thorhammer" joins `script::Runtime::playerObjects` (larabase 37), `World::hasHammer`;
+  `chapterGear(6..8)` carry it [I: the Andaman Sea start has it, walkthroughs]; our larabase 42 drops only `g_*` gear.
+- [O] Change Weapon (tru.exe 0x704930) cycles pistols -> secondary -> hammer, skipping what she lacks.
+- [O] Clips in wp_thorhammer.drm: ground_equip / ground_unequip (26 keys), aim poses ground_aim_right / _front / _left
+  (ours: by aim yaw −52 / 0 / +32 deg [I], measured from the pointing right hand), the throw ground_fire_idle (29 keys,
+  Lara animation event 0x75 at frame 10 fires), the ground pound ground_melee_idle (61 keys, event 0x4B at frame 12 ->
+  0x6E68B0: 0x69F1E0 area hits from a runtime table, not traced: [U] damage, ours knocks enemies within 948 units — the
+  reach of its bolt-1 lightning — into a hit reaction without damage), under water swim_submerge_thorhammer_attack_*
+  (ours: _front, shot at frame 10 [I]). Fire = throw, target lock + interact = ground pound (walkthroughs).
+- [O] Mount: weapon data +0xB8 / +0xB9 = Lara HInfo markers 5 (segment 71, the LEFT hand's grip child of 55) and 31
+  (chest segment 15, on her back): she draws it from her back with the left hand, holds it up and points with the
+  right. (Handgun +0xB8..BB = markers 7/6/5/4: right grip seg 96, right thigh, left grip seg 71, left thigh.)
+- Effects: each bolt plays wp_thorhammer's `fire` events at the hammer head (bolt 2 from the hammer to the shot end,
+  sparks, glow, light, filter) and bullet_hit_thor at the impact; wp_thorhammer's events of the swing / pound clips run
+  on Lara (ground pound: three bolt-1 arcs from her root). Shot sound `thor_hammer_shot_c/_d`.
+- Effect on enemies: 1000 per bolt kills viking thralls (500 hp) in one hit, yeti thralls in two on Normal (l7
+  replay `tests/replays/mjolnir_thralls.txt`, viewed GL + Vulkan). No breakable objects or scripted Thor mechanisms
+  check for the hammer in our data survey (Thor doors / pillars / rune switches react to the gauntlets' sensors).
+
 ## Thor's gear (draw groups)
 
 - [O] Every outfit model (all 8 Lara DRMs) carries Thor's gauntlets and belt as model primgroups with a draw group

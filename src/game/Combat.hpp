@@ -45,6 +45,7 @@ struct Hit {
     glm::vec3 dir{0};   // unit direction the shot / blow travelled
     Team source = Team::Neutral;
     bool headshot = false; // adrenaline head shot (kills; the enemy may pick a special death clip)
+    bool knock = false;    // knocked off balance whatever the damage (Mjolnir's ground pound)
 };
 
 // Anything Lara can target and shoot. Enemies (src/game/ai) implement it and register the pointer in
@@ -144,11 +145,12 @@ private:
 
 // ---- weapons ----------------------------------------------------------------------------------
 // Lara's weapon set: the dual pistols plus one secondary (weapon object data +0xDC = 1; picking up another
-// replaces it). Sticky grenades are a gadget (GrenadeTuning below).
-enum class Weapon { Pistols, Uzi, Shotgun, Speargun };
-inline constexpr int kWeaponCount = 4;
-std::string_view weaponObject(Weapon w);         // "wp_handgun", "wp_uzi", "wp_shotgun", "wp_speargun"
-std::string_view weaponName(Weapon w);           // "pistols", "uzi", "shotgun", "speargun"
+// replaces it), and Thor's hammer Mjolnir once carried (data +0xDC = 2, its own inventory slot +0x24: tru.exe
+// 0x704930 cycles pistols -> secondary -> hammer, skipping what she lacks). Sticky grenades are a gadget (GrenadeTuning).
+enum class Weapon { Pistols, Uzi, Shotgun, Speargun, ThorHammer };
+inline constexpr int kWeaponCount = 5;
+std::string_view weaponObject(Weapon w);         // "wp_handgun", "wp_uzi", "wp_shotgun", "wp_speargun", "wp_thorhammer"
+std::string_view weaponName(Weapon w);           // "pistols", "uzi", "shotgun", "speargun", "thorhammer"
 std::optional<Weapon> weaponByName(std::string_view name); // weaponName inverse
 
 // A weapon object's stats block S (object data +0xE0) and its ammo object's fire-mode record (ammo
@@ -159,7 +161,7 @@ struct WeaponDef {
     int ammoSlot = -1;            // S+0x04 (0xFF none): live count fadb58+0x51C + 2 slot, max-reserve table index
     std::array<int, 3> maxReserve{}; // Lara data +0x868 / +0x87C / +0x872 + 2 slot by Tailoring::ammo (0x6EEAE0); 0 without a slot
     int pellets = 1;              // S+0x05
-    int clip = 12;                // S+0x0B, rounds per gun
+    int clip = 12;                // S+0x0B, rounds per gun; -1 (Mjolnir) no clip: never empties, never reloads
     bool infinite = true, dual = true; // S+0x88 bits 0x80 / 0x20
     float shortRange = 4000.0f;   // S+0x20: damage knee, targeting range
     float maxRange = 6500.0f;     // S+0x18: damage falloff end; [I] no hit past it
@@ -169,7 +171,10 @@ struct WeaponDef {
     // Hitscan: record +4 / +0x10 / +0x14 = damage at 0, shortRange, maxRange. Projectile (mode 2, pr_spear): the
     // record's +0x1C (250) for all three [I]; we fire projectiles as hitscan (the projectile record is not decoded).
     float damage[3] = {40.0f, 30.0f, 20.0f};
-    float damageAt(float dist) const;        // linear between the three
+    // The ammo's second fire record (+0x84), which 0x69E770 picks while instance +0x131 is set: [I] under water (its hit
+    // object +0xA8 is the *_underwater one). Mjolnir 1000 / 400 / 100.
+    float wetDamage[3] = {40.0f, 40.0f, 20.0f};
+    float damageAt(float dist, bool wet = false) const; // linear between the three
 };
 // Decodes `object` (pc-w\<object>.drm) and its ammo object, and the max reserve from Lara's data (pc-w\lara.drm);
 // nullopt if a DRM or block is missing.
@@ -186,12 +191,21 @@ struct Shot {
     float damage = 0;
 };
 
+// Mjolnir's actions (wp_thorhammer's clips of Lara, docs/GAMEPLAY.md "Mjolnir"): fire = the swing that throws the bolt
+// (ground_fire_idle, the shot on its animation event 0x75 at frame 10), target lock + interact = the ground pound
+// (ground_melee_idle, its shock on event 0x4B at frame 12, tru.exe 0x6E68B0). Times in seconds since the start.
+struct HammerAction {
+    std::string clip; // "" none, else a wp_thorhammer clip name
+    float t = 0, prevT = 0;
+};
+
 // Lara's weapon/target state, advanced by World every tick.
 struct CombatState {
     Weapon weapon = Weapon::Pistols;    // in hand or holstered ready (inventory +0x134)
     Weapon previous = Weapon::Pistols;  // inventory +0x138
     Weapon secondary = Weapon::Pistols; // carried secondary (World::giveWeapon); Pistols = none
     Weapon want = Weapon::Pistols;      // switch target: the drawn weapon holsters, then this one is drawn
+    HammerAction hammer;      // Mjolnir's swing / ground pound in progress
     bool drawn = false;       // weapon in hand (or being drawn)
     bool redraw = false;      // switching: draw `want` once the current one is holstered
     float drawT = 0;          // upper-body layer: 0 holstered .. 1 aiming (equip / unequip clips)

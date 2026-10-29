@@ -45,6 +45,10 @@ float angleBetween(glm::vec3 a, glm::vec3 b) {
 //   24 keys, reload 117 (the whole clip per reload, however many shells are missing [I]).
 // - speargun: the shotgun aim/fire set of wp_speargun; clip 1, so combat_speargun_reload (31 keys) after every
 //   shot; under water combat_shotgun_equip_submerged (17) / unequip_submerged (19), combat_speargun_reload_submerged.
+// - Mjolnir (wp_thorhammer): ground_equip / ground_unequip (26 keys), aim poses ground_aim_right / _front / _left, the
+//   throw ground_fire_idle (29 keys, shot on event 0x75 at frame 10), the ground pound ground_melee_idle (61 keys,
+//   event 0x4B at frame 12); under water combat_water_submerged_equip / _unequip and swim_submerge_thorhammer_attack_front
+//   (31 keys) [I: its shot at frame 10 too, the swim attack clips carry no event list]. No clip, so no reload.
 struct WeaponInfo {
     std::string_view object, name;
     bool rifle; // two-handed: one gun, the 3x5 shotgun aim grid
@@ -61,8 +65,17 @@ const WeaponInfo kWeapons[kWeaponCount] = {
      "combat_shotgun_unequip", "combat_shotgun_reload", {0, -156, 25}}, // y -155.8 .. 58.1
     {"wp_speargun", "speargun", true, 13 / 30.0f, 24 / 30.0f, 24 / 30.0f, 31 / 30.0f, "combat_shotgun_equip",
      "combat_shotgun_unequip", "combat_speargun_reload", {0, -152, 25}}, // y -151.8 .. 15.4
+    {"wp_thorhammer", "thorhammer", false, 29 / 30.0f, 26 / 30.0f, 26 / 30.0f, 0, "ground_equip", "ground_unequip", "",
+     {0, 0, 95}}, // handle along +Z from the grip, head z 60 .. 120
 };
 const WeaponInfo& info(Weapon w) { return kWeapons[size_t(w)]; }
+constexpr float kHammerShot = 10 / 30.0f, kHammerPound = 12 / 30.0f; // events 0x75 / 0x4B
+// [I] the ground pound's reach: its lightning (wp_thorhammer bolt 1, three at frame 12) ends up to +-948 from Lara.
+// tru.exe applies 0x69F1E0 area hits from a runtime table (0x6E68B0) not traced to the data: damage [U], ours 0.
+constexpr float kPoundRadius = 948.0f;
+// Mjolnir's aim poses ground_aim_right / _front / _left by aim yaw; no pitch rows. Yaws [I]: the pointing (right) hand's
+// shoulder -> hand direction in each pose relative to _front's (which points 9 deg right of the heading): -52, 0, +32.
+const float kHammerCols[] = {-52 * kPi / 180, 0, 32 * kPi / 180};
 constexpr float kRifleFire = 13.0f / 30.0f, kPump = 25.0f / 30.0f;      // combat_shotgun_fire_* / combat_shotgun_pump
 constexpr float kSubEquip = 17.0f / 30.0f, kSubUnequip = 19.0f / 30.0f; // speargun under water
 constexpr float kRespawnDelay = 1.0f; // after the death clip ends [I]
@@ -101,9 +114,10 @@ constexpr float kSlowWindow = 3.0f;  // real seconds to steer the pip in and fir
 constexpr float kPipStart = 2.5f, kPipSpeed = 2.0f; // pip start distance / stick speed, reticle radii (per second)
 
 bool swimHit(State s) { return s == State::SwimUnder || s == State::Surfacing || s == State::SwimDive || s == State::Hit; }
-// Guns out on the ground (and in a hit reaction); under water only the speargun [U whether the exe allows more].
+// Guns out on the ground (and in a hit reaction); under water only the speargun and Mjolnir (its swim_submerge attack
+// clips) [U whether the exe allows more].
 bool canShoot(const PlayerState& s, Weapon w) {
-    if (s.water >= 0) return w == Weapon::Speargun && swimHit(s.state);
+    if (s.water >= 0) return (w == Weapon::Speargun || w == Weapon::ThorHammer) && swimHit(s.state);
     switch (s.state) {
     case State::Idle: case State::Walk: case State::Run: case State::Stop: case State::Turn: case State::Land:
     case State::JumpPrep: case State::Jump: case State::Fall: case State::Hit: return true;
@@ -222,15 +236,23 @@ WeaponDef weaponDefaults(Weapon w) {
         d.object = "wp_uzi", d.ammo = "pr_uzibullet", d.ammoSlot = 0, d.maxReserve = {400, 240, 160}, d.clip = 40, d.infinite = false;
         d.shortRange = 2000, d.maxRange = 4500, d.maxSpreadDeg = 5, d.spreadPerShot = 1, d.spreadRecovery = 0.1f;
         d.damage[0] = 25, d.damage[1] = 25, d.damage[2] = 10;
+        d.wetDamage[0] = 25, d.wetDamage[1] = 25, d.wetDamage[2] = 10;
         break;
     case Weapon::Shotgun:
         d.object = "wp_shotgun", d.ammo = "pr_shotgunbullet", d.ammoSlot = 1, d.maxReserve = {90, 72, 42}, d.pellets = 7, d.clip = 6;
         d.infinite = d.dual = false, d.shortRange = 2000, d.maxRange = 3000, d.spreadDeg = d.maxSpreadDeg = 15;
         d.damage[0] = 50, d.damage[1] = 50, d.damage[2] = 40;
+        d.wetDamage[0] = 50, d.wetDamage[1] = 50, d.wetDamage[2] = 40;
         break;
     case Weapon::Speargun:
         d.object = "wp_speargun", d.ammo = "pr_spear", d.ammoSlot = 4, d.maxReserve = {40, 25, 15}, d.clip = 1, d.infinite = d.dual = false;
         d.shortRange = 2500, d.maxRange = 5000, d.mode = 2, d.damage[0] = d.damage[1] = d.damage[2] = 250;
+        d.wetDamage[0] = d.wetDamage[1] = d.wetDamage[2] = 250;
+        break;
+    case Weapon::ThorHammer: // pr_thorbolt: 1000 at every range on land, 1000 / 400 / 100 under water
+        d.object = "wp_thorhammer", d.ammo = "pr_thorbolt", d.clip = -1, d.dual = false, d.shortRange = 1000, d.maxRange = 8000;
+        d.damage[0] = d.damage[1] = d.damage[2] = 1000;
+        d.wetDamage[0] = 1000, d.wetDamage[1] = 400, d.wetDamage[2] = 100;
         break;
     }
     return d;
@@ -250,13 +272,18 @@ const std::vector<std::string_view>& weaponClipNames(Weapon w) {
         for (int i = 0; i < kWeaponCount; ++i) {
             const WeaponInfo& wi = kWeapons[i];
             auto& o = own[size_t(i)];
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < gridCols(wi.rifle); ++c) {
-                    o.push_back(cellName(wi.rifle, false, r, c));
-                    if (wi.rifle) o.push_back(cellName(true, true, r, c));
-                }
-            if (!wi.rifle) o.insert(o.end(), {"combat_pistol_RfireE", "combat_pistol_LfireE"});
-            o.insert(o.end(), {std::string(wi.equipClip), std::string(wi.unequipClip), std::string(wi.reloadClip)});
+            if (Weapon(i) == Weapon::ThorHammer) {
+                o = {"ground_equip", "ground_unequip", "ground_aim_right", "ground_aim_front", "ground_aim_left",
+                     "ground_fire_idle", "ground_melee_idle", "swim_submerge_thorhammer_attack_front"};
+            } else {
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < gridCols(wi.rifle); ++c) {
+                        o.push_back(cellName(wi.rifle, false, r, c));
+                        if (wi.rifle) o.push_back(cellName(true, true, r, c));
+                    }
+                if (!wi.rifle) o.insert(o.end(), {"combat_pistol_RfireE", "combat_pistol_LfireE"});
+                o.insert(o.end(), {std::string(wi.equipClip), std::string(wi.unequipClip), std::string(wi.reloadClip)});
+            }
             if (Weapon(i) == Weapon::Shotgun) o.push_back("combat_shotgun_pump");
             if (Weapon(i) == Weapon::Speargun)
                 o.insert(o.end(), {"combat_shotgun_equip_submerged", "combat_shotgun_unequip_submerged", "combat_speargun_reload_submerged"});
@@ -271,9 +298,10 @@ const anim::Clip* AnimLibrary::weaponClip(Weapon w, std::string_view name) const
     return find(std::string(weaponObject(w)) + ":" + std::string(name));
 }
 
-float WeaponDef::damageAt(float d) const {
-    if (d <= shortRange) return glm::mix(damage[0], damage[1], std::max(0.0f, d) / shortRange);
-    return glm::mix(damage[1], damage[2], std::min(1.0f, (d - shortRange) / (maxRange - shortRange)));
+float WeaponDef::damageAt(float d, bool wet) const {
+    const float* v = wet ? wetDamage : damage;
+    if (d <= shortRange) return glm::mix(v[0], v[1], std::max(0.0f, d) / shortRange);
+    return glm::mix(v[1], v[2], std::min(1.0f, (d - shortRange) / (maxRange - shortRange)));
 }
 
 std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view object) {
@@ -295,12 +323,16 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     if (ammoName == names.end()) return std::nullopt;
     const auto ammo = objectData(bf, ammoName->second);
     if (!ammo) return std::nullopt;
-    constexpr uint32_t R = 0x18; // fire-mode record (0x69E770; +0x84 upgraded)
+    constexpr uint32_t R = 0x18, R2 = 0x84; // fire-mode records (0x69E770: +0x84 while instance +0x131 is set [I under water])
     const auto mode = ammo->at<int32_t>(R);
     if (!mode) return std::nullopt;
     const auto d0 = ammo->at<float>(*mode == 2 ? R + 0x1C : R + 4), d1 = ammo->at<float>(*mode == 2 ? R + 0x1C : R + 0x10),
                d2 = ammo->at<float>(*mode == 2 ? R + 0x1C : R + 0x14);
     if (!d0 || !d1 || !d2) return std::nullopt;
+    // the second record's hitscan damage; projectiles (mode 2: its layout not decoded) keep the first's
+    const bool wetScan = ammo->at<int32_t>(R2) == 1;
+    const auto w0 = ammo->at<float>(R2 + 4), w1 = ammo->at<float>(R2 + 0x10), w2 = ammo->at<float>(R2 + 0x14);
+    if (wetScan && (!w0 || !w1 || !w2)) return std::nullopt;
     WeaponDef def;
     def.object = std::string(object), def.ammo = ammoName->second;
     def.ammoSlot = *slot == 0xFF ? -1 : *slot;
@@ -319,6 +351,8 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     def.spreadDeg = *spread, def.maxSpreadDeg = *maxSpread, def.spreadPerShot = *perShot, def.spreadRecovery = *recovery;
     def.mode = *mode;
     def.damage[0] = *d0, def.damage[1] = *d1, def.damage[2] = *d2;
+    if (wetScan) def.wetDamage[0] = *w0, def.wetDamage[1] = *w1, def.wetDamage[2] = *w2;
+    else std::copy(def.damage, def.damage + 3, def.wetDamage);
     return def;
 }
 
@@ -416,6 +450,19 @@ std::optional<std::pair<int, glm::mat4>> World::gunMount(Weapon w, int hand) con
     const CombatState& c = combat_;
     const bool inHand = w == c.weapon && c.drawT >= 0.5f; // [I] the gun changes bones half way through equip / unequip
     glm::mat4 m(1);
+    if (w == Weapon::ThorHammer) {
+        // [O] wp_thorhammer data +0xB8 / +0xB9 = Lara's HInfo markers 5 (in hand: segment 71, the left hand's grip
+        // child of 55) and 31 (stowed: chest segment 15, on her back); the model's frame is the marker's (its grip at
+        // the origin). The left hand draws it from the back (ground_equip) and holds it up while the right one points.
+        if (hand != 0 || (w != c.weapon && !hasHammer())) return std::nullopt;
+        if (inHand) {
+            m[0] = glm::vec4(0, 0, 1, 0), m[1] = glm::vec4(-1, 0, 0, 0), m[2] = glm::vec4(0, -1, 0, 0), m[3] = glm::vec4(0, 0, -0.9f, 1);
+            return std::pair{bones_.size() > 71 ? 71 : kHandBone[1], m};
+        }
+        m[0] = glm::vec4(0.03f, 0.99f, -0.12f, 0), m[1] = glm::vec4(-0.98f, 0.0f, -0.19f, 0), m[2] = glm::vec4(-0.19f, 0.12f, 0.97f, 0);
+        m[3] = glm::vec4(6.3f, 48.2f, -8.1f, 1);
+        return std::pair{15, m};
+    }
     if (!info(w).rifle) {
         if (w == Weapon::Uzi && !inHand) return std::nullopt; // [I] no uzi holster: the thigh holsters keep the pistols
         const float side = hand == 0 ? -1.0f : 1.0f; // right arm extends along -X, left along +X
@@ -468,6 +515,12 @@ vec3 World::muzzle(int hand) const {
 
 void World::giveWeapon(Weapon w, int reserve) {
     CombatState& c = combat_;
+    if (w == Weapon::ThorHammer) { // her own slot, as larabase 37("wp_thorhammer") in 250_val_hammer's end handler
+        auto objects = script_.playerObjects();
+        objects.insert(std::string(weaponObject(w)));
+        script_.setPlayerObjects(std::move(objects));
+        return;
+    }
     if (const Weapon old = c.secondary; old != Weapon::Pistols) { // the new secondary takes the old one's place
         if (c.weapon == old) c.weapon = w;
         if (c.want == old) c.want = w;
@@ -573,7 +626,7 @@ void World::fire(int hand) {
         }
         Shot shot{from, from + dir * best, hand, hitAny, struck, 0};
         if (struck) {
-            shot.damage = w.damageAt(best);
+            shot.damage = w.damageAt(best, submerged());
             struck->onHit({shot.damage, shot.to, dir, Team::Player});
             c.adrenaline = std::min(1.0f, c.adrenaline + shot.damage / kAdrenalineFill); // "damaging enemies" (locals 1310)
         }
@@ -582,6 +635,16 @@ void World::fire(int hand) {
     c.spread = std::min(w.maxSpreadDeg, c.spread + w.spreadPerShot);
     c.sinceShot[hand] = 0;
     ++c.shotsFired;
+}
+
+void World::groundPound() {
+    const vec3 p = player_.state().pos;
+    for (Damageable* t : targets) {
+        if (!t || !t->alive() || t->team() != Team::Enemy) continue;
+        const vec3 d = t->position() - p;
+        if (glm::length(vec2(d)) > kPoundRadius + t->radius() || std::abs(d.z) > kPoundRadius) continue;
+        t->onHit({0, t->aimPoint(), glm::normalize(vec3(vec2(d), 0) + vec3(1e-4f, 0, 0)), Team::Player, false, true});
+    }
 }
 
 void World::tickCombat(const Actions& a, float dt) {
@@ -622,13 +685,20 @@ void World::tickCombat(const Actions& a, float dt) {
         c = d;
         return;
     }
-    // weapon switch (pistols <-> secondary): the weapon in hand holsters (unequip clip), then the other is drawn
-    if (weaponPressed && c.secondary != Weapon::Pistols && c.slowMo <= 0) {
-        c.want = c.want == Weapon::Pistols ? c.secondary : Weapon::Pistols;
-        c.redraw = c.redraw || c.drawn;
+    // weapon switch: the weapon in hand holsters (unequip clip), then the next is drawn; tru.exe 0x704930 cycles
+    // pistols -> secondary -> Mjolnir, skipping what she lacks
+    if (c.want == Weapon::ThorHammer && !hasHammer()) c.want = Weapon::Pistols, c.hammer = {};
+    if (weaponPressed && c.slowMo <= 0) {
+        Weapon cycle[3] = {Weapon::Pistols};
+        int n = 1;
+        if (c.secondary != Weapon::Pistols) cycle[n++] = c.secondary;
+        if (hasHammer()) cycle[n++] = Weapon::ThorHammer;
+        const auto at = std::find(cycle, cycle + n, c.want);
+        if (n > 1) c.want = at == cycle + n || at + 1 == cycle + n ? cycle[0] : *(at + 1);
+        c.redraw = c.redraw || (n > 1 && c.drawn);
     }
     if (c.want != c.weapon) {
-        c.drawn = false, c.reload = 0;
+        c.drawn = false, c.reload = 0, c.hammer = {};
         if (c.drawT <= 0) {
             c.previous = c.weapon, c.weapon = c.want;
             c.drawn = c.redraw && canShoot(s, c.weapon);
@@ -654,7 +724,10 @@ void World::tickCombat(const Actions& a, float dt) {
         glm::length(c.target->aimPoint() - s.pos) > targeting.lockRange) // [I] the lock drops past the tier range
         c.target = nullptr, c.locked = false;
     if (!c.target) c.slowMo = 0; // the window needs its target
-    if (!c.drawn) return;
+    if (!c.drawn) {
+        c.hammer = {};
+        return;
+    }
 
     // targeting: aim held = hard lock (kept, switchable), else the soft target in front of Lara; the adrenaline
     // window keeps its target
@@ -685,10 +758,31 @@ void World::tickCombat(const Actions& a, float dt) {
     if (c.locked && (s.state == State::Idle || s.state == State::Turn)) // [I] standing: turn to face the lock
         player_.face(s.yaw + std::clamp(wrapAngle(std::atan2(v.y, v.x) - s.yaw), -player_.tuning().turnRate * dt,
                                         player_.tuning().turnRate * dt));
-    c.aim = {std::clamp(wrapAngle(std::atan2(v.y, v.x) - player_.state().yaw), colYaw(in.rifle, 0), colYaw(in.rifle, gridCols(in.rifle) - 1)),
-             std::clamp(std::atan2(v.z, glm::length(vec2(v))), -gridDown(in.rifle), gridUp(in.rifle))};
+    const bool hammer = c.weapon == Weapon::ThorHammer;
+    const float yawLo = hammer ? kHammerCols[0] : colYaw(in.rifle, 0), yawHi = hammer ? kHammerCols[2] : colYaw(in.rifle, gridCols(in.rifle) - 1);
+    c.aim = {std::clamp(wrapAngle(std::atan2(v.y, v.x) - player_.state().yaw), yawLo, yawHi),
+             hammer ? 0.0f : std::clamp(std::atan2(v.z, glm::length(vec2(v))), -gridDown(in.rifle), gridUp(in.rifle))};
 
     const int hand = w.dual ? c.hand : 0;
+    if (hammer) { // Mjolnir: swings and ground pounds play out; no adrenaline head shot [I]
+        HammerAction& h = c.hammer;
+        if (!h.clip.empty()) {
+            h.prevT = h.t, h.t += dt;
+            const auto reached = [&](float at) { return h.prevT < at && h.t >= at; };
+            if (h.clip == "ground_melee_idle") {
+                if (reached(kHammerPound)) groundPound();
+            } else if (reached(kHammerShot)) {
+                fire(0);
+            }
+            const anim::Clip* k = anims_.weaponClip(Weapon::ThorHammer, h.clip);
+            if (h.t >= (k ? float(k->durationSeconds()) : in.refire)) h = {};
+        } else if (c.drawT >= 1 && interactPressed && c.locked && s.water < 0) {
+            h = {"ground_melee_idle", 0, -1 / 30.0f}; // target lock + interact
+        } else if (c.drawT >= 1 && a.fire) {
+            h = {s.water >= 0 ? "swim_submerge_thorhammer_attack_front" : "ground_fire_idle", 0, -1 / 30.0f};
+        }
+        return;
+    }
     if (c.slowMo > 0) { // adrenaline window: the stick steers the pip; fire with it in the reticle = head shot
         c.pip += a.move * (kPipSpeed * dt);
         c.slowMo = std::max(0.0f, c.slowMo - dt);
@@ -747,10 +841,10 @@ void World::aimLayer(std::vector<anim::LocalTransform>& local, float dt) {
     const auto& sk = anims_.skeleton;
     const Weapon wpn = c.weapon;
     const WeaponInfo& in = info(wpn);
-    const bool rifle = in.rifle, sub = player_.state().water >= 0 && wpn == Weapon::Speargun;
+    const bool rifle = in.rifle, sub = player_.state().water >= 0 && wpn == Weapon::Speargun, hammer = wpn == Weapon::ThorHammer;
     const int cols = gridCols(rifle);
     const auto clip = [&](std::string_view n) { return anims_.weaponClip(wpn, n); };
-    const anim::Clip* centre = clip(cellName(rifle, false, 1, cols / 2));
+    const anim::Clip* centre = clip(hammer ? std::string("ground_aim_front") : cellName(rifle, false, 1, cols / 2));
     if (c.drawT <= 0 || local.size() != sk.bones.size() || sk.bones.size() <= size_t(kHandBone[0]) || !centre) return;
     const auto sample = [&](const anim::Clip* k, double t, bool loop) { return anim::sample(*k, sk, t, loop); };
     const auto additive = [&](std::vector<anim::LocalTransform>& p, const anim::Clip* k, double t) {
@@ -762,31 +856,44 @@ void World::aimLayer(std::vector<anim::LocalTransform>& local, float dt) {
             p[i].trans += ft[i].trans - f0[i].trans;
         }
     };
-    int i0 = 0;
-    while (i0 + 2 < cols && c.aim.x > colYaw(rifle, i0 + 1)) ++i0;
-    const float u = std::clamp((c.aim.x - colYaw(rifle, i0)) / (colYaw(rifle, i0 + 1) - colYaw(rifle, i0)), 0.0f, 1.0f);
-    const int row = c.aim.y >= 0 ? 0 : 2;
-    const float v = std::clamp(c.aim.y >= 0 ? c.aim.y / gridUp(rifle) : -c.aim.y / gridDown(rifle), 0.0f, 1.0f);
-    const bool firing = rifle && c.sinceShot[0] < kRifleFire;
-    const auto cell = [&](int r, int col) {
-        if (const anim::Clip* k = firing ? clip(cellName(rifle, true, r, col)) : nullptr) return sample(k, c.sinceShot[0], false);
-        const anim::Clip* k = clip(cellName(rifle, false, r, col));
-        return sample(k ? k : centre, aimTime_, true);
-    };
     std::vector<anim::LocalTransform> p(local.size()), q(local.size());
-    anim::blendPoses(cell(1, i0), cell(1, i0 + 1), u, p);
-    anim::blendPoses(cell(row, i0), cell(row, i0 + 1), u, q);
-    anim::blendPoses(p, q, v, p);
-    if (!rifle) {
-        for (int hand = 0; hand < 2; ++hand) // recoil
-            if (const anim::Clip* k = clip(hand == 0 ? "combat_pistol_RfireE" : "combat_pistol_LfireE"); k && c.sinceShot[hand] < k->durationSeconds())
-                additive(p, k, c.sinceShot[hand]);
-    } else if (const anim::Clip* k = wpn == Weapon::Shotgun ? clip("combat_shotgun_pump") : nullptr;
-               k && c.sinceShot[0] >= kRifleFire && c.sinceShot[0] < kRifleFire + kPump) {
-        additive(p, k, c.sinceShot[0] - kRifleFire);
+    if (hammer) { // Mjolnir: its three aim poses by yaw; a swing / ground pound replaces them while it plays
+        static constexpr std::string_view kAim[3] = {"ground_aim_right", "ground_aim_front", "ground_aim_left"};
+        const int j = c.aim.x > kHammerCols[1] ? 1 : 0;
+        const float u = std::clamp((c.aim.x - kHammerCols[j]) / (kHammerCols[j + 1] - kHammerCols[j]), 0.0f, 1.0f);
+        const auto aim = [&](int k) {
+            const anim::Clip* a = clip(kAim[k]);
+            return sample(a ? a : centre, aimTime_, true);
+        };
+        anim::blendPoses(aim(j), aim(j + 1), u, p);
+        if (const anim::Clip* k = c.hammer.clip.empty() ? nullptr : clip(c.hammer.clip))
+            anim::blendPoses(p, sample(k, std::max(0.0f, c.hammer.t), false), 1.0f, p);
+    } else {
+        int i0 = 0;
+        while (i0 + 2 < cols && c.aim.x > colYaw(rifle, i0 + 1)) ++i0;
+        const float u = std::clamp((c.aim.x - colYaw(rifle, i0)) / (colYaw(rifle, i0 + 1) - colYaw(rifle, i0)), 0.0f, 1.0f);
+        const int row = c.aim.y >= 0 ? 0 : 2;
+        const float v = std::clamp(c.aim.y >= 0 ? c.aim.y / gridUp(rifle) : -c.aim.y / gridDown(rifle), 0.0f, 1.0f);
+        const bool firing = rifle && c.sinceShot[0] < kRifleFire;
+        const auto cell = [&](int r, int col) {
+            if (const anim::Clip* k = firing ? clip(cellName(rifle, true, r, col)) : nullptr) return sample(k, c.sinceShot[0], false);
+            const anim::Clip* k = clip(cellName(rifle, false, r, col));
+            return sample(k ? k : centre, aimTime_, true);
+        };
+        anim::blendPoses(cell(1, i0), cell(1, i0 + 1), u, p);
+        anim::blendPoses(cell(row, i0), cell(row, i0 + 1), u, q);
+        anim::blendPoses(p, q, v, p);
+        if (!rifle) {
+            for (int hand = 0; hand < 2; ++hand) // recoil
+                if (const anim::Clip* k = clip(hand == 0 ? "combat_pistol_RfireE" : "combat_pistol_LfireE"); k && c.sinceShot[hand] < k->durationSeconds())
+                    additive(p, k, c.sinceShot[hand]);
+        } else if (const anim::Clip* k = wpn == Weapon::Shotgun ? clip("combat_shotgun_pump") : nullptr;
+                   k && c.sinceShot[0] >= kRifleFire && c.sinceShot[0] < kRifleFire + kPump) {
+            additive(p, k, c.sinceShot[0] - kRifleFire);
+        }
+        if (const anim::Clip* k = clip(sub ? "combat_speargun_reload_submerged" : in.reloadClip); k && c.reload > 0)
+            anim::blendPoses(p, sample(k, in.reload - c.reload, false), 1.0f, p);
     }
-    if (const anim::Clip* k = clip(sub ? "combat_speargun_reload_submerged" : in.reloadClip); k && c.reload > 0)
-        anim::blendPoses(p, sample(k, in.reload - c.reload, false), 1.0f, p);
     float layer = 1;
     if (c.drawT < 1) {
         const float dur = c.drawn ? (sub ? kSubEquip : in.equip) : (sub ? kSubUnequip : in.unequip);

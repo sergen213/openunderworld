@@ -167,7 +167,7 @@ void Enemy::onHit(const Hit& hit) {
     s_.damageSinceReaction += hit.damage;
     if (s_.health <= 0) {
         die(hit);
-    } else if (s_.damageSinceReaction >= type_->tuning.staggerDamage) {
+    } else if (hit.knock || s_.damageSinceReaction >= type_->tuning.staggerDamage) {
         s_.damageSinceReaction = 0;
         setMode(Mode::Hit);
     } else if (s_.mode == Mode::Idle) {

@@ -75,7 +75,7 @@ struct Options {
     std::string cine;     // --cine NAME: play pc-w\cinstream\NAME.mul in its unit (--frames/--screenshot apply), then exit
     double die = -1;      // --die SECONDS: Lara dies then (death clip) and respawns at the last checkpoint
     std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
-    std::optional<ou::game::Weapon> weapon;    // --weapon uzi|shotgun|speargun: carried secondary with max reserve
+    std::optional<ou::game::Weapon> weapon;    // --weapon uzi|shotgun|speargun|thorhammer: carried secondary with max reserve (thorhammer: Mjolnir)
     ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr/--rt/--rt-quality (or --config)
     ou::game::Controls controls;         // --config "controls" (default bindings without it)
     ou::config::GameConfig game;         // --config "game": in-game menu settings
@@ -90,7 +90,7 @@ void usage() {
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
-                 "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun]\n"
+                 "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
                  "               [--shaders original|generic]\n"
@@ -102,8 +102,9 @@ void usage() {
                  "               [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
-                 "          F draw/holster, mouse left fire, right aim/lock, Q switch target, X switch weapon, H health pack,\n"
-                 "          L flashlight, R throw grenade, E with a full adrenaline meter + lock close by: head-shot window, mouse look;\n"
+                 "          F draw/holster, mouse left fire, right aim/lock, Q switch target, X switch weapon (pistols, secondary,\n"
+                 "          Mjolnir), H health pack, L flashlight, R throw grenade, E with a full adrenaline meter + lock close by:\n"
+                 "          head-shot window (Mjolnir: E + lock = ground pound), mouse look;\n"
                  "          gamepad: left stick, right stick, A jump, B drop, X use, Y draw, RT fire, LT lock, R3 switch, LB walk,\n"
                  "          d-pad right switch weapon, d-pad up health pack, d-pad left flashlight, d-pad down grenade,\n"
                  "          Start pause; Esc pause menu, F1 overlay, F5 quicksave, F9 quickload (slot 'quick'), F7 water debug view\n"
@@ -187,7 +188,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         }
         else if (a == "--weapon") {
             o.weapon = ou::game::weaponByName(v);
-            if (!o.weapon || *o.weapon == ou::game::Weapon::Pistols) { std::fprintf(stderr, "--weapon wants uzi, shotgun or speargun\n"); return false; }
+            if (!o.weapon || *o.weapon == ou::game::Weapon::Pistols) { std::fprintf(stderr, "--weapon wants uzi, shotgun, speargun or thorhammer\n"); return false; }
         }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return false; }
     }
@@ -906,6 +907,16 @@ struct EffectsView {
                 clipEvents(library->get(obj), name, layerClip, layerTime, t, 1e9, 0, m, [&] { return w.pose(1.0); });
             layerClip = std::move(name), layerTime = t;
         }
+        // Mjolnir's swing / ground pound: wp_thorhammer's events of Lara's clip run on Lara (her segments: the ground
+        // pound's lightning arcs from her root, wp_thorhammer bolt 1), frames (prevT, t].
+        if (const auto& h = c.hammer; !h.clip.empty())
+            if (const auto ham = library->get("wp_thorhammer"))
+                if (const auto* ev = ham->clip(h.clip)) {
+                    const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+                    const auto pose = w.pose(1.0);
+                    if (follows(ham)) system.track(kLaraOwner, model, pose);
+                    system.runEvents(ham, *ev, model, kLaraOwner, w.submerged() ? 3 : 0, h.prevT * 30 + 1e-3f, h.t * 30 + 1e-3f, pose);
+                }
         for (const auto& e : w.enemies().all()) {
             const auto &s = e->state(), &p = e->previous();
             const auto it = e->type().clips.find(s.clip);
@@ -1919,9 +1930,13 @@ int main(int argc, char** argv) {
                                 world->found[2], cs.adrenaline * 100, cs.slowMo > 0 ? " HEAD SHOT" : "");
             const auto& wd = world->anims().weapons[size_t(cs.weapon)];
             const auto wi = size_t(cs.weapon);
-            t += fmt(" | %s %d", std::string(ou::game::weaponName(cs.weapon)).c_str(), cs.clip[wi][0]);
-            if (wd.dual) t += fmt("+%d", cs.clip[wi][1]);
-            t += wd.infinite ? std::string(" / inf") : fmt(" / %d", cs.reserve[wi]);
+            t += fmt(" | %s", std::string(ou::game::weaponName(cs.weapon)).c_str());
+            if (wd.clip >= 0) {
+                t += fmt(" %d", cs.clip[wi][0]);
+                if (wd.dual) t += fmt("+%d", cs.clip[wi][1]);
+                t += wd.infinite ? std::string(" / inf") : fmt(" / %d", cs.reserve[wi]);
+            }
+            if (!cs.hammer.clip.empty()) t += " " + cs.hammer.clip;
             if (cs.secondary != ou::game::Weapon::Pistols && cs.secondary != cs.weapon)
                 t += fmt(" (%s %d)", std::string(ou::game::weaponName(cs.secondary)).c_str(), cs.reserve[size_t(cs.secondary)]);
             if (cs.drawn)

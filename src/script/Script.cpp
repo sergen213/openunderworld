@@ -773,12 +773,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // the type 205 equip helpers vt 59-61 that unit/chapter scripts call: larabase 38 (0x777E90: an object of
             // that name is in one of her 15 slots), 37 (0x7161F0: attach it), 42 (0x6F5A10: drop a slot's object). The
             // show helpers vt 62-64 only unhide a draw group while its object is carried. [I] our 42 drops every gear
-            // object (its slot argument is not tracked; the equip helpers call it together). 14 (0x7793F0: post
-            // 0x19B/0x146 to a slot) has nothing to stow.
+            // object (its slot argument is not tracked; the equip helpers call it together) but not Mjolnir
+            // ("wp_thorhammer", given by 37 at the end of 250_val_hammer; no script drops it [O string survey]). 14
+            // (0x7793F0: post 0x19B/0x146 to a slot) has nothing to stow.
             if (!std::strcmp(name, "larabase") && (nc.function == 14 || nc.function == 37 || nc.function == 38 || nc.function == 42)) {
                 const auto text = std::find_if(nc.args.begin(), nc.args.end(), [](const vm::Value& a) { return a.text; });
                 if (nc.function == 37 && text != nc.args.end()) playerObjects_.insert(*text->text);
-                if (nc.function == 42) playerObjects_.clear();
+                if (nc.function == 42) std::erase_if(playerObjects_, [](const std::string& o) { return o.starts_with("g_"); });
                 nc.result = vm::Value::scalar(nc.function == 38 && text != nc.args.end() && playerObjects_.contains(*text->text));
                 return true;
             }

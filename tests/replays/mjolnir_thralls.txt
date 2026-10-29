@@ -1,0 +1,7 @@
+# l7_yggdrasil_hall01: --spawn 1000,0,0,90 (chapter 7 carries Mjolnir). X cycles to the hammer, draw, lock on the thralls, hold fire: viking 8833 dies to one bolt (tick ~129), yeti 8831 to two.
+0.2 weapon 1
+0.3 weapon 0
+0.5 draw 1
+0.6 draw 0
+1.6 aim 1
+1.8 fire 1

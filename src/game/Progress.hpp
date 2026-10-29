@@ -42,10 +42,13 @@ inline constexpr int16_t kStringOneWeekEarlier = 1307; // "ONE WEEK EARLIER..." 
 // Thor's gear objects Lara carries entering chapter n (GAMEPLAY.md "Thor's gear"). [O] the original under Wine
 // (larabase 38's slots, *(*0xFADB58+0x500)): a new game's prologue and a load of l4_trailstart carry none; loading
 // l5_startsnow (even from a fresh prologue) gives both gauntlets and the belt, and l7_thin_ice keeps all three.
-// Carrying is not wearing: the draw groups stay hidden in all of these (GAMEPLAY.md).
+// Carrying is not wearing: the draw groups stay hidden in all of these (GAMEPLAY.md). Mjolnir ("wp_thorhammer", larabase
+// 37 at the end of l5_valaskjalf's 250_val_hammer) from chapter 6 on [I: no unit script gives it again; the Andaman
+// Sea start has it, GAMEPLAY.md "Mjolnir"].
 inline std::set<std::string> chapterGear(int chapter) {
     if (chapter < 5) return {};
-    return {"g_belt", "g_gauntletleft", "g_gauntletright"};
+    if (chapter == 5) return {"g_belt", "g_gauntletleft", "g_gauntletright"};
+    return {"g_belt", "g_gauntletleft", "g_gauntletright", "wp_thorhammer"};
 }
 int chapterIndex(std::string_view startUnit); // -1 if no chapter starts there
 // Chapter a unit belongs to when nothing else says (saves without a chapter): its l<N>_ prefix [I]; the

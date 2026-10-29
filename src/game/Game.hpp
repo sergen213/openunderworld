@@ -79,7 +79,8 @@ struct AnimLibrary {
     // Weapons (index = Weapon): stats (loadWeapon) and Lara's clips from each weapon's DRM (weaponClipNames), kept in
     // `clips` as "<object>:<clip>" (the DRMs reuse names). Defaults keep synthetic libraries usable without them.
     std::array<WeaponDef, kWeaponCount> weapons{weaponDefaults(Weapon::Pistols), weaponDefaults(Weapon::Uzi),
-                                                weaponDefaults(Weapon::Shotgun), weaponDefaults(Weapon::Speargun)};
+                                                weaponDefaults(Weapon::Shotgun), weaponDefaults(Weapon::Speargun),
+                                                weaponDefaults(Weapon::ThorHammer)};
     BikeTuning bike; // motorcycle.drm (loadBikeTuning); its riding clips are in `clips` as "motorcycle:<name>"
     GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
     DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
@@ -476,8 +477,11 @@ public:
     std::optional<std::pair<int, glm::mat4>> gunMount(Weapon w, int hand) const;
     vec3 muzzle(int hand) const; // current weapon, world, this tick's pose
     // Carries `w` as the secondary (replacing the previous one; Pistols: none), full clip, `reserve` spare rounds
-    // capped at its max reserve (ou-game --weapon; the original gets them from pickups).
+    // capped at its max reserve (ou-game --weapon; the original gets them from pickups). ThorHammer: Mjolnir joins her
+    // carried objects (script::Runtime::playerObjects, as larabase 37 "wp_thorhammer"); `reserve` is ignored.
     void giveWeapon(Weapon w, int reserve);
+    // Mjolnir carried: "wp_thorhammer" among her carried objects (250_val_hammer's end gives it; chapterGear from 6).
+    bool hasHammer() const { return script_.playerObjects().contains("wp_thorhammer"); }
     // PLAYER TAILORING (Combat.hpp): Lara's max health (keeping its fraction), enemy health on (re)spawn, saving grab
     // window, ammunition capacity (reserves / grenades over the new capacity are dropped). Saved with the game.
     void setTailoring(const Tailoring& t);
@@ -524,6 +528,7 @@ private:
     void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // weapon upper body over `local`
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order
     void fire(int hand);
+    void groundPound(); // Mjolnir's shock (event 0x4B): knocks every enemy within kPoundRadius off balance
     void reloadWeapon(); // refill the current weapon's clips from its reserve
     void collectPickups(bool pressed);
     void tickAir(float dt); // oxygen / drowning (World.cpp)

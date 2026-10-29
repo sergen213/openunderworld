@@ -323,7 +323,7 @@ two camera-facing bands; alpha fades below 896 units of view depth.
 Ours: `LightningDef`, drawn as quads in the effect pass (hash-random jitter per 30 Hz frame [I: the exe's sine-table
 indexing]). Users: weapon tracers (`wp_handgun` / `wp_uzi` / `wp_akrifle` `fire`), Thor's hammer (`wp_thorhammer`
 melee / fire, `co_fx_val_hammer`), Valaskjalf door beam (`fx_beam_val_door_unlock`), light shafts (`sa_uo_light_beams`,
-`fx_glare_*`, `fx_light_ray_*`), cinematic lightning (`fx_cine_lightning`). Mjolnir itself is not a player weapon yet.
+`fx_glare_*`, `fx_light_ray_*`), cinematic lightning (`fx_cine_lightning`). Mjolnir as Lara's weapon: GAMEPLAY.md "Mjolnir".
 
 ## Script-object clip events
 

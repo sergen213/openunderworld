@@ -427,24 +427,27 @@ TEST(StreamReal, PoolToRagnarokOnFootThenSaveLoad) {
 // Level loads dress Lara in the unit's outfit object (GAMEPLAY.md "Outfits"); streaming keeps it; a load restores the
 // saved one (tru.exe 0x5DE2B0).
 // Thor's gear per chapter start (GAMEPLAY.md "Thor's gear", checked in the original under Wine): none before Jan
-// Mayen, both gauntlets and the belt from it on; the gear draw groups 10-12 stay hidden in every chapter (the
-// original's mask +0x23C keeps 0xE00 while she carries them); saves keep both.
+// Mayen, both gauntlets and the belt from it on, Mjolnir from the Andaman Sea on (GAMEPLAY.md "Mjolnir"); the gear draw
+// groups 10-12 stay hidden in every chapter (the original's mask +0x23C keeps 0xE00 while she carries them); saves
+// keep both.
 TEST(StreamReal, ChapterThorGear) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
     w.script().setBigfile(&bf);
-    const std::set<std::string> none, gear{"g_belt", "g_gauntletleft", "g_gauntletright"};
+    const std::set<std::string> none, gear{"g_belt", "g_gauntletleft", "g_gauntletright"},
+        hammer{"g_belt", "g_gauntletleft", "g_gauntletright", "wp_thorhammer"};
     for (int c = 0; c < int(game::kChapters.size()); ++c) {
         w.startChapter(c);
-        EXPECT_EQ(w.script().playerObjects(), c >= 5 ? gear : none) << c;
+        EXPECT_EQ(w.script().playerObjects(), c >= 6 ? hammer : c == 5 ? gear : none) << c;
+        EXPECT_EQ(w.hasHammer(), c >= 6) << c;
         EXPECT_EQ(w.script().playerHiddenGroups(), 0x7u << 9) << c; // carried gear is still put away
     }
     w.startChapter(6);
     auto saved = save::capture(w);
     w.startChapter(2);
     save::apply(saved, w);
-    EXPECT_EQ(w.script().playerObjects(), gear);
+    EXPECT_EQ(w.script().playerObjects(), hammer);
     saved.script.erase("player"); // a chapter-start slot written before gear state was saved
     saved.chapter = 1;
     save::apply(saved, w);
