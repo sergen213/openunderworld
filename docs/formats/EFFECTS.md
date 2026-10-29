@@ -102,14 +102,45 @@ back-to-front, depth-tested without writes, `tex × colour × 2`.
   (`--spawn 0,-17200,2600,-90 --camera 1500,-18200,5000,2292,-19285,5300`); the hall view hides torches 214/215
   behind the serpent heads, which was the earlier "invisible" report. l2_junglehub splash-edge foam faint but present.
   Flames look thinner than remembered from the original: no Wine reference capture yet [U].
-- Combat findings [O], not implemented: weapons are `handgun_rbweapon`, `shotgun_rbweapon`, … in the global object
-  table 0x8AA768 (with `particle`, `bullet_hit`, `bullet_hit_shotgun`, `fx_grapple_bling`); `bullet_hit` holds 161
-  particle definitions grouped per surface (dust, sparks, water, blood-like dark red …) but only one event record, so
-  the surface → definition mapping lives in code or its DTPs (2493–2508) [U]. `wp_handgun` (27 defs) /
-  `wp_shotgun` (19) have no event list. Animation event lists are processed by 0x5BBFD0: records
-  `{u16 info, u16 frame, u32 instance ref +4, u16 +8, u8 +0xA, command +0xC}`, size `(info >> 12) * 4 + 0xC`; case 1
-  runs the command on the referenced instance's object (0x548850). Script `effect` markup Start is 0x4ADC00.
-- Missing: animation-event effects, combat effects (muzzle flash, impacts, blood, casings), classes 1–5/7–9
-  (ribbons, glows, lightning, …), lights from effects, attached/segment-following particles, mesh/model particles,
-  decals, lens flares, skydomes (`*_skydome_*` unit dependencies not placed), UV scroll, screen effects. Frame-time
-  cost not measured.
+
+## Animation events and combat [O unless marked]
+
+- An object's animation list (ObjectBase `+0x54` count, `+0x58` 12-byte entries `{i16 anim, i16, u32 event-list DTP
+  id, char* name}`) gives each clip an event list (DTP rtype 19): a u32 header, then records in the object-event
+  layout (`8 + (info >> 12) * 4` bytes, end `0xFFFF`). `frame` = 30 Hz clip frame. `info & 0x3F0 >> 4` = surface
+  material filter (0 any, else it must equal the instance material, instance `+0x186`, tru.exe 0x5BBFD0), `info & 4`
+  disabled, `info & 0xC00` variant (we run variant 0 only [I]). Type-0 records with a pointer at `+0xC` are skipped.
+  Parsed into `ObjectFx::clips`; `System::runEvents` (frame span) and `System::play` (one-shot instance, later frames
+  fire as ticks pass).
+- Material = collision face byte `+0x10` (tru.exe 0x6F06B0 copies the floor face's to Lara's `+0x186`). From
+  bullet_hit's per-material lists and Lara's footstep lists: 1 stone (most faces), 2/3 water (Lara: 2 in water),
+  4 dirt, 5 ice, 6 wood, 7 metal, 8 carpet, 9 snow, 11 plaster, 12 glass, 13 unbreakable glass, 14 sand, 15 mud,
+  16 pipe, 17/18/19/20 stone/unpaved variants, 21 thin metal, 22 grass, 23 flesh (dark-red blood), 24 flesh?,
+  25 electrical, 26 wood, 27 stone, 28 leaves, 29 goo [names I, from bullet_hit's state names + colours].
+- Hitscan impacts (0x6C64D0 → 0x6B7030): the ammo object's data `+0x3C` (above water) / `+0xA8` (under water) is an
+  object id (`pr_handgunbullet` 53 `bullet_hit` / 61 `bullet_hit_underwater`; shotgun 68); that object is born at
+  the hit (Z on the normal) with the hit material and its `idle` clip events start the surface's particles (stone:
+  87–90 + sparks 61/63; flesh: blood 20–24). Weapon data `+0xE6` names the ammo object. Bodies use material 23 [I].
+- Muzzle: the weapon object's `fire` / `fire_submerged` clip events (`wp_handgun` defs 0–7, 9, 10, 22–26 at frame
+  0), in the gun's frame: HInfo markers −10 muzzle (−Y = barrel), −13 ejection port, −20..−24 flash points. We place
+  the gun so marker −10 sits on the shot origin facing the shot [I]. Enemies use their type's weapon object
+  (`EnemyType::weapon`, e.g. 114 `wp_akrifle`).
+- `ou-game` runs Lara's and every enemy's current clip events each tick on their posed bones (Lara: `lara` object,
+  floor material / 2 swimming / 3 submerged [I]); `object:clip` clips (weapon, vehicle) are skipped.
+- Other commands in these lists: 6 (class 2, `0x536B70`, e.g. muzzle / impact flash) [U], 9, 0xD (0x481B50), 0xE/0xF
+  (0x481CC0/CF0), 0x11 light (0x546710, muzzle/metal-hit light), 0x15/0x1A — not implemented.
+- Model particles (def `+4 & 0x80`, e.g. casings) are drawn as 1.5-unit sprites in their key colour [I]. Defs with no
+  texture and no list name a resource at `+0x168` (wp_handgun def 25 → 2770; distortion / heat haze? [U]) and are
+  not drawn — drawn white they covered the shot line.
+- Viewed 2026-10-29 (GL + Vulkan, `tests/replays/poacher_firefight.txt`, l4_ballcourt `--spawn 17520,10383,2650,180`,
+  frame 38 `--camera 17850,10550,3150,17620,10200,2980`): yellow muzzle flash + sparks at the pistol, blood mist and
+  red streaks on the panther, smoke drifting. No Wine reference capture.
+
+## Missing
+
+Command classes 1/2/4/5/7–9 (ribbons, flashes/glows, lightning …), effect lights (0x11, flicker), particles that
+follow their segment (mode 1), casing meshes and collision, the `+0x168` material particles, decals, lens flares,
+skydomes (`*_skydome_*` dependencies not placed), UV scroll, screen effects, uber-object / door / breakable clip
+events (script-driven objects' clips are not tracked), enemy textures for generator-spawned enemies before the next
+scene rebuild, per-enemy hit materials (all bodies 23), Wine reference comparisons, frame-time measurements in the
+heaviest units (not measured).

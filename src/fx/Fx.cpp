@@ -38,6 +38,7 @@ int objectDtp(const cdc::Drm& drm, const cdc::Section& obj, uint32_t off) {
 }
 
 float frac(int16_t percent) { return std::clamp(float(percent) / 100.0f, 0.0f, 1.0f); }
+constexpr float kModelSprite = 1.5f; // half-size of a model particle's stand-in sprite, units [I]
 
 } // namespace
 
@@ -90,23 +91,43 @@ ParticleDef parseParticleDef(std::span<const uint8_t> d) {
     return p;
 }
 
+// Records until 0xFFFF, 8 + (info >> 12) * 4 bytes each, from `o`.
+static std::vector<Event> parseEvents(std::span<const uint8_t> d, size_t o) {
+    std::vector<Event> out;
+    while (o + 2 <= d.size()) {
+        const auto info = rd<uint16_t>(d, o);
+        if (info == 0xFFFF) break;
+        out.push_back({info, rd<uint16_t>(d, o + 2), rd<uint8_t>(d, o + 4),
+                       {rd<uint16_t>(d, o + 8), rd<uint16_t>(d, o + 10), rd<uint16_t>(d, o + 12), rd<uint16_t>(d, o + 14)}});
+        o += 8 + size_t(info >> 12) * 4;
+    }
+    return out;
+}
+
 std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::string>* warnings) {
     const auto obj = std::find_if(drm.sections.begin(), drm.sections.end(), [](const auto& s) { return s.type == cdc::SectionType::Object; });
     if (obj == drm.sections.end() || obj->data.size() < 12) return std::nullopt;
-    const int ev = objectDtp(drm, *obj, 4), gen = objectDtp(drm, *obj, 8);
-    if (ev < 0 && gen < 0) return std::nullopt;
+    const int ev = objectDtp(drm, *obj, 4), gen = objectDtp(drm, *obj, 8), base = objectDtp(drm, *obj, 0);
     ObjectFx fx;
-    if (ev >= 0) { // records until 0xFFFF, 8 + (info >> 12) * 4 bytes each
-        const auto d = drm.sections[size_t(ev)].data;
-        for (size_t o = 0; o + 2 <= d.size();) {
-            const auto info = rd<uint16_t>(d, o);
-            if (info == 0xFFFF) break;
-            Event e{info, rd<uint16_t>(d, o + 2), rd<uint8_t>(d, o + 4),
-                    {rd<uint16_t>(d, o + 8), rd<uint16_t>(d, o + 10), rd<uint16_t>(d, o + 12), rd<uint16_t>(d, o + 14)}};
-            fx.events.push_back(e);
-            o += 8 + size_t(info >> 12) * 4;
-        }
+    if (ev >= 0) fx.events = parseEvents(drm.sections[size_t(ev)].data, 0);
+    if (base >= 0) { // animation list: {i16 anim, i16, u32 event-list DTP id, char* name}
+        const auto& s = drm.sections[size_t(base)];
+        const auto ptrs = cdc::sectionPointers(drm, uint32_t(base));
+        const uint32_t n = rd<uint32_t>(s.data, 0x54);
+        if (const auto list = ptrs.find(0x58); list != ptrs.end() && list->second.section == uint32_t(base) && n < 4096)
+            for (uint32_t i = 0; i < n; ++i) {
+                const uint32_t e = list->second.offset + 12 * i;
+                const auto name = ptrs.find(e + 8);
+                const int list19 = dtpIndex(drm, rd<uint32_t>(s.data, e + 4));
+                if (name == ptrs.end() || list19 < 0 || name->second.section != uint32_t(base)) continue;
+                std::string nm;
+                for (size_t k = name->second.offset; k < s.data.size() && s.data[k]; ++k) nm += char(s.data[k]);
+                auto events = parseEvents(drm.sections[size_t(list19)].data, 4); // u32 header
+                if (std::any_of(events.begin(), events.end(), [](const Event& x) { return x.effect(); }))
+                    fx.clips.emplace(std::move(nm), std::move(events));
+            }
     }
+    if (ev < 0 && gen < 0 && fx.clips.empty()) return std::nullopt;
     if (gen >= 0) {
         const auto& s = drm.sections[size_t(gen)];
         const auto ptrs = cdc::sectionPointers(drm, uint32_t(gen));
@@ -134,10 +155,9 @@ std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::stri
         const auto phys = physics::loadObjectPhysics(drm);
         fx.segments = phys.segments;
         for (const auto& m : phys.hmarkers) {
-            const glm::mat4 seg = m.segment < int(phys.segments.size()) ? phys.segments[size_t(m.segment)] : glm::mat4(1);
             glm::mat4 r = glm::translate(glm::mat4(1), m.pos);
             r = glm::rotate(r, m.rot.x, {1, 0, 0}), r = glm::rotate(r, m.rot.y, {0, 1, 0}), r = glm::rotate(r, m.rot.z, {0, 0, 1});
-            fx.markers.emplace(m.id, seg * r);
+            fx.markers.emplace(m.id, ObjectFx::Marker{m.segment, r});
         }
     } catch (const std::exception& e) {
         if (warnings) warnings->push_back(std::string("effect segments: ") + e.what());
@@ -145,10 +165,14 @@ std::optional<ObjectFx> parseObjectFx(const cdc::Drm& drm, std::vector<std::stri
     return fx;
 }
 
-glm::mat4 ObjectFx::frame(int16_t s) const {
-    if (s >= 0) return size_t(s) < segments.size() ? segments[size_t(s)] : glm::mat4(1);
+glm::mat4 ObjectFx::frame(int16_t s, std::span<const glm::mat4> bones) const {
+    auto seg = [&](int i) {
+        if (i >= 0 && size_t(i) < bones.size()) return bones[size_t(i)];
+        return i >= 0 && size_t(i) < segments.size() ? segments[size_t(i)] : glm::mat4(1);
+    };
+    if (s >= 0) return seg(s);
     const auto it = markers.find(-s);
-    return it != markers.end() ? it->second : glm::mat4(1); // -125 (0x538570) and ids >= 100 (runtime list): root [U]
+    return it != markers.end() ? seg(it->second.segment) * it->second.local : glm::mat4(1); // -125 (0x538570), ids >= 100: root [U]
 }
 
 std::vector<uint32_t> ObjectFx::textureIds() const {
@@ -179,10 +203,10 @@ uint32_t System::rand15() {
 }
 
 bool System::start(std::shared_ptr<const ObjectFx> fx, int def, const glm::mat4& world, int32_t owner, int16_t segment,
-                   int16_t segment2) {
-    if (!fx || def < 0 || size_t(def) >= fx->particles.size() || fx->particles[size_t(def)].model()) return false;
+                   int16_t segment2, std::span<const glm::mat4> bones) {
+    if (!fx || def < 0 || size_t(def) >= fx->particles.size()) return false;
     const auto& d = fx->particles[size_t(def)];
-    auto at = [&](int16_t s) { return world * fx->frame(s); };
+    auto at = [&](int16_t s) { return world * fx->frame(s, bones); };
     Emitter e;
     e.def = &d, e.owner = owner;
     const int16_t s1 = segment ? segment : d.segment, s2 = segment2 ? segment2 : d.segment2;
@@ -196,15 +220,16 @@ bool System::start(std::shared_ptr<const ObjectFx> fx, int def, const glm::mat4&
     return true;
 }
 
-bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command& c, const glm::mat4& world, int32_t owner) {
+bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command& c, const glm::mat4& world, int32_t owner,
+                        std::span<const glm::mat4> bones) {
     switch (c.type) {
-    case 3: return start(fx, c.a1, world, owner, int16_t(c.a2 == 0xFF ? 0 : c.a2), int16_t(c.a3)); // particle (seg, seg2)
-    case 0x1D: return start(fx, c.a1, world, owner);                                                // particle, root
-    case 0x20: return start(fx, c.a1, world, owner);
+    case 3: return start(fx, c.a1, world, owner, int16_t(c.a2 == 0xFF ? 0 : c.a2), int16_t(c.a3), bones); // particle (seg, seg2)
+    case 0x1D: return start(fx, c.a1, world, owner, 0, 0, bones);                                          // particle, root
+    case 0x20: return start(fx, c.a1, world, owner, 0, 0, bones);
     case 4: { // the particle on every segment from a2 (0x547C8E)
         bool any = false;
         const int n = c.a3 ? c.a3 : int(fx->segments.size());
-        for (int s = c.a2; s < n; ++s) any |= start(fx, c.a1, world, owner, int16_t(s));
+        for (int s = c.a2; s < n; ++s) any |= start(fx, c.a1, world, owner, int16_t(s), 0, bones);
         return any;
     }
     default: return false; // other effect classes: docs/formats/EFFECTS.md "Missing"
@@ -219,6 +244,22 @@ int System::startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat
     return n;
 }
 
+int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
+                      int32_t owner, uint8_t material, float from, float to, std::span<const glm::mat4> bones) {
+    int n = 0;
+    for (const auto& e : events)
+        if (e.runsOn(material) && float(e.frame) >= from && float(e.frame) < to) n += runCommand(fx, e.cmd, world, owner, bones);
+    return n;
+}
+
+void System::play(std::shared_ptr<const ObjectFx> fx, const std::vector<Event>& events, const glm::mat4& world, int32_t owner,
+                  uint8_t material) {
+    if (!fx) return;
+    Sequence s{std::move(fx), &events, world, owner, 0, material};
+    runEvents(s.fx, events, world, owner, material, 0.0f, 0.5f); // frame 0 now, later frames as ticks pass
+    sequences_.push_back(std::move(s));
+}
+
 void System::stopOwner(int32_t owner) {
     for (auto& e : emitters_)
         if (e.owner == owner) e.stopped = true;
@@ -228,7 +269,7 @@ bool System::hasOwner(int32_t owner) const {
     return std::any_of(emitters_.begin(), emitters_.end(), [&](const Emitter& e) { return e.owner == owner && !e.stopped; });
 }
 
-void System::clear() { emitters_.clear(), particles_.clear(); }
+void System::clear() { emitters_.clear(), particles_.clear(), sequences_.clear(); }
 
 void System::spawn(Emitter& e, const glm::vec3& camera) {
     const ParticleDef& d = *e.def;
@@ -278,6 +319,13 @@ void System::spawn(Emitter& e, const glm::vec3& camera) {
 }
 
 void System::tick(const glm::vec3& camera) {
+    for (auto& s : sequences_) { // frame f fires at tick 2f (30 Hz authoring)
+        ++s.age;
+        runEvents(s.fx, *s.events, s.world, s.owner, s.material, 0.5f * float(s.age), 0.5f * float(s.age + 1));
+    }
+    std::erase_if(sequences_, [](const Sequence& s) {
+        return std::none_of(s.events->begin(), s.events->end(), [&](const Event& e) { return 2 * int(e.frame) > s.age; });
+    });
     for (auto& p : particles_) {
         ++p.age;
         p.pos += p.vel, p.vel += p.acc, p.rot += p.spin;
@@ -326,6 +374,9 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         const ParticleDef& d = *p.def;
         const float depth = glm::dot(p.pos - camera.position, fwd);
         if (depth < 16.0f || d.keys.empty()) continue; // 0x54B0A0: 16 <= z
+        // No texture and no list: these defs name a resource at +0x168 instead (e.g. wp_handgun def 25 -> 2770; the
+        // exe's 0x543F70 takes another path for +0x168/+0x16C) [U: distortion / heat haze?]. Not drawn.
+        if (!d.model() && !d.texture && d.textures.empty()) continue;
         const float t = std::clamp(float(p.age) / float(p.life), 0.0f, 1.0f);
         size_t k = 0;
         while (k + 2 < d.keys.size() && t > d.keys[k + 1].time) ++k;
@@ -343,8 +394,11 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         }
         if (s0 < 0) s0 = s1;
         if (s1 < 0) s1 = s0;
-        const float size = s0 < 0 ? 0.0f : t1 > t0 ? s0 + (s1 - s0) * (t - t0) / (t1 - t0) : s0;
+        // Model particles (def +0x04 & 0x80: shell casings, debris meshes) are not decoded as meshes; drawn as a small
+        // sprite in their key colour, alpha-blended [I] (ponytail: no mesh, upgrade = the particle's model segment).
+        const float size = d.model() ? kModelSprite : s0 < 0 ? 0.0f : t1 > t0 ? s0 + (s1 - s0) * (t - t0) / (t1 - t0) : s0;
         if (size <= 0) continue;
+        if (d.model()) rgba[3] = 255;
         const float ys = a.yScale * (1 - f) + b.yScale * f;
         // Camera-distance fade band (particle +0xB8 / +0xBA from def +0x5A / +0x5C, 0x54B1A6).
         if (d.fadeFar > d.fadeNear) {
@@ -361,7 +415,8 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         // Depth bias (def +0x15E -> emitter +0x10C -> particle +0x28, flag 0x200; 0x54B0E8): z += bias, >= 16. Drawn by
         // scaling the quad about the eye so its screen footprint stays put [I] (0x400 = biased projection depth).
         const float biased = std::max(16.0f, depth + float(d.depthBias));
-        Sprite sp{biased, p.pos, size, size * (ys > 0 ? ys : 1), p.rot, 0, 0, 0, 0, 1, 1, uint8_t(blendFor(d.keys[0].blend)),
+        Sprite sp{biased, p.pos, size, size * (ys > 0 ? ys : 1), p.rot, 0, 0, 0, 0, 1, 1,
+                  uint8_t(d.model() ? Blend::Alpha : blendFor(d.keys[0].blend)),
                   biased / depth};
         for (int c = 0; c < 4; ++c) sp.rgba |= uint32_t(std::clamp(std::lround(rgba[c]), 0L, 255L)) << (8 * c);
         // Texture frame: list or atlas; animRate 0 = the particle's random frame, 255 = over its life [I], else
@@ -374,7 +429,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         };
         if (!d.textures.empty()) sp.tex = d.textures[frameOf(d.textures.size())];
         else {
-            sp.tex = d.texture;
+            sp.tex = d.model() ? 0 : d.texture;
             if (d.atlasCols && d.atlasRows) {
                 const size_t cells = size_t(d.atlasCols) * d.atlasRows;
                 const size_t n = std::clamp<size_t>(d.atlasFrames ? d.atlasFrames : cells, 1, cells);
@@ -411,6 +466,23 @@ uint64_t System::checksum() const {
     return h;
 }
 
+void Library::loadTextures(const cdc::Drm& drm, const std::string& name, const std::vector<uint32_t>& ids,
+                           std::vector<std::string>* warnings) {
+    for (const uint32_t id : ids) {
+        if (textureIds_.contains(id)) continue;
+        for (const auto& s : drm.sections)
+            if (s.type == cdc::SectionType::Texture && s.id == id) {
+                std::string why;
+                if (auto t = formats::decodeTexture(s, &why)) {
+                    t->origin = "pc-w\\" + name + ".drm#fx texture " + std::to_string(id);
+                    textures_.push_back(std::move(*t));
+                    textureIds_.insert(id);
+                } else if (warnings) warnings->push_back(name + ": fx texture " + std::to_string(id) + ": " + why);
+                break;
+            }
+    }
+}
+
 std::shared_ptr<const ObjectFx> Library::get(const std::string& name, std::vector<std::string>* warnings) {
     if (const auto it = objects_.find(name); it != objects_.end()) return it->second.fx;
     Entry& e = objects_[name];
@@ -419,21 +491,19 @@ std::shared_ptr<const ObjectFx> Library::get(const std::string& name, std::vecto
     try {
         const auto drm = cdc::parseDrm(std::move(*bytes));
         e.flags = formats::objectFlags(drm);
-        auto fx = parseObjectFx(drm, warnings);
-        if (!fx || (fx->particles.empty() && fx->events.empty())) return nullptr;
-        for (const uint32_t id : fx->textureIds()) {
-            if (textureIds_.contains(id)) continue;
-            for (const auto& s : drm.sections)
-                if (s.type == cdc::SectionType::Texture && s.id == id) {
-                    std::string why;
-                    if (auto t = formats::decodeTexture(s, &why)) {
-                        t->origin = "pc-w\\" + name + ".drm#fx texture " + std::to_string(id);
-                        textures_.push_back(std::move(*t));
-                        textureIds_.insert(id);
-                    } else if (warnings) warnings->push_back(name + ": fx texture " + std::to_string(id) + ": " + why);
-                    break;
+        // Object data block (object section +0 -> ObjectBase, +0xC8 -> data, as game::loadWeapon reads it).
+        if (const auto obj = std::find_if(drm.sections.begin(), drm.sections.end(), [](const auto& s) { return s.type == cdc::SectionType::Object; });
+            obj != drm.sections.end())
+            if (const int base = objectDtp(drm, *obj, 0); base >= 0) {
+                const auto ptrs = cdc::sectionPointers(drm, uint32_t(base));
+                if (const auto it = ptrs.find(0xC8); it != ptrs.end()) {
+                    const auto d = drm.sections[it->second.section].data;
+                    if (it->second.offset < d.size()) e.data.assign(d.begin() + it->second.offset, d.end());
                 }
-        }
+            }
+        auto fx = parseObjectFx(drm, warnings);
+        if (!fx || (fx->particles.empty() && fx->events.empty() && fx->clips.empty())) return nullptr;
+        loadTextures(drm, name, fx->textureIds(), warnings);
         e.fx = std::make_shared<const ObjectFx>(std::move(*fx));
     } catch (const std::exception& ex) {
         if (warnings) warnings->push_back("pc-w\\" + name + ".drm effects: " + ex.what());
@@ -444,6 +514,12 @@ std::shared_ptr<const ObjectFx> Library::get(const std::string& name, std::vecto
 uint32_t Library::flags(const std::string& name) const {
     const auto it = objects_.find(name);
     return it == objects_.end() ? 0 : it->second.flags;
+}
+
+uint16_t Library::dataU16(const std::string& name, uint32_t off) {
+    get(name);
+    const auto& d = objects_[name].data;
+    return rd<uint16_t>(d, off);
 }
 
 } // namespace ou::fx
