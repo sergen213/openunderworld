@@ -1,7 +1,7 @@
 // Front-end and in-game UI: main/pause/load/options menus, the PDA page, pickup notifications and chapter
 // title cards. Renderer-agnostic: draws into render::TextVertex quads (FrameOptions::ui). Main and pause menus
 // are the original radial menu drawn with the game's own art and font (ui::Art, generalbank.drm) at the layout
-// measured from tru.exe captures; submenus, HUD and subtitles use the renderer's 8x8 atlas font. Text is the
+// measured from tru.exe captures, as are the HUD and subtitles (src/ui/Hud.cpp); submenus use the renderer's 8x8 atlas font. Text is the
 // original locals.bin strings. The original UI scripts are not executed. docs/GAMEPLAY.md "Menus".
 #pragma once
 
@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -121,18 +122,59 @@ private:
     float label_ = 0;             // label fade-in of the selected radial item, 0..1
 };
 
-// ---- HUD: pickup notifications and chapter title cards ------------------------------------------------
+// ---- HUD: the original display groups, reticles, notifications, title cards, subtitles ---------------
+// Game state the HUD shows, filled by the app each tick (no ou_game dependency).
+struct HudState {
+    float health = 1000, healthMax = 1000; // absolute: the HUD script's colour bands are health values
+    float adrenaline = 0;                  // 0..1
+    float breath = 1;                      // 0..1; below 1 the adrenaline bar shows it (breath bar)
+    int weapon = 0;                        // game::Weapon order: pistols, uzi, shotgun, speargun
+    bool drawn = false, dual = true, dead = false;
+    int clip[2] = {}, clipSize = 12;       // rounds in the right / left gun
+    int nextHand = 0;                      // gun that fires next (its last round is highlighted)
+    int healthPacks = 0;
+    bool gear = false;                     // a d-pad item (health pack, weapon switch) was pressed
+};
+
+// Combat reticle (screen pixels), drawn while a weapon is out.
+struct Reticle {
+    enum class Kind : uint8_t { None, Free, Target, Locked };
+    Kind kind = Kind::None;
+    float x = 0, y = 0;
+    bool slowMo = false; // adrenaline head-shot window: ring + pip
+    float pipX = 0, pipY = 0; // pip offset in reticle radii (+y up)
+};
+
 class Hud {
 public:
+    enum Group { Health, Weapons, Gear, kGroups };
+    // HUD space (tru.exe captures): origin (5 % W, 5 % H) for the top groups, (5 % W, 95 % H) for the d-pad,
+    // 1 virtual unit = H / 480, art 2/3 virtual unit per texel.
+    static float unit(int height) { return float(height) / 480.0f; }
+    static float originX(int width) { return 0.05f * float(width); }
+    static float originY(int height, bool bottom) { return (bottom ? 0.95f : 0.05f) * float(height); }
+    // Lara silhouette tint for a health value (HUD script bands 2000/1500/1000/500), 0xAABBGGRR.
+    static uint32_t healthColor(float health);
+    // In-game subtitle lines in the game font (TEXT.md §4: scale 0.6 at virtual y 352 / 374).
+    static void subtitles(Canvas& c, std::string_view top, std::string_view bottom);
+
     void notify(std::string text, double seconds = 3.0) { toast_ = std::move(text), toastLeft_ = seconds; }
     void title(std::string text, std::string subtitle = {}, double seconds = 4.0) {
         title_ = std::move(text), subtitle_ = std::move(subtitle), titleLeft_ = seconds;
     }
+    // Display groups appear on their triggers (damage, weapon drawn, d-pad...) and fade out after a hold.
+    void update(const HudState& s, double dt);
     void tick(double dt) { toastLeft_ -= dt, titleLeft_ -= dt; }
-    bool showing() const { return toastLeft_ > 0 || titleLeft_ > 0; }
+    float alpha(Group g) const { return alpha_[g]; }
     void draw(Canvas& c) const;
 
+    Reticle reticle;                       // set each frame
+    std::optional<std::array<float, 2>> grapple; // grapple target marker, screen pixels; set each frame
+
 private:
+    HudState s_, prev_;
+    bool first_ = true;
+    std::array<float, kGroups> alpha_{}, hold_{};
     std::string toast_, title_, subtitle_;
     double toastLeft_ = 0, titleLeft_ = 0;
 };
