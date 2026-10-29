@@ -53,7 +53,8 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
             const uint32_t t = targets + 0x0C * j;
             const int32_t section = at<int32_t>(ob, t);
             const uint32_t type = at<uint32_t>(ob, t + 4);
-            if (section < 0 || uint32_t(section) >= ns || type < 1 || type > 4)
+            // tru.exe 0x4D7680 switches on the type (1 state, 2-4 section actions); type 0 is a no-op there.
+            if (section < 0 || uint32_t(section) >= ns || type > 4)
                 throw FormatError("uber: invalid command target");
             command.targets.push_back({section, type, at<uint32_t>(ob, t + 8)});
         }

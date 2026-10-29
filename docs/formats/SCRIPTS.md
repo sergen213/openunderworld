@@ -158,7 +158,11 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   clones. No Wine process is needed for this implementation.
 - [O] Interpreter details read from 0x57CE50 (switch on opcode − 1): **SLEEP 0x7C** pops nothing and yields until
   the next frame (only WAIT 0x80 takes seconds); **STATE 0x7D** pops a state index and `0x57C830` ends the object's
-  threads and enters that state (ours ends the object's frames; the state's own code is not run [U]); PUSHM*/PUSHMA
+  threads and enters that state: `0x57B560` runs entry n of the type's state table (type section +0x40, count u8
+  +0x3E; inherited from the nearest super type that has one) as the object's new thread. Ours: in place when the
+  machine belongs to that object, else as a separate runtime thread beside the caller, which resumes at once; the
+  object's other threads end. Each event now runs as its own thread (a sleeping earlier handler keeps running).
+  State 0 (entered by Run) is not used as the startup function: doing so stops the l2 elevator chain [U]. PUSHM*/PUSHMA
   on a null object push 0 and MOVE through a null address is skipped (no failure). Native receivers held in a
   local (e.g. `PUSHLA 0` for `this`) are dereferenced before the call.
 - [O] Native function tables: each `*_ScriptType` vtable slot 3 is a bind function calling `FUN_005768f0(index,
@@ -174,6 +178,16 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   (Post 0xD / hit 0x11C, scripts pass 12345 or 1000: death volumes/planes) damage her [I: absolute / given type];
   `instance` Kill (10, 0x5B5740 dead flag) hides the object; `watervolumebase` reset (3) takes no argument;
   `messagechannel` Send always succeeds (unconsumed posts are no-ops in the exe too).
+- [O] More bindings: `enemybase` (bind 0x7B4060) 16/17 Set/Get the AI behaviour index (0x776F10 → 0x62DE00),
+  22 selects list entry n and posts 0xE1 (0x777010 → 0x63AC40), 26 the MoveNav animation variant (0x7771E0, field
+  0x37C0 read by 0x61B0C0) — ours keep the values (`World::enemyValues_`), their AI effect is [U];
+  `generatorbase` (0x7B4B60) 1/2 Spawn, 3 Enable / 4 Disable (generator flag 0x84 bit 0, read by the update 0x781510),
+  5 kill spawns, 6 spawn count → `ai::Enemies::generatorNative`; `health` 1/2 on an enemy's own script damage it;
+  `modifiable` 7 (Post 0x2E, receivers [U]); `uigamedata` 1 (0x60D630 returns 0) and 14 (a UI byte).
+  `uberobjectbase` 1 takes the command member as its argument (thunk 0x79D070); a command member is {object id,
+  command word}. Uber command targets of type 0 are no-ops (switch 0x4D7680), which the l1 Kraken tentacles use.
+- [O] A caller that discards a return value pushes no result address (l3_chapel soundvolumes calling
+  `globals.member12` vt 19); the VM only consumes an address-kind slot.
 
 ### Survey (`OU_SCRIPT_SURVEY=1 ou_game_tests --gtest_filter=GameReal.ScriptSurvey`)
 
@@ -186,6 +200,7 @@ DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). 
 |---|---|---|
 | Before (HEAD c3c69f2) | 1 390 | markup 0 (546), instanceref Get on unloaded target (232), SLEEP with empty stack (98), CALL5 (39), MOVE32 (34), music 2 (37, receiver in a local) |
 | After | 404 | enemybase 26/16/22 (80, AI), CALL5 0x6A (36, l3_chapel globals member 12 is not modelled), tentacle uber commands (31: `formats::loadUberObject` rejects their target types), spline 5 (27, l7 `natla_end_mover`), generatorbase 3/4 (22), uigamedata 1 (16), modifiable 7 (16) |
+| After states/enemy natives | 314 | playersensor 0 (28), spline 5 (27, l7 `natla_end_mover`: intro +0x68 multispline not decoded), CALL5 0x6A (24, l5 soundvolumes), larabase 56 (20), generatorbase 3 (20: surveyed Worlds have no enemy bigfile, so no generators), modifiable 1 (15). Gone: enemybase 16/22/26, tentacle uber commands, l3_chapel 0x6A, uigamedata 1, modifiable 7, enemy health 1. State threads now run code the previous survey never reached. |
 
 The survey also found a crash: cyclic static links (l2 planes) recursed forever in the legacy fallback; it is now
 bounded to depth 8. The three script-only chapter ends (l1_ship_sinking_hall plane 1074 / volume 1082 → 1005,

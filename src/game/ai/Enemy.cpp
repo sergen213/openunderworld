@@ -498,18 +498,50 @@ void Enemies::reset() {
     sync();
 }
 
+// tru.exe 0x781510: an enabled generator spawns on its own; ours when Lara is within range [I].
 void Enemies::tick(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, float dt) {
-    for (auto& g : generators_) {
-        if (g.fired || flatDist(g.pos, lara.pos) > g.range || std::abs(g.pos.z - lara.pos.z) > 2000.0f) continue;
-        g.fired = true;
-        if (auto type = typeOf(g.object)) {
-            auto& e = add(std::move(type), g.uid, g.pos, g.yaw, true);
-            e.unit = g.unit;
-            e.generator = g.uid;
-        }
-    }
+    for (auto& g : generators_)
+        if (!g.fired && g.enabled && flatDist(g.pos, lara.pos) <= g.range && std::abs(g.pos.z - lara.pos.z) <= 2000.0f)
+            spawn(g);
     shots.clear();
     for (auto& e : enemies_) e->tick(col, lara, hurt, dt, &shots);
+}
+
+void Enemies::spawn(Generator& g) {
+    g.fired = true;
+    if (auto type = typeOf(g.object)) {
+        auto& e = add(std::move(type), g.uid, g.pos, g.yaw, true);
+        e.unit = g.unit;
+        e.generator = g.uid;
+    }
+}
+
+// 1/2 Spawn (0x780EB0; ours: once per generator), 3 Enable, 4 Disable (flag 0x84 bit 0, read by the update
+// 0x781510), 5 kill every spawn (0x779350 flags them 0x20), 6 spawn count (+0x70).
+bool Enemies::generatorNative(int32_t uid, uint32_t function, uint32_t& result) {
+    const auto g = std::find_if(generators_.begin(), generators_.end(), [&](const Generator& x) { return x.uid == uid; });
+    if (g == generators_.end()) return false;
+    const auto spawned = [&](const auto& e) { return e->generator == uid && e->alive(); };
+    switch (function) {
+    case 1: case 2: if (!g->fired) spawn(*g); return true;
+    case 3: g->enabled = true; return true;
+    case 4: g->enabled = false; return true;
+    case 5:
+        for (auto& e : enemies_)
+            if (spawned(e)) e->onHit({e->health() + 1, e->position(), {0, 0, -1}});
+        return true;
+    case 6: result = uint32_t(std::count_if(enemies_.begin(), enemies_.end(), spawned)); return true;
+    default: return false;
+    }
+}
+
+bool Enemies::damage(int32_t uid, float amount) {
+    for (auto& e : enemies_)
+        if (e->uid() == uid) {
+            e->onHit({amount, e->position(), {0, 0, -1}});
+            return true;
+        }
+    return false;
 }
 
 } // namespace ou::game::ai

@@ -505,6 +505,8 @@ private:
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
     std::vector<ObjectCollider> colliders_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
+    void bindEnemies();
+    std::map<std::pair<int32_t, uint32_t>, uint32_t> enemyValues_; // (intro uid, enemybase setter fn) -> value
     physics::Scene physics_;
     Health health_;
     WaterSim water_;

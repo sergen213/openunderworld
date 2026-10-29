@@ -216,6 +216,10 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
         }
         t.functions.push_back(std::move(f));
     }
+    if (const uint8_t n = s.at<uint8_t>(0x3E))
+        if (const auto sp = s.ptr(0x40))
+            for (uint32_t k = 0; k < n; ++k)
+                t.states.push_back(views[sp->section].ptr(sp->offset + 4 * k).value_or(cdc::Pointer{}));
     return t;
 }
 
@@ -310,6 +314,7 @@ void applyState(Object& o, const nlohmann::json* s) {
     o.state = 0, o.t = 0, o.inside = o.firstIn = false, o.offset = vec3(0);
     o.hidden = false, o.engagement = -1;
     o.machine.reset();
+    o.fibers.clear();
     if (o.script) {
         o.script->fields = o.script->initial;
         o.script->strings = o.script->initialStrings;
@@ -477,10 +482,41 @@ const Object* Runtime::find(int32_t uid) const {
 }
 Object* Runtime::findMut(int32_t uid) { return const_cast<Object*>(find(uid)); }
 
+std::shared_ptr<vm::Instance> Runtime::instance(int32_t uid) const {
+    for (const auto& candidate : objects_) if (candidate.uid == uid) return candidate.script;
+    if (playerScript_ && playerScript_->uid == uid) return playerScript_;
+    for (const auto& [key, instance] : auxiliary_) if (instance->uid == uid) return instance;
+    return {};
+}
+
 void Runtime::recordFailure(const Object& o) {
-    if (!o.machine) return;
-    if (failures_[{o.uid, o.machine->failure()}]++ == 0)
-        std::fprintf(stderr, "script: uid %d (%s) handler stopped: %s\n", o.uid, o.name.c_str(), o.machine->failure().c_str());
+    if (o.machine) recordFailure(o.uid, o.name, *o.machine);
+}
+void Runtime::recordFailure(int32_t uid, const std::string& name, const vm::Machine& m) {
+    if (failures_[{uid, m.failure()}]++ == 0)
+        std::fprintf(stderr, "script: uid %d (%s) handler stopped: %s\n", uid, name.c_str(), m.failure().c_str());
+}
+
+// STATE (0x57C830) ends every thread of the object but the one now running its new state.
+void Runtime::endOtherThreads(int32_t uid, const vm::Machine* keep) {
+    std::erase_if(threads_, [&](const auto& t) { return t.first == uid && t.second.get() != keep; });
+    Object* o = findMut(uid);
+    if (!o) return;
+    std::erase_if(o->fibers, [&](const auto& m) { return m.get() != keep; });
+    if (o->machine.get() != keep) o->machine.reset();
+}
+
+// After a thread ran: apply its STATE effects; states entered from another object's call become threads.
+void Runtime::adopt(const std::shared_ptr<vm::Machine>& m) {
+    if (const auto changed = m->takeStateChange()) endOtherThreads(*changed, m.get());
+    for (const auto& [uid, f] : m->takeStarts()) {
+        const auto self = instance(uid);
+        if (!self) continue;
+        const auto thread = makeMachine(uid);
+        if (!thread->start(*self, *f)) recordFailure(uid, find(uid) ? find(uid)->name : "unit script", *thread);
+        if (thread->active()) threads_.push_back({uid, thread});
+        adopt(thread);
+    }
 }
 
 void Runtime::endCinematic(int32_t uid) {
@@ -507,12 +543,36 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
     const size_t eventCount = events_.size();
     bool completed = false;
     if (o.script) {
-        auto resolve = [this](int32_t uid) -> std::shared_ptr<vm::Instance> {
-            for (auto& candidate : objects_) if (candidate.uid == uid) return candidate.script;
-            if (playerScript_ && playerScript_->uid == uid) return playerScript_;
-            for (auto& [key, instance] : auxiliary_) if (instance->uid == uid) return instance;
-            return {};
-        };
+        if (o.machine && o.machine->active() && k == EventKind::Main) {
+            completed = true; // function 2 waits until the constructor's thread finishes (retried in tick)
+        } else {
+            // Each event runs as its own thread in the exe; a sleeping earlier handler keeps running beside it.
+            if (o.machine && o.machine->active()) o.fibers.push_back(std::move(o.machine));
+            const auto machine = makeMachine(source);
+            o.machine = machine;
+            completed = machine->call(*o.script, vt);
+            if (!completed) recordFailure(o.uid, o.name, *machine);
+            adopt(machine);
+            if (k == EventKind::Main) o.mainPending = false;
+        }
+    }
+    if (events_.size() != eventCount || completed) return;
+    const auto it = o.links.find(vt);
+    if (it == o.links.end() || fallbackDepth_ >= 8) return; // static links can form cycles (survey found l2 plane loops)
+    ++fallbackDepth_;
+    for (const int32_t target : std::vector<int32_t>(it->second)) { // copy: activation may not invalidate
+        events_.push_back({EventKind::Activate, source, target, tick_});
+        Object* t = findMut(target);
+        if (t) fire(EventKind::Use, *t, false);
+        if (t && t->kind == Kind::Door && t->state == 0) t->state = t->clips ? 1 : 2, t->t = 0; // [I] doors only open
+    }
+    --fallbackDepth_;
+}
+
+// A VM thread whose natives act for `source` (the intro uid that owns the thread).
+std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
+    {
+        auto resolve = [this](int32_t uid) { return instance(uid); };
         auto auxiliary = [this](const std::shared_ptr<vm::Program>& program, uint32_t typeId) {
             const auto key = std::make_pair(program.get(), typeId);
             auto& instance = auxiliary_[key];
@@ -658,6 +718,14 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 nc.result = vm::Value::scalar(field() == other->fields[nc.args[0].offset]);
                 return true;
             }
+            // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance; its receivers are [U].
+            if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) return true;
+            // uigamedata 1 (0x60D630) always returns 0; 14 (0x77BBF0) sets a global UI byte no gameplay reads [U].
+            if (!std::strcmp(name, "uigamedata") && nc.function == 1 && nc.args.empty()) {
+                nc.result = vm::Value::scalar(0);
+                return true;
+            }
+            if (!std::strcmp(name, "uigamedata") && nc.function == 14 && nc.args.size() == 1) return true;
             if (!std::strcmp(name, "instance") && (nc.function == 0 || nc.function == 1)) return true; // debug print
             if (!std::strcmp(name, "instanceref") && nc.function == 9 && nc.args.size() == 2) { // SetProperty
                 self->properties[(uint64_t(off) << 32) | nc.args[0].bits] = nc.args[1].bits & 0xFF;
@@ -767,13 +835,16 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                     return entry.second == object->name;
                 });
                 if (!knownObject || (nc.function == 5 && !nc.args.empty())) return false; // native "object mismatch" path
-                const uint32_t command = nc.function == 1 ? self->fields[off + 4] : 0;
+                // fn 1 is invoked on the command member itself, or on the object with the command member as argument.
+                const uint32_t commandOff = nc.args.size() == 1 && nc.args[0].kind == vm::Value::Kind::Member &&
+                                                    nc.args[0].uid == self->uid ? nc.args[0].offset : off;
+                const uint32_t command = nc.function == 1 ? self->fields[commandOff + 4] : 0;
                 uint32_t commandIndex = 0;
                 if (nc.function == 1)
                     for (const ScriptType* type = self->program->type(self->typeId); type; type = self->program->type(type->superId))
                         for (const auto& member : type->members)
                             if (!std::strcmp(self->program->nativeName(member.typeId), "uberobjectcommand")) {
-                                if (member.offset == off) goto commandIndexFound;
+                                if (member.offset == commandOff) goto commandIndexFound;
                                 ++commandIndex;
                             }
             commandIndexFound:
@@ -814,6 +885,13 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 unitEffect_ = nc.args[0].bits; // tru.exe 0x6D6F20 writes the global post-effect scalar
                 return true;
             }
+            if (enemy_ && (!std::strcmp(name, "enemybase") || !std::strcmp(name, "generatorbase") ||
+                           (!std::strcmp(name, "health") && self != playerScript_))) {
+                uint32_t result = 0;
+                if (!enemy_(self->uid, name, nc.function, nc.args, result)) return false;
+                nc.result = vm::Value::scalar(result);
+                return true;
+            }
             return false;
         };
         auto cinematic = [this, source](vm::Instance& target, int16_t vt) {
@@ -823,26 +901,8 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
             events_.push_back({EventKind::Activate, source, object->uid, tick_});
             return true;
         };
-        if (o.machine && o.machine->active()) {
-            completed = true; // a sleeping handler owns the object until it finishes
-        } else {
-            o.machine = std::make_shared<vm::Machine>(resolve, native, cinematic);
-            completed = o.machine->call(*o.script, vt);
-            if (!completed) recordFailure(o);
-            if (k == EventKind::Main) o.mainPending = false;
-        }
+        return std::make_shared<vm::Machine>(resolve, native, cinematic);
     }
-    if (events_.size() != eventCount || completed) return;
-    const auto it = o.links.find(vt);
-    if (it == o.links.end() || fallbackDepth_ >= 8) return; // static links can form cycles (survey found l2 plane loops)
-    ++fallbackDepth_;
-    for (const int32_t target : std::vector<int32_t>(it->second)) { // copy: activation may not invalidate
-        events_.push_back({EventKind::Activate, source, target, tick_});
-        Object* t = findMut(target);
-        if (t) fire(EventKind::Use, *t, false);
-        if (t && t->kind == Kind::Door && t->state == 0) t->state = t->clips ? 1 : 2, t->t = 0; // [I] doors only open
-    }
-    --fallbackDepth_;
 }
 
 std::string Runtime::helpCondition() const {
@@ -858,8 +918,25 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     for (auto& [key, c] : clocks_) // 0x4A3380; alarm callbacks (fn 11 handler) are not run [U]
         if (c.state == 2) c.elapsed += float(kDt);
     fade_ = fade_ < fadeTarget_ ? std::min(fadeTarget_, fade_ + fadeStep_) : std::max(fadeTarget_, fade_ - fadeStep_);
+    for (size_t i = 0; i < threads_.size(); ++i) { // copy: adopt may add or end threads
+        const auto [uid, thread] = threads_[i];
+        if (!instance(uid)) continue; // owner unloaded: dropped below
+        if (!thread->tick(float(kDt))) recordFailure(uid, find(uid) ? find(uid)->name : "unit script", *thread);
+        adopt(thread);
+    }
+    std::erase_if(threads_, [&](const auto& t) { return !t.second->active() || !instance(t.first); });
     for (auto& o : objects_) {
-        if (o.machine && o.machine->active() && !o.machine->tick(float(kDt))) recordFailure(o);
+        for (size_t i = 0; i < o.fibers.size(); ++i) { // copy: a STATE may end the object's threads
+            const auto fiber = o.fibers[i];
+            if (!fiber->tick(float(kDt))) recordFailure(o.uid, o.name, *fiber);
+            adopt(fiber);
+        }
+        std::erase_if(o.fibers, [](const auto& m) { return !m->active(); });
+        if (o.machine && o.machine->active()) {
+            const auto machine = o.machine;
+            if (!machine->tick(float(kDt))) recordFailure(o.uid, o.name, *machine);
+            adopt(machine);
+        }
         if (o.mainPending && (!o.machine || !o.machine->active())) fire(EventKind::Main, o);
     }
     holding_ = false, carried_ = vec3(0);
@@ -1001,6 +1078,7 @@ void Runtime::restore(const nlohmann::json& j) {
         applyState(o, stash_.contains(key) ? &stash_[key] : nullptr);
         stash_.erase(key);
     }
+    threads_.clear(); // active sleep frames do not persist
     hasLast_ = false; // no plane crossings across the jump
 }
 

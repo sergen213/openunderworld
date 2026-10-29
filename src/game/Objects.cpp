@@ -97,7 +97,7 @@ bool World::sendUberCommand(int32_t uid, uint32_t commandIndex) {
     if (!data || commandIndex >= data->commands.size()) return false;
     auto& states = uberStates_[uid];
     for (const auto& target : data->commands[commandIndex].targets) {
-        if (target.section < 0 || size_t(target.section) >= states.size()) continue;
+        if (target.type == 0 || target.section < 0 || size_t(target.section) >= states.size()) continue;
         states[size_t(target.section)] = target.payload;
     }
     if (const auto motion = uberMotion_.find(uid); motion != uberMotion_.end())
@@ -119,8 +119,11 @@ void World::bindUber() {
             return true;
         }
         if (function != 1) return false;
+        // The command member is {uber object id, command word}: the word names its table entry [I: by ordinal and
+        // id when they agree, else as the table index, else as the id].
         const auto commandIt = commandIndex < data->commands.size() && data->commands[commandIndex].id == command
             ? data->commands.begin() + commandIndex
+            : command < data->commands.size() ? data->commands.begin() + command
             : std::find_if(data->commands.begin(), data->commands.end(), [&](const auto& c) { return c.id == command; });
         if (commandIt == data->commands.end()) return false;
         if (!sendUberCommand(uid, uint32_t(commandIt - data->commands.begin()))) return false;
@@ -212,6 +215,33 @@ void World::bindMarkup() {
                     if (u.data.col.markup[i].id == key.second)
                         col_.markup[u.markupBase + i].type = enabled ? u.data.col.markup[i].type : kMarkupDisabled;
         return true;
+    });
+}
+
+// enemybase (tru.exe bind 0x7B4060): 16/17 Set/Get the AI behaviour index (0x776F10 -> 0x62DE00 selects the
+// behaviour list of the enemy data; 0x776F40 reads it back), 22 selects entry n of the current target's list and
+// posts 0xE1 (0x777010 -> 0x63AC40), 26 picks the MoveNav animation variant (0x7771E0, field 0x37C0 read by
+// 0x61B0C0). Ours keep the values for Get; our AI has no behaviour lists or variants [U: their effect on it].
+// generatorbase (0x7B4B60) and health 1/2 on an enemy's own script go to ai::Enemies.
+void World::bindEnemies() {
+    script_.setEnemyNative([this](int32_t uid, std::string_view type, uint32_t function,
+                                  std::span<const script::vm::Value> args, uint32_t& result) {
+        if (type == "generatorbase") return enemies_.generatorNative(uid, function, result);
+        if (type == "health") {
+            if ((function != 1 || args.size() != 1) && (function != 2 || args.empty() || args.size() > 2)) return false;
+            enemies_.damage(uid, float(int32_t(args[0].bits))); // [I] absolute, like Lara's; absent enemy: no-op
+            return true;
+        }
+        if ((function == 16 || function == 22 || function == 26) && args.size() == 1) {
+            enemyValues_[{uid, function}] = args[0].bits;
+            return true;
+        }
+        if (function == 17 && args.empty()) {
+            const auto it = enemyValues_.find({uid, 16});
+            result = it == enemyValues_.end() ? 0 : it->second;
+            return true;
+        }
+        return false;
     });
 }
 

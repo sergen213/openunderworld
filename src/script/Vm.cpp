@@ -63,6 +63,11 @@ const Function* Program::method(uint32_t typeId, int16_t vt) const {
         for (const auto& f : t->functions) if (f.vtIndex == vt) return &f;
     return nullptr;
 }
+const Function* Program::state(uint32_t typeId, uint32_t n) const {
+    for (const ScriptType* t = type(typeId); t; t = type(t->superId))
+        if (!t->states.empty()) return n < t->states.size() ? method(t->states[n]) : nullptr;
+    return nullptr;
+}
 const Function* Program::startup(uint32_t typeId) const {
     for (const ScriptType* t = type(typeId); t; t = type(t->superId))
         if (!t->functions.empty())
@@ -122,9 +127,11 @@ bool Machine::call(Instance& object, int16_t vt) {
     if (!object.program) return false;
     const Function* f = vt == -2 ? object.program->startup(object.typeId)
         : vt == -3 ? object.program->mainFunction(object.typeId) : object.program->method(object.typeId, vt);
-    if (!f) return true; // inherited empty/no handler
+    return f ? start(object, *f) : true; // no handler: inherited empty
+}
+bool Machine::start(Instance& object, const Function& f) {
     frames_.clear(); steps_ = 0; wait_ = 0; failure_.clear();
-    if (!push(object, *f)) return false;
+    if (!push(object, f)) return false;
     return run() != Step::Failed;
 }
 
@@ -227,10 +234,14 @@ bool Machine::write(const Value& destination, const Value& source) {
 }
 
 int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame& frame) {
-    if (frame.stack.size() < size_t(f.argCount) + (f.returnType != 0)) return 0;
+    if (frame.stack.size() < size_t(f.argCount)) return 0;
     if (receiver.kind == Value::Kind::Local) receiver = read(receiver); // object or native value held in a local
     const std::vector<Value> args(frame.stack.end() - f.argCount, frame.stack.end());
-    const Value resultAddress = f.returnType ? *(frame.stack.end() - f.argCount - 1) : Value{};
+    // A caller that discards the result pushes no result address (l3_chapel soundvolume `globals.member12.vt19()`).
+    const Value* slot = f.returnType && frame.stack.size() > f.argCount ? &*(frame.stack.end() - f.argCount - 1) : nullptr;
+    const bool hasResult = slot && (slot->kind == Value::Kind::Local || slot->kind == Value::Kind::Member ||
+                                     (slot->kind == Value::Kind::Scalar && slot->bits == 0));
+    const Value resultAddress = hasResult ? *slot : Value{};
     Value result;
     if (f.native) {
         NativeContext nc{current.program->owner(&f), current.program->functionIndex(&f), receiver, args, {}};
@@ -242,11 +253,11 @@ int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame&
         if (nc.wait) return 3; // blocking native (e.g. WaitUntilBirthed): stack untouched, retried next tick
         result = nc.result;
     }
-    frame.stack.resize(frame.stack.size() - f.argCount - (f.returnType != 0));
-    if (f.native) return f.returnType && !write(resultAddress, result) ? 0 : 1;
+    frame.stack.resize(frame.stack.size() - f.argCount - hasResult);
+    if (f.native) return hasResult && !write(resultAddress, result) ? 0 : 1;
     auto target = resolveObject(receiver);
     if (!target) {
-        if (f.returnType && !write(resultAddress, Value::scalar(0))) return 0;
+        if (hasResult && !write(resultAddress, Value::scalar(0))) return 0;
         return 1; // the exe reports a null script receiver and continues the caller
     }
     if (event_ && event_(*target, f.vtIndex)) return 1;
@@ -520,11 +531,22 @@ Machine::Step Machine::step() {
         }
         case 0x7D: { // STATE: pop the state index; tru.exe 0x57C830 ends this object's threads and enters that state
             if (fr.stack.empty()) return fail();
-            pop();
+            const uint32_t n = load(pop());
+            Instance& self = object;
+            stateChanged_ = self.uid;
             size_t k = 0;
-            while (frames_[k].object != &object) ++k;
-            frames_.erase(frames_.begin() + ptrdiff_t(k) + 1, frames_.end());
-            frames_[k].pc = frames_[k].function->code.size(); // the state's own code is not run [U]
+            while (frames_[k].object != &self) ++k;
+            frames_.erase(frames_.begin() + ptrdiff_t(k), frames_.end());
+            // 0x57B560 runs the state's function (type +0x40 table) as the object's new thread; state 0 is only
+            // entered by Run(). This machine's own object continues here; another object's state starts beside the
+            // caller, which resumes at once.
+            const Function* sf = n > 0 ? self.program->state(self.typeId, n) : nullptr;
+            if (k == 0) {
+                if (sf && !push(self, *sf)) return Step::Failed;
+            } else {
+                ++frames_.back().pc; // the ended call returns to its caller
+                if (sf) starts_.push_back({self.uid, sf});
+            }
             return Step::Continue;
         }
         case 0x7E: { // ISTYPE

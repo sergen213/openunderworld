@@ -1583,7 +1583,8 @@ TEST(GameReal, ScriptSurvey) {
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
         if (line.empty()) continue;
         const std::string name = line.substr(line.rfind('\\') + 1);
-        if (bf.read("pc-w\\" + name + ".drm")) units.push_back(name);
+        const char* only = std::getenv("OU_SCRIPT_SURVEY_UNIT"); // optional substring filter
+        if (bf.read("pc-w\\" + name + ".drm") && (!only || name.find(only) != std::string::npos)) units.push_back(name);
     }
     const auto implemented = [](uint8_t op) {
         return op <= 0x15 || (op >= 0x2E && op <= 0x31) || op == 0x34 || (op >= 0x3D && op <= 0x6C) || op == 0x77 ||

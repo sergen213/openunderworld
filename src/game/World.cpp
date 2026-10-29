@@ -209,6 +209,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     updateCamera({}, 0);
     prevCam_ = cam_;
     updatePose(0, true);
+    bindEnemies();
 }
 
 std::vector<script::UnitRef> World::unitRefs() const {

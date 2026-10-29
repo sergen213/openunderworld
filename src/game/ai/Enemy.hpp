@@ -220,6 +220,7 @@ struct Generator {
     float yaw = 0;
     float range = 2528.45f; // [I] spawns when Lara comes this close (8 m), at most 2000 units above/below
     bool fired = false;
+    bool enabled = true; // generatorbase Enable (3) / Disable (4): tru.exe generator flag 0x84 bit 0 clear / set
 };
 
 // Every enemy of the loaded units: placed enemy intros and generator spawns. World ticks it after Lara.
@@ -251,12 +252,17 @@ public:
     std::vector<Shot> shots;
     const std::vector<std::unique_ptr<Enemy>>& all() const { return enemies_; }
     const std::vector<Generator>& generators() const { return generators_; }
+    // Script natives on an enemy or generator intro (tru.exe NsEnemyBase / NsGeneratorBase bind tables 0x7B4060,
+    // 0x7B4B60; docs/formats/SCRIPTS.md). False: no such object, or a function not modelled.
+    bool generatorNative(int32_t uid, uint32_t function, uint32_t& result);
+    bool damage(int32_t uid, float amount); // health 1/2 on an enemy's own script
     uint64_t version() const { return version_; } // bumped whenever all() gains or loses an enemy
     std::vector<std::string> warnings;
 
 private:
     std::shared_ptr<const EnemyType> typeOf(const std::string& name);
     void sync(); // targets_ <- enemies_
+    void spawn(Generator& g);
 
     const cdc::BigfileSet* bigfile_ = nullptr;
     std::map<std::string, std::shared_ptr<const EnemyType>, std::less<>> types_;

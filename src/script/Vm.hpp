@@ -27,7 +27,8 @@ public:
     const char* nativeName(uint32_t id) const;
     bool isA(uint32_t derived, uint32_t base) const;
     const Function* method(uint32_t typeId, int16_t vt) const;
-    const Function* startup(uint32_t typeId) const; // first function of the most-derived type that has functions
+    const Function* startup(uint32_t typeId) const; // first function (vt -1/20); state 0 (Run, 0x57B560) is not used [U: breaks the l2 elevator chain]
+    const Function* state(uint32_t typeId, uint32_t n) const; // most-derived state table with entry n
     const Function* mainFunction(uint32_t typeId) const; // function 2: WAIT-based multibody polling script
     const Function* method(cdc::Pointer p) const; // Function record or Prototype
     std::shared_ptr<Instance> instantiate(int32_t uid, uint32_t typeId);
@@ -69,9 +70,14 @@ public:
     Machine(Resolve resolve, Native native, Event event = {}) : resolve_(std::move(resolve)), native_(std::move(native)),
         event_(std::move(event)) {}
     bool call(Instance& object, int16_t vt); // false: unsupported opcode/call/binding or budget exceeded
+    bool start(Instance& object, const Function& f); // a new thread running f (entered state)
     bool tick(float seconds);                // resume after SLEEP/WAIT; false on execution failure
     bool active() const { return !frames_.empty(); }
     const std::string& failure() const { return failure_; } // why the last call/tick failed ("op 0x78", "native x fn 3", ...)
+    // A STATE ran on that object (uid): its other threads end (tru.exe 0x57C830).
+    std::optional<int32_t> takeStateChange() { return std::exchange(stateChanged_, std::nullopt); }
+    // States entered by objects called from another object's frames: the runtime starts each as its own thread.
+    std::vector<std::pair<int32_t, const Function*>> takeStarts() { return std::exchange(starts_, {}); }
 
 private:
     struct Frame {
@@ -99,6 +105,8 @@ private:
     size_t steps_ = 0;
     float wait_ = 0;
     std::string failure_;
+    std::optional<int32_t> stateChanged_;
+    std::vector<std::pair<int32_t, const Function*>> starts_;
 };
 
 } // namespace ou::script::vm

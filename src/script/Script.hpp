@@ -71,6 +71,8 @@ struct ScriptType {
     uint16_t size = 0;            // instance data bytes
     std::vector<Member> members;
     std::vector<Function> functions;
+    // +0x40 (count: u8 +0x3E): Function record run on entering state n (tru.exe 0x57B560; Run() enters state 0)
+    std::vector<cdc::Pointer> states;
 };
 // Parses drm.sections[index] (type 8). Throws cdc::FormatError on layout mismatch or unknown opcodes.
 ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index);
@@ -128,6 +130,7 @@ struct Object {
     std::map<int16_t, std::vector<int32_t>> links; // vtIndex -> targets (legacy fallback when VM is unsupported)
     std::shared_ptr<vm::Instance> script;          // parsed intro type + mutable fields; null in synthetic tests
     std::shared_ptr<vm::Machine> machine;          // active handler; retained across SLEEP/WAIT ticks
+    std::vector<std::shared_ptr<vm::Machine>> fibers; // earlier handlers still sleeping beside it (threads)
     bool mainPending = false;                      // start function 2 after the constructor finishes
     // Animation (Switch/Door): skeleton of the object's render model + the clips its states play.
     std::shared_ptr<const scene::Skeleton> skeleton;
@@ -186,6 +189,10 @@ public:
     // initial value (an inline SoundPlex node in the owner's unit DRM); anchor = intro uid for 3D plays, 0 for 2D.
     using SoundNative = std::function<bool(int32_t owner, uint32_t member, cdc::Pointer plex, uint32_t function, int32_t anchor)>;
     void setSoundNative(SoundNative native) { sound_ = std::move(native); }
+    // enemybase / generatorbase natives and health 1/2 on a non-player script, on the intro `uid` (World -> ai::Enemies).
+    using EnemyNative = std::function<bool(int32_t uid, std::string_view type, uint32_t function,
+                                           std::span<const vm::Value> args, uint32_t& result)>;
+    void setEnemyNative(EnemyNative native) { enemy_ = std::move(native); }
     // gamebase natives 4-7 = the global music variables (0x4A3E00/10/30/50 -> 0x583D40/30, array 0xCCB560).
     std::array<uint8_t, 256>& gameValues() { return gameValues_; }
     // Help-on-demand condition ("hint_NN") a unit script last stored: unit vt 28 copies its string argument into a
@@ -226,6 +233,12 @@ private:
     void fire(EventKind k, Object& o, bool announce = true);
     Object* findMut(int32_t uid);
     void recordFailure(const Object& o);
+    void recordFailure(int32_t uid, const std::string& name, const vm::Machine& m);
+    void endOtherThreads(int32_t uid, const vm::Machine* keep);
+    void adopt(const std::shared_ptr<vm::Machine>& m);
+    std::shared_ptr<vm::Instance> instance(int32_t uid) const; // object, Lara or unit/global script by uid
+    std::shared_ptr<vm::Machine> makeMachine(int32_t source);
+    std::vector<std::pair<int32_t, std::shared_ptr<vm::Machine>>> threads_; // states entered from another object's call
 
     const cdc::BigfileSet* bigfile_ = nullptr;
     std::shared_ptr<vm::Instance> playerScript_;
@@ -237,6 +250,7 @@ private:
     HealthNative health_;
     MarkupNative markup_;
     SoundNative sound_;
+    EnemyNative enemy_;
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;
     struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips; };
