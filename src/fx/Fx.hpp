@@ -162,6 +162,16 @@ struct LightDef {
     std::optional<scene::Light> dtp; // +0x20 light DTP: type, cone, falloff curve, flicker
 };
 
+// Class 7 instance fade (GenericFXObject +0x44 / +0x48, 0x0C bytes; command 0x22 / effect map class 7, tru.exe
+// 0x52C920; per frame 0x5B55D0). The instance fade is instance +0x1B4 (0 drawn, 1 gone; 4096 = 1 in the record): set to
+// `from`, then moved to `to` over `frames` 30 Hz frames (0: `to` at once).
+struct FadeDef {
+    float from = 0, to = 0;  // +0x00 / +0x02 s16 / 4096
+    int16_t frames = 0;      // +0x04
+    int16_t model = 0;       // +0x06 model index (flags & 0x80)
+    uint8_t flags = 0;       // +0x0B: 0x80 = crossfade to model `model` (instance +0x238, 0x5B3EC0) [not implemented]
+};
+
 // 0x31C0-byte screen filter resource (DTP rtype 16; EFFECTS.md "Screen filters"): the parts drawn. Curves are 9 tables
 // of 256 bytes, a 3x3 matrix: tables 3c..3c+2 = what input channel c adds to R, G, B.
 struct FilterResource {
@@ -227,6 +237,7 @@ struct Event {
     bool effect() const { return (info & 3) == 1 && !(info & 4); } // effect callback, not disabled
     bool isSound() const { return sound.kind != 0xFF && !(info & 4); }
     uint8_t material() const { return uint8_t((info & 0x3F0) >> 4); }
+    int variant() const { return (info >> 10) & 3; }
     bool matches(uint8_t mat) const { return !(info & 0xC00) && (!material() || material() == mat); }
     // Anim-list record that runs on an instance standing on / hit at `material`.
     bool runsOn(uint8_t mat) const { return effect() && matches(mat); }
@@ -241,6 +252,7 @@ struct ObjectFx {
     std::vector<FilterDef> filters;      // class 5
     std::vector<RibbonDef> ribbons;      // class 1
     std::vector<LightningDef> bolts;     // class 3
+    std::vector<FadeDef> fades;          // class 7
     struct MapEntry { uint8_t id = 0; int8_t cls = -1; uint8_t index = 0; };
     std::vector<MapEntry> effectMap;     // +0x04 / +0x08 (commands 0x1C / 0x2F look effects up by id)
     std::vector<Event> events;           // object section +4 list
@@ -301,6 +313,10 @@ public:
     // `material` (Event::soundOn) go to `sound` at their segment's world position.
     int runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
                   int32_t owner, uint8_t material, float from, float to, std::span<const glm::mat4> bones = {});
+    // The records of `events` of event variant `variant` (info >> 10 & 3, >= 1), all at once whatever their frame
+    // (tru.exe 0x5B26C0 with a variant: no frame window). Rewards' "pickup" lists keep their fade-out there (0x2401).
+    int runVariant(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
+                   int32_t owner, int variant, uint8_t material = 0);
     // A one-shot instance playing `events` from frame 0 at a fixed `world` as the game ticks (bullet hits, weapon
     // fire: tru.exe births the hit object, whose clip events filter on its material, 0x6B7030).
     // `target`: the shot's end, the position of segment -100 (lightning tracers: wp_* `fire` class 3 records) [I].
@@ -314,6 +330,11 @@ public:
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     bool hasOwner(int32_t owner) const;
     void clear();
+    // Instance fade of `owner` (class 7 / command 0x21, instance +0x1B4): 0 drawn .. 1 gone; 0 without one.
+    float fade(int32_t owner) const;
+    bool fading(int32_t owner) const; // a fade still moving toward its target
+    // Owners with a fade > 0 (renderers draw their instances with opacity 1 - fade).
+    void fadedOwners(std::vector<std::pair<int32_t, float>>& out) const;
     void tick(const glm::vec3& camera); // one 60 Hz game tick
     // Camera-facing sprites (particles and glows), back to front, batched by texture and blend.
     void build(const render::Camera& camera, float aspect, std::vector<render::FxVertex>& vertices,
@@ -451,6 +472,9 @@ private:
     std::vector<Face> faces_;
     std::vector<Bolt> bolts_;
     std::unordered_map<int32_t, Pose> poses_;
+    struct Fade { float value = 0, target = 0, step = 0; }; // instance +0x1B4 / +0x1B8 / +0x1BC (step per 30 Hz frame)
+    std::unordered_map<int32_t, Fade> fades_;
+    void setFade(int32_t owner, float from, float to, int frames); // from < 0: from the current value (0x52C890)
     std::optional<glm::vec3> target_; // segment -100 while a sequence with a target runs its events
 };
 

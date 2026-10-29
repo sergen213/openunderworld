@@ -141,7 +141,7 @@ struct ScenePush {
     int32_t lighting;
     float alphaRef;
     int32_t rt; // scene.frag: bit 0 RT sun shadows, bit 1 reflective draw (sun, eye, rays: sun.glsl OuShadow)
-    int32_t pad;
+    float opacity; // scene.frag: instance opacity (FrameOptions::meshOpacity); < 0: opaque material, alpha = -opacity
 };
 static_assert(sizeof(ScenePush) == 144);
 static_assert(sizeof(scene::Vertex) == 18 * 4, "render/sun.glsl kOuVertexWords (ray-traced vertex fetches)");
@@ -688,7 +688,7 @@ public:
         const bool rtOn = rtPipelines_ && tlas_ && options.rt != RayTracing::Off;
         const bool shadowMap = options.shadows || options.rt != RayTracing::Off;
         rtStatus_.active = rtOn;
-        ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0, 0.0f, 0, 0};
+        ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0, 0.0f, 0, 1.0f};
         const glm::mat4 currentVP = zRemap * eye.projection(aspect) * eye.view(); // unjittered (FSR motion)
         const bool enhancedWater = options.water == WaterQuality::Enhanced;
         uint32_t splashCount = 0; // splash droplet vertices drawn (FSR reactivity)
@@ -706,7 +706,8 @@ public:
                                (filter && options.screenFilter->dof);
         for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        drawOrder(meshes_, camera.position, order_);
+        meshOpacities(options.meshOpacity, meshes_.size(), opacity_);
+        drawOrder(meshes_, camera.position, order_, opacity_);
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
         gpuMark(cmd, 2);
         // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
@@ -805,6 +806,7 @@ public:
             if (rtOn) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 2, 1, &rtSet_, 0, nullptr);
             layout = Bound::Generic;
         };
+        auto opacityOf = [&](uint32_t mesh) { return mesh < opacity_.size() ? opacity_[mesh] : 1.0f; };
         auto drawOriginal = [&](const DrawRef& d, const OrigDraw& od, VkPipeline p) {
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             if (layout != Bound::Original) {
@@ -821,7 +823,7 @@ public:
             if (meshLights_.size() < meshes_.size()) meshLights_.resize(meshes_.size());
             auto& [stamp, lights] = meshLights_[d.mesh];
             if (stamp != frameCounter_ + 1) stamp = frameCounter_ + 1, lights = original::lightSet(environment_, m.center, m.radius);
-            original::fillObject(ob, viewProjD3D, m.model, lights);
+            original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);
             vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
@@ -834,7 +836,7 @@ public:
         if (rtPipelines_) { // RT depth pre-pass over the opaque submeshes (they are first in order_)
             for (const DrawRef& d : order_) {
                 const scene::SubMesh& s = meshes_[d.mesh].submeshes[d.sub];
-                if (s.blend != scene::Blend::Opaque) break;
+                if (drawBlend(s, opacityOf(d.mesh)) != scene::Blend::Opaque) break;
                 if (enhancedWater && meshes_[d.mesh].water) continue;
                 // Translated programs pre-pass with their own (invariant) VS and plain PS (its alpha test, no sun term).
                 if (const OrigDraw* od = origDraw(d)) {
@@ -858,24 +860,27 @@ public:
             const GpuMesh& m = meshes_[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
             if (enhancedWater && m.water) continue; // the water pass below draws them with the opaque copies
+            const float op = opacityOf(d.mesh);
+            const scene::Blend blend = drawBlend(s, op);
             // Rays on opaque surfaces (pre-passed: each visible pixel traces once) and on water for reflections.
             const bool reflective = rtOn && m.water && options.rt == RayTracing::Full;
-            const bool rays = rtOn && (s.blend == scene::Blend::Opaque || reflective);
+            const bool rays = rtOn && (blend == scene::Blend::Opaque || reflective);
             if (const OrigDraw* od = origDraw(d)) {
                 if (od->screen) {
                     screenDraws_.push_back(d);
                     continue;
                 }
-                drawOriginal(d, *od, origPipeline(od->program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, s.blend));
+                drawOriginal(d, *od, origPipeline(od->program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, blend));
                 continue;
             }
             useGeneric();
-            const VkPipeline p = scenePipelines_[size_t(s.blend)];
+            const VkPipeline p = scenePipelines_[size_t(blend)];
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             bindMesh(d.mesh);
             push.model = m.model;
             push.alphaRef = s.alphaRef / 255.0f;
-            push.rt = (rtOn && s.blend == scene::Blend::Opaque ? 1 : 0) | (reflective ? 2 : 0);
+            push.rt = (rtOn && blend == scene::Blend::Opaque ? 1 : 0) | (reflective ? 2 : 0);
+            push.opacity = s.blend == scene::Blend::Opaque ? -op : op;
             vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
             vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
             const VkDescriptorSet set = textureSet(s.textureId);
@@ -901,7 +906,7 @@ public:
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE); // the surface also reads from below
             for (const DrawRef& d : screenDraws_) {
                 const OrigDraw& od = origDraws_[d.mesh][d.sub];
-                const scene::Blend blend = meshes_[d.mesh].submeshes[d.sub].blend;
+                const scene::Blend blend = drawBlend(meshes_[d.mesh].submeshes[d.sub], opacityOf(d.mesh));
                 const bool rays = rtOn && blend == scene::Blend::Opaque;
                 drawOriginal(d, od, origPipeline(od.program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, blend));
             }
@@ -3621,6 +3626,7 @@ private:
     std::array<VkDescriptorSet, kFramesInFlight> shadowSets_{};
     Bounds bounds_;
     std::vector<DrawRef> order_;
+    std::vector<float> opacity_; // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)
 
     LinearAllocator staticMemory_, sceneMemory_, swapMemory_;
     std::unordered_map<uint32_t, GpuImage> textures_;

@@ -35,8 +35,8 @@ LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius)
 // World-space bounding sphere (xyz centre, w radius) of vertices under `model` (lightSet input; skinned meshes
 // recompute it in updateVertices).
 glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat4& model);
-// Object registers: WorldViewProject (c0-3) and World (c4-7), as matrix columns, and the object's light set.
-void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProjD3D, const glm::mat4& model, LightSet lights = {});
+// Object registers: WorldViewProject (c0-3) and World (c4-7), as matrix columns, the object's light set and opacity.
+void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProjD3D, const glm::mat4& model, LightSet lights = {}, float opacity = 1);
 // AttenuationSampler row of each env.lights entry (distinct falloff curves share rows 0-95).
 std::vector<int> falloffRows(const scene::Environment& env);
 

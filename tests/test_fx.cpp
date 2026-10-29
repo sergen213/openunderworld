@@ -504,3 +504,52 @@ TEST(Fx, RibbonsTrailTrackedSegmentsAndBoltsExpire) {
     EXPECT_EQ(s.faceCount(), 0u);
     EXPECT_EQ(s.boltCount(), 0u);
 }
+
+TEST(Fx, InstanceFadeClass7Curve) {
+    auto o = std::make_shared<fx::ObjectFx>();
+    o->fades = {{0, 1, 35}, {1, 0, 0}}; // med_rw_shard_a's fade out; an instant set
+    fx::Event pickup, idle;
+    pickup.info = 0x2401, pickup.cmd = {0x22, 0, 0, 0}; // variant 1: run by runVariant, never by frame
+    idle.info = 0x2001, idle.cmd = {0x22, 1, 0, 0};
+    const std::vector<fx::Event> list{idle, pickup};
+    fx::System s;
+    EXPECT_EQ(s.runEvents(o, list, glm::mat4(1), 7, 0, 0, 1), 1); // the variant-0 record only: fade set to 0 at once
+    EXPECT_FLOAT_EQ(s.fade(7), 0.0f);
+    EXPECT_FALSE(s.fading(7));
+    EXPECT_EQ(s.runVariant(o, list, glm::mat4(1), 7, 1), 1);
+    EXPECT_TRUE(s.fading(7));
+    for (int t = 0; t < 35; ++t) s.tick({0, 0, 0}); // 35 ticks = 17.5 frames of 35
+    EXPECT_NEAR(s.fade(7), 0.5f, 1e-5f);
+    std::vector<std::pair<int32_t, float>> faded;
+    s.fadedOwners(faded);
+    ASSERT_EQ(faded.size(), 1u);
+    EXPECT_NEAR(faded[0].second, 0.5f, 1e-5f);
+    for (int t = 0; t < 35; ++t) s.tick({0, 0, 0});
+    EXPECT_FLOAT_EQ(s.fade(7), 1.0f); // gone, and stays
+    EXPECT_FALSE(s.fading(7));
+    EXPECT_TRUE(s.runCommand(o, {0x21, 0, 10, 0}, glm::mat4(1), 7)); // 0x52C890: back to 0 over 10 frames from the current 1
+    for (int t = 0; t < 10; ++t) s.tick({0, 0, 0});
+    EXPECT_NEAR(s.fade(7), 0.5f, 1e-5f);
+    s.stopOwner(7);
+    EXPECT_FLOAT_EQ(s.fade(7), 0.0f);
+}
+
+TEST(FxReal, RewardPickupFadesOut) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const char* name : {"med_rw_shard_a", "ar_rw_artifact"}) {
+        const auto parsed = load(bf, name);
+        ASSERT_TRUE(parsed) << name;
+        const auto t = std::make_shared<const fx::ObjectFx>(*parsed);
+        ASSERT_EQ(t->fades.size(), 1u) << name;
+        EXPECT_FLOAT_EQ(t->fades[0].from, 0.0f);
+        EXPECT_FLOAT_EQ(t->fades[0].to, 1.0f);
+        EXPECT_EQ(t->fades[0].frames, 35);
+        const auto* pickup = t->clip("pickup");
+        ASSERT_TRUE(pickup) << name;
+        fx::System s;
+        EXPECT_EQ(s.runVariant(t, *pickup, glm::mat4(1), 1, 1), 1) << name;
+        for (int k = 0; k < 70; ++k) s.tick({0, 0, 0});
+        EXPECT_FLOAT_EQ(s.fade(1), 1.0f) << name;
+    }
+}

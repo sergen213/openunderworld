@@ -17,6 +17,7 @@ layout(location = 4) in vec3 vWorld;
 layout(push_constant) uniform Push {
     mat4 viewProj; mat4 model; int lighting; float alphaRef;
     int rt; // bit 0 ray-traced sun shadow, bit 1 reflective (water) draw
+    float opacity; // instance opacity; < 0: opaque material, alpha = -opacity
 } pc;
 layout(set = 0, binding = 0) uniform sampler2D uTex;
 layout(location = 0) out vec4 oColor;
@@ -31,6 +32,7 @@ void main() {
     // alpha-cut and unlit lanes trace nothing.
     float vis = ouSunVisibility(vWorld, n, pc.lighting != 0 && ndl > 0.0 && c.a >= pc.alphaRef, (pc.rt & 1) != 0);
     if (c.a < pc.alphaRef) discard;
+    if (abs(pc.opacity) < 1.0) c.a = (pc.opacity < 0.0 ? 1.0 : c.a) * abs(pc.opacity);
     if (pc.lighting != 0 && len > 1e-6) c.rgb *= 0.45 + 0.55 * ndl * vis;
 #ifdef OU_RT
     if ((pc.rt & 2) != 0 && len > 1e-6) c = ouRtWater(c, vWorld, n, pc.lighting != 0);

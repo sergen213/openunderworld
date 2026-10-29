@@ -269,6 +269,7 @@ struct ScriptedMeshes {
     std::map<int32_t, std::vector<size_t>> meshes; // intro unique id -> scene mesh indices
     std::set<int32_t> posed;                       // uploaded with a non-bind pose
     std::set<int32_t> hidden;                      // collected pickups, uploaded collapsed to a point
+    std::vector<std::pair<int32_t, float>> faded;  // scratch: fx::System::fadedOwners
     std::vector<ou::scene::Vertex> scratch;
 
     void index(const ou::scene::SceneData& s) {
@@ -277,11 +278,13 @@ struct ScriptedMeshes {
             if (const auto at = s.meshes[i].origin.rfind(" @intro "); at != std::string::npos)
                 meshes[std::atoi(s.meshes[i].origin.c_str() + at + 8)].push_back(i);
     }
-    // Picked-up rewards vanish: their meshes degenerate to one point (no scene rebuild).
-    void hide(const std::set<int32_t>& ids, const ou::scene::SceneData& s, ou::render::Renderer& r) {
+    // Picked-up rewards vanish once their instance fade (class 7, their "pickup" list) is done: their meshes degenerate
+    // to one point (no scene rebuild) and their effects end with the instance.
+    void hide(const std::set<int32_t>& ids, const ou::scene::SceneData& s, ou::render::Renderer& r, ou::fx::System& fx) {
         for (const int32_t id : ids) {
             const auto it = meshes.find(id);
-            if (it == meshes.end() || !hidden.insert(id).second) continue;
+            if (it == meshes.end() || fx.fading(id) || !hidden.insert(id).second) continue;
+            fx.stopOwner(id);
             for (const size_t i : it->second) {
                 scratch = s.meshes[i].vertices;
                 if (scratch.empty()) continue;
@@ -289,6 +292,14 @@ struct ScriptedMeshes {
                 r.updateVertices(i, scratch);
             }
         }
+    }
+    // Instances with a fade (fx owner = intro uid): their meshes at opacity 1 - fade (FrameOptions::meshOpacity).
+    void opacities(const ou::fx::System& fx, std::vector<ou::render::MeshOpacity>& out) {
+        out.clear();
+        fx.fadedOwners(faded);
+        for (const auto& [uid, f] : faded)
+            if (const auto it = meshes.find(uid); it != meshes.end() && !hidden.contains(uid))
+                for (const size_t i : it->second) out.push_back({uint32_t(i), 1.0f - f});
     }
     void pose(const ou::script::Runtime& rt, const ou::scene::SceneData& s, ou::render::Renderer& r) {
         for (const auto& o : rt.objects()) {
@@ -750,10 +761,12 @@ struct EffectsView {
                 const auto n = names.find(in.objectId);
                 if (n == names.end()) continue;
                 const auto fx = library->get(n->second, &warnings);
-                if (!fx || (library->flags(n->second) & ou::fx::kObjectNoBirthEffects)) continue;
+                if (!fx) continue;
                 glm::mat4 m;
                 ou::formats::introMatrix(in, &m[0][0]);
                 m[3] += glm::vec4(u.offset, 0);
+                if (!fx->fades.empty()) intros[in.uniqueId] = {fx, m};
+                if (library->flags(n->second) & ou::fx::kObjectNoBirthEffects) continue;
                 if (system.startBirth(fx, m, in.uniqueId)) owners.push_back(in.uniqueId);
             }
             // Unit FX point sets (fires, heat haze without an object): owners 0x40000000 | set id [I: ids beside intros'].
@@ -847,6 +860,15 @@ struct EffectsView {
     static int32_t enemyOwner(int32_t uid) { return -(0x10000000 | (uid & 0x0FFFFFFF)); }
     static bool follows(const std::shared_ptr<const ou::fx::ObjectFx>& fx) { return fx && (!fx->ribbons.empty() || !fx->bolts.empty()); }
     std::map<int32_t, std::pair<std::string, double>> objectClipAt; // script object uid -> last clip, time
+    // Placed objects with class-7 fades (rewards, keys): intro uid -> effects, world matrix.
+    std::map<int32_t, std::pair<std::shared_ptr<const ou::fx::ObjectFx>, glm::mat4>> intros;
+    // A reward picked up: its "pickup" list's variant-1 records (tru.exe 0x5B26C0 with variant 0x400 [I: the pickup
+    // script's request]) start its fade out (class 7: 0 -> 1 over 35 frames); it is hidden when the fade ends.
+    void pickedUp(int32_t uid) {
+        const auto it = intros.find(uid);
+        if (it == intros.end()) return;
+        if (const auto* list = it->second.first->clip("pickup")) system.runVariant(it->second.first, *list, it->second.second, uid, 1);
+    }
     void events(const ou::game::World& w) {
         if (!library) return;
         const auto& c = w.combat();
@@ -1379,6 +1401,7 @@ int main(int argc, char** argv) {
     std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
     std::vector<ou::render::WaterVolume> waterVolumes;     // loaded units' water boxes, each frame
     std::vector<ou::render::WaterParticle> splashParticles; // game::WaterSim droplets, each frame
+    std::vector<ou::render::MeshOpacity> meshOpacity;      // fading instances (class-7 fades), each frame
     // Enhanced weather (graphics.weather): the unit's own rain / snow objects (game::unitWeather), eased out while a
     // roof is above the camera.
     std::map<uint16_t, std::string> objectNames;
@@ -1763,6 +1786,7 @@ int main(int argc, char** argv) {
                 const std::string text = std::string(strings->get(ou::game::pickupStringId(p.kind))) + "  " +
                                          std::to_string(world->found[size_t(p.kind)]);
                 hud.notify(text);
+                effects.pickedUp(p.id);
                 std::fprintf(stderr, "ou-game: tick %llu pickup %s %d (%s)\n", tick, ou::game::pickupKindName(p.kind), p.id, text.c_str());
             }
             if (world->chapter != shownChapter && shownChapter != -2) {
@@ -1840,7 +1864,7 @@ int main(int argc, char** argv) {
         objects.pose(world->script(), scene, *renderer);
         combat.pose(*world, s, clock.alpha(), scene, streamed.gunIndices, streamed.gunSlots, *renderer);
         gadgets.pose(*world, streamed, scene, *renderer);
-        objects.hide(world->collected, scene, *renderer);
+        objects.hide(world->collected, scene, *renderer, effects.system);
         ou::render::Camera cam;
         cam.verticalFovDeg = c.fovDeg > 0 ? c.fovDeg : world->fovDeg; // spline cameras have their own
         cam.nearZ = 5.0f;
@@ -1970,6 +1994,8 @@ int main(int argc, char** argv) {
         if (opt.gfx.water && !mainMenu)
             for (const auto& d : ws.drops()) splashParticles.push_back({{d.pos.x, d.pos.y, d.pos.z}, d.radius, d.alpha()});
         fo.splashes = splashParticles;
+        objects.opacities(effects.system, meshOpacity);
+        fo.meshOpacity = meshOpacity;
         fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
         fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;
         if (opt.gfx.weather && !mainMenu) {

@@ -17,10 +17,13 @@ namespace ou::render::sm3 {
 //                                                  vec4 lights[64 * 5]: the scene's point/spot light registers
 //   material (VK set 1 binding 0, GL UBO binding 1): vec4 vs[40] = c25..c64; vec4 ps[40] = c100..c139;
 //                                                  vec4 fixed = (c2 AlphaThreshold, c98 MaterialOpacity, alphaRef,
-//                                                  flags: 1 = fogged (VS c22 live), 2 = additive (PS c0 FogColor = 0))
+//                                                  flags: 1 = fogged (VS c22 live), 2 = additive (PS c0 FogColor = 0),
+//                                                  4 = RT water (sun.glsl), 8 = opaque material (PS alpha is no opacity))
 //   object  (VK push constant, GL UBO binding 2): vec4 v[8] = vs c0..c7 (WorldViewProject, World columns);
-//                                                  uvec4 lightSet: the object's light set (tru.exe 0x5042B0), one byte
-//                                                  per PS light slot 0-5 (x: slots 0-3, y: 4-5), 0xFF = empty
+//                                                  uvec2 lightSet: the object's light set (tru.exe 0x5042B0), one byte
+//                                                  per PS light slot 0-5 (x: slots 0-3, y: 4-5), 0xFF = empty;
+//                                                  float opacity: instance fade (< 1: final alpha = (flags & 8 ? 1 :
+//                                                  alpha) x opacity, FrameOptions::meshOpacity)
 //   samplers s0..s15: VK set 1 binding 1 + n, GL texture unit n.
 // Register -> block: VS c0-7 object, c25-64 material (MaterialParams + InstanceParams c57), else frame; PS c2/c98 material.fixed, c100-139 material (MaterialParams + InstanceParams c132),
 // PS c178-c207 (Shadow/NonShadowLights, 5 per slot) frame.lights[lightSet slot], b0-b5 = slot used, else frame.
@@ -44,7 +47,8 @@ struct MaterialBlock {
 };
 struct ObjectBlock {
     float v[kObjectVs][4];
-    uint32_t lightSet[4] = {~0u, ~0u, ~0u, ~0u};
+    uint32_t lightSet[2] = {~0u, ~0u};
+    float opacity = 1, pad = 0;
 };
 static_assert(sizeof(FrameBlock) == (kFrameVs + kFramePs + 16 + 16 + 1 + 1 + kMaxLights * kLightRegs) * 16);
 static_assert(sizeof(MaterialBlock) == (kMaterialVs + kMaterialPs + 1) * 16);

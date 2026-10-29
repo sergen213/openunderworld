@@ -118,6 +118,12 @@ struct RgbaImage {
     uint64_t version = 0; // backends upload only when this changes
 };
 
+// Opacity of one uploaded mesh (SceneData::meshes index) for a frame: instance fades (fx::System::fade, tru.exe instance
+// +0x1B4). As tru.exe's translucent pass 0x5066A0 draws a fading instance: opaque materials alpha-blended (mode 4) with
+// alpha = opacity [I: the opacity PS variant's alpha], other materials with their own blend and alpha x opacity; all
+// without depth writes, after the opaque ones. 0 = not drawn.
+struct MeshOpacity { uint32_t mesh = 0; float opacity = 1; };
+
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
     bool cullBackFaces = true;              // front = counter-clockwise (cdc meshes are CCW)
@@ -167,6 +173,7 @@ struct FrameOptions {
     std::span<const FxVertex> fxVertices;
     std::span<const FxBatch> fxBatches;
     const ScreenFilter* screenFilter = nullptr; // original class-5 screen filters (post pass); nullptr / inactive = none
+    std::span<const MeshOpacity> meshOpacity; // unlisted meshes: 1
 };
 
 // Ray-tracing state for diagnostics and tests.

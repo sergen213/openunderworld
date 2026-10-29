@@ -346,6 +346,10 @@ static ObjectFx parseFxSections(const cdc::Drm& drm, int ev, int gen, int base, 
             l.speed = rd<int16_t>(r, 0xA8), l.length = rd<int16_t>(r, 0xAA);
             fx.bolts.push_back(std::move(l));
         });
+        records(0x44, 0x48, 0x0C, [&](std::span<const uint8_t> r, const auto&, uint32_t) {
+            fx.fades.push_back({float(rd<int16_t>(r, 0)) / 4096.0f, float(rd<int16_t>(r, 2)) / 4096.0f, rd<int16_t>(r, 4),
+                                rd<int16_t>(r, 6), rd<uint8_t>(r, 0x0B)});
+        });
         if (const auto it = ptrs.find(0x08); it != ptrs.end()) { // effect map: u16 n at +4, {u8 id, i8 class, u8 index, pad}
             const auto md = drm.sections[it->second.section].data;
             for (uint32_t k = 0, n = rd<uint16_t>(s.data, 4); k < n && k < 256; ++k)
@@ -577,6 +581,12 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
     auto bolt = [&](int i, int16_t s, int16_t s2) {
         return size_t(i) < fx->bolts.size() && (!birth || fx->bolts[size_t(i)].birth) && startBolt(fx, i, world, owner, s, s2, bones);
     };
+    auto fade = [&](int i) { // 0x52C920 (model crossfades, flags 0x80, not done)
+        if (size_t(i) >= fx->fades.size() || (fx->fades[size_t(i)].flags & 0x80)) return false;
+        const FadeDef& d = fx->fades[size_t(i)];
+        setFade(owner, d.frames ? d.from : d.to, d.to, d.frames);
+        return true;
+    };
     switch (c.type) {
     case 3: return particle(c.a1, seg, int16_t(c.a3)); // particle (seg, seg2)
     case 0x1D: return particle(c.a1, 0, 0);           // particle, root
@@ -594,7 +604,12 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
     case 0x19: return bolt(c.a1, 0, 0);
     case 0x11: return light(c.a1, seg);
     case 0xB: return filter(c.a1);
-    case 0x1C: case 0x2F: // effect map id a1 -> {class, index} (classes 4, 7, 8: not implemented, EFFECTS.md)
+    case 0x22: return !c.a2 && fade(c.a1); // a2 != 0: the instance at +0x218 instead [U]
+    case 0x21: // 0x52C890: to a1 / 255 over a2 frames from the current fade (a3 != 0: the +0x218 instance)
+        if (c.a3) return false;
+        setFade(owner, c.a2 ? -1.0f : float(c.a1) / 255.0f, float(c.a1) / 255.0f, c.a2);
+        return true;
+    case 0x1C: case 0x2F: // effect map id a1 -> {class, index} (classes 4, 8: not implemented, EFFECTS.md)
         for (const auto& m : fx->effectMap)
             if (m.id == c.a1) {
                 if (m.cls == 0) return particle(m.index, 0, 0);
@@ -603,6 +618,7 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
                 if (m.cls == 3) return bolt(m.index, 0, 0);
                 if (m.cls == 6) return light(m.index, 0);
                 if (m.cls == 5) return filter(m.index);
+                if (m.cls == 7) return fade(m.index);
                 return false;
             }
         return false;
@@ -731,10 +747,44 @@ void System::play(std::shared_ptr<const ObjectFx> fx, const std::vector<Event>& 
     sequences_.push_back(std::move(s));
 }
 
+int System::runVariant(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
+                       int32_t owner, int variant, uint8_t material) {
+    int n = 0;
+    for (const auto& e : events)
+        if (e.effect() && e.variant() == variant && (!e.material() || e.material() == material))
+            n += runCommand(fx, e.cmd, world, owner);
+    return n;
+}
+
+void System::setFade(int32_t owner, float from, float to, int frames) {
+    Fade& f = fades_[owner];
+    if (from >= 0) f.value = from;
+    f.target = to;
+    f.step = frames ? (to - f.value) / float(frames) : 0.0f;
+    if (!frames) f.value = to;
+}
+
+float System::fade(int32_t owner) const {
+    const auto it = fades_.find(owner);
+    return it == fades_.end() ? 0.0f : it->second.value;
+}
+
+bool System::fading(int32_t owner) const {
+    const auto it = fades_.find(owner);
+    return it != fades_.end() && it->second.value != it->second.target;
+}
+
+void System::fadedOwners(std::vector<std::pair<int32_t, float>>& out) const {
+    out.clear();
+    for (const auto& [owner, f] : fades_)
+        if (f.value > 0) out.emplace_back(owner, std::min(f.value, 1.0f));
+}
+
 void System::stopOwner(int32_t owner) {
     for (auto& e : emitters_)
         if (e.owner == owner) e.stopped = true;
     stopId(owner, -1, false);
+    fades_.erase(owner); // the instance is gone
 }
 
 bool System::hasOwner(int32_t owner) const {
@@ -748,7 +798,12 @@ bool System::hasOwner(int32_t owner) const {
 
 void System::clear() {
     emitters_.clear(), particles_.clear(), sequences_.clear(), glows_.clear(), lights_.clear(), filters_.clear();
-    ribbons_.clear(), faces_.clear(), bolts_.clear(), poses_.clear();
+    ribbons_.clear(), faces_.clear(), bolts_.clear(), poses_.clear(), fades_.clear();
+}
+// 0x5B55D0, every frame: fade += step x timeMult (0.5 per 60 Hz tick), stopping at the target.
+static void advance(float& value, float target, float step) {
+    const float v = value + step * 0.5f;
+    value = step == 0 || (step < 0 && v <= target) || (step > 0 && v >= target) ? target : v;
 }
 
 void System::spawn(Emitter& e, const glm::vec3& camera) {
@@ -800,6 +855,7 @@ void System::spawn(Emitter& e, const glm::vec3& camera) {
 }
 
 void System::tick(const glm::vec3& camera) {
+    for (auto& [owner, f] : fades_) advance(f.value, f.target, f.step);
     for (auto& s : sequences_) { // frame f fires at tick 2f (30 Hz authoring)
         ++s.age;
         target_ = s.target;
@@ -1001,10 +1057,10 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
             for (int k = 0; k < 32; k += 8)
                 c |= uint32_t(std::lround(float((d.colours[prev] >> k) & 0xFF) * (1 - w) + float((d.colours[cur] >> k) & 0xFF) * w)) << k;
         }
-        float fade = 1;
-        if (g.age < 2 * d.fadeIn) fade = float(g.age) / float(2 * d.fadeIn);
-        else if (g.fadeOut >= 0 && d.fadeOut) fade = float(g.fadeOut) / float(2 * d.fadeOut);
-        else if (g.left >= 0 && g.left < 2 * d.fadeOut) fade = float(g.left) / float(2 * d.fadeOut);
+        float fade = d.flags & 4 ? 1.0f : 1.0f - System::fade(g.owner); // flag 4: ignores its instance's fade [O]
+        if (g.age < 2 * d.fadeIn) fade *= float(g.age) / float(2 * d.fadeIn);
+        else if (g.fadeOut >= 0 && d.fadeOut) fade *= float(g.fadeOut) / float(2 * d.fadeOut);
+        else if (g.left >= 0 && g.left < 2 * d.fadeOut) fade *= float(g.left) / float(2 * d.fadeOut);
         if (d.facingMode && d.facingMode != 4 && glm::dot(g.axis, g.axis) > 0) { // 0x52F660 facing threshold
             const float t = glm::dot(glm::normalize(camera.position - g.axisFrom), g.axis) - 1.0f + d.facing;
             if (t <= 0) continue;

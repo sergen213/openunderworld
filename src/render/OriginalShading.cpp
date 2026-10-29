@@ -106,16 +106,18 @@ void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene
     // modes 2-6 ref 1, others 0. The fixed-function alpha test (ALPHAFUNC GREATEREQUAL) follows SubMesh::alphaRef.
     const int ref = mat.blendMode == 1 ? mat.alphaThreshold : (mat.blendMode >= 2 && mat.blendMode <= 6) ? 1 : 0;
     m.fixed[0] = float(ref) / 255.0f;
-    m.fixed[1] = 1.0f; // MaterialOpacity: no instance fade
+    m.fixed[1] = 1.0f; // MaterialOpacity: 1 (instance fades: ObjectBlock::opacity)
     m.fixed[2] = sub.alphaRef ? float(sub.alphaRef) / 255.0f : -1.0f;
-    // Bit 0: fogged material (flags 0x04) -> VS c22; bit 1: additive modes 5/6 -> PS FogColor 0 (0x5068E6, 0x5066A0).
-    m.fixed[3] = float(((mat.flags & 4) ? 1 : 0) | ((mat.blendMode == 5 || mat.blendMode == 6) ? 2 : 0));
+    // Bit 0: fogged material (flags 0x04) -> VS c22; bit 1: additive modes 5/6 -> PS FogColor 0 (0x5068E6, 0x5066A0);
+    // value 8: opaque (mode 0, alpha-blended as mode 4 while the instance fades, 0x5066A0).
+    m.fixed[3] = float(((mat.flags & 4) ? 1 : 0) | ((mat.blendMode == 5 || mat.blendMode == 6) ? 2 : 0) |
+                       (sub.blend == scene::Blend::Opaque ? 8 : 0));
 }
 
-void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProj, const glm::mat4& model, LightSet lights) {
+void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProj, const glm::mat4& model, LightSet lights, float opacity) {
     putMatrix(o.v, 0, viewProj * model);
     putMatrix(o.v, 4, model);
-    o.lightSet[0] = lights.packed[0], o.lightSet[1] = lights.packed[1], o.lightSet[2] = o.lightSet[3] = ~0u;
+    o.lightSet[0] = lights.packed[0], o.lightSet[1] = lights.packed[1], o.opacity = opacity;
 }
 
 std::vector<int> falloffRows(const scene::Environment& env) {

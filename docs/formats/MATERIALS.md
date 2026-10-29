@@ -90,7 +90,8 @@ list below describes the generic fallback.
 - Original Fidelity: texture × fixed sun lambert (0.45 ambient), alpha test at the material threshold, per-material
   blend mode and cull mode, two-sided lighting via `gl_FrontFacing` for two-sided materials.
 - Not reproduced (deviations): the per-shader colour tints/params, light maps, vertex-colour baked lighting, fog,
-  wind animation, the original's PSSM shadows (our Enhanced shadow map is our own), opacity fades.
+  wind animation, the original's PSSM shadows (our Enhanced shadow map is our own). Opacity fades: both paths
+  (docs/RENDERING.md "Instance opacity").
 - Verified [O]: `l4_ballcourt` from the `player` start (`--cam 26971,23597,3000,-100,-5`): ground plants and palms
   that rendered black or opaque now show textured, alpha-cut leaves in GL and Vulkan (docs/RENDERING.md).
 

@@ -200,6 +200,15 @@ Viewed: ballcourt path/court show light-mapped multi-layer terrain, sun-lit cour
 the original swirl shader; the l3_main_bedroom corridor is light-map + ambient only (its torch lights are not fed) and so
 much darker than the generic lambert; the 060_med_natla cutscene keeps Lara/actors on generic shading.
 
+### Instance opacity (`FrameOptions::meshOpacity`, GL + Vulkan)
+
+Fading instances (class-7 instance fades, docs/formats/EFFECTS.md "Instance fades") pass `{mesh index, opacity}`; as
+tru.exe's translucent pass (0x5066A0) their submeshes all draw after the opaque ones, back to front, without depth
+writes (`drawOrder` with per-mesh opacity); opaque materials switch to alpha blending (`drawBlend`, mode 4) with
+alpha = opacity, others keep their blend with alpha × opacity; opacity 0 is not drawn. Translated shaders read it from
+the object block (`ObjectBlock::opacity` after the alpha test; material flag value 8 = opaque material), the generic
+shaders from `uFade` (GL) / the scene push constant (Vulkan). Shadow casting, RT instances and FSR masks ignore it.
+
 ## Water (Enhanced, GL + Vulkan; `graphics.water`, `--water original|enhanced`)
 
 Original (`water = 0`) draws water-surface meshes with TRU's own translated shaders, as before.

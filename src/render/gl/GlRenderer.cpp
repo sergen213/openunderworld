@@ -94,6 +94,7 @@ const char* kSceneFsHead = R"(#version 460 core
 in vec3 vNormal; in vec2 vUv; in vec4 vColor; in vec3 vWorld;
 layout(location = 2) uniform int uLighting;
 layout(location = 3) uniform float uAlphaRef;
+layout(location = 4) uniform vec2 uFade; // instance opacity, 1 = opaque material (alpha = opacity)
 layout(binding = 0) uniform sampler2D uTex;
 out vec4 oColor;
 )";
@@ -101,6 +102,7 @@ const char* kSceneFsMain = R"(
 void main() {
     vec4 c = texture(uTex, vUv) * vColor;
     if (c.a < uAlphaRef) discard;
+    if (uFade.x < 1.0) c.a = (uFade.y > 0.5 ? 1.0 : c.a) * uFade.x;
     float len = length(vNormal);
     if (uLighting != 0 && len > 1e-6) {
         vec3 n = (gl_FrontFacing ? 1.0 : -1.0) * vNormal / len; // two-sided materials light both faces
@@ -561,7 +563,8 @@ public:
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
         glNamedBufferSubData(r.waterUbo.get(), 0, sizeof wb, &wb);
         glBindBufferBase(GL_UNIFORM_BUFFER, 4, r.waterUbo.get());
-        drawOrder(r.meshes, camera.position, r.order);
+        meshOpacities(options.meshOpacity, r.meshes.size(), opacity_);
+        drawOrder(r.meshes, camera.position, r.order, opacity_);
         // No ray tracing here: a requested RT mode renders with the shadow map (as Vulkan without RT support).
         const bool shadows = options.shadows || options.rt != RayTracing::Off;
         const SunShadow sun = sunShadow(camera, vp, r.bounds, sunToward(environment_), false, shadows, 0, 0);
@@ -588,6 +591,8 @@ public:
         for (const DrawRef& d : r.order) {
             const GpuMesh& m = r.meshes[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
+            const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;
+            const scene::Blend blend = drawBlend(s, op);
             if (enhancedWater && m.water) continue; // drawn by drawWater with the opaque copies
             const int p = originals ? m.program[d.sub] : -1;
             if (p != program) {
@@ -600,7 +605,7 @@ public:
                 glBindVertexArray(m.vao.get());
                 boundMesh = d.mesh;
             }
-            if (int(s.blend) != state) setBlend(state = int(s.blend));
+            if (int(blend) != state) setBlend(state = int(blend));
             if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
                 if (m.screenSamplers[d.sub]) { // reads the scene drawn so far: after the loop, from the copies
@@ -618,6 +623,7 @@ public:
                 continue;
             }
             glUniform1f(3, s.alphaRef / 255.0f);
+            glUniform2f(4, op, s.blend == scene::Blend::Opaque ? 1.0f : 0.0f);
             drawSubmesh(s);
         }
         setBlend(int(scene::Blend::Opaque));
@@ -996,7 +1002,8 @@ private:
             const scene::SubMesh& s = m.submeshes[d.sub];
             glUseProgram(r.originals[size_t(m.program[d.sub])].get());
             glBindVertexArray(m.vao.get());
-            if (int(s.blend) != state) setBlend(state = int(s.blend));
+            const scene::Blend blend = drawBlend(s, d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f);
+            if (int(blend) != state) setBlend(state = int(blend));
             glDisable(GL_CULL_FACE); // the sea is also seen from below
             glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));
             glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
@@ -1038,7 +1045,8 @@ private:
         objectScratch_.assign(r.meshes.size() * size_t(objectStride()), 0);
         for (size_t i = 0; i < r.meshes.size(); ++i)
             original::fillObject(*reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * size_t(objectStride())]), vpD3D, r.meshes[i].model,
-                                 original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius));
+                                 original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius),
+                                 i < opacity_.size() ? opacity_[i] : 1.0f);
         if (r.objectUbo.get())
             glNamedBufferSubData(r.objectUbo.get(), 0, GLsizeiptr(objectScratch_.size()), objectScratch_.data());
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());
@@ -1211,6 +1219,7 @@ private:
     std::vector<uint8_t> materialBlocks_; // during upload()
     std::vector<uint8_t> objectScratch_;
     std::vector<DrawRef> deferred_; // per frame: back/depth-buffer readers (drawScreenReaders)
+    std::vector<float> opacity_;    // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)
     bool s3tc_ = false, debug_ = false;
     float maxAniso_ = 1.0f;
 };

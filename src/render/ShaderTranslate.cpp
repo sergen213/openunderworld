@@ -31,9 +31,9 @@ const char* kPrelude = R"(#version 450
 OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[320]; } ouFrame;
 OU_UBO(1, 0, 1) uniform OuMaterial { vec4 vs[40]; vec4 ps[40]; vec4 fixedParams; } ouMat;
 #ifdef OU_VULKAN
-layout(push_constant) uniform OuObject { vec4 v[8]; uvec4 lightSet; } ouObj;
+layout(push_constant) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; float pad; } ouObj;
 #else
-layout(std140, binding = 2) uniform OuObject { vec4 v[8]; uvec4 lightSet; } ouObj;
+layout(std140, binding = 2) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; float pad; } ouObj;
 #endif
 // Light table index of PS light slot s (0-5), 255 = slot empty.
 #define OU_LIGHT(s) ((ouObj.lightSet[(s) >> 2] >> (8u * uint((s) & 3))) & 255u)
@@ -167,7 +167,8 @@ public:
             if (depthOut_) pre += "    vec4 oDepth = vec4(gl_FragCoord.z);\n";
             post += "    ouColor = oC0;\n"
                     "#ifdef OU_SUN\n    ouColor = ouSunEnd(ouColor);\n#endif\n"
-                    "    if (ouMat.fixedParams.z >= 0.0 && ouColor.a < ouMat.fixedParams.z) discard; // D3DRS_ALPHAREF test\n";
+                    "    if (ouMat.fixedParams.z >= 0.0 && ouColor.a < ouMat.fixedParams.z) discard; // D3DRS_ALPHAREF test\n"
+                    "    if (ouObj.opacity < 1.0) ouColor.a = ((int(ouMat.fixedParams.w) & 8) != 0 ? 1.0 : ouColor.a) * ouObj.opacity;\n";
             if (depthOut_) post += "    gl_FragDepth = oDepth.x;\n";
         }
         for (unsigned n = 0; n < temps_; ++n) pre += "    vec4 r" + std::to_string(n) + " = vec4(0.0);\n";

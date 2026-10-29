@@ -33,7 +33,7 @@ Object section (type 11) +0 / +4 / +8 are DTP resource references: +0 ObjectBase
 | +0x2C / +0x30 | class 4 | 0x64 | 0x53D100 [U] |
 | +0x34 / +0x38 | class 5 screen filters (prim 0x85) | 0x28 | 0x535CC0, draw 0x5469A0 ("Screen filters" below) |
 | +0x3C / +0x40 | effect lights (prim 6) | 0x24 | 0x546710 → 0x5C35D0 — implemented, "Lights" |
-| +0x44 / +0x48 | class 7 | 0x0C | 0x52C920: instance fade (+0x1B4/+0x1B8, 4096 = 1) [O] — not implemented |
+| +0x44 / +0x48 | class 7 instance fades | 0x0C | 0x52C920: instance fade (+0x1B4/+0x1B8, 4096 = 1) [O] — implemented, "Instance fades" |
 | +0x54 / +0x58 | class 8 | 0x3C | 0x5310A0 |
 | +0x5C / +0x60 | class 9 | 0x10 | 0x5471A0 |
 | +0x64 / +0x68 | texture lists `{u32 n, ids[n]}` | | referenced by particle +0x114 |
@@ -109,7 +109,9 @@ back-to-front, depth-tested without writes, `tex × colour × 2`.
   id, char* name}`) gives each clip an event list (DTP rtype 19): a u32 header, then records in the object-event
   layout (`8 + (info >> 12) * 4` bytes, end `0xFFFF`). `frame` = 30 Hz clip frame. `info & 0x3F0 >> 4` = surface
   material filter (0 any, else it must equal the instance material, instance `+0x186`, tru.exe 0x5BBFD0), `info & 4`
-  disabled, `info & 0xC00` variant (we run variant 0 only [I]). Type-0 records with a pointer at `+0xC` are skipped.
+  disabled, `info & 0xC00` variant: frame-windowed runs take variant 0 only; a run with a variant (tru.exe 0x5B26C0,
+  `param >> 10 & 3`) takes that variant's records whatever their frame (`System::runVariant`; rewards' `pickup` lists
+  keep their fade there, info 0x2401). Type-0 records with a pointer at `+0xC` are skipped.
   Parsed into `ObjectFx::clips`; `System::runEvents` (frame span) and `System::play` (one-shot instance, later frames
   fire as ticks pass).
 - Material = collision face byte `+0x10` (tru.exe 0x6F06B0 copies the floor face's to Lara's `+0x186`). From
@@ -274,9 +276,10 @@ DRM, `scratch/cmdsurvey.py`). Classes by GenericFXObject list:
 | 0x12, 0x1F | debug print | 35 | — |
 | 0x15 / 0x1A, 0x18 / 0x1B | fade / remove prims by id (self, +0x218, 0x5B36F0, parent) | 467 / 13 | yes (own instance) |
 | 0x17 | 0x5B3EC0 instance model switch [I] | 41 | no |
-| 0x1C, 0x2F | effect map id -> class 0..8 | 220 (Lara) | yes, classes 0-3, 5, 6 |
+| 0x1C, 0x2F | effect map id -> class 0..8 | 220 (Lara) | yes, classes 0-3, 5, 6, 7 |
 | 0x1E | clears 0xAE5144 (weather lightning timer, 0x545950) | 0 | — |
-| 0x21 / 0x22 / 0x23 | instance fades: 0x52C890, class 7 (0x52C920: alpha from +0 to +2 over +4 frames, 0x0C bytes), 0x52B2C0 | 0 / 122 (pickups, Lara) / 0 | no: needs per-instance alpha in the renderers |
+| 0x21 / 0x22 | instance fade: 0x52C890 (to a1 / 255 over a2 frames from the current fade; a3 != 0 the instance at +0x218) / class 7 record a1 (0x52C920; a2 != 0 the +0x218 instance) | 0 / 122 (rewards, keys, chunkdolls, natla_end; Lara's 17 records are model crossfades, reached only by effect-map ids) | yes ("Instance fades"; +0x218 targets and model crossfades no) |
+| 0x23 | 0x52B2C0: births object list entry a1 as a child instance playing animation a2 (not a fade) | 0 | no |
 | 0x25 | class 8 (0x5310A0, 0x3C bytes): per-vertex burn map on the instance mesh (instance +0x1B0) [I: BurnFX] | 0 (particle.drm records only) | no |
 | 0x26 | class 9 (0x5471A0, 0x10 bytes) | 0 (no records) | no |
 | 0x27 / 0x28 / 0x29 / 0x2B / 0x2C / 0x2D / 0x2E | 0x531510, 0x531430, 0x52B5C0, 0x52CE90, 0x52CF30, 0x53B780 (Lara, x a3), 0x53B650 [U] | 0x2C 18, 0x2D 250 | no |
@@ -328,9 +331,34 @@ ou-game runs the clip events of switches / doors (their pull / open and held idl
 uber objects while their travel clip runs, as the characters' (owner = intro uid). Light fixtures switched by script
 clips (`on` / `off`) still do not run: those clips are played by natives not tracked.
 
+## Instance fades
+
+Class 7 records (`+0x44` count, `+0x48` records of 0x0C bytes) [O 0x52C920]: `+0x00` / `+0x02` s16 fade from / to
+(4096 = 1), `+0x04` s16 frames (0: `to` at once), `+0x06` model index and `+0x08..+0x0A` model parameters, `+0x0B`
+flags (0x80: crossfade to model `+0x06`, fade in instance `+0x238` and switch with 0x5B3EC0 — Lara's 17 records; not
+implemented). The record sets instance `+0x1B4` (fade) = from, `+0x1B8` = to, `+0x1BC` = (to − from) / frames and
+instance flag 0x40000000; 0x5B55D0 adds `+0x1BC × timeMult` every frame (0.5 per 60 Hz tick) until it passes the
+target, and copies the fade to the instances chained from `+0x218`. Fade 0 = drawn, 1 = gone [O: rewards fade 0 → 1
+when picked up, keys' `fx_fade_in` 1 → 0, natla_end's `poof_in` sets 1 then fades to 0]. Command 0x21 (0x52C890) moves
+the fade from its current value to a1 / 255 over a2 frames.
+
+Drawing [O 0x5066A0]: a fading instance (opacity = 1 − fade < 1) goes through the translucent pass; opaque materials
+(blob mode 0) draw as mode 4 (SRCALPHA / INVSRCALPHA), the others keep their mode; MaterialOpacity (PS c98) = the
+opacity; no depth writes. Ours: `FrameOptions::meshOpacity` (RENDERING.md "Instance opacity") with alpha = opacity for
+opaque materials and alpha × opacity for the others [I: the opacity PS variant, composite slot 1, is not translated].
+The instance's glows fade with it unless their flag 4 is set [O 0x536280]; particles also scale by it unless their
+prim `+0x83 & 4` [O 0x5364A4] — not done (particles do not keep their owner).
+
+ou-game (`EffectsView::pickedUp`): a collected reward runs its `pickup` list's variant-1 records (the 0x2401 fade,
+0 → 1 over 35 frames = 70 ticks) and is hidden (meshes collapsed, its effects stopped) when the fade ends; rewards
+without a fade vanish at once as before. Script objects with fade records in their clips (keys' `obj_store` /
+`fx_fade_in`) fade through the same path. Viewed [O] (2026-10-29): l4_pool treasure 5489 half faded at tick 66 (pickup
+tick 31) in GL and Vulkan, the floor showing through; the tablet's mean grey 3.4 → 14.8 in both.
+
 ## Missing
 
-Classes 4, 7 (instance fades), 8, 9 (above); ribbon subdivision; lightning's exact jitter tables; the feedback filter
+Classes 4, 8, 9 (above); class 7 model crossfades and +0x218 targets; instance fades of particles; ribbon subdivision;
+lightning's exact jitter tables; the feedback filter
 uses the current frame's blur instead of the previous frame; noise uses a hash, not the device texture; skydomes,
 particles that follow their segment (mode 1), casing meshes, per-enemy hit materials, the line emitters' view-angle
 density rule (def `+0x8C / +0x90`, 0x5386F0 second branch: no data sets it in the fire defs checked).
