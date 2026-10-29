@@ -9,6 +9,8 @@
 
 #include <gtest/gtest.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <algorithm>
 #include <cstdlib>
 
@@ -352,50 +354,50 @@ TEST(MenusReal, RawImagesAndPdaArt) {
     EXPECT_FALSE(ui::loadRaw(bf, "no_such_image"));
 }
 
-TEST(ChaptersReal, MediterraneanEndingRunsThroughTriggerScript) {
-    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+// Chapter ends that run through trigger scripts: the volume around the exit preloads the closing cinematic (vt 63, state 2:
+// stream created, nothing plays), the plane beyond it plays it (vt 57); World then plays the stream(s) and starts the next
+// chapter. Lara spawns in the preload volume and walks through the plane.
+static void endingPlays(const char* unitName, int chapter, int32_t preload, int32_t plane, const std::vector<std::string>& streams,
+                 int next) {
     const cdc::BigfileSet bf(gameDir());
-    const auto unit = game::loadUnitData(bf, "l1_ship_sinking_hall");
-    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
-                  "l1_ship_sinking_hall", idleAnims(), game::Spawn{introPos(unit, 1082), 0});
+    const auto unit = game::loadUnitData(bf, unitName);
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), unitName,
+                  idleAnims(), game::Spawn{introPos(unit, preload), 0});
     w.script().setBigfile(&bf);
+    w.chapter = chapter;
     std::vector<std::string> played;
     w.onCinematic = [&](const std::string& name, bool) { played.push_back(name); };
     for (int i = 0; i < 4; ++i) w.tick({});
-    EXPECT_EQ(played, std::vector<std::string>{"070_med_dive"});
-    EXPECT_EQ(w.chapter, 2);
+    EXPECT_TRUE(played.empty()) << unitName << ": the preload volume plays nothing";
+    const auto* t = w.script().find(plane);
+    ASSERT_TRUE(t && t->kind == script::Kind::Plane) << unitName;
+    const glm::mat3 r = glm::mat3(glm::rotate(glm::mat4(1), t->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), t->rot.y, {0, 1, 0}) *
+                                  glm::rotate(glm::mat4(1), t->rot.z, {0, 0, 1}));
+    const vec3 n = r * vec3(0, 1, 0), base = t->pos - vec3(0, 0, script::kTestPointHeight);
+    for (const vec3 p : {base + n * 300.0f, base - n * 300.0f}) {
+        auto s = w.player().state();
+        s.pos = p;
+        w.restore(s, 0, 0);
+        w.tick({});
+    }
+    for (int i = 0; i < 120 && w.chapter == chapter; ++i) w.tick({});
+    EXPECT_EQ(played, streams) << unitName;
+    EXPECT_EQ(w.chapter, next) << unitName;
+}
+
+TEST(ChaptersReal, MediterraneanEndingRunsThroughTriggerScript) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    endingPlays("l1_ship_sinking_hall", 1, 1082, 1074, {"070_med_dive"}, 2);
 }
 
 TEST(ChaptersReal, CroftManorEndingRunsBothCinematics) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::BigfileSet bf(gameDir());
-    const auto unit = game::loadUnitData(bf, "l3_main_hall");
-    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
-                  "l3_main_hall", idleAnims(), game::Spawn{introPos(unit, 4137), 0});
-    w.script().setBigfile(&bf);
-    std::vector<std::string> played;
-    w.onCinematic = [&](const std::string& name, bool) { played.push_back(name); };
-    w.tick({});
-    auto state = w.player().state();
-    state.pos = {1000000, 1000000, 1000000};
-    w.restore(state, 0, 0);
-    for (int i = 0; i < 30; ++i) w.tick({});
-    EXPECT_EQ(played, (std::vector<std::string>{"160_man_shot", "170_man_exit"}));
-    EXPECT_EQ(w.chapter, 4);
+    endingPlays("l3_main_hall", 3, 4137, 4128, {"160_man_shot", "170_man_exit"}, 4);
 }
 
 TEST(ChaptersReal, NatlaShipEndingPassesLoadedGuard) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::BigfileSet bf(gameDir());
-    const auto unit = game::loadUnitData(bf, "l6_ship_engine_hall");
-    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
-                  "l6_ship_engine_hall", idleAnims(), game::Spawn{introPos(unit, 7566), 0});
-    w.script().setBigfile(&bf);
-    std::vector<std::string> played;
-    w.onCinematic = [&](const std::string& name, bool) { played.push_back(name); };
-    for (int i = 0; i < 4; ++i) w.tick({});
-    EXPECT_EQ(played, std::vector<std::string>{"270_shp_escape"});
-    EXPECT_EQ(w.chapter, 7);
+    endingPlays("l6_ship_engine_hall", 6, 7566, 7565, {"270_shp_escape"}, 7);
 }
 
 TEST(ChaptersReal, PickupsAndMusic) {

@@ -259,6 +259,12 @@ public:
     // void one that does more than return runs, as its own thread. False if none ran to completion.
     bool grapplePulled(int32_t uid);
     void tick(const TickInput& in, const collision::CollisionMesh* col = nullptr);
+    // The player's stream unit (stream unit id, Portal::toStreamId) for the unit scripts (gamebase callbacks): on a level
+    // load (tru.exe 0x5D2310 -> 0x4B0150) vt 13(unit); moving into a new stream unit (STREAM_MoveIntoNewStreamUnit
+    // 0x5C1BF0 -> 0x4B01E0) vt 11(unit) and vt 12(previous). Unit scripts created later get the current state (0x4B0050).
+    void setPlayerUnit(uint32_t unit, std::optional<uint32_t> previous);
+    // A script placed Lara on an object's transform (instance 26): that object's uid, once.
+    std::optional<int32_t> takeTeleport() { return std::exchange(teleport_, std::nullopt); }
 
     const std::vector<Object>& objects() const { return objects_; }
     const Object* find(int32_t uid) const;
@@ -334,6 +340,9 @@ private:
     std::map<std::string, std::pair<const vm::Program*, uint32_t>> unitScripts_; // unit -> its NsUnit script instance key
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;
+    std::optional<std::pair<uint32_t, std::optional<uint32_t>>> playerUnit_; // setPlayerUnit
+    void notifyPlayerUnit(int32_t uid);
+    std::optional<int32_t> teleport_;
     uint64_t visibilityVersion_ = 0;
     uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)

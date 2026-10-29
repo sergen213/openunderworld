@@ -452,7 +452,15 @@ void Runtime::addUnit(const UnitRef& u) {
     for (const auto& in : unit.intros) {
         const auto n = objectNames_.find(in.objectId);
         if (n == objectNames_.end()) continue;
-        const auto kind = classify(n->second);
+        auto kind = classify(n->second);
+        // The native base decides plane vs volume, not the object name: l3_main_hall "triggervolume" intros 4128 / 4129
+        // run triggerplane scripts (3529 -> triggerplanebase) whose vt 54 is the crossing handler [O bytecode].
+        if (kind == Kind::Volume || kind == Kind::Plane)
+            for (const ScriptType* t = in.scriptId ? program->type(in.scriptId) : nullptr; t; t = program->type(t->superId))
+                if (t->nativeName == "triggerplanebase" || t->nativeName == "triggervolumebase") {
+                    kind = t->nativeName == "triggerplanebase" ? Kind::Plane : Kind::Volume;
+                    break;
+                }
         if (!kind && !in.scriptId && !in.spline) continue;
         Object o;
         o.uid = in.uniqueId, o.unit = u.name, o.name = n->second, o.kind = kind.value_or(Kind::Scripted);
@@ -546,13 +554,17 @@ void Runtime::addUnit(const UnitRef& u) {
     // The unit script (Level+0x70 DTP +0x1C0, an NsUnit type; LEVELS.md "Unit script") is created with its unit and
     // enters state 0 as its own thread (e.g. l3_main_bedroom: Run, then the hint_01 help condition via vt 28).
     // unitref.Get returns the same instance. [I: started after the unit's intros so its instancerefs resolve]
-    if (const Function* f = program->type(unit.scriptId) ? program->startup(unit.scriptId) : nullptr) {
+    // A unit script without a startup function still listens (l1_cine_ship_sinking 5997: only vt 11 / 13).
+    if (program->type(unit.scriptId)) {
         const auto self = auxiliaryInstance(program, unit.scriptId);
         unitScripts_[u.name] = {program.get(), unit.scriptId};
-        const auto thread = makeMachine(self->uid);
-        if (!thread->start(*self, *f)) recordFailure(self->uid, u.name + " unit script", *thread);
-        if (thread->active()) threads_.push_back({self->uid, thread});
-        adopt(thread);
+        if (const Function* f = program->startup(unit.scriptId)) {
+            const auto thread = makeMachine(self->uid);
+            if (!thread->start(*self, *f)) recordFailure(self->uid, u.name + " unit script", *thread);
+            if (thread->active()) threads_.push_back({self->uid, thread});
+            adopt(thread);
+        }
+        notifyPlayerUnit(self->uid); // 0x4B0050: a new listener gets the player's current unit(s)
     }
 }
 
@@ -664,6 +676,26 @@ void Runtime::callback(int32_t uid, const char* base, size_t prototype, std::spa
     if (!machine->call(*self, vt, args)) recordFailure(uid, o ? o->name : "unit script", *machine);
     else if (!o && machine->active()) threads_.emplace_back(uid, machine); // unit/global script: its own thread
     adopt(machine);
+}
+
+void Runtime::setPlayerUnit(uint32_t unit, std::optional<uint32_t> previous) {
+    playerUnit_ = {unit, previous};
+    for (const auto& [name, key] : unitScripts_)
+        if (const auto a = auxiliary_.find(key); a != auxiliary_.end()) notifyPlayerUnit(a->second->uid);
+}
+
+void Runtime::notifyPlayerUnit(int32_t uid) {
+    if (!playerUnit_) return;
+    const auto& [unit, previous] = *playerUnit_;
+    // gamebase prototypes 17 / 18 / 19 = vt 11 / 12 / 13 (bind 0x7B44A0 -> 0x798370 / 0x7983B0 / 0x7983F0).
+    if (previous) {
+        const auto now = vm::Value::scalar(unit), before = vm::Value::scalar(*previous);
+        callback(uid, "gamebase", 17, std::span(&now, 1));
+        callback(uid, "gamebase", 18, std::span(&before, 1));
+    } else {
+        const auto now = vm::Value::scalar(unit);
+        callback(uid, "gamebase", 19, std::span(&now, 1));
+    }
 }
 
 void Runtime::cameraSplineDone(uint32_t value) {
@@ -790,7 +822,16 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // Receiver-independent bindings whose side effects other engine systems own (sound: below, once bound).
             // reverb 1 (0x4AA750 -> 0x582B70) copies its 13 settings words into the audio environment: our mixer has no
             // reverb, so it is passive too.
-            for (const char* passive : {"soundgroup", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect", "reverb"})
+            // cinematic (bind 0x7AC050): 0 Create (0x4ABD30 -> 0x4A4D10) and 2 IsCreated (0x4ABD40) the member's stream,
+            // which the cinematic base's preload state (3523 fn 13) polls. Ours loads a cutscene when it plays, so it is
+            // always ready [I].
+            if (!std::strcmp(name, "cinematic") && (nc.function == 0 || nc.function == 2)) {
+                nc.result = vm::Value::scalar(1);
+                return true;
+            }
+            // unlockable (bind 0x7AD470): 1 IsUnlocked (0x5DB8A0), 2 Unlock (0x5D6600) the extras item; ours has no extras.
+            for (const char* passive : {"soundgroup", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect", "reverb",
+                                        "unlockable"})
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
             // Receivers: a member address (object uid + offset), an object, or a native value held in a local.
             auto self = resolve(nc.receiver.uid);
@@ -805,6 +846,22 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                     return true;
                 }
                 if ((nc.function == 3 || nc.function == 6) && nc.args.empty()) { nc.wait = !target; return true; }
+            }
+            // unitref 0 (0x4A52E0): receiver and argument name the same unit. Values are stream unit ids: a unitref member's
+            // initial value, or the unit a gamebase callback passes (l1_cine_ship_sinking unit script vt 11: the player's
+            // new unit == its own 41).
+            if (!std::strcmp(name, "unitref") && nc.function == 0 && nc.args.size() == 1) {
+                const auto unit = [&](const vm::Value& v) -> uint32_t {
+                    if (v.kind != vm::Value::Kind::Member) return v.bits;
+                    const auto holder = resolve(v.uid);
+                    if (!holder || !holder->program) return 0;
+                    if (const auto f = holder->fields.find(v.offset); f != holder->fields.end()) return f->second;
+                    const Member* m = holder->program->member(holder->typeId, v.offset);
+                    return m && m->init ? *m->init : 0;
+                };
+                const uint32_t a = unit(nc.receiver), b = unit(nc.args[0]);
+                nc.result = vm::Value::scalar(a != 0 && (a & 0xFFFF) == (b & 0xFFFF));
+                return true;
             }
             if (!std::strcmp(name, "music") && nc.function >= 1 && nc.function <= 3) {
                 MusicRequest r{self ? self->uid : 0, nc.function, {}, -1, nc.args.empty() ? 0.0f : std::bit_cast<float>(nc.args[0].bits)};
@@ -865,9 +922,10 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(result);
                 return true;
             }
-            // health on Lara's script: 9 current value; 1 / 2 hit her (death volumes and planes; non-player targets unsupported).
+            // health on Lara's script: 9 current value; 1 / 2 hit her (death volumes and planes; non-player targets unsupported);
+            // 3 heals her (0x4A5180: INSTANCE_Post(5, amount) = the health pack message, l3_main_hall 4129 passes 400).
             if (!std::strcmp(name, "health") && health_ &&
-                (nc.function == 9 || ((nc.function == 1 || nc.function == 2) && playerScript_ && self == playerScript_))) {
+                (nc.function == 9 || ((nc.function == 1 || nc.function == 2 || nc.function == 3) && playerScript_ && self == playerScript_))) {
                 uint32_t result = 0;
                 if (!health_(nc.function, nc.args, result)) return false;
                 nc.result = vm::Value::scalar(result);
@@ -1128,6 +1186,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 }
                 return true;
             }
+            // instance 26 (0x4A4140): place the receiver at the transform its argument holds; an `instance` 4 result
+            // (0x4AB2A0: the target's transform, ours the object). l1_ship_sinking_hall plane 1074 moves Lara onto
+            // cinematic_object 1005 in l1_cine_ship_sinking, whose unit script then plays it (World::tick).
+            if (!std::strcmp(name, "instance") && nc.function == 26 && nc.args.size() == 1 && self == playerScript_ &&
+                nc.args[0].kind == vm::Value::Kind::Object && find(nc.args[0].uid)) {
+                teleport_ = nc.args[0].uid;
+                return true;
+            }
             if (!std::strcmp(name, "instance") &&
                 (nc.function == 4 || nc.function == 5 || nc.function == 6 || nc.function == 7 || nc.function == 8 ||
                  nc.function == 9 || nc.function == 14 || nc.function == 15 || nc.function == 16 || nc.function == 26 || nc.function == 28)) {
@@ -1201,7 +1267,9 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             return false;
         };
         auto cinematic = [this, source](vm::Instance& target, int16_t vt) {
-            if (vt != 57 && vt != 63) return false;
+            // vt 57 plays (cinematic base 3523 fn 0 -> STATE 1); vt 63 only preloads (STATE 2 = fn 13 creates the stream
+            // and waits) [O bytecode], so it is not an activation (l3_main_hall 4137 OnIn preloads 4108, 4128 plays it).
+            if (vt != 57) return false;
             const auto* object = findMut(target.uid);
             if (!object || object->name != "cinematic_object") return false;
             events_.push_back({EventKind::Activate, source, object->uid, tick_});

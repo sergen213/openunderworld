@@ -374,6 +374,11 @@ public:
     // doors and push blocks are collision().dynamics (following their pose); rigid-body doors swing on a hinge.
     const physics::Scene& physics() const { return physics_; }
     bool sendUberCommand(int32_t uid, uint32_t commandIndex);
+    // Section states of uber object `uid` (UberObjectData::sectionModels order; 0 = initial), null before its first use.
+    const std::vector<uint32_t>* uberState(int32_t uid) const {
+        const auto it = uberStates_.find(uid);
+        return it == uberStates_.end() ? nullptr : &it->second;
+    }
     // Script objects playing an animation-list clip this tick (switches / doors: their pull / open and held idle
     // clips; uber objects: their travel clip while it runs forward): for their clip effect events (EFFECTS.md).
     struct ObjectClip {
@@ -558,6 +563,7 @@ private:
     size_t current_ = 0;
     uint64_t unitsVersion_ = 0;
     std::string startUnit_;
+    std::string playerUnit_; // unit the scripts were last told Lara is in (Runtime::setPlayerUnit); empty = level load
     std::optional<Spawn> startSpawn_;
     std::optional<CheckpointRef> checkpoint_;
     script::Runtime script_;

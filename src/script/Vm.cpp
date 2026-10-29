@@ -541,7 +541,12 @@ Machine::Step Machine::step() {
                 wait_ = 0;
                 return suspend();
             }
-            if (invoked == 1) return done();
+            // A native sequence (0x57CE50 case 0x6A: 0x574960 starts its latent object, the thread waits on it) resumes
+            // after the SSEQU once it is done: l1_cine_ship_sinking vt 11 waits until cinematic 1005 is birthed, then plays.
+            if (invoked == 1) {
+                ++pc;
+                return Step::Continue;
+            }
             frames_.erase(frames_.end() - 2); // discard the parent; its caller resumes after the sequence
             return Step::Continue;
         }

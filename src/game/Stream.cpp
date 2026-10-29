@@ -142,6 +142,7 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     units_.clear();
     units_.push_back(std::move(base));
     current_ = 0;
+    playerUnit_.clear(); // a level load: the unit scripts get vt 13 (World::tick)
     player_.restore(PlayerState{}); // the old ledge index means nothing in the new stream
     streamAround(0);
     player_.spawn(spawn->pos, spawn->yaw);

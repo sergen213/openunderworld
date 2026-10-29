@@ -1148,7 +1148,8 @@ ours now decodes and loops that movie through either renderer's post pass. Its a
 **Level ends** [O data, I trigger]: the script of exactly one `cinematic_object` per chapter end names the next chapter's
 start unit: l3_main_hall 4106 (prologue → 1), l1_cine_ship_sinking 1005, l2_cliffclimb 2565, l3_mansion_exterior_afterburn
 4070, l4_ballcourt 5483, l5_valaskjalf 6846, l6_ship_natla_room 1387. l3_main_hall's script also names
-`l3_caverns_start`, so the target is the lowest-numbered start unit after the current chapter. Trigger volumes link to
+`l3_caverns_start`, so the target is the lowest-numbered start unit after the current chapter. Gate-by-gate routes and the
+original end chains (preload volume, then the playing plane / unit callback): docs/PROGRESSION.md. Trigger volumes link to
 these cinematics (l2 2564, l3_main_hall 4129, l4 5468/6407, l5 6866/6872); in our runtime the Activate of such a
 cinematic plays its cutscene (its `cinematic` member names the stream, docs/formats/CINEMATICS.md) and then starts the
 next chapter. The l1/l6/afterburn cinematics are reached through other scripts: l1_ship_sinking_hall plane 1074 /

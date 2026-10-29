@@ -259,6 +259,12 @@ Not done: collection/array/map opcodes, other thread/PSEQ fibers, most native bi
 full uber-object animation state graphs, dispatchers, cinematics and reveal cameras,
 closing-door animations, Lara's interaction clips.
 
+- [O] Progression findings (docs/PROGRESSION.md "Fixes"): the native base, not the object name, makes a trigger a plane
+  or a volume; cinematic vt 63 preloads (state 2) and only vt 57 plays; gamebase prototypes 17/18/19 = unit callbacks
+  vt 11/12/13 with stream unit ids (unitref 0 compares them); `instance` 26 places Lara on an `instance` 4 transform;
+  SSEQU on a native waits for it and then continues (0x57CE50 case 0x6A). The physical pressure plate base 3938
+  (`multibody` 1, `joint` 17, `limit` 3 ranges, engine callback vt 34 with the range id) is not modelled.
+
 ## Verification
 
 - `ou_script_tests`: synthetic shapes, enter/exit, dispatch order, plane/switch/block, VM arithmetic/raw-word

@@ -353,6 +353,30 @@ void World::tick(const Actions& input) {
         scriptUnits_ = unitsVersion_;
     }
     script_.tick({player_.state().pos, player_.state().yaw, a.move, a.interact}, &col_);
+    // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.
+    if (!units_.empty() && units_[current_].data.name != playerUnit_) {
+        const auto streamId = [&](const std::string& name) -> uint32_t {
+            for (const auto& u : units_)
+                for (const auto& p : u.data.portals)
+                    if (p.toUnit == name) return uint32_t(uint16_t(p.toStreamId));
+            return 0;
+        };
+        const std::string& now = units_[current_].data.name;
+        script_.setPlayerUnit(streamId(now), playerUnit_.empty() ? std::nullopt : std::optional<uint32_t>(streamId(playerUnit_)));
+        playerUnit_ = now;
+    }
+    if (const auto to = script_.takeTeleport(); to && !units_.empty()) // instance 26 on Lara: onto the object's transform
+        if (const auto* o = script_.find(*to)) {
+            PlayerState s;
+            s.pos = o->pos, s.yaw = o->rot.z - kPi / 2; // intro heading as findSpawn
+            const std::string unit = o->unit;           // `o` may move when the units change
+            player_.restore(s);
+            for (size_t i = 0; i < units_.size(); ++i)
+                if (units_[i].data.name == unit && i != current_) {
+                    streamAround(i);
+                    break;
+                }
+        }
     collectPickups(a.interact && !interactHeld_);
     tickObjects(dt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
