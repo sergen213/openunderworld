@@ -708,6 +708,11 @@ public:
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         meshOpacities(options.meshOpacity, meshes_.size(), opacity_);
         drawOrder(meshes_, camera.position, order_, opacity_);
+        unitClips_ = options.unitClips;
+        meshClip_.assign(meshes_.size(), -1);
+        for (size_t i = 0; i < meshSlot_.size(); ++i)
+            if (meshSlot_[i] < meshes_.size()) meshClip_[meshSlot_[i]] = clipIndex(unitClips_, i);
+        std::erase_if(order_, [&](const DrawRef& d) { return clippedAway(d.mesh); });
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
         gpuMark(cmd, 2);
         // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
@@ -789,6 +794,14 @@ public:
             vkCmdBindIndexBuffer(cmd, meshes_[mesh].indices.buffer, 0, VK_INDEX_TYPE_UINT32);
             boundMesh = mesh;
         };
+        int scissorClip = -1; // the portal clip set as the scissor (-1: the whole target)
+        auto clipTo = [&](uint32_t mesh) {
+            const int c = mesh < meshClip_.size() ? meshClip_[mesh] : -1;
+            if (c == scissorClip) return;
+            scissorClip = c;
+            const VkRect2D r = clipScissor(mesh);
+            vkCmdSetScissor(cmd, 0, 1, &r);
+        };
         // Original Fidelity: translated TRU shaders where a submesh's material has them, with the sun shadow / RT hooks.
         const bool originals = options.originalShaders && !origPrograms_.empty();
         if (originals) warmOriginalPipelines(rtOn, shadowMap, options.rt == RayTracing::Full);
@@ -826,6 +839,7 @@ public:
             original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);
+            clipTo(d.mesh);
             vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
             vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
         };
@@ -847,6 +861,7 @@ public:
                 if (prepassPipeline_ != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = prepassPipeline_);
                 layout = Bound::None; // set 0 of sceneLayout_ below disturbs the translated programs' sets
                 bindMesh(d.mesh);
+                clipTo(d.mesh);
                 push.model = meshes_[d.mesh].model;
                 push.alphaRef = s.alphaRef / 255.0f;
                 vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
@@ -877,6 +892,7 @@ public:
             const VkPipeline p = scenePipelines_[size_t(blend)];
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             bindMesh(d.mesh);
+            clipTo(d.mesh);
             push.model = m.model;
             push.alphaRef = s.alphaRef / 255.0f;
             push.rt = (rtOn && blend == scene::Blend::Opaque ? 1 : 0) | (reflective ? 2 : 0);
@@ -887,6 +903,7 @@ public:
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
             vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
         }
+        clipTo(UINT32_MAX);
 
         if (needDepth) { // second pass: water surfaces + splashes (Enhanced water), then the debug lines below
             vkCmdEndRendering(cmd);
@@ -903,6 +920,7 @@ public:
             vkCmdBeginRendering(cmd, &ri);
             vkCmdSetViewport(cmd, 0, 1, &flipped);
             vkCmdSetScissor(cmd, 0, 1, &scissor);
+            scissorClip = -1;
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE); // the surface also reads from below
             for (const DrawRef& d : screenDraws_) {
                 const OrigDraw& od = origDraws_[d.mesh][d.sub];
@@ -911,6 +929,7 @@ public:
                 drawOriginal(d, od, origPipeline(od.program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, blend));
             }
             screenDraws_.clear();
+            clipTo(UINT32_MAX);
         }
         if (enhancedWater) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
@@ -918,11 +937,13 @@ public:
                                     nullptr);
             for (uint32_t mi = 0; mi < meshes_.size(); ++mi) {
                 const GpuMesh& m = meshes_[mi];
-                if (!m.water) continue;
+                if (!m.water || clippedAway(mi)) continue;
                 bindMesh(mi);
+                clipTo(mi);
                 vkCmdPushConstants(cmd, waterLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m.model);
                 for (const auto& s : m.submeshes) vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
             }
+            clipTo(UINT32_MAX);
             if (!options.splashes.empty()) {
                 const auto verts = splashVertices(camera, options.splashes);
                 const VkDeviceSize bytes = verts.size() * sizeof(SplashVertex);
@@ -2375,6 +2396,16 @@ private:
         }
     }
     bool fsrActiveRequest() const { return fsrRequested_ && fsrReason_.empty() && fsrError_.empty(); }
+    // Scissor of GPU mesh `mesh`'s portal clip (FrameOptions::unitClips via meshClip_); unclipped: the whole target.
+    VkRect2D clipScissor(uint32_t mesh) const {
+        const int c = mesh < meshClip_.size() ? meshClip_[mesh] : -1;
+        if (c < 0) return {{0, 0}, extent_};
+        const PixelRect p = clipPixels(unitClips_[size_t(c)], int(extent_.width), int(extent_.height), true);
+        return {{p.x, p.y}, {uint32_t(p.width), uint32_t(p.height)}};
+    }
+    bool clippedAway(uint32_t mesh) const {
+        return mesh < meshClip_.size() && meshClip_[mesh] >= 0 && clipHidden(unitClips_[size_t(meshClip_[mesh])]);
+    }
 
     // Motion vectors + reactivity at the render resolution after the scene (docs/RENDERING.md "FSR"). depth_ goes
     // DEPTH_ATTACHMENT -> DEPTH_READ_ONLY (tested + sampled here) -> SHADER_READ_ONLY with motion_ / reactive_ for FSR.
@@ -2434,7 +2465,10 @@ private:
         vkCmdSetViewport(cmd, 0, 1, &flipped);
         const glm::mat4& previousVP = fsrHistory_ ? prevViewProj_ : currentVP;
         auto draw = [&](uint32_t mi, const scene::SubMesh& s, glm::vec4 params) {
+            if (clippedAway(mi)) return;
             const GpuMesh& m = meshes_[mi];
+            const VkRect2D clip = clipScissor(mi);
+            vkCmdSetScissor(cmd, 0, 1, &clip);
             const VkDeviceSize zero[2] = {0, 0};
             const VkBuffer vb[2] = {m.vertices.buffer, m.prevVertices.buffer ? m.prevVertices.buffer : m.vertices.buffer};
             vkCmdBindVertexBuffers(cmd, 0, 2, vb, zero);
@@ -2465,6 +2499,7 @@ private:
                 if (water) draw(mi, s, {0, 0.6f, 0, 0});
                 else if (s.blend != scene::Blend::Opaque) draw(mi, s, {s.alphaRef / 255.0f, 0.9f, 1, 0});
         }
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
         if (reactive && !options.fxBatches.empty() && !options.fxVertices.empty()) { // drawFrame filled fxBuffers_[frameIndex_]
             const VkDeviceSize zero = 0;
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
@@ -3628,6 +3663,8 @@ private:
     Bounds bounds_;
     std::vector<DrawRef> order_;
     std::vector<float> opacity_; // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)
+    std::span<const UnitClip> unitClips_; // per frame: FrameOptions::unitClips
+    std::vector<int> meshClip_;           // per frame and GPU mesh: index into unitClips_, -1 = unclipped
 
     LinearAllocator staticMemory_, sceneMemory_, swapMemory_;
     std::unordered_map<uint32_t, GpuImage> textures_;

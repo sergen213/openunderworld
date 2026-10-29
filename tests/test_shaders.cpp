@@ -376,3 +376,43 @@ TEST(RenderCommon, OutsideOrtho) {
     EXPECT_TRUE(render::outsideOrtho(vp, {0, -70, 0}, 10));
     EXPECT_FALSE(render::outsideOrtho(vp, {0, 0, 5000}, 10)); // depth is never culled
 }
+
+// Neighbour units draw through their stream portals (RenderCommon portalClips, docs/RENDERING.md "Portal clipping").
+TEST(PortalClips, NeighbourSeenOnlyThroughItsPortal) {
+    using render::PortalUnit;
+    const glm::vec3 q[4] = {{-1000, -100, -100}, {-1000, 100, -100}, {-1000, 100, 100}, {-1000, -100, 100}};
+    std::vector<PortalUnit> units(3);
+    units[0] = {0, 10, {{1, {q[0], q[1], q[2], q[3]}, {1, 0, 0}}}};   // A: portal at x -1000 to B, normal into A (+x)
+    units[1] = {10, 5, {{0, {q[0], q[1], q[2], q[3]}, {-1, 0, 0}}}}; // B: the back portal
+    units[2] = {15, 5, {}};                                           // C: loaded, no portal from A
+    render::Camera cam;
+    cam.position = {0, 0, 0};
+    cam.lookAt({-1, 0, 0});
+    auto clips = render::portalClips(units, 0, cam, 1.0f);
+    ASSERT_EQ(clips.size(), 3u);
+    EXPECT_FLOAT_EQ(clips[0].rect[0], -1.0f);
+    EXPECT_FLOAT_EQ(clips[0].rect[2], 1.0f);
+    const float e = 100.0f / 1000.0f / std::tan(glm::radians(cam.verticalFovDeg) * 0.5f); // quad half-size in NDC
+    EXPECT_NEAR(clips[1].rect[0], -e, 1e-4f);
+    EXPECT_NEAR(clips[1].rect[3], e, 1e-4f);
+    EXPECT_TRUE(render::clipHidden(clips[2]));
+    EXPECT_EQ(render::clipIndex(clips, 12), 1);
+    EXPECT_EQ(render::clipIndex(clips, 25), -1);
+    const auto px = render::clipPixels(clips[1], 1000, 1000, true);
+    EXPECT_NEAR(px.x + px.width * 0.5f, 500.0f, 1.5f);
+    EXPECT_NEAR(px.width, e * 1000.0f + 2, 2.5f);
+
+    cam.lookAt({1, 0, 0}); // portal behind the camera
+    EXPECT_TRUE(render::clipHidden(render::portalClips(units, 0, cam, 1.0f)[1]));
+    cam.position = {-1500, 0, 0}; // through the portal: B whole
+    cam.lookAt({0, 0, 0});
+    clips = render::portalClips(units, 0, cam, 1.0f);
+    EXPECT_FLOAT_EQ(clips[1].rect[0], -1.0f);
+    EXPECT_FLOAT_EQ(clips[1].rect[3], 1.0f);
+    cam.position = {-999.5f, 0, 0}; // in the doorway: the quad lies behind the near plane
+    clips = render::portalClips(units, 0, cam, 1.0f);
+    EXPECT_FLOAT_EQ(clips[1].rect[2], 1.0f);
+    cam.position = {-1500, 5000, 0}; // past the portal's plane far from its quad: still in A, the portal faces away
+    cam.lookAt({-3000, 5000, 0});
+    EXPECT_TRUE(render::clipHidden(render::portalClips(units, 0, cam, 1.0f)[1]));
+}

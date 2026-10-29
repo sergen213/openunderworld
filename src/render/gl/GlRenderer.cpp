@@ -567,6 +567,10 @@ public:
         glBindBufferBase(GL_UNIFORM_BUFFER, 4, r.waterUbo.get());
         meshOpacities(options.meshOpacity, r.meshes.size(), opacity_);
         drawOrder(r.meshes, camera.position, r.order, opacity_);
+        unitClips_ = options.unitClips;
+        meshClip_.resize(r.meshes.size());
+        for (size_t i = 0; i < r.meshes.size(); ++i) meshClip_[i] = clipIndex(unitClips_, r.meshes[i].source);
+        std::erase_if(r.order, [&](const DrawRef& d) { return clippedAway(d.mesh); });
         // No ray tracing here: a requested RT mode renders with the shadow map (as Vulkan without RT support).
         const bool shadows = options.shadows || options.rt != RayTracing::Off;
         const SunShadow sun = sunShadow(camera, vp, r.bounds, sunToward(environment_), false, shadows, 0, 0);
@@ -596,6 +600,7 @@ public:
             const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;
             const scene::Blend blend = drawBlend(s, op);
             if (enhancedWater && m.water) continue; // drawn by drawWater with the opaque copies
+            scissorFor(d.mesh, vp);
             const int p = originals ? m.program[d.sub] : -1;
             if (p != program) {
                 glUseProgram(p < 0 ? r.sceneProgram.get() : r.originals[size_t(p)].get());
@@ -628,6 +633,7 @@ public:
             glUniform2f(4, op, s.blend == scene::Blend::Opaque ? 1.0f : 0.0f);
             drawSubmesh(s);
         }
+        scissorFor(UINT32_MAX, vp); // off: blits obey the scissor
         if (originals && !deferred_.empty()) drawScreenReaders(vp);
         setBlend(int(scene::Blend::Opaque));
         if (enhancedWater) drawWater(camera, vp, options);
@@ -1005,6 +1011,7 @@ private:
             const scene::SubMesh& s = m.submeshes[d.sub];
             glUseProgram(r.originals[size_t(m.program[d.sub])].get());
             glBindVertexArray(m.vao.get());
+            scissorFor(d.mesh, vp);
             const scene::Blend blend = drawBlend(s, d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f);
             if (int(blend) != state) setBlend(state = int(blend));
             glDisable(GL_CULL_FACE); // the sea is also seen from below
@@ -1019,7 +1026,20 @@ private:
             glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
                            reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
         }
+        scissorFor(UINT32_MAX, vp);
     }
+
+    // Portal clip of GPU mesh `mesh` (FrameOptions::unitClips via meshClip_) as the GL scissor; UINT32_MAX: off.
+    void scissorFor(uint32_t mesh, Viewport vp) {
+        const int c = mesh < meshClip_.size() ? meshClip_[mesh] : -1;
+        if (c == scissorClip_) return;
+        scissorClip_ = c;
+        if (c < 0) { glDisable(GL_SCISSOR_TEST); return; }
+        const PixelRect p = clipPixels(unitClips_[size_t(c)], vp.width, vp.height, false);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(p.x, p.y, p.width, p.height);
+    }
+    bool clippedAway(size_t mesh) const { return meshClip_[mesh] >= 0 && clipHidden(unitClips_[size_t(meshClip_[mesh])]); }
 
     GLintptr objectStrideFor(size_t bytes) const {
         const GLintptr a = res_->uboAlign;
@@ -1092,14 +1112,17 @@ private:
         glDepthMask(GL_FALSE);
         glDisable(GL_BLEND);
         glDisable(GL_CULL_FACE); // the surface must also read from below
-        for (const auto& m : r.meshes) {
-            if (!m.water) continue;
+        for (uint32_t i = 0; i < r.meshes.size(); ++i) {
+            const GpuMesh& m = r.meshes[i];
+            if (!m.water || clippedAway(i)) continue;
+            scissorFor(i, vp);
             glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(m.model));
             glBindVertexArray(m.vao.get());
             for (const auto& s : m.submeshes)
                 glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
                                reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
         }
+        scissorFor(UINT32_MAX, vp);
         if (!options.splashes.empty()) {
             const auto verts = splashVertices(camera, options.splashes);
             if (!verts.empty()) {
@@ -1222,6 +1245,9 @@ private:
     std::vector<uint8_t> materialBlocks_; // during upload()
     std::vector<uint8_t> objectScratch_;
     std::vector<DrawRef> deferred_; // per frame: back/depth-buffer readers (drawScreenReaders)
+    std::span<const UnitClip> unitClips_; // per frame: FrameOptions::unitClips
+    std::vector<int> meshClip_;           // per frame and GPU mesh: index into unitClips_, -1 = unclipped
+    int scissorClip_ = -1;                // clip the GL scissor is set to, -1 = scissor test off
     std::vector<float> opacity_;    // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)
     bool s3tc_ = false, debug_ = false;
     float maxAniso_ = 1.0f;

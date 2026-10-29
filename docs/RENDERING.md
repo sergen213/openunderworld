@@ -464,6 +464,31 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
   queued frames) fixed FG destroying image views still in flight. Unsupported devices (no formatless storage images, compute derivatives, independent blend,
   subgroup ops) or a build without DXC fall back to native rendering with the reason in F1.
 
+## Portal clipping (GL + Vulkan; `FrameOptions::unitClips`, RenderCommon `portalClips`)
+
+tru.exe binds every stream portal (0x5CEC60 / 0x5CF070) as a `cdc::ScenePortal` of its unit's cell group, so a
+neighbour unit is only ever seen through its portal. ou-game streams neighbours in and relocates them (docs/formats/
+LEVELS.md "Streaming"), and draws them the same way:
+
+- `StreamedScene` records each loaded unit's scene mesh range; `app::unitClips` turns the units' `StreamUnitPortal`
+  quads (+0xB0, offset by the unit's relocation) and normals (+0xF0, pointing into the owning unit) into
+  `render::PortalUnit` links, for ou-game frames and cinematics alike.
+- `portalClips` walks depth first from the camera's unit through the portals that face the camera; each unit gets the
+  union of its paths' screen rects (the quad clipped to the near plane, projected, intersected along the path).
+  Units no path reaches get an empty rect and are not drawn. A camera inside a portal's box (2 × near plane), or
+  behind one of its own unit's portals within 1500 units of the quad [I: the third-person camera trails Lara by a few
+  hundred units while she crosses], sees that neighbour whole; behind it farther away the portal is back-facing
+  (l1_seatop's sky portal to l1_cineseatop).
+- Both renderers drop hidden units' draws and set the clip as the scissor (grown by a pixel) for the scene, depth
+  pre-pass, screen-reader (TRU water), Enhanced water and FSR reactive-mask draws. Shadow maps and ray tracing still see
+  every loaded unit (off-screen casters), and meshes outside the ranges (Lara, guns, effects) are unclipped.
+- Effect [O]: ch1's start no longer draws l1_cineseatop (relocated by (−166366, 0, −2); its glass dome and yacht hung
+  in the western sky over the sea). The l4_pool ↔ l4_ragnarok_room doorway and l2_junglehub render as before.
+- Cost [O] (`--chapter N --width 2560 --height 1440 --no-vsync --no-overlay --render-hz 60 --frames 600`, mean ms
+  before → after, same host load; other agents were running, so absolute times are above the sweep's): ch1 Vulkan
+  6.34 → 6.09, GL 7.19 → 6.75; ch2 Vulkan 17.6 → 16.5, GL 9.18 → 7.77; ch4 Vulkan 15.6 → 15.3, GL 6.92 → 7.18. The
+  walk and per-mesh clip lookup are within noise; hidden neighbours save their draws.
+
 ## Visual sweep (2026-10-29)
 
 Captures [O]: `ou-game` Release (HEAD 1550709 + the fixes below), 1920×1080, 120 frames, every `--chapter 0-8` start plus
@@ -478,7 +503,8 @@ and OpenGL `--preset original`; invisible kwin_wayland sessions; screenshots vie
 | l4_pool (Vulkan) | device lost / crash on entry | critical | Enhanced water ripple texture lived in `sceneMemory_`, which `destroySceneResources` reset without destroying the image; the next scene reused it on freed memory | fixed |
 | l1_seatop, l1_seafloor, l7_arctic_sea (Vulkan) | validation errors every frame (VUID-VkImageMemoryBarrier2-image-01932, vkCmdCopyBufferToImage-dstImage-07966) | high | same as above | fixed; all 25 Vulkan runs validation-clean (only the host's unrelated lsfg loader-layer messages remain) |
 | l1_seatop, l2_cliffclimb (OpenGL) | no sea: grey/beige fogged seabed to the horizon | high | 94ed091 removed 9cb8444's misplaced `drawScreenReaders` call but never re-added it, so GL skipped every back/depth-buffer reading submesh (TRU's water) | fixed; also `fillFrame(…, flipY = true)` for GL's bottom-up screen copies (ScreenExtents c51 sampled them upside down) |
-| l1_seatop (both) | blotchy z-fighting patches on the sea around the yacht and toward the west | high | l1_cineseatop (portal neighbour, relocated by (−166366, 0, −2)) has its own sea plane at z 1671, 2 units under l1_seatop's 1673; the two wave independently. Its portal is a 6300² quad in the sky at x −71582. [I] tru.exe draws neighbour units only through their portal (clip rect), which would never show that sea; we draw every loaded unit whole | open: needs portal-clipped neighbour rendering (per-unit scissor from the projected portal quad, full draw when the camera is at / behind the portal); confirmed by hiding section 7994 (patches gone) |
+| l1_seatop (both) | l1_cineseatop's glass dome and yacht hanging in the western sky; its sea plane (z 1671, 2 units under l1_seatop's 1673) z-fighting with l1_seatop's west of x −65052 | high | l1_cineseatop is a portal neighbour relocated by (−166366, 0, −2) whose portal is a 6300² quad in the sky at x −71582; tru.exe draws neighbours only through their portals, we drew every loaded unit whole | fixed: "Portal clipping" above (far-west views at x −60000 / −100000 [O]: dome, yacht and its sea gone, GL and Vulkan) |
+| l1_seatop (both) | blotchy dark patches on the sea around the yacht and toward the west | high | l1_seafloor's seabed, drawn through the horizontal portal at z −4605 (which faces the camera, so clipping keeps it), shows through the sea: hiding l1_seafloor removes them [O]; [I] the sea's depth / fog over the seabed (underwater look) | open |
 | l2_junglehub start (Enhanced) | whole ledge in sun shadow, map and RT alike | low | not a renderer bug: the sun ray from Lara (sun (0.609, −0.486, 0.626)) hits real one-sided geometry facing the sun — canopy foliage 1064 units up (mat 10641), terrain 10539, l2_cliffhall_b terrain and trees — invisible from below because back faces are culled. [U] whether the original's PSSM casters include them (its depth pass 0x505D80 renders with cull none) | kept |
 | l7_arctic_sea / ch7 start | Enhanced: flat teal, ruins invisible at the start frame; Original (GL): no underwater tint at all vs the blue orig_ch7 | medium | Enhanced underwater absorption / unit fog under water (StartFixes' area; reported) | open |
 | l1_seafloor | very bright saturated cyan in both presets | medium | unit fog / lighting under water [U] | open |

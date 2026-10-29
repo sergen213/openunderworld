@@ -106,4 +106,26 @@ void drawOrder(const std::vector<GpuMesh>& meshes, glm::vec3 eye, std::vector<Dr
                      [&](const DrawRef& a, const DrawRef& b) { return dist(a) > dist(b); });
 }
 
+// ---- Stream-unit portals (docs/RENDERING.md "Portal clipping") ----
+// One loaded unit: its scene meshes and its portals to other loaded units (world space; `normal` points into this unit,
+// as the StreamUnitPortal +0xF0 normals of l1_seatop, l1_cineseatop, l4_pool and l4_ragnarok_room do).
+struct PortalUnit {
+    struct Link { size_t to; glm::vec3 quad[4]; glm::vec3 normal; };
+    uint32_t firstMesh = 0, meshCount = 0;
+    std::vector<Link> links;
+};
+// tru.exe binds every stream portal (0x5CEC60 / 0x5CF070) as a cdc::ScenePortal of the unit's cell group: a neighbour
+// is drawn only through its portal. From the camera's unit, depth first through the portals facing the camera, each
+// unit gets the union of its portal paths' screen rects (projected quad bounds, intersected along the path). A camera
+// in a portal of its own unit, or behind it within 1500 units of the quad, sees that neighbour whole; behind it farther
+// away (past the plane only, as l1_seatop's sky portal to l1_cineseatop) the portal is back-facing. Unreached units are
+// hidden.
+std::vector<UnitClip> portalClips(std::span<const PortalUnit> units, size_t cameraUnit, const Camera& camera, float aspect);
+// Index into `clips` of scene mesh `mesh`, -1 when it is in no clip range.
+int clipIndex(std::span<const UnitClip> clips, size_t mesh);
+inline bool clipHidden(const UnitClip& c) { return c.rect[0] >= c.rect[2] || c.rect[1] >= c.rect[3]; }
+struct PixelRect { int x = 0, y = 0, width = 0, height = 0; };
+// Scissor of a clip on a width x height target, grown by a pixel; `yDown`: y from the top (Vulkan), else bottom (GL).
+PixelRect clipPixels(const UnitClip& c, int width, int height, bool yDown);
+
 } // namespace ou::render

@@ -237,4 +237,81 @@ std::unique_ptr<Renderer> selectRenderer(std::string_view name, const std::funct
     return r;
 }
 
+namespace {
+using Rect = glm::vec4; // NDC x0, y0, x1, y1
+constexpr Rect kNoRect{1, 1, -1, -1}, kScreen{-1, -1, 1, 1};
+bool emptyRect(Rect r) { return r.x >= r.z || r.y >= r.w; }
+Rect intersect(Rect a, Rect b) { return {std::max(a.x, b.x), std::max(a.y, b.y), std::min(a.z, b.z), std::min(a.w, b.w)}; }
+Rect unite(Rect a, Rect b) {
+    if (emptyRect(a)) return b;
+    if (emptyRect(b)) return a;
+    return {std::min(a.x, b.x), std::min(a.y, b.y), std::max(a.z, b.z), std::max(a.w, b.w)};
+}
+// Screen bounds of a world-space quad: the polygon clipped to the near plane (z >= -w), projected, kept on screen.
+Rect projectQuad(const glm::mat4& viewProj, const glm::vec3 (&quad)[4]) {
+    glm::vec4 c[4];
+    for (int i = 0; i < 4; ++i) c[i] = viewProj * glm::vec4(quad[i], 1.0f);
+    glm::vec2 lo(1e30f), hi(-1e30f); // stays inverted (empty) when the whole quad is behind the near plane
+    auto add = [&](glm::vec4 p) { lo = glm::min(lo, glm::vec2(p) / p.w), hi = glm::max(hi, glm::vec2(p) / p.w); };
+    for (int i = 0; i < 4; ++i) {
+        const glm::vec4 a = c[i], b = c[(i + 1) % 4];
+        const float da = a.z + a.w, db = b.z + b.w;
+        if (da >= 0) add(a);
+        if ((da >= 0) != (db >= 0)) add(a + (b - a) * (da / (da - db)));
+    }
+    return intersect(Rect(lo, hi), kScreen);
+}
+} // namespace
+
+std::vector<UnitClip> portalClips(std::span<const PortalUnit> units, size_t cameraUnit, const Camera& camera, float aspect) {
+    if (cameraUnit >= units.size()) return {};
+    const glm::mat4 viewProj = camera.projection(aspect) * camera.view();
+    const glm::vec3 eye = camera.position;
+    const float inside = 2.0f * camera.nearZ; // closer to a portal than this, its quad may lie behind the near plane
+    // [I] A camera behind one of its unit's portals and this close to the quad has gone through it (the third-person
+    // camera trails Lara by a few hundred units); farther away it is only past the portal's plane, still in its unit.
+    constexpr float kThrough = 1500.0f;
+    auto near = [&](const glm::vec3& lo, const glm::vec3& hi, float d) {
+        return glm::all(glm::greaterThanEqual(eye, lo - d)) && glm::all(glm::lessThanEqual(eye, hi + d));
+    };
+    std::vector<Rect> seen(units.size(), kNoRect);
+    auto walk = [&](auto& self, size_t u, Rect rect, size_t depth) -> void {
+        seen[u] = unite(seen[u], rect);
+        if (depth >= units.size()) return;
+        for (const auto& l : units[u].links) {
+            if (l.to >= units.size()) continue;
+            const float side = glm::dot(eye - l.quad[0], l.normal);
+            glm::vec3 lo = l.quad[0], hi = l.quad[0];
+            for (const auto& q : l.quad) lo = glm::min(lo, q), hi = glm::max(hi, q);
+            Rect next;
+            if (depth == 0 && (near(lo, hi, inside) || (side <= 0 && near(lo, hi, kThrough)))) next = kScreen; // in that unit
+            else if (side <= 0) continue; // seen from behind
+            else next = intersect(rect, projectQuad(viewProj, l.quad));
+            if (!emptyRect(next)) self(self, l.to, next, depth + 1);
+        }
+    };
+    walk(walk, cameraUnit, kScreen, 0);
+    std::vector<UnitClip> out;
+    out.reserve(units.size());
+    for (size_t i = 0; i < units.size(); ++i)
+        out.push_back({units[i].firstMesh, units[i].meshCount, {seen[i].x, seen[i].y, seen[i].z, seen[i].w}});
+    return out;
+}
+
+int clipIndex(std::span<const UnitClip> clips, size_t mesh) {
+    for (size_t i = 0; i < clips.size(); ++i)
+        if (mesh >= clips[i].firstMesh && mesh - clips[i].firstMesh < clips[i].meshCount) return int(i);
+    return -1;
+}
+
+PixelRect clipPixels(const UnitClip& c, int width, int height, bool yDown) {
+    const int x0 = std::max(0, int(std::floor((c.rect[0] + 1) * 0.5f * float(width))) - 1);
+    const int x1 = std::min(width, int(std::ceil((c.rect[2] + 1) * 0.5f * float(width))) + 1);
+    int y0 = std::max(0, int(std::floor((c.rect[1] + 1) * 0.5f * float(height))) - 1);
+    int y1 = std::min(height, int(std::ceil((c.rect[3] + 1) * 0.5f * float(height))) + 1);
+    if (yDown) { const int top = height - y1; y1 = height - y0; y0 = top; }
+    if (clipHidden(c) || x1 <= x0 || y1 <= y0) return {};
+    return {x0, y0, x1 - x0, y1 - y0};
+}
+
 } // namespace ou::render

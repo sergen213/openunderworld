@@ -123,6 +123,10 @@ struct RgbaImage {
 // alpha = opacity [I: the opacity PS variant's alpha], other materials with their own blend and alpha x opacity; all
 // without depth writes, after the opaque ones. 0 = not drawn.
 struct MeshOpacity { uint32_t mesh = 0; float opacity = 1; };
+// Scene meshes [firstMesh, firstMesh + meshCount) of one streamed unit draw only inside `rect` (NDC x0, y0, x1, y1, y up)
+// in the camera passes; an empty rect hides them. Neighbour units are seen through their stream portals (RenderCommon
+// portalClips). Shadow / ray-traced passes ignore it.
+struct UnitClip { uint32_t firstMesh = 0, meshCount = 0; float rect[4] = {-1, -1, 1, 1}; };
 
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
@@ -174,6 +178,7 @@ struct FrameOptions {
     std::span<const FxBatch> fxBatches;
     const ScreenFilter* screenFilter = nullptr; // original class-5 screen filters (post pass); nullptr / inactive = none
     std::span<const MeshOpacity> meshOpacity; // unlisted meshes: 1
+    std::span<const UnitClip> unitClips;     // meshes in no range: unclipped
 };
 
 // Ray-tracing state for diagnostics and tests.

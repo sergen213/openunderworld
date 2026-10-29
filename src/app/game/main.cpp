@@ -543,6 +543,7 @@ void appendEnemyLines(const ou::game::World& w, std::vector<ou::render::DebugLin
 // its stream offset, then Lara's skinned meshes. Rebuilt and re-uploaded when World::unitsVersion changes.
 struct StreamedScene {
     std::map<std::string, ou::scene::SceneData> units; // unit frame
+    std::vector<std::pair<uint32_t, uint32_t>> unitMeshes; // per World::units() entry: first scene mesh, count (portal clips)
     ou::scene::SceneData lara;                         // Lara's skinned meshes, skeletons, textures
     ou::scene::SceneData guns;                         // weapon models, one per gunSlots entry (CombatView::pose)
     std::vector<std::pair<ou::game::Weapon, int>> gunSlots; // weapon, hand of each guns mesh
@@ -634,13 +635,16 @@ struct StreamedScene {
                 out.environment.lights.push_back(std::move(l));
             }
         };
+        unitMeshes.clear();
         for (const auto& u : w.units()) {
             auto it = units.find(u.data.name);
             if (it == units.end()) {
                 it = units.emplace(u.data.name, ou::formats::loadLevelScene(bf, "pc-w\\" + u.data.name + ".drm")).first;
                 for (const auto& s : it->second.warnings) warnings.push_back(s);
             }
+            const auto first = uint32_t(out.meshes.size());
             append(it->second, u.offset, nullptr, &u.data.name);
+            unitMeshes.emplace_back(first, uint32_t(out.meshes.size()) - first);
         }
         // Draw groups hidden on Lara (Thor's gear, wetsuit dive gear; GAMEPLAY.md). Lara's meshes are the last block of
         // `out` here, so the ones hideDrawGroups emptied are dropped in place.
@@ -1783,6 +1787,7 @@ int main(int argc, char** argv) {
     // ---- cinematics (src/cine, app/game/Cinematic.*): --cine, and the cinematic_objects scripts activate (level ends) ----
     auto cineView = [&] {
         ou::app::CineView v{*bigfile, *world, *renderer, window.get(), audioOn ? &mixer : nullptr, scene, lara.meshIndices, streamed.gunIndices};
+        v.unitMeshes = streamed.unitMeshes;
         v.renderHz = opt.renderHz;
         v.frame.msaa = opt.gfx.msaa, v.frame.shadows = opt.gfx.shadows, v.frame.fxaa = opt.gfx.fxaa, v.frame.hdr = opt.gfx.hdr;
         v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
@@ -2265,6 +2270,8 @@ int main(int argc, char** argv) {
         if (!mainMenu && opt.gfx.effects) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;
+        const auto clips = ou::app::unitClips(*world, streamed.unitMeshes, world->currentUnit().data.name, cam, float(w) / float(std::max(1, h)));
+        fo.unitClips = clips;
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {

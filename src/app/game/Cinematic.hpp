@@ -26,6 +26,7 @@ struct CineView {
     const scene::SceneData& scene;     // the game scene now uploaded (units, Lara, ...); re-upload it afterwards
     std::vector<size_t> laraMeshes;    // Lara's skinned meshes in `scene`
     std::vector<size_t> hide;          // meshes of `scene` collapsed while playing (pistols)
+    std::vector<std::pair<uint32_t, uint32_t>> unitMeshes; // per World::units() entry: its first mesh in `scene`, count
     render::FrameOptions frame{};      // graphics settings
     double renderHz = 0;               // > 0: fixed frame time (replays, screenshots)
     int maxFrames = 0;                 // > 0: stop after this many frames and keep the last image
@@ -42,5 +43,10 @@ struct CineResult {
 
 // Throws on a missing or malformed stream.
 CineResult playCinematic(const std::string& name, const CineView& view);
+
+// Portal clips (render::portalClips) of the loaded units whose meshes are `unitMeshes` (per World::units() entry, as
+// StreamedScene builds the scene), seen from `camera` in unit `cameraUnit`. Empty when the ranges are stale.
+std::vector<render::UnitClip> unitClips(const game::World& world, std::span<const std::pair<uint32_t, uint32_t>> unitMeshes,
+                                        const std::string& cameraUnit, const render::Camera& camera, float aspect);
 
 } // namespace ou::app

@@ -21,6 +21,7 @@
 #include "cine/Cine.hpp"
 #include "formats/Formats.hpp"
 #include "locale/Locale.hpp"
+#include "render/RenderCommon.hpp"
 #include "ui/Ui.hpp"
 
 namespace ou::app {
@@ -228,6 +229,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         fo.overlay = overlay;
         fo.debugLines = {};
         fo.ui = canvas.vertices;
+        const auto clips = unitClips(v.world, v.unitMeshes, lower(h.unitName), cam, hgt > 0 ? float(w) / float(hgt) : 1.0f);
+        fo.unitClips = clips;
         v.renderer.drawFrame(cam, {w, hgt}, fo);
         ++r.frames;
         if (v.maxFrames && r.frames >= v.maxFrames) {
@@ -245,6 +248,26 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
     std::fprintf(stderr, "ou-game: cinematic %s: %d frames to frame %d%s\n", name.c_str(), r.frames, player.frame(),
                  r.skipped ? " (skipped)" : r.quit ? " (closed)" : "");
     return r;
+}
+
+std::vector<render::UnitClip> unitClips(const game::World& world, std::span<const std::pair<uint32_t, uint32_t>> unitMeshes,
+                                        const std::string& cameraUnit, const render::Camera& camera, float aspect) {
+    const auto& units = world.units();
+    if (unitMeshes.size() != units.size()) return {};
+    std::vector<render::PortalUnit> pu(units.size());
+    size_t cam = units.size();
+    for (size_t i = 0; i < units.size(); ++i) {
+        pu[i].firstMesh = unitMeshes[i].first, pu[i].meshCount = unitMeshes[i].second;
+        if (units[i].data.name == cameraUnit) cam = i;
+        for (const auto& p : units[i].data.portals)
+            for (size_t j = 0; j < units.size(); ++j) {
+                if (units[j].data.name != p.toUnit) continue;
+                render::PortalUnit::Link l{j, {}, glm::vec3(p.normal[0], p.normal[1], p.normal[2])};
+                for (int k = 0; k < 4; ++k) l.quad[k] = glm::vec3(p.quad[k][0], p.quad[k][1], p.quad[k][2]) + units[i].offset;
+                pu[i].links.push_back(l);
+            }
+    }
+    return render::portalClips(pu, cam, camera, aspect);
 }
 
 } // namespace ou::app
