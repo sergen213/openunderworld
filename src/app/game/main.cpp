@@ -1317,6 +1317,7 @@ int main(int argc, char** argv) {
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
         world->script().setPlayerObjects(ou::game::chapterGear(world->chapter)); // a direct chapter start
         world->chapterLoadout(world->chapter);
+        if (opt.level.empty() && opt.chapter >= 0 && opt.loadSlot.empty()) world->announceChapter(); // its intro (World::startChapter)
         if (!opt.loadSlot.empty() && !quickLoad(*world, opt.loadSlot)) return 1;
 
         streamed.dress(bf, *world, warnings);
@@ -1773,12 +1774,7 @@ int main(int argc, char** argv) {
         if (!playedCines.insert(name).second) return;
         try {
             const auto r = ou::app::playCinematic(name, cineView());
-            if (r.quit) running = false;
-            if (!levelEnd && r.laraPos) { // the stream leaves Lara where it ends (0x455D90)
-                auto s = world->player().state();
-                s.pos = *r.laraPos, s.yaw = r.laraYaw, s.vel = glm::vec3(0);
-                world->restore(s, world->camera().yaw, world->camera().pitch);
-            }
+            if (r.quit) running = false; // World places Lara and the bikes at the stream's tails afterwards
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: cinematic %s: %s\n", name.c_str(), e.what());
         }

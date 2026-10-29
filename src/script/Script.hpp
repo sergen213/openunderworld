@@ -56,8 +56,17 @@ struct Member {
                              // all of them changes l1 kraken-room scripts (GameReal.KrakenRoomRappel)]
     std::optional<uint32_t> init2; // terraingroup: model index (init's low u16 is the stream unit id)
     std::optional<cdc::Pointer> initAt; // NATIVE/SCRIPT: where the initial value lives (sound: inline SoundPlex)
-    std::string initText;   // NATIVE/SCRIPT: a C string the value's first word points to (music: the track name)
+    std::string initText;   // NATIVE/SCRIPT: a C string the value's first word points to (music: the track name), else
+                            // its second word (messagechannel {mode, name}: the channel name)
 };
+
+// A messagechannel member's value: its channel, identified by name (0x4A3680 registers channels by name, 0x5D0700;
+// equality 0x4A2E90 compares the registered channel). FNV-1a of the name.
+constexpr uint32_t channelId(std::string_view name) {
+    uint32_t h = 2166136261u;
+    for (const char c : name) h = (h ^ uint8_t(c)) * 16777619u;
+    return h;
+}
 
 struct Function {
     cdc::Pointer self{};  // Function record, used by CALLU/CALLn operands
@@ -267,6 +276,16 @@ public:
     void setUnits(const std::vector<UnitRef>& units);
     void addObject(Object o, bool start = true); // setUnits and tests; applies pending restored state
     void endCinematic(int32_t uid); // run the object's non-virtual post-stream helper
+    // Message channels: messagechannel Send (tru.exe 0x4A2E70 -> 0x5D0670) posts {id, payload} to the channel's
+    // subscribers. Ours [I: the subscriber modes, IMessageChannelReferrer +8]: every other script instance with a
+    // messagechannel member on `channel` runs its vt 0 override OnMessage(channel, id, payload). Queued; delivered at
+    // the start of the next tick, after a load's units and their scripts exist. Script Sends queue here too.
+    void sendMessage(uint32_t channel, uint32_t id, std::string payload = {}, int32_t sender = 0);
+    // A cinematic_object's stream event: its vt 45 override runs with the cinematicevent id (members hold 0, 1, 2, 5-8,
+    // 10-24; World sends 0 when the stream starts and 1 when it ends [I]).
+    void cinematicEvent(int32_t uid, uint32_t id);
+    // Bikes larabase 52 mounted Lara on (0x777DD0 posts INSTANCE message 0x85 to the bike and to her), oldest first.
+    std::vector<int32_t> takeMounts() { return std::exchange(mounts_, {}); }
     // Lara pulled grapple target `uid` (an uber grapple target, script type 3565's subclasses). They override slots
     // 55..60 with handlers that send their uberobjectcommand members (levers 59/60, shiva arms 55/56, uber walls and
     // the naga statue 56/57, the snake head 57) [O]; which slot the exe calls on a pull is [I]: the first overridden
@@ -279,6 +298,9 @@ public:
     void setPlayerUnit(uint32_t unit, std::optional<uint32_t> previous);
     // A script placed Lara on an object's transform (instance 26): that object's uid, once.
     std::optional<int32_t> takeTeleport() { return std::exchange(teleport_, std::nullopt); }
+    // Lara was moved, not walked (teleport, cinematic end position): no plane crossings across the jump [I] (else
+    // 260_ship_intro's warp onto the deck crosses kill plane 7650).
+    void playerJumped() { hasLast_ = false; }
 
     const std::vector<Object>& objects() const { return objects_; }
     const Object* find(int32_t uid) const;
@@ -344,6 +366,12 @@ private:
     uint32_t cameraSplineValue(const vm::Value& v); // (unit ordinal << 16) | spline index; 0xFFFFFFFF = unknown
     // Runs `uid`'s override of the prototype `prototype` of native base `base` (an engine callback) with `args`.
     void callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args);
+    // Runs `uid`'s override of vtable slot `vt` with `args` as a new thread beside its running ones.
+    void run(int32_t uid, int16_t vt, std::span<const vm::Value> args);
+    struct Message { uint32_t channel, id; std::string payload; int32_t sender; };
+    std::vector<Message> messages_;
+    std::set<std::string> payloads_; // delivered payload texts (handler arguments point at them)
+    std::vector<int32_t> mounts_;
     EnemyNative enemy_;
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;

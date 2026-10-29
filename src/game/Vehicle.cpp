@@ -134,6 +134,7 @@ std::optional<glm::mat4> World::bikeMatrix(int32_t uid, double alpha) const {
     const auto it = bikes_.find(uid);
     if (it == bikes_.end() || std::none_of(units_.begin(), units_.end(), [&](const LoadedUnit& u) { return u.data.name == it->second.unit; }))
         return std::nullopt;
+    if (const auto* o = script_.find(uid); o && o->hidden && riding_ != uid) return std::nullopt; // instance 12 / 60 (7528)
     const Bike& b = it->second;
     const float a = float(alpha);
     const vec3 p = glm::mix(b.prevPos, b.pos + bikeOffset(b), a);
@@ -151,6 +152,29 @@ void World::syncVehicles() {
             }
     // A level load moved the stream (units at new offsets): no interpolation from the old frame.
     for (auto& [uid, b] : bikes_) b.prevPos = b.pos + bikeOffset(b), b.prevYaw = b.yaw, b.prevPitch = b.pitch;
+}
+
+// larabase 52 (0x777DD0 posts message 0x85 to the bike and to Lara): she sits on it at once, riding (the original's ch4
+// and ch5 starts after their intro cinematics); the bike's unit becomes the current one (l5_valgrind_tunnel's 7229).
+void World::mountBike(int32_t uid) {
+    const auto it = bikes_.find(uid);
+    if (it == bikes_.end() || !bikeMatrix(uid, 1)) {
+        warnings.push_back("mount: bike " + std::to_string(uid) + " not loaded");
+        return;
+    }
+    if (const auto old = bikes_.find(riding_); riding_ != uid && old != bikes_.end()) old->second.phase = BikePhase::Parked, old->second.speed = 0;
+    Bike& b = it->second;
+    recentre(b.unit);
+    riding_ = uid, ++bikeMounts;
+    b.phase = BikePhase::Ride, b.t = 0, b.speed = 0, b.steer = 0, b.air = false;
+    combat_.drawn = combat_.redraw = false, combat_.drawT = 0;
+    PlayerState s = player_.state();
+    s.state = State::Vehicle;
+    s.pos = b.pos + bikeOffset(b), s.yaw = b.yaw, s.pitch = b.pitch, s.vel = vec3(0);
+    s.ledge = -1, s.water = -1, s.grappleUid = 0;
+    s.clip = "motorcycle:motorcycle_idle_foot_down", s.loop = true, s.clipTime = 0, s.clipRate = 1;
+    s.fallStartZ = s.pos.z, s.fallHeight = 0;
+    player_.restore(s);
 }
 
 // Ramming [I]: a living enemy whose body capsule reaches into a sphere around the front wheel while the bike is faster

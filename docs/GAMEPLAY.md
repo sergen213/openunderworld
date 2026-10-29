@@ -1188,27 +1188,35 @@ Vulkan) and notes in openunderworld-work/screens/chapters):
 | 1 | l1_seatop | wetsuit_warm on the boat deck, harness, no face mask | same (the face mask was drawn) |
 | 2 | l2_cliffclimb | jungle_a on the boat bow, no enemy in sight | same (sharks 4021-4023 left the sea and landed on the deck) |
 | 3 | l3_caverns_start | casual, cavern stairs | same |
-| 4 | l4_trailstart | jungle_heavy, **riding** the motorcycle on the trail | standing beside bike 5482 |
-| 5 | l5_startsnow | snow_heavy, after intro cinematic 7530 **riding** in l5_valgrind_tunnel | standing at the startsnow player intro, bike 7528 aside; her feet do not meet the snow there (render vs collision; she never stands there in the original) |
+| 4 | l4_trailstart | jungle_heavy, **riding** the motorcycle on the trail | after `180_mex_intro`, riding bike 5482 |
+| 5 | l5_startsnow | snow_heavy, after intro cinematic 7530 **riding** in l5_valgrind_tunnel | after `230_val_intro`, riding 7229 in l5_valgrind_tunnel |
 | 6 | l6_ship_exterior | jungle_b on the deck | same |
-| 7 | l7_thin_ice | wetsuit_cold, after its intro the script changes level to l7_arctic_sea: **swimming** under water, mask on | standing on the ice at the thin_ice player intro |
+| 7 | l7_thin_ice | wetsuit_cold, after its intro the script changes level to l7_arctic_sea: **swimming** under water, mask on | after `275_hel_explosion`, swimming under the ice in l7_arctic_sea |
 | 8 | l7_himalaya_end | ending cinematic, credits, main menu | the unit's player intro (no gameplay to compare) |
 
-Not done: starting mounted (ch4, ch5; what mounts her is [U]: no script failure at either start, the bike intros'
-scripts 13919/17208 run without one), the chapter-start intro cinematics and what follows them (7530 → valgrind
-tunnel; thin_ice's script naming l7_arctic_sea), Open-sea water is done (watervolume intro boxes, "Water").
-How the original reaches those starts [O bytecode, not implemented]: generalbank's game script (type 6, state fn 30)
-sends messagechannel 2 id = chapter; the start unit's script (l4 13929 / l5 17775 / l7 19597) receives it in vt 0
-(OnMessage) and enters STATE 1, which Activates (vt 57) its intro cinematic_object (l4 5484 `180_mex_intro`, l5 7530
-`230_val_intro`, l7 9071 `275_hel_explosion`). Those objects' vt 45 (cinematic event; `cinematicevent` members hold ids
-0, 1, 2, 5-8, 10-24) handles event 1 [I: stream end]: l4 calls larabase 52 on its bike 5482, l5 waits 0.6 s, calls
-`instance` on bike 7528 and larabase 52 on l5_valgrind_tunnel's bike 7229 (the tunnel is startsnow's portal neighbour).
-larabase 52 (thunk 0x79A4B0 -> 0x777DD0) posts INSTANCE message 0x85 to the bike and to Lara: mount. l7's Lara tail in
-`275_hel_explosion` is (-243.6, -96.7, -1946.9) from marker 9072, under the ice in the portal neighbour l7_arctic_sea
-(swimming there now works). The l4/l5 streams' Lara tails are (0, 0, 0) [U: no tail]; the bikes' tails differ from their
-intros (0x455D90 places every instance with a tail; ou-game places only Lara).
-Holstered back weapons (the
-speargun on her back in ch1, a rifle in ch6) are not drawn.
+Chapter-start flow (ours, `StreamReal.ChapterStartIntros`) [O bytecode]: `World::startChapter` (new game, level end,
+`ou-game --chapter N`; not a save load) sends id = chapter on channel `mc_CinematicData` as generalbank's game script
+(type 6 fn 30, member +924). Message delivery [O]: channels are named (a `messagechannel` member's init is {mode, name};
+0x4A3680 registers it by name), and each other referrer of that name with mode 1 or 2 (mode 3: only its own posts,
+0x5D0670) runs its vt 0 OnMessage(channel, id, text), queued to the start of the next tick; script Sends queue too.
+Ours had compared every channel equal (the mode word), so l4's start script re-entered STATE 1 on other channels'
+id-4 posts and replayed `180_mex_intro` every tick. Unit scripts
+without a state 0 still exist and listen (l5_startsnow 17775). The start unit's script enters STATE 1, which Activates
+(vt 57) its intro cinematic_object (l2 2562 `080_tha_yacht`, l3 4318 `120_man_vault` on id 3, l4 5484 `180_mex_intro`,
+l5 7530 `230_val_intro`, l6 7652 `260_ship_intro`, l7 9071 `275_hel_explosion`). World then sends cinematic event 0
+(vt 45), plays the stream, places Lara and the bikes at the header tails (0x455D90: tail + the end unit's marker
+intro; a (0, 0, 0) tail is none, 0x49AFA0), and sends event 1. Event-1 handlers: l4 larabase 52 on bike 5482, l5 0.6 s
+later larabase 52 on l5_valgrind_tunnel's 7229 (thunk 0x79A4B0 -> 0x777DD0: INSTANCE message 0x85 to bike and Lara,
+mounted at once); base 3523's "Lara warping to cine object" when the instance type's +140 is set (7652: `instance` 8
+= its model-marker anchor 0x4AB320, `instance` 26 onto it: the deck, as the original after loading l6). Results:
+ch2 on the yacht at its tail, ch6 on the deck, ch7 swimming (her tail under the ice is inside arctic_sea's water
+box; placed deeper than the swim depth she stays under, SwimUnder). ch3: `120_man_vault`'s Lara tail
+(-2704.7, -4321, -7.3) lies in l3_main_hall, not loaded beside l3_caverns_start; a tail over no loaded floor or water
+leaves her at the cavern-stairs player intro [I]. Teleports and tails reset plane-crossing tracking
+(`Runtime::playerJumped`; else the 7652 warp crosses kill plane 7650). Water boxes keep their half extents and
+rotation when a unit is offset (only min / max / centre move): l7_arctic_sea's boxes failed at its offset before.
+Holstered back weapons as the original draws them (speargun across her back in ch1, the rifle in ch6; weapon data
++0xB9 names Lara's stow marker) are not yet placed from the data: ours use the generic spine holster.
 
 **Pickups** [O names/counts, I roles]: `*_rw_artifact` (7..22 per chapter) = treasures, `*_rw_treasure` (one per
 chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot

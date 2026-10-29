@@ -1034,7 +1034,10 @@ bool Player::enterWater() {
     if (w < 0) return false;
     const float surf = col_.markup[size_t(w)].points[1].z;
     if (s_.pos.z > surf) return false;
-    if (auto floor = col_.groundProbe(vec3(s_.pos.x, s_.pos.y, surf), t_.swimDepth); floor) return false; // shallow: walk
+    // Shallow (a floor within swimDepth under the surface): walk. Feet already deeper than that are swimming (placed under
+    // l7_arctic_sea's ice by 275_hel_explosion, where the probe from the surface would hit the ice).
+    if (s_.pos.z > surf - t_.swimDepth)
+        if (auto floor = col_.groundProbe(vec3(s_.pos.x, s_.pos.y, surf), t_.swimDepth); floor) return false;
     const bool airborne = s_.state == State::Jump || s_.state == State::Fall;
     s_.water = w;
     s_.pitch = 0;
@@ -1042,6 +1045,10 @@ bool Player::enterWater() {
     if (airborne) { // keep the plunge velocity; water drag stops it
         s_.state = State::SwimSplash;
         play("swim_jump_land", false);
+    } else if (s_.pos.z <= surf - t_.swimDepth) { // placed deep (275_hel_explosion's end): stays under, swimming
+        s_.vel = vec3(0);
+        s_.state = State::SwimUnder;
+        play("swim_submerged_idle", true);
     } else {
         s_.vel = vec3(0);
         s_.state = State::Surfacing;

@@ -38,8 +38,6 @@ struct CineResult {
     bool skipped = false;              // Esc / gamepad Start
     bool quit = false;                 // window closed
     std::optional<render::Image> lastImage; // maxFrames reached
-    std::optional<glm::vec3> laraPos;  // where the stream leaves Lara (world), header tail (0x455D90)
-    float laraYaw = 0;                 // her heading there
 };
 
 // Throws on a missing or malformed stream.

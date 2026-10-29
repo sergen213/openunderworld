@@ -437,10 +437,18 @@ public:
     // Lara's hidden draw groups (bit n-1 hides group n): the scripts' (script().playerHiddenGroups()) with the
     // wetsuits' face mask (group 1) only while she swims and their stowed gear (2) never (GAMEPLAY.md "Thor's gear").
     uint32_t laraHiddenGroups() const;
-    // Starts chapter `n` (kChapters) at its start unit's player intro; respawns fall back there. Throws as enterUnit.
+    // Starts chapter `n` (kChapters) at its start unit's player intro and announces it; respawns fall back there.
+    // Throws as enterUnit.
     void startChapter(int n);
-    // Called when a script activates a cinematic_object that has a stream (UnitData::cinematics), before a level
-    // end's chapter change (`levelEnd`). ou-game plays the cutscene here (src/app/game/Cinematic.*); unset = skipped.
+    // The chapter-start message: generalbank's game script (type 6 fn 30) Sends id = chapter on its +924 channel
+    // "mc_CinematicData"; the start unit's script receives it in OnMessage and enters state 1, which activates the
+    // chapter's intro cinematic (l4 13929 -> 5484, l5 17775 -> 7530, l7 19597 -> 9071; GAMEPLAY.md "Chapter starts").
+    // Delivered next tick.
+    void announceChapter() { script_.sendMessage(script::channelId("mc_CinematicData"), uint32_t(chapter)); }
+    // Called when a script activates a cinematic_object that has a stream (UnitData::cinematics), between its cinematic
+    // events 0 and 1, before a level end's chapter change (`levelEnd`). ou-game plays the cutscene here
+    // (src/app/game/Cinematic.*); unset = skipped. Afterwards World places Lara and the bikes where the stream leaves
+    // them (its header tails, 0x455D90).
     std::function<void(const std::string& cinematic, bool levelEnd)> onCinematic;
     const std::vector<Pickup>& pickedUp() const { return pickedUp_; } // last tick (world-frame positions)
 
@@ -558,7 +566,11 @@ private:
     void tickAir(float dt); // oxygen / drowning (World.cpp)
     static constexpr float kAirSeconds = 45.0f;   // [I] no tru.exe number decoded yet
     static constexpr float kAirRefillSeconds = 2.0f; // [I]
-    void checkLevelEnd(); // script Activate of a cinematic_object -> onCinematic; a level end's -> startChapter(next)
+    // Script Activate of a cinematic_object: cinematic event 0, onCinematic, placeAfterCinematic, event 1, the post-stream
+    // helper; a level end's -> startChapter(next).
+    void checkLevelEnd();
+    void placeAfterCinematic(const std::string& stream); // Lara + bike header tails (0x455D90)
+    void recentre(const std::string& unit); // Lara moved into loaded `unit`: it becomes the current one (streamAround)
     void registerCinematicUnits();
     struct CinematicEnd { std::string stream; std::vector<std::string> chapters; };
     std::vector<script::UnitRef> cinematicRefs_;
@@ -640,6 +652,7 @@ private:
     // motorcycle (Vehicle.cpp)
     bool tickVehicles(const Actions& a, float dt); // true while Lara is on a bike: Player::tick is skipped
     void syncVehicles();                           // register the loaded units' bike intros (after streaming)
+    void mountBike(int32_t uid);                   // larabase 52: on the bike at once, riding (script_.takeMounts)
     void driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt);
     void ramEnemies(Bike& b);
     vec3 bikeOffset(const Bike& b) const;          // its unit's stream offset (0 when not loaded)

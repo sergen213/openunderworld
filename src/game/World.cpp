@@ -372,12 +372,14 @@ void World::tick(const Actions& input) {
             s.pos = o->pos, s.yaw = o->rot.z - kPi / 2; // intro heading as findSpawn
             const std::string unit = o->unit;           // `o` may move when the units change
             player_.restore(s);
+            script_.playerJumped();
             for (size_t i = 0; i < units_.size(); ++i)
                 if (units_[i].data.name == unit && i != current_) {
                     streamAround(i);
                     break;
                 }
         }
+    for (const int32_t bike : script_.takeMounts()) mountBike(bike); // larabase 52 from a sleeping handler (l5: 0.6 s)
     collectPickups(a.interact && !interactHeld_);
     carryPortables(a.interact && !interactHeld_ && pickedUp_.empty());
     tickObjects(dt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them

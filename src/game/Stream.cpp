@@ -236,7 +236,9 @@ void World::rebuildCollision() {
             col_.faces.push_back(f);
         }
         for (collision::Markup m : c.markup) {
-            for (auto& p : m.points) p += u.offset;
+            // Water boxes (waterBoxes) carry {min, max, centre, half extents, rotation}: only the first three are positions.
+            const size_t positions = m.type == 10 && m.points.size() == 5 ? 3 : m.points.size();
+            for (size_t i = 0; i < positions; ++i) m.points[i] += u.offset;
             if (disabledMarkup_.contains({u.data.name, m.id})) m.type = kMarkupDisabled;
             col_.markup.push_back(std::move(m));
         }
@@ -295,6 +297,7 @@ void World::startChapter(int n) {
     health_.reset(); // [I] a chapter starts at full health, as a respawn (tru.exe 0x700060)
     script_.setPlayerObjects(chapterGear(n));
     chapterLoadout(n);
+    announceChapter();
 }
 
 void World::recordReveal() {
@@ -350,12 +353,19 @@ void World::collectPickups(bool pressed) {
 }
 
 void World::checkLevelEnd() {
-    for (const auto& e : script_.events()) {
-        if (e.kind != script::EventKind::Activate) continue;
+    const auto events = script_.events(); // copy: the cinematic events' handlers add events
+    std::set<int32_t> done; // two scripts may activate one cinematic in a tick (l1_seatop's 5789 instances -> 997)
+    for (const auto& e : events) {
+        if (e.kind != script::EventKind::Activate || !done.insert(e.target).second) continue;
         const auto end = cinematicEnds_.find(e.target);
         if (end == cinematicEnds_.end()) continue;
         const auto next = nextChapter(chapter, end->second.chapters);
-        if (!end->second.stream.empty() && onCinematic) onCinematic(end->second.stream, next.has_value());
+        const std::string stream = end->second.stream;
+        script_.cinematicEvent(e.target, 0);
+        if (!stream.empty() && onCinematic) onCinematic(stream, next.has_value());
+        if (!stream.empty() && !next) placeAfterCinematic(stream);
+        script_.cinematicEvent(e.target, 1);
+        for (const int32_t bike : script_.takeMounts()) mountBike(bike);
         script_.endCinematic(e.target);
         if (next) {
             try {
@@ -366,6 +376,61 @@ void World::checkLevelEnd() {
             return;
         }
     }
+}
+
+// The stream's header tails (tru.exe 0x455D90 places every instance that has one): position relative to the area
+// marker of its end unit, heading from the tail rotation (intro yaw - 90 degrees, as findSpawn). Lara (intro -1) and
+// the bikes. Lara's (0, 0, 0) tails (180_mex_intro, 230_val_intro) are none (0x49AFA0). A loaded unit whose water box
+// holds her end becomes the current one (275_hel_explosion: under the ice, in l7_arctic_sea), else the marker's [I].
+// A tail over no loaded floor or water leaves her where she was [I]: 120_man_vault's (-2704.7, -4321, -7.3) is in
+// l3_main_hall, five portals from l3_caverns_start, whose player intro on the cavern stairs is where the original
+// stands after loading the unit.
+void World::placeAfterCinematic(const std::string& stream) {
+    const auto* bigfile = script_.bigfile();
+    const auto mul = bigfile ? bigfile->read("pc-w\\cinstream\\" + stream + ".mul") : std::nullopt;
+    if (!mul) return;
+    cine::Header h;
+    try {
+        h = cine::parseHeader(cine::demux(*mul));
+    } catch (const std::exception& e) {
+        warnings.push_back("cinematic " + stream + ": " + e.what());
+        return;
+    }
+    struct Marker { vec3 pos; std::string unit; };
+    std::map<uint32_t, Marker> markers; // stream unit id -> its loaded marker intro (world frame)
+    for (const auto& u : units_)
+        for (const auto& in : formats::parseUnit(*u.data.drm).intros)
+            for (const auto& m : h.markers)
+                if (m.intro == in.uniqueId && !markers.contains(m.unit)) markers[m.unit] = {v3(in.position) + u.offset, u.data.name};
+    for (const auto& inst : h.instances) {
+        if (!inst.endPos || !inst.endRot) continue;
+        const auto m = markers.find(inst.endUnit);
+        if (m == markers.end()) continue;
+        const vec3 at = *inst.endPos + m->second.pos;
+        const float yaw = inst.endRot->z - kPi / 2;
+        if (inst.intro == -1) {
+            if (*inst.endPos == vec3(0)) continue;
+            std::string unit = m->second.unit;
+            bool water = false;
+            for (const auto& u : units_)
+                for (const auto& w : u.data.col.markup)
+                    if (w.type == 10 && insideWater(w, at - u.offset)) unit = u.data.name, water = true;
+            if (!water && !col_.groundProbe(at + vec3(0, 0, 100), 20000)) continue;
+            recentre(unit);
+            auto s = player_.state();
+            s.pos = at, s.yaw = yaw, s.vel = vec3(0);
+            restore(s, yaw, cam_.pitch);
+            script_.playerJumped();
+        } else if (const auto b = bikes_.find(inst.intro); b != bikes_.end() && bikeMatrix(b->first, 1)) {
+            b->second.pos = at - bikeOffset(b->second), b->second.yaw = yaw, b->second.pitch = 0;
+            b->second.prevPos = at, b->second.prevYaw = yaw, b->second.prevPitch = 0;
+        }
+    }
+}
+
+void World::recentre(const std::string& unit) {
+    for (size_t i = 0; i < units_.size(); ++i)
+        if (units_[i].data.name == unit && i != current_) return streamAround(i);
 }
 
 std::optional<std::pair<std::string, int>> World::markupOwner(int index) const {

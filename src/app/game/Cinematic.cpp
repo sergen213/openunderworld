@@ -242,14 +242,6 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         v.mixer->setBusVolume(audio::Bus::Music, v.musicVolume), v.mixer->setBusVolume(audio::Bus::Sfx, v.sfxVolume);
         std::fprintf(stderr, "ou-game: cinematic %s ends: music / sfx buses back to %.1f / %.1f\n", name.c_str(), v.musicVolume, v.sfxVolume);
     }
-    // Where Lara stands afterwards: tail position + the marker intro of her unit, heading from the tail rotation.
-    for (const auto& inst : h.instances)
-        if (inst.intro == -1 && inst.endPos)
-            for (const auto& m : h.markers)
-                if (const auto [in, off] = find(m.intro); in && m.unit == inst.endUnit) {
-                    r.laraPos = *inst.endPos + glm::vec3(in->position[0], in->position[1], in->position[2]) + off;
-                    r.laraYaw = (*inst.endRot).z - glm::half_pi<float>(); // intro yaw -> heading (World::findSpawn)
-                }
     std::fprintf(stderr, "ou-game: cinematic %s: %d frames to frame %d%s\n", name.c_str(), r.frames, player.frame(),
                  r.skipped ? " (skipped)" : r.quit ? " (closed)" : "");
     return r;

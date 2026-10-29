@@ -540,6 +540,57 @@ TEST(StreamReal, OpenSeaWater) {
     EXPECT_GT(w.player().state().pos.z, -3000.0f) << "does not sink through the sea";
 }
 
+// The original's chapter starts (GAMEPLAY.md "Chapter starts"): startChapter Sends messagechannel 2 id = chapter, the
+// start unit's script enters state 1 and activates its intro cinematic; after the stream (skipped here) World places
+// Lara / the bikes at the header tails and sends cinematic event 1, whose handler mounts her (larabase 52).
+TEST(StreamReal, ChapterStartIntros) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    std::vector<std::string> played;
+    w.onCinematic = [&](const std::string& n, bool) { played.push_back(n); };
+    const auto start = [&](int c, int ticks) {
+        played.clear();
+        w.startChapter(c);
+        for (int i = 0; i < ticks; ++i) w.tick({});
+        for (const auto& p : played) std::fprintf(stderr, "ch%d played %s\n", c, p.c_str());
+        const auto& s = w.player().state();
+        std::fprintf(stderr, "ch%d: %s unit %s pos %.1f %.1f %.1f state %s water %d played %zu\n", c, w.currentUnit().data.name.c_str(),
+                     w.currentUnit().data.name.c_str(), s.pos.x, s.pos.y, s.pos.z, std::string(game::stateName(s.state)).c_str(), s.water, played.size());
+    };
+    start(4, 60); // l4_trailstart: 180_mex_intro, then riding bike 5482
+    EXPECT_EQ(played, std::vector<std::string>{"180_mex_intro"});
+    ASSERT_TRUE(w.ridden());
+    EXPECT_EQ(w.ridden()->uid, 5482);
+    EXPECT_EQ(w.player().state().state, game::State::Vehicle);
+    start(5, 90); // l5_startsnow: 230_val_intro, 0.6 s later riding l5_valgrind_tunnel's 7229
+    EXPECT_EQ(played, std::vector<std::string>{"230_val_intro"});
+    ASSERT_TRUE(w.ridden());
+    EXPECT_EQ(w.ridden()->uid, 7229);
+    EXPECT_EQ(w.currentUnit().data.name, "l5_valgrind_tunnel");
+    start(7, 120); // l7_thin_ice: 275_hel_explosion leaves her swimming under the ice in l7_arctic_sea
+    EXPECT_EQ(played, std::vector<std::string>{"275_hel_explosion"});
+    EXPECT_FALSE(w.ridden());
+    EXPECT_EQ(w.currentUnit().data.name, "l7_arctic_sea");
+    EXPECT_GE(w.player().state().water, 0);
+    EXPECT_EQ(w.player().state().state, game::State::SwimUnder);
+    start(2, 60); // l2_cliffclimb: 080_tha_yacht leaves her standing on the yacht
+    EXPECT_EQ(played, std::vector<std::string>{"080_tha_yacht"});
+    EXPECT_EQ(w.player().state().water, -1);
+    EXPECT_EQ(w.player().state().state, game::State::Idle);
+    start(3, 60); // l3_caverns_start: 120_man_vault's tail is over no loaded floor; she stays on the cavern stairs
+    EXPECT_EQ(played, std::vector<std::string>{"120_man_vault"});
+    EXPECT_LT(glm::distance(w.player().state().pos, w.currentUnit().data.spawn->pos), 200.0f);
+    start(6, 60); // l6_ship_exterior: 260_ship_intro ends in the boat, cinematic object 7652 (+140) warps her onto the deck
+    EXPECT_EQ(played, std::vector<std::string>{"260_ship_intro"});
+    EXPECT_LT(glm::distance(w.player().state().pos, vec3(5006.0f, 21948.7f, 5386.2f)), 50.0f);
+    EXPECT_EQ(w.player().state().water, -1);
+    start(1, 30); // l1_seatop: no intro, on the deck
+    EXPECT_LE(played.size(), 1u);
+}
+
 TEST(StreamReal, ChapterOutfits) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());

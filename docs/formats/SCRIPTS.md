@@ -132,7 +132,7 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   instance debug/marker/modifiable interfaces (0/1, 4–9, 14–16, 28/61), Reset (25), engagement-property selection (59), Hide (60), `playersensor` void interface call (2),
   `checkpointbase` activation (3), static-water reset/depth (3/4), `terraingroup` SetEnabled/IsEnabled (2/3), `light` SetEnabled/IsEnabled (1/2),
   `health` current-value Get (9), `gamebase` global-byte Get/Set/Add/Subtract (4–7), `unit` post-effect scalar Set (15), and `multibody` Enable (2), SetJointLimit (77),
-  GetJointValue (78) and JointDrive (79). `messagechannel` Send (2) delivers channel id, message id and string payload
+  GetJointValue (78) and JointDrive (79). `messagechannel` Send (2) delivers channel (named: member init {mode, name}, 0x4A3680; listeners of mode 1/2, mode 3 only its own posts, 0x5D0670), message id and string payload
   to the registered native subscriber; channel equality is fn 3 and fn 0/1 are the original debug stubs.
   `playerref.Get` returns Lara's actual type-205 script from lara.drm. The bedroom path
   4525 → 12131 → 4520 → 12126 → 12171 runs its real bytecode: `stickybool(+8).Set(true)` and

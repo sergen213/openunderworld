@@ -439,7 +439,8 @@ TEST(ProgressionReal, DumpScripts) {
         if (drm.sections[i].type == cdc::SectionType::Script) types.push_back(script::parseScriptType(drm, i));
     auto program = std::make_shared<script::vm::Program>(types);
     std::map<int32_t, uint32_t> scriptOf;
-    for (const auto& in : formats::parseUnit(drm).intros) scriptOf[in.uniqueId] = in.scriptId;
+    if (drm.sections.at(0).type == cdc::SectionType::General) // generalbank etc. have no unit
+        for (const auto& in : formats::parseUnit(drm).intros) scriptOf[in.uniqueId] = in.scriptId;
     std::set<uint32_t> shown;
     std::function<void(uint32_t)> dump = [&](uint32_t id) {
         for (; id && shown.insert(id).second; id = program->type(id) ? program->type(id)->superId : 0) {
@@ -455,8 +456,9 @@ TEST(ProgressionReal, DumpScripts) {
             for (size_t i = 0; i < t->states.size(); ++i)
                 if (const auto* f = program->method(t->states[i])) std::printf("  state %zu -> fn %u\n", i, program->functionIndex(f));
             for (const auto& m : t->members)
-                std::printf("  member +%u type %u ref %u(%s)%s\n", m.offset, m.type, m.typeId, program->nativeName(m.typeId),
-                            m.init ? (" init " + std::to_string(int32_t(*m.init))).c_str() : "");
+                std::printf("  member +%u type %u ref %u(%s)%s%s%s\n", m.offset, m.type, m.typeId, program->nativeName(m.typeId),
+                            m.init ? (" init " + std::to_string(int32_t(*m.init))).c_str() : "", m.initText.empty() ? "" : " text ",
+                            m.initText.c_str());
             for (size_t f = 0; f < t->functions.size(); ++f) {
                 const auto& fn = t->functions[f];
                 std::printf("  fn %zu vt %d args %u locals %u%s\n", f, fn.vtIndex, fn.argCount, fn.localCount, fn.native ? " native" : "");

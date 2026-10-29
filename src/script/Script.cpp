@@ -164,8 +164,17 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
                             m.initText += char(d[i]);
                     }
                     if (vp->offset <= drm.sections[vp->section].data.size() &&
-                        drm.sections[vp->section].data.size() - vp->offset >= 8)
+                        drm.sections[vp->section].data.size() - vp->offset >= 8) {
                         m.init2 = views[vp->section].at<uint32_t>(vp->offset + 4);
+                        // messagechannel {mode, name}: the channel is the name (0x4A3680 registers it by name, 0x5D0700)
+                        if (const auto np = views[vp->section].ptr(vp->offset + 4); m.initText.empty() && np &&
+                            np->section < drm.sections.size())
+                            for (size_t i = np->offset, n = drm.sections[np->section].data.size(); i < n; ++i) {
+                                const char c = char(drm.sections[np->section].data[i]);
+                                if (c < 0x20 || c >= 0x7F || m.initText.size() >= 256) break;
+                                m.initText += c;
+                            }
+                    }
                 }
             } else {
                 m.init = iv.at<uint32_t>(ip->offset);
@@ -679,17 +688,24 @@ uint32_t Runtime::cameraSplineValue(const vm::Value& v) {
 void Runtime::callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args) {
     const auto self = instance(uid);
     if (!self || !self->program) return;
-    const auto& program = *self->program;
-    int16_t vt = -1;
-    for (const ScriptType* t = program.type(self->typeId); t; t = program.type(t->superId))
-        if (t->nativeName == base) { vt = t->prototypes.size() > prototype ? t->prototypes[prototype] : -1; break; }
-    const Function* f = vt >= 0 ? program.method(self->typeId, vt) : nullptr;
+    for (const ScriptType* t = self->program->type(self->typeId); t; t = self->program->type(t->superId))
+        if (t->nativeName == base) {
+            if (t->prototypes.size() > prototype && t->prototypes[prototype] >= 0) run(uid, t->prototypes[prototype], args);
+            return;
+        }
+}
+
+void Runtime::run(int32_t uid, int16_t vt, std::span<const vm::Value> args) {
+    const auto self = instance(uid);
+    if (!self || !self->program) return;
+    const Function* f = self->program->method(self->typeId, vt);
     if (!f || f->native || f->wordCount <= 1) return; // not overridden: the base slot does nothing
     const auto machine = makeMachine(uid);
     Object* o = findMut(uid);
     if (o && o->machine && o->machine->active()) o->fibers.push_back(std::move(o->machine));
     if (o) o->machine = machine;
-    if (!machine->call(*self, vt, args)) recordFailure(uid, o ? o->name : "unit script", *machine);
+    const bool ok = machine->call(*self, vt, args);
+    if (!ok) recordFailure(uid, o ? o->name : "unit script", *machine);
     else if (!o && machine->active()) threads_.emplace_back(uid, machine); // unit/global script: its own thread
     adopt(machine);
 }
@@ -712,6 +728,15 @@ void Runtime::notifyPlayerUnit(int32_t uid) {
         const auto now = vm::Value::scalar(unit);
         callback(uid, "gamebase", 19, std::span(&now, 1));
     }
+}
+
+void Runtime::sendMessage(uint32_t channel, uint32_t id, std::string payload, int32_t sender) {
+    messages_.push_back({channel, id, std::move(payload), sender});
+}
+
+void Runtime::cinematicEvent(int32_t uid, uint32_t id) {
+    const vm::Value arg = vm::Value::scalar(id);
+    run(uid, 45, std::span(&arg, 1));
 }
 
 void Runtime::cameraSplineDone(uint32_t value) {
@@ -817,6 +842,16 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 events_.push_back({EventKind::PlayerMessage, source, nc.function == 59 ? 0x1D5 : 0x1D6, tick_});
                 return true;
             }
+            // larabase 52 (thunk 0x79A4B0 -> 0x777DD0): INSTANCE_Post 0x85 to the bike in the instanceref argument and to
+            // Lara, who is on it at once (the chapter-start intros' event-1 handlers: l4 5484 -> 5482, l5 7530 -> 7229).
+            if (!std::strcmp(name, "larabase") && nc.function == 52 && nc.args.size() == 1) {
+                const vm::Value& a = nc.args[0];
+                int32_t bike = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
+                if (a.kind == vm::Value::Kind::Member)
+                    if (const auto holder = resolve(a.uid)) bike = int32_t(holder->fields[a.offset]);
+                if (bike) mounts_.push_back(bike);
+                return true;
+            }
             // Thor's gear objects (g_gauntletleft / g_gauntletright / g_belt) Lara carries in her object slots, set by
             // the type 205 equip helpers vt 59-61 that unit/chapter scripts call: larabase 38 (0x777E90: an object of
             // that name is in one of her 15 slots), 37 (0x7161F0: attach it), 42 (0x6F5A10: drop a slot's object). The
@@ -851,6 +886,9 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             for (const char* passive : {"soundgroup", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect", "reverb",
                                         "unlockable", "animated"})
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
+            // gamebase 32 (0x797E50 -> 0x714DE0) frees a global effect list at a cinematic's start (cinematic_object base
+            // vt 45 event 0); no effect on play.
+            if (!std::strcmp(name, "gamebase") && nc.function == 32 && nc.args.empty()) return true;
             // Receivers: a member address (object uid + offset), an object, or a native value held in a local.
             auto self = resolve(nc.receiver.uid);
             // An instanceref held in a local may also be an object value (instance 14/15 GetInstanceRef results).
@@ -879,6 +917,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 };
                 const uint32_t a = unit(nc.receiver), b = unit(nc.args[0]);
                 nc.result = vm::Value::scalar(a != 0 && (a & 0xFFFF) == (b & 0xFFFF));
+                return true;
+            }
+            // Equality whose receiver is an argument held in a local (OnMessage's channel: `channel == this.channel`,
+            // 0x4A2E90 compares the channels) against a member.
+            if (inLocal && !std::strcmp(name, "messagechannel") && nc.function == 3 && nc.args.size() == 1) {
+                const auto& a = nc.args[0];
+                const auto other = a.kind == vm::Value::Kind::Member ? resolve(a.uid) : nullptr;
+                nc.result = vm::Value::scalar(localValue == (other ? other->fields[a.offset] : a.bits));
                 return true;
             }
             if (!std::strcmp(name, "music") && nc.function >= 1 && nc.function <= 3) {
@@ -992,10 +1038,12 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return false;
             }
             if (!std::strcmp(name, "messagechannel") && (nc.function == 0 || nc.function == 1)) return true; // debug stubs
-            // Send (tru.exe 0x4A2E70): delivered to the channel's native subscribers; none registered = nothing happens.
+            // Send (tru.exe 0x4A2E70): the app's native subscribers (message_), then the script listeners (sendMessage).
             if (!std::strcmp(name, "messagechannel") && nc.function == 2 && nc.args.size() == 2) {
                 const std::string* text = nc.args[1].text;
-                return !message_ || message_(field(), nc.args[0].bits, text ? *text : std::string());
+                if (message_ && !message_(field(), nc.args[0].bits, text ? *text : std::string())) return false;
+                sendMessage(field(), nc.args[0].bits, text ? *text : std::string(), self->uid);
+                return true;
             }
             if (!std::strcmp(name, "modifiable") && nc.function == 3 && nc.args.size() == 2) {
                 const auto value = resolve(nc.args[0].uid);
@@ -1009,6 +1057,15 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const auto other = resolve(nc.args[0].uid);
                 if (!other) return false;
                 nc.result = vm::Value::scalar(field() == other->fields[nc.args[0].offset]);
+                return true;
+            }
+            // cinematicevent 0: equality with the event id a cinematic_object's vt 45 receives; the members hold the ids
+            // as their initial value (0, 1, 2, 5-8, 10-24).
+            if (!std::strcmp(name, "cinematicevent") && nc.function == 0 && nc.args.size() == 1 && nc.receiver.kind == vm::Value::Kind::Member) {
+                const Member* m = program->member(self->typeId, off);
+                const auto it = self->fields.find(off);
+                const uint32_t mine = it != self->fields.end() ? it->second : m && m->init ? *m->init : 0;
+                nc.result = vm::Value::scalar(mine == nc.args[0].bits);
                 return true;
             }
             // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance; its receivers are [U].
@@ -1127,11 +1184,42 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(cameraSplineValue(nc.receiver) == cameraSplineValue(nc.args[0]));
                 return true;
             }
-            if (!std::strcmp(name, "larabase") && (nc.function == 25 || nc.function == 27) && nc.args.empty()) {
-                // 27 posts 0x10D (8) to Lara (0x777C90); 25 posts 0x156 to a global instance (0x777C10) [U].
-                if (nc.function == 27) events_.push_back({EventKind::PlayerMessage, source, 0x10D, tick_});
+            if (!std::strcmp(name, "larabase") && (nc.function == 25 || nc.function == 27 || nc.function == 28) && nc.args.empty()) {
+                // 27 posts 0x10D (8) to Lara (0x777C90), 28 posts 0x106 (8) (0x777CB0, a cinematic's end); 25 posts 0x156
+                // to a global instance (0x777C10) [U].
+                if (nc.function != 25) events_.push_back({EventKind::PlayerMessage, source, nc.function == 27 ? 0x10D : 0x106, tick_});
                 return true;
             }
+            // 16 (0x79A090 -> 0x779480): hide (false) / show the two models of a weapon slot (flag 0x800); cinematics show
+            // her weapons again at their end. Ours draws weapons from the combat state [I].
+            if (!std::strcmp(name, "larabase") && nc.function == 16 && nc.args.size() == 2) return true;
+            // 30 (0x777CE0) posts 0x146 to the slot-6 object; 68 (0x778150 -> 0x6ED460) and 67 (0x778140 -> 0x6ED510) reset
+            // Lara state blocks (67: seven timestamps from a global clock, seven counters zeroed); they run around a
+            // cinematic [U: no effect on ours].
+            if (!std::strcmp(name, "larabase") && (nc.function == 30 || nc.function == 67 || nc.function == 68) && nc.args.empty())
+                return true;
+            // uitext 57 (0x7A6D10 -> 0x4C32E0): returns member +0x210 of the text's lazily created widget (a localized
+            // string handle) [U]; we have no widget, so null. uigamedata 106 (0x7A14F0 -> 0x77C8B0) stores that string as
+            // the level description when it is non-null (globals vt 20, "Setting level description text...") [U: unused].
+            // uitext 54 (0x7A6C80 -> 0x4C31F0) is the same kind of getter; uitext 4 is UIText vtable slot 1 [U].
+            if (!std::strcmp(name, "uitext") && (nc.function == 54 || nc.function == 57) && nc.args.empty()) {
+                nc.result = vm::Value::scalar(0);
+                return true;
+            }
+            if (!std::strcmp(name, "uitext") && nc.function == 4) return true;
+            if (!std::strcmp(name, "uigamedata") && nc.function == 106) return true;
+            // Screen presentation the cinematic base and its letterbox / saving screens run (uiscreen 6/7 = UIScreen vtable
+            // slots 0x24/0x28 show/hide, 22 colour, 90/92 = 0x4B2030/0x4B2050; uicolortimeline 0/10 set, 12/13 =
+            // 0x4BF370/0x4BF3C0 play/stop; uigamedata 3 = 0x77BC00 flag). Ours draws no script UI screens [U].
+            if ((!std::strcmp(name, "uiscreen") && (nc.function == 6 || nc.function == 7 || nc.function == 22 ||
+                                                    nc.function == 90 || nc.function == 92)) ||
+                (!std::strcmp(name, "uicolortimeline") && (nc.function == 0 || nc.function == 10 || nc.function == 12 ||
+                                                           nc.function == 13)) ||
+                (!std::strcmp(name, "uigamedata") && nc.function == 3) ||
+                (!std::strcmp(name, "uivec3timeline") && nc.function == 15)) // 0x4C49E0 play (chapter title animation)
+                return true;
+            // cinematic 7 (0x79EB10 -> 0x60D630) always returns 0.
+            if (!std::strcmp(name, "cinematic") && nc.function == 7 && nc.args.empty()) { nc.result = vm::Value::scalar(0); return true; }
             if (!std::strcmp(name, "stickybool") || !std::strcmp(name, "stickyint") || !std::strcmp(name, "stickyfloat")) {
                 if (nc.function == 0 && nc.args.size() == 1) { field() = nc.args[0].bits; return true; } // Set
                 if ((nc.function == 1 || nc.function == 2) && nc.args.empty()) {
@@ -1185,7 +1273,9 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (Object* object = findMut(self->uid)) { object->engagement = int32_t(nc.args[0].bits); return true; }
                 return false;
             }
-            if (!std::strcmp(name, "instance") && nc.function == 60 && nc.args.size() == 1) {
+            // 60 hides / shows; 12 (0x798D30 -> 0x4A4000) also sets the hide flag 0x800 with its collision and update
+            // flags (230_val_intro's event 1 hides the startsnow bike 7528 when Lara rides on in the tunnel).
+            if (!std::strcmp(name, "instance") && (nc.function == 60 || nc.function == 12) && nc.args.size() == 1) {
                 if (Object* object = findMut(self->uid)) {
                     const bool hidden = nc.args[0].bits != 0;
                     if (object->hidden != hidden) { object->hidden = hidden; ++visibilityVersion_; }
@@ -1434,6 +1524,31 @@ std::string Runtime::helpCondition() const {
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     events_.clear();
     ++tick_;
+    // Queued messages: the recipients are taken per message (a handler's own Sends wait for the next tick).
+    for (auto& msg : std::exchange(messages_, {})) {
+        std::vector<int32_t> uids;
+        // 0x5D0670: each referrer of the named channel receives when its mode (the member's first init word) is 1 or 2;
+        // mode 3 receives only its own posts. Mode 0 only sends.
+        auto subscribed = [&](const vm::Instance& in) {
+            if (!in.program) return false;
+            const bool self = in.uid == msg.sender;
+            for (const ScriptType* t = in.program->type(in.typeId); t; t = in.program->type(t->superId))
+                for (const Member& m : t->members)
+                    if (!std::strcmp(in.program->nativeName(m.typeId), "messagechannel")) {
+                        const auto it = in.fields.find(m.offset);
+                        const uint32_t mode = m.init.value_or(2);
+                        if (it != in.fields.end() && it->second == msg.channel && (self ? mode == 3 : mode == 1 || mode == 2))
+                            return true;
+                    }
+            return false;
+        };
+        for (const Object& o : objects_) if (o.script && subscribed(*o.script)) uids.push_back(o.uid);
+        for (const auto& [key, in] : auxiliary_) if (subscribed(*in)) uids.push_back(in->uid);
+        if (playerScript_ && subscribed(*playerScript_)) uids.push_back(playerScript_->uid);
+        vm::Value args[3] = {vm::Value::scalar(msg.channel), vm::Value::scalar(msg.id), {}};
+        args[2].kind = vm::Value::Kind::Constant, args[2].text = &*payloads_.insert(std::move(msg.payload)).first;
+        for (const int32_t uid : uids) run(uid, 0, args);
+    }
     // Clocks (NtClockThread update 0x4A3960): a running clock reaching its alarm fires once (Start and SetAlarm re-arm
     // it) and calls its owner's corebase prototype-25 slot with the clock (0x7961A0; NsCoreBase bind 0x7B3920).
     std::vector<uint64_t> alarms;
@@ -1624,6 +1739,7 @@ nlohmann::json Runtime::serialize() const {
 
 void Runtime::restore(const nlohmann::json& j) {
     gameValues_.fill(0);
+    messages_.clear(), mounts_.clear(); // a load replaces a chapter start still being announced
     if (j.is_object() && j.contains("gameValues") && j["gameValues"].is_array())
         for (size_t i = 0; i < gameValues_.size() && i < j["gameValues"].size(); ++i)
             gameValues_[i] = j["gameValues"][i].get<uint8_t>();
