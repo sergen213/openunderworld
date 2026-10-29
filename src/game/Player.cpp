@@ -1021,8 +1021,7 @@ int Player::waterAt(vec3 feet) const {
     int best = -1;
     for (size_t i = 0; i < col_.markup.size(); ++i) {
         const auto& m = col_.markup[i];
-        if (m.type != 10 || m.points.size() != 2) continue;
-        if (glm::any(glm::greaterThan(c - h, m.points[1])) || glm::any(glm::lessThan(c + h, m.points[0]))) continue;
+        if (m.type != 10 || !insideWater(m, c, h)) continue;
         if (best < 0 || m.points[1].z > col_.markup[size_t(best)].points[1].z) best = int(i);
     }
     return best;

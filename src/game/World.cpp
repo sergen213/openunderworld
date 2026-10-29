@@ -319,6 +319,15 @@ void World::tick(const Actions& input) {
         else if (const auto t = grappleTarget()) attachGrapple(t->pos, t->uid, t->kind);
     }
     grappleHeld_ = a.grapple;
+    // Freshly loaded units (a chapter start) get their scripted objects and colliders before Lara moves, so she
+    // starts on l2_cliffclimb's yacht deck rather than in the sea under it.
+    if (!units_.empty() && scriptUnits_ != unitsVersion_) {
+        const auto refs = unitRefs();
+        script_.setUnits(refs);
+        enemies_.setUnits(refs);
+        scriptUnits_ = unitsVersion_;
+    }
+    if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
     if (!onBike) player_.tick(move, a, dt);
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
     else if (a.interact)
@@ -507,11 +516,6 @@ std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& u
                  names.count(pick->objectId) && names.at(pick->objectId) == "player"};
 }
 
-// tru.exe: a water volume instance (object `watervolume`) gets a type-10 markup box (0x5D7130, MUD flag
-// 0x100000); the player tests its water probe box against those (0x710A20). The volume's intro data holds
-// the unique id of its water-surface intro at +0x12 (l4_pool: 5608 -> ca_goo_pool_watersurface 5607) [O].
-// The box bounds come from a component we have not decoded [U]; we use the surface model's bounds (x/y,
-// surface = top) and let the box reach 100 000 units down [I].
 uint64_t World::stateHash() const {
     uint64_t h = 1469598103934665603ull;
     auto bytes = [&](const void* p, size_t n) { // FNV-1a over 64-bit words, then the tail bytes
@@ -548,6 +552,14 @@ uint64_t World::stateHash() const {
     return h;
 }
 
+// tru.exe: a water volume instance (object `watervolume`) gets a type-10 markup box (0x5D7130, MUD flag
+// 0x100000): centred on the instance, rotated with it, half extents = intro data +0x54/+0x58/+0x5C (the centre
+// offsets +0x60/+0x64 are 0 in all 82 units); the water data takes bottom/top from that box (0x69D350) and the
+// surface is its top [O: l2_cliffclimb's sea 2563 tops out at z 108, l7_arctic_sea's 11 volumes, l4_pool 2661.5
+// under the goo plane at 2699]. The player tests its water probe box against those (0x710A20). Intro data +0x12 /
+// +0x10 are marker ids (0x69D690), not the surface.
+// Markup points: {world AABB min, world AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0)}.
+// Only yaw rotations occur (l5_valaskjalf, l7_yggdrasil_end).
 std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit) {
     const auto u = formats::parseUnit(unit);
     const auto listBytes = bigfile.read("\\tr8\\pc-w\\objectlist.txt");
@@ -558,31 +570,26 @@ std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const c
         const auto n = names.find(vol.objectId);
         if (n == names.end() || n->second != "watervolume" || !vol.data) continue;
         const auto& bytes = unit.sections.at(vol.data->section).data;
-        if (vol.data->offset + 0x14 > bytes.size()) continue;
-        const uint16_t surfaceId = uint16_t(bytes[vol.data->offset + 0x12] | bytes[vol.data->offset + 0x13] << 8);
-        const auto s = std::find_if(u.intros.begin(), u.intros.end(), [&](const formats::Intro& i) { return i.uniqueId == surfaceId; });
-        if (s == u.intros.end() || !names.count(s->objectId)) continue;
-        scene::SceneData model;
-        try {
-            model = formats::loadDrmScene(bigfile, "pc-w\\" + names.at(s->objectId) + ".drm");
-        } catch (const std::exception&) {
-            continue;
-        }
-        float im[16];
-        formats::introMatrix(*s, im);
-        const glm::mat4 intro = glm::make_mat4(im);
-        vec3 lo(1e30f), hi(-1e30f);
-        for (const auto& mesh : model.meshes) {
-            const glm::mat4 m = intro * glm::make_mat4(mesh.transform);
-            for (const auto& v : mesh.vertices) {
-                const vec3 p(m * glm::vec4(v.position[0], v.position[1], v.position[2], 1));
-                lo = glm::min(lo, p), hi = glm::max(hi, p);
-            }
-        }
-        if (lo.x > hi.x) continue;
-        out.push_back({10, uint16_t(vol.uniqueId), {{lo.x, lo.y, hi.z - 100000.0f}, hi}});
+        if (vol.data->offset + 0x60 > bytes.size()) continue;
+        vec3 half;
+        std::memcpy(&half, bytes.data() + vol.data->offset + 0x54, sizeof half);
+        const vec3 c(vol.position[0], vol.position[1], vol.position[2]);
+        const float cs = std::cos(vol.rotation[2]), sn = std::sin(vol.rotation[2]);
+        const vec3 ext(std::abs(cs) * half.x + std::abs(sn) * half.y, std::abs(sn) * half.x + std::abs(cs) * half.y, half.z);
+        out.push_back({10, uint16_t(vol.uniqueId), {c - ext, c + ext, c, half, vec3(cs, sn, 0)}});
     }
     return out;
+}
+
+// Inside water box `m` (type 10): `p` in its rotated frame, grown by `grow` on each axis. Two-point markups
+// (tests) are plain AABBs.
+bool insideWater(const collision::Markup& m, vec3 p, vec3 grow) {
+    if (m.points.size() < 5)
+        return m.points.size() >= 2 && glm::all(glm::lessThanEqual(m.points[0] - grow, p)) &&
+               glm::all(glm::lessThanEqual(p, m.points[1] + grow));
+    const vec3 d = p - m.points[2], r = m.points[4];
+    const vec3 local(r.x * d.x + r.y * d.y, -r.y * d.x + r.x * d.y, d.z);
+    return glm::all(glm::lessThanEqual(glm::abs(local), m.points[3] + grow));
 }
 
 } // namespace ou::game

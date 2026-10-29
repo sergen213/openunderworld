@@ -973,7 +973,7 @@ TEST(GameReal, PoolSwimReplay) {
     ASSERT_EQ(water.size(), 1u);
     EXPECT_EQ(water[0].type, 10);
     EXPECT_EQ(water[0].id, 5608);
-    EXPECT_NEAR(water[0].points[1].z, 2699.3f, 0.5f);
+    EXPECT_NEAR(water[0].points[1].z, 2661.5f, 0.5f); // box top (intro data +0x5C half height), 38 under the goo plane
     EXPECT_LT(water[0].points[0].x, -5000);
     EXPECT_GT(water[0].points[1].x, 1000);
     col.markup.insert(col.markup.end(), water.begin(), water.end());

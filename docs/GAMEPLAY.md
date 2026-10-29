@@ -405,16 +405,18 @@ outfit (the original only reads `+0x294` on a level load).
 
 ## Water
 
-- Volumes [O]: l4_pool has one `watervolume` intro (uid 5608, object id 7, a 316-unit editor cube at z −534.5). Its
-  intro data is `{flags 0xB, 0, 0, 0, u16 +0x12 = 5607, …}`; 5607 is the `ca_goo_pool_watersurface` intro: the blue goo
-  is water. The exe gives each water volume instance a type-10 markup box (0x5D7130, MUD flag 0x100000, centre + half
-  extents); the volume's handler (0x6AC340) keeps bottom/surface heights (+0x50/+0x58 of its component) and moves the
-  surface on script messages (0x1B4: absolute, relative to the bottom, to a marker intro, or by a delta, with a rate).
-  The level markup has no type-10 items (73 items: 61 ledgegrab, 10 balancebeam, 2 jumplanding).
-- Ours: `findWater` builds the box from the linked surface model's bounds: x/y of the 17 257-unit goo plane, surface
-  = its top (intro z 2690.7 + model z 8.6 = **2699.3**), bottom 100 000 below [I]; how the exe sizes the box (a
-  component at +0x13C) is [U]. The initial surface is the surface intro's height [I]; the scripted level changes are not
-  run. `loadUnitData` appends the boxes to the unit's markup.
+- Volumes [O]: each `watervolume` intro's data holds its box: half extents at intro data +0x54/+0x58/+0x5C (centre
+  offsets +0x60/+0x64 are 0 in all 82 units), centred on the intro and rotated with it (only yaw occurs). tru.exe gives
+  each instance a type-10 markup box from it (0x5D7130, MUD flag 0x100000); the water component takes its bottom/top
+  from the box (0x69D350: +0x50 bottom, +0x54 top, +0x58 surface, set to the top). Intro data +0x10/+0x12 are marker
+  intro ids (0x69D690, the surface-to-marker message 0x1B4 case 3), not the surface. The volume's handler (0x6AC340)
+  moves the surface on script messages (0x1B4: absolute, relative to the bottom, to a marker intro, or by a delta).
+  Open sea is such a box too: l2_cliffclimb 2563 (top z 108), l1_seatop 1851 (1672.7), l1_seafloor, l6/l1 ship
+  exteriors, l7_arctic_sea's 11 volumes; l4_pool 5608's top is 2661.5 (the goo plane is at 2699.3).
+- Ours: `findWater` builds these boxes (points: AABB min/max, centre, half extents, yaw axis; `insideWater` tests in the
+  box frame); `loadUnitData` appends them to the unit's markup. Scripted surface moves are not run. Freshly loaded units
+  get their scripted objects and colliders before Lara's first tick, so the l2_cliffclimb start stands on the yacht deck
+  (z 71, below the sea top) instead of dropping into the sea under it (`StreamReal.OpenSeaWater`).
 - In water: the water probe box overlaps a volume, the feet are below its surface and there is no floor within
   `swimDepth` (400) below the surface. From the air → SwimSplash (plunge velocity damped by drag) → Surfacing (rise at
   swim speed) → SwimTread. From the ground (standing on a deep floor) → Surfacing.
@@ -1141,8 +1143,18 @@ Vulkan) and notes in openunderworld-work/screens/chapters):
 
 Not done: starting mounted (ch4, ch5; what mounts her is [U]: no script failure at either start, the bike intros'
 scripts 13919/17208 run without one), the chapter-start intro cinematics and what follows them (7530 → valgrind
-tunnel; thin_ice's script naming l7_arctic_sea), and open-sea water (l2_cliffclimb and l7_arctic_sea have no
-`watervolume` intro, so Lara cannot swim there and falls through the arctic sea). Holstered back weapons (the
+tunnel; thin_ice's script naming l7_arctic_sea), Open-sea water is done (watervolume intro boxes, "Water").
+How the original reaches those starts [O bytecode, not implemented]: generalbank's game script (type 6, state fn 30)
+sends messagechannel 2 id = chapter; the start unit's script (l4 13929 / l5 17775 / l7 19597) receives it in vt 0
+(OnMessage) and enters STATE 1, which Activates (vt 57) its intro cinematic_object (l4 5484 `180_mex_intro`, l5 7530
+`230_val_intro`, l7 9071 `275_hel_explosion`). Those objects' vt 45 (cinematic event; `cinematicevent` members hold ids
+0, 1, 2, 5-8, 10-24) handles event 1 [I: stream end]: l4 calls larabase 52 on its bike 5482, l5 waits 0.6 s, calls
+`instance` on bike 7528 and larabase 52 on l5_valgrind_tunnel's bike 7229 (the tunnel is startsnow's portal neighbour).
+larabase 52 (thunk 0x79A4B0 -> 0x777DD0) posts INSTANCE message 0x85 to the bike and to Lara: mount. l7's Lara tail in
+`275_hel_explosion` is (-243.6, -96.7, -1946.9) from marker 9072, under the ice in the portal neighbour l7_arctic_sea
+(swimming there now works). The l4/l5 streams' Lara tails are (0, 0, 0) [U: no tail]; the bikes' tails differ from their
+intros (0x455D90 places every instance with a tail; ou-game places only Lara).
+Holstered back weapons (the
 speargun on her back in ch1, a rifle in ch6) are not drawn.
 
 **Pickups** [O names/counts, I roles]: `*_rw_artifact` (7..22 per chapter) = treasures, `*_rw_treasure` (one per

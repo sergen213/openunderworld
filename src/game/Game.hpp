@@ -619,10 +619,12 @@ private:
 // The unit's `player` intro (objectlist.txt name), else the first intro; nullopt if the unit has none.
 std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
 // Water volumes of a unit as type-10 ("water", MUD flag 0x100000) markup boxes, as tru.exe builds them
-// for each water volume instance (0x5D7130): points = {min, max}, surface = max.z. One per `watervolume`
-// intro whose intro data (+0x12) names its water-surface intro; x/y and the surface come from that
-// surface's model bounds (docs/GAMEPLAY.md "Water"). Missing objects are skipped.
+// for each `watervolume` instance (0x5D7130): its intro data's box around the instance, surface = top.
+// points = {AABB min, AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0)}
+// (docs/GAMEPLAY.md "Water").
 std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
+// `p` inside water box `m` (a findWater markup) grown by `grow` per axis in the box frame.
+bool insideWater(const collision::Markup& m, vec3 p, vec3 grow = vec3(0));
 
 // ---- input ------------------------------------------------------------------------------------
 // Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions, through

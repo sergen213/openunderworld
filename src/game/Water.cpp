@@ -72,7 +72,7 @@ void WaterSim::tick(const World& w, float dt) {
     const float reach = kSize * 0.5f * kCell;
     for (size_t i = 0; i < markup.size(); ++i) {
         const auto& m = markup[i];
-        if (m.type != 10 || m.points.size() != 2) continue;
+        if (m.type != 10 || m.points.size() < 2) continue;
         if (int(i) == ps.water) { chosen = int(i); break; }
         const vec3& lo = m.points[0];
         const vec3& hi = m.points[1];

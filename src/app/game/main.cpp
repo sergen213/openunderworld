@@ -1962,7 +1962,7 @@ int main(int argc, char** argv) {
                           ws.heights(), ws.version()};
         waterVolumes.clear();
         for (const auto& m : world->collision().markup)
-            if (!mainMenu && m.type == 10 && m.points.size() == 2)
+            if (!mainMenu && m.type == 10 && m.points.size() >= 2)
                 waterVolumes.push_back({{m.points[0].x, m.points[0].y, m.points[0].z},
                                         {m.points[1].x, m.points[1].y, m.points[1].z}});
         fo.waterVolumes = waterVolumes;

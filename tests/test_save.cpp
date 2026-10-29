@@ -476,6 +476,35 @@ TEST(StreamReal, ChapterStartEnemiesStayInTheirMedium) {
     EXPECT_GE(sharks, 3); // l2_cliffclimb 4021-4023 are loaded at the start
 }
 
+// Open sea: the watervolume intros' own boxes (intro data +0x54 half extents, World.cpp findWater). Lara starts on
+// l2_cliffclimb's yacht deck (below the sea top at z 108, the deck collider exists before her first tick) and swims
+// once she is put into the sea beside it.
+TEST(StreamReal, OpenSeaWater) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto cliff = game::loadUnitData(bf, "l2_cliffclimb");
+    int boxes = 0;
+    for (const auto& m : cliff.col.markup)
+        if (m.type == 10 && m.id == 2563) { ++boxes; EXPECT_NEAR(m.points[1].z, 108.0f, 1.0f); }
+    EXPECT_EQ(boxes, 1);
+    size_t arctic = 0;
+    for (const auto& m : game::loadUnitData(bf, "l7_arctic_sea").col.markup) arctic += m.type == 10;
+    EXPECT_EQ(arctic, 11u);
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.startChapter(2);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_LT(w.player().state().water, 0) << "on the deck";
+    EXPECT_GT(w.player().state().pos.z, 40.0f);
+    auto s = w.player().state();
+    s.pos = glm::vec3(-31000, -10000, -500); // open sea, 600 below the surface
+    w.restore(s, w.camera().yaw, w.camera().pitch);
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_GE(w.player().state().water, 0);
+    EXPECT_GT(w.player().state().pos.z, -3000.0f) << "does not sink through the sea";
+}
+
 TEST(StreamReal, ChapterOutfits) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
