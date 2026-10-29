@@ -389,8 +389,6 @@ outfit (the original only reads `+0x294` on a level load).
 - `GameReal.ValaskjalfRailSlideTraversesAndDetaches` traverses all of rail 1562 and checks the low endpoint. A rendered
   `ou-game` run also landed at `7269.1,-76525.5,-13337.3` with `ng_generic_land_forwards` [O].
 
-## Enemies
-
 ## Motorcycle (src/game/Vehicle.*)
 
 Lara mounts the bike with E (interact) next to its left side, rides it with the move stick (forward = throttle, back =
@@ -465,6 +463,8 @@ the slope; wheels and Lara stay on the bike through slope pitch. One OpenGL fram
 Not done [U/I]: gears, engine/skid/landing sounds, wheelies, power slides, donuts, crash braces and crashes, the jump
 dismounts, PDA on the bike, shooting from the bike, hit reactions while riding (damage applies without a clip), dismount
 clearance checks (`PSCCF_Vehicle_DismountClearance`), the revisit spawner, water.
+
+## Enemies
 
 Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy
 registers in `World::targets` (Combat's `Damageable`) and hurts Lara through `World::damageLara`. ou-game draws them

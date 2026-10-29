@@ -90,10 +90,10 @@ void usage() {
                  "          gamepad: left stick, right stick, A jump, B drop, X use, Y draw, RT fire, LT lock, R3 switch, LB walk,\n"
                  "          d-pad right switch weapon, d-pad up health pack,\n"
                  "          Start pause; Esc pause menu, F1 overlay, F5 quicksave, F9 quickload (slot 'quick')\n"
-                 "menus: arrows/WASD or d-pad navigate, Enter/Space/E or A accept, Esc/Backspace or B back\n"
-                 "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|weapon|heal|pause|\n"
                  "motorcycle: E beside it gets on / off (almost stopped); forward throttle, back brake/reverse, left/right steer,\n"
                  "          Space hop\n"
+                 "menus: arrows/WASD or d-pad navigate, Enter/Space/E or A accept, Esc/Backspace or B back\n"
+                 "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|weapon|heal|pause|\n"
                  "                    lookx|looky>\n"
                  "                    [value]  (in menus forward/right +-1 navigate, jump or interact accepts, drop goes back;\n"
                  "                    script time runs on while paused)\n");
@@ -200,8 +200,6 @@ std::string fmt(const char* f, A... a) {
     return buf;
 }
 
-// Lara's skinned meshes: CPU-skinned in model space from World::pose (crossfaded clips + simulated hair;
-// root segment held at bind, its motion is in the player position), then moved to the world.
 // The motorcycle (src/game/Vehicle.*): its skinned model posed from World::bikes (wheels, handlebars) and placed by
 // World::bikeMatrix; its intro mesh in the level scene is left out (StreamedScene::build).
 using BikeIndices = std::vector<std::pair<int32_t, std::vector<size_t>>>; // bike uid -> scene mesh indices
@@ -222,6 +220,8 @@ void poseBikes(const ou::game::World& w, double alpha, const BikeIndices& bikes,
     }
 }
 
+// Lara's skinned meshes: CPU-skinned in model space from World::pose (crossfaded clips + simulated hair;
+// root segment held at bind, its motion is in the player position), then moved to the world.
 struct LaraMeshes {
     std::vector<size_t> meshIndices; // into the uploaded scene
     std::vector<ou::scene::Vertex> scratch;
@@ -555,9 +555,9 @@ struct StreamedScene {
     std::map<std::string, ou::scene::SceneData> units; // unit frame
     ou::scene::SceneData lara;                         // Lara's skinned meshes, skeletons, textures
     ou::scene::SceneData guns;                         // weapon models, one per gunSlots entry (CombatView::pose)
-    BikeIndices bikeIndices;
     std::vector<std::pair<ou::game::Weapon, int>> gunSlots; // weapon, hand of each guns mesh
     std::vector<size_t> gunIndices;
+    BikeIndices bikeIndices;
     uint64_t version = ~0ull, enemyVersion = ~0ull, lightsVersion = ~0ull, visibilityVersion = ~0ull;
     std::string laraOutfit; // pc-w\<laraOutfit>.drm is in `lara` and rigs the world's pose skeleton
 
@@ -602,9 +602,9 @@ struct StreamedScene {
         for (const auto& e : w.enemies().all())
             if (!e->generator) enemyIntros.insert(e->uid());
         std::set<int32_t> hiddenIntros;
-        for (const auto& [uid, b] : w.bikes()) hiddenIntros.insert(uid); // drawn posed (poseBikes)
         for (const auto& o : w.script().objects())
             if (o.hidden) hiddenIntros.insert(o.uid);
+        for (const auto& [uid, b] : w.bikes()) hiddenIntros.insert(uid); // drawn posed (poseBikes)
         auto append = [&](const ou::scene::SceneData& s, glm::vec3 offset, std::vector<size_t>* indices,
                           const std::string* unitName = nullptr) {
             const auto skelBase = int32_t(out.skeletons.size());
@@ -652,14 +652,14 @@ struct StreamedScene {
         enemyMeshes.meshIndices.clear();
         for (const auto& e : w.enemies().all()) {
             enemyMeshes.meshIndices.emplace_back();
+            append(enemyMeshes.type(bf, e->type().name, warnings), glm::vec3(0), &enemyMeshes.meshIndices.back());
+        }
         bikeIndices.clear();
         for (const auto& [uid, b] : w.bikes())
             if (w.bikeMatrix(uid, 1)) {
                 bikeIndices.push_back({uid, {}});
                 append(enemyMeshes.type(bf, "motorcycle", warnings), glm::vec3(0), &bikeIndices.back().second);
             }
-            append(enemyMeshes.type(bf, e->type().name, warnings), glm::vec3(0), &enemyMeshes.meshIndices.back());
-        }
         gunIndices.clear();
         append(guns, glm::vec3(0), &gunIndices);
         version = w.unitsVersion();
@@ -1012,6 +1012,9 @@ int main(int argc, char** argv) {
     const auto dieTick = opt.die >= 0 ? uint64_t(std::llround(opt.die / ou::game::kTickSeconds)) : ~0ull;
     ou::game::Actions held, menuHeld; // previous tick's actions: save/load/pause and menu input react to press edges
     std::string unitName;             // music follows the current unit
+    int bikeMounts = 0;                                    // World::bikeMounts seen (first mount: bike music)
+    std::string bikePhase = "parked";                      // ridden bike phase seen, for logs
+    std::vector<ou::scene::Vertex> bikeScratch;
     // Title card when the chapter changes (-2: not until New Game; --level/--load start without one).
     int shownChapter = menuStart ? -2 : opt.chapter >= 0 ? -1 : world->chapter;
 
@@ -1026,9 +1029,6 @@ int main(int argc, char** argv) {
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: main menu movie: %s\n", e.what());
         }
-    int bikeMounts = 0;                                    // World::bikeMounts seen (first mount: bike music)
-    std::string bikePhase = "parked";                      // ridden bike phase seen, for logs
-    std::vector<ou::scene::Vertex> bikeScratch;
     };
     auto applyVolumes = [&] {
         mixer.setBusVolume(ou::audio::Bus::Music, float(menus.musicVolume) / 10);
@@ -1230,24 +1230,6 @@ int main(int argc, char** argv) {
             }
             world->tick(a);
             combat.tick(*world, audioOn ? &mixer : nullptr);
-            const auto tick = (unsigned long long)world->ticks();
-            for (const auto& e : world->script().events()) {
-                const auto* src = world->script().find(e.source);
-                const auto* dst = world->script().find(e.target);
-                std::fprintf(stderr, "ou-game: tick %llu script %s %d (%s) -> %d (%s)\n", (unsigned long long)e.tick,
-                             ou::script::eventName(e.kind), e.source, src ? src->name.c_str() : "?", e.target,
-                             dst ? dst->name.c_str() : "untracked");
-            }
-            for (const auto& e : world->enemies().all()) { // enemy mode changes and blows, for replays
-                const auto &p = e->previous(), &s = e->state();
-                if (p.mode != s.mode || (s.blowLanded && !p.blowLanded))
-                    std::fprintf(stderr, "ou-game: tick %llu enemy %d (%s) %s%s [%s] pos %.0f %.0f %.0f hp %.0f | lara %.0f %.0f %.0f\n",
-                                 (unsigned long long)world->ticks(), e->uid(), e->type().name.c_str(),
-                                 std::string(ou::game::ai::modeName(s.mode)).c_str(), s.blowLanded && !p.blowLanded ? " blow lands" : "",
-                                 s.clip.c_str(), s.pos.x, s.pos.y, s.pos.z, s.health, world->player().state().pos.x,
-                                 world->player().state().pos.y, world->player().state().pos.z);
-            }
-            for (const auto& sh : world->enemies().shots) { // enemy shots: logged, drawn as tracers for a moment
             if (const auto* b = world->ridden(); b || bikePhase != "parked") { // bike phase changes + 1 Hz while riding
                 const std::string phase(b ? ou::game::bikePhaseName(b->phase) : "parked");
                 if (b && (phase != bikePhase || world->ticks() % 60 == 0)) {
@@ -1268,6 +1250,24 @@ int main(int argc, char** argv) {
                     music.play(*bigfile, mixer, "l4_laras_new_bike", "bike", world->ticks());
                 bikeMounts = world->bikeMounts;
             }
+            const auto tick = (unsigned long long)world->ticks();
+            for (const auto& e : world->script().events()) {
+                const auto* src = world->script().find(e.source);
+                const auto* dst = world->script().find(e.target);
+                std::fprintf(stderr, "ou-game: tick %llu script %s %d (%s) -> %d (%s)\n", (unsigned long long)e.tick,
+                             ou::script::eventName(e.kind), e.source, src ? src->name.c_str() : "?", e.target,
+                             dst ? dst->name.c_str() : "untracked");
+            }
+            for (const auto& e : world->enemies().all()) { // enemy mode changes and blows, for replays
+                const auto &p = e->previous(), &s = e->state();
+                if (p.mode != s.mode || (s.blowLanded && !p.blowLanded))
+                    std::fprintf(stderr, "ou-game: tick %llu enemy %d (%s) %s%s [%s] pos %.0f %.0f %.0f hp %.0f | lara %.0f %.0f %.0f\n",
+                                 (unsigned long long)world->ticks(), e->uid(), e->type().name.c_str(),
+                                 std::string(ou::game::ai::modeName(s.mode)).c_str(), s.blowLanded && !p.blowLanded ? " blow lands" : "",
+                                 s.clip.c_str(), s.pos.x, s.pos.y, s.pos.z, s.health, world->player().state().pos.x,
+                                 world->player().state().pos.y, world->player().state().pos.z);
+            }
+            for (const auto& sh : world->enemies().shots) { // enemy shots: logged, drawn as tracers for a moment
                 std::fprintf(stderr, "ou-game: tick %llu enemy %d shot %s from %.0f %.0f %.0f to %.0f %.0f %.0f | health %.0f\n", tick,
                              sh.uid, sh.hit ? "hits Lara" : "misses", sh.from.x, sh.from.y, sh.from.z, sh.to.x, sh.to.y, sh.to.z,
                              world->health().value());
@@ -1313,7 +1313,6 @@ int main(int argc, char** argv) {
         }
         if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion ||
             world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion) {
-            hud.update(CombatView::hudState(*world), ou::game::kTickSeconds);
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {
                 scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings);
@@ -1332,6 +1331,7 @@ int main(int argc, char** argv) {
         const auto c = world->interpolatedCamera(clock.alpha());
         lara.pose(*world, s, clock.alpha(), scene, *renderer);
         enemyMeshes.pose(*world, clock.alpha(), scene, *renderer);
+        poseBikes(*world, clock.alpha(), streamed.bikeIndices, scene, *renderer, bikeScratch);
         objects.pose(world->script(), scene, *renderer);
         combat.pose(*world, s, clock.alpha(), scene, streamed.gunIndices, streamed.gunSlots, *renderer);
         objects.hide(world->collected, scene, *renderer);
@@ -1353,7 +1353,6 @@ int main(int argc, char** argv) {
         SDL_GetWindowSizeInPixels(window.get(), &w, &h);
         std::vector<std::string> lines;
         if (overlay && !mainMenu) {
-        poseBikes(*world, clock.alpha(), streamed.bikeIndices, scene, *renderer, bikeScratch);
             lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS | tick %llu%s%s", world->currentUnit().data.name.c_str(), fps,
                                 (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
             lines.push_back(renderer->description());
@@ -1420,10 +1419,6 @@ int main(int argc, char** argv) {
         // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these
         // lines change every frame (HUD, effects), so consecutive frames must never share a pointer.
         auto& frameLines = lineBuffers[frame & 1];
-            hud.reticle = CombatView::reticle(*world, c, world->fovDeg, w, h);
-            hud.grapple.reset();
-            if (const auto target = world->grappleTarget(); target && !world->player().state().grappleUid)
-                if (const auto p = toScreen(c, world->fovDeg, w, h, target->pos)) hud.grapple = std::array{p->x, p->y};
         frameLines.assign(debugLines.begin(), debugLines.end());
         if (opt.showTriggers) appendTriggerLines(world->script(), frameLines);
         if (opt.showEnemies) appendEnemyLines(*world, frameLines);
