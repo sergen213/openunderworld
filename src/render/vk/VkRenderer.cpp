@@ -3387,6 +3387,7 @@ private:
         destroyOriginalScene();
         for (auto& [_, img] : textures_) destroyImage(img);
         textures_.clear();
+        if (ripples_.image) destroyImage(ripples_); // sceneMemory_ below; updateRipples recreates it and the water sets
         for (auto& m : meshes_) {
             vkDestroyBuffer(device_, m.vertices.buffer, nullptr);
             vkDestroyBuffer(device_, m.prevVertices.buffer, nullptr);
