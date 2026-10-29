@@ -7,6 +7,7 @@
 #include "collision/Collision.hpp"
 #include "physics/Physics.hpp"
 #include "formats/Formats.hpp"
+#include "formats/Uber.hpp"
 #include "game/Combat.hpp"
 #include "game/Progress.hpp"
 #include "game/Water.hpp"
@@ -111,6 +112,8 @@ enum class State {
     Ladder, Perch, Pillar, // markup 9 ladders, 13 perches, 15 pillars (src/game/Traverse.cpp)
     GrappleThrow, GrappleSwing, // grapple attached: throw/jumpon clip, then pendulum on the rope (Grapple.cpp)
     Hit, // hit reaction clip once with root motion (ground or swimming), then Idle / the swim state (World::damageLara)
+    RailSlide, // markup 8 rail slide (src/game/Traverse.cpp)
+    GrapplePull, // mounted target: pull the object instead of swinging (Grapple.cpp)
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -144,6 +147,8 @@ struct Tuning {
 };
 Tuning defaultTuning();
 
+enum class GrappleKind : uint8_t { Ceiling, Wall, Post, Mounted };
+
 struct PlayerState {
     State state = State::Idle;
     vec3 pos{0};    // root = feet; swimming: the swim clips' root (water surface while treading, body centre under water)
@@ -173,6 +178,7 @@ struct PlayerState {
     int32_t grappleUid = 0;
     vec3 grappleAnchor{0};
     float ropeLength = 0;
+    GrappleKind grappleKind = GrappleKind::Ceiling;
 };
 
 class Player {
@@ -188,7 +194,7 @@ public:
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0) const;
     void face(float yaw) { s_.yaw = yaw; } // combat: turn toward a locked target
-    void attachGrapple(vec3 anchor, int32_t uid); // Grapple.cpp: throw the hook at a target
+    void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling); // Grapple.cpp: target attachment
     void releaseGrapple(bool jump);               // let go, keeping the swing's momentum
     void die(std::string_view clip);       // State::Dead playing `clip` once
     void hitReact(std::string_view clip);  // State::Hit playing `clip` once (restarts it)
@@ -232,6 +238,8 @@ private:
     void ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     bool tryPerch(bool fromAir);
     void perch(bool jumpPressed, bool dropPressed, float dt);
+    bool tryRail(bool fromAir);
+    void rail(bool jumpPressed, bool dropPressed, float dt);
     void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp
     void land(vec2 move);
 
@@ -257,7 +265,6 @@ struct Spawn {
 
 // ---- units, streaming, checkpoints (docs/formats/LEVELS.md "Streaming", docs/SAVES.md) -------
 // Grapple-target intro (`*_ei_grapple_ceiling/_wall/_post` etc.): position in its unit's frame.
-enum class GrappleKind : uint8_t { Ceiling, Wall, Post, Mounted };
 struct GrappleTarget {
     int32_t uid = 0;
     vec3 pos{0};
@@ -327,6 +334,7 @@ public:
     // Object collision and physics doors (src/physics, docs/formats/PHYSICS.md): the solid primitives of script()'s
     // doors and push blocks are collision().dynamics (following their pose); rigid-body doors swing on a hinge.
     const physics::Scene& physics() const { return physics_; }
+    bool sendUberCommand(int32_t uid, uint32_t commandIndex);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
@@ -370,11 +378,13 @@ public:
 
     // Interactive water (src/game/Water): ripple field + splash droplets around Lara, ticked with the world.
     const WaterSim& water() const { return water_; }
+    bool lightEnabled(std::string_view unit, uint32_t lightId) const;
+    uint64_t lightsVersion() const { return lightsVersion_; }
     // One-off splash on the active surface (shots, hazards, scripted impacts).
     void splashWater(vec3 pos, float strength = 1.0f) { water_.splash(pos, strength); }
     // Grapple: best target within range, aim cone and line of sight (World.cpp), for attach + the HUD marker.
     std::optional<GrappleTarget> grappleTarget() const;
-    void attachGrapple(vec3 anchor, int32_t uid) { player_.attachGrapple(anchor, uid); }
+    void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling) { player_.attachGrapple(anchor, uid, kind); }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath: 1 = full, 0 = drowning (kAirSeconds while the head is under water). [I] 45 s, refill 2 s.
     float air() const { return air_; }
@@ -417,6 +427,10 @@ private:
     static constexpr float kAirSeconds = 45.0f;   // [I] no tru.exe number decoded yet
     static constexpr float kAirRefillSeconds = 2.0f; // [I]
     void checkLevelEnd(); // script Activate of a cinematic_object -> onCinematic; a level end's -> startChapter(next)
+    void registerCinematicUnits();
+    struct CinematicEnd { std::string stream; std::vector<std::string> chapters; };
+    std::vector<script::UnitRef> cinematicRefs_;
+    std::map<int32_t, CinematicEnd> cinematicEnds_;
 
     collision::CollisionMesh col_;
     AnimLibrary anims_;
@@ -438,6 +452,19 @@ private:
     ai::Enemies enemies_{&targets};
     uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
+    void bindMultibody();
+    void bindUber();
+    void bindTerrain();
+    void bindLightHealth();
+    const formats::UberObjectData* prepareUber(const script::Object& o);
+    std::map<int32_t, float> multibodyLo_, multibodyHi_; // native limits issued before hinges exist
+    std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
+    std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
+    std::map<int32_t, std::vector<uint32_t>> uberStates_;
+    struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; };
+    std::map<int32_t, UberMotion> uberMotion_;
+    std::map<std::pair<std::string, uint32_t>, bool> lightStates_;
+    uint64_t lightsVersion_ = 0;
     // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()).
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
     std::vector<ObjectCollider> colliders_;

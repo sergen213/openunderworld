@@ -178,6 +178,17 @@ TEST(PhysicsRealData, BallcourtDoorObject) {
     EXPECT_TRUE(physics::solidShape(o, 0));
 }
 
+TEST(PhysicsRealData, BallcourtLeverObject) {
+    const auto* bf = bigfile();
+    if (!bf) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto o = physics::loadObjectPhysics(cdc::parseDrm(*bf->read("pc-w\\ca_pt_phole_lever.drm")));
+    EXPECT_EQ(o.physClass, 6u);
+    ASSERT_EQ(o.markers.size(), 1u);
+    EXPECT_EQ(o.markers[0].kind, 2u);
+    EXPECT_NEAR(o.markers[0].pos.z, 1062.76f, 0.01f);
+    EXPECT_NEAR(physics::massProps(o).mass, 50.0f, 1e-4f);
+}
+
 TEST(PhysicsRealData, AllObjectsParse) {
     const auto* bf = bigfile();
     if (!bf) GTEST_SKIP() << "OU_GAME_DIR not set";

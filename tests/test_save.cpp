@@ -75,6 +75,8 @@ game::UnitData syntheticUnit(const std::string& name) {
         u.col.markup.push_back({1, 5, {{100, 100, 0}, {200, 100, 0}}});
         u.portals = {portal("b", 31, 22, 0, 0, 0)};
         u.spawn = game::Spawn{{2000, 1000, 0}, 0, true};
+    } else if (name == "l1_cine_ship_sinking" || name == "l3_mansion_exterior_afterburn" || name == "l6_ship_natla_room") {
+        // Cinematic-only registration needs the unit reference, not a gameplay spawn or collision.
     } else {
         throw cdc::FormatError("pc-w\\" + name + ".drm not in bigfile");
     }

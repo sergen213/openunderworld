@@ -4,6 +4,7 @@
 
 #include "cdc/Cdc.hpp"
 #include "formats/Formats.hpp"
+#include "game/Game.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -61,11 +62,11 @@ Senses readSenses(const cdc::Section& s, uint32_t o) {
 // and death clips come from the enemy data records instead.
 const std::array<std::vector<std::string_view>, size_t(Role::Count)> kRoleCandidates = {{
     {"passive_idle", "idle_passive", "idle"},                                         // Idle
-    {"attack_idle", "idle_aggresive", "idle_combat_stand"},                           // Alert
-    {"walk_forward_2", "walk", "combat_walk_forward", "bat_fly_passive"},             // Walk
-    {"run_forward_2", "run", "combat_run_forward", "bat_fly_aggressive"},             // Run
-    {"simple_attack_static1", "rifle_bash", "attack_bite", "simple_attack", "slash_attack", "slash"}, // Attack
-    {"hitreact_medium_front", "hitreact_medium", "hit_front", "hit_react_light_front", "hit_react_medium"}, // Hit
+    {"attack_idle", "idle_aggresive", "idle_combat_stand", "swim_forward_medium"},   // Alert
+    {"walk_forward_2", "walk", "combat_walk_forward", "bat_fly_passive", "swim_forward_slow"}, // Walk
+    {"run_forward_2", "run", "combat_run_forward", "bat_fly_aggressive", "swim_forward_fast", "swim_forward_medium"}, // Run
+    {"simple_attack_static1", "rifle_bash", "attack_bite", "simple_attack", "slash_attack", "slash", "bite_2", "burst_attack"}, // Attack
+    {"hitreact_medium_front", "hitreact_medium", "hit_front", "hit_react_light_front", "hit_react_medium", "hit"}, // Hit
     {"death_static", "death_shot", "death", "damage_front_death"},                    // Death
     {"spawn_from_pool"},                                                              // Spawn
 }};
@@ -194,6 +195,17 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
         t->tuning.attackReach = t->tuning.radius + 250.0f;
         t->tuning.attackCooldown = 1.5f;
     }
+    if (t->aquatic()) {
+        // Sharks have no attack records: their clip set supplies the locomotion and the unrecorded melee damage
+        // remains the inferred 120 default. Use the actual fast-swim root cycle rather than the bat's speed.
+        const anim::Clip* run = t->clip(Role::Run);
+        const double seconds = run ? run->durationSeconds() : 0;
+        if (run && seconds > 0) {
+            const vec3 cycle = rootTranslation(*run, seconds, true) - rootTranslation(*run, 0, true);
+            if (const float distance = glm::length(cycle); distance > 1e-3f) t->tuning.flySpeed = distance / float(seconds);
+        }
+        loadClip("death_float_loop");
+    }
 
     // Death clips that end lying down: the last frame's median bone height under a third of the bind pose's (the
     // median, as helper bones such as the dropped rifle fly far off).
@@ -219,7 +231,7 @@ std::shared_ptr<const EnemyType> Enemies::typeOf(const std::string& name) {
     try {
         t = loadEnemyType(*bigfile_, name);
         if (!t->spawnable()) {
-            warnings.push_back("enemy " + name + ": no idle/run/death clip with an attack clip or fire record (sharks are not implemented); not spawned");
+            warnings.push_back("enemy " + name + ": no idle/run/death clip with an attack clip or fire record; not spawned");
             t = nullptr;
         }
     } catch (const std::exception& e) {

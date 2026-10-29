@@ -230,6 +230,13 @@ struct GpuImage {
     bool cube = false;                    // 6-layer cube view
 };
 
+// FrameOptions::uiImages slot: texture + the version/size it was last uploaded with.
+struct UiImage {
+    GpuImage gpu;
+    uint64_t version = 0;
+    int width = 0, height = 0;
+};
+
 struct GpuMesh {
     Buffer vertices, indices;
     std::vector<scene::SubMesh> submeshes;
@@ -516,6 +523,7 @@ public:
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
         std::memcpy(waterUbo_[frameIndex_].mapped, &wb, sizeof wb);
         if (enhancedWater) updateRipples(options);
+        for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         drawOrder(meshes_, camera.position, order_);
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
@@ -792,7 +800,10 @@ public:
             const VkDeviceSize zero = 0;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textPipeline_);
             vkCmdPushConstants(cmd, textLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof screen, screen);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout_, 0, 1, &font_.set, 0, nullptr);
+            VkDescriptorSet sets[3] = {font_.set, white_.set, white_.set}; // text.frag: font, uiImages[0], uiImages[1]
+            for (size_t i = 0; i < uiImages_.size(); ++i)
+                if (uiImages_[i].gpu.image) sets[1 + i] = uiImages_[i].gpu.set;
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout_, 0, 3, sets, 0, nullptr);
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.text.buffer, &zero);
             vkCmdDraw(cmd, count, 1, 0, 0);
         }
@@ -915,6 +926,8 @@ public:
             destroyImage(attenuation_);
             destroyImage(blackCube_);
             if (ripples_.image) destroyImage(ripples_);
+            for (auto& u : uiImages_)
+                if (u.gpu.image) destroyImage(u.gpu);
             for (auto& b : waterUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             for (auto& b : splashBuffers_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             for (auto& m : splashMemory_) m.reset();
@@ -1423,10 +1436,13 @@ private:
         VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 3u : 2u,
                                       sceneSets, 1, &scenePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &sceneLayout_));
-        pl.setLayoutCount = 1;
-        pl.pSetLayouts = &setLayout_;
+        const VkDescriptorSetLayout textSets[3] = {setLayout_, setLayout_, setLayout_}; // font + two FrameOptions::uiImages
+        pl.setLayoutCount = 3;
+        pl.pSetLayouts = textSets;
         pl.pPushConstantRanges = &textPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &textLayout_));
+        pl.setLayoutCount = 1;
+        pl.pSetLayouts = &setLayout_;
         // Enhanced water: set 0 = WaterBlock UBO + opaque colour/depth + ripple field; splash uses the same layout.
         const VkDescriptorSetLayoutBinding wb[4] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
@@ -1633,10 +1649,10 @@ private:
         sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &shadowSampler_));
 
-        // post, white, font + the per-frame sun shadow sets (atlas + OuShadow UBO).
-        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 + kFramesInFlight},
+        // post, white, font, the two UI images + the per-frame sun shadow sets (atlas + OuShadow UBO).
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 + kFramesInFlight},
                                             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}};
-        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 3 + kFramesInFlight, 2, ps};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 5 + kFramesInFlight, 2, ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &staticPool_));
 
         // Sun shadow atlas (kShadowCascades tiles side by side): always allocated so the shadow sets are valid; kept in
@@ -1910,6 +1926,30 @@ private:
         });
         vkDestroyBuffer(device_, src.buffer, nullptr);
         staging.reset();
+    }
+
+    // FrameOptions::uiImages[i] -> RGBA8 texture (recreated on a size change, uploaded when the version changes).
+    // Its descriptor set is allocated once and rewritten when the image is recreated.
+    void updateUiImage(UiImage& u, const RgbaImage& img) {
+        if (img.rgba.empty()) return;
+        if (!u.gpu.image || u.width != img.width || u.height != img.height) {
+            const VkDescriptorSet set = u.gpu.set;
+            if (u.gpu.image) {
+                vkDeviceWaitIdle(device_);
+                destroyImage(u.gpu);
+            }
+            u.gpu = createImage(staticMemory_, VK_FORMAT_R8G8B8A8_UNORM, uint32_t(img.width), uint32_t(img.height), 1,
+                                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+            if (set) writeSet(u.gpu.set = set, u.gpu.view, postSampler_);
+            else u.gpu.set = allocateSet(staticPool_, u.gpu.view, postSampler_);
+            u.width = img.width, u.height = img.height;
+            u.version = 0;
+        }
+        if (u.version == img.version) return;
+        UploadBatch batch;
+        batch.images.push_back({u.gpu.image, {{img.rgba.data(), img.rgba.size_bytes(), uint32_t(img.width), uint32_t(img.height)}}});
+        flush(batch);
+        u.version = img.version;
     }
 
     // Game ripple height field -> R32F texture, re-uploaded when its version changes (game::WaterSim).
@@ -2472,6 +2512,7 @@ private:
               postSampler_ = VK_NULL_HANDLE;
     VkDescriptorPool staticPool_ = VK_NULL_HANDLE, scenePool_ = VK_NULL_HANDLE;
     GpuImage white_, font_, shadow_;
+    std::array<UiImage, 2> uiImages_; // FrameOptions::uiImages
     VkDescriptorSet postSet_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout shadowSetLayout_ = VK_NULL_HANDLE;           // sun.glsl: atlas + OuShadow UBO
     std::array<Buffer, kFramesInFlight> shadowUbo_{};                 // OuShadow, host-coherent

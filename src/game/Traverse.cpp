@@ -147,4 +147,95 @@ void Player::perch(bool jumpPressed, bool dropPressed, float dt) {
     advanceClip(dt);
 }
 
+namespace {
+// Rail distances are fully 3D (unlike the mostly-horizontal ledge helpers in Player.cpp).
+float railLen(const collision::Markup& m, int seg) { return glm::length(m.points[size_t(seg) + 1] - m.points[size_t(seg)]); }
+vec3 railDir(const collision::Markup& m, int seg) {
+    const vec3 d = m.points[size_t(seg) + 1] - m.points[size_t(seg)];
+    const float l = glm::length(d);
+    return l > 1e-4f ? d / l : vec3(1, 0, 0);
+}
+vec3 railPoint(const collision::Markup& m, int seg, float t) {
+    const float len = railLen(m, seg);
+    return glm::mix(m.points[size_t(seg)], m.points[size_t(seg) + 1], len > 1e-4f ? t / len : 0.0f);
+}
+bool moveRail(const collision::Markup& m, int& seg, float& t, float ds) {
+    t += ds;
+    while (t > railLen(m, seg) && size_t(seg) + 2 < m.points.size()) t -= railLen(m, seg++);
+    while (t < 0 && seg > 0) t += railLen(m, --seg);
+    const float len = railLen(m, seg);
+    const bool end = t < 0 || t > len;
+    t = std::clamp(t, 0.0f, len);
+    return end;
+}
+} // namespace
+
+// Rail slide (markup 8): attach near the line and follow it downhill. Reach and heading tolerance are [I].
+bool Player::tryRail(bool fromAir) {
+    if (s_.regrabCooldown > 0 || (fromAir && s_.vel.z > 0)) return false;
+    int best = -1, bestSeg = 0;
+    float bestT = 0, bestSide = 1, bestDist = fromAir ? 160.0f : 120.0f; // [I]
+    vec3 bestQ(0), bestDirection(0);
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 8 || m.points.size() < 2) continue;
+        for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
+            const vec3 segment = railDir(m, si);
+            const float side = m.points[size_t(si) + 1].z <= m.points[size_t(si)].z ? 1.0f : -1.0f;
+            const vec3 direction = segment * side;
+            if (!fromAir && glm::dot(forward(), unitXY(direction, vec3(1, 0, 0))) < 0.5f) continue;
+            const float len = railLen(m, si);
+            if (len < 1e-4f) continue;
+            const float t = std::clamp(glm::dot(s_.pos - m.points[size_t(si)], segment), 0.0f, len);
+            const vec3 q = railPoint(m, si, t), delta = s_.pos - q;
+            const float dist = glm::length(delta);
+            if (dist < bestDist) {
+                bestDist = dist, best = int(li), bestSeg = si, bestT = t, bestSide = side, bestQ = q, bestDirection = direction;
+            }
+        }
+    }
+    if (best < 0) return false;
+    s_.ledge = best, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide;
+    s_.pos = bestQ;
+    s_.yaw = yawOf(xy(bestDirection));
+    s_.vel = bestDirection * std::max(0.0f, glm::dot(s_.vel, bestDirection));
+    s_.state = State::RailSlide;
+    s_.fallStartZ = s_.pos.z;
+    play("slope_slidefront", true); // [I] original slide clip; lara.drm has no rail-specific clip name
+    return true;
+}
+
+void Player::rail(bool jumpPressed, bool dropPressed, float dt) {
+    if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size()) { startFall(s_.vel); return; }
+    const auto& m = col_.markup[size_t(s_.ledge)];
+    if (m.type != 8 || s_.ledgeSeg < 0 || size_t(s_.ledgeSeg) + 1 >= m.points.size()) { startFall(s_.vel); return; }
+    const vec3 direction = railDir(m, s_.ledgeSeg) * s_.ledgeSide;
+    advanceClip(dt);
+    s_.fallStartZ = s_.pos.z; // the slide itself is not a damaging fall
+    if (jumpPressed) { // [I] jump keeps rail momentum and adds the normal standing-jump vertical speed
+        s_.ledge = -1;
+        s_.regrabCooldown = 0.3f;
+        s_.vel += vec3(0, 0, t_.jumpVz);
+        s_.state = State::Jump;
+        s_.fallStartZ = s_.pos.z;
+        play("NG_InAir_Feet_Forward_stage1", false);
+        return;
+    }
+    if (dropPressed) { // [I] drop lets go with the current rail velocity
+        s_.regrabCooldown = 0.4f;
+        startFall(s_.vel);
+        return;
+    }
+    // Tangential gravity: downhill accelerates, uphill decelerates, level rail preserves speed.
+    const float speed = std::max(0.0f, glm::dot(s_.vel, direction) - t_.gravity * direction.z * dt);
+    s_.vel = direction * speed;
+    const bool end = moveRail(m, s_.ledgeSeg, s_.ledgeT, speed * dt);
+    s_.pos = railPoint(m, s_.ledgeSeg, s_.ledgeT);
+    s_.yaw = yawOf(xy(direction));
+    if (end) { // [I] detach with a short regrab cooldown; normal collision handles the floor or the drop
+        s_.regrabCooldown = 0.4f;
+        startFall(s_.vel);
+    }
+}
+
 } // namespace ou::game

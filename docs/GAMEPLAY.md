@@ -29,7 +29,9 @@ forward/back held), mouse orbits the camera.
 Gamepad: left stick, right stick, South = jump/climb, East = drop, West = use, left shoulder = walk. F1 toggles the
 overlay, Esc / pad Start opens the pause menu ("Progression" below; without `--level`/`--chapter`/`--load` ou-game
 starts at the main menu). `--fov` / the launcher config set the vertical FOV. Switches, doors, trigger volumes/planes and
-blocks: `src/script`, docs/formats/SCRIPTS.md; script events are logged to stderr.
+blocks: `src/script`, docs/formats/SCRIPTS.md; script events are logged to stderr. Supported handlers execute their
+original SCMD bytecode, including nested calls, strings, sticky/modifiable state and SLEEP/WAIT resume across ticks;
+unsupported natives use the static-link fallback.
 
 Input scripts: one event per line, `<seconds> <action> [value]`, `#` comments. Actions `forward`, `right` (stick
 axes −1..1), `walk`, `jump`, `drop`, `interact`, `save`, `load` (0/1, default value 1; `save`/`load` = F5 quicksave /
@@ -315,6 +317,14 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   `GameReal.ShipSinkingHallLadder`. Object-DRM markup does not exist in this data (COLLISION.md), so all
   traversal markup comes from the units.
 
+## Rail slides (src/game/Traverse.cpp)
+
+- Type-8 markup attaches from the ground or air after ledges, poles, ladders, perches and rock faces. Lara follows the
+  polyline downhill with tangential gravity; Space jumps with rail momentum, Ctrl/C drops, and the endpoint enters a
+  normal fall with a short regrab cooldown. Attach tolerances, detach behavior and reuse of `slope_slidefront` are [I].
+- `GameReal.ValaskjalfRailSlideTraversesAndDetaches` traverses all of rail 1562 and checks the low endpoint. A rendered
+  `ou-game` run also landed at `7269.1,-76525.5,-13337.3` with `ng_generic_land_forwards` [O].
+
 ## Enemies
 
 Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy
@@ -453,12 +463,14 @@ the checkpoint save; the restore path was not traced]. Generator spawns are stas
 their unit streams out and re-spawned when it streams back in.
 
 Sharks [O]: enemy family, class 1, behaviour 2 (the bats' flyer tree), health 500 / 800, senses above, death record
-with four type-2 entries, no attack records (damage [U]); clips `swim_forward_slow/medium/fast`, `burst_attack`,
-`bite_2` (blueshark), `death` (8 s), `death_float_loop`. Not spawned (warned): their units have no `watervolume` intro
-that `findWater` turns into a water box, so there is no volume to keep them in.
+with four type-2 entries, no attack records (bite damage stays at the inferred 120 default [I]); clips
+`swim_forward_slow/medium/fast`, `burst_attack`, `bite_2` (blueshark), `death` (8 s), `death_float_loop`. They spawn,
+chase with 3D clip-driven swimming and sphere collision, bite, and die into the floating loop. Type-10 boxes confine
+swimming when present; the real shark units expose none, so their live behavior uses collision-based free swimming.
+`AiReal.SharksSpawnSwimBiteAndDie` verifies populations and shark 4020 chasing, biting and dying.
 
 Not done: behaviour trees (search, flank, cover, taunt, dodge, jump/vault, nap), merc / long-range specifics beyond
-their records, rifle mesh, bat latch, sharks, wall-hung spiders (they drop), navmesh/routing, enemy sounds, ragdoll.
+their records, rifle mesh, bat latch, wall-hung spiders (they drop), navmesh/routing, enemy sounds, ragdoll.
 
 Verification [O] (ou-game, GL, 1792×1008, ASan debug build; screenshots viewed, kept privately): replay
 `tests/replays/poacher_firefight.txt` (l4_ballcourt, `--spawn 17520,10383,2650,180`): poachers 6540/6541 alert at tick
@@ -671,8 +683,8 @@ No side-by-side comparison with the original game was made.
   not the exe's component. Ripple/caustic parameters are ours [I].
 - Free climbing is implemented for flagged rock faces (see "Free climbing"): direction-bit semantics are
   [U], movement speed/reach are [I], no bad-attach/wrestle/corner-specific clips, no `DICE_L/R/LW/RW` wall
-  variants. Ladders (9), perches (13) and pillars (15) work (see "Ladders, pillars, perches"); vertical poles
-  (type 5) have no markup in any unit. Still missing: ropes, zip lines, rail slides, cover, `Wall_Hug_*`,
+  variants. Ladders (9), perches (13), pillars (15) and rail slides (8) work (see their sections); vertical poles
+  (type 5) have no markup in any unit. Still missing: cover, `Wall_Hug_*`,
   balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang, hurdles/vaults,
   mirrored left-side clips. Root motion of the jump, attach and fling clips is not applied (the flight is
   ballistic), so their poses can sit off the computed path.
@@ -703,7 +715,7 @@ and 030_med_yacht in l1_seatop [O]. `FUN_005de2b0` special-cases `l1_seatop` (we
 52..58 in that order [I mapping]; prologue = 54 CROFT MANOR [I]; "ONE WEEK EARLIER..." (1307) is shown under the chapter-1
 title after the prologue [I placement]. New Game: frontend state 8 "PlayNewGameMovie" plays `explode.bik`
 (`0x5DB110`, state names `0x77CB20`) [O], then chapter 0. The original main menu plays `medsea_loop.bik` behind it [O];
-ours draws the chapter-0 unit dimmed instead.
+ours now decodes and loops that movie through either renderer's post pass. Its audio track is not mixed yet [U].
 
 **Level ends** [O data, I trigger]: the script of exactly one `cinematic_object` per chapter end names the next chapter's
 start unit: l3_main_hall 4106 (prologue → 1), l1_cine_ship_sinking 1005, l2_cliffclimb 2565, l3_mansion_exterior_afterburn
@@ -721,13 +733,33 @@ natives). All share base script 3674 (playersensor, "popUpTitleMessageChannel", 
 `World::found` counts it, the mesh is hidden and the HUD shows `TREASURES|RELICS|HEALTH PACKS` (1251/1252/1274) with the
 count [I format]. Saved (docs/SAVES.md). Health packs are not yet usable (Combat).
 
-**Menus** [I layout, O strings]: Main 51 title, 124 START NEW GAME, 126 LOAD GAME, 125 GAME OPTIONS, 131 QUIT GAME;
-Pause 1049 PAUSE, 122 RESUME GAME, 127 SAVE GAME (slot `save-<date>`), 126, 1050 ACCESS PDA, 125, 1062 BACK TO MENU;
+**Menus** [O layout/art/strings from tru.exe captures, I pause/submenus]: the main menu is the original's
+`ScriptMainMenu` screen (cdc script UI `uimainmenu`, generalbank.drm script 8; the scripts themselves are not
+executed). Reference: tru.exe under Wine+DXVK (4 CPUs: its `CPUCount` 0x4A21D0 overflows the stack with 32) captured at
+1024×768 4:3 and 1920×1080 16:9 (openunderworld-work/screens/menu). Everything is in the 640×480 UI space at the window
+height's scale, centred horizontally (16:9 keeps the 4:3 layout in the middle). Art = generalbank.drm textures packed
+into one atlas (`ui::Art`, `FrameOptions::uiImages[0]`); font = DTP 46 (header and 12-byte glyph table over textures
+109/110, advance `(spacing + width) · scale − 1` as `Font_GetTextWidth` 0x4758C0; text scale 0.625 × the font's 0.5).
+Fitted layout: texture 17 glyph art 672² at (317.5, 242.25), ¾ opaque; texture 50 quarter ring 208² mirrored four
+times around the centre (320.3, 240.3); ring radius 136.8, 7 items from −90° in steps of 180°/7; discs (15) and icons
+(18–26) at 0.67 per texel, unselected icons tinted (50, 115, 185); the selected item: black disc 51 (×1.17 on the
+ring, ×1 in the centre), white icon (×1.125 ring), glow 11 (×1.22 ring / ×1.17 centre, 0.7 opaque), label fading in
+over ~0.5 s on bar 12 (centre, above) or 13 (ring, to the left, ink ending 53.6 left of the item centre); footer lines
+(texture 105, 686 wide at y 432 / 450.5) and the prompt string 120 with the key name "Return" in (99, 209, 247). The
+movie `medsea_loop.bik` is fitted to the window width, centred, at ~0.66 brightness. Items: centre 123 PLAY GAME
+(loads the newest save, else a new game), ring 124 START NEW GAME, 125 GAME OPTIONS, 126 LOAD GAME, 127 SAVE GAME (the
+original's message 161 "only … in gameplay mode" in box 106 with OK 383), 128 AUDIO/VISUAL (our Options), 129 EXTRAS
+(not ported: message 456 "Unavailable"), 131 QUIT GAME. Navigation as tru.exe: Left from the centre to the last ring
+item (first time SAVE GAME, the one level with the centre), Right back to the centre, Up/Down along the ring and off
+either end to the centre. Pause [I]: the same radial art with 122 RESUME GAME in the centre and 127 SAVE GAME (slot
+`save-<date>`), 126, 1050 ACCESS PDA, 125, 1062 BACK TO MENU on the ring. Load/Options/PDA are our panels in the 8×8
+atlas font [I].
 Load lists `saveDir()/*.ousave` newest first (456 "Unavailable" if none); Options 491: 487 SFX VOLUME, 488 IN-GAME MUSIC
 VOLUME (mixer bus volumes); PDA page: chapter name, 1075 AREA INFO, 1073/1072/1274 with the found counts. Objective text is
 not mapped [U]. Keys: arrows/WASD, Enter/Space/E accept, Esc/Backspace back; pad d-pad, South, East/Start. Replays drive
 menus with `forward`/`right` ±1, `jump`/`interact` (accept), `drop`/`pause` (back); the script clock keeps running in menus.
-Text uses the renderer's 8×8 ASCII atlas: button glyphs U+1800.. are dropped, accents removed.
+The original's attract mode (intro.bik after ~1 min idle) and title music are not reproduced; the footer always names the
+keyboard key.
 
 **Music** (docs/formats/AUDIO.md §5): one track, `pc-w\music\<name>\<name>.mul` with its `.mus` sequencer setting the
 stem gains every tick (variables all 0: writers of e.g. 0x7D are [U]). The track changes (2 s crossfade) when the current
@@ -737,6 +769,8 @@ unit has a `<unit>_mus_01` track [I naming] and when Lara enters a volume whose 
 into l1_seafloor), tick 105 l1_seatop_mus_01 (volume 927), tick 181 l4_pool_mus_01 after a quickload; 0.5 s RMS
 0.084 → 0.043 across the crossfade, then 0.08–0.11 (WAV in openunderworld-work/screens/progression, not listened to).
 
-Verified [O] (2026-10-18, GL, screenshots viewed): main menu over the dimmed bedroom; `menu_new_game.txt` → explode.bik
+Verified [O] (2026-10-28, GL + Vulkan, screenshots viewed): `medsea_loop.bik` behind the radial main menu, Options
+opened by replay, no gameplay HUD, and no Vulkan validation errors. `menu_new_game.txt` with `--no-movies` reached
+CROFT MANOR and Lara walking. Earlier [O] (2026-10-18, GL): `menu_new_game.txt` → explode.bik
 (45 frames) → "CROFT MANOR" card, Lara walking in l3_main_bedroom; `pool_pickup.txt` in l4_pool with `--spawn
 -6045,-6100,2844,-90` → treasure 5489, "TREASURES 1".

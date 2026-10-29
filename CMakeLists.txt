@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(OpenUnderworld VERSION 0.8.0 LANGUAGES CXX)
+project(OpenUnderworld VERSION 0.9.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -149,7 +149,7 @@ endif()
 
 # ---- ou_formats: PCD9 textures, render models, terrain -> ou::scene; ou-asset CLI ----------
 add_library(ou_formats STATIC src/formats/Texture.cpp src/formats/Model.cpp src/formats/Scene.cpp src/formats/Level.cpp
-            src/formats/Shader.cpp)
+            src/formats/Shader.cpp src/formats/Uber.cpp)
 target_link_libraries(ou_formats PUBLIC ou_cdc ou_anim)
 add_executable(ou-asset tools/ou-asset/main.cpp)
 target_link_libraries(ou-asset PRIVATE ou_formats)
@@ -278,7 +278,7 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_script: script types, trigger volumes/planes, switches, doors, blocks (docs/formats/SCRIPTS.md) ----
-add_library(ou_script STATIC src/script/Script.cpp)
+add_library(ou_script STATIC src/script/Script.cpp src/script/Vm.cpp)
 target_link_libraries(ou_script PUBLIC ou_formats ou_anim ou_collision glm::glm nlohmann_json::nlohmann_json)
 if(OU_BUILD_TESTS)
   add_executable(ou_script_tests tests/test_script.cpp)
@@ -307,8 +307,8 @@ target_link_libraries(ou_save PUBLIC ou_game nlohmann_json::nlohmann_json PRIVAT
 target_sources(ou_game PRIVATE src/game/Objects.cpp)
 target_link_libraries(ou_game PUBLIC ou_physics)
 # ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
-add_library(ou_ui STATIC src/ui/Ui.cpp)
-target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale)
+add_library(ou_ui STATIC src/ui/Ui.cpp src/ui/Art.cpp)
+target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale ou_formats)
 add_executable(ou-game src/app/game/main.cpp src/app/game/Cinematic.cpp)
 target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio)
 if(OU_BUILD_TESTS)

@@ -101,6 +101,8 @@ struct EnemyType {
     const std::string& clipName(Role r) const { return roles[size_t(r)]; }
     uint16_t weapon = 0;     // list node +0x20 weapon record u16 +2: weapon object id (poacher 114 wp_akrifle); 0 none
     bool flyer() const { return behaviour == 2; }
+    // The shared flyer behaviour tree also drives sharks; their animation set selects the aquatic controller.
+    bool aquatic() const { return flyer() && clipName(Role::Run).starts_with("swim_"); }
     // Armed, with a fire record whose shot clip we have (soldiers). Cats' records may name a +0x7C clip too.
     bool ranged() const {
         return weapon && std::any_of(tuning.attacks.begin(), tuning.attacks.end(), [&](const Attack& a) { return a.ranged() && clips.count(a.shotClip); });

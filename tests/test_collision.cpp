@@ -212,6 +212,57 @@ Agreement probeAgreement(const Unit& u) {
 
 } // namespace
 
+TEST(CollisionRealData, TerrainGroupEnableGatesQueries) {
+    if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
+    Unit u = loadUnit("pc-w\\l4_pool.drm");
+    // Native model index 0 resolves through the model-list identity to group 1, not group 0.
+    ASSERT_EQ(u.col.terrainGroupForModel(0), 1u);
+    ASSERT_EQ(u.col.terrainGroupForModel(5), 6u);
+    ASSERT_EQ(u.col.terrainGroupEnabled(0), true);
+    uint32_t face = 0;
+    std::optional<collision::Hit> ray, sweep;
+    std::optional<collision::Hit> closest;
+    vec3 start{};
+    for (uint32_t i = 0; i < u.col.faces.size(); ++i) {
+        const auto& f = u.col.faces[i];
+        if (f.group != 1) continue;
+        const vec3 center = (u.col.vertices[f.v[0]] + u.col.vertices[f.v[1]] + u.col.vertices[f.v[2]]) / 3.0f;
+        const vec3 normal = u.col.faceNormal(i);
+        const vec3 candidate = center + normal * 20.0f;
+        auto r = u.col.raycast(candidate, -normal, 40);
+        if (!r || u.col.faces[r->face].group != 1) continue;
+        face = i;
+        start = candidate;
+        ray = r;
+        sweep = u.col.sweepSphere(candidate, 1, -normal * 40.0f);
+        closest = u.col.closestPoint(center, 100);
+        break;
+    }
+    ASSERT_TRUE(ray) << "no isolated ray hit on terrain group 1";
+    ASSERT_TRUE(sweep);
+    ASSERT_TRUE(closest);
+    EXPECT_EQ(u.col.faces[ray->face].group, 1);
+    EXPECT_EQ(u.col.faces[sweep->face].group, 1);
+    EXPECT_EQ(u.col.faces[closest->face].group, 1);
+    ASSERT_TRUE(u.col.setTerrainGroupEnabled(0, false));
+    EXPECT_EQ(u.col.terrainGroupEnabled(0), false);
+    auto offGroup = [&](const std::optional<collision::Hit>& hit) {
+        return !hit || u.col.faces[hit->face].group != 1;
+    };
+    EXPECT_TRUE(offGroup(u.col.raycast(start, -u.col.faceNormal(face), 40)));
+    EXPECT_TRUE(offGroup(u.col.sweepSphere(start, 1, -u.col.faceNormal(face) * 40.0f)));
+    EXPECT_TRUE(offGroup(u.col.closestPoint((u.col.vertices[u.col.faces[face].v[0]] +
+                                             u.col.vertices[u.col.faces[face].v[1]] +
+                                             u.col.vertices[u.col.faces[face].v[2]]) / 3.0f, 100)));
+    ASSERT_TRUE(u.col.setTerrainGroupEnabled(0, true));
+    EXPECT_EQ(u.col.terrainGroupEnabled(0), true);
+    EXPECT_EQ(u.col.faces[u.col.raycast(start, -u.col.faceNormal(face), 40)->face].group, 1);
+    EXPECT_EQ(u.col.faces[u.col.sweepSphere(start, 1, -u.col.faceNormal(face) * 40.0f)->face].group, 1);
+    EXPECT_EQ(u.col.faces[u.col.closestPoint((u.col.vertices[u.col.faces[face].v[0]] +
+                                              u.col.vertices[u.col.faces[face].v[1]] +
+                                              u.col.vertices[u.col.faces[face].v[2]]) / 3.0f, 100)->face].group, 1);
+}
+
 TEST(CollisionRealData, PoolCollisionMarkupAndRenderAgreement) {
     if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
     const Unit u = loadUnit("pc-w\\l4_pool.drm");

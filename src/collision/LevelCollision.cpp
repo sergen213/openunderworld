@@ -156,12 +156,34 @@ CollisionMesh loadLevelCollision(const cdc::Drm& drm, std::vector<std::string>* 
 
     CollisionMesh out;
     const uint32_t numGroups = u.at<uint32_t>(*terrain, 8);
+    out.groupModels_.assign(numGroups, ~0u);
+    out.groupEnabled_.assign(numGroups, true);
+    const auto unitData = u.ptr({level.section, level.offset + 0x74});
+    std::optional<Pointer> models;
+    uint32_t numModels = 0;
+    if (unitData) {
+        numModels = u.at<uint32_t>(*unitData, 0xA0);
+        if (numModels) models = u.need({unitData->section, unitData->offset + 0xA4}, "unit model list");
+    }
     if (numGroups) {
         const Pointer groups = u.need({terrain->section, terrain->offset + 12}, "terrain groups");
         u.need(groups, 0x50 * size_t(numGroups), "terrain groups");
-        for (uint32_t g = 0; g < numGroups; ++g)
-            if (const auto mesh = u.ptr({groups.section, groups.offset + 0x50 * g + 0x38}))
+        for (uint32_t g = 0; g < numGroups; ++g) {
+            const Pointer group{groups.section, groups.offset + 0x50 * g};
+            if (const auto extra = u.ptr({group.section, group.offset + 0x30})) {
+                // tru.exe 0x5C2440 sets both disabled bits; 0x5C2480 confusingly returns them as IsEnabled.
+                const uint32_t flags = u.at<uint32_t>(*extra);
+                out.groupEnabled_[g] = (flags & 4) == 0 || (flags & 8) == 0;
+                if (models && extra->section == models->section)
+                    for (uint32_t m = 0; m < numModels; ++m)
+                        if (extra->offset == models->offset + 0x30 * m) {
+                            out.groupModels_[g] = m; // NtTerrainGroup::ResolveTerrainGroup 0x4AACA0
+                            break;
+                        }
+            }
+            if (const auto mesh = u.ptr({group.section, group.offset + 0x38}))
                 decodeMesh(u, *mesh, uint16_t(g), levelOffset, out, warn);
+        }
     }
     decodeMarkup(u, level, out, warn);
     out.build();

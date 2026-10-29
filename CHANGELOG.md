@@ -4,7 +4,26 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
-## [Unreleased]
+## [0.9.0] - 2026-10-28
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+### Added
+- The main menu now reproduces the Windows game's: its own art and font from `generalbank.drm` (glyph overlay, ring shadow, discs, icons, label bars, footer lines) at the layout measured from the original running at 1024×768 and 1920×1080, the full item set (PLAY GAME in the centre continues the newest save; START NEW GAME, GAME OPTIONS, LOAD GAME, SAVE GAME, AUDIO/VISUAL, EXTRAS, QUIT GAME on the ring), the original navigation (Left/Right between centre and ring, Up/Down along it), selection growth and label fade, the "Return SELECT" prompt, the "only in gameplay mode" message box for SAVE GAME, and `medsea_loop.bik` fitted to the window width behind it. Widescreen keeps the 4:3 layout centred, as the original. The pause menu uses the same radial art. EXTRAS (rewards) is not ported and shows "Unavailable".
+- Native uber-object command dispatch and section state: the Kraken tomb door opens through its original command, and the l2 adrenaline elevator now moves its collision and carries Lara using the actual `falling` animation travel. Unit startup waits for all intros, and added the observed `instance` and two-argument `modifiable` bindings required by the elevator chain.
+- Terrain-group SetEnabled/IsEnabled now reach the addressed streamed unit and preserve group state in merged collision, so trigger planes can enable or disable the terrain Lara queries.
+- Script-controlled lights now enable/disable their rendered unit lights and invalidate the streamed scene. Added the original health getter and persistent `gamebase` global-byte get/set/add/subtract, allowing the l2 tutorial trigger and cinematic scripts to complete without unsupported-native fallbacks.
+- Uber state-thread initialization now completes, duplicate command IDs retain member identity, and translational/rotational clip travel drives moving collision. The Mexico hallway ramps raise through their real `raising` animation; a real-data regression covers the second same-ID command.
+- Added instance Reset, engagement selection, and hidden-state natives. Hidden intros are removed from the streamed render scene, visibility changes trigger rebuilds, and hidden/engagement state survives save/load.
+- Added the original `unit.fn15` post-effect scalar binding; observed zero-valued reset calls now complete instead of falling back.
+- Native SCMD script VM for common scalar opcodes, arithmetic, raw-word branches, nested/virtual calls and instance type checks. Real intro handlers now run with `instanceref`, `unitref`, `globalsref`, sticky boolean/integer and modifiable bindings; the Croft Manor electric switch opens its door through the original bytecode. Unsupported paths keep the previous static-link fallback.
+- Level scripts now compare, copy and convert constant strings, preserve object references across moves, suspend on SLEEP/WAIT and resume nested handlers on later game ticks, and run sequential calls without returning to the parent handler. `MOVEU` copies the eight observed native value layouts at their actual widths. Dirty scalar and string script fields survive save/load.
+- Script construction and WAIT-based multibody polling loops run for level objects. Native `multibody` enable/limit/read/drive calls connect to the hinge solver: the Mexico ballcourt pole lever now turns and its original script drives the door at twice the lever angle instead of using the old open-fully fallback. Also corrected SCMD local byte addressing, move stack order, CALL3 receiver semantics and null-call continuation.
+- Added `playerref` lookup/loaded wait, loaded `instanceref` waits, dynamic instance property get/set and native instance-interface getters. Lara's actual type-205 script is returned to scripts, and dynamic properties persist in saves.
+- START now launches a fresh fiber at the next statement boundary with clean locals/stack and returns to the caller when it finishes, instead of dropping the fiber. Real `l2_shrineroom` and `l2_towerroom` constructors now reach their field initialization.
+- Every scripted intro, including cinematic objects, now reaches the runtime. Added native message-channel delivery, checkpoint events, target-load waits, sticky floats and additional instance/sensor/marker interfaces; original constructors continue through those calls instead of falling back to simplified links.
+- Rail slides: type-8 markup now attaches from ground or air, accelerates downhill along the real polyline, and detaches on jump, drop or the endpoint. Verified on Valaskjalf rail 1562 in a real-data test and a rendered native descent.
+- Sharks now spawn and swim in 3D using their original locomotion, bite, hit and death/floating clips. Restored 6 Mediterranean and 4 Thailand bluesharks plus 8 Arctic Greenland sharks; verified a Thailand shark chasing, biting and dying. Bite damage remains inferred because shark DRMs have no attack records.
 
 ## [0.8.0] - 2026-10-27
 
@@ -107,7 +126,8 @@ First experimental build. Requires your own legally owned copy of Tomb Raider: U
 - Signed updater (Ed25519, staged swap with journal recovery, anti-rollback) and `ou-sign`.
 - AppImage packaging (`packaging/appimage/build-appimage.sh`), AppImage self-update in the launcher (`--check-update`, `--update`), local signed release script `tools/release.sh`, CI AppImage artifact.
 
-[Unreleased]: https://github.com/sergen213/openunderworld/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/sergen213/openunderworld/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/sergen213/openunderworld/compare/v0.8.0...v0.9.0
 [0.4.0]: https://github.com/sergen213/openunderworld/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sergen213/openunderworld/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sergen213/openunderworld/compare/v0.1.0...v0.2.0

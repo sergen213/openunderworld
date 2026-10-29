@@ -114,45 +114,77 @@ player every frame:
 
 ## Runtime (`script::Runtime`) — what is implemented
 
-Not a script VM. Links and handler slots come from the bytecode; behaviour is native C++:
+The runtime executes handlers through `script::vm` and retains static-link/native C++ fallbacks for unsupported paths:
 
-## Toward a bytecode VM (2026-10-27 findings)
+## Bytecode VM (`script::vm`)
 
-- `parseScriptType` already decodes every section: members with initial values, instanceref links,
-  functions with their prototype and vtable slot, and the instruction words (op, arg, operand
-  pointers, ISTYPE ref, PUSH immediate).
-- The exe's `FUN_00432B20` is only a small state-chart condition evaluator (PUSH/POP, float and
-  bool arithmetic, JMP/JMPF, CALLU, RET), not the full cdc script VM.
-- Native types seen in real scripts: `instance` (id 3, 72 prototypes), `multibody` (3566, 94),
-  `stickybool` (69), `globalsref` (81), `modifiable` (823), `instanceref` (51, 17). Native class
-  vftables are RCObject/lifetime methods, not these prototypes; the CALLU function tables are built
-  at runtime (static table memory is zero), so mapping `(type id, function index)` to an
-  implementation needs live observation (a Wine hook) or more decomp work.
-- cdcEngineDXHR/cdcScript/ByteCodeEnum.h has the opcode numbering; there is no interpreter in the
-  research clones. Next: implement the interpreter for common opcodes and map native calls by
-  observing them live.
+- [O] The full interpreter is `tru.exe 0x57CE50` (not `FUN_00432B20`, which is only a state-chart condition
+  evaluator). `src/script/Vm.cpp` ports its common scalar core: constants/local/member loads and addresses,
+  scalar/reference/string moves, typed native `MOVEU` for the eight observed 4/8/20-byte layouts, integer/float/bool/bit arithmetic and conversions, string comparison and numeric
+  conversions, raw-code-word JMP/JMPF, ISTYPE/STATE, CALLU/CALL1–5, SSEQU/SSEQ1, START and RET. Calls are bounded to
+  100 frames / 100 000 instructions per handler.
+- [O] Function records now retain their own address, prototype, argument/local counts, return type and native
+  flag; branches use raw word offsets, including relocated operand words. Inheritance and virtual calls resolve
+  against the actual linked instance.
+- [O] Native bindings implemented by behavior observed in the scripts: `playerref.Get` (0) and loaded wait (2),
+  `instanceref` loaded/birthed waits (3/6), Get (7), SetProperty (9), GetProperty (12/15), `unitref.Get` (3),
+  `globalsref.Get` (0), sticky bool/int/float Set (0), Get (1/2) and equality (3), `modifiable` Set/Get (4/8) and its two-argument setter (3), native
+  instance debug/marker/modifiable interfaces (0/1, 4–9, 14–16, 28/61), Reset (25), engagement-property selection (59), Hide (60), `playersensor` void interface call (2),
+  `checkpointbase` activation (3), static-water reset/depth (3/4), `terraingroup` SetEnabled/IsEnabled (2/3), `light` SetEnabled/IsEnabled (1/2),
+  `health` current-value Get (9), `gamebase` global-byte Get/Set/Add/Subtract (4–7), `unit` post-effect scalar Set (15), and `multibody` Enable (2), SetJointLimit (77),
+  GetJointValue (78) and JointDrive (79). `messagechannel` Send (2) delivers channel id, message id and string payload
+  to the registered native subscriber; channel equality is fn 3 and fn 0/1 are the original debug stubs.
+  `playerref.Get` returns Lara's actual type-205 script from lara.drm. The bedroom path
+  4525 → 12131 → 4520 → 12126 → 12171 runs its real bytecode: `stickybool(+8).Set(true)` and
+  `modifiable(+4).Set(0)`. The ballcourt lever's polling loop drives its door at twice the lever angle.
+  Unsupported bindings stop execution and use the old static-link fallback unless the VM already activated something.
+- [O] Uber object section/command tables are decoded from the class-79 ObjectBase record. `uberobjectbase` commands
+  dispatch by receiving command-member ordinal (numeric IDs can repeat), and function 5 initializes the command-driven
+  state machine. Command targets update section state, open the associated hinge, and drive moving collision from
+  actual travel clips, including translation and axis-angle rotation. Unit constructors start after all intros are
+  registered, so forward `instanceref` links (including the l2 elevator chain) resolve. The l1 kraken tomb door,
+  l2 `sa_uo_elevator_adrenaline`, and l4 `ca_rb_hallway_ramps_b` `raising` travel are covered by real-data tests.
+- [I] Unit/global script objects live for the runtime; sound/music/UI natives on the proven bedroom path return
+  zero without new side effects. Function 0 runs as the constructor when its slot is −1 or 20; function 2 starts
+  when it is a WAIT-based multibody polling loop. START starts a fresh fiber at the first instruction at or beyond
+  the next statement boundary, with clean locals/stack; its caller resumes when it returns. SLEEP/WAIT retain the
+  nested frame stack and resume on later 60 Hz ticks;
+  sequential calls replace the parent handler. Dirty `scriptFields` and `scriptStrings` persist in saves; active
+  sleep frames do not. The 256 `gamebase` global bytes persist as `gameValues`; script-controlled light enable states
+  version the streamed render scene so disabled unit lights are removed and re-enabled lights return.
+  Collections, arrays/maps, object construction, other thread/PSEQ fibers and most native types
+  are not implemented.
+- cdcEngineDXHR/cdcScript/ByteCodeEnum.h supplies the opcode numbering; no interpreter exists in the research
+  clones. No Wine process is needed for this implementation.
 
 | Piece | Status |
 |---|---|
 | Volume box/sphere test, +200 test point, enter/exit, FirstIn once, dispatch order Enter → FirstIn → its calls → In → its calls; Exit → Out → its calls | [O] as above |
 | Plane crossing | [O] geometry; [I] side of one-sided planes, vt 54 |
-| Handler targets: instanceref members the handler (and the non-virtual helpers it calls) pushes with PUSHSA | [O] data; [I] that each such target is "activated" |
-| Object classes by objectlist name: `*triggervolume`, `triggerplane`, `*switch*`/`*lever*` (not cheat buttons), `*pu_block*`/`*rb_pushblock*`/`*pushable*`, `*door*`/`*gate*` | [I] the exe binds C++ types per object; not decoded |
+| Handler execution | [O] actual SCMD handler + nested calls; [I] static instanceref-target activation only as fallback |
+| Object classes by objectlist name: `*triggervolume`, `triggerplane`, `*switch*`/`*lever*` (not cheat buttons), `*pu_block*`/`*rb_pushblock*`/`*pushable*`, `*door*`/`*gate*`; every other scripted intro uses `Kind::Scripted`, including cinematic objects | [I] specialized behavior classes by name; [O] all scripted intros instantiate and run available handlers |
 | Switch: E / pad West within 200 units (±250 z) of the switch intro → plays `active_pulling`, then fires Use (vt 55 targets) and holds `active_idle` | [I] distances, timing; Lara plays no `obj_pull_lever` |
-| Door: Activate → plays its `*opening*` (else `open`) clip, then holds `*open*idle*`/`*_open` | [I] stands in for the uber/modifiable state machine; doors only open |
+| Door: `modifiable.Set(0)` opens, `Set(1)` closes; opening plays its `*opening*` (else `open`) clip, then holds `*open*idle*`/`*_open` | [I] modifiable mapping and clip choice; closing is immediate (no closing clip yet) |
 | Push block: E held + stick forward/back within reach → moves along the world axis nearest Lara's facing, 120 units/s, stops at collision | [I] the real block snaps to a grid and moves Lara with it (Lara's controller is untouched) |
-| Save state | `serialize()`/`restore()` JSON keyed by intro unique id: `state`, `t`, `inside`, `firstIn`, `offset`; state of units not loaded is kept and applied when they stream in |
+| Save state | `serialize()`/`restore()` JSON keyed by intro unique id: `state`, `t`, `inside`, `firstIn`, `offset`, `hidden`, `engagement`, plus dirty `scriptFields`, `scriptStrings` and `scriptProperties`; state of units not loaded is kept and applied when they stream in. The 256 `gamebase` global bytes are stored in `gameValues`. |
 
-Not done: running the bytecode (members like `stickybool`, `modifiable`, `uberobjectcommand`, unit scripts,
-dispatchers, cinematics, reveal cameras), uber-object section tables, door closing, Lara's interaction clips, door
-collision.
+Not done: collection/array/map opcodes, other thread/PSEQ fibers, most native bindings,
+full uber-object animation state graphs, dispatchers, cinematics and reveal cameras,
+closing-door animations, Lara's interaction clips.
 
 ## Verification
 
-- `ou_script_tests`: synthetic shapes, enter/exit, dispatch order, plane/switch/block, save round trip and
-  restore-before-load; real data: every type-8 section of all 82 units parses, every unit's trigger intros load
-  (1 332 volumes, 327 planes, 28 switches, 58 doors, 566 objects with links, 39 animated), bedroom switch → door
-  link and l4_pool volume 5513 box 567 × 553 × 248.
+- `ou_script_tests`: synthetic shapes, enter/exit, dispatch order, plane/switch/block, VM arithmetic/raw-word
+  branches/native calls, string copy/compare/conversion, nested sleep/resume, sequential tail calls, scalar/string
+  save round trip and restore-before-load, instance/modifiable and checkpoint natives, message delivery, real chapter-end
+  cinematic instantiation; real data: every type-8 section of all 82 units parses, every unit's
+  trigger intros load (1 790 volumes, 327 planes, 28 switches, 58 doors, 640 objects with links, 39 animated),
+  bedroom switch → door bytecode, ballcourt construction calling multibody SetJointLimit/Enable, playerref returning
+  type 205, loaded instance waits, dynamic property get/set, and l4_pool volume 5513 box 567 × 553 × 248.
+  `GameReal.BallcourtLeverDrivesDoorJoint` checks the live 2:1 lever/door coupling. `GameReal.ElevatorUberCommandCreatesMovingCollision`
+  and `GameReal.ElevatorCarriesPlayer` cover the l2 elevator's native command, travel and player carry;
+  `GameReal.TerrainGroupNativeUpdatesMergedCollision` covers l2 trigger-plane terrain toggles. START also runs fresh fibers
+  through nested calls; `StartFibersClearInitialFields` covers real l2_shrineroom/l2_towerroom field creation.
 - Replay (2026-10-18): `ou-game --level 'pc-w\l3_main_bedroom.drm' --spawn -8600,-8400,1850,-100
   --input-script bedroom.txt` with `0.5 interact 1` / `0.6 interact 0`: tick 31 the switch starts pulling, tick
   144 `use 4525 → activate 4520 (ma_ei_house_door)` and `→ 4086 (untracked; an intro of another unit)`; the door swings open (screenshots

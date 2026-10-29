@@ -495,7 +495,9 @@ int main(int argc, char** argv) {
             if (warnings.size() > 8) lines.push_back(fmt("!... %zu more warnings on stderr", warnings.size() - 8));
             lines.push_back("hold RMB look | WASD/QE move | Shift fast | wheel speed | V vsync | L light | C cull | F1 overlay");
         }
-        ou::render::FrameOptions fo{lighting, cull, lines, debugLines};
+        ou::render::FrameOptions fo{};
+        fo.lighting = lighting, fo.cullBackFaces = cull;
+        fo.overlay = lines, fo.debugLines = debugLines;
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame

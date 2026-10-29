@@ -1,6 +1,7 @@
 // Backend interface. Apps and scene code talk to this; only src/render/<backend> sees the GPU API.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -26,9 +27,11 @@ struct DebugLine {
     uint32_t color = 0xFFFFFFFF; // RGBA8, little-endian (as scene::Vertex::color)
 };
 
-// Screen-space quad vertex of the text/UI pass (font atlas: RenderCommon kGlyph/kAtlas*).
+// Screen-space quad vertex of the text/UI pass. u < 0: solid quad; 0 <= u <= 1: font atlas (RenderCommon
+// kGlyph/kAtlas*), colour alpha-masked by the glyph; 2 <= u < 4: FrameOptions::uiImages[0] at (u - 2, v); u >= 4:
+// uiImages[1] at (u - 4, v); images are RGBA x colour.
 struct TextVertex {
-    float x, y, u, v; // pixels from top-left; u < 0 = solid quad
+    float x, y, u, v; // pixels from top-left
     uint32_t color;   // RGBA8
 };
 
@@ -53,6 +56,12 @@ struct WaterVolume { float min[3], max[3]; };
 // Splash / spray droplet: world position, radius (world units), opacity 0..1; drawn as a camera-facing soft disc.
 struct WaterParticle { float pos[3]; float radius; float alpha; };
 
+struct RgbaImage {
+    std::span<const uint8_t> rgba; // tightly packed RGBA8, top row first
+    int width = 0, height = 0;
+    uint64_t version = 0; // backends upload only when this changes
+};
+
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
     bool cullBackFaces = true;              // front = counter-clockwise (cdc meshes are CCW)
@@ -70,6 +79,9 @@ struct FrameOptions {
     bool originalShaders = false;
     float time = 0.0f;
     std::span<const TextVertex> ui = {}; // screen-space triangle list (src/ui menus, HUD), drawn before the overlay
+    // Sampled by `ui` vertices with u >= 2 (bilinear, clamped): [0] original menu art atlas (ui::Art), [1] menu movie.
+    // Backends upload only when an image's version changes (versions start at 1); empty = keep the previous upload.
+    std::array<RgbaImage, 2> uiImages;
     // Replaces the sun shadow map when the backend supports it; otherwise the shadow map is used.
     RayTracing rt = RayTracing::Off;
     int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)

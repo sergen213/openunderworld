@@ -183,8 +183,12 @@ void main() {
 const char* kTextFs = R"(#version 460 core
 in vec2 vUv; in vec4 vColor;
 layout(binding = 0) uniform sampler2D uFont;
+layout(binding = 1) uniform sampler2D uImage0; // FrameOptions::uiImages
+layout(binding = 2) uniform sampler2D uImage1;
 out vec4 oColor;
 void main() {
+    if (vUv.x >= 4.0) { oColor = texture(uImage1, vUv - vec2(4.0, 0.0)) * vColor; return; }
+    if (vUv.x >= 2.0) { oColor = texture(uImage0, vUv - vec2(2.0, 0.0)) * vColor; return; }
     float a = vUv.x < 0.0 ? 1.0 : texture(uFont, vUv).r; // negative uv = solid background quad
     oColor = vec4(vColor.rgb, vColor.a * a);
 })";
@@ -293,6 +297,8 @@ struct Resources {
     VertexArray splashVao;
     Buffer splashVbo;
     Texture white, font, shadowMap, attenuation, blackCube;
+    struct Streamed { Texture tex; uint64_t version = 0; int width = 0, height = 0; };
+    std::array<Streamed, 2> uiImages; // FrameOptions::uiImages
     // Original Fidelity (docs/formats/SHADERS.md): translated programs, register-file UBOs (bindings 0 frame,
     // 1 material, 2 object; ShaderTranslate.hpp), objects rewritten per frame.
     std::vector<Program> originals;
@@ -571,7 +577,26 @@ public:
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        drawOverlay(vp, options.overlay, options.ui);
+        drawOverlay(vp, options.overlay, options.ui, options.uiImages);
+    }
+
+    // (Re)creates the texture on a size change and uploads when the version changes; empty images keep the old one.
+    static void upload(Resources::Streamed& s, const RgbaImage& img) {
+        if (img.rgba.empty()) return;
+        if (s.width != img.width || s.height != img.height) {
+            s.tex = newTexture();
+            glTextureStorage2D(s.tex.get(), 1, GL_RGBA8, img.width, img.height);
+            glTextureParameteri(s.tex.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTextureParameteri(s.tex.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTextureParameteri(s.tex.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTextureParameteri(s.tex.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            s.width = img.width, s.height = img.height;
+            s.version = 0;
+        }
+        if (s.version != img.version) {
+            glTextureSubImage2D(s.tex.get(), 0, 0, 0, img.width, img.height, GL_RGBA, GL_UNSIGNED_BYTE, img.rgba.data());
+            s.version = img.version;
+        }
     }
 
     Image readBackbuffer(Viewport vp) override {
@@ -978,7 +1003,8 @@ private:
         glDepthFunc(GL_LESS);
     }
 
-    void drawOverlay(Viewport vp, std::span<const std::string> lines, std::span<const TextVertex> ui) {
+    void drawOverlay(Viewport vp, std::span<const std::string> lines, std::span<const TextVertex> ui,
+                     const std::array<RgbaImage, 2>& uiImages) {
         if (lines.empty() && ui.empty()) return;
         std::vector<TextVertex> v = buildOverlayVertices(vp, lines, ui);
         Resources& r = *res_;
@@ -990,6 +1016,10 @@ private:
         glUseProgram(r.textProgram.get());
         glUniform2f(0, float(vp.width), float(vp.height));
         glBindTextureUnit(0, r.font.get());
+        for (size_t i = 0; i < r.uiImages.size(); ++i) {
+            upload(r.uiImages[i], uiImages[i]);
+            glBindTextureUnit(GLuint(1 + i), r.uiImages[i].tex.get() ? r.uiImages[i].tex.get() : r.white.get());
+        }
         glBindVertexArray(r.textVao.get());
         glDrawArrays(GL_TRIANGLES, 0, GLsizei(v.size()));
     }

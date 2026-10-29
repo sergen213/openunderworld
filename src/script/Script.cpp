@@ -1,5 +1,6 @@
 // Script types, intro links, trigger shapes and the object runtime. Evidence: docs/formats/SCRIPTS.md.
 #include "script/Script.hpp"
+#include "script/Vm.hpp"
 
 #include "collision/Collision.hpp"
 #include "formats/Formats.hpp"
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <set>
 
@@ -51,6 +53,12 @@ struct View {
         const auto it = ptrs.find(off);
         return it == ptrs.end() ? std::nullopt : std::optional(it->second);
     }
+    std::string string(uint32_t off) const {
+        const auto d = drm.sections[index].data;
+        if (off >= d.size()) throw FormatError("script string past section end");
+        const char* s = reinterpret_cast<const char*>(d.data() + off);
+        return {s, strnlen(s, d.size() - off)};
+    }
     uint32_t ref(uint32_t off) const { return refs.contains(off) ? at<uint32_t>(off) : 0; }
 };
 
@@ -71,7 +79,8 @@ struct Views {
     }
 };
 
-const char* kEventNames[] = {"enter", "firstin", "in", "out", "cross", "use", "activate"};
+const char* kEventNames[] = {"enter", "firstin", "in", "out", "cross", "use", "activate", "start", "main", "checkpoint",
+                             "cinematicend"};
 
 glm::mat3 rotation(vec3 r) { // Rx(x) * Ry(y) * Rz(z) (cdc_Matrix_Build_XYZOrder 0x49D500, LEVELS.md)
     return glm::mat3(glm::rotate(glm::mat4(1), r.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), r.y, {0, 1, 0}) *
@@ -147,7 +156,12 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
             const View& iv = views[ip->section];
             const uint8_t base = m.type & 0x0F;
             if (base == 10 || base == 11) { // NATIVE/SCRIPT: init points at a pointer to the value
-                if (const auto vp = iv.ptr(ip->offset)) m.init = views[vp->section].at<uint32_t>(vp->offset);
+                if (const auto vp = iv.ptr(ip->offset)) {
+                    m.init = views[vp->section].at<uint32_t>(vp->offset);
+                    if (vp->offset <= drm.sections[vp->section].data.size() &&
+                        drm.sections[vp->section].data.size() - vp->offset >= 8)
+                        m.init2 = views[vp->section].at<uint32_t>(vp->offset + 4);
+                }
             } else {
                 m.init = iv.at<uint32_t>(ip->offset);
             }
@@ -161,11 +175,18 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
         const View& v = views[fp.section];
         const uint32_t b = fp.offset + 0x1C * k;
         Function f;
+        f.self = {fp.section, b};
+        f.native = (v.at<uint8_t>(b + 4) & 1) != 0;
+        f.localCount = views.array(v, b + 0x0C).second;
         if (const auto pp = v.ptr(b)) {
             f.proto = *pp;
-            f.vtIndex = views[pp->section].at<int16_t>(pp->offset + 6);
+            const View& pv = views[pp->section];
+            f.vtIndex = pv.at<int16_t>(pp->offset + 6);
+            f.argCount = views.array(pv, pp->offset + 0x0C).second;
+            f.returnType = pv.at<uint8_t>(pp->offset + 0x10) & 0x0F;
         }
         const auto [cp, cn] = views.array(v, b + 0x18);
+        f.wordCount = cn;
         if (cn) {
             const View& cv = views[cp.section];
             bool immediate = false; // the word after PUSH is its raw operand
@@ -176,6 +197,7 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
                 if ((p || cv.refs.contains(off)) && f.code.empty()) throw FormatError("script code starts with an operand");
                 if (p) {
                     f.code.back().ptrs.push_back(*p);
+                    if (f.code.back().op == 0x05) f.code.back().text = views[p->section].string(p->offset);
                 } else if (cv.refs.contains(off)) {
                     f.code.back().ref = word;
                 } else if (immediate) {
@@ -184,6 +206,7 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
                     Instr in;
                     in.op = uint8_t(word >> 24);
                     in.arg = int32_t(word << 8) >> 8;
+                    in.word = w;
                     if (in.op >= kOpCount) throw FormatError("unknown script opcode " + std::to_string(in.op));
                     immediate = in.op == kOpPush;
                     f.code.push_back(std::move(in));
@@ -261,20 +284,75 @@ bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b) {
 
 namespace {
 nlohmann::json stateOf(const Object& o) {
-    if (o.state == 0 && !o.inside && !o.firstIn && o.offset == vec3(0)) return nullptr; // birth state
+    nlohmann::json fields = nlohmann::json::object(), strings = nlohmann::json::object(), properties = nlohmann::json::object();
+    if (o.script) {
+        for (const auto& [offset, value] : o.script->fields) {
+            const auto initial = o.script->initial.find(offset);
+            if (initial == o.script->initial.end() || initial->second != value) fields[std::to_string(offset)] = value;
+        }
+        for (const auto& [offset, value] : o.script->strings) {
+            const auto initial = o.script->initialStrings.find(offset);
+            if (initial == o.script->initialStrings.end() || initial->second != value) strings[std::to_string(offset)] = value;
+        }
+        for (const auto& [key, value] : o.script->properties) {
+            const auto initial = o.script->initialProperties.find(key);
+            if (initial == o.script->initialProperties.end() || initial->second != value)
+                properties[std::to_string(key)] = value;
+        }
+    }
+    if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty()) return nullptr; // birth state
     return {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
-            {"offset", {o.offset.x, o.offset.y, o.offset.z}}};
+            {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
+            {"scriptStrings", std::move(strings)}, {"scriptProperties", std::move(properties)}};
 }
 void applyState(Object& o, const nlohmann::json* s) {
     o.state = 0, o.t = 0, o.inside = o.firstIn = false, o.offset = vec3(0);
+    o.hidden = false, o.engagement = -1;
+    o.machine.reset();
+    if (o.script) {
+        o.script->fields = o.script->initial;
+        o.script->strings = o.script->initialStrings;
+        o.script->properties = o.script->initialProperties;
+    }
     if (!s || !s->is_object()) return;
     o.state = s->value("state", 0), o.t = s->value("t", 0.0);
     o.inside = s->value("inside", false), o.firstIn = s->value("firstIn", false);
+    o.hidden = s->value("hidden", false), o.engagement = s->value("engagement", -1);
     const auto off = s->value("offset", std::vector<float>{0, 0, 0});
     if (off.size() == 3) o.offset = {off[0], off[1], off[2]};
+    if (o.script) {
+        const auto fields = s->find("scriptFields");
+        if (fields != s->end() && fields->is_object())
+            for (const auto& [key, value] : fields->items())
+                if (value.is_number_unsigned() || value.is_number_integer())
+                    o.script->fields[uint32_t(std::stoul(key))] = value.get<uint32_t>();
+        const auto strings = s->find("scriptStrings");
+        if (strings != s->end() && strings->is_object())
+            for (const auto& [key, value] : strings->items())
+                if (value.is_string()) o.script->strings[uint32_t(std::stoul(key))] = value.get<std::string>();
+        const auto properties = s->find("scriptProperties");
+        if (properties != s->end() && properties->is_object())
+            for (const auto& [key, value] : properties->items())
+                if (value.is_number_unsigned() || value.is_number_integer())
+                    o.script->properties[uint64_t(std::stoull(key))] = value.get<uint32_t>();
+    }
     if (o.state < 0 || o.state > 2 || (o.state == 1 && !o.clips)) o.state = 2;
 }
 } // namespace
+
+void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
+    bigfile_ = bigfile;
+    playerScript_.reset();
+    if (!bigfile_) return;
+    const auto bytes = bigfile_->read("pc-w\\lara.drm");
+    if (!bytes) return;
+    const auto drm = cdc::parseDrm(*bytes);
+    std::vector<ScriptType> types;
+    for (uint32_t i = 0; i < drm.sections.size(); ++i)
+        if (drm.sections[i].type == cdc::SectionType::Script) types.push_back(parseScriptType(drm, i));
+    auto program = std::make_shared<vm::Program>(std::move(types));
+    playerScript_ = program->instantiate(nextAuxiliaryUid_--, 205); // LaraBase player instance script
+}
 
 void Runtime::setUnits(const std::vector<UnitRef>& units) {
     std::erase_if(objects_, [&](const Object& o) {
@@ -294,17 +372,19 @@ void Runtime::addUnit(const UnitRef& u) {
         objectNames_ = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
     }
     const auto unit = formats::parseUnit(*u.drm);
-    std::map<uint32_t, uint32_t> scripts; // section id -> index
+    const size_t firstNew = objects_.size();
+    std::vector<ScriptType> types;
     for (uint32_t i = 0; i < u.drm->sections.size(); ++i)
-        if (u.drm->sections[i].type == cdc::SectionType::Script) scripts.emplace(u.drm->sections[i].id, i);
+        if (u.drm->sections[i].type == cdc::SectionType::Script) types.push_back(parseScriptType(*u.drm, i));
+    auto program = std::make_shared<vm::Program>(std::move(types));
 
     for (const auto& in : unit.intros) {
         const auto n = objectNames_.find(in.objectId);
         if (n == objectNames_.end()) continue;
         const auto kind = classify(n->second);
-        if (!kind) continue;
+        if (!kind && !in.scriptId) continue;
         Object o;
-        o.uid = in.uniqueId, o.unit = u.name, o.name = n->second, o.kind = *kind;
+        o.uid = in.uniqueId, o.unit = u.name, o.name = n->second, o.kind = kind.value_or(Kind::Scripted);
         o.pos = vec3(in.position[0], in.position[1], in.position[2]) + u.offset;
         o.rot = {in.rotation[0], in.rotation[1], in.rotation[2]};
         if (o.kind == Kind::Volume || o.kind == Kind::Plane) {
@@ -313,11 +393,16 @@ void Runtime::addUnit(const UnitRef& u) {
             if (!shape) continue;
             o.shape = *shape;
         }
-        if (const auto it = scripts.find(in.scriptId); in.scriptId && it != scripts.end()) {
-            const auto t = parseScriptType(*u.drm, it->second);
-            for (const auto& f : t.functions)
+        if (const ScriptType* t = in.scriptId ? program->type(in.scriptId) : nullptr) {
+            o.script = program->instantiate(o.uid, in.scriptId);
+            if (playerScript_)
+                for (const ScriptType* type = t; type; type = program->type(type->superId))
+                    for (const auto& member : type->members)
+                        if (member.typeId == 205)
+                            o.script->fields[member.offset] = o.script->initial[member.offset] = uint32_t(playerScript_->uid);
+            for (const auto& f : t->functions)
                 if (f.vtIndex >= 0)
-                    for (const int32_t target : functionTargets(t, f)) o.links[f.vtIndex].push_back(target);
+                    for (const int32_t target : functionTargets(*t, f)) o.links[f.vtIndex].push_back(target);
         }
         if (o.kind == Kind::Switch || o.kind == Kind::Door) {
             auto& set = animSets_[o.name];
@@ -366,14 +451,23 @@ void Runtime::addUnit(const UnitRef& u) {
             o.skeleton = set->skeleton;
             o.clips = set->clips;
         }
-        addObject(std::move(o));
+        addObject(std::move(o), false);
+    }
+    for (size_t i = firstNew; i < objects_.size(); ++i) {
+        fire(EventKind::Start, objects_[i]);
+        objects_[i].mainPending = true;
+        fire(EventKind::Main, objects_[i]);
     }
 }
 
-void Runtime::addObject(Object o) {
+void Runtime::addObject(Object o, bool start) {
     const auto key = std::to_string(o.uid);
     if (stash_.contains(key)) applyState(o, &stash_[key]), stash_.erase(key); // restored / streamed back in
     objects_.push_back(std::move(o));
+    if (!start) return;
+    fire(EventKind::Start, objects_.back());
+    objects_.back().mainPending = true;
+    fire(EventKind::Main, objects_.back());
 }
 
 const Object* Runtime::find(int32_t uid) const {
@@ -382,10 +476,14 @@ const Object* Runtime::find(int32_t uid) const {
 }
 Object* Runtime::findMut(int32_t uid) { return const_cast<Object*>(find(uid)); }
 
-// Pushes the event, then (depth-first, as the script VM runs a handler's calls inline) an Activate for
-// every target of the script function that handles it.
-void Runtime::fire(EventKind k, Object& o) {
-    events_.push_back({k, o.uid, o.uid, tick_});
+void Runtime::endCinematic(int32_t uid) {
+    if (Object* object = findMut(uid)) fire(EventKind::CinematicEnd, *object);
+}
+
+// Runs the intro's real handler. If an unsupported opcode/binding stops it, the older static-link path is
+// retained; any activation already produced by the VM suppresses that fallback to avoid duplicate effects.
+void Runtime::fire(EventKind k, Object& o, bool announce) {
+    if (announce && k != EventKind::Start && k != EventKind::Main) events_.push_back({k, o.uid, o.uid, tick_});
     int16_t vt = -1;
     switch (k) {
     case EventKind::FirstIn: vt = kVtOnFirstIn; break;
@@ -393,14 +491,251 @@ void Runtime::fire(EventKind k, Object& o) {
     case EventKind::Out: vt = kVtOnOut; break;
     case EventKind::Cross: vt = kVtPlaneCross; break;
     case EventKind::Use: vt = contains(o.name, "phole_lever") ? kVtLeverMoved : kVtSwitchUsed; break;
+    case EventKind::Start: vt = -2; break; // StartObject invokes the first function, not a fixed virtual slot
+    case EventKind::Main: vt = -3; break;  // function 2 is the object's main/polling script
+    case EventKind::CinematicEnd: vt = -1; break; // non-virtual post-stream helper
     default: return;
     }
+    const int32_t source = o.uid;
+    const size_t eventCount = events_.size();
+    bool completed = false;
+    if (o.script) {
+        auto resolve = [this](int32_t uid) -> std::shared_ptr<vm::Instance> {
+            for (auto& candidate : objects_) if (candidate.uid == uid) return candidate.script;
+            if (playerScript_ && playerScript_->uid == uid) return playerScript_;
+            for (auto& [key, instance] : auxiliary_) if (instance->uid == uid) return instance;
+            return {};
+        };
+        auto auxiliary = [this](const std::shared_ptr<vm::Program>& program, uint32_t typeId) {
+            const auto key = std::make_pair(program.get(), typeId);
+            auto& instance = auxiliary_[key];
+            if (!instance) instance = program->instantiate(nextAuxiliaryUid_--, typeId);
+            return instance;
+        };
+        auto native = [this, source, resolve, auxiliary](vm::NativeContext& nc) -> bool {
+            auto self = resolve(nc.receiver.uid);
+            if (!self || !self->program) return false;
+            const auto program = self->program;
+            const char* name = program->nativeName(nc.typeId);
+            const uint32_t off = nc.receiver.offset;
+            auto field = [&]() -> uint32_t& { return self->fields[off]; };
+            if (!std::strcmp(name, "terraingroup") && (nc.function == 2 || nc.function == 3)) {
+                const Member* m = program->member(self->typeId, off);
+                if (!m || !m->init || !m->init2 || !terrain_ || (nc.function == 2 ? nc.args.size() != 1 : !nc.args.empty()))
+                    return false;
+                // Natural enabled semantics: tru.exe 0x5C2480 reports the disabled flag pair instead.
+                uint32_t result = 0;
+                if (!terrain_(self->uid, uint16_t(*m->init), *m->init2, nc.function, nc.args, result)) return false;
+                nc.result = vm::Value::scalar(result);
+                return true;
+            }
+            if (!std::strcmp(name, "light") && (nc.function == 1 || nc.function == 2) && light_) {
+                const Member* m = program->member(self->typeId, off);
+                if (!m || !m->init || (nc.function == 1 ? nc.args.size() != 1 : !nc.args.empty())) return false;
+                uint32_t result = 0;
+                if (!light_(self->uid, *m->init, nc.function, nc.args, result)) return false;
+                nc.result = vm::Value::scalar(result);
+                return true;
+            }
+            if (!std::strcmp(name, "health") && nc.function == 9 && health_ && nc.args.empty()) {
+                uint32_t result = 0;
+                if (!health_(nc.function, nc.args, result)) return false;
+                nc.result = vm::Value::scalar(result);
+                return true;
+            }
+            if (!std::strcmp(name, "gamebase") && nc.function >= 4 && nc.function <= 7) {
+                const size_t expected = nc.function == 4 ? 1 : 2;
+                if (nc.args.size() != expected || nc.args[0].bits >= 256) return false;
+                auto& value = gameValues_[nc.args[0].bits];
+                if (nc.function == 4) nc.result = vm::Value::scalar(value);
+                else if (nc.function == 5) value = uint8_t(nc.args[1].bits);
+                else if (nc.function == 6) value = uint8_t(value + nc.args[1].bits);
+                else value = uint8_t(value - nc.args[1].bits);
+                return true;
+            }
+            if (!std::strcmp(name, "playerref")) {
+                if (!playerScript_) return false;
+                if (nc.function == 0) { nc.result = vm::Value::object(playerScript_->uid); return true; } // Get
+                if (nc.function == 2) { nc.result = vm::Value::scalar(0); return true; } // WaitUntilLoaded: already loaded
+                return false;
+            }
+            if (!std::strcmp(name, "messagechannel") && (nc.function == 0 || nc.function == 1)) return true; // debug stubs
+            if (!std::strcmp(name, "messagechannel") && nc.function == 2 && nc.args.size() == 2 &&
+                nc.args[1].kind == vm::Value::Kind::Constant && nc.args[1].text && message_)
+                return message_(field(), nc.args[0].bits, *nc.args[1].text); // Send (tru.exe 0x4A2E70)
+            if (!std::strcmp(name, "modifiable") && nc.function == 3 && nc.args.size() == 2) {
+                const auto value = resolve(nc.args[0].uid);
+                if (!value) return false;
+                field() = nc.args[0].kind == vm::Value::Kind::Member ? value->fields[nc.args[0].offset] : nc.args[0].bits;
+                return true;
+            }
+            if ((!std::strcmp(name, "messagechannel") || !std::strcmp(name, "stickybool") ||
+                 !std::strcmp(name, "stickyint") || !std::strcmp(name, "stickyfloat")) && nc.function == 3 &&
+                nc.args.size() == 1) {
+                const auto other = resolve(nc.args[0].uid);
+                if (!other) return false;
+                nc.result = vm::Value::scalar(field() == other->fields[nc.args[0].offset]);
+                return true;
+            }
+            if (!std::strcmp(name, "instance") && (nc.function == 0 || nc.function == 1)) return true; // debug print
+            if (!std::strcmp(name, "instanceref") && nc.function == 9 && nc.args.size() == 2) { // SetProperty
+                self->properties[(uint64_t(off) << 32) | nc.args[0].bits] = nc.args[1].bits & 0xFF;
+                return true;
+            }
+            if (!std::strcmp(name, "instanceref") && (nc.function == 12 || nc.function == 15) && nc.args.size() == 1) {
+                nc.result = vm::Value::scalar(self->properties[(uint64_t(off) << 32) | nc.args[0].bits]); // GetProperty
+                return true;
+            }
+            if (!std::strcmp(name, "instanceref") && nc.function == 4) {
+                nc.result = vm::Value::scalar(resolve(int32_t(field())) ? 1u : 0u); // target-present guard
+                return true;
+            }
+            if (!std::strcmp(name, "instanceref") && (nc.function == 3 || nc.function == 6)) { // loaded/birthed wait
+                if (!resolve(int32_t(field()))) return false;
+                nc.result = vm::Value::scalar(0);
+                return true;
+            }
+            if (!std::strcmp(name, "instanceref") && nc.function == 7) { // Get
+                auto target = resolve(int32_t(field()));
+                if (!target) return false;
+                nc.result = vm::Value::object(target->uid);
+                return true;
+            }
+            if ((!std::strcmp(name, "unitref") && nc.function == 3) ||
+                (!std::strcmp(name, "globalsref") && nc.function == 0)) { // Get
+                const Member* m = program->member(self->typeId, off);
+                if (!m || !m->argTypeId) return false;
+                nc.result = vm::Value::object(auxiliary(program, m->argTypeId)->uid);
+                return true;
+            }
+            if (!std::strcmp(name, "checkpointbase") && nc.function == 3 && nc.args.empty()) {
+                events_.push_back({EventKind::Checkpoint, self->uid, self->uid, tick_});
+                return true;
+            }
+            if (!std::strcmp(name, "watervolumebase") && nc.function == 3 && nc.args.size() == 1) return true; // reset default level
+            if (!std::strcmp(name, "watervolumebase") && nc.function == 4 && nc.args.empty()) {
+                nc.result = vm::Value::scalar(0); // static water: zero depth offset
+                return true;
+            }
+            if (!std::strcmp(name, "playersensor") && nc.function == 2) return true; // void native sensor interface call
+            if (!std::strcmp(name, "stickybool") || !std::strcmp(name, "stickyint") || !std::strcmp(name, "stickyfloat")) {
+                if (nc.function == 0 && nc.args.size() == 1) { field() = nc.args[0].bits; return true; } // Set
+                if ((nc.function == 1 || nc.function == 2) && nc.args.empty()) {
+                    nc.result = vm::Value::scalar(field());
+                    return true;
+                } // Get
+                return false;
+            }
+            if (!std::strcmp(name, "modifiable")) {
+                if (nc.function == 8 && nc.args.empty()) { nc.result = vm::Value::scalar(field()); return true; } // Get
+                if (nc.function != 4 || nc.args.size() != 1) return false;
+                const uint32_t value = nc.args[0].bits;
+                field() = value;
+                if (Object* target = findMut(self->uid); target && target->kind == Kind::Door) {
+                    const bool opens = value == 0, changes = opens ? target->state == 0 : target->state != 0;
+                    if (changes) {
+                        events_.push_back({EventKind::Activate, source, target->uid, tick_});
+                        target->state = opens ? (target->clips ? 1 : 2) : 0;
+                        target->t = 0;
+                    }
+                }
+                return true;
+            }
+            if (!std::strcmp(name, "instance") && nc.function == 25 && nc.args.empty()) {
+                if (Object* object = findMut(self->uid)) {
+                    self->fields = self->initial;
+                    self->strings = self->initialStrings;
+                    self->properties = self->initialProperties;
+                    object->state = 0, object->t = 0, object->offset = vec3(0), object->body = glm::mat4(1);
+                    object->hidden = false, object->engagement = -1, object->mainPending = true;
+                    ++visibilityVersion_;
+                    return true;
+                }
+                return false;
+            }
+            if (!std::strcmp(name, "instance") && nc.function == 59 && nc.args.size() == 1) {
+                if (Object* object = findMut(self->uid)) { object->engagement = int32_t(nc.args[0].bits); return true; }
+                return false;
+            }
+            if (!std::strcmp(name, "instance") && nc.function == 60 && nc.args.size() == 1) {
+                if (Object* object = findMut(self->uid)) {
+                    const bool hidden = nc.args[0].bits != 0;
+                    if (object->hidden != hidden) { object->hidden = hidden; ++visibilityVersion_; }
+                    return true;
+                }
+                return false;
+            }
+            if (!std::strcmp(name, "instance") &&
+                (nc.function == 4 || nc.function == 5 || nc.function == 6 || nc.function == 7 || nc.function == 8 ||
+                 nc.function == 9 || nc.function == 14 || nc.function == 15 || nc.function == 16 || nc.function == 26 || nc.function == 28 ||
+                 nc.function == 61)) {
+                nc.result = vm::Value::object(self->uid); // native interface of this instance (multibody etc.)
+                return true;
+            }
+            if (!std::strcmp(name, "uberobjectbase") && (nc.function == 1 || nc.function == 2 || nc.function == 5) && uber_) {
+                const Object* object = findMut(self->uid);
+                if (!object) return false;
+                const bool knownObject = std::any_of(objectNames_.begin(), objectNames_.end(), [&](const auto& entry) {
+                    return entry.second == object->name;
+                });
+                if (!knownObject || (nc.function == 5 && !nc.args.empty())) return false; // native "object mismatch" path
+                const uint32_t command = nc.function == 1 ? self->fields[off + 4] : 0;
+                uint32_t commandIndex = 0;
+                if (nc.function == 1)
+                    for (const ScriptType* type = self->program->type(self->typeId); type; type = self->program->type(type->superId))
+                        for (const auto& member : type->members)
+                            if (!std::strcmp(self->program->nativeName(member.typeId), "uberobjectcommand")) {
+                                if (member.offset == off) goto commandIndexFound;
+                                ++commandIndex;
+                            }
+            commandIndexFound:
+                uint32_t result = 0;
+                if (!uber_(object->uid, nc.function, command, commandIndex, nc.args, result)) return false;
+                nc.result = vm::Value::scalar(result);
+                return true;
+            }
+            if (!std::strcmp(name, "multibody") && multibody_) {
+                if (nc.function == 2) self->fields[1] = 1; // Enable sets the script object's state byte
+                uint32_t result = 0;
+                if (multibody_(self->uid, nc.function, nc.args, result)) {
+                    nc.result = vm::Value::scalar(result);
+                    return true;
+                }
+            }
+            // Existing engine systems already handle (or intentionally do not yet expose) these side effects.
+            // Their return values are zero; unknown gameplay bindings remain unsupported instead of being ignored.
+            for (const char* passive : {"sound", "soundgroup", "music", "corebase", "uipopupmgr",
+                                        "uilocalstrproperty", "globaleffect"})
+                if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
+            if (!std::strcmp(name, "unit") && nc.function == 15 && nc.args.size() == 1) {
+                unitEffect_ = nc.args[0].bits; // tru.exe 0x6D6F20 writes the global post-effect scalar
+                return true;
+            }
+            std::fprintf(stderr, "unsupported native uid %d type %s fn %u\n", self->uid, name, nc.function);
+            return false;
+        };
+        auto cinematic = [this, source](vm::Instance& target, int16_t vt) {
+            if (vt != 57 && vt != 63) return false;
+            const auto* object = findMut(target.uid);
+            if (!object || object->name != "cinematic_object") return false;
+            events_.push_back({EventKind::Activate, source, object->uid, tick_});
+            return true;
+        };
+        if (o.machine && o.machine->active()) {
+            completed = true; // a sleeping handler owns the object until it finishes
+        } else {
+            o.machine = std::make_shared<vm::Machine>(resolve, native, cinematic);
+            completed = o.machine->call(*o.script, vt);
+            if (k == EventKind::Main) o.mainPending = false;
+        }
+    }
+    if (events_.size() != eventCount || completed) return;
     const auto it = o.links.find(vt);
     if (it == o.links.end()) return;
-    const int32_t source = o.uid;
     for (const int32_t target : std::vector<int32_t>(it->second)) { // copy: activation may not invalidate
         events_.push_back({EventKind::Activate, source, target, tick_});
         Object* t = findMut(target);
+        if (t) fire(EventKind::Use, *t, false);
         if (t && t->kind == Kind::Door && t->state == 0) t->state = t->clips ? 1 : 2, t->t = 0; // [I] doors only open
     }
 }
@@ -408,6 +743,10 @@ void Runtime::fire(EventKind k, Object& o) {
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     events_.clear();
     ++tick_;
+    for (auto& o : objects_) {
+        if (o.machine && o.machine->active()) o.machine->tick(float(kDt));
+        if (o.mainPending && (!o.machine || !o.machine->active())) fire(EventKind::Main, o);
+    }
     holding_ = false, carried_ = vec3(0);
     const vec3 up(0, 0, kTestPointHeight), p = in.pos + up, prev = (hasLast_ ? lastPos_ : in.pos) + up;
     const bool pressed = in.interact && !interactHeld_;
@@ -464,6 +803,8 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             carried_ = axis * step;
             break;
         }
+        case Kind::Scripted:
+            break;
         }
     }
     if (useSwitch) {
@@ -525,6 +866,7 @@ std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> Runtime::debugLines() co
 
 nlohmann::json Runtime::serialize() const {
     nlohmann::json j = stash_;
+    j["gameValues"] = gameValues_;
     for (const auto& o : objects_) {
         if (auto s = stateOf(o); !s.is_null()) j[std::to_string(o.uid)] = std::move(s);
         else j.erase(std::to_string(o.uid));
@@ -533,7 +875,12 @@ nlohmann::json Runtime::serialize() const {
 }
 
 void Runtime::restore(const nlohmann::json& j) {
+    gameValues_.fill(0);
+    if (j.is_object() && j.contains("gameValues") && j["gameValues"].is_array())
+        for (size_t i = 0; i < gameValues_.size() && i < j["gameValues"].size(); ++i)
+            gameValues_[i] = j["gameValues"][i].get<uint8_t>();
     stash_ = j.is_object() ? j : nlohmann::json::object();
+    stash_.erase("gameValues");
     for (auto& o : objects_) {
         const auto key = std::to_string(o.uid);
         applyState(o, stash_.contains(key) ? &stash_[key] : nullptr);

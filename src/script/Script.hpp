@@ -10,6 +10,8 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <array>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -21,6 +23,8 @@ namespace ou::collision { class CollisionMesh; }
 
 namespace ou::script {
 
+namespace vm { struct Instance; struct Value; class Program; class Machine; }
+
 using glm::vec2;
 using glm::vec3;
 
@@ -30,9 +34,11 @@ using glm::vec3;
 struct Instr {
     uint8_t op = 0;
     int32_t arg = 0;
+    uint32_t word = 0;            // raw code-word offset (JMP/JMPF use these, including operands)
     std::vector<cdc::Pointer> ptrs; // CALLU/CALLn/PUSHC operands (function, prototype, constant)
     uint32_t ref = 0;               // ISTYPE operand: script type section id (resource reference)
     uint32_t imm = 0;               // PUSH operand word
+    std::string text;               // PUSHC: relocated constant string
 };
 inline constexpr uint8_t kOpPush = 0x02, kOpPushSA = 0x0F, kOpCallU = 0x65, kOpCall1 = 0x66, kOpCall5 = 0x6A,
                          kOpRet = 0x7B, kOpCount = 0x86;
@@ -44,11 +50,17 @@ struct Member {
     uint16_t offset = 0;    // byte offset in the object instance
     uint16_t name = 0;      // symbol id (the PC data has no member names)
     std::optional<uint32_t> init; // first u32 of the initial value (instanceref: target intro unique id)
+    std::optional<uint32_t> init2; // terraingroup: model index (init's low u16 is the stream unit id)
 };
 
 struct Function {
+    cdc::Pointer self{};  // Function record, used by CALLU/CALLn operands
     int16_t vtIndex = -1; // prototype vtable slot; -1 = not virtual
     cdc::Pointer proto{}; // its prototype (CALLn operands point at prototypes)
+    uint16_t argCount = 0, localCount = 0;
+    uint8_t returnType = 0; // DataType low nibble; zero = void
+    bool native = false;
+    uint32_t wordCount = 0;
     std::vector<Instr> code;
 };
 
@@ -95,8 +107,8 @@ bool inside(const Shape& s, vec3 pos, vec3 rot, vec3 p);
 bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b);
 
 // ---- runtime ------------------------------------------------------------------------------------------
-enum class Kind : uint8_t { Volume, Plane, Switch, Door, Block };
-enum class EventKind : uint8_t { Enter, FirstIn, In, Out, Cross, Use, Activate };
+enum class Kind : uint8_t { Volume, Plane, Switch, Door, Block, Scripted };
+enum class EventKind : uint8_t { Enter, FirstIn, In, Out, Cross, Use, Activate, Start, Main, Checkpoint, CinematicEnd };
 const char* eventName(EventKind k);
 struct Event {
     EventKind kind;
@@ -111,7 +123,10 @@ struct Object {
     Kind kind = Kind::Volume;
     vec3 pos{0}, rot{0};    // world frame (intro + unit offset), Euler radians
     Shape shape;            // Volume/Plane
-    std::map<int16_t, std::vector<int32_t>> links; // vtIndex -> targets (intro script)
+    std::map<int16_t, std::vector<int32_t>> links; // vtIndex -> targets (legacy fallback when VM is unsupported)
+    std::shared_ptr<vm::Instance> script;          // parsed intro type + mutable fields; null in synthetic tests
+    std::shared_ptr<vm::Machine> machine;          // active handler; retained across SLEEP/WAIT ticks
+    bool mainPending = false;                      // start function 2 after the constructor finishes
     // Animation (Switch/Door): skeleton of the object's render model + the clips its states play.
     std::shared_ptr<const scene::Skeleton> skeleton;
     std::shared_ptr<const std::vector<anim::Clip>> clips; // [0] transition (pulling/opening), [1] held idle
@@ -122,6 +137,8 @@ struct Object {
     bool inside = false, firstIn = false;
     vec3 offset{0};         // Block displacement
     glm::mat4 body{1};      // Door: model-space rigid transform set by src/physics (physics doors), identity = at rest
+    bool hidden = false;    // instance.fn60 visibility; saved
+    int32_t engagement = -1; // instance.fn59 engagement-property selector; saved
 };
 
 struct UnitRef {
@@ -140,16 +157,36 @@ struct TickInput {
 class Runtime {
 public:
     // objectlist.txt and object DRMs (animations). Without it units load no objects.
-    void setBigfile(const cdc::BigfileSet* bigfile) { bigfile_ = bigfile; }
+    void setBigfile(const cdc::BigfileSet* bigfile);
     const cdc::BigfileSet* bigfile() const { return bigfile_; }
+    const vm::Instance* playerScript() const { return playerScript_.get(); }
+    using MultibodyNative = std::function<bool(int32_t uid, uint32_t function, std::span<const vm::Value> args,
+                                               uint32_t& result)>;
+    void setMultibodyNative(MultibodyNative native) { multibody_ = std::move(native); }
+    using MessageNative = std::function<bool(uint32_t channel, uint32_t id, std::string_view payload)>;
+    void setMessageNative(MessageNative native) { message_ = std::move(native); }
+    using UberNative = std::function<bool(int32_t uid, uint32_t function, uint32_t command, uint32_t commandIndex,
+                                         std::span<const vm::Value> args, uint32_t& result)>;
+    void setUberNative(UberNative native) { uber_ = std::move(native); }
+    using TerrainNative = std::function<bool(int32_t uid, uint16_t streamUnitId, uint32_t modelIndex, uint32_t function,
+                                             std::span<const vm::Value> args, uint32_t& result)>;
+    void setTerrainNative(TerrainNative native) { terrain_ = std::move(native); }
+    using LightNative = std::function<bool(int32_t uid, uint32_t lightId, uint32_t function,
+                                           std::span<const vm::Value> args, uint32_t& result)>;
+    void setLightNative(LightNative native) { light_ = std::move(native); }
+    using HealthNative = std::function<bool(uint32_t function, std::span<const vm::Value> args, uint32_t& result)>;
+    void setHealthNative(HealthNative native) { health_ = std::move(native); }
     // Keeps objects of units still present, adds new units, drops missing ones. Throws cdc::FormatError.
     void setUnits(const std::vector<UnitRef>& units);
-    void addObject(Object o); // setUnits and tests; applies pending restored state
+    void addObject(Object o, bool start = true); // setUnits and tests; applies pending restored state
+    void endCinematic(int32_t uid); // run the object's non-virtual post-stream helper
     void tick(const TickInput& in, const collision::CollisionMesh* col = nullptr);
 
     const std::vector<Object>& objects() const { return objects_; }
     const Object* find(int32_t uid) const;
     const std::vector<Event>& events() const { return events_; } // last tick, dispatch order
+    uint64_t visibilityVersion() const { return visibilityVersion_; }
+    uint32_t unitEffect() const { return unitEffect_; }
     bool holding() const { return holding_; }  // last tick: Lara grips a push block (interact held next to it)
     vec3 carried() const { return carried_; }  // last tick: displacement of the gripped block; move Lara by it
     uint64_t ticks() const { return tick_; }
@@ -167,16 +204,28 @@ public:
 
 private:
     void addUnit(const UnitRef& u);
-    void fire(EventKind k, Object& o);
+    void fire(EventKind k, Object& o, bool announce = true);
     Object* findMut(int32_t uid);
 
     const cdc::BigfileSet* bigfile_ = nullptr;
+    std::shared_ptr<vm::Instance> playerScript_;
+    MultibodyNative multibody_;
+    MessageNative message_;
+    UberNative uber_;
+    TerrainNative terrain_;
+    LightNative light_;
+    HealthNative health_;
+    std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;
     struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips; };
     std::map<std::string, std::shared_ptr<AnimSet>> animSets_; // object name -> skeleton + clips
     std::vector<Object> objects_;
+    std::map<std::pair<const vm::Program*, uint32_t>, std::shared_ptr<vm::Instance>> auxiliary_; // unit/global scripts
+    int32_t nextAuxiliaryUid_ = -1;
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;
+    uint64_t visibilityVersion_ = 0;
+    uint32_t unitEffect_ = 0;
     uint64_t tick_ = 0;
     vec3 lastPos_{0};
     bool hasLast_ = false, interactHeld_ = false, holding_ = false;

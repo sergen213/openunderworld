@@ -1,4 +1,5 @@
 #include "formats/Formats.hpp"
+#include "formats/Uber.hpp"
 
 #include <gtest/gtest.h>
 
@@ -528,6 +529,28 @@ TEST(RealData, LevelBallcourtStreamGroupsAndImfs) {
     EXPECT_GT(blended, 0u);
     EXPECT_GT(alphaTested, 0u);
     EXPECT_GT(twoSided, 0u);
+}
+
+TEST(RealData, UberObjectCommandsAndQueriesDecode) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    for (const auto& test : {std::pair{"ms_ani_tombdoor", 1u}, {"sa_uo_elevator_adrenaline", 1u}}) {
+        const auto& [name, sections] = test;
+        const auto data = formats::loadUberObject(cdc::parseDrm(*bf.read("pc-w\\" + std::string(name) + ".drm")));
+        ASSERT_TRUE(data) << name;
+        EXPECT_EQ(data->objectClass, 79);
+        ASSERT_EQ(data->sectionModels.size(), sections) << name;
+        ASSERT_FALSE(data->commands.empty()) << name;
+        std::fprintf(stderr, "%s: %zu sections, %zu commands, %zu queries\n", name, data->sectionModels.size(),
+                     data->commands.size(), data->queries.size());
+        for (const auto& command : data->commands) {
+            std::fprintf(stderr, "  command %u:", command.id);
+            for (const auto& target : command.targets)
+                std::fprintf(stderr, " (%d,%u,%u)", target.section, target.type, target.payload);
+            std::fprintf(stderr, "\n");
+        }
+    }
 }
 
 // Every unit's light records decode: counts of the install (LEVELS.md "Lights", 2026-10-18 survey).

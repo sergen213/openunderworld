@@ -112,6 +112,10 @@ const std::vector<std::string_view> kLaraClipNames = {
     "lad_attach_up", "lad_climbup", "lad_climbdown", "lad_Idle", "lad_detach", "lad_detach_drop",
     "lad_ClimbOffTop", "lad_ClimbOffBot", "perch_attach_air", "perch_attach_ground", "perch_idle",
     "perch_jump_forward", "perch_detach_drop",
+    "grapple_pull_up_light_begin", "grapple_pull_mid_light_begin", "grapple_pull_down_light_begin",
+    "grapple_pull_up_heavy_begin", "grapple_pull_mid_heavy_begin", "grapple_pull_down_heavy_begin",
+    "grapple_pull_up_light", "grapple_pull_mid_light", "grapple_pull_down_light",
+    "grapple_pull_up_heavy", "grapple_pull_mid_heavy", "grapple_pull_down_heavy",
 };
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
@@ -176,6 +180,10 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
           return tuning;
       }()) {
     startSpawn_ = spawn; // respawn target without units
+    bindMultibody();
+    bindUber();
+    bindTerrain();
+    bindLightHealth();
     player_.spawn(spawn.pos, spawn.yaw);
     prev_ = player_.state();
     cam_.yaw = player_.state().yaw;
@@ -196,10 +204,18 @@ void World::tick(const Actions& a) {
     if (combat_.slowMo > 0) move = vec2(0); // [I] adrenaline window: the stick steers the pip (Combat.cpp)
     if (a.grapple && !grappleHeld_) {
         if (player_.state().grappleUid) releaseGrapple(false);
-        else if (const auto t = grappleTarget()) attachGrapple(t->pos, t->uid);
+        else if (const auto t = grappleTarget()) attachGrapple(t->pos, t->uid, t->kind);
     }
     grappleHeld_ = a.grapple;
     player_.tick(move, a, dt);
+    if (player_.state().state == State::GrapplePull && a.interact)
+        if (auto* target = const_cast<script::Object*>(script_.find(player_.state().grappleUid));
+            target && target->kind == script::Kind::Block) {
+            vec3 delta = player_.state().pos - (target->pos + target->offset);
+            delta.z = 0;
+            if (const float distance = glm::length(delta); distance > 1.0f)
+                target->offset += delta * std::min(240.0f * float(dt), distance) / distance; // [I] braced pull speed
+        }
     if (!units_.empty()) { // streaming world (src/game/Stream.cpp)
         crossPortals(prev_.pos, player_.state().pos);
         touchCheckpoints();
@@ -207,6 +223,7 @@ void World::tick(const Actions& a) {
     if (!units_.empty() && scriptUnits_ != unitsVersion_) { // scripted objects follow the loaded units
         std::vector<script::UnitRef> refs;
         for (const auto& u : units_) refs.push_back({u.data.name, u.data.drm, u.offset});
+        refs.insert(refs.end(), cinematicRefs_.begin(), cinematicRefs_.end());
         script_.setUnits(refs);
         enemies_.setUnits(refs);
         scriptUnits_ = unitsVersion_;

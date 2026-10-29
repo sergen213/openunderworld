@@ -278,6 +278,7 @@ void Enemy::move(const collision::CollisionMesh& col, vec3 delta, float dt) {
 void Enemy::fly(const collision::CollisionMesh& col, vec3 delta) {
     const float r = type_->tuning.radius, half = type_->tuning.height * 0.5f;
     vec3 c = s_.pos + vec3(0, 0, half);
+    const vec3 from = c;
     for (int iter = 0; iter < 4 && glm::dot(delta, delta) > 1e-8f; ++iter) {
         const auto hit = col.sweepSphere(c, r, delta);
         if (!hit || (hit->t == 0 && glm::dot(delta, hit->normal) >= 0)) {
@@ -288,6 +289,16 @@ void Enemy::fly(const collision::CollisionMesh& col, vec3 delta) {
         const vec3 rest = delta * (1 - hit->t);
         delta = rest - hit->normal * std::min(0.0f, glm::dot(rest, hit->normal));
     }
+    if (type_->aquatic())
+        for (const auto& water : col.markup) {
+            if (water.type != 10 || water.points.size() < 2) continue;
+            const vec3 lo = glm::min(water.points[0], water.points[1]), hi = glm::max(water.points[0], water.points[1]);
+            if (glm::any(glm::lessThan(from, lo)) || glm::any(glm::greaterThan(from, hi))) continue;
+            for (int axis = 0; axis < 3; ++axis)
+                c[axis] = hi[axis] - lo[axis] < 2 * r ? (lo[axis] + hi[axis]) * 0.5f
+                                                      : std::clamp(c[axis], lo[axis] + r, hi[axis] - r);
+            break;
+        }
     s_.pos = c - vec3(0, 0, half);
 }
 
@@ -295,6 +306,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     prev_ = s_;
     const EnemyTuning& t = type_->tuning;
     const bool flyer = type_->flyer();
+    const bool aquatic = type_->aquatic();
     s_.modeTime += dt;
     s_.cooldown = std::max(0.0f, s_.cooldown - dt);
     for (float& c : s_.fireCooldown) c = std::max(0.0f, c - dt);
@@ -310,7 +322,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     const vec3 head = lara.pos + vec3(0, 0, lara.height * 0.85f), centre = s_.pos + vec3(0, 0, t.height * 0.5f);
     const float dist = flyer ? glm::distance(centre, head) : flatDist(s_.pos, lara.pos);
     vec3 delta = advanceClip(dt);
-    vec3 flight(0); // flyers: this tick's 3D move
+    vec3 flight = aquatic ? delta : vec3(0); // aquatic clips keep their 3D root motion; bats hover except when chasing
 
     switch (s_.mode) {
     case Mode::Spawning:
@@ -334,6 +346,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         } else if (sees && (dist <= t.attackRange || (type_->ranged() && dist <= senses().eye.range))) {
             play(Role::Alert, true); // in reach, or in rifle range with a clear line: stand (and aim)
             delta = vec3(0);
+            flight = vec3(0);
             if (fire >= 0 && dist > t.attackRange && aimError(lara.pos) <= t.attacks[size_t(fire)].maxYaw) {
                 s_.fire = fire;
                 setMode(Mode::Fire);
@@ -341,6 +354,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         } else if (!sees && flatDist(s_.pos, s_.lastSeen) < t.radius) {
             play(Role::Alert, true); // at the last seen spot: waits
             delta = vec3(0);
+            flight = vec3(0);
         } else {
             play(Role::Run, true);
             if (flyer && dist > 1) {
@@ -390,11 +404,13 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         if (clipDone()) setMode(Mode::Chase);
         break;
     case Mode::Dead:
+        if (aquatic && clipDone() && s_.clip != "death_float_loop" && type_->clips.count("death_float_loop"))
+            playClip("death_float_loop", true);
         if (clipDone() && !flyer && !type_->lyingDeaths.count(s_.clip)) s_.tip = std::min(kPi / 2, s_.tip + dt * kPi / 2 / kTipSeconds);
         break;
     }
-    if (flyer && s_.mode != Mode::Dead) {
-        fly(col, flight); // hovers (root motion dropped) unless chasing
+    if (flyer && (s_.mode != Mode::Dead || aquatic)) {
+        fly(col, flight); // bats hover unless chasing; sharks keep clip motion and never use ground gravity
         updatePose(dt, false);
         return;
     }

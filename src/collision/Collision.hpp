@@ -87,6 +87,13 @@ public:
 
     vec3 faceNormal(uint32_t face) const; // unit, from winding (v1-v0)x(v2-v0)
 
+    // NtTerrainGroup identity is the unit model-list index; group 0 has no model/extra record.
+    std::optional<uint32_t> terrainGroupForModel(uint32_t modelIndex) const;
+    std::optional<bool> terrainGroupEnabled(uint32_t modelIndex) const;
+    bool setTerrainGroupEnabled(uint32_t modelIndex, bool enabled);
+    void clearTerrainGroups();
+    uint32_t appendTerrainGroups(const CollisionMesh& other);
+
 private:
     struct Node {
         vec3 lo, hi;
@@ -99,8 +106,12 @@ private:
     std::optional<Hit> closestFaces(vec3 p, float maxDist, uint8_t mask) const;
     // Runs `local(shape, inverse transform)` on every dynamic and keeps the smallest t (hits mapped back).
     template <class Local> std::optional<Hit> withDynamics(std::optional<Hit> best, Local&& local) const;
+    bool queryable(const Face& f, uint8_t mask) const;
+    friend CollisionMesh loadLevelCollision(const cdc::Drm& drm, std::vector<std::string>* warnings);
     std::vector<Node> nodes_;
     std::vector<uint32_t> order_;
+    std::vector<uint32_t> groupModels_; // terrain group -> unit model-list index; UINT32_MAX = no identity
+    std::vector<bool> groupEnabled_;
 };
 
 // Decodes every terrain group collision mesh (the signal/portal group is skipped) and the markup

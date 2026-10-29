@@ -6,6 +6,8 @@
 
 #include <gtest/gtest.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -962,6 +964,39 @@ int markupIndex(const game::World& w, uint16_t id) {
 }
 } // namespace
 
+// l5_valaskjalf rail 1562: fall onto its high end, slide the full polyline and leave at the low end.
+TEST(GameReal, ValaskjalfRailSlideTraversesAndDetaches) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const vec3 start(7269.15f, -79262.62f, -11757.10f), end(7269.15f, -76525.55f, -13337.35f);
+    auto w = unitWorld(bf, "l5_valaskjalf", {start, glm::radians(90.0f)});
+    game::PlayerState air;
+    air.state = State::Fall, air.pos = start + vec3(0, 0, 200), air.clip = "NG_InAir_Feet_Forward_stage3";
+    w.restore(air, 0, -0.25f);
+    const auto& s = w.player().state();
+    int ticks = 0;
+    while (ticks++ < 90 && game::stateName(s.state) != "railslide") w.tick({});
+    ASSERT_EQ(game::stateName(s.state), "railslide");
+    ASSERT_GE(s.ledge, 0);
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1562);
+    EXPECT_EQ(s.clip, "slope_slidefront");
+    float previousY = s.pos.y, nearestEnd = glm::distance(s.pos, end);
+    bool travelled = false;
+    for (ticks = 0; ticks < 1800 && game::stateName(s.state) == "railslide"; ++ticks) {
+        w.tick({});
+        EXPECT_GE(s.pos.y, previousY - 1e-3f) << "rail travel reversed at tick " << ticks;
+        previousY = s.pos.y;
+        const float u = std::clamp((s.pos.y - start.y) / (end.y - start.y), 0.0f, 1.0f);
+        EXPECT_NEAR(s.pos.z, glm::mix(start.z, end.z, u), 1.0f) << "left the rail at tick " << ticks;
+        nearestEnd = std::min(nearestEnd, glm::distance(s.pos, end));
+        travelled |= s.pos.y > start.y + 500;
+    }
+    EXPECT_TRUE(travelled);
+    EXPECT_LT(nearestEnd, 100.0f);
+    EXPECT_NE(game::stateName(s.state), "railslide");
+    EXPECT_GE(s.pos.z, end.z - 100.0f) << "fell through the end of the rail";
+}
+
 // l4_temple balance beam 1079: (-5590, -8099) -> (-3986, -8099) at z 3061 over a 1734-unit drop (the log it
 // lies on reaches no walkable floor: Lara starts on it). Walk, jump ahead along it (the jump assist puts the
 // landing back on the line), walk on to the far end (nothing beyond: she stops there).
@@ -1248,6 +1283,28 @@ TEST(GameReal, PoolGrappleTargetAndSwing) {
     EXPECT_EQ(w.player().state().grappleUid, 5511);
 }
 
+TEST(GameReal, MountedGrapplePullsBlockWithoutSwinging) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto unit = game::loadUnitData(bf, "l4_traprooms");
+    const auto target = std::find_if(unit.grapples.begin(), unit.grapples.end(), [](const auto& g) { return g.uid == 5884; });
+    ASSERT_NE(target, unit.grapples.end());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l4_traprooms", game::loadLaraAnims(bf), game::Spawn{target->pos + vec3(-1000, 0, 0), 0});
+    w.script().setBigfile(&bf);
+    w.attachGrapple(target->pos, target->uid, game::GrappleKind::Mounted);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    EXPECT_NE(w.player().state().state, State::GrappleSwing);
+    const auto* block = w.script().find(5884);
+    ASSERT_TRUE(block);
+    const vec3 initial = block->offset;
+    Actions pull;
+    pull.interact = true;
+    for (int i = 0; i < 60; ++i) w.tick(pull);
+    EXPECT_NE(w.player().state().state, State::GrappleSwing);
+    EXPECT_GT(glm::length(block->offset - initial), 100.0f);
+}
+
 // ---- ladders / pillars / perches (src/game/Traverse) ----
 TEST(Game, LadderAttachClimbOffTop) {
     CollisionMesh m;
@@ -1294,6 +1351,48 @@ TEST(Game, PerchAttachAndJumpOff) {
     EXPECT_EQ(w->player().state().state, State::Jump);
 }
 
+TEST(Game, RailSlideJumpAndDropDetach) {
+    auto attached = [] {
+        CollisionMesh m;
+        addFloor(m, -500, -500, 500, 500, 0);
+        m.markup.push_back({8, 1, {{0, 0, 0}, {0, 2000, -1000}}});
+        auto w = makeWorld(std::move(m), {0, 0, 0}, kPi / 2);
+        w->tick({});
+        return w;
+    };
+    auto jumping = attached();
+    ASSERT_EQ(jumping->player().state().state, State::RailSlide); // deterministic ground attachment
+    Actions jump;
+    jump.jump = true;
+    jumping->tick(jump);
+    EXPECT_EQ(jumping->player().state().state, State::Jump);
+    EXPECT_EQ(jumping->player().state().ledge, -1);
+    EXPECT_GT(jumping->player().state().vel.z, 0);
+
+    auto dropping = attached();
+    ASSERT_EQ(dropping->player().state().state, State::RailSlide);
+    Actions drop;
+    drop.drop = true;
+    dropping->tick(drop);
+    EXPECT_EQ(dropping->player().state().state, State::Fall);
+    EXPECT_EQ(dropping->player().state().ledge, -1);
+}
+
+TEST(Game, RailSlideAirAttachAndEndDetach) {
+    CollisionMesh m; // deliberately no floor: the end must enter a normal fall, not reattach or stick
+    m.markup.push_back({8, 1, {{0, 0, 500}, {0, 1000, 0}}});
+    auto w = makeWorld(std::move(m), {0, 0, 700}, kPi / 2);
+    const auto& s = w->player().state();
+    for (int i = 0; i < 90 && s.state != State::RailSlide; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::RailSlide);
+    for (int i = 0; i < 600 && s.state == State::RailSlide; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Fall);
+    EXPECT_EQ(s.ledge, -1);
+    EXPECT_NEAR(glm::distance(s.pos, vec3(0, 1000, 0)), 0, 1e-3f);
+    w->tick({});
+    EXPECT_EQ(s.state, State::Fall); // regrab cooldown prevents an endpoint reattachment loop
+}
+
 TEST(GameReal, ShipSinkingHallLadder) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1301,4 +1400,122 @@ TEST(GameReal, ShipSinkingHallLadder) {
     for (int i = 0; i < 10 && w.player().state().state != State::Ladder; ++i) w.tick(forward());
     ASSERT_EQ(w.player().state().state, State::Ladder);
     EXPECT_EQ(w.collision().markup[size_t(w.player().state().ledge)].id, 234);
+}
+
+TEST(GameReal, TerrainGroupNativeUpdatesMergedCollision) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l2_hubhall", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto* plane = w.script().find(2571);
+    ASSERT_TRUE(plane);
+    const glm::mat4 rot = glm::rotate(glm::mat4(1), plane->rot.x, {1, 0, 0}) *
+                          glm::rotate(glm::mat4(1), plane->rot.y, {0, 1, 0}) *
+                          glm::rotate(glm::mat4(1), plane->rot.z, {0, 0, 1});
+    const vec3 normal = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
+    const vec3 before = plane->pos + normal * 1000.0f, after = plane->pos - normal * 1000.0f;
+    w.script().tick({before, 0, {}, false}, &w.collision());
+    w.script().tick({after, 0, {}, false}, &w.collision());
+    EXPECT_EQ(w.collision().terrainGroupEnabled(5), false);
+    EXPECT_EQ(w.collision().terrainGroupEnabled(1), true);
+    EXPECT_FALSE(w.lightEnabled("l2_hubhall", 4));
+    EXPECT_TRUE(w.lightEnabled("l2_hubhall", 3));
+    EXPECT_GT(w.lightsVersion(), 0u);
+}
+
+TEST(GameReal, RampUberCommandMovesCollision) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l4_staircase_upper", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto it = std::find_if(w.collision().dynamics.begin(), w.collision().dynamics.end(), [](const auto& d) {
+        return d.id == 6045;
+    });
+    ASSERT_NE(it, w.collision().dynamics.end());
+    const glm::mat4 initial = it->transform;
+    ASSERT_TRUE(w.sendUberCommand(6045, 1)); // second command with the same numeric ID: raise, not lower
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_NE(it->transform, initial);
+}
+
+TEST(GameReal, ElevatorUberCommandCreatesMovingCollision) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto unit = game::loadUnitData(bf, "l2_puzzleroom");
+    vec3 at;
+    for (const auto& in : formats::parseUnit(*unit.drm).intros)
+        if (in.uniqueId == 2961) at = {in.position[0], in.position[1], in.position[2]};
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l2_puzzleroom", game::loadLaraAnims(bf), game::Spawn{at, 0});
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto it = std::find_if(w.collision().dynamics.begin(), w.collision().dynamics.end(), [](const auto& d) {
+        return d.id == 2973;
+    });
+    ASSERT_NE(it, w.collision().dynamics.end());
+    const glm::mat4 initial = it->transform;
+    Actions use;
+    use.interact = true;
+    for (int i = 0; i < 30; ++i) w.tick(use);
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_NE(it->transform, initial);
+}
+
+TEST(GameReal, ElevatorCarriesPlayer) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto unit = game::loadUnitData(bf, "l2_puzzleroom");
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l2_puzzleroom", game::loadLaraAnims(bf), unit.spawn);
+    w.script().setBigfile(&bf);
+    w.tick({});
+    const auto it = std::find_if(w.collision().dynamics.begin(), w.collision().dynamics.end(), [](const auto& d) {
+        return d.id == 2973;
+    });
+    ASSERT_NE(it, w.collision().dynamics.end());
+    const auto* sw = w.script().find(2961);
+    ASSERT_TRUE(sw);
+    for (int i = 0; i < 30; ++i) w.script().tick({sw->pos, 0, {}, true}, &w.collision());
+    game::PlayerState ride;
+    ride.pos = vec3(it->transform[3]) + vec3(0, 0, 500);
+    w.restore(ride, 0, 0);
+    const float startZ = ride.pos.z;
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_LT(w.player().state().pos.z, startZ - 100.0f);
+}
+
+TEST(GameReal, BallcourtLeverReplayPassesDoor) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l4_ballcourt", game::loadLaraAnims(bf), game::Spawn{{-20066, 14150, 3540}, 0});
+    w.script().setBigfile(&bf);
+    // Physics-only replay: enabling the poacher interrupts this route with genuine hit reactions.
+    const auto replay = game::InputScript::parse(
+        "0.3 interact 1\n0.4 interact 0\n0.6 forward 1\n1.75 forward 0\n1.8 right 1\n5.0 right 0\n");
+    for (int i = 0; i < 360; ++i) w.tick(replay.at(i));
+    const auto& p = w.player().state().pos;
+    EXPECT_GT(p.x, -18520.0f);
+    EXPECT_LT(p.y, 13700.0f);
+}
+
+TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l4_ballcourt", game::loadLaraAnims(bf), game::Spawn{{-20066, 14150, 3540}, 0});
+    w.script().setBigfile(&bf);
+    Actions use;
+    use.interact = true;
+    for (int i = 0; i < 30; ++i) w.tick(use);
+    for (int i = 0; i < 240; ++i) w.tick({});
+    ASSERT_EQ(w.physics().hinges.size(), 2u);
+    const float a = w.physics().angle(0), b = w.physics().angle(1);
+    EXPECT_NEAR(std::abs(b), 2.0f * std::abs(a), 0.05f);
+    EXPECT_NEAR(std::abs(a), glm::radians(40.0f), 0.05f);
+    EXPECT_GT(std::max(std::abs(a), std::abs(b)), 0.1f);
 }

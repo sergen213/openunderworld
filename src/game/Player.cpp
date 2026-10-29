@@ -125,7 +125,7 @@ std::string_view stateName(State s) {
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
                                              "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
-                                             "grappleswing", "hit"};
+                                             "grappleswing", "hit", "railslide", "grapplepull"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -367,7 +367,7 @@ void Player::airMove(float dt, vec2 move) {
     tryGrabPole(prevPos);
     if (tryLadder(true)) return;
     if (tryPerch(true)) return;
-    tryClimb(true); // ledges and poles win over a rock face
+    if (!tryClimb(true)) tryRail(true); // ledges, poles, ladders, perches and rock faces win over a rail
 }
 
 // Ledge grab: markup type 1 ("ledgegrab") polylines. The hands (hang pose) must pass the ledge height
@@ -678,6 +678,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             tryBeam("bbeam_walk_attach", false);
         // Pushing into a climbable rock face starts climbing (a jump keeps its normal arc).
         if (wantsMove && glm::dot(move, xy(forward())) > 0.5f && !tryLadder(false)) tryClimb(false);
+        if ((s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop) && tryRail(false)) break;
         break;
     }
     case State::Crouch: {
@@ -727,6 +728,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         s_.pos.z = g2->point.z;
         break;
     }
+    case State::RailSlide:
+        rail(jumpPressed, dropPressed, dt);
+        break;
     case State::Beam:
         beam(move, jumpPressed, dropPressed, dt);
         break;
@@ -741,6 +745,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         perch(jumpPressed, dropPressed, dt);
         break;
     case State::GrappleThrow:
+    case State::GrapplePull:
     case State::GrappleSwing:
         grapple(move, a, jumpPressed, dropPressed, dt);
         break;

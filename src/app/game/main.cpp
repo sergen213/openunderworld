@@ -34,6 +34,8 @@
 #include "save/Save.hpp"
 #include "render/Renderer.hpp"
 #include "video/Player.hpp"
+#include "video/Movie.hpp"
+#include "ui/Art.hpp"
 #include "ui/Ui.hpp"
 
 namespace {
@@ -531,7 +533,7 @@ struct StreamedScene {
     ou::scene::SceneData guns;                         // weapon models, one per gunSlots entry (CombatView::pose)
     std::vector<std::pair<ou::game::Weapon, int>> gunSlots; // weapon, hand of each guns mesh
     std::vector<size_t> gunIndices;
-    uint64_t version = ~0ull, enemyVersion = ~0ull;
+    uint64_t version = ~0ull, enemyVersion = ~0ull, lightsVersion = ~0ull, visibilityVersion = ~0ull;
 
     ou::scene::SceneData build(const ou::cdc::BigfileSet& bf, const ou::game::World& w, LaraMeshes& laraMeshes,
                                EnemyMeshes& enemyMeshes, std::vector<std::string>& warnings) {
@@ -544,12 +546,18 @@ struct StreamedScene {
         std::set<int32_t> enemyIntros; // drawn posed by EnemyMeshes instead
         for (const auto& e : w.enemies().all())
             if (!e->generator) enemyIntros.insert(e->uid());
-        auto append = [&](const ou::scene::SceneData& s, glm::vec3 offset, std::vector<size_t>* indices) {
+        std::set<int32_t> hiddenIntros;
+        for (const auto& o : w.script().objects())
+            if (o.hidden) hiddenIntros.insert(o.uid);
+        auto append = [&](const ou::scene::SceneData& s, glm::vec3 offset, std::vector<size_t>* indices,
+                          const std::string* unitName = nullptr) {
             const auto skelBase = int32_t(out.skeletons.size());
             out.skeletons.insert(out.skeletons.end(), s.skeletons.begin(), s.skeletons.end());
             for (auto m : s.meshes) {
-                if (const auto at = m.origin.rfind(" @intro "); at != std::string::npos && enemyIntros.contains(std::atoi(m.origin.c_str() + at + 8)))
-                    continue;
+                if (const auto at = m.origin.rfind(" @intro "); at != std::string::npos) {
+                    const int32_t uid = std::atoi(m.origin.c_str() + at + 8);
+                    if (enemyIntros.contains(uid) || hiddenIntros.contains(uid)) continue;
+                }
                 m.transform[12] += offset.x, m.transform[13] += offset.y, m.transform[14] += offset.z;
                 if (m.skeleton >= 0) m.skeleton += skelBase;
                 if (indices) indices->push_back(out.meshes.size());
@@ -568,7 +576,9 @@ struct StreamedScene {
                 out.environment.lights.clear();
                 for (int c = 0; c < 3; ++c) out.environment.sunOrigin[c] += offset[c];
             }
-            for (auto l : s.environment.lights) {
+            for (size_t i = 0; i < s.environment.lights.size(); ++i) {
+                if (unitName && !w.lightEnabled(*unitName, uint32_t(i))) continue;
+                auto l = s.environment.lights[i];
                 for (int c = 0; c < 3; ++c) l.position[c] += offset[c];
                 out.environment.lights.push_back(std::move(l));
             }
@@ -579,7 +589,7 @@ struct StreamedScene {
                 it = units.emplace(u.data.name, ou::formats::loadLevelScene(bf, "pc-w\\" + u.data.name + ".drm")).first;
                 for (const auto& s : it->second.warnings) warnings.push_back(s);
             }
-            append(it->second, u.offset, nullptr);
+            append(it->second, u.offset, nullptr, &u.data.name);
         }
         laraMeshes.meshIndices.clear();
         append(lara, glm::vec3(0), &laraMeshes.meshIndices);
@@ -592,6 +602,8 @@ struct StreamedScene {
         append(guns, glm::vec3(0), &gunIndices);
         version = w.unitsVersion();
         enemyVersion = w.enemies().version();
+        lightsVersion = w.lightsVersion();
+        visibilityVersion = w.script().visibilityVersion();
         return out;
     }
 };
@@ -731,6 +743,45 @@ std::optional<ou::ui::Nav> padNav(uint8_t b) {
     }
 }
 
+class MenuMovie {
+public:
+    explicit MenuMovie(std::filesystem::path file) : file_(std::move(file)) { restart(); }
+
+    ou::render::RgbaImage update() {
+        const double duration = movie_->info().duration;
+        double t = duration > 0 ? std::fmod(double(SDL_GetTicksNS() - started_) * 1e-9, duration) : 0;
+        if (t + 0.001 < previous_) restart();
+        const double frameTime = movie_->info().fps > 0 ? 1.0 / movie_->info().fps : 1.0 / 30;
+        while (!have_ || frame_.pts + frameTime <= t) {
+            if (!movie_->next(frame_, audio_)) {
+                restart();
+                t = 0;
+                continue;
+            }
+            have_ = true;
+            ++version_;
+        }
+        previous_ = t;
+        return {frame_.rgba, movie_->info().width, movie_->info().height, version_};
+    }
+
+private:
+    void restart() {
+        movie_ = std::make_unique<ou::video::Movie>(file_, -1); // menu visuals; movie audio is not mixed into the game
+        frame_ = {};
+        have_ = false;
+        previous_ = 0;
+    }
+
+    std::filesystem::path file_;
+    std::unique_ptr<ou::video::Movie> movie_;
+    ou::video::VideoFrame frame_;
+    std::vector<float> audio_;
+    uint64_t started_ = SDL_GetTicksNS(), version_ = 0;
+    double previous_ = 0;
+    bool have_ = false;
+};
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -743,6 +794,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<const ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
     std::unique_ptr<ou::game::World> world;
     std::optional<ou::locale::Strings> strings;
+    std::optional<ou::ui::Art> art; // generalbank.drm menu art and font
     ou::scene::SceneData scene;
     StreamedScene streamed;
     LaraMeshes lara;
@@ -757,6 +809,9 @@ int main(int argc, char** argv) {
         const auto& bf = *bigfile;
         strings = ou::locale::loadStrings(opt.gameDir, ou::locale::Language::English);
         if (!strings) throw std::runtime_error("pc-w\\local\\locals.bin not in bigfile");
+        std::string why;
+        art = ou::ui::loadArt(bf, &why);
+        if (!art) throw std::runtime_error("menu art: " + why);
         // "pc-w\\l4_pool.drm" -> unit "l4_pool"; its portal neighbours stream in with it (World, LEVELS.md). The main
         // menu shows (and New Game starts) chapter 0's unit.
         std::string unit = opt.level.substr(opt.level.find_last_of('\\') + 1);
@@ -909,6 +964,15 @@ int main(int argc, char** argv) {
     // ---- UI (src/ui): menus, PDA page, pickup notifications, chapter titles ----
     ou::ui::Menus menus;
     ou::ui::Hud hud;
+    std::optional<MenuMovie> menuMovie;
+    auto ensureMenuMovie = [&] {
+        if (menuMovie || opt.noMovies) return;
+        try {
+            menuMovie.emplace(opt.gameDir / "Movies" / "medsea_loop.bik");
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: main menu movie: %s\n", e.what());
+        }
+    };
     auto applyVolumes = [&] {
         mixer.setBusVolume(ou::audio::Bus::Music, float(menus.musicVolume) / 10);
         mixer.setBusVolume(ou::audio::Bus::Sfx, float(menus.sfxVolume) / 10);
@@ -926,6 +990,13 @@ int main(int argc, char** argv) {
         using ou::ui::Action;
         switch (action) {
         case Action::None: return;
+        case Action::Continue: // PLAY GAME: the newest save, else a new game
+            if (!menus.saves.empty()) {
+                if (!quickLoad(*world, menus.saves.front())) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
+                shownChapter = world->chapter;
+                break;
+            }
+            [[fallthrough]];
         case Action::NewGame:
             std::fprintf(stderr, "ou-game: new game\n");
             if (!opt.noMovies) { // frontend state 8 PlayNewGameMovie (tru.exe 0x5DB110)
@@ -959,6 +1030,7 @@ int main(int argc, char** argv) {
             menus.close();
             menus.saves = listSaves();
             menus.open(ou::ui::Screen::Main);
+            ensureMenuMovie();
             shownChapter = -2;
             break;
         case Action::Quit: running = false; break;
@@ -973,6 +1045,7 @@ int main(int argc, char** argv) {
     if (menuStart) {
         menus.saves = listSaves();
         menus.open(ou::ui::Screen::Main);
+        ensureMenuMovie();
     }
     // ---- cinematics (src/cine, app/game/Cinematic.*): --cine, and the cinematic_objects scripts activate (level ends) ----
     auto cineView = [&] {
@@ -1030,6 +1103,7 @@ int main(int argc, char** argv) {
 
     while (running) {
         const bool inMenu = menus.screen() != ou::ui::Screen::None;
+        const bool mainMenu = menus.mainMenu();
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
@@ -1150,7 +1224,8 @@ int main(int argc, char** argv) {
             }
             hud.tick(ou::game::kTickSeconds);
         }
-        if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion) {
+        if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion ||
+            world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion) {
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {
                 scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings);
@@ -1189,7 +1264,7 @@ int main(int argc, char** argv) {
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window.get(), &w, &h);
         std::vector<std::string> lines;
-        if (overlay) {
+        if (overlay && !mainMenu) {
             lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS | tick %llu%s%s", world->currentUnit().data.name.c_str(), fps,
                                 (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
             lines.push_back(renderer->description());
@@ -1214,7 +1289,7 @@ int main(int argc, char** argv) {
                             "F draw | LMB fire | RMB lock | "
                             "Q switch | X weapon | H health pack | mouse look | F5 save | F9 load | F1 overlay | Esc menu");
         }
-        { // combat HUD text (always shown)
+        if (!mainMenu) { // combat HUD text (gameplay only)
             const auto& cs = world->combat();
             std::string t = fmt("health %.0f/%.0f | health packs %d | adrenaline %.0f%%%s", world->health().value(), world->health().max(),
                                 world->found[2], cs.adrenaline * 100, cs.slowMo > 0 ? " HEAD SHOT" : "");
@@ -1230,13 +1305,27 @@ int main(int argc, char** argv) {
             for (const auto& d : combat.dummies) t += fmt(" | dummy %.0f hp", d->hp);
             lines.push_back(t);
         }
-        ou::ui::Canvas canvas(w, h);
-        hud.draw(canvas);
-        if (world->air() < 0.999f) { // breath bar while it is not full (under water / refilling)
-            const float u = canvas.unit(), bw = 160 * u, bh = 10 * u, x = 20 * u, y = 40 * u;
-            canvas.rect(x - 2 * u, y - 2 * u, bw + 4 * u, bh + 4 * u, ou::ui::kShade);
-            canvas.rect(x, y, bw * world->air(), bh, world->air() < 0.25f ? 0xFF0000FFu : 0xFFC0A040u);
-            canvas.text(x, y + 13 * u, 12 * u, "AIR", ou::ui::kWhite);
+        menus.tick(dt);
+        ou::ui::Canvas canvas(w, h, &*art);
+        // Main menu backdrop (tru.exe): black, the menu movie fitted to the window width and centred, dimmed [V
+        // captures: ~0.66 of the decoded frame].
+        ou::render::RgbaImage movieImage;
+        if (mainMenu) {
+            canvas.rect(0, 0, float(w), float(h), 0xFF000000u);
+            if (menuMovie) {
+                movieImage = menuMovie->update();
+                const float mh = float(w) * float(movieImage.height) / float(std::max(1, movieImage.width));
+                canvas.image(1, 0, (float(h) - mh) / 2, float(w), mh, 0, 0, 1, 1, 0xFFA8A8A8u);
+            }
+        }
+        if (!mainMenu) {
+            hud.draw(canvas);
+            if (world->air() < 0.999f) { // breath bar while it is not full (under water / refilling)
+                const float u = canvas.unit(), bw = 160 * u, bh = 10 * u, x = 20 * u, y = 40 * u;
+                canvas.rect(x - 2 * u, y - 2 * u, bw + 4 * u, bh + 4 * u, ou::ui::kShade);
+                canvas.rect(x, y, bw * world->air(), bh, world->air() < 0.25f ? 0xFF0000FFu : 0xFFC0A040u);
+                canvas.text(x, y + 13 * u, 12 * u, "AIR", ou::ui::kWhite);
+            }
         }
         menus.draw(canvas, *strings);
         // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these
@@ -1259,8 +1348,9 @@ int main(int argc, char** argv) {
         }
         ou::render::FrameOptions fo{};
         fo.lighting = true, fo.cullBackFaces = true;
-        fo.overlay = lines, fo.debugLines = frameLines;
+        fo.overlay = lines, fo.debugLines = mainMenu ? std::span<const ou::render::DebugLine>{} : std::span<const ou::render::DebugLine>(frameLines);
         fo.ui = canvas.vertices;
+        fo.uiImages = {ou::render::RgbaImage{art->rgba, art->width, art->height, art->version}, movieImage};
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
@@ -1272,12 +1362,12 @@ int main(int argc, char** argv) {
                           ws.heights(), ws.version()};
         waterVolumes.clear();
         for (const auto& m : world->collision().markup)
-            if (m.type == 10 && m.points.size() == 2)
+            if (!mainMenu && m.type == 10 && m.points.size() == 2)
                 waterVolumes.push_back({{m.points[0].x, m.points[0].y, m.points[0].z},
                                         {m.points[1].x, m.points[1].y, m.points[1].z}});
         fo.waterVolumes = waterVolumes;
         splashParticles.clear();
-        if (opt.gfx.water)
+        if (opt.gfx.water && !mainMenu)
             for (const auto& d : ws.drops()) splashParticles.push_back({{d.pos.x, d.pos.y, d.pos.z}, d.radius, d.alpha()});
         fo.splashes = splashParticles;
         renderer->drawFrame(cam, {w, h}, fo);

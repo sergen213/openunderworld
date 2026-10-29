@@ -125,6 +125,18 @@ std::shared_ptr<const game::ai::EnemyType> syntheticBat() {
     return t;
 }
 
+// Synthetic shark: the same flyer family, distinguished by its swimming clips rather than its object name.
+std::shared_ptr<const game::ai::EnemyType> syntheticShark() {
+    auto t = std::make_shared<game::ai::EnemyType>(*syntheticBat());
+    t->name = "synthetic_shark";
+    t->roles[size_t(Role::Run)] = "swim_forward_fast";
+    t->clips["swim_forward_fast"] = rootClip(20, 20);
+    t->roles[size_t(Role::Attack)] = "burst_attack";
+    t->clips["burst_attack"] = rootClip(21, 0);
+    t->tuning.health = 500;
+    return t;
+}
+
 game::Hit shotFrom(vec3 dir, float damage = 1000, bool headshot = false) { return {damage, {}, dir, game::Team::Player, headshot}; }
 } // namespace
 
@@ -372,6 +384,23 @@ TEST(Ai, BatFliesToLaraAndBites) {
     EXPECT_EQ(e.state().pos.z, 0); // fell to the floor
 }
 
+// An aquatic flyer uses the same 3D sphere collision as a bat but cannot chase out of its type-10 water box.
+TEST(Ai, SharkStaysInsideWaterVolume) {
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, -2000);
+    m.markup.push_back({10, 1, {{-1000, -1000, -1000}, {1000, 1000, 1000}}});
+    const auto col = built(m);
+    game::ai::Enemies es;
+    auto& e = es.add(syntheticShark(), 1, {0, 0, 0}, 0);
+    for (int i = 0; i < 600; ++i) es.tick(col, {{3000, 0, 3000}}, {}, kDt);
+    const float r = e.type().tuning.radius, half = e.type().tuning.height * 0.5f;
+    EXPECT_GT(e.state().pos.x, 500); // pursued the visible target to the boundary
+    EXPECT_LE(e.state().pos.x, 1000 - r + 1e-3f);
+    EXPECT_LE(e.state().pos.z + half, 1000 - r + 1e-3f);
+    EXPECT_EQ(e.state().mode, Mode::Chase); // swimming, not falling or walking on the floor below
+    EXPECT_GT(e.state().pos.z, -1000 - half);
+}
+
 // Death clips as tru.exe FUN_00642210: by the attacker's quadrant (left -> category 3, behind -> 5) with the
 // heading turned to match; head shot -> flag 3; hit while running -> flag 5; nothing usable -> the role clip. Clips
 // ending upright tip the body onto its side in 0.5 s [I]; lying ones do not.
@@ -584,15 +613,16 @@ TEST(AiReal, DecodedSensesAttacksDeaths) {
     ASSERT_EQ(b.deaths.size(), 1u);
     EXPECT_EQ(b.deaths[0].clip, "death");
 
-    // Sharks are enemies (flyer tree like bats) with health and senses but no attack records; not spawned (no water
-    // volume is found in their units to swim in).
+    // Sharks use the same behaviour-tree family as bats, but their clips and domain are aquatic.
     const auto shark = game::ai::loadEnemyType(bf, "shark_blueshark");
     EXPECT_EQ(shark->enemyClass, 1);
     EXPECT_TRUE(shark->flyer());
     EXPECT_EQ(shark->tuning.health, 500);
     cone(shark->tuning.senses.eye, 11378, 180, 180), cone(shark->tuning.senses.body[0], 6321, 180, 90);
     EXPECT_TRUE(shark->tuning.attacks.empty());
-    EXPECT_FALSE(shark->spawnable());
+    EXPECT_TRUE(shark->spawnable());
+    EXPECT_EQ(shark->clipName(Role::Run), "swim_forward_fast");
+    EXPECT_EQ(shark->clipName(Role::Attack), "bite_2");
     EXPECT_EQ(game::ai::loadEnemyType(bf, "shark_greenland")->tuning.health, 800);
 
     for (const char* n : {"death_static", "death_running", "death_adren"}) EXPECT_TRUE(panther->lyingDeaths.count(n)) << n;
@@ -615,6 +645,69 @@ TEST(AiReal, DecodedSensesAttacksDeaths) {
                          t->name.c_str(), n.c_str(), clip.durationSeconds(), low, top, zs[zs.size() / 2], zs[zs.size() * 9 / 10],
                          bind[bind.size() / 2], t->tuning.height, t->lyingDeaths.count(n) ? "lying" : "upright (tips over)");
         }
+}
+
+// The placed sharks are live enemies, not discarded intros. A real blueshark leaves its placement, swims to Lara,
+// plays its data's bite clip and hurts her, then responds normally to a fatal hit.
+TEST(AiReal, SharksSpawnSwimBiteAndDie) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto objectBytes = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(objectBytes);
+    const auto objectNames = formats::parseObjectList({reinterpret_cast<const char*>(objectBytes->data()), objectBytes->size()});
+    struct Population { const char* unit; int first, last, count; };
+    for (const Population p : {Population{"l1_seafloor", 980, 985, 6}, Population{"l2_cliffclimb", 4020, 4023, 4},
+                               Population{"l7_arctic_sea", 9125, 9133, 8}}) { // 9129 is a triggervolume, not a ninth shark
+        auto unit = game::loadUnitData(bf, p.unit);
+        unit.col.build();
+        for (const auto& in : formats::parseUnit(*unit.drm).intros)
+            if (in.uniqueId >= p.first && in.uniqueId <= p.last)
+                std::fprintf(stderr, "%s intro %d: %s\n", p.unit, in.uniqueId,
+                             objectNames.count(in.objectId) ? objectNames.at(in.objectId).c_str() : "?");
+        game::ai::Enemies es;
+        es.setBigfile(&bf);
+        es.setUnits({{unit.name, unit.drm, vec3(0)}});
+        std::set<int32_t> sharks;
+        for (const auto& e : es.all())
+            if (e->uid() >= p.first && e->uid() <= p.last) {
+                sharks.insert(e->uid());
+                EXPECT_TRUE(e->type().name.starts_with("shark_")) << p.unit << " " << e->uid();
+            }
+        EXPECT_EQ(sharks.size(), size_t(p.count)) << p.unit;
+        std::fprintf(stderr, "%s: %zu sharks, %zu water volumes\n", p.unit, sharks.size(),
+                     size_t(std::count_if(unit.col.markup.begin(), unit.col.markup.end(), [](const auto& m) { return m.type == 10; })));
+        for (const auto& m : unit.col.markup)
+            if (m.type == 10 && m.points.size() >= 2)
+                std::fprintf(stderr, "  water %u (%.0f %.0f %.0f)..(%.0f %.0f %.0f)\n", m.id,
+                             m.points[0].x, m.points[0].y, m.points[0].z, m.points[1].x, m.points[1].y, m.points[1].z);
+    }
+
+    auto unit = game::loadUnitData(bf, "l2_cliffclimb");
+    unit.col.build();
+    game::ai::Enemies es;
+    es.setBigfile(&bf);
+    es.setUnits({{unit.name, unit.drm, vec3(0)}});
+    const auto it = std::find_if(es.all().begin(), es.all().end(), [](const auto& e) { return e->uid() == 4020; });
+    ASSERT_NE(it, es.all().end());
+    auto& shark = **it;
+    const vec3 start = shark.state().pos;
+    const game::ai::Target lara{start + vec3(1200, 0, 0)};
+    std::vector<float> damage;
+    bool attacked = false;
+    for (int i = 0; i < 900 && damage.empty(); ++i) {
+        es.tick(unit.col, lara, [&](float d, vec3, int) { damage.push_back(d); }, kDt);
+        attacked |= shark.state().mode == Mode::Attack && shark.state().clip == shark.type().clipName(Role::Attack);
+    }
+    EXPECT_TRUE(attacked);
+    ASSERT_EQ(damage.size(), 1u);
+    EXPECT_GT(damage[0], 0);
+    EXPECT_LT(glm::distance(shark.state().pos, lara.pos), glm::distance(start, lara.pos));
+    shark.onHit(shotFrom({-1, 0, 0}, shark.health() + 1));
+    EXPECT_EQ(shark.state().mode, Mode::Dead);
+    for (int i = 0; i < 600; ++i)
+        es.tick(unit.col, lara, [](float, vec3, int) { FAIL() << "dead sharks do not bite"; }, kDt);
+    EXPECT_EQ(shark.state().mode, Mode::Dead);
+    EXPECT_EQ(shark.state().clip, "death_float_loop");
 }
 
 // l4_pool's mayan_thrall_pool_generator 5637 spawns a mayan_thrall that plays spawn_from_pool, then hunts Lara.

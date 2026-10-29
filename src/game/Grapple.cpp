@@ -14,18 +14,27 @@ float yawOf(vec2 d) { return std::atan2(d.y, d.x); }
 constexpr float kHandZ = 400.0f; // rope attaches this far above the root [I]
 } // namespace
 
-void Player::attachGrapple(vec3 anchor, int32_t uid) {
+void Player::attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind) {
     s_.grappleUid = uid;
     s_.grappleAnchor = anchor;
+    s_.grappleKind = kind;
     s_.ropeLength = glm::distance(anchor, s_.pos + vec3(0, 0, kHandZ));
     s_.vel = vec3(0);
     s_.ledge = -1;
     s_.state = State::GrappleThrow;
-    play("grapple_rappel_free_jumpon", false);
+    if (kind == GrappleKind::Mounted) {
+        const float dz = anchor.z - s_.pos.z;
+        play(dz > 400 ? "grapple_pull_up_light_begin" : dz < -400 ? "grapple_pull_down_light_begin"
+                                                                  : "grapple_pull_mid_light_begin",
+             false);
+    } else {
+        play("grapple_rappel_free_jumpon", false);
+    }
 }
 
 void Player::releaseGrapple(bool jump) {
     s_.grappleUid = 0;
+    s_.grappleKind = GrappleKind::Ceiling;
     s_.ropeLength = 0;
     s_.state = State::Jump;
     s_.fallStartZ = s_.pos.z;
@@ -35,6 +44,24 @@ void Player::releaseGrapple(bool jump) {
 
 void Player::grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt) {
     if (!s_.grappleUid || s_.ropeLength <= 0) { startFall(s_.vel); return; } // loaded without an anchor
+    if (s_.grappleKind == GrappleKind::Mounted) {
+        if (s_.state == State::GrappleThrow) {
+            advanceClip(dt);
+            if (clipDone()) {
+                const float dz = s_.grappleAnchor.z - s_.pos.z;
+                s_.state = State::GrapplePull;
+                play(dz > 400 ? "grapple_pull_up_light" : dz < -400 ? "grapple_pull_down_light" : "grapple_pull_mid_light",
+                     true);
+            }
+            return;
+        }
+        if (jumpPressed) { releaseGrapple(true); return; }
+        if (dropPressed) { releaseGrapple(false); return; }
+        s_.vel = vec3(0); // the world moves the mounted object; Lara remains braced [I]
+        const float dz = s_.grappleAnchor.z - s_.pos.z;
+        play(dz > 400 ? "grapple_pull_up_light" : dz < -400 ? "grapple_pull_down_light" : "grapple_pull_mid_light", true);
+        return;
+    }
     if (s_.state == State::GrappleThrow) {
         advanceClip(dt);
         if (clipDone()) {

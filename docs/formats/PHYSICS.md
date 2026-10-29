@@ -65,8 +65,7 @@ type 2, is [I].
 - [O] Door script 15695 fn 0: `multibody.SetJointLimit(joint m8, 1, 2, 2); multibody.Enable()` — locked at 2°.
 - [O] Lever script 15637: fn 2 loops every 0.033 s: drives its own joint (native 79 with −600, −350, 1), reads its
   joint value (78) into m8 and, when it changed, calls fn 3 (vt 54): `door.SetJointLimit(door.m8, 1, m24, m24)`
-  with `m24 = m8 op 2` (opcode 0x40; [I] add: door angle = lever angle + 2, matching the door's initial 2).
-  So the door follows the lever 1:1 while Lara works it [I].
+  with `m24 = m8 * 2` (opcode 0x40 = MULI). So the door follows the lever 2:1 while Lara works it [O].
 - [O] Geometry (raycasts): the door sits in a 600-wide, 1 047-high passage through a wall; the room behind
   (−y) is 1 300 high. A flap hinged at z = 952.9 about model X swings up into that room [I].
 
@@ -80,10 +79,11 @@ type 2, is [I].
   (spheres/capsules as their bounding boxes), placed by intro × pose (animated doors follow their bone, blocks their
   offset). Doors therefore block while closed and stop blocking once their animation (or swing) moves them away.
   Lara rides the dynamic under her feet.
-- Hinge doors [I]: a class-34 door without clips becomes a rigid body (mass/inertia from its primitives) on a hinge
-  about its first marker's X axis, limits 0..80°; a motor drives it to 80° once the script door state is open (2),
-  else to 0. We do not run the lever's coupling loop: using the pole lever (E) fires its vt-54 targets (door 6505),
-  which opens the door fully.
+- Hinge doors and levers [I]: a class-34 door or class-6 lever without clips becomes a rigid body on a hinge about
+  its first marker's X axis. Script `multibody` 2/77/78/79 enables physics, changes limits, reads the angle and
+  issues drive commands. Function-0 construction and the lever's WAIT-based function-2 polling loop run, so using
+  the pole lever drives the door to twice the lever angle through the original bytecode rather than a full-open
+  fallback. Other animated doors still use their script state and clips.
 - Solver (`Scene::step`, fixed tick): semi-implicit Euler, sequential impulses (16 iterations, Baumgarte 0.2):
   anchor point (3 rows), axis alignment (2), motor (clamped by `maxTorque·dt`), limits; tru.exe gravity
   5.72443 units/frame². Deterministic: same ticks ⇒ bit-identical bodies at 30/60/144 Hz render rates
@@ -98,8 +98,10 @@ type 2, is [I].
   mask; real data: door decode, all objects parse.
 - Replays (l4_ballcourt, GL screenshots viewed): `tests/replays/ballcourt_door_blocked.txt` with
   `--spawn -18520,14600,3540,-90`: Lara stops at y = 13 944.9, against the closed door (door at 13 706 + box half
-  depth 136 + capsule 100). `tests/replays/ballcourt_door_lever.txt` with `--spawn -20066,14150,3540,0`: lever used,
-  door swings open, Lara runs through the passage to y = 10 032.9.
+  depth 136 + capsule 100). `GameReal.BallcourtLeverDrivesDoorJoint` verifies a 40° lever and 80° door through the
+  native 2:1 script coupling. `GameReal.BallcourtLeverReplayPassesDoor` completes the same route with physics
+  isolated. With the poacher enabled, its genuine hit reactions interrupt the rendered replay at (-18871.9, 14058.3);
+  this is combat, not a remaining door-collision blocker.
 
 ## Open questions
 

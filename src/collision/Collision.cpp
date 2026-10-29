@@ -179,6 +179,36 @@ template <class Visit> void CollisionMesh::overlap(vec3 lo, vec3 hi, Visit&& vis
     }
 }
 
+std::optional<uint32_t> CollisionMesh::terrainGroupForModel(uint32_t modelIndex) const {
+    for (uint32_t g = 0; g < groupModels_.size(); ++g)
+        if (groupModels_[g] == modelIndex) return g;
+    return std::nullopt;
+}
+std::optional<bool> CollisionMesh::terrainGroupEnabled(uint32_t modelIndex) const {
+    const auto group = terrainGroupForModel(modelIndex);
+    if (!group) return std::nullopt;
+    return groupEnabled_[*group];
+}
+bool CollisionMesh::setTerrainGroupEnabled(uint32_t modelIndex, bool enabled) {
+    const auto group = terrainGroupForModel(modelIndex);
+    if (!group) return false;
+    groupEnabled_[*group] = enabled;
+    return true;
+}
+void CollisionMesh::clearTerrainGroups() {
+    groupModels_.clear();
+    groupEnabled_.clear();
+}
+uint32_t CollisionMesh::appendTerrainGroups(const CollisionMesh& other) {
+    const uint32_t base = uint32_t(groupModels_.size());
+    groupModels_.insert(groupModels_.end(), other.groupModels_.begin(), other.groupModels_.end());
+    groupEnabled_.insert(groupEnabled_.end(), other.groupEnabled_.begin(), other.groupEnabled_.end());
+    return base;
+}
+bool CollisionMesh::queryable(const Face& f, uint8_t mask) const {
+    return collision::queryable(f, mask) && (f.group >= groupEnabled_.size() || groupEnabled_[f.group]);
+}
+
 std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist, uint8_t mask) const {
     const float len = glm::length(dir);
     if (len <= 0 || nodes_.empty()) return std::nullopt;

@@ -54,7 +54,7 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
         if (n->second == "checkpoint" || n->second == "invis_checkpoint")
             u.checkpoints.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2}); // heading as findSpawn
         if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position)});
-        if (n->second.find("_ei_grapple") != std::string::npos) {
+        if (n->second.find("_grapple") != std::string::npos) {
             const GrappleKind k = n->second.find("wall") != std::string::npos   ? GrappleKind::Wall
                                   : n->second.find("post") != std::string::npos ? GrappleKind::Post
                                   : n->second.find("ceiling") != std::string::npos ? GrappleKind::Ceiling
@@ -81,9 +81,18 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     return u;
 }
 
+void World::registerCinematicUnits() {
+    for (const char* name : {"l1_cine_ship_sinking", "l3_mansion_exterior_afterburn", "l6_ship_natla_room"}) {
+        auto u = loader_(name);
+        cinematicRefs_.push_back({u.name, u.drm, vec3(0)});
+        for (const auto& [uid, stream] : u.cinematics) cinematicEnds_[uid] = {stream, u.chapterLinks[uid]};
+    }
+}
+
 World::World(UnitLoader loader, const std::string& unit, AnimLibrary anims, std::optional<Spawn> spawn, Tuning tuning)
     : World(collision::CollisionMesh{}, std::move(anims), Spawn{}, tuning) {
     loader_ = std::move(loader);
+    registerCinematicUnits();
     startUnit_ = unit;
     startSpawn_ = spawn;
     enterUnit(unit, spawn);
@@ -169,6 +178,10 @@ void World::streamAround(size_t center) {
     for (size_t i = 0; i < units_.size(); ++i)
         if (units_[i].data.name == centerName) current_ = i;
     rebuildCollision();
+    for (const auto& u : units_) {
+        for (const auto& [uid, chapters] : u.data.chapterLinks) cinematicEnds_[uid].chapters = chapters;
+        for (const auto& [uid, stream] : u.data.cinematics) cinematicEnds_[uid].stream = stream;
+    }
     PlayerState s = player_.state();
     s.ledge = ledgeOwner ? markupIndex(ledgeOwner->first, ledgeOwner->second) : -1;
     s.water = waterOwner ? markupIndex(waterOwner->first, waterOwner->second) : -1; // its unit is Lara's or a neighbour: kept
@@ -179,13 +192,16 @@ void World::streamAround(size_t center) {
 
 void World::rebuildCollision() {
     col_.vertices.clear(), col_.faces.clear(), col_.markup.clear();
+    col_.clearTerrainGroups();
     for (auto& u : units_) {
         const auto& c = u.data.col;
         const auto vb = uint32_t(col_.vertices.size());
+        const auto groupBase = col_.appendTerrainGroups(c);
         u.markupBase = col_.markup.size();
         for (const vec3& v : c.vertices) col_.vertices.push_back(v + u.offset);
         for (collision::Face f : c.faces) {
             for (auto& i : f.v) i += vb;
+            f.group = uint16_t(f.group + groupBase);
             col_.faces.push_back(f);
         }
         for (collision::Markup m : c.markup) {
@@ -217,6 +233,15 @@ void World::crossPortals(vec3 from, vec3 to) {
 }
 
 void World::touchCheckpoints() {
+    for (const auto& e : script_.events())
+        if (e.kind == script::EventKind::Checkpoint)
+            if (const auto* o = script_.find(e.target)) {
+                const CheckpointRef next{o->unit, o->uid};
+                if (checkpoint_ != next) {
+                    checkpoint_ = next;
+                    enemies_.checkpoint();
+                }
+            }
     const vec3 p = player_.state().pos;
     for (const auto& u : units_)
         for (const auto& c : u.data.checkpoints) {
@@ -260,19 +285,18 @@ void World::collectPickups(bool pressed) {
 void World::checkLevelEnd() {
     for (const auto& e : script_.events()) {
         if (e.kind != script::EventKind::Activate) continue;
-        for (const auto& u : units_) {
-            const auto it = u.data.chapterLinks.find(e.target);
-            const auto next = it != u.data.chapterLinks.end() ? nextChapter(chapter, it->second) : std::nullopt;
-            if (const auto c = u.data.cinematics.find(e.target); c != u.data.cinematics.end() && onCinematic)
-                onCinematic(c->second, next.has_value()); // before the chapter change: it plays in this unit
-            if (next) {
-                try {
-                    startChapter(*next);
-                } catch (const std::exception& ex) {
-                    warnings.push_back(std::string("level end -> chapter ") + std::to_string(*next) + ": " + ex.what());
-                }
-                return;
+        const auto end = cinematicEnds_.find(e.target);
+        if (end == cinematicEnds_.end()) continue;
+        const auto next = nextChapter(chapter, end->second.chapters);
+        if (!end->second.stream.empty() && onCinematic) onCinematic(end->second.stream, next.has_value());
+        script_.endCinematic(e.target);
+        if (next) {
+            try {
+                startChapter(*next);
+            } catch (const std::exception& ex) {
+                warnings.push_back(std::string("level end -> chapter ") + std::to_string(*next) + ": " + ex.what());
             }
+            return;
         }
     }
 }

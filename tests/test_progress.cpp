@@ -2,6 +2,7 @@
 #include "game/Game.hpp"
 #include "game/Progress.hpp"
 #include "save/Save.hpp"
+#include "ui/Art.hpp"
 #include "ui/Ui.hpp"
 
 #include "cdc/Cdc.hpp"
@@ -47,6 +48,12 @@ game::Actions interact(bool on) {
     game::Actions a;
     a.interact = on;
     return a;
+}
+
+vec3 introPos(const game::UnitData& u, int32_t uid) {
+    for (const auto& in : formats::parseUnit(*u.drm).intros)
+        if (in.uniqueId == uid) return {in.position[0], in.position[1], in.position[2]};
+    throw std::runtime_error("intro not found");
 }
 
 } // namespace
@@ -137,17 +144,38 @@ TEST(Menus, MainMenuNavigation) {
     ui::Menus m;
     m.open(ui::Screen::Main);
     auto items = m.items();
-    ASSERT_EQ(items.size(), 4u);
-    EXPECT_EQ(items[0].stringId, 124); // START NEW GAME
-    EXPECT_EQ(items[3].stringId, 131); // QUIT GAME
+    ASSERT_EQ(items.size(), 8u);
+    EXPECT_EQ(items[0].stringId, 123); // PLAY GAME, the centre
+    EXPECT_EQ(items[1].stringId, 124); // START NEW GAME, top of the ring
+    EXPECT_EQ(items[7].stringId, 131); // QUIT GAME, bottom
     EXPECT_EQ(m.input(ui::Nav::Up), ui::Action::None);
-    EXPECT_EQ(m.cursor(), 3); // wraps
-    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Quit);
-    m.input(ui::Nav::Down); // -> 0
+    EXPECT_EQ(m.cursor(), 0); // Up/Down do nothing in the centre
+    m.input(ui::Nav::Left);
+    EXPECT_EQ(m.cursor(), 4); // first Left: the ring item level with the centre, SAVE GAME (as tru.exe)
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 7);
     m.input(ui::Nav::Down);
-    m.input(ui::Nav::Down); // GAME OPTIONS
+    EXPECT_EQ(m.cursor(), 0); // off the bottom of the ring: back to the centre
+    m.input(ui::Nav::Left);
+    EXPECT_EQ(m.cursor(), 7); // Left returns to the last ring item
+    m.input(ui::Nav::Right);
+    EXPECT_EQ(m.cursor(), 0);
+    m.input(ui::Nav::Left), m.input(ui::Nav::Up), m.input(ui::Nav::Up), m.input(ui::Nav::Up), m.input(ui::Nav::Up),
+        m.input(ui::Nav::Up), m.input(ui::Nav::Up);
+    EXPECT_EQ(m.cursor(), 1); // START NEW GAME
+    m.input(ui::Nav::Up);
+    EXPECT_EQ(m.cursor(), 0); // off the top: the centre
+    m.input(ui::Nav::Left);
+    EXPECT_EQ(m.cursor(), 1); // the last ring item
+}
+
+TEST(Menus, MainMenuActionsAndScreens) {
+    ui::Menus m;
+    m.open(ui::Screen::Main);
+    m.input(ui::Nav::Left), m.input(ui::Nav::Up), m.input(ui::Nav::Up); // SAVE GAME -> LOAD GAME -> GAME OPTIONS
+    EXPECT_EQ(m.items()[size_t(m.cursor())].stringId, 125);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
-    EXPECT_EQ(m.screen(), ui::Screen::Options);
+    ASSERT_EQ(m.screen(), ui::Screen::Options);
     m.input(ui::Nav::Down); // music volume
     m.input(ui::Nav::Right), m.input(ui::Nav::Right), m.input(ui::Nav::Right);
     EXPECT_EQ(m.musicVolume, 10); // clamped
@@ -155,19 +183,30 @@ TEST(Menus, MainMenuNavigation) {
     EXPECT_EQ(m.musicVolume, 9);
     EXPECT_EQ(m.input(ui::Nav::Back), ui::Action::None);
     EXPECT_EQ(m.screen(), ui::Screen::Main);
+    EXPECT_EQ(m.cursor(), 2); // back on GAME OPTIONS
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down); // SAVE GAME: a message in the main menu
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::Message);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // OK
+    EXPECT_EQ(m.screen(), ui::Screen::Main);
     EXPECT_EQ(m.input(ui::Nav::Back), ui::Action::None); // Main stays
     EXPECT_EQ(m.screen(), ui::Screen::Main);
-    EXPECT_EQ(m.cursor(), 0);
+    m.input(ui::Nav::Up), m.input(ui::Nav::Up), m.input(ui::Nav::Up); // START NEW GAME
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::NewGame);
+    EXPECT_EQ(m.screen(), ui::Screen::None);
+    m.open(ui::Screen::Main);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Continue); // PLAY GAME
     EXPECT_EQ(m.screen(), ui::Screen::None);
 }
 
 TEST(Menus, PauseLoadAndPda) {
     ui::Menus m;
     m.open(ui::Screen::Pause);
-    EXPECT_EQ(m.items()[0].stringId, 122); // RESUME GAME
+    EXPECT_EQ(m.items()[0].stringId, 122); // RESUME GAME, the centre
     m.saves = {"quick", "save-1"};
-    m.input(ui::Nav::Down), m.input(ui::Nav::Down); // LOAD GAME
+    m.input(ui::Nav::Left);
+    EXPECT_EQ(m.items()[size_t(m.cursor())].stringId, 125); // GAME OPTIONS: first of the two ring items level with the centre
+    m.input(ui::Nav::Up), m.input(ui::Nav::Up); // ACCESS PDA, LOAD GAME
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
     ASSERT_EQ(m.screen(), ui::Screen::Load);
     ASSERT_EQ(m.items().size(), 3u); // two saves + BACK
@@ -176,7 +215,7 @@ TEST(Menus, PauseLoadAndPda) {
     EXPECT_EQ(m.selectedSave(), "save-1");
     EXPECT_EQ(m.screen(), ui::Screen::None);
     m.open(ui::Screen::Pause);
-    m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Down); // ACCESS PDA
+    m.input(ui::Nav::Left), m.input(ui::Nav::Up); // ACCESS PDA
     m.input(ui::Nav::Accept);
     EXPECT_EQ(m.screen(), ui::Screen::Pda);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // BACK TO PREVIOUS MENU
@@ -221,6 +260,77 @@ TEST(ChaptersReal, StartUnitsAndLevelEnds) {
         ASSERT_NE(it, u.chapterLinks.end()) << e.unit;
         EXPECT_EQ(game::nextChapter(e.from, it->second), e.to) << e.unit;
     }
+}
+
+// generalbank.drm menu art: the font table and the hor+ 640x480 mapping reproduce tru.exe's measured layout
+// (docs/GAMEPLAY.md "Menus": "PLAY GAME" ink from x 287.0 at 1920x1080, i.e. 66 wide centred on 320).
+TEST(MenusReal, ArtAndFontMetrics) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::string why;
+    const auto art = ui::loadArt(bf, &why);
+    ASSERT_TRUE(art) << why;
+    EXPECT_EQ(art->font.texture, 109u);
+    EXPECT_EQ(art->font.cellHeight, 46);
+    const ui::Glyph* a = art->font.find('A');
+    ASSERT_TRUE(a);
+    EXPECT_EQ(a->width, 29);
+    EXPECT_EQ(a->x, 1);
+    EXPECT_FALSE(a->second);
+    EXPECT_TRUE(art->font.find(0x1800)->second);                 // controller glyphs: second texture
+    EXPECT_EQ(art->font.find(0x2603), art->font.find(0x18AF));   // missing -> U+18AF
+    for (const uint32_t id : {11u, 12u, 13u, 15u, 17u, 18u, 26u, 50u, 51u, 105u, 106u, 109u, 110u}) EXPECT_TRUE(art->find(id)) << id;
+    EXPECT_EQ(art->find(17)->width, 1024);
+    ui::Canvas c(1920, 1080, &*art);
+    EXPECT_FLOAT_EQ(c.sx(0), 240);
+    EXPECT_FLOAT_EQ(c.unit(), 2.25f);
+    EXPECT_FLOAT_EQ(c.fontWidth("PLAY GAME", 0.625f), 66.0f);
+}
+
+TEST(ChaptersReal, MediterraneanEndingRunsThroughTriggerScript) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto unit = game::loadUnitData(bf, "l1_ship_sinking_hall");
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l1_ship_sinking_hall", idleAnims(), game::Spawn{introPos(unit, 1082), 0});
+    w.script().setBigfile(&bf);
+    std::vector<std::string> played;
+    w.onCinematic = [&](const std::string& name, bool) { played.push_back(name); };
+    for (int i = 0; i < 4; ++i) w.tick({});
+    EXPECT_EQ(played, std::vector<std::string>{"070_med_dive"});
+    EXPECT_EQ(w.chapter, 2);
+}
+
+TEST(ChaptersReal, CroftManorEndingRunsBothCinematics) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto unit = game::loadUnitData(bf, "l3_main_hall");
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l3_main_hall", idleAnims(), game::Spawn{introPos(unit, 4137), 0});
+    w.script().setBigfile(&bf);
+    std::vector<std::string> played;
+    w.onCinematic = [&](const std::string& name, bool) { played.push_back(name); };
+    w.tick({});
+    auto state = w.player().state();
+    state.pos = {1000000, 1000000, 1000000};
+    w.restore(state, 0, 0);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_EQ(played, (std::vector<std::string>{"160_man_shot", "170_man_exit"}));
+    EXPECT_EQ(w.chapter, 4);
+}
+
+TEST(ChaptersReal, NatlaShipEndingPassesLoadedGuard) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto unit = game::loadUnitData(bf, "l6_ship_engine_hall");
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l6_ship_engine_hall", idleAnims(), game::Spawn{introPos(unit, 7566), 0});
+    w.script().setBigfile(&bf);
+    std::vector<std::string> played;
+    w.onCinematic = [&](const std::string& name, bool) { played.push_back(name); };
+    for (int i = 0; i < 4; ++i) w.tick({});
+    EXPECT_EQ(played, std::vector<std::string>{"270_shp_escape"});
+    EXPECT_EQ(w.chapter, 7);
 }
 
 TEST(ChaptersReal, PickupsAndMusic) {

@@ -186,5 +186,9 @@ Survey of all 82 unit DRMs (throwaway tool over `loadLevelCollision` + `formats:
   0x01..0x20 set (0x3f/0x3b/0x3d/0x3e/0x37/0x2b/0x1b/0x29 etc.); ordinary walls/floors have 0. We treat
   those faces as free-climbable rock (`collision::climbable`, GAMEPLAY.md "Free climbing"); the meaning of
   each direction bit is [U].
+- [O] `terraingroup` native SetEnabled (2) and IsEnabled (3) resolve the member's stream-unit/model identity. The
+  world maps that identity through loaded portal links, updates the source unit and rebuilds merged collision with
+  per-unit group enable bits; ray, sweep and closest-point queries skip disabled groups. The l2_hubhall trigger
+  plane 2571 disables model 5 and enables model 1 in `GameReal.TerrainGroupNativeUpdatesMergedCollision`.
 - [U] Moving terrain groups: which instance drives them, and their runtime transforms.
 - [U] Object-DRM markup and per-instance collision (not decoded).
