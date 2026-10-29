@@ -196,6 +196,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     bindUber();
     bindTerrain();
     bindLightHealth();
+    bindMarkup();
     player_.spawn(spawn.pos, spawn.yaw);
     prev_ = player_.state();
     cam_.yaw = player_.state().yaw;

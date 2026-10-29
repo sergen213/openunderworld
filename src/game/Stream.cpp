@@ -210,6 +210,7 @@ void World::rebuildCollision() {
         }
         for (collision::Markup m : c.markup) {
             for (auto& p : m.points) p += u.offset;
+            if (disabledMarkup_.contains({u.data.name, m.id})) m.type = kMarkupDisabled;
             col_.markup.push_back(std::move(m));
         }
     }

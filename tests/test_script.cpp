@@ -172,7 +172,7 @@ TEST(ScriptRuntime, VolumeHandlerSleepsAcrossTicks) {
     type.id = 100;
     Function onIn;
     onIn.vtIndex = kVtOnIn; onIn.self = {2, 0x64}; onIn.localCount = 1;
-    onIn.code = {ins(0x0F, 4), ins(0x04, 1), ins(0x2F), delay, ins(0x7C),
+    onIn.code = {ins(0x0F, 4), ins(0x04, 1), ins(0x2F), delay, ins(0x80),
                  ins(0x0F, 8), ins(0x04, 2), ins(0x2F), ins(0x7B)};
     type.functions = {onIn};
     auto program = std::make_shared<vm::Program>(std::vector<ScriptType>{type});
@@ -337,7 +337,7 @@ TEST(ScriptVm, SleepResumesNestedHandler) {
     type.id = 100;
     Function child;
     child.self = {2, 0x80}; child.localCount = 1;
-    child.code = {pushFloat(0.02f), ins(0x7C), ins(0x0F, 16), ins(0x04, 7), ins(0x2F), ins(0x7B)};
+    child.code = {pushFloat(0.02f), ins(0x80), ins(0x0F, 16), ins(0x04, 7), ins(0x2F), ins(0x7B)};
     Function main;
     main.vtIndex = 54; main.self = {2, 0x64}; main.localCount = 1;
     auto call = ins(0x66); call.ptrs = {child.self};
@@ -972,4 +972,53 @@ TEST(ScriptRealData, ChapterEndCinematicsHaveRuntimeScripts) {
         ASSERT_TRUE(cinematic) << unit;
         EXPECT_TRUE(cinematic->script) << unit;
     }
+}
+
+// SLEEP (0x7C) yields one tick and pops nothing (tru.exe 0x57CE50 case 0x7B); real data uses it with an empty stack.
+TEST(ScriptVm, SleepYieldsOneTickWithoutOperand) {
+    auto ins = [](uint8_t op, int32_t arg = 0) { Instr i; i.op = op; i.arg = arg; return i; };
+    ScriptType type;
+    type.id = 100;
+    Function f;
+    f.vtIndex = 54; f.self = {2, 0x64}; f.localCount = 1;
+    f.code = {ins(0x7C), ins(0x0F, 4), ins(0x04, 9), ins(0x2F), ins(0x7B)};
+    type.functions = {f};
+    auto program = std::make_shared<vm::Program>(std::vector<ScriptType>{type});
+    auto object = program->instantiate(1, 100);
+    vm::Machine machine([&](int32_t) { return object; }, [&](vm::NativeContext&) { return false; });
+    ASSERT_TRUE(machine.call(*object, 54));
+    EXPECT_TRUE(machine.active());
+    EXPECT_FALSE(object->fields.contains(4));
+    ASSERT_TRUE(machine.tick(1.0f / 60));
+    EXPECT_FALSE(machine.active());
+    EXPECT_EQ(object->fields[4], 9u);
+}
+
+// A blocking native (instanceref WaitUntilBirthed) retries the same call each tick until it is satisfied.
+TEST(ScriptVm, BlockingNativeRetriesCall) {
+    auto ins = [](uint8_t op, int32_t arg = 0) { Instr i; i.op = op; i.arg = arg; return i; };
+    ScriptType native;
+    native.id = 51; native.nativeName = "instanceref";
+    Function wait; wait.self = {1, 0x54}; wait.native = true;
+    native.functions = {wait};
+    ScriptType type;
+    type.id = 100;
+    Function f;
+    f.vtIndex = 54; f.self = {2, 0x64}; f.localCount = 1;
+    Instr call = ins(0x65); call.ptrs = {wait.self};
+    f.code = {ins(0x0F, 8), call, ins(0x0F, 4), ins(0x04, 5), ins(0x2F), ins(0x7B)};
+    type.functions = {f};
+    auto program = std::make_shared<vm::Program>(std::vector<ScriptType>{native, type});
+    auto object = program->instantiate(1, 100);
+    int calls = 0;
+    vm::Machine machine([&](int32_t) { return object; }, [&](vm::NativeContext& nc) {
+        nc.wait = ++calls < 3;
+        return std::string_view(nc.name) == "instanceref";
+    });
+    ASSERT_TRUE(machine.call(*object, 54));
+    ASSERT_TRUE(machine.tick(0.1f));
+    EXPECT_FALSE(object->fields.contains(4));
+    ASSERT_TRUE(machine.tick(0.1f));
+    EXPECT_EQ(calls, 3);
+    EXPECT_EQ(object->fields[4], 5u);
 }

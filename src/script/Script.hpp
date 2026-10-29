@@ -108,7 +108,8 @@ bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b);
 
 // ---- runtime ------------------------------------------------------------------------------------------
 enum class Kind : uint8_t { Volume, Plane, Switch, Door, Block, Scripted };
-enum class EventKind : uint8_t { Enter, FirstIn, In, Out, Cross, Use, Activate, Start, Main, Checkpoint, CinematicEnd };
+enum class EventKind : uint8_t { Enter, FirstIn, In, Out, Cross, Use, Activate, Start, Main, Checkpoint, CinematicEnd,
+                                 PlayerMessage }; // PlayerMessage: target = INSTANCE_Post message id sent to Lara
 const char* eventName(EventKind k);
 struct Event {
     EventKind kind;
@@ -176,6 +177,10 @@ public:
     void setLightNative(LightNative native) { light_ = std::move(native); }
     using HealthNative = std::function<bool(uint32_t function, std::span<const vm::Value> args, uint32_t& result)>;
     void setHealthNative(HealthNative native) { health_ = std::move(native); }
+    // markup SetEnabled (0) / IsEnabled (1) on the markup with `id` of the calling object's unit (tru.exe 0x4A56B0).
+    using MarkupNative = std::function<bool(const std::string& unit, uint32_t id, uint32_t function,
+                                            std::span<const vm::Value> args, uint32_t& result)>;
+    void setMarkupNative(MarkupNative native) { markup_ = std::move(native); }
     // Keeps objects of units still present, adds new units, drops missing ones. Throws cdc::FormatError.
     void setUnits(const std::vector<UnitRef>& units);
     void addObject(Object o, bool start = true); // setUnits and tests; applies pending restored state
@@ -187,9 +192,13 @@ public:
     const std::vector<Event>& events() const { return events_; } // last tick, dispatch order
     uint64_t visibilityVersion() const { return visibilityVersion_; }
     uint32_t unitEffect() const { return unitEffect_; }
+    // globaleffect FadeOut/FadeIn screen wipe: 0 = clear, 1 = black; moves by 1/frames each tick.
+    float screenFade() const { return fade_; }
     bool holding() const { return holding_; }  // last tick: Lara grips a push block (interact held next to it)
     vec3 carried() const { return carried_; }  // last tick: displacement of the gripped block; move Lara by it
     uint64_t ticks() const { return tick_; }
+    // Handler failures since construction: (intro uid, Machine::failure reason) -> count. The survey reads these.
+    const std::map<std::pair<int32_t, std::string>, size_t>& failures() const { return failures_; }
     // Model-space bone palette of a posed object (animated Switch/Door; a displaced Block or a moved physics door
     // gets one matrix for every vertex). nullopt = bind pose.
     std::optional<std::vector<glm::mat4>> pose(const Object& o) const;
@@ -206,6 +215,7 @@ private:
     void addUnit(const UnitRef& u);
     void fire(EventKind k, Object& o, bool announce = true);
     Object* findMut(int32_t uid);
+    void recordFailure(const Object& o);
 
     const cdc::BigfileSet* bigfile_ = nullptr;
     std::shared_ptr<vm::Instance> playerScript_;
@@ -215,6 +225,7 @@ private:
     TerrainNative terrain_;
     LightNative light_;
     HealthNative health_;
+    MarkupNative markup_;
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;
     struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips; };
@@ -227,6 +238,11 @@ private:
     uint64_t visibilityVersion_ = 0;
     uint32_t unitEffect_ = 0;
     uint64_t tick_ = 0;
+    std::map<std::pair<int32_t, std::string>, size_t> failures_;
+    int fallbackDepth_ = 0;
+    struct Clock { int state = 0; float elapsed = 0, alarm = 0; }; // state 0 stopped, 1 paused, 2 running
+    std::map<uint64_t, Clock> clocks_; // (uid << 32) | member offset
+    float fade_ = 0, fadeTarget_ = 0, fadeStep_ = 0;
     vec3 lastPos_{0};
     bool hasLast_ = false, interactHeld_ = false, holding_ = false;
     vec3 carried_{0};

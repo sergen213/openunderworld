@@ -181,16 +181,46 @@ void World::bindLightHealth() {
         return true;
     });
     script_.setHealthNative([this](uint32_t function, std::span<const script::vm::Value> args, uint32_t& result) {
-        if (function != 9 || !args.empty()) return false;
-        result = std::bit_cast<uint32_t>(health_.value()); // instance property 0x1D (tru.exe 0x4A5200)
+        if (function == 9 && args.empty()) {
+            result = std::bit_cast<uint32_t>(health_.value()); // instance property 0x1D (tru.exe 0x4A5200)
+            return true;
+        }
+        // fn 1 (0x4A50F0): INSTANCE_Post(0xD, value), scripts pass 12345 to kill [I: absolute damage];
+        // fn 2 (0x4A50D0 -> 0x5D3C90): hit message 0x11C with float(amount) and the type argument [I: same type ids].
+        if (function == 1 && args.size() == 1) return health_.damage(float(int32_t(args[0].bits)), kDamageAbsolute), true;
+        if (function == 2 && (args.size() == 1 || args.size() == 2))
+            return health_.damage(float(int32_t(args[0].bits)), args.size() == 2 ? int(args[1].bits) : kDamageLight), true;
+        return false;
+    });
+}
+
+// markup SetEnabled (fn 0) / IsEnabled (fn 1): tru.exe 0x4A56B0 sets/clears bit 31 of the markup box flags, which the
+// traversal queries skip; 0x4A5720 reports it (the owner-instance checks of 0x5BE2F0 are not modelled).
+void World::bindMarkup() {
+    script_.setMarkupNative([this](const std::string& unit, uint32_t id, uint32_t function,
+                                   std::span<const script::vm::Value> args, uint32_t& result) {
+        const auto key = std::make_pair(unit, uint16_t(id));
+        if (function == 1) {
+            result = markupEnabled(unit, key.second);
+            return true;
+        }
+        const bool enabled = (args[0].bits & 0xFF) != 0;
+        if (enabled ? !disabledMarkup_.erase(key) : !disabledMarkup_.insert(key).second) return true; // unchanged
+        for (const auto& u : units_)
+            if (u.data.name == unit)
+                for (size_t i = 0; i < u.data.col.markup.size(); ++i)
+                    if (u.data.col.markup[i].id == key.second)
+                        col_.markup[u.markupBase + i].type = enabled ? u.data.col.markup[i].type : kMarkupDisabled;
         return true;
     });
 }
 
 void World::bindMultibody() {
-    script_.setMessageNative([](uint32_t, uint32_t, std::string_view payload) {
-        // The app already owns one cinematic at a time, and enemy birth/generator state is driven by Enemies.
-        return payload == "stopOthers" || payload == "enemyBirthed";
+    script_.setMessageNative([](uint32_t, uint32_t, std::string_view) {
+        // Send (0x4A2E70) posts to the channel's native subscribers; a post nobody consumes is a no-op in the exe too.
+        // Ours: the app owns one cinematic at a time ("stopOthers") and Enemies drives birth/generator state
+        // ("enemyBirthed"); UI/HUD channel subscribers are not modelled [U].
+        return true;
     });
     script_.setMultibodyNative([this](int32_t uid, uint32_t function, std::span<const script::vm::Value> args,
                                       uint32_t& result) {

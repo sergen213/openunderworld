@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -122,13 +123,14 @@ bool Machine::call(Instance& object, int16_t vt) {
     const Function* f = vt == -2 ? object.program->startup(object.typeId)
         : vt == -3 ? object.program->mainFunction(object.typeId) : object.program->method(object.typeId, vt);
     if (!f) return true; // inherited empty/no handler
-    frames_.clear(); steps_ = 0; wait_ = 0;
+    frames_.clear(); steps_ = 0; wait_ = 0; failure_.clear();
     if (!push(object, *f)) return false;
     return run() != Step::Failed;
 }
 
 bool Machine::tick(float seconds) {
     if (frames_.empty()) return true;
+    failure_.clear();
     wait_ = std::max(0.0f, wait_ - std::max(0.0f, seconds));
     if (wait_ > 0) return true;
     return run() != Step::Failed;
@@ -138,6 +140,7 @@ Machine::Step Machine::run() {
     while (!frames_.empty()) {
         const Step result = step();
         if (result == Step::Failed) {
+            if (failure_.empty()) failure_ = "budget/stack";
             frames_.clear();
             return result;
         }
@@ -211,7 +214,7 @@ bool Machine::write(const Value& destination, const Value& source) {
     }
     if (destination.kind == Value::Kind::Member) {
         auto o = resolveObject(destination);
-        if (!o) return false;
+        if (!o) return true; // the exe skips stores through a null object (MOVE cases 0x2E/0x2F)
         if (src.kind == Value::Kind::Constant && src.text) {
             o->strings[destination.offset] = *src.text;
             o->fields[destination.offset] = !src.text->empty();
@@ -220,23 +223,27 @@ bool Machine::write(const Value& destination, const Value& source) {
         }
         return true;
     }
-    return false;
+    return destination.kind == Value::Kind::Scalar && destination.bits == 0; // null address: skipped
 }
 
 int Machine::invoke(Instance& current, const Function& f, Value receiver, Frame& frame) {
     if (frame.stack.size() < size_t(f.argCount) + (f.returnType != 0)) return 0;
-    std::span<const Value> args(frame.stack.end() - f.argCount, f.argCount);
-    frame.stack.resize(frame.stack.size() - f.argCount);
-    Value resultAddress;
-    if (f.returnType) {
-        resultAddress = frame.stack.back(); frame.stack.pop_back();
-    }
+    if (receiver.kind == Value::Kind::Local) receiver = read(receiver); // object or native value held in a local
+    const std::vector<Value> args(frame.stack.end() - f.argCount, frame.stack.end());
+    const Value resultAddress = f.returnType ? *(frame.stack.end() - f.argCount - 1) : Value{};
+    Value result;
     if (f.native) {
         NativeContext nc{current.program->owner(&f), current.program->functionIndex(&f), receiver, args, {}};
-        if (!native_(nc)) return 0;
-        if (f.returnType && !write(resultAddress, nc.result)) return 0;
-        return 1;
+        nc.name = current.program->nativeName(nc.typeId);
+        if (!native_(nc)) {
+            failure_ = std::string("native ") + nc.name + " fn " + std::to_string(nc.function);
+            return 0;
+        }
+        if (nc.wait) return 3; // blocking native (e.g. WaitUntilBirthed): stack untouched, retried next tick
+        result = nc.result;
     }
+    frame.stack.resize(frame.stack.size() - f.argCount - (f.returnType != 0));
+    if (f.native) return f.returnType && !write(resultAddress, result) ? 0 : 1;
     auto target = resolveObject(receiver);
     if (!target) {
         if (f.returnType && !write(resultAddress, Value::scalar(0))) return 0;
@@ -251,7 +258,14 @@ Machine::Step Machine::step() {
     Frame& fr = frames_.back();
     Instance& object = *fr.object;
     const Function& f = *fr.function;
-    auto fail = [&] { return Step::Failed; };
+    auto fail = [&] {
+        if (failure_.empty() && fr.pc < f.code.size()) {
+            char buf[16];
+            std::snprintf(buf, sizeof buf, "op 0x%02X", f.code[fr.pc].op);
+            failure_ = buf;
+        }
+        return Step::Failed;
+    };
     auto done = [&] { return Step::Complete; };
     auto suspend = [&] { return Step::Suspended; };
     auto pop = [&]() -> Value {
@@ -266,7 +280,7 @@ Machine::Step Machine::step() {
     };
     size_t& pc = fr.pc;
     while (pc < f.code.size()) {
-        if (++steps_ > 100000) return fail();
+        if (++steps_ > 100000) { failure_ = "budget"; return fail(); }
         const Instr& in = f.code[pc];
         const uint32_t arg = uint32_t(in.arg);
         auto pushScalar = [&](uint32_t v) { fr.stack.push_back(Value::scalar(v)); };
@@ -279,21 +293,31 @@ Machine::Step Machine::step() {
             while (pc < f.code.size() && f.code[pc].word < target) ++pc;
             return pc < f.code.size() && f.code[pc].word == target;
         };
-        auto direct = [&](bool popReceiver, bool virtualCall) -> bool {
-            if (in.ptrs.empty()) return false;
+        // 0 failed, 1 continue, 2 suspended: a blocking native retries this instruction next tick.
+        auto callWith = [&](const Function& callee, const Value& receiver, bool popped) -> int {
+            const int invoked = invoke(object, callee, receiver, fr);
+            if (!invoked) return 0;
+            if (invoked == 3) {
+                if (popped) fr.stack.push_back(receiver);
+                wait_ = 0;
+                return 2;
+            }
+            if (invoked == 1) ++pc;
+            return 1;
+        };
+        auto direct = [&](bool popReceiver, bool virtualCall) -> int {
+            if (in.ptrs.empty()) return 0;
             Value receiver = popReceiver ? pop() : Value::object(object.uid);
             const Function* callee = object.program->method(in.ptrs.back());
-            std::shared_ptr<Instance> target;
-            if (virtualCall) {
-                target = resolveObject(receiver);
-                if (target && callee) callee = target->program->method(target->typeId, callee->vtIndex);
+            if (virtualCall && callee && callee->vtIndex >= 0) {
+                // Dispatch on the receiver's own type; keep the static callee if that type does not override it.
+                if (auto target = resolveObject(receiver))
+                    if (const Function* own = target->program->method(target->typeId, callee->vtIndex)) callee = own;
             }
-            if (!callee) return false;
-            const int invoked = invoke(object, *callee, receiver, fr);
-            if (!invoked) return false;
-            if (invoked == 1) ++pc;
-            return true;
+            if (!callee) return 0;
+            return callWith(*callee, receiver, popReceiver);
         };
+        auto called = [&](int r) { return r == 0 ? fail() : r == 2 ? suspend() : Step::Continue; };
         switch (in.op) {
         case 0x00: ++pc; break; // NOP (statement number)
         case 0x01: if (fr.stack.empty()) return fail(); fr.stack.pop_back(); ++pc; break;
@@ -323,8 +347,8 @@ Machine::Step Machine::step() {
         case 0x0C: pushMember(object.uid, arg, 0xFF); ++pc; break;
         case 0x0D: pushMember(object.uid, arg, 0xFFFF); ++pc; break;
         case 0x0F: fr.stack.push_back(member(object.uid, arg)); ++pc; break;
-        case 0x11: case 0x12: case 0x15: { // member of an object on the stack
-            Value v = pop(); auto o = resolveObject(v); if (!o) return fail();
+        case 0x11: case 0x12: case 0x15: { // member of an object on the stack; a null object yields 0 (exe 0x57D040)
+            Value v = pop(); auto o = resolveObject(v); if (!o) { pushScalar(0); ++pc; break; }
             const auto it = o->fields.find(arg);
             if (in.op == 0x15 && it == o->fields.end() && o->typeId == 5) fr.stack.push_back(Value::object(o->uid));
             else if (it == o->fields.end()) pushScalar(0);
@@ -335,10 +359,10 @@ Machine::Step Machine::step() {
             ++pc; break;
         }
         case 0x13: {
-            Value v = pop(); auto o = resolveObject(v); if (!o) return fail();
-            fr.stack.push_back(read(member(o->uid, arg))); ++pc; break;
+            Value v = pop(); auto o = resolveObject(v);
+            fr.stack.push_back(o ? read(member(o->uid, arg)) : Value::scalar(0)); ++pc; break;
         }
-        case 0x14: { Value v = pop(); auto o = resolveObject(v); if (!o) return fail(); fr.stack.push_back(member(o->uid, arg)); ++pc; break; }
+        case 0x14: { Value v = pop(); auto o = resolveObject(v); fr.stack.push_back(o ? member(o->uid, arg) : Value::scalar(0)); ++pc; break; }
         case 0x2E: { // MOVE8: source on top, destination below it
             if (fr.stack.size() < 2) return fail();
             const uint32_t src = load(pop());
@@ -454,14 +478,11 @@ Machine::Step Machine::step() {
             Value receiver = pop();
             const Function* callee = object.program->method(in.ptrs[0]);
             if (!callee) return fail();
-            const int invoked = invoke(object, *callee, receiver, fr);
-            if (!invoked) return fail();
-            if (invoked == 1) ++pc;
-            return Step::Continue;
+            return called(callWith(*callee, receiver, true));
         }
-        case 0x66: case 0x67: case 0x68: if (!direct(false, false)) return fail(); return Step::Continue; // this, direct/super
-        case 0x69: if (!direct(true, false)) return fail(); return Step::Continue;  // receiver, direct
-        case 0x6A: if (!direct(true, true)) return fail(); return Step::Continue;              // receiver, virtual
+        case 0x66: case 0x67: case 0x68: return called(direct(false, false)); // this, direct/super
+        case 0x69: return called(direct(true, false));  // receiver, direct
+        case 0x6A: return called(direct(true, true));   // receiver, virtual
         case 0x6B: case 0x6C: { // SSEQU / SSEQ1: replace this handler with the child sequence
             if (in.ptrs.empty()) return fail();
             Value receiver = in.op == 0x6B ? pop() : Value::object(object.uid);
@@ -469,6 +490,11 @@ Machine::Step Machine::step() {
             if (!callee) return fail();
             const int invoked = invoke(object, *callee, receiver, fr);
             if (!invoked) return fail();
+            if (invoked == 3) {
+                if (in.op == 0x6B) fr.stack.push_back(receiver);
+                wait_ = 0;
+                return suspend();
+            }
             if (invoked == 1) return done();
             frames_.erase(frames_.end() - 2); // discard the parent; its caller resumes after the sequence
             return Step::Continue;
@@ -485,17 +511,21 @@ Machine::Step Machine::step() {
         }
         case 0x78: case 0x79: case 0x7A:
             return done(); // other thread boundaries remain unsupported
-        case 0x7C: case 0x80: { // SLEEP / WAIT
+        case 0x7C: wait_ = 0; ++pc; return suspend(); // SLEEP: yield until the next tick (exe case 0x7B pops nothing)
+        case 0x80: { // WAIT seconds
             if (fr.stack.empty()) return fail();
             wait_ = std::max(0.0f, asFloat(load(pop())));
             ++pc;
             return suspend();
         }
-        case 0x7D: { // STATE: null the receiver unless it derives from the operand type
+        case 0x7D: { // STATE: pop the state index; tru.exe 0x57C830 ends this object's threads and enters that state
             if (fr.stack.empty()) return fail();
-            auto o = resolveObject(fr.stack.back());
-            if (!o || !in.ref || !o->program->isA(o->typeId, in.ref)) fr.stack.back() = Value::scalar(0);
-            ++pc; break;
+            pop();
+            size_t k = 0;
+            while (frames_[k].object != &object) ++k;
+            frames_.erase(frames_.begin() + ptrdiff_t(k) + 1, frames_.end());
+            frames_[k].pc = frames_[k].function->code.size(); // the state's own code is not run [U]
+            return Step::Continue;
         }
         case 0x7E: { // ISTYPE
             Value v = pop(); auto o = resolveObject(v);

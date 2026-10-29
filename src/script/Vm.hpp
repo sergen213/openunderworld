@@ -57,6 +57,8 @@ struct NativeContext {
     Value receiver;
     std::span<const Value> args;
     Value result;
+    const char* name = "";  // native type name ("instanceref", ...)
+    bool wait = false;      // set by a blocking native: the call is retried next tick (stack untouched)
 };
 
 class Machine {
@@ -69,6 +71,7 @@ public:
     bool call(Instance& object, int16_t vt); // false: unsupported opcode/call/binding or budget exceeded
     bool tick(float seconds);                // resume after SLEEP/WAIT; false on execution failure
     bool active() const { return !frames_.empty(); }
+    const std::string& failure() const { return failure_; } // why the last call/tick failed ("op 0x78", "native x fn 3", ...)
 
 private:
     struct Frame {
@@ -95,6 +98,7 @@ private:
     std::deque<Frame> frames_;
     size_t steps_ = 0;
     float wait_ = 0;
+    std::string failure_;
 };
 
 } // namespace ou::script::vm

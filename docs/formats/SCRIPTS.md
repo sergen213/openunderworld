@@ -156,6 +156,41 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   are not implemented.
 - cdcEngineDXHR/cdcScript/ByteCodeEnum.h supplies the opcode numbering; no interpreter exists in the research
   clones. No Wine process is needed for this implementation.
+- [O] Interpreter details read from 0x57CE50 (switch on opcode − 1): **SLEEP 0x7C** pops nothing and yields until
+  the next frame (only WAIT 0x80 takes seconds); **STATE 0x7D** pops a state index and `0x57C830` ends the object's
+  threads and enters that state (ours ends the object's frames; the state's own code is not run [U]); PUSHM*/PUSHMA
+  on a null object push 0 and MOVE through a null address is skipped (no failure). Native receivers held in a
+  local (e.g. `PUSHLA 0` for `this`) are dereferenced before the call.
+- [O] Native function tables: each `*_ScriptType` vtable slot 3 is a bind function calling `FUN_005768f0(index,
+  thunk)` per native function (rtti.tsv slots). Added bindings, by the thunks' targets:
+  `instanceref` Get (7) returns null when unbound (0x4AC070) and WaitUntilLoaded/Birthed (3/6) **block** — the VM
+  retries the call each tick (`NativeContext::wait`) until the target's unit is loaded; `clock` 0–10 (Start/Stop/
+  Pause/Resume/IsRunning/GetTime/GetAlarm/SetAlarm/same-clock, 0x4A3450..0x4A34F0, advanced per tick as 0x4A3380;
+  alarm callbacks [U]); `globaleffect` FadeOut/FadeIn (5/6, 0x4A4EB0/0x4A4EF0 screen wipe → `Runtime::screenFade`,
+  not rendered yet); `larabase` 59/60 post messages 0x1D5/0x1D6 to Lara (`EventKind::PlayerMessage`, meaning [U]);
+  `markup` SetEnabled/IsEnabled (0/1, 0x4A56B0: box flag bit 31) → `World` keeps disabled (unit, markup id) pairs and
+  gives that markup type 0xFF so no traversal query matches it; `triggervolumebase` Add/Remove instance (0/1) accept
+  Lara or null (ours only test Lara), `triggerplanebase` 0/1 are empty in the exe; `health` 1/2 on Lara's health
+  (Post 0xD / hit 0x11C, scripts pass 12345 or 1000: death volumes/planes) damage her [I: absolute / given type];
+  `instance` Kill (10, 0x5B5740 dead flag) hides the object; `watervolumebase` reset (3) takes no argument;
+  `messagechannel` Send always succeeds (unconsumed posts are no-ops in the exe too).
+
+### Survey (`OU_SCRIPT_SURVEY=1 ou_game_tests --gtest_filter=GameReal.ScriptSurvey`)
+
+Static: bytecode of every distinct script type of the 82 units, 362 distinct native functions called; opcodes the VM lacks:
+DREF/BOUNDS 0x1D–0x22 (57 sites), TSSTART/TPSTART/TEND 0x78–0x7A (4 sites). Dynamic: every unit loaded as a streaming
+`World` (natives bound), every volume entered, plane crossed, switch used, 300 ticks; handler failures counted as
+(start unit, object, reason) triples:
+
+| | Failures | Top reasons |
+|---|---|---|
+| Before (HEAD c3c69f2) | 1 390 | markup 0 (546), instanceref Get on unloaded target (232), SLEEP with empty stack (98), CALL5 (39), MOVE32 (34), music 2 (37, receiver in a local) |
+| After | 404 | enemybase 26/16/22 (80, AI), CALL5 0x6A (36, l3_chapel globals member 12 is not modelled), tentacle uber commands (31: `formats::loadUberObject` rejects their target types), spline 5 (27, l7 `natla_end_mover`), generatorbase 3/4 (22), uigamedata 1 (16), modifiable 7 (16) |
+
+The survey also found a crash: cyclic static links (l2 planes) recursed forever in the legacy fallback; it is now
+bounded to depth 8. The three script-only chapter ends (l1_ship_sinking_hall plane 1074 / volume 1082 → 1005,
+l6_ship_engine_hall plane 7565 → 1387, l3_main_hall volume 4128 → 4108 → post-stream helper → 4070) run their real
+handlers without a stop (`GameReal.ScriptedChapterEndChainsStartNextChapter`).
 
 | Piece | Status |
 |---|---|

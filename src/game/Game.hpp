@@ -392,6 +392,9 @@ public:
     // Interactive water (src/game/Water): ripple field + splash droplets around Lara, ticked with the world.
     const WaterSim& water() const { return water_; }
     bool lightEnabled(std::string_view unit, uint32_t lightId) const;
+    // Script markup.SetEnabled: disabled markup keeps its index but its type becomes kMarkupDisabled (no traversal).
+    static constexpr uint8_t kMarkupDisabled = 0xFF;
+    bool markupEnabled(const std::string& unit, uint16_t id) const { return !disabledMarkup_.contains({unit, id}); }
     uint64_t lightsVersion() const { return lightsVersion_; }
     // One-off splash on the active surface (shots, hazards, scripted impacts).
     void splashWater(vec3 pos, float strength = 1.0f) { water_.splash(pos, strength); }
@@ -470,6 +473,8 @@ private:
     void bindUber();
     void bindTerrain();
     void bindLightHealth();
+    void bindMarkup();
+    std::set<std::pair<std::string, uint16_t>> disabledMarkup_; // (unit, markup id)
     const formats::UberObjectData* prepareUber(const script::Object& o);
     std::map<int32_t, float> multibodyLo_, multibodyHi_; // native limits issued before hinges exist
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;

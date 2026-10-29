@@ -80,7 +80,7 @@ struct Views {
 };
 
 const char* kEventNames[] = {"enter", "firstin", "in", "out", "cross", "use", "activate", "start", "main", "checkpoint",
-                             "cinematicend"};
+                             "cinematicend", "playermessage"};
 
 glm::mat3 rotation(vec3 r) { // Rx(x) * Ry(y) * Rz(z) (cdc_Matrix_Build_XYZOrder 0x49D500, LEVELS.md)
     return glm::mat3(glm::rotate(glm::mat4(1), r.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), r.y, {0, 1, 0}) *
@@ -476,6 +476,12 @@ const Object* Runtime::find(int32_t uid) const {
 }
 Object* Runtime::findMut(int32_t uid) { return const_cast<Object*>(find(uid)); }
 
+void Runtime::recordFailure(const Object& o) {
+    if (!o.machine) return;
+    if (failures_[{o.uid, o.machine->failure()}]++ == 0)
+        std::fprintf(stderr, "script: uid %d (%s) handler stopped: %s\n", o.uid, o.name.c_str(), o.machine->failure().c_str());
+}
+
 void Runtime::endCinematic(int32_t uid) {
     if (Object* object = findMut(uid)) fire(EventKind::CinematicEnd, *object);
 }
@@ -513,12 +519,60 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
             return instance;
         };
         auto native = [this, source, resolve, auxiliary](vm::NativeContext& nc) -> bool {
+            const char* name = nc.name;
+            // Natives with no per-object state (tru.exe thunks that ignore the receiver value).
+            if (!std::strcmp(name, "globaleffect") && (nc.function == 5 || nc.function == 6) && nc.args.size() == 1) {
+                // FadeOut / FadeIn over N frames (0x4A4EB0 / 0x4A4EF0: GAMELOOP_SetScreenWipe(10, 100 | 0, max(N, 1))).
+                fadeTarget_ = nc.function == 5 ? 1.0f : 0.0f;
+                fadeStep_ = 1.0f / float(std::max<int32_t>(int32_t(nc.args[0].bits), 1));
+                return true;
+            }
+            if (!std::strcmp(name, "larabase") && (nc.function == 59 || nc.function == 60) && nc.args.empty()) {
+                // INSTANCE_Post(player, 0x1D5 | 0x1D6, 0) (0x778020 / 0x778040); the message's meaning is [U].
+                events_.push_back({EventKind::PlayerMessage, source, nc.function == 59 ? 0x1D5 : 0x1D6, tick_});
+                return true;
+            }
+            // Receiver-independent bindings whose side effects other engine systems own (sound: below, once bound).
+            for (const char* passive : {"soundgroup", "music", "corebase", "uipopupmgr", "uilocalstrproperty", "globaleffect"})
+                if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
+            // Receivers: a member address (object uid + offset), an object, or a native value held in a local.
             auto self = resolve(nc.receiver.uid);
+            const bool inLocal = nc.receiver.kind == vm::Value::Kind::Scalar;
+            uint32_t localValue = nc.receiver.bits;
+            if (inLocal && !std::strcmp(name, "instanceref")) {
+                auto target = resolve(int32_t(localValue));
+                if (nc.function == 7 && nc.args.empty()) { // Get: null when unbound (0x4AC070)
+                    nc.result = target ? vm::Value::object(target->uid) : vm::Value::scalar(0);
+                    return true;
+                }
+                if ((nc.function == 3 || nc.function == 6) && nc.args.empty()) { nc.wait = !target; return true; }
+            }
             if (!self || !self->program) return false;
             const auto program = self->program;
-            const char* name = program->nativeName(nc.typeId);
             const uint32_t off = nc.receiver.offset;
             auto field = [&]() -> uint32_t& { return self->fields[off]; };
+            if (!std::strcmp(name, "clock") && nc.receiver.kind == vm::Value::Kind::Member) {
+                Clock& c = clocks_[(uint64_t(uint32_t(self->uid)) << 32) | off]; // tru.exe 0x4A3450..0x4A34F0, update 0x4A3380
+                switch (nc.function) {
+                case 0: if (c.state != 2) c = {2, 0, c.alarm}; return true;         // Start
+                case 1: c.state = 0; return true;                                    // Stop
+                case 2: if (c.state == 2) c.state = 1; return true;                  // Pause
+                case 3: if (c.state == 1) c.state = 2; return true;                  // Resume
+                case 4: nc.result = vm::Value::scalar(c.state == 2); return true;     // IsRunning
+                case 5: case 7: nc.result = vm::Value::scalar(std::bit_cast<uint32_t>(c.elapsed)); return true;
+                case 6: case 8: nc.result = vm::Value::scalar(std::bit_cast<uint32_t>(c.alarm)); return true;
+                case 9:                                                                // SetAlarm
+                    if (nc.args.size() != 1) return false;
+                    c.alarm = std::bit_cast<float>(nc.args[0].bits);
+                    return true;
+                case 10:                                                               // same clock
+                    if (nc.args.size() != 1) return false;
+                    nc.result = vm::Value::scalar(nc.args[0].kind == vm::Value::Kind::Member && nc.args[0].uid == self->uid &&
+                                                  nc.args[0].offset == off);
+                    return true;
+                default: return false;
+                }
+            }
             if (!std::strcmp(name, "terraingroup") && (nc.function == 2 || nc.function == 3)) {
                 const Member* m = program->member(self->typeId, off);
                 if (!m || !m->init || !m->init2 || !terrain_ || (nc.function == 2 ? nc.args.size() != 1 : !nc.args.empty()))
@@ -537,9 +591,35 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 nc.result = vm::Value::scalar(result);
                 return true;
             }
-            if (!std::strcmp(name, "health") && nc.function == 9 && health_ && nc.args.empty()) {
+            // health on Lara's script: 9 current value; 1 / 2 hit her (death volumes and planes; non-player targets unsupported).
+            if (!std::strcmp(name, "health") && health_ &&
+                (nc.function == 9 || ((nc.function == 1 || nc.function == 2) && playerScript_ && self == playerScript_))) {
                 uint32_t result = 0;
                 if (!health_(nc.function, nc.args, result)) return false;
+                nc.result = vm::Value::scalar(result);
+                return true;
+            }
+            if (!std::strcmp(name, "triggerplanebase") && (nc.function == 0 || nc.function == 1)) return true; // 0x79D8E0: empty
+            if (!std::strcmp(name, "triggervolumebase") && (nc.function == 0 || nc.function == 1) && nc.args.size() == 1) {
+                // Add (0x4A43E0) / Remove (0x4A4410) an instance the volume tests. Ours test Lara only, so adding or
+                // removing her (or null) is satisfied; other instances are not tracked.
+                const vm::Value& a = nc.args[0];
+                int32_t uid = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
+                if (a.kind == vm::Value::Kind::Member) {
+                    const auto holder = resolve(a.uid);
+                    uid = holder ? int32_t(holder->fields[a.offset]) : 0;
+                }
+                return uid == 0 || (playerScript_ && uid == playerScript_->uid);
+            }
+            if (!std::strcmp(name, "markup") && (nc.function == 0 || nc.function == 1) && markup_) {
+                const Member* m = program->member(self->typeId, off);
+                // The calling intro's unit; unit/global scripts (auxiliary instances) use the unit of their program.
+                const auto owner = std::find_if(objects_.begin(), objects_.end(), [&](const Object& o) {
+                    return o.uid == self->uid || (self->uid < 0 && o.script && o.script->program == program);
+                });
+                if (!m || !m->init || owner == objects_.end() || nc.args.size() != (nc.function == 0 ? 1u : 0u)) return false;
+                uint32_t result = 0;
+                if (!markup_(owner->unit, *m->init, nc.function, nc.args, result)) return false;
                 nc.result = vm::Value::scalar(result);
                 return true;
             }
@@ -591,14 +671,13 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 return true;
             }
             if (!std::strcmp(name, "instanceref") && (nc.function == 3 || nc.function == 6)) { // loaded/birthed wait
-                if (!resolve(int32_t(field()))) return false;
+                nc.wait = !resolve(int32_t(field())); // blocks until the target's unit streams in
                 nc.result = vm::Value::scalar(0);
                 return true;
             }
-            if (!std::strcmp(name, "instanceref") && nc.function == 7) { // Get
+            if (!std::strcmp(name, "instanceref") && nc.function == 7) { // Get: null when unbound (0x4AC070)
                 auto target = resolve(int32_t(field()));
-                if (!target) return false;
-                nc.result = vm::Value::object(target->uid);
+                nc.result = target ? vm::Value::object(target->uid) : vm::Value::scalar(0);
                 return true;
             }
             if ((!std::strcmp(name, "unitref") && nc.function == 3) ||
@@ -612,7 +691,8 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 events_.push_back({EventKind::Checkpoint, self->uid, self->uid, tick_});
                 return true;
             }
-            if (!std::strcmp(name, "watervolumebase") && nc.function == 3 && nc.args.size() == 1) return true; // reset default level
+            // Reset water level (0x778430 posts 0x1B3 with the default; static water already sits at it).
+            if (!std::strcmp(name, "watervolumebase") && nc.function == 3 && nc.args.size() <= 1) return true;
             if (!std::strcmp(name, "watervolumebase") && nc.function == 4 && nc.args.empty()) {
                 nc.result = vm::Value::scalar(0); // static water: zero depth offset
                 return true;
@@ -665,6 +745,13 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 }
                 return false;
             }
+            if (!std::strcmp(name, "instance") && nc.function == 10 && nc.args.empty()) {
+                // Kill (0x4A3EC0 -> 0x5B5740 sets the dead flag 0x20): the object leaves the scene for good.
+                Object* object = findMut(self->uid);
+                if (!object) return false;
+                if (!object->hidden) object->hidden = true, ++visibilityVersion_;
+                return true;
+            }
             if (!std::strcmp(name, "instance") &&
                 (nc.function == 4 || nc.function == 5 || nc.function == 6 || nc.function == 7 || nc.function == 8 ||
                  nc.function == 9 || nc.function == 14 || nc.function == 15 || nc.function == 16 || nc.function == 26 || nc.function == 28 ||
@@ -711,7 +798,6 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 unitEffect_ = nc.args[0].bits; // tru.exe 0x6D6F20 writes the global post-effect scalar
                 return true;
             }
-            std::fprintf(stderr, "unsupported native uid %d type %s fn %u\n", self->uid, name, nc.function);
             return false;
         };
         auto cinematic = [this, source](vm::Instance& target, int16_t vt) {
@@ -726,25 +812,31 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
         } else {
             o.machine = std::make_shared<vm::Machine>(resolve, native, cinematic);
             completed = o.machine->call(*o.script, vt);
+            if (!completed) recordFailure(o);
             if (k == EventKind::Main) o.mainPending = false;
         }
     }
     if (events_.size() != eventCount || completed) return;
     const auto it = o.links.find(vt);
-    if (it == o.links.end()) return;
+    if (it == o.links.end() || fallbackDepth_ >= 8) return; // static links can form cycles (survey found l2 plane loops)
+    ++fallbackDepth_;
     for (const int32_t target : std::vector<int32_t>(it->second)) { // copy: activation may not invalidate
         events_.push_back({EventKind::Activate, source, target, tick_});
         Object* t = findMut(target);
         if (t) fire(EventKind::Use, *t, false);
         if (t && t->kind == Kind::Door && t->state == 0) t->state = t->clips ? 1 : 2, t->t = 0; // [I] doors only open
     }
+    --fallbackDepth_;
 }
 
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     events_.clear();
     ++tick_;
+    for (auto& [key, c] : clocks_) // 0x4A3380; alarm callbacks (fn 11 handler) are not run [U]
+        if (c.state == 2) c.elapsed += float(kDt);
+    fade_ = fade_ < fadeTarget_ ? std::min(fadeTarget_, fade_ + fadeStep_) : std::max(fadeTarget_, fade_ - fadeStep_);
     for (auto& o : objects_) {
-        if (o.machine && o.machine->active()) o.machine->tick(float(kDt));
+        if (o.machine && o.machine->active() && !o.machine->tick(float(kDt))) recordFailure(o);
         if (o.mainPending && (!o.machine || !o.machine->active())) fire(EventKind::Main, o);
     }
     holding_ = false, carried_ = vec3(0);

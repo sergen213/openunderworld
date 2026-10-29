@@ -787,8 +787,10 @@ start unit: l3_main_hall 4106 (prologue → 1), l1_cine_ship_sinking 1005, l2_cl
 `l3_caverns_start`, so the target is the lowest-numbered start unit after the current chapter. Trigger volumes link to
 these cinematics (l2 2564, l3_main_hall 4129, l4 5468/6407, l5 6866/6872); in our runtime the Activate of such a
 cinematic plays its cutscene (its `cinematic` member names the stream, docs/formats/CINEMATICS.md) and then starts the
-next chapter. The l1/l6/afterburn cinematics are only reached through unit scripts or other cinematics, which do not run
-yet [U]; `--chapter N` starts any chapter, `--cine NAME` plays any cutscene.
+next chapter. The l1/l6/afterburn cinematics are reached through other scripts: l1_ship_sinking_hall plane 1074 /
+volume 1082 → 1005, l6_ship_engine_hall plane 7565 → 1387, and l3_main_hall volume 4128 → cinematic 4108, whose
+post-stream helper plays 4070 [O bytecode]; all run natively (docs/formats/SCRIPTS.md "Survey"). `--chapter N` starts
+any chapter, `--cine NAME` plays any cutscene.
 
 **Pickups** [O names/counts, I roles]: `*_rw_artifact` (7..22 per chapter) = treasures, `*_rw_treasure` (one per
 chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot

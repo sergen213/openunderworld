@@ -3,6 +3,7 @@
 #include "cdc/Cdc.hpp"
 #include "engine/FrameClock.hpp"
 #include "formats/Formats.hpp"
+#include "script/Vm.hpp"
 
 #include <gtest/gtest.h>
 
@@ -1561,4 +1562,147 @@ TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
     EXPECT_NEAR(std::abs(b), 2.0f * std::abs(a), 0.05f);
     EXPECT_NEAR(std::abs(a), glm::radians(40.0f), 0.05f);
     EXPECT_GT(std::max(std::abs(a), std::abs(b)), 0.1f);
+}
+
+// Script coverage survey (docs/formats/SCRIPTS.md "Survey"). Static: native call sites per (native type, function)
+// and opcodes the VM lacks, over every distinct script type of the 82 units. Dynamic: each unit in a streaming World
+// (its natives bound) runs constructors/main scripts, every trigger volume entered, plane crossed and switch used,
+// then 300 ticks; handler failures are grouped by reason. Measurement only: run with OU_SCRIPT_SURVEY=1.
+TEST(GameReal, ScriptSurvey) {
+    if (!gameDir() || !std::getenv("OU_SCRIPT_SURVEY")) GTEST_SKIP() << "OU_GAME_DIR and OU_SCRIPT_SURVEY not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list);
+    std::vector<std::string> units;
+    const std::string text(list->begin(), list->end());
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty()) continue;
+        const std::string name = line.substr(line.rfind('\\') + 1);
+        if (bf.read("pc-w\\" + name + ".drm")) units.push_back(name);
+    }
+    const auto implemented = [](uint8_t op) {
+        return op <= 0x15 || (op >= 0x2E && op <= 0x31) || op == 0x34 || (op >= 0x3D && op <= 0x6C) || op == 0x77 ||
+               (op >= 0x7B && op <= 0x7E) || op == 0x80;
+    };
+    std::map<std::string, size_t> calls;
+    std::map<uint8_t, size_t> missingOps;
+    std::set<uint32_t> seenTypes;
+    std::map<std::string, game::UnitData> cache;
+    std::map<std::string, std::set<std::string>> failures; // reason -> "unit uid name"
+    for (const auto& unit : units) {
+        const auto drm = cdc::parseDrm(*bf.read("pc-w\\" + unit + ".drm"));
+        std::vector<script::ScriptType> types;
+        for (uint32_t i = 0; i < drm.sections.size(); ++i)
+            if (drm.sections[i].type == cdc::SectionType::Script) types.push_back(script::parseScriptType(drm, i));
+        auto program = std::make_shared<script::vm::Program>(types);
+        for (const auto& t : types) {
+            if (!seenTypes.insert(t.id).second) continue;
+            for (const auto& f : t.functions)
+                for (const auto& in : f.code) {
+                    if (!implemented(in.op)) ++missingOps[in.op];
+                    if (in.op < 0x65 || in.op > 0x6C) continue;
+                    for (const auto& p : in.ptrs)
+                        if (const auto* callee = program->method(p); callee && callee->native)
+                            ++calls[std::string(program->nativeName(program->owner(callee))) + " fn " +
+                                    std::to_string(program->functionIndex(callee))];
+                }
+        }
+        game::World w(game::UnitLoader([&](const std::string& name) {
+                          auto& d = cache[name];
+                          if (!d.drm) d = game::loadUnitData(bf, name);
+                          return d;
+                      }),
+                      unit, game::loadLaraAnims(bf), game::Spawn{{0, 0, 0}, 0});
+        w.script().setBigfile(&bf);
+        w.tick({});
+        auto& rt = w.script();
+        const vec3 away(1e7f, 1e7f, 1e7f);
+        std::vector<std::pair<script::Kind, std::pair<vec3, vec3>>> todo;
+        for (const auto& o : rt.objects()) {
+            if (o.unit != unit) continue;
+            const glm::mat4 rot = glm::rotate(glm::mat4(1), o.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), o.rot.y, {0, 1, 0}) *
+                                  glm::rotate(glm::mat4(1), o.rot.z, {0, 0, 1});
+            const vec3 n = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
+            const vec3 c = o.pos - vec3(0, 0, script::kTestPointHeight);
+            todo.push_back({o.kind, {c + n * 1000.0f, c - n * 1000.0f}});
+            if (o.kind == script::Kind::Volume) todo.back().second = {c, away};
+            if (o.kind == script::Kind::Switch) todo.back().second = {o.pos, o.pos};
+        }
+        for (const auto& [kind, path] : todo) {
+            if (kind == script::Kind::Switch) {
+                for (int i = 0; i < 60; ++i) rt.tick({path.first, 0, {}, i < 30}, &w.collision());
+            } else if (kind == script::Kind::Volume || kind == script::Kind::Plane) {
+                rt.tick({away, 0, {}, false}, &w.collision());
+                rt.tick({path.first, 0, {}, false}, &w.collision());
+                rt.tick({path.second, 0, {}, false}, &w.collision());
+            }
+        }
+        for (int i = 0; i < 300; ++i) rt.tick({away, 0, {}, false}, &w.collision());
+        for (const auto& [key, count] : rt.failures()) {
+            const auto* o = rt.find(key.first);
+            failures[key.second].insert(unit + " " + std::to_string(key.first) + " " + (o ? o->name : std::string("?")));
+        }
+    }
+    std::vector<std::pair<size_t, std::string>> byCount;
+    for (const auto& [k, n] : calls) byCount.push_back({n, k});
+    std::sort(byCount.rbegin(), byCount.rend());
+    size_t sites = 0;
+    for (const auto& [n, k] : byCount) sites += n;
+    std::printf("== native call sites (distinct script types): %zu sites, %zu distinct native functions; top 40 ==\n",
+                sites, byCount.size());
+    for (size_t i = 0; i < byCount.size() && i < 40; ++i) std::printf("%6zu %s\n", byCount[i].first, byCount[i].second.c_str());
+    std::printf("== opcodes without VM support ==\n");
+    for (const auto& [op, n] : missingOps) std::printf("  0x%02X %zu\n", op, n);
+    std::vector<std::pair<size_t, std::string>> failed;
+    size_t objects = 0;
+    for (const auto& [k, v] : failures) failed.push_back({v.size(), k}), objects += v.size();
+    std::sort(failed.rbegin(), failed.rend());
+    std::printf("== dynamic handler failures: %zu (start unit, object, reason) triples ==\n", objects);
+    for (const auto& [n, k] : failed) {
+        std::printf("%6zu %s:", n, k.c_str());
+        size_t shown = 0;
+        for (const auto& o : failures[k]) if (shown++ < 4) std::printf(" [%s]", o.c_str());
+        std::printf("\n");
+    }
+}
+
+// The three chapter ends reached only through other scripts (docs/GAMEPLAY.md "Level ends"): a trigger (or the
+// preceding cinematic's post-stream helper) runs its real bytecode, which activates the closing cinematic_object;
+// World plays it and starts the next chapter.
+TEST(GameReal, ScriptedChapterEndChainsStartNextChapter) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    struct Chain { const char* unit; int chapter; int32_t trigger; int32_t cinematic; int next; };
+    for (const Chain c : {Chain{"l1_ship_sinking_hall", 1, 1074, 1005, 2}, Chain{"l6_ship_engine_hall", 6, 7565, 1387, 7},
+                          Chain{"l3_main_hall", 3, 4128, 4070, 4}}) {
+        game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), c.unit,
+                      game::loadLaraAnims(bf));
+        w.script().setBigfile(&bf);
+        w.chapter = c.chapter;
+        std::vector<std::string> played;
+        w.onCinematic = [&](const std::string& name, bool) { played.push_back(name); };
+        w.tick({});
+        const auto* t = w.script().find(c.trigger);
+        ASSERT_TRUE(t) << c.unit;
+        const glm::mat4 rot = glm::rotate(glm::mat4(1), t->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), t->rot.y, {0, 1, 0}) *
+                              glm::rotate(glm::mat4(1), t->rot.z, {0, 0, 1});
+        const vec3 n = glm::normalize(vec3(rot * glm::vec4(0, 1, 0, 0)));
+        const vec3 base = t->pos - vec3(0, 0, script::kTestPointHeight);
+        game::PlayerState s = w.player().state();
+        for (const vec3 p : t->kind == script::Kind::Plane ? std::vector<vec3>{base + n * 300.0f, base - n * 300.0f}
+                                                           : std::vector<vec3>{base + vec3(5000, 0, 0), base}) {
+            s.pos = p;
+            w.restore(s, 0, 0);
+            w.tick({});
+        }
+        for (int i = 0; i < 1800 && w.chapter == c.chapter; ++i) w.tick({});
+        for (const auto& [key, n] : w.script().failures())
+            EXPECT_NE(key.first, c.trigger) << c.unit << ": trigger handler stopped (" << key.second << "), legacy fallback";
+        EXPECT_EQ(w.chapter, c.next) << c.unit;
+        EXPECT_FALSE(played.empty()) << c.unit;
+    }
 }
