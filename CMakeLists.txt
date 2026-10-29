@@ -358,6 +358,22 @@ if(OU_BUILD_TESTS)
     a=$(cat "$out/30") b=$(cat "$out/240"); rm -rf "$out"; echo "30 Hz:  $a"; echo "240 Hz: $b"
     [ -n "$a" ] && [ "$a" = "$b" ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays/ballcourt_door_lever.txt)
   set_tests_properties(game_render_rate_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+  # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,
+  # docs/RENDERING.md "Ray tracing"); 77 = skipped (no OU_GAME_DIR, display or ray-query device).
+  add_test(NAME game_vulkan_rt_smoke COMMAND sh -c [=[
+    [ -n "$OU_GAME_DIR" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || exit 77
+    game=$0
+    for spot in 'l4_ballcourt -20066,14150,3540,0' 'l1_kraken_room -2204,-15106,2212,180'; do
+      set -- $spot
+      out=$("$game" --game-dir "$OU_GAME_DIR" --renderer vulkan --preset enhanced --shaders original --rt shadows \
+              --level "pc-w\\$1.drm" --spawn "$2" --no-audio --no-movies --no-overlay --width 1280 --height 720 --frames 120 2>&1)
+      code=$?
+      echo "$out" | grep -q 'ray queries yes' || exit 77
+      echo "$out" | grep -E '^ou-game: (final tick|RT )'
+      [ $code -eq 0 ] && echo "$out" | grep -q '^ou-game: RT shadows .*BLAS' && ! echo "$out" | grep -q 'NOT ACTIVE' ||
+        { echo "$out" | tail -n 20; echo "$1: exit $code"; exit 1; }
+    done]=] $<TARGET_FILE:ou-game>)
+  set_tests_properties(game_vulkan_rt_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300 ENVIRONMENT "${OU_VK_TEST_ENV}")
   add_executable(ou_ai_tests tests/test_ai.cpp)
   target_link_libraries(ou_ai_tests PRIVATE ou_game GTest::gtest_main)
   gtest_discover_tests(ou_ai_tests DISCOVERY_TIMEOUT 30)

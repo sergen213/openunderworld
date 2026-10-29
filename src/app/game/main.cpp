@@ -1965,6 +1965,8 @@ int main(int argc, char** argv) {
                          world->checkpoint() ? world->checkpoint()->id : 0, world->found[0], world->found[1], world->found[2],
                          std::string(ou::game::stateName(fs.state)).c_str(), fs.pos.x, fs.pos.y, fs.pos.z, glm::degrees(fs.yaw), fs.clip.c_str(),
                          (unsigned long long)world->stateHash(), effects.system.particleCount());
+            std::fprintf(stderr, "ou-game: %s\n",
+                         ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays).c_str());
             if (!opt.screenshot.empty()) {
                 if (!writePpm(opt.screenshot, renderer->readBackbuffer({w, h}))) {
                     std::fprintf(stderr, "ou-game: cannot write %s\n", opt.screenshot.string().c_str());

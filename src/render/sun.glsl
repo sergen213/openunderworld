@@ -133,8 +133,16 @@ vec3 ouRtReflect(vec3 p, vec3 r, bool lit) {
     if (dot(n, r) > 0.0) n = -n; // two-sided, as gl_FrontFacing in the raster pass
     return c.rgb * (0.45 + 0.55 * max(dot(n, ouShadow.sun.xyz), 0.0));
 }
+// Ray query origins / directions must be finite (Vulkan: OpRayQueryInitializeKHR); RADV hangs the GPU
+// on non-finite ones. Translated shaders derive p from 1 / gl_FragCoord.w and n from its derivatives, which are not
+// finite on some fragments (l4_ballcourt, l1_kraken_room spawns lost the device on the first RT frame). NaN fails every
+// comparison, so it is excluded too.
+bool ouRayInputsFinite(vec3 p, vec3 n) {
+    return all(lessThan(abs(p), vec3(1.0e30))) && all(lessThan(abs(n), vec3(2.0)));
+}
 // Water surface colour `c` at p (normal n) with the mirrored scene mixed in by Schlick Fresnel (water F0 = 0.02).
 vec4 ouRtWater(vec4 c, vec3 p, vec3 n, bool lit) {
+    if (!ouRayInputsFinite(p, n)) return c;
     vec3 v = normalize(p - ouShadow.eye.xyz);
     float f = 0.02 + 0.98 * pow(1.0 - clamp(dot(-v, n), 0.0, 1.0), 5.0);
     // ponytail: no material roughness decoded (MATERIALS.md), so a perfect mirror; jitter r by roughness when it is.
@@ -148,7 +156,7 @@ vec4 ouRtWater(vec4 c, vec3 p, vec3 n, bool lit) {
 float ouSunVisibility(vec3 p, vec3 n, bool lit, bool rays) {
 #ifdef OU_RT
     if (rays) {
-        bool traces = lit && !gl_HelperInvocation && dot(n, ouShadow.sun.xyz) > 0.0;
+        bool traces = lit && !gl_HelperInvocation && dot(n, ouShadow.sun.xyz) > 0.0 && ouRayInputsFinite(p, n);
         float w = ouQuadSum(traces ? 1.0 : 0.0);
         float v = ouQuadSum(traces ? ouRtSun(p, n, int(ouShadow.eye.w)) : 0.0);
         return w > 0.0 ? v / w : 1.0;
