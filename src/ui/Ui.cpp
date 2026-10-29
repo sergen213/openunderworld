@@ -172,6 +172,14 @@ constexpr float kConfirmCap = 164, kConfirmCapQuit = 168.9f, kConfirmW = 356, kC
 // Load/Save slot ring: the main ring mirrored about x = kRingX (items 2..7: page up, four slots, page down).
 constexpr float kOpenedRing = 29.8f, kOpenedRingW = 1.3f; // white circle around the ring item that opened it
 constexpr float kSlotFooterL = 193.6f, kSlotFooterR = 433.3f; // "Return SELECT" / "BackSpace DELETE" centres
+// The selected slot's panel, relative to its disc centre [O load_slot_filled, 1080p]: box to x 585.3, 27 above / 26.3 below;
+// name (89, 168, 239) at +31 cap -24.3 scale 0.57; separators -14.1 / +14.6; area / title caps -7.4 / +2.8 and time / date
+// at +29.7 / +82.6 cap +18.3, scale 0.45; the slot number centred at (+4.8, +5) scale 0.6 in the selected icon.
+constexpr float kSlotBoxRight = 585.3f, kSlotBoxTop = 27, kSlotBoxBottom = 26.3f, kSlotTextX = 31, kSlotNameCap = -24.3f,
+                kSlotNameScale = 0.57f, kSlotLine0 = -14.1f, kSlotLine1 = 14.6f, kSlotAreaCap = -7.4f, kSlotTitleCap = 2.8f,
+                kSlotSmall = 0.45f, kSlotTimeX = 29.7f, kSlotDateX = 82.6f, kSlotTimeCap = 18.3f, kSlotBoxLeft = 23.6f;
+constexpr float kSlotNameTrack = 0.94f, kSlotTrack = 0.72f; // letter-spaced [O widths]
+constexpr float kSlotNumberX = 4.8f / kSelIcon, kSlotNumberY = 5.0f / kSelIcon, kSlotNumberScale = 0.6f / kSelIcon;
 // List screens (GAME OPTIONS, AUDIO/VISUAL, VOLUME SETTINGS).
 constexpr float kListIconX = 191, kListIconY = 88, kListDivX = 218, kListDivTop = 73.3f, kListDivBottom = 104;
 constexpr float kTitle1X = 226.7f, kTitle1Cap = 75.1f, kTitle1Scale = 0.95f;
@@ -197,7 +205,8 @@ constexpr uint32_t kIconBlue = rgba(50, 115, 185), kLabel = rgba(203, 203, 203),
                    kSlotIcon = rgba(114, 124, 165), kTitleBlue = rgba(110, 165, 200), kRowGrey = rgba(129, 130, 131),
                    kSelBar = rgba(23, 69, 97), kSliderFrame = rgba(5, 50, 80), kSliderFill = rgba(185, 230, 255),
                    kTailorBar = rgba(30, 90, 127), kPdaSel = rgba(76, 139, 193), kPdaGrey = rgba(91, 91, 91),
-                   kPdaLine = rgba(46, 86, 121), kPdaSelLine = rgba(68, 130, 184), kPdaBoxLine = rgba(16, 60, 66);
+                   kPdaLine = rgba(46, 86, 121), kPdaSelLine = rgba(68, 130, 184), kPdaBoxLine = rgba(16, 60, 66),
+                   kSlotName = rgba(89, 168, 239), kSlotLine = rgba(72, 72, 72), kSlotRim = rgba(28, 92, 150);
 
 uint32_t withAlpha(uint32_t c, float a) { return (c & 0x00FFFFFFu) | uint32_t(std::clamp(a, 0.0f, 1.0f) * float(c >> 24)) << 24; }
 uint32_t mix(uint32_t a, uint32_t b, float t) {
@@ -356,6 +365,24 @@ constexpr float kPdaFootCap = 600, kPdaFootBack = 289.8f, kPdaFootSelect = 621.3
 
 } // namespace
 
+int16_t levelTitle(int chapter, std::string_view unit) {
+    auto has = [&](std::string_view p) { return unit.find(p) != std::string_view::npos; };
+    switch (chapter) {
+    case 0: return 386; // Prologue
+    case 1: return has("seafloor") ? 388 : has("kraken") || has("norse") ? 389 : has("baldrs_tomb") || has("baldrs_sideroom") ? 391
+                 : has("baldrs") ? 390 : has("ship") ? 392 : 387;
+    case 2: return has("norsehall") ? 396 : has("norsehub") ? 395 : has("cliff") || has("junglehub") ? 393 : 394;
+    case 3: return 397;
+    case 4: return has("mictlan") ? 401 : has("ragnarok") || has("pool") ? 400
+                 : has("xibalba") || has("staircase_upper") || has("ballcourt") || has("traprooms") ? 399 : 398;
+    case 5: return has("valaskjalf") ? 403 : 402;
+    case 6: return 404;
+    case 7: return has("yggdrasil") ? 406 : has("monastery") ? 407 : 405;
+    case 8: return 407;
+    default: return 0;
+    }
+}
+
 std::string_view loadingImage(int chapter) {
     static constexpr std::string_view kImages[] = {"loading_bg_mansion", "loading_bg_medsea", "loading_bg_thailand",
                                                    "loading_bg_dungeon", "loading_bg_mexico", "loading_bg_snow",
@@ -445,9 +472,12 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         std::vector<Item> v{{.icon = kIconPageUp}};
         for (int k = 0; k < 4; ++k) {
             const size_t i = size_t(page_ * 4 + k);
-            v.push_back(i < saves.size() ? Item{.label = saves[i], .action = screen == Screen::Load ? Action::Load : Action::Save,
-                                                .icon = kIconSlotUsed, .confirm = int16_t(screen == Screen::Load ? 12 : 16)}
-                                         : Item{.action = screen == Screen::Load ? Action::None : Action::Save, .icon = kIconSlotEmpty});
+            if (i >= saves.size()) v.push_back({.action = screen == Screen::Load ? Action::None : Action::Save, .icon = kIconSlotEmpty});
+            else if (screen == Screen::Save && saves[i].autosave) // "not allowed to overwrite auto saved games"
+                v.push_back({.label = saves[i].slot, .opens = Screen::Message, .icon = kIconSlotUsed, .message = 17});
+            else
+                v.push_back({.label = saves[i].slot, .action = screen == Screen::Load ? Action::Load : Action::Save,
+                             .icon = kIconSlotUsed, .confirm = int16_t(screen == Screen::Load ? 12 : 16)});
         }
         v.push_back({.icon = kIconPageDown});
         return v;
@@ -530,7 +560,7 @@ Action Menus::input(Nav n) {
             if (cursor_ < 0) { select(1); return Action::None; }
             if (cursor_ == 0 || cursor_ == count - 1) { page(cursor_ == 0 ? -1 : 1); return Action::None; }
             const Item& it = list[size_t(cursor_)];
-            if (it.action == Action::None) return Action::None; // empty slot on Load
+            if (it.action == Action::None && it.opens == Screen::None) return Action::None; // empty slot on Load
             selected_ = it.label;
             return activate(it);
         }
@@ -633,8 +663,42 @@ void Menus::drawRadial(Canvas& c, const locale::Strings& s, Screen screen, int c
     }
 }
 
-void Menus::drawSlots(Canvas& c, const locale::Strings&) {
+void Menus::drawSlots(Canvas& c, const locale::Strings& s) {
     const auto list = items();
+    // The selected slot's panel [O load_slot_filled, load_slots]: a black box from the disc to x 585.3, y -27 .. +26.3, with
+    // a blue rim; a used slot shows its name (blue, cut with "..."), "<AREA>:" / title, then time and date. The box goes
+    // under the discs, its text over them (the selected disc's glow).
+    size_t text0 = c.vertices.size(), text1 = text0;
+    if (cursor_ >= 1 && cursor_ <= 4) {
+        const auto [x, y] = radialPos(size_t(cursor_) + 2, true);
+        const float a = label_;
+        const float x0 = x + kSlotBoxLeft, w = kSlotBoxRight - x0, h = kSlotBoxTop + kSlotBoxBottom;
+        for (const auto [d, rim] : {std::pair{2.6f, 0.12f}, {1.6f, 0.25f}, {0.7f, 0.6f}}) // the rim's soft glow
+            vrect(c, x0 - d, y - kSlotBoxTop - d, w + 2 * d, h + 2 * d, withAlpha(kSlotRim, a * rim));
+        vrect(c, x0, y - kSlotBoxTop, w, h, withAlpha(kBlack, a));
+        text0 = c.vertices.size();
+        const size_t i = size_t(page_ * 4 + cursor_ - 1);
+        if (i < saves.size()) {
+            const SaveSlot& sv = saves[i];
+            const float tx = x + kSlotTextX, right = kSlotBoxRight - 4;
+            std::string name = sv.name.empty() ? std::string(s.get(sv.area)) + " - " + std::string(s.get(sv.title)) : sv.name;
+            if (trackedWidth(c, name, kSlotNameScale, kSlotNameTrack) > right - tx) { // cut at a word to fit with "..." [O]
+                while (!name.empty() && trackedWidth(c, name + "...", kSlotNameScale, kSlotNameTrack) > right - tx) {
+                    const size_t sp = name.find_last_of(' ');
+                    name.resize(sp == std::string::npos ? name.size() - 1 : sp);
+                    while (!name.empty() && (name.back() == ' ' || name.back() == '-')) name.pop_back();
+                }
+                name += "...";
+            }
+            capText(c, tx, y + kSlotNameCap, kSlotNameScale, name, withAlpha(kSlotName, a), kSlotNameTrack);
+            for (const float ly : {kSlotLine0, kSlotLine1}) vrect(c, tx - 1.5f, y + ly, right - tx, 0.9f, withAlpha(kSlotLine, a));
+            if (sv.area) capText(c, tx, y + kSlotAreaCap, kSlotSmall, std::string(s.get(sv.area)) + ":", withAlpha(kWhite, a), kSlotTrack);
+            if (sv.title) capText(c, tx, y + kSlotTitleCap, kSlotSmall, s.get(sv.title), withAlpha(kWhite, a), kSlotTrack);
+            capText(c, x + kSlotTimeX, y + kSlotTimeCap, kSlotSmall, sv.time, withAlpha(kWhite, a), kSlotTrack);
+            capText(c, x + kSlotDateX, y + kSlotTimeCap, kSlotSmall, sv.date, withAlpha(kWhite, a), kSlotTrack);
+        }
+        text1 = c.vertices.size();
+    }
     std::vector<size_t> order(list.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return grow_[a] < grow_[b]; });
@@ -645,14 +709,15 @@ void Menus::drawSlots(Canvas& c, const locale::Strings&) {
         if (g > 0) c.sprite(kGlow, x, y, disc * kGlowRing, disc * kGlowRing, withAlpha(kWhite, g * kGlowAlpha));
         c.sprite(kDisc, x, y, disc * sDisc, disc * sDisc, kWhite);
         if (g > 0) c.sprite(kBlackDisc, x, y, disc * sDisc, disc * sDisc, withAlpha(kBlack, g));
-        c.sprite(list[i].icon, x, y, icon * sIcon, icon * sIcon, mix(kSlotIcon, kWhite, g));
+        const uint32_t tint = mix(kSlotIcon, kWhite, g);
+        c.sprite(list[i].icon, x, y, icon * sIcon, icon * sIcon, tint);
+        if (list[i].icon == kIconSlotUsed) { // its number in the icon's circle
+            const std::string n = std::to_string(page_ * 4 + int(i));
+            const float sc = kSlotNumberScale * sIcon;
+            capText(c, x + kSlotNumberX * sIcon - c.fontWidth(n, sc) / 2, y + kSlotNumberY * sIcon - kCapHeight * sc / 2, sc, n, tint);
+        }
     }
-    // The selected used slot's name on the mirrored label bar [I: filled slots were not captured].
-    if (cursor_ < 1 || size_t(cursor_) >= list.size() || list[size_t(cursor_)].label.empty()) return;
-    const auto [x, y] = radialPos(size_t(cursor_) + 2, true);
-    const std::string& label = list[size_t(cursor_)].label;
-    c.sprite(kBarLeft, x + kSideBarEnd + kSideBarW / 2, y, kSideBarW, kBarH, withAlpha(kWhite, label_), true);
-    c.fontText(x + kLabelGap, y - kCapMid, kTextScale, label, withAlpha(kLabel, label_));
+    std::rotate(c.vertices.begin() + ptrdiff_t(text0), c.vertices.begin() + ptrdiff_t(text1), c.vertices.end());
 }
 
 void Menus::drawList(Canvas& c, const locale::Strings& s) {

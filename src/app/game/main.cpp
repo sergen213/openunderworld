@@ -1149,15 +1149,31 @@ bool writeWav(const std::filesystem::path& path, const std::vector<float>& lr, u
     return bool(f);
 }
 
-// Save slots in saveDir(), newest first.
-std::vector<std::string> listSaves() {
+// Save slots in saveDir(), newest first, with where and when each was saved (ui::SaveSlot). The autosave is named after
+// its place; "savegame-<n>" shows as "Savegame <n>" (the original's default name), other slots by their file name.
+std::vector<ou::ui::SaveSlot> listSaves() {
     std::vector<std::pair<std::filesystem::file_time_type, std::string>> v;
     std::error_code ec;
     for (const auto& e : std::filesystem::directory_iterator(ou::save::saveDir(), ec))
         if (e.path().extension() == ".ousave") v.emplace_back(e.last_write_time(ec), e.path().stem().string());
     std::sort(v.begin(), v.end(), std::greater<>());
-    std::vector<std::string> out;
-    for (auto& [t, s] : v) out.push_back(std::move(s));
+    std::vector<ou::ui::SaveSlot> out;
+    for (auto& [t, s] : v) {
+        ou::ui::SaveSlot slot{.slot = s, .autosave = s == ou::ui::kAutosaveSlot};
+        if (!slot.autosave) slot.name = s.starts_with("savegame-") ? "Savegame " + s.substr(9) : s;
+        try {
+            const auto g = ou::save::readFile(ou::save::slotPath(s));
+            const int c = std::clamp(g.chapter, 0, int(ou::game::kChapters.size()) - 1);
+            slot.area = ou::game::kChapters[size_t(c)].nameId, slot.title = ou::ui::levelTitle(c, g.unit);
+        } catch (const std::exception&) {
+        }
+        const std::time_t tt = std::chrono::system_clock::to_time_t(std::chrono::file_clock::to_sys(t));
+        char time[16], date[16];
+        std::strftime(time, sizeof time, "%H:%M:%S", std::localtime(&tt));
+        std::strftime(date, sizeof date, "%d-%m-%Y", std::localtime(&tt));
+        slot.time = time, slot.date = date;
+        out.push_back(std::move(slot));
+    }
     return out;
 }
 
@@ -1536,8 +1552,8 @@ int main(int argc, char** argv) {
         case Action::None: return;
         case Action::Continue: // PLAY GAME: the newest save, else a new game
             if (!menus.saves.empty()) {
-                showLoading(saveChapter(menus.saves.front()));
-                if (!quickLoad(*world, menus.saves.front())) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
+                showLoading(saveChapter(menus.saves.front().slot));
+                if (!quickLoad(*world, menus.saves.front().slot)) hud.notify(std::string(strings->get(3)), 2.0); // "Load failed."
                 shownChapter = world->chapter;
                 break;
             }
@@ -1560,11 +1576,11 @@ int main(int argc, char** argv) {
             }
             break;
         case Action::Resume: break;
-        case Action::Save: { // a used slot is overwritten, an empty one gets a new name
-            char slot[40];
-            const std::time_t t = std::time(nullptr);
-            std::strftime(slot, sizeof slot, "save-%Y%m%d-%H%M%S", std::localtime(&t));
-            const std::string name = menus.selectedSave().empty() ? std::string(slot) : menus.selectedSave();
+        case Action::Save: { // a used slot is overwritten, an empty one becomes the first free "savegame-<n>"
+            std::string name = menus.selectedSave();
+            for (int n = 1; name.empty(); ++n)
+                if (std::none_of(menus.saves.begin(), menus.saves.end(), [&](const auto& s) { return s.slot == "savegame-" + std::to_string(n); }))
+                    name = "savegame-" + std::to_string(n);
             hud.notify(std::string(strings->get(quickSave(*world, name) ? 18 : 5)), 2.0); // "Save Successful" / "Save failed."
             menus.saves = listSaves();
             break;

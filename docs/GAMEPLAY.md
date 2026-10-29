@@ -1231,10 +1231,23 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   16 and Delete 10 [I placement].
 - LOAD / SAVE GAME [O empty slots]: the ring stays (the opened item: black disc ×1.17 with a white circle r 29.8, 1.3
   wide; the centre label stays) and a mirrored ring (items 2..7 mirrored about x 320.3): page up 27, four slots, page
-  down 28, icons (114, 124, 165); empty slot 29, used slot 30 [I: filled slots were not captured], selection as on the
-  ring with the save name on the mirrored bar 13. Right/Accept enter the slots, Left leaves; Accept loads / saves
-  (an empty slot gets `save-<date>`, a used one is overwritten), Backspace / pad North deletes (11 / 9); footer string
-  121 split at its spaces, centres 193.6 / 433.3.
+  down 28, icons (114, 124, 165); empty slot 29, used slot 30 with its number (1.. over all pages) centred (+4.8, +5) at
+  0.6 in the icon's circle (scaled with the icon). The selected slot gets a panel [O load_slot_filled, load_slots]: a black
+  box from +23.6 right of the disc centre to x 585.3, 27 above to 26.3 below, with a soft blue rim (under the discs);
+  a used slot's name in (89, 168, 239) at +31, cap −24.3, scale 0.57, tracking 0.94, cut at a word with "..." to fit;
+  grey separators at −14.1 / +14.6; "<AREA>:" (chapter name 52–58) and the level title (386–407) at caps −7.4 / +2.8
+  and the save's time / date ("HH:MM:SS", "DD-MM-YYYY", file time) at +29.7 / +82.6 cap +18.3, all 0.45 with tracking
+  0.72. Names: the autosave (slot `autosave`) is "<AREA> - <TITLE>" (tru.exe 0x789770 `"%s - %s"`) and cannot be
+  overwritten (message 17); a new save becomes `savegame-<n>` shown "Savegame <n>" (the original's default name; there
+  is no name entry yet), older slots their file name. Level titles (`ui::levelTitle`): tru.exe keeps the current one in
+  the scene object `*0xC59268 +0x1B0` (area +0x1AC; overrides +0x1B4/+0x1B8), set through a vtable (no table found);
+  [O] l2_cliffclimb 393, l4_trailstart 398, l5_startsnow 402; [I] by unit: prologue 386; Med Sea seatop 387, seafloor 388,
+  kraken / norse 389, baldrs halls 390, baldrs tomb / side room 391, ship 392; Thailand cliff / jungle hub 393, the
+  hub / tower / shrine / puzzle rooms 394, norse hub 395, norse hall 396; Croft Manor 397; Mexico trail / temple 398,
+  Xibalba stairs / ball court / trap rooms 399, pool / Ragnarok room 400, Mictlan stairs 401; Jan Mayen 402,
+  Valaskjalf 403; Andaman Sea 404; Arctic Sea 405, Yggdrasil 406, monastery and the epilogue 407. Right/Accept enter
+  the slots, Left leaves; Accept loads / saves (a used one is overwritten), Backspace / pad North deletes (11 / 9);
+  footer string 121 split at its spaces, centres 193.6 / 433.3.
 - List screens (GAME OPTIONS 490/491, AUDIO/VISUAL 497/491, VOLUME SETTINGS 486/497) over the glyph art and ring shadow:
   icon (20 / 23 / 32, 2/3 texel, white) centred (191, 88), white divider x 218 y 73.3–104, title 1 white at x 226.7 cap
   75.1 scale 0.95, title 2 (110, 165, 200) at x 262.2 cap 91.6 scale 0.67; white line 105 409 wide at y 110 and under
@@ -1277,7 +1290,7 @@ Keys: arrows/WASD, Enter/Space accept, E = Alt (accept; PDA TASK), Esc back, Bac
 South accept, West Alt, North delete, East/Start back. Replays drive menus with `forward`/`right` ±1, `jump` (accept),
 `interact` (Alt), `drop`/`pause` (back), `pda`; the script clock keeps running in menus. Not reproduced: the attract
 mode (intro.bik after ~1 min idle), title music, the decorative small text under
-the list panels, the PDA's sonar map / weapon / inventory / journal sub-screens, filled save slot details, and the
+the list panels, the PDA's sonar map / weapon / inventory / journal sub-screens, save name entry (496), and the
 footer always names the keyboard key.
 
 **Original UI reference (2026-10-28)** [O captures; implemented: HUD below, menus/PDA/loading above]: tru.exe captures at 1920×1080 (and

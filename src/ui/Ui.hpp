@@ -86,6 +86,21 @@ struct Item {
     int16_t confirm = 0;   // Accept first asks this locals.bin YES / NO question (Screen::Confirm)
 };
 
+// A Load/Save slot: its file (save::slotPath), the name shown (empty: "<AREA> - <TITLE>", as tru.exe 0x789770 names
+// autosaves), where it was saved (`area` = the chapter name, locals.bin 52..58; `title` = levelTitle) and when
+// ("HH:MM:SS", "DD-MM-YYYY"). The autosave cannot be overwritten (message 17).
+struct SaveSlot {
+    std::string slot{}, name{};
+    int16_t area = 0, title = 0;
+    std::string time{}, date{};
+    bool autosave = false;
+};
+inline constexpr std::string_view kAutosaveSlot = "autosave";
+// Level title (locals.bin 386..407) of `unit` in chapter `chapter` (kChapters index): tru.exe keeps it in the scene
+// object (+0x1B0, set per area; no exe table found). [O] chapter starts l2_cliffclimb 393, l4_trailstart 398,
+// l5_startsnow 402; [I] the other units by name (docs/GAMEPLAY.md "Menus"). 0 = none.
+int16_t levelTitle(int chapter, std::string_view unit);
+
 // What the PDA shows: the chapter (kChapters index) and this chapter's relics/treasures found / in it.
 struct PdaInfo {
     int chapter = 0;
@@ -115,7 +130,7 @@ public:
     std::vector<Item> items(); // of the current screen
     const std::string& selectedSave() const { return selected_; } // after Action::Load / Save / Delete
 
-    std::vector<std::string> saves; // Load/Save slot entries (slot names, newest first); set before opening them
+    std::vector<SaveSlot> saves;    // Load/Save slot entries (newest first); set before opening them
     int musicVolume = 8, sfxVolume = 8, cinematicVolume = 8; // 0..10, VOLUME SETTINGS
     int brightness = 5;             // 0..10 (5 = neutral; the app maps it to graphics brightness)
     bool reticles = true, helperButtons = true, trainingText = true, invertY = false, subtitles = true;

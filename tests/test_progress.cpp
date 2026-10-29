@@ -227,7 +227,7 @@ TEST(Menus, PauseSlotsAndPda) {
     ASSERT_EQ(ring.size(), 8u); // the main menu's ring (no PDA item: key 1 opens it)
     EXPECT_EQ(ring[0].stringId, 122); // RESUME GAME, the centre
     EXPECT_EQ(ring[7].stringId, 131);
-    m.saves = {"quick", "save-1"};
+    m.saves = {{.slot = "quick"}, {.slot = "save-1"}};
     m.input(ui::Nav::Left), m.input(ui::Nav::Up); // SAVE GAME -> LOAD GAME
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
     ASSERT_EQ(m.screen(), ui::Screen::Load);
@@ -302,7 +302,7 @@ TEST(Menus, ConfirmDialogs) {
     ASSERT_EQ(m.screen(), ui::Screen::Tailoring);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::NewGame);
     m.open(ui::Screen::Pause);
-    m.saves = {"quick"};
+    m.saves = {{.slot = "quick"}};
     m.input(ui::Nav::Left), m.input(ui::Nav::Accept), m.input(ui::Nav::Accept); // SAVE GAME, the used slot
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // overwrite? (16)
     ASSERT_EQ(m.screen(), ui::Screen::Confirm);
@@ -310,6 +310,34 @@ TEST(Menus, ConfirmDialogs) {
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Save);
     EXPECT_EQ(m.selectedSave(), "quick");
     EXPECT_EQ(m.screen(), ui::Screen::Save);
+}
+
+// Filled slots [O load_slot_filled]: the autosave cannot be overwritten (17); level titles per unit (386..407).
+TEST(Menus, SaveSlotsAndLevelTitles) {
+    EXPECT_EQ(ui::levelTitle(2, "l2_cliffclimb"), 393); // [O] chapter starts
+    EXPECT_EQ(ui::levelTitle(4, "l4_trailstart"), 398);
+    EXPECT_EQ(ui::levelTitle(5, "l5_startsnow"), 402);
+    EXPECT_EQ(ui::levelTitle(0, "l3_main_bedroom"), 386); // the prologue, not Croft Manor's 397
+    EXPECT_EQ(ui::levelTitle(3, "l3_main_bedroom"), 397);
+    EXPECT_EQ(ui::levelTitle(1, "l1_seatop"), 387);
+    EXPECT_EQ(ui::levelTitle(7, "l7_yggdrasil_hall01"), 406);
+    EXPECT_EQ(ui::levelTitle(8, "l7_himalaya_end"), 407);
+    for (int c = 0; c <= 8; ++c) {
+        const int t = ui::levelTitle(c, game::kChapters[size_t(c)].unit);
+        EXPECT_GE(t, 386);
+        EXPECT_LE(t, 407);
+    }
+    ui::Menus m;
+    m.saves = {{.slot = "autosave", .area = 53, .title = 393, .autosave = true}, {.slot = "savegame-1", .name = "Savegame 1"}};
+    m.open(ui::Screen::Pause);
+    m.input(ui::Nav::Left), m.input(ui::Nav::Accept), m.input(ui::Nav::Accept); // SAVE GAME, the autosave slot
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::Message);
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::Save);
+    m.input(ui::Nav::Down);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::Confirm); // overwrite Savegame 1?
 }
 
 TEST(Menus, TextAndCanvas) {
