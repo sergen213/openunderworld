@@ -85,6 +85,8 @@ struct AnimLibrary {
     BikeTuning bike; // motorcycle.drm (loadBikeTuning); its riding clips are in `clips` as "motorcycle:<name>"
     GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
     DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
+    // Lara's HInfo markers (lara.drm model): id -> (segment, frame in it, R = Rx * Ry * Rz); weapons mount there.
+    std::map<int, std::pair<int, glm::mat4>> markers;
 
     const anim::Clip* find(std::string_view name) const;
     const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")

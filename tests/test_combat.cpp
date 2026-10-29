@@ -577,6 +577,8 @@ TEST(CombatReal, WeaponData) {
         for (int k = 0; k < 3; ++k) EXPECT_EQ(p->wetDamage[k], def.wetDamage[k]);
         EXPECT_EQ(p->hitClass, def.hitClass);
         EXPECT_EQ(p->hitType, def.hitType);
+        EXPECT_EQ(p->hand, def.hand);
+        EXPECT_EQ(p->stow, def.stow);
     }
     // Lara's clips of every weapon load (loadLaraAnims throws on a missing one), with the lengths Combat.cpp times by
     const auto anims = game::loadLaraAnims(bf);
@@ -598,6 +600,16 @@ TEST(CombatReal, WeaponData) {
     EXPECT_EQ(len(game::Weapon::ThorHammer, "ground_fire_idle"), 29.0 / 30.0);
     EXPECT_EQ(len(game::Weapon::ThorHammer, "ground_melee_idle"), 61.0 / 30.0);
     for (const char* n : {"hit_light_front", "hit_mediumback", "hit_light_side_swim"}) EXPECT_TRUE(anims.find(n)) << n;
+    // Mount markers on Lara: every weapon's exist; stowed rifles across her back (15, chest segment), Mjolnir's 31 as
+    // measured before (R = Rx Ry Rz of its Euler angles).
+    for (int i = 0; i < game::kWeaponCount; ++i)
+        for (const int id : {anims.weapons[size_t(i)].hand[0], anims.weapons[size_t(i)].stow[0]}) EXPECT_TRUE(anims.markers.contains(id)) << id;
+    EXPECT_EQ(anims.markers.at(15).first, 15);
+    const auto& [seg, m] = anims.markers.at(31);
+    EXPECT_EQ(seg, 15);
+    EXPECT_NEAR(m[0].y, 0.99f, 0.01f);
+    EXPECT_NEAR(m[1].x, -0.98f, 0.01f);
+    EXPECT_NEAR(m[3].y, 48.2f, 0.1f);
 }
 
 // l4_pool, on the stairs below the player intro (floor z 4721.2): a 1800-unit drop hurts, 2900 kills, the death

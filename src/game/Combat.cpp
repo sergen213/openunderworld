@@ -111,7 +111,7 @@ std::string cellName(const WeaponInfo& in, bool fire, int row, int col) {
 }
 // Lara's bones: arms 52-55 (left, model +X) / 77-80 (right), thighs 4 (left) / 9 (right); upper body = the
 // subtree of spine segment 14.
-constexpr int kHandBone[2] = {80, 55}, kThighBone[2] = {9, 4}, kSpineBone = 14;
+constexpr int kHandBone[2] = {80, 55}, kSpineBone = 14;
 
 // Health packs (g_healthpack data; use = gadget fnC 0x6CBB20): heal +0xF0 = 640 through 0x6F4EF0 (clamped to max),
 // cooldown +0xEA = 60 frames [I 30 Hz]; no full-health check in the exe.
@@ -243,13 +243,14 @@ WeaponDef weaponDefaults(Weapon w) {
     switch (w) {
     case Weapon::Pistols: break;
     case Weapon::Uzi:
-        d.object = "wp_uzi", d.ammo = "pr_uzibullet", d.ammoSlot = 0, d.maxReserve = {400, 240, 160}, d.clip = 40, d.infinite = false;
+        d.object = "wp_uzi", d.ammo = "pr_uzibullet", d.ammoSlot = 0, d.maxReserve = {400, 240, 160}, d.clip = 40, d.infinite = false, d.stow = {36, 37};
         d.shortRange = 2000, d.maxRange = 4500, d.maxSpreadDeg = 5, d.spreadPerShot = 1, d.spreadRecovery = 0.1f;
         d.damage[0] = 25, d.damage[1] = 25, d.damage[2] = 10;
         d.wetDamage[0] = 25, d.wetDamage[1] = 25, d.wetDamage[2] = 10;
         break;
     case Weapon::Shotgun:
         d.object = "wp_shotgun", d.ammo = "pr_shotgunbullet", d.ammoSlot = 1, d.maxReserve = {90, 72, 42}, d.pellets = 7, d.clip = 6;
+        d.hand = {5, 7}, d.stow = {15, 6};
         d.infinite = d.dual = false, d.shortRange = 2000, d.maxRange = 3000, d.spreadDeg = d.maxSpreadDeg = 15;
         d.damage[0] = 50, d.damage[1] = 50, d.damage[2] = 40;
         d.wetDamage[0] = 50, d.wetDamage[1] = 50, d.wetDamage[2] = 40;
@@ -257,17 +258,20 @@ WeaponDef weaponDefaults(Weapon w) {
         break;
     case Weapon::Speargun:
         d.object = "wp_speargun", d.ammo = "pr_spear", d.ammoSlot = 4, d.maxReserve = {40, 25, 15}, d.clip = 1, d.infinite = d.dual = false;
+        d.hand = {5, 7}, d.stow = {15, 6};
         d.shortRange = 2500, d.maxRange = 5000, d.mode = 2, d.damage[0] = d.damage[1] = d.damage[2] = 250;
         d.wetDamage[0] = d.wetDamage[1] = d.wetDamage[2] = 250;
         break;
     case Weapon::ThorHammer: // pr_thorbolt: 1000 at every range on land, 1000 / 400 / 100 under water
         d.object = "wp_thorhammer", d.ammo = "pr_thorbolt", d.clip = -1, d.dual = false, d.shortRange = 1000, d.maxRange = 8000;
+        d.hand = {5, 7}, d.stow = {31, 6};
         d.damage[0] = d.damage[1] = d.damage[2] = 1000;
         d.wetDamage[0] = 1000, d.wetDamage[1] = 400, d.wetDamage[2] = 100;
         d.hitClass = 13, d.hitType = 3;
         break;
     case Weapon::AssaultRifle: // pr_akriflebullet (as wp_akrifle, the poachers' gun)
         d.object = "wp_assault_rifle", d.ammo = "pr_akriflebullet", d.ammoSlot = 2, d.maxReserve = {300, 210, 120}, d.clip = 30;
+        d.hand = {5, 7}, d.stow = {15, 6};
         d.infinite = d.dual = false, d.shortRange = 5000, d.maxRange = 8000;
         d.maxSpreadDeg = 5, d.spreadPerShot = 1.2f, d.spreadRecovery = 0.125f;
         d.damage[0] = 27, d.damage[1] = 27, d.damage[2] = 21;
@@ -275,6 +279,7 @@ WeaponDef weaponDefaults(Weapon w) {
         break;
     case Weapon::Tranquilizer: // pr_tranquilizerdart: a projectile (mode 2) whose +0x1C is the 500 dose
         d.object = "wp_tranq", d.ammo = "pr_tranquilizerdart", d.ammoSlot = 3, d.maxReserve = {25, 15, 10}, d.clip = 1;
+        d.hand = {5, 7}, d.stow = {15, 6};
         d.infinite = d.dual = false, d.shortRange = 4000, d.maxRange = 6000, d.spreadDeg = d.maxSpreadDeg = 5, d.mode = 2;
         d.damage[0] = d.damage[1] = d.damage[2] = 500;
         d.wetDamage[0] = d.wetDamage[1] = d.wetDamage[2] = 500;
@@ -352,7 +357,8 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     const auto maxRange = w->at<float>(S + 0x18), spread = w->at<float>(S + 0x1C), shortRange = w->at<float>(S + 0x20);
     const auto maxSpread = w->at<float>(S + 0x2C), perShot = w->at<float>(S + 0x30), recovery = w->at<float>(S + 0x34);
     const auto flags = w->at<uint8_t>(S + 0x88);
-    if (!slot || !pellets || !clip || !ammoId || !maxRange || !spread || !shortRange || !maxSpread || !perShot || !recovery || !flags)
+    const auto markers = w->at<std::array<uint8_t, 4>>(0xB8);
+    if (!slot || !pellets || !clip || !ammoId || !maxRange || !spread || !shortRange || !maxSpread || !perShot || !recovery || !flags || !markers)
         return std::nullopt;
     const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
     if (!list) return std::nullopt;
@@ -389,6 +395,7 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     def.spreadDeg = *spread, def.maxSpreadDeg = *maxSpread, def.spreadPerShot = *perShot, def.spreadRecovery = *recovery;
     def.mode = *mode;
     if (*mode == 1) def.hitClass = ammo->at<int32_t>(R + 8).value_or(0), def.hitType = ammo->at<int32_t>(R + 0xC).value_or(1);
+    def.hand = {(*markers)[0], (*markers)[2]}, def.stow = {(*markers)[1], (*markers)[3]};
     def.damage[0] = *d0, def.damage[1] = *d1, def.damage[2] = *d2;
     if (wetScan) def.wetDamage[0] = *w0, def.wetDamage[1] = *w1, def.wetDamage[2] = *w2;
     else std::copy(def.damage, def.damage + 3, def.wetDamage);
@@ -488,58 +495,44 @@ void World::kill() { health_.damage(health_.value(), kDamageKill); }
 std::optional<std::pair<int, glm::mat4>> World::gunMount(Weapon w, int hand) const {
     const CombatState& c = combat_;
     const bool inHand = w == c.weapon && c.drawT >= 0.5f; // [I] the gun changes bones half way through equip / unequip
+    const WeaponDef& d = anims_.weapons[size_t(w)];
+    // [O] the weapon model sits at one of Lara's HInfo markers (WeaponDef::hand / stow, data +0xB8..+0xBB) with the
+    // marker's frame as its own. A library without markers (synthetic tests) draws no stowed weapon.
+    const auto marker = [&](int id) -> std::optional<std::pair<int, glm::mat4>> {
+        const auto it = anims_.markers.find(id);
+        if (it == anims_.markers.end()) return std::nullopt;
+        return it->second;
+    };
     glm::mat4 m(1);
     if (w == Weapon::ThorHammer) {
-        // [O] wp_thorhammer data +0xB8 / +0xB9 = Lara's HInfo markers 5 (in hand: segment 71, the left hand's grip
-        // child of 55) and 31 (stowed: chest segment 15, on her back); the model's frame is the marker's (its grip at
-        // the origin). The left hand draws it from the back (ground_equip) and holds it up while the right one points.
+        // In hand marker 5 (segment 71, the left hand's grip child of 55), stowed 31 (chest segment 15, on her back):
+        // the left hand draws it from the back (ground_equip) and holds it up while the right one points.
         if (hand != 0 || (w != c.weapon && !hasHammer())) return std::nullopt;
-        if (inHand) {
-            m[0] = glm::vec4(0, 0, 1, 0), m[1] = glm::vec4(-1, 0, 0, 0), m[2] = glm::vec4(0, -1, 0, 0), m[3] = glm::vec4(0, 0, -0.9f, 1);
-            return std::pair{bones_.size() > 71 ? 71 : kHandBone[1], m};
-        }
-        m[0] = glm::vec4(0.03f, 0.99f, -0.12f, 0), m[1] = glm::vec4(-0.98f, 0.0f, -0.19f, 0), m[2] = glm::vec4(-0.19f, 0.12f, 0.97f, 0);
-        m[3] = glm::vec4(6.3f, 48.2f, -8.1f, 1);
-        return std::pair{15, m};
+        return marker(inHand ? d.hand[0] : d.stow[0]);
     }
     if (!info(w).rifle) {
-        if (w == Weapon::Uzi && !inHand) return std::nullopt; // [I] no uzi holster: the thigh holsters keep the pistols
+        if (!inHand) return w == Weapon::Pistols || w == c.secondary ? marker(d.stow[size_t(hand)]) : std::nullopt;
+        // barrel (gun -Y) along the arm, gun top (+Z) along the thumb (-Y)
         const float side = hand == 0 ? -1.0f : 1.0f; // right arm extends along -X, left along +X
-        if (inHand) {
-            // barrel (gun -Y) along the arm, gun top (+Z) along the thumb (-Y)
-            m[0] = glm::vec4(0, 0, side, 0);
-            m[1] = glm::vec4(-side, 0, 0, 0);
-            m[2] = glm::vec4(0, -1, 0, 0);
-            m[3] = glm::vec4(side * 18.0f, 0, 0, 1);
-            return std::pair{kHandBone[hand], m};
-        }
-        // thigh holster: barrel down, gun top forward, on the outside of the thigh
-        m[0] = glm::vec4(1, 0, 0, 0);
-        m[1] = glm::vec4(0, 0, 1, 0);
+        m[0] = glm::vec4(0, 0, side, 0);
+        m[1] = glm::vec4(-side, 0, 0, 0);
         m[2] = glm::vec4(0, -1, 0, 0);
-        m[3] = glm::vec4(side * 24.0f, 8.0f, -22.0f, 1);
-        return std::pair{kThighBone[hand], m};
+        m[3] = glm::vec4(side * 18.0f, 0, 0, 1);
+        return std::pair{kHandBone[hand], m};
     }
     if (hand != 0 || (w != c.weapon && w != c.secondary)) return std::nullopt;
-    if (inHand) {
-        // two-handed: the grip in the rear (left, 55) hand, the barrel along the line to the front (right, 80) hand
-        // (the aim poses' barrel line), gun top toward model up
-        if (bones_.size() <= size_t(kHandBone[0])) return std::pair{kHandBone[1], m}; // synthetic skeleton
-        const vec3 rear(bones_[size_t(kHandBone[1])][3]), front(bones_[size_t(kHandBone[0])][3]);
-        const vec3 fwd = glm::normalize(front - rear + vec3(0, -1e-3f, 0));
-        const vec3 up = glm::normalize(vec3(0, 0, 1) - fwd * fwd.z + vec3(0, 1e-3f, 0));
-        m[1] = glm::vec4(-fwd, 0);
-        m[2] = glm::vec4(up, 0);
-        m[0] = glm::vec4(glm::cross(-fwd, up), 0);
-        m[3] = glm::vec4(rear, 1);
-        return std::pair{kHandBone[1], glm::inverse(bones_[size_t(kHandBone[1])]) * m};
-    }
-    // back holster on the spine [I], barrel up and 30 deg to her left, gun top facing back (+Y)
-    m[0] = glm::vec4(0.866f, 0, -0.5f, 0);
-    m[1] = glm::vec4(-0.5f, 0, -0.866f, 0);
-    m[2] = glm::vec4(0, 1, 0, 0);
-    m[3] = glm::vec4(0, 40.0f, 60.0f, 1);
-    return std::pair{kSpineBone, m};
+    if (!inHand) return marker(d.stow[0]); // marker 15: across her back
+    // two-handed: the grip in the rear (left, 55) hand, the barrel along the line to the front (right, 80) hand
+    // (the aim poses' barrel line), gun top toward model up
+    if (bones_.size() <= size_t(kHandBone[0])) return std::pair{kHandBone[1], m}; // synthetic skeleton
+    const vec3 rear(bones_[size_t(kHandBone[1])][3]), front(bones_[size_t(kHandBone[0])][3]);
+    const vec3 fwd = glm::normalize(front - rear + vec3(0, -1e-3f, 0));
+    const vec3 up = glm::normalize(vec3(0, 0, 1) - fwd * fwd.z + vec3(0, 1e-3f, 0));
+    m[1] = glm::vec4(-fwd, 0);
+    m[2] = glm::vec4(up, 0);
+    m[0] = glm::vec4(glm::cross(-fwd, up), 0);
+    m[3] = glm::vec4(rear, 1);
+    return std::pair{kHandBone[1], glm::inverse(bones_[size_t(kHandBone[1])]) * m};
 }
 
 vec3 World::muzzle(int hand) const {

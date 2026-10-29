@@ -1026,9 +1026,11 @@ left hand 55 → front right hand 80) relative to `_F`: −90° / −47° / 0 / 
 aim cells, then the shotgun adds `combat_shotgun_pump`. The reload clip replaces the layer while reloading. Drawing /
 holstering play the weapon's equip / unequip clip while `drawT` ramps over its length, blended into the aim pose over
 the last / first 30 % of the ramp, the layer fading in / out over 0.1 s at the holstered end [I]; the gun moves
-between holster and hand half way through [I]. Mounts [I, fitted on screenshots]: pistols / uzi on hand bones 80/55,
-pistols in thigh holsters 9/4 (the uzi is not shown out of hand); shotgun / speargun with the grip in the left hand
-along the line to the right hand, on the back (spine 14) when holstered.
+between holster and hand half way through [I]. In hand [I, fitted on screenshots]: pistols / uzi on hand bones 80/55;
+shotgun / speargun / rifle / tranquilizer with the grip in the left hand along the line to the right hand. Stowed [O]:
+weapon data +0xB9 / +0xBB name Lara's HInfo markers (lara model, `AnimLibrary::markers`) and the model takes the
+marker's frame: pistols thighs 6 / 4 (segments 9 / 4), uzis on her back 36 / 37, every two-handed weapon 15 (chest
+segment 15, across her back), Mjolnir 31. The secondary is shown stowed while it is not in hand.
 
 Targeting [O data, I use] (Lara data +0x480 / +0x470, criteria records {u16 type, u16 mode, f threshold, axis}):
 hard lock (aim held) tries tiers in order: nearest within 1264 (3D), then the smallest camera angle among targets
@@ -1285,8 +1287,8 @@ box; placed deeper than the swim depth she stays under, SwimUnder). ch3: `120_ma
 leaves her at the cavern-stairs player intro [I]. Teleports and tails reset plane-crossing tracking
 (`Runtime::playerJumped`; else the 7652 warp crosses kill plane 7650). Water boxes keep their half extents and
 rotation when a unit is offset (only min / max / centre move): l7_arctic_sea's boxes failed at its offset before.
-Holstered back weapons as the original draws them (speargun across her back in ch1, the rifle in ch6; weapon data
-+0xB9 names Lara's stow marker) are not yet placed from the data: ours use the generic spine holster.
+Stowed weapons are placed from the data as the original (speargun across her back in ch1, the rifle in ch6; weapon
+data +0xB9 names Lara's stow marker, "Combat").
 
 **Pickups** [O names/counts, I roles]: `*_rw_artifact` (7..22 per chapter) = treasures, `*_rw_treasure` (one per
 chapter) = relics, `*_rw_shard` = health packs (base script 3924 pushes "g_healthpack" and uses the health/invslot

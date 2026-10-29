@@ -226,6 +226,13 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         lib.bike = loadBikeTuning(bd);
     }
     rigOutfit(lib, drm);
+    for (const auto& m : physics::loadObjectPhysics(drm).hmarkers) { // weapon mounts (WeaponDef::hand / stow)
+        const glm::quat q = glm::angleAxis(m.rot.x, vec3(1, 0, 0)) * glm::angleAxis(m.rot.y, vec3(0, 1, 0)) *
+                            glm::angleAxis(m.rot.z, vec3(0, 0, 1));
+        glm::mat4 frame = glm::mat4_cast(q);
+        frame[3] = glm::vec4(m.pos, 1);
+        lib.markers.emplace(m.id, std::pair{m.segment, frame});
+    }
     // Sticky grenades: the throw clip lives in g_grenade_thrower.drm (it animates Lara); tuning from its + pr_grenade's data.
     if (auto g = bigfile.read("pc-w\\g_grenade_thrower.drm")) {
         loadClips(cdc::parseDrm(std::move(*g)), {"combat_grenade_Throw1"}, "pc-w\\g_grenade_thrower.drm", "g_grenade_thrower:");

@@ -175,6 +175,10 @@ void World::mountBike(int32_t uid) {
     s.clip = "motorcycle:motorcycle_idle_foot_down", s.loop = true, s.clipTime = 0, s.clipRate = 1;
     s.fallStartZ = s.pos.z, s.fallHeight = 0;
     player_.restore(s);
+    // the camera behind her (the original's ch4 start after 180_mex_intro looks up the trail) [I]
+    cam_.yaw = b.yaw, cam_.pitch = CameraState{}.pitch;
+    updateCamera({}, 0);
+    prevCam_ = cam_;
 }
 
 // Ramming [I]: a living enemy whose body capsule reaches into a sphere around the front wheel while the bike is faster

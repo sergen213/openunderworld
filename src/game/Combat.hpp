@@ -192,6 +192,10 @@ struct WeaponDef {
     float wetDamage[3] = {40.0f, 40.0f, 20.0f};
     // Hit class / type (record +8 / +0xC, the hit message's +0x50 / +0x64: 0x6C64D0); projectiles (not decoded) [I] as bullets.
     int hitClass = 0, hitType = 1;
+    // Data +0xB8 / +0xB9 (gun 0) and +0xBA / +0xBB (gun 1): Lara's HInfo markers in hand and stowed (the weapon model is
+    // mounted at the marker; its frame is the model's). Handgun 7/6, 5/4 (grips, thighs); uzi 7/36, 5/37 (back);
+    // two-handed 5/15 (left grip, across her back); Mjolnir 5/31.
+    std::array<int, 2> hand{7, 5}, stow{6, 4};
     float damageAt(float dist, bool wet = false) const; // linear between the three
 };
 // Decodes `object` (pc-w\<object>.drm) and its ammo object, and the max reserve from Lara's data (pc-w\lara.drm);
