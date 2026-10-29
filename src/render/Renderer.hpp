@@ -98,13 +98,13 @@ struct FrameOptions {
     RayTracing rt = RayTracing::Off;
     int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)
     float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
+    float screenFade = 0.0f; // scripted screen wipe (globaleffect FadeOut/FadeIn, script::Runtime::screenFade): 1 = black
     WaterQuality water = WaterQuality::Original;  // ou::config presets choose (Enhanced by default)
     WaterRipples ripples;                          // empty = calm (procedural waves only)
     std::span<const WaterVolume> waterVolumes;     // loaded units' water volumes
     std::span<const WaterParticle> splashes;       // drawn blended after the water surfaces
     // Moving lights (the flashlight): replace the first size() entries of the uploaded scene's environment lights for
     // this frame. The app reserves those slots in SceneData::environment (same falloff curves, so the attenuation LUT
-    float screenFade = 0.0f; // scripted screen wipe (globaleffect FadeOut/FadeIn, script::Runtime::screenFade): 1 = black
     // already has their rows); colour 0 = off.
     std::span<const scene::Light> dynamicLights;
     bool waterDetail = false; // Enhanced water extras: swell, flow, glitter, shadowed sun path, thickness SSR, lamps

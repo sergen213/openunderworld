@@ -580,17 +580,15 @@ public:
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
         std::memcpy(waterUbo_[frameIndex_].mapped, &wb, sizeof wb);
         if (enhancedWater) updateRipples(options);
-        for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
-        // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water.
-        const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f;
-        constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        drawOrder(meshes_, camera.position, order_);
-        if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
-        // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
         // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water; translated
         // materials reading the back/depth buffer (the sea, OrigDraw::screen) draw in the second pass from the copies.
         const bool screenReaders = options.originalShaders && !origPrograms_.empty() && !screenSets_.empty();
         const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f || screenReaders;
+        for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
+        constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        drawOrder(meshes_, camera.position, order_);
+        if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
+        // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
         const SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
                                         shadowMap, rtOn ? (options.rt == RayTracing::Full ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
         std::memcpy(shadowUbo_[frameIndex_].mapped, &sun.block, sizeof sun.block); // host-coherent
@@ -713,12 +711,12 @@ public:
                 if (enhancedWater && meshes_[d.mesh].water) continue;
                 // Translated programs pre-pass with their own (invariant) VS and plain PS (its alpha test, no sun term).
                 if (const OrigDraw* od = origDraw(d)) {
+                    if (od->screen) continue; // drawn after the copies, depth included
                     drawOriginal(d, *od, origPipeline(od->program, kOrigPrepass, s.blend));
                     continue;
                 }
                 if (prepassPipeline_ != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = prepassPipeline_);
                 layout = Bound::None; // set 0 of sceneLayout_ below disturbs the translated programs' sets
-                    if (od->screen) continue; // drawn after the copies, depth included
                 bindMesh(d.mesh);
                 push.model = meshes_[d.mesh].model;
                 push.alphaRef = s.alphaRef / 255.0f;
@@ -737,15 +735,15 @@ public:
             const bool reflective = rtOn && m.water && options.rt == RayTracing::Full;
             const bool rays = rtOn && (s.blend == scene::Blend::Opaque || reflective);
             if (const OrigDraw* od = origDraw(d)) {
+                if (od->screen) {
+                    screenDraws_.push_back(d);
+                    continue;
+                }
                 drawOriginal(d, *od, origPipeline(od->program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, s.blend));
                 continue;
             }
             useGeneric();
             const VkPipeline p = scenePipelines_[size_t(s.blend)];
-                if (od->screen) {
-                    screenDraws_.push_back(d);
-                    continue;
-                }
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             bindMesh(d.mesh);
             push.model = m.model;
@@ -774,11 +772,6 @@ public:
             vkCmdSetViewport(cmd, 0, 1, &flipped);
             vkCmdSetScissor(cmd, 0, 1, &scissor);
             vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE); // the surface also reads from below
-        }
-        if (enhancedWater) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 0, 1, &waterSets_[frameIndex_], 0,
-                                    nullptr);
             for (const DrawRef& d : screenDraws_) {
                 const OrigDraw& od = origDraws_[d.mesh][d.sub];
                 const scene::Blend blend = meshes_[d.mesh].submeshes[d.sub].blend;
@@ -786,6 +779,11 @@ public:
                 drawOriginal(d, od, origPipeline(od.program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, blend));
             }
             screenDraws_.clear();
+        }
+        if (enhancedWater) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 0, 1, &waterSets_[frameIndex_], 0,
+                                    nullptr);
             for (uint32_t mi = 0; mi < meshes_.size(); ++mi) {
                 const GpuMesh& m = meshes_[mi];
                 if (!m.water) continue;
@@ -1180,6 +1178,7 @@ private:
     struct OrigDraw {
         int program = -1; // origPrograms_ index, -1 = generic shading
         VkDescriptorSet set = VK_NULL_HANDLE;
+        uint32_t screen = 0; // original::screenSamplers: low 16 back buffer, high 16 depth (drawn after the copies)
     };
 
     VkPipeline origPipeline(int program, OrigVariant variant, scene::Blend blend) {
@@ -1212,10 +1211,10 @@ private:
     }
 
     void destroyOriginalScene() {
-        uint32_t screen = 0; // original::screenSamplers: low 16 back buffer, high 16 depth (drawn after the copies)
         destroyOriginalPipelines();
         origPrograms_.clear();
         origDraws_.clear();
+        screenSets_.clear();
         vkDestroyBuffer(device_, std::exchange(origMaterialUbo_, {}).buffer, nullptr); // memory: sceneMemory_
         vkDestroyDescriptorPool(device_, std::exchange(origScenePool_, VK_NULL_HANDLE), nullptr);
     }
@@ -1248,7 +1247,6 @@ private:
             uint8_t alphaRef;
             bool water; // RT reflections (MaterialBlock::fixed[3] bit 2, sun.glsl ouSunEnd)
             auto operator<=>(const Key&) const = default;
-        screenSets_.clear();
         };
         std::map<Key, size_t> keys;
         std::vector<std::pair<Key, const scene::SubMesh*>> unique;
@@ -1259,6 +1257,9 @@ private:
                 OrigDraw d;
                 d.program = prep.program(s.materialId);
                 if (d.program >= 0 && !ok[size_t(d.program)]) d.program = -1;
+                if (d.program >= 0)
+                    d.screen = original::screenSamplers(*prep.materials.at(s.materialId), s.instanceTextures,
+                                                        prep.programs[size_t(d.program)].psGlsl.readsDepth);
                 size_t k = SIZE_MAX;
                 if (d.program >= 0) {
                     const Key key{d.program, s.materialId, {s.instanceTextures[0], s.instanceTextures[1], s.instanceTextures[2],
@@ -1291,9 +1292,6 @@ private:
             const VkDescriptorBufferInfo bi{origMaterialUbo_.buffer, stride * u, sizeof(sm3::MaterialBlock)};
             std::array<VkDescriptorImageInfo, 16> ii;
             const sm3::Glsl& ps = prep.programs[size_t(key.program)].psGlsl;
-                if (d.program >= 0)
-                    d.screen = original::screenSamplers(*prep.materials.at(s.materialId), s.instanceTextures,
-                                                        prep.programs[size_t(d.program)].psGlsl.readsDepth);
             for (int n = 0; n < 16; ++n) {
                 // The view type must match the shader's sampler: unbound cube samplers read black (as D3D9), others white.
                 const bool cube = ps.samplerType[n] == 3;
@@ -2405,6 +2403,7 @@ private:
             w.pImageInfo = &depth;
             vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
         }
+        writeScreenSets();
     }
 
     // Records, submits and waits for one command buffer (uploads, readback). Not for per-frame work.
@@ -2455,7 +2454,6 @@ private:
                 std::memcpy(src.mapped + off, r.src, r.size);
                 VkBufferCopy copy{off, 0, r.size};
                 vkCmdCopyBuffer(cmd, src.buffer, dst, 1, &copy);
-        writeScreenSets();
                 off += aligned(r.size);
             }
             std::vector<VkImageMemoryBarrier2> b;
@@ -3111,6 +3109,8 @@ private:
     GpuImage attenuation_, blackCube_;
     std::vector<OrigProgram> origPrograms_;
     std::vector<std::vector<OrigDraw>> origDraws_; // meshes_ index -> per submesh
+    std::vector<std::pair<VkDescriptorSet, uint32_t>> screenSets_; // material sets with back/depth-buffer samplers
+    std::vector<DrawRef> screenDraws_;                               // per frame: their draws, for the second pass
     Buffer origMaterialUbo_;
     scene::Environment environment_;
 
@@ -3166,8 +3166,6 @@ private:
         for (double x : d) var += (x - mean) * (x - mean);
         std::vector<double> sorted = d;
         std::sort(sorted.begin(), sorted.end());
-    std::vector<std::pair<VkDescriptorSet, uint32_t>> screenSets_; // material sets with back/depth-buffer samplers
-    std::vector<DrawRef> screenDraws_;                               // per frame: their draws, for the second pass
         std::fprintf(stderr,
                      "ou: presents %zu in %.2f s = %.1f/s (real %llu, generated %llu); interval mean %.2f ms sd %.2f p99 %.2f; "
                      "alternate intervals %.2f / %.2f ms\n",

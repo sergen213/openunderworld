@@ -267,6 +267,8 @@ struct GpuMesh {
     std::vector<int> program;
     std::vector<GLintptr> materialOffset;
     std::vector<std::array<GLuint, 16>> samplers;
+    // original::screenSamplers per submesh: low 16 bits back buffer, high 16 depth buffer (drawn after the opaque copies).
+    std::vector<uint32_t> screenSamplers;
     glm::mat4 model;
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
@@ -285,8 +287,6 @@ struct Targets {
     // Enhanced water: single-sample copies of the opaque scene (refraction, absorption, reflections,
     // underwater fog). Blitted after the opaque/blended pass, before the water surfaces draw.
     Texture opaqueColor, opaqueDepth;
-    // original::screenSamplers per submesh: low 16 bits back buffer, high 16 depth buffer (drawn after the opaque copies).
-    std::vector<uint32_t> screenSamplers;
     Framebuffer opaqueColorFbo, opaqueDepthFbo;
 };
 
@@ -530,6 +530,7 @@ public:
         if (originals) beginOriginals(camera, vp, options);
         uint32_t boundMesh = UINT32_MAX, boundObject = UINT32_MAX;
         int state = -1, program = -1; // -1 = generic scene program
+        deferred_.clear();
         for (const DrawRef& d : r.order) {
             const GpuMesh& m = r.meshes[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
@@ -548,6 +549,10 @@ public:
             if (int(s.blend) != state) setBlend(state = int(s.blend));
             if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
+                if (m.screenSamplers[d.sub]) { // reads the scene drawn so far: after the loop, from the copies
+                    deferred_.push_back(d);
+                    continue;
+                }
                 if (d.mesh != boundObject) {
                     glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));
                     boundObject = d.mesh;
@@ -559,7 +564,6 @@ public:
                 continue;
             }
             glUniform1f(3, s.alphaRef / 255.0f);
-        deferred_.clear();
             drawSubmesh(s);
         }
         setBlend(int(scene::Blend::Opaque));
@@ -578,13 +582,10 @@ public:
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glUseProgram(r.postProgram.get());
-                if (m.screenSamplers[d.sub]) { // reads the scene drawn so far: after the loop, from the copies
-                    deferred_.push_back(d);
-                    continue;
-                }
         glUniform1i(0, options.fxaa ? 1 : 0);
         glUniform1i(1, options.hdr ? 1 : 0);
         glUniform1f(2, options.brightness);
+        glUniform1f(3, std::clamp(options.screenFade, 0.0f, 1.0f));
         glBindTextureUnit(0, t.color.get());
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindVertexArray(r.emptyVao.get());
@@ -595,7 +596,6 @@ public:
     // (Re)creates the texture on a size change and uploads when the version changes; empty images keep the old one.
     static void upload(Resources::Streamed& s, const RgbaImage& img) {
         if (img.rgba.empty()) return;
-        if (originals && !deferred_.empty()) drawScreenReaders(vp);
         if (s.width != img.width || s.height != img.height) {
             s.tex = newTexture();
             glTextureStorage2D(s.tex.get(), 1, GL_RGBA8, img.width, img.height);
@@ -616,7 +616,6 @@ public:
         Image img{vp.width, vp.height, std::vector<uint8_t>(size_t(vp.width) * vp.height * 3)};
         std::vector<uint8_t> raw(img.rgb.size());
         glReadBuffer(GL_BACK);
-        glUniform1f(3, std::clamp(options.screenFade, 0.0f, 1.0f));
         glReadPixels(0, 0, vp.width, vp.height, GL_RGB, GL_UNSIGNED_BYTE, raw.data());
         size_t row = size_t(vp.width) * 3;
         for (int y = 0; y < vp.height; ++y) // GL origin is bottom-left
@@ -873,6 +872,7 @@ private:
         g.program.push_back(p);
         g.materialOffset.push_back(0);
         g.samplers.emplace_back();
+        g.screenSamplers.push_back(0);
         if (p < 0) return;
         const scene::Material& mat = *prepared_.materials.at(s.materialId);
         const auto stride = size_t(objectStrideFor(sizeof(sm3::MaterialBlock)));
@@ -893,39 +893,8 @@ private:
                 if (auto it = r.textures.find(id); it != r.textures.end() && cubes_.contains(id) == cube) tex = it->second.get();
             g.samplers.back()[size_t(n)] = tex;
         }
-    }
-    GLintptr objectStrideFor(size_t bytes) const {
-        const GLintptr a = res_->uboAlign;
-        return (GLintptr(bytes) + a - 1) / a * a;
-    }
-
-    void finishOriginals() {
-        Resources& r = *res_;
-        r.materialUbo = {};
-        r.objectUbo = {};
-        g.screenSamplers.push_back(0);
-        if (materialBlocks_.empty()) return;
-        r.materialUbo = newBuffer();
-        glNamedBufferStorage(r.materialUbo.get(), GLsizeiptr(materialBlocks_.size()), materialBlocks_.data(), 0);
-        r.objectUbo = newBuffer();
-        glNamedBufferStorage(r.objectUbo.get(), GLsizeiptr(r.meshes.size()) * objectStride(), nullptr, GL_DYNAMIC_STORAGE_BIT);
-        materialBlocks_.clear();
-        materialBlocks_.shrink_to_fit();
-    }
-
-    void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o) {
-        Resources& r = *res_;
-        sm3::FrameBlock f;
-        original::fillFrame(f, camera, vp, o.time, environment_);
-        glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
-        const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
-        objectScratch_.assign(r.meshes.size() * size_t(objectStride()), 0);
-        for (size_t i = 0; i < r.meshes.size(); ++i)
-            original::fillObject(*reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * size_t(objectStride())]), vpD3D, r.meshes[i].model,
-                                 original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius));
-        if (r.objectUbo.get())
         g.screenSamplers.back() = original::screenSamplers(mat, s.instanceTextures, prog.psGlsl.readsDepth);
-            glNamedBufferSubData(r.objectUbo.get(), 0, GLsizeiptr(objectScratch_.size()), objectScratch_.data());
+    }
 
     // Submeshes whose materials sample the back / depth buffer (original::screenSamplers; the sea): copy the scene drawn
     // so far into the single-sample textures, then draw them in draw order with those bound.
@@ -957,6 +926,36 @@ private:
         }
     }
 
+    GLintptr objectStrideFor(size_t bytes) const {
+        const GLintptr a = res_->uboAlign;
+        return (GLintptr(bytes) + a - 1) / a * a;
+    }
+
+    void finishOriginals() {
+        Resources& r = *res_;
+        r.materialUbo = {};
+        r.objectUbo = {};
+        if (materialBlocks_.empty()) return;
+        r.materialUbo = newBuffer();
+        glNamedBufferStorage(r.materialUbo.get(), GLsizeiptr(materialBlocks_.size()), materialBlocks_.data(), 0);
+        r.objectUbo = newBuffer();
+        glNamedBufferStorage(r.objectUbo.get(), GLsizeiptr(r.meshes.size()) * objectStride(), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        materialBlocks_.clear();
+        materialBlocks_.shrink_to_fit();
+    }
+
+    void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o) {
+        Resources& r = *res_;
+        sm3::FrameBlock f;
+        original::fillFrame(f, camera, vp, o.time, environment_);
+        glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
+        const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
+        objectScratch_.assign(r.meshes.size() * size_t(objectStride()), 0);
+        for (size_t i = 0; i < r.meshes.size(); ++i)
+            original::fillObject(*reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * size_t(objectStride())]), vpD3D, r.meshes[i].model,
+                                 original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius));
+        if (r.objectUbo.get())
+            glNamedBufferSubData(r.objectUbo.get(), 0, GLsizeiptr(objectScratch_.size()), objectScratch_.data());
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());
     }
 
@@ -1079,6 +1078,7 @@ private:
     std::unordered_set<uint32_t> cubes_; // texture ids uploaded as cube maps
     std::vector<uint8_t> materialBlocks_; // during upload()
     std::vector<uint8_t> objectScratch_;
+    std::vector<DrawRef> deferred_; // per frame: back/depth-buffer readers (drawScreenReaders)
     bool s3tc_ = false, debug_ = false;
     float maxAniso_ = 1.0f;
 };
@@ -1088,4 +1088,3 @@ private:
 std::unique_ptr<Renderer> createGlRenderer() { return std::make_unique<GlRenderer>(); }
 
 } // namespace ou::render
-    std::vector<DrawRef> deferred_; // per frame: back/depth-buffer readers (drawScreenReaders)

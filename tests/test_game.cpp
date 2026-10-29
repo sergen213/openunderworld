@@ -1503,6 +1503,8 @@ TEST(GameReal, ElevatorUberCommandCreatesMovingCollision) {
     });
     ASSERT_NE(it, w.collision().dynamics.end());
     const glm::mat4 initial = it->transform;
+    for (int i = 0; i < 60; ++i) w.tick({}); // startup runs state 0: the elevator waits for its switch
+    EXPECT_EQ(it->transform, initial);
     Actions use;
     use.interact = true;
     for (int i = 0; i < 30; ++i) w.tick(use);
@@ -1588,8 +1590,6 @@ TEST(GameReal, ScriptSurvey) {
     }
     const auto implemented = [](uint8_t op) {
         return op <= 0x15 || (op >= 0x2E && op <= 0x31) || op == 0x34 || (op >= 0x3D && op <= 0x6C) || op == 0x77 ||
-    for (int i = 0; i < 60; ++i) w.tick({}); // startup runs state 0: the elevator waits for its switch
-    EXPECT_EQ(it->transform, initial);
                (op >= 0x7B && op <= 0x7E) || op == 0x80;
     };
     std::map<std::string, size_t> calls;
