@@ -463,3 +463,43 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
   storage images declare `Rg32f` / `R32f` formats over our R16G16 / R16 float images (warnings, once per pass at start); SDK patch 6 (8
   queued frames) fixed FG destroying image views still in flight. Unsupported devices (no formatless storage images, compute derivatives, independent blend,
   subgroup ops) or a build without DXC fall back to native rendering with the reason in F1.
+
+## Visual sweep (2026-10-29)
+
+Captures [O]: `ou-game` Release (HEAD 1550709 + the fixes below), 1920×1080, 120 frames, every `--chapter 0-8` start plus
+l3_main_bedroom, l1_seafloor, l1_kraken_room, l2_junglehub, l2_norsehall, l2_puzzleroom, l3_chapel, l4_ballcourt, l4_pool,
+l4_temple, l5_valaskjalf, l5_valgrind, l6_ship_engine_hall, l7_arctic_sea, l7_helheim01, l7_yggdrasil_end (spawns from
+docs/GAMEPLAY.md and tests/replays, else the unit's first intro); Vulkan default Enhanced under the Khronos validation layer
+and OpenGL `--preset original`; invisible kwin_wayland sessions; screenshots viewed, kept privately
+(openunderworld-work/vs/out). Compared with screens/chapters/orig_ch*.
+
+| Unit | Issue | Severity | Cause | Status |
+|---|---|---|---|---|
+| l4_pool (Vulkan) | device lost / crash on entry | critical | Enhanced water ripple texture lived in `sceneMemory_`, which `destroySceneResources` reset without destroying the image; the next scene reused it on freed memory | fixed |
+| l1_seatop, l1_seafloor, l7_arctic_sea (Vulkan) | validation errors every frame (VUID-VkImageMemoryBarrier2-image-01932, vkCmdCopyBufferToImage-dstImage-07966) | high | same as above | fixed; all 25 Vulkan runs validation-clean (only the host's unrelated lsfg loader-layer messages remain) |
+| l1_seatop, l2_cliffclimb (OpenGL) | no sea: grey/beige fogged seabed to the horizon | high | 94ed091 removed 9cb8444's misplaced `drawScreenReaders` call but never re-added it, so GL skipped every back/depth-buffer reading submesh (TRU's water) | fixed; also `fillFrame(…, flipY = true)` for GL's bottom-up screen copies (ScreenExtents c51 sampled them upside down) |
+| l1_seatop (both) | blotchy z-fighting patches on the sea around the yacht and toward the west | high | l1_cineseatop (portal neighbour, relocated by (−166366, 0, −2)) has its own sea plane at z 1671, 2 units under l1_seatop's 1673; the two wave independently. Its portal is a 6300² quad in the sky at x −71582. [I] tru.exe draws neighbour units only through their portal (clip rect), which would never show that sea; we draw every loaded unit whole | open: needs portal-clipped neighbour rendering (per-unit scissor from the projected portal quad, full draw when the camera is at / behind the portal); confirmed by hiding section 7994 (patches gone) |
+| l2_junglehub start (Enhanced) | whole ledge in sun shadow, map and RT alike | low | not a renderer bug: the sun ray from Lara (sun (0.609, −0.486, 0.626)) hits real one-sided geometry facing the sun — canopy foliage 1064 units up (mat 10641), terrain 10539, l2_cliffhall_b terrain and trees — invisible from below because back faces are culled. [U] whether the original's PSSM casters include them (its depth pass 0x505D80 renders with cull none) | kept |
+| l7_arctic_sea / ch7 start | Enhanced: flat teal, ruins invisible at the start frame; Original (GL): no underwater tint at all vs the blue orig_ch7 | medium | Enhanced underwater absorption / unit fog under water (StartFixes' area; reported) | open |
+| l1_seafloor | very bright saturated cyan in both presets | medium | unit fog / lighting under water [U] | open |
+| l2_norsehall, l2_puzzleroom (Enhanced) | much darker than Original (statues in shadow) | low | canopy casters as l2_junglehub [I] | kept |
+| l5_valaskjalf (Enhanced) | snow falls inside the hall | low | weather `auto` picks snow for the unit | open |
+| others (ch0, ch3–ch6, ch8, bedroom, kraken, chapel, ballcourt, temple, engine hall, helheim, yggdrasil, valgrind) | none obvious; GL Original and Vulkan Enhanced agree | — | — | — |
+
+Frame times [O] (`--chapter N --width 2560 --height 1440 --no-vsync --no-overlay --render-hz 60 --frames 600`, Release,
+RX 7900 XTX / RADV + radeonsi, mean (p95) ms, fps = 1000 / mean; Vulkan default Enhanced with RT, OpenGL default
+settings):
+
+| Chapter start | Vulkan Enhanced | fps | OpenGL | fps |
+|---|---|---|---|---|
+| 0 l3_main_bedroom | 2.24 (2.39) | 446 | 1.86 (2.09) | 537 |
+| 1 l1_seatop | 5.84 (4.88) | 171 | 4.15 (4.10) | 241 |
+| 2 l2_cliffclimb | 8.93 (9.51) | 112 | 4.80 (5.02) | 208 |
+| 3 l3_caverns_start | 3.50 (3.75) | 286 | 2.68 (2.77) | 373 |
+| 4 l4_trailstart | 10.60 (11.58) | 94 | 4.13 (4.78) | 242 |
+| 5 l5_startsnow | 8.30 (3.04) | 120 | 4.84 (2.84) | 207 |
+| 6 l6_ship_exterior | 6.74 (14.92) | 148 | 4.52 (4.61) | 221 |
+| 7 l7_thin_ice | 3.85 (4.09) | 260 | 3.48 (3.95) | 287 |
+| 8 l7_himalaya_end | 2.37 (2.50) | 422 | 2.29 (2.39) | 437 |
+
+The first 600 frames include each start's cutscene / fade-in and streaming hitches (mean above p95 in ch1/ch5).
