@@ -345,6 +345,7 @@ void World::tick(const Actions& input) {
     if (!units_.empty()) { // streaming world (src/game/Stream.cpp)
         crossPortals(prev_.pos, player_.state().pos);
         touchCheckpoints();
+        recordReveal();
     }
     if (!units_.empty() && scriptUnits_ != unitsVersion_) { // scripted objects follow the loaded units
         const auto refs = unitRefs();

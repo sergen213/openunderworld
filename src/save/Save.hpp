@@ -41,6 +41,8 @@ struct SaveGame {
     nlohmann::json script = nlohmann::json::object(); // trigger/puzzle state (src/script), opaque here
     nlohmann::json enemies; // ai::Enemies::serialize(), opaque here; null (older saves) = enemies left as they are
     nlohmann::json vehicles; // World::serializeVehicles() (bikes, the ridden one); null (older saves) = bikes left as they are
+    nlohmann::json combat; // World::serializeCombat() (weapons, clips, reserves); null (older saves) = the chapter's loadout
+    std::map<std::string, std::vector<glm::vec3>> reveal; // World::mapReveal (unit-frame points per unit)
     uint64_t ticks = 0;        // simulation ticks played when saved (informational)
 };
 

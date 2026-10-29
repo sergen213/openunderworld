@@ -891,17 +891,34 @@ Weapons [O] (object data = ObjectBase+0xC8; stats block S = data+0xE0, read by f
 = `weaponDefaults`, checked by `CombatReal.WeaponData`): Lara carries the pistols plus one secondary (data+0xDC: 0
 pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary replaces the old one).
 
-| | pistols (wp_handgun) | uzi | shotgun | speargun |
-|---|---|---|---|---|
-| ammo object (S+6), mode | pr_handgunbullet, hitscan | pr_uzibullet, hitscan | pr_shotgunbullet, hitscan | pr_spear, projectile (2) |
-| damage at 0 / short / max range | 40 / 30 / 20 | 25 / 25 / 10 | 50 / 50 / 40 per pellet | 250 [I] |
-| short / max range (S+0x20 / +0x18) | 4000 / 6500 | 2000 / 4500 | 2000 / 3000 | 2500 / 5000 |
-| clip (S+0xB), dual (S+0x88 0x20) | 12 per gun, dual | 40 per gun, dual | 6 | 1 |
-| pellets (S+5), spread / max (S+0x1C / +0x2C) | 1, 1° / 1° | 1, 1° / 5° | 7, 15° / 15° | 1, 1° / 1° |
-| spread per shot / recovery (S+0x30 / +0x34) | 0 / 0 | 1° / 0.1° per frame [I unit] | 0 / 0 | 0 / 0 |
-| ammo slot (S+4), max reserve | none (S+0x88 0x80: infinite) | 0, 240 | 1, 72 | 4, 25 |
-| refire [I] | `combat_pistol_[RL]fireE` 10 keys, hands alternate | the uzi's own `fire` clip, 5 keys, alternate | `combat_shotgun_fire_*` 13 + `pump` 25 keys | 13 keys, then reload |
-| equip / unequip / reload | 6 / 19 / 21 keys | 15 / 15 / 21 (wp_uzi's own) | 24 / 24 / 117 | 24 / 24 / 31; under water 17 / 19 / 31 |
+| | pistols (wp_handgun) | uzi | shotgun | speargun | assault rifle (wp_assault_rifle) | tranquilizer (wp_tranq) |
+|---|---|---|---|---|---|---|
+| ammo object (S+6), mode | pr_handgunbullet, hitscan | pr_uzibullet, hitscan | pr_shotgunbullet, hitscan | pr_spear, projectile (2) | pr_akriflebullet, hitscan | pr_tranquilizerdart, projectile (2) |
+| damage at 0 / short / max range | 40 / 30 / 20 | 25 / 25 / 10 | 50 / 50 / 40 per pellet | 250 [I] | 27 / 27 / 21 (under water 23 / 23 / 18) | 500 dose (+0x1C) [I] |
+| short / max range (S+0x20 / +0x18) | 4000 / 6500 | 2000 / 4500 | 2000 / 3000 | 2500 / 5000 | 5000 / 8000 | 4000 / 6000 |
+| clip (S+0xB), dual (S+0x88 0x20) | 12 per gun, dual | 40 per gun, dual | 6 | 1 | 30 | 1 |
+| pellets (S+5), spread / max (S+0x1C / +0x2C) | 1, 1° / 1° | 1, 1° / 5° | 7, 15° / 15° | 1, 1° / 1° | 1, 1° / 5° | 1, 5° / 5° |
+| spread per shot / recovery (S+0x30 / +0x34) | 0 / 0 | 1° / 0.1° per frame [I unit] | 0 / 0 | 0 / 0 | 1.2° / 0.125° | 0 / 0 |
+| ammo slot (S+4), max reserve | none (S+0x88 0x80: infinite) | 0, 240 | 1, 72 | 4, 25 | 2, 210 | 3, 15 |
+| refire [I] | `combat_pistol_[RL]fireE` 10 keys, hands alternate | the uzi's own `fire` clip, 5 keys, alternate | `combat_shotgun_fire_*` 13 + `pump` 25 keys | 13 keys, then reload | `combat_rifle_fire_*` 3 keys | 3 keys, then reload |
+| equip / unequip / reload | 6 / 19 / 21 keys | 15 / 15 / 21 (wp_uzi's own) | 24 / 24 / 117 | 24 / 24 / 31; under water 17 / 19 / 31 | `combat_rifle_equip` 19 / `_unequip` 24 / `_reload` 41 | 19 / 24 / `combat_tranqgun_reload` 19 |
+
+- Rifle and tranquilizer upper body: each DRM's own 3×5 `combat_rifle_aim_*` / `combat_rifle_fire_*` grid, blended with the
+  shotgun grid's columns / rows [I: not measured separately]; muzzles [I] from the mesh bounds.
+- Tranquilizer darts (`Hit::tranq`): animals with `sleep_start` / `sleep_loop` / `sleep_end` (cats; tru.exe
+  EnemyBehavior_Nap / EnemyState_Nap) add the 500 dose instead of damage and fall asleep once the dose reaches their
+  health (`ai::Mode::Sleep`, saved): sleep_start, sleep_loop for 20 s [I], sleep_end, then alert. Other enemies take the
+  dose as damage [I]. Panther (700): two darts.
+- Chapter loadout (`chapterSecondary`, `World::chapterLoadout` on a chapter start and for saves without combat state)
+  [O object deps of every pc-w\l<N>_*.drm unit: all load wp_handgun + wp_uzi; l1 / l7 wp_speargun, l3 wp_shotgun, l4
+  wp_tranq, l6 wp_assault_rifle, l2 / l5 / l7_himalaya_end nothing else; no unit script names a wp_* but
+  wp_thorhammer]: Mediterranean / Arctic speargun, Thailand / Jan Mayen / epilogue uzi, Croft Manor shotgun, Mexico
+  tranquilizer, Andaman Sea rifle; the prologue the pistols [I]. Every secondary starts the chapter with a full clip and
+  reserve [V: the original's WEAPON SELECTION after a fresh l4 load lists all five full, the tranquilizer equipped].
+- PDA WEAPON SELECTION's EQUIP (`World::equipWeapon`) makes the row's weapon the secondary with the rounds it has (no
+  refill); in hand, Lara switches as with Change Weapon.
+- Saves: `combat` = weapon in hand, secondary, per weapon clips + reserve, adrenaline (`World::serializeCombat`); a load
+  holsters.
 
 - Max reserve: Lara data u16 tables at +0x868 / +0x872 / +0x87C (slot × 2; uzi, shotgun, rifle, tranq, spear =
   400/90/300/25/40, 160/42/120/10/15, 240/72/210/15/25) picked by `0x3efa0` = 0 / 2 / other (0x6EEAE0) [O]; we use
@@ -921,8 +938,12 @@ pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary re
   0x6F5E70: the intro's property 0x55 added to the slot, capped by the max reserve). A survey of every unit's intros
   finds no uzi / shotgun / speargun / grenade pickups (only `wp_akrifle` in l1, `wp_handgun` in l3_main_hall,
   `wp_thorhammer` and `wp_natla_fireball(_adren)` in l7_yggdrasil_end, `co_wp_*` cinematic props): the secondaries
-  come from scripts / enemy drops not decoded [U]. `ou-game --weapon uzi|shotgun|speargun` gives one with its max
-  reserve for testing (`World::giveWeapon`).
+  come with the chapter (loadout above). Ammunition pickups (`ammoWeapon`, `World::collectPickups` on interact within the
+  pickup cylinder, only while the reserve is below its max as 0x6F5E70): wp_* intros of a secondary and `wp_akrifle`
+  (same pr_akriflebullet slot 2 as the assault rifle); an armed enemy's body (poachers' `wp_akrifle`, enemy data node
+  +0x20, `EnemyType::weaponObject`) gives its rounds [I]. Each gives one clip [I: intro property 0x55 not decoded].
+  `ou-game --weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer` gives one with its max reserve for testing
+  (`World::giveWeapon`).
 - Grenades: see "Grenades" below.
 
 Upper body (subtree of spine segment 14; Lara's weapon clips live in each wp_* DRM and are kept as
@@ -1281,6 +1302,30 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   0.63, wrapped at 300, centred on the pane; footer 375 at x 289.8 and 120 at 621.3 (not on AREA INFO), cap 600. Totals
   come from `game::chapterRewards` [O survey of every l<N>_ unit's reward intros]: 10/22/7/10/10/0/19 treasures and one
   relic for chapters 1–5 and 7; found = those ids in `World::collected`.
+- PDA sub-pages [V screens/pda captures; `ui::Menus` Screen::PdaSonar / PdaWeapons / PdaInventory / PdaItems; 3D views
+  rasterised on the CPU (`src/ui/Pda.*`) into `uiImages[1]`, so GL and Vulkan show the same pixels]:
+  - WEAPON SELECTION (1076): header 1100, the five secondaries in the original's order (76 SUBMACHINE GUNS, 77, 78, 80,
+    79) + 469 BACK, the equipped one orange; right pane: document icon 698 + title + window buttons 699, the model panel
+    at bg (573, 214) 422×163 (pda_bg_960: 160 px left) — ground (3, 4, 5), grid every 9 px through the centre (9, 32,
+    36), border (13, 52, 58), inner frame lines 12.7 px in — with the weapon's model in a three-quarter view (barrels
+    right, turned 45° towards the camera, 10° above, near-flat 10° lens, fitted to 88% of the panel) [I view, fitted to
+    the captures]; AVAILABLE AMMUNITION reserve / max and CURRENTLY EQUIPPED YES / NO (1102 / 1103, 384 / 385) in the
+    lower box; footer 1104 Return EQUIP.
+  - INVENTORY (1077): BACKPACK / GEAR / WEAPONS / TREASURES (1101, 1235, 1100, 1251) with pictures 702–705 and prompts
+    1236–1239; a category lists its items + BACK: BACKPACK = HEALTH PACKS [n] (picture 706, 1275) and STICKY GRENADE [n]
+    while carried (1248 / 1249); GEAR = GRAPPLE, UTILITY LIGHT, FIELD CAMERA, SCUBA, PDA (1260–1269; the units' g_* gear)
+    and Thor's gauntlets / belt while carried (1270–1273); WEAPONS = PISTOLS (1241 / 1242), the secondaries (1243–1247)
+    and THOR'S HAMMER (81 / 1250); TREASURES = each area's treasures / relics found [I layout]. Items show their model in
+    the panel, descriptions at scale 0.58 from cap 445 every 16.7.
+  - SONAR MAP (1074; "unavailable" 1093 when the unit has no pc-w\<unit>_map.drm): every loaded unit's map mesh, grey
+    by view angle with a teal world-space grid (250 units [I]) on black, Lara (`ping_map_icon_lara`, green) and bikes
+    (`ping_map_icon_motorcycle`, grey) pawns, rendered at half the window size when the view moves; free camera behind
+    Lara (reset on open and E), move keys turn / fly, H up, G down [I speeds]; overlay rulers (697), brackets, the curved
+    bottom panel with E RESET VIEW (1140) / Escape BACK, G DOWN / H UP (1141 / 1142).
+  - Reveal: the map shows triangles within 4000 units of `World::mapReveal` (a point per unit every 1000 units Lara
+    moves, saved as `reveal`) [I]. The original marks per-instance reveal volumes (`PDAMap::RevealedInfo_Box` / _Sphere /
+    _Capsule, serialised with the save at game state +0x590.. by 0x6E4410) containing Lara's position + 200 z
+    (0x6E33D0, over the volumes of instances whose object +0xDD is set); those volumes' data was not decoded.
 - Loading screen [O]: `loading_bg_<area>` (640×360) covering the window, black 0.69 outside the band y 88.9–390.2 and
   0.08 inside, white 0.3 band edges 2.2 tall, emblem 5 (345², 0.35); title 51 + chapter cap 220.4 scale 1.17, line 105
   at 242.4, story 59 + chapter at scale 0.66 from cap 256.9 every 13.15, wrapped at 540. Image per chapter [I by area]:
@@ -1290,7 +1335,7 @@ Keys: arrows/WASD, Enter/Space accept, E = Alt (accept; PDA TASK), Esc back, Bac
 South accept, West Alt, North delete, East/Start back. Replays drive menus with `forward`/`right` ±1, `jump` (accept),
 `interact` (Alt), `drop`/`pause` (back), `pda`; the script clock keeps running in menus. Not reproduced: the attract
 mode (intro.bik after ~1 min idle), title music, the decorative small text under
-the list panels, the PDA's sonar map / weapon / inventory / journal sub-screens, save name entry (496), and the
+the list panels, the PDA's journal, save name entry (496), and the
 footer always names the keyboard key.
 
 **Original UI reference (2026-10-28)** [O captures; implemented: HUD below, menus/PDA/loading above]: tru.exe captures at 1920×1080 (and

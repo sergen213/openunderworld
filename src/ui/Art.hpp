@@ -1,4 +1,4 @@
-// Original front-end art from pc-w\generalbank.drm (plus the PDA picture windows 680..705 of pc-w\g_pda.drm): every
+// Original front-end art from pc-w\generalbank.drm (plus the PDA windows and icons 680..706 of pc-w\g_pda.drm): every
 // texture section packed into one RGBA atlas (render::FrameOptions::uiImages[0]) and the game font (DTP section 46:
 // glyph table over textures 109 and 110). Full-screen cdc RAW images (pc-w\image\*.raw: loading and PDA backgrounds)
 // load separately. Layout and metrics: docs/GAMEPLAY.md "Menus".

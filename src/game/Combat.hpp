@@ -46,6 +46,7 @@ struct Hit {
     Team source = Team::Neutral;
     bool headshot = false; // adrenaline head shot (kills; the enemy may pick a special death clip)
     bool knock = false;    // knocked off balance whatever the damage (Mjolnir's ground pound)
+    bool tranq = false;    // tranquilizer dart: animals with sleep clips are dosed instead of hurt (ai::Mode::Sleep)
 };
 
 // Anything Lara can target and shoot. Enemies (src/game/ai) implement it and register the pointer in
@@ -147,11 +148,22 @@ private:
 // Lara's weapon set: the dual pistols plus one secondary (weapon object data +0xDC = 1; picking up another
 // replaces it), and Thor's hammer Mjolnir once carried (data +0xDC = 2, its own inventory slot +0x24: tru.exe
 // 0x704930 cycles pistols -> secondary -> hammer, skipping what she lacks). Sticky grenades are a gadget (GrenadeTuning).
-enum class Weapon { Pistols, Uzi, Shotgun, Speargun, ThorHammer };
-inline constexpr int kWeaponCount = 5;
-std::string_view weaponObject(Weapon w);         // "wp_handgun", "wp_uzi", "wp_shotgun", "wp_speargun", "wp_thorhammer"
-std::string_view weaponName(Weapon w);           // "pistols", "uzi", "shotgun", "speargun", "thorhammer"
+enum class Weapon { Pistols, Uzi, Shotgun, Speargun, ThorHammer, AssaultRifle, Tranquilizer };
+inline constexpr int kWeaponCount = 7;
+// "wp_handgun", "wp_uzi", "wp_shotgun", "wp_speargun", "wp_thorhammer", "wp_assault_rifle", "wp_tranq"
+std::string_view weaponObject(Weapon w);
+std::string_view weaponName(Weapon w); // "pistols", "uzi", "shotgun", "speargun", "thorhammer", "rifle", "tranquilizer"
 std::optional<Weapon> weaponByName(std::string_view name); // weaponName inverse
+// The secondary every unit of chapter n (kChapters index) loads besides wp_handgun / wp_uzi [O object deps of the
+// pc-w\l<N>_*.drm units]: l1 / l7 wp_speargun, l3 wp_shotgun, l4 wp_tranq, l6 wp_assault_rifle; l2 / l5 / the epilogue
+// only wp_uzi. Lara starts the chapter with it, its reserve full [I]; the prologue (Croft Manor units, wp_shotgun loaded
+// for chapter 3) with the pistols only [I]. GAMEPLAY.md "Weapons".
+Weapon chapterSecondary(int chapter);
+// Picking up a weapon object adds rounds to the gun with its ammunition slot (tru.exe 0x70E530 -> 0x6F5E70: the
+// intro's property 0x55 into slot S+4, only while below the max reserve) [O]: the secondaries' own objects, and
+// wp_akrifle (the poachers' rifle: pr_akriflebullet, slot 2) for the assault rifle. nullopt: no ammunition (pistols,
+// Mjolnir, anything else). The count, property 0x55, is not decoded: one clip [I].
+std::optional<Weapon> ammoWeapon(std::string_view object);
 
 // A weapon object's stats block S (object data +0xE0) and its ammo object's fire-mode record (ammo
 // object data +0x18), as tru.exe's fire function 0x6C9E50 / hitscan 0x6C64D0 read them. Defaults: the

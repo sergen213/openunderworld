@@ -83,6 +83,7 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
         if (n->second == "checkpoint" || n->second == "invis_checkpoint")
             u.checkpoints.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2}); // heading as findSpawn
         if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position)});
+        if (ammoWeapon(n->second)) u.weaponPickups.push_back({in.uniqueId, n->second, v3(in.position)});
         if (n->second == "motorcycle") u.vehicles.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2});
         if (n->second.find("_grapple") != std::string::npos && !n->second.starts_with("fx_")) {
             const GrappleKind k = in.scriptId && uberScript(bigfile, *drm, n->second, in.scriptId) ? GrappleKind::Mounted
@@ -293,6 +294,16 @@ void World::startChapter(int n) {
     checkpoint_.reset();
     health_.reset(); // [I] a chapter starts at full health, as a respawn (tru.exe 0x700060)
     script_.setPlayerObjects(chapterGear(n));
+    chapterLoadout(n);
+}
+
+void World::recordReveal() {
+    const LoadedUnit& u = currentUnit();
+    const vec3 p = player_.state().pos - u.offset;
+    auto& points = mapReveal[u.data.name];
+    for (const vec3& q : points)
+        if (glm::length(p - q) < kSonarRevealStep) return;
+    points.push_back(p);
 }
 
 void World::collectPickups(bool pressed) {
@@ -302,12 +313,36 @@ void World::collectPickups(bool pressed) {
     const Pickup* best = nullptr;
     vec3 bestPos{0};
     float bestD = kPickupRadius;
-    for (const auto& u : units_)
-        for (const auto& k : u.data.pickups) {
-            const vec3 w = k.pos + u.offset;
-            const float d = glm::length(vec2(p - w));
-            if (d < bestD && std::abs(p.z - w.z) < kPickupHeight && !collected.contains(k.id)) best = &k, bestPos = w, bestD = d;
-        }
+    int32_t ammoId = 0; // a weapon intro / armed body is nearest instead
+    Weapon ammo = Weapon::Pistols;
+    const auto nearer = [&](vec3 w, int32_t id) {
+        const float d = glm::length(vec2(p - w));
+        if (!(d < bestD && std::abs(p.z - w.z) < kPickupHeight && !collected.contains(id))) return false;
+        bestD = d, bestPos = w;
+        return true;
+    };
+    // 0x6F5E70 takes rounds only while the gun is below its max reserve
+    const auto room = [&](const std::string& object) {
+        const auto w = ammoWeapon(object);
+        return w && combat_.reserve[size_t(*w)] < maxReserve(*w) ? w : std::nullopt;
+    };
+    for (const auto& u : units_) {
+        for (const auto& k : u.data.pickups)
+            if (nearer(k.pos + u.offset, k.id)) best = &k, ammoId = 0;
+        for (const auto& k : u.data.weaponPickups)
+            if (const auto w = room(k.object); w && nearer(k.pos + u.offset, k.id)) best = nullptr, ammoId = k.id, ammo = *w;
+    }
+    // [I] an armed enemy's body gives its gun's rounds (the poachers' wp_akrifle). ponytail: keyed by the enemy's uid, so
+    // a generator's spawns (sharing its uid) give once.
+    for (const auto& e : enemies_.all())
+        if (const auto w = e->state().mode == ai::Mode::Dead ? room(e->type().weaponObject) : std::nullopt; w && nearer(e->position(), e->uid()))
+            best = nullptr, ammoId = e->uid(), ammo = *w;
+    if (ammoId) {
+        collected.insert(ammoId);
+        int& r = combat_.reserve[size_t(ammo)];
+        r = std::min(maxReserve(ammo), r + anims_.weapons[size_t(ammo)].clip);
+        return;
+    }
     if (!best) return;
     collected.insert(best->id);
     ++found[size_t(best->kind)];

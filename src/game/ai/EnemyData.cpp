@@ -114,6 +114,10 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
     if (const auto s = field(0x30)) t->tuning.senses = t->tuning.combatSenses = readSenses(drm->sections[s->section], s->offset);
     if (const auto s = field(0x38)) t->tuning.combatSenses = readSenses(drm->sections[s->section], s->offset);
     if (const auto w = field(0x20)) t->weapon = read<uint16_t>(drm->sections[w->section], w->offset + 2); // 0x614400 -> 0x614950 attaches it
+    if (const auto list = t->weapon ? bigfile.read("\\tr8\\pc-w\\objectlist.txt") : std::nullopt) {
+        const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+        if (const auto n = names.find(t->weapon); n != names.end()) t->weaponObject = n->second;
+    }
 
     // Clip refs {s16 type, s16 idx}: type 1 -> ObjectBase +0x60 table (count +0x5C, 0x24-byte entries), entry +4 -> s16
     // animation-list index (FUN_00626F10 / FUN_004325d0). Type 2 (anim requests) is not resolved: "".
@@ -207,6 +211,8 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
         }
         loadClip("death_float_loop");
     }
+    // Tranquilizer naps (EnemyBehavior_Nap; cats' sleep_start / sleep_loop / sleep_end).
+    t->sleeps = loadClip("sleep_start") && loadClip("sleep_loop") && loadClip("sleep_end");
 
     // Death clips that end lying down: the last frame's median bone height under a third of the bind pose's (the
     // median, as helper bones such as the dropped rifle fly far off).
@@ -326,19 +332,20 @@ nlohmann::json toJson(const EnemyState& s) {
             {"loop", s.loop}, {"health", s.health}, {"modeTime", s.modeTime}, {"unseenTime", s.unseenTime},
             {"cooldown", s.cooldown}, {"blowLanded", s.blowLanded}, {"damageSinceReaction", s.damageSinceReaction},
             {"lastSeen", vec(s.lastSeen)}, {"fire", s.fire}, {"shotsLeft", s.shotsLeft}, {"shotTimer", s.shotTimer},
-            {"fireCooldown", s.fireCooldown}, {"rng", s.rng}, {"tip", s.tip}};
+            {"fireCooldown", s.fireCooldown}, {"rng", s.rng}, {"tip", s.tip}, {"sleep", s.sleep}, {"drowsy", s.drowsy}};
 }
 
 EnemyState stateFromJson(const nlohmann::json& j) {
     EnemyState s;
     const int mode = j.at("mode").get<int>();
-    if (mode < 0 || mode > int(Mode::Reload)) throw std::runtime_error("enemy mode " + std::to_string(mode));
+    if (mode < 0 || mode > int(Mode::Sleep)) throw std::runtime_error("enemy mode " + std::to_string(mode));
     s.mode = Mode(mode);
     s.pos = vec(j.at("pos")), s.yaw = j.at("yaw"), s.vz = j.at("vz"), s.clip = j.at("clip"), s.clipTime = j.at("clipTime");
     s.loop = j.at("loop"), s.health = j.at("health"), s.modeTime = j.at("modeTime"), s.unseenTime = j.at("unseenTime");
     s.cooldown = j.at("cooldown"), s.blowLanded = j.at("blowLanded"), s.damageSinceReaction = j.at("damageSinceReaction");
     s.lastSeen = vec(j.at("lastSeen")), s.fire = j.at("fire"), s.shotsLeft = j.at("shotsLeft"), s.shotTimer = j.at("shotTimer");
     s.fireCooldown = j.at("fireCooldown"), s.rng = j.at("rng"), s.tip = j.at("tip");
+    s.sleep = j.value("sleep", 0.0f), s.drowsy = j.value("drowsy", 0.0f); // older saves: awake
     return s;
 }
 } // namespace

@@ -80,7 +80,8 @@ struct AnimLibrary {
     // `clips` as "<object>:<clip>" (the DRMs reuse names). Defaults keep synthetic libraries usable without them.
     std::array<WeaponDef, kWeaponCount> weapons{weaponDefaults(Weapon::Pistols), weaponDefaults(Weapon::Uzi),
                                                 weaponDefaults(Weapon::Shotgun), weaponDefaults(Weapon::Speargun),
-                                                weaponDefaults(Weapon::ThorHammer)};
+                                                weaponDefaults(Weapon::ThorHammer), weaponDefaults(Weapon::AssaultRifle),
+                                                weaponDefaults(Weapon::Tranquilizer)};
     BikeTuning bike; // motorcycle.drm (loadBikeTuning); its riding clips are in `clips` as "motorcycle:<name>"
     GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
     DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
@@ -326,6 +327,7 @@ struct UnitData {
     // units (level ends); the unit's own track "<name>_mus_01" when it exists, else empty [I: played only while no
     // script `music` request has started a track; AUDIO.md §9.4].
     std::vector<Pickup> pickups;
+    std::vector<WeaponPickup> weaponPickups; // intros of ammoWeapon() objects
     std::map<int32_t, std::vector<std::string>> chapterLinks;
     std::string music;
     std::map<int32_t, std::string> cinematics; // cinematic_object intro -> the stream it plays (cine::introCinematic)
@@ -485,6 +487,18 @@ public:
     // capped at its max reserve (ou-game --weapon; the original gets them from pickups). ThorHammer: Mjolnir joins her
     // carried objects (script::Runtime::playerObjects, as larabase 37 "wp_thorhammer"); `reserve` is ignored.
     void giveWeapon(Weapon w, int reserve);
+    // PDA WEAPON SELECTION's EQUIP: `w` (a secondary, or Pistols for none) becomes the secondary with the clip and
+    // reserve it already has (no refill); drawn, Lara switches to it as Change Weapon would.
+    void equipWeapon(Weapon w);
+    // A chapter start: every secondary (uzi, shotgun, speargun, rifle, tranquilizer) full clip and reserve, the
+    // chapter's own one equipped (chapterSecondary) [I: the original's PDA lists them all, full, in a fresh l4 load].
+    void chapterLoadout(int chapter);
+    // Weapons, clips, reserves and the adrenaline meter, for saves; restoreCombat holsters (nullptr / bad: unchanged).
+    nlohmann::json serializeCombat() const;
+    void restoreCombat(const nlohmann::json& j);
+    // The sonar map's reveal: per unit, unit-frame points Lara has stood at, kSonarRevealStep apart (the PDA shows
+    // the map within ui::kSonarRevealRadius of them). Saved. GAMEPLAY.md "PDA".
+    std::map<std::string, std::vector<vec3>> mapReveal;
     // Mjolnir carried: "wp_thorhammer" among her carried objects (250_val_hammer's end gives it; chapterGear from 6).
     bool hasHammer() const { return script_.playerObjects().contains("wp_thorhammer"); }
     // PLAYER TAILORING (Combat.hpp): Lara's max health (keeping its fraction), enemy health on (re)spawn, saving grab
@@ -529,6 +543,7 @@ private:
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
     void touchCheckpoints();
+    void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
     void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // weapon upper body over `local`
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order

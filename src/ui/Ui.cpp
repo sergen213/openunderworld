@@ -10,6 +10,8 @@
 #include <cmath>
 #include <utility>
 
+#include <glm/glm.hpp>
+
 namespace ou::ui {
 
 std::string atlasText(std::string_view s) {
@@ -140,6 +142,7 @@ constexpr uint32_t kIconPlay = 18, kIconNew = 19, kIconOptions = 20, kIconLoad =
                    kIconExtras = 24, kIconQuit = 26, kIconPageUp = 27, kIconPageDown = 28, kIconSlotEmpty = 29,
                    kIconSlotUsed = 30, kIconVolume = 32;
 constexpr uint32_t kPdaPicture = 680, kPdaSonar = 688, kPdaWeapons = 689, kPdaInventory = 690; // pc-w\g_pda.drm
+constexpr uint32_t kPdaDoc = 698, kPdaButtons = 699, kPdaBackpack = 702; // title icon, window buttons, 702..705 categories
 
 // Layout in the 640x480 virtual space, measured from tru.exe at 1024x768 (4:3) and 1920x1080 (16:9) with the
 // art textures fitted to the captures (docs/GAMEPLAY.md "Menus").
@@ -206,7 +209,9 @@ constexpr uint32_t kIconBlue = rgba(50, 115, 185), kLabel = rgba(203, 203, 203),
                    kSelBar = rgba(23, 69, 97), kSliderFrame = rgba(5, 50, 80), kSliderFill = rgba(185, 230, 255),
                    kTailorBar = rgba(30, 90, 127), kPdaSel = rgba(76, 139, 193), kPdaGrey = rgba(91, 91, 91),
                    kPdaLine = rgba(46, 86, 121), kPdaSelLine = rgba(68, 130, 184), kPdaBoxLine = rgba(16, 60, 66),
-                   kSlotName = rgba(89, 168, 239), kSlotLine = rgba(72, 72, 72), kSlotRim = rgba(28, 92, 150);
+                   kSlotName = rgba(89, 168, 239), kSlotLine = rgba(72, 72, 72), kSlotRim = rgba(28, 92, 150),
+                   kPdaHead = rgba(100, 170, 235), kPdaEquipped = rgba(245, 135, 25), kPdaTitleRule = rgba(40, 95, 120),
+                   kPdaValue = rgba(200, 200, 200), kPdaYes = rgba(40, 220, 40), kPdaNo = rgba(230, 25, 25);
 
 uint32_t withAlpha(uint32_t c, float a) { return (c & 0x00FFFFFFu) | uint32_t(std::clamp(a, 0.0f, 1.0f) * float(c >> 24)) << 24; }
 uint32_t mix(uint32_t a, uint32_t b, float t) {
@@ -287,6 +292,8 @@ std::string_view placeholderKey(char32_t cp, std::string_view select) {
     case 0x182C: return "BackSpace"; // DELETE
     case 0x1803: return "space";     // jump (PDA "PRESS ... TO")
     case 0x1801: return "E";         // interact
+    case 0x1805: return "G";         // sonar map DOWN
+    case 0x1807: return "H";         // sonar map UP
     default: return {};
     }
 }
@@ -362,6 +369,14 @@ constexpr float kPdaBoxTop = 405.3f, kPdaBoxBottom = 525, kPdaRowCap0 = 442.7f, 
 constexpr float kPdaRowX = 602.7f, kPdaRowRight = 963.3f, kPdaPromptMid = 465, kPdaPromptStep = 19.3f, kPdaPromptW = 330;
 constexpr float kPdaFieldBox0 = 155, kPdaFieldBox1 = 344, kPdaFieldBox2 = 357, kPdaFieldBox3 = 544;
 constexpr float kPdaFootCap = 600, kPdaFootBack = 289.8f, kPdaFootSelect = 621.3f;
+// WEAPON SELECTION / INVENTORY pages [V captures at 1920x1080]: the list's header row, the right pane's title bar,
+// model panel, ammunition rows and description box.
+constexpr float kPdaHeadX = 248;
+constexpr float kPdaTitleX = 583.3f, kPdaTitleCap = 163.3f, kPdaTitleScale = 0.54f, kPdaTitleLine = 184;
+constexpr float kPdaAmmoScale = 0.55f, kPdaAmmoTracking = 1.0f;
+constexpr float kPdaDescTop = 370, kPdaDescBottom = 544, kPdaDescX = 558, kPdaDescCap = 445, kPdaDescStep = 16.7f,
+                kPdaDescW = 462, kPdaDescScale = 0.58f; // [V inventory_view]
+constexpr int kWeaponPanel[4] = {573, 214, 422, 163}, kItemPanel[4] = {580, 193, 433, 167}; // x, y, w, h
 
 } // namespace
 
@@ -419,6 +434,7 @@ void Menus::open(Screen s) {
     if (slots(s)) cursor_ = -1;          // focus stays on the ring item until Right / Accept
     if (s == Screen::Pda) cursor_ = kAreaInfo;
     if (s == Screen::Tailoring) cursor_ = tailoring;
+    if (s == Screen::PdaItems) category_ = std::clamp(cursors_.back(), 0, 3); // the INVENTORY row that opened it
 }
 
 void Menus::close() {
@@ -508,22 +524,43 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         return {{.stringId = 481, .action = a}, {.stringId = 482, .action = a}, {.stringId = 483, .action = a}};
     }
     case Screen::Pda:
-        return {{.stringId = 1074, .opens = Screen::Message, .message = 1093}, // "SONAR MAP IS CURRENTLY UNAVAILABLE"
+        return {pda.sonar ? Item{.stringId = 1074, .opens = Screen::PdaSonar}
+                          : Item{.stringId = 1074, .opens = Screen::Message, .message = 1093}, // "SONAR MAP IS CURRENTLY UNAVAILABLE"
                 {.stringId = 1075},
-                {.stringId = 1076, .opens = Screen::Message, .message = unavailable},
-                {.stringId = 1077, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 1076, .opens = Screen::PdaWeapons},
+                {.stringId = 1077, .opens = Screen::PdaInventory},
                 {.stringId = 1078, .action = Action::Hint},
                 {.stringId = 1081, .greyed = true},
                 {.stringId = 1082, .greyed = true},
                 {.stringId = 122, .action = Action::Resume}};
     case Screen::Message: return {{.stringId = 383}}; // OK
     case Screen::Confirm: return {{.stringId = 384}, {.stringId = 385}}; // YES / NO
+    case Screen::PdaWeapons: { // the secondaries, BACK TO PREVIOUS MENU
+        std::vector<Item> v;
+        for (const auto& w : pda.weapons) v.push_back({.stringId = w.name, .action = Action::Equip});
+        v.push_back({.stringId = 469});
+        return v;
+    }
+    case Screen::PdaInventory: // BACKPACK, GEAR, WEAPONS, TREASURES
+        return {{.stringId = 1101, .opens = Screen::PdaItems}, {.stringId = 1235, .opens = Screen::PdaItems},
+                {.stringId = 1100, .opens = Screen::PdaItems}, {.stringId = 1251, .opens = Screen::PdaItems}, {.stringId = 469}};
+    case Screen::PdaItems: {
+        std::vector<Item> v;
+        for (const auto& it : pda.inventory[size_t(category_)]) v.push_back({.stringId = it.name, .label = it.suffix});
+        v.push_back({.stringId = 469});
+        return v;
+    }
+    case Screen::PdaSonar: break;
     case Screen::None: break;
     }
     return {};
 }
 
 Action Menus::input(Nav n) {
+    if (screen() == Screen::PdaSonar) { // Escape BACK, E RESET VIEW; the app flies the camera with the held keys
+        if (n == Nav::Back) back();
+        return n == Nav::Alt ? Action::SonarReset : Action::None;
+    }
     auto list = items();
     if (list.empty()) return Action::None;
     const int count = int(list.size());
@@ -618,11 +655,13 @@ Action Menus::activate(Item it) {
         tailoring = cursor_;
         if (it.action == Action::None) { back(); return Action::None; }
     }
+    if (scr == Screen::PdaItems && cursor_ + 1 < int(items().size())) return Action::None; // an item: only shown
     if (it.action == Action::None) { // BACK / OK / sliders / PDA AREA INFO
         if (!it.value && scr != Screen::Pda) return input(Nav::Back);
         return Action::None;
     }
     if (it.action == Action::Hint) return Action::Hint;
+    if (it.action == Action::Equip) equip_ = pda.weapons[size_t(cursor_)].weapon;
     if (it.action == Action::Resume || it.action == Action::NewGame || it.action == Action::Continue || it.action == Action::Load)
         close();
     return it.action;
@@ -795,11 +834,20 @@ void Menus::drawPda(Canvas& c, const locale::Strings& s) {
     const float k = float(c.height) / 720, bw = (float(c.width) / float(c.height) < 1.556f ? 960 : 1280) * k;
     c.image(1, (float(c.width) - bw) / 2, 0, bw, float(c.height), 0, 0, 1, 1, kWhite);
     const auto list = items();
+    const Screen scr = screen();
+    const bool sub = scr != Screen::Pda; // WEAPON SELECTION / INVENTORY pages: a header row above the list
+    if (sub) {
+        static constexpr int16_t kCategory[] = {1101, 1235, 1100, 1251};
+        const std::string t(s.get(scr == Screen::PdaWeapons ? 1100 : scr == Screen::PdaInventory ? 1077 : kCategory[category_]));
+        capText(c, pdaX(kPdaHeadX), pdaY(kPdaItemCap), kPdaItemScale, t, kPdaHead);
+        vrect(c, pdaX(kPdaHeadX), pdaY(kPdaItemCap + kPdaLineBelow), (kPdaItemRight - kPdaHeadX) * 2 / 3, pdaY(1.5f), kPdaSelLine);
+    }
     for (size_t i = 0; i < list.size(); ++i) {
-        const float cap = kPdaItemCap + float(i) * kPdaItemStep;
+        const float cap = kPdaItemCap + float(i + sub) * kPdaItemStep;
         const bool sel = int(i) == cursor_;
-        const uint32_t col = list[i].greyed ? kPdaGrey : sel ? kPdaSel : kWhite;
-        const std::string t(s.get(list[i].stringId));
+        const bool equipped = scr == Screen::PdaWeapons && i < pda.weapons.size() && pda.weapons[i].equipped;
+        const uint32_t col = list[i].greyed ? kPdaGrey : sel ? kPdaSel : equipped ? kPdaEquipped : kWhite;
+        const std::string t = std::string(s.get(list[i].stringId)) + list[i].label; // INVENTORY items: " [count]"
         const float right = sel ? kPdaItemRight - kPdaArrowW - 3 : kPdaItemRight;
         capText(c, pdaX(right) - c.fontWidth(t, kPdaItemScale), pdaY(cap), kPdaItemScale, t, col);
         if (sel) // texture 114's ink (9x18 of 16x32 texels) drawn 10x12, tinted to the label's blue
@@ -822,7 +870,45 @@ void Menus::drawPda(Canvas& c, const locale::Strings& s) {
         const std::string t(s.get(tab));
         capText(c, pdaX(kPdaTabRight) - c.fontWidth(t, kPdaSmall), pdaY(kPdaTabCap), kPdaSmall, t, kWhite);
     };
-    switch (cursor_) {
+    // Title bar of a WEAPON SELECTION / INVENTORY item: document icon, blue title, rule, window buttons.
+    auto titleBar = [&](std::string_view t) {
+        c.sprite(kPdaDoc, pdaX(562.5f), pdaY(166), pdaY(24), pdaY(24), kWhite);
+        capText(c, pdaX(kPdaTitleX), pdaY(kPdaTitleCap), kPdaTitleScale, t, kPdaHead);
+        vrect(c, pdaX(kPdaPicX + 4), pdaY(kPdaTitleLine), (kPdaPicRight - kPdaPicX - 4) * 2 / 3, pdaY(1.3f), kPdaTitleRule);
+        c.sprite(kPdaButtons, pdaX(1016.7f), pdaY(170), pdaY(36), pdaY(18), kWhite);
+    };
+    const bool onItem = cursor_ >= 0 && cursor_ + 1 < int(list.size()); // not on BACK TO PREVIOUS MENU
+    if (scr == Screen::PdaInventory) {
+        box(kPdaBoxTop, kPdaBoxBottom);
+        if (onItem) picture(kPdaBackpack + uint32_t(cursor_), list[size_t(cursor_)].stringId), prompt(int16_t(1236 + cursor_), kPdaPromptMid);
+    } else if (scr == Screen::PdaWeapons && onItem) {
+        const PdaWeapon& w = pda.weapons[size_t(cursor_)];
+        titleBar(s.get(w.name));
+        box(kPdaBoxTop, kPdaBoxBottom);
+        // "AVAILABLE AMMUNITION : n/max" and "CURRENTLY EQUIPPED : YES / NO", centred on the pane.
+        const std::pair<std::string, std::pair<std::string, uint32_t>> rows[] = {
+            {std::string(s.get(1102)), {std::to_string(w.ammo) + "/" + std::to_string(w.max), kPdaValue}},
+            {std::string(s.get(1103)), {std::string(s.get(w.equipped ? 384 : 385)), w.equipped ? kPdaYes : kPdaNo}}};
+        float cap = kPdaRowCap0;
+        for (const auto& [label, value] : rows) {
+            const float lw = trackedWidth(c, label, kPdaAmmoScale, kPdaAmmoTracking), vw = trackedWidth(c, value.first, kPdaAmmoScale, kPdaAmmoTracking);
+            const float x = pdaX((kPdaPicX + kPdaPicRight) / 2) - (lw + vw) / 2;
+            capText(c, x, pdaY(cap), kPdaAmmoScale, label, kPdaHead, kPdaAmmoTracking);
+            capText(c, x + lw, pdaY(cap), kPdaAmmoScale, value.first, value.second, kPdaAmmoTracking);
+            cap = kPdaRowCap1;
+        }
+    } else if (scr == Screen::PdaItems && onItem) {
+        const PdaItem& it = pda.inventory[size_t(category_)][size_t(cursor_)];
+        titleBar(s.get(it.name));
+        if (it.picture) // 706: the first-aid kit on the grid, its lower quarter transparent
+            c.sprite(it.picture, pdaX(kItemPanel[0] + kItemPanel[2] / 2.0f), pdaY(kItemPanel[1] + kItemPanel[2] / 4.0f),
+                     pdaX(float(kItemPanel[2])) - pdaX(0), pdaY(kItemPanel[2] / 2.0f), kWhite);
+        box(kPdaDescTop, kPdaDescBottom);
+        float cap = kPdaDescCap;
+        for (const auto& l : fontWrap(c, it.text ? s.get(it.text) : std::string_view(it.body), pdaX(kPdaDescW) - pdaX(0), kPdaDescScale))
+            capText(c, pdaX(kPdaDescX), pdaY(cap), kPdaDescScale, l, kWhite), cap += kPdaDescStep;
+    }
+    if (!sub) switch (cursor_) {
     case kSonar: picture(kPdaSonar, 1074), prompt(1085, kPdaPromptMid); break;
     case kAreaInfo: {
         picture(kPdaPicture + uint32_t(std::clamp(pda.chapter, 0, 7)), 1075);
@@ -853,8 +939,79 @@ void Menus::drawPda(Canvas& c, const locale::Strings& s) {
             for (const auto& r : keyRuns(s.get(id), "Return")) px += capText(c, px, cap, kPdaSmall, r.text, r.key ? kKeyBlue : kWhite, kPdaTracking);
         };
         left(kPdaFootBack, 375);
-        if (cursor_ != kAreaInfo) left(kPdaFootSelect, 120);
+        const int16_t select = !sub ? (cursor_ != kAreaInfo ? 120 : 0) : scr == Screen::PdaWeapons ? 1104 : scr == Screen::PdaInventory ? 120 : 0;
+        if (select) left(kPdaFootSelect, select); // "Return SELECT" / "Return EQUIP"
     }
+}
+
+// SONAR MAP view overlay [V captures at 1920x1080, positions in their pixels scaled by the window height; x from the
+// centre]: frame lines and rulers top and bottom (black beyond them), "G DOWN" / "H UP", side brackets, the curved
+// bottom panel with "E RESET VIEW" / "Escape BACK". The map image itself (uiImages[1]) fills the window.
+void Menus::drawSonar(Canvas& c, const locale::Strings& s) {
+    const float w = float(c.width), h = float(c.height), f = h / 1080, cx = w / 2;
+    c.image(1, 0, 0, w, h, 0, 0, 1, 1, kWhite);
+    const uint32_t blue = rgba(90, 190, 230), dim = rgba(55, 60, 62), grey = rgba(105, 108, 110), black = rgba(0, 0, 0, 235);
+    auto tri = [&](glm::vec2 a, glm::vec2 b, glm::vec2 d, uint32_t col) {
+        c.vertices.insert(c.vertices.end(), {{a.x, a.y, -1, -1, col}, {b.x, b.y, -1, -1, col}, {d.x, d.y, -1, -1, col}});
+    };
+    auto line = [&](glm::vec2 a, glm::vec2 b, float width, uint32_t col) { // thick segment
+        const glm::vec2 d = b - a, n = glm::vec2(-d.y, d.x) / std::max(glm::length(d), 1e-3f) * (width / 2);
+        tri(a - n, b - n, b + n, col), tri(a - n, b + n, a + n, col);
+    };
+    auto ruler = [&](float y) { // texture 697: ticks, faded towards the ends
+        constexpr int kSeg = 8;
+        for (int i = 0; i < kSeg; ++i) {
+            const float t0 = float(i) / kSeg, t1 = float(i + 1) / kSeg, a = 1 - std::abs((t0 + t1) - 1);
+            if (const AtlasRect* r = c.art ? c.art->find(697) : nullptr)
+                c.image(0, cx - 390 * f + 780 * f * t0, y - 8 * f, 780 * f / kSeg, 16 * f, r->u0 + (r->u1 - r->u0) * t0, r->v0,
+                        r->u0 + (r->u1 - r->u0) * t1, r->v1, withAlpha(kWhite, 0.8f * a));
+        }
+    };
+    // Top: black band, a dim rule, the ruler, the bright rule.
+    c.rect(0, 0, w, 65 * f, black);
+    c.rect(0, 44 * f, w, std::max(1.0f, f), dim);
+    ruler(53 * f);
+    c.rect(0, 64 * f, w, 2 * f, blue);
+    // Bottom panel: the bright rule rises in two quarter curves around the prompts; black below it.
+    std::vector<glm::vec2> path{{0, 1017 * f}, {cx - 705 * f, 1017 * f}};
+    for (int i = 1; i <= 12; ++i) { // left curve, centre (cx - 620, 1017), radii 85 x 70
+        const float a = float(i) / 12 * 1.5707963f;
+        path.push_back({cx - 620 * f - 85 * f * std::cos(a), 1017 * f - 70 * f * std::sin(a)});
+    }
+    for (int i = 0; i <= 12; ++i) {
+        const float a = float(i) / 12 * 1.5707963f;
+        path.push_back({cx + 620 * f + 85 * f * std::sin(a), 1017 * f - 70 * f * std::cos(a)});
+    }
+    path.push_back({w, 1017 * f});
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        const glm::vec2 a = path[i], b = path[i + 1];
+        tri(a, b, {b.x, h}, black), tri(a, {b.x, h}, {a.x, h}, black);
+    }
+    for (size_t i = 0; i + 1 < path.size(); ++i) line(path[i], path[i + 1], 2 * f, blue);
+    ruler(1034 * f);
+    c.rect(0, 1046 * f, w, std::max(1.0f, f), dim);
+    // Side brackets with their middle tabs.
+    for (const float side : {-1.0f, 1.0f}) {
+        const float x = cx + side * 663 * f, in = -side; // `in`: towards the centre
+        line({x, 139 * f}, {x, 880 * f}, 2 * f, grey);
+        line({x, 139 * f}, {x + in * 7 * f, 139 * f}, 2 * f, grey), line({x, 880 * f}, {x + in * 7 * f, 880 * f}, 2 * f, grey);
+        const glm::vec2 t0{x, 466 * f}, t1{x + in * 18 * f, 478 * f}, t2{x + in * 18 * f, 544 * f}, t3{x, 556 * f};
+        tri(t0, t1, t2, grey), tri(t0, t2, t3, grey);
+    }
+    const float top = 88 / 2.25f, bottom = 974 / 2.25f, scale = 0.57f;
+    keyed(c, 320 - 240 / 2.25f, top, scale, s.get(1141), "Return"), keyed(c, 320 + 237 / 2.25f, top, scale, s.get(1142), "Return");
+    keyed(c, 320 - 462 / 2.25f, bottom, scale, s.get(1140), "Return"), keyed(c, 320 + 450 / 2.25f, bottom, scale, s.get(375), "Return");
+}
+
+std::optional<PdaModel> Menus::pdaModel() const {
+    const Screen scr = screen();
+    if (scr == Screen::PdaWeapons && cursor_ >= 0 && size_t(cursor_) < pda.weapons.size() && !pda.weapons[size_t(cursor_)].model.empty())
+        return PdaModel{pda.weapons[size_t(cursor_)].model, kWeaponPanel[0], kWeaponPanel[1], kWeaponPanel[2], kWeaponPanel[3]};
+    if (scr == Screen::PdaItems && cursor_ >= 0 && size_t(cursor_) < pda.inventory[size_t(category_)].size()) {
+        const PdaItem& it = pda.inventory[size_t(category_)][size_t(cursor_)];
+        if (!it.picture && !it.model.empty()) return PdaModel{it.model, kItemPanel[0], kItemPanel[1], kItemPanel[2], kItemPanel[3]};
+    }
+    return std::nullopt;
 }
 
 void Menus::drawMessage(Canvas& c, const locale::Strings& s) {
@@ -888,7 +1045,8 @@ void Menus::drawConfirm(Canvas& c, const locale::Strings& s) {
 void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
     const Screen scr = screen();
     if (scr == Screen::None) return;
-    if (scr == Screen::Pda) return drawPda(c, s);
+    if (scr == Screen::Pda || scr == Screen::PdaWeapons || scr == Screen::PdaInventory || scr == Screen::PdaItems) return drawPda(c, s);
+    if (scr == Screen::PdaSonar) return drawSonar(c, s);
     if (!mainMenu()) c.rect(0, 0, float(c.width), float(c.height), 0x70000000u); // the paused game, dimmed
     if (scr == Screen::Tailoring) return drawTailoring(c, s); // these two over the backdrop alone [O captures]
     if (scr == Screen::Message) return drawMessage(c, s), footer(c, s, key, {{320, 120}});

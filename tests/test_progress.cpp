@@ -3,7 +3,12 @@
 #include "game/Progress.hpp"
 #include "save/Save.hpp"
 #include "ui/Art.hpp"
+#include "ui/Pda.hpp"
 #include "ui/Ui.hpp"
+
+#include "formats/Formats.hpp"
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "cdc/Cdc.hpp"
 
@@ -340,6 +345,57 @@ TEST(Menus, SaveSlotsAndLevelTitles) {
     EXPECT_EQ(m.screen(), ui::Screen::Confirm); // overwrite Savegame 1?
 }
 
+// PDA pages: SONAR MAP (only with a map; E resets, Escape back), WEAPON SELECTION (the secondaries + BACK, Return EQUIP
+// names the row's weapon, its model in the panel), INVENTORY categories and their items.
+TEST(Menus, PdaWeaponsInventoryAndSonar) {
+    ui::Menus m;
+    m.open(ui::Screen::Pda);
+    m.input(ui::Nav::Up), m.input(ui::Nav::Accept);
+    EXPECT_EQ(m.screen(), ui::Screen::Message); // no map: SONAR MAP IS CURRENTLY UNAVAILABLE
+    m.close();
+    m.pda.sonar = true;
+    for (int w : {1, 2, 5, 6, 3}) m.pda.weapons.push_back({w, int16_t(75 + w), 10 * w, 20 * w, w == 6, "wp_" + std::to_string(w)});
+    m.pda.inventory[0] = {{1274, " [2]", 1275, {}, 706, {}}, {1248, " [4]", 1249, {}, 0, "pr_grenade"}};
+    m.open(ui::Screen::Pda);
+    m.input(ui::Nav::Up), m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::PdaSonar);
+    EXPECT_EQ(m.input(ui::Nav::Up), ui::Action::None); // the app flies the camera with held keys
+    EXPECT_EQ(m.input(ui::Nav::Alt), ui::Action::SonarReset);
+    EXPECT_EQ(m.screen(), ui::Screen::PdaSonar);
+    m.input(ui::Nav::Back);
+    ASSERT_EQ(m.screen(), ui::Screen::Pda);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // WEAPON SELECTION
+    ASSERT_EQ(m.screen(), ui::Screen::PdaWeapons);
+    ASSERT_EQ(m.items().size(), 6u);
+    EXPECT_EQ(m.items().back().stringId, 469); // BACK TO PREVIOUS MENU
+    EXPECT_EQ(m.cursor(), 0);
+    ASSERT_TRUE(m.pdaModel());
+    EXPECT_EQ(m.pdaModel()->object, "wp_1");
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Equip);
+    EXPECT_EQ(m.equipWeapon(), 5);
+    EXPECT_EQ(m.screen(), ui::Screen::PdaWeapons); // stays, the app refreshes the rows
+    for (int i = 0; i < 3; ++i) m.input(ui::Nav::Down);
+    EXPECT_FALSE(m.pdaModel()); // BACK row
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::Pda);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // INVENTORY
+    ASSERT_EQ(m.screen(), ui::Screen::PdaInventory);
+    EXPECT_EQ(m.items().size(), 5u);
+    m.input(ui::Nav::Accept); // BACKPACK
+    ASSERT_EQ(m.screen(), ui::Screen::PdaItems);
+    ASSERT_EQ(m.items().size(), 3u);
+    EXPECT_EQ(m.items()[0].label, " [2]");
+    EXPECT_FALSE(m.pdaModel()); // a picture
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::PdaItems);
+    m.input(ui::Nav::Down);
+    ASSERT_TRUE(m.pdaModel());
+    EXPECT_EQ(m.pdaModel()->object, "pr_grenade");
+    m.input(ui::Nav::Back);
+    EXPECT_EQ(m.screen(), ui::Screen::PdaInventory);
+}
+
 TEST(Menus, TextAndCanvas) {
     EXPECT_EQ(ui::atlasText("\xE1\xA0\x83 RESUME"), " RESUME");       // U+1803 button glyph dropped
     EXPECT_EQ(ui::atlasText("RAGNAR\xC3\x96K"), "RAGNAROK");          // Latin-1 accent
@@ -501,4 +557,55 @@ TEST(ChaptersReal, RewardTableMatchesUnits) {
     EXPECT_EQ(game::chapterRewards(2).treasures.size(), 22u);
     EXPECT_EQ(game::chapterRewards(0).relic, 0);
     EXPECT_EQ(&game::chapterRewards(8), &game::chapterRewards(7));
+}
+
+// PDA sonar map: l4_trailstart's map is in the unit frame (inside its collision bounds), shows only triangles near
+// the reveal points, and renders the revealed part with the grid; the side-view model panel draws a weapon.
+// OU_PDA_DUMP=<dir> writes the images as PPM for viewing.
+TEST(PdaReal, SonarMapFrameRevealAndModels) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto map = ui::loadSonarMap(bf, "l4_trailstart");
+    ASSERT_TRUE(map);
+    const auto u = game::loadUnitData(bf, "l4_trailstart");
+    vec3 lo(1e30f), hi(-1e30f);
+    for (const auto& v : u.col.vertices) lo = glm::min(lo, v), hi = glm::max(hi, v);
+    vec3 centre(0);
+    for (const auto& v : map->vertices) centre += vec3(v[0], v[1], v[2]) / float(map->vertices.size());
+    EXPECT_TRUE(glm::all(glm::greaterThan(centre, lo)) && glm::all(glm::lessThan(centre, hi))) << centre.x << " " << centre.y << " " << centre.z;
+    const vec3 lara = u.spawn ? u.spawn->pos : centre;
+    const std::vector<vec3> reveal{lara};
+    const auto shown = ui::Sonar::revealTriangles(*map, reveal);
+    const auto count = std::count(shown.begin(), shown.end(), 1);
+    EXPECT_GT(count, 0);
+    EXPECT_LT(size_t(count), shown.size());
+    const auto none = ui::Sonar::revealTriangles(*map, {});
+    EXPECT_EQ(std::count(none.begin(), none.end(), 1), 0);
+
+    ui::SonarCamera cam;
+    cam.reset(lara, u.spawn ? u.spawn->yaw : 0);
+    ui::Sonar sonar;
+    const ui::SonarUnit units[] = {{"l4_trailstart", &*map, vec3(0), &reveal}};
+    const auto pawnMesh = ui::viewMesh(formats::loadDrmScene(bf, "pc-w\\ping_map_icon_lara.drm"));
+    EXPECT_FALSE(pawnMesh.empty());
+    const ui::SonarPawn pawns[] = {{&pawnMesh, glm::translate(glm::mat4(1), lara), {0.1f, 0.8f, 0.55f}}};
+    const auto& img = sonar.render(960, 540, cam, units, pawns);
+    size_t lit = 0;
+    for (size_t i = 0; i < img.rgba.size(); i += 4) lit += img.rgba[i + 1] > 40;
+    EXPECT_GT(lit, img.rgba.size() / 4 / 10); // the revealed map fills part of the view
+
+    auto uzi = ui::viewMesh(formats::loadDrmScene(bf, "pc-w\\wp_uzi.drm"));
+    EXPECT_FALSE(uzi.empty());
+    EXPECT_FALSE(uzi.textures.empty());
+    ui::Image panel{std::vector<uint8_t>(426 * 164 * 4, 0), 426, 164};
+    ui::drawModelPanel(panel, 0, 0, 426, 164, &uzi);
+    if (const char* dir = std::getenv("OU_PDA_DUMP")) {
+        auto dump = [&](const ui::Image& im, const std::string& name) {
+            std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
+            std::fprintf(f, "P6\n%d %d\n255\n", im.width, im.height);
+            for (size_t i = 0; i < im.rgba.size(); i += 4) std::fwrite(&im.rgba[i], 1, 3, f);
+            std::fclose(f);
+        };
+        dump(img, "sonar.ppm"), dump(panel, "panel.ppm");
+    }
 }

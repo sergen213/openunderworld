@@ -17,6 +17,7 @@ namespace {
 constexpr float kPi = 3.14159265f;
 constexpr float kSkin = 1.0f;       // gap kept to surfaces after a sweep (as Player)
 constexpr float kAlertSeconds = 0.4f; // [I] pause facing Lara before the chase starts
+constexpr float kSleepSeconds = 20.0f; // [I] sleep_loop time (EnemyNapData +4 not tied to the cats' data)
 constexpr float kFaceToAttack = 0.5f; // rad: attack only roughly facing Lara [I]
 constexpr float kBlowCone = 1.05f;    // rad: half angle a blow reaches [I]
 constexpr float kCount = 1.0f / 30.0f; // [I] s per record timer count (enemy clock unit not found; 30 Hz frames)
@@ -58,7 +59,7 @@ const anim::Clip* EnemyType::clip(Role r) const {
 }
 
 std::string_view modeName(Mode m) {
-    static constexpr std::string_view k[] = {"idle", "alert", "chase", "attack", "hit", "dead", "spawning", "fire", "reload"};
+    static constexpr std::string_view k[] = {"idle", "alert", "chase", "attack", "hit", "dead", "spawning", "fire", "reload", "sleep"};
     return size_t(m) < std::size(k) ? k[size_t(m)] : "unknown";
 }
 
@@ -134,6 +135,7 @@ void Enemy::setMode(Mode m) {
         break;
     }
     case Mode::Reload: playClip(type_->tuning.attacks[size_t(s_.fire)].followClip, false); break;
+    case Mode::Sleep: s_.sleep = kSleepSeconds, s_.drowsy = 0, playClip("sleep_start", false); break;
     }
 }
 
@@ -161,9 +163,15 @@ bool Enemy::perceives(const collision::CollisionMesh& col, const Target& lara) c
 
 void Enemy::onHit(const Hit& hit) {
     if (!alive()) return;
-    s_.health -= hit.damage;
     s_.lastSeen = s_.pos - hit.dir * 1000.0f; // [I] turns towards where the shot came from
     s_.unseenTime = 0;
+    if (hit.tranq && type_->sleeps) { // darts dose the animal instead of hurting it; asleep at its health [I]
+        if (s_.mode == Mode::Sleep) return;
+        if ((s_.drowsy += hit.damage) >= s_.health) setMode(Mode::Sleep);
+        else if (s_.mode == Mode::Idle) setMode(Mode::Alert);
+        return;
+    }
+    s_.health -= hit.damage;
     s_.damageSinceReaction += hit.damage;
     if (s_.health <= 0) {
         die(hit);
@@ -402,6 +410,12 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     }
     case Mode::Reload:
         if (clipDone()) setMode(Mode::Chase);
+        break;
+    case Mode::Sleep: // sleep_start, sleep_loop for kSleepSeconds, sleep_end, then awake and alert
+        if (s_.clip == "sleep_start" && clipDone()) playClip("sleep_loop", true);
+        else if (s_.clip == "sleep_loop" && (s_.sleep -= dt) <= 0) playClip("sleep_end", false);
+        else if (s_.clip == "sleep_end" && clipDone()) setMode(Mode::Alert);
+        delta = vec3(0), flight = vec3(0);
         break;
     case Mode::Hit:
         if (clipDone()) setMode(Mode::Chase);

@@ -49,12 +49,17 @@ float angleBetween(glm::vec3 a, glm::vec3 b) {
 //   throw ground_fire_idle (29 keys, shot on event 0x75 at frame 10), the ground pound ground_melee_idle (61 keys,
 //   event 0x4B at frame 12); under water combat_water_submerged_equip / _unequip and swim_submerge_thorhammer_attack_front
 //   (31 keys) [I: its shot at frame 10 too, the swim attack clips carry no event list]. No clip, so no reload.
+// - assault rifle / tranquilizer (wp_assault_rifle / wp_tranq): Lara's 3x5 combat_rifle_aim_* / combat_rifle_fire_*
+//   (3 keys) grids of each DRM; combat_rifle_equip 19, unequip 24; reload combat_rifle_reload 41 (30 rounds) /
+//   combat_tranqgun_reload 19 (one dart per clip, so after every shot).
 struct WeaponInfo {
     std::string_view object, name;
-    bool rifle; // two-handed: one gun, the 3x5 shotgun aim grid
+    bool rifle; // two-handed: one gun, the 3x5 aim grid
     float refire, equip, unequip, reload; // seconds
     std::string_view equipClip, unequipClip, reloadClip;
     glm::vec3 muzzle; // barrel tip in the gun model (barrel -Y, top +Z) [I] from the mesh bounds
+    std::string_view grid = "combat_shotgun_"; // two-handed: <grid>aim_* / <grid>fire_*
+    float fire = 13 / 30.0f;                   // two-handed: length of the fire_* cells
 };
 const WeaponInfo kWeapons[kWeaponCount] = {
     {"wp_handgun", "pistols", false, 10 / 30.0f, 6 / 30.0f, 19 / 30.0f, 21 / 30.0f, "combat_pistols_equip", "combat_pistols_unequip",
@@ -67,6 +72,10 @@ const WeaponInfo kWeapons[kWeaponCount] = {
      "combat_shotgun_unequip", "combat_speargun_reload", {0, -152, 25}}, // y -151.8 .. 15.4
     {"wp_thorhammer", "thorhammer", false, 29 / 30.0f, 26 / 30.0f, 26 / 30.0f, 0, "ground_equip", "ground_unequip", "",
      {0, 0, 95}}, // handle along +Z from the grip, head z 60 .. 120
+    {"wp_assault_rifle", "rifle", true, 3 / 30.0f, 19 / 30.0f, 24 / 30.0f, 41 / 30.0f, "combat_rifle_equip",
+     "combat_rifle_unequip", "combat_rifle_reload", {0, -170, 20}, "combat_rifle_", 3 / 30.0f}, // y -170.6 .. 71.5
+    {"wp_tranq", "tranquilizer", true, 3 / 30.0f, 19 / 30.0f, 24 / 30.0f, 19 / 30.0f, "combat_rifle_equip",
+     "combat_rifle_unequip", "combat_tranqgun_reload", {0, -124, 10}, "combat_rifle_", 3 / 30.0f}, // y -124.6 .. 18.5
 };
 const WeaponInfo& info(Weapon w) { return kWeapons[size_t(w)]; }
 constexpr float kHammerShot = 10 / 30.0f, kHammerPound = 12 / 30.0f; // events 0x75 / 0x4B
@@ -76,7 +85,7 @@ constexpr float kPoundRadius = 948.0f;
 // Mjolnir's aim poses ground_aim_right / _front / _left by aim yaw; no pitch rows. Yaws [I]: the pointing (right) hand's
 // shoulder -> hand direction in each pose relative to _front's (which points 9 deg right of the heading): -52, 0, +32.
 const float kHammerCols[] = {-52 * kPi / 180, 0, 32 * kPi / 180};
-constexpr float kRifleFire = 13.0f / 30.0f, kPump = 25.0f / 30.0f;      // combat_shotgun_fire_* / combat_shotgun_pump
+constexpr float kPump = 25.0f / 30.0f;                                   // combat_shotgun_pump
 constexpr float kSubEquip = 17.0f / 30.0f, kSubUnequip = 19.0f / 30.0f; // speargun under water
 constexpr float kRespawnDelay = 1.0f; // after the death clip ends [I]
 constexpr float kShoulderHeight = 418.0f; // bind-pose shoulder joints 53 / 78 above the feet
@@ -84,9 +93,10 @@ constexpr float kDeg = kPi / 180;
 // Aim grids: columns right .. left with the aim yaw each was measured at, rows up / middle / down.
 // Pistols (combat_pistol_pose[A-I], wp_handgun and wp_uzi): each pose's shoulder->hand directions (both arms,
 // model space): columns C/F/I -104 deg, B/E/H 0, A/D/G +109; rows up +40, down -57.
-// Shotgun / speargun (combat_shotgun_aim_*): the barrel line rear (left, bone 55) -> front (right, 80) hand of each
-// pose relative to _F (whose line points 15 deg right of the heading): middle row R -90, FR -47, F 0, FL +58, L +90;
-// rows up +45, down -39 (row means). _UFR is a copy of _FR in the data.
+// Two-handed (combat_shotgun_aim_* of the shotgun / speargun; combat_rifle_aim_* of the rifle / tranquilizer, the same
+// columns and rows [I]): the barrel line rear (left, bone 55) -> front (right, 80) hand of each shotgun pose relative to
+// _F (whose line points 15 deg right of the heading): middle row R -90, FR -47, F 0, FL +58, L +90; rows up +45, down -39
+// (row means). _UFR is a copy of _FR in the data.
 const float kPistolCols[] = {-104 * kDeg, 0, 109 * kDeg};
 const float kRifleCols[] = {-90 * kDeg, -47 * kDeg, 0, 58 * kDeg, 90 * kDeg};
 constexpr std::string_view kPistolCells[3][3] = {{"C", "B", "A"}, {"F", "E", "D"}, {"I", "H", "G"}};
@@ -95,8 +105,8 @@ int gridCols(bool rifle) { return rifle ? 5 : 3; }
 float colYaw(bool rifle, int col) { return rifle ? kRifleCols[col] : kPistolCols[col]; }
 float gridUp(bool rifle) { return (rifle ? 45.0f : 40.0f) * kDeg; }
 float gridDown(bool rifle) { return (rifle ? 39.0f : 57.0f) * kDeg; }
-std::string cellName(bool rifle, bool fire, int row, int col) {
-    if (rifle) return std::string(fire ? "combat_shotgun_fire_" : "combat_shotgun_aim_") + std::string(kRifleCells[row][col]);
+std::string cellName(const WeaponInfo& in, bool fire, int row, int col) {
+    if (in.rifle) return std::string(in.grid) + (fire ? "fire_" : "aim_") + std::string(kRifleCells[row][col]);
     return "combat_pistol_pose" + std::string(kPistolCells[row][col]);
 }
 // Lara's bones: arms 52-55 (left, model +X) / 77-80 (right), thighs 4 (left) / 9 (right); upper body = the
@@ -254,8 +264,34 @@ WeaponDef weaponDefaults(Weapon w) {
         d.damage[0] = d.damage[1] = d.damage[2] = 1000;
         d.wetDamage[0] = 1000, d.wetDamage[1] = 400, d.wetDamage[2] = 100;
         break;
+    case Weapon::AssaultRifle: // pr_akriflebullet (as wp_akrifle, the poachers' gun)
+        d.object = "wp_assault_rifle", d.ammo = "pr_akriflebullet", d.ammoSlot = 2, d.maxReserve = {300, 210, 120}, d.clip = 30;
+        d.infinite = d.dual = false, d.shortRange = 5000, d.maxRange = 8000;
+        d.maxSpreadDeg = 5, d.spreadPerShot = 1.2f, d.spreadRecovery = 0.125f;
+        d.damage[0] = 27, d.damage[1] = 27, d.damage[2] = 21;
+        d.wetDamage[0] = 23, d.wetDamage[1] = 23, d.wetDamage[2] = 18;
+        break;
+    case Weapon::Tranquilizer: // pr_tranquilizerdart: a projectile (mode 2) whose +0x1C is the 500 dose
+        d.object = "wp_tranq", d.ammo = "pr_tranquilizerdart", d.ammoSlot = 3, d.maxReserve = {25, 15, 10}, d.clip = 1;
+        d.infinite = d.dual = false, d.shortRange = 4000, d.maxRange = 6000, d.spreadDeg = d.maxSpreadDeg = 5, d.mode = 2;
+        d.damage[0] = d.damage[1] = d.damage[2] = 500;
+        d.wetDamage[0] = d.wetDamage[1] = d.wetDamage[2] = 500;
+        break;
     }
     return d;
+}
+
+Weapon chapterSecondary(int chapter) {
+    static constexpr Weapon k[] = {Weapon::Pistols, Weapon::Speargun, Weapon::Uzi, Weapon::Shotgun, Weapon::Tranquilizer,
+                                   Weapon::Uzi, Weapon::AssaultRifle, Weapon::Speargun, Weapon::Uzi};
+    return chapter >= 0 && size_t(chapter) < std::size(k) ? k[chapter] : Weapon::Pistols;
+}
+
+std::optional<Weapon> ammoWeapon(std::string_view object) {
+    if (object == "wp_akrifle") return Weapon::AssaultRifle;
+    for (const Weapon w : {Weapon::Uzi, Weapon::Shotgun, Weapon::Speargun, Weapon::AssaultRifle, Weapon::Tranquilizer})
+        if (weaponObject(w) == object) return w;
+    return std::nullopt;
 }
 
 CombatState fullClips(const std::array<WeaponDef, kWeaponCount>& weapons) {
@@ -278,8 +314,8 @@ const std::vector<std::string_view>& weaponClipNames(Weapon w) {
             } else {
                 for (int r = 0; r < 3; ++r)
                     for (int c = 0; c < gridCols(wi.rifle); ++c) {
-                        o.push_back(cellName(wi.rifle, false, r, c));
-                        if (wi.rifle) o.push_back(cellName(true, true, r, c));
+                        o.push_back(cellName(wi, false, r, c));
+                        if (wi.rifle) o.push_back(cellName(wi, true, r, c));
                     }
                 if (!wi.rifle) o.insert(o.end(), {"combat_pistol_RfireE", "combat_pistol_LfireE"});
                 o.insert(o.end(), {std::string(wi.equipClip), std::string(wi.unequipClip), std::string(wi.reloadClip)});
@@ -534,6 +570,58 @@ void World::giveWeapon(Weapon w, int reserve) {
     c.reserve[i] = std::clamp(reserve, 0, max > 0 ? max : reserve);
 }
 
+void World::equipWeapon(Weapon w) {
+    CombatState& c = combat_;
+    if (w == Weapon::ThorHammer || w == c.secondary) return;
+    if (c.secondary != Weapon::Pistols && c.want == c.secondary) { // the old secondary in hand: switch as Change Weapon
+        c.redraw = c.redraw || c.drawn;
+        c.want = w;
+    }
+    c.secondary = w;
+}
+
+void World::chapterLoadout(int chapter) {
+    CombatState& c = combat_;
+    for (const Weapon w : {Weapon::Uzi, Weapon::Shotgun, Weapon::Speargun, Weapon::AssaultRifle, Weapon::Tranquilizer}) {
+        const WeaponDef& d = anims_.weapons[size_t(w)];
+        c.clip[size_t(w)][0] = d.clip, c.clip[size_t(w)][1] = d.dual ? d.clip : 0;
+        c.reserve[size_t(w)] = maxReserve(w);
+    }
+    c.weapon = c.want = c.previous = Weapon::Pistols;
+    c.drawn = c.redraw = false, c.drawT = 0, c.reload = 0, c.hammer = {};
+    c.secondary = chapterSecondary(chapter);
+}
+
+nlohmann::json World::serializeCombat() const {
+    const CombatState& c = combat_;
+    nlohmann::json guns = nlohmann::json::object();
+    for (int i = 0; i < kWeaponCount; ++i)
+        guns[std::string(weaponName(Weapon(i)))] = {{"clip", {c.clip[i][0], c.clip[i][1]}}, {"reserve", c.reserve[i]}};
+    return {{"weapon", weaponName(c.weapon)}, {"secondary", weaponName(c.secondary)}, {"guns", guns}, {"adrenaline", c.adrenaline}};
+}
+
+void World::restoreCombat(const nlohmann::json& j) {
+    if (!j.is_object()) return;
+    const auto weapon = weaponByName(j.value("weapon", std::string{})), secondary = weaponByName(j.value("secondary", std::string{}));
+    if (!weapon || !secondary) return;
+    CombatState c = fullClips(anims_.weapons); // holstered, as a respawn
+    c.weapon = c.want = c.previous = *weapon, c.secondary = *secondary;
+    const nlohmann::json guns = j.value("guns", nlohmann::json::object());
+    for (int i = 0; i < kWeaponCount && guns.is_object(); ++i) {
+        const auto g = guns.find(std::string(weaponName(Weapon(i))));
+        if (g == guns.end() || !g->is_object()) continue;
+        const auto clip = g->value("clip", std::array<int, 2>{});
+        const int max = anims_.weapons[size_t(i)].clip;
+        if (max < 0) continue; // Mjolnir: no clip
+        c.clip[i][0] = std::clamp(clip[0], 0, max), c.clip[i][1] = std::clamp(clip[1], 0, max);
+        c.reserve[i] = std::max(0, g->value("reserve", 0));
+    }
+    c.adrenaline = std::clamp(j.value("adrenaline", 0.0f), 0.0f, 1.0f);
+    c.spread = anims_.weapons[size_t(c.weapon)].spreadDeg;
+    c.rng = combat_.rng;
+    combat_ = c;
+}
+
 void World::setTailoring(const Tailoring& t) {
     tailoring_ = t;
     const auto level = [](int v) { return size_t(std::clamp(v, 0, 2)); };
@@ -627,7 +715,9 @@ void World::fire(int hand) {
         Shot shot{from, from + dir * best, hand, hitAny, struck, 0};
         if (struck) {
             shot.damage = w.damageAt(best, submerged());
-            struck->onHit({shot.damage, shot.to, dir, Team::Player});
+            Hit hit{shot.damage, shot.to, dir, Team::Player};
+            hit.tranq = c.weapon == Weapon::Tranquilizer; // pr_tranquilizerdart: the damage is its dose
+            struck->onHit(hit);
             c.adrenaline = std::min(1.0f, c.adrenaline + shot.damage / kAdrenalineFill); // "damaging enemies" (locals 1310)
         }
         c.shots.push_back(shot);
@@ -844,7 +934,7 @@ void World::aimLayer(std::vector<anim::LocalTransform>& local, float dt) {
     const bool rifle = in.rifle, sub = player_.state().water >= 0 && wpn == Weapon::Speargun, hammer = wpn == Weapon::ThorHammer;
     const int cols = gridCols(rifle);
     const auto clip = [&](std::string_view n) { return anims_.weaponClip(wpn, n); };
-    const anim::Clip* centre = clip(hammer ? std::string("ground_aim_front") : cellName(rifle, false, 1, cols / 2));
+    const anim::Clip* centre = clip(hammer ? std::string("ground_aim_front") : cellName(in, false, 1, cols / 2));
     if (c.drawT <= 0 || local.size() != sk.bones.size() || sk.bones.size() <= size_t(kHandBone[0]) || !centre) return;
     const auto sample = [&](const anim::Clip* k, double t, bool loop) { return anim::sample(*k, sk, t, loop); };
     const auto additive = [&](std::vector<anim::LocalTransform>& p, const anim::Clip* k, double t) {
@@ -874,10 +964,10 @@ void World::aimLayer(std::vector<anim::LocalTransform>& local, float dt) {
         const float u = std::clamp((c.aim.x - colYaw(rifle, i0)) / (colYaw(rifle, i0 + 1) - colYaw(rifle, i0)), 0.0f, 1.0f);
         const int row = c.aim.y >= 0 ? 0 : 2;
         const float v = std::clamp(c.aim.y >= 0 ? c.aim.y / gridUp(rifle) : -c.aim.y / gridDown(rifle), 0.0f, 1.0f);
-        const bool firing = rifle && c.sinceShot[0] < kRifleFire;
+        const bool firing = rifle && c.sinceShot[0] < in.fire;
         const auto cell = [&](int r, int col) {
-            if (const anim::Clip* k = firing ? clip(cellName(rifle, true, r, col)) : nullptr) return sample(k, c.sinceShot[0], false);
-            const anim::Clip* k = clip(cellName(rifle, false, r, col));
+            if (const anim::Clip* k = firing ? clip(cellName(in, true, r, col)) : nullptr) return sample(k, c.sinceShot[0], false);
+            const anim::Clip* k = clip(cellName(in, false, r, col));
             return sample(k ? k : centre, aimTime_, true);
         };
         anim::blendPoses(cell(1, i0), cell(1, i0 + 1), u, p);
@@ -888,8 +978,8 @@ void World::aimLayer(std::vector<anim::LocalTransform>& local, float dt) {
                 if (const anim::Clip* k = clip(hand == 0 ? "combat_pistol_RfireE" : "combat_pistol_LfireE"); k && c.sinceShot[hand] < k->durationSeconds())
                     additive(p, k, c.sinceShot[hand]);
         } else if (const anim::Clip* k = wpn == Weapon::Shotgun ? clip("combat_shotgun_pump") : nullptr;
-                   k && c.sinceShot[0] >= kRifleFire && c.sinceShot[0] < kRifleFire + kPump) {
-            additive(p, k, c.sinceShot[0] - kRifleFire);
+                   k && c.sinceShot[0] >= in.fire && c.sinceShot[0] < in.fire + kPump) {
+            additive(p, k, c.sinceShot[0] - in.fire);
         }
         if (const anim::Clip* k = clip(sub ? "combat_speargun_reload_submerged" : in.reloadClip); k && c.reload > 0)
             anim::blendPoses(p, sample(k, in.reload - c.reload, false), 1.0f, p);

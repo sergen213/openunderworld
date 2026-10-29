@@ -337,7 +337,7 @@ target_link_libraries(ou_save PUBLIC ou_game nlohmann_json::nlohmann_json PRIVAT
 target_sources(ou_game PRIVATE src/game/Objects.cpp)
 target_link_libraries(ou_game PUBLIC ou_physics)
 # ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
-add_library(ou_ui STATIC src/ui/Ui.cpp src/ui/Hud.cpp src/ui/Art.cpp)
+add_library(ou_ui STATIC src/ui/Ui.cpp src/ui/Hud.cpp src/ui/Art.cpp src/ui/Pda.cpp)
 target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale ou_formats)
 add_executable(ou-game src/app/game/main.cpp src/app/game/Cinematic.cpp src/app/game/Sound.cpp)
 target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio ou_fx)

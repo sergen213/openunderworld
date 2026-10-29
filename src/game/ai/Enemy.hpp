@@ -103,6 +103,8 @@ struct EnemyType {
     const anim::Clip* clip(Role r) const;
     const std::string& clipName(Role r) const { return roles[size_t(r)]; }
     uint16_t weapon = 0;     // list node +0x20 weapon record u16 +2: weapon object id (poacher 114 wp_akrifle); 0 none
+    std::string weaponObject; // its objectlist name ("wp_akrifle"): Lara picks it up from the body (World::enemyDrops)
+    bool sleeps = false;     // has sleep_start / sleep_loop / sleep_end: tranquilizer darts put it to sleep (cats)
     bool flyer() const { return behaviour == 2; }
     // The shared flyer behaviour tree also drives sharks; their animation set selects the aquatic controller.
     bool aquatic() const { return flyer() && clipName(Role::Run).starts_with("swim_"); }
@@ -120,7 +122,8 @@ extern const std::array<std::vector<std::string_view>, size_t(Role::Count)> kRol
 // Enemy objects: ObjectBase oflags2 bit 0x400000 (tru.exe 0x5BF0E0 picks the "enemy" family, 0x8ABA28 entry 14).
 bool isEnemyObject(const cdc::BigfileSet& bigfile, const std::string& name);
 
-enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload };
+// Sleep: knocked out by tranquilizer darts (EnemyBehavior_Nap / EnemyState_Nap in tru.exe; docs/GAMEPLAY.md "Combat").
+enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep };
 std::string_view modeName(Mode m);
 
 // What enemies hunt: Lara's feet and whether she can still be hurt.
@@ -160,6 +163,8 @@ struct EnemyState {
     std::array<float, 4> fireCooldown{}; // s per fire record (first four)
     uint32_t rng = 1;        // LCG for shot accuracy (seeded by uid)
     float tip = 0;           // dead: rad the body has tipped over onto its side (clips ending upright)
+    float sleep = 0;         // Sleep: seconds left in sleep_loop
+    float drowsy = 0;        // tranquilizer dose since it last woke (sleeps at its health)
 };
 
 class Enemy final : public Damageable {

@@ -44,6 +44,11 @@ json toJson(const SaveGame& s) {
         ledge = {{"unit", s.ledgeUnit}, {"index", s.ledgeIndex}, {"seg", p.ledgeSeg}, {"t", p.ledgeT}, {"side", p.ledgeSide}};
     json water = nullptr;
     if (!s.waterUnit.empty()) water = {{"unit", s.waterUnit}, {"index", s.waterIndex}};
+    json reveal = json::object();
+    for (const auto& [unit, points] : s.reveal) {
+        json& a = reveal[unit] = json::array();
+        for (const auto& q : points) a.push_back(vec(q));
+    }
     json cp = nullptr;
     if (s.checkpoint) cp = {{"unit", s.checkpoint->unit}, {"id", s.checkpoint->id}};
     return {
@@ -68,6 +73,8 @@ json toJson(const SaveGame& s) {
         {"script", s.script},
         {"enemies", s.enemies},
         {"vehicles", s.vehicles},
+        {"combat", s.combat},
+        {"reveal", reveal},
     };
 }
 
@@ -139,6 +146,11 @@ SaveGame fromJson(const json& j) {
     if (!s.enemies.is_null() && !s.enemies.is_object()) throw SaveError("enemy state is not an object");
     s.vehicles = j.value("vehicles", json(nullptr));
     if (!s.vehicles.is_null() && !s.vehicles.is_object()) throw SaveError("vehicle state is not an object");
+    s.combat = j.value("combat", json(nullptr));
+    if (!s.combat.is_null() && !s.combat.is_object()) throw SaveError("combat state is not an object");
+    if (const auto r = j.find("reveal"); r != j.end() && r->is_object())
+        for (const auto& [unit, points] : r->items())
+            for (const auto& q : points) s.reveal[unit].push_back(vec(q));
     return s;
 }
 
@@ -176,6 +188,8 @@ SaveGame capture(const game::World& world) {
     s.script = world.script().serialize();
     s.enemies = world.enemies().serialize();
     s.vehicles = world.serializeVehicles();
+    s.combat = world.serializeCombat();
+    s.reveal = world.mapReveal;
     s.ticks = world.ticks();
     return s;
 }
@@ -218,6 +232,9 @@ void apply(const SaveGame& save, game::World& world) {
             throw SaveError(std::string("vehicles: ") + e.what());
         }
     }
+    if (save.combat.is_null()) world.chapterLoadout(save.chapter); // older saves: what the chapter starts with
+    else world.restoreCombat(save.combat);
+    world.mapReveal = save.reveal;
     if (save.health) world.setHealth(*save.health);
 }
 

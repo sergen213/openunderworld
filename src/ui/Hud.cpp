@@ -45,12 +45,15 @@ struct Pips {
 // Icons 96 handgun, 98 uzi, 99 shotgun, 102 speargun, 97 Mjolnir (HUD script weapon list: wp_handgun, wp_thorhammer 97,
 // wp_uzi, wp_shotgun, wp_assault_rifle 100, wp_tranq 101, wp_speargun). [V fits of hud_weapon_1080 / _768] bullets 83-85,
 // 12 per row from x 63.6 every 6, rows at 36.0 / 43.1; shells 86-88 from (66.8, 36.6) every 11.7. Spears 89/90 [I].
-// Mjolnir has no clip (S+0x0B = -1; tru.exe 0x6E8370 sets its HUD clip fraction 0): the icon alone.
-constexpr Pips kPips[5] = {{96, 83, 84, 85, 63.6f, 6.0f, {36.0f, 43.1f}},
-                           {98, 83, 84, 85, 63.6f, 6.0f, {36.0f, 43.1f}},
-                           {99, 86, 87, 88, 66.8f, 11.7f, {36.6f, 36.6f}},
-                           {102, 89, 90, 89, 63.6f, 30.0f, {37.0f, 37.0f}},
-                           {97, 0, 0, 0, 0, 0, {0, 0}}};
+// Mjolnir has no clip (S+0x0B = -1; tru.exe 0x6E8370 sets its HUD clip fraction 0): the icon alone. The rifle's 30
+// rounds use the bullet pips squeezed into the row as the uzi's, the tranquilizer's dart the spear pips [I].
+constexpr Pips kPips[] = {{96, 83, 84, 85, 63.6f, 6.0f, {36.0f, 43.1f}},
+                          {98, 83, 84, 85, 63.6f, 6.0f, {36.0f, 43.1f}},
+                          {99, 86, 87, 88, 66.8f, 11.7f, {36.6f, 36.6f}},
+                          {102, 89, 90, 89, 63.6f, 30.0f, {37.0f, 37.0f}},
+                          {97, 0, 0, 0, 0, 0, {0, 0}},
+                          {100, 83, 84, 85, 63.6f, 6.0f, {36.0f, 43.1f}},
+                          {101, 89, 90, 89, 63.6f, 30.0f, {37.0f, 37.0f}}};
 
 } // namespace
 
@@ -117,7 +120,7 @@ void Hud::draw(Canvas& c) const {
         put(c, ox, oy, 76, 35.1f, -2.7f, fade(kWhite, a));
         put(c, ox, oy, 75, 9.8f, -2.7f, fade(healthColor(s_.health), a));
     }
-    if (const float a = alpha_[Weapons]; a > 0 && s_.weapon >= 0 && s_.weapon < 5) { // WEAPONS: icon + clip pips
+    if (const float a = alpha_[Weapons]; a > 0 && s_.weapon >= 0 && s_.weapon < int(std::size(kPips))) { // WEAPONS: icon + clip pips
         const Pips& p = kPips[s_.weapon];
         put(c, ox, oy, p.icon, 59.1f, -4.9f, fade(kWhite, a), 0.65f); // [V fit: pistols icon]
         const int guns = s_.dual ? 2 : 1;

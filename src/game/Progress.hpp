@@ -73,9 +73,19 @@ struct Pickup {
     PickupKind kind = PickupKind::Treasure;
     glm::vec3 pos{0}; // unit frame
 };
+// Weapon intros (and armed enemies' bodies) Lara takes ammunition from: game::ammoWeapon(object) names the gun whose
+// reserve it fills (Combat.hpp).
+struct WeaponPickup {
+    int32_t id = 0; // intro unique id (World::collected keys)
+    std::string object;
+    glm::vec3 pos{0}; // unit frame
+};
 // [I] reach: the pickup base script (3674) uses a playersensor; Lara picks up on interact (hint 1300 "Press
 // ... to pick up objects", lara_pickup_ground/crouch clips in the reward DTPs) within this cylinder.
 inline constexpr float kPickupRadius = 200.0f, kPickupHeight = 250.0f;
+// PDA sonar map reveal (World::mapReveal): a point every this many units Lara moves [I]. The original marks the reveal
+// volumes (PDAMap RevealedInfo box / sphere / capsule) Lara's position + 200 z lies in (tru.exe 0x6E33D0), not decoded.
+inline constexpr float kSonarRevealStep = 1000.0f;
 
 // Treasure and relic intro ids per chapter (kChapters index; the epilogue shares the Arctic Sea's), for the PDA's
 // AREA INFO found/total [O survey: the reward intros of every pc-w\l<N>_*.drm unit; ids are unique game-wide; the

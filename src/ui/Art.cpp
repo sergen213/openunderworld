@@ -13,7 +13,7 @@ namespace {
 constexpr uint32_t kFontDtp = 46;     // generalbank.drm DTP section of the game font
 constexpr uint32_t kMissingGlyph = 0x18AF;
 constexpr int kAtlasWidth = 2048, kGutter = 2; // gutter: edge texels repeated, so bilinear taps never cross textures
-constexpr uint32_t kPdaFirst = 680, kPdaLast = 705;
+constexpr uint32_t kPdaFirst = 680, kPdaLast = 706;
 
 template <class T> T rd(std::span<const uint8_t> d, size_t at) {
     T v;
@@ -85,7 +85,8 @@ std::optional<Art> loadArt(const cdc::BigfileSet& bigfile, std::string* why) {
         }
     };
     add(drm, 0, ~0u);
-    // PDA picture windows (pc-w\g_pda.drm 680..705, ids clear of generalbank's 1..117); optional.
+    // PDA picture windows, frame icons and the first-aid picture (pc-w\g_pda.drm 680..706, ids clear of
+    // generalbank's 1..117); optional.
     if (auto pda = bigfile.read("pc-w\\g_pda.drm")) add(cdc::parseDrm(std::move(*pda)), kPdaFirst, kPdaLast);
     std::stable_sort(list.begin(), list.end(), [](const Pending& a, const Pending& b) { return a.h > b.h; });
     // Shelf packing, tallest first.

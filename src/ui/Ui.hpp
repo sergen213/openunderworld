@@ -66,10 +66,12 @@ public:
 // elsewhere.
 enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
 // Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item.
-enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm };
+enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
+                              PdaSonar, PdaWeapons, PdaInventory, PdaItems };
 // Continue: load the newest save (the app starts a new game when there is none). Save/Load/Delete act on
 // selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
-enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer };
+// Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW).
+enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer, Equip, SonarReset };
 
 struct Item {
     int16_t stringId = 0;  // locals.bin label; 0 = `label`
@@ -101,10 +103,38 @@ inline constexpr std::string_view kAutosaveSlot = "autosave";
 // l5_startsnow 402; [I] the other units by name (docs/GAMEPLAY.md "Menus"). 0 = none.
 int16_t levelTitle(int chapter, std::string_view unit);
 
-// What the PDA shows: the chapter (kChapters index) and this chapter's relics/treasures found / in it.
+// What the PDA shows: the chapter (kChapters index) and this chapter's relics/treasures found / in it; WEAPON
+// SELECTION rows (the secondaries, game::Weapon index in `weapon`); INVENTORY items per category (BACKPACK, GEAR,
+// WEAPONS, TREASURES). An item shows a g_pda picture (`picture`) or the side view of `model` (pc-w\<model>.drm,
+// drawn by the app into the PDA background: Menus::pdaModel).
+struct PdaWeapon {
+    int weapon = 0;
+    int16_t name = 0;
+    int ammo = 0, max = 0;
+    bool equipped = false;
+    std::string model{}; // pc-w\<model>.drm
+};
+struct PdaItem {
+    int16_t name = 0;     // locals.bin label
+    std::string suffix{}; // after the label (" [3]")
+    int16_t text = 0;     // description; 0 = `body`
+    std::string body{};
+    uint32_t picture = 0; // g_pda texture, 0 = `model`
+    std::string model{};
+};
 struct PdaInfo {
     int chapter = 0;
     int relics = 0, relicsTotal = 0, treasures = 0, treasuresTotal = 0;
+    bool sonar = false; // SONAR MAP: the area has a map (else "SONAR MAP IS CURRENTLY UNAVAILABLE")
+    std::vector<PdaWeapon> weapons;
+    std::array<std::vector<PdaItem>, 4> inventory;
+};
+// The model panel of WEAPON SELECTION / INVENTORY items: pc-w\<object>.drm drawn into the PDA background
+// (pda_bg_1280 pixels; pda_bg_960 is the same 160 pixels further left).
+struct PdaModel {
+    std::string object;
+    int x = 0, y = 0, w = 0, h = 0;
+    bool operator==(const PdaModel&) const = default;
 };
 
 // Loading screen background of a chapter (kChapters index): pc-w\image\<name>.raw [I mapping by area].
@@ -129,6 +159,8 @@ public:
     int cursor() const { return cursor_; }
     std::vector<Item> items(); // of the current screen
     const std::string& selectedSave() const { return selected_; } // after Action::Load / Save / Delete
+    int equipWeapon() const { return equip_; }                     // after Action::Equip: PdaWeapon::weapon
+    std::optional<PdaModel> pdaModel() const;                      // the model panel the current PDA page shows
 
     std::vector<SaveSlot> saves;    // Load/Save slot entries (newest first); set before opening them
     int musicVolume = 8, sfxVolume = 8, cinematicVolume = 8; // 0..10, VOLUME SETTINGS
@@ -146,6 +178,7 @@ private:
     void drawList(Canvas& c, const locale::Strings& s);
     void drawTailoring(Canvas& c, const locale::Strings& s);
     void drawPda(Canvas& c, const locale::Strings& s);
+    void drawSonar(Canvas& c, const locale::Strings& s);
     void drawMessage(Canvas& c, const locale::Strings& s);
     void drawConfirm(Canvas& c, const locale::Strings& s);
     std::vector<Item> itemsOf(Screen s);
@@ -159,6 +192,8 @@ private:
     int page_ = 0;               // Load/Save slot page (four slots each)
     int16_t message_ = 0;
     Item pending_;         // Screen::Confirm: the item YES runs
+    int category_ = 0; // PdaItems: the INVENTORY category it shows
+    int equip_ = 0;
     std::string selected_;
     std::array<float, 8> grow_{}; // per radial / slot item: 0 = idle .. 1 = selected (eased)
     float label_ = 0;             // label fade-in of the selected radial item, 0..1

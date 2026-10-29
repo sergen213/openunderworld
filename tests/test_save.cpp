@@ -349,6 +349,38 @@ TEST(Save, HealthRoundTrip) {
                  save::SaveError);
 }
 
+// Weapons (secondary, clips, reserves) and the sonar reveal points survive save -> load; saves without combat state
+// load the chapter's loadout (every secondary full, the chapter's equipped); PDA EQUIP keeps the rounds.
+TEST(Save, CombatAndRevealRoundTrip) {
+    game::World w(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    w.chapterLoadout(4);
+    const auto rifle = size_t(game::Weapon::AssaultRifle), tranq = size_t(game::Weapon::Tranquilizer);
+    EXPECT_EQ(w.combat().secondary, game::Weapon::Tranquilizer);
+    EXPECT_EQ(w.combat().reserve[rifle], w.maxReserve(game::Weapon::AssaultRifle));
+    w.giveWeapon(game::Weapon::AssaultRifle, 17); // 17 spare, full clip
+    w.equipWeapon(game::Weapon::Tranquilizer);
+    EXPECT_EQ(w.combat().secondary, game::Weapon::Tranquilizer);
+    EXPECT_EQ(w.combat().reserve[rifle], 17); // equip does not refill
+    EXPECT_EQ(w.combat().reserve[tranq], w.maxReserve(game::Weapon::Tranquilizer));
+    for (int i = 0; i < 70; ++i) w.tick(forward()); // into b: a reveal point in each unit
+    ASSERT_FALSE(w.mapReveal["a"].empty());
+    ASSERT_FALSE(w.mapReveal["b"].empty());
+    const auto reveal = w.mapReveal;
+    const auto bytes = save::serialize(save::capture(w));
+    w.chapterLoadout(6), w.mapReveal.clear();
+    save::apply(save::parse(bytes), w);
+    EXPECT_EQ(w.combat().secondary, game::Weapon::Tranquilizer);
+    EXPECT_EQ(w.combat().reserve[rifle], 17);
+    EXPECT_EQ(w.combat().clip[rifle][0], 30);
+    EXPECT_EQ(w.mapReveal.size(), reveal.size());
+    EXPECT_EQ(w.mapReveal.at("b").size(), reveal.at("b").size());
+    auto old = save::parse(bytes);
+    old.combat = nullptr, old.chapter = 6;
+    save::apply(save::parse(save::serialize(old)), w);
+    EXPECT_EQ(w.combat().secondary, game::Weapon::AssaultRifle);
+    EXPECT_EQ(w.combat().reserve[rifle], w.maxReserve(game::Weapon::AssaultRifle));
+}
+
 // ---- real data (OU_GAME_DIR) -------------------------------------------------------------------
 namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }

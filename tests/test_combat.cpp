@@ -803,3 +803,81 @@ TEST(GadgetsReal, TuningLightsAndSpotUnits) {
     EXPECT_FALSE(game::loadUnitData(bf, "l3_main_bedroom").flashlightSpot);
     EXPECT_TRUE(game::loadLaraAnims(bf).find("g_grenade_thrower:combat_grenade_Throw1"));
 }
+
+// The assault rifle (wp_assault_rifle) and tranquilizer (wp_tranq): Lara's combat_rifle_* clips load with the lengths
+// Combat.cpp times by; chapter secondaries follow the units' weapon objects.
+TEST(CombatReal, RifleAndTranquilizerClips) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto anims = game::loadLaraAnims(bf);
+    const auto len = [&](game::Weapon w, const char* n) { return anims.weaponClip(w, n)->durationSeconds(); };
+    for (const auto w : {game::Weapon::AssaultRifle, game::Weapon::Tranquilizer}) {
+        EXPECT_EQ(len(w, "combat_rifle_fire_F"), 3.0 / 30.0);
+        EXPECT_EQ(len(w, "combat_rifle_equip"), 19.0 / 30.0);
+        EXPECT_EQ(len(w, "combat_rifle_unequip"), 24.0 / 30.0);
+    }
+    EXPECT_EQ(len(game::Weapon::AssaultRifle, "combat_rifle_reload"), 41.0 / 30.0);
+    EXPECT_EQ(len(game::Weapon::Tranquilizer, "combat_tranqgun_reload"), 19.0 / 30.0);
+    EXPECT_EQ(game::ammoWeapon("wp_akrifle"), game::Weapon::AssaultRifle);
+    const auto akrifle = game::loadWeapon(bf, "wp_akrifle");
+    ASSERT_TRUE(akrifle);
+    EXPECT_EQ(akrifle->ammoSlot, anims.weapons[size_t(game::Weapon::AssaultRifle)].ammoSlot); // the same ammunition
+    EXPECT_EQ(game::chapterSecondary(4), game::Weapon::Tranquilizer);
+    EXPECT_EQ(game::chapterSecondary(6), game::Weapon::AssaultRifle);
+}
+
+// l4_pool: the rifle empties its 30-round clip at one shot per 3 frames (27 damage within its 5000 short range), then
+// reloads from the reserve; tranquilizer darts put a real panther to sleep (sleep_start / sleep_loop) without hurting
+// it, and it wakes after the nap.
+TEST(CombatReal, PoolRifleAndTranquilizer) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    {
+        game::World w(loader, "l4_pool", anims);
+        game::DummyTarget t;
+        t.hp = 1e6f;
+        t.pos = {-13385, -600, 4500};
+        w.targets.push_back(&t);
+        w.giveWeapon(game::Weapon::AssaultRifle, 300);
+        Actions sw;
+        sw.weapon = true;
+        w.tick(sw);
+        EXPECT_EQ(w.combat().want, game::Weapon::AssaultRifle);
+        for (int i = 0; i < 400; ++i) w.tick(guns(i >= 12));
+        const auto r = size_t(game::Weapon::AssaultRifle);
+        EXPECT_GE(w.combat().shotsFired, 30u); // a full clip, the reload (41 frames), then more
+        EXPECT_EQ(w.combat().reserve[r], 210 - 30); // Normal max reserve 210, one clip moved in
+        EXPECT_GT(t.hits, 20);
+        EXPECT_FLOAT_EQ(1e6f - t.hp, 27.0f * float(t.hits));
+        w.targets.clear();
+    }
+    game::World w(loader, "l4_pool", anims);
+    const auto panther = game::ai::loadEnemyType(bf, "cat_panther");
+    ASSERT_TRUE(panther->sleeps);
+    const vec3 lara = w.player().state().pos;
+    auto& cat = w.enemies().add(panther, 990001, lara + vec3(-1500, -600, 0), 0);
+    const float full = cat.health();
+    w.giveWeapon(game::Weapon::Tranquilizer, 15);
+    Actions sw;
+    sw.weapon = true;
+    w.tick(sw);
+    int slept = -1;
+    for (int i = 0; i < 600 && slept < 0; ++i) {
+        w.tick(guns(true));
+        if (cat.state().mode == game::ai::Mode::Sleep) slept = i;
+    }
+    ASSERT_GE(slept, 0) << "mode " << game::ai::modeName(cat.state().mode);
+    EXPECT_EQ(cat.health(), full);
+    EXPECT_GE(w.combat().shotsFired, 2u); // 500 per dart against 700
+    int woke = -1;
+    for (int i = 0; i < 60 * 40 && woke < 0; ++i) {
+        w.tick({});
+        if (i == 600) EXPECT_EQ(cat.state().clip, "sleep_loop");
+        if (cat.state().mode != game::ai::Mode::Sleep) woke = i;
+    }
+    EXPECT_GT(woke, 60 * 19);
+}

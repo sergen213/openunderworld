@@ -20,6 +20,7 @@
 
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "app/game/Cinematic.hpp"
 #include "app/game/Sound.hpp"
@@ -45,6 +46,7 @@
 #include "video/Movie.hpp"
 #include "ui/Art.hpp"
 #include "ui/Ui.hpp"
+#include "ui/Pda.hpp"
 
 namespace {
 
@@ -75,7 +77,7 @@ struct Options {
     std::string cine;     // --cine NAME: play pc-w\cinstream\NAME.mul in its unit (--frames/--screenshot apply), then exit
     double die = -1;      // --die SECONDS: Lara dies then (death clip) and respawns at the last checkpoint
     std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
-    std::optional<ou::game::Weapon> weapon;    // --weapon uzi|shotgun|speargun|thorhammer: carried secondary with max reserve (thorhammer: Mjolnir)
+    std::optional<ou::game::Weapon> weapon;    // --weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer: carried secondary with max reserve (thorhammer: Mjolnir)
     ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr/--rt/--rt-quality (or --config)
     ou::game::Controls controls;         // --config "controls" (default bindings without it)
     ou::config::GameConfig game;         // --config "game": in-game menu settings
@@ -90,7 +92,7 @@ void usage() {
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
-                 "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|thorhammer]\n"
+                 "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
                  "               [--shaders original|generic]\n"
@@ -188,7 +190,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         }
         else if (a == "--weapon") {
             o.weapon = ou::game::weaponByName(v);
-            if (!o.weapon || *o.weapon == ou::game::Weapon::Pistols) { std::fprintf(stderr, "--weapon wants uzi, shotgun, speargun or thorhammer\n"); return false; }
+            if (!o.weapon || *o.weapon == ou::game::Weapon::Pistols) { std::fprintf(stderr, "--weapon wants uzi, shotgun, speargun, rifle, tranquilizer or thorhammer\n"); return false; }
         }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return false; }
     }
@@ -1313,6 +1315,7 @@ int main(int argc, char** argv) {
         world->chapter = opt.level.empty() ? std::max(opt.chapter, 0) : std::max(0, ou::game::chapterOfUnit(unit));
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
         world->script().setPlayerObjects(ou::game::chapterGear(world->chapter)); // a direct chapter start
+        world->chapterLoadout(world->chapter);
         if (!opt.loadSlot.empty() && !quickLoad(*world, opt.loadSlot)) return 1;
 
         streamed.dress(bf, *world, warnings);
@@ -1342,7 +1345,7 @@ int main(int argc, char** argv) {
             d->pos = glm::vec3(t[0], t[1], t[2]) + world->currentUnit().offset;
             world->targets.push_back(d.get());
         }
-        if (opt.weapon) // testing: the original gets its secondary and rounds from pickups
+        if (opt.weapon) // testing: this secondary with its max reserve, whatever the chapter's
             world->giveWeapon(*opt.weapon, world->maxReserve(*opt.weapon));
         gadgets.load(bf, streamed, warnings);
         effects.reserve(streamed);
@@ -1505,13 +1508,76 @@ int main(int argc, char** argv) {
         menus.open(ou::ui::Screen::Pause);
         std::fprintf(stderr, "ou-game: tick %llu pause menu\n", (unsigned long long)world->ticks());
     };
-    auto openPda = [&] { // the chapter's relics/treasures found / in it (game::chapterRewards)
+    // PDA sonar maps by unit (pc-w\<unit>_map.drm; nullopt: the unit has none) and the 3D models its pages show.
+    std::map<std::string, std::optional<ou::ui::SonarMap>> sonarMaps;
+    auto sonarMap = [&](const std::string& unit) -> const ou::ui::SonarMap* {
+        auto it = sonarMaps.find(unit);
+        if (it == sonarMaps.end()) it = sonarMaps.emplace(unit, ou::ui::loadSonarMap(*bigfile, unit)).first;
+        return it->second ? &*it->second : nullptr;
+    };
+    std::map<std::string, ou::ui::ViewMesh> viewMeshes;
+    auto viewMesh = [&](const std::string& object) -> const ou::ui::ViewMesh& {
+        auto it = viewMeshes.find(object);
+        if (it == viewMeshes.end())
+            it = viewMeshes.emplace(object, ou::ui::viewMesh(ou::formats::loadDrmScene(*bigfile, "pc-w\\" + object + ".drm"))).first;
+        return it->second;
+    };
+    // What the PDA shows (ui::PdaInfo): the chapter's relics/treasures found / in it (game::chapterRewards), WEAPON
+    // SELECTION's secondaries in the original's order with reserve / max, the INVENTORY pages [O strings 76-81,
+    // 1241-1275; V captures screens/pda].
+    auto fillPda = [&] {
+        using ou::game::Weapon;
+        const auto found = [&](const ou::game::ChapterRewards& r) {
+            return std::pair{int(std::count_if(r.treasures.begin(), r.treasures.end(), [&](int32_t id) { return world->collected.contains(id); })),
+                             r.relic && world->collected.contains(r.relic) ? 1 : 0};
+        };
         const auto& r = ou::game::chapterRewards(world->chapter);
-        const int treasures = int(std::count_if(r.treasures.begin(), r.treasures.end(), [&](int32_t id) { return world->collected.contains(id); }));
-        menus.pda = {world->chapter, r.relic && world->collected.contains(r.relic), r.relic ? 1 : 0, treasures, int(r.treasures.size())};
+        const auto [treasures, relics] = found(r);
+        ou::ui::PdaInfo& p = menus.pda;
+        p = {world->chapter, relics, r.relic ? 1 : 0, treasures, int(r.treasures.size())};
+        p.sonar = sonarMap(world->currentUnit().data.name) != nullptr;
+        const auto& c = world->combat();
+        struct Gun { Weapon w; int16_t name, text; };
+        static constexpr Gun kGuns[] = {{Weapon::Uzi, 76, 1243}, {Weapon::Shotgun, 77, 1244}, {Weapon::AssaultRifle, 78, 1245},
+                                        {Weapon::Tranquilizer, 80, 1246}, {Weapon::Speargun, 79, 1247}};
+        for (const auto& g : kGuns)
+            p.weapons.push_back({int(g.w), g.name, c.reserve[size_t(g.w)], world->maxReserve(g.w), c.secondary == g.w,
+                                 std::string(ou::game::weaponObject(g.w))});
+        const auto count = [](int n) { return " [" + std::to_string(n) + "]"; };
+        p.inventory[0] = {{1274, count(world->found[2]), 1275, {}, 706, {}}}; // HEALTH PACKS [0] shown too [V inventory_view]
+        if (world->grenades > 0) p.inventory[0].push_back({1248, count(world->grenades), 1249, {}, 0, "pr_grenade"});
+        const auto& carried = world->script().playerObjects();
+        p.inventory[1] = {{1260, {}, 1261, {}, 0, "g_grapple"}, {1262, {}, 1263, {}, 0, "g_personal_light"},
+                          {1264, {}, 1265, {}, 0, "g_binoculars"}, {1266, {}, 1267, {}, 0, "g_tanks"}, {1268, {}, 1269, {}, 0, "g_pda"}};
+        if (carried.contains("g_gauntletleft")) p.inventory[1].push_back({1270, {}, 1272, {}, 0, "g_gauntletleft"});
+        if (carried.contains("g_belt")) p.inventory[1].push_back({1271, {}, 1273, {}, 0, "g_belt"});
+        p.inventory[2] = {{1241, {}, 1242, {}, 0, "wp_handgun"}};
+        for (const auto& g : kGuns) p.inventory[2].push_back({g.name, {}, g.text, {}, 0, std::string(ou::game::weaponObject(g.w))});
+        if (world->hasHammer()) p.inventory[2].push_back({81, {}, 1250, {}, 0, "wp_thorhammer"});
+        for (int ch = 1; ch <= 7; ++ch) { // TREASURES: each area's found / total [I layout]
+            const auto& cr = ou::game::chapterRewards(ch);
+            const auto [t, rl] = found(cr);
+            const std::string body = std::string(strings->get(1251)) + "  " + std::to_string(t) + "/" + std::to_string(cr.treasures.size()) +
+                                     "      " + std::string(strings->get(1252)) + "  " + std::to_string(rl) + "/" + (cr.relic ? "1" : "0");
+            p.inventory[3].push_back({int16_t(1252 + ch), {}, 0, body, uint32_t(680 + ch), {}});
+        }
+    };
+    auto openPda = [&] {
+        fillPda();
         menus.open(ou::ui::Screen::Pda);
         std::fprintf(stderr, "ou-game: tick %llu pda\n", (unsigned long long)world->ticks());
     };
+    ou::ui::Sonar sonar;
+    ou::ui::SonarCamera sonarCam;
+    auto resetSonar = [&] { sonarCam.reset(world->player().state().pos, world->player().state().yaw); };
+    // What uiImages[1] was last built from: the PDA page's model panel, the sonar view.
+    ou::ui::Screen shownScreen = ou::ui::Screen::None;
+    std::optional<ou::ui::PdaModel> shownModel;
+    std::string shownModelBg;
+    ou::ui::Image pdaImage;
+    uint64_t pdaVersion = uint64_t(1) << 61, sonarVersion = uint64_t(1) << 60;
+    ou::ui::SonarCamera shownCam;
+    glm::ivec2 shownSonarSize(0);
     // Loading screen (pc-w\image\loading_bg_*, chapter title and story) shown for one frame before a load blocks.
     ou::ui::Image screenImage; // uiImages[1] outside the main menu: the PDA background or a loading screen
     uint64_t screenVersion = uint64_t(1) << 62;
@@ -1609,6 +1675,13 @@ int main(int argc, char** argv) {
             shownChapter = -2;
             break;
         case Action::Quit: running = false; break;
+        case Action::Equip: // PDA WEAPON SELECTION
+            world->equipWeapon(ou::game::Weapon(menus.equipWeapon()));
+            fillPda();
+            std::fprintf(stderr, "ou-game: tick %llu equip %s\n", (unsigned long long)world->ticks(),
+                         std::string(ou::game::weaponName(world->combat().secondary)).c_str());
+            break;
+        case Action::SonarReset: resetSonar(); break;
         }
         std::fprintf(stderr, "ou-game: tick %llu menu action %d\n", (unsigned long long)world->ticks(), int(action));
     };
@@ -1734,6 +1807,11 @@ int main(int argc, char** argv) {
             if (menus.screen() != ou::ui::Screen::None) { // paused: the world does not tick
                 if (script)
                     if (const auto n = scriptNav(a, menuHeld)) nav(*n);
+                if (menus.screen() == ou::ui::Screen::PdaSonar) { // SONAR MAP: the move keys turn / fly, H up, G down
+                    const bool* k = SDL_GetKeyboardState(nullptr);
+                    const float rise = (k[SDL_SCANCODE_H] ? 1.0f : 0.0f) - (k[SDL_SCANCODE_G] ? 1.0f : 0.0f);
+                    sonarCam.fly({-a.move.x, a.move.y, rise}, float(ou::game::kTickSeconds));
+                }
                 menuHeld = a, held = a;
                 mouse = glm::vec2(0);
                 continue;
@@ -1985,9 +2063,44 @@ int main(int argc, char** argv) {
             if (menus.screen() == ou::ui::Screen::None) hud.draw(canvas); // menus hide the HUD [O pause captures]
             if (sound && menus.subtitles) ou::app::drawSubtitles(canvas, sound->subtitles());
         }
-        if (menus.screen() == ou::ui::Screen::Pda) // pda_bg_960 for narrow windows (ui::Menus::drawPda)
+        const ou::ui::Screen scr = menus.screen();
+        const bool pdaPage = scr == ou::ui::Screen::Pda || scr == ou::ui::Screen::PdaWeapons || scr == ou::ui::Screen::PdaInventory ||
+                             scr == ou::ui::Screen::PdaItems;
+        if (scr == ou::ui::Screen::PdaSonar && shownScreen != scr) resetSonar(), shownSonarSize = {}; // opens behind Lara
+        shownScreen = scr;
+        if (pdaPage) // pda_bg_960 for narrow windows (ui::Menus::drawPda)
             useScreenImage(float(w) / float(std::max(1, h)) < 1.556f ? "pda_bg_960" : "pda_bg_1280");
         if (!mainMenu) movieImage = {screenImage.rgba, screenImage.width, screenImage.height, screenVersion};
+        if (const auto m = pdaPage ? menus.pdaModel() : std::nullopt) { // the background with the model panel drawn in
+            if (m != shownModel || screenName != shownModelBg) {
+                pdaImage = screenImage;
+                ou::ui::drawModelPanel(pdaImage, m->x - (screenName == "pda_bg_960" ? 160 : 0), m->y, m->w, m->h, &viewMesh(m->object));
+                shownModel = m, shownModelBg = screenName, ++pdaVersion;
+            }
+            movieImage = {pdaImage.rgba, pdaImage.width, pdaImage.height, pdaVersion};
+        }
+        if (scr == ou::ui::Screen::PdaSonar) { // rendered at half the window size, again when the view moves
+            const glm::ivec2 size(std::max(1, w / 2), std::max(1, h / 2));
+            if (!(sonarCam == shownCam) || size != shownSonarSize) {
+                std::vector<ou::ui::SonarUnit> units;
+                for (const auto& u : world->units()) {
+                    const auto r = world->mapReveal.find(u.data.name);
+                    units.push_back({u.data.name, sonarMap(u.data.name), u.offset, r == world->mapReveal.end() ? nullptr : &r->second});
+                }
+                const auto& st = world->player().state();
+                std::vector<ou::ui::SonarPawn> pawns{{&viewMesh("ping_map_icon_lara"),
+                                                      glm::rotate(glm::translate(glm::mat4(1), st.pos), st.yaw, {0, 0, 1}), {0.1f, 0.8f, 0.55f}}};
+                for (const auto& [uid, b] : world->bikes())
+                    for (const auto& u : world->units())
+                        if (u.data.name == b.unit) // grey [V sonar_full_1]
+                            pawns.push_back({&viewMesh("ping_map_icon_motorcycle"),
+                                             glm::rotate(glm::translate(glm::mat4(1), b.pos + u.offset), b.yaw, {0, 0, 1}), glm::vec3(0.75f)});
+                sonar.render(size.x, size.y, sonarCam, units, pawns);
+                shownCam = sonarCam, shownSonarSize = size, ++sonarVersion;
+            }
+            const auto& img = sonar.image();
+            movieImage = {img.rgba, img.width, img.height, sonarVersion};
+        }
         menus.draw(canvas, *strings);
         // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these
         // lines change every frame (HUD, effects), so consecutive frames must never share a pointer.
