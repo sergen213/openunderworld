@@ -403,4 +403,31 @@ mixing and the exact FMOD IMA rounding.
 3. The Wave header byte 0x0C (10 / 100): volume or priority? `.mul` header fields 0x30/0x34.
 4. Where the FSB sync points (mode 0x80004000) are stored.
 5. The sound-plex layer (`cdc::SoundPlex*` RTTI, DTP data): how game objects and materials map to
-   Wave ids, which footstep/ambient selection needs.
+   Wave ids, which footstep/ambient selection needs. Partial, below.
+
+### 8.1 Voice lines are referenced from SoundPlex DTPs [V-data]
+
+A byte survey of every decompressed DRM in the bigfile filelist for `vo\` (2026-10-29, throwaway tool) finds
+voice-line names in 81 DRMs; the inspected ones (generalbank, lara) hold them in DTP-data sections, each name in a
+variation record:
+
+| Offset | Type | Value |
+|---|---|---|
+| +0x00 | u32 | 0xBEEBBEEB (record marker, also used as an empty slot) |
+| +0x04 | u16 | 0 |
+| +0x06 | u16 | 0x50 / 0x5A / 0x64 (80/90/100) [I] volume percent |
+| +0x08 | 8 bytes | 0 |
+| +0x10 | char[] | NUL-terminated stream path without extension, e.g. `vo\lara\lara_drown_01` |
+
+- `lara.drm` (and every `lara_*` outfit DRM) DTP 2315 holds the 8 `lara_drown_NN` lines as one sound with 8
+  variations [I random choice].
+- `generalbank.drm` holds 499 distinct Lara voice names in single-line DTPs (e.g. DTP 284 = `vo\lara\sc_01_05_hint`): the `sc_CC_NN_hint` /
+  `sc_CC_NN_answer` pairs of the in-game hint system and the other Lara lines.
+- The l1 Kraken units and `ms_ani_kraken_body` / `ms_ani_tentacle_*` hold 16–17 `vo\kraken\*` sounds; the l1/l6 ship
+  units hold one `vo\enemy\merc\*` sound (mercenary chatter).
+- [I] Lines play through a SoundPlex DTP id, not by path (section types of the other 79 DRMs' hits not checked). The DX:HR
+  cdc reconstruction (`research/cdcEngineDXHR/cdcSound`, `eventually_generated/cdc/dtp/objectproperties/sfxmarker.h`)
+  shows `sfxmarker` objects starting sound refs on enter/exit and setting/incrementing music variables; that is the
+  likely writer of the Mus! variables (question 2) [I, not yet checked in tru.exe].
+- Not done: the SoundPlex node types (choice list, sequence, stream, …) of TR8's DTPs, which script natives or
+  objects start them, and in-game subtitle display for these lines.
