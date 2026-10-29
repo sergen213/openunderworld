@@ -27,7 +27,7 @@ public:
     const char* nativeName(uint32_t id) const;
     bool isA(uint32_t derived, uint32_t base) const;
     const Function* method(uint32_t typeId, int16_t vt) const;
-    const Function* startup(uint32_t typeId) const; // first function (vt -1/20); state 0 (Run, 0x57B560) is not used [U: breaks the l2 elevator chain]
+    const Function* startup(uint32_t typeId) const; // first function if vt -1 (a vt 20 state callback is not run at birth: l7 puzzle_cheat_button 9279 lowered drawbridge 9116); state 0 (Run, 0x57B560) is not used [U: breaks the l2 elevator chain]
     const Function* state(uint32_t typeId, uint32_t n) const; // most-derived state table with entry n
     const Function* mainFunction(uint32_t typeId) const; // function 2: WAIT-based multibody polling script
     const Function* method(cdc::Pointer p) const; // Function record or Prototype

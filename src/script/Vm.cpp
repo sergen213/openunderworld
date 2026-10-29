@@ -72,7 +72,7 @@ const Function* Program::startup(uint32_t typeId) const {
     if (const Function* s = state(typeId, 0)) return s;
     for (const ScriptType* t = type(typeId); t; t = type(t->superId))
         if (!t->functions.empty())
-            return t->functions.front().vtIndex == -1 || t->functions.front().vtIndex == 20 ? &t->functions.front() : nullptr;
+            return t->functions.front().vtIndex == -1 ? &t->functions.front() : nullptr;
     return nullptr;
 }
 const Function* Program::mainFunction(uint32_t typeId) const {
@@ -180,7 +180,8 @@ bool Machine::push(Instance& object, const Function& f, std::span<const Value> a
         const bool symbol = l.init && !std::strcmp(type, "symbol"), music = l.initAt && !std::strcmp(type, "music");
         // uberobjectevent / uberobjectcommand locals {object, index} (l5_valaskjalf_entryb 7187 vt 54, l7_arctic_sea
         // 9115's constructor): natives receive the local's value, so it holds the index.
-        if (l.init2 && (!std::strcmp(type, "uberobjectevent") || !std::strcmp(type, "uberobjectcommand"))) {
+        if (l.init2 && (!std::strcmp(type, "uberobjectevent") || !std::strcmp(type, "uberobjectcommand") ||
+                        !std::strcmp(type, "uberobjectquery"))) {
             if (l.offset >= fr.locals.size()) fr.locals.resize(l.offset + 1);
             fr.locals[l.offset] = Value::scalar(*l.init2);
             continue;

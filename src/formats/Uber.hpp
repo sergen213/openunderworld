@@ -48,6 +48,7 @@ struct UberObjectData {
     std::vector<UberSection> sections;
     std::vector<UberCommand> commands;
     std::vector<UberEvent> events;
+    std::vector<std::vector<UberCondition>> queries; // +0x28 / +0x2C: `uberobjectquery` index -> condition list (0x4AB6A0)
 };
 
 // nullopt for non-uber objects. Throws cdc::FormatError on malformed uber data.

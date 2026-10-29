@@ -170,6 +170,7 @@ struct Object {
     bool loose = false;
     glm::mat4 body{1};      // Door: model-space rigid transform set by src/physics (physics doors), identity = at rest
     bool hidden = false;    // instance.fn60 visibility; saved
+    bool dead = false;      // instance.fn10 Kill: hidden, and its trigger no longer fires; saved
     int32_t engagement = -1; // instance.fn59 engagement-property selector; saved
     // Spline mover (intro +0x68; tru.exe 0x5BA280 setup, 0x5CF260 per-frame update, `spline` natives 0x4AA8B0..):
     // the path moves the object (`body`), so its collision carries Lara like any moved dynamic.
@@ -384,6 +385,7 @@ private:
     std::vector<Message> messages_;
     std::set<std::string> payloads_; // delivered payload texts (handler arguments point at them)
     std::vector<int32_t> mounts_;
+    int32_t lastBike_ = 0; // larabase 52's bike (Lara +0xF00) for larabase 53; saved
     EnemyNative enemy_;
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;

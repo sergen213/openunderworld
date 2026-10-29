@@ -133,6 +133,11 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
         }
         out.events.push_back(std::move(event));
     }
+    if (const uint32_t nq = at<uint32_t>(ob, rec + 0x28)) { // condition lists in place, 0x0C apart
+        const uint32_t queries = ptr(ob, rec + 0x2C);
+        bounded(nq, queries, 0x0C, ob.data.size());
+        for (uint32_t i = 0; i < nq; ++i) out.queries.push_back(conditionList(ob, queries + 0x0C * i));
+    }
     return out;
 }
 

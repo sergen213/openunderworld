@@ -531,7 +531,8 @@ TEST(ProgressionReal, CriticalGates) {
         {3, {"l3_main_hall", 4128, Action::Enter, {}, 4}},               // 160_man_shot, 170_man_exit -> chapter 4
         {4, {"l4_ballcourt", 6502, Action::Use, {6505}}},                // pole lever -> door joint
         {4, {"l4_traprooms", 5884, Action::Push, {}}},                   // grapple push block
-        {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5}},               // chapter end 5483
+        // the Xibalba exit switch, the plane of 190_mex (6410 -> 6389), then the chapter end 5483
+        {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5, {{5469, Action::Use}, {6410, Action::Enter}}}},
         {5, {"l5_valaskjalf_entry", 7228, Action::Use, {7227}}},         // switch -> reward door
         {5, {"l5_valaskjalf", 6866, Action::Enter, {}, 6}},              // chapter end 6846
         {6, {"l6_ship_engine_hall", 7565, Action::Enter, {}, 7}},        // chapter end 1387

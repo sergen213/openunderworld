@@ -351,10 +351,10 @@ nlohmann::json stateOf(const Object& o) {
                 properties[std::to_string(key)] = value;
         }
     }
-    if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline &&
+    if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && !o.dead && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline &&
         (!o.joint || o.joint->position == 0) && !o.loose) return nullptr; // birth state
     nlohmann::json out = {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
-            {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
+            {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"dead", o.dead}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
             {"scriptStrings", std::move(strings)}, {"scriptProperties", std::move(properties)}};
     if (const auto& s = o.spline)
         out["spline"] = {s->t, s->dir, s->mode, s->playing, s->toKey, s->clip, s->target, s->from, s->to, s->count};
@@ -364,7 +364,7 @@ nlohmann::json stateOf(const Object& o) {
 }
 void applyState(Object& o, const nlohmann::json* s) {
     o.state = 0, o.t = 0, o.inside = o.firstIn = false, o.offset = vec3(0);
-    o.hidden = false, o.engagement = -1, o.loose = false;
+    o.hidden = o.dead = false, o.engagement = -1, o.loose = false;
     o.machine.reset();
     o.fibers.clear();
     if (o.script) {
@@ -380,7 +380,7 @@ void applyState(Object& o, const nlohmann::json* s) {
     if (!s || !s->is_object()) return;
     o.state = s->value("state", 0), o.t = s->value("t", 0.0);
     o.inside = s->value("inside", false), o.firstIn = s->value("firstIn", false);
-    o.hidden = s->value("hidden", false), o.engagement = s->value("engagement", -1), o.loose = s->value("loose", false);
+    o.hidden = s->value("hidden", false), o.dead = s->value("dead", false), o.engagement = s->value("engagement", -1), o.loose = s->value("loose", false);
     const auto off = s->value("offset", std::vector<float>{0, 0, 0});
     if (off.size() == 3) o.offset = {off[0], off[1], off[2]};
     if (o.script) {
@@ -885,7 +885,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 int32_t bike = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
                 if (a.kind == vm::Value::Kind::Member)
                     if (const auto holder = resolve(a.uid)) bike = int32_t(holder->fields[a.offset]);
-                if (bike) mounts_.push_back(bike);
+                if (bike) mounts_.push_back(bike), lastBike_ = bike;
+                return true;
+            }
+            // larabase 53 (0x79A4D0 -> 0x777E10): post 0x85 again to the bike 52 last named (Lara +0xF00), if any:
+            // l4_ballcourt's 190_mex end handler (6389 vt 58) puts her back on bike 5482 for the ride out.
+            if (!std::strcmp(name, "larabase") && nc.function == 53 && nc.args.empty()) {
+                if (lastBike_) mounts_.push_back(lastBike_);
                 return true;
             }
             // Thor's gear objects (g_gauntletleft / g_gauntletright / g_belt) Lara carries in her object slots, set by
@@ -1379,6 +1385,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 Object* object = findMut(self->uid);
                 if (!object) return false;
                 if (!object->hidden) object->hidden = true, ++visibilityVersion_;
+                object->dead = true;
                 return true;
             }
             if (!std::strcmp(name, "instance") && nc.function == 61 && nc.args.size() == 2) {
@@ -1416,7 +1423,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::object(self->uid); // native interface of this instance (multibody etc.)
                 return true;
             }
-            if (!std::strcmp(name, "uberobjectbase") && (nc.function == 1 || nc.function == 5) && uber_) {
+            if (!std::strcmp(name, "uberobjectbase") && (nc.function == 0 || nc.function == 1 || nc.function == 5) && uber_) {
                 const Object* object = findMut(self->uid);
                 if (!object) return false;
                 const bool knownObject = std::any_of(objectNames_.begin(), objectNames_.end(), [&](const auto& entry) {
@@ -1426,7 +1433,8 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 // fn 1 is invoked on the command member itself, or on the object with the command member as argument.
                 const uint32_t commandOff = nc.args.size() == 1 && nc.args[0].kind == vm::Value::Kind::Member &&
                                                     nc.args[0].uid == self->uid ? nc.args[0].offset : off;
-                const uint32_t command = nc.function == 1 ? self->fields[commandOff + 4] : 0;
+                // fn 0 (0x79D040 -> 0x4AB6A0) queries the same way: {object, query index} member, receiver or argument.
+                const uint32_t command = nc.function <= 1 ? self->fields[commandOff + 4] : 0;
                 uint32_t commandIndex = 0;
                 if (nc.function == 1)
                     for (const ScriptType* type = self->program->type(self->typeId); type; type = self->program->type(type->superId))
@@ -1699,6 +1707,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     Object* useSwitch = nullptr;
     float best = kReach;
     for (auto& o : objects_) {
+        if (o.dead) continue;
         switch (o.kind) {
         case Kind::Volume: {
             const bool now = inside(o.shape, o.pos, o.rot, p);
@@ -1845,7 +1854,7 @@ nlohmann::json Runtime::serialize() const {
         for (const auto& [offset, value] : playerScript_->fields)
             if (const auto it = playerScript_->initial.find(offset); it == playerScript_->initial.end() || it->second != value)
                 fields[std::to_string(offset)] = value;
-    j["player"] = {{"hiddenGroups", playerHiddenGroups_}, {"objects", playerObjects_}, {"scriptFields", std::move(fields)}};
+    j["player"] = {{"hiddenGroups", playerHiddenGroups_}, {"objects", playerObjects_}, {"scriptFields", std::move(fields)}, {"lastBike", lastBike_}};
     return j;
 }
 
@@ -1862,6 +1871,7 @@ void Runtime::restore(const nlohmann::json& j) {
     if (const uint32_t mask = player.value("hiddenGroups", playerGearGroups_); mask != playerHiddenGroups_)
         playerHiddenGroups_ = mask, ++visibilityVersion_;
     playerObjects_ = player.value("objects", std::set<std::string>{});
+    lastBike_ = player.value("lastBike", 0);
     if (playerScript_) {
         playerScript_->fields = playerScript_->initial;
         if (const auto f = player.find("scriptFields"); f != player.end() && f->is_object())

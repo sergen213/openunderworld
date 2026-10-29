@@ -366,6 +366,10 @@ void World::bindUber() {
         const auto* data = prepareUber(*object);
         if (!data) return false;
         if (function == 5) return true; // initialize the command-driven section state machine
+        if (function == 0) { // query (0x4AB6A0): its condition list on the current section states
+            result = command < data->queries.size() && uberHolds(uid, data->queries[command]);
+            return true;
+        }
         if (function != 1) return false;
         // The command member is {uber object id, command word}; the word indexes the command table (0x4D77A0).
         if (command >= data->commands.size() || !sendUberCommand(uid, command)) return false;

@@ -73,7 +73,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 4 | l4_traprooms | plates 5717/5718 (stand on / scepter weight 5883) | seal 5701 | pass (`ProgressionReal.TraproomsSeal`, after the trap rooms: sticky +268 raised, int +240 = 4): each plate's vt 6 sticky notification counts it on the seal (+304), both held run vt 58 |
 | 4 | l4_traprooms | block 5884 (push), planes 5900/5901/5904/5914/5915 | block, thrones, door 5702 | pass |
 | 4 | l4_pool | volumes 5566/5624/5626 | snake heads, reveal cinematics | pass |
-| 4 | l4_ballcourt | volume 5468 | 5483 → chapter 5 | pass |
+| 4 | l4_ballcourt | switch 5469, plane 6410 (190_mex), plane 5468 | 5483 → chapter 5 | pass (before gates 4 it passed only through puzzle_cheat_button 6512's vt 20 run at birth) |
 | 5 | l5_valgrind | volumes 7471/7511 | door 7334, cinematic 7464 | pass |
 | 5 | l5_valaskjalf_entry | switch 7228 (use) | reward door 7227 | pass |
 | 5 | l5_valaskjalf_entryb | levers 7188/7189 (use) | reward doors 7187/7227 | **fail** (lever handlers change nothing visible) |
@@ -81,7 +81,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 5 | l5_valaskjalf | volume 6866 | 6846 → chapter 6 | pass |
 | 6 | l6_ship_upper_hallway* | volumes 7622/7623/7644/7646 | ship doors 7621/7642/7643 have no script (the volumes' ISTYPE fails): they stand open | pass (`ChapterSixShipDoorsOpen`) |
 | 6 | l6_ship_engine_hall | plane 7565 (cross) | 270 → chapter 7 | pass |
-| 7 | l7_arctic_sea | switch 9103 (use) | seafloor drawbridge 9116 | **fail** |
+| 7 | l7_arctic_sea | switch 9103 (use) | seafloor drawbridge 9116 | pass (uber transition 0 starts; was lowered at load by puzzle_cheat_button 9279) |
 | 7 | l7_helheim01 | rune switches 8993-8995 | dispatcher 8997 | not asserted (dispatcher only) |
 | 7 | l7_yggdrasil(_end) | volumes 8804, 8303/8312, 8323-8329 | cinematics 8773/8261, spline mover 8404 | pass |
 
@@ -120,4 +120,5 @@ Portal order from the start unit; level changes not made by portals are named.
   2393); levers / switches whose handlers run but change nothing visible (l1 57, l4 5469, l5 7188/7189, l7 9103);
   l4_traprooms seal 5701 (both plates held: one weight source missing). (gates 4) Solved: sticky Set notifications
   (vt 6 / 7) reach the plates' and the seal's handlers; the scepter weight is carried onto the second plate.
+- (gates 4) Startup no longer runs a type's first function when it is vt 20 (puzzle_cheat_button debug objects sent their "solved" messages at birth). Killed objects (instance 10) no longer trigger. `uberobjectbase` 0 queries (+0x28/+0x2C condition lists) and larabase 53 (re-mount 52's bike) let 190_mex's end handler run. Open: triggers 14/15 still timed [I]; l1 57 column shooting, l4 `ca_ani_*` playback by uber values, `uberobjectbase` 3 (0x79D0D0 -> 0x4A4490, ~30 l1 ship objects) not modelled; the GateSweep was not re-run.
 - Chapter 7 → 8 has no scripted level end in the data we decoded [U]; the ending (7996, credits) is not run.

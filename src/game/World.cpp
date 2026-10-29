@@ -576,7 +576,7 @@ uint64_t World::stateHash() const {
     for (const auto& m : physics_.movers) add(m.s);
     for (const auto& d : col_.dynamics) add(d.transform);
     for (const auto& o : script_.objects()) {
-        add(o.uid), add(o.state), add(o.t), add(o.pos), add(o.offset), add(o.body), add(o.inside), add(o.hidden);
+        add(o.uid), add(o.state), add(o.t), add(o.pos), add(o.offset), add(o.body), add(o.inside), add(o.hidden), add(o.dead);
         if (o.spline) add(o.spline->t), add(o.spline->dir), add(o.spline->playing);
         if (o.joint) add(o.joint->position);
         add(o.loose);
