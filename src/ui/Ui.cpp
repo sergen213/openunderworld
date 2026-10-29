@@ -396,7 +396,30 @@ constexpr float kPdaListRight = 504.7f, kPdaListCap = 185.3f, kPdaListStep = 40,
                 kPdaListLineRight = 509.3f, kPdaListBackCap = 551.3f, kPdaListBackScale = 0.57f;
 constexpr float kPdaPaneX = 546, kPdaPaneTitleX = 583.3f, kPdaPaneTitleCap = 162.7f, kPdaPaneLine = 183.3f, kPdaPaneLineX = 548.7f,
                 kPdaPaneRight = 1034.7f, kPdaPaneCap = 200.7f, kPdaPaneStep = 19.4f, kPdaPaneScale = 0.57f, kPdaPaneW = 484;
-
+// EXTRAS [O extras / extras_env / extras_gear, 1080p]. The category ring: the main ring mirrored, positions 2..6 (icons
+// 43, 44, 45, 46, 48; labels 146..149, 151), the selected one's label left-aligned 39.2 right of its centre on the
+// mirrored bar. While a category is selected the centre item is not. A category: the list title (icon | white name,
+// blue "EXTRAS" 129 at 247.6, cap 93.8, 0.72); the preview (uiImages[2], 640x480 with its own white frame) at x
+// 200.4..440, y 114.2..294.2; lines at 307.4 / 403.4 as wide as the footer's; five rows, caps 318.2 + 16.8 i at 0.54
+// tracked 0.25 (grey 192, the selected (194, 219, 234) on a (26, 77, 108) bar 16.9 high, solid +-115, fading to +-205),
+// the name ("LOCKED" 470) from 147.6, its number "01".. right-aligned at 492.2; arrows 111 / 112 (0.56 per texel) left
+// of the first / last row while the list scrolls; BACK TO PREVIOUS MENU (a label: Esc) centred at 316.4, cap 412.9,
+// 0.57 tracked 0.65; prompts 472 (468 for movies) / 375 at 271.8 / 403.8.
+constexpr uint32_t kExtrasIcons[] = {43, 44, 45, 46, 48}, kArrowUp = 111, kArrowDown = 112;
+constexpr int16_t kExtrasLabels[] = {146, 147, 148, 149, 151};
+constexpr float kExtrasLabelGap = 39.2f, kExtrasTitle1X = 228.4f, kExtrasTitle2X = 247.6f, kExtrasTitle2Cap = 93.8f, kExtrasTitle2Scale = 0.72f;
+constexpr float kExtrasPreview[4] = {200.4f, 114.2f, 440, 294.2f};
+// Behind it [O extras_gear]: the ring shade (texture 50) centred at y 218 x 1.23, its inside filled (3, 16, 24) to radius
+// 146, and a black band under the rows (solid +-380, fading to +-420).
+constexpr float kExtrasHaloY = 218, kExtrasHaloScale = 1.23f, kExtrasHaloFill = 146, kExtrasBandSolid = 380, kExtrasBandFade = 420;
+constexpr uint32_t kExtrasHalo = 3 | 16 << 8 | 24 << 16 | 0xFFu << 24;
+constexpr int kExtrasRows = 5;
+constexpr float kExtrasLine0 = 307.4f, kExtrasLine1 = 403.4f, kExtrasRowCap = 318.2f, kExtrasRowStep = 16.8f, kExtrasRowScale = 0.54f,
+                kExtrasRowX = 147.6f, kExtrasNumRight = 492.2f, kExtrasBarTop = 4.9f, kExtrasBarH = 16.9f, kExtrasBarSolid = 115,
+                kExtrasBarFade = 205, kExtrasArrowX = 130.5f, kExtrasArrowUpY = 3.9f, kExtrasArrowDownY = 4.9f, kExtrasArrowTexel = 0.56f,
+                kExtrasTrack = 0.25f;
+constexpr float kExtrasBackX = 316.4f, kExtrasBackCap = 412.9f, kExtrasBackScale = 0.57f, kExtrasBackTrack = 0.65f, kExtrasFootL = 271.8f,
+                kExtrasFootR = 403.8f;
 
 } // namespace
 
@@ -416,6 +439,12 @@ int16_t levelTitle(int chapter, std::string_view unit) {
     case 8: return 407;
     default: return 0;
     }
+}
+
+bool unlocked(int code, const Unlocks& u) {
+    if (code < 0) return true;
+    if (code >= 3 && code <= 10) return u.chapters >> (code == 3 ? 1 : code == 4 ? 0 : code - 3) & 1 || u.finished;
+    return code == 11 ? u.finished : code == 12 ? u.treasures : code == 13 && u.relics;
 }
 
 std::string_view loadingImage(int chapter) {
@@ -451,7 +480,7 @@ void Menus::open(Screen s) {
     cursor_ = 0, ring_ = -1, label_ = 0, page_ = 0, top_ = 0;
     grow_.fill(0);
     if (radial(s)) grow_[0] = 1;
-    if (slots(s)) cursor_ = -1;          // focus stays on the ring item until Right / Accept
+    if (slots(s) || s == Screen::Extras) cursor_ = -1; // focus stays on the ring item until Right / Accept
     if (s == Screen::Pda) cursor_ = kAreaInfo;
     if (s == Screen::Tailoring) cursor_ = tailoring;
     if (s == Screen::PdaItems) category_ = std::clamp(cursors_.back(), 0, 3); // the INVENTORY row that opened it
@@ -475,7 +504,7 @@ void Menus::select(int item) {
 }
 
 void Menus::tick(double seconds) {
-    const bool animated = radial(screen()) || slots(screen());
+    const bool animated = radial(screen()) || slots(screen()) || screen() == Screen::Extras;
     for (size_t i = 0; i < grow_.size(); ++i) { // ~0.15 s to grow / shrink
         const float target = animated && int(i) == cursor_ ? 1.0f : 0.0f;
         const float step = float(seconds) / 0.15f;
@@ -503,7 +532,8 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 pause ? Item{.stringId = 127, .opens = Screen::Save, .icon = kIconSave}
                       : Item{.stringId = 127, .opens = Screen::Message, .icon = kIconSave, .message = 161}, // "only ... in gameplay mode"
                 {.stringId = 128, .opens = Screen::AudioVisual, .icon = kIconAv},
-                {.stringId = 129, .opens = Screen::Message, .icon = kIconExtras, .message = unavailable},
+                rewards ? Item{.stringId = 129, .opens = Screen::Extras, .icon = kIconExtras}
+                        : Item{.stringId = 129, .opens = Screen::Message, .icon = kIconExtras, .message = unavailable},
                 {.stringId = 131, .action = pause ? Action::QuitToMenu : Action::Quit, .icon = kIconQuit, .confirm = 494}};
     }
     case Screen::Load:
@@ -574,6 +604,18 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         return v;
     }
     case Screen::PdaSonar: break;
+    case Screen::Extras: {
+        std::vector<Item> v;
+        for (size_t i = 0; i < 5; ++i) v.push_back({.stringId = kExtrasLabels[i], .opens = Screen::ExtrasCategory, .icon = kExtrasIcons[i]});
+        return v;
+    }
+    case Screen::ExtrasCategory: { // LOCKED (470) until unlocked
+        std::vector<Item> v;
+        if (const auto* l = rewardList())
+            for (const Reward& r : *l) v.push_back({.stringId = unlocked(r.unlock, unlocks) ? r.name : int16_t(470)});
+        return v;
+    }
+    case Screen::ExtrasView: return {{}};
     case Screen::Revisit: { // the chapters by name (52..58), their loading-screen story beside [I: not captured]
         std::vector<Item> v;
         for (int16_t c = 1; c <= 7; ++c) v.push_back({.stringId = int16_t(51 + c), .action = Action::Revisit, .message = int16_t(59 + c)});
@@ -593,6 +635,42 @@ Action Menus::input(Nav n) {
     if (list.empty()) return Action::None;
     const int count = int(list.size());
     const Screen scr = screen();
+    if (scr == Screen::ExtrasView) { // any key returns [I]
+        if (n == Nav::Accept || n == Nav::Back || n == Nav::Alt) back();
+        return Action::None;
+    }
+    if (scr == Screen::Extras) { // the category ring, as the slot ring: -1 = focus on EXTRAS
+        switch (n) {
+        case Nav::Up: case Nav::Down:
+            if (cursor_ >= 0) select(std::clamp(cursor_ + (n == Nav::Up ? -1 : 1), 0, count - 1));
+            return Action::None;
+        case Nav::Right: if (cursor_ < 0) select(0); return Action::None;
+        case Nav::Left: if (cursor_ >= 0) cursor_ = -1, label_ = 0; return Action::None;
+        case Nav::Back: back(); return Action::None;
+        case Nav::Accept: case Nav::Alt:
+            if (cursor_ < 0) select(0);
+            else extras_ = cursor_, open(Screen::ExtrasCategory);
+            return Action::None;
+        default: return Action::None;
+        }
+    }
+    if (scr == Screen::ExtrasCategory) { // rows scroll five at a time; Accept views an unlocked one
+        switch (n) {
+        case Nav::Up: case Nav::Down:
+            select(std::clamp(cursor_ + (n == Nav::Up ? -1 : 1), 0, count - 1));
+            top_ = std::clamp(top_, cursor_ - kExtrasRows + 1, cursor_);
+            return Action::None;
+        case Nav::Back: back(); return Action::None;
+        case Nav::Accept: case Nav::Alt: {
+            const Reward& r = (*rewardList())[size_t(cursor_)];
+            if (!unlocked(r.unlock, unlocks)) return Action::None;
+            if (r.movie.empty()) { open(Screen::ExtrasView); return Action::None; }
+            selected_ = r.movie + ".bik"; // in play: "requires you to exit the current game" (471)
+            return activate({.action = Action::PlayMovie, .confirm = int16_t(mainMenu() ? 0 : 471)});
+        }
+        default: return Action::None;
+        }
+    }
     if (n == Nav::Alt) {
         if (scr == Screen::Pda && cursor_ == kField) return Action::Answer;
         n = Nav::Accept;
@@ -706,12 +784,12 @@ Action Menus::activate(Item it) {
     return it.action;
 }
 
-void Menus::drawRadial(Canvas& c, const locale::Strings& s, Screen screen, int cursor, bool opened) {
+void Menus::drawRadial(Canvas& c, const locale::Strings& s, Screen screen, int cursor, bool opened, bool centre) {
     const auto list = itemsOf(screen);
     // Unselected first, the growing/selected ones on top; the opened item (Load/Save beneath) keeps its ring.
     std::vector<size_t> order(list.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = i;
-    auto g = [&](size_t i) { return opened ? (i == 0 ? 1.0f : 0.0f) : grow_[i]; };
+    auto g = [&](size_t i) { return opened ? (i == 0 && centre ? 1.0f : 0.0f) : grow_[i]; };
     std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return g(a) < g(b); });
     for (const size_t i : order) {
         const auto [x, y] = radialPos(i);
@@ -726,7 +804,7 @@ void Menus::drawRadial(Canvas& c, const locale::Strings& s, Screen screen, int c
         if (isOpened) ring(c, x, y, kOpenedRing, kOpenedRingW, kWhite);
         c.sprite(list[i].icon, x, y, icon * sIcon, icon * sIcon, mix(kIconBlue, kWhite, gi));
     }
-    if (cursor < 0 || size_t(cursor) >= list.size()) return;
+    if (cursor < 0 || size_t(cursor) >= list.size() || !centre) return;
     const int labelled = opened ? 0 : cursor; // Load/Save: the centre label stays
     const float alpha = opened ? 1 : label_;
     const std::string label(s.get(list[size_t(labelled)].stringId));
@@ -796,6 +874,66 @@ void Menus::drawSlots(Canvas& c, const locale::Strings& s) {
         }
     }
     std::rotate(c.vertices.begin() + ptrdiff_t(text0), c.vertices.begin() + ptrdiff_t(text1), c.vertices.end());
+}
+
+void Menus::drawExtras(Canvas& c, const locale::Strings& s) {
+    const auto list = items();
+    std::vector<size_t> order(list.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return grow_[a] < grow_[b]; });
+    for (const size_t i : order) { // the main ring's items, mirrored
+        const auto [x, y] = radialPos(i + 2, true);
+        const float g = grow_[i], disc = 128 * kTexel, icon = 64 * kTexel;
+        const float sDisc = 1 + (kSelDisc - 1) * g, sIcon = 1 + (kSelIcon - 1) * g;
+        if (g > 0) c.sprite(kGlow, x, y, disc * kGlowRing, disc * kGlowRing, withAlpha(kWhite, g * kGlowAlpha));
+        c.sprite(kDisc, x, y, disc * sDisc, disc * sDisc, kWhite);
+        if (g > 0) c.sprite(kBlackDisc, x, y, disc * kSelDisc, disc * kSelDisc, withAlpha(kBlack, g));
+        c.sprite(list[i].icon, x, y, icon * sIcon, icon * sIcon, mix(kIconBlue, kWhite, g));
+    }
+    if (cursor_ < 0 || size_t(cursor_) >= list.size()) return;
+    const auto [x, y] = radialPos(size_t(cursor_) + 2, true);
+    c.sprite(kBarLeft, x + kSideBarEnd + kSideBarW / 2, y, kSideBarW, kBarH, withAlpha(kWhite, label_), true);
+    c.fontText(x + kExtrasLabelGap, y - kCapMid, kTextScale, s.get(list[size_t(cursor_)].stringId), withAlpha(kWhite, label_));
+}
+
+void Menus::drawExtrasCategory(Canvas& c, const locale::Strings& s) {
+    const auto list = items();
+    const int n = int(list.size());
+    ring(c, kRingX, kExtrasHaloY, kExtrasHaloFill, kExtrasHaloFill, kExtrasHalo); // the shade's inside, filled
+    fadeBar(c, kExtrasLine0, kExtrasLine1 - kExtrasLine0, kExtrasBandSolid, kExtrasBandFade, kBlack); // under the rows
+    c.sprite(kExtrasIcons[extras_], kListIconX, kListIconY, 64 * kTexel, 64 * kTexel, kWhite);
+    vrect(c, kListDivX, kListDivTop, 0.9f, kListDivBottom - kListDivTop, kWhite);
+    capText(c, kExtrasTitle1X, kTitle1Cap, kTitle1Scale, s.get(kExtrasLabels[extras_]), kWhite);
+    capText(c, kExtrasTitle2X, kExtrasTitle2Cap, kExtrasTitle2Scale, s.get(129), kTitleBlue);
+    const auto [x0, y0, x1, y1] = kExtrasPreview;
+    c.image(2, c.sx(x0), c.sy(y0), (x1 - x0) * c.unit(), (y1 - y0) * c.unit(), 0, 0, 1, 1, kWhite);
+    c.sprite(kLine, 320, kExtrasLine0, 1024 * kTexel, 1.8f, kWhite);
+    c.sprite(kLine, 320, kExtrasLine1, 1024 * kTexel, 1.8f, kWhite);
+    for (int r = 0; r < kExtrasRows && top_ + r < n; ++r) {
+        const int i = top_ + r;
+        const float cap = kExtrasRowCap + kExtrasRowStep * float(r);
+        const bool sel = i == cursor_;
+        if (sel) fadeBar(c, cap - kExtrasBarTop, kExtrasBarH, kExtrasBarSolid, kExtrasBarFade, rgba(26, 77, 108));
+        const uint32_t col = sel ? rgba(194, 219, 234) : rgba(192, 192, 192);
+        capText(c, kExtrasRowX, cap, kExtrasRowScale, s.get(list[size_t(i)].stringId), col, kExtrasTrack);
+        const std::string num = (i < 9 ? "0" : "") + std::to_string(i + 1);
+        capText(c, kExtrasNumRight - trackedWidth(c, num, kExtrasRowScale, kExtrasTrack), cap, kExtrasRowScale, num, col, kExtrasTrack);
+    }
+    if (n > kExtrasRows) {
+        const float w = 32 * kExtrasArrowTexel, h = 16 * kExtrasArrowTexel;
+        c.sprite(kArrowUp, kExtrasArrowX, kExtrasRowCap + kExtrasArrowUpY, w, h, kWhite);
+        c.sprite(kArrowDown, kExtrasArrowX, kExtrasRowCap + kExtrasRowStep * (kExtrasRows - 1) + kExtrasArrowDownY, w, h, kWhite);
+    }
+    const std::string back(s.get(469));
+    capText(c, kExtrasBackX - trackedWidth(c, back, kExtrasBackScale, kExtrasBackTrack) / 2, kExtrasBackCap, kExtrasBackScale, back,
+            kWhite, kExtrasBackTrack);
+}
+
+// An unlocked image (uiImages[2]) over black, 4:3 fitted to the window [I: not captured].
+void Menus::drawExtrasView(Canvas& c) {
+    const float w = float(c.width), h = float(c.height), k = std::min(w / 4, h / 3);
+    c.rect(0, 0, w, h, 0xFF000000u);
+    c.image(2, (w - 4 * k) / 2, (h - 3 * k) / 2, 4 * k, 3 * k, 0, 0, 1, 1, kWhite);
 }
 
 void Menus::drawList(Canvas& c, const locale::Strings& s) {
@@ -1040,6 +1178,23 @@ void Menus::drawSonar(Canvas& c, const locale::Strings& s) {
     keyed(c, 320 - 462 / 2.25f, bottom, scale, s.get(1140), "Return"), keyed(c, 320 + 450 / 2.25f, bottom, scale, s.get(375), "Return");
 }
 
+const std::vector<Reward>* Menus::rewardList() const {
+    if (!rewards) return nullptr;
+    const std::vector<Reward>* lists[] = {&rewards->environment, &rewards->character, &rewards->gear, &rewards->storyboards,
+                                          &rewards->trailers};
+    return lists[std::clamp(extras_, 0, 4)];
+}
+
+std::string Menus::extrasImage() const {
+    const Screen scr = screen();
+    const auto* l = rewardList();
+    if (!l || (scr != Screen::ExtrasCategory && scr != Screen::ExtrasView)) return {};
+    const int i = scr == Screen::ExtrasView ? cursors_.back() : cursor_;
+    if (i < 0 || size_t(i) >= l->size()) return {};
+    const Reward& r = (*l)[size_t(i)];
+    return unlocked(r.unlock, unlocks) ? r.image : "locked_concept";
+}
+
 std::optional<PdaModel> Menus::pdaModel() const {
     const Screen scr = screen();
     if (scr == Screen::PdaWeapons && cursor_ >= 0 && size_t(cursor_) < pda.weapons.size() && !pda.weapons[size_t(cursor_)].model.empty())
@@ -1119,15 +1274,18 @@ void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
     if (scr == Screen::Pda || scr == Screen::PdaWeapons || scr == Screen::PdaInventory || scr == Screen::PdaItems) return drawPda(c, s);
     if (scr == Screen::PdaSonar) return drawSonar(c, s);
     if (pdaList(scr)) return drawPdaList(c, s);
+    if (scr == Screen::ExtrasView) return drawExtrasView(c);
     if (!mainMenu()) c.rect(0, 0, float(c.width), float(c.height), 0x70000000u); // the paused game, dimmed
     if (scr == Screen::Tailoring) return drawTailoring(c, s); // these two over the backdrop alone [O captures]
     if (scr == Screen::Message) return drawMessage(c, s), footer(c, s, key, {{320, 120}});
     if (scr == Screen::Confirm) return drawConfirm(c, s), footer(c, s, key, {{320, 120}});
     // Backdrop of the ring and list screens: the glyph art and the ring's shadow.
     c.sprite(kFrontArt, kArtX, kArtY, kArtSize, kArtSize, withAlpha(kWhite, kArtAlpha));
+    const bool extrasList = scr == Screen::ExtrasCategory; // its ring shade surrounds the preview
+    const float shadeY = extrasList ? kExtrasHaloY : kRingY, shade = kShadeQuarter * (extrasList ? kExtrasHaloScale : 1);
     for (int q = 0; q < 4; ++q) // one quarter texture, mirrored
-        c.sprite(kRingShade, kRingX + (q & 1 ? 0.5f : -0.5f) * kShadeQuarter, kRingY + (q & 2 ? 0.5f : -0.5f) * kShadeQuarter,
-                 kShadeQuarter, kShadeQuarter, kWhite, q & 1, q & 2);
+        c.sprite(kRingShade, kRingX + (q & 1 ? 0.5f : -0.5f) * shade, shadeY + (q & 2 ? 0.5f : -0.5f) * shade, shade, shade, kWhite,
+                 q & 1, q & 2);
     if (radial(scr)) {
         drawRadial(c, s, scr, cursor_, false);
         footer(c, s, key, {{320, 120}});
@@ -1140,6 +1298,13 @@ void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
         const float cap = kFooterY + kCapTop * kTextScale;
         keyed(c, kSlotFooterL, cap, kTextScale, std::string_view(both).substr(0, gap), key);
         if (right != std::string::npos) keyed(c, kSlotFooterR, cap, kTextScale, std::string_view(both).substr(right), key);
+    } else if (scr == Screen::Extras) {
+        drawRadial(c, s, stack_[stack_.size() - 2], cursors_.back(), true, cursor_ < 0); // a category selected: the centre too
+        drawExtras(c, s);
+        footer(c, s, key, {{320, 120}});
+    } else if (scr == Screen::ExtrasCategory) {
+        drawExtrasCategory(c, s);
+        footer(c, s, key, {{kExtrasFootL, int16_t(extras_ == 4 ? 468 : 472)}, {kExtrasFootR, 375}});
     } else {
         drawList(c, s);
         footer(c, s, key, {{kListFooterL, 120}, {kListFooterR, 375}});

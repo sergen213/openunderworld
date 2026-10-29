@@ -332,14 +332,14 @@ Profile readProfile(const fs::path& dir) {
     if (!f) return {};
     try {
         const json j = json::parse(f);
-        return {j.value("chapters", 0u), j.value("finished", false)};
+        return {j.value("chapters", 0u), j.value("finished", false), j.value("treasures", false), j.value("relics", false)};
     } catch (const std::exception&) {
         return {};
     }
 }
 
 void writeProfile(const Profile& p, const fs::path& dir) {
-    writeFile(dir / "profile.json", json{{"chapters", p.chapters}, {"finished", p.finished}}.dump());
+    writeFile(dir / "profile.json", json{{"chapters", p.chapters}, {"finished", p.finished}, {"treasures", p.treasures}, {"relics", p.relics}}.dump());
 }
 
 } // namespace ou::save

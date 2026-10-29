@@ -19,6 +19,8 @@ namespace ou::locale { class Strings; }
 namespace ou::ui {
 
 struct Art;
+struct Reward;
+struct Rewards;
 using render::TextVertex;
 
 // Colours, 0xAABBGGRR as TextVertex::color.
@@ -66,15 +68,17 @@ public:
 // elsewhere.
 enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
 // Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item. Revisit: the PDA's
-// REVISIT LOCATION list (Treasure Hunt).
+// REVISIT LOCATION list (Treasure Hunt). Extras: the EXTRAS categories on a mirrored ring; ExtrasCategory: one's rewards
+// (Menus::rewards) with a preview; ExtrasView: an unlocked image full screen.
 enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
-                              PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit };
+                              PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit, Extras, ExtrasCategory, ExtrasView };
 // Continue: load the autosave, else the newest save (the app starts a new game when there is none). Save/Load/Delete act
 // on selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
 // Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW). TreasureHunt: the
-// main menu's centre after the ending. Revisit: start revisitChapter().
+// main menu's centre after the ending. Revisit: start revisitChapter(). PlayMovie: EXTRAS TRAILERS & CREDITS, the
+// Movies\ file in selectedSave().
 enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer, Equip, SonarReset,
-                              TreasureHunt, Revisit };
+                              TreasureHunt, Revisit, PlayMovie };
 
 struct Item {
     int16_t stringId = 0;  // locals.bin label; 0 = `label`
@@ -105,6 +109,17 @@ inline constexpr std::string_view kAutosaveSlot = "autosave";
 // object (+0x1B0, set per area; no exe table found). [O] chapter starts l2_cliffclimb 393, l4_trailstart 398,
 // l5_startsnow 402; [I] the other units by name (docs/GAMEPLAY.md "Menus"). 0 = none.
 int16_t levelTitle(int chapter, std::string_view unit);
+
+// What the EXTRAS rewards unlock against (save::Profile): chapters ended (bit n = kChapters index n), the game finished,
+// every treasure / relic found.
+struct Unlocks {
+    uint32_t chapters = 0;
+    bool finished = false, treasures = false, relics = false;
+};
+// Reward unlock codes (ui::Reward::unlock) [O values per list; I meanings from what they show]: -1 always; 3..10 a
+// chapter ended: 3 Mediterranean Sea, 4 the prologue, 5..10 Coastal Thailand .. Arctic Sea; 11 the game finished
+// (storyboards); 12 every treasure (creatures); 13 every relic (Lara's outfits).
+bool unlocked(int code, const Unlocks& u);
 
 // What the PDA shows: the chapter (kChapters index) and this chapter's relics/treasures found / in it; WEAPON
 // SELECTION rows (the secondaries, game::Weapon index in `weapon`); INVENTORY items per category (BACKPACK, GEAR,
@@ -165,6 +180,9 @@ public:
     int equipWeapon() const { return equip_; }                     // after Action::Equip: PdaWeapon::weapon
     std::optional<PdaModel> pdaModel() const;                      // the model panel the current PDA page shows
     int revisitChapter() const { return revisit_; }                 // after Action::Revisit: kChapters index 1..7
+    // The pc-w\image raw the EXTRAS screens show in uiImages[2] (the selected reward, "locked_concept" while locked);
+    // empty elsewhere.
+    std::string extrasImage() const;
 
     std::vector<SaveSlot> saves;    // Load/Save slot entries (newest first); set before opening them
     int musicVolume = 8, sfxVolume = 8, cinematicVolume = 8; // 0..10, VOLUME SETTINGS
@@ -175,12 +193,15 @@ public:
     // The main menu's centre [O]: TREASURE HUNT (49) once the game is `finished`, else RESUME GAME (122) with an autosave
     // in `saves`, else PLAY GAME (123). `treasureHunt`: the game being played is one (PDA REVISIT LOCATION).
     bool finished = false, treasureHunt = false;
+    const Rewards* rewards = nullptr; // EXTRAS (ui::loadRewards); null = EXTRAS shows "Unavailable"
+    Unlocks unlocks;
 
     // `keyName`: the key shown in the footer prompt (tru.exe shows the bound key's name, "Return").
     void draw(Canvas& c, const locale::Strings& s, std::string_view keyName = "Return");
 
 private:
-    void drawRadial(Canvas& c, const locale::Strings& s, Screen ring, int cursor, bool opened);
+    // `opened`: under the Load/Save / EXTRAS ring, the centre still selected and labelled unless `centre` is false.
+    void drawRadial(Canvas& c, const locale::Strings& s, Screen ring, int cursor, bool opened, bool centre = true);
     void drawSlots(Canvas& c, const locale::Strings& s);
     void drawList(Canvas& c, const locale::Strings& s);
     void drawTailoring(Canvas& c, const locale::Strings& s);
@@ -189,6 +210,10 @@ private:
     void drawMessage(Canvas& c, const locale::Strings& s);
     void drawConfirm(Canvas& c, const locale::Strings& s);
     void drawPdaList(Canvas& c, const locale::Strings& s);
+    void drawExtras(Canvas& c, const locale::Strings& s);
+    void drawExtrasCategory(Canvas& c, const locale::Strings& s);
+    void drawExtrasView(Canvas& c);
+    const std::vector<Reward>* rewardList() const; // the open EXTRAS category's
     std::vector<Item> itemsOf(Screen s);
     Action activate(Item it); // Accept on `it` of the current screen
     void back(); // pop, restoring the cursor of the screen below
@@ -203,7 +228,8 @@ private:
     int category_ = 0; // PdaItems: the INVENTORY category it shows
     int equip_ = 0;
     int revisit_ = 1;
-    int top_ = 0;          // PDA list pages: first row shown
+    int top_ = 0;          // PDA list pages, EXTRAS lists: first row shown
+    int extras_ = 0;       // EXTRAS category (environment, character, gear, storyboards, trailers & credits)
     std::string selected_;
     std::array<float, 8> grow_{}; // per radial / slot item: 0 = idle .. 1 = selected (eased)
     float label_ = 0;             // label fade-in of the selected radial item, 0..1

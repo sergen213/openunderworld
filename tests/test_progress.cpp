@@ -436,13 +436,89 @@ TEST(Menus, MainCentreTreasureHuntAndRevisit) {
     EXPECT_EQ(m.screen(), ui::Screen::None);
 }
 
-// save::Profile (chapters ended, the ending) and a Treasure Hunt's save flag.
+// EXTRAS [O extras captures]: the mirrored category ring, a category's rows (LOCKED until unlocked), the preview image,
+// the full-screen view and the trailers' movies.
+TEST(Menus, ExtrasRingCategoriesAndUnlocks) {
+    EXPECT_TRUE(ui::unlocked(-1, {}));
+    EXPECT_FALSE(ui::unlocked(3, {}));
+    EXPECT_TRUE(ui::unlocked(3, {.chapters = 1u << 1}));  // Mediterranean Sea
+    EXPECT_TRUE(ui::unlocked(4, {.chapters = 1u << 0}));  // the prologue
+    EXPECT_TRUE(ui::unlocked(10, {.chapters = 1u << 7})); // Arctic Sea
+    EXPECT_FALSE(ui::unlocked(5, {.chapters = 1u << 1}));
+    EXPECT_TRUE(ui::unlocked(11, {.finished = true}));
+    EXPECT_TRUE(ui::unlocked(12, {.treasures = true}));
+    EXPECT_FALSE(ui::unlocked(13, {.treasures = true}));
+    ui::Rewards r;
+    r.environment = {{304, 3, "concept_medsea_ruin"}, {313, 5, "concept_thailand_temple"}};
+    for (int16_t i = 0; i < 9; ++i) r.gear.push_back({int16_t(348 + i), 8, "concept_gear_" + std::to_string(i)});
+    r.character = r.storyboards = r.environment;
+    r.trailers = {{360, -1, "previously", "prevontr"}};
+    ui::Menus m;
+    m.open(ui::Screen::Main);
+    EXPECT_EQ(m.items()[6].opens, ui::Screen::Message); // no rewards: "Unavailable"
+    m.rewards = &r;
+    m.unlocks.chapters = 1u << 1;
+    ASSERT_EQ(m.items()[6].opens, ui::Screen::Extras);
+    m.input(ui::Nav::Left);  // SAVE GAME (level with the centre)
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 6);
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::Extras);
+    EXPECT_EQ(m.cursor(), -1); // focus on EXTRAS until Right
+    const auto ring = m.items();
+    ASSERT_EQ(ring.size(), 5u);
+    EXPECT_EQ(ring[0].stringId, 146);
+    EXPECT_EQ(ring[0].icon, 43u);
+    EXPECT_EQ(ring[4].stringId, 151);
+    EXPECT_EQ(ring[4].icon, 48u);
+    m.input(ui::Nav::Right);
+    EXPECT_EQ(m.cursor(), 0);
+    m.input(ui::Nav::Accept); // ENVIRONMENT CONCEPTS
+    ASSERT_EQ(m.screen(), ui::Screen::ExtrasCategory);
+    EXPECT_EQ(m.items()[0].stringId, 304);
+    EXPECT_EQ(m.items()[1].stringId, 470); // LOCKED
+    EXPECT_EQ(m.extrasImage(), "concept_medsea_ruin");
+    m.input(ui::Nav::Down);
+    EXPECT_EQ(m.extrasImage(), "locked_concept");
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // locked: nothing
+    EXPECT_EQ(m.screen(), ui::Screen::ExtrasCategory);
+    m.input(ui::Nav::Up), m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::ExtrasView);
+    EXPECT_EQ(m.extrasImage(), "concept_medsea_ruin");
+    m.input(ui::Nav::Back), m.input(ui::Nav::Back);
+    EXPECT_EQ(m.screen(), ui::Screen::Extras);
+    EXPECT_EQ(m.cursor(), 0);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // GEAR CONCEPTS: nine rows, five shown
+    m.unlocks.chapters = 1u << 5; // Jan Mayen
+    EXPECT_EQ(m.items()[0].stringId, 348);
+    for (int i = 0; i < 8; ++i) m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 8);
+    m.input(ui::Nav::Back), m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // TRAILERS & CREDITS
+    EXPECT_EQ(m.extrasImage(), "previously");
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::PlayMovie);
+    EXPECT_EQ(m.selectedSave(), "prevontr.bik");
+    EXPECT_EQ(m.screen(), ui::Screen::ExtrasCategory); // the menu stays
+    m.input(ui::Nav::Back), m.input(ui::Nav::Back);
+    EXPECT_EQ(m.screen(), ui::Screen::Main);
+    m.close(); // in play the movie first asks to leave the game (471)
+    m.open(ui::Screen::Pause);
+    m.input(ui::Nav::Left), m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Accept), m.input(ui::Nav::Accept);
+    for (int i = 0; i < 4; ++i) m.input(ui::Nav::Down);
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::ExtrasCategory);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::Confirm);
+    m.input(ui::Nav::Left);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::PlayMovie);
+}
+
+// save::Profile (chapters ended, the ending, all treasures / relics) and a Treasure Hunt's save flag.
 TEST(Progress, ProfileAndTreasureHuntSave) {
     const auto dir = std::filesystem::temp_directory_path() / ("ou_profile_" + std::to_string(::getpid()));
     std::filesystem::remove_all(dir);
     EXPECT_EQ(save::readProfile(dir), save::Profile{});
-    save::writeProfile({0x7Fu, true}, dir);
-    EXPECT_EQ(save::readProfile(dir), (save::Profile{0x7Fu, true}));
+    save::writeProfile({0x7Fu, true, true, false}, dir);
+    EXPECT_EQ(save::readProfile(dir), (save::Profile{0x7Fu, true, true, false}));
     std::filesystem::remove_all(dir);
     save::SaveGame g;
     g.unit = "l1_seatop", g.treasureHunt = true;
@@ -529,6 +605,15 @@ TEST(MenusReal, RawImagesAndPdaArt) {
         EXPECT_EQ(img->rgba.size(), size_t(img->width) * size_t(img->height) * 4) << n;
     }
     for (int c = 0; c < 9; ++c) EXPECT_TRUE(ui::loadRaw(bf, ui::loadingImage(c))) << c;
+    const auto rewards = ui::loadRewards(bf); // EXTRAS: every reward's image, the trailers' movies
+    ASSERT_TRUE(rewards);
+    EXPECT_EQ(rewards->gear.size(), 9u);
+    for (const auto* l : {&rewards->environment, &rewards->character, &rewards->gear, &rewards->storyboards, &rewards->trailers})
+        for (const auto& w : *l) EXPECT_TRUE(bf.read("pc-w\\image\\" + w.image + ".raw")) << w.image;
+    ASSERT_EQ(rewards->trailers.size(), 3u);
+    EXPECT_EQ(rewards->trailers[0].movie, "prevontr");
+    EXPECT_EQ(rewards->trailers[2].movie, "credits");
+    EXPECT_TRUE(ui::loadRaw(bf, "locked_concept"));
     const auto pda = ui::loadRaw(bf, "pda_bg_1280"); // the bezel is blue: B,G,R,A pixels
     const uint8_t* bar = &pda->rgba[(size_t(600) * 1280 + 640) * 4];
     EXPECT_GT(bar[2], bar[0]);

@@ -1246,18 +1246,35 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   centred, at ~0.66 brightness. Items: centre [O mainmenu, e4/e5] 49 TREASURE HUNT once the game is finished, else 122
   RESUME GAME with an autosave, else 123 PLAY GAME (icon 18 for all; RESUME / PLAY load the autosave, else the newest
   save, else start a new game), ring 124 START NEW GAME (PLAYER TAILORING first; with an autosave after 157 [I]), 125 GAME OPTIONS, 126 LOAD GAME, 127 SAVE GAME (main menu: message 161 "only … in
-  gameplay mode" in box 106 with OK 383), 128 AUDIO/VISUAL, 129 EXTRAS (not ported: message 456 "Unavailable"), 131
+  gameplay mode" in box 106 with OK 383), 128 AUDIO/VISUAL, 129 EXTRAS (below), 131
   QUIT GAME. Navigation as tru.exe: Left from the centre to the last ring item (first time SAVE GAME, the one level with
   the centre), Right back to the centre, Up/Down along the ring and off either end to the centre.
 - Autosave and profile [I]: a game started from the main menu autosaves (slot `autosave`) at every chapter start and
   checkpoint (key: chapter + checkpoint; loads do not re-save). `<saveDir>/profile.json` (`save::Profile`) keeps the
-  chapters ended (a level end's cinematic) and whether the ending played. The ending [O GAMEPLAY "Thor's gear"]: a
+  chapters ended (a level end's cinematic), whether the ending played, and whether every treasure / relic was found by a
+  chapter end (EXTRAS unlocks). The ending [O GAMEPLAY "Thor's gear"]: a
   cinematic in chapter 8 (l7_himalaya_end) marks the game finished, autosaves what was found, plays `credits.bik` and
   returns to the main menu, whose centre is then TREASURE HUNT.
 - Treasure Hunt [O start unit l1_seatop; I rules]: starts chapter 1 keeping the autosave's `collected` / `found` (what the
   finished game picked up stays picked up), `World::treasureHunt` set and saved (its autosave reads "<AREA> - TREASURE
   HUNT"); the PDA's REVISIT LOCATION is enabled only then and lists the chapters 52–58 (a PDA list page as JOURNAL
   ENTRIES, the chapter's loading-screen story 59 + n beside [I: not captured]); Return starts that chapter, finds kept.
+- EXTRAS [O extras, extras_sel, extras_env, extras_gear, x0/x1; generalbank DTP 36 reward lists, `ui::loadRewards`]: as
+  Load/Save, the ring stays (EXTRAS circled, the centre still labelled) and a mirrored ring at positions 2..6 holds the
+  categories 146 ENVIRONMENT (icon 43), 147 CHARACTER (44), 148 GEAR CONCEPTS (45), 149 STORYBOARDS (46), 151 TRAILERS &
+  CREDITS (48); Right/Return enter it (the centre is then unselected), the selected one's label white, left-aligned 39.2
+  right of its centre on bar 13 mirrored. A category is a list screen: icon | name (title cap 75.1 from 228.4) and blue 129
+  "EXTRAS" (cap 93.8, 0.72, from 247.6); the preview (uiImages[2], `pc-w\image\<image>.raw` 4:3, `locked_concept` while
+  locked; 640×480 with their own white frame) at x 200.4..440, y 114.2..294.2; footer-wide lines 105 at 307.4 / 403.4; five rows from cap
+  318.2 every 16.8 (scale 0.54, tracked 0.25; grey 192, the selected (194, 219, 234) on a (26, 77, 108) bar 16.9 high,
+  solid ±115 fading to ±205): the name or 470 LOCKED from 147.6, "01".. right-aligned at 492.2, arrows 111 / 112 (0.56 per
+  texel) left of the first / last row when the list scrolls; BACK TO PREVIOUS MENU (a label, Esc) centred at 316.4 cap 412.9
+  (0.57, tracked 0.65); prompts 472 VIEW FULLSCREEN (468 VIEW MOVIE for trailers) / 375 at 271.8 / 403.8. Return on an
+  unlocked image shows it 4:3 fitted over black [I: not captured], any key returns; on a trailer it plays
+  `Movies\<movie>.bik` (previously → prevontr, teaser → intro, credits → credits) with the Bink player, from the pause
+  menu after 471 and then back to the main menu. Unlock codes (`ui::unlocked`) against `profile.json`: −1 always; 3..10 a
+  chapter ended (3 Mediterranean Sea, 4 the prologue, 5..10 Thailand .. Arctic Sea), also once the game is finished; 11
+  the game finished (storyboards); 12 every treasure, 13 every relic (checked at chapter ends) [O codes, I meanings].
 - Pause [O]: the same ring with 122 RESUME GAME in the centre over the game dimmed to ~0.56 (HUD hidden); SAVE GAME opens
   the Save screen, QUIT GAME returns to the main menu (after 494 [I]). No PDA item: the `pda` action (key 1,
   replays `pda`) opens the PDA.

@@ -1055,10 +1055,10 @@ public:
             const VkDeviceSize zero = 0;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textPipeline_);
             vkCmdPushConstants(cmd, textLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof screen, screen);
-            VkDescriptorSet sets[3] = {font_.set, white_.set, white_.set}; // text.frag: font, uiImages[0], uiImages[1]
+            VkDescriptorSet sets[4] = {font_.set, white_.set, white_.set, white_.set}; // text.frag: font, uiImages[0..2]
             for (size_t i = 0; i < uiImages_.size(); ++i)
                 if (uiImages_[i].gpu.image) sets[1 + i] = uiImages_[i].gpu.set;
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout_, 0, 3, sets, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, textLayout_, 0, 4, sets, 0, nullptr);
             vkCmdBindVertexBuffers(cmd, 0, 1, &f.text.buffer, &zero);
             vkCmdDraw(cmd, overlayCount, 1, 0, 0);
         };
@@ -2000,8 +2000,8 @@ private:
         VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 3u : 2u,
                                       sceneSets, 1, &scenePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &sceneLayout_));
-        const VkDescriptorSetLayout textSets[3] = {setLayout_, setLayout_, setLayout_}; // font + two FrameOptions::uiImages
-        pl.setLayoutCount = 3;
+        const VkDescriptorSetLayout textSets[4] = {setLayout_, setLayout_, setLayout_, setLayout_}; // font + FrameOptions::uiImages
+        pl.setLayoutCount = 4;
         pl.pSetLayouts = textSets;
         pl.pPushConstantRanges = &textPush;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &textLayout_));
@@ -2653,10 +2653,10 @@ private:
         sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &shadowSampler_));
 
-        // post, white, font, the two UI images + the per-frame sun shadow sets (atlas + OuShadow UBO).
-        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 + kFramesInFlight},
+        // post, white, font, the three UI images + the per-frame sun shadow sets (atlas + OuShadow UBO).
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 + kFramesInFlight},
                                             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}};
-        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 5 + kFramesInFlight, 2, ps};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 6 + kFramesInFlight, 2, ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &staticPool_));
 
         // Sun shadow atlas (kShadowCascades tiles side by side): always allocated so the shadow sets are valid; kept in
@@ -3619,7 +3619,7 @@ private:
     std::vector<std::pair<VkDescriptorSet, std::array<VkDescriptorImageInfo, 16>>> origMaterialImages_; // setMipBias
     VkDescriptorPool staticPool_ = VK_NULL_HANDLE, scenePool_ = VK_NULL_HANDLE;
     GpuImage white_, font_, shadow_;
-    std::array<UiImage, 2> uiImages_; // FrameOptions::uiImages
+    std::array<UiImage, 3> uiImages_; // FrameOptions::uiImages
     VkDescriptorSet postSet_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout shadowSetLayout_ = VK_NULL_HANDLE;           // sun.glsl: atlas + OuShadow UBO
     std::array<Buffer, kFramesInFlight> shadowUbo_{};                 // OuShadow, host-coherent

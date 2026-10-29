@@ -28,8 +28,8 @@ struct DebugLine {
 };
 
 // Screen-space quad vertex of the text/UI pass. u < 0: solid quad; 0 <= u <= 1: font atlas (RenderCommon
-// kGlyph/kAtlas*), colour alpha-masked by the glyph; 2 <= u < 4: FrameOptions::uiImages[0] at (u - 2, v); u >= 4:
-// uiImages[1] at (u - 4, v); images are RGBA x colour.
+// kGlyph/kAtlas*), colour alpha-masked by the glyph; 2 <= u < 4: FrameOptions::uiImages[0] at (u - 2, v); 4 <= u < 6:
+// uiImages[1] at (u - 4, v); u >= 6: uiImages[2] at (u - 6, v); images are RGBA x colour.
 struct TextVertex {
     float x, y, u, v; // pixels from top-left
     uint32_t color;   // RGBA8
@@ -143,7 +143,7 @@ struct FrameOptions {
     std::span<const TextVertex> ui = {}; // screen-space triangle list (src/ui menus, HUD), drawn before the overlay
     // Sampled by `ui` vertices with u >= 2 (bilinear, clamped): [0] original menu art atlas (ui::Art), [1] menu movie.
     // Backends upload only when an image's version changes (versions start at 1); empty = keep the previous upload.
-    std::array<RgbaImage, 2> uiImages;
+    std::array<RgbaImage, 3> uiImages;
     // Replaces the sun shadow map when the backend supports it; otherwise the shadow map is used.
     RayTracing rt = RayTracing::Off;
     int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)

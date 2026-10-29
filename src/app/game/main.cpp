@@ -1465,6 +1465,8 @@ int main(int argc, char** argv) {
 
     // ---- UI (src/ui): menus, PDA page, pickup notifications, chapter titles ----
     ou::ui::Menus menus;
+    const auto rewards = ou::ui::loadRewards(*bigfile); // EXTRAS
+    if (rewards) menus.rewards = &*rewards;
     ou::ui::Hud hud;
     std::optional<MenuMovie> menuMovie;
     auto ensureMenuMovie = [&] {
@@ -1583,6 +1585,9 @@ int main(int argc, char** argv) {
     glm::ivec2 shownSonarSize(0);
     // Loading screen (pc-w\image\loading_bg_*, chapter title and story) shown for one frame before a load blocks.
     ou::ui::Image screenImage; // uiImages[1] outside the main menu: the PDA background or a loading screen
+    ou::ui::Image extrasImage; // uiImages[2]: the EXTRAS picture (ui::Menus::extrasImage)
+    std::string extrasName;
+    uint64_t extrasVersion = uint64_t(1) << 59;
     uint64_t screenVersion = uint64_t(1) << 62;
     std::string screenName;
     auto useScreenImage = [&](std::string_view name) {
@@ -1617,11 +1622,23 @@ int main(int argc, char** argv) {
     bool running = true;
     // What the player reached across games (save::Profile): chapter ends and the ending (TREASURE HUNT, EXTRAS unlocks).
     ou::save::Profile profile = ou::save::readProfile();
-    menus.finished = profile.finished;
-    auto reached = [&](uint32_t chapters, bool finished) {
-        const ou::save::Profile p{profile.chapters | chapters, profile.finished || finished};
+    auto showProfile = [&] {
+        menus.finished = profile.finished;
+        menus.unlocks = {profile.chapters, profile.finished, profile.treasures, profile.relics};
+    };
+    showProfile();
+    auto reached = [&](uint32_t chapters, bool finished) { // also every treasure / relic found (EXTRAS)
+        bool treasures = true, relics = true;
+        for (int ch = 1; ch <= 7; ++ch) {
+            const auto& r = ou::game::chapterRewards(ch);
+            treasures = treasures && std::all_of(r.treasures.begin(), r.treasures.end(), [&](int32_t id) { return world->collected.contains(id); });
+            relics = relics && (!r.relic || world->collected.contains(r.relic));
+        }
+        const ou::save::Profile p{profile.chapters | chapters, profile.finished || finished, profile.treasures || treasures,
+                                  profile.relics || relics};
         if (p == profile) return;
-        profile = p, menus.finished = p.finished;
+        profile = p;
+        showProfile();
         try {
             ou::save::writeProfile(profile);
         } catch (const std::exception& e) {
@@ -1709,6 +1726,14 @@ int main(int argc, char** argv) {
             shownChapter = world->chapter;
             autosaveHere();
             break;
+        case Action::PlayMovie: // EXTRAS TRAILERS & CREDITS; in play the game is left after it (471)
+            if (!opt.noMovies) {
+                SDL_GLContext gl = SDL_GL_GetCurrentContext();
+                playMovie(menus.selectedSave().c_str());
+                if (gl) SDL_GL_MakeCurrent(window.get(), gl);
+            }
+            if (menus.mainMenu()) break;
+            [[fallthrough]];
         case Action::QuitToMenu:
             menus.close();
             menus.saves = listSaves();
@@ -2171,7 +2196,14 @@ int main(int argc, char** argv) {
         fo.lighting = true, fo.cullBackFaces = true;
         fo.overlay = lines, fo.debugLines = mainMenu ? std::span<const ou::render::DebugLine>{} : std::span<const ou::render::DebugLine>(frameLines);
         fo.ui = canvas.vertices;
-        fo.uiImages = {ou::render::RgbaImage{art->rgba, art->width, art->height, art->version}, movieImage};
+        if (const std::string name = menus.extrasImage(); !name.empty() && name != extrasName) { // EXTRAS preview / view
+            extrasName = name;
+            if (auto img = ou::ui::loadRaw(*bigfile, name)) extrasImage = std::move(*img);
+            else extrasImage = {}, std::fprintf(stderr, "ou-game: pc-w\\image\\%s.raw missing\n", name.c_str());
+            ++extrasVersion;
+        }
+        fo.uiImages = {ou::render::RgbaImage{art->rgba, art->width, art->height, art->version}, movieImage,
+                       ou::render::RgbaImage{extrasImage.rgba, extrasImage.width, extrasImage.height, extrasVersion}};
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());

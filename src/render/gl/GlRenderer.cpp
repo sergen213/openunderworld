@@ -189,8 +189,10 @@ in vec2 vUv; in vec4 vColor;
 layout(binding = 0) uniform sampler2D uFont;
 layout(binding = 1) uniform sampler2D uImage0; // FrameOptions::uiImages
 layout(binding = 2) uniform sampler2D uImage1;
+layout(binding = 3) uniform sampler2D uImage2;
 out vec4 oColor;
 void main() {
+    if (vUv.x >= 6.0) { oColor = texture(uImage2, vUv - vec2(6.0, 0.0)) * vColor; return; }
     if (vUv.x >= 4.0) { oColor = texture(uImage1, vUv - vec2(4.0, 0.0)) * vColor; return; }
     if (vUv.x >= 2.0) { oColor = texture(uImage0, vUv - vec2(2.0, 0.0)) * vColor; return; }
     float a = vUv.x < 0.0 ? 1.0 : texture(uFont, vUv).r; // negative uv = solid background quad
@@ -349,7 +351,7 @@ struct Resources {
     Buffer fxVbo;
     Texture white, font, shadowMap, attenuation, blackCube;
     struct Streamed { Texture tex; uint64_t version = 0; int width = 0, height = 0; };
-    std::array<Streamed, 2> uiImages; // FrameOptions::uiImages
+    std::array<Streamed, 3> uiImages; // FrameOptions::uiImages
     // Original Fidelity (docs/formats/SHADERS.md): translated programs, register-file UBOs (bindings 0 frame,
     // 1 material, 2 object; ShaderTranslate.hpp), objects rewritten per frame.
     std::vector<Program> originals;
@@ -1190,7 +1192,7 @@ private:
     }
 
     void drawOverlay(Viewport vp, std::span<const std::string> lines, std::span<const TextVertex> ui,
-                     const std::array<RgbaImage, 2>& uiImages) {
+                     const std::array<RgbaImage, 3>& uiImages) {
         if (lines.empty() && ui.empty()) return;
         std::vector<TextVertex> v = buildOverlayVertices(vp, lines, ui);
         Resources& r = *res_;

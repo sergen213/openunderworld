@@ -72,18 +72,21 @@ struct SonarMap {
 std::optional<SonarMap> loadSonarMap(const cdc::BigfileSet& bigfile, std::string_view unit);
 
 // EXTRAS rewards: pc-w\generalbank.drm DTP 36, a header of {u32 count, record*} lists [O]: 3 cinematics, 4 storyboards,
-// 5 character concepts, 6 environment concepts, 7 gear concepts (0x1C-byte records {u32 locals id, u32 unlock, u32,
+// 5 character concepts, 6 environment concepts, 7 gear concepts (0x1C-byte records {u32 locals id, i32 unlock, u32,
 // char[] path*, char* image, char[]*, u32}), 9 trailers & credits, 8 outfits (not read). `unlock` codes [O values, I
 // meaning from the shipped game's rewards]: 3 Mediterranean Sea complete, 4 prologue, 5 Thailand, 6 Croft Manor, 7 Mexico,
 // 8 Jan Mayen, 9 Andaman Sea, 10 Arctic Sea (= chapter + 2, the prologue 4), 11 the game on Master Survivalist, 12 every
 // treasure, 13 every relic.
+// List 9 (trailers & credits) has 0x18-byte records {u32 locals id, i32 unlock (-1: always), char* movie (Movies\<movie>),
+// u32, char* image, u32} [O: 360 prevontr.bik / previously, 361 intro.bik / teaser, 362 credits.bik / credits].
 struct Reward {
     int16_t name = 0;  // locals.bin
     int unlock = 0;
-    std::string image; // pc-w\image\<image>.raw
+    std::string image{}; // pc-w\image\<image>.raw
+    std::string movie{}; // trailers & credits: the Movies\ file
 };
 struct Rewards {
-    std::vector<Reward> environment, character, gear, storyboards; // EXTRAS 146..149 in that order
+    std::vector<Reward> environment, character, gear, storyboards, trailers; // EXTRAS 146..149, 151 in that order
 };
 std::optional<Rewards> loadRewards(const cdc::BigfileSet& bigfile);
 

@@ -181,19 +181,22 @@ std::optional<Rewards> loadRewards(const cdc::BigfileSet& bigfile) {
             const auto* c = reinterpret_cast<const char*>(s.data.data()) + p->second.offset;
             return std::string(c, strnlen(c, s.data.size() - p->second.offset));
         };
-        const auto list = [&](uint32_t index) {
+        const auto list = [&](uint32_t index, uint32_t stride = 0x1C) {
             std::vector<Reward> out;
             const auto base = ptrs.find(8 * index + 4);
             if (base == ptrs.end()) return out;
             const uint32_t count = rd<uint32_t>(s.data, 8 * index);
-            for (uint32_t k = 0; k < count && base->second.offset + 0x1C * size_t(k + 1) <= s.data.size(); ++k) {
-                const uint32_t at = base->second.offset + 0x1C * k;
-                out.push_back({int16_t(rd<uint32_t>(s.data, at)), int(rd<uint32_t>(s.data, at + 4)), string(at + 0x10)});
+            for (uint32_t k = 0; k < count && base->second.offset + stride * size_t(k + 1) <= s.data.size(); ++k) {
+                const uint32_t at = base->second.offset + stride * k;
+                Reward w{int16_t(rd<uint32_t>(s.data, at)), int(rd<int32_t>(s.data, at + 4)), string(at + 0x10)};
+                if (stride == 0x18) w.movie = string(at + 8);
+                out.push_back(std::move(w));
             }
             return out;
         };
-        Rewards r{list(6), list(5), list(7), list(4)};
-        if (r.environment.empty() || r.character.empty() || r.gear.empty() || r.storyboards.empty()) return std::nullopt;
+        Rewards r{list(6), list(5), list(7), list(4), list(9, 0x18)};
+        if (r.environment.empty() || r.character.empty() || r.gear.empty() || r.storyboards.empty() || r.trailers.empty())
+            return std::nullopt;
         return r;
     }
     return std::nullopt;

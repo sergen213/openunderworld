@@ -70,10 +70,11 @@ void writeFile(const std::filesystem::path& path, std::string_view bytes);
 SaveGame readFile(const std::filesystem::path& path, bool* usedBackup = nullptr);
 
 // What the player has reached across games (<saveDir>/profile.json, written whole): chapters completed (bit n = kChapters
-// index n ended) and the game finished (the ending played): the main menu's TREASURE HUNT and the EXTRAS unlocks.
+// index n ended), the game finished (the ending played), every treasure / relic found (checked at chapter ends): the main
+// menu's TREASURE HUNT and the EXTRAS unlocks (ui::unlocked).
 struct Profile {
     uint32_t chapters = 0;
-    bool finished = false;
+    bool finished = false, treasures = false, relics = false;
     bool operator==(const Profile&) const = default;
 };
 Profile readProfile(const std::filesystem::path& dir = saveDir()); // missing / unreadable = nothing reached
