@@ -19,6 +19,7 @@
 #include <glm/glm.hpp>
 
 #include "app/game/Cinematic.hpp"
+#include "app/game/Sound.hpp"
 #include "anim/Anim.hpp"
 #include "audio/Audio.hpp"
 #include "audio/Mixer.hpp"
@@ -701,13 +702,13 @@ bool quickLoad(ou::game::World& w, const std::string& slot) {
 // Music (docs/formats/AUDIO.md §5, GAMEPLAY.md "Music"): one track at a time, pc-w\music\<name>\<name>.mul
 // streamed with the stem gains its .mus script computes (audio::MusSequencer). Tracks change when the current
 // unit changes (the unit's own "<unit>_mus_01") and when Lara enters a volume whose script names a track
-// (soundvolume/soundtriggervolume intros, UnitData::musicByIntro) [I]. The music variables stay at 0: who
-// writes them (e.g. intensity 0x7D) is not decoded [U].
+// (soundvolume/soundtriggervolume intros, UnitData::musicByIntro) [I]. The music variables are the script runtime's
+// gamebase values (tru.exe keeps one array, 0xCCB560, for scripts and the sequencer; AUDIO.md §5.3, §9.4).
 struct Music {
     std::string current;
     std::unique_ptr<ou::audio::MusFile> mus; // the sequencer keeps a reference to it
     std::unique_ptr<ou::audio::MusSequencer> seq;
-    std::array<uint8_t, 256> vars{};
+    std::array<uint8_t, 256>* vars = nullptr; // world->script().gameValues()
 
     bool play(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer, const std::string& name, const std::string& why, uint64_t tick) {
         if (name.empty() || name == current) return false;
@@ -720,7 +721,7 @@ struct Music {
             if (auto m = bf.read(base + ".mus")) {
                 mus = std::make_unique<ou::audio::MusFile>(ou::audio::parseMus(*m));
                 seq = std::make_unique<ou::audio::MusSequencer>(*mus);
-                seq->update(0, vars);
+                seq->update(0, *vars);
             }
             mixer.playMusic(std::move(pcm), current.empty() ? 1.0f : 2.0f, seq ? seq->stemGains() : std::vector<float>{});
             std::fprintf(stderr, "ou-game: tick %llu music %s (%s)%s\n", (unsigned long long)tick, name.c_str(), why.c_str(),
@@ -735,7 +736,7 @@ struct Music {
     }
     void tick(ou::audio::Mixer& mixer, float dt) {
         if (!seq) return;
-        seq->update(dt, vars);
+        seq->update(dt, *vars);
         mixer.setMusicStemGains(seq->stemGains());
     }
 };
@@ -953,6 +954,8 @@ int main(int argc, char** argv) {
     ou::audio::Mixer mixer; // after SdlInit: closes its device before SDL_Quit
     Footsteps steps;
     Music music;
+    music.vars = &world->script().gameValues();
+    std::optional<ou::app::GameSound> sound; // sfxmarkers, script sounds, drowning, voice subtitles
     std::vector<float> wav; // --music-wav capture
     bool audioOn = false;
     if (!opt.noAudio) {
@@ -969,6 +972,12 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "ou-game: audio %s\n", !opt.musicWav.empty() ? "to WAV" : audioOn ? "on" : "off");
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: audio: %s\n", e.what());
+        }
+        try {
+            sound.emplace(*bigfile, mixer);
+            sound->attach(*world);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: sound events: %s\n", e.what());
         }
     }
     ou::platform::WindowPtr window; // before the renderer: GL context / VkSurface die first
@@ -1218,6 +1227,8 @@ int main(int argc, char** argv) {
             a.look -= mouse * kMouseSensitivity * opt.controls.mouseScale / float(ou::game::kTickSeconds);
             mouse = glm::vec2(0);
             if (a.save && !held.save) quickSave(*world, "quick");
+            if (sound && a.hint && !held.hint) sound->playHelp(*world, false); // PDA Hint / Answer (help on demand)
+            if (sound && a.answer && !held.answer) sound->playHelp(*world, true);
             if (a.load && !held.load) quickLoad(*world, "quick"), shownChapter = world->chapter;
             held = a;
             if (world->ticks() == dieTick) {
@@ -1296,6 +1307,7 @@ int main(int argc, char** argv) {
                 music.tick(mixer, float(ou::game::kTickSeconds));
                 steps.tick(*world, mixer);
             }
+            if (sound) sound->tick(*world);
             hud.tick(ou::game::kTickSeconds);
         }
         try { // a level load or save changed the outfit: new Lara meshes, rig and waves
@@ -1409,6 +1421,7 @@ int main(int argc, char** argv) {
             if (const auto target = world->grappleTarget(); target && !world->player().state().grappleUid)
                 if (const auto p = toScreen(c, world->fovDeg, w, h, target->pos)) hud.grapple = std::array{p->x, p->y};
             hud.draw(canvas);
+            if (sound) ou::app::drawSubtitles(canvas, sound->subtitles());
         }
         menus.draw(canvas, *strings);
         // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these

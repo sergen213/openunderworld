@@ -151,6 +151,12 @@ bool Mixer::hasSound(uint32_t id) const {
     return sounds_.contains(id);
 }
 
+std::shared_ptr<const Pcm> Mixer::sound(uint32_t id) const {
+    std::lock_guard lock(mutex_);
+    const auto it = sounds_.find(id);
+    return it == sounds_.end() ? nullptr : it->second;
+}
+
 VoiceId Mixer::start(std::shared_ptr<const Pcm> pcm, const PlayParams& p, float fadeIn) {
     if (!pcm || !pcm->frames()) return 0;
     Voice v{.id = nextId_++, .pcm = std::move(pcm), .params = p};

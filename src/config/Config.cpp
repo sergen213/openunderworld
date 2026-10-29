@@ -68,7 +68,7 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
 
 const std::vector<std::string>& bindableActions() {
     static const std::vector<std::string> a = {"forward", "back", "left", "right", "walk", "sprint", "jump", "drop", "interact",
-                                               "draw", "fire", "aim", "switch", "weapon", "heal", "grapple", "save", "load"};
+                                               "draw", "fire", "aim", "switch", "weapon", "heal", "grapple", "save", "load", "hint", "answer", "pda"};
     return a;
 }
 
@@ -91,7 +91,10 @@ InputConfig::InputConfig()
                {"heal", {"H", "Pad dpup"}},
                {"grapple", {"G", "Pad rightshoulder"}},
                {"save", {"F5"}},
-               {"load", {"F9"}}} {}
+               {"load", {"F9"}},
+               {"hint", {"T"}},    // PDA Hint / Answer (help on demand, locals.bin 168/169); keys are ours [I]
+               {"answer", {"Y"}},
+               {"pda", {"1"}}} {} // tru.exe default: 1 opens the PDA [O]
 
 Config load(const fs::path& path) {
     Config c;

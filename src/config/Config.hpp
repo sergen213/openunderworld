@@ -58,7 +58,7 @@ struct InputConfig {
     InputConfig();                 // default bindings
 };
 // Bindable actions in display order: forward, back, left, right, walk, sprint, jump, drop, interact, draw, fire,
-// aim, switch, weapon, heal, grapple, save, load.
+// aim, switch, weapon, heal, grapple, save, load, hint, answer.
 const std::vector<std::string>& bindableActions();
 
 struct Config {

@@ -1,5 +1,6 @@
 // ou-game cutscene playback. Docs: docs/formats/CINEMATICS.md "Playback in ou-game".
 #include "app/game/Cinematic.hpp"
+#include "app/game/Sound.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -215,14 +216,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         cam.farZ = 200000.0f;
         if (v.mixer) v.mixer->setListener({pose.position, pose.forward, pose.up});
 
-        ui::Canvas canvas(w, hgt); // subtitle ticker: two centred lines at y 352 / 374 of 640x480 (TEXT.md §4)
-        const float u = canvas.unit(), g = std::round(12 * u);
-        const std::string* lines[2] = {&ticker.top(), &ticker.bottom()};
-        for (int k = 0; k < 2; ++k)
-            if (!lines[k]->empty()) {
-                canvas.textCentered(float(w) / 2 + std::max(1.0f, u), (352 + 22 * k) * u + std::max(1.0f, u), g, *lines[k], 0xC0000000u);
-                canvas.textCentered(float(w) / 2, (352 + 22 * k) * u, g, *lines[k], 0xFFFFFFFFu);
-            }
+        ui::Canvas canvas(w, hgt);
+        drawSubtitles(canvas, ticker);
         overlay.clear();
         if (v.overlay) {
             char buf[160];

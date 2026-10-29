@@ -51,6 +51,7 @@ struct Member {
     uint16_t name = 0;      // symbol id (the PC data has no member names)
     std::optional<uint32_t> init; // first u32 of the initial value (instanceref: target intro unique id)
     std::optional<uint32_t> init2; // terraingroup: model index (init's low u16 is the stream unit id)
+    std::optional<cdc::Pointer> initAt; // NATIVE/SCRIPT: where the initial value lives (sound: inline SoundPlex)
 };
 
 struct Function {
@@ -181,6 +182,15 @@ public:
     using MarkupNative = std::function<bool(const std::string& unit, uint32_t id, uint32_t function,
                                             std::span<const vm::Value> args, uint32_t& result)>;
     void setMarkupNative(MarkupNative native) { markup_ = std::move(native); }
+    // "sound" natives (tru.exe thunks 0x79C570..0x79C5D0): 1/3 Play3D(anchor), 2/4 Play, 5 Stop. plex = the member's
+    // initial value (an inline SoundPlex node in the owner's unit DRM); anchor = intro uid for 3D plays, 0 for 2D.
+    using SoundNative = std::function<bool(int32_t owner, uint32_t member, cdc::Pointer plex, uint32_t function, int32_t anchor)>;
+    void setSoundNative(SoundNative native) { sound_ = std::move(native); }
+    // gamebase natives 4-7 = the global music variables (0x4A3E00/10/30/50 -> 0x583D40/30, array 0xCCB560).
+    std::array<uint8_t, 256>& gameValues() { return gameValues_; }
+    // Help-on-demand condition ("hint_NN") a unit script last stored: unit vt 28 copies its string argument into a
+    // string member (l3_main_bedroom type 12059 +168) [V-data bytecode]. Empty when none.
+    std::string helpCondition() const;
     // Keeps objects of units still present, adds new units, drops missing ones. Throws cdc::FormatError.
     void setUnits(const std::vector<UnitRef>& units);
     void addObject(Object o, bool start = true); // setUnits and tests; applies pending restored state
@@ -226,6 +236,7 @@ private:
     LightNative light_;
     HealthNative health_;
     MarkupNative markup_;
+    SoundNative sound_;
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;
     struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips; };

@@ -374,8 +374,8 @@ Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494
   - No FMOD effects or reverb (`reverbVol` and the Wave byte 0x0C are unused).
   - Linear resampling.
   - Mus! scripts run on `MusSequencer`. It uses the tempo clock instead of the stream-synced one
-    (§5.3) and ignores pan and mute ramps. Nothing in `src/game` drives the music variables yet.
-  - Voice-line subtitles are exposed, but nothing displays them yet.
+    (§5.3) and ignores pan and mute ramps. The variables are the script runtime's `gamebase` values (§9.4).
+  - Voice-line subtitles go to the two-line ticker in ou-game (§9.6).
 
 ## 7. Verification log
 
@@ -429,5 +429,77 @@ variation record:
   cdc reconstruction (`research/cdcEngineDXHR/cdcSound`, `eventually_generated/cdc/dtp/objectproperties/sfxmarker.h`)
   shows `sfxmarker` objects starting sound refs on enter/exit and setting/incrementing music variables; that is the
   likely writer of the Mus! variables (question 2) [I, not yet checked in tru.exe].
-- Not done: the SoundPlex node types (choice list, sequence, stream, …) of TR8's DTPs, which script natives or
-  objects start them, and in-game subtitle display for these lines.
+- Decoded since: node types, sfxmarkers, script sound natives and the hint path (§9).
+
+## 9. SoundPlex graphs, sfxmarkers, sound natives (`src/audio/SoundPlex.*`, `src/app/game/Sound.*`)
+
+### 9.1 Node `{i32 type, ptr data}` [V-exe `SoundPlexCollection::Create` 0x5920B0; V-data]
+
+`0xBEEBBEEB` is the unrelocated value of every pointer field (the relocation fills it), not a record marker.
+
+| Type | Class | Data | Played by `SoundPlayer` |
+|---|---|---|---|
+| 0 | TimeIn (silence) | f32 seconds | waits |
+| 1 | Reference | u32 DTP id (looked up by `0x54DF80`) | resolves via `PlexBank` |
+| 2 | Wave | u32 Wave section id, u32 (30 seen), 8 bytes | `Mixer::play`; Waves with loop points loop until stopped [I] |
+| 3 | Stream | `char*` path (no `.mul`), u8, u8, u16 volume % [I] | `pc-w\audio\streams\<path>.mul`, Voice bus, subtitles |
+| 4 | Assignment (0x590970) | [0] child, [1..2] delay, [3..4] volume, each value ± variance (`0x582D50`, clamped ≥ 0), [14] f32 distance [I], byte 0x44 max instances | volume, delay, max distance |
+| 5 / 9 / 12 | Envelope / Reaction / Effect | child at data +0 | child only (envelope/effect ignored) |
+| 6 | ChoiceList (0x587920) | {n, Plex**, Plex*, i8 mode, i8, u32 counter} | mode 0 random, 1 no repeat, 2 shuffle (n ≤ 32), 3 in order |
+| 7 / 8 / 13 | MaterialList / Selector / Oscillator | — | not used by the graphs below |
+| 10 | Sequence (0x58E070) | {n, Plex**, …} | children one after the other |
+| 11 | Overlap (0x58B570) | {n, Plex**, …, +0x14 has delays, +0x18 {value, variance}[n]} | all children |
+
+Reached from all 701 sfxmarkers: 6722 Wave, 2381 Assignment, 1508 Reference, 739 ChoiceList, 717 Envelope,
+273 Silence, 186 Sequence, 79 Overlap, 17 Effect, 1 Stream; every Reference resolves inside the same unit DRM.
+Examples (test `AudioReal.SoundPlexVoiceDtps`): generalbank DTP 284 = Assignment → Stream `vo\lara\sc_01_05_hint`
+(100 %); lara.drm DTP 2315 = Assignment → ChoiceList mode 2 of `lara_drown_01..08` (80 %).
+
+### 9.2 sfxmarker [V-exe 0x594B90 / 0x594A80 / 0x594870 / 0x586C70; V-data]
+
+Unit data (Level +0x74) +0xAC count, +0xB0 `sfxmarker*[]`; each loaded unit's markers update every frame
+(0x5D4520). Marker 0x3C bytes = DX:HR `dtp::sfxmarker`: position, rotation, +0x20 id, +0x24 runtime handles,
++0x28 `Plex**` sounds, +0x2C count, +0x30 trigger count, +0x38 triggers (0x18 each: u32 bits {bit 0 armed (runtime),
+bits 1–2 condition Init/Enter/Exit, bits 3–6 action Start/End/Set/Inc/Dec music variable}, perimeter {f32 radius,
+invader, flags bit 0 always, bit 1 inside, bits 2–7 fire count}, action {u8 restart, u8, u16 refs, u32* refs} or
+{u8 variable, u8 value}). Inside = 3D distance marker → Lara ≤ radius. Init fires once; Enter/Exit fire when the
+inside flag changes (first update: Enter if already inside); without bAlways only once. Start skips a ref still
+playing. Survey (test `AudioReal.SfxMarkersAllUnits`): 82 units, 701 markers, 1996 triggers (Enter/Start 968,
+Exit/End 898, Init/Start 120); **no retail trigger uses the music-variable actions**, so sfxmarkers are not the
+writers of `0x7D` (question 2).
+
+### 9.3 Script `sound` natives [V-exe registration 0x7ACFC0, thunks 0x79C550–0x79C630]
+
+fn 0 same-handle test, 1 Play3D(anchor) + wait thread, 2 Play + wait, 3 Play3D(anchor) (0x4AE380), 4 Play
+(0x4AE290), 5 Stop (0x4ACE30), 6 wait thread, 7–9 [U]. The member's initial value is an inline ScriptSound
+`{Plex, u16 endType, u16 refCount}` in the unit DRM (`Member::initAt`); 640 such members in the units reach
+streams: music stingers (`music\…`), `event_triggered\…`, `vo\kraken\…` — no Lara voice lines. ou-game plays
+fn 1–4 (3D at the anchor intro) and stops on 5; the wait threads are not modelled (the call returns at once).
+
+### 9.4 Music variables [V-exe]
+
+`gamebase` natives 4/5/6/7 (thunks 0x797C10–0x797C70) call 0x4A3E00/10/30/50 = get / set / add / subtract on the
+music-variable array 0xCCB560 (§5.3). `script::Runtime::gameValues()` is that array; ou-game's `Music` sequencer
+reads it directly and logs every change (`music var 0xNN a -> b`). No idle replay so far changed one [O].
+
+### 9.5 Voice lines with subtitles = help on demand [V-data]
+
+Only the generalbank `sc_CC_NN_hint|answer` lines carry subtitles among gameplay voice lines (lara.drm's drown lines,
+kraken and merc lines have none). generalbank script 201 (a `uiscreen`, "HelpOnDemandStrLib") holds them as 518
+sound members; the PDA strings are locals 168 "Hint" / 169 "Answer". Units send the current condition as a string:
+trigger volumes' OnFirstIn (vt 72) call the unit script's vt 28 with `"hint_NN"`, which stores it in a string member
+(l3_main_bedroom type 12059 +168) behind a gate on an `instanceref` (there: a `dispatcher` in l3_main_hall).
+ou-game: T / Y (bindable `hint`/`answer`, keys ours [I]) play `vo\lara\sc_0<level>_<NN>_hint|answer` for
+`Runtime::helpCondition()` [I: CC = the unit's level digit; sc_04_01 = "Mayan Ball Court" fits l4]. In the replays
+tried (bedroom spawn, bedroom hint volume 4472, l3_main_hall, l4_ballcourt, l2_cliffclimb, l1_seafloor) the
+condition stayed empty: the unit vt 28 gate and the unit startup function (non-virtual, sets `hint_01`) do not
+pass/run yet [U].
+
+### 9.6 ou-game
+
+`GameSound`: PlexBank of lara.drm + generalbank.drm + every loaded unit (its Waves join the mixer); sfxmarkers
+per unit (logged `sfxmarker <unit> #i (id) start sound r`); script sounds; drowning plays DTP 2315 when the air
+reaches 0 and again while it stays 0 [I: lara.drm DTPs 1014/1020 hold 2315 in records whose state is not decoded];
+stream subtitles (English) go to `locale::SubtitleTicker`, drawn by `ui::Hud::subtitles` (also used by cutscenes).
+Replays: l2_cliffclimb starts 12 ambient sounds at tick 1, l7_arctic_sea 12, l3_main_bedroom marker 1 at tick 171
+after a 2 s walk [O, logs; not listened to].

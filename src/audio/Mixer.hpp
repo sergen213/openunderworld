@@ -62,6 +62,7 @@ public:
     void addSound(uint32_t id, std::shared_ptr<const Pcm> pcm);
     size_t addWaves(const cdc::Drm& drm); // every Wave section, keyed by section id; returns count
     bool hasSound(uint32_t id) const;
+    std::shared_ptr<const Pcm> sound(uint32_t id) const; // null if unknown
 
     VoiceId play(uint32_t soundId, const PlayParams& p = {}); // 0 if the id is unknown
     VoiceId play(std::shared_ptr<const Pcm> pcm, const PlayParams& p = {});

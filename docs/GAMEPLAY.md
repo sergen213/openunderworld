@@ -44,7 +44,8 @@ unit's music stream `pc-w\music\<unit>_mus_01\<unit>_mus_01.mul` loops (all stem
 in the bigfile, how the game's Mus! sequencer picks and mixes tracks is [U]). Footsteps [I]: during walk/run/stop a
 foot (bones 8 and 13) dropping below 12 units in model space plays `fst_boot_stone_b_heel_01..10` (Wave 0x11A..0x123);
 leaving the air plays `fst_boot_stone_a_land_01..05` (0x1D3..0x1D7). Stone only: the surface-material → sound mapping
-is not decoded. [O] A 5.5 s replay (run, running jump, walk) opened the SDL device, played l4_pool_mus_01 and 11
+is not decoded. Sound events (sfxmarker ambience, script sounds, drowning line, T / Y help-on-demand Hint / Answer
+lines with subtitles; input-script actions `hint`, `answer`): docs/formats/AUDIO.md §9. [O] A 5.5 s replay (run, running jump, walk) opened the SDL device, played l4_pool_mus_01 and 11
 footstep/landing sounds without errors; the result was not listened to or captured.
 
 ## Structure

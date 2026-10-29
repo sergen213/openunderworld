@@ -158,6 +158,7 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
             if (base == 10 || base == 11) { // NATIVE/SCRIPT: init points at a pointer to the value
                 if (const auto vp = iv.ptr(ip->offset)) {
                     m.init = views[vp->section].at<uint32_t>(vp->offset);
+                    m.initAt = *vp;
                     if (vp->offset <= drm.sections[vp->section].data.size() &&
                         drm.sections[vp->section].data.size() - vp->offset >= 8)
                         m.init2 = views[vp->section].at<uint32_t>(vp->offset + 4);
@@ -789,6 +790,21 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                     return true;
                 }
             }
+            if (!std::strcmp(name, "sound") && nc.function >= 1 && nc.function <= 5 && sound_ &&
+                nc.receiver.kind == vm::Value::Kind::Member) {
+                int32_t anchor = 0;
+                if ((nc.function == 1 || nc.function == 3) && !nc.args.empty()) { // 3D: an instance(ref) argument
+                    const auto& a = nc.args[0];
+                    if (a.kind == vm::Value::Kind::Object) anchor = a.uid;
+                    else if (a.kind == vm::Value::Kind::Member)
+                        if (const auto holder = resolve(a.uid)) anchor = int32_t(holder->fields[a.offset]);
+                }
+                const Member* m = program->member(self->typeId, off);
+                if (m && m->initAt && sound_(self->uid, off, *m->initAt, nc.function, anchor)) {
+                    nc.result = vm::Value::scalar(0);
+                    return true;
+                }
+            }
             // Existing engine systems already handle (or intentionally do not yet expose) these side effects.
             // Their return values are zero; unknown gameplay bindings remain unsupported instead of being ignored.
             for (const char* passive : {"sound", "soundgroup", "music", "corebase", "uipopupmgr",
@@ -827,6 +843,13 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
         if (t && t->kind == Kind::Door && t->state == 0) t->state = t->clips ? 1 : 2, t->t = 0; // [I] doors only open
     }
     --fallbackDepth_;
+}
+
+std::string Runtime::helpCondition() const {
+    for (const auto& [key, instance] : auxiliary_)
+        for (const auto& [offset, text] : instance->strings)
+            if (text.size() == 7 && text.starts_with("hint_")) return text;
+    return {};
 }
 
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {

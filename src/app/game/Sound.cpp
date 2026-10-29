@@ -1,0 +1,181 @@
+// ou-game sound events. Evidence: docs/formats/AUDIO.md §9.
+#include "app/game/Sound.hpp"
+
+#include <cctype>
+#include <cmath>
+#include <cstdio>
+#include <set>
+
+namespace ou::app {
+namespace {
+constexpr uint32_t kLaraDrown = 2315; // lara.drm DTP: ChoiceList of lara_drown_01..08 (AUDIO.md §8.1)
+std::shared_ptr<const cdc::Drm> load(const cdc::BigfileSet& bf, const std::string& path) {
+    auto d = bf.read(path);
+    return d ? std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*d))) : nullptr;
+}
+} // namespace
+
+GameSound::GameSound(const cdc::BigfileSet& bigfile, audio::Mixer& mixer)
+    : bf_(bigfile), mixer_(mixer), player_(mixer, [this](uint32_t id) { return bank_.find(id); },
+                                           [this](const std::string& path) -> std::shared_ptr<const audio::Mul> {
+                                               auto& m = streams_[path];
+                                               if (!m)
+                                                   if (auto d = bf_.read("pc-w\\audio\\streams\\" + path + ".mul"))
+                                                       m = std::make_shared<audio::Mul>(audio::decodeMul(*d));
+                                               return m;
+                                           }) {
+    for (const char* name : {"pc-w\\lara.drm", "pc-w\\generalbank.drm"})
+        try {
+            if (auto drm = load(bf_, name)) bank_.add(std::move(drm));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: sound bank %s: %s\n", name, e.what());
+        }
+    for (uint32_t id = 200; id < 1000; ++id) // generalbank hint/answer lines: single-stream DTPs (AUDIO.md §9.5)
+        if (const audio::Plex* p = bank_.find(id); p && p->type == audio::PlexType::Assignment && p->children.size() == 1 &&
+                                                   p->children[0].type == audio::PlexType::Stream)
+            helpLines_.try_emplace(p->children[0].stream, id);
+}
+
+void GameSound::attach(game::World& world) {
+    syncUnits(world), unitsVersion_ = world.unitsVersion();
+    world.script().setSoundNative([this, &world](int32_t owner, uint32_t member, cdc::Pointer at, uint32_t fn, int32_t anchor) {
+        const auto key = std::make_pair(owner, member);
+        if (fn == 5) { // Stop
+            if (const auto it = scriptHandles_.find(key); it != scriptHandles_.end()) player_.stop(it->second), scriptHandles_.erase(it);
+            return true;
+        }
+        const auto* o = world.script().find(owner);
+        const auto unit = o ? units_.find(o->unit) : units_.end();
+        if (unit == units_.end()) return false;
+        auto& plex = scriptPlex_[{o->unit, at.section, at.offset}];
+        if (!plex) {
+            try {
+                plex = std::make_unique<audio::Plex>(audio::parsePlex(*unit->second.drm, at.section, at.offset));
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "ou-game: script sound of %d: %s\n", owner, e.what());
+                return false;
+            }
+        }
+        std::optional<glm::vec3> pos;
+        if (anchor)
+            if (const auto* a = world.script().find(anchor)) pos = a->pos;
+        if (const auto it = scriptHandles_.find(key); it != scriptHandles_.end()) player_.stop(it->second);
+        scriptHandles_[key] = player_.start(*plex, pos);
+        std::fprintf(stderr, "ou-game: tick %llu script sound %d (%s) +%u %s%s%u%s\n", (unsigned long long)world.ticks(), owner,
+                     o->name.c_str(), member, fn == 1 || fn == 3 ? "3D " : "", plex->type == audio::PlexType::Reference ? "DTP " : "node type ",
+                     plex->type == audio::PlexType::Reference ? plex->id : uint32_t(plex->type), pos ? " at anchor" : "");
+        return true;
+    });
+}
+
+bool GameSound::playHelp(const game::World& world, bool answer) {
+    const std::string& unit = world.currentUnit().data.name;
+    const std::string condition = world.script().helpCondition();
+    if (condition.empty() || unit.size() < 3 || unit[0] != 'l' || !std::isdigit(static_cast<unsigned char>(unit[1]))) {
+        std::fprintf(stderr, "ou-game: tick %llu help: no hint condition\n", (unsigned long long)world.ticks());
+        return false;
+    }
+    // sc_<CC>: the level number of the unit name [I]; NN: the condition's number.
+    const std::string path = std::string("vo\\lara\\sc_0") + unit[1] + "_" + condition.substr(5, 2) + (answer ? "_answer" : "_hint");
+    const auto it = helpLines_.find(path);
+    const audio::Plex* p = it == helpLines_.end() ? nullptr : bank_.find(it->second);
+    std::fprintf(stderr, "ou-game: tick %llu help %s %s -> %s\n", (unsigned long long)world.ticks(), answer ? "answer" : "hint",
+                 condition.c_str(), p ? path.c_str() : "no line");
+    if (!p) return false;
+    player_.stop(help_);
+    help_ = player_.start(*p);
+    return true;
+}
+
+void GameSound::syncUnits(const game::World& world) {
+    std::set<std::string> present;
+    for (const auto& u : world.units()) {
+        present.insert(u.data.name);
+        if (units_.contains(u.data.name) || !u.data.drm) continue;
+        try {
+            bank_.add(u.data.drm);
+            mixer_.addWaves(*u.data.drm);
+            auto markers = audio::parseSfxMarkers(*u.data.drm);
+            audio::SfxMarkerTriggers triggers(markers);
+            units_.emplace(u.data.name, UnitSfx{u.data.drm, std::move(markers), std::move(triggers), {}});
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: sfxmarkers of %s: %s\n", u.data.name.c_str(), e.what());
+            units_.emplace(u.data.name, UnitSfx{u.data.drm, {}, audio::SfxMarkerTriggers({}), {}});
+        }
+    }
+    for (auto it = units_.begin(); it != units_.end();) { // streamed out: their sounds end
+        if (present.contains(it->first)) { ++it; continue; }
+        for (const auto& [k, h] : it->second.handles) player_.stop(h);
+        it = units_.erase(it);
+    }
+}
+
+void GameSound::tick(game::World& world) {
+    const auto tick = (unsigned long long)world.ticks();
+    if (world.unitsVersion() != unitsVersion_) syncUnits(world), unitsVersion_ = world.unitsVersion();
+    const glm::vec3 lara = world.player().state().pos;
+    for (const auto& u : world.units()) {
+        const auto it = units_.find(u.data.name);
+        if (it == units_.end()) continue;
+        UnitSfx& s = it->second;
+        for (const auto& f : s.triggers.update(s.markers, lara - u.offset)) { // 0x594870
+            const auto& m = s.markers[f.marker];
+            const auto& t = m.triggers[f.trigger];
+            auto& vars = world.script().gameValues();
+            switch (t.action) {
+            case audio::SfxTrigger::Start:
+                for (const int32_t r : t.refs) {
+                    if (r < 0 || size_t(r) >= m.sounds.size()) continue;
+                    auto& h = s.handles[{f.marker, size_t(r)}];
+                    if (player_.active(h)) continue; // still playing: not restarted
+                    h = player_.start(m.sounds[size_t(r)], m.position + u.offset);
+                    std::fprintf(stderr, "ou-game: tick %llu sfxmarker %s #%zu (id %u) start sound %d%s\n", tick, u.data.name.c_str(),
+                                 f.marker, m.id, r, h ? "" : " (silent)");
+                }
+                break;
+            case audio::SfxTrigger::End:
+                for (const int32_t r : t.refs)
+                    if (const auto h = s.handles.find({f.marker, size_t(r)}); h != s.handles.end()) player_.stop(h->second), s.handles.erase(h);
+                break;
+            case audio::SfxTrigger::SetVariable: vars[t.variable] = t.value; break;
+            case audio::SfxTrigger::IncVariable: vars[t.variable] = uint8_t(vars[t.variable] + t.value); break;
+            case audio::SfxTrigger::DecVariable: vars[t.variable] = uint8_t(vars[t.variable] - t.value); break;
+            default: break;
+            }
+        }
+    }
+
+    // Drowning: the line starts when the air runs out and repeats while she stays under [I] (lara.drm DTPs
+    // 1014/1020 reference DTP 2315; the state that plays it is not decoded).
+    const float air = world.air();
+    if (air <= 0 && !world.health().dead() && !player_.active(drown_))
+        if (const audio::Plex* p = bank_.find(kLaraDrown)) {
+            drown_ = player_.start(*p, lara);
+            std::fprintf(stderr, "ou-game: tick %llu drowning: Lara sound DTP %u\n", tick, kLaraDrown);
+        }
+
+    player_.update(game::kTickSeconds);
+    for (const auto& l : player_.lines) {
+        std::fprintf(stderr, "ou-game: tick %llu voice %s \"%s\"\n", tick, l.path.c_str(), l.subtitle.c_str());
+        for (const auto& line : locale::cineSubtitleLines(l.subtitle)) ticker_.push(line);
+    }
+    player_.lines.clear(), player_.waves.clear();
+    ticker_.advance(game::kTickSeconds * 30); // ticker ticks are 1/30 s
+
+    if (auto c = world.script().helpCondition(); c != lastCondition_) {
+        std::fprintf(stderr, "ou-game: tick %llu help condition %s\n", tick, c.c_str());
+        lastCondition_ = std::move(c);
+    }
+    auto& vars = world.script().gameValues(); // music variables: written by gamebase natives (and sfxmarkers)
+    for (size_t i = 0; i < vars.size(); ++i)
+        if (vars[i] != lastVars_[i]) {
+            std::fprintf(stderr, "ou-game: tick %llu music var 0x%02zX %u -> %u\n", tick, i, lastVars_[i], vars[i]);
+            lastVars_[i] = vars[i];
+        }
+}
+
+void drawSubtitles(ui::Canvas& canvas, const locale::SubtitleTicker& ticker) {
+    ui::Hud::subtitles(canvas, ticker.top(), ticker.bottom());
+}
+
+} // namespace ou::app

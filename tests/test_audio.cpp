@@ -1,4 +1,5 @@
 #include "audio/Mixer.hpp"
+#include "audio/SoundPlex.hpp"
 
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
@@ -597,4 +598,158 @@ TEST(AudioReal, MusPoolStemGainsFollowVariable7D) {
     EXPECT_NEAR(g0[1], base * 0x5F / 127, 0.005);
     EXPECT_NEAR(g7[0], base * 5 / 127, 0.005);
     EXPECT_NEAR(g8[1], base, 0.005);
+}
+
+// ---- SoundPlex / sfxmarker (AUDIO.md §9) ---------------------------------------------------------
+TEST(SfxMarker, PerimeterTriggersFireOnEdges) {
+    SfxMarker m;
+    m.position = {0, 0, 0};
+    m.triggers = {{SfxTrigger::Init, SfxTrigger::SetVariable, 0, false, {}, 0x7D, 3},
+                  {SfxTrigger::Enter, SfxTrigger::Start, 100, true, {0}},
+                  {SfxTrigger::Exit, SfxTrigger::End, 150, true, {0}},
+                  {SfxTrigger::Enter, SfxTrigger::Start, 100, false, {0}}}; // fires once only
+    const std::vector<SfxMarker> ms{m};
+    SfxMarkerTriggers t(ms);
+    auto fired = [&](glm::vec3 p) {
+        std::vector<size_t> out;
+        for (const auto& f : t.update(ms, p)) out.push_back(f.trigger);
+        return out;
+    };
+    EXPECT_EQ(fired({500, 0, 0}), (std::vector<size_t>{0})); // Init once; outside: nothing else
+    EXPECT_EQ(fired({500, 0, 0}), (std::vector<size_t>{}));
+    EXPECT_EQ(fired({50, 0, 0}), (std::vector<size_t>{1, 3})); // entered both radii
+    EXPECT_EQ(fired({120, 0, 0}), (std::vector<size_t>{}));    // left 100, still inside 150
+    EXPECT_EQ(fired({200, 0, 0}), (std::vector<size_t>{2}));   // left the exit radius
+    EXPECT_EQ(fired({0, 0, 0}), (std::vector<size_t>{1}));     // re-entry: bAlways only
+}
+
+TEST(SfxMarker, StartsInsideFiresEnterOnFirstUpdate) {
+    SfxMarker m;
+    m.triggers = {{SfxTrigger::Enter, SfxTrigger::Start, 100, false, {0}}, {SfxTrigger::Exit, SfxTrigger::End, 100, false, {0}}};
+    const std::vector<SfxMarker> ms{m};
+    SfxMarkerTriggers t(ms);
+    ASSERT_EQ(t.update(ms, {10, 0, 0}).size(), 1u);
+    EXPECT_EQ(t.update(ms, {300, 0, 0}).at(0).trigger, 1u);
+}
+
+TEST(SoundPlayer, ChoiceSequenceAndStop) {
+    Mixer mix;
+    auto tone = [](size_t frames) {
+        auto p = std::make_shared<Pcm>();
+        p->sampleRate = 1000, p->channels = 1, p->samples.assign(frames, 1000);
+        return p;
+    };
+    mix.addSound(1, tone(500)), mix.addSound(2, tone(500)), mix.addSound(3, tone(1000));
+    Plex w1{PlexType::Wave, 1}, w2{PlexType::Wave, 2}, w3{PlexType::Wave, 3};
+    Plex choice{PlexType::ChoiceList};
+    choice.mode = 3, choice.children = {w1, w2};
+    Plex seq{PlexType::Sequence};
+    seq.children = {choice, w3};
+    std::map<uint32_t, Plex> bank{{900, seq}};
+    SoundPlayer sp(mix, [&](uint32_t id) { return bank.contains(id) ? &bank[id] : nullptr; }, {});
+    const auto h = sp.start(Plex{PlexType::Reference, 900});
+    ASSERT_NE(h, 0u);
+    EXPECT_EQ(sp.waves, (std::vector<std::string>{"1"}));
+    std::vector<float> out(2 * 48000);
+    mix.mix(out.data(), 24000 + 100); // 0.5 s: wave 1 ends
+    sp.update(0.51);
+    EXPECT_EQ(sp.waves, (std::vector<std::string>{"1", "3"})); // sequence step 2
+    EXPECT_TRUE(sp.active(h));
+    sp.stop(h);
+    EXPECT_FALSE(sp.active(h));
+    sp.start(bank[900].children[0]); // in order: the next pick is wave 2
+    EXPECT_EQ(sp.waves.back(), "2");
+}
+
+TEST(AudioReal, SoundPlexVoiceDtps) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    PlexBank bank;
+    bank.add(std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\generalbank.drm"))));
+    bank.add(std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\lara.drm"))));
+    const Plex* hint = bank.find(284);
+    ASSERT_TRUE(hint);
+    EXPECT_EQ(hint->type, PlexType::Assignment);
+    ASSERT_EQ(hint->children.size(), 1u);
+    EXPECT_EQ(hint->children[0].type, PlexType::Stream);
+    EXPECT_EQ(hint->children[0].stream, "vo\\lara\\sc_01_05_hint");
+    EXPECT_FLOAT_EQ(hint->children[0].volume, 1.0f);
+    const Plex* drown = bank.find(2315);
+    ASSERT_TRUE(drown);
+    ASSERT_EQ(drown->children.size(), 1u);
+    const Plex& choice = drown->children[0];
+    EXPECT_EQ(choice.type, PlexType::ChoiceList);
+    EXPECT_EQ(choice.mode, 2); // shuffle
+    ASSERT_EQ(choice.children.size(), 8u);
+    for (size_t k = 0; k < 8; ++k) {
+        EXPECT_EQ(choice.children[k].stream, "vo\\lara\\lara_drown_0" + std::to_string(k + 1));
+        EXPECT_FLOAT_EQ(choice.children[k].volume, 0.8f);
+    }
+
+    Mixer mix; // the hint line plays as a voice stream with its English subtitle
+    SoundPlayer sp(mix, [&](uint32_t id) { return bank.find(id); }, [&](const std::string& path) -> std::shared_ptr<const Mul> {
+        const auto d = bf.read("pc-w\\audio\\streams\\" + path + ".mul");
+        return d ? std::make_shared<Mul>(decodeMul(*d)) : nullptr;
+    });
+    EXPECT_NE(sp.start(*hint), 0u);
+    ASSERT_EQ(sp.lines.size(), 1u);
+    EXPECT_FALSE(sp.lines[0].subtitle.empty());
+}
+
+TEST(AudioReal, SfxMarkersAllUnits) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list);
+    std::string text(list->begin(), list->end());
+    size_t markers = 0, triggers = 0, musicActions = 0, units = 0, unresolved = 0;
+    for (size_t p = text.find('\n') + 1; p < text.size();) {
+        size_t e = text.find('\n', p);
+        if (e == text.npos) e = text.size();
+        std::string line = text.substr(p, e - p);
+        p = e + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        const auto name = line.substr(line.rfind('\\') + 1);
+        auto d = bf.read("pc-w\\" + name + ".drm");
+        if (!d) continue;
+        ++units;
+        SCOPED_TRACE(name);
+        auto drm = std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(std::move(*d)));
+        PlexBank bank;
+        bank.add(drm);
+        const auto ms = parseSfxMarkers(*drm);
+        markers += ms.size();
+        for (const auto& m : ms) {
+            for (const auto& s : m.sounds)
+                if (s.type == PlexType::Reference && !bank.find(s.id)) ++unresolved;
+            for (const auto& t : m.triggers) {
+                ++triggers;
+                if (t.action >= SfxTrigger::SetVariable) ++musicActions;
+                for (int32_t r : t.refs) EXPECT_LT(size_t(r), m.sounds.size());
+            }
+        }
+        if (name == "l3_main_bedroom") {
+            ASSERT_EQ(ms.size(), 40u);
+            ASSERT_EQ(ms[0].sounds.size(), 2u);
+            EXPECT_EQ(ms[0].sounds[0].type, PlexType::Reference);
+            EXPECT_EQ(ms[0].sounds[0].id, 11660u);
+            ASSERT_EQ(ms[0].triggers.size(), 4u);
+            EXPECT_EQ(ms[0].triggers[0].condition, SfxTrigger::Enter);
+            EXPECT_EQ(ms[0].triggers[0].action, SfxTrigger::Start);
+            EXPECT_NEAR(ms[0].triggers[0].radius, 3322, 1);
+            EXPECT_EQ(ms[0].triggers[1].action, SfxTrigger::End);
+            const Plex* amb = bank.find(11673); // Assignment -> ChoiceList of 10 waves
+            ASSERT_TRUE(amb);
+            ASSERT_EQ(amb->children.size(), 1u);
+            EXPECT_EQ(amb->children[0].type, PlexType::ChoiceList);
+            EXPECT_EQ(amb->children[0].children.size(), 10u);
+            EXPECT_EQ(amb->children[0].children[0].type, PlexType::Wave);
+            EXPECT_EQ(amb->children[0].children[0].id, 0xC61u);
+        }
+    }
+    EXPECT_EQ(units, 82u);
+    EXPECT_EQ(markers, 701u);
+    EXPECT_EQ(triggers, 1996u);
+    EXPECT_EQ(musicActions, 0u); // retail sfxmarkers never set music variables
+    EXPECT_EQ(unresolved, 0u);   // every referenced DTP lives in the same unit DRM
 }

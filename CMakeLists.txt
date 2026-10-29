@@ -179,7 +179,7 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_audio: IMA ADPCM, FSB4, Wave sections, .mul streams; SDL3 mixer; ou-audio CLI (docs/formats/AUDIO.md) ----
-add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Mixer.cpp src/audio/Mus.cpp)
+add_library(ou_audio STATIC src/audio/Audio.cpp src/audio/Mixer.cpp src/audio/Mus.cpp src/audio/SoundPlex.cpp)
 target_link_libraries(ou_audio PUBLIC ou_cdc glm::glm PRIVATE SDL3::SDL3)
 add_executable(ou-audio tools/ou-audio/main.cpp)
 target_link_libraries(ou-audio PRIVATE ou_audio SDL3::SDL3)
@@ -313,7 +313,7 @@ target_link_libraries(ou_game PUBLIC ou_physics)
 # ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
 add_library(ou_ui STATIC src/ui/Ui.cpp src/ui/Hud.cpp src/ui/Art.cpp)
 target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale ou_formats)
-add_executable(ou-game src/app/game/main.cpp src/app/game/Cinematic.cpp)
+add_executable(ou-game src/app/game/main.cpp src/app/game/Cinematic.cpp src/app/game/Sound.cpp)
 target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio)
 if(OU_BUILD_TESTS)
   add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp)

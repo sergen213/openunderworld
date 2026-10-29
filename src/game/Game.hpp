@@ -55,6 +55,8 @@ struct Actions {
     bool pause = false; // held; ou-game opens the pause menu on the press edge (Esc / pad Start; scripts: "pause")
     bool grapple = false; // held; the grapple reacts to the press edge (G / pad right shoulder; scripts: "grapple")
     bool sprint = false;  // held (Left Alt / pad left stick click; scripts: "sprint")
+    bool pda = false;  // held; ou-game opens the PDA on the press edge (1; scripts: "pda")
+    bool hint = false, answer = false; // held; ou-game plays the help-on-demand hint / answer line on the press edge (T / Y)
 };
 
 // ---- animations -------------------------------------------------------------------------------
