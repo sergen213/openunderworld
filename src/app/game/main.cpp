@@ -1064,6 +1064,7 @@ int main(int argc, char** argv) {
         world->enemies().setBigfile(&bf);
         world->chapter = opt.level.empty() ? std::max(opt.chapter, 0) : std::max(0, ou::game::chapterOfUnit(unit));
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
+        world->script().setPlayerObjects(ou::game::chapterGear(world->chapter)); // a direct chapter start
         if (!opt.loadSlot.empty() && !quickLoad(*world, opt.loadSlot)) return 1;
 
         streamed.dress(bf, *world, warnings);

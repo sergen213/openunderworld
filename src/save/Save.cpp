@@ -192,6 +192,8 @@ void apply(const SaveGame& save, game::World& world) {
     // tru.exe 0x5DE2B0: a load keeps the saved outfit (game state +0x20C), except l1_seatop forces lara_wetsuit_warm.
     if (!save.outfit.empty()) world.outfit = save.unit == "l1_seatop" ? "lara_wetsuit_warm" : save.outfit;
     world.script().restore(save.script);
+    if (!save.script.is_object() || !save.script.contains("player")) // older saves: what the chapter starts with
+        world.script().setPlayerObjects(game::chapterGear(save.chapter));
     if (!save.enemies.is_null()) {
         try {
             world.restoreEnemies(save.enemies);

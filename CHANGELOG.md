@@ -7,7 +7,7 @@ All notable changes to OpenUnderworld are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
-- Lara no longer wears Thor's gauntlets and belt before she has them: the outfit models' gear primgroups (draw groups 10-12) start hidden and only Lara's own gear scripts (instance native 61, carried `g_*` objects) show them; state saved. Script INT/FLOAT/BOOL member defaults (stored inline in the member record) are now parsed; instances do not apply them yet.
+- Lara no longer wears Thor's gauntlets and belt before she has them: the outfit models' gear primgroups (draw groups 10-12) start hidden and only Lara's own gear scripts (instance native 61, carried `g_*` objects) show them; state saved; a chapter start gives Lara the gauntlets she has by then (both from Jan Mayen on). Script INT/FLOAT/BOOL member defaults (stored inline in the member record) are now parsed; instances do not apply them yet.
 - The sea is no longer white at the l1_seatop and l2_cliffclimb starts (OpenGL and Vulkan): TRU's water materials read the back buffer and depth buffer, which are now copied after the opaque scene and fed to them, so the sea shows refraction, reflections and depth fade.
 - The l2 elevator only starts when Lara pulls its switch: objects now start in state 0 of their script, as the original does, and switches whose script handles the use itself get it.
 - Scripted screen fades (fade to/from black) are now drawn in OpenGL and Vulkan.
