@@ -1294,12 +1294,12 @@ Vulkan) and notes in openunderworld-work/screens/chapters):
 | ch | start unit | original after load | ours |
 |---|---|---|---|
 | 0 | l3_main_bedroom | casual, corridor facing the fire | same |
-| 1 | l1_seatop | wetsuit_warm on the boat deck, harness, no face mask | same (the face mask was drawn) |
+| 1 | l1_seatop | wetsuit_warm on the boat deck, harness, no face mask | after `030_med_yacht`, standing on the stern deck (marker 13) |
 | 2 | l2_cliffclimb | jungle_a on the boat bow, no enemy in sight | same (sharks 4021-4023 left the sea and landed on the deck) |
 | 3 | l3_caverns_start | casual, cavern stairs | same |
 | 4 | l4_trailstart | jungle_heavy, **riding** the motorcycle on the trail | after `180_mex_intro`, riding bike 5482 |
 | 5 | l5_startsnow | snow_heavy, after intro cinematic 7530 **riding** in l5_valgrind_tunnel | after `230_val_intro`, riding 7229 in l5_valgrind_tunnel |
-| 6 | l6_ship_exterior | jungle_b on the deck | same |
+| 6 | l6_ship_exterior | jungle_b on the deck, rifle on her back | same (was black: the fade-in after the cutscene did not run) |
 | 7 | l7_thin_ice | wetsuit_cold, after its intro the script changes level to l7_arctic_sea: **swimming** under water, mask on | after `275_hel_explosion`, swimming under the ice in l7_arctic_sea |
 | 8 | l7_himalaya_end | ending cinematic, credits, main menu | the unit's player intro (no gameplay to compare) |
 
@@ -1321,7 +1321,15 @@ mounted at once); base 3523's "Lara warping to cine object" when the instance ty
 ch2 on the yacht at its tail, ch6 on the deck, ch7 swimming (her tail under the ice is inside arctic_sea's water
 box; placed deeper than the swim depth she stays under, SwimUnder). ch3: `120_man_vault`'s Lara tail
 (-2704.7, -4321, -7.3) lies in l3_main_hall, not loaded beside l3_caverns_start; a tail over no loaded floor or water
-leaves her at the cavern-stairs player intro [I]. Teleports and tails reset plane-crossing tracking
+leaves her at the cavern-stairs player intro [I]. The cinematic bases' end handlers then request the autosave
+(`uisavemenu` 5: 0x7A4620 -> 0x77D880 -> 0x788A70(arg, 0, 1, -1), which requests it through 0x789E40(1); ours an
+`Autosave` event, `World::autosaveRequests`) and fade in (`globaleffect` 6). Stopping at that call left ch6 black
+(7652's handler never reached its FadeIn). ch1: 030_med_yacht's Lara tail is in the sea; cinematic object 997's
+state 3 (fn 5) reads `uigamedata` 18 (0x77BB90: byte 0xFAE8DB, set by 17 / 0x77BB70; while set, level changes fade
+to white, 0x5DAB40), then after 0.2 s puts her onto `uberobjectbase` 2's anchor (0x79D090 -> 0x4AB800: a
+ModelMarkerAnchor, 0x4D3110, of ms_uo_yacht 998 at HInfo marker 13, 0x4D4820 -> 0x46DF20) with `instance` 26:
+standing on the stern deck, facing the frame's -Y as intros (ours: `World::markerFrame`, `Player::spawn`, the camera
+behind her [I]). Teleports and tails reset plane-crossing tracking
 (`Runtime::playerJumped`; else the 7652 warp crosses kill plane 7650). Water boxes keep their half extents and
 rotation when a unit is offset (only min / max / centre move): l7_arctic_sea's boxes failed at its offset before.
 Stowed weapons are placed from the data as the original (speargun across her back in ch1, the rifle in ch6; weapon
@@ -1359,7 +1367,8 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   QUIT GAME. Navigation as tru.exe: Left from the centre to the last ring item (first time SAVE GAME, the one level with
   the centre), Right back to the centre, Up/Down along the ring and off either end to the centre.
 - Autosave and profile [I]: a game started from the main menu autosaves (slot `autosave`) at every chapter start and
-  checkpoint (key: chapter + checkpoint; loads do not re-save). `<saveDir>/profile.json` (`save::Profile`) keeps the
+  checkpoint, and when a script requests one (`uisavemenu` 5, after the chapter-start cutscenes) (key: chapter +
+  checkpoint + requests; loads do not re-save). `<saveDir>/profile.json` (`save::Profile`) keeps the
   chapters ended (a level end's cinematic), whether the ending played, and whether every treasure / relic was found by a
   chapter end (EXTRAS unlocks). The ending [O GAMEPLAY "Thor's gear"]: a
   cinematic in chapter 8 (l7_himalaya_end) marks the game finished, autosaves what was found, plays `credits.bik` and

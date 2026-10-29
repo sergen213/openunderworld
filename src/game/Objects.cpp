@@ -20,6 +20,39 @@ glm::mat4 introModel(const script::Object& o) { // T * Rx * Ry * Rz, as the intr
            glm::rotate(glm::mat4(1), o.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), o.rot.z, {0, 0, 1});
 }
 
+} // namespace
+
+const physics::ObjectPhysics* World::objectPhysics(const std::string& name) {
+    auto it = objectPhysics_.find(name);
+    if (it == objectPhysics_.end()) {
+        std::shared_ptr<const physics::ObjectPhysics> p;
+        if (const auto* bf = script_.bigfile())
+            if (auto bytes = bf->read("pc-w\\" + name + ".drm")) try {
+                    p = std::make_shared<physics::ObjectPhysics>(physics::loadObjectPhysics(cdc::parseDrm(std::move(*bytes))));
+                } catch (const cdc::FormatError& e) {
+                    warnings.push_back(name + ": " + e.what());
+                }
+        it = objectPhysics_.emplace(name, std::move(p)).first;
+    }
+    return it->second.get();
+}
+
+// HInfo marker `id` of an object in the world: intro transform * its segment's bind frame * the marker frame (0x46DF20).
+std::optional<glm::mat4> World::markerFrame(const script::Object& o, int id) {
+    const physics::ObjectPhysics* p = objectPhysics(o.name);
+    if (!p) return std::nullopt;
+    for (const auto& m : p->hmarkers)
+        if (m.id == id) {
+            const glm::mat4 segment = size_t(m.segment) < p->segments.size() ? p->segments[size_t(m.segment)] : glm::mat4(1);
+            return glm::translate(glm::mat4(1), o.offset) * introModel(o) * segment * glm::translate(glm::mat4(1), m.pos) *
+                   glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) *
+                   glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
+        }
+    return std::nullopt;
+}
+
+namespace {
+
 struct UberMotionSample {
     vec3 delta{0}, rotation{0};
     float duration = 1;
@@ -333,13 +366,6 @@ void World::bindUber() {
         const auto* data = prepareUber(*object);
         if (!data) return false;
         if (function == 5) return true; // initialize the command-driven section state machine
-        if (function == 2) { // [I] some section away from its default state
-            const auto& rt = uberRuntime_[uid];
-            result = false;
-            for (size_t i = 0; i < rt.sections.size(); ++i)
-                result |= rt.sections[i].state != int32_t(data->sections[i].defaultState);
-            return true;
-        }
         if (function != 1) return false;
         // The command member is {uber object id, command word}; the word indexes the command table (0x4D77A0).
         if (command >= data->commands.size() || !sendUberCommand(uid, command)) return false;
@@ -523,19 +549,9 @@ void World::syncObjects() {
         if (!ordinary && !uber && !o.spline && !lateCollider(o)) continue; // spline movers' collision follows Object::body (pose below)
         if (o.kind == script::Kind::Switch && !uber &&
             (!o.script || !o.script->program->mainFunction(o.script->typeId))) continue;
-        auto it = objectPhysics_.find(o.name);
-        if (it == objectPhysics_.end()) {
-            std::shared_ptr<const physics::ObjectPhysics> p;
-            if (const auto* bf = script_.bigfile())
-                if (auto bytes = bf->read("pc-w\\" + o.name + ".drm")) try {
-                        p = std::make_shared<physics::ObjectPhysics>(physics::loadObjectPhysics(cdc::parseDrm(std::move(*bytes))));
-                    } catch (const cdc::FormatError& e) {
-                        warnings.push_back(o.name + ": " + e.what());
-                    }
-            it = objectPhysics_.emplace(o.name, std::move(p)).first;
-        }
-        if (!it->second) continue;
-        const physics::ObjectPhysics& p = *it->second;
+        const physics::ObjectPhysics* physics = objectPhysics(o.name);
+        if (!physics) continue;
+        const physics::ObjectPhysics& p = *physics;
         const glm::mat4 intro = introModel(o);
         int hinge = -1;
         // [I] Rigid doors (class 34) and joint levers (class 6) swing about the X axis of their first model marker.

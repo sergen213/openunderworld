@@ -373,12 +373,15 @@ void World::tick(const Actions& input) {
         script_.setPlayerUnit(streamId(now), playerUnit_.empty() ? std::nullopt : std::optional<uint32_t>(streamId(playerUnit_)));
         playerUnit_ = now;
     }
-    if (const auto to = script_.takeTeleport(); to && !units_.empty()) // instance 26 on Lara: onto the object's transform
-        if (const auto* o = script_.find(*to)) {
-            PlayerState s;
-            s.pos = o->pos, s.yaw = o->rot.z - kPi / 2; // intro heading as findSpawn
-            const std::string unit = o->unit;           // `o` may move when the units change
-            player_.restore(s);
+    if (const auto to = script_.takeTeleport(); to && !units_.empty()) // instance 26 on Lara: onto an object / its marker
+        if (const auto* o = script_.find(to->first)) {
+            const std::string unit = o->unit; // `o` may move when the units change
+            vec3 at = o->pos;
+            float yaw = o->rot.z - kPi / 2; // intro heading as findSpawn: facing the frame's -Y
+            if (const auto m = to->second >= 0 ? markerFrame(*o, to->second) : std::nullopt)
+                at = vec3((*m)[3]), yaw = std::atan2(-(*m)[1].y, -(*m)[1].x);
+            player_.spawn(at, yaw); // standing (ng_idle)
+            cam_.yaw = yaw, cam_.pitch = CameraState{}.pitch, cameraCut_ = true; // the camera behind her [I]
             script_.playerJumped();
             for (size_t i = 0; i < units_.size(); ++i)
                 if (units_[i].data.name == unit && i != current_) {

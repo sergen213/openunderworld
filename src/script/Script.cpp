@@ -80,8 +80,10 @@ struct Views {
     }
 };
 
+constexpr uint32_t kAnchorBit = 0x80000000u; // uberobjectbase 2 result: Object value bits = this | HInfo marker id
+
 const char* kEventNames[] = {"enter", "firstin", "in", "out", "cross", "use", "activate", "start", "main", "checkpoint",
-                             "cinematicend", "playermessage"};
+                             "cinematicend", "playermessage", "autosave"};
 
 glm::mat3 rotation(vec3 r) { // Rx(x) * Ry(y) * Rz(z) (cdc_Matrix_Build_XYZOrder 0x49D500, LEVELS.md)
     return glm::mat3(glm::rotate(glm::mat4(1), r.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), r.y, {0, 1, 0}) *
@@ -1256,6 +1258,24 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             }
             if (!std::strcmp(name, "uitext") && nc.function == 4) return true;
             if (!std::strcmp(name, "uigamedata") && nc.function == 106) return true;
+            // uigamedata 17 / 18 (0x7A0C90 / 0x7A0CB0 -> 0x77BB70 / 0x77BB90): set / get byte 0xFAE8DB; while set, level
+            // changes fade to white instead of black (0x5DAB40, GAMELOOP_RequestLevelChangeByName) [U: ours always black].
+            if (!std::strcmp(name, "uigamedata") && nc.function == 17 && nc.args.size() == 1) {
+                uiFlag_ = (nc.args[0].bits & 0xFF) != 0;
+                return true;
+            }
+            if (!std::strcmp(name, "uigamedata") && nc.function == 18 && nc.args.empty()) {
+                nc.result = vm::Value::scalar(uiFlag_);
+                return true;
+            }
+            // uisavemenu 5 (0x7A4620 -> 0x77D880 -> 0x788A70(arg, 0, 1, -1)): copies the save header, stores the byte
+            // argument at +0x1F8 and requests the autosave (0x789E40(1)); returns 0. Cinematic bases call it after
+            // their cutscene.
+            if (!std::strcmp(name, "uisavemenu") && nc.function == 5 && nc.args.size() == 1) {
+                events_.push_back({EventKind::Autosave, source, source, tick_});
+                nc.result = vm::Value::scalar(0);
+                return true;
+            }
             // Screen presentation the cinematic base and its letterbox / saving screens run (uiscreen 6/7 = UIScreen vtable
             // slots 0x24/0x28 show/hide, 22 colour, 90/92 = 0x4B2030/0x4B2050; uicolortimeline 0/10 set, 12/13 =
             // 0x4BF370/0x4BF3C0 play/stop; uigamedata 3 = 0x77BC00 flag). Ours draws no script UI screens [U].
@@ -1350,11 +1370,21 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             // instance 26 (0x4A4140): place the receiver at the transform its argument holds; an `instance` 4 result
-            // (0x4AB2A0: the target's transform, ours the object). l1_ship_sinking_hall plane 1074 moves Lara onto
-            // cinematic_object 1005 in l1_cine_ship_sinking, whose unit script then plays it (World::tick).
+            // (0x4AB2A0: the target's transform, ours the object) or a `uberobjectbase` 2 marker anchor. l1_ship_sinking_hall
+            // plane 1074 moves Lara onto cinematic_object 1005 in l1_cine_ship_sinking, whose unit script then plays it
+            // (World::tick); 030_med_yacht's end (997 fn 5) puts her on ms_uo_yacht's stern marker 13.
             if (!std::strcmp(name, "instance") && nc.function == 26 && nc.args.size() == 1 && self == playerScript_ &&
                 nc.args[0].kind == vm::Value::Kind::Object && find(nc.args[0].uid)) {
-                teleport_ = nc.args[0].uid;
+                const uint32_t b = nc.args[0].bits;
+                teleport_ = {nc.args[0].uid, b & kAnchorBit ? int32_t(b & 0xFFFF) : -1};
+                return true;
+            }
+            // uberobjectbase 2 (0x79D090 -> 0x4AB800): a ModelMarkerAnchor (0x4D3110) on section `args[0]` at HInfo
+            // marker id `args[1]` (0x4D4820 -> 0x46DF20); instance 26 / 23 take it. Ours: the object, tagged with the
+            // marker id [I: section 0 = the object itself; every caller passes an unset section id].
+            if (!std::strcmp(name, "uberobjectbase") && nc.function == 2 && nc.args.size() == 2) {
+                nc.result = vm::Value::object(self->uid);
+                nc.result.bits = kAnchorBit | (nc.args[1].bits & 0xFFFF);
                 return true;
             }
             if (!std::strcmp(name, "instance") &&
@@ -1363,7 +1393,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::object(self->uid); // native interface of this instance (multibody etc.)
                 return true;
             }
-            if (!std::strcmp(name, "uberobjectbase") && (nc.function == 1 || nc.function == 2 || nc.function == 5) && uber_) {
+            if (!std::strcmp(name, "uberobjectbase") && (nc.function == 1 || nc.function == 5) && uber_) {
                 const Object* object = findMut(self->uid);
                 if (!object) return false;
                 const bool knownObject = std::any_of(objectNames_.begin(), objectNames_.end(), [&](const auto& entry) {

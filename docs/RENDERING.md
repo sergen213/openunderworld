@@ -230,8 +230,13 @@ Technique (written for this project, no third-party shader code):
   screen-space in both backends.
 - Foam where the bottom is shallow (shore/intersection) and on ripple crests.
 - Splash droplets: camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
-- Underwater: when the camera is inside a `WaterVolume` below its surface, the post pass fogs
-  into the same tint by reconstructed depth and adds caustics; the surface seen from below is
+- Underwater: when the camera is inside a `WaterVolume` below its surface, the post pass adds
+  Beer-Lambert absorption by reconstructed depth (per unit 1.0e-4 / 0.4e-4 / 0.3e-4 for r / g / b,
+  red first) on top of the scene's own unit fog, which TRU's shaders already apply, plus faint
+  caustics; pixels with no geometry take the tint. The original fogs the submerged scene with the
+  unit fog alone: l7_arctic_sea's rocks and ice stay readable thousands of units away
+  (openunderworld-work/screens/chapters/side_ch7.png). The earlier exp(-0.0009 d) haze covered
+  them [I: coefficients fitted to that capture and l1_seafloor]. The surface seen from below is
   tinted instead of mirrored. With `water = original` the post pass is byte-identical to before.
 
 Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the ripple field, splash

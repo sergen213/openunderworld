@@ -429,6 +429,8 @@ public:
     void respawn();
     const std::optional<CheckpointRef>& checkpoint() const { return checkpoint_; }
     void setCheckpoint(std::optional<CheckpointRef> c) { checkpoint_ = std::move(c); }
+    // Autosaves the scripts requested (uisavemenu 5, after cinematics); the app autosaves when it changes.
+    uint32_t autosaveRequests() const { return autosaveRequests_; }
     std::set<int32_t> collected; // intro ids of picked-up items (Pickup::id); saved
     std::array<int, 3> found{};  // pickups collected per PickupKind (PDA counts); saved
     int chapter = 0;             // kChapters index being played; saved
@@ -604,6 +606,7 @@ private:
     std::string playerUnit_; // unit the scripts were last told Lara is in (Runtime::setPlayerUnit); empty = level load
     std::optional<Spawn> startSpawn_;
     std::optional<CheckpointRef> checkpoint_;
+    uint32_t autosaveRequests_ = 0;
     script::Runtime script_;
     ai::Enemies enemies_{&targets};
     uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
@@ -645,6 +648,8 @@ private:
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
     std::vector<ObjectCollider> colliders_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
+    const physics::ObjectPhysics* objectPhysics(const std::string& name); // objectPhysics_, loaded on first use
+    std::optional<glm::mat4> markerFrame(const script::Object& o, int id); // HInfo marker `id` of `o` in the world
     physics::Scene physics_;
     Health health_;
     Tailoring tailoring_;

@@ -16,6 +16,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -1647,10 +1648,13 @@ int main(int argc, char** argv) {
         }
     };
     // Autosave (slot "autosave", ui::kAutosaveSlot) at every chapter start and checkpoint of a game started from the main
-    // menu [I: the original autosaves at checkpoints]; key = (chapter, checkpoint) last saved, -1 = save at the next tick.
+    // menu [I: the original autosaves at checkpoints] and when a script requests one (uisavemenu 5, after cinematics);
+    // key = (chapter, checkpoint, requests) last saved, chapter -1 = save at the next tick.
     const bool autosaves = menuStart && !script;
-    std::optional<std::pair<int, std::optional<ou::game::CheckpointRef>>> autoKey;
-    auto autosaveHere = [&] { autoKey = std::pair{world->chapter, world->checkpoint()}; };
+    using AutoKey = std::tuple<int, std::optional<ou::game::CheckpointRef>, uint32_t>;
+    std::optional<AutoKey> autoKey;
+    auto autosaveKey = [&] { return AutoKey{world->chapter, world->checkpoint(), world->autosaveRequests()}; };
+    auto autosaveHere = [&] { autoKey = autosaveKey(); };
     auto startChapter = [&](int n, bool keepFinds) { // New Game / Treasure Hunt / REVISIT LOCATION
         showLoading(n);
         try {
@@ -1658,7 +1662,7 @@ int main(int argc, char** argv) {
             world->script().restore(nlohmann::json::object());
             world->startChapter(n);
             shownChapter = -1;
-            autoKey = std::pair{-1, std::optional<ou::game::CheckpointRef>{}};
+            autoKey = AutoKey{-1, {}, 0};
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: chapter %d: %s\n", n, e.what());
         }
@@ -1924,7 +1928,7 @@ int main(int argc, char** argv) {
             }
             world->tick(a);
             if (autosaves && autoKey && !menus.mainMenu()) {
-                const std::pair key{world->chapter, world->checkpoint()};
+                const AutoKey key = autosaveKey();
                 if (key != *autoKey) quickSave(*world, std::string(ou::ui::kAutosaveSlot)), autoKey = key;
             }
             combat.tick(*world);

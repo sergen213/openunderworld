@@ -132,7 +132,8 @@ bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b);
 // ---- runtime ------------------------------------------------------------------------------------------
 enum class Kind : uint8_t { Volume, Plane, Switch, Door, Block, Scripted };
 enum class EventKind : uint8_t { Enter, FirstIn, In, Out, Cross, Use, Activate, Start, Main, Checkpoint, CinematicEnd,
-                                 PlayerMessage }; // PlayerMessage: target = INSTANCE_Post message id sent to Lara
+                                 PlayerMessage, // target = INSTANCE_Post message id sent to Lara
+                                 Autosave };    // uisavemenu 5: the scripts request an autosave
 const char* eventName(EventKind k);
 struct Event {
     EventKind kind;
@@ -299,8 +300,9 @@ public:
     // load (tru.exe 0x5D2310 -> 0x4B0150) vt 13(unit); moving into a new stream unit (STREAM_MoveIntoNewStreamUnit
     // 0x5C1BF0 -> 0x4B01E0) vt 11(unit) and vt 12(previous). Unit scripts created later get the current state (0x4B0050).
     void setPlayerUnit(uint32_t unit, std::optional<uint32_t> previous);
-    // A script placed Lara on an object's transform (instance 26): that object's uid, once.
-    std::optional<int32_t> takeTeleport() { return std::exchange(teleport_, std::nullopt); }
+    // A script placed Lara on an object's transform (instance 26), once: {object uid, HInfo marker id of that object or
+    // -1 = the object's own transform}.
+    std::optional<std::pair<int32_t, int32_t>> takeTeleport() { return std::exchange(teleport_, std::nullopt); }
     // Lara was moved, not walked (teleport, cinematic end position): no plane crossings across the jump [I] (else
     // 260_ship_intro's warp onto the deck crosses kill plane 7650).
     void playerJumped() { hasLast_ = false; }
@@ -366,6 +368,7 @@ private:
     CameraNative camera_;
     std::vector<std::string> cameraUnits_; // unit names by cameraspline value high word
     bool playerControl_ = true;
+    bool uiFlag_ = false; // uigamedata 17 / 18 (0x77BB70 / 0x77BB90: byte 0xFAE8DB, level changes fade to white when set)
     uint32_t cameraSplineValue(const vm::Value& v); // (unit ordinal << 16) | spline index; 0xFFFFFFFF = unknown
     // Runs `uid`'s override of the prototype `prototype` of native base `base` (an engine callback) with `args`.
     void callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args);
@@ -389,7 +392,7 @@ private:
     std::vector<Event> events_;
     std::optional<std::pair<uint32_t, std::optional<uint32_t>>> playerUnit_; // setPlayerUnit
     void notifyPlayerUnit(int32_t uid);
-    std::optional<int32_t> teleport_;
+    std::optional<std::pair<int32_t, int32_t>> teleport_;
     uint64_t visibilityVersion_ = 0;
     uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)

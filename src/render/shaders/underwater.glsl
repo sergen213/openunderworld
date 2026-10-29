@@ -35,10 +35,13 @@ vec3 ouUnderwater(vec3 c, vec2 uv) {
     if (w.fogColor.w < 0.5) return c;
     float d = texture(uDepth, uv).r;
     vec3 p = ouWorld(uv, d, w.invViewProj);
-    float dist = d >= 0.999999 ? w.fogRange.y : length(p - w.eye.xyz);
-    float f = clamp(1.0 - exp(-dist * 0.0009), 0.0, 0.92);
-    vec3 col = mix(c, w.absorb.rgb, f);
+    if (d >= 0.999999) return mix(c, w.absorb.rgb, 0.92); // nothing drawn: open water
+    // TRU's shaders already fog the submerged scene with the unit's fog (Original = that alone; l7_arctic_sea's rocks
+    // and ice stay readable thousands of units away, as in the original's captures). Enhanced adds Beer-Lambert
+    // absorption on top, red first, thin enough to keep that range [I: per-unit coefficients fitted to the captures].
+    vec3 t = exp(-length(p - w.eye.xyz) * vec3(1.0e-4, 0.4e-4, 0.3e-4));
+    vec3 col = mix(w.absorb.rgb, c, t);
     if (p.z < w.ripple.w)
-        col += w.sunColor.rgb * (ouCaustic(p.xy, w.eye.w) * w.sunColor.w * (1.0 - f));
+        col += w.sunColor.rgb * (ouCaustic(p.xy, w.eye.w) * w.sunColor.w * 0.35 * t.g); // faint: the captures show none [I]
     return col;
 }

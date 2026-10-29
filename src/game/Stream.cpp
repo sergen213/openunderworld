@@ -267,7 +267,8 @@ void World::crossPortals(vec3 from, vec3 to) {
 }
 
 void World::touchCheckpoints() {
-    for (const auto& e : script_.events())
+    for (const auto& e : script_.events()) {
+        if (e.kind == script::EventKind::Autosave) ++autosaveRequests_;
         if (e.kind == script::EventKind::Checkpoint)
             if (const auto* o = script_.find(e.target)) {
                 const CheckpointRef next{o->unit, o->uid};
@@ -276,6 +277,7 @@ void World::touchCheckpoints() {
                     enemies_.checkpoint();
                 }
             }
+    }
     const vec3 p = player_.state().pos;
     for (const auto& u : units_)
         for (const auto& c : u.data.checkpoints) {

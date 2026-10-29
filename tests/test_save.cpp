@@ -557,8 +557,8 @@ TEST(StreamReal, ChapterStartIntros) {
         for (int i = 0; i < ticks; ++i) w.tick({});
         for (const auto& p : played) std::fprintf(stderr, "ch%d played %s\n", c, p.c_str());
         const auto& s = w.player().state();
-        std::fprintf(stderr, "ch%d: %s unit %s pos %.1f %.1f %.1f state %s water %d played %zu\n", c, w.currentUnit().data.name.c_str(),
-                     w.currentUnit().data.name.c_str(), s.pos.x, s.pos.y, s.pos.z, std::string(game::stateName(s.state)).c_str(), s.water, played.size());
+        std::fprintf(stderr, "ch%d: unit %s pos %.1f %.1f %.1f state %s clip %s water %d played %zu\n", c, w.currentUnit().data.name.c_str(),
+                     s.pos.x, s.pos.y, s.pos.z, std::string(game::stateName(s.state)).c_str(), s.clip.c_str(), s.water, played.size());
     };
     start(4, 60); // l4_trailstart: 180_mex_intro, then riding bike 5482
     EXPECT_EQ(played, std::vector<std::string>{"180_mex_intro"});
@@ -583,12 +583,23 @@ TEST(StreamReal, ChapterStartIntros) {
     start(3, 60); // l3_caverns_start: 120_man_vault's tail is over no loaded floor; she stays on the cavern stairs
     EXPECT_EQ(played, std::vector<std::string>{"120_man_vault"});
     EXPECT_LT(glm::distance(w.player().state().pos, w.currentUnit().data.spawn->pos), 200.0f);
-    start(6, 60); // l6_ship_exterior: 260_ship_intro ends in the boat, cinematic object 7652 (+140) warps her onto the deck
+    // l6_ship_exterior: 260_ship_intro ends in the boat, cinematic object 7652 (+140) warps her onto the deck, standing;
+    // its end handler requests the autosave (uisavemenu 5) and fades in.
+    const uint32_t saves = w.autosaveRequests();
+    start(6, 60);
     EXPECT_EQ(played, std::vector<std::string>{"260_ship_intro"});
     EXPECT_LT(glm::distance(w.player().state().pos, vec3(5006.0f, 21948.7f, 5386.2f)), 50.0f);
     EXPECT_EQ(w.player().state().water, -1);
-    start(1, 30); // l1_seatop: no intro, on the deck
-    EXPECT_LE(played.size(), 1u);
+    EXPECT_EQ(w.player().state().clip, "ng_idle");
+    EXPECT_EQ(w.autosaveRequests(), saves + 1);
+    EXPECT_EQ(w.script().screenFade(), 0.0f);
+    // l1_seatop: 030_med_yacht ends in the sea; 997 fn 5 then puts her on ms_uo_yacht's stern (uberobjectbase 2 anchor
+    // at HInfo marker 13 -> instance 26), standing on the deck.
+    start(1, 30);
+    EXPECT_EQ(played, std::vector<std::string>{"030_med_yacht"});
+    EXPECT_LT(glm::distance(w.player().state().pos, vec3(-18829.5f, -3621.6f, 2025.6f)), 50.0f);
+    EXPECT_EQ(w.player().state().water, -1);
+    EXPECT_EQ(w.player().state().state, game::State::Idle);
 }
 
 TEST(StreamReal, ChapterOutfits) {
