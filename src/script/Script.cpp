@@ -916,9 +916,10 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // reverb 1 (0x4AA750 -> 0x582B70) copies its 13 settings words into the audio environment: our mixer has no
             // reverb, so it is passive too.
             // cinematic (bind 0x7AC050): 0 Create (0x4ABD30 -> 0x4A4D10) and 2 IsCreated (0x4ABD40) the member's stream,
-            // which the cinematic base's preload state (3523 fn 13) polls. Ours loads a cutscene when it plays, so it is
-            // always ready [I].
-            if (!std::strcmp(name, "cinematic") && (nc.function == 0 || nc.function == 2)) {
+            // which the cinematic base's preload state (3523 fn 13) polls; 1 Play(create) (0x796F90 -> 0x4ADB50: plays the
+            // stream, creating it first when asked; 1) from the play state 3523 fn 12 after its fade. Ours loads a cutscene
+            // when it plays and plays it at the vt 57 activation (World::checkLevelEnd), so it is always ready [I].
+            if (!std::strcmp(name, "cinematic") && (nc.function == 0 || nc.function == 2 || (nc.function == 1 && nc.args.size() == 1))) {
                 nc.result = vm::Value::scalar(1);
                 return true;
             }
@@ -944,6 +945,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(index == nc.receiver.bits);
                 return true;
             }
+            // uberobjectbase 3 (0x79D0D0 -> 0x4A4490): AttachTo(anchor): the receiver's uber instance (0x4D12D0) goes to the
+            // anchor's vtable slot 6 (ModelMarkerAnchor 0x4D3180 / cdc 0x5BE250 -> INSTANCE link 0x5B4DE0 at the anchor's
+            // marker); a null anchor does nothing. l1 ship props and l7's endgame gun 8401 (a section onto marker 33) run it
+            // in their constructors. Ours draws an uber object as one model, its sections in place [I: no visible change].
+            if (!std::strcmp(name, "uberobjectbase") && nc.function == 3 && nc.args.size() == 2) return true; // the anchor value: two words
             // uberobjectbase 1 on a command held in a local (its index, vm::Machine::push), as the receiver or the argument
             // of the object (l7_arctic_sea 9115's constructor: `PUSHLA 0; CALL1`).
             if (!std::strcmp(name, "uberobjectbase") && nc.function == 1 && uber_) {
@@ -1271,6 +1277,10 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // cinematic [U: no effect on ours].
             if (!std::strcmp(name, "larabase") && (nc.function == 30 || nc.function == 67 || nc.function == 68) && nc.args.empty())
                 return true;
+            // 31 (0x7975F0 -> 0x776EF0) posts INSTANCE message 0xC (!arg) to Lara; 61 (0x79A590 -> 0x778060) copies a global
+            // clock into Lara +0x6DC and zeroes +0x6E0. The endgame warps (340 / 342 end handlers) run them [U: no effect on ours].
+            if (!std::strcmp(name, "larabase") && ((nc.function == 31 && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
+                return true;
             // uitext 57 (0x7A6D10 -> 0x4C32E0): returns member +0x210 of the text's lazily created widget (a localized
             // string handle) [U]; we have no widget, so null. uigamedata 106 (0x7A14F0 -> 0x77C8B0) stores that string as
             // the level description when it is non-null (globals vt 20, "Setting level description text...") [U: unused].
@@ -1299,6 +1309,26 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(0);
                 return true;
             }
+            // uisavemenu 6 (0x7A4640 -> 0x77D8A0 -> 0x788A70(arg, 0, 1, unit)): the same request with the unitref argument
+            // as the save's unit (0x4AA530), when that is set: the endgame cinematics' "end game save" (l7_monastery 8138
+            // vt 60) the Treasure Hunt starts from [I]. Ours: an autosave request.
+            if (!std::strcmp(name, "uisavemenu") && nc.function == 6 && nc.args.size() == 2) {
+                events_.push_back({EventKind::Autosave, source, source, tick_});
+                nc.result = vm::Value::scalar(0);
+                return true;
+            }
+            // unlockablemovie 3 (0x79DE20 -> 0x778F50 -> 0x5D6A80): queues Movies\<name>.bik (global 0xE7ECE0) and leaves
+            // the game for the frontend movie state (0x77BBC0(5)); the endgame plays "credits" so [O bytecode].
+            if (!std::strcmp(name, "unlockablemovie") && nc.function == 3 && nc.args.size() == 1 && nc.args[0].text) {
+                movies_.push_back(*nc.args[0].text);
+                return true;
+            }
+            // hudscreenmgr 4 (0x79E3E0 -> 0x77DAF0): HUD manager vtable slot 0x10 [U: ours has no script HUD]; uigamedata 43
+            // (0x7A0EF0 -> 0x77C160) is a debug print; uisavemenu 9 (0x7A4680 -> 0x788D10) stores its byte at save header
+            // +0x1F9 [U: no field of ours].
+            if ((!std::strcmp(name, "hudscreenmgr") && nc.function == 4) || (!std::strcmp(name, "uigamedata") && nc.function == 43) ||
+                (!std::strcmp(name, "uisavemenu") && nc.function == 9 && nc.args.size() == 1))
+                return true;
             // Screen presentation the cinematic base and its letterbox / saving screens run (uiscreen 6/7 = UIScreen vtable
             // slots 0x24/0x28 show/hide, 22 colour, 90/92 = 0x4B2030/0x4B2050; uicolortimeline 0/10 set, 12/13 =
             // 0x4BF370/0x4BF3C0 play/stop; uigamedata 3 = 0x77BC00 flag). Ours draws no script UI screens [U].
@@ -1641,6 +1671,7 @@ std::string Runtime::helpCondition() const {
 void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     events_.clear();
     ++tick_;
+    for (const auto& [uid, vt] : std::exchange(calls_, {})) run(uid, vt, {});
     // Queued messages: the recipients are taken per message (a handler's own Sends wait for the next tick).
     for (auto& msg : std::exchange(messages_, {})) {
         std::vector<int32_t> uids;

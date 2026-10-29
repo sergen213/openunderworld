@@ -238,12 +238,19 @@ GateResult runGate(const cdc::BigfileSet& bf, const game::UnitLoader& load, cons
     std::map<int32_t, Snapshot> before;
     for (const int32_t id : targets) before[id] = snapshot(w, id);
     perform(g.trigger, g.action);
-    for (int i = 0; i < 600 && w.chapter == chapter; ++i) tick({});
+    // A change at any tick counts: a hazard's swing (l1_kraken_room tentacles 494-496) returns to its rest state.
+    std::set<int32_t> seen;
+    const auto look = [&] {
+        for (const int32_t id : targets)
+            if (before.contains(id) && differs(before[id], snapshot(w, id))) seen.insert(id);
+    };
+    look();
+    for (int i = 0; i < 600 && w.chapter == chapter; ++i) tick({}), look();
     r.chapter = w.chapter;
     for (const int32_t id : targets) {
         const auto* o = w.script().find(id);
         const bool cine = o && o->name == "cinematic_object";
-        const bool ok = cine ? activated.contains(id) : before.contains(id) && differs(before[id], snapshot(w, id));
+        const bool ok = cine ? activated.contains(id) : seen.contains(id);
         (ok ? r.changed : r.unchanged).push_back(id);
     }
     for (const auto& [key, n] : w.script().failures())
@@ -384,6 +391,7 @@ TEST(ProgressionReal, Survey) {
             for (const auto& s : st) std::printf(" %s", s.c_str());
             std::printf("\n");
         }
+        for (const auto& [uid, stream] : u.cinematics) std::printf("  cinematic %d = %s\n", uid, stream.c_str());
         for (const auto& s : u.drm->sections) {
             if (s.type != cdc::SectionType::Script) continue;
             std::string units;
@@ -677,4 +685,75 @@ TEST(ProgressionReal, TraproomsSeal) {
     EXPECT_EQ(a->script->fields[124], 1u) << "Lara holds plate 5717";
     EXPECT_EQ(seal->script->fields[304], 2u);
     EXPECT_NE(seal->script->fields, before) << "both held: vt 58 opens the seal";
+}
+
+// The ending (chapter 7 -> the epilogue): l7_yggdrasil_end's dispatcher 8360 counts the buttresses broken in the Natla
+// fight (A from 320_hel_boss's end, B / C / D from the buttress mounts' vt 54), each revealed by a camera; C's reveal plays
+// 330_hel_thralls, the last one runs vt 66 -> vt 67 "AllButtressesBroken_BreakGun" -> 340_hel_endgame; its end warps Lara
+// to l7_monastery (instance 26 on 8138) and plays 342_hel_endgame, whose end makes the end game save (uisavemenu 6) and
+// plays the credits movie (unlockablemovie 3): ou-game's ending.
+TEST(ProgressionReal, EndgameCredits) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l7_yggdrasil_end", anims);
+    w.script().setBigfile(&bf);
+    w.chapter = 7;
+    std::vector<std::string> played;
+    w.onCinematic = [&](const std::string& name, bool levelEnd) {
+        played.push_back(name);
+        EXPECT_FALSE(levelEnd) << name;
+    };
+    std::vector<std::string> movies;
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            w.tick({});
+            for (auto& m : w.script().takeMovies()) movies.push_back(std::move(m));
+        }
+    };
+    run(60);
+    const uint32_t saves = w.autosaveRequests();
+    w.script().call(8360, 62); // buttress A
+    run(120);
+    for (const int32_t mount : {8362, 8363, 8364}) { // B, C, D; each reveal camera runs ~7 s
+        w.script().call(mount, 54);
+        run(900);
+    }
+    EXPECT_EQ(played, (std::vector<std::string>{"330_hel_thralls", "340_hel_endgame", "342_hel_endgame"}));
+    EXPECT_EQ(w.currentUnit().data.name, "l7_monastery");
+    EXPECT_GT(w.autosaveRequests(), saves) << "the end game save";
+    EXPECT_EQ(movies, std::vector<std::string>{"credits"});
+    for (const int32_t uid : {8263, 8138, 8360, 8401}) // their handlers run to the end (8401: uberobjectbase 3)
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+
+// l1_kraken_room: switch 57 only turns tentacle gear 32 once the column (its section 12) is shot down: the bullet's
+// trigger 15 (World::uberShot) drops the column; before that 57's use is the "attempt" reaction.
+TEST(ProgressionReal, KrakenColumnShot) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_kraken_room", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 60; ++i) w.tick({});
+    const auto* sw = w.script().find(57);
+    ASSERT_TRUE(sw && w.uberState(32));
+    EXPECT_TRUE(std::ranges::any_of(w.collision().dynamics, [](const auto& d) { return d.id == 32; })) << "bullets can hit the gear";
+    const auto use = [&] {
+        place(w, sw->pos, 0);
+        game::Actions a;
+        a.interact = true;
+        for (int i = 0; i < 10; ++i) w.tick(a);
+        for (int i = 0; i < 600; ++i) w.tick({});
+    };
+    const auto rest = *w.uberState(32);
+    use();
+    EXPECT_EQ(*w.uberState(32), rest) << "the column still stands: 57 only tries";
+    w.uberShot(32);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(32))[12], 1u) << "the shot column fell (section 12: 0 -> 2 -> 1)";
+    const auto fallen = *w.uberState(32);
+    use();
+    EXPECT_NE(*w.uberState(32), fallen) << "57 turns the gear";
 }

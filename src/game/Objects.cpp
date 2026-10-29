@@ -340,6 +340,23 @@ bool World::sendUberCommand(int32_t uid, uint32_t commandIndex) {
     return true;
 }
 
+// tru.exe registers action 0x14's limit with the physics system (0x4D5B10 -> 0x4D5A50); the body falls when shot and
+// fires trigger 15 at its limit: l1_kraken_room gear 32's column (section 12) before switch 57 turns the gear. ponytail:
+// no Havok bodies or impulses: any hit on the object knocks every armed section over at once.
+void World::uberShot(int32_t uid) {
+    const auto data = uberData_.find(uid);
+    const auto rt = uberRuntime_.find(uid);
+    if (data == uberData_.end() || !data->second || rt == uberRuntime_.end()) return;
+    for (size_t i = 0; i < rt->second.sections.size(); ++i) {
+        const auto& s = rt->second.sections[i];
+        const auto& sec = data->second->sections[i];
+        if (s.transition >= 0 || s.state < 0 || size_t(s.state) >= sec.stateOut.size()) continue;
+        if (std::ranges::find(sec.stateActions[size_t(s.state)], 20u) == sec.stateActions[size_t(s.state)].end()) continue;
+        for (const uint32_t ti : sec.stateOut[size_t(s.state)])
+            if (sec.transitions[ti].trigger == 15) { uberBegin(uid, i, ti); break; }
+    }
+}
+
 std::vector<World::ObjectClip> World::objectClips() const {
     std::vector<ObjectClip> out;
     for (const auto& o : script_.objects()) {

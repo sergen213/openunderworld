@@ -355,7 +355,8 @@ outfit (the original only reads `+0x294` on a level load).
   | l7_thin_ice → l7_arctic_sea (load) | both gauntlets + belt | `0xE02` | nothing (bare hands, wetsuit) |
 
   So carrying is not wearing: outside the Thor-mechanism volumes/sensors the gear is never drawn, in any chapter.
-  l7_himalaya_end is the ending cinematic, credits, then the main menu (a GAME COMPLETE save, Treasure Hunt).
+  The ending (342_hel_endgame in l7_monastery, see docs/PROGRESSION.md) is the credits, then the main menu (a GAME
+  COMPLETE save, Treasure Hunt).
   l6_ship_exterior did not finish loading by a level change (once a crash at 0x4A1720) and was not checked.
   Captures: openunderworld-work/screens/gear (`orig_*`, `ours_*`, `side_*.png`).
 - Not done: player sensors (vt 14) never fire, and the per-chapter equip scripts do not run in our runtime yet
@@ -1370,9 +1371,10 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   checkpoint, and when a script requests one (`uisavemenu` 5, after the chapter-start cutscenes) (key: chapter +
   checkpoint + requests; loads do not re-save). `<saveDir>/profile.json` (`save::Profile`) keeps the
   chapters ended (a level end's cinematic), whether the ending played, and whether every treasure / relic was found by a
-  chapter end (EXTRAS unlocks). The ending [O GAMEPLAY "Thor's gear"]: a
-  cinematic in chapter 8 (l7_himalaya_end) marks the game finished, autosaves what was found, plays `credits.bik` and
-  returns to the main menu, whose centre is then TREASURE HUNT.
+  chapter end (EXTRAS unlocks). The ending [O bytecode, docs/PROGRESSION.md chapter 7]: 342_hel_endgame's end handler
+  (l7_monastery 8138 vt 60) requests the end game save (`uisavemenu` 6, our autosave of what was found) and plays the
+  credits (`unlockablemovie` 3 "credits"); ou-game marks the game finished, plays `credits.bik` and returns to the main
+  menu, whose centre is then TREASURE HUNT.
 - Treasure Hunt [O start unit l1_seatop; I rules]: starts chapter 1 keeping the autosave's `collected` / `found` (what the
   finished game picked up stays picked up), `World::treasureHunt` set and saved (its autosave reads "<AREA> - TREASURE
   HUNT"); the PDA's REVISIT LOCATION is enabled only then and lists the chapters 52–58 (a PDA list page as JOURNAL

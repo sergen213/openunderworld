@@ -1818,16 +1818,6 @@ int main(int argc, char** argv) {
         }
         if (levelEnd) reached(1u << world->chapter, false); // before World::startChapter moves on
         if (levelEnd && running) showLoading(world->chapter + 1); // [I] the next chapter is the following one
-        if (!levelEnd && world->chapter == 8 && running) { // the ending [O]: credits, then the main menu with TREASURE HUNT
-            reached(1u << 7 | 1u << 8, true);
-            if (autosaves) quickSave(*world, std::string(ou::ui::kAutosaveSlot)); // what was found, for Treasure Hunt
-            if (!opt.noMovies) {
-                SDL_GLContext gl = SDL_GL_GetCurrentContext();
-                playMovie("credits.bik");
-                if (gl) SDL_GL_MakeCurrent(window.get(), gl);
-            }
-            act(ou::ui::Action::QuitToMenu);
-        }
         streamed.version = ~0ull; // re-upload the game scene
     };
 
@@ -1930,6 +1920,19 @@ int main(int argc, char** argv) {
             if (autosaves && autoKey && !menus.mainMenu()) {
                 const AutoKey key = autosaveKey();
                 if (key != *autoKey) quickSave(*world, std::string(ou::ui::kAutosaveSlot)), autoKey = key;
+            }
+            // Script movies (unlockablemovie 3) leave the game for the frontend [O 0x5D6A80]. The endgame's "credits"
+            // (after 342_hel_endgame and its end game save, the autosave above) is the ending: then the main menu with
+            // TREASURE HUNT.
+            for (const auto& movie : world->script().takeMovies()) {
+                if (movie == "credits") reached(1u << 7 | 1u << 8, true);
+                if (!opt.noMovies) {
+                    SDL_GLContext gl = SDL_GL_GetCurrentContext();
+                    playMovie((movie + ".bik").c_str());
+                    if (gl) SDL_GL_MakeCurrent(window.get(), gl);
+                }
+                act(ou::ui::Action::QuitToMenu);
+                break;
             }
             combat.tick(*world);
             gadgets.tick(*world);

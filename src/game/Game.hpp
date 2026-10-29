@@ -378,6 +378,9 @@ public:
     // doors and push blocks are collision().dynamics (following their pose); rigid-body doors swing on a hinge.
     const physics::Scene& physics() const { return physics_; }
     bool sendUberCommand(int32_t uid, uint32_t commandIndex);
+    // A bullet struck uber object `uid`'s collision: each section resting in a state that registers a physics-limit
+    // trigger (action 20) takes its trigger-15 transition, as its shot body reaching the joint limit [I].
+    void uberShot(int32_t uid);
     // Section states of uber object `uid` (UberObjectData::sections order; 0xFFFFFFFF = in a transition), null before its
     // first use.
     const std::vector<uint32_t>* uberState(int32_t uid) const {

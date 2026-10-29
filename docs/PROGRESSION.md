@@ -19,7 +19,9 @@ Tools (`tests/test_gates.cpp`, `ou_gates_tests`):
 - `OU_UBER_DUMP=<object>` (`UberDump`: ObjectBase hex, `*` = pointer), `OU_OBJ_FIELDS=<unit>:<uid>` (`ObjectFields`),
   `OU_ANIM_NAMES=<object>` (`AnimNames`): data research for uber records, script fields and animation lists.
 
-Sweep 2026-10-29: 116 / 289 candidate gates pass. The sweep over-counts failures: preload volumes (they only call
+Sweep 2026-10-29 (ending pass): 141 / 289 candidate gates pass (135 before it on 839ea16; new, all from counting a change at
+any tick: l1 tentacle volumes 562-564, switch 57's attempt reaction, resetting switch 748, l2_norsehall 2493). l4_ballcourt 5468 fails alone since
+gates 4: it needs switch 5469 and plane 6410 first (the critical gate runs them). The sweep over-counts failures: preload volumes (they only call
 cinematic vt 63, see below), sound volumes whose links are conditions, and handlers that need an earlier step all
 show FAIL on their own. The interactive failures that block a route are listed under each chapter.
 
@@ -36,8 +38,8 @@ Portal order from the start unit; level changes not made by portals are named.
 | 4 | l4_trailstart → l4_trailtube → l4_ballcourt → l4_templepath → l4_temple; l4_ballcourt → l4_staircase_upper → l4_staircase_xibalba → l4_traprooms → l4_staircase_mictlan → l4_ragnarok_room → l4_pool, back to l4_ballcourt | volumes 5468 / 6407 → 5483 → chapter 5 |
 | 5 | l5_startsnow → l5_valgrind_tunnel → l5_valgrind → l5_valaskjalf_entry → l5_valaskjalf_entryb → l5_valaskjalf | volumes 6866 / 6872 → 6846 → chapter 6 |
 | 6 | l6_ship_exterior → l6_ship_upper_hallway_a/b → l6_ship_upper_hallway → l6_ship_engine_hall | volume 7566 preloads 1387; plane 7565 plays it → chapter 7 |
-| 7 | l7_thin_ice → l7_arctic_sea → l7_helheim_hall01/02 → l7_helheim01/02/03 → l7_yggdrasil → l7_yggdrasil_hall01/02 → l7_yggdrasil_end → l7_monastery | portal into l7_himalaya_end [U: no cinematic names it] |
-| 8 | l7_himalaya_end | ending cinematic 7996 → credits [U] |
+| 7 | l7_thin_ice → l7_arctic_sea → l7_helheim_hall01/02 → l7_helheim01/02/03 → l7_yggdrasil → l7_yggdrasil_hall01/02 → l7_yggdrasil_end | buttresses A-D broken (dispatcher 8360) → 340_hel_endgame (8263); its end warps Lara to l7_monastery (instance 26 on 8138) and plays 342_hel_endgame, whose end saves and plays the credits: the ending (below) |
+| 8 | l7_himalaya_end | not on the route: its 7996 (343_hel_engame) plays on its unit script's mc_CinematicData 7 when the unit is started directly, then the same end game save and credits [O bytecode] |
 
 ## Gates
 
@@ -51,7 +53,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 1 | l1_kraken_entrance | resetting switch 748 (use, both plates down) | flints, torches, reveal 702 → cinematic 696, gate 743 | pass |
 | 1 | l1_kraken_entrance | snake head 751 (grapple pull) | falls onto plate 752 (loose rigid body) | pass (in the 748 gate) |
 | 1 | l1_kraken_room | switches 55 / 30 / 498 (use) | tentacle gear 36, sun-sphere platform 27, tomb door 497 | pass |
-| 1 | l1_kraken_room | switch 57 (use) | tentacle gear 32 | **fail** (no visible change [U]) |
+| 1 | l1_kraken_room | switch 57 (use) | tentacle gear 32 | pass after the column is shot (row below); alone the sweep's FAIL is the "attempt" reaction |
 | 1 | l1_baldrs_tomb | press plates 219/221/222 (stand on) | door 223, gate 45 (locks 69/70: native `multibody` 89 [U]) | pass |
 | 1 | l1_ship_upper_hallway_a/b, upper_hallway, engine_hall | volumes 1531, 1492, 1465, 1436 | ship doors, cinematics 1453 / 1288 | pass (1531 in suite) |
 | 1 | l1_ship_sinking_hall | plane 1074 (cross) | 070_med_dive → chapter 2 | pass (fixed) |
@@ -84,6 +86,8 @@ Portal order from the start unit; level changes not made by portals are named.
 | 7 | l7_arctic_sea | switch 9103 (use) | seafloor drawbridge 9116 | pass (uber transition 0 starts; was lowered at load by puzzle_cheat_button 9279) |
 | 7 | l7_helheim01 | rune switches 8993-8995 | dispatcher 8997 | not asserted (dispatcher only) |
 | 7 | l7_yggdrasil(_end) | volumes 8804, 8303/8312, 8323-8329 | cinematics 8773/8261, spline mover 8404 | pass |
+| 7 | l7_yggdrasil_end | buttresses A (8360 vt 62) / B-D (mounts 8362-8364 vt 54), each revealed by 8296-8298 | 330_hel_thralls (C), 340_hel_endgame (last) → l7_monastery 342_hel_endgame → end game save, credits movie | pass (`ProgressionReal.EndgameCredits`; the breaks are called directly: the mounts break on their modifiable reaching 3 (vt 20), set by the endgame gun's anim graph [U]) |
+| 1 | l1_kraken_room | column (gear 32 section 12, shot) then switch 57 (use) | column falls (trigger 15), gear 32 turns | pass (`ProgressionReal.KrakenColumnShot`; World::uberShot) |
 
 ## Fixes in this pass (each covered by `CriticalGates` / `ChaptersReal`)
 
@@ -120,5 +124,25 @@ Portal order from the start unit; level changes not made by portals are named.
   2393); levers / switches whose handlers run but change nothing visible (l1 57, l4 5469, l5 7188/7189, l7 9103);
   l4_traprooms seal 5701 (both plates held: one weight source missing). (gates 4) Solved: sticky Set notifications
   (vt 6 / 7) reach the plates' and the seal's handlers; the scepter weight is carried onto the second plate.
-- (gates 4) Startup no longer runs a type's first function when it is vt 20 (puzzle_cheat_button debug objects sent their "solved" messages at birth). Killed objects (instance 10) no longer trigger. `uberobjectbase` 0 queries (+0x28/+0x2C condition lists) and larabase 53 (re-mount 52's bike) let 190_mex's end handler run. Open: triggers 14/15 still timed [I]; l1 57 column shooting, l4 `ca_ani_*` playback by uber values, `uberobjectbase` 3 (0x79D0D0 -> 0x4A4490, ~30 l1 ship objects) not modelled; the GateSweep was not re-run.
-- Chapter 7 → 8 has no scripted level end in the data we decoded [U]; the ending (7996, credits) is not run.
+- (gates 4) Startup no longer runs a type's first function when it is vt 20 (puzzle_cheat_button debug objects sent their "solved" messages at birth). Killed objects (instance 10) no longer trigger. `uberobjectbase` 0 queries (+0x28/+0x2C condition lists) and larabase 53 (re-mount 52's bike) let 190_mex's end handler run. Open: triggers 14/15 still timed [I] (except shot bodies, below).
+- (ending) [O bytecode] The play route ends in l7_monastery, not l7_himalaya_end: 342_hel_endgame's end (8138 vt 60)
+  calls `uisavemenu` 6 (0x7A4640 -> 0x77D8A0: the autosave request with a unitref as the save's unit; ours: autosave)
+  and `unlockablemovie` 3 "credits" (0x79DE20 -> 0x778F50 -> 0x5D6A80: Movies\credits.bik, then the frontend);
+  Runtime::takeMovies -> ou-game plays it, marks the game finished and opens the main menu (TREASURE HUNT). Bound on the
+  way: `larabase` 31 / 61 (0x776EF0 INSTANCE message 0xC / 0x778060 Lara clock fields), `cinematic` 1 (Play, 0x4ADB50),
+  `hudscreenmgr` 4, `uigamedata` 43 (debug print), `uisavemenu` 9 (save header byte +0x1F9). Open: what breaks the
+  buttresses in play: the mounts' vt 20 / 19 run when their `modifiable` reaches 3, which the endgame gun 8401 / its
+  messages (gun_state_message_channel, `modifiable` 3 / 7 = INSTANCE messages 0x33 stimulus / 0x2E to the anim graph) set
+  [U: anim graphs not modelled]; 320_hel_boss (8261) by the unit script on entering.
+- (ending) `uberobjectbase` 3 (0x79D0D0 -> 0x4A4490) = AttachTo(anchor value, two words): the uber instance goes to the
+  anchor's vtable slot 6 (INSTANCE link 0x5B4DE0 at its marker); passive for us (one model per uber object). The ~30 l1
+  ship props (life preservers, lockers, cases, powerbox) and the endgame gun now run their constructors to the end.
+- (ending) Shooting uber physics [I]: a bullet striking an uber object's collider (World::fire -> World::uberShot) starts
+  the trigger-15 transition of every section resting in a state with action 20 (the physics-limit trigger, 0x4D5B10):
+  l1 gear 32's column falls and switch 57 turns the gear. No Havok impulse.
+- (ending) `ca_ani_*` objects (l4 temple reveal 5464 behind switch 5469) are anim-graph objects, not uber: no uber record;
+  `modifiable` 3 (0x4AC390) / 7 (0x4A5A90) post INSTANCE messages 0x33 (stimulus) / 0x2E (value) to their animation state
+  graph (animation lists "LeftOpeningRightClosed", "RevealOpen", "Reset", ...). Not modelled [U: graph format], so 5469's
+  reopening still shows no change; the chapter 4 route passes without it (plane 6410, 5468).
+- GateSweep counts a target changed at any tick of its 600-tick window (a hazard's swing back to rest, l1_kraken_room
+  tentacles 494-496, counted as unchanged before).

@@ -702,7 +702,9 @@ void World::fire(int hand) {
         const vec3 dir = glm::normalize(glm::angleAxis(dy, vec3(0, 0, 1)) * (glm::angleAxis(dp, right) * aim));
         float best = w.maxRange;
         bool hitAny = false;
-        if (const auto g = col_.raycast(from, dir, best)) best = g->t, hitAny = true;
+        int32_t object = 0; // the dynamic collider (script object) the bullet hit
+        if (const auto g = col_.raycast(from, dir, best))
+            best = g->t, hitAny = true, object = g->dynamic >= 0 ? col_.dynamics[size_t(g->dynamic)].id : 0;
         Damageable* struck = nullptr;
         for (Damageable* t : targets) {
             if (!t || !t->alive() || t->team() == Team::Player) continue;
@@ -717,6 +719,7 @@ void World::fire(int hand) {
             struck->onHit(hit);
             c.adrenaline = std::min(1.0f, c.adrenaline + shot.damage / kAdrenalineFill); // "damaging enemies" (locals 1310)
         }
+        if (!struck && object) uberShot(object);
         c.shots.push_back(shot);
     }
     c.spread = std::min(w.maxSpreadDeg, c.spread + w.spreadPerShot);

@@ -256,6 +256,9 @@ public:
         float fade = 0;     // args[0], seconds
     };
     std::vector<MusicRequest> takeMusicRequests() { return std::exchange(musicRequests_, {}); }
+    // Movies the scripts played (unlockablemovie 3: Movies\<name>.bik, then the frontend), oldest first. The endgame
+    // (l7_monastery 8138's end) plays "credits": the game's ending.
+    std::vector<std::string> takeMovies() { return std::exchange(movies_, {}); }
     // enemybase / generatorbase natives and health 1/2 on a non-player script, on the intro `uid` (World -> ai::Enemies).
     using EnemyNative = std::function<bool(int32_t uid, std::string_view type, uint32_t function,
                                            std::span<const vm::Value> args, uint32_t& result)>;
@@ -297,6 +300,9 @@ public:
     // void one that does more than return runs, as its own thread. False if none ran to completion.
     bool grapplePulled(int32_t uid);
     void tick(const TickInput& in, const collision::CollisionMesh* col = nullptr);
+    // Runs `uid`'s override of vtable slot `vt` (no arguments) at the start of the next tick, as an engine callback
+    // would: the gate tests call handlers no data path of ours reaches yet.
+    void call(int32_t uid, int16_t vt) { calls_.emplace_back(uid, vt); }
     // The player's stream unit (stream unit id, Portal::toStreamId) for the unit scripts (gamebase callbacks): on a level
     // load (tru.exe 0x5D2310 -> 0x4B0150) vt 13(unit); moving into a new stream unit (STREAM_MoveIntoNewStreamUnit
     // 0x5C1BF0 -> 0x4B01E0) vt 11(unit) and vt 12(previous). Unit scripts created later get the current state (0x4B0050).
@@ -366,6 +372,7 @@ private:
     MarkupNative markup_;
     SoundNative sound_;
     std::vector<MusicRequest> musicRequests_;
+    std::vector<std::string> movies_;
     CameraNative camera_;
     std::vector<std::string> cameraUnits_; // unit names by cameraspline value high word
     bool playerControl_ = true;
@@ -375,6 +382,7 @@ private:
     void callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args);
     // Runs `uid`'s override of vtable slot `vt` with `args` as a new thread beside its running ones.
     void run(int32_t uid, int16_t vt, std::span<const vm::Value> args);
+    std::vector<std::pair<int32_t, int16_t>> calls_; // call(): run at the next tick
     // Sticky Set (0x7B6200 bool / 0x7B7B50 int) notifies the sticky's owner (0x4AF6D0 / 0x4AF740): its corebase
     // vt 5 float / 6 bool / 7 int with (the sticky, the value); the owner is not notified again from its own handler.
     struct StickyChange { int32_t uid; uint32_t offset; int16_t vt; uint32_t value; };
