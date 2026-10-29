@@ -319,6 +319,26 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     return def;
 }
 
+std::optional<GrenadeTuning> loadGrenadeTuning(const cdc::BigfileSet& bf) {
+    const auto g = objectData(bf, "g_grenade_thrower"), p = objectData(bf, "pr_grenade");
+    if (!g || !p) return std::nullopt;
+    const auto max = g->at<int16_t>(0xE4), cooldown = g->at<int16_t>(0xEA);
+    const auto vz = g->at<float>(0x10C), gravity = g->at<float>(0x110), lo = g->at<float>(0x134), hi = g->at<float>(0x138);
+    // pr_grenade explosion record (+0x44 = 2): +0x48 damage, +0x4C radius, +0x50 edge damage, +0x58 / +0x5C knock speeds,
+    // +0x80 frames (0x69F1E0 parameters [I mapping])
+    const auto kind = p->at<int32_t>(0x44), fuse = p->at<int32_t>(0x80);
+    const auto dmg = p->at<float>(0x48), radius = p->at<float>(0x4C), edge = p->at<float>(0x50);
+    const auto imp = p->at<float>(0x58), edgeImp = p->at<float>(0x5C);
+    if (!max || !cooldown || !vz || !gravity || !lo || !hi || kind != 2 || !fuse || !dmg || !radius || !edge || !imp || !edgeImp)
+        return std::nullopt;
+    GrenadeTuning t;
+    t.maxCarried = *max, t.cooldown = *cooldown / 30.0f;
+    t.launchVz = *vz, t.gravity = *gravity, t.minRange = *lo, t.maxRange = *hi;
+    t.damage = *dmg, t.radius = *radius, t.edgeDamage = *edge, t.impulse = *imp, t.edgeImpulse = *edgeImp;
+    t.fuse = *fuse / 30.0f;
+    return t;
+}
+
 std::optional<float> rayCapsule(glm::vec3 ro, glm::vec3 rd, glm::vec3 base, float r, float h, float maxDist) {
     const glm::vec3 pa = base + glm::vec3(0, 0, r), pb = base + glm::vec3(0, 0, std::max(r, h - r));
     std::optional<float> best;

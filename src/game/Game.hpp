@@ -57,6 +57,8 @@ struct Actions {
     bool sprint = false;  // held (Left Alt / pad left stick click; scripts: "sprint")
     bool pda = false;  // held; ou-game opens the PDA on the press edge (1; scripts: "pda")
     bool hint = false, answer = false; // held; ou-game plays the help-on-demand hint / answer line on the press edge (T / Y)
+    bool light = false;   // held; the flashlight toggles on the press edge (L / pad d-pad left; scripts: "light")
+    bool grenade = false; // held; a sticky grenade is thrown on the press edge (R / pad d-pad down; scripts: "grenade")
 };
 
 // ---- animations -------------------------------------------------------------------------------
@@ -79,6 +81,7 @@ struct AnimLibrary {
     std::array<WeaponDef, kWeaponCount> weapons{weaponDefaults(Weapon::Pistols), weaponDefaults(Weapon::Uzi),
                                                 weaponDefaults(Weapon::Shotgun), weaponDefaults(Weapon::Speargun)};
     BikeTuning bike; // motorcycle.drm (loadBikeTuning); its riding clips are in `clips` as "motorcycle:<name>"
+    GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
 
     const anim::Clip* find(std::string_view name) const;
     const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")
@@ -306,6 +309,7 @@ struct UnitData {
     std::map<int32_t, std::string> cinematics; // cinematic_object intro -> the stream it plays (cine::introCinematic)
     std::string playerObject; // Lara outfit object of this unit (formats::Unit::playerObjectId name); empty if none
     std::vector<VehicleIntro> vehicles; // `motorcycle` intros (unit frame)
+    bool flashlightSpot = false; // formats::Unit::flashlightSpot: the flashlight's spot is on here, else only its omni
 };
 // Throws cdc::FormatError if pc-w\<name>.drm is missing or not a unit.
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name);
@@ -429,6 +433,16 @@ public:
     // capped at its max reserve (ou-game --weapon; the original gets them from pickups).
     void giveWeapon(Weapon w, int reserve);
 
+    // ---- gadgets (Gadgets.cpp; docs/GAMEPLAY.md "Flashlight", "Grenades") ----
+    bool flashlight = false;         // utility light on (Actions::light toggles it); saved
+    bool flashlightSpot() const;     // the current unit lights the spot too (else the omni light alone)
+    // Light origin (chest bone 15, 25 units forward [I]) and the torso's forward direction, world, blended between the
+    // last two ticks; the app places the personal light's spot/omni there.
+    std::pair<vec3, vec3> flashlightPose(double alpha) const;
+    int grenades = 0;                // carried; World starts with anims().grenade.maxCarried [I]; saved
+    const std::vector<Grenade>& liveGrenades() const { return grenades_; }
+    const std::vector<vec3>& explosions() const { return explosions_; } // grenades that went off this tick
+
     // ---- motorcycle (Vehicle.cpp; docs/GAMEPLAY.md "Motorcycle") ----
     // Every bike of the units loaded so far (by intro uid), kept across streaming; positions in their unit's frame.
     const std::map<int32_t, Bike>& bikes() const { return bikes_; }
@@ -505,13 +519,23 @@ private:
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
     std::vector<ObjectCollider> colliders_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
-    void bindEnemies();
-    std::map<std::pair<int32_t, uint32_t>, uint32_t> enemyValues_; // (intro uid, enemybase setter fn) -> value
     physics::Scene physics_;
     Health health_;
     WaterSim water_;
     float air_ = 1.0f;
     bool submerged_ = false;
+    void bindEnemies();
+    std::map<std::pair<int32_t, uint32_t>, uint32_t> enemyValues_; // (intro uid, enemybase setter fn) -> value
+    // gadgets (Gadgets.cpp)
+    void tickGadgets(const Actions& a, float dt);
+    void explode(vec3 at);
+    void throwLayer(std::vector<anim::LocalTransform>& local) const; // throw clip over the upper body
+    std::vector<Grenade> grenades_;
+    std::vector<vec3> explosions_;
+    bool lightHeld_ = true, grenadeHeld_ = true; // no press edge on the first tick
+    float lightCooldown_ = 0, grenadeCooldown_ = 0;
+    float throwT_ = -1;              // seconds into the throw clip; -1 = not throwing
+    vec3 throwAt_{0};                // landing point chosen on the press
     CombatState combat_ = fullClips(anims_.weapons);
     double aimTime_ = 0; // pose clips' clock
     bool interactHeld_ = true;     // no press edge on the first tick

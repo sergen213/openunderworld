@@ -117,8 +117,7 @@ private:
 
 // ---- weapons ----------------------------------------------------------------------------------
 // Lara's weapon set: the dual pistols plus one secondary (weapon object data +0xDC = 1; picking up another
-// replaces it). Grenades (g_grenade_thrower) are not implemented: pr_grenade's projectile record is not
-// decoded (docs/GAMEPLAY.md "Combat").
+// replaces it). Sticky grenades are a gadget (GrenadeTuning below).
 enum class Weapon { Pistols, Uzi, Shotgun, Speargun };
 inline constexpr int kWeaponCount = 4;
 std::string_view weaponObject(Weapon w);         // "wp_handgun", "wp_uzi", "wp_shotgun", "wp_speargun"
@@ -192,6 +191,32 @@ struct CombatState {
     float slowMo = 0;         // real seconds left of the head-shot window; 0 = closed
     glm::vec2 pip{0};         // pip offset from the reticle, reticle radii (inside 1 = on target)
     float timeScale = 1;      // world (enemy) time scale; adrenaline slows it, Lara keeps real time (tru.exe 0x622418)
+};
+
+// ---- sticky grenades (gadget "Sticky Bomb", tru.exe gadget table 0x8AFC70 entry 4; docs/GAMEPLAY.md "Grenades") ----
+// g_grenade_thrower data (+0xE2.. per difficulty, +0xEA cooldown, +0xF0 projectile pr_grenade, +0x10C/+0x110 launch,
+// +0x134/+0x138 range) and pr_grenade's explosion record (+0x44: 2, 1000, 1100, 200, 70, 300, 100, ..., +0x80 = 120)
+// as read by the area-damage function 0x69F1E0 [O values; field meanings I where marked in GAMEPLAY.md].
+struct GrenadeTuning {
+    int maxCarried = 6;         // +0xE4 (Easy / Normal / Hard = +0xE2 / +0xE4 / +0xE6: 4 / 6 / 10)
+    float cooldown = 20 / 30.0f; // +0xEA frames
+    float launchVz = 632.1f;    // +0x10C units/s [I meaning]
+    float gravity = 4741.0f;    // +0x110 units/s^2 [I meaning]
+    float minRange = 200.0f, maxRange = 1000.0f; // +0x134 / +0x138 [I meaning]
+    float damage = 1000.0f, radius = 1100.0f, edgeDamage = 200.0f; // explosion +0x48 / +0x4C / +0x50 [I meaning]
+    float impulse = 300.0f, edgeImpulse = 100.0f; // +0x58 / +0x5C: knock speed at the centre / the edge [I meaning]
+    float fuse = 120 / 30.0f;   // explosion +0x80 frames, from the moment it sticks [I meaning]
+};
+// Decodes g_grenade_thrower + pr_grenade; nullopt if a DRM or block is missing.
+std::optional<GrenadeTuning> loadGrenadeTuning(const cdc::BigfileSet& bigfile);
+// A thrown grenade: flying, then stuck to the world or to a target (moving with it) until the fuse runs out.
+struct Grenade {
+    glm::vec3 pos{0}, vel{0};
+    bool stuck = false;
+    Damageable* target = nullptr; // stuck to (World drops it when the target leaves World::targets)
+    glm::vec3 offset{0};          // from target->position() while stuck to it
+    float fuse = 0;               // seconds left once stuck
+    float age = 0;                // seconds since the throw
 };
 // A fresh state with every weapon's clips full (reserves empty).
 CombatState fullClips(const std::array<WeaponDef, kWeaponCount>& weapons);

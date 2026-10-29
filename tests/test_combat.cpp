@@ -3,9 +3,11 @@
 
 #include "cdc/Cdc.hpp"
 #include "engine/FrameClock.hpp"
+#include "formats/Formats.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <memory>
 
@@ -616,4 +618,97 @@ TEST(CombatReal, PoolSpeargunUnderWater) {
     EXPECT_EQ(t.hp, 700 - 2 * 250);
     EXPECT_LE(w.combat().reserve[3], 4);
     w.targets.clear();
+}
+
+// ---- gadgets (src/game/Gadgets.cpp) -------------------------------------------------------------
+TEST(Gadgets, FlashlightToggleCooldownAndPose) {
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 2000, 2000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    Actions light;
+    light.light = true;
+    w->tick(light); // held from the first tick: no press edge
+    EXPECT_FALSE(w->flashlight);
+    w->tick({});
+    w->tick(light);
+    EXPECT_TRUE(w->flashlight);
+    for (int i = 0; i < 10; ++i) w->tick(light); // holding does not toggle again
+    EXPECT_TRUE(w->flashlight);
+    w->tick({});
+    w->tick(light);
+    EXPECT_FALSE(w->flashlight);
+    w->tick({});
+    w->tick(light); // within the 4-frame cooldown
+    EXPECT_FALSE(w->flashlight);
+    for (int i = 0; i < 10; ++i) w->tick({});
+    w->tick(light);
+    EXPECT_TRUE(w->flashlight);
+    EXPECT_FALSE(w->flashlightSpot()); // no unit: omni only
+    const auto [pos, dir] = w->flashlightPose(1);
+    EXPECT_GT(dir.x, 0.99f); // facing +X
+    EXPECT_NEAR(pos.x, 25, 1e-3);
+}
+
+// A grenade thrown at a locked dummy 800 ahead sticks to it, goes off after the fuse, kills it and hurts Lara.
+TEST(Gadgets, GrenadeKillsDummyAndHurtsLara) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    const auto& g = w->anims().grenade;
+    ASSERT_EQ(w->grenades, g.maxCarried);
+    game::DummyTarget t;
+    t.pos = {800, 0, 0};
+    w->targets.push_back(&t);
+    Actions draw;
+    draw.draw = true;
+    w->tick(draw);
+    w->tick({});
+    for (int i = 0; i < 30; ++i) w->tick(guns(false)); // aim locks
+    ASSERT_EQ(w->combat().target, &t);
+    Actions throwIt = guns(false);
+    throwIt.grenade = true;
+    w->tick(throwIt);
+    int exploded = -1;
+    for (int i = 0; i < 600 && exploded < 0; ++i) {
+        w->tick(guns(false));
+        if (!w->explosions().empty()) exploded = i;
+        if (!w->liveGrenades().empty() && w->liveGrenades()[0].stuck) EXPECT_EQ(w->liveGrenades()[0].target, &t);
+    }
+    ASSERT_GE(exploded, 0);
+    EXPECT_EQ(w->grenades, g.maxCarried - 1);
+    EXPECT_NEAR(exploded / 60.0, g.fuse + 0.3, 0.4); // release + flight, then the fuse
+    EXPECT_FALSE(t.alive());
+    EXPECT_LT(w->health().value(), 1000);
+    EXPECT_GT(w->health().value(), 1000 - g.damage);
+    EXPECT_TRUE(w->liveGrenades().empty());
+    w->targets.clear();
+}
+
+TEST(GadgetsReal, TuningLightsAndSpotUnits) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto g = game::loadGrenadeTuning(bf);
+    ASSERT_TRUE(g);
+    EXPECT_EQ(g->maxCarried, 6);
+    EXPECT_FLOAT_EQ(g->cooldown, 20 / 30.0f);
+    EXPECT_FLOAT_EQ(g->minRange, 200);
+    EXPECT_FLOAT_EQ(g->maxRange, 1000);
+    EXPECT_FLOAT_EQ(g->damage, 1000);
+    EXPECT_FLOAT_EQ(g->radius, 1100);
+    EXPECT_FLOAT_EQ(g->edgeDamage, 200);
+    EXPECT_FLOAT_EQ(g->fuse, 4);
+    auto b = bf.read("pc-w\\g_personal_light.drm");
+    ASSERT_TRUE(b);
+    const auto lights = formats::objectLights(cdc::parseDrm(std::move(*b)));
+    ASSERT_EQ(lights.size(), 2u);
+    const auto spot = std::find_if(lights.begin(), lights.end(), [](const auto& l) { return l.type == 1; });
+    const auto omni = std::find_if(lights.begin(), lights.end(), [](const auto& l) { return l.type == 0; });
+    ASSERT_NE(spot, lights.end());
+    ASSERT_NE(omni, lights.end());
+    EXPECT_FLOAT_EQ(spot->radius, 5000);
+    EXPECT_FLOAT_EQ(omni->radius, 1800);
+    EXPECT_TRUE(game::loadUnitData(bf, "l4_pool").flashlightSpot);
+    EXPECT_FALSE(game::loadUnitData(bf, "l3_main_bedroom").flashlightSpot);
+    EXPECT_TRUE(game::loadLaraAnims(bf).find("g_grenade_thrower:combat_grenade_Throw1"));
 }

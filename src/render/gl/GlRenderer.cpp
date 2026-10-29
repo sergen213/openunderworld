@@ -495,6 +495,7 @@ public:
     void drawFrame(const Camera& camera, Viewport vp, const FrameOptions& options) override {
         Resources& r = *res_;
         if (vp.width <= 0 || vp.height <= 0) return;
+        for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
         ensureTargets(vp, options);
         const float aspect = float(vp.width) / float(vp.height);
         const glm::mat4 viewProj = camera.projection(aspect) * camera.view();

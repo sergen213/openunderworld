@@ -74,10 +74,11 @@ void Hud::update(const HudState& s, double dt) {
     // and while a weapon is out; WEAPONS while drawn, on firing / reloading / switching; GEAR on a d-pad press (drawing
     // counts: the hud_weapon capture shows the d-pad with the weapon item lit). The pressed item stays lit [V captures].
     constexpr float kHold = 3.0f, kIn = 4.0f, kOut = 2.0f; // seconds held after the trigger; fade rates per second
-    const int item = s.healthPacks != prev_.healthPacks ? 0 : s.gearItem;
+    const int item = s.healthPacks != prev_.healthPacks ? 0 : s.flashlight != prev_.flashlight ? 1 : s.grenades < prev_.grenades ? 3 : s.gearItem;
     const bool trig[kGroups] = {
         s.drawn || s.health != prev_.health || s.breath < 1 || std::abs(s.adrenaline - prev_.adrenaline) > 1e-4f,
-        s.drawn || s.weapon != prev_.weapon || s.clip[0] != prev_.clip[0] || s.clip[1] != prev_.clip[1], item >= 0};
+        s.drawn || s.weapon != prev_.weapon || s.clip[0] != prev_.clip[0] || s.clip[1] != prev_.clip[1] || s.grenades != prev_.grenades,
+        item >= 0};
     if (item >= 0) lit_ = item;
     for (int g = 0; g < kGroups; ++g) {
         if (s.dead) hold_[g] = 0;
@@ -128,6 +129,8 @@ void Hud::draw(Canvas& c) const {
                 const uint32_t id = !loaded ? p.empty : i == s_.clip[g] - 1 && g == row ? p.next : p.full;
                 put(c, ox, oy, id, p.x + float(i) * step, p.rows[g], fade(kWhite, a));
             }
+        // [O position: the original's grenade row, 81 full / 82 empty at y 52] one pip per carried maximum, x step [I]
+        for (int i = 0; i < s_.grenadesMax; ++i) put(c, ox, oy, i < s_.grenades ? 81u : 82u, 63.6f + 9.0f * float(i), 52.0f, fade(kWhite, a));
     }
     if (const float a = alpha_[Gear]; a > 0) { // GEAR d-pad, from (5 % W, 95 % H)
         // [V fits of hud_dpad_1080] items at 2/3 unit per texel around (104, -73), dimmed except the pressed one.

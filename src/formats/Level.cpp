@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <utility>
 
 namespace ou::formats {
@@ -158,28 +159,15 @@ Unit parseUnit(const cdc::Drm& d) {
                 e.cookieScroll[0] = dtp.at<float>(0x834), e.cookieScroll[1] = dtp.at<float>(0x838);
                 continue;
             }
-            if (type > 1) continue;
-            scene::Light l;
-            l.type = uint8_t(type);
-            l.shadow = dtp.at<uint8_t>(0x144C) != 0;
+            auto l = lightFromDtp(d, dtpIndex);
+            if (!l) continue;
             for (int c = 0; c < 3; ++c) {
-                l.position[c] = rec.at<float>(r + 0x30 + 4 * c);
-                l.direction[c] = rec.at<float>(r + 0x20 + 4 * c);
-                l.color[c] = color[c];
+                l->position[c] = rec.at<float>(r + 0x30 + 4 * c);
+                l->direction[c] = rec.at<float>(r + 0x20 + 4 * c);
+                l->color[c] = color[c];
             }
-            l.radius = rec.at<uint8_t>(r + 0x5C) && rec.at<float>(r + 0x58) > 0 ? rec.at<float>(r + 0x58) : dtp.at<float>(0x04);
-            l.coneInner = dtp.at<float>(0x0C), l.coneOuter = dtp.at<float>(0x10);
-            l.nearWidth = dtp.at<float>(0x14);
-            // AttenuationSampler row: texel k = round(curve[k] * 255) in R for k < 255, texel 255 = 0 (0x50AFB0).
-            l.falloff.assign(256, 0);
-            for (int t = 0; t < 255; ++t)
-                l.falloff[t] = uint8_t(std::lround(std::clamp(dtp.at<float>(0x1C + 4 * t), 0.0f, 1.0f) * 255.0f));
-            if (dtp.at<uint8_t>(0x41C) && dtp.at<float>(0x420) > 0) {
-                l.flickerPeriod = dtp.at<float>(0x420);
-                l.flicker.resize(256);
-                for (int t = 0; t < 256; ++t) l.flicker[t] = dtp.at<float>(0x424 + 4 * t);
-            }
-            e.lights.push_back(std::move(l));
+            if (rec.at<uint8_t>(r + 0x5C) && rec.at<float>(r + 0x58) > 0) l->radius = rec.at<float>(r + 0x58);
+            e.lights.push_back(std::move(*l));
         }
     }
 
@@ -198,6 +186,8 @@ Unit parseUnit(const cdc::Drm& d) {
         if (e.fogFar == 0) e.fogFar = rs.at<float>(o + 0x38);
         e.valid = true;
         u.playerObjectId = rs.at<uint16_t>(o + 0x294);
+        if (const auto f = rs.ptrs.find(o + 0x2B4); f != rs.ptrs.end())
+            u.flashlightSpot = View(d, f->second.section).at<uint8_t>(f->second.offset + 0x0A) != 0;
     }
 
     // Level+0x90 -> cell group data {header*, ?, streamGroups*, symbols*, cells*, ?, imfs*}.
@@ -311,6 +301,52 @@ std::optional<uint32_t> objectBaseSection(const cdc::Drm& d) {
         return rootIndex;
     }
     return std::nullopt;
+}
+
+std::optional<scene::Light> lightFromDtp(const cdc::Drm& d, uint32_t dtpIndex) {
+    const View dtp(d, dtpIndex);
+    const uint32_t type = dtp.at<uint32_t>(0);
+    if (type > 1) return std::nullopt;
+    scene::Light l;
+    l.type = uint8_t(type);
+    l.shadow = dtp.at<uint8_t>(0x144C) != 0;
+    for (int c = 0; c < 3; ++c) l.color[c] = dtp.at<float>(0x08) * dtp.at<uint8_t>(0x18 + c) / 255.0f;
+    l.radius = dtp.at<float>(0x04);
+    l.coneInner = dtp.at<float>(0x0C), l.coneOuter = dtp.at<float>(0x10);
+    l.nearWidth = dtp.at<float>(0x14);
+    // AttenuationSampler row: texel k = round(curve[k] * 255) in R for k < 255, texel 255 = 0 (0x50AFB0).
+    l.falloff.assign(256, 0);
+    for (int t = 0; t < 255; ++t)
+        l.falloff[t] = uint8_t(std::lround(std::clamp(dtp.at<float>(0x1C + 4 * t), 0.0f, 1.0f) * 255.0f));
+    if (dtp.at<uint8_t>(0x41C) && dtp.at<float>(0x420) > 0) {
+        l.flickerPeriod = dtp.at<float>(0x420);
+        l.flicker.resize(256);
+        for (int t = 0; t < 256; ++t) l.flicker[t] = dtp.at<float>(0x424 + 4 * t);
+    }
+    return l;
+}
+
+std::vector<scene::Light> objectLights(const cdc::Drm& d) {
+    // tru.exe 0x546710 reads the effect list from *(Object +8): the object section's third DTP reference, not ObjectBase.
+    const auto obj = std::find_if(d.sections.begin(), d.sections.end(), [](const cdc::Section& s) { return s.type == cdc::SectionType::Object; });
+    if (obj == d.sections.end() || obj->data.size() < 12) return {};
+    uint32_t fxIndex = 0;
+    const uint32_t fxId = resourceId(*obj, 8, cdc::SectionType::DtpData);
+    if (!fxId || !findSection(d, cdc::SectionType::DtpData, fxId, &fxIndex)) return {};
+    const View root(d, fxIndex);
+    const auto n = root.at<uint32_t>(0x3C);
+    if (!n || !root.ptrs.count(0x40)) return {};
+    const auto lp = root.ptr(0x40, "object effect list");
+    const View list(d, lp.section);
+    std::vector<scene::Light> out;
+    std::set<uint32_t> seen;
+    for (uint32_t k = 0; k < n; ++k) {
+        const uint32_t id = list.at<uint32_t>(lp.offset + 0x24 * k + 0x20); // plain DTP id (no relocation)
+        uint32_t index = 0;
+        if (!id || !seen.insert(id).second || !findSection(d, cdc::SectionType::DtpData, id, &index)) continue;
+        if (auto l = lightFromDtp(d, index)) out.push_back(std::move(*l));
+    }
+    return out;
 }
 
 uint32_t objectFlags(const cdc::Drm& d) {

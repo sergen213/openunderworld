@@ -156,6 +156,8 @@ struct HudState {
     int nextHand = 0;                      // gun that fires next (its last round is highlighted)
     int healthPacks = 0;
     int gearItem = -1;                     // d-pad item pressed: 0 health pack, 1 flashlight, 2 weapon (draw/switch), 3 grenade
+    bool flashlight = false;               // toggling it lights the d-pad's flashlight item
+    int grenades = 0, grenadesMax = 0;     // grenade row under the clip pips; throwing lights the grenade item
 };
 
 // Combat reticle (screen pixels), drawn while a weapon is out.

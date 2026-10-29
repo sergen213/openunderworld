@@ -44,6 +44,7 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     u.col.markup.insert(u.col.markup.end(), water.begin(), water.end());
     auto unit = formats::parseUnit(*drm);
     u.portals = std::move(unit.portals);
+    u.flashlightSpot = unit.flashlightSpot;
     // tru.exe 0x5D40C0 picks the respawn intro among objects "checkpoint" / "invis_checkpoint".
     const auto list = bigfile.read("\\tr8\\pc-w\\objectlist.txt");
     const auto names = list ? formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})

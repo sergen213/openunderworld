@@ -486,6 +486,7 @@ public:
     void drawFrame(const Camera& camera, Viewport vp, const FrameOptions& options) override {
         frameActive_ = false;
         if (vp.width <= 0 || vp.height <= 0) return; // minimised
+        for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
         if (vp.width != requested_.width || vp.height != requested_.height) swapchainDirty_ = true;
         applySettings(options);
         if (rtPipelines_ && !tlas_ && scenePool_) buildRayTracing(); // first RT frame after upload()

@@ -224,13 +224,14 @@ outfit (the original only reads `+0x294` on a level load).
   file omits keep their defaults, an unknown action or input name is an error. Edit them on the launcher's
   Controllers tab (Add input… captures a key, mouse button, pad button or trigger; Esc cancels).
 - Actions: forward, back, left, right, walk, sprint, jump, drop, interact, draw, fire, aim, switch, weapon, heal,
-  grapple, save, load. Inputs: SDL scancode names (`W`, `Space`, `Left Shift`, `F5`), `Mouse Left/Right/Middle`,
+  grapple, save, load, hint, answer, pda, light, grenade. Inputs: SDL scancode names (`W`, `Space`, `Left Shift`, `F5`), `Mouse Left/Right/Middle`,
   `Pad <SDL button>` (`Pad a`, `Pad dpright`, `Pad leftshoulder`, `Pad leftstick`), `Pad lefttrigger/righttrigger`
   (pressed past half). Case-insensitive.
 - Defaults: WASD/arrows, Shift walk, Alt sprint, Space jump, Ctrl/C drop, E interact, F draw, mouse left fire / right
-  aim, Q switch target, X weapon, H health pack, G grapple, F5/F9 quick save/load; pad South jump, East drop, West
-  interact, North draw, left shoulder walk, right shoulder grapple, triggers fire/aim, right stick click switch,
-  d-pad right weapon, d-pad up health pack, left stick click sprint.
+  aim, Q switch target, X weapon, H health pack, G grapple, L flashlight, R grenade, F5/F9 quick save/load; pad South
+  jump, East drop, West interact, North draw, left shoulder walk, right shoulder grapple, triggers fire/aim, right stick
+  click switch, d-pad right weapon, d-pad up health pack, d-pad left flashlight, d-pad down grenade, left stick click
+  sprint. [I] the original's PC default for the light seems to be T, which is our hint key.
 - Fixed: left stick moves, right stick looks (2.5 rad/s at full deflection, 0.15 dead zone), Esc / Start opens the
   pause menu, F1 toggles the overlay, menu navigation (arrows / Return / Esc, d-pad / South / East).
 
@@ -692,10 +693,7 @@ pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary re
   `wp_thorhammer` and `wp_natla_fireball(_adren)` in l7_yggdrasil_end, `co_wp_*` cinematic props): the secondaries
   come from scripts / enemy drops not decoded [U]. `ou-game --weapon uzi|shotgun|speargun` gives one with its max
   reserve for testing (`World::giveWeapon`).
-- Grenades (g_grenade_thrower: gadget slot 4, max 4 / 6 / 10, +1 per pickup, cooldown 20 frames, projectile +0xF0 =
-  pr_grenade, locals 1309 "Press U+1806 to throw a sticky grenade" = RB [I]) are not implemented: pr_grenade's record
-  is mode 2 with an explosion sub-record (+0x44 = 2, then 1000, 1100, 200, 70, 300, 100, …, +0x80 = 120) whose fields
-  (damage, radius, fuse?) are [U].
+- Grenades: see "Grenades" below.
 
 Upper body (subtree of spine segment 14; Lara's weapon clips live in each wp_* DRM and are kept as
 `"<object>:<clip>"` because the DRMs reuse names): the aim grid is blended bilinearly by the aim yaw/pitch. Pistols /
@@ -748,6 +746,42 @@ lengths). Viewed (l4_pool, GL, 1792×1008, 2026-10-18; openunderworld-work/scree
 on the hands firing at a `--target` dummy (pistols in the thigh holsters), `--weapon shotgun` firing 7 tracers into the
 dummy from the hip hold, and a health pack picked up after an 1800-unit drop (517 hp) and used: 1000 hp, packs 1 → 0.
 
+## Flashlight (src/game/Gadgets.cpp)
+
+- Gadget "Personal Light" (g_personal_light): its object effect list (DTP at object section +8, +0x3C count, +0x40 →
+  0x24-byte records, light DTP id at +0x20; tru.exe 0x546710 → 0x5C35D0) holds two lights [O]: a spot (type 1, reach
+  5000, intensity 2, cone 1.02 / 1.80) and an omni (type 0, reach 1800, intensity 0.6), both white with the DTPs'
+  falloff curves (`formats::objectLights`, `lightFromDtp`).
+- Toggle (`Actions::light`: L / pad d-pad left; script `light`) on the press edge, then a 4-frame cooldown (data +0xEA)
+  [O]. No battery: drain / recharge frames (+0xF0 / +0xF2) are −1, which 0x6B1810 skips [O]. Saved (`flashlight`).
+- Spot or not [O]: the unit's render settings (Level +0x70 DTP +0x2B4 → byte +0x0A, tru.exe 0x5D3FF0 → flag 0xED00AA,
+  read by 0x6B17C0) turn on the spot ("Both"); 38 units set it (l4_pool among them), elsewhere (l3_main_bedroom) only
+  the omni lights up (`UnitData::flashlightSpot`).
+- Placement [I]: chest bone 15, 25 units forward along the torso, pointing where the torso faces. ou-game reserves the
+  first environment light slots for spot, omni and a grenade flash and moves them every frame
+  (`FrameOptions::dynamicLights`, GL + Vulkan, original-shader path only; the generic shader ignores point / spot
+  lights). Toggling lights the HUD d-pad's flashlight item.
+
+## Grenades (src/game/Gadgets.cpp)
+
+- Data [O values, I meanings where marked]: g_grenade_thrower (gadget slot 4) max carried +0xE2/+0xE4/+0xE6 = 4 / 6 /
+  10 (Easy / Normal / Hard; we use Normal), cooldown +0xEA = 20 frames, launch vertical speed +0x10C = 632.1 and
+  gravity +0x110 = 4741 [I], throw range +0x134 / +0x138 = 200..1000 [I]; projectile +0xF0 = pr_grenade, whose explosion
+  record (+0x44 = 2) gives damage 1000 at the centre (+0x48), radius 1100 (+0x4C), 200 at the edge (+0x50), knock
+  speeds 300 / 100 (+0x58 / +0x5C) and +0x80 = 120 frames (the fuse once stuck [I]) — `loadGrenadeTuning`.
+- Throw (`Actions::grenade`: R / pad d-pad down; script `grenade`; locals 1309 "Press U+1806 to throw a sticky
+  grenade"): from the ground states, at the locked target's aim point or along the camera ray, range clamped to
+  200..1000. Lara turns to it and plays g_grenade_thrower's `combat_grenade_Throw1` over the upper body; the grenade
+  leaves the right hand at 45 % of the clip [I] on an arc with the fixed vertical speed that lands on the point [I].
+- Flight: gravity; it sticks to the first surface or living target it hits (and rides on the target), then the fuse
+  runs; one that never sticks goes off 3 s after the throw [I].
+- Blast (area damage after 0x69F1E0 [O]): every target and Lara within 1100, damage linear 1000 → 200 from the centre
+  to the edge, no occlusion test; physics bodies get the knock speed away from the centre [I as velocity].
+- Count: Lara starts with 6 [I] (no unit has grenade pickups; +1 per pickup in the original); saved (`grenades`). HUD:
+  grenade row (81 full / 82 empty at y 52) under the clip pips, throwing lights the d-pad grenade item. ou-game draws
+  live grenades with pr_grenade's mesh (5 at once, as tru.exe tracks 5 attached ones) and an orange flash light [I]
+  for 0.3 s at each explosion.
+
 ## Tests
 
 - `Game.*` (synthetic collision + synthetic clips with the measured root speeds): loop-seam root motion, wall slide,
@@ -780,6 +814,11 @@ dummy from the hip hold, and a health pack picked up after an 1800-unit drop (51
   hands on the targets ± 1); `PoolSideJump` (1250 → 1251, set up hanging via `World::restore`); `PoolDropToHang` (grab
   and climb 1253, drop back into the hang, hands at 3562 ± 1); `TrapRoomsPoleFling` (l4_traprooms: standing jump onto
   pole 1336 from 345 short, swing, fling 1264 to pole 1337).
+- Gadgets (`tests/test_combat.cpp`): `Gadgets.FlashlightToggleCooldownAndPose` (press edge, 4-frame cooldown, light
+  25 units ahead facing forward), `Gadgets.GrenadeKillsDummyAndHurtsLara` (thrown at a locked dummy 800 ahead: sticks
+  to it, goes off after the fuse, kills it, Lara takes 1000..0), `GadgetsReal.TuningLightsAndSpotUnits` (decoded
+  grenade data, personal light spot 5000 / omni 1800, spot on in l4_pool and off in l3_main_bedroom); replay
+  `tests/replays/pool_gadgets.txt` (l4_pool: light on, grenade thrown and exploding).
 
 ## Verification (viewed screenshots, 2026-10-18) [O]
 
@@ -831,7 +870,8 @@ No side-by-side comparison with the original game was made.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
   see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
   model, ledge-grapple transitions, exe rappel speeds (ours are [I]).
-- Missing: sprint, state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenades (pr_grenade record [U]), the
+- Missing: sprint, state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenade crouch / perch / under-water
+  placing, the
   assault rifle / tranquilizer / Thor's hammer, projectile flight for the speargun (hitscan), mirrored side hit
   reactions, thrown / knock-down reactions (`Hit_Thrown*`, `hitReact_*`, types 7/9/10/12/15), hit reactions while
   hanging/crouching, weapon and ammo pickups (none of uzi / shotgun / speargun in any intro), aiming from ledges /
@@ -991,7 +1031,7 @@ template-matching the generalbank textures against `hud_weapon_1080/_768` and `h
   wp_tranq 101, wp_speargun 102) at (59.1, −4.9), 0.65 unit/texel; clip pips per gun row: bullets 83 full / 84 spent /
   85 white from (63.6, 36.0 / 43.1) every 6 (12 per row; uzi's 40 squeezed into the same width [I]); shells 86/87/88
   from (66.8, 36.6) every 11.7; spears 89/90 [I]. One gun's last loaded round is white (second row at rest) [V; I: the
-  next hand]. The original's grenade row (81 full / 82 empty at y 52) is not drawn: ours has no grenades.
+  next hand]. Grenade row: 81 full / 82 empty at y 52, one per carried maximum, x from 63.6 every 9 [I step].
 - GEAR d-pad: cross 91 (half opaque) centred (104, −73); 92 health packs (count in the box, game font 0.55) at
   (104, −106.5), 93 flashlight (71.1, −72), 94 weapon (136.4, −73.8), 95 grenades (103.6, −38.2), centres, all 2/3
   unit/texel, at 0.3 brightness except the last pressed item [V captures: R lights 94].

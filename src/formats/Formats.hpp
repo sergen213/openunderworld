@@ -117,7 +117,17 @@ struct Unit {
     // Level+0x70 DTP +0x294 u16: objectlist.txt id of the Lara outfit object the unit loads (tru.exe 0x5DE2B0,
     // 0x5D4340); 0 without a settings DTP. docs/GAMEPLAY.md "Outfits".
     uint16_t playerObjectId = 0;
+    // Level+0x70 DTP +0x2B4 -> byte +0x0A: the personal light also turns on its spot ("Both" mode) in this unit, else
+    // only its omni light (tru.exe 0x5D3FF0 -> 0x698890 flag 0xED00AA, read by 0x6B17C0). docs/GAMEPLAY.md "Flashlight".
+    bool flashlightSpot = false;
 };
+// Point/spot light from a light DTP (section `dtpIndex`): type, DTP radius, cone, near width, falloff curve, flicker,
+// shadow flag, colour = DTP intensity (+0x08) x rgb (+0x18) (LEVELS.md "Lights"); position/direction 0. nullopt for
+// suns and other types.
+std::optional<scene::Light> lightFromDtp(const cdc::Drm& drm, uint32_t dtpIndex);
+// Lights of an object's effect list (DTP at object section +8: +0x3C count, +0x40 -> 0x24-byte records, light DTP id at +0x20;
+// created by tru.exe 0x546710 -> 0x5C35D0), distinct DTPs in record order. Empty without an object section.
+std::vector<scene::Light> objectLights(const cdc::Drm& object);
 // Parses the level struct (section 0) of a unit DRM. Throws cdc::FormatError on layout mismatch.
 Unit parseUnit(const cdc::Drm& unit);
 

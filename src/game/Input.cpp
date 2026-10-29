@@ -30,7 +30,7 @@ Controls::Controls(const config::InputConfig& c) : mouseScale(c.mouseSensitivity
 }
 
 Actions readDevices(const Controls& c, const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
-    enum { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple, Save, Load, Hint, Answer, Pda };
+    enum { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple, Save, Load, Hint, Answer, Pda, Light, Grenade };
     const auto on = [&](int action) {
         return std::any_of(c.actions[action].begin(), c.actions[action].end(),
                            [&](const platform::InputRef& r) { return platform::pressed(r, keys, pad, mouseButtons); });
@@ -44,13 +44,14 @@ Actions readDevices(const Controls& c, const bool* keys, SDL_Gamepad* pad, uint3
     a.walk = on(Walk), a.sprint = on(Sprint), a.jump = on(Jump), a.drop = on(Drop), a.interact = on(Interact);
     a.draw = on(Draw), a.fire = on(Fire), a.aim = on(Aim), a.switchTarget = on(Switch), a.weapon = on(Weapon);
     a.heal = on(Heal), a.grapple = on(Grapple), a.save = on(Save), a.load = on(Load);
-    a.hint = on(Hint), a.answer = on(Answer), a.pda = on(Pda);
+    a.hint = on(Hint), a.answer = on(Answer), a.pda = on(Pda), a.light = on(Light), a.grenade = on(Grenade);
     return a;
 }
 
 InputScript InputScript::parse(std::string_view text) {
     static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact", "save",
-                                                    "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda"};
+                                                    "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda",
+                                                    "light", "grenade"};
     InputScript s;
     std::istringstream in{std::string(text)};
     std::string line;
@@ -105,6 +106,8 @@ Actions InputScript::at(uint64_t tick) const {
         else if (e.action == "hint") a.hint = e.value != 0;
         else if (e.action == "answer") a.answer = e.value != 0;
         else if (e.action == "pda") a.pda = e.value != 0;
+        else if (e.action == "light") a.light = e.value != 0;
+        else if (e.action == "grenade") a.grenade = e.value != 0;
         else if (e.action == "lookx") a.look.x = e.value;
         else a.look.y = e.value;
     }

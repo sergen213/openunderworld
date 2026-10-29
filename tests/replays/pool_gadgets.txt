@@ -1,0 +1,6 @@
+# l4_pool (a spot-light unit): flashlight on, turn to the dark side, throw a grenade along the camera; it sticks where it
+# lands and goes off after the 4 s fuse (log: "flashlight on (spot + omni)", "grenade thrown, 5 left", "grenade exploded")
+0.5 light 1
+0.6 light 0
+1.0 grenade 1
+1.1 grenade 0

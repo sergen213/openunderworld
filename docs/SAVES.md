@@ -71,6 +71,8 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `collected` | [int] | intro unique ids of picked-up rewards (`World::collected`, src/game/Progress.hpp) |
 | `chapter` | int | `game::kChapters` index; missing (older saves) = the unit's `l<N>_` prefix, else 0 |
 | `found` | [int, int, int] | rewards collected per kind: treasures, relics, health packs (PDA counts; health packs = carried, a use takes one); missing = 0s |
+| `grenades` | int or null | sticky grenades carried (`World::grenades`); missing / null = left as the world starts them (6) |
+| `flashlight` | bool | the personal light is on; missing = off |
 | `health` | number or null | Lara's health (`World::health`); missing/null (older saves, or saved while dead) = full; must be > 0 |
 | `script` | object | `script::Runtime::serialize()` (src/script): per-intro trigger/switch/door/block state, opaque here |
 | `enemies` | object or null | `ai::Enemies::serialize()`: `states` (intro uid → full enemy state in its unit's frame: mode, pos, yaw, clip + time, health, AI timers, aim RNG; generator spawns under their generator's uid; loaded and streamed-out enemies), `firedGenerators`, `deadAtCheckpoint`; missing/null (older saves) = enemies left as they are |

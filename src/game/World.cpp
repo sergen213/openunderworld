@@ -171,6 +171,11 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         lib.bike = loadBikeTuning(bd);
     }
     rigOutfit(lib, drm);
+    // Sticky grenades: the throw clip lives in g_grenade_thrower.drm (it animates Lara); tuning from its + pr_grenade's data.
+    if (auto g = bigfile.read("pc-w\\g_grenade_thrower.drm")) {
+        loadClips(cdc::parseDrm(std::move(*g)), {"combat_grenade_Throw1"}, "pc-w\\g_grenade_thrower.drm", "g_grenade_thrower:");
+        if (auto t = loadGrenadeTuning(bigfile)) lib.grenade = *t;
+    }
     // Swim speed: mean root speed of the clips that start swimming (their loops have no root motion).
     float dist = 0;
     double secs = 0;
@@ -198,6 +203,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
           return tuning;
       }()) {
     startSpawn_ = spawn; // respawn target without units
+    grenades = anims_.grenade.maxCarried; // [I] Lara carries the Normal maximum (no grenade pickups in any unit)
     bindMultibody();
     bindUber();
     bindTerrain();
@@ -275,6 +281,7 @@ void World::tick(const Actions& input) {
                   [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, dt * combat_.timeScale);
     updateCamera(a, dt);
     tickCombat(a, dt); // after the camera: free aim follows it
+    tickGadgets(a, dt); // flashlight, grenades (Gadgets.cpp)
     tickAir(dt);
     water_.tick(*this, dt); // after combat: this tick's shots make rings
     updatePose(dt, false);
@@ -388,6 +395,7 @@ void World::updatePose(float dt, bool reset) {
     }
     auto local = anim_.pose();
     aimLayer(local, reset ? 0 : dt);
+    throwLayer(local);
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(anims_.skeleton.bones[0].pivot)}; // root motion is in pos
     auto m = anim::worldMatrices(anims_.skeleton, local);
     const glm::mat4 toWorld = player_.modelMatrix(s.pos, s.yaw, s.pitch);

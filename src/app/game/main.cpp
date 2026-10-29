@@ -91,16 +91,16 @@ void usage() {
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
                  "          F draw/holster, mouse left fire, right aim/lock, Q switch target, X switch weapon, H health pack,\n"
-                 "          E with a full adrenaline meter + lock close by: head-shot window, mouse look;\n"
+                 "          L flashlight, R throw grenade, E with a full adrenaline meter + lock close by: head-shot window, mouse look;\n"
                  "          gamepad: left stick, right stick, A jump, B drop, X use, Y draw, RT fire, LT lock, R3 switch, LB walk,\n"
-                 "          d-pad right switch weapon, d-pad up health pack,\n"
+                 "          d-pad right switch weapon, d-pad up health pack, d-pad left flashlight, d-pad down grenade,\n"
                  "          Start pause; Esc pause menu, F1 overlay, F5 quicksave, F9 quickload (slot 'quick'), F7 water debug view\n"
                  "motorcycle: E beside it gets on / off (almost stopped); forward throttle, back brake/reverse, left/right steer,\n"
                  "          Space hop\n"
                  "menus: arrows/WASD or d-pad navigate, Enter/Space or A accept, E or X alt (PDA task), Esc or B back,\n"
                  "          Backspace or Y deletes a save slot; 1 opens the PDA\n"
                  "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|weapon|heal|pause|\n"
-                 "                    grapple|sprint|hint|answer|pda|lookx|looky>\n"
+                 "                    grapple|sprint|hint|answer|pda|light|grenade|lookx|looky>\n"
                  "                    [value]  (in menus forward/right +-1 navigate, jump accepts, interact is alt, drop goes back;\n"
                  "                    script time runs on while paused)\n");
 }
@@ -386,7 +386,6 @@ struct EnemyMeshes {
     }
 };
 
-// Combat (src/game/Combat.*): weapon models on Lara's hand / holster bones, --target dummies, muzzle flashes,
 // World point -> screen pixels (top-left origin) for the camera; nullopt behind it.
 std::optional<glm::vec2> toScreen(const ou::game::CameraState& cam, float fovDeg, int width, int height, glm::vec3 p) {
     const glm::vec3 fwd = glm::normalize(cam.target - cam.position), right = glm::normalize(glm::cross(fwd, glm::vec3(0, 0, 1))),
@@ -398,6 +397,7 @@ std::optional<glm::vec2> toScreen(const ou::game::CameraState& cam, float fovDeg
     return glm::vec2((glm::dot(v, right) / (z * tx) + 1) * 0.5f * float(width), (1 - glm::dot(v, up) / (z * ty)) * 0.5f * float(height));
 }
 
+// Combat (src/game/Combat.*): weapon models on Lara's hand / holster bones, --target dummies, muzzle flashes,
 // tracers, impacts, the HUD state and reticle (ui::Hud) and each weapon's shot / reload waves. [I] the exe's flash/impact FX
 // objects are not decoded.
 struct CombatView {
@@ -512,6 +512,7 @@ struct CombatView {
         h.clip[0] = c.clip[size_t(c.weapon)][0], h.clip[1] = c.clip[size_t(c.weapon)][1], h.clipSize = wd.clip, h.nextHand = c.hand;
         h.healthPacks = w.found[2];
         h.gearItem = c.healHeld ? 0 : c.weaponHeld || c.drawHeld ? 2 : -1;
+        h.flashlight = w.flashlight, h.grenades = w.grenades, h.grenadesMax = w.anims().grenade.maxCarried;
         return h;
     }
 
@@ -560,6 +561,9 @@ struct StreamedScene {
     ou::scene::SceneData guns;                         // weapon models, one per gunSlots entry (CombatView::pose)
     std::vector<std::pair<ou::game::Weapon, int>> gunSlots; // weapon, hand of each guns mesh
     std::vector<size_t> gunIndices;
+    ou::scene::SceneData grenades;                     // GadgetView::kSlots copies of pr_grenade's mesh (GadgetView::pose)
+    std::vector<size_t> grenadeIndices;
+    std::vector<ou::scene::Light> reservedLights;      // GadgetView::base: the first environment lights of every build
     BikeIndices bikeIndices;
     uint64_t version = ~0ull, enemyVersion = ~0ull, lightsVersion = ~0ull, visibilityVersion = ~0ull;
     std::string laraOutfit; // pc-w\<laraOutfit>.drm is in `lara` and rigs the world's pose skeleton
@@ -665,11 +669,99 @@ struct StreamedScene {
             }
         gunIndices.clear();
         append(guns, glm::vec3(0), &gunIndices);
+        grenadeIndices.clear();
+        append(grenades, glm::vec3(0), &grenadeIndices);
+        // GadgetView's moving lights take the first environment slots (OriginalShading uses the first 64 lights).
+        if (out.environment.valid) out.environment.lights.insert(out.environment.lights.begin(), reservedLights.begin(), reservedLights.end());
         version = w.unitsVersion();
         enemyVersion = w.enemies().version();
         lightsVersion = w.lightsVersion();
         visibilityVersion = w.script().visibilityVersion();
         return out;
+    }
+};
+
+// Gadgets (GAMEPLAY.md "Flashlight", "Grenades"): g_personal_light's effect lights (its spot and omni) plus an explosion
+// flash [I] are the scene's first environment lights (StreamedScene::reservedLights), moved every frame through
+// FrameOptions::dynamicLights; pr_grenade's mesh is posed at the live grenades. Logs toggles, throws and explosions.
+struct GadgetView {
+    static constexpr int kSlots = 5; // grenades drawn at once (tru.exe tracks 5 attached ones, 0xED0128 cleared by 0x6988E0)
+    std::vector<ou::scene::Light> base, lights; // spot, omni, flash
+    std::vector<ou::scene::Vertex> scratch;
+    glm::vec3 flashAt{0};
+    uint64_t flashTick = 0;
+    bool lightOn = false, any = false;
+    int carried = -1;
+
+    void load(const ou::cdc::BigfileSet& bf, StreamedScene& streamed, std::vector<std::string>& warnings) {
+        std::vector<ou::scene::Light> found;
+        if (auto b = bf.read("pc-w\\g_personal_light.drm")) found = ou::formats::objectLights(ou::cdc::parseDrm(std::move(*b)));
+        const auto spot = std::find_if(found.begin(), found.end(), [](const auto& l) { return l.type == 1; });
+        const auto omni = std::find_if(found.begin(), found.end(), [](const auto& l) { return l.type == 0; });
+        if (spot == found.end() || omni == found.end()) {
+            warnings.push_back("pc-w\\g_personal_light.drm: no spot / omni light decoded; the flashlight is dark");
+        } else {
+            base = {*spot, *omni, *omni};
+            auto& flash = base[2]; // [I] grenade blast flash: the omni's falloff, orange, explosion-radius reach
+            flash.radius = 2500.0f, flash.flicker.clear(), flash.flickerPeriod = 0;
+            flash.color[0] = 3.0f, flash.color[1] = 1.8f, flash.color[2] = 0.7f;
+            for (auto& l : base) l.position[0] = l.position[1] = l.position[2] = 1e9f; // off until update()
+            lights = base;
+            streamed.reservedLights = base;
+        }
+        auto sc = ou::formats::loadDrmScene(bf, "pc-w\\pr_grenade.drm");
+        if (sc.meshes.empty()) return warnings.push_back("pc-w\\pr_grenade.drm: no mesh decoded");
+        streamed.grenades.textures = std::move(sc.textures), streamed.grenades.materials = std::move(sc.materials);
+        streamed.grenades.shaders = std::move(sc.shaders);
+        for (int k = 0; k < kSlots; ++k) {
+            auto m = sc.meshes[0]; // CPU-posed in world space, as the guns
+            m.skeleton = -1, m.skin.clear();
+            for (int i = 0; i < 16; ++i) m.transform[i] = i % 5 == 0 ? 1.0f : 0.0f;
+            streamed.grenades.meshes.push_back(std::move(m));
+        }
+    }
+
+    void tick(const ou::game::World& w) {
+        const auto tick = (unsigned long long)w.ticks();
+        if (w.flashlight != lightOn)
+            std::fprintf(stderr, "ou-game: tick %llu flashlight %s (%s)\n", tick, w.flashlight ? "on" : "off", w.flashlightSpot() ? "spot + omni" : "omni");
+        if (carried >= 0 && w.grenades < carried) std::fprintf(stderr, "ou-game: tick %llu grenade thrown, %d left\n", tick, w.grenades);
+        for (const auto& e : w.explosions()) {
+            std::fprintf(stderr, "ou-game: tick %llu grenade exploded at %.0f %.0f %.0f (health %.0f)\n", tick, e.x, e.y, e.z, w.health().value());
+            flashAt = e, flashTick = w.ticks(), any = true;
+        }
+        lightOn = w.flashlight, carried = w.grenades;
+    }
+
+    const std::vector<ou::scene::Light>& update(const ou::game::World& w, double alpha) {
+        if (base.empty()) return lights;
+        lights = base; // same sizes: no allocation
+        const auto [pos, dir] = w.flashlightPose(alpha);
+        for (int i = 0; i < 2; ++i) {
+            if (!w.flashlight || (i == 0 && !w.flashlightSpot())) continue; // omni alone outside spot units (0x6B17C0)
+            auto& l = lights[size_t(i)];
+            for (int c = 0; c < 3; ++c) l.position[c] = pos[c], l.direction[c] = dir[c];
+        }
+        const float f = any ? 1.0f - float((double(w.ticks()) + alpha) - double(flashTick)) / 18.0f : 0.0f; // [I] 0.3 s fade
+        if (f > 0) {
+            auto& l = lights[2];
+            for (int c = 0; c < 3; ++c) l.position[c] = flashAt[c], l.color[c] = base[2].color[c] * f;
+        }
+        return lights;
+    }
+
+    void pose(const ou::game::World& w, const StreamedScene& streamed, const ou::scene::SceneData& scene, ou::render::Renderer& r) {
+        const auto& live = w.liveGrenades();
+        for (size_t k = 0; k < streamed.grenadeIndices.size(); ++k) {
+            const size_t i = streamed.grenadeIndices[k];
+            if (k < live.size()) {
+                ou::anim::skinVertices(scene.meshes[i], {}, scratch, glm::translate(glm::mat4(1), live[k].pos));
+            } else {
+                scratch = scene.meshes[i].vertices;
+                for (auto& v : scratch) v.position[0] = v.position[1] = v.position[2] = 0;
+            }
+            r.updateVertices(i, scratch);
+        }
     }
 };
 
@@ -872,6 +964,7 @@ int main(int argc, char** argv) {
     ScriptedMeshes objects;
     std::vector<std::string> warnings;
     CombatView combat;
+    GadgetView gadgets;
     bool spawnFromIntro = false;
     try {
         if (!opt.inputScript.empty()) script = ou::game::InputScript::load(opt.inputScript);
@@ -933,6 +1026,7 @@ int main(int argc, char** argv) {
         }
         if (opt.weapon) // testing: the original gets its secondary and rounds from pickups
             world->giveWeapon(*opt.weapon, world->anims().weapons[size_t(*opt.weapon)].maxReserve);
+        gadgets.load(bf, streamed, warnings);
         scene = streamed.build(bf, *world, lara, enemyMeshes, warnings);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "ou-game: %s\n", e.what());
@@ -1321,6 +1415,7 @@ int main(int argc, char** argv) {
             }
             world->tick(a);
             combat.tick(*world, audioOn ? &mixer : nullptr);
+            gadgets.tick(*world);
             if (const auto* b = world->ridden(); b || bikePhase != "parked") { // bike phase changes + 1 Hz while riding
                 const std::string phase(b ? ou::game::bikePhaseName(b->phase) : "parked");
                 if (b && (phase != bikePhase || world->ticks() % 60 == 0)) {
@@ -1393,6 +1488,7 @@ int main(int argc, char** argv) {
             }
             if (sound) sound->tick(*world);
             hud.tick(ou::game::kTickSeconds);
+            hud.update(CombatView::hudState(*world), ou::game::kTickSeconds);
         }
         try { // a level load or save changed the outfit: new Lara meshes, rig and waves
             if (const auto drm = streamed.dress(*bigfile, *world, warnings)) {
@@ -1426,6 +1522,7 @@ int main(int argc, char** argv) {
         poseBikes(*world, clock.alpha(), streamed.bikeIndices, scene, *renderer, bikeScratch);
         objects.pose(world->script(), scene, *renderer);
         combat.pose(*world, s, clock.alpha(), scene, streamed.gunIndices, streamed.gunSlots, *renderer);
+        gadgets.pose(*world, streamed, scene, *renderer);
         objects.hide(world->collected, scene, *renderer);
         ou::render::Camera cam;
         cam.verticalFovDeg = world->fovDeg;
@@ -1475,7 +1572,6 @@ int main(int argc, char** argv) {
                                 world->found[2], cs.adrenaline * 100, cs.slowMo > 0 ? " HEAD SHOT" : "");
             const auto& wd = world->anims().weapons[size_t(cs.weapon)];
             const auto wi = size_t(cs.weapon);
-            hud.update(CombatView::hudState(*world), ou::game::kTickSeconds);
             t += fmt(" | %s %d", std::string(ou::game::weaponName(cs.weapon)).c_str(), cs.clip[wi][0]);
             if (wd.dual) t += fmt("+%d", cs.clip[wi][1]);
             t += wd.infinite ? std::string(" / inf") : fmt(" / %d", cs.reserve[wi]);
@@ -1567,6 +1663,7 @@ int main(int argc, char** argv) {
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
+        fo.dynamicLights = gadgets.update(*world, clock.alpha());
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;
         if (opt.frames && frame >= opt.frames) {
