@@ -161,6 +161,14 @@ constexpr float kLabelGap = 53.6f;                    // ring label: right ink e
 constexpr float kFooterY = 434.1f, kFooterLine0 = 432.0f, kFooterLine1 = 450.5f; // prompt cell top, lines
 // Message box: texture 106 (its box covers texels 202..822 x 5..250), text at 0.74 with 16-pixel lines.
 constexpr float kDialogY = 214.7f, kDialogW = 672, kDialogH = 210, kDialogText = 0.74f, kDialogTop = 179.8f;
+// YES / NO question in the same box [O dlg_quit / dlg_load(_yes) / dlg_newgame / dlg_autosave_*, 1080p]: text caps from 164
+// every 16, wrapped at 356; labels 384 / 385 at the text's 0.74 with their ink ends (YES right, NO left) at 302.2 / 339.6,
+// a white "/" at 320. The quit question 494 (the main menu's own dialog [I]) differs: caps from 168.9, ink ends 310.7 / 325,
+// "/" at 319. The selected label sits on bar 107 (YES, right end 322.2) or 108 (NO, left end 318.5): 128x32 texels at
+// 0.6 x 0.83, white at 0.5, centred at y 291.1.
+constexpr uint32_t kYesBar = 107, kNoBar = 108;
+constexpr float kConfirmCap = 164, kConfirmCapQuit = 168.9f, kConfirmW = 356, kConfirmMid = 291.1f, kConfirmBarW = 0.6f,
+                kConfirmBarH = 0.83f;
 // Load/Save slot ring: the main ring mirrored about x = kRingX (items 2..7: page up, four slots, page down).
 constexpr float kOpenedRing = 29.8f, kOpenedRingW = 1.3f; // white circle around the ring item that opened it
 constexpr float kSlotFooterL = 193.6f, kSlotFooterR = 433.3f; // "Return SELECT" / "BackSpace DELETE" centres
@@ -423,21 +431,22 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         const bool pause = screen == Screen::Pause;
         return {pause ? Item{.stringId = 122, .action = Action::Resume, .icon = kIconPlay}
                       : Item{.stringId = 123, .action = Action::Continue, .icon = kIconPlay},
-                {.stringId = 124, .opens = Screen::Tailoring, .icon = kIconNew},
+                {.stringId = 124, .opens = Screen::Tailoring, .icon = kIconNew, .confirm = int16_t(pause ? 154 : 0)},
                 {.stringId = 125, .opens = Screen::GameOptions, .icon = kIconOptions},
                 {.stringId = 126, .opens = Screen::Load, .icon = kIconLoad},
                 pause ? Item{.stringId = 127, .opens = Screen::Save, .icon = kIconSave}
                       : Item{.stringId = 127, .opens = Screen::Message, .icon = kIconSave, .message = 161}, // "only ... in gameplay mode"
                 {.stringId = 128, .opens = Screen::AudioVisual, .icon = kIconAv},
                 {.stringId = 129, .opens = Screen::Message, .icon = kIconExtras, .message = unavailable},
-                {.stringId = 131, .action = pause ? Action::QuitToMenu : Action::Quit, .icon = kIconQuit}};
+                {.stringId = 131, .action = pause ? Action::QuitToMenu : Action::Quit, .icon = kIconQuit, .confirm = 494}};
     }
     case Screen::Load:
     case Screen::Save: {
         std::vector<Item> v{{.icon = kIconPageUp}};
         for (int k = 0; k < 4; ++k) {
             const size_t i = size_t(page_ * 4 + k);
-            v.push_back(i < saves.size() ? Item{.label = saves[i], .action = screen == Screen::Load ? Action::Load : Action::Save, .icon = kIconSlotUsed}
+            v.push_back(i < saves.size() ? Item{.label = saves[i], .action = screen == Screen::Load ? Action::Load : Action::Save,
+                                                .icon = kIconSlotUsed, .confirm = int16_t(screen == Screen::Load ? 12 : 16)}
                                          : Item{.action = screen == Screen::Load ? Action::None : Action::Save, .icon = kIconSlotEmpty});
         }
         v.push_back({.icon = kIconPageDown});
@@ -478,6 +487,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.stringId = 1082, .greyed = true},
                 {.stringId = 122, .action = Action::Resume}};
     case Screen::Message: return {{.stringId = 383}}; // OK
+    case Screen::Confirm: return {{.stringId = 384}, {.stringId = 385}}; // YES / NO
     case Screen::None: break;
     }
     return {};
@@ -491,6 +501,14 @@ Action Menus::input(Nav n) {
     if (n == Nav::Alt) {
         if (scr == Screen::Pda && cursor_ == kField) return Action::Answer;
         n = Nav::Accept;
+    }
+    if (scr == Screen::Confirm) { // Esc does nothing [O]
+        if (n == Nav::Up || n == Nav::Down || n == Nav::Left || n == Nav::Right) cursor_ = 1 - cursor_;
+        if (n != Nav::Accept) return Action::None;
+        const bool yes = cursor_ == 0;
+        const Item it = pending_;
+        back();
+        return yes ? activate(it) : Action::None;
     }
     if (slots(scr)) { // the slot ring: -1 = focus on the ring item that opened the screen
         auto page = [&](int d) {
@@ -507,15 +525,14 @@ Action Menus::input(Nav n) {
         case Nav::Delete:
             if (cursor_ < 1 || cursor_ > 4 || list[size_t(cursor_)].label.empty()) return Action::None;
             selected_ = list[size_t(cursor_)].label;
-            return Action::Delete;
+            return activate({.action = Action::Delete, .confirm = 10});
         case Nav::Accept: {
             if (cursor_ < 0) { select(1); return Action::None; }
             if (cursor_ == 0 || cursor_ == count - 1) { page(cursor_ == 0 ? -1 : 1); return Action::None; }
             const Item& it = list[size_t(cursor_)];
             if (it.action == Action::None) return Action::None; // empty slot on Load
             selected_ = it.label;
-            if (it.action == Action::Load) close();
-            return it.action;
+            return activate(it);
         }
         default: return Action::None;
         }
@@ -548,28 +565,37 @@ Action Menus::input(Nav n) {
         return Action::None;
     case Nav::Delete: return Action::None;
     case Nav::Alt:
-    case Nav::Accept: {
-        const Item& it = list[size_t(cursor_)];
-        if (it.opens != Screen::None) {
-            if (it.opens == Screen::Message) message_ = it.message;
-            open(it.opens);
-            return Action::None;
-        }
-        if (it.toggle) { *it.toggle = !*it.toggle; return Action::None; }
-        if (scr == Screen::Tailoring) {
-            tailoring = cursor_;
-            if (it.action == Action::None) { back(); return Action::None; }
-        }
-        if (it.action == Action::None) { // BACK / OK / sliders / PDA AREA INFO
-            if (!it.value && scr != Screen::Pda) return input(Nav::Back);
-            return Action::None;
-        }
-        if (it.action == Action::Hint) return Action::Hint;
-        if (it.action == Action::Resume || it.action == Action::NewGame || it.action == Action::Continue) close();
-        return it.action;
-    }
+    case Nav::Accept: return activate(list[size_t(cursor_)]);
     }
     return Action::None;
+}
+
+Action Menus::activate(Item it) {
+    if (it.confirm) {
+        pending_ = it, pending_.confirm = 0, message_ = it.confirm;
+        open(Screen::Confirm);
+        cursor_ = 1; // NO [O]
+        return Action::None;
+    }
+    const Screen scr = screen();
+    if (it.opens != Screen::None) {
+        if (it.opens == Screen::Message) message_ = it.message;
+        open(it.opens);
+        return Action::None;
+    }
+    if (it.toggle) { *it.toggle = !*it.toggle; return Action::None; }
+    if (scr == Screen::Tailoring) {
+        tailoring = cursor_;
+        if (it.action == Action::None) { back(); return Action::None; }
+    }
+    if (it.action == Action::None) { // BACK / OK / sliders / PDA AREA INFO
+        if (!it.value && scr != Screen::Pda) return input(Nav::Back);
+        return Action::None;
+    }
+    if (it.action == Action::Hint) return Action::Hint;
+    if (it.action == Action::Resume || it.action == Action::NewGame || it.action == Action::Continue || it.action == Action::Load)
+        close();
+    return it.action;
 }
 
 void Menus::drawRadial(Canvas& c, const locale::Strings& s, Screen screen, int cursor, bool opened) {
@@ -777,6 +803,23 @@ void Menus::drawMessage(Canvas& c, const locale::Strings& s) {
     c.fontText(320 - c.fontWidth(ok, kDialogText) / 2, 290.2f - kCapMid * kDialogText / kTextScale, kDialogText, ok, kWhite);
 }
 
+void Menus::drawConfirm(Canvas& c, const locale::Strings& s) {
+    c.sprite(kDialog, 320, kDialogY, kDialogW, kDialogH, kWhite);
+    float cap = message_ == 494 ? kConfirmCapQuit : kConfirmCap;
+    for (const auto& l : fontWrap(c, s.get(message_), kConfirmW, kDialogText))
+        capText(c, 320 - c.fontWidth(l, kDialogText) / 2, cap, kDialogText, l, kWhite), cap += 16;
+    const float barW = 128 * kConfirmBarW, barH = 32 * kConfirmBarH, kConfirmScale = kDialogText;
+    const bool yes = cursor_ == 0;
+    c.sprite(yes ? kYesBar : kNoBar, yes ? 322.2f - barW / 2 : 318.5f + barW / 2, kConfirmMid, barW, barH, withAlpha(kWhite, 0.5f));
+    const float labelCap = kConfirmMid - kCapHeight * kConfirmScale / 2;
+    const std::string y(s.get(384)), n(s.get(385)), slash("/");
+    const uint32_t on = rgba(181, 217, 255), off = rgba(76, 76, 76);
+    const bool quit = message_ == 494;
+    capText(c, (quit ? 310.7f : 302.2f) - c.fontWidth(y, kConfirmScale), labelCap, kConfirmScale, y, yes ? on : off);
+    capText(c, quit ? 325 : 339.6f, labelCap, kConfirmScale, n, yes ? off : on);
+    capText(c, (quit ? 319 : 320) - c.fontWidth(slash, kConfirmScale) / 2, labelCap, kConfirmScale, slash, kWhite);
+}
+
 void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
     const Screen scr = screen();
     if (scr == Screen::None) return;
@@ -784,6 +827,7 @@ void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
     if (!mainMenu()) c.rect(0, 0, float(c.width), float(c.height), 0x70000000u); // the paused game, dimmed
     if (scr == Screen::Tailoring) return drawTailoring(c, s); // these two over the backdrop alone [O captures]
     if (scr == Screen::Message) return drawMessage(c, s), footer(c, s, key, {{320, 120}});
+    if (scr == Screen::Confirm) return drawConfirm(c, s), footer(c, s, key, {{320, 120}});
     // Backdrop of the ring and list screens: the glyph art and the ring's shadow.
     c.sprite(kFrontArt, kArtX, kArtY, kArtSize, kArtSize, withAlpha(kWhite, kArtAlpha));
     for (int q = 0; q < 4; ++q) // one quarter texture, mirrored

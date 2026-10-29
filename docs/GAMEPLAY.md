@@ -1220,8 +1220,15 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   QUIT GAME. Navigation as tru.exe: Left from the centre to the last ring item (first time SAVE GAME, the one level with
   the centre), Right back to the centre, Up/Down along the ring and off either end to the centre.
 - Pause [O]: the same ring with 122 RESUME GAME in the centre over the game dimmed to ~0.56 (HUD hidden); SAVE GAME opens
-  the Save screen, QUIT GAME returns to the main menu [I: no confirmation 494]. No PDA item: the `pda` action (key 1,
+  the Save screen, QUIT GAME returns to the main menu (after 494 [I]). No PDA item: the `pda` action (key 1,
   replays `pda`) opens the PDA.
+- Confirmation dialogs [O dlg_quit, dlg_load(_yes), dlg_newgame, dlg_autosave_*]: box 106 over the backdrop alone (no ring);
+  the question at 0.74 centred, wrapped at 356, caps from 164 every 16; YES 384 / NO 385 at 0.74 with their ink ends at
+  302.2 / 339.6 and "/" at 320 (white); the selected one (181, 217, 255) on bar 107 (YES, right end 322.2) or 108 (NO, left
+  end 318.5) at 0.6 × 0.83 per texel, white at 0.5, centred y 291.1; the other (76, 76, 76); NO selected, Esc does nothing,
+  footer 120. The quit dialog (494) is laid out differently: caps from 168.9, ink ends 310.7 / 325, "/" at 319. Asked by:
+  QUIT GAME 494 (main menu [O]; pause [I]), Load on a used slot 12 [O], pause START NEW GAME 154 [O], Save on a used slot
+  16 and Delete 10 [I placement].
 - LOAD / SAVE GAME [O empty slots]: the ring stays (the opened item: black disc ×1.17 with a white circle r 29.8, 1.3
   wide; the centre label stays) and a mirrored ring (items 2..7 mirrored about x 320.3): page up 27, four slots, page
   down 28, icons (114, 124, 165); empty slot 29, used slot 30 [I: filled slots were not captured], selection as on the
@@ -1269,7 +1276,7 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
 Keys: arrows/WASD, Enter/Space accept, E = Alt (accept; PDA TASK), Esc back, Backspace/Delete delete; pad d-pad,
 South accept, West Alt, North delete, East/Start back. Replays drive menus with `forward`/`right` ±1, `jump` (accept),
 `interact` (Alt), `drop`/`pause` (back), `pda`; the script clock keeps running in menus. Not reproduced: the attract
-mode (intro.bik after ~1 min idle), title music, confirmation dialogs (154–160, 494), the decorative small text under
+mode (intro.bik after ~1 min idle), title music, the decorative small text under
 the list panels, the PDA's sonar map / weapon / inventory / journal sub-screens, filled save slot details, and the
 footer always names the keyboard key.
 

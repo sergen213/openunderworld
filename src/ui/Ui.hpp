@@ -65,7 +65,8 @@ public:
 // Delete: Backspace on the Save/Load slot ring. Alt: the second PDA prompt key (E: Field Assistance TASK); Accept
 // elsewhere.
 enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
-enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message };
+// Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item.
+enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm };
 // Continue: load the newest save (the app starts a new game when there is none). Save/Load/Delete act on
 // selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
 enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer };
@@ -82,6 +83,7 @@ struct Item {
     int16_t onId = 0, offId = 0;
     bool pair = false;
     bool greyed = false;   // shown, never selected (PDA JOURNAL / REVISIT LOCATION)
+    int16_t confirm = 0;   // Accept first asks this locals.bin YES / NO question (Screen::Confirm)
 };
 
 // What the PDA shows: the chapter (kChapters index) and this chapter's relics/treasures found / in it.
@@ -130,7 +132,9 @@ private:
     void drawTailoring(Canvas& c, const locale::Strings& s);
     void drawPda(Canvas& c, const locale::Strings& s);
     void drawMessage(Canvas& c, const locale::Strings& s);
+    void drawConfirm(Canvas& c, const locale::Strings& s);
     std::vector<Item> itemsOf(Screen s);
+    Action activate(Item it); // Accept on `it` of the current screen
     void back(); // pop, restoring the cursor of the screen below
     void select(int item);
 
@@ -139,6 +143,7 @@ private:
     int cursor_ = 0, ring_ = -1; // ring_: last ring item (radial screens), -1 = none yet
     int page_ = 0;               // Load/Save slot page (four slots each)
     int16_t message_ = 0;
+    Item pending_;         // Screen::Confirm: the item YES runs
     std::string selected_;
     std::array<float, 8> grow_{}; // per radial / slot item: 0 = idle .. 1 = selected (eased)
     float label_ = 0;             // label fade-in of the selected radial item, 0..1

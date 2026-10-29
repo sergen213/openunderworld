@@ -238,11 +238,19 @@ TEST(Menus, PauseSlotsAndPda) {
     EXPECT_TRUE(slotRing[3].label.empty());
     m.input(ui::Nav::Right), m.input(ui::Nav::Down);
     EXPECT_EQ(m.cursor(), 2);
-    EXPECT_EQ(m.input(ui::Nav::Delete), ui::Action::Delete);
+    EXPECT_EQ(m.input(ui::Nav::Delete), ui::Action::None); // asks 10 first
+    ASSERT_EQ(m.screen(), ui::Screen::Confirm);
+    m.input(ui::Nav::Left);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Delete); // YES
+    EXPECT_EQ(m.screen(), ui::Screen::Load);
     EXPECT_EQ(m.selectedSave(), "save-1");
+    EXPECT_EQ(m.cursor(), 2);
     m.input(ui::Nav::Down);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // empty slot
     m.input(ui::Nav::Up);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // asks 12
+    ASSERT_EQ(m.screen(), ui::Screen::Confirm);
+    m.input(ui::Nav::Left);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Load);
     EXPECT_EQ(m.selectedSave(), "save-1");
     EXPECT_EQ(m.screen(), ui::Screen::None);
@@ -268,6 +276,40 @@ TEST(Menus, PauseSlotsAndPda) {
     m.open(ui::Screen::Pda);
     EXPECT_EQ(m.input(ui::Nav::Back), ui::Action::Resume);
     EXPECT_EQ(m.screen(), ui::Screen::None);
+}
+
+// YES / NO questions [O dlg_*]: NO selected, Esc ignored, YES runs the item.
+TEST(Menus, ConfirmDialogs) {
+    ui::Menus m;
+    m.open(ui::Screen::Main);
+    m.input(ui::Nav::Left), m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Down); // QUIT GAME
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    ASSERT_EQ(m.screen(), ui::Screen::Confirm);
+    EXPECT_EQ(m.cursor(), 1);
+    EXPECT_EQ(m.input(ui::Nav::Back), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::Confirm);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // NO
+    EXPECT_EQ(m.screen(), ui::Screen::Main);
+    EXPECT_EQ(m.cursor(), 7);
+    m.input(ui::Nav::Accept), m.input(ui::Nav::Right);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Quit); // YES
+    m.close();
+    m.open(ui::Screen::Pause);
+    m.input(ui::Nav::Left), m.input(ui::Nav::Up), m.input(ui::Nav::Up), m.input(ui::Nav::Up); // START NEW GAME
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    ASSERT_EQ(m.screen(), ui::Screen::Confirm); // 154
+    m.input(ui::Nav::Up), m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::Tailoring);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::NewGame);
+    m.open(ui::Screen::Pause);
+    m.saves = {"quick"};
+    m.input(ui::Nav::Left), m.input(ui::Nav::Accept), m.input(ui::Nav::Accept); // SAVE GAME, the used slot
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None); // overwrite? (16)
+    ASSERT_EQ(m.screen(), ui::Screen::Confirm);
+    m.input(ui::Nav::Left);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Save);
+    EXPECT_EQ(m.selectedSave(), "quick");
+    EXPECT_EQ(m.screen(), ui::Screen::Save);
 }
 
 TEST(Menus, TextAndCanvas) {
