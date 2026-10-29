@@ -120,7 +120,7 @@ VK 1.66 ms); FXAA + HDR add ≤ 0.07 ms. GL is CPU/draw-call bound (one draw per
 | Shaders | GLSL in `src/render/vk/shaders/`, compiled by `glslc --target-env=vulkan1.3 -O -mfmt=num` at build time into `build/vk_shaders/*.inc`, `#include`d as `uint32_t[]`; `scene.vert/frag` a second time with `-DOU_RT` (`scene_rt.*.inc`). Push constants: scene/shadow `{mat4 viewProj, model; int lighting; float alphaRef; int rt, pad}` (144 B, checked against `maxPushConstantsSize`; sun/eye/rays live in the `OuShadow` UBO), overlay `{vec2 screen}`, post `{int fxaa, hdr; float brightness}`. Pipelines: one per `scene::Blend` + lines (rebuilt with the MSAA count / HDR format / RT on-off), shadow (depth only, depth bias), RT depth pre-pass, post and overlay (swapchain format). `shaderDemoteToHelperInvocation` enabled for `discard`. |
 | Pipeline cache | loaded from / saved to `$XDG_CACHE_HOME/openunderworld/vk_pipeline_cache.bin` (fallback `~/.cache/...`); drivers ignore incompatible blobs. |
 | Screenshot | after `drawFrame`, a one-shot copy PRESENT_SRC → TRANSFER_SRC → buffer → PRESENT_SRC, BGRA swizzled to RGB. |
-| CPU skinning | `updateVertices(meshIndex, vertices)`: scene-mesh → GPU-slot map, vertex count checked, staged copy into the device-local vertex buffer behind a write-after-read barrier, waited on a fence (one queue round-trip per call). |
+| CPU skinning | `updateVertices(meshIndex, vertices)`: scene-mesh → GPU-slot map, vertex count checked, copied into the current frame-in-flight's host-visible staging buffer (grown on demand; repeated updates before a draw overwrite their slot). `drawFrame` records the staged copies at the start of its command buffer behind one write-after-read barrier (no queue round-trip; the old per-call fence wait serialised CPU and GPU). See "FSR … Performance" for the l4_ballcourt profile. |
 | Debug lines | `FrameOptions::debugLines`: expanded to `{vec3, unorm4}` vertices in a per-frame host-coherent buffer (grown to the next power of two), `LINE_LIST` pipeline after the scene, depth test LEQUAL without depth writes, `z -= 0.5e-4·w` (the GL backend's `1e-4·w` in GL's [-w, w] clip range), unlit. |
 | Ray tracing | optional, see "Ray tracing" below: `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` (+ `deferred_host_operations`), `bufferDeviceAddress`, descriptor indexing, `shaderInt64` enabled when all are present. `VK_KHR_ray_tracing_pipeline` is not used. |
 
@@ -142,7 +142,7 @@ rebuilds (`Renderer::rtStatus()`, `rtSummary`).
 |---|---|
 | Support | `probeRayTracing()`: the extensions + features above and ≥ 4098 sampled images per stage. Anything missing (or `OU_VK_NO_RT=1`, the simulated-unsupported switch) leaves the device without RT: `rtStatus().supported = false` with the reason, and a requested RT mode renders with the shadow map (`--rt` never fails). The GL backend reports unsupported. |
 | Acceleration structures | Built by the first frame that asks for RT after `upload()` (nothing is built while RT is off). One BLAS per mesh with one triangle geometry per submesh that casts in the shadow map too (`Blend::Opaque` + `Blend::Alpha`; Additive / Average neither cast nor reflect), vertex/index buffers used in place via buffer device addresses. Static BLASes `PREFER_FAST_TRACE`; skinned meshes (`MeshData::skin`) `ALLOW_UPDATE + PREFER_FAST_BUILD`. One TLAS instance per BLAS with the mesh's model matrix (static: `GpuMesh::model` never changes), both faces (`TRIANGLE_FACING_CULL_DISABLE`), custom index = first geometry record; mask 2 for water, 1 otherwise. TLAS `ALLOW_UPDATE + PREFER_FAST_TRACE`. Upload builds are batched into ≤ 64 MiB of shared scratch. |
-| Dynamic meshes | `updateVertices()` records the BLAS work into the copy's own submission: refit (mode UPDATE) for skinned meshes (Lara, enemies), full in-place rebuild for others (pistols in ou-game are rigid and rebuilt). The next RT frame updates the TLAS in place once (not rebuilt). Choice [I]: refits keep the bind-pose BVH topology, so traversal degrades with large poses but stays correct. |
+| Dynamic meshes | The frame's recorded vertex copies are followed by the BLAS work: refit (mode UPDATE) for skinned meshes (Lara, enemies), full in-place rebuild for others (pistols in ou-game are rigid and rebuilt), once per frame however often the mesh was updated. The TLAS is then updated in place once (not rebuilt). Choice [I]: refits keep the bind-pose BVH topology, so traversal degrades with large poses but stays correct. |
 | Geometry records | storage buffer, one `{vertex address, index address, first index, texture slot, alpha ref}` per geometry, indexed by `instanceCustomIndex + geometryIndex` in the shader. |
 | Alpha test (any-hit equivalent) | Non-opaque geometries (alpha ref ≠ 0: `Blend::Alpha` cut at 50 % as the shadow map, or an alpha-tested opaque material) are tested in the `rayQueryProceedEXT` loop: barycentric UV from the index/vertex buffers, `textureLod(..., 0)` of the bindless texture array (set 2, 4096 slots, partially bound), texture alpha only (as `shadow.frag`); candidates that pass are confirmed. |
 | Shadows | `scene_rt.frag`: N rays per pixel toward the sun inside a cone of tan 0.012 (golden-angle spiral rotated per pixel by interleaved gradient noise), `TerminateOnFirstHit`, origin offset along the normal by 2 + 2e-4 · distance units. Spatial denoise: the visibility is averaged over the lanes of the 2x2 pixel quad that trace (fine derivatives; quads never span primitives, so no bleeding across edges); helper lanes, alpha-discarded lanes and lanes facing away from the sun trace nothing. No temporal accumulation (no history buffer / TAA yet): the per-pixel noise is fixed, so still frames are stable. |
@@ -177,8 +177,9 @@ shared): frame UBO, material UBO + 16 samplers, object block (GL UBO range / Vul
 irradiance-volume lighting (dynamic objects), and materials without composite programs, keep the generic shading below.
 With RT: depth pre-pass, then opaque draws use the ray-traced pixel-shader variant (water: + reflections), blended ones
 the shadow-map variant. Details, survey and evidence: docs/formats/SHADERS.md.
-Vulkan: one pipeline per (program, pixel-shader variant plain / shadow map / rays, blend) created on first use (variants
-compiled on first use), one descriptor set per distinct (program, material,
+Vulkan: one pipeline per (program, pixel-shader variant plain / shadow map / rays, blend) created on first use; all
+variants' SPIR-V is compiled at upload on up to 16 threads (compiling them on first draw cost ~30 % of l4_ballcourt's
+frames as materials came into view; rays only on RT-capable devices), one descriptor set per distinct (program, material,
 instance textures, alpha ref), only consumed vertex attributes declared (validation-clean).
 
 **Observed** GL vs Vulkan (`ou-imgdiff`, 1792x1008, original shaders, 2026-10-18): l4_ballcourt `player` start 0.025/255
@@ -366,20 +367,49 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
   resolution with FSR's Halton jitter (`Camera::jitter`, applied to the generic and the translated programs'
   projections). Then a mask pass (`fsr_camera.frag`, `fsr_mask.*`) writes motion vectors (UV, previous − current,
   unjittered; RG16F): camera motion of every pixel from depth, overwritten for meshes moved by `updateVertices`
-  (CPU-skinned characters, animated objects; previous pose kept per mesh) — and reactivity (R8): blended submeshes
-  0.9 × alpha, Enhanced water 0.6. The post pass writes `fsrInput_` (LDR, display-referred), FSR upscales into an RGBA8
+  (CPU-skinned characters, animated objects; the pose the last frame drew is copied GPU-side into the mesh's
+  `prevVertices` at the start of the frame, before the new upload lands — no CPU copy, no re-upload) — and
+  reactivity (R8, max-blended): blended submeshes 0.9 × alpha, Enhanced water 0.6, original fx sprites
+  (`fsr_fx.frag`: alpha blend → alpha, additive / subtract → max(rgb · a), multiply → |rgb + a − 1|) and splash droplets
+  (`fsr_splash.frag`) 0.9 × their coverage, rain / snow 0.9 × the post pass's precipitation coverage
+  (`fsr_weather.frag`, `atmosphere.glsl` `ouPrecipitation`). The reactive draws are skipped when the provider does not
+  consume a reactive mask (ffx resource-requirements query; FSR 3.1 takes it as optional input). The upscaler context
+  carries `ffxCreateContextDescUpscaleVersion` (SDK 2.1+ contract). The post pass writes `fsrInput_` (LDR,
+  display-referred), FSR upscales into an RGBA8
   image, which is blitted into the swapchain; the UI / HUD / overlay is drawn after the upscale at display resolution.
   Depth is standard (0 near, 1 far, finite far plane). Exposure 1 (input already tonemapped). Camera cuts
   (> 500 units or > 45°) reset the history.
 - **Frame generation**: per frame, FSR FG prepares from depth + motion and interpolates between the previous and this
-  frame's HUD-less upscaled image; the UI is drawn on both. `present()` presents the generated image, then the real one
-  half the measured frame interval later (0.9/0.1 moving average; the render thread sleeps). The swapchain gets
-  minImageCount + 2 images. Each frame thus shows the previous real frame's successor half a frame late (latency +½ frame).
+  frame's HUD-less upscaled image; the UI is drawn on both. A present thread (started with the first generated frame;
+  afterwards every present goes through it, in order) presents the generated image no earlier than half an interval after
+  the previous real one, then the real one half an interval later, so the render thread goes straight on with the next
+  frame. Interval = 0.9/0.1 moving average of the render thread's frame time without its waits for swapchain images
+  (counting those would lock the pacing at any interval it once had). While further frames are queued the thread presents
+  without waiting. Queue submits / presents and swapchain acquires share one mutex (Vulkan external synchronisation);
+  acquires poll with timeout 0 under it, so the render thread never blocks inside the driver on an image only the present
+  thread can free; device-idle waits drain the present queue first. The swapchain gets minImageCount + 2 images. Each
+  frame shows the previous real frame's successor half a frame late (latency +½ frame).
+- **Performance** (`tests/replays/ballcourt_door_lever.txt` in l4_ballcourt, 400 frames, `OU_VK_PRESENT_STATS=1`, no vsync, RT on, RX 7900 XTX):
+  `perf` showed the game CPU-bound at 21.7 fps (1440p native) on three things, all fixed: CPU skinning of every
+  enemy every frame (32 % of the main thread; now enemies outside the view cone beyond 1500 units keep their pose, and
+  single-bone vertices reuse one world × palette matrix per bone, bit-identical), compiling the translated programs'
+  shadow-map / ray-traced variants on first draw (29 %; now at upload, in parallel), and `updateVertices`' per-call
+  fence wait (now recorded into the frame). Medians of the present interval after the fixes:
+
+  | Output | Native | FSR Quality | FSR Performance | Quality + FG (presented / real per s) | Performance + FG |
+  |---|---|---|---|---|---|
+  | 2560×1440 | 19.6 ms | 16.4 ms | 15.0 ms | 96.7 / 48.4 | 97.6 / 48.8 |
+  | 3840×2160 | 28.1 ms | 20.8 ms | 17.8 ms | 68.2 / 34.1 | 78.6 / 39.3 |
+
+  (Averages over the 400 frames incl. one streaming hitch: 1440p 44.2 / 49.9 / 55.1 fps, 4K 27.9 / 35.0 / 39.5 fps.)
+  Frame generation costs about 1 ms of real frame time and doubles presented frames. Original preset with FSR off is
+  byte-identical to the build before these changes (ou-imgdiff GL and Vulkan, frame 240 of the replay: mean 0.000).
 - **Diagnostics**: F1 line `FSR 3.1.6 quality 1280x720 -> 1920x1080 | frame generation on, FG 3.1.6 (N generated)`.
-  `OU_VK_PRESENT_STATS=1` prints presented images/s and present spacing at exit; `OU_VK_CAPTURE_DIR=dir` writes every
-  presented image (`NNNNNN-real.ppm`, `NNNNNN-gen.ppm`).
-- **Known gaps**: splashes and original fx billboards are not in the reactive mask (can ghost briefly); rain/snow are
-  drawn in the post pass without motion; translated vertex animation (wind) has no motion vectors. Khronos validation
-  reports one upstream issue: the FG pass writes a 3-component texel to the RGBA8 output (`VUID-vkCmdDispatch-OpImageWrite-08795`,
-  harmless on RADV). Unsupported devices (no formatless storage images, compute derivatives, independent blend,
+  `OU_VK_PRESENT_STATS=1` prints presented images/s, present spacing (mean / median / sd / p99, alternating intervals)
+  and the render thread's per-frame fence / acquire waits and `vkQueuePresentKHR` time at exit; `OU_VK_CAPTURE_DIR=dir`
+  writes every presented image (`NNNNNN-real.ppm`, `NNNNNN-gen.ppm`).
+- **Known gaps**: translated vertex animation (wind) has no motion vectors; no negative texture mip bias with FSR yet
+  (every texture descriptor shares one sampler). Khronos validation reports one upstream issue: the FG pass writes a
+  3-component texel to the RGBA8 output (`VUID-vkCmdDispatch-OpImageWrite-08795`, harmless on RADV); SDK patch 6 (8
+  queued frames) fixed FG destroying image views still in flight. Unsupported devices (no formatless storage images, compute derivatives, independent blend,
   subgroup ops) or a build without DXC fall back to native rendering with the reason in F1.

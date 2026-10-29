@@ -118,26 +118,6 @@ TEST(Fx, BurstEmitterSpawnsOnce) {
     EXPECT_EQ(s.particleCount(), 12u);
 }
 
-// Anim-event records: material filter (info & 0x3F0), variant bits (0xC00) skipped, later frames fire as ticks pass.
-TEST(Fx, AnimEventsFilterByMaterialAndPlayLater) {
-    auto o = std::make_shared<fx::ObjectFx>();
-    o->particles.push_back(fx::parseParticleDef(flameDef()));
-    auto& ev = o->clips["idle"];
-    ev.push_back({0x2001, 0, 0, {3, 0, 0, 0}}); // any material
-    ev.push_back({0x2011, 0, 0, {3, 0, 0, 0}}); // material 1 only
-    ev.push_back({0x2021, 3, 0, {3, 0, 0, 0}}); // material 2, frame 3
-    ev.push_back({0x2801, 0, 0, {3, 0, 0, 0}}); // variant 2: never
-    ev.push_back({0x2025, 0, 0, {3, 0, 0, 0}}); // disabled
-    fx::System s;
-    s.play(o, *o->clip("idle"), glm::mat4(1), 7, 2);
-    EXPECT_EQ(s.emitterCount(), 1u); // the unfiltered record now
-    for (int t = 0; t < 5; ++t) s.tick({});
-    EXPECT_EQ(s.emitterCount(), 1u);
-    s.tick({}); // tick 6 = frame 3
-    EXPECT_EQ(s.emitterCount(), 2u);
-    EXPECT_EQ(s.runEvents(o, ev, glm::mat4(1), 8, 1, 0, 1), 2); // material 1: unfiltered + its own
-}
-
 // ---- Real data (skipped without OU_GAME_DIR) ---------------------------------------------------
 namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }
@@ -212,55 +192,4 @@ TEST(FxReal, EveryFxObjectParses) {
     EXPECT_EQ(defs, 2011);    // particle definitions
     EXPECT_EQ(birth, 389);    // enabled event-0 effect records
     EXPECT_EQ(textured, 1908); // per-object distinct particle textures, all present in the object DRM
-}
-
-// Hitscan impacts: the ammo object names its hit objects (data +0x3C above water, +0xA8 under water; tru.exe 0x6C64D0
-// -> 0x6B7030), whose "idle" clip events pick the particles by the hit surface's material (info & 0x3F0).
-TEST(FxReal, BulletHitPicksParticlesBySurfaceMaterial) {
-    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::BigfileSet bf(gameDir());
-    fx::Library lib(bf);
-    EXPECT_EQ(lib.dataU16("pr_handgunbullet", 0x3C), 53);  // bullet_hit
-    EXPECT_EQ(lib.dataU16("pr_handgunbullet", 0xA8), 61);  // bullet_hit_underwater
-    EXPECT_EQ(lib.dataU16("pr_shotgunbullet", 0x3C), 68);  // bullet_hit_shotgun
-    const auto hit = lib.get("bullet_hit");
-    ASSERT_TRUE(hit);
-    EXPECT_EQ(hit->particles.size(), 161u);
-    const auto* idle = hit->clip("idle");
-    ASSERT_TRUE(idle);
-    auto started = [&](uint8_t material) {
-        std::set<int> defs;
-        for (const auto& e : *idle)
-            if (e.runsOn(material) && e.cmd.type == 3) defs.insert(e.cmd.a1);
-        return defs;
-    };
-    EXPECT_EQ(started(1), (std::set<int>{61, 62, 63, 87, 88, 89, 90}));      // stone dust + unfiltered sparks
-    EXPECT_TRUE(started(23).contains(23));                                   // flesh: dark-red blood
-    EXPECT_EQ(hit->particles[23].keys[0].rgba & 0xFFFFFF, 0x07076Eu);
-    EXPECT_TRUE(started(2).contains(109));                                   // water spray
-    fx::System s;
-    s.play(hit, *idle, glm::mat4(1), 1, 1);
-    for (int t = 0; t < 4; ++t) s.tick({0, -500, 0});
-    EXPECT_GT(s.particleCount(), 10u);
-}
-
-// Weapon "fire" clip events start the muzzle flash at the gun's HInfo markers (-10 muzzle, -20..-23 flash points).
-TEST(FxReal, WeaponFireEventsUseMuzzleMarkers) {
-    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::BigfileSet bf(gameDir());
-    const auto gun = load(bf, "wp_handgun");
-    ASSERT_TRUE(gun);
-    const auto* fire = gun->clip("fire");
-    ASSERT_TRUE(fire);
-    std::set<int> defs;
-    for (const auto& e : *fire)
-        if (e.runsOn(1) && e.cmd.type == 3 && e.frame == 0) defs.insert(e.cmd.a1);
-    for (const int d : {0, 1, 2, 3, 4, 5, 6, 7}) EXPECT_TRUE(defs.contains(d)) << d;
-    for (const int id : {10, 20, 23}) EXPECT_TRUE(gun->markers.contains(id)) << id;
-    EXPECT_GT(glm::length(glm::vec3(gun->frame(-10)[3]) - glm::vec3(gun->frame(-13)[3])), 5.0f); // muzzle != ejection port
-    for (const auto* name : {"wp_shotgun", "wp_uzi", "wp_speargun"}) {
-        const auto w = load(bf, name);
-        ASSERT_TRUE(w) << name;
-        EXPECT_TRUE(w->clip("fire")) << name;
-    }
 }

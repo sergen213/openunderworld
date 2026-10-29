@@ -7,7 +7,6 @@ All notable changes to OpenUnderworld are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- Original combat and animation-event effects: muzzle flashes from the weapon objects' `fire` clip events at their muzzle markers, bullet impacts from the ammo's hit object (`bullet_hit`, ...) picked by the hit surface's collision material (stone dust, sparks, water spray, blood on bodies), casings as small sprites, and Lara's / enemies' clip events (footstep dust, splashes) on their posed bones, GL + Vulkan; the placeholder line muzzle flashes/impacts are gone (docs/formats/EFFECTS.md "Animation events and combat").
 - Spline movers: intro +0x68 paths (Bezier/Hermite position, slerped rotation, 30 Hz keys) move their objects with the original play modes (once, loop, loop count, ping-pong, clip, play-to-key, key-range callbacks) and all `spline` script natives; moved objects with collision carry Lara. The l7_yggdrasil_end Natla movers and l1_seafloor fish now move.
 - Script VM: array opcodes (DREF/BOUNDS) and thread blocks (TSSTART/TPSTART/TEND, run inline); `playersensor`, `instance` 18/21/23, `modifiable` 1, `unitref` 2 and `larabase` 25/27/29/55/56 natives. Script survey stops 472 → 265 (with more code now reached).
 - Script function arguments are placed at their prototype byte offsets (from 0) instead of after a `this` slot; handlers that read their arguments (e.g. Lara's reveal control toggle, mover PlayFromKey) got the object's own id before.
@@ -18,6 +17,8 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - The l2 elevator only starts when Lara pulls its switch: objects now start in state 0 of their script, as the original does, and switches whose script handles the use itself get it.
 - Scripted screen fades (fade to/from black) are now drawn in OpenGL and Vulkan.
 - Lara can no longer free-climb any wall: she now only climbs where the level places the original's free-climb holds (eight areas, such as the Thailand cliff climb), and stops where the holds end.
+- Much higher frame rates in busy levels (Vulkan): l4_ballcourt at 1440p went from about 22 to 45 fps. Enemies the camera can't see are no longer re-skinned every frame, the original shaders' lighting variants are compiled while the level loads instead of when materials first come into view (which also removes stutter), and animated characters' vertex uploads no longer stall the GPU.
+- FSR is now faster than native rendering (1440p: Quality 16.4 ms and Performance 15.0 ms per frame against 19.6 ms native; 4K: 20.8 / 17.8 ms against 28.1 ms), and frame generation no longer halves the real frame rate: it now nearly doubles the frames shown (1440p Quality: 97 per second from 48 real ones; before, 26 from 13). Torch and other effect sprites, water splashes and rain/snow are now marked for FSR so they should ghost less. Fixed Vulkan validation errors with frame generation on.
 
 ### Added
 - Original particle effects (torches, splashes, ambient fx objects): the objects' own GenericFXObject particle definitions and birth events are simulated at 60 Hz and drawn as sprites in OpenGL and Vulkan, with the original depth bias and HInfo marker emitters; fx proxy boxes are no longer drawn (docs/formats/EFFECTS.md). `ou-game --camera X,Y,Z,TX,TY,TZ` fixes the view for screenshots.

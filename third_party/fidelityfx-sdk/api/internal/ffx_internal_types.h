@@ -108,7 +108,9 @@
 /// Maximum number of queued frames in the backend
 ///
 /// @ingroup Defines
-#define FFX_MAX_QUEUED_FRAMES          (4)
+// ou patch 6: 4 -> 8. Frame generation runs several graph executions per frame, each advancing the per-context
+// dynamic-view ring; with two frames in flight 4 slots destroyed views still in use (VUID-vkDestroyImageView-01026).
+#define FFX_MAX_QUEUED_FRAMES          (8)
 
 /// Maximum number of resources per effect context
 ///

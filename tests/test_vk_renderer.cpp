@@ -157,10 +157,11 @@ TEST(VulkanRenderer, RayTracingBuildsUpdatesAndTearsDown) {
     EXPECT_LT(meanAbsDiff(rt, offBefore), 3.0);
     EXPECT_GT(meanAbsDiff(rt, offBefore), 0.0); // but traced, not the map
 
-    // Non-skinned mesh changed: full BLAS rebuild, then one TLAS update on the next RT frame.
+    // Non-skinned mesh changed: full BLAS rebuild recorded by the next frame, which also updates the TLAS once.
     EXPECT_TRUE(v.r->updateVertices(0, scene.meshes[0].vertices));
-    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 1u);
+    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 0u); // staged; nothing submitted yet
     v.frame(enhanced(RayTracing::Full));
+    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 1u);
     EXPECT_EQ(v.r->rtStatus().tlasUpdates, 1u);
     v.frame(enhanced(RayTracing::Full));
     EXPECT_EQ(v.r->rtStatus().tlasUpdates, 1u); // clean TLAS: no update
@@ -175,10 +176,11 @@ TEST(VulkanRenderer, RayTracingBuildsUpdatesAndTearsDown) {
     EXPECT_EQ(v.r->rtStatus().tlasBuilds, 2u);
     std::vector<ou::scene::Vertex> moved = scene.meshes[0].vertices;
     for (auto& p : moved) p.position[2] += 50.0f;
-    EXPECT_TRUE(v.r->updateVertices(0, moved));
+    EXPECT_TRUE(v.r->updateVertices(0, scene.meshes[0].vertices));
+    EXPECT_TRUE(v.r->updateVertices(0, moved)); // overwrites the staged pose: one copy, one refit
+    v.frame(enhanced(RayTracing::Shadows));
     EXPECT_EQ(v.r->rtStatus().blasRefits, 1u);
     EXPECT_EQ(v.r->rtStatus().blasRebuilds, 1u);
-    v.frame(enhanced(RayTracing::Shadows));
     EXPECT_EQ(v.r->rtStatus().tlasUpdates, 2u);
 }
 

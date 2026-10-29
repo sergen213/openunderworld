@@ -26,6 +26,8 @@ Local patches (marked `ou patch N`):
 3. `api/internal/ffx_provider.h`: includes `ou/ffx_provider_external.h`.
 4. `ffx_provider_fsr3upscale.cpp`, `ffx_provider_fsr3framegeneration.cpp`: MSVC `ui64` literal suffix -> `ull`.
 5. `api/internal/ffx_internal_types.h`: `FFX_SDK_DEFAULT_CONTEXT_SIZE` overridable.
+6. `api/internal/ffx_internal_types.h`: `FFX_MAX_QUEUED_FRAMES` 4 -> 8 (frame generation's per-frame graph executions
+   recycled image views of frames still in flight).
 
 Upgrading: replace the upstream directories, re-apply the patches, rerun the build; the renderer only talks ffx-api
 (`src/render/vk/VkFsr.cpp`).

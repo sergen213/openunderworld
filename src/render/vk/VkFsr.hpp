@@ -40,6 +40,8 @@ public:
     void destroy();
     bool valid() const { return upscaler_ != nullptr; }
     bool frameGeneration() const { return framegen_ != nullptr; }
+    // The upscaler consumes a reactive mask (FFX resource-requirements query; FSR 4 providers would not).
+    bool reactiveUsed() const { return reactive_; }
     VkExtent2D render() const { return render_; }
     VkExtent2D display() const { return display_; }
 
@@ -62,6 +64,7 @@ private:
     void* framegen_ = nullptr;
     VkExtent2D render_{}, display_{};
     int32_t jitterIndex_ = 0;
+    bool reactive_ = true;
     uint64_t frameId_ = 0;
 };
 

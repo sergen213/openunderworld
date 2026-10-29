@@ -85,7 +85,13 @@ bool Context::create(VkDevice device, VkPhysicalDevice gpu, VkExtent2D render, V
     auto backend = backendDesc(device, gpu);
     ffxCreateContextDescUpscale up{};
     up.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
-    up.header.pNext = &backend.header;
+    // The API version this was built against (SDK 2.1+ contract; lets a newer provider, e.g. a future Linux FSR 4,
+    // be picked by the loader without code changes here).
+    ffxCreateContextDescUpscaleVersion ver{};
+    ver.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION;
+    ver.header.pNext = &backend.header;
+    ver.version = FFX_UPSCALER_VERSION;
+    up.header.pNext = &ver.header;
     // Input = the post pass output: display-referred (gamma-encoded) LDR colour; exposure 1.
     up.flags = FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
     up.maxRenderSize = {render.width, render.height};
@@ -96,6 +102,11 @@ bool Context::create(VkDevice device, VkPhysicalDevice gpu, VkExtent2D render, V
         return false;
     }
     upscaler_ = ctx;
+    // Masks this provider consumes (FSR 4 needs no reactive mask; FSR 3.1 takes it as optional input).
+    ffxQueryDescUpscaleGetResourceRequirements req{};
+    req.header.type = FFX_API_QUERY_DESC_TYPE_UPSCALE_GET_RESOURCE_REQUIREMENTS;
+    reactive_ = ffxQuery(&ctx, &req.header) != FFX_API_RETURN_OK ||
+                ((req.required_resources | req.optional_resources) & FFX_API_QUERY_RESOURCE_INPUT_REACTIVEMASK);
     if (frameGeneration) {
         auto fgBackend = backendDesc(device, gpu);
         ffxCreateContextDescFrameGeneration fg{};

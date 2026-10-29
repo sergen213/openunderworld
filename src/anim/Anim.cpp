@@ -350,18 +350,32 @@ void skinVertices(const scene::MeshData& mesh, std::span<const glm::mat4> palett
         if (const float len = glm::length(n); len > 0.0f) n /= len;
         d[0] = n.x, d[1] = n.y, d[2] = n.z;
     };
+    // Single-bone vertices (weight 255) reuse world * palette[bone], computed once per bone: bit-identical to the
+    // general path (m = palette * 1.0f / 1.0f is exact).
+    std::vector<glm::mat4> single(skinned ? palette.size() : 0);
+    std::vector<uint8_t> have(single.size(), 0);
     for (size_t v = 0; v < out.size(); ++v) {
         glm::mat4 m(0.0f);
         float total = 0.0f;
+        const glm::mat4* fast = nullptr;
         if (skinned) {
             const auto& s = mesh.skin[v];
-            for (int k = 0; k < 4; ++k)
-                if (s.weight[k] && s.bone[k] < palette.size()) {
-                    m += palette[s.bone[k]] * (s.weight[k] / 255.0f);
-                    total += s.weight[k] / 255.0f;
-                }
+            const int n = (s.weight[0] != 0) + (s.weight[1] != 0) + (s.weight[2] != 0) + (s.weight[3] != 0);
+            const int k0 = s.weight[0] ? 0 : s.weight[1] ? 1 : s.weight[2] ? 2 : 3;
+            if (n == 1 && s.weight[k0] == 255 && s.bone[k0] < palette.size()) {
+                const size_t b = s.bone[k0];
+                if (!have[b]) single[b] = world * palette[b], have[b] = 1;
+                fast = &single[b];
+            } else {
+                for (int k = 0; k < 4; ++k)
+                    if (s.weight[k] && s.bone[k] < palette.size()) {
+                        m += palette[s.bone[k]] * (s.weight[k] / 255.0f);
+                        total += s.weight[k] / 255.0f;
+                    }
+            }
         }
-        m = total > 0.0f ? world * (m / total) : world;
+        if (fast) m = *fast;
+        else m = total > 0.0f ? world * (m / total) : world;
         auto& o = out[v];
         const glm::vec3 p(m * glm::vec4(o.position[0], o.position[1], o.position[2], 1.0f));
         o.position[0] = p.x, o.position[1] = p.y, o.position[2] = p.z;

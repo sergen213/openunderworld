@@ -12,7 +12,12 @@
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -93,6 +98,15 @@ const uint32_t kFsrMaskFrag[] = {
 };
 const uint32_t kFsrCameraFrag[] = {
 #include "fsr_camera.frag.inc"
+};
+const uint32_t kFsrFxFrag[] = { // FSR reactivity of fx sprites, splashes, rain / snow
+#include "fsr_fx.frag.inc"
+};
+const uint32_t kFsrSplashFrag[] = {
+#include "fsr_splash.frag.inc"
+};
+const uint32_t kFsrWeatherFrag[] = {
+#include "fsr_weather.frag.inc"
 };
 const uint32_t kFxVert[] = { // original particle effects (src/fx)
 #include "fx.vert.inc"
@@ -269,11 +283,11 @@ struct GpuMesh {
     Buffer blasBuffer;
     std::vector<VkAccelerationStructureGeometryKHR> rtGeometries;
     std::vector<VkAccelerationStructureBuildRangeInfoKHR> rtRanges;
-    // FSR motion vectors of meshes moved by updateVertices: the previous drawn frame's vertices (a GPU copy and the CPU
-    // source of the next copy) and the frame counter of the last update.
+    // FSR motion vectors of meshes moved by updateVertices: the previous drawn frame's vertices (GPU copy at the start
+    // of the frame) and the frame counter of the last update; the staging slot of a pending updateVertices.
     Buffer prevVertices;
-    std::vector<scene::Vertex> lastVertices;
-    uint64_t movedFrame = 0;
+    uint64_t movedFrame = 0, stagingFrame = 0;
+    VkDeviceSize stagingOffset = 0;
 };
 
 struct Frame {
@@ -284,6 +298,15 @@ struct Frame {
     Buffer text;
     Buffer lines; // debug lines, grown on demand in lineMemory_[frame]
     VkDeviceSize lineCapacity = 0;
+};
+
+// updateVertices staging of one frame in flight (host-visible, grown on demand), recorded by recordVertexUploads.
+struct Staging {
+    LinearAllocator memory;
+    Buffer buffer;
+    VkDeviceSize capacity = 0, used = 0;
+    std::vector<size_t> meshes; // GpuMesh slots with a pending copy
+    bool idle = false;          // the frame's fence was waited since its last submit
 };
 
 // Staged copies recorded into one command buffer. Sources must outlive flush().
@@ -396,7 +419,7 @@ public:
 
     std::vector<std::string> upload(const scene::SceneData& scene) override {
         std::vector<std::string> warnings;
-        vkDeviceWaitIdle(device_);
+        waitIdle();
         destroySceneResources();
         sceneMemory_.init(device_, gpu_, kBlockSize, rtStatus_.supported);
 
@@ -467,7 +490,8 @@ public:
             const VkBufferUsageFlags rtInput = rtStatus_.supported ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
                                                                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
                                                                    : 0;
-            g.vertices = createBuffer(sceneMemory_, vb, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rtInput,
+            g.vertices = createBuffer(sceneMemory_, vb, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | rtInput,
                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             g.indices = createBuffer(sceneMemory_, ib, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rtInput,
                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -488,34 +512,107 @@ public:
 
     void resize(Viewport) override { swapchainDirty_ = true; } // SDL pixel-size event → recreate next frame
 
-    // Staged copy into the device-local vertex buffer; flush() orders it after in-flight reads and
-    // waits. ponytail: one queue round-trip per call; switch to per-frame host-visible copies if
-    // many skinned meshes per tick show up in profiles.
+    // Copied into this frame-in-flight's host-visible staging buffer; drawFrame records the copies (and BLAS refits)
+    // at the start of its command buffer (recordVertexUploads). Repeated updates before a draw overwrite their slot.
     bool updateVertices(size_t meshIndex, std::span<const scene::Vertex> vertices) override {
         if (meshIndex >= meshSlot_.size() || meshSlot_[meshIndex] == SIZE_MAX) return false;
-        GpuMesh& g = meshes_[meshSlot_[meshIndex]];
+        const size_t slot = meshSlot_[meshIndex];
+        GpuMesh& g = meshes_[slot];
         if (vertices.size() != g.vertexCount) return false;
-        UploadBatch batch;
         const glm::vec4 sphere = original::boundingSphere(vertices, g.model); // skinned: follows the pose
         g.center = glm::vec3(sphere), g.radius = sphere.w;
-        batch.buffers.push_back({g.vertices.buffer, {vertices.data(), vertices.size_bytes(), 0, 0}});
-        // FSR motion vectors: on the first update since the last drawn frame, the pose that frame drew becomes the
-        // previous one (no pose yet: this one, no motion).
-        const bool track = fsr_.valid();
-        if (track && g.movedFrame != frameCounter_ + 1) {
-            if (!g.prevVertices.buffer)
-                g.prevVertices = createBuffer(sceneMemory_, vertices.size_bytes(),
-                                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            const void* prev = g.lastVertices.empty() ? static_cast<const void*>(vertices.data()) : g.lastVertices.data();
-            batch.buffers.push_back({g.prevVertices.buffer, {prev, vertices.size_bytes(), 0, 0}});
+        Staging& st = staging_[frameIndex_];
+        if (!st.idle) { // its previous frame may still read the staging buffer
+            VK_CHECK(vkWaitForFences(device_, 1, &frames_[frameIndex_].fence, VK_TRUE, UINT64_MAX));
+            st.idle = true;
         }
-        // Ray tracing: the BLAS follows in the same submission (refit when skinned, else rebuilt); the
-        // TLAS is updated once per frame in drawFrame.
-        if (g.blas) flush(batch, [&](VkCommandBuffer cmd) { rebuildBlas(cmd, g); });
-        else flush(batch);
-        if (track) g.lastVertices.assign(vertices.begin(), vertices.end()), g.movedFrame = frameCounter_ + 1;
+        if (g.stagingFrame != frameCounter_ + 1) { // first update since the last recorded frame: a new slot
+            const VkDeviceSize need = st.used + vertices.size_bytes();
+            if (need > st.capacity) { // grow, keeping this frame's earlier copies (the old buffer is idle)
+                LinearAllocator memory;
+                memory.init(device_, gpu_, 0);
+                const VkDeviceSize capacity = std::bit_ceil(std::max<VkDeviceSize>(need, 4 << 20));
+                Buffer b = createBuffer(memory, capacity, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                if (st.used) std::memcpy(b.mapped, st.buffer.mapped, st.used);
+                vkDestroyBuffer(device_, st.buffer.buffer, nullptr);
+                st.memory.reset();
+                st.memory = std::move(memory);
+                st.buffer = b, st.capacity = capacity;
+            }
+            g.stagingOffset = st.used, g.stagingFrame = frameCounter_ + 1;
+            st.used = (need + 15) & ~VkDeviceSize(15);
+            st.meshes.push_back(slot);
+        }
+        std::memcpy(st.buffer.mapped + g.stagingOffset, vertices.data(), vertices.size_bytes());
+        // FSR motion vectors: the pose the last frame drew is copied GPU-side into prevVertices before the new one
+        // lands (recordVertexUploads); meshes not moved since that frame draw no motion of their own (movedFrame).
+        if (fsr_.valid() && !g.prevVertices.buffer)
+            g.prevVertices = createBuffer(sceneMemory_, vertices.size_bytes(),
+                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        g.movedFrame = frameCounter_ + 1;
         return true;
+    }
+
+    // Start of the frame's command buffer: last frame's vertices -> prevVertices (FSR), staged vertices -> the vertex
+    // buffers, then the BLAS refits / rebuilds (the TLAS update follows in drawFrame).
+    void recordVertexUploads(VkCommandBuffer cmd) {
+        Staging& st = staging_[frameIndex_];
+        if (st.meshes.empty()) return;
+        // Write-after-read: earlier frames on this queue may still read the vertex buffers.
+        const VkMemoryBarrier2 war{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0,
+                                   VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT};
+        barriers(cmd, {}, &war);
+        bool prev = false;
+        for (const size_t slot : st.meshes) {
+            const GpuMesh& g = meshes_[slot];
+            if (!g.prevVertices.buffer || !fsr_.valid()) continue;
+            const VkBufferCopy c{0, 0, g.vertexCount * sizeof(scene::Vertex)};
+            vkCmdCopyBuffer(cmd, g.vertices.buffer, g.prevVertices.buffer, 1, &c);
+            prev = true;
+        }
+        if (prev) { // the copies above read what the copies below overwrite
+            const VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, VK_PIPELINE_STAGE_2_COPY_BIT,
+                                     VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT};
+            barriers(cmd, {}, &b);
+        }
+        for (const size_t slot : st.meshes) {
+            GpuMesh& g = meshes_[slot];
+            const VkBufferCopy c{g.stagingOffset, 0, g.vertexCount * sizeof(scene::Vertex)};
+            vkCmdCopyBuffer(cmd, st.buffer.buffer, g.vertices.buffer, 1, &c);
+            g.stagingFrame = 0; // a later update takes a new slot
+        }
+        // Vertex input, and the RT shaders' buffer-address reads of vertices (alpha-tested hits).
+        const VkMemoryBarrier2 vertex{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, VK_PIPELINE_STAGE_2_COPY_BIT,
+                                      VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                      VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                      VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT};
+        barriers(cmd, {}, &vertex);
+        for (const size_t slot : st.meshes) // rebuildBlas orders itself after the copies
+            if (meshes_[slot].blas) rebuildBlas(cmd, meshes_[slot]);
+        st.meshes.clear();
+        st.used = 0;
+        st.idle = false; // this frame's submit reads it
+    }
+
+    // The present thread presents to the same swapchain on the same queue (both externally synchronised): acquire
+    // under queueMutex_ without blocking in the driver, which could wait for an image only the present thread frees.
+    VkResult acquireImage(VkSemaphore semaphore, uint32_t& index) {
+        const auto start = std::chrono::steady_clock::now();
+        for (;;) {
+            VkResult r;
+            {
+                const std::lock_guard lock(queueMutex_);
+                r = vkAcquireNextImageKHR(device_, swapchain_, 0, semaphore, VK_NULL_HANDLE, &index);
+            }
+            if (r != VK_NOT_READY && r != VK_TIMEOUT) {
+                const int64_t ns = (std::chrono::steady_clock::now() - start).count();
+                acquireNs_ += ns, frameAcquireNs_ += ns;
+                return r;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
     }
 
     void drawFrame(const Camera& eye, Viewport vp, const FrameOptions& options) override {
@@ -523,14 +620,19 @@ public:
         if (vp.width <= 0 || vp.height <= 0) return; // minimised
         for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
         if (vp.width != requested_.width || vp.height != requested_.height) swapchainDirty_ = true;
+        if (presentOutOfDate_.exchange(false)) swapchainDirty_ = true; // reported by the present thread
         applySettings(options);
         if (rtPipelines_ && !tlas_ && scenePool_) buildRayTracing(); // first RT frame after upload()
         Frame& f = frames_[frameIndex_];
-        VK_CHECK(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX));
+        {
+            const auto start = std::chrono::steady_clock::now();
+            VK_CHECK(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX));
+            fenceNs_ += (std::chrono::steady_clock::now() - start).count();
+        }
         for (int attempt = 0;; ++attempt) {
             if (swapchainDirty_) recreateSwapchain(vp);
             if (!swapchain_) return;
-            VkResult r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, f.acquired, VK_NULL_HANDLE, &imageIndex_);
+            VkResult r = acquireImage(f.acquired, imageIndex_);
             if (r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true; // image acquired; render it, recreate after
             else if (r == VK_ERROR_OUT_OF_DATE_KHR && attempt == 0) { swapchainDirty_ = true; continue; }
             else if (r == VK_ERROR_OUT_OF_DATE_KHR) return;
@@ -541,8 +643,7 @@ public:
         // one (out of date) this frame presents only its own.
         generatedIndex_ = UINT32_MAX;
         if (fsr_.frameGeneration()) {
-            const VkResult r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, f.acquiredGenerated, VK_NULL_HANDLE,
-                                                     &generatedIndex_);
+            const VkResult r = acquireImage(f.acquiredGenerated, generatedIndex_);
             if (r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true;
             else if (r != VK_SUCCESS) swapchainDirty_ = true, generatedIndex_ = UINT32_MAX;
         }
@@ -552,6 +653,7 @@ public:
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
                                     VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr};
         VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
+        recordVertexUploads(cmd);
         // FSR: sub-pixel jitter on every scene projection (camera.jitter); `eye` keeps the unjittered one for motion.
         Camera camera = eye;
         const bool fsrOn = fsr_.valid();
@@ -583,6 +685,7 @@ public:
         ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0, 0.0f, 0, 0};
         const glm::mat4 currentVP = zRemap * eye.projection(aspect) * eye.view(); // unjittered (FSR motion)
         const bool enhancedWater = options.water == WaterQuality::Enhanced;
+        uint32_t splashCount = 0; // splash droplet vertices drawn (FSR reactivity)
         WaterBlock wb = waterBlock(camera, {int(extent_.width), int(extent_.height)}, push.viewProj, environment_, options);
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
         std::memcpy(waterUbo_[frameIndex_].mapped, &wb, sizeof wb);
@@ -817,6 +920,7 @@ public:
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splashPipeline_);
                     vkCmdBindVertexBuffers(cmd, 0, 1, &splashBuffers_[frameIndex_].buffer, &zero);
                     vkCmdDraw(cmd, uint32_t(verts.size()), 1, 0, 0);
+                    splashCount = uint32_t(verts.size());
                     (void)fr;
                 }
             }
@@ -868,8 +972,8 @@ public:
             vkCmdDraw(cmd, uint32_t(options.debugLines.size() * 2), 1, 0, 0);
         }
         vkCmdEndRendering(cmd);
-        if (fsrOn) recordFsrMasks(cmd, push.viewProj, currentVP, jitter / glm::vec2(extent_.width, extent_.height), enhancedWater,
-                                  options.cullBackFaces);
+        if (fsrOn) recordFsrMasks(cmd, options, splashCount, wb.weather.x > 0.5f, push.viewProj, currentVP,
+                                  jitter / glm::vec2(extent_.width, extent_.height), enhancedWater, options.cullBackFaces);
 
         // Post pass: resolved scene → swapchain (tonemap / FXAA), then the overlay on top. With FSR the post pass writes
         // fsrInput_ at the render resolution; FSR upscales it into the swapchain image(s), then the overlay.
@@ -991,7 +1095,10 @@ public:
         si.pCommandBufferInfos = &cbi;
         si.signalSemaphoreInfoCount = images;
         si.pSignalSemaphoreInfos = signal;
-        VK_CHECK(vkQueueSubmit2(queue_, 1, &si, f.fence));
+        {
+            const std::lock_guard lock(queueMutex_);
+            VK_CHECK(vkQueueSubmit2(queue_, 1, &si, f.fence));
+        }
         frameActive_ = true;
     }
 
@@ -1040,41 +1147,109 @@ public:
 
     // With FSR frame generation the generated image is presented first and this frame's own half a frame interval
     // later (interval = 0.9 / 0.1 moving average of the time between present() calls), so both show for equal times.
-    // ponytail: the render thread sleeps that half interval; a present thread would overlap it with the next frame's CPU
-    // work if CPU-bound frame-generation runs ever need it.
+    // The pacing runs on a present thread (started with the first generated frame) so the render thread goes on with
+    // the next frame instead of sleeping; once it exists every present goes through it, in order.
     void present() override {
         if (!frameActive_) return;
         frameActive_ = false;
         using Clock = std::chrono::steady_clock;
         const auto ready = Clock::now();
         if (captureDir_) capturePresented();
-        auto presentImage = [&](uint32_t index) {
-            VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-            pi.waitSemaphoreCount = 1;
-            pi.pWaitSemaphores = &presentReady_[index];
-            pi.swapchainCount = 1;
-            pi.pSwapchains = &swapchain_;
-            pi.pImageIndices = &index;
-            VkResult r = vkQueuePresentKHR(queue_, &pi);
-            if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true;
-            else check(r, "vkQueuePresentKHR");
-            if (presentStats_) presentTimes_.push_back(Clock::now());
-        };
         if (lastReady_ != Clock::time_point{}) {
-            const double ms = std::chrono::duration<double, std::milli>(ready - lastReady_).count();
+            // The render thread's own frame time: waiting for an image the present thread still holds is pacing, not
+            // work (counting it would hold the interval at whatever pacing it once had).
+            const double ms = std::chrono::duration<double, std::milli>(ready - lastReady_).count() - frameAcquireNs_ * 1e-6;
             if (ms < 250.0) frameIntervalMs_ = frameIntervalMs_ > 0.0 ? frameIntervalMs_ * 0.9 + ms * 0.1 : ms;
         }
+        frameAcquireNs_ = 0;
         lastReady_ = ready;
-        if (generatedIndex_ != UINT32_MAX) {
-            presentImage(generatedIndex_);
-            ++presentedGenerated_;
-            const auto due = ready + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(frameIntervalMs_ * 0.5));
-            if (const auto wait = due - Clock::now(); wait > Clock::duration::zero())
-                SDL_DelayPrecise(Uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(wait).count()));
+        if (generatedIndex_ != UINT32_MAX && !presentThread_.joinable())
+            presentThread_ = std::thread([this] { presentLoop(); });
+        if (presentThread_.joinable()) {
+            {
+                const std::lock_guard lock(presentMutex_);
+                presentJobs_.push_back({swapchain_, generatedIndex_, imageIndex_, frameIntervalMs_ * 0.5});
+            }
+            presentCv_.notify_all();
+        } else {
+            presentImage(swapchain_, imageIndex_);
         }
-        presentImage(imageIndex_);
+        if (generatedIndex_ != UINT32_MAX) ++presentedGenerated_;
         ++frameCounter_;
         frameIndex_ = (frameIndex_ + 1) % kFramesInFlight;
+    }
+
+    void presentImage(VkSwapchainKHR swapchain, uint32_t index) {
+        VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+        pi.waitSemaphoreCount = 1;
+        pi.pWaitSemaphores = &presentReady_[index];
+        pi.swapchainCount = 1;
+        pi.pSwapchains = &swapchain;
+        pi.pImageIndices = &index;
+        VkResult r;
+        {
+            const std::lock_guard lock(queueMutex_);
+            const auto start = std::chrono::steady_clock::now();
+            r = vkQueuePresentKHR(queue_, &pi);
+            presentNs_ += (std::chrono::steady_clock::now() - start).count();
+        }
+        if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) presentOutOfDate_ = true;
+        else if (r != VK_SUCCESS) std::fprintf(stderr, "ou: vkQueuePresentKHR: %d\n", int(r)), presentOutOfDate_ = true;
+        if (presentStats_) {
+            const std::lock_guard lock(presentMutex_);
+            presentTimes_.push_back(std::chrono::steady_clock::now());
+        }
+    }
+
+    // Generated image no earlier than half an interval after the previous real one, the real one half an interval
+    // after it; no waiting while further frames are queued (catch up instead of adding latency).
+    void presentLoop() {
+        using Clock = std::chrono::steady_clock;
+        Clock::time_point lastReal{};
+        auto sleepUntil = [](Clock::time_point t) {
+            if (const auto wait = t - Clock::now(); wait > Clock::duration::zero())
+                SDL_DelayPrecise(Uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(wait).count()));
+        };
+        for (;;) {
+            PresentJob job;
+            bool behind;
+            {
+                std::unique_lock lock(presentMutex_);
+                presentCv_.wait(lock, [&] { return presentQuit_ || !presentJobs_.empty(); });
+                if (presentJobs_.empty()) return;
+                job = presentJobs_.front();
+                presentJobs_.pop_front();
+                presentBusy_ = true;
+                behind = !presentJobs_.empty();
+            }
+            const auto half = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(job.halfMs));
+            if (job.generated != UINT32_MAX) {
+                if (!behind && lastReal != Clock::time_point{}) sleepUntil(lastReal + half);
+                presentImage(job.swapchain, job.generated);
+                if (!behind) sleepUntil(Clock::now() + half);
+            }
+            presentImage(job.swapchain, job.real);
+            lastReal = Clock::now();
+            {
+                const std::lock_guard lock(presentMutex_);
+                presentBusy_ = false;
+            }
+            presentCv_.notify_all();
+        }
+    }
+
+    // Every queued present done (swapchain recreation, device idle, shutdown).
+    void drainPresents() {
+        if (!presentThread_.joinable()) return;
+        std::unique_lock lock(presentMutex_);
+        presentCv_.wait(lock, [&] { return presentJobs_.empty() && !presentBusy_; });
+    }
+
+    // vkDeviceWaitIdle needs every queue externally synchronised.
+    void waitIdle() {
+        drainPresents();
+        const std::lock_guard lock(queueMutex_);
+        vkDeviceWaitIdle(device_);
     }
 
     // OU_VK_CAPTURE_DIR: every presented image as <dir>/NNNNNN-real.ppm / NNNNNN-gen.ppm (FSR frame generation checks).
@@ -1127,7 +1302,15 @@ public:
 
     void shutdown() override {
         if (device_) {
-            vkDeviceWaitIdle(device_);
+            waitIdle();
+            if (presentThread_.joinable()) {
+                {
+                    const std::lock_guard lock(presentMutex_);
+                    presentQuit_ = true;
+                }
+                presentCv_.notify_all();
+                presentThread_.join();
+            }
             if (presentStats_) printPresentStats();
             savePipelineCache();
             destroySceneResources();
@@ -1155,6 +1338,10 @@ public:
             for (auto& m : splashMemory_) m.reset();
             for (auto& b : fxBuffers_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             for (auto& m : fxMemory_) m.reset();
+            for (auto& s : staging_) {
+                vkDestroyBuffer(device_, std::exchange(s.buffer, {}).buffer, nullptr);
+                s.memory.reset();
+            }
             vkDestroyDescriptorPool(device_, std::exchange(waterPool_, VK_NULL_HANDLE), nullptr);
             vkDestroyPipelineLayout(device_, std::exchange(waterLayout_, VK_NULL_HANDLE), nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(waterSetLayout_, VK_NULL_HANDLE), nullptr);
@@ -1205,7 +1392,7 @@ private:
     struct OrigProgram {
         std::vector<uint32_t> vs;                  // SPIR-V (libshaderc at upload)
         std::string psGlsl;                        // translated pixel shader
-        std::array<std::vector<uint32_t>, 3> ps;   // per OrigVariant (plain at upload, the others on first use)
+        std::array<std::vector<uint32_t>, 3> ps;   // per OrigVariant (compiled at upload; rays only with RT support)
         uint8_t attributes = 0;                    // vertex attribute locations the VS reads
         std::array<std::array<VkPipeline, 4>, 4> pipelines{}; // created on first use
     };
@@ -1259,17 +1446,46 @@ private:
         environment_ = scene.environment;
         const original::Prepared prep = original::prepare(scene, true);
         for (const auto& w : prep.warnings) warnings.push_back(w);
+        // Every program's VS and PS variants compile in parallel here (shaderc is reentrant): compiling the sun /
+        // rays variants on first draw cost ~30 % of l4_ballcourt's frames as new materials came into view.
+        const size_t n = prep.programs.size();
+        origPrograms_.resize(n);
+        std::vector<std::array<std::string, 4>> errors(n); // per task: each written by one thread
+        const bool rays = rtStatus_.supported;
+        std::atomic<size_t> next{0};
+        auto work = [&] {
+            for (size_t task; (task = next++) < n * 4;) {
+                const size_t i = task / 4;
+                const auto& p = prep.programs[i];
+                OrigProgram& o = origPrograms_[i];
+                std::string& error = errors[i][task % 4];
+                switch (task % 4) {
+                case 0: o.vs = sm3::compileSpirv(p.vsGlsl.source, false, true, error); break;
+                case 1: o.ps[kOrigPlain] = sm3::compileSpirv(p.psGlsl.source, true, true, error); break;
+                case 2: o.ps[kOrigShadowMap] = sm3::compileSpirv(originalPixelSource(p.psGlsl.source, true, false), true, true, error); break;
+                case 3: if (rays) o.ps[kOrigRays] = sm3::compileSpirv(originalPixelSource(p.psGlsl.source, true, true), true, true, error); break;
+                }
+            }
+        };
+        {
+            std::vector<std::thread> pool(std::clamp<size_t>(std::thread::hardware_concurrency(), 1, 16) - 1);
+            for (auto& t : pool) t = std::thread(work);
+            work();
+            for (auto& t : pool) t.join();
+        }
         std::vector<bool> ok;
-        for (const auto& p : prep.programs) {
-            std::string error;
-            OrigProgram o;
-            o.attributes = p.vsGlsl.attributes;
-            o.vs = sm3::compileSpirv(p.vsGlsl.source, false, true, error);
-            o.psGlsl = p.psGlsl.source;
-            if (!o.vs.empty()) o.ps[kOrigPlain] = sm3::compileSpirv(o.psGlsl, true, true, error);
+        for (size_t i = 0; i < n; ++i) {
+            OrigProgram& o = origPrograms_[i];
+            o.attributes = prep.programs[i].vsGlsl.attributes;
+            o.psGlsl = prep.programs[i].psGlsl.source;
+            if (o.vs.empty()) o.ps = {};
+            for (int v : {kOrigShadowMap, kOrigRays}) { // keep drawing without the sun term
+                if (!o.ps[size_t(v)].empty() || (v == kOrigRays && !rays) || o.ps[kOrigPlain].empty()) continue;
+                std::fprintf(stderr, "[vk] original pixel shader with sun term: %s\n", errors[i][size_t(v) + 1].c_str());
+                o.ps[size_t(v)] = o.ps[kOrigPlain];
+            }
             ok.push_back(!o.ps[kOrigPlain].empty());
-            if (!ok.back()) warnings.push_back("original program: " + error);
-            origPrograms_.push_back(std::move(o));
+            if (!ok.back()) warnings.push_back("original program: " + (o.vs.empty() ? errors[i][0] : errors[i][1]));
         }
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(gpu_, &props);
@@ -1402,7 +1618,7 @@ private:
         const VkFormat format = o.hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
         const bool rt = rtStatus_.supported && o.rt != RayTracing::Off;
         if (samples == samples_ && format == sceneFormat_ && rt == rtPipelines_ && scenePipelines_[0]) return;
-        vkDeviceWaitIdle(device_);
+        waitIdle();
         samples_ = samples;
         sceneFormat_ = format;
         rtPipelines_ = rt;
@@ -1916,25 +2132,50 @@ private:
     // ---- AMD FSR (docs/RENDERING.md "FSR") ----
     // Mask pass pipelines: attachment 0 = motion (RG16F), 1 = reactivity (R8), the scene depth read-only. Motion: moving
     // meshes over the camera motion (LEQUAL, pulled toward the camera: the translated programs' positions differ in the
-    // last bits). Reactive: max-blended into attachment 1. Camera: fullscreen, writes both, no depth.
-    enum class FsrPipeline { Motion, Reactive, Camera };
+    // last bits). Reactive*: max-blended into attachment 1 (meshes; fx sprites and splashes from their own vertex
+    // streams; rain / snow fullscreen). Camera: fullscreen, writes both, no depth.
+    enum class FsrPipeline { Motion, Reactive, Camera, FxReactive, SplashReactive, WeatherReactive };
     VkPipeline createFsrPipeline(FsrPipeline kind) {
-        const bool camera = kind == FsrPipeline::Camera;
-        VkShaderModule v = shaderModule(camera ? std::span<const uint32_t>(kPostVert) : kFsrMaskVert);
-        VkShaderModule f = shaderModule(camera ? std::span<const uint32_t>(kFsrCameraFrag) : kFsrMaskFrag);
-        const VkPipelineShaderStageCreateInfo stages[2] = {
-            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, v, "main", nullptr},
-            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, f, "main", nullptr},
-        };
-        const VkVertexInputBindingDescription bindings[2] = {kSceneBinding, {1, sizeof(scene::Vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
-        const VkVertexInputAttributeDescription attrs[4] = {
+        const bool fullscreen = kind == FsrPipeline::Camera || kind == FsrPipeline::WeatherReactive;
+        const bool reactive = kind != FsrPipeline::Motion && kind != FsrPipeline::Camera;
+        std::span<const uint32_t> vs = kFsrMaskVert, fs = kFsrMaskFrag;
+        VkPipelineLayout layout = fsrMaskLayout_;
+        const VkVertexInputBindingDescription meshBindings[2] = {kSceneBinding, {1, sizeof(scene::Vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
+        const VkVertexInputAttributeDescription meshAttrs[4] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
             {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(scene::Vertex, uv)},
             {3, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(scene::Vertex, color)},
             {4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(scene::Vertex, position)},
         };
+        const VkVertexInputBindingDescription fxBinding{0, sizeof(FxVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+        const VkVertexInputAttributeDescription fxAttrs[3] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FxVertex, pos)},
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(FxVertex, uv)},
+            {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(FxVertex, rgba)},
+        };
+        const VkVertexInputBindingDescription splashBinding{0, sizeof(SplashVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+        const VkVertexInputAttributeDescription splashAttrs[3] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SplashVertex, pos)},
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(SplashVertex, uv)},
+            {2, 0, VK_FORMAT_R32_SFLOAT, offsetof(SplashVertex, alpha)},
+        };
         VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, nullptr, 0,
-                                                camera ? 0u : 2u, bindings, camera ? 0u : 4u, attrs};
+                                                2, meshBindings, 4, meshAttrs};
+        switch (kind) {
+        case FsrPipeline::Camera: vs = kPostVert, fs = kFsrCameraFrag, layout = fsrCameraLayout_, vi = {vi.sType}; break;
+        case FsrPipeline::WeatherReactive: vs = kPostVert, fs = kFsrWeatherFrag, layout = postLayout_, vi = {vi.sType}; break;
+        case FsrPipeline::FxReactive: vs = kFxVert, fs = kFsrFxFrag, layout = fsrFxLayout_, vi = {vi.sType, nullptr, 0, 1, &fxBinding, 3, fxAttrs}; break;
+        case FsrPipeline::SplashReactive:
+            vs = kSplashVert, fs = kFsrSplashFrag, layout = waterLayout_, vi = {vi.sType, nullptr, 0, 1, &splashBinding, 3, splashAttrs};
+            break;
+        default: break;
+        }
+        VkShaderModule v = shaderModule(vs);
+        VkShaderModule f = shaderModule(fs);
+        const VkPipelineShaderStageCreateInfo stages[2] = {
+            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, v, "main", nullptr},
+            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, f, "main", nullptr},
+        };
         VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, nullptr, 0,
                                                   VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE};
         VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, nullptr, 0, 1, nullptr, 1, nullptr};
@@ -1942,19 +2183,19 @@ private:
         rs.polygonMode = VK_POLYGON_MODE_FILL;
         rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rs.lineWidth = 1.0f;
-        rs.depthBiasEnable = !camera;
+        rs.depthBiasEnable = !fullscreen;
         rs.depthBiasConstantFactor = -64.0f;
         rs.depthBiasSlopeFactor = -1.0f;
         VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        ds.depthTestEnable = !camera;
+        ds.depthTestEnable = !fullscreen;
         ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         VkPipelineColorBlendAttachmentState blend[2]{};
         constexpr VkColorComponentFlags kRG = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT;
-        blend[0].colorWriteMask = kind == FsrPipeline::Reactive ? 0 : kRG;
+        blend[0].colorWriteMask = reactive ? 0 : kRG;
         blend[1].colorWriteMask = kind == FsrPipeline::Motion ? 0 : VK_COLOR_COMPONENT_R_BIT;
-        if (kind == FsrPipeline::Reactive) {
+        if (reactive) {
             blend[1].blendEnable = VK_TRUE;
             blend[1].srcColorBlendFactor = blend[1].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
             blend[1].srcAlphaBlendFactor = blend[1].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -1981,7 +2222,7 @@ private:
         ci.pDepthStencilState = &ds;
         ci.pColorBlendState = &cb;
         ci.pDynamicState = &dy;
-        ci.layout = camera ? fsrCameraLayout_ : fsrMaskLayout_;
+        ci.layout = layout;
         VkPipeline p = VK_NULL_HANDLE;
         VkResult r = vkCreateGraphicsPipelines(device_, pipelineCache_, 1, &ci, nullptr, &p);
         vkDestroyShaderModule(device_, v, nullptr);
@@ -2006,9 +2247,15 @@ private:
         VkPushConstantRange cp{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FsrCameraPush)};
         pl.pPushConstantRanges = &cp;
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &fsrCameraLayout_));
+        VkPushConstantRange fp{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4) + sizeof(glm::vec4)};
+        pl.pPushConstantRanges = &fp; // fx.vert's view-projection + fsr_fx.frag's blend mode
+        VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &fsrFxLayout_));
         fsrMotionPipeline_ = createFsrPipeline(FsrPipeline::Motion);
         fsrReactivePipeline_ = createFsrPipeline(FsrPipeline::Reactive);
         fsrCameraPipeline_ = createFsrPipeline(FsrPipeline::Camera);
+        fsrFxPipeline_ = createFsrPipeline(FsrPipeline::FxReactive);
+        fsrSplashPipeline_ = createFsrPipeline(FsrPipeline::SplashReactive);
+        fsrWeatherPipeline_ = createFsrPipeline(FsrPipeline::WeatherReactive);
         const VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 1, &ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &fsrPool_));
@@ -2018,9 +2265,10 @@ private:
 
     void destroyFsr() {
         fsr_.destroy();
-        for (VkPipeline* p : {&fsrMotionPipeline_, &fsrReactivePipeline_, &fsrCameraPipeline_})
+        for (VkPipeline* p : {&fsrMotionPipeline_, &fsrReactivePipeline_, &fsrCameraPipeline_, &fsrFxPipeline_, &fsrSplashPipeline_,
+                              &fsrWeatherPipeline_})
             vkDestroyPipeline(device_, std::exchange(*p, VK_NULL_HANDLE), nullptr);
-        for (VkPipelineLayout* l : {&fsrMaskLayout_, &fsrCameraLayout_})
+        for (VkPipelineLayout* l : {&fsrMaskLayout_, &fsrCameraLayout_, &fsrFxLayout_})
             vkDestroyPipelineLayout(device_, std::exchange(*l, VK_NULL_HANDLE), nullptr);
         vkDestroyDescriptorPool(device_, std::exchange(fsrPool_, VK_NULL_HANDLE), nullptr);
     }
@@ -2058,7 +2306,8 @@ private:
 
     // Motion vectors + reactivity at the render resolution after the scene (docs/RENDERING.md "FSR"). depth_ goes
     // DEPTH_ATTACHMENT -> DEPTH_READ_ONLY (tested + sampled here) -> SHADER_READ_ONLY with motion_ / reactive_ for FSR.
-    void recordFsrMasks(VkCommandBuffer cmd, const glm::mat4& jitteredVP, const glm::mat4& currentVP, glm::vec2 jitterUv,
+    void recordFsrMasks(VkCommandBuffer cmd, const FrameOptions& options, uint32_t splashCount, bool weather,
+                        const glm::mat4& jitteredVP, const glm::mat4& currentVP, glm::vec2 jitterUv,
                         bool enhancedWater, bool cullBackFaces) {
         constexpr VkPipelineStageFlags2 kDepthStages =
             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
@@ -2102,6 +2351,12 @@ private:
         vkCmdPushConstants(cmd, fsrCameraLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof cam, &cam);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrCameraLayout_, 0, 1, &fsrDepthSet_, 0, nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
+        if (weather && fsr_.reactiveUsed()) { // rain / snow coverage, as the post pass will draw it (its sets 1 + 2)
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrWeatherPipeline_);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 1, 1, &postWaterSets_[frameIndex_], 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 2, 1, &shadowSets_[frameIndex_], 0, nullptr);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+        }
 
         const VkViewport flipped{0, float(extent_.height), float(extent_.width), -float(extent_.height), 0, 1};
         vkCmdSetViewport(cmd, 0, 1, &flipped);
@@ -2128,14 +2383,39 @@ private:
                 if (s.blend == scene::Blend::Opaque) draw(mi, s, {s.alphaRef / 255.0f, 0, 0, 0});
         }
         // Reactivity: blended surfaces by their alpha (90 %), Enhanced water surfaces 60 % (animated shading with no
-        // motion of its own). ponytail: splashes and fx billboards are not marked; add them if they ghost.
+        // motion of its own), fx sprites and splash droplets by their contribution (90 %).
+        const bool reactive = fsr_.reactiveUsed();
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrReactivePipeline_);
-        for (uint32_t mi = 0; mi < meshes_.size(); ++mi) {
+        for (uint32_t mi = 0; reactive && mi < meshes_.size(); ++mi) {
             const GpuMesh& m = meshes_[mi];
             const bool water = enhancedWater && m.water;
             for (const auto& s : m.submeshes)
                 if (water) draw(mi, s, {0, 0.6f, 0, 0});
                 else if (s.blend != scene::Blend::Opaque) draw(mi, s, {s.alphaRef / 255.0f, 0.9f, 1, 0});
+        }
+        if (reactive && !options.fxBatches.empty() && !options.fxVertices.empty()) { // drawFrame filled fxBuffers_[frameIndex_]
+            const VkDeviceSize zero = 0;
+            vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrFxPipeline_);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &fxBuffers_[frameIndex_].buffer, &zero);
+            vkCmdPushConstants(cmd, fsrFxLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4),
+                               &jitteredVP);
+            for (const auto& b : options.fxBatches) {
+                const glm::vec4 mode(float(b.blend), 0, 0, 0);
+                vkCmdPushConstants(cmd, fsrFxLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4),
+                                   sizeof mode, &mode);
+                const VkDescriptorSet set = textureSet(b.textureId);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrFxLayout_, 0, 1, &set, 0, nullptr);
+                vkCmdDraw(cmd, b.count, 1, b.first, 0);
+            }
+        }
+        if (reactive && splashCount) { // drawFrame filled splashBuffers_[frameIndex_] (Enhanced water)
+            const VkDeviceSize zero = 0;
+            vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrSplashPipeline_);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 0, 1, &waterSets_[frameIndex_], 0, nullptr);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &splashBuffers_[frameIndex_].buffer, &zero);
+            vkCmdDraw(cmd, splashCount, 1, 0, 0);
         }
         vkCmdEndRendering(cmd);
         const VkImageMemoryBarrier2 out[] = {
@@ -2476,7 +2756,11 @@ private:
         VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
         si.commandBufferInfoCount = 1;
         si.pCommandBufferInfos = &cbi;
-        VkResult r = vkQueueSubmit2(queue_, 1, &si, fence);
+        VkResult r;
+        {
+            const std::lock_guard lock(queueMutex_);
+            r = vkQueueSubmit2(queue_, 1, &si, fence);
+        }
         if (r == VK_SUCCESS) r = vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(device_, fence, nullptr);
         vkFreeCommandBuffers(device_, uploadPool_, 1, &cmd);
@@ -2549,7 +2833,7 @@ private:
         if (!u.gpu.image || u.width != img.width || u.height != img.height) {
             const VkDescriptorSet set = u.gpu.set;
             if (u.gpu.image) {
-                vkDeviceWaitIdle(device_);
+                waitIdle();
                 destroyImage(u.gpu);
             }
             u.gpu = createImage(staticMemory_, VK_FORMAT_R8G8B8A8_UNORM, uint32_t(img.width), uint32_t(img.height), 1,
@@ -2572,7 +2856,7 @@ private:
         if (rip.cellSize <= 0 || rip.size <= 0 || rip.heights.empty()) return;
         if (!ripples_.image || rippleSize_ != rip.size) {
             if (ripples_.image) {
-                vkDeviceWaitIdle(device_);
+                waitIdle();
                 destroyImage(ripples_);
             }
             ripples_ = createImage(sceneMemory_, VK_FORMAT_R32_SFLOAT, uint32_t(rip.size), uint32_t(rip.size), 1,
@@ -2943,6 +3227,7 @@ private:
         rtStatus_.blas = rtStatus_.instances = rtStatus_.geometries = rtStatus_.waterInstances = 0;
         meshes_.clear();
         meshSlot_.clear();
+        for (auto& s : staging_) s.meshes.clear(), s.used = 0; // pending copies of the old meshes
         vkDestroyDescriptorPool(device_, scenePool_, nullptr);
         scenePool_ = VK_NULL_HANDLE;
         sceneMemory_.reset();
@@ -2959,7 +3244,7 @@ private:
     }
 
     void recreateSwapchain(Viewport vp) {
-        vkDeviceWaitIdle(device_); // ponytail: full stall on resize; fine for a viewer
+        waitIdle(); // ponytail: full stall on resize; fine for a viewer
         swapchainDirty_ = false;
         requested_ = vp;
         VkSurfaceCapabilitiesKHR caps;
@@ -3195,13 +3480,27 @@ private:
     bool fsrRequested_ = false, fsrFrameGen_ = false, fsrHistory_ = false;
     int fsrQuality_ = 1;
     GpuImage motion_, reactive_, fsrInput_, fsrOutput_, fsrGenerated_;
-    VkPipelineLayout fsrMaskLayout_ = VK_NULL_HANDLE, fsrCameraLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout fsrMaskLayout_ = VK_NULL_HANDLE, fsrCameraLayout_ = VK_NULL_HANDLE, fsrFxLayout_ = VK_NULL_HANDLE;
+    VkPipeline fsrFxPipeline_ = VK_NULL_HANDLE, fsrSplashPipeline_ = VK_NULL_HANDLE, fsrWeatherPipeline_ = VK_NULL_HANDLE;
     VkPipeline fsrMotionPipeline_ = VK_NULL_HANDLE, fsrReactivePipeline_ = VK_NULL_HANDLE, fsrCameraPipeline_ = VK_NULL_HANDLE;
     VkDescriptorPool fsrPool_ = VK_NULL_HANDLE;
     VkDescriptorSet fsrDepthSet_ = VK_NULL_HANDLE;
     glm::mat4 prevViewProj_{1.0f}; // previous frame, unjittered
     glm::vec3 prevCamPos_{0.0f}, prevCamForward_{0.0f};
     uint64_t frameCounter_ = 0, presentedGenerated_ = 0; // presented real / generated frames
+    std::array<Staging, kFramesInFlight> staging_;
+    // Queue + swapchain access from the render and the present thread; the present thread's job queue.
+    struct PresentJob {
+        VkSwapchainKHR swapchain;
+        uint32_t generated, real;
+        double halfMs;
+    };
+    std::mutex queueMutex_, presentMutex_;
+    std::condition_variable presentCv_;
+    std::deque<PresentJob> presentJobs_;
+    bool presentQuit_ = false, presentBusy_ = false;
+    std::atomic<bool> presentOutOfDate_{false};
+    std::thread presentThread_;
     uint32_t generatedIndex_ = UINT32_MAX;               // this frame's generated swapchain image
     std::chrono::steady_clock::time_point lastFrame_{}, lastReady_{};
     double frameIntervalMs_ = 0.0;
@@ -3223,13 +3522,18 @@ private:
         for (double x : d) var += (x - mean) * (x - mean);
         std::vector<double> sorted = d;
         std::sort(sorted.begin(), sorted.end());
+        const double frames = double(std::max<uint64_t>(frameCounter_, 1));
         std::fprintf(stderr,
-                     "ou: presents %zu in %.2f s = %.1f/s (real %llu, generated %llu); interval mean %.2f ms sd %.2f p99 %.2f; "
-                     "alternate intervals %.2f / %.2f ms\n",
+                     "ou: presents %zu in %.2f s = %.1f/s (real %llu, generated %llu); interval mean %.2f ms median %.2f sd %.2f "
+                     "p99 %.2f; alternate intervals %.2f / %.2f ms; per real frame: fence wait %.2f ms, acquire %.2f ms, "
+                     "vkQueuePresentKHR %.2f ms\n",
                      presentTimes_.size(), sum / 1000.0, 1000.0 * double(d.size()) / sum, (unsigned long long)frameCounter_,
-                     (unsigned long long)presentedGenerated_, mean, std::sqrt(var / double(d.size())),
-                     sorted[sorted.size() * 99 / 100], alt[0] / double((d.size() + 1) / 2), alt[1] / double(d.size() / 2));
+                     (unsigned long long)presentedGenerated_, mean, sorted[sorted.size() / 2], std::sqrt(var / double(d.size())),
+                     sorted[sorted.size() * 99 / 100], alt[0] / double((d.size() + 1) / 2), alt[1] / double(d.size() / 2),
+                     fenceNs_ * 1e-6 / frames, acquireNs_ * 1e-6 / frames, presentNs_ * 1e-6 / frames);
     }
+    std::atomic<int64_t> fenceNs_{0}, acquireNs_{0}, presentNs_{0}; // OU_VK_PRESENT_STATS wait totals
+    int64_t frameAcquireNs_ = 0; // this frame's acquire wait (present())
 };
 
 } // namespace

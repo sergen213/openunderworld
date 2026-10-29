@@ -81,6 +81,19 @@ vec4 ouPrecipLayer(vec3 dir, float sceneT, float radius, float layer, bool snow,
     a *= exp(-t / (snow ? 1800.0 : 2600.0));
     return vec4(col * a, a);
 }
+// Precipitation layers, near to far (depth-tested against the scene): premultiplied colour (lit) + coverage. Also the
+// FSR reactivity source (vk/shaders/fsr_weather.frag).
+vec4 ouPrecipitation(vec3 dir, float sceneT, bool snow, float amount) {
+    const float radii[4] = float[4](110.0, 240.0, 500.0, 1000.0);
+    float density = snow ? 0.12 + 0.4 * amount : 0.25 + 0.55 * amount;
+    float light = 0.55 + 0.45 * clamp(dot(w.fogColor.rgb, vec3(0.3, 0.59, 0.11)) * 2.0, 0.0, 1.0);
+    vec4 acc = vec4(0);
+    for (int i = 0; i < 4; ++i) {
+        vec4 l = ouPrecipLayer(dir, sceneT, radii[i], float(i), snow, density);
+        acc += l * (1.0 - acc.a);
+    }
+    return vec4(acc.rgb * light, acc.a);
+}
 vec3 ouAtmosphere(vec3 c, vec2 uv) {
     if ((w.haze.w < 0.5 && w.weather.x < 0.5) || w.fogColor.w > 0.5) return c;
     float d = texture(uDepth, uv).r;
@@ -141,15 +154,8 @@ vec3 ouAtmosphere(vec3 c, vec2 uv) {
 
     // Precipitation layers, near to far (depth-tested against the scene).
     if (rain || snow) {
-        const float radii[4] = float[4](110.0, 240.0, 500.0, 1000.0);
-        float density = snow ? 0.12 + 0.4 * amount : 0.25 + 0.55 * amount;
-        float light = 0.55 + 0.45 * clamp(dot(w.fogColor.rgb, vec3(0.3, 0.59, 0.11)) * 2.0, 0.0, 1.0);
-        vec4 acc = vec4(0);
-        for (int i = 0; i < 4; ++i) {
-            vec4 l = ouPrecipLayer(dir, sceneT, radii[i], float(i), snow, density);
-            acc += l * (1.0 - acc.a);
-        }
-        c = c * (1.0 - acc.a) + acc.rgb * light;
+        vec4 pr = ouPrecipitation(dir, sceneT, snow, amount);
+        c = c * (1.0 - pr.a) + pr.rgb;
     }
     return c;
 }
