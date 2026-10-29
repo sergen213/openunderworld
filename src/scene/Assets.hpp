@@ -147,6 +147,15 @@ struct MeshData {
     int32_t skeleton = -1;     // SceneData::skeletons index when skinned
 };
 
+// Drops m's primgroups of the draw groups whose bit (group - 1) is set in `hidden` (SubMesh::drawGroup). Returns false
+// when that left nothing of a mesh that had primgroups: drop the mesh then, as renderers draw a mesh without submeshes
+// whole and untextured (lara_jungle_heavy's group-11 gauntlet is a mesh of its own: a white hand).
+inline bool hideDrawGroups(MeshData& m, uint32_t hidden) {
+    if (m.submeshes.empty()) return true;
+    std::erase_if(m.submeshes, [&](const SubMesh& s) { return s.drawGroup && (hidden >> ((s.drawGroup - 1) & 31) & 1); });
+    return !m.submeshes.empty();
+}
+
 // A loaded set ready for rendering. `placeholder` = true when any content is synthetic.
 struct SceneData {
     std::vector<MeshData> meshes;

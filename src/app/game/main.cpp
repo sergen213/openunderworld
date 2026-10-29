@@ -683,12 +683,18 @@ struct StreamedScene {
             }
             append(it->second, u.offset, nullptr, &u.data.name);
         }
+        // Draw groups the scripts hid (Thor's gear, GAMEPLAY.md). Lara's meshes are the last block of `out` here, so the
+        // ones hideDrawGroups emptied are dropped in place.
         laraMeshes.meshIndices.clear();
-        append(lara, glm::vec3(0), &laraMeshes.meshIndices);
-        for (const size_t i : laraMeshes.meshIndices) // draw groups the scripts hid (Thor's gear, GAMEPLAY.md)
-            std::erase_if(out.meshes[i].submeshes, [&](const ou::scene::SubMesh& s) {
-                return s.drawGroup && (w.script().playerHiddenGroups() >> ((s.drawGroup - 1) & 31) & 1);
-            });
+        const size_t laraFirst = out.meshes.size();
+        append(lara, glm::vec3(0), nullptr);
+        size_t kept = laraFirst;
+        for (size_t i = laraFirst; i < out.meshes.size(); ++i) {
+            if (!ou::scene::hideDrawGroups(out.meshes[i], w.script().playerHiddenGroups())) continue;
+            if (kept != i) out.meshes[kept] = std::move(out.meshes[i]);
+            laraMeshes.meshIndices.push_back(kept++);
+        }
+        out.meshes.resize(kept);
         enemyMeshes.meshIndices.clear();
         for (const auto& e : w.enemies().all()) {
             enemyMeshes.meshIndices.emplace_back();

@@ -282,7 +282,14 @@ outfit (the original only reads `+0x294` on a level load).
   [U]); instance 61 on Lara's script changes it; larabase 37/38/42 track the carried `g_*` objects
   (`playerObjects()`; 42 drops all three, its slot argument is not tracked [I]). Mask, objects and Lara's script
   fields are saved (`script.player`); a chapter start without a save resets them. ou-game drops hidden groups'
-  submeshes from Lara's meshes when building the scene (gameplay and cutscenes, GL and Vulkan).
+  submeshes from Lara's meshes when building the scene (gameplay and cutscenes, GL and Vulkan), and meshes left with
+  none (`scene::hideDrawGroups`: lara_jungle_heavy's group-11 gauntlet is a mesh of its own; kept empty, the
+  renderers drew it whole and untextured, a white hand).
+- [U] Wetsuit dive-gear groups (lara_wetsuit_warm/cold): 1 = mask on the face + regulator in the mouth, 2 = the same
+  gear stowed [I], 3 = tank and harness (warm only); all drawn by us. tru.exe sets these masks only from instance data
+  (`0x63C7A0` -> `0x698250`: visible-group bits of instance `+0x104` data; player intros have none), anim-effect
+  commands 0x17 / 0x22 (`0x547B40`; none in Lara's clip lists) and scripts. A Wine capture of treasure-hunt l1_seatop
+  shows Lara on the boat with none of the three; what hides them is not found.
 - [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic, volume 9628 takes it
   back; l3_secretchamber cinematic 4654 gives the right one at its end (vt 60), 4655 takes it at its start (vt 58);
   l5_startsnow's chapter-start cinematic 7530 takes both at its start and gives both at its end (also sets story

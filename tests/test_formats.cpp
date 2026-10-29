@@ -3,10 +3,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <set>
 
 using namespace ou;
 
@@ -611,4 +613,41 @@ TEST(RealData, UnitOutfitObjects) {
         ASSERT_TRUE(names.count(u.playerObjectId)) << unit;
         EXPECT_EQ(names.at(u.playerObjectId), outfit) << unit;
     }
+}
+
+// Every outfit's skinned meshes with Thor's gear hidden (draw groups 10-12, script::Runtime's default mask): each mesh
+// left has primgroups, and each primgroup a real texture and material whose textures are in the DRM. lara_jungle_heavy's
+// group-11 gauntlet is a mesh of its own; kept with no primgroups it was drawn whole and untextured: a white hand.
+TEST(RealData, LaraOutfitsDrawTextured) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    int dropped = 0;
+    for (const char* outfit : {"lara", "lara_casual", "lara_wetsuit_warm", "lara_jungle_a", "lara_jungle_heavy",
+                               "lara_snow_heavy", "lara_jungle_b", "lara_wetsuit_cold"}) {
+        auto sc = formats::loadDrmScene(bf, std::string("pc-w\\") + outfit + ".drm");
+        std::set<uint32_t> textures;
+        for (const auto& t : sc.textures) textures.insert(t.id);
+        size_t drawn = 0;
+        for (auto& m : sc.meshes) {
+            if (m.skeleton < 0) continue;
+            if (!scene::hideDrawGroups(m, 0x7u << 9)) {
+                dropped += std::string_view(outfit) == "lara_jungle_heavy";
+                continue;
+            }
+            ASSERT_FALSE(m.submeshes.empty()) << outfit;
+            for (const auto& s : m.submeshes) {
+                ++drawn;
+                EXPECT_TRUE(textures.contains(s.textureId)) << outfit << " texture " << s.textureId;
+                const auto mat = std::find_if(sc.materials.begin(), sc.materials.end(),
+                                              [&](const scene::Material& x) { return x.id == s.materialId; });
+                ASSERT_NE(mat, sc.materials.end()) << outfit << " material " << s.materialId;
+                EXPECT_NE(mat->pixelShader, 0u) << outfit << " material " << s.materialId;
+                for (const auto& smp : mat->samplers)
+                    EXPECT_TRUE(textures.contains(smp.textureId)) << outfit << " material " << s.materialId << " s" << int(smp.reg);
+            }
+        }
+        EXPECT_GT(drawn, 20u) << outfit;
+    }
+    EXPECT_EQ(dropped, 1);
 }
