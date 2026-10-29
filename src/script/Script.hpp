@@ -236,6 +236,7 @@ public:
     // (+40/+44/+48 = 10, 11 gauntlets, 12 belt) hidden; instance native 61 from scripts shows/hides them.
     uint32_t playerHiddenGroups() const { return playerHiddenGroups_; }
     const std::set<std::string>& playerObjects() const { return playerObjects_; } // carried gear (g_belt, ...)
+    void setPlayerObjects(std::set<std::string> objects) { playerObjects_ = std::move(objects); } // chapter starts
     uint32_t unitEffect() const { return unitEffect_; }
     // globaleffect FadeOut/FadeIn screen wipe: 0 = clear, 1 = black; moves by 1/frames each tick.
     float screenFade() const { return fade_; }
