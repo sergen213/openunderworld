@@ -169,6 +169,53 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 - [U] Jump take-off speeds, step heights and swim speeds were not found in this block; the swim loops and the air clips
   have no root motion either, so these stay inferred.
 
+## Outfits (Lara's player object per level)
+
+Selection rule (tru.exe 0x5DE2B0, run by the main-state level load 0x5DE7E0):
+
+- [O] Default: the unit's settings DTP (`Level+0x70`, the render-settings block) holds at `+0x294` a u16 objectlist id;
+  `name = g_objectList[id]` is the object Lara is loaded as (`pc-w\<name>.drm`). Read again in 0x5D4340 (player
+  reload) when the requested object does not exist. [O] 0x5D40C0 then rewrites the unit's `player` intro (object
+  id from `OBTABLE_GetObjectID("player")`, or any id in the outfit list `GlobalInfo+4`) to that object id, so the
+  player instance *is* the outfit object.
+- [O] Override: game-state buffer `DAT_00c59264 +0x20C` (`+0x210` when `+500` is set, a mode we do not know [U]) is
+  written with the current outfit by every checkpoint save (0x555BE0) and read back by checkpoint restore (0x556E90);
+  it is cleared by the reset 0x556940. If non-zero and its DRM exists (0x5BF7B0 file check), the level load keeps it,
+  except that a load into `l1_seatop` forces `lara_wetsuit_warm`.
+- [O] Script natives: 0x77BD50 → 0x5D9F40 sets the outfit by object name; `unlockablecostume` 0x778CA0 sets the next
+  outfit from the costume record (+8) and reloads the player (0x6F0A90, also `PLAYER_DebugSwitchPlayerCharacter`).
+  [U] which scripts call them; the extras/PDA costume choice is not implemented, so the default rule always applies
+  outside saves.
+
+Data (all 82 units of `unitlist.txt`, `RealData.UnitOutfitObjects`) [V-data]: one outfit per chapter.
+
+| Units | Outfit (objectlist id) |
+|---|---|
+| `l3_*` (prologue, Croft Manor, `l3_mansion_exterior_afterburn`) | `lara_casual` (10) |
+| `l1_*` incl. `l1_ship\*`, `l1_cine_ship_sinking` (Mediterranean) | `lara_wetsuit_warm` (19) |
+| `l2_*` (Coastal Thailand) | `lara_jungle_a` (12) |
+| `l4_*` (Southern Mexico) | `lara_jungle_heavy` (14) |
+| `l5_*` (Jan Mayen) | `lara_snow_heavy` (16) |
+| `l6_*` (Andaman Sea ship) | `lara_jungle_b` (13) |
+| `l7_*` (Arctic Sea, Helheim, epilogue) | `lara_wetsuit_cold` (18) |
+| `container1` | `lara` (8) |
+
+`lara_bikini`, `lara_snow_light` and the `dlc_*` costumes are named by no unit [V-data] (costume unlocks [I]);
+`lara_doppelganger` / `lara_mom_thrall` have objectlist ids but no DRM. `lara.drm` uses the same render model
+(2366) as `lara_jungle_a`, so before this change chapter 2 alone looked right.
+
+Outfit DRMs [V-data] (`AnimReal.OutfitsShareClipsAndSkeletonTopology`): each is a whole Lara object. All 1744
+animation sections are byte-identical to lara.drm's; the player data DTP (lara.drm 850, e.g. casual 2643) is the
+same 550112 bytes and differs only in 38 bytes of u16 resource ids. Skeletons have lara.drm's 153 bones and parents
+but their own pivots (up to 13.4 units apart, `lara_wetsuit_warm`); every outfit has the 37-particle hair rig.
+Wetsuits carry extra Wave sections (556 vs 493) and each outfit one extra script type (280 bytes) [U] content.
+
+Ours: `UnitData::playerObject`; `World::enterUnit` (level load, respawn, chapter start, save load) sets
+`World::outfit`; saves store it (`outfit`) and loading applies the 0x5DE2B0 override rule above. ou-game loads the
+outfit's skinned meshes and textures, re-rigs the pose skeleton, hair and hand offsets from it (`rigOutfit`; clips
+stay lara.drm's, identical) and adds its waves. Cutscenes pose the same meshes. Streaming into a neighbour keeps the
+outfit (the original only reads `+0x294` on a level load).
+
 ## Controls
 
 - Bindings live in `config.json` under `controls` (`bindings`: action → list of inputs; `mouse_sensitivity` 0.1..10,

@@ -58,6 +58,7 @@ json toJson(const SaveGame& s) {
         {"collected", s.collected},
         {"chapter", s.chapter},
         {"found", s.found},
+        {"outfit", s.outfit},
         {"health", s.health ? json(*s.health) : json(nullptr)},
         {"script", s.script},
         {"enemies", s.enemies},
@@ -111,6 +112,9 @@ SaveGame fromJson(const json& j) {
     s.collected = j.value("collected", std::set<int32_t>{});
     s.chapter = j.value("chapter", std::max(0, game::chapterOfUnit(s.unit)));
     s.found = j.value("found", std::array<int, 3>{});
+    s.outfit = j.value("outfit", std::string{});
+    if (s.outfit.size() > 64 || s.outfit.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos)
+        throw SaveError("bad outfit " + s.outfit);
     if (const auto h = j.find("health"); h != j.end() && !h->is_null()) {
         s.health = h->get<float>();
         if (!(*s.health > 0 && *s.health < 1e6f)) throw SaveError("bad health " + h->dump());
@@ -150,6 +154,7 @@ SaveGame capture(const game::World& world) {
     s.collected = world.collected;
     s.chapter = world.chapter;
     s.found = world.found;
+    s.outfit = world.outfit;
     if (!world.health().dead()) s.health = world.health().value(); // [I] a save taken while dead loads at full
     s.script = world.script().serialize();
     s.enemies = world.enemies().serialize();
@@ -173,6 +178,8 @@ void apply(const SaveGame& save, game::World& world) {
     world.collected = save.collected;
     world.chapter = save.chapter;
     world.found = save.found;
+    // tru.exe 0x5DE2B0: a load keeps the saved outfit (game state +0x20C), except l1_seatop forces lara_wetsuit_warm.
+    if (!save.outfit.empty()) world.outfit = save.unit == "l1_seatop" ? "lara_wetsuit_warm" : save.outfit;
     world.script().restore(save.script);
     if (!save.enemies.is_null()) {
         try {

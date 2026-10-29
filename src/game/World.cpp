@@ -120,18 +120,28 @@ const std::vector<std::string_view> kLaraClipNames = {
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
 
-AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile) {
-    auto bytes = bigfile.read("pc-w\\lara.drm");
-    if (!bytes) throw std::runtime_error("pc-w\\lara.drm not in bigfile");
-    const cdc::Drm drm = cdc::parseDrm(std::move(*bytes));
+void rigOutfit(AnimLibrary& lib, const cdc::Drm& drm) {
     std::vector<std::string> warnings;
     auto skeletons = anim::decodeSkeletons(drm, warnings);
-    if (skeletons.empty()) throw std::runtime_error("pc-w\\lara.drm: no skeleton");
-    AnimLibrary lib;
-    // Lara's render model (2366) has the full skeleton; the other dtp Model is an empty placeholder.
+    if (skeletons.empty()) throw std::runtime_error("outfit DRM: no skeleton");
+    // The render model (lara.drm 2366) has the full skeleton; the other dtp Model is an empty placeholder.
     lib.skeleton = std::move(*std::max_element(skeletons.begin(), skeletons.end(), [](const auto& a, const auto& b) {
         return a.bones.size() < b.bones.size();
     }));
+    // Hands (bones 55, 80: the last segment of each arm chain before the fingers) in the hang pose.
+    if (const auto* c = lib.find("ledgeb_idle"))
+        if (auto h = lib.handsAt(*c, 0)) lib.hangHandOffset = *h;
+    if (const auto* c = lib.find("HPole_idleHangPerp"))
+        if (auto h = lib.handsAt(*c, 0)) lib.poleHandOffset = *h;
+    lib.hair = anim::decodeHair(drm, lib.skeleton);
+}
+
+AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& outfit) {
+    const std::string path = "pc-w\\" + outfit + ".drm";
+    auto bytes = bigfile.read(path);
+    if (!bytes) throw std::runtime_error(path + " not in bigfile");
+    const cdc::Drm drm = cdc::parseDrm(std::move(*bytes));
+    AnimLibrary lib;
     const auto loadClips = [&](const cdc::Drm& d, const std::vector<std::string_view>& names, const std::string& file,
                                const std::string& prefix) {
         const auto list = anim::animList(d);
@@ -145,7 +155,7 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile) {
             lib.clips.emplace(prefix + std::string(name), anim::decodeClip(s->data));
         }
     };
-    loadClips(drm, kLaraClipNames, "lara.drm", "");
+    loadClips(drm, kLaraClipNames, path, "");
     // Lara's weapon clips live in each weapon's DRM (they animate her skeleton); stats from its data.
     for (int i = 0; i < kWeaponCount; ++i) {
         const std::string object(weaponObject(Weapon(i))), file = "pc-w\\" + object + ".drm";
@@ -154,9 +164,7 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile) {
         loadClips(cdc::parseDrm(std::move(*gun)), weaponClipNames(Weapon(i)), file, object + ":");
         if (auto w = loadWeapon(bigfile, object)) lib.weapons[size_t(i)] = *w;
     }
-    // Hands (bones 55, 80: the last segment of each arm chain before the fingers) in the hang pose.
-    if (auto h = lib.handsAt(*lib.find("ledgeb_idle"), 0)) lib.hangHandOffset = *h;
-    if (auto h = lib.handsAt(*lib.find("HPole_idleHangPerp"), 0)) lib.poleHandOffset = *h;
+    rigOutfit(lib, drm);
     // Swim speed: mean root speed of the clips that start swimming (their loops have no root motion).
     float dist = 0;
     double secs = 0;
@@ -166,8 +174,12 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile) {
         secs += c.durationSeconds();
     }
     lib.swimSpeed = dist / float(secs);
-    lib.hair = anim::decodeHair(drm, lib.skeleton);
     return lib;
+}
+
+void World::setOutfitRig(const cdc::Drm& drm) {
+    rigOutfit(anims_, drm); // in place: Player and AnimController keep referring to anims_
+    updatePose(0, true);
 }
 
 World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tuning tuning)

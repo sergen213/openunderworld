@@ -90,9 +90,13 @@ const std::vector<std::string_view>& weaponClipNames(Weapon w);
 // anim requests. Player::play starts clips at startSeconds; World crossfades over blendSeconds.
 struct ClipBlend { float blendSeconds; double startSeconds; };
 ClipBlend clipBlend(std::string_view from, std::string_view to);
-// Skeleton + kLaraClipNames clips from pc-w\lara.drm, each weapon's weaponClipNames + stats. Throws
+// Skeleton + kLaraClipNames clips from pc-w\<outfit>.drm, each weapon's weaponClipNames + stats. Throws
 // cdc::FormatError / std::runtime_error.
-AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile);
+AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& outfit = "lara");
+// Replaces `lib`'s skeleton, hair rig and hand offsets with those of outfit DRM `drm` (pc-w\lara_*.drm). The
+// outfits' clips are byte-identical to lara.drm's; their skeletons share its topology with other pivots
+// (docs/GAMEPLAY.md "Outfits"). Throws std::runtime_error without a skeleton.
+void rigOutfit(AnimLibrary& lib, const cdc::Drm& drm);
 
 // Segment-0 (root) translation of `clip` at unbounded time `t` seconds. Looping clips are unwrapped:
 // each full cycle adds the cycle displacement, so root(t1) - root(t0) is the motion over [t0, t1]
@@ -295,6 +299,7 @@ struct UnitData {
     std::map<int32_t, std::string> musicByIntro;
     std::string music;
     std::map<int32_t, std::string> cinematics; // cinematic_object intro -> the stream it plays (cine::introCinematic)
+    std::string playerObject; // Lara outfit object of this unit (formats::Unit::playerObjectId name); empty if none
 };
 // Throws cdc::FormatError if pc-w\<name>.drm is missing or not a unit.
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name);
@@ -367,6 +372,10 @@ public:
     std::set<int32_t> collected; // intro ids of picked-up items (Pickup::id); saved
     std::array<int, 3> found{};  // pickups collected per PickupKind (PDA counts); saved
     int chapter = 0;             // kChapters index being played; saved
+    // Lara's outfit object (objectlist.txt name, pc-w\<outfit>.drm): the level-load unit's (UnitData::playerObject,
+    // set by enterUnit), or a save's. Rendering follows it; setOutfitRig re-rigs the pose skeleton. Saved.
+    std::string outfit = "lara";
+    void setOutfitRig(const cdc::Drm& drm); // rigOutfit on the pose library, then a pose reset
     // Starts chapter `n` (kChapters) at its start unit's player intro; respawns fall back there. Throws as enterUnit.
     void startChapter(int n);
     // Called when a script activates a cinematic_object that has a stream (UnitData::cinematics), before a level

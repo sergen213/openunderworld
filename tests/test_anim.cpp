@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <optional>
 
 using namespace ou;
@@ -427,4 +428,48 @@ TEST(AnimReal, LaraHairRig) {
     // Rest lengths are the bind-pose distances.
     for (const auto& k : rig.links)
         EXPECT_NEAR(glm::length(bind[rig.particles[k.a].bone] - bind[rig.particles[k.b].bone]), k.rest, 0.01f);
+}
+
+// Every outfit DRM is a whole Lara object: its clips are byte-identical to lara.drm's and its skinned meshes deform
+// a skeleton with lara.drm's topology (pivots differ, wetsuit_warm by up to 13.4 units) and a 37-particle hair rig.
+TEST(AnimReal, OutfitsShareClipsAndSkeletonTopology) {
+    const Lara* l = lara();
+    if (!l) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet big(std::getenv("OU_GAME_DIR"));
+    const auto* ref = &l->skeletons[0];
+    for (const auto& s : l->skeletons)
+        if (s.bones.size() > ref->bones.size()) ref = &s;
+    ASSERT_EQ(ref->bones.size(), 153u);
+    std::map<uint32_t, const cdc::Section*> refClips;
+    for (const auto& s : l->drm.sections)
+        if (s.type == cdc::SectionType::Animation) refClips[s.id] = &s;
+    for (const char* n : {"lara_bikini", "lara_casual", "lara_jungle_a", "lara_jungle_b", "lara_jungle_heavy", "lara_snow_heavy",
+                          "lara_snow_light", "lara_wetsuit_cold", "lara_wetsuit_warm"}) {
+        const std::string path = std::string("pc-w\\") + n + ".drm";
+        const auto d = cdc::parseDrm(*big.read(path));
+        size_t clips = 0;
+        for (const auto& s : d.sections)
+            if (s.type == cdc::SectionType::Animation) {
+                ++clips;
+                const auto r = refClips.find(s.id);
+                ASSERT_NE(r, refClips.end()) << n << " clip " << s.id;
+                EXPECT_TRUE(std::equal(s.data.begin(), s.data.end(), r->second->data.begin(), r->second->data.end())) << n << " " << s.id;
+            }
+        EXPECT_EQ(clips, refClips.size()) << n;
+        const auto sc = formats::loadDrmScene(big, path);
+        size_t skinned = 0;
+        for (const auto& m : sc.meshes) {
+            if (m.skeleton < 0 || m.indices.empty()) continue;
+            ++skinned;
+            const auto& sk = sc.skeletons.at(size_t(m.skeleton));
+            ASSERT_EQ(sk.bones.size(), ref->bones.size()) << n;
+            for (size_t b = 0; b < sk.bones.size(); ++b) ASSERT_EQ(sk.bones[b].parent, ref->bones[b].parent) << n << " bone " << b;
+            ASSERT_EQ(m.skin.size(), m.vertices.size()) << n;
+            for (const auto& w : m.skin)
+                for (int k = 0; k < 4; ++k)
+                    if (w.weight[k]) { ASSERT_LT(w.bone[k], sk.bones.size()) << n; }
+            EXPECT_EQ(anim::decodeHair(d, sk).particles.size(), 37u) << n;
+        }
+        EXPECT_GE(skinned, 5u) << n;
+    }
 }

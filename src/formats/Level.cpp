@@ -197,6 +197,7 @@ Unit parseUnit(const cdc::Drm& d) {
         e.fogFar = rs.at<float>(o + 0x3C);
         if (e.fogFar == 0) e.fogFar = rs.at<float>(o + 0x38);
         e.valid = true;
+        u.playerObjectId = rs.at<uint16_t>(o + 0x294);
     }
 
     // Level+0x90 -> cell group data {header*, ?, streamGroups*, symbols*, cells*, ?, imfs*}.

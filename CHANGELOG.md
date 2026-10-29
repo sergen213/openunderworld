@@ -7,6 +7,7 @@ All notable changes to OpenUnderworld are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Lara wears each level's own outfit, as the original picks it from the level data: casual at Croft Manor, the warm wetsuit in the Mediterranean, jungle outfits in Thailand, Mexico and on the Andaman Sea ship, the snow gear on Jan Mayen and the cold wetsuit in the Arctic. The outfit changes with the chapter, is kept in saves and is the one cutscenes show (skeleton, hair and sounds from the outfit too).
 - Configurable controls: every gameplay action (move, walk, sprint, jump, drop, interact, draw, fire, aim, switch target, weapon, health pack, grapple, quick save/load) can be bound to any keys, mouse buttons, gamepad buttons or triggers in `config.json` (`controls`) or on the launcher's Controllers tab, which captures the pressed input. Also mouse sensitivity and inverted look. Defaults are unchanged.
 - Saves now include the enemies: every enemy's position, health, animation and AI state (also in streamed-out areas), fired spawn generators and the checkpoint's dead set. Loading no longer revives enemies you killed or resets ones mid-fight. Older saves still load (their enemies stay as they are).
 

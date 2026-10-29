@@ -33,6 +33,7 @@ struct SaveGame {
     std::set<int32_t> collected; // World::collected (pickup intro ids)
     int chapter = 0; // game::kChapters index; saves without it: chapterOfUnit(unit), else 0
     std::array<int, 3> found{}; // World::found (per PickupKind)
+    std::string outfit; // World::outfit (objectlist name, [a-z0-9_]); empty (older saves) = the unit's
     std::optional<float> health; // Lara's health (World::health); missing = full
     nlohmann::json script = nlohmann::json::object(); // trigger/puzzle state (src/script), opaque here
     nlohmann::json enemies; // ai::Enemies::serialize(), opaque here; null (older saves) = enemies left as they are

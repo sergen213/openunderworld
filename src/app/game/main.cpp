@@ -536,6 +536,36 @@ struct StreamedScene {
     std::vector<std::pair<ou::game::Weapon, int>> gunSlots; // weapon, hand of each guns mesh
     std::vector<size_t> gunIndices;
     uint64_t version = ~0ull, enemyVersion = ~0ull, lightsVersion = ~0ull, visibilityVersion = ~0ull;
+    std::string laraOutfit; // pc-w\<laraOutfit>.drm is in `lara` and rigs the world's pose skeleton
+
+    // Lara's skinned meshes and pose rig from World::outfit's DRM (GAMEPLAY.md "Outfits") when it changed: level loads
+    // and saves pick the outfit. Returns the parsed DRM (for its waves) on a change; the scene then needs a rebuild.
+    // A missing DRM falls back to lara.drm, as tru.exe 0x5DE2B0 falls back to the unit's object.
+    std::optional<ou::cdc::Drm> dress(const ou::cdc::BigfileSet& bf, ou::game::World& w, std::vector<std::string>& warnings) {
+        if (w.outfit == laraOutfit) return std::nullopt;
+        auto bytes = bf.read("pc-w\\" + w.outfit + ".drm");
+        if (!bytes) {
+            warnings.push_back("pc-w\\" + w.outfit + ".drm not in bigfile: Lara wears lara.drm");
+            w.outfit = "lara";
+            if (w.outfit == laraOutfit) return std::nullopt;
+            bytes = bf.read("pc-w\\lara.drm");
+            if (!bytes) throw std::runtime_error("pc-w\\lara.drm not in bigfile");
+        }
+        auto drm = ou::cdc::parseDrm(std::move(*bytes));
+        w.setOutfitRig(drm);
+        auto sc = ou::formats::loadDrmScene(bf, "pc-w\\" + w.outfit + ".drm");
+        lara = {};
+        lara.skeletons = std::move(sc.skeletons);
+        lara.textures = std::move(sc.textures);
+        lara.materials = std::move(sc.materials);
+        lara.shaders = std::move(sc.shaders);
+        for (auto& m : sc.meshes)
+            if (m.skeleton >= 0 && !m.indices.empty()) lara.meshes.push_back(std::move(m)); // skinned body only
+        if (lara.meshes.empty()) warnings.push_back("pc-w\\" + w.outfit + ".drm: no skinned mesh decoded");
+        for (auto& x : sc.warnings) warnings.push_back(std::move(x));
+        laraOutfit = w.outfit;
+        return drm;
+    }
 
     ou::scene::SceneData build(const ou::cdc::BigfileSet& bf, const ou::game::World& w, LaraMeshes& laraMeshes,
                                EnemyMeshes& enemyMeshes, std::vector<std::string>& warnings) {
@@ -836,14 +866,7 @@ int main(int argc, char** argv) {
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
         if (!opt.loadSlot.empty() && !quickLoad(*world, opt.loadSlot)) return 1;
 
-        auto laraScene = ou::formats::loadDrmScene(bf, "pc-w\\lara.drm");
-        streamed.lara.skeletons = std::move(laraScene.skeletons);
-        streamed.lara.textures = std::move(laraScene.textures);
-        streamed.lara.materials = std::move(laraScene.materials);
-        streamed.lara.shaders = std::move(laraScene.shaders);
-        for (auto& m : laraScene.meshes)
-            if (m.skeleton >= 0 && !m.indices.empty()) streamed.lara.meshes.push_back(std::move(m)); // skinned body only
-        for (auto& w : laraScene.warnings) warnings.push_back(std::move(w));
+        streamed.dress(bf, *world, warnings);
         // Weapons: each wp_* DRM's first mesh (the gun; wp_handgun's others are a low-detail copy and a small part):
         // pistols and uzi once per hand, shotgun and speargun once; posed in model space on the CPU (CombatView::pose).
         for (int i = 0; i < ou::game::kWeaponCount; ++i) {
@@ -873,7 +896,6 @@ int main(int argc, char** argv) {
         if (opt.weapon) // testing: the original gets its secondary and rounds from pickups
             world->giveWeapon(*opt.weapon, world->anims().weapons[size_t(*opt.weapon)].maxReserve);
         scene = streamed.build(bf, *world, lara, enemyMeshes, warnings);
-        if (lara.meshIndices.empty()) warnings.push_back("pc-w\\lara.drm: no skinned mesh decoded");
     } catch (const std::exception& e) {
         std::fprintf(stderr, "ou-game: %s\n", e.what());
         return 1;
@@ -909,7 +931,7 @@ int main(int argc, char** argv) {
     bool audioOn = false;
     if (!opt.noAudio) {
         try {
-            if (auto laraDrm = bigfile->read("pc-w\\lara.drm")) mixer.addWaves(ou::cdc::parseDrm(std::move(*laraDrm)));
+            if (auto laraDrm = bigfile->read("pc-w\\" + world->outfit + ".drm")) mixer.addWaves(ou::cdc::parseDrm(std::move(*laraDrm)));
             for (int i = 0; i < ou::game::kWeaponCount; ++i) // shots, holster, reload waves
                 if (auto gun = bigfile->read("pc-w\\" + std::string(ou::game::weaponObject(ou::game::Weapon(i))) + ".drm")) {
                     const auto drm = ou::cdc::parseDrm(std::move(*gun));
@@ -1226,6 +1248,15 @@ int main(int argc, char** argv) {
                 steps.tick(*world, mixer);
             }
             hud.tick(ou::game::kTickSeconds);
+        }
+        try { // a level load or save changed the outfit: new Lara meshes, rig and waves
+            if (const auto drm = streamed.dress(*bigfile, *world, warnings)) {
+                streamed.version = ~0ull;
+                if (audioOn) mixer.addWaves(*drm);
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: outfit %s: %s\n", world->outfit.c_str(), e.what());
+            streamed.laraOutfit = world->outfit; // keep the current meshes, do not retry every frame
         }
         if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion ||
             world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion) {

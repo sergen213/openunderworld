@@ -590,3 +590,25 @@ TEST(RealData, UnitLightsAllUnits) {
     EXPECT_EQ(suns, 23u);
     EXPECT_EQ(maxPerUnit, 28u);
 }
+
+// Each unit's settings DTP (Level+0x70) names Lara's outfit object at +0x294 (tru.exe 0x5DE2B0); survey of all
+// units 2026-10-28 in GAMEPLAY.md "Outfits": one outfit per chapter.
+TEST(RealData, UnitOutfitObjects) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    for (const auto& [unit, outfit] : std::vector<std::pair<const char*, const char*>>{
+             {"l3_main_bedroom", "lara_casual"},       {"l3_caverns_start", "lara_casual"}, {"l1_seatop", "lara_wetsuit_warm"},
+             {"l1_ship_exterior", "lara_wetsuit_warm"}, {"l2_cliffclimb", "lara_jungle_a"},  {"l4_pool", "lara_jungle_heavy"},
+             {"l5_startsnow", "lara_snow_heavy"},      {"l6_ship_exterior", "lara_jungle_b"}, {"l7_arctic_sea", "lara_wetsuit_cold"},
+             {"l7_himalaya_end", "lara_wetsuit_cold"}}) {
+        const auto bytes = bf.read(std::string("pc-w\\") + unit + ".drm");
+        ASSERT_TRUE(bytes) << unit;
+        const auto u = formats::parseUnit(cdc::parseDrm(*bytes));
+        ASSERT_TRUE(names.count(u.playerObjectId)) << unit;
+        EXPECT_EQ(names.at(u.playerObjectId), outfit) << unit;
+    }
+}

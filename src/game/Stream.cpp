@@ -48,6 +48,8 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     const auto list = bigfile.read("\\tr8\\pc-w\\objectlist.txt");
     const auto names = list ? formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})
                             : std::map<uint16_t, std::string>{};
+    // tru.exe 0x5DE2B0: the level loads Lara as the object named by its settings DTP (GAMEPLAY.md "Outfits").
+    if (const auto p = names.find(unit.playerObjectId); unit.playerObjectId && p != names.end()) u.playerObject = p->second;
     for (const auto& in : unit.intros) {
         const auto n = names.find(in.objectId);
         if (n == names.end()) continue;
@@ -111,6 +113,8 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
             if (c.id == checkpointId) spawn = Spawn{c.pos, c.yaw, true};
     if (!spawn) spawn = base.data.spawn;
     if (!spawn) throw cdc::FormatError(unit + ": no intro to spawn at");
+    // Level load (also respawns, saves, chapters): Lara becomes the unit's outfit object; streaming keeps hers.
+    if (!base.data.playerObject.empty()) outfit = base.data.playerObject;
     units_.clear();
     units_.push_back(std::move(base));
     current_ = 0;

@@ -114,6 +114,9 @@ struct Unit {
     std::vector<ImfPlacement> imfs;
     std::vector<Portal> portals;
     scene::Environment environment; // Level+0x70 render settings (fog, ambient)
+    // Level+0x70 DTP +0x294 u16: objectlist.txt id of the Lara outfit object the unit loads (tru.exe 0x5DE2B0,
+    // 0x5D4340); 0 without a settings DTP. docs/GAMEPLAY.md "Outfits".
+    uint16_t playerObjectId = 0;
 };
 // Parses the level struct (section 0) of a unit DRM. Throws cdc::FormatError on layout mismatch.
 Unit parseUnit(const cdc::Drm& unit);

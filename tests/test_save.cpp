@@ -154,7 +154,8 @@ void spit(const fs::path& p, const std::string& s) { std::ofstream(p, std::ios::
 // ---- format ------------------------------------------------------------------------------------
 
 TEST(Save, RoundTripIsExact) {
-    const auto s = sample();
+    auto s = sample();
+    s.outfit = "lara_casual";
     const auto r = save::parse(save::serialize(s));
     EXPECT_EQ(r.unit, s.unit);
     expectSame(r.player, s.player);
@@ -166,6 +167,7 @@ TEST(Save, RoundTripIsExact) {
     EXPECT_EQ(r.collected, s.collected);
     EXPECT_EQ(r.script, s.script);
     EXPECT_EQ(r.ticks, s.ticks);
+    EXPECT_EQ(r.outfit, "lara_casual");
     EXPECT_EQ(save::serialize(r), save::serialize(s));
 }
 
@@ -185,6 +187,7 @@ TEST(Save, RejectsCorruptAndTruncated) {
     EXPECT_THROW(save::parse(withHeader(2, "{\"unit\": \"a\"}")), save::SaveError); // no player
     EXPECT_THROW(save::parse(withHeader(2, R"({"unit":"a","player":{"state":"idle","pos":[1,2],"yaw":0}})")), save::SaveError);
     EXPECT_THROW(save::parse(withHeader(2, R"({"unit":"a","player":{"state":"teleport","pos":[1,2,3],"yaw":0}})")), save::SaveError);
+    EXPECT_THROW(save::parse(withHeader(2, R"({"unit":"a","player":{"state":"idle","pos":[1,2,3],"yaw":0},"outfit":"..\\x"})")), save::SaveError);
 }
 
 TEST(Save, MigratesVersion1) {
@@ -417,4 +420,31 @@ TEST(StreamReal, PoolToRagnarokOnFootThenSaveLoad) {
         ASSERT_EQ(s.clip, after[size_t(i)].clip) << "tick " << i;
         ASSERT_LT(glm::length(s.pos - after[size_t(i)].pos), 0.5f) << "tick " << i;
     }
+}
+
+// Level loads dress Lara in the unit's outfit object (GAMEPLAY.md "Outfits"); streaming keeps it; a load restores the
+// saved one (tru.exe 0x5DE2B0).
+TEST(StreamReal, ChapterOutfits) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    EXPECT_EQ(w.outfit, "lara_casual");
+    const char* expect[] = {"lara_casual", "lara_wetsuit_warm", "lara_jungle_a", "lara_casual", "lara_jungle_heavy",
+                            "lara_snow_heavy", "lara_jungle_b", "lara_wetsuit_cold", "lara_wetsuit_cold"};
+    for (int c = 0; c < int(game::kChapters.size()); ++c) {
+        w.startChapter(c);
+        EXPECT_EQ(w.outfit, expect[c]) << c;
+    }
+    w.startChapter(4);
+    const auto saved = save::capture(w);
+    EXPECT_EQ(saved.outfit, "lara_jungle_heavy");
+    auto other = saved;
+    other.outfit = "lara_bikini"; // a saved outfit wins over the unit's
+    save::apply(other, w);
+    EXPECT_EQ(w.outfit, "lara_bikini");
+    // The outfit's skeleton re-rigs the pose (same bone count, its own pivots).
+    const auto drm = cdc::parseDrm(*bf.read("pc-w\\lara_wetsuit_warm.drm"));
+    w.setOutfitRig(drm);
+    EXPECT_EQ(w.anims().skeleton.bones.size(), 153u);
+    EXPECT_EQ(w.pose(1).size(), 153u);
 }

@@ -30,6 +30,7 @@ Every unit DRM begins with a general section: the **Level** struct. [O] in all 8
 | Level offset | Meaning | Evidence |
 |---|---|---|
 | +0x00 | `Terrain*` (24-byte section: portals, collision terrain groups) | [O] reloc; matches TRLAU-menu-hook TR8 `Terrain` |
+| +0x70 | settings DTP: fog/ambient (SHADERS.md), `+0x294` u16 Lara outfit object id | [O] 0x5C7CA0, 0x5DE2B0 (GAMEPLAY.md "Outfits") |
 | +0x74 | unit data (DTPDATA section) | [O] `FUN_005B3860` reads intros from `Level+0x74` |
 | +0x80 | float3 offset between the collision and render frames | [O] reported by the Collision agent. Collision meshes **and portals** are stored relative to it; intros do **not** need it (see below and "Streaming") |
 | +0x90 | cell group data (general section) | [O] reloc; field layout matches DXHR `CellGroupData`, reordered |

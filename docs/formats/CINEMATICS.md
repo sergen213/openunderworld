@@ -170,7 +170,7 @@ player intro).
 - The game scene is re-used: Lara's skinned meshes are posed from the stream, other actors come from their object DRM
   (render model 0; rigid models follow bone 0), the actors' static level copies and the pistols are hidden, game music
   is muted, the camera comes from the stream (with roll), the `.mul` track plays as a voice started with frame 0.
-- Not done: lights, depth of field, outfit variants (Lara always wears lara.drm's model), hair simulation (hair bones
+- Lara wears the level's outfit (GAMEPLAY.md "Outfits"). Not done: lights, depth of field, hair simulation (hair bones
   ride rigidly), events/vars, instance channels 0–2. [I] Frame position follows wall time; the exe follows the stream's
   playback clock.
 
