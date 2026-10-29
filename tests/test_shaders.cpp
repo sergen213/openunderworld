@@ -7,6 +7,7 @@
 #include "render/ShaderTranslate.hpp"
 
 #include <gtest/gtest.h>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -348,4 +349,30 @@ TEST(OriginalShading, LightTableAndSets) {
     const auto both = render::original::lightSet(env, {500, 0, 0}, 100);
     EXPECT_NE(both.packed[0] >> 8 & 0xFF, 0xFFu);
     EXPECT_EQ(render::original::lightSet(env, {5000, 0, 0}, 10).packed[0], ~0u);
+}
+
+// Light sets keep the six heaviest lights, heaviest first, equal weights in light order.
+TEST(OriginalShading, LightSetOrder) {
+    scene::Environment env;
+    env.valid = true;
+    for (int i = 0; i < 9; ++i) {
+        scene::Light l;
+        l.radius = 1000;
+        l.color[0] = l.color[1] = l.color[2] = i == 7 ? 5.0f : i % 2 ? 1.0f : 2.0f; // 7 heaviest, evens next, odds last
+        env.lights.push_back(l);
+    }
+    const auto s = render::original::lightSet(env, {0, 0, 0}, 1);
+    auto slot = [&](int k) { return int(s.packed[k >> 2] >> (8 * (k & 3)) & 0xFF); };
+    constexpr int kExpected[6] = {7, 0, 2, 4, 6, 8};
+    for (int k = 0; k < 6; ++k) EXPECT_EQ(slot(k), kExpected[k]) << k;
+}
+
+// Shadow cascade culling: only spheres wholly outside the orthographic x / y clip range are skipped.
+TEST(RenderCommon, OutsideOrtho) {
+    const glm::mat4 vp = glm::ortho(-100.0f, 100.0f, -50.0f, 50.0f, -1000.0f, 1000.0f);
+    EXPECT_FALSE(render::outsideOrtho(vp, {0, 0, 0}, 1));
+    EXPECT_FALSE(render::outsideOrtho(vp, {105, 0, 0}, 10));  // overlaps the right edge
+    EXPECT_TRUE(render::outsideOrtho(vp, {120, 0, 0}, 10));
+    EXPECT_TRUE(render::outsideOrtho(vp, {0, -70, 0}, 10));
+    EXPECT_FALSE(render::outsideOrtho(vp, {0, 0, 5000}, 10)); // depth is never culled
 }

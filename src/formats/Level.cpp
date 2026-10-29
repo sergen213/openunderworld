@@ -43,12 +43,13 @@ struct View {
     }
 };
 
-// Type-3/type-5 resource relocations: patch offset -> section type of the referenced resource.
-// The id itself stays in the data at the patch offset (as in materialTextures()).
-std::unordered_map<uint32_t, uint32_t> resourceRefs(const cdc::Section& s) {
-    std::unordered_map<uint32_t, uint32_t> out;
+// Type-3/type-5 resource relocation for patch offset `off`: section type of the referenced resource (last entry wins),
+// or ~0u. The id itself stays in the data at the patch offset (as in materialTextures()). A linear scan: building a
+// map per lookup was a third of a level load.
+uint32_t resourceRef(const cdc::Section& s, uint32_t off) {
     const auto r = s.relocations;
-    if (r.size() < 20) return out;
+    uint32_t type = ~0u;
+    if (r.size() < 20) return type;
     uint32_t c[5];
     std::memcpy(c, r.data(), sizeof c);
     const size_t t3 = 20 + 8 * size_t(c[0]) + 8 * size_t(c[1]), t5 = t3 + 4 * (size_t(c[2]) + c[3]);
@@ -57,9 +58,9 @@ std::unordered_map<uint32_t, uint32_t> resourceRefs(const cdc::Section& s) {
             if (p0 + 4 * (k + 1ull) > r.size()) throw FormatError("resource relocation table truncated");
             uint32_t v;
             std::memcpy(&v, r.data() + p0 + 4 * size_t(k), 4);
-            out[(v & 0x1FFFFFF) * 4] = v >> 25;
+            if ((v & 0x1FFFFFF) * 4 == off) type = v >> 25;
         }
-    return out;
+    return type;
 }
 
 const cdc::Section* findSection(const cdc::Drm& d, cdc::SectionType t, uint32_t id, uint32_t* index = nullptr) {
@@ -73,9 +74,7 @@ const cdc::Section* findSection(const cdc::Drm& d, cdc::SectionType t, uint32_t 
 
 // u32 resource id at `off` of `s` if a relocation marks it as a reference to section type `t`.
 uint32_t resourceId(const cdc::Section& s, uint32_t off, cdc::SectionType t) {
-    const auto refs = resourceRefs(s);
-    const auto it = refs.find(off);
-    if (it == refs.end() || it->second != uint32_t(t) || off + 4 > s.data.size()) return 0;
+    if (resourceRef(s, off) != uint32_t(t) || off + 4 > s.data.size()) return 0;
     uint32_t id;
     std::memcpy(&id, s.data.data() + off, 4);
     return id;

@@ -283,6 +283,7 @@ struct GpuMesh {
     Buffer blasBuffer;
     std::vector<VkAccelerationStructureGeometryKHR> rtGeometries;
     std::vector<VkAccelerationStructureBuildRangeInfoKHR> rtRanges;
+    VkDeviceSize rtScratch = 0; // aligned max(build, update) scratch size
     // FSR motion vectors of meshes moved by updateVertices: the previous drawn frame's vertices (GPU copy at the start
     // of the frame) and the frame counter of the last update; the staging slot of a pending updateVertices.
     Buffer prevVertices;
@@ -298,6 +299,8 @@ struct Frame {
     Buffer text;
     Buffer lines; // debug lines, grown on demand in lineMemory_[frame]
     VkDeviceSize lineCapacity = 0;
+    VkQueryPool gpuTimes = VK_NULL_HANDLE; // OU_VK_PRESENT_STATS: pass timestamps (kGpuMarks)
+    bool gpuTimed = false;                 // gpuTimes holds this frame's previous results
 };
 
 // updateVertices staging of one frame in flight (host-visible, grown on demand), recorded by recordVertexUploads.
@@ -452,7 +455,7 @@ public:
                                     VK_SAMPLE_COUNT_1_BIT, t.cube);
             // Cube maps (environment reflections of the original shaders) never feed the 2D generic / RT paths.
             img.cube = t.cube;
-            img.set = t.cube ? white_.set : allocateSet(scenePool_, img.view, sceneSampler_);
+            img.set = t.cube ? white_.set : allocateSet(scenePool_, img.view, textureSampler());
             img.slot = t.cube ? 0 : uint32_t(textures_.size() + 1);
             if (rtStatus_.supported && img.slot >= kMaxRtTextures) {
                 warn("beyond the " + std::to_string(kMaxRtTextures) + " ray-traced textures: rays see it white");
@@ -532,6 +535,8 @@ public:
                 LinearAllocator memory;
                 memory.init(device_, gpu_, 0);
                 const VkDeviceSize capacity = std::bit_ceil(std::max<VkDeviceSize>(need, 4 << 20));
+                // System memory: host-visible VRAM (resizable BAR) cut the GPU copies 1.7 -> 0.4 ms in l4_ballcourt but
+                // the CPU writes into it dropped the frame rate 58 -> 39 fps.
                 Buffer b = createBuffer(memory, capacity, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 if (st.used) std::memcpy(b.mapped, st.buffer.mapped, st.used);
@@ -589,8 +594,7 @@ public:
                                       VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                                       VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT};
         barriers(cmd, {}, &vertex);
-        for (const size_t slot : st.meshes) // rebuildBlas orders itself after the copies
-            if (meshes_[slot].blas) rebuildBlas(cmd, meshes_[slot]);
+        rebuildBlases(cmd, st.meshes);
         st.meshes.clear();
         st.used = 0;
         st.idle = false; // this frame's submit reads it
@@ -653,7 +657,9 @@ public:
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
                                     VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr};
         VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
+        gpuBegin(f, cmd);
         recordVertexUploads(cmd);
+        gpuMark(cmd, 1);
         // FSR: sub-pixel jitter on every scene projection (camera.jitter); `eye` keeps the unjittered one for motion.
         Camera camera = eye;
         const bool fsrOn = fsr_.valid();
@@ -698,11 +704,13 @@ public:
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         drawOrder(meshes_, camera.position, order_);
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
+        gpuMark(cmd, 2);
         // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
         const SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
                                         shadowMap, rtOn ? (options.rt == RayTracing::Full ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
         std::memcpy(shadowUbo_[frameIndex_].mapped, &sun.block, sizeof sun.block); // host-coherent
         if (shadowMap) recordShadowPass(cmd, sun, zRemap);
+        gpuMark(cmd, 3);
 
         const VkImage target = swapImages_[imageIndex_];
         constexpr VkPipelineStageFlags2 kDepthStages =
@@ -778,6 +786,7 @@ public:
         };
         // Original Fidelity: translated TRU shaders where a submesh's material has them, with the sun shadow / RT hooks.
         const bool originals = options.originalShaders && !origPrograms_.empty();
+        if (originals) warmOriginalPipelines(rtOn, shadowMap, options.rt == RayTracing::Full);
         const glm::mat4 viewProjD3D = original::viewProjD3D(camera, aspect);
         if (originals) {
             sm3::FrameBlock fb;
@@ -804,7 +813,11 @@ public:
             const scene::SubMesh& s = m.submeshes[d.sub];
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 1, 1, &od.set, 0, nullptr);
             sm3::ObjectBlock ob;
-            original::fillObject(ob, viewProjD3D, m.model, original::lightSet(environment_, m.center, m.radius));
+            // Once per mesh and frame (the lights move: dynamicLights), not per submesh and pass.
+            if (meshLights_.size() < meshes_.size()) meshLights_.resize(meshes_.size());
+            auto& [stamp, lights] = meshLights_[d.mesh];
+            if (stamp != frameCounter_ + 1) stamp = frameCounter_ + 1, lights = original::lightSet(environment_, m.center, m.radius);
+            original::fillObject(ob, viewProjD3D, m.model, lights);
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);
             vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
@@ -972,6 +985,7 @@ public:
             vkCmdDraw(cmd, uint32_t(options.debugLines.size() * 2), 1, 0, 0);
         }
         vkCmdEndRendering(cmd);
+        gpuMark(cmd, 4);
         if (fsrOn) recordFsrMasks(cmd, options, splashCount, wb.weather.x > 0.5f, push.viewProj, currentVP,
                                   jitter / glm::vec2(extent_.width, extent_.height), enhancedWater, options.cullBackFaces);
 
@@ -1033,6 +1047,7 @@ public:
         };
         if (!fsrOn) drawOverlay();
         vkCmdEndRendering(cmd);
+        gpuMark(cmd, 5);
 
         bool fsrDone = false;
         if (fsrOn) {
@@ -1075,6 +1090,7 @@ public:
                 VK_PIPELINE_STAGE_2_NONE, 0); // the present semaphore signal makes the writes visible to the presenter
             barriers(cmd, {&end, 1});
         }
+        gpuMark(cmd, 6);
         VK_CHECK(vkEndCommandBuffer(cmd));
 
         // FSR writes the swapchain images by blits: their acquire waits then cover the transfer stage.
@@ -1323,6 +1339,7 @@ public:
                 vkDestroySemaphore(device_, f.acquiredGenerated, nullptr);
                 vkDestroyBuffer(device_, f.text.buffer, nullptr);
                 vkDestroyBuffer(device_, f.lines.buffer, nullptr);
+                vkDestroyQueryPool(device_, f.gpuTimes, nullptr);
                 f = {};
             }
             destroyImage(white_);
@@ -1361,7 +1378,7 @@ public:
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(shadowSetLayout_, VK_NULL_HANDLE), nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(rtSetLayout_, VK_NULL_HANDLE), nullptr);
-            for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_}) vkDestroySampler(device_, s, nullptr);
+            for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_, biasedSampler_}) vkDestroySampler(device_, s, nullptr);
             vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
             vkDestroyCommandPool(device_, uploadPool_, nullptr);
             staticMemory_.reset();
@@ -1425,10 +1442,40 @@ private:
         return p;
     }
 
+    // Before the first frame that can draw them (after upload or a settings change): every translated pipeline the
+    // current RT / shadow settings select for the uploaded submeshes, one program per task on worker threads, instead
+    // of creating each on the first draw that needs it (a stall whenever a new material came into view).
+    void warmOriginalPipelines(bool rtOn, bool shadowMap, bool rtFull) {
+        const int key = rtOn | shadowMap << 1 | rtFull << 2;
+        if (key == origWarmKey_) return;
+        origWarmKey_ = key;
+        std::vector<std::vector<std::pair<OrigVariant, scene::Blend>>> needs(origPrograms_.size());
+        for (size_t mi = 0; mi < meshes_.size() && mi < origDraws_.size(); ++mi)
+            for (size_t si = 0; si < origDraws_[mi].size(); ++si) {
+                const OrigDraw& od = origDraws_[mi][si];
+                if (od.program < 0) continue;
+                const scene::Blend blend = meshes_[mi].submeshes[si].blend;
+                const bool opaque = blend == scene::Blend::Opaque;
+                auto& n = needs[size_t(od.program)];
+                if (rtPipelines_ && opaque && !od.screen) n.push_back({kOrigPrepass, blend});
+                const bool rays = rtOn && (opaque || (meshes_[mi].water && rtFull && !od.screen));
+                n.push_back({rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, blend});
+            }
+        std::atomic<size_t> next{0};
+        auto work = [&] {
+            for (size_t i; (i = next++) < needs.size();)
+                for (const auto& [variant, blend] : needs[i]) origPipeline(int(i), variant, blend);
+        };
+        std::vector<std::jthread> pool(std::clamp<size_t>(std::thread::hardware_concurrency(), 1, 16) - 1);
+        for (auto& t : pool) t = std::jthread(work);
+        work();
+    }
+
     void destroyOriginalPipelines() {
         for (auto& o : origPrograms_)
             for (auto& byBlend : o.pipelines)
                 for (VkPipeline& p : byBlend) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
+        origWarmKey_ = -1;
     }
 
     void destroyOriginalScene() {
@@ -1436,6 +1483,7 @@ private:
         origPrograms_.clear();
         origDraws_.clear();
         screenSets_.clear();
+        origMaterialImages_.clear();
         vkDestroyBuffer(device_, std::exchange(origMaterialUbo_, {}).buffer, nullptr); // memory: sceneMemory_
         vkDestroyDescriptorPool(device_, std::exchange(origScenePool_, VK_NULL_HANDLE), nullptr);
     }
@@ -1545,7 +1593,7 @@ private:
             for (int n = 0; n < 16; ++n) {
                 // The view type must match the shader's sampler: unbound cube samplers read black (as D3D9), others white.
                 const bool cube = ps.samplerType[n] == 3;
-                ii[size_t(n)] = {sceneSampler_, cube ? blackCube_.view : white_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                ii[size_t(n)] = {textureSampler(), cube ? blackCube_.view : white_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
                 if (n == original::kAttenuationSampler && !cube)
                     ii[size_t(n)] = {postSampler_, attenuation_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
                 if (n == original::kSunCookieSampler && !cube && environment_.sunCookie)
@@ -1565,6 +1613,7 @@ private:
             w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             w[1].pImageInfo = ii.data();
             vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
+            origMaterialImages_.push_back({sets[u], ii});
         }
         for (size_t mi = 0; mi < meshes_.size(); ++mi)
             for (size_t si = 0; si < slot[mi].size(); ++si)
@@ -1669,8 +1718,9 @@ private:
             vkCmdSetViewport(cmd, 0, 1, &viewport);
             vkCmdSetScissor(cmd, 0, 1, &tile);
             push.viewProj = zRemap * sun.lightViewProj[c];
-            // ponytail: every mesh into every cascade; cull by mesh bounds per cascade if the shadow pass shows up.
+            // Meshes whose bounds miss the cascade are skipped (identical map; the pass was ~3.4 ms in l4_ballcourt).
             for (const auto& m : meshes_) {
+                if (outsideOrtho(sun.lightViewProj[c], m.center, m.radius)) continue;
                 const VkDeviceSize zero = 0;
                 vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
                 vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -2520,7 +2570,7 @@ private:
         std::ofstream(path, std::ios::binary).write(data.data(), std::streamsize(size));
     }
 
-    void createStaticResources() {
+    VkSamplerCreateInfo sceneSamplerInfo(float mipBias) const {
         VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
         sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -2528,6 +2578,42 @@ private:
         sci.anisotropyEnable = maxAniso_ > 1.0f;
         sci.maxAnisotropy = maxAniso_;
         sci.maxLod = VK_LOD_CLAMP_NONE;
+        sci.mipLodBias = mipBias;
+        return sci;
+    }
+
+    // Texture sampler of the scene's texture and material sets: sceneSampler_, or with FSR biasedSampler_.
+    VkSampler textureSampler() const { return biasedSampler_ ? biasedSampler_ : sceneSampler_; }
+
+    // FSR: textures sample with mip bias log2(render / display width) - 1 (AMD's FSR guidance) so the upscaled image
+    // keeps display-resolution texture detail; native rendering keeps sceneSampler_ (bias 0). Rewrites the texture
+    // and material sets; device idle (recreateSwapchain). The RT set's alpha tests keep sceneSampler_.
+    void setMipBias(float bias) {
+        if (bias == mipBias_) return;
+        const VkSampler old = textureSampler();
+        VkSampler biased = VK_NULL_HANDLE;
+        if (bias != 0.0f) {
+            const VkSamplerCreateInfo sci = sceneSamplerInfo(bias);
+            VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &biased));
+        }
+        mipBias_ = bias;
+        biasedSampler_ = biased;
+        for (const auto& [_, img] : textures_)
+            if (!img.cube) writeSet(img.set, img.view, textureSampler());
+        for (auto& [set, ii] : origMaterialImages_) {
+            for (auto& i : ii)
+                if (i.sampler == old) i.sampler = textureSampler();
+            VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            w.dstSet = set, w.dstBinding = 1, w.descriptorCount = 16;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, w.pImageInfo = ii.data();
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+        }
+        writeScreenSets(); // the back/depth-buffer samplers rewritten above
+        if (old != sceneSampler_) vkDestroySampler(device_, old, nullptr);
+    }
+
+    void createStaticResources() {
+        VkSamplerCreateInfo sci = sceneSamplerInfo(0.0f);
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &sceneSampler_));
         sci.magFilter = sci.minFilter = VK_FILTER_NEAREST;
         sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -3069,7 +3155,7 @@ private:
             VkAccelerationStructureBuildSizesInfoKHR sz{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
             vkGetAccelerationStructureBuildSizesKHR_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bi, counts.data(), &sz);
             m.blas = createAs(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sz.accelerationStructureSize, m.blasBuffer);
-            const VkDeviceSize scratch = alignUp(std::max(sz.buildScratchSize, sz.updateScratchSize));
+            const VkDeviceSize scratch = m.rtScratch = alignUp(std::max(sz.buildScratchSize, sz.updateScratchSize));
             pending.push_back({&m, scratch});
             maxScratch = std::max(maxScratch, scratch);
             sumScratch += scratch;
@@ -3180,18 +3266,35 @@ private:
 
     VkDeviceAddress alignUp(VkDeviceAddress v) const { return (v + scratchAlign_ - 1) / scratchAlign_ * scratchAlign_; }
 
-    // Recorded after updateVertices' copy: refit (skinned) or rebuild the mesh's BLAS in place. Earlier
-    // frames may still trace it, and the shared scratch may be in use by an earlier build.
-    void rebuildBlas(VkCommandBuffer cmd, const GpuMesh& m) {
-        asBarrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | kAsBuild,
-                  VK_ACCESS_2_TRANSFER_WRITE_BIT | kAsWrite, kAsBuild, VK_ACCESS_2_SHADER_READ_BIT | kAsRead | kAsWrite);
-        auto bi = blasInfo(m, m.skinned ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
-        bi.scratchData.deviceAddress = scratchBlas_;
-        const VkAccelerationStructureBuildRangeInfoKHR* r = m.rtRanges.data();
-        vkCmdBuildAccelerationStructuresKHR_(cmd, 1, &bi, &r);
-        asBarrier(cmd, kAsBuild, kAsWrite, kAsBuild | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, kAsRead);
-        ++(m.skinned ? rtStatus_.blasRefits : rtStatus_.blasRebuilds);
-        tlasDirty_ = true;
+    // Recorded after updateVertices' copies: refit (skinned) or rebuild the meshes' BLASes in place, as few batched
+    // builds as the shared scratch allows (one barrier pair per batch; serialising one build + two barriers per mesh
+    // held l4_ballcourt 1440p at 51 instead of 58 fps). Earlier frames may still trace them.
+    void rebuildBlases(VkCommandBuffer cmd, std::span<const size_t> slots) {
+        std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
+        std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> ranges;
+        VkDeviceSize used = 0;
+        const VkDeviceSize capacity = scratchTlas_ - scratchBlas_;
+        auto submit = [&] {
+            if (infos.empty()) return;
+            asBarrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | kAsBuild,
+                      VK_ACCESS_2_TRANSFER_WRITE_BIT | kAsWrite, kAsBuild, VK_ACCESS_2_SHADER_READ_BIT | kAsRead | kAsWrite);
+            vkCmdBuildAccelerationStructuresKHR_(cmd, uint32_t(infos.size()), infos.data(), ranges.data());
+            infos.clear(), ranges.clear(), used = 0;
+        };
+        for (const size_t slot : slots) {
+            const GpuMesh& m = meshes_[slot];
+            if (!m.blas) continue;
+            if (used + m.rtScratch > capacity) submit();
+            auto bi = blasInfo(m, m.skinned ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
+            bi.scratchData.deviceAddress = scratchBlas_ + used;
+            used += m.rtScratch;
+            infos.push_back(bi);
+            ranges.push_back(m.rtRanges.data());
+            ++(m.skinned ? rtStatus_.blasRefits : rtStatus_.blasRebuilds);
+            tlasDirty_ = true;
+        }
+        submit();
+        if (tlasDirty_) asBarrier(cmd, kAsBuild, kAsWrite, kAsBuild | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, kAsRead);
     }
 
     // Per frame when a BLAS changed: TLAS update in place (same instances; BLAS bounds moved).
@@ -3341,6 +3444,7 @@ private:
                                    VK_IMAGE_ASPECT_COLOR_BIT, samples_);
         writeSet(postSet_, sceneColor_.view, postSampler_);
         createFsrTargets();
+        setMipBias(fsr_.valid() ? std::log2(float(extent_.width) / float(display_.width)) - 1.0f : 0.0f);
     }
 
     // Destroys the per-swapchain objects (views, semaphores, depth) and `chain` itself. Device must be idle.
@@ -3426,7 +3530,9 @@ private:
     VkPipelineLayout fxLayout_ = VK_NULL_HANDLE;
     std::array<LinearAllocator, kFramesInFlight> lineMemory_;
     VkSampler sceneSampler_ = VK_NULL_HANDLE, fontSampler_ = VK_NULL_HANDLE, shadowSampler_ = VK_NULL_HANDLE,
-              postSampler_ = VK_NULL_HANDLE;
+              postSampler_ = VK_NULL_HANDLE, biasedSampler_ = VK_NULL_HANDLE; // biasedSampler_: setMipBias
+    float mipBias_ = 0.0f;
+    std::vector<std::pair<VkDescriptorSet, std::array<VkDescriptorImageInfo, 16>>> origMaterialImages_; // setMipBias
     VkDescriptorPool staticPool_ = VK_NULL_HANDLE, scenePool_ = VK_NULL_HANDLE;
     GpuImage white_, font_, shadow_;
     std::array<UiImage, 2> uiImages_; // FrameOptions::uiImages
@@ -3450,6 +3556,8 @@ private:
     std::array<VkDescriptorSet, kFramesInFlight> origFrameSet_{};
     GpuImage attenuation_, blackCube_;
     std::vector<OrigProgram> origPrograms_;
+    int origWarmKey_ = -1; // warmOriginalPipelines' settings since the pipelines were last destroyed
+    std::vector<std::pair<uint64_t, original::LightSet>> meshLights_; // meshes_ index -> (frameCounter_ + 1, light set)
     std::vector<std::vector<OrigDraw>> origDraws_; // meshes_ index -> per submesh
     std::vector<std::pair<VkDescriptorSet, uint32_t>> screenSets_; // material sets with back/depth-buffer samplers
     std::vector<DrawRef> screenDraws_;                               // per frame: their draws, for the second pass
@@ -3507,6 +3615,32 @@ private:
     const char* captureDir_ = std::getenv("OU_VK_CAPTURE_DIR");
     bool presentStats_ = std::getenv("OU_VK_PRESENT_STATS") != nullptr;
     std::vector<std::chrono::steady_clock::time_point> presentTimes_;
+    // OU_VK_PRESENT_STATS GPU pass times: timestamps after begin(0), vertex uploads + BLAS refits (1), TLAS update (2),
+    // shadow map (3), scene (4), FSR masks + post (5), FSR / FG / end (6); summed per segment over timed frames.
+    static constexpr uint32_t kGpuMarks = 7;
+    std::array<double, kGpuMarks - 1> gpuMs_{};
+    uint64_t gpuFrames_ = 0;
+    void gpuBegin(Frame& f, VkCommandBuffer cmd) {
+        if (!presentStats_) return;
+        if (!f.gpuTimes) {
+            const VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, nullptr, 0, VK_QUERY_TYPE_TIMESTAMP, kGpuMarks};
+            VK_CHECK(vkCreateQueryPool(device_, &qi, nullptr, &f.gpuTimes));
+        } else if (f.gpuTimed) { // its fence was waited: the previous results are final
+            uint64_t t[kGpuMarks];
+            if (vkGetQueryPoolResults(device_, f.gpuTimes, 0, kGpuMarks, sizeof t, t, sizeof t[0], VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+                VkPhysicalDeviceProperties props;
+                vkGetPhysicalDeviceProperties(gpu_, &props);
+                for (uint32_t i = 1; i < kGpuMarks; ++i) gpuMs_[i - 1] += double(t[i] - t[i - 1]) * props.limits.timestampPeriod * 1e-6;
+                ++gpuFrames_;
+            }
+        }
+        vkCmdResetQueryPool(cmd, f.gpuTimes, 0, kGpuMarks);
+        f.gpuTimed = true;
+        gpuMark(cmd, 0);
+    }
+    void gpuMark(VkCommandBuffer cmd, uint32_t i) {
+        if (presentStats_) vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frames_[frameIndex_].gpuTimes, i);
+    }
 
     // OU_VK_PRESENT_STATS: presented images per second and the spacing of consecutive presents (CPU timestamps after
     // vkQueuePresentKHR); with frame generation the two alternating intervals should match (even pacing).
@@ -3531,6 +3665,11 @@ private:
                      (unsigned long long)presentedGenerated_, mean, sorted[sorted.size() / 2], std::sqrt(var / double(d.size())),
                      sorted[sorted.size() * 99 / 100], alt[0] / double((d.size() + 1) / 2), alt[1] / double(d.size() / 2),
                      fenceNs_ * 1e-6 / frames, acquireNs_ * 1e-6 / frames, presentNs_ * 1e-6 / frames);
+        if (gpuFrames_) {
+            const double n = double(gpuFrames_);
+            std::fprintf(stderr, "ou: GPU ms per frame: uploads+BLAS %.2f, TLAS %.2f, shadow map %.2f, scene %.2f, post %.2f, FSR/end %.2f\n",
+                         gpuMs_[0] / n, gpuMs_[1] / n, gpuMs_[2] / n, gpuMs_[3] / n, gpuMs_[4] / n, gpuMs_[5] / n);
+        }
     }
     std::atomic<int64_t> fenceNs_{0}, acquireNs_{0}, presentNs_{0}; // OU_VK_PRESENT_STATS wait totals
     int64_t frameAcquireNs_ = 0; // this frame's acquire wait (present())

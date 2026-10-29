@@ -185,8 +185,10 @@ LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius)
         if (d >= l.radius) continue;
         const float w = (0.3f * l.color[0] + 0.6f * l.color[1] + 0.1f * l.color[2]) * (1.0f - std::max(d, 0.0f) / l.radius) + 1e-6f;
         if (w <= best.back().first) continue;
-        best.back() = {w, int(i)};
-        std::sort(best.begin(), best.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        // Insert keeping heavier first, ties in arrival order (what std::sort's insertion sort did for 6 entries).
+        size_t j = best.size() - 1;
+        for (; j > 0 && best[j - 1].first < w; --j) best[j] = best[j - 1];
+        best[j] = {w, int(i)};
     }
     LightSet s{{~0u, ~0u}};
     for (int k = 0; k < sm3::kLightSlots; ++k) {

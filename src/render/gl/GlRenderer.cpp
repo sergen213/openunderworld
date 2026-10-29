@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <optional>
@@ -653,7 +654,10 @@ public:
         return img;
     }
 
-    void present() override { SDL_GL_SwapWindow(window_); }
+    void present() override {
+        SDL_GL_SwapWindow(window_);
+        if (presentStats_) presentTimes_.push_back(std::chrono::steady_clock::now());
+    }
 
     bool setVsync(bool enabled) override { return SDL_GL_SetSwapInterval(enabled ? 1 : 0); }
 
@@ -666,6 +670,12 @@ public:
 
     void shutdown() override {
         if (!context_) return;
+        // OU_VK_PRESENT_STATS (also GL): presented frames per second after the first (load) frame.
+        if (presentTimes_.size() > 2) {
+            const double s = std::chrono::duration<double>(presentTimes_.back() - presentTimes_[1]).count();
+            std::fprintf(stderr, "ou: presents %zu in %.2f s = %.1f/s (gl)\n", presentTimes_.size() - 2, s,
+                         double(presentTimes_.size() - 2) / s);
+        }
         SDL_GL_MakeCurrent(window_, context_);
         res_.reset(); // GL objects must die while the context is current
         SDL_GL_DestroyContext(context_);
@@ -673,6 +683,9 @@ public:
     }
 
 private:
+    bool presentStats_ = std::getenv("OU_VK_PRESENT_STATS") != nullptr;
+    std::vector<std::chrono::steady_clock::time_point> presentTimes_;
+
     static void attrib(GLuint vao, GLuint index, GLint size, GLenum type, GLboolean norm, size_t offset) {
         glEnableVertexArrayAttrib(vao, index);
         glVertexArrayAttribFormat(vao, index, size, type, norm, GLuint(offset));
@@ -747,8 +760,7 @@ private:
     }
 
     // One atlas tile per cascade. Opaque and alpha-blended surfaces cast (blended ones alpha-tested at 50 %);
-    // additive/average effects do not. Both faces, slope-scaled bias.
-    // ponytail: every mesh is drawn into every cascade; cull by mesh bounds per cascade if the GL path gets CPU bound.
+    // additive/average effects do not. Both faces, slope-scaled bias. Meshes whose bounds miss a cascade are skipped.
     void drawShadowMap(const SunShadow& sun) {
         Resources& r = *res_;
         glBindFramebuffer(GL_FRAMEBUFFER, r.shadowFbo.get());
@@ -765,6 +777,7 @@ private:
             glViewport(c * kShadowMapSize, 0, kShadowMapSize, kShadowMapSize);
             glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(sun.lightViewProj[c]));
             for (const auto& m : r.meshes) {
+                if (outsideOrtho(sun.lightViewProj[c], m.center, m.radius)) continue;
                 glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
                 glBindVertexArray(m.vao.get());
                 for (const auto& s : m.submeshes) {

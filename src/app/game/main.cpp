@@ -2,6 +2,7 @@
 // interpolates between the last two ticks. Docs: docs/GAMEPLAY.md.
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -355,7 +357,10 @@ struct Footsteps {
 struct EnemyMeshes {
     std::map<std::string, ou::scene::SceneData> types; // object name -> model-0 skinned meshes + textures
     std::vector<std::vector<size_t>> meshIndices;       // per World::enemies().all() entry
-    std::vector<ou::scene::Vertex> scratch;
+    struct SkinJob { size_t mesh, palette; glm::mat4 model; };
+    std::vector<SkinJob> jobs;
+    std::vector<std::vector<glm::mat4>> palettes;     // per posed enemy this frame
+    std::vector<std::vector<ou::scene::Vertex>> outs; // per job, reused across frames
     std::vector<std::pair<ou::game::ai::Shot, uint64_t>> tracers; // shot, World tick
 
     void tracerLines(uint64_t tick, std::vector<ou::render::DebugLine>& out) {
@@ -382,7 +387,8 @@ struct EnemyMeshes {
     }
     // Enemies outside the view cone (bounding radius kRadius; everything within kNear of the camera still poses so
     // nearby off-screen shadows follow) keep their last uploaded pose: CPU skinning every enemy was a third of
-    // l4_ballcourt's frame. fovDeg >= 180: pose all.
+    // l4_ballcourt's frame. fovDeg >= 180: pose all. The visible meshes skin on worker threads (skinVertices is pure),
+    // then upload in order on this thread.
     void pose(const ou::game::World& w, double alpha, const ou::scene::SceneData& scene, ou::render::Renderer& r, glm::vec3 eye,
               glm::vec3 target, float fovDeg, float aspect) {
         constexpr float kNear = 1500.0f, kRadius = 400.0f;
@@ -390,6 +396,8 @@ struct EnemyMeshes {
         const float ty = std::tan(glm::radians(std::min(fovDeg, 179.0f)) * 0.5f);
         const float halfDiag = std::atan(ty * std::sqrt(1.0f + aspect * aspect)); // cone around the view rectangle
         const auto& all = w.enemies().all();
+        jobs.clear();
+        palettes.clear();
         for (size_t k = 0; k < all.size() && k < meshIndices.size(); ++k) {
             const auto& e = *all[k];
             const auto s = e.interpolated(alpha);
@@ -400,13 +408,23 @@ struct EnemyMeshes {
                                         halfDiag + std::asin(std::min(1.0f, kRadius / dist)))
                     continue;
             }
-            const auto palette = ou::anim::skinPalette(e.type().skeleton, e.pose(alpha));
+            palettes.push_back(ou::anim::skinPalette(e.type().skeleton, e.pose(alpha)));
             const glm::mat4 m = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip);
-            for (const size_t i : meshIndices[k]) {
-                ou::anim::skinVertices(scene.meshes[i], palette, scratch, m);
-                r.updateVertices(i, scratch);
-            }
+            for (const size_t i : meshIndices[k]) jobs.push_back({i, palettes.size() - 1, m});
         }
+        if (outs.size() < jobs.size()) outs.resize(jobs.size());
+        std::atomic<size_t> next{0};
+        auto work = [&] {
+            for (size_t j; (j = next++) < jobs.size();)
+                ou::anim::skinVertices(scene.meshes[jobs[j].mesh], palettes[jobs[j].palette], outs[j], jobs[j].model);
+        };
+        {
+            // jobs may be empty (nothing posed this frame, or a frame before the first tick): 0 extra threads, not SIZE_MAX
+            std::vector<std::jthread> pool(std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()), std::clamp<size_t>(jobs.size(), 1, 8)) - 1);
+            for (auto& t : pool) t = std::jthread(work);
+            work();
+        }
+        for (size_t j = 0; j < jobs.size(); ++j) r.updateVertices(jobs[j].mesh, outs[j]);
     }
 };
 

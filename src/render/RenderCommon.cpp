@@ -111,6 +111,15 @@ glm::vec3 sunToward(const scene::Environment& env) {
     return env.valid && env.sun && glm::dot(d, d) > 1e-12f ? -glm::normalize(d) : kSunDirection;
 }
 
+bool outsideOrtho(const glm::mat4& viewProj, glm::vec3 center, float radius) {
+    for (int i = 0; i < 2; ++i) {
+        const glm::vec3 row(viewProj[0][i], viewProj[1][i], viewProj[2][i]);
+        const float d = glm::dot(row, center) + viewProj[3][i], e = radius * glm::length(row) + 1e-3f;
+        if (d - e > 1.0f || d + e < -1.0f) return true;
+    }
+    return false;
+}
+
 glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene, glm::vec3 toSun, float sliceNear, float sliceFar) {
     // Bounding sphere of the view frustum slice; a sphere keeps the box size fixed while the camera
     // turns, which together with texel snapping keeps shadow edges stable.

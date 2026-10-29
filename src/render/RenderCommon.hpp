@@ -47,6 +47,9 @@ Bounds meshBounds(const scene::MeshData& m);
 // Orthographic sun view-projection (GL clip convention, z in [-w, w]) fitted to the camera frustum slice
 // [sliceNear, sliceFar], texel-snapped against shimmering; depth spans the whole scene so off-screen casters still cast.
 glm::mat4 shadowViewProj(const Camera& camera, float aspect, const Bounds& scene, glm::vec3 toSun, float sliceNear, float sliceFar);
+// True when the world-space sphere lies entirely outside x or y of an orthographic view-projection's clip volume
+// ([-1, 1]): none of it can rasterise, so skipping its draw leaves the target unchanged (shadow cascades).
+bool outsideOrtho(const glm::mat4& viewProj, glm::vec3 center, float radius);
 
 // std140 `OuShadow` block of src/render/sun.glsl (keep in step).
 struct SunShadowBlock {

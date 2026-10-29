@@ -116,7 +116,7 @@ VK 1.66 ms); FXAA + HDR add ≤ 0.07 ms. GL is CPU/draw-call bound (one draw per
 | Frames in flight | 2. Per frame: command pool + buffer, fence (signalled at creation), acquire semaphore, 640 KiB host-coherent overlay vertex buffer. One present semaphore per swapchain image (safe reuse). Fence reset only after a successful acquire. Depth image shared between frames, ordered by a depth-write barrier. |
 | Memory | `LinearAllocator`: bump allocation inside 64 MiB `VkDeviceMemory` blocks per memory type, aligned to `max(alignment, bufferImageGranularity)`, host-visible blocks persistently mapped. Arenas: static (font, white, overlay buffers), scene (released on every `upload()`), and exact-size single-resource arenas for depth, staging, readback and the per-frame debug-line buffers. No per-object free. |
 | Uploads | one staging buffer per batch sized to the sum of all regions (16-byte aligned for BCn), one command buffer with sync2 barriers, waited on a fence. |
-| Textures | `VK_FORMAT_BC1_RGBA_UNORM_BLOCK` (DXT1 with 1-bit alpha, as D3D9), `BC2_UNORM`, `BC3_UNORM`, `R8G8B8A8_UNORM`, `B8G8R8A8_UNORM`; full validated mip chains (`usableMips`). One combined-image-sampler descriptor set per texture from a per-scene pool; one repeat/linear/trilinear sampler with max anisotropy. |
+| Textures | `VK_FORMAT_BC1_RGBA_UNORM_BLOCK` (DXT1 with 1-bit alpha, as D3D9), `BC2_UNORM`, `BC3_UNORM`, `R8G8B8A8_UNORM`, `B8G8R8A8_UNORM`; full validated mip chains (`usableMips`). One combined-image-sampler descriptor set per texture from a per-scene pool; one repeat/linear/trilinear sampler with max anisotropy (with FSR a second one with negative mip bias, "FSR … Texture mip bias"). |
 | Shaders | GLSL in `src/render/vk/shaders/`, compiled by `glslc --target-env=vulkan1.3 -O -mfmt=num` at build time into `build/vk_shaders/*.inc`, `#include`d as `uint32_t[]`; `scene.vert/frag` a second time with `-DOU_RT` (`scene_rt.*.inc`). Push constants: scene/shadow `{mat4 viewProj, model; int lighting; float alphaRef; int rt, pad}` (144 B, checked against `maxPushConstantsSize`; sun/eye/rays live in the `OuShadow` UBO), overlay `{vec2 screen}`, post `{int fxaa, hdr; float brightness}`. Pipelines: one per `scene::Blend` + lines (rebuilt with the MSAA count / HDR format / RT on-off), shadow (depth only, depth bias), RT depth pre-pass, post and overlay (swapchain format). `shaderDemoteToHelperInvocation` enabled for `discard`. |
 | Pipeline cache | loaded from / saved to `$XDG_CACHE_HOME/openunderworld/vk_pipeline_cache.bin` (fallback `~/.cache/...`); drivers ignore incompatible blobs. |
 | Screenshot | after `drawFrame`, a one-shot copy PRESENT_SRC → TRANSFER_SRC → buffer → PRESENT_SRC, BGRA swizzled to RGB. |
@@ -142,7 +142,7 @@ rebuilds (`Renderer::rtStatus()`, `rtSummary`).
 |---|---|
 | Support | `probeRayTracing()`: the extensions + features above and ≥ 4098 sampled images per stage. Anything missing (or `OU_VK_NO_RT=1`, the simulated-unsupported switch) leaves the device without RT: `rtStatus().supported = false` with the reason, and a requested RT mode renders with the shadow map (`--rt` never fails). The GL backend reports unsupported. |
 | Acceleration structures | Built by the first frame that asks for RT after `upload()` (nothing is built while RT is off). One BLAS per mesh with one triangle geometry per submesh that casts in the shadow map too (`Blend::Opaque` + `Blend::Alpha`; Additive / Average neither cast nor reflect), vertex/index buffers used in place via buffer device addresses. Static BLASes `PREFER_FAST_TRACE`; skinned meshes (`MeshData::skin`) `ALLOW_UPDATE + PREFER_FAST_BUILD`. One TLAS instance per BLAS with the mesh's model matrix (static: `GpuMesh::model` never changes), both faces (`TRIANGLE_FACING_CULL_DISABLE`), custom index = first geometry record; mask 2 for water, 1 otherwise. TLAS `ALLOW_UPDATE + PREFER_FAST_TRACE`. Upload builds are batched into ≤ 64 MiB of shared scratch. |
-| Dynamic meshes | The frame's recorded vertex copies are followed by the BLAS work: refit (mode UPDATE) for skinned meshes (Lara, enemies), full in-place rebuild for others (pistols in ou-game are rigid and rebuilt), once per frame however often the mesh was updated. The TLAS is then updated in place once (not rebuilt). Choice [I]: refits keep the bind-pose BVH topology, so traversal degrades with large poses but stays correct. |
+| Dynamic meshes | The frame's recorded vertex copies are followed by the BLAS work: refit (mode UPDATE) for skinned meshes (Lara, enemies), full in-place rebuild for others (pistols in ou-game are rigid and rebuilt), once per frame however often the mesh was updated, batched into as few build calls as the shared scratch holds. The TLAS is then updated in place once (not rebuilt). Choice [I]: refits keep the bind-pose BVH topology, so traversal degrades with large poses but stays correct. |
 | Geometry records | storage buffer, one `{vertex address, index address, first index, texture slot, alpha ref}` per geometry, indexed by `instanceCustomIndex + geometryIndex` in the shader. |
 | Alpha test (any-hit equivalent) | Non-opaque geometries (alpha ref ≠ 0: `Blend::Alpha` cut at 50 % as the shadow map, or an alpha-tested opaque material) are tested in the `rayQueryProceedEXT` loop: barycentric UV from the index/vertex buffers, `textureLod(..., 0)` of the bindless texture array (set 2, 4096 slots, partially bound), texture alpha only (as `shadow.frag`); candidates that pass are confirmed. |
 | Shadows | `scene_rt.frag`: N rays per pixel toward the sun inside a cone of tan 0.012 (golden-angle spiral rotated per pixel by interleaved gradient noise), `TerminateOnFirstHit`, origin offset along the normal by 2 + 2e-4 · distance units. Spatial denoise: the visibility is averaged over the lanes of the 2x2 pixel quad that trace (fine derivatives; quads never span primitives, so no bleeding across edges); helper lanes, alpha-discarded lanes and lanes facing away from the sun trace nothing. No temporal accumulation (no history buffer / TAA yet): the per-pixel noise is fixed, so still frames are stable. |
@@ -177,7 +177,8 @@ shared): frame UBO, material UBO + 16 samplers, object block (GL UBO range / Vul
 irradiance-volume lighting (dynamic objects), and materials without composite programs, keep the generic shading below.
 With RT: depth pre-pass, then opaque draws use the ray-traced pixel-shader variant (water: + reflections), blended ones
 the shadow-map variant. Details, survey and evidence: docs/formats/SHADERS.md.
-Vulkan: one pipeline per (program, pixel-shader variant plain / shadow map / rays, blend) created on first use; all
+Vulkan: one pipeline per (program, pixel-shader variant plain / shadow map / rays, blend), the ones the current RT / shadow
+settings select created on worker threads before the first frame that can draw them (after upload or a settings change); all
 variants' SPIR-V is compiled at upload on up to 16 threads (compiling them on first draw cost ~30 % of l4_ballcourt's
 frames as materials came into view; rays only on RT-capable devices), one descriptor set per distinct (program, material,
 instance textures, alpha ref), only consumed vertex attributes declared (validation-clean).
@@ -394,22 +395,46 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
   enemy every frame (32 % of the main thread; now enemies outside the view cone beyond 1500 units keep their pose, and
   single-bone vertices reuse one world × palette matrix per bone, bit-identical), compiling the translated programs'
   shadow-map / ray-traced variants on first draw (29 %; now at upload, in parallel), and `updateVertices`' per-call
-  fence wait (now recorded into the frame). Medians of the present interval after the fixes:
+  fence wait (now recorded into the frame). That made it GPU-bound; per-pass GPU timestamps (`OU_VK_PRESENT_STATS`) then
+  showed, at 1440p native: scene 11.0 ms (8 of them ray-traced sun shadows), shadow map 3.4 ms, uploads + BLAS refits
+  1.7 ms. Second round, all output-identical:
+  - shadow cascades skip meshes whose bounding sphere misses the cascade's x/y clip range (`outsideOrtho`; GL too):
+    3.4 → 1.0 ms;
+  - per-frame BLAS refits / rebuilds batched into as few `vkCmdBuildAccelerationStructuresKHR` calls as the shared
+    scratch holds (was one build + two barriers per mesh): 51 → 58 fps;
+  - the visible enemies' meshes skin on worker threads, uploads stay in order on the render thread (GL 51 → 65 fps);
+  - translated pipelines for the current RT / shadow settings are created on worker threads before the first frame
+    that can draw them (after upload or a settings change), not on first draw: with cold driver and pipeline caches the
+    p99 present interval drops 25.8 → 19.3 ms; the original light set is computed once per mesh and frame, not per
+    draw, by insertion instead of `std::sort`;
+  - level load: resource relocations are scanned linearly instead of building a map per lookup (l4_ballcourt load
+    19 → 13 s).
+  Host-visible VRAM staging for the vertex uploads was tried and rejected (GPU copies 1.7 → 0.4 ms, but the CPU writes
+  dropped 58 → 39 fps). Presented frames per second over the 400 frames, before (58c5aeb) → after:
 
-  | Output | Native | FSR Quality | FSR Performance | Quality + FG (presented / real per s) | Performance + FG |
-  |---|---|---|---|---|---|
-  | 2560×1440 | 19.6 ms | 16.4 ms | 15.0 ms | 96.7 / 48.4 | 97.6 / 48.8 |
-  | 3840×2160 | 28.1 ms | 20.8 ms | 17.8 ms | 68.2 / 34.1 | 78.6 / 39.3 |
+  | Scene / output | Native | FSR Quality | FSR Performance | Quality + FG (presented; real = half) |
+  |---|---|---|---|---|
+  | l4_ballcourt 2560×1440 | 49.9 → 67.2 | 59.1 → 83.2 | 65.1 → 93.8 | 110.8 → 151.0 |
+  | l4_ballcourt 3840×2160 | 35.8 → 44.0 | 46.9 → 61.8 | 55.4 → 76.5 | 84.2 → 104.2 |
+  | l4_pool 2560×1440 | 269 → 445 | 258 → 411 | 269 → 445 | 395 → 576 |
+  | l4_pool 3840×2160 | 222 → 328 | 211 → 309 | 231 → 346 | 271 → 354 |
 
-  (Averages over the 400 frames incl. one streaming hitch: 1440p 44.2 / 49.9 / 55.1 fps, 4K 27.9 / 35.0 / 39.5 fps.)
-  Frame generation costs about 1 ms of real frame time and doubles presented frames. Original preset with FSR off is
-  byte-identical to the build before these changes (ou-imgdiff GL and Vulkan, frame 240 of the replay: mean 0.000).
+  (l4_pool: `--spawn -6045,-6100,2844,-90` + `tests/replays/pool_gadgets.txt`; ~2 ms of GPU work, CPU-bound, so FSR
+  only adds its own cost there.) Frame generation costs about 1 ms of real frame time (l4_ballcourt 1440p: 83.2 real
+  fps without, 75.5 with) and doubles presented frames. Original preset with FSR off, and the Enhanced defaults on
+  Vulkan, are byte-identical before / after (ou-imgdiff, frame 240 of both replays, GL and Vulkan: mean 0.000).
+- **Texture mip bias**: with FSR active the scene's texture and material sets sample with a second sampler biased by
+  log2(render / display width) − 1 (AMD's FSR guidance: −1.58 Quality, −2 Performance), so upscaled textures keep
+  display-resolution detail; recreated with the swapchain, native rendering keeps the unbiased sampler (and so do the
+  RT alpha tests).
 - **Diagnostics**: F1 line `FSR 3.1.6 quality 1280x720 -> 1920x1080 | frame generation on, FG 3.1.6 (N generated)`.
   `OU_VK_PRESENT_STATS=1` prints presented images/s, present spacing (mean / median / sd / p99, alternating intervals)
-  and the render thread's per-frame fence / acquire waits and `vkQueuePresentKHR` time at exit; `OU_VK_CAPTURE_DIR=dir`
+  and the render thread's per-frame fence / acquire waits and `vkQueuePresentKHR` time at exit, and the GPU time per
+  frame of vertex uploads + BLAS refits, TLAS update, shadow map, scene, FSR masks + post and FSR / FG (timestamp
+  queries); with OpenGL it prints presented frames per second. `OU_VK_CAPTURE_DIR=dir`
   writes every presented image (`NNNNNN-real.ppm`, `NNNNNN-gen.ppm`).
-- **Known gaps**: translated vertex animation (wind) has no motion vectors; no negative texture mip bias with FSR yet
-  (every texture descriptor shares one sampler). Khronos validation reports one upstream issue: the FG pass writes a
+- **Known gaps**: translated vertex animation (wind) has no motion vectors; ray-traced sun shadows remain the largest
+  GPU cost (~8 ms of l4_ballcourt's 1440p frame). Khronos validation reports one upstream issue: the FG pass writes a
   3-component texel to the RGBA8 output (`VUID-vkCmdDispatch-OpImageWrite-08795`, harmless on RADV); SDK patch 6 (8
   queued frames) fixed FG destroying image views still in flight. Unsupported devices (no formatless storage images, compute derivatives, independent blend,
   subgroup ops) or a build without DXC fall back to native rendering with the reason in F1.
