@@ -141,7 +141,7 @@ constexpr uint32_t kGlow = 11, kBarCentre = 12, kBarLeft = 13, kDisc = 15, kFron
 constexpr uint32_t kIconPlay = 18, kIconNew = 19, kIconOptions = 20, kIconLoad = 21, kIconSave = 22, kIconAv = 23,
                    kIconExtras = 24, kIconQuit = 26, kIconPageUp = 27, kIconPageDown = 28, kIconSlotEmpty = 29,
                    kIconSlotUsed = 30, kIconVolume = 32;
-constexpr uint32_t kPdaPicture = 680, kPdaSonar = 688, kPdaWeapons = 689, kPdaInventory = 690; // pc-w\g_pda.drm
+constexpr uint32_t kPdaPicture = 680, kPdaSonar = 688, kPdaWeapons = 689, kPdaInventory = 690, kPdaJournal = 693; // pc-w\g_pda.drm (694 REVISIT)
 constexpr uint32_t kPdaDoc = 698, kPdaButtons = 699, kPdaBackpack = 702; // title icon, window buttons, 702..705 categories
 
 // Layout in the 640x480 virtual space, measured from tru.exe at 1024x768 (4:3) and 1920x1080 (16:9) with the
@@ -361,10 +361,10 @@ void pdaBackground(Canvas& c) {
 
 bool radial(Screen s) { return s == Screen::Main || s == Screen::Pause; }
 bool slots(Screen s) { return s == Screen::Load || s == Screen::Save; }
-bool pdaList(Screen s) { return s == Screen::Revisit; }
+bool pdaList(Screen s) { return s == Screen::Revisit || s == Screen::Journal; }
 
-// PDA pages (left list): SONAR MAP, AREA INFO, WEAPON SELECTION, INVENTORY, FIELD ASSISTANCE, JOURNAL and REVISIT
-// LOCATION (greyed: not ported, as on PC without them), RESUME GAME.
+// PDA pages (left list): SONAR MAP, AREA INFO, WEAPON SELECTION, INVENTORY, FIELD ASSISTANCE, JOURNAL (greyed without
+// entries) and REVISIT LOCATION (greyed outside a Treasure Hunt), RESUME GAME.
 enum PdaPage { kSonar, kAreaInfo, kWeapons, kInventory, kField, kJournal, kRevisit, kResume };
 // PDA geometry is in pda_bg_1280 pixels (720 high, fitted to the window height and centred; pda_bg_960 for narrow
 // windows has the same content 160 pixels further left): bg pixel -> virtual.
@@ -388,7 +388,7 @@ constexpr int kWeaponPanel[4] = {573, 214, 422, 163}, kItemPanel[4] = {580, 193,
 // PDA list pages (JOURNAL ENTRIES [O j3..j5]; REVISIT LOCATION [I] the same), bg pixels: header at x 243.3 cap 153.3 (0.605,
 // kPdaHead) over a line at 174 (x 242.7..505.3); nine rows right-aligned at 504.7, caps 185.3 + 40 i, scale 0.51, the
 // selected one kPdaHead, a line 33.4 below each (to 509.3); BACK TO PREVIOUS MENU (a label: Esc) right at 505.3 cap 551.3,
-// 0.57. Right pane: icon 698 centred (564, 168), title cap 162.7 at 583.3 (0.51, kPdaHead), window buttons 699 centred
+// 0.57. Right pane: icon 698 centred (564, 168), title cap 162.7 at 583.3 (0.57, kPdaHead), window buttons 699 centred
 // (1017, 170.7), a line at 183.3 (548.7..1034.7), the text from cap 200.7 every 19.4 at 546, 0.57, wrapped at 484.
 constexpr int kPdaListRows = 9;
 constexpr float kPdaListX = 242.7f, kPdaListHeadX = 243.3f, kPdaHeadCap = 153.3f, kPdaHeadLine = 174, kPdaHeadRight = 505.3f;
@@ -396,6 +396,8 @@ constexpr float kPdaListRight = 504.7f, kPdaListCap = 185.3f, kPdaListStep = 40,
                 kPdaListLineRight = 509.3f, kPdaListBackCap = 551.3f, kPdaListBackScale = 0.57f;
 constexpr float kPdaPaneX = 546, kPdaPaneTitleX = 583.3f, kPdaPaneTitleCap = 162.7f, kPdaPaneLine = 183.3f, kPdaPaneLineX = 548.7f,
                 kPdaPaneRight = 1034.7f, kPdaPaneCap = 200.7f, kPdaPaneStep = 19.4f, kPdaPaneScale = 0.57f, kPdaPaneW = 484;
+// Letter-spaced [O j3 word widths]: rows 0.7, BACK 0.55, the pane's title (at the text's 0.57) and text 0.7 (virtual).
+constexpr float kPdaListTrack = 0.7f, kPdaListBackTrack = 0.55f, kPdaPaneTrack = 0.7f;
 // EXTRAS [O extras / extras_env / extras_gear, 1080p]. The category ring: the main ring mirrored, positions 2..6 (icons
 // 43, 44, 45, 46, 48; labels 146..149, 151), the selected one's label left-aligned 39.2 right of its centre on the
 // mirrored bar. While a category is selected the centre item is not. A category: the list title (icon | white name,
@@ -445,6 +447,11 @@ bool unlocked(int code, const Unlocks& u) {
     if (code < 0) return true;
     if (code >= 3 && code <= 10) return u.chapters >> (code == 3 ? 1 : code == 4 ? 0 : code - 3) & 1 || u.finished;
     return code == 11 ? u.finished : code == 12 ? u.treasures : code == 13 && u.relics;
+}
+
+int journalEntries(int chapter) {
+    static constexpr int kEnd[] = {0, 7, 14, 20, 31, 38, 39, 45}; // after Mediterranean Sea 1151, Thailand 1158, ...
+    return kEnd[size_t(std::clamp(chapter, 0, 7))];
 }
 
 std::string_view loadingImage(int chapter) {
@@ -583,7 +590,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.stringId = 1076, .opens = Screen::PdaWeapons},
                 {.stringId = 1077, .opens = Screen::PdaInventory},
                 {.stringId = 1078, .action = Action::Hint},
-                {.stringId = 1081, .greyed = true},
+                {.stringId = 1081, .opens = Screen::Journal, .greyed = journal == 0},
                 {.stringId = 1082, .opens = Screen::Revisit, .greyed = !treasureHunt},
                 {.stringId = 122, .action = Action::Resume}};
     case Screen::Message: return {{.stringId = 383}}; // OK
@@ -616,6 +623,11 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         return v;
     }
     case Screen::ExtrasView: return {{}};
+    case Screen::Journal: { // [O j3..j5] the entry's title, its text (id + 45) beside
+        std::vector<Item> v;
+        for (int16_t i = 0; i < journal; ++i) v.push_back({.stringId = int16_t(1145 + i), .message = int16_t(1190 + i)});
+        return v;
+    }
     case Screen::Revisit: { // the chapters by name (52..58), their loading-screen story beside [I: not captured]
         std::vector<Item> v;
         for (int16_t c = 1; c <= 7; ++c) v.push_back({.stringId = int16_t(51 + c), .action = Action::Revisit, .message = int16_t(59 + c)});
@@ -690,7 +702,8 @@ Action Menus::input(Nav n) {
             return Action::None;
         }
         if (n == Nav::Back) { back(); return Action::None; }
-        return n == Nav::Accept ? activate(list[size_t(cursor_)]) : Action::None;
+        const Item& it = list[size_t(cursor_)];
+        return n == Nav::Accept && it.action != Action::None ? activate(it) : Action::None; // journal entries: only shown
     }
     if (slots(scr)) { // the slot ring: -1 = focus on the ring item that opened the screen
         auto page = [&](int d) {
@@ -1101,6 +1114,8 @@ void Menus::drawPda(Canvas& c, const locale::Strings& s) {
     }
     case kWeapons: picture(kPdaWeapons, 1076), box(kPdaBoxTop, kPdaBoxBottom), prompt(1086, kPdaPromptMid); break;
     case kInventory: picture(kPdaInventory, 1077), box(kPdaBoxTop, kPdaBoxBottom), prompt(1087, kPdaPromptMid); break;
+    case kJournal: picture(kPdaJournal, 1081), box(kPdaBoxTop, kPdaBoxBottom), prompt(1088, kPdaPromptMid); break;
+    case kRevisit: picture(kPdaJournal + 1, 1082), box(kPdaBoxTop, kPdaBoxBottom), prompt(1089, kPdaPromptMid); break;
     case kField:
         box(kPdaFieldBox0, kPdaFieldBox1), box(kPdaFieldBox2, kPdaFieldBox3);
         prompt(1091, (kPdaFieldBox0 + kPdaFieldBox1) / 2), prompt(1092, (kPdaFieldBox2 + kPdaFieldBox3) / 2);
@@ -1216,20 +1231,22 @@ void Menus::drawPdaList(Canvas& c, const locale::Strings& s) {
     for (int r = 0; r < kPdaListRows && top_ + r < int(list.size()); ++r) {
         const float cap = kPdaListCap + kPdaListStep * float(r);
         const std::string t(s.get(list[size_t(top_ + r)].stringId));
-        capText(c, pdaX(kPdaListRight) - c.fontWidth(t, kPdaListScale), pdaY(cap), kPdaListScale, t, top_ + r == cursor_ ? kPdaHead : kWhite);
+        capText(c, pdaX(kPdaListRight) - trackedWidth(c, t, kPdaListScale, kPdaListTrack), pdaY(cap), kPdaListScale, t,
+                top_ + r == cursor_ ? kPdaHead : kWhite, kPdaListTrack);
         line(kPdaListX, kPdaListLineRight, cap + kPdaListLine, kPdaRowLine);
     }
     const std::string back(s.get(469));
-    capText(c, pdaX(kPdaHeadRight) - c.fontWidth(back, kPdaListBackScale), pdaY(kPdaListBackCap), kPdaListBackScale, back, kWhite);
+    capText(c, pdaX(kPdaHeadRight) - trackedWidth(c, back, kPdaListBackScale, kPdaListBackTrack), pdaY(kPdaListBackCap), kPdaListBackScale,
+            back, kWhite, kPdaListBackTrack);
     if (cursor_ >= 0 && cursor_ < int(list.size())) { // the selected entry
         const Item& it = list[size_t(cursor_)];
         c.sprite(kPdaDoc, pdaX(564), pdaY(168), pdaY(32), pdaY(32), kWhite);
         c.sprite(kPdaButtons, pdaX(1017), pdaY(170.7f), pdaY(32), pdaY(16), kWhite);
-        capText(c, pdaX(kPdaPaneTitleX), pdaY(kPdaPaneTitleCap), kPdaListScale, s.get(it.stringId), kPdaHead);
+        capText(c, pdaX(kPdaPaneTitleX), pdaY(kPdaPaneTitleCap), kPdaPaneScale, s.get(it.stringId), kPdaHead, kPdaPaneTrack);
         line(kPdaPaneLineX, kPdaPaneRight, kPdaPaneLine, kPdaHead);
         float cap = kPdaPaneCap;
-        for (const auto& l : fontWrap(c, s.get(it.message), pdaY(kPdaPaneW), kPdaPaneScale))
-            capText(c, pdaX(kPdaPaneX), pdaY(cap), kPdaPaneScale, l, kWhite), cap += kPdaPaneStep;
+        for (const auto& l : fontWrap(c, s.get(it.message), pdaY(kPdaPaneW), kPdaPaneScale, kPdaPaneTrack))
+            capText(c, pdaX(kPdaPaneX), pdaY(cap), kPdaPaneScale, l, kWhite, kPdaPaneTrack), cap += kPdaPaneStep;
     }
     const float cap = pdaY(kPdaFootCap);
     auto left = [&](float x, int16_t id) {

@@ -1,6 +1,7 @@
 // Progression: chapter table, level ends, pickups + save round trip (src/game/Progress), menus (src/ui).
 #include "game/Game.hpp"
 #include "game/Progress.hpp"
+#include "config/Config.hpp"
 #include "save/Save.hpp"
 #include "ui/Art.hpp"
 #include "ui/Pda.hpp"
@@ -510,6 +511,38 @@ TEST(Menus, ExtrasRingCategoriesAndUnlocks) {
     EXPECT_EQ(m.screen(), ui::Screen::Confirm);
     m.input(ui::Nav::Left);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::PlayMovie);
+}
+
+// PDA JOURNAL [O j3..j5]: greyed without entries, a list page of the entries reached with each one's text; Tab opens the PDA.
+TEST(Menus, PdaJournal) {
+    EXPECT_EQ(config::InputConfig().bindings.at("pda"), std::vector<std::string>{"Tab"});
+    EXPECT_EQ(ui::journalEntries(0), 0);
+    EXPECT_EQ(ui::journalEntries(1), 7);  // MED SEA EXPEDITION .. NATLA
+    EXPECT_EQ(ui::journalEntries(2), 14); // .. ODIN'S MAP ROOM
+    EXPECT_EQ(ui::journalEntries(8), 45); // .. MOTHER
+    ui::Menus m;
+    m.open(ui::Screen::Pda);
+    EXPECT_TRUE(m.items()[5].greyed);
+    m.close();
+    m.journal = ui::journalEntries(2);
+    m.open(ui::Screen::Pda);
+    ASSERT_FALSE(m.items()[5].greyed);
+    for (int i = 0; i < 4; ++i) m.input(ui::Nav::Down); // AREA INFO .. FIELD ASSISTANCE, JOURNAL
+    EXPECT_EQ(m.cursor(), 5);
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::Journal);
+    const auto list = m.items();
+    ASSERT_EQ(list.size(), 14u);
+    EXPECT_EQ(list[0].stringId, 1145);
+    EXPECT_EQ(list[0].message, 1190); // its text
+    EXPECT_EQ(list[13].stringId, 1158);
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    EXPECT_EQ(m.screen(), ui::Screen::Journal); // Return does nothing
+    for (int i = 0; i < 20; ++i) m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 13);
+    m.input(ui::Nav::Back);
+    EXPECT_EQ(m.screen(), ui::Screen::Pda);
+    EXPECT_EQ(m.cursor(), 5);
 }
 
 // save::Profile (chapters ended, the ending, all treasures / relics) and a Treasure Hunt's save flag.

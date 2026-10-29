@@ -55,7 +55,7 @@ struct Actions {
     bool pause = false; // held; ou-game opens the pause menu on the press edge (Esc / pad Start; scripts: "pause")
     bool grapple = false; // held; the grapple reacts to the press edge (G / pad right shoulder; scripts: "grapple")
     bool sprint = false;  // held (Left Alt / pad left stick click; scripts: "sprint")
-    bool pda = false;  // held; ou-game opens the PDA on the press edge (1; scripts: "pda")
+    bool pda = false;  // held; ou-game opens the PDA on the press edge (Tab; scripts: "pda")
     bool hint = false, answer = false; // held; ou-game plays the help-on-demand hint / answer line on the press edge (T / Y)
     bool light = false;   // held; the flashlight toggles on the press edge (L / pad d-pad left; scripts: "light")
     bool grenade = false; // held; a sticky grenade is thrown on the press edge (R / pad d-pad down; scripts: "grenade")

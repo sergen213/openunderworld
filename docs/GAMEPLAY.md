@@ -1276,8 +1276,8 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   chapter ended (3 Mediterranean Sea, 4 the prologue, 5..10 Thailand .. Arctic Sea), also once the game is finished; 11
   the game finished (storyboards); 12 every treasure, 13 every relic (checked at chapter ends) [O codes, I meanings].
 - Pause [O]: the same ring with 122 RESUME GAME in the centre over the game dimmed to ~0.56 (HUD hidden); SAVE GAME opens
-  the Save screen, QUIT GAME returns to the main menu (after 494 [I]). No PDA item: the `pda` action (key 1,
-  replays `pda`) opens the PDA.
+  the Save screen, QUIT GAME returns to the main menu (after 494 [I]). No PDA item: the `pda` action (key Tab as
+  tru.exe, rebindable as `controls.pda`; replays `pda`) opens the PDA.
 - Confirmation dialogs [O dlg_quit, dlg_load(_yes), dlg_newgame, dlg_autosave_*]: box 106 over the backdrop alone (no ring);
   the question at 0.74 centred, wrapped at 356, caps from 164 every 16; YES 384 / NO 385 at 0.74 with their ink ends at
   302.2 / 339.6 and "/" at 320 (white); the selected one (181, 217, 255) on bar 107 (YES, right end 322.2) or 108 (NO, left
@@ -1327,12 +1327,13 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   LESS / NORMAL / EXTRA) is not ported.
 - PDA [O]: `pda_bg_1280` (`_960` when the window is narrower than 1.556:1) fitted to the window height and centred; in
   bg pixels (virtual = bg·2/3 − 106.7, bg·2/3, the same for both widths): items 1074 SONAR MAP, 1075 AREA INFO, 1076,
-  1077, 1078, 1081 / 1082 greyed (91, 91, 91, skipped; 1082 enabled in a Treasure Hunt), 122 RESUME GAME, right-aligned at 502.7, caps 173.3 + 43.3·i,
+  1077, 1078, 1081 JOURNAL / 1082 greyed (91, 91, 91, skipped; 1081 enabled with entries, 1082 in a Treasure Hunt), 122 RESUME GAME, right-aligned at 502.7, caps 173.3 + 43.3·i,
   scale 0.605, a line 17.4 below each from x 251.3 ((46, 86, 121); selected 2 px (68, 130, 184)); the selected item in
   (76, 139, 193) with arrow 114. Picture window (g_pda texture, tab bar included) at (544.7, 166) 1 px/texel, tab label
   right-aligned at 994 cap 360.7 scale 0.57: SONAR 688 + prompt 1085 (Accept: 1093 "unavailable"); AREA INFO 680 +
   chapter (680–687) and RELICS / TREASURES found/total at caps 442.7 / 478.7 scale 0.8 (x 602.7, values to 963.3) in a
-  black box from 405.3 (line (16, 60, 66)) to 525; WEAPON SELECTION 689 + 1086, INVENTORY 690 + 1087 (Accept: 456);
+  black box from 405.3 (line (16, 60, 66)) to 525; WEAPON SELECTION 689 + 1086, INVENTORY 690 + 1087, JOURNAL 693 + 1088,
+  REVISIT LOCATION 694 + 1089;
   FIELD ASSISTANCE two boxes 155–344 / 357–544 with 1091 (Accept: hint) / 1092 (E / pad West: answer); prompts scale
   0.63, wrapped at 300, centred on the pane; footer 375 at x 289.8 and 120 at 621.3 (not on AREA INFO), cap 600. Totals
   come from `game::chapterRewards` [O survey of every l<N>_ unit's reward intros]: 10/22/7/10/10/0/19 treasures and one
@@ -1352,6 +1353,11 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
     and Thor's gauntlets / belt while carried (1270–1273); WEAPONS = PISTOLS (1241 / 1242), the secondaries (1243–1247)
     and THOR'S HAMMER (81 / 1250); TREASURES = each area's treasures / relics found [I layout]. Items show their model in
     the panel, descriptions at scale 0.58 from cap 445 every 16.7.
+  - JOURNAL (1081) [O j3..j5]: the PDA list page (header 1144 JOURNAL ENTRIES, nine scrolling rows, Escape BACK only) of
+    entries 1145.., the selected one's text (id + 45) in the right pane; Return does nothing. Available: the entries up to
+    the current chapter's (`ui::journalEntries`: 7 after the Mediterranean Sea, 14 Thailand, 20 Croft Manor, 31 Mexico,
+    38 Jan Mayen, 39 Andaman Sea, all 45 in the Arctic Sea and a Treasure Hunt) [I: grouped by topic; tru.exe unlocks
+    them by script].
   - SONAR MAP (1074; "unavailable" 1093 when the unit has no pc-w\<unit>_map.drm): every loaded unit's map mesh, grey
     by view angle with a teal world-space grid (250 units [I]) on black, Lara (`ping_map_icon_lara`, green) and bikes
     (`ping_map_icon_motorcycle`, grey) pawns, rendered at half the window size when the view moves; free camera behind
@@ -1370,14 +1376,14 @@ Keys: arrows/WASD, Enter/Space accept, E = Alt (accept; PDA TASK), Esc back, Bac
 South accept, West Alt, North delete, East/Start back. Replays drive menus with `forward`/`right` ±1, `jump` (accept),
 `interact` (Alt), `drop`/`pause` (back), `pda`; the script clock keeps running in menus. Not reproduced: the attract
 mode (intro.bik after ~1 min idle), title music, the decorative small text under
-the list panels, the PDA's journal, save name entry (496), and the
+the list panels, save name entry (496), and the
 footer always names the keyboard key.
 
 **Original UI reference (2026-10-28)** [O captures; implemented: HUD below, menus/PDA/loading above]: tru.exe captures at 1920×1080 (and
 HUD at 1024×768) in openunderworld-work/screens/ui (`hud_weapon_*`, `hud_dpad_*`, `pause_*`, `game_options_1080`,
 `av_1080`, `av_volume_1080`, `load_game_1080`, `save_game_1080`, `panel_player_tailoring_1080`, `pda_*_1080`,
 `loading_1080`). Under Wine the paused game applies key presses several seconds late; wait ~4 s between keys.
-- Default keys [O]: R draws weapons (shows the HEALTH and WEAPONS groups), Q/F show the GEAR d-pad, 1 opens the PDA,
+- Default keys [O]: R draws weapons (shows the HEALTH and WEAPONS groups), Q/F show the GEAR d-pad, Tab opens the PDA,
   Esc pauses.
 - Pause [O]: the main menu's ring (124 START NEW GAME, 125, 126, 127, 128, 129, 131 QUIT GAME) with 122 RESUME GAME in
   the centre; no PDA item. New Game first opens a PLAYER TAILORING list panel (CASUAL EXPLORER / TOMB RAIDER / MASTER

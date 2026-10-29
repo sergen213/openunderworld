@@ -133,7 +133,7 @@ InputConfig::InputConfig()
                {"load", {"F9"}},
                {"hint", {"T"}},    // PDA Hint / Answer (help on demand, locals.bin 168/169); keys are ours [I]
                {"answer", {"Y"}},
-               {"pda", {"1"}},     // tru.exe default: 1 opens the PDA [O]
+               {"pda", {"Tab"}},   // tru.exe default: Tab opens the PDA [O]
                // tru.exe 0x487700 default keys: T = action 13, R = action 15, on pad d-pad left / down, the HUD's light /
                // grenade items [I action order]; T is taken by "hint", so the light defaults to L.
                {"light", {"L", "Pad dpleft"}},

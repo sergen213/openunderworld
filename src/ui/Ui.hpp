@@ -67,11 +67,11 @@ public:
 // Delete: Backspace on the Save/Load slot ring. Alt: the second PDA prompt key (E: Field Assistance TASK); Accept
 // elsewhere.
 enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
-// Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item. Revisit: the PDA's
-// REVISIT LOCATION list (Treasure Hunt). Extras: the EXTRAS categories on a mirrored ring; ExtrasCategory: one's rewards
+// Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item. Revisit / Journal:
+// the PDA's REVISIT LOCATION list (Treasure Hunt) and JOURNAL ENTRIES. Extras: the EXTRAS categories on a mirrored ring; ExtrasCategory: one's rewards
 // (Menus::rewards) with a preview; ExtrasView: an unlocked image full screen.
 enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
-                              PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit, Extras, ExtrasCategory, ExtrasView };
+                              PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit, Extras, ExtrasCategory, ExtrasView, Journal };
 // Continue: load the autosave, else the newest save (the app starts a new game when there is none). Save/Load/Delete act
 // on selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
 // Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW). TreasureHunt: the
@@ -120,6 +120,9 @@ struct Unlocks {
 // chapter ended: 3 Mediterranean Sea, 4 the prologue, 5..10 Coastal Thailand .. Arctic Sea; 11 the game finished
 // (storyboards); 12 every treasure (creatures); 13 every relic (Lara's outfits).
 bool unlocked(int code, const Unlocks& u);
+// JOURNAL entries (locals.bin 1145.., text id + 45) available in chapter `chapter` (kChapters index) [I: the entries by
+// their topics up to that chapter's: 1145 Mediterranean Sea .. 1184..1189 Arctic Sea; tru.exe unlocks them by script].
+int journalEntries(int chapter);
 
 // What the PDA shows: the chapter (kChapters index) and this chapter's relics/treasures found / in it; WEAPON
 // SELECTION rows (the secondaries, game::Weapon index in `weapon`); INVENTORY items per category (BACKPACK, GEAR,
@@ -190,6 +193,7 @@ public:
     bool reticles = true, helperButtons = true, trainingText = true, invertY = false, subtitles = true;
     int tailoring = 1;              // PLAYER TAILORING preset: 0 casual explorer, 1 tomb raider, 2 master survivalist
     PdaInfo pda;
+    int journal = 0;                // PDA JOURNAL entries available (journalEntries); 0 = greyed
     // The main menu's centre [O]: TREASURE HUNT (49) once the game is `finished`, else RESUME GAME (122) with an autosave
     // in `saves`, else PLAY GAME (123). `treasureHunt`: the game being played is one (PDA REVISIT LOCATION).
     bool finished = false, treasureHunt = false;

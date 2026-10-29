@@ -1569,6 +1569,7 @@ int main(int argc, char** argv) {
     auto openPda = [&] {
         fillPda();
         menus.treasureHunt = world->treasureHunt; // REVISIT LOCATION
+        menus.journal = ou::ui::journalEntries(world->treasureHunt ? 7 : world->chapter);
         menus.open(ou::ui::Screen::Pda);
         std::fprintf(stderr, "ou-game: tick %llu pda\n", (unsigned long long)world->ticks());
     };
@@ -2142,7 +2143,8 @@ int main(int argc, char** argv) {
         }
         const ou::ui::Screen scr = menus.screen();
         const bool pdaPage = scr == ou::ui::Screen::Pda || scr == ou::ui::Screen::PdaWeapons || scr == ou::ui::Screen::PdaInventory ||
-                             scr == ou::ui::Screen::PdaItems || scr == ou::ui::Screen::Revisit;
+                             scr == ou::ui::Screen::PdaItems || scr == ou::ui::Screen::Revisit ||
+                             scr == ou::ui::Screen::Journal;
         if (scr == ou::ui::Screen::PdaSonar && shownScreen != scr) resetSonar(), shownSonarSize = {}; // opens behind Lara
         shownScreen = scr;
         if (pdaPage) // pda_bg_960 for narrow windows (ui::Menus::drawPda)
