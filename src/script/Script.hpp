@@ -374,6 +374,12 @@ private:
     void callback(int32_t uid, const char* base, size_t prototype, std::span<const vm::Value> args);
     // Runs `uid`'s override of vtable slot `vt` with `args` as a new thread beside its running ones.
     void run(int32_t uid, int16_t vt, std::span<const vm::Value> args);
+    // Sticky Set (0x7B6200 bool / 0x7B7B50 int) notifies the sticky's owner (0x4AF6D0 / 0x4AF740): its corebase
+    // vt 5 float / 6 bool / 7 int with (the sticky, the value); the owner is not notified again from its own handler.
+    struct StickyChange { int32_t uid; uint32_t offset; int16_t vt; uint32_t value; };
+    std::vector<StickyChange> stickyChanges_; // delivered after the running machine step (adopt)
+    std::set<std::pair<int32_t, uint32_t>> stickyNotifying_;
+    bool flushingStickies_ = false;
     struct Message { uint32_t channel, id; std::string payload; int32_t sender; };
     std::vector<Message> messages_;
     std::set<std::string> payloads_; // delivered payload texts (handler arguments point at them)

@@ -662,6 +662,18 @@ void Runtime::adopt(const std::shared_ptr<vm::Machine>& m) {
         if (thread->active()) threads_.push_back({uid, thread});
         adopt(thread);
     }
+    if (flushingStickies_) return; // the outer adopt delivers what handlers queue
+    flushingStickies_ = true;
+    for (size_t i = 0; i < stickyChanges_.size(); ++i) {
+        const StickyChange c = stickyChanges_[i];
+        vm::Value args[2] = {{}, vm::Value::scalar(c.value)};
+        args[0].kind = vm::Value::Kind::Member, args[0].uid = c.uid, args[0].offset = c.offset;
+        stickyNotifying_.insert({c.uid, c.offset});
+        run(c.uid, c.vt, args);
+        stickyNotifying_.erase({c.uid, c.offset});
+    }
+    stickyChanges_.clear();
+    flushingStickies_ = false;
 }
 
 bool Runtime::grapplePulled(int32_t uid) {
@@ -1101,9 +1113,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 field() = nc.args[0].kind == vm::Value::Kind::Member ? value->fields[nc.args[0].offset] : nc.args[0].bits;
                 return true;
             }
-            if ((!std::strcmp(name, "messagechannel") || !std::strcmp(name, "stickybool") ||
-                 !std::strcmp(name, "stickyint") || !std::strcmp(name, "stickyfloat")) && nc.function == 3 &&
-                nc.args.size() == 1) {
+            // Sticky equality (0x7B3390 -> 0x7B2940) compares identity (owner key, sticky id), not values.
+            if ((!std::strcmp(name, "stickybool") || !std::strcmp(name, "stickyint") || !std::strcmp(name, "stickyfloat")) &&
+                nc.function == 3 && nc.args.size() == 1) {
+                nc.result = vm::Value::scalar(nc.args[0].kind == vm::Value::Kind::Member && nc.args[0].uid == self->uid &&
+                                              nc.args[0].offset == off);
+                return true;
+            }
+            if (!std::strcmp(name, "messagechannel") && nc.function == 3 && nc.args.size() == 1) {
                 const auto other = resolve(nc.args[0].uid);
                 if (!other) return false;
                 nc.result = vm::Value::scalar(field() == other->fields[nc.args[0].offset]);
@@ -1289,7 +1306,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // cinematic 7 (0x79EB10 -> 0x60D630) always returns 0.
             if (!std::strcmp(name, "cinematic") && nc.function == 7 && nc.args.empty()) { nc.result = vm::Value::scalar(0); return true; }
             if (!std::strcmp(name, "stickybool") || !std::strcmp(name, "stickyint") || !std::strcmp(name, "stickyfloat")) {
-                if (nc.function == 0 && nc.args.size() == 1) { field() = nc.args[0].bits; return true; } // Set
+                if (nc.function == 0 && nc.args.size() == 1) { // Set (a bool keeps one bit); the owner hears of it
+                    const bool flag = !std::strcmp(name, "stickybool");
+                    field() = flag ? uint32_t((nc.args[0].bits & 0xFF) != 0) : nc.args[0].bits;
+                    if (nc.receiver.kind == vm::Value::Kind::Member && !stickyNotifying_.contains({self->uid, off}))
+                        stickyChanges_.push_back({self->uid, off, int16_t(flag ? 6 : name[6] == 'i' ? 7 : 5), field()});
+                    return true;
+                }
                 if ((nc.function == 1 || nc.function == 2) && nc.args.empty()) {
                     nc.result = vm::Value::scalar(field());
                     return true;

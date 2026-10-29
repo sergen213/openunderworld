@@ -63,7 +63,7 @@ enum class Action : uint8_t {
     Push,   // push block: grip (interact held) and push (stick forward) from one of its four faces
     Pull,   // mounted grapple target: World's grapple pull runs its pull handler (Runtime::grapplePulled)
     Step,   // pressure plate: Lara stands on it
-    Weigh,  // pressure plate: Lara carries the nearest portable weight (*_pt_weight*) onto it and sets it down
+    Weigh,  // pressure plate: Lara carries the nearest portable weight (*_pt_*weight*) onto it and sets it down
     Enter,  // trigger volume: Lara walks into it; trigger plane: Lara crosses it
 };
 const char* actionName(Action a) {
@@ -198,7 +198,8 @@ GateResult runGate(const cdc::BigfileSet& bf, const game::UnitLoader& load, cons
         case Action::Weigh: {
             const script::Object* weight = nullptr;
             for (const auto& o : w.script().objects())
-                if (o.name.find("_pt_weight") != std::string::npos && o.name.find("break") == std::string::npos &&
+                if (o.name.find("_pt_") != std::string::npos && o.name.find("weight") != std::string::npos &&
+                    o.name.find("break") == std::string::npos &&
                     (!weight || glm::length(o.pos + o.offset - at) < glm::length(weight->pos + weight->offset - at)) &&
                     glm::length(glm::vec2(o.pos + o.offset - at)) > 300.0f)
                     weight = &o;
@@ -637,4 +638,42 @@ TEST(ProgressionReal, AnimNames) {
     if (!gameDir() || !name) GTEST_SKIP();
     const cdc::BigfileSet bf(gameDir());
     for (const auto& e : anim::animList(cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm")))) std::printf("%s %u\n", e.name.c_str(), e.animId);
+}
+
+// l4_traprooms seal 5701: with the seal raised (sticky +268) and the four trap rooms done (sticky int +240 = 4), plates
+// 5717 / 5718 each set their sticky +124 and hear of it in vt 6 (sticky notification), which counts them on the seal
+// (+304) and runs its vt 58: both held opens it (seal sticky +20 of the unit's globals, modifiable +64). Lara stands on
+// one, the scepter weight 5883 is carried onto the other.
+TEST(ProgressionReal, TraproomsSeal) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l4_traprooms", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 60; ++i) w.tick({});
+    const auto* seal = w.script().find(5701);
+    ASSERT_TRUE(seal && seal->script);
+    seal->script->fields[268] = 1, seal->script->fields[240] = 4; // earlier progress: raised, trap rooms done
+    const auto* weight = w.script().find(5883);
+    const auto* a = w.script().find(5717);
+    const auto* b = w.script().find(5718);
+    ASSERT_TRUE(weight && a && b);
+    game::Actions press;
+    press.interact = true;
+    place(w, weight->pos + weight->offset, 0);
+    w.tick(press), w.tick({});
+    place(w, b->pos - vec3(90, 0, -30), 0);
+    w.tick({});
+    w.tick(press), w.tick({});
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_EQ(b->script->fields[124], 1u) << "the weight holds plate 5718";
+    EXPECT_EQ(seal->script->fields[304], 1u);
+    EXPECT_NE(seal->script->fields[64], 0xFFFFFFFFu);
+    const auto before = seal->script->fields;
+    place(w, a->pos + vec3(0, 0, 30), 0);
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_EQ(a->script->fields[124], 1u) << "Lara holds plate 5717";
+    EXPECT_EQ(seal->script->fields[304], 2u);
+    EXPECT_NE(seal->script->fields, before) << "both held: vt 58 opens the seal";
 }

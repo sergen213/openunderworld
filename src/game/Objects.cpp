@@ -642,7 +642,13 @@ void World::carryPortables(bool pressed) {
     auto* held = held_ ? const_cast<script::Object*>(script_.find(held_)) : nullptr; // World owns object motion
     if (held_ && !held) held_ = 0;
     if (held && pressed) {
-        held->offset = s.pos + fwd * 90.0f + vec3(0, 0, 20) - held->pos;
+        // Its collision's base 40 units above her feet (as carried, the base may sit lower than its origin): it falls
+        // from there onto what is below (a raised plate top included).
+        float base = 0;
+        for (const auto& d : col_.dynamics)
+            if (d.id == held->uid)
+                for (const vec3& v : d.shape->vertices) base = std::min(base, vec3(d.transform * glm::vec4(v, 1)).z - (held->pos.z + held->offset.z));
+        held->offset = s.pos + fwd * 90.0f + vec3(0, 0, 40 - base) - held->pos;
         held->loose = true;
         held_ = 0;
         return;

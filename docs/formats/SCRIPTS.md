@@ -157,12 +157,19 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   scalar/reference/string moves, typed native `MOVEU` for the eight observed 4/8/20-byte layouts, integer/float/bool/bit arithmetic and conversions, string comparison and numeric
   conversions, raw-code-word JMP/JMPF, ISTYPE/STATE, CALLU/CALL1–5, SSEQU/SSEQ1, START and RET. Calls are bounded to
   100 frames / 100 000 instructions per handler.
+- [O] Stickies (28-byte members: key = owner instance uid + sticky id from the member init, 0x7B3450) live in a
+  global store; Set (bool 0x7B6200 one bit, int 0x7B7B50) always notifies the registered owner (0x4AF6D0 / 0x4AF740 ->
+  0x4AF5C0 -> 0x7981F0): corebase vt 5 float / 6 bool / 7 int (ids 0x13A / 0x156 / 0x172 of the corebase table) with
+  (the sticky, the new value); the owner slot is cleared during the call, so its own handler's Sets do not re-notify.
+  Equality (3, 0x7B2940) compares keys, not values. Ours delivers the notifications after the running machine step
+  (`Runtime::adopt`) [I: the exe calls them synchronously inside Set]. l4_traprooms plates 5717 / 5718 count on seal
+  5701 from their vt 6; the seal's vt 7 opens door 5702 when sticky int +240 (trap rooms done) reaches 4.
 - [O] Function records now retain their own address, prototype, argument/local counts, return type and native
   flag; branches use raw word offsets, including relocated operand words. Inheritance and virtual calls resolve
   against the actual linked instance.
 - [O] Native bindings implemented by behavior observed in the scripts: `playerref.Get` (0) and loaded wait (2),
   `instanceref` loaded/birthed waits (3/6), Get (7), SetProperty (9), GetProperty (12/15), `unitref.Get` (3),
-  `globalsref.Get` (0), sticky bool/int/float Set (0), Get (1/2) and equality (3), `modifiable` Set/Get (4/8) and its two-argument setter (3), native
+  `globalsref.Get` (0), sticky bool/int/float Set (0: notifies the sticky's owner, below), Get (1/2) and identity equality (3), `modifiable` Set/Get (4/8) and its two-argument setter (3), native
   instance debug/marker/modifiable interfaces (0/1, 4–9, 14–16, 28/61), Reset (25), engagement-property selection (59), Hide (60), `playersensor` void interface call (2),
   `checkpointbase` activation (3), static-water reset/depth (3/4), `terraingroup` SetEnabled/IsEnabled (2/3), `light` SetEnabled/IsEnabled (1/2),
   `health` current-value Get (9), `gamebase` global-byte Get/Set/Add/Subtract (4–7), `unit` post-effect scalar Set (15), and `multibody` Enable (2), SetJointLimit (77),

@@ -70,7 +70,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 4 | l4_ballcourt | pole lever 6502 (use), block 6504 (push) | door joint 6505, block | pass |
 | 4 | l4_ballcourt | autoreset switch 5469 (use) | temple reveal 5464 | **fail** (no visible change) |
 | 4 | l4_staircase_upper/xibalba | volumes/planes 6046, 6076, 6078, 6039 | hallway ramps 6045/6036, trap door 5702 | pass |
-| 4 | l4_traprooms | plates 5717/5718 (stand on) | seal 5701 | **fail**: plates press (base 3938 + `multibody` 79 range 56); 5701 counts both via stickies (needs both held) |
+| 4 | l4_traprooms | plates 5717/5718 (stand on / scepter weight 5883) | seal 5701 | pass (`ProgressionReal.TraproomsSeal`, after the trap rooms: sticky +268 raised, int +240 = 4): each plate's vt 6 sticky notification counts it on the seal (+304), both held run vt 58 |
 | 4 | l4_traprooms | block 5884 (push), planes 5900/5901/5904/5914/5915 | block, thrones, door 5702 | pass |
 | 4 | l4_pool | volumes 5566/5624/5626 | snake heads, reveal cinematics | pass |
 | 4 | l4_ballcourt | volume 5468 | 5483 → chapter 5 | pass |
@@ -118,5 +118,6 @@ Portal order from the start unit; level changes not made by portals are named.
   modifiable / stimulus animations [not modelled]; l5 7188 / 7189 need switch 7192 pulled first; l7 9103's message reaches
   the unit script and commands drawbridge 9116 [I: the sweep still shows no change, unresolved]. Previously listed as: VM opcode 0x34 DBOUNDS (l2_norsehub
   2393); levers / switches whose handlers run but change nothing visible (l1 57, l4 5469, l5 7188/7189, l7 9103);
-  l4_traprooms seal 5701 (both plates held: one weight source missing).
+  l4_traprooms seal 5701 (both plates held: one weight source missing). (gates 4) Solved: sticky Set notifications
+  (vt 6 / 7) reach the plates' and the seal's handlers; the scepter weight is carried onto the second plate.
 - Chapter 7 → 8 has no scripted level end in the data we decoded [U]; the ending (7996, credits) is not run.
