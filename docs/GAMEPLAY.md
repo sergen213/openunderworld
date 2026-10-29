@@ -731,8 +731,8 @@ end spends the meter and time eases back.
 
 Input: F draw/holster (fire also draws), LMB fire, RMB aim/lock, Q switch target, X switch weapon, H health pack, E
 adrenaline; pad Y / RT / LT / R3 / d-pad right / d-pad up / X; input scripts `draw`, `fire`, `aim`, `switch`, `weapon`,
-`heal`, `interact`. HUD (ou-game): health bar, adrenaline meter, lock reticle / free-aim cross, head-shot pip, text
-line (health, packs, adrenaline, weapon clip / reserve, carried secondary); muzzle flash, tracer and impact lines;
+`heal`, `interact`. HUD (ou-game): the original display groups and reticles (see **HUD** under Progression; F1 adds a
+text line with health, packs, adrenaline, weapon clip / reserve, carried secondary); muzzle flash, tracer and impact lines;
 shot / reload waves per weapon (`HG1_shot_c_*`, `MP5_shot_*`, `SG1_shot_*`, `speargun_shot_b_*`; HG1 magazine,
 `SG1_reload`, `speargun_cock_a_*`). `--target X,Y,Z` places a 700-hp dummy capsule.
 
@@ -902,7 +902,7 @@ menus with `forward`/`right` ±1, `jump`/`interact` (accept), `drop`/`pause` (ba
 The original's attract mode (intro.bik after ~1 min idle) and title music are not reproduced; the footer always names the
 keyboard key.
 
-**Original UI reference (2026-10-28)** [O captures, not yet implemented in ours]: tru.exe captures at 1920×1080 (and
+**Original UI reference (2026-10-28)** [O captures; HUD implemented, the rest not yet]: tru.exe captures at 1920×1080 (and
 HUD at 1024×768) in openunderworld-work/screens/ui (`hud_weapon_*`, `hud_dpad_*`, `pause_*`, `game_options_1080`,
 `av_1080`, `av_volume_1080`, `load_game_1080`, `save_game_1080`, `panel_player_tailoring_1080`, `pda_*_1080`,
 `loading_1080`). Under Wine the paused game applies key presses several seconds late; wait ~4 s between keys.
@@ -912,15 +912,7 @@ HUD at 1024×768) in openunderworld-work/screens/ui (`hud_weapon_*`, `hud_dpad_*
   the centre; no PDA item. New Game first opens a PLAYER TAILORING list panel (CASUAL EXPLORER / TOMB RAIDER / MASTER
   SURVIVALIST). LOAD/SAVE GAME keep the ring and add a mirrored ring on the right: arrow 27, four slot discs (29 empty
   page), arrow 28; the opened item gets a white circle; footer `Return SELECT` left, `BackSpace DELETE` right.
-- HUD anchoring [O, both resolutions]: origin = (5 % W, 5 % H), 1 virtual unit = H/480, art 2/3 virtual per texel.
-  HEALTH group top-left: panel 78 at (−4.4, −2.7); silhouette 75 at (9.8, −2.7) tinted by health band (green
-  0,255,0 when full; bands 2000/1500/1000/500 from generalbank HUD script strings "Player health is between …");
-  bar 77 at (9.3, 16.4) over a green fill (x 15.6–22.7) = the adrenaline bar, which the script also uses as the breath
-  bar ("Showing adrenaline bar as breathbar"); mask 76 at (37.3, −2.7) over a yellow (255,255,0) fill = health meter
-  [I mapping]; weapon icon (96 pistols, 98 uzi, 99 shotgun, 100 rifle, 102 speargun [I]) at (61.8, −2.7); ammo pips
-  (8×8 textures 83–85, ~4 v) in rows at y 36.9 / 43.6 from x 64.4 every 6 v, 12 per row; magazine icons 81/82 at
-  y 52 from x 61.8 every 12 v. GEAR group bottom-left: cross centre (101.8, −71.6) from (5 % W, 95 % H), items at
-  ~0.47 v/texel: up 92 health packs with a count box, left 93 flashlight, right 94 weapon switch, down 95.
+- HUD [O]: implemented, see **HUD** below (positions refitted against these captures).
 - List screens (GAME OPTIONS, AUDIO/VISUAL, VOLUME SETTINGS), 4:3-centred virtual: icon (2/3 texel) centred
   (191, 88), white divider x 220 y 73–104, title line 1 white at x 226.7 (font scale ~0.95), line 2 (110,165,200) at
   x 262 (~0.67); white line 105 at y 110, centre 320, width 409; black panel solid ±125 v fading to ±181 v; rows 24 v
@@ -935,7 +927,35 @@ HUD at 1024×768) in openunderworld-work/screens/ui (`hud_weapon_*`, `hud_dpad_*
   description (59–66) below at ~0.45 in 13 v lines. `!WAR` pixels are B,G,R,A bytes (the PDA bezel is blue only when
   decoded so).
 - Subtitles [V-exe, TEXT.md §4]: game font scale 0.6 at virtual y 352/374. Pickup toasts, "Save Successful", chapter
-  title animation, reticles and the air bar were not captured [U].
+  title animation and reticles were not captured [U] (a 2026-10-28 retry: the paused opening cutscene ignored menu keys).
+
+**HUD** (`src/ui/Hud.cpp`, `ui::Hud`; fed by `ui::HudState` from `CombatView::hudState` each tick) [O captures, V fits,
+I where marked]. Space: origin (5 % W, 5 % H) for the top groups and (5 % W, 95 % H) for the d-pad, 1 unit = H/480, art
+2/3 unit per texel; ultrawide keeps the groups inside the 5 % margin. Positions are top-left in units, fitted by
+template-matching the generalbank textures against `hud_weapon_1080/_768` and `hud_dpad_1080` (±1 px):
+- HEALTH: panel 78 at (−5.3, −3.1); green fill x 14.9–22.3, y 16–60 under bar 77 at (9.3, 16.4) = adrenaline, or breath
+  while it is below full (HUD script "Showing adrenaline bar as breathbar"; replaces our old AIR bar); yellow (255,255,0)
+  fill of mask 76's opaque rows 25–102 at (35.1, −2.7) = health / max [I mapping]; silhouette 75 at (9.8, −2.7) tinted by
+  the HUD script's four "Player health is between …" branches [V bytecode: (r,g,b) constants]: 2000–1500 (0, v, 1),
+  1500–1000 green, 1000–500 (v, 1, 0), 500–0 red, v linear over the band [I]; absolute health, so Normal's full 1000 is
+  the captures' pure green.
+- WEAPONS: icon (HUD script list wp_handgun 96, wp_thorhammer 97, wp_uzi 98, wp_shotgun 99, wp_assault_rifle 100,
+  wp_tranq 101, wp_speargun 102) at (59.1, −4.9), 0.65 unit/texel; clip pips per gun row: bullets 83 full / 84 spent /
+  85 white from (63.6, 36.0 / 43.1) every 6 (12 per row; uzi's 40 squeezed into the same width [I]); shells 86/87/88
+  from (66.8, 36.6) every 11.7; spears 89/90 [I]. One gun's last loaded round is white (second row at rest) [V; I: the
+  next hand]. The original's grenade row (81 full / 82 empty at y 52) is not drawn: ours has no grenades.
+- GEAR d-pad: cross 91 (half opaque) centred (104, −73); 92 health packs (count in the box, game font 0.55) at
+  (104, −106.5), 93 flashlight (71.1, −72), 94 weapon (136.4, −73.8), 95 grenades (103.6, −38.2), centres, all 2/3
+  unit/texel, at 0.3 brightness except the last pressed item [V captures: R lights 94].
+- Visibility [I timing; the script plays per-group fade anims]: hidden at rest; HEALTH on health / adrenaline change,
+  breath below full or a weapon out; WEAPONS while drawn and on clip / weapon change; GEAR on heal, weapon switch or
+  draw. Each holds 3 s after its trigger, fades in at 4/s and out at 2/s; death hides all.
+- Reticles [I, not captured]: free aim 69, soft target 65, hard lock 72, adrenaline window 71 with pip 74, 0.35
+  unit/texel at the target's aim point; grapple target marker 70 at the anchor's screen point.
+- Notifications (pickups, "Save Successful", load errors) [I]: game font 0.55 on a dark band at y 398; chapter title
+  card: font 1.2 at y 208 and the subtitle at 0.45, as the loading screen [O]; subtitles via `Hud::subtitles`.
+Tests `tests/test_hud.cpp`: `Hud.SpaceKeepsTheSafeMarginAtEveryAspect` (16:9, 4:3, 21:9, 32:9, 5:4),
+`Hud.HealthColourBands`, `Hud.GroupsShowOnTriggersAndFadeOut`.
 
 **Music** (docs/formats/AUDIO.md §5): one track, `pc-w\music\<name>\<name>.mul` with its `.mus` sequencer setting the
 stem gains every tick (variables all 0: writers of e.g. 0x7D are [U]). The track changes (2 s crossfade) when the current

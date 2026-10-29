@@ -380,8 +380,18 @@ struct EnemyMeshes {
 };
 
 // Combat (src/game/Combat.*): weapon models on Lara's hand / holster bones, --target dummies, muzzle flashes,
-// tracers, impacts, the HUD (health bar, adrenaline meter, lock reticle or free-aim cross, the head-shot pip:
-// screen-space lines just past the near plane) and each weapon's shot / reload waves. [I] the exe's flash/impact FX
+// World point -> screen pixels (top-left origin) for the camera; nullopt behind it.
+std::optional<glm::vec2> toScreen(const ou::game::CameraState& cam, float fovDeg, int width, int height, glm::vec3 p) {
+    const glm::vec3 fwd = glm::normalize(cam.target - cam.position), right = glm::normalize(glm::cross(fwd, glm::vec3(0, 0, 1))),
+                    up = glm::cross(right, fwd);
+    const float ty = std::tan(glm::radians(fovDeg) * 0.5f), tx = ty * float(width) / float(height);
+    const glm::vec3 v = p - cam.position;
+    const float z = glm::dot(v, fwd);
+    if (z <= 1) return std::nullopt;
+    return glm::vec2((glm::dot(v, right) / (z * tx) + 1) * 0.5f * float(width), (1 - glm::dot(v, up) / (z * ty)) * 0.5f * float(height));
+}
+
+// tracers, impacts, the HUD state and reticle (ui::Hud) and each weapon's shot / reload waves. [I] the exe's flash/impact FX
 // objects are not decoded.
 struct CombatView {
     std::vector<ou::scene::Vertex> scratch;
@@ -459,8 +469,7 @@ struct CombatView {
         }
     }
 
-    void lines(const ou::game::World& w, const ou::game::CameraState& cam, float fovDeg, int width, int height,
-               std::vector<ou::render::DebugLine>& out) const {
+    void lines(const ou::game::World& w, std::vector<ou::render::DebugLine>& out) const {
         auto line = [&](glm::vec3 a, glm::vec3 b, uint32_t col) { out.push_back({{a.x, a.y, a.z}, {b.x, b.y, b.z}, col}); };
         for (const auto& d : dummies) { // capsule wireframe: red alive, grey dead
             const uint32_t col = d->alive() ? 0xFF3030FF : 0xFF808080;
@@ -483,46 +492,33 @@ struct CombatView {
                 for (const glm::vec3 d : {glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)})
                     line(f.shot.to - d * 15.0f, f.shot.to + d * 15.0f, f.shot.target ? 0xFF2020FF : 0xFFC0C0C0);
         }
-        // HUD: pixel (x, y) from the top-left -> a point 10 units in front of the camera
-        const glm::vec3 fwd = glm::normalize(cam.target - cam.position), right = glm::normalize(glm::cross(fwd, glm::vec3(0, 0, 1))),
-                        up = glm::cross(right, fwd);
-        const float ty = std::tan(glm::radians(fovDeg) * 0.5f), tx = ty * float(width) / float(height), d = 10.0f;
-        auto px = [&](float x, float y) {
-            return cam.position + fwd * d + right * ((2 * x / float(width) - 1) * d * tx) + up * ((1 - 2 * y / float(height)) * d * ty);
-        };
-        auto hline = [&](float x0, float x1, float y, uint32_t col) { line(px(x0, y), px(x1, y), col); };
-        const float hp = std::clamp(w.health().value() / w.health().max(), 0.0f, 1.0f);
-        const float x0 = 40, bw = 300, y0 = float(height) - 64;
-        for (int y = -1; y <= 13; ++y) hline(x0 - 2, x0 + bw + 2, y0 + float(y), y == -1 || y == 13 ? 0xFF000000 : 0xFF303030);
-        const uint32_t barCol = hp > 0.5f ? 0xFF40D040 : hp > 0.25f ? 0xFF20C0E0 : 0xFF2020E0;
-        for (int y = 1; y <= 11; ++y) hline(x0, x0 + bw * hp, y0 + float(y), barCol);
+    }
+
+    // The original HUD's game values (ui::Hud display groups).
+    static ou::ui::HudState hudState(const ou::game::World& w) {
         const auto& c = w.combat();
-        for (int y = -1; y <= 5; ++y) // adrenaline meter under the health bar: orange, white while the window is open
-            hline(x0 - 2, x0 + bw + 2, y0 + 18 + float(y), y == -1 || y == 5 ? 0xFF000000 : 0xFF303030);
-        for (int y = 1; y <= 3; ++y) hline(x0, x0 + bw * c.adrenaline, y0 + 18 + float(y), c.slowMo > 0 ? 0xFFFFFFFF : 0xFF0090FF);
-        if (!c.drawn) return;
-        auto toScreen = [&](glm::vec3 p) -> std::optional<glm::vec2> {
-            const glm::vec3 v = p - cam.position;
-            const float z = glm::dot(v, fwd);
-            if (z <= 1) return std::nullopt;
-            return glm::vec2((glm::dot(v, right) / (z * tx) + 1) * 0.5f * float(width), (1 - glm::dot(v, up) / (z * ty)) * 0.5f * float(height));
-        };
-        const auto s = c.target ? toScreen(c.target->aimPoint()) : std::optional(glm::vec2(width, height) * 0.5f);
-        if (!s) return;
-        const uint32_t col = c.target ? (c.locked ? 0xFF2020FF : 0xFFFFFFFF) : 0xC0FFFFFF;
-        const float r = c.target ? 22.0f : 8.0f;
-        if (c.target) { // diamond + corner ticks
-            const glm::vec2 q[4] = {{0, -r}, {r, 0}, {0, r}, {-r, 0}};
-            for (int k = 0; k < 4; ++k) line(px(s->x + q[k].x, s->y + q[k].y), px(s->x + q[(k + 1) % 4].x, s->y + q[(k + 1) % 4].y), col);
-        } else { // free-aim cross
-            line(px(s->x - r, s->y), px(s->x + r, s->y), col);
-            line(px(s->x, s->y - r), px(s->x, s->y + r), col);
-        }
-        if (c.slowMo > 0) { // head-shot pip: a small yellow cross, `pip` reticle radii from the reticle's centre
-            const glm::vec2 p = *s + glm::vec2(c.pip.x, -c.pip.y) * r;
-            line(px(p.x - 6, p.y), px(p.x + 6, p.y), 0xFF00FFFF);
-            line(px(p.x, p.y - 6), px(p.x, p.y + 6), 0xFF00FFFF);
-        }
+        const auto& wd = w.anims().weapons[size_t(c.weapon)];
+        ou::ui::HudState h;
+        h.health = w.health().value(), h.healthMax = w.health().max();
+        h.adrenaline = c.adrenaline, h.breath = w.air();
+        h.weapon = int(c.weapon), h.drawn = c.drawn, h.dual = wd.dual, h.dead = w.player().state().state == ou::game::State::Dead;
+        h.clip[0] = c.clip[size_t(c.weapon)][0], h.clip[1] = c.clip[size_t(c.weapon)][1], h.clipSize = wd.clip, h.nextHand = c.hand;
+        h.healthPacks = w.found[2];
+        h.gearItem = c.healHeld ? 0 : c.weaponHeld || c.drawHeld ? 2 : -1;
+        return h;
+    }
+
+    // Combat reticle in screen pixels: on the target's aim point, else centred (free aim) while a weapon is out.
+    static ou::ui::Reticle reticle(const ou::game::World& w, const ou::game::CameraState& cam, float fovDeg, int width, int height) {
+        const auto& c = w.combat();
+        ou::ui::Reticle r;
+        if (!c.drawn) return r;
+        const auto s = c.target ? toScreen(cam, fovDeg, width, height, c.target->aimPoint()) : std::optional(glm::vec2(width, height) * 0.5f);
+        if (!s) return r;
+        using K = ou::ui::Reticle::Kind;
+        r.kind = c.target ? (c.locked ? K::Locked : K::Target) : K::Free;
+        r.x = s->x, r.y = s->y, r.slowMo = c.slowMo > 0, r.pipX = c.pip.x, r.pipY = c.pip.y;
+        return r;
     }
 };
 
@@ -1377,12 +1373,13 @@ int main(int argc, char** argv) {
                             "F draw | LMB fire | RMB lock | "
                             "Q switch | X weapon | H health pack | mouse look | F5 save | F9 load | F1 overlay | Esc menu");
         }
-        if (!mainMenu) { // combat HUD text (gameplay only)
+        if (overlay && !mainMenu) { // combat values (F1 overlay; the HUD shows them as art)
             const auto& cs = world->combat();
             std::string t = fmt("health %.0f/%.0f | health packs %d | adrenaline %.0f%%%s", world->health().value(), world->health().max(),
                                 world->found[2], cs.adrenaline * 100, cs.slowMo > 0 ? " HEAD SHOT" : "");
             const auto& wd = world->anims().weapons[size_t(cs.weapon)];
             const auto wi = size_t(cs.weapon);
+            hud.update(CombatView::hudState(*world), ou::game::kTickSeconds);
             t += fmt(" | %s %d", std::string(ou::game::weaponName(cs.weapon)).c_str(), cs.clip[wi][0]);
             if (wd.dual) t += fmt("+%d", cs.clip[wi][1]);
             t += wd.infinite ? std::string(" / inf") : fmt(" / %d", cs.reserve[wi]);
@@ -1407,13 +1404,11 @@ int main(int argc, char** argv) {
             }
         }
         if (!mainMenu) {
+            hud.reticle = CombatView::reticle(*world, c, world->fovDeg, w, h);
+            hud.grapple.reset();
+            if (const auto target = world->grappleTarget(); target && !world->player().state().grappleUid)
+                if (const auto p = toScreen(c, world->fovDeg, w, h, target->pos)) hud.grapple = std::array{p->x, p->y};
             hud.draw(canvas);
-            if (world->air() < 0.999f) { // breath bar while it is not full (under water / refilling)
-                const float u = canvas.unit(), bw = 160 * u, bh = 10 * u, x = 20 * u, y = 40 * u;
-                canvas.rect(x - 2 * u, y - 2 * u, bw + 4 * u, bh + 4 * u, ou::ui::kShade);
-                canvas.rect(x, y, bw * world->air(), bh, world->air() < 0.25f ? 0xFF0000FFu : 0xFFC0A040u);
-                canvas.text(x, y + 13 * u, 12 * u, "AIR", ou::ui::kWhite);
-            }
         }
         menus.draw(canvas, *strings);
         // Two persistent buffers, alternated: the GL backend caches line uploads by data pointer + size, and these
@@ -1423,16 +1418,11 @@ int main(int argc, char** argv) {
         if (opt.showTriggers) appendTriggerLines(world->script(), frameLines);
         if (opt.showEnemies) appendEnemyLines(*world, frameLines);
         enemyMeshes.tracerLines(world->ticks(), frameLines);
-        combat.lines(*world, c, world->fovDeg, w, h, frameLines);
+        combat.lines(*world, frameLines);
         if (world->player().state().grappleUid) { // the rope from Lara's hand to the anchor
             const glm::vec3 hand = s.pos + glm::vec3(0, 0, 400);
             const glm::vec3 anchor = world->player().state().grappleAnchor;
             frameLines.push_back({{hand.x, hand.y, hand.z}, {anchor.x, anchor.y, anchor.z}, 0xFF60A0C0});
-        } else if (const auto target = world->grappleTarget()) { // a hookable anchor in reach
-            const glm::vec3 p = target->pos;
-            frameLines.push_back({{p.x - 70, p.y, p.z}, {p.x + 70, p.y, p.z}, 0xFF40C0FF});
-            frameLines.push_back({{p.x, p.y - 70, p.z}, {p.x, p.y + 70, p.z}, 0xFF40C0FF});
-            frameLines.push_back({{p.x, p.y, p.z - 70}, {p.x, p.y, p.z + 70}, 0xFF40C0FF});
         }
         ou::render::FrameOptions fo{};
         fo.lighting = true, fo.cullBackFaces = true;

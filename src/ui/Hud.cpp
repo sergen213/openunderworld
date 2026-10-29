@@ -14,7 +14,7 @@ namespace ou::ui {
 namespace {
 
 constexpr float kArt = 2.0f / 3;  // HUD art: virtual units per texel
-constexpr float kGear = 0.55f;    // d-pad items [V fit of hud_dpad captures]
+constexpr uint32_t kDim = 0xFF4D4D4Du; // d-pad items not in use [V fit: ~0.3 of the art]
 constexpr float kReticle = 0.35f; // reticles [I]: not captured
 
 uint32_t fade(uint32_t col, float a) {
@@ -43,13 +43,12 @@ struct Pips {
     float x, step, rows[2];
 };
 // Icons 96 handgun, 98 uzi, 99 shotgun, 102 speargun (HUD script weapon list: wp_handgun, wp_thorhammer 97, wp_uzi,
-// wp_shotgun, wp_assault_rifle 100, wp_tranq 101, wp_speargun). Bullets 83-85 [V hud_weapon_1080: 12 per row from
-// x 64.4 every 6, rows at 36.9 / 43.6], shells 86-88 [V hud_weapon_768: from x 67.2 every 11.7, top 35.4],
-// spears 89/90 [I].
-constexpr Pips kPips[4] = {{96, 83, 84, 85, 64.4f, 6.0f, {36.9f, 43.6f}},
-                           {98, 83, 84, 85, 64.4f, 6.0f, {36.9f, 43.6f}},
-                           {99, 86, 87, 88, 67.2f, 11.7f, {35.4f, 35.4f}},
-                           {102, 89, 90, 89, 64.4f, 30.0f, {37.0f, 37.0f}}};
+// wp_shotgun, wp_assault_rifle 100, wp_tranq 101, wp_speargun). [V fits of hud_weapon_1080 / _768] bullets 83-85,
+// 12 per row from x 63.6 every 6, rows at 36.0 / 43.1; shells 86-88 from (66.8, 36.6) every 11.7. Spears 89/90 [I].
+constexpr Pips kPips[4] = {{96, 83, 84, 85, 63.6f, 6.0f, {36.0f, 43.1f}},
+                           {98, 83, 84, 85, 63.6f, 6.0f, {36.0f, 43.1f}},
+                           {99, 86, 87, 88, 66.8f, 11.7f, {36.6f, 36.6f}},
+                           {102, 89, 90, 89, 63.6f, 30.0f, {37.0f, 37.0f}}};
 
 } // namespace
 
@@ -72,18 +71,21 @@ void Hud::update(const HudState& s, double dt) {
     s_ = s;
     first_ = false;
     // Triggers [I timing; the HUD script plays per-group fade anims]: HEALTH on damage / healing / adrenaline / breath
-    // and while a weapon is out; WEAPONS while drawn, on firing / reloading / switching; GEAR on a d-pad press.
+    // and while a weapon is out; WEAPONS while drawn, on firing / reloading / switching; GEAR on a d-pad press (drawing
+    // counts: the hud_weapon capture shows the d-pad with the weapon item lit). The pressed item stays lit [V captures].
     constexpr float kHold = 3.0f, kIn = 4.0f, kOut = 2.0f; // seconds held after the trigger; fade rates per second
+    const int item = s.healthPacks != prev_.healthPacks ? 0 : s.gearItem;
     const bool trig[kGroups] = {
         s.drawn || s.health != prev_.health || s.breath < 1 || std::abs(s.adrenaline - prev_.adrenaline) > 1e-4f,
-        s.drawn || s.weapon != prev_.weapon || s.clip[0] != prev_.clip[0] || s.clip[1] != prev_.clip[1],
-        s.gear || s.healthPacks != prev_.healthPacks};
+        s.drawn || s.weapon != prev_.weapon || s.clip[0] != prev_.clip[0] || s.clip[1] != prev_.clip[1], item >= 0};
+    if (item >= 0) lit_ = item;
     for (int g = 0; g < kGroups; ++g) {
         if (s.dead) hold_[g] = 0;
         else if (trig[g]) hold_[g] = kHold;
         else hold_[g] = std::max(0.0f, hold_[g] - float(dt));
         alpha_[g] = hold_[g] > 0 ? std::min(1.0f, alpha_[g] + kIn * float(dt)) : std::max(0.0f, alpha_[g] - kOut * float(dt));
     }
+    if (alpha_[Gear] <= 0) lit_ = -1;
 }
 
 void Hud::subtitles(Canvas& c, std::string_view top, std::string_view bottom) {
@@ -101,39 +103,42 @@ void Hud::draw(Canvas& c) const {
     const float ox = originX(c.width), oy = originY(c.height, false), by = originY(c.height, true);
 
     if (const float a = alpha_[Health]; a > 0) { // HEALTH: panel, adrenaline/breath bar, health meter, silhouette
-        put(c, ox, oy, 78, -4.4f, -2.7f, fade(kWhite, a));
+        put(c, ox, oy, 78, -5.3f, -3.1f, fade(kWhite, a));
         const float bar = std::clamp(s_.breath < 1 ? s_.breath : s_.adrenaline, 0.0f, 1.0f); // "adrenaline bar as breathbar"
-        const float b0 = 17.0f, b1 = 16.4f + 64 * kArt;                                        // fill under bar 77's cap
-        c.rect(ox + 15.6f * u, oy + (b1 - (b1 - b0) * bar) * u, 7.1f * u, (b1 - b0) * bar * u, fade(0xFF00FF00u, a));
+        const float b0 = 16.0f, b1 = 60.0f; // [V] green fill rows, under bar 77's cap
+        c.rect(ox + 14.9f * u, oy + (b1 - (b1 - b0) * bar) * u, 7.4f * u, (b1 - b0) * bar * u, fade(0xFF00FF00u, a));
         put(c, ox, oy, 77, 9.3f, 16.4f, fade(kWhite, a));
-        const float m0 = -2.7f + 24 * kArt, m1 = -2.7f + 104 * kArt; // mask 76's opaque rows 24..103
+        const float m0 = -2.7f + 25 * kArt, m1 = -2.7f + 102 * kArt; // inside mask 76's opaque rows 24..102
         const float hp = std::clamp(s_.health / std::max(1.0f, s_.healthMax), 0.0f, 1.0f);
-        c.rect(ox + 37.3f * u, oy + (m1 - (m1 - m0) * hp) * u, 32 * kArt * u, (m1 - m0) * hp * u, fade(0xFF00FFFFu, a));
-        put(c, ox, oy, 76, 37.3f, -2.7f, fade(kWhite, a));
+        c.rect(ox + 35.1f * u, oy + (m1 - (m1 - m0) * hp) * u, 32 * kArt * u, (m1 - m0) * hp * u, fade(0xFF00FFFFu, a));
+        put(c, ox, oy, 76, 35.1f, -2.7f, fade(kWhite, a));
         put(c, ox, oy, 75, 9.8f, -2.7f, fade(healthColor(s_.health), a));
     }
     if (const float a = alpha_[Weapons]; a > 0 && s_.weapon >= 0 && s_.weapon < 4) { // WEAPONS: icon + clip pips
         const Pips& p = kPips[s_.weapon];
-        put(c, ox, oy, p.icon, 61.8f, -2.7f, fade(kWhite, a));
+        put(c, ox, oy, p.icon, 59.1f, -4.9f, fade(kWhite, a), 0.65f); // [V fit: pistols icon]
         const int guns = s_.dual ? 2 : 1;
         // [I] clips longer than 12 rounds (uzi 40) squeeze into the 12-pip row width.
         const float step = s_.clipSize > 12 && p.step < 10 ? p.step * 12 / float(s_.clipSize) : p.step;
         for (int g = 0; g < guns; ++g)
             for (int i = 0; i < s_.clipSize; ++i) {
                 const bool loaded = i < s_.clip[g];
-                // [V captures] the gun's last loaded round is white: the round that fires next [I: next hand only].
-                const uint32_t id = !loaded ? p.empty : i == s_.clip[g] - 1 && g == s_.nextHand % guns ? p.next : p.full;
+                // [V captures] one gun's last loaded round is white (at rest: the second row) [I: the next hand's].
+                const int row = guns == 2 ? 1 - s_.nextHand % 2 : 0;
+                const uint32_t id = !loaded ? p.empty : i == s_.clip[g] - 1 && g == row ? p.next : p.full;
                 put(c, ox, oy, id, p.x + float(i) * step, p.rows[g], fade(kWhite, a));
             }
     }
-    if (const float a = alpha_[Gear]; a > 0) { // GEAR d-pad: cross centre (101.8, -71.6) from (5 % W, 95 % H)
-        const float gx = 101.8f, gy = -71.6f;
-        put(c, ox, by, 91, gx, gy, fade(0x99FFFFFFu, a), kGear, true);
-        put(c, ox, by, 92, gx + 0.7f, gy - 33.3f, fade(kWhite, a), kGear, true); // health packs + count box
-        put(c, ox, by, 93, gx - 29.3f, gy, fade(kWhite, a), kGear, true);        // flashlight
-        put(c, ox, by, 94, gx + 31.0f, gy, fade(kWhite, a), kGear, true);        // weapon switch
-        put(c, ox, by, 95, gx + 0.7f, gy + 28.6f, fade(kWhite, a), kGear, true); // grenades
-        fontCentred(c, ox + (gx + 11.4f) * u, by + (gy - 32.4f) * u, 0.55f, std::to_string(s_.healthPacks), fade(kWhite, a));
+    if (const float a = alpha_[Gear]; a > 0) { // GEAR d-pad, from (5 % W, 95 % H)
+        // [V fits of hud_dpad_1080] items at 2/3 unit per texel around (104, -73), dimmed except the pressed one.
+        const float gx = 104.0f, gy = -73.0f;
+        auto col = [&](int item) { return fade(item == lit_ ? kWhite : kDim, a); };
+        put(c, ox, by, 91, gx, gy, fade(0x80FFFFFFu, a), kArt, true);
+        put(c, ox, by, 92, gx, gy - 33.5f, col(0), kArt, true);         // health packs + count box
+        put(c, ox, by, 93, gx - 32.9f, gy + 1.0f, col(1), kArt, true);  // flashlight
+        put(c, ox, by, 94, gx + 32.4f, gy - 0.8f, col(2), kArt, true);  // weapon switch
+        put(c, ox, by, 95, gx - 0.4f, gy + 34.8f, col(3), kArt, true);  // grenades
+        fontCentred(c, ox + (gx + 10.3f) * u, by + (gy - 33.5f + 6.0f - 4.0f) * u, 0.55f, std::to_string(s_.healthPacks), fade(kWhite, a));
     }
 
     // Reticles [I]: not captured. Free aim 69 (thin arcs), soft target 65 (white brackets), hard lock 72 (red

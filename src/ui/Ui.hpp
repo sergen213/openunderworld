@@ -133,7 +133,7 @@ struct HudState {
     int clip[2] = {}, clipSize = 12;       // rounds in the right / left gun
     int nextHand = 0;                      // gun that fires next (its last round is highlighted)
     int healthPacks = 0;
-    bool gear = false;                     // a d-pad item (health pack, weapon switch) was pressed
+    int gearItem = -1;                     // d-pad item pressed: 0 health pack, 1 flashlight, 2 weapon (draw/switch), 3 grenade
 };
 
 // Combat reticle (screen pixels), drawn while a weapon is out.
@@ -174,6 +174,7 @@ public:
 private:
     HudState s_, prev_;
     bool first_ = true;
+    int lit_ = -1; // d-pad item drawn bright while the GEAR group shows
     std::array<float, kGroups> alpha_{}, hold_{};
     std::string toast_, title_, subtitle_;
     double toastLeft_ = 0, titleLeft_ = 0;
