@@ -1,6 +1,7 @@
 // Free climbing on climbable rock (lara.drm DICE_B_* clips): attach from the ground or the air,
-// climb with the stick, top out, jump off or drop. Which faces are climbable is observed
-// (collision::climbable); speeds and reach are ours [I], the settle clips have no root motion.
+// climb with the stick, top out, jump off or drop. Rock is climbable only where the level places free-climb
+// holds (markup types 16-20, docs/GAMEPLAY.md "Free climbing"); speeds and reach are ours [I], the settle
+// clips have no root motion.
 #include "game/Game.hpp"
 
 #include <algorithm>
@@ -13,6 +14,20 @@ vec2 xy(vec3 v) { return {v.x, v.y}; }
 float yawOf(vec2 d) { return std::atan2(d.y, d.x); }
 constexpr float kSpeed = 240.0f;   // units/s along the wall [I]
 constexpr float kReach = 90.0f;    // probe past the capsule radius [I]
+constexpr float kHoldReach = 350.0f; // chest (root + 300) to hold centroid; holds sit 100-250 apart [I]
+
+// Free-climb holds [O]: markup types 16-20 (MUD 0x8000 + one of 0x4000..0x400), 3-point triangles 20-35
+// units off the rock. tru.exe disables 0x8000 markup unless it has exactly 3 points (0x5D6F00) and places
+// Lara at point 0 - 158.025 z when attaching to one (0x707C60). A hold counts when it is within reach of the
+// chest and on this wall (near the plane through `wall` with normal `n`), not one behind a thin wall.
+bool holdNear(const collision::CollisionMesh& col, vec3 chest, vec3 wall, vec3 n) {
+    for (const auto& m : col.markup) {
+        if (m.type < 16 || m.type > 20 || m.points.size() != 3) continue;
+        const vec3 c = (m.points[0] + m.points[1] + m.points[2]) / 3.0f;
+        if (std::abs(glm::dot(c - wall, n)) < 120.0f && glm::length(c - chest) < kHoldReach) return true;
+    }
+    return false;
+}
 } // namespace
 
 // Attach to a climbable wall ahead of Lara (chest-height probe, facing it, nearly vertical).
@@ -36,7 +51,7 @@ bool Player::tryClimb(bool fromAir) {
     const vec3 fwd = forward();
     const auto h = col_.raycast(s_.pos + vec3(0, 0, 300), fwd, t_.radius + kReach);
     if (!h || h->dynamic >= 0) return false;
-    if (!collision::climbable(col_.faces[h->face]) || std::abs(h->normal.z) > 0.35f) return false;
+    if (std::abs(h->normal.z) > 0.35f || !holdNear(col_, s_.pos + vec3(0, 0, 300), h->point, h->normal)) return false;
     if (glm::dot(fwd, -h->normal) < 0.6f) return false;
     s_.climbFace = h->face;
     s_.climbNormal = h->normal;
@@ -95,9 +110,11 @@ void Player::climb(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     }
     s_.pos = slide(s_.pos, delta, t_.stepUp, true);
 
-    // Stay on the rock: probe back into the wall, follow it (also around corners), or top out.
-    const auto h = col_.raycast(s_.pos + n * 20.0f, -n, t_.radius + kReach + 40.0f);
-    if (h && h->dynamic < 0 && collision::climbable(col_.faces[h->face]) && std::abs(h->normal.z) <= 0.35f) {
+    // Stay on the rock: probe back into the wall at chest height (at the feet the probe grazes the floor), follow
+    // it (also around corners) while holds are in reach, or top out.
+    const vec3 chest = s_.pos + vec3(0, 0, 300);
+    const auto h = col_.raycast(chest + n * 20.0f, -n, t_.radius + kReach + 40.0f);
+    if (h && h->dynamic < 0 && std::abs(h->normal.z) <= 0.35f && holdNear(col_, chest, h->point, h->normal)) {
         s_.climbFace = h->face;
         s_.climbNormal = h->normal;
         s_.yaw = yawOf(xy(-h->normal));
@@ -105,9 +122,10 @@ void Player::climb(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         s_.pos.x = p.x, s_.pos.y = p.y; // pinned at capsule distance from the rock
         return;
     }
-    // No climbable rock here: a standable floor just above and into the wall = climb onto it.
+    // No holds here: a standable floor above the feet, just into the wall = climb onto it (not the floor at the
+    // wall's foot, found through the rock when the holds end sideways).
     if (const auto top = col_.groundProbe(s_.pos + fwd * (t_.radius + 100.0f) + vec3(0, 0, 450), 550.0f);
-        top && top->normal.z >= t_.minFloorNormalZ && top->point.z > prev.z - 100.0f) {
+        top && top->normal.z >= t_.minFloorNormalZ && top->point.z > prev.z + 10.0f) {
         s_.pos = top->point + n * t_.radius;
         s_.climbFace = UINT32_MAX;
         s_.state = State::Idle;

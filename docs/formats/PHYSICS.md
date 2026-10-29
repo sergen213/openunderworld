@@ -107,11 +107,10 @@ type 2, is [I].
 
 - [U] Where class-34 joints are created (the query `0x6BA730`/`0x6B4EC0` answers no joint count) and the cdc joint
   axis convention; the lever's joint and Lara's interaction with it (she pushes the lever round).
-- Wall climbing (not implemented): TRU's free climb is Lara's `Wall_Hug_*` clip family (idle, shimmy left, jump up,
-  braced/unbraced ledge pull-ups, land-jump stages) [O]; no climb RTTI state exists (state-chart driven) [O]. Face
-  material / clientFlags show no climb-specific value (l2_cliffclimb walls: material 27/6/10/14/18) [O]. The candidate
-  markup is **types 16–20** (MUD bits 0x4000…0x400 + 0x8000): 3-point triangles ~150–250 units across lying 20–35
-  units off vertical walls, stacked up climbable faces, e.g. l2_cliffclimb wall y ≈ −3404 from z 677 (519 above the
-  floor) to 2 270 [O]; that they are wall-hug holds is [I].
+- Wall climbing (implemented, GAMEPLAY.md "Free climbing"): no climb RTTI state exists (state-chart driven) [O].
+  Face material / clientFlags show no climb-specific value (l2_cliffclimb walls: material 27/6/10/14/18) [O]. The
+  climb surfaces are the **markup types 16–20** (MUD bits 0x4000…0x400 + 0x8000): 3-point triangles ~150–250 units
+  across lying 20–35 units off vertical walls, e.g. l2_cliffclimb wall y ≈ −3404 from z 677 (519 above the floor)
+  to 2 270 [O]; tru.exe attaches Lara to 0x8000 markup (0x707C60) [O], so they are free-climb holds.
 - [U] HInfo slot 2 markers, primitive type 13, flag bytes 0 and 2–3.
 - [U] Moving terrain groups: none of l4_ballcourt's 17 groups sits at the door; the small offset groups remain unexplained.

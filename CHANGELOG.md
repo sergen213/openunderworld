@@ -10,6 +10,7 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - The sea is no longer white at the l1_seatop and l2_cliffclimb starts (OpenGL and Vulkan): TRU's water materials read the back buffer and depth buffer, which are now copied after the opaque scene and fed to them, so the sea shows refraction, reflections and depth fade.
 - The l2 elevator only starts when Lara pulls its switch: objects now start in state 0 of their script, as the original does, and switches whose script handles the use itself get it.
 - Scripted screen fades (fade to/from black) are now drawn in OpenGL and Vulkan.
+- Lara can no longer free-climb any wall: she now only climbs where the level places the original's free-climb holds (eight areas, such as the Thailand cliff climb), and stops where the holds end.
 
 ### Added
 - AMD FSR upscaling and frame generation (Vulkan): the launcher's Upscaler setting (or `--upscaler fsr`) renders the 3D scene at a lower resolution and lets FSR 3.1.6 rebuild a sharp full-resolution image (Native AA, Quality, Balanced, Performance, Ultra Performance; adjustable sharpening); menus and HUD stay at full resolution. Frame generation (`--frame-generation on`) shows an extra generated frame between real ones for smoother motion. Built from AMD's FSR SDK 2.4.0 (MIT); FSR 4 is not possible on Linux (AMD ships it only as Windows DLLs). OpenGL is unchanged; off by default.

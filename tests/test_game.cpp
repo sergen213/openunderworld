@@ -1245,14 +1245,16 @@ TEST(Game, WaterAirDrainsRefillsAndDrowns) {
 
 // ---- free climbing (src/game/Climb) ----
 namespace {
-// A climbable wall at x = 400 (z 0..1200) with a floor on top, and an unflagged twin for the negative case.
-CollisionMesh climbMesh(bool flagged) {
+// A rock wall at x = 400 (z 0..1200, facing -x) with a floor on top. `holds`: a column of free-climb holds
+// (markup type 16 triangles, 20 off the rock) at y = 0 from z 450 to the top, as the levels place them.
+CollisionMesh climbMesh(bool holds) {
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
     addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1200}, {400, -2000, 1200});
     addQuad(m, {400, -2000, 1200}, {2000, -2000, 1200}, {2000, 2000, 1200}, {400, 2000, 1200});
-    if (flagged)
-        for (auto& f : m.faces) f.flags = 0x3F;
+    if (holds)
+        for (float z = 450; z < 1200; z += 160)
+            m.markup.push_back({16, uint16_t(z), {{380, -60, z - 40}, {380, 60, z - 40}, {380, 0, z + 60}}});
     return m;
 }
 } // namespace
@@ -1284,10 +1286,108 @@ TEST(Game, ClimbJumpOff) {
     EXPECT_GT(w->player().state().vel.z, 0.0f);
 }
 
-TEST(Game, ClimbIgnoresUnflaggedWall) {
+TEST(Game, ClimbNeedsHolds) {
     auto w = makeWorld(climbMesh(false), {300, 0, 0});
     w->tick(forward());
-    EXPECT_NE(w->player().state().state, State::Climb) << "an unflagged wall is not climbable";
+    EXPECT_NE(w->player().state().state, State::Climb) << "rock without holds is not climbable";
+    auto far = makeWorld(climbMesh(true), {300, 1500, 0}); // same wall, 1500 from the hold column
+    for (int i = 0; i < 10; ++i) far->tick(forward());
+    EXPECT_NE(far->player().state().state, State::Climb) << "only the rock around the holds is climbable";
+}
+
+TEST(Game, ClimbStaysWithinHolds) {
+    auto w = makeWorld(climbMesh(true), {300, 0, 0});
+    w->tick(forward());
+    ASSERT_EQ(w->player().state().state, State::Climb);
+    for (int i = 0; i < 120; ++i) w->tick({});
+    Actions right;
+    right.move.x = 1;
+    for (int i = 0; i < 600; ++i) w->tick(right); // sideways along the wall, away from the column
+    EXPECT_EQ(w->player().state().state, State::Climb);
+    EXPECT_LT(std::abs(w->player().state().pos.y), 360.0f) << "stops where the holds end";
+}
+
+namespace {
+// Pushes Lara into up to `limit` walls of `unit` she can walk up to (a floor 250-700 below the face centre 250 in
+// front of it, a wall at chest height), skipping walls with a free-climb hold (markup 16-20) within 1000.
+// Returns {walls tried, walls that attached}.
+std::pair<int, int> pushIntoWalls(const cdc::BigfileSet& bf, const game::AnimLibrary& anims, const std::string& unit,
+                                  int limit) {
+    auto col = collision::loadLevelCollision(cdc::parseDrm(std::move(*bf.read("pc-w\\" + unit + ".drm"))));
+    col.build();
+    std::vector<vec3> holds;
+    for (const auto& m : col.markup)
+        if (m.type >= 16 && m.type <= 20 && !m.points.empty()) holds.push_back(m.points[0]);
+    int tried = 0, attached = 0;
+    const size_t stride = std::max<size_t>(1, col.faces.size() / 400);
+    for (size_t i = 0; i < col.faces.size() && tried < limit; i += stride) {
+        const auto& f = col.faces[i];
+        if (f.flags & 0x40) continue;
+        const vec3 a = col.vertices[f.v[0]], b = col.vertices[f.v[1]], c = col.vertices[f.v[2]];
+        vec3 n = glm::cross(b - a, c - a);
+        if (glm::length(n) < 1e-3f) continue;
+        n = glm::normalize(n);
+        if (std::abs(n.z) > 0.2f) continue;
+        const vec3 mid = (a + b + c) / 3.0f;
+        if (std::any_of(holds.begin(), holds.end(), [&](vec3 h) { return glm::length(h - mid) < 1000; })) continue;
+        for (const float s : {1.0f, -1.0f}) {
+            const vec3 out = glm::normalize(vec3(n.x, n.y, 0)) * s;
+            const auto g = col.groundProbe(mid + out * 250.0f, 1000);
+            if (!g || g->normal.z < 0.7f || mid.z - g->point.z < 250 || mid.z - g->point.z > 700) continue;
+            const vec3 spawn(mid.x + out.x * 250, mid.y + out.y * 250, g->point.z);
+            const auto wall = col.raycast(spawn + vec3(0, 0, 300), -out, 400);
+            if (!wall || std::abs(wall->normal.z) > 0.35f) continue;
+            game::World w(col, anims, {spawn + vec3(0, 0, 5), std::atan2(-out.y, -out.x)});
+            bool climbed = false;
+            for (int t = 0; t < 30 && !climbed; ++t) {
+                w.tick(forward());
+                climbed = w.player().state().state == State::Climb;
+            }
+            ++tried;
+            attached += climbed;
+            break;
+        }
+    }
+    return {tried, attached};
+}
+} // namespace
+
+// The user's bug: every wall was free-climbable (the old predicate read the face adjacency flags). Ordinary walls
+// in units with and without holds refuse; the l2_cliffclimb hold wall accepts a ground attach.
+TEST(GameReal, ClimbOnlyAtHolds) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    for (const char* unit : {"l3_main_bedroom", "l4_pool", "l4_ballcourt", "l2_hubhall", "l2_cliffclimb", "l1_baldrsstairs_a"}) {
+        const auto [tried, attached] = pushIntoWalls(bf, anims, unit, 12);
+        EXPECT_GE(tried, 4) << unit;
+        EXPECT_EQ(attached, 0) << unit << ": ordinary walls must not attach";
+    }
+    // Hold 910 of l2_cliffclimb at (-23835, -3404, 677) on the -y face, its floor at z 158: walking north attaches.
+    auto col = collision::loadLevelCollision(cdc::parseDrm(std::move(*bf.read("pc-w\\l2_cliffclimb.drm"))));
+    col.build();
+    game::World w(std::move(col), anims, {{-23835, -3600, 300}, glm::radians(90.0f)});
+    bool climbed = false;
+    for (int t = 0; t < 60 && !climbed; ++t) {
+        w.tick(forward());
+        climbed = w.player().state().state == State::Climb;
+    }
+    ASSERT_TRUE(climbed) << "the hold wall is climbable";
+    for (int t = 0; t < 120; ++t) w.tick({});
+    const float z0 = w.player().state().pos.z;
+    for (int t = 0; t < 180; ++t) w.tick(forward());
+    EXPECT_EQ(w.player().state().state, State::Climb);
+    EXPECT_GT(w.player().state().pos.z, z0 + 300) << "climbs up through the hold field";
+    // l1_baldrsstairs_a: falling past hold 44 (-5294, -6605, 1860) with forward held catches the rock.
+    auto stairs = collision::loadLevelCollision(cdc::parseDrm(std::move(*bf.read("pc-w\\l1_baldrsstairs_a.drm"))));
+    stairs.build();
+    game::World air(std::move(stairs), anims, {{-5294, -6455, 2160}, glm::radians(-90.0f)});
+    climbed = false;
+    for (int t = 0; t < 120 && !climbed; ++t) {
+        air.tick(forward());
+        climbed = air.player().state().state == State::Climb;
+    }
+    EXPECT_TRUE(climbed) << "air attach onto the hold field";
 }
 
 // ---- grapple (src/game/Grapple) ----

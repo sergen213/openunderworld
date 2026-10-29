@@ -332,24 +332,36 @@ outfit (the original only reads `+0x294` on a level load).
 
 ## Free climbing (src/game/Climb.cpp)
 
-- Climbable faces [O]: terrain faces whose flags byte (+0x0C) has any of bits 0x01..0x20 set
-  (`collision::climbable`). In l2_cliffclimb the markup types 16-20 sit exactly on those walls; ordinary
-  walls have flags 0. The individual direction bits' meanings are [U]. Nearly vertical faces only
-  (|normal.z| ≤ 0.35), not dynamics.
+- Climbable rock = the free-climb holds the level places [O]: markup types 16-20 (MUD 0x8000 plus one of
+  0x4000/0x2000/0x1000/0x800/0x400), 3-point triangles ~150-250 across lying 20-35 units off the rock,
+  100-250 apart along a route. tru.exe disables 0x8000 markup unless it has exactly 3 points (0x5D6F00),
+  accepts it as an attach candidate after a vector test (0x6FC6B0, a 0x49D270/0x4898E0 result < 0.2; operands
+  [U]) and places Lara at point 0
+  − 158.025 z (0x707C60). Only 8 units have any (l1_baldrsstairs_a, l1_ship_sinking_hall, l2_cliffclimb,
+  l2_norsehub, l2_puzzleroom, l4_temple, l4_traprooms, l7_yggdrasil_end; COLLISION.md markup survey).
+  Before 2026-10-29 we treated faces with flags bits 0x01..0x20 as climbable; that byte is the
+  `adjacencyFlags` of TRLAU's IndexedFace and is set on ~99.5-100 % of all walls, so Lara could climb
+  every wall (survey of l3_main_bedroom, l4_pool, l4_ballcourt, l2_hubhall, l3_main_hall, l5_startsnow).
+- Our rule [I]: a nearly vertical terrain face (|normal.z| ≤ 0.35, not dynamics) is climbable where a hold's
+  centroid lies within 350 of Lara's chest (root + 300) and within 120 of the face's plane (not a hold behind
+  a thin wall). The original positions Lara per hold [O, 0x707C60] and so presumably moves hold to hold [I]; we
+  move freely inside the band the holds cover. Which hold type selects which `DICE_*` clip set is [U].
 - Attach: pushing into such a wall from the ground (chest probe at +300, reach = capsule radius + 90,
   facing it within ~53°) or falling onto it (after ledge/pole grabs, which win). `DICE_B_ground_attach` /
   `DICE_B_air_attach_M` plays, then `DICE_B_Idle`.
 - Climbing: the stick's into-wall component climbs up (away = down), its along-wall component moves
   sideways at 240 units/s [I]; the settle clips (`DICE_B_Settle_up/_down/_Left/_right`) have no root
   motion [O], so the controller moves the root and pins it at capsule distance from the rock, following
-  the face (and around corners) with a back probe.
-- Top out: when the rock ends and a standable floor is within reach past the wall, Lara steps onto it
-  (Idle). Otherwise movement stops at the edge. Jump = `DICE_B_Jump_Back` + a leap away (700 out, 1400 up
-  [I]); drop = `DICE_B_Drop` and fall. Cooldown 0.4 s before re-attaching.
-- Tests `Game.ClimbAttachClimbUpTopOut`, `Game.ClimbJumpOff`, `Game.ClimbIgnoresUnflaggedWall`; real-data
-  check on l2_cliffclimb's flagged cliff (2026-10-27). Air-attach replay on l1_baldrsstairs_a:
-  `ou-game --level 'pc-w\l1_baldrsstairs_a.drm' --spawn '-5294,-6455,2160,-90'` with forward held ends in
-  `state climb`, `clip DICE_B_Settle_up` (screenshot viewed, Lara on the rock).
+  the face (and around corners) with a back probe at chest height. Movement stops where no hold is in reach.
+- Top out: when no hold is in reach and a standable floor above Lara's feet is within reach past the wall,
+  Lara steps onto it (Idle). Otherwise movement stops at the edge. Jump = `DICE_B_Jump_Back` + a leap away
+  (700 out, 1400 up [I]); drop = `DICE_B_Drop` and fall. Cooldown 0.4 s before re-attaching.
+- Tests `Game.ClimbAttachClimbUpTopOut`, `Game.ClimbJumpOff`, `Game.ClimbNeedsHolds`, `Game.ClimbStaysWithinHolds`,
+  `GameReal.ClimbOnlyAtHolds` (12 reachable walls ≥ 1000 from any hold in each of l3_main_bedroom, l4_pool,
+  l4_ballcourt, l2_hubhall, l2_cliffclimb, l1_baldrsstairs_a: 0 attach, the old rule attached 10-12 of 12;
+  l2_cliffclimb hold 910 ground attach + climb up; l1_baldrsstairs_a air attach at hold 44). Hand test:
+  `ou-game --level 'pc-w\l2_cliffclimb.drm' --spawn '-23835,-3600,300,90'` and hold forward (climbs);
+  `ou-game --level 'pc-w\l3_main_bedroom.drm'` and run into any wall (no climb).
 
 ## Grapple (src/game/Grapple.cpp)
 
@@ -860,8 +872,9 @@ No side-by-side comparison with the original game was made.
   Still missing: wading clip (`swim_wading`), surface turn clips, underwater fast/sprint, swim damage from other
   sources; the water surface is static (scripted level changes not run); the water box is sized from the surface model,
   not the exe's component. Ripple/caustic parameters are ours [I].
-- Free climbing is implemented for flagged rock faces (see "Free climbing"): direction-bit semantics are
-  [U], movement speed/reach are [I], no bad-attach/wrestle/corner-specific clips, no `DICE_L/R/LW/RW` wall
+- Free climbing is implemented on the levels' free-climb holds (markup 16-20, see "Free climbing"): free movement
+  inside the hold band instead of hold-to-hold, hold-type semantics [U], movement speed/reach [I], no
+  bad-attach/wrestle/corner-specific clips, no `DICE_L/R/LW/RW` wall
   variants. Ladders (9), perches (13), pillars (15) and rail slides (8) work (see their sections); vertical poles
   (type 5) have no markup in any unit. Still missing: cover, `Wall_Hug_*`,
   balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang, hurdles/vaults,

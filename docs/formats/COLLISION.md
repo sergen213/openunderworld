@@ -52,6 +52,8 @@ TerrainGroup (0x50)
   - l4_pool: mask = 3 on every terrain face, 0xFF on the signal quad; flags low bits vary (0x20..0x3F, plus 0x80) [O];
     clientFlags ∈ {0, 0x04, 0x80, 0xA0, 0x1A0}, material ∈ {1, 17, 27} [O]. Their meanings are [U] (TRL calls the
     fields adjacencyFlags/collisionFlags/clientFlags/materialType; adjacency for +0x0C is [I] at best since bit 0x40 is a skip flag).
+    Bits 0x01..0x3F are set on 99.5-100 % of wall faces in every unit surveyed (2026-10-29), so they do not mark
+    climbable rock (free-climb surfaces are markup types 16–20, GAMEPLAY.md "Free climbing") [O].
   - Face and BIH sections are 3 resp. 2 bytes shorter than count × stride: the last element is stored without
     its padding [O]. Hence material is read as u8 and node bytes 0x0E–0x0F are padding [I].
 - Winding: floor faces whose CCW normal points up match the render floors (see agreement below) much better than
@@ -105,7 +107,7 @@ Type → MUD flags = `switch 0x5D6F90 | switch 0x5D70A0` [O] (names from the TR8
 | 3 | 0x10000000 | enemydropdown | | 13 | 0x20000 | perch |
 | 4 | 0x8000000 | pole | | 14 | 0x10000 | balancebeam |
 | 5 | 0x4000000 | vertpole | | 15 | 0x10 | pillar |
-| 6 | 0x2000000 | horizpole | | 16–20 | 0x4000…0x400, plus 0x8000 | 0x8000 = CONSTRAINEDGROUND (TRLAU-menu-hook TR8 names); the sub-bits are unnamed [U] |
+| 6 | 0x2000000 | horizpole | | 16–20 | 0x4000…0x400, plus 0x8000 | free-climb holds: 0x8000 markup must have exactly 3 points (0x5D6F00) and is a Lara attach target (0x707C60) [O]; TRLAU's TR8 name CONSTRAINEDGROUND and the sub-bits' meanings are [U] |
 | 7 | 0x1000000 | zipline | | 10 | 0x100000 | water (volume path: no polyline bit) |
 | 8 | 0x800000 | railslide | | other | 0x80000000 | disabled |
 | 9 | 0x400000 | ladder | | | | |
@@ -181,11 +183,12 @@ Survey of all 82 unit DRMs (throwaway tool over `loadLevelCollision` + `formats:
 ## Open questions
 
 - [U] Meaning of face flags (+0x0C other than 0x40), clientFlags, material; TerrainGroupExtra flags.
-- [U] Level+0x80 in tru.exe; the second float4 of markup points; markup types 16–20.
-- Face flags byte (+0x0C) [O]: in l2_cliffclimb the walls carrying markup types 16-20 have flags with bits
-  0x01..0x20 set (0x3f/0x3b/0x3d/0x3e/0x37/0x2b/0x1b/0x29 etc.); ordinary walls/floors have 0. We treat
-  those faces as free-climbable rock (`collision::climbable`, GAMEPLAY.md "Free climbing"); the meaning of
-  each direction bit is [U].
+- [U] Level+0x80 in tru.exe; the second float4 of markup points; which of the five free-climb hold types (16–20)
+  selects which `DICE_*` clip set.
+- Face flags byte (+0x0C) [O]: bits 0x01..0x3F are set on almost every wall (99.5-100 % in l3_main_bedroom,
+  l4_pool, l4_ballcourt, l2_hubhall, l2_cliffclimb, l3_main_hall, l5_startsnow; 2026-10-29 survey), consistent
+  with TRLAU's `adjacencyFlags` [I]. An earlier reading of them as "climbable rock" made every wall climbable; free
+  climbing now uses the markup 16–20 holds (GAMEPLAY.md "Free climbing").
 - [O] `terraingroup` native SetEnabled (2) and IsEnabled (3) resolve the member's stream-unit/model identity. The
   world maps that identity through loaded portal links, updates the source unit and rebuilds merged collision with
   per-unit group enable bits; ray, sweep and closest-point queries skip disabled groups. The l2_hubhall trigger
