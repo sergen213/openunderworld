@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace ou::physics {
@@ -59,8 +60,9 @@ struct ObjectPhysics {
     std::vector<HMarker> hmarkers;
 };
 inline constexpr int kClassRigidBody = 34; // tru.exe 0x6BA570 (0x6D00E0 dispatch); 28 objects, the "*_rb_*" ones
-// Model 0 of an object DRM. Empty without an object section or model; throws cdc::FormatError on bad layouts.
-ObjectPhysics loadObjectPhysics(const cdc::Drm& object);
+// Model `model` (ObjectBase +0xA4 list) of an object DRM. Empty without an object section or that model; throws
+// cdc::FormatError on bad layouts.
+ObjectPhysics loadObjectPhysics(const cdc::Drm& object, uint32_t model = 0);
 // Face mask of object collision shapes: our own convention, outside the terrain bits (l4_pool terrain faces are 3) [I];
 // mask-0x0F queries see terrain only.
 inline constexpr uint8_t kObjectMask = 0x10;
@@ -105,6 +107,30 @@ struct Mover {
     float s = 0;       // distance travelled along the ping-pong path
     vec3 position() const;
 };
+
+// One-degree-of-freedom joint of a body against a fixed frame, simulated in its own coordinate (tru.exe uber-object
+// joints, 0x4D8000; docs/formats/PHYSICS.md "Uber joints"). Units are tru.exe's: per 30 Hz frame. Prismatic: x in
+// units along `axis`; hinge: x in radians about `axis` through the pivot, `arm` = pivot -> centre of mass at x = 0.
+struct Joint1 {
+    bool hinge = false;
+    float x = 0, v = 0;         // coordinate, its velocity per frame
+    float mass = 0;             // body mass
+    float inertia = 0;          // hinge: about the axis through the pivot
+    vec3 axis{0, 0, 1}, arm{0}; // world
+    vec3 pivot{0};              // world origin of the joint frame (where the body is posed from)
+    float lo = 0, hi = 0;       // limit (x units), when `limited`
+    bool limited = false;
+    float speed = 0, force = 0; // motor: target velocity per frame, impulse bound per step (<= 0: unbounded)
+    bool motor = false;
+    float push = 0;             // this step only: velocity per frame imposed from outside (Lara pushing), over gravity and motors
+    float effectiveMass() const { return hinge ? inertia : mass; }
+    float gravityForce(float x) const; // generalized gravity force (torque) at coordinate x, per frame^2
+};
+// Gravity on uber joints, units per frame^2 (Lara's, tru.exe 5.72443 at 30 Hz).
+inline constexpr float kJointGravity = 5.72443f;
+// Advances `j` and the joints linked to it (joint = ratio * j.x) by `frames` 30 Hz frames: gravity, then each motor
+// row (impulse clamped to its bound), then the position, clamped to every limit (inelastic). Deterministic.
+void stepJoint(Joint1& j, std::span<const std::pair<Joint1*, float>> linked, float frames);
 
 class Scene {
 public:

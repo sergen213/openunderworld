@@ -318,7 +318,7 @@ void World::tick(const Actions& input) {
     const vec2 fwd(std::cos(cam_.yaw), std::sin(cam_.yaw)), right(std::sin(cam_.yaw), -std::cos(cam_.yaw));
     vec2 move = right * a.move.x + fwd * a.move.y;
     if (glm::length(move) > 1) move = glm::normalize(move);
-    if (script_.holding()) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
+    if (script_.holding() || uberGrip_) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
     if (combat_.slowMo > 0) move = vec2(0); // [I] adrenaline window: the stick steers the pip (Combat.cpp)
     if (splineCam_ && !script_.playerControl()) move = vec2(0); // reveal camera with control disabled (larabase 56)
     if (a.grapple && !grappleHeld_) {
@@ -392,8 +392,14 @@ void World::tick(const Actions& input) {
     for (const int32_t bike : script_.takeMounts()) mountBike(bike); // larabase 52 from a sleeping handler (l5: 0.6 s)
     collectPickups(a.interact && !interactHeld_);
     carryPortables(a.interact && !interactHeld_ && pickedUp_.empty());
+    pushUberJoints(a);
     tickObjects(dt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
+    if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) { // she follows the pushed body
+        auto s = player_.state();
+        s.pos += j->axis * (j->x - uberPush_.before);
+        player_.restore(s);
+    }
     if (const vec3 d = script_.carried(); d != vec3(0)) { // Lara follows the block she pushes/pulls
         auto s = player_.state();
         s.pos += d;
@@ -474,7 +480,9 @@ std::optional<GrappleTarget> World::grappleTarget() const {
             if (dist < 300.0f || dist > 5000.0f) continue;
             const float c = glm::dot(d / dist, fwd);
             if (c < 0.5f) continue;
-            if (col_.raycast(eye, d / dist, dist - 60.0f)) continue; // something blocks the hook
+            if (const auto hit = col_.raycast(eye, d / dist, dist - 60.0f); // something blocks the hook (not its own object)
+                hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != t.uid))
+                continue;
             const float score = (1.0f - c) * 2000.0f + dist * 0.2f;
             if (score < bestScore) bestScore = score, best = t;
         }
@@ -592,7 +600,10 @@ uint64_t World::stateHash() const {
     }
     for (const auto& [uid, rt] : uberRuntime_) {
         add(uid), add(rt.fired), add(rt.commanded);
-        for (const auto& s : rt.sections) add(s.state), add(s.transition), add(s.time), add(s.length), add(s.carried);
+        for (const auto& s : rt.sections) add(s.state), add(s.transition), add(s.time), add(s.length);
+        for (const auto& [index, j] : rt.joints) add(index), add(j.x), add(j.v), add(j.lo), add(j.hi), add(j.speed), add(j.force), add(j.motor), add(j.limited);
+        for (const int32_t l : rt.links) add(l);
+        for (const auto& w : rt.watches) add(w.section), add(w.joint), add(w.range), add(w.mode), add(w.inside);
     }
     for (const auto& [uid, m] : uberMotion_) add(uid), add(m.t), add(m.active);
     add(held_);

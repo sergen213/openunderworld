@@ -541,7 +541,7 @@ outfit (the original only reads `+0x294` on a level load).
   l4_pool's ceiling anchor is uid 5511 at (4362, -70, 2607). `sa_ei_grapple_wall_rigid_body` (l2_maproom 2676) is a
   plain anchor (script type 4734); its attached-instance field is filled at run time [U].
 - Selection (ours [I]): within 300..5000 units of Lara's eye (+375), inside a 60-degree cone of the camera,
-  clear line of sight (`World::grappleTarget`). Best by angle then distance; a crosshair marks it in ou-game.
+  clear line of sight (`World::grappleTarget`; the target object's own collision does not block it). Best by angle then distance; a crosshair marks it in ou-game.
 - G / pad right shoulder (`Actions::grapple`) throws (`grapple_rappel_free_jumpon`) and attaches; G again or
   Ctrl/C releases. Space jumps off with the swing's momentum (`grapple_rappel_free_jumpoff`).
 - Swing (ours [I], no exe numbers): gravity + stick pumping (500 u/s²), a rope constraint at hand = root + 400

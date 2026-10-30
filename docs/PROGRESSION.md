@@ -19,6 +19,8 @@ Tools (`tests/test_gates.cpp`, `ou_gates_tests`):
 - `OU_UBER_DUMP=<object>` (`UberDump`: ObjectBase hex, `*` = pointer), `OU_OBJ_FIELDS=<unit>:<uid>` (`ObjectFields`),
   `OU_ANIM_NAMES=<object>` (`AnimNames`): data research for uber records, script fields and animation lists.
 
+Sweep 2026-10-29 (uber joints): 132 / 289. Every uber object now starts its sections at spawn, so its first script use no longer counts as a change: the seven `sa_ei_grapple_wall` pulls (l2_maproom 2595, l2_norsehall 2457, l2_norsehub 2383/2394/2395, l2_towerconnector 2005/2042/2043 and volume 2040 -> 2043) and l5_valaskjalf volumes 7025/7026 (targets 6944/6943) passed only by that lazy start [I: not re-examined]; l3_bedroom_hall plane 4375 now passes.
+
 Sweep 2026-10-29 (ending pass): 141 / 289 candidate gates pass (135 before it on 839ea16; new, all from counting a change at
 any tick: l1 tentacle volumes 562-564, switch 57's attempt reaction, resetting switch 748, l2_norsehall 2493). l4_ballcourt 5468 fails alone since
 gates 4: it needs switch 5469 and plane 6410 first (the critical gate runs them). The sweep over-counts failures: preload volumes (they only call
@@ -68,10 +70,10 @@ Portal order from the start unit; level changes not made by portals are named.
 | 3 | l3_chamberrockhall | switch 4617 (use) | secret door 4528 | pass |
 | 3 | l3_secretchamber | volumes 4666/4669 | gauntlet cinematic 4654 | pass |
 | 3 | l3_main_hall | plane 4128 (cross) | 160 + 170 → chapter 4 | pass |
-| 4 | l4_trailstart | grapple lever post 6695 (pull) | lever | **fail** in the sweep (handler runs, nothing visible changes) |
+| 4 | l4_trailstart | grapple lever post 6695 (pull) | lever | pull handler runs; the post slides out on its uber joint and its linked joint's range watch sends trigger 14 (section 1: 0 → 1, `GameReal.GrappleLeverJointIndependentOfRenderRate`); the sweep's snapshot does not cover joints [I: still listed as a sweep fail] |
 | 4 | l4_ballcourt | pole lever 6502 (use), block 6504 (push) | door joint 6505, block | pass |
 | 4 | l4_ballcourt | autoreset switch 5469 (use) | temple reveal 5464 | pass (`ProgressionReal.TempleRevealReopens`: anim graph states 0 → 3 → 5 → 6 → 7, docs/formats/ANIMGRAPH.md) |
-| 4 | l4_staircase_upper/xibalba | volumes/planes 6046, 6076, 6078, 6039 | hallway ramps 6045/6036, trap door 5702 | pass |
+| 4 | l4_staircase_upper/xibalba | volumes/planes 6046, 6076, 6078, 6039 | hallway ramps 6045/6036, trap door 5702 | pass (`ProgressionReal.HallwayRampsJoint`: ramp section 0 falls on its prismatic joint to -948, trigger 14 tilts the ramps; 6078 raises it on its motor, 14 at the top) |
 | 4 | l4_traprooms | plates 5717/5718 (stand on / scepter weight 5883) | seal 5701 | pass (`ProgressionReal.TraproomsSeal`, after the trap rooms: sticky +268 raised, int +240 = 4): each plate's vt 6 sticky notification counts it on the seal (+304), both held run vt 58 |
 | 4 | l4_traprooms | block 5884 (push), planes 5900/5901/5904/5914/5915 | block, thrones, door 5702 | pass |
 | 4 | l4_pool | volumes 5566/5624/5626 | snake heads, reveal cinematics | pass |
@@ -87,7 +89,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 7 | l7_helheim01 | rune switches 8993-8995 | dispatcher 8997 | not asserted (dispatcher only) |
 | 7 | l7_yggdrasil(_end) | volumes 8804, 8303/8312, 8323-8329 | cinematics 8773/8261, spline mover 8404 | pass |
 | 7 | l7_yggdrasil_end | buttresses A (8360 vt 62) / B-D (mounts 8362-8364 vt 54), each revealed by 8296-8298 | 330_hel_thralls (C), 340_hel_endgame (last) → l7_monastery 342_hel_endgame → end game save, credits movie | pass (`ProgressionReal.EndgameCredits`, played: arena volume 8303 → 320_hel_boss breaks A and locks the mounts (anim graph state 2); Lara's use breaks each mount (stimulus 1 → state 3, vt 20); no handler called directly) |
-| 1 | l1_kraken_room | column (gear 32 section 12, shot) then switch 57 (use) | column falls (trigger 15), gear 32 turns | pass (`ProgressionReal.KrakenColumnShot`; World::uberShot) |
+| 1 | l1_kraken_room | column (gear 32 section 12, shot) then switch 57 (use) | column falls (trigger 15), gear 32 turns | pass (`ProgressionReal.KrakenColumnShot`; World::uberShot pushes the column's braked prismatic joint out of its watched range: trigger 15) |
 
 ## Fixes in this pass (each covered by `CriticalGates` / `ChaptersReal`)
 
@@ -131,15 +133,17 @@ Portal order from the start unit; level changes not made by portals are named.
   Runtime::takeMovies -> ou-game plays it, marks the game finished and opens the main menu (TREASURE HUNT). Bound on the
   way: `larabase` 31 / 61 (0x776EF0 INSTANCE message 0xC / 0x778060 Lara clock fields), `cinematic` 1 (Play, 0x4ADB50),
   `hudscreenmgr` 4, `uigamedata` 43 (debug print), `uisavemenu` 9 (save header byte +0x1F9). Buttresses in play
-  (anim graphs, below): arena volume 8303 plays 320_hel_boss, whose handler pushes the Thor towers; their events lock
-  mounts 8362-8364 (state 2); Lara's use breaks each (stimulus 1 → state 3, vt 20). The endgame gun 8401 only reacts
+  (anim graphs, below): arena volume 8303 plays 320_hel_boss, whose handler retracts the Thor towers 8398-8400 (uber
+  command 0: their prismatic joints' motors pull them in, trigger 14 at the bottom → state 3, a weak brake); Lara pushes
+  each back out until its joint enters [1074.6, 1137.8) (trigger 14 → state 2, "block_pushed"), whose event locks its
+  mount 8362-8364 (state 2); Lara's use breaks each (stimulus 1 → state 3, vt 20). The endgame gun 8401 only reacts
   to broken mounts; it does not break them (the earlier [U] guess was wrong).
 - (ending) `uberobjectbase` 3 (0x79D0D0 -> 0x4A4490) = AttachTo(anchor value, two words): the uber instance goes to the
   anchor's vtable slot 6 (INSTANCE link 0x5B4DE0 at its marker); passive for us (one model per uber object). The ~30 l1
   ship props (life preservers, lockers, cases, powerbox) and the endgame gun now run their constructors to the end.
-- (ending) Shooting uber physics [I]: a bullet striking an uber object's collider (World::fire -> World::uberShot) starts
-  the trigger-15 transition of every section resting in a state with action 20 (the physics-limit trigger, 0x4D5B10):
-  l1 gear 32's column falls and switch 57 turns the gear. No Havok impulse.
+- (ending) Shooting uber physics [I]: a bullet striking an uber object's collider (World::fire -> World::uberShot) pushes
+  its watched joints (impulse 3000 along the shot); l1 gear 32's braked column slides out of its range (trigger 15,
+  0x4D5B10), falls, and switch 57 turns the gear.
 - (anim graphs) `ca_ani_*` objects, buttress mounts, flame traps and crates are anim-graph objects, not uber: physical
   class 6's state machine (docs/formats/ANIMGRAPH.md; no object uses the cdc AnimGraph). States / transitions play
   their clips, the timer stimulus runs each tick, Lara's use is stimulus 1, scripts hear vt 19 / 20; `modifiable` 0-8

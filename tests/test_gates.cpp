@@ -136,6 +136,27 @@ void place(game::World& w, vec3 pos, float yaw) {
     w.restore(s, yaw, -0.25f);
 }
 
+// Lara grips uber object `uid` (its model 0 riding a level prismatic joint, index `joint`) from behind and pushes it
+// along the joint's +axis for `ticks` ticks (World::pushUberJoints).
+void pushUber(game::World& w, int32_t uid, int32_t joint, int ticks) {
+    const auto* j = w.uberJoint(uid, joint);
+    ASSERT_TRUE(j);
+    vec3 lo(1e30f), hi(-1e30f);
+    for (const auto& d : w.collision().dynamics)
+        if (d.id == uid)
+            for (const vec3& v : d.shape->vertices) lo = glm::min(lo, vec3(d.transform * glm::vec4(v, 1))), hi = glm::max(hi, vec3(d.transform * glm::vec4(v, 1)));
+    ASSERT_LT(lo.x, hi.x) << uid << " has collision";
+    const vec3 axis = j->axis, c = (lo + hi) * 0.5f;
+    vec3 at = c - axis * (glm::dot(hi - lo, glm::abs(axis)) * 0.5f + 60.0f);
+    at.z = lo.z;
+    if (const auto floor = w.collision().groundProbe(at + vec3(0, 0, 300), 1000, 0x0F)) at.z = floor->point.z;
+    place(w, at, std::atan2(axis.y, axis.x));
+    game::Actions push;
+    push.interact = true, push.move.y = 1;
+    for (int i = 0; i < ticks; ++i) w.tick(push);
+    w.tick({});
+}
+
 // Runs one gate in a fresh World of its unit (neighbours streamed, natives bound, no enemies).
 GateResult runGate(const cdc::BigfileSet& bf, const game::UnitLoader& load, const game::AnimLibrary& anims, const Gate& g,
                    int chapter) {
@@ -758,12 +779,22 @@ TEST(ProgressionReal, EndgameCredits) {
     run(60);
     const uint32_t saves = w.autosaveRequests();
     // Buttress A: Lara enters the arena volume 8303, whose vt 72 plays 320_hel_boss (8261); its end breaks A (8360
-    // vt 62). The fight's start locks the buttress mounts B-D (anim graph state 2: modifiable 7 (1), then the Thor
-    // towers' state 2 event's modifiable 4 (2)).
+    // vt 62). The fight's start and the pushed Thor towers lock the buttress mounts B-D (anim graph state 2:
+    // modifiable 7 (1), then the towers' state 2 event's modifiable 4 (2)).
     const auto* arena = w.script().find(8303);
     ASSERT_TRUE(arena);
     place(w, arena->pos, 0);
     run(60 * 60);
+    // The fight's start retracts the Thor towers 8398-8400 on their joint motors (command 0; trigger 14 at the bottom,
+    // state 3). Lara pushes each back out along its prismatic joint until it enters [1074.6, 1137.8): trigger 14, state
+    // 2, whose event ("block_pushed") locks its mount (modifiable 4 (2)).
+    for (const int32_t tower : {8398, 8399, 8400}) {
+        ASSERT_TRUE(w.uberState(tower));
+        EXPECT_EQ((*w.uberState(tower))[0], 3u) << "tower " << tower << " retracted";
+        pushUber(w, tower, 0, 12 * 60);
+        EXPECT_EQ((*w.uberState(tower))[0], 2u) << "tower " << tower << " pushed out";
+    }
+    run(120);
     const auto graphState = [&](int32_t uid) {
         const auto* o = w.script().find(uid);
         return o && o->graph && o->graph->set->graph ? int(o->graph->set->graph->states[size_t(o->graph->state)].index) : -1;
@@ -822,6 +853,40 @@ TEST(ProgressionReal, KrakenColumnShot) {
     const auto fallen = *w.uberState(32);
     use();
     EXPECT_NE(*w.uberState(32), fallen) << "57 turns the gear";
+}
+
+// l4_staircase_upper hallway ramps 6045 (ca_rb_hallway_ramps_b): volume 6046 switches section 0's motor off and its
+// body falls on the prismatic joint to the lower limit (-948), where the range watch [-979.8, -916.6) sends trigger 14
+// (3 -> 2, the ramps tilt: section 1 follows by condition list); plane 6078 raises it on the motor (316 units/s) until
+// [-31.6, 31.6) is entered again (4 -> 1). Triggers 14 / 15 come from the joint simulation, not timers.
+TEST(ProgressionReal, HallwayRampsJoint) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l4_staircase_upper", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 60; ++i) w.tick({});
+    ASSERT_TRUE(w.uberState(6045));
+    const auto* ramp = w.uberJoint(6045, 0);
+    ASSERT_TRUE(ramp);
+    EXPECT_EQ((*w.uberState(6045))[0], 1u);
+    EXPECT_EQ(ramp->x, 0.0f) << "the motor holds it at its upper limit";
+    const auto enter = [&](int32_t uid) {
+        const auto* t = w.script().find(uid);
+        ASSERT_TRUE(t);
+        place(w, t->pos - vec3(0, 0, script::kTestPointHeight), 0);
+    };
+    enter(6046);
+    for (int i = 0; i < 600 && (*w.uberState(6045))[0] != 2; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(6045))[0], 2u);
+    EXPECT_NEAR(w.uberJoint(6045, 0)->x, -948.167f, 0.01f) << "fell to its lower limit";
+    for (int i = 0; i < 120; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(6045))[1], 2u) << "the ramps tilted";
+    enter(6078);
+    for (int i = 0; i < 600 && (*w.uberState(6045))[0] != 1; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(6045))[0], 1u);
+    EXPECT_GE(w.uberJoint(6045, 0)->x, -31.6056f) << "raised back into its top range";
 }
 
 // l4_ballcourt Xibalba exit switch 5469 reopens the temple (docs/formats/ANIMGRAPH.md): its vt 55 calls the temple

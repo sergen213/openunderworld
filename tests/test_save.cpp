@@ -665,3 +665,34 @@ TEST(StreamReal, UberStateSaveLoad) {
     EXPECT_EQ(*fresh.uberState(4837), moved);
     EXPECT_EQ(fresh.serializeObjects(), expect); // timers, once-events and travel ran on alike
 }
+
+// Uber joints save and load mid-motion: l4_staircase_upper ramp 6045's section 0 falls on its prismatic joint (command
+// 1 switches the motor off); a save during the fall restores the joint's position, velocity, motor and range watches, so
+// trigger 14 at the bottom fires alike after the load.
+TEST(StreamReal, UberJointSaveLoad) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    game::World w(load, "l4_staircase_upper", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 60; ++i) w.tick({});
+    ASSERT_TRUE(w.sendUberCommand(6045, 1));
+    for (int i = 0; i < 20; ++i) w.tick({});
+    const auto* falling = w.uberJoint(6045, 0);
+    ASSERT_TRUE(falling);
+    EXPECT_LT(falling->x, -100.0f);
+    EXPECT_GT(falling->x, -900.0f) << "mid-fall";
+    const auto bytes = save::serialize(save::capture(w));
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(6045))[0], 2u) << "down: trigger 14 at the bottom";
+    const auto expect = w.serializeObjects();
+
+    game::World fresh(load, "l4_staircase_upper", anims);
+    fresh.script().setBigfile(&bf);
+    fresh.onCinematic = [](const std::string&, bool) {};
+    save::apply(save::parse(bytes), fresh);
+    for (int i = 0; i < 60; ++i) fresh.tick({});
+    EXPECT_EQ(fresh.serializeObjects(), expect);
+}

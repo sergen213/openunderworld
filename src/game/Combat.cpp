@@ -719,7 +719,7 @@ void World::fire(int hand) {
             struck->onHit(hit);
             c.adrenaline = std::min(1.0f, c.adrenaline + shot.damage / kAdrenalineFill); // "damaging enemies" (locals 1310)
         }
-        if (!struck && object) uberShot(object);
+        if (!struck && object) uberShot(object, dir);
         c.shots.push_back(shot);
     }
     c.spread = std::min(w.maxSpreadDeg, c.spread + w.spreadPerShot);

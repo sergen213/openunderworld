@@ -218,3 +218,37 @@ TEST(PhysicsRealData, AllObjectsParse) {
     std::printf("objects %zu prims %zu (boxes %zu spheres %zu capsules %zu) rigid %zu\n", objects, prims, boxes, spheres,
                 capsules, rigid);
 }
+
+// Uber joints (Joint1, 1/60 s = half a 30 Hz frame per tick): a vertical prismatic body falls to its lower limit and
+// stops there; a motor whose impulse bound exceeds the body's weight per step (mass 100, 395: tru.exe's hallway ramps)
+// lifts it at the motor speed to the upper limit; a link drives its second joint at the ratio; same steps, same result.
+TEST(Physics, UberJointFallsLiftsAndLinks) {
+    physics::Joint1 ramp;
+    ramp.mass = 100, ramp.axis = {0, 0, 1};
+    ramp.limited = true, ramp.lo = -948.167f, ramp.hi = 0;
+    physics::Joint1 follower = ramp;
+    follower.limited = false;
+    const std::pair<physics::Joint1*, float> link{&follower, 0.5f};
+    for (int i = 0; i < 60; ++i) physics::stepJoint(ramp, {&link, 1}, 0.5f);
+    EXPECT_EQ(ramp.x, ramp.lo);
+    EXPECT_EQ(ramp.v, 0.0f);
+    EXPECT_FLOAT_EQ(follower.x, 0.5f * ramp.lo);
+    ramp.motor = true, ramp.speed = 316.056f / 30.0f, ramp.force = 395.07f;
+    float before = ramp.x;
+    physics::stepJoint(ramp, {}, 0.5f);
+    EXPECT_GT(ramp.x, before) << "the motor beats gravity per step";
+    for (int i = 0; i < 400; ++i) physics::stepJoint(ramp, {}, 0.5f);
+    EXPECT_EQ(ramp.x, 0.0f);
+    ramp.force = 250; // below m * g per step (286): it slides down
+    before = ramp.x;
+    for (int i = 0; i < 10; ++i) physics::stepJoint(ramp, {}, 0.5f);
+    EXPECT_LT(ramp.x, before);
+    physics::Joint1 a = ramp, b = ramp;
+    for (int i = 0; i < 100; ++i) physics::stepJoint(a, {}, 0.5f), physics::stepJoint(b, {}, 0.5f);
+    EXPECT_EQ(a.x, b.x);
+    // A hinge with its centre of mass beside the axis swings down toward hanging below the pivot.
+    physics::Joint1 arm;
+    arm.hinge = true, arm.mass = 10, arm.inertia = 10 * 100.0f * 100.0f, arm.axis = {1, 0, 0}, arm.arm = {0, 100, 0};
+    for (int i = 0; i < 30; ++i) physics::stepJoint(arm, {}, 0.5f);
+    EXPECT_LT(arm.x, -0.1f) << "turned about +X so the arm points down";
+}

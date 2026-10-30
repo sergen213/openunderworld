@@ -380,9 +380,17 @@ public:
     // doors and push blocks are collision().dynamics (following their pose); rigid-body doors swing on a hinge.
     const physics::Scene& physics() const { return physics_; }
     bool sendUberCommand(int32_t uid, uint32_t commandIndex);
-    // A bullet struck uber object `uid`'s collision: each section resting in a state that registers a physics-limit
-    // trigger (action 20) takes its trigger-15 transition, as its shot body reaching the joint limit [I].
-    void uberShot(int32_t uid);
+    // A bullet in direction `dir` struck uber object `uid`'s collision: an impulse on each of its simulated joints that
+    // has a range watch (tru.exe: the bullet's Havok impulse; l1 column 32 section 12 slides out of its range and takes
+    // trigger 15). Zero `dir`: along each joint's axis.
+    void uberShot(int32_t uid, vec3 dir = vec3(0));
+    // Simulated uber joint `joint` (UberObjectData::joints index) of object `uid`, null when it does not exist (yet).
+    const physics::Joint1* uberJoint(int32_t uid, int32_t joint) const {
+        const auto rt = uberRuntime_.find(uid);
+        if (rt == uberRuntime_.end()) return nullptr;
+        const auto it = rt->second.joints.find(joint);
+        return it == rt->second.joints.end() ? nullptr : &it->second;
+    }
     // Section states of uber object `uid` (UberObjectData::sections order; 0xFFFFFFFF = in a transition), null before its
     // first use.
     const std::vector<uint32_t>* uberState(int32_t uid) const {
@@ -635,8 +643,19 @@ private:
     std::map<int32_t, std::vector<uint32_t>> uberStates_; // per section: current state, 0xFFFFFFFF in a transition
     // Section components (tru.exe 0x4D7550 update): current state (+0x84) or running transition (+0x80), seconds in the
     // state (+0x88) / transition; events fired once (+0x60); commanded: a command changed a section (travel latch).
-    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0; bool carried = false; };
-    struct UberRuntime { std::vector<UberSectionState> sections; std::vector<float> animLength; uint64_t fired = 0; bool commanded = false; };
+    // Joints: the simulated physics joints (action 9 creates, 10 removes; types 0 / 2, links 11); watches: range watches
+    // (action 0x14, 0x49A5C0 record: inside starts true, 0x4937A0).
+    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0; };
+    struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };
+    struct UberRuntime {
+        std::vector<UberSectionState> sections;
+        std::vector<float> animLength;
+        uint64_t fired = 0;
+        bool commanded = false;
+        std::map<int32_t, physics::Joint1> joints;
+        std::set<int32_t> links; // created type-11 link joints
+        std::vector<UberWatch> watches;
+    };
     std::map<int32_t, UberRuntime> uberRuntime_;
     std::vector<std::pair<int32_t, uint32_t>> uberEvents_; // (uid, event index) for the script's vt 54
     void uberEnter(int32_t uid, size_t section, uint32_t state);
@@ -644,6 +663,15 @@ private:
     void uberFire(int32_t uid, size_t section, uint32_t kind, uint32_t value);
     bool uberHolds(int32_t uid, const std::vector<formats::UberCondition>& conditions) const;
     void tickUber(float dt);
+    void uberAction(int32_t uid, size_t section, const formats::UberAction& a); // a state's entry action (0x4D86A0)
+    std::optional<physics::Joint1> makeUberJoint(int32_t uid, int32_t joint); // frame, mass, gravity; at rest at 0
+    void tickUberJoints(int32_t uid);
+    std::optional<glm::mat4> uberJointPose(int32_t uid) const;
+    int32_t uberModelJoint(int32_t uid) const;
+    void pushUberJoints(const Actions& a); // Lara grips / pushes an uber object riding a level prismatic joint
+    bool uberGrip_ = false;                // last tick: Lara grips one (her stick moves it)
+    struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
+    std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)
     struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; std::string clip; };
     std::map<int32_t, UberMotion> uberMotion_;
     std::map<int32_t, nlohmann::json> uberSaved_; // restored uber state of objects not prepared since (prepareUber applies it)

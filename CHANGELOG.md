@@ -15,6 +15,16 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - Original shaders: tru.exe's planar water reflection (0x5CE800: the scene from the camera mirrored in the sea's
   plane, half size, global texture class 5, PS InstanceParams c132–c134) in GL and Vulkan; the l1_seatop /
   l2_cliffclimb sea reflects the cliffs (docs/RENDERING.md "Planar reflection").
+- Uber objects simulate their physics joints (docs/formats/PHYSICS.md "Uber joints"): state entry actions create /
+  remove hinge and prismatic joints (frame from the object model's marker, body = the section's model), set their
+  limits and motors and register range watches; triggers 14 / 15 fire when a joint's position or velocity enters /
+  leaves a watched range, replacing the 1 s timers (l4 hallway ramps fall and rise on their joint, the l1 kraken
+  entrance gate opens when its halves reach the range, the l4 grapple post's linked joint fires as it is pulled out,
+  the shot l1 column slides out of its range). Link joints couple two joints by their ratio; model 0 follows its
+  section's joint when it has no travel clip; Lara grips and pushes such a body on a level prismatic joint (the l7 Thor
+  towers, which the fight retracts, are pushed back out to lock the buttress mounts); every uber object starts its
+  sections at spawn (and gets its collision; the grapple's line of sight ignores the target's own). Joints and watches are saved and part of `World::stateHash`. Tests
+  `ProgressionReal.HallwayRampsJoint`, `GameReal.GrappleLeverJointIndependentOfRenderRate`, `StreamReal.UberJointSaveLoad`.
 
 ### Fixed
 

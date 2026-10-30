@@ -564,6 +564,42 @@ TEST(RealData, UberObjectCommandsDecode) {
     }
 }
 
+// Uber joints decode (formats::UberJoint / UberParam): the hallway ramps' prismatic joint between sections 2 and 0
+// (model 1 marker 1), its watched ranges on section 0's 14 / 15 transitions; the entrance gate's cog link (ratio 0.5).
+TEST(RealData, UberJointsDecode) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto ramps = formats::loadUberObject(cdc::parseDrm(*bf.read("pc-w\\ca_rb_hallway_ramps_b.drm")));
+    ASSERT_TRUE(ramps);
+    const auto& s0 = ramps->sections[0];
+    const auto& t0 = s0.transitions[0];
+    EXPECT_EQ(t0.trigger, 15u);
+    ASSERT_GE(t0.joint, 0);
+    ASSERT_GE(t0.range, 0);
+    const auto& j = ramps->joints[size_t(t0.joint)];
+    EXPECT_EQ(j.type, 2);
+    EXPECT_EQ(j.bodyA, 2);
+    EXPECT_EQ(j.bodyB, 0);
+    EXPECT_EQ(j.model, 1);
+    EXPECT_EQ(j.marker, 1);
+    EXPECT_NEAR(ramps->params[size_t(t0.range)].a, -31.6056f, 1e-3f);
+    const auto& state0 = s0.stateActions[0];
+    ASSERT_EQ(state0.size(), 6u);
+    EXPECT_EQ(state0[2].type, 12u);
+    EXPECT_NEAR(ramps->params[size_t(state0[2].param)].a, -948.167f, 1e-3f);
+    EXPECT_TRUE(ramps->params[size_t(state0[2].param)].flag);
+    EXPECT_EQ(state0[5].type, 13u);
+    EXPECT_NEAR(ramps->params[size_t(state0[5].param)].b, 395.07f, 1e-2f);
+    const auto gate = formats::loadUberObject(cdc::parseDrm(*bf.read("pc-w\\ms_ani_entrance_gate.drm")));
+    ASSERT_TRUE(gate);
+    const auto link = std::find_if(gate->joints.begin(), gate->joints.end(), [](const auto& x) { return x.type == 11; });
+    ASSERT_NE(link, gate->joints.end());
+    EXPECT_FLOAT_EQ(link->ratio, 0.5f);
+    EXPECT_EQ(gate->joints[size_t(link->link1)].type, 2);
+    EXPECT_EQ(gate->joints[size_t(link->link2)].type, 0);
+}
+
 // Every unit's light records decode: counts of the install (LEVELS.md "Lights", 2026-10-18 survey).
 TEST(RealData, UnitLightsAllUnits) {
     const char* g = gameDir();

@@ -3,6 +3,8 @@
 #include "formats/Formats.hpp"
 
 #include <cstring>
+#include <functional>
+#include <map>
 
 namespace ou::formats {
 namespace {
@@ -55,6 +57,35 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
     bounded(ns, sections, 0x54, ob.data.size());
     bounded(nc, commands, 0x0C, ob.data.size());
     bounded(ne, events, 0x1C, ob.data.size());
+    // Joint and limit / motor / range records, shared by pointer between actions and transitions.
+    std::map<uint32_t, int32_t> jointAt, paramAt;
+    const auto param = [&](uint32_t o) {
+        if (const auto it = paramAt.find(o); it != paramAt.end()) return it->second;
+        out.params.push_back({at<uint8_t>(ob, o), at<float>(ob, o + 4), at<float>(ob, o + 8), at<uint8_t>(ob, o + 12) != 0});
+        return paramAt[o] = int32_t(out.params.size() - 1);
+    };
+    std::function<int32_t(uint32_t)> joint = [&](uint32_t o) -> int32_t {
+        if (const auto it = jointAt.find(o); it != jointAt.end()) return it->second;
+        const int32_t index = jointAt[o] = int32_t(out.joints.size());
+        out.joints.emplace_back();
+        UberJoint j;
+        j.type = at<uint8_t>(ob, o);
+        if (j.type == 11) { // link {type, joint1, joint2, ratio}
+            j.ratio = at<float>(ob, o + 12);
+            j.link1 = joint(ptr(ob, o + 4));
+            j.link2 = joint(ptr(ob, o + 8));
+        } else {
+            j.bodyA = at<int32_t>(ob, o + 4), j.bodyB = at<int32_t>(ob, o + 8);
+            j.model = at<uint8_t>(ob, o + 0xC), j.marker = at<uint8_t>(ob, o + 0xD);
+            j.lo = at<float>(ob, o + 0x2C), j.hi = at<float>(ob, o + 0x30);
+            j.speed = at<float>(ob, o + 0x34), j.force = at<float>(ob, o + 0x38);
+            j.flags = at<uint8_t>(ob, o + 0x3C);
+            if (j.bodyA < -1 || j.bodyA >= int32_t(ns) || j.bodyB < -1 || j.bodyB >= int32_t(ns))
+                throw FormatError("uber: joint body outside the sections");
+        }
+        out.joints[size_t(index)] = j;
+        return index;
+    };
     for (uint32_t i = 0; i < ns; ++i) {
         const uint32_t sec = sections + 0x54 * i;
         UberSection section;
@@ -71,6 +102,10 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
             x.trigger = at<uint32_t>(ob, tr + 0x18), x.param = at<uint32_t>(ob, tr + 0x1C);
             if (x.trigger == 9)
                 if (const auto list = cdc::internalPointer(ob, tr + 0x1C)) x.conditions = conditionList(ob, *list);
+            if (x.trigger == 14 || x.trigger == 15) {
+                if (const auto j = cdc::internalPointer(ob, tr + 0x20)) x.joint = joint(*j);
+                if (const auto r = cdc::internalPointer(ob, tr + 0x24)) x.range = param(*r);
+            }
             const uint16_t anim = at<uint16_t>(ob, tr + 0x2A);
             x.anim = anim == 0xFFFF ? -1 : anim;
             x.probability = at<uint32_t>(ob, tr + 0x2C), x.flags = at<uint32_t>(ob, tr + 0x34);
@@ -92,11 +127,23 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
                 }
             }
             section.stateOut.push_back(std::move(out));
-            std::vector<uint32_t> actions; // {type, value, ...} records 0x10 apart (0x4D5C60)
+            std::vector<UberAction> actions; // {type, 3 words} records 0x10 apart (0x4D5C60, 0x4D86A0)
             if (const uint32_t na = at<uint32_t>(ob, st + 0x14)) {
                 const uint32_t list = ptr(ob, st + 0x18);
                 bounded(na, list, 0x10, ob.data.size());
-                for (uint32_t k = 0; k < na; ++k) actions.push_back(at<uint32_t>(ob, list + 0x10 * k));
+                for (uint32_t k = 0; k < na; ++k) {
+                    const uint32_t r = list + 0x10 * k;
+                    UberAction a{at<uint32_t>(ob, r), at<uint32_t>(ob, r + 4)};
+                    const auto p1 = cdc::internalPointer(ob, r + 4), p2 = cdc::internalPointer(ob, r + 8),
+                               p3 = cdc::internalPointer(ob, r + 12);
+                    if ((a.type == 9 || a.type == 10 || a.type == 12 || a.type == 13) && p1) {
+                        a.joint = joint(*p1);
+                        if (a.type >= 12 && p2) a.param = param(*p2);
+                    } else if ((a.type == 0x14 || a.type == 0x15) && p2 && p3) {
+                        a.joint = joint(*p2), a.param = param(*p3);
+                    }
+                    actions.push_back(a);
+                }
             }
             section.stateActions.push_back(std::move(actions));
         }

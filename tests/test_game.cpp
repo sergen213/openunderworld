@@ -2307,6 +2307,25 @@ TEST(GameReal, PressurePlateIndependentOfRenderRate) {
     EXPECT_EQ(plate->joint->position, 0.0f) << "the plate rose after Lara left it";
 }
 
+// l4_trailstart grapple lever post 6695 (ca_ei_lever_grapple_post, uber joints): Lara pulls it with the grapple, its
+// script's command runs section 0's motor (158 units/s), the post slides out on its prismatic joint and drives section
+// 1's joint through their 0.75 link; that joint entering its watched range [158, 1580) sends trigger 14 (section 1:
+// 0 -> 1) from the simulation, not a timer.
+TEST(GameReal, GrappleLeverJointIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/grapple_pull.txt");
+    const auto w = expectRateIndependent(worldMaker(bf, "l4_trailstart", game::Spawn{{61161, -42611, 4948}, glm::radians(-11.0f)}), replay, 420);
+    EXPECT_EQ(w->lastPulled(), 6695);
+    const auto* post = w->uberJoint(6695, 0);
+    const auto* linked = w->uberJoint(6695, 1);
+    ASSERT_TRUE(post && linked);
+    EXPECT_GT(post->x, 211.0f) << "pulled out";
+    EXPECT_FLOAT_EQ(linked->x, 0.75f * post->x);
+    ASSERT_TRUE(w->uberState(6695));
+    EXPECT_EQ((*w->uberState(6695))[1], 1u);
+}
+
 // l2_puzzleroom: switch 2961 starts elevator 2973's uber command chain; the platform's collision moves.
 TEST(GameReal, ElevatorUberIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

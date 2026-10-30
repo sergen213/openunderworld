@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace ou::physics {
 namespace {
@@ -76,7 +77,7 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
 
 } // namespace
 
-ObjectPhysics loadObjectPhysics(const cdc::Drm& d) {
+ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
     ObjectPhysics o;
     const auto base = formats::objectBaseSection(d);
     if (!base) return o;
@@ -84,13 +85,13 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d) {
     o.oflags = at<uint32_t>(ob, 0);
     if (const auto p = cdc::internalPointer(ob, 0xC8); p && *p + 6 <= ob.data.size() && at<uint16_t>(ob, *p + 4) == 0xB00B)
         o.physClass = at<uint16_t>(ob, *p + 2);
-    // Model 0: ObjectBase +0xA0 u16 count, +0xA4 -> resource refs of the model DTPs (formats::objectRenderModels).
+    // Models: ObjectBase +0xA0 u16 count, +0xA4 -> resource refs of the model DTPs (formats::objectRenderModels).
     const auto ptrs = cdc::sectionPointers(d, *base);
     const auto lp = ptrs.find(0xA4);
-    if (!at<uint16_t>(ob, 0xA0) || lp == ptrs.end()) return o;
+    if (at<uint16_t>(ob, 0xA0) <= model || lp == ptrs.end()) return o;
     const auto& list = d.sections[lp->second.section];
-    if (cdc::resourceRefType(list, lp->second.offset) != int(cdc::SectionType::DtpData)) return o;
-    const uint32_t modelId = at<uint32_t>(list, lp->second.offset);
+    if (cdc::resourceRefType(list, lp->second.offset + 4 * model) != int(cdc::SectionType::DtpData)) return o;
+    const uint32_t modelId = at<uint32_t>(list, lp->second.offset + 4 * model);
     const auto m = std::find_if(d.sections.begin(), d.sections.end(), [&](const cdc::Section& s) {
         return s.type == cdc::SectionType::DtpData && s.id == modelId;
     });
@@ -278,6 +279,43 @@ void Scene::step(float dt) {
         b.pos += b.vel * dt;
         b.rot = glm::normalize(b.rot + quat(0, b.angVel.x, b.angVel.y, b.angVel.z) * b.rot * (0.5f * dt));
     }
+}
+
+float Joint1::gravityForce(float q) const {
+    const vec3 g(0, 0, -kJointGravity);
+    if (!hinge) return mass * glm::dot(g, axis);
+    return glm::dot(glm::cross(glm::angleAxis(q, axis) * arm, mass * g), axis);
+}
+
+// Reduced coordinates: the linked joints follow j (joint = ratio * j.x), so the chain has one mass M and one
+// generalized force. Each motor is a velocity row on its own joint, its impulse bounded per step [I: tru.exe steps its
+// solver at 60 Hz; with that every motor of a vertical uber joint holds its body against gravity, PHYSICS.md].
+void stepJoint(Joint1& j, std::span<const std::pair<Joint1*, float>> linked, float frames) {
+    float M = j.effectiveMass(), F = j.gravityForce(j.x);
+    for (const auto& [o, r] : linked) M += r * r * o->effectiveMass(), F += r * o->gravityForce(r * j.x);
+    const float push = std::exchange(j.push, 0.0f);
+    j.v = push != 0 ? push : M > 0 ? j.v + F / M * frames : 0.0f;
+    const auto motor = [&](const Joint1& m, float r) {
+        if (!m.motor || r == 0) return;
+        if (M <= 0) { j.v = m.speed / r; return; } // massless: the motor sets the speed
+        float impulse = (m.speed - r * j.v) * M / (r * r);
+        if (m.force > 0) impulse = std::clamp(impulse, -m.force, m.force);
+        j.v += r * impulse / M;
+    };
+    if (push == 0) {
+        motor(j, 1);
+        for (const auto& [o, r] : linked) motor(*o, r);
+    }
+    j.x += j.v * frames;
+    const auto limit = [&](const Joint1& m, float r) {
+        if (!m.limited || r == 0) return;
+        const float lo = std::min(m.lo / r, m.hi / r), hi = std::max(m.lo / r, m.hi / r);
+        if (j.x < lo) j.x = lo, j.v = std::max(j.v, 0.0f);
+        else if (j.x > hi) j.x = hi, j.v = std::min(j.v, 0.0f);
+    };
+    limit(j, 1);
+    for (const auto& [o, r] : linked) limit(*o, r);
+    for (const auto& [o, r] : linked) o->x = r * j.x, o->v = r * j.v;
 }
 
 } // namespace ou::physics

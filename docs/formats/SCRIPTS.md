@@ -121,8 +121,8 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
 | record | fields |
 |---|---|
 | section (0x54) | +4/+8 states, +0xC/+0x10 transitions, +0x14 default state, +0x18 model, +0x28 float angle (0x4D3050) |
-| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, value; 0x4D86A0: 2/3 play an animation, 9/12/13 physics joints, 0x14 joint-limit callbacks) |
-| transition (0x38) | +0 from, +4 to, +8 float, +0x18 trigger, +0x1C parameter, +0x2A animation-list index (0xFFFF none), +0x2C probability, +0x30 effect, +0x34 flags (1 play the animation, 2 wait for its end, 0x10 random) |
+| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, 3 words; 0x4D86A0: 2/3 play an animation, 9/10 create/remove a physics joint, 12/13 its limit/motor, 0x14/0x15 add/remove a range watch; PHYSICS.md "Uber joints") |
+| transition (0x38) | +0 from, +4 to, +8 float, +0x18 trigger, +0x1C parameter, +0x20/+0x24 joint and range records (triggers 14/15), +0x2A animation-list index (0xFFFF none), +0x2C probability, +0x30 effect, +0x34 flags (1 play the animation, 2 wait for its end, 0x10 random) |
 | command (0xC) | +0 id (0 in every object seen), +4/+8 targets {section, type, payload} |
 | event (0x1C) | +4/+8 condition lists, +0xC section, +0x10 kind, +0x14 value, +0x18 once, +0x1A script event id |
 | condition list | +4/+8 entries {section, kind, value}: kind 1 = section in state `value`, 2 = section missing (0x4D1360) |
@@ -132,8 +132,9 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
   payload (0x4D4BE0), 3 / 4 the one with trigger 0xD / 0x10 and that parameter. A section in a transition ignores
   them.
 - Automatic transitions (0x4D4B60 → 0x4D31E0): trigger 1 after `parameter` seconds in the state, 3 at once, 9 when
-  its condition list holds, 0xB/0xC on the section's facing flags (not modelled). 15 / 14 are physics joint limit
-  callbacks (0x4D7380 → 0x4D5A50); [I] ours fire 15 after 1 s in a state with a drive action (13) and 14 after 1 s.
+  its condition list holds, 0xB/0xC on the section's facing flags (not modelled). 14 / 15 are a physics joint's
+  value entering / leaving a watched range (0x4D7380 → 0x4937A0 → 0x4D5A50), from the simulated joints
+  (docs/formats/PHYSICS.md "Uber joints").
 - A transition with flags 1 + 2 and an animation lasts the clip; then the target state is entered (0x4D7440).
   Events: kind 2 leaving a state, 3 starting a transition (0x4D4A00), 4 finishing one, 1 entering a state; a match
   (all condition lists holding) runs the object script's vt 54 with the event index, which `uberobjectevent` 0

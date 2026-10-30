@@ -92,7 +92,46 @@ type 2, is [I].
   `World::tick` (one `Scene::step(kTickSeconds)` per 60 Hz tick, no time-based substeps); the render rate, vsync and
   FSR frame generation never step them (docs/GAMEPLAY.md "Timing", audit table). Real puzzles are checked
   bit-identical tick by tick at 24–1000 Hz and irregular frames: `GameReal.{BallcourtLever,ElevatorUber,PushBlock,
-  SplineMover}IndependentOfRenderRate`.
+  SplineMover,GrappleLeverJoint}IndependentOfRenderRate`.
+- Uber joints (class 79 objects, `formats::UberJoint` / `UberParam`, `physics::Joint1`, `World::tickUberJoints`):
+  - [O] State entry actions (0x10 bytes {type, 3 words}, run on entering the state, 0x4D7440 -> 0x4D5C60 -> 0x4D86A0):
+    9 creates the joint of the record its first word points at (0x4D8000; nothing if it exists), 10 removes it
+    (0x4D6220), 12 sets its limit (0x4D6310 -> 0x4D4510), 13 its motor (0x4D6350 -> 0x4D2B00 prismatic / 0x4D29F0
+    hinge), 0x14 / 0x15 add / remove a range watch (0x4D7380 -> 0x49A5C0 / 0x493A80; word 1 = mode, 2 = joint, 3 = range).
+  - [O] Joint record: +0 type byte (0x4D1040: 0 hinge -> engine 1, 2 prismatic -> 3, 5 -> 8, 7 -> 10, 8 fixed -> 0xB,
+    11 link -> 0xD), +4 / +8 bodies A / B = section indices (each section spawns its instance into the component's
+    +0x6C list, 0x4D3DA0; -1 = world), +0xC model byte, +0xD marker byte: the frame is that object model's marker
+    (0x30 bytes, Euler XYZ) × the instance transform; the joint axis is the frame's Z (0x4D4240 passes row 2 to the
+    hinge / prismatic constructors 0x4DF5D0 / 0x4DFC10). +0x10 block (0x4D4690): +0x2C / +0x30 limit (hinge degrees),
+    +0x34 motor speed per second (× 1/30, hinge × π/180/30, 0x4D1F00), +0x38 motor bound (<= 0: unbounded),
+    +0x3C bit 0 limit on, bit 1 motor on. Link (type 11, 0x4D7ED0 -> 0x4E17B0): {type, joint1 ptr, joint2 ptr, ratio};
+    joint2 = ratio × joint1 (degrees per unit when joint1 is prismatic and joint2 a hinge: l4 grapple post 1264 × 0.75
+    = 948, the second joint's limit).
+  - [O] Limit / motor / range records {u8 kind, a, b, u8 flag} (0x4D11E0): limit lo, hi, on; motor speed, bound, on;
+    range lo, hi. Watch check (0x4937A0, every instance update): value = mode 0 position (prismatic units, hinge
+    degrees), 1 velocity per second; `inside` starts true, so a watch registered outside its range reports leaving on
+    the first check; `lo <= v < hi` turning true calls back with 1, false with 0 (0x4D5B10 -> 0x4D5A50), which starts the
+    watching section's transition of trigger 14 (entered) / 15 (left) with the same mode (+0x1C), joint (+0x20) and
+    range (+0x24), only while the section is in a state.
+  - [I] Simulation (`physics::stepJoint`, one per 60 Hz tick = half a 30 Hz frame): each joint is one degree of
+    freedom of body B (its section model's mass, centre of mass and inertia, `massProps`) against a fixed frame, with
+    linked joints folded into one effective mass; gravity 5.72443 units/frame², each motor a velocity row whose impulse
+    is clamped to its bound per step, inelastic limits. A tru.exe solver step of 1/60 s is inferred from the motors: of
+    the vertical prismatic uber joints, five motors are weaker than their body's weight per 30 Hz frame but stronger
+    than per 1/60 s (hallway ramps 395 vs 100 × 5.72, wall lever 319 vs 60 × 5.72, cliffclimb ledge, empty throne,
+    windup statue), and only the latter lets them hold their bodies as the states expect. Body A's own motion, the
+    multi-axis types 5 / 7 (push blocks, scales) and fixed joints (8) are not simulated; watches on them never fire.
+  - Every uber object's sections start in their default state at spawn (each section component exists from the
+    instance's creation, 0x4D3DA0), not when a script first touches it: the l7 Thor towers extend on their motors at
+    load. Model 0 of an uber object follows the joint of the section that uses it when it has no travel clip and no
+    loose / carried offset (`World::uberJointPose`). Bullets push watched joints (`World::uberShot`, impulse 3000 [I]
+    along the shot). Lara grips a model-0 body on a level prismatic joint within 120 units of its collision and the stick
+    moves it along the axis at 120 units/s, over its motor and gravity, and she follows (`World::pushUberJoints` [I], as
+    push blocks): the Thor towers are pushed back out after the fight retracts them (`ProgressionReal.EndgameCredits`).
+  - Verified: `ProgressionReal.HallwayRampsJoint` (ramp 6045 falls to -948 and tilts the ramps, rises back on its
+    motor), `ProgressionReal.KrakenColumnShot` (the shot column leaves [-15.8, 237)), `GameReal.GrappleLeverJoint
+    IndependentOfRenderRate` (l4 grapple post 6695: pulled out, its linked joint enters [158, 1580): trigger 14),
+    `StreamReal.UberJointSaveLoad`, `Physics.UberJointFallsLiftsAndLinks`, `RealData.UberJointsDecode`.
 - `Mover`: kinematic ping-pong path for platforms; no moving platform object was identified yet [U], so World does
   not create any.
 
