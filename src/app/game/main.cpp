@@ -260,8 +260,19 @@ struct LaraMeshes {
               ou::render::Renderer& r) {
         const auto palette = ou::anim::skinPalette(world.anims().skeleton, world.pose(alpha));
         const glm::mat4 m = world.player().modelMatrix(s.pos, s.yaw, s.pitch);
+        const auto& wet = world.wetness().bone;
         for (const size_t i : meshIndices) {
-            ou::anim::skinVertices(scene.meshes[i], palette, scratch, m);
+            const auto& mesh = scene.meshes[i];
+            ou::anim::skinVertices(mesh, palette, scratch, m);
+            // COLOR0 = weighted per-bone wetness (x; dirt y = 0), as tru.exe's skinned VS blends the palette's 4th rows
+            // (scene::Material::skinParams); the weights sum to 255, so the sum is the R byte.
+            for (size_t v = 0; v < mesh.skin.size() && v < scratch.size(); ++v) {
+                const auto& k = mesh.skin[v];
+                float x = 0;
+                for (int j = 0; j < 4; ++j)
+                    if (k.bone[j] < wet.size()) x += float(k.weight[j]) * wet[k.bone[j]];
+                scratch[v].color0 = uint32_t(std::lround(std::min(x, 255.0f)));
+            }
             r.updateVertices(i, scratch);
         }
     }
@@ -1000,7 +1011,6 @@ struct EffectsView {
     void water(const ou::render::Camera& cam, const ou::game::World& w, ou::render::FrameOptions& fo, bool lists,
                std::vector<std::string>& warnings) {
         waterFilters.clear();
-        fo.underwater = nullptr;
         const auto& unit = w.currentUnit().data;
         auto it = unitWater.find(unit.name);
         if (it == unitWater.end()) {
@@ -1042,7 +1052,7 @@ struct EffectsView {
             underwater.fog = true, underwater.fogNear = n + uw.env.waterFogNear * rest, underwater.fogFar = f + uw.env.waterFogFar * rest;
             for (int k = 0; k < 3; ++k) underwater.fogColor[k] = c[k];
         }
-        if (under || underwater.strength > 0) fo.underwater = &underwater;
+        fo.underwater = &underwater; // the colours tint Enhanced water from above too; strength 0 = no pass, no fog
         if (lists && library && unit.drm && under != submerged) {
             const auto& ps = w.player().state();
             const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);

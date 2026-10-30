@@ -66,12 +66,34 @@ void loadMaterials(scene::SceneData& sc, const Drms& drms) {
         }
         return 0;
     };
+    // Weighted-skin VS (slot 0x21, else 0xA1) writing its COLOR0 output from c[a0 + 88] (Material::skinParams).
+    auto skinParams = [&](uint32_t libId) {
+        const cdc::Section* lib = libId ? findSection(drms, cdc::SectionType::ShaderLib, libId) : nullptr;
+        try {
+            const auto parsed = lib ? d3d9::parseShaderLib(lib->data) : d3d9::ShaderLib{};
+            const auto* e = parsed.find(0x21);
+            if (!e) e = parsed.find(0xA1);
+            if (!e) return false;
+            const auto p = d3d9::parse(e->bytecode);
+            int color = -1;
+            for (const auto& in : p.instructions)
+                if (in.op == d3d9::Dcl && in.dst.type == d3d9::Reg::Output && in.usage == d3d9::Usage::Color && !in.usageIndex)
+                    color = in.dst.num;
+            for (const auto& in : p.instructions)
+                if (in.hasDst && in.dst.type == d3d9::Reg::Output && in.dst.num == color)
+                    for (const auto& s : in.src)
+                        if (s.relative && s.num == 88) return true;
+        } catch (const cdc::FormatError&) {
+        }
+        return false;
+    };
     for (const uint32_t id : wanted) {
         const cdc::Section* sec = findSection(drms, cdc::SectionType::Material, id);
         if (!sec) continue;
         MaterialShaderLibs libs;
         auto m = decodeMaterial(*sec, &libs);
         m.vertexShader = program(libs.vertex, {0x20, 0xA0});
+        m.skinParams = m.vertexShader && skinParams(libs.vertex);
         m.pixelShader = program(libs.pixel, {0});
         sc.materials.push_back(std::move(m));
     }

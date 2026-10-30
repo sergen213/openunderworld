@@ -670,7 +670,7 @@ TEST(Game, SwimEnterCrossClimbOut) {
         splashed |= s.state == State::SwimSplash;
         if (s.state == State::SwimTread || s.state == State::SwimSurface) {
             swam |= s.state == State::SwimSurface;
-            ASSERT_NEAR(s.pos.z, -150, 1e-3) << i; // treading / surface swimming: root on the water surface
+            ASSERT_NEAR(s.pos.z, -150 - w->player().tuning().swimSurfaceDepth, 1e-3) << i; // root under the surface
             ASSERT_LT(s.pos.x, 2000 - w->player().tuning().swimRadius + 0.01f) << i;
         }
         ASSERT_GE(s.pos.z, -3000) << i;
@@ -710,9 +710,9 @@ TEST(Game, DiveSwimDownAndSurface) {
     int ticks = 0;
     for (; ticks < 300 && s.state != State::SwimTread; ++ticks) w->tick(up);
     EXPECT_EQ(s.state, State::SwimTread);
-    EXPECT_NEAR(s.pos.z, -150, 1e-3);
     const auto& t = w->player().tuning();
-    EXPECT_NEAR(ticks / 60.0, (-150 - z) / t.swimSpeed + t.swimSpeed / (2 * t.swimAccel), 0.4); // + pitch-up time
+    EXPECT_NEAR(s.pos.z, -150 - t.swimSurfaceDepth, 1e-3);
+    EXPECT_NEAR(ticks / 60.0, (-150 - t.swimSurfaceDepth - z) / t.swimSpeed + t.swimSpeed / (2 * t.swimAccel), 0.4); // + pitch-up time
 }
 
 TEST(Game, SwimSimulationIndependentOfRenderRate) {
@@ -1144,7 +1144,7 @@ TEST(GameReal, PoolSwimReplay) {
     };
     auto inState = [&](State x) { return [&s, x] { return s.state == x; }; };
     ASSERT_TRUE(runUntil([](int) { return forward(); }, inState(State::SwimSurface), 360)) << game::stateName(s.state);
-    EXPECT_NEAR(s.pos.z, surf, 1e-3);
+    EXPECT_NEAR(s.pos.z, surf - w.player().tuning().swimSurfaceDepth, 1e-3);
     const float entryX = s.pos.x;
     runUntil([](int) { return forward(); }, [] { return false; }, 120); // swim east 2 s
     EXPECT_GT(s.pos.x, entryX + 0.8f * 2 * w.player().tuning().swimSpeed);
@@ -1389,8 +1389,9 @@ TEST(Game, WaterWakeFollowsLara) {
     auto w = makeWorld(poolMesh(), {1000, 0, 400});
     for (int i = 0; i < 90; ++i) w->tick({});
     const float ox = w->water().originX(), oy = w->water().originY();
-    for (int i = 0; i < 300; ++i) w->tick(forward());
-    EXPECT_GT(maxRipple(w->water()), 0.5f) << "surface swimming leaves a wake";
+    float peak = 0;
+    for (int i = 0; i < 300; ++i) w->tick(forward()), peak = std::max(peak, maxRipple(w->water()));
+    EXPECT_GT(peak, 0.5f) << "surface swimming leaves a wake";
     EXPECT_TRUE(w->water().originX() != ox || w->water().originY() != oy) << "the field follows Lara";
     EXPECT_NEAR(std::remainder(w->water().originX(), game::WaveField::kCell), 0.0f, 1e-2f);
     EXPECT_TRUE(w->water().field().wall({-5, 0})) << "the pool side is a wall";
@@ -1510,9 +1511,10 @@ TEST(WaveField, ScrollKeepsWaves) {
     EXPECT_EQ(worst, 0.0f);
 }
 
-// A body walking (180 Joan units/s) / running (400) through open water at 240 fps leaves ~2-unit (x S) wake waves.
+// A body wading slower than the waves (40 / 75 Joan units/s; they run at 80) at 240 fps leaves ~2-unit (x S) wake
+// waves. One outrunning them is neither a wall nor a wake source (its wake would be a Mach cone).
 TEST(WaveField, WakeHeight) {
-    for (const float speed : {180 * S, 400 * S}) {
+    for (const float speed : {40 * S, 75 * S}) {
         auto f = waveField();
         float top = 0;
         vec2 p = vec2(-250, 0) * S;
@@ -1526,6 +1528,11 @@ TEST(WaveField, WakeHeight) {
         EXPECT_GT(top, 0.5f * S) << speed;
         EXPECT_LT(top, 2.5f * S) << speed;
     }
+    auto f = waveField();
+    f.kick(vec2(-40, 0) * S, 6 * S, 22 * S);
+    f.wade({0, 0}, {game::WaveField::kSpeed, 0}, kDt);
+    f.step(kDt);
+    EXPECT_NE(f.height({0, 0}), 0.0f) << "a fast body is no wall";
 }
 
 TEST(Game, WaterAirDrainsRefillsAndDrowns) {
@@ -1543,6 +1550,7 @@ TEST(Game, WaterAirDrainsRefillsAndDrowns) {
     up.jump = true;
     for (int i = 0; i < 300 && w->player().state().state != State::SwimTread; ++i) w->tick(up);
     ASSERT_EQ(w->player().state().state, State::SwimTread);
+    for (int i = 0; i < 30; ++i) w->tick({}); // treading: the head is out (root swimSurfaceDepth under the surface)
     EXPECT_GT(w->air(), low) << "surfacing refills the meter";
     for (int i = 0; i < 60 * 50 && w->health().value() >= w->health().max(); ++i) w->tick(dive);
     EXPECT_EQ(w->air(), 0.0f);
@@ -2778,4 +2786,26 @@ TEST(GameReal, StairsWalkAndRunUpAndDown) {
     EXPECT_GT(h.player().state().pos.x, -4853 + 30);
     EXPECT_LT(h.player().state().pos.x, -4853 + 85);
     EXPECT_NEAR(h.player().state().pos.z, 87, 1);
+}
+
+// Wetness (tru.exe 0x6FF200 / 0x6ED130): soaked at once in water; out of it the regions dry at 0.0002 per 30 Hz frame
+// (1 -> 0 in 5000 frames, ~167 s). The head chain's first bone follows its region; the feet, last down the chains, stay
+// wet until the bones above them dried (water runs down).
+TEST(Game, WetnessSoaksAndDries) {
+    ou::game::Wetness w;
+    w.water = 0x7F;
+    w.tick(1);
+    for (const float r : w.region) EXPECT_EQ(r, 1.0f);
+    EXPECT_EQ(w.bone[17], 1.0f);  // head
+    EXPECT_EQ(w.bone[95], 1.0f);  // a hand bone
+    EXPECT_EQ(w.bone[0], 0.0f);   // root: in no chain
+    w.water = 0;
+    for (int i = 0; i < 2500; ++i) w.tick(1);
+    EXPECT_NEAR(w.region[6], 0.5f, 1e-3f);
+    EXPECT_NEAR(w.bone[17], 0.5f, 1e-3f);
+    EXPECT_EQ(w.bone[8], 1.0f);   // foot: not yet
+    for (int i = 0; i < 12000; ++i) w.tick(1);
+    EXPECT_EQ(w.region[1], 0.0f);
+    EXPECT_EQ(w.bone[8], 0.0f);
+    EXPECT_EQ(w.bone[95], 0.0f);
 }

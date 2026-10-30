@@ -1106,7 +1106,10 @@ int Player::waterAt(vec3 feet) const {
     return best;
 }
 
-float Player::surfaceZ() const { return waterSurface(col_.markup[size_t(s_.water)], vec2(s_.pos), waveSeconds_); }
+// The swimming root's level at the surface: the wave surface less swimSurfaceDepth.
+float Player::surfaceZ() const {
+    return waterSurface(col_.markup[size_t(s_.water)], vec2(s_.pos), waveSeconds_) - t_.swimSurfaceDepth;
+}
 
 bool Player::enterWater() {
     const int w = waterAt(s_.pos);
@@ -1155,7 +1158,7 @@ vec3 Player::swimSlide(vec3 pos, vec3 delta) const {
 bool Player::tryClimbOut() {
     const anim::Clip* c = anims_.find("swim_climbout");
     if (!c) return false;
-    const float surf = surfaceZ(), reach = 300.0f;
+    const float surf = surfaceZ() + t_.swimSurfaceDepth, reach = 300.0f;
     const auto wall = col_.sweepSphere(s_.pos, t_.swimRadius, forward() * reach);
     if (!wall || std::abs(wall->normal.z) > 0.5f || glm::dot(xy(wall->normal), xy(forward())) > -0.5f) return false;
     const vec3 edge = wall->point;
@@ -1218,7 +1221,9 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         if (dropPressed) { s_.state = State::SwimDive; s_.pitch = 0; play("swim_surfacedive", false); break; }
         if (wantsMove) {
             s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
-            if (s_.state == State::SwimTread) { s_.state = State::SwimSurface; play("swim_surface", true); }
+            // swim_sub as under water (tru.exe has one SwimState for both): Lara's spine in tru.exe swimming at the
+            // surface fits swim_sub at the root (rms 4), swim_surface only 28 lower than it plays (docs/GAMEPLAY.md).
+            if (s_.state == State::SwimTread) { s_.state = State::SwimSurface; play("swim_sub", true); }
         } else if (s_.state == State::SwimSurface) {
             s_.state = State::SwimTread;
             play("swim_surfaceidle", true);

@@ -131,7 +131,8 @@ struct MeshOpacity { uint32_t mesh = 0; float opacity = 1; };
 // portalClips). Shadow / ray-traced passes ignore it.
 struct UnitClip { uint32_t firstMesh = 0, meshCount = 0; float rect[4] = {-1, -1, 1, 1}; };
 // Under water (docs/RENDERING.md "Under water"): the camera unit's look for this frame, filled by the app from
-// scene::Environment while the camera is below Lara's water surface or less than 600 units above it (tru.exe 0x6D9DA0).
+// scene::Environment every frame (Enhanced water tints its surface by `pass`); strength / fog only while the camera is
+// below Lara's water surface or less than 600 units above it (tru.exe 0x6D9DA0).
 struct Underwater {
     float strength = 0;    // full-screen pass alpha scale: 1 below the surface, 1 - height / 600 above; 0 = no pass
     float pass[2][4] = {}; // scene::Environment::waterPass (surface rgb + alpha at the eye, deep rgb + full-fog distance)

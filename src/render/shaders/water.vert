@@ -10,6 +10,7 @@ layout(binding = 4) uniform Water {
     vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
     vec4 ripple; vec4 rippleInfo; vec4 ambient;
     vec4 detail; vec4 lamps[4]; vec4 lampColor[4]; vec4 haze; vec4 mist; vec4 weather; vec4 volumes[16];
+    vec4 filters[9]; uvec4 filterLut[640]; vec4 waterPass[3]; // as water.frag (GL links blocks across stages)
 } w;
 #ifdef VULKAN
 layout(set = 0, binding = 3) uniform sampler2D uRipples;

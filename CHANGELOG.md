@@ -4,9 +4,16 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
-## [Unreleased]
+## [0.14.0] - 2026-10-30
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
 
 - `tools/release.sh` no longer runs the test suite by default (releases are hand-tested; `--test` runs the full Debug + ASan ctest) and reuses an incremental Release build in `build-release/appimage`: the AppImage step takes ~11 s after a small change instead of the ~35 min test run plus a full rebuild.
+- Enhanced water: objects just under the surface (the yacht hull, sharks, Lara's body) no longer show as pale flat silhouettes; foam and the reflection fade now only act where something actually crosses the surface.
+- Enhanced water takes each level's own water colours and clarity from the original (Coastal Thailand is clear again: the reef and bed show through a light teal tint) and submerged objects darken with depth like the original's.
+- Enhanced water: swimming Lara no longer drags a fan of straight bright streaks (a Mach cone: she swims faster than the ripples travel) that read as an upright halo; each stroke now leaves a flat ring spreading on the surface, and ripple crests shade in proportion to their size.
+- Lara gets wet like in the original: swimming soaks her (darker skin and clothes with a wet sheen, Original shaders) and out of the water she dries from the head down over about three minutes, the feet last (tru.exe's wetness regions, drying rate and bone chains).
+- Swimming Lara sits in the water like in the original instead of floating on it: her root rides 44 units under the wave surface (measured in tru.exe) and surface swimming plays the original's level stroke (`swim_sub`) rather than the high crawl, so only her head and shoulders break the surface, treading or swimming.
 
 ## [0.13.0] - 2026-10-30
 

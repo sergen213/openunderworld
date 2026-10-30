@@ -134,7 +134,8 @@ bool crosses(const Shape& s, vec3 pos, vec3 rot, vec3 a, vec3 b);
 enum class Kind : uint8_t { Volume, Plane, Switch, Door, Block, Scripted };
 enum class EventKind : uint8_t { Enter, FirstIn, In, Out, Cross, Use, Activate, Start, Main, Checkpoint, CinematicEnd,
                                  PlayerMessage, // target = INSTANCE_Post message id sent to Lara
-                                 Autosave };    // uisavemenu 5: the scripts request an autosave
+                                 Autosave,      // uisavemenu 5: the scripts request an autosave
+                                 Wetness };     // larabase 67 / 68: target 1 = soak Lara, 0 = dry (game::Wetness)
 const char* eventName(EventKind k);
 struct Event {
     EventKind kind;

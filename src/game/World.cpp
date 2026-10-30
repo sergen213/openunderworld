@@ -399,6 +399,10 @@ void World::tick(const Actions& input) {
     tickCombat(a, dt); // after the camera: free aim follows it
     tickGadgets(a, dt); // flashlight, grenades (Gadgets.cpp)
     tickAir(dt);
+    // Swimming soaks every region (tru.exe under Wine: mask 0x7F while she swims); out of the water the mask is clear
+    // and she dries (Wetness::tick).
+    wetness_.water = player_.state().water >= 0 ? 0x7F : 0;
+    wetness_.tick(dt * 30.0f);
     water_.tick(*this, dt); // after combat: this tick's shots make rings
     updatePose(dt, false);
     ++ticks_;
@@ -429,6 +433,36 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     float f = 1;
     if (auto h = col_.sweepSphere(cam_.target, kProbeRadius, back)) f = std::max(0.0f, h->t - 2.0f / kDistance);
     cam_.position = cam_.target + back * f;
+}
+
+// tru.exe 0x6FF200 (region soak / dry, no rain or mud) + 0x6ED3F0 (clamp) + 0x6ED130 (bone chains, in its call order).
+void Wetness::tick(float t) {
+    for (int i = 0; i < kRegions; ++i)
+        region[size_t(i)] = std::clamp(region[size_t(i)] + ((water >> i & 1) ? kSoak : -kDry) * t, 0.0f, kMax);
+    // Bones of a chain take the region value when it is higher; a wetter bone dries (kDry) only once the bone before it
+    // dropped below 1 - 1 / (5 n), so drying runs down the chain. Returns the last bone's value before this tick.
+    auto chain = [&](std::initializer_list<uint8_t> bones, int r, float prev) {
+        const float start = 1.0f - 1.0f / (float(bones.size()) * 5.0f), v = region[size_t(r)];
+        for (const uint8_t b : bones) {
+            float& w = bone[b];
+            const float cur = w;
+            if (cur <= v || (prev < start && prev < cur && (w -= kDry * t) < v)) w = v;
+            prev = cur;
+        }
+        return prev;
+    };
+    // Bone lists 0x85DC60.. (Lara's skeleton): head/face, spine, pelvis, legs, arms, hands.
+    const float head = chain({17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
+                              35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51}, 6, 0.0f);
+    const float hips = chain({1, 2, 3}, 4, chain({16, 52, 77, 102, 104, 103, 105, 15, 14}, 5, head));
+    chain({9, 10}, 1, hips);
+    const float thighs = chain({4, 5}, 1, hips);
+    chain({11, 12, 13}, 1, thighs);
+    chain({6, 7, 8}, 1, thighs);
+    chain({78, 79, 97, 98, 99, 100, 101}, 3, head);
+    const float arm = chain({53, 54, 72, 73, 74, 75, 76}, 3, head);
+    chain({80, 81, 82, 84, 87, 90, 93, 83, 85, 88, 91, 94, 86, 89, 92, 95}, 2, arm);
+    chain({55, 56, 57, 59, 62, 65, 68, 58, 60, 63, 66, 69, 61, 64, 67, 70}, 2, arm);
 }
 
 // Oxygen: the head is under water in the submerged swim states (root + 150 = head height [I]).

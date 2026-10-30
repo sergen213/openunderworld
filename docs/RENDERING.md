@@ -258,10 +258,20 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
 - Improved: both marches (`ouTrace`) are 14 quadratic steps + 5 binary refinements, bounded by the screen, and fail
   when the crossing lies far behind the surface found (a foreground object in front of the ray); a traced refraction
   that fails, leaves the screen or lands above the water falls back to Simple (normal offset × (bed − surface) /
-  bed distance; straight through when that lands on the shore). In-scattering from teal (shallow beds) to deep blue
-  (> 12 m) instead of black deep water; octaves finer than ~4 pixels fade to their mean and all slopes fade with
+  bed distance; straight through when that lands on the shore). Absorption and in-scattering follow the unit's own
+  water (`scene::Environment::waterPass`, tru.exe's under-water pass material, handed over every frame, not only under
+  water): extinction per unit `(1 − 0.85 × surface colour) × 30 / full-fog distance` (Coastal Thailand: red 1/e at
+  ~13 m, green ~23 m, the reef ~10 m down shows through a light teal; the North Sea ~5 m), in-scatter of the deep
+  colour (one colour, not keyed on the depth buffer, so a shark or hull nearer than the bed is no flat pale cutout),
+  and downwelling: what is seen under the surface also dims by its
+  depth below it, so submerged hulls and rocks darken as in the original (units without the material use
+  l2_cliffclimb's look); octaves finer than ~4 pixels fade to their mean and all slopes fade with
   distance (60 m), the GGX glint widening instead (α 0.04 → 0.10); sun glint occluded screen-space and nearby lamps
   glint (water detail); soft waterline (the bed shows through the last 6 units); lacy foam (edge noise squared).
+  Foam, the reflection fade and the soft waterline only act at contact lines: the bed's screen-derivative slope
+  gives the horizontal distance to the contact (depth / slope), and flat surfaces just under the water (a hull
+  bottom, a shark, Lara's body) or object outlines over a deeper bed count as a metre deeper, so they keep the
+  normal reflection instead of showing as pale cutouts.
   From below: Fresnel on the air side inside the window (refracted ray traced into the scene above, else the sky),
   total internal reflection outside it (SSR of the water below, else the deep colour); the post pass's under-water
   fog stops at the surface for what is seen through it (`ouWaterPass`, Enhanced only).
@@ -276,8 +286,9 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   follows), then the Godot height layers (± 0.06 m) and on seas afl's waves (12 iterations, 0.45 m) centred on that
   surface but clamped to the rest plane — the original's own crest bound — so the yacht deck stays above the drawn
   sea; then the wave field's height. Coarse TRU meshes show it only at their few interior vertices.
-- Interactive waves (ours, `game::WaveField`): bend the normals, displace, light crests / darken troughs by the
-  curvature and foam splash craters and sharp crests (unchanged from the Joan port, docs/RESEARCH.md §8.7).
+- Interactive waves (ours, `game::WaveField`): bend the normals, displace, light crests / darken troughs in
+  proportion to the curvature (a splash crater is a bright line, a swim-stroke ring a tint) and foam splash craters
+  and sharp crests (the Joan port, docs/RESEARCH.md §8.7).
 - Splash droplets (ours): camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
 - Underwater: the original's under-water look ("Under water" below) in both qualities; Enhanced adds faint caustics
   on the submerged bottom.

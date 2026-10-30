@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <tuple>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -261,27 +262,27 @@ Prepared prepare(const scene::SceneData& scene, bool vulkan) {
     Prepared out;
     std::unordered_map<uint64_t, const scene::ShaderCode*> code;
     for (const auto& c : scene.shaders) code.emplace(c.hash, &c);
-    std::map<uint64_t, sm3::Glsl> cache;
-    auto glsl = [&](uint64_t hash, bool pixel, std::string& why) -> const sm3::Glsl* {
-        if (auto it = cache.find(hash); it != cache.end()) return it->second.error.empty() ? &it->second : (why = it->second.error, nullptr);
+    std::map<std::pair<uint64_t, bool>, sm3::Glsl> cache; // (hash, Material::skinParams)
+    auto glsl = [&](uint64_t hash, bool pixel, std::string& why, bool skinParams = false) -> const sm3::Glsl* {
+        if (auto it = cache.find({hash, skinParams}); it != cache.end()) return it->second.error.empty() ? &it->second : (why = it->second.error, nullptr);
         const auto c = code.find(hash);
         if (c == code.end() || c->second->pixel != pixel) { why = "program not loaded"; return nullptr; }
         sm3::Glsl g;
         try {
             const auto prog = formats::d3d9::parse(std::span<const uint8_t>(c->second->bytecode));
-            g = sm3::translate(prog, vulkan);
+            g = sm3::translate(prog, vulkan, skinParams);
         } catch (const std::exception& e) {
             g.error = e.what();
         }
-        auto& slot = cache[hash] = std::move(g);
+        auto& slot = cache[{hash, skinParams}] = std::move(g);
         if (!slot.error.empty()) { why = slot.error; return nullptr; }
         return &slot;
     };
-    std::map<std::pair<uint64_t, uint64_t>, int> pairs;
+    std::map<std::tuple<uint64_t, uint64_t, bool>, int> pairs;
     for (const auto& m : scene.materials) {
         out.materials[m.id] = &m;
         std::string why;
-        const sm3::Glsl* v = m.vertexShader ? glsl(m.vertexShader, false, why) : nullptr;
+        const sm3::Glsl* v = m.vertexShader ? glsl(m.vertexShader, false, why, m.skinParams) : nullptr;
         const sm3::Glsl* p = m.pixelShader ? glsl(m.pixelShader, true, why) : nullptr;
         if (!v || !p) {
             ++out.fallback;
@@ -289,7 +290,7 @@ Prepared prepare(const scene::SceneData& scene, bool vulkan) {
                                    (why.empty() ? "no composite programs" : why) + ")");
             continue;
         }
-        auto [it, fresh] = pairs.try_emplace({m.vertexShader, m.pixelShader}, int(out.programs.size()));
+        auto [it, fresh] = pairs.try_emplace({m.vertexShader, m.pixelShader, m.skinParams}, int(out.programs.size()));
         if (fresh) out.programs.push_back({m.vertexShader, m.pixelShader, *v, *p});
         out.materialProgram[m.id] = it->second;
         ++out.translated;

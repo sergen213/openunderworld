@@ -26,6 +26,8 @@ layout(binding = 4) uniform Water {
     vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
     vec4 ripple; vec4 rippleInfo; vec4 ambient;
     vec4 detail; vec4 lamps[4]; vec4 lampColor[4]; vec4 haze; vec4 mist; vec4 weather; vec4 volumes[16];
+    vec4 filters[9]; uvec4 filterLut[640]; // (unused here; the post pass's screen filters)
+    vec4 waterPass[3]; // the unit's water look: [0] surface rgb, [1] deep rgb + full-fog distance (ouWaterLook)
 } w;
 #ifdef VULKAN
 layout(set = 0, binding = 1) uniform sampler2D uScene;
@@ -135,10 +137,8 @@ float ouSea(vec2 p, float t, int iterations) {
 const float kPi = 3.14159265;
 const float kIor = 1.33;                       // Godot IOR (air 1.0)
 const float kF0 = 0.02;                        // ((1.33 - 1) / (1.33 + 1))^2
-const vec3 kAbsorb = vec3(0.50, 0.86, 0.90);   // transmittance per metre (Godot absorptioncolour): red goes first
-const vec3 kShallow = vec3(0.07, 0.40, 0.38);  // in-scatter over a shallow bed: Mediterranean / Andaman teal
-const vec3 kDeep = vec3(0.008, 0.07, 0.14);    // ... over deep water
-const vec3 kCrest = vec3(0.10, 0.45, 0.40);    // sea crest translucency
+// Default water look where the unit has none (scene::Environment::waterPass[1].w = 0): l2_cliffclimb's (Coastal Thailand).
+const vec4 kSurfaceDefault = vec4(0.447, 0.780, 0.792, 0.4), kDeepDefault = vec4(0.216, 0.439, 0.427, 100000.0);
 const float kEdge = 0.15 * kM;                 // Godot edge_size (0.1 m)
 
 vec3 toLinear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
@@ -236,16 +236,30 @@ float ggxSpec(vec3 n, vec3 v, vec3 l, float a) {
     float nl = max(dot(n, l), 0.0), nv = max(dot(n, v), 1e-3);
     return d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * nl * schlick(dot(v, h));
 }
-// Water transmittance and in-scatter over `path` units, the scatter colour by the bed's depth.
-vec3 ouAbsorb(vec3 below, float path, float bedDepth, vec3 light) {
-    vec3 tr = pow(kAbsorb, vec3(min(path, 1e5) / kM));
-    vec3 scatter = mix(kShallow, kDeep, smoothstep(0.3 * kM, 12.0 * kM, bedDepth)) * light;
-    return below * tr + scatter * (1.0 - tr);
+// The unit's water look (WaterBlock waterPass = scene::Environment::waterPass, tru.exe's under-water pass material):
+// in-scatter of its deep colour, extinction per unit from its surface colour and full-fog distance with
+// red going first (1 - 0.85 x surface colour: Thailand's teal ~13 m to 1/e for red, ~23 m for green, so its reef ~10 m
+// down shows as in the original; the North Sea ~5 m).
+vec3 gSurf, gDeep, gSigma;
+void ouWaterLook() {
+    bool unit = w.waterPass[1].w > 0.0;
+    vec4 sf = unit ? w.waterPass[0] : kSurfaceDefault, dp = unit ? w.waterPass[1] : kDeepDefault;
+    gSurf = toLinear(sf.rgb), gDeep = toLinear(dp.rgb);
+    gSigma = (1.0 - 0.85 * gSurf) * (30.0 / dp.w);
+}
+// Water transmittance and in-scatter over `path` units; `down`: how far the seen point lies under the surface, dimming
+// the light that reached it (downwelling: submerged hulls darken with depth). The in-scatter colour is one colour, not
+// keyed on the depth buffer: a shark or hull nearer than the bed would otherwise take a paler colour and show as a flat
+// cutout; shallow beds read lighter by their own transmitted colour.
+vec3 ouAbsorb(vec3 below, float path, float down, vec3 light) {
+    vec3 tr = exp(-gSigma * min(path, 1e5));
+    return below * tr * exp(-gSigma * min(down, 1e5)) + gDeep * light * (1.0 - tr);
 }
 
 void main() {
     vec3 p = vWorld;
     float t = w.eye.w, dist = distance(w.eye.xyz, p);
+    ouWaterLook();
     float footprint = length(fwidth(p.xy)); // world units per pixel
     bool detail = w.detail.x > 0.5, sea = vSea > 0.5;
 
@@ -275,6 +289,15 @@ void main() {
     bool open = sd0 >= 0.999999;
     vec3 bed0 = ouWorld(uv, sd0);
     float depth = open ? 1e5 : max(p.z - bed0.z, 0.0); // perpendicular water depth under this pixel
+    // Foam, the reflection fade and the soft waterline belong at contact lines (a shore or a hull side rising through the
+    // surface), not over a flat hull bottom or a swimmer lying a few units under it. The bed's slope from its screen
+    // derivatives gives the horizontal distance to the contact (depth / slope); a jump in depth across a pixel is an
+    // object's outline over a deeper bed, not a slope. Non-contacts count as a metre deeper.
+    vec3 bx = dFdx(bed0), by = dFdy(bed0);
+    vec3 bn = cross(bx, by);
+    float run = depth * abs(bn.z) / max(length(bn.xy), 1e-3 * abs(bn.z) + 1e-6);
+    bool jump = max(length(bx), length(by)) > 16.0 * footprint; // also a grazing wall: only matters off the waterline
+    float cdepth = open ? depth : depth + kM * (jump ? smoothstep(0.02 * kM, 0.1 * kM, depth) : smoothstep(0.5 * kM, 1.5 * kM, run));
     vec3 light = toLinear(min(w.ambient.rgb + w.sunColor.rgb * max(w.sunDir.z, 0.0), vec3(1.0)));
     vec3 fogLin = toLinear(w.fogColor.rgb);
     // Sky for reflection misses: the fog colour, brightening toward the horizon as afl_ext's sky (x (1 + (1 - up)^3),
@@ -305,9 +328,11 @@ void main() {
             if (sd < 0.999999 && bed.z > p.z) ruv = uv, sd = sd0, bed = bed0; // the offset reached the shore
             path = sd >= 0.999999 ? 1e5 : distance(p, bed);
         }
-        vec3 refr = ouAbsorb(toLinear(textureLod(uScene, ruv, 0.0).rgb), path, depth, light);
+        float rsd = textureLod(uDepth, ruv, 0.0).r;
+        float down = rsd >= 0.999999 ? 1e5 : max(p.z - ouWorld(ruv, rsd).z, 0.0);
+        vec3 refr = ouAbsorb(toLinear(textureLod(uScene, ruv, 0.0).rgb), path, down, light);
         // Sea: afl's subsurface scattering, brighter where the wave stands higher (thin crest water lit through).
-        if (sea) refr += mix(vec3(0.0293, 0.0698, 0.1717), kCrest, 0.5) * light * (1.6 * seaH * (0.4 + 0.6 * pow(1.0 - cosI, 2.0)));
+        if (sea) refr += gDeep * light * (1.6 * seaH * (0.4 + 0.6 * pow(1.0 - cosI, 2.0)));
 
         // ---- reflection: traced SSR, the sky where it misses or fades at the screen border ----
         fresnel = schlick(cosI);
@@ -316,7 +341,7 @@ void main() {
             conf = ouEdgeFade(huv, 0.08) * (1.0 - smoothstep(0.6, 1.0, ht / (40.0 * kM)));
             refl = mix(sky, toLinear(textureLod(uScene, huv, 0.0).rgb), conf);
         }
-        float shore = smoothstep(0.0, 0.2 * kM, depth); // the reflection fades in off the waterline
+        float shore = smoothstep(0.0, 0.2 * kM, cdepth); // the reflection fades in off the waterline
         c = mix(refr, refl, clamp(fresnel * w.fogRange.w, 0.0, 1.0) * shore);
 
         // Sun glint (GGX; rougher far away, where the normals were faded) + on seas afl's sharp sun disc seen in the
@@ -334,18 +359,19 @@ void main() {
                 if (reach > 0.0)
                     c += toLinear(min(w.lampColor[i].rgb, vec3(1.0))) * (ggxSpec(n, v, L / ld, 0.12) * reach * reach * shore);
             }
-        // Wave-field crests catch light and troughs darken (curvature: fronts read as lines, sloshing stays a tilt).
-        float bend = -640.0 * wave.w, crest = sign(bend) * smoothstep(0.4, 3.0, abs(bend)) * shore;
+        // Wave-field crests catch light and troughs darken (curvature: fronts read as lines, sloshing stays a tilt),
+        // growing with the curvature: a splash's 45-unit crater (bend ~14) is a bright line, a stroke ring a tint.
+        float bend = -640.0 * wave.w, crest = sign(bend) * smoothstep(2.0, 20.0, abs(bend)) * shore;
         c = mix(c, crest > 0.0 ? mix(sky, fogLin, 0.5) : c * 0.5, 0.45 * abs(crest));
 
         // Edge foam (Godot: foam where the edge texture exceeds depth / edge_size) + the wave field's churn.
         float e = ouEdgeNoise(p.xy, t);
-        float foam = smoothstep(-0.05, 0.05, e * e - depth / kEdge); // squared: lace, not a solid band
+        float foam = smoothstep(-0.05, 0.05, e * e - cdepth / kEdge); // squared: lace, not a solid band
         float churn = max(smoothstep(25.0, 45.0, abs(wave.z)), smoothstep(0.02, 0.04, -wave.w));
         foam = max(foam, churn * smoothstep(0.3, 0.7, e));
         c = mix(c, light * 0.9, foam * 0.65);
         // Soft waterline (Godot foam_or_fade = fade): the bed shows through the last few units.
-        c = mix(toLinear(textureLod(uScene, uv, 0.0).rgb), c, smoothstep(0.0, 6.0, depth));
+        c = mix(toLinear(textureLod(uScene, uv, 0.0).rgb), c, smoothstep(0.0, 6.0, cdepth));
     } else {
         // ---- from below: Snell's window ----
         float sin2T = kIor * kIor * (1.0 - cosI * cosI);
@@ -363,10 +389,10 @@ void main() {
             }
         }
         // Total internal reflection: the water below by SSR, else the deep in-scatter colour.
-        vec3 tir = kDeep * light;
+        vec3 tir = gDeep * light;
         if (fresnel > 0.0 && ouTrace(p - vec3(0.0, 0.0, 2.0), r, 30.0 * kM, 2.0 * kM, huv, ht)) {
             conf = ouEdgeFade(huv, 0.08);
-            tir = mix(tir, ouAbsorb(toLinear(textureLod(uScene, huv, 0.0).rgb), ht, 1e5, light), conf);
+            tir = mix(tir, ouAbsorb(toLinear(textureLod(uScene, huv, 0.0).rgb), ht, 0.0, light), conf);
         }
         c = mix(window, tir, fresnel);
     }

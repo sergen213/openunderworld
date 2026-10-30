@@ -27,6 +27,9 @@ Material blob (MATERIALS.md) → libs: +0x28 depth-pass PS (4 slots), +0x2C shad
 VS slot bits [O by comparing variants]: 0–1 skinning (0 none, 1 weighted `SkinMatrices`, 2 rigid index), 3 depth output,
 5 composite (fog, `WorldToPSSM0`, world position), 6 material colour inputs, 7 no `NormalScaleOffset`.
 We use VS slot 0x20 (unskinned: CPU skinning feeds bind-pose-free vertices) else 0xA0, and PS slot 0 (no PSSM receive).
+Where the weighted-skin slot (0x21 / 0xA1) writes COLOR0 from the palette's 4th rows (`c[a0 + 88]`: per-bone wetness and
+dirt, GAMEPLAY.md "Wetness") the unskinned slot writes 0; such materials (`Material::skinParams`) are translated with
+COLOR0 = the vertex's color0, which ou-game's CPU skinning fills with the same weighted sum.
 
 ## Survey of the install (`ou-asset shaders <gameDir> all`, 2026-10-18) [O]
 

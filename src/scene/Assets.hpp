@@ -95,6 +95,10 @@ struct Material {
     uint8_t blendMode = 0;        // cdc blend mode (blob +0x38)
     uint8_t alphaThreshold = 0;   // blob +0x4C
     uint32_t flags = 0;           // blob +0x40 (0x04 = fogged: the VS gets fogScaleAndOffset)
+    // The skinned VS variant (slot 0x21) outputs COLOR0 = the weighted 4th skin-palette rows (c88 + 4 bone: per-bone
+    // wetness / dirt, tru.exe 0x5B60F0); our unskinned slot writes 0 there. Set: the translated VS takes COLOR0 from
+    // the vertex's color0 instead, which CPU skinning fills (docs/GAMEPLAY.md "Wetness").
+    bool skinParams = false;
 };
 
 // Point / spot light of a unit (0xE0-byte record + light DTP, tru.exe 0x5C6530 / PCRenderLight 0x50B910).

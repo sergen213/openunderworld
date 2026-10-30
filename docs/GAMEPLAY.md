@@ -129,8 +129,8 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Shimmy | `ledgeb_right` (227); left = played backwards | 21, 0.70 s | −X 4.3 → 200.2: **294 units/s** | yes |
 | ClimbUp | `ledgeb_climbup_fast` (221) | 23, 0.77 s | (52.5, −178.0, 644.1) | no |
 | SwimSplash (fall into water) | `swim_jump_land` (390) | 16, 1.10 s | none (standing → swim pose) | no |
-| SwimTread | `swim_surfaceidle` (386) | 24, 1.60 s | none; feet at −352, root = water surface | yes |
-| SwimSurface | `swim_surface` (379) | 19, 1.27 s | none (body horizontal at the root) | yes |
+| SwimTread | `swim_surfaceidle` (386) | 24, 1.60 s | none; feet at −352, root 44.1 under the water surface | yes |
+| SwimSurface | `swim_sub` (370), as under water (`swim_surface` (379) is not what tru.exe shows, see "Water") | 21, 1.40 s | none | yes |
 | (swim speed source) | `swim_surfaceidle_to_swim` (385) | 5, 0.37 s | −Y 206.1 | — |
 | SwimDive | `swim_surfacedive` (382) | 18, 1.20 s | (5.0, −112.3, −666.8) | no |
 | SwimUnder idle | `swim_submerged_idle` (199) | 47, 1.57 s | none | yes |
@@ -510,7 +510,12 @@ outfit (the original only reads `+0x294` on a level load).
 - In water: the water probe box overlaps a volume, the feet are below its surface and there is no floor within
   `swimDepth` (400) below the surface. From the air → SwimSplash (plunge velocity damped by drag) → Surfacing (rise at
   swim speed) → SwimTread. From the ground (standing on a deep floor) → Surfacing.
-- Surface (SwimTread / SwimSurface): root on the surface; the stick swims up to 1348.6 units/s (ramping, Numbers) along the heading, which turns
+- Surface (SwimTread / SwimSurface): root **44.1** under the wave surface in both [O-runtime: tru.exe under Wine,
+  l2_cliffclimb sea, 2026-10-30: Lara's z fits the player's water top (player +0x8E0, −18895.8 there) + the 0x69DA80
+  waves − 44.1 at rms < 1 treading and swimming at full speed; `swimSurfaceDepth`]. Treading plays
+  `swim_surfaceidle` (its bones fit tru.exe's at rms 1.2, same root); swimming plays `swim_sub` [O-runtime: tru.exe's
+  spine bones fit `swim_sub` at the root at rms 4 and `swim_surface` only 28 below its root at rms 8; tru.exe has one
+  SwimState for surface and under water, RTTI], so only her head and shoulders break the surface. The stick swims up to 1348.6 units/s (ramping, Numbers) along the heading, which turns
   at turnRate; drop = SwimDive (`swim_surfacedive` root motion, 667 down); jump facing a wall whose top is 50..400
   above the water = SwimClimbOut; floor within 400 below = stand up (Idle).
 - Under water (SwimUnder): stick swims horizontally, jump / drop held swim up / down; the swim direction's pitch turns
@@ -534,7 +539,9 @@ outfit (the original only reads `+0x294` on a level load).
   hats (zero volume, so the level never creeps). Units: Joan's lengths × `kWaterScale` = 6.4 (body heights: Lara
   ~512, a Joan soldier ~80), so cells are 25.6 units (a 6554-unit window), wave speed 512 units/s (CFL 0.33 as in
   Joan), splash crater 45 units deep / 64 wide; slopes, damping and times are Joan's. Sources: a body with its feet
-  in the water and not under it wades (bow mound + stern trough, the wake; standing, a faint bob every 1.2–1.5 s);
+  in the water and not under it wades (bow mound + stern trough, the wake; standing, a faint bob every 1.2–1.5 s).
+  A body faster than the waves (swimming Lara, 1349 units/s) would trail a Mach cone, so it is no wall and has no
+  continuous wake; it rings the water (strength 0.6) every 0.4 s instead [I], leaving flat rings behind it;
   Lara's entry splash (strength from the plunge speed) and climb-out; hitscan rays crossing the surface
   (`CombatState::shots`) and an enemy dying in the water splash as a projectile / body (strength 1); a dynamic body
   falling through the surface 0.8; droplets falling back leave pinpricks. `World::splashWater` takes other impacts.
@@ -544,6 +551,34 @@ outfit (the original only reads `+0x294` on a level load).
   Godot / afl_ext surface, which layers the field's height and slopes on its own waves); Original water does not use
   them. The drawn waves are centred on the gameplay surface (the original sea waves) and never rise above the rest plane. Tests `WaveField.*` (Joan's `water_waves_test` in TRU units: superposition,
   shore reflection, bodies as obstacles, damping, scrolling, wake height) and `Game.Water*`.
+
+### Wetness (`game::Wetness`, `World::wetness()`)
+
+- tru.exe [O: decomp] keeps one wetness object (global 0xFADF98, 0xA70 bytes, built by 0x6FF1E0): wetness of seven
+  body regions at +0x00, dirt at +0x1C, region masks +0x38 (in water), +0x3C (in mud), +0x40 (soaking slowly), rain
+  +0x44, the dirt colour +0x50 (PS InstanceParams 0 = c132, starts (0.625, 0.5, 0.359, 1), eases to the unit's colour
+  bytes while muddy) and per-bone vec4 (wetness, dirt) from +0x60. The game loop ticks it (0x5DFF0A → 0x709D10 →
+  0x6FF200, `timeMult` frames): a region in water gains +0xB84 per frame (lara.drm object data: 1, so at once) and loses
+  dirt at +0xB80 (0.05); else it dries at +0xB78 (0.0002: 1 → 0 in 5000 frames, 167 s); 0x6ED3F0 clamps to +0xB70 /
+  +0xB74 (1, 1). 0x6ED130 then walks bone lists (0x85DC60.., Lara's skeleton): head and face 17–51 (region 6), spine
+  and neck 14–16, 52, 77, 102–105 (5), pelvis 1–3 (4), legs 4–13 (1), arms 53/54/72–76 and 78/79/97–101 (3), fingers
+  55–70 and 80–95 (2); region 0 has no bones. A bone takes its region's value when that is higher; a wetter bone dries
+  (same rate) only once the bone before it in the chain fell below 1 − 1/(5 n), so drying runs from the head down and the
+  feet stay wet longest. 0x5B60F0 copies (wetness, dirt) into the model instance's per-bone rows, uploaded as the 4th
+  row of every skin-palette bone (`SkinMatrices` c88 + 4 i, 0x50F0E0); Lara's skinned VS (slot 0x21) blends them into
+  COLOR0 and her PS (lara.drm lib 25..) darkens the diffuse by `c110.y × wet` and adds a wet specular / environment
+  sheen (`× c104`) masked by `s9` and the setup map; dirt lerps the albedo to c132.
+- The region masks come from INSTANCE message 0x641 (handler 0x7686F0 → 0x6ED050: 1 = all regions, 2–8 one region,
+  9–16 the same for mud, 17 slow soak, 0 / other clear). Read live in tru.exe under Wine (l2_cliffclimb sea, 2026-10-30):
+  mask 0x7F and every region 1.0 while she swims. larabase 67 (0x778140 → 0x6ED510) soaks every region, 68 (0x778150 →
+  0x6ED460) resets wetness and dirt; the chapter start cinematics run 68.
+- Ours: `World::tick` sets the mask to 0x7F while Lara swims (`PlayerState::water` ≥ 0) and clears it otherwise [I:
+  the poster of 0x641 is data we have not traced], then ticks `Wetness` with the same constants, bone lists and order;
+  script events `Wetness` run 67 / 68. ou-game writes the weighted bone wetness into each skinned vertex's color0 (the
+  sum tru.exe's VS forms) and translates the materials whose skinned VS reads the palette's 4th row
+  (`scene::Material::skinParams`, 7 of lara.drm's 25) with COLOR0 taken from that attribute (`sm3::translate`
+  `colorFromVertex`; formats/SHADERS.md). Not modelled: dirt / mud and its colour, rain soaking (0x52E180), partial
+  wetness while wading; the generic (non-original) shading shows no wetness. Test `Game.WetnessSoaksAndDries`.
 
 ## Free climbing (src/game/Climb.cpp)
 

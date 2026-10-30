@@ -73,8 +73,9 @@ struct Glsl {
     bool readsDepth = false;     // PS reads DepthToW c77 (decodes the depth buffer; original::screenSamplers)
 };
 
-// `vulkan` only selects the #define in the prelude; the body is identical.
-Glsl translate(const formats::d3d9::Program& p, bool vulkan);
+// `vulkan` only selects the #define in the prelude; the body is identical. `colorFromVertex` (VS, scene::Material::
+// skinParams): the COLOR0 output is the vertex's color0 attribute instead of what the program writes.
+Glsl translate(const formats::d3d9::Program& p, bool vulkan, bool colorFromVertex = false);
 
 // GLSL -> SPIR-V with libshaderc (target Vulkan 1.3, or OpenGL 4.5 to validate the GL flavour offline).
 // Empty result + `error` on failure. Thread-safe.

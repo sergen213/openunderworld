@@ -269,6 +269,7 @@ void World::crossPortals(vec3 from, vec3 to) {
 void World::touchCheckpoints() {
     for (const auto& e : script_.events()) {
         if (e.kind == script::EventKind::Autosave) ++autosaveRequests_;
+        if (e.kind == script::EventKind::Wetness) e.target ? wetness_.soak() : wetness_.reset();
         if (e.kind == script::EventKind::Checkpoint)
             if (const auto* o = script_.find(e.target)) {
                 const CheckpointRef next{o->unit, o->uid};

@@ -48,7 +48,8 @@ public:
     // off is taken evenly off the other cells.
     void kick(vec2 p, float amplitude, float sigma);
     // A body in the water moving at `velocity` (units/s) over dt: a wall for the next step() (waves scatter around it)
-    // and, moving, it heaps water up ahead and leaves a trough behind (the wake).
+    // and, moving, it heaps water up ahead and leaves a trough behind (the wake). Bodies at kSpeed or faster are
+    // ignored (their wake would be a Mach cone; WaterSim rings them per stroke).
     void wade(vec2 p, vec2 velocity, float dt);
 
     float height(vec2 p) const; // the cell holding p, 0 outside the window

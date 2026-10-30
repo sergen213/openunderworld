@@ -26,8 +26,11 @@ constexpr float kViscosity = 0.005f;
 // the cells they step into, and in a closed pool nothing else would ever drain the offset that leaves.
 constexpr float kRelax = 1e-4f;
 // Wading: body radius and the wake, a bow mound / stern trough pair (two kicks of width kWakeSigma just outside the
-// body) deepened by kWake per unit walked each step, the speed capped at kMaxWade (a teleport is no sprint).
-constexpr float kLegs = 10.0f * S, kWakeSigma = 6.0f * S, kWake = 0.3f, kMinWade = 30.0f * S, kMaxWade = 500.0f * S;
+// body) deepened by kWake per unit walked each step. A body faster than the waves (Lara swims at 1349 units/s, the
+// waves run at 512) would trail a Mach cone instead: two straight crests fanning out behind it. It is no wall and
+// leaves no continuous wake; it rings the water once per stroke / step (kStroke s, ring strength kStrokeRing) [I].
+constexpr float kLegs = 10.0f * S, kWakeSigma = 6.0f * S, kWake = 0.3f, kMinWade = 30.0f * S;
+constexpr float kStroke = 0.4f, kStrokeRing = 0.6f;
 constexpr float kLaraHeight = 512.0f;
 } // namespace
 
@@ -121,11 +124,12 @@ void WaveField::kick(vec2 p, float amplitude, float sigma) {
 }
 
 void WaveField::wade(vec2 p, vec2 velocity, float dt) {
-    bodies_.push_back({p, kLegs});
     const float speed = glm::length(velocity);
+    if (speed >= kSpeed) return; // outruns its waves: WaterSim rings it per stroke
+    bodies_.push_back({p, kLegs});
     if (speed < kMinWade) return;
     const vec2 ahead = velocity / speed * (kLegs + kWakeSigma);
-    const float push = kWake * std::min(speed, kMaxWade) * dt;
+    const float push = kWake * speed * dt;
     kick(p + ahead, -push, kWakeSigma);
     kick(p - ahead, push, kWakeSigma);
 }
@@ -281,14 +285,17 @@ void WaterSim::tick(const World& w, float dt) {
         return !hit || hit->dynamic >= 0;
     });
 
-    // A body with its feet in the water and not under it: an obstacle; moving, a wake; standing, a faint bob every
-    // 1.2..1.5 s (phased per body so a group does not pulse together).
+    // A body with its feet in the water and not under it: an obstacle; moving, a wake (faster than the waves: a ring
+    // per stroke); standing, a faint bob every 1.2..1.5 s (phased per body so a group does not pulse together).
     const auto wade = [&](vec3 p, vec3 last, float height, float& bob, float phase) {
         const float h = waterAt(vec2(p));
         if (h == kNoWater || p.z > h + 2.0f * S || p.z <= h - height) return;
         const vec2 vel = dt > 0 ? vec2(p - last) / dt : vec2(0);
+        const float speed = glm::length(vel);
         field_.wade(vec2(p), vel, dt);
-        if (glm::length(vel) > kMinWade) bob = time_;
+        if (speed >= WaveField::kSpeed) {
+            if (time_ - bob >= kStroke) ripple(vec3(vec2(p), h), kStrokeRing), bob = time_;
+        } else if (speed > kMinWade) bob = time_;
         else if (time_ - bob >= 1.2f + 0.3f * phase) ripple(vec3(vec2(p), h), 0.15f), bob = time_;
     };
     wade(ps.pos, prev.pos, kLaraHeight, bob_, 0.0f);

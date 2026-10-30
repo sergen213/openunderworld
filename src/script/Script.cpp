@@ -83,7 +83,7 @@ struct Views {
 constexpr uint32_t kAnchorBit = 0x80000000u; // uberobjectbase 2 result: Object value bits = this | HInfo marker id
 
 const char* kEventNames[] = {"enter", "firstin", "in", "out", "cross", "use", "activate", "start", "main", "checkpoint",
-                             "cinematicend", "playermessage", "autosave"};
+                             "cinematicend", "playermessage", "autosave", "wetness"};
 
 glm::mat3 rotation(vec3 r) { // Rx(x) * Ry(y) * Rz(z) (cdc_Matrix_Build_XYZOrder 0x49D500, LEVELS.md)
     return glm::mat3(glm::rotate(glm::mat4(1), r.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), r.y, {0, 1, 0}) *
@@ -1371,11 +1371,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // 16 (0x79A090 -> 0x779480): hide (false) / show the two models of a weapon slot (flag 0x800); cinematics show
             // her weapons again at their end. Ours draws weapons from the combat state [I].
             if (!std::strcmp(name, "larabase") && nc.function == 16 && nc.args.size() == 2) return true;
-            // 30 (0x777CE0) posts 0x146 to the slot-6 object; 68 (0x778150 -> 0x6ED460) and 67 (0x778140 -> 0x6ED510) reset
-            // Lara state blocks (67: seven timestamps from a global clock, seven counters zeroed); they run around a
-            // cinematic [U: no effect on ours].
-            if (!std::strcmp(name, "larabase") && (nc.function == 30 || nc.function == 67 || nc.function == 68) && nc.args.empty())
+            // 30 (0x777CE0) posts 0x146 to the slot-6 object [U: no effect on ours]. 67 (0x778140 -> 0x6ED510) soaks Lara:
+            // every wetness region at its maximum, dirt 0; 68 (0x778150 -> 0x6ED460) resets wetness and dirt (they run
+            // around a cinematic; docs/GAMEPLAY.md "Wetness").
+            if (!std::strcmp(name, "larabase") && (nc.function == 30 || nc.function == 67 || nc.function == 68) && nc.args.empty()) {
+                if (nc.function != 30) events_.push_back({EventKind::Wetness, source, nc.function == 67, tick_});
                 return true;
+            }
             // 31 (0x7975F0 -> 0x776EF0) posts INSTANCE message 0xC (!arg) to Lara; 61 (0x79A590 -> 0x778060) copies a global
             // clock into Lara +0x6DC and zeroes +0x6E0. The endgame warps (340 / 342 end handlers) run them [U: no effect on ours].
             if (!std::strcmp(name, "larabase") && ((nc.function == 31 && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))

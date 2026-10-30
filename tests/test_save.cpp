@@ -579,7 +579,8 @@ TEST(StreamReal, YachtDecksAboveSea) {
         const auto& p = w.player().state();
         if (p.state != game::State::SwimTread) continue;
         const auto& sea = w.collision().markup[size_t(p.water)];
-        EXPECT_NEAR(p.pos.z, game::waterSurface(sea, glm::vec2(p.pos), double(w.ticks() - 1) * game::kTickSeconds), 1.0f);
+        EXPECT_NEAR(p.pos.z + w.player().tuning().swimSurfaceDepth,
+                    game::waterSurface(sea, glm::vec2(p.pos), double(w.ticks() - 1) * game::kTickSeconds), 1.0f);
         heights.insert(int(p.pos.z / 10));
     }
     EXPECT_GT(heights.size(), 3u) << "she rides the waves";

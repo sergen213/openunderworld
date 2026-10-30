@@ -77,7 +77,7 @@ int attributeLocation(Usage u, int index) {
 
 class Translator {
 public:
-    Translator(const Program& p, Glsl& out) : p_(p), out_(out) {}
+    Translator(const Program& p, Glsl& out, bool colorFromVertex) : p_(p), out_(out), colorFromVertex_(colorFromVertex) {}
 
     std::string run() {
         // Pass 1: declarations and register usage.
@@ -144,7 +144,14 @@ public:
                     const int loc = varyingLocation(d->usage, d->usageIndex);
                     if (loc < 0) throw Fail("unsupported VS output usage " + std::to_string(int(d->usage)));
                     h += "layout(location = " + std::to_string(loc) + ") out vec4 ouVar" + std::to_string(loc) + ";\n";
-                    post += "    ouVar" + std::to_string(loc) + " = o" + std::to_string(n) + ";\n";
+                    std::string value = "o" + std::to_string(n);
+                    if (colorFromVertex_ && d->usage == Usage::Color && d->usageIndex == 0) { // Material::skinParams
+                        if (!(out_.attributes >> kAttrColor0 & 1))
+                            h += "layout(location = " + std::to_string(kAttrColor0) + ") in vec4 ouAttr" + std::to_string(kAttrColor0) + ";\n";
+                        out_.attributes |= uint8_t(1u << kAttrColor0);
+                        value = "ouAttr" + std::to_string(kAttrColor0);
+                    }
+                    post += "    ouVar" + std::to_string(loc) + " = " + value + ";\n";
                 }
             }
         } else {
@@ -209,7 +216,7 @@ private:
     std::map<unsigned, const Instruction*> inputs_, outputs_, floatDefs_, intDefs_, boolDefs_;
     std::set<unsigned> misc_;
     unsigned temps_ = 0, colorOuts_ = 0;
-    bool usesA0_ = false, usesAL_ = false, usesP0_ = false, depthOut_ = false;
+    bool usesA0_ = false, usesAL_ = false, usesP0_ = false, depthOut_ = false, colorFromVertex_ = false;
 
     std::string constRef(unsigned n) const {
         if (floatDefs_.count(n)) return "c" + std::to_string(n) + "_def";
@@ -503,11 +510,11 @@ private:
 
 } // namespace
 
-Glsl translate(const Program& p, bool vulkan) {
+Glsl translate(const Program& p, bool vulkan, bool colorFromVertex) {
     Glsl g;
     try {
         if (p.major != 3) throw Fail("only shader model 3 is translated");
-        Translator t(p, g);
+        Translator t(p, g, colorFromVertex);
         std::string body = t.run();
         g.source = vulkan ? body.insert(body.find('\n') + 1, "#define OU_VULKAN 1\n") : body;
     } catch (const std::exception& e) {

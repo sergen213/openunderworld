@@ -174,6 +174,9 @@ struct Tuning {
     float swimSpeed = 1348.6f, swimAccel = 2475.0f, swimDecel = 3760.0f;
     float swimDepth = 400.0f;   // water at least this deep under the surface is swum, shallower walked
     float swimRadius = 100.0f;  // sphere around the swimming root
+    // Root under the wave surface treading / swimming at the surface (tru.exe, Wine, l2_cliffclimb sea: z fits
+    // player+0x8E0 top + the 0x69DA80 waves - 44.1 at rms < 1 in both states).
+    float swimSurfaceDepth = 44.1f;
     float crouchHeight = 260.0f; // capsule while crouched/rolling: player data +0x14
     float slideMinNormalZ = 0.3f; // floors between this and minFloorNormalZ are slid down
     float beamAttach = 30.0f;   // root within this of a balance beam (x/y, and z) gets on it
@@ -372,6 +375,23 @@ struct CheckpointRef {
     bool operator==(const CheckpointRef&) const = default;
 };
 
+// Lara's wetness (docs/GAMEPLAY.md "Wetness"; tru.exe object 0xFADF98, ticked by 0x709D10 -> 0x6FF200 each game frame):
+// seven body regions soak in water and dry slowly; the per-bone values follow their region along bone chains (0x6ED130)
+// and reach her shaders as the 4th skin-palette row (0x5B60F0, mask 1 = x) = COLOR0.x: darker diffuse, wet sheen.
+// Dirt (the y channel, the 0x3C region mask, PS InstanceParams c132 = the unit's dirt colour) and rain soaking (0x44,
+// 0x52E180) are not modelled: nothing of ours posts them.
+struct Wetness {
+    static constexpr int kRegions = 7, kBones = 160;
+    // lara.drm object data (also the lara_wetsuit_* outfits) [O]: +0xB70 max, +0xB78 drying, +0xB84 soaking, per 30 Hz frame.
+    static constexpr float kMax = 1.0f, kDry = 0.0002f, kSoak = 1.0f;
+    std::array<float, kRegions> region{}; // +0x00
+    std::array<float, kBones> bone{};     // +0x60 + 16 bone (.x)
+    uint8_t water = 0;                    // +0x38: regions in water (message 0x641 -> 0x6ED050; swimming 0x7F [O Wine])
+    void tick(float frames);              // frames = timeMult (dt / 33.3 ms)
+    void soak() { region.fill(kMax); }    // larabase 67 (0x778140 -> 0x6ED510)
+    void reset() { *this = {}; }          // larabase 68 (0x778150 -> 0x6ED460)
+};
+
 class World {
 public:
     World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tuning tuning = defaultTuning());
@@ -515,6 +535,7 @@ public:
     // Breath: 1 = full, 0 = drowning (kAirSeconds while the head is under water). [I] 45 s, refill 2 s.
     float air() const { return air_; }
     bool submerged() const { return submerged_; } // head under water this tick
+    const Wetness& wetness() const { return wetness_; }
 
     // ---- combat (Combat.cpp; docs/GAMEPLAY.md "Combat") ----
     std::vector<Damageable*> targets; // lock-on / hitscan targets, non-owning (src/game/ai registers its enemies)
@@ -711,6 +732,7 @@ private:
     WaterSim water_;
     float air_ = 1.0f;
     bool submerged_ = false;
+    Wetness wetness_;
     // gadgets (Gadgets.cpp)
     void tickGadgets(const Actions& a, float dt);
     void explode(vec3 at);
