@@ -515,7 +515,7 @@ TEST(Menus, ExtrasRingCategoriesAndUnlocks) {
 
 // PDA JOURNAL [O j3..j5]: greyed without entries, a list page of the entries reached with each one's text; Tab opens the PDA.
 TEST(Menus, PdaJournal) {
-    EXPECT_EQ(config::InputConfig().bindings.at("pda"), std::vector<std::string>{"Tab"});
+    EXPECT_EQ(config::InputConfig().bindings.at("pda"), (std::vector<std::string>{"Tab", "Pad back"}));
     EXPECT_EQ(ui::journalEntries(0), 0);
     EXPECT_EQ(ui::journalEntries(1), 7);  // MED SEA EXPEDITION .. NATLA
     EXPECT_EQ(ui::journalEntries(2), 14); // .. ODIN'S MAP ROOM

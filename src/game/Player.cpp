@@ -168,7 +168,7 @@ void Player::play(std::string_view clip, bool loop, float rate) {
     double t = 0;
     if (s_.clip != clip) {
         const auto gait = [](std::string_view n) {
-            return n == "ng_walk" || n == "ng_run" ? 1 : n == "swim_sub" || n == "swim_sub_up" || n == "swim_sub_down" ? 2 : 0;
+            return n == "ng_walk" || n == "ng_run" || n == "sprint_loop" ? 1 : n == "swim_sub" || n == "swim_sub_up" || n == "swim_sub_down" ? 2 : 0;
         };
         const anim::Clip *from = anims_.find(s_.clip), *to = anims_.find(clip);
         t = from && to && s_.loop && loop && gait(clip) && gait(clip) == gait(s_.clip)
@@ -609,6 +609,10 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     jumpHeld_ = a.jump;
     dropHeld_ = a.drop;
     s_.fallHeight = 0;
+    // Sprint stamina (tru.exe under Wine, l4_trailstart): sprinting spends it second for second, anything else but the
+    // exhaustion clips refills it as fast.
+    if (s_.clip == "sprint_loop") s_.sprintUsed += dt;
+    else if (s_.clip != "ng_sprint_to_exhaust" && s_.clip != "ng_run_exhaust") s_.sprintUsed = std::max(0.0f, s_.sprintUsed - dt);
     s_.regrabCooldown = std::max(0.0f, s_.regrabCooldown - dt);
     const float mag = std::min(1.0f, glm::length(move));
     const float target = mag > 0.1f ? std::atan2(move.y, move.x) : s_.yaw;
@@ -634,7 +638,11 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         }
         // Drop (crouch button): at an edge drop to hang, running roll, else crouch while held.
         if (dropPressed && s_.state != State::Run && tryDropToHang()) break;
-        if (dropPressed && s_.state == State::Run) { s_.state = State::Roll; play("ng_roll_front", false); break; }
+        if (dropPressed && s_.state == State::Run) {
+            s_.state = State::Roll;
+            play(s_.clip == "sprint_loop" ? "ng_roll_front_sprinting" : "ng_roll_front", false);
+            break;
+        }
         if (a.drop && s_.state != State::Run && s_.state != State::Land) {
             s_.state = State::Crouch;
             play("crouch_idleToCrouch", false);
@@ -660,6 +668,15 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
             if (!wantsMove) { s_.state = State::Stop; play("ng_running_stop", false); }
             else if (wantsWalk) { s_.state = State::Walk; play("ng_walk", true); }
+            else if (s_.clip == "sprint_loop") { // sprint_loop root motion 1927 units/s (tru.exe: ~1860 on a curve)
+                if (s_.sprintUsed >= t_.sprintSeconds) play("ng_sprint_to_exhaust", false);
+                else if (!a.sprint) play("ng_run", true);
+            } else if (s_.clip == "ng_sprint_to_exhaust") {
+                if (clipDone()) play("ng_run_exhaust", false);
+            } else if (s_.clip == "ng_run_exhaust") {
+                if (clipDone()) play("ng_run", true);
+            } else if (a.sprint && s_.sprintUsed <= t_.sprintSeconds - t_.sprintResume && (s_.clip == "ng_run" || clipDone()))
+                play("sprint_loop", true);
             else if ((s_.clip == "ng_run_start" || s_.clip == "ng_running_land") && clipDone()) play("ng_run", true);
             break;
         case State::Stop:

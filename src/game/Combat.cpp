@@ -800,7 +800,7 @@ void World::tickCombat(const Actions& a, float dt) {
     } else if (!canShoot(s, c.weapon)) c.drawn = false; // hanging, swimming (not the speargun under water): holstered
     else if (c.redraw) c.drawn = true, c.redraw = false;
     else if (drawPressed) c.drawn = !c.drawn;
-    else if (a.fire && !c.drawn) c.drawn = true; // [I] fire draws
+    else if ((a.fire || a.aim) && !c.drawn) c.drawn = true; // target lock draws (manual), fire too [I]
     const auto wi = size_t(c.weapon);
     const WeaponDef& w = anims_.weapons[wi];
     const WeaponInfo& in = info(c.weapon);

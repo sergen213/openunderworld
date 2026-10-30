@@ -371,11 +371,45 @@ outfit (the original only reads `+0x294` on a level load).
   grapple, save, load, hint, answer, pda, light, grenade. Inputs: SDL scancode names (`W`, `Space`, `Left Shift`, `F5`), `Mouse Left/Right/Middle`,
   `Pad <SDL button>` (`Pad a`, `Pad dpright`, `Pad leftshoulder`, `Pad leftstick`), `Pad lefttrigger/righttrigger`
   (pressed past half). Case-insensitive.
-- Defaults: WASD/arrows, Shift walk, Alt sprint, Space jump, Ctrl/C drop, E interact, F draw, mouse left fire / right
-  aim, Q switch target, X weapon, H health pack, G grapple, L flashlight, R grenade, F5/F9 quick save/load; pad South
-  jump, East drop, West interact, North draw, left shoulder walk, right shoulder grapple, triggers fire/aim, right stick
-  click switch, d-pad right weapon, d-pad up health pack, d-pad left flashlight, d-pad down grenade, left stick click
-  sprint. [I] the original's PC default for the light seems to be T, which is our hint key.
+- Defaults are tru.exe's [O]: `FUN_00487710` (0x487710) binds the 25 virtual buttons below (key code = 0x80 + DirectInput
+  scan code, 0x60 / 0x61 = mouse left / right; arrows as the second key of 16..19 and 23 / 24); the registry
+  `HKCU\Software\Crystal Dynamics\Tomb Raider: Underworld\Input` holds the same list ("6"="170" = Left Shift) and
+  `Input\Xbox 360 Controller` maps button i to pad code 64 + i, whose order is the PS2 pad's (tru.exe 0x844E40 /
+  0x844E78: Y, X, B, A, LT, RT, LB, RB, LS, RS, Start, Back, d-pad up / down / left / right). Names: the Control
+  Configuration screen (`openunderworld-work/screens/controls/buttons1.png`, `buttons2.png`).
+
+  | button | original name | key | pad | ours |
+  |---|---|---|---|---|
+  | 19 / 18 / 17 / 16 | Up / Down / Left / Right | W S A D, arrows | left stick | forward / back / left / right |
+  | 2 | Crouch/Roll (drop, dive) | Left Ctrl | B | drop |
+  | 3 | Jump | Space | A | jump |
+  | 1 | Grapple | Q | X | grapple |
+  | 0 | Interact | E | Y | interact |
+  | 5 | Shoot | H, mouse left | RT | fire |
+  | 7 | Grenade (throw held object) | Caps Lock | RB | grenade |
+  | 9 | Manual Aim | Z | right stick click | switch (change target; no manual aim yet) |
+  | 10 | Pause | Esc | Start | fixed |
+  | 11 | Access PDA | Tab | Back | pda |
+  | 12 | Use Medipack | V | d-pad up | heal |
+  | 15 | Change Weapon | R | d-pad right | weapon |
+  | 20 | Walk | Left Alt | — (light stick) | walk |
+  | 14 | Light | F | d-pad left | light |
+  | 13 | Camera (field camera) | T | d-pad down | — (not implemented) |
+  | 4 | Target Lock (draws) | G, mouse right | LT | aim |
+  | 6 | Sprint (swim faster) | Left Shift | LB | sprint |
+  | 8 | Recenter Camera (patch 1.1) | Q | left stick click | — (not implemented) |
+  | 23 / 24 / 22 / 21 | Vehicle Gas / Reverse / Brake / Shoot | W / S / Space / H, mouse left | RT / LT / A / RB | stick forward / back; jump hops [I]; no bike shooting yet |
+
+  So Lara runs by default; walking is Alt held (or the stick pushed lightly) and Shift sprints. Ours without an
+  original key: draw / holster X (target lock and fire also draw), save / load F5 / F9, hint / answer F2 / F3. A config
+  written before 0.12 (Shift walk, Alt sprint, …) gets these defaults for every action still on its old default;
+  rebound actions are kept.
+- Sprint (Tuning in Game.hpp; tru.exe under Wine, l4_trailstart, `openunderworld-work/screens/controls/s_*.txt`):
+  sprint held while running plays `sprint_loop` (root motion 1927 units/s; tru ~1860 on a curve) for 9.7 s of
+  stamina (measured 9.5..9.9), then `ng_sprint_to_exhaust` + `ng_run_exhaust` (no refill while they play) and `ng_run`.
+  Stamina refills a second per second of anything else; a sprint starts again once 0.9 s is back (held throughout:
+  ~2.2 s running, 0.9 s sprinting; 4 s without it after exhaustion: 4.1 s). Crouch while sprinting rolls with
+  `ng_roll_front_sprinting`.
 - Fixed: left stick moves, right stick looks (2.5 rad/s at full deflection, 0.15 dead zone), Esc / Start opens the
   pause menu, F1 toggles the overlay, menu navigation (arrows / Return / Esc, d-pad / South / East).
 
@@ -1265,7 +1299,8 @@ No side-by-side comparison with the original game was made.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
   see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
   model, ledge-grapple transitions, exe rappel speeds (ours are [I]).
-- Missing: sprint, state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenade crouch / perch / under-water
+- Missing: sprint on stairs / slopes (`ng_sprint_up` / `_down`), sprint jumps and swim / beam sprint,
+  state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenade crouch / perch / under-water
   placing, the
   assault rifle / tranquilizer / Thor's hammer, projectile flight for the speargun (hitscan), mirrored side hit
   reactions, thrown / knock-down reactions (`Hit_Thrown*`, `hitReact_*`, types 7/9/10/12/15), hit reactions while

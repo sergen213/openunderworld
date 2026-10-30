@@ -67,6 +67,9 @@ game::AnimLibrary syntheticAnims() {
     a.clips["ng_idle"] = rootClip(50, 0);
     a.clips["ng_walk"] = rootClip(38, 11.6f);   // ~348 units/s
     a.clips["ng_run"] = rootClip(20, 42.47f);   // ~1274 units/s
+    a.clips["sprint_loop"] = rootClip(15, 64.2f);          // ~1927 units/s
+    a.clips["ng_sprint_to_exhaust"] = rootClip(17, 49.3f); // 0.567 s
+    a.clips["ng_run_exhaust"] = rootClip(20, 42.47f);      // 0.667 s
     a.clips["ledgeb_idle"] = rootClip(15, 0);
     anim::Clip shimmy = rootClip(21, 0);        // ledgeb_right: root moves model -X (Lara's right)
     shimmy.tracks[0][anim::TransX].clear();
@@ -228,6 +231,41 @@ TEST(Game, CameraRestAndPitchReturn) {
     EXPECT_NEAR(c.pitch, -1.0f, 1e-4);
     for (int i = 0; i < 60; ++i) w->tick(forward());
     EXPECT_NEAR(c.pitch, -0.0225f + (-1.0f + 0.0225f) * std::exp(-1.3f), 0.03f);
+}
+
+// tru.exe sprint (Wine, l4_trailstart; screens/controls s_spr / s_rec / s_r4): Shift held while running sprints at
+// ~1860..1930 units/s for 9.5..9.9 s, then runs exhausted; Shift still held: ~2.2 s running, 0.9 s sprinting; 4 s
+// without Shift after exhaustion refill 4.1 s of sprint.
+TEST(Game, SprintStaminaMatchesTru) {
+    CollisionMesh m;
+    addQuad(m, {-60000, -60000, 0}, {60000, -60000, 0}, {60000, 60000, 0}, {-60000, 60000, 0});
+    auto w = makeWorld(std::move(m), {-55000, 0, 0});
+    const auto& s = w->player().state();
+    Actions sprint = forward();
+    sprint.sprint = true;
+    const auto sprintSeconds = [&](const Actions& a, int ticks) {
+        int n = 0;
+        for (int i = 0; i < ticks; ++i) w->tick(a), n += s.clip == "sprint_loop";
+        return n / 60.0f;
+    };
+    w->tick(forward());
+    for (int i = 0; i < 30; ++i) w->tick(sprint);
+    ASSERT_EQ(s.clip, "sprint_loop");
+    const vec3 p0 = s.pos;
+    w->tick(sprint);
+    EXPECT_NEAR(glm::length(s.pos - p0) * 60, 1927, 40);
+    EXPECT_NEAR(sprintSeconds(sprint, 11 * 60) + 0.5f, 9.7f, 0.1f) << "one full sprint";
+    EXPECT_NE(s.clip, "sprint_loop");
+    EXPECT_NEAR(sprintSeconds(sprint, 6 * 60), 2 * 0.9f, 0.2f) << "held after exhaustion: short bursts";
+    for (int i = 0; i < 600 && s.clip != "ng_sprint_to_exhaust"; ++i) w->tick(sprint);
+    ASSERT_EQ(s.clip, "ng_sprint_to_exhaust");
+    for (int i = 0; i < 72; ++i) w->tick(sprint);      // tru: Shift released 1.2 s after exhaustion,
+    for (int i = 0; i < 240; ++i) w->tick(forward()); // 4 s of plain running,
+    EXPECT_NEAR(sprintSeconds(sprint, 6 * 60), 4.1f, 0.2f); // then 4.1 s of sprint
+    Actions walk = forward();
+    walk.walk = true;
+    for (int i = 0; i < 60; ++i) w->tick(walk);
+    EXPECT_EQ(s.state, State::Walk) << "Alt walks";
 }
 
 // tru.exe swimming (Wine, l2_cliffclimb sea, swim_l2b.txt): 44.95 units per 30 Hz frame at full stick, reached
@@ -417,6 +455,19 @@ TEST(Game, ControlBindings) {
     EXPECT_TRUE(a.save);
     EXPECT_FALSE(a.load || a.grapple || a.heal || a.jump);
     press("F5", false);
+    // tru.exe defaults (0x487710): Shift sprints, Alt walks, Q grapples, V heals, F light, Caps Lock grenade
+    for (const auto& [key, field] : {std::pair{"Left Shift", &game::Actions::sprint}, std::pair{"Left Alt", &game::Actions::walk},
+                                     std::pair{"Q", &game::Actions::grapple}, std::pair{"V", &game::Actions::heal},
+                                     std::pair{"F", &game::Actions::light}, std::pair{"CapsLock", &game::Actions::grenade},
+                                     std::pair{"R", &game::Actions::weapon}, std::pair{"G", &game::Actions::aim},
+                                     std::pair{"H", &game::Actions::fire}, std::pair{"Left Ctrl", &game::Actions::drop}}) {
+        press(key, true);
+        a = game::readDevices(standard, keys, nullptr);
+        EXPECT_TRUE(a.*field) << key;
+        EXPECT_FALSE(key != std::string_view("Left Shift") && a.sprint) << key;
+        EXPECT_FALSE(key != std::string_view("Left Alt") && a.walk) << key;
+        press(key, false);
+    }
 
     config::InputConfig custom;
     custom.bindings["jump"] = {"J"};

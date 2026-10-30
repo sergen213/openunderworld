@@ -403,6 +403,23 @@ TEST(Config, ControlsOverridePerActionAndRoundTrip) {
     fs::remove_all(p.parent_path());
 }
 
+// Pre-0.12 configs saved every binding; an action still on its old default (Shift walk, Alt sprint) takes today's
+// default (tru.exe's), a rebound one is kept.
+TEST(Config, ControlsMigrateOldDefaults) {
+    fs::path p = fs::temp_directory_path() / ("ou_config_mig_" + std::to_string(::getpid()) + "/config.json");
+    fs::create_directories(p.parent_path());
+    const ou::config::InputConfig defaults;
+    std::ofstream(p) << R"({"controls":{"bindings":{"walk":["Left Shift","Right Shift","Pad leftshoulder"],
+        "sprint":["Left Alt","Pad leftstick"],"pda":["1"],"light":["L","Pad dpleft"],"grapple":["G"]}}})";
+    const auto c = ou::config::load(p);
+    EXPECT_EQ(c.controls.bindings.at("walk"), std::vector<std::string>{"Left Alt"});
+    EXPECT_EQ(c.controls.bindings.at("sprint"), (std::vector<std::string>{"Left Shift", "Pad leftshoulder"}));
+    EXPECT_EQ(c.controls.bindings.at("pda"), defaults.bindings.at("pda"));
+    EXPECT_EQ(c.controls.bindings.at("light"), (std::vector<std::string>{"F", "Pad dpleft"}));
+    EXPECT_EQ(c.controls.bindings.at("grapple"), std::vector<std::string>{"G"}); // the user's own
+    fs::remove_all(p.parent_path());
+}
+
 TEST(Config, GraphicsPresets) {
     using ou::config::GraphicsSettings;
     using ou::config::resolve;

@@ -111,33 +111,47 @@ const std::vector<std::string>& bindableActions() {
     return a;
 }
 
-// The hard-wired v0.9.0 layout (docs/GAMEPLAY.md "Controls").
+// tru.exe's defaults (0x487710: virtual pad button -> key; docs/GAMEPLAY.md "Controls" has the full table). Keys of
+// actions the original lacks (draw, switch, save, load, hint, answer) are ours.
 InputConfig::InputConfig()
     : bindings{{"forward", {"W", "Up"}},
                {"back", {"S", "Down"}},
                {"left", {"A", "Left"}},
                {"right", {"D", "Right"}},
-               {"walk", {"Left Shift", "Right Shift", "Pad leftshoulder"}},
-               {"sprint", {"Left Alt", "Pad leftstick"}},
-               {"jump", {"Space", "Pad a"}},
-               {"drop", {"Left Ctrl", "Right Ctrl", "C", "Pad b"}},
-               {"interact", {"E", "Pad x"}},
-               {"draw", {"F", "Pad y"}},
-               {"fire", {"Mouse Left", "Pad righttrigger"}},
-               {"aim", {"Mouse Right", "Pad lefttrigger"}},
-               {"switch", {"Q", "Pad rightstick"}},
-               {"weapon", {"X", "Pad dpright"}},
-               {"heal", {"H", "Pad dpup"}},
-               {"grapple", {"G", "Pad rightshoulder"}},
+               {"walk", {"Left Alt"}},                         // button 20; pads walk by a light stick
+               {"sprint", {"Left Shift", "Pad leftshoulder"}}, // button 6 (LB)
+               {"jump", {"Space", "Pad a"}},                   // 3 (A)
+               {"drop", {"Left Ctrl", "Pad b"}},               // 2 (B)
+               {"interact", {"E", "Pad y"}},                   // 0 (Y)
+               {"draw", {"X"}},                                // none: target lock draws
+               {"fire", {"Mouse Left", "H", "Pad righttrigger"}},  // 5 (RT)
+               {"aim", {"Mouse Right", "G", "Pad lefttrigger"}},   // 4 (LT), target lock
+               {"switch", {"Z", "Pad rightstick"}},            // 9 (RS click) is precision aim there
+               {"weapon", {"R", "Pad dpright"}},               // 15
+               {"heal", {"V", "Pad dpup"}},                    // 12
+               {"grapple", {"Q", "Pad x"}},                    // 1 (X)
                {"save", {"F5"}},
                {"load", {"F9"}},
-               {"hint", {"T"}},    // PDA Hint / Answer (help on demand, locals.bin 168/169); keys are ours [I]
-               {"answer", {"Y"}},
-               {"pda", {"Tab"}},   // tru.exe default: Tab opens the PDA [O]
-               // tru.exe 0x487700 default keys: T = action 13, R = action 15, on pad d-pad left / down, the HUD's light /
-               // grenade items [I action order]; T is taken by "hint", so the light defaults to L.
-               {"light", {"L", "Pad dpleft"}},
-               {"grenade", {"R", "Pad dpdown"}}} {}
+               {"hint", {"F2"}}, // PDA Hint / Answer (help on demand, locals.bin 168/169)
+               {"answer", {"F3"}},
+               {"pda", {"Tab", "Pad back"}},                   // 11
+               {"light", {"F", "Pad dpleft"}},                 // 14
+               {"grenade", {"CapsLock", "Pad rightshoulder"}}} {} // 7 (RB)
+
+namespace {
+// Defaults before 0.12 (Shift walked, Alt sprinted): a config that still holds one of these gets today's default.
+const std::map<std::string, std::vector<std::string>, std::less<>> kOldDefaults = {
+    {"walk", {"Left Shift", "Right Shift", "Pad leftshoulder"}}, {"sprint", {"Left Alt", "Pad leftstick"}},
+    {"drop", {"Left Ctrl", "Right Ctrl", "C", "Pad b"}}, {"interact", {"E", "Pad x"}}, {"draw", {"F", "Pad y"}},
+    {"fire", {"Mouse Left", "Pad righttrigger"}}, {"aim", {"Mouse Right", "Pad lefttrigger"}},
+    {"switch", {"Q", "Pad rightstick"}}, {"weapon", {"X", "Pad dpright"}}, {"heal", {"H", "Pad dpup"}},
+    {"grapple", {"G", "Pad rightshoulder"}}, {"hint", {"T"}}, {"answer", {"Y"}}, {"pda", {"Tab"}},
+    {"light", {"L", "Pad dpleft"}}, {"grenade", {"R", "Pad dpdown"}}};
+bool oldDefault(const std::string& action, const std::vector<std::string>& inputs) {
+    const auto o = kOldDefaults.find(action);
+    return (o != kOldDefaults.end() && o->second == inputs) || (action == "pda" && inputs == std::vector<std::string>{"1"});
+}
+} // namespace
 
 Config load(const fs::path& path) {
     Config c;
@@ -187,7 +201,8 @@ Config load(const fs::path& path) {
             if (auto b = in->find("bindings"); b != in->end())
                 for (const auto& [action, inputs] : b->items()) { // missing actions keep their defaults
                     if (!c.controls.bindings.contains(action)) throw std::runtime_error("unknown control action " + action);
-                    c.controls.bindings[action] = inputs.get<std::vector<std::string>>();
+                    auto v = inputs.get<std::vector<std::string>>();
+                    if (!oldDefault(action, v)) c.controls.bindings[action] = std::move(v);
                 }
         }
         if (auto g = j.find("game"); g != j.end()) {

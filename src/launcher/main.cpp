@@ -501,7 +501,18 @@ private:
         bindings_->horizontalHeader()->setStretchLastSection(true);
         bindings_->setSelectionBehavior(QAbstractItemView::SelectRows);
         bindings_->setSelectionMode(QAbstractItemView::SingleSelection);
-        for (int i = 0; i < int(actions.size()); ++i) bindings_->setVerticalHeaderItem(i, new QTableWidgetItem(q(actions[i])));
+        // The original's names for its actions (tru.exe control screen / manual); ours where it has none.
+        static const std::map<std::string, QString, std::less<>> kLabels = {
+            {"forward", "Forward"}, {"back", "Back"}, {"left", "Left"}, {"right", "Right"}, {"walk", "Walk (hold)"},
+            {"sprint", "Sprint (hold; swim faster)"}, {"jump", "Jump"}, {"drop", "Crouch / roll / drop"},
+            {"interact", "Interact"}, {"draw", "Draw / holster"}, {"fire", "Fire weapon"},
+            {"aim", "Target lock (draws)"}, {"switch", "Change target"}, {"weapon", "Change weapon"},
+            {"heal", "Use health pack"}, {"grapple", "Grapple"}, {"save", "Quick save"}, {"load", "Quick load"},
+            {"hint", "Hint"}, {"answer", "Answer"}, {"pda", "PDA"}, {"light", "Utility light"}, {"grenade", "Grenade / throw"}};
+        for (int i = 0; i < int(actions.size()); ++i) {
+            const auto l = kLabels.find(actions[i]);
+            bindings_->setVerticalHeaderItem(i, new QTableWidgetItem(l == kLabels.end() ? q(actions[i]) : l->second));
+        }
         showBindings(cfg_.controls);
         auto* add = new QPushButton("Add input…");
         auto* clear = new QPushButton("Clear");

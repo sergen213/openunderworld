@@ -45,22 +45,22 @@ inline constexpr double kTickSeconds = 1.0 / 60.0; // fixed simulation step (eng
 struct Actions {
     vec2 move{0};      // camera-relative stick: x = right, y = forward, length <= 1
     vec2 look{0};      // camera orbit rate, rad/s: x = yaw (positive turns the camera left), y = pitch
-    bool walk = false; // walk modifier
+    bool walk = false; // walk modifier (Left Alt; a light stick walks too)
     bool jump = false; // held; the controller reacts to the press edge
     bool drop = false; // held; let go of a ledge / pole; on the ground: crouch (held), roll (running), drop to hang
     bool interact = false; // held; switches/levers react to the press edge, push blocks while held (src/script)
     bool save = false, load = false; // held; ou-game quicksaves / quickloads on the press edge (F5 / F9)
-    // combat (Combat.cpp): draw toggles the weapon on the press edge; fire held (draws first); aim held = hard
-    // lock-on; switchTarget press edge cycles the lock; weapon press edge swaps pistols <-> the secondary; heal
-    // press edge uses a health pack. Adrenaline: interact while the meter is full and close to a hard lock.
+    // combat (Combat.cpp): draw toggles the weapon on the press edge; fire / aim held draw first; aim held = hard
+    // lock-on (target lock); switchTarget press edge cycles the lock; weapon press edge swaps pistols <-> the
+    // secondary; heal press edge uses a health pack. Adrenaline: interact while the meter is full and close to a hard lock.
     bool draw = false, fire = false, aim = false, switchTarget = false, weapon = false, heal = false;
     bool pause = false; // held; ou-game opens the pause menu on the press edge (Esc / pad Start; scripts: "pause")
-    bool grapple = false; // held; the grapple reacts to the press edge (G / pad right shoulder; scripts: "grapple")
-    bool sprint = false;  // held (Left Alt / pad left stick click; scripts: "sprint")
-    bool pda = false;  // held; ou-game opens the PDA on the press edge (Tab; scripts: "pda")
-    bool hint = false, answer = false; // held; ou-game plays the help-on-demand hint / answer line on the press edge (T / Y)
-    bool light = false;   // held; the flashlight toggles on the press edge (L / pad d-pad left; scripts: "light")
-    bool grenade = false; // held; a sticky grenade is thrown on the press edge (R / pad d-pad down; scripts: "grenade")
+    bool grapple = false; // held; the grapple reacts to the press edge (Q / pad X; scripts: "grapple")
+    bool sprint = false;  // held (Left Shift / pad left shoulder; scripts: "sprint")
+    bool pda = false;  // held; ou-game opens the PDA on the press edge (Tab / pad Back; scripts: "pda")
+    bool hint = false, answer = false; // held; ou-game plays the help-on-demand hint / answer line on the press edge (F2 / F3)
+    bool light = false;   // held; the flashlight toggles on the press edge (F / pad d-pad left; scripts: "light")
+    bool grenade = false; // held; a sticky grenade is thrown on the press edge (Caps Lock / pad RB; scripts: "grenade")
 };
 
 // ---- animations -------------------------------------------------------------------------------
@@ -185,6 +185,10 @@ struct Tuning {
     float hangJumpApex = 60.0f;  // targeted jumps rise this far above the higher of start and target
     // Reach of targeted jumps from a hang (hands to target hands): up, sideways, back (away from the wall).
     float hangJumpUp = 700.0f, hangJumpSide = 800.0f, hangJumpBack = 1200.0f, poleFlingReach = 1800.0f;
+    // Sprint (Shift / LB held while running; tru.exe under Wine, l4_trailstart): sprint_loop for 9.5..9.9 s, then
+    // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
+    // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
+    float sprintSeconds = 9.7f, sprintResume = 0.9f;
 };
 Tuning defaultTuning();
 
@@ -224,6 +228,7 @@ struct PlayerState {
     vec3 grappleAnchor{0};
     float ropeLength = 0;
     GrappleKind grappleKind = GrappleKind::Ceiling;
+    float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
 };
 
 class Player {
@@ -755,11 +760,11 @@ std::array<vec4, 4> waveRegisters(const collision::Markup& m, double seconds);
 
 // ---- input ------------------------------------------------------------------------------------
 // Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions, through
-// the user's bindings (config::InputConfig; defaults: WASD/arrows move, Shift walk, Alt sprint, Space jump, Ctrl/C
-// drop, E interact, F draw/holster, Q switch target, X switch weapon, H health pack, G grapple, F5/F9 save/load,
-// mouse left fire, right aim/lock; pad South jump, East drop, West interact, North draw, left shoulder walk, right
-// shoulder grapple, triggers fire/aim, right stick click switch, d-pad right weapon, d-pad up health pack — locals.bin
-// 1298 / 1291 glyphs U+180A / U+1808 [I button order]). Sticks are fixed: left moves, right looks.
+// the user's bindings (config::InputConfig; defaults are tru.exe's, docs/GAMEPLAY.md "Controls": WASD/arrows move,
+// Shift sprint, Alt walk, Space jump, Ctrl drop, E interact, Q grapple, mouse right / G target lock, left / H fire,
+// R weapon, V health pack, F light, Caps Lock grenade, Tab PDA; pad A jump, B drop, X grapple, Y interact, LB sprint,
+// RB grenade, LT lock, RT fire, Back PDA, d-pad up / left / right health / light / weapon). Sticks are fixed: left
+// moves (lightly = walk), right looks.
 // Mouse look is added by the app: it accumulates relative motion per frame and feeds it to the next tick as a rate
 // (see ou-game), scaled by mouseScale and flipped by invertY.
 struct Controls {

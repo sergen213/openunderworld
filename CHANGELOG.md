@@ -6,6 +6,19 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Default controls are tru.exe's (its defaults at 0x487710, the registry `Input` keys and its Control Configuration
+  screen): Left Shift sprints and Left Alt walks (they were swapped since the start of the port), Q grapple, E
+  interact, Left Ctrl crouch / roll / drop, G / mouse right target lock, H / mouse left fire, R change weapon, V health
+  pack, F light, Caps Lock grenade, Tab PDA; pad A jump, B drop, X grapple, Y interact, LB sprint, RB grenade, LT / RT
+  lock / fire, Back PDA, d-pad up / left / right health / light / weapon. Ours where the original has no key: X draw /
+  holster, Z / right stick click change target, F2 / F3 hint / answer, F5 / F9 quick save / load. Target lock now
+  draws the weapon, as in the original. A config.json still holding the old defaults gets the new ones per action;
+  rebound actions are kept. The launcher's Controllers tab names the actions as the original does; docs/GAMEPLAY.md
+  "Controls" has the full table.
+- Sprint: holding sprint while running plays tru.exe's `sprint_loop` (1927 units/s) for 9.7 s of stamina, then the
+  exhaustion clips; stamina refills a second per second (measured under Wine on l4_trailstart; test
+  `SprintStaminaMatchesTru`). The sprint action did nothing before.
+
 ## [0.11.0] - 2026-10-30
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

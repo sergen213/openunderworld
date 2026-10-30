@@ -163,15 +163,16 @@ TEST(Combat, PistolsLockFireAndHit) {
     game::DummyTarget t;
     t.pos = {2000, 300, 0};
     w->targets.push_back(&t);
-    for (int i = 0; i < 30; ++i) w->tick(guns(false)); // fire draws; aim locks
-    EXPECT_FALSE(w->combat().drawn); // aim alone does not draw
+    for (int i = 0; i < 30; ++i) w->tick(guns(false)); // target lock draws and locks (tru.exe Target Lock)
+    EXPECT_TRUE(w->combat().drawn);
+    EXPECT_EQ(w->combat().shotsFired, 0u);
     for (int i = 0; i < 60; ++i) w->tick(guns(true)); // 1 s of fire
     const auto& c = w->combat();
     EXPECT_TRUE(c.drawn);
     EXPECT_EQ(c.target, &t);
     EXPECT_TRUE(c.locked);
-    // drawn after 0.2 s, then one shot per 1/3 s
-    EXPECT_GE(c.shotsFired, 2u);
+    // already drawn: one shot per 1/3 s
+    EXPECT_GE(c.shotsFired, 3u);
     EXPECT_LE(c.shotsFired, 4u);
     EXPECT_EQ(t.hits, int(c.shotsFired));
     const float dist = glm::length(t.aimPoint() - vec3(0, 0, 418)); // roughly from the gun
