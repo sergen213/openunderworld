@@ -79,9 +79,11 @@ struct Options {
     std::vector<fs::path> forbiddenRoots; // e.g. the game directory: the root may not overlap it
     std::function<void(const std::string&)> progress;
     // AppImage mode (set when running as one, i.e. $APPIMAGE): root is ignored; the version is compared
-    // against runningVersion and update() replaces this file with the manifest's *.AppImage entry.
+    // against runningVersion and update() installs the manifest's *.AppImage entry next to this file as
+    // OpenUnderworld-<version>-x86_64.AppImage (see installAppImage).
     fs::path appImage;
     std::string runningVersion;
+    fs::path applicationsDir; // $XDG_DATA_HOME/applications: .desktop entries launching appImage follow it
 };
 
 enum class Status { Disabled, UpToDate, Available, Installed };
@@ -89,6 +91,7 @@ struct Result {
     Status status = Status::Disabled;
     std::optional<std::string> installedVersion; // before the operation
     Manifest manifest;                           // the verified remote manifest (unless Disabled)
+    fs::path appImage;                           // AppImage mode, Installed: the path to run from now on
 };
 
 bool disabledByEnvironment();
@@ -105,12 +108,19 @@ std::string recover(const fs::path& root);   // repair an interrupted swap; "" i
 std::optional<std::string> installedVersion(const fs::path& root);
 std::optional<std::string> versionOf(const fs::path& versionDir);
 
-// AppImage self-update: download the manifest's single top-level *.AppImage entry to <appImage>.new
-// (same directory, so the rename is atomic), check size + SHA-256, hard-link the running file to
-// <appImage>.bak, then rename .new over appImage. The manifest must already be signature-verified.
-void installAppImage(const fs::path& appImage, const Manifest& m, const Fetch& fetch,
-                     const std::function<void(const std::string&)>& progress = {});
-// Exchanges <appImage>.bak and appImage (pressing it again re-applies the newer one).
-void rollbackAppImage(const fs::path& appImage);
+// AppImage self-update. Downloads the manifest's single top-level *.AppImage entry to
+// <dir>/OpenUnderworld-<version>-x86_64.AppImage.new (same directory: atomic rename), checks size +
+// SHA-256, keeps the running file as <old>.bak (older OpenUnderworld*.AppImage.bak siblings are
+// deleted), renames .new into place, rewrites Exec/TryExec/X-AppImage-Version of every .desktop in
+// applicationsDir that launched the old path (renaming the entry when its name holds the old file
+// stem), then deletes the old-named file. A symlinked appImage is repointed and kept. Returns the
+// path to run from now on. The manifest must already be signature-verified.
+fs::path installAppImage(const fs::path& appImage, const Manifest& m, const Fetch& fetch,
+                         const fs::path& applicationsDir = {},
+                         const std::function<void(const std::string&)>& progress = {});
+// Restores the backed-up AppImage under its old name (the current one becomes <current>.bak) and
+// points the desktop entries back at it; pressing it again re-applies the newer one. Returns the
+// path to run from now on.
+fs::path rollbackAppImage(const fs::path& appImage, const fs::path& applicationsDir = {});
 
 } // namespace ou::update

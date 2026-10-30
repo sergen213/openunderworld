@@ -92,6 +92,7 @@ ou::update::Options updateOptions(const Paths& paths, const ou::config::Config& 
     ou::update::Options o;
     o.root = paths.installRoot;
     o.appImage = paths.appImage;
+    o.applicationsDir = ou::config::dataHome() / "applications";
     o.runningVersion = OU_VERSION;
     o.manifestUrl = c.updateManifestUrl;
     o.channel = c.updateChannel;
@@ -102,13 +103,13 @@ ou::update::Options updateOptions(const Paths& paths, const ou::config::Config& 
     return o;
 }
 
-QString describe(const ou::update::Result& r, const Paths& paths) {
+QString describe(const ou::update::Result& r) {
     using S = ou::update::Status;
     if (r.status == S::Disabled) return "Updates are disabled.";
     if (r.status == S::UpToDate) return "Up to date (" + q(r.manifest.version) + ").";
     if (r.status == S::Available) return "Signed update " + q(r.manifest.version) + " available.";
-    if (!paths.appImage.empty())
-        return "Installed " + q(r.manifest.version) + " into " + q(paths.appImage) + " (old one kept as .bak); restart to use it.";
+    if (!r.appImage.empty())
+        return "Installed " + q(r.manifest.version) + " as " + q(r.appImage) + " (old one kept as .bak); restart to use it.";
     return "Installed " + q(r.manifest.version) + "; previous version kept for rollback.";
 }
 
@@ -285,6 +286,7 @@ private:
     QLineEdit *gameDir_, *drm_, *manifestUrl_;
     QCheckBox *hashFiles_, *fullscreen_, *vsync_, *updatesEnabled_;
     QPushButton* scanBtn_;
+    QPushButton* restartBtn_ = nullptr;
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
     QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_, *upscaler_, *fsrQuality_;
@@ -739,11 +741,17 @@ private:
         auto* rollbackBtn = new QPushButton("Roll back to previous");
         connect(checkBtn, &QPushButton::clicked, this, [this] { runUpdate(false); });
         connect(installBtn, &QPushButton::clicked, this, [this] { runUpdate(true); });
+        restartBtn_ = new QPushButton("Restart");
+        restartBtn_->hide();
+        connect(restartBtn_, &QPushButton::clicked, this, [this] {
+            if (QProcess::startDetached(q(paths_.appImage), {})) QApplication::quit();
+            else updateStatus_->setText("Could not start " + q(paths_.appImage));
+        });
         connect(rollbackBtn, &QPushButton::clicked, this, [this] {
             try {
                 if (!paths_.appImage.empty()) {
-                    ou::update::rollbackAppImage(paths_.appImage);
-                    updateStatus_->setText("Swapped " + q(paths_.appImage) + " with its .bak; restart to use it.");
+                    followAppImage(ou::update::rollbackAppImage(paths_.appImage, ou::config::dataHome() / "applications"));
+                    updateStatus_->setText("Rolled back to " + q(paths_.appImage) + "; restart to use it.");
                 } else {
                     updateStatus_->setText("Rolled back; active version " + q(ou::update::rollback(paths_.installRoot)));
                 }
@@ -758,6 +766,7 @@ private:
         row->addWidget(checkBtn);
         row->addWidget(installBtn);
         row->addWidget(rollbackBtn);
+        row->addWidget(restartBtn_);
         row->addStretch();
         auto* lay = new QVBoxLayout(w);
         lay->addWidget(versionLabel_);
@@ -770,9 +779,16 @@ private:
         return w;
     }
 
+    // The AppImage moved (update/rollback renames it): $APPIMAGE, Restart and the next rollback use the new path.
+    void followAppImage(const fs::path& p) {
+        paths_.appImage = p;
+        ::setenv("APPIMAGE", p.c_str(), 1);
+        restartBtn_->show();
+    }
+
     void refreshVersion() {
         auto inst = ou::update::installedVersion(paths_.installRoot);
-        QString managed = !paths_.appImage.empty() ? "AppImage " + q(paths_.appImage) + " (updated in place)"
+        QString managed = !paths_.appImage.empty() ? "AppImage " + q(paths_.appImage) + " (self-updating)"
                           : inst                   ? "install " + q(*inst) + " in " + q(paths_.installRoot)
                                                    : QString("none");
         versionLabel_->setText(QString("<b>OpenUnderworld %1</b> (this launcher)<br>Updater-managed: %2<br>%3")
@@ -803,7 +819,9 @@ private:
                     QString cl = q(r.manifest.changelog);
                     QMetaObject::invokeMethod(changelog_, [this, cl] { changelog_->setPlainText(cl); });
                 }
-                return describe(r, paths_);
+                if (!r.appImage.empty())
+                    QMetaObject::invokeMethod(this, [this, p = r.appImage] { followAppImage(p); }, Qt::BlockingQueuedConnection);
+                return describe(r);
             } catch (const std::exception& e) { return QString("Update failed: ") + e.what(); }
         }));
     }
@@ -933,7 +951,7 @@ int main(int argc, char** argv) {
             auto o = updateOptions(paths, ou::config::load(paths.config));
             o.progress = [](const std::string& m) { std::fprintf(stderr, "update: %s\n", m.c_str()); };
             auto r = cli.isSet(doUpdate) ? ou::update::update(o) : ou::update::check(o);
-            std::printf("%s\n", s(describe(r, paths)).c_str());
+            std::printf("%s\n", s(describe(r)).c_str());
             return 0;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "Update failed: %s\n", e.what());

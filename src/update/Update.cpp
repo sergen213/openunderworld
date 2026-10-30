@@ -373,7 +373,7 @@ Result update(const Options& opt) {
     Result r = fetchVerified(opt, mb, sig);
     if (r.status != Status::Available) return r;
     if (opt.appImage.empty()) install(opt.root, r.manifest, mb, sig, opt.fetch, opt.forbiddenRoots, opt.progress);
-    else installAppImage(opt.appImage, r.manifest, opt.fetch, opt.progress);
+    else r.appImage = installAppImage(opt.appImage, r.manifest, opt.fetch, opt.applicationsDir, opt.progress);
     r.status = Status::Installed;
     return r;
 }
@@ -432,8 +432,113 @@ std::string recover(const fs::path& root) {
     return recoverLocked(root);
 }
 
-void installAppImage(const fs::path& appImage, const Manifest& m, const Fetch& fetch,
-                     const std::function<void(const std::string&)>& progress) {
+namespace {
+
+std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return s;
+}
+
+// The version in an OpenUnderworld-<version>-x86_64.AppImage name; "" for any other name.
+std::string versionInName(const fs::path& p) {
+    std::string n = p.filename().string();
+    constexpr std::string_view pre = "OpenUnderworld-", post = "-x86_64.AppImage";
+    if (!n.starts_with(pre) || !n.ends_with(post) || n.size() <= pre.size() + post.size()) return {};
+    std::string v = n.substr(pre.size(), n.size() - pre.size() - post.size());
+    try { compareVersions(v, v); } catch (const Error&) { return {}; }
+    return v;
+}
+
+// <x>.AppImage.bak siblings an earlier update made: the explicit one, else OpenUnderworld*-named ones.
+std::vector<fs::path> backups(const fs::path& dir) {
+    std::vector<fs::path> out;
+    for (const auto& e : fs::directory_iterator(dir)) {
+        std::string n = lower(e.path().filename().string());
+        if (n.starts_with("openunderworld") && n.ends_with(".appimage.bak") && e.is_regular_file()) out.push_back(e.path());
+    }
+    return out;
+}
+
+void linkOrCopy(const fs::path& from, const fs::path& to) {
+    std::error_code ec;
+    fs::create_hard_link(from, to, ec); // same inode, no copy; falls back to a copy (e.g. FAT)
+    if (ec) fs::copy_file(from, to);
+}
+
+// Replaces `from` by `to` at a path boundary (not inside e.g. "<from>.bak").
+bool replacePath(std::string& line, const std::string& from, const std::string& to) {
+    bool changed = false;
+    for (size_t at = line.find(from); at != std::string::npos; at = line.find(from, at)) {
+        size_t end = at + from.size();
+        if (end < line.size() && line[end] != '"' && line[end] != '\'' && line[end] != ' ' && line[end] != '\t') {
+            at = end;
+            continue;
+        }
+        line.replace(at, from.size(), to);
+        at += to.size();
+        changed = true;
+    }
+    return changed;
+}
+
+// Points every .desktop entry in `apps` whose Exec/TryExec runs one of `from` at `to`.
+// ponytail: plain substring match; an Exec with desktop-escaped characters (\$, \") in the path is not followed.
+void retargetDesktopEntries(const fs::path& apps, const std::vector<fs::path>& from, const fs::path& to,
+                            const std::string& version) {
+    std::error_code ec;
+    if (apps.empty() || !fs::is_directory(apps, ec)) return;
+    const std::string oldStem = lower(from.back().stem().string()), newStem = to.stem().string();
+    for (const auto& e : fs::directory_iterator(apps)) {
+        if (e.path().extension() != ".desktop" || !e.is_regular_file()) continue;
+        std::ifstream in(e.path());
+        std::vector<std::string> lines;
+        bool launches = false;
+        for (std::string l; std::getline(in, l);) {
+            if (l.starts_with("Exec=") || l.starts_with("TryExec="))
+                for (const auto& f : from) launches = replacePath(l, f.string(), to.string()) || launches;
+            lines.push_back(std::move(l));
+        }
+        if (!launches) continue;
+        std::string text;
+        for (auto& l : lines) {
+            if (l.starts_with("X-AppImage-Version=") && !version.empty()) l = "X-AppImage-Version=" + version;
+            text += l + '\n';
+        }
+        // Rename e.g. openunderworld-0.10.0-x86_64.desktop, keeping the name's case style.
+        std::string name = e.path().filename().string();
+        if (size_t at = lower(name).find(oldStem); at != std::string::npos && !oldStem.empty()) {
+            std::string span = name.substr(at, oldStem.size());
+            name.replace(at, span.size(), span == lower(span) ? lower(newStem) : newStem);
+        }
+        const fs::path dst = apps / name, tmp = apps / ("." + name + ".tmp");
+        writeFileSync(tmp, {reinterpret_cast<const uint8_t*>(text.data()), text.size()},
+                      mode_t(fs::status(e.path()).permissions() & fs::perms::mask));
+        fs::rename(tmp, dst);
+        if (dst != e.path()) fs::remove(e.path());
+    }
+    fsyncDir(apps);
+}
+
+// Repoints a symlinked $APPIMAGE at `to` (atomically); returns the path the launcher should run.
+fs::path follow(const fs::path& appImage, const fs::path& to) {
+    if (!fs::is_symlink(appImage)) return to;
+    const fs::path tmp = appImage.string() + ".new";
+    fs::remove(tmp);
+    fs::create_symlink(to, tmp);
+    fs::rename(tmp, appImage);
+    return appImage;
+}
+
+// Entries pointing at the symlink itself still work; only those naming the real file move.
+std::vector<fs::path> launchPaths(const fs::path& appImage, const fs::path& target) {
+    if (fs::is_symlink(appImage)) return {target};
+    return {fs::absolute(appImage).lexically_normal(), target};
+}
+
+} // namespace
+
+fs::path installAppImage(const fs::path& appImage, const Manifest& m, const Fetch& fetch, const fs::path& applicationsDir,
+                         const std::function<void(const std::string&)>& progress) {
     const fs::path target = fs::canonical(appImage); // a symlinked AppImage: replace the real file
     if (!fs::is_regular_file(target)) throw Error(target.string() + " is not a regular file");
     auto it = std::find_if(m.files.begin(), m.files.end(),
@@ -446,7 +551,8 @@ void installAppImage(const fs::path& appImage, const Manifest& m, const Fetch& f
         throw Error(target.string() + " is locked by another update");
     }
     std::unique_ptr<int, void (*)(int*)> unlock(&fd, [](int* f) { ::close(*f); });
-    const fs::path stg = target.string() + ".new", bak = target.string() + ".bak";
+    const fs::path dir = target.parent_path(), next = dir / ("OpenUnderworld-" + m.version + "-x86_64.AppImage");
+    const fs::path stg = next.string() + ".new", bak = target.string() + ".bak";
     fs::remove(stg); // leftover of an interrupted download
     say(progress, "downloading " + it->path);
     // ponytail: whole AppImage buffered in memory (~100 MB); stream to disk if it grows much larger.
@@ -456,25 +562,49 @@ void installAppImage(const fs::path& appImage, const Manifest& m, const Fetch& f
     if (sha256Hex(data) != it->sha256) throw Error(it->path + ": sha256 mismatch");
     try {
         writeFileSync(stg, data, 0755);
+        for (const auto& b : backups(dir)) fs::remove(b); // one backup only: the version being replaced
         fs::remove(bak);
-        std::error_code ec;
-        fs::create_hard_link(target, bak, ec); // same inode, no copy; falls back to a copy (e.g. FAT)
-        if (ec) fs::copy_file(target, bak);
-        say(progress, "replacing " + target.string());
-        fs::rename(stg, target); // atomic: the old inode lives on as .bak (and for the running process)
+        linkOrCopy(target, bak);
+        say(progress, "installing " + next.string());
+        fs::rename(stg, next); // atomic; until the old name is removed below both names run
     } catch (...) {
         std::error_code ec;
         fs::remove(stg, ec);
         throw;
     }
-    fsyncDir(target.parent_path());
+    fsyncDir(dir);
+    if (next == target) return follow(appImage, next);
+    retargetDesktopEntries(applicationsDir, launchPaths(appImage, target), next, m.version);
+    fs::path run = follow(appImage, next);
+    fs::remove(target); // the stale old-named file; its inode lives on as .bak (and for the running process)
+    fsyncDir(dir);
+    return run;
 }
 
-void rollbackAppImage(const fs::path& appImage) {
-    const fs::path target = fs::canonical(appImage), bak = target.string() + ".bak";
-    if (!fs::is_regular_file(bak)) throw Error("no " + bak.string() + " to roll back to");
-    exchange(bak, target);
-    fsyncDir(target.parent_path());
+fs::path rollbackAppImage(const fs::path& appImage, const fs::path& applicationsDir) {
+    const fs::path cur = fs::canonical(appImage), dir = cur.parent_path();
+    fs::path bak = cur.string() + ".bak";
+    if (!fs::is_regular_file(bak)) {
+        auto found = backups(dir);
+        if (found.size() != 1) throw Error("no single OpenUnderworld*.AppImage.bak next to " + cur.string() + " to roll back to");
+        bak = found.front();
+    }
+    const fs::path old = bak.parent_path() / bak.stem(); // X.AppImage.bak -> X.AppImage
+    if (old == cur) {
+        exchange(bak, cur);
+        fsyncDir(dir);
+        return follow(appImage, cur);
+    }
+    const fs::path curBak = cur.string() + ".bak";
+    fs::remove(curBak);
+    linkOrCopy(cur, curBak);
+    fs::rename(bak, old);
+    fsyncDir(dir);
+    retargetDesktopEntries(applicationsDir, launchPaths(appImage, cur), old, versionInName(old));
+    fs::path run = follow(appImage, old);
+    fs::remove(cur);
+    fsyncDir(dir);
+    return run;
 }
 
 } // namespace ou::update

@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <sodium.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -194,55 +195,123 @@ TEST_F(UpdateTest, UserRollbackToPrevious) {
     EXPECT_EQ(versionOf(root / "previous"), "0.3.0");
 }
 
-TEST_F(UpdateTest, AppImageSelfUpdate) {
-    const fs::path app = tmp / "apps/OpenUnderworld.AppImage", bak = app.string() + ".bak", stg = app.string() + ".new";
-    writeAll(app, bytes("appimage 0.1.0"));
-    fs::permissions(app, fs::perms(0755));
-    auto appOpts = [&](const std::string& v, const std::string& running) {
+// An AppImage named like the user's (an integrator-made desktop entry included), updated in place.
+class AppImageUpdateTest : public UpdateTest {
+protected:
+    fs::path apps, dir, desktop;
+    fs::path named(const std::string& v) { return dir / ("OpenUnderworld-" + v + "-x86_64.AppImage"); }
+    void SetUp() override {
+        UpdateTest::SetUp();
+        dir = tmp / "bin";
+        apps = tmp / "share/applications";
+        writeAll(named("0.1.0"), bytes("appimage 0.1.0"));
+        fs::permissions(named("0.1.0"), fs::perms(0755));
+        desktop = apps / "openunderworld-0.1.0-x86_64.desktop";
+        writeAll(desktop, bytes(entry(named("0.1.0"), "0.1.0")));
+        writeAll(apps / "other.desktop", bytes("[Desktop Entry]\nExec=/opt/other/OpenUnderworld-0.1.0-x86_64.AppImage\n"));
+        writeAll(apps / "bak.desktop", bytes("[Desktop Entry]\nExec=" + named("0.1.0").string() + ".bak\n"));
+    }
+    static std::string entry(const fs::path& app, const std::string& v) {
+        return "[Desktop Entry]\nType=Application\nName=OpenUnderworld\nExec=\"" + app.string() + "\" %U\nIcon=openunderworld-0.1.0-x86_64\n"
+               "X-AppImage-Version=" + v + "\n\nTryExec=" + app.string() + "\n";
+    }
+    Options appOpts(const std::string& v, const std::string& running, const fs::path& app) {
         Options o = publish(v, release(v, {{"OpenUnderworld-" + v + "-x86_64.AppImage", "appimage " + v}}));
         o.appImage = app;
         o.runningVersion = running;
+        o.applicationsDir = apps;
         return o;
-    };
-    EXPECT_EQ(check(appOpts("0.1.0", "0.1.0")).status, Status::UpToDate);
-    EXPECT_THROW(check(appOpts("0.0.9", "0.1.0")), Error); // signed but older: rollback refused
+    }
+    std::vector<std::string> files(const fs::path& d) {
+        std::vector<std::string> out;
+        for (const auto& e : fs::directory_iterator(d)) out.push_back(e.path().filename().string());
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+};
 
+TEST_F(AppImageUpdateTest, RefusalsLeaveTheAppImageAlone) {
+    const fs::path app = named("0.1.0");
+    EXPECT_EQ(check(appOpts("0.1.0", "0.1.0", app)).status, Status::UpToDate);
+    EXPECT_THROW(check(appOpts("0.0.9", "0.1.0", app)), Error); // signed but older: rollback refused
     // Hash mismatch: the running AppImage stays, no staging file is left.
-    Options bad = appOpts("0.2.0", "0.1.0");
+    Options bad = appOpts("0.2.0", "0.1.0", app);
     writeAll(srv / "0.2.0/OpenUnderworld-0.2.0-x86_64.AppImage", bytes("APPIMAGE 0.2.0"));
     EXPECT_THROW(update(bad), Error);
-    EXPECT_EQ(text(app), "appimage 0.1.0");
-    EXPECT_FALSE(fs::exists(stg));
-
-    // Good update: atomic replace, old file kept as .bak, install root never created.
-    writeAll(stg, bytes("stale partial download"));
-    Result r = update(appOpts("0.2.0", "0.1.0"));
-    EXPECT_EQ(r.status, Status::Installed);
-    EXPECT_EQ(r.installedVersion, "0.1.0");
-    EXPECT_EQ(text(app), "appimage 0.2.0");
-    EXPECT_NE(fs::status(app).permissions() & fs::perms::owner_exec, fs::perms::none);
-    EXPECT_EQ(text(bak), "appimage 0.1.0");
-    EXPECT_FALSE(fs::exists(stg));
-    EXPECT_FALSE(fs::exists(root));
-
-    // A symlink to the AppImage updates the real file and keeps the link.
-    fs::create_symlink(app, tmp / "link.AppImage");
-    Options viaLink = appOpts("0.3.0", "0.2.0");
-    viaLink.appImage = tmp / "link.AppImage";
-    EXPECT_EQ(update(viaLink).status, Status::Installed);
-    EXPECT_TRUE(fs::is_symlink(tmp / "link.AppImage"));
-    EXPECT_EQ(text(app), "appimage 0.3.0");
-
-    rollbackAppImage(app);
-    EXPECT_EQ(text(app), "appimage 0.2.0");
-    EXPECT_EQ(text(bak), "appimage 0.3.0");
-
     // A manifest without an AppImage entry is refused in AppImage mode.
     Options noApp = publish("0.4.0", release("0.4.0", {{"bin/ou-viewer", "viewer"}}));
     noApp.appImage = app;
-    noApp.runningVersion = "0.2.0";
+    noApp.runningVersion = "0.1.0";
     EXPECT_THROW(update(noApp), Error);
-    EXPECT_EQ(text(app), "appimage 0.2.0");
+    EXPECT_EQ(files(dir), std::vector<std::string>{"OpenUnderworld-0.1.0-x86_64.AppImage"});
+    EXPECT_EQ(text(app), "appimage 0.1.0");
+    EXPECT_EQ(text(desktop), entry(app, "0.1.0"));
+    EXPECT_FALSE(fs::exists(root));
+}
+
+TEST_F(AppImageUpdateTest, UpdateRenamesAndRetargetsDesktopEntry) {
+    const fs::path old = named("0.1.0"), next = named("0.2.0");
+    writeAll(next.string() + ".new", bytes("stale partial download"));
+    writeAll(dir / "OpenUnderworld-0.0.5-x86_64.AppImage.bak", bytes("ancient backup"));
+    writeAll(dir / "notes.bak", bytes("not ours"));
+    Result r = update(appOpts("0.2.0", "0.1.0", old));
+    EXPECT_EQ(r.status, Status::Installed);
+    EXPECT_EQ(r.installedVersion, "0.1.0");
+    EXPECT_EQ(r.appImage, next);
+    EXPECT_EQ(text(next), "appimage 0.2.0");
+    EXPECT_NE(fs::status(next).permissions() & fs::perms::owner_exec, fs::perms::none);
+    EXPECT_EQ(text(old.string() + ".bak"), "appimage 0.1.0");
+    EXPECT_EQ(files(dir), (std::vector<std::string>{"OpenUnderworld-0.1.0-x86_64.AppImage.bak", "OpenUnderworld-0.2.0-x86_64.AppImage", "notes.bak"}));
+    EXPECT_FALSE(fs::exists(root));
+
+    // The entry is rewritten and renamed; Icon and unrelated entries stay.
+    const fs::path moved = apps / "openunderworld-0.2.0-x86_64.desktop";
+    EXPECT_FALSE(fs::exists(desktop));
+    EXPECT_EQ(text(moved), "[Desktop Entry]\nType=Application\nName=OpenUnderworld\nExec=\"" + next.string() +
+                               "\" %U\nIcon=openunderworld-0.1.0-x86_64\nX-AppImage-Version=0.2.0\n\nTryExec=" + next.string() + "\n");
+    EXPECT_EQ(text(apps / "other.desktop"), "[Desktop Entry]\nExec=/opt/other/OpenUnderworld-0.1.0-x86_64.AppImage\n");
+    EXPECT_EQ(text(apps / "bak.desktop"), "[Desktop Entry]\nExec=" + old.string() + ".bak\n");
+
+    // Next update from the new path: one backup only (the 0.2.0 file).
+    EXPECT_EQ(update(appOpts("0.3.0", "0.2.0", next)).appImage, named("0.3.0"));
+    EXPECT_EQ(files(dir), (std::vector<std::string>{"OpenUnderworld-0.2.0-x86_64.AppImage.bak", "OpenUnderworld-0.3.0-x86_64.AppImage", "notes.bak"}));
+    EXPECT_TRUE(fs::exists(apps / "openunderworld-0.3.0-x86_64.desktop"));
+}
+
+TEST_F(AppImageUpdateTest, RollbackRestoresOldNameAndDesktopEntry) {
+    const fs::path old = named("0.1.0"), next = named("0.2.0");
+    EXPECT_EQ(update(appOpts("0.2.0", "0.1.0", old)).appImage, next);
+    // The launcher was not restarted: it rolls back from the path update() returned.
+    EXPECT_EQ(rollbackAppImage(next, apps), old);
+    EXPECT_EQ(files(dir), (std::vector<std::string>{"OpenUnderworld-0.1.0-x86_64.AppImage", "OpenUnderworld-0.2.0-x86_64.AppImage.bak"}));
+    EXPECT_EQ(text(old), "appimage 0.1.0");
+    EXPECT_EQ(text(next.string() + ".bak"), "appimage 0.2.0");
+    EXPECT_EQ(text(desktop), entry(old, "0.1.0"));
+    EXPECT_FALSE(fs::exists(apps / "openunderworld-0.2.0-x86_64.desktop"));
+    // Again: re-applies the newer one.
+    EXPECT_EQ(rollbackAppImage(old, apps), next);
+    EXPECT_EQ(text(next), "appimage 0.2.0");
+    EXPECT_TRUE(fs::exists(apps / "openunderworld-0.2.0-x86_64.desktop"));
+    EXPECT_EQ(files(dir), (std::vector<std::string>{"OpenUnderworld-0.1.0-x86_64.AppImage.bak", "OpenUnderworld-0.2.0-x86_64.AppImage"}));
+    EXPECT_THROW(rollbackAppImage(tmp / "missing.AppImage", apps), std::exception);
+}
+
+TEST_F(AppImageUpdateTest, CustomNameAndSymlink) {
+    // A user-named file is renamed too; its backup keeps the user's name.
+    const fs::path custom = dir / "openunderworld.AppImage";
+    fs::rename(named("0.1.0"), custom);
+    EXPECT_EQ(update(appOpts("0.2.0", "0.1.0", custom)).appImage, named("0.2.0"));
+    EXPECT_EQ(files(dir), (std::vector<std::string>{"OpenUnderworld-0.2.0-x86_64.AppImage", "openunderworld.AppImage.bak"}));
+    EXPECT_EQ(rollbackAppImage(named("0.2.0"), apps), custom);
+    EXPECT_EQ(text(custom), "appimage 0.1.0");
+    // A symlinked $APPIMAGE is repointed and stays the path to run; legacy same-name backups still roll back.
+    fs::create_symlink(custom, tmp / "link.AppImage");
+    EXPECT_EQ(update(appOpts("0.3.0", "0.1.0", tmp / "link.AppImage")).appImage, tmp / "link.AppImage");
+    EXPECT_TRUE(fs::is_symlink(tmp / "link.AppImage"));
+    EXPECT_EQ(fs::read_symlink(tmp / "link.AppImage"), named("0.3.0"));
+    EXPECT_EQ(text(tmp / "link.AppImage"), "appimage 0.3.0");
+    EXPECT_EQ(rollbackAppImage(tmp / "link.AppImage", apps), tmp / "link.AppImage");
+    EXPECT_EQ(text(tmp / "link.AppImage"), "appimage 0.1.0");
 }
 
 TEST_F(UpdateTest, InterruptedSwapRecovery) {

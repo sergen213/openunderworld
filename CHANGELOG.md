@@ -6,6 +6,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- AppImage self-update renames the file: the update lands as `OpenUnderworld-<new>-x86_64.AppImage` next to the old
+  one (atomic rename), the old file is kept as `<old>.bak` (older OpenUnderworld `.bak` files are removed) and its
+  old name is deleted. Before, the file kept its first name forever (0.11.0 still ran as `…-0.10.0-…AppImage`).
+  `.desktop` entries in `$XDG_DATA_HOME/applications` that launched the old path get Exec / TryExec /
+  X-AppImage-Version rewritten and are renamed when named after the old file. The launcher follows the new path
+  (`$APPIMAGE`, a new **Restart** button, the next rollback); "Roll back to previous" restores the old name and
+  desktop entry. Tests `AppImageUpdateTest.*`; verified end to end in a temp HOME with a test-key-signed manifest
+  (docs/UPDATES.md).
 - Chapter 2 start: the yacht no longer sits in the sea. The sea program never got its waves in game: l2_cliffclimb's
   sea is part of one terrain mesh (radius ~176000) centred outside the sea box, and `fillWaves` picked the volume by
   the mesh centre, so the drawn sea stayed at its static z 107.8, above the 71..87 deck (the 0.11.0 test checked only

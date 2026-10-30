@@ -75,18 +75,21 @@ All of these are covered by the `OnlyProjectFilesAndOwnedRoots` test (observed).
 1. Disable switch, fetch, **verify the signature, then parse**, channel check: as above.
 2. Anti-rollback compares the manifest against `runningVersion`: older → "rollback refused", equal → up to date, `min_version` enforced.
 3. `installAppImage`:
-   - Resolves `$APPIMAGE` with `canonical()`, so a symlinked AppImage updates the real file and the link stays.
+   - Resolves `$APPIMAGE` with `canonical()`, so a symlinked AppImage updates the real file; the link is repointed at the new file (atomically) and stays the path to run.
    - Takes `flock(LOCK_EX|LOCK_NB)` on the AppImage file itself, so no lock file appears next to it.
    - Picks the manifest's single top-level `*.AppImage` entry; if there is none, it errors.
    - Downloads it with a cap equal to the declared size, then checks the exact size and SHA-256.
-   - Writes `<AppImage>.new` in the same directory (same filesystem) with fsync and mode 0755. A stale `.new` from an interrupted download is deleted first.
-   - Hard-links the current file to `<AppImage>.bak`; filesystems without hard links get a copy.
-   - `rename(.new, AppImage)`: atomic. The running process keeps its old inode, which stays reachable as `.bak`. Then the directory is fsynced.
+   - Writes `OpenUnderworld-<version>-x86_64.AppImage.new` in the same directory (same filesystem) with fsync and mode 0755. A stale `.new` from an interrupted download is deleted first.
+   - Deletes older `OpenUnderworld*.AppImage.bak` siblings (only one backup is kept), then hard-links the running file to `<old>.bak`; filesystems without hard links get a copy.
+   - `rename(.new, OpenUnderworld-<version>-x86_64.AppImage)`: atomic. Until the next step both names run.
+   - Rewrites every `.desktop` in `Options::applicationsDir` (the launcher passes `$XDG_DATA_HOME/applications`) whose `Exec=`/`TryExec=` runs the old path: both lines point at the new file, `X-AppImage-Version=` (if present) becomes the new version, and an entry named after the old file stem (e.g. `openunderworld-0.10.0-x86_64.desktop`, case style kept) is renamed. Written via a temp file + rename. `Icon=` and other entries are left alone.
+   - Deletes the old-named file. The running process keeps its inode, still reachable as `<old>.bak`. Directories are fsynced.
+   - Returns the path to run from now on (`Result::appImage`). The launcher sets `$APPIMAGE` to it; its **Restart** button starts it and quits; the next rollback starts from it.
 
-   On a size/hash mismatch the AppImage is untouched and `.new` is removed.
-4. `rollbackAppImage` exchanges `.bak` and the AppImage with `renameat2(RENAME_EXCHANGE)`. It is the launcher's "Roll back to previous" in AppImage mode; pressing it again re-applies the newer one.
+   On a size/hash mismatch nothing is renamed and `.new` is removed. A crash leaves at least one runnable name, and the desktop entry still points at a file until the old name is deleted.
+4. `rollbackAppImage` restores `<AppImage>.bak`, or else the single `OpenUnderworld*.AppImage.bak` sibling, under its old name. The current file becomes `<current>.bak`, the desktop entries point back (X-AppImage-Version = the version in the restored `OpenUnderworld-<v>-x86_64.AppImage` name, unchanged for other names), and the restored path is returned. A backup with the current name is exchanged with `renameat2(RENAME_EXCHANGE)`. It is the launcher's "Roll back to previous" in AppImage mode; pressing it again re-applies the newer one.
 
-Headless: `OpenUnderworld.AppImage --check-update` / `--update` print one line and exit (0 = success). Without a display, set `QT_QPA_PLATFORM=offscreen`.
+Headless: `OpenUnderworld.AppImage --check-update` / `--update` print one line (with the new path) and exit (0 = success). Without a display, set `QT_QPA_PLATFORM=offscreen`.
 
 The release manifest (`tools/release.sh`) lists only the AppImage:
 
@@ -120,17 +123,15 @@ Every crash point has a test in `InterruptedSwapRecovery` (observed): before any
 
 ## Tests
 
-`ou_update_tests`: 14 tests, all passing under ASan/UBSan on 2026-10-18 [O].
+`ou_update_tests`: 15 updater tests (+ 5 Config) (14 under ASan/UBSan on 2026-10-18 [O]; the AppImage ones rewritten 2026-10-30 [O]).
 
 - No network. A test-only transport maps `https://updates.test/<rel>` to `file://<tmp>/srv/<rel>`, so the `https://` rules stay in force.
 - Coverage: good signature; bad signature (wrong key, truncated signature, no payload fetched); tampered manifest (field edit, bit flip); size too small and too large; hash mismatch; rollback attempt (older, signed, via both `update` and `install`); `min_version`; user rollback; interrupted-swap recovery; disable switch (config and environment, transport never called); unsafe paths, game-data paths, non-https URLs, duplicates, foreign root, game-dir overlap.
-- `AppImageSelfUpdate` covers:
-  - up to date, and older refused, both against `runningVersion`;
-  - hash mismatch leaves the AppImage untouched with no `.new`;
-  - a good update replaces the file, keeps it executable, writes `.bak` and removes a stale `.new`, without creating the install root;
-  - an update through a symlink replaces the target and keeps the link;
-  - `rollbackAppImage` swaps;
-  - a manifest without an AppImage is refused.
+- `AppImageUpdateTest` (a `bin/` + `share/applications/` layout like an integrator leaves it):
+  - `RefusalsLeaveTheAppImageAlone`: up to date and older refused against `runningVersion`; hash mismatch and a manifest without an AppImage leave the file, desktop entry and directory untouched;
+  - `UpdateRenamesAndRetargetsDesktopEntry`: new name, executable, `<old>.bak`, stale `.new` and older OpenUnderworld `.bak` removed, unrelated files kept; desktop entry rewritten (Exec with `%U`, TryExec, version) and renamed, entries for other paths or for `.bak` untouched; a second update keeps one backup;
+  - `RollbackRestoresOldNameAndDesktopEntry`: rollback from the returned path restores the old name and the exact original desktop entry; again re-applies the newer one;
+  - `CustomNameAndSymlink`: a user-named file is renamed and rolled back to its name; a symlinked `$APPIMAGE` is repointed and stays the returned path.
 - `HttpsTransportRefusesOtherSchemes` checks that the libcurl transport rejects `http://`, `file://` and `ftp://` before connecting.
 - The live HTTPS path against GitHub releases: see the v0.1.0 verification below.
 
@@ -144,7 +145,9 @@ Every crash point has a test in `InterruptedSwapRecovery` (observed): before any
   - `--update`, running from the FUSE mount, so it replaced its own running file: it downloaded the 90 098 168-byte AppImage and printed `Installed 0.1.0 into …/OpenUnderworld.AppImage (old one kept as .bak)`;
   - afterwards `OpenUnderworld.AppImage --version` printed `0.1.0` and `OpenUnderworld.AppImage.bak --version` printed `0.0.9`. The SHA-256 of the replaced file equals the published `.sha256` (`3c76f545…a99a133`), and a second `--update` reports up to date.
 - [O] `ou-sign verify manifest.json` on the downloaded release assets: `OK: version 0.1.0, channel stable, 1 files`.
-- [U] The launcher GUI buttons (Check / Download & install / Roll back) in AppImage mode were not clicked; they call the same `updateOptions` → `update`/`rollbackAppImage` code paths as the CLI [I].
+- [O] 2026-10-30, the user's layout in a temp `HOME` (never the real one): `~/.local/bin/OpenUnderworld-0.10.0-x86_64.AppImage` (a 0.11.0 build of this tree with a throwaway test key compiled in) plus a stale `…0.10.0-x86_64.AppImage.bak`, and a copy of the integrator-made `openunderworld-0.10.0-x86_64.desktop`. The manifest for a 0.12.0 build was made with `ou-sign manifest` and signed with the test key, served over local HTTPS (self-signed cert trusted only inside `unshare -Urm` via a bind-mounted CA bundle). Results:
+  - `--update` (run via the desktop `Exec`) installed `OpenUnderworld-0.12.0-x86_64.AppImage`, left `OpenUnderworld-0.10.0-x86_64.AppImage.bak` (the running 0.11.0, sha256 equal), removed the old name and renamed the entry to `openunderworld-0.12.0-x86_64.desktop` with Exec/TryExec/X-AppImage-Version 0.12.0; the new `Exec` printed `ou-launcher 0.12.0` and up to date.
+  - GUI on Xvfb (xdotool clicks, screenshots viewed): "Roll back to previous" restored the 0.10.0 name and desktop entry; **Restart** came up as 0.11.0 with `$APPIMAGE` = the restored path; "Download & install" then **Restart** came up as 0.12.0 from the new name.
 
 ## Release key ceremony
 
