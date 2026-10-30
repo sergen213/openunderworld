@@ -39,6 +39,9 @@ glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat
 // Object registers: WorldViewProject (c0-3) and World (c4-7), as matrix columns, the object's light set and opacity.
 // PS InstanceParams 0-2 (c132-c134, ObjectBlock::inst) stay zero; reflective draws set them (Reflection::rows).
 void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProjD3D, const glm::mat4& model, LightSet lights = {}, float opacity = 1);
+// VS InstanceParams 3-6 (ObjectBlock::waves): the waves of the first volume containing `center` (tru.exe attaches them to
+// the water volume's sea drawable; only the sea programs read c60-c63).
+void fillWaves(sm3::ObjectBlock& o, std::span<const WaterVolume> volumes, glm::vec3 center);
 // AttenuationSampler row of each env.lights entry (distinct falloff curves share rows 0-95).
 std::vector<int> falloffRows(const scene::Environment& env);
 

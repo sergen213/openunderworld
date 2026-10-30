@@ -1027,12 +1027,12 @@ int Player::waterAt(vec3 feet) const {
     return best;
 }
 
-float Player::surfaceZ() const { return col_.markup[size_t(s_.water)].points[1].z; }
+float Player::surfaceZ() const { return waterSurface(col_.markup[size_t(s_.water)], vec2(s_.pos), waveSeconds_); }
 
 bool Player::enterWater() {
     const int w = waterAt(s_.pos);
     if (w < 0) return false;
-    const float surf = col_.markup[size_t(w)].points[1].z;
+    const float surf = waterSurface(col_.markup[size_t(w)], vec2(s_.pos), waveSeconds_);
     if (s_.pos.z > surf) return false;
     // Shallow (a floor within swimDepth under the surface): walk. Feet already deeper than that are swimming (placed under
     // l7_arctic_sea's ice by 275_hel_explosion, where the probe from the surface would hit the ice).

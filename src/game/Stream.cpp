@@ -236,8 +236,8 @@ void World::rebuildCollision() {
             col_.faces.push_back(f);
         }
         for (collision::Markup m : c.markup) {
-            // Water boxes (waterBoxes) carry {min, max, centre, half extents, rotation}: only the first three are positions.
-            const size_t positions = m.type == 10 && m.points.size() == 5 ? 3 : m.points.size();
+            // Water boxes (findWater) carry {min, max, centre, half extents, rotation, waves}: only the first three are positions.
+            const size_t positions = m.type == 10 && m.points.size() >= 5 ? 3 : m.points.size();
             for (size_t i = 0; i < positions; ++i) m.points[i] += u.offset;
             if (disabledMarkup_.contains({u.data.name, m.id})) m.type = kMarkupDisabled;
             col_.markup.push_back(std::move(m));

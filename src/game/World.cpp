@@ -335,6 +335,7 @@ void World::tick(const Actions& input) {
         scriptUnits_ = unitsVersion_;
     }
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
+    player_.setWaveSeconds(double(ticks_) * kTickSeconds);
     if (!onBike) player_.tick(move, a, dt);
     if (player_.state().state != State::GrapplePull) pullT_ = 0;
     else if (a.interact)
@@ -443,7 +444,7 @@ void World::tickAir(float dt) {
     const PlayerState& ps = player_.state();
     submerged_ = false;
     if (ps.water >= 0 && size_t(ps.water) < col_.markup.size()) {
-        const float surf = col_.markup[size_t(ps.water)].points[1].z;
+        const float surf = waterSurface(col_.markup[size_t(ps.water)], vec2(ps.pos), double(ticks_) * kTickSeconds);
         switch (ps.state) {
         case State::SwimUnder:
         case State::SwimDive:
@@ -634,9 +635,44 @@ std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const c
         const vec3 c(vol.position[0], vol.position[1], vol.position[2]);
         const float cs = std::cos(vol.rotation[2]), sn = std::sin(vol.rotation[2]);
         const vec3 ext(std::abs(cs) * half.x + std::abs(sn) * half.y, std::abs(sn) * half.x + std::abs(cs) * half.y, half.z);
-        out.push_back({10, uint16_t(vol.uniqueId), {c - ext, c + ext, c, half, vec3(cs, sn, 0)}});
+        auto& m = out.emplace_back(collision::Markup{10, uint16_t(vol.uniqueId), {c - ext, c + ext, c, half, vec3(cs, sn, 0)}});
+        // Waves (0x6AC720 reads the hook data = intro data + 4): +0x4E bit 1 on; +0x6C height scale; wave i: kx +0x70 + 8i,
+        // ky +0x74 + 8i, height share +0x90 + 4i, speed +0xA0 + 4i (rad/s). l1_seatop / l2_cliffclimb / l1_ship_exterior /
+        // l6_ship_exterior's seas.
+        const auto f = [&](size_t o) { float v; std::memcpy(&v, bytes.data() + vol.data->offset + o, 4); return v; };
+        uint16_t flags;
+        std::memcpy(&flags, bytes.data() + vol.data->offset + 0x4E, 2);
+        if (!(flags & 2) || vol.data->offset + 0xB0 > bytes.size()) continue;
+        for (int i = 0; i < 4; ++i) m.points.push_back({f(0x70 + 8 * i), f(0x74 + 8 * i), f(0xA0 + 4 * i)});
+        for (int i = 0; i < 4; ++i) m.points.push_back({f(0x6C) * f(0x90 + 4 * i), 0, 0});
     }
     return out;
+}
+
+namespace {
+float waveSeconds(double seconds) { return float(std::fmod(seconds, 628.3185307179586)); } // 0x6C10D0: fmod(t, 200 pi)
+} // namespace
+
+float waveHeight(const collision::Markup& m, vec2 xy, double seconds) {
+    if (m.points.size() < 13) return 0;
+    const float t = waveSeconds(seconds);
+    float h = 0;
+    for (int i = 0; i < 4; ++i) {
+        const vec3 w = m.points[size_t(5 + i)];
+        h += m.points[size_t(9 + i)].x * (std::cos(w.x * xy.x + w.y * xy.y + w.z * t) - 1.0f);
+    }
+    return h;
+}
+
+std::array<vec4, 4> waveRegisters(const collision::Markup& m, double seconds) {
+    std::array<vec4, 4> r{};
+    if (m.points.size() < 13) return r;
+    const float t = waveSeconds(seconds);
+    for (int i = 0; i < 4; ++i) {
+        const vec3 w = m.points[size_t(5 + i)];
+        r[0][i] = w.x, r[1][i] = w.y, r[2][i] = w.z * t, r[3][i] = m.points[size_t(9 + i)].x;
+    }
+    return r;
 }
 
 // Inside water box `m` (type 10): `p` in its rotated frame, grown by `grow` on each axis. Two-point markups

@@ -540,6 +540,45 @@ TEST(StreamReal, OpenSeaWater) {
     EXPECT_GT(w.player().state().pos.z, -3000.0f) << "does not sink through the sea";
 }
 
+// The open seas' waves (tru.exe 0x69DA80 / 0x69DFB0, GAMEPLAY.md "Water"): the surface is the volume top lowered by
+// sum height x (1 - cos), so the ch1 / ch2 yachts' decks stay above the water at every phase and Lara starts dry; a
+// swimmer rides the waves.
+TEST(StreamReal, YachtDecksAboveSea) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    for (const auto& [chapter, volume] : {std::pair{1, 1851}, std::pair{2, 2563}}) {
+        w.startChapter(chapter);
+        for (int i = 0; i < 60; ++i) w.tick({});
+        const auto& s = w.player().state();
+        EXPECT_LT(s.water, 0) << "ch" << chapter << " starts dry";
+        const collision::Markup* sea = nullptr;
+        for (const auto& m : w.collision().markup)
+            if (m.type == 10 && m.id == volume) sea = &m;
+        ASSERT_NE(sea, nullptr) << chapter;
+        ASSERT_EQ(sea->points.size(), 13u) << "waves";
+        float highest = -1e9f;
+        for (double t = 0; t < 628.4; t += 0.05) highest = std::max(highest, game::waterSurface(*sea, glm::vec2(s.pos), t));
+        EXPECT_LT(highest, s.pos.z - 10.0f) << "ch" << chapter << " deck above the sea at every phase";
+        EXPECT_GT(highest, s.pos.z - 400.0f) << "ch" << chapter;
+    }
+    auto s = w.player().state(); // ch2: put her into the sea beside the yacht; she surfaces and treads on the waves
+    s.pos = glm::vec3(-31000, -10000, -500);
+    w.restore(s, w.camera().yaw, w.camera().pitch);
+    std::set<int> heights;
+    for (int i = 0; i < 600; ++i) {
+        w.tick({});
+        const auto& p = w.player().state();
+        if (p.state != game::State::SwimTread) continue;
+        const auto& sea = w.collision().markup[size_t(p.water)];
+        EXPECT_NEAR(p.pos.z, game::waterSurface(sea, glm::vec2(p.pos), double(w.ticks() - 1) * game::kTickSeconds), 1.0f);
+        heights.insert(int(p.pos.z / 10));
+    }
+    EXPECT_GT(heights.size(), 3u) << "she rides the waves";
+}
+
 // The original's chapter starts (GAMEPLAY.md "Chapter starts"): startChapter Sends messagechannel 2 id = chapter, the
 // start unit's script enters state 1 and activates its intro cinematic; after the stream (skipped here) World places
 // Lara / the bikes at the header tails and sends cinematic event 1, whose handler mounts her (larabase 52).

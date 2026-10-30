@@ -224,6 +224,17 @@ count, resolved; its own frame block per frame in flight) before the main pass; 
 `ObjectBlock::inst` (GL: a second half of the object buffer). Viewed (2026-10-29): the ch2 start's cliffs reflect in
 the sea in GL Original and Vulkan Original / Enhanced.
 
+Sea waves (VS InstanceParams 3–6 = c60–c63, `ObjectBlock::waves`): tru.exe's water volume hook 0x69DFB0 sets the
+sea program's x / y wave numbers, phases (speed × game seconds mod 200π) and heights each frame; the program lowers each
+vertex by Σ height (1 − cos(kx x + ky y + phase)) (GAMEPLAY.md "Water"). The game passes them per water volume
+(`WaterVolume::waves`, `game::waveRegisters` on the sim clock) and `original::fillWaves` gives them to every draw whose
+bounds centre lies in the volume (only the sea programs read c60–c63). The reflection plane stays at the sea mesh
+(0x5C5B80 takes the drawable's plane, not the waves). Read in tru.exe under Wine at l2_cliffclimb (2026-10-29): water
+component +0x7C = 0xF, +0xC8 = 250, c60 (1, 5, −14, −16)·10⁻⁴, c61 (3, 0, −14, 2)·10⁻⁴, c63 (100, 75, 50, 25), c62 =
+(0.7, 1, 0.7, 0.3) × the 0xED00C8 clock. Viewed GL / Vulkan Original next to the original at the yacht's bow
+(openunderworld-work screens/chapters/side_ch2_waves.png): the water sits below the deck rim in all three; the ch1
+start deck is dry too.
+
 ## Water (Enhanced, GL + Vulkan; `graphics.water`, `--water original|enhanced`)
 
 Original (`water = 0`) draws water-surface meshes with TRU's own translated shaders, as before.

@@ -90,7 +90,8 @@ PS samplers: 49 933 2D + 1 205 cube declarations. Full opcode / declaration / CT
 
 Not fed yet [U/I]: spot-light cookies (s12/s13, 63 spots) and light shadow maps (slots 0–2), receiver masks, directional
 SH terms of IrradianceState, lights of object intros and cinematic light rigs, PSSM shadows, per-instance params (zero)
-except the planar reflection (global class 5 + PS InstanceParams 0–2, RENDERING.md "Planar reflection"). Opacity fades: MaterialOpacity c98 stays 1;
+except the planar reflection (global class 5 + PS InstanceParams 0–2, RENDERING.md "Planar reflection") and the sea
+waves (VS InstanceParams 3–6). Opacity fades: MaterialOpacity c98 stays 1;
 the instance opacity multiplies the output alpha instead (RENDERING.md "Instance opacity") [I: the composite slot-1
 opacity variant is not used].
 

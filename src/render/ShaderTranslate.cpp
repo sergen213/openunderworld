@@ -31,9 +31,9 @@ const char* kPrelude = R"(#version 450
 OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[320]; } ouFrame;
 OU_UBO(1, 0, 1) uniform OuMaterial { vec4 vs[40]; vec4 ps[40]; vec4 fixedParams; } ouMat;
 #ifdef OU_VULKAN
-layout(push_constant) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; float pad; vec4 inst[3]; } ouObj;
+layout(push_constant) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; float pad; vec4 inst[3]; vec4 waves[4]; } ouObj;
 #else
-layout(std140, binding = 2) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; float pad; vec4 inst[3]; } ouObj;
+layout(std140, binding = 2) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; float pad; vec4 inst[3]; vec4 waves[4]; } ouObj;
 #endif
 // Light table index of PS light slot s (0-5), 255 = slot empty.
 #define OU_LIGHT(s) ((ouObj.lightSet[(s) >> 2] >> (8u * uint((s) & 3))) & 255u)
@@ -215,6 +215,7 @@ private:
         if (floatDefs_.count(n)) return "c" + std::to_string(n) + "_def";
         if (!p_.pixel) {
             if (n < unsigned(kObjectVs)) return "ouObj.v[" + std::to_string(n) + "]";
+            if (n >= 60 && n <= 63) return "ouObj.waves[" + std::to_string(n - 60) + "]"; // InstanceParams 3-6 (per draw)
             if (n >= unsigned(kMaterialVsBase) && n < unsigned(kMaterialVsBase + kMaterialVs))
                 return "ouMat.vs[" + std::to_string(n - kMaterialVsBase) + "]";
             if (n >= unsigned(kFrameVs)) throw Fail("VS constant out of range");

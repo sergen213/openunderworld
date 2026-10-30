@@ -840,6 +840,7 @@ public:
             auto& [stamp, lights] = meshLights_[d.mesh];
             if (stamp != frameCounter_ + 1) stamp = frameCounter_ + 1, lights = original::lightSet(environment_, m.center, m.radius);
             original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
+            original::fillWaves(ob, options.waterVolumes, m.center);
             if (reflection && od.reflection) std::memcpy(ob.inst, reflection->rows, sizeof ob.inst);
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);
@@ -2008,6 +2009,8 @@ private:
         driver_ = std::string(p12.driverName) + " " + p12.driverInfo;
         if (props.properties.limits.maxPushConstantsSize < sizeof(ScenePush))
             throw std::runtime_error("maxPushConstantsSize < " + std::to_string(sizeof(ScenePush)));
+        if (props.properties.limits.maxPushConstantsSize < sizeof(sm3::ObjectBlock)) // 256: the translated shaders' object block
+            throw std::runtime_error("maxPushConstantsSize < " + std::to_string(sizeof(sm3::ObjectBlock)));
 
         VkPhysicalDeviceFeatures supported;
         vkGetPhysicalDeviceFeatures(gpu_, &supported);

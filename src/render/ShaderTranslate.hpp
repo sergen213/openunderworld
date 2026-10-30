@@ -26,8 +26,10 @@ namespace ou::render::sm3 {
 //                                                  alpha) x opacity, FrameOptions::meshOpacity)
 //                                                  vec4 inst[3] = PS c132..c134 (InstanceParams 0-2: the planar
 //                                                  reflection's matrix on reflecting draws, else 0);
+//                                                  vec4 waves[4] = VS c60..c63 (InstanceParams 3-6: the water
+//                                                  volume's sea waves, original::fillWaves; else 0);
 //   samplers s0..s15: VK set 1 binding 1 + n, GL texture unit n.
-// Register -> block: VS c0-7 object, c25-64 material (MaterialParams + InstanceParams c57), else frame; PS c2/c98 material.fixed, c132-134 object.inst, c100-139 material (MaterialParams + InstanceParams c135),
+// Register -> block: VS c0-7 object, c60-63 object.waves, c25-64 material (MaterialParams + InstanceParams c57), else frame; PS c2/c98 material.fixed, c132-134 object.inst, c100-139 material (MaterialParams + InstanceParams c135),
 // PS c178-c207 (Shadow/NonShadowLights, 5 per slot) frame.lights[lightSet slot], b0-b5 = slot used, else frame.
 // `def` constants shadow every block (D3D9 semantics).
 inline constexpr int kFrameVs = 256, kFramePs = 224, kMaterialVsBase = 25, kMaterialVs = 40, kMaterialPsBase = 100,
@@ -52,6 +54,7 @@ struct ObjectBlock {
     uint32_t lightSet[2] = {~0u, ~0u};
     float opacity = 1, pad = 0;
     float inst[3][4] = {};
+    float waves[4][4] = {};
 };
 static_assert(sizeof(FrameBlock) == (kFrameVs + kFramePs + 16 + 16 + 1 + 1 + kMaxLights * kLightRegs) * 16);
 static_assert(sizeof(MaterialBlock) == (kMaterialVs + kMaterialPs + 1) * 16);

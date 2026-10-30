@@ -41,6 +41,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ### Fixed
 
+- The open seas have tru.exe's waves (water volume data +0x4E bit 1: four long swells, 0x69DA80 / 0x69DFB0): the sea
+  shader lowers its surface by them and Lara swims on the same surface, so the ch1 / ch2 yachts float with their decks
+  above the water and Lara starts dry instead of standing in the sea (docs/GAMEPLAY.md "Water").
 - Original shaders: D3D9 `vFace` was inverted; two-sided shaders now light the correct side, and the l1_seatop sea
   no longer shows l1_seafloor's backdrop / seabed and light streaks through its near-camera refraction (it took its
   under-water branch from above).

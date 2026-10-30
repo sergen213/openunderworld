@@ -2316,10 +2316,15 @@ int main(int argc, char** argv) {
             fo.ripples = {ws.originX(), ws.originY(), ou::game::WaterSim::kCell, ws.surfaceZ(), ou::game::WaterSim::kSize,
                           ws.heights(), ws.version()};
         waterVolumes.clear();
+        const double waveSeconds = (double(world->ticks()) + clock.alpha()) * ou::game::kTickSeconds; // the sim's sea clock
         for (const auto& m : world->collision().markup)
-            if (!mainMenu && m.type == 10 && m.points.size() >= 2)
-                waterVolumes.push_back({{m.points[0].x, m.points[0].y, m.points[0].z},
-                                        {m.points[1].x, m.points[1].y, m.points[1].z}});
+            if (!mainMenu && m.type == 10 && m.points.size() >= 2) {
+                auto& v = waterVolumes.emplace_back(ou::render::WaterVolume{{m.points[0].x, m.points[0].y, m.points[0].z},
+                                                                            {m.points[1].x, m.points[1].y, m.points[1].z}});
+                const auto r = ou::game::waveRegisters(m, waveSeconds);
+                for (int i = 0; i < 4; ++i)
+                    for (int k = 0; k < 4; ++k) v.waves[i][k] = r[size_t(i)][k];
+            }
         fo.waterVolumes = waterVolumes;
         splashParticles.clear();
         if (opt.gfx.water && !mainMenu)

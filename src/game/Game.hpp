@@ -19,6 +19,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -36,6 +37,7 @@ namespace ou::game {
 
 using glm::vec2;
 using glm::vec3;
+using glm::vec4;
 
 inline constexpr double kTickSeconds = 1.0 / 60.0; // fixed simulation step (engine::FrameClock default)
 
@@ -225,6 +227,7 @@ public:
     const Tuning& tuning() const { return t_; }
     void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
+    void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
     void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0) const;
@@ -286,6 +289,7 @@ private:
     Tuning t_;
     PlayerState s_;
     bool jumpHeld_ = false, dropHeld_ = false;
+    double waveSeconds_ = 0;
 };
 
 // ---- camera -----------------------------------------------------------------------------------
@@ -726,11 +730,19 @@ private:
 std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
 // Water volumes of a unit as type-10 ("water", MUD flag 0x100000) markup boxes, as tru.exe builds them
 // for each `watervolume` instance (0x5D7130): its intro data's box around the instance, surface = top.
-// points = {AABB min, AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0)}
+// points = {AABB min, AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0)}, then for volumes with
+// waves (data +0x4E bit 1) 4 x (kx, ky, speed) and 4 x (height, 0, 0)
 // (docs/GAMEPLAY.md "Water").
 std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
 // `p` inside water box `m` (a findWater markup) grown by `grow` per axis in the box frame.
 bool insideWater(const collision::Markup& m, vec3 p, vec3 grow = vec3(0));
+// Sea waves of a water volume (tru.exe 0x69DA80): sum_i height_i (cos(kx_i x + ky_i y + speed_i t) - 1), <= 0, with t =
+// game seconds mod 200 pi (0x6ADB70, 0x6C10D0); 0 for volumes without waves.
+float waveHeight(const collision::Markup& m, vec2 xy, double seconds);
+// Water surface z of volume `m` at `xy` (top + waveHeight, tru.exe 0x6AD010).
+inline float waterSurface(const collision::Markup& m, vec2 xy, double seconds) { return m.points[1].z + waveHeight(m, xy, seconds); }
+// The sea program's VS InstanceParams 3-6 (c60-c63: kx, ky, phase, height per wave; 0x69DFB0); zero without waves.
+std::array<vec4, 4> waveRegisters(const collision::Markup& m, double seconds);
 
 // ---- input ------------------------------------------------------------------------------------
 // Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions, through

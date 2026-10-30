@@ -136,6 +136,14 @@ void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProj, const glm::mat4&
     o.lightSet[0] = lights.packed[0], o.lightSet[1] = lights.packed[1], o.opacity = opacity;
 }
 
+void fillWaves(sm3::ObjectBlock& o, std::span<const WaterVolume> volumes, glm::vec3 center) {
+    for (const auto& v : volumes)
+        if (glm::all(glm::lessThanEqual(glm::make_vec3(v.min), center)) && glm::all(glm::lessThanEqual(center, glm::make_vec3(v.max)))) {
+            std::memcpy(o.waves, v.waves, sizeof o.waves);
+            return;
+        }
+}
+
 std::vector<int> falloffRows(const scene::Environment& env) {
     std::vector<int> rows;
     std::map<std::vector<uint8_t>, int> unique;
