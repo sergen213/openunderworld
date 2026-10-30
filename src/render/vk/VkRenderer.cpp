@@ -279,6 +279,7 @@ struct GpuMesh {
     glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;    // world-space bounding-sphere radius (original::lightSet)
     float reflectZ = std::numeric_limits<float>::quiet_NaN(); // original::reflectionPlaneZ (NaN: nothing reflects)
+    std::vector<uint8_t> reflective; // per submesh: a planar-reflection material (render::reflectsWater candidates)
     // Ray tracing (empty without RT support): one BLAS geometry per traced submesh (Opaque + Alpha
     // blends, as the shadow map). Skinned meshes are refitted, others rebuilt, on updateVertices.
     bool skinned = false, water = false;
@@ -694,6 +695,9 @@ public:
         ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0, 0.0f, 0, 1.0f};
         const glm::mat4 currentVP = zRemap * eye.projection(aspect) * eye.view(); // unjittered (FSR motion)
         const bool enhancedWater = options.water == WaterQuality::Enhanced;
+        sea_.assign(enhancedWater ? meshes_.size() : 0, 0);
+        for (size_t i = 0; i < sea_.size(); ++i)
+            sea_[i] = reflectsWater(meshes_[i].center, meshes_[i].radius, meshes_[i].reflectZ, options.waterVolumes);
         uint32_t splashCount = 0; // splash droplet vertices drawn (FSR reactivity)
         WaterBlock wb = waterBlock(camera, {int(extent_.width), int(extent_.height)}, push.viewProj, environment_, options);
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
@@ -956,7 +960,7 @@ public:
         auto drawMain = [&](const DrawRef& d) {
             const GpuMesh& m = meshes_[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
-            if (enhancedWater && m.water) return; // the water pass below draws them with the opaque copies
+            if (enhancedWater && waterDraw(d.mesh, d.sub)) return; // the water pass below draws them with the opaque copies
             const float op = opacityOf(d.mesh);
             const scene::Blend blend = drawBlend(s, op);
             // Rays on opaque surfaces (pre-passed: each visible pixel traces once) and on water for reflections; none on
@@ -992,7 +996,7 @@ public:
             for (const DrawRef& d : refs) {
                 const scene::SubMesh& s = meshes_[d.mesh].submeshes[d.sub];
                 if (drawBlend(s, opacityOf(d.mesh)) != scene::Blend::Opaque) break;
-                if (enhancedWater && meshes_[d.mesh].water) continue;
+                if (enhancedWater && waterDraw(d.mesh, d.sub)) continue;
                 // Translated programs pre-pass with their own (invariant) VS and plain PS (its alpha test, no sun term).
                 if (const OrigDraw* od = origDraw(d)) {
                     if (od->screen) continue; // drawn after the copies, depth included
@@ -1059,11 +1063,13 @@ public:
                                     nullptr);
             for (uint32_t mi = 0; mi < meshes_.size(); ++mi) {
                 const GpuMesh& m = meshes_[mi];
-                if (!m.water || clippedAway(mi)) continue;
+                if (!(m.water || sea_[mi]) || clippedAway(mi)) continue;
                 bindMesh(mi);
                 clipTo(mi);
-                vkCmdPushConstants(cmd, waterLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m.model);
-                for (const auto& s : m.submeshes) vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+                const glm::mat4 wp[2] = {m.model, waterWaves(m.center, m.radius, options.waterVolumes)};
+                vkCmdPushConstants(cmd, waterLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof wp, wp);
+                for (uint32_t s = 0; s < m.submeshes.size(); ++s)
+                    if (waterDraw(mi, s)) vkCmdDrawIndexed(cmd, m.submeshes[s].indexCount, 1, m.submeshes[s].firstIndex, 0, 0);
             }
             clipTo(UINT32_MAX);
             if (!options.splashes.empty()) {
@@ -1789,8 +1795,15 @@ private:
                     if (od.reflection) reflectSets_.push_back({od.set, od.reflection});
                 }
         for (size_t si = 0; si < scene.meshes.size() && si < meshSlot_.size(); ++si)
-            if (meshSlot_[si] < meshes_.size())
-                meshes_[meshSlot_[si]].reflectZ = original::reflectionPlaneZ(scene.meshes[si], meshes_[meshSlot_[si]].model, prep.materials);
+            if (meshSlot_[si] < meshes_.size()) {
+                GpuMesh& g = meshes_[meshSlot_[si]];
+                g.reflectZ = original::reflectionPlaneZ(scene.meshes[si], g.model, prep.materials);
+                g.reflective.clear();
+                for (const auto& s : g.submeshes) {
+                    const auto it = prep.materials.find(s.materialId);
+                    g.reflective.push_back(it != prep.materials.end() && original::reflectionSamplers(*it->second) != 0);
+                }
+            }
         writeScreenSets();
     }
 
@@ -2191,7 +2204,7 @@ private:
         };
         VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
-        VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
+        VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves
         VkPipelineLayoutCreateInfo wpl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &waterSetLayout_, 1,
                                        &modelPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &wpl, nullptr, &waterLayout_));
@@ -2639,10 +2652,11 @@ private:
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrReactivePipeline_);
         for (uint32_t mi = 0; reactive && mi < meshes_.size(); ++mi) {
             const GpuMesh& m = meshes_[mi];
-            const bool water = enhancedWater && m.water;
-            for (const auto& s : m.submeshes)
-                if (water) draw(mi, s, {0, 0.6f, 0, 0});
+            for (uint32_t si = 0; si < m.submeshes.size(); ++si) {
+                const scene::SubMesh& s = m.submeshes[si];
+                if (enhancedWater && waterDraw(mi, si)) draw(mi, s, {0, 0.6f, 0, 0});
                 else if (s.blend != scene::Blend::Opaque) draw(mi, s, {s.alphaRef / 255.0f, 0.9f, 1, 0});
+            }
         }
         vkCmdSetScissor(cmd, 0, 1, &scissor);
         if (reactive && !options.fxBatches.empty() && !options.fxVertices.empty()) { // drawFrame filled fxBuffers_[frameIndex_]
@@ -3836,6 +3850,12 @@ private:
     std::unordered_map<uint32_t, GpuImage> textures_;
     std::vector<GpuMesh> meshes_;
     std::vector<size_t> meshSlot_; // last upload()'s SceneData::meshes index -> meshes_ index (SIZE_MAX = skipped)
+    std::vector<uint8_t> sea_;     // per frame (Enhanced): render::reflectsWater per mesh
+    // Enhanced water draws this submesh (water pass, not the scene passes).
+    bool waterDraw(uint32_t mesh, uint32_t sub) const {
+        const GpuMesh& m = meshes_[mesh];
+        return m.water || (mesh < sea_.size() && sea_[mesh] && sub < m.reflective.size() && m.reflective[sub]);
+    }
 
     // Original Fidelity (translated TRU shaders).
     VkDescriptorSetLayout origFrameLayout_ = VK_NULL_HANDLE, origMatLayout_ = VK_NULL_HANDLE;

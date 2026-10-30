@@ -1392,7 +1392,140 @@ TEST(Game, WaterWakeFollowsLara) {
     for (int i = 0; i < 300; ++i) w->tick(forward());
     EXPECT_GT(maxRipple(w->water()), 0.5f) << "surface swimming leaves a wake";
     EXPECT_TRUE(w->water().originX() != ox || w->water().originY() != oy) << "the field follows Lara";
-    EXPECT_EQ(std::fmod(w->water().originX(), game::WaterSim::kCell), 0.0f);
+    EXPECT_NEAR(std::remainder(w->water().originX(), game::WaveField::kCell), 0.0f, 1e-2f);
+    EXPECT_TRUE(w->water().field().wall({-5, 0})) << "the pool side is a wall";
+    EXPECT_FALSE(w->water().field().wall({1000, 0}));
+}
+
+// ---- the wave field itself (game::WaveField): Joan of Arc's tests/engine/water_waves_test.cpp in TRU units ----
+namespace {
+using glm::vec2;
+constexpr float S = game::kWaterScale, kDt = game::WaveField::kStep;
+using Wet = game::WaveField::Wet;
+
+game::WaveField waveField(const Wet& wet = [](vec2) { return true; }) {
+    game::WaveField f;
+    f.follow({0, 0}, wet);
+    return f;
+}
+void runWaves(game::WaveField& f, float seconds) {
+    for (int i = 0; i < int(seconds / kDt + 0.5f); ++i) f.step(kDt);
+}
+float waveEnergy(const game::WaveField& f, const std::function<bool(vec2)>& in) {
+    const auto h = f.heights();
+    constexpr int n = game::WaveField::kN;
+    float e = 0;
+    for (int i = 0; i < n * n; ++i)
+        if (in(f.origin() + (vec2(i % n, i / n) + 0.5f) * game::WaveField::kCell)) e += h[size_t(i)] * h[size_t(i)];
+    return e;
+}
+float wavePeak(const game::WaveField& f) {
+    float m = 0;
+    for (float h : f.heights()) m = std::max(m, std::abs(h));
+    return m;
+}
+} // namespace
+
+// Two splashes 400 Joan units apart: the field is linear, so at the midpoint both together are exactly the sum of each
+// alone; equal kicks double there (constructive), opposite ones cancel (destructive).
+TEST(WaveField, Superposition) {
+    const vec2 p1 = vec2(-198, 2) * S, p2 = vec2(202, 2) * S, mid = vec2(2, 2) * S; // mirror images about a cell centre
+    auto a = waveField(), b = waveField(), ab = waveField(), anti = waveField();
+    a.kick(p1, 6 * S, 24 * S), b.kick(p2, 6 * S, 24 * S);
+    ab.kick(p1, 6 * S, 24 * S), ab.kick(p2, 6 * S, 24 * S);
+    anti.kick(p1, 6 * S, 24 * S), anti.kick(p2, -6 * S, 24 * S);
+    float worst = 0, single = 0, both = 0, cancel = 0;
+    for (int i = 0; i < 240; ++i) {
+        for (auto* f : {&a, &b, &ab, &anti}) f->step(kDt);
+        worst = std::max(worst, std::abs(ab.height(mid) - a.height(mid) - b.height(mid)));
+        single = std::max(single, std::abs(a.height(mid)));
+        both = std::max(both, std::abs(ab.height(mid)));
+        cancel = std::max(cancel, std::abs(anti.height(mid)));
+    }
+    EXPECT_GT(single, 0.02f * S);
+    EXPECT_LT(worst, 1e-4f * S);
+    EXPECT_NEAR(both, 2 * single, 1e-3f * S);
+    EXPECT_LT(cancel, 1e-4f * S);
+}
+
+// A shore: a splash near it keeps its energy on the water side (it reflects) where open water lets it run on; wall
+// cells never move.
+TEST(WaveField, ShoreReflects) {
+    const auto water = [](vec2 p) { return p.x < 160 * S; };
+    auto shore = waveField(water), open = waveField();
+    for (auto* f : {&shore, &open}) f->kick(vec2(96, 4) * S, 6 * S, 24 * S);
+    runWaves(shore, 2), runWaves(open, 2);
+    const float kept = waveEnergy(shore, water), lost = waveEnergy(open, water);
+    EXPECT_GT(kept, 1.5f * lost);
+    EXPECT_EQ(waveEnergy(shore, [&](vec2 p) { return !water(p); }), 0.0f);
+    EXPECT_TRUE(shore.wall(vec2(200, 0) * S));
+    EXPECT_FALSE(shore.wall(vec2(100, 0) * S));
+}
+
+// A body is a wall for the step after it is placed: no water moves inside it. A kick at its feet, clipped by the body
+// and a shore, still moves no water in or out (the pool level stays put).
+TEST(WaveField, BodiesAreObstacles) {
+    auto f = waveField([](vec2 p) { return p.x < 40 * S; });
+    f.wade({0, 0}, {0, 0}, kDt);
+    f.kick({0, 0}, 6 * S, 22 * S);
+    float volume = 0;
+    for (float h : f.heights()) volume += h;
+    f.step(kDt);
+    EXPECT_LT(std::abs(volume), 1e-3f * S * S);
+    EXPECT_EQ(f.height({0, 0}), 0.0f);
+    EXPECT_NE(f.height(vec2(-40, 0) * S), 0.0f);
+}
+
+// Damping: a full splash is gone after a few seconds, and the empty span tells the renderer the water is at rest.
+TEST(WaveField, DampsToRest) {
+    auto f = waveField();
+    f.kick({0, 0}, 6 * S, 24 * S);
+    const float start = wavePeak(f);
+    runWaves(f, 1);
+    const float one = wavePeak(f);
+    runWaves(f, 3);
+    const float four = wavePeak(f);
+    runWaves(f, 6);
+    EXPECT_GT(start, 5 * S);
+    EXPECT_LT(one, 1.5f * S);
+    EXPECT_LT(four, 0.05f * S);
+    EXPECT_TRUE(f.heights().empty());
+}
+
+// Scrolling the window by whole cells keeps every wave at its world position.
+TEST(WaveField, ScrollKeepsWaves) {
+    auto still = waveField(), moved = waveField();
+    for (auto* f : {&still, &moved}) f->kick(vec2(40, 40) * S, 6 * S, 24 * S), runWaves(*f, 1);
+    moved.follow(vec2(37 * 8 + 3, -21 * 8) * S, [](vec2) { return true; });
+    EXPECT_NE(moved.origin(), still.origin());
+    runWaves(still, 0.5f), runWaves(moved, 0.5f);
+    float worst = 0, seen = 0;
+    for (float x = -160; x <= 240; x += 8)
+        for (float y = -160; y <= 240; y += 8) {
+            const vec2 p = vec2(x, y) * S;
+            worst = std::max(worst, std::abs(still.height(p) - moved.height(p)));
+            seen = std::max(seen, std::abs(still.height(p)));
+        }
+    EXPECT_GT(seen, 0.1f * S);
+    EXPECT_EQ(worst, 0.0f);
+}
+
+// A body walking (180 Joan units/s) / running (400) through open water at 240 fps leaves ~2-unit (x S) wake waves.
+TEST(WaveField, WakeHeight) {
+    for (const float speed : {180 * S, 400 * S}) {
+        auto f = waveField();
+        float top = 0;
+        vec2 p = vec2(-250, 0) * S;
+        for (int i = 0; i < 360; ++i) {
+            const float dt = 1.0f / 240.0f;
+            f.step(dt);
+            p.x += speed * dt;
+            f.wade(p, {speed, 0}, dt);
+            top = std::max(top, wavePeak(f));
+        }
+        EXPECT_GT(top, 0.5f * S) << speed;
+        EXPECT_LT(top, 2.5f * S) << speed;
+    }
 }
 
 TEST(Game, WaterAirDrainsRefillsAndDrowns) {

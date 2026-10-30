@@ -241,28 +241,38 @@ Original (`water = 0`) draws water-surface meshes with TRU's own translated shad
 Enhanced (`water = 1`, the enhanced-preset default) replaces them with our own water shading
 (`src/render/shaders/water.{vert,frag}`, shared by both backends; `src/render/Water.{hpp,cpp}`).
 Water surfaces are meshes whose object name contains `watersurface` [I], e.g.
-`ca_goo_pool_watersurface` in l4_pool; `render::isWaterSurface` is the shared test.
+`ca_goo_pool_watersurface` in l4_pool (`render::isWaterSurface`), and TRU's planar-reflection water: the submeshes
+with `original::reflectionSamplers` of a mesh whose reflection plane lies in a water volume (`render::reflectsWater`;
+l2_cliffclimb's sea is such a submesh of one terrain mesh). `water.vert` lowers those by the sea's waves exactly as
+their original vertex shader (`render::waterWaves`, columns c60-c63), so the yacht deck stays above the drawn sea.
 
-Technique (written for this project, no third-party shader code):
-- Normals: four directional waves with analytic slopes, plus the game's ripple height field
-  (central differences). Procedural wave amplitudes are ours [I].
-- Refraction: a single-sample copy of the opaque scene colour + depth, distorted by the normal;
-  foreground pixels are rejected. Thickness drives Beer-Lambert absorption (red attenuates
-  fastest) into a blue-green tint, and caustics (animated ridged filaments) on the bottom.
-- Reflections: Schlick Fresnel (F0 0.02) with screen-space ray marching against the opaque
-  depth (20 steps, radial hit test), fog colour as the miss fallback. Sun glints from the unit's
-  sun. The Original RT water-reflection path is not used in Enhanced; Enhanced reflections are
-  screen-space in both backends.
-- Foam where the bottom is shallow (shore/intersection) and on ripple crests.
-- Splash droplets: camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
+Technique: the stylised water of our Wars and Warriors: Joan of Arc port (same author, GPLv3; its
+`shaders/common/pbr_shade.glsl` `shade_water`, credited in docs/RESEARCH.md §8.7), ported to TRU:
+- Shaded in linear light (the gamma scene copy goes to linear and back), every length × `kScale` = 6.4
+  (`game::kWaterScale`, TRU units per Joan unit), the Laplacian thresholds ÷ 6.4.
+- Normals: two drifting, crossing normal layers (900 and 260 Joan units; Joan samples the original's
+  `Lake1.bmp` height map, TRU has none, so two octaves of value noise stand in) and the interactive wave
+  field (`game::WaveField`, central differences 1.5 cells apart, slope softly capped towards 0.3).
+- Refraction: the opaque scene colour + depth refracted by the normals and the waves (stronger over deep
+  beds); a sample above the surface falls back to straight through. Absorption removes red first (teal
+  shallows), in-scattered colour runs teal → deep blue with the bed depth, lit by ambient + sun. No depth
+  behind the surface = open, deep water.
+- Reflection with Schlick Fresnel (F0 0.02), fading in over the first 64 units of depth so the waterline
+  stays soft. Joan reads a sky environment map; we march the scene (screen-space, ours: 20 steps, or the
+  thickness-tested 24-step march with water detail) with a fog / sun-lobe sky as the miss colour.
+- Wave light: crests (negative Laplacian) catch the sky, troughs darken — a high-pass, so wakes and rings
+  read as lines; GGX sun glints (α 0.07; with water detail occluded screen-space, and nearby lamps glint).
+- Foam: a shoreline band (256 units) broken into drifting lace by fine noise, plus wave foam on splash
+  craters and the sharpest crests.
+- Splash droplets (ours): camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
 - Underwater: the original's under-water look ("Under water" below) in both qualities; Enhanced
   adds faint caustics on the submerged bottom. The surface seen from below is tinted instead of
   mirrored.
 
-Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the ripple field, splash
+Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the wave field, splash
 droplets and the water volumes; ou-game fills `FrameOptions::{ripples, waterVolumes, splashes}`
-every frame. `render::WaterBlock` (UBO: camera, inverse view-projection, sun, fog, ripple
-transform, absorption) feeds the water, splash and post shaders.
+every frame. `render::WaterBlock` (UBO: camera, inverse view-projection, sun, ambient, fog, wave
+field transform) feeds the water, splash and post shaders.
 
 Backend plumbing: GL blits the scene colour/depth into `opaqueColor/opaqueDepth` after the scene
 pass (MSAA resolve included), then draws water + splashes into the same framebuffer. Vulkan
@@ -275,9 +285,10 @@ Measured (2026-10-27, l4_pool viewer, Vulkan, 1792x1008): Original 4.80 ms, Enha
 average frame time over 49 frames. Viewed screenshots (GL and Vulkan, same camera): reflective,
 refractive pool with shore foam and caustics; Lara treading with a wake; underwater tint + AIR bar.
 
-Limits [I]: SSR misses off-screen geometry (fog fallback), one simulated surface (the one Lara
-is in or nearest), no water flow/buoyancy, procedural caustics are not light-accurate, foam noise
-is hashed cells, no ripples in ou-viewer (it has no simulation).
+Limits [I]: SSR misses off-screen geometry (fog fallback), the wave field covers a 6554-unit window
+around Lara (fading out at its edge), shore walls are sampled once per cell from the collision at the
+volume's rest surface (a sea's waves move the real shoreline), no water flow/buoyancy, no waves in
+ou-viewer (it has no simulation).
 
 ### Under water (GL + Vulkan, both water qualities; `FrameOptions::underwater`)
 

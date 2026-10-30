@@ -466,6 +466,16 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   atmosphere stops at the water surface, water debug views, analytic two-layer height fog with a
   Henyey-Greenstein lobe, screen-space sun shafts, depth-tested precipitation layers, rain splashes.
 
+### 8.7 Wars and Warriors: Joan of Arc port (GPL-3.0, same author) — water code ported
+
+- Our native port of Wars and Warriors: Joan of Arc (local repo, GPL-3.0 like OpenUnderworld, same author; commits
+  1dca714 stylised water, 0ff4524 wave field, bddcada, a2fa7c6). Ported with permission of the licence:
+  `src/engine/water_waves.{hpp,cpp}` → `game::WaveField` (verbatim algorithm, z-up, lengths × 6.4),
+  `world_view_water.cpp` (wading / wake / bob / splash strengths) → `game::WaterSim::tick`,
+  `shaders/common/pbr_shade.glsl` `shade_water` → `src/render/shaders/water.frag`, and
+  `tests/engine/water_waves_test.cpp` → `WaveField.*` in `tests/test_game.cpp`. Not ported: its sky environment
+  map / ray-traced water reflection (ours stay screen-space) and the `Lake1.bmp` normal map (value noise instead).
+
 ---
 
 ## Open questions

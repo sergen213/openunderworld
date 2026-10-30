@@ -524,17 +524,25 @@ outfit (the original only reads `+0x294` on a level load).
   is under water (SwimUnder / SwimDive / Surfacing / SwimSplash with root + 150 below the surface) and refills it in
   2 s at the surface. At 0, `damageLara(max / 6 per second, kDamageBypass)` until Lara surfaces or dies. ou-game draws
   an AIR bar whenever the meter is not full. Air is not saved (a load starts at full health/air).
-- Interactive surface (`src/game/Water.{hpp,cpp}`, `World::water()`; technique and parameters [I], TRU does not
-  simulate ripples): a deterministic 256×256 damped wave-equation height field (28-unit cells, wave speed 420 units/s,
-  damping 0.994/tick) rides the surface Lara is in or nearest, follows her in whole cells and resets when the surface
-  changes. Impulses: entry splash (strength from the plunge speed), surface-swim wake and stroke pulses, tread rings,
-  near-surface under-water swimming, wading (feet below the surface but not swimming), climb-out drips, living enemies
-  and moving collision dynamics crossing the surface, and this tick's hitscan rays crossing it (`CombatState::shots`).
-  `World::splashWater` is the entry point for other impacts. Splash droplets are ballistic (gravity as Tuning, drag by
-  lifetime, capped at 256, xorshift RNG) and die on the surface or after 0.35–0.75 s. ou-game copies the field, water
-  volumes and droplets into `FrameOptions` for the Enhanced water shader (docs/RENDERING.md "Water"); Original water
-  does not use them. Tests `Game.Water*`; real-data l4_pool: entry rings, swim wake, AIR bar and drowning verified by
-  replay/screenshot (2026-10-27).
+- Interactive surface (`src/game/Water.{hpp,cpp}`, `World::water()`; TRU does not simulate ripples): the wave field of
+  our Wars and Warriors: Joan of Arc port (same author, GPLv3: its `water_waves.cpp` and `world_view_water.cpp`),
+  `game::WaveField`. A damped 2D wave equation (Verlet, fixed 1/60 s substeps, velocity damping 2.5/s, viscosity
+  0.005, a weak spring to rest) on a 256×256 grid that follows Lara in whole cells. Waves interfere, reflect off walls
+  and scatter around bodies: a cell is a static wall when no water volume (markup type 10) covers it or terrain lies
+  within 0.75 cell of its volume's rest surface (shores, rocks, hulls, pool sides; asked once as the cell scrolls in),
+  and each body in the water (Lara, enemies, animals, moving dynamics) is a wall for the next step. Kicks are Mexican
+  hats (zero volume, so the level never creeps). Units: Joan's lengths × `kWaterScale` = 6.4 (body heights: Lara
+  ~512, a Joan soldier ~80), so cells are 25.6 units (a 6554-unit window), wave speed 512 units/s (CFL 0.33 as in
+  Joan), splash crater 45 units deep / 64 wide; slopes, damping and times are Joan's. Sources: a body with its feet
+  in the water and not under it wades (bow mound + stern trough, the wake; standing, a faint bob every 1.2–1.5 s);
+  Lara's entry splash (strength from the plunge speed) and climb-out; hitscan rays crossing the surface
+  (`CombatState::shots`) and an enemy dying in the water splash as a projectile / body (strength 1); a dynamic body
+  falling through the surface 0.8; droplets falling back leave pinpricks. `World::splashWater` takes other impacts.
+  The field reports empty after 8 quiet seconds (the renderer skips it). Splash droplets (ours) are ballistic
+  (gravity as Tuning, capped at 256, xorshift RNG) and die on the surface or after 0.35–0.75 s. ou-game copies the
+  field, water volumes and droplets into `FrameOptions` for the Enhanced water shader (docs/RENDERING.md "Water");
+  Original water does not use them. Tests `WaveField.*` (Joan's `water_waves_test` in TRU units: superposition,
+  shore reflection, bodies as obstacles, damping, scrolling, wake height) and `Game.Water*`.
 
 ## Free climbing (src/game/Climb.cpp)
 

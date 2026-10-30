@@ -2427,7 +2427,7 @@ int main(int argc, char** argv) {
         fo.water = ou::render::WaterQuality(opt.gfx.water);
         const auto& ws = world->water();
         if (opt.gfx.water && ws.active())
-            fo.ripples = {ws.originX(), ws.originY(), ou::game::WaterSim::kCell, ws.surfaceZ(), ou::game::WaterSim::kSize,
+            fo.ripples = {ws.originX(), ws.originY(), ou::game::WaveField::kCell, ws.surfaceZ(), ou::game::WaveField::kN,
                           ws.heights(), ws.version()};
         waterVolumes.clear();
         const double waveSeconds = (double(world->ticks()) + clock.alpha()) * ou::game::kTickSeconds; // the sim's sea clock

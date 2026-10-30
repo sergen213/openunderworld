@@ -324,6 +324,7 @@ struct GpuMesh {
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
     bool water = false;                 // *watersurface* mesh (render/Water.hpp): Enhanced water draws it separately
+    std::vector<uint8_t> reflective;    // per submesh: a planar-reflection material (render::reflectsWater candidates)
     size_t source = 0, vertexCount = 0; // SceneData::meshes index, vertex count
 };
 
@@ -577,6 +578,9 @@ public:
         glNamedBufferSubData(r.waterUbo.get(), 0, sizeof wb, &wb);
         glBindBufferBase(GL_UNIFORM_BUFFER, 4, r.waterUbo.get());
         meshOpacities(options.meshOpacity, r.meshes.size(), opacity_);
+        sea_.assign(enhancedWater ? r.meshes.size() : 0, 0);
+        for (size_t i = 0; i < sea_.size(); ++i)
+            sea_[i] = reflectsWater(r.meshes[i].center, r.meshes[i].radius, r.meshes[i].reflectZ, options.waterVolumes);
         drawOrder(r.meshes, camera.position, r.order, opacity_);
         unitClips_ = options.unitClips;
         meshClip_.resize(r.meshes.size());
@@ -618,7 +622,7 @@ public:
             const scene::SubMesh& s = m.submeshes[d.sub];
             const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;
             const scene::Blend blend = drawBlend(s, op);
-            if (enhancedWater && m.water) continue; // drawn by drawWater with the opaque copies
+            if (enhancedWater && waterDraw(d.mesh, d.sub)) continue; // drawn by drawWater with the opaque copies
             scissorFor(d.mesh, vp);
             const int p = originals ? m.program[d.sub] : -1;
             if (p != program) {
@@ -964,6 +968,10 @@ private:
         attrib(vao, sm3::kAttrBinormal, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, binormal));
         for (const auto& s : g.submeshes) addOriginal(g, s);
         g.reflectZ = original::reflectionPlaneZ(m, g.model, prepared_.materials);
+        for (const auto& s : g.submeshes) {
+            const auto it = prepared_.materials.find(s.materialId);
+            g.reflective.push_back(it != prepared_.materials.end() && original::reflectionSamplers(*it->second) != 0);
+        }
         res_->meshes.push_back(std::move(g));
     }
 
@@ -1235,13 +1243,16 @@ private:
         glDisable(GL_CULL_FACE); // the surface must also read from below
         for (uint32_t i = 0; i < r.meshes.size(); ++i) {
             const GpuMesh& m = r.meshes[i];
-            if (!m.water || clippedAway(i)) continue;
+            if (!(m.water || sea_[i]) || clippedAway(i)) continue;
             scissorFor(i, vp);
             glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(m.model));
+            const glm::mat4 waves = waterWaves(m.center, m.radius, options.waterVolumes);
+            glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(waves));
             glBindVertexArray(m.vao.get());
-            for (const auto& s : m.submeshes)
-                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
-                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+            for (uint32_t s = 0; s < m.submeshes.size(); ++s)
+                if (waterDraw(i, s))
+                    glDrawElements(GL_TRIANGLES, GLsizei(m.submeshes[s].indexCount), GL_UNSIGNED_INT,
+                                   reinterpret_cast<const void*>(uintptr_t(m.submeshes[s].firstIndex) * sizeof(uint32_t)));
         }
         scissorFor(UINT32_MAX, vp);
         if (!options.splashes.empty()) {
@@ -1371,6 +1382,12 @@ private:
     int scissorClip_ = -1;
     bool reflecting_ = false;             // drawReflection drew Targets::reflection this frame                // clip the GL scissor is set to, -1 = scissor test off
     std::vector<float> opacity_;    // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)
+    std::vector<uint8_t> sea_;      // per frame (Enhanced): render::reflectsWater per mesh
+    // Enhanced water draws this submesh (water pass, not the scene pass).
+    bool waterDraw(uint32_t mesh, uint32_t sub) const {
+        const GpuMesh& m = res_->meshes[mesh];
+        return m.water || (mesh < sea_.size() && sea_[mesh] && m.reflective[sub]);
+    }
     bool s3tc_ = false, debug_ = false;
     float maxAniso_ = 1.0f;
 };

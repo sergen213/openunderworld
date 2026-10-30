@@ -3,6 +3,7 @@
 // files with glslc -DVULKAN=1 at build time).
 #include "render/Water.hpp"
 
+#include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -37,6 +38,23 @@ const char* kFilter =
 } // namespace
 
 bool isWaterSurface(std::string_view meshOrigin) { return meshOrigin.find("watersurface") != std::string_view::npos; }
+
+bool reflectsWater(glm::vec3 center, float radius, float reflectZ, std::span<const WaterVolume> volumes) {
+    if (std::isnan(reflectZ)) return false;
+    for (const auto& v : volumes)
+        if (center.x + radius >= v.min[0] && center.x - radius <= v.max[0] && center.y + radius >= v.min[1] &&
+            center.y - radius <= v.max[1] && reflectZ >= v.min[2] && reflectZ <= v.max[2] + 500.0f)
+            return true;
+    return false;
+}
+
+glm::mat4 waterWaves(glm::vec3 center, float radius, std::span<const WaterVolume> volumes) {
+    sm3::ObjectBlock o{};
+    original::fillWaves(o, volumes, center, radius);
+    glm::mat4 m;
+    std::memcpy(&m, o.waves, sizeof m);
+    return m;
+}
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes) {
     for (const auto& v : volumes) {
@@ -88,9 +106,7 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     const auto& r = options.ripples;
     w.ripple = {r.originX, r.originY, r.cellSize, r.surfaceZ};
     w.rippleInfo = {float(r.size), r.cellSize > 0 && r.size > 0 && !r.heights.empty() ? 1.0f : 0.0f, 0, 0};
-    // TRU's seas and pools read blue-green; absorption removes red first (Beer-Lambert). [I]
-    w.absorb = {0.045f, 0.22f, 0.27f, 1.0f / 2600.0f};
-    w.shallow = {0.30f, 0.62f, 0.62f, 110.0f};
+    w.ambient = env.valid ? glm::vec4(env.ambient[0], env.ambient[1], env.ambient[2], 0) : glm::vec4(0.35f, 0.35f, 0.38f, 0);
 
     const glm::vec3 eye = camera.position;
     // Water volumes, nearest first (box distance): the atmosphere ends its rays on their surfaces (the Enhanced

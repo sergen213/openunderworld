@@ -1,7 +1,8 @@
 // Enhanced water: shared uniform block and GLSL for both backends (Original water keeps TRU's shaders).
-// Technique is ours, written for this project: procedural wave normals + the game's ripple height field,
-// screen-space refraction with Beer-Lambert absorption, shore/crest foam, screen-space reflections,
-// sun specular, caustics and an underwater post effect. docs/RENDERING.md "Water".
+// The surface look is Wars and Warriors: Joan of Arc's port's shade_water (same author, GPLv3): saturated teal-to-deep-
+// blue absorption over the refracted bed, the interactive wave field (game::WaveField) bending refraction / reflection
+// and lighting crests, Fresnel reflection, GGX sun glints, shoreline lace foam. Plus ours: screen-space reflections,
+// splash droplets and the underwater post effect. docs/RENDERING.md "Water".
 #pragma once
 
 #include "render/Renderer.hpp"
@@ -15,9 +16,15 @@ namespace ou::render {
 
 // Water-surface meshes are objects named *watersurface* (l4_pool: ca_goo_pool_watersurface) [I].
 bool isWaterSurface(std::string_view meshOrigin);
+// Enhanced water also draws TRU's planar-reflection water (the submeshes with original::reflectionSamplers: seas and
+// lakes such as l2_cliffclimb's sea, one terrain mesh) when the mesh's reflection plane `reflectZ` lies in a water
+// volume: its bounds reach the box in x, y and the plane is between the box floor and 500 above the surface.
+bool reflectsWater(glm::vec3 center, float radius, float reflectZ, std::span<const WaterVolume> volumes);
+// The sea waves water.vert lowers such a mesh by (columns c60-c63 as original::fillWaves; zero = flat).
+glm::mat4 waterWaves(glm::vec3 center, float radius, std::span<const WaterVolume> volumes);
 
 // std140 block shared by the water, splash and post (underwater, atmosphere, weather) shaders. GL: UBO binding 4.
-// Vulkan: water set 0 / post set 1, binding 0. Shaders may declare a prefix of it (splash stops at `shallow`).
+// Vulkan: water set 0 / post set 1, binding 0. Shaders may declare a prefix of it (splash stops at `ambient`).
 struct WaterBlock {
     glm::mat4 viewProj;    // world -> clip of the backend (VK includes the z remap)
     glm::mat4 invViewProj; // clip -> world, for depth reconstruction
@@ -28,9 +35,8 @@ struct WaterBlock {
     glm::vec4 fogColor;    // rgb, w 1 = the camera is submerged (underwater post)
     glm::vec4 fogRange;    // x fog near, y fog far, z ripple normal strength, w reflection strength
     glm::vec4 ripple;      // origin x, origin y, cell size, surface z
-    glm::vec4 rippleInfo;  // x grid size, y 1 = a ripple field is bound, z/w unused
-    glm::vec4 absorb;      // rgb deep-water tint, w absorption rate per world unit
-    glm::vec4 shallow;     // rgb shallow tint, w foam depth (world units)
+    glm::vec4 rippleInfo;  // x grid size, y 1 = a wave field is bound, z/w unused
+    glm::vec4 ambient;     // rgb scene ambient (scene::Environment::ambient), w unused
     // ---- v0.10 extras (FrameOptions waterDetail / waterDebug / atmosphere / weather) ----
     glm::vec4 detail;      // x 1 = water detail, y debug view, z geometry wave amplitude, w water volume count
     glm::vec4 lamps[4];    // nearest point lights: xyz world, w radius (0 = unused); water reflects them
@@ -48,7 +54,7 @@ struct WaterBlock {
     glm::vec4 waterPass[3]; // FrameOptions::underwater: [0] surface rgb + alpha at the eye, [1] deep rgb + distance,
                             // [2] x strength (0 = off); both water qualities
 };
-static_assert(sizeof(WaterBlock) == 2 * 64 + 10 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16);
+static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16);
 inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes);

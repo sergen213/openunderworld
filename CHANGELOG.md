@@ -22,6 +22,16 @@ All notable changes to OpenUnderworld are documented here. The format follows
   menu, New Game, Continue, Load and quick load stop every chapter sound and the music first (the chapter's loops kept
   playing on the main menu before), and the unit music starts afresh instead of staying on the previous track.
   Evidence: docs/formats/AUDIO.md §9.11.
+- Enhanced water is now the water of our Wars and Warriors: Joan of Arc port (same author, GPLv3), replacing the
+  previous Enhanced ripples and shading. The wave field (`game::WaveField`, Joan's `water_waves`) is a damped wave
+  equation around Lara whose waves interfere, reflect off shores, rocks, hulls and pool sides and bend around
+  bodies: Lara, enemies and animals wading or swimming at the surface leave wakes (standing, a faint bob), diving in,
+  climbing out, shots through the surface, an enemy dying in the water, debris falling in and splash droplets kick
+  it. The surface shading is Joan's `shade_water`: teal shallows to deep blue absorption over the refracted bed,
+  crests catching the sky and troughs darkening along the wakes, Fresnel reflection (ours stays screen-space), GGX
+  sun glints and shoreline lace foam. Joan's lengths are × 6.4 for TRU's units (body heights). The Original water
+  preset is unchanged. Tests `WaveField.*` (Joan's wave tests in TRU units). Credit: docs/RESEARCH.md §8.7.
+
 ## [0.12.0] - 2026-10-30
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

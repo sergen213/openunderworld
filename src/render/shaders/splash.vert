@@ -7,7 +7,7 @@ layout(binding = 4) uniform Water {
 #endif
     mat4 viewProj; mat4 invViewProj;
     vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
-    vec4 ripple; vec4 rippleInfo; vec4 absorb; vec4 shallow;
+    vec4 ripple; vec4 rippleInfo; vec4 ambient;
 } w;
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aUv;

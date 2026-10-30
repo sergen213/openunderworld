@@ -8,7 +8,7 @@ layout(binding = 4) uniform Water {
 #endif
     mat4 viewProj; mat4 invViewProj;
     vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
-    vec4 ripple; vec4 rippleInfo; vec4 absorb; vec4 shallow;
+    vec4 ripple; vec4 rippleInfo; vec4 ambient;
     vec4 detail; vec4 lamps[4]; vec4 lampColor[4]; vec4 haze; vec4 mist; vec4 weather; vec4 volumes[16];
     vec4 filters[9]; uvec4 filterLut[640]; // original screen filters (shaders/filter.glsl)
     vec4 waterPass[3]; // tru.exe's full-screen under-water pass (ouWaterPass)
