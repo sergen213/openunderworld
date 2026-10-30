@@ -411,8 +411,9 @@ bool Player::tryGrab(vec3 prevPos) {
     return false;
 }
 
-// Horizontal poles (markup 4 "pole", 6 "horizpole"): falling hands (pole hang pose, Lara turned square to the
-// pole) pass the pole axis within poleReach, same height window as ledges.
+// Horizontal poles (markup 4 "pole", 6 "horizpole"): the hands (pole hang pose, Lara turned square to the
+// pole) within poleReach of the pole axis, rising or falling inside the zVel window, from grabWindow below the
+// axis to poleGrabAbove above it.
 bool Player::tryGrabPole(vec3 prevPos) {
     if (s_.regrabCooldown > 0 || s_.vel.z < t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
     for (size_t li = 0; li < col_.markup.size(); ++li) {
@@ -424,10 +425,11 @@ bool Player::tryGrabPole(vec3 prevPos) {
             if (std::abs(c) < 0.5f) continue; // not facing across the pole
             const float side = c > 0 ? 1.0f : -1.0f, yaw = yawOf(n * side);
             const vec3 hand = s_.pos + rotYaw(yaw, anims_.poleHandOffset), prevHand = prevPos + rotYaw(yaw, anims_.poleHandOffset);
+            const float window = std::max(t_.grabWindow, prevHand.z - hand.z);
             const float t = std::clamp(glm::dot(xy(hand - m.points[size_t(si)]), dir), 0.0f, segLen(m, si));
             const vec3 q = pointOn(m, si, t);
             if (glm::length(xy(hand - q)) > t_.poleReach) continue;
-            if (hand.z > q.z + 10.0f || prevHand.z < q.z - t_.grabWindow || hand.z < q.z - t_.grabWindow) continue;
+            if (hand.z > q.z + t_.poleGrabAbove || hand.z < q.z - window) continue;
             s_.ledge = int(li), s_.ledgeSeg = si, s_.ledgeT = t, s_.ledgeSide = side;
             s_.vel = vec3(0);
             s_.state = State::PoleHang;
@@ -620,9 +622,12 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Turn:
     case State::Land: {
         if (enterWater()) break; // standing in water deeper than swimDepth
+        const float diff = std::abs(wrapAngle(target - s_.yaw));
         if (jumpPressed && s_.state != State::Land) {
             if (tryPerch(false)) break; // a standing jump onto a perch balances there
-            s_.runJump = s_.state == State::Run;
+            // tru.exe (Wine): the stick behind her turns her round into a running jump; to a side, a standing one.
+            s_.runJump = s_.state == State::Run || (wantsMove && diff > 1.75f);
+            if (s_.runJump && s_.state != State::Run) s_.yaw = target;
             s_.state = State::JumpPrep; // launch velocity is set when the take-off clip ends
             play(s_.runJump ? "ng_running_jump_forwards" : "ng_standing_jump", false);
             break;
@@ -635,7 +640,6 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             play("crouch_idleToCrouch", false);
             break;
         }
-        const float diff = std::abs(wrapAngle(target - s_.yaw));
         switch (s_.state) {
         case State::Idle:
             if (!wantsMove) break;
@@ -766,10 +770,11 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         const bool running = s_.runJump;
         const vec3 d = toWorld(advanceClip(dt));
         if (running) groundMove(d, dt);
-        if (s_.state != State::JumpPrep || !clipDone()) break; // fell off during the take-off, or still crouching
-        const float h = running ? t_.runSpeed : wantsMove ? t_.standJumpSpeed : 0.0f;
+        if (s_.state != State::JumpPrep) break; // fell off during the take-off
+        if (!clipDone() && (running || !wantsMove || s_.clipTime < t_.standMoveTakeoff)) break; // still crouching
+        const float h = running ? t_.runJumpSpeed : wantsMove ? t_.standJumpSpeed : 0.0f;
         if (wantsMove && !running) s_.yaw = target;
-        s_.vel = forward() * h + vec3(0, 0, running ? t_.runJumpVz : t_.jumpVz);
+        s_.vel = forward() * h + vec3(0, 0, running ? t_.runJumpVz : wantsMove ? t_.standMoveJumpVz : t_.jumpVz);
         s_.state = State::Jump;
         s_.fallStartZ = s_.pos.z;
         assistJump();
@@ -886,7 +891,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             if (!startHangJump(3)) {
                 s_.ledge = -1;
                 s_.regrabCooldown = 0.3f;
-                s_.vel = forward() * t_.runSpeed + vec3(0, 0, t_.runJumpVz);
+                s_.vel = forward() * t_.runJumpSpeed + vec3(0, 0, t_.runJumpVz);
                 s_.state = State::Jump;
                 s_.fallStartZ = s_.pos.z;
                 play("hpole_perp_fling", false);

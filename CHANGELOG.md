@@ -6,6 +6,11 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Lara's jump take-offs are tru.exe's, measured under Wine: standing 1441 up (apex 201.6), with the stick 1499 up +
+  1200 along it (leaving at 0.26 s), running 1276 up + 1975 forward (was 1803 up, 637 / 1274 forward); the stick
+  behind her turns her round into the running jump, to a side a standing jump that way. Poles are caught rising or
+  falling with the hands up to 138 above the axis (`Hpole_perp_attach_M`'s start pose), so l4_traprooms' standing
+  jump to pole 1336 still connects (docs/GAMEPLAY.md Numbers; test `JumpTakeOffsMatchTruTraces`).
 - The planar reflection pass (GL and Vulkan) draws exterior terrain first and clears the depth after it, as the main
   pass does: panorama cylinders / sky domes no longer occlude reflected geometry.
 - Spline (reveal) cameras of a neighbour unit render: the portal walk starts from the spline's unit, not Lara's; the

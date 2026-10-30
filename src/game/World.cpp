@@ -266,14 +266,7 @@ void World::setOutfitRig(const cdc::Drm& drm) {
 }
 
 World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tuning tuning)
-    : col_(std::move(col)), anims_(std::move(anims)), player_(col_, anims_, [&] {
-          // Run take-off speed = ng_run's root-motion speed when the clip is present.
-          if (const anim::Clip* run = anims_.find("ng_run")) {
-              const double d = run->durationSeconds();
-              tuning.runSpeed = glm::length(rootTranslation(*run, d, true) - rootTranslation(*run, 0, true)) / float(d);
-          }
-          return tuning;
-      }()) {
+    : col_(std::move(col)), anims_(std::move(anims)), player_(col_, anims_, tuning) {
     startSpawn_ = spawn; // respawn target without units
     grenades = maxGrenades(); // [I] Lara carries the maximum (no grenade pickups in any unit)
     bindMultibody();

@@ -169,6 +169,48 @@ TEST(Game, GravityJumpAndLanding) {
     EXPECT_NEAR(w->player().state().pos.z, 0, 1e-3);
 }
 
+// tru.exe take-offs under Wine (openunderworld-work/screens/stairs j_*.txt, Instance +0x2A0 per 30 Hz frame):
+// standing 48.04 up (apex 201.6, 0.56 s air); stick 49.97 up + 40.00 along it; running, or the stick behind
+// her (she turns round), 42.53 up + 65.83 forward; the stick to a side jumps that way standing.
+TEST(Game, JumpTakeOffsMatchTruTraces) {
+    const auto flight = [](Actions hold, int runTicks, float& vz, float& hspeed, float& yaw, float& apex) {
+        CollisionMesh m;
+        addFloor(m, -20000, -20000, 20000, 20000, 0);
+        auto w = makeWorld(std::move(m), {0, 0, 0});
+        for (int i = 0; i < runTicks; ++i) w->tick(forward());
+        Actions j = hold;
+        j.jump = true;
+        w->tick(j);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 60 && s.state != State::Jump; ++i) w->tick(hold);
+        vz = s.vel.z, hspeed = glm::length(glm::vec2(s.vel)), yaw = s.yaw, apex = 0;
+        for (int i = 0; i < 120 && s.state == State::Jump; ++i) w->tick(hold), apex = std::max(apex, s.pos.z);
+    };
+    float vz, h, yaw, apex;
+    flight({}, 0, vz, h, yaw, apex);
+    EXPECT_NEAR(vz, 48.04f * 30, 1);
+    EXPECT_NEAR(h, 0, 1e-3);
+    EXPECT_NEAR(apex, 201.6f, 4);
+    flight(forward(), 0, vz, h, yaw, apex);
+    EXPECT_NEAR(vz, 49.97f * 30, 1);
+    EXPECT_NEAR(h, 40.0f * 30, 1);
+    flight(forward(), 40, vz, h, yaw, apex);
+    EXPECT_NEAR(vz, 42.53f * 30, 1);
+    EXPECT_NEAR(h, 65.83f * 30, 1);
+    EXPECT_NEAR(apex, 158.0f, 4);
+    Actions back;
+    back.move.y = -1;
+    flight(back, 0, vz, h, yaw, apex);
+    EXPECT_NEAR(vz, 42.53f * 30, 1) << "stick behind: turn-round running jump";
+    EXPECT_NEAR(h, 65.83f * 30, 1);
+    EXPECT_NEAR(std::abs(std::remainder(yaw, 2 * glm::pi<float>())), glm::pi<float>(), 0.01f);
+    Actions side;
+    side.move.x = 1;
+    flight(side, 0, vz, h, yaw, apex);
+    EXPECT_NEAR(vz, 49.97f * 30, 1) << "stick to a side: standing jump that way";
+    EXPECT_NEAR(h, 40.0f * 30, 1);
+}
+
 TEST(Game, RunsOffEdgeFallsAndLands) {
     CollisionMesh m;
     addFloor(m, -1000, -1000, 400, 1000, 300); // platform
@@ -769,7 +811,7 @@ TEST(Game, AssistedJumpLandsOnJumpLandingMarkup) {
     };
     EXPECT_NEAR(run(300), 600, 2);
     const auto t = game::defaultTuning();
-    EXPECT_NEAR(run(0), t.standJumpSpeed * 2 * t.jumpVz / t.gravity, 15);
+    EXPECT_NEAR(run(0), t.standJumpSpeed * 2 * t.standMoveJumpVz / t.gravity, 15);
 }
 
 // Drop (crouch button) standing at an edge with a ledge: drop_to_ledgeb (synthetic: forward 218.8, down

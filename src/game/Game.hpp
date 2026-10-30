@@ -150,9 +150,13 @@ struct Tuning {
     // root snapping to each step top; the 121-unit hearth edge blocks her. 110 lies between (GAMEPLAY.md Numbers).
     float stepUp = 110.0f, stepDown = 110.0f;
     float minFloorNormalZ = 0.7f;              // steeper = wall (~45.6 deg)
-    float runSpeed = 1274.0f;                  // horizontal take-off speed of a running jump, units/s
     float gravity = 5.72443f * 900.0f;         // units/s^2 (tru.exe: 5.72443 units per 30 Hz frame^2)
-    float jumpVz = 1803.0f, runJumpVz = 1803.0f, standJumpSpeed = 637.0f; // units/s
+    // Jump take-offs measured in tru.exe under Wine (Instance +0x2A0 velocity, units per 30 Hz frame x 30):
+    // standing 48.04 up; standing with the stick 49.97 up + 40.00 along it; running (or the stick behind her:
+    // she turns round) 42.53 up + 65.83 forward. Delays from the press: 359 / 290 / 109 ms (GAMEPLAY.md Numbers).
+    float jumpVz = 1441.2f, standMoveJumpVz = 1499.1f, standJumpSpeed = 1200.0f; // units/s
+    float runJumpVz = 1275.9f, runJumpSpeed = 1974.9f;                          // units/s
+    float standMoveTakeoff = 0.26f; // s into ng_standing_jump a stick jump leaves the ground (0.33 s clip: 359 vs 290 ms)
     float turnRate = 6.0f;                     // rad/s
     float grabReach = 60.0f, grabWindow = 40.0f; // hand-to-ledge horizontal / vertical tolerance
     // Grab only while -13 <= zVel <= 9 units/frame * 5.72443 (30 Hz): player data bytes +0x834 / +0x833 (0x759260)
@@ -172,6 +176,9 @@ struct Tuning {
     float slideAccel = 2500.0f, slideMaxSpeed = 1400.0f; // units/s^2, units/s down the slope
     float beamAttach = 30.0f;   // root within this of a balance beam (x/y, and z) gets on it
     float poleReach = 60.0f;    // hands to pole axis, horizontal
+    // Pole hands (pole pose) may be this far above the axis when caught: Hpole_perp_attach_M starts with the hands
+    // 138 below the pole pose (481 vs 619 above the root), so the root sinks 138 onto the hang.
+    float poleGrabAbove = 138.0f;
     float assistRadius = 300.0f; // jump-landing / beam markup this close to the natural landing pulls the jump onto it
     float hangJumpApex = 60.0f;  // targeted jumps rise this far above the higher of start and target
     // Reach of targeted jumps from a hang (hands to target hands): up, sideways, back (away from the wall).
