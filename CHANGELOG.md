@@ -6,6 +6,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-30
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
 - Enhanced water has a new surface look (both renderers). It is a translation of smallcableboi's Godot shader
   "Realistic Water with Traced and Simple Reflection and Refraction V2" (CC0): Fresnel reflection, two scrolling
   wave layers, colour absorbed with depth along the refracted view, traced refraction with a simple fallback, traced
