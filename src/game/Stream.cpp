@@ -412,6 +412,13 @@ void World::placeAfterCinematic(const std::string& stream) {
         const float yaw = inst.endRot->z - kPi / 2;
         if (inst.intro == -1) {
             if (*inst.endPos == vec3(0)) continue;
+            // tru.exe under Wine (new game): 001_pro_corridor's tail holds Lara at (-4336, 5847) facing +x for the unit
+            // script's 5 s corridor camera, then she stands on l3_main_bedroom's player intro 4456 facing down the corridor
+            // (rot z 0), the camera behind her, and play starts. [I] a tail within 500 of the start unit's player intro is
+            // that hand-over: she keeps the intro pose (enterUnit put her there).
+            if (const auto& s = currentUnit().data.spawn; s && s->fromIntro && currentUnit().data.name == startUnit_ &&
+                                                         glm::distance(at, s->pos + currentUnit().offset) < 500.0f)
+                continue;
             std::string unit = m->second.unit;
             bool water = false;
             for (const auto& u : units_)

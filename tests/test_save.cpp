@@ -820,3 +820,85 @@ TEST(StreamReal, UberJointSaveLoad) {
     for (int i = 0; i < 60; ++i) fresh.tick({});
     EXPECT_EQ(fresh.serializeObjects(), expect);
 }
+
+// The New Game flow in the prologue (tru.exe under Wine, 2026-10-30, wmem trace; l3_main_bedroom = ours + (9622, 333,
+// -2977)): after 001_pro_corridor Lara stands on the player intro 4456 facing down the corridor (-y), the camera 1261
+// behind her; running down the corridor she climbs onto the 253-high debris slab (ledge 974) without a jump, in 0.27 s;
+// across the slab and off its far side, over the rubble (a 50 step, a 101 step), a standing jump catches the 725-high
+// wall's ledge 973 and she climbs it; then up the bedroom staircase. Fire volumes on the way hurt her as in the original.
+TEST(StreamReal, PrologueCorridorToStaircase) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const auto newGame = [&] {
+        auto w = std::make_unique<game::World>([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom",
+                                               game::AnimLibrary(anims));
+        w->script().setBigfile(&bf);
+        w->enemies().setBigfile(&bf);
+        std::vector<std::string> played;
+        w->onCinematic = [&](const std::string& n, bool) { played.push_back(n); };
+        w->startChapter(0);
+        for (int i = 0; i < 30; ++i) w->tick({});
+        EXPECT_EQ(played, std::vector<std::string>{"001_pro_corridor"});
+        w->onCinematic = nullptr;
+        return w;
+    };
+    // Steers the camera-relative stick at a world point; true once within 120.
+    const auto toward = [](game::World& w, glm::vec2 at, float stick = 1) {
+        const glm::vec2 d = at - glm::vec2(w.player().state().pos);
+        if (glm::length(d) < 120) return true;
+        const float cy = w.camera().yaw;
+        game::Actions a;
+        a.move = stick * glm::vec2(glm::dot(glm::normalize(d), glm::vec2(std::sin(cy), -std::cos(cy))),
+                                   glm::dot(glm::normalize(d), glm::vec2(std::cos(cy), std::sin(cy))));
+        w.tick(a);
+        return false;
+    };
+    auto w = newGame();
+    const auto& s = w->player().state();
+    EXPECT_LT(glm::distance(glm::vec2(s.pos), glm::vec2(-4263.5f, 5958.5f)), 5.0f);
+    EXPECT_NEAR(s.yaw, -1.5708f, 0.05f);
+    EXPECT_GT(w->camera().position.y - s.pos.y, 1000.0f) << "camera behind her, looking down the corridor";
+    EXPECT_NEAR(w->camera().position.x, s.pos.x, 50.0f);
+    // Run down the corridor onto the slab.
+    int climbTicks = 0;
+    bool hurdled = false;
+    for (int t = 0; t < 400 && s.pos.y > 150; ++t) {
+        toward(*w, {-4264, -500});
+        ASSERT_NE(s.state, game::State::Fall) << "tick " << t << " at " << s.pos.x << "," << s.pos.y;
+        if (s.state == game::State::ClimbUp) hurdled |= s.clip == "hurdle_low_onto_100", ++climbTicks;
+    }
+    EXPECT_TRUE(hurdled);
+    EXPECT_LE(climbTicks, 20); // 0.3 s
+    EXPECT_NEAR(s.pos.z, 336, 8) << "on the slab";
+    // Across it, off its far side, over the rubble to the high wall.
+    for (const glm::vec2 at : {glm::vec2(-4700, -300), {-6000, -300}, {-7300, -300}, {-8050, -2000}, {-8100, -3600}, {-8300, -4100},
+                               {-8300, -4380}, {-8470, -4330}})
+        for (int t = 0; t < 600 && !toward(*w, at); ++t) ASSERT_NE(s.state, game::State::Dead);
+    EXPECT_NEAR(s.pos.z, 230, 15) << "on the rubble";
+    game::Actions face; // a light stick turns her to the wall (-y)
+    face.move = 0.2f * glm::vec2(glm::dot(glm::vec2(0, -1), glm::vec2(std::sin(w->camera().yaw), -std::cos(w->camera().yaw))),
+                                 glm::dot(glm::vec2(0, -1), glm::vec2(std::cos(w->camera().yaw), std::sin(w->camera().yaw))));
+    for (int t = 0; t < 6; ++t) w->tick(face);
+    game::Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 2; ++i) { // a standing jump catches ledge 973; jump again climbs up
+        w->tick(jump);
+        for (int t = 0; t < 90; ++t) w->tick({});
+    }
+    EXPECT_NEAR(s.pos.z, 807, 8) << "on top of the wall";
+    for (const glm::vec2 at : {glm::vec2(-8300, -5000), {-8300, -5600}, {-8100, -7600}})
+        for (int t = 0; t < 600 && !toward(*w, at); ++t) ASSERT_NE(s.state, game::State::Dead);
+    EXPECT_GT(s.pos.z, 1700.0f) << "up the staircase";
+    // Walking into the slab: the slow hurdle_onto, onto the top as well.
+    w = newGame();
+    const auto& s2 = w->player().state();
+    bool walkHurdle = false;
+    for (int t = 0; t < 2000 && !(walkHurdle && s2.state != game::State::ClimbUp); ++t) {
+        toward(*w, {-4400, -300}, 0.3f);
+        ASSERT_NE(s2.state, game::State::Fall) << "tick " << t << " at " << s2.pos.x << "," << s2.pos.y << "," << s2.pos.z;
+        walkHurdle |= s2.clip == "hurdle_onto";
+    }
+    EXPECT_TRUE(walkHurdle);
+    EXPECT_NEAR(s2.pos.z, 336, 8);
+}

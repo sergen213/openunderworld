@@ -6,6 +6,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Prologue: Lara climbs onto low ledges. Running or walking into a ledge 110..340 above her feet (the corridor's
+  253-high debris slab) plays tru.exe's hurdle clips (`hurdle_low_onto` / `_100` running, `hurdle_onto` walking), the
+  rise scaled to the ledge; the original does it without a jump in 0.27 s (Wine trace). Since the measured jump
+  heights (0.11.0) she could neither jump onto the slab nor hang from it. After `001_pro_corridor` she now stands on
+  the player intro facing down the corridor with the camera behind her, as in the original (she faced the side wall).
+  Test `StreamReal.PrologueCorridorToStaircase`: New Game, down the corridor, onto the slab (running and walking),
+  over the rubble and the high wall, up the bedroom staircase.
 - AppImage self-update renames the file: the update lands as `OpenUnderworld-<new>-x86_64.AppImage` next to the old
   one (atomic rename), the old file is kept as `<old>.bak` (older OpenUnderworld `.bak` files are removed) and its
   old name is deleted. Before, the file kept its first name forever (0.11.0 still ran as `…-0.10.0-…AppImage`).

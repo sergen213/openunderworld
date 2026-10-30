@@ -270,6 +270,7 @@ private:
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
     bool canClimbUp() const;
+    bool tryHurdle(bool running); // onto a low ledge from the ground (State::ClimbUp, hurdle_* clips)
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge); 3 pole fling
     void assistJump();
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide

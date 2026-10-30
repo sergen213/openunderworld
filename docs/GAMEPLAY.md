@@ -148,9 +148,22 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | PoleHang (grab) | `Hpole_perp_attach_M` (1541) | 45, 1.5 s | ignored | no |
 | PoleHang | `HPole_idleHangPerp` (127); swing `HPole_StartSwing` (143) → `HPole_swing` (146); stop `Hpole_swingstopA` (152) | 30, 1.0 s; 70, 2.33 s → 41, 1.37 s; 41, 1.37 s | none | idle/swing yes |
 | Pole fling | `hpole_perp_fling` (423) | 7, 0.5 s | (−1.1, −382.6, 69.5) not applied (ballistic flight) | no |
+| ClimbUp (hurdle onto a low ledge) | running `hurdle_low_onto` (1351) / `hurdle_low_onto_100` (1350); walking or standing `hurdle_onto` (1352) | 0.3 s / 0.3 s / 0.8 s | (0, −282.6, 162.7) / (0, −206.7, 316.1) / (0, −311.5, 317.3); applied, the rise scaled to the ledge | no |
 
 - [O] No exe string names these clips; they are the TR8 anim-list debug names in lara.drm. The state → clip choice is
   ours [I]. `ledgeb_*` (braced: feet on the wall) was chosen over `ledgeu_*` (free hang) [I].
+- Hurdles [O-runtime] (tru.exe under Wine, new game, l3_main_bedroom = ours + (9622, 333, −2977); traces in
+  openunderworld-work/screens/prologue): running down the prologue corridor into the 253-high debris slab (ledge 974,
+  34° off square) she climbs onto it **without a jump**: the root is ~64 in front of the ledge line when it starts, the
+  rise takes 0.27 s and ends exactly on the ledge height, ~220 forward, and she runs on. The 121-unit hearth has no
+  ledge markup and stays a wall; the 725-high wall at the far end of the left corridor (ledge 973) is taken with a
+  standing jump from the rubble in front of it (50 and 101 steps), a ledge grab and a climb-up. Ours
+  (`Player::tryHurdle`): a ledge (markup 1) stepUp..340 above the feet, the root within radius + 40 of its line, facing
+  it within 53°, the stick pushing towards it (or jump pressed), and a walkable floor within 40 of the ledge where the
+  clip ends: the clip of the nearest rise plays with its root rise scaled to the ledge (State::ClimbUp, no collision).
+  [I] the bounds, walking clip, and jump trigger; `hurdle_ground_attach_*` / `_over` / `_to_ledgeb` / `_down_*` (vaults
+  over, onto higher ones) are not played. The anim names count heights in cm: `_50` / `_100` / `_150` / `_200` rise
+  158 / 316 / 474 / 632 units.
 - [O] The air clips have no root motion: flight is physics-driven (below). There is no `ledgeb_left` or
   `ledgeb_jump_left`; [I] the game probably mirrors the right clips. We play the right clips for both sides.
 - Clips whose root rotates (`drop_to_ledgeb`, `bbeam_walk_turn180`, `ledgeb_jump_back`, `ng_turn_center`) turn the
@@ -1293,7 +1306,7 @@ No side-by-side comparison with the original game was made.
   bad-attach/wrestle/corner-specific clips, no `DICE_L/R/LW/RW` wall
   variants. Ladders (9), perches (13), pillars (15) and rail slides (8) work (see their sections); vertical poles
   (type 5) have no markup in any unit. Still missing: cover, `Wall_Hug_*`,
-  balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang, hurdles/vaults,
+  balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
   mirrored left-side clips. Root motion of the jump, attach and fling clips is not applied (the flight is
   ballistic), so their poses can sit off the computed path.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
@@ -1345,7 +1358,7 @@ Vulkan) and notes in openunderworld-work/screens/chapters):
 
 | ch | start unit | original after load | ours |
 |---|---|---|---|
-| 0 | l3_main_bedroom | casual, corridor facing the fire | same |
+| 0 | l3_main_bedroom | casual, corridor facing the fire; after `001_pro_corridor` (new game): its tail holds her at (−4336, 5847) facing +x for a 5 s corridor camera, then she stands on the player intro 4456 facing down the corridor, camera 1261 behind | same: a start cinematic tail within 500 of the start unit's player intro keeps the intro pose [I rule] (was: facing the side wall) |
 | 1 | l1_seatop | wetsuit_warm on the boat deck, harness, no face mask | after `030_med_yacht`, standing on the stern deck (marker 13) |
 | 2 | l2_cliffclimb | jungle_a on the boat bow, no enemy in sight | same (sharks 4021-4023 left the sea and landed on the deck) |
 | 3 | l3_caverns_start | casual, cavern stairs | same |

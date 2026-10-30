@@ -521,6 +521,39 @@ bool Player::canClimbUp() const {
     return g && g->normal.z >= t_.minFloorNormalZ && g->point.z > q.z - 30 && g->point.z < q.z + 150;
 }
 
+// Hurdle onto a low ledge (markup 1) from the ground. tru.exe under Wine (new game, l3_main_bedroom): running down the
+// corridor into the 253-high debris slab (ledge 974, 34 degrees off square), she climbs onto it without a jump: the
+// climb starts with the root ~64 in front of the ledge line, takes 0.27 s, rises exactly onto the ledge height and
+// carries ~220 forward; the 121-unit hearth (no ledge markup) stays a wall. Clips: hurdle_low_onto (rise 162.7) and
+// hurdle_low_onto_100 (316.1), 0.3 s, running; hurdle_onto (317.3, 0.8 s) from a walk or standing [I]. The nearest
+// rise plays, its root rise scaled to the ledge (State::ClimbUp). [I] heights stepUp..340, the root within radius + 40
+// of the line, facing it within 53 degrees, a walkable floor within 40 of the ledge where the clip ends.
+bool Player::tryHurdle(bool running) {
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 1) continue;
+        const OnLine o = closestOn(m, s_.pos);
+        if (o.seg < 0 || o.u < 0 || o.u > segLen(m, o.seg) || o.dist > t_.radius + 40.0f) continue;
+        const float h = o.q.z - s_.pos.z;
+        if (h <= t_.stepUp || h > 340.0f) continue;
+        vec2 out = vec2(-segDir(m, o.seg).y, segDir(m, o.seg).x);
+        if (glm::dot(xy(s_.pos - o.q), out) < 0) out = -out; // Lara's side
+        if (glm::dot(xy(forward()), -out) < 0.6f) continue;
+        const std::string_view clip = !running ? "hurdle_onto" : h < 240.0f ? "hurdle_low_onto" : "hurdle_low_onto_100";
+        const anim::Clip* c = anims_.find(clip);
+        if (!c) continue;
+        const vec2 end = xy(s_.pos + toWorld(rootTranslation(*c, c->durationSeconds(), false) - rootTranslation(*c, 0, false)));
+        const auto g = col_.groundProbe(vec3(end, o.q.z + 100), 140);
+        if (!g || g->normal.z < t_.minFloorNormalZ || std::abs(g->point.z - o.q.z) > 40) continue;
+        s_.ledge = int(li), s_.ledgeSeg = o.seg, s_.ledgeT = o.t, s_.ledgeSide = 1;
+        s_.vel = vec3(0);
+        s_.state = State::ClimbUp;
+        play(clip, false);
+        return true;
+    }
+    return false;
+}
+
 // Targeted jump from a hang (kind 0 up, +-1 right/left, 2 back) to another ledge, or from a pole (kind 3,
 // fling forward) to another pole. The target is the attach point in the jump's reach box nearest to a typical
 // jump end (400 up / 400 aside / 700 back and 100 down / 1264 ahead: l4_traprooms' pole spacing) [I]; the flight
@@ -628,7 +661,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (enterWater()) break; // standing in water deeper than swimDepth
         const float diff = std::abs(wrapAngle(target - s_.yaw));
         if (jumpPressed && s_.state != State::Land) {
-            if (tryPerch(false)) break; // a standing jump onto a perch balances there
+            if (tryHurdle(s_.state == State::Run) || tryPerch(false)) break; // a low ledge ahead / a perch
             // tru.exe (Wine): the stick behind her turns her round into a running jump; to a side, a standing one.
             s_.runJump = s_.state == State::Run || (wantsMove && diff > 1.75f);
             if (s_.runJump && s_.state != State::Run) s_.yaw = target;
@@ -701,6 +734,8 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         groundMove(toWorld(d), dt);
         if (s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop)
             tryBeam("bbeam_walk_attach", false);
+        const bool grounded = s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop;
+        if (grounded && wantsMove && glm::dot(move, xy(forward())) > 0.5f * mag && tryHurdle(s_.state == State::Run)) break;
         // Pushing into a climbable rock face starts climbing (a jump keeps its normal arc).
         if (wantsMove && glm::dot(move, xy(forward())) > 0.5f && !tryLadder(false)) tryClimb(false);
         if ((s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop) && tryRail(false)) break;
@@ -932,19 +967,29 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         placeOnLedge();
         break;
     }
-    case State::ClimbUp:
-        s_.pos += toWorld(advanceClip(dt)); // full root motion, no collision: the clip lifts her over the edge
+    case State::ClimbUp: {
+        // Full root motion, no collision: the clip lifts her over the edge. A hurdle's rise is scaled to the ledge: each
+        // tick takes the clip's share of what is left to the ledge height.
+        const anim::Clip* c = anims_.find(s_.clip);
+        const float riseLeft = c ? rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z : 0.0f;
+        vec3 d = toWorld(advanceClip(dt));
+        if (s_.clip.starts_with("hurdle_") && s_.ledge >= 0 && riseLeft > 1.0f)
+            d.z *= (pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT).z - s_.pos.z) / riseLeft;
+        s_.pos += d;
         if (clipDone()) {
+            const bool hurdle = s_.clip.starts_with("hurdle_");
             s_.ledge = -1;
             if (auto g = col_.groundProbe(s_.pos + vec3(0, 0, t_.stepUp + 100.0f), t_.stepUp + 100.0f + t_.stepDown + 100.0f)) {
                 s_.pos.z = g->point.z;
-                s_.state = State::Idle;
-                play("ng_idle", true);
+                // tru.exe (Wine): running on, she runs off the hurdle without stopping.
+                if (hurdle && wantsMove && !wantsWalk) { s_.state = State::Run; play("ng_run", true); }
+                else { s_.state = State::Idle; play("ng_idle", true); }
             } else {
                 startFall(vec3(0));
             }
         }
         break;
+    }
     case State::SwimSplash:
     case State::SwimTread:
     case State::SwimSurface:
