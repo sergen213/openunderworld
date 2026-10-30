@@ -710,8 +710,10 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         }
         break;
     case State::Slide: {
-        // Down the fall line of a floor steeper than minFloorNormalZ: accelerate to slideMaxSpeed [I]; jump leaps
-        // off forward; a standable floor ends it, nothing below falls.
+        // Down the fall line of a floor steeper than minFloorNormalZ, accelerated by gravity along it without friction
+        // or cap (tru.exe, Wine: l3_main_bedroom roof, normal z 0.45: along-slope speed 51 -> 69 -> 91 units per
+        // 30 Hz frame, ~4.7k units/s^2 = g sin 63 deg); jump leaps off forward; a standable floor ends it, nothing
+        // below falls.
         advanceClip(dt);
         s_.fallStartZ = s_.pos.z; // sliding is not falling (no fall damage on the run-out)
         if (jumpPressed) {
@@ -727,9 +729,10 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (dl < 1e-4f) { land(move); break; }
         const vec2 dir = xy(g->normal) / dl; // the normal leans downhill
         s_.yaw = yawOf(dir);
-        const float speed = std::clamp(glm::dot(xy(s_.vel), dir) + t_.slideAccel * dt, 0.0f, t_.slideMaxSpeed);
-        s_.vel = vec3(dir * speed, 0);
-        vec3 p = slide(s_.pos, s_.vel * dt, t_.stepUp, true);
+        const float nz = std::max(g->normal.z, 1e-3f), along = std::max(0.0f, glm::dot(xy(s_.vel), dir)) / nz;
+        const float speed = (along + t_.gravity * std::sqrt(1 - nz * nz) * dt) * nz; // horizontal part of the along-slope speed
+        s_.vel = vec3(dir * speed, -speed * std::sqrt(1 - nz * nz) / nz); // z: the descent, carried into a fall
+        vec3 p = slide(s_.pos, vec3(xy(s_.vel) * dt, 0), t_.stepUp, true);
         const auto g2 = col_.groundProbe(p + vec3(0, 0, t_.stepUp), t_.stepUp + t_.stepDown + speed * dt * 3);
         s_.pos = p;
         if (!g2) { startFall(s_.vel); break; }

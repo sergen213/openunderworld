@@ -1022,6 +1022,27 @@ TEST(Game, SlidesDownSteepSlope) {
     EXPECT_NE(s.state, State::Slide);
 }
 
+// tru.exe slides without friction or cap: on the l3_main_bedroom roof (normal z 0.45) the along-slope speed went
+// 51.0 -> 69.0 -> 91.3 units per 30 Hz frame in 0.25 s (Wine trace slide1.txt), g sin(63.3 deg) = 4601 units/s^2.
+TEST(Game, SlideAcceleratesAtGravityAlongSlope) {
+    const float nz = 0.45f, run = 6000, drop = run * std::sqrt(1 - nz * nz) / nz;
+    CollisionMesh m;
+    addFloor(m, -1000, -1000, 500, 1000, drop);
+    addQuad(m, {500, -1000, drop}, {500 + run, -1000, 0}, {500 + run, 1000, 0}, {500, 1000, drop});
+    addFloor(m, 500 + run, -1000, 20000, 1000, 0);
+    auto w = makeWorld(std::move(m), {400, 0, drop});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 120 && s.state != State::Slide; ++i) w->tick(forward());
+    ASSERT_EQ(s.state, State::Slide);
+    for (int i = 0; i < 6; ++i) w->tick({});
+    const float a0 = glm::length(glm::vec2(s.vel)) / nz;
+    for (int i = 0; i < 30; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Slide);
+    const float a1 = glm::length(glm::vec2(s.vel)) / nz;
+    EXPECT_NEAR((a1 - a0) / 0.5f, w->player().tuning().gravity * std::sqrt(1 - nz * nz), 50);
+    EXPECT_GT(a1, 2738) << "no cap below tru.exe's fastest observed slide (91.3 units/frame)";
+}
+
 // ---- swimming (real data) ---------------------------------------------------------------------
 
 // l4_pool: the watervolume intro is linked to the goo surface (ca_goo_pool_watersurface, z 2699.3). Lara

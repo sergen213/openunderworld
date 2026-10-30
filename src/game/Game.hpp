@@ -176,7 +176,6 @@ struct Tuning {
     float swimRadius = 100.0f;  // sphere around the swimming root
     float crouchHeight = 260.0f; // capsule while crouched/rolling: player data +0x14
     float slideMinNormalZ = 0.3f; // floors between this and minFloorNormalZ are slid down
-    float slideAccel = 2500.0f, slideMaxSpeed = 1400.0f; // units/s^2, units/s down the slope
     float beamAttach = 30.0f;   // root within this of a balance beam (x/y, and z) gets on it
     float poleReach = 60.0f;    // hands to pole axis, horizontal
     // Pole hands (pole pose) may be this far above the axis when caught: Hpole_perp_attach_M starts with the hands

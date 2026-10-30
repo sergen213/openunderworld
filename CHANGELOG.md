@@ -16,6 +16,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
   hangs on keep the old 100-unit root offset.
 - Swimming is tru.exe's speed, measured in the l2_cliffclimb sea under Wine: 1348.6 units/s at the surface and under
   water (was 562), ramping up at 2475 units/s² and coasting to a stop at 3760 units/s² (test `SwimSpeedMatchesTru`).
+- Slides accelerate by gravity along the slope without friction or cap, as tru.exe on the l3_main_bedroom roof (was
+  2500 units/s² capped at 1400); a slide running off an edge keeps its descent (test
+  `SlideAcceleratesAtGravityAlongSlope`).
 - The planar reflection pass (GL and Vulkan) draws exterior terrain first and clears the depth after it, as the main
   pass does: panorama cylinders / sky domes no longer occlude reflected geometry.
 - Spline (reveal) cameras of a neighbour unit render: the portal walk starts from the spline's unit, not Lara's; the
