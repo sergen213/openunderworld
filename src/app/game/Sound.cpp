@@ -30,7 +30,10 @@ GameSound::GameSound(const cdc::BigfileSet& bigfile, audio::Mixer& mixer)
                                            }) {
     for (const char* name : {"pc-w\\lara.drm", "pc-w\\generalbank.drm"})
         try {
-            if (auto drm = load(bf_, name)) bank_.add(std::move(drm));
+            if (auto drm = load(bf_, name)) {
+                if (std::string_view(name).ends_with("generalbank.drm")) mixer_.addWaves(*drm); // the menu sounds
+                bank_.add(std::move(drm));
+            }
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: sound bank %s: %s\n", name, e.what());
         }
@@ -89,6 +92,27 @@ bool GameSound::playHelp(const game::World& world, bool answer) {
     player_.stop(help_);
     help_ = player_.start(*p);
     return true;
+}
+
+void GameSound::reset() {
+    player_.stopAll();
+    for (auto& [name, u] : units_) u.handles.clear(), u.triggers = audio::SfxMarkerTriggers(u.markers); // Init fires again
+    scriptHandles_.clear();
+    drown_ = engine_ = help_ = 0;
+    bikeSpeed_ = 0;
+    lastVars_ = {};
+    ticker_ = {};
+    lastCondition_.clear();
+}
+
+void GameSound::menuSound(uint32_t dtp) {
+    const audio::Plex* p = bank_.find(dtp);
+    if (!p || p->type != audio::PlexType::Assignment || p->children.empty() || p->children[0].type != audio::PlexType::Wave) {
+        std::fprintf(stderr, "ou-game: menu sound DTP %u: not an Assignment -> Wave\n", dtp);
+        return;
+    }
+    const auto v = mixer_.play(p->children[0].id, {.volume = p->volume, .world = false});
+    std::fprintf(stderr, "ou-game: menu sound DTP %u wave %u%s\n", dtp, p->children[0].id, v ? "" : " (silent)");
 }
 
 void GameSound::addObject(const fx::ObjectFx& fx) {

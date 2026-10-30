@@ -6,6 +6,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Menu audio as tru.exe: the main menu plays the title music (`music\tomb_raider_underworld_main_theme`, what the
+  original's main menu script asks GameGlobals for) and `medsea_loop.bik`'s own sea sound looped with the picture,
+  from the first frame; both stop when a game starts or a movie plays and come back on the main menu. Every menu
+  screen has its click sounds from generalbank (move, accept, back, value change). The pause menu and the PDA now
+  hold in-world sounds and music as the original does (voice lines and menu sounds keep playing). Quitting to the main
+  menu, New Game, Continue, Load and quick load stop every chapter sound and the music first (the chapter's loops kept
+  playing on the main menu before), and the unit music starts afresh instead of staying on the previous track.
+  Evidence: docs/formats/AUDIO.md §9.11.
 ## [0.12.0] - 2026-10-30
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

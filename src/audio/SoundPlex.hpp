@@ -107,6 +107,7 @@ public:
     // `material`: the surface material MaterialList nodes pick by (sound instance +0x44, AUDIO.md §9.7).
     Handle start(const Plex& p, std::optional<glm::vec3> position = {}, float volume = 1, uint16_t material = 0);
     void stop(Handle h, float fadeSeconds = 0.2f);
+    void stopAll(float fadeSeconds = 0); // every sound, pending parts too (leaving play: tru.exe 0x593D10)
     bool active(Handle h) const; // a voice still plays or a delayed/sequenced part is pending
     void setParam(Handle h, size_t index, float value); // Reaction input (game parameter) of a running sound
     void setPosition(Handle h, glm::vec3 position);     // a 3D sound's emitter moved

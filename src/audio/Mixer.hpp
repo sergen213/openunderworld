@@ -32,6 +32,9 @@ struct PlayParams {
     Bus bus = Bus::Sfx;
     std::optional<glm::vec3> position{}; // world position; nullopt = 2D
     float minDistance = 1, maxDistance = 10000; // FSB4 defaults seen in every TRU bank
+    // In-world voice (default): setWorldPaused / stopWorld act on it. Menu sounds and the main menu's movie sound
+    // pass false.
+    bool world = true;
 };
 
 struct Listener {
@@ -80,6 +83,12 @@ public:
     void setMusicStemGains(std::vector<float> stemGains);
     void stopMusic(float fadeSeconds = 2);
 
+    // The pause menu / PDA: world voices of the Sfx and Music buses hold their position and stay silent (tru.exe
+    // 0x5874B0 pauses the sound categories globalsoundinfo lists: music, sfx, movie; the voice category is not in the
+    // list, so Bus::Voice plays on). Quit to menu / new game / load: stopWorld ends every world voice (0x593D10).
+    void setWorldPaused(bool paused);
+    void stopWorld(float fadeSeconds = 0);
+
     void setListener(const Listener& l);
     void setBusVolume(Bus b, float volume);
     void setAttenuation(Attenuation a);
@@ -108,6 +117,7 @@ private:
     VoiceId nextId_ = 1, music_ = 0;
     Listener listener_;
     float bus_[size_t(Bus::Count)] = {1, 1, 1};
+    bool worldPaused_ = false;
     Attenuation atten_;
     SDL_AudioStream* stream_ = nullptr;
     std::vector<float> scratch_;

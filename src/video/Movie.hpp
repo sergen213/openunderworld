@@ -47,6 +47,8 @@ public:
     // appended to `audio` as interleaved float32 (audioTrack()->channels per sample frame).
     // Returns false at the end of the movie (after flushing the decoders).
     bool next(VideoFrame& frame, std::vector<float>& audio);
+    // The whole selected audio track (interleaved float32), without decoding video. Call instead of next().
+    std::vector<float> decodeAudio();
 
 private:
     struct Impl;

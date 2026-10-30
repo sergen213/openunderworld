@@ -56,6 +56,7 @@ void Mixer::mix(float* out, size_t frames) {
             v.done = true;
             continue;
         }
+        if (worldPaused_ && v.params.world && v.params.bus != Bus::Voice) continue; // held: no output, no advance
         // Per-channel stereo gains (header layout or default), times music stem gains.
         float gl[12], gr[12];
         for (size_t c = 0; c < ch && c < 12; ++c) {
@@ -245,6 +246,18 @@ void Mixer::stopMusic(float fadeSeconds) {
     std::lock_guard lock(mutex_);
     if (Voice* v = find(music_)) fadeTo(*v, 0, fadeSeconds, true);
     music_ = 0;
+}
+
+void Mixer::setWorldPaused(bool paused) {
+    std::lock_guard lock(mutex_);
+    worldPaused_ = paused;
+}
+
+void Mixer::stopWorld(float fadeSeconds) {
+    std::lock_guard lock(mutex_);
+    for (Voice& v : voices_)
+        if (v.params.world && !v.done) fadeTo(v, 0, worldPaused_ ? 0 : fadeSeconds, true); // a held voice cannot fade
+    if (const Voice* m = find(music_); !m || m->params.world) music_ = 0;
 }
 
 void Mixer::setListener(const Listener& l) {

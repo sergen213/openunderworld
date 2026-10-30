@@ -562,3 +562,39 @@ streams `vo\enemy\merc\b_<voice>_<CAT>_<g|s>_NN` (voices M02 / M10 / M11; catego
 INV, SWP, GAT; `s` = FDY). tru.exe paces them through the `bark` native script type and a BarkTimer (not decoded).
 Ours: `GameSound::syncUnits` files each unit's chatter DTPs by category; `ai::Enemies::barks` (EAR spotted, CBR cover,
 FDY squad mate down, SWP lost her; GAMEPLAY.md "Mercs") start a random DTP of that category at the soldier.
+
+### 9.11 Main menu, menu sounds, pause, leaving play [V-exe, V-data; I where tagged]
+
+- **Title music.** ScriptMainMenu (generalbank script 8, vt 2) sends GameGlobals (script 5) the message `startTitleMusic`;
+  GameGlobals vt 0 plays its sound member +380 = generalbank DTP 78: Assignment → Envelope (param 0: 1 → 0 over 1.05 s)
+  → stream `music\tomb_raider_underworld_main_theme` (`pc-w\audio\streams\…mul`, 213.6 s stereo, loop start 0).
+  `stopTitleMusic` comes from scripts 6 (constructor), 60 (attract-mode timer), 110 ("Unmuting audio during a movie")
+  and 121 (intro movie). Ours: `Music::title` on the Music bus whenever the main menu opens; it stops with a 1.05 s fade
+  [I: the envelope as the release curve] when a game starts or a movie plays.
+- **Menu movie sound.** The frontend (0x5DAE20) loops `medsea_loop.bik` through the movie player 0x4A12B0, Bink audio on
+  (track 0: 44.1 kHz stereo sea ambience, about −25 dBFS). Its volume (0x4A0F20 `BinkSetVolume`) is sound category 25 of
+  globalsoundinfo (below). Ours: decoded once (`video::Movie::decodeAudio`), cut to the video's 30.03 s and looped with
+  the picture on Bus::Sfx [I: category 25 lies under the SfxVolume category 4].
+- **Sound categories** (globalsoundinfo.drm DTP 792, struct at +0xE0): +0x04 count 77, +0x00 → 0x84-byte records
+  (first word = parent); +0x24 → {music 1, sfx 4, voice 7, …, +0x14 movie 25} — the option sliders MusicVolume /
+  SfxVolume / VoVolume set categories 1 / 4 / 7 (0x477CA0 → 0x589520 / 0x589590 / 0x587140); +0x1C/+0x20 the pause
+  list {6, 25, 3, 9}: 3 = the only child of music, 6 and 9 = children of sfx, 25 = movie. The voice category and sfx's
+  third child 54 are not in it.
+- **Pause.** Opening the pause menu (0x5D4780) calls 0x5874B0 → 0x5873A0(1): the paused bit of every listed category;
+  0x5874D0 clears it. Ours: `Mixer::setWorldPaused` holds every world voice of the Sfx and Music buses while the pause
+  menu or the PDA is open (`world sound held` / `resumed` in the log); Bus::Voice (help lines) plays on, and menu sounds
+  pass `PlayParams::world = false` [I: menu sounds are category 54].
+- **Leaving play.** Level change (0x5DF760, 0x5DF8C0) and quitting to the frontend (0x5DAB40) call 0x593D10, which stops
+  every sound and the music and resets the category volumes (0x5895F0). Ours (`audio reset` in the log): New Game,
+  Continue, Load, Treasure Hunt, Revisit, quick load and Quit to Menu stop the music (`Music` state cleared; the unit's
+  music starts afresh), `GameSound::reset` (every SoundPlayer instance incl. pending parts, sfxmarker triggers re-armed,
+  script / drowning / bike engine / help handles, subtitles) and `Mixer::stopWorld`. Movies hold the world sound while they
+  play and stop the main menu sound.
+- **Menu sounds.** The uiscreen scripts play their `sound` members (Play, type 71 +0xD4) on input. Script 130: vt 36/37
+  member 1582 = DTP 214 (0.04 s, volume 0.2) when the selection moves, vt 33/34/38/39 member 2748 = DTP 243 (0.22 s)
+  before opening a screen, vt 40 member 2749 = DTP 217 (0.39 s) going back, vt 35 members 2750 / 2751 = DTPs 247 / 248
+  (0.15 / 0.06 s, 0.2) changing a value; the same members recur in scripts 104, 110–117, 122, 127–134. Ours
+  (`GameSound::menuSound`, logged `menu sound DTP d wave w`): every menu screen, from the menu's reaction to the key —
+  accept / opened screen 243, Back 217, a value changed 247 (Right) / 248 (Left) [I: direction], selection moved 214
+  [I: one mapping for all screens; the main menu script 8 has no sound members of its own]. DTPs 100 / 101 (members
+  1589 / 467, scripts 39–45, 121, 128–134) and 140–143, 209–211 (PDA scripts 7, 37) are not mapped [U: their events].

@@ -420,6 +420,12 @@ void SoundPlayer::stop(Handle h, float fade) {
     instances_.erase(it);
 }
 
+void SoundPlayer::stopAll(float fade) {
+    for (const auto& [h, in] : instances_)
+        for (const Voice& v : in.voices) mixer_.stop(v.id, fade);
+    instances_.clear(), lines.clear(), waves.clear();
+}
+
 bool SoundPlayer::active(Handle h) const { return instances_.contains(h); }
 
 void SoundPlayer::setParam(Handle h, size_t index, float value) {

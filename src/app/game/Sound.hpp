@@ -25,6 +25,9 @@ public:
     GameSound(const cdc::BigfileSet& bigfile, audio::Mixer& mixer); // loads lara.drm + generalbank.drm graphs
     void attach(game::World& world); // script "sound" native hook; call once after the world exists
     void tick(game::World& world);   // after World::tick: units, sfxmarkers, drowning, scheduled parts, subtitles
+    void reset(); // stop and forget everything playing (quit to menu, new game, load)
+    // A menu sound: generalbank DTP (Assignment -> Wave) on the Sfx bus, not held by the pause menu (AUDIO.md §9.11).
+    void menuSound(uint32_t dtp);
     const locale::SubtitleTicker& subtitles() const { return ticker_; }
     // Help on demand (PDA Hint / Answer): plays vo\lara\sc_<level>_<NN>_hint|answer for the unit script's current
     // "hint_NN" condition (script::Runtime::helpCondition); false (and a log line) when there is none.

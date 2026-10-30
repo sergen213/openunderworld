@@ -159,4 +159,19 @@ bool Movie::next(VideoFrame& frame, std::vector<float>& audio) {
     return true;
 }
 
+std::vector<float> Movie::decodeAudio() {
+    Impl& d = *d_;
+    std::vector<float> out;
+    if (!d.adec) return out;
+    d.fmt->streams[d.vstream]->discard = AVDISCARD_ALL;
+    const int stream = d.info.audio[d.track].stream;
+    while (av_read_frame(d.fmt, d.pkt) >= 0) {
+        if (d.pkt->stream_index == stream) avcodec_send_packet(d.adec, d.pkt), d.drainAudio(out);
+        av_packet_unref(d.pkt);
+    }
+    avcodec_send_packet(d.adec, nullptr);
+    d.drainAudio(out);
+    return out;
+}
+
 } // namespace ou::video

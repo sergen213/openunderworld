@@ -1563,9 +1563,17 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
 Keys: arrows/WASD, Enter/Space accept, E = Alt (accept; PDA TASK), Esc back, Backspace/Delete delete; pad d-pad,
 South accept, West Alt, North delete, East/Start back. Replays drive menus with `forward`/`right` ±1, `jump` (accept),
 `interact` (Alt), `drop`/`pause` (back), `pda`; the script clock keeps running in menus. Not reproduced: the attract
-mode (intro.bik after ~1 min idle), title music, the decorative small text under
+mode (intro.bik after ~1 min idle), the decorative small text under
 the list panels, save name entry (496), and the
 footer always names the keyboard key.
+
+**Menu audio** (docs/formats/AUDIO.md §9.11): the main menu plays the title music (generalbank DTP 78, stream
+`music\tomb_raider_underworld_main_theme`, Music bus) and `medsea_loop.bik`'s own sound track looped with the picture
+(Sfx bus [I]); both stop when a game starts or a movie plays and start again on the main menu. Every menu screen plays the
+uiscreen scripts' sounds: selection moves DTP 214, accept / opening a screen 243, back 217, a value change 247 / 248
+[I: one mapping for all screens]. The pause menu and the PDA hold the in-world sound and the music (tru.exe 0x5874B0);
+voice lines and menu sounds play on. New Game, Continue, Load, quick load, Treasure Hunt and Quit to Menu stop every
+in-world sound and the music first (0x593D10); a load within the same chapter restarts the track that was playing [I].
 
 **Original UI reference (2026-10-28)** [O captures; implemented: HUD below, menus/PDA/loading above]: tru.exe captures at 1920×1080 (and
 HUD at 1024×768) in openunderworld-work/screens/ui (`hud_weapon_*`, `hud_dpad_*`, `pause_*`, `game_options_1080`,

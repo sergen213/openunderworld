@@ -452,6 +452,24 @@ TEST(Mixer, SoundRegistry) {
     EXPECT_EQ(m.activeVoices(), 1u);
 }
 
+TEST(Mixer, WorldPauseHoldsAndStopWorldEndsWorldVoicesOnly) {
+    Mixer m;
+    const auto sfx = m.play(constant(1, {16384}, 100), {.pan = 1, .loop = true});
+    const auto menu = m.play(constant(1, {8192}, 100), {.pan = -1, .loop = true, .world = false});
+    const auto vo = m.play(constant(1, {16384}, 100), {.pan = 1, .loop = true, .bus = Bus::Voice});
+    m.setWorldPaused(true);
+    auto o = run(m, 4);
+    EXPECT_NEAR(o[0], 0.25f, 1e-4); // the menu voice, left
+    EXPECT_NEAR(o[1], 0.5f, 1e-4);  // the voice line plays on; the held sfx adds nothing
+    m.setWorldPaused(false);
+    o = run(m, 4);
+    EXPECT_NEAR(o[1], 1.0f, 1e-4);
+    m.stopWorld();
+    EXPECT_FALSE(m.playing(sfx));
+    EXPECT_FALSE(m.playing(vo));
+    EXPECT_TRUE(m.playing(menu));
+}
+
 TEST(Mixer, MusicCrossfadeAndStems) {
     Mixer m(1000);
     m.playMusic(constant(2, {16384, 0}, 100000, 1000), 0);
