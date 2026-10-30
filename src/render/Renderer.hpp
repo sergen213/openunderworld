@@ -127,6 +127,14 @@ struct MeshOpacity { uint32_t mesh = 0; float opacity = 1; };
 // in the camera passes; an empty rect hides them. Neighbour units are seen through their stream portals (RenderCommon
 // portalClips). Shadow / ray-traced passes ignore it.
 struct UnitClip { uint32_t firstMesh = 0, meshCount = 0; float rect[4] = {-1, -1, 1, 1}; };
+// Under water (docs/RENDERING.md "Under water"): the camera unit's look for this frame, filled by the app from
+// scene::Environment while the camera is below Lara's water surface or less than 600 units above it (tru.exe 0x6D9DA0).
+struct Underwater {
+    float strength = 0;    // full-screen pass alpha scale: 1 below the surface, 1 - height / 600 above; 0 = no pass
+    float pass[2][4] = {}; // scene::Environment::waterPass (surface rgb + alpha at the eye, deep rgb + full-fog distance)
+    bool fog = false;      // below the surface: this fog replaces the unit fog (TRU's shaders, water, atmosphere)
+    float fogColor[3] = {}, fogNear = 0, fogFar = 0;
+};
 
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
@@ -179,6 +187,7 @@ struct FrameOptions {
     const ScreenFilter* screenFilter = nullptr; // original class-5 screen filters (post pass); nullptr / inactive = none
     std::span<const MeshOpacity> meshOpacity; // unlisted meshes: 1
     std::span<const UnitClip> unitClips;     // meshes in no range: unclipped
+    const Underwater* underwater = nullptr;  // nullptr = above water
 };
 
 // Ray-tracing state for diagnostics and tests.

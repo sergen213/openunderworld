@@ -60,6 +60,17 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     const glm::vec3 fog = env.valid ? glm::vec3(env.fogColor[0], env.fogColor[1], env.fogColor[2]) : glm::vec3(0.08f, 0.09f, 0.11f);
     w.fogColor = glm::vec4(fog, cameraUnderwater(camera, options.waterVolumes) ? 1.0f : 0.0f);
     w.fogRange = {env.valid ? env.fogNear : 1000.0f, env.valid && env.fogFar > env.fogNear ? env.fogFar : 30000.0f, 1.0f, 1.0f};
+    if (const Underwater* u = options.underwater) {
+        if (u->fog) {
+            w.fogColor = glm::vec4(u->fogColor[0], u->fogColor[1], u->fogColor[2], w.fogColor.w);
+            w.fogRange.x = u->fogNear, w.fogRange.y = std::max(u->fogFar, u->fogNear + 1.0f);
+        }
+        if (u->strength > 0 && u->pass[1][3] > 0) {
+            w.waterPass[0] = glm::vec4(u->pass[0][0], u->pass[0][1], u->pass[0][2], u->pass[0][3]);
+            w.waterPass[1] = glm::vec4(u->pass[1][0], u->pass[1][1], u->pass[1][2], u->pass[1][3]);
+            w.waterPass[2].x = u->strength;
+        }
+    }
     if (const ScreenFilter* f = options.screenFilter; f && f->active()) {
         w.filter[0] = {f->alphaA, f->blurA, f->dof ? 1.0f : 0.0f, f->colourMatrix ? 1.0f : 0.0f};
         w.filter[1] = {f->tintA[0], f->tintA[1], f->tintA[2], f->finishMatrix ? 1.0f : 0.0f};

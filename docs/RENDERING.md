@@ -40,7 +40,7 @@ shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the o
 | FXAA | off | off (optional) | `--fxaa on/off`, `graphics.fxaa` |
 | HDR | off | off: the original shaders write LDR gamma-space colour; the ACES tonemap (RGBA16F target) only compresses it | `--hdr on/off`, `graphics.hdr` |
 | Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `graphics.rt`, `graphics.rt_quality` |
-| Water | TRU's own water shaders | enhanced water ("Water" below): waves, refraction, SSR, ripples, splashes, underwater | `--water original/enhanced`, `graphics.water` |
+| Water | TRU's own water shaders | enhanced water ("Water" below): waves, refraction, SSR, ripples, splashes, caustics under water (the under-water look itself is in both) | `--water original/enhanced`, `graphics.water` |
 | Brightness | 1.0 | 1.0 | `--brightness 0.5-2.0`, `graphics.brightness` |
 | Original effects (`src/fx`) | on | on (ou-game only; off = no particles / ribbons / lightning / glows / effect lights / screen filters; frame times in docs/formats/EFFECTS.md "Performance") | `--fx on/off`, `graphics.effects` |
 
@@ -230,14 +230,9 @@ Technique (written for this project, no third-party shader code):
   screen-space in both backends.
 - Foam where the bottom is shallow (shore/intersection) and on ripple crests.
 - Splash droplets: camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
-- Underwater: when the camera is inside a `WaterVolume` below its surface, the post pass adds
-  Beer-Lambert absorption by reconstructed depth (per unit 1.0e-4 / 0.4e-4 / 0.3e-4 for r / g / b,
-  red first) on top of the scene's own unit fog, which TRU's shaders already apply, plus faint
-  caustics; pixels with no geometry take the tint. The original fogs the submerged scene with the
-  unit fog alone: l7_arctic_sea's rocks and ice stay readable thousands of units away
-  (openunderworld-work/screens/chapters/side_ch7.png). The earlier exp(-0.0009 d) haze covered
-  them [I: coefficients fitted to that capture and l1_seafloor]. The surface seen from below is
-  tinted instead of mirrored. With `water = original` the post pass is byte-identical to before.
+- Underwater: the original's under-water look ("Under water" below) in both qualities; Enhanced
+  adds faint caustics on the submerged bottom. The surface seen from below is tinted instead of
+  mirrored.
 
 Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the ripple field, splash
 droplets and the water volumes; ou-game fills `FrameOptions::{ripples, waterVolumes, splashes}`
@@ -258,6 +253,39 @@ refractive pool with shore foam and caustics; Lara treading with a wake; underwa
 Limits [I]: SSR misses off-screen geometry (fog fallback), one simulated surface (the one Lara
 is in or nearest), no water flow/buoyancy, procedural caustics are not light-accurate, foam noise
 is hashed cells, no ripples in ou-viewer (it has no simulation).
+
+### Under water (GL + Vulkan, both water qualities; `FrameOptions::underwater`)
+
+tru.exe's look while Lara is in a water volume (decoded; confirmed live in tru.exe under Wine, l1_seatop /
+l1_seafloor: ret-patching 0x6D8C20 removes all the blue, and with filter 5292's fog forced white the scene goes white
+without the pass but stays blue with it, alpha 0.56 at Lara):
+- Full-screen pass [O]: 0x5D4AB0 → 0x6DA130 registers the unit data `+0x160` count / `+0x164` 0x100-byte records
+  (UnderWaterRayDrawable). Each frame 0x6D9DA0 sets "under water" (0x5EA200: camera below Lara's water surface; also
+  less than 600 units above it, strength 1 − h / 600) and draws the camera unit's records with `+0x84` bit 0 through
+  0x6D8C20: the `+0x74` material (l1 5767, l7 19575; PS lib 410 slot 0) over the screen, alpha-blended. Its
+  MaterialParams c100 = surface colour + alpha at the eye (l1 0.235 / 0.455 / 0.608, 0.6), c101 = deep colour + full-fog
+  distance (l1 0.031 / 0.118 / 0.157, 45000; l7 0.216 / 0.408 / 0.663, 0.5 and 0 / 0.059 / 0.176, 60000). Colour =
+  mix(deep, surface, 0.5 + 0.5 · view-dir z), alpha = mix(eye alpha, 1, view depth / distance) · strength.
+  `scene::Environment::waterPass`, `ouWaterPass` (shaders/underwater.glsl, post pass, after the screen filters).
+  Left out [U]: the noise texture's ±0.05 gradient wobble, the scripted murk (InstanceParams c134.y, underwaterray
+  native 0x776C70, 0 by default), the `+0xDC` / `+0xE0` / `+0xE4` colour lerp (off in every unit), the `+0x6C` /
+  `+0x70` sun-glow passes through 50×50 / 25×25 targets and the ray records (bit 0 clear, 0x6D9660).
+- Fog [O]: below the surface the render settings' water fog set (`+0x1C` colour, `+0x4C` near, `+0x48` far, 0 = the far
+  plane, 0x5C1F50) replaces the unit fog, and the filters' fog blocks (`+0x2FA4`: enable, colour, near, far) take over
+  as far as their weights go (0x512D60 / 0x514D90). l1: filter 5292 (near = far = 379267, black); l7: 859 (63211).
+  `FrameOptions::underwater` fog → FogColor c0 / fog vs c22 (`original::fillFrame`) and the water block. The fog
+  blocks' curves and height fog are not used [U].
+- Screen filters [O]: render settings `+0x84` deep / `+0x88` surface filter DTPs, `+0x90` / `+0x8C` fade ranges below /
+  above (0x5C78A0): w = 1 − min(|camera z − surface|, range) / range; below: surface × w + deep × (1 − w); above:
+  surface × w. Summed into the running filters (`fx::System::screenFilter` `extra`): l1's deep filter 5292 is a ColorDOF
+  blur (alpha 0.89, DOF) + bloom, the surface filter 5557 a blur + feedback.
+- Enter / leave lists [O]: render settings `+0x68` / `+0x6C` event lists (l1 / l7: 4455 = GenericFXObject 845's
+  motes and soft blobs, 835) run on Lara when the camera goes under / comes out (0x5C7CA0 → 0x535EB0); leaving stops
+  the enter list's effects (player prims 0x402, 0x52F4D0). `fx::parseEffectList`, `Library::effectList`; the effects
+  follow Lara (`System::moveOwner`).
+
+ou-game (`EffectsView::water`) fills `FrameOptions::underwater` and the filter weights from the current unit and logs
+`camera under / out of water`. Test: `FxReal.UnderwaterSettings`.
 
 ### Water detail, debug views (`graphics.water_detail`, `--water-detail`, `--water-debug`, F7)
 
@@ -504,10 +532,10 @@ and OpenGL `--preset original`; invisible kwin_wayland sessions; screenshots vie
 | l1_seatop, l1_seafloor, l7_arctic_sea (Vulkan) | validation errors every frame (VUID-VkImageMemoryBarrier2-image-01932, vkCmdCopyBufferToImage-dstImage-07966) | high | same as above | fixed; all 25 Vulkan runs validation-clean (only the host's unrelated lsfg loader-layer messages remain) |
 | l1_seatop, l2_cliffclimb (OpenGL) | no sea: grey/beige fogged seabed to the horizon | high | 94ed091 removed 9cb8444's misplaced `drawScreenReaders` call but never re-added it, so GL skipped every back/depth-buffer reading submesh (TRU's water) | fixed; also `fillFrame(…, flipY = true)` for GL's bottom-up screen copies (ScreenExtents c51 sampled them upside down) |
 | l1_seatop (both) | l1_cineseatop's glass dome and yacht hanging in the western sky; its sea plane (z 1671, 2 units under l1_seatop's 1673) z-fighting with l1_seatop's west of x −65052 | high | l1_cineseatop is a portal neighbour relocated by (−166366, 0, −2) whose portal is a 6300² quad in the sky at x −71582; tru.exe draws neighbours only through their portals, we drew every loaded unit whole | fixed: "Portal clipping" above (far-west views at x −60000 / −100000 [O]: dome, yacht and its sea gone, GL and Vulkan) |
-| l1_seatop (both) | blotchy dark patches on the sea around the yacht and toward the west | high | l1_seafloor's seabed, drawn through the horizontal portal at z −4605 (which faces the camera, so clipping keeps it), shows through the sea: hiding l1_seafloor removes them [O]; [I] the sea's depth / fog over the seabed (underwater look) | open |
+| l1_seatop (both) | blotchy dark patches on the sea around the yacht and toward the west | high | l1_seafloor's seabed, drawn through the horizontal portal at z −4605 (which faces the camera, so clipping keeps it), shows through the sea: hiding l1_seafloor removes them [O]. Not the under-water look: the camera is above water, where tru.exe draws no water pass (0x6D9DA0); the original's ch1 start shows a uniform sea | open |
 | l2_junglehub start (Enhanced) | whole ledge in sun shadow, map and RT alike | low | not a renderer bug: the sun ray from Lara (sun (0.609, −0.486, 0.626)) hits real one-sided geometry facing the sun — canopy foliage 1064 units up (mat 10641), terrain 10539, l2_cliffhall_b terrain and trees — invisible from below because back faces are culled. [U] whether the original's PSSM casters include them (its depth pass 0x505D80 renders with cull none) | kept |
-| l7_arctic_sea / ch7 start | Enhanced: flat teal, ruins invisible at the start frame; Original (GL): no underwater tint at all vs the blue orig_ch7 | medium | Enhanced underwater absorption / unit fog under water (StartFixes' area; reported) | open |
-| l1_seafloor | very bright saturated cyan in both presets | medium | unit fog / lighting under water [U] | open |
+| l7_arctic_sea / ch7 start | Enhanced: flat teal, ruins invisible at the start frame; Original (GL): no underwater tint at all vs the blue orig_ch7 | medium | the original's full-screen water pass, water fog and screen filters were missing; our Enhanced absorption replaced them | fixed: "Under water" above (ch7 start blue in GL Original and Vulkan Enhanced, viewed beside orig_ch7) |
+| l1_seafloor | very bright saturated cyan in both presets | medium | the same missing water pass | colour fixed ("Under water"; at tru.exe's camera −44357, −14000, 3792: original 27 / 58 / 76, GL 27 / 61 / 73, Vulkan 26 / 58 / 71 at the screen centre). Open: around Lara the original shows tall reef rock that our scene lacks (a flat sandy bed with wreck pieces below her) [U] |
 | l2_norsehall, l2_puzzleroom (Enhanced) | much darker than Original (statues in shadow) | low | canopy casters as l2_junglehub [I] | kept |
 | l5_valaskjalf (Enhanced) | snow falls inside the hall | low | weather `auto` picks snow for the unit | open |
 | others (ch0, ch3–ch6, ch8, bedroom, kraken, chapel, ballcourt, temple, engine hall, helheim, yggdrasil, valgrind) | none obvious; GL Original and Vulkan Enhanced agree | — | — | — |

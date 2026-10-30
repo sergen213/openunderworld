@@ -352,6 +352,34 @@ Unit parseUnit(const cdc::Drm& d) {
         u.scriptId = rs.at<uint32_t>(o + 0x1C0);
         if (const auto f = rs.ptrs.find(o + 0x2B4); f != rs.ptrs.end())
             u.flashlightSpot = View(d, f->second.section).at<uint8_t>(f->second.offset + 0x0A) != 0;
+        // Under water (RENDERING.md "Under water"): fog set +0x1C / +0x4C / +0x48 (0 -> far plane; near >= far ->
+        // far - 1, 0x5C1F50), screen filters +0x84 / +0x88 over +0x90 / +0x8C (0x5C78A0), event lists +0x68 / +0x6C.
+        for (int k = 0; k < 3; ++k) e.waterFogColor[k] = rs.at<uint8_t>(o + 0x1C + k) / 255.0f;
+        e.waterFogFar = rs.at<float>(o + 0x48);
+        if (e.waterFogFar == 0) e.waterFogFar = rs.at<float>(o + 0x38);
+        e.waterFogNear = std::min(rs.at<float>(o + 0x4C), e.waterFogFar - 1);
+        e.waterFilter[0] = rs.at<uint32_t>(o + 0x84), e.waterFilter[1] = rs.at<uint32_t>(o + 0x88);
+        e.waterFilterRange[0] = rs.at<float>(o + 0x90), e.waterFilterRange[1] = rs.at<float>(o + 0x8C);
+        e.waterList[0] = rs.at<uint32_t>(o + 0x68), e.waterList[1] = rs.at<uint32_t>(o + 0x6C);
+    }
+    // Full-screen water pass (tru.exe 0x5D4AB0 -> 0x6DA130 registers unit data +0x160 count / +0x164 0x100-byte
+    // records; 0x6D9DA0 draws those with +0x84 bit 0 through 0x6D8C20 while the camera is under water): the +0x74
+    // material's MaterialParams. The +0x6C / +0x70 sun-glow passes and the bit-0-clear ray records are not drawn [U].
+    if (const auto n = d.sections[up.section].data.size() >= up.offset + 0x168 ? ud.at<uint32_t>(up.offset + 0x160) : 0;
+        n && n < 64 && ud.ptrs.count(up.offset + 0x164)) {
+        const auto rp = ud.ptr(up.offset + 0x164, "unit water records");
+        const View rv(d, rp.section);
+        for (uint32_t k = 0; k < n; ++k) {
+            const uint32_t r = rp.offset + 0x100 * k;
+            if (!(rv.at<uint32_t>(r + 0x84) & 1) || cdc::resourceRefType(d.sections[rp.section], r + 0x74) != int(cdc::SectionType::Material))
+                continue;
+            uint32_t mi = 0;
+            if (!findSection(d, cdc::SectionType::Material, rv.at<uint32_t>(r + 0x74), &mi)) continue;
+            const auto m = decodeMaterial(d.sections[mi]);
+            if (m.psParams.size() < 8) continue;
+            for (int i = 0; i < 8; ++i) u.environment.waterPass[i / 4][i % 4] = m.psParams[size_t(i)];
+            break;
+        }
     }
 
     // Level+0x90 -> cell group data {header*, ?, streamGroups*, symbols*, cells*, ?, imfs*}.

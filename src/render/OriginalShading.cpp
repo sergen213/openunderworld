@@ -28,7 +28,8 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect) {
     return camera.jittered(glm::perspectiveRH_ZO(glm::radians(camera.verticalFovDeg), aspect, camera.nearZ, camera.farZ)) * camera.view();
 }
 
-void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env, bool flipY) {
+void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env, bool flipY,
+               const Underwater* underwater) {
     std::memset(&f, 0, sizeof f);
     const float aspect = vp.height > 0 ? float(vp.width) / float(vp.height) : 1.0f;
     const glm::vec3 eye = camera.position;
@@ -47,6 +48,11 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     put(f.vs, 254, 1, 1, 0, 0);                      // TexcoordScales: uv / uv1 are pre-scaled by the loader
     // ---- pixel shader registers ----
     if (env.valid) put(f.ps, 0, env.fogColor[0], env.fogColor[1], env.fogColor[2], 0); // FogColor
+    if (const Underwater* u = underwater; u && u->fog) { // under water: the unit's water fog set / filter fog (0x5C1F50)
+        const float range = std::max(u->fogFar - u->fogNear, 1.0f);
+        put(f.vs, 22, -u->fogNear / range, 1.0f / range, 0, u->fogFar);
+        put(f.ps, 0, u->fogColor[0], u->fogColor[1], u->fogColor[2], 0);
+    }
     put(f.ps, 1, eye.x, eye.y, eye.z, 0);            // g_CameraPosition
     if (env.valid) put(f.ps, 15, env.ambient[0], env.ambient[1], env.ambient[2], 0); // g_Ambient
     put(f.ps, 53, time, dt, 0, 0);                   // TimeVectorPS

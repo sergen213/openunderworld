@@ -590,3 +590,43 @@ TEST(FxReal, LaraRibbonsAreOnUnfiredEventsAndVisualsOffStartsNothing) {
     EXPECT_EQ(off.emitterCount() + off.particleCount() + off.glowCount() + off.boltCount() + off.ribbonCount() + off.filterCount(), 0u);
     EXPECT_GT(sounds, 0); // the fire clip's sound record still plays
 }
+
+// Under water (docs/RENDERING.md "Under water"): the unit's water fog set, deep / surface screen filters with their fog
+// blocks, the full-screen pass material and the enter list (tru.exe 0x5C1F50, 0x5C78A0, 0x6D8C20, 0x5C7CA0).
+TEST(FxReal, UnderwaterSettings) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto b = bf.read("pc-w\\l1_seafloor.drm");
+    ASSERT_TRUE(b);
+    const auto d = cdc::parseDrm(std::move(*b));
+    const auto e = formats::parseUnit(d).environment;
+    EXPECT_NEAR(e.waterFogNear, 31605.6f, 1.0f);
+    EXPECT_NEAR(e.waterFogFar, 632111.0f, 2.0f);
+    EXPECT_EQ(e.waterFilter[0], 5292u);
+    EXPECT_EQ(e.waterFilter[1], 5557u);
+    EXPECT_FLOAT_EQ(e.waterFilterRange[0], 100.0f);
+    EXPECT_EQ(e.waterList[0], 4455u);
+    EXPECT_NEAR(e.waterPass[0][2], 0.607843f, 1e-5); // surface blue (material 5767 c100)
+    EXPECT_NEAR(e.waterPass[0][3], 0.6f, 1e-5);      // alpha at the eye
+    EXPECT_NEAR(e.waterPass[1][3], 45000.0f, 1.0f);  // full-fog distance
+    const auto deep = fx::loadFilterResource(d, 5292), surface = fx::loadFilterResource(d, 5557);
+    ASSERT_TRUE(deep && surface);
+    EXPECT_TRUE(deep->fog && !surface->fog);
+    EXPECT_NEAR(deep->fogNear, 379267.0f, 2.0f);
+    EXPECT_TRUE(deep->colorDof && surface->feedback);
+    const auto enter = fx::parseEffectList(d, e.waterList[0]);
+    ASSERT_TRUE(enter && enter->fx);
+    EXPECT_FALSE(enter->events.empty());
+    fx::System s;
+    EXPECT_GT(s.startPointSet(*enter, glm::mat4(1), -3), 0);
+    s.moveOwner(-3, {100, 0, 0});
+    for (int k = 0; k < 60; ++k) s.tick({0, 0, 0});
+    EXPECT_GT(s.particleCount(), 0u);
+
+    auto a = bf.read("pc-w\\l7_arctic_sea.drm");
+    ASSERT_TRUE(a);
+    const auto arctic = formats::parseUnit(cdc::parseDrm(std::move(*a))).environment;
+    EXPECT_NEAR(arctic.waterPass[0][2], 0.662745f, 1e-5); // material 19575
+    EXPECT_NEAR(arctic.waterPass[1][3], 60000.0f, 1.0f);
+    EXPECT_EQ(arctic.waterFilter[0], 859u);
+}

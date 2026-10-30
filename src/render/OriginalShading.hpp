@@ -22,8 +22,9 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect);
 
 // Frame registers: transforms, time, fog, ambient, sun, sun cookie, light table (FrameBlock layout: ShaderTranslate.hpp).
 // `flipY`: the backend's screen copies are stored bottom-up (GL), so ScreenExtents maps vPos.y to 1 - v.
+// `underwater` with fog: its fog replaces the unit's (FrameOptions::underwater).
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float timeSeconds, const scene::Environment& env,
-               bool flipY = false);
+               bool flipY = false, const Underwater* underwater = nullptr);
 // The point/spot light table (FrameBlock::lights, first kMaxLights of env.lights) at time t (flicker); part of fillFrame.
 void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds);
 // Material registers: MaterialParams, InstanceParams (zero, as tru.exe's default 0x848F78), AlphaThreshold, opacity.

@@ -113,7 +113,15 @@ FilterResource parseFilterResource(std::span<const uint8_t> d) {
     f.fbAngle = rd<float>(d, fb + 0x14), f.fbAngle2 = rd<float>(d, fb + 0x18), f.fbColour = rd<uint32_t>(d, fb + 0x1C);
     f.noise = rd<uint8_t>(d, nz + 0x10), f.noiseColour = rd<uint32_t>(d, nz);
     f.noiseAlpha = float(rd<int32_t>(d, nz + 4)), f.noiseCells = float(rd<int32_t>(d, nz + 8));
+    constexpr size_t fog = 0x2FA4;
+    f.fog = rd<uint8_t>(d, fog) != 0, f.fogColour = rd<uint32_t>(d, fog + 4) & 0xFFFFFF;
+    f.fogNear = rd<float>(d, fog + 8), f.fogFar = rd<float>(d, fog + 0xC);
     return f;
+}
+
+std::shared_ptr<const FilterResource> loadFilterResource(const cdc::Drm& drm, uint32_t id) {
+    std::map<uint32_t, std::shared_ptr<const FilterResource>> cache;
+    return filterResource(drm, id, cache);
 }
 
 ParticleDef parseParticleDef(std::span<const uint8_t> d) {
@@ -438,6 +446,18 @@ std::vector<PointSet> parsePointSets(const cdc::Drm& unit, std::vector<std::stri
         out.push_back(std::move(ps));
     }
     return out;
+}
+
+std::optional<PointSet> parseEffectList(const cdc::Drm& unit, uint32_t listId, std::vector<std::string>* warnings) {
+    const int list = listId ? dtpIndex(unit, listId) : -1;
+    if (list < 0 || unit.sections[size_t(list)].data.size() < 4) return std::nullopt;
+    const int gen = dtpIndex(unit, rd<uint32_t>(unit.sections[size_t(list)].data, 0));
+    if (gen < 0) return std::nullopt;
+    PointSet ps;
+    ps.id = int32_t(listId);
+    ps.fx = std::make_shared<const ObjectFx>(parseFxSections(unit, -1, gen, -1, warnings));
+    ps.events = parseEvents(unit, size_t(list), 4);
+    return ps;
 }
 
 glm::mat4 ObjectFx::frame(int16_t s, std::span<const glm::mat4> bones) const {
@@ -779,6 +799,11 @@ void System::fadedOwners(std::vector<std::pair<int32_t, float>>& out) const {
     out.clear();
     for (const auto& [owner, f] : fades_)
         if (f.value > 0) out.emplace_back(owner, std::min(f.value, 1.0f));
+}
+
+void System::moveOwner(int32_t owner, const glm::vec3& delta) {
+    for (auto& e : emitters_)
+        if (e.owner == owner) e.origin += delta, e.origin2 += delta;
 }
 
 void System::stopOwner(int32_t owner) {
@@ -1229,9 +1254,10 @@ void System::lights(std::vector<LiveLight>& out) const {
 }
 
 void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out,
-                          const glm::mat4* viewProj, const std::function<bool(const glm::vec3&)>& visible) const {
+                          const glm::mat4* viewProj, const std::function<bool(const glm::vec3&)>& visible,
+                          std::span<const std::pair<const FilterResource*, float>> extra) const {
     out = {};
-    if (filters_.empty()) return;
+    if (filters_.empty() && extra.empty()) return;
     // tru.exe sums each running filter's resource x weight into the effects' accumulators (0x516E70 ColorDOF,
     // 0x51AAB0 Finish; tables: + round(t x w), saturating at 255) and fills what the weights leave below 1 with the
     // identity (0x517570, 0x51AE50).
@@ -1249,6 +1275,31 @@ void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, rend
         if (w > 0)
             for (int c = 0; c < 3; ++c)
                 for (int x = 0; x < 256; ++x) acc[size_t(4 * c * 256 + x)] += float(x) * w;
+    };
+    auto accumulate = [&](const FilterResource& r, float w) {
+        if (r.feedback) { // 0x51A190
+            wFb += w, fbKeep += r.fbKeep * w, fbAmount += r.fbAmount * w, fbBlur += r.fbBlur * w;
+            fbZoomX += r.fbZoomX * w, fbZoomY += r.fbZoomY * w, fbAngle += r.fbAngle * w, fbColour += rgb(r.fbColour) * w;
+        }
+        if (r.noise) wN += w, noiseAlpha += r.noiseAlpha * w, noiseCells += r.noiseCells * w, noiseColour += rgb(r.noiseColour) * w; // 0x51B110
+        if (r.colorDof) {
+            wA += w, blurA += r.blur * w, alphaA += r.alpha * w;
+            tint += glm::vec3(float(r.tint & 0xFF), float((r.tint >> 8) & 0xFF), float((r.tint >> 16) & 0xFF)) * w;
+            add(m2, r.m2, w);
+            if (r.matrix1) wM1 += w, add(m1, r.m1, w);
+            if (r.dof) {
+                wDof += w, dofNear += r.dofNear * w, dofFar += r.dofFar * w;
+                for (size_t k = 0; k < 256; ++k) curve[k] += float(r.dofCurve[k]) * w;
+            }
+        }
+        if (r.finish) {
+            blurC += r.finishBlur * w, amountC += r.finishAmount * w;
+            if (r.finishCurves) {
+                wF += w;
+                if (r.finishFull) add(mf, r.mf, w);
+                else identity(mf, w);
+            }
+        }
     };
     for (const auto& f : filters_) {
         // Weight (0x5469A0): intensity x fade in / out x (1 - d^2 / radius^2), d from mix(camera, player) to the owner.
@@ -1286,31 +1337,11 @@ void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, rend
             f.hidden = std::clamp(f.hidden + (seen ? -0.125f : 0.125f), 0.0f, 1.0f);
             w *= 1 - f.hidden;
         }
-        if (w <= 0) continue;
-        if (r.feedback) { // 0x51A190
-            wFb += w, fbKeep += r.fbKeep * w, fbAmount += r.fbAmount * w, fbBlur += r.fbBlur * w;
-            fbZoomX += r.fbZoomX * w, fbZoomY += r.fbZoomY * w, fbAngle += r.fbAngle * w, fbColour += rgb(r.fbColour) * w;
-        }
-        if (r.noise) wN += w, noiseAlpha += r.noiseAlpha * w, noiseCells += r.noiseCells * w, noiseColour += rgb(r.noiseColour) * w; // 0x51B110
-        if (r.colorDof) {
-            wA += w, blurA += r.blur * w, alphaA += r.alpha * w;
-            tint += glm::vec3(float(r.tint & 0xFF), float((r.tint >> 8) & 0xFF), float((r.tint >> 16) & 0xFF)) * w;
-            add(m2, r.m2, w);
-            if (r.matrix1) wM1 += w, add(m1, r.m1, w);
-            if (r.dof) {
-                wDof += w, dofNear += r.dofNear * w, dofFar += r.dofFar * w;
-                for (size_t k = 0; k < 256; ++k) curve[k] += float(r.dofCurve[k]) * w;
-            }
-        }
-        if (r.finish) {
-            blurC += r.finishBlur * w, amountC += r.finishAmount * w;
-            if (r.finishCurves) {
-                wF += w;
-                if (r.finishFull) add(mf, r.mf, w);
-                else identity(mf, w);
-            }
-        }
+        if (w > 0) accumulate(r, w);
     }
+    // Resources added without a filter record: the unit's under-water filters (0x5C78A0 -> 0x52C480).
+    for (const auto& [r, w] : extra)
+        if (r && w > 0) accumulate(*r, w);
     identity(m1, 1.0f - wM1), identity(m2, 1.0f - wA), identity(mf, 1.0f - wF);
     tint += glm::vec3(255.0f * std::max(0.0f, 1.0f - wA));
     out.colourMatrix = wM1 > 0, out.dof = wDof > 0, out.finishMatrix = wF > 0;
@@ -1333,7 +1364,7 @@ void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, rend
         out.noiseAlpha = std::min(noiseAlpha, 255.0f) / 255.0f, out.noiseCells = std::min(noiseCells, 255.0f);
         const glm::vec3 c = noiseColour / wN;
         for (int i = 0; i < 3; ++i) out.noiseColour[i] = std::min(c[i], 1.0f);
-        out.noiseSeed = float(filters_.front().age % 997); // 0x51B1D0 re-rolls every frame
+        out.noiseSeed = filters_.empty() ? 0.0f : float(filters_.front().age % 997); // 0x51B1D0 re-rolls every frame
     }
     auto byte = [](float v) { return uint8_t(std::clamp(std::lround(v), 0L, 255L)); };
     const Acc* mats[3] = {&m1, &m2, &mf};
@@ -1413,6 +1444,18 @@ const std::vector<PointSet>& Library::pointSets(const cdc::Drm& unit, const std:
                 if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture, kRibbonTexture}, warnings);
         }
     return sets;
+}
+
+const PointSet* Library::effectList(const cdc::Drm& unit, const std::string& unitName, uint32_t listId,
+                                   std::vector<std::string>* warnings) {
+    const auto key = std::make_pair(unitName, listId);
+    if (const auto it = lists_.find(key); it != lists_.end()) return it->second ? &*it->second : nullptr;
+    auto& l = lists_[key] = parseEffectList(unit, listId, warnings);
+    if (!l) return nullptr;
+    loadTextures(unit, unitName, l->fx->textureIds(), warnings);
+    if (l->fx->usesGlowTexture() && !textureIds_.contains(kRibbonTexture))
+        if (auto p = bigfile_.read("pc-w\\particle.drm")) loadTextures(cdc::parseDrm(std::move(*p)), "particle", {kGlowTexture, kRibbonTexture}, warnings);
+    return &*l;
 }
 
 uint32_t Library::flags(const std::string& name) const {

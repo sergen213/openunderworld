@@ -765,7 +765,10 @@ struct EffectsView {
         for (const auto& u : w.units()) {
             if (unitOwners.contains(u.data.name) || !u.data.drm) continue;
             auto& owners = unitOwners[u.data.name];
-            for (const auto& in : ou::formats::parseUnit(*u.data.drm).intros) {
+            const auto parsed = ou::formats::parseUnit(*u.data.drm);
+            for (const uint32_t list : parsed.environment.waterList) // under-water lists: textures before the upload
+                library->effectList(*u.data.drm, u.data.name, list, &warnings);
+            for (const auto& in : parsed.intros) {
                 const auto n = names.find(in.objectId);
                 if (n == names.end()) continue;
                 const auto fx = library->get(n->second, &warnings);
@@ -970,8 +973,82 @@ struct EffectsView {
             const glm::vec3 d = p - cam.position;
             const float len = glm::length(d);
             return len < 1 || !w.collision().raycast(cam.position, d / len, len - 1.0f).has_value();
-        });
+        }, waterFilters);
         fo.screenFilter = filter.active() ? &filter : nullptr;
+    }
+    // Under water (docs/RENDERING.md "Under water"; tru.exe 0x6D9DA0, 0x5C1F50, 0x5C78A0, 0x5C7CA0): while Lara is in a
+    // water volume, the camera unit's water look below its surface (full-screen pass, fog set + the filters' fog, the
+    // deep / surface screen filters by depth, enter / leave lists on Lara) and less than 600 units above it (the
+    // surface filter, the pass fading out). Before frame(): it passes waterFilters on.
+    struct UnitWater {
+        ou::scene::Environment env; // the water* fields
+        std::shared_ptr<const ou::fx::FilterResource> filter[2]; // deep, surface
+    };
+    std::map<std::string, UnitWater> unitWater;
+    std::vector<std::pair<const ou::fx::FilterResource*, float>> waterFilters;
+    ou::render::Underwater underwater;
+    bool submerged = false;
+    glm::vec3 waterAt{0};
+    static constexpr int32_t kWaterOwner = -3; // the enter list's effects, carried by Lara (tru.exe player prims 0x402)
+    void water(const ou::render::Camera& cam, const ou::game::World& w, ou::render::FrameOptions& fo, bool lists,
+               std::vector<std::string>& warnings) {
+        waterFilters.clear();
+        fo.underwater = nullptr;
+        const auto& unit = w.currentUnit().data;
+        auto it = unitWater.find(unit.name);
+        if (it == unitWater.end()) {
+            it = unitWater.emplace(unit.name, UnitWater{}).first;
+            if (unit.drm) {
+                it->second.env = ou::formats::parseUnit(*unit.drm).environment;
+                for (int k = 0; k < 2; ++k) it->second.filter[k] = ou::fx::loadFilterResource(*unit.drm, it->second.env.waterFilter[k]);
+            }
+        }
+        const auto& uw = it->second;
+        const glm::vec3 lara = w.player().state().pos, eye = cam.position;
+        bool under = false;
+        underwater = {};
+        for (const auto& m : w.collision().markup) {
+            if (m.type != 10 || m.points.size() < 2) continue;
+            const glm::vec3 lo = m.points[0], hi = m.points[1];
+            if (glm::any(glm::lessThan(lara, lo)) || glm::any(glm::greaterThan(lara, hi))) continue; // not Lara's
+            const float h = eye.z - hi.z, d = std::abs(h);
+            const bool xy = eye.x >= lo.x && eye.x <= hi.x && eye.y >= lo.y && eye.y <= hi.y;
+            under = xy && h < 0 && eye.z >= lo.z;
+            underwater.strength = under ? 1.0f : xy && h >= 0 && h < 600 ? 1.0f - h / 600.0f : 0.0f;
+            const float range = uw.env.waterFilterRange[under ? 0 : 1];
+            const float ws = range > 0 ? 1.0f - std::min(d, range) / range : 0.0f;
+            waterFilters.push_back({uw.filter[1].get(), ws});
+            if (under) waterFilters.push_back({uw.filter[0].get(), 1.0f - ws});
+            break;
+        }
+        std::copy(&uw.env.waterPass[0][0], &uw.env.waterPass[0][0] + 8, &underwater.pass[0][0]);
+        if (under) { // the water fog set, replaced by the filters' fog blocks as far as their weights go (0x514D90)
+            float rest = 1, n = 0, f = 0;
+            glm::vec3 c(0);
+            for (const auto& [r, k] : waterFilters)
+                if (r && r->fog && k > 0) {
+                    const glm::vec3 rc(float(r->fogColour & 0xFF), float((r->fogColour >> 8) & 0xFF), float((r->fogColour >> 16) & 0xFF));
+                    c += rc / 255.0f * k, n += r->fogNear * k, f += r->fogFar * k, rest -= k;
+                }
+            rest = std::max(rest, 0.0f);
+            c += glm::vec3(uw.env.waterFogColor[0], uw.env.waterFogColor[1], uw.env.waterFogColor[2]) * rest;
+            underwater.fog = true, underwater.fogNear = n + uw.env.waterFogNear * rest, underwater.fogFar = f + uw.env.waterFogFar * rest;
+            for (int k = 0; k < 3; ++k) underwater.fogColor[k] = c[k];
+        }
+        if (under || underwater.strength > 0) fo.underwater = &underwater;
+        if (lists && library && unit.drm && under != submerged) {
+            const auto& ps = w.player().state();
+            const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+            if (!under) system.stopOwner(kWaterOwner);
+            if (const auto* l = library->effectList(*unit.drm, unit.name, uw.env.waterList[under ? 0 : 1], &warnings))
+                system.startPointSet(*l, model, under ? kWaterOwner : kWaterOwner - 1);
+        } else if (under) {
+            system.moveOwner(kWaterOwner, lara - waterAt);
+        }
+        if (under != submerged)
+            std::fprintf(stderr, "ou-game: camera %s water (%s: pass %s, fog %.0f..%.0f)\n", under ? "under" : "out of",
+                         unit.name.c_str(), uw.env.waterPass[1][3] > 0 ? "yes" : "no", underwater.fogNear, underwater.fogFar);
+        submerged = under, waterAt = lara;
     }
 };
 
@@ -2267,6 +2344,7 @@ int main(int argc, char** argv) {
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
+        if (!mainMenu) effects.water(cam, *world, fo, opt.gfx.effects, warnings);
         if (!mainMenu && opt.gfx.effects) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;

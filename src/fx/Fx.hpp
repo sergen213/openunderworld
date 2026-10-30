@@ -196,8 +196,15 @@ struct FilterResource {
     bool noise = false;                                  // +0x10
     uint32_t noiseColour = 0;
     float noiseAlpha = 0, noiseCells = 0;
+    // Fog block (+0x2FA4, 0x512D60 into the view's fog): +0 enable, +4 colour bytes R, G, B, +8 near, +0xC far.
+    // Its +0x10 curve and +0x110 height fog are not used [U].
+    bool fog = false;
+    uint32_t fogColour = 0;
+    float fogNear = 0, fogFar = 0;
 };
 FilterResource parseFilterResource(std::span<const uint8_t> data); // data.size() >= 0x31C0
+// The filter resource DTP `id` of `drm` (null when absent or too small).
+std::shared_ptr<const FilterResource> loadFilterResource(const cdc::Drm& drm, uint32_t id);
 
 // Class 5 screen filter (GenericFXObject +0x34 / +0x38, 0x28 bytes; command 0xB, creator tru.exe 0x535CC0, per-frame
 // weight 0x5469A0). Times in 30 Hz frames.
@@ -290,6 +297,9 @@ struct PointSet {
     float distance = 0;                 // +0x5C [U: cull distance]
 };
 std::vector<PointSet> parsePointSets(const cdc::Drm& unit, std::vector<std::string>* warnings = nullptr);
+// An event list placed without points (DTP: u32 GenericFXObject DTP id, then event records; the unit's under-water
+// enter / leave lists): nullopt when the list or its GenericFXObject is not in `unit`.
+std::optional<PointSet> parseEffectList(const cdc::Drm& unit, uint32_t listId, std::vector<std::string>* warnings = nullptr);
 
 enum class Blend : uint8_t { Alpha, Additive, Subtract, Multiply };
 Blend blendFor(uint8_t keyBlend); // tru.exe 0x52AE60: 1 -> mode 4, 2 -> 5, 3 -> 0, 4 -> 6, 5 -> 7, else 5
@@ -329,6 +339,7 @@ public:
     std::function<void(const ObjectFx&, const Event&, glm::vec3 position, uint8_t material)> sound;
     bool visuals = true; // false (ou-game --fx off): commands start nothing but instance fades; sequences run for `sound`
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
+    void moveOwner(int32_t owner, const glm::vec3& delta); // its emitters' origins (effects carried by a moving instance)
     bool hasOwner(int32_t owner) const;
     void clear();
     // Instance fade of `owner` (class 7 / command 0x21, instance +0x1B4): 0 drawn .. 1 gone; 0 without one.
@@ -352,8 +363,10 @@ public:
     // The running screen filters at the camera / player, summed as tru.exe's PCColorDOF / PCFinish / PCFeedback /
     // PCNoise accumulators plus the tints. `viewProj` + `visible` (owner point not occluded): screen-centre filters
     // (sun glares, record +0x18); without them those filters are skipped.
+    // `extra`: resources added at a weight without a filter record (the unit's under-water filters, 0x5C78A0).
     void screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out,
-                      const glm::mat4* viewProj = nullptr, const std::function<bool(const glm::vec3&)>& visible = {}) const;
+                      const glm::mat4* viewProj = nullptr, const std::function<bool(const glm::vec3&)>& visible = {},
+                      std::span<const std::pair<const FilterResource*, float>> extra = {}) const;
     size_t ribbonCount() const { return ribbons_.size(); }
     size_t faceCount() const { return faces_.size(); }
     size_t boltCount() const { return bolts_.size(); }
@@ -492,6 +505,9 @@ public:
     // A unit's FX point sets (parsed once per unit name) with their textures loaded from the unit DRM.
     const std::vector<PointSet>& pointSets(const cdc::Drm& unit, const std::string& unitName,
                                            std::vector<std::string>* warnings = nullptr);
+    // A unit's event list placed without points (parseEffectList), parsed once with its textures; null when absent.
+    const PointSet* effectList(const cdc::Drm& unit, const std::string& unitName, uint32_t listId,
+                               std::vector<std::string>* warnings = nullptr);
     const std::vector<scene::TextureData>& textures() const { return textures_; }
 
 private:
@@ -501,6 +517,7 @@ private:
     const cdc::BigfileSet& bigfile_;
     std::map<std::string, Entry> objects_;
     std::map<std::string, std::vector<PointSet>> pointSets_;
+    std::map<std::pair<std::string, uint32_t>, std::optional<PointSet>> lists_;
     std::vector<scene::TextureData> textures_;
     std::set<uint32_t> textureIds_;
 };

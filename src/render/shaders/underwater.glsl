@@ -1,4 +1,4 @@
-// Underwater post: distance fog into the water's tint + caustics on the submerged scene.
+// Underwater post: tru.exe's full-screen water pass + Enhanced caustics on the submerged scene.
 // Included by the post shaders after their own declarations; returns the input colour unchanged
 // when the camera is not submerged, so Original output stays byte-identical.
 #ifdef VULKAN
@@ -11,6 +11,7 @@ layout(binding = 4) uniform Water {
     vec4 ripple; vec4 rippleInfo; vec4 absorb; vec4 shallow;
     vec4 detail; vec4 lamps[4]; vec4 lampColor[4]; vec4 haze; vec4 mist; vec4 weather; vec4 volumes[16];
     vec4 filters[9]; uvec4 filterLut[640]; // original screen filters (shaders/filter.glsl)
+    vec4 waterPass[3]; // tru.exe's full-screen under-water pass (ouWaterPass)
 } w;
 #ifdef VULKAN
 layout(set = 1, binding = 1) uniform sampler2D uDepth;
@@ -31,17 +32,26 @@ float ouCaustic(vec2 p, float t) {
     float b = sin(p.x * 0.037 - t * 0.6) + sin(p.y * 0.041 + t * 0.8) + sin((p.x - p.y) * 0.043 - t * 0.4);
     return pow(1.0 - clamp(abs(a + b) * 0.25, 0.0, 1.0), 6.0);
 }
+// tru.exe's under-water pass (0x6D8C20 drawing the unit's water material, PS lib 410 slot 0; RENDERING.md "Under
+// water"), both water qualities: the colour runs from the deep colour (looking down) to the surface colour (looking
+// up), its alpha from the eye's value to 1 at the material's distance (view depth). The PS's noise texture wobble
+// (+-0.05 of the gradient, 0.004 of the colour) and the scripted murk (c134.y) are left out.
+vec3 ouWaterPass(vec3 c, vec2 uv) {
+    if (w.waterPass[2].x <= 0.0) return c;
+    vec3 far = ouWorld(uv, 1.0, w.invViewProj);
+    float up = clamp(0.5 + 0.5 * normalize(far - w.eye.xyz).z, 0.0, 1.0);
+    vec3 col = mix(w.waterPass[1].rgb, w.waterPass[0].rgb, up);
+    float viewZ = (w.viewProj * vec4(ouWorld(uv, texture(uDepth, uv).r, w.invViewProj), 1.0)).w;
+    float a = mix(w.waterPass[0].w, 1.0, clamp(viewZ / w.waterPass[1].w, 0.0, 1.0)) * w.waterPass[2].x;
+    return mix(c, col, clamp(a, 0.0, 1.0));
+}
 vec3 ouUnderwater(vec3 c, vec2 uv) {
+    c = ouWaterPass(c, uv);
     if (w.fogColor.w < 0.5) return c;
+    // Enhanced: faint caustics on the submerged bottom [I: the captures show none].
     float d = texture(uDepth, uv).r;
     vec3 p = ouWorld(uv, d, w.invViewProj);
-    if (d >= 0.999999) return mix(c, w.absorb.rgb, 0.92); // nothing drawn: open water
-    // TRU's shaders already fog the submerged scene with the unit's fog (Original = that alone; l7_arctic_sea's rocks
-    // and ice stay readable thousands of units away, as in the original's captures). Enhanced adds Beer-Lambert
-    // absorption on top, red first, thin enough to keep that range [I: per-unit coefficients fitted to the captures].
-    vec3 t = exp(-length(p - w.eye.xyz) * vec3(1.0e-4, 0.4e-4, 0.3e-4));
-    vec3 col = mix(w.absorb.rgb, c, t);
-    if (p.z < w.ripple.w)
-        col += w.sunColor.rgb * (ouCaustic(p.xy, w.eye.w) * w.sunColor.w * 0.35 * t.g); // faint: the captures show none [I]
-    return col;
+    if (d < 0.999999 && p.z < w.ripple.w)
+        c += w.sunColor.rgb * (ouCaustic(p.xy, w.eye.w) * w.sunColor.w * 0.35 * exp(-length(p - w.eye.xyz) * 0.4e-4));
+    return c;
 }

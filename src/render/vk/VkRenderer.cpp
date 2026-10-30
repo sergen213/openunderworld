@@ -702,7 +702,7 @@ public:
         // Material particles that refract / fade softly sample the same copies (FxBatch::screen).
         const bool fxScreen = std::any_of(options.fxBatches.begin(), options.fxBatches.end(), [](const FxBatch& b) { return b.screen(); });
         const bool filter = options.screenFilter && options.screenFilter->active(); // original screen filters (post)
-        const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f || screenReaders || fxScreen ||
+        const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f || wb.waterPass[2].x > 0 || screenReaders || fxScreen ||
                                (filter && options.screenFilter->dof);
         for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -808,7 +808,8 @@ public:
         const glm::mat4 viewProjD3D = original::viewProjD3D(camera, aspect);
         if (originals) {
             sm3::FrameBlock fb;
-            original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_);
+            original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_, false,
+                                options.underwater);
             std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
         }
         // Sets shared by every draw of a pipeline layout (binding with the other layout disturbs them).

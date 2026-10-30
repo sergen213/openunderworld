@@ -117,6 +117,18 @@ struct Environment {
     uint32_t sunCookie = 0;
     float sunAxes[2][3] = {}, sunOrigin[3] = {};
     float cookieScale = 1, cookieRotation = 0, cookieScroll[2] = {};
+    // Under water (docs/RENDERING.md "Under water"). Render settings +0x1C fog colour u8[3], +0x4C near, +0x48 far
+    // (0 -> +0x38): the fog while the camera is below Lara's water surface (tru.exe 0x5C1F50).
+    float waterFogColor[3] = {};
+    float waterFogNear = 0, waterFogFar = 0;
+    // +0x84 deep / +0x88 surface screen-filter DTPs, faded over +0x90 units below / +0x8C above the surface (0x5C78A0);
+    // +0x68 / +0x6C event lists run on Lara when the camera goes under / comes out (0x5C7CA0). 0 = none.
+    uint32_t waterFilter[2] = {}, waterList[2] = {};
+    float waterFilterRange[2] = {}; // [0] below, [1] above
+    // Full-screen water pass: the unit data +0x160 / +0x164 record with +0x84 bit 0, drawn by 0x6D8C20 with its
+    // +0x74 material; that material's PS MaterialParams c100 = surface colour + alpha at the eye, c101 = deep colour +
+    // full-fog distance. waterPass[1].w = 0: none.
+    float waterPass[2][4] = {};
     std::vector<Light> lights; // point and spot lights (type 0/1 records), unit frame
 };
 

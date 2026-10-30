@@ -45,8 +45,10 @@ struct WaterBlock {
     // [8] (noise rgb, seed); off = all 0 except feedback keep / zoom 1.
     glm::vec4 filter[9];
     glm::uvec4 filterLut[ScreenFilter::kLutRows * 64]; // ScreenFilter::lut, 4 RGBA8 texels per element
+    glm::vec4 waterPass[3]; // FrameOptions::underwater: [0] surface rgb + alpha at the eye, [1] deep rgb + distance,
+                            // [2] x strength (0 = off); both water qualities
 };
-static_assert(sizeof(WaterBlock) == 2 * 64 + 10 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024);
+static_assert(sizeof(WaterBlock) == 2 * 64 + 10 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16);
 inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes);

@@ -6,6 +6,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Under water looks like the original in both presets and renderers (docs/RENDERING.md "Under water"): tru.exe's full-screen water pass (unit data +0x160 records, 0x6D8C20 drawing the unit's water material: deep-to-surface blue by view direction, alpha 0.6 at the eye to 1 at 45000 / 60000 units, fading out up to 600 units above the surface), the render settings' water fog set and the deep / surface screen filters with their fog blocks by depth (0x5C78A0), and the enter / leave water effect lists on Lara (motes, 0x5C7CA0). l1_seafloor is no longer bright cyan, l7_arctic_sea / the ch7 start is blue instead of flat teal (Enhanced) or untinted (Original); Enhanced keeps faint caustics and drops its fitted Beer-Lambert tint. Confirmed in tru.exe under Wine (ret-patching 0x6D8C20 removes the blue). Test `FxReal.UnderwaterSettings`.
+
 ## [0.10.0] - 2026-10-29
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
