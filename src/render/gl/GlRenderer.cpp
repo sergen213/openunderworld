@@ -1103,7 +1103,13 @@ private:
         scissorClip_ = -1;
         beginOriginals(refl.camera, half, options);
         int state = -1, program = -2;
+        const size_t exterior = exteriorCount(r.meshes, std::span<const DrawRef>(r.order));
         for (const DrawRef& d : r.order) {
+            if (exterior && &d - r.order.data() == std::ptrdiff_t(exterior)) { // exterior drawn: behind everything else
+                glDepthMask(GL_TRUE);
+                glClear(GL_DEPTH_BUFFER_BIT);
+                state = -1;
+            }
             const GpuMesh& m = r.meshes[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
             const int p = m.program[d.sub];

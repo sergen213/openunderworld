@@ -6,6 +6,8 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- The planar reflection pass (GL and Vulkan) draws exterior terrain first and clears the depth after it, as the main
+  pass does: panorama cylinders / sky domes no longer occlude reflected geometry.
 - Spline (reveal) cameras of a neighbour unit render: the portal walk starts from the spline's unit, not Lara's; the
   l2_hubhall shiva-scales reveal (l2_puzzleroom spline 4) was an empty frame. The empty l2_hubhall default spawn after
   1 s was that reveal fired by the old 1 s uber timers (gone since the joint simulation).

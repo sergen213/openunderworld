@@ -907,7 +907,15 @@ public:
             ScenePush rp = push;
             rp.viewProj = zRemap * reflection->camera.projection(aspect) * reflection->camera.view();
             rp.rt = 0;
+            // Exterior terrain first, then a depth clear, as in the main pass (SubMesh::exterior).
+            const size_t exterior = exteriorCount(meshes_, std::span<const DrawRef>(order_));
             for (const DrawRef& d : order_) {
+                if (exterior && &d - order_.data() == std::ptrdiff_t(exterior)) {
+                    VkClearAttachment clear{VK_IMAGE_ASPECT_DEPTH_BIT};
+                    clear.clearValue.depthStencil = {1.0f, 0};
+                    const VkClearRect rect{hs, 0, 1};
+                    vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
+                }
                 const GpuMesh& m = meshes_[d.mesh];
                 const scene::SubMesh& s = m.submeshes[d.sub];
                 if (m.water) continue;
