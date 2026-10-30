@@ -1110,6 +1110,14 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         play("ng_idle", true);
     };
     const float surf = surfaceZ();
+    // Swim velocity: towards `dir * swimSpeed * wish` at swimAccel, slowing at swimDecel (tru.exe ramps).
+    auto swimTowards = [&](vec3 dir, float wish) {
+        const float speed = glm::length(s_.vel), want = t_.swimSpeed * wish;
+        const float next = want > speed ? std::min(want, speed + t_.swimAccel * dt) : std::max(want, speed - t_.swimDecel * dt);
+        if (wish <= 0 && speed > 1e-4f) dir = s_.vel / speed; // coasting keeps its heading
+        s_.vel = dir * next;
+        s_.pos = swimSlide(s_.pos, s_.vel * dt);
+    };
     switch (s_.state) {
     case State::SwimSplash: { // tru.exe SwimSplashDownState; drag constant [I]
         advanceClip(dt);
@@ -1124,7 +1132,7 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
     }
     case State::Surfacing: // rise straight up at swim speed; drop takes control under water
         advanceClip(dt);
-        s_.pos = swimSlide(s_.pos, vec3(0, 0, anims_.swimSpeed * dt));
+        s_.pos = swimSlide(s_.pos, vec3(0, 0, t_.swimSpeed * dt));
         if (s_.pos.z >= surf) { s_.state = State::SwimTread; play("swim_surfaceidle", true); }
         else if (dropPressed) { s_.state = State::SwimUnder; }
         break;
@@ -1142,7 +1150,7 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
             play("swim_surfaceidle", true);
         }
         advanceClip(dt);
-        if (s_.state == State::SwimSurface) s_.pos = swimSlide(s_.pos, forward() * (anims_.swimSpeed * mag * dt));
+        swimTowards(forward(), s_.state == State::SwimSurface ? mag : 0.0f);
         s_.pos.z = surf;
         // Shallow water: stand on the floor.
         if (auto floor = col_.groundProbe(s_.pos, t_.swimDepth); floor && floor->normal.z >= t_.minFloorNormalZ) standUp(floor->point.z);
@@ -1162,11 +1170,11 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
             if (wantsMove) s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
             const float wish = std::atan2(v, h);
             s_.pitch += std::clamp(wish - s_.pitch, -t_.turnRate * dt, t_.turnRate * dt);
-            const vec3 dir = forward() * std::cos(s_.pitch) + vec3(0, 0, std::sin(s_.pitch));
-            s_.pos = swimSlide(s_.pos, dir * (anims_.swimSpeed * std::min(1.0f, std::hypot(h, v)) * dt));
+            swimTowards(forward() * std::cos(s_.pitch) + vec3(0, 0, std::sin(s_.pitch)), std::min(1.0f, std::hypot(h, v)));
             play("swim_sub", true);
         } else {
             s_.pitch += std::clamp(-s_.pitch, -t_.turnRate * dt, t_.turnRate * dt);
+            swimTowards(forward(), 0.0f);
             play("swim_submerged_idle", true);
         }
         advanceClip(dt);

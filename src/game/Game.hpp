@@ -73,10 +73,6 @@ struct AnimLibrary {
     vec3 hangHandOffset{6.3f, -141.7f, 495.6f};
     // Hands relative to the root hanging from a horizontal pole (HPole_idleHangPerp at t = 0).
     vec3 poleHandOffset{-3.4f, 17.0f, 619.4f};
-    // Swim speed, units/s: mean root speed of the two one-shot clips that start swimming,
-    // swim_surfaceidle_to_swim (206 units / 0.367 s) and swim_surfacedive (676 units / 1.2 s). The swim
-    // loops have no root motion.
-    float swimSpeed = 562.0f;
     anim::HairRig hair; // Lara's hair particles + constraints (anim::decodeHair); empty = rigid hair
     // Weapons (index = Weapon): stats (loadWeapon) and Lara's clips from each weapon's DRM (weaponClipNames), kept in
     // `clips` as "<object>:<clip>" (the DRMs reuse names). Defaults keep synthetic libraries usable without them.
@@ -173,6 +169,9 @@ struct Tuning {
     // +0xC42 above the feet; overlapping a water volume puts Lara in it.
     vec3 waterProbeHalf{221.0f, 221.0f, 572.0f};
     float waterProbeCenterZ = 320.0f;
+    // Swimming, surface and under water (tru.exe, Wine, l2_cliffclimb sea): 44.95 units per 30 Hz frame at full
+    // stick; from rest it ramps up in ~0.7 s, after release it slows ~twice as fast (fitted slopes, units/s^2).
+    float swimSpeed = 1348.6f, swimAccel = 2475.0f, swimDecel = 3760.0f;
     float swimDepth = 400.0f;   // water at least this deep under the surface is swum, shallower walked
     float swimRadius = 100.0f;  // sphere around the swimming root
     float crouchHeight = 260.0f; // capsule while crouched/rolling: player data +0x14

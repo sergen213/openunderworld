@@ -211,6 +211,25 @@ TEST(Game, JumpTakeOffsMatchTruTraces) {
     EXPECT_NEAR(h, 40.0f * 30, 1);
 }
 
+// tru.exe swimming (Wine, l2_cliffclimb sea, swim_l2b.txt): 44.95 units per 30 Hz frame at full stick, reached
+// ~0.7 s after the press; about half speed 0.2 s after the release.
+TEST(Game, SwimSpeedMatchesTru) {
+    auto w = makeWorld(poolMesh(), {1000, -2000, 0}, glm::pi<float>() / 2);
+    const auto& s = w->player().state();
+    for (int i = 0; i < 120; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::SwimTread);
+    Actions go = forward();
+    for (int i = 0; i < 20; ++i) w->tick(go);
+    EXPECT_NEAR(glm::length(s.vel), 24.4f * 30, 150) << "0.33 s into the stroke";
+    for (int i = 0; i < 60; ++i) w->tick(go);
+    EXPECT_EQ(s.state, State::SwimSurface);
+    const vec3 p0 = s.pos;
+    for (int i = 0; i < 30; ++i) w->tick(go);
+    EXPECT_NEAR(glm::length(s.pos - p0) / 0.5f, 44.95f * 30, 5);
+    for (int i = 0; i < 12; ++i) w->tick({});
+    EXPECT_NEAR(glm::length(s.vel), 21.6f * 30, 150) << "0.2 s after the release";
+}
+
 TEST(Game, RunsOffEdgeFallsAndLands) {
     CollisionMesh m;
     addFloor(m, -1000, -1000, 400, 1000, 300); // platform
@@ -610,6 +629,8 @@ TEST(Game, DiveSwimDownAndSurface) {
     EXPECT_EQ(s.state, State::SwimUnder);
     EXPECT_LT(s.pitch, -1.2f);
     EXPECT_LT(s.pos.z, -150 - 300);
+    for (int i = 0; i < 30; ++i) w->tick({}); // released: coasts to a stop (tru.exe swimDecel)
+    EXPECT_NEAR(glm::length(s.vel), 0, 1e-3);
     const float z = s.pos.z;
     for (int i = 0; i < 30; ++i) w->tick({}); // no buoyancy evidence: she stays put
     EXPECT_NEAR(s.pos.z, z, 1e-3);
@@ -620,7 +641,8 @@ TEST(Game, DiveSwimDownAndSurface) {
     for (; ticks < 300 && s.state != State::SwimTread; ++ticks) w->tick(up);
     EXPECT_EQ(s.state, State::SwimTread);
     EXPECT_NEAR(s.pos.z, -150, 1e-3);
-    EXPECT_NEAR(ticks / 60.0, (-150 - z) / w->anims().swimSpeed, 0.4); // rise at swim speed (+ pitch-up time)
+    const auto& t = w->player().tuning();
+    EXPECT_NEAR(ticks / 60.0, (-150 - z) / t.swimSpeed + t.swimSpeed / (2 * t.swimAccel), 0.4); // + pitch-up time
 }
 
 TEST(Game, SwimSimulationIndependentOfRenderRate) {
@@ -1034,7 +1056,7 @@ TEST(GameReal, PoolSwimReplay) {
     EXPECT_NEAR(s.pos.z, surf, 1e-3);
     const float entryX = s.pos.x;
     runUntil([](int) { return forward(); }, [] { return false; }, 120); // swim east 2 s
-    EXPECT_GT(s.pos.x, entryX + 0.8f * 2 * w.anims().swimSpeed);
+    EXPECT_GT(s.pos.x, entryX + 0.8f * 2 * w.player().tuning().swimSpeed);
     Actions drop;
     drop.drop = true;
     runUntil([&](int) { return drop; }, [] { return false; }, 90); // dive, swim down

@@ -191,7 +191,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Hang jumps | from a hang: up (stick forward/neutral, no top to climb): hands 150..700 above, ±100 aside; side: 150..800 aside, ±150 in/out, ±400 height; back: 200..1200 behind, ±200 aside, −700..+200 height, turning round. Target nearest to 400 up / 400 aside / 700 back + 100 down. Flight rises 60 above the higher end and lands exactly on the target's hang pose | [I] ours (the exe's ranges are in the state chart) |
 | Poles | types 4 (`pole`) and 6 (`horizpole`); hands (pole pose) within 60 of the axis, rising or falling within the ledges' zVel window, from 40 below to **138** above the axis, facing across it (cos ≥ 0.5). Fling: to the pole 300..1800 ahead (±300 aside, ±500 height), else a leap at run-jump speeds | [I] ours; the 138 [O-data, I meaning]: `Hpole_perp_attach_M` starts with the hands 481 above the root against the pole pose's 619, so the catch pulls her down 138 onto the hang (a standing stick jump at the measured speed passes l4_traprooms pole 1336 with the pole-pose hands 62 above it); l4_traprooms' poles are 1264 apart; [O] the markup's matrix carries real translations there (COLLISION.md) |
 | Water probe | box ±221 × ±221 × ±572 centred 320 above the feet | [O] shorts data+0xC3E/+0xC40/+0xC42 (221, 572, 320), box overlap against each water volume box in 0x710A20; the highest surface wins |
-| Swim speed | **562 units/s** (surface and under water) | [I] mean root speed of the one-shots that start swimming: `swim_surfaceidle_to_swim` 206 units / 0.367 s, `swim_surfacedive` 676 units / 1.2 s (562 and 563 each); [U] the exe's swim speed |
+| Swim speed | **1348.6 units/s** (surface and under water), reached at **2475 units/s²**, slowing at **3760 units/s²** when the stick is released (she coasts) | [O-runtime] tru.exe under Wine (l2_cliffclimb sea, traces swim_l2b / swim_l2c): 44.95 units per 30 Hz frame at full stick both at the surface and after a dive; from rest 0.54 → 8.3 → 33.1 → 44.3 per frame at 0.05 / 0.2 / 0.5 / 0.87 s (S-shaped; the linear slope is fitted to its middle), after the release 44.6 → 21.6 in 0.18 s. [I] linear ramps. The old 562 (root speed of `swim_surfaceidle_to_swim` / `swim_surfacedive`) was the clips', not the controller's |
 | Swim depth | water ≥ 400 under the surface is swum, shallower walked | [I] ours (tread pose feet at −352) |
 | Water drag (splash) | velocity × e^(−3 t) | [I] ours |
 | Buoyancy, air/oxygen | none | [U] no buoyancy or air timer found (only `death_drown` exists); not implemented |
@@ -462,7 +462,7 @@ outfit (the original only reads `+0x294` on a level load).
 - In water: the water probe box overlaps a volume, the feet are below its surface and there is no floor within
   `swimDepth` (400) below the surface. From the air → SwimSplash (plunge velocity damped by drag) → Surfacing (rise at
   swim speed) → SwimTread. From the ground (standing on a deep floor) → Surfacing.
-- Surface (SwimTread / SwimSurface): root on the surface; the stick swims at 562 units/s along the heading, which turns
+- Surface (SwimTread / SwimSurface): root on the surface; the stick swims up to 1348.6 units/s (ramping, Numbers) along the heading, which turns
   at turnRate; drop = SwimDive (`swim_surfacedive` root motion, 667 down); jump facing a wall whose top is 50..400
   above the water = SwimClimbOut; floor within 400 below = stand up (Idle).
 - Under water (SwimUnder): stick swims horizontally, jump / drop held swim up / down; the swim direction's pitch turns

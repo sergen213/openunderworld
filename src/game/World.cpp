@@ -239,15 +239,6 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         if (auto t = loadGrenadeTuning(bigfile)) lib.grenade = *t;
     }
     if (auto d = loadDifficulty(bigfile)) lib.difficulty = *d;
-    // Swim speed: mean root speed of the clips that start swimming (their loops have no root motion).
-    float dist = 0;
-    double secs = 0;
-    for (const char* n : {"swim_surfaceidle_to_swim", "swim_surfacedive"}) {
-        const anim::Clip& c = *lib.find(n);
-        dist += glm::length(rootTranslation(c, c.durationSeconds(), false) - rootTranslation(c, 0, false));
-        secs += c.durationSeconds();
-    }
-    lib.swimSpeed = dist / float(secs);
     return lib;
 }
 
