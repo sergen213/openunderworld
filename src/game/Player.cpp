@@ -158,7 +158,7 @@ vec3 Player::forward() const { return {std::cos(s_.yaw), std::sin(s_.yaw), 0}; }
 vec3 Player::toWorld(vec3 m) const { return rotYaw(s_.yaw, m); }
 
 float Player::capHeight() const {
-    return s_.state == State::Crouch || s_.state == State::Roll ? t_.crouchHeight : t_.height;
+    return s_.state == State::Crouch || s_.state == State::Roll ? t_.crouchHeight : t_.capsuleTop;
 }
 
 void Player::play(std::string_view clip, bool loop, float rate) {
@@ -691,7 +691,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     }
     case State::Crouch: {
         const bool headroom = !col_.sweepCapsule(s_.pos + vec3(0, 0, t_.stepUp + t_.radius), s_.pos + vec3(0, 0, t_.crouchHeight - t_.radius),
-                                                 t_.radius, vec3(0, 0, t_.height - t_.crouchHeight));
+                                                 t_.radius, vec3(0, 0, t_.capsuleTop - t_.crouchHeight));
         if (!a.drop && headroom) { s_.state = State::Idle; play("ng_idle", true); break; }
         if (wantsMove) {
             s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);

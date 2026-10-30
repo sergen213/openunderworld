@@ -96,7 +96,7 @@ bool Player::tryClimb(bool fromAir) {
         }
     }
     const vec3 fwd = forward();
-    const auto h = col_.raycast(s_.pos + vec3(0, 0, 300), fwd, t_.radius + kReach);
+    const auto h = col_.raycast(s_.pos + vec3(0, 0, 300), fwd, t_.wallOffset + kReach);
     if (!h || h->dynamic >= 0) return false;
     if (std::abs(h->normal.z) > 0.35f || glm::dot(fwd, -h->normal) < 0.6f) return false;
     const int32_t hold = nearestHold(col_, s_.pos + vec3(0, 0, 300), h->point, h->normal);
@@ -109,7 +109,7 @@ bool Player::tryClimb(bool fromAir) {
     s_.vel = vec3(0);
     s_.ledge = -1;
     s_.state = State::Climb;
-    vec3 p = h->point + h->normal * t_.radius;
+    vec3 p = h->point + h->normal * t_.wallOffset;
     p.z = s_.pos.z; // the attach clip supplies the rise
     s_.pos = p;
     play(stanceClip(s_.climbStance, fromAir ? "air_attach" : "ground_attach"), false);
@@ -167,13 +167,13 @@ void Player::climb(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     // Stay on the rock: probe back into the wall at chest height (at the feet the probe grazes the floor), follow
     // it (also around corners) while holds are in reach, or top out.
     const vec3 chest = s_.pos + vec3(0, 0, 300);
-    const auto h = col_.raycast(chest + n * 20.0f, -n, t_.radius + kReach + 40.0f);
+    const auto h = col_.raycast(chest + n * 20.0f, -n, t_.wallOffset + kReach + 40.0f);
     if (const int32_t hold = h && h->dynamic < 0 && std::abs(h->normal.z) <= 0.35f ? nearestHold(col_, chest, h->point, h->normal) : -1;
         hold >= 0) {
         s_.climbFace = h->face;
         s_.climbNormal = h->normal;
         s_.yaw = yawOf(xy(-h->normal));
-        const vec3 p = h->point + h->normal * t_.radius;
+        const vec3 p = h->point + h->normal * t_.wallOffset;
         s_.pos.x = p.x, s_.pos.y = p.y; // pinned at capsule distance from the rock
         if (hold != s_.climbHold && !attaching) { // reached the next hold: its stance, via the matching transition [I]
             const auto to = uint8_t(col_.markup[size_t(hold)].type - 16);
@@ -186,9 +186,9 @@ void Player::climb(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     }
     // No holds here: a standable floor above the feet, just into the wall = climb onto it (not the floor at the
     // wall's foot, found through the rock when the holds end sideways).
-    if (const auto top = col_.groundProbe(s_.pos + fwd * (t_.radius + 100.0f) + vec3(0, 0, 450), 550.0f);
+    if (const auto top = col_.groundProbe(s_.pos + fwd * (t_.wallOffset + 100.0f) + vec3(0, 0, 450), 550.0f);
         top && top->normal.z >= t_.minFloorNormalZ && top->point.z > prev.z + 10.0f) {
-        s_.pos = top->point + n * t_.radius;
+        s_.pos = top->point + n * t_.wallOffset;
         s_.climbFace = UINT32_MAX;
         s_.climbHold = -1;
         s_.state = State::Idle;

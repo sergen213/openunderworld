@@ -30,10 +30,10 @@ bool Player::tryLadder(bool fromAir) {
         if (glm::length(out) < 0.5f) out = unitXY(s_.pos - top, vec3(1, 0, 0));
         if (glm::dot(fwd, -out) < 0.5f) continue;
         if (s_.pos.z < bottom.z - 100.0f || s_.pos.z > top.z + 200.0f) continue;
-        if (glm::length(xy(s_.pos - vec3(top.x, top.y, s_.pos.z))) > t_.radius + 100.0f) continue;
+        if (glm::length(xy(s_.pos - vec3(top.x, top.y, s_.pos.z))) > t_.wallOffset + 100.0f) continue;
         s_.ledge = int(i);
         s_.climbNormal = out;
-        s_.pos = vec3(top.x, top.y, s_.pos.z) + out * t_.radius;
+        s_.pos = vec3(top.x, top.y, s_.pos.z) + out * t_.wallOffset;
         s_.yaw = yawOf(-out);
         s_.vel = vec3(0);
         s_.state = m.type == 9 ? State::Ladder : State::Pillar;
@@ -84,17 +84,17 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         const vec3 c(top.x, top.y, s_.pos.z);
         const float a = std::atan2(s_.pos.y - c.y, s_.pos.x - c.x) + side * 1.2f * dt;
         const vec3 n(std::cos(a), std::sin(a), 0);
-        s_.pos = c + n * t_.radius;
+        s_.pos = c + n * t_.wallOffset;
         s_.climbNormal = n;
         s_.yaw = yawOf(-n);
     } else {
-        s_.pos.x = top.x + out.x * t_.radius, s_.pos.y = top.y + out.y * t_.radius;
+        s_.pos.x = top.x + out.x * t_.wallOffset, s_.pos.y = top.y + out.y * t_.wallOffset;
     }
     if (climb > 0 && s_.pos.z >= top.z) {
         s_.pos = top;
         play("lad_ClimbOffTop", false);
     } else if (climb < 0 && s_.pos.z <= bottom.z) {
-        s_.pos = bottom + out * t_.radius;
+        s_.pos = bottom + out * t_.wallOffset;
         play("lad_ClimbOffBot", false);
     }
 }

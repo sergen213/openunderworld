@@ -66,7 +66,7 @@ void Player::rappelOnto(const collision::Hit& h, vec3 vel, std::string_view clip
     s_.climbNormal = n;
     s_.yaw = yawOf(xy(-n));
     s_.vel = vel - n * glm::dot(vel, n);
-    vec3 p = h.point + n * t_.radius;
+    vec3 p = h.point + n * t_.wallOffset;
     p.z = s_.pos.z;
     s_.pos = p;
     play(clip, false);
@@ -103,7 +103,7 @@ void Player::rappel(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     }
     // Stay on the wall (following its steps and recesses); where it ends, step onto a floor at the feet (the far
     // ledge of a wall run) or swing free again.
-    const auto h = col_.raycast(p + n * 50.0f, -n, t_.radius + 200.0f); // steps up to 150 deep [I]
+    const auto h = col_.raycast(p + n * 50.0f, -n, t_.wallOffset + 200.0f); // steps up to 150 deep [I]
     if (!h || h->dynamic >= 0 || std::abs(h->normal.z) > kSteep) {
         if (const auto g = col_.groundProbe(p + vec3(0, 0, 50.0f), 60.0f); g && standable(p, *g)) {
             s_.pos = vec3(xy(p), g->point.z);
@@ -116,7 +116,7 @@ void Player::rappel(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         return;
     }
     const vec3 hn = glm::normalize(vec3(h->normal.x, h->normal.y, 0));
-    p = vec3(xy(h->point + hn * t_.radius), p.z);
+    p = vec3(xy(h->point + hn * t_.wallOffset), p.z);
     s_.climbNormal = hn;
     s_.yaw = yawOf(xy(-hn));
     // A floor underfoot while descending ends it standing, except running down the arc toward the point below the
@@ -184,7 +184,7 @@ void Player::grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPre
         if (!a || std::abs(a->normal.z) > kSteep) return false;
         vec3 an = glm::normalize(vec3(a->normal.x, a->normal.y, 0)); // out of the wall, on Lara's side
         if (glm::dot(an, s_.pos - a->point) < 0) an = -an;
-        const auto h = col_.raycast(s_.pos + vec3(0, 0, 150.0f), -an, t_.radius + kWallReach);
+        const auto h = col_.raycast(s_.pos + vec3(0, 0, 150.0f), -an, t_.wallOffset + kWallReach);
         if (!h || h->dynamic >= 0 || std::abs(h->normal.z) > kSteep) return false;
         const vec3 n = glm::normalize(vec3(h->normal.x, h->normal.y, 0)), right(-n.y, n.x, 0);
         const float side = glm::dot(move, xy(right));
@@ -229,7 +229,7 @@ void Player::grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPre
     // Feet onto a wall: rappel on it; swinging down onto a floor lands her (lets go); other contacts (overhangs, the
     // floor she stands on) stop the motion into them.
     if (const vec3 step = p - s_.pos; glm::length(step) > 1e-4f)
-        if (const auto h = col_.sweepSphere(s_.pos + vec3(0, 0, t_.radius), t_.radius, step); h && h->dynamic < 0) {
+        if (const auto h = col_.sweepSphere(s_.pos + vec3(0, 0, t_.wallOffset), t_.wallOffset, step); h && h->dynamic < 0) {
             if (std::abs(h->normal.z) <= kSteep && glm::dot(vel, h->normal) < 0) {
                 const vec3 n = glm::normalize(vec3(h->normal.x, h->normal.y, 0)), right(-n.y, n.x, 0);
                 const float side = glm::dot(vel, right);

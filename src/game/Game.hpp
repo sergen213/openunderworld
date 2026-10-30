@@ -145,7 +145,11 @@ std::string_view stateName(State s); // "unknown" past the last state
 
 // Controller constants. Provenance ([O] observed / [I] inferred) is listed in docs/GAMEPLAY.md.
 struct Tuning {
-    float radius = 100.0f, height = 512.0f;    // capsule; feet at the root. height: lara.drm player data +0x10
+    // Lara's height: lara.drm player data +0x10. Collision capsule as tru.exe's standing Havok proxy (Wine, instance
+    // +0x288: radius +0x65C 79.01, cylinder +0x660 189.63, centre 315.4 above the feet), so its top is 489.2; on the
+    // ground our capsule's bottom is stepUp (the proxy's own bottom, 141.6, is above the 121-unit hearth it stops at).
+    float radius = 79.01f, height = 512.0f, capsuleTop = 489.2f;
+    float wallOffset = 100.0f; // root distance from a wall climbed / hung on (climb, ladders, grapple walls) [I]
     // Ground snap window. tru.exe (Wine, l3_main_bedroom): Lara runs up the 97..100-unit stair risers with the
     // root snapping to each step top; the 121-unit hearth edge blocks her. 110 lies between (GAMEPLAY.md Numbers).
     float stepUp = 110.0f, stepDown = 110.0f;

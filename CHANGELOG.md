@@ -11,6 +11,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
   behind her turns her round into the running jump, to a side a standing jump that way. Poles are caught rising or
   falling with the hands up to 138 above the axis (`Hpole_perp_attach_M`'s start pose), so l4_traprooms' standing
   jump to pole 1336 still connects (docs/GAMEPLAY.md Numbers; test `JumpTakeOffsMatchTruTraces`).
+- Lara's collision capsule is tru.exe's standing Havok proxy, measured under Wine: radius 79.01 (was 100), top 489.2
+  (was 512); the 121-unit Croft Manor hearth now stops her one radius short (tru.exe: 38..72); walls she climbs or
+  hangs on keep the old 100-unit root offset.
 - The planar reflection pass (GL and Vulkan) draws exterior terrain first and clears the depth after it, as the main
   pass does: panorama cylinders / sky domes no longer occlude reflected geometry.
 - Spline (reveal) cameras of a neighbour unit render: the portal walk starts from the spline's unit, not Lara's; the

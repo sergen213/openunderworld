@@ -2525,9 +2525,11 @@ TEST(GameReal, StairsWalkAndRunUpAndDown) {
         }
         EXPECT_NEAR(d.player().state().pos.z, 870, 30) << "stick " << stick; // the landing below: 802..899
     }
-    // The hearth beside the bedroom start is 121 high: blocked, as in tru.exe.
+    // The hearth beside the bedroom start is 121 high: blocked, as in tru.exe, where she stops 38..72 short of its edge
+    // (Wine trace t2: pushed to and fro); ours stops one capsule radius (79.01) short.
     game::World h(collision::CollisionMesh(bedroom), game::AnimLibrary(anims), {{-4264, 5958, 90}, glm::radians(180.0f)});
     for (int t = 0; t < 120; ++t) h.tick(forward());
     EXPECT_GT(h.player().state().pos.x, -4853 + 30);
+    EXPECT_LT(h.player().state().pos.x, -4853 + 85);
     EXPECT_NEAR(h.player().state().pos.z, 87, 1);
 }
