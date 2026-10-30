@@ -88,7 +88,7 @@ APP="$DIST/$APPNAME"
 QT_QPA_PLATFORM=offscreen OU_DISABLE_UPDATES=1 APPIMAGE_EXTRACT_AND_RUN=1 "$APP" --self-test || die "AppImage launcher self-test failed"
 APPIMAGE_EXTRACT_AND_RUN=1 "$APP" game --help >/dev/null 2>&1 || [ $? -lt 128 ] || die "AppImage 'game' crashed"
 
-OU_SIGN="$WORK/appimage/ou-sign"
+OU_SIGN="$SRC/build-release/appimage/ou-sign"
 mkdir -p "$WORK/payload"
 ln "$APP" "$WORK/payload/$APPNAME"
 NOTES="$WORK/notes.md"
