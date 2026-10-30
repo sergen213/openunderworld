@@ -6,6 +6,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Shadow-only terrain groups (group +0x0C bit 1; tru.exe's colour pass 0x511810 skips them, the shadow pass 0x511E20
+  keeps them) are no longer drawn but still cast sun shadows (map and RT): the grey rock sheets hanging over the
+  l2_junglehub canopy are gone.
 - Exterior terrain (unit cell group +0x14: panorama cylinders, sky domes) is drawn behind all other geometry as tru.exe
   does (far 2 % of the depth range, PCRenderTerrain +0xC8 / 0x51D0A0): the l2_junglehub start shows the temple behind
   the pillars instead of the painted hillside card 10540; l2_norsehub, l2_cliffhall_b, l3_main_hall and l4_traprooms

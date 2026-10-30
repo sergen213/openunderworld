@@ -153,7 +153,7 @@ struct RtGeometry {
     VkDeviceAddress vertices, indices;
     uint32_t firstIndex, texture; // texture = slot in the bindless array
     float alphaRef;
-    uint32_t flags; // 1: not a sun-shadow caster (sun.glsl OuGeom)
+    uint32_t flags; // 1: not a sun-shadow caster, 2: shadow-only (sun.glsl OuGeom)
 };
 
 const VkVertexInputBindingDescription kSceneBinding{0, sizeof(scene::Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
@@ -3380,8 +3380,9 @@ private:
                 const uint8_t ref = s.blend == scene::Blend::Alpha ? std::max<uint8_t>(s.alphaRef, 128) : s.alphaRef;
                 VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
                 g.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-                // non-opaque: alpha test in scene_rt.frag; non-casters too, so shadow rays can skip them (sun.glsl)
-                g.flags = ref == 0 && s.castsShadow ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
+                // non-opaque: alpha test in scene_rt.frag; non-casters and shadow-only ones too, so the rays that
+                // ignore them can skip them (sun.glsl)
+                g.flags = ref == 0 && s.castsShadow && !s.shadowOnly ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
                 auto& t = g.geometry.triangles;
                 t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
                 t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
@@ -3393,7 +3394,7 @@ private:
                 m.rtGeometries.push_back(g);
                 m.rtRanges.push_back({s.indexCount / 3, s.firstIndex * uint32_t(sizeof(uint32_t)), 0, 0});
                 auto tex = textures_.find(s.textureId);
-                records.push_back({va, ia, s.firstIndex, tex != textures_.end() ? tex->second.slot : 0, ref / 255.0f, s.castsShadow ? 0u : 1u});
+                records.push_back({va, ia, s.firstIndex, tex != textures_.end() ? tex->second.slot : 0, ref / 255.0f, (s.castsShadow ? 0u : 1u) | (s.shadowOnly ? 2u : 0u)});
             }
             if (m.rtGeometries.empty()) continue;
             if (records.size() >= (1u << 24)) throw std::runtime_error("RT: more than 2^24 geometries");

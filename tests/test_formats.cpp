@@ -239,6 +239,21 @@ TEST(RealData, ExteriorTerrain) {
     EXPECT_EQ(other, 0u);
 }
 
+// Terrain group +0x0C bit 1: shadow-only (tru.exe 0x511810 skips it in the colour pass, 0x511E20 keeps it as caster).
+// l2_junglehub's stream terrain has four such groups: the canopy occluders over the hub (material 10914) and two more.
+TEST(RealData, ShadowOnlyTerrainGroups) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto sc = formats::loadLevelScene(bf, "pc-w\\l2_junglehub.drm");
+    size_t shadowOnly = 0, occluders = 0;
+    for (const auto& m : sc.meshes)
+        for (const auto& s : m.submeshes)
+            if (s.shadowOnly) ++shadowOnly, occluders += s.materialId == 10914 && s.castsShadow;
+    EXPECT_EQ(shadowOnly, 4u);
+    EXPECT_EQ(occluders, 2u);
+}
+
 TEST(RealData, Bgra8ChannelOrder) {
     const char* g = gameDir();
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";

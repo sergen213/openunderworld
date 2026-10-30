@@ -144,7 +144,9 @@ channels).
   `SubMesh::exterior` first and clear the depth (same result). l2_hubhall's second exterior 10533 has +0xC8 = 0 there
   (not drawn from that spot [U] why).
 - Terrain group `+0x0C` bit 1: the group is skipped by the colour pass (0x511810) but not by the shadow pass
-  (0x511E20, bit 2 only) [O]; not applied by us (2-4 groups per l2 stream terrain).
+  (0x511E20, bit 2 only) [O]: `SubMesh::shadowOnly`, left out of the draw order, cast shadows (map + RT shadow
+  rays), skipped by other RT rays. l2_junglehub's are the speckled rock sheets (material 10914) above the hub that
+  shade the canopy floor; drawn, they showed as grey patches among the trees.
 - Cell terrain data `{renderTerrain resource ref, 0, 1, TerrainGroup*}` [O]. No transform is stored; terrain is drawn
   untransformed, and the renders line up [O].
 - Cell `renderMesh` (+0x20) is a model with no texcoords and only depth/fog-type materials. It is skipped as a "volume",

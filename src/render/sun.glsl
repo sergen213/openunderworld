@@ -37,7 +37,7 @@ float ouShadowMapVisibility(vec3 p) {
 #ifdef OU_RT
 layout(set = OU_RT_SET, binding = 0) uniform accelerationStructureEXT ouTlas;
 // One record per BLAS geometry (= traced submesh), indexed by instance custom index + geometry index.
-struct OuGeom { uint64_t vertices; uint64_t indices; uint firstIndex; uint texture; float alphaRef; uint flags; }; // flags 1: no sun shadow
+struct OuGeom { uint64_t vertices; uint64_t indices; uint firstIndex; uint texture; float alphaRef; uint flags; }; // flags 1: no sun shadow, 2: shadow-only
 layout(set = OU_RT_SET, binding = 1, std430) readonly buffer OuGeoms { OuGeom ouGeoms[]; };
 layout(set = OU_RT_SET, binding = 2) uniform sampler2D ouRtTextures[];
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer OuWords { uint w[]; };
@@ -67,10 +67,11 @@ vec4 ouColorAt(OuWords vb, OuTri t, vec3 b) {
 }
 
 // The any-hit equivalent: alpha test of a non-opaque candidate. Texture alpha only, as the shadow-map pass
-// (shadow.frag); vertex alpha is ignored for casters. Shadow rays also pass through non-casters (SubMesh::castsShadow).
+// (shadow.frag); vertex alpha is ignored for casters. Shadow rays also pass through non-casters (SubMesh::castsShadow),
+// other rays through shadow-only geometry (SubMesh::shadowOnly).
 bool ouAlphaPasses(uint record, uint prim, vec2 b2, bool shadowRay) {
     OuGeom g = ouGeoms[record];
-    if (shadowRay && (g.flags & 1u) != 0u) return false;
+    if (shadowRay ? (g.flags & 1u) != 0u : (g.flags & 2u) != 0u) return false;
     OuTri t = ouCorners(g, prim);
     return textureLod(ouRtTextures[nonuniformEXT(g.texture)], ouAttr2(OuWords(g.vertices), t, 6u, ouBary(b2)), 0.0).a >= g.alphaRef;
 }

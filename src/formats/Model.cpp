@@ -253,7 +253,7 @@ void appendIndices(scene::MeshData& m, const Reader& r, size_t indexBase, uint32
     auto& b = m.submeshes;
     if (!b.empty() && b.back().textureId == sm.textureId && b.back().blend == sm.blend &&
         b.back().alphaRef == sm.alphaRef && b.back().doubleSided == sm.doubleSided && b.back().materialId == sm.materialId &&
-        b.back().drawGroup == sm.drawGroup && b.back().castsShadow == sm.castsShadow &&
+        b.back().drawGroup == sm.drawGroup && b.back().castsShadow == sm.castsShadow && b.back().shadowOnly == sm.shadowOnly &&
         std::equal(sm.instanceTextures, sm.instanceTextures + 4, b.back().instanceTextures) &&
         b.back().firstIndex + b.back().indexCount == sm.firstIndex)
         b.back().indexCount += count;
@@ -344,6 +344,7 @@ void decodeTerrain(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& 
         // Group +0x10..+0x1C: instance textures (light map class 1, blend masks class 3; terrain construct 0x510780).
         Ctx::instanceTextures(groups.back().material, r, G + 0x10, texIds);
         if (r.at<uint8_t>(G + 0x0C) & 4) groups.back().material.castsShadow = false; // no-shadow group (0x511E20)
+        if (r.at<uint8_t>(G + 0x0C) & 2) groups.back().material.shadowOnly = true;   // not drawn (0x511810)
         if (groups.back().vb >= vbCount) throw FormatError("terrain group vertex buffer out of range");
     }
     // Collect chunks per (vertex buffer, group).

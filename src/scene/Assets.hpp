@@ -58,6 +58,9 @@ struct SubMesh {
     // material blob +0x44 has 0x40000000 and blend mode +0x38 < 4, terrain groups also need +0x0C bit 2 clear
     // (models 0x50F7C0 / terrain 0x511E20; docs/formats/MATERIALS.md). True for non-cdc meshes.
     bool castsShadow = true;
+    // Shadow-only terrain group (+0x0C bit 1): tru.exe's colour pass 0x511810 skips it, the shadow pass 0x511E20 keeps
+    // it (caster rule above). Not in drawOrder; RT colour rays pass through it, shadow rays hit it.
+    bool shadowOnly = false;
     // Exterior terrain (Unit::exteriorTerrains: panorama cylinders, sky domes): tru.exe draws it in the far 2 % of the
     // depth range ([0.98, 1], the rest in [0, 0.98]; PCRenderTerrain +0xC8 -> 0x51D0A0), so it lies behind all other
     // geometry wherever it is placed. Renderers draw exterior submeshes first and then clear the depth.
