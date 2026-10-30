@@ -2157,6 +2157,7 @@ TEST(GameReal, RevealCameraPlaysUnitSpline) {
     for (int i = 0; i < 120 && started < 0; ++i, w.tick({}))
         if (w.splineCameraActive()) started = i;
     ASSERT_GE(started, 0) << "no spline camera";
+    EXPECT_EQ(w.cameraUnit(), "l1_kraken_room"); // the spline's unit: the renderer's portal walk starts there
     const auto& spline = w.currentUnit().data.cameraSplines.at(9);
     const auto& k0 = spline.camera.keys.front();
     EXPECT_LT(glm::distance(w.camera().position, vec3(k0.pos[0], k0.pos[1], k0.pos[2]) + w.currentUnit().offset), 200.0f);

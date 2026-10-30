@@ -1161,6 +1161,9 @@ dummy from the hip hold, and a health pack picked up after an 1800-unit drop (51
 - [I] ours: a spline camera cuts in, holds its last pose after finishing until a script switches (10 s safety), and
   blends back to the orbit camera over 0.5 s. Lara's stick is zeroed only while a spline camera plays and control
   is disabled (a reveal that never re-enables control cannot lock her). All per 60 Hz tick.
+- [I] The renderer's portal walk starts from the spline's unit while one plays (`World::cameraUnit`), else Lara's:
+  l2_hubhall's shiva-scales reveal (l2_puzzleroom spline 4) looks at the puzzleroom statue from inside that unit, and
+  starting from hubhall clipped everything away (empty frame).
 
 ## Tests
 

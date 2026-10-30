@@ -6,6 +6,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Spline (reveal) cameras of a neighbour unit render: the portal walk starts from the spline's unit, not Lara's; the
+  l2_hubhall shiva-scales reveal (l2_puzzleroom spline 4) was an empty frame. The empty l2_hubhall default spawn after
+  1 s was that reveal fired by the old 1 s uber timers (gone since the joint simulation).
 - Shadow-only terrain groups (group +0x0C bit 1; tru.exe's colour pass 0x511810 skips them, the shadow pass 0x511E20
   keeps them) are no longer drawn but still cast sun shadows (map and RT): the grey rock sheets hanging over the
   l2_junglehub canopy are gone.

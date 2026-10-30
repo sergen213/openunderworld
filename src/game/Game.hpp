@@ -422,6 +422,9 @@ public:
     // Scripted reveal camera (Camera.cpp, docs/GAMEPLAY.md "Cameras"): a unit camera spline replaces the orbit
     // camera until it ends; Lara's stick is zeroed meanwhile when a script disabled her control (larabase 56).
     bool splineCameraActive() const { return bool(splineCam_); }
+    // The unit whose camera spline is playing (its tracks are in that unit's frame), else the current unit: the unit the
+    // renderer's portal walk starts from (a l2_puzzleroom spline seen from l2_hubhall must not clip to hubhall's portals).
+    const std::string& cameraUnit() const;
 
     // State blended between the last two ticks (alpha in [0,1]).
     PlayerState interpolated(double alpha) const;

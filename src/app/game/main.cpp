@@ -2365,7 +2365,7 @@ int main(int argc, char** argv) {
         if (!mainMenu && opt.gfx.effects) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;
-        const auto clips = ou::app::unitClips(*world, streamed.unitMeshes, world->currentUnit().data.name, cam, float(w) / float(std::max(1, h)));
+        const auto clips = ou::app::unitClips(*world, streamed.unitMeshes, world->cameraUnit(), cam, float(w) / float(std::max(1, h)));
         fo.unitClips = clips;
         renderer->drawFrame(cam, {w, h}, fo);
         ++frame;

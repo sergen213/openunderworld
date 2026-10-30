@@ -127,6 +127,8 @@ bool World::startSplineCamera(const std::string& unit, uint32_t index, uint32_t 
     return true;
 }
 
+const std::string& World::cameraUnit() const { return splineCam_ ? splineCam_->unit : currentUnit().data.name; }
+
 bool World::cameraNative(int op, const std::string& unit, uint32_t index, uint32_t value) {
     if (op == 0) return startSplineCamera(unit, index, value);
     if (op == 2) return (splineCam_ ? kAutoSplineCamera : 1u) == index;
