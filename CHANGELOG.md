@@ -6,6 +6,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-29
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
 ### Added
 - Object anim state graphs (physical class 6, ObjectBase +0xC8; `src/formats/AnimGraph.*`, docs/formats/ANIMGRAPH.md): scripted objects with a `modifiable` / `animated` member get their skeleton, clips and state machine; states and transitions play their clips, the timer stimulus runs each tick, Lara's use is stimulus 1, scripts hear transitions (vt 19) and states (vt 20); `modifiable` 0-8 and `animated` 1 bound; saved and hashed. l4_ballcourt switch 5469 now opens the temple reveal 5464 (test `ProgressionReal.TempleRevealReopens`); the Natla fight's buttress mounts 8362-8364 lock when the fight starts and break when Lara uses them, so `ProgressionReal.EndgameCredits` plays the ending without calling any handler directly; combat crates, flame traps and `ca_ani_*` props take their state clips
 - The ending runs from its scripts: in l7_yggdrasil_end the buttresses' reveals play 330_hel_thralls, the last one 340_hel_endgame, whose end warps Lara to l7_monastery and plays 342_hel_endgame; its end handler requests the end game save (`uisavemenu` 6, ou-game's autosave) and plays the credits (`unlockablemovie` 3 "credits", Runtime::takeMovies), after which ou-game marks the game finished and opens the main menu with TREASURE HUNT (before, the ending waited for a cinematic in l7_himalaya_end, which the route never enters); `larabase` 31 / 61, `cinematic` 1, `hudscreenmgr` 4, `uigamedata` 43, `uisavemenu` 9 bound; test `ProgressionReal.EndgameCredits`
