@@ -48,6 +48,14 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     put(f.vs, 23, time, dt, 0, 0);                   // TimeVector (wind phase)
     put(f.vs, 24, eye.x, eye.y, eye.z, 0);           // CameraPos
     put(f.vs, 254, 1, 1, 0, 0);                      // TexcoordScales: uv / uv1 are pre-scaled by the loader
+    // SkinMatrices bone 0 (c85-c87 = 3x4 rows, c88 = the bone's bend vector; tru.exe 0x50F0E0 uploads 4 rows per palette
+    // bone, row 3 from the vec4s after the pose's matrices). Our programs are the unskinned slots (CPU skinning), but the
+    // bend_* foliage VS (kelp, jungle broadleaf, bamboo) read bone 0 statically: pos = c85..c87 x (v0 + bend terms of
+    // c88 and texcoord3-5). Identity + zero bend = the rest pose; zeros collapsed those objects to a point. ponytail: no
+    // sway (the bend vector of tru.exe's bend controller is not reproduced).
+    put(f.vs, 85, 1, 0, 0, 0);
+    put(f.vs, 86, 0, 1, 0, 0);
+    put(f.vs, 87, 0, 0, 1, 0);
     // ---- pixel shader registers ----
     if (env.valid) put(f.ps, 0, env.fogColor[0], env.fogColor[1], env.fogColor[2], 0); // FogColor
     if (const Underwater* u = underwater; u && u->fog) { // under water: the unit's water fog set / filter fog (0x5C1F50)

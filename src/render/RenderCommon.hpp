@@ -73,8 +73,9 @@ SunShadow sunShadow(const Camera& camera, Viewport vp, const Bounds& scene, glm:
 const char* sunGlsl();
 std::string originalPixelSource(const std::string& translated, bool vulkan, bool rt);
 
-// Draw order: opaque submeshes in mesh order, then blended ones back to front by mesh centre
-// distance from `eye` (the original game sorts its translucent pass; per-mesh granularity here).
+// Draw order: exterior submeshes first (SubMesh::exterior; the renderers clear the depth after them), then opaque
+// submeshes in mesh order, then blended ones back to front by mesh centre distance from `eye` (the original game sorts
+// its translucent pass; per-mesh granularity here); exterior ones are ordered the same way among themselves.
 // `opacity`: per mesh (empty = all 1); meshes below 1 draw all their submeshes in the blended part, 0 not at all.
 struct DrawRef { uint32_t mesh, sub; };
 // The blend a submesh draws with at `opacity` (FrameOptions::meshOpacity): opaque materials alpha-blend while fading.
@@ -92,18 +93,29 @@ inline void meshOpacities(std::span<const MeshOpacity> list, size_t meshes, std:
 template <class GpuMesh> // needs .center (glm::vec3) and .submeshes (scene::SubMesh)
 void drawOrder(const std::vector<GpuMesh>& meshes, glm::vec3 eye, std::vector<DrawRef>& out, std::span<const float> opacity = {}) {
     out.clear();
-    size_t opaque = 0;
     auto op = [&](uint32_t m) { return m < opacity.size() ? opacity[m] : 1.0f; };
-    for (uint32_t m = 0; m < meshes.size(); ++m)
-        for (uint32_t s = 0; s < meshes[m].submeshes.size(); ++s)
-            if (drawBlend(meshes[m].submeshes[s], op(m)) == scene::Blend::Opaque) out.push_back({m, s});
-    opaque = out.size();
-    for (uint32_t m = 0; m < meshes.size(); ++m)
-        for (uint32_t s = 0; s < meshes[m].submeshes.size(); ++s)
-            if (op(m) > 0 && drawBlend(meshes[m].submeshes[s], op(m)) != scene::Blend::Opaque) out.push_back({m, s});
     auto dist = [&](const DrawRef& d) { const glm::vec3 v = meshes[d.mesh].center - eye; return glm::dot(v, v); };
-    std::stable_sort(out.begin() + std::ptrdiff_t(opaque), out.end(),
-                     [&](const DrawRef& a, const DrawRef& b) { return dist(a) > dist(b); });
+    for (const bool exterior : {true, false}) {
+        for (uint32_t m = 0; m < meshes.size(); ++m)
+            for (uint32_t s = 0; s < meshes[m].submeshes.size(); ++s)
+                if (meshes[m].submeshes[s].exterior == exterior && drawBlend(meshes[m].submeshes[s], op(m)) == scene::Blend::Opaque)
+                    out.push_back({m, s});
+        const size_t blended = out.size();
+        for (uint32_t m = 0; m < meshes.size(); ++m)
+            for (uint32_t s = 0; s < meshes[m].submeshes.size(); ++s)
+                if (meshes[m].submeshes[s].exterior == exterior && op(m) > 0 &&
+                    drawBlend(meshes[m].submeshes[s], op(m)) != scene::Blend::Opaque)
+                    out.push_back({m, s});
+        std::stable_sort(out.begin() + std::ptrdiff_t(blended), out.end(),
+                         [&](const DrawRef& a, const DrawRef& b) { return dist(a) > dist(b); });
+    }
+}
+// Number of exterior draws at the front of a drawOrder list.
+template <class GpuMesh>
+size_t exteriorCount(const std::vector<GpuMesh>& meshes, std::span<const DrawRef> order) {
+    size_t n = 0;
+    while (n < order.size() && meshes[order[n].mesh].submeshes[order[n].sub].exterior) ++n;
+    return n;
 }
 
 // ---- Stream-unit portals (docs/RENDERING.md "Portal clipping") ----

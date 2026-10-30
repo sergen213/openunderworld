@@ -6,6 +6,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Exterior terrain (unit cell group +0x14: panorama cylinders, sky domes) is drawn behind all other geometry as tru.exe
+  does (far 2 % of the depth range, PCRenderTerrain +0xC8 / 0x51D0A0): the l2_junglehub start shows the temple behind
+  the pillars instead of the painted hillside card 10540; l2_norsehub, l2_cliffhall_b, l3_main_hall and l4_traprooms
+  no longer hide rooms behind their backdrops. Exterior meshes are not ray-traced.
+- Translated shaders get SkinMatrices bone 0 = identity (c85-c87, bend vector c88 = 0): the bend_* foliage vertex
+  shaders read it statically and collapsed to a point, so l1_seafloor's kelp and the jungle's bend broadleaf / bamboo
+  were invisible with the original shaders (rest pose, no sway).
 - Sun shadows (shadow map and RT) use tru.exe's caster rule: only materials with blob +0x44 bit 0x40000000 and blend
   mode < 4, and terrain groups without the +0x0C no-shadow bit, cast; backdrop cards, light cards and tree IMFs no
   longer put the l2_junglehub start ledge in shadow (docs/RENDERING.md "Visual sweep").

@@ -224,6 +224,21 @@ TEST(RealData, UnitTerrain) {
     EXPECT_EQ(skipped, 3u); // sections 13938/13941/13944: level-enclosing boxes, material 0xd78
 }
 
+// Cell group +0x14 exterior terrains (panorama cylinders), drawn behind everything (tru.exe far depth range).
+TEST(RealData, ExteriorTerrain) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    EXPECT_EQ(formats::parseUnit(cdc::parseDrm(*bf.read("pc-w\\l2_hubhall.drm"))).exteriorTerrains, (std::vector<uint32_t>{10532, 10533}));
+    EXPECT_TRUE(formats::parseUnit(cdc::parseDrm(*bf.read("pc-w\\l1_seafloor.drm"))).exteriorTerrains.empty());
+    const auto sc = formats::loadLevelScene(bf, "pc-w\\l2_junglehub.drm");
+    size_t exterior = 0, other = 0;
+    for (const auto& m : sc.meshes)
+        for (const auto& s : m.submeshes) (m.origin.find("section 10635 ") != std::string::npos ? exterior : other) += s.exterior;
+    EXPECT_EQ(exterior, 5u); // the start's 4 painted quarter cylinders + the light card
+    EXPECT_EQ(other, 0u);
+}
+
 TEST(RealData, Bgra8ChannelOrder) {
     const char* g = gameDir();
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";

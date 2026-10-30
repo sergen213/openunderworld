@@ -944,8 +944,43 @@ public:
         vkCmdSetViewport(cmd, 0, 1, &flipped);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
         scissorClip = -1;
-        if (rtPipelines_) { // RT depth pre-pass over the opaque submeshes (they are first in order_)
-            for (const DrawRef& d : order_) {
+        auto drawMain = [&](const DrawRef& d) {
+            const GpuMesh& m = meshes_[d.mesh];
+            const scene::SubMesh& s = m.submeshes[d.sub];
+            if (enhancedWater && m.water) return; // the water pass below draws them with the opaque copies
+            const float op = opacityOf(d.mesh);
+            const scene::Blend blend = drawBlend(s, op);
+            // Rays on opaque surfaces (pre-passed: each visible pixel traces once) and on water for reflections; none on
+            // the exterior (not pre-passed, and placed in the world only as a backdrop).
+            const bool reflective = rtOn && m.water && options.rt == RayTracing::Full && !s.exterior;
+            const bool rays = rtOn && !s.exterior && (blend == scene::Blend::Opaque || reflective);
+            if (const OrigDraw* od = origDraw(d)) {
+                if (od->screen) {
+                    screenDraws_.push_back(d);
+                    return;
+                }
+                drawOriginal(d, *od, origPipeline(od->program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, blend));
+                return;
+            }
+            useGeneric();
+            const VkPipeline p = scenePipelines_[size_t(blend)];
+            if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
+            bindMesh(d.mesh);
+            clipTo(d.mesh);
+            push.model = m.model;
+            push.alphaRef = s.alphaRef / 255.0f;
+            push.rt = (rays && blend == scene::Blend::Opaque ? 1 : 0) | (reflective ? 2 : 0);
+            push.opacity = s.blend == scene::Blend::Opaque ? -op : op;
+            vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
+            vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+            const VkDescriptorSet set = textureSet(s.textureId);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
+            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+        };
+        // RT depth pre-pass over the leading opaque submeshes of `refs` (opaque ones come first in each drawOrder group).
+        auto prepass = [&](std::span<const DrawRef> refs) {
+            if (!rtPipelines_) return;
+            for (const DrawRef& d : refs) {
                 const scene::SubMesh& s = meshes_[d.mesh].submeshes[d.sub];
                 if (drawBlend(s, opacityOf(d.mesh)) != scene::Blend::Opaque) break;
                 if (enhancedWater && meshes_[d.mesh].water) continue;
@@ -967,39 +1002,20 @@ public:
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
                 vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
             }
+        };
+        // Exterior terrain first, then a depth clear: it stays behind everything (tru.exe's far depth range, SubMesh::exterior).
+        const size_t exterior = exteriorCount(meshes_, std::span<const DrawRef>(order_));
+        const std::span<const DrawRef> outside(order_.data(), exterior), inside(order_.data() + exterior, order_.size() - exterior);
+        if (exterior) {
+            prepass(outside);
+            for (const DrawRef& d : outside) drawMain(d);
+            VkClearAttachment clear{VK_IMAGE_ASPECT_DEPTH_BIT};
+            clear.clearValue.depthStencil = {1.0f, 0};
+            const VkClearRect rect{{{0, 0}, extent_}, 0, 1};
+            vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
         }
-        for (const DrawRef& d : order_) {
-            const GpuMesh& m = meshes_[d.mesh];
-            const scene::SubMesh& s = m.submeshes[d.sub];
-            if (enhancedWater && m.water) continue; // the water pass below draws them with the opaque copies
-            const float op = opacityOf(d.mesh);
-            const scene::Blend blend = drawBlend(s, op);
-            // Rays on opaque surfaces (pre-passed: each visible pixel traces once) and on water for reflections.
-            const bool reflective = rtOn && m.water && options.rt == RayTracing::Full;
-            const bool rays = rtOn && (blend == scene::Blend::Opaque || reflective);
-            if (const OrigDraw* od = origDraw(d)) {
-                if (od->screen) {
-                    screenDraws_.push_back(d);
-                    continue;
-                }
-                drawOriginal(d, *od, origPipeline(od->program, rays ? kOrigRays : shadowMap ? kOrigShadowMap : kOrigPlain, blend));
-                continue;
-            }
-            useGeneric();
-            const VkPipeline p = scenePipelines_[size_t(blend)];
-            if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
-            bindMesh(d.mesh);
-            clipTo(d.mesh);
-            push.model = m.model;
-            push.alphaRef = s.alphaRef / 255.0f;
-            push.rt = (rtOn && blend == scene::Blend::Opaque ? 1 : 0) | (reflective ? 2 : 0);
-            push.opacity = s.blend == scene::Blend::Opaque ? -op : op;
-            vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof push, &push);
-            vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
-            const VkDescriptorSet set = textureSet(s.textureId);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
-            vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
-        }
+        prepass(inside);
+        for (const DrawRef& d : inside) drawMain(d);
         clipTo(UINT32_MAX);
 
         if (needDepth) { // second pass: water surfaces + splashes (Enhanced water), then the debug lines below
@@ -3358,7 +3374,9 @@ private:
             const VkDeviceAddress va = address(m.vertices.buffer), ia = address(m.indices.buffer);
             const uint32_t base = uint32_t(records.size());
             for (const scene::SubMesh& s : m.submeshes) {
-                if ((s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) || s.indexCount < 3) continue;
+                // Exterior terrain is a backdrop placed somewhere in the world (a 3072-unit cylinder round l2_junglehub's
+                // start): rays would hit it in front of the scene it stands behind.
+                if ((s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) || s.indexCount < 3 || s.exterior) continue;
                 const uint8_t ref = s.blend == scene::Blend::Alpha ? std::max<uint8_t>(s.alphaRef, 128) : s.alphaRef;
                 VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
                 g.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;

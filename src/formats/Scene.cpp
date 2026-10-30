@@ -196,7 +196,11 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
     for (const auto& [dtp, model] : imfModel) placedModels.insert(model);
     for (auto& [id, meshes] : levelModels)
         if (!placedModels.contains(id))
-            for (const auto& m : meshes) sc.meshes.push_back(m);
+            for (auto m : meshes) {
+                if (std::ranges::find(u.exteriorTerrains, id) != u.exteriorTerrains.end())
+                    for (auto& s : m.submeshes) s.exterior = true;
+                sc.meshes.push_back(std::move(m));
+            }
     std::map<uint32_t, size_t> unresolvedImf;
     for (const auto& p : u.imfs) {
         const auto it = levelModels.find(imfModel[p.dtpId]);

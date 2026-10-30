@@ -129,6 +129,7 @@ channels).
 | +0x08 | stream groups*, 20 bytes `{name*, numCells, cells*, streamFileName*, resolveObject}` | [O] same as DXHR `CellStreamGroupData` |
 | +0x0C | symbol table* (offsets + strings "unitname", "portal_cell1"…) | [O] |
 | +0x10 | cells*[numTotalCells] → `CellData {header*, terrainData*, …, renderMesh* @+0x20}` | [O] |
+| +0x14 | exterior terrains* `{count, CellTerrainData[count] {terrain ref, flags, light mask, user data}}` (`Unit::exteriorTerrains`): panorama cylinders / sky domes added to the scene's "Exterior Cellgroup" (0x572BD0 → 0x56DE80). 18 units have them (l2_junglehub 10635: four painted quarter cylinders of radius 3072 round the start + a light card) | [O] |
 | +0x18 | IMF records*, 0x70 bytes each | [O] |
 | +0x1C | resource ref to a DTP | [O]; content [U] |
 
@@ -136,6 +137,14 @@ channels).
   `pc-w\streamgroups\<file>.drm` (`LOAD_StreamGroupFileName` 0x477990). Ballcourt: 10 groups, 8 DRMs. All 8 exist and
   hold the unit's terrain (res 24). The ballcourt unit DRM itself has no terrain. l4_pool has 0 stream groups, and its
   terrain is in the unit DRM.
+- Exterior terrain is drawn in the far 2 % of the depth range: `PCRenderTerrain +0xC8` (vtable +0x38 setter 0x510B00)
+  makes the terrain drawable switch the viewport (0x51D0A0) to MinZ = 0.98·MaxZ, all other geometry using
+  [MinZ, 0.98·MaxZ], so the backdrop is behind everything wherever it stands [O decompile; tru.exe memory at the
+  l2_junglehub start: the 3 exterior terrains drawn there have +0xC8 = 1, the 8 cell terrains 0]. Renderers draw
+  `SubMesh::exterior` first and clear the depth (same result). l2_hubhall's second exterior 10533 has +0xC8 = 0 there
+  (not drawn from that spot [U] why).
+- Terrain group `+0x0C` bit 1: the group is skipped by the colour pass (0x511810) but not by the shadow pass
+  (0x511E20, bit 2 only) [O]; not applied by us (2-4 groups per l2 stream terrain).
 - Cell terrain data `{renderTerrain resource ref, 0, 1, TerrainGroup*}` [O]. No transform is stored; terrain is drawn
   untransformed, and the renders line up [O].
 - Cell `renderMesh` (+0x20) is a model with no texcoords and only depth/fog-type materials. It is skipped as a "volume",

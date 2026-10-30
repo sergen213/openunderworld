@@ -606,7 +606,14 @@ public:
         uint32_t boundMesh = UINT32_MAX, boundObject = UINT32_MAX;
         int state = -1, program = -1; // -1 = generic scene program
         deferred_.clear();
+        const size_t exterior = exteriorCount(r.meshes, std::span<const DrawRef>(r.order));
         for (const DrawRef& d : r.order) {
+            if (exterior && &d - r.order.data() == std::ptrdiff_t(exterior)) { // exterior drawn: behind everything else
+                scissorFor(UINT32_MAX, vp);
+                glDepthMask(GL_TRUE);
+                glClear(GL_DEPTH_BUFFER_BIT);
+                state = -1;
+            }
             const GpuMesh& m = r.meshes[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
             const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;

@@ -173,6 +173,7 @@ struct CameraSpline {
 struct Unit {
     std::vector<Intro> intros;
     std::vector<std::string> streamGroups; // stream DRM base names ("pc-w\\streamgroups\\<name>.drm")
+    std::vector<uint32_t> exteriorTerrains; // cell group +0x14: render terrain ids drawn behind everything (SubMesh::exterior)
     std::vector<ImfPlacement> imfs;
     std::vector<Portal> portals;
     std::vector<CameraSpline> cameraSplines; // index = the cameraspline script value's first word

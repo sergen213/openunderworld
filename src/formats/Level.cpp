@@ -398,6 +398,17 @@ Unit parseUnit(const cdc::Drm& d) {
             if (it != sg.ptrs.end()) u.streamGroups.push_back(sg.str(it->second));
         }
     }
+    // +0x14 -> {count, CellTerrainData[count] {terrain ref, flags, light mask, user data}}: the unit's exterior
+    // terrains (panorama cylinders / sky domes), added to the scene's "Exterior Cellgroup" (tru.exe 0x572BD0 ->
+    // 0x56DE80) and drawn in the far 2 % of the depth range (PCRenderTerrain +0xC8, 0x51D0A0; LEVELS.md).
+    if (const auto it = cg.ptrs.find(cp.offset + 0x14); it != cg.ptrs.end()) {
+        const View ev(d, it->second.section);
+        const auto n = ev.at<uint32_t>(it->second.offset);
+        for (uint32_t k = 0; k < n; ++k)
+            if (const auto id = resourceId(d.sections[it->second.section], it->second.offset + 4 + 16 * k,
+                                           cdc::SectionType::RenderResource))
+                u.exteriorTerrains.push_back(id);
+    }
     if (numImfs) {
         // 0x70 bytes: D3D row-major matrix, +0x44 name*, +0x48 DTP id (resource relocation).
         const auto ip = cg.ptr(cp.offset + 0x18, "IMF list");
