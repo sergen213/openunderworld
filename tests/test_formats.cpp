@@ -433,6 +433,16 @@ TEST(Model, MaterialStateFromBlob) {
     EXPECT_EQ(state(8, 0, 0).blend, scene::Blend::Average);
     EXPECT_EQ(state(8, 0, 0).alphaRef, 0);
     EXPECT_TRUE(state(0, 0x800, 0).doubleSided); // "render twice"
+    // Shadow casters: +0x44 bit 0x40000000 and blend mode < 4 (0x50F7C0 / 0x511E20).
+    auto caster = [](uint32_t mode, uint32_t flags44) {
+        std::vector<uint8_t> blob(0x60);
+        set32(blob, 0x38, mode), set32(blob, 0x44, flags44);
+        return formats::materialState(section(cdc::SectionType::Material, 1, blob)).castsShadow;
+    };
+    EXPECT_TRUE(caster(0, 0xd0000000));  // l2_cliffhall_b rock 8191
+    EXPECT_FALSE(caster(0, 0x10000000)); // l2_junglehub backdrop card 10539
+    EXPECT_FALSE(caster(4, 0xd0000001)); // blended
+    EXPECT_TRUE(caster(3, 0x40000000));
     EXPECT_EQ(formats::materialState(section(cdc::SectionType::Material, 1, std::vector<uint8_t>(8))).blend,
               scene::Blend::Opaque); // too short: defaults
 }

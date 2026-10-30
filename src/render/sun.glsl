@@ -37,7 +37,7 @@ float ouShadowMapVisibility(vec3 p) {
 #ifdef OU_RT
 layout(set = OU_RT_SET, binding = 0) uniform accelerationStructureEXT ouTlas;
 // One record per BLAS geometry (= traced submesh), indexed by instance custom index + geometry index.
-struct OuGeom { uint64_t vertices; uint64_t indices; uint firstIndex; uint texture; float alphaRef; uint pad; };
+struct OuGeom { uint64_t vertices; uint64_t indices; uint firstIndex; uint texture; float alphaRef; uint flags; }; // flags 1: no sun shadow
 layout(set = OU_RT_SET, binding = 1, std430) readonly buffer OuGeoms { OuGeom ouGeoms[]; };
 layout(set = OU_RT_SET, binding = 2) uniform sampler2D ouRtTextures[];
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer OuWords { uint w[]; };
@@ -67,25 +67,26 @@ vec4 ouColorAt(OuWords vb, OuTri t, vec3 b) {
 }
 
 // The any-hit equivalent: alpha test of a non-opaque candidate. Texture alpha only, as the shadow-map pass
-// (shadow.frag); vertex alpha is ignored for casters.
-bool ouAlphaPasses(uint record, uint prim, vec2 b2) {
+// (shadow.frag); vertex alpha is ignored for casters. Shadow rays also pass through non-casters (SubMesh::castsShadow).
+bool ouAlphaPasses(uint record, uint prim, vec2 b2, bool shadowRay) {
     OuGeom g = ouGeoms[record];
+    if (shadowRay && (g.flags & 1u) != 0u) return false;
     OuTri t = ouCorners(g, prim);
     return textureLod(ouRtTextures[nonuniformEXT(g.texture)], ouAttr2(OuWords(g.vertices), t, 6u, ouBary(b2)), 0.0).a >= g.alphaRef;
 }
-void ouResolveCandidates(rayQueryEXT rq) {
+void ouResolveCandidates(rayQueryEXT rq, bool shadowRay) {
     while (rayQueryProceedEXT(rq))
         if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT &&
             ouAlphaPasses(uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false) +
                                rayQueryGetIntersectionGeometryIndexEXT(rq, false)),
                           uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)),
-                          rayQueryGetIntersectionBarycentricsEXT(rq, false)))
+                          rayQueryGetIntersectionBarycentricsEXT(rq, false), shadowRay))
             rayQueryConfirmIntersectionEXT(rq);
 }
 float ouVisible(vec3 o, vec3 d) {
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsTerminateOnFirstHitEXT, 0xFFu, o, 0.0, d, kOuTMax);
-    ouResolveCandidates(rq);
+    ouResolveCandidates(rq, true);
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
 }
 // Soft sun shadow: `rays` directions in the sun cone (golden-angle spiral, rotated per pixel by interleaved
@@ -117,7 +118,7 @@ float ouQuadSum(float v) {
 vec3 ouRtReflect(vec3 p, vec3 r, bool lit) {
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsNoneEXT, kOuMaskSolid, p, 1.0, r, kOuTMax);
-    ouResolveCandidates(rq);
+    ouResolveCandidates(rq, false);
     if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.08, 0.09, 0.11);
     OuGeom g = ouGeoms[uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true) + rayQueryGetIntersectionGeometryIndexEXT(rq, true))];
     OuWords vb = OuWords(g.vertices);

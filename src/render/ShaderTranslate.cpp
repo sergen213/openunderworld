@@ -158,7 +158,10 @@ public:
             if (misc_.count(0))
                 pre += "    vec4 vPos = vec4(gl_FragCoord.x - 0.5, "
                        "(OU_DFDY_SIGN > 0.0 ? gl_FragCoord.y : ouFrame.screen.y - gl_FragCoord.y) - 0.5, 0.0, 0.0);\n";
-            if (misc_.count(1)) pre += "    vec4 vFace = vec4(gl_FrontFacing ? 1.0 : -1.0);\n";
+            // vFace >= 0 is the side facing away from the cdc front (counter-clockwise, the side its normals point to):
+            // every two-sided cdc shader that reads it negates its normal for vFace >= 0 (`cmp r, vFace, -v, v`), the
+            // l1_seatop sea (normals +z, front up) takes its lit, depth-limited refraction branch from above only then.
+            if (misc_.count(1)) pre += "    vec4 vFace = vec4(gl_FrontFacing ? -1.0 : 1.0);\n";
             h += "layout(location = 0) out vec4 ouColor;\n";
             // Sun shadow / RT hooks (render/sun.glsl, defined by the backend with OU_SUN): first thing in main and before
             // the alpha test; SunLight colour reads (c212) are scaled by the visibility.

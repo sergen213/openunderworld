@@ -19,6 +19,7 @@ PCMaterial pass functions 0x505D80–0x506880 and `FUN_00505A90`/`FUN_00505C00` 
 | +0x28 … +0x34 | res[4] | ShaderLib (section type 9) references, resource relocations; e.g. ballcourt material 13393 → ShaderLibs 945–948 [O] |
 | +0x38 | u32 | **blend mode**, passed to `PCStateManager_SetBlendMode` (0x527A80) [O], table below |
 | +0x40 | u32 | **flags**: `0x80` = cull none (0x506040, 0x5061C0, 0x5066A0: `(flags & 0x80 or instance polyflags & 0x40) and !(flags & 0x800)` selects the no-cull entry of `DAT_008A34F8`) [O]; `0x800` = "render twice" in DXHR (`dword18 & 0x800`) [I]; `0x1000`, `0x04`, `0x20`, … [U] |
+| +0x44 | u32 | `0x40000000` = **shadow caster** (with blend mode < 4: model drawables get pass bit 2 in 0x50F7C0, terrain groups join the shadow lights' lists in 0x511E20) [O]; `0x80000000` light-set related (0x504CC0) [I]; `2` keeps the material out of the depth / composite lists (0x50F7C0) [O]. Survey: opaque rock / Lara 0xD0000000-ish, backdrop cards, foliage and tree trunks 0x10000000 / 0x90000000 |
 | +0x4C | u8 | **alpha threshold** (0–255), second argument of SetBlendMode [O] |
 | +0x50 / +0x51 / +0x52 | u8 | texture-entry counts (PS instance, PS material, …) [O]; exact split [I] |
 | +0x54 | ptr | 16-byte texture entries `{textureId, f32 lodBias, u32 category, u8 class, u8 sampler, u16 filter}` [O] |

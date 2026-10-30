@@ -54,6 +54,10 @@ struct SubMesh {
     // Model primgroup +0x20 draw group: 0 = always drawn, n = hidden while bit n-1 of the instance's hidden-group
     // mask is set (tru.exe 0x4F50F0 / 0x5B4150; Lara's Thor gear: 10, 11 gauntlets, 12 belt).
     uint8_t drawGroup = 0;
+    // Sun-shadow caster (shadow map + RT shadow rays): tru.exe queues a drawable for its shadow pass only when the
+    // material blob +0x44 has 0x40000000 and blend mode +0x38 < 4, terrain groups also need +0x0C bit 2 clear
+    // (models 0x50F7C0 / terrain 0x511E20; docs/formats/MATERIALS.md). True for non-cdc meshes.
+    bool castsShadow = true;
 };
 
 // One D3D9 SM3 program of a TRU ShaderLib (formats/Shader.hpp parses it).

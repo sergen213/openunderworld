@@ -210,7 +210,7 @@ struct Ctx {
         const auto it = materials.find(matIds[index]);
         if (it == materials.end()) return sm;
         const MaterialState st = materialState(*it->second);
-        sm.blend = st.blend, sm.alphaRef = st.alphaRef, sm.doubleSided = st.doubleSided;
+        sm.blend = st.blend, sm.alphaRef = st.alphaRef, sm.doubleSided = st.doubleSided, sm.castsShadow = st.castsShadow;
         sm.materialId = matIds[index];
         // Category 1 = diffuse (verified visually on Lara's face/teeth textures); materials
         // without one (e.g. hair, all categories 0) use the slot-0 texture (heuristic). Of several
@@ -253,7 +253,7 @@ void appendIndices(scene::MeshData& m, const Reader& r, size_t indexBase, uint32
     auto& b = m.submeshes;
     if (!b.empty() && b.back().textureId == sm.textureId && b.back().blend == sm.blend &&
         b.back().alphaRef == sm.alphaRef && b.back().doubleSided == sm.doubleSided && b.back().materialId == sm.materialId &&
-        b.back().drawGroup == sm.drawGroup &&
+        b.back().drawGroup == sm.drawGroup && b.back().castsShadow == sm.castsShadow &&
         std::equal(sm.instanceTextures, sm.instanceTextures + 4, b.back().instanceTextures) &&
         b.back().firstIndex + b.back().indexCount == sm.firstIndex)
         b.back().indexCount += count;
@@ -343,6 +343,7 @@ void decodeTerrain(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& 
         groups.push_back({r.u32(G + 4), c.material(matIds, r.u32(G))});
         // Group +0x10..+0x1C: instance textures (light map class 1, blend masks class 3; terrain construct 0x510780).
         Ctx::instanceTextures(groups.back().material, r, G + 0x10, texIds);
+        if (r.at<uint8_t>(G + 0x0C) & 4) groups.back().material.castsShadow = false; // no-shadow group (0x511E20)
         if (groups.back().vb >= vbCount) throw FormatError("terrain group vertex buffer out of range");
     }
     // Collect chunks per (vertex buffer, group).
@@ -420,6 +421,7 @@ MaterialState materialState(const cdc::Section& material) {
     // Flags 0x80: cull none (PCMaterial cull selection 0x506040); 0x800 "render twice" (back then
     // front) is approximated as two-sided too.
     st.doubleSided = (r.u32(0x40) & 0x880) != 0;
+    st.castsShadow = (r.u32(0x44) & 0x40000000) && r.u32(0x38) < 4;
     return st;
 }
 

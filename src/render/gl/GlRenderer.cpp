@@ -838,7 +838,7 @@ private:
                 glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
                 glBindVertexArray(m.vao.get());
                 for (const auto& s : m.submeshes) {
-                    if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
+                    if ((s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) || !s.castsShadow) continue;
                     glUniform1f(3, (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f);
                     drawSubmesh(s);
                 }

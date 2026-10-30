@@ -59,8 +59,9 @@ std::map<uint32_t, std::vector<scene::MeshData>> decodeRenderResources(const cdc
 struct MaterialTexture { uint32_t textureId, category, slot; };
 std::vector<MaterialTexture> materialTextures(const cdc::Section& material);
 // Pass state of a material section: blob +0x38 blend mode, +0x40 flags (0x80 = two-sided),
-// +0x4C alpha threshold, applied as PCStateManager_SetBlendMode (tru.exe 0x527A80) does.
-struct MaterialState { scene::Blend blend = scene::Blend::Opaque; uint8_t alphaRef = 0; bool doubleSided = false; };
+// +0x4C alpha threshold, applied as PCStateManager_SetBlendMode (tru.exe 0x527A80) does; castsShadow =
+// +0x44 bit 0x40000000 with blend mode < 4 (tru.exe's shadow-pass condition, 0x50F7C0 / 0x511E20).
+struct MaterialState { scene::Blend blend = scene::Blend::Opaque; uint8_t alphaRef = 0; bool doubleSided = false; bool castsShadow = true; };
 MaterialState materialState(const cdc::Section& material);
 // Shader-relevant material data (docs/formats/SHADERS.md): constants, sampler entries, blend mode. The composite
 // pass programs are in the ShaderLib sections `libs` names (vertex = blob +0x34, pixel = blob +0x30); the caller

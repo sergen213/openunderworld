@@ -151,7 +151,7 @@ struct RtGeometry {
     VkDeviceAddress vertices, indices;
     uint32_t firstIndex, texture; // texture = slot in the bindless array
     float alphaRef;
-    uint32_t pad;
+    uint32_t flags; // 1: not a sun-shadow caster (sun.glsl OuGeom)
 };
 
 const VkVertexInputBindingDescription kSceneBinding{0, sizeof(scene::Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
@@ -1765,7 +1765,7 @@ private:
                 vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
                 push.model = m.model;
                 for (const auto& s : m.submeshes) {
-                    if (s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) continue;
+                    if ((s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) || !s.castsShadow) continue;
                     push.alphaRef = (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f;
                     vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                        sizeof push, &push);
@@ -3242,7 +3242,8 @@ private:
                 const uint8_t ref = s.blend == scene::Blend::Alpha ? std::max<uint8_t>(s.alphaRef, 128) : s.alphaRef;
                 VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
                 g.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-                g.flags = ref == 0 ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0; // non-opaque: alpha test in scene_rt.frag
+                // non-opaque: alpha test in scene_rt.frag; non-casters too, so shadow rays can skip them (sun.glsl)
+                g.flags = ref == 0 && s.castsShadow ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
                 auto& t = g.geometry.triangles;
                 t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
                 t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
@@ -3254,7 +3255,7 @@ private:
                 m.rtGeometries.push_back(g);
                 m.rtRanges.push_back({s.indexCount / 3, s.firstIndex * uint32_t(sizeof(uint32_t)), 0, 0});
                 auto tex = textures_.find(s.textureId);
-                records.push_back({va, ia, s.firstIndex, tex != textures_.end() ? tex->second.slot : 0, ref / 255.0f, 0});
+                records.push_back({va, ia, s.firstIndex, tex != textures_.end() ? tex->second.slot : 0, ref / 255.0f, s.castsShadow ? 0u : 1u});
             }
             if (m.rtGeometries.empty()) continue;
             if (records.size() >= (1u << 24)) throw std::runtime_error("RT: more than 2^24 geometries");
