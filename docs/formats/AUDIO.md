@@ -443,8 +443,8 @@ variation record:
 | 1 | Reference | u32 DTP id (looked up by `0x54DF80`) | resolves via `PlexBank` |
 | 2 | Wave | u32 Wave section id, u32 (30 seen), 8 bytes | `Mixer::play`; Waves with loop points loop until stopped [I] |
 | 3 | Stream | `char*` path (no `.mul`), u8, u8, u16 volume % [I] | `pc-w\audio\streams\<path>.mul`, Voice bus, subtitles |
-| 4 | Assignment (0x590970) | [0] child, [1..2] delay, [3..4] volume, each value ± variance (`0x582D50`, clamped ≥ 0), [14] f32 distance [I], byte 0x44 max instances | volume, delay, max distance |
-| 5 | Envelope (0x590CE0 / 0x587A90) | {Plex*, u32 n, Curve**}; Curve {u16 param, u16, Keys*}; Keys {i32 loop start, i32 loop end, u32 count, {f32 time, f32 value, u32 flags}[count]} | param 0 = volume over the node's age, linear between keys; a last key of 0 ends the voice [I: param meaning from shapes]; other params and loops ignored |
+| 4 | Assignment (0x590970) | [0] child, [1..2] delay, [3..4] volume, each value ± variance (`0x582D50`, clamped ≥ 0), [14] f32 distance [I], byte 0x44 max instances | volume, delay, max distance (§9.12) |
+| 5 | Envelope (0x590CE0 / 0x587A90 / 0x587B80) | {Plex*, u32 n, Curve**}; Curve {u16 param, u16 release (0 = releases on stop), Keys*}; Keys {i32 loop start, i32 loop end, u32 count, {f32 time, f32 value, u32 flags (bit 0 = loop start here, bit 1 = loop end here)}[count]} | param 0 = volume from key 0 at age 0, linear to each next key over the key time difference; at loop end (not stopped) back to loop start, loop start = loop end holds (sustain); stopping jumps a release curve from loop end (else the last key) on through the following keys; past the last key a value of 0 ends the voice [I: param meaning from shapes]; other params ignored (§9.13) |
 | 9 | Reaction (0x590F30 / 0x592640) | {Plex*, u8 flags, u8 n, Map*}; Map 0x1C {u16 map (low nibble input game parameter, 0xFF random; bits 8-11 output: 0 volume ×, 1 pitch semitones +; bits 12-13 sign mode; 0x4000 / 0x8000 zero below / above), u16 flags (bit 0 off), f32 in min/max, f32 out min/max, u32 n, {f32 x, f32 y}* curve} (0x587FF0 / 0x587F10) | per voice: Σ/Π of the maps on `SoundPlayer::setParam` inputs (sound instance +0x28) |
 | 12 | Effect | child at data +0 | child only (effect ignored) |
 | 6 | ChoiceList (0x587920) | {n, Plex**, Plex*, i8 mode, i8, u32 counter} | mode 0 random, 1 no repeat, 2 shuffle (n ≤ 32), 3 in order |
@@ -474,11 +474,16 @@ writers of `0x7D` (question 2).
 
 ### 9.3 Script `sound` natives [V-exe registration 0x7ACFC0, thunks 0x79C550–0x79C630]
 
-fn 0 same-handle test, 1 Play3D(anchor) + wait thread, 2 Play + wait, 3 Play3D(anchor) (0x4AE380), 4 Play
-(0x4AE290), 5 Stop (0x4ACE30), 6 wait thread, 7–9 [U]. The member's initial value is an inline ScriptSound
+fn 0 same-handle test (0x4AE670), 1 Play3D(anchor) + wait thread (0x4AF230), 2 Play + wait (0x4AF290), 3 Play3D(anchor)
+(0x4AE380), 4 Play (0x4AE290), 5 Stop (0x4ACE30 → 0x5527F0 [I: the release request]), 6 wait thread (0x4ACDE0),
+7 cueing wait (0x4AF2E0), 8 play with a float unless playing (0x4AE500), 9 stop at once (0x4ACE70 → 0x5527F0(6)). Play
+and Play3D leave a sound that still plays on the member alone (0x4AE290 / 0x4AE380 skip to the end when the member's
+handle is live); scripts call them every tick to keep a loop going (l3_main_bedroom's firetriggervolumes: 2439 calls in
+30 s). The member's initial value is an inline ScriptSound
 `{Plex, u16 endType, u16 refCount}` in the unit DRM (`Member::initAt`); 640 such members in the units reach
 streams: music stingers (`music\…`), `event_triggered\…`, `vo\kraken\…` — no Lara voice lines. ou-game plays
-fn 1–4 (3D at the anchor intro) and stops on 5; the wait threads are not modelled (the call returns at once).
+fn 1–4 (3D at the anchor intro; a live sound only follows the anchor) and stops on 5; the wait threads are not
+modelled (the call returns at once).
 
 ### 9.4 Music variables [V-exe]
 
@@ -598,3 +603,51 @@ FDY squad mate down, SWP lost her; GAMEPLAY.md "Mercs") start a random DTP of th
   accept / opened screen 243, Back 217, a value changed 247 (Right) / 248 (Left) [I: direction], selection moved 214
   [I: one mapping for all screens; the main menu script 8 has no sound members of its own]. DTPs 100 / 101 (members
   1589 / 467, scripts 39–45, 121, 128–134) and 140–143, 209–211 (PDA scripts 7, 37) are not mapped [U: their events].
+
+### 9.12 3D rolloff and listener [V-exe 0x5850E0 / 0x585070 / 0x57FD50; V-data globalsoundinfo]
+
+globalsoundinfo.drm object data (ObjectBase DTP 792 +0xC8) +0x28 → {f32 max distance 3160.56, f32 min distance 158.03,
+f32 curve 1.0, …, +0x20 0.5, +0x24 0}. A 3D sound's gain (0x5850E0 → 0x585070(−d, −max, −min, curve)): 1 within min,
+0 beyond max, else f = (max − d) / (max − min), gain = (f² − f)·curve + f = f². The emitter's own max (its +0, set when
+> 0) replaces the global one: ours = the innermost Assignment's [14] distance (lara.drm footsteps 5000) [I: which field
+fills the emitter]. The listener (0x8A7F40, updated each frame by 0x57FD50 from the camera position) sits at
+camera + 0.5 · (Lara − camera) for distances (+0x20) and at the camera for panning (+0x24 = 0); ours puts the one mixer
+listener at that midpoint (`ou::audio::rolloff`, `kSound*`, `GameSound` → `Mixer::setAttenuation`, main.cpp
+`setListener`). Before this the Mixer's FMOD default `1 / clamp(d, 1, 10000)` applied with the listener at the camera:
+Lara's own footsteps ~300 units away played at about −50 dB, every unit ambience further down — the "most chapter
+sounds do not play" report.
+
+### 9.13 Envelope sustain and release [V-exe 0x590CE0 / 0x587A90 / 0x587B80; V-data]
+
+0x590CE0 marks key flags bit 0 / bit 1 as the curve's loop start / end; 0x587A90 steps key to key, and on reaching the
+loop end while not stopped jumps to loop start + 1 (loop start = loop end: holds there). A loop end without a loop
+start only requests the release (vfunc 4). Stop (0x587B80, states 1/4/5) sets every curve whose second u16 is 0 to its
+loop end (or the last key) so the following keys play out; an envelope with no sustain and no such curve stops at once.
+Survey of the 1120 sfxmarker sounds (82 units): 717 volume curves, 514 hold a sustain key, 53 end at 0 without a loop,
+150 hold a non-zero last key; all 717 carry the release u16 = 0. Ours ignored the loops: every sustained ambience
+loop (824 of the 1120 marker sounds loop a Wave) was cut when its curve reached its last key (≈1 s). Now
+`Plex::Curve::value` follows the loop / release, `SoundPlayer::stop` releases (a second stop cuts) [I: a released
+curve past its last key ends the voice even when that key is not 0]. generalbank DTP 78 (title music) holds key 0 =
+1.0 until stopped, then fades over 1.05 s. Tests `SoundPlex.EnvelopeSustainHoldsUntilStopThenReleases`,
+`SoundPlex.RolloffFollowsGlobalSoundInfo`.
+
+### 9.14 SoundComponent slots (object loops) [V-exe 0x58D6A0 / 0x593D50 / 0x5B69C0; V-data]
+
+ObjectBase +0xA8 count, +0xAC {Plex*, i16 segment, i16}[count] (0x58D6A0 builds instance +0x248 from it). Event
+records of kind 2 with command 0x60 (0x5B69C0: a1 & 0xFF ≠ 0xFF, slot = a2 & 0xFF, action = a2 >> 8) run 0x593D50:
+action 0 releases the slot's sound, 1 starts it unless it plays, others restart it, at the slot segment with the
+instance material; the component's sounds end with the instance (0x58D740). 129 of 794 objects have slots, 114 hold
+2619 such records: waterfalls and gutters (birth list: start), sa_uo_flush_gate / ar_uo_reward_door / grinders / gears
+(clip start / stop), ignitables, motorcycle (accelerate / donut), bats, thralls, tigers. Ours: `fx::ObjectFx::soundSlots`,
+`Event::slotSound`, `fx::System::slotSound` from birth lists and every clip span (Lara, enemies, script objects),
+`GameSound::slotSound` (logged `slot sound <object> owner o slot s`); `fx::System::ownerStopped` (streamed-out intros)
+and departed enemies stop them. fx_fire / fx_water_spout slots without records are played by scripts (§9.3).
+
+Measured (ou-game at 160×120 under Xvfb, `--music-wav` with the Music bus at 0, 30 s, a walk / turn / jump / shoot
+script; RMS of the Sfx + Voice mix) [O]:
+
+| run | before | after | starts in 30 s after (silent) |
+|---|---|---|---|
+| `--chapter 0` (l3_main_bedroom) | −99.4 dB | −29.7 dB | 503 anim (75: material 1 has DTP 0 in lara.drm DTP 2305 = silent by data), 20 sfxmarker, 1 script fire loop (was 2439 restarts), 3 slot |
+| `--load chapter-1` (l1_seatop) | −76.8 dB | −20.2 dB | 142 anim (0) |
+| `--load chapter-2` (l2_cliffclimb) | −71.0 dB | −15.2 dB | 871 anim (3), 13 sfxmarker, 7 slot (waterfalls) |

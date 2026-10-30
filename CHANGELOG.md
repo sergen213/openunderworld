@@ -6,6 +6,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Chapter sounds are audible again: 3D sounds used the mixer's FMOD-style default rolloff (1 / distance from 1 unit)
+  heard at the camera, so footsteps came out near −50 dB and ambiences below that. They now use tru.exe's rolloff
+  (globalsoundinfo: full within 158 units, (max − d)² / (max − min)² to 3160 units or the sound's own distance) heard
+  from halfway between camera and Lara. Envelopes keep their sustain loops (ambience loops were cut after about a second)
+  and fade out with their release when stopped; script Play / Play3D no longer restart a sound that still plays (the
+  bedroom fire restarted 80 times a second); object SoundComponent loops play (waterfalls, gutters, gates, gears,
+  grinders, ignitables, bats, thralls, motorcycle). Sfx mix RMS over 30 s: chapter 0 −99 → −30 dB, chapter 1 −77 →
+  −20 dB, chapter 2 −71 → −15 dB. Evidence: docs/formats/AUDIO.md §9.12–9.14.
 - Menu audio as tru.exe: the main menu plays the title music (`music\tomb_raider_underworld_main_theme`, what the
   original's main menu script asks GameGlobals for) and `medsea_loop.bik`'s own sea sound looped with the picture,
   from the first frame; both stop when a game starts or a movie plays and come back on the main menu. Every menu

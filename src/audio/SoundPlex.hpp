@@ -36,8 +36,18 @@ struct Plex {
     // MaterialList (0x583960) / Selector (0x583490): children are References to DTP ids, picked by key (surface
     // material; Selector: 0xFFFFFFFF = default entry).
     std::vector<uint32_t> keys;
-    // Envelope (0x590CE0 / 0x587A90): curves of {time s, value} keys over the node's age; param 0 = volume [I: shape].
-    struct Curve { uint16_t param = 0; std::vector<std::pair<float, float>> keys; };
+    // Envelope (0x590CE0 / 0x587A90 / 0x587B80): curves of {time s, value} keys from key 0, linear between keys; param 0
+    // = volume [I: shape]. Reaching key loopEnd while not released jumps back to loopStart (loopStart == loopEnd: holds
+    // there = sustain); loopEnd without loopStart only marks the release point. Stopping releases: `release` curves
+    // (u16 +2 == 0) go on from loopEnd (else the last key) towards the following keys; an envelope without such a curve
+    // or a sustain stops at once. A volume curve past its last key with value 0 ends the voice.
+    struct Curve {
+        uint16_t param = 0;
+        bool release = false;
+        int32_t loopStart = -1, loopEnd = -1; // header ints, overridden by key flags bit 0 / bit 1
+        std::vector<std::pair<float, float>> keys;
+        float value(float t, float releasedAt, bool* ended = nullptr) const; // at t s after the envelope started
+    };
     std::vector<Curve> curves;
     // Reaction (0x590F30 / 0x592640 / 0x587FF0): game parameters (SoundPlayer::setParam) mapped onto the child's
     // volume (output 0) / pitch in semitones (output 1): x in [inMin, inMax] -> normalised -> piecewise-linear curve ->
@@ -96,6 +106,13 @@ private:
     std::vector<std::vector<State>> state_;
 };
 
+// 3D distance rolloff, tru.exe 0x5850E0 -> 0x585070 with globalsoundinfo.drm's object data +0x28 {f32 max distance 3160.56,
+// f32 min distance 158.03, f32 curve 1.0}: f = (max - d) / (max - min) clamped to [0, 1], gain = (f² - f)·curve + f (= f²).
+// An Assignment's distance [14] replaces the max (0x5850E0: the emitter's +0 when > 0). The listener is halfway between
+// the camera and Lara (0x57FD50 with globalsoundinfo +0x20 = 0.5; pan weight +0x24 = 0).
+inline constexpr float kSoundMinDistance = 158.028f, kSoundMaxDistance = 3160.56f, kSoundListenerToPlayer = 0.5f;
+float rolloff(float distance, float minDistance, float maxDistance); // Mixer::setAttenuation for the game's sounds
+
 // ---- player ----
 class SoundPlayer {
 public:
@@ -117,7 +134,8 @@ public:
     std::vector<Line> lines;
     std::vector<std::string> waves; // "0x<id>" of every wave started, for logs; cleared by the caller
 private:
-    struct Mod { const Plex* plex; double start; }; // an Envelope / Reaction above a voice and when it started
+    // An Envelope / Reaction above a voice and when it started; also an Assignment with a max distance (innermost wins).
+    struct Mod { const Plex* plex; double start; };
     using Mods = std::vector<Mod>;
     struct Pending { double at; const Plex* plex; float volume; size_t index; Mods mods; };
     struct Voice { VoiceId id; float volume; Mods mods; };
@@ -127,6 +145,7 @@ private:
         std::array<float, 16> params{};  // Reaction inputs (sound instance +0x28)
         std::vector<Voice> voices;
         std::vector<Pending> pending;
+        double released = -1; // stop() time while release envelopes play out
     };
     bool apply(Instance& in, Voice& v); // the voice's Envelope / Reaction volume and pitch; false when an envelope ended
     float mapValue(const Plex::Map& m, float x);

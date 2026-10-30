@@ -28,6 +28,7 @@ GameSound::GameSound(const cdc::BigfileSet& bigfile, audio::Mixer& mixer)
                                                        m = std::make_shared<audio::Mul>(audio::decodeMul(*d));
                                                return m;
                                            }) {
+    mixer_.setAttenuation(audio::rolloff); // the game's distance curve (AUDIO.md §9.12), not the Mixer's FMOD default
     for (const char* name : {"pc-w\\lara.drm", "pc-w\\generalbank.drm"})
         try {
             if (auto drm = load(bf_, name)) {
@@ -66,11 +67,17 @@ void GameSound::attach(game::World& world) {
         std::optional<glm::vec3> pos;
         if (anchor)
             if (const auto* a = world.script().find(anchor)) pos = a->pos;
-        if (const auto it = scriptHandles_.find(key); it != scriptHandles_.end()) player_.stop(it->second);
+        // Play / Play3D (0x4AE290 / 0x4AE380) leave a sound that still plays on the member alone: scripts call them every
+        // tick to keep a loop going (l3_main_bedroom's firetriggervolumes).
+        if (const auto it = scriptHandles_.find(key); it != scriptHandles_.end() && player_.active(it->second)) {
+            if (pos) player_.setPosition(it->second, *pos);
+            return true;
+        }
         scriptHandles_[key] = player_.start(*plex, pos);
-        std::fprintf(stderr, "ou-game: tick %llu script sound %d (%s) +%u %s%s%u%s\n", (unsigned long long)world.ticks(), owner,
+        std::fprintf(stderr, "ou-game: tick %llu script sound %d (%s) +%u %s%s%u%s%s\n", (unsigned long long)world.ticks(), owner,
                      o->name.c_str(), member, fn == 1 || fn == 3 ? "3D " : "", plex->type == audio::PlexType::Reference ? "DTP " : "node type ",
-                     plex->type == audio::PlexType::Reference ? plex->id : uint32_t(plex->type), pos ? " at anchor" : "");
+                     plex->type == audio::PlexType::Reference ? plex->id : uint32_t(plex->type), pos ? " at anchor" : "",
+                     scriptHandles_[key] ? "" : " (silent)");
         return true;
     });
 }
@@ -97,7 +104,7 @@ bool GameSound::playHelp(const game::World& world, bool answer) {
 void GameSound::reset() {
     player_.stopAll();
     for (auto& [name, u] : units_) u.handles.clear(), u.triggers = audio::SfxMarkerTriggers(u.markers); // Init fires again
-    scriptHandles_.clear();
+    scriptHandles_.clear(), slots_.clear();
     drown_ = engine_ = help_ = 0;
     bikeSpeed_ = 0;
     lastVars_ = {};
@@ -119,6 +126,44 @@ void GameSound::addObject(const fx::ObjectFx& fx) {
     if (fx.drm && eventDrms_.insert(fx.drm.get()).second) bank_.add(fx.drm), mixer_.addWaves(*fx.drm);
 }
 
+const audio::Plex* GameSound::objectPlex(const fx::ObjectFx& fx, cdc::Pointer at) {
+    auto& slot = eventPlex_[{fx.drm.get(), at.section, at.offset}];
+    if (!slot) {
+        try {
+            slot = std::make_unique<audio::Plex>(audio::parsePlex(*fx.drm, at.section, at.offset));
+        } catch (const std::exception& ex) {
+            std::fprintf(stderr, "ou-game: %s sound record: %s\n", fx.name.c_str(), ex.what());
+            slot = std::make_unique<audio::Plex>(); // silence: do not retry
+        }
+    }
+    return slot.get();
+}
+
+void GameSound::slotSound(const fx::ObjectFx& fx, uint8_t slot, uint8_t action, int32_t owner, glm::vec3 position, uint8_t material,
+                          uint64_t tick) {
+    if (!fx.drm || slot >= fx.soundSlots.size() || fx.soundSlots[slot].plex.section == ~0u) return;
+    addObject(fx);
+    const auto key = std::make_tuple(owner, fx.drm.get(), slot);
+    const auto it = slots_.find(key);
+    if (action == 0) { // 0x593D50: the playing sound gets its release (vfunc 4)
+        if (it != slots_.end()) player_.stop(it->second), slots_.erase(it);
+        return;
+    }
+    if (it != slots_.end() && player_.active(it->second)) {
+        if (action == 1) return player_.setPosition(it->second, position);
+        player_.stop(it->second, 0);
+    }
+    const auto h = player_.start(*objectPlex(fx, fx.soundSlots[slot].plex), position, 1, material);
+    slots_[key] = h;
+    std::fprintf(stderr, "ou-game: tick %llu slot sound %s owner %d slot %u%s\n", (unsigned long long)tick, fx.name.c_str(), owner, slot,
+                 h ? "" : " (silent)");
+}
+
+void GameSound::ownerGone(int32_t owner) {
+    for (auto it = slots_.lower_bound({owner, nullptr, 0}); it != slots_.end() && std::get<0>(it->first) == owner;)
+        player_.stop(it->second), it = slots_.erase(it);
+}
+
 void GameSound::animSound(const fx::ObjectFx& fx, const fx::Event& e, glm::vec3 position, uint8_t material, uint64_t tick) {
     if (!fx.drm) return;
     addObject(fx);
@@ -126,16 +171,7 @@ void GameSound::animSound(const fx::ObjectFx& fx, const fx::Event& e, glm::vec3 
     uint32_t dtp = 0;
     const auto& s = e.sound;
     if (s.kind == 0) {
-        auto& slot = eventPlex_[{fx.drm.get(), s.plex.section, s.plex.offset}];
-        if (!slot) {
-            try {
-                slot = std::make_unique<audio::Plex>(audio::parsePlex(*fx.drm, s.plex.section, s.plex.offset));
-            } catch (const std::exception& ex) {
-                std::fprintf(stderr, "ou-game: %s sound record: %s\n", fx.name.c_str(), ex.what());
-                slot = std::make_unique<audio::Plex>(); // silence: do not retry
-            }
-        }
-        p = slot.get();
+        p = objectPlex(fx, s.plex);
     } else {
         dtp = s.dtp[0];
         if (s.kind == 3) { // 0x5B2820: rand() % (w0 + w1 + w2) picks one of three DTPs
@@ -203,6 +239,15 @@ void GameSound::tick(game::World& world) {
     const auto tick = (unsigned long long)world.ticks();
     if (world.unitsVersion() != unitsVersion_) syncUnits(world), unitsVersion_ = world.unitsVersion();
     const glm::vec3 lara = world.player().state().pos;
+    // Enemies' slot sounds (owners -(0x10000000 | uid), ou-game's EffectsView) end with the enemy (0x58D740 stops a
+    // SoundComponent's sounds when its instance goes).
+    for (auto it = slots_.begin(); it != slots_.end();) {
+        const int32_t owner = std::get<0>(it->first);
+        const bool enemy = owner < 0 && (-owner & 0x10000000), gone = enemy && std::none_of(world.enemies().all().begin(), world.enemies().all().end(),
+                                                                   [&](const auto& e) { return (e->uid() & 0x0FFFFFFF) == (-owner & 0x0FFFFFFF); });
+        if (gone || !player_.active(it->second)) player_.stop(it->second), it = slots_.erase(it);
+        else ++it;
+    }
     for (const auto& b : world.enemies().barks) { // a line of that category from the loaded units, at the soldier
         std::vector<uint32_t> lines;
         for (const auto& [name, us] : units_)

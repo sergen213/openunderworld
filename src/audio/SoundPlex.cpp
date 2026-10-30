@@ -117,10 +117,19 @@ struct Reader {
                 const auto keys = c ? ptr(at(*c, 4)) : std::nullopt;
                 if (!keys) continue;
                 Plex::Curve cv;
-                cv.param = uint16_t(u32(*c));
+                const uint32_t head = u32(*c);
+                cv.param = uint16_t(head), cv.release = (head >> 16) == 0;
+                cv.loopStart = int32_t(u32(*keys)), cv.loopEnd = int32_t(u32(at(*keys, 4)));
                 const uint32_t count = u32(at(*keys, 8));
                 if (count > 1024) throw FormatError("soundplex: envelope keys");
-                for (uint32_t i = 0; i < count; ++i) cv.keys.emplace_back(f32(at(*keys, 12 + 12 * i)), f32(at(*keys, 16 + 12 * i)));
+                for (uint32_t i = 0; i < count; ++i) {
+                    cv.keys.emplace_back(f32(at(*keys, 12 + 12 * i)), f32(at(*keys, 16 + 12 * i)));
+                    const uint32_t flags = u32(at(*keys, 20 + 12 * i)); // 0x590CE0: bit 0 loop start, bit 1 loop end here
+                    if (flags & 1) cv.loopStart = int32_t(i);
+                    if (flags & 2) cv.loopEnd = int32_t(i);
+                }
+                if (cv.loopStart >= int32_t(count)) cv.loopStart = -1;
+                if (cv.loopEnd >= int32_t(count) || cv.loopEnd < cv.loopStart) cv.loopEnd = -1, cv.loopStart = -1;
                 x.curves.push_back(std::move(cv));
             }
         }
@@ -253,6 +262,13 @@ std::vector<SfxMarkerTriggers::Fired> SfxMarkerTriggers::update(const std::vecto
     return out;
 }
 
+float rolloff(float d, float mn, float mx) { // 0x585070 (curve 1)
+    if (d >= mx) return 0;
+    if (d <= mn || mx <= mn) return 1;
+    const float f = (mx - d) / (mx - mn);
+    return f * f;
+}
+
 float SoundPlayer::vary(float v, float var) { // 0x582D50: v ± var, clamped at 0
     if (var == 0) return v;
     return std::max(0.0f, v + std::uniform_real_distribution<float>(-var, var)(rng_));
@@ -260,7 +276,9 @@ float SoundPlayer::vary(float v, float var) { // 0x582D50: v ± var, clamped at 
 
 double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, const Mods& mods, int depth) {
     if (depth > 32) return 0;
-    PlayParams pp{.volume = volume, .position = in.position};
+    PlayParams pp{.volume = volume, .position = in.position, .minDistance = kSoundMinDistance, .maxDistance = kSoundMaxDistance};
+    for (const Mod& m : mods)
+        if (m.plex->type == PlexType::Assignment) pp.maxDistance = m.plex->maxDistance; // innermost wins
     auto play = [&](VoiceId v) {
         if (!v) return;
         in.voices.push_back({v, volume * (p.type == PlexType::Stream ? p.volume : 1), mods});
@@ -292,12 +310,13 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, c
     case PlexType::Assignment: {
         if (p.children.empty()) return 0;
         const float v = volume * vary(p.volume, p.volumeVar), d = vary(p.delay, p.delayVar);
-        if (p.maxDistance > 0 && in.position) pp.maxDistance = p.maxDistance;
+        Mods m = mods;
+        if (p.maxDistance > 0) m.push_back({&p, at});
         if (d > 0) { // SoundPlexTimeIn before the child
-            in.pending.push_back({at + d, &p.children[0], v, SIZE_MAX, mods});
+            in.pending.push_back({at + d, &p.children[0], v, SIZE_MAX, m});
             return d;
         }
-        return fire(in, p.children[0], v, at, mods, depth + 1);
+        return fire(in, p.children[0], v, at, m, depth + 1);
     }
     case PlexType::Envelope: case PlexType::Reaction: {
         if (p.children.empty()) return 0;
@@ -371,26 +390,57 @@ float SoundPlayer::mapValue(const Plex::Map& m, float x) {
     return m.outMin + (m.outMax - m.outMin) * u;
 }
 
-// Envelope volume curves (param 0) at the node's age: linear from the previous key; past the last key it holds, and a
-// last key of 0 ends the voice (0x587A90). Reaction maps: output 0 multiplies the volume, output 1 adds semitones.
+float Plex::Curve::value(float t, float releasedAt, bool* ended) const {
+    if (ended) *ended = false;
+    if (keys.empty()) return 1;
+    bool past = false;
+    // From value v0 at key j's time through keys j+1.. (0x587A90 moves linearly from the current value to the next key).
+    const auto walk = [&](float u, size_t j, float v0) {
+        float a = keys[j].first, va = v0;
+        for (size_t k = j + 1; k < keys.size(); ++k) {
+            const float b = keys[k].first;
+            if (u < b) return b > a ? va + (keys[k].second - va) * (u - a) / (b - a) : keys[k].second;
+            a = b, va = keys[k].second;
+        }
+        past = true;
+        return va;
+    };
+    const auto sustain = [&](float s) {
+        float u = keys[0].first + s;
+        if (loopStart >= 0 && u >= keys[size_t(loopEnd)].first) {
+            if (loopStart == loopEnd) return keys[size_t(loopEnd)].second;
+            const float a = keys[size_t(loopStart)].first, b = keys[size_t(loopEnd)].first;
+            u = b > a ? a + std::fmod(u - b, b - a) : b; // [I] the jump back continues from loop start's value
+        }
+        return walk(u, 0, keys[0].second);
+    };
+    // [I] a released curve past its last key ends the voice even when that key is not 0 (else a looping wave would
+    // play on); sustain curves without the release flag leave their loop the same way.
+    const bool released = releasedAt >= 0 && t >= releasedAt && (release || loopStart >= 0);
+    float v;
+    if (released) {
+        const size_t j = loopEnd >= 0 ? size_t(loopEnd) : keys.size() - 1;
+        const float v0 = sustain(releasedAt);
+        past = false;
+        v = walk(keys[j].first + (t - releasedAt), j, v0);
+    } else {
+        v = sustain(t);
+    }
+    if (ended) *ended = past && param == 0 && (released || keys.back().second <= 0);
+    return v;
+}
+
+// Envelope volume curves (param 0, Plex::Curve::value) at the node's age; one ending ends the voice (0x587A90). Reaction
+// maps: output 0 multiplies the volume, output 1 adds semitones.
 bool SoundPlayer::apply(Instance& in, Voice& v) {
     float gain = 1, semitones = 0;
     bool pitch = false;
     for (const Mod& mod : v.mods) {
         for (const Plex::Curve& c : mod.plex->curves) {
-            if (c.param != 0 || c.keys.empty()) continue;
-            const float t = float(now_ - mod.start);
-            float g = c.keys.back().second;
-            if (t >= c.keys.back().first) {
-                if (g <= 0) return false;
-            } else {
-                for (size_t k = 0; k < c.keys.size(); ++k)
-                    if (t < c.keys[k].first) {
-                        const auto a = k ? c.keys[k - 1] : std::pair<float, float>{0, c.keys[0].second}, b = c.keys[k];
-                        g = a.second + (b.second - a.second) * (b.first > a.first ? (t - a.first) / (b.first - a.first) : 1);
-                        break;
-                    }
-            }
+            if (c.param != 0) continue;
+            bool ended = false;
+            const float g = c.value(float(now_ - mod.start), in.released >= 0 ? float(std::max(0.0, in.released - mod.start)) : -1, &ended);
+            if (ended) return false;
             gain *= std::max(0.0f, g);
         }
         for (const Plex::Map& m : mod.plex->maps) {
@@ -413,10 +463,23 @@ SoundPlayer::Handle SoundPlayer::start(const Plex& p, std::optional<glm::vec3> p
     return h;
 }
 
+// 0x587B80: stopping an Envelope with a sustain or a release curve plays its release instead of cutting the voice;
+// pending parts never start. A second stop (or one without such an envelope) cuts.
 void SoundPlayer::stop(Handle h, float fade) {
     const auto it = instances_.find(h);
     if (it == instances_.end()) return;
-    for (const Voice& v : it->second.voices) mixer_.stop(v.id, fade);
+    Instance& in = it->second;
+    const auto releases = [](const Voice& v) {
+        return std::any_of(v.mods.begin(), v.mods.end(), [](const Mod& m) {
+            return std::any_of(m.plex->curves.begin(), m.plex->curves.end(), [](const Plex::Curve& c) { return c.param == 0 && (c.release || c.loopStart >= 0); });
+        });
+    };
+    if (in.released < 0) {
+        in.released = now_, in.pending.clear();
+        std::erase_if(in.voices, [&](const Voice& v) { return releases(v) ? false : (mixer_.stop(v.id, fade), true); });
+        if (!in.voices.empty()) return;
+    }
+    for (const Voice& v : in.voices) mixer_.stop(v.id, fade);
     instances_.erase(it);
 }
 

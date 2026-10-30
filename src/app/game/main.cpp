@@ -778,7 +778,8 @@ struct EffectsView {
                 m[3] += glm::vec4(u.offset, 0);
                 if (!fx->fades.empty()) intros[in.uniqueId] = {fx, m};
                 if (library->flags(n->second) & ou::fx::kObjectNoBirthEffects) continue;
-                if (system.startBirth(fx, m, in.uniqueId)) owners.push_back(in.uniqueId);
+                if (!system.slotSound && !fx->soundSlots.empty()) unheard.push_back({fx, m, in.uniqueId});
+                if (system.startBirth(fx, m, in.uniqueId) || !fx->soundSlots.empty()) owners.push_back(in.uniqueId);
             }
             // Unit FX point sets (fires, heat haze without an object): owners 0x40000000 | set id [I: ids beside intros'].
             for (const auto& ps : library->pointSets(*u.data.drm, u.data.name, &warnings)) {
@@ -800,6 +801,12 @@ struct EffectsView {
             library->get(e->type().name, &warnings);
             if (const auto n = names.find(e->type().weapon); n != names.end()) weapon(n->second);
         }
+    }
+    // Instances born before GameSound existed (the first sync): their birth slot sounds (waterfalls), once it does.
+    std::vector<std::tuple<std::shared_ptr<const ou::fx::ObjectFx>, glm::mat4, int32_t>> unheard;
+    void birthSounds() {
+        for (const auto& [fx, m, uid] : unheard) system.startBirth(fx, m, uid, false);
+        unheard.clear();
     }
     // Rigid frame at p: muzzle (axis 1, -Y along the shot, Z up) or impact (axis 2, Z = surface normal).
     static glm::mat4 frameAlong(glm::vec3 p, glm::vec3 d, int axis) {
@@ -859,7 +866,7 @@ struct EffectsView {
         std::vector<glm::mat4> b;
         for (const auto& [a, z] : spans)
             if (std::any_of(ev->begin(), ev->end(), [&](const auto& e) {
-                    return (e.runsOn(mat) || e.soundOn(mat)) && float(e.frame) >= a && float(e.frame) < z;
+                    return (e.runsOn(mat) || e.soundOn(mat) || (e.slotSound() && e.matches(mat))) && float(e.frame) >= a && float(e.frame) < z;
                 })) {
                 if (b.empty()) b = bones();
                 system.runEvents(fx, *ev, world, owner, mat, a, z, b);
@@ -1526,6 +1533,11 @@ int main(int argc, char** argv) {
             effects.system.sound = [&](const ou::fx::ObjectFx& fx, const ou::fx::Event& e, glm::vec3 at, uint8_t mat) {
                 sound->animSound(fx, e, at, mat, world->ticks());
             };
+            effects.system.slotSound = [&](const ou::fx::ObjectFx& fx, uint8_t slot, uint8_t action, int32_t owner, glm::vec3 at, uint8_t mat) {
+                sound->slotSound(fx, slot, action, owner, at, mat, world->ticks());
+            };
+            effects.system.ownerStopped = [&](int32_t owner) { sound->ownerGone(owner); };
+            effects.birthSounds();
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: sound events: %s\n", e.what());
         }
@@ -2258,7 +2270,8 @@ int main(int argc, char** argv) {
         cam.lookAt(c.target);
         cam.up = c.up;
         if (opt.camera) cam.position = {(*opt.camera)[0], (*opt.camera)[1], (*opt.camera)[2]}, cam.lookAt({(*opt.camera)[3], (*opt.camera)[4], (*opt.camera)[5]});
-        if (audioOn) mixer.setListener({c.position, glm::normalize(c.target - c.position), {0, 0, 1}});
+        if (audioOn) // halfway between the camera and Lara (tru.exe 0x57FD50, ou::audio::kSoundListenerToPlayer)
+            mixer.setListener({glm::mix(c.position, s.pos, ou::audio::kSoundListenerToPlayer), glm::normalize(c.target - c.position), {0, 0, 1}});
 
         ++fpsFrames;
         if (now - fpsStart >= 500'000'000ull) {

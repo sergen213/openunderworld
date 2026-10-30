@@ -249,6 +249,9 @@ struct Event {
     // Anim-list record that runs on an instance standing on / hit at `material`.
     bool runsOn(uint8_t mat) const { return effect() && matches(mat); }
     bool soundOn(uint8_t mat) const { return isSound() && matches(mat); }
+    // Kind 2 command 0x60 (tru.exe 0x5B69C0 -> 0x593D50): the instance's SoundComponent slot a2 & 0xFF, action a2 >> 8
+    // (0 stop = release, 1 start unless it plays, else restart); a1 & 0xFF == 0xFF or slot 0xFF: nothing.
+    bool slotSound() const { return (info & 3) == 2 && !(info & 4) && cmd.type == 0x60 && (cmd.a1 & 0xFF) != 0xFF && (cmd.a2 & 0xFF) != 0xFF; }
 };
 
 struct ObjectFx {
@@ -265,6 +268,10 @@ struct ObjectFx {
     std::vector<Event> events;           // object section +4 list
     std::string name;                    // object name (Library::get)
     std::shared_ptr<const cdc::Drm> drm; // the object DRM (sound records' SoundPlex graphs); set by Library::get
+    // SoundComponent slots (ObjectBase +0xA8 n, +0xAC {Plex*, i16 segment, i16}[n]; 0x58D6A0): looping object sounds
+    // (waterfalls, fires, gears, switches) started / stopped by `slotSound` events.
+    struct SoundSlot { cdc::Pointer plex{~0u, 0}; int16_t segment = 0; };
+    std::vector<SoundSlot> soundSlots;
     // Animation list (ObjectBase +0x54 / +0x58 {i16 anim, i16, u32 event-list DTP, char* name}) -> that clip's
     // event list (DTP rtype 19: u32 header, then records as `events`). Only clips with an event list.
     std::map<std::string, std::vector<Event>> clips;
@@ -311,8 +318,9 @@ public:
     // `bones`: posed segment frames in the object frame (empty = bind pose). Returns false for out-of-range defs.
     bool start(std::shared_ptr<const ObjectFx> fx, int def, const glm::mat4& world, int32_t owner,
                int16_t segment = 0, int16_t segment2 = 0, std::span<const glm::mat4> bones = {});
-    // Runs an instance's birth effects: enabled event-0 records of fx->events (tru.exe 0x5BA480 -> 0x5BA000).
-    int startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat4& world, int32_t owner);
+    // Runs an instance's birth effects: enabled event-0 records of fx->events (tru.exe 0x5BA480 -> 0x5BA000), slot sounds
+    // included; `commands` false: only the slot sounds (instances born before `slotSound` was set).
+    int startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat4& world, int32_t owner, bool commands = true);
     // A unit FX point set's birth records (as startBirth) with its points as the segments; `world` = the unit offset.
     int startPointSet(const PointSet& set, const glm::mat4& world, int32_t owner);
     // `birth`: run from the birth list, where glows / lights also need their record's birth bit.
@@ -337,6 +345,9 @@ public:
     // stops adding quads (its quads fade on).
     void track(int32_t owner, const glm::mat4& world, std::span<const glm::mat4> bones);
     std::function<void(const ObjectFx&, const Event&, glm::vec3 position, uint8_t material)> sound;
+    // Event::slotSound records (anim clips and birth lists): slot, action, owner, the slot segment's world position.
+    std::function<void(const ObjectFx&, uint8_t slot, uint8_t action, int32_t owner, glm::vec3 position, uint8_t material)> slotSound;
+    std::function<void(int32_t owner)> ownerStopped; // stopOwner: the instance is gone (its slot sounds end)
     bool visuals = true; // false (ou-game --fx off): commands start nothing but instance fades; sequences run for `sound`
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     void moveOwner(int32_t owner, const glm::vec3& delta); // its emitters' origins (effects carried by a moving instance)

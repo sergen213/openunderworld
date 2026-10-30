@@ -792,11 +792,71 @@ TEST(SoundPlex, ReactionAndEnvelopeShapeVolume) {
     sp.update(0);
     EXPECT_NEAR(run(m, 4)[0], 0.5f * full, 1e-3);
     Plex env;
-    env.type = PlexType::Envelope, env.children = {wave}, env.curves = {{0, {{0.1f, 1}, {0.2f, 0}}}};
+    env.type = PlexType::Envelope, env.children = {wave}, env.curves = {{.keys = {{0.1f, 1}, {0.2f, 0}}}};
     const auto e = sp.start(env);
     EXPECT_TRUE(sp.active(e));
     sp.update(0.25);
     EXPECT_FALSE(sp.active(e));
+}
+
+// Envelope loops (0x587A90 / 0x587B80): a sustain key holds until stop(), which plays the release tail from loop end;
+// without the stop a one-key-loop envelope (generalbank's main theme, DTP 78) never fades.
+TEST(SoundPlex, EnvelopeSustainHoldsUntilStopThenReleases) {
+    Plex::Curve c{.release = true, .loopStart = 0, .loopEnd = 0, .keys = {{0, 1}, {0.28f, 0.91f}, {0.49f, 0.8f}, {1.05f, 0}}};
+    bool ended = true;
+    EXPECT_FLOAT_EQ(c.value(100, -1, &ended), 1);
+    EXPECT_FALSE(ended);
+    EXPECT_NEAR(c.value(100.28f, 100), 0.91f, 1e-4);
+    EXPECT_NEAR(c.value(100.385f, 100), 0.855f, 1e-4); // halfway 0.91 -> 0.8
+    c.value(101.1f, 100, &ended);
+    EXPECT_TRUE(ended);
+    // A two-key loop wraps (keys 1..2 repeat); no loop: plays once and a last key of 0 ends it.
+    Plex::Curve loop{.loopStart = 1, .loopEnd = 2, .keys = {{0, 0}, {1, 1}, {2, 0.5f}}};
+    EXPECT_NEAR(loop.value(2.5f, -1), 0.75f, 1e-4);
+    EXPECT_NEAR(loop.value(10.5f, -1), 0.75f, 1e-4);
+    Plex::Curve once{.keys = {{0, 1}, {1, 0}}};
+    EXPECT_NEAR(once.value(0.25f, -1, &ended), 0.75f, 1e-4);
+    EXPECT_FALSE(ended);
+    once.value(1.5f, -1, &ended);
+    EXPECT_TRUE(ended);
+
+    Mixer m;
+    m.addSound(7, constant(1, {16384}, 48000));
+    Plex wave;
+    wave.type = PlexType::Wave, wave.id = 7;
+    Plex env;
+    env.type = PlexType::Envelope, env.children = {wave}, env.curves = {c};
+    SoundPlayer sp(m, nullptr, nullptr);
+    const auto h = sp.start(env);
+    sp.update(10);
+    EXPECT_TRUE(sp.active(h)); // held at the sustain key
+    sp.stop(h);
+    sp.update(0.5);
+    EXPECT_TRUE(sp.active(h)); // releasing
+    sp.update(0.6);
+    EXPECT_FALSE(sp.active(h));
+}
+
+// 0x585070 with globalsoundinfo's {max 3160.56, min 158.03, curve 1}: full volume inside min, f² between, 0 beyond max.
+TEST(SoundPlex, RolloffFollowsGlobalSoundInfo) {
+    EXPECT_FLOAT_EQ(rolloff(100, kSoundMinDistance, kSoundMaxDistance), 1);
+    const float mid = (kSoundMinDistance + kSoundMaxDistance) / 2;
+    EXPECT_NEAR(rolloff(mid, kSoundMinDistance, kSoundMaxDistance), 0.25f, 1e-5);
+    EXPECT_EQ(rolloff(kSoundMaxDistance, kSoundMinDistance, kSoundMaxDistance), 0);
+    EXPECT_EQ(rolloff(5000, kSoundMinDistance, kSoundMaxDistance), 0);
+    EXPECT_FLOAT_EQ(rolloff(4000, kSoundMinDistance, 5000), (1000 / (5000 - kSoundMinDistance)) * (1000 / (5000 - kSoundMinDistance)));
+    // The player gives 3D voices those distances; an Assignment's distance replaces the max.
+    Mixer m;
+    m.setAttenuation(rolloff);
+    m.setListener({});
+    m.addSound(7, constant(1, {16384}, 48000));
+    Plex wave;
+    wave.type = PlexType::Wave, wave.id = 7;
+    Plex far;
+    far.type = PlexType::Assignment, far.maxDistance = 6000, far.children = {wave};
+    SoundPlayer sp(m, nullptr, nullptr);
+    sp.start(far, glm::vec3(0, 4000, 0));
+    EXPECT_GT(std::abs(run(m, 2)[0]), 0.01f); // beyond the default max, inside the Assignment's
 }
 
 // Lara's footsteps: Selector -> MaterialList picks a different graph per surface material; the bike engine is an

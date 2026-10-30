@@ -224,8 +224,18 @@ static ObjectFx parseFxSections(const cdc::Drm& drm, int ev, int gen, int base, 
                 std::string nm;
                 for (size_t k = name->second.offset; k < s.data.size() && s.data[k]; ++k) nm += char(s.data[k]);
                 auto events = parseEvents(drm, size_t(list19), 4); // u32 header
-                if (std::any_of(events.begin(), events.end(), [](const Event& x) { return x.effect() || x.isSound(); }))
+                if (std::any_of(events.begin(), events.end(), [](const Event& x) { return x.effect() || x.isSound() || x.slotSound(); }))
                     fx.clips.emplace(std::move(nm), std::move(events));
+            }
+        const uint32_t slots = rd<uint32_t>(s.data, 0xA8); // SoundComponent slots {Plex*, i16 segment, i16} (0x58D6A0, 0x593D50)
+        if (const auto arr = ptrs.find(0xAC); arr != ptrs.end() && slots < 256)
+            for (uint32_t i = 0; i < slots; ++i) {
+                const auto& as = drm.sections[arr->second.section];
+                const uint32_t at = arr->second.offset + 8 * i;
+                if (at + 8 > as.data.size()) break;
+                const auto aptrs = arr->second.section == uint32_t(base) ? ptrs : cdc::sectionPointers(drm, arr->second.section);
+                const auto p = aptrs.find(at);
+                fx.soundSlots.push_back({p == aptrs.end() ? cdc::Pointer{~0u, 0} : p->second, rd<int16_t>(as.data, at + 4)});
             }
     }
     if (gen >= 0) {
@@ -661,11 +671,22 @@ int System::startPointSet(const PointSet& set, const glm::mat4& world, int32_t o
     return n;
 }
 
-int System::startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat4& world, int32_t owner) {
+// Event::slotSound -> System::slotSound at the slot's segment (0x593D50 -> 0x5875A0).
+static void runSlotSound(const System& s, const ObjectFx& fx, const Event& e, const glm::mat4& world, int32_t owner, uint8_t material,
+                      std::span<const glm::mat4> bones) {
+    const uint8_t slot = uint8_t(e.cmd.a2 & 0xFF);
+    if (!s.slotSound || slot >= fx.soundSlots.size()) return;
+    s.slotSound(fx, slot, uint8_t(e.cmd.a2 >> 8), owner, glm::vec3((world * fx.frame(fx.soundSlots[slot].segment, bones))[3]), material);
+}
+
+int System::startBirth(const std::shared_ptr<const ObjectFx>& fx, const glm::mat4& world, int32_t owner, bool commands) {
     int n = 0;
     if (!fx) return 0;
     for (const auto& e : fx->events)
-        if (e.effect() && e.event == 0 && !(e.info & 0x3F0)) n += runCommand(fx, e.cmd, world, owner, {}, true);
+        if (e.event == 0 && !(e.info & 0x3F0)) {
+            if (e.effect()) n += commands ? runCommand(fx, e.cmd, world, owner, {}, true) : 0;
+            else if (e.slotSound()) runSlotSound(*this, *fx, e, world, owner, 0, {});
+        }
     return n;
 }
 
@@ -754,6 +775,8 @@ int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vect
         if (e.runsOn(material)) n += runCommand(fx, e.cmd, world, owner, bones);
         else if (sound && fx && e.soundOn(material))
             sound(*fx, e, glm::vec3((world * (e.sound.kind == 3 ? glm::mat4(1) : fx->frame(e.sound.segment, bones)))[3]), material);
+        else if (fx && e.slotSound() && e.matches(material))
+            runSlotSound(*this, *fx, e, world, owner, material, bones);
     }
     return n;
 }
@@ -807,6 +830,7 @@ void System::moveOwner(int32_t owner, const glm::vec3& delta) {
 }
 
 void System::stopOwner(int32_t owner) {
+    if (ownerStopped) ownerStopped(owner);
     for (auto& e : emitters_)
         if (e.owner == owner) e.stopped = true;
     stopId(owner, -1, false);

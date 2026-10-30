@@ -35,6 +35,10 @@ public:
     // A sound record of an animation / one-shot event list (fx::System::sound; AUDIO.md §9.7) at a world position.
     void addObject(const fx::ObjectFx& fx); // its DTPs join the bank, its Waves the mixer (once; animSound does it too)
     void animSound(const fx::ObjectFx& fx, const fx::Event& e, glm::vec3 position, uint8_t material, uint64_t tick);
+    // An instance's SoundComponent slot (fx::System::slotSound; AUDIO.md §9.14): action 0 releases it, 1 starts it unless
+    // it plays, others restart it. ownerGone: the instance left (streamed out, removed); its slots stop.
+    void slotSound(const fx::ObjectFx& fx, uint8_t slot, uint8_t action, int32_t owner, glm::vec3 position, uint8_t material, uint64_t tick);
+    void ownerGone(int32_t owner);
 
 private:
     struct UnitSfx {
@@ -44,6 +48,7 @@ private:
         std::map<std::pair<size_t, size_t>, audio::SoundPlayer::Handle> handles; // (marker, sound)
         std::map<std::string, std::vector<uint32_t>> barks; // enemy chatter DTPs by category ("vo\\enemy\\merc\\b_M11_ADV_g_01": ADV)
     };
+    const audio::Plex* objectPlex(const fx::ObjectFx& fx, cdc::Pointer at); // an inline graph of an object DRM (cached)
     void syncUnits(const game::World& world);
     const cdc::BigfileSet& bf_;
     audio::Mixer& mixer_;
@@ -64,6 +69,7 @@ private:
     std::string lastCondition_;
     std::map<std::tuple<const cdc::Drm*, uint32_t, uint32_t>, std::unique_ptr<audio::Plex>> eventPlex_; // kind-0 graphs
     std::set<const cdc::Drm*> eventDrms_; // object DRMs whose DTPs / Waves joined the bank and the mixer
+    std::map<std::tuple<int32_t, const cdc::Drm*, uint8_t>, audio::SoundPlayer::Handle> slots_; // (owner, object, slot)
     std::mt19937 rng_{0x5B28}; // kind-3 weighted picks (fixed seed: replays repeat)
 };
 
