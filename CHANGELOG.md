@@ -19,6 +19,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - Slides accelerate by gravity along the slope without friction or cap, as tru.exe on the l3_main_bedroom roof (was
   2500 units/s² capped at 1400); a slide running off an edge keeps its descent (test
   `SlideAcceleratesAtGravityAlongSlope`).
+- The follow camera rests where tru.exe's does (Wine): 1261 from a point 462.6 above Lara's feet at pitch −0.0225
+  (was 700 / 450 / −0.25); a looked-up or -down pitch eases back to rest while she moves (no yaw recentring, as
+  tru.exe) (test `CameraRestAndPitchReturn`).
 - The planar reflection pass (GL and Vulkan) draws exterior terrain first and clears the depth after it, as the main
   pass does: panorama cylinders / sky domes no longer occlude reflected geometry.
 - Spline (reveal) cameras of a neighbour unit render: the portal walk starts from the spline's unit, not Lara's; the

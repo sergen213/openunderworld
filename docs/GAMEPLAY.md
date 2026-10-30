@@ -196,7 +196,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Water drag (splash) | velocity × e^(−3 t) | [I] ours |
 | Buoyancy, air/oxygen | none | [U] no buoyancy or air timer found (only `death_drown` exists); not implemented |
 | Fall damage | 0 up to **1280.03**, linear to 500 at **1817.32**, linear to 1000 (= death) at **2215.55**, death above | [O] floats data+0x4C/+0x50/+0x54 and the curve 0x6F1790; height = z on becoming airborne (player +0x6DC, set on FallState entry 0x75C550) − landing z; applied on landing (0x75D080 → 0x702FC0), never scaled by difficulty (Combat below) |
-| Camera | orbit 700 units behind a point 450 above the feet, pitch −1.2..0.7 rad, sphere-swept (r 20) pull-in | [I] ours. [O] LaraCamera (vtable 0x880574) clamps distance at 1000 and has a 300-unit floor in its collision pull-in; defaults are data-driven (`ExplorationCameraResource`) [U] |
+| Camera | **1261** from a point **462.6** above the feet, rest pitch **−0.0225 rad** (camera 1260.8 behind, 491.1 above the feet); while she moves (no vertical look input) the pitch returns to rest at 1.3 /s, at rest it holds; the yaw never swings behind her; pitch −1.2..0.7 rad, sphere-swept (r 20) pull-in. Bike: 1711 [I] | [O-runtime] tru.exe under Wine (l3_main_bedroom start, camera *0xE80534: position +0x40/+0x90, forward +0x30; camst.sh, traces camrec / campitch): rest 1260.8 / 491.1 / pitch −0.0225, look ray 462.6 above her feet at her; idle after a mouse turn or a look down: unchanged; running sideways from a turned camera: no swing behind her (the camera stayed put against the bedroom wall while she circled it; whether it is a drag camera in the open [U]); running forward after a look down to −1.05: pitch −0.47 / −0.34 / −0.25 / −0.17 / −0.10 at 1.0 / 1.3 / 1.6 / 1.9 / 2.3 s (fitted 1.3 /s). [I] the 200-unit teleport guard, the clamp, the probe radius. [O] LaraCamera (vtable 0x880574) clamps distance at 1000 and has a 300-unit floor in its collision pull-in [the runtime rest distance exceeds that clamp: U]; defaults are data-driven (`ExplorationCameraResource`) |
 | FOV | config / `--fov` (default 60° vertical, Hor+) | [O] BaseCamera ctor 0x5E1B60 defaults fov to π/2; the game's exploration FOV is data-driven [U] |
 
 ### Lara's player data (lara.drm) [O]
@@ -1193,6 +1193,8 @@ dummy from the hip hold, and a health pack picked up after an 1800-unit drop (51
   `PoleGrabSwingFlingDrop`, `TraversalIndependentOfRenderRate` (pole grab/fling/drop script bit-identical at
   30/60/144 Hz), `CrouchUnderSlabAndRoll` (crawls under a 350-high slab, stays crouched under it, stands past it; roll
   root motion), `SlidesDownSteepSlope` (normal z 0.45: slides > 1000 units/s, stops on the flat).
+  `JumpTakeOffsMatchTruTraces` (standing / stick / running / back / side take-offs, apex 201.6 and 158 against the
+  tru.exe Wine traces), `CameraRestAndPitchReturn`, `SwimSpeedMatchesTru`, `SlideAcceleratesAtGravityAlongSlope`.
 - `GameReal.*` (gated by `OU_GAME_DIR`): the clips load, `ng_run` root speed 1274 ± 5 units/s, hand anchor; l4_pool:
   `'player'` spawn, 1.5 s run replay never below the floor and covers 50–105 % of the same replay on a flat floor; jump
   from the lower floor grabs ledge 1253 (hands at z 3562) and climbs onto the rock top (z 3571 ± 1, end snap < 10).
@@ -1244,8 +1246,9 @@ No side-by-side comparison with the original game was made.
 
 ## Deviations and open questions
 
-- Jump velocities, step limits, swim speed, camera distance/height, all traversal reach boxes and the jump-assist radius
-  are inferred; they are not in Lara's player data block (Numbers) [U]. The grab zVel window, height, crouch height and
+- Jump take-offs, step limits, swim speed, slides, the capsule and the camera rest pose are measured in tru.exe under
+  Wine (Numbers); traversal reach boxes and the jump-assist radius are inferred; none are in Lara's player data block
+  (Numbers) [U]. The grab zVel window, height, crouch height and
   water probe are taken from it.
 - Swimming: oxygen/drowning are implemented with inferred rates (45 s / refill 2 s / max-per-6 s; no exe numbers).
   Still missing: wading clip (`swim_wading`), surface turn clips, underwater fast/sprint, swim damage from other

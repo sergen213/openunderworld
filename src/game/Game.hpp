@@ -304,7 +304,7 @@ private:
 // ---- camera -----------------------------------------------------------------------------------
 struct CameraState {
     vec3 position{0}, target{0};
-    float yaw = 0, pitch = -0.25f; // orbit angles; camera looks along yaw/pitch
+    float yaw = 0, pitch = -0.0225f; // orbit angles; camera looks along yaw/pitch (tru.exe's rest pitch)
     vec3 up{0, 0, 1};              // spline cameras roll
     float fovDeg = 0;              // vertical; 0 = World::fovDeg (spline cameras use their own)
 };

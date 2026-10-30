@@ -211,6 +211,25 @@ TEST(Game, JumpTakeOffsMatchTruTraces) {
     EXPECT_NEAR(h, 40.0f * 30, 1);
 }
 
+// tru.exe camera (Wine, l3_main_bedroom start; camst.sh / campitch traces): at rest 1260.8 behind and 491.1 above
+// her feet, pitch -0.0225; while she moves a looked-down pitch eases back to rest (-0.342 -> -0.103 in 1 s), at rest
+// it holds.
+TEST(Game, CameraRestAndPitchReturn) {
+    CollisionMesh m;
+    addFloor(m, -20000, -20000, 20000, 20000, 0);
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    for (int i = 0; i < 10; ++i) w->tick({});
+    const auto& c = w->camera();
+    EXPECT_NEAR(glm::length(glm::vec2(c.position)), 1260.8f, 2);
+    EXPECT_NEAR(c.position.z, 491.1f, 2);
+    EXPECT_NEAR(c.position.x, -1260.8f, 2) << "behind her";
+    w->restore(w->player().state(), c.yaw, -1.0f);
+    for (int i = 0; i < 60; ++i) w->tick({});
+    EXPECT_NEAR(c.pitch, -1.0f, 1e-4);
+    for (int i = 0; i < 60; ++i) w->tick(forward());
+    EXPECT_NEAR(c.pitch, -0.0225f + (-1.0f + 0.0225f) * std::exp(-1.3f), 0.03f);
+}
+
 // tru.exe swimming (Wine, l2_cliffclimb sea, swim_l2b.txt): 44.95 units per 30 Hz frame at full stick, reached
 // ~0.7 s after the press; about half speed 0.2 s after the release.
 TEST(Game, SwimSpeedMatchesTru) {

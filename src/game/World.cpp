@@ -403,18 +403,25 @@ void World::tick(const Actions& input) {
     if (!units_.empty()) checkLevelEnd(); // last: a chapter change re-spawns Lara (enterUnit)
 }
 
-// Orbit camera around a point above Lara's root; pulled in along the view ray when level geometry is
-// in the way. Distance/height/pitch limits are inferred (docs/GAMEPLAY.md).
+// Orbit camera around a point above Lara's root; pulled in along the view ray when level geometry is in the way.
+// tru.exe under Wine (camera *0xE80534: position +0x40, forward +0x30): at rest 1261 from a point 462.6 above her
+// feet, pitch -0.0225 rad; while she moves its pitch eases back to rest (rate fitted to the trace), at rest it holds.
+// Its yaw does not swing behind her (idle or running sideways); how it follows otherwise is not modelled [U].
 void World::updateOrbitCamera(const Actions& a, float dt) {
-    constexpr float kTargetHeight = 450.0f, kProbeRadius = 20.0f;
+    constexpr float kTargetHeight = 462.6f, kProbeRadius = 20.0f, kPitchReturn = 1.3f;
+    const float kRestPitch = CameraState{}.pitch;
     const Bike* bike = ridden();
-    const float kDistance = bike ? 950.0f : 700.0f; // [I] VehicleCamera pulls back on the bike
+    const float kDistance = bike ? 1711.0f : 1261.0f; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
+    const vec3 target = player_.state().pos + vec3(0, 0, kTargetHeight);
+    const float moved = glm::length(vec2(target - cam_.target)); // not across jumps (teleports, spline cameras ending)
+    if (dt > 0 && a.look.y == 0 && moved > 1e-3f && moved < 200.0f)
+        cam_.pitch += (kRestPitch - cam_.pitch) * (1 - std::exp(-kPitchReturn * dt));
     cam_.yaw += a.look.x * dt;
     // [I] riding without looking: swing behind the bike, faster the faster it goes
     if (bike && bike->phase == BikePhase::Ride && a.look.x == 0 && bike->speed > 0)
         cam_.yaw = lerpAngle(cam_.yaw, bike->yaw, std::min(1.0f, dt * 3.0f * std::min(1.0f, bike->speed / 1500.0f)));
     cam_.pitch = std::clamp(cam_.pitch + a.look.y * dt, -1.2f, 0.7f);
-    cam_.target = player_.state().pos + vec3(0, 0, kTargetHeight);
+    cam_.target = target;
     const vec3 dir(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw), std::sin(cam_.pitch));
     const vec3 back = -dir * kDistance;
     float f = 1;
