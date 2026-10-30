@@ -6,6 +6,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-30
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
 - Lara's jump take-offs are tru.exe's, measured under Wine: standing 1441 up (apex 201.6), with the stick 1499 up +
   1200 along it (leaving at 0.26 s), running 1276 up + 1975 forward (was 1803 up, 637 / 1274 forward); the stick
   behind her turns her round into the running jump, to a side a standing jump that way. Poles are caught rising or
