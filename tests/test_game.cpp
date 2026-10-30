@@ -2194,6 +2194,16 @@ TEST(GameReal, UnitWeatherSurvey) {
         const auto drm = cdc::parseDrm(*bytes);
         if (const auto w = game::unitWeather(names, drm); w.kind != game::Precipitation::None) weather[name] = w;
     }
+    // Coverage: inside a measured source's column only; unmeasured sources cover the unit.
+    const auto& val = weather.at("l5_valaskjalf");
+    EXPECT_EQ(val.sources.size(), 8u);
+    game::UnitWeather w = val;
+    for (auto& s : w.sources) s.radius = 3161, s.depth = 8861;
+    const glm::vec3 a = w.sources[0].position;
+    EXPECT_FLOAT_EQ(game::weatherCoverage(w, a - glm::vec3(0, 0, 1000)), 1.0f);
+    EXPECT_FLOAT_EQ(game::weatherCoverage(w, a + glm::vec3(0, 0, 20000)), 0.0f);      // above every emitter
+    EXPECT_FLOAT_EQ(game::weatherCoverage(w, a + glm::vec3(1e6f, 0, 0)), 0.0f);      // outside every column
+    EXPECT_FLOAT_EQ(game::weatherCoverage(val, a + glm::vec3(1e6f, 0, 0)), 1.0f);    // unmeasured: whole unit
     std::string got;
     for (const auto& [u, w] : weather)
         got += u + (w.kind == game::Precipitation::Snow ? " snow " : " rain ") + std::to_string(int(w.intensity * 100)) + "\n";

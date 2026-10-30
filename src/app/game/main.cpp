@@ -1523,6 +1523,7 @@ int main(int argc, char** argv) {
     if (const auto list = bigfile->read("\\tr8\\pc-w\\objectlist.txt"))
         objectNames = ou::formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
     std::map<std::string, ou::game::UnitWeather> unitWeathers;
+    std::optional<ou::fx::Library> weatherFx; // the weather objects' particle definitions (their columns)
     float shelter = 0;
     const auto& sp = world->player().state();
     std::fprintf(stderr, "ou-game: %s | chapter %d | spawn %s at %.1f %.1f %.1f yaw %.1f\n", world->currentUnit().data.name.c_str(),
@@ -2332,11 +2333,27 @@ int main(int argc, char** argv) {
             using P = ou::game::Precipitation;
             ou::game::UnitWeather uw{opt.gfx.weather == 2 ? P::Rain : P::Snow, opt.gfx.weather == 2 ? 0.8f : 1.0f};
             if (opt.gfx.weather == 1) {
-                const auto& u = world->currentUnit().data;
+                const auto& unit = world->currentUnit();
+                const auto& u = unit.data;
                 auto it = unitWeathers.find(u.name);
-                if (it == unitWeathers.end())
-                    it = unitWeathers.emplace(u.name, u.drm ? ou::game::unitWeather(objectNames, *u.drm) : ou::game::UnitWeather{}).first;
-                uw = it->second;
+                if (it == unitWeathers.end()) {
+                    auto found = u.drm ? ou::game::unitWeather(objectNames, *u.drm) : ou::game::UnitWeather{};
+                    // Each source's column: how far its particles spread sideways and fall within their life
+                    // (per 30 Hz frame velocities x life frames, docs/formats/EFFECTS.md).
+                    if (!weatherFx) weatherFx.emplace(*bigfile);
+                    for (auto& s : found.sources)
+                        if (const auto fx = weatherFx->get(s.object))
+                            for (const auto& p : fx->particles) {
+                                if (p.rate == 0) continue;
+                                const float life = float(p.life);
+                                s.radius = std::max(s.radius, p.radiusMax + std::hypot(p.offset.x, p.offset.y) +
+                                                                  std::hypot(p.velocity.x, p.velocity.y) * life);
+                                s.depth = std::max(s.depth, p.radiusMax - p.offset.z + std::max(0.0f, -p.velocity.z) * life);
+                            }
+                    it = unitWeathers.emplace(u.name, std::move(found)).first;
+                }
+                uw.kind = it->second.kind;
+                uw.intensity = it->second.intensity * ou::game::weatherCoverage(it->second, cam.position - unit.offset);
             }
             const bool roof = world->collision().raycast(cam.position, {0, 0, 1}, 3000.0f).has_value();
             shelter += (float(roof) - shelter) * (1.0f - std::exp(-3.0f * float(dt))); // same fade at any render rate
