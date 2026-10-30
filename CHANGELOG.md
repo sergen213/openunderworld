@@ -6,6 +6,8 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- `tools/release.sh` no longer runs the test suite by default (releases are hand-tested; `--test` runs the full Debug + ASan ctest) and reuses an incremental Release build in `build-release/appimage`: the AppImage step takes ~11 s after a small change instead of the ~35 min test run plus a full rebuild.
+
 ## [0.13.0] - 2026-10-30
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

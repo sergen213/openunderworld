@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# One-command signed release of the pushed HEAD of main: tools/release.sh [--dry-run]
+# One-command signed release of the pushed HEAD of main: tools/release.sh [--dry-run] [--test]
 #   1. checks: signing key, HEAD == origin/main, tag/release absent, CHANGELOG section present
-#   2. clean detached worktree of HEAD (uncommitted work in your tree is never released)
-#   3. full ctest (Debug + ASan/UBSan; real-data tests run when OU_GAME_DIR is set)
-#   4. tag vX.Y.Z, build the AppImage, smoke it, ou-sign manifest + sign + verify
+#   2. clean detached worktree of HEAD at build-release/src (uncommitted work in your tree is never released)
+#   3. only with --test (or OU_RELEASE_TESTS=1): full ctest (Debug + ASan/UBSan; real-data tests with OU_GAME_DIR).
+#      Default skips it: the user hand-tests releases, the script only ships them.
+#   4. tag vX.Y.Z, build the AppImage (incremental Release build in build-release/appimage), smoke it,
+#      ou-sign manifest + sign + verify
 #   5. push the tag, gh release create, download the assets back and verify them
 # --dry-run stops after step 4 and deletes the local tag. The secret key never leaves
 # ~/.config/openunderworld-signing. Bump project(VERSION) + CHANGELOG.md first. Notes: docs/RELEASING.md.
@@ -12,8 +14,10 @@ set -euo pipefail
 REPO=sergen213/openunderworld
 SRC="$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)"
 KEY_DIR="${OU_SIGNING_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/openunderworld-signing}"
-DRY=0
-[ "${1:-}" = "--dry-run" ] && DRY=1
+DRY=0 TESTS="${OU_RELEASE_TESTS:-0}"
+for a in "$@"; do
+  case "$a" in --dry-run) DRY=1 ;; --test) TESTS=1 ;; *) echo "usage: tools/release.sh [--dry-run] [--test]" >&2; exit 2 ;; esac
+done
 die() { echo "release: $*" >&2; exit 1; }
 say() { echo "== $*"; }
 # Heavy steps get a memory cap where systemd user scopes exist (workstation OOM protection).
@@ -46,31 +50,37 @@ fi
 WORK="$SRC/build-release/$TAG"
 TAGGED=0
 cleanup() {
-  git -C "$SRC" worktree remove --force "$WORK/src" 2>/dev/null || true
+  git -C "$SRC" worktree remove --force "$SRC/build-release/src" 2>/dev/null || true
   if [ "$TAGGED" = 1 ]; then git -C "$SRC" tag -d "$TAG" >/dev/null; echo "release: removed local tag $TAG"; fi
 }
 trap cleanup EXIT
 rm -rf "$WORK"
 mkdir -p "$WORK"
+git worktree remove --force "$SRC/build-release/src" 2>/dev/null || true
 git worktree prune
-git worktree add -q --detach "$WORK/src" HEAD
-[ -z "$(git -C "$WORK/src" status --porcelain)" ] || die "release worktree is not clean"
+# A fixed source path keeps build-release/appimage's CMake cache valid, so each release rebuilds only what changed.
+git worktree add -q --detach "$SRC/build-release/src" HEAD
+[ -z "$(git -C "$SRC/build-release/src" status --porcelain)" ] || die "release worktree is not clean"
 
-# ---- 3. tests --------------------------------------------------------------------------------------------
-say "ctest (Debug + ASan/UBSan) on $(git rev-parse --short HEAD)"
-[ -n "${OU_GAME_DIR:-}" ] || echo "note: OU_GAME_DIR unset, real-data tests will skip"
-heavy cmake -S "$WORK/src" -B "$WORK/test" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOU_SANITIZE=ON >/dev/null
-heavy cmake --build "$WORK/test" -j "${OU_JOBS:-12}" >/dev/null
-QT_QPA_PLATFORM=offscreen OU_DISABLE_UPDATES=1 heavy ctest --test-dir "$WORK/test" --output-on-failure \
-  > "$WORK/ctest.log" 2>&1 || { tail -40 "$WORK/ctest.log"; die "ctest failed (log: $WORK/ctest.log)"; }
-grep -E 'tests passed|tests failed' "$WORK/ctest.log"
+# ---- 3. tests (opt-in) -----------------------------------------------------------------------------------
+if [ "$TESTS" = 1 ]; then
+  say "ctest (Debug + ASan/UBSan) on $(git rev-parse --short HEAD)"
+  [ -n "${OU_GAME_DIR:-}" ] || echo "note: OU_GAME_DIR unset, real-data tests will skip"
+  heavy cmake -S "$SRC/build-release/src" -B "$SRC/build-release/test" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOU_SANITIZE=ON >/dev/null
+  heavy cmake --build "$SRC/build-release/test" -j "${OU_JOBS:-12}" >/dev/null
+  QT_QPA_PLATFORM=offscreen OU_DISABLE_UPDATES=1 heavy ctest --test-dir "$SRC/build-release/test" --output-on-failure \
+    > "$WORK/ctest.log" 2>&1 || { tail -40 "$WORK/ctest.log"; die "ctest failed (log: $WORK/ctest.log)"; }
+  grep -E 'tests passed|tests failed' "$WORK/ctest.log"
+else
+  say "tests skipped (hand-test the AppImage; --test runs the full ctest)"
+fi
 
 # ---- 4. tag, AppImage, signed manifest ------------------------------------------------------------------
 git tag -a "$TAG" -m "OpenUnderworld $VERSION" HEAD
 TAGGED=1
 say "AppImage $VERSION"
 DIST="$WORK/dist"
-OU_APPIMAGE_BUILD_DIR="$WORK/appimage" heavy "$WORK/src/packaging/appimage/build-appimage.sh" "$DIST" > "$WORK/appimage.log" 2>&1 \
+OU_APPIMAGE_BUILD_DIR="$SRC/build-release/appimage" heavy "$SRC/build-release/src/packaging/appimage/build-appimage.sh" "$DIST" > "$WORK/appimage.log" 2>&1 \
   || { tail -40 "$WORK/appimage.log"; die "AppImage build failed (log: $WORK/appimage.log)"; }
 APPNAME="OpenUnderworld-$VERSION-x86_64.AppImage"
 APP="$DIST/$APPNAME"

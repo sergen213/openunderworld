@@ -62,7 +62,7 @@ All run from a copy in `/tmp/ou-apptest.*` under `env -i HOME=<tmp> XDG_RUNTIME_
 - [O] `OU.AppImage tools`, `sign` and `--version` (`ou-launcher 0.1.0`).
 - [U] Other distributions: not tried. Expect failures on hosts with an older glibc/libstdc++ than Arch's.
 
-## Signed release: `tools/release.sh [--dry-run]`
+## Signed release: `tools/release.sh [--dry-run] [--test]`
 
 Before running it:
 1. Bump `project(OpenUnderworld VERSION X.Y.Z)` in `CMakeLists.txt`.
@@ -75,8 +75,8 @@ The script:
    - `HEAD == origin/main`;
    - tag and release do not exist yet;
    - `CHANGELOG.md` has the version's section.
-2. Releases a clean detached `git worktree` of `HEAD` in `build-release/vX.Y.Z/src`. Uncommitted changes in your tree are listed and **excluded**; other people's work in progress never ships.
-3. Runs the full ctest in a Debug + ASan/UBSan build. Real-data tests run when `OU_GAME_DIR` is set.
+2. Releases a clean detached `git worktree` of `HEAD` in `build-release/src` (a fixed path, so the Release build in `build-release/appimage` stays configured and only rebuilds what changed since the last release). Uncommitted changes in your tree are listed and **excluded**; other people's work in progress never ships. Logs and the dist files go to `build-release/vX.Y.Z/`.
+3. Tests are **off by default**: the maintainer hand-tests each AppImage. `--test` (or `OU_RELEASE_TESTS=1`) runs the full ctest in a Debug + ASan/UBSan build in `build-release/test` (real-data tests when `OU_GAME_DIR` is set; ~35 min).
 4. Tags `vX.Y.Z` (annotated, local), then builds the AppImage from the worktree. The version is exactly `X.Y.Z` because `git describe` sits on the tag. It smoke-runs `--self-test` and `game --help`.
 5. Makes the manifest: `ou-sign manifest --version X.Y.Z --channel stable --changelog <section> --base-url https://github.com/sergen213/openunderworld/releases/download/vX.Y.Z/ payload/`. The payload is the AppImage only, a project-owned file.
 6. Signs and verifies:
