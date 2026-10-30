@@ -6,6 +6,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-30
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
 - Prologue: Lara climbs onto low ledges. Running or walking into a ledge 110..340 above her feet (the corridor's
   253-high debris slab) plays tru.exe's hurdle clips (`hurdle_low_onto` / `_100` running, `hurdle_onto` walking), the
   rise scaled to the ledge; the original does it without a jump in 0.27 s (Wine trace). Since the measured jump
