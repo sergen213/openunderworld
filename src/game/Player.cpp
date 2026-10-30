@@ -523,11 +523,12 @@ bool Player::canClimbUp() const {
 
 // Hurdle onto a low ledge (markup 1) from the ground. tru.exe under Wine (new game, l3_main_bedroom): running down the
 // corridor into the 253-high debris slab (ledge 974, 34 degrees off square), she climbs onto it without a jump: the
-// climb starts with the root ~64 in front of the ledge line, takes 0.27 s, rises exactly onto the ledge height and
-// carries ~220 forward; the 121-unit hearth (no ledge markup) stays a wall. Clips: hurdle_low_onto (rise 162.7) and
-// hurdle_low_onto_100 (316.1), 0.3 s, running; hurdle_onto (317.3, 0.8 s) from a walk or standing [I]. The nearest
-// rise plays, its root rise scaled to the ledge (State::ClimbUp). [I] heights stepUp..340, the root within radius + 40
-// of the line, facing it within 53 degrees, a walkable floor within 40 of the ledge where the clip ends.
+// climb starts with the root ~64 in front of the ledge line, moved ~50 along it (away from the slab's corner), takes
+// 0.27 s, rises exactly onto the ledge height and carries ~220 forward; the 121-unit hearth (no ledge markup) stays a
+// wall. Clips: hurdle_low_onto (rise 162.7) and hurdle_low_onto_100 (316.1), 0.3 s, running; hurdle_onto (317.3, 0.8 s)
+// from a walk or standing [I]. The nearest rise plays, its root rise scaled to the ledge (State::ClimbUp). [I] heights
+// stepUp..340, the root within radius + 40 of the line, facing it within 53 degrees, a walkable floor within 40 of the
+// ledge where the clip ends, from where she is or moved up to 100 along the ledge (the nearest such start).
 bool Player::tryHurdle(bool running) {
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
@@ -542,10 +543,18 @@ bool Player::tryHurdle(bool running) {
         const std::string_view clip = !running ? "hurdle_onto" : h < 240.0f ? "hurdle_low_onto" : "hurdle_low_onto_100";
         const anim::Clip* c = anims_.find(clip);
         if (!c) continue;
-        const vec2 end = xy(s_.pos + toWorld(rootTranslation(*c, c->durationSeconds(), false) - rootTranslation(*c, 0, false)));
-        const auto g = col_.groundProbe(vec3(end, o.q.z + 100), 140);
-        if (!g || g->normal.z < t_.minFloorNormalZ || std::abs(g->point.z - o.q.z) > 40) continue;
-        s_.ledge = int(li), s_.ledgeSeg = o.seg, s_.ledgeT = o.t, s_.ledgeSide = 1;
+        const vec3 move = toWorld(rootTranslation(*c, c->durationSeconds(), false) - rootTranslation(*c, 0, false));
+        const auto supported = [&](float along) {
+            const float u = o.u + along;
+            if (u < 0 || u > segLen(m, o.seg)) return false;
+            const auto g = col_.groundProbe(vec3(xy(s_.pos + move) + segDir(m, o.seg) * along, o.q.z + 100), 140);
+            return g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - o.q.z) <= 40;
+        };
+        float along = 0;
+        while (!supported(along) && along > -100.0f) along = along > 0 ? -along : 25.0f - along; // 0, 25, -25, 50, ...
+        if (!supported(along)) continue;
+        s_.pos += vec3(segDir(m, o.seg) * along, 0);
+        s_.ledge = int(li), s_.ledgeSeg = o.seg, s_.ledgeT = std::clamp(o.t + along, 0.0f, segLen(m, o.seg)), s_.ledgeSide = 1;
         s_.vel = vec3(0);
         s_.state = State::ClimbUp;
         play(clip, false);

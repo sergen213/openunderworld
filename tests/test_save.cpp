@@ -860,11 +860,13 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
     EXPECT_NEAR(s.yaw, -1.5708f, 0.05f);
     EXPECT_GT(w->camera().position.y - s.pos.y, 1000.0f) << "camera behind her, looking down the corridor";
     EXPECT_NEAR(w->camera().position.x, s.pos.x, 50.0f);
-    // Run down the corridor onto the slab.
+    // Run down the corridor onto the slab, the stick straight forward (the camera stays behind her).
     int climbTicks = 0;
     bool hurdled = false;
-    for (int t = 0; t < 400 && s.pos.y > 150; ++t) {
-        toward(*w, {-4264, -500});
+    game::Actions run;
+    run.move = {0, 1};
+    for (int t = 0; t < 400 && !(hurdled && s.state != game::State::ClimbUp); ++t) {
+        w->tick(run);
         ASSERT_NE(s.state, game::State::Fall) << "tick " << t << " at " << s.pos.x << "," << s.pos.y;
         if (s.state == game::State::ClimbUp) hurdled |= s.clip == "hurdle_low_onto_100", ++climbTicks;
     }
