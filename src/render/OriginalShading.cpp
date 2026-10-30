@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -25,7 +26,8 @@ constexpr int kLutWidth = 256, kLutRows = 128, kFogRow = 96, kLightRow = 0;
 } // namespace
 
 glm::mat4 viewProjD3D(const Camera& camera, float aspect) {
-    return camera.jittered(glm::perspectiveRH_ZO(glm::radians(camera.verticalFovDeg), aspect, camera.nearZ, camera.farZ)) * camera.view();
+    return camera.clipped(camera.jittered(glm::perspectiveRH_ZO(glm::radians(camera.verticalFovDeg), aspect, camera.nearZ, camera.farZ)), true) *
+           camera.view();
 }
 
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env, bool flipY,
@@ -294,6 +296,44 @@ uint32_t screenSamplers(const scene::Material& mat, std::span<const uint32_t> in
         if ((s.source == 1 && s.cls == 10) || (readsDepth && unsupplied && s.cls == 3)) mask |= 1u << (16 + s.reg);
     }
     return mask;
+}
+
+uint32_t reflectionSamplers(const scene::Material& mat) {
+    uint32_t mask = 0;
+    for (const auto& s : mat.samplers)
+        if (s.reg < 16 && s.source == 1 && s.cls == 5) mask |= 1u << s.reg;
+    return mask;
+}
+
+float reflectionPlaneZ(const scene::MeshData& m, const glm::mat4& model,
+                       const std::unordered_map<uint32_t, const scene::Material*>& materials) {
+    double z = 0;
+    size_t n = 0;
+    for (const auto& s : m.submeshes) {
+        const auto it = materials.find(s.materialId);
+        if (it == materials.end() || !reflectionSamplers(*it->second)) continue;
+        for (uint32_t i = s.firstIndex; i < s.firstIndex + s.indexCount && i < m.indices.size(); ++i, ++n)
+            z += (model * glm::vec4(glm::make_vec3(m.vertices[m.indices[i]].position), 1.0f)).z;
+    }
+    return n ? float(z / double(n)) : std::numeric_limits<float>::quiet_NaN();
+}
+
+Reflection reflection(const Camera& camera, float aspect, float planeZ, bool flipY) {
+    Reflection r;
+    Camera& m = r.camera;
+    m = camera;
+    m.position.z = 2.0f * planeZ - camera.position.z;
+    m.pitch = -camera.pitch;
+    m.jitter = glm::vec2(0.0f);
+    m.clipPlane = glm::vec4(0, 0, 1, -planeZ);
+    // InstanceParams 0-2 (0x5CE800 -> 0x5C5B80) hold the columns of a 3x3 map: q = R.x c132 + R.y c133 + R.z c134 of
+    // the reflected eye ray R, uv = q.xy / q.z on the reflection target. The mirror camera sees along R what the plane
+    // reflects there.
+    const glm::mat4 pv = m.projection(aspect) * m.view();
+    auto row = [&](int i) { return glm::vec3(pv[0][i], pv[1][i], pv[2][i]); };
+    const glm::vec3 rows[3] = {0.5f * (row(0) + row(3)), 0.5f * ((flipY ? 1.0f : -1.0f) * row(1) + row(3)), row(3)};
+    for (int c = 0; c < 3; ++c) r.rows[c][0] = rows[0][c], r.rows[c][1] = rows[1][c], r.rows[c][2] = rows[2][c], r.rows[c][3] = 0;
+    return r;
 }
 
 } // namespace ou::render::original

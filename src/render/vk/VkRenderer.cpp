@@ -22,7 +22,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
@@ -276,6 +278,7 @@ struct GpuMesh {
     glm::mat4 model;
     glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;    // world-space bounding-sphere radius (original::lightSet)
+    float reflectZ = std::numeric_limits<float>::quiet_NaN(); // original::reflectionPlaneZ (NaN: nothing reflects)
     // Ray tracing (empty without RT support): one BLAS geometry per traced submesh (Opaque + Alpha
     // blends, as the shadow map). Skinned meshes are refitted, others rebuilt, on updateVertices.
     bool skinned = false, water = false;
@@ -777,13 +780,9 @@ public:
         ri.colorAttachmentCount = 1;
         ri.pColorAttachments = &color;
         ri.pDepthAttachment = &depth;
-        vkCmdBeginRendering(cmd, &ri);
-
         // Negative height flips Y so GL-convention clip space and CCW front faces carry over unchanged.
         const VkViewport flipped{0, float(extent_.height), float(extent_.width), -float(extent_.height), 0, 1};
         const VkRect2D scissor{{0, 0}, extent_};
-        vkCmdSetViewport(cmd, 0, 1, &flipped);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         VkPipeline bound = VK_NULL_HANDLE;
         uint32_t boundMesh = UINT32_MAX;
@@ -795,9 +794,10 @@ public:
             boundMesh = mesh;
         };
         int scissorClip = -1; // the portal clip set as the scissor (-1: the whole target)
+        bool portalClips = true; // off in the reflection pass (the clips are the camera's)
         auto clipTo = [&](uint32_t mesh) {
             const int c = mesh < meshClip_.size() ? meshClip_[mesh] : -1;
-            if (c == scissorClip) return;
+            if (!portalClips || c == scissorClip) return;
             scissorClip = c;
             const VkRect2D r = clipScissor(mesh);
             vkCmdSetScissor(cmd, 0, 1, &r);
@@ -805,7 +805,9 @@ public:
         // Original Fidelity: translated TRU shaders where a submesh's material has them, with the sun shadow / RT hooks.
         const bool originals = options.originalShaders && !origPrograms_.empty();
         if (originals) warmOriginalPipelines(rtOn, shadowMap, options.rt == RayTracing::Full);
-        const glm::mat4 viewProjD3D = original::viewProjD3D(camera, aspect);
+        glm::mat4 viewProjD3D = original::viewProjD3D(camera, aspect);
+        VkDescriptorSet frameSet = origFrameSet_[frameIndex_];
+        std::optional<original::Reflection> reflection; // the planar reflection the reflecting draws sample this frame
         if (originals) {
             sm3::FrameBlock fb;
             original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_, false,
@@ -824,7 +826,7 @@ public:
         auto drawOriginal = [&](const DrawRef& d, const OrigDraw& od, VkPipeline p) {
             if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
             if (layout != Bound::Original) {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 0, 1, &origFrameSet_[frameIndex_], 0, nullptr);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 0, 1, &frameSet, 0, nullptr);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 2, 1, &shadowSets_[frameIndex_], 0, nullptr);
                 if (rtOn) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 3, 1, &rtSet_, 0, nullptr);
                 layout = Bound::Original;
@@ -838,6 +840,7 @@ public:
             auto& [stamp, lights] = meshLights_[d.mesh];
             if (stamp != frameCounter_ + 1) stamp = frameCounter_ + 1, lights = original::lightSet(environment_, m.center, m.radius);
             original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
+            if (reflection && od.reflection) std::memcpy(ob.inst, reflection->rows, sizeof ob.inst);
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);
             clipTo(d.mesh);
@@ -848,6 +851,99 @@ public:
             const OrigDraw* od = originals ? &origDraws_[d.mesh][d.sub] : nullptr;
             return od && od->program >= 0 ? od : nullptr;
         };
+        // Planar reflection (original::reflection): the plane of the nearest drawn reflecting submesh, with the camera above
+        // it; the scene except the water surfaces and the screen / reflection readers, seen from the mirrored camera, into
+        // reflColor_ (half size).
+        float planeZ = 0, nearest = std::numeric_limits<float>::max();
+        for (const DrawRef& d : order_)
+            if (const OrigDraw* od = origDraw(d); od && od->reflection) {
+                const GpuMesh& m = meshes_[d.mesh];
+                if (const float dist = glm::distance(m.center, camera.position) - m.radius; dist < nearest) nearest = dist, planeZ = m.reflectZ;
+            }
+        if (nearest < std::numeric_limits<float>::max() && camera.position.z > planeZ) {
+            reflection = original::reflection(camera, aspect, planeZ, false);
+            const VkExtent2D half{std::max(1u, extent_.width / 2), std::max(1u, extent_.height / 2)};
+            sm3::FrameBlock fb;
+            original::fillFrame(fb, reflection->camera, {int(half.width), int(half.height)}, options.time, environment_, false,
+                                options.underwater);
+            std::memcpy(reflFrameUbo_[frameIndex_].mapped, &fb, sizeof fb);
+            std::vector<VkImageMemoryBarrier2> rb = {
+                imageBarrier(reflColor_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, kColorOut,
+                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT),
+                imageBarrier(reflDepth_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, kDepthStages,
+                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kDepthStages,
+                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                             VK_IMAGE_ASPECT_DEPTH_BIT),
+            };
+            if (reflMsColor_.image)
+                rb.push_back(imageBarrier(reflMsColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                          kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kColorOut,
+                                          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT));
+            barriers(cmd, rb);
+            VkRenderingAttachmentInfo rc = color;
+            rc.imageView = reflMsColor_.image ? reflMsColor_.view : reflColor_.view;
+            rc.storeOp = reflMsColor_.image ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+            rc.resolveImageView = reflMsColor_.image ? reflColor_.view : VK_NULL_HANDLE; // color resolves only with MSAA
+            VkRenderingAttachmentInfo rd{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            rd.imageView = reflDepth_.view;
+            rd.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            rd.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            rd.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            rd.clearValue.depthStencil = {1.0f, 0};
+            VkRenderingInfo rri = ri;
+            rri.renderArea = {{0, 0}, half};
+            rri.pColorAttachments = &rc;
+            rri.pDepthAttachment = &rd;
+            vkCmdBeginRendering(cmd, &rri);
+            const VkViewport hv{0, float(half.height), float(half.width), -float(half.height), 0, 1};
+            const VkRect2D hs{{0, 0}, half};
+            vkCmdSetViewport(cmd, 0, 1, &hv);
+            vkCmdSetScissor(cmd, 0, 1, &hs);
+            viewProjD3D = original::viewProjD3D(reflection->camera, aspect);
+            frameSet = reflFrameSet_[frameIndex_];
+            portalClips = false;
+            ScenePush rp = push;
+            rp.viewProj = zRemap * reflection->camera.projection(aspect) * reflection->camera.view();
+            rp.rt = 0;
+            for (const DrawRef& d : order_) {
+                const GpuMesh& m = meshes_[d.mesh];
+                const scene::SubMesh& s = m.submeshes[d.sub];
+                if (m.water) continue;
+                const scene::Blend blend = drawBlend(s, opacityOf(d.mesh));
+                if (const OrigDraw* od = origDraw(d)) {
+                    if (!od->screen && !od->reflection)
+                        drawOriginal(d, *od, origPipeline(od->program, shadowMap ? kOrigShadowMap : kOrigPlain, blend));
+                    continue;
+                }
+                useGeneric();
+                const VkPipeline p = scenePipelines_[size_t(blend)];
+                if (p != bound) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
+                bindMesh(d.mesh);
+                rp.model = m.model;
+                rp.alphaRef = s.alphaRef / 255.0f;
+                rp.opacity = s.blend == scene::Blend::Opaque ? -opacityOf(d.mesh) : opacityOf(d.mesh);
+                vkCmdPushConstants(cmd, sceneLayout_, kPushStages, 0, sizeof rp, &rp);
+                vkCmdSetCullMode(cmd, options.cullBackFaces && !s.doubleSided ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+                const VkDescriptorSet set = textureSet(s.textureId);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
+                vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+            }
+            vkCmdEndRendering(cmd);
+            const VkImageMemoryBarrier2 toRead = imageBarrier(reflColor_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut,
+                                                              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                                                              VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            barriers(cmd, {&toRead, 1});
+            viewProjD3D = original::viewProjD3D(camera, aspect);
+            frameSet = origFrameSet_[frameIndex_];
+            portalClips = true;
+            layout = Bound::None; // the frame set changes back
+        }
+        vkCmdBeginRendering(cmd, &ri);
+        vkCmdSetViewport(cmd, 0, 1, &flipped);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        scissorClip = -1;
         if (rtPipelines_) { // RT depth pre-pass over the opaque submeshes (they are first in order_)
             for (const DrawRef& d : order_) {
                 const scene::SubMesh& s = meshes_[d.mesh].submeshes[d.sub];
@@ -1403,6 +1499,7 @@ public:
             vkDestroyDescriptorSetLayout(device_, std::exchange(waterSetLayout_, VK_NULL_HANDLE), nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(postWaterSetLayout_, VK_NULL_HANDLE), nullptr);
             for (auto& b : origFrameUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
+            for (auto& b : reflFrameUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             for (auto& b : shadowUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
             vkDestroyDescriptorPool(device_, std::exchange(origStaticPool_, VK_NULL_HANDLE), nullptr);
             vkDestroyPipelineLayout(device_, std::exchange(origLayout_, VK_NULL_HANDLE), nullptr);
@@ -1456,6 +1553,7 @@ private:
         int program = -1; // origPrograms_ index, -1 = generic shading
         VkDescriptorSet set = VK_NULL_HANDLE;
         uint32_t screen = 0; // original::screenSamplers: low 16 back buffer, high 16 depth (drawn after the copies)
+        uint32_t reflection = 0; // original::reflectionSamplers: read reflColor_, InstanceParams 0-2 = the reflection
     };
 
     VkPipeline origPipeline(int program, OrigVariant variant, scene::Blend blend) {
@@ -1522,6 +1620,7 @@ private:
         origPrograms_.clear();
         origDraws_.clear();
         screenSets_.clear();
+        reflectSets_.clear();
         origMaterialImages_.clear();
         vkDestroyBuffer(device_, std::exchange(origMaterialUbo_, {}).buffer, nullptr); // memory: sceneMemory_
         vkDestroyDescriptorPool(device_, std::exchange(origScenePool_, VK_NULL_HANDLE), nullptr);
@@ -1594,9 +1693,11 @@ private:
                 OrigDraw d;
                 d.program = prep.program(s.materialId);
                 if (d.program >= 0 && !ok[size_t(d.program)]) d.program = -1;
-                if (d.program >= 0)
+                if (d.program >= 0) {
                     d.screen = original::screenSamplers(*prep.materials.at(s.materialId), s.instanceTextures,
                                                         prep.programs[size_t(d.program)].psGlsl.readsDepth);
+                    d.reflection = original::reflectionSamplers(*prep.materials.at(s.materialId));
+                }
                 size_t k = SIZE_MAX;
                 if (d.program >= 0) {
                     const Key key{d.program, s.materialId, {s.instanceTextures[0], s.instanceTextures[1], s.instanceTextures[2],
@@ -1660,7 +1761,11 @@ private:
                     auto& od = origDraws_[mi][si];
                     od.set = sets[slot[mi][si]];
                     if (od.screen) screenSets_.push_back({od.set, od.screen});
+                    if (od.reflection) reflectSets_.push_back({od.set, od.reflection});
                 }
+        for (size_t si = 0; si < scene.meshes.size() && si < meshSlot_.size(); ++si)
+            if (meshSlot_[si] < meshes_.size())
+                meshes_[meshSlot_[si]].reflectZ = original::reflectionPlaneZ(scene.meshes[si], meshes_[meshSlot_[si]].model, prep.materials);
         writeScreenSets();
     }
 
@@ -1668,6 +1773,18 @@ private:
     // rewritten with the water sets when the targets change.
     void writeScreenSets() {
         if (!opaqueColor_.view || !opaqueDepth_.view) return;
+        for (const auto& [set, mask] : reflectSets_) // the planar reflection target (reflColor_)
+            for (uint32_t n = 0; n < 16; ++n) {
+                if (!(mask >> n & 1)) continue;
+                const VkDescriptorImageInfo ii{postSampler_, reflColor_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w.dstSet = set;
+                w.dstBinding = 1 + n;
+                w.descriptorCount = 1;
+                w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                w.pImageInfo = &ii;
+                vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+            }
         for (const auto& [set, mask] : screenSets_)
             for (uint32_t n = 0; n < 32; ++n) {
                 if (!(mask >> n & 1)) continue;
@@ -2761,17 +2878,20 @@ private:
                                    VK_IMAGE_ASPECT_COLOR_BIT);
         batch.images.push_back({attenuation_.image, {{lut.rgba.data(), lut.rgba.size(), uint32_t(lut.width), uint32_t(lut.height)}}});
         flush(batch);
-        VkDescriptorPoolSize ups{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight};
-        VkDescriptorPoolCreateInfo upci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, kFramesInFlight, 1, &ups};
+        // Per frame in flight: the camera's frame block and the planar reflection camera's (reflFrame*).
+        VkDescriptorPoolSize ups{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * kFramesInFlight};
+        VkDescriptorPoolCreateInfo upci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 2 * kFramesInFlight, 1, &ups};
         VK_CHECK(vkCreateDescriptorPool(device_, &upci, nullptr, &origStaticPool_));
-        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-            origFrameUbo_[i] = createBuffer(staticMemory_, sizeof(sm3::FrameBlock), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        for (uint32_t i = 0; i < 2 * kFramesInFlight; ++i) {
+            Buffer& ubo = i < kFramesInFlight ? origFrameUbo_[i] : reflFrameUbo_[i - kFramesInFlight];
+            VkDescriptorSet& set = i < kFramesInFlight ? origFrameSet_[i] : reflFrameSet_[i - kFramesInFlight];
+            ubo = createBuffer(staticMemory_, sizeof(sm3::FrameBlock), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             VkDescriptorSetAllocateInfo fai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, origStaticPool_, 1, &origFrameLayout_};
-            VK_CHECK(vkAllocateDescriptorSets(device_, &fai, &origFrameSet_[i]));
-            const VkDescriptorBufferInfo bi{origFrameUbo_[i].buffer, 0, sizeof(sm3::FrameBlock)};
+            VK_CHECK(vkAllocateDescriptorSets(device_, &fai, &set));
+            const VkDescriptorBufferInfo bi{ubo.buffer, 0, sizeof(sm3::FrameBlock)};
             VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            w.dstSet = origFrameSet_[i];
+            w.dstSet = set;
             w.descriptorCount = 1;
             w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             w.pBufferInfo = &bi;
@@ -3542,8 +3662,19 @@ private:
         filterBlur_ = createImage(swapMemory_, sceneFormat_, bw, bh, filterLevels_,
                                   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                   VK_IMAGE_ASPECT_COLOR_BIT);
+        reflColor_ = createImage(swapMemory_, sceneFormat_, bw, bh, 1, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                 VK_IMAGE_ASPECT_COLOR_BIT);
+        reflDepth_ = createImage(swapMemory_, depthFormat_, bw, bh, 1, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                 VK_IMAGE_ASPECT_DEPTH_BIT, samples_);
+        if (samples_ != VK_SAMPLE_COUNT_1_BIT)
+            reflMsColor_ = createImage(swapMemory_, sceneFormat_, bw, bh, 1,
+                                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                                       VK_IMAGE_ASPECT_COLOR_BIT, samples_);
         oneShot([&](VkCommandBuffer cmd) { // valid sampled layouts from the start (post binds them always)
-            const VkImageMemoryBarrier2 b[3] = {
+            const VkImageMemoryBarrier2 b[4] = {
+                imageBarrier(reflColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
                 imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                              VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
@@ -3573,7 +3704,8 @@ private:
         swapViews_.clear();
         presentReady_.clear();
         swapImages_.clear();
-        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_, &opaqueColor_, &opaqueDepth_, &filterBlur_, &motion_, &reactive_,
+        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_, &opaqueColor_, &opaqueDepth_, &filterBlur_, &reflColor_, &reflMsColor_,
+                              &reflDepth_, &motion_, &reactive_,
                               &fsrInput_, &fsrOutput_, &fsrGenerated_})
             if (img->image) destroyImage(*img);
         swapMemory_.reset();
@@ -3620,6 +3752,8 @@ private:
     GpuImage depth_, sceneColor_, msColor_; // msColor_ only with MSAA
     // Enhanced water: single-sample opaque copies (refraction etc.) and the game's ripple height field.
     GpuImage opaqueColor_, opaqueDepth_, ripples_;
+    // Planar reflection (original::reflection): half size, the scene's sample count, resolved into reflColor_.
+    GpuImage reflColor_, reflMsColor_, reflDepth_;
     GpuImage filterBlur_;        // screen filters: the half-size scene + mips (recordFilterBlur)
     uint32_t filterLevels_ = 0;
     uint64_t rippleVersion_ = 0;
@@ -3679,12 +3813,15 @@ private:
     VkDescriptorPool origStaticPool_ = VK_NULL_HANDLE, origScenePool_ = VK_NULL_HANDLE;
     std::array<Buffer, kFramesInFlight> origFrameUbo_{};
     std::array<VkDescriptorSet, kFramesInFlight> origFrameSet_{};
+    std::array<Buffer, kFramesInFlight> reflFrameUbo_{}; // the planar reflection camera's frame block
+    std::array<VkDescriptorSet, kFramesInFlight> reflFrameSet_{};
     GpuImage attenuation_, blackCube_;
     std::vector<OrigProgram> origPrograms_;
     int origWarmKey_ = -1; // warmOriginalPipelines' settings since the pipelines were last destroyed
     std::vector<std::pair<uint64_t, original::LightSet>> meshLights_; // meshes_ index -> (frameCounter_ + 1, light set)
     std::vector<std::vector<OrigDraw>> origDraws_; // meshes_ index -> per submesh
     std::vector<std::pair<VkDescriptorSet, uint32_t>> screenSets_; // material sets with back/depth-buffer samplers
+    std::vector<std::pair<VkDescriptorSet, uint32_t>> reflectSets_; // material sets with planar reflection samplers
     std::vector<DrawRef> screenDraws_;                               // per frame: their draws, for the second pass
     Buffer origMaterialUbo_;
     scene::Environment environment_;

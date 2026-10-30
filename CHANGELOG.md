@@ -12,6 +12,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - Enhanced weather `auto` shows a unit's snow / rain only inside its weather objects' particle columns (spawn radius +
   drift, fall depth), not across the whole unit: l5_valaskjalf's hall stays dry outside the columns under its broken
   roof (docs/RENDERING.md "Weather").
+- Original shaders: tru.exe's planar water reflection (0x5CE800: the scene from the camera mirrored in the sea's
+  plane, half size, global texture class 5, PS InstanceParams c132–c134) in GL and Vulkan; the l1_seatop /
+  l2_cliffclimb sea reflects the cliffs (docs/RENDERING.md "Planar reflection").
 
 ### Fixed
 

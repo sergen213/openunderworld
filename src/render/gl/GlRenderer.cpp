@@ -6,8 +6,11 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
+#include <limits>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -313,6 +316,10 @@ struct GpuMesh {
     std::vector<std::array<GLuint, 16>> samplers;
     // original::screenSamplers per submesh: low 16 bits back buffer, high 16 depth buffer (drawn after the opaque copies).
     std::vector<uint32_t> screenSamplers;
+    // original::reflectionSamplers per submesh (the planar reflection, Targets::reflection); reflectZ: the world z of the
+    // reflecting submeshes' plane (NaN: none).
+    std::vector<uint32_t> reflection;
+    float reflectZ = std::numeric_limits<float>::quiet_NaN();
     glm::mat4 model;
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
@@ -335,6 +342,10 @@ struct Targets {
     // Original screen filters (FrameOptions::screenFilter): the half-size scene and its mip chain (blur levels).
     Texture filterBlur;
     Framebuffer filterFbo;
+    // Planar reflection (original::reflection): the scene seen from the mirrored camera, half size, single sample.
+    Texture reflection;
+    Renderbuffer reflectionDepth;
+    Framebuffer reflectionFbo;
 };
 
 struct Resources {
@@ -578,6 +589,7 @@ public:
         glNamedBufferSubData(r.shadowUbo.get(), 0, sizeof sun.block, &sun.block);
         glBindBufferBase(GL_UNIFORM_BUFFER, 3, r.shadowUbo.get());
         glBindTextureUnit(16, r.shadowMap.get());
+        const auto reflection = drawReflection(camera, vp, options);
 
         glBindFramebuffer(GL_FRAMEBUFFER, r.targets.scene.get());
         glViewport(0, 0, vp.width, vp.height);
@@ -590,7 +602,7 @@ public:
         glUniform1i(2, options.lighting ? 1 : 0);
         glBlendColor(0.5f, 0.5f, 0.5f, 0.5f); // Blend::Average = D3DBLEND_BLENDFACTOR 0x80808080
         const bool originals = options.originalShaders && !r.originals.empty();
-        if (originals) beginOriginals(camera, vp, options);
+        if (originals) beginOriginals(camera, vp, options, reflection ? &*reflection : nullptr);
         uint32_t boundMesh = UINT32_MAX, boundObject = UINT32_MAX;
         int state = -1, program = -1; // -1 = generic scene program
         deferred_.clear();
@@ -619,12 +631,12 @@ public:
                     deferred_.push_back(d);
                     continue;
                 }
-                if (d.mesh != boundObject) {
-                    glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));
-                    boundObject = d.mesh;
+                if (const uint32_t slot = objectSlot(m, d); slot != boundObject) {
+                    glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(slot) * objectStride(), sizeof(sm3::ObjectBlock));
+                    boundObject = slot;
                 }
                 glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
-                glBindTextures(0, 16, m.samplers[d.sub].data());
+                glBindTextures(0, 16, originalTextures(m, d).data());
                 glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
                                reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
                 continue;
@@ -792,6 +804,16 @@ private:
         glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         t.filterFbo = newFramebuffer();
         glNamedFramebufferTexture(t.filterFbo.get(), GL_COLOR_ATTACHMENT0, t.filterBlur.get(), 0);
+        t.reflection = newTexture();
+        glTextureStorage2D(t.reflection.get(), 1, format, bw, bh);
+        glTextureParameteri(t.reflection.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(t.reflection.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(t.reflection.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(t.reflection.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        t.reflectionDepth = newRenderbuffer(1, GL_DEPTH_COMPONENT32F, bw, bh);
+        t.reflectionFbo = newFramebuffer();
+        glNamedFramebufferTexture(t.reflectionFbo.get(), GL_COLOR_ATTACHMENT0, t.reflection.get(), 0);
+        glNamedFramebufferRenderbuffer(t.reflectionFbo.get(), GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.reflectionDepth.get());
     }
 
     // Opaque: depth write, LESS. Blended (the original's translucent pass 0x5066A0): no depth
@@ -934,6 +956,7 @@ private:
         attrib(vao, sm3::kAttrTangent, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, tangent));
         attrib(vao, sm3::kAttrBinormal, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, binormal));
         for (const auto& s : g.submeshes) addOriginal(g, s);
+        g.reflectZ = original::reflectionPlaneZ(m, g.model, prepared_.materials);
         res_->meshes.push_back(std::move(g));
     }
 
@@ -973,6 +996,7 @@ private:
         g.materialOffset.push_back(0);
         g.samplers.emplace_back();
         g.screenSamplers.push_back(0);
+        g.reflection.push_back(0);
         if (p < 0) return;
         const scene::Material& mat = *prepared_.materials.at(s.materialId);
         const auto stride = size_t(objectStrideFor(sizeof(sm3::MaterialBlock)));
@@ -994,6 +1018,7 @@ private:
             g.samplers.back()[size_t(n)] = tex;
         }
         g.screenSamplers.back() = original::screenSamplers(mat, s.instanceTextures, prog.psGlsl.readsDepth);
+        g.reflection.back() = original::reflectionSamplers(mat);
     }
 
     // Submeshes whose materials sample the back / depth buffer (original::screenSamplers; the sea): copy the scene drawn
@@ -1015,9 +1040,9 @@ private:
             const scene::Blend blend = drawBlend(s, d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f);
             if (int(blend) != state) setBlend(state = int(blend));
             glDisable(GL_CULL_FACE); // the sea is also seen from below
-            glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));
+            glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(objectSlot(m, d)) * objectStride(), sizeof(sm3::ObjectBlock));
             glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
-            auto tex = m.samplers[d.sub];
+            auto tex = originalTextures(m, d);
             for (int n = 0; n < 16; ++n) {
                 if (m.screenSamplers[d.sub] >> n & 1) tex[size_t(n)] = t.opaqueColor.get();
                 if (m.screenSamplers[d.sub] >> (16 + n) & 1) tex[size_t(n)] = t.opaqueDepth.get();
@@ -1027,6 +1052,80 @@ private:
                            reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
         }
         scissorFor(UINT32_MAX, vp);
+    }
+
+    // Object block of an original draw: reflecting submeshes take the second half (beginOriginals) while a reflection
+    // was drawn this frame; their reflection samplers read Targets::reflection.
+    uint32_t objectSlot(const GpuMesh& m, const DrawRef& d) const {
+        return reflecting_ && m.reflection[d.sub] ? uint32_t(res_->meshes.size()) + d.mesh : d.mesh;
+    }
+    std::array<GLuint, 16> originalTextures(const GpuMesh& m, const DrawRef& d) const {
+        auto tex = m.samplers[d.sub];
+        if (reflecting_)
+            for (int n = 0; n < 16; ++n)
+                if (m.reflection[d.sub] >> n & 1) tex[size_t(n)] = res_->targets.reflection.get();
+        return tex;
+    }
+
+    // Planar reflection (original::reflection): the plane of the nearest drawn reflecting submesh, when the camera is
+    // above it; the opaque and blended scene except the water surfaces and screen readers, from the mirrored camera,
+    // into Targets::reflection. Returns the reflection (reflecting_) or nullopt.
+    std::optional<original::Reflection> drawReflection(const Camera& camera, Viewport vp, const FrameOptions& options) {
+        Resources& r = *res_;
+        reflecting_ = false;
+        if (!options.originalShaders || r.originals.empty()) return std::nullopt;
+        float planeZ = 0, best = std::numeric_limits<float>::max();
+        for (const DrawRef& d : r.order) {
+            const GpuMesh& m = r.meshes[d.mesh];
+            if (m.program[d.sub] < 0 || !m.reflection[d.sub]) continue;
+            const float dist = glm::distance(m.center, camera.position) - m.radius;
+            if (dist < best) best = dist, planeZ = m.reflectZ;
+        }
+        if (best == std::numeric_limits<float>::max() || camera.position.z <= planeZ) return std::nullopt;
+        Targets& t = r.targets;
+        const Viewport half{std::max(1, vp.width / 2), std::max(1, vp.height / 2)};
+        const auto refl = original::reflection(camera, float(vp.width) / float(vp.height), planeZ, true);
+        const glm::mat4 viewProj = refl.camera.projection(float(vp.width) / float(vp.height)) * refl.camera.view();
+        glBindFramebuffer(GL_FRAMEBUFFER, t.reflectionFbo.get());
+        glViewport(0, 0, half.width, half.height);
+        glClearColor(0.08f, 0.09f, 0.11f, 1.0f);
+        glDepthMask(GL_TRUE);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        glDisable(GL_SCISSOR_TEST);
+        scissorClip_ = -1;
+        beginOriginals(refl.camera, half, options);
+        int state = -1, program = -2;
+        for (const DrawRef& d : r.order) {
+            const GpuMesh& m = r.meshes[d.mesh];
+            const scene::SubMesh& s = m.submeshes[d.sub];
+            const int p = m.program[d.sub];
+            if (m.water || (p >= 0 && (m.screenSamplers[d.sub] || m.reflection[d.sub]))) continue;
+            const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;
+            if (p != program) {
+                glUseProgram(p < 0 ? r.sceneProgram.get() : r.originals[size_t(p)].get());
+                if (p < 0) glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj)), glUniform1i(2, options.lighting ? 1 : 0);
+                program = p;
+            }
+            glBindVertexArray(m.vao.get());
+            if (const scene::Blend blend = drawBlend(s, op); int(blend) != state) setBlend(state = int(blend));
+            if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+            if (p >= 0) {
+                glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));
+                glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
+                glBindTextures(0, 16, m.samplers[d.sub].data());
+                glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
+                               reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
+                continue;
+            }
+            glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
+            glUniform1f(3, s.alphaRef / 255.0f);
+            glUniform2f(4, op, s.blend == scene::Blend::Opaque ? 1.0f : 0.0f);
+            drawSubmesh(s);
+        }
+        setBlend(int(scene::Blend::Opaque));
+        reflecting_ = true;
+        return refl;
     }
 
     // Portal clip of GPU mesh `mesh` (FrameOptions::unitClips via meshClip_) as the GL scissor; UINT32_MAX: off.
@@ -1054,22 +1153,30 @@ private:
         r.materialUbo = newBuffer();
         glNamedBufferStorage(r.materialUbo.get(), GLsizeiptr(materialBlocks_.size()), materialBlocks_.data(), 0);
         r.objectUbo = newBuffer();
-        glNamedBufferStorage(r.objectUbo.get(), GLsizeiptr(r.meshes.size()) * objectStride(), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        // Second half: the same blocks with the planar reflection's InstanceParams, bound by the reflecting draws.
+        glNamedBufferStorage(r.objectUbo.get(), 2 * GLsizeiptr(r.meshes.size()) * objectStride(), nullptr, GL_DYNAMIC_STORAGE_BIT);
         materialBlocks_.clear();
         materialBlocks_.shrink_to_fit();
     }
 
-    void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o) {
+    // `reflection`: the planar reflection the reflecting draws sample (their second-half object blocks), or none.
+    void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o, const original::Reflection* reflection = nullptr) {
         Resources& r = *res_;
         sm3::FrameBlock f;
         original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater); // screen copies are bottom-up
         glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
         const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
-        objectScratch_.assign(r.meshes.size() * size_t(objectStride()), 0);
-        for (size_t i = 0; i < r.meshes.size(); ++i)
-            original::fillObject(*reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * size_t(objectStride())]), vpD3D, r.meshes[i].model,
-                                 original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius),
+        const size_t stride = size_t(objectStride()), n = r.meshes.size();
+        objectScratch_.assign(2 * n * stride, 0);
+        for (size_t i = 0; i < n; ++i) {
+            auto& block = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * stride]);
+            original::fillObject(block, vpD3D, r.meshes[i].model, original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius),
                                  i < opacity_.size() ? opacity_[i] : 1.0f);
+            if (!reflection || std::isnan(r.meshes[i].reflectZ)) continue;
+            auto& lit = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(n + i) * stride]);
+            lit = block;
+            std::memcpy(lit.inst, reflection->rows, sizeof lit.inst);
+        }
         if (r.objectUbo.get())
             glNamedBufferSubData(r.objectUbo.get(), 0, GLsizeiptr(objectScratch_.size()), objectScratch_.data());
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());
@@ -1247,7 +1354,8 @@ private:
     std::vector<DrawRef> deferred_; // per frame: back/depth-buffer readers (drawScreenReaders)
     std::span<const UnitClip> unitClips_; // per frame: FrameOptions::unitClips
     std::vector<int> meshClip_;           // per frame and GPU mesh: index into unitClips_, -1 = unclipped
-    int scissorClip_ = -1;                // clip the GL scissor is set to, -1 = scissor test off
+    int scissorClip_ = -1;
+    bool reflecting_ = false;             // drawReflection drew Targets::reflection this frame                // clip the GL scissor is set to, -1 = scissor test off
     std::vector<float> opacity_;    // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)
     bool s3tc_ = false, debug_ = false;
     float maxAniso_ = 1.0f;

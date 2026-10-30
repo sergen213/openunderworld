@@ -210,6 +210,20 @@ alpha = opacity, others keep their blend with alpha × opacity; opacity 0 is not
 the object block (`ObjectBlock::opacity` after the alpha test; material flag value 8 = opaque material), the generic
 shaders from `uFade` (GL) / the scene push constant (Vulkan). Shadow casting, RT instances and FSR masks ignore it.
 
+### Planar reflection (GL + Vulkan, Original shaders; `original::reflection`)
+
+tru.exe renders a planar reflection for drawables whose material samples the global class-5 texture (the l1_seatop /
+l2_cliffclimb sea): 0x5C5B80 registers the plane (0x5C5890, one plane per frame, "Multiple reflection planes visible at
+once!"), 0x5CE800 renders the scene from the camera mirrored in it (0x5C5740) into a half-size target (0x5CAE70,
+vfunc 0xCC(50, 50, 25)), bound as class 5, and puts the lookup into PS c132–c134 (InstanceParams 0–2: q = R.x c132 +
+R.y c133 + R.z c134 of the reflected eye ray, uv = q.xy / q.z) [O: decomp]. Ours: the plane is the mean world z of the
+reflecting submeshes of the nearest drawn reflecting mesh (`reflectionPlaneZ`); the mirrored camera gets an oblique near
+plane on the water (`Camera::clipPlane`, Lengyel) so nothing under it reflects; the pass draws the scene without the
+water / screen-reading / reflecting draws and without portal clips into a half-size target (Vulkan: at the scene's MSAA
+count, resolved; its own frame block per frame in flight) before the main pass; reflecting draws get the rows in
+`ObjectBlock::inst` (GL: a second half of the object buffer). Viewed (2026-10-29): the ch2 start's cliffs reflect in
+the sea in GL Original and Vulkan Original / Enhanced.
+
 ## Water (Enhanced, GL + Vulkan; `graphics.water`, `--water original|enhanced`)
 
 Original (`water = 0`) draws water-surface meshes with TRU's own translated shaders, as before.

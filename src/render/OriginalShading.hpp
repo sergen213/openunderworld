@@ -37,6 +37,7 @@ LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius)
 // recompute it in updateVertices).
 glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat4& model);
 // Object registers: WorldViewProject (c0-3) and World (c4-7), as matrix columns, the object's light set and opacity.
+// PS InstanceParams 0-2 (c132-c134, ObjectBlock::inst) stay zero; reflective draws set them (Reflection::rows).
 void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProjD3D, const glm::mat4& model, LightSet lights = {}, float opacity = 1);
 // AttenuationSampler row of each env.lights entry (distinct falloff curves share rows 0-95).
 std::vector<int> falloffRows(const scene::Environment& env);
@@ -79,5 +80,20 @@ uint32_t samplerTexture(const scene::Material& mat, std::span<const uint32_t> in
 //   decodes class 3 with DepthFactors; which drawable passes the targets was not traced].
 // Their submeshes are drawn after the opaque scene from single-sample copies.
 uint32_t screenSamplers(const scene::Material& mat, std::span<const uint32_t> instanceTextures, bool readsDepth);
+
+// Planar reflection (tru.exe 0x5C5B80 registers a reflecting drawable's plane via 0x5C5890, "Multiple reflection planes
+// visible at once!"; 0x5CE800 renders the scene from the camera mirrored in it, 0x5C5740, into the target 0x5CAE70
+// creates with vfunc 0xCC(50, 50, 25), half the screen; bound as engine texture class 5, device 0x507150 slot 0).
+// Samplers reading it: global table entries (source 1) of class 5 (the l1_seatop / l2_cliffclimb sea).
+uint32_t reflectionSamplers(const scene::Material& mat);
+// World z of the plane of m's reflecting submeshes (their vertices' mean under `model`); NaN when none reflects.
+float reflectionPlaneZ(const scene::MeshData& m, const glm::mat4& model,
+                       const std::unordered_map<uint32_t, const scene::Material*>& materials);
+struct Reflection {
+    Camera camera;      // mirrored in z = planeZ, oblique near plane on the water (Camera::clipPlane)
+    float rows[3][4];   // PS c132-c134 of the reflecting draws (direction -> target uv, projective)
+};
+// `flipY`: the target's rows are stored bottom-up (GL).
+Reflection reflection(const Camera& camera, float aspect, float planeZ, bool flipY);
 
 } // namespace ou::render::original

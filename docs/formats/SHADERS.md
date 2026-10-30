@@ -89,8 +89,8 @@ PS samplers: 49 933 2D + 1 205 cube declarations. Full opcode / declaration / CT
 | cube samplers | cube maps decoded (TEXTURES.md); missing ones read black | [O] |
 
 Not fed yet [U/I]: spot-light cookies (s12/s13, 63 spots) and light shadow maps (slots 0–2), receiver masks, directional
-SH terms of IrradianceState, lights of object intros and cinematic light rigs, PSSM shadows, the global class-5 texture
-(l1_seatop sea reflection, default texture kept), per-instance params (zero). Opacity fades: MaterialOpacity c98 stays 1;
+SH terms of IrradianceState, lights of object intros and cinematic light rigs, PSSM shadows, per-instance params (zero)
+except the planar reflection (global class 5 + PS InstanceParams 0–2, RENDERING.md "Planar reflection"). Opacity fades: MaterialOpacity c98 stays 1;
 the instance opacity multiplies the output alpha instead (RENDERING.md "Instance opacity") [I: the composite slot-1
 opacity variant is not used].
 
