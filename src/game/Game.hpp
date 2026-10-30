@@ -757,6 +757,12 @@ float waveHeight(const collision::Markup& m, vec2 xy, double seconds);
 inline float waterSurface(const collision::Markup& m, vec2 xy, double seconds) { return m.points[1].z + waveHeight(m, xy, seconds); }
 // The sea program's VS InstanceParams 3-6 (c60-c63: kx, ky, phase, height per wave; 0x69DFB0); zero without waves.
 std::array<vec4, 4> waveRegisters(const collision::Markup& m, double seconds);
+// The water the camera looks at Lara in (tru.exe 0x5EA200, the under-water pass / fog test): the volume Lara is
+// swimming in, else the one her feet are below the (wave) surface of; `surface` = that surface at `eye`'s xy, `seconds`
+// the sea clock. nullopt = Lara is not in water: no under-water look, even if her box (l2 yacht deck) is inside a sea
+// volume whose top is above her.
+struct EyeWater { int markup; float surface; };
+std::optional<EyeWater> eyeWater(const World& w, vec3 eye, double seconds);
 
 // ---- input ------------------------------------------------------------------------------------
 // Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions, through

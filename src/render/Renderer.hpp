@@ -53,7 +53,8 @@ struct WaterRipples {
     std::span<const float> heights; // world units above the rest surface
     uint64_t version = 0;           // changes whenever heights change; backends re-upload only then
 };
-// Water volume: world AABB, max[2] = surface z (game water markup, type 10). Underwater post and caustics.
+// Water volume: world AABB, max[2] = surface z (a sea's: lowered by its waves under the camera this frame; game water
+// markup, type 10). Underwater post and caustics.
 // waves: the sea's VS InstanceParams 3-6 (c60-c63) this frame, tru.exe 0x69DFB0 (rows: x and y wave numbers, phases,
 // heights; the surface is lowered by sum heights x (1 - cos(x c60 + y c61 + c62))); zero = flat (original::fillWaves).
 struct WaterVolume { float min[3], max[3]; float waves[4][4] = {}; };

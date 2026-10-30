@@ -1185,7 +1185,7 @@ private:
             auto& block = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * stride]);
             original::fillObject(block, vpD3D, r.meshes[i].model, original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius),
                                  i < opacity_.size() ? opacity_[i] : 1.0f);
-            original::fillWaves(block, o.waterVolumes, r.meshes[i].center);
+            original::fillWaves(block, o.waterVolumes, r.meshes[i].center, r.meshes[i].radius);
             if (!reflection || std::isnan(r.meshes[i].reflectZ)) continue;
             auto& lit = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(n + i) * stride]);
             lit = block;

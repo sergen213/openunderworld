@@ -1007,11 +1007,12 @@ struct EffectsView {
         const glm::vec3 lara = w.player().state().pos, eye = cam.position;
         bool under = false;
         underwater = {};
-        for (const auto& m : w.collision().markup) {
-            if (m.type != 10 || m.points.size() < 2) continue;
+        // tru.exe 0x5EA200: only the water Lara is in, against its wave surface at the eye (the l2 yacht deck lies inside
+        // the sea's box, under its top, but above the waves: no water look there).
+        if (const auto ew = ou::game::eyeWater(w, eye, double(w.ticks()) * ou::game::kTickSeconds)) {
+            const auto& m = w.collision().markup[size_t(ew->markup)];
             const glm::vec3 lo = m.points[0], hi = m.points[1];
-            if (glm::any(glm::lessThan(lara, lo)) || glm::any(glm::greaterThan(lara, hi))) continue; // not Lara's
-            const float h = eye.z - hi.z, d = std::abs(h);
+            const float h = eye.z - ew->surface, d = std::abs(h);
             const bool xy = eye.x >= lo.x && eye.x <= hi.x && eye.y >= lo.y && eye.y <= hi.y;
             under = xy && h < 0 && eye.z >= lo.z;
             underwater.strength = under ? 1.0f : xy && h >= 0 && h < 600 ? 1.0f - h / 600.0f : 0.0f;
@@ -1019,7 +1020,6 @@ struct EffectsView {
             const float ws = range > 0 ? 1.0f - std::min(d, range) / range : 0.0f;
             waterFilters.push_back({uw.filter[1].get(), ws});
             if (under) waterFilters.push_back({uw.filter[0].get(), 1.0f - ws});
-            break;
         }
         std::copy(&uw.env.waterPass[0][0], &uw.env.waterPass[0][0] + 8, &underwater.pass[0][0]);
         if (under) { // the water fog set, replaced by the filters' fog blocks as far as their weights go (0x514D90)
@@ -2319,8 +2319,10 @@ int main(int argc, char** argv) {
         const double waveSeconds = (double(world->ticks()) + clock.alpha()) * ou::game::kTickSeconds; // the sim's sea clock
         for (const auto& m : world->collision().markup)
             if (!mainMenu && m.type == 10 && m.points.size() >= 2) {
+                // max z = the surface under the camera: a sea's waves lower it below the box top (water look, fog, caustics)
+                const float surface = ou::game::waterSurface(m, glm::vec2(cam.position), waveSeconds);
                 auto& v = waterVolumes.emplace_back(ou::render::WaterVolume{{m.points[0].x, m.points[0].y, m.points[0].z},
-                                                                            {m.points[1].x, m.points[1].y, m.points[1].z}});
+                                                                            {m.points[1].x, m.points[1].y, surface}});
                 const auto r = ou::game::waveRegisters(m, waveSeconds);
                 for (int i = 0; i < 4; ++i)
                     for (int k = 0; k < 4; ++k) v.waves[i][k] = r[size_t(i)][k];

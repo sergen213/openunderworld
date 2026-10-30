@@ -6,6 +6,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Chapter 2 start: the yacht no longer sits in the sea. The sea program never got its waves in game: l2_cliffclimb's
+  sea is part of one terrain mesh (radius ~176000) centred outside the sea box, and `fillWaves` picked the volume by
+  the mesh centre, so the drawn sea stayed at its static z 107.8, above the 71..87 deck (the 0.11.0 test checked only
+  the simulated surface). Waves now go to meshes whose bounds reach a waved volume. The under-water look (0x5EA200)
+  now needs Lara in the water (`game::eyeWater`) and measures the eye against the wave surface, not the box top: the
+  deck lies inside the sea's box, which tinted the whole view teal. Test `StreamReal.YachtRenderedSeaBelowDeck`
+  (`--chapter 2` and a save loaded there: drawn sea under the deck at every phase, no water look).
 - Default controls are tru.exe's (its defaults at 0x487710, the registry `Input` keys and its Control Configuration
   screen): Left Shift sprints and Left Alt walks (they were swapped since the start of the port), Q grapple, E
   interact, Left Ctrl crouch / roll / drop, G / mouse right target lock, H / mouse left fire, R change weapon, V health

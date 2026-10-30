@@ -678,4 +678,17 @@ bool insideWater(const collision::Markup& m, vec3 p, vec3 grow) {
     return glm::all(glm::lessThanEqual(glm::abs(local), m.points[3] + grow));
 }
 
+std::optional<EyeWater> eyeWater(const World& w, vec3 eye, double seconds) {
+    const auto& markup = w.collision().markup;
+    const auto& s = w.player().state();
+    int idx = s.water >= 0 && size_t(s.water) < markup.size() ? s.water : -1;
+    for (size_t i = 0; idx < 0 && i < markup.size(); ++i) {
+        const auto& m = markup[i];
+        if (m.type == 10 && m.points.size() >= 2 && insideWater(m, s.pos) && s.pos.z < waterSurface(m, vec2(s.pos), seconds))
+            idx = int(i);
+    }
+    if (idx < 0) return std::nullopt;
+    return EyeWater{idx, waterSurface(markup[size_t(idx)], vec2(eye), seconds)};
+}
+
 } // namespace ou::game

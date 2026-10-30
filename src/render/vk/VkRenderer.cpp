@@ -840,7 +840,7 @@ public:
             auto& [stamp, lights] = meshLights_[d.mesh];
             if (stamp != frameCounter_ + 1) stamp = frameCounter_ + 1, lights = original::lightSet(environment_, m.center, m.radius);
             original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
-            original::fillWaves(ob, options.waterVolumes, m.center);
+            original::fillWaves(ob, options.waterVolumes, m.center, m.radius);
             if (reflection && od.reflection) std::memcpy(ob.inst, reflection->rows, sizeof ob.inst);
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);

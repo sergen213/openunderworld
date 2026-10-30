@@ -136,12 +136,15 @@ void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProj, const glm::mat4&
     o.lightSet[0] = lights.packed[0], o.lightSet[1] = lights.packed[1], o.opacity = opacity;
 }
 
-void fillWaves(sm3::ObjectBlock& o, std::span<const WaterVolume> volumes, glm::vec3 center) {
-    for (const auto& v : volumes)
-        if (glm::all(glm::lessThanEqual(glm::make_vec3(v.min), center)) && glm::all(glm::lessThanEqual(center, glm::make_vec3(v.max)))) {
+void fillWaves(sm3::ObjectBlock& o, std::span<const WaterVolume> volumes, glm::vec3 center, float radius) {
+    for (const auto& v : volumes) { // the first waved volume whose xy box the mesh bounds reach; z: max is the waved surface
+        const bool waved = v.waves[3][0] != 0 || v.waves[3][1] != 0 || v.waves[3][2] != 0 || v.waves[3][3] != 0;
+        if (waved && center.x + radius >= v.min[0] && center.x - radius <= v.max[0] && center.y + radius >= v.min[1] &&
+            center.y - radius <= v.max[1]) {
             std::memcpy(o.waves, v.waves, sizeof o.waves);
             return;
         }
+    }
 }
 
 std::vector<int> falloffRows(const scene::Environment& env) {

@@ -1,13 +1,19 @@
 #include "save/Save.hpp"
 
 #include "cdc/Cdc.hpp"
+#include "formats/Formats.hpp"
+#include "render/OriginalShading.hpp"
+#include "render/ShaderTranslate.hpp"
 
+#include <glm/gtc/type_ptr.hpp>
 #include <gtest/gtest.h>
 
 #include <set>
 #include <zlib.h>
 
 #include <cstdlib>
+#include <cstring>
+#include <unordered_map>
 #include <fstream>
 #include <memory>
 
@@ -577,6 +583,85 @@ TEST(StreamReal, YachtDecksAboveSea) {
         heights.insert(int(p.pos.z / 10));
     }
     EXPECT_GT(heights.size(), 3u) << "she rides the waves";
+}
+
+// User report (v0.11.0): the ch2 yacht still sat in the sea. The sim's waves were right, but (1) the sea program got
+// no waves: l2_cliffclimb's sea is part of one terrain mesh (radius ~176000) centred outside the sea box, and
+// fillWaves picked volumes by the mesh centre, so the drawn sea stayed at its static 107.8, above the 71..87 deck; (2)
+// the under-water look took any volume whose box held Lara (the deck is under the box top 108) and its flat top. Both
+// flows: `--chapter 2` and loading a save taken there. The DRAWN surface (sea vertices lowered by the VS waves) stays
+// under the deck at every phase, and the camera sees no water.
+TEST(StreamReal, YachtRenderedSeaBelowDeck) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto scene = formats::loadLevelScene(bf, "pc-w\\l2_cliffclimb.drm");
+    std::unordered_map<uint32_t, const scene::Material*> materials;
+    for (const auto& m : scene.materials) materials[m.id] = &m;
+    const auto check = [&](const game::World& w, const char* flow) {
+        const auto& s = w.player().state();
+        const double t0 = double(w.ticks()) * game::kTickSeconds;
+        EXPECT_FALSE(game::eyeWater(w, w.camera().position, t0)) << flow << ": no water look on the deck";
+        std::vector<render::WaterVolume> vols; // as ou-game builds them
+        std::vector<const collision::Markup*> volMarkup;
+        for (const auto& m : w.collision().markup)
+            if (m.type == 10 && m.points.size() >= 2) {
+                auto& v = vols.emplace_back(render::WaterVolume{{m.points[0].x, m.points[0].y, m.points[0].z},
+                                                                {m.points[1].x, m.points[1].y, m.points[1].z}});
+                const auto r = game::waveRegisters(m, t0);
+                for (int i = 0; i < 4; ++i)
+                    for (int k = 0; k < 4; ++k) v.waves[i][k] = r[size_t(i)][k];
+                volMarkup.push_back(&m);
+            }
+        size_t seas = 0;
+        for (const auto& mesh : scene.meshes) {
+            const glm::mat4 model = glm::make_mat4(mesh.transform);
+            if (std::isnan(render::original::reflectionPlaneZ(mesh, model, materials))) continue;
+            float lowest = 1e9f; // the drawn sea's static height near the yacht
+            for (const auto& sub : mesh.submeshes)
+                if (materials.contains(sub.materialId) && render::original::reflectionSamplers(*materials[sub.materialId]))
+                    for (uint32_t i = sub.firstIndex; i < sub.firstIndex + sub.indexCount; ++i) {
+                        const vec3 p = vec3(model * glm::vec4(glm::make_vec3(mesh.vertices[mesh.indices[i]].position), 1));
+                        if (glm::length(glm::vec2(p - s.pos)) < 5000) lowest = std::min(lowest, p.z);
+                    }
+            if (lowest > 1e8f) continue;
+            ++seas;
+            const glm::vec4 sphere = render::original::boundingSphere(mesh.vertices, model);
+            render::sm3::ObjectBlock ob{};
+            render::original::fillWaves(ob, vols, vec3(sphere), sphere.w);
+            ASSERT_NE(ob.waves[3][0], 0.0f) << flow << ": the sea program gets the waves";
+            const collision::Markup* sea = nullptr;
+            for (size_t k = 0; k < vols.size(); ++k)
+                if (std::memcmp(vols[k].waves, ob.waves, sizeof ob.waves) == 0) sea = volMarkup[k];
+            ASSERT_NE(sea, nullptr);
+            for (double t = 0; t < 628.4; t += 0.05) { // the VS: z -= sum c63 (1 - cos(x c60 + y c61 + c62))
+                const auto r = game::waveRegisters(*sea, t);
+                float z = lowest;
+                for (int i = 0; i < 4; ++i) z -= r[3][i] * (1 - std::cos(s.pos.x * r[0][i] + s.pos.y * r[1][i] + r[2][i]));
+                ASSERT_LT(z, s.pos.z - 10) << flow << " drawn sea under the deck at t " << t;
+            }
+        }
+        EXPECT_GE(seas, 1u) << flow;
+    };
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.startChapter(2);
+    for (int i = 0; i < 120; ++i) w.tick({});
+    ASSERT_EQ(w.currentUnit().data.name, "l2_cliffclimb");
+    check(w, "--chapter 2");
+    const auto bytes = save::serialize(save::capture(w));
+    game::World l([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    l.script().setBigfile(&bf);
+    l.enemies().setBigfile(&bf);
+    save::apply(save::parse(bytes), l);
+    for (int i = 0; i < 60; ++i) l.tick({});
+    EXPECT_LT(l.player().state().water, 0);
+    check(l, "loaded save");
+    auto swim = l.player().state(); // in the sea beside the yacht the camera does see water
+    swim.pos = vec3(-31000, -10000, -500);
+    l.restore(swim, l.camera().yaw, l.camera().pitch);
+    for (int i = 0; i < 120; ++i) l.tick({});
+    EXPECT_TRUE(game::eyeWater(l, l.camera().position, double(l.ticks()) * game::kTickSeconds));
 }
 
 // The original's chapter starts (GAMEPLAY.md "Chapter starts"): startChapter Sends messagechannel 2 id = chapter, the
