@@ -18,6 +18,7 @@ All notable changes to OpenUnderworld are documented here. The format follows
 - Original shaders: D3D9 `vFace` was inverted; two-sided shaders now light the correct side, and the l1_seatop sea
   no longer shows l1_seafloor's backdrop / seabed and light streaks through its near-camera refraction (it took its
   under-water branch from above).
+- Lara walks and runs up and down stairs without jumping (the Croft Manor prologue staircase's 97..100-unit risers and every staircase surveyed in seven units): step up / down raised from 70 to 110 units, measured in tru.exe under Wine (she climbs the 100-unit risers, the 121-unit hearth stops her); docs/GAMEPLAY.md Numbers.
 - Under water looks like the original in both presets and renderers (docs/RENDERING.md "Under water"): tru.exe's full-screen water pass (unit data +0x160 records, 0x6D8C20 drawing the unit's water material: deep-to-surface blue by view direction, alpha 0.6 at the eye to 1 at 45000 / 60000 units, fading out up to 600 units above the surface), the render settings' water fog set and the deep / surface screen filters with their fog blocks by depth (0x5C78A0), and the enter / leave water effect lists on Lara (motes, 0x5C7CA0). l1_seafloor is no longer bright cyan, l7_arctic_sea / the ch7 start is blue instead of flat teal (Enhanced) or untinted (Original); Enhanced keeps faint caustics and drops its fitted Beer-Lambert tint. Confirmed in tru.exe under Wine (ret-patching 0x6D8C20 removes the blue). Test `FxReal.UnderwaterSettings`.
 
 ## [0.10.0] - 2026-10-29

@@ -2381,3 +2381,91 @@ TEST(GameReal, SplineMoverIndependentOfRenderRate) {
     const auto w = expectRateIndependent(make, input, 180);
     EXPECT_GT(w->script().find(990001)->spline->t, 60.0f) << "the stone travelled";
 }
+
+// Stairs (user report: Lara could not walk up the prologue stairs). tru.exe, measured under Wine in l3_main_bedroom
+// (docs/GAMEPLAY.md Numbers "Step up / down"): she runs up the staircase's 97..100-unit risers, the root snapping
+// onto each step as it crosses the riser line, and the 121-unit hearth edge stops her.
+namespace {
+struct Riser {
+    vec3 front; // floor point 200 in front of the riser
+    float yaw;  // facing it
+    float top;
+};
+// Every wide (>= 300) vertical riser of 40..115 with a floor in front, a >= 230-deep tread on top and no wall
+// behind, at most one per 200-unit cell.
+std::vector<Riser> findRisers(const collision::CollisionMesh& col) {
+    std::vector<Riser> out;
+    std::set<std::pair<int, int>> seen;
+    for (const auto& f : col.faces) {
+        if (!collision::queryable(f, 0xFF)) continue;
+        const vec3 p0 = col.vertices[f.v[0]], p1 = col.vertices[f.v[1]], p2 = col.vertices[f.v[2]];
+        vec3 n = glm::cross(p1 - p0, p2 - p0);
+        if (glm::length(n) < 1e-3f) continue;
+        n = glm::normalize(n);
+        const float lo = std::min({p0.z, p1.z, p2.z}), hi = std::max({p0.z, p1.z, p2.z});
+        if (std::abs(n.z) > 0.05f || hi - lo < 40 || hi - lo > 115) continue;
+        const float w = std::max({glm::length(glm::vec2(p1 - p0)), glm::length(glm::vec2(p2 - p1)), glm::length(glm::vec2(p0 - p2))});
+        if (w < 300) continue;
+        const vec3 mid = (p0 + p1 + p2) / 3.0f, o = glm::normalize(vec3(n.x, n.y, 0));
+        if (!seen.insert({int(mid.x / 200), int(mid.y / 200)}).second) continue;
+        const auto front = col.groundProbe(vec3(mid.x, mid.y, lo) + o * 200.0f + vec3(0, 0, 20), 40);
+        const auto top = col.groundProbe(vec3(mid.x, mid.y, hi) - o * 40.0f + vec3(0, 0, 20), 40);
+        const auto top2 = col.groundProbe(vec3(mid.x, mid.y, hi) - o * 230.0f + vec3(0, 0, 300), 330);
+        if (!front || !top || !top2 || front->normal.z < 0.9f || top->normal.z < 0.9f || std::abs(front->point.z - lo) > 3 ||
+            std::abs(top->point.z - hi) > 3 || top2->point.z < hi - 3 || top2->point.z > hi + 115)
+            continue;
+        if (col.raycast(vec3(mid.x, mid.y, hi + 150) + o * 200.0f, -o, 450)) continue; // wall on the tread
+        out.push_back({front->point, std::atan2(-o.y, -o.x), hi});
+    }
+    return out;
+}
+} // namespace
+
+TEST(GameReal, StairsWalkAndRunUpAndDown) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const auto unit = [&](const char* name) { return collision::loadLevelCollision(cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm"))); };
+    // Every riser of these staircases (Croft Manor hall and chapel, the Mictlan staircase, Baldr's tomb, the kraken
+    // stairs, the pool) is climbed walking and running, without a fall.
+    size_t risers = 0;
+    for (const char* name : {"l3_main_hall", "l3_chapel", "l4_staircase_mictlan", "l1_baldrs_tomb", "l1_krakenstairs_a",
+                             "l1_krakenstairs_b", "l4_pool"}) {
+        const auto col = unit(name);
+        for (const auto& r : findRisers(col)) {
+            ++risers;
+            for (const float stick : {0.3f, 1.0f}) {
+                game::World w(collision::CollisionMesh(col), game::AnimLibrary(anims), {r.front, r.yaw});
+                bool up = false;
+                for (int t = 0; t < 60 && !up; ++t) {
+                    w.tick(forward(stick));
+                    ASSERT_NE(w.player().state().state, State::Fall) << name << " riser at " << r.front.x << "," << r.front.y;
+                    up = w.player().state().pos.z > r.top - 3;
+                }
+                EXPECT_TRUE(up) << name << " riser at " << r.front.x << "," << r.front.y << " stick " << stick;
+            }
+        }
+    }
+    EXPECT_GE(risers, 100u);
+    // l3_main_bedroom's staircase (risers 97..100, treads 186): up and down the whole flight, walking and running.
+    const auto bedroom = unit("l3_main_bedroom");
+    for (const float stick : {0.3f, 1.0f}) {
+        game::World w(collision::CollisionMesh(bedroom), game::AnimLibrary(anims), {{-8000, -5500, 900}, glm::radians(-90.0f)});
+        for (int t = 0; t < 600 && w.player().state().pos.y > -7600; ++t) {
+            w.tick(forward(stick));
+            ASSERT_NE(w.player().state().state, State::Fall) << "up, stick " << stick << " tick " << t;
+        }
+        EXPECT_NEAR(w.player().state().pos.z, 1766, 10) << "stick " << stick;
+        game::World d(collision::CollisionMesh(bedroom), game::AnimLibrary(anims), {{-8000, -7600, 1800}, glm::radians(90.0f)});
+        for (int t = 0; t < 600 && d.player().state().pos.y < -5650; ++t) {
+            d.tick(forward(stick));
+            ASSERT_NE(d.player().state().state, State::Fall) << "down, stick " << stick << " tick " << t;
+        }
+        EXPECT_NEAR(d.player().state().pos.z, 870, 30) << "stick " << stick; // the landing below: 802..899
+    }
+    // The hearth beside the bedroom start is 121 high: blocked, as in tru.exe.
+    game::World h(collision::CollisionMesh(bedroom), game::AnimLibrary(anims), {{-4264, 5958, 90}, glm::radians(180.0f)});
+    for (int t = 0; t < 120; ++t) h.tick(forward());
+    EXPECT_GT(h.player().state().pos.x, -4853 + 30);
+    EXPECT_NEAR(h.player().state().pos.z, 87, 1);
+}

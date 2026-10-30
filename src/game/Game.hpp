@@ -144,7 +144,9 @@ std::string_view stateName(State s); // "unknown" past the last state
 // Controller constants. Provenance ([O] observed / [I] inferred) is listed in docs/GAMEPLAY.md.
 struct Tuning {
     float radius = 100.0f, height = 512.0f;    // capsule; feet at the root. height: lara.drm player data +0x10
-    float stepUp = 70.0f, stepDown = 70.0f;    // ground snap window
+    // Ground snap window. tru.exe (Wine, l3_main_bedroom): Lara runs up the 97..100-unit stair risers with the
+    // root snapping to each step top; the 121-unit hearth edge blocks her. 110 lies between (GAMEPLAY.md Numbers).
+    float stepUp = 110.0f, stepDown = 110.0f;
     float minFloorNormalZ = 0.7f;              // steeper = wall (~45.6 deg)
     float runSpeed = 1274.0f;                  // horizontal take-off speed of a running jump, units/s
     float gravity = 5.72443f * 900.0f;         // units/s^2 (tru.exe: 5.72443 units per 30 Hz frame^2)
