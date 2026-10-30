@@ -540,8 +540,9 @@ outfit (the original only reads `+0x294` on a level load).
   falling through the surface 0.8; droplets falling back leave pinpricks. `World::splashWater` takes other impacts.
   The field reports empty after 8 quiet seconds (the renderer skips it). Splash droplets (ours) are ballistic
   (gravity as Tuning, capped at 256, xorshift RNG) and die on the surface or after 0.35–0.75 s. ou-game copies the
-  field, water volumes and droplets into `FrameOptions` for the Enhanced water shader (docs/RENDERING.md "Water");
-  Original water does not use them. Tests `WaveField.*` (Joan's `water_waves_test` in TRU units: superposition,
+  field, water volumes and droplets into `FrameOptions` for the Enhanced water shader (docs/RENDERING.md "Water": the
+  Godot / afl_ext surface, which layers the field's height and slopes on its own waves); Original water does not use
+  them. The drawn waves are centred on the gameplay surface (the original sea waves) and never rise above the rest plane. Tests `WaveField.*` (Joan's `water_waves_test` in TRU units: superposition,
   shore reflection, bodies as obstacles, damping, scrolling, wake height) and `Game.Water*`.
 
 ## Free climbing (src/game/Climb.cpp)

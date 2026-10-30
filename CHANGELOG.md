@@ -6,6 +6,18 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Enhanced water has a new surface look (both renderers). It is a translation of smallcableboi's Godot shader
+  "Realistic Water with Traced and Simple Reflection and Refraction V2" (CC0): Fresnel reflection, two scrolling
+  wave layers, colour absorbed with depth along the refracted view, traced refraction with a simple fallback, traced
+  screen-space reflections, edge foam and, from under water, Snell's window with total internal reflection outside it.
+  Its bugs are fixed (Fresnel, the marches' never-updated depth, unbounded and 512-step loops, refraction artifacts
+  behind foreground objects) and it gains teal-to-deep-blue in-scattering, anti-aliased and distance-faded waves,
+  sun and lamp glints and a soft waterline. Open seas (chapter 2 yacht, the Mediterranean and Thailand seas) add
+  afl_ext's "Very fast procedural ocean" waves (MIT) for the surface and its shape, with brighter crests, a sharp sun
+  in the reflection and a sky that brightens toward the horizon; the look also takes cues from TDM's "Seascape" (no
+  code used). The waves are centred on the gameplay surface and never rise above the original's crest, so the yacht
+  deck stays dry. Lara's wakes and ripples (the wave field) still show on top. The Original water preset is
+  unchanged. Credits: docs/RESEARCH.md §8.8.
 - Chapter sounds are audible again: 3D sounds used the mixer's FMOD-style default rolloff (1 / distance from 1 unit)
   heard at the camera, so footsteps came out near −50 dB and ambiences below that. They now use tru.exe's rolloff
   (globalsoundinfo: full within 158 units, (max − d)² / (max − min)² to 3160 units or the sound's own distance) heard

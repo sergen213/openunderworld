@@ -475,6 +475,28 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   `shaders/common/pbr_shade.glsl` `shade_water` → `src/render/shaders/water.frag`, and
   `tests/engine/water_waves_test.cpp` → `WaveField.*` in `tests/test_game.cpp`. Not ported: its sky environment
   map / ray-traced water reflection (ours stay screen-space) and the `Lake1.bmp` normal map (value noise instead).
+- Since the Godot / afl_ext water (§8.8) only the wave field and the wading / wake strengths remain from Joan; the
+  surface shading `shade_water` was replaced.
+
+### 8.8 Enhanced water shading sources
+
+- **"Realistic Water with Traced and Simple Reflection and Refraction V2"** by smallcableboi,
+  https://godotshaders.com/shader/realistic-water-with-traced-and-simple-reflection-and-refraction-v2/ — CC0 (public
+  domain). Translated from Godot into `src/render/shaders/water.frag` (Fresnel, scrolling normal / height layers,
+  absorption, Traced / Simple refraction, traced SSR with screen-edge fade, edge foam, Snell's window) and improved
+  (RENDERING "Water"). Copy of the source: openunderworld-work/godot-water-v2.gdshader.
+- **"Very fast procedural ocean"** by afl_ext (2017), https://www.shadertoy.com/view/MdXyzX — "afl_ext 2017-2024,
+  MIT License"; shipped in xscreensaver as prococean with: "Copyright (C) 2017 by afl_ext. Permission to use, copy,
+  modify, distribute, and sell this software and its documentation for any purpose is hereby granted without fee,
+  provided that the above copyright notice appear in all copies and that both that copyright notice and this
+  permission notice appear in supporting documentation. No representations are made about the suitability of this
+  software for any purpose. It is provided "as is" without express or implied warranty." Its `wavedx` / `getwaves`
+  are ported into `water.vert` / `water.frag` (the notice is in `water.frag`'s header); its sun disc, subsurface term,
+  horizon-bright sky and distance normal smoothing are adapted. Copy of the source (xscreensaver
+  `hacks/glx/glsl/prococean.glsl`): openunderworld-work/afl-ocean.glsl.
+- **"Seascape"** by TDM (Alexander Alekseev, 2014), https://www.shadertoy.com/view/Ms2SD1 — CC BY-NC-SA 3.0,
+  incompatible with GPLv3: look inspired by Shadertoy Ms2SD1 Seascape (CC BY-NC-SA, no code used; clean-room from
+  general techniques). Its source was not read for this work.
 
 ---
 

@@ -246,28 +246,43 @@ with `original::reflectionSamplers` of a mesh whose reflection plane lies in a w
 l2_cliffclimb's sea is such a submesh of one terrain mesh). `water.vert` lowers those by the sea's waves exactly as
 their original vertex shader (`render::waterWaves`, columns c60-c63), so the yacht deck stays above the drawn sea.
 
-Technique: the stylised water of our Wars and Warriors: Joan of Arc port (same author, GPLv3; its
-`shaders/common/pbr_shade.glsl` `shade_water`, credited in docs/RESEARCH.md §8.7), ported to TRU:
-- Shaded in linear light (the gamma scene copy goes to linear and back), every length × `kScale` = 6.4
-  (`game::kWaterScale`, TRU units per Joan unit), the Laplacian thresholds ÷ 6.4.
-- Normals: two drifting, crossing normal layers (900 and 260 Joan units; Joan samples the original's
-  `Lake1.bmp` height map, TRU has none, so two octaves of value noise stand in) and the interactive wave
-  field (`game::WaveField`, central differences 1.5 cells apart, slope softly capped towards 0.3).
-- Refraction: the opaque scene colour + depth refracted by the normals and the waves (stronger over deep
-  beds); a sample above the surface falls back to straight through. Absorption removes red first (teal
-  shallows), in-scattered colour runs teal → deep blue with the bed depth, lit by ambient + sun. No depth
-  behind the surface = open, deep water.
-- Reflection with Schlick Fresnel (F0 0.02), fading in over the first 64 units of depth so the waterline
-  stays soft. Joan reads a sky environment map; we march the scene (screen-space, ours: 20 steps, or the
-  thickness-tested 24-step march with water detail) with a fog / sun-lobe sky as the miss colour.
-- Wave light: crests (negative Laplacian) catch the sky, troughs darken — a high-pass, so wakes and rings
-  read as lines; GGX sun glints (α 0.07; with water detail occluded screen-space, and nearby lamps glint).
-- Foam: a shoreline band (256 units) broken into drifting lace by fine noise, plus wave foam on splash
-  craters and the sharpest crests.
+Technique (`water.frag` header lists the sources; credits in docs/RESEARCH.md §8.8). Lengths in metres × `kM` = 290
+TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma scene copy goes to linear and back).
+- Base: smallcableboi's Godot shader "Realistic Water with Traced and Simple Reflection and Refraction V2" (CC0),
+  translated: Schlick Fresnel (IOR 1.0 / 1.33, F0 0.02), two scrolling normal + height layers (its noise textures; here
+  procedural 4-octave value-noise fbm, 2 m and 1.4 m features, 0.2 m/s, crossing), absorption
+  `pow(absorption colour, metres)` along the refracted path, refraction Traced with Simple fallback, traced SSR with
+  a screen-edge fade, edge foam where the edge noise exceeds depth / edge size, Snell's window from below.
+  Fixed: the Fresnel took `cos()` of a dot product and divided by it; the march loops shadowed `lastdepth1` (never
+  updated) and read an uninitialised depth; refraction was not bounded by the screen; 512 fixed steps.
+- Improved: both marches (`ouTrace`) are 14 quadratic steps + 5 binary refinements, bounded by the screen, and fail
+  when the crossing lies far behind the surface found (a foreground object in front of the ray); a traced refraction
+  that fails, leaves the screen or lands above the water falls back to Simple (normal offset × (bed − surface) /
+  bed distance; straight through when that lands on the shore). In-scattering from teal (shallow beds) to deep blue
+  (> 12 m) instead of black deep water; octaves finer than ~4 pixels fade to their mean and all slopes fade with
+  distance (60 m), the GGX glint widening instead (α 0.04 → 0.10); sun glint occluded screen-space and nearby lamps
+  glint (water detail); soft waterline (the bed shows through the last 6 units); lacy foam (edge noise squared).
+  From below: Fresnel on the air side inside the window (refracted ray traced into the scene above, else the sky),
+  total internal reflection outside it (SSR of the water below, else the deep colour); the post pass's under-water
+  fog stops at the surface for what is seen through it (`ouWaterPass`, Enhanced only).
+- Open seas (meshes with TRU's sea waves bound, `vSea`; l2_cliffclimb, l1 seas, Thailand): afl_ext's "Very fast
+  procedural ocean" (MIT) wave function: sums of `exp(sin − 1)` directional waves, each warping the next by its
+  derivative (drag 0.38), 1 afl unit = 1 m. Fragment normals by differences of 36 / 24 / 12 iterations (< 25 m,
+  < 80 m, beyond), the step at least a pixel, smoothed toward flat with distance as afl does; afl's
+  height-proportional subsurface term brightens crests; its sharp sun disc (pow 720 × 210) in the reflection; the
+  miss sky brightens toward the horizon as afl's (fog colour × (0.6 + 0.6 (1 − up)³)). Look cues from Shadertoy
+  "Seascape" (TDM, CC BY-NC-SA; no code used). Pools and still water keep only the calmer Godot layers.
+- Vertex displacement (`water.vert`): the original sea waves (`render::waterWaves`, which the gameplay surface
+  follows), then the Godot height layers (± 0.06 m) and on seas afl's waves (12 iterations, 0.45 m) centred on that
+  surface but clamped to the rest plane — the original's own crest bound — so the yacht deck stays above the drawn
+  sea; then the wave field's height. Coarse TRU meshes show it only at their few interior vertices.
+- Interactive waves (ours, `game::WaveField`): bend the normals, displace, light crests / darken troughs by the
+  curvature and foam splash craters and sharp crests (unchanged from the Joan port, docs/RESEARCH.md §8.7).
 - Splash droplets (ours): camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
-- Underwater: the original's under-water look ("Under water" below) in both qualities; Enhanced
-  adds faint caustics on the submerged bottom. The surface seen from below is tinted instead of
-  mirrored.
+- Underwater: the original's under-water look ("Under water" below) in both qualities; Enhanced adds faint caustics
+  on the submerged bottom.
+- Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
+  3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
 
 Data flow: `game::WaterSim` (docs/GAMEPLAY.md "Water") produces the wave field, splash
 droplets and the water volumes; ou-game fills `FrameOptions::{ripples, waterVolumes, splashes}`
@@ -281,9 +296,14 @@ splits dynamic rendering into two passes: pass 1 ends with a colour resolve and,
 UBO + 3 textures, post set 1 = UBO + depth. The ripple field uploads as R32F only when
 `WaterSim::version` changes.
 
-Measured (2026-10-27, l4_pool viewer, Vulkan, 1792x1008): Original 4.80 ms, Enhanced 5.01 ms
-average frame time over 49 frames. Viewed screenshots (GL and Vulkan, same camera): reflective,
-refractive pool with shore foam and caustics; Lara treading with a wake; underwater tint + AIR bar.
+Measured (2026-10-30, ou-game Debug build, Vulkan, 1920x1080, `--preset enhanced`, `OU_VK_PRESENT_STATS=1`, GPU
+"scene" segment incl. the water pass, 370 frames): l2_cliffclimb by the yacht looking down at the sea (water ~80 % of
+the screen) `--water original` 10.06 ms, Enhanced 10.73 ms (+0.67 ms); the horizon view 9.58 → 9.81 ms. Viewed
+screenshots (GL and Vulkan alike, openunderworld-work/screens/godotwater): ch2 yacht — clear teal water over the
+visible reef, afl wave streaks and glints, Lara's wake rings, the hull refracted below the waterline; horizon — waves
+fading into the scene fog; l4_pool — Lara treading with rings, refracted pillars, thin edge-foam lines on the rocks;
+under the pool — Snell's window showing the cave above, blue total internal reflection around it. l4_pool has no
+wadeable shallows at the spawns tried (Lara treads everywhere).
 
 Limits [I]: SSR misses off-screen geometry (fog fallback), the wave field covers a 6554-unit window
 around Lara (fading out at its edge), shore walls are sampled once per cell from the collision at the

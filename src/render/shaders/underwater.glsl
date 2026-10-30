@@ -41,7 +41,13 @@ vec3 ouWaterPass(vec3 c, vec2 uv) {
     vec3 far = ouWorld(uv, 1.0, w.invViewProj);
     float up = clamp(0.5 + 0.5 * normalize(far - w.eye.xyz).z, 0.0, 1.0);
     vec3 col = mix(w.waterPass[1].rgb, w.waterPass[0].rgb, up);
-    float viewZ = (w.viewProj * vec4(ouWorld(uv, texture(uDepth, uv).r, w.invViewProj), 1.0)).w;
+    vec3 q = ouWorld(uv, texture(uDepth, uv).r, w.invViewProj);
+    // Enhanced (submerged flag): what lies above the water is seen through the surface (water.frag's Snell's
+    // window), so the water fogs the path only up to the nearest volume's surface.
+    float surf = w.volumes[1].z;
+    if (w.fogColor.w > 0.5 && w.detail.w > 0.5 && w.eye.z < surf && q.z > surf)
+        q = w.eye.xyz + (q - w.eye.xyz) * ((surf - w.eye.z) / (q.z - w.eye.z));
+    float viewZ = (w.viewProj * vec4(q, 1.0)).w;
     float a = mix(w.waterPass[0].w, 1.0, clamp(viewZ / w.waterPass[1].w, 0.0, 1.0)) * w.waterPass[2].x;
     return mix(c, col, clamp(a, 0.0, 1.0));
 }

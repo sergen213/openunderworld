@@ -1,8 +1,7 @@
 // Enhanced water: shared uniform block and GLSL for both backends (Original water keeps TRU's shaders).
-// The surface look is Wars and Warriors: Joan of Arc's port's shade_water (same author, GPLv3): saturated teal-to-deep-
-// blue absorption over the refracted bed, the interactive wave field (game::WaveField) bending refraction / reflection
-// and lighting crests, Fresnel reflection, GGX sun glints, shoreline lace foam. Plus ours: screen-space reflections,
-// splash droplets and the underwater post effect. docs/RENDERING.md "Water".
+// The surface look is smallcableboi's Godot water (CC0: Fresnel, scrolling wave layers, absorption, traced / simple
+// refraction, traced SSR, edge foam, Snell's window) with afl_ext's procedural ocean waves (MIT) on open seas, plus the
+// interactive wave field (game::WaveField), splash droplets and the underwater post effect. docs/RENDERING.md "Water".
 #pragma once
 
 #include "render/Renderer.hpp"
@@ -38,7 +37,7 @@ struct WaterBlock {
     glm::vec4 rippleInfo;  // x grid size, y 1 = a wave field is bound, z/w unused
     glm::vec4 ambient;     // rgb scene ambient (scene::Environment::ambient), w unused
     // ---- v0.10 extras (FrameOptions waterDetail / waterDebug / atmosphere / weather) ----
-    glm::vec4 detail;      // x 1 = water detail, y debug view, z geometry wave amplitude, w water volume count
+    glm::vec4 detail;      // x 1 = water detail, y debug view, z Godot height-layer amplitude (water.vert), w volume count
     glm::vec4 lamps[4];    // nearest point lights: xyz world, w radius (0 = unused); water reflects them
     glm::vec4 lampColor[4];
     glm::vec4 haze;        // x density per unit, y height falloff per unit, z base height (world z), w atmosphere level

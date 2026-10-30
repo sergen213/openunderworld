@@ -123,7 +123,7 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
         w.volumes[2 * i + 1] = {vols[i].second->max[0], vols[i].second->max[1], vols[i].second->max[2], 0};
     }
     const float debug = float(std::clamp(options.waterDebug, 0, kWaterDebugViews - 1));
-    w.detail = {options.waterDetail ? 1.0f : 0.0f, debug, options.waterDetail ? 6.0f : 0.0f, float(nv)};
+    w.detail = {options.waterDetail ? 1.0f : 0.0f, debug, 0.12f * 290.0f, float(nv)}; // z: Godot heightstrength 0.12 m
     if (options.waterDetail) { // the four lamps nearest the camera, reflected by the water [I radius cut]
         std::vector<std::pair<float, const scene::Light*>> lamps;
         for (const auto& l : env.lights)
