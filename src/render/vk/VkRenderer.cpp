@@ -2686,10 +2686,10 @@ private:
             const GpuMesh& m = meshes_[mi];
             if (m.movedFrame != frameCounter_ + 1 || !m.prevVertices.buffer || (enhancedWater && m.water)) continue;
             for (const auto& s : m.submeshes)
-                if (s.blend == scene::Blend::Opaque) draw(mi, s, {s.alphaRef / 255.0f, 0, 0, 0});
+                if (s.blend == scene::Blend::Opaque || s.depthWrite) draw(mi, s, {s.alphaRef / 255.0f, 0, 0, 0});
         }
-        // Reactivity: blended surfaces by their alpha (90 %), Enhanced water surfaces 60 % (animated shading with no
-        // motion of its own), fx sprites and splash droplets by their contribution (90 %).
+        // Reactivity: blended surfaces that do not write depth by their alpha (90 %), Enhanced water surfaces 60 %
+        // (animated shading with no motion of its own), fx sprites and splash droplets by their contribution (90 %).
         const bool reactive = fsr_.reactiveUsed();
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrReactivePipeline_);
         for (uint32_t mi = 0; reactive && mi < meshes_.size(); ++mi) {
@@ -2697,7 +2697,10 @@ private:
             for (uint32_t si = 0; si < m.submeshes.size(); ++si) {
                 const scene::SubMesh& s = m.submeshes[si];
                 if (enhancedWater && waterDraw(mi, si)) draw(mi, s, {0, 0.6f, 0, 0});
-                else if (s.blend != scene::Blend::Opaque) draw(mi, s, {s.alphaRef / 255.0f, 0.9f, 1, 0});
+                // Depth writers (blend modes 2-3: foliage, seaweed; SubMesh::depthWrite) are in the depth and motion
+                // FSR reprojects, so their history is valid; marked reactive, the alpha-tested plants shimmered with
+                // every jitter phase (l2_cliffclimb cliffs).
+                else if (s.blend != scene::Blend::Opaque && !s.depthWrite) draw(mi, s, {s.alphaRef / 255.0f, 0.9f, 1, 0});
             }
         }
         vkCmdSetScissor(cmd, 0, 1, &scissor);

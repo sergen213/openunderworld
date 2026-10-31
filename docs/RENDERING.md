@@ -573,9 +573,10 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
   unjittered; RG16F): camera motion of every pixel from depth (previous view-projection × inverse of this frame's
   jittered one, multiplied in double: in float the world translation left up to a pixel of error in the distance that
   changed with each jitter phase, so a still camera's scenery shook in FSR's output), overwritten for meshes moved by `updateVertices`
-  (CPU-skinned characters, animated objects; the pose the last frame drew is copied GPU-side into the mesh's
+  (CPU-skinned characters, animated objects; opaque and depth-writing submeshes; the pose the last frame drew is copied GPU-side into the mesh's
   `prevVertices` at the start of the frame, before the new upload lands — no CPU copy, no re-upload) — and
-  reactivity (R8, max-blended): blended submeshes 0.9 × alpha, Enhanced water 0.6, original fx sprites
+  reactivity (R8, max-blended): blended submeshes that do not write depth 0.9 × alpha (depth writers — blend modes 2-3,
+  foliage — have valid history; marked reactive, the cliff plants of l2_cliffclimb shimmered), Enhanced water 0.6, original fx sprites
   (`fsr_fx.frag`: alpha blend → alpha, additive / subtract → max(rgb · a), multiply → |rgb + a − 1|) and splash droplets
   (`fsr_splash.frag`) 0.9 × their coverage, rain / snow 0.9 × the post pass's precipitation coverage
   (`fsr_weather.frag`, `atmosphere.glsl` `ouPrecipitation`). The reactive draws are skipped when the provider does not

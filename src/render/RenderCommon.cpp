@@ -173,8 +173,10 @@ SunShadow sunShadow(const Camera& camera, Viewport vp, const Bounds& scene, glm:
     const glm::mat4 invView = glm::inverse(camera.view());
     const glm::vec3 right(invView[0]), up(invView[1]), forward = -glm::vec3(invView[2]);
     const float tanY = std::tan(glm::radians(camera.verticalFovDeg) * 0.5f), tanX = tanY * aspect, sy = vulkanY ? -1.0f : 1.0f;
-    // ndc x = 2u - 1, ndc y = sy (2v - 1)
-    s.block.rayBase = glm::vec4(forward - tanX * right - sy * tanY * up, 0);
+    // ndc x = 2u - 1, ndc y = sy (2v - 1), minus the FSR jitter the projection adds (Camera::jittered): without it the
+    // reconstructed point leaves the surface by the jitter times the slope, and grazing faces shadowed themselves
+    // in some jitter phases only (whole triangles flickering on the l2_cliffclimb cliffs).
+    s.block.rayBase = glm::vec4(forward - (1 + camera.jitter.x) * tanX * right - (sy + camera.jitter.y) * tanY * up, 0);
     s.block.rayU = glm::vec4(2 * tanX * right, 0);
     s.block.rayV = glm::vec4(2 * sy * tanY * up, 0);
     s.block.sun = glm::vec4(toSun, shadows ? 1.0f : 0.0f);
