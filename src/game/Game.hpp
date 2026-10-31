@@ -218,6 +218,8 @@ struct PlayerState {
         enum Next : uint8_t { Onto, Over, ToLedge, Down } next = Onto;
         float mix = 0;
         bool alt = false;
+        bool draw = false; // low (no attach clip): drawn onto the ledge point + 86.94 over the clip (anim target 0x273)
+        vec2 drawOff{0};   // that correction, spread over the clip
         vec3 edge{0};
         vec2 out{0};
         float h = 0, endZ = 0;
@@ -297,7 +299,8 @@ private:
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
     bool canClimbUp() const;
-    bool tryHurdle(bool running, bool jumped); // onto / over a ledge from the ground (State::ClimbUp, hurdle_* clips)
+    bool tryHurdle(bool jumped); // onto / over a ledge from the ground (State::ClimbUp, hurdle_* clips)
+    void startHurdleFollowUp(bool low); // the onto / over / far-side hang clip after the attach (or S958)
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge); 3 pole fling
@@ -680,6 +683,12 @@ private:
     std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
     std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
+    struct OrbitState {      // orbit camera (World.cpp): +0x150 desired point, +0x1D4 distance, +0x1D8 its return speed
+        vec3 desired{0};
+        float dist = 0, speed = 0;
+        bool valid = false;
+        float yaw = 0, pitch = 0; // the angles it left in cam_ (others changing them re-seed it)
+    } orbit_;
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp
     CameraState blendFrom_; // last spline camera pose, blended out of over kCameraBlendSeconds
     float blendOut_ = 0;    // seconds of blend-out left

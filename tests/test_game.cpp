@@ -587,9 +587,11 @@ TEST(GameReal, PoolRunReplayStaysOnFloor) {
     EXPECT_LT(moved, 1.05 * expected);
 }
 
-// l4_pool ledge markup id 1253 (rock ledge at z 3562, lower floor 523 units below, rock top walkable): a standing
-// jump from the lower floor pulls her straight up (hurdle_ground_attach_mid_150, then hurdle_onto) onto the top.
-TEST(GameReal, PoolRockHurdle) {
+// l4_pool ledge markup id 1253 (rock ledge at z 3562, lower floor 523 below, rock top walkable; the line sits up to ~180
+// back from the rock face): the ledge class test measures the floor 94.8 out from the ledge point (tru.exe 0x728650),
+// which is the rock top here, so it is no hurdle (pulling her up 523 squared to the line sank her into the rock): a
+// standing jump grabs it and a second jump climbs onto the top.
+TEST(GameReal, PoolRockGrabNotHurdle) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     auto bytes = bf.read("pc-w\\l4_pool.drm");
@@ -600,33 +602,16 @@ TEST(GameReal, PoolRockHurdle) {
     Actions jump;
     jump.jump = true;
     const auto& s = w.player().state();
-    const auto hands = [&] { // blended like the blend-space request (PlayerState::clipMix / mix)
-        const anim::Clip* c = w.anims().find(s.clip);
-        vec3 h = *w.anims().handsAt(*c, s.clipTime);
-        if (const anim::Clip* m = s.mix > 0 ? w.anims().find(s.clipMix) : nullptr)
-            h = glm::mix(h, *w.anims().handsAt(*m, s.clipTime / c->durationSeconds() * m->durationSeconds()), s.mix);
-        return vec3(w.player().modelMatrix(s.pos, s.yaw) * glm::vec4(h, 1));
-    };
     std::vector<std::string> clips;
-    float lastClimbZ = 0, snap = -1, handsJump = -1;
-    vec3 prevHands(0);
-    for (int i = 0; i < 120; ++i) {
-        w.tick(i == 5 ? jump : Actions{});
-        if (clips.empty() || clips.back() != s.clip) {
-            if (s.clip == "hurdle_onto") handsJump = glm::length(hands() - prevHands); // hands stay on the edge
-            clips.push_back(s.clip);
-        }
-        if (s.state == State::ClimbUp) lastClimbZ = s.pos.z, prevHands = hands();
-        else if (snap < 0 && lastClimbZ != 0) snap = std::abs(s.pos.z - lastClimbZ);
+    for (int i = 0; i < 200; ++i) {
+        w.tick(i == 5 || i == 90 ? jump : Actions{});
+        if (clips.empty() || clips.back() != s.clip) clips.push_back(s.clip);
     }
-    // 523 high: request 129 (hurdle_ground_attach_high_150 blended with _high_200 by height), then 133.
-    EXPECT_EQ(clips, (std::vector<std::string>{"ng_idle", "hurdle_ground_attach_high_150", "hurdle_onto", "ng_idle"}));
+    EXPECT_TRUE(std::find(clips.begin(), clips.end(), "ledgeb_attach_M") != clips.end()) << ::testing::PrintToString(clips);
+    EXPECT_TRUE(std::find(clips.begin(), clips.end(), "ledgeb_climbup_fast") != clips.end()) << ::testing::PrintToString(clips);
+    EXPECT_TRUE(std::none_of(clips.begin(), clips.end(), [](const std::string& c) { return c.starts_with("hurdle_"); }));
     EXPECT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 3571, 1); // rock top
-    EXPECT_LT(handsJump, 25);
-    // hurdle_onto's rise is scaled to end on the ledge height; the remaining snap is the rock top (3571) sitting 9
-    // above the ledge markup (3562).
-    EXPECT_LT(snap, 10);
 }
 
 // Animation pops: per-tick change of the bones' model-space orientations over a scripted run / walk / stop /
@@ -1336,8 +1321,8 @@ TEST(GameReal, TempleLedgeJumpsUpAndBack) {
     run({{-8411.9f, -7173.9f, 1400}, glm::radians(90.0f)}, 1158, forward(-1), 1159);
 }
 
-// l4_pool rock ledge 1253 (hands z 3562; PoolRockHurdle's spawn): onto the rock top, and drop (crouch button) goes
-// back down into the hang on 1253.
+// l4_pool rock ledge 1253 (hands z 3562; PoolRockGrabNotHurdle's spawn): grabbed and climbed onto the rock top, drop
+// (crouch button) goes back down into the hang on 1253.
 TEST(GameReal, PoolDropToHang) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1346,7 +1331,7 @@ TEST(GameReal, PoolDropToHang) {
     jump.jump = true;
     auto w = unitWorld(bf, "l4_pool", spawn);
     const auto& s = w.player().state();
-    for (int i = 0; i < 120; ++i) w.tick(i == 5 ? jump : Actions{}); // hurdle onto the top
+    for (int i = 0; i < 200; ++i) w.tick(i == 5 || i == 90 ? jump : Actions{}); // grab, climb onto the top
     ASSERT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 3571, 1);
     Actions drop;
@@ -1427,6 +1412,47 @@ TEST(GameReal, PoolSideJump) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     auto w = unitWorld(bf, "l4_pool", {{-5274, 3618, 3400}, 0});
+// Ticks `input` in `unit` from the spawn; the clips played in order and the state on the tick the obstacle move ended.
+static std::pair<std::vector<std::string>, game::PlayerState> obstacleRun(const char* unit, vec3 pos, float yawDeg, int ticks, Actions in) {
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(collision::loadLevelCollision(cdc::parseDrm(*bf.read(std::string("pc-w\\") + unit + ".drm"))), game::loadLaraAnims(bf),
+                  {pos, glm::radians(yawDeg)});
+    std::vector<std::string> clips;
+    std::optional<game::PlayerState> after;
+    bool climbing = false;
+    for (int t = 0; t < ticks; ++t) {
+        w.tick(in);
+        const auto& s = w.player().state();
+        if (clips.empty() || clips.back() != s.clip) clips.push_back(s.clip);
+        if (climbing && s.state != State::ClimbUp && !after) after = s;
+        climbing = s.state == State::ClimbUp;
+    }
+    return {clips, after.value_or(w.player().state())};
+}
+
+// l2_junglehub ledge 2: a 273-high, 240-thick wall (ledges both sides, the floor behind it ~3975): running into it the
+// ledge class is 5 (low) and 0x73DFF0's class 0: hurdle_low_over straight off the run (chart S958 -> S971), landing
+// on the floor behind it at her own height.
+TEST(GameReal, JunglehubVaultOver) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto [clips, end] = obstacleRun("l2_junglehub", {-9422.8f, 18174.8f, 4100}, -90, 120, forward());
+    EXPECT_TRUE(std::find(clips.begin(), clips.end(), "hurdle_low_over") != clips.end() ||
+                std::find(clips.begin(), clips.end(), "hurdle_over_low_long_50") != clips.end())
+        << ::testing::PrintToString(clips);
+    EXPECT_LT(end.pos.y, 17774.8f - 100); // past the wall (its far ledge 3)
+    EXPECT_NE(end.state, State::Fall);   // on the floor behind it (3975), not falling
+    EXPECT_NEAR(end.pos.z, 3975, 40);
+}
+
+// l4_pool rock top (ledge 50, floor 195 below past it): running off the edge plays hurdle_down_low_50 (ledge class 8,
+// chart S724 -> S996) and ends on the lower floor.
+TEST(GameReal, PoolRockStepDown) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto [clips, end] = obstacleRun("l4_pool", {-3993.2f, 4255.0f, 3100}, -47.7f, 90, forward());
+    EXPECT_TRUE(std::find(clips.begin(), clips.end(), "hurdle_down_low_50") != clips.end()) << ::testing::PrintToString(clips);
+    EXPECT_LT(end.pos.z, 3069.5f - 150);
+}
+
     const int from = markupIndex(w, 1250);
     ASSERT_GE(from, 0);
     const auto& m = w.collision().markup[size_t(from)];

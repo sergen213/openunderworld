@@ -162,26 +162,52 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   standing jump from the rubble in front of it (50 and 101 steps), a ledge grab and a climb-up. Ours
   (`Player::tryHurdle`). Blend spaces [O-data]: the requests above (object DTP +0x60, 0x24-byte records, `+4` clip list,
   `+0x10` count; dumped from lara.drm) name heights / depths in cm, 1 cm = 3.1605 units: the exe's own floats
-  158.02501 / 316.05002 / 474.075 / 632.1 (0x707C60, 0x72CCD0, 0x7396E0). Bands: low stepUp..316 (127 / 132 / 130 / 134
-  / 139), mid 316..474 (128 / 131 / 135 / 141), high 474..642.4 (129 / 133 / 140; 642.4 = `_high_200`'s hands at its
-  end, replacing the old 650 guess); the weight is the position inside the band. The Wine slab confirms request 132:
+  158.02501 / 316.05002 / 474.075 / 632.1 (0x707C60, 0x72CCD0, 0x7396E0). Bands (the ledge class table below):
+  low 154.87..312.90 (132 / 130 / 134 / 139), mid ..474.08 (128 / 131 / 135 / 141), high ..635.27 (129 / 133 / 140),
+  replacing our old 340 / 650 guesses; the weight is the position on the request's axis. The Wine slab confirms request 132:
   0.267 s = its 0.3 s from start frame 1, ~220 forward = the blend's 237 at 253 high. Clip geometry [O-data, our
   probe]: attach clips have no root motion (mid / high hands end 103 ahead on the edge); `hurdle_over` / `_onto` /
   `_to_ledgeb_mid_*` start in the mid attach's end pose; `_to_ledgeb_*` turn half round and end in the hang pose
   (forward 332 / 459 / 571 for 25 / 65 / 100 cm deep tops); over forward 640 / 860 (low), 594 / 722 (mid); down
-  forward ~310 (low) / ~360. Our choice [I] (the player state chart in lara.drm decides in the original; its condition
-  registry is tru.exe 0x8B2840 `{fn, id, group}`, not decoded far enough): running into a low obstacle with a top
-  goes straight onto it (132); otherwise the band's attach plays (mid / high need the jump, reach radius + 120;
-  low: radius + 40) and is followed by a hang on the far side (top ≤ 100 cm deep ending in a hangable ledge), over
-  (her own floor past the top and the long clip lands clear of it) or onto (a walkable top where it ends); pulling
-  back during the attach plays its cancel. Down: walking / running at a ledge's edge (top ending within radius + 40,
-  facing it) over a stepDown..632 drop to a walkable floor. Reach is measured to the top's edge on her side — the face
-  under the ledge line at ledge height — not the line, and mid / high are drawn there: l4_pool rock 1253's line sits
-  up to ~180 back from the face, so squaring her to the line put her inside the rock. tru.exe's ledge attach target
-  (0x74ED30, target 0x262) does place the hang root on the line: 160 out (+0x250 −160) and 498 down (+0x252), with
-  per-state overrides (state-chart properties 0x1A5 / 0x1A6). 0x759260 / 0x7594C0 are not the ledge grab: they are
-  the `PSCCF_WallJumpAnticipate` / `WallJumpAttach` / `WallJumpCollide` conditions (wrappers 0x763330 / 0x7633E0 /
-  0x763490), so their pelvis sweep is a wall-jump test and is not ported to grabs.
+  forward ~310 (low) / ~360. 0x759260 / 0x7594C0 are not the ledge grab: they are the `PSCCF_WallJumpAnticipate` /
+  `WallJumpAttach` / `WallJumpCollide` conditions (wrappers 0x763330 / 0x7633E0 / 0x763490).
+- Player state chart [O-data + O] (lara.drm object data = ObjectBase +0xC8 block; dump tool
+  openunderworld-work/hurdles/sc.py). Header +0x12508: u16 states 1445, u16 transitions 2374, ptr states[], ptr
+  transitions[], ptr events[] (69); the runtime chart object is 8 bytes earlier (0x12500: tru.exe reads +0xC / +0x10
+  / +0x14); a second chart at +0x12530 (103 / 203 / 14). State (0x28): +4 s16 anim request (played on entry,
+  0x783470), +6 s16 parent (transitions inherited, 0x787570), +0xA / +0x14 properties `{u16 id, u16 type, u32 value}`,
+  +0xC / +0x18 entry actions (u16 ids into the PSCPF table 0x8B0A50 `{id, f1..f6}`), +0xE / +0x1C transition indices,
+  +0x10 / +0x20 events. Transition (0x14): +0 s16 target, +2 / +8 flags, +4 / +0xC conditions `{s16 kind, s16 id, s16
+  value, u8 negate}` (all must hold, 0x785920); the condition registry is `{id, group, fn}` at 0x8B2CE8 / 0x8B2838.
+  For obstacles:
+  - Ground locomotion (S724 / S730) runs markup query 96 (property 0x21D). The winning ledge is classed by the ledge
+    markup table (FUN_005D5930 → objdata +0x116B0 → +0x90 / +0x94 = objdata +0x121C0, 18 × `{class, min, max, kind,
+    test}`, evaluated in order by 0x728650; kind 1 / 2 test 0x7260B0 on the floor 94.815 out from the ledge point):
+    floor 154.87..312.90 / ..474.08 / ..635.27 below the ledge = class 5 / 6 / 7 (up), the same past a ledge she
+    stands on (ledge < 6.33 above her feet, facing it) = 8 / 9 / 10 (down); each also needs test 0 (0x727BF0,
+    clearance; we apply its over-the-top and standing-column segments, not its first one [U: frame]). Class 5 on the
+    ground → S958 with no attach clip (low onto / over / far-side hang); 6 → wall_collide_mid only; 8 / 9 / 10 →
+    S996 / S995 / S994 (requests 139 / 141 / 140). Mid / high (6 / 7) climb only from the jump states (S289, running
+    jump S775 → S959 / S957 attach mid / high); a low obstacle jumped at is S958 again. So the jump is required for
+    mid / high and not for low (Wine: the 253 slab).
+  - The hurdle parent S954 runs action 0x201 = 0x73DFF0 on entry (tuning objdata +0x530): rays along her heading
+    from 6.32 behind the ledge point to 474.08 past it at 237.04 and then 31.61 above it (a hit within 237.04 = class
+    −1, beyond = 1); else a down ray 353.3 past the point from 37.9 above to 53.7 below it: a top = 1 (onto); none →
+    query 100 for a ledge along the far end: found = 2 (hang on the far side) unless a floor lies within 632 below 158
+    past it (then 0), not found = 0 (over). Condition 0x1D1 (player +0x6C) then picks S971 / S981 (0 over), S974 /
+    S980 (1 onto), S966 / S983 (2, jump target a ledge); −1 falls through to onto. 3 / 4 / 5 are the same with flair
+    clips when 0x72F360 finds room (not played).
+  - Positioning: anim target 0x273 (0x73DD70, property 0x19A = 627): root at the ledge point + property 0x119 out
+    (S954: 86.94) at her own height (0x11A = 0); down (S997): on the line, heading the normal + 180 (0x11C).
+  - Blend axes (properties 0x0E5..0x0EA, floats): attach / onto / down 158.1..316.2 / 316.2..474.1 / 474.1..632.2 by
+    height; far-side hang 79.06 / 205.4 / 316.2 by depth; over 316.2..632.2 × 158.1..316.2 (which distance the first
+    axis is: [U], ours root to the top's far end).
+  - Cancel: stick back (condition 0x192 MoveDir 411) during the attach → S961 (request 149 / 148 / 147).
+  Ours (`Player::tryHurdle`, `tryHurdleDown`, `hurdleClass`): the above, measured from the face under the ledge line
+  instead of the line (l4_pool rock 1253's sits up to ~180 back from the face: its floor 94.8 out is the rock top, so it
+  is no hurdle at all — a standing jump grabs it, as `GameReal.PoolRockGrabNotHurdle`). [U]: query 96's reach (ours:
+  the root within radius + 40 of the face, radius + 120 jumping) — the query sweep is v·t + ½gt² over 40 frames with v
+  from her velocity scaled by player +0x6E4 (DiceJumps), not measured yet; the far-ledge search radius of query 100.
 - [O] The air clips have no root motion: flight is physics-driven (below). There is no `ledgeb_left` or
   `ledgeb_jump_left`; [I] the game probably mirrors the right clips. We play the right clips for both sides.
 - Clips whose root rotates (`drop_to_ledgeb`, `bbeam_walk_turn180`, `ledgeb_jump_back`, `ng_turn_center`) turn the

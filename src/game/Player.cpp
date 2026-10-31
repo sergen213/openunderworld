@@ -565,140 +565,143 @@ bool Player::canClimbUp() const {
 //       forward) and down its far side into a hang, turning half round
 //   139 hurdle_down_low_50 / _100, 141 _mid_100 / _mid_150, 140 _mid_150 / _high_200: down 158..632 off a ledge
 //   147 / 149 / 148 hurdle_ground_attach_*_cancel: back off the attach (low / mid / high), 107-110 back
-// Which request the original's state chart (lara.drm player state chart, conditions 0x8B2840 registry) picks is not
-// decoded [I]; ours, from the clips: running into a low (stepUp..316) obstacle with a top climbs straight onto it
-// (tru.exe under Wine, l3_main_bedroom: the 253-high slab, 0.267 s = request 132 at start frame 1, ~220 forward:
-// the blend's 237), else the attach of its height band plays (mid / high only with the jump [I]) and is followed by:
-// a hang on the far side when the top is at most 100 cm deep and its far end is a hangable ledge, over when the floor
-// past the top is her own and the long clip lands past it, else onto (a walkable top where the clip ends). The attach
-// draws mid / high to the top's edge on her side: the face under the line, not the line (l4_pool 1253's sits up to
-// ~180 back: she sank into the rock). Pulling back during the attach cancels it.
+// Selection: lara.drm's player state chart (decoded, docs/GAMEPLAY.md "Obstacles"; tool openunderworld-work/hurdles/sc.py):
+// - the ground locomotion states (chart S724 / S730) run markup query 96 (state property 0x21D); its winning ledge is
+//   classed by the ledge markup table (objdata +0x121C0, evaluated by 0x728650): the floor 94.8 out from the ledge on
+//   her side 154.87..312.90 / 312.90..474.08 / 474.08..635.27 below it = class 5 / 6 / 7 (up), the same drop beyond a
+//   ledge she stands on = 8 / 9 / 10 (down), each also needing the clearance test 0x727BF0. On the ground, class 5 goes
+//   straight into S958 (no attach clip: low onto / over / far-side hang), 6 only bumps (wall_collide_mid, not played),
+//   8 / 9 / 10 play the down clips (S996 / S995 / S994); from the jump states (S289, running jump S775) class 6 / 7 play
+//   the mid / high attach (S959 / S957; 5 again S958): mid / high need the jump.
+// - the hurdle parent S954 runs action 0x201 = 0x73DFF0 on entry, which classes what is past the ledge (player +0x6C,
+//   condition 0x1D1): see hurdleClass. 0 over (S971 / S981), 1 onto (S974 / S980), 2 onto the far side into a hang
+//   (S966 / S983, the jump target a ledge); unclassed (-1) falls to onto. (3 / 4 / 5 = the same with flair clips when
+//   0x72F360 finds room around her; not played.)
+// - anim target 0x273 (0x73DD70, state property 0x19A): the root is drawn to the ledge point + 86.94 out (property
+//   0x119 of S954) at her own height (0x11A = 0); down (S997): on the line, heading the normal + 180 (0x11C). We measure
+//   from the face under the line (l4_pool 1253's line sits up to ~180 back: on the line she sank into the rock).
+// - cancel: stick back (conditions 0x192 MoveDir 411) during the attach (S959 -> S961, request 149 / 148 / 147).
 namespace {
 constexpr float kCm50 = 158.02501f, kCm100 = 316.05002f, kCm150 = 474.075f, kCm200 = 632.1f;
-constexpr float kHighHands = 642.4f; // hurdle_ground_attach_high_200's hands at its end: the highest edge she reaches
+// ledge markup class table (objdata +0x121C0): class 5..7 / 8..10 bands of the floor 94.815 out below the ledge
+constexpr float kBand0 = 154.86726f, kBand1 = 312.89508f, kBand2 = 474.08347f, kBand3 = 635.27185f;
+constexpr float kFloorOut = 94.815f, kAttachOut = 86.94f; // 0x728650; S954 property 0x119
 float span(float v, float a, float b) { return std::clamp((v - a) / (b - a), 0.0f, 1.0f); }
 
-struct Top {
-    vec3 edge{0};        // top edge on Lara's side (ledge height)
-    float depth = 1e9f;  // walkable top past the edge (1e9: more than any clip covers)
-    std::optional<float> beyond; // floor z past the top
-    std::optional<float> topZ;   // the top's floor next to the edge
-};
-// The face under the ledge point q, seen from `from` along -out at 20 below the top (the line when nothing is hit or
-// the face is behind it), and the walkable top past it (within 40 of q.z, 20-unit steps).
-Top surveyTop(const collision::CollisionMesh& col, vec3 from, vec3 q, vec2 out, float minNz) {
-    Top t{q};
+// What is past the ledge point q for a hurdle along f (tru.exe 0x73DFF0, tuning objdata +0x530): rays along f from 6.32
+// behind q to 474.08 past it at 237.04 and then 31.61 above q: a hit within 237.04 = -1, beyond = 1 (onto); else a
+// down ray 347 + 6.32 past q from 37.9 above to 53.7 below it: a top there = 1; none = 2 when a ledge along the top's far
+// end can be hung from (query 100 in the original; ours the nearest ledge within 200 of where the top ends) unless a
+// floor lies within 632 below 158 past it (then 0), else 0 (over).
+struct Past { int cls = 1; int li = -1, seg = 0; float t = 0, side = 1, depth = 0; };
+Past hurdleClass(const collision::CollisionMesh& col, vec3 q, vec2 f) {
+    Past p;
+    for (const float z : {237.04f, 31.606f})
+        if (const auto hit = col.raycast(vec3(xy(q) - f * 6.321f, q.z + z), vec3(f, 0), kBand2 + 6.321f)) {
+            p.cls = hit->t < 237.04f ? -1 : 1;
+            return p;
+        }
+    if (col.raycast(vec3(xy(q) + f * 353.321f, q.z + 37.926f), vec3(0, 0, -1), 91.642f)) return p; // onto
+    float k = 20;
+    for (; k < 353.0f; k += 20)
+        if (!col.raycast(vec3(xy(q) + f * k, q.z + 37.926f), vec3(0, 0, -1), 91.642f)) break;
+    p.depth = k - 20;
+    const vec3 far = q + vec3(f * p.depth, 0);
+    float best = 200.0f;
+    p.cls = 0;
+    for (size_t fi = 0; fi < col.markup.size(); ++fi) {
+        const auto& fm = col.markup[fi];
+        if (fm.type != 1) continue;
+        const OnLine fo = closestOn(fm, far);
+        if (fo.seg < 0 || fo.dist >= best || std::abs(fo.q.z - q.z) > 40.0f || glm::dot(xy(fo.q - q), f) < 20.0f) continue;
+        const vec2 n(-segDir(fm, fo.seg).y, segDir(fm, fo.seg).x);
+        if (std::abs(glm::dot(n, f)) < 0.7f) continue;
+        const float side = glm::dot(n, f) > 0 ? 1.0f : -1.0f;
+        best = fo.dist;
+        const bool floor = bool(col.raycast(fo.q + vec3(n * side * 158.0f, 6.321f), vec3(0, 0, -1), kCm200 + 12.642f));
+        p.cls = floor ? 0 : 2, p.li = int(fi), p.seg = fo.seg, p.t = fo.t, p.side = side;
+    }
+    return p;
+}
+// Ledge class test 0 (0x727BF0; tuning +0x6E8 100, +0x6EA 139, +0x6F0 252, +0x10 height 512), its segments in the
+// ledge's frame (out = away from the top, up): over the top 252 above the ledge from 100 out to 139 onto it (both ways)
+// and a standing column 69.5 onto the top from 31.6 to 543.6 above it must be clear. Its first segment (100 out,
+// 252 below to 252 above) would cross the floor under every low ledge as we read the frame: not applied [U].
+bool ledgeClear(const collision::CollisionMesh& col, vec3 q, vec2 out) {
+    const auto p = [&](float y, float z) { return q + vec3(out * y, z); };
+    const auto clear = [&](vec3 a, vec3 b) { const vec3 d = b - a; return !col.raycast(a, glm::normalize(d), glm::length(d)); };
+    return clear(p(100, 252), p(-139, 252)) && clear(p(-139, 252), p(100, 252)) && clear(p(-69.5f, 31.605f), p(-69.5f, 512.0f + 31.605f));
+}
+// Face under the ledge point q seen from `from` along -out at 20 below the top (q when nothing is hit or it is behind).
+vec3 faceEdge(const collision::CollisionMesh& col, vec3 from, vec3 q, vec2 out) {
     const float toLine = glm::dot(xy(from - q), out);
     if (const auto hit = col.raycast(vec3(xy(from), q.z - 20), vec3(-out, 0), std::max(toLine, 0.0f) + 10); hit && hit->t < toLine)
-        t.edge = vec3(xy(from) - out * hit->t, q.z);
-    for (float k = 20; k <= 1200; k += 20) {
-        const auto g = col.groundProbe(vec3(xy(t.edge) - out * k, q.z + 60), 100);
-        if (g && g->normal.z >= minNz && std::abs(g->point.z - q.z) <= 40) {
-            if (!t.topZ) t.topZ = g->point.z;
-            continue;
-        }
-        t.depth = k - 20;
-        if (const auto f = col.groundProbe(vec3(xy(t.edge) - out * (k + 60), q.z + 60), 1400); f && f->normal.z >= minNz) t.beyond = f->point.z;
-        break;
-    }
-    return t;
+        return vec3(xy(from) - out * hit->t, q.z);
+    return q;
 }
 } // namespace
 
-bool Player::tryHurdle(bool running, bool jumped) {
-    const auto travel = [&](std::string_view a, std::string_view b, float w) { // blended root motion from the request start
-        const anim::Clip *ca = anims_.find(a), *cb = anims_.find(b);
-        if (!ca) return vec3(0);
-        const auto part = [&](const anim::Clip& c) {
-            return rootTranslation(c, c.durationSeconds(), false) - rootTranslation(c, clipBlend("", a).startSeconds / ca->durationSeconds() * c.durationSeconds(), false);
-        };
-        return cb ? glm::mix(part(*ca), part(*cb), w) : part(*ca);
-    };
+bool Player::tryHurdle(bool jumped) {
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
         if (m.type != 1) continue;
         const OnLine o = closestOn(m, s_.pos);
         if (o.seg < 0 || o.u < 0 || o.u > segLen(m, o.seg) || o.dist > t_.radius + 120.0f + 200.0f) continue;
-        const float h = o.q.z - s_.pos.z;
-        if (h <= t_.stepUp || h > kHighHands) continue;
         vec2 out = vec2(-segDir(m, o.seg).y, segDir(m, o.seg).x);
         if (glm::dot(xy(s_.pos - o.q), out) < 0) out = -out; // Lara's side
         if (glm::dot(xy(forward()), -out) < 0.6f) continue;
-        const int band = h <= kCm100 ? 0 : h <= kCm150 ? 1 : 2;
-        if (band > 0 && !jumped) continue; // [I]
-        const Top top = surveyTop(col_, s_.pos, o.q, out, t_.minFloorNormalZ);
-        const float reach = glm::dot(xy(s_.pos - top.edge), out);
-        if (reach < -1.0f || reach > t_.radius + (jumped ? 120.0f : 40.0f)) continue;
+        const vec3 edge = faceEdge(col_, s_.pos, o.q, out);
+        const float reach = glm::dot(xy(s_.pos - edge), out);
+        if (reach < -1.0f || reach > t_.radius + (jumped ? 120.0f : 40.0f)) continue; // [U] query 96's reach
+        const auto below = col_.groundProbe(vec3(xy(edge) + out * kFloorOut, o.q.z + 60), kBand3 + 200.0f);
+        const float h = o.q.z - (below ? below->point.z : s_.pos.z);
+        const int band = h <= kBand0 ? -1 : h <= kBand1 ? 0 : h <= kBand2 ? 1 : h <= kBand3 ? 2 : -1;
+        if (band < 0 || (band > 0 && !jumped) || !anims_.find("hurdle_low_onto") || !ledgeClear(col_, o.q, out)) continue; // 6 / 7 only from the jump states
+        const Past past = hurdleClass(col_, o.q, xy(forward()));
         PlayerState::Hurdle hu;
-        hu.edge = top.edge, hu.out = out, hu.h = h, hu.endZ = top.topZ.value_or(o.q.z);
+        hu.edge = edge, hu.out = out, hu.h = h, hu.endZ = o.q.z;
+        if (const auto top = col_.groundProbe(vec3(xy(edge) - out * 40.0f, o.q.z + 60), 100); top && std::abs(top->point.z - o.q.z) <= 40)
+            hu.endZ = top->point.z;
+        // blend weights: requests' axes (state properties 0x0E6 / 0x0E7: 158.1..316.2 / 316.2..474.1 / 474.1..632.2)
         const float hw = band == 0 ? span(h, kCm50, kCm100) : band == 1 ? span(h, kCm100, kCm150) : span(h, kCm150, kCm200);
-        const float startReach = band == 0 ? reach : 103.0f; // mid / high are drawn to the edge, hands 103 ahead
-        // Onto the far side into a hang: a hangable ledge along the top's far end, at most 100 cm deep.
-        bool chosen = false;
-        if (band < 2 && top.depth <= kCm100 + 20.0f) {
-            const vec3 far = top.edge - vec3(out * top.depth, 0);
-            float best = 200.0f;
-            for (size_t fi = 0; fi < col_.markup.size(); ++fi) {
-                const auto& fm = col_.markup[fi];
-                if (fm.type != 1) continue;
-                const OnLine fo = closestOn(fm, far);
-                if (fo.seg < 0 || fo.dist >= best || std::abs(fo.q.z - o.q.z) > 40.0f || glm::dot(xy(fo.q - top.edge), -out) < 20.0f) continue;
-                const vec2 n(-segDir(fm, fo.seg).y, segDir(fm, fo.seg).x);
-                if (std::abs(glm::dot(n, out)) < 0.7f) continue;
-                const float side = glm::dot(n, -out) > 0 ? 1.0f : -1.0f;
-                if (!openBelow(col_, fm, fo.seg, fo.t, side)) continue;
-                best = fo.dist, chosen = true;
-                hu.next = PlayerState::Hurdle::ToLedge, hu.farLedge = int(fi), hu.farSeg = fo.seg, hu.farT = fo.t, hu.farSide = side;
-                hu.alt = top.depth > 205.4f; // the 65 / 100 cm pair
-                hu.mix = hu.alt ? span(top.depth, 205.4f, kCm100) : span(top.depth, 79.01f, 205.4f);
-            }
-        }
-        // Over: her own floor past the top, the landing (forward travel from the start) clear of the far face.
-        if (!chosen && band < 2 && top.beyond && std::abs(*top.beyond - s_.pos.z) <= t_.stepUp) {
-            const float need = startReach + top.depth + t_.radius;
-            const bool longOne = band == 0 && need > -travel("hurdle_low_over", "hurdle_low_over_100", hw).y;
-            const float most = band == 0 ? -travel(longOne ? "hurdle_over_low_long_50" : "hurdle_low_over", longOne ? "hurdle_over_low_long_100" : "hurdle_low_over_100", hw).y
-                                         : -travel("hurdle_over_long_100", "", 0).y;
-            if (need <= most) {
-                chosen = true;
-                hu.next = PlayerState::Hurdle::Over, hu.alt = longOne, hu.endZ = *top.beyond;
-                hu.mix = band == 0 ? hw : span(need, -travel("hurdle_over", "", 0).y, most);
-            }
-        }
-        // Onto: a walkable top where the onto clip ends (from where she is, or up to 100 along the ledge running).
-        const bool direct = band == 0 && running && !chosen; // tru.exe: running, straight onto it
-        float along = 0;
-        if (!chosen) {
+        if (past.cls == 2) {
+            hu.next = PlayerState::Hurdle::ToLedge, hu.farLedge = past.li, hu.farSeg = past.seg, hu.farT = past.t, hu.farSide = past.side;
+            hu.alt = past.depth > 205.4f; // depth axis 79.06 / 205.4 / 316.2 (S977 properties 0x0E5..0x0E7)
+            hu.mix = hu.alt ? span(past.depth, 205.4f, kCm100) : span(past.depth, 79.06f, 205.4f);
+        } else if (past.cls == 0) {
+            hu.next = PlayerState::Hurdle::Over, hu.endZ = s_.pos.z;
+            // depth axis 316.2..632.2 (S971 properties 0x0E6 / 0x0E7; its height axis 0x0E9 / 0x0EA 158.1..316.2): [U]
+            // which distance; ours from her root to the top's far end
+            const float dw = span(reach + past.depth + kAttachOut, kCm100, kCm200);
+            hu.alt = band == 0 && dw >= 0.5f;
+            hu.mix = band == 0 ? hw : dw;
+        } else {
             hu.next = PlayerState::Hurdle::Onto;
-            const vec3 tr = band == 0 ? travel("hurdle_low_onto", "hurdle_low_onto_100", hw) : travel("hurdle_onto", "", 0);
-            const vec2 from = direct ? xy(s_.pos) : xy(top.edge) + out * startReach;
-            const vec2 move = xy(rotYaw(direct ? s_.yaw : yawOf(-out), tr));
-            const auto supported = [&](float a) {
-                if (o.u + a < 0 || o.u + a > segLen(m, o.seg)) return false;
-                const auto g = col_.groundProbe(vec3(from + move + segDir(m, o.seg) * a, o.q.z + 100), 140);
-                return g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - o.q.z) <= 40;
-            };
-            while (!supported(along) && direct && along > -100.0f) along = along > 0 ? -along : 25.0f - along; // 0, 25, -25, ...
-            if (!supported(along)) continue;
         }
-        s_.pos += vec3(segDir(m, o.seg) * along, 0);
-        hu.edge += vec3(segDir(m, o.seg) * along, 0);
-        s_.ledge = int(li), s_.ledgeSeg = o.seg, s_.ledgeT = std::clamp(o.t + along, 0.0f, segLen(m, o.seg)), s_.ledgeSide = 1;
+        s_.ledge = int(li), s_.ledgeSeg = o.seg, s_.ledgeT = o.t, s_.ledgeSide = 1;
         s_.vel = vec3(0);
         s_.state = State::ClimbUp;
         s_.hurdle = hu;
-        if (direct) playMix("hurdle_low_onto", "hurdle_low_onto_100", hw);
-        else if (band == 0) playMix("hurdle_ground_attach_low_50", "hurdle_ground_attach_low_100", hw);
-        else if (band == 1) playMix("hurdle_ground_attach_mid_100", "hurdle_ground_attach_mid_150", hw);
-        else playMix("hurdle_ground_attach_high_150", "hurdle_ground_attach_high_200", hw);
+        if (band == 0) { // S958: no attach clip
+            s_.hurdle.draw = true, s_.hurdle.drawOff = out * (kAttachOut - reach);
+            s_.mix = hw;
+            startHurdleFollowUp(true);
+        } else if (band == 1) {
+            playMix("hurdle_ground_attach_mid_100", "hurdle_ground_attach_mid_150", hw);
+        } else {
+            playMix("hurdle_ground_attach_high_150", "hurdle_ground_attach_high_200", hw);
+        }
         return true;
     }
     return false;
 }
 
-// Down off an obstacle: running or walking at the edge of a ledge's top (feet within 40 of the line, the top ending
-// within radius + 40 ahead [I]) over a drop of stepDown..632 to a walkable floor, facing it within 53 degrees:
-// request 139 (down 50..100 cm, 0.3 s), 141 (100..150, 0.63 s) or 140 (150..200), the drop scaled to the floor.
+// Down off an obstacle (ledge class 8 / 9 / 10: chart S724 -> S996 / S995 / S994, no other condition): walking or
+// running at the edge of a ledge's top she stands on (the class test: ledge less than 6.33 above her feet), facing it
+// within 53 degrees, the floor 94.8 out past the ledge 154.87..312.90 / ..474.08 / ..635.27 below it: request 139 / 141 /
+// 140, weighted 158.1..316.2 / 316.2..474.1 / 474.1..632.2 (S996 properties 0x0E6 / 0x0E7), heading the ledge normal +
+// 180 from the line (S997 property 0x11C, 0x119 = 0); the drop scaled to the floor. Trigger distance: the top ending
+// within radius + 40 ahead [U: query 96's reach].
 bool Player::tryHurdleDown() {
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
@@ -714,17 +717,18 @@ bool Player::tryHurdleDown() {
             if (!g || g->normal.z < t_.minFloorNormalZ || std::abs(g->point.z - s_.pos.z) > 40.0f) break;
         }
         if (k > t_.radius + 40.0f || std::abs(glm::dot(xy(s_.pos) + out * k - xy(o.q), out)) > 200.0f) continue; // no edge near / not at this ledge
-        const auto below = col_.groundProbe(vec3(xy(s_.pos) + out * (k + t_.radius + 60.0f), s_.pos.z + 60), kCm200 + 120.0f);
+        if (o.q.z - s_.pos.z >= 6.3281126f || !ledgeClear(col_, o.q, out)) continue; // 0x7260B0 kind 2, test 0
+        const auto below = col_.groundProbe(vec3(xy(s_.pos) + out * (k + kFloorOut), s_.pos.z + 60), kBand3 + 120.0f);
         if (!below || below->normal.z < t_.minFloorNormalZ) continue;
-        const float d = s_.pos.z - below->point.z;
-        if (d <= t_.stepDown || d > kCm200 + 10.0f) continue;
-        const std::string_view a = d <= kCm100 ? "hurdle_down_low_50" : d <= kCm150 ? "hurdle_down_mid_100" : "hurdle_down_mid_150";
-        const std::string_view b = d <= kCm100 ? "hurdle_down_low_100" : d <= kCm150 ? "hurdle_down_mid_150" : "hurdle_down_high_200";
-        const float w = d <= kCm100 ? span(d, kCm50, kCm100) : d <= kCm150 ? span(d, kCm100, kCm150) : span(d, kCm150, kCm200);
+        const float d = o.q.z - below->point.z;
+        if (d <= kBand0 || d > kBand3) continue;
+        const std::string_view a = d <= kBand1 ? "hurdle_down_low_50" : d <= kBand2 ? "hurdle_down_mid_100" : "hurdle_down_mid_150";
+        const std::string_view b = d <= kBand1 ? "hurdle_down_low_100" : d <= kBand2 ? "hurdle_down_mid_150" : "hurdle_down_high_200";
+        const float w = d <= kBand1 ? span(d, kCm50, kCm100) : d <= kBand2 ? span(d, kCm100, kCm150) : span(d, kCm150, kCm200);
         const anim::Clip *ca = anims_.find(a), *cb = anims_.find(b);
         if (!ca || !cb) continue;
         const vec2 land = xy(s_.pos) + out * -glm::mix(rootTranslation(*ca, ca->durationSeconds(), false).y, rootTranslation(*cb, cb->durationSeconds(), false).y, w);
-        const auto g = col_.groundProbe(vec3(land, s_.pos.z + 60), kCm200 + 120.0f);
+        const auto g = col_.groundProbe(vec3(land, s_.pos.z + 60), kBand3 + 120.0f);
         if (!g || g->normal.z < t_.minFloorNormalZ || std::abs(g->point.z - below->point.z) > t_.stepUp) continue;
         s_.hurdle = {};
         s_.hurdle.next = PlayerState::Hurdle::Down;
@@ -739,6 +743,30 @@ bool Player::tryHurdleDown() {
         return true;
     }
     return false;
+}
+
+void Player::startHurdleFollowUp(bool low) {
+    const auto& hu = s_.hurdle;
+    switch (hu.next) {
+    case PlayerState::Hurdle::Onto:
+        if (low) playMix("hurdle_low_onto", "hurdle_low_onto_100", s_.mix);
+        else play("hurdle_onto", false);
+        break;
+    case PlayerState::Hurdle::Over:
+        if (!low) playMix("hurdle_over", "hurdle_over_long_100", hu.mix);
+        else if (hu.alt) playMix("hurdle_over_low_long_50", "hurdle_over_low_long_100", hu.mix);
+        else playMix("hurdle_low_over", "hurdle_low_over_100", hu.mix);
+        break;
+    default: { // ToLedge: the 25 / 65 or 65 / 100 cm deep pair
+        const std::string base = low ? "hurdle_to_ledgeb_low_" : "hurdle_to_ledgeb_mid_";
+        playMix(base + (hu.alt ? "65" : "25"), base + (hu.alt ? "100" : "65"), hu.mix);
+        // Turning half round into the hang: start at the heading that ends on the hang's.
+        const anim::Clip* c = anims_.find(s_.clip);
+        const float hangYaw = attachPose(hu.farLedge, hu.farSeg, hu.farT, hu.farSide).second;
+        if (c) s_.yaw = wrapAngle(hangYaw - (rootYaw(*c, c->durationSeconds(), false) - rootYaw(*c, s_.clipTime, false)));
+        break;
+    }
+    }
 }
 
 bool Player::hurdleTick(vec2 move, float dt) {
@@ -760,34 +788,15 @@ bool Player::hurdleTick(vec2 move, float dt) {
             return false;
         }
         const anim::Clip* a = anims_.find(s_.clip);
-        if (!low) { // square up to the edge, hands (103 ahead) on it, over the attach clip
+        if (!low) { // square up: root to the edge + 86.94 out (anim target 0x273, S954 property 0x119), over the attach clip
             const float f = a ? float(std::min(1.0, dt / std::max(double(dt), a->durationSeconds() - s_.clipTime))) : 1.0f;
-            s_.pos += vec3((xy(hu.edge) + hu.out * 103.0f - xy(s_.pos)) * f, 0);
+            s_.pos += vec3((xy(hu.edge) + hu.out * kAttachOut - xy(s_.pos)) * f, 0);
             s_.yaw = wrapAngle(s_.yaw + wrapAngle(yawOf(-hu.out) - s_.yaw) * f);
         }
         advanceClip(dt);
         if (!clipDone()) return false;
         const auto end = hands();
-        switch (hu.next) {
-        case PlayerState::Hurdle::Onto:
-            if (low) playMix("hurdle_low_onto", "hurdle_low_onto_100", s_.mix);
-            else play("hurdle_onto", false);
-            break;
-        case PlayerState::Hurdle::Over:
-            if (!low) playMix("hurdle_over", "hurdle_over_long_100", hu.mix);
-            else if (hu.alt) playMix("hurdle_over_low_long_50", "hurdle_over_low_long_100", hu.mix);
-            else playMix("hurdle_low_over", "hurdle_low_over_100", hu.mix);
-            break;
-        default: { // ToLedge: the 25 / 65 or 65 / 100 cm deep pair
-            const std::string base = low ? "hurdle_to_ledgeb_low_" : "hurdle_to_ledgeb_mid_";
-            playMix(base + (hu.alt ? "65" : "25"), base + (hu.alt ? "100" : "65"), hu.mix);
-            // Turning half round into the hang: start at the heading that ends on the hang's.
-            const anim::Clip* c = anims_.find(s_.clip);
-            const float hangYaw = attachPose(hu.farLedge, hu.farSeg, hu.farT, hu.farSide).second;
-            if (c) s_.yaw = wrapAngle(hangYaw - (rootYaw(*c, c->durationSeconds(), false) - rootYaw(*c, s_.clipTime, false)));
-            break;
-        }
-        }
+        startHurdleFollowUp(low);
         // Mid / high: moved so the hands stay where the attach left them (on the edge; the follow-up starts mid-clip).
         if (!low)
             if (const auto start = hands(); start && end) s_.pos += toWorld(*end - *start);
@@ -819,6 +828,7 @@ bool Player::hurdleTick(vec2 move, float dt) {
     // (the request's blend clears 50..100 cm; mid / high start raised onto the edge), drawn down onto her floor.
     const float zLeft = rootLeft().z;
     vec3 d = toWorld(advanceClip(dt));
+    if (const anim::Clip* c = hu.draw ? anims_.find(s_.clip) : nullptr) d += vec3(hu.drawOff * float(dt / c->durationSeconds()), 0);
     if (hu.next != PlayerState::Hurdle::Over) {
         if (std::abs(zLeft) > 1.0f) d.z *= (hu.endZ - s_.pos.z) / zLeft;
     } else if (const anim::Clip* c = anims_.find(s_.clip)) {
@@ -937,7 +947,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (enterWater()) break; // standing in water deeper than swimDepth
         const float diff = std::abs(wrapAngle(target - s_.yaw));
         if (jumpPressed && s_.state != State::Land) {
-            if (tryHurdle(s_.state == State::Run, true) || tryPerch(false)) break; // a low ledge ahead / a perch
+            if (tryHurdle(true) || tryPerch(false)) break; // a low ledge ahead / a perch
             // tru.exe (Wine): the stick behind her turns her round into a running jump; to a side, a standing one.
             s_.runJump = s_.state == State::Run || (wantsMove && diff > 1.75f);
             if (s_.runJump && s_.state != State::Run) s_.yaw = target;
@@ -1012,7 +1022,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             tryBeam("bbeam_walk_attach", false);
         const bool grounded = s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop;
         if (grounded && wantsMove && glm::dot(move, xy(forward())) > 0.5f * mag &&
-            (tryHurdle(s_.state == State::Run, false) || ((s_.state == State::Walk || s_.state == State::Run) && tryHurdleDown())))
+            (tryHurdle(false) || ((s_.state == State::Walk || s_.state == State::Run) && tryHurdleDown())))
             break;
         // Pushing into a climbable rock face starts climbing (a jump keeps its normal arc).
         if (wantsMove && glm::dot(move, xy(forward())) > 0.5f && !tryLadder(false)) tryClimb(false);
