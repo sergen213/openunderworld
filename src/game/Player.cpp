@@ -811,7 +811,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         beam(move, jumpPressed, dropPressed, dt);
         break;
     case State::Climb:
-        climb(move, jumpPressed, dropPressed, dt);
+        climb(glm::dot(move, move) > 0 ? a.move : vec2(0), jumpPressed, dropPressed, dt); // the stick as on screen: up = up the rock
         break;
     case State::Ladder:
     case State::Pillar:
@@ -870,7 +870,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (s_.flight > 0) break;
         const bool pole = isPole(col_.markup[size_t(s_.ledge)]);
         const std::string_view attach = pole                              ? "Hpole_perp_attach_M"
-                                        : s_.clip == "ledgeb_jump_up"   ? "ledgeb_attach_U"
+                                        : s_.clip.ends_with("jump_up")   ? "ledgeb_attach_U" // also DICE_<s>_jump_up (Climb.cpp)
                                         : s_.clip == "ledgeb_jump_back" ? "ledgeb_attach_F"
                                                                          : "ledgeb_attach_S";
         s_.vel = vec3(0);

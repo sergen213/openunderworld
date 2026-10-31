@@ -15,7 +15,6 @@ vec3 unitXY(vec3 v, vec3 fallback) {
     const float l = glm::length(xy(v));
     return l > 1e-4f ? vec3(v.x / l, v.y / l, 0) : fallback;
 }
-constexpr float kSpeed = 240.0f; // climb rate, units/s [I]
 } // namespace
 
 // Attach to a ladder (9) or pillar (15) within reach, facing it. climbNormal = outward from it.
@@ -47,10 +46,9 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size()) { startFall(s_.vel); return; }
     const auto& m = col_.markup[size_t(s_.ledge)];
     const vec3 top = m.points[0], bottom = m.points[1], out = s_.climbNormal;
-    // The climb-off clips finish before control returns.
+    // The climb-off clips finish before control returns, their root motion carrying her off the ladder.
     if (s_.clip == "lad_ClimbOffTop" || s_.clip == "lad_ClimbOffBot") {
-        advanceClip(dt);
-        if (clipDone()) {
+        if (warpStep(dt)) {
             s_.state = State::Idle;
             s_.ledge = -1;
             play("ng_idle", true);
@@ -78,8 +76,7 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (climb > 0.1f) play("lad_climbup", true);
     else if (climb < -0.1f) play("lad_climbdown", true);
     else play("lad_Idle", true);
-    advanceClip(dt);
-    s_.pos.z += climb * kSpeed * dt;
+    s_.pos.z += advanceClip(dt).z; // lad_climbup / lad_climbdown root motion: 98 / -90 units per 0.3 s rung cycle
     if (m.type == 15 && std::abs(side) > 0.1f) { // pillars: rotate around the shaft
         const vec3 c(top.x, top.y, s_.pos.z);
         const float a = std::atan2(s_.pos.y - c.y, s_.pos.x - c.x) + side * 1.2f * dt;
@@ -90,12 +87,18 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     } else {
         s_.pos.x = top.x + out.x * t_.wallOffset, s_.pos.y = top.y + out.y * t_.wallOffset;
     }
-    if (climb > 0 && s_.pos.z >= top.z) {
-        s_.pos = top;
-        play("lad_ClimbOffTop", false);
-    } else if (climb < 0 && s_.pos.z <= bottom.z) {
-        s_.pos = bottom + out * t_.wallOffset;
-        play("lad_ClimbOffBot", false);
+    // Climbing off: lad_ClimbOffTop (rise 575) starts that far below the top point and ends on it; lad_ClimbOffBot
+    // steps back from the ladder foot (its root motion).
+    const anim::Clip* off = anims_.find(climb > 0 ? "lad_ClimbOffTop" : "lad_ClimbOffBot");
+    const vec3 offMove = off ? rootTranslation(*off, off->durationSeconds(), false) - rootTranslation(*off, 0, false) : vec3(0);
+    const bool offTop = climb > 0 && s_.pos.z >= top.z - offMove.z, offBot = climb < 0 && s_.pos.z <= bottom.z;
+    if (offTop || offBot) {
+        if (offTop) s_.pos.z = top.z - offMove.z;
+        else s_.pos = bottom + out * t_.wallOffset;
+        s_.climbFrom = s_.pos;
+        s_.climbTo = offTop ? top : s_.pos + toWorld(offMove);
+        s_.climbYawFrom = s_.climbYawTo = s_.yaw;
+        play(offTop ? "lad_ClimbOffTop" : "lad_ClimbOffBot", false);
     }
 }
 

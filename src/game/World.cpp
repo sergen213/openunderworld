@@ -122,6 +122,13 @@ const std::vector<std::string_view> kLaraClipNames = {
     "DICE_R_settle_right", "DICE_R_settle_up", "DICE_Rw_air_attach_mid", "DICE_Rw_drop", "DICE_Rw_ground_attach",
     "DICE_RW_Idle", "DICE_Rw_Jump_Back", "DICE_RW_Settle_down", "DICE_Rw_Settle_Left", "DICE_Rw_Settle_right",
     "DICE_Rw_Settle_up",
+    // reaching for a hold that is not there (pushing toward no hold), the leap up onto a ledge, stepping off at the foot
+    "DICE_B_Reach_up", "DICE_B_Reach_down", "DICE_B_Reach_Left", "DICE_B_Reach_Right", "DICE_L_reach_up",
+    "DICE_L_reach_down", "DICE_L_reach_left", "DICE_L_reach_right", "DICE_LW_reach_up", "DICE_LW_reach_down",
+    "DICE_LW_reach_left", "DICE_LW_reach_right", "DICE_R_reach_up", "DICE_R_reach_down", "DICE_R_reach_left",
+    "DICE_R_reach_right", "DICE_Rw_Reach_up", "DICE_Rw_Reach_down", "DICE_Rw_Reach_Left", "DICE_Rw_Reach_Right",
+    "DICE_B_jump_up", "DICE_L_jump_up", "DICE_LW_jump_up", "DICE_R_jump_up", "DICE_Rw_jump_up",
+    "DICE_L_step_off_ground", "DICE_LW_step_off_ground", "DICE_R_step_off_ground",
     "DICE_B_to_B_DownDiagR", "DICE_B_to_B_DownR", "DICE_B_to_B_Left", "DICE_B_to_B_Right", "DICE_B_to_B_Up",
     "DICE_B_to_B_UpDiagL", "DICE_B_to_B_UpDiagR", "DICE_B_to_L_DownDiagL", "DICE_B_to_L_DownDiagR",
     "DICE_B_to_L_DownR", "DICE_B_to_L_Right", "DICE_B_to_L_Up", "DICE_B_to_L_UpDiagL", "DICE_B_to_Lw_DownDiagL",
@@ -626,7 +633,7 @@ uint64_t World::stateHash() const {
     auto str = [&](const std::string& s) { bytes(s.data(), s.size()), add(s.size()); };
     const PlayerState& s = player_.state();
     add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), add(s.ledge);
-    add(s.ledgeT), add(s.water), add(s.climbFace), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
+    add(s.ledgeT), add(s.water), add(s.climbHold), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
     add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch), add(health_.value()), add(air_);
     for (const auto& m : bones_) add(m);
     for (const auto& b : physics_.bodies) add(b.pos), add(b.rot), add(b.vel), add(b.angVel);

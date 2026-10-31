@@ -95,10 +95,6 @@ struct AnimLibrary {
 };
 // Names the controller requests; loadLaraAnims loads exactly these.
 extern const std::vector<std::string_view> kLaraClipNames;
-// Free climbing (Climb.cpp): the hold-to-hold clip DICE_<from>_to_<to>_<dir> exactly as lara.drm names it, for stances
-// 0..4 (B / L / LW / R / RW) and a move `dir` (x right, y up on the wall); the nearest existing direction within 60
-// degrees when that one is missing, "" when lara.drm has no clip for the pair.
-std::string_view diceTransition(uint8_t from, uint8_t to, vec2 dir);
 // Lara's clips in weapon w's DRM: aim grid, fire, reload, equip/unequip (+ shotgun pump, speargun submerged).
 const std::vector<std::string_view>& weaponClipNames(Weapon w);
 // How the original fades `to` in after `from`: crossfade length and start time (seconds) from lara.drm's
@@ -224,12 +220,16 @@ struct PlayerState {
     float flight = 0; // HangJump: seconds left until the target is reached
     float fallStartZ = 0; // z when Lara last became airborne (tru.exe player +0x6DC, set on FallState entry 0x75C550)
     float fallHeight = 0; // set by land(): fallStartZ - pos.z; 0 on every other tick
-    // Free climbing (State::Climb): terrain face index + outward normal of the wall she is on; the hold she is at
-    // (CollisionMesh::markup index, -1 none) and its hand stance (0..4 = DICE B / L / LW / R / RW, markup type - 16).
-    uint32_t climbFace = UINT32_MAX;
-    vec3 climbNormal{0};
+    // Free climbing (State::Climb): the hold she is at (CollisionMesh::markup index, -1 = not on a wall), its hand stance
+    // (0..4 = DICE B / L / LW / R / RW, markup type - 16) and the rock's outward normal there. climbWarp: an attach /
+    // hold-to-hold / step-off clip is carrying her from climbFrom (heading climbYawFrom) to climbTo (climbYawTo); the
+    // ladder climb-off clips use climbFrom / climbTo too.
     int32_t climbHold = -1;
     uint8_t climbStance = 0;
+    bool climbWarp = false;
+    vec3 climbNormal{0};
+    vec3 climbFrom{0}, climbTo{0};
+    float climbYawFrom = 0, climbYawTo = 0;
     // Grapple (State::GrappleThrow/Swing/Pull/Rappel): anchor intro unique id, world anchor, rope length at hand (root + 400).
     int32_t grappleUid = 0;
     vec3 grappleAnchor{0};
@@ -292,7 +292,8 @@ private:
     bool tryClimbOut();
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
     bool tryClimb(bool fromAir);
-    void climb(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    bool warpStep(float dt); // the clip carries her climbFrom -> climbTo (climbing, ladder climb-off); true when done
+    void climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt);
     // Ladders (markup 9), perches (13), pillars (15), src/game/Traverse.cpp. climbNormal = outward from the wall.
     bool tryLadder(bool fromAir);
     void ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt);

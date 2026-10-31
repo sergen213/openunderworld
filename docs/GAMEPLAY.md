@@ -649,43 +649,58 @@ outfit (the original only reads `+0x294` on a level load).
   Before 2026-10-29 we treated faces with flags bits 0x01..0x20 as climbable; that byte is the
   `adjacencyFlags` of TRLAU's IndexedFace and is set on ~99.5-100 % of all walls, so Lara could climb
   every wall (survey of l3_main_bedroom, l4_pool, l4_ballcourt, l2_hubhall, l3_main_hall, l5_startsnow).
-- Our rule [I]: a nearly vertical terrain face (|normal.z| ≤ 0.35, not dynamics) is climbable where a hold's
-  centroid lies within 350 of Lara's chest (root + 300) and within 120 of the face's plane (not a hold behind
-  a thin wall). The original positions Lara per hold [O, 0x707C60] and so presumably moves hold to hold [I]; we
-  move freely inside the band the holds cover.
-- Hand stance [I, from the hold shapes]: the hold nearest the chest sets Lara's `DICE_*` clip set. Each hold is a
+- Hold to hold [O]: Lara's root is always at a hold — point 0 − 158.025 z (tru.exe 0x707C60) — or travelling between
+  two. The holds lie on a 158-unit grid (l2_cliffclimb columns at z 614, 772, 932, 1058, 1217, 1377, …) and every
+  `DICE_<from>_to_<to>_<dir>` clip's root motion is one grid step in Lara's frame (`DICE_B_to_B_Up` (0, 157),
+  `DICE_B_to_B_Left` 159 left, `DICE_B_to_Lw_Left` 236 left for the wide stances, 0.8-1.3 s). The stick (as on
+  screen: up = up the rock, whichever way the camera looks) picks the next hold: of the holds on this rock (outward
+  normal from the hold triangle, ≥ 0.5 alike, within 150 of the plane) 50-450 away and within 50° of the stick,
+  the one some `DICE_<stance>_to_<its stance>_<dir>` clip's root motion reaches best (within 90 [I]). That clip
+  carries her there (`Player::warpStep`: its root motion scaled per axis to the real offset, the residual eased in
+  where the clip has none; the heading turns to the new hold's rock with it, so corners turn smoothly). Holding the
+  stick chains the next step; a step's last frame is the new stance's idle pose (`DICE_B_to_B_Up` ends with the chest
+  within 4 of `DICE_B_Idle`'s), so she then idles. The `DICE_<s>_settle_<dir>` clips are not played after a step: they
+  start far off idle (`DICE_R_settle_right`: chest 211 to her left), the swing after a DICE jump lands (jumps not done). Pushing toward no hold plays `DICE_<s>_reach_<dir>` (held at its last frame) without moving.
+  lara.drm has 181 of the 300 stance pairs × 12 directions and spells the stances inconsistently (`Lw`/`LW`,
+  `Rw`/`RW`), so `kLaraClipNames` lists every DICE clip exactly and names are looked up case-insensitively. The
+  `<dir>` suffixes are not exact angles (`DICE_B_to_B_DownR` is straight down), hence the root-motion match.
+  Before 2026-10-31 Lara slid at a fixed 240 units/s inside the band the holds cover with the transition clips'
+  root motion ignored, re-pinned every tick to the rock face under her chest (her heading jumping with each face's
+  normal, up to 0.067 rad a tick) and the settle clips looping as a "moving" pose: feet sliding, jitter, pops.
+  Ladders likewise: `lad_climbup`/`lad_climbdown` move the root 98 / −90 per 0.3 s rung cycle (their root motion now
+  drives her, not 240 units/s), and `lad_ClimbOffTop` (575 up, 216 forward) starts 575 below the top point and carries
+  her onto it (before, she was put on the top point at once and the clip played in place).
+- Hand stance [I, from the hold shapes]: the hold she is at sets Lara's `DICE_*` clip set. Each hold is a
   triangle; points 1 and 2 relative to point 0 (right, up along the rock, means over all 336 holds in the 8 units,
   2026-10-29 survey) are 16: (−67, 144) (69, 174) both hands high → `B`; 17: (−75, 174) (41, 16) left high → `L`;
   18: (−134, 143) (136, 16) left high, wide → `LW`; 19: (−72, 14) (70, 143) right high → `R`; 20: (−96, 20)
   (125, 169) right high, wide → `RW`. tru.exe's own selection (state charts) is not traced [U].
 - Attach: pushing into such a wall from the ground (chest probe at +300, reach = capsule radius + 90,
-  facing it within ~53°) or falling onto it (after ledge/pole grabs, which win). The stance's ground attach
-  (`DICE_B_ground_attach`, `DICE_L_ground_attach`, …) / air attach (`DICE_B_air_attach_M`, `DICE_<L/LW/R/Rw>_air_attach_mid`)
-  plays, then its idle.
-- Climbing: the stick's into-wall component climbs up (away = down), its along-wall component moves
-  sideways at 240 units/s [I]; the stance's settle clips (`DICE_<s>_settle_up/_down/_left/_right`) have no root
-  motion [O], so the controller moves the root and pins it at capsule distance from the rock, following
-  the face (and around corners) with a back probe at chest height. Movement stops where no hold is in reach.
-- Hold to hold [I]: when the nearest hold changes while moving, its stance takes over and
-  `DICE_<from>_to_<to>_<dir>` plays once (its root motion not applied), then the new stance's settle clip. `<dir>`
-  is the move's direction in 30° steps clockwise from up: `Up`, `UpR`, `UpDiagR`, `Right`, `DownDiagR`, `DownR`,
-  `Down`, `DownL`, `DownDiagL`, `Left`, `UpDiagL`, `UpL` (the 12 suffixes lara.drm uses; the angles are ours). lara.drm
-  has 181 of the 300 combinations and spells the stances inconsistently (`Lw`/`LW`, `Rw`/`RW`, `Dice_L_attach_*`), so
-  `kLaraClipNames` lists every DICE clip exactly and `diceTransition` looks names up case-insensitively, falling
-  back to the nearest existing direction within 60° (none: no transition clip).
-- Top out: when no hold is in reach and a standable floor above Lara's feet is within reach past the wall,
-  Lara steps onto it (Idle). Otherwise movement stops at the edge. Jump = the stance's `jump_back` clip + a leap away
-  (700 out, 1400 up [I]); drop = its `drop` clip and fall. Cooldown 0.4 s before re-attaching.
-- Tests `Game.ClimbAttachClimbUpTopOut`, `Game.ClimbJumpOff`, `Game.ClimbNeedsHolds`, `Game.ClimbStaysWithinHolds`,
-  `Game.ClimbStanceFollowsHolds` (a column of 17/19/18/20/16 holds: L → R → LW → RW → B with `DICE_L_to_R_UpL`,
-  `DICE_R_to_LW_UpR`), `Game.DiceTransitionNames`, `GameReal.CliffclimbStances` (l2_cliffclimb hold field zig-zag:
-  3 stances, `DICE_L_to_B_Up`, `DICE_B_to_R_UpDiagR`, `DICE_R_to_L_UpDiagR`, every clip loaded; before 2026-10-29 the
-  climb's "right" was Lara's left, so the settle clips were mirrored),
+  facing it within ~53°) or falling onto it (after ledge/pole grabs, which win). The hold is the one nearest (within
+  300 [I]) to where the stance's attach clip ends — ground: its root motion from her feet (`DICE_B_ground_attach`
+  268 forward, 185 up; `DICE_L_ground_attach` 134, 317), air: where she is (`DICE_<L/LW/R/Rw>_air_attach_mid` have
+  none) — and that clip carries her onto it as a hold-to-hold step does, then its idle.
+- Top out: no hold above but a ledge (markup 1) along this rock within 200 horizontally and −50..450 above her hands
+  (root + 300) = `DICE_<s>_jump_up` and a targeted jump onto it (as `ledgeb_jump_up`: `ledgeb_attach_U`, then the
+  ledge's climb up). l2_cliffclimb's wall ends that way: hold 5 (z 2480) → ledge 45 (z 2891). Foot: no hold below but a
+  floor where `DICE_<L/LW/R>_step_off_ground` ends (226 back, 317 down; B and RW have none) = that clip onto it, Idle.
+  Jump = the stance's `jump_back` clip + a leap away (700 out, 1400 up [I]); drop = its `drop` clip and fall.
+  Cooldown 0.4 s before re-attaching.
+- Tests `GameReal.ClimbAttachClimbUpTopOut` (a synthetic hold column with lara.drm's clips: attach at hold 0 exactly,
+  one `DICE_B_to_B_Up` = 158 up, `DICE_B_jump_up` onto the top ledge, hang, climb up), `GameReal.ClimbJumpOff`,
+  `GameReal.ClimbNeedsHolds`, `GameReal.ClimbStaysWithinHolds` (reach, no movement), `GameReal.ClimbStanceFollowsHolds`
+  (L → R → LW → RW → B with `DICE_L_to_R_UpL`, `DICE_R_to_LW_UpR`, `DICE_Lw_to_Rw_UpL`, `DICE_Rw_to_B_UpR`, then
+  `DICE_B_Idle`), `Game.DiceTransitionNames`, `GameReal.CliffclimbStances` (the l2_cliffclimb wall's whole route,
+  holds 21 11 38 12 7 19 17 13 18 14 15 6 4 40 8 3 9 5, then `DICE_B_jump_up` onto ledge 45: the root exactly at a
+  hold whenever a step ends, chest (bone 14) step change < 16 units a tick, heading ≤ 0.02 rad a tick; on a fixed
+  zig-zag stick script the old code changed the chest's step by > 3 units on 212 of 749 ticks, the root's on 32,
+  and turned up to 0.067 rad a tick; now 27, 2 and 0.002),
   `GameReal.ClimbOnlyAtHolds` (12 reachable walls ≥ 1000 from any hold in each of l3_main_bedroom, l4_pool,
   l4_ballcourt, l2_hubhall, l2_cliffclimb, l1_baldrsstairs_a: 0 attach, the old rule attached 10-12 of 12;
   l2_cliffclimb hold 910 ground attach + climb up; l1_baldrsstairs_a air attach at hold 44). Hand test:
-  `ou-game --level 'pc-w\l2_cliffclimb.drm' --spawn '-23835,-3600,300,90'` and hold forward, then forward + left/right
-  (stance changes; F1 overlay shows the clip); `ou-game --level 'pc-w\l3_main_bedroom.drm'` and run into any wall (no climb).
+  `ou-game --level 'pc-w\l2_cliffclimb.drm' --spawn '-23835,-3600,300,90'`, walk into the rock, then stick up / left /
+  right (F1 overlay shows the clip); the route goes up and right around the corner column, then left along the top
+  to the ledge; `ou-game --level 'pc-w\l3_main_bedroom.drm'` and run into any wall (no climb).
 
 ## Grapple (src/game/Grapple.cpp)
 
@@ -746,13 +761,14 @@ outfit (the original only reads `+0x294` on a level load).
 
 - Markup [O]: ladders (9) and pillars (15) have points `{top, bottom, bottom + outward hint}`; perches (13) are a
   short ledge segment. `climbNormal` holds the outward direction (reused field).
-- Ladders/pillars: attach from the ground (push into them) or the air; stick into = up at 240 u/s [I],
-  `lad_climbup/_down`, `lad_Idle`; top = `lad_ClimbOffTop` onto the top point, bottom = `lad_ClimbOffBot`;
+- Ladders/pillars: attach from the ground (push into them) or the air; stick into = up, `lad_climbup/_down` (their
+  root motion: 98 / −90 per 0.3 s), `lad_Idle`; top = `lad_ClimbOffTop`, started 575 (its rise) below the top point
+  and carrying her onto it, bottom = `lad_ClimbOffBot` (its root motion, 95 back);
   Space = `lad_detach` (out 500, up 900), Ctrl = `lad_detach_drop`. Pillars also rotate around the shaft with
   the stick's sideways component. l1_ship_sinking_hall ladder 234 is climbed in a real-data test.
 - Perches: from the air or a standing jump next to the segment (`perch_attach_air/_ground`), balance on the
   point with `perch_idle`, Space = `perch_jump_forward`, Ctrl = `perch_detach_drop`.
-- Tests `Game.LadderAttachClimbOffTop`, `Game.PillarAttach`, `Game.PerchAttachAndJumpOff`,
+- Tests `GameReal.LadderAttachClimbOffTop` (lara.drm's clips), `Game.PillarAttach`, `Game.PerchAttachAndJumpOff`,
   `GameReal.ShipSinkingHallLadder`. Object-DRM markup does not exist in this data (COLLISION.md), so all
   traversal markup comes from the units.
 
@@ -1407,10 +1423,9 @@ No side-by-side comparison with the original game was made.
   Still missing: wading clip (`swim_wading`), surface turn clips, swim damage from other
   sources; the water surface is static (scripted level changes not run); the water box is sized from the surface model,
   not the exe's component. Ripple/caustic parameters are ours [I].
-- Free climbing is implemented on the levels' free-climb holds (markup 16-20, see "Free climbing"): free movement
-  inside the hold band instead of hold-to-hold, hold-type semantics [U], movement speed/reach [I], no
-  bad-attach/wrestle/corner-specific clips, no `DICE_L/R/LW/RW` wall
-  variants. Ladders (9), perches (13), pillars (15) and rail slides (8) work (see their sections); vertical poles
+- Free climbing is implemented on the levels' free-climb holds (markup 16-20, see "Free climbing"): hold to hold
+  with the transition clips' root motion; hold-type semantics [U], hold choice/reach [I], no DICE jumps to far holds
+  (`DICE_<s>_antic_*`, `_jump_left/right/up` + `_settle_*`), no bad-attach/wrestle clips. Ladders (9), perches (13), pillars (15) and rail slides (8) work (see their sections); vertical poles
   (type 5) have no markup in any unit. Still missing: cover, `Wall_Hug_*`,
   balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
   mirrored left-side clips. Root motion of the jump, attach and fling clips is not applied (the flight is

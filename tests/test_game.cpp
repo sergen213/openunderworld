@@ -1612,34 +1612,71 @@ TEST(Game, WaterAirDrainsRefillsAndDrowns) {
 namespace {
 // A rock wall at x = 400 (z 0..1200, facing -x) with a floor on top. `holds`: a column of free-climb holds
 // (markup type 16 triangles, 20 off the rock) at y = 0 from z 450 to the top, as the levels place them.
-CollisionMesh climbMesh(bool holds) {
+// A rock wall at x = 400 (top 1200, a ledge along its edge) with a column of free-climb holds 158 apart (the hold
+// grid every DICE transition's root motion steps), laid out as the levels' are: point 0 low in the middle, 1 high left,
+// 2 high right (Lara faces +X: her left is +Y).
+CollisionMesh climbMesh(bool holds, std::vector<uint8_t> types = {16, 16, 16, 16, 16}) {
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
     addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1200}, {400, -2000, 1200});
     addQuad(m, {400, -2000, 1200}, {2000, -2000, 1200}, {2000, 2000, 1200}, {400, 2000, 1200});
+    m.markup.push_back({1, 1, {{400, -2000, 1200}, {400, 2000, 1200}}});
     if (holds)
-        for (float z = 450; z < 1200; z += 160)
-            m.markup.push_back({16, uint16_t(z), {{380, -60, z - 40}, {380, 60, z - 40}, {380, 0, z + 60}}});
+        for (size_t i = 0; i < types.size(); ++i) {
+            const float z = 350 + 158.0f * float(i);
+            m.markup.push_back({types[i], uint16_t(z), {{380, 0, z}, {380, 70, z + 144}, {380, -70, z + 174}}});
+        }
     return m;
+}
+// The free-climb tests need lara.drm's DICE clips (their root motion is the step between holds).
+std::unique_ptr<game::World> climbWorld(CollisionMesh m, vec3 spawn) {
+    static const auto anims = [] {
+        const cdc::BigfileSet bf(gameDir());
+        return game::loadLaraAnims(bf);
+    }();
+    m.build();
+    return std::make_unique<game::World>(std::move(m), anims, game::Spawn{spawn, 0});
 }
 } // namespace
 
-TEST(Game, ClimbAttachClimbUpTopOut) {
-    auto w = makeWorld(climbMesh(true), {300, 0, 0});
+// Pushing into the rock attaches at a hold (root at point 0 - 158.025, tru.exe 0x707C60); each push up steps one hold
+// with DICE_B_to_B_Up's root motion; no hold above but the ledge in reach: DICE_B_jump_up onto it, hang, climb up.
+TEST(GameReal, ClimbAttachClimbUpTopOut) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    auto w = climbWorld(climbMesh(true), {300, 0, 0});
     w->tick(forward()); // pushing into the rock attaches
     ASSERT_EQ(w->player().state().state, State::Climb);
     for (int i = 0; i < 120; ++i) w->tick({}); // the attach clip finishes
+    EXPECT_EQ(w->player().state().clip, "DICE_B_Idle");
+    EXPECT_NEAR(glm::distance(w->player().state().pos, vec3(380, 0, 350 - 158.025f)), 0, 1e-2f) << "at hold 0";
     const float z0 = w->player().state().pos.z;
-    for (int i = 0; i < 90; ++i) w->tick(forward()); // into the wall = climb up
-    EXPECT_GT(w->player().state().pos.z, z0 + 200.0f);
-    EXPECT_NEAR(w->player().state().pos.x, 300.0f, 1.0f) << "pinned at capsule distance from the rock";
-    for (int i = 0; i < 1200 && w->player().state().state == State::Climb; ++i) w->tick(forward());
+    bool up = false;
+    for (int i = 0; i < 62; ++i) {
+        w->tick(forward()); // into the wall = climb up
+        up |= w->player().state().clip == "DICE_B_to_B_Up";
+    }
+    EXPECT_TRUE(up);
+    EXPECT_NEAR(w->player().state().pos.z, z0 + 158.0f, 1.0f) << "one hold up";
+    EXPECT_NEAR(w->player().state().pos.x, 380.0f, 1e-2f);
+    bool jumpUp = false;
+    for (int i = 0; i < 1500 && w->player().state().state != State::Hang; ++i) {
+        w->tick(forward());
+        jumpUp |= w->player().state().clip == "DICE_B_jump_up";
+    }
+    EXPECT_TRUE(jumpUp);
+    ASSERT_EQ(w->player().state().state, State::Hang);
+    for (int i = 0; i < 60; ++i) w->tick({}); // ledgeb_attach_U
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump); // pull up
+    for (int i = 0; i < 300 && w->player().state().state != State::Idle; ++i) w->tick({});
     EXPECT_EQ(w->player().state().state, State::Idle);
     EXPECT_NEAR(w->player().state().pos.z, 1200.0f, 1.0f) << "climbed onto the wall's top";
 }
 
-TEST(Game, ClimbJumpOff) {
-    auto w = makeWorld(climbMesh(true), {300, 0, 0});
+TEST(GameReal, ClimbJumpOff) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    auto w = climbWorld(climbMesh(true), {300, 0, 0});
     w->tick(forward());
     ASSERT_EQ(w->player().state().state, State::Climb);
     for (int i = 0; i < 120; ++i) w->tick({});
@@ -1651,73 +1688,71 @@ TEST(Game, ClimbJumpOff) {
     EXPECT_GT(w->player().state().vel.z, 0.0f);
 }
 
-TEST(Game, ClimbNeedsHolds) {
-    auto w = makeWorld(climbMesh(false), {300, 0, 0});
+TEST(GameReal, ClimbNeedsHolds) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    auto w = climbWorld(climbMesh(false), {300, 0, 0});
     w->tick(forward());
     EXPECT_NE(w->player().state().state, State::Climb) << "rock without holds is not climbable";
-    auto far = makeWorld(climbMesh(true), {300, 1500, 0}); // same wall, 1500 from the hold column
+    auto far = climbWorld(climbMesh(true), {300, 1500, 0}); // same wall, 1500 from the hold column
     for (int i = 0; i < 10; ++i) far->tick(forward());
     EXPECT_NE(far->player().state().state, State::Climb) << "only the rock around the holds is climbable";
 }
 
-TEST(Game, ClimbStaysWithinHolds) {
-    auto w = makeWorld(climbMesh(true), {300, 0, 0});
+// Pushing toward no hold reaches for one (DICE_B_Reach_Right) without moving.
+TEST(GameReal, ClimbStaysWithinHolds) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    auto w = climbWorld(climbMesh(true), {300, 0, 0});
     w->tick(forward());
     ASSERT_EQ(w->player().state().state, State::Climb);
     for (int i = 0; i < 120; ++i) w->tick({});
+    const vec3 p0 = w->player().state().pos;
     Actions right;
     right.move.x = 1;
-    for (int i = 0; i < 600; ++i) w->tick(right); // sideways along the wall, away from the column
+    for (int i = 0; i < 120; ++i) w->tick(right);
     EXPECT_EQ(w->player().state().state, State::Climb);
-    EXPECT_LT(std::abs(w->player().state().pos.y), 360.0f) << "stops where the holds end";
+    EXPECT_EQ(w->player().state().clip, "DICE_B_Reach_Right");
+    EXPECT_EQ(w->player().state().pos, p0) << "stays at the hold";
+    w->tick({});
+    EXPECT_EQ(w->player().state().clip, "DICE_B_Idle");
 }
 
-// Hand stance from the nearest hold's markup type (16..20 = B / L / LW / R / RW); climbing to a hold of another type
-// plays that pair's DICE_<from>_to_<to>_<dir> once, then that stance's settle clip.
-TEST(Game, ClimbStanceFollowsHolds) {
-    CollisionMesh m;
-    addFloor(m, -2000, -2000, 2000, 2000, 0);
-    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1200}, {400, -2000, 1200});
-    addQuad(m, {400, -2000, 1200}, {2000, -2000, 1200}, {2000, 2000, 1200}, {400, 2000, 1200});
-    const uint8_t types[] = {17, 19, 18, 20, 16};
-    for (int i = 0; i < 5; ++i) {
-        const float z = 450 + 160.0f * float(i);
-        m.markup.push_back({types[i], uint16_t(z), {{380, -60, z - 40}, {380, 60, z - 40}, {380, 0, z + 60}}});
-    }
-    auto w = makeWorld(std::move(m), {300, 0, 0});
+// Hand stance from the hold's markup type (16..20 = B / L / LW / R / RW); each step plays that pair's
+// DICE_<from>_to_<to>_<dir>, then the new stance's idle when the stick is released.
+TEST(GameReal, ClimbStanceFollowsHolds) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    auto w = climbWorld(climbMesh(true, {19, 17, 19, 18, 20, 16}), {300, 0, 0});
     w->tick(forward());
     ASSERT_EQ(w->player().state().state, State::Climb);
-    EXPECT_EQ(w->player().state().climbStance, 1); // hold 0 (type 17) is nearest the chest
+    EXPECT_EQ(w->player().state().climbStance, 1) << "hold 1 (type 17): DICE_L_ground_attach's rise 317 reaches it";
     EXPECT_EQ(w->player().state().clip, "DICE_L_ground_attach");
     for (int i = 0; i < 120; ++i) w->tick({});
     EXPECT_EQ(w->player().state().clip, "DICE_L_Idle");
     std::vector<std::string> clips;
     std::vector<int> stances{1};
-    for (int i = 0; i < 300 && w->player().state().state == State::Climb; ++i) {
+    for (int i = 0; i < 400 && stances.size() < 5; ++i) {
         w->tick(forward());
         const auto& s = w->player().state();
         if (clips.empty() || clips.back() != s.clip) clips.push_back(s.clip);
         if (stances.back() != s.climbStance) stances.push_back(s.climbStance);
     }
+    for (int i = 0; i < 300 && w->player().state().climbWarp; ++i) w->tick({}); // the last step finishes
     EXPECT_EQ(stances, (std::vector<int>{1, 3, 2, 4, 0})) << "L, R, LW, RW, B going up the column";
-    for (const char* c : {"DICE_L_settle_up", "DICE_L_to_R_UpL", "DICE_R_settle_up", "DICE_R_to_LW_UpR", "DICE_LW_settle_up"})
+    for (const char* c : {"DICE_L_to_R_UpL", "DICE_R_to_LW_UpR", "DICE_Lw_to_Rw_UpL", "DICE_Rw_to_B_UpR"})
         EXPECT_NE(std::find(clips.begin(), clips.end(), c), clips.end()) << c;
+    EXPECT_EQ(w->player().state().clip, "DICE_B_Idle");
 }
 
-// The exact-name table: lara.drm's capitalisation (Lw/LW, Rw/RW), and the nearest direction it has.
+// Every hold-to-hold clip lara.drm has, spelled as it spells them (Lw/LW, Rw/RW).
 TEST(Game, DiceTransitionNames) {
-    EXPECT_EQ(game::diceTransition(2, 0, {-1, 0}), "DICE_Lw_to_B_Left");
-    EXPECT_EQ(game::diceTransition(1, 2, {1, 0}), "DICE_L_to_LW_Right");
-    EXPECT_EQ(game::diceTransition(4, 3, {-0.866f, 0.5f}), "DICE_Rw_to_R_UpDiagL");
-    EXPECT_EQ(game::diceTransition(4, 4, {0, 1}), "DICE_Rw_to_Rw_UpR") << "no straight Up: nearest is UpR";
-    EXPECT_EQ(game::diceTransition(4, 4, {1, -0.5f}), "") << "Rw->Rw has only DownL and UpR, both > 60 degrees off";
     int names = 0;
     for (const auto n : game::kLaraClipNames) names += n.find("_to_") != std::string_view::npos && n.substr(0, 4) == "DICE";
     EXPECT_EQ(names, 181);
 }
 
-// l2_cliffclimb's hold field (the ClimbOnlyAtHolds wall): climbing up crosses holds of several types, so the stance
-// changes through real transition clips, each one loaded from lara.drm.
+// l2_cliffclimb's hold wall (the ClimbOnlyAtHolds wall), its whole route: 18 holds through all stances but RW, each
+// step a lara.drm transition clip, then the leap up onto the ledge. The root moves smoothly (no per-tick
+// snapping: before 2026-10-31 she slid at a fixed 240 units/s and was re-pinned to each rock face, its heading
+// jumping with the face normals) and is exactly at a hold (point 0 - 158.025) whenever a step ends.
 TEST(GameReal, CliffclimbStances) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1727,22 +1762,72 @@ TEST(GameReal, CliffclimbStances) {
     game::World w(std::move(col), anims, {{-23835, -3600, 300}, glm::radians(90.0f)});
     for (int t = 0; t < 60 && w.player().state().state != State::Climb; ++t) w.tick(forward());
     ASSERT_EQ(w.player().state().state, State::Climb);
-    std::set<int> stances;
+    std::set<int> stances, holds;
     std::vector<std::string> transitions;
-    for (int t = 0; t < 600 && w.player().state().state == State::Climb; ++t) {
-        Actions a = forward();
-        a.move.x = (t / 90) % 2 ? 0.5f : -0.5f; // zig-zag up through the field
-        w.tick(a);
+    // Smoothness of what is seen: the chest (spine bone 14) in the world. Transition clips move the root in ramps their
+    // pose compensates, so the root alone is not the measure.
+    const auto chest = [&] {
         const auto& s = w.player().state();
+        return vec3(w.player().modelMatrix(s.pos, s.yaw) * w.pose(1.0)[14][3]);
+    };
+    float maxStep = 0, maxChange = 0, maxTurn = 0;
+    vec3 prev = chest(), prevStep(0);
+    float prevYaw = w.player().state().yaw;
+    // The wall's route, hold by hold (markup indices): up the left column, right around the corner, up the corner column,
+    // left along the top row to hold 5 under ledge 45. The stick points at the next hold as seen on the rock.
+    const std::vector<int> plan = {21, 11, 38, 12, 7, 19, 17, 13, 18, 14, 15, 6, 4, 40, 8, 3, 9, 5};
+    size_t next = 1;
+    std::vector<int> route{w.player().state().climbHold};
+    float maxRootChange = 0;
+    vec3 prevRoot = w.player().state().pos, prevRootStep(0);
+    const float z0 = w.player().state().pos.z;
+    for (int t = 0; t < 3600 && w.player().state().state == State::Climb; ++t) {
+        const auto& s = w.player().state();
+        if (next < plan.size() && s.climbHold == plan[next] && !s.climbWarp) ++next;
+        Actions a;
+        if (next < plan.size()) {
+            const vec3 d = w.collision().markup[size_t(plan[next])].points[0] - w.collision().markup[size_t(s.climbHold)].points[0];
+            const vec3 n = s.climbNormal, right = glm::normalize(glm::cross(-n, vec3(0, 0, 1)));
+            a.move = glm::normalize(vec2(glm::dot(d, right), d.z));
+        } else {
+            a.move = {0, 1}; // up from the last hold: the ledge
+        }
+        w.tick(a);
+        if (s.climbHold != route.back() && s.climbHold >= 0) route.push_back(s.climbHold);
+        const vec3 c = chest(), step = c - prev, rootStep = s.pos - prevRoot;
+        if (t > 0 && s.state == State::Climb) { // (the first tick starts the attach crossfade from the standing pose)
+            maxStep = std::max(maxStep, glm::length(step));
+            maxChange = std::max(maxChange, glm::length(step - prevStep));
+            maxRootChange = std::max(maxRootChange, glm::length(rootStep - prevRootStep));
+        }
+        prevRoot = s.pos, prevRootStep = rootStep;
+        maxTurn = std::max(maxTurn, std::abs(std::remainder(s.yaw - prevYaw, 6.2831853f)));
+        prev = c, prevStep = step, prevYaw = s.yaw;
         stances.insert(s.climbStance);
+        holds.insert(s.climbHold);
         EXPECT_NE(anims.find(s.clip), nullptr) << s.clip;
+        if (!s.climbWarp && s.state == State::Climb)
+            EXPECT_LT(glm::distance(s.pos, w.collision().markup[size_t(s.climbHold)].points[0] - vec3(0, 0, 158.025f)), 1e-2f);
         if (s.clip.find("_to_") != std::string::npos && (transitions.empty() || transitions.back() != s.clip)) transitions.push_back(s.clip);
     }
-    std::printf("cliffclimb: %zu stances, transitions:", stances.size());
+    const float rise = w.player().state().pos.z - z0;
+    for (int t = 0; t < 120 && w.player().state().state == State::HangJump; ++t) w.tick({});
+    std::printf("cliffclimb: %zu holds, %zu stances, rise %.0f, chest max step %.2f/tick, max step change %.2f, "
+                "root max step change %.2f, max turn %.4f rad/tick; transitions:",
+                holds.size(), stances.size(), rise, maxStep, maxChange, maxRootChange, maxTurn);
     for (const auto& c : transitions) std::printf(" %s", c.c_str());
-    std::printf("\n");
-    EXPECT_GE(stances.size(), 3u);
-    EXPECT_GE(transitions.size(), 3u);
+    std::printf("\nroute:");
+    for (const int h : route) std::printf(" %d", h);
+    std::printf(" -> %s\n", std::string(game::stateName(w.player().state().state)).c_str());
+    EXPECT_EQ(route, plan) << "every step of the route has a transition clip";
+    EXPECT_EQ(w.player().state().state, State::Hang) << "DICE_B_jump_up onto ledge 45";
+    EXPECT_EQ(w.player().state().ledge, 45);
+    EXPECT_GE(stances.size(), 4u);
+    EXPECT_GT(rise, 1800.0f);
+    EXPECT_LT(maxStep, 25.0f) << "no snapping (the attach clip's leap moves the chest up to ~19 units a tick)";
+    EXPECT_LT(maxChange, 16.0f) << "no pops (a settle clip after a step crossfaded the chest by up to 45 units a tick)";
+    EXPECT_LT(maxRootChange, 10.0f) << "the root follows the clips' root motion";
+    EXPECT_LT(maxTurn, 0.02f) << "the heading turns smoothly (re-pinned to each face it jumped by up to 0.067 rad)";
 }
 
 namespace {
@@ -2035,11 +2120,12 @@ TEST(GameReal, KrakenRoomRappel) {
 }
 
 // ---- ladders / pillars / perches (src/game/Traverse) ----
-TEST(Game, LadderAttachClimbOffTop) {
+TEST(GameReal, LadderAttachClimbOffTop) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
     m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}}); // outward -X, toward Lara
-    auto w = makeWorld(std::move(m), {300, 0, 0});
+    auto w = climbWorld(std::move(m), {300, 0, 0});
     w->tick(forward());
     ASSERT_EQ(w->player().state().state, State::Ladder);
     const float z0 = w->player().state().pos.z;
