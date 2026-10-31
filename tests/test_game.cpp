@@ -1848,6 +1848,7 @@ TEST(GameReal, CliffclimbStances) {
     float maxRootChange = 0;
     vec3 prevRoot = w.player().state().pos, prevRootStep(0);
     const float z0 = w.player().state().pos.z;
+    float minCamera = 1e9f; // orbit camera distance from its pivot (root + 462.6, ~20 off the rock she climbs)
     for (int t = 0; t < 3600 && w.player().state().state == State::Climb; ++t) {
         const auto& s = w.player().state();
         if (next < plan.size() && s.climbHold == plan[next] && !s.climbWarp) ++next;
@@ -1873,6 +1874,7 @@ TEST(GameReal, CliffclimbStances) {
         stances.insert(s.climbStance);
         holds.insert(s.climbHold);
         EXPECT_NE(anims.find(s.clip), nullptr) << s.clip;
+        minCamera = std::min(minCamera, glm::distance(w.camera().position, w.camera().target));
         if (!s.climbWarp && s.state == State::Climb)
             EXPECT_LT(glm::distance(s.pos, w.collision().markup[size_t(s.climbHold)].points[0] - vec3(0, 0, 158.025f)), 1e-2f);
         if (s.clip.find("_to_") != std::string::npos && (transitions.empty() || transitions.back() != s.clip)) transitions.push_back(s.clip);
@@ -1880,8 +1882,8 @@ TEST(GameReal, CliffclimbStances) {
     const float rise = w.player().state().pos.z - z0;
     for (int t = 0; t < 120 && w.player().state().state == State::HangJump; ++t) w.tick({});
     std::printf("cliffclimb: %zu holds, %zu stances, rise %.0f, chest max step %.2f/tick, max step change %.2f, "
-                "root max step change %.2f, max turn %.4f rad/tick; transitions:",
-                holds.size(), stances.size(), rise, maxStep, maxChange, maxRootChange, maxTurn);
+                "root max step change %.2f, max turn %.4f rad/tick, camera min %.0f; transitions:",
+                holds.size(), stances.size(), rise, maxStep, maxChange, maxRootChange, maxTurn, minCamera);
     for (const auto& c : transitions) std::printf(" %s", c.c_str());
     std::printf("\nroute:");
     for (const int h : route) std::printf(" %d", h);
@@ -1895,6 +1897,8 @@ TEST(GameReal, CliffclimbStances) {
     EXPECT_LT(maxChange, 16.0f) << "no pops (a settle clip after a step crossfaded the chest by up to 45 units a tick)";
     EXPECT_LT(maxRootChange, 10.0f) << "the root follows the clips' root motion";
     EXPECT_LT(maxTurn, 0.02f) << "the heading turns smoothly (re-pinned to each face it jumped by up to 0.067 rad)";
+    EXPECT_GT(minCamera, 1000.0f) << "the camera stays back (its probe started touching the rock and collapsed onto the "
+                                     "pivot: position = target, a NaN view, the screen white)";
 }
 
 namespace {

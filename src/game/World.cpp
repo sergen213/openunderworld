@@ -442,7 +442,17 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     const float kRestPitch = CameraState{}.pitch;
     const Bike* bike = ridden();
     const float kDistance = bike ? 1711.0f : 1261.0f; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
-    const vec3 target = player_.state().pos + vec3(0, 0, kTargetHeight);
+    vec3 target = player_.state().pos + vec3(0, 0, kTargetHeight);
+    // Free climbing puts her root at the hold (Climb.cpp), 15-30 off the rock and inside it where the rock bulges or turns
+    // a corner; a pivot there starts the probe in the rock and the camera collapses onto it (position = target: a NaN
+    // view, a white screen). The pivot keeps 2 probe radii in front of the rock she faces: out along her heading (it turns
+    // smoothly at corners), measured to the rock from out there, so it eases out as she nears the rock and back after.
+    {
+        const vec3 out(-std::cos(player_.state().yaw), -std::sin(player_.state().yaw), 0);
+        constexpr float kReach = 100.0f, kClearance = 2 * kProbeRadius;
+        if (const auto h = col_.raycast(target + out * kReach, -out, kReach + kClearance); h && glm::dot(h->normal, out) > 0)
+            target += out * std::max(0.0f, kReach + kClearance - h->t);
+    }
     const float moved = glm::length(vec2(target - cam_.target)); // not across jumps (teleports, spline cameras ending)
     if (dt > 0 && a.look.y == 0 && moved > 1e-3f && moved < 200.0f)
         cam_.pitch += (kRestPitch - cam_.pitch) * (1 - std::exp(-kPitchReturn * dt));
