@@ -315,6 +315,22 @@ TEST(FxReal, BulletHitPicksParticlesBySurfaceMaterial) {
     EXPECT_GT(s.particleCount(), 10u);
 }
 
+// Lara's idle breath condensation (ng_idle frames 20 / 120: def 6 at the head, event byte 0x2C) needs the snow amount,
+// which nothing in the data sets (tru.exe 0x7181A0): her idle starts no emitter.
+TEST(FxReal, LaraIdleBreathNeedsSnow) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    fx::Library lib(bf);
+    const auto lara = lib.get("lara");
+    ASSERT_TRUE(lara);
+    const auto* idle = lara->clip("ng_idle");
+    ASSERT_TRUE(idle);
+    EXPECT_EQ(std::count_if(idle->begin(), idle->end(), [](const fx::Event& e) { return e.runsOn(0) && e.event == 0x2C; }), 2);
+    fx::System s;
+    EXPECT_EQ(s.runEvents(lara, *idle, glm::mat4(1), -2, 0, 0.0f, 1e9f), 0);
+    EXPECT_EQ(s.emitterCount(), 0u);
+}
+
 // Weapon "fire" clip events start the muzzle flash at the gun's HInfo markers (-10 muzzle, -20..-23 flash points).
 TEST(FxReal, WeaponFireEventsUseMuzzleMarkers) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

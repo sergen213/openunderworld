@@ -784,7 +784,10 @@ int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vect
     int n = 0;
     for (const auto& e : events) {
         if (float(e.frame) < from || float(e.frame) >= to) continue;
-        if (e.runsOn(material)) n += runCommand(fx, e.cmd, world, owner, bones);
+        // Effect records with event byte 0x2C (Lara's breath condensation in ng_idle & co.) run only while the snow amount
+        // DAT_00ae4d80 is set (tru.exe 0x7181A0 Lara, 0x5B9C40 others). Only globaleffect 8 (0x4A4F90) and effect command
+        // 7 (0x547B40) set it, and no script or effect list in the data uses either: the breath never shows.
+        if (e.runsOn(material)) n += e.event == 0x2C ? 0 : runCommand(fx, e.cmd, world, owner, bones);
         else if (sound && fx && e.soundOn(material))
             sound(*fx, e, glm::vec3((world * (e.sound.kind == 3 ? glm::mat4(1) : fx->frame(e.sound.segment, bones)))[3]), material);
         else if (fx && e.slotSound() && e.matches(material))
