@@ -117,6 +117,14 @@ Actions forward(float f = 1) {
     return a;
 }
 
+// Stick input as if the camera still looked along `yaw0`: the orbit camera drags after Lara (World::updateOrbitCamera),
+// so a held sideways stick circles her round it; tests that mean a world direction convert through this.
+Actions fixedCamera(const game::World& w, Actions a, float yaw0) {
+    const float d = w.camera().yaw - yaw0, c = std::cos(d), s = std::sin(d);
+    a.move = {a.move.x * c + a.move.y * s, a.move.y * c - a.move.x * s};
+    return a;
+}
+
 } // namespace
 
 TEST(Game, RootTranslationUnwrapsLoops) {
@@ -139,7 +147,7 @@ TEST(Game, WalkingIntoWallSlides) {
     auto w = makeWorld(std::move(m), {0, 0, 0});
     Actions a;
     a.move = {0.5f, 0.866f}; // camera faces +X: forward + a bit right (-Y)
-    for (int i = 0; i < 180; ++i) w->tick(a);
+    for (int i = 0; i < 180; ++i) w->tick(fixedCamera(*w, a, 0));
     const auto& s = w->player().state();
     EXPECT_EQ(s.state, State::Run);
     EXPECT_LE(s.pos.x, 400 - w->player().tuning().radius + 0.01f); // never inside the wall
@@ -215,9 +223,10 @@ TEST(Game, JumpTakeOffsMatchTruTraces) {
     EXPECT_NEAR(h, 40.0f * 30, 1);
 }
 
-// tru.exe camera (Wine, l3_main_bedroom start; camst.sh / campitch traces): pitch -0.0225, 491.1 above her feet;
-// while she moves a looked-down pitch eases back to rest (-0.342 -> -0.103 in 1 s), at rest it holds. Its distance
-// is the camera settings' 1264.22 (DTP 0x14 +0x60; l1_seatop / l2_cliffclimb at rest; the bedroom's 1260.8 behind her).
+// tru.exe camera (Wine, l3_main_bedroom start; camst.sh / campitch traces): pitch -0.0225, 491.1 above her feet; at
+// rest a looked-down pitch holds; running forward after a look down to -1.05 it flattens (-0.47 / -0.25 / -0.10 at
+// 1.0 / 1.6 / 2.3 s) as the camera drags after her. Its distance is the camera settings' 1264.22 (DTP 0x14 +0x60;
+// l1_seatop / l2_cliffclimb at rest; the bedroom's 1260.8 behind her).
 TEST(Game, CameraRestAndPitchReturn) {
     CollisionMesh m;
     addFloor(m, -20000, -20000, 20000, 20000, 0);
@@ -227,11 +236,15 @@ TEST(Game, CameraRestAndPitchReturn) {
     EXPECT_NEAR(glm::length(glm::vec2(c.position)), 1263.9f, 2);
     EXPECT_NEAR(c.position.z, 491.1f, 2);
     EXPECT_NEAR(c.position.x, -1263.9f, 2) << "behind her";
-    w->restore(w->player().state(), c.yaw, -1.0f);
+    w->restore(w->player().state(), c.yaw, -1.05f);
     for (int i = 0; i < 60; ++i) w->tick({});
-    EXPECT_NEAR(c.pitch, -1.0f, 1e-4);
+    EXPECT_NEAR(c.pitch, -1.05f, 1e-3);
     for (int i = 0; i < 60; ++i) w->tick(forward());
-    EXPECT_NEAR(c.pitch, -0.0225f + (-1.0f + 0.0225f) * std::exp(-1.3f), 0.03f);
+    EXPECT_NEAR(c.pitch, -0.47f, 0.08f);
+    for (int i = 0; i < 36; ++i) w->tick(forward());
+    EXPECT_NEAR(c.pitch, -0.25f, 0.08f);
+    for (int i = 0; i < 42; ++i) w->tick(forward());
+    EXPECT_NEAR(c.pitch, -0.10f, 0.08f);
 }
 
 // tru.exe sprint (Wine, l4_trailstart; screens/controls s_spr / s_rec / s_r4): Shift held while running sprints at
@@ -1000,7 +1013,7 @@ TEST(Game, HangJumpsUpRightAndBack) {
     auto jump = [&](float right, float fwd, int ledge, vec3 at) {
         Actions a;
         a.jump = true, a.move = {right, fwd};
-        w->tick(a);
+        w->tick(fixedCamera(*w, a, 0));
         ASSERT_EQ(s.state, State::HangJump);
         EXPECT_EQ(s.ledge, ledge);
         float maxStep = 0;
@@ -2148,13 +2161,13 @@ TEST(Game, GrappleWallRunFromGround) {
     w->attachGrapple({480, 0, 1500}, 1, game::GrappleKind::Wall);
     Actions run;
     run.move.x = 1;
-    for (int i = 0; i < 90 && w->player().state().state != State::GrappleRappel; ++i) w->tick(run);
+    for (int i = 0; i < 90 && w->player().state().state != State::GrappleRappel; ++i) w->tick(fixedCamera(*w, run, 0));
     ASSERT_EQ(w->player().state().state, State::GrappleRappel);
     EXPECT_EQ(w->player().state().clip, "ng_ground_to_wallrun_right");
     float minZ = 0;
     bool ran = false;
     for (int i = 0; i < 240 && w->player().state().state == State::GrappleRappel; ++i) {
-        w->tick(run);
+        w->tick(fixedCamera(*w, run, 0));
         const auto& s = w->player().state();
         if (s.state != State::GrappleRappel) break;
         ran |= s.clip == "grapple_rappel_right";
@@ -2189,7 +2202,7 @@ TEST(GameReal, ValaskjalfWallRun) {
             EXPECT_EQ(t->uid, 6750);
             EXPECT_EQ(t->kind, game::GrappleKind::Wall);
         }
-        w.tick(replay.at(i));
+        w.tick(fixedCamera(w, replay.at(i), -1.5707963f));
         const auto& s = w.player().state();
         if (std::getenv("OU_GRAPPLE_TRACE") && i % 10 == 0)
             std::printf("tick %3llu %s %s pos %.0f %.0f %.0f vel %.0f %.0f %.0f rope %.0f\n", (unsigned long long)i,
@@ -2558,7 +2571,7 @@ TEST(GameReal, BallcourtLeverReplayPassesDoor) {
     // Physics-only replay: enabling the poacher interrupts this route with genuine hit reactions.
     const auto replay = game::InputScript::parse(
         "0.3 interact 1\n0.4 interact 0\n0.6 forward 1\n1.75 forward 0\n1.8 right 1\n5.0 right 0\n");
-    for (int i = 0; i < 360; ++i) w.tick(replay.at(i));
+    for (int i = 0; i < 360; ++i) w.tick(fixedCamera(w, replay.at(i), 0));
     const auto& p = w.player().state().pos;
     EXPECT_GT(p.x, -18520.0f);
     EXPECT_LT(p.y, 13700.0f);
@@ -2818,11 +2831,12 @@ std::vector<uint64_t> digestsAtRate(const MakeWorld& make, const game::InputScri
                                     const std::function<double(int)>& frameDt, std::unique_ptr<game::World>* owner = nullptr) {
     auto w = make();
     const uint64_t start = w->ticks();
+    const float yaw0 = w->camera().yaw;
     engine::FrameClock clock(game::kTickSeconds);
     std::vector<uint64_t> out;
     for (int f = 0; int(out.size()) < ticks; ++f) {
         for (int n = clock.advance(frameDt(f)); n > 0 && int(out.size()) < ticks; --n) {
-            w->tick(input.at(w->ticks() - start));
+            w->tick(fixedCamera(*w, input.at(w->ticks() - start), yaw0));
             out.push_back(w->stateHash());
         }
         const double a = clock.alpha();

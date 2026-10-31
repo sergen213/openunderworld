@@ -688,6 +688,14 @@ private:
         float dist = 0, speed = 0;
         bool valid = false;
         float yaw = 0, pitch = 0; // the angles it left in cam_ (others changing them re-seed it)
+        struct Limits {           // camera mode's focus record offset / dead zones and look limits, blended
+            vec3 offset{0}, zones{-1};
+            float yawRange = 0, pitchLo = 0, pitchHi = 0;
+        } from, now;
+        int mode = -1;
+        float modeTime = 0, idle = 0; // seconds in this mode / since the last look input (+0x1E4)
+        float moves[10] = {}; // her last per-frame moves (30 Hz units) for the yaw force
+        vec3 lastPos{0};
     } orbit_;
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp
     CameraState blendFrom_; // last spline camera pose, blended out of over kCameraBlendSeconds

@@ -97,6 +97,13 @@ game::Actions forward() {
     return a;
 }
 
+// Stick input as if the camera still looked along `yaw0` (the orbit camera drags after Lara; test_game.cpp has the same).
+game::Actions fixedCamera(const game::World& w, game::Actions a, float yaw0) {
+    const float d = w.camera().yaw - yaw0, c = std::cos(d), s = std::sin(d);
+    a.move = {a.move.x * c + a.move.y * s, a.move.y * c - a.move.x * s};
+    return a;
+}
+
 std::string withHeader(int version, const std::string& body) {
     char h[64];
     std::snprintf(h, sizeof h, "OUSAVE %d %08lx %zu\n", version, crc32(0, reinterpret_cast<const Bytef*>(body.data()), uInt(body.size())),
@@ -422,8 +429,9 @@ TEST(StreamReal, PoolToRagnarokOnFootThenSaveLoad) {
     game::Actions back;
     back.move.y = -1; // away from the camera: Lara turns and runs west
     int crossed = -1;
+    const float yaw0 = w.camera().yaw; // the camera drags after her: steer by the starting view
     for (int i = 0; i < 300 && crossed < 0; ++i) {
-        w.tick(back);
+        w.tick(fixedCamera(w, back, yaw0));
         const auto& s = w.player().state();
         ASSERT_NE(s.state, game::State::Fall) << "tick " << i;
         ASSERT_NEAR(s.pos.z, startZ, 80) << "tick " << i;
@@ -433,7 +441,7 @@ TEST(StreamReal, PoolToRagnarokOnFootThenSaveLoad) {
     std::vector<std::string> names;
     for (const auto& u : w.units()) names.push_back(u.data.name);
     EXPECT_EQ(names, (std::vector<std::string>{"l4_pool", "l4_ragnarok_room", "l4_staircase_mictlan"}));
-    for (int i = 0; i < 30; ++i) w.tick(back);
+    for (int i = 0; i < 30; ++i) w.tick(fixedCamera(w, back, yaw0));
     EXPECT_EQ(w.currentUnit().data.name, "l4_ragnarok_room");
     ASSERT_TRUE(w.collision().groundProbe(w.player().state().pos + vec3(0, 0, 50), 200)); // ragnarok floor under her
 
@@ -442,7 +450,7 @@ TEST(StreamReal, PoolToRagnarokOnFootThenSaveLoad) {
     const auto bytes = save::serialize(save::capture(w));
     std::vector<game::PlayerState> after; // the 40 ticks following the save, in ragnarok's frame
     for (int i = 0; i < 40; ++i) {
-        w.tick(back);
+        w.tick(fixedCamera(w, back, yaw0));
         after.push_back(w.player().state());
         after.back().pos -= offset;
     }
@@ -454,7 +462,7 @@ TEST(StreamReal, PoolToRagnarokOnFootThenSaveLoad) {
     expectSame(w.player().state(), expect);
     // Same inputs after the load replay the same 40 ticks (up to float rounding of the other frame).
     for (int i = 0; i < 40; ++i) {
-        w.tick(back);
+        w.tick(fixedCamera(w, back, yaw0));
         const auto& s = w.player().state();
         ASSERT_EQ(s.state, after[size_t(i)].state) << "tick " << i;
         ASSERT_EQ(s.clip, after[size_t(i)].clip) << "tick " << i;
@@ -903,13 +911,14 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
     EXPECT_NEAR(s.yaw, -1.5708f, 0.05f);
     EXPECT_GT(w->camera().position.y - s.pos.y, 1000.0f) << "camera behind her, looking down the corridor";
     EXPECT_NEAR(w->camera().position.x, s.pos.x, 50.0f);
-    // Run down the corridor onto the slab, the stick straight forward (the camera stays behind her).
+    // Run down the corridor onto the slab, the stick straight forward in the starting view (the camera drags after her).
     int climbTicks = 0;
     bool hurdled = false;
     game::Actions run;
     run.move = {0, 1};
+    const float yaw0 = w->camera().yaw;
     for (int t = 0; t < 400 && !(hurdled && s.state != game::State::ClimbUp); ++t) {
-        w->tick(run);
+        w->tick(fixedCamera(*w, run, yaw0));
         ASSERT_NE(s.state, game::State::Fall) << "tick " << t << " at " << s.pos.x << "," << s.pos.y;
         if (s.state == game::State::ClimbUp) hurdled |= s.clip == "hurdle_low_onto_100", ++climbTicks;
     }
