@@ -7,6 +7,7 @@ All notable changes to OpenUnderworld are documented here. The format follows
 ## [Unreleased]
 
 - The camera no longer bumps into things the original lets it pass through. It now collides only with what tru.exe's camera does: the terrain groups the game marks camera-transparent (scenery like the Kraken entrance and chapel pieces) and small objects such as poles, gears, breakables and pickups no longer pull it in, while level walls and large doors or towers still do.
+- Ray-traced local-light shadows (Vulkan, `rt: full`, or `--rt-lights on|off` / `rt_lights` / launcher checkbox): the point and spot lights the original marks as shadow casters (lamps, torches, the flashlight's spot) now cast soft shadows of Lara and the scenery, as tru.exe's light shadow maps did; until now every local light shone through walls and Lara.
 
 ## [0.19.0] - 2026-10-31
 

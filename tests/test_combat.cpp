@@ -814,6 +814,8 @@ TEST(GadgetsReal, TuningLightsAndSpotUnits) {
     ASSERT_NE(omni, lights.end());
     EXPECT_FLOAT_EQ(spot->radius, 5000);
     EXPECT_FLOAT_EQ(omni->radius, 1800);
+    EXPECT_TRUE(spot->shadow); // DTP +0x144C: the spot is a shadow light (RT local-light shadows trace it), the omni not
+    EXPECT_FALSE(omni->shadow);
     EXPECT_TRUE(game::loadUnitData(bf, "l4_pool").flashlightSpot);
     EXPECT_FALSE(game::loadUnitData(bf, "l3_main_bedroom").flashlightSpot);
     EXPECT_TRUE(game::loadLaraAnims(bf).find("g_grenade_thrower:combat_grenade_Throw1"));

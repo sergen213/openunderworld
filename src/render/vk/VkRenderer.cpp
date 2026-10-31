@@ -737,6 +737,18 @@ public:
         const SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
                                         shadowMap, rtOn ? (options.rt == RayTracing::Full ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
         std::memcpy(shadowUbo_[frameIndex_].mapped, &sun.block, sizeof sun.block); // host-coherent
+        // Local-light shadows (sun.glsl ouLightsBegin): the shadow lights of the table (scene::Light::shadow, tru.exe
+        // DTP +0x144C: the flashlight's spot, fixtures), half the sun's rays per light (each pixel may trace 4 lights).
+        glm::uvec4 rtLights(0);
+        rtStatus_.lights = rtOn && options.rtLights;
+        if (rtStatus_.lights) {
+            for (size_t i = 0; i < std::min(environment_.lights.size(), size_t(sm3::kMaxLights)); ++i) {
+                const scene::Light& l = environment_.lights[i]; // colour 0: a switched-off dynamic light (flashlight)
+                if (l.shadow && l.color[0] + l.color[1] + l.color[2] > 0) rtLights[i >> 5] |= 1u << (i & 31);
+            }
+            rtLights.z = uint32_t(std::clamp(options.rtRays / 2, 1, 32));
+        }
+        std::memcpy(shadowUbo_[frameIndex_].mapped + offsetof(SunShadowBlock, lights), &rtLights, sizeof rtLights);
         if (shadowMap) recordShadowPass(cmd, sun, zRemap);
         gpuMark(cmd, 3);
 

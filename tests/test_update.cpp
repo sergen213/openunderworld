@@ -511,7 +511,20 @@ TEST(Config, GraphicsPresets) {
         return c;
     };
     EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
-    EXPECT_EQ(resolve(rt("enhanced", "full", "high")), (GraphicsSettings{4, true, false, false, 2, 4, true, 1, 1.0f, true, 2, true, 1}));
+    auto full = resolve(rt("enhanced", "full", "high"));
+    EXPECT_TRUE(full.rtLights); // rt full turns the RT features on
+    full.rtLights = false;
+    EXPECT_EQ(full, (GraphicsSettings{4, true, false, false, 2, 4, true, 1, 1.0f, true, 2, true, 1}));
+    // rt_lights: unset = on with full only; an explicit value wins over the mode, but nothing traces without RT.
+    auto lights = [&](std::string mode, Opt on) {
+        auto c = rt("enhanced", std::move(mode));
+        c.rtLights = on;
+        return resolve(c).rtLights;
+    };
+    EXPECT_FALSE(lights("shadows", {}));
+    EXPECT_FALSE(lights("full", false));
+    EXPECT_TRUE(lights("shadows", true));
+    EXPECT_FALSE(lights("off", true));
     EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1, true, 1, 1.0f, true, 2, true, 1}));
     EXPECT_THROW(resolve(rt("original", "shadows")), std::runtime_error);
     EXPECT_THROW(resolve(rt("original", "full")), std::runtime_error);
@@ -536,6 +549,9 @@ TEST(Config, GraphicsPresets) {
     EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--fxaa", "yes"), std::runtime_error);
     EXPECT_EQ(flags.rt, "full");
     EXPECT_EQ(flags.rtQuality, "low");
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--rt-lights", "off"));
+    EXPECT_EQ(flags.rtLights, std::optional<bool>(false));
+    EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--rt-lights", "maybe"), std::runtime_error);
     EXPECT_EQ(flags.shadows, std::optional<bool>(false));
 
     fs::path p = fs::temp_directory_path() / ("ou_config_gfx_" + std::to_string(::getpid()) + "/config.json");
@@ -543,6 +559,7 @@ TEST(Config, GraphicsPresets) {
     c.graphics = g("enhanced", 2, std::nullopt, true);
     c.graphics.rt = "shadows", c.graphics.rtQuality = "high", c.graphics.brightness = 0.75f;
     c.graphics.atmosphere = "high", c.graphics.lightShafts = false;
+    c.graphics.rtLights = true;
     ou::config::save(p, c);
     const auto d = ou::config::load(p).graphics;
     EXPECT_EQ(d.preset, "enhanced");
@@ -552,7 +569,11 @@ TEST(Config, GraphicsPresets) {
     EXPECT_FLOAT_EQ(d.brightness, 0.75f);
     EXPECT_EQ(d.atmosphere, "high");
     EXPECT_EQ(d.lightShafts, std::optional<bool>(false));
-    EXPECT_EQ(resolve(d), (GraphicsSettings{2, true, true, false, 1, 4, true, 1, 0.75f, true, 3, false, 1}));
+    EXPECT_EQ(d.rtLights, std::optional<bool>(true));
+    auto rd = resolve(d);
+    EXPECT_TRUE(rd.rtLights); // explicit on with rt shadows
+    rd.rtLights = false;
+    EXPECT_EQ(rd, (GraphicsSettings{2, true, true, false, 1, 4, true, 1, 0.75f, true, 3, false, 1}));
     std::ofstream(p) << R"({"graphics":{"brightness":0.2}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
     std::ofstream(p) << R"({"graphics":{"preset":"enhanced","msaa":5}})";
