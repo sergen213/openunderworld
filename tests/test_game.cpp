@@ -1420,11 +1420,6 @@ TEST(GameReal, CliffclimbObstaclesAndLedgeGrabs) {
     }));
 }
 
-// l4_pool ledges 1250 -> 1251 (z 3864 + 495.6 hands): jump right along the wall (~420 across).
-TEST(GameReal, PoolSideJump) {
-    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::BigfileSet bf(gameDir());
-    auto w = unitWorld(bf, "l4_pool", {{-5274, 3618, 3400}, 0});
 // Ticks `input` in `unit` from the spawn; the clips played in order and the state on the tick the obstacle move ended.
 static std::pair<std::vector<std::string>, game::PlayerState> obstacleRun(const char* unit, vec3 pos, float yawDeg, int ticks, Actions in) {
     const cdc::BigfileSet bf(gameDir());
@@ -1466,6 +1461,11 @@ TEST(GameReal, PoolRockStepDown) {
     EXPECT_LT(end.pos.z, 3069.5f - 150);
 }
 
+// l4_pool ledges 1250 -> 1251 (z 3864 + 495.6 hands): jump right along the wall (~420 across).
+TEST(GameReal, PoolSideJump) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l4_pool", {{-5274, 3618, 3400}, 0});
     const int from = markupIndex(w, 1250);
     ASSERT_GE(from, 0);
     const auto& m = w.collision().markup[size_t(from)];
@@ -2016,6 +2016,7 @@ TEST(GameReal, CliffclimbDiceJumps) {
         w.tick(push);
         EXPECT_EQ(w.player().state().clip, launch);
         EXPECT_EQ(w.player().state().climbHold, hold);
+        const vec3 p0 = w.player().state().pos;
         const auto* c = anims.find(launch);
         ASSERT_NE(c, nullptr);
         for (int t = 0; t < int(c->durationSeconds() * 60) - 1; ++t) w.tick({});
@@ -2046,7 +2047,6 @@ std::pair<int, int> pushIntoWalls(const cdc::BigfileSet& bf, const game::AnimLib
     std::vector<vec3> holds;
     for (const auto& m : col.markup)
         if (m.type >= 16 && m.type <= 20 && !m.points.empty()) holds.push_back(m.points[0]);
-        const vec3 p0 = w.player().state().pos;
     int tried = 0, attached = 0;
     const size_t stride = std::max<size_t>(1, col.faces.size() / 400);
     for (size_t i = 0; i < col.faces.size() && tried < limit; i += stride) {

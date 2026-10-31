@@ -4,6 +4,15 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.19.0] - 2026-10-31
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Obstacles follow the original's player state chart (decoded from lara.drm): height classes, which move plays (climb onto, vault over, hang on the far side, step down, cancel by pulling back) and when a jump is needed now come from the game data. Low obstacles are climbed or vaulted straight off a walk or run; mid and high ones from a jump. Moves blend between the original's animation pairs by obstacle height and depth.
+- No more sinking into rock during pull-ups: ledges whose top isn't a hurdle in the original (e.g. the l4_pool rock) are grabbed and climbed like the original instead.
+- Free climbing: hold choice uses the original's per-direction markup queries; long DICE jumps to far holds (lean, launch, ballistic flight, catch, air attach), jump back to a hold behind, and free leaps with the original's launch velocities.
+- Camera ported from the original's gameplay camera: pivot on Lara's camera bone with per-mode offsets, distance 1264, trailing focus, the original's collider and floor probe, per-state modes (on foot, free climb, hang, ladder, swim, underwater, beam, pole...) with their limits and distances, the idle auto-swing after 5 s, and the levels' own camera records on climbing walls. The camera now drags after Lara like the original instead of keeping its own yaw. The original's field of view is 45° (`--fov 45`); the default stays 60.
+
 ## [0.18.1] - 2026-10-31
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
