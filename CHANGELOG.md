@@ -4,6 +4,17 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.18.0] - 2026-10-31
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Lara no longer shakes when the camera moves. The view matrix was built from a look-at point rounded to the world position's float grid, turning a moving camera by up to ~0.2° per frame; it is now built from the exact direction (FSR on or off). Same fix for the PDA sonar view.
+- FSR: no more flickering on the Coastal Thailand cliffs. RT shadow rays started from un-jittered camera rays, so whole rock triangles shadowed themselves in some jitter phases; depth-writing cliff plants are no longer marked reactive and stop shimmering.
+- Free climbing reworked to move hold to hold like the original: each step is carried by its climb animation's root motion, no sliding or snapping to rock faces, smooth corners, reach animations toward no hold, jump up onto ledges above, step off at the foot. Ladders use their animations' root motion and the climb-off-top no longer teleports.
+- Swimming: shark bites and other light hits no longer put Lara in a T-pose; light hit reactions now play as overlays on top of the current pose (on land too).
+- Lara's breath condensation no longer appears in every level. The original only shows it with its snow effect active, which no shipped level turns on.
+- Enhanced water: underwater caustics and sun shafts toned down to half strength.
+
 ## [0.17.1] - 2026-10-31
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

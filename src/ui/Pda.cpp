@@ -234,7 +234,8 @@ const Image& Sonar::render(int w, int h, const SonarCamera& cam, std::span<const
     if (w <= 0 || h <= 0) return image_;
     const glm::vec3 eye = cam.eye, dir = cam.dir();
     const float fov = glm::radians(kSonarFovDeg);
-    const glm::mat4 vp = glm::perspective(fov, float(w) / float(h), 20.0f, 200000.0f) * glm::lookAt(eye, eye + dir, {0, 0, 1});
+    const glm::mat4 vp = glm::perspective(fov, float(w) / float(h), 20.0f, 200000.0f) *
+                         glm::translate(glm::lookAt(glm::vec3(0.0f), dir, {0, 0, 1}), -eye); // eye+dir loses float precision at world scale
     const float pixel = 2 * std::tan(fov / 2) / float(h); // world size of one pixel per unit of distance
     Raster r(image_, 0, 0, w, h);
     // Look [V captures]: grey surfaces, darker facing the camera and lighter at grazing angles; a teal world-space grid,
