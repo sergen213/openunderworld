@@ -27,7 +27,10 @@ struct Camera {
         return {std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), std::sin(pitch)};
     }
     glm::vec3 right() const { return {std::sin(yaw), -std::cos(yaw), 0.0f}; }
-    glm::mat4 view() const { return glm::lookAt(position, position + forward(), up); }
+    // Rotation from the direction itself, then the translation: glm::lookAt(position, position + forward()) rounds the
+    // look point to the world position's float grid (~0.004 at 40000 units), turning the view by up to ~0.2 deg, a pixel
+    // or more that changed every frame of a moving camera (Lara, centred by the orbit camera, shook sideways).
+    glm::mat4 view() const { return glm::translate(glm::lookAt(glm::vec3(0.0f), forward(), up), -position); }
     glm::mat4 projection(float aspect) const {
         return clipped(jittered(glm::perspective(glm::radians(verticalFovDeg), aspect, nearZ, farZ)), false);
     }
