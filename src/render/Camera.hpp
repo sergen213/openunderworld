@@ -50,7 +50,9 @@ struct Camera {
         return p;
     }
     void lookAt(const glm::vec3& target) {
-        glm::vec3 d = glm::normalize(target - position);
+        const glm::vec3 v = target - position;
+        if (glm::dot(v, v) < 1e-6f) return; // camera on its target (orbit sweep hit at t=0): keep the last direction, not a NaN view
+        glm::vec3 d = v / std::sqrt(glm::dot(v, v));
         yaw = std::atan2(d.y, d.x);
         pitch = std::asin(glm::clamp(d.z, -1.0f, 1.0f));
     }

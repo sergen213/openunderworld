@@ -4,6 +4,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.18.1] - 2026-10-31
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Climbing: the screen no longer goes white. On bulging rock and corners the orbit camera's pivot ended up touching the rock, the camera collapsed onto it and the view became invalid; the pivot now keeps clear of the rock Lara faces, and a camera on its target keeps its last direction instead of breaking the view.
+- Lara clears basic obstacles: chest- and head-high blocks with a walkable top (up to about 2 m) are pulled up onto with the jump using the original's pull-up animations, and a running jump straight into a wall below a ledge now catches it instead of sliding down.
+
 ## [0.18.0] - 2026-10-31
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
