@@ -81,12 +81,13 @@ double syncedStartTime(const Clip& from, double fromTime, const Clip& to);
 
 // Crossfading player. Each play() fades the new clip in over `blendSeconds` (linear weight, as tru.exe's
 // anim request: weight += 1/interpFrames per 30 Hz frame) on top of whatever was showing; older layers keep
-// playing until a newer one reaches full weight.
+// playing until a newer one reaches full weight. An additive layer (overlay clips, e.g. hit_light_*) adds its
+// keyed segments' change from its own last key to the pose under it and never hides that pose.
 class AnimController {
 public:
     explicit AnimController(const scene::Skeleton& skeleton);
     // `clip` may be null (bind pose). `startTime` in seconds; looping clips may pass unbounded times.
-    void play(const Clip* clip, float blendSeconds, bool loop, float rate = 1, double startTime = 0);
+    void play(const Clip* clip, float blendSeconds, bool loop, float rate = 1, double startTime = 0, bool additive = false);
     void update(double dt);                // advances every layer and the fades
     void setTime(double seconds);          // newest layer's time (when the caller owns the clock)
     std::vector<LocalTransform> pose() const;
@@ -98,7 +99,7 @@ private:
         const Clip* clip;
         double time;
         float rate, fade, elapsed;
-        bool loop;
+        bool loop, additive;
         float weight() const { return fade <= 0 ? 1.0f : std::min(1.0f, elapsed / fade); }
     };
     std::vector<LocalTransform> sampleLayer(const Layer& l) const;

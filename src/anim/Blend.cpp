@@ -47,10 +47,10 @@ double syncedStartTime(const Clip& from, double fromTime, const Clip& to) {
 
 AnimController::AnimController(const scene::Skeleton& skeleton) : skeleton_(&skeleton) {}
 
-void AnimController::play(const Clip* clip, float blendSeconds, bool loop, float rate, double startTime) {
+void AnimController::play(const Clip* clip, float blendSeconds, bool loop, float rate, double startTime, bool additive) {
     // ponytail: at most 4 layers; the oldest is dropped (a small jump) if transitions pile up faster than they fade.
     if (layers_.size() >= 4) layers_.erase(layers_.begin());
-    layers_.push_back({clip, startTime, rate, layers_.empty() ? 0.0f : blendSeconds, 0.0f, loop});
+    layers_.push_back({clip, startTime, rate, layers_.empty() ? 0.0f : blendSeconds, 0.0f, loop, additive});
 }
 
 void AnimController::update(double dt) {
@@ -59,9 +59,9 @@ void AnimController::update(double dt) {
         if (!l.loop && l.clip) l.time = std::clamp(l.time, 0.0, l.clip->durationSeconds());
         l.elapsed += float(dt);
     }
-    // A layer at full weight hides everything under it.
+    // A layer at full weight hides everything under it (an additive one builds on it).
     for (size_t i = layers_.size(); i-- > 1;)
-        if (layers_[i].weight() >= 1) {
+        if (layers_[i].weight() >= 1 && !layers_[i].additive) {
             layers_.erase(layers_.begin(), layers_.begin() + ptrdiff_t(i));
             break;
         }
@@ -80,7 +80,26 @@ std::vector<LocalTransform> AnimController::sampleLayer(const Layer& l) const {
 std::vector<LocalTransform> AnimController::pose() const {
     if (layers_.empty()) return bindPose(*skeleton_);
     auto out = sampleLayer(layers_.front());
-    for (size_t i = 1; i < layers_.size(); ++i) blendPoses(out, sampleLayer(layers_[i]), layers_[i].weight(), out);
+    for (size_t i = 1; i < layers_.size(); ++i) {
+        const Layer& l = layers_[i];
+        if (!l.additive) {
+            blendPoses(out, sampleLayer(l), l.weight(), out);
+            continue;
+        }
+        if (!l.clip) continue;
+        // Overlay clips key only the segments they move (lara.drm hit_light_*: 12-23 of 113, the arms un-keyed) with
+        // values relative to a reference pose: the spine / arm channels end at exactly 0, the rest repeat full-clip
+        // constants (seg 57, 109, 111, 112) or a +-pi flip (76, 101). Taking the change from the clip's last key
+        // keeps the motion and cancels the constants [I: the original's overlay node is not decoded].
+        const auto now = sample(*l.clip, *skeleton_, l.time, l.loop), ref = sample(*l.clip, *skeleton_, l.clip->durationSeconds(), false);
+        const float w = l.weight();
+        for (size_t s = 0; s < out.size() && s < l.clip->tracks.size(); ++s) {
+            const auto& t = l.clip->tracks[s];
+            if (!t[0].empty() || !t[1].empty() || !t[2].empty())
+                out[s].rot = toVector(toQuat(out[s].rot) * glm::slerp(glm::quat(1, 0, 0, 0), glm::inverse(toQuat(ref[s].rot)) * toQuat(now[s].rot), w));
+            out[s].trans += w * (now[s].trans - ref[s].trans);
+        }
+    }
     return out;
 }
 

@@ -1152,7 +1152,10 @@ damage type +0x63C):
   back,side}`, heavy = `hit_medium{front,back,right}` (lara.drm, 0.33 / 0.70 s [O]); front within ±45° of her heading,
   back beyond ±135°, else side [I]; no mirroring: the side / right clip plays for both sides; swimming the `*_swim`
   variants. The clip plays once with its root motion (ground: collide-and-slide, water: the swim sphere), then idle /
-  tread or submerged idle. Guns stay drawn and fire during it [I].
+  tread or submerged idle. Guns stay drawn and fire during it [I]. The light clips are overlays [O]: they key only 12-23
+  of 113 segments (spine, head, arm twists; not the arms), as offsets that end at 0 (like `combat_pistol_fire_overlay_*`,
+  `face_overlay_*`), so as a full pose they left Lara in her bind T-pose (shark bites while swimming). They play as an
+  additive layer on the pose under them (`AnimController`, their change from their own last key [I]).
 
 Weapons [O] (object data = ObjectBase+0xC8; stats block S = data+0xE0, read by fire `0x6C9E50`; `loadWeapon`, values
 = `weaponDefaults`, checked by `CombatReal.WeaponData`): Lara carries the pistols plus one secondary (data+0xDC: 0

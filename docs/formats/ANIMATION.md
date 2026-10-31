@@ -228,7 +228,9 @@ space is not decoded]. `World` watches `PlayerState` (clip/loop/rate change or r
 {ng_walk, ng_run} and {swim_sub, _up, _down}, which keep the stride phase (`anim::syncedStartTime`; ng_walk and
 ng_run have the left/right foot offset in phase at phase 0, cross-correlation peak at offset 0.99 ≈ 0) [O]. Root
 motion still comes from the newest clip only (the original also blends root deltas, 0x44B020) [deviation].
-`World::pose(alpha)` interpolates per-bone matrices between ticks (slerp + lerp).
+`World::pose(alpha)` interpolates per-bone matrices between ticks (slerp + lerp). Overlay clips (`hit_light_*`: only
+the moved segments keyed, as offsets) go in as an additive layer: keyed segments get rotation `base · ref⁻¹ · now`
+and translation `base + now − ref`, ref = the clip's last key; the layer never hides the pose under it [I].
 
 **Measured pops** (`GameReal.TransitionsReducePops`, flat floor, 560-tick replay: run, run→walk→run, stop, walk,
 standing jump, run, running jump; per-tick change of a bone's model-space orientation; at each clip change raw =

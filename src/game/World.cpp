@@ -558,15 +558,20 @@ CameraState World::interpolatedCamera(double alpha) const {
 void World::updatePose(float dt, bool reset) {
     const PlayerState& s = player_.state();
     reset = reset || bones_.empty();
+    // Light hit reactions are overlay clips (only the spine / head / arm-twist segments keyed, as deltas): played as a
+    // full pose they left every other bone at bind, Lara in a T-pose (swimming: shark bites). They go on top of what
+    // is showing (anim::AnimController additive layer).
+    const bool overlay = s.clip.starts_with("hit_light_");
     if (reset) {
         anim_ = anim::AnimController(anims_.skeleton);
-        anim_.play(anims_.find(s.clip), 0, s.loop, s.clipRate, s.clipTime);
+        if (overlay) anim_.play(anims_.find(s.water >= 0 ? "swim_submerged_idle" : "ng_idle"), 0, true); // [I] a base under it
+        anim_.play(anims_.find(s.clip), 0, s.loop, s.clipRate, s.clipTime, overlay);
         hair_ = anim::HairSim(anims_.hair, anims_.skeleton, laraHair());
     } else {
         anim_.update(dt);
         // Player::play changed the clip (or restarted it): fade the new one in over what is showing.
         if (s.clip != prev_.clip || s.loop != prev_.loop || s.clipRate != prev_.clipRate || s.clipTime < prev_.clipTime)
-            anim_.play(anims_.find(s.clip), clipBlend(prev_.clip, s.clip).blendSeconds, s.loop, s.clipRate, s.clipTime);
+            anim_.play(anims_.find(s.clip), clipBlend(prev_.clip, s.clip).blendSeconds, s.loop, s.clipRate, s.clipTime, overlay);
         else
             anim_.setTime(s.clipTime); // the player's clock is authoritative (root motion comes from it)
     }

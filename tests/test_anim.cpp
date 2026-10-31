@@ -346,6 +346,31 @@ TEST(Anim, ControllerCrossfadeTiming) {
     EXPECT_NEAR(anim::syncedStartTime(a, a.durationSeconds() * 2.25, b), b.durationSeconds() * 0.25, 1e-9);
 }
 
+// Overlay clips (lara.drm hit_light_*) key a few segments: as an additive layer they add their change from their own
+// last key to the pose under it and leave un-keyed segments (her arms) as they are, not at bind (the swim T-pose).
+TEST(Anim, ControllerAdditiveOverlayKeepsBase) {
+    scene::Skeleton sk;
+    sk.bones = {{-1, {0, 0, 0}}, {0, {0, 0, 10}}, {0, {0, 0, 20}}};
+    anim::Clip base = constantClip({0, 0, 0.5f}), hit;
+    base.tracks.resize(3);
+    for (int a = 0; a < 3; ++a) base.tracks[2][size_t(anim::RotX + a)] = std::vector<float>(10, a == 1 ? 0.8f : 0.0f);
+    hit.keyCount = 3, hit.timePerKey = 100, hit.tracks.resize(3); // bone 1 only: x 0.3 -> 0.1 -> 0 (ends at the reference)
+    hit.tracks[1][anim::RotX] = {0.3f, 0.1f, 0.0f}, hit.tracks[1][anim::RotY] = {0, 0, 0}, hit.tracks[1][anim::RotZ] = {0, 0, 0};
+    anim::AnimController c(sk);
+    c.play(&base, 0, true);
+    c.play(&hit, 0, false, 1, 0, true);
+    c.update(1.0 / 60); // a full-weight additive layer keeps the one under it
+    ASSERT_EQ(c.layers(), 2u);
+    c.setTime(0);
+    auto p = c.pose();
+    EXPECT_LT(angleBetween(p[2].rot, {0, 0.8f, 0}), 1e-5f) << "un-keyed segment keeps the base";
+    const glm::mat3 want = anim::rotationFromVector({0, 0, 0.5f}) * anim::rotationFromVector({0.3f, 0, 0}), got = anim::rotationFromVector(p[1].rot);
+    const glm::mat3 r = glm::transpose(want) * got;
+    EXPECT_LT(std::acos(std::clamp((r[0][0] + r[1][1] + r[2][2] - 1) * 0.5f, -1.0f, 1.0f)), 1e-3f) << "keyed segment: base then the overlay's delta";
+    c.setTime(hit.durationSeconds());
+    EXPECT_LT(angleBetween(c.pose()[1].rot, {0, 0, 0.5f}), 1e-5f) << "back on the base at the overlay's end";
+}
+
 TEST(Anim, HairChainIsStableAndSettlesUnderGravity) {
     // Root bone, pinned anchor at z 100, then 6 free segments sticking out horizontally along +Y.
     scene::Skeleton sk;
