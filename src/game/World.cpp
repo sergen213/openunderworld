@@ -456,25 +456,57 @@ void World::tick(const Actions& input) {
     if (!units_.empty()) checkLevelEnd(); // last: a chapter change re-spawns Lara (enterUnit)
 }
 
-// Orbit camera around a point above Lara's root; pulled in along the view ray when level geometry is in the way.
-// tru.exe under Wine (camera *0xE80534: position +0x40, forward +0x30): at rest 1261 from a point 462.6 above her
-// feet, pitch -0.0225 rad; while she moves its pitch eases back to rest (rate fitted to the trace), at rest it holds.
-// Its yaw does not swing behind her (idle or running sideways); how it follows otherwise is not modelled [U].
+// Orbit camera around a focus point near Lara; pulled in along the view ray when level geometry is in the way.
+// tru.exe's gameplay camera is LaraCameraRewrite (vtable 0x85600C, *0xE80534 under Wine): it orbits its frame +0xD0
+// whose origin +0x100 is the focus +0x3B0 after the pivot clearance 0x5EA050 (update 0x602690). At rest it sits
+// 1264.22 back (camera settings DTP 0x14 +0x60, the global data +0x144's id); pitch -0.0225 rad; while she moves its
+// pitch eases back to rest (rate fitted to the trace), at rest it holds. Its yaw does not swing behind her (idle or
+// running sideways); how it follows otherwise (and its climb-mode auto-yaw) is not modelled [U].
 void World::updateOrbitCamera(const Actions& a, float dt) {
-    constexpr float kTargetHeight = 462.6f, kProbeRadius = 20.0f, kPitchReturn = 1.3f;
+    constexpr float kProbeRadius = 20.0f, kPitchReturn = 1.3f;
     const float kRestPitch = CameraState{}.pitch;
     const Bike* bike = ridden();
-    const float kDistance = bike ? 1711.0f : 1261.0f; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
-    vec3 target = player_.state().pos + vec3(0, 0, kTargetHeight);
-    // Free climbing puts her root at the hold (Climb.cpp), 15-30 off the rock and inside it where the rock bulges or turns
-    // a corner; a pivot there starts the probe in the rock and the camera collapses onto it (position = target: a NaN
-    // view, a white screen). The pivot keeps 2 probe radii in front of the rock she faces: out along her heading (it turns
-    // smoothly at corners), measured to the rock from out there, so it eases out as she nears the rock and back after.
+    const float kDistance = bike ? 1711.0f : 1264.22f; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
+    // Focus goal (0x607D40): bone 108 (a helper the clips carry: 320 over her feet standing, by the pelvis 95 off the
+    // rock climbing) plus the offset of the focus record the camera mode picks. Records (settings DTP +0x50, 0x6C
+    // bytes: bone, offset, dead zones, speed, 64-byte ease curve) chosen per mode by the DTP's mode list +0x148 (0x5FF080
+    // command 10): mode 1 (on foot) record 1 (0, 0, 142.23), mode 4 (free climbing) record 10 (0, 0, 79.01).
+    const PlayerState& s = player_.state();
+    const vec3 offset(0, 0, s.state == State::Climb ? 79.01f : 142.23f);
+    const glm::mat4 model = player_.modelMatrix(s.pos, s.yaw, s.pitch);
+    const vec3 goal = bones_.size() > 108 ? vec3(model * bones_[108] * glm::vec4(offset, 1)) : s.pos + vec3(0, 0, 320.3f) + offset;
+    // The focus lags its goal (0x609830 -> 0x609440) per axis of the camera's horizontal frame (0x6091A0: right,
+    // forward, up) by dead zones 3.16 / 126.42 / 252.84: what is past a zone is caught up at once, the rest at up to
+    // 1896.3 units/s scaled by the record's ease curve at (distance / zone) (0x5E4530). Records 1 and 10 share these.
+    // Moving platforms carry it in the original (0x7027B0); not modelled [U].
+    if (!focus_ || bike || glm::distance(*focus_, goal) > 2000.0f) focus_ = goal; // spawns, teleports
     {
-        const vec3 out(-std::cos(player_.state().yaw), -std::sin(player_.state().yaw), 0);
-        constexpr float kReach = 100.0f, kClearance = 2 * kProbeRadius;
-        if (const auto h = col_.raycast(target + out * kReach, -out, kReach + kClearance); h && glm::dot(h->normal, out) > 0)
-            target += out * std::max(0.0f, kReach + kClearance - h->t);
+        static constexpr uint8_t kEase[64] = {0,   1,   2,   2,   2,   3,   3,   3,   4,   5,   6,   8,   10,  13,  16,  20,
+                                              24,  29,  34,  40,  46,  52,  58,  65,  72,  79,  86,  93,  101, 109, 118, 127,
+                                              137, 146, 155, 164, 173, 181, 188, 195, 201, 207, 213, 218, 223, 228, 232, 236,
+                                              239, 241, 244, 245, 247, 248, 249, 250, 251, 251, 252, 252, 253, 253, 254, 255};
+        constexpr float kZone[3] = {3.16f, 126.42f, 252.84f}, kSpeed = 1896.3f;
+        const vec3 axis[3] = {{std::sin(cam_.yaw), -std::cos(cam_.yaw), 0}, {std::cos(cam_.yaw), std::sin(cam_.yaw), 0}, {0, 0, 1}};
+        const vec3 d = goal - *focus_;
+        for (int i = 0; i < 3; ++i) {
+            const float off = glm::dot(d, axis[i]), dist = std::abs(off), excess = std::max(0.0f, dist - kZone[i]);
+            const float x = std::min(1.0f, dist / kZone[i]) * 63.0f;
+            const int k = int(x), k1 = std::min(63, k + 1);
+            const float ease = std::round(float(kEase[k1] - kEase[k]) * (x - float(k)) + float(kEase[k])) / 255.0f;
+            const float step = std::min(dist, excess + ease * std::max(0.0f, kSpeed * dt - excess));
+            *focus_ += axis[i] * std::copysign(step, off);
+        }
+    }
+    // Pivot clearance (0x5EA050): when the 474.075 above her root is blocked, the pivot is pulled back toward bone 1 to
+    // keep 2 x 13.91 (settings DTP +0x68) clear of what is in the way. The camera then sweeps out from the pivot.
+    vec3 target = *focus_;
+    if (col_.raycast(s.pos, {0, 0, 1}, 474.075f) && bones_.size() > 1) {
+        constexpr float kClear = 2 * 13.91f;
+        const vec3 from(model * bones_[1][3]), ray = target - from;
+        if (glm::length(ray) > 1e-3f) {
+            const vec3 dir = glm::normalize(ray);
+            if (const auto h = col_.raycast(from, dir, glm::length(ray) + kClear)) target = from + dir * (h->t - kClear);
+        }
     }
     const float moved = glm::length(vec2(target - cam_.target)); // not across jumps (teleports, spline cameras ending)
     if (dt > 0 && a.look.y == 0 && moved > 1e-3f && moved < 200.0f)

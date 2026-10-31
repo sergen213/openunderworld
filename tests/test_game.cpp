@@ -215,18 +215,18 @@ TEST(Game, JumpTakeOffsMatchTruTraces) {
     EXPECT_NEAR(h, 40.0f * 30, 1);
 }
 
-// tru.exe camera (Wine, l3_main_bedroom start; camst.sh / campitch traces): at rest 1260.8 behind and 491.1 above
-// her feet, pitch -0.0225; while she moves a looked-down pitch eases back to rest (-0.342 -> -0.103 in 1 s), at rest
-// it holds.
+// tru.exe camera (Wine, l3_main_bedroom start; camst.sh / campitch traces): pitch -0.0225, 491.1 above her feet;
+// while she moves a looked-down pitch eases back to rest (-0.342 -> -0.103 in 1 s), at rest it holds. Its distance
+// is the camera settings' 1264.22 (DTP 0x14 +0x60; l1_seatop / l2_cliffclimb at rest; the bedroom's 1260.8 behind her).
 TEST(Game, CameraRestAndPitchReturn) {
     CollisionMesh m;
     addFloor(m, -20000, -20000, 20000, 20000, 0);
     auto w = makeWorld(std::move(m), {0, 0, 0});
     for (int i = 0; i < 10; ++i) w->tick({});
     const auto& c = w->camera();
-    EXPECT_NEAR(glm::length(glm::vec2(c.position)), 1260.8f, 2);
+    EXPECT_NEAR(glm::length(glm::vec2(c.position)), 1263.9f, 2);
     EXPECT_NEAR(c.position.z, 491.1f, 2);
-    EXPECT_NEAR(c.position.x, -1260.8f, 2) << "behind her";
+    EXPECT_NEAR(c.position.x, -1263.9f, 2) << "behind her";
     w->restore(w->player().state(), c.yaw, -1.0f);
     for (int i = 0; i < 60; ++i) w->tick({});
     EXPECT_NEAR(c.pitch, -1.0f, 1e-4);
@@ -1853,7 +1853,7 @@ TEST(GameReal, CliffclimbStances) {
     float maxRootChange = 0;
     vec3 prevRoot = w.player().state().pos, prevRootStep(0);
     const float z0 = w.player().state().pos.z;
-    float minCamera = 1e9f; // orbit camera distance from its pivot (root + 462.6, ~20 off the rock she climbs)
+    float minCamera = 1e9f; // orbit camera distance from its pivot (bone 108 + 79.01 climbing, ~95 off the rock)
     for (int t = 0; t < 3600 && w.player().state().state == State::Climb; ++t) {
         const auto& s = w.player().state();
         if (next < plan.size() && s.climbHold == plan[next] && !s.climbWarp) ++next;

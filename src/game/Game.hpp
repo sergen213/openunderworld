@@ -679,6 +679,7 @@ private:
     anim::HairSim hair_;
     std::vector<glm::mat4> bones_, prevBones_; // model space, this tick and the previous one
     CameraState cam_, prevCam_;
+    std::optional<vec3> focus_; // orbit camera focus point (tru.exe LaraCameraRewrite +0x3B0), lagging its goal (World.cpp)
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp
     CameraState blendFrom_; // last spline camera pose, blended out of over kCameraBlendSeconds
     float blendOut_ = 0;    // seconds of blend-out left
