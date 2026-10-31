@@ -5,6 +5,7 @@
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/ShaderTranslate.hpp"
+#include "render/Water.hpp"
 
 #include <gtest/gtest.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -415,4 +416,29 @@ TEST(PortalClips, NeighbourSeenOnlyThroughItsPortal) {
     cam.position = {-1500, 5000, 0}; // past the portal's plane far from its quad: still in A, the portal faces away
     cam.lookAt({-3000, 5000, 0});
     EXPECT_TRUE(render::clipHidden(render::portalClips(units, 0, cam, 1.0f)[1]));
+}
+
+// tru.exe's under-water light rays (render::UnderwaterRays, docs/RENDERING.md "Under water"): a lit grid seen from
+// under it adds light to the 50 x 50 image; looking away adds none; above the first depth marker nothing is drawn.
+TEST(UnderwaterRays, DrawsColumnsInView) {
+    scene::Environment::WaterRays r;
+    r.grid = 4, r.mask.assign(16, 0xFF), r.halfSize = 2000, r.length = 20000;
+    r.sun[2] = 1e6f;                            // straight above: vertical columns
+    r.depthZ[0] = 1000, r.depthZ[1] = -1000;    // full strength below -1000
+    r.life[0] = 3, r.life[1] = 10, r.extinction[1] = 3, r.vsExtinction = 2.11e-5f; // no dark spells
+    render::UnderwaterRays rays;
+    rays.reset(r);
+    for (int i = 0; i < 25 * 60; ++i) rays.step(1.0f / 60); // past the first dark spells (up to 20 s)
+    const float waves[4][4] = {};
+    std::array<uint8_t, 2500> img{};
+    render::Camera cam;
+    cam.position = {-6000, 0, -3000};
+    cam.lookAt({0, 0, -3000});
+    ASSERT_TRUE(rays.draw(cam, 16.0f / 9.0f, waves, img));
+    EXPECT_GT(*std::max_element(img.begin(), img.end()), 0);
+    cam.lookAt({-12000, 0, -3000});
+    ASSERT_TRUE(rays.draw(cam, 16.0f / 9.0f, waves, img));
+    EXPECT_EQ(*std::max_element(img.begin(), img.end()), 0);
+    cam.position.z = 2000;
+    EXPECT_FALSE(rays.draw(cam, 16.0f / 9.0f, waves, img));
 }

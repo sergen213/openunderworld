@@ -2,6 +2,7 @@
 // Written for OpenUnderworld; technique list and credits in docs/RENDERING.md "Atmosphere" / "Weather".
 // Included after underwater.glsl and render/sun.glsl: uses the block `w`, uDepth, ouWorld and the sun shadow map. Returns `c` unchanged when both the
 // atmosphere and the weather are off, or the camera is submerged (the underwater effect owns that view).
+float ouSunShadowVisibility(vec3 p) { return ouShadow.sun.w != 0.0 ? ouShadowMapVisibility(p) : 1.0; } // underwater.glsl caustics
 float ouHashCell(vec2 cell, float salt) { // integer hash of a cell (+ salt) -> [0, 1)
     uvec2 q = uvec2(ivec2(floor(cell)) + ivec2(int(salt) * 7919, int(salt) * 104729));
     uint n = (q.x * 1597334677u) ^ (q.y * 3812015801u);
@@ -42,6 +43,7 @@ float ouSunTap(vec3 p) {
     }
     return 1.0;
 }
+float ouSunTapVisibility(vec3 p) { return ouShadow.sun.w != 0.0 ? ouSunTap(p) : 1.0; } // underwater.glsl shafts
 // One precipitation layer on a camera-centred cylinder of radius `radius`; azimuth and world height anchor it, so
 // turning the camera does not drag it along. Returns (rgb premultiplied, alpha).
 vec4 ouPrecipLayer(vec3 dir, float sceneT, float radius, float layer, bool snow, float amount) {

@@ -52,8 +52,8 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     // SkinMatrices bone 0 (c85-c87 = 3x4 rows, c88 = the bone's bend vector; tru.exe 0x50F0E0 uploads 4 rows per palette
     // bone, row 3 from the vec4s after the pose's matrices). Our programs are the unskinned slots (CPU skinning), but the
     // bend_* foliage VS (kelp, jungle broadleaf, bamboo) read bone 0 statically: pos = c85..c87 x (v0 + bend terms of
-    // c88 and texcoord3-5). Identity + zero bend = the rest pose; zeros collapsed those objects to a point. ponytail: no
-    // sway (the bend vector of tru.exe's bend controller is not reproduced).
+    // c88 and texcoord3-5). Identity + zero bend = the rest pose; zeros collapsed those objects to a point. The sway
+    // (game::Bends) is applied to their vertices on the CPU (ou-game BendMeshes), so c88 stays zero.
     put(f.vs, 85, 1, 0, 0, 0);
     put(f.vs, 86, 0, 1, 0, 0);
     put(f.vs, 87, 0, 0, 1, 0);

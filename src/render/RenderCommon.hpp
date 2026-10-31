@@ -83,6 +83,8 @@ struct DrawRef { uint32_t mesh, sub; };
 inline scene::Blend drawBlend(const scene::SubMesh& s, float opacity) {
     return opacity < 1 && s.blend == scene::Blend::Opaque ? scene::Blend::Alpha : s.blend;
 }
+// Whether a blended submesh writes depth (SubMesh::depthWrite); fading instances go to the translucent pass (0x50F7C0).
+inline bool drawDepthWrite(const scene::SubMesh& s, float opacity) { return s.depthWrite && opacity >= 1; }
 // FrameOptions::meshOpacity -> one value per mesh (out stays empty when nothing fades).
 inline void meshOpacities(std::span<const MeshOpacity> list, size_t meshes, std::vector<float>& out) {
     out.clear();

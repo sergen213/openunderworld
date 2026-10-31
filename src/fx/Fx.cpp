@@ -128,6 +128,9 @@ ParticleDef parseParticleDef(std::span<const uint8_t> d) {
     ParticleDef p;
     p.size0 = rd<float>(d, 0x00);
     p.flags4 = rd<uint8_t>(d, 0x04), p.flags5 = rd<uint8_t>(d, 0x05), p.mode = rd<int8_t>(d, 0x06);
+    // Flat on the world XY plane (water rings): def +0x05 & 1 -> emitter +0x24 & 1 -> particle +0x2C & 4 unless
+    // def +0x14C & 2 (0x540B80 spawn) or mode 2; drawn by 0x54AEC0 -> 0x549500 as a horizontal quad.
+    p.flat = (p.flags5 & 1) && !(rd<uint8_t>(d, 0x14C) & 2) && p.mode != 2;
     p.segment = rd<int16_t>(d, 0x0A), p.segment2 = rd<int16_t>(d, 0x0C);
     p.radiusMax = rd<float>(d, 0x10), p.radiusMin = rd<float>(d, 0x6C); // emitter +0x90 / +0x92 (0x5445B8)
     p.velocity = vec3At(d, 0x14), p.velocityRandom = vec3At(d, 0x20), p.accel = vec3At(d, 0x2C), p.offset = vec3At(d, 0x4C);
@@ -1009,7 +1012,8 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
     vertices.clear(), batches.clear();
     struct Sprite { float depth; glm::vec3 c; float hw, hh, rot; uint32_t rgba, tex; float u0, v0, u1, v1; uint8_t blend; float pull;
                     const ParticleMaterial* mat = nullptr;
-                    bool quad = false; glm::vec3 q[4]{}; uint32_t corner[4]{}; }; // quad: world corners + colours (ribbons, bolts)
+                    bool quad = false; glm::vec3 q[4]{}; uint32_t corner[4]{}; // quad: world corners + colours (ribbons, bolts)
+                    bool flat = false; }; // lying on the world XY plane (ParticleDef::flat)
     std::vector<Sprite> sprites;
     sprites.reserve(particles_.size());
     const glm::vec3 fwd = camera.forward(), right = camera.right(), up = glm::cross(right, fwd);
@@ -1062,6 +1066,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         Sprite sp{biased, p.pos, size, size * (ys > 0 ? ys : 1), p.rot, 0, 0, 0, 0, 1, 1,
                   uint8_t(d.model() ? Blend::Alpha : blendFor(d.keys[0].blend)),
                   biased / depth};
+        sp.flat = d.flat;
         for (int c = 0; c < 4; ++c) sp.rgba |= uint32_t(std::clamp(std::lround(rgba[c]), 0L, 255L)) << (8 * c);
         // Texture frame: list or atlas; animRate 0 = the particle's random frame, 255 = over its life [I], else
         // one frame per animRate 30 Hz frames [I].
@@ -1231,7 +1236,8 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
     vertices.reserve(sprites.size() * 6);
     for (const auto& s : sprites) {
         const float cs = std::cos(s.rot), sn = std::sin(s.rot);
-        const glm::vec3 rx = (right * cs + up * sn) * s.hw, ry = (up * cs - right * sn) * s.hh;
+        const glm::vec3 ax = s.flat ? glm::vec3(1, 0, 0) : right, ay = s.flat ? glm::vec3(0, 1, 0) : up;
+        const glm::vec3 rx = (ax * cs + ay * sn) * s.hw, ry = (ay * cs - ax * sn) * s.hh;
         glm::vec3 q[4] = {s.c - rx - ry, s.c + rx - ry, s.c + rx + ry, s.c - rx + ry};
         if (s.quad) std::copy(std::begin(s.q), std::end(s.q), q);
         if (s.pull != 1.0f)

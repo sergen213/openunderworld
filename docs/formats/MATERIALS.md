@@ -53,6 +53,14 @@ one, and class 10 a scene-global texture table [O]. Ballcourt foliage uses categ
   depth pre-pass with `D3DCMP_EQUAL` and no writes (0x506040, `FUN_00526BB0(3, 0)`) [O]. We draw opaque with LESS +
   writes and blended submeshes afterwards, sorted back to front per mesh, LEQUAL without writes [I: equivalent ordering;
   the original's sort key is unknown].
+- Modes 2 and 3 are not translucent-pass materials: the model list builder 0x50F7C0 gives a drawable pass bit 0x200
+  (opaque, with the depth pre-pass) unless its opacity is below 1 or its mode is above 3, and the terrain colour pass
+  0x511810 puts groups with mode < 4 into the same sorted list as opaque ones (mode 4+ with flag 0x400 go to the
+  translucent list) [O decompile]. So seaweed, coral, kelp and foliage (the 95 mode 2-3 materials) are in the depth
+  buffer. Ours: `SubMesh::depthWrite`, still drawn blended in the back-to-front part but with depth writes (GL
+  `glDepthMask`, Vulkan dynamic depth-write state on the Alpha pipelines); fading instances drop it. Without it the
+  post passes reading the depth (Enhanced caustics, the full-screen water pass, atmosphere) took the seabed behind the
+  plants: under water in Enhanced the l2 reef's sea fans, seaweed bushes and kelp vanished into the caustics.
 
 Survey of all 1057 DRMs in the bigfile (2248 distinct materials) [O]: mode 0 ×1720, 1 ×32, 2 ×44, 3 ×51, 4 ×339,
 5 ×57, 8 ×5; flags 0x80 ×97, 0x880 ×60; mode-1 thresholds 127 (30 materials), 102, 124.

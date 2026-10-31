@@ -2,6 +2,7 @@
 // renderers (src/render/*) upload them. No GPU or file-format types here.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -46,6 +47,10 @@ struct SubMesh {
     uint32_t textureId = 0;    // TextureData::id; 0 = untextured
     Blend blend = Blend::Opaque;
     uint8_t alphaRef = 0;      // alpha test: keep texels with alpha >= alphaRef / 255; 0 = off
+    // Blend modes 2-3 (alpha-blended, alpha test ref 1): tru.exe sorts them into its opaque pass, not the translucent one
+    // (models 0x50F7C0: modes <= 3 at full opacity; terrain 0x511810: modes < 4), so they write depth: seaweed, coral,
+    // foliage occlude later draws and the post passes reading the depth see them. Still alpha-blended.
+    bool depthWrite = false;
     bool doubleSided = false;  // draw back faces too
     uint32_t materialId = 0;   // cdc material section id (SceneData::materials[].id); 0 = none
     // Per-instance textures of material classes 1-4 (light map, "Setup" blend masks; SHADERS.md): terrain group
@@ -144,6 +149,21 @@ struct Environment {
     // +0x74 material; that material's PS MaterialParams c100 = surface colour + alpha at the eye, c101 = deep colour +
     // full-fog distance. waterPass[1].w = 0: none.
     float waterPass[2][4] = {};
+    // Under-water light rays of that record (0x6D8C20 -> 0x6D75C0 / VS lib 403; RENDERING.md "Under water"): a grid of
+    // light columns hanging from the waved surface along the refracted sun. grid = 0: none.
+    struct WaterRays {
+        int grid = 0;              // +0xC8 DTP +0x00: vertices per side
+        std::vector<uint8_t> mask; // DTP +0x10 + 4 i, byte 2: column i drawn (index row-major as tru.exe reads it)
+        float origin[3] = {};      // +0x40: grid centre xy, surface z
+        float halfSize = 0;        // +0x8C: grid half extent
+        float length = 0;          // +0x50: column length along the refracted sun
+        float sun[3] = {};         // marker +0x88 position: where the sun rays come from
+        float depthZ[2] = {};      // markers +0xD0 / +0xD4 z: the rays fade in from the first to the second
+        float life[2] = {};        // +0x90 base, +0x94 random column life (s)
+        float dark[2] = {};        // +0xA0 random dark spell (s), +0xA4 longest spell kept lit
+        float extinction[2] = {};  // +0xA8 bottom, +0xAC top vertices, x the material's VS c25.x
+        float vsExtinction = 0;    // +0x68 material VS MaterialParams c25.x
+    } waterRays;
     std::vector<Light> lights; // point and spot lights (type 0/1 records), unit frame
 };
 
@@ -173,6 +193,9 @@ struct MeshData {
     std::string origin;        // provenance, as for TextureData::origin
     std::vector<SkinInfluence> skin; // empty, or one per vertex (vertices are the bind pose)
     int32_t skeleton = -1;     // SceneData::skeletons index when skinned
+    // bend_* plants: per-vertex bend basis (cdc TEXCOORD3-5, FLOAT4 each), empty otherwise. The bend VS moves a vertex by
+    // t3 s.x + t4 s.x² + t5 s.y + (t3.w, t4.w, t5.w) s.y² with s = bendA * v.xy + bendB of its bone (game/Bend.hpp).
+    std::vector<std::array<float, 12>> bend;
 };
 
 // Drops m's primgroups of the draw groups whose bit (group - 1) is set in `hidden` (SubMesh::drawGroup). Returns false

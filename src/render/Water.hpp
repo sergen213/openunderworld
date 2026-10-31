@@ -51,14 +51,34 @@ struct WaterBlock {
     glm::vec4 filter[9];
     glm::uvec4 filterLut[ScreenFilter::kLutRows * 64]; // ScreenFilter::lut, 4 RGBA8 texels per element
     glm::vec4 waterPass[3]; // FrameOptions::underwater: [0] surface rgb + alpha at the eye, [1] deep rgb + distance,
-                            // [2] x strength (0 = off); both water qualities
+                            // [2] x strength (0 = off), y light-ray weight (Underwater::rayWeight); both water qualities
+    glm::uvec4 rays[157];   // Underwater::rays, 4 texels per uint (ouRays)
 };
-static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16);
+static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16);
 inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes);
 WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewProj, const scene::Environment& env,
                       const FrameOptions& options);
+
+// tru.exe's under-water light rays (RENDERING.md "Under water"): the water record's grid of light columns (0x6D6640:
+// the four side walls of every masked cell), hanging from the waved surface along the refracted sun (VS lib 403
+// slot 32), drawn additively into a 50 x 50 target (0x6D8C20, material +0x68, PS lib 402) that the +0x6C material adds
+// over the screen. Each column corner relights on its own clock (0x6D7CB0). The app steps it and draws it on the CPU.
+struct UnderwaterRays {
+    static constexpr int kSize = 50;
+    scene::Environment::WaterRays rec;
+    std::vector<glm::vec2> life;  // per top vertex: lit from, to (s); the envelope peaks at a quarter, ends at half
+    std::vector<float> darkUntil; // per top vertex: no new life before then
+    float time = 0;
+    size_t cursor = 0;
+    uint32_t rng = 1;
+    void reset(const scene::Environment::WaterRays& r);
+    void step(float dt); // 0x6D7CB0: 100 corners per call
+    // Draws into out (Underwater::rays); false = nothing drawn (no grid, the camera above depthZ[0]). The caller only
+    // asks with the camera fully below the surface. waves: the water volume's (WaterVolume::waves).
+    bool draw(const Camera& camera, float aspect, const float (&waves)[4][4], std::array<uint8_t, 2500>& out);
+};
 
 // Water surface shaders (same mesh vertex layout as the scene pass).
 std::string waterVertexSource(bool vulkan);

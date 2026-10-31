@@ -122,6 +122,26 @@ TEST(Fx, BurstEmitterSpawnsOnce) {
     EXPECT_EQ(s.particleCount(), 12u);
 }
 
+// def +0x05 & 1 (water rings): the sprite lies on the world XY plane (tru.exe 0x549500), not facing the camera.
+TEST(Fx, FlatParticlesLieOnTheGround) {
+    auto d = flameDef();
+    put<float>(d, 0x14 + 8, 0.0f), put<float>(d, 0x2C + 8, 0.0f); // stays at z = 0
+    d[5] = 1;
+    auto o = std::make_shared<fx::ObjectFx>();
+    o->particles.push_back(fx::parseParticleDef(d));
+    ASSERT_TRUE(o->particles[0].flat);
+    fx::System s;
+    ASSERT_TRUE(s.start(o, 0, glm::mat4(1), 1));
+    for (int t = 0; t < 10; ++t) s.tick({});
+    render::Camera cam;
+    cam.position = {-2000, 0, 200};
+    std::vector<render::FxVertex> v;
+    std::vector<render::FxBatch> b;
+    s.build(cam, 1.0f, v, b);
+    ASSERT_FALSE(v.empty());
+    for (const auto& x : v) EXPECT_NEAR(x.pos[2], 0.0f, 1e-3f);
+}
+
 // Anim-event records: material filter (info & 0x3F0), variant bits (0xC00) skipped, later frames fire as ticks pass.
 TEST(Fx, AnimEventsFilterByMaterialAndPlayLater) {
     auto o = std::make_shared<fx::ObjectFx>();
@@ -609,6 +629,15 @@ TEST(FxReal, UnderwaterSettings) {
     EXPECT_NEAR(e.waterPass[0][2], 0.607843f, 1e-5); // surface blue (material 5767 c100)
     EXPECT_NEAR(e.waterPass[0][3], 0.6f, 1e-5);      // alpha at the eye
     EXPECT_NEAR(e.waterPass[1][3], 45000.0f, 1.0f);  // full-fog distance
+    const auto& rays = e.waterRays; // the record's light rays: DTP 5386 grid, markers 2 / 3 / 4, material 5379
+    EXPECT_EQ(rays.grid, 32);
+    EXPECT_EQ(rays.mask.size(), 32u * 32u);
+    EXPECT_FLOAT_EQ(rays.halfSize, 11000.0f);
+    EXPECT_NEAR(rays.length, 126422.0f, 1.0f);
+    EXPECT_NEAR(rays.sun[2], 374807.0f, 1.0f);
+    EXPECT_NEAR(rays.depthZ[0], -9022.19f, 0.1f);
+    EXPECT_NEAR(rays.depthZ[1], 12299.8f, 0.1f);
+    EXPECT_NEAR(rays.vsExtinction, 2.11e-5f, 1e-9f);
     const auto deep = fx::loadFilterResource(d, 5292), surface = fx::loadFilterResource(d, 5557);
     ASSERT_TRUE(deep && surface);
     EXPECT_TRUE(deep->fog && !surface->fog);

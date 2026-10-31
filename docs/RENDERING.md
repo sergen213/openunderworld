@@ -24,7 +24,7 @@ render/RenderCommon.*  ->  backend-free helpers shared by both (font atlas, over
   faces, one lambert sun `normalize(-0.4, -0.5, 0.75)` (`RenderCommon kSunDirection`) with 0.45
   ambient and two-sided normals, per-submesh material state (alpha test, blend mode, cull; see
   docs/formats/MATERIALS.md): opaque first (LESS + depth writes), then blended submeshes back to
-  front per mesh (LEQUAL, no writes), debug lines, then a fullscreen post pass to the back buffer
+  front per mesh (LEQUAL, no writes; blend modes 2-3 write depth, `SubMesh::depthWrite`), debug lines, then a fullscreen post pass to the back buffer
   and the overlay. Gamma-space (UNORM) textures and targets, as tru.exe (see "Colour space" below).
 
 ## Graphics presets (`ou::config::GraphicsConfig`, `FrameOptions::{msaa, shadows, fxaa, hdr, rt, brightness, water}`)
@@ -290,8 +290,21 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   proportion to the curvature (a splash crater is a bright line, a swim-stroke ring a tint) and foam splash craters
   and sharp crests (the Joan port, docs/RESEARCH.md §8.7).
 - Splash droplets (ours): camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
-- Underwater: the original's under-water look ("Under water" below) in both qualities; Enhanced adds faint caustics
-  on the submerged bottom.
+- Underwater: the original's under-water look ("Under water" below) in both qualities.
+- Caustics (ours, Enhanced only; tru.exe draws none [O: no caustic pass or texture; its UnderWaterRayDrawable is
+  the full-screen pass, the light rays and the flashlight beam, 0x6D8C20; the original captures show none]): `ouCausticLight` in
+  `shaders/caustics.glsl`, one source for both views (glslc `#include`; GL: `render::Water.cpp` splices it in).
+  Under water: `ouCaustics` (`underwater.glsl`, post pass, before the water pass fogs the scene) on every opaque
+  point inside a water volume below its surface. From above: `water.frag` lights the refracted bed sample (at `ruv`,
+  depth under this pixel's surface) before `ouAbsorb`; Vulkan binds the sun shadow set as the water layout's set 1.
+  The pattern: an animated Voronoi border network (F2 − F1, two
+  domain-warped layers, their mean squared), looked up where the refracted sun ray through the point entered the
+  surface (world-anchored, 180-unit cells growing to 360 with depth), so it slides across slopes with the sun.
+  Strength `sunColor.w` 0.8 (0: a unit without sun; the post pass is off and water.frag is not drawn in Original) ×
+  (0.5 + 0.5 e^(−depth/3000)) × the depth buffer's normal facing the refracted sun × the sun shadow map; lines
+  widen and split red/blue with depth, and
+  fade where cells shrink under ~2 px. Multiplies the lit colour about mean-preserving (lines up to +170 %, gaps
+  −30 % at full strength). [I] values; physically caustics vanish within ~10 m, TRU's sea floors lie 100+ m down.
 - Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
   3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
 
@@ -335,8 +348,46 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
   mix(deep, surface, 0.5 + 0.5 · view-dir z), alpha = mix(eye alpha, 1, view depth / distance) · strength.
   `scene::Environment::waterPass`, `ouWaterPass` (shaders/underwater.glsl, post pass, after the screen filters).
   Left out [U]: the noise texture's ±0.05 gradient wobble, the scripted murk (InstanceParams c134.y, underwaterray
-  native 0x776C70, 0 by default), the `+0xDC` / `+0xE0` / `+0xE4` colour lerp (off in every unit), the `+0x6C` /
-  `+0x70` sun-glow passes through 50×50 / 25×25 targets and the ray records (bit 0 clear, 0x6D9660).
+  native 0x776C70, 0 by default), the `+0xDC` / `+0xE0` / `+0xE4` colour lerp (off in every unit).
+- Light rays [O]: the same record's grid of light columns (`scene::Environment::WaterRays`, `render::UnderwaterRays`).
+  Mesh (0x6D6640, built once): the `+0xC8` DTP's N × N vertices (DTP +0, N = 32 in every sea; x, y = −1 + 2 i / N) at
+  z = 1 and again at z = 0, and for every cell whose DTP byte (+0x12 + 4 · (row · N + column), rows and columns
+  swapped against the vertices) is set, the 8 triangles of its four side walls; back faces culled (material +0x68 has
+  no cull-none flag). VS lib 403 slot 32 (params 0x6D75C0): xy = v.xy · `+0x8C` + `+0x40`.xy, top z = `+0x40`.z +
+  100 (sin a0 − 1) + 75 (sin a1 − 1) with a = x c57 + y c58 + c59 = the water volume's sea waves (its c60 / c61 / c62,
+  0x69DFB0); the z = 0 end moves along refract(normalize(point − sun marker `+0x88`), wave normal, 0.8) × `+0x50`.
+  Brightness per vertex (texcoord0.x → PS lib 402: white × it, additive, no fog): envelope (life t = (time − u) /
+  (v − u): 4t up to ¼, 2 − 4t down to ½, then 0) × clamp(1 + camera forward z) × depth fade (camera z from marker
+  `+0xD0` z to `+0xD4` z) × sat(horizontal distance / ((murk / 0.7 + 1e-5) · 8000)) × extinction (top: e^(−distance
+  · c25.x · `+0xAC`), bottom: e^(−(surface z − camera z + distance) · c25.x · `+0xA8`); material 5379 c25.x 2.11e-5)
+  × (tilt + scatter) · 0.07, tilt = (1 − normal z)² · 0.99 + 0.01, scatter (top only) = min(2 sat(0.0796 ((1 +
+  cos(view, toward sun)) · 0.4)^5 · 4.5 + 0.8)), 1). Corner clocks (0x6D7CB0, 100 top corners per update, the bottom
+  ends share them): a corner whose life ended and that is not in a dark spell starts a new life now lasting `+0x90` +
+  rand · rand · `+0x94` s (l1 3 + up to 10), after a dark spell of rand · `+0xA0` s when that exceeds `+0xA4` (l1 50 /
+  10: four lives in five); at load every corner starts dark for rand · 20 s with texcoord (rand, 0). 0x6D8C20 draws
+  the mesh into a 50 × 50 A8R8G8B8 target only with the camera fully under water (strength 1) and the depth fade > 0
+  (record byte `+0xB8` = 0), then after the full-screen pass the `+0x6C` material (5380, PS lib 405, additive) adds it
+  bilinearly over the screen × (1 − murk / 0.7). Ours rasterises the mesh on the CPU every frame (perspective
+  correct, near-plane clipped, pixel centres; [I] the generator) and packs the 50 × 50 bytes into the water block
+  (`rays`); `ouRays` adds them after `ouWaterPass`. [I]: c63.x is taken as the camera forward z (tru.exe passes the
+  camera matrix's row 2 z); tru.exe's unit offset (0xEDBFA0) is ours (`LoadedUnit::offset`); a corner's first life
+  starts with a negative envelope, which we clamp per vertex (tru.exe clamps the blended pixels). Records: l1_seatop,
+  l1_seafloor, l1_cine_ship_sinking, l1_kraken_entrance, l1_ship_exterior, l1_norse_hallway_a, l2_cliffclimb, l2_maproom,
+  l2_flushtunnel, l7_arctic_sea (grid DTP 19967), l7_thin_ice, l7_helheim01 / hall01 / hall02.
+- Flashlight beam [O, not drawn]: with the post effects on and Lara's personal light lit (player +0x500 attached object
+  type 6, its data +0x54 bit 14), 0x6D8C20 also draws two cone meshes (0x6D6DE0: radius 5 → 3000 and 5 → 600 over
+  7000 units, 20 × 20) from the light's matrix with material `+0x80` into a 25 × 25 target, blurs it twice through
+  25 × 25 with `+0x70` (5381, 9 taps), and the `+0x6C` composite adds it too (InstanceParams c132 = depth fade,
+  1 − murk / 0.7, beam drawn, rays drawn: out = rays · c132.w · c132.y + beam · c132.z).
+- Interior ray records (`+0x84` bit 0 clear; l1 ship halls, l2 Norse halls / puzzle room / map room, l4 ballcourt) [O,
+  not drawn]: window light boxes (0x6D83C0) drawn above water only by 0x6D9660 into 50 × 50, blurred, composited.
+- Sun shafts (ours, Enhanced only): `ouShafts` (underwater.glsl, after the full-screen pass, before `ouRays`) marches
+  the view ray 12 jittered steps up to the scene, the surface or 6000 units; each step in-scatters the sun ×
+  `ouSunTapVisibility` (one sun shadow-map tap, atmosphere.glsl) × the squared caustic layer (`ouCausticLayer`, width
+  0.35) at the point where the refracted sun ray entered the surface (600-unit cells, so the shafts lean with the sun
+  and flicker with the waves) × e^(−depth / 4000 − distance · 3 / the water pass's full-fog distance); sum × (1 −
+  e^(−length / 2500)) / 12 × HG(0.6) · 4π × `sunColor.w` × 2.5 × the sun colour × the unit's surface water colour.
+  [I] values. Cost: +0.17 ms post pass (l1_seatop, 1920 × 1052, Vulkan, RX 7900 XTX).
 - Fog [O]: below the surface the render settings' water fog set (`+0x1C` colour, `+0x4C` near, `+0x48` far, 0 = the far
   plane, 0x5C1F50) replaces the unit fog, and the filters' fog blocks (`+0x2FA4`: enable, colour, near, far) take over
   as far as their weights go (0x512D60 / 0x514D90). l1: filter 5292 (near = far = 379267, black); l7: 859 (63211).

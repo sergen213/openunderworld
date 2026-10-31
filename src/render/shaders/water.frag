@@ -38,6 +38,13 @@ layout(binding = 5) uniform sampler2D uScene;
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 7) uniform sampler2D uRipples;
 #endif
+// Sun shadow map (render/sun.glsl; Vulkan: water layout set 1) for the caustics on the refracted bed.
+#ifdef VULKAN
+#define OU_SHADOW_SET 1
+#endif
+#include "sun.glsl"
+#include "shaders/caustics.glsl"
+float ouSunShadowVisibility(vec3 p) { return ouSunVisibility(p, vec3(0.0), true, false); }
 #ifdef VULKAN
 #define OU_NDC_Y(uv) (1.0 - 2.0 * (uv).y)
 #define OU_NDC_Z(d) (d)
@@ -329,8 +336,13 @@ void main() {
             path = sd >= 0.999999 ? 1e5 : distance(p, bed);
         }
         float rsd = textureLod(uDepth, ruv, 0.0).r;
-        float down = rsd >= 0.999999 ? 1e5 : max(p.z - ouWorld(ruv, rsd).z, 0.0);
-        vec3 refr = ouAbsorb(toLinear(textureLod(uScene, ruv, 0.0).rgb), path, down, light);
+        vec3 rbed = ouWorld(ruv, rsd);
+        float down = rsd >= 0.999999 ? 1e5 : max(p.z - rbed.z, 0.0);
+        vec3 seen = toLinear(textureLod(uScene, ruv, 0.0).rgb);
+        // Caustics (shaders/caustics.glsl) light the bed before the water absorbs it; the normal and footprint are the
+        // unrefracted bed's (derivatives outside this branch).
+        if (rsd < 0.999999) seen *= ouCausticLight(rbed, bn, down, length(abs(bx.xy) + abs(by.xy)));
+        vec3 refr = ouAbsorb(seen, path, down, light);
         // Sea: afl's subsurface scattering, brighter where the wave stands higher (thin crest water lit through).
         if (sea) refr += gDeep * light * (1.6 * seaH * (0.4 + 0.6 * pow(1.0 - cosI, 2.0)));
 

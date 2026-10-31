@@ -352,6 +352,20 @@ Unit parseUnit(const cdc::Drm& d) {
         u.scriptId = rs.at<uint32_t>(o + 0x1C0);
         if (const auto f = rs.ptrs.find(o + 0x2B4); f != rs.ptrs.end())
             u.flashlightSpot = View(d, f->second.section).at<uint8_t>(f->second.offset + 0x0A) != 0;
+        if (const auto w = rs.ptrs.find(o + 0x2B0); w != rs.ptrs.end() && rs.at<uint32_t>(o + 0x2AC) < 32) {
+            const View wv(d, w->second.section);
+            for (uint32_t k = 0; k < rs.at<uint32_t>(o + 0x2AC); ++k) {
+                const uint32_t r = w->second.offset + 100 * k;
+                Unit::Wind x;
+                x.enabled = wv.at<uint8_t>(r) != 0;
+                for (int i = 0; i < 2; ++i) {
+                    x.retarget[i] = wv.at<float>(r + 0x04 + 4 * i), x.strength[i] = wv.at<float>(r + 0x0C + 4 * i);
+                    x.heading[i] = wv.at<float>(r + 0x14 + 4 * i), x.wavelength[i] = wv.at<float>(r + 0x1C + 4 * i);
+                }
+                x.frequency = wv.at<float>(r + 0x24);
+                u.wind.push_back(x);
+            }
+        }
         // Under water (RENDERING.md "Under water"): fog set +0x1C / +0x4C / +0x48 (0 -> far plane; near >= far ->
         // far - 1, 0x5C1F50), screen filters +0x84 / +0x88 over +0x90 / +0x8C (0x5C78A0), event lists +0x68 / +0x6C.
         for (int k = 0; k < 3; ++k) e.waterFogColor[k] = rs.at<uint8_t>(o + 0x1C + k) / 255.0f;
@@ -364,7 +378,8 @@ Unit parseUnit(const cdc::Drm& d) {
     }
     // Full-screen water pass (tru.exe 0x5D4AB0 -> 0x6DA130 registers unit data +0x160 count / +0x164 0x100-byte
     // records; 0x6D9DA0 draws those with +0x84 bit 0 through 0x6D8C20 while the camera is under water): the +0x74
-    // material's MaterialParams. The +0x6C / +0x70 sun-glow passes and the bit-0-clear ray records are not drawn [U].
+    // material's MaterialParams, and the record's light rays (scene::Environment::WaterRays; markers index the unit
+    // data +0x20 intro list). The +0x80 flashlight beam and the bit-0-clear interior ray records are not drawn [U].
     if (const auto n = d.sections[up.section].data.size() >= up.offset + 0x168 ? ud.at<uint32_t>(up.offset + 0x160) : 0;
         n && n < 64 && ud.ptrs.count(up.offset + 0x164)) {
         const auto rp = ud.ptr(up.offset + 0x164, "unit water records");
@@ -378,6 +393,33 @@ Unit parseUnit(const cdc::Drm& d) {
             const auto m = decodeMaterial(d.sections[mi]);
             if (m.psParams.size() < 8) continue;
             for (int i = 0; i < 8; ++i) u.environment.waterPass[i / 4][i % 4] = m.psParams[size_t(i)];
+            auto& wr = u.environment.waterRays;
+            const auto marker = [&](uint32_t at, float* out, int cnt) { // position (cnt 3) or z (cnt 1)
+                const auto idx = rv.at<int32_t>(at);
+                if (idx < 0 || idx >= int32_t(ud.at<uint32_t>(up.offset + 0x1C)) || !ud.ptrs.count(up.offset + 0x20)) return false;
+                const auto lp = ud.ptr(up.offset + 0x20, "unit intro list");
+                for (int c = 0; c < cnt; ++c) out[c] = View(d, lp.section).at<float>(lp.offset + 0x90 * uint32_t(idx) + 0x10 + 4 * uint32_t(3 - cnt + c));
+                return true;
+            };
+            uint32_t gi = 0, ri = 0;
+            if (rv.at<uint8_t>(r + 0xB8) == 0 && marker(r + 0x88, wr.sun, 3) && marker(r + 0xD0, &wr.depthZ[0], 1) &&
+                marker(r + 0xD4, &wr.depthZ[1], 1) && findSection(d, cdc::SectionType::DtpData, rv.at<uint32_t>(r + 0xC8), &gi) &&
+                findSection(d, cdc::SectionType::Material, rv.at<uint32_t>(r + 0x68), &ri)) {
+                const View g(d, gi);
+                const auto rm = decodeMaterial(d.sections[ri]);
+                const int side = g.at<int32_t>(0);
+                if (side >= 2 && side <= 64 && !rm.vsParams.empty()) {
+                    wr.mask.resize(size_t(side) * side);
+                    for (size_t i = 0; i < wr.mask.size(); ++i) wr.mask[i] = g.at<uint8_t>(0x12 + 4 * i);
+                    for (int c = 0; c < 3; ++c) wr.origin[c] = rv.at<float>(r + 0x40 + 4 * c);
+                    wr.length = rv.at<float>(r + 0x50), wr.halfSize = rv.at<float>(r + 0x8C);
+                    wr.life[0] = rv.at<float>(r + 0x90), wr.life[1] = rv.at<float>(r + 0x94);
+                    wr.dark[0] = rv.at<float>(r + 0xA0), wr.dark[1] = rv.at<float>(r + 0xA4);
+                    wr.extinction[0] = rv.at<float>(r + 0xA8), wr.extinction[1] = rv.at<float>(r + 0xAC);
+                    wr.vsExtinction = rm.vsParams[0];
+                    wr.grid = side;
+                }
+            }
             break;
         }
     }

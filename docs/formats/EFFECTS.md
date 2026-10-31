@@ -86,6 +86,15 @@ Instances of objects with oflags 0x40000000 (fx proxies, bullet hits, squibs, ca
 `InstanceDrawable` 0x5B5CA0 returns no draw flags [O] (`formats::kObjectNoInstanceDraw`). Sprites are camera-facing,
 back-to-front, depth-tested without writes, `tex × colour × 2`.
 
+- Flat sprites [O]: def `+0x05 & 1` → emitter `+0x24 & 1` → particle `+0x2C & 4` (spawn in 0x540B80, unless def
+  `+0x14C & 2` or mode 2); the sprite draw 0x54AEC0 then builds the quad with 0x549500 on the world XY plane at the
+  particle's z (half sizes `size` × `size·yScale`, rotated), not facing the camera. TRU's water rings around a
+  treading Lara or a shark use it (drawn camera-facing they stood up as a halo). Those rings (lara particles 171/172,
+  176, 179–182, 190, …) are refraction materials (screen-space offset of the back buffer by a ring normal map), drawn
+  after the sea: they sample the scene with the water in it. The Vulkan renderer refreshes its colour copy after the
+  water for them (GL blits before the fx anyway); sampling the pre-water copy showed the seabed through the sea as
+  dark brown rings.
+
 - Depth bias [O]: def `+0x15E` (s16) → emitter `+0x10C` → particle `+0x28`, flag 0x200; the sprite draw (0x54B0E8)
   uses `z + bias` (≥ 16) for fades and, with flag 0x400, as the projected depth. Torch flames use −158 (their origin
   sits inside the sconce). We scale the quad about the eye by `(z + bias) / z`: same screen footprint, nearer depth [I].

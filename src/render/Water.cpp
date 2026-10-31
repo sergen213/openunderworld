@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_inverse.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace ou::render {
@@ -34,6 +35,9 @@ const char* kAtmosphere =
     ;
 const char* kFilter =
 #include "filter.glsl.inc"
+    ;
+const char* kCaustics =
+#include "caustics.glsl.inc"
     ;
 } // namespace
 
@@ -74,7 +78,7 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     w.eye = glm::vec4(camera.position, options.time);
     w.screen = {float(vp.width), float(vp.height), 1.0f / vp.width, 1.0f / vp.height};
     w.sunDir = glm::vec4(sunToward(env), 1.0f);
-    w.sunColor = glm::vec4(env.sun ? glm::vec3(env.sunColor[0], env.sunColor[1], env.sunColor[2]) : glm::vec3(1), 0.6f);
+    w.sunColor = glm::vec4(env.sun ? glm::vec3(env.sunColor[0], env.sunColor[1], env.sunColor[2]) : glm::vec3(1), env.sun ? 0.8f : 0.0f);
     const glm::vec3 fog = env.valid ? glm::vec3(env.fogColor[0], env.fogColor[1], env.fogColor[2]) : glm::vec3(0.08f, 0.09f, 0.11f);
     w.fogColor = glm::vec4(fog, cameraUnderwater(camera, options.waterVolumes) ? 1.0f : 0.0f);
     w.fogRange = {env.valid ? env.fogNear : 1000.0f, env.valid && env.fogFar > env.fogNear ? env.fogFar : 30000.0f, 1.0f, 1.0f};
@@ -89,6 +93,10 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
             w.waterPass[0] = glm::vec4(u->pass[0][0], u->pass[0][1], u->pass[0][2], u->pass[0][3]);
             w.waterPass[1] = glm::vec4(u->pass[1][0], u->pass[1][1], u->pass[1][2], u->pass[1][3]);
             w.waterPass[2].x = u->strength;
+        }
+        if (u->rayWeight > 0) {
+            w.waterPass[2].y = u->rayWeight;
+            std::memcpy(w.rays, u->rays.data(), u->rays.size());
         }
     }
     if (const ScreenFilter* f = options.screenFilter; f && f->active()) {
@@ -155,14 +163,143 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
 }
 
 namespace {
+float rayRandom(uint32_t& s) { // tru.exe: (rand() & 0x7FFFFF) / 8388607 [I: generator]
+    s = s * 1664525u + 1013904223u;
+    return float(s >> 9) / 8388607.0f;
+}
+} // namespace
+
+void UnderwaterRays::reset(const scene::Environment::WaterRays& r) {
+    rec = r;
+    const size_t n = size_t(r.grid) * size_t(r.grid);
+    life.resize(n), darkUntil.resize(n);
+    time = 0, cursor = 0;
+    for (size_t i = 0; i < n; ++i) // 0x6D64D0 (texcoord u random, v 0), 0x6D6EA0 (dark for up to 20 s)
+        life[i] = {rayRandom(rng), 0.0f}, darkUntil[i] = rayRandom(rng) * 20.0f;
+}
+
+void UnderwaterRays::step(float dt) {
+    time += dt;
+    for (int k = 0; k < 100 && !life.empty(); ++k, cursor = (cursor + 1) % life.size()) {
+        const float a = rayRandom(rng);
+        if (life[cursor].y >= time || darkUntil[cursor] >= time) continue;
+        const float spell = rec.dark[0] * rayRandom(rng);
+        if (spell > rec.dark[1]) darkUntil[cursor] = time + spell;
+        life[cursor] = {time, time + rec.life[0] + a * rec.life[1] * rayRandom(rng)};
+    }
+}
+
+bool UnderwaterRays::draw(const Camera& camera, float aspect, const float (&wv)[4][4], std::array<uint8_t, 2500>& out) {
+    const int g = rec.grid;
+    if (g < 2 || life.size() != size_t(g) * size_t(g)) return false;
+    // 0x6D8C20: the rays fade in between the two depth markers (camera z), and are drawn only above 0
+    float depth = (camera.position.z - rec.depthZ[0]) / (rec.depthZ[1] - rec.depthZ[0]);
+    if (!(depth <= 1.0f)) depth = 1.0f;
+    if (!(depth > 0.0f)) return false;
+    const size_t n = life.size();
+    const glm::vec3 o(rec.origin[0], rec.origin[1], rec.origin[2]), sun(rec.sun[0], rec.sun[1], rec.sun[2]), eye = camera.position;
+    const float facing = std::clamp(1.0f + camera.forward().z, 0.0f, 1.0f); // c63.x [I: camera matrix row 2 = forward]
+    const auto height = [&](float x, float y) { // c61.z + 100 (sin a0 - 1) + 75 (sin a1 - 1), a = x c57 + y c58 + c59
+        float h = o.z;
+        for (int i = 0; i < 2; ++i) h += (i ? 75.0f : 100.0f) * (std::sin(x * wv[0][i] + y * wv[1][i] + wv[2][i]) - 1.0f);
+        return h;
+    };
+    const glm::mat4 vp = camera.projection(aspect) * camera.view();
+    struct V {
+        glm::vec4 c;
+        float v;
+    };
+    std::vector<V> verts(2 * n); // top (surface) corners, then their bottom ends
+    for (size_t k = 0; k < verts.size(); ++k) {
+        const size_t i = k % n;
+        const glm::vec2 p = glm::vec2(o) + rec.halfSize * glm::vec2(-1.0f + 2.0f * float(i % size_t(g)) / float(g),
+                                                                   -1.0f + 2.0f * float(i / size_t(g)) / float(g));
+        const float h = height(p.x, p.y);
+        const glm::vec3 nrm = glm::normalize(glm::vec3(-2.0f * (height(p.x + 2, p.y) - h), -2.0f * (height(p.x, p.y + 2) - h), 4.0f));
+        const float tilt = (1.0f - nrm.z) * (1.0f - nrm.z) * 0.99f + 0.01f;
+        const glm::vec3 in = glm::normalize(glm::vec3(p, o.z) - sun);
+        glm::vec3 pos(p, h);
+        float ext, scatter = 0;
+        if (k < n) { // forward scattering toward the eye, extinction over the view distance (+0xAC)
+            const float c = glm::dot(glm::normalize(glm::vec3(p, o.z) - eye), -in);
+            scatter = std::min(2.0f * std::clamp(0.0795774683f * (std::pow((1.0f + c) * 0.4f, 5.0f) * 4.5f + 0.8f), 0.0f, 1.0f), 1.0f);
+            ext = std::exp(-glm::distance(pos, eye) * rec.vsExtinction * rec.extinction[1]);
+        } else { // refracted (eta 0.8) and extended; extinction over depth + view distance (+0xA8)
+            pos += glm::refract(in, nrm, 0.8f) * rec.length;
+            ext = std::exp(-(o.z - eye.z + glm::distance(pos, eye)) * rec.vsExtinction * rec.extinction[0]);
+        }
+        const float t = (time - life[i].x) / (life[i].y - life[i].x);
+        // ponytail: negative envelopes (a corner's first life) clamp per vertex, tru.exe clamps the blended pixels
+        const float env = std::max(t <= 0.25f ? 4.0f * t : t <= 0.5f ? 2.0f - 4.0f * t : 0.0f, 0.0f);
+        const float nearFade = std::clamp(glm::distance(glm::vec2(pos), glm::vec2(eye)) * 12.5f, 0.0f, 1.0f); // murk 0
+        verts[k] = {vp * glm::vec4(pos, 1.0f), env * facing * depth * nearFade * ext * (tilt + scatter) * 0.07f};
+    }
+    std::array<float, kSize * kSize> img{};
+    const auto fill = [&](const V& a, const V& b, const V& c) { // perspective-correct, pixel centres, rows down
+        const V* v[3] = {&a, &b, &c};
+        glm::vec2 s[3];
+        float iw[3], vw[3];
+        for (int i = 0; i < 3; ++i) {
+            iw[i] = 1.0f / v[i]->c.w, vw[i] = v[i]->v * iw[i];
+            s[i] = {(v[i]->c.x * iw[i] * 0.5f + 0.5f) * kSize, (0.5f - v[i]->c.y * iw[i] * 0.5f) * kSize};
+        }
+        const auto edge = [](glm::vec2 p, glm::vec2 q, glm::vec2 r) { return (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x); };
+        const float area = edge(s[0], s[1], s[2]);
+        if (area >= 0) return; // back face (counter-clockwise in NDC is front; rows run down here)
+        const int x0 = std::max(0, int(std::floor(std::min({s[0].x, s[1].x, s[2].x})))), x1 = std::min(kSize - 1, int(std::max({s[0].x, s[1].x, s[2].x})));
+        const int y0 = std::max(0, int(std::floor(std::min({s[0].y, s[1].y, s[2].y})))), y1 = std::min(kSize - 1, int(std::max({s[0].y, s[1].y, s[2].y})));
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) {
+                const glm::vec2 p(float(x) + 0.5f, float(y) + 0.5f);
+                const float b0 = edge(s[1], s[2], p) / area, b1 = edge(s[2], s[0], p) / area, b2 = edge(s[0], s[1], p) / area;
+                if (b0 < 0 || b1 < 0 || b2 < 0) continue;
+                img[size_t(y * kSize + x)] += (b0 * vw[0] + b1 * vw[1] + b2 * vw[2]) / (b0 * iw[0] + b1 * iw[1] + b2 * iw[2]);
+            }
+    };
+    const auto tri = [&](size_t a, size_t b, size_t c) { // clipped against the near plane (z > -w) first
+        const V in[3] = {verts[a], verts[b], verts[c]};
+        if (in[0].v <= 0 && in[1].v <= 0 && in[2].v <= 0) return;
+        V poly[4];
+        int m = 0;
+        for (int i = 0; i < 3; ++i) {
+            const V &p = in[i], &q = in[(i + 1) % 3];
+            const float dp = p.c.z + p.c.w, dq = q.c.z + q.c.w;
+            if (dp >= 0) poly[m++] = p;
+            if ((dp >= 0) != (dq >= 0)) {
+                const float f = dp / (dp - dq);
+                poly[m++] = {glm::mix(p.c, q.c, f), p.v + (q.v - p.v) * f};
+            }
+        }
+        for (int i = 1; i + 1 < m; ++i) fill(poly[0], poly[i], poly[i + 1]);
+    };
+    for (size_t ca = 0; ca + 2 <= size_t(g); ++ca) // 0x6D6640: the four side walls of every masked cell
+        for (size_t cb = 0; cb + 2 <= size_t(g); ++cb) {
+            if (!rec.mask[cb * size_t(g) + ca]) continue;
+            const size_t A = size_t(g) * ca + cb, B = A + size_t(g);
+            tri(B, B + 1, B + 1 + n), tri(B, B + 1 + n, B + n), tri(A, B, B + n), tri(A, B + n, A + n);
+            tri(A, A + n, A + 1 + n), tri(A, A + 1 + n, A + 1), tri(A + 1, B + 1 + n, B + 1), tri(A + 1, A + 1 + n, B + 1 + n);
+        }
+    for (size_t i = 0; i < img.size(); ++i) out[i] = uint8_t(std::lround(std::clamp(img[i], 0.0f, 1.0f) * 255.0f)); // A8R8G8B8
+    return true;
+}
+
+namespace {
 std::string withVersion(const char* source, bool vulkan) {
     (void)vulkan; // the files carry #version 460; glslc defines VULKAN for the descriptor syntax
     return source;
 }
+// GL has no #include: splice the shared files in place of their #include lines (glslc resolves them for Vulkan).
+std::string expandIncludes(std::string s) {
+    const std::pair<const char*, const char*> files[] = {{"#include \"sun.glsl\"", sunGlsl()},
+                                                         {"#include \"shaders/caustics.glsl\"", kCaustics}};
+    for (const auto& [line, text] : files)
+        if (const size_t at = s.find(line); at != std::string::npos) s.replace(at, std::strlen(line), text);
+    return s;
+}
 } // namespace
 
 std::string waterVertexSource(bool vulkan) { return withVersion(kWaterVert, vulkan); }
-std::string waterFragmentSource(bool vulkan) { return withVersion(kWaterFrag, vulkan); }
+std::string waterFragmentSource(bool vulkan) { return expandIncludes(withVersion(kWaterFrag, vulkan)); }
 
 std::vector<SplashVertex> splashVertices(const Camera& camera, std::span<const WaterParticle> splashes) {
     std::vector<SplashVertex> out;
@@ -186,7 +323,7 @@ std::string splashVertexSource(bool vulkan) { return withVersion(kSplashVert, vu
 std::string splashFragmentSource(bool vulkan) { return withVersion(kSplashFrag, vulkan); }
 
 std::string underwaterPostSource(bool vulkan) {
-    return std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere + kFilter;
+    return expandIncludes(std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere + kFilter);
 }
 
 } // namespace ou::render

@@ -10,6 +10,7 @@
 #include "physics/Physics.hpp"
 #include "formats/Formats.hpp"
 #include "formats/Uber.hpp"
+#include "game/Bend.hpp"
 #include "game/Combat.hpp"
 #include "game/Progress.hpp"
 #include "game/Water.hpp"
@@ -172,6 +173,9 @@ struct Tuning {
     // Swimming, surface and under water (tru.exe, Wine, l2_cliffclimb sea): 44.95 units per 30 Hz frame at full
     // stick; from rest it ramps up in ~0.7 s, after release it slows ~twice as fast (fitted slopes, units/s^2).
     float swimSpeed = 1348.6f, swimAccel = 2475.0f, swimDecel = 3760.0f;
+    // Sprint (Shift held) swims 1.2x as fast, surface and under water: 53.94 vs 44.95 units per 30 Hz frame (tru.exe,
+    // Wine, l2_cliffclimb sea; player +0x2A0 velocity), on the run sprint's stamina (sprintSeconds, sprintResume).
+    float swimSprintFactor = 1.2f;
     float swimDepth = 400.0f;   // water at least this deep under the surface is swum, shallower walked
     float swimRadius = 100.0f;  // sphere around the swimming root
     // Root under the wave surface treading / swimming at the surface (tru.exe, Wine, l2_cliffclimb sea: z fits
@@ -360,6 +364,8 @@ struct UnitData {
     std::string playerObject; // Lara outfit object of this unit (formats::Unit::playerObjectId name); empty if none
     std::vector<VehicleIntro> vehicles; // `motorcycle` intros (unit frame)
     bool flashlightSpot = false; // formats::Unit::flashlightSpot: the flashlight's spot is on here, else only its omni
+    std::vector<BendIntro> bends;          // bend_* intros (game/Bend.hpp), unit frame
+    std::vector<formats::Unit::Wind> wind; // formats::Unit::wind
 };
 // Throws cdc::FormatError if pc-w\<name>.drm is missing or not a unit.
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name);
@@ -536,6 +542,7 @@ public:
     float air() const { return air_; }
     bool submerged() const { return submerged_; } // head under water this tick
     const Wetness& wetness() const { return wetness_; }
+    const Bends& bends() const { return bends_; } // bend_* plants' bend vectors (game/Bend.hpp)
 
     // ---- combat (Combat.cpp; docs/GAMEPLAY.md "Combat") ----
     std::vector<Damageable*> targets; // lock-on / hitscan targets, non-owning (src/game/ai registers its enemies)
@@ -733,6 +740,8 @@ private:
     float air_ = 1.0f;
     bool submerged_ = false;
     Wetness wetness_;
+    Bends bends_;
+    uint64_t bendUnits_ = ~uint64_t(0); // unitsVersion_ bends_ was synced to
     // gadgets (Gadgets.cpp)
     void tickGadgets(const Actions& a, float dt);
     void explode(vec3 at);

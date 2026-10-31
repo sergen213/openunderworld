@@ -61,7 +61,7 @@ std::vector<MaterialTexture> materialTextures(const cdc::Section& material);
 // Pass state of a material section: blob +0x38 blend mode, +0x40 flags (0x80 = two-sided),
 // +0x4C alpha threshold, applied as PCStateManager_SetBlendMode (tru.exe 0x527A80) does; castsShadow =
 // +0x44 bit 0x40000000 with blend mode < 4 (tru.exe's shadow-pass condition, 0x50F7C0 / 0x511E20).
-struct MaterialState { scene::Blend blend = scene::Blend::Opaque; uint8_t alphaRef = 0; bool doubleSided = false; bool castsShadow = true; };
+struct MaterialState { scene::Blend blend = scene::Blend::Opaque; uint8_t alphaRef = 0; bool doubleSided = false; bool castsShadow = true; bool depthWrite = false; };
 MaterialState materialState(const cdc::Section& material);
 // Shader-relevant material data (docs/formats/SHADERS.md): constants, sampler entries, blend mode. The composite
 // pass programs are in the ShaderLib sections `libs` names (vertex = blob +0x34, pixel = blob +0x30); the caller
@@ -187,6 +187,17 @@ struct Unit {
     bool flashlightSpot = false;
     // Level+0x70 DTP +0x1C0: the unit script's type id (a type-8 section of the unit DRM), 0 = none. docs/formats/LEVELS.md "Unit script".
     uint32_t scriptId = 0;
+    // Level+0x70 DTP +0x2A4 global wind (tru.exe 0x546170 registers it as wind source type 1; game/Bend.hpp): +0x2AC
+    // count, +0x2B0 -> 100-byte records. Ranges {lo, hi} draw lo + (hi - lo) sin(u pi) (0x52E750).
+    struct Wind {
+        bool enabled = false;     // +0x00 byte
+        float retarget[2] = {};   // +0x04: seconds until the next random targets
+        float strength[2] = {};   // +0x0C, x 8
+        float heading[2] = {};    // +0x14: degrees about Z
+        float wavelength[2] = {}; // +0x1C, x 100.60183: spatial phase |x + y| / wavelength
+        float frequency = 0;      // +0x24: Hz of the rectified sine (x 2 pi / 60 per 60 Hz tick)
+    };
+    std::vector<Wind> wind;
 };
 // Point/spot light from a light DTP (section `dtpIndex`): type, DTP radius, cone, near width, falloff curve, flicker,
 // shadow flag, colour = DTP intensity (+0x08) x rgb (+0x18) (LEVELS.md "Lights"); position/direction 0. nullopt for

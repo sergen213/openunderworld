@@ -92,6 +92,7 @@ game::AnimLibrary syntheticAnims() {
         drop.tracks[0][anim::RotZ].push_back(3.14159f * u);
     }
     a.clips["drop_to_ledgeb"] = drop;
+    a.clips["swim_surface_exhausted"] = rootClip(41, 0); // 1.367 s
     return a;
 }
 
@@ -280,11 +281,56 @@ TEST(Game, SwimSpeedMatchesTru) {
     EXPECT_NEAR(glm::length(s.vel), 24.4f * 30, 150) << "0.33 s into the stroke";
     for (int i = 0; i < 60; ++i) w->tick(go);
     EXPECT_EQ(s.state, State::SwimSurface);
+    EXPECT_EQ(s.clip, "swim_surface_fast_forward") << "tru.exe's surface stroke (docs/GAMEPLAY.md SwimSurface)";
     const vec3 p0 = s.pos;
     for (int i = 0; i < 30; ++i) w->tick(go);
     EXPECT_NEAR(glm::length(s.pos - p0) / 0.5f, 44.95f * 30, 5);
     for (int i = 0; i < 12; ++i) w->tick({});
     EXPECT_NEAR(glm::length(s.vel), 21.6f * 30, 150) << "0.2 s after the release";
+}
+
+// tru.exe swim sprint (Wine, l2_cliffclimb sea, player +0x2A0 velocity; openunderworld-work/scratch/swimsprint): Shift
+// held swims 53.94 units per 30 Hz frame at the surface and under water (1.2 x 44.95) for ~9.95 s, then normal speed;
+// Shift still held: 2.13 s at normal speed, 0.95 s sprinting.
+TEST(Game, SwimSprintMatchesTru) {
+    CollisionMesh m;
+    addQuad(m, {-60000, -60000, -3000}, {60000, -60000, -3000}, {60000, 60000, -3000}, {-60000, 60000, -3000});
+    m.markup.push_back({10, 1, {{-60000, -60000, -100150}, {60000, 60000, -150}}});
+    auto w = makeWorld(std::move(m), {-55000, 0, 0});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 120; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::SwimTread);
+    const auto speed = [&](const Actions& a) {
+        const vec3 p0 = s.pos;
+        for (int i = 0; i < 30; ++i) w->tick(a);
+        return glm::length(s.pos - p0) / 0.5f;
+    };
+    for (int i = 0; i < 60; ++i) w->tick(forward());
+    EXPECT_NEAR(speed(forward()), 44.95f * 30, 5);
+    Actions sprint = forward();
+    sprint.sprint = true;
+    for (int i = 0; i < 30; ++i) w->tick(sprint);
+    EXPECT_EQ(s.clip, "swim_surface_sprint_forward");
+    EXPECT_NEAR(speed(sprint), 53.94f * 30, 5) << "1 s into the sprint";
+    int n = 0;
+    for (; n < 15 * 60 && s.clip == "swim_surface_sprint_forward"; ++n) w->tick(sprint);
+    EXPECT_NEAR(n / 60.0f + 1.0f, 9.7f, 0.1f) << "one full sprint";
+    EXPECT_EQ(s.clip, "swim_surface_exhausted");
+    for (int i = 0; i < 15; ++i) w->tick(sprint);
+    EXPECT_NEAR(speed(sprint), 44.95f * 30, 5) << "exhausted: normal speed";
+    int off = 45, on = 0;
+    for (; off < 5 * 60 && s.clip != "swim_surface_sprint_forward"; ++off) w->tick(sprint);
+    for (; on < 5 * 60 && s.clip == "swim_surface_sprint_forward"; ++on) w->tick(sprint);
+    EXPECT_NEAR(off / 60.0f, 2.13f, 0.1f) << "held after exhaustion";
+    EXPECT_NEAR(on / 60.0f, 0.95f, 0.1f);
+    for (int i = 0; i < 600; ++i) w->tick({}); // refilled
+    Actions drop;
+    drop.drop = true;
+    for (int i = 0; i < 60; ++i) w->tick(drop); // dive, swim down
+    ASSERT_EQ(s.state, State::SwimUnder);
+    for (int i = 0; i < 60; ++i) w->tick(sprint);
+    EXPECT_EQ(s.clip, "swim_submerged_sprint");
+    EXPECT_NEAR(speed(sprint), 53.94f * 30, 5) << "under water";
 }
 
 TEST(Game, RunsOffEdgeFallsAndLands) {
@@ -2808,4 +2854,85 @@ TEST(Game, WetnessSoaksAndDries) {
     EXPECT_EQ(w.region[1], 0.0f);
     EXPECT_EQ(w.bone[8], 0.0f);
     EXPECT_EQ(w.bone[95], 0.0f);
+}
+
+// bend_* plants (game/Bend.hpp). A steady wind (no frequency, no wavelength: the phase stays 0, so no |sin| pulse)
+// settles a critically damped bone at x = F / w^2; its bend vector is b = linear x - quadratic x^2 / 2 for a box
+// symmetric about the trunk. The wind ramps to strength x 8 over the retarget countdown (seconds x 60 ticks).
+TEST(Game, BendSettlesUnderSteadyWind) {
+    using namespace ou;
+    formats::Unit::Wind rec;
+    rec.enabled = true, rec.retarget[0] = rec.retarget[1] = 1, rec.strength[0] = rec.strength[1] = 0.1f;
+    game::Wind wind({rec});
+    wind.tick();
+    EXPECT_NEAR(wind.at(vec3(0)).x, 0.8f / 60, 1e-6f);
+    auto type = std::make_shared<game::BendType>();
+    game::BendType::Bone b; // bend_kelp_a's bone [O]
+    b.segment = 1, b.mass = 5, b.linear = 0.8f, b.quadratic = 0.6f, b.omega = 3, b.damping = 1, b.wind = 5;
+    b.lo = {-407.7f, -348.2f, -34.9f}, b.hi = {407.7f, 348.2f, 3188.4f}, b.inv2Size = {1 / 1630.9f, 1 / 1392.6f};
+    type->bones = {b}, type->segments = 2;
+    const std::vector<game::BendIntro> intros{{7, vec3(0), vec3(0, 0, 3.14159265f / 2), type}}; // turned 90 degrees
+    const std::vector<formats::Unit::Wind> winds{rec};
+    const game::Bends::Unit unit{"u", vec3(0), &intros, &winds};
+    game::Bends bends;
+    bends.sync({&unit, 1});
+    const vec3 far(1e5f);
+    for (int i = 0; i < 1200; ++i) bends.tick(far, far);
+    const auto out = bends.bend(7);
+    ASSERT_EQ(out.size(), 2u);
+    const float x = 5 * 0.8f / 9; // F = w^2 x (tru.exe does not scale the spring by mass); wind +X = the plant's local -Y
+    EXPECT_NEAR(out[1].x, 0, 1e-6f);
+    EXPECT_NEAR(out[1].y, -x * x * 0.6f / (b.hi.y - b.lo.y), 1e-6f);
+    EXPECT_NEAR(out[1].w, 0.8f * -x + 0.3f * x * x, 1e-4f);
+    EXPECT_EQ(out[0], glm::vec4(0));
+}
+
+// Without wind, Lara swimming past a distance-pushed plant bends it away from her.
+TEST(Game, BendGivesWayToLara) {
+    using namespace ou;
+    auto type = std::make_shared<game::BendType>();
+    game::BendType::Bone b;
+    b.mass = 5, b.linear = 0.8f, b.quadratic = 0.6f, b.omega = 3, b.damping = 1, b.push = 25, b.pushRadius = 300, b.pushPad = 0;
+    b.centre = {0, 0, 1500}, b.lo = vec3(-400, -400, 0), b.hi = vec3(400, 400, 3000), b.inv2Size = vec2(1 / 1600.0f);
+    type->bones = {b}, type->segments = 1;
+    const std::vector<game::BendIntro> intros{{1, vec3(0), vec3(0), type}};
+    const game::Bends::Unit unit{"u", vec3(0), &intros, nullptr};
+    game::Bends bends;
+    bends.sync({&unit, 1});
+    for (int i = 0; i < 30; ++i) { // 10 units per tick toward +Y, 200 to the plant's -X side of its centre
+        const vec3 at(-200, -150 + 10.0f * i, 1500);
+        bends.tick(at, at - vec3(0, 10, 0));
+    }
+    EXPECT_GT(bends.bend(1)[0].z, 0.01f); // b.x = linear x + ...: bent toward +X, away from Lara
+}
+
+TEST(GameReal, SeafloorKelpSwaysInTheUnitWind) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto u = game::loadUnitData(bf, "l1_seafloor");
+    ASSERT_EQ(u.wind.size(), 1u); // [O] settings +0x2A4: retarget 1..5 s, strength 0..0.1, heading 0..80, wavelength 6..10, 0.1 Hz
+    EXPECT_TRUE(u.wind[0].enabled);
+    EXPECT_EQ(u.wind[0].heading[1], 80.0f);
+    EXPECT_NEAR(u.wind[0].frequency, 0.1f, 1e-6f);
+    const auto kelp = std::find_if(u.bends.begin(), u.bends.end(), [](const game::BendIntro& b) { return b.uid == 886; });
+    ASSERT_NE(kelp, u.bends.end());
+    ASSERT_EQ(kelp->type->bones.size(), 1u);
+    const auto& bone = kelp->type->bones[0]; // tru.exe's state after setup (Wine, l1_seafloor instance 886) [O]
+    EXPECT_EQ(bone.segment, 1);
+    EXPECT_NEAR(bone.lo.x, -407.733f, 1e-2f);
+    EXPECT_NEAR(bone.hi.z, 3188.367f, 1e-2f);
+    EXPECT_NEAR(bone.inv2Size.x, 0.000613146f, 1e-8f);
+    EXPECT_GE(u.bends.size(), 50u);
+    // kelp_b 873 in tru.exe peaked at x ~0.12 within 20 s; ours stays in that range and moves.
+    const std::vector<game::Bends::Unit> units{{u.name, vec3(0), &u.bends, &u.wind}};
+    game::Bends bends;
+    bends.sync(units);
+    float lo = 1, hi = -1;
+    for (int i = 0; i < 60 * 30; ++i) {
+        bends.tick(vec3(1e6f), vec3(1e6f));
+        const float bx = bends.bend(873)[1].z;
+        lo = std::min(lo, bx), hi = std::max(hi, bx);
+    }
+    EXPECT_GT(hi - lo, 0.01f);
+    EXPECT_LT(std::max(std::abs(lo), std::abs(hi)), 0.3f);
 }

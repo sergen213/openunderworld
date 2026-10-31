@@ -130,12 +130,13 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | ClimbUp | `ledgeb_climbup_fast` (221) | 23, 0.77 s | (52.5, −178.0, 644.1) | no |
 | SwimSplash (fall into water) | `swim_jump_land` (390) | 16, 1.10 s | none (standing → swim pose) | no |
 | SwimTread | `swim_surfaceidle` (386) | 24, 1.60 s | none; feet at −352, root 44.1 under the water surface | yes |
-| SwimSurface | `swim_sub` (370), as under water (`swim_surface` (379) is not what tru.exe shows, see "Water") | 21, 1.40 s | none | yes |
+| SwimSurface | `swim_surface_fast_forward` (984), the forward clip of lara.drm's surface blend request 881 (fast_right / _forward / _left; its sprint twin is 896). [O-runtime] tru.exe surface swimming (24 Wine snapshots, l2_cliffclimb sea, bone z, root at surface − 44.1; mean rms best phase, free offset / fixed root): full skeleton `swim_surface_fast_forward` 16.7 / 18.3, `swim_normal_freestyle` 18.3 / 18.7, `swim_sub` 31.9 / 32.7, `swim_surface` 36.4 / 48.8; body (no hair) 10.7 / 14.5, 12.6 / 13.2, 30.0 / 30.9, 32.8 / 41.5; spine (pelvis → head) 1.8 / 2.4, 2.7 / 7.6, 2.0 / 2.8, 7.7 / 20.9. The spine cannot tell `swim_sub` from it; the limbs can. Which request index tru.exe plays was not read at runtime [U] | 17, 1.13 s | none | yes |
 | (swim speed source) | `swim_surfaceidle_to_swim` (385) | 5, 0.37 s | −Y 206.1 | — |
 | SwimDive | `swim_surfacedive` (382) | 18, 1.20 s | (5.0, −112.3, −666.8) | no |
 | SwimUnder idle | `swim_submerged_idle` (199) | 47, 1.57 s | none | yes |
 | SwimUnder | `swim_sub` (370) at every pitch (the model is pitched); Surfacing = `swim_sub_up` (373) | 21, 1.40 s | none; body pitch 8.8° (`swim_sub_up` 44.1°, `swim_sub_down` −30.6°) | yes |
 | SwimClimbOut | `swim_climbout` (368) | 47, 1.57 s | (0, −308.7, 172.8) | no |
+| Swim sprint (Shift) | `swim_surface_sprint_forward` (1716) at the surface, `swim_submerged_sprint` (194) under water; exhausted: `swim_surface_exhausted` (1425) / `swim_submerged_exhausted` (1426), once | 28, 0.93 s / 14, 0.47 s; 20, 1.37 s / 23, 1.53 s | none | yes / no |
 | Crouch (enter) | `crouch_idleToCrouch` (55) | 10, 0.33 s | none | no |
 | Crouch | `crouch_Idle` (54) / `Crouch_Front` (53) moving | 30, 2.0 s / 31, 1.03 s | none / −Y 11.3 → 350.2: **328 units/s** | yes |
 | Roll | `ng_roll_front` (1254) | 25, 0.83 s | −Y 63.7 → 1200.3 (1364 units/s) | no |
@@ -207,6 +208,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Water probe | box ±221 × ±221 × ±572 centred 320 above the feet | [O] shorts data+0xC3E/+0xC40/+0xC42 (221, 572, 320), box overlap against each water volume box in 0x710A20; the highest surface wins |
 | Swim speed | **1348.6 units/s** (surface and under water), reached at **2475 units/s²**, slowing at **3760 units/s²** when the stick is released (she coasts) | [O-runtime] tru.exe under Wine (l2_cliffclimb sea, traces swim_l2b / swim_l2c): 44.95 units per 30 Hz frame at full stick both at the surface and after a dive; from rest 0.54 → 8.3 → 33.1 → 44.3 per frame at 0.05 / 0.2 / 0.5 / 0.87 s (S-shaped; the linear slope is fitted to its middle), after the release 44.6 → 21.6 in 0.18 s. [I] linear ramps. The old 562 (root speed of `swim_surfaceidle_to_swim` / `swim_surfacedive`) was the clips', not the controller's |
 | Swim depth | water ≥ 400 under the surface is swum, shallower walked | [I] ours (tread pose feet at −352) |
+| Swim sprint | **1.2 × swim speed = 1618.3 units/s** while Shift is held (surface and under water), same ramps; stamina shared with the run sprint (`sprintSeconds` 9.7, `sprintResume` 0.9); at exhaustion the exhausted clip plays once at normal speed without refill | [O-runtime] tru.exe under Wine (l2_cliffclimb sea, 2026-10-30; player velocity +0x2A0, traces in openunderworld-work/scratch/swimsprint): 53.94 units per 30 Hz frame sprinting vs 44.95, at the surface and ~2000 under it; 44.8 → 53.4 in 0.36 s after the press; with Shift held 9.95 s of sprint, then 2.13 s at 44.95 and 0.95 s bursts (the run sprint's 9.5..9.9 / 2.2 / 0.9 s). Clips [O-runtime, rms 18.7 vs 21+ for any other clip, z of the body bones over 14 snapshots]: the surface sprint pose fits `swim_surface_sprint_forward` (= `swim_sprint_butterfly`), lara.drm request 896; under water request 934's `swim_submerged_sprint` [I: pose not compared]. Ours: `Tuning::swimSprintFactor`, `Player::swim` |
 | Water drag (splash) | velocity × e^(−3 t) | [I] ours |
 | Buoyancy, air/oxygen | none | [U] no buoyancy or air timer found (only `death_drown` exists); not implemented |
 | Fall damage | 0 up to **1280.03**, linear to 500 at **1817.32**, linear to 1000 (= death) at **2215.55**, death above | [O] floats data+0x4C/+0x50/+0x54 and the curve 0x6F1790; height = z on becoming airborne (player +0x6DC, set on FallState entry 0x75C550) − landing z; applied on landing (0x75D080 → 0x702FC0), never scaled by difficulty (Combat below) |
@@ -513,15 +515,19 @@ outfit (the original only reads `+0x294` on a level load).
 - Surface (SwimTread / SwimSurface): root **44.1** under the wave surface in both [O-runtime: tru.exe under Wine,
   l2_cliffclimb sea, 2026-10-30: Lara's z fits the player's water top (player +0x8E0, −18895.8 there) + the 0x69DA80
   waves − 44.1 at rms < 1 treading and swimming at full speed; `swimSurfaceDepth`]. Treading plays
-  `swim_surfaceidle` (its bones fit tru.exe's at rms 1.2, same root); swimming plays `swim_sub` [O-runtime: tru.exe's
-  spine bones fit `swim_sub` at the root at rms 4 and `swim_surface` only 28 below its root at rms 8; tru.exe has one
-  SwimState for surface and under water, RTTI], so only her head and shoulders break the surface. The stick swims up to 1348.6 units/s (ramping, Numbers) along the heading, which turns
+  `swim_surfaceidle` (its bones fit tru.exe's at rms 1.2, same root); swimming plays `swim_surface_fast_forward`
+  [O-runtime: of the candidate clips it fits tru.exe's whole body best and its spine as well as `swim_sub` does (clip
+  table, SwimSurface)], so only her head and shoulders break the surface. The stick swims up to 1348.6 units/s (ramping, Numbers) along the heading, which turns
   at turnRate; drop = SwimDive (`swim_surfacedive` root motion, 667 down); jump facing a wall whose top is 50..400
   above the water = SwimClimbOut; floor within 400 below = stand up (Idle).
 - Under water (SwimUnder): stick swims horizontally, jump / drop held swim up / down; the swim direction's pitch turns
   towards the wish at turnRate and pitches the model; the clip is `swim_sub` (level stroke) at every pitch. No input:
   `swim_submerged_idle`, no drift. Reaching the surface = SwimTread. Movement is a sphere (r 100) swept around the
   root, slid along contacts and clamped to the surface.
+- Sprint (Shift held while swimming, surface or under water): the sprint stroke (`swim_surface_sprint_forward` /
+  `swim_submerged_sprint`) at 1.2 × swim speed on the run sprint's stamina; exhausted, `swim_surface_exhausted` /
+  `swim_submerged_exhausted` plays once at normal speed, then a sprint resumes once 0.9 s is refilled (Numbers,
+  "Swim sprint").
 - Climb out: a sphere sweep 300 forward must hit a wall (|n.z| ≤ 0.5, facing it); a ray 50 past the contact finds the
   top. The root is placed so the clip's hands (at its start time) reach the contact and its root ends on the top
   (`top − rise`); the clip's root motion then plays without collision and the end snaps to the floor.
@@ -539,7 +545,9 @@ outfit (the original only reads `+0x294` on a level load).
   hats (zero volume, so the level never creeps). Units: Joan's lengths × `kWaterScale` = 6.4 (body heights: Lara
   ~512, a Joan soldier ~80), so cells are 25.6 units (a 6554-unit window), wave speed 512 units/s (CFL 0.33 as in
   Joan), splash crater 45 units deep / 64 wide; slopes, damping and times are Joan's. Sources: a body with its feet
-  in the water and not under it wades (bow mound + stern trough, the wake; standing, a faint bob every 1.2–1.5 s).
+  in the water and not under it wades (bow mound + stern trough, the wake; standing or treading, a bob every
+  1.2–1.5 s: a kick as wide as the body, 25.6 units over sigma 90 [I], since a narrower one falls inside the body's
+  own cells and leaves no visible ring).
   A body faster than the waves (swimming Lara, 1349 units/s) would trail a Mach cone, so it is no wall and has no
   continuous wake; it rings the water (strength 0.6) every 0.4 s instead [I], leaving flat rings behind it;
   Lara's entry splash (strength from the plunge speed) and climb-out; hitscan rays crossing the surface
@@ -579,6 +587,42 @@ outfit (the original only reads `+0x294` on a level load).
   (`scene::Material::skinParams`, 7 of lara.drm's 25) with COLOR0 taken from that attribute (`sm3::translate`
   `colorFromVertex`; formats/SHADERS.md). Not modelled: dirt / mud and its colour, rain soaking (0x52E180), partial
   wetness while wading; the generic (non-original) shading shows no wetness. Test `Game.WetnessSoaksAndDries`.
+
+## Bend plants (src/game/Bend.*)
+
+- [O] tru.exe "Bendie" (per-instance update 0x499B40, setup 0x48FD70) drives the 14 `bend_*` objects (kelp a/b/c,
+  palm kelp, jungle broadleaf, bamboo, red plants, ...). Object data = ObjectBase +0xC8, class 57 / 0xB00B: +0x08 byte
+  physical (phantom body; contact push), +0x14 activation distance (0 on all kelp), +0x24 -> 0x48-byte bone records,
+  +0x28 count (kelp 1 bone = segment 1; jungle plants 3-5). Bone: +0x08 mass, +0x0C linear, +0x10 quadratic,
+  +0x14 omega, +0x18 damping ratio, +0x1C push gain, +0x20 push radius, +0x24 push pad (x 3.1), +0x28 wind gain,
+  +0x30/+0x34 rain-gust rate/gain, +0x3C s16 segment, +0x40/+0x44 sound thresholds.
+- [O] Setup: the segment's first HInfo box gives the bend range (corners centre -/+ size/2 = state +0xC0 min / +0xD0
+  max) and 1/(2 size.xy). Wine, l1_seafloor kelp 886: min (-407.7, -348.2, -34.9), max (407.7, 348.2, 3188.4),
+  0.000613 / 0.000718 — exactly the box of `bend_kelp_a`.
+- [O] Update (dt = timeMult/30): F += unit wind in instance axes x wind gain (+ rain gusts while it rains,
+  DAT_00AE4D84, set by effect type 8; not modelled); Lara's push; then F -= 2 w zeta v + w^2 x (not scaled by mass),
+  a = F/mass, v += a dt, x += a dt^2/2 + v dt, x clamped to the unit square (outward v zeroed) and disc. Output per
+  segment (a.x, a.y, b.x, b.y): a = |x| x quadratic / span (span = min - max for x >= 0, else max - min), b = linear
+  x - |x| x quadratic / 2 - (min + max) a / 2, uploaded as the 4th skin-palette row (0x5B60F0 mask 0xF) = the bend
+  VS's c88: s = a v.xy + b, pos += t3 s.x + t4 s.x^2 + t5 s.y + (t3.w, t4.w, t5.w) s.y^2 (TEXCOORD3-5, decl hashes
+  0x6E3DDDE9 / 0x637EFB30 / 0x67BFE687, FLOAT4).
+- [O] tru.exe updates a plant only when it was drawn the frame before (instance flag 0x200: cleared for all instances
+  by 0x5C0380, toggles on screen in Wine) or within +0x14 of Lara: on-screen kelp sways (Wine: kelp_b 873 x ~0..0.12,
+  20 s series), off-screen kelp is frozen (state all zero).
+- [O] Push: distance plants (+0x08 clear, 0x490450) within the push radius: away from Lara in the plane x
+  push gain / (2 size) x (1 - reach/radius) x (Lara frame speed^2 + 1) while |x| < 1 - reach/radius; physical ones by
+  the collision callback (0x490590 from 0x491CF0, 0.75 speed^2 + 150). Ours: [I] contact = Lara within 100 of the box.
+- [O] Unit wind = settings DTP +0x2A4 (`formats::Unit::wind`), wind source type 1 (0x546170). Per 60 Hz wind tick
+  (0x53C3F0): when the countdown (rand(+0x04, +0x08) x 60 ticks; constant 60.0 at 0x84BD00) runs out, targets
+  strength rand(+0x0C, +0x10) x 8, heading rand(+0x14, +0x18) deg, wavelength rand(+0x1C, +0x20) x 100.6, rate
+  |target - cur| / countdown; frequency +0x24 x 2 pi/60. rand(lo, hi) = lo + (hi - lo) sin(u pi) (0x52E750, LCG
+  0x41C64E6D/0x3039). Evaluate (0x52E460): strength x sin(phase mod pi) along (cos, sin) heading, phase = ticks x
+  frequency + |x + y| / wavelength — the wind pulses and never reverses (period 5 s on l1_seafloor). Wine l1_seafloor:
+  strength 0.04..0.79, heading 6..72 deg, wavelength 700..1006, frequency 0.01047, clock ~60 ticks/s.
+- Ours: `game::Bends` ticks every loaded plant (ponytail: off-screen ones keep swaying); `ou-game` applies the bend
+  on the CPU each tick to plants within the fog range (`BendMeshes`), so both presets and the shadow pass sway; c88
+  stays zero. Not modelled: rain gusts, bend sounds (0x5BA000 events 0xD/0xE), point/cylinder/vortex wind objects.
+  Tests `Game.BendSettlesUnderSteadyWind`, `Game.BendGivesWayToLara`, `GameReal.SeafloorKelpSwaysInTheUnitWind`.
 
 ## Free climbing (src/game/Climb.cpp)
 
@@ -1286,7 +1330,8 @@ dummy from the hip hold, and a health pack picked up after an 1800-unit drop (51
   30/60/144 Hz), `CrouchUnderSlabAndRoll` (crawls under a 350-high slab, stays crouched under it, stands past it; roll
   root motion), `SlidesDownSteepSlope` (normal z 0.45: slides > 1000 units/s, stops on the flat).
   `JumpTakeOffsMatchTruTraces` (standing / stick / running / back / side take-offs, apex 201.6 and 158 against the
-  tru.exe Wine traces), `CameraRestAndPitchReturn`, `SwimSpeedMatchesTru`, `SlideAcceleratesAtGravityAlongSlope`.
+  tru.exe Wine traces), `CameraRestAndPitchReturn`, `SwimSpeedMatchesTru`, `SwimSprintMatchesTru` (1618 units/s at the
+  surface and under water, 9.7 s stamina, 2.13 s / 0.95 s with Shift held), `SlideAcceleratesAtGravityAlongSlope`.
 - `GameReal.*` (gated by `OU_GAME_DIR`): the clips load, `ng_run` root speed 1274 ± 5 units/s, hand anchor; l4_pool:
   `'player'` spawn, 1.5 s run replay never below the floor and covers 50–105 % of the same replay on a flat floor; jump
   from the lower floor grabs ledge 1253 (hands at z 3562) and climbs onto the rock top (z 3571 ± 1, end snap < 10).
@@ -1343,7 +1388,7 @@ No side-by-side comparison with the original game was made.
   (Numbers) [U]. The grab zVel window, height, crouch height and
   water probe are taken from it.
 - Swimming: oxygen/drowning are implemented with inferred rates (45 s / refill 2 s / max-per-6 s; no exe numbers).
-  Still missing: wading clip (`swim_wading`), surface turn clips, underwater fast/sprint, swim damage from other
+  Still missing: wading clip (`swim_wading`), surface turn clips, swim damage from other
   sources; the water surface is static (scripted level changes not run); the water box is sized from the surface model,
   not the exe's component. Ripple/caustic parameters are ours [I].
 - Free climbing is implemented on the levels' free-climb holds (markup 16-20, see "Free climbing"): free movement
@@ -1357,7 +1402,7 @@ No side-by-side comparison with the original game was made.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
   see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
   model, ledge-grapple transitions, exe rappel speeds (ours are [I]).
-- Missing: sprint on stairs / slopes (`ng_sprint_up` / `_down`), sprint jumps and swim / beam sprint,
+- Missing: sprint on stairs / slopes (`ng_sprint_up` / `_down`), sprint jumps and beam sprint,
   state-chart conditions (`PlayerSC_*`, `PSCCF_*`); combat: grenade crouch / perch / under-water
   placing, the
   assault rifle / tranquilizer / Thor's hammer, projectile flight for the speargun (hitscan), mirrored side hit

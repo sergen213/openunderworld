@@ -333,6 +333,45 @@ struct ScriptedMeshes {
     }
 };
 
+// bend_* plants (game/Bend.hpp): each tick their bend vectors move the vertices as the bend VS's c88 terms do
+// (scene::MeshData::bend: pos += t3 s.x + t4 s.x² + t5 s.y + (t3.w, t4.w, t5.w) s.y², s = a v.xy + b of the vertex's
+// bone), on the CPU so the Enhanced preset and the shadow pass sway too; c88 itself stays zero. Plants beyond the fog
+// keep their last pose (no upload).
+struct BendMeshes {
+    std::vector<std::pair<int32_t, size_t>> meshes; // (intro uid, scene mesh with a bend basis)
+    uint64_t tick = ~uint64_t(0);
+    std::vector<ou::scene::Vertex> scratch;
+
+    void index(const ou::scene::SceneData& s) {
+        meshes.clear(), tick = ~uint64_t(0);
+        for (size_t i = 0; i < s.meshes.size(); ++i)
+            if (const auto at = s.meshes[i].origin.rfind(" @intro "); at != std::string::npos && !s.meshes[i].bend.empty())
+                meshes.push_back({std::atoi(s.meshes[i].origin.c_str() + at + 8), i});
+    }
+    void pose(const ou::game::World& w, const ou::scene::SceneData& s, ou::render::Renderer& r, glm::vec3 eye) {
+        if (w.ticks() == tick) return;
+        tick = w.ticks();
+        const auto& e = s.environment;
+        const float range = std::max({e.fogFar, e.waterFogFar, 20000.0f});
+        for (const auto& [uid, i] : meshes) {
+            const auto bend = w.bends().bend(uid);
+            const auto& m = s.meshes[i];
+            if (bend.empty() || glm::distance(glm::vec3(m.transform[12], m.transform[13], m.transform[14]), eye) > range) continue;
+            scratch = m.vertices;
+            for (size_t v = 0; v < scratch.size() && v < m.bend.size(); ++v) {
+                const size_t bone = m.skin.empty() ? 0 : m.skin[v].bone[0];
+                if (bone >= bend.size()) continue;
+                const glm::vec4 c = bend[bone];
+                const auto& t = m.bend[v];
+                float* p = scratch[v].position;
+                const float sx = c.x * p[0] + c.z, sy = c.y * p[1] + c.w;
+                for (int k = 0; k < 3; ++k) p[k] += t[k] * sx + t[4 + k] * sx * sx + t[8 + k] * sy + t[4 * k + 3] * sy * sy;
+            }
+            r.updateVertices(i, scratch);
+        }
+    }
+};
+
 void appendTriggerLines(const ou::script::Runtime& rt, std::vector<ou::render::DebugLine>& out) {
     for (const auto& [ab, c] : rt.debugLines()) out.push_back({{ab.first.x, ab.first.y, ab.first.z}, {ab.second.x, ab.second.y, ab.second.z}, c});
 }
@@ -1005,11 +1044,13 @@ struct EffectsView {
     std::map<std::string, UnitWater> unitWater;
     std::vector<std::pair<const ou::fx::FilterResource*, float>> waterFilters;
     ou::render::Underwater underwater;
+    ou::render::UnderwaterRays rays; // the camera unit's light rays (tru.exe 0x6D8C20), reset on a unit change
+    std::string raysUnit;
     bool submerged = false;
     glm::vec3 waterAt{0};
     static constexpr int32_t kWaterOwner = -3; // the enter list's effects, carried by Lara (tru.exe player prims 0x402)
-    void water(const ou::render::Camera& cam, const ou::game::World& w, ou::render::FrameOptions& fo, bool lists,
-               std::vector<std::string>& warnings) {
+    void water(const ou::render::Camera& cam, float aspect, float dt, const ou::game::World& w, ou::render::FrameOptions& fo,
+               bool lists, std::vector<std::string>& warnings) {
         waterFilters.clear();
         const auto& unit = w.currentUnit().data;
         auto it = unitWater.find(unit.name);
@@ -1052,6 +1093,20 @@ struct EffectsView {
             underwater.fog = true, underwater.fogNear = n + uw.env.waterFogNear * rest, underwater.fogFar = f + uw.env.waterFogFar * rest;
             for (int k = 0; k < 3; ++k) underwater.fogColor[k] = c[k];
         }
+        if (raysUnit != unit.name) { // the record's frame is the unit's: move it by the unit offset
+            auto r = uw.env.waterRays;
+            const glm::vec3 off = w.currentUnit().offset;
+            for (int c = 0; c < 3; ++c) r.origin[c] += off[c], r.sun[c] += off[c];
+            for (float& z : r.depthZ) z += off.z;
+            rays.reset(r), raysUnit = unit.name;
+        }
+        rays.step(dt);
+        if (under) // 0x6D8C20 draws them only fully under water, with the volume's waves; weight 1 - murk / 0.7 (murk 0)
+            for (const auto& v : fo.waterVolumes)
+                if (eye.x >= v.min[0] && eye.x <= v.max[0] && eye.y >= v.min[1] && eye.y <= v.max[1] && eye.z >= v.min[2] && eye.z <= v.max[2]) {
+                    underwater.rayWeight = rays.draw(cam, aspect, v.waves, underwater.rays) ? 1.0f : 0.0f;
+                    break;
+                }
         fo.underwater = &underwater; // the colours tint Enhanced water from above too; strength 0 = no pass, no fog
         if (lists && library && unit.drm && under != submerged) {
             const auto& ps = w.player().state();
@@ -1414,6 +1469,7 @@ int main(int argc, char** argv) {
     LaraMeshes lara;
     EnemyMeshes enemyMeshes;
     ScriptedMeshes objects;
+    BendMeshes plants;
     std::vector<std::string> warnings;
     CombatView combat;
     GadgetView gadgets;
@@ -1569,6 +1625,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "ou-game: %s\n", renderer->description().c_str());
     for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
     objects.index(scene);
+    plants.index(scene);
     for (const auto& w : warnings) std::fprintf(stderr, "ou-game: warning: %s\n", w.c_str());
     auto debugLines = opt.showCollision ? collisionLines(world->collision()) : std::vector<ou::render::DebugLine>{};
     std::vector<ou::render::DebugLine> lineBuffers[2]; // per-frame lines (see the draw call)
@@ -2242,6 +2299,7 @@ int main(int argc, char** argv) {
                 effects.addTextures(scene);
                 for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
                 objects.index(scene);
+                plants.index(scene);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "ou-game: streaming the render scene failed: %s\n", e.what());
                 streamed.version = world->unitsVersion();
@@ -2269,6 +2327,7 @@ int main(int argc, char** argv) {
         }
         poseBikes(*world, clock.alpha(), streamed.bikeIndices, scene, *renderer, bikeScratch);
         objects.pose(world->script(), scene, *renderer);
+        plants.pose(*world, scene, *renderer, c.position);
         combat.pose(*world, s, clock.alpha(), scene, streamed.gunIndices, streamed.gunSlots, *renderer);
         gadgets.pose(*world, streamed, scene, *renderer);
         objects.hide(world->collected, scene, *renderer, effects.system);
@@ -2492,7 +2551,7 @@ int main(int argc, char** argv) {
                               : uw.kind == P::Snow ? ou::render::Weather::Kind::Snow : ou::render::Weather::Kind::None;
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
-        if (!mainMenu) effects.water(cam, *world, fo, opt.gfx.effects, warnings);
+        if (!mainMenu) effects.water(cam, float(w) / float(std::max(1, h)), float(dt), *world, fo, opt.gfx.effects, warnings);
         if (!mainMenu && opt.gfx.effects) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;

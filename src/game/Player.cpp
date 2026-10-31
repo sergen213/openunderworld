@@ -117,6 +117,9 @@ bool openBelow(const collision::CollisionMesh& col, const collision::Markup& m, 
     return false;
 }
 
+bool swimSprintClip(std::string_view c) { return c == "swim_surface_sprint_forward" || c == "swim_submerged_sprint"; }
+bool swimExhaustedClip(std::string_view c) { return c == "swim_surface_exhausted" || c == "swim_submerged_exhausted"; }
+
 } // namespace
 
 std::string_view stateName(State s) {
@@ -651,10 +654,11 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     jumpHeld_ = a.jump;
     dropHeld_ = a.drop;
     s_.fallHeight = 0;
-    // Sprint stamina (tru.exe under Wine, l4_trailstart): sprinting spends it second for second, anything else but the
-    // exhaustion clips refills it as fast.
-    if (s_.clip == "sprint_loop") s_.sprintUsed += dt;
-    else if (s_.clip != "ng_sprint_to_exhaust" && s_.clip != "ng_run_exhaust") s_.sprintUsed = std::max(0.0f, s_.sprintUsed - dt);
+    // Sprint stamina (tru.exe under Wine, l4_trailstart; swimming the same, l2_cliffclimb sea): sprinting spends it
+    // second for second, anything else but the exhaustion clips refills it as fast.
+    if (s_.clip == "sprint_loop" || swimSprintClip(s_.clip)) s_.sprintUsed += dt;
+    else if (s_.clip != "ng_sprint_to_exhaust" && s_.clip != "ng_run_exhaust" && !swimExhaustedClip(s_.clip))
+        s_.sprintUsed = std::max(0.0f, s_.sprintUsed - dt);
     s_.regrabCooldown = std::max(0.0f, s_.regrabCooldown - dt);
     const float mag = std::min(1.0f, glm::length(move));
     const float target = mag > 0.1f ? std::atan2(move.y, move.x) : s_.yaw;
@@ -1187,6 +1191,27 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         play("ng_idle", true);
     };
     const float surf = surfaceZ();
+    // Stroke of a swim that moves: at the surface swim_surface_fast_forward, under water swim_sub; with Shift held the
+    // sprint stroke at swimSprintFactor (tru.exe under Wine, l2_cliffclimb sea: 53.94 vs 44.95 units per frame at the
+    // surface and under water; request 896 / 934 clips, the surface pose fits swim_surface_sprint_forward). The surface
+    // strokes are lara.drm's 3-way surface blends, request 881 (normal) and 896 (sprint): tru.exe's surface-swim pose
+    // fits swim_surface_fast_forward at body rms 10.7 vs swim_sub 30.0 (docs/GAMEPLAY.md). The sprint stamina is the
+    // run sprint's: after sprintSeconds the exhaustion clip plays once at normal speed, then she sprints again once
+    // sprintResume is refilled (Wine: 9.95 s sprint, then 2.13 s normal / 0.95 s sprint while Shift stays held).
+    // Returns the speed factor.
+    auto stroke = [&](bool surface) {
+        const std::string_view normal = surface ? "swim_surface_fast_forward" : "swim_sub",
+                               fast = surface ? "swim_surface_sprint_forward" : "swim_submerged_sprint";
+        if (swimSprintClip(s_.clip)) {
+            if (s_.sprintUsed >= t_.sprintSeconds) play(surface ? "swim_surface_exhausted" : "swim_submerged_exhausted", false);
+            else play(a.sprint ? fast : normal, true);
+        } else if (swimExhaustedClip(s_.clip)) {
+            if (clipDone()) play(normal, true);
+        } else {
+            play(a.sprint && s_.sprintUsed <= t_.sprintSeconds - t_.sprintResume ? fast : normal, true);
+        }
+        return swimSprintClip(s_.clip) ? t_.swimSprintFactor : 1.0f;
+    };
     // Swim velocity: towards `dir * swimSpeed * wish` at swimAccel, slowing at swimDecel (tru.exe ramps).
     auto swimTowards = [&](vec3 dir, float wish) {
         const float speed = glm::length(s_.vel), want = t_.swimSpeed * wish;
@@ -1219,17 +1244,18 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         s_.pitch += std::clamp(-s_.pitch, -t_.turnRate * dt, t_.turnRate * dt); // level out after surfacing
         if (jumpPressed && tryClimbOut()) break;
         if (dropPressed) { s_.state = State::SwimDive; s_.pitch = 0; play("swim_surfacedive", false); break; }
+        float speed = 1;
         if (wantsMove) {
             s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
-            // swim_sub as under water (tru.exe has one SwimState for both): Lara's spine in tru.exe swimming at the
-            // surface fits swim_sub at the root (rms 4), swim_surface only 28 lower than it plays (docs/GAMEPLAY.md).
-            if (s_.state == State::SwimTread) { s_.state = State::SwimSurface; play("swim_sub", true); }
+            // tru.exe has one SwimState for surface and under water; the surface strokes are its surface blends (stroke).
+            s_.state = State::SwimSurface;
+            speed = stroke(true);
         } else if (s_.state == State::SwimSurface) {
             s_.state = State::SwimTread;
             play("swim_surfaceidle", true);
         }
         advanceClip(dt);
-        swimTowards(forward(), s_.state == State::SwimSurface ? mag : 0.0f);
+        swimTowards(forward(), s_.state == State::SwimSurface ? mag * speed : 0.0f);
         s_.pos.z = surf;
         // Shallow water: stand on the floor.
         if (auto floor = col_.groundProbe(s_.pos, t_.swimDepth); floor && floor->normal.z >= t_.minFloorNormalZ) standUp(floor->point.z);
@@ -1249,8 +1275,8 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
             if (wantsMove) s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
             const float wish = std::atan2(v, h);
             s_.pitch += std::clamp(wish - s_.pitch, -t_.turnRate * dt, t_.turnRate * dt);
-            swimTowards(forward() * std::cos(s_.pitch) + vec3(0, 0, std::sin(s_.pitch)), std::min(1.0f, std::hypot(h, v)));
-            play("swim_sub", true);
+            const float k = stroke(false);
+            swimTowards(forward() * std::cos(s_.pitch) + vec3(0, 0, std::sin(s_.pitch)), std::min(1.0f, std::hypot(h, v)) * k);
         } else {
             s_.pitch += std::clamp(-s_.pitch, -t_.turnRate * dt, t_.turnRate * dt);
             swimTowards(forward(), 0.0f);

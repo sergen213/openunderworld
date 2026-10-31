@@ -138,6 +138,10 @@ struct Underwater {
     float pass[2][4] = {}; // scene::Environment::waterPass (surface rgb + alpha at the eye, deep rgb + full-fog distance)
     bool fog = false;      // below the surface: this fog replaces the unit fog (TRU's shaders, water, atmosphere)
     float fogColor[3] = {}, fogNear = 0, fogFar = 0;
+    // tru.exe's under-water light rays (render::UnderwaterRays): 50 x 50 additive image, rows top-down, 255 = 1, added
+    // over the screen (bilinear) x rayWeight; 0 = not drawn this frame. Both water qualities.
+    float rayWeight = 0;
+    std::array<uint8_t, 2500> rays{};
 };
 
 struct FrameOptions {

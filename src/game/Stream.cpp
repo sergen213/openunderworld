@@ -55,6 +55,15 @@ bool isMusic(const cdc::BigfileSet& bigfile, const std::string& name) {
     if (it != cache.end()) return it->second;
     return cache[name] = bigfile.read("pc-w\\music\\" + name + "\\" + name + ".mus").has_value();
 }
+
+// Bend data of object `name` (nullptr: none). ponytail: process-wide cache keyed by name, as isMusic.
+std::shared_ptr<const BendType> bendType(const cdc::BigfileSet& bigfile, const std::string& name) {
+    static std::map<std::string, std::shared_ptr<const BendType>> cache;
+    if (const auto it = cache.find(name); it != cache.end()) return it->second;
+    std::shared_ptr<const BendType> t;
+    if (auto b = bigfile.read("pc-w\\" + name + ".drm")) try { t = loadBendType(cdc::parseDrm(std::move(*b))); } catch (const cdc::FormatError&) {}
+    return cache[name] = t;
+}
 } // namespace
 
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
@@ -71,6 +80,7 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     u.portals = std::move(unit.portals);
     u.flashlightSpot = unit.flashlightSpot;
     u.cameraSplines = std::move(unit.cameraSplines);
+    u.wind = std::move(unit.wind);
     // tru.exe 0x5D40C0 picks the respawn intro among objects "checkpoint" / "invis_checkpoint".
     const auto list = bigfile.read("\\tr8\\pc-w\\objectlist.txt");
     const auto names = list ? formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})
@@ -85,6 +95,9 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
         if (const auto k = pickupKind(n->second)) u.pickups.push_back({in.uniqueId, *k, v3(in.position)});
         if (ammoWeapon(n->second)) u.weaponPickups.push_back({in.uniqueId, n->second, v3(in.position)});
         if (n->second == "motorcycle") u.vehicles.push_back({in.uniqueId, v3(in.position), in.rotation[2] - kPi / 2});
+        if (n->second.starts_with("bend_"))
+            if (auto t = bendType(bigfile, n->second))
+                u.bends.push_back({in.uniqueId, v3(in.position), v3(in.rotation), std::move(t)});
         if (n->second.find("_grapple") != std::string::npos && !n->second.starts_with("fx_")) {
             const GrappleKind k = in.scriptId && uberScript(bigfile, *drm, n->second, in.scriptId) ? GrappleKind::Mounted
                                   : n->second.find("wall") != std::string::npos ? GrappleKind::Wall

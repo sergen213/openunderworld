@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(OpenUnderworld VERSION 0.14.0 LANGUAGES CXX)
+project(OpenUnderworld VERSION 0.15.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,7 +56,7 @@ file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gen/sun_glsl.inc CONTENT "R\"o
 target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
 
 # Enhanced water / splash / underwater-post GLSL shared by GL (runtime compile) and Vulkan (glslc).
-foreach(s water.vert water.frag splash.vert splash.frag underwater.glsl atmosphere.glsl filter.glsl)
+foreach(s water.vert water.frag splash.vert splash.frag underwater.glsl atmosphere.glsl filter.glsl caustics.glsl)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${src})
   file(READ ${src} OU_WATER_SRC)
@@ -78,7 +78,8 @@ foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.v
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl
-                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl VERBATIM)
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
 # Original particle effects (src/fx sprites).
@@ -89,17 +90,19 @@ foreach(s fx.vert fx.frag)
                      DEPENDS ${src} VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
-# Enhanced water + splash (shared GLSL with GL, -DVULKAN=1 selects the descriptor syntax).
+# Enhanced water + splash (shared GLSL with GL, -DVULKAN=1 selects the descriptor syntax; water.frag includes sun.glsl
+# and shaders/caustics.glsl).
 foreach(s water.vert water.frag splash.vert splash.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}
-                     DEPENDS ${src} VERBATIM)
+                     DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
-# post.frag includes shaders/underwater.glsl, shaders/atmosphere.glsl and shaders/filter.glsl.
+# post.frag includes shaders/underwater.glsl (+ caustics.glsl), shaders/atmosphere.glsl and shaders/filter.glsl.
 set_property(SOURCE ${OU_VK_SPV_DIR}/post.frag.inc APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl
-             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl)
+             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl
+             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl)
 # Ray-traced scene variant (-DOU_RT: ray queries against the scene TLAS); only loaded on RT-capable devices.
 foreach(stage vert frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/scene.${stage})
@@ -327,7 +330,7 @@ endif()
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
 add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp
   src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/Progress.cpp
-  src/game/Vehicle.cpp src/game/Weather.cpp src/game/Gadgets.cpp src/game/Camera.cpp)
+  src/game/Vehicle.cpp src/game/Weather.cpp src/game/Gadgets.cpp src/game/Camera.cpp src/game/Bend.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine ou_input glm::glm PRIVATE SDL3::SDL3)
 # ---- ou_save: save games, atomic slots (docs/SAVES.md) ----
 add_library(ou_save STATIC src/save/Save.cpp)

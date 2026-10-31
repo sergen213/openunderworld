@@ -49,6 +49,7 @@ struct ParticleDef {
     float size0 = 0;
     uint8_t flags4 = 0, flags5 = 0;
     int8_t mode = 0;                       // +0x06: 0 free particles, 1 attached, 2 one persistent particle
+    bool flat = false;                     // drawn lying on the world XY plane, not facing the camera (parseParticleDef)
     int16_t segment = 0, segment2 = kNoSegment;
     float radiusMax = 0, radiusMin = 0;    // +0x10 / +0x6C spawn shell radius
     glm::vec3 velocity{0}, velocityRandom{0}, accel{0}, offset{0}; // +0x14 / +0x20 / +0x2C / +0x4C, per 30 Hz frame

@@ -4,6 +4,17 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.15.0] - 2026-10-30
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Kelp, sea fans and jungle plants (`bend_*` objects) now sway in each level's wind and bend away when Lara swims or walks through them, as in tru.exe (its "Bendie" springs and pulsing unit wind, reverse-engineered); both presets.
+- Enhanced water: new natural caustics replace the harsh sine stripes. They are an animated, world-anchored light network projected from the sun through the surface onto the submerged scene, seen both under water and from above on shallow beds. They respect sun shadows (the yacht's shadow stays clean) and surfaces facing away from the sun. They soften with depth and are absorbed and fogged by the water like the rest of the scene. Original water is unchanged.
+- The original game's water rings around a treading Lara and swimming sharks now lie flat on the water and spread outward, as in tru.exe; they were drawn facing the camera and stood up around Lara like a halo. They are refraction rings: with Vulkan they no longer show the seabed through the sea as dark brown rings, but a faint ripple of the water around her, as in the original. Treading Lara also makes visible soft ripples in the Enhanced wave field; before, her own body swallowed them.
+- Holding Shift (sprint) while swimming makes Lara swim 1.2 times as fast, at the surface and under water, with the original's sprint strokes; as in tru.exe it uses the run sprint's stamina (about 10 s, then a tired stroke at normal speed and short bursts while Shift stays held). Normal surface swimming now plays the original's surface stroke (`swim_surface_fast_forward`), which fits tru.exe's swimming Lara far better than `swim_sub` did.
+- Under water, the reef plants are back: sea fans, seaweed bushes, kelp, coral and other alpha-blended foliage now write depth as in tru.exe (blend modes 2-3 belong to its opaque pass). Before, the water effects looked through them at the seabed, so with Enhanced water the Thailand reef under the yacht showed only the plants' shadows.
+- Sun rays under water: the original's light rays are back in both water qualities. They are tru.exe's soft light columns hanging from the waving sea along the refracted sun, each one fading in and out on its own clock, in the Mediterranean, Thailand, Arctic and other sea units. Enhanced water also adds volumetric sun shafts that follow the sun, flicker with the waves and stop at sun shadows (about 0.17 ms).
+
 ## [0.14.0] - 2026-10-30
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

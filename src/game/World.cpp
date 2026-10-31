@@ -38,6 +38,9 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ledgeb_right", 3, 3}, {"ledgeb_climbup_fast", 6, 6}, {"swim_surfacedive", 4, 1}, {"swim_surface", 6, 12},
         {"swim_climbout", 12, 6}, {"swim_sub", 6, 8}, {"swim_sub_up", 6, 8}, {"swim_sub_down", 6, 8},
         {"swim_surfaceidle", 8, 6}, {"swim_jump_land", 6, 6}, {"swim_submerged_idle", 10, 10},
+        // surface stroke (request 881), swim sprint (896, 934) and its exhaustion (880, 921)
+        {"swim_surface_fast_forward", 8, 8}, {"swim_surface_sprint_forward", 8, 8}, {"swim_submerged_sprint", 10, 10},
+        {"swim_surface_exhausted", 8, 6}, {"swim_submerged_exhausted", 8, 4},
         // traversal (requests most often used for each clip)
         {"bbeam_walk", 5, 5}, {"bbeam_idle", 6, 6}, {"bbeam_walk_attach", 7, 1}, {"bbeam_jumpland", 5, 5},
         {"bbeam_walk_turn180", 5, 5}, {"drop_to_ledgeb", 3, 3}, {"ledgeb_jump_up", 8, 4}, {"ledgeb_jump_back", 5, 0},
@@ -173,6 +176,9 @@ const std::vector<std::string_view> kLaraClipNames = {
     "grapple_pull_up_heavy_begin", "grapple_pull_mid_heavy_begin", "grapple_pull_down_heavy_begin",
     "grapple_pull_up_light", "grapple_pull_mid_light", "grapple_pull_down_light",
     "grapple_pull_up_heavy", "grapple_pull_mid_heavy", "grapple_pull_down_heavy",
+    // surface stroke and swim sprint (Player::swim)
+    "swim_surface_sprint_forward", "swim_submerged_sprint", "swim_surface_exhausted", "swim_submerged_exhausted",
+    "swim_surface_fast_forward",
 };
 
 Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
@@ -346,6 +352,15 @@ void World::tick(const Actions& input) {
         script_.setUnits(refs);
         enemies_.setUnits(refs);
         scriptUnits_ = unitsVersion_;
+    }
+    if (!units_.empty()) { // bend_* plants (game/Bend.hpp) follow the loaded units, then sway and give way to Lara
+        if (bendUnits_ != unitsVersion_) {
+            std::vector<Bends::Unit> list;
+            for (const auto& u : units_) list.push_back({u.data.name, u.offset, &u.data.bends, &u.data.wind});
+            bends_.sync(list);
+            bendUnits_ = unitsVersion_;
+        }
+        bends_.tick(player_.state().pos, prev_.pos);
     }
     script_.tick({player_.state().pos, player_.state().yaw, a.move, a.interact}, &col_);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.

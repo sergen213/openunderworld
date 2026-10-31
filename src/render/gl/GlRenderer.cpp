@@ -636,6 +636,7 @@ public:
                 boundMesh = d.mesh;
             }
             if (int(blend) != state) setBlend(state = int(blend));
+            if (blend == scene::Blend::Alpha) glDepthMask(drawDepthWrite(s, op) ? GL_TRUE : GL_FALSE);
             if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
                 if (m.screenSamplers[d.sub]) { // reads the scene drawn so far: after the loop, from the copies
@@ -828,7 +829,7 @@ private:
     }
 
     // Opaque: depth write, LESS. Blended (the original's translucent pass 0x5066A0): no depth
-    // write, LEQUAL, blend per cdc mode.
+    // write, LEQUAL, blend per cdc mode; the draw loops turn depth writes back on for modes 2-3 (SubMesh::depthWrite).
     static void setBlend(int blend) {
         const auto b = scene::Blend(blend);
         const bool opaque = b == scene::Blend::Opaque;
@@ -1129,7 +1130,9 @@ private:
                 program = p;
             }
             glBindVertexArray(m.vao.get());
-            if (const scene::Blend blend = drawBlend(s, op); int(blend) != state) setBlend(state = int(blend));
+            const scene::Blend blend = drawBlend(s, op);
+            if (int(blend) != state) setBlend(state = int(blend));
+            if (blend == scene::Blend::Alpha) glDepthMask(drawDepthWrite(s, op) ? GL_TRUE : GL_FALSE);
             if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
                 glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));

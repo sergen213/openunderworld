@@ -31,6 +31,10 @@ constexpr float kRelax = 1e-4f;
 // leaves no continuous wake; it rings the water once per stroke / step (kStroke s, ring strength kStrokeRing) [I].
 constexpr float kLegs = 10.0f * S, kWakeSigma = 6.0f * S, kWake = 0.3f, kMinWade = 30.0f * S;
 constexpr float kStroke = 0.4f, kStrokeRing = 0.6f;
+// A standing / treading body's bob: a kick as wide as the body (crater radius sqrt 2 sigma ~ 2 x kLegs). A narrower
+// one falls inside the body, whose cells kick() leaves alone, and its ring left under 1 unit tall: invisible. This one
+// leaves a ~3-unit ring (half a stroke ring) spreading round from the body [I].
+constexpr float kBob = 4.0f * S, kBobSigma = 1.4f * kLegs;
 constexpr float kLaraHeight = 512.0f;
 } // namespace
 
@@ -210,8 +214,8 @@ float WaterSim::waterAt(vec2 p) const {
 }
 
 void WaterSim::ripple(vec3 p, float strength) {
-    // Strength 1 (splash): a 45-unit crater of width 64; 0.15 (a standing body's bob) 11.5 over 42; 0.6 (a weapon) 31
-    // over 54 (^0.7: faint kicks still read, a crowd's bobbing does not churn the whole pool). Joan x kWaterScale.
+    // Strength 1 (splash): a 45-unit crater of width 64; 0.6 (a stroke, a weapon) 31 over 54; 0.05 (a droplet) 5.5 over
+    // 40 (^0.7: faint kicks still read). Joan x kWaterScale.
     field_.kick(vec2(p), 7.0f * S * std::pow(strength, 0.7f), (6.0f + 4.0f * strength) * S);
 }
 
@@ -296,7 +300,7 @@ void WaterSim::tick(const World& w, float dt) {
         if (speed >= WaveField::kSpeed) {
             if (time_ - bob >= kStroke) ripple(vec3(vec2(p), h), kStrokeRing), bob = time_;
         } else if (speed > kMinWade) bob = time_;
-        else if (time_ - bob >= 1.2f + 0.3f * phase) ripple(vec3(vec2(p), h), 0.15f), bob = time_;
+        else if (time_ - bob >= 1.2f + 0.3f * phase) field_.kick(vec2(p), kBob, kBobSigma), bob = time_;
     };
     wade(ps.pos, prev.pos, kLaraHeight, bob_, 0.0f);
 

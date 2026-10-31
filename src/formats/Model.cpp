@@ -38,6 +38,8 @@ constexpr uint32_t kPosition = 0xD2F7D823, kNormal = 0x36F5E414, kTerrainNormal 
 // Skin attributes (D3DCOLOR). Byte k of the weights pairs with byte k of the indices; indices
 // address the batch bone palette (docs/formats/ANIMATION.md).
 constexpr uint32_t kSkinWeights = 0x48E691C0, kSkinIndices = 0x5156D8D3;
+// bend_* plants' bend basis (FLOAT4 each; their VS inputs TEXCOORD3-5, scene::MeshData::bend).
+constexpr uint32_t kBendX = 0x6E3DDDE9, kBendXX = 0x637EFB30, kBendY = 0x67BFE687;
 
 constexpr uint32_t kResourceTerrain = 24, kResourceModel = 26;
 constexpr uint32_t kMeshMagic = 0x6873654D; // "Mesh"
@@ -186,6 +188,20 @@ std::vector<scene::SkinInfluence> readSkin(const Reader& r, size_t off, uint32_t
     return out;
 }
 
+// Bend basis of `count` vertices; empty unless the declaration has all three bend attributes.
+std::vector<std::array<float, 12>> readBend(const Reader& r, size_t off, uint32_t count, const Decl& decl) {
+    const Elem* e[3] = {};
+    for (const auto& el : decl.elems)
+        for (int k = 0; k < 3; ++k)
+            if (el.hash == std::array{kBendX, kBendXX, kBendY}[k]) e[k] = &el;
+    if (!e[0] || !e[1] || !e[2]) return {};
+    std::vector<std::array<float, 12>> out(count);
+    for (uint32_t i = 0; i < count; ++i)
+        for (int k = 0; k < 3; ++k)
+            if (!readAttr(r.d.data() + off + size_t(i) * decl.stride + e[k]->offset, e[k]->format, &out[i][4 * size_t(k)])) return {};
+    return out;
+}
+
 // {u32 count, u32 ids[count]} list addressed by a relocated pointer at `ptrOffset`.
 std::vector<uint32_t> idList(const cdc::Section& s, uint32_t ptrOffset) {
     const auto p = cdc::internalPointer(s, ptrOffset);
@@ -211,6 +227,7 @@ struct Ctx {
         if (it == materials.end()) return sm;
         const MaterialState st = materialState(*it->second);
         sm.blend = st.blend, sm.alphaRef = st.alphaRef, sm.doubleSided = st.doubleSided, sm.castsShadow = st.castsShadow;
+        sm.depthWrite = st.depthWrite;
         sm.materialId = matIds[index];
         // Category 1 = diffuse (verified visually on Lara's face/teeth textures); materials
         // without one (e.g. hair, all categories 0) use the slot-0 texture (heuristic). Of several
@@ -306,6 +323,7 @@ void decodeModel(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& ou
             for (uint32_t i = 0; i < n; ++i) palette.push_back(r.u32(M + po + 4 * size_t(i)));
         }
         m.skin = readSkin(r, M + vtxOff, numVerts, decl, palette);
+        m.bend = readBend(r, M + vtxOff, numVerts, decl);
         for (uint32_t i = 0; i < batchPgs; ++i, ++pg) {
             const size_t P = M + pgOff + 0x40 * size_t(pg);
             const uint32_t first = r.u32(P + 0x10), tris = r.u32(P + 0x14);
@@ -423,6 +441,7 @@ MaterialState materialState(const cdc::Section& material) {
     // front) is approximated as two-sided too.
     st.doubleSided = (r.u32(0x40) & 0x880) != 0;
     st.castsShadow = (r.u32(0x44) & 0x40000000) && r.u32(0x38) < 4;
+    st.depthWrite = r.u32(0x38) == 2 || r.u32(0x38) == 3; // opaque pass (SubMesh::depthWrite)
     return st;
 }
 
