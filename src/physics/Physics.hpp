@@ -64,10 +64,11 @@ inline constexpr int kClassRigidBody = 34; // tru.exe 0x6BA570 (0x6D00E0 dispatc
 // cdc::FormatError on bad layouts.
 ObjectPhysics loadObjectPhysics(const cdc::Drm& object, uint32_t model = 0);
 // Face mask of object collision shapes: our own convention, outside the terrain bits (l4_pool terrain faces are 3) [I];
-// mask-0x0F queries see terrain only.
-inline constexpr uint8_t kObjectMask = 0x10;
-// Solid primitives of `segment` as one collision shape (faces masked kObjectMask) in that segment's frame; nullptr if it
-// has none. Spheres and capsules become their bounding boxes.
+// mask-0x0F queries see terrain only. Objects the gameplay camera collides with (ObjectBase oflags bit 0x02, tru.exe
+// 0x5E94C0; 101 of the 335 solid objects placed in units) also carry kCameraObjectMask (collision::kCameraMask).
+inline constexpr uint8_t kObjectMask = 0x10, kCameraObjectMask = 0x20;
+// Solid primitives of `segment` as one collision shape (faces masked kObjectMask, plus kCameraObjectMask for camera
+// colliders) in that segment's frame; nullptr if it has none. Spheres and capsules become their bounding boxes.
 std::shared_ptr<const collision::CollisionMesh> solidShape(const ObjectPhysics& o, int segment);
 
 // ---- rigid bodies -----------------------------------------------------------------------------------------

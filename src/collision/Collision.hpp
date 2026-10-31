@@ -30,6 +30,13 @@ struct Face {
 
 // tru.exe skips faces with flags bit 0x40 and faces whose mask shares no bit with the query mask.
 inline bool queryable(const Face& f, uint8_t mask) { return !(f.flags & 0x40) && (f.mask & mask); }
+// Query mask of the gameplay camera's collision. Terrain: tru.exe's collider queries faces with mask 2 (0x5EB9B0 ->
+// 0x5EAF60 -> 0x462E10) and skips terrain groups whose TerrainGroupExtra flags have 0x200 (0x5EB9B0 / 0x5EC360; its
+// rays 0x493330 -> filter 0x48EF50 skip 0x300), so loadLevelCollision clears bit 2 of those groups' faces (21 903
+// faces in 76 groups over the 82 units; every other terrain face has mask 3 or 0). Objects: only those with ObjectBase
+// oflags bit 0x02 (0x5E94C0 / 0x5E91D0 / 0x5E8940), which physics::solidShape marks with bit 0x20.
+// ponytail: the rays' extra 0x100-only skip (5 groups with faces, e.g. l2_norsehub 2) is not modelled.
+inline constexpr uint8_t kCameraMask = 0x22;
 
 // Level camera record (unit data +0x208 count, +0x20C 0x70-byte records; tru.exe 0x606xxx): where the gameplay camera
 // is drawn while Lara is on a markup whose camera commands select it (command 0x12, COLLISION.md "Camera records").

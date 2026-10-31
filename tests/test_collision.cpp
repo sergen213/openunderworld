@@ -263,6 +263,33 @@ TEST(CollisionRealData, TerrainGroupEnableGatesQueries) {
                                               u.col.vertices[u.col.faces[face].v[2]]) / 3.0f, 100)->face].group, 1);
 }
 
+// tru.exe's camera skips terrain groups with TerrainGroupExtra flag 0x200 (0x5EB9B0): their faces lose the camera bit,
+// so a camera query passes through them while Lara's queries (and an ordinary wall for the camera) still hit.
+TEST(CollisionRealData, CameraSkipsTheTerrainGroupsTruSkips) {
+    if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const Unit u = loadUnit("pc-w\\l4_pool.drm");
+    // Hit by a ray from 20 along the face's normal, both with all bits and with the camera mask.
+    const auto probe = [&](uint32_t i, uint8_t mask) {
+        const auto& f = u.col.faces[i];
+        const vec3 c = (u.col.vertices[f.v[0]] + u.col.vertices[f.v[1]] + u.col.vertices[f.v[2]]) / 3.0f, n = u.col.faceNormal(i);
+        const auto h = u.col.raycast(c + n * 20.0f, -n, 40, mask);
+        return h && h->face == i;
+    };
+    int skipped = 0, walls = 0;
+    for (uint32_t i = 0; i < u.col.faces.size(); ++i) {
+        const auto& f = u.col.faces[i];
+        if (f.mask == 1 && probe(i, 0xFF)) {
+            EXPECT_FALSE(probe(i, collision::kCameraMask)) << i;
+            ++skipped;
+        } else if (f.mask == 3 && walls < 100 && std::abs(u.col.faceNormal(i).z) < 0.3f && probe(i, 0xFF)) {
+            EXPECT_TRUE(probe(i, collision::kCameraMask)) << i;
+            ++walls;
+        }
+    }
+    EXPECT_GT(skipped, 10);
+    EXPECT_EQ(walls, 100);
+}
+
 TEST(CollisionRealData, PoolCollisionMarkupAndRenderAgreement) {
     if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
     const Unit u = loadUnit("pc-w\\l4_pool.drm");

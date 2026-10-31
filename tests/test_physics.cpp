@@ -189,6 +189,23 @@ TEST(PhysicsRealData, BallcourtLeverObject) {
     EXPECT_NEAR(physics::massProps(o).mass, 50.0f, 1e-4f);
 }
 
+// The gameplay camera collides only with objects whose oflags have bit 0x02 (tru.exe 0x5E94C0): the Thor slide door
+// does, a pole does not (its shape lacks kCameraObjectMask, so camera queries pass through it).
+TEST(PhysicsRealData, CameraCollidesOnlyWithFlaggedObjects) {
+    const auto* bf = bigfile();
+    if (!bf) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto mask = [&](const char* name) {
+        const auto o = physics::loadObjectPhysics(cdc::parseDrm(*bf->read(std::string("pc-w\\") + name + ".drm")));
+        for (int s = 0; s < int(o.segments.size()); ++s)
+            if (const auto shape = physics::solidShape(o, s)) return int(shape->faces[0].mask);
+        return -1;
+    };
+    EXPECT_EQ(mask("ar_ei_thor_slide_door"), physics::kObjectMask | physics::kCameraObjectMask);
+    EXPECT_EQ(mask("ar_pt_pole_a"), physics::kObjectMask);
+    EXPECT_EQ(physics::kCameraObjectMask & collision::kCameraMask, physics::kCameraObjectMask);
+    EXPECT_EQ(physics::kObjectMask & collision::kCameraMask, 0);
+}
+
 TEST(PhysicsRealData, AllObjectsParse) {
     const auto* bf = bigfile();
     if (!bf) GTEST_SKIP() << "OU_GAME_DIR not set";

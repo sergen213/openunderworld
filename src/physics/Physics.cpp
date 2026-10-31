@@ -118,13 +118,14 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
 
 std::shared_ptr<const collision::CollisionMesh> solidShape(const ObjectPhysics& o, int segment) {
     auto shape = std::make_shared<collision::CollisionMesh>();
+    const uint8_t mask = kObjectMask | (o.oflags & 2 ? kCameraObjectMask : 0);
     for (const auto& p : o.prims) {
         if (p.segment != segment || !p.solid()) continue;
         // ponytail: spheres/capsules as their bounding boxes; exact shapes when a curved prim must block precisely.
         const vec3 size = p.kind == PrimKind::Box      ? p.size
                           : p.kind == PrimKind::Sphere ? vec3(2 * p.radius)
                                                        : vec3(2 * p.radius, 2 * p.radius, p.length + 2 * p.radius);
-        collision::addBox(*shape, glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot), size, kObjectMask);
+        collision::addBox(*shape, glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot), size, mask);
     }
     if (shape->faces.empty()) return nullptr;
     shape->build();

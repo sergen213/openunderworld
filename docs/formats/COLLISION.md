@@ -49,6 +49,9 @@ TerrainGroup (0x50)
   Indices are u32 (largest mesh: 71 705 faces, 40 590 vertices).
   - tru.exe face queries (0x462E10 box query, 0x462FA0 ray query) skip a face when `flags & 0x40` or
     `(mask & queryMask) == 0`; callers pass query masks 0x0F, 0xFF or a parameter [O]. `queryable()` mirrors this.
+  - The gameplay camera queries mask 2 and skips terrain groups whose TerrainGroupExtra flags have 0x200 (tru.exe
+    0x5EB9B0 / 0x5EC360); `loadLevelCollision` clears bit 2 on those groups' faces (survey 2026-10-31: every face
+    is mask 3 or 0 otherwise; 76 groups, 21 903 faces). See `collision::kCameraMask`.
   - l4_pool: mask = 3 on every terrain face, 0xFF on the signal quad; flags low bits vary (0x20..0x3F, plus 0x80) [O];
     clientFlags ∈ {0, 0x04, 0x80, 0xA0, 0x1A0}, material ∈ {1, 17, 27} [O]. Their meanings are [U] (TRL calls the
     fields adjacencyFlags/collisionFlags/clientFlags/materialType; adjacency for +0x0C is [I] at best since bit 0x40 is a skip flag).

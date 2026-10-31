@@ -546,13 +546,15 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
         }
     }
     // Pivot clearance (0x5EA050): when the 474.075 above her root is blocked, the pivot is pulled back toward bone 1 to
-    // keep 2 x 13.91 clear of what is in the way.
+    // keep 2 x 13.91 clear of what is in the way. Every camera query sees only what tru.exe's camera collides with
+    // (collision::kCameraMask: not the terrain groups it skips, only objects with oflags bit 2).
+    constexpr uint8_t kMask = collision::kCameraMask;
     vec3 target = *focus_;
-    if (col_.raycast(s.pos, {0, 0, 1}, 474.075f) && bones_.size() > 1) {
+    if (col_.raycast(s.pos, {0, 0, 1}, 474.075f, kMask) && bones_.size() > 1) {
         const vec3 from(model * bones_[1][3]), ray = target - from;
         if (glm::length(ray) > 1e-3f) {
             const vec3 dir = glm::normalize(ray);
-            if (const auto h = col_.raycast(from, dir, glm::length(ray) + 2 * kRadius)) target = from + dir * (h->t - 2 * kRadius);
+            if (const auto h = col_.raycast(from, dir, glm::length(ray) + 2 * kRadius, kMask)) target = from + dir * (h->t - 2 * kRadius);
         }
     }
     const float kDistance = bike ? 1711.0f : mode.distance; // [I] VehicleCamera pulls back on the bike (our old 950/700 ratio)
@@ -694,7 +696,7 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     // plain pull-in 0x5F0810: the nearest contact of the swept sphere more than 10 along (+0x138) puts it there, never
     // nearer than 97.98 (+0x14). A camera record with +0x6D lets it through within its radius of the record's point
     // (0x606070).
-    const auto clear = [&](vec3 to) { return !col_.sweepSphere(target, kRadius, to - target); };
+    const auto clear = [&](vec3 to) { return !col_.sweepSphere(target, kRadius, to - target, kMask); };
     vec3 out = proposed;
     if (orbit_.hintMarkup >= 0 && rec->inside && glm::distance(cam_.position, orbit_.hint) < rec->radius) {
         // inside the record's radius: no collision
@@ -702,17 +704,17 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
         const float len = glm::length(proposed - target);
         if (len > 10.0f) {
             const vec3 d = (proposed - target) / len;
-            if (const auto h = col_.sweepSphere(target + d * 10.0f, kRadius, d * (len - 10.0f)))
+            if (const auto h = col_.sweepSphere(target + d * 10.0f, kRadius, d * (len - 10.0f), kMask))
                 out = target + d * std::clamp(10.0f + (len - 10.0f) * h->t, std::min(97.98f, len), len);
         }
     } else if (!clear(proposed)) {
         vec3 straight = proposed;
-        if (const auto h = col_.sweepSphere(target, kRadius, proposed - target)) straight = target + (proposed - target) * h->t;
+        if (const auto h = col_.sweepSphere(target, kRadius, proposed - target, kMask)) straight = target + (proposed - target) * h->t;
         float straightCost = glm::distance(straight, proposed);
         if (glm::distance(straight, target) < 10.0f) {
             const vec3 ray = proposed - target;
             const float len = glm::length(ray);
-            const auto h = len > 1e-3f ? col_.raycast(target, ray / len, len) : std::nullopt;
+            const auto h = len > 1e-3f ? col_.raycast(target, ray / len, len, kMask) : std::nullopt;
             straight = h ? h->point : proposed;
             straightCost = len;
         }
@@ -755,7 +757,7 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     if (mode.floorProbe && dist > 1e-3f) {
         const vec3 d = (out - target) / dist;
         const float far = std::max(dist, kDistance);
-        const auto h = col_.raycast(target, d, far);
+        const auto h = col_.raycast(target, d, far, kMask);
         const float f = std::max(300.0f, h ? h->t : far);
         if (f < orbit_.dist) orbit_.dist = f, out = target + d * f, orbit_.speed = 0;
     }
