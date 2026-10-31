@@ -70,7 +70,7 @@ float ouSunShadowVisibility(vec3 p);
 // (l1_seafloor lies 95 m down: a soft shimmer kept for the look; physically caustics fade within ~10-20 m). Fades with
 // the normal facing the refracted sun, in the sun shadow map, and with the footprint past ~60 units per pixel.
 // Multiply the lit colour by it. The single fold branch loses the light of overlapping folds, so gaps keep half their
-// deficit (about -20%; lines up to +200% at full strength).
+// deficit (about -10%; lines up to +100% at full strength).
 // sunColor.w = strength (0: no sun).
 vec3 ouCausticLight(vec3 p, vec3 n, float h, float footprint) {
     if (w.sunColor.w <= 0.0 || h <= 0.0 || w.sunDir.z < 0.05 || dot(n, n) < 1e-12) return vec3(1.0);
@@ -90,5 +90,5 @@ vec3 ouCausticLight(vec3 p, vec3 n, float h, float footprint) {
     vec3 k = vec3(ouFocus(H, 0.975 * c, e), ouFocus(H, c, e), ouFocus(H, 1.025 * c, e));
     k = max(k, 0.5 + 0.5 * k);
     vec3 tint = w.sunColor.rgb / max(max(w.sunColor.r, w.sunColor.g), max(w.sunColor.b, 1e-3)); // the sun's hue
-    return 1.0 + (0.7 * amount) * tint * (k - 1.0);
+    return 1.0 + (0.35 * amount) * tint * (k - 1.0); // 0.35: strength (was 0.7, toned down by request)
 }

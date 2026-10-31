@@ -137,8 +137,9 @@ vec3 ouShafts(vec3 c, vec2 uv) {
         lit += exp(-sigma * (sunPath + t)) * (b * v * dt);
     }
     lit = ouQuadMean(lit, px); // the quad's four interleaved marches: 64 steps' worth, no dither left
-    vec3 s = w.sunColor.rgb * w.sunColor.w * lit * (4.0e-3 * 12.566371 * ouPhase(dot(dir, l), 0.7));
-    vec3 cap = 0.3 * sf; // soft clamp under a third of the water's own colour: streaks, never a saturated blob
+    const float kShaftStrength = 0.5; // scales both in-scatter and cap: exactly halves the shafts (was 1.0)
+    vec3 s = w.sunColor.rgb * w.sunColor.w * lit * (kShaftStrength * 4.0e-3 * 12.566371 * ouPhase(dot(dir, l), 0.7));
+    vec3 cap = kShaftStrength * 0.3 * sf; // soft clamp under the water's own colour: streaks, never a saturated blob
     return c + cap * (1.0 - exp(-s / cap));
 }
 vec3 ouUnderwater(vec3 c, vec2 uv) {
