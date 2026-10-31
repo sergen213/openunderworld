@@ -1,4 +1,11 @@
 #version 460
+#ifdef OU_RT // water_rt.frag.inc (Vulkan, FrameOptions::rtReflections): reflections traced against the scene TLAS (set 2)
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#define OU_RT_SET 2
+#endif
 // Enhanced water surface. Base: "Realistic Water with Traced and Simple Reflection and Refraction V2" by
 // smallcableboi (godotshaders.com, CC0; docs/RESEARCH.md), translated from Godot to TRU and improved:
 // - Schlick Fresnel with the real cosine (the original fed the dot product to cos() and divided by it).
@@ -261,10 +268,34 @@ void main() {
         // ---- reflection: traced SSR, the sky where it misses or fades at the screen border ----
         fresnel = schlick(cosI);
         vec3 refl = sky;
+#ifdef OU_RT
+        // Ray traced (render/sun.glsl ouRtHit: water excluded): sees what SSR cannot (off screen, behind Lara, under
+        // foreground objects). A hit that lies on screen and is the visible surface there takes the rasterised colour
+        // (the translated shaders' exact look, its fog included); the others are shaded by ouRtLit (texture x vertex
+        // colour x lambert x one shadow ray), scaled by waterPass[2].w (the translated shaders read ~2x brighter than the
+        // generic shading of the same hit) and fogged by their eye distance like the scene; misses keep the sky.
+        vec3 ro = p + vec3(0.0, 0.0, 2.0);
+        vec3 hc, hn;
+        float hd = ouRayInputsFinite(ro, rs) ? ouRtHit(ro, rs, hc, hn) : -1.0;
+        if (hd >= 0.0) {
+            vec3 hp = ro + rs * hd;
+            float he = distance(hp, w.eye.xyz);
+            bool inside;
+            vec2 su = ouScreenUv(hp, inside);
+            float sd = inside ? textureLod(uDepth, su, 0.0).r : 1.0;
+            if (sd < 0.999999 && abs(distance(ouWorld(su, sd), w.eye.xyz) - he) < 20.0 + 0.01 * he)
+                hc = textureLod(uScene, su, 0.0).rgb;
+            else
+                hc = mix(min(ouRtLit(hp, hn, hc) * max(w.waterPass[2].w, 1.0), vec3(1.0)), w.fogColor.rgb,
+                         clamp((he - w.fogRange.x) / max(1.0, w.fogRange.y - w.fogRange.x), 0.0, 1.0));
+            refl = toLinear(hc), conf = 1.0;
+        }
+#else
         if (ouTrace(p + vec3(0.0, 0.0, 2.0), rs, 40.0 * kM, 2.0 * kM, huv, ht)) {
             conf = ouEdgeFade(huv, 0.08) * (1.0 - smoothstep(0.6, 1.0, ht / (40.0 * kM)));
             refl = mix(sky, toLinear(textureLod(uScene, huv, 0.0).rgb), conf);
         }
+#endif
         float shore = smoothstep(0.0, 0.2 * kM, cdepth); // the reflection fades in off the waterline
         c = mix(refr, refl, clamp(fresnel * w.fogRange.w, 0.0, 1.0) * shore);
 

@@ -4,6 +4,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [Unreleased]
+
+- Ray-traced water reflections (Vulkan, `rt: full`, or `--rt-reflections on|off` / `rt_reflections` / launcher checkbox): Enhanced water now mirrors what screen-space reflections missed, such as cliffs above the frame, things behind Lara and the yacht's hidden side, with shadowed rock reflecting dark. The sea no longer reflects itself. Reflections from below the surface and OpenGL still use SSR.
+
 ## [0.19.0] - 2026-10-31
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
