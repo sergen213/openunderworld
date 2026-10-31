@@ -129,6 +129,12 @@ const std::vector<std::string_view> kLaraClipNames = {
     "DICE_LW_reach_left", "DICE_LW_reach_right", "DICE_R_reach_up", "DICE_R_reach_down", "DICE_R_reach_left",
     "DICE_R_reach_right", "DICE_Rw_Reach_up", "DICE_Rw_Reach_down", "DICE_Rw_Reach_Left", "DICE_Rw_Reach_Right",
     "DICE_B_jump_up", "DICE_L_jump_up", "DICE_LW_jump_up", "DICE_R_jump_up", "DICE_Rw_jump_up",
+    // DICE jumps to far holds: the anticipation (held while the stick points at one), then the launch sideways
+    "DICE_B_antic_Up", "DICE_B_antic_Left", "DICE_B_antic_Right", "DICE_L_antic_up", "DICE_L_antic_left",
+    "DICE_L_antic_right", "DICE_LW_antic_up", "DICE_LW_antic_left", "DICE_LW_antic_right", "DICE_R_antic_up",
+    "DICE_R_antic_left", "DICE_R_antic_right", "DICE_Rw_antic_Up", "DICE_Rw_antic_Left", "DICE_Rw_antic_Right",
+    "DICE_B_Jump_Left", "DICE_B_jump_right", "DICE_L_jump_left", "DICE_L_jump_right", "DICE_LW_jump_left",
+    "DICE_LW_jump_right", "DICE_R_jump_left", "DICE_R_jump_right", "DICE_Rw_Jump_Left", "DICE_Rw_jump_right",
     "DICE_L_step_off_ground", "DICE_LW_step_off_ground", "DICE_R_step_off_ground",
     "DICE_B_to_B_DownDiagR", "DICE_B_to_B_DownR", "DICE_B_to_B_Left", "DICE_B_to_B_Right", "DICE_B_to_B_Up",
     "DICE_B_to_B_UpDiagL", "DICE_B_to_B_UpDiagR", "DICE_B_to_L_DownDiagL", "DICE_B_to_L_DownDiagR",

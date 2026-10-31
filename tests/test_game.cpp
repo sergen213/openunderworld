@@ -1842,7 +1842,7 @@ TEST(GameReal, CliffclimbStances) {
     float prevYaw = w.player().state().yaw;
     // The wall's route, hold by hold (markup indices): up the left column, right around the corner, up the corner column,
     // left along the top row to hold 5 under ledge 45. The stick points at the next hold as seen on the rock.
-    const std::vector<int> plan = {21, 11, 38, 12, 7, 19, 17, 13, 18, 14, 15, 6, 4, 40, 8, 3, 9, 5};
+    const std::vector<int> plan = {21, 11, 38, 12, 7, 19, 17, 13, 18, 14, 16, 15, 6, 4, 40, 8, 3, 9, 5};
     size_t next = 1;
     std::vector<int> route{w.player().state().climbHold};
     float maxRootChange = 0;
@@ -1899,6 +1899,54 @@ TEST(GameReal, CliffclimbStances) {
     EXPECT_LT(maxTurn, 0.02f) << "the heading turns smoothly (re-pinned to each face it jumped by up to 0.067 rad)";
     EXPECT_GT(minCamera, 1000.0f) << "the camera stays back (its probe started touching the rock and collapsed onto the "
                                      "pivot: position = target, a NaN view, the screen white)";
+}
+
+// DICE jumps on the same wall: pushing at a hold out of a move's reach leans toward it (DICE_<s>_antic_<dir>); jump
+// launches (DICE_<s>_jump_<dir>) onto it, and the settle swing plays on landing. From hold 18 the corner column has a
+// 475 gap up to hold 10 (lara.drm q31's arc rises 480); from 10 hold 1 is 905 to the right (q28 / q29: past 410).
+TEST(GameReal, CliffclimbDiceJumps) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    auto col = collision::loadLevelCollision(cdc::parseDrm(std::move(*bf.read("pc-w\\l2_cliffclimb.drm"))));
+    col.build();
+    game::World w(std::move(col), anims, {{-23835, -3600, 300}, glm::radians(90.0f)});
+    for (int t = 0; t < 60 && w.player().state().state != State::Climb; ++t) w.tick(forward());
+    ASSERT_EQ(w.player().state().state, State::Climb);
+    const std::vector<int> plan = {21, 11, 38, 12, 7, 19, 17, 13, 18};
+    size_t next = 1;
+    for (int t = 0; t < 3600 && next < plan.size(); ++t) {
+        const auto& s = w.player().state();
+        if (s.climbHold == plan[next] && !s.climbWarp) { ++next; continue; }
+        const vec3 d = w.collision().markup[size_t(plan[next])].points[0] - w.collision().markup[size_t(s.climbHold)].points[0];
+        const vec3 right = glm::normalize(glm::cross(-s.climbNormal, vec3(0, 0, 1)));
+        Actions a;
+        a.move = glm::normalize(vec2(glm::dot(d, right), d.z));
+        w.tick(a);
+    }
+    for (int t = 0; t < 120; ++t) w.tick({});
+    ASSERT_EQ(w.player().state().climbHold, 18);
+    // Jumps to `hold` pushing `move`: antic while pushing, then jump, flight, settle, idle at the hold.
+    const auto jumpTo = [&](vec2 move, int hold, const char* antic, const char* launch, const char* settle) {
+        Actions push;
+        push.move = move;
+        const int from = w.player().state().climbHold;
+        for (int t = 0; t < 10; ++t) w.tick(push);
+        EXPECT_EQ(w.player().state().clip, antic);
+        EXPECT_EQ(w.player().state().climbHold, from) << "out of a move's reach";
+        push.jump = true;
+        w.tick(push);
+        EXPECT_EQ(w.player().state().clip, launch);
+        EXPECT_EQ(w.player().state().climbHold, hold);
+        for (int t = 0; t < 120 && w.player().state().clip != std::string(settle); ++t) w.tick({});
+        EXPECT_EQ(w.player().state().clip, settle);
+        EXPECT_LT(glm::distance(w.player().state().pos, w.collision().markup[size_t(hold)].points[0] - vec3(0, 0, 158.025f)), 1e-2f);
+        for (int t = 0; t < 60; ++t) w.tick({});
+        EXPECT_EQ(w.player().state().state, State::Climb);
+        EXPECT_NE(w.player().state().clip.find("Idle"), std::string::npos) << w.player().state().clip;
+    };
+    jumpTo({0, 1}, 10, "DICE_B_antic_Up", "DICE_B_jump_up", "DICE_R_settle_up");
+    jumpTo({1, 0}, 1, "DICE_R_antic_right", "DICE_R_jump_right", "DICE_R_settle_right");
 }
 
 namespace {
