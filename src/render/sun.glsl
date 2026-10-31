@@ -16,6 +16,7 @@ OU_SHADOW_UBO uniform OuShadow {
     vec4 sun;         // xyz unit vector toward the sun; w = 1: sun shadows on (map or rays)
     vec4 eye;         // xyz camera position; w = shadow rays per pixel
     vec4 screen;      // 1 / width, 1 / height, ray tracing (0 off, 1 shadows, 2 + water reflections), unused
+    uvec4 lights;     // local-light shadow rays: x / y shadow-light bits (light table 0-31 / 32-63), z rays per light (0 off)
 } ouShadow;
 OU_SHADOW_TEX uniform sampler2DShadow ouShadowMap; // atlas: the 3 cascades side by side
 
@@ -91,6 +92,32 @@ float ouVisible(vec3 o, vec3 d) {
     rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsTerminateOnFirstHitEXT, kOuMaskShadow, o, 0.0, d, kOuTMax);
     ouResolveCandidates(rq);
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+}
+// Unoccluded segment o -> o + d tMax (unit d): local-light shadow rays stop short of the light.
+float ouVisibleWithin(vec3 o, vec3 d, float tMax) {
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsTerminateOnFirstHitEXT, kOuMaskShadow, o, 0.0, d, tMax);
+    ouResolveCandidates(rq);
+    return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+}
+// Local light: a disc of kOuLightSize radius facing p (lamp flame / flashlight lens size [I]); rays stop kOuLightClear
+// short of its centre so a fixture's own housing (brazier, lamp glass) around the light does not shadow it [I].
+const float kOuLightSize = 15.0, kOuLightClear = 40.0;
+// Soft shadow toward the light at lp: `rays` points on its disc (golden-angle spiral, per-pixel rotation as ouRtSun,
+// offset by `seed` so the lights of one pixel do not share their pattern).
+float ouRtLight(vec3 p, vec3 n, vec3 lp, int rays, float seed) {
+    vec3 o = p + n * (2.0 + 2.0e-4 * distance(p, ouShadow.eye.xyz));
+    vec3 l = normalize(lp - o);
+    vec3 t1 = normalize(cross(l, abs(l.z) < 0.9 ? vec3(0, 0, 1) : vec3(1, 0, 0))), t2 = cross(l, t1);
+    float rot = 6.2831853 * fract(seed + 52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float v = 0.0;
+    for (int i = 0; i < rays; ++i) {
+        float r = sqrt((float(i) + 0.5) / float(rays)), a = rot + float(i) * 2.3999632;
+        vec3 q = lp + kOuLightSize * r * (cos(a) * t1 + sin(a) * t2) - o;
+        float len = length(q);
+        v += len > kOuLightClear + 1.0 ? ouVisibleWithin(o, q / len, len - kOuLightClear) : 1.0;
+    }
+    return v / float(rays);
 }
 // Soft sun shadow: `rays` directions in the sun cone (golden-angle spiral, rotated per pixel by interleaved
 // gradient noise so the 2x2 quad average sees 4x as many distinct directions).
@@ -190,6 +217,34 @@ float ouSunBegin(bool sunLit) {
     return sunLit ? ouSunVisibility(ouP, ouN, true, true) : 1.0;
 #else
     return sunLit ? ouSunVisibility(ouP, ouN, true, false) : 1.0;
+#endif
+}
+// Local-light shadows (OU_RT with ouShadow.lights.z rays): visibility of the object's light slots `slots` (bit s: the
+// program reads slot s's colour, which ShaderTranslate scales by vis[s]) from ouP, after ouSunBegin. tru.exe gives its
+// shadow lights (DTP +0x144C, scene::Light::shadow) shadow maps in slots 0-2 (0x5042B0); here the first 4 slots of the
+// light set (strongest first, original::lightSet) whose light is a shadow light trace, where the light reaches ouP
+// (inside its radius, in front of the spot's cone and of the face). Uniform control flow: slot / light tests are per
+// draw, the per-pixel ones only gate the traced value.
+void ouLightsBegin(uint slots, out float vis[6]) {
+    for (int s = 0; s < 6; ++s) vis[s] = 1.0;
+#ifdef OU_RT
+    const int rays = int(ouShadow.lights.z);
+    if (rays == 0) return;
+    for (int s = 0; s < 4; ++s) { // ponytail: 4-light budget (slots 4-5 stay unshadowed); raise with the ray budget
+        uint i = OU_LIGHT(s);
+        if ((slots >> uint(s) & 1u) == 0u || i > 63u || ((i < 32u ? ouShadow.lights.x >> i : ouShadow.lights.y >> (i - 32u)) & 1u) == 0u)
+            continue;
+        // Light registers (original::fillLights): R0 the spot apex, R1 direction, R2 (1 / radius, 0, -apex / radius),
+        // R3 (cone scale, cone bias, apex plane); the light itself sits apex units ahead of R0.
+        vec4 r0 = ouFrame.lights[i * 5u], r1 = ouFrame.lights[i * 5u + 1u], r2 = ouFrame.lights[i * 5u + 2u], r3 = ouFrame.lights[i * 5u + 3u];
+        vec3 lp = r0.xyz - r1.xyz * (r2.z / r2.x), fromApex = ouP - r0.xyz;
+        float d = length(fromApex);
+        bool traces = !gl_HelperInvocation && ouRayInputsFinite(ouP, ouN) && ouRayInputsFinite(lp, vec3(0.0)) && d > 1.0 &&
+                      d * r2.x + r2.z < 1.0 && dot(fromApex / d, r1.xyz) * r3.x + r3.y > 0.0 && dot(ouN, lp - ouP) > 0.0;
+        float w = ouQuadSum(traces ? 1.0 : 0.0);
+        float v = ouQuadSum(traces ? ouRtLight(ouP, ouN, lp, rays, 0.37 * float(s)) : 0.0);
+        vis[s] = w > 0.0 ? v / w : 1.0;
+    }
 #endif
 }
 // After the program: RT water reflections on materials the backend flags reflective (fixedParams.w bit 2).

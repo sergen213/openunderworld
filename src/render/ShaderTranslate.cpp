@@ -172,7 +172,7 @@ public:
             h += "layout(location = 0) out vec4 ouColor;\n";
             // Sun shadow / RT hooks (render/sun.glsl, defined by the backend with OU_SUN): first thing in main and before
             // the alpha test; SunLight colour reads (c212) are scaled by the visibility.
-            h += "#ifdef OU_SUN\nfloat ouSunBegin(bool sunLit);\nvec4 ouSunEnd(vec4 c);\n#endif\n";
+            h += "#ifdef OU_SUN\nfloat ouSunBegin(bool sunLit);\nvec4 ouSunEnd(vec4 c);\nvoid ouLightsBegin(uint slots, out float vis[6]);\n#endif\n";
             for (unsigned n = 0; n < std::max(colorOuts_, 1u); ++n) pre += "    vec4 oC" + std::to_string(n) + " = vec4(0.0);\n";
             if (depthOut_) pre += "    vec4 oDepth = vec4(gl_FragCoord.z);\n";
             post += "    ouColor = oC0;\n"
@@ -204,9 +204,15 @@ public:
             body += ind + line + "\n";
             if (in.op == If || in.op == IfC || in.op == Loop || in.op == Rep || in.op == Else) ++depth;
         }
-        if (p_.pixel) // after the body: statement() set out_.sunLit
+        if (p_.pixel) { // after the body: statement() set out_.sunLit and lightsLit_
+            // Light colours (slot register 4) read by the body are scaled by their local-light shadow visibility
+            // (render/sun.glsl ouLightsBegin; 1 without OU_SUN or RT).
+            if (lightsLit_)
+                pre = "#ifdef OU_SUN\n    float ouLightVis[6];\n    ouLightsBegin(" + std::to_string(lightsLit_) +
+                      "u, ouLightVis);\n#else\n    const float ouLightVis[6] = float[6](1.0, 1.0, 1.0, 1.0, 1.0, 1.0);\n#endif\n" + pre;
             pre = std::string("#ifdef OU_SUN\n    float ouSunVis = ouSunBegin(") + (out_.sunLit ? "true" : "false") +
                   ");\n#else\n    const float ouSunVis = 1.0;\n#endif\n" + pre;
+        }
         return h + "void main() {\n" + pre + body + post + "}\n";
     }
 
@@ -217,6 +223,7 @@ private:
     std::set<unsigned> misc_;
     unsigned temps_ = 0, colorOuts_ = 0;
     bool usesA0_ = false, usesAL_ = false, usesP0_ = false, depthOut_ = false, colorFromVertex_ = false;
+    mutable unsigned lightsLit_ = 0; // bit s: the PS reads light slot s's colour (constRef)
 
     std::string constRef(unsigned n) const {
         if (floatDefs_.count(n)) return "c" + std::to_string(n) + "_def";
@@ -238,9 +245,12 @@ private:
         if (n >= unsigned(kFramePs)) throw Fail("PS constant out of range");
         // Shadow/NonShadowLights: 5 registers per slot from the object's light set (ShaderTranslate.hpp).
         if (n >= unsigned(kLightSlotBase) && n < unsigned(kLightSlotBase + kLightSlots * kLightRegs)) {
-            const unsigned k = n - kLightSlotBase;
-            return "ouFrame.lights[min(OU_LIGHT(" + std::to_string(k / kLightRegs) + "), " + std::to_string(kMaxLights - 1) +
-                   "u) * 5u + " + std::to_string(k % kLightRegs) + "u]";
+            const unsigned k = n - kLightSlotBase, slot = k / kLightRegs;
+            const std::string reg = "ouFrame.lights[min(OU_LIGHT(" + std::to_string(slot) + "), " + std::to_string(kMaxLights - 1) +
+                                    "u) * 5u + " + std::to_string(k % kLightRegs) + "u]";
+            if (k % kLightRegs != 4) return reg;
+            lightsLit_ |= 1u << slot;
+            return "(" + reg + " * ouLightVis[" + std::to_string(slot) + "])";
         }
         // FogColor: 0 for the additive blend modes 5/6 (tru.exe 0x5066A0).
         if (n == 0) return "((int(ouMat.fixedParams.w) & 2) != 0 ? vec4(0.0) : ouFrame.ps[0])";

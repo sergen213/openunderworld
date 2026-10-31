@@ -4,6 +4,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [Unreleased]
+
+- Ray-traced local-light shadows (Vulkan, `rt: full`, or `--rt-lights on|off` / `rt_lights` / launcher checkbox): the point and spot lights the original marks as shadow casters (lamps, torches, the flashlight's spot) now cast soft shadows of Lara and the scenery, as tru.exe's light shadow maps did; until now every local light shone through walls and Lara.
+
 ## [0.19.0] - 2026-10-31
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

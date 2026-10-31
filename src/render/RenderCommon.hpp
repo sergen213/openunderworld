@@ -58,8 +58,11 @@ struct SunShadowBlock {
     glm::vec4 sun;                      // toward the sun; w 1 = sun shadows on
     glm::vec4 eye;                      // camera position; w = shadow rays per pixel
     glm::vec4 screen;                   // 1 / width, 1 / height, ray tracing mode (0, 1 shadows, 2 full), 0
+    // Local-light shadow rays (sun.glsl ouLightsBegin): x / y = shadow-light bits over the light table (env.lights 0-31 /
+    // 32-63, scene::Light::shadow), z = rays per light and pixel (0 = off), w unused.
+    glm::uvec4 lights{0};
 };
-static_assert(sizeof(SunShadowBlock) == kShadowCascades * 64 + 6 * 16);
+static_assert(sizeof(SunShadowBlock) == kShadowCascades * 64 + 7 * 16);
 struct SunShadow {
     glm::mat4 lightViewProj[kShadowCascades]; // per cascade tile, GL clip convention (backends remap z as needed)
     SunShadowBlock block;

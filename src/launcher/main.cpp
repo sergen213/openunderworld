@@ -291,6 +291,7 @@ private:
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
     QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_, *upscaler_, *fsrQuality_;
     QCheckBox* frameGeneration_;
+    QCheckBox* rtLights_;
     QDoubleSpinBox* sharpness_;
     QSpinBox *width_, *height_;
     QDoubleSpinBox *fov_, *brightness_;
@@ -385,10 +386,15 @@ private:
         rtQuality_->addItem("Medium (2 rays/pixel)", "medium");
         rtQuality_->addItem("High (4 rays/pixel)", "high");
         rtQuality_->setCurrentIndex(std::max(0, rtQuality_->findData(q(g.rtQuality))));
+        rtLights_ = new QCheckBox("Local-light shadows (flashlight, fires)");
+        rtLights_->setToolTip("Ray-traced shadows of the original's shadow-casting point / spot lights; default on with "
+                              "\"Shadows + water reflections\"");
+        rtLights_->setChecked(g.rtLights.value_or(g.rt == "full"));
         auto rtEnable = [this] { // RT needs the enhanced preset
             bool on = gfxPreset_->currentData().toString() == "enhanced";
             rt_->setEnabled(on);
             rtQuality_->setEnabled(on);
+            rtLights_->setEnabled(on);
         };
         connect(gfxPreset_, &QComboBox::currentIndexChanged, this, rtEnable);
         rtEnable();
@@ -476,6 +482,7 @@ private:
         f->addRow("Preset", gfxPreset_);
         f->addRow("Ray tracing", rt_);
         f->addRow("RT quality", rtQuality_);
+        f->addRow("", rtLights_);
         f->addRow("MSAA", msaa_);
         f->addRow("Sun shadows", shadows_);
         f->addRow("Shaders", shaders_);
@@ -844,6 +851,9 @@ private:
         // RT needs the enhanced preset: "auto" resolves to off for original, so resolve() never throws.
         g.rt = rt_->isEnabled() ? s(rt_->currentData().toString()) : "auto";
         g.rtQuality = s(rtQuality_->currentData().toString());
+        // Unset when it matches the RT mode's default (on with full), so a later mode change keeps the default.
+        if (const bool lights = rtLights_->isChecked(); lights == (g.rt == "full")) g.rtLights.reset();
+        else g.rtLights = lights;
         g.msaa = msaa_->currentData().toInt();
         g.shadows = overrideValue(shadows_);
         g.originalShaders = shaders_->currentIndex() == 1 ? std::optional(false) : std::nullopt; // unset = original
