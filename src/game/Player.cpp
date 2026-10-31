@@ -373,8 +373,10 @@ void Player::airMove(float dt, vec2 move) {
     if (!tryClimb(true)) tryRail(true); // ledges, poles, ladders, perches and rock faces win over a rail
 }
 
-// Ledge grab: markup type 1 ("ledgegrab") polylines. The hands (hang pose) must pass the ledge height
-// while falling, within grabReach horizontally, with Lara facing the ledge.
+// Ledge grab: markup type 1 ("ledgegrab") polylines. The hands (hang pose) must pass the ledge height while falling,
+// with Lara facing the ledge, from grabReach in front of its line to anywhere over it while her root is still on her
+// side: pressed square against the wall under a ledge at its face, the capsule (radius 79) holds the root 79 short of
+// the line and the hands, 141.7 ahead, reach 63 over it (a running jump into l2_cliffclimb's ledge 911 missed it).
 bool Player::tryGrab(vec3 prevPos) {
     // Faster than grabMinVz (up to twice) only a saving grab holds [I]; the vertical window grows to one tick's fall.
     if (s_.regrabCooldown > 0 || s_.vel.z < 2 * t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
@@ -391,13 +393,14 @@ bool Player::tryGrab(vec3 prevPos) {
             if (len2 < 1e-4f) continue;
             const float u = std::clamp(glm::dot(xy(hand - p0), seg) / len2, 0.0f, 1.0f);
             const vec3 q = glm::mix(p0, p1, u);
-            if (glm::length(xy(hand - q)) > t_.grabReach) continue;
             if (hand.z > q.z + 10.0f || prevHand.z < q.z - window || hand.z < q.z - window) continue;
             // Lara's side of the ledge: the wall is the other side; she must be facing it.
             const vec2 dir = seg / std::sqrt(len2);
             vec2 out(-dir.y, dir.x);
             float side = 1;
             if (glm::dot(xy(s_.pos - q), out) < 0) side = -1, out = -out;
+            const float over = glm::dot(xy(hand - q), -out); // hands past the line (> 0) or short of it
+            if (over < -t_.grabReach || std::abs(glm::dot(xy(hand - q), dir)) > t_.grabReach) continue;
             if (glm::dot(xy(forward()), -out) < 0.5f) continue;
             s_.ledge = int(li);
             s_.ledgeSeg = int(si);
@@ -482,8 +485,9 @@ bool Player::tryBeam(std::string_view clip, bool anyHeading) {
     return false;
 }
 
-// Standing near a ledge (markup 1) at floor height whose far side (away from Lara) drops more than 200 within
-// 240 units of the line (ledge lines can sit well inside the collision top: l4_pool 1253 by up to ~180):
+// Standing within 250 [I] of a ledge (markup 1; a hurdle_onto leaves her 208 past it) at floor height whose far side
+// (away from Lara) drops more than 200 within 240 units of the line (ledge lines can sit well inside the collision
+// top: l4_pool 1253 by up to ~180):
 // drop_to_ledgeb, which starts facing the drop and turns half round into the hang. Placed so the clip's root
 // ends on the hang pose.
 bool Player::tryDropToHang() {
@@ -494,7 +498,7 @@ bool Player::tryDropToHang() {
         const auto& m = col_.markup[li];
         if (m.type != 1) continue;
         const OnLine o = closestOn(m, s_.pos);
-        if (o.seg < 0 || o.dist > 200.0f || o.dist >= bestOn.dist || std::abs(o.q.z - s_.pos.z) > 40.0f) continue;
+        if (o.seg < 0 || o.dist > 250.0f || o.dist >= bestOn.dist || std::abs(o.q.z - s_.pos.z) > 40.0f) continue;
         const vec2 dir = segDir(m, o.seg), n(-dir.y, dir.x);
         const float side = glm::dot(xy(s_.pos - o.q), n) > 0 ? -1.0f : 1.0f; // hang on the side away from Lara
         if (!openBelow(col_, m, o.seg, o.t, side)) continue;
@@ -532,31 +536,43 @@ bool Player::canClimbUp() const {
 // from a walk or standing [I]. The nearest rise plays, its root rise scaled to the ledge (State::ClimbUp). [I] heights
 // stepUp..340, the root within radius + 40 of the line, facing it within 53 degrees, a walkable floor within 40 of the
 // ledge where the clip ends, from where she is or moved up to 100 along the ledge (the nearest such start).
-bool Player::tryHurdle(bool running) {
+// Higher ledges, up to 650 [I] (high_200's 632 + its hands' 10; the prologue's 725 wall takes a jump and a grab),
+// need the jump (which reaches radius + 120 [I]): lara.drm's
+// hurdle_ground_attach_mid_100 / mid_150 / high_200 (no root motion) pull her up until the hands are on an edge 316 /
+// 474 / 632 above the feet (+3..+10) in the pose hurdle_onto starts from (hands 319, 103 ahead); she is raised by the
+// difference at the switch and hurdle_onto's 317 rise, scaled, ends on the ledge (State::ClimbUp). The clip of the
+// nearest of the three heights plays [I].
+bool Player::tryHurdle(bool running, bool jumped) {
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
         if (m.type != 1) continue;
         const OnLine o = closestOn(m, s_.pos);
-        if (o.seg < 0 || o.u < 0 || o.u > segLen(m, o.seg) || o.dist > t_.radius + 40.0f) continue;
+        if (o.seg < 0 || o.u < 0 || o.u > segLen(m, o.seg) || o.dist > t_.radius + (jumped ? 120.0f : 40.0f)) continue;
         const float h = o.q.z - s_.pos.z;
-        if (h <= t_.stepUp || h > 340.0f) continue;
+        if (h <= t_.stepUp || h > (jumped ? 650.0f : 340.0f)) continue;
         vec2 out = vec2(-segDir(m, o.seg).y, segDir(m, o.seg).x);
         if (glm::dot(xy(s_.pos - o.q), out) < 0) out = -out; // Lara's side
         if (glm::dot(xy(forward()), -out) < 0.6f) continue;
-        const std::string_view clip = !running ? "hurdle_onto" : h < 240.0f ? "hurdle_low_onto" : "hurdle_low_onto_100";
-        const anim::Clip* c = anims_.find(clip);
-        if (!c) continue;
-        const vec3 move = toWorld(rootTranslation(*c, c->durationSeconds(), false) - rootTranslation(*c, 0, false));
+        const std::string_view clip = h > 340.0f ? (h < 395.0f ? "hurdle_ground_attach_mid_100" : h < 553.0f ? "hurdle_ground_attach_mid_150"
+                                                                                                            : "hurdle_ground_attach_high_200")
+                                      : !running   ? "hurdle_onto"
+                                      : h < 240.0f ? "hurdle_low_onto"
+                                                   : "hurdle_low_onto_100";
+        const anim::Clip* c = anims_.find(h > 340.0f ? "hurdle_onto" : clip);
+        if (!c || !anims_.find(clip)) continue;
+        // Mid / high: the attach clip draws her square to the ledge, hands (103 ahead of the root) on it (ClimbUp).
+        const vec2 from = h > 340.0f ? xy(o.q) + out * 103.0f : xy(s_.pos);
+        const vec3 move = rotYaw(h > 340.0f ? yawOf(-out) : s_.yaw, rootTranslation(*c, c->durationSeconds(), false) - rootTranslation(*c, 0, false));
         const auto supported = [&](float along) {
             const float u = o.u + along;
             if (u < 0 || u > segLen(m, o.seg)) return false;
-            const auto g = col_.groundProbe(vec3(xy(s_.pos + move) + segDir(m, o.seg) * along, o.q.z + 100), 140);
+            const auto g = col_.groundProbe(vec3(from + xy(move) + segDir(m, o.seg) * along, o.q.z + 100), 140);
             return g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - o.q.z) <= 40;
         };
         float along = 0;
         while (!supported(along) && along > -100.0f) along = along > 0 ? -along : 25.0f - along; // 0, 25, -25, 50, ...
         if (!supported(along)) continue;
-        s_.pos += vec3(segDir(m, o.seg) * along, 0);
+        if (h <= 340.0f) s_.pos += vec3(segDir(m, o.seg) * along, 0);
         s_.ledge = int(li), s_.ledgeSeg = o.seg, s_.ledgeT = std::clamp(o.t + along, 0.0f, segLen(m, o.seg)), s_.ledgeSide = 1;
         s_.vel = vec3(0);
         s_.state = State::ClimbUp;
@@ -674,7 +690,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (enterWater()) break; // standing in water deeper than swimDepth
         const float diff = std::abs(wrapAngle(target - s_.yaw));
         if (jumpPressed && s_.state != State::Land) {
-            if (tryHurdle(s_.state == State::Run) || tryPerch(false)) break; // a low ledge ahead / a perch
+            if (tryHurdle(s_.state == State::Run, true) || tryPerch(false)) break; // a low ledge ahead / a perch
             // tru.exe (Wine): the stick behind her turns her round into a running jump; to a side, a standing one.
             s_.runJump = s_.state == State::Run || (wantsMove && diff > 1.75f);
             if (s_.runJump && s_.state != State::Run) s_.yaw = target;
@@ -748,7 +764,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop)
             tryBeam("bbeam_walk_attach", false);
         const bool grounded = s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop;
-        if (grounded && wantsMove && glm::dot(move, xy(forward())) > 0.5f * mag && tryHurdle(s_.state == State::Run)) break;
+        if (grounded && wantsMove && glm::dot(move, xy(forward())) > 0.5f * mag && tryHurdle(s_.state == State::Run, false)) break;
         // Pushing into a climbable rock face starts climbing (a jump keeps its normal arc).
         if (wantsMove && glm::dot(move, xy(forward())) > 0.5f && !tryLadder(false)) tryClimb(false);
         if ((s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop) && tryRail(false)) break;
@@ -983,6 +999,25 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::ClimbUp: {
         // Full root motion, no collision: the clip lifts her over the edge. A hurdle's rise is scaled to the ledge: each
         // tick takes the clip's share of what is left to the ledge height.
+        if (s_.clip.starts_with("hurdle_ground_attach") && s_.ledge >= 0) {
+            // Square up to the ledge, hands (103 ahead) on its edge, over the attach clip; then hurdle_onto from its
+            // start pose, raised so its hands stay where the attach clip left them.
+            const auto& m = col_.markup[size_t(s_.ledge)];
+            const vec3 q = pointOn(m, s_.ledgeSeg, s_.ledgeT);
+            vec2 out(-segDir(m, s_.ledgeSeg).y, segDir(m, s_.ledgeSeg).x);
+            if (glm::dot(xy(s_.pos - q), out) < 0) out = -out;
+            const anim::Clip* a = anims_.find(s_.clip);
+            const float f = a ? std::min(1.0, dt / std::max(double(dt), a->durationSeconds() - s_.clipTime)) : 1.0f;
+            s_.pos += vec3((xy(q) + out * 103.0f - xy(s_.pos)) * f, 0);
+            s_.yaw = wrapAngle(s_.yaw + wrapAngle(yawOf(-out) - s_.yaw) * f);
+            advanceClip(dt);
+            if (!clipDone()) break;
+            const auto end = a ? anims_.handsAt(*a, a->durationSeconds()) : std::nullopt;
+            play("hurdle_onto", false);
+            const anim::Clip* o = anims_.find(s_.clip);
+            if (const auto start = o ? anims_.handsAt(*o, s_.clipTime) : std::nullopt; start && end) s_.pos.z += end->z - start->z;
+            break;
+        }
         const anim::Clip* c = anims_.find(s_.clip);
         const float riseLeft = c ? rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z : 0.0f;
         vec3 d = toWorld(advanceClip(dt));

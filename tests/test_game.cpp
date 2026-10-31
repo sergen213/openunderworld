@@ -587,9 +587,9 @@ TEST(GameReal, PoolRunReplayStaysOnFloor) {
     EXPECT_LT(moved, 1.05 * expected);
 }
 
-// l4_pool ledge markup id 1253 (rock ledge at z 3562, lower floor 523 units below): a standing jump
-// from the lower floor grabs it, a climb-up ends standing on the rock top.
-TEST(GameReal, PoolLedgeGrabAndClimb) {
+// l4_pool ledge markup id 1253 (rock ledge at z 3562, lower floor 523 units below, rock top walkable): a standing
+// jump from the lower floor pulls her straight up (hurdle_ground_attach_mid_150, then hurdle_onto) onto the top.
+TEST(GameReal, PoolRockHurdle) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     auto bytes = bf.read("pc-w\\l4_pool.drm");
@@ -599,23 +599,29 @@ TEST(GameReal, PoolLedgeGrabAndClimb) {
     EXPECT_NEAR(w.player().state().pos.z, 3039.5f, 1);
     Actions jump;
     jump.jump = true;
-    for (int i = 0; i < 90; ++i) w.tick(i == 5 ? jump : Actions{});
     const auto& s = w.player().state();
-    ASSERT_EQ(s.state, State::Hang);
-    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1253);
-    const vec3 hands = vec3(w.player().modelMatrix(s.pos, s.yaw) * glm::vec4(w.anims().hangHandOffset, 1));
-    EXPECT_NEAR(hands.z, 3562, 1);
-    float lastClimbZ = 0, snap = -1;
-    for (int i = 0; i < 90; ++i) {
+    const auto hands = [&] {
+        const anim::Clip* c = w.anims().find(s.clip);
+        return vec3(w.player().modelMatrix(s.pos, s.yaw) * glm::vec4(*w.anims().handsAt(*c, s.clipTime), 1));
+    };
+    std::vector<std::string> clips;
+    float lastClimbZ = 0, snap = -1, handsJump = -1;
+    vec3 prevHands(0);
+    for (int i = 0; i < 120; ++i) {
         w.tick(i == 5 ? jump : Actions{});
-        if (s.state == State::ClimbUp) lastClimbZ = s.pos.z;
+        if (clips.empty() || clips.back() != s.clip) {
+            if (s.clip == "hurdle_onto") handsJump = glm::length(hands() - prevHands); // hands stay on the edge
+            clips.push_back(s.clip);
+        }
+        if (s.state == State::ClimbUp) lastClimbZ = s.pos.z, prevHands = hands();
         else if (snap < 0 && lastClimbZ != 0) snap = std::abs(s.pos.z - lastClimbZ);
     }
+    EXPECT_EQ(clips, (std::vector<std::string>{"ng_idle", "hurdle_ground_attach_mid_150", "hurdle_onto", "ng_idle"}));
     EXPECT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 3571, 1); // rock top
-    // The climb starts where ledgeb_climbup_fast expects the ledge, so its root motion ends on the ledge
-    // height; the remaining snap is the rock top (3571) sitting 9 above the ledge markup (3562). Played from
-    // the hang root the clip ended ~150 above the ledge.
+    EXPECT_LT(handsJump, 25);
+    // hurdle_onto's rise is scaled to end on the ledge height; the remaining snap is the rock top (3571) sitting 9
+    // above the ledge markup (3562).
     EXPECT_LT(snap, 10);
 }
 
@@ -1326,8 +1332,8 @@ TEST(GameReal, TempleLedgeJumpsUpAndBack) {
     run({{-8411.9f, -7173.9f, 1400}, glm::radians(90.0f)}, 1158, forward(-1), 1159);
 }
 
-// l4_pool rock ledge 1253 (hands z 3562; the existing grab test's spawn): grab, climb onto the rock top, and
-// drop (crouch button) goes back down into the hang on 1253.
+// l4_pool rock ledge 1253 (hands z 3562; PoolRockHurdle's spawn): onto the rock top, and drop (crouch button) goes
+// back down into the hang on 1253.
 TEST(GameReal, PoolDropToHang) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1336,8 +1342,7 @@ TEST(GameReal, PoolDropToHang) {
     jump.jump = true;
     auto w = unitWorld(bf, "l4_pool", spawn);
     const auto& s = w.player().state();
-    for (int i = 0; i < 90; ++i) w.tick(i == 5 ? jump : Actions{});
-    for (int i = 0; i < 90; ++i) w.tick(i == 5 ? jump : Actions{}); // climb up
+    for (int i = 0; i < 120; ++i) w.tick(i == 5 ? jump : Actions{}); // hurdle onto the top
     ASSERT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 3571, 1);
     Actions drop;
@@ -1348,6 +1353,68 @@ TEST(GameReal, PoolDropToHang) {
     ASSERT_EQ(s.state, State::Hang);
     EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1253);
     EXPECT_NEAR(handsOf(w, w.anims().hangHandOffset).z, 3562, 1);
+}
+
+// l2_cliffclimb's basic obstacles (the shore plateau west of the start boat, floor ~3000-3200): walking into the
+// 169-high step (ledge 941) hurdles onto it; a standing jump at the 474-high block (939) pulls her up onto it
+// (hurdle_ground_attach_mid_150 -> hurdle_onto); the 614-high wall (911) is caught from a standing jump with the
+// stick and from a running jump (pressed square against its face: hands 63 over the ledge line), then climbed.
+TEST(GameReal, CliffclimbObstaclesAndLedgeGrabs) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto unitBytes = *bf.read("pc-w\\l2_cliffclimb.drm");
+    const auto anims = game::loadLaraAnims(bf);
+    // Ticks `input` from the spawn; returns the clips played (in order) and the ledge ids she was attached to.
+    struct Run { std::vector<std::string> clips; std::set<int> ledges; game::PlayerState end; float snap = -1; };
+    const auto run = [&](vec3 pos, float yawDeg, int ticks, auto input) {
+        game::World w(collision::loadLevelCollision(cdc::parseDrm(std::vector<uint8_t>(unitBytes))), anims, {pos, glm::radians(yawDeg)});
+        Run r;
+        float lastClimbZ = 0;
+        for (int t = 0; t < ticks; ++t) {
+            w.tick(input(t, w.player().state()));
+            const auto& s = w.player().state();
+            if (r.clips.empty() || r.clips.back() != s.clip) r.clips.push_back(s.clip);
+            if (s.ledge >= 0) r.ledges.insert(w.collision().markup[size_t(s.ledge)].id);
+            if (s.state == State::ClimbUp) lastClimbZ = s.pos.z;
+            else if (r.snap < 0 && lastClimbZ != 0) r.snap = std::abs(s.pos.z - lastClimbZ);
+        }
+        r.end = w.player().state();
+        return r;
+    };
+    const auto has = [](const Run& r, const char* clip) { return std::find(r.clips.begin(), r.clips.end(), clip) != r.clips.end(); };
+    // Waist-high step: walk / run into it.
+    Run r = run({-28152, -1550, 3100}, 90, 60, [](int, const game::PlayerState&) { return forward(); });
+    EXPECT_TRUE(has(r, "hurdle_low_onto"));
+    EXPECT_TRUE(r.ledges.count(941));
+    EXPECT_GT(r.end.pos.z, 3160); // on the step (floor 3010), running on over its sloping top
+    EXPECT_TRUE(r.end.state == State::Run || r.end.state == State::Idle);
+    // Chest-high block: a standing jump in front of it.
+    r = run({-28029, -650, 3300}, 90, 120, [](int t, const game::PlayerState&) { Actions a; a.jump = t == 5; return a; });
+    EXPECT_TRUE(has(r, "hurdle_ground_attach_mid_150") && has(r, "hurdle_onto")) << r.clips.size();
+    EXPECT_TRUE(r.ledges.count(939));
+    EXPECT_EQ(r.end.state, State::Idle);
+    EXPECT_NEAR(r.end.pos.z, 3638, 5);
+    EXPECT_LT(r.snap, 10);
+    // Head-high wall: catch it, hang, pull up (jump again once hanging).
+    const auto grabAndClimb = [&](const Run& g) {
+        EXPECT_TRUE(has(g, "ledgeb_attach_M"));
+        EXPECT_TRUE(has(g, "ledgeb_climbup_fast"));
+        EXPECT_TRUE(g.ledges.count(911));
+        EXPECT_EQ(g.end.state, State::Idle);
+        EXPECT_NEAR(g.end.pos.z, 3807, 5);
+        EXPECT_LT(g.snap, 10); // ledgeb_climbup_fast starts where its root motion ends on the ledge
+    };
+    const auto pullUp = [](int t, const game::PlayerState& s) { Actions a; a.jump = s.state == State::Hang && s.clip == "ledgeb_idle" && t % 2; return a; };
+    grabAndClimb(run({-29439, -900, 3300}, 110, 240, [&](int t, const game::PlayerState& s) {
+        Actions a = t >= 10 && t < 40 ? forward() : Actions{};
+        a.jump = t == 10 || pullUp(t, s).jump;
+        return a;
+    }));
+    grabAndClimb(run({-28734, -1318, 3300}, 107.3f, 240, [&](int t, const game::PlayerState& s) {
+        Actions a = s.state == State::Run || t < 25 ? forward() : Actions{};
+        a.jump = t == 25 || pullUp(t, s).jump;
+        return a;
+    }));
 }
 
 // l4_pool ledges 1250 -> 1251 (z 3864 + 495.6 hands): jump right along the wall (~420 across).

@@ -151,6 +151,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | PoleHang | `HPole_idleHangPerp` (127); swing `HPole_StartSwing` (143) → `HPole_swing` (146); stop `Hpole_swingstopA` (152) | 30, 1.0 s; 70, 2.33 s → 41, 1.37 s; 41, 1.37 s | none | idle/swing yes |
 | Pole fling | `hpole_perp_fling` (423) | 7, 0.5 s | (−1.1, −382.6, 69.5) not applied (ballistic flight) | no |
 | ClimbUp (hurdle onto a low ledge) | running `hurdle_low_onto` (1351) / `hurdle_low_onto_100` (1350); walking or standing `hurdle_onto` (1352) | 0.3 s / 0.3 s / 0.8 s | (0, −282.6, 162.7) / (0, −206.7, 316.1) / (0, −311.5, 317.3); applied, the rise scaled to the ledge | no |
+| ClimbUp (pull-up onto a 340..650 ledge, jump) | `hurdle_ground_attach_mid_100` / `_mid_150` / `_high_200`, then `hurdle_onto` | 0.33 s / 0.33 s / 0.57 s | none (hands end 323 / 477 / 642 above the feet, 103 ahead); raised by the hand difference into `hurdle_onto` | no |
 
 - [O] No exe string names these clips; they are the TR8 anim-list debug names in lara.drm. The state → clip choice is
   ours [I]. `ledgeb_*` (braced: feet on the wall) was chosen over `ledgeu_*` (free hang) [I].
@@ -163,9 +164,17 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   (`Player::tryHurdle`): a ledge (markup 1) stepUp..340 above the feet, the root within radius + 40 of its line, facing
   it within 53°, the stick pushing towards it (or jump pressed), and a walkable floor within 40 of the ledge where the
   clip ends: the clip of the nearest rise plays with its root rise scaled to the ledge (State::ClimbUp, no collision).
-  [I] the bounds, walking clip, and jump trigger; `hurdle_ground_attach_*` / `_over` / `_to_ledgeb` / `_down_*` (vaults
-  over, onto higher ones) are not played. The anim names count heights in cm: `_50` / `_100` / `_150` / `_200` rise
-  158 / 316 / 474 / 632 units.
+  The anim names count heights in cm: `_50` / `_100` / `_150` / `_200` rise 158 / 316 / 474 / 632 units.
+  Higher ledges, 340..650 above the feet, are pulled up onto with the jump (root within radius + 120):
+  `hurdle_ground_attach_mid_100` / `_mid_150` / `_high_200` (the nearest of 316 / 474 / 632) [O-data]: no root motion,
+  the hands end on an edge that high (323 / 477 / 642) and 103 ahead, in the pose `hurdle_onto` starts from (hands
+  319, 103 ahead, pelvis 331); Lara is drawn square to the ledge, hands on its line, over the attach clip, raised by
+  the hand difference at the switch, and `hurdle_onto`'s 317 rise, scaled, ends on the ledge. [I] the 650 bound (632 +
+  the clip's 10 above it; the prologue's 725 wall takes a grab), the jump trigger and reach, the height buckets;
+  `_low_*`, `high_150`, `_over` / `_to_ledgeb` / `_down_*` / `_cancel` (vaults over, onto the far side, back down) are
+  not played. Before, anything 340..650 high with a walkable top was a wall she could neither hurdle nor (with her
+  hands already above it standing, 495) grab: l2_cliffclimb's 474-high block 939, l4_pool's 523-high rock 1253 from
+  in front of it.
 - [O] The air clips have no root motion: flight is physics-driven (below). There is no `ledgeb_left` or
   `ledgeb_jump_left`; [I] the game probably mirrors the right clips. We play the right clips for both sides.
 - Clips whose root rotates (`drop_to_ledgeb`, `bbeam_walk_turn180`, `ledgeb_jump_back`, `ng_turn_center`) turn the
@@ -199,7 +208,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Edge slide-off | a capsule resting on an edge corner (floor-like contact, no floor under the root) gets ≥ 200 units/s outwards | [I] ours (fixes the Fall/Land alternation walking slowly off a ledge) |
 | Crouch capsule height | **260** | [O] player data +0x14 |
 | Turn rate (walk/run steering, swimming) | 6 rad/s | [I] from `ng_turn_center`; turning in place uses the clip's root rotation instead (above) |
-| Ledge grab | hands within 60 units horizontally, ledge between hand height −40 and +10, falling, facing the ledge (cos ≥ 0.5), **−2232.5 ≤ zVel ≤ 1545.6 units/s** | zVel window [O]: 0x759260 allows a grab when `−byte[data+0x834]·5.72443 ≤ zVel ≤ byte[data+0x833]·5.72443` (units per 30 Hz frame); the bytes are 13 and 9. Geometry [I] ours. What the exe does with the other bytes [O read, I meaning]: 0x759260 / 0x7594C0 get from 0x758DD0 the pelvis (segment 1, instance+0x90 matrix 1) position and its prediction N frames ahead (N = byte +0x820 = 0, resp. +0x821 = 3: the horizontal speed × N along the pelvis forward, z − ½·5.72443·N²), raise both by int +0x824 (**+63**) and sweep the segment between them with collision query 0x4935F0 (mask 0x2C19E7); a hit of kind 3 or 5 accepted by 0x5D3BA0/0x758F70 is repeated at int +0x828 (**−158**): the ledge face must span 158 below to 63 above the anchor. 0x7591E0: a probe from the root down int +0x82C (**31**) must find no floor. 0x758B00: the grab point must lie within float +0x838 (**951.3**) horizontally of a position stored at player-state +0x9C0 ([U] probably the take-off point). Which bone/point the anchor is is [U], so these are not used |
+| Ledge grab | hands from 60 units short of the line to anywhere over it (the root on her side; within 60 along it past its ends), ledge between hand height −40 and +10, falling, facing the ledge (cos ≥ 0.5), **−2232.5 ≤ zVel ≤ 1545.6 units/s** | zVel window [O]: 0x759260 allows a grab when `−byte[data+0x834]·5.72443 ≤ zVel ≤ byte[data+0x833]·5.72443` (units per 30 Hz frame); the bytes are 13 and 9. Geometry [I] ours. What the exe does with the other bytes [O read, I meaning]: 0x759260 / 0x7594C0 get from 0x758DD0 the pelvis (segment 1, instance+0x90 matrix 1) position and its prediction N frames ahead (N = byte +0x820 = 0, resp. +0x821 = 3: the horizontal speed × N along the pelvis forward, z − ½·5.72443·N²), raise both by int +0x824 (**+63**) and sweep the segment between them with collision query 0x4935F0 (mask 0x2C19E7); a hit of kind 3 or 5 accepted by 0x5D3BA0/0x758F70 is repeated at int +0x828 (**−158**): the ledge face must span 158 below to 63 above the anchor. 0x7591E0: a probe from the root down int +0x82C (**31**) must find no floor. 0x758B00: the grab point must lie within float +0x838 (**951.3**) horizontally of a position stored at player-state +0x9C0 ([U] probably the take-off point). Which bone/point the anchor is is [U], so these are not used |
 | Ledge targets (drop to hang, hang jumps) | the hang side must drop > 200 within 240 units of the ledge line | [I] ours; l4_pool's ledge 1253 sits up to ~180 inside the collision top, so a fixed 60-unit probe misses the drop |
 | Balance beam | root within 30 (x/y and z) of a type-14 line, heading within 45° of it from the ground (any heading from the air); walk 140 units/s (clip) | [I] attach distances ours; [O] markup type 14 = MUD 0x10000 BALANCEBEAM |
 | Jump assist | at take-off, of the jump-landing (2) and beam (14) lines the point nearest the natural landing (at its height) within **300** becomes the landing: horizontal velocity = Δxy / flight time, vertical unchanged | [O] solver 0x73EDC0: `v = (target − pos − ½·g·t²) / t` with g = −5.72443/frame², re-aimed every frame with the remaining time (0x751D10, player-state +0x77C) at the markup in +0xA64 whose MUD flags match 0x20830000 (jump landing, rail slide, perch, balance beam); speed cap player data +0xC10 = 18963 (never reached). [I] the 300 radius and solving once at take-off |
@@ -1366,15 +1375,19 @@ dummy from the hip hold, and a health pack picked up after an 1800-unit drop (51
   surface and under water, 9.7 s stamina, 2.13 s / 0.95 s with Shift held), `SlideAcceleratesAtGravityAlongSlope`.
 - `GameReal.*` (gated by `OU_GAME_DIR`): the clips load, `ng_run` root speed 1274 ± 5 units/s, hand anchor; l4_pool:
   `'player'` spawn, 1.5 s run replay never below the floor and covers 50–105 % of the same replay on a flat floor; jump
-  from the lower floor grabs ledge 1253 (hands at z 3562) and climbs onto the rock top (z 3571 ± 1, end snap < 10).
+  from the lower floor (`PoolRockHurdle`) pulls her up onto the rock top past ledge 1253 (`hurdle_ground_attach_mid_150`
+  → `hurdle_onto`, hands within 25 across the switch, z 3571 ± 1, end snap < 10).
+  `CliffclimbObstaclesAndLedgeGrabs` (l2_cliffclimb shore plateau): walking into the 169-high step 941 hurdles onto it;
+  a standing jump at the 474-high block 939 pulls her up onto it (z 3638 ± 5); the 614-high wall 911 is caught from a
+  standing stick jump and from a running jump into its face, then climbed (z 3807 ± 5, end snap < 10).
   `PoolSwimReplay`: `findWater` gives one box (id 5608, surface 2699.3 ± 0.5); from the west walkway (−6000, 0, 2844.4)
   Lara runs into the goo, swims east 2 s (> 80 % of 2 s × swim speed), dives below surface − 600, swims up to tread,
   swims back west and climbs out (720 ticks) onto a pool rock at (−4190, −183, 2864.9), standing on its floor.
 - Traversal, real data: `TempleBalanceBeamWalkAndJump` (l4_temple beam 1079: on it from a spawn on the beam, 5 s walk
   within ±1 of the line, a standing jump lands back on it 300+ ahead, then walks to its far end x −3986 and stops);
   `TempleLedgeJumpsUpAndBack` (from the floor: grab 1187, jump up to 1162; grab 1158, jump back to 1159 turning round;
-  hands on the targets ± 1); `PoolSideJump` (1250 → 1251, set up hanging via `World::restore`); `PoolDropToHang` (grab
-  and climb 1253, drop back into the hang, hands at 3562 ± 1); `TrapRoomsPoleFling` (l4_traprooms: standing jump onto
+  hands on the targets ± 1); `PoolSideJump` (1250 → 1251, set up hanging via `World::restore`); `PoolDropToHang` (onto
+  the 1253 rock top, drop back into the hang, hands at 3562 ± 1); `TrapRoomsPoleFling` (l4_traprooms: standing jump onto
   pole 1336 from 345 short, swing, fling 1264 to pole 1337).
 - Gadgets (`tests/test_combat.cpp`): `Gadgets.FlashlightToggleCooldownAndPose` (press edge, 4-frame cooldown, light
   25 units ahead facing forward), `Gadgets.GrenadeKillsDummyAndHurtsLara` (thrown at a locked dummy 800 ahead: sticks
@@ -1389,7 +1402,8 @@ All on `pc-w\l4_pool.drm`, 1792×1008, GL unless noted:
 - standing at the `player` intro on the entrance stairs, facing the pool hall (ng_idle);
 - running down the stairs mid-stride (replay `0 forward 1`, frame 80); the same in Vulkan at frame 100;
 - mid running jump, legs tucked (`NG_InAir_Feet_Forward_stage1`, frame 92);
-- hanging braced on rock ledge 1253 with both hands on its top edge (`--spawn -4291,4225.6,3100,-157.9`, jump);
+- hanging braced on rock ledge 1253 with both hands on its top edge (`--spawn -4291,4225.6,3100,-157.9`, jump; since
+  the pull-up onto 340..650 ledges that jump takes her onto the rock instead);
 - shimmying right along it; standing on the rock top after the climb-up;
 - swimming at the goo surface (`swim_surface`, body horizontal, root at z 2699; replay `0 forward 1`, `--spawn
   -6000,0,2900,0`, frame 230), rising after the splash (only the hair bun above the goo, frame 150), and swimming down
