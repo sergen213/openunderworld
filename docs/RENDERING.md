@@ -570,7 +570,9 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
 - **Frame**: the scene (all passes incl. water, fx, post: fog, underwater, tonemap, brightness) renders at the render
   resolution with FSR's Halton jitter (`Camera::jitter`, applied to the generic and the translated programs'
   projections). Then a mask pass (`fsr_camera.frag`, `fsr_mask.*`) writes motion vectors (UV, previous − current,
-  unjittered; RG16F): camera motion of every pixel from depth, overwritten for meshes moved by `updateVertices`
+  unjittered; RG16F): camera motion of every pixel from depth (previous view-projection × inverse of this frame's
+  jittered one, multiplied in double: in float the world translation left up to a pixel of error in the distance that
+  changed with each jitter phase, so a still camera's scenery shook in FSR's output), overwritten for meshes moved by `updateVertices`
   (CPU-skinned characters, animated objects; the pose the last frame drew is copied GPU-side into the mesh's
   `prevVertices` at the start of the frame, before the new upload lands — no CPU copy, no re-upload) — and
   reactivity (R8, max-blended): blended submeshes 0.9 × alpha, Enhanced water 0.6, original fx sprites

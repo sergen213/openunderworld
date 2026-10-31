@@ -4,6 +4,12 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.17.1] - 2026-10-31
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- FSR: the ground, cliffs and other static scenery no longer shake. The camera motion vectors were computed in single precision from matrices that carry the world position, and the error (up to a pixel in the distance) changed with every FSR jitter step; FSR followed it, so the scenery wobbled sideways every frame even with a still camera, more visibly at high frame rates. Now computed in double: a still scene is pixel-stable (docs/RENDERING.md "FSR").
+
 ## [0.17.0] - 2026-10-30
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

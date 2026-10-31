@@ -2645,7 +2645,11 @@ private:
         vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
         const VkViewport upright{0, 0, float(extent_.width), float(extent_.height), 0, 1};
         vkCmdSetViewport(cmd, 0, 1, &upright);
-        const FsrCameraPush cam{(fsrHistory_ ? prevViewProj_ : currentVP) * glm::inverse(jitteredVP), jitterUv};
+        // In double: both view-projections carry the world translation (tens of thousands of units); the float product
+        // with the inverse was off by up to a pixel in the distance and changed with each jitter phase, so a still
+        // camera's static scenery drifted with the jitter in FSR's output.
+        const glm::mat4 reproject(glm::dmat4(fsrHistory_ ? prevViewProj_ : currentVP) * glm::inverse(glm::dmat4(jitteredVP)));
+        const FsrCameraPush cam{reproject, jitterUv};
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrCameraPipeline_);
         vkCmdPushConstants(cmd, fsrCameraLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof cam, &cam);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fsrCameraLayout_, 0, 1, &fsrDepthSet_, 0, nullptr);
