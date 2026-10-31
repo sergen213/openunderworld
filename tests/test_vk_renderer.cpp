@@ -120,8 +120,8 @@ TEST(RendererSelect, AutoFallsBackToOpenGl) {
 }
 
 // Ray tracing on a capable device: acceleration structures for the scene (built by the first RT
-// frame), counts, BLAS rebuild/refit on updateVertices + TLAS update, shading close to the shadow
-// map, RT off unchanged, teardown. Skips without RT support.
+// frame), counts, the merged static BLAS and a mesh leaving it on its first updateVertices (TLAS rebuild), BLAS refit
+// of skinned meshes + TLAS update, shading close to the shadow map, RT off unchanged, teardown. Skips without RT support.
 TEST(VulkanRenderer, RayTracingBuildsUpdatesAndTearsDown) {
     using ou::render::RayTracing;
     VkWindow v;
@@ -144,9 +144,11 @@ TEST(VulkanRenderer, RayTracingBuildsUpdatesAndTearsDown) {
     const ou::render::Image rt = v.frame(enhanced(RayTracing::Shadows));
     auto st = v.r->rtStatus();
     EXPECT_TRUE(st.active);
-    EXPECT_EQ(st.blas, traced);
-    EXPECT_EQ(st.instances, traced);
-    EXPECT_EQ(st.geometries, geometries);
+    // The placeholder's traced submeshes are all solid casters (one ray mask): every mesh gets its own BLAS, and the
+    // static ones (all, before any updateVertices) are traced through one merged BLAS, the only TLAS instance.
+    EXPECT_EQ(st.blas, traced + 1);
+    EXPECT_EQ(st.instances, 1u);
+    EXPECT_EQ(st.geometries, 2 * geometries);
     EXPECT_EQ(st.waterInstances, 0u);
     EXPECT_EQ(st.tlasBuilds, 1u);
     EXPECT_EQ(st.tlasUpdates, 0u);
@@ -157,11 +159,17 @@ TEST(VulkanRenderer, RayTracingBuildsUpdatesAndTearsDown) {
     EXPECT_LT(meanAbsDiff(rt, offBefore), 3.0);
     EXPECT_GT(meanAbsDiff(rt, offBefore), 0.0); // but traced, not the map
 
-    // Non-skinned mesh changed: full BLAS rebuild recorded by the next frame, which also updates the TLAS once.
+    // A static mesh changed: its own BLAS rebuilt, the merged one rebuilt without it, the TLAS rebuilt with its instance.
     EXPECT_TRUE(v.r->updateVertices(0, scene.meshes[0].vertices));
     EXPECT_EQ(v.r->rtStatus().blasRebuilds, 0u); // staged; nothing submitted yet
     v.frame(enhanced(RayTracing::Full));
-    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 1u);
+    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 2u);
+    EXPECT_EQ(v.r->rtStatus().tlasBuilds, 2u);
+    EXPECT_EQ(v.r->rtStatus().instances, 2u);
+    // Moved again: only its own BLAS, then a TLAS update.
+    EXPECT_TRUE(v.r->updateVertices(0, scene.meshes[0].vertices));
+    v.frame(enhanced(RayTracing::Full));
+    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 3u);
     EXPECT_EQ(v.r->rtStatus().tlasUpdates, 1u);
     v.frame(enhanced(RayTracing::Full));
     EXPECT_EQ(v.r->rtStatus().tlasUpdates, 1u); // clean TLAS: no update
@@ -173,14 +181,14 @@ TEST(VulkanRenderer, RayTracingBuildsUpdatesAndTearsDown) {
     scene.meshes[0].skin.assign(scene.meshes[0].vertices.size(), {});
     EXPECT_TRUE(v.r->upload(scene).empty());
     v.frame(enhanced(RayTracing::Shadows));
-    EXPECT_EQ(v.r->rtStatus().tlasBuilds, 2u);
+    EXPECT_EQ(v.r->rtStatus().tlasBuilds, 3u);
     std::vector<ou::scene::Vertex> moved = scene.meshes[0].vertices;
     for (auto& p : moved) p.position[2] += 50.0f;
     EXPECT_TRUE(v.r->updateVertices(0, scene.meshes[0].vertices));
     EXPECT_TRUE(v.r->updateVertices(0, moved)); // overwrites the staged pose: one copy, one refit
     v.frame(enhanced(RayTracing::Shadows));
     EXPECT_EQ(v.r->rtStatus().blasRefits, 1u);
-    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 1u);
+    EXPECT_EQ(v.r->rtStatus().blasRebuilds, 3u);
     EXPECT_EQ(v.r->rtStatus().tlasUpdates, 2u);
 }
 

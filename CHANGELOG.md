@@ -4,6 +4,12 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.17.0] - 2026-10-30
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Performance at 4K/FSR with full ray tracing (RX 7900 XTX): Coastal Thailand deck 81 → 170 fps (its yacht cinematic's scene pass 18.2 → 5.3 ms), jungle hub 9 → 81 fps, Mexico on the motorcycle 28 → 169 fps, ball court 32 → 91 fps. Shadow rays no longer walk through non-shadow-casting geometry, static scenery is traced through merged BLASes, the motorcycle's sound bank is no longer re-read every tick (the engine sound now plays), and plants / scripted objects that did not move are no longer re-uploaded (docs/RENDERING.md "Performance pass"). Original output unchanged.
+
 ## [0.16.0] - 2026-10-30
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

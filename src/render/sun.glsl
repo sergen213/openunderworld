@@ -36,13 +36,16 @@ float ouShadowMapVisibility(vec3 p) {
 
 #ifdef OU_RT
 layout(set = OU_RT_SET, binding = 0) uniform accelerationStructureEXT ouTlas;
-// One record per BLAS geometry (= traced submesh), indexed by instance custom index + geometry index.
-struct OuGeom { uint64_t vertices; uint64_t indices; uint firstIndex; uint texture; float alphaRef; uint flags; }; // flags 1: no sun shadow, 2: shadow-only
+// One record per BLAS geometry (= traced submesh), indexed by instance custom index + geometry index. `transform`: the
+// geometry's own model (VkTransformMatrixKHR rows) in the merged static BLASes (VkRenderer::buildRayTracing), else 0.
+struct OuGeom { uint64_t vertices; uint64_t indices; uint firstIndex; uint texture; float alphaRef; uint pad; uint64_t transform; };
 layout(set = OU_RT_SET, binding = 1, std430) readonly buffer OuGeoms { OuGeom ouGeoms[]; };
 layout(set = OU_RT_SET, binding = 2) uniform sampler2D ouRtTextures[];
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer OuWords { uint w[]; };
 const uint kOuVertexWords = 18u; // scene::Vertex: position 0-2, normal 3-5, uv 6-7, RGBA8 colour 8, original-shader inputs 9-17
-const uint kOuMaskSolid = 1u;    // instance masks: 1 solid, 2 water (water never reflects itself)
+// Instance masks (VkRenderer::buildRayTracing): 1 solid (reflection rays: not water, not shadow-only), 2 water (water never
+// reflects itself), 4 sun-shadow casters (shadow rays; SubMesh::castsShadow).
+const uint kOuMaskSolid = 1u, kOuMaskShadow = 4u;
 const float kOuSunTan = 0.012;   // sun disc half-angle (tan) of the soft-shadow cone; the real sun is 0.0047
 const float kOuTMax = 1.0e6;
 
@@ -67,27 +70,26 @@ vec4 ouColorAt(OuWords vb, OuTri t, vec3 b) {
 }
 
 // The any-hit equivalent: alpha test of a non-opaque candidate. Texture alpha only, as the shadow-map pass
-// (shadow.frag); vertex alpha is ignored for casters. Shadow rays also pass through non-casters (SubMesh::castsShadow),
-// other rays through shadow-only geometry (SubMesh::shadowOnly).
-bool ouAlphaPasses(uint record, uint prim, vec2 b2, bool shadowRay) {
+// (shadow.frag); vertex alpha is ignored for casters. Which rays see non-casters and shadow-only geometry is the
+// instance mask's business (kOuMask*), not the candidate loop's.
+bool ouAlphaPasses(uint record, uint prim, vec2 b2) {
     OuGeom g = ouGeoms[record];
-    if (shadowRay ? (g.flags & 1u) != 0u : (g.flags & 2u) != 0u) return false;
     OuTri t = ouCorners(g, prim);
     return textureLod(ouRtTextures[nonuniformEXT(g.texture)], ouAttr2(OuWords(g.vertices), t, 6u, ouBary(b2)), 0.0).a >= g.alphaRef;
 }
-void ouResolveCandidates(rayQueryEXT rq, bool shadowRay) {
+void ouResolveCandidates(rayQueryEXT rq) {
     while (rayQueryProceedEXT(rq))
         if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT &&
             ouAlphaPasses(uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false) +
                                rayQueryGetIntersectionGeometryIndexEXT(rq, false)),
                           uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)),
-                          rayQueryGetIntersectionBarycentricsEXT(rq, false), shadowRay))
+                          rayQueryGetIntersectionBarycentricsEXT(rq, false)))
             rayQueryConfirmIntersectionEXT(rq);
 }
 float ouVisible(vec3 o, vec3 d) {
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsTerminateOnFirstHitEXT, 0xFFu, o, 0.0, d, kOuTMax);
-    ouResolveCandidates(rq, true);
+    rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsTerminateOnFirstHitEXT, kOuMaskShadow, o, 0.0, d, kOuTMax);
+    ouResolveCandidates(rq);
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
 }
 // Soft sun shadow: `rays` directions in the sun cone (golden-angle spiral, rotated per pixel by interleaved
@@ -119,7 +121,7 @@ float ouQuadSum(float v) {
 vec3 ouRtReflect(vec3 p, vec3 r, bool lit) {
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsNoneEXT, kOuMaskSolid, p, 1.0, r, kOuTMax);
-    ouResolveCandidates(rq, false);
+    ouResolveCandidates(rq);
     if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.08, 0.09, 0.11);
     OuGeom g = ouGeoms[uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true) + rayQueryGetIntersectionGeometryIndexEXT(rq, true))];
     OuWords vb = OuWords(g.vertices);
@@ -129,7 +131,14 @@ vec3 ouRtReflect(vec3 p, vec3 r, bool lit) {
     // ponytail: mip from hit distance only (no ray cones); fine for the flat mirror of water.
     vec4 c = textureLod(ouRtTextures[nonuniformEXT(g.texture)], ouAttr2(vb, t, 6u, b), clamp(log2(dist / 400.0), 0.0, 8.0)) *
              ouColorAt(vb, t, b);
-    vec3 n = mat3(rayQueryGetIntersectionObjectToWorldEXT(rq, true)) * ouAttr3(vb, t, 3u, b);
+    vec3 n = ouAttr3(vb, t, 3u, b);
+    if (g.transform != uint64_t(0)) {
+        OuWords x = OuWords(g.transform);
+        n = vec3(dot(vec3(uintBitsToFloat(x.w[0]), uintBitsToFloat(x.w[1]), uintBitsToFloat(x.w[2])), n),
+                 dot(vec3(uintBitsToFloat(x.w[4]), uintBitsToFloat(x.w[5]), uintBitsToFloat(x.w[6])), n),
+                 dot(vec3(uintBitsToFloat(x.w[8]), uintBitsToFloat(x.w[9]), uintBitsToFloat(x.w[10])), n));
+    }
+    n = mat3(rayQueryGetIntersectionObjectToWorldEXT(rq, true)) * n;
     if (!lit || dot(n, n) < 1e-12) return c.rgb;
     n = normalize(n);
     if (dot(n, r) > 0.0) n = -n; // two-sided, as gl_FrontFacing in the raster pass

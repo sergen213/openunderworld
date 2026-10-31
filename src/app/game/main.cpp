@@ -282,7 +282,7 @@ struct LaraMeshes {
 // Their level-scene meshes are tagged " @intro <unique id>" (formats::loadLevelScene).
 struct ScriptedMeshes {
     std::map<int32_t, std::vector<size_t>> meshes; // intro unique id -> scene mesh indices
-    std::set<int32_t> posed;                       // uploaded with a non-bind pose
+    std::map<int32_t, std::vector<glm::mat4>> posed; // uploaded with a non-bind pose: that palette
     std::set<int32_t> hidden;                      // collected pickups, uploaded collapsed to a point
     std::vector<std::pair<int32_t, float>> faded;  // scratch: fx::System::fadedOwners
     std::vector<ou::scene::Vertex> scratch;
@@ -316,19 +316,22 @@ struct ScriptedMeshes {
             if (const auto it = meshes.find(uid); it != meshes.end() && !hidden.contains(uid))
                 for (const size_t i : it->second) out.push_back({uint32_t(i), 1.0f - f});
     }
+    // Only poses that changed upload (a re-upload re-skins on this thread and rebuilds the mesh's BLAS: l4_ballcourt's
+    // still-posed objects cost ~1.5 ms a frame).
     void pose(const ou::script::Runtime& rt, const ou::scene::SceneData& s, ou::render::Renderer& r) {
         for (const auto& o : rt.objects()) {
             const auto it = meshes.find(o.uid);
             if (it == meshes.end()) continue;
-            const auto palette = rt.pose(o);
-            if (!palette && !posed.erase(o.uid)) continue; // bind pose already uploaded
-            if (palette) posed.insert(o.uid);
+            auto palette = rt.pose(o);
+            if (const auto p = posed.find(o.uid); p != posed.end() ? palette && p->second == *palette : !palette) continue;
             for (const size_t i : it->second) {
                 const auto& m = s.meshes[i];
                 if (palette && !m.skin.empty() && palette->size() > 1) ou::anim::skinVertices(m, *palette, scratch);
                 else ou::anim::skinVertices(m, {}, scratch, palette ? (*palette)[0] : glm::mat4(1.0f)); // rigid: bone 0
                 r.updateVertices(i, scratch);
             }
+            if (palette) posed[o.uid] = std::move(*palette);
+            else posed.erase(o.uid); // back at the bind pose
         }
     }
 };
@@ -336,39 +339,62 @@ struct ScriptedMeshes {
 // bend_* plants (game/Bend.hpp): each tick their bend vectors move the vertices as the bend VS's c88 terms do
 // (scene::MeshData::bend: pos += t3 s.x + t4 s.x² + t5 s.y + (t3.w, t4.w, t5.w) s.y², s = a v.xy + b of the vertex's
 // bone), on the CPU so the Enhanced preset and the shadow pass sway too; c88 itself stays zero. Plants beyond the fog
-// keep their last pose (no upload).
+// keep their last pose, plants whose bend vectors did not change too (no upload); the rest deform on worker threads
+// (l4_ballcourt: 333 plants, 173k vertices a tick) and upload in order on this thread.
 struct BendMeshes {
     std::vector<std::pair<int32_t, size_t>> meshes; // (intro uid, scene mesh with a bend basis)
+    std::vector<std::vector<glm::vec4>> uploaded;   // per entry of `meshes`: the bend vectors of its last upload
     uint64_t tick = ~uint64_t(0);
-    std::vector<ou::scene::Vertex> scratch;
+    std::vector<size_t> jobs;                        // entries of `meshes` to deform this tick
+    std::vector<std::vector<ou::scene::Vertex>> outs; // per job, reused across ticks
 
     void index(const ou::scene::SceneData& s) {
-        meshes.clear(), tick = ~uint64_t(0);
+        meshes.clear(), uploaded.clear(), tick = ~uint64_t(0);
         for (size_t i = 0; i < s.meshes.size(); ++i)
             if (const auto at = s.meshes[i].origin.rfind(" @intro "); at != std::string::npos && !s.meshes[i].bend.empty())
                 meshes.push_back({std::atoi(s.meshes[i].origin.c_str() + at + 8), i});
+        uploaded.resize(meshes.size());
     }
     void pose(const ou::game::World& w, const ou::scene::SceneData& s, ou::render::Renderer& r, glm::vec3 eye) {
         if (w.ticks() == tick) return;
         tick = w.ticks();
         const auto& e = s.environment;
         const float range = std::max({e.fogFar, e.waterFogFar, 20000.0f});
-        for (const auto& [uid, i] : meshes) {
-            const auto bend = w.bends().bend(uid);
-            const auto& m = s.meshes[i];
-            if (bend.empty() || glm::distance(glm::vec3(m.transform[12], m.transform[13], m.transform[14]), eye) > range) continue;
-            scratch = m.vertices;
-            for (size_t v = 0; v < scratch.size() && v < m.bend.size(); ++v) {
-                const size_t bone = m.skin.empty() ? 0 : m.skin[v].bone[0];
-                if (bone >= bend.size()) continue;
-                const glm::vec4 c = bend[bone];
-                const auto& t = m.bend[v];
-                float* p = scratch[v].position;
-                const float sx = c.x * p[0] + c.z, sy = c.y * p[1] + c.w;
-                for (int k = 0; k < 3; ++k) p[k] += t[k] * sx + t[4 + k] * sx * sx + t[8 + k] * sy + t[4 * k + 3] * sy * sy;
-            }
-            r.updateVertices(i, scratch);
+        jobs.clear();
+        for (size_t j = 0; j < meshes.size(); ++j) {
+            const auto bend = w.bends().bend(meshes[j].first);
+            const auto& m = s.meshes[meshes[j].second];
+            if (bend.empty() || std::ranges::equal(bend, uploaded[j]) ||
+                glm::distance(glm::vec3(m.transform[12], m.transform[13], m.transform[14]), eye) > range)
+                continue;
+            uploaded[j].assign(bend.begin(), bend.end());
+            jobs.push_back(j);
         }
+        if (outs.size() < jobs.size()) outs.resize(jobs.size());
+        std::atomic<size_t> next{0};
+        auto work = [&] {
+            for (size_t k; (k = next++) < jobs.size();) {
+                const auto& m = s.meshes[meshes[jobs[k]].second];
+                const auto& bend = uploaded[jobs[k]];
+                auto& out = outs[k];
+                out = m.vertices;
+                for (size_t v = 0; v < out.size() && v < m.bend.size(); ++v) {
+                    const size_t bone = m.skin.empty() ? 0 : m.skin[v].bone[0];
+                    if (bone >= bend.size()) continue;
+                    const glm::vec4 c = bend[bone];
+                    const auto& t = m.bend[v];
+                    float* p = out[v].position;
+                    const float sx = c.x * p[0] + c.z, sy = c.y * p[1] + c.w;
+                    for (int q = 0; q < 3; ++q) p[q] += t[q] * sx + t[4 + q] * sx * sx + t[8 + q] * sy + t[4 * q + 3] * sy * sy;
+                }
+            }
+        };
+        {
+            std::vector<std::jthread> pool(std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()), std::clamp<size_t>(jobs.size() / 16, 1, 8)) - 1);
+            for (auto& t : pool) t = std::jthread(work);
+            work();
+        }
+        for (size_t k = 0; k < jobs.size(); ++k) r.updateVertices(meshes[jobs[k]].second, outs[k]);
     }
 };
 

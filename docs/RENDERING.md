@@ -154,7 +154,7 @@ rebuilds (`Renderer::rtStatus()`, `rtSummary`).
 | Overdraw | RT adds a depth pre-pass over opaque submeshes (`prepass.vert/frag`: same alpha test, `invariant gl_Position` as `scene_rt.vert`; translated programs pre-pass with their own invariant VS and the plain PS, i.e. their own alpha test and no sun term); the opaque colour pass then tests LEQUAL without writes, so each visible opaque pixel traces once. Blended submeshes (no depth writes, drawn layer over layer) keep sampling the shadow map, which is still rendered in RT mode: tracing them cost ~10 of 15 ms in the ballcourt foliage (measured). |
 | Reflections (`full`) | Draws of water meshes trace one mirror ray (mask 1: water never reflects itself) with closest hit, alpha-tested like shadows, and shade the hit with texture × vertex colour × the raster lambert (no shadow ray at the hit; misses = clear colour), mixed in by Schlick Fresnel with F0 = 0.02 (alpha raised by the same factor). Water = meshes whose origin names a `*watersurface*` object [I] (l4_pool: `ca_goo_pool_watersurface`, the surface intro of the pool's `watervolume`, GAMEPLAY.md "Water"). No roughness: TRU's material blobs give none we decode [U], so water is a perfect mirror and wet surfaces get no reflections. |
 | Non-finite inputs | Ray-query origins / directions must be finite (Vulkan spec); RADV hangs the GPU on others. [O] l4_ballcourt (`--spawn -20066,14150,3540,0`) and (reported by a sibling run) l1_kraken_room spawns lost the device (`ring gfx timeout`, SQC GPUVM fault) on the first RT frame, already at c3c69f2 (v0.9.0+2), only with the translated shaders' rays variant (generic shaders, `--rt off`, and the shadow-map variant in its place were fine; `RADV_DEBUG=syncshaders` and GPU-assisted validation still hung); skipping rays whose point or normal is not finite (`ouRayInputsFinite`, sun.glsl: shadow term from the quad's other lanes, no reflection) ends it, 6 × 2000 frames clean. [I] The culprits are fragments where the translated point (1 / `gl_FragCoord.w`) or its derivative normal is not finite; none reach the final image. ctest `game_vulkan_rt_smoke` runs both spawns. |
-| Not done | 1-bounce GI / AO (not started); temporal denoise; merged static BLASes (traversal cost); ray cones for reflection mip selection (mip from hit distance only). |
+| Not done | 1-bounce GI / AO (not started); temporal denoise; ray cones for reflection mip selection (mip from hit distance only). Merged static BLASes and per-mask instances: "Performance pass". |
 
 Verification [O] (RX 7900 XTX, RADV Mesa 26.2.4, 2026-10-18):
 - Validation layer clean (`OU_VK_VALIDATION=1`): `ou_vk_tests`, `ou-viewer --level` l4_ballcourt / l4_pool with `--rt shadows/full`, and `ou-game` l4_pool `--rt full` for 60 frames (Lara skinned: 638 BLAS refits, 116 rigid rebuilds, 57 TLAS updates, 2 TLAS builds across a unit stream-in).
@@ -712,3 +712,66 @@ settings):
 | 8 l7_himalaya_end | 2.37 (2.50) | 422 | 2.29 (2.39) | 437 |
 
 The first 600 frames include each start's cutscene / fade-in and streaming hitches (mean above p95 in ch1/ch5).
+
+## Performance pass (2026-10-30)
+
+Measured [O] with Release builds, the user's config (Vulkan, Enhanced, 3840×2160, vsync off, RT full / medium =
+2 rays/px, FSR balanced, Enhanced water high, atmosphere high, shafts, effects, shadows), invisible
+`kwin_wayland --virtual` at 3840×2160, `--render-hz 60 --no-overlay`, `OU_VK_PRESENT_STATS=1`; RX 7900 XTX, RADV Mesa
+26.2.5. "Frame" = ou-game's `frame time mean / p95` (wall time per frame after 30 warm-up frames, ticks + draw); GPU
+segments = the last 500 timed frames (the stats line now prints the whole run and the last 500; the scene is split into
+planar reflection, scene draws, copies, water, fx; FSR masks are timed apart from the post pass). Chapter starts:
+`--chapter N --frames 600` (gameplay after the start cinematic); spots: `--frames 400`.
+
+| Spot | before: frame mean / p95 ms (fps) | after | GPU scene ms before → after | other GPU after (uploads+BLAS / TLAS / post / FSR) |
+|---|---|---|---|---|
+| ch0 l3_main_bedroom | 2.55 / 2.88 (392) | 2.52 / 2.94 (397) | 0.79 → 0.70 | 0.55 / 0.13 / 0.09 / 0.75 |
+| ch1 l1_seatop | 9.58 / 10.10 (104) | 6.81 / 7.41 (147) | 4.25 → 1.61 | 1.04 / 0.19 / 0.57 / 0.73 |
+| ch2 l2_cliffclimb deck (cliff) | 12.29 / 14.01 (81) | 5.88 / 7.47 (170) | 9.14 → 2.84 (+0.36 water) | 0.68 / 0.16 / 0.54 / 0.76 |
+| ch2 yacht cinematic (whole run, GPU) | — | — | 18.24 → 5.27 | |
+| ch2 deck facing the sea (`--camera`) | 8.00 / 9.37 (125) | 5.11 / 6.56 (196) | 3.59 → 1.71 | 1.08 / 0.17 / 0.58 / 0.72 |
+| ch2 reef, looking up to the sun | 17.24 / 19.06 (58) | 6.73 / 8.02 (149) | 13.03 → 3.21 | 1.07 / 0.17 / 0.90 / 0.74 |
+| ch2 reef, looking down | 11.29 / 12.93 (89) | 6.83 / 8.12 (146) | 6.75 → 2.72 | 1.09 / 0.18 / 1.42 / 0.78 |
+| ch3 l3_caverns_start | 4.00 / 5.58 (250) | 3.55 / 5.15 (282) | 1.77 → 1.30 | 0.80 / 0.18 / 0.11 / 0.78 |
+| ch4 l4_trailstart (motorcycle) | 35.07 / 35.66 (29) | 5.90 / 7.57 (169) | 22.05 → 3.50 | 0.68 / 0.15 / 0.33 / 0.78 |
+| ch5 l5_valgrind_tunnel (motorcycle) | 40.20 / 36.05 (25) | 8.60 / 4.97 (116) | 2.44 → 0.87 | 0.76 / 0.22 / 0.34 / 0.79 |
+| ch6 l6_ship_exterior | 5.88 / 7.51 (170) | 4.99 / 6.21 (200) | 1.60 → 1.18 | 1.28 / 0.24 / 0.27 / 0.74 |
+| ch7 l7_arctic_sea | 7.96 / 9.43 (126) | 6.00 / 7.41 (167) | 3.60 → 1.63 | 1.51 / 0.17 / 1.39 / 0.74 |
+| ch8 l7_himalaya_end | 3.38 / 4.99 (296) | 3.08 / 4.68 (325) | 1.20 → 0.70 | 0.66 / 0.14 / 0.46 / 0.72 |
+| l1_seafloor | 6.12 / 5.84 (163) | 6.16 / 5.80 (162) | 1.21 → 1.19 | 1.01 / 0.20 / 0.66 / 0.76 |
+| l4_ballcourt (`--spawn 17520,10383,2650,180`) | 30.92 / 33.65 (32) | 11.00 / 12.49 (91) | 22.72 → 5.49 | 2.09 / 0.18 / 1.45 / 0.81 |
+| l2_junglehub | 109.76 / 118.22 (9) | 12.35 / 13.69 (81) | 101.58 → 7.93 | 1.64 / 0.18 / 0.71 / 0.79 |
+| l6_ship_engine_hall | 3.69 / 5.09 (271) | 3.64 / 5.07 (275) | 1.02 → 0.97 | 1.16 / 0.18 / 0.13 / 0.75 |
+| l1_kraken_room | 3.20 / 4.83 (313) | 3.57 / 5.19 (280) | 0.98 → 1.39 | 0.63 / 0.15 / 0.11 / 0.77 |
+
+Root causes and fixes:
+- **Non-casters in shadow rays** (the big one). Shadow rays rejected non-caster submeshes (`SubMesh::castsShadow`
+  false: 1786 of l4_trailstart's 2996 traced submeshes, most foliage) one candidate at a time in the shader, so every
+  ray walked through all of them. `buildRayTracing` now gives each mesh one BLAS / instance per ray mask (sun.glsl
+  `kOuMask*`: 1 reflection rays, 2 water, 4 shadow casters); shadow rays use mask 4, and geometry is opaque whenever it
+  needs no alpha test. l4_trailstart scene 17 → 6 ms, l2_junglehub 102 → 12.6 ms. Byte-identical where checked
+  (l4_trailstart).
+- **Overlapping per-mesh instances**: thousands of instances made rays descend into dozens of BLASes. Meshes never moved
+  by `updateVertices` are traced through one merged BLAS per mask (mesh models as geometry transforms; records carry the
+  transform for reflection normals); their own BLASes are built too and take over the first time a mesh moves
+  (`evictStatic`: its merged geometries rebuilt with 0 triangles so record indices stay, TLAS rebuilt with the new
+  instance list, sized for all instances up front). l2_junglehub 12.6 → 7.9 ms, l4_trailstart 6.2 → 3.5. Differs from
+  per-mesh instances in ≤ 0.001 % of pixels (triangle intersection precision). l1_kraken_room's scene got 0.4 ms slower.
+- **Motorcycle sound bank re-read every tick** (CPU 35 ms a frame in ch4 / ch5): `PlexBank::find` cached the miss for the
+  engine DTP 13589 asked for before motorcycle.drm was added, so GameSound re-parsed and re-decoded the DRM every tick
+  and the engine never sounded. `PlexBank::add` now drops cached misses for the ids it adds
+  (test `AudioReal.BankFindsDtpAddedAfterMiss`).
+- **Unchanged re-uploads**: bend plants re-deformed and uploaded every tick (l4_ballcourt: 333 meshes, 173k vertices;
+  each a CPU deform, bounding sphere, GPU copy and BLAS refit) now upload only when their bend vectors changed, deforming
+  on worker threads; scripted objects re-skinned every frame now only when their palette changed. l4_ballcourt BLAS
+  refits 530 → 137 a frame, frame 12.6 → 11.0 ms. Plants at rest now get FSR's camera motion instead of their own
+  (identical) vertex motion, which shifts FSR's output on them slightly.
+- **Planar reflection pass in Enhanced**: the half-size scene redraw for reflecting materials ran although Enhanced water
+  draws those submeshes itself (0.6–0.7 ms in ch2); skipped when no drawn reader remains.
+
+Original preset (GL path untouched; Vulkan `--preset original --rt off --water original`, ch2 frame 300) is
+byte-identical before / after. Not changed: the remaining RT cost is alpha-tested casters and traversal (l2_junglehub:
+RT off 1.9 ms scene vs 7.9 with RT); FSR upscale ~0.75 ms at 4K; post 1.4 ms under water / in l4_ballcourt and ch7;
+uploads + refits 1–2 ms with many animated meshes (no frustum culling of draws: GPU-cheap here, RT off scene ≤ 1.9 ms);
+ch5 / l1_seafloor streaming hitches (mean above p95). A depth-EQUAL main pass (no rays from transparent texels of
+pre-passed foliage) was measured and gave nothing.

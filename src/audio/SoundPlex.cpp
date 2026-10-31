@@ -167,7 +167,10 @@ Plex parsePlex(const cdc::Drm& drm, uint32_t section, uint32_t offset) {
 
 void PlexBank::add(std::shared_ptr<const cdc::Drm> drm) {
     for (uint32_t i = 0; i < drm->sections.size(); ++i)
-        if (drm->sections[i].type == cdc::SectionType::DtpData) sections_.try_emplace(drm->sections[i].id, drm, i);
+        if (drm->sections[i].type == cdc::SectionType::DtpData && sections_.try_emplace(drm->sections[i].id, drm, i).second)
+            // find() caches misses: an id asked for before its DRM was added must be looked up again (the motorcycle
+            // engine DTP 13589 stayed missing, and ou-game re-read motorcycle.drm every tick, 35 ms, while riding).
+            if (const auto it = parsed_.find(drm->sections[i].id); it != parsed_.end() && !it->second) parsed_.erase(it);
 }
 
 const Plex* PlexBank::find(uint32_t id) {

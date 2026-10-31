@@ -898,3 +898,13 @@ TEST(AudioReal, MaterialListAndEngineReaction) {
     EXPECT_EQ(r.maps[1].output, 1);
     EXPECT_TRUE(r.maps[1].add);
 }
+
+// GameSound asks for the bike engine before it loads motorcycle.drm: the miss must not stick after the add.
+TEST(AudioReal, BankFindsDtpAddedAfterMiss) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    PlexBank bank;
+    EXPECT_FALSE(bank.find(13589));
+    bank.add(std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\motorcycle.drm"))));
+    EXPECT_TRUE(bank.find(13589));
+}
