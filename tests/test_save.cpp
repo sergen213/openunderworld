@@ -920,7 +920,7 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
     for (int t = 0; t < 400 && !(hurdled && s.state != game::State::ClimbUp); ++t) {
         w->tick(fixedCamera(*w, run, yaw0));
         ASSERT_NE(s.state, game::State::Fall) << "tick " << t << " at " << s.pos.x << "," << s.pos.y;
-        if (s.state == game::State::ClimbUp) hurdled |= s.clip == "hurdle_low_onto_100", ++climbTicks;
+        if (s.state == game::State::ClimbUp) hurdled |= s.clip == "hurdle_low_onto" && s.clipMix == "hurdle_low_onto_100", ++climbTicks; // request 132
     }
     EXPECT_TRUE(hurdled);
     EXPECT_LE(climbTicks, 20); // 0.3 s
@@ -944,14 +944,15 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
     for (const glm::vec2 at : {glm::vec2(-8300, -5000), {-8300, -5600}, {-8100, -7600}})
         for (int t = 0; t < 600 && !toward(*w, at); ++t) ASSERT_NE(s.state, game::State::Dead);
     EXPECT_GT(s.pos.z, 1700.0f) << "up the staircase";
-    // Walking into the slab: the slow hurdle_onto, onto the top as well.
+    // Walking into the slab: the same request 132 (the player state chart has no walk / run split for a low ledge: S958),
+    // onto the top as well.
     w = newGame();
     const auto& s2 = w->player().state();
     bool walkHurdle = false;
     for (int t = 0; t < 2000 && !(walkHurdle && s2.state != game::State::ClimbUp); ++t) {
         toward(*w, {-4400, -300}, 0.3f);
         ASSERT_NE(s2.state, game::State::Fall) << "tick " << t << " at " << s2.pos.x << "," << s2.pos.y << "," << s2.pos.z;
-        walkHurdle |= s2.clip == "hurdle_onto";
+        walkHurdle |= s2.clip == "hurdle_low_onto";
     }
     EXPECT_TRUE(walkHurdle);
     EXPECT_NEAR(s2.pos.z, 336, 8);

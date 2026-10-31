@@ -678,7 +678,29 @@ bool Player::tryHurdle(bool jumped) {
         } else {
             hu.next = PlayerState::Hurdle::Onto;
         }
-        s_.ledge = int(li), s_.ledgeSeg = o.seg, s_.ledgeT = o.t, s_.ledgeSide = 1;
+        // Low onto: where the request's root motion ends must be on the top; tru.exe under Wine (the prologue slab, 34
+        // degrees off square) started it moved ~50 along the ledge, away from the slab's corner: the nearest start up to
+        // 100 along it whose landing is on the top (0, 25, -25, ... [I] the step).
+        float along = 0;
+        if (band == 0 && hu.next == PlayerState::Hurdle::Onto) {
+            const anim::Clip *ca = anims_.find("hurdle_low_onto"), *cb = anims_.find("hurdle_low_onto_100");
+            if (!ca || !cb) continue;
+            const double t0 = clipBlend("", "hurdle_low_onto").startSeconds;
+            const vec3 tr = glm::mix(rootTranslation(*ca, ca->durationSeconds(), false) - rootTranslation(*ca, t0, false),
+                                     rootTranslation(*cb, cb->durationSeconds(), false) - rootTranslation(*cb, t0 / ca->durationSeconds() * cb->durationSeconds(), false), hw);
+            const vec2 land = xy(s_.pos) + out * (kAttachOut - reach) + xy(rotYaw(s_.yaw, tr));
+            const auto supported = [&](float a) {
+                if (o.u + a < 0 || o.u + a > segLen(m, o.seg)) return false;
+                const auto g = col_.groundProbe(vec3(land + segDir(m, o.seg) * a, o.q.z + 100), 140);
+                return g && g->normal.z >= t_.minFloorNormalZ && std::abs(g->point.z - o.q.z) <= 40;
+            };
+            while (!supported(along) && along > -100.0f) along = along > 0 ? -along : 25.0f - along;
+            if (!supported(along)) continue;
+            if (const auto g = col_.groundProbe(vec3(land + segDir(m, o.seg) * along, o.q.z + 100), 140)) hu.endZ = g->point.z;
+        }
+        s_.pos += vec3(segDir(m, o.seg) * along, 0);
+        hu.edge += vec3(segDir(m, o.seg) * along, 0);
+        s_.ledge = int(li), s_.ledgeSeg = o.seg, s_.ledgeT = std::clamp(o.t + along, 0.0f, segLen(m, o.seg)), s_.ledgeSide = 1;
         s_.vel = vec3(0);
         s_.state = State::ClimbUp;
         s_.hurdle = hu;
@@ -711,6 +733,8 @@ bool Player::tryHurdleDown() {
         vec2 out = vec2(-segDir(m, o.seg).y, segDir(m, o.seg).x);
         if (glm::dot(xy(forward()), out) < 0) out = -out;
         if (glm::dot(xy(forward()), out) < 0.6f) continue;
+        // the ledge ahead of her (she stands on its top side; a ledge she has just climbed over is behind her)
+        if (glm::dot(xy(o.q - s_.pos), out) < -20.0f) continue;
         float k = 0; // where the top ends ahead
         for (; k <= t_.radius + 40.0f; k += 10.0f) {
             const auto g = col_.groundProbe(vec3(xy(s_.pos) + out * k, s_.pos.z + 60), 100);
