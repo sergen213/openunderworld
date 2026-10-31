@@ -41,6 +41,7 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     else if (g.rtQuality == "high") s.rtRays = 4;
     else if (g.rtQuality != "medium") throw std::runtime_error("rt quality must be low, medium or high, got " + g.rtQuality);
     s.rtLights = s.rt != 0 && g.rtLights.value_or(s.rt == 2); // needs RT; an explicit override wins over the mode
+    s.rtReflections = s.rt != 0 && g.rtReflections.value_or(s.rt == 2); // explicit on also works with rt shadows
     if (g.water == "enhanced") s.water = 1;
     else if (g.water == "original") s.water = 0;
     else if (g.water == "auto") s.water = g.preset == "enhanced" ? 1 : 0;
@@ -93,6 +94,10 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     else if (flag == "--atmosphere") g.atmosphere = value;
     else if (flag == "--weather") g.weather = value;
     else if (flag == "--rt-quality") g.rtQuality = value;
+    else if (flag == "--rt-reflections") {
+        if (value != "on" && value != "off") throw std::runtime_error("--rt-reflections wants on or off");
+        g.rtReflections = value == "on";
+    }
     else if (flag == "--brightness") g.brightness = std::strtof(std::string(value).c_str(), nullptr);
     else if (flag == "--upscaler") g.upscaler = value;
     else if (flag == "--fsr-quality") g.fsrQuality = value;
@@ -193,6 +198,7 @@ Config load(const fs::path& path) {
             if (g->contains("light_shafts")) c.graphics.lightShafts = g->at("light_shafts").get<bool>();
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
             if (g->contains("rt_lights")) c.graphics.rtLights = g->at("rt_lights").get<bool>();
+            if (g->contains("rt_reflections")) c.graphics.rtReflections = g->at("rt_reflections").get<bool>();
             if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
             c.graphics.brightness = g->value("brightness", c.graphics.brightness);
             c.graphics.upscaler = g->value("upscaler", c.graphics.upscaler);
@@ -255,6 +261,7 @@ void save(const fs::path& path, const Config& c) {
     if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;
     if (c.graphics.lightShafts) g["light_shafts"] = *c.graphics.lightShafts;
     if (c.graphics.rtLights) g["rt_lights"] = *c.graphics.rtLights;
+    if (c.graphics.rtReflections) g["rt_reflections"] = *c.graphics.rtReflections;
     j["controls"] = {{"mouse_sensitivity", c.controls.mouseSensitivity}, {"invert_y", c.controls.invertY},
                      {"bindings", c.controls.bindings}};
     j["game"] = {{"sfx_volume", c.game.sfxVolume}, {"music_volume", c.game.musicVolume}, {"cinematic_volume", c.game.cinematicVolume},

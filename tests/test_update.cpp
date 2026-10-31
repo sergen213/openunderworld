@@ -513,7 +513,8 @@ TEST(Config, GraphicsPresets) {
     EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
     auto full = resolve(rt("enhanced", "full", "high"));
     EXPECT_TRUE(full.rtLights); // rt full turns the RT features on
-    full.rtLights = false;
+    EXPECT_TRUE(full.rtReflections);
+    full.rtLights = false, full.rtReflections = false;
     EXPECT_EQ(full, (GraphicsSettings{4, true, false, false, 2, 4, true, 1, 1.0f, true, 2, true, 1}));
     // rt_lights: unset = on with full only; an explicit value wins over the mode, but nothing traces without RT.
     auto lights = [&](std::string mode, Opt on) {
@@ -525,6 +526,14 @@ TEST(Config, GraphicsPresets) {
     EXPECT_FALSE(lights("full", false));
     EXPECT_TRUE(lights("shadows", true));
     EXPECT_FALSE(lights("off", true));
+    // --rt-reflections overrides either way, but never without rays.
+    auto refl = rt("enhanced", "full");
+    refl.rtReflections = false;
+    EXPECT_FALSE(resolve(refl).rtReflections);
+    refl.rt = "shadows", refl.rtReflections = true;
+    EXPECT_TRUE(resolve(refl).rtReflections);
+    refl.rt = "off";
+    EXPECT_FALSE(resolve(refl).rtReflections);
     EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1, true, 1, 1.0f, true, 2, true, 1}));
     EXPECT_THROW(resolve(rt("original", "shadows")), std::runtime_error);
     EXPECT_THROW(resolve(rt("original", "full")), std::runtime_error);

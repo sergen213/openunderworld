@@ -25,6 +25,7 @@ struct GraphicsConfig {
                                             // (Vulkan ray queries; explicit shadows/full need the enhanced preset)
     std::string rtQuality = "medium";       // "low" | "medium" | "high": 1, 2, 4 shadow rays per pixel
     std::optional<bool> rtLights;           // RT shadows of the point / spot shadow lights (flashlight, fixtures); unset = on with rt "full"
+    std::optional<bool> rtReflections;      // ray-traced water reflections (replace SSR); unset = on with rt "full"
     std::optional<bool> originalShaders;    // TRU's translated shaders (docs/formats/SHADERS.md); unset = preset default (on)
     std::string water = "auto";             // "auto" (enhanced -> enhanced, original -> original) | "original" | "enhanced"
     // Enhanced water / atmosphere / weather (docs/RENDERING.md); "auto" = on for the enhanced preset, off for original.
@@ -63,6 +64,7 @@ struct GraphicsSettings {
     bool frameGeneration = false;
     bool effects = true;
     bool rtLights = false; // RT shadows of local shadow lights (= render::FrameOptions::rtLights); last: tests brace-init the rest
+    bool rtReflections = false; // ray-traced water reflections (render::FrameOptions::rtReflections); needs rt > 0
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without
@@ -70,6 +72,7 @@ struct GraphicsSettings {
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
 // --rt, --rt-quality, --rt-lights on|off, --water original|enhanced, --water-detail, --atmosphere, --shafts on|off, --weather, --brightness,
+// --rt, --rt-quality, --rt-reflections on|off, --water original|enhanced, --water-detail, --atmosphere, --shafts on|off, --weather, --brightness,
 // --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off.
 // false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);

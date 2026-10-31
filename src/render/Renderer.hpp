@@ -168,6 +168,7 @@ struct FrameOptions {
     RayTracing rt = RayTracing::Off;
     int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)
     bool rtLights = false; // ray-traced shadows of the point / spot shadow lights (sun.glsl ouLightsBegin; Vulkan RT only)
+    bool rtReflections = false; // ray-traced reflections on water (Enhanced: instead of SSR; Original: its water materials)
     float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
     float screenFade = 0.0f; // scripted screen wipe (globaleffect FadeOut/FadeIn, script::Runtime::screenFade): 1 = black
     WaterQuality water = WaterQuality::Original;  // ou::config presets choose (Enhanced by default)
@@ -205,6 +206,7 @@ struct RtStatus {
     bool active = false;      // the last frame traced rays
     bool lights = false;      // the last frame traced local-light shadows (FrameOptions::rtLights)
     uint32_t blas = 0, instances = 0, geometries = 0, waterInstances = 0; // current scene
+    bool reflections = false; // the last frame traced water reflections (FrameOptions::rtReflections)
     uint32_t tlasBuilds = 0, tlasUpdates = 0, blasRefits = 0, blasRebuilds = 0; // since init
     std::string reason; // why unsupported
 };

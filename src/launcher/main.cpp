@@ -292,6 +292,7 @@ private:
     QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_, *upscaler_, *fsrQuality_;
     QCheckBox* frameGeneration_;
     QCheckBox* rtLights_;
+    QCheckBox* rtReflections_; // tri-state: partially checked = unset (on with RT "full")
     QDoubleSpinBox* sharpness_;
     QSpinBox *width_, *height_;
     QDoubleSpinBox *fov_, *brightness_;
@@ -390,11 +391,15 @@ private:
         rtLights_->setToolTip("Ray-traced shadows of the original's shadow-casting point / spot lights; default on with "
                               "\"Shadows + water reflections\"");
         rtLights_->setChecked(g.rtLights.value_or(g.rt == "full"));
+        rtReflections_ = new QCheckBox("RT reflections (water; partial = with Full)");
+        rtReflections_->setTristate(true);
+        rtReflections_->setCheckState(!g.rtReflections ? Qt::PartiallyChecked : *g.rtReflections ? Qt::Checked : Qt::Unchecked);
         auto rtEnable = [this] { // RT needs the enhanced preset
             bool on = gfxPreset_->currentData().toString() == "enhanced";
             rt_->setEnabled(on);
             rtQuality_->setEnabled(on);
             rtLights_->setEnabled(on);
+            rtReflections_->setEnabled(on);
         };
         connect(gfxPreset_, &QComboBox::currentIndexChanged, this, rtEnable);
         rtEnable();
@@ -483,6 +488,7 @@ private:
         f->addRow("Ray tracing", rt_);
         f->addRow("RT quality", rtQuality_);
         f->addRow("", rtLights_);
+        f->addRow("", rtReflections_);
         f->addRow("MSAA", msaa_);
         f->addRow("Sun shadows", shadows_);
         f->addRow("Shaders", shaders_);
@@ -854,6 +860,8 @@ private:
         // Unset when it matches the RT mode's default (on with full), so a later mode change keeps the default.
         if (const bool lights = rtLights_->isChecked(); lights == (g.rt == "full")) g.rtLights.reset();
         else g.rtLights = lights;
+        g.rtReflections = rtReflections_->checkState() == Qt::PartiallyChecked ? std::nullopt
+                                                                                : std::optional(rtReflections_->checkState() == Qt::Checked);
         g.msaa = msaa_->currentData().toInt();
         g.shadows = overrideValue(shadows_);
         g.originalShaders = shaders_->currentIndex() == 1 ? std::optional(false) : std::nullopt; // unset = original

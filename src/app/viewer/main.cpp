@@ -59,6 +59,7 @@ void usage() {
                  "                 [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off]\n"
                  "                 [--hdr on|off] [--shaders original|generic] [--rt auto|off|shadows|full] [--rt-quality low|medium|high]\n"
                  "                 [--rt-lights on|off]\n"
+                 "                 [--rt-reflections on|off] (unset: on with --rt full)\n"
                  "                 [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
                  "                 [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather off|rain|snow]\n"
                  "                 [--brightness 0.5..2.0] [--config config.json]  (launcher settings; later flags override)\n"
@@ -506,6 +507,7 @@ int main(int argc, char** argv) {
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.rtLights = opt.gfx.rtLights;
+        fo.rtReflections = opt.gfx.rtReflections;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
         fo.brightness = opt.gfx.brightness;
         fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;

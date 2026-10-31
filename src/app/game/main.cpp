@@ -99,6 +99,7 @@ void usage() {
                  "               [--shaders original|generic]\n"
                  "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0]\n"
                  "               [--rt-lights on|off]\n"
+                 "               [--rt-reflections on|off] (unset: on with --rt full)\n"
                  "               [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
                  "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"
@@ -2077,6 +2078,7 @@ int main(int argc, char** argv) {
         v.frame.msaa = opt.gfx.msaa, v.frame.shadows = opt.gfx.shadows, v.frame.fxaa = opt.gfx.fxaa, v.frame.hdr = opt.gfx.hdr;
         v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
         v.frame.rtLights = opt.gfx.rtLights;
+        v.frame.rtReflections = opt.gfx.rtReflections;
         v.frame.originalShaders = opt.gfx.originalShaders, v.frame.brightness = opt.gfx.brightness;
         v.overlay = !opt.noOverlay;
         v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
@@ -2519,6 +2521,7 @@ int main(int argc, char** argv) {
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.rtLights = opt.gfx.rtLights;
+        fo.rtReflections = opt.gfx.rtReflections;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
         fo.brightness = opt.gfx.brightness, fo.screenFade = world->script().screenFade();
         fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;

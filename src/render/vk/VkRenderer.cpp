@@ -86,6 +86,9 @@ const uint32_t kWaterVert[] = { // Enhanced water + splashes (shared GLSL, rende
 const uint32_t kWaterFrag[] = {
 #include "water.frag.inc"
 };
+const uint32_t kWaterRtFrag[] = { // water.frag -DOU_RT: ray-traced reflections instead of SSR (FrameOptions::rtReflections)
+#include "water_rt.frag.inc"
+};
 const uint32_t kSplashVert[] = {
 #include "splash.vert.inc"
 };
@@ -703,6 +706,7 @@ public:
         const bool rtOn = rtPipelines_ && tlas_ && options.rt != RayTracing::Off;
         const bool shadowMap = options.shadows || options.rt != RayTracing::Off;
         rtStatus_.active = rtOn;
+        rtStatus_.reflections = rtOn && options.rtReflections;
         ScenePush push{zRemap * camera.projection(aspect) * camera.view(), glm::mat4(1), options.lighting ? 1 : 0, 0.0f, 0, 1.0f};
         const glm::mat4 currentVP = zRemap * eye.projection(aspect) * eye.view(); // unjittered (FSR motion)
         const bool enhancedWater = options.water == WaterQuality::Enhanced;
@@ -712,6 +716,10 @@ public:
         uint32_t splashCount = 0; // splash droplet vertices drawn (FSR reactivity)
         WaterBlock wb = waterBlock(camera, {int(extent_.width), int(extent_.height)}, push.viewProj, environment_, options);
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
+        // water_rt.frag: gain of off-screen reflection hits (generic texture x vertex colour x lambert) toward the translated
+        // shaders' look. [O] l2_cliffclimb deck: raster / RT luminance of on-screen hits, median 2.2 (226k pixels).
+        // ponytail: one global gain; per-material shading at the hit would need the translated programs in the ray path.
+        wb.waterPass[2].w = options.originalShaders && !origPrograms_.empty() ? 2.0f : 1.0f;
         std::memcpy(waterUbo_[frameIndex_].mapped, &wb, sizeof wb);
         if (enhancedWater) updateRipples(options);
         // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water; translated
@@ -735,7 +743,7 @@ public:
         gpuMark(cmd, 2);
         // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
         const SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
-                                        shadowMap, rtOn ? (options.rt == RayTracing::Full ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
+                                        shadowMap, rtOn ? (options.rtReflections ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
         std::memcpy(shadowUbo_[frameIndex_].mapped, &sun.block, sizeof sun.block); // host-coherent
         // Local-light shadows (sun.glsl ouLightsBegin): the shadow lights of the table (scene::Light::shadow, tru.exe
         // DTP +0x144C: the flashlight's spot, fixtures), half the sun's rays per light (each pixel may trace 4 lights).
@@ -831,7 +839,7 @@ public:
         };
         // Original Fidelity: translated TRU shaders where a submesh's material has them, with the sun shadow / RT hooks.
         const bool originals = options.originalShaders && !origPrograms_.empty();
-        if (originals) warmOriginalPipelines(rtOn, shadowMap, options.rt == RayTracing::Full);
+        if (originals) warmOriginalPipelines(rtOn, shadowMap, options.rtReflections);
         glm::mat4 viewProjD3D = original::viewProjD3D(camera, aspect);
         VkDescriptorSet frameSet = origFrameSet_[frameIndex_];
         std::optional<original::Reflection> reflection; // the planar reflection the reflecting draws sample this frame
@@ -991,7 +999,7 @@ public:
             const scene::Blend blend = drawBlend(s, op);
             // Rays on opaque surfaces (pre-passed: each visible pixel traces once) and on water for reflections; none on
             // the exterior (not pre-passed, and placed in the world only as a backdrop).
-            const bool reflective = rtOn && m.water && options.rt == RayTracing::Full && !s.exterior;
+            const bool reflective = rtOn && m.water && options.rtReflections && !s.exterior;
             const bool rays = rtOn && !s.exterior && (blend == scene::Blend::Opaque || reflective);
             if (const OrigDraw* od = origDraw(d)) {
                 if (od->screen) {
@@ -1091,7 +1099,10 @@ public:
         }
         gpuMark(cmd, 6);
         if (enhancedWater) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
+            // Ray-traced reflections: the -DOU_RT variant traces the TLAS (set 2) instead of the SSR march.
+            const bool rtWater = rtOn && options.rtReflections && waterRtPipeline_;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rtWater ? waterRtPipeline_ : waterPipeline_);
+            if (rtWater) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 2, 1, &rtSet_, 0, nullptr);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 0, 1, &waterSets_[frameIndex_], 0,
                                     nullptr);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterLayout_, 1, 1, &shadowSets_[frameIndex_], 0,
@@ -1921,6 +1932,7 @@ private:
         vkDestroyPipeline(device_, std::exchange(prepassPipeline_, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(linePipeline_, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(waterPipeline_, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipeline(device_, std::exchange(waterRtPipeline_, VK_NULL_HANDLE), nullptr);
         vkDestroyPipeline(device_, std::exchange(splashPipeline_, VK_NULL_HANDLE), nullptr);
         for (VkPipeline& p : fxPipelines_) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
     }
@@ -2251,8 +2263,9 @@ private:
         VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
         VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves
-        const VkDescriptorSetLayout waterSets[2] = {waterSetLayout_, shadowSetLayout_}; // 1: sun shadow (caustics)
-        VkPipelineLayoutCreateInfo wpl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 2, waterSets, 1,
+        // 1: sun shadow (caustics); 2 (RT devices): the scene TLAS for water_rt.frag's reflections.
+        const VkDescriptorSetLayout waterSets[3] = {waterSetLayout_, shadowSetLayout_, rtSetLayout_};
+        VkPipelineLayoutCreateInfo wpl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 3u : 2u, waterSets, 1,
                                        &modelPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &wpl, nullptr, &waterLayout_));
         const VkDescriptorSetLayout postSets[3] = {setLayout_, postWaterSetLayout_, shadowSetLayout_}; // 2: sun shafts
@@ -2321,6 +2334,9 @@ private:
                                        samples_, sceneFormat_, depthFormat_);
         waterPipeline_ = createPipeline(kWaterVert, kWaterFrag, waterLayout_, &kSceneBinding, kSceneAttrs, PipelineKind::Water,
                                         samples_, sceneFormat_, depthFormat_);
+        if (rtPipelines_)
+            waterRtPipeline_ = createPipeline(kWaterVert, kWaterRtFrag, waterLayout_, &kSceneBinding, kSceneAttrs, PipelineKind::Water,
+                                              samples_, sceneFormat_, depthFormat_);
         const VkVertexInputBindingDescription splashBinding{0, sizeof(SplashVertex), VK_VERTEX_INPUT_RATE_VERTEX};
         const VkVertexInputAttributeDescription splashAttrs[] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SplashVertex, pos)},
@@ -3466,7 +3482,11 @@ private:
             // Exterior terrain is a backdrop placed somewhere in the world (a 3072-unit cylinder round l2_junglehub's
             // start): rays would hit it in front of the scene it stands behind.
             if ((s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) || s.indexCount < 3 || s.exterior) return 0;
-            return (s.shadowOnly ? 0u : m.water ? 2u : 1u) | (s.castsShadow ? 4u : 0u);
+            // Water = `*watersurface*` meshes and the planar-reflection (sea) materials: reflection rays must not hit the
+            // sea they start on (l2_cliffclimb's sea is not m.water; mask 1 made every ray hit it within ~2000 units).
+            const size_t i = size_t(&s - m.submeshes.data());
+            const bool water = m.water || (i < m.reflective.size() && m.reflective[i]);
+            return (s.shadowOnly ? 0u : water ? 2u : 1u) | (s.castsShadow ? 4u : 0u);
         };
         auto geometry = [&](const GpuMesh& m, const scene::SubMesh& s, RtBlas& b, VkDeviceAddress transform) {
             const VkDeviceAddress va = address(m.vertices.buffer), ia = address(m.indices.buffer);
@@ -3981,7 +4001,7 @@ private:
     std::array<VkPipeline, 4> scenePipelines_{}; // indexed by scene::Blend
     VkPipeline textPipeline_ = VK_NULL_HANDLE, linePipeline_ = VK_NULL_HANDLE, shadowPipeline_ = VK_NULL_HANDLE,
                postPipeline_ = VK_NULL_HANDLE, prepassPipeline_ = VK_NULL_HANDLE;
-    VkPipeline waterPipeline_ = VK_NULL_HANDLE, splashPipeline_ = VK_NULL_HANDLE;
+    VkPipeline waterPipeline_ = VK_NULL_HANDLE, waterRtPipeline_ = VK_NULL_HANDLE, splashPipeline_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout waterSetLayout_ = VK_NULL_HANDLE, postWaterSetLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout waterLayout_ = VK_NULL_HANDLE; // water + splashes: set 0 = WaterBlock + 3 textures, push model
     VkDescriptorPool waterPool_ = VK_NULL_HANDLE;

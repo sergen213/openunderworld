@@ -143,13 +143,15 @@ float ouQuadSum(float v) {
     float dy = dFdyFine(row);
     return 2.0 * row + (top ? dy : -dy);
 }
-// Mirror reflection of the solid scene (water surfaces excluded): texture * vertex colour with the generic sun
-// lambert at the hit; no shadow ray at the hit. Misses return the clear colour.
-vec3 ouRtReflect(vec3 p, vec3 r, bool lit) {
+// Closest solid hit (water surfaces excluded) along unit r from p, for mirror reflections. Returns the hit distance, < 0
+// on a miss (the caller's own sky / surface colour); `col` = texture * vertex colour, `n` = unit world normal facing back
+// along r (two-sided, as gl_FrontFacing in the raster pass), 0 where the mesh has none. Shade with ouRtLit.
+float ouRtHit(vec3 p, vec3 r, out vec3 col, out vec3 n) {
+    col = vec3(0.0), n = vec3(0.0);
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsNoneEXT, kOuMaskSolid, p, 1.0, r, kOuTMax);
     ouResolveCandidates(rq);
-    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.08, 0.09, 0.11);
+    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) return -1.0;
     OuGeom g = ouGeoms[uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true) + rayQueryGetIntersectionGeometryIndexEXT(rq, true))];
     OuWords vb = OuWords(g.vertices);
     OuTri t = ouCorners(g, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)));
@@ -158,7 +160,7 @@ vec3 ouRtReflect(vec3 p, vec3 r, bool lit) {
     // ponytail: mip from hit distance only (no ray cones); fine for the flat mirror of water.
     vec4 c = textureLod(ouRtTextures[nonuniformEXT(g.texture)], ouAttr2(vb, t, 6u, b), clamp(log2(dist / 400.0), 0.0, 8.0)) *
              ouColorAt(vb, t, b);
-    vec3 n = ouAttr3(vb, t, 3u, b);
+    n = ouAttr3(vb, t, 3u, b);
     if (g.transform != uint64_t(0)) {
         OuWords x = OuWords(g.transform);
         n = vec3(dot(vec3(uintBitsToFloat(x.w[0]), uintBitsToFloat(x.w[1]), uintBitsToFloat(x.w[2])), n),
@@ -166,10 +168,20 @@ vec3 ouRtReflect(vec3 p, vec3 r, bool lit) {
                  dot(vec3(uintBitsToFloat(x.w[8]), uintBitsToFloat(x.w[9]), uintBitsToFloat(x.w[10])), n));
     }
     n = mat3(rayQueryGetIntersectionObjectToWorldEXT(rq, true)) * n;
-    if (!lit || dot(n, n) < 1e-12) return c.rgb;
-    n = normalize(n);
-    if (dot(n, r) > 0.0) n = -n; // two-sided, as gl_FrontFacing in the raster pass
-    return c.rgb * (0.45 + 0.55 * max(dot(n, ouShadow.sun.xyz), 0.0));
+    col = c.rgb;
+    if (dot(n, n) < 1e-12) n = vec3(0.0);
+    else n = dot(n, r) > 0.0 ? -normalize(n) : normalize(n);
+    return dist;
+}
+// Generic sun shading of a reflection hit at h (normal n from ouRtHit): scene.frag's 0.45 + 0.55 n.l, times one hard
+// shadow ray toward the sun disc centre so shadowed cliffs mirror dark (no cone, no noise: the wave-bent reflection is
+// the only variation).
+vec3 ouRtLit(vec3 h, vec3 n, vec3 col) {
+    if (dot(n, n) < 0.5) return col;
+    float ndl = max(dot(n, ouShadow.sun.xyz), 0.0);
+    if (ndl > 0.0 && ouShadow.sun.w != 0.0)
+        ndl *= ouVisible(h + n * (2.0 + 2.0e-4 * distance(h, ouShadow.eye.xyz)), ouShadow.sun.xyz);
+    return col * (0.45 + 0.55 * ndl);
 }
 // Ray query origins / directions must be finite (Vulkan: OpRayQueryInitializeKHR); RADV hangs the GPU
 // on non-finite ones. Translated shaders derive p from 1 / gl_FragCoord.w and n from its derivatives, which are not
@@ -178,13 +190,20 @@ vec3 ouRtReflect(vec3 p, vec3 r, bool lit) {
 bool ouRayInputsFinite(vec3 p, vec3 n) {
     return all(lessThan(abs(p), vec3(1.0e30))) && all(lessThan(abs(n), vec3(2.0)));
 }
-// Water surface colour `c` at p (normal n) with the mirrored scene mixed in by Schlick Fresnel (water F0 = 0.02).
-vec4 ouRtWater(vec4 c, vec3 p, vec3 n, bool lit) {
+// Water surface colour `c` at p (normal n) with the mirrored scene mixed in by Schlick Fresnel (water F0 = 0.02). Misses
+// keep the material's own colour (its shader's sky / environment term) instead of a made-up sky. `gain` scales the hit
+// colour toward the shading around it: 1 under the generic shaders, 2 under the translated ones (they read ~2x brighter
+// than the generic shading of the same surface: water_rt.frag, VkRenderer waterPass[2].w).
+vec4 ouRtWater(vec4 c, vec3 p, vec3 n, bool lit, float gain) {
     if (!ouRayInputsFinite(p, n)) return c;
     vec3 v = normalize(p - ouShadow.eye.xyz);
     float f = 0.02 + 0.98 * pow(1.0 - clamp(dot(-v, n), 0.0, 1.0), 5.0);
+    vec3 o = p + n * 2.0, r = reflect(v, n), refl, hn;
     // ponytail: no material roughness decoded (MATERIALS.md), so a perfect mirror; jitter r by roughness when it is.
-    return vec4(mix(c.rgb, ouRtReflect(p + n * 2.0, reflect(v, n), lit), f), mix(c.a, 1.0, f));
+    float d = ouRtHit(o, r, refl, hn);
+    if (d < 0.0) return c;
+    if (lit) refl = ouRtLit(o + r * d, hn, refl);
+    return vec4(mix(c.rgb, min(refl * gain, vec3(1.0)), f), mix(c.a, 1.0, f));
 }
 #endif
 
@@ -250,7 +269,7 @@ void ouLightsBegin(uint slots, out float vis[6]) {
 // After the program: RT water reflections on materials the backend flags reflective (fixedParams.w bit 2).
 vec4 ouSunEnd(vec4 c) {
 #ifdef OU_RT
-    if ((int(ouMat.fixedParams.w) & 4) != 0 && ouShadow.screen.z >= 2.0) return ouRtWater(c, ouP, ouN, true);
+    if ((int(ouMat.fixedParams.w) & 4) != 0 && ouShadow.screen.z >= 2.0) return ouRtWater(c, ouP, ouN, true, 2.0);
 #endif
     return c;
 }
