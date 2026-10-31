@@ -48,6 +48,14 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"HPole_idleHangPerp", 0, 0}, {"Hpole_perp_attach_M", 2, 4}, {"HPole_StartSwing", 4, 4}, {"HPole_swing", 1, 1},
         {"hpole_perp_fling", 1, 1}, {"crouch_Idle", 6, 6}, {"crouch_idleToCrouch", 4, 6}, {"Crouch_Front", 6, 3},
         {"ng_roll_front", 3, 1}, {"slope_slidefront", 6, 1},
+        // obstacles: requests 127 / 128 / 129 attach low / mid / high, 130 / 131 over, 132 / 133 onto, 134 / 135 onto the
+        // far side into a hang, 139 / 140 / 141 down, 147 / 148 / 149 cancel (blend space: each request's first clip)
+        {"hurdle_ground_attach_low_50", 3, 3}, {"hurdle_ground_attach_mid_100", 2, 2}, {"hurdle_ground_attach_high_150", 4, 4},
+        {"hurdle_low_over", 3, 1}, {"hurdle_over_low_long_50", 3, 1}, {"hurdle_over", 1, 1}, {"hurdle_low_onto", 4, 1},
+        {"hurdle_onto", 5, 7}, {"hurdle_to_ledgeb_low_25", 1, 1}, {"hurdle_to_ledgeb_low_65", 1, 1},
+        {"hurdle_to_ledgeb_mid_25", 1, 1}, {"hurdle_to_ledgeb_mid_65", 1, 1}, {"hurdle_down_low_50", 3, 1},
+        {"hurdle_down_mid_150", 1, 1}, {"hurdle_down_mid_100", 1, 1}, {"hurdle_ground_attach_low_50_cancel", 5, 5},
+        {"hurdle_ground_attach_mid_150_cancel", 5, 5}, {"hurdle_ground_attach_mid_100_cancel", 5, 5},
     };
     Row r{to, 3, 0};
     for (const auto& k : kRows)
@@ -96,8 +104,17 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ng_standing_jump", "ng_running_jump_forwards", "NG_InAir_Feet_Forward_stage1_standing",
     "NG_InAir_Feet_Forward_stage1", "NG_InAir_Feet_Forward_stage2", "NG_InAir_Feet_Forward_stage3",
     "ng_generic_land_forwards", "ng_running_land", "ledgeb_attach_M", "ledgeb_idle", "ledgeb_right",
-    "ledgeb_climbup_fast", "hurdle_low_onto", "hurdle_low_onto_100", "hurdle_onto", "hurdle_ground_attach_mid_100",
-    "hurdle_ground_attach_mid_150", "hurdle_ground_attach_high_200", "swim_jump_land", "swim_surfaceidle",
+    "ledgeb_climbup_fast", "hurdle_low_onto", "hurdle_low_onto_100", "hurdle_onto",
+    // obstacles (Player::tryHurdle / tryHurdleDown): lara.drm anim requests 127-141, 147-149 (blend spaces)
+    "hurdle_ground_attach_low_50", "hurdle_ground_attach_low_100", "hurdle_ground_attach_mid_100",
+    "hurdle_ground_attach_mid_150", "hurdle_ground_attach_high_150", "hurdle_ground_attach_high_200",
+    "hurdle_low_over", "hurdle_low_over_100", "hurdle_over_low_long_50", "hurdle_over_low_long_100", "hurdle_over",
+    "hurdle_over_long_100", "hurdle_to_ledgeb_low_25", "hurdle_to_ledgeb_low_65", "hurdle_to_ledgeb_low_100",
+    "hurdle_to_ledgeb_mid_25", "hurdle_to_ledgeb_mid_65", "hurdle_to_ledgeb_mid_100", "hurdle_down_low_50",
+    "hurdle_down_low_100", "hurdle_down_mid_100", "hurdle_down_mid_150", "hurdle_down_high_200",
+    "hurdle_ground_attach_low_50_cancel", "hurdle_ground_attach_low_100_cancel", "hurdle_ground_attach_mid_100_cancel",
+    "hurdle_ground_attach_mid_150_cancel", "hurdle_ground_attach_high_200_cancel",
+    "swim_jump_land", "swim_surfaceidle",
     "swim_surface", "swim_surfaceidle_to_swim",
     "swim_surfacedive", "swim_submerged_idle", "swim_sub", "swim_sub_up", "swim_sub_down", "swim_climbout",
     "bbeam_walk", "bbeam_idle", "bbeam_walk_attach", "bbeam_jumpland", "bbeam_walk_turn180", "drop_to_ledgeb",
@@ -589,13 +606,15 @@ void World::updatePose(float dt, bool reset) {
     if (reset) {
         anim_ = anim::AnimController(anims_.skeleton);
         if (overlay) anim_.play(anims_.find(s.water >= 0 ? "swim_submerged_idle" : "ng_idle"), 0, true); // [I] a base under it
-        anim_.play(anims_.find(s.clip), 0, s.loop, s.clipRate, s.clipTime, overlay);
+        anim_.play(anims_.find(s.clip), 0, s.loop, s.clipRate, s.clipTime, overlay, anims_.find(s.clipMix), s.mix);
         hair_ = anim::HairSim(anims_.hair, anims_.skeleton, laraHair());
     } else {
         anim_.update(dt);
         // Player::play changed the clip (or restarted it): fade the new one in over what is showing.
-        if (s.clip != prev_.clip || s.loop != prev_.loop || s.clipRate != prev_.clipRate || s.clipTime < prev_.clipTime)
-            anim_.play(anims_.find(s.clip), clipBlend(prev_.clip, s.clip).blendSeconds, s.loop, s.clipRate, s.clipTime, overlay);
+        if (s.clip != prev_.clip || s.loop != prev_.loop || s.clipRate != prev_.clipRate || s.clipTime < prev_.clipTime ||
+            s.clipMix != prev_.clipMix || s.mix != prev_.mix)
+            anim_.play(anims_.find(s.clip), clipBlend(prev_.clip, s.clip).blendSeconds, s.loop, s.clipRate, s.clipTime, overlay,
+                       anims_.find(s.clipMix), s.mix);
         else
             anim_.setTime(s.clipTime); // the player's clock is authoritative (root motion comes from it)
     }

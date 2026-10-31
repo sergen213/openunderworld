@@ -47,10 +47,11 @@ double syncedStartTime(const Clip& from, double fromTime, const Clip& to) {
 
 AnimController::AnimController(const scene::Skeleton& skeleton) : skeleton_(&skeleton) {}
 
-void AnimController::play(const Clip* clip, float blendSeconds, bool loop, float rate, double startTime, bool additive) {
+void AnimController::play(const Clip* clip, float blendSeconds, bool loop, float rate, double startTime, bool additive,
+                          const Clip* mixClip, float mix) {
     // ponytail: at most 4 layers; the oldest is dropped (a small jump) if transitions pile up faster than they fade.
     if (layers_.size() >= 4) layers_.erase(layers_.begin());
-    layers_.push_back({clip, startTime, rate, layers_.empty() ? 0.0f : blendSeconds, 0.0f, loop, additive});
+    layers_.push_back({clip, startTime, rate, layers_.empty() ? 0.0f : blendSeconds, 0.0f, loop, additive, mixClip, mix});
 }
 
 void AnimController::update(double dt) {
@@ -74,7 +75,12 @@ void AnimController::setTime(double seconds) {
 float AnimController::weight() const { return layers_.empty() ? 1.0f : layers_.back().weight(); }
 
 std::vector<LocalTransform> AnimController::sampleLayer(const Layer& l) const {
-    return l.clip ? sample(*l.clip, *skeleton_, l.time, l.loop) : bindPose(*skeleton_);
+    if (!l.clip) return bindPose(*skeleton_);
+    auto out = sample(*l.clip, *skeleton_, l.time, l.loop);
+    // Blend space (a multi-clip anim request): the other clip at the same phase (tru.exe 0x4428A0: t_i = t_0/len_0 * len_i).
+    if (l.mixClip && l.mix > 0)
+        blendPoses(out, sample(*l.mixClip, *skeleton_, l.time / l.clip->durationSeconds() * l.mixClip->durationSeconds(), l.loop), l.mix, out);
+    return out;
 }
 
 std::vector<LocalTransform> AnimController::pose() const {

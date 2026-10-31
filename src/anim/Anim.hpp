@@ -87,7 +87,9 @@ class AnimController {
 public:
     explicit AnimController(const scene::Skeleton& skeleton);
     // `clip` may be null (bind pose). `startTime` in seconds; looping clips may pass unbounded times.
-    void play(const Clip* clip, float blendSeconds, bool loop, float rate = 1, double startTime = 0, bool additive = false);
+    // `mixClip` / `mix`: the second clip of a blend-space request, weighted `mix` and phase-synced to `clip`.
+    void play(const Clip* clip, float blendSeconds, bool loop, float rate = 1, double startTime = 0, bool additive = false,
+              const Clip* mixClip = nullptr, float mix = 0);
     void update(double dt);                // advances every layer and the fades
     void setTime(double seconds);          // newest layer's time (when the caller owns the clock)
     std::vector<LocalTransform> pose() const;
@@ -100,6 +102,8 @@ private:
         double time;
         float rate, fade, elapsed;
         bool loop, additive;
+        const Clip* mixClip;
+        float mix;
         float weight() const { return fade <= 0 ? 1.0f : std::min(1.0f, elapsed / fade); }
     };
     std::vector<LocalTransform> sampleLayer(const Layer& l) const;

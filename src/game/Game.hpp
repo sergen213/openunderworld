@@ -206,6 +206,24 @@ struct PlayerState {
     double clipTime = 0; // unbounded for looping clips (anim time = fmod(clipTime, duration))
     float clipRate = 1;
     bool loop = true;
+    // Blend space: `clip` is the first clip of a multi-clip lara.drm anim request (hurdles: obstacle height / depth);
+    // `clipMix` is the other, weighted `mix`, phase-synced; root motion is blended the same way. Empty = single clip.
+    std::string clipMix;
+    float mix = 0;
+    // Obstacle move in progress (State::ClimbUp hurdle_* clips, Player::tryHurdle / tryHurdleDown): what follows the
+    // attach clip, its blend weight and pair (over: the long clips; onto the far side: 65 / 100 cm deep), the
+    // obstacle's top edge on her side and outward normal (toward where she came from), its height above her start,
+    // the floor z she ends on, and for onto-the-far-side the ledge she ends hanging from.
+    struct Hurdle {
+        enum Next : uint8_t { Onto, Over, ToLedge, Down } next = Onto;
+        float mix = 0;
+        bool alt = false;
+        vec3 edge{0};
+        vec2 out{0};
+        float h = 0, endZ = 0;
+        int farLedge = -1, farSeg = 0;
+        float farT = 0, farSide = 1;
+    } hurdle;
     // attached markup (index into collision().markup): ledge while hanging, balance beam, pole; while a
     // HangJump flies, the target. Segment, position along it, and side: ledges/poles = which side of the
     // polyline Lara hangs on, beams = walking direction (+1 along the points).
@@ -260,6 +278,8 @@ public:
 
 private:
     void play(std::string_view clip, bool loop, float rate = 1);
+    void playMix(std::string_view clip, std::string_view other, float mix); // blend-space request, played once
+    vec3 rootLeft() const; // model-space root motion from now to the clip end (blend space included)
     bool clipDone() const;
     vec3 advanceClip(float dt); // returns the model-space root delta
     vec3 advanceRoot(float dt); // world root delta; the clip's root Z rotation turns the yaw
@@ -277,7 +297,9 @@ private:
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
     bool canClimbUp() const;
-    bool tryHurdle(bool running, bool jumped); // onto a ledge from the ground (State::ClimbUp, hurdle_* clips)
+    bool tryHurdle(bool running, bool jumped); // onto / over a ledge from the ground (State::ClimbUp, hurdle_* clips)
+    bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
+    bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge); 3 pole fling
     void assistJump();
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide

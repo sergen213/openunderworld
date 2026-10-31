@@ -600,9 +600,12 @@ TEST(GameReal, PoolRockHurdle) {
     Actions jump;
     jump.jump = true;
     const auto& s = w.player().state();
-    const auto hands = [&] {
+    const auto hands = [&] { // blended like the blend-space request (PlayerState::clipMix / mix)
         const anim::Clip* c = w.anims().find(s.clip);
-        return vec3(w.player().modelMatrix(s.pos, s.yaw) * glm::vec4(*w.anims().handsAt(*c, s.clipTime), 1));
+        vec3 h = *w.anims().handsAt(*c, s.clipTime);
+        if (const anim::Clip* m = s.mix > 0 ? w.anims().find(s.clipMix) : nullptr)
+            h = glm::mix(h, *w.anims().handsAt(*m, s.clipTime / c->durationSeconds() * m->durationSeconds()), s.mix);
+        return vec3(w.player().modelMatrix(s.pos, s.yaw) * glm::vec4(h, 1));
     };
     std::vector<std::string> clips;
     float lastClimbZ = 0, snap = -1, handsJump = -1;
@@ -616,7 +619,8 @@ TEST(GameReal, PoolRockHurdle) {
         if (s.state == State::ClimbUp) lastClimbZ = s.pos.z, prevHands = hands();
         else if (snap < 0 && lastClimbZ != 0) snap = std::abs(s.pos.z - lastClimbZ);
     }
-    EXPECT_EQ(clips, (std::vector<std::string>{"ng_idle", "hurdle_ground_attach_mid_150", "hurdle_onto", "ng_idle"}));
+    // 523 high: request 129 (hurdle_ground_attach_high_150 blended with _high_200 by height), then 133.
+    EXPECT_EQ(clips, (std::vector<std::string>{"ng_idle", "hurdle_ground_attach_high_150", "hurdle_onto", "ng_idle"}));
     EXPECT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 3571, 1); // rock top
     EXPECT_LT(handsJump, 25);
@@ -1390,7 +1394,8 @@ TEST(GameReal, CliffclimbObstaclesAndLedgeGrabs) {
     EXPECT_TRUE(r.end.state == State::Run || r.end.state == State::Idle);
     // Chest-high block: a standing jump in front of it.
     r = run({-28029, -650, 3300}, 90, 120, [](int t, const game::PlayerState&) { Actions a; a.jump = t == 5; return a; });
-    EXPECT_TRUE(has(r, "hurdle_ground_attach_mid_150") && has(r, "hurdle_onto")) << r.clips.size();
+    // 474 high: the top of request 128 (mid_100 / mid_150) or the bottom of 129 (high_150 / high_200).
+    EXPECT_TRUE((has(r, "hurdle_ground_attach_mid_100") || has(r, "hurdle_ground_attach_high_150")) && has(r, "hurdle_onto")) << r.clips.size();
     EXPECT_TRUE(r.ledges.count(939));
     EXPECT_EQ(r.end.state, State::Idle);
     EXPECT_NEAR(r.end.pos.z, 3638, 5);

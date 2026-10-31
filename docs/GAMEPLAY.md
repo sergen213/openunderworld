@@ -150,8 +150,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | PoleHang (grab) | `Hpole_perp_attach_M` (1541) | 45, 1.5 s | ignored | no |
 | PoleHang | `HPole_idleHangPerp` (127); swing `HPole_StartSwing` (143) → `HPole_swing` (146); stop `Hpole_swingstopA` (152) | 30, 1.0 s; 70, 2.33 s → 41, 1.37 s; 41, 1.37 s | none | idle/swing yes |
 | Pole fling | `hpole_perp_fling` (423) | 7, 0.5 s | (−1.1, −382.6, 69.5) not applied (ballistic flight) | no |
-| ClimbUp (hurdle onto a low ledge) | running `hurdle_low_onto` (1351) / `hurdle_low_onto_100` (1350); walking or standing `hurdle_onto` (1352) | 0.3 s / 0.3 s / 0.8 s | (0, −282.6, 162.7) / (0, −206.7, 316.1) / (0, −311.5, 317.3); applied, the rise scaled to the ledge | no |
-| ClimbUp (pull-up onto a 340..650 ledge, jump) | `hurdle_ground_attach_mid_100` / `_mid_150` / `_high_200`, then `hurdle_onto` | 0.33 s / 0.33 s / 0.57 s | none (hands end 323 / 477 / 642 above the feet, 103 ahead); raised by the hand difference into `hurdle_onto` | no |
+| ClimbUp (obstacles, `Player::tryHurdle` / `tryHurdleDown`) | lara.drm anim requests (blend spaces, the second clip weighted by height / depth): 127 `hurdle_ground_attach_low_50`/`_100`, 128 `_mid_100`/`_150`, 129 `_high_150`/`_200`; 132 `hurdle_low_onto`/`_100`, 133 `hurdle_onto`; 130 `hurdle_low_over`/`_100` (long: `hurdle_over_low_long_50`/`_100`), 131 `hurdle_over`/`_long_100`; 134 / 135 `hurdle_to_ledgeb_low_*` / `_mid_*` (25 / 65 / 100); 139 / 141 / 140 `hurdle_down_*`; 147 / 149 / 148 `*_cancel` | attach 0.17 / 0.33 / 0.57 s; onto 0.3 / 0.8; over 0.5 / 0.6; to_ledgeb 1.0 / 1.13; down 0.3 / 0.63; cancel 0.3 | blended between the request's clips (`PlayerState::clipMix` / `mix`, phase-synced as tru.exe 0x4428A0); onto / down rise scaled to the top / floor, over drawn to her floor, to_ledgeb drawn onto the far hang pose | no |
 
 - [O] No exe string names these clips; they are the TR8 anim-list debug names in lara.drm. The state → clip choice is
   ours [I]. `ledgeb_*` (braced: feet on the wall) was chosen over `ledgeu_*` (free hang) [I].
@@ -161,20 +160,28 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
   rise takes 0.27 s and ends exactly on the ledge height, ~220 forward, and she runs on. The 121-unit hearth has no
   ledge markup and stays a wall; the 725-high wall at the far end of the left corridor (ledge 973) is taken with a
   standing jump from the rubble in front of it (50 and 101 steps), a ledge grab and a climb-up. Ours
-  (`Player::tryHurdle`): a ledge (markup 1) stepUp..340 above the feet, the root within radius + 40 of its line, facing
-  it within 53°, the stick pushing towards it (or jump pressed), and a walkable floor within 40 of the ledge where the
-  clip ends: the clip of the nearest rise plays with its root rise scaled to the ledge (State::ClimbUp, no collision).
-  The anim names count heights in cm: `_50` / `_100` / `_150` / `_200` rise 158 / 316 / 474 / 632 units.
-  Higher ledges, 340..650 above the feet, are pulled up onto with the jump (root within radius + 120):
-  `hurdle_ground_attach_mid_100` / `_mid_150` / `_high_200` (the nearest of 316 / 474 / 632) [O-data]: no root motion,
-  the hands end on an edge that high (323 / 477 / 642) and 103 ahead, in the pose `hurdle_onto` starts from (hands
-  319, 103 ahead, pelvis 331); Lara is drawn square to the ledge, hands on its line, over the attach clip, raised by
-  the hand difference at the switch, and `hurdle_onto`'s 317 rise, scaled, ends on the ledge. [I] the 650 bound (632 +
-  the clip's 10 above it; the prologue's 725 wall takes a grab), the jump trigger and reach, the height buckets;
-  `_low_*`, `high_150`, `_over` / `_to_ledgeb` / `_down_*` / `_cancel` (vaults over, onto the far side, back down) are
-  not played. Before, anything 340..650 high with a walkable top was a wall she could neither hurdle nor (with her
-  hands already above it standing, 495) grab: l2_cliffclimb's 474-high block 939, l4_pool's 523-high rock 1253 from
-  in front of it.
+  (`Player::tryHurdle`). Blend spaces [O-data]: the requests above (object DTP +0x60, 0x24-byte records, `+4` clip list,
+  `+0x10` count; dumped from lara.drm) name heights / depths in cm, 1 cm = 3.1605 units: the exe's own floats
+  158.02501 / 316.05002 / 474.075 / 632.1 (0x707C60, 0x72CCD0, 0x7396E0). Bands: low stepUp..316 (127 / 132 / 130 / 134
+  / 139), mid 316..474 (128 / 131 / 135 / 141), high 474..642.4 (129 / 133 / 140; 642.4 = `_high_200`'s hands at its
+  end, replacing the old 650 guess); the weight is the position inside the band. The Wine slab confirms request 132:
+  0.267 s = its 0.3 s from start frame 1, ~220 forward = the blend's 237 at 253 high. Clip geometry [O-data, our
+  probe]: attach clips have no root motion (mid / high hands end 103 ahead on the edge); `hurdle_over` / `_onto` /
+  `_to_ledgeb_mid_*` start in the mid attach's end pose; `_to_ledgeb_*` turn half round and end in the hang pose
+  (forward 332 / 459 / 571 for 25 / 65 / 100 cm deep tops); over forward 640 / 860 (low), 594 / 722 (mid); down
+  forward ~310 (low) / ~360. Our choice [I] (the player state chart in lara.drm decides in the original; its condition
+  registry is tru.exe 0x8B2840 `{fn, id, group}`, not decoded far enough): running into a low obstacle with a top
+  goes straight onto it (132); otherwise the band's attach plays (mid / high need the jump, reach radius + 120;
+  low: radius + 40) and is followed by a hang on the far side (top ≤ 100 cm deep ending in a hangable ledge), over
+  (her own floor past the top and the long clip lands clear of it) or onto (a walkable top where it ends); pulling
+  back during the attach plays its cancel. Down: walking / running at a ledge's edge (top ending within radius + 40,
+  facing it) over a stepDown..632 drop to a walkable floor. Reach is measured to the top's edge on her side — the face
+  under the ledge line at ledge height — not the line, and mid / high are drawn there: l4_pool rock 1253's line sits
+  up to ~180 back from the face, so squaring her to the line put her inside the rock. tru.exe's ledge attach target
+  (0x74ED30, target 0x262) does place the hang root on the line: 160 out (+0x250 −160) and 498 down (+0x252), with
+  per-state overrides (state-chart properties 0x1A5 / 0x1A6). 0x759260 / 0x7594C0 are not the ledge grab: they are
+  the `PSCCF_WallJumpAnticipate` / `WallJumpAttach` / `WallJumpCollide` conditions (wrappers 0x763330 / 0x7633E0 /
+  0x763490), so their pelvis sweep is a wall-jump test and is not ported to grabs.
 - [O] The air clips have no root motion: flight is physics-driven (below). There is no `ledgeb_left` or
   `ledgeb_jump_left`; [I] the game probably mirrors the right clips. We play the right clips for both sides.
 - Clips whose root rotates (`drop_to_ledgeb`, `bbeam_walk_turn180`, `ledgeb_jump_back`, `ng_turn_center`) turn the
@@ -208,7 +215,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Edge slide-off | a capsule resting on an edge corner (floor-like contact, no floor under the root) gets ≥ 200 units/s outwards | [I] ours (fixes the Fall/Land alternation walking slowly off a ledge) |
 | Crouch capsule height | **260** | [O] player data +0x14 |
 | Turn rate (walk/run steering, swimming) | 6 rad/s | [I] from `ng_turn_center`; turning in place uses the clip's root rotation instead (above) |
-| Ledge grab | hands from 60 units short of the line to anywhere over it (the root on her side; within 60 along it past its ends), ledge between hand height −40 and +10, falling, facing the ledge (cos ≥ 0.5), **−2232.5 ≤ zVel ≤ 1545.6 units/s** | zVel window [O]: 0x759260 allows a grab when `−byte[data+0x834]·5.72443 ≤ zVel ≤ byte[data+0x833]·5.72443` (units per 30 Hz frame); the bytes are 13 and 9. Geometry [I] ours. What the exe does with the other bytes [O read, I meaning]: 0x759260 / 0x7594C0 get from 0x758DD0 the pelvis (segment 1, instance+0x90 matrix 1) position and its prediction N frames ahead (N = byte +0x820 = 0, resp. +0x821 = 3: the horizontal speed × N along the pelvis forward, z − ½·5.72443·N²), raise both by int +0x824 (**+63**) and sweep the segment between them with collision query 0x4935F0 (mask 0x2C19E7); a hit of kind 3 or 5 accepted by 0x5D3BA0/0x758F70 is repeated at int +0x828 (**−158**): the ledge face must span 158 below to 63 above the anchor. 0x7591E0: a probe from the root down int +0x82C (**31**) must find no floor. 0x758B00: the grab point must lie within float +0x838 (**951.3**) horizontally of a position stored at player-state +0x9C0 ([U] probably the take-off point). Which bone/point the anchor is is [U], so these are not used |
+| Ledge grab | hands from 60 units short of the line to anywhere over it (the root on her side; within 60 along it past its ends), ledge between hand height −40 and +10, falling, facing the ledge (cos ≥ 0.5), **−2232.5 ≤ zVel ≤ 1545.6 units/s** [I: the window is the one below, from the wall-jump test] | Correction (2026-10-31): 0x759260 / 0x7594C0 are the state-chart conditions `PSCCF_WallJumpAnticipate` / `WallJumpAttach` / `WallJumpCollide` (registry 0x8B2840; wrappers 0x763330 / 0x7633E0 / 0x763490 name them), not the ledge grab. What they do [O]: zVel window `−byte[data+0x834]·5.72443 ≤ zVel ≤ byte[data+0x833]·5.72443` (bytes 13 and 9, units per 30 Hz frame); 0x758DD0 gives the pelvis (segment 1) position and its prediction N frames ahead (N = byte +0x820 = 0, resp. +0x821 = 3), both raised by int +0x824 (**+63**), swept with collision query 0x4935F0 (mask 0x2C19E7); a kind 3 / 5 hit accepted by 0x5D3BA0 / 0x758F70 is repeated at int +0x828 (**−158**); 0x7591E0: no floor within int +0x82C (**31**) below the root; 0x758B00: within float +0x838 (**951.3**) of player-state +0x9C0. The ledge grab's own test is in the state chart (not decoded) [U] |
 | Ledge targets (drop to hang, hang jumps) | the hang side must drop > 200 within 240 units of the ledge line | [I] ours; l4_pool's ledge 1253 sits up to ~180 inside the collision top, so a fixed 60-unit probe misses the drop |
 | Balance beam | root within 30 (x/y and z) of a type-14 line, heading within 45° of it from the ground (any heading from the air); walk 140 units/s (clip) | [I] attach distances ours; [O] markup type 14 = MUD 0x10000 BALANCEBEAM |
 | Jump assist | at take-off, of the jump-landing (2) and beam (14) lines the point nearest the natural landing (at its height) within **300** becomes the landing: horizontal velocity = Δxy / flight time, vertical unchanged | [O] solver 0x73EDC0: `v = (target − pos − ½·g·t²) / t` with g = −5.72443/frame², re-aimed every frame with the remaining time (0x751D10, player-state +0x77C) at the markup in +0xA64 whose MUD flags match 0x20830000 (jump landing, rail slide, perch, balance beam); speed cap player data +0xC10 = 18963 (never reached). [I] the 300 radius and solving once at take-off |
