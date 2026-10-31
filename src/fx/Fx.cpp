@@ -533,21 +533,30 @@ bool System::start(std::shared_ptr<const ObjectFx> fx, int def, const glm::mat4&
                    int16_t segment2, std::span<const glm::mat4> bones) {
     if (!fx || def < 0 || size_t(def) >= fx->particles.size()) return false;
     const auto& d = fx->particles[size_t(def)];
-    auto at = [&](int16_t s) { return segmentFrame(*fx, s, world, bones); };
     Emitter e;
-    e.def = &d, e.owner = owner;
-    const int16_t s1 = segment ? segment : d.segment, s2 = segment2 ? segment2 : d.segment2;
+    e.fx = fx, e.def = &d, e.owner = owner;
+    e.segment = segment ? segment : d.segment, e.segment2 = segment2 ? segment2 : d.segment2;
+    place(e, world, bones);
+    e.burst = d.duration == 0;
+    e.ticksLeft = d.duration < 0 ? -1 : 2 * d.duration;
+    e.fx = std::move(fx);
+    emitters_.push_back(std::move(e));
+    return true;
+}
+
+// Emitter position from its segments in `world` / `bones`. 0x540B80 re-reads them every frame from the instance's
+// current matrices (instance +0x90 + 0x40 segment; HInfo markers 0x46DF20), so an emitter follows a moving owner (the
+// drips swim_climbout starts on Lara's head); -126 (the emitter's own matrix, 0x43B760) stays where it started.
+void System::place(Emitter& e, const glm::mat4& world, std::span<const glm::mat4> bones) const {
+    const ParticleDef& d = *e.def;
+    auto at = [&](int16_t s) { return segmentFrame(*e.fx, s, world, bones); };
+    const int16_t s1 = e.segment, s2 = e.segment2;
     e.origin = at(s1)[3], e.origin2 = d.shape == 7 && s2 != kNoSegment ? glm::vec3(at(s2)[3]) : e.origin;
     if (d.velocitySegment != kNoSegment) e.velocityFrame = glm::mat3(at(d.velocitySegment));
     if (d.offsetSegment != kNoSegment) e.offsetFrame = glm::mat3(at(d.offsetSegment));
     // 0x543F70 -> 0x5386F0: def +0x164 scales the rate by the distance between the emitter's two segments (the second
     // = the first when none: no emission) over +0x164, i.e. +0x164 units of line per authored rate.
     if (d.rateLength) e.rateScale = glm::length(glm::vec3(at(s2 == kNoSegment ? s1 : s2)[3]) - glm::vec3(at(s1)[3])) / float(d.rateLength);
-    e.burst = d.duration == 0;
-    e.ticksLeft = d.duration < 0 ? -1 : 2 * d.duration;
-    e.fx = std::move(fx);
-    emitters_.push_back(std::move(e));
-    return true;
 }
 
 glm::mat4 System::segmentFrame(const ObjectFx& fx, int16_t s, const glm::mat4& world, std::span<const glm::mat4> bones) const {
@@ -924,6 +933,8 @@ void System::tick(const glm::vec3& camera) {
     }
     for (auto& e : emitters_) {
         if (e.stopped) continue;
+        if (e.segment != -126 && e.segment != -100)
+            if (const auto pose = poses_.find(e.owner); pose != poses_.end()) place(e, pose->second.world, pose->second.bones);
         const ParticleDef& d = *e.def;
         const float dist2 = glm::dot(camera - e.origin, camera - e.origin);
         // Emitter +0x2C / +0x30 = def +0x74 / +0x78 squared: outside that camera range nothing spawns (0x540D82).

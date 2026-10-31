@@ -725,6 +725,48 @@ TEST(StreamReal, ChapterStartIntros) {
     EXPECT_LT(glm::distance(w.player().state().pos, vec3(-18829.5f, -3621.6f, 2025.6f)), 50.0f);
     EXPECT_EQ(w.player().state().water, -1);
     EXPECT_EQ(w.player().state().state, game::State::Idle);
+    EXPECT_EQ(w.wetness().region[6], 0.0f); // dry on deck (her sea ticks are behind the black fade)
+}
+
+// User report: "Chapter 1 doesn't spawn Lara at the correct location, she just falls through emptiness". The chapter-1
+// slot (LOAD GAME, written at the chapter start by an older build) held her falling at (-183404, -24577, 10386): on
+// l1_cineseatop's set, outside l1_seatop's sea box. An airborne save resumes at its checkpoint (l1_seatop 1000, the
+// stern), else its unit's spawn: also this build's own chapter-start autosave, taken while 030_med_yacht's tail drops
+// her into the sea before 997 puts her on the stern. Standing / riding saves keep their exact place.
+TEST(StreamReal, AirborneSaveResumesAtCheckpoint) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto world = [&] {
+        auto w = std::make_unique<game::World>([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom",
+                                               game::loadLaraAnims(bf));
+        w->script().setBigfile(&bf);
+        w->enemies().setBigfile(&bf);
+        return w;
+    };
+    auto w = world();
+    w->startChapter(1);
+    for (int i = 0; i < 3; ++i) w->tick({});
+    ASSERT_EQ(w->player().state().state, game::State::Fall) << "the chapter-start autosave tick";
+    const auto early = save::capture(*w);
+    auto stale = early; // the user's slot
+    stale.player.pos = vec3(-183403.84f, -24577.49f, 10386.43f), stale.player.vel = vec3(0, 0, -429.3f);
+    stale.checkpoint = game::CheckpointRef{"l1_seatop", 1000};
+    for (const auto& [sg, flow] : {std::pair<const save::SaveGame*, const char*>{&early, "chapter-start autosave"}, {&stale, "older build's slot"}}) {
+        auto l = world();
+        save::apply(save::parse(save::serialize(*sg)), *l);
+        for (int i = 0; i < 120; ++i) l->tick({});
+        const auto& s = l->player().state();
+        EXPECT_EQ(l->currentUnit().data.name, "l1_seatop") << flow;
+        EXPECT_LT(glm::distance(glm::vec2(s.pos), glm::vec2(-18717.0f, -3775.0f)), 300.0f) << flow << ": on the yacht";
+        EXPECT_NEAR(s.pos.z, 2025.6f, 20.0f) << flow << ": standing on the deck";
+        EXPECT_EQ(s.state, game::State::Idle) << flow;
+        EXPECT_EQ(s.water, -1) << flow;
+    }
+    for (int i = 0; i < 60; ++i) w->tick({}); // on the stern: a standing save keeps its place
+    const vec3 at = w->player().state().pos;
+    auto l = world();
+    save::apply(save::capture(*w), *l);
+    EXPECT_LT(glm::distance(l->player().state().pos, at), 1.0f);
 }
 
 TEST(StreamReal, ChapterOutfits) {

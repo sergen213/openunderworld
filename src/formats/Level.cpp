@@ -417,6 +417,7 @@ Unit parseUnit(const cdc::Drm& d) {
                     wr.dark[0] = rv.at<float>(r + 0xA0), wr.dark[1] = rv.at<float>(r + 0xA4);
                     wr.extinction[0] = rv.at<float>(r + 0xA8), wr.extinction[1] = rv.at<float>(r + 0xAC);
                     wr.vsExtinction = rm.vsParams[0];
+                    wr.follow = rv.at<uint8_t>(r + 0xF0) != 0;
                     wr.grid = side;
                 }
             }

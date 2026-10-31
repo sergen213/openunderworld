@@ -425,6 +425,7 @@ private:
     struct Emitter {
         std::shared_ptr<const ObjectFx> fx;
         const ParticleDef* def = nullptr;
+        int16_t segment = 0, segment2 = kNoSegment; // resolved (command or def); re-read every tick from a tracked pose
         glm::vec3 origin{0}, origin2{0};
         glm::mat3 velocityFrame{1}, offsetFrame{1}; // def +0x96 / +0xAA frames (identity when "none")
         int32_t owner = 0;
@@ -434,6 +435,7 @@ private:
         bool burst = false, stopped = false;
         uint32_t persistent = 0; // mode 2: id + 1 of its particle
     };
+    void place(Emitter& e, const glm::mat4& world, std::span<const glm::mat4> bones) const;
     struct Particle {
         const ParticleDef* def = nullptr;
         std::shared_ptr<const ObjectFx> fx; // keeps def alive

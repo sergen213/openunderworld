@@ -691,6 +691,7 @@ public:
         glBindTextureUnit(0, t.color.get());
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindTextureUnit(7, t.filterBlur.get());  // screen filters (unused unless one runs)
+        glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get()); // underwater caustics' wave field
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
         drawOverlay(vp, options.overlay, options.ui, options.uiImages);

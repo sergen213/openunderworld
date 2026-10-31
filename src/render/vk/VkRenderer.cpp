@@ -2213,13 +2213,14 @@ private:
         VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, wb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &wl, nullptr, &waterSetLayout_));
         // Post: set 1 = WaterBlock UBO + opaque depth (underwater, atmosphere, weather) + the screen filters' blur levels
-        // (filterBlur_); set 2 = the sun shadow set (shafts).
-        const VkDescriptorSetLayoutBinding pb[3] = {
+        // (filterBlur_) + the ripple field (caustics); set 2 = the sun shadow set (shafts).
+        const VkDescriptorSetLayoutBinding pb[4] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         };
-        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, pb};
+        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
         VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves
         const VkDescriptorSetLayout waterSets[2] = {waterSetLayout_, shadowSetLayout_}; // 1: sun shadow (caustics)
@@ -2905,7 +2906,7 @@ private:
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &postSet_)); // written per swapchain (recreateSwapchain)
 
         // Enhanced water: one WaterBlock UBO and one water + post-water set per frame in flight.
-        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * kFramesInFlight},
+        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 * kFramesInFlight},
                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4}};
         VkDescriptorPoolCreateInfo wpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 2 * kFramesInFlight, 2, wps};
         VK_CHECK(vkCreateDescriptorPool(device_, &wpci, nullptr, &waterPool_));
@@ -3067,6 +3068,9 @@ private:
                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             w.dstBinding = 2;
             w.pImageInfo = &blur;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+            w.dstBinding = 3; // the ripple field (underwater caustics)
+            w.pImageInfo = &rip;
             vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
         }
         writeScreenSets();

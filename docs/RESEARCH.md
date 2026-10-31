@@ -498,6 +498,32 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   incompatible with GPLv3: look inspired by Shadertoy Ms2SD1 Seascape (CC BY-NC-SA, no code used; clean-room from
   general techniques). Its source was not read for this work.
 
+### 8.9 Caustics references (2026-10-30)
+
+`src/render/shaders/caustics.glsl` is written for this project; no third-party caustic code is used.
+- **WebGL Water** by Evan Wallace (2011), https://github.com/evanw/webgl-water — "Copyright 2011 Evan Wallace,
+  Released under the MIT license" (source headers; the repo has no LICENSE file). Physics followed: caustic light =
+  old area / new area of the refracted beam (its caustics shader rasterises the refracted surface grid). Ours takes
+  the same ratio analytically per pixel (1 / |det| of the refraction map's Jacobian, from the drawn water surface's
+  own height field: shaders/waves.glsl), no mesh, no code copied.
+- **GPU Gems ch. 2 "Rendering Water Caustics"** (Guardado, Sánchez-Crespo, NVIDIA 2004),
+  https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-2-rendering-water-caustics — technique
+  only (refract the sun through a procedural wave function, light by where the refracted ray points; caustics
+  sharpest near the surface, attenuated with depth).
+- **Real-Time Underwater Caustics Projector (URP)** by Ivan Larinin, https://veltrynox.github.io/caustics.html — no
+  licence stated, technique only: two scrolling caustic textures combined with `min()`, R/G/B sampled with small
+  offsets (chromatic aberration), mip blur with depth. Ours gets the colour split physically (red / blue focus 2.5 %
+  apart) and the blur from the sun-disk term instead of a texture.
+- **"Tileable Water Caustic"** by Dave_Hoskins after joltz0r, https://www.shadertoy.com/view/MdlXz8 (iterated-sine
+  pattern; Godot Shaders port "Water Caustic" by haruyou27) — Shadertoy default CC BY-NC-SA 3.0, incompatible with
+  GPLv3: look reference only, no code used.
+- "Caustics by second derivatives", https://www.shadertoy.com/view/tf2SWy — CC BY-NC-SA 3.0 (Shadertoy default):
+  idea only (caustics from the height field's Hessian), its source was not read.
+- Look targets: photos of shallow tropical seabeds (thin bright curved filaments with brighter knots and doubled
+  folds, round dim cells ~20–60 cm in 1–5 m of water, colour fringes and softer, wider, fainter networks with depth).
+  Reference photo used: "Caustics Shallow Water Pic1.png" by Peacelovedeathmetal2, Wikimedia Commons, CC BY-SA 4.0
+  (https://commons.wikimedia.org/wiki/File:Caustics_Shallow_Water_Pic1.png), compared by eye only (not shipped).
+
 ---
 
 ## Open questions

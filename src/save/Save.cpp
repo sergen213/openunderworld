@@ -202,17 +202,25 @@ SaveGame capture(const game::World& world) {
 
 void apply(const SaveGame& save, game::World& world) {
     if (save.tailoring) world.setTailoring(*save.tailoring); // first: the units' enemies spawn with its health level
-    world.enterUnit(save.unit, game::Spawn{save.player.pos, save.player.yaw});
-    game::PlayerState p = save.player; // enterUnit put the save's unit at offset 0: positions apply as-is
-    auto markup = [&](const std::string& unit, int index, const char* what) {
-        if (unit.empty()) return -1;
-        const int i = world.markupIndex(unit, index);
-        if (i < 0) throw SaveError(std::string(what) + " " + std::to_string(index) + " of " + unit + " is not loaded");
-        return i;
-    };
-    p.ledge = markup(save.ledgeUnit, save.ledgeIndex, "ledge");
-    p.water = markup(save.waterUnit, save.waterIndex, "water volume");
-    world.restore(p, save.cameraYaw, save.cameraPitch);
+    // An airborne save resumes at its checkpoint (else its unit's spawn), as tru.exe's loads always do (checkpoint
+    // restore 0x556E90): one taken mid-fall holds no place to come down on. The chapter-1 start slot of older builds held
+    // Lara on l1_cineseatop's set, 166000 units off the yacht, falling through the sky [user report].
+    const bool airborne = save.player.state == game::State::Fall || save.player.state == game::State::Jump;
+    if (airborne) {
+        world.enterUnit(save.checkpoint ? save.checkpoint->unit : save.unit, std::nullopt, save.checkpoint ? save.checkpoint->id : 0);
+    } else {
+        world.enterUnit(save.unit, game::Spawn{save.player.pos, save.player.yaw});
+        game::PlayerState p = save.player; // enterUnit put the save's unit at offset 0: positions apply as-is
+        auto markup = [&](const std::string& unit, int index, const char* what) {
+            if (unit.empty()) return -1;
+            const int i = world.markupIndex(unit, index);
+            if (i < 0) throw SaveError(std::string(what) + " " + std::to_string(index) + " of " + unit + " is not loaded");
+            return i;
+        };
+        p.ledge = markup(save.ledgeUnit, save.ledgeIndex, "ledge");
+        p.water = markup(save.waterUnit, save.waterIndex, "water volume");
+        world.restore(p, save.cameraYaw, save.cameraPitch);
+    }
     world.setCheckpoint(save.checkpoint);
     world.collected = save.collected;
     world.chapter = save.chapter;

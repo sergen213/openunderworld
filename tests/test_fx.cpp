@@ -122,6 +122,23 @@ TEST(Fx, BurstEmitterSpawnsOnce) {
     EXPECT_EQ(s.particleCount(), 12u);
 }
 
+// 0x540B80 re-reads an emitter's segment from its instance every frame: started on a tracked owner, it spawns where the
+// owner is now (swim_climbout's drips on Lara's head as she climbs onto the deck), not where it was started.
+TEST(Fx, EmitterFollowsItsTrackedOwner) {
+    fx::System s;
+    ASSERT_TRUE(s.start(flameFx(), 0, glm::mat4(1), 1));
+    s.track(1, glm::translate(glm::mat4(1), glm::vec3(5000, 0, 0)), {});
+    for (int t = 0; t < 20; ++t) s.tick({});
+    ASSERT_GT(s.particleCount(), 0u);
+    render::Camera cam;
+    cam.position = {3000, -2000, 200};
+    std::vector<render::FxVertex> v;
+    std::vector<render::FxBatch> b;
+    s.build(cam, 16.0f / 9, v, b);
+    ASSERT_FALSE(v.empty());
+    for (const auto& x : v) EXPECT_GT(x.pos[0], 4000.0f);
+}
+
 // def +0x05 & 1 (water rings): the sprite lies on the world XY plane (tru.exe 0x549500), not facing the camera.
 TEST(Fx, FlatParticlesLieOnTheGround) {
     auto d = flameDef();

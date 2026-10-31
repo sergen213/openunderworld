@@ -13,13 +13,16 @@ layout(binding = 4) uniform Water {
     vec4 filters[9]; uvec4 filterLut[640]; // original screen filters (shaders/filter.glsl)
     vec4 waterPass[3]; // tru.exe's full-screen under-water pass (ouWaterPass); [2].y light-ray weight (ouRays)
     uvec4 rays[157];   // tru.exe's under-water light rays, 50 x 50 bytes (ouRays)
+    mat4 seaWaves;     // tru.exe's sea waves at the camera (caustics: shaders/waves.glsl)
 } w;
 #ifdef VULKAN
 layout(set = 1, binding = 1) uniform sampler2D uDepth;
+layout(set = 1, binding = 3) uniform sampler2D uRipples; // the interactive wave field (caustics)
 #define OU_NDC_Y(uv) (1.0 - 2.0 * (uv).y)
 #define OU_NDC_Z(d) (d)
 #else
 layout(binding = 6) uniform sampler2D uDepth;
+layout(binding = 9) uniform sampler2D uRipples;
 #define OU_NDC_Y(uv) (2.0 * (uv).y - 1.0)
 #define OU_NDC_Z(d) (2.0 * (d) - 1.0)
 #endif
@@ -80,13 +83,31 @@ vec3 ouRays(vec3 c, vec2 uv) {
     float r = mix(mix(ouRayTexel(i), ouRayTexel(i + ivec2(1, 0)), f.x), mix(ouRayTexel(i + ivec2(0, 1)), ouRayTexel(i + ivec2(1, 1)), f.x), f.y);
     return c + r * w.waterPass[2].y;
 }
-// Enhanced (ours, RENDERING.md "Under water"): volumetric sun shafts. 12 jittered steps along the view ray (to the
-// scene, the surface or 6000 units) in-scatter the sun where the sun shadow map sees it, through the caustic network
-// at the point where the refracted sun ray entered the surface (900-unit cells, so the shafts follow the sun and
-// flicker with the waves), fading below the surface and with the water fog toward the eye; tinted by the unit's
-// surface water colour. ouSunTapVisibility / ouPhase are in atmosphere.glsl.
-float ouSunTapVisibility(vec3 p);
+// Enhanced (ours, RENDERING.md "Under water"): sun shafts as the volumetric continuation of the caustics. Each step
+// along the view ray traces back along the refracted sun to where it entered the surface and takes the focusing of
+// the same waves there (caustics.glsl ouCausticFocus, as the bed's caustics: the streaks meet the bright lines on the
+// floor and move with the waves), blurred by the sun disk (0.005 x depth, as the bed) and 2.5% of the step (one afl iteration): many thin parallel streaks under the
+// focusing crests (smoothstep(1.15, 2.2, focus)), coming and going in slow wave groups (ouShaftGroups). In-scatter:
+// HG 0.7 (strongest toward the sun), 3x3-PCF sun shadow (soft occluder volumes, not texel blocks), attenuated per
+// channel by the unit's extinction (water.frag ouWaterLook: red goes first) over the sun's path below the surface and
+// the view path (blue-green, fading with depth), then soft-clamped under 0.3 x the water colour so looking into the
+// sun never saturates. 4 steps over up to 4000 units packed toward the eye (t ~ u^2), steps between groups or in
+// shadow skipping the focus (~1.5 ms at 2560 x 1440); the four pixels of each 2x2 quad march at interleaved quarter offsets and share their mean (ouQuadMean): 16 depth slices
+// without bands and no screen-space dither left (a static per-pixel jitter was the black checker FSR kept).
 float ouPhase(float cosT, float g);
+// Wave groups: the swell focuses in patches ~10 m across (3000 units) that drift and come and go: streaks 0..1.
+float ouShaftGroups(vec2 e, float t) {
+    float m = sin(dot(e, vec2(0.0021, 0.0009)) + 0.23 * t) * sin(dot(e, vec2(-0.0008, 0.0019)) - 0.17 * t);
+    m += 0.5 * sin(dot(e, vec2(0.0013, -0.0027)) + 0.31 * t);
+    return smoothstep(-0.45, 0.9, m);
+}
+// Mean over the 2x2 pixel quad via fine derivatives (uniform control flow only; helper lanes take part).
+vec3 ouQuadMean(vec3 v, ivec2 px) {
+    vec3 dx = dFdxFine(v);
+    vec3 row = v + (px.x == 0 ? dx : -dx) * 0.5;
+    vec3 dy = dFdyFine(row);
+    return row + (px.y == 0 ? dy : -dy) * 0.5;
+}
 vec3 ouShafts(vec3 c, vec2 uv) {
     if (w.fogColor.w < 0.5 || w.sunColor.w <= 0.0 || w.sunDir.z < 0.05 || w.detail.w < 0.5) return c;
     vec3 q = ouWorld(uv, texture(uDepth, uv).r, w.invViewProj);
@@ -96,23 +117,29 @@ vec3 ouShafts(vec3 c, vec2 uv) {
     float surf = w.volumes[1].z;
     if (w.eye.z >= surf) return c;
     if (dir.z > 1e-4) len = min(len, (surf - w.eye.z) / dir.z);
-    len = min(len, 6000.0);
+    len = min(len, 4000.0);
     vec3 l = -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / 1.333); // toward the sun, under water
-    const int steps = 12;
-    float dt = len / float(steps);
-    float t = dt * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    float fog = w.waterPass[1].w > 0.0 ? 3.0 / w.waterPass[1].w : 1.0 / max(w.fogRange.y, 1.0);
-    float lit = 0.0;
-    for (int i = 0; i < steps; ++i, t += dt) {
+    bool unit = w.waterPass[1].w > 0.0; // ouWaterLook's extinction per unit length, linear colour
+    vec3 sf = unit ? w.waterPass[0].rgb : vec3(0.447, 0.780, 0.792);
+    vec3 sigma = (1.0 - 0.85 * pow(sf, vec3(2.2))) * (30.0 / (unit ? w.waterPass[1].w : 100000.0));
+    const int steps = 4;
+    ivec2 px = ivec2(gl_FragCoord.xy) & 1;
+    float o = (float(px.x + 2 * px.y) + 0.5) * 0.25; // this pixel's quarter of each step (2x2 interleave)
+    vec3 lit = vec3(0.0);
+    for (int i = 0; i < steps; ++i) {
+        float u = (float(i) + o) / float(steps), t = len * u * u, dt = len * 2.0 * u / float(steps);
         vec3 p = w.eye.xyz + dir * t;
-        float h = surf - p.z;
-        vec2 s = (p.xy + l.xy * (h / l.z)) / 600.0;
-        float k = ouCausticLayer(s, w.eye.w * 0.6, 0.35);
-        lit += ouSunTapVisibility(p) * k * k * exp(-h / 4000.0 - t * fog);
+        float h = max(surf - p.z, 1.0), sunPath = h / l.z;
+        vec2 e = p.xy + l.xy * sunPath; // surface entry point
+        float g = ouShaftGroups(e, w.eye.w), v = g > 0.0 ? ouSunShadowVisibility(p) : 0.0;
+        if (v <= 0.01) continue; // between wave groups or in shadow: skip the focus (the costly part)
+        float b = smoothstep(1.15, 2.2, ouCausticFocus(e, h, 0.005 * h + 0.025 * dt, 1)) * g;
+        lit += exp(-sigma * (sunPath + t)) * (b * v * dt);
     }
-    vec3 tint = w.waterPass[1].w > 0.0 ? w.waterPass[0].rgb : vec3(0.3, 0.55, 0.65);
-    float air = (1.0 - exp(-len / 2500.0)) / float(steps); // more water in front, more scattering
-    return c + w.sunColor.rgb * tint * (lit * air * ouPhase(dot(dir, l), 0.6) * 12.566371 * w.sunColor.w * 2.5);
+    lit = ouQuadMean(lit, px); // the quad's four interleaved marches: 64 steps' worth, no dither left
+    vec3 s = w.sunColor.rgb * w.sunColor.w * lit * (4.0e-3 * 12.566371 * ouPhase(dot(dir, l), 0.7));
+    vec3 cap = 0.3 * sf; // soft clamp under a third of the water's own colour: streaks, never a saturated blob
+    return c + cap * (1.0 - exp(-s / cap));
 }
 vec3 ouUnderwater(vec3 c, vec2 uv) {
     // caustics light the scene, the water pass fogs it, then the shafts' and tru.exe's rays add light (0x6D8C20 order)

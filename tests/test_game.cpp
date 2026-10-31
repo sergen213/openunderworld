@@ -729,6 +729,11 @@ TEST(Game, SwimEnterCrossClimbOut) {
     EXPECT_EQ(s.water, -1);
     EXPECT_NEAR(s.pos.z, 0, 1e-3); // the clip's rise ends exactly on the walkway
     EXPECT_GT(s.pos.x, 2000 + 50);
+    // Out of the water she dries (tru.exe under Wine: 0.006 per second, 0.0002 per 30 Hz frame).
+    EXPECT_EQ(w->wetness().water, 0);
+    const float wet = w->wetness().region[6];
+    for (int i = 0; i < 600; ++i) w->tick({});
+    EXPECT_NEAR(w->wetness().region[6], wet - 0.06f, 1e-3f);
 }
 
 TEST(Game, DiveSwimDownAndSurface) {
@@ -2854,6 +2859,35 @@ TEST(Game, WetnessSoaksAndDries) {
     EXPECT_EQ(w.region[1], 0.0f);
     EXPECT_EQ(w.bone[8], 0.0f);
     EXPECT_EQ(w.bone[95], 0.0f);
+}
+
+// Drying timeline after leaving the water, tru.exe 1.1 under Wine (l1_seatop yacht stern, *0xFADF98 sampled every
+// 0.75 s): head first, then down the spine and arms, the feet last. Seconds from leaving the water until each bone
+// starts drying / is dry; World ticks at 60 Hz with timeMult 0.5.
+TEST(Game, WetnessDryingMatchesOriginalTimeline) {
+    ou::game::Wetness w;
+    w.water = 0x7F;
+    w.tick(1);
+    w.water = 0;
+    struct Bone { int bone; float start, dry; };
+    const Bone tru[] = {{17, 0.0f, 166.4f},  {51, 33.0f, 199.3f},  {16, 36.7f, 203.0f}, {14, 66.7f, 232.5f},
+                        {1, 77.5f, 244.1f},  {3, 100.2f, 266.4f},  {4, 116.1f, 283.0f}, {5, 133.3f, 299.5f},
+                        {6, 144.5f, 311.1f}, {8, 166.4f, 332.7f},  {11, 144.5f, 311.1f}, {13, 166.4f, 332.7f},
+                        {53, 37.5f, 203.9f}, {76, 66.7f, 232.5f},  {95, 100.2f, 266.4f}};
+    float start[160], dry[160];
+    std::fill(std::begin(start), std::end(start), -1.0f), std::fill(std::begin(dry), std::end(dry), -1.0f);
+    for (int t = 1; t <= 60 * 400; ++t) {
+        w.tick(0.5f);
+        for (const auto& b : tru) {
+            if (start[b.bone] < 0 && w.bone[size_t(b.bone)] < 0.999f) start[b.bone] = float(t) / 60;
+            if (dry[b.bone] < 0 && w.bone[size_t(b.bone)] <= 0.0f) dry[b.bone] = float(t) / 60;
+        }
+    }
+    for (const auto& b : tru) {
+        SCOPED_TRACE(b.bone);
+        EXPECT_NEAR(start[b.bone], b.start, 1.5f); // the samples are 0.75 s apart
+        EXPECT_NEAR(dry[b.bone], b.dry, 1.5f);
+    }
 }
 
 // bend_* plants (game/Bend.hpp). A steady wind (no frequency, no wavelength: the phase stays 0, so no |sin| pulse)

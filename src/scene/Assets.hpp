@@ -155,6 +155,7 @@ struct Environment {
         int grid = 0;              // +0xC8 DTP +0x00: vertices per side
         std::vector<uint8_t> mask; // DTP +0x10 + 4 i, byte 2: column i drawn (index row-major as tru.exe reads it)
         float origin[3] = {};      // +0x40: grid centre xy, surface z
+        bool follow = false;       // +0xF0: the grid centre xy follows Lara (0x6D8C20; set in every shipped record)
         float halfSize = 0;        // +0x8C: grid half extent
         float length = 0;          // +0x50: column length along the refracted sun
         float sun[3] = {};         // marker +0x88 position: where the sun rays come from

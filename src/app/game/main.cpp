@@ -1104,6 +1104,7 @@ struct EffectsView {
         if (under) // 0x6D8C20 draws them only fully under water, with the volume's waves; weight 1 - murk / 0.7 (murk 0)
             for (const auto& v : fo.waterVolumes)
                 if (eye.x >= v.min[0] && eye.x <= v.max[0] && eye.y >= v.min[1] && eye.y <= v.max[1] && eye.z >= v.min[2] && eye.z <= v.max[2]) {
+                    if (rays.rec.follow) rays.rec.origin[0] = lara.x, rays.rec.origin[1] = lara.y;
                     underwater.rayWeight = rays.draw(cam, aspect, v.waves, underwater.rays) ? 1.0f : 0.0f;
                     break;
                 }

@@ -39,6 +39,9 @@ const char* kFilter =
 const char* kCaustics =
 #include "caustics.glsl.inc"
     ;
+const char* kWaves =
+#include "waves.glsl.inc"
+    ;
 } // namespace
 
 bool isWaterSurface(std::string_view meshOrigin) { return meshOrigin.find("watersurface") != std::string_view::npos; }
@@ -116,6 +119,7 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     const auto& r = options.ripples;
     w.ripple = {r.originX, r.originY, r.cellSize, r.surfaceZ};
     w.rippleInfo = {float(r.size), r.cellSize > 0 && r.size > 0 && !r.heights.empty() ? 1.0f : 0.0f, 0, 0};
+    w.seaWaves = waterWaves(camera.position, 1.0f, options.waterVolumes); // the sea the caustics look through
     w.ambient = env.valid ? glm::vec4(env.ambient[0], env.ambient[1], env.ambient[2], 0) : glm::vec4(0.35f, 0.35f, 0.38f, 0);
 
     const glm::vec3 eye = camera.position;
@@ -288,17 +292,19 @@ std::string withVersion(const char* source, bool vulkan) {
     (void)vulkan; // the files carry #version 460; glslc defines VULKAN for the descriptor syntax
     return source;
 }
-// GL has no #include: splice the shared files in place of their #include lines (glslc resolves them for Vulkan).
+// GL has no #include: splice the shared files in place of their #include lines (glslc resolves them for Vulkan); every
+// occurrence, in this order, so caustics.glsl's own waves include is spliced too (waves.glsl has an include guard).
 std::string expandIncludes(std::string s) {
     const std::pair<const char*, const char*> files[] = {{"#include \"sun.glsl\"", sunGlsl()},
-                                                         {"#include \"shaders/caustics.glsl\"", kCaustics}};
+                                                         {"#include \"shaders/caustics.glsl\"", kCaustics},
+                                                         {"#include \"shaders/waves.glsl\"", kWaves}};
     for (const auto& [line, text] : files)
-        if (const size_t at = s.find(line); at != std::string::npos) s.replace(at, std::strlen(line), text);
+        for (size_t at; (at = s.find(line)) != std::string::npos;) s.replace(at, std::strlen(line), text);
     return s;
 }
 } // namespace
 
-std::string waterVertexSource(bool vulkan) { return withVersion(kWaterVert, vulkan); }
+std::string waterVertexSource(bool vulkan) { return expandIncludes(withVersion(kWaterVert, vulkan)); }
 std::string waterFragmentSource(bool vulkan) { return expandIncludes(withVersion(kWaterFrag, vulkan)); }
 
 std::vector<SplashVertex> splashVertices(const Camera& camera, std::span<const WaterParticle> splashes) {

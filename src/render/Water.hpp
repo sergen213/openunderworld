@@ -53,8 +53,9 @@ struct WaterBlock {
     glm::vec4 waterPass[3]; // FrameOptions::underwater: [0] surface rgb + alpha at the eye, [1] deep rgb + distance,
                             // [2] x strength (0 = off), y light-ray weight (Underwater::rayWeight); both water qualities
     glm::uvec4 rays[157];   // Underwater::rays, 4 texels per uint (ouRays)
+    glm::mat4 seaWaves;     // render::waterWaves at the camera: tru.exe's sea waves c60-c63 (zero = no sea; caustics)
 };
-static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16);
+static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16 + 64);
 inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes);

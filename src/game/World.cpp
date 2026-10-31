@@ -415,8 +415,9 @@ void World::tick(const Actions& input) {
     tickGadgets(a, dt); // flashlight, grenades (Gadgets.cpp)
     tickAir(dt);
     // Swimming soaks every region (tru.exe under Wine: mask 0x7F while she swims); out of the water the mask is clear
-    // and she dries (Wetness::tick).
-    wetness_.water = player_.state().water >= 0 ? 0x7F : 0;
+    // and she dries (Wetness::tick). Not behind a black screen fade: l1_seatop's chapter start drops her into the sea
+    // for 12 ticks at 030_med_yacht's end before 997 puts her on the stern (tru.exe: dry on deck after its larabase 68).
+    wetness_.water = player_.state().water >= 0 && script_.screenFade() < 1.0f ? 0x7F : 0;
     wetness_.tick(dt * 30.0f);
     water_.tick(*this, dt); // after combat: this tick's shots make rings
     updatePose(dt, false);

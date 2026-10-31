@@ -580,9 +580,22 @@ outfit (the original only reads `+0x294` on a level load).
   9–16 the same for mud, 17 slow soak, 0 / other clear). Read live in tru.exe under Wine (l2_cliffclimb sea, 2026-10-30):
   mask 0x7F and every region 1.0 while she swims. larabase 67 (0x778140 → 0x6ED510) soaks every region, 68 (0x778150 →
   0x6ED460) resets wetness and dirt; the chapter start cinematics run 68.
+- Drying timeline [O: tru.exe under Wine, l1_seatop stern, 2026-10-30, *0xFADF98 sampled every 0.75 s]: the mask
+  clears the frame she leaves the water; regions dry at 0.006 / s (0 after 166 s); per bone, seconds from leaving until
+  it starts drying / is dry: head 17 0 / 166, face 51 33 / 199, neck 16 37 / 203, arm 53 38 / 204, spine 14 67 / 233,
+  pelvis 1 78 / 244, hand 95 100 / 266, thigh 4 116 / 283, shin 5 133 / 300, feet 8 / 13 166 / 333. Ours matches to
+  the sample spacing (test `Game.WetnessDryingMatchesOriginalTimeline`).
+- Drips [O: lara.drm, Wine]: swim_climbout (and _A/_B/_C) frame 0 runs command 3 particle 208 on segment 17 (head):
+  65 frames at 1 per frame, life 30, size 6 → 1, gravity −1.58, grey-white texture 164 (_A adds the 209 spray); in
+  tru.exe the droplets fall from her head and shoulders for about 2 s after she climbs out, then stop. No other drip
+  source exists [I: no wetness-driven emitter; 0x6FF200 and its callers start no effects]. Emitters re-read their
+  segment every frame (0x540B80 reads instance +0x90 + 0x40 × segment), so they follow her onto the deck; ours did not
+  (now `fx::System::place`, re-run each tick from the owner's tracked pose), which left the drips in the sea.
 - Ours: `World::tick` sets the mask to 0x7F while Lara swims (`PlayerState::water` ≥ 0) and clears it otherwise [I:
   the poster of 0x641 is data we have not traced], then ticks `Wetness` with the same constants, bone lists and order;
-  script events `Wetness` run 67 / 68. ou-game writes the weighted bone wetness into each skinned vertex's color0 (the
+  script events `Wetness` run 67 / 68. No soaking behind a black screen fade (`screenFade` 1): l1_seatop's chapter start
+  leaves her 12 ticks in the sea after 030_med_yacht before 997 moves her onto the stern [I: tru.exe's Lara is dry
+  there]. ou-game writes the weighted bone wetness into each skinned vertex's color0 (the
   sum tru.exe's VS forms) and translates the materials whose skinned VS reads the palette's 4th row
   (`scene::Material::skinParams`, 7 of lara.drm's 25) with COLOR0 taken from that attribute (`sm3::translate`
   `colorFromVertex`; formats/SHADERS.md). Not modelled: dirt / mud and its colour, rain soaking (0x52E180), partial

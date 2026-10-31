@@ -4,6 +4,15 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.16.0] - 2026-10-30
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Under-water sun rays look natural. The original's light rays now hang around Lara as in tru.exe (its records centre the ray grid on her; we used a fixed point up to 13000 units away, so they only showed as far streaks), and the Enhanced shafts are rebuilt as the continuation of the caustics: a few distinct beams under the waves' focusing crests, strongest looking toward the sun, turning blue-green and fading with depth, blocked by the scenery, and steady, with no dither or black checker pattern (docs/RENDERING.md "Under water").
+- Enhanced water caustics are now cast by the water's own waves: the open sea's swell, the small surface ripples and Lara's own ripples and splashes focus the sunlight into bright moving lines on the sea bed, matching the waves above them, seen both under water and from above. No more cracked-mud network or worm pattern on deep sea floors; they are crisp on shallow beds, softer in deep water and never shimmer in the distance. Original water is unchanged.
+- Loading a save taken while Lara was in mid-air now resumes at its checkpoint, the way the original's loads do. This fixes the chapter-1 start slot written by an older build, which dropped her through the empty sky far from the yacht; she now stands on the yacht's stern.
+- Water now drips from Lara's head and shoulders for about two seconds after she climbs out, as in tru.exe; effect emitters follow the bone they start on (the original re-reads it every frame), so the drips no longer stay behind in the sea. She starts chapter 1 dry on the yacht's stern instead of soaked, and her drying matches the original's timeline measured under Wine: head first, the feet last, fully dry after about 5.5 minutes.
+
 ## [0.15.0] - 2026-10-30
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
