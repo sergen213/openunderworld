@@ -31,11 +31,23 @@ struct Face {
 // tru.exe skips faces with flags bit 0x40 and faces whose mask shares no bit with the query mask.
 inline bool queryable(const Face& f, uint8_t mask) { return !(f.flags & 0x40) && (f.mask & mask); }
 
+// Level camera record (unit data +0x208 count, +0x20C 0x70-byte records; tru.exe 0x606xxx): where the gameplay camera
+// is drawn while Lara is on a markup whose camera commands select it (command 0x12, COLLISION.md "Camera records").
+struct CameraRecord {
+    uint32_t type = 0;                 // +0x4C: 0 nearest spline point to Lara, 1 / 2 along her markup, 3 by markup in `markups`
+    std::vector<vec3> pos, tangent;    // +0x44 count, +0x48 0x20-byte Hermite points {position, tangent} (unit frame)
+    std::vector<uint16_t> markups;     // +0x50 count, +0x54 markup items (as markup ids)
+    float angleSpeed = 0, distanceSpeed = 0, radius = 0; // +0x58 deg/s, +0x5C units/s, +0x60
+    bool distance = false, inside = false;               // +0x6C drive the distance too, +0x6D no collision within radius
+    std::vector<std::pair<uint32_t, float>> forces;      // +0x64 count, +0x68 0x44-byte force records {type, k}
+};
+
 // Markup polyline ("markup2" in tru.exe): ledges, landings, balance beams, ...
 struct Markup {
     uint8_t type = 0;   // raw type byte; markupFlags/markupTypeName interpret it
     uint16_t id = 0;
     std::vector<vec3> points;
+    std::optional<CameraRecord> camera; // item +0x64 / +0x68 camera commands: the record command 0x12 selects
 };
 // MUD flag bits tru.exe derives from the type (switch 0x5D6F90 | 0x5D70A0).
 uint32_t markupFlags(uint8_t type);

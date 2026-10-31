@@ -252,6 +252,8 @@ void World::rebuildCollision() {
             // Water boxes (findWater) carry {min, max, centre, half extents, rotation, waves}: only the first three are positions.
             const size_t positions = m.type == 10 && m.points.size() >= 5 ? 3 : m.points.size();
             for (size_t i = 0; i < positions; ++i) m.points[i] += u.offset;
+            if (m.camera)
+                for (vec3& p : m.camera->pos) p += u.offset;
             if (disabledMarkup_.contains({u.data.name, m.id})) m.type = kMarkupDisabled;
             col_.markup.push_back(std::move(m));
         }

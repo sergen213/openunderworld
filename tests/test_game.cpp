@@ -1291,18 +1291,18 @@ TEST(GameReal, TempleBalanceBeamWalkAndJump) {
         ASSERT_NEAR(s.pos.z, 3061, 1);
     };
     const float x0 = s.pos.x;
-    for (int i = 0; i < 300; ++i) w.tick(forward(0.3f)), onBeam(i);
+    for (int i = 0; i < 300; ++i) w.tick(fixedCamera(w, forward(0.3f), 0)), onBeam(i);
     EXPECT_NEAR(s.pos.x - x0, 140 * 5, 60); // bbeam_walk: 501 units per 3.57 s cycle
     Actions jump = forward(0.3f);
     jump.jump = true;
-    w.tick(jump);
+    w.tick(fixedCamera(w, jump, 0));
     EXPECT_EQ(s.state, State::JumpPrep);
     const float x1 = s.pos.x;
-    for (int i = 0; i < 120 && s.state != State::Beam; ++i) w.tick(forward(0.3f));
+    for (int i = 0; i < 120 && s.state != State::Beam; ++i) w.tick(fixedCamera(w, forward(0.3f), 0));
     ASSERT_EQ(s.state, State::Beam);
     EXPECT_EQ(s.clip, "bbeam_jumpland");
     EXPECT_GT(s.pos.x - x1, 300);
-    for (int i = 0; i < 900; ++i) w.tick(forward(0.3f)), onBeam(i);
+    for (int i = 0; i < 900; ++i) w.tick(fixedCamera(w, forward(0.3f), 0)), onBeam(i);
     EXPECT_NEAR(s.pos.x, -3986, 1); // stopped at the far end
 }
 
@@ -1943,6 +1943,39 @@ TEST(GameReal, CliffclimbStances) {
     EXPECT_LT(maxTurn, 0.02f) << "the heading turns smoothly (re-pinned to each face it jumped by up to 0.067 rad)";
     EXPECT_GT(minCamera, 1000.0f) << "the camera stays back (its probe started touching the rock and collapsed onto the "
                                      "pivot: position = target, a NaN view, the screen white)";
+}
+
+// l2_cliffclimb's hold wall carries a level camera record (type 3, 2 Hermite points, 11 holds, 300 deg/s, force 5 x
+// 0.2): holds list in the record's order (hold id 900 second, 901 fourth: tru.exe under Wine put the camera point at
+// u = 0.1 / 0.3 there). Idle on the wall, after 5 s without look input the camera turns 1.0 deg/s toward the record's
+// point and its distance grows 3.16 units/s toward the point's (Wine: 1.0 deg/s at hold 908).
+TEST(GameReal, CliffclimbCameraRecord) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto col = collision::loadLevelCollision(cdc::parseDrm(std::move(*bf.read("pc-w\\l2_cliffclimb.drm"))));
+    col.build();
+    ASSERT_TRUE(col.markup[11].camera);
+    const auto& r = *col.markup[11].camera;
+    EXPECT_EQ(col.markup[11].id, 900);
+    EXPECT_EQ(r.type, 3u);
+    EXPECT_EQ(r.markups, (std::vector<uint16_t>{910, 900, 927, 901, 896, 908, 906, 902, 907, 903, 905}));
+    ASSERT_EQ(r.pos.size(), 2u);
+    EXPECT_NEAR(r.pos[0].x, -22592.1f, 0.1f);
+    EXPECT_NEAR(r.angleSpeed, 300.0f, 1e-3f);
+    EXPECT_TRUE(r.distance);
+    game::World w(std::move(col), game::loadLaraAnims(bf), {{-23835, -3600, 300}, glm::radians(90.0f)});
+    for (int t = 0; t < 60 && w.player().state().state != State::Climb; ++t) w.tick(forward());
+    ASSERT_EQ(w.player().state().state, State::Climb);
+    const auto view = [&] {
+        const vec3 d = w.camera().position - w.camera().target;
+        return std::pair{glm::degrees(std::atan2(d.y, d.x)), glm::length(d)};
+    };
+    for (int t = 0; t < 9 * 60; ++t) w.tick({});
+    const auto [yaw0, dist0] = view();
+    for (int t = 0; t < 10 * 60; ++t) w.tick({});
+    const auto [yaw1, dist1] = view();
+    EXPECT_NEAR(yaw1 - yaw0, 10.0f, 0.5f) << "toward the record's point at 1 deg/s";
+    EXPECT_NEAR(dist1 - dist0, 31.6f, 2.0f);
 }
 
 // DICE jumps on the same wall: pushing at a hold out of a move's reach leans toward it (DICE_<s>_antic_<dir>); jump

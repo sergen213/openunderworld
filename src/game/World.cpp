@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <stdexcept>
 
 namespace ou::game {
@@ -475,24 +476,32 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     // 0x5E8210; Wine, hooked at 0x5E8210 while she acted: on foot, jumping and falling 1, free climb 4, ledge hang and
     // shimmy 11, surface swim 20, under water 19), and what its mode-list entry sets; a mode without command 10 / 2
     // gets the defaults (0x601D30: record 1, settings +0x60). Look pitch limits from command 8 (0x607A30: centre
-    // (c + 90) deg from straight up, half-range r): look pitch within -c +- r. Ladders, poles, perches, pillars, beams
-    // and the grapple were not observed: on-foot mode [U].
+    // (c + 90) deg from straight up, half-range r): look pitch within -c +- r. Ladders, perches, pillars, beams and
+    // poles were not observed; their modes come from the settings' markup-type table +0x14C (0x5F9960: ladder 9 -> 10,
+    // perch 13 -> 16, pillar 15 -> 17, balance beam 14 -> 3, pole 4 -> 9) [I]. Grapple states: on-foot mode [U].
     struct Mode {
         int id = 1;
         vec3 offset{0, 0, 142.23f}, zones{3.16f, 126.42f, 252.84f}; // focus record offset / dead zones
         float distance = 1264.22f;
         bool floorProbe = true;                                   // command 0x13
         float yawRange = 3.1415927f, pitchLo = -1.2f, pitchHi = 0.7f; // commands 7 / 8 ([I] our free on-foot pitch)
+        bool pullIn = false;                                      // command 15: 0x5F0810 instead of the collider
     } mode;
-    const float k55 = glm::radians(55.0f), k90 = glm::radians(90.0f);
+    const float k55 = glm::radians(55.0f), k90 = glm::radians(90.0f), kFree = mode.yawRange;
+    const vec3 rec1 = mode.offset, zones = mode.zones;
     switch (s.state) {
-    case State::Climb: mode = {4, {0, 0, 79.01f}, mode.zones, 1264.22f, false, k90, -k55, k55}; break; // record 10
+    case State::Climb: mode = {4, {0, 0, 79.01f}, zones, 1264.22f, false, k90, -k55, k55, true}; break; // record 10
     case State::Hang: case State::Shimmy: case State::DropToHang: case State::ClimbUp: // [I] the last two
-        mode = {11, {0, 63.21f, 316.06f}, mode.zones, 1896.3f, false, k90, -k55, k55}; break; // record 8, distance 1896.3
+        mode = {11, {0, 63.21f, 316.06f}, zones, 1896.3f, false, k90, -k55, k55, true}; break; // record 8, distance 1896.3
     case State::SwimSurface: case State::SwimTread: case State::SwimSplash: // command 8 (-40, 30)
-        mode = {20, mode.offset, mode.zones, 1264.22f, false, mode.yawRange, glm::radians(-70.0f), glm::radians(-10.0f)}; break;
+        mode = {20, rec1, zones, 1264.22f, false, kFree, glm::radians(-70.0f), glm::radians(-10.0f)}; break;
     case State::SwimUnder: case State::SwimDive: case State::Surfacing: // record 41 (no dead zones), command 8 (-5, 80)
-        mode = {19, vec3(0), vec3(0), 1264.22f, false, mode.yawRange, glm::radians(-85.0f), glm::radians(75.0f)}; break;
+        mode = {19, vec3(0), vec3(0), 1264.22f, false, kFree, glm::radians(-85.0f), glm::radians(75.0f)}; break;
+    case State::Ladder: mode = {10, rec1, zones, 1896.3f, false, k90, -k55, k55, true}; break; // distance 1896.3
+    case State::Perch: mode = {16, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
+    case State::Pillar: mode = {17, rec1, zones, 1264.22f, false, kFree, -k55, k55, true}; break;
+    case State::Beam: mode = {3, rec1, zones, 1264.22f, true, kFree, -1.2f, 0.7f, true}; break;
+    case State::PoleHang: mode = {9, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
     default: break; // mode 1: record 1, command 0x13
     }
     // A new mode's focus record blends in over 0.5 s (settings +0x78 via 0x608200; 0x609830 lerps the records) and its
@@ -572,11 +581,85 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     std::rotate(orbit_.moves, orbit_.moves + 1, orbit_.moves + 10);
     orbit_.moves[9] = dt > 0 && orbit_.valid ? glm::distance(s.pos, orbit_.lastPos) / (dt * 30.0f) : 0.0f;
     orbit_.lastPos = s.pos;
-    if (const float weight = std::clamp((orbit_.idle - 5.0f) / 2.0f, 0.0f, 1.0f); weight > 0 && !bike) {
+    float meanMove = 0;
+    for (const float m : orbit_.moves) meanMove += m / 10;
+    const float weight = std::clamp((orbit_.idle - 5.0f) / 2.0f, 0.0f, 1.0f);
+    // Level camera record (0x601D30 / 0x5FE800: the markup she is on (player +0xC94 -> CameraManager +0x74 +0x24: the
+    // free-climb hold, the ledge) carries camera commands; command 0x12 selects a record of its unit, used while the
+    // camera mode is one the settings' markup-type table +0x14C lists for its type). Its point (0x606160): type 3 =
+    // the Hermite spline at u = (index of her markup in the record's list) / (list size - 1), 0 when not listed
+    // (0x605ED0); 1 / 2 = at her position along the markup / one minus it (0x5F7510 / 0x5F7550; [I] our ledge
+    // distance over its length); 0 = the spline point nearest the pivot (0x605A20); it eases 0.25 per frame toward
+    // that. The camera turns toward the point's angles by at most speed (+0x58 deg/s) x strength x dt and, with +0x6C,
+    // its distance toward the point's at +0x5C units/s x strength (0x606310), both x the look-idle weight 0x5FFA90, in
+    // place of the forces and of the distance return (0x5FFB00). Strength = product of its forces (0x605980 ->
+    // 0x5F2180: type 5 = min(1, k x dt), 7 = min(1, k x her mean move), others 0 [I]). Wine, l2_cliffclimb hold wall
+    // (record type 3, 300 deg/s, force 5 x 0.2): after 5 s without looking the camera turns 1.0 deg/s toward its point.
+    static const std::map<uint8_t, std::vector<int>> kMarkupModes = {{1, {11, 14, 15, 42, 37, 38, 39, 21, 22}}, {14, {3, 43}},
+        {9, {10}}, {13, {16}}, {15, {17}}, {4, {9, 3}}, {16, {4}}, {17, {4}}, {18, {4}}, {19, {4}}, {20, {4}}};
+    const int on = s.state == State::Climb ? s.climbHold : s.ledge;
+    const collision::Markup* onMarkup = on >= 0 && size_t(on) < col_.markup.size() ? &col_.markup[size_t(on)] : nullptr;
+    const collision::CameraRecord* rec = nullptr;
+    if (onMarkup && onMarkup->camera && !bike)
+        if (const auto g = kMarkupModes.find(onMarkup->type); g != kMarkupModes.end() && std::ranges::find(g->second, mode.id) != g->second.end())
+            rec = &*onMarkup->camera;
+    if (rec && !rec->pos.empty()) {
+        const auto& r = *rec;
+        const auto spline = [&](float u) { // u in [0, 1] over the whole spline (0x6057F0 / 0x5F7340)
+            if (r.pos.size() == 1) return r.pos[0];
+            const float sv = std::clamp(u, 0.0f, 1.0f) * float(r.pos.size() - 1);
+            const size_t i = std::min(size_t(sv), r.pos.size() - 2);
+            const float t = std::min(1.0f, sv - float(i)), t2 = t * t, t3 = t2 * t;
+            return (2 * t3 - 3 * t2 + 1) * r.pos[i] + (t3 - 2 * t2 + t) * r.tangent[i] + (3 * t2 - 2 * t3) * r.pos[i + 1] +
+                   (t3 - t2) * r.tangent[i + 1];
+        };
+        float u = 0;
+        if (r.type == 3) {
+            if (const auto k = std::ranges::find(r.markups, onMarkup->id); k != r.markups.end())
+                u = float(k - r.markups.begin()) / float(std::max<size_t>(r.markups.size() - 1, 1));
+        } else if (r.type == 1 || r.type == 2) {
+            float len = 0, at = 0;
+            for (size_t i = 0; i + 1 < onMarkup->points.size(); ++i) {
+                const float seg = glm::distance(onMarkup->points[i], onMarkup->points[i + 1]);
+                if (int(i) < s.ledgeSeg) at += seg;
+                len += seg;
+            }
+            u = len > 0 ? std::clamp((at + s.ledgeT) / len, 0.0f, 1.0f) : 0.0f;
+            if (r.type == 2) u = 1 - u;
+        } else { // nearest point to the pivot: coarse samples, then a local refinement
+            float best = FLT_MAX;
+            for (int i = 0; i <= 64; ++i)
+                if (const float d = glm::distance(spline(float(i) / 64), target); d < best) best = d, u = float(i) / 64;
+            for (float h = 1.0f / 128; h > 1e-4f; h *= 0.5f)
+                for (const float c : {u - h, u + h})
+                    if (const float d = glm::distance(spline(c), target); c >= 0 && c <= 1 && d < best) best = d, u = c;
+        }
+        const vec3 point = spline(u);
+        orbit_.hint = orbit_.hintMarkup == on ? orbit_.hint + (point - orbit_.hint) * (1 - std::pow(0.75f, dt * 60.0f)) : point;
+        orbit_.hintMarkup = on;
+    } else {
+        orbit_.hintMarkup = -1;
+    }
+    bool recordDistance = false;
+    if (orbit_.hintMarkup >= 0 && weight > 0 && a.look.x == 0 && a.look.y == 0) {
+        float strength = 1;
+        for (const auto& [type, k] : rec->forces)
+            strength *= type == 5 ? std::min(1.0f, k * dt) : type == 7 ? std::min(1.0f, k * meanMove) : 0.0f;
+        const vec3 to = target - orbit_.hint;
+        if (glm::length(to) > 1e-3f) {
+            const vec3 look = glm::normalize(to);
+            const float rate = glm::radians(rec->angleSpeed) * strength * dt;
+            cam_.yaw += std::clamp(std::remainder(std::atan2(look.y, look.x) - cam_.yaw, 6.2831853f), -rate, rate) * weight;
+            cam_.pitch += std::clamp(std::asin(std::clamp(look.z, -1.0f, 1.0f)) - cam_.pitch, -rate, rate) * weight;
+            if (rec->distance) {
+                const float step = rec->distanceSpeed * strength * dt;
+                orbit_.dist += std::clamp(glm::length(to) - orbit_.dist, -step, step) * weight;
+                recordDistance = true;
+            }
+        }
+    } else if (weight > 0 && !bike && a.look.x == 0) {
         if (mode.id == 4 || mode.id == 11) {
-            float mean = 0;
-            for (const float m : orbit_.moves) mean += m / 10;
-            const float rate = glm::radians(10.0f) * std::min(1.0f, mean * 20.0f) * weight * dt;
+            const float rate = glm::radians(10.0f) * std::min(1.0f, meanMove * 20.0f) * weight * dt;
             cam_.yaw += std::clamp(std::remainder(s.yaw - cam_.yaw, 6.2831853f), -rate, rate);
         } else if (mode.id == 1) {
             const float rate = glm::radians(5.0f) * std::min(1.0f, orbit_.moves[9]) * weight * dt;
@@ -593,7 +676,7 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     cam_.target = target;
     // Distance back toward the mode's (0x5FFB00): its speed accelerates by 1106.36 x clamp((gap - 2 step) / step, -1, 1)
     // per second (step = speed x dt, at least 1) up to 4741.4; it moves by at most last tick's step.
-    {
+    if (!recordDistance) {
         const float gap = kDistance - orbit_.dist, step = dt * orbit_.speed;
         const float r = std::clamp((std::abs(gap) - 2 * step) / std::max(step, 1.0f), -1.0f, 1.0f);
         orbit_.speed = std::clamp(orbit_.speed + 1106.36f * r * dt, 0.0f, 4741.4f);
@@ -607,11 +690,15 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     // up to 45 deg about the vertical the way it was moving, 5 steps the other way, 5 steps up to 25 deg up and down,
     // the last three costing 5x): cost = distance from the proposed point; the swing wins when strictly cheaper (weight
     // +0x74 = -1: 0.5 / 0.5) and its straight pull-in is at least 10 from the proposed point.
-    // Modes with command 15 (0x1328 = 1: free climb 4, hang 11) skip it for the plain pull-in 0x5F0810: the nearest
-    // contact of the swept sphere more than 10 along (+0x138) puts it there, never nearer than 97.98 (+0x14).
+    // Modes with command 15 (0x1328 = 1: climbing, hanging, ladders, perches, pillars, beams, poles) skip it for the
+    // plain pull-in 0x5F0810: the nearest contact of the swept sphere more than 10 along (+0x138) puts it there, never
+    // nearer than 97.98 (+0x14). A camera record with +0x6D lets it through within its radius of the record's point
+    // (0x606070).
     const auto clear = [&](vec3 to) { return !col_.sweepSphere(target, kRadius, to - target); };
     vec3 out = proposed;
-    if (mode.id == 4 || mode.id == 11) {
+    if (orbit_.hintMarkup >= 0 && rec->inside && glm::distance(cam_.position, orbit_.hint) < rec->radius) {
+        // inside the record's radius: no collision
+    } else if (mode.pullIn) {
         const float len = glm::length(proposed - target);
         if (len > 10.0f) {
             const vec3 d = (proposed - target) / len;

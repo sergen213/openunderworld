@@ -98,8 +98,37 @@ void decodeMarkup(Unit& u, Pointer level, CollisionMesh& out, std::vector<std::s
     const uint32_t count = u.at<uint32_t>(*ud, 0x2C);
     if (count == 0) return;
     const Pointer list = u.need({ud->section, ud->offset + 0x30}, "markup list");
+    std::vector<std::optional<Pointer>> items(count);
+    std::map<std::pair<uint32_t, uint32_t>, uint16_t> idAt; // item -> markup id (camera records list items)
     for (uint32_t i = 0; i < count; ++i) {
-        const auto item = u.ptr({list.section, list.offset + 4 * i});
+        items[i] = u.ptr({list.section, list.offset + 4 * i});
+        if (items[i]) idAt[{items[i]->section, items[i]->offset}] = u.at<uint16_t>(*items[i], 0x48);
+    }
+    // Camera records (unit data +0x208 count, +0x20C records of 0x70 bytes; tru.exe 0x606160 / 0x606310 / 0x605ED0).
+    const uint32_t numRecords = u.at<uint32_t>(*ud, 0x208);
+    const auto records = numRecords ? u.ptr({ud->section, ud->offset + 0x20C}) : std::nullopt;
+    const auto record = [&](Pointer r) {
+        CameraRecord c;
+        c.type = u.at<uint32_t>(r, 0x4C);
+        if (const uint32_t n = u.at<uint32_t>(r, 0x44); n)
+            if (const auto p = u.ptr({r.section, r.offset + 0x48}))
+                for (uint32_t k = 0; k < n; ++k) c.pos.push_back(vec(u, *p, 32 * k)), c.tangent.push_back(vec(u, *p, 32 * k + 16));
+        if (const uint32_t n = u.at<uint32_t>(r, 0x50); n)
+            if (const auto p = u.ptr({r.section, r.offset + 0x54}))
+                for (uint32_t k = 0; k < n; ++k)
+                    if (const auto it = u.ptr({p->section, p->offset + 4 * k}); it && idAt.contains({it->section, it->offset}))
+                        c.markups.push_back(idAt.at({it->section, it->offset}));
+                    else
+                        c.markups.push_back(0xFFFF), warn.push_back("camera record: markup " + std::to_string(k) + " not a markup item");
+        c.angleSpeed = u.at<float>(r, 0x58), c.distanceSpeed = u.at<float>(r, 0x5C), c.radius = u.at<float>(r, 0x60);
+        if (const uint32_t n = u.at<uint32_t>(r, 0x64); n)
+            if (const auto p = u.ptr({r.section, r.offset + 0x68}))
+                for (uint32_t k = 0; k < n; ++k) c.forces.push_back({u.at<uint32_t>(*p, 0x44 * k), u.at<float>(*p, 0x44 * k + 4)});
+        c.distance = u.at<uint8_t>(r, 0x6C) != 0, c.inside = u.at<uint8_t>(r, 0x6D) != 0;
+        return c;
+    };
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto& item = items[i];
         if (!item) { warn.push_back("markup " + std::to_string(i) + ": null"); continue; }
         u.need(*item, 0xA4, "markup item");
         Markup mk;
@@ -116,6 +145,16 @@ void decodeMarkup(Unit& u, Pointer level, CollisionMesh& out, std::vector<std::s
                 mk.points.push_back(r0 * p.x + r1 * p.y + r2 * p.z + r3);
             }
         }
+        // Camera commands {u32 command, args} x 0x18 bytes (+0x64 count, +0x68 list; tru.exe 0x5FE800 -> 0x6019D0):
+        // command 0x12 points at one of the unit's camera records.
+        if (const uint32_t nc = u.at<uint32_t>(*item, 0x64); nc && records)
+            if (const auto cmds = u.ptr({item->section, item->offset + 0x68}))
+                for (uint32_t k = 0; k < nc; ++k)
+                    if (u.at<uint32_t>(*cmds, 0x18 * k) == 0x12)
+                        if (const auto r = u.ptr({cmds->section, cmds->offset + 0x18 * k + 4});
+                            r && r->section == records->section && r->offset >= records->offset &&
+                            (r->offset - records->offset) % 0x70 == 0 && (r->offset - records->offset) / 0x70 < numRecords)
+                            mk.camera = record(*r);
         out.markup.push_back(std::move(mk));
     }
 }

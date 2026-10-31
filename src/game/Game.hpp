@@ -696,6 +696,8 @@ private:
         float modeTime = 0, idle = 0; // seconds in this mode / since the last look input (+0x1E4)
         float moves[10] = {}; // her last per-frame moves (30 Hz units) for the yaw force
         vec3 lastPos{0};
+        vec3 hint{0};         // level camera record point (+0x12B0), eased toward the record's
+        int hintMarkup = -1;  // the markup whose record it follows, -1 = none
     } orbit_;
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp
     CameraState blendFrom_; // last spline camera pose, blended out of over kCameraBlendSeconds

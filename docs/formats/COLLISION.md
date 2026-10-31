@@ -143,6 +143,30 @@ are not decoded: the count is 0 in all 82 units [O]. FUN_005D0610 runs per objec
 global list from MarkupManager (its count/pointer are read from the manager, not from the object's DTP), so objects
 do not add their own traversal markup in this data [O: ca_pt_weightbreak_b's DTP+0x54/+0x58 is unrelated].
 
+### Camera records [O]
+
+A markup item's camera commands are `{u32 command, args}` × 0x18 bytes at item `+0x64` count / `+0x68` pointer, the
+same commands as the camera settings' mode list (tru.exe 0x5FE800 → 0x6019D0). Command `0x12` points at one of the
+unit's camera records: unit data (Level+0x74) `+0x208` count, `+0x20C` array of 0x70-byte records:
+
+| Offset | Meaning |
+|---|---|
+| +0x00 | 4×4 matrix (identity in every record seen) |
+| +0x44 / +0x48 | point count / 0x20-byte Hermite points `{float4 position, float4 tangent}` (unit frame, like markup) |
+| +0x4C | type: 0 point nearest the camera pivot (0x605A20), 1 / 2 along her markup / one minus (0x5F7510 / 0x5F7550), 3 by the index of her markup in the list (0x605ED0) |
+| +0x50 / +0x54 | count / markup item pointers |
+| +0x58 | turn speed, deg/s |
+| +0x5C | distance speed, units/s |
+| +0x60 | radius (with +0x6D: no camera collision within it of the point, 0x606070) |
+| +0x64 / +0x68 | count / 0x44-byte force records `{type, k, curve}` (0x5F2180) |
+| +0x6C / +0x6D | byte: drive the distance too / the radius bypass |
+
+The record applies while Lara is on that markup (player +0xC94 → CameraManager +0x74 +0x24) and the camera mode is
+listed for the markup's type in the camera settings' table +0x14C (0x5F9960). `World::updateOrbitCamera` uses it;
+GAMEPLAY.md "Camera" has the behaviour. Units with records: l2_cliffclimb 47 markups (types 0 / 1 / 3), l4_pool 31,
+l5_valaskjalf 28, l1_kraken_room 24, l7_arctic_sea 23, l4_trailstart 10, l3_main_bedroom 3; l1_seatop and
+l4_ballcourt none.
+
 ## Our implementation
 
 - `loadLevelCollision` merges all terrain-group meshes (signal group skipped) into one `CollisionMesh` in the render
