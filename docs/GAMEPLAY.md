@@ -671,14 +671,15 @@ outfit (the original only reads `+0x294` on a level load).
   `DICE_B_to_B_Left` 159 left, `DICE_B_to_Lw_Left` 236 left for the wide stances, 0.8-1.3 s). The stick (as on
   screen: up = up the rock, whichever way the camera looks) picks the next hold with lara.drm's markup-detection
   queries (below): the first hold box the DICE move sweep enters along the stick — 15.80 units a frame sideways /
-  19.28 vertically for up to 10 frames (q73 / q80 / q81), within 90° of the stick — pushing up or down, else along the
-  diagonals 45° beside it [I]; then the `DICE_<stance>_to_<its stance>_<dir>` clip whose root motion fits that step
-  best. That clip
+  19.28 vertically for up to 10 frames (q73 / q80 / q81), within 90° of the stick; then the
+  `DICE_<stance>_to_<its stance>_<dir>` clip whose root motion fits that step best. No diagonal fallback [O]: tru.exe
+  under Wine on l2_cliffclimb hold 11 stays put with up or right alone and goes to hold 38 (159 right, 160 up) only
+  with both held. That clip
   carries her there (`Player::warpStep`: its root motion scaled per axis to the real offset, the residual eased in
   where the clip has none; the heading turns to the new hold's rock with it, so corners turn smoothly). Holding the
   stick chains the next step; a step's last frame is the new stance's idle pose (`DICE_B_to_B_Up` ends with the chest
   within 4 of `DICE_B_Idle`'s), so she then idles. The `DICE_<s>_settle_<dir>` clips are not played after a step: they
-  start far off idle (`DICE_R_settle_right`: chest 211 to her left), the swing after a DICE jump lands. Pushing toward no hold plays `DICE_<s>_reach_<dir>` (held at its last frame) without moving.
+  start far off idle (`DICE_R_settle_right`: chest 211 to her left). Pushing toward no hold plays `DICE_<s>_reach_<dir>` (held at its last frame) without moving.
   lara.drm has 181 of the 300 stance pairs × 12 directions and spells the stances inconsistently (`Lw`/`LW`,
   `Rw`/`RW`), so `kLaraClipNames` lists every DICE clip exactly and names are looked up case-insensitively. The
   `<dir>` suffixes are not exact angles (`DICE_B_to_B_DownR` is straight down), hence the root-motion match.
@@ -699,19 +700,34 @@ outfit (the original only reads `+0x294` on a level load).
   from the hands, bones 55 / 80), frames 1..10, no gravity, cone 90°, +0x6C 30; jumps q31 (74.12 up), q28 / q29
   (63.21 sideways + 34.77 up), q30 (50.57 out + 34.77 up: back), gravity 5.72443, frames 1..40, sideways beyond 410,
   cone 120° (up 180°), start 316.06 (sideways) / 158.03 (up) down and 63.21 out with the same offsets for target type 1.
-  Ours [I]: the state chart that picks a query is not decoded; the sweep is 2D on her rock (right, up) from her hold to
-  each hold's anchor (start and target offsets taken to cancel), a hold's box = half its points' extent in its own
-  plane + the record's +0x6C (30 moves, 25 jumps; its reader not traced); moves take the first box touched from frame
-  0 (the frame-1 minimum would reject touching neighbours in this 2D model), jumps from frame 1; a jump up only to
-  holds above (its arc falls back past the holds below).
-- DICE jumps to far holds: with no move that way but a jump target straight that way (up / left / right) she leans
-  toward it, `DICE_<s>_antic_<dir>` looping (lara.drm request flag b16 = 2, as the idles; the jump clips are 1 =
-  once), until jump is pressed; then `DICE_<s>_jump_<dir>` and a ballistic flight landing exactly on the target hold
-  after the query's hit time (as `HangJump`: the launch velocity solved for that time, g = 5.72443 / frame²), then
-  `DICE_<its stance>_settle_<dir>` (the swing, 0.5-0.87 s, input waits for it) and its idle. l2_cliffclimb: hold 18 →
-  10 up (475, hit at frame 7.2), 10 → 1 right (905, frame 12.8). Jump with the stick neutral or down still leaps
-  off backwards (`jump_back`; q30 jumps back to a hold behind are not done). The launch clips' root motion (70-224 out
-  and sideways in 0.17-0.23 s) is not applied, so the pose sits off the arc at the start [I].
+  Player state chart [O] (lara.drm objdata +0x12508, decoded with Hurdles' openunderworld-work/hurdles/sc.py; tru.exe
+  under Wine reading player+0xB00 / +0xC90, the query ids of state props 541 / 546, and the current state at
+  *(player+0xF10)+0x510): on a hold (S571) the stick's quadrant (cond 0x195 = 450..453, 0x764270) picks S575..S578,
+  whose props pair a move query with a jump query — up q80 / q31, down q81 / q30, left q82 / q28, right q83 / q29
+  (live: 80/31 idle, 82/28 holding A, 83/29 D, 81/30 S); action 423 (0x75EB50) runs both every frame into player+0x980
+  / +0xB10. The jump button (cond 0x98 = 52) from the hold or the lean states S583..S587 goes to S601..S604, which run
+  the jump query of the stick's quadrant (neutral or down: q30), then the jump (S605). The jump goes even with no
+  target: tru.exe jumping with the stick neutral at hold 1 ran q30 and leapt 1517 units/s out (= 50.57 a frame), g
+  5100. With a target (16 → 1 pushing right: 1064 away, 152 up) the launch clip plays first (~0.15 s before she
+  leaves), she flies ~0.6 s and is caught 167 out from the rock and 163 below the hold, then carried onto it over
+  0.8 s. Cond 0x262 tests the result target's markup flags (0x782810: 1 = any, 618 = 0x8000 hold, 625 = 0x10000).
+  Ours [I]: the sweep is 2D on her rock (right, up) from her hold to each hold's anchor (start and target offsets taken
+  to cancel), a hold's box = half its points' extent in its own plane + the record's +0x6C (30 moves, 25 jumps; its
+  reader not traced); moves take the first box touched from frame 0 (tru.exe steps down to the adjacent hold, which
+  this 2D model overlaps at frame 0; its 3D sweep starts at the chest), jumps from frame 1; a jump up only to holds
+  above (its arc falls back past the holds below; 0x6FC6B0's direction test not traced). The lean (antic) plays when
+  no move but a jump target lies straight that way; the chart enters its lean states from the move states on a move
+  query result whose markup lacks flag 0x10000 and whose direction class (cond 0x19E, 0x786490) matches — not
+  reproduced exactly.
+- DICE jumps to far holds: the lean `DICE_<s>_antic_<dir>` loops (lara.drm request flag b16 = 2) until jump is
+  pressed; then `DICE_<s>_jump_<dir>` carries her off the rock with its root motion (70-224 out and sideways in
+  0.17-0.23 s), a ballistic flight (g 5.72443 / frame²) reaches the catch point at the query's hit time — 168 out and
+  161 below the hold, `DICE_attach_M`'s root motion (tru.exe: 167 / 163) — and the stance's `air_attach` clip carries
+  her onto the hold (0.9 s; tru.exe 0.8 s), then its idle. No settle clip is played (none seen in tru.exe's catch).
+  l2_cliffclimb: hold 18 → 10 up (475, hit at frame 7.2), 10 → 1 right (905, frame 12.8). Jump with the stick neutral
+  or down: q30 to a hold on rock facing back at her (3D arc, out 50.57 + up 34.77 a frame, frames 1..40), else the
+  free leap with q30's launch. Jump left / right with nothing that way: the free leap with q28 / q29's launch (63.21
+  sideways, 34.77 up a frame), as the chart does. There is no DICE jump down (down + jump = q30).
 - Hand stance [I, from the hold shapes]: the hold she is at sets Lara's `DICE_*` clip set. Each hold is a
   triangle; points 1 and 2 relative to point 0 (right, up along the rock, means over all 336 holds in the 8 units,
   2026-10-29 survey) are 16: (−67, 144) (69, 174) both hands high → `B`; 17: (−75, 174) (41, 16) left high → `L`;
@@ -726,8 +742,8 @@ outfit (the original only reads `+0x294` on a level load).
   (root + 300) = `DICE_<s>_jump_up` and a targeted jump onto it (as `ledgeb_jump_up`: `ledgeb_attach_U`, then the
   ledge's climb up). l2_cliffclimb's wall ends that way: hold 5 (z 2480) → ledge 45 (z 2891). Foot: no hold below but a
   floor where `DICE_<L/LW/R>_step_off_ground` ends (226 back, 317 down; B and RW have none) = that clip onto it, Idle.
-  Jump with the stick neutral or down = the stance's `jump_back` clip + a leap away (700 out, 1400 up [I]); drop = its
-  `drop` clip and fall. Cooldown 0.4 s before re-attaching.
+  Free leaps (no jump target) use the queries' launch velocities (above); drop = its `drop` clip and fall. Cooldown
+  0.4 s before re-attaching.
 - Tests `GameReal.ClimbAttachClimbUpTopOut` (a synthetic hold column with lara.drm's clips: attach at hold 0 exactly,
   one `DICE_B_to_B_Up` = 158 up, `DICE_B_jump_up` onto the top ledge, hang, climb up), `GameReal.ClimbJumpOff`,
   `GameReal.ClimbNeedsHolds`, `GameReal.ClimbStaysWithinHolds` (reach, no movement), `GameReal.ClimbStanceFollowsHolds`
@@ -740,7 +756,7 @@ outfit (the original only reads `+0x294` on a level load).
   `GameReal.ClimbOnlyAtHolds` (12 reachable walls ≥ 1000 from any hold in each of l3_main_bedroom, l4_pool,
   l4_ballcourt, l2_hubhall, l2_cliffclimb, l1_baldrsstairs_a: 0 attach, the old rule attached 10-12 of 12;
   l2_cliffclimb hold 910 ground attach + climb up; l1_baldrsstairs_a air attach at hold 44),
-  `GameReal.CliffclimbDiceJumps` (antic, jump, settle, idle exactly at the hold: 18 → 10 up, 10 → 1 right). Hand test:
+  `GameReal.CliffclimbDiceJumps` (antic, launch root motion, catch 161 below, air attach, idle exactly at the hold: 18 → 10 up, 10 → 1 right). Hand test:
   `ou-game --level 'pc-w\l2_cliffclimb.drm' --spawn '-23835,-3600,300,90'`, walk into the rock, then stick up / left /
   right (F1 overlay shows the clip); the route goes up and right around the corner column, then left along the top
   to the ledge. On the corner column's top B hold (18, z 1533) push up: `DICE_B_antic_Up`, Space jumps to hold 10; there
@@ -1475,7 +1491,7 @@ No side-by-side comparison with the original game was made.
   not the exe's component. Ripple/caustic parameters are ours [I].
 - Free climbing is implemented on the levels' free-climb holds (markup 16-20, see "Free climbing"): hold to hold
   with the transition clips' root motion and DICE jumps up / left / right to far holds; hold-type semantics [U], hold
-  choice/reach from lara.drm's queries but which query the state chart runs [I], no jumps back / down to holds, no
+  choice/reach from lara.drm's queries and the player state chart, the sweep geometry [I] (2D), no
   bad-attach/wrestle clips. Ladders (9), perches (13), pillars (15) and rail slides (8) work (see their sections); vertical poles
   (type 5) have no markup in any unit. Still missing: cover, `Wall_Hug_*`,
   balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),

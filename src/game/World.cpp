@@ -152,6 +152,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "DICE_R_antic_left", "DICE_R_antic_right", "DICE_Rw_antic_Up", "DICE_Rw_antic_Left", "DICE_Rw_antic_Right",
     "DICE_B_Jump_Left", "DICE_B_jump_right", "DICE_L_jump_left", "DICE_L_jump_right", "DICE_LW_jump_left",
     "DICE_LW_jump_right", "DICE_R_jump_left", "DICE_R_jump_right", "DICE_Rw_Jump_Left", "DICE_Rw_jump_right",
+    "DICE_attach_M", // its root motion = where a DICE jump catches the hold
     "DICE_L_step_off_ground", "DICE_LW_step_off_ground", "DICE_R_step_off_ground",
     "DICE_B_to_B_DownDiagR", "DICE_B_to_B_DownR", "DICE_B_to_B_Left", "DICE_B_to_B_Right", "DICE_B_to_B_Up",
     "DICE_B_to_B_UpDiagL", "DICE_B_to_B_UpDiagR", "DICE_B_to_L_DownDiagL", "DICE_B_to_L_DownDiagR",

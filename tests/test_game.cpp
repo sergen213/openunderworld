@@ -1907,8 +1907,9 @@ TEST(GameReal, CliffclimbStances) {
 }
 
 // DICE jumps on the same wall: pushing at a hold out of a move's reach leans toward it (DICE_<s>_antic_<dir>); jump
-// launches (DICE_<s>_jump_<dir>) onto it, and the settle swing plays on landing. From hold 18 the corner column has a
-// 475 gap up to hold 10 (lara.drm q31's arc rises 480); from 10 hold 1 is 905 to the right (q28 / q29: past 410).
+// plays DICE_<s>_jump_<dir> (its root motion carries her off the rock), flies to a catch point 168 out and 161 below
+// the hold (DICE_attach_M's root motion; tru.exe: 167 / 163) and the air attach carries her onto it. From hold 18 the
+// corner column has a 475 gap up to hold 10 (lara.drm q31's arc rises 480); from 10 hold 1 is 905 to the right (q29).
 TEST(GameReal, CliffclimbDiceJumps) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1931,8 +1932,8 @@ TEST(GameReal, CliffclimbDiceJumps) {
     }
     for (int t = 0; t < 120; ++t) w.tick({});
     ASSERT_EQ(w.player().state().climbHold, 18);
-    // Jumps to `hold` pushing `move`: antic while pushing, then jump, flight, settle, idle at the hold.
-    const auto jumpTo = [&](vec2 move, int hold, const char* antic, const char* launch, const char* settle) {
+    // Jumps to `hold` pushing `move`: antic while pushing, then the launch, flight, catch, air attach, idle at the hold.
+    const auto jumpTo = [&](vec2 move, int hold, const char* antic, const char* launch, const char* attach) {
         Actions push;
         push.move = move;
         const int from = w.player().state().climbHold;
@@ -1943,15 +1944,23 @@ TEST(GameReal, CliffclimbDiceJumps) {
         w.tick(push);
         EXPECT_EQ(w.player().state().clip, launch);
         EXPECT_EQ(w.player().state().climbHold, hold);
-        for (int t = 0; t < 120 && w.player().state().clip != std::string(settle); ++t) w.tick({});
-        EXPECT_EQ(w.player().state().clip, settle);
-        EXPECT_LT(glm::distance(w.player().state().pos, w.collision().markup[size_t(hold)].points[0] - vec3(0, 0, 158.025f)), 1e-2f);
-        for (int t = 0; t < 60; ++t) w.tick({});
+        const auto* c = anims.find(launch);
+        ASSERT_NE(c, nullptr);
+        for (int t = 0; t < int(c->durationSeconds() * 60) - 1; ++t) w.tick({});
+        EXPECT_EQ(w.player().state().clip, launch);
+        EXPECT_GT(glm::distance(w.player().state().pos, p0), 60.0f) << "the launch clip's root motion moves her";
+        for (int t = 0; t < 120 && w.player().state().clip != std::string(attach); ++t) w.tick({});
+        EXPECT_EQ(w.player().state().clip, attach);
+        const vec3 anchor = w.collision().markup[size_t(hold)].points[0] - vec3(0, 0, 158.025f);
+        EXPECT_NEAR(w.player().state().pos.z, anchor.z - 161, 15.0f) << "caught below the hold";
+        for (int t = 0; t < 120 && w.player().state().climbWarp; ++t) w.tick({});
+        EXPECT_LT(glm::distance(w.player().state().pos, anchor), 1e-2f);
+        w.tick({});
         EXPECT_EQ(w.player().state().state, State::Climb);
         EXPECT_NE(w.player().state().clip.find("Idle"), std::string::npos) << w.player().state().clip;
     };
-    jumpTo({0, 1}, 10, "DICE_B_antic_Up", "DICE_B_jump_up", "DICE_R_settle_up");
-    jumpTo({1, 0}, 1, "DICE_R_antic_right", "DICE_R_jump_right", "DICE_R_settle_right");
+    jumpTo({0, 1}, 10, "DICE_B_antic_Up", "DICE_B_jump_up", "DICE_R_air_attach_mid");
+    jumpTo({1, 0}, 1, "DICE_R_antic_right", "DICE_R_jump_right", "DICE_R_air_attach_mid");
 }
 
 namespace {
@@ -1965,6 +1974,7 @@ std::pair<int, int> pushIntoWalls(const cdc::BigfileSet& bf, const game::AnimLib
     std::vector<vec3> holds;
     for (const auto& m : col.markup)
         if (m.type >= 16 && m.type <= 20 && !m.points.empty()) holds.push_back(m.points[0]);
+        const vec3 p0 = w.player().state().pos;
     int tried = 0, attached = 0;
     const size_t stride = std::max<size_t>(1, col.faces.size() / 400);
     for (size_t i = 0; i < col.faces.size() && tried < limit; i += stride) {
@@ -2022,7 +2032,9 @@ TEST(GameReal, ClimbOnlyAtHolds) {
     ASSERT_TRUE(climbed) << "the hold wall is climbable";
     for (int t = 0; t < 120; ++t) w.tick({});
     const float z0 = w.player().state().pos.z;
-    for (int t = 0; t < 180; ++t) w.tick(forward());
+    Actions upRight; // up alone stops at hold 11 (hold 38 is up and right), as in tru.exe
+    upRight.move = {0.7071f, 0.7071f};
+    for (int t = 0; t < 180; ++t) w.tick(t < 60 ? forward() : upRight);
     EXPECT_EQ(w.player().state().state, State::Climb);
     EXPECT_GT(w.player().state().pos.z, z0 + 300) << "climbs up through the hold field";
     // l1_baldrsstairs_a: falling past hold 44 (-5294, -6605, 1860) with forward held catches the rock.

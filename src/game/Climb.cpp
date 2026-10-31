@@ -2,7 +2,7 @@
 // the stick, jump to far holds, leap up to a ledge, step off at the foot, jump off or drop. Rock is climbable only where
 // the level places free-climb holds (markup types 16-20, docs/GAMEPLAY.md "Free climbing"). Lara's root sits at a hold;
 // each move plays DICE_<from>_to_<to>_<dir>, whose root motion is the step to the next hold, ending in the new stance's
-// idle; a jump flies there and plays the settle swing.
+// idle; a jump launches, flies to a catch point below the hold and air-attaches onto it.
 #include "game/Game.hpp"
 
 #include <algorithm>
@@ -29,11 +29,15 @@ constexpr float kAttachError = 300.0f; // hold anchor within this of where the a
 //   74.12 up a frame from the root under gravity 5.72443 / frame^2, frames 1..40 (+0xA4 -1: object +0xBDE), sideways
 //   only to holds more than 410 away horizontally (+0x28, 0x6EC360) within 120 degrees (+0x24). Their start offsets
 //   (+0x58: -316.06 / -158.03 down, +0x5C: 63.21 out) equal their offsets for target type 1 (+0x8C).
-// Ours [I]: which query the state chart runs when is not decoded; sweepHit() approximates the 3D sweep in 2D.
+// The player state chart (lara.drm objdata +0x12508) pairs them per stick quadrant: up q80 / q31, down q81 / q30, left
+// q82 / q28, right q83 / q29 (states S575..S578; seen live in tru.exe at player+0xB00 / +0xC90); the jump button runs
+// the quadrant's jump query (neutral or down: q30) and jumps even without a target (S601..S605).
+// Ours [I]: sweepHit() approximates the 3D sweep in 2D (docs/GAMEPLAY.md "Free climbing").
 constexpr float kStepSide = 15.80f, kStepUp = 19.28f, kStepFrames = 10.0f;               // q73 / q80 / q81
 constexpr float kJumpSide = 63.21f, kJumpSideUp = 34.77f, kJumpUp = 74.12f;              // q28 / q29 / q31
 constexpr float kJumpGravity = 5.72443f, kJumpFrames = 40.0f, kJumpSideMin = 410.0f;     // q28 / q29 +0x28
 constexpr float kJumpOut = 63.21f;                                                      // +0x5C / +0x8C
+constexpr float kJumpBack = 50.57f;                                                     // q30 out from the rock
 constexpr float kJumpSideCone = 0.5f;                                                   // cos 120 degrees
 // +0x6C: 30 (moves) / 25 (jumps); taken as the swept point's radius [I: no reader of it traced].
 constexpr float kStepRadius = 30.0f, kJumpRadius = 25.0f;
@@ -190,22 +194,40 @@ bool Player::warpStep(float dt) {
 void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
     if (s_.climbHold < 0 || size_t(s_.climbHold) >= col_.markup.size()) { startFall(s_.vel); return; }
     static constexpr std::array<std::string_view, 4> kSide = {"up", "right", "down", "left"};
-    if (s_.flight > 0) { // a DICE jump: the launch clip, the flight onto the hold (climbTo), then its settle swing
+    // Where a jump catches the hold: DICE_attach_M's root motion before it (168 out, 161 down; tru.exe under Wine,
+    // l2_cliffclimb 16 -> 1: caught 167 out, 163 down, then carried in over 0.8 s).
+    const auto attachRoot = [&] {
+        const anim::Clip* a = anims_.find("DICE_attach_M");
+        return a ? rootAt(*a, a->durationSeconds()) : vec3(0);
+    };
+    if (s_.flight > 0) { // a DICE jump: the launch clip, the flight to the catch point, then the air attach onto the hold
         advanceClip(dt);
+        const anim::Clip* c = anims_.find(s_.clip);
+        if (s_.vel == vec3(0) && c && !clipDone()) { // the launch clip carries her off the rock with its root motion
+            s_.pos = s_.climbFrom + rotYaw(s_.climbYawFrom, rootAt(*c, s_.clipTime));
+            s_.flight = std::max(s_.flight - dt, 1.0f / 30.0f);
+            return;
+        }
+        const vec3 catchAt = s_.climbTo - rotYaw(s_.climbYawTo, attachRoot());
+        if (s_.vel == vec3(0)) { // launched: the rest of the query's flight time to the catch point
+            const float time = s_.flight;
+            s_.vel = (catchAt - s_.pos) / time + vec3(0, 0, 0.5f * t_.gravity * time);
+        }
         const float step = std::min(dt, s_.flight);
         s_.pos += s_.vel * step + vec3(0, 0, -0.5f * t_.gravity * step * step);
         s_.vel.z -= t_.gravity * step;
         s_.flight -= step;
-        const vec3 span = s_.climbTo - s_.climbFrom;
+        const vec3 span = catchAt - s_.climbFrom;
         const float u = glm::dot(span, span) > 1 ? std::clamp(glm::dot(s_.pos - s_.climbFrom, span) / glm::dot(span, span), 0.0f, 1.0f) : 1.0f;
         s_.yaw = lerpYaw(s_.climbYawFrom, s_.climbYawTo, u);
         if (s_.flight > 0) return;
-        s_.pos = s_.climbTo, s_.yaw = s_.climbYawTo, s_.vel = vec3(0);
-        const std::string_view dirName = s_.clip.ends_with("up") ? "up" : s_.clip.ends_with("ight") ? "right" : "left";
-        play(stanceClip(s_.climbStance, "settle_" + std::string(dirName)), false);
+        s_.pos = catchAt, s_.yaw = s_.climbYawTo, s_.vel = vec3(0), s_.flight = 0;
+        s_.climbWarp = true; // the stance's air attach carries her the rest of the way, as an attach from a fall does
+        s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw;
+        play(stanceClip(s_.climbStance, "air_attach"), false);
         return;
     }
-    // Attach / transition / step-off clips carry her to their target (warpStep); the idle / reach / antic / settle
+    // Attach / transition / step-off clips carry her to their target (warpStep); the idle / reach / antic
     // clips have no root motion: she stays at her hold.
     bool arrived = false;
     if (s_.climbWarp) {
@@ -221,10 +243,6 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
         if (!arrived) play(stanceClip(s_.climbStance, "idle"), true); // attached
     } else {
         advanceClip(dt);
-        if (s_.clip.find("ettle_") != std::string::npos) { // the swing after a jump lands plays out
-            if (!clipDone()) return;
-            play(stanceClip(s_.climbStance, "idle"), true);
-        }
     }
 
     const vec3 n = s_.climbNormal;
@@ -264,28 +282,72 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
             return glm::length(h) > kJumpSideMin && glm::dot(glm::normalize(h), xy(right) * side) >= kJumpSideCone;
         });
     };
+    // q30 (jump with the stick neutral or down): 50.57 out from the rock + 34.77 up a frame, gravity 5.72443, frames
+    // 1..40, to a hold on rock facing back at her (in 3D: the arc within half the hold's extent + the radius of it).
+    const auto backTarget = [&] {
+        int32_t best = -1;
+        float bestT = 1e9f;
+        for (size_t i = 0; i < col_.markup.size(); ++i) {
+            const auto& m = col_.markup[i];
+            if (!isHold(m) || int32_t(i) == s_.climbHold) continue;
+            const vec3 hn = holdNormal(m, -n);
+            if (glm::dot(hn, n) > -0.5f) continue;
+            const vec3 own = glm::normalize(glm::cross(-hn, vec3(0, 0, 1)));
+            vec2 lo(1e9f), hi(-1e9f);
+            for (const vec3& p : m.points) lo = glm::min(lo, vec2(glm::dot(p, own), p.z)), hi = glm::max(hi, vec2(glm::dot(p, own), p.z));
+            const vec2 h = (hi - lo) * 0.5f + kJumpRadius;
+            for (float t = 1; t <= kJumpFrames && t < bestT; t += 0.25f) {
+                const vec3 d = holdAnchor(m) - (here + n * (kJumpBack * t) + vec3(0, 0, kJumpSideUp * t - 0.5f * kJumpGravity * t * t));
+                if (std::abs(glm::dot(d, own)) <= h.x && std::abs(d.z) <= h.y && std::abs(glm::dot(d, hn)) <= kJumpRadius) {
+                    best = int32_t(i), bestT = t;
+                    break;
+                }
+            }
+        }
+        return std::pair{best, bestT};
+    };
+    // Onto a hold: the launch clip, then the flight to her catch point at the query's hit time (tru.exe 0x710100 keeps
+    // the first hold its arc meets).
+    const auto jumpTo = [&](int32_t target, float frames, std::string_view launch) {
+        const auto& m = col_.markup[size_t(target)];
+        s_.climbFrom = s_.pos, s_.climbTo = holdAnchor(m);
+        s_.climbYawFrom = s_.yaw;
+        s_.climbNormal = holdNormal(m, glm::dot(holdNormal(m, n), n) < -0.5f ? -n : n);
+        s_.climbYawTo = yawOf(xy(-s_.climbNormal));
+        s_.vel = vec3(0);
+        s_.flight = frames / 30.0f;
+        s_.climbHold = target;
+        play(launch, false);
+        s_.climbStance = uint8_t(m.type - 16);
+    };
 
-    if (jumpPressed && held && verb != 2) { // a DICE jump to the hold that way, if there is one
+    // Jump (tru.exe player chart, hold idle S571 / lean S583..S587 on the jump button): the stick's quadrant picks the
+    // jump query — up q31, right q29, left q28, neutral or down q30.
+    if (jumpPressed && held && verb != 2) {
         if (const auto [target, frames] = jumpTarget(verb); target >= 0) {
-            const auto& m = col_.markup[size_t(target)];
-            const float time = frames / 30.0f;
-            s_.climbFrom = s_.pos, s_.climbTo = holdAnchor(m);
-            s_.climbYawFrom = s_.yaw;
-            s_.climbNormal = holdNormal(m, n);
-            s_.climbYawTo = yawOf(xy(-s_.climbNormal));
-            // The query's flight time; the launch scaled to land exactly on the hold (as tru.exe's jump-to-target).
-            s_.vel = (s_.climbTo - s_.climbFrom) / time + vec3(0, 0, 0.5f * t_.gravity * time);
-            s_.flight = time;
-            s_.climbHold = target;
+            jumpTo(target, frames, stanceClip(stance, "jump_" + std::string(kSide[verb])));
+            return;
+        }
+        if (verb != 0) { // nothing that way: the leap still goes, q28 / q29's launch (63.21 sideways, 34.77 up a frame)
+            s_.climbHold = -1;
+            s_.state = State::Jump;
+            s_.vel = (right * (verb == 1 ? kJumpSide : -kJumpSide) + vec3(0, 0, kJumpSideUp)) * 30.0f;
+            s_.fallStartZ = s_.pos.z;
+            s_.regrabCooldown = 0.4f;
             play(stanceClip(stance, "jump_" + std::string(kSide[verb])), false);
-            s_.climbStance = uint8_t(m.type - 16);
             return;
         }
     }
-    if (jumpPressed && (!held || verb == 2)) { // leap away from the wall
+    if (jumpPressed && (!held || verb == 2)) {
+        if (const auto [target, frames] = backTarget(); target >= 0) {
+            jumpTo(target, frames, stanceClip(stance, "jump_back"));
+            return;
+        }
+        // Leap away from the wall with q30's launch: 50.57 out, 34.77 up a frame (tru.exe under Wine, l2_cliffclimb hold
+        // 1: 1517 units/s out, apex 0.2 s after leaving, g 5100 measured).
         s_.climbHold = -1;
         s_.state = State::Jump;
-        s_.vel = n * 700.0f + vec3(0, 0, 1400.0f);
+        s_.vel = (n * kJumpBack + vec3(0, 0, kJumpSideUp)) * 30.0f;
         s_.fallStartZ = s_.pos.z;
         s_.regrabCooldown = 0.4f;
         play(stanceClip(stance, "jump_back"), false);
@@ -301,29 +363,22 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
 
     // A finished step ends in the new stance's idle pose (DICE_B_to_B_Up's last frame has the chest within 4 units of
     // DICE_B_Idle's): the next step follows straight on, or she idles. The DICE_<s>_settle_<dir> clips are not for this:
-    // they start far off idle (DICE_R_settle_right: chest 211 to her left), the swing after a DICE jump lands.
+    // they start far off idle (DICE_R_settle_right: chest 211 to her left).
     if (arrived) play(stanceClip(stance, "idle"), true);
 
     if (held) {
-        // The next hold that way: the move query's sweep along the stick (q73 / q80 / q81); pushing up or down, else
-        // along the diagonals beside it (the DICE clips step in 12 directions; tru.exe's state chart runs several move
-        // queries per stance, which ones not traced [I]); then the DICE_<stance>_to_<its stance>_<dir> clip whose root
-        // motion fits best.
+        // The next hold that way: the move query's sweep along the stick (q73 / q80 / q81), then the
+        // DICE_<stance>_to_<its stance>_<dir> clip whose root motion fits best. No diagonal fallback: tru.exe under Wine
+        // on l2_cliffclimb hold 11 stays put pushing up or right alone and goes to hold 38 (159 right, 160 up) only with
+        // up + right held.
         const vec2 sd = glm::normalize(dir);
-        int32_t best = -1;
-        for (const float turn : {0.0f, 0.785398f, -0.785398f}) {
-            if (turn != 0 && verb % 2) break;
-            const vec2 w(sd.x * std::cos(turn) - sd.y * std::sin(turn), sd.x * std::sin(turn) + sd.y * std::cos(turn));
-            best = firstHold(vec2(w.x * kStepSide, w.y * kStepUp), 0.0f, 0.0f, kStepFrames, kStepRadius, [&](vec3 d) {
-                return glm::dot(vec2(glm::dot(d, right), d.z), w) >= 0; // q73 +0x24: 90 degrees
-            }).first;
-            if (best >= 0) break;
-            // A far hold straight that way: lean toward it (DICE_<stance>_antic_<dir>, looping) until jump is pressed.
-            if (turn == 0 && jumpTarget(verb).first >= 0) {
-                if (const auto antic = stanceClip(stance, "antic_" + std::string(kSide[verb])); !antic.empty()) {
-                    play(antic, true);
-                    return;
-                }
+        const int32_t best = firstHold(vec2(sd.x * kStepSide, sd.y * kStepUp), 0.0f, 0.0f, kStepFrames, kStepRadius, [&](vec3 d) {
+            return glm::dot(vec2(glm::dot(d, right), d.z), sd) >= 0; // q73 +0x24: 90 degrees
+        }).first;
+        if (best < 0 && jumpTarget(verb).first >= 0) { // a far hold that way: lean toward it until jump is pressed
+            if (const auto antic = stanceClip(stance, "antic_" + std::string(kSide[verb])); !antic.empty()) {
+                play(antic, true);
+                return;
             }
         }
         std::string_view bestClip;
