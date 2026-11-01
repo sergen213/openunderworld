@@ -42,6 +42,8 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     else if (g.rtQuality != "medium") throw std::runtime_error("rt quality must be low, medium or high, got " + g.rtQuality);
     s.rtLights = s.rt != 0 && g.rtLights.value_or(s.rt == 2); // needs RT; an explicit override wins over the mode
     s.rtReflections = s.rt != 0 && g.rtReflections.value_or(s.rt == 2); // explicit on also works with rt shadows
+    s.rtAo = s.rt != 0 && g.rtAo.value_or(s.rt == 2);
+    s.rtGi = s.rt != 0 && g.rtGi.value_or(s.rt == 2);
     if (g.water == "enhanced") s.water = 1;
     else if (g.water == "original") s.water = 0;
     else if (g.water == "auto") s.water = g.preset == "enhanced" ? 1 : 0;
@@ -109,6 +111,10 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     else if (flag == "--rt-lights") {
         if (value != "on" && value != "off") throw std::runtime_error("--rt-lights wants on or off");
         g.rtLights = value == "on";
+    }
+    else if (flag == "--rt-ao" || flag == "--rt-gi") {
+        if (value != "on" && value != "off") throw std::runtime_error(std::string(flag) + " wants on or off");
+        (flag == "--rt-ao" ? g.rtAo : g.rtGi) = value == "on";
     }
     else return false;
     return true;
@@ -199,6 +205,8 @@ Config load(const fs::path& path) {
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
             if (g->contains("rt_lights")) c.graphics.rtLights = g->at("rt_lights").get<bool>();
             if (g->contains("rt_reflections")) c.graphics.rtReflections = g->at("rt_reflections").get<bool>();
+            if (g->contains("rt_ao")) c.graphics.rtAo = g->at("rt_ao").get<bool>();
+            if (g->contains("rt_gi")) c.graphics.rtGi = g->at("rt_gi").get<bool>();
             if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
             c.graphics.brightness = g->value("brightness", c.graphics.brightness);
             c.graphics.upscaler = g->value("upscaler", c.graphics.upscaler);
@@ -259,6 +267,8 @@ void save(const fs::path& path, const Config& c) {
     for (auto [key, field] : {std::pair{"shadows", &c.graphics.shadows}, std::pair{"fxaa", &c.graphics.fxaa}, std::pair{"hdr", &c.graphics.hdr}})
         if (*field) g[key] = **field;
     if (c.graphics.originalShaders) g["original_shaders"] = *c.graphics.originalShaders;
+    if (c.graphics.rtAo) g["rt_ao"] = *c.graphics.rtAo;
+    if (c.graphics.rtGi) g["rt_gi"] = *c.graphics.rtGi;
     if (c.graphics.lightShafts) g["light_shafts"] = *c.graphics.lightShafts;
     if (c.graphics.rtLights) g["rt_lights"] = *c.graphics.rtLights;
     if (c.graphics.rtReflections) g["rt_reflections"] = *c.graphics.rtReflections;

@@ -120,6 +120,17 @@ add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/water_rt.frag.inc
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
 list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/water_rt.frag.inc)
+# RT AO / GI (rt_indirect.comp): trace, trace from MSAA depth, denoise.
+foreach(def OU_TRACE OU_MS OU_DENOISE)
+  string(REPLACE "OU_TRACE" "rt_indirect" name ${def})
+  string(REPLACE "OU_MS" "rt_indirect_ms" name ${name})
+  string(REPLACE "OU_DENOISE" "rt_denoise" name ${name})
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/rt_indirect.comp)
+  add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${name}.comp.inc
+                     COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -D${def} -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${name}.comp.inc ${src}
+                     DEPENDS ${src} ${OU_SUN_GLSL_SRC} VERBATIM)
+  list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${name}.comp.inc)
+endforeach()
 # AMD FSR 3.1.6 upscaling + frame generation (FidelityFX SDK 2.4.0 ffx-api, third_party/fidelityfx-sdk; sets OU_HAS_FSR).
 add_subdirectory(third_party/fidelityfx-sdk)
 add_library(ou_render_vk STATIC src/render/vk/VkRenderer.cpp src/render/vk/VkFsr.cpp ${OU_VK_SPV})

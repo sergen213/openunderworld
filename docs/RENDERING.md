@@ -39,7 +39,7 @@ shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the o
 | Sun shadows | off | cascaded shadow map ("Sun shadows" below), or rays (`rt`) | `--shadows on/off`, `graphics.shadows` |
 | FXAA | off | off (optional) | `--fxaa on/off`, `graphics.fxaa` |
 | HDR | off | off: the original shaders write LDR gamma-space colour; the ACES tonemap (RGBA16F target) only compresses it | `--hdr on/off`, `graphics.hdr` |
-| Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `graphics.rt`, `graphics.rt_quality` |
+| Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `--rt-ao/--rt-gi on/off` (unset = on with `full`), `graphics.rt`, `graphics.rt_quality`, `graphics.rt_ao`, `graphics.rt_gi` |
 | Water | TRU's own water shaders | enhanced water ("Water" below): waves, refraction, SSR, ripples, splashes, caustics under water (the under-water look itself is in both) | `--water original/enhanced`, `graphics.water` |
 | Brightness | 1.0 | 1.0 | `--brightness 0.5-2.0`, `graphics.brightness` |
 | Original effects (`src/fx`) | on | on (ou-game only; off = no particles / ribbons / lightning / glows / effect lights / screen filters; frame times in docs/formats/EFFECTS.md "Performance") | `--fx on/off`, `graphics.effects` |
@@ -136,8 +136,9 @@ Known limits (deliberate):
 
 ## Ray tracing (Vulkan, Enhanced, optional)
 
-`--rt shadows` traces the sun shadow; `--rt full` also traces reflections (`--rt-reflections on|off`, `graphics.rt_reflections`,
-launcher checkbox: unset = on with `full`; explicit `on` also works with `shadows`; `FrameOptions::rtReflections`). Needs `--preset
+`--rt shadows` traces the sun shadow; `--rt full` also traces water reflections (`--rt-reflections on|off`,
+`graphics.rt_reflections`; `FrameOptions::rtReflections`), local-light shadows (`--rt-lights`) and ray-traced AO and sun
+bounce ("RT AO / GI" below; `--rt-ao` / `--rt-gi on|off`). Each override wins over the mode, also with `shadows`. Needs `--preset
 enhanced` (`config::resolve` rejects RT with `original`); default `auto` = shadows. Works inside the original
 translated shaders ("Sun shadows": the traced visibility scales c212) and the generic ones alike. `--rt-quality low|medium|high`
 = 1 / 2 / 4 shadow rays per pixel. The overlay line `RT ...` shows the mode, whether rays are
@@ -158,7 +159,7 @@ rebuilds (`Renderer::rtStatus()`, `rtSummary`).
 | Reflection cost [O] | RX 7900 XTX, RADV, 1080p FSR quality, Debug build: l2_cliffclimb deck spawn water pass 0.26 → 0.50 ms; low over the sea facing the cliff (`--camera -35312,-14147,40,-36400,-13050,60`, water fills the frame) 0.48 → 1.25 ms, 0.46 ms of it the alpha test of the cliff foliage (opaque rays: 0.79 ms). Alpha-testing reflection candidates at the shading mip instead of level 0 was slower (1.97 ms: thinned leaves let rays travel further). |
 | Non-finite inputs | Ray-query origins / directions must be finite (Vulkan spec); RADV hangs the GPU on others. [O] l4_ballcourt (`--spawn -20066,14150,3540,0`) and (reported by a sibling run) l1_kraken_room spawns lost the device (`ring gfx timeout`, SQC GPUVM fault) on the first RT frame, already at c3c69f2 (v0.9.0+2), only with the translated shaders' rays variant (generic shaders, `--rt off`, and the shadow-map variant in its place were fine; `RADV_DEBUG=syncshaders` and GPU-assisted validation still hung); skipping rays whose point or normal is not finite (`ouRayInputsFinite`, sun.glsl: shadow term from the quad's other lanes, no reflection) ends it, 6 × 2000 frames clean. [I] The culprits are fragments where the translated point (1 / `gl_FragCoord.w`) or its derivative normal is not finite; none reach the final image. ctest `game_vulkan_rt_smoke` runs both spawns. |
 | Local-light shadows (`full`, or `--rt-lights on\|off`, `graphics.rt_lights`; `FrameOptions::rtLights`) | Before this, point / spot lights (lamps, torches, `g_personal_light`'s spot; effect lights) were applied per pixel by the translated shaders (light table `ouFrame.lights`, per-object slots 0-5 from `original::lightSet`) but never occluded. tru.exe gives lights whose DTP +0x144C is set (`scene::Light::shadow`; 271 of 560 unit lights, the flashlight's spot but not its omni, `GadgetsReal.TuningLightsAndSpotUnits`) a shadow-map slot (0-2, 0x5042B0, 0x50A080) [O]; we trace instead. ShaderTranslate scales every light-colour read (slot register 4) by `ouLightVis[slot]`, filled by `ouLightsBegin` (sun.glsl) after `ouSunBegin`: for the first 4 slots whose light is a shadow light with non-zero colour (mask `OuShadow.lights.xy`, VkRenderer per frame), pixels inside its radius, in front of its cone and facing it trace `max(1, rays / 2)` rays (`OuShadow.lights.z`; high = 2) to points on a 15-unit disc around the light (spots: R0 + apex · R1), stopping 40 units short (fixture housings) [I sizes], golden-angle spiral rotated per pixel and offset per slot, averaged over the 2x2 quad as the sun. Only that light's term darkens. Translated shaders only (the generic shaders have no local lights); GL and RT off: `ouLightVis` = 1 (× 1.0, output unchanged). [O] l3_main_bedroom `--spawn -4263,1800,87,-90`: the corridor lamp casts Lara's long soft shadow toward the camera and the pillars' shadows on the walls; Debug, 1920x1080 FSR quality, RT full high: scene pass 1.04 → 1.41 ms. Not traced: slots 4-5, the flashlight's omni (no +0x144C), the muzzle / impact lights (ou-game's reserved effect slots carry no shadow flag; whether tru.exe shadows effect lights is [U]). |
-| Not done | 1-bounce GI / AO (not started); temporal denoise; ray cones for reflection mip selection (mip from hit distance only). Merged static BLASes and per-mask instances: "Performance pass". |
+| Not done | Temporal denoise of the sun shadows; ray cones for reflection mip selection (mip from hit distance only). Merged static BLASes and per-mask instances: "Performance pass". AO / GI: "RT AO / GI" below. |
 
 Verification [O] (RX 7900 XTX, RADV Mesa 26.2.4, 2026-10-18):
 - Validation layer clean (`OU_VK_VALIDATION=1`): `ou_vk_tests`, `ou-viewer --level` l4_ballcourt / l4_pool with `--rt shadows/full`, and `ou-game` l4_pool `--rt full` for 60 frames (Lara skinned: 638 BLAS refits, 116 rigid rebuilds, 57 TLAS updates, 2 TLAS builds across a unit stream-in).
@@ -178,6 +179,36 @@ Verification [O] (RX 7900 XTX, RADV Mesa 26.2.4, 2026-10-18):
 Cost scales with rays per pixel; in the jungle it is dominated by alpha-tested casters (measured on
 the `player` start at 1 ray: 6.2 ms, 3.4 ms with the alpha test forced to pass). Before the depth
 pre-pass and the shadow-map fallback for blended receivers the same view took 22 ms at 1 ray.
+
+### RT AO / GI (`graphics.rt_ao`, `graphics.rt_gi`; `shaders/rt_indirect.comp`, `VkRenderer::recordIndirect`)
+
+Ray-traced ambient occlusion and one bounce of sun light, sharing the rays. Only where the RT depth pre-pass ran (opaque,
+non-exterior submeshes); the pass sits between the pre-pass and the opaque colour draws (the rendering is split there,
+the second half loads colour and depth, MSAA resolves only at its end), at the render resolution before FSR (nothing
+marked reactive).
+
+| Piece | Choice |
+|---|---|
+| Resolution | Half: texel q traces from full-resolution pixel 2q of the pre-pass depth (`sampler2DMS` sample 0 with MSAA: `rt_indirect_ms`). |
+| Surface | Position = eye + camera ray (OuShadow `rayBase/U/V`, jittered as drawn) × view depth from the depth (`w = P[3][2] / (d + P[2][2])` of the remapped projection). A primary ray within 1 % of that depth (mask 1) gives the receiver's albedo (texture rgb) and its vertex normal, used where it agrees with the depth normal (one-sided differences with the smaller step) within cos 0.3. One shadow ray toward the sun gives its direct-sun factor (ndl × visibility). |
+| Rays | 1 cosine-weighted hemisphere ray per half-res pixel (2 with `rt_quality high` and GI), interleaved gradient noise shifted along R2 per frame, masks 1 + 4 (solid or casting; water, including the planar-reflection sea, is mask 2: l2_cliffclimb's sea plane lies ~30 units above the yacht deck and hid every ray). AO: occlusion 1 − (t / 250)² for hits within 250 units. GI (rays to 2000 units): the hit's texture × vertex colour × sun colour (c212) × lambert × its sun visibility (one more shadow ray) — its baked light is not bounced again; escaping rays add 0.15 × fog colour; both × 1.5 (`kGiStrength`). |
+| Denoise | Temporal: reprojection through the previous frame's jittered view-projection (eye-relative, composed in double), bilinear over the history taps whose view depth (5 %) and normal (cos 0.8) agree, history clipped to the 3×3 raw mean ± 2σ (Kabus 22 `rt_filter.comp`), blend max(1 / (n + 1), 0.06 GI / 0.08 AO), n ≤ 32 frames; reset on a camera cut (500 units) or after a frame without the pass. Spatial: 3 à-trous B3 5×5 iterations (strides 1, 2, 4) with plane-distance (1 % of the depth) and normal (cos¹⁶) stopping. |
+| Composite | The last iteration writes rgb = bounce × receiver albedo, a = AO factor = mix(1, mix(ao², 1, 0.4 × direct sun), 0.85) (AO darkens the ambient / baked part much more than what the sun lights; 0.85 = `kAoStrength`), both faded out between 6000 and 12000 units of depth. The opaque ray-traced draws (generic `scene.frag` with `rt` bit 0, translated programs in `ouSunEnd` unless reflective) end with `colour × a + rgb` (sun.glsl `ouIndirect`), joint-bilaterally upsampled from the 2×2 half-res texels by view-depth agreement. `OuShadow.screen.w` bits 1 / 2 say whether the pass ran. AO alone skips the primary ray (depth normal, no albedo) and traces 1 ray at every quality. |
+| Not done | Motion vectors of moving meshes in the reprojection (camera only; the history clip and the depth test catch Lara); blended / depth-writing foliage receives nothing (not pre-passed); translated screen readers (drawn after the copies, not pre-passed) take the AO of the surface behind; receiver albedo at half resolution. |
+
+Verification [O] (RX 7900 XTX / RADV, Debug build with validation, 2026-10-31; ou-game l2_cliffclimb `--spawn
+-34749.2,-14716.0,71.3,134.7`, `--camera -33950,-15500,850,-34749,-14716,60` (deck) and `-34850,-15150,230,-35150,-15950,40`
+(under the canopy), 30 frames, the user's config at 1920×1080: `rt full`, `rt_quality high`): contact shadows under the
+bench seat, in the deck / wall and bench corners, behind the diving tanks, round Lara's feet and between her legs; warm
+bounce on the bench front facing the sunlit deck. Three consecutive frames of an orbiting camera and of Lara running
+show no noise crawl or trails; validation clean (only the FSR SDK's known storage-format warnings); MSAA 4x path
+(`--upscaler off --msaa 4`) renders the same. GPU "scene" segment (`OU_VK_PRESENT_STATS`, includes the pass):
+
+| Render resolution | RT AO / GI off | AO only | AO + GI |
+|---|---|---|---|
+| 1920×1080 native (`--upscaler off`), deck | 8.43 ms | 9.36 ms (+0.93) | 11.21 ms (+2.78) |
+| 1280×720 (FSR quality), deck | 5.87 ms | — | 7.32 ms (+1.45) |
+| 1280×720 (FSR quality), under the canopy | 5.28 ms | — | 7.08 ms (+1.80) |
 
 ## Original shaders (`--shaders original|generic`, `graphics.original_shaders`; default original)
 
@@ -551,7 +582,7 @@ Two render modes share the scene graph and simulation; only the backend's frame 
   caustics, interactive ripples and splashes, underwater fog ("Water" above).
 - Optional ray tracing on hardware exposing `VK_KHR_ray_query` + `VK_KHR_acceleration_structure`:
   RT sun shadows and water reflections via ray queries in the raster pipeline, shadow map as
-  fallback (implemented, "Ray tracing" above); RT AO / GI not started.
+  fallback (implemented, "Ray tracing" above); RT AO + one-bounce sun GI ("RT AO / GI").
 - Any enhancement must be switchable per feature so a difference can be traced back to it.
 
 The OpenGL backend stays the portability/reference path for Original Fidelity; Enhanced

@@ -50,6 +50,15 @@ const uint32_t kSceneRtVert[] = { // scene.vert -DOU_RT: invariant position (dep
 const uint32_t kSceneRtFrag[] = { // scene.frag -DOU_RT: ray-queried sun shadows + water reflections
 #include "scene_rt.frag.inc"
 };
+const uint32_t kRtIndirect[] = { // RT AO / sun bounce: trace (rt_indirect.comp), from MSAA depth, denoise
+#include "rt_indirect.comp.inc"
+};
+const uint32_t kRtIndirectMs[] = {
+#include "rt_indirect_ms.comp.inc"
+};
+const uint32_t kRtDenoise[] = {
+#include "rt_denoise.comp.inc"
+};
 const uint32_t kPrepassVert[] = {
 #include "prepass.vert.inc"
 };
@@ -741,9 +750,13 @@ public:
         std::erase_if(order_, [&](const DrawRef& d) { return clippedAway(d.mesh); });
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
         gpuMark(cmd, 2);
+        // RT AO / sun bounce (recordIndirect): traced from the opaque pre-pass depth, between the pre-pass and the draws.
+        const bool indirect = rtOn && (options.rtAo || options.rtGi) && indTrace_ && ind_.final.image;
+        rtStatus_.ao = indirect && options.rtAo, rtStatus_.gi = indirect && options.rtGi;
         // Sun shadow block (render/sun.glsl) for both the generic and the translated shaders, per frame in flight.
-        const SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
-                                        shadowMap, rtOn ? (options.rtReflections ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
+        SunShadow sun = sunShadow(camera, {int(extent_.width), int(extent_.height)}, bounds_, sunToward(environment_), true,
+                                  shadowMap, rtOn ? (options.rtReflections ? 2 : 1) : 0, std::clamp(options.rtRays, 1, 64));
+        sun.block.screen.w = float((rtStatus_.ao ? 1 : 0) | (rtStatus_.gi ? 2 : 0)); // sun.glsl ouIndirect
         std::memcpy(shadowUbo_[frameIndex_].mapped, &sun.block, sizeof sun.block); // host-coherent
         // Local-light shadows (sun.glsl ouLightsBegin): the shadow lights of the table (scene::Light::shadow, tru.exe
         // DTP +0x144C: the flashlight's spot, fixtures), half the sun's rays per light (each pixel may trace 4 lights).
@@ -987,7 +1000,16 @@ public:
             layout = Bound::None; // the frame set changes back
         }
         gpuMark(cmd, 4);
-        vkCmdBeginRendering(cmd, &ri);
+        // RT AO / GI: the pre-pass renders without resolves first, the pass traces from its depth, then the draws load it.
+        VkRenderingAttachmentInfo color1 = color, depth1 = depth;
+        VkRenderingInfo ri1 = ri;
+        if (indirect) {
+            color1.resolveMode = depth1.resolveMode = VK_RESOLVE_MODE_NONE;
+            color1.resolveImageView = depth1.resolveImageView = VK_NULL_HANDLE;
+            color1.storeOp = depth1.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            ri1.pColorAttachments = &color1, ri1.pDepthAttachment = &depth1;
+        }
+        vkCmdBeginRendering(cmd, &ri1);
         vkCmdSetViewport(cmd, 0, 1, &flipped);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
         scissorClip = -1;
@@ -1063,6 +1085,15 @@ public:
             vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
         }
         prepass(inside);
+        if (indirect) {
+            vkCmdEndRendering(cmd);
+            recordIndirect(cmd, options, camera, aspect, zRemap, push.viewProj);
+            color.loadOp = depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; // ri: the same attachments, resolves included
+            vkCmdBeginRendering(cmd, &ri);
+            vkCmdSetViewport(cmd, 0, 1, &flipped);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            scissorClip = -1;
+        }
         for (const DrawRef& d : inside) drawMain(d);
         clipTo(UINT32_MAX);
         gpuMark(cmd, 5);
@@ -1600,6 +1631,7 @@ public:
             for (auto& m : lineMemory_) m.reset();
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
             vkDestroyDescriptorSetLayout(device_, std::exchange(shadowSetLayout_, VK_NULL_HANDLE), nullptr);
+            destroyIndirect();
             vkDestroyDescriptorSetLayout(device_, std::exchange(rtSetLayout_, VK_NULL_HANDLE), nullptr);
             for (VkSampler s : {sceneSampler_, fontSampler_, shadowSampler_, postSampler_, biasedSampler_, blurSampler_}) vkDestroySampler(device_, s, nullptr);
             vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
@@ -1995,6 +2027,165 @@ private:
         barriers(cmd, {&toRead, 1});
     }
 
+    // ---- RT ambient occlusion + one-bounce sun GI (shaders/rt_indirect.comp, docs/RENDERING.md "RT AO / GI") ----
+    // Half render resolution: trace from the depth pre-pass (cosine hemisphere rays, AO + sun bounce, receiver albedo
+    // and direct sun from a primary ray), temporal accumulation, a-trous x3 into ind_.final, which the opaque ray-traced
+    // draws composite through sun.glsl ouIndirect. Recorded with no render pass active; leaves depth_ DEPTH_ATTACHMENT.
+    static constexpr float kAoStrength = 0.85f, kGiStrength = 1.5f, kAoRange = 250.0f, kGiRange = 2000.0f;
+    struct IndirectPush { glm::mat4 reproject; glm::vec4 depthW, sunColor, sky; glm::ivec4 cfg; }; // rt_indirect.comp Push
+    void recordIndirect(VkCommandBuffer cmd, const FrameOptions& o, const Camera& camera, float aspect, const glm::mat4& zRemap,
+                        const glm::mat4& viewProj) {
+        constexpr VkPipelineStageFlags2 kDepthStages =
+            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        constexpr VkPipelineStageFlags2 kCompute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        // Pre-pass depth -> sampled; this frame's vertex uploads / BLAS refits / TLAS update and the earlier frames'
+        // fragment reads of the targets -> this pass.
+        const VkImageMemoryBarrier2 toRead =
+            imageBarrier(depth_.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                         kDepthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kCompute, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                         VK_IMAGE_ASPECT_DEPTH_BIT);
+        const VkMemoryBarrier2 in{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr,
+                                  VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | kCompute,
+                                  VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR |
+                                      VK_ACCESS_2_SHADER_WRITE_BIT,
+                                  kCompute,
+                                  VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT |
+                                      VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR};
+        barriers(cmd, {&toRead, 1}, &in);
+        // History: the previous frame ran the pass and the camera did not cut (FSR's 500-unit rule).
+        const glm::dvec3 eye(camera.position);
+        const bool history = indLast_ == frameCounter_ && glm::distance(eye, indPrevEye_) < 500.0;
+        // Reprojection in double (both view-projections carry the ~40000-unit world translation; RENDERING.md "FSR"):
+        // eye-relative position -> previous jittered clip.
+        glm::dmat4 toWorld(1.0);
+        toWorld[3] = glm::dvec4(eye, 1.0);
+        const glm::mat4 proj = zRemap * camera.projection(aspect);
+        const scene::Environment& e = environment_;
+        const glm::vec3 sunColor = e.sun ? glm::vec3(e.sunColor[0], e.sunColor[1], e.sunColor[2]) : glm::vec3(0.7f);
+        // Escaping rays see a dim sky in the fog colour (the art's ambient already holds most of the sky light).
+        const glm::vec3 sky = 0.15f * glm::vec3(e.fogColor[0], e.fogColor[1], e.fogColor[2]);
+        IndirectPush p{glm::mat4(indPrevVP_ * toWorld), {proj[2][2], proj[3][2], kAoRange, kGiRange},
+                       {sunColor * kGiStrength, kAoStrength}, {sky * kGiStrength, 0.0f},
+                       {(o.rtAo ? 1 : 0) | (o.rtGi ? 2 : 0) | (history ? 4 : 0), int(frameCounter_ % 1024), 0, o.rtRays >= 4 && o.rtGi ? 2 : 1}};
+        indPrevVP_ = glm::dmat4(viewProj), indPrevEye_ = eye, indLast_ = frameCounter_ + 1;
+        const VkDescriptorSet sets[3] = {indSets_[frameIndex_], rtSet_, shadowSets_[frameIndex_]};
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, indLayout_, 0, 3, sets, 0, nullptr);
+        const uint32_t gx = (indExtent_.width + 7) / 8, gy = (indExtent_.height + 7) / 8;
+        const VkMemoryBarrier2 step{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCompute, VK_ACCESS_2_SHADER_WRITE_BIT, kCompute,
+                                    VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT};
+        auto dispatch = [&](VkPipeline pipeline, int z) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+            p.cfg.z = z;
+            vkCmdPushConstants(cmd, indLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof p, &p);
+            vkCmdDispatch(cmd, gx, gy, 1);
+            barriers(cmd, {}, &step);
+        };
+        dispatch(samples_ != VK_SAMPLE_COUNT_1_BIT ? indTraceMs_ : indTrace_, 0);
+        for (int z : {0, 1, 2, 4}) dispatch(indDenoise_, z); // temporal, a-trous strides 1 / 2 / 4
+        const VkImageMemoryBarrier2 back =
+            imageBarrier(depth_.image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         kCompute, 0, kDepthStages,
+                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                         VK_IMAGE_ASPECT_DEPTH_BIT);
+        const VkMemoryBarrier2 out{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCompute, VK_ACCESS_2_SHADER_WRITE_BIT,
+                                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT};
+        barriers(cmd, {&back, 1}, &out);
+    }
+
+    // Set 0 = depth + the targets (per frame in flight: the two geometry / history / length images swap roles), set 1 =
+    // the RT set, set 2 = the sun shadow set (OuShadow: eye, camera rays, sun). RT devices only.
+    void createIndirect() {
+        constexpr VkShaderStageFlags cs = VK_SHADER_STAGE_COMPUTE_BIT;
+        std::array<VkDescriptorSetLayoutBinding, 12> b{};
+        b[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, cs, nullptr};
+        for (uint32_t i = 1; i < b.size(); ++i) b[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, cs, nullptr};
+        VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, uint32_t(b.size()), b.data()};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &dl, nullptr, &indSetLayout_));
+        const VkDescriptorSetLayout sets[3] = {indSetLayout_, rtSetLayout_, shadowSetLayout_};
+        const VkPushConstantRange push{cs, 0, sizeof(IndirectPush)};
+        VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 3, sets, 1, &push};
+        VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &indLayout_));
+        auto pipeline = [&](std::span<const uint32_t> code) {
+            VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shaderModule(code),
+                        "main", nullptr};
+            ci.layout = indLayout_;
+            VkPipeline p;
+            VK_CHECK(vkCreateComputePipelines(device_, pipelineCache_, 1, &ci, nullptr, &p));
+            vkDestroyShaderModule(device_, ci.stage.module, nullptr);
+            return p;
+        };
+        indTrace_ = pipeline(kRtIndirect), indTraceMs_ = pipeline(kRtIndirectMs), indDenoise_ = pipeline(kRtDenoise);
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight},
+                                            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 11 * kFramesInFlight}};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, kFramesInFlight, 2, ps};
+        VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &indPool_));
+        for (VkDescriptorSet& s : indSets_) {
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, indPool_, 1, &indSetLayout_};
+            VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &s));
+        }
+    }
+    void destroyIndirect() {
+        for (VkPipeline* p : {&indTrace_, &indTraceMs_, &indDenoise_}) vkDestroyPipeline(device_, std::exchange(*p, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipelineLayout(device_, std::exchange(indLayout_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorPool(device_, std::exchange(indPool_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorSetLayout(device_, std::exchange(indSetLayout_, VK_NULL_HANDLE), nullptr);
+    }
+    std::array<GpuImage*, 11> indImages() {
+        return {&ind_.signal, &ind_.geom[0], &ind_.geom[1], &ind_.albedo, &ind_.hist[0], &ind_.hist[1], &ind_.len[0], &ind_.len[1],
+                &ind_.tmpA, &ind_.tmpB, &ind_.final};
+    }
+    // Per swapchain (half the render resolution), with the RT pipelines: the targets in GENERAL, cleared (no history,
+    // no surface), and their descriptors, including the shadow sets' ouIndirectMap / ouIndirectGeom (binding 2 / 3).
+    void createIndirectTargets() {
+        if (!rtPipelines_ || !indLayout_) return;
+        indExtent_ = {(extent_.width + 1) / 2, (extent_.height + 1) / 2};
+        constexpr VkImageUsageFlags u = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        for (GpuImage* img : indImages()) {
+            const VkFormat f = img == &ind_.albedo                           ? VK_FORMAT_R8G8B8A8_UNORM
+                               : img == &ind_.len[0] || img == &ind_.len[1] ? VK_FORMAT_R32_SFLOAT
+                                                                             : VK_FORMAT_R16G16B16A16_SFLOAT;
+            *img = createImage(swapMemory_, f, indExtent_.width, indExtent_.height, 1, u, VK_IMAGE_ASPECT_COLOR_BIT);
+        }
+        oneShot([&](VkCommandBuffer cmd) {
+            std::vector<VkImageMemoryBarrier2> b;
+            for (GpuImage* img : indImages())
+                b.push_back(imageBarrier(img->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                                         VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT));
+            barriers(cmd, b);
+            const VkClearColorValue zero{};
+            const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            for (GpuImage* img : indImages()) vkCmdClearColorImage(cmd, img->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all);
+            const VkMemoryBarrier2 m{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                                     VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                     VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT};
+            barriers(cmd, {}, &m);
+        });
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+            const uint32_t j = (i + 1) % kFramesInFlight; // the previous frame's
+            const VkImageView views[14] = {depth_.view, ind_.signal.view, ind_.geom[i].view, ind_.albedo.view, ind_.geom[j].view,
+                                           ind_.hist[j].view, ind_.hist[i].view, ind_.len[j].view, ind_.len[i].view,
+                                           ind_.tmpA.view, ind_.tmpB.view, ind_.final.view,
+                                           ind_.final.view, ind_.geom[i].view}; // 12, 13: shadow set binding 2, 3
+            VkDescriptorImageInfo ii[14];
+            VkWriteDescriptorSet w[14];
+            for (uint32_t n = 0; n < 14; ++n) {
+                const bool shadowSet = n >= 12;
+                ii[n] = {fontSampler_, views[n], n == 0 ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL};
+                w[n] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w[n].dstSet = shadowSet ? shadowSets_[i] : indSets_[i];
+                w[n].dstBinding = shadowSet ? n - 10 : n;
+                w[n].descriptorCount = 1;
+                w[n].descriptorType = n == 0 || shadowSet ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                w[n].pImageInfo = &ii[n];
+            }
+            vkUpdateDescriptorSets(device_, 14, w, 0, nullptr);
+        }
+        indLast_ = 0; // new targets: no history
+    }
+
     void createInstance() {
         uint32_t loaderVersion = VK_API_VERSION_1_0;
         vkEnumerateInstanceVersion(&loaderVersion);
@@ -2210,14 +2401,18 @@ private:
         // Scene: set 0 = material texture, set 1 = sun shadow (render/sun.glsl: atlas with comparison sampler + OuShadow
         // UBO, per frame in flight), set 2 (RT devices only, used by scene_rt.frag) = TLAS, geometry records, bindless
         // textures (partially bound).
-        const VkDescriptorSetLayoutBinding sb[2] = {
-            {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        // Binding 2 / 3: the RT AO / GI composite map and its geometry (sun.glsl ouIndirect; createIndirectTargets).
+        constexpr VkShaderStageFlags fcs = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // + rt_indirect.comp
+        const VkDescriptorSetLayoutBinding sb[4] = {
+            {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, fcs, nullptr},
+            {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
+            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fcs, nullptr},
         };
-        VkDescriptorSetLayoutCreateInfo sl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, sb};
+        VkDescriptorSetLayoutCreateInfo sl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, sb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &sl, nullptr, &shadowSetLayout_));
         if (rtStatus_.supported) {
-            constexpr VkShaderStageFlags fs = VK_SHADER_STAGE_FRAGMENT_BIT;
+            constexpr VkShaderStageFlags fs = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // + rt_indirect.comp
             const VkDescriptorSetLayoutBinding rb[3] = {
                 {0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, fs, nullptr},
                 {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, fs, nullptr},
@@ -2312,6 +2507,7 @@ private:
         VkPipelineLayoutCreateInfo ol{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 4u : 3u, origSets, 1,
                                       &objectPush};
         VK_CHECK(vkCreatePipelineLayout(device_, &ol, nullptr, &origLayout_));
+        if (rtStatus_.supported) createIndirect();
         if (fsrReason_.empty()) createFsrPipelines();
     }
 
@@ -2920,8 +3116,9 @@ private:
         sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &shadowSampler_));
 
-        // post, white, font, the three UI images + the per-frame sun shadow sets (atlas + OuShadow UBO).
-        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 + kFramesInFlight},
+        // post, white, font, the three UI images + the per-frame sun shadow sets (atlas + OuShadow UBO + the RT AO / GI
+        // map and geometry).
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 + 3 * kFramesInFlight},
                                             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 6 + kFramesInFlight, 2, ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &staticPool_));
@@ -3875,7 +4072,7 @@ private:
         swapMemory_.init(device_, gpu_, 0);
         depth_ = createImage(swapMemory_, depthFormat_, extent_.width, extent_.height, 1,
                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                 (fsrActiveRequest() ? VK_IMAGE_USAGE_SAMPLED_BIT : 0),
+                                 (fsrActiveRequest() || rtPipelines_ ? VK_IMAGE_USAGE_SAMPLED_BIT : 0), // + RT AO / GI
                              VK_IMAGE_ASPECT_DEPTH_BIT, samples_);
         sceneColor_ = createImage(swapMemory_, sceneFormat_, extent_.width, extent_.height, 1,
                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -3926,6 +4123,7 @@ private:
                                    VK_IMAGE_ASPECT_COLOR_BIT, samples_);
         writeSet(postSet_, sceneColor_.view, postSampler_);
         createFsrTargets();
+        createIndirectTargets();
         setMipBias(fsr_.valid() ? std::log2(float(extent_.width) / float(display_.width)) - 1.0f : 0.0f);
     }
 
@@ -3939,6 +4137,8 @@ private:
         for (GpuImage* img : {&depth_, &sceneColor_, &msColor_, &opaqueColor_, &opaqueDepth_, &filterBlur_, &reflColor_, &reflMsColor_,
                               &reflDepth_, &motion_, &reactive_,
                               &fsrInput_, &fsrOutput_, &fsrGenerated_})
+            if (img->image) destroyImage(*img);
+        for (GpuImage* img : indImages())
             if (img->image) destroyImage(*img);
         swapMemory_.reset();
         vkDestroySwapchainKHR(device_, chain, nullptr);
@@ -4077,6 +4277,18 @@ private:
     VkDescriptorSetLayout rtSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool rtPool_ = VK_NULL_HANDLE;
     VkDescriptorSet rtSet_ = VK_NULL_HANDLE;
+    // RT AO / GI (recordIndirect): pipelines, targets at half render resolution, the previous frame's jittered
+    // view-projection (double) and eye, and the frame (frameCounter_ + 1) that last ran the pass (0 = none).
+    VkDescriptorSetLayout indSetLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout indLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool indPool_ = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, kFramesInFlight> indSets_{};
+    VkPipeline indTrace_ = VK_NULL_HANDLE, indTraceMs_ = VK_NULL_HANDLE, indDenoise_ = VK_NULL_HANDLE;
+    struct { GpuImage signal, geom[2], albedo, hist[2], len[2], tmpA, tmpB, final; } ind_;
+    VkExtent2D indExtent_{};
+    glm::dmat4 indPrevVP_{1.0};
+    glm::dvec3 indPrevEye_{0.0};
+    uint64_t indLast_ = 0;
     VkAccelerationStructureKHR tlas_ = VK_NULL_HANDLE;
     Buffer tlasBuffer_, instanceBuffer_, geometryBuffer_, scratch_, transformBuffer_;
     std::vector<RtBlas> staticBlases_; // one merged BLAS per ray mask over the GpuMesh::rtStatic meshes
