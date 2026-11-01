@@ -167,6 +167,7 @@ struct FrameOptions {
     // Replaces the sun shadow map when the backend supports it; otherwise the shadow map is used.
     RayTracing rt = RayTracing::Off;
     int rtRays = 2; // sun-cone shadow rays per pixel (then averaged over the 2x2 pixel quad)
+    bool rtAo = false, rtGi = false; // ray-traced ambient occlusion / one-bounce sun GI (Vulkan RT; RENDERING.md "RT AO / GI")
     float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
     float screenFade = 0.0f; // scripted screen wipe (globaleffect FadeOut/FadeIn, script::Runtime::screenFade): 1 = black
     WaterQuality water = WaterQuality::Original;  // ou::config presets choose (Enhanced by default)
@@ -202,6 +203,7 @@ struct FrameOptions {
 struct RtStatus {
     bool supported = false;   // device + driver can (and may: OU_VK_NO_RT unset) do ray queries
     bool active = false;      // the last frame traced rays
+    bool ao = false, gi = false; // the last frame traced RT ambient occlusion / sun bounce
     uint32_t blas = 0, instances = 0, geometries = 0, waterInstances = 0; // current scene
     uint32_t tlasBuilds = 0, tlasUpdates = 0, blasRefits = 0, blasRebuilds = 0; // since init
     std::string reason; // why unsupported

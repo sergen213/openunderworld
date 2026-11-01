@@ -511,7 +511,19 @@ TEST(Config, GraphicsPresets) {
         return c;
     };
     EXPECT_EQ(resolve(rt("enhanced", "shadows")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
-    EXPECT_EQ(resolve(rt("enhanced", "full", "high")), (GraphicsSettings{4, true, false, false, 2, 4, true, 1, 1.0f, true, 2, true, 1}));
+    GraphicsSettings full{4, true, false, false, 2, 4, true, 1, 1.0f, true, 2, true, 1};
+    full.rtAo = full.rtGi = true; // rt full turns on every RT feature whose override is unset
+    EXPECT_EQ(resolve(rt("enhanced", "full", "high")), full);
+    auto feature = rt("enhanced", "full");
+    feature.rtGi = false; // per-feature override
+    EXPECT_TRUE(resolve(feature).rtAo);
+    EXPECT_FALSE(resolve(feature).rtGi);
+    feature = rt("enhanced", "shadows");
+    feature.rtAo = true; // opt-in with rt shadows
+    EXPECT_TRUE(resolve(feature).rtAo);
+    EXPECT_FALSE(resolve(feature).rtGi);
+    feature.rt = "off"; // needs rt
+    EXPECT_FALSE(resolve(feature).rtAo);
     EXPECT_EQ(resolve(rt("enhanced", "off", "low")), (GraphicsSettings{4, true, false, false, 0, 1, true, 1, 1.0f, true, 2, true, 1}));
     EXPECT_THROW(resolve(rt("original", "shadows")), std::runtime_error);
     EXPECT_THROW(resolve(rt("original", "full")), std::runtime_error);
@@ -537,13 +549,20 @@ TEST(Config, GraphicsPresets) {
     EXPECT_EQ(flags.rt, "full");
     EXPECT_EQ(flags.rtQuality, "low");
     EXPECT_EQ(flags.shadows, std::optional<bool>(false));
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--rt-gi", "off"));
+    EXPECT_EQ(flags.rtGi, std::optional<bool>(false));
+    EXPECT_FALSE(flags.rtAo.has_value());
+    EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--rt-ao", "yes"), std::runtime_error);
 
     fs::path p = fs::temp_directory_path() / ("ou_config_gfx_" + std::to_string(::getpid()) + "/config.json");
     ou::config::Config c;
     c.graphics = g("enhanced", 2, std::nullopt, true);
     c.graphics.rt = "shadows", c.graphics.rtQuality = "high", c.graphics.brightness = 0.75f;
     c.graphics.atmosphere = "high", c.graphics.lightShafts = false;
+    c.graphics.rtAo = false;
     ou::config::save(p, c);
+    EXPECT_EQ(ou::config::load(p).graphics.rtAo, std::optional<bool>(false));
+    EXPECT_FALSE(ou::config::load(p).graphics.rtGi.has_value());
     const auto d = ou::config::load(p).graphics;
     EXPECT_EQ(d.preset, "enhanced");
     EXPECT_EQ(d.msaa, 2);

@@ -4,6 +4,10 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [Unreleased]
+
+- Vulkan ray tracing now adds ray-traced ambient occlusion and sun bounce light (global illumination): contact shadows under benches, in corners and around Lara's feet, and warm light bounced from sunlit surfaces into shade. On with `rt full`; switch each with `--rt-ao on|off` / `--rt-gi on|off`, `graphics.rt_ao` / `rt_gi`, or the launcher's checkboxes. Costs about 1-2 ms of GPU time at 1080p.
+
 ## [0.19.0] - 2026-10-31
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

@@ -1,0 +1,264 @@
+#version 460
+// Ray-traced ambient occlusion + one-bounce sun GI (VkRenderer::recordIndirect, docs/RENDERING.md "RT AO / GI"), at half
+// the render resolution from the RT depth pre-pass. Compiled three times:
+// - rt_indirect.comp.inc: trace from the single-sample depth,
+// - rt_indirect_ms.comp.inc (-DOU_MS): the same from sample 0 of the MSAA depth,
+// - rt_denoise.comp.inc (-DOU_DENOISE): cfg.z 0 = temporal accumulation, 1 / 2 / 4 = one a-trous iteration (stride 4
+//   writes the composite map the scene shaders read through sun.glsl ouIndirect).
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#define OU_RT 1
+#define OU_RT_SET 1
+#define OU_SHADOW_SET 2
+// sun.glsl's fragment-only parts (ouRtSun's per-pixel rotation, the 2x2 quad sums, ouIndirect) are never called here;
+// these only let it compile in a compute shader.
+#define gl_FragCoord vec4(0.0)
+#define gl_HelperInvocation false
+#define dFdxFine(x) (0.0 * (x))
+#define dFdyFine(x) (0.0 * (x))
+#include "sun.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(push_constant) uniform Push {
+    mat4 reproject; // this frame's eye-relative position -> the previous frame's jittered clip (built in double)
+    vec4 depthW;    // view depth = y / (depth + x); z AO ray length, w GI ray length (world units)
+    vec4 sunColor;  // rgb: sun colour (c212) x GI strength; w: AO strength
+    vec4 sky;       // rgb: radiance of GI rays that escape (x GI strength)
+    ivec4 cfg;      // x bits 1 AO, 2 GI, 4 history valid; y frame number; z denoise step; w rays per pixel
+} pc;
+#ifdef OU_MS
+layout(set = 0, binding = 0) uniform sampler2DMS uDepth;
+float depthAt(ivec2 p) { return texelFetch(uDepth, p, 0).r; }
+ivec2 depthSize() { return textureSize(uDepth); }
+#else
+layout(set = 0, binding = 0) uniform sampler2D uDepth;
+float depthAt(ivec2 p) { return texelFetch(uDepth, p, 0).r; }
+ivec2 depthSize() { return textureSize(uDepth, 0); }
+#endif
+layout(set = 0, binding = 1, rgba16f) uniform image2D uSignal;   // raw: bounce irradiance rgb, AO (unoccluded) a
+layout(set = 0, binding = 2, rgba16f) uniform image2D uGeom;     // this frame: normal xyz, view depth w (0 = none)
+layout(set = 0, binding = 3, rgba8) uniform image2D uAlbedo;     // receiver texture rgb, direct sun (ndl x vis) a
+layout(set = 0, binding = 4, rgba16f) uniform image2D uGeomPrev;
+layout(set = 0, binding = 5, rgba16f) uniform image2D uHistPrev;
+layout(set = 0, binding = 6, rgba16f) uniform image2D uHist;     // temporal output = next frame's history
+layout(set = 0, binding = 7, r16f) uniform image2D uLenPrev;     // history length (frames)
+layout(set = 0, binding = 8, r16f) uniform image2D uLen;
+layout(set = 0, binding = 9, rgba16f) uniform image2D uTmpA;
+layout(set = 0, binding = 10, rgba16f) uniform image2D uTmpB;
+layout(set = 0, binding = 11, rgba16f) uniform image2D uFinal;   // sun.glsl ouIndirectMap
+
+// Camera ray through full-resolution pixel centre `frag`, scaled so that eye-relative position = ray x view depth
+// (render::sunShadow rayBase / rayU / rayV with the jittered camera, as the depth pre-pass drew).
+vec3 rayDir(vec2 frag) {
+    vec2 uv = frag * ouShadow.screen.xy;
+    return ouShadow.rayBase.xyz + uv.x * ouShadow.rayU.xyz + uv.y * ouShadow.rayV.xyz;
+}
+// Half-resolution texel q samples full-resolution pixel 2q.
+vec2 fragOf(ivec2 q) { return vec2(2 * q) + 0.5; }
+
+#ifndef OU_DENOISE
+float viewDepth(float d) { return pc.depthW.y / (d + pc.depthW.x); }
+vec3 relAt(ivec2 p) { return rayDir(vec2(p) + 0.5) * viewDepth(depthAt(p)); }
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+
+// Closest alpha-tested hit among the `mask` instances (sun.glsl kOuMask*): texture and vertex colour, world normal facing
+// the ray origin (two-sided, as the raster pass). Mip from the hit distance + `mipBias`.
+bool traceSurface(vec3 o, vec3 d, uint mask, float tmin, float tmax, float mipBias, out float t, out vec4 tex, out vec4 vc,
+                  out vec3 n) {
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, ouTlas, gl_RayFlagsNoneEXT, mask, o, tmin, d, tmax);
+    ouResolveCandidates(rq);
+    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) return false;
+    OuGeom g = ouGeoms[uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true) + rayQueryGetIntersectionGeometryIndexEXT(rq, true))];
+    OuWords vb = OuWords(g.vertices);
+    OuTri tri = ouCorners(g, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)));
+    vec3 b = ouBary(rayQueryGetIntersectionBarycentricsEXT(rq, true));
+    t = rayQueryGetIntersectionTEXT(rq, true);
+    // ponytail: mip from hit distance only (no ray cones), as ouRtReflect; the bounce is blurred anyway.
+    tex = textureLod(ouRtTextures[nonuniformEXT(g.texture)], ouAttr2(vb, tri, 6u, b), clamp(log2(t / 400.0) + mipBias, 0.0, 8.0));
+    vc = ouColorAt(vb, tri, b);
+    n = ouAttr3(vb, tri, 3u, b);
+    if (g.transform != uint64_t(0)) {
+        OuWords x = OuWords(g.transform);
+        n = vec3(dot(vec3(uintBitsToFloat(x.w[0]), uintBitsToFloat(x.w[1]), uintBitsToFloat(x.w[2])), n),
+                 dot(vec3(uintBitsToFloat(x.w[4]), uintBitsToFloat(x.w[5]), uintBitsToFloat(x.w[6])), n),
+                 dot(vec3(uintBitsToFloat(x.w[8]), uintBitsToFloat(x.w[9]), uintBitsToFloat(x.w[10])), n));
+    }
+    n = mat3(rayQueryGetIntersectionObjectToWorldEXT(rq, true)) * n;
+    n = dot(n, n) > 1.0e-12 ? normalize(n) : -d; // meshes without normals (baked lighting only)
+    if (dot(n, d) > 0.0) n = -n;
+    return true;
+}
+
+void main() {
+    ivec2 q = ivec2(gl_GlobalInvocationID.xy), size = imageSize(uSignal);
+    if (any(greaterThanEqual(q, size))) return;
+    ivec2 last = depthSize() - 1, full = min(2 * q, last);
+    float d = depthAt(full);
+    vec3 ray = rayDir(vec2(full) + 0.5);
+    float w = viewDepth(d);
+    vec3 rel = ray * w, p = ouShadow.eye.xyz + rel;
+    // Surface normal from the depth: per axis the one-sided difference with the smaller step (never across an edge).
+    vec3 dx1 = relAt(min(full + ivec2(1, 0), last)) - rel, dx0 = rel - relAt(max(full - ivec2(1, 0), ivec2(0)));
+    vec3 dy1 = relAt(min(full + ivec2(0, 1), last)) - rel, dy0 = rel - relAt(max(full - ivec2(0, 1), ivec2(0)));
+    vec3 nd = cross(dot(dx1, dx1) < dot(dx0, dx0) ? dx1 : dx0, dot(dy1, dy1) < dot(dy0, dy0) ? dy1 : dy0);
+    nd = dot(nd, nd) > 0.0 ? normalize(nd) : -normalize(ray);
+    if (dot(nd, ray) > 0.0) nd = -nd;
+    // Sky / cleared depth (the exterior backdrop is drawn before the pre-pass clear), or inputs RADV would hang on.
+    if (d >= 1.0 || !ouRayInputsFinite(p, nd) || !ouRayInputsFinite(rel, nd)) {
+        imageStore(uGeom, q, vec4(0.0));
+        imageStore(uSignal, q, vec4(0.0, 0.0, 0.0, 1.0));
+        imageStore(uAlbedo, q, vec4(0.0));
+        return;
+    }
+    float dist = length(rel);
+    vec3 dir = rel / dist, n = nd, albedo = vec3(0.5);
+    // GI: primary ray onto the triangle under the pixel (within 1 % of the depth): its texture is the receiver's albedo,
+    // its vertex normal (where it agrees with the depth's) the smooth shading normal. AO alone keeps the depth normal.
+    bool gi = (pc.cfg.x & 2) != 0;
+    float t;
+    vec4 tex, vc;
+    vec3 ns;
+    float win = 4.0 + 0.01 * dist;
+    if (gi && traceSurface(ouShadow.eye.xyz, dir, kOuMaskSolid, max(dist - win, 0.0), dist + win, 1.0, t, tex, vc, ns)) {
+        albedo = tex.rgb;
+        if (dot(ns, nd) > 0.3) n = ns;
+    }
+    vec3 sun = ouShadow.sun.xyz;
+    vec3 o = p + n * (2.0 + 2.0e-4 * dist); // as ouRtSun: against self-intersection, growing with float spacing
+    // Direct sun at the receiver: AO darkens the ambient part of the lighting, much less what the sun lights directly.
+    float sunlit = 0.0, ndl = dot(n, sun);
+    if ((pc.cfg.x & 1) != 0 && ndl > 0.0) sunlit = ndl * ouVisible(o, sun);
+    float aoRange = pc.depthW.z, tMax = gi ? pc.depthW.w : aoRange;
+    vec3 t1 = normalize(cross(n, abs(n.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0))), t2 = cross(n, t1);
+    vec3 bounce = vec3(0.0);
+    float occ = 0.0;
+    int rays = max(pc.cfg.w, 1);
+    // Cosine-weighted hemisphere: interleaved gradient noise per pixel, shifted per frame along the R2 sequence (the
+    // temporal pass integrates the frames). Lambertian receiver with cosine sampling: bounce = mean incoming radiance.
+    vec2 noise = vec2(ign(vec2(q)), ign(vec2(q) + vec2(47.0, 17.0)));
+    for (int i = 0; i < rays; ++i) {
+        vec2 xi = fract(noise + float(pc.cfg.y * rays + i) * vec2(0.7548776662, 0.5698402910));
+        float r = sqrt(xi.x), a = 6.2831853 * xi.y;
+        vec3 rd = normalize(t1 * (r * cos(a)) + t2 * (r * sin(a)) + n * sqrt(max(1.0 - xi.x, 0.0)));
+        float th;
+        vec4 ht, hv;
+        vec3 hn;
+        // Everything solid or casting occludes and bounces (floors such as the l2_cliffclimb deck do not cast); water
+        // (mask 2, the sea plane included) neither.
+        if (traceSurface(o, rd, kOuMaskSolid | kOuMaskShadow, 0.0, tMax, 0.0, th, ht, hv, hn)) {
+            float u = th / aoRange;
+            occ += clamp(1.0 - u * u, 0.0, 1.0);
+            float hl = dot(hn, sun);
+            // The hit's sunlit radiance in the generic shading's units: texture x vertex colour x sun colour x lambert x
+            // its own sun visibility (one shadow ray). Its baked / ambient light is not bounced (already in the art).
+            if (gi && hl > 0.0) {
+                vec3 hp = o + rd * th + hn * (2.0 + 2.0e-4 * (dist + th));
+                bounce += ht.rgb * hv.rgb * pc.sunColor.rgb * (hl * ouVisible(hp, sun));
+            }
+        } else if (gi) bounce += pc.sky.rgb;
+    }
+    imageStore(uSignal, q, vec4(bounce / float(rays), 1.0 - occ / float(rays)));
+    imageStore(uGeom, q, vec4(n, w));
+    imageStore(uAlbedo, q, vec4(albedo, sunlit));
+}
+
+#else // OU_DENOISE
+vec3 relOf(ivec2 q, float w) { return rayDir(fragOf(q)) * w; }
+
+// History outside the current 3x3 raw signal mean +- 2 sigma is pulled onto that box (Kabus 22 rt_filter.comp): a bounce
+// or contact shadow that moved with its caster (Lara) does not linger on the receiver.
+vec4 clipHistory(vec4 h, vec4 m1, vec4 m2) {
+    vec4 mean = m1 / 9.0, dev = h - mean;
+    vec4 e = abs(dev) / (2.0 * sqrt(max(m2 / 9.0 - mean * mean, 0.0)) + 1.0e-4);
+    float m = max(max(e.x, e.y), max(e.z, e.w));
+    return m > 1.0 ? mean + dev / m : h;
+}
+
+vec4 loadStep(int stride, ivec2 p) {
+    return stride == 1 ? imageLoad(uHist, p) : stride == 2 ? imageLoad(uTmpA, p) : imageLoad(uTmpB, p);
+}
+
+void main() {
+    ivec2 q = ivec2(gl_GlobalInvocationID.xy), size = imageSize(uSignal);
+    if (any(greaterThanEqual(q, size))) return;
+    vec4 g = imageLoad(uGeom, q);
+    int stride = pc.cfg.z;
+    if (stride == 0) {
+        // Temporal: reproject through the previous frame's jittered view-projection into its geometry; bilinear over
+        // the taps whose view depth (5 %) and normal (cos 0.8) agree, so disocclusions restart.
+        vec4 s = imageLoad(uSignal, q);
+        float len = 0.0;
+        if (g.w > 0.0 && (pc.cfg.x & 4) != 0) {
+            vec4 c = pc.reproject * vec4(relOf(q, g.w), 1.0);
+            if (c.w > 0.0) {
+                vec2 fb = vec2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5) / ouShadow.screen.xy; // flipped viewport
+                vec2 h = (fb - 0.5) * 0.5;
+                ivec2 b = ivec2(floor(h));
+                vec2 f = h - vec2(b);
+                vec4 hist = vec4(0.0);
+                float hl = 0.0, ws = 0.0;
+                for (int i = 0; i < 4; ++i) {
+                    ivec2 o = ivec2(i & 1, i >> 1), pp = b + o;
+                    if (any(lessThan(pp, ivec2(0))) || any(greaterThanEqual(pp, size))) continue;
+                    vec4 pg = imageLoad(uGeomPrev, pp);
+                    if (pg.w <= 0.0 || abs(pg.w - c.w) > 0.05 * c.w || dot(pg.xyz, g.xyz) < 0.8) continue;
+                    float w = mix(1.0 - f.x, f.x, float(o.x)) * mix(1.0 - f.y, f.y, float(o.y));
+                    hist += w * imageLoad(uHistPrev, pp);
+                    hl += w * imageLoad(uLenPrev, pp).r;
+                    ws += w;
+                }
+                if (ws > 1.0e-3) {
+                    vec4 m1 = vec4(0.0), m2 = vec4(0.0);
+                    for (int y = -1; y <= 1; ++y)
+                        for (int x = -1; x <= 1; ++x) {
+                            vec4 v = imageLoad(uSignal, clamp(q + ivec2(x, y), ivec2(0), size - 1));
+                            m1 += v;
+                            m2 += v * v;
+                        }
+                    hist = clipHistory(hist / ws, m1, m2);
+                    len = min(hl / ws + 1.0, 32.0);
+                    // ~1 / frames up to 12 (AO) / 16 (GI) frames: stable, and a moved shadow fades within ~0.2 s.
+                    s = vec4(mix(hist.rgb, s.rgb, max(1.0 / (len + 1.0), 0.06)), mix(hist.a, s.a, max(1.0 / (len + 1.0), 0.08)));
+                }
+            }
+        }
+        imageStore(uHist, q, s);
+        imageStore(uLen, q, vec4(len));
+        return;
+    }
+    // A-trous (B3 5x5, strides 1, 2, 4) with plane-distance and normal edge stopping.
+    vec4 c = loadStep(stride, q);
+    if (g.w > 0.0) {
+        const float k[3] = float[3](0.375, 0.25, 0.0625);
+        vec3 rel = relOf(q, g.w);
+        vec4 sum = vec4(0.0);
+        float ws = 0.0;
+        for (int y = -2; y <= 2; ++y)
+            for (int x = -2; x <= 2; ++x) {
+                ivec2 pp = q + ivec2(x, y) * stride;
+                if (any(lessThan(pp, ivec2(0))) || any(greaterThanEqual(pp, size))) continue;
+                vec4 pg = imageLoad(uGeom, pp);
+                if (pg.w <= 0.0) continue;
+                float plane = abs(dot(g.xyz, relOf(pp, pg.w) - rel));
+                float w = k[abs(x)] * k[abs(y)] * exp(-plane / (0.01 * g.w + 1.0)) * pow(max(dot(pg.xyz, g.xyz), 0.0), 16.0);
+                sum += w * loadStep(stride, pp);
+                ws += w;
+            }
+        if (ws > 0.0) c = sum / ws;
+    }
+    if (stride == 1) imageStore(uTmpA, q, c);
+    else if (stride == 2) imageStore(uTmpB, q, c);
+    else {
+        // Composite map: bounce x receiver albedo, AO factor (lifted where the sun lights the receiver directly); both
+        // fade out with distance (6000-12000 units), where fog takes over and the rays' scale is below a pixel.
+        vec4 alb = imageLoad(uAlbedo, q);
+        float fade = 1.0 - smoothstep(6000.0, 12000.0, g.w);
+        float ao = (pc.cfg.x & 1) != 0 ? mix(1.0, mix(c.a * c.a, 1.0, 0.4 * alb.a), pc.sunColor.w * fade) : 1.0;
+        vec3 gi = (pc.cfg.x & 2) != 0 ? c.rgb * alb.rgb * fade : vec3(0.0);
+        imageStore(uFinal, q, g.w > 0.0 ? vec4(gi, ao) : vec4(0.0, 0.0, 0.0, 1.0));
+    }
+}
+#endif

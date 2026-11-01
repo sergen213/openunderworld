@@ -211,6 +211,7 @@ std::string rtSummary(const RtStatus& s, RayTracing requested, int rays) {
         return line + " | unsupported" + (s.reason.empty() ? "" : " (" + s.reason + ")") +
                (requested != RayTracing::Off ? " -> shadow map" : "");
     if (requested != RayTracing::Off) line += " | " + std::to_string(rays) + " ray(s)/px" + (s.active ? "" : " | NOT ACTIVE");
+    if (s.ao || s.gi) line += std::string(" | ") + (s.ao && s.gi ? "AO + sun GI" : s.ao ? "AO" : "sun GI");
     return line + " | " + std::to_string(s.blas) + " BLAS, " + std::to_string(s.geometries) + " geometries, " +
            std::to_string(s.instances) + " instances (" + std::to_string(s.waterInstances) + " water) | TLAS builds " +
            std::to_string(s.tlasBuilds) + " updates " + std::to_string(s.tlasUpdates) + " | BLAS refits " +

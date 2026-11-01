@@ -176,6 +176,38 @@ float ouSunVisibility(vec3 p, vec3 n, bool lit, bool rays) {
     return lit && ouShadow.sun.w != 0.0 ? ouShadowMapVisibility(p) : 1.0;
 }
 
+#ifdef OU_RT
+// Ray-traced AO / sun bounce (VkRenderer recordIndirect, RENDERING.md "RT AO / GI"): half resolution, denoised; map rgb =
+// bounce light x the receiver's albedo, a = AO factor; geometry .w = view depth (clip w, 0 = no surface).
+layout(set = OU_SHADOW_SET, binding = 2) uniform sampler2D ouIndirectMap;
+layout(set = OU_SHADOW_SET, binding = 3) uniform sampler2D ouIndirectGeom;
+// c x AO + bounce at an opaque, pre-passed fragment (the pass traced from the pre-pass depth): joint-bilateral
+// upsampling from the 2x2 half-resolution texels around it, weighted by view-depth agreement (none agrees: the closest
+// one in depth, so silhouettes take their own side). screen.w bits 1 (AO) / 2 (GI) clear = the pass did not run: c.
+vec3 ouIndirect(vec3 c) {
+    if ((int(ouShadow.screen.w) & 3) == 0) return c;
+    float z = 1.0 / gl_FragCoord.w;
+    vec2 h = (gl_FragCoord.xy - 0.5) * 0.5;
+    ivec2 b = ivec2(floor(h)), last = textureSize(ouIndirectMap, 0) - 1;
+    vec2 t = h - vec2(b);
+    vec4 sum = vec4(0.0), best = vec4(0.0, 0.0, 0.0, 1.0);
+    float wsum = 0.0, bestErr = 1.0e30;
+    for (int i = 0; i < 4; ++i) {
+        ivec2 o = ivec2(i & 1, i >> 1), q = clamp(b + o, ivec2(0), last);
+        float d = texelFetch(ouIndirectGeom, q, 0).w;
+        if (d <= 0.0) continue;
+        vec4 s = texelFetch(ouIndirectMap, q, 0);
+        float err = abs(d - z) / z;
+        float w = mix(1.0 - t.x, t.x, float(o.x)) * mix(1.0 - t.y, t.y, float(o.y)) * exp(-50.0 * err);
+        sum += w * s;
+        wsum += w;
+        if (err < bestErr) bestErr = err, best = s;
+    }
+    vec4 s = wsum > 1.0e-4 ? sum / wsum : best;
+    return c * s.a + s.rgb;
+}
+#endif
+
 #ifdef OU_SUN
 // Translated original pixel shaders: position from gl_FragCoord (exact view depth 1 / gl_FragCoord.w along the camera
 // ray), face normal from its derivatives, both computed first thing in main() (uniform control flow, before texkill).
@@ -192,10 +224,12 @@ float ouSunBegin(bool sunLit) {
     return sunLit ? ouSunVisibility(ouP, ouN, true, false) : 1.0;
 #endif
 }
-// After the program: RT water reflections on materials the backend flags reflective (fixedParams.w bit 2).
+// After the program: RT water reflections on materials the backend flags reflective (fixedParams.w bit 2); RT AO /
+// sun bounce on the rest (the ray-traced variant draws only opaque, pre-passed submeshes and reflective ones).
 vec4 ouSunEnd(vec4 c) {
 #ifdef OU_RT
     if ((int(ouMat.fixedParams.w) & 4) != 0 && ouShadow.screen.z >= 2.0) return ouRtWater(c, ouP, ouN, true);
+    if ((int(ouMat.fixedParams.w) & 4) == 0) c.rgb = ouIndirect(c.rgb);
 #endif
     return c;
 }

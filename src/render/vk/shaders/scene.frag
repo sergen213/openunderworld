@@ -35,6 +35,7 @@ void main() {
     if (abs(pc.opacity) < 1.0) c.a = (pc.opacity < 0.0 ? 1.0 : c.a) * abs(pc.opacity);
     if (pc.lighting != 0 && len > 1e-6) c.rgb *= 0.45 + 0.55 * ndl * vis;
 #ifdef OU_RT
+    if ((pc.rt & 1) != 0) c.rgb = ouIndirect(c.rgb); // RT AO / sun bounce (opaque, pre-passed draws only)
     if ((pc.rt & 2) != 0 && len > 1e-6) c = ouRtWater(c, vWorld, n, pc.lighting != 0);
 #endif
     oColor = c;

@@ -291,6 +291,7 @@ private:
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
     QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_, *upscaler_, *fsrQuality_;
     QCheckBox* frameGeneration_;
+    QCheckBox *rtAo_, *rtGi_; // checked state = resolved value; saved only where it differs from the rt mode's default
     QDoubleSpinBox* sharpness_;
     QSpinBox *width_, *height_;
     QDoubleSpinBox *fov_, *brightness_;
@@ -385,10 +386,17 @@ private:
         rtQuality_->addItem("Medium (2 rays/pixel)", "medium");
         rtQuality_->addItem("High (4 rays/pixel)", "high");
         rtQuality_->setCurrentIndex(std::max(0, rtQuality_->findData(q(g.rtQuality))));
+        // RT ambient occlusion / sun bounce: on by default with "full".
+        rtAo_ = new QCheckBox("RT ambient occlusion");
+        rtGi_ = new QCheckBox("RT sun bounce (global illumination)");
+        rtAo_->setChecked(g.rtAo.value_or(g.rt == "full"));
+        rtGi_->setChecked(g.rtGi.value_or(g.rt == "full"));
         auto rtEnable = [this] { // RT needs the enhanced preset
             bool on = gfxPreset_->currentData().toString() == "enhanced";
             rt_->setEnabled(on);
             rtQuality_->setEnabled(on);
+            rtAo_->setEnabled(on);
+            rtGi_->setEnabled(on);
         };
         connect(gfxPreset_, &QComboBox::currentIndexChanged, this, rtEnable);
         rtEnable();
@@ -476,6 +484,8 @@ private:
         f->addRow("Preset", gfxPreset_);
         f->addRow("Ray tracing", rt_);
         f->addRow("RT quality", rtQuality_);
+        f->addRow("", rtAo_);
+        f->addRow("", rtGi_);
         f->addRow("MSAA", msaa_);
         f->addRow("Sun shadows", shadows_);
         f->addRow("Shaders", shaders_);
@@ -844,6 +854,8 @@ private:
         // RT needs the enhanced preset: "auto" resolves to off for original, so resolve() never throws.
         g.rt = rt_->isEnabled() ? s(rt_->currentData().toString()) : "auto";
         g.rtQuality = s(rtQuality_->currentData().toString());
+        for (auto [box, field] : {std::pair{rtAo_, &g.rtAo}, std::pair{rtGi_, &g.rtGi}})
+            *field = box->isChecked() == (g.rt == "full") ? std::nullopt : std::optional(box->isChecked());
         g.msaa = msaa_->currentData().toInt();
         g.shadows = overrideValue(shadows_);
         g.originalShaders = shaders_->currentIndex() == 1 ? std::optional(false) : std::nullopt; // unset = original

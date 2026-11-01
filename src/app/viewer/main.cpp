@@ -58,6 +58,7 @@ void usage() {
                  "                 [--anim ID|#INDEX|NAME] [--anim-time SECONDS] [--anim-list] [--show-collision]\n"
                  "                 [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off]\n"
                  "                 [--hdr on|off] [--shaders original|generic] [--rt auto|off|shadows|full] [--rt-quality low|medium|high]\n"
+                 "                 [--rt-ao on|off] [--rt-gi on|off]\n"
                  "                 [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
                  "                 [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather off|rain|snow]\n"
                  "                 [--brightness 0.5..2.0] [--config config.json]  (launcher settings; later flags override)\n"
@@ -504,6 +505,7 @@ int main(int argc, char** argv) {
         fo.overlay = lines, fo.debugLines = debugLines;
         fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
+        fo.rtAo = opt.gfx.rtAo, fo.rtGi = opt.gfx.rtGi;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
         fo.brightness = opt.gfx.brightness;
         fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;
