@@ -244,6 +244,8 @@ public:
     virtual RtStatus rtStatus() const { return {}; } // backends without ray tracing: unsupported
     // One overlay line on upscaling: requested / active mode, resolutions, frame generation, or why not.
     virtual std::string upscalerSummary() const { return "FSR: Vulkan only"; }
+    // FSR / frame generation can run on this device (after init; Vulkan only). Menus grey the upscaler rows otherwise.
+    virtual bool fsrSupported() const { return false; }
     virtual void shutdown() = 0;
 };
 

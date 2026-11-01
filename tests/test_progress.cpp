@@ -3,6 +3,7 @@
 #include "game/Progress.hpp"
 #include "config/Config.hpp"
 #include "save/Save.hpp"
+#include "locale/Locale.hpp"
 #include "ui/Art.hpp"
 #include "ui/Pda.hpp"
 #include "ui/Ui.hpp"
@@ -227,6 +228,84 @@ TEST(Menus, MainMenuActionsAndScreens) {
     m.open(ui::Screen::Main);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Continue); // PLAY GAME
     EXPECT_EQ(m.screen(), ui::Screen::None);
+}
+
+TEST(Menus, GraphicsOptions) {
+    ui::Menus m;
+    ui::GraphicsOptions& g = m.graphics;
+    g.resolutions = {{1280, 720}, {1920, 1080}};
+    g.resolution = 1;
+    auto row = [&] { return m.items()[size_t(m.cursor())]; };
+    m.open(ui::Screen::Pause);
+    m.open(ui::Screen::AudioVisual);
+    for (int i = 0; i < 4; ++i) m.input(ui::Nav::Down);
+    EXPECT_EQ(row().stringId, 498); // DISPLAY MODE SELECTION
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::GfxDisplay);
+    EXPECT_EQ(row().label, "RENDERER");
+    m.input(ui::Nav::Right), m.input(ui::Nav::Right), m.input(ui::Nav::Right);
+    EXPECT_EQ(g.renderer, 2); // OPENGL, clamped
+    m.input(ui::Nav::Accept);
+    EXPECT_EQ(g.renderer, 0); // Accept wraps to AUTO
+    m.input(ui::Nav::Down); // RESOLUTION
+    EXPECT_EQ(row().choices, (std::vector<std::string>{"1280 X 720", "1920 X 1080"}));
+    m.input(ui::Nav::Right);
+    EXPECT_EQ(g.resolution, 1);
+    m.input(ui::Nav::Left);
+    EXPECT_EQ(g.resolution, 0);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // FULLSCREEN
+    EXPECT_TRUE(g.fullscreen);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Down); // FIELD OF VIEW
+    m.input(ui::Nav::Right);
+    EXPECT_EQ(g.fov, 75);
+    g.fov = 72, m.input(ui::Nav::Right);
+    EXPECT_EQ(g.fov, 75); // snaps onto the 5-degree grid
+    g.fov = 120, m.input(ui::Nav::Right);
+    EXPECT_EQ(g.fov, 120);
+    g.fov = 30, m.input(ui::Nav::Left);
+    EXPECT_EQ(g.fov, 30);
+    m.input(ui::Nav::Back);
+    ASSERT_EQ(m.screen(), ui::Screen::AudioVisual);
+    EXPECT_EQ(m.cursor(), 4);
+    m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // DISPLAY SETTINGS
+    ASSERT_EQ(m.screen(), ui::Screen::GfxSettings);
+    m.input(ui::Nav::Accept); // QUALITY
+    ASSERT_EQ(m.screen(), ui::Screen::GfxQuality);
+    g.rt = 3;
+    m.input(ui::Nav::Right); // PRESET ORIGINAL: explicit RT is invalid there
+    EXPECT_EQ(g.preset, 1);
+    EXPECT_EQ(g.rt, 0);
+    m.input(ui::Nav::Back), m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // RAY TRACING
+    ASSERT_EQ(m.screen(), ui::Screen::GfxRayTracing);
+    EXPECT_EQ(m.cursor(), 6); // every RT row greyed with preset original: BACK
+    m.input(ui::Nav::Back);
+    EXPECT_EQ(m.cursor(), 1);
+    g.preset = 0, g.rt = 1; // OFF: only the mode row stays selectable
+    m.input(ui::Nav::Accept);
+    EXPECT_EQ(m.cursor(), 0);
+    m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 6); // greyed rows skipped
+    m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 0);
+    m.input(ui::Nav::Right), m.input(ui::Nav::Right);
+    EXPECT_EQ(g.rt, 3); // FULL
+    m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 1); // RT QUALITY now selectable
+    m.input(ui::Nav::Back), m.input(ui::Nav::Down), m.input(ui::Nav::Down), m.input(ui::Nav::Accept); // UPSCALING
+    ASSERT_EQ(m.screen(), ui::Screen::GfxUpscaling);
+    g.fsr = true, g.frameGeneration = true;
+    m.input(ui::Nav::Accept); // FSR off: frame generation needs it
+    EXPECT_FALSE(g.fsr);
+    EXPECT_FALSE(g.frameGeneration);
+    m.input(ui::Nav::Down);
+    EXPECT_EQ(m.cursor(), 4); // FSR QUALITY / SHARPNESS / FRAME GENERATION greyed
+    m.input(ui::Nav::Back);
+    g.fsrSupported = false;
+    m.input(ui::Nav::Accept);
+    EXPECT_EQ(m.cursor(), 4); // the upscaler row greyed too
+    m.input(ui::Nav::Accept); // BACK
+    EXPECT_EQ(m.screen(), ui::Screen::GfxSettings);
+    EXPECT_EQ(m.cursor(), 3);
 }
 
 TEST(Menus, PauseSlotsAndPda) {
@@ -653,6 +732,30 @@ TEST(MenusReal, ArtAndFontMetrics) {
     EXPECT_FLOAT_EQ(c.sx(0), 240);
     EXPECT_FLOAT_EQ(c.unit(), 2.25f);
     EXPECT_FLOAT_EQ(c.fontWidth("PLAY GAME", 0.625f), 66.0f);
+}
+
+// Graphics rows fit the list: labels end before the slider's left arrow (307.6), values fit between its arrows.
+TEST(MenusReal, GraphicsRowsFit) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto art = ui::loadArt(bf);
+    ASSERT_TRUE(art);
+    const auto strings = locale::loadStrings(gameDir(), locale::Language::English);
+    ASSERT_TRUE(strings);
+    ui::Canvas c(1920, 1080, &*art);
+    ui::Menus m;
+    m.graphics.resolutions = {{3840, 2160}};
+    for (auto s : {ui::Screen::GfxDisplay, ui::Screen::GfxSettings, ui::Screen::GfxQuality, ui::Screen::GfxRayTracing,
+                   ui::Screen::GfxWater, ui::Screen::GfxUpscaling}) {
+        m.open(s);
+        for (const auto& it : m.items()) {
+            if (it.stringId == 469) continue;
+            const std::string label = it.stringId ? std::string(strings->get(it.stringId)) : it.label;
+            EXPECT_LT(152.4f + c.fontWidth(label, 0.6f), 303.0f) << label;
+            for (const auto& v : it.choices) EXPECT_LT(c.fontWidth(v, 0.6f), 152.0f) << v; // 475.6 - 307.6 - two arrow widths
+        }
+        m.close();
+    }
 }
 
 // pc-w\image RAW backgrounds (loading screens, PDA frame) and the g_pda picture windows in the atlas.

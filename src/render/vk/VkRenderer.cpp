@@ -1544,6 +1544,8 @@ public:
         return true;
     }
 
+    bool fsrSupported() const override { return device_ && fsrReason_.empty(); }
+
     RtStatus rtStatus() const override { return rtStatus_; }
 
     std::string upscalerSummary() const override {
@@ -1943,6 +1945,12 @@ private:
             fsrError_.clear();
             swapchainDirty_ = true;
         }
+        // Settings that change the look (menu, mid-run): drop the temporal histories (FSR, RT AO / GI) so the old image
+        // is not smeared into the new one. Weather is left out: its intensity fades every frame under shelter.
+        const std::array<float, 14> look{float(o.rt), float(o.rtRays), float(o.rtLights), float(o.rtReflections), float(o.rtAo),
+                                         float(o.rtGi), float(o.originalShaders), float(o.water), float(o.waterDetail),
+                                         float(o.atmosphere), float(o.lightShafts), float(o.shadows), float(o.hdr), o.brightness};
+        if (look != look_) look_ = look, fsrHistory_ = false, indLast_ = 0;
         VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
         for (int s = fsrActiveRequest() ? 1 : std::clamp(o.msaa, 1, 8); s > 1; s >>= 1)
             if (supportedSamples_ & VkSampleCountFlags(s)) { samples = VkSampleCountFlagBits(s); break; }
@@ -4302,6 +4310,7 @@ private:
     std::string fsrReason_, fsrError_; // why FSR cannot run here; a runtime failure (FSR off until the settings change)
     bool fsrRequested_ = false, fsrFrameGen_ = false, fsrHistory_ = false;
     int fsrQuality_ = 1;
+    std::array<float, 14> look_{}; // applySettings: the look-changing settings of the last frame
     GpuImage motion_, reactive_, fsrInput_, fsrOutput_, fsrGenerated_;
     VkPipelineLayout fsrMaskLayout_ = VK_NULL_HANDLE, fsrCameraLayout_ = VK_NULL_HANDLE, fsrFxLayout_ = VK_NULL_HANDLE;
     VkPipeline fsrFxPipeline_ = VK_NULL_HANDLE, fsrSplashPipeline_ = VK_NULL_HANDLE, fsrWeatherPipeline_ = VK_NULL_HANDLE;

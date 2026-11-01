@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ou::locale { class Strings; }
@@ -70,10 +71,11 @@ enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
 // Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item. Revisit / Journal:
 // the PDA's REVISIT LOCATION list (Treasure Hunt) and JOURNAL ENTRIES. Extras: the EXTRAS categories on a mirrored ring; ExtrasCategory: one's rewards
 // (Menus::rewards) with a preview; ExtrasView: an unlocked image full screen. TailoringOptions: GAME OPTIONS > PLAYER
-// TAILORING, its four levels one by one (Menus::tailor).
+// TAILORING, its four levels one by one (Menus::tailor). Gfx*: AUDIO/VISUAL > DISPLAY MODE SELECTION (GfxDisplay) and
+// DISPLAY SETTINGS (GfxSettings: QUALITY, RAY TRACING, WATER & SKY, UPSCALING), editing Menus::graphics.
 enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
                               PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit, Extras, ExtrasCategory, ExtrasView, Journal,
-                              TailoringOptions };
+                              TailoringOptions, GfxDisplay, GfxSettings, GfxQuality, GfxRayTracing, GfxWater, GfxUpscaling };
 // Continue: load the autosave, else the newest save (the app starts a new game when there is none). Save/Load/Delete act
 // on selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
 // Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW). TreasureHunt: the
@@ -84,7 +86,7 @@ enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delet
 
 struct Item {
     int16_t stringId = 0;  // locals.bin label; 0 = `label`
-    std::string label{};   // save slot names
+    std::string label{};   // save slot names, graphics rows (uppercase ASCII)
     Action action = Action::None;
     Screen opens = Screen::None;
     int* value = nullptr;  // slider 0..10 (Left/Right)
@@ -95,8 +97,13 @@ struct Item {
     bool* toggle = nullptr; // Left/Right/Accept flip it; shows onId / offId (both, "ON / OFF", when `pair`)
     int16_t onId = 0, offId = 0;
     bool pair = false;
-    bool greyed = false;   // shown, never selected (PDA JOURNAL / REVISIT LOCATION)
+    bool greyed = false;   // shown dim, never selected (PDA JOURNAL / REVISIT LOCATION, graphics rows that cannot apply)
     int16_t confirm = 0;   // Accept first asks this locals.bin YES / NO question (Screen::Confirm)
+    // A choice row: *choice = choiceMin + index * choiceStep, choices[index] shown; Left/Right step and stop at the ends,
+    // Accept steps forward and wraps.
+    int* choice = nullptr;
+    std::vector<std::string> choices{};
+    int choiceMin = 0, choiceStep = 1;
 };
 
 // A Load/Save slot: its file (save::slotPath), the name shown (empty: "<AREA> - <TITLE>", as tru.exe 0x789770 names
@@ -166,6 +173,36 @@ struct PdaModel {
     bool operator==(const PdaModel&) const = default;
 };
 
+// AUDIO/VISUAL > GRAPHICS: the launcher's display and graphics settings, applied live by the app (no restart).
+// Indices mirror config::GraphicsConfig strings in the launcher's order. Tri-state overrides: 0 default, 1 on, 2 off.
+struct GraphicsOptions {
+    int renderer = 0;                              // 0 auto, 1 vulkan, 2 opengl
+    std::vector<std::pair<int, int>> resolutions;  // window sizes offered (app fills: presets + desktop + current)
+    int resolution = 0;                            // index into resolutions
+    bool fullscreen = false, vsync = true;
+    int fov = 70;                                  // degrees, 30..120, Left/Right step 5
+    int preset = 0;                                // 0 enhanced, 1 original
+    int rt = 0;                                    // 0 auto, 1 off, 2 shadows, 3 full (explicit 2/3 need preset enhanced)
+    int rtQuality = 1;                             // 0 low, 1 medium, 2 high
+    int rtLights = 0, rtReflections = 0, rtAo = 0, rtGi = 0; // tri-state (default = on with rt full)
+    int msaa = 0;                                  // 0 preset default, 1 1x, 2 2x, 3 4x, 4 8x
+    int shadows = 0;                               // tri-state
+    bool originalShaders = true;
+    int water = 0;                                 // 0 auto, 1 original, 2 enhanced
+    int waterDetail = 0;                           // 0 auto, 1 standard, 2 high
+    int atmosphere = 0;                            // 0 auto, 1 off, 2 low, 3 medium, 4 high
+    int lightShafts = 0;                           // tri-state
+    int weather = 0;                               // 0 auto, 1 off, 2 rain, 3 snow
+    bool fsr = false;                              // upscaler fsr
+    int fsrQuality = 1;                            // 0 native, 1 quality, 2 balanced, 3 performance, 4 ultra performance
+    int sharpness = 5;                             // 0..10 slider = config sharpness * 10
+    bool frameGeneration = false;                  // needs fsr
+    bool effects = true;
+    // Set by the app from the live renderer: rows that cannot apply are greyed (shown, not selectable).
+    bool rtSupported = true, fsrSupported = true;
+    bool operator==(const GraphicsOptions&) const = default;
+};
+
 // Loading screen background of a chapter (kChapters index): pc-w\image\<name>.raw [I mapping by area].
 std::string_view loadingImage(int chapter);
 // tru.exe loading screen: `image` = uiImages[1] (loadingImage), chapter title 51.. and story 59.. (docs "Menus").
@@ -198,6 +235,7 @@ public:
     std::vector<SaveSlot> saves;    // Load/Save slot entries (newest first); set before opening them
     int musicVolume = 8, sfxVolume = 8, cinematicVolume = 8; // 0..10, VOLUME SETTINGS
     int brightness = 5;             // 0..10 (5 = neutral; the app maps it to graphics brightness)
+    GraphicsOptions graphics;       // AUDIO/VISUAL > GRAPHICS; the app fills it and applies changes live
     bool reticles = true, helperButtons = true, trainingText = true, invertY = false, subtitles = true;
     int tailoring = 1;              // PLAYER TAILORING preset: 0 casual explorer, 1 tomb raider, 2 master survivalist
     // GAME OPTIONS > PLAYER TAILORING levels 0..2 (game::Tailoring): enemy health, ammunition capacity, damage to Lara,

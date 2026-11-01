@@ -365,6 +365,21 @@ void pdaBackground(Canvas& c) {
 bool radial(Screen s) { return s == Screen::Main || s == Screen::Pause; }
 bool slots(Screen s) { return s == Screen::Load || s == Screen::Save; }
 bool pdaList(Screen s) { return s == Screen::Revisit || s == Screen::Journal; }
+bool gfx(Screen s) { return s >= Screen::GfxDisplay && s <= Screen::GfxUpscaling; }
+int choiceIndex(const Item& it) {
+    return std::clamp((*it.choice - it.choiceMin) / it.choiceStep, 0, std::max(0, int(it.choices.size()) - 1));
+}
+void stepChoice(const Item& it, int d, bool wrap) {
+    const int n = int(it.choices.size());
+    if (n == 0) return;
+    const int i = wrap ? (choiceIndex(it) + d + n) % n : std::clamp(choiceIndex(it) + d, 0, n - 1);
+    *it.choice = it.choiceMin + i * it.choiceStep;
+}
+// Keeps GraphicsOptions what config::resolve() accepts: explicit RT needs preset enhanced, frame generation needs FSR.
+void sanitize(GraphicsOptions& g) {
+    if (g.preset == 1 && g.rt >= 2) g.rt = 0;
+    if (!g.fsr) g.frameGeneration = false;
+}
 
 // PDA pages (left list): SONAR MAP, AREA INFO, WEAPON SELECTION, INVENTORY, FIELD ASSISTANCE, JOURNAL (greyed without
 // entries) and REVISIT LOCATION (greyed outside a Treasure Hunt), RESUME GAME.
@@ -499,6 +514,10 @@ void Menus::open(Screen s) {
     if (s == Screen::Pda) cursor_ = kAreaInfo;
     if (s == Screen::Tailoring) cursor_ = tailoring;
     if (s == Screen::PdaItems) category_ = std::clamp(cursors_.back(), 0, 3); // the INVENTORY row that opened it
+    if (gfx(s)) { // first selectable row (BACK is never greyed)
+        const auto list = itemsOf(s);
+        while (list[size_t(cursor_)].greyed) ++cursor_;
+    }
 }
 
 void Menus::close() {
@@ -531,7 +550,7 @@ void Menus::tick(double seconds) {
 std::vector<Item> Menus::items() { return itemsOf(screen()); }
 
 std::vector<Item> Menus::itemsOf(Screen screen) {
-    const int16_t unavailable = 456; // "Unavailable": not ported (the launcher configures display and controls)
+    const int16_t unavailable = 456; // "Unavailable": not ported (the launcher configures controls)
     switch (screen) {
     case Screen::Main:
     case Screen::Pause: {
@@ -580,8 +599,8 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.stringId = 144, .toggle = &subtitles, .onId = 45, .offId = 46, .pair = true},
                 {.stringId = 142, .opens = Screen::Volume},
                 {.stringId = 143, .value = &brightness},
-                {.stringId = 498, .opens = Screen::Message, .message = unavailable},
-                {.stringId = 499, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 498, .opens = Screen::GfxDisplay}, // DISPLAY MODE SELECTION
+                {.stringId = 499, .opens = Screen::GfxSettings}, // DISPLAY SETTINGS
                 {.stringId = 469}};
     case Screen::Volume:
         return {{.stringId = 487, .value = &sfxVolume}, {.stringId = 488, .value = &musicVolume},
@@ -589,6 +608,63 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
     case Screen::TailoringOptions: // [O tailor_options]: 367 / 369 (training text, meta icons) are not on PC
         return {{.stringId = 368, .level = &tailor[0]}, {.stringId = 370, .level = &tailor[1], .reversed = true},
                 {.stringId = 371, .level = &tailor[2]}, {.stringId = 372, .level = &tailor[3], .reversed = true}, {.stringId = 469}};
+    // AUDIO/VISUAL > DISPLAY MODE SELECTION / DISPLAY SETTINGS [I: the original's PC screens (1016.. DISPLAY SETTINGS
+    // strings) were not captured; rows are the launcher's settings, original strings where one fits].
+    case Screen::GfxDisplay: {
+        GraphicsOptions& g = graphics;
+        std::vector<std::string> res, fov;
+        for (const auto& [w, h] : g.resolutions) res.push_back(std::to_string(w) + " X " + std::to_string(h));
+        for (int d = 30; d <= 120; d += 5) fov.push_back(std::to_string(d));
+        return {{.label = "RENDERER", .choice = &g.renderer, .choices = {"AUTO", "VULKAN", "OPENGL"}},
+                {.label = "RESOLUTION", .greyed = res.empty(), .choice = &g.resolution, .choices = std::move(res)},
+                {.label = "FULLSCREEN", .toggle = &g.fullscreen, .onId = 45, .offId = 46},
+                {.stringId = 1027, .toggle = &g.vsync, .onId = 45, .offId = 46}, // VSYNC
+                {.label = "FIELD OF VIEW", .choice = &g.fov, .choices = std::move(fov), .choiceMin = 30, .choiceStep = 5},
+                {.stringId = 469}};
+    }
+    case Screen::GfxSettings:
+        return {{.label = "QUALITY", .opens = Screen::GfxQuality}, {.label = "RAY TRACING", .opens = Screen::GfxRayTracing},
+                {.label = "WATER & SKY", .opens = Screen::GfxWater}, {.label = "UPSCALING", .opens = Screen::GfxUpscaling},
+                {.stringId = 469}};
+    case Screen::GfxQuality: {
+        GraphicsOptions& g = graphics;
+        return {{.label = "PRESET", .choice = &g.preset, .choices = {"ENHANCED", "ORIGINAL"}},
+                {.stringId = 1018, .choice = &g.msaa, .choices = {"DEFAULT", "1X", "2X", "4X", "8X"}}, // ANTI ALIASING
+                {.stringId = 1025, .choice = &g.shadows, .choices = {"DEFAULT", "ON", "OFF"}},         // SHADOWS
+                {.label = "ORIGINAL SHADERS", .toggle = &g.originalShaders, .onId = 45, .offId = 46},
+                {.label = "PARTICLE EFFECTS", .toggle = &g.effects, .onId = 45, .offId = 46},
+                {.stringId = 469}};
+    }
+    case Screen::GfxRayTracing: {
+        GraphicsOptions& g = graphics;
+        const bool none = g.preset == 1 || !g.rtSupported, off = none || g.rt == 1;
+        const std::vector<std::string> tri{"DEFAULT", "ON", "OFF"};
+        return {{.label = "RAY TRACING", .greyed = none, .choice = &g.rt, .choices = {"AUTO", "OFF", "SHADOWS", "FULL"}},
+                {.label = "RT QUALITY", .greyed = off, .choice = &g.rtQuality, .choices = {"LOW", "MEDIUM", "HIGH"}},
+                {.label = "LOCAL LIGHT SHADOWS", .greyed = off, .choice = &g.rtLights, .choices = tri},
+                {.stringId = 1022, .greyed = off, .choice = &g.rtReflections, .choices = tri}, // REFLECTIONS
+                {.label = "AMBIENT OCCLUSION", .greyed = off, .choice = &g.rtAo, .choices = tri},
+                {.label = "SUN BOUNCE", .greyed = off, .choice = &g.rtGi, .choices = tri},
+                {.stringId = 469}};
+    }
+    case Screen::GfxWater: {
+        GraphicsOptions& g = graphics;
+        return {{.stringId = 1023, .choice = &g.water, .choices = {"AUTO", "ORIGINAL", "ENHANCED"}}, // WATER EFFECTS
+                {.label = "WATER DETAIL", .choice = &g.waterDetail, .choices = {"AUTO", "STANDARD", "HIGH"}},
+                {.label = "ATMOSPHERE", .choice = &g.atmosphere, .choices = {"AUTO", "OFF", "LOW", "MEDIUM", "HIGH"}},
+                {.label = "SUN SHAFTS", .choice = &g.lightShafts, .choices = {"DEFAULT", "ON", "OFF"}},
+                {.label = "WEATHER", .choice = &g.weather, .choices = {"AUTO", "OFF", "RAIN", "SNOW"}},
+                {.stringId = 469}};
+    }
+    case Screen::GfxUpscaling: {
+        GraphicsOptions& g = graphics;
+        return {{.label = "AMD FSR", .toggle = &g.fsr, .onId = 45, .offId = 46, .greyed = !g.fsrSupported},
+                {.label = "FSR QUALITY", .greyed = !g.fsr, .choice = &g.fsrQuality,
+                 .choices = {"NATIVE", "QUALITY", "BALANCED", "PERFORMANCE", "ULTRA PERFORMANCE"}},
+                {.label = "SHARPNESS", .value = &g.sharpness, .greyed = !g.fsr},
+                {.label = "FRAME GENERATION", .toggle = &g.frameGeneration, .onId = 45, .offId = 46, .greyed = !g.fsr},
+                {.stringId = 469}};
+    }
     case Screen::Tailoring: { // from START NEW GAME it starts the game; from GAME OPTIONS it only sets the preset
         const bool newGame = stack_.size() >= 2 && radial(stack_[stack_.size() - 2]);
         const Action a = newGame ? Action::NewGame : Action::None;
@@ -761,9 +837,12 @@ Action Menus::input(Nav n) {
         if (radial(scr)) {
             if (n == Nav::Left && cursor_ == 0) select(ring_ > 0 ? ring_ : levelRingItem(list.size()));
             else if (n == Nav::Right) select(0);
-        } else if (int* v = list[size_t(cursor_)].value) *v = std::clamp(*v + (n == Nav::Right ? 1 : -1), 0, 10);
+        } else if (list[size_t(cursor_)].greyed) return Action::None;
+        else if (int* v = list[size_t(cursor_)].value) *v = std::clamp(*v + (n == Nav::Right ? 1 : -1), 0, 10);
         else if (int* l = list[size_t(cursor_)].level) *l = std::clamp(*l + (n == Nav::Right ? 1 : -1), 0, 2);
         else if (bool* t = list[size_t(cursor_)].toggle) *t = !*t;
+        else if (list[size_t(cursor_)].choice) stepChoice(list[size_t(cursor_)], n == Nav::Right ? 1 : -1, false);
+        sanitize(graphics);
         return Action::None;
     case Nav::Back:
         if (scr == Screen::Main) return Action::None;
@@ -772,7 +851,7 @@ Action Menus::input(Nav n) {
         return Action::None;
     case Nav::Delete: return Action::None;
     case Nav::Alt:
-    case Nav::Accept: return activate(list[size_t(cursor_)]);
+    case Nav::Accept: return list[size_t(cursor_)].greyed ? Action::None : activate(list[size_t(cursor_)]);
     }
     return Action::None;
 }
@@ -790,7 +869,12 @@ Action Menus::activate(Item it) {
         open(it.opens);
         return Action::None;
     }
-    if (it.toggle) { *it.toggle = !*it.toggle; return Action::None; }
+    if (it.toggle || it.choice) {
+        if (it.toggle) *it.toggle = !*it.toggle;
+        else stepChoice(it, 1, true);
+        sanitize(graphics);
+        return Action::None;
+    }
     if (scr == Screen::Tailoring) {
         tailoring = cursor_;
         if (it.action == Action::None) { back(); return Action::None; }
@@ -965,15 +1049,23 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
     const Screen scr = screen();
     const auto list = items();
     const int n = int(list.size());
-    // Title: icon | white line 1 / blue line 2 (GAME OPTIONS, AUDIO/VISUAL OPTIONS, VOLUME SETTINGS AUDIO/VISUAL).
-    const bool tailor = scr == Screen::TailoringOptions;
-    const uint32_t icon = scr == Screen::GameOptions ? kIconOptions : scr == Screen::AudioVisual ? kIconAv : tailor ? kIconTailor : kIconVolume;
+    // Title: icon | white line 1 / blue line 2 (GAME OPTIONS, AUDIO/VISUAL OPTIONS, VOLUME SETTINGS AUDIO/VISUAL; the
+    // graphics screens DISPLAY MODE SELECTION, DISPLAY SETTINGS and <page> SETTINGS under the AUDIO/VISUAL icon).
+    const bool tailor = scr == Screen::TailoringOptions, g = gfx(scr);
+    const uint32_t icon = scr == Screen::GameOptions ? kIconOptions : scr == Screen::AudioVisual || g ? kIconAv : tailor ? kIconTailor : kIconVolume;
     const int16_t t1 = scr == Screen::GameOptions ? 490 : scr == Screen::AudioVisual ? 497 : tailor ? 366 : 486;
     const int16_t t2 = scr == Screen::Volume ? 497 : tailor ? 125 : 491;
+    const std::string_view title1 = !g ? s.get(t1)
+                                  : scr == Screen::GfxQuality    ? "QUALITY"
+                                  : scr == Screen::GfxRayTracing ? "RAY TRACING"
+                                  : scr == Screen::GfxWater      ? "WATER & SKY"
+                                  : scr == Screen::GfxUpscaling  ? "UPSCALING"
+                                                                 : s.get(1016); // DISPLAY
+    const std::string_view title2 = !g ? s.get(t2) : s.get(scr == Screen::GfxDisplay ? 1031 : 1017); // MODE SELECTION / SETTINGS
     c.sprite(icon, kListIconX, kListIconY, 64 * kTexel, 64 * kTexel, kWhite);
     vrect(c, kListDivX, kListDivTop, 0.9f, kListDivBottom - kListDivTop, kWhite);
-    capText(c, kTitle1X, kTitle1Cap, kTitle1Scale, s.get(t1), kWhite);
-    capText(c, kTitle2X, kTitle2Cap, kTitle2Scale, s.get(t2), kTitleBlue);
+    capText(c, kTitle1X, kTitle1Cap, kTitle1Scale, title1, kWhite);
+    capText(c, kTitle2X, kTitle2Cap, kTitle2Scale, title2, kTitleBlue);
     // Panel between the two lines; rows.
     const float row0 = kRowCap + (n < 5 ? kFewRowsDrop : 0);
     const float bottom = std::max(row0 + float(n - 1) * kRowStep + kRowsBelow, kListMinBottom);
@@ -991,12 +1083,13 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
         const float y = row0 + float(i) * kRowStep;
         const bool sel = i == cursor_;
         if (sel) fadeBar(c, y + capMid - kSelBarH / 2, kSelBarH, kSelBarSolid, kSelBarFade, kSelBar);
-        const uint32_t grey = tailor ? rgba(78, 80, 81) : kRowGrey;
-        capText(c, labelX, y, kRowScale, s.get(it.stringId), sel ? kWhite : grey, tailor ? kTailorTrack : 0);
+        const uint32_t grey = tailor ? rgba(78, 80, 81) : kRowGrey, dim = rgba(62, 63, 64); // dim: greyed (cannot apply)
+        capText(c, labelX, y, kRowScale, it.stringId ? s.get(it.stringId) : std::string_view(it.label),
+                it.greyed ? dim : sel ? kWhite : grey, tailor ? kTailorTrack : 0);
         if (it.value) {
-            const float sy0 = y + capMid - kSliderH / 2;
-            vrect(c, kSliderX0, sy0, kSliderX1 - kSliderX0, kSliderH, kSliderFrame);
-            vrect(c, kSliderX0 + 1, sy0 + 1, (kSliderX1 - kSliderX0 - 2) * float(*it.value) / 10, kSliderH - 2, kSliderFill);
+            const float sy0 = y + capMid - kSliderH / 2, a = it.greyed ? 0.35f : 1.0f;
+            vrect(c, kSliderX0, sy0, kSliderX1 - kSliderX0, kSliderH, withAlpha(kSliderFrame, a));
+            vrect(c, kSliderX0 + 1, sy0 + 1, (kSliderX1 - kSliderX0 - 2) * float(*it.value) / 10, kSliderH - 2, withAlpha(kSliderFill, a));
             if (sel) {
                 c.sprite(kArrowLeft, kSliderArrowL, y + capMid, kSliderArrow, kSliderArrow, kWhite);
                 c.sprite(kArrowRight, kSliderArrowR, y + capMid, kSliderArrow, kSliderArrow, kWhite);
@@ -1010,6 +1103,16 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
             x += capText(c, x, y, kRowScale, on, *it.toggle ? kWhite : kRowGrey);
             x += capText(c, x, y, kRowScale, slash, kRowGrey);
             capText(c, x, y, kRowScale, off, *it.toggle ? kRowGrey : kWhite);
+        } else if (it.choice || (g && it.toggle)) { // graphics values: centred over the slider track, its arrows when selected
+            const std::string v = it.toggle             ? std::string(s.get(*it.toggle ? it.onId : it.offId))
+                                  : it.choices.empty()   ? std::string()
+                                  : it.choiceStep > 1    ? std::to_string(*it.choice)
+                                                         : it.choices[size_t(choiceIndex(it))];
+            capText(c, (kSliderX0 + kSliderX1 - c.fontWidth(v, kRowScale)) / 2, y, kRowScale, v, it.greyed ? dim : kWhite);
+            if (sel) {
+                c.sprite(kArrowLeft, kSliderArrowL, y + capMid, kSliderArrow, kSliderArrow, kWhite);
+                c.sprite(kArrowRight, kSliderArrowR, y + capMid, kSliderArrow, kSliderArrow, kWhite);
+            }
         } else if (it.onId) {
             const std::string v(s.get(!it.toggle || *it.toggle ? it.onId : it.offId));
             capText(c, valueRight - c.fontWidth(v, kRowScale), y, kRowScale, v, kWhite);

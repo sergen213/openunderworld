@@ -898,13 +898,44 @@ private:
     }
 
     bool saveConfig() {
-        // ou-game writes its menu settings into this file (config::GameConfig, look Y inversion, brightness): adopt what
-        // it changed since this launcher last loaded or saved it, so Play does not undo them.
+        // ou-game writes its menu settings into this file (config::GameConfig, look Y inversion, brightness, AUDIO/VISUAL >
+        // GRAPHICS display + graphics keys): adopt what it changed since this launcher last loaded or saved it, so Play
+        // does not undo them.
         try {
             const auto disk = ou::config::load(paths_.config);
             cfg_.game = disk.game;
             if (disk.controls.invertY != written_.controls.invertY) invertY_->setChecked(disk.controls.invertY);
-            if (disk.graphics.brightness != written_.graphics.brightness) brightness_->setValue(disk.graphics.brightness);
+            const auto &d = disk.graphics, &o = written_.graphics;
+            const auto pick = [](QComboBox* c, const QVariant& v) { c->setCurrentIndex(std::max(0, c->findData(v))); };
+            const auto tri = [](QComboBox* c, std::optional<bool> v) { c->setCurrentIndex(!v ? 0 : *v ? 1 : 2); }; // overrideCombo
+            if (disk.renderer != written_.renderer) pick(renderer_, q(disk.renderer));
+            if (disk.width != written_.width) width_->setValue(disk.width);
+            if (disk.height != written_.height) height_->setValue(disk.height);
+            if (disk.fullscreen != written_.fullscreen) fullscreen_->setChecked(disk.fullscreen);
+            if (disk.fov != written_.fov) fov_->setValue(disk.fov);
+            if (disk.vsync != written_.vsync) vsync_->setChecked(disk.vsync);
+            if (d.preset != o.preset) pick(gfxPreset_, q(d.preset));
+            if (d.rt != o.rt) pick(rt_, q(d.rt));
+            if (d.rtQuality != o.rtQuality) pick(rtQuality_, q(d.rtQuality));
+            if (d.rtLights != o.rtLights || d.rt != o.rt) rtLights_->setChecked(d.rtLights.value_or(d.rt == "full"));
+            if (d.rtReflections != o.rtReflections)
+                rtReflections_->setCheckState(!d.rtReflections ? Qt::PartiallyChecked : *d.rtReflections ? Qt::Checked : Qt::Unchecked);
+            if (d.rtAo != o.rtAo || d.rt != o.rt) rtAo_->setChecked(d.rtAo.value_or(d.rt == "full"));
+            if (d.rtGi != o.rtGi || d.rt != o.rt) rtGi_->setChecked(d.rtGi.value_or(d.rt == "full"));
+            if (d.msaa != o.msaa) pick(msaa_, d.msaa);
+            if (d.shadows != o.shadows) tri(shadows_, d.shadows);
+            if (d.originalShaders != o.originalShaders) shaders_->setCurrentIndex(d.originalShaders == std::optional(false) ? 1 : 0);
+            if (d.brightness != o.brightness) brightness_->setValue(d.brightness);
+            if (d.water != o.water) pick(water_, q(d.water));
+            if (d.waterDetail != o.waterDetail) pick(waterDetail_, q(d.waterDetail));
+            if (d.atmosphere != o.atmosphere) pick(atmosphere_, q(d.atmosphere));
+            if (d.lightShafts != o.lightShafts) tri(shafts_, d.lightShafts);
+            if (d.weather != o.weather) pick(weather_, q(d.weather));
+            if (d.upscaler != o.upscaler) pick(upscaler_, q(d.upscaler));
+            if (d.fsrQuality != o.fsrQuality) pick(fsrQuality_, q(d.fsrQuality));
+            if (d.sharpness != o.sharpness) sharpness_->setValue(d.sharpness);
+            if (d.frameGeneration != o.frameGeneration) frameGeneration_->setChecked(d.frameGeneration);
+            if (d.effects != o.effects) cfg_.graphics.effects = d.effects; // no widget: collect() keeps it
         } catch (const std::exception&) {} // unreadable: ours overwrites it
         collect();
         try {

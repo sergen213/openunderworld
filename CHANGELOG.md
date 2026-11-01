@@ -4,6 +4,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.21.0] - 2026-10-31
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- All of the launcher's display and graphics settings are now in the game's own menus, drawn with the original menu art: AUDIO/VISUAL > DISPLAY MODE SELECTION (renderer, resolution, fullscreen, VSync, field of view) and DISPLAY SETTINGS (quality, ray tracing, water & sky, upscaling). Every change applies immediately, including switching between Vulkan and OpenGL, and is saved to the config the launcher reads. Settings that can't apply (ray tracing on the original preset or without RT support, FSR options with FSR off) are dimmed.
+- Changing graphics settings on Vulkan no longer smears the previous look into the new one for a moment (FSR and RT AO/GI history are reset).
+
 ## [0.20.0] - 2026-10-31
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

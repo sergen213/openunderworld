@@ -1711,12 +1711,25 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   ±217.5; sliders: frame (5, 50, 80), fill (185, 230, 255), x 322.7–461.3, 7 tall, arrows 113/114 at 307.6 / 475.6 on
   the selected row; footer 120 / 375 at 271.6 / 379. Rows and what they drive: COMBAT RETICLES (HUD reticle), HELPER
   BUTTONS and TRAINING TEXT (stored only: ours has no helper buttons/training text toggles), GAMEPAD / CONTROL
-  CONFIGURATION and DISPLAY MODE / SETTINGS (message 456: the launcher configures them), VIEW AXIS INVERSION (ON/OFF
+  CONFIGURATION (message 456: the launcher configures them), VIEW AXIS INVERSION (ON/OFF
   inline, mouse/stick Y [I: the original opens a 501–504 sub-screen, not captured]), PLAYER TAILORING; LANGUAGE (ENGLISH,
   fixed), SUBTITLES ON / OFF, VOLUME SETTINGS, BRIGHTNESS (inline slider, graphics brightness 0.5·2^(v/5) [I: the
-  original opens a screen, not captured]); SFX / IN-GAME MUSIC / CINEMATIC VOLUME (mixer buses; cutscene audio).
+  original opens a screen, not captured]), DISPLAY MODE SELECTION, DISPLAY SETTINGS; SFX / IN-GAME MUSIC / CINEMATIC
+  VOLUME (mixer buses; cutscene audio).
   Changed settings are written back to the `--config` file (launcher config: `game` volumes/subtitles/reticles/helper
-  buttons/training text, `controls.invert_y`, `graphics.brightness`) and read at start.
+  buttons/training text, `controls.invert_y`, `graphics.*`) and read at start.
+- Graphics (`ui::GraphicsOptions`, `Menus::graphics`) [I: the original's PC display screens were not captured; same
+  list art under the AUDIO/VISUAL icon, original strings where one fits (1016.. DISPLAY / SETTINGS / MODE SELECTION,
+  VSYNC, ANTI ALIASING, SHADOWS, REFLECTIONS, WATER EFFECTS, ON / OFF), the rest uppercase text]: the launcher's
+  Graphics settings, applied live by the app (no restart). DISPLAY MODE SELECTION: RENDERER, RESOLUTION, FULLSCREEN,
+  VSYNC, FIELD OF VIEW (30–120, step 5). DISPLAY SETTINGS opens QUALITY (PRESET, ANTI ALIASING, SHADOWS, ORIGINAL
+  SHADERS, PARTICLE EFFECTS), RAY TRACING (mode, RT QUALITY, LOCAL LIGHT SHADOWS, REFLECTIONS, AMBIENT OCCLUSION, SUN
+  BOUNCE; tri-state rows DEFAULT / ON / OFF), WATER & SKY (WATER EFFECTS, WATER DETAIL, ATMOSPHERE, SUN SHAFTS,
+  WEATHER) and UPSCALING (AMD FSR, FSR QUALITY, SHARPNESS slider, FRAME GENERATION). Values sit centred over the slider
+  track with its arrows on the selected row; Left/Right step and stop at the ends, Return steps forward and wraps.
+  Rows that cannot apply are dim and skipped: RT rows with preset ORIGINAL or no ray-query device, the RT detail rows
+  with RAY TRACING OFF, the FSR rows with FSR off, AMD FSR without FSR support. PRESET ORIGINAL resets an explicit RAY
+  TRACING SHADOWS / FULL to AUTO and FSR off clears FRAME GENERATION, so the settings always resolve.
 - PLAYER TAILORING [O]: box 106 stretched to 672×237 at y 216 over the backdrop alone; title 484 cap 117.8 scale 0.8,
   line under it (y 139.6, 190 wide); 481/482/483 centred at 176.9 + 28.9·i, scale 0.66, selected white on a (30, 90, 127)
   bar (solid ±100, fading to ±182), others (203, 203, 203); footer line y 287 and prompts at 266.7 / 373.3 (scale 0.76).

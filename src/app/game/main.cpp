@@ -23,6 +23,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "app/game/Graphics.hpp"
 #include "app/game/Cinematic.hpp"
 #include "app/game/Sound.hpp"
 #include "anim/Anim.hpp"
@@ -1713,19 +1714,72 @@ int main(int argc, char** argv) {
     menus.invertY = opt.controls.invertY;
     menus.brightness = std::clamp(int(std::lround(5 * std::log2(2 * opt.gfx.brightness))), 0, 10);
     int menuBrightness = menus.brightness; // the launcher's finer value stays until the slider moves
+    // AUDIO/VISUAL > GRAPHICS: the launcher's graphics + display settings (app/game/Graphics.hpp), applied live. A renderer
+    // change swaps the backend and its window before the next frame's scene upload (swapRenderer, below).
+    auto display = [&] { return ou::app::Display{opt.renderer, opt.width, opt.height, opt.fullscreen, opt.vsync, opt.fov}; };
+    auto fillGraphicsMenu = [&] {
+        const SDL_DisplayMode* dm = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(window.get()));
+        menus.graphics = ou::app::graphicsMenu(opt.graphics, display(), dm ? std::pair(dm->w, dm->h) : std::pair(0, 0));
+        menus.graphics.rtSupported = renderer->rtStatus().supported;
+        menus.graphics.fsrSupported = renderer->fsrSupported();
+    };
+    fillGraphicsMenu();
+    ou::ui::GraphicsOptions appliedGraphics = menus.graphics;
+    bool graphicsDirty = false; // not yet written to --config
+    std::optional<std::string> swapFrom; // renderer setting before a pending backend swap
+    auto applyGraphics = [&] {
+        ou::app::Display d = display();
+        auto g = opt.graphics; // its brightness: as last written (applyVolumes persists the slider's)
+        ou::app::applyGraphicsMenu(menus.graphics, g, d);
+        auto r = g;
+        r.brightness = opt.gfx.brightness;
+        try {
+            opt.gfx = ou::config::resolve(r);
+        } catch (const std::exception& e) { // applyGraphicsMenu sanitizes: not expected
+            std::fprintf(stderr, "ou-game: graphics settings: %s\n", e.what());
+            menus.graphics = appliedGraphics;
+            return;
+        }
+        opt.graphics = g;
+        effects.system.visuals = opt.gfx.effects;
+        world->fovDeg = opt.fov = d.fov;
+        if (d.vsync != opt.vsync) renderer->setVsync(opt.vsync = d.vsync);
+        if (d.fullscreen != opt.fullscreen || d.width != opt.width || d.height != opt.height) {
+            opt.fullscreen = d.fullscreen, opt.width = d.width, opt.height = d.height;
+            // Desktop fullscreen as at startup; the resolution is the windowed size. SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
+            // resizes the renderer.
+            SDL_SetWindowFullscreen(window.get(), opt.fullscreen);
+            if (!opt.fullscreen) SDL_SetWindowSize(window.get(), opt.width, opt.height);
+        }
+        if (d.renderer != opt.renderer && !swapFrom) swapFrom = opt.renderer;
+        opt.renderer = d.renderer;
+        appliedGraphics = menus.graphics, graphicsDirty = true;
+        std::fprintf(stderr, "ou-game: tick %llu graphics: %s %dx%d%s vsync %d fov %.0f | %s rt %s msaa %d water %s fsr %s fx %d\n",
+                     (unsigned long long)world->ticks(), opt.renderer.c_str(), opt.width, opt.height, opt.fullscreen ? " fullscreen" : "",
+                     int(opt.vsync), opt.fov, g.preset.c_str(), g.rt.c_str(), opt.gfx.msaa, g.water.c_str(),
+                     opt.gfx.fsr ? g.fsrQuality.c_str() : "off", int(opt.gfx.effects));
+    };
     auto applyVolumes = [&] {
         mixer.setBusVolume(ou::audio::Bus::Music, float(menus.musicVolume) / 10);
         mixer.setBusVolume(ou::audio::Bus::Sfx, float(menus.sfxVolume) / 10);
         opt.controls.invertY = menus.invertY;
         if (menus.brightness != menuBrightness) menuBrightness = menus.brightness, opt.gfx.brightness = 0.5f * std::exp2(float(menus.brightness) / 5);
+        if (menus.graphics != appliedGraphics) applyGraphics();
         const ou::config::GameConfig g{menus.sfxVolume, menus.musicVolume, menus.cinematicVolume, menus.subtitles,
                                        menus.reticles, menus.helperButtons, menus.trainingText};
-        if (opt.configPath.empty() || (g == opt.game && opt.controls.invertY == opt.configInvertY && opt.gfx.brightness == opt.graphics.brightness))
+        if (opt.configPath.empty() ||
+            (g == opt.game && opt.controls.invertY == opt.configInvertY && opt.gfx.brightness == opt.graphics.brightness && !graphicsDirty))
             return;
         try { // re-read: the launcher may have changed other keys meanwhile
             auto c = ou::config::load(opt.configPath);
             c.game = opt.game = g;
             c.controls.invertY = opt.configInvertY = opt.controls.invertY;
+            if (graphicsDirty) {
+                c.graphics = opt.graphics;
+                c.renderer = opt.renderer, c.width = opt.width, c.height = opt.height, c.fullscreen = opt.fullscreen;
+                c.fov = opt.fov, c.vsync = opt.vsync;
+                graphicsDirty = false;
+            }
             c.graphics.brightness = opt.graphics.brightness = opt.gfx.brightness;
             ou::config::save(opt.configPath, c);
         } catch (const std::exception& e) {
@@ -2035,7 +2089,8 @@ int main(int argc, char** argv) {
     // 2749 = DTP 217 going back, vt 35 members 2750 / 2751 = DTPs 247 / 248 changing a value; I: which of 247 / 248 is up].
     auto menuValues = [&] {
         return std::tuple(menus.musicVolume, menus.sfxVolume, menus.cinematicVolume, menus.brightness, menus.reticles,
-                          menus.helperButtons, menus.trainingText, menus.invertY, menus.subtitles, menus.tailoring, menus.tailor);
+                          menus.helperButtons, menus.trainingText, menus.invertY, menus.subtitles, menus.tailoring, menus.tailor,
+                          menus.graphics);
     };
     auto nav = [&](ou::ui::Nav n) {
         const int tailoring = menus.tailoring;
@@ -2155,7 +2210,9 @@ int main(int argc, char** argv) {
             case SDL_EVENT_GAMEPAD_REMOVED:
                 if (pad && SDL_GetGamepadID(pad.get()) == e.gdevice.which) pad.reset();
                 break;
-            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: renderer->resize({e.window.data1, e.window.data2}); break;
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: // not a window left by a renderer swap
+                if (e.window.windowID == SDL_GetWindowID(window.get())) renderer->resize({e.window.data1, e.window.data2});
+                break;
             default: break;
             }
         }
@@ -2312,6 +2369,39 @@ int main(int argc, char** argv) {
             hud.tick(ou::game::kTickSeconds);
             hud.update(CombatView::hudState(*world), ou::game::kTickSeconds);
         }
+        bool poseAll = false; // after a renderer swap: every enemy, not only the visible ones (the upload is at bind pose)
+        if (swapFrom) { // AUDIO/VISUAL > GRAPHICS renderer: the other backend in a new window, the scene uploaded to it
+            std::string ch, nt, err;
+            auto next = ou::render::selectRenderer(opt.renderer, ou::render::createBackend, ch, nt, err);
+            ou::platform::WindowPtr nw;
+            if (next && ch == chosen) next.reset(), err.clear(); // "auto" = the current backend
+            else if (next) {
+                nw.reset(SDL_CreateWindow("OpenUnderworld", opt.width, opt.height,
+                                          SDL_WindowFlags(next->windowFlags()) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                              (opt.fullscreen ? SDL_WINDOW_FULLSCREEN : 0)));
+                if (!nw) err = SDL_GetError(), next.reset();
+                else if (!next->init(nw.get(), err)) next.reset(); // its destructor shuts down before `nw` goes
+            }
+            if (next) {
+                renderer->shutdown(); // before its window goes
+                renderer = std::move(next);
+                window = std::move(nw);
+                chosen = ch;
+                renderer->setVsync(opt.vsync);
+                for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
+                objects.index(scene);
+                plants.index(scene);
+                poseAll = true;
+                std::fprintf(stderr, "ou-game: tick %llu renderer swapped to %s\n", (unsigned long long)world->ticks(), renderer->description().c_str());
+            } else if (!err.empty()) { // keep the current one; the menu shows the setting it had
+                std::fprintf(stderr, "ou-game: %s renderer unavailable: %s; keeping %s\n", opt.renderer.c_str(), err.c_str(), chosen.c_str());
+                opt.renderer = *swapFrom;
+                menus.graphics.renderer = ou::app::graphics_detail::indexOf(ou::app::graphics_detail::kRenderers, opt.renderer);
+            }
+            swapFrom.reset();
+            menus.graphics.rtSupported = renderer->rtStatus().supported, menus.graphics.fsrSupported = renderer->fsrSupported();
+            appliedGraphics = menus.graphics;
+        }
         try { // a level load or save changed the outfit: new Lara meshes, rig and waves
             if (const auto drm = streamed.dress(*bigfile, *world, warnings)) {
                 streamed.version = ~0ull;
@@ -2355,7 +2445,7 @@ int main(int argc, char** argv) {
             int pw = 1, ph = 1;
             SDL_GetWindowSizeInPixels(window.get(), &pw, &ph);
             const bool fixedCam = bool(opt.camera); // --camera: no culling against the game camera
-            enemyMeshes.pose(*world, clock.alpha(), scene, *renderer, c.position, c.target, fixedCam ? 360.0f : world->fovDeg,
+            enemyMeshes.pose(*world, clock.alpha(), scene, *renderer, c.position, c.target, fixedCam || poseAll ? 360.0f : world->fovDeg,
                              float(pw) / float(std::max(ph, 1)));
         }
         poseBikes(*world, clock.alpha(), streamed.bikeIndices, scene, *renderer, bikeScratch);
