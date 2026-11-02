@@ -32,4 +32,4 @@ See [docs/BUILDING.md](docs/BUILDING.md). Releases are made with `tools/release.
 
 ## License
 
-GPL-3.0-or-later; see [LICENSE](LICENSE). Tomb Raider is a trademark of its owners. This project is not affiliated with or endorsed by them.
+Source-available, all rights reserved; see [LICENSE](LICENSE). Contributions via pull request only; see [CONTRIBUTING.md](CONTRIBUTING.md). Versions published before this change remain under GPL-3.0-or-later. Tomb Raider is a trademark of its owners. This project is not affiliated with or endorsed by them.
