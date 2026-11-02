@@ -3,7 +3,7 @@
 Code: `src/update/Update.{hpp,cpp}` (library `ou_update`, no Qt), `tools/ou-sign`, tests in `tests/test_update.cpp`.
 Status labels: **observed** = I ran it and saw the result; **inferred** = follows from the code but not exercised; **unknown**.
 
-The design follows the ideas of IKV's updater, as described in `docs/EXISTING_PROJECT_AUDIT.md`: a detached signature over the exact manifest bytes, checked before parsing; an embedded trust key; anti-rollback; a staged, journaled swap. IKV has no licence, so this is a fresh implementation; no IKV code was copied. Differences: libsodium instead of OpenSSL, and directory exchange (`renameat2(RENAME_EXCHANGE)`) instead of symlinks.
+The design follows the ideas of IKV's updater: a detached signature over the exact manifest bytes, checked before parsing; an embedded trust key; anti-rollback; a staged, journaled swap. This is a fresh implementation; no IKV code was copied. Differences: libsodium instead of OpenSSL, and directory exchange (`renameat2(RENAME_EXCHANGE)`) instead of symlinks.
 
 ## What gets updated
 
