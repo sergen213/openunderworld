@@ -151,9 +151,9 @@ Every crash point has a test in `InterruptedSwapRecovery` (observed): before any
 
 ## Release key ceremony
 
-The release key pair was generated on 2026-10-18 with `ou-sign keygen` on the maintainer workstation (observed):
+The first release key pair was generated on 2026-10-18 with `ou-sign keygen` (public `1bac0f21…ab7303`). It was rotated on 2026-11-02 (observed): 0.21.1 is signed with the old key and embeds the new one; the old secret key is kept as `~/.config/openunderworld-signing.retired-2026-11-02`.
 - Secret key: `~/.config/openunderworld-signing/release.key`, 64 bytes, mode 0600, directory 0700.
-- Public key: committed as `packaging/release-pubkey.hex` (`1bac0f21…ab7303`) and compiled in through CMake (`OU_UPDATE_PUBLIC_KEY`, read from that file by default).
+- Public key: committed as `packaging/release-pubkey.hex` (`93d21646…61eea4`) and compiled in through CMake (`OU_UPDATE_PUBLIC_KEY`, read from that file by default).
 
 `ou-sign keygen` refuses to write into any directory inside a git work tree and never overwrites an existing key. `.gitignore` also ignores `*.key`.
 
@@ -170,9 +170,10 @@ The launcher's default `updates.manifest_url` is `https://github.com/sergen213/o
 Key hygiene and rotation:
 - Back up `release.key` offline, e.g. on an encrypted USB stick. Losing it means users must reinstall to trust a new key.
 - **Rotation:**
-  1. `ou-sign keygen --dir <new dir>`.
-  2. Ship one release signed with the **old** key whose binaries embed the **new** public key.
-  3. Sign later releases with the new key.
+  1. `ou-sign keygen --dir <new dir>`; copy its `release.pub.hex` to `packaging/release-pubkey.hex`.
+  2. Ship one release signed with the **old** key whose binaries embed the **new** public key: `OU_ROTATE_FROM=<old public key hex> tools/release.sh` (signing dir still the old one).
+  3. Swap the signing directories so later releases are signed with the new key.
+  - Clients only fetch `releases/latest`, so an install older than the rotation release can update only while that release is the newest; after the next release it must be reinstalled by hand. Rolling back past the rotation release (launcher "Roll back to previous") restores a binary that trusts only the old key.
 - **Compromise:** the old key cannot be revoked remotely (there is no revocation list; unknown whether one will be needed). Publish a notice and a manually installed release with a new key.
 - CI never holds the secret key; signing is local only.
 

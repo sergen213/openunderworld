@@ -82,6 +82,7 @@ The script:
 6. Signs and verifies:
    - `ou-sign sign --dir ~/.config/openunderworld-signing manifest.json`. A warning that the key differs from the compiled-in key aborts the release.
    - `ou-sign verify manifest.json` checks against the key compiled into the release build.
+   - Key rotation (docs/UPDATES.md): `OU_ROTATE_FROM=<old public key hex>` signs with the old key in the signing dir while the build embeds the new `packaging/release-pubkey.hex`; the script then requires the manifest to verify with the old key and fail with the compiled-in one, and verifies the published manifest with `--pubkey <old>`.
    - `sha256sum -c`.
 7. Pushes the tag and runs `gh release create vX.Y.Z --latest --title "OpenUnderworld X.Y.Z (experimental)"` with the notes (header + changelog section). Assets: the AppImage, `.sha256`, `.zsync`, `manifest.json` and `manifest.json.sig`.
 8. Downloads every asset back into a temp dir, then runs `sha256sum -c`, `ou-sign verify` and `cmp` on the manifest.

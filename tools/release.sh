@@ -14,6 +14,11 @@ set -euo pipefail
 REPO=sergen213/openunderworld
 SRC="$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)"
 KEY_DIR="${OU_SIGNING_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/openunderworld-signing}"
+# Key rotation (docs/UPDATES.md): OU_ROTATE_FROM=<old public key hex> signs this one release with the old
+# key in KEY_DIR while the build embeds packaging/release-pubkey.hex (the new key).
+ROTATE="${OU_ROTATE_FROM:-}"
+VERIFY=()
+[ -z "$ROTATE" ] || VERIFY=(--pubkey "$ROTATE")
 DRY=0 TESTS="${OU_RELEASE_TESTS:-0}"
 for a in "$@"; do
   case "$a" in --dry-run) DRY=1 ;; --test) TESTS=1 ;; *) echo "usage: tools/release.sh [--dry-run] [--test]" >&2; exit 2 ;; esac
@@ -92,7 +97,8 @@ OU_SIGN="$SRC/build-release/appimage/ou-sign"
 mkdir -p "$WORK/payload"
 ln "$APP" "$WORK/payload/$APPNAME"
 NOTES="$WORK/notes.md"
-cat > "$NOTES" <<EOF
+{ [ -z "$ROTATE" ] || printf '%s\n\n' "**Security: release signing key rotated.** This update is signed with the previous key and installs the new key; later updates are signed with the new key only. Please update to this version to keep receiving automatic updates."
+cat <<EOF
 **Experimental build.** You need your own legally owned copy of Tomb Raider: Underworld (GOG build, \`tru.exe\` 1.1.0.0). No game data is included.
 
 Run it:
@@ -107,12 +113,18 @@ Requirements: x86_64 Linux with a current glibc/libstdc++ (built on Arch Linux),
 
 $CHANGES
 EOF
+} > "$NOTES"
 echo "$CHANGES" > "$WORK/changelog.txt"
 "$OU_SIGN" manifest --version "$VERSION" --channel stable --changelog "$WORK/changelog.txt" \
   --base-url "https://github.com/$REPO/releases/download/$TAG/" "$WORK/payload" > "$DIST/manifest.json"
 "$OU_SIGN" sign --dir "$KEY_DIR" "$DIST/manifest.json" 2> "$WORK/sign.log" || { cat "$WORK/sign.log"; die "signing failed"; }
-! grep -q WARNING "$WORK/sign.log" || { cat "$WORK/sign.log"; die "signing key is not the release key compiled into this build"; }
-"$OU_SIGN" verify "$DIST/manifest.json"
+if [ -n "$ROTATE" ]; then
+  grep -q "(key $ROTATE)" "$WORK/sign.log" || { cat "$WORK/sign.log"; die "OU_ROTATE_FROM is not the key in $KEY_DIR"; }
+  ! "$OU_SIGN" verify "$DIST/manifest.json" >/dev/null 2>&1 || die "rotation: manifest also verifies with the compiled-in key (same key?)"
+else
+  ! grep -q WARNING "$WORK/sign.log" || { cat "$WORK/sign.log"; die "signing key is not the release key compiled into this build"; }
+fi
+"$OU_SIGN" verify "${VERIFY[@]}" "$DIST/manifest.json"
 (cd "$DIST" && sha256sum -c "$APPNAME.sha256")
 ASSETS=("$APP" "$APP.sha256" "$DIST/manifest.json" "$DIST/manifest.json.sig")
 [ -f "$APP.zsync" ] && ASSETS+=("$APP.zsync")
@@ -129,6 +141,6 @@ gh release create "$TAG" -R "$REPO" --verify-tag --latest --title "OpenUnderworl
   --notes-file "$NOTES" "${ASSETS[@]}"
 CHECK="$(mktemp -d)"
 gh release download "$TAG" -R "$REPO" -D "$CHECK"
-(cd "$CHECK" && sha256sum -c "$APPNAME.sha256" && "$OU_SIGN" verify manifest.json && cmp manifest.json "$DIST/manifest.json")
+(cd "$CHECK" && sha256sum -c "$APPNAME.sha256" && "$OU_SIGN" verify "${VERIFY[@]}" manifest.json && cmp manifest.json "$DIST/manifest.json")
 rm -rf "$CHECK"
 say "published https://github.com/$REPO/releases/tag/$TAG"

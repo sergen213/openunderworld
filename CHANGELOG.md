@@ -4,6 +4,13 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.21.1] - 2026-11-02
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Security: release signing key rotated. This update is signed with the previous key and installs the new key; later updates are signed with the new key only. Please update to this version to keep receiving automatic updates.
+- License: OpenUnderworld is now source-available, all rights reserved (see LICENSE); earlier releases keep their old license.
+
 ## [0.21.0] - 2026-10-31
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
