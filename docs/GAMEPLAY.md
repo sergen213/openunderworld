@@ -9,7 +9,9 @@ render; **[I]** inference; **[U]** unknown.
 ## Running
 
 ```
-ou-game --game-dir "/path/to/Tomb Raider Underworld"            # pc-w\l4_pool.drm, 'player' intro, OpenGL
+ou-game --game-dir "/path/to/Tomb Raider Underworld"            # main menu (New Game = chapter 0)
+ou-game --game-dir DIR --level 'pc-w\l4_pool.drm'                # straight into a level
+ou-game --game-dir DIR --chapter 4                              # start a chapter (0-8)
 ou-game --game-dir DIR --renderer vulkan --level 'pc-w\l4_ballcourt.drm'
 ou-game --game-dir DIR --input-script run.txt --frames 100 --screenshot run.ppm   # deterministic replay
 ou-game --game-dir DIR --spawn -4291,4225.6,3100,-157.9          # X,Y,Z,yaw-degrees override (l4_pool ledge 1253)
@@ -22,12 +24,12 @@ opens the game window; `--intro-frames N` stops it after N frames. [O] `--intro-
 level loaded (log only; the movie frames themselves are verified in VIDEO.md). Under ASan, SDL's renderer may pick
 Vulkan, so the RADV 256-byte leak needs `tests/lsan_vulkan.supp`.
 
-Controls: WASD/arrows move relative to the camera, Shift walks, Space jumps (while hanging: climbs up, or with the
-stick jumps up/sideways/back to another ledge; on a pole: flings), Ctrl or C lets go of a ledge/pole and on the ground
-crouches (held), rolls (running) or drops into a hang at an edge, E uses switches / pushes and pulls blocks (with
-forward/back held), mouse orbits the camera.
-Gamepad: left stick, right stick, South = jump/climb, East = drop, West = use, left shoulder = walk. F1 toggles the
-overlay, Esc / pad Start opens the pause menu ("Progression" below; without `--level`/`--chapter`/`--load` ou-game
+Controls (defaults; full table and rebinding: "Controls" below): WASD/arrows move relative to the camera, Left Alt
+walks, Left Shift sprints, Space jumps (while hanging: climbs up, or with the stick jumps up/sideways/back to another
+ledge; on a pole: flings), Left Ctrl lets go of a ledge/pole and on the ground crouches (held), rolls (running) or drops
+into a hang at an edge, E uses switches / pushes and pulls blocks (with forward/back held), mouse orbits the camera.
+Gamepad: left stick, right stick, South = jump/climb, East = drop, North = use, a light stick push walks, left shoulder
+sprints. F1 toggles the overlay, Esc / pad Start opens the pause menu ("Progression" below; without `--level`/`--chapter`/`--load` ou-game
 starts at the main menu). `--fov` / the launcher config set the vertical FOV. Switches, doors, trigger volumes/planes and
 blocks: `src/script`, docs/formats/SCRIPTS.md; script events are logged to stderr. Supported handlers execute their
 original SCMD bytecode, including nested calls, strings, sticky/modifiable state and SLEEP/WAIT resume across ticks;

@@ -22,7 +22,7 @@ Official releases are **local and signed**: `tools/release.sh` on the maintainer
 
    The tools run with `APPIMAGE_EXTRACT_AND_RUN=1`, so no FUSE is needed (containers).
 3. **Release build** into `build-appimage/` (or `$OU_APPIMAGE_BUILD_DIR`): `-DCMAKE_BUILD_TYPE=Release -DOU_SANITIZE=OFF -DOU_BUILD_TESTS=OFF`, then `cmake --install` into the AppDir. All nine tools land in `usr/bin`: `ou-launcher` (entry point), `ou-game`, `ou-viewer`, `ou-movie`, `ou-audio`, `ou-import`, `ou-asset`, `ou-text`, `ou-sign`. The desktop file and the icon come from `packaging/`.
-4. **Qt, bundled by hand.** `linuxdeploy-plugin-qt` is not installed on this workstation (`~/.local/bin` has none), and no unverified tool is downloaded. Only `ou-launcher` uses Qt (Widgets), so the script:
+4. **Qt, bundled by hand.** `linuxdeploy-plugin-qt` is not used, and no unverified tool is downloaded. Only `ou-launcher` uses Qt (Widgets), so the script:
    - copies the plugins it needs from `qmake6 -query QT_INSTALL_PLUGINS` to `usr/lib/qt6/plugins/`: `platforms/{libqxcb,libqwayland,libqoffscreen}`, `wayland-shell-integration/libxdg-shell`, `wayland-decoration-client/{libbradient,libadwaita}`, `platformthemes/libqxdgdesktopportal`, `imageformats/{libqsvg,libqico,libqjpeg}`, `iconengines/libqsvgicon`;
    - lets linuxdeploy deploy their dependencies (`--deploy-deps-only`);
    - writes `usr/bin/qt.conf` (`Prefix = ..`, `Plugins = lib/qt6/plugins`).
@@ -48,12 +48,12 @@ Official releases are **local and signed**: `tools/release.sh` on the maintainer
 
 Our own binaries are stripped with the host `strip`. linuxdeploy's bundled strip cannot read `.relr.dyn` and fails on current Arch libraries, so `NO_STRIP=1` is set for it.
 
-### Verification on this machine (2026-10-18)
+### Verification (2026-10-18)
 
-All run from a copy in `/tmp/ou-apptest.*` under `env -i HOME=<tmp> XDG_RUNTIME_DIR WAYLAND_DISPLAY DISPLAY [XAUTHORITY] PATH=/usr/bin:/bin`, i.e. no build directory on any path:
+All run from a copy in a temporary directory under `env -i HOME=<tmp> XDG_RUNTIME_DIR WAYLAND_DISPLAY DISPLAY [XAUTHORITY] PATH=/usr/bin:/bin`, i.e. no build directory on any path:
 
 - [O] Size: 86 MB (124 bundled libraries).
-- [O] `OU.AppImage game --game-dir "/mnt/1st4TB/Tomb Raider Underworld" --level 'pc-w\l4_pool.drm' --frames 30 --screenshot game.ppm --no-audio` (FUSE mount): exit 0. The screenshot shows Lara on the l4_pool stairs with textured stone and water; the overlay reports OpenGL 4.6, Mesa 26.2.4 radeonsi (host driver).
+- [O] `OU.AppImage game --game-dir "/path/to/Tomb Raider Underworld" --level 'pc-w\l4_pool.drm' --frames 30 --screenshot game.ppm --no-audio` (FUSE mount): exit 0. The screenshot shows Lara on the l4_pool stairs with textured stone and water; the overlay reports OpenGL 4.6, Mesa 26.2.4 radeonsi (host driver).
 - [O] `OU.AppImage viewer --level --drm 'pc-w\l4_pool.drm' --renderer vulkan --frames 30 --screenshot …`: the level renders on RADV (Vulkan 1.4.354 host loader).
 - [O] `--self-test`:
   - with `--appimage-extract-and-run` and `QT_QPA_PLATFORM=offscreen`: exit 0;
@@ -88,20 +88,20 @@ The script:
 
 On any failure the worktree is removed, as is the local tag if it was not pushed yet. `--dry-run` stops before step 7.
 
-Heavy steps run under `systemd-run --user --scope -p MemoryMax=6G` when available (`OU_RELEASE_MEMMAX` overrides). The workstation OOM-kills the terminal otherwise.
+Heavy steps run under `systemd-run --user --scope -p MemoryMax=6G` when available (`OU_RELEASE_MEMMAX` overrides). Without the limit, the build can run the machine out of memory.
 
 **Releases are normal GitHub releases marked "experimental" in the title and notes, not GitHub pre-releases.** `releases/latest/download/…` (the launcher's default manifest URL) never resolves to a pre-release. Observed: a repo with only pre-releases answers `/releases/latest` with a redirect to `/releases`, and the API returns 404.
 
 ### v0.1.0 (2026-10-18)
 
-- [O] `OU_GAME_DIR="/mnt/1st4TB/Tomb Raider Underworld" tools/release.sh`:
+- [O] `OU_GAME_DIR="/path/to/Tomb Raider Underworld" tools/release.sh`:
   - ctest 122/122 passed on a clean worktree of `8b36983`;
   - built `OpenUnderworld-0.1.0-x86_64.AppImage` (90 098 168 bytes, sha256 `3c76f545…a99a133`);
   - signed and verified the manifest, then published <https://github.com/sergen213/openunderworld/releases/tag/v0.1.0> with the AppImage, `.sha256`, `.zsync`, `manifest.json` and `manifest.json.sig`;
   - the download-back check passed.
 
   The whole run took 104 s. A `--dry-run` before it passed the same way.
-- [O] Assets downloaded again with `gh release download` into a fresh 0700 `/tmp` dir and run under `env -i`:
+- [O] Assets downloaded again with `gh release download` into a fresh 0700 temporary directory and run under `env -i`:
   - `sha256sum -c` OK; `OpenUnderworld-0.1.0-x86_64.AppImage sign verify manifest.json` → `OK: version 0.1.0, channel stable, 1 files`;
   - `game … --level 'pc-w\l4_pool.drm' --frames 30 --screenshot`: Lara on the l4_pool stairs, screenshot viewed;
   - `viewer … --renderer vulkan`: the level renders on RADV, screenshot viewed;

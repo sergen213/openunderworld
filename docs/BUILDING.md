@@ -2,17 +2,35 @@
 
 ## Dependencies (Arch / CachyOS package names)
 
-`cmake ninja gcc` (or clang), `zlib-ng-compat`, `sdl3`, `libepoxy`, `glm`, `gtest`,
-`vulkan-headers vulkan-icd-loader shaderc` (glslc) for the Vulkan backend.
-`openssl nlohmann-json` (importer), `libsodium curl` (updater, `ou-sign`), `qt6-base` (`ou-launcher`;
-skipped with a CMake notice if Qt 6 is missing). Launcher and updater: `docs/LAUNCHER.md`, `docs/UPDATES.md`.
-`ffmpeg` (libavformat/libavcodec/libswscale/libswresample: `ou-movie`, `ou_video`) and optionally
-`sdl3_ttf` (movie subtitles in a system font, else SDL's ASCII debug font; `docs/formats/VIDEO.md`).
-A GPU/driver with OpenGL 4.5+ core (4.6 requested; developed on Mesa radeonsi); Vulkan 1.3
-for `--renderer vulkan` (see "Vulkan backend" below).
+- Required: `cmake ninja gcc` (or clang), `zlib` (or `zlib-ng-compat`), `sdl3`, `libepoxy`, `glm`, `gtest`
+  (with tests), `vulkan-headers vulkan-icd-loader shaderc` (glslc; the Vulkan backend is always built),
+  `openssl nlohmann-json` (importer), `libsodium curl` (updater, `ou-sign`), `ffmpeg`
+  (libavformat/libavcodec/libswscale/libswresample: `ou-movie`, `ou_video`).
+- Optional: `qt6-base` 6.5 or newer (`ou-launcher`; skipped with a CMake notice if Qt 6 is missing),
+  `sdl3_ttf` (movie subtitles in a system font, else SDL's ASCII debug font; `docs/formats/VIDEO.md`),
+  `python` and DXC for AMD FSR (below).
+- One line, as used by CI (`.github/workflows/ci.yml`):
 
-No vendored libraries: OpenGL entry points come from libepoxy, the overlay font is SDL3's
-built-in 8x8 debug font (`SDL_RenderDebugText`) rasterised once into a texture atlas.
+  ```sh
+  sudo pacman -S --needed base-devel cmake ninja sdl3 glm libepoxy zlib openssl nlohmann-json gtest \
+    libsodium curl qt6-base vulkan-headers vulkan-icd-loader shaderc ffmpeg sdl3_ttf
+  ```
+
+Launcher and updater: `docs/LAUNCHER.md`, `docs/UPDATES.md`.
+
+Runtime: a GPU/driver with OpenGL 4.5+ core (4.6 requested; developed on Mesa radeonsi) or Vulkan 1.3
+(see "Vulkan backend" below). `--renderer auto` (the default) uses Vulkan and falls back to OpenGL.
+
+Vendored: only the AMD FidelityFX SDK subset in `third_party/fidelityfx-sdk` (FSR upscaling and frame
+generation, Vulkan). OpenGL entry points come from libepoxy; the overlay font is SDL3's built-in 8x8 debug
+font (`SDL_RenderDebugText`) rasterised once into a texture atlas.
+
+### AMD FSR (optional)
+
+`-DOU_FSR=ON` (default) builds FSR when DirectX Shader Compiler is available: a system `dxc`, or else on
+x86_64 Linux CMake downloads the pinned official DXC v1.9.2609 release (SHA-256 checked). FSR shaders are
+then compiled from HLSL with `tools/ffx_shaders.py`, which needs Python 3. Without DXC, CMake prints
+"FSR disabled" and the build continues without FSR. `-DOU_FSR=OFF` skips it (and the download).
 
 ## Build
 
@@ -22,8 +40,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Release: `-DCMAKE_BUILD_TYPE=Release -DOU_SANITIZE=OFF`. Debug builds request a GL debug
-context and print `KHR_debug` messages (non-notification severities) to stderr.
+Release: `-DCMAKE_BUILD_TYPE=Release -DOU_SANITIZE=OFF`; `-DOU_BUILD_TESTS=OFF` skips the tests. Debug builds
+request a GL debug context and print `KHR_debug` messages (non-notification severities) to stderr.
+
+The programs are written to `build/`: `ou-game` (the game), `ou-launcher`, `ou-viewer`, and the tools
+`ou-movie`, `ou-audio`, `ou-import`, `ou-asset`, `ou-text`, `ou-sign`, `ou-imgdiff`. `cmake --install build`
+installs all of them except `ou-imgdiff`, plus the desktop file and icon.
 
 `viewer_placeholder_screenshot` opens a real window for 5 frames and writes
 `build/viewer_placeholder.ppm`; it is reported as *skipped* (exit 77) when SDL finds no
@@ -31,14 +53,23 @@ video device (e.g. `env -u WAYLAND_DISPLAY -u DISPLAY`).
 
 Tests that need the original game read `OU_GAME_DIR` and skip when it is unset.
 
+## ou-game
+
+`build/ou-game --game-dir "/path/to/Tomb Raider Underworld"` opens the main menu. Options, controls and
+input scripts: [GAMEPLAY.md](GAMEPLAY.md) "Running" and "Controls".
+
 ## ou-viewer
 
 ```sh
 build/ou-viewer                                   # placeholder scene (labelled PLACEHOLDER)
 build/ou-viewer --game-dir "/path/to/Tomb Raider Underworld" --drm 'pc-w\lara.drm'
+build/ou-viewer --game-dir "/path/to/Tomb Raider Underworld" --level --drm 'pc-w\l4_pool.drm'
 build/ou-viewer --width 3440 --height 1440 --fov 60
 build/ou-viewer --frames 5 --screenshot out.ppm   # render N frames, save PPM, exit
 ```
+
+`ou-viewer --help` lists every option, including the graphics flags shared with `ou-game` (`--preset`,
+`--msaa`, `--rt`, `--water`, `--brightness`, …; [LAUNCHER.md](LAUNCHER.md)).
 
 | Option | Meaning |
 |---|---|
@@ -50,7 +81,9 @@ build/ou-viewer --frames 5 --screenshot out.ppm   # render N frames, save PPM, e
 | `--screenshot FILE` | after the last frame, save the back buffer as binary PPM (implies `--frames 1`) |
 | `--no-vsync` | start with vsync off |
 | `--cam X,Y,Z,YAW,PITCH` | initial camera position (game units) and yaw/pitch in degrees |
-| `--renderer opengl\|vulkan` | render backend (default `opengl`); unavailable backend → exit 77 |
+| `--renderer auto\|opengl\|vulkan` | render backend (default `auto`: Vulkan, else OpenGL); unavailable backend → exit 77 |
+| `--level` | load `--drm` as a whole level (unit, stream groups, objects) instead of a single object file |
+| `--show-collision` | draw collision faces and markup as debug lines |
 | `--no-overlay` | start with the diagnostics overlay hidden (used for GL/Vulkan image diffs) |
 | `--fullscreen` | start fullscreen |
 | `--anim ID\|#INDEX\|NAME` | play a clip of `--drm` on its skinned meshes (anim id, anim-list index or name), looping on the 60 Hz tick, in place (`docs/formats/ANIMATION.md`) |
@@ -75,10 +108,13 @@ What is shown:
 
 Convert a screenshot: `ffmpeg -i out.ppm out.png`.
 
-## Renderer notes
+## Renderer notes (first viewer, 0.1.0)
 
-- Backend interface `src/render/Renderer.hpp`; OpenGL 4.6 (DSA) in `src/render/gl/`. App and
-  scene code never include GL headers, so a Vulkan backend can implement the same interface.
+These notes and the verification below record the first OpenGL viewer. The current renderers, presets,
+ray tracing and FSR are described in [RENDERING.md](RENDERING.md).
+
+- Backend interface `src/render/Renderer.hpp`; OpenGL 4.6 (DSA) in `src/render/gl/`, Vulkan 1.3 in
+  `src/render/vk/`. App and scene code never include GL or Vulkan headers.
 - World is Z-up (cdc convention, confirmed by the format parsers), units are game units.
 - Simulation (camera movement) runs at a fixed 60 Hz (`src/engine/FrameClock.hpp`) and is
   interpolated by `alpha()` for rendering; mouse/stick look is applied per rendered frame.
@@ -117,7 +153,7 @@ frame), gamepad input (no pad attached), runtime `V` toggle.
 `build/ou-viewer --renderer vulkan [...]` selects the Vulkan 1.3 backend
 (`src/render/vk/`, architecture in [RENDERING.md](RENDERING.md)). Build requirements:
 `vulkan-headers`, `vulkan-icd-loader` (linked as `libvulkan`; no volk) and `glslc` (package
-`shaderc`). The four GLSL shaders in `src/render/vk/shaders/` are compiled at build time into
+`shaderc`). The GLSL shaders in `src/render/vk/shaders/` are compiled at build time into
 `build/vk_shaders/*.inc` and embedded; editing a shader rebuilds only the backend.
 
 Runtime:
@@ -134,7 +170,8 @@ Runtime:
 - Pipeline cache: `$XDG_CACHE_HOME/openunderworld/vk_pipeline_cache.bin` (default
   `~/.cache/...`), written at shutdown.
 - The overlay line `RT detected: ...` reports `VK_KHR_acceleration_structure`,
-  `VK_KHR_ray_query` and `VK_KHR_ray_tracing_pipeline`; ray tracing is not used yet.
+  `VK_KHR_ray_query` and `VK_KHR_ray_tracing_pipeline`. Ray tracing uses ray queries
+  (`--rt`, [RENDERING.md](RENDERING.md)).
 
 Tests (all skip without a display or a usable Vulkan device):
 - `viewer_vulkan_placeholder_screenshot`: 5 frames + PPM, like the GL test.

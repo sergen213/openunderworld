@@ -165,7 +165,7 @@ ou-game: <saved|loaded|died, respawned> ...: unit U state S pos X Y Z (unit fram
 
 Verification:
 
-- [O] `tests/replays/save_move_load.txt`, 2026-10-18, `XDG_DATA_HOME=/tmp/...`:
+- [O] `tests/replays/save_move_load.txt`, 2026-10-18, `XDG_DATA_HOME` set to a temporary directory:
   - the save at 2.0 s and the load at 3.5 s logged identical lines: unit `l4_ragnarok_room`, state run, pos
     3685.266 2829.039 −7850.686, yaw −3.1416, clip ng_run t 1.3333, checkpoint 5502;
   - the slot file was 528 bytes, header `OUSAVE 2 36a60efc 506`.
@@ -187,7 +187,7 @@ Verification:
     - `profile.pro`: 1.
   - The contents are the engine's SAVE block buffer (`0x556310`: "illegal save type", "save %d is too big",
     "SAVE_BufferIntro", per-intro saved instances). It also holds the PDA map and gear ("evControlSaveData").
-- [U] The binary layout of `.sav` / `.pro`. No public documentation was found, and there are no original saves on
-  this machine: no Wine prefix holds an `Eidos\Tomb Raider - Underworld` folder.
+- [U] The binary layout of `.sav` / `.pro`. No public documentation was found, and no original saves were available
+  for testing: no Wine prefix held an `Eidos\Tomb Raider - Underworld` folder.
 - Import is **not implemented**. It would need a real `.sav` to reverse the SAVE block types against `0x556310` and
   `0x556E90`. OpenUnderworld never reads or writes the original saves.

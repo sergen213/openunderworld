@@ -21,7 +21,7 @@ The launcher is one window with six tabs and a bottom bar with **Save settings**
 2. next to the launcher binary
 3. `$PATH`
 
-Clicking Play/Viewer inside the GUI was not exercised: the computer-use helper sees no windows on this Wayland session, so no clicks could be scripted (inferred).
+Clicking Play/Viewer inside the GUI has not been exercised by automated tests (inferred).
 
 Startup runs `ou::update::recover()` on the install root, so an interrupted update swap is repaired before anything else happens.
 
@@ -66,7 +66,7 @@ When run from the AppImage (`$APPIMAGE` set), the Version & Updates tab updates 
 
 ## Verification (2026-10-18)
 
-- **Live Wayland session (observed).** `ou-launcher --game-dir "/mnt/1st4TB/Tomb Raider Underworld" --scan`, captured with `spectacle -b -n -a`.
+- **Live Wayland session (observed).** `ou-launcher --game-dir "/path/to/Tomb Raider Underworld" --scan`, captured with `spectacle -b -n -a`.
 - `ou-viewer --config` (observed): a config with `drm "pc-w\\lara.drm"`, 800×450, FOV 70, vsync off rendered Lara with overlay "vFOV 70.0", "vsync off", 1120×630 framebuffer (HiDPI 1.4×).
 - `launcher_self_test` (`--self-test`, offscreen, LSan on): exit 0 (observed).
   - The Game tab showed: "VALIDATION: OK", build "GOG 1900745791 (buildId 58082205556264096)", tru.exe sha256 `1fdbd345…`, file version 1.1.0.0, PE timestamp 2008-12-16T17:31:02Z, 37 files, bigfile 7339 records in 4 parts with 0 errors, patch 9 records, scan 0.5 s.
@@ -76,7 +76,7 @@ When run from the AppImage (`$APPIMAGE` set), the Version & Updates tab updates 
 
 ## Packaging
 
-- `cmake --install` installs `ou-viewer`, `ou-launcher`, `ou-import`, `ou-asset` and `ou-sign` to `bin/`, `packaging/openunderworld.desktop` to `share/applications/`, and `packaging/openunderworld.svg` (original artwork) to `share/icons/hicolor/scalable/apps/`.
+- `cmake --install` installs `ou-game`, `ou-viewer`, `ou-launcher` (when Qt 6 is found), `ou-movie`, `ou-audio`, `ou-import`, `ou-asset`, `ou-text` and `ou-sign` to `bin/`, `packaging/openunderworld.desktop` to `share/applications/`, and `packaging/openunderworld.svg` (original artwork) to `share/icons/hicolor/scalable/apps/`.
 - `packaging/PKGBUILD` builds `openunderworld-git` from the working tree: `cd packaging && makepkg`. Install the result yourself with `pacman -U`. Observed 2026-10-18: `makepkg -f` built `openunderworld-git-0.1.0.r12.g12a8f56-1`; `check()` passed 71/71 ctest; `package()` installed the 5 binaries, the .desktop file and the icon. The artifacts were then deleted. `makepkg -i` was not run.
 - `.github/workflows/ci.yml` runs on an `archlinux:latest` container. It does a Debug + ASan/UBSan build and runs ctest; real-data tests skip, display tests exit 77, Qt runs offscreen, and `OU_DISABLE_UPDATES=1` is set. It finishes with a `makepkg --nodeps` package build. It is green on GitHub (observed 2026-10-18).
 - AppImage and signed GitHub releases: see `docs/RELEASING.md`.
