@@ -618,6 +618,16 @@ TEST(Config, GraphicsPresets) {
     EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--fx", "off"));
     EXPECT_FALSE(ou::config::resolve(flags).effects);
     EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--fx", "no"), std::runtime_error);
+    EXPECT_FALSE(ou::config::resolve(flags).antiLag); // AMD Anti-Lag defaults off
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(flags, "--anti-lag", "on"));
+    EXPECT_TRUE(ou::config::resolve(flags).antiLag);
+    EXPECT_THROW(ou::config::applyGraphicsFlag(flags, "--anti-lag", "yes"), std::runtime_error);
+    const fs::path al = fs::temp_directory_path() / ("ou_config_antilag_" + std::to_string(::getpid()) + "/config.json");
+    ou::config::Config alc;
+    alc.graphics.antiLag = true;
+    ou::config::save(al, alc);
+    EXPECT_TRUE(ou::config::load(al).graphics.antiLag);
+    fs::remove_all(al.parent_path());
 }
 
 TEST(Config, WaterQuality) {

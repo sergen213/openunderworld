@@ -298,11 +298,13 @@ TEST(Menus, GraphicsOptions) {
     EXPECT_FALSE(g.fsr);
     EXPECT_FALSE(g.frameGeneration);
     m.input(ui::Nav::Down);
-    EXPECT_EQ(m.cursor(), 4); // FSR QUALITY / SHARPNESS / FRAME GENERATION greyed
-    m.input(ui::Nav::Back);
-    g.fsrSupported = false;
+    EXPECT_EQ(m.cursor(), 4); // FSR QUALITY / SHARPNESS / FRAME GENERATION greyed: AMD ANTI-LAG
     m.input(ui::Nav::Accept);
-    EXPECT_EQ(m.cursor(), 4); // the upscaler row greyed too
+    EXPECT_TRUE(g.antiLag);
+    m.input(ui::Nav::Back);
+    g.fsrSupported = g.antiLagSupported = false;
+    m.input(ui::Nav::Accept);
+    EXPECT_EQ(m.cursor(), 5); // the upscaler and Anti-Lag rows greyed too
     m.input(ui::Nav::Accept); // BACK
     EXPECT_EQ(m.screen(), ui::Screen::GfxSettings);
     EXPECT_EQ(m.cursor(), 3);

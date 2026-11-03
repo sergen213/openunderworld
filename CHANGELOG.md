@@ -4,6 +4,18 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.23.0] - 2026-11-02
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: turning on frame generation after loading a save (or after the main menu) could switch FSR off entirely, so
+  the game rendered at full resolution and got slower instead of faster. On Mesa/RADV the FSR libraries reserved far
+  more descriptor memory than they use and ran out of room; they now reserve what they need.
+- New: AMD Anti-Lag (Vulkan) for lower input latency, in the launcher (Graphics) and in the game's DISPLAY SETTINGS >
+  Upscaling. Off by default; applies immediately. On Mesa it uses the anti-lag layer Mesa ships.
+- Fixed: after updating from the launcher, Play started the old game version until the launcher was restarted; it now
+  starts the updated one.
+
 ## [0.22.1] - 2026-11-02
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

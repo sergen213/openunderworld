@@ -663,6 +663,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                  .choices = {"NATIVE", "QUALITY", "BALANCED", "PERFORMANCE", "ULTRA PERFORMANCE"}},
                 {.label = "SHARPNESS", .value = &g.sharpness, .greyed = !g.fsr},
                 {.label = "FRAME GENERATION", .toggle = &g.frameGeneration, .onId = 45, .offId = 46, .greyed = !g.fsr},
+                {.label = "AMD ANTI-LAG", .toggle = &g.antiLag, .onId = 45, .offId = 46, .greyed = !g.antiLagSupported},
                 {.stringId = 469}};
     }
     case Screen::Tailoring: { // from START NEW GAME it starts the game; from GAME OPTIONS it only sets the preset

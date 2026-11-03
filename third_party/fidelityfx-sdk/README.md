@@ -28,6 +28,10 @@ Local patches (marked `ou patch N`):
 5. `api/internal/ffx_internal_types.h`: `FFX_SDK_DEFAULT_CONTEXT_SIZE` overridable.
 6. `api/internal/ffx_internal_types.h`: `FFX_MAX_QUEUED_FRAMES` 4 -> 8 (frame generation's per-frame graph executions
    recycled image views of frames still in flight).
+7. `backend/vk/ffx_vk.cpp` `CreateBackendContextVK`: global descriptor pool sized per set (`FFX_MAX_SAMPLERS`,
+   `FFX_MAX_NUM_SRVS`, `FFX_MAX_NUM_UAVS`, `FFX_MAX_NUM_CONST_BUFFERS`) instead of `FFX_MAX_RESOURCE_COUNT` per type:
+   RADV keeps all descriptor pools in a 4 GiB window and the upstream sizes made frame generation fail to start
+   (VK_ERROR_OUT_OF_DEVICE_MEMORY) after a second scene load.
 
 Upgrading: replace the upstream directories, re-apply the patches, rerun the build; the renderer only talks ffx-api
 (`src/render/vk/VkFsr.cpp`).

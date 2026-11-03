@@ -290,7 +290,7 @@ private:
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
     QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_, *upscaler_, *fsrQuality_;
-    QCheckBox* frameGeneration_;
+    QCheckBox *frameGeneration_, *antiLag_;
     QCheckBox* rtLights_;
     QCheckBox* rtReflections_; // tri-state: partially checked = unset (on with RT "full")
     QCheckBox *rtAo_, *rtGi_; // checked state = resolved value; saved only where it differs from the rt mode's default
@@ -449,6 +449,9 @@ private:
         sharpness_->setValue(g.sharpness);
         frameGeneration_ = new QCheckBox("Frame generation");
         frameGeneration_->setChecked(g.frameGeneration);
+        antiLag_ = new QCheckBox("AMD Anti-Lag (Vulkan)");
+        antiLag_->setChecked(g.antiLag);
+        antiLag_->setToolTip("Lower input latency: VK_AMD_anti_lag (Mesa's anti-lag layer on RADV). No effect elsewhere.");
         auto fsrEnable = [this] {
             const bool on = upscaler_->currentData().toString() == "fsr";
             fsrQuality_->setEnabled(on), sharpness_->setEnabled(on), frameGeneration_->setEnabled(on);
@@ -512,6 +515,7 @@ private:
         f->addRow("FSR quality", fsrQuality_);
         f->addRow("FSR sharpness", sharpness_);
         f->addRow("", frameGeneration_);
+        f->addRow("", antiLag_);
         f->addRow("", new QLabel("Like the original game's brightness option; 1.00 = neutral."));
         return w;
     }
@@ -887,6 +891,7 @@ private:
         g.fsrQuality = s(fsrQuality_->currentData().toString());
         g.sharpness = float(sharpness_->value());
         g.frameGeneration = g.upscaler == "fsr" && frameGeneration_->isChecked();
+        g.antiLag = antiLag_->isChecked();
         const auto& actions = ou::config::bindableActions();
         for (int i = 0; i < int(actions.size()); ++i) {
             auto& names = cfg_.controls.bindings[actions[i]];
@@ -935,6 +940,7 @@ private:
             if (d.fsrQuality != o.fsrQuality) pick(fsrQuality_, q(d.fsrQuality));
             if (d.sharpness != o.sharpness) sharpness_->setValue(d.sharpness);
             if (d.frameGeneration != o.frameGeneration) frameGeneration_->setChecked(d.frameGeneration);
+            if (d.antiLag != o.antiLag) antiLag_->setChecked(d.antiLag);
             if (d.effects != o.effects) cfg_.graphics.effects = d.effects; // no widget: collect() keeps it
         } catch (const std::exception&) {} // unreadable: ours overwrites it
         collect();
@@ -967,14 +973,18 @@ private:
     }
 
     // Saves the config, then starts `name` (ou-game / ou-viewer) --config <it>, logging to logs/<game|viewer>-<time>.log.
+    // As an AppImage it runs through $APPIMAGE (AppRun's game / viewer subcommands), not this launcher's mount: after an
+    // in-place update that is the new version, while the running launcher's own binaries are still the old one.
     void launch(const char* name) {
         if (!saveConfig()) return;
         fs::create_directories(paths_.logs);
-        fs::path log = paths_.logs / s(q(name).mid(3) + "-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".log");
-        const fs::path bin = toolPath(name);
+        const QString tool = q(name).mid(3);
+        fs::path log = paths_.logs / s(tool + "-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".log");
+        const bool appImage = !paths_.appImage.empty() && ::access(paths_.appImage.c_str(), X_OK) == 0;
+        const fs::path bin = appImage ? paths_.appImage : toolPath(name);
         QProcess p;
         p.setProgram(q(bin));
-        p.setArguments({"--config", q(paths_.config)});
+        p.setArguments(appImage ? QStringList{tool, "--config", q(paths_.config)} : QStringList{"--config", q(paths_.config)});
         p.setStandardOutputFile(q(log));
         p.setStandardErrorFile(q(log));
         qint64 pid = 0;

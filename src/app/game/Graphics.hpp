@@ -57,7 +57,7 @@ inline std::vector<std::pair<int, int>> resolutionChoices(std::pair<int, int> de
     return r;
 }
 
-// Menu values of a graphics config + display. rtSupported / fsrSupported stay true (the app sets them from the renderer).
+// Menu values of a graphics config + display. rtSupported / fsrSupported / antiLagSupported stay true (the app sets them from the renderer).
 inline ui::GraphicsOptions graphicsMenu(const config::GraphicsConfig& g, const Display& d, std::pair<int, int> desktop) {
     using namespace graphics_detail;
     ui::GraphicsOptions m;
@@ -71,7 +71,7 @@ inline ui::GraphicsOptions graphicsMenu(const config::GraphicsConfig& g, const D
     m.water = indexOf(kWater, g.water), m.waterDetail = indexOf(kWaterDetail, g.waterDetail);
     m.atmosphere = indexOf(kAtmosphere, g.atmosphere), m.lightShafts = toTri(g.lightShafts), m.weather = indexOf(kWeather, g.weather);
     m.fsr = g.upscaler == "fsr", m.fsrQuality = indexOf(kFsrQuality, g.fsrQuality), m.sharpness = sharpnessStep(g.sharpness);
-    m.frameGeneration = g.frameGeneration, m.effects = g.effects;
+    m.frameGeneration = g.frameGeneration, m.effects = g.effects, m.antiLag = g.antiLag;
     return m;
 }
 
@@ -95,7 +95,7 @@ inline void applyGraphicsMenu(const ui::GraphicsOptions& m, config::GraphicsConf
     g.atmosphere = at(kAtmosphere, m.atmosphere), g.lightShafts = fromTri(m.lightShafts), g.weather = at(kWeather, m.weather);
     g.upscaler = m.fsr ? "fsr" : "off", g.fsrQuality = at(kFsrQuality, m.fsrQuality);
     if (m.sharpness != sharpnessStep(g.sharpness)) g.sharpness = float(std::clamp(m.sharpness, 0, 10)) / 10;
-    g.frameGeneration = m.fsr && m.frameGeneration, g.effects = m.effects;
+    g.frameGeneration = m.fsr && m.frameGeneration, g.effects = m.effects, g.antiLag = m.antiLag;
 }
 
 } // namespace ou::app

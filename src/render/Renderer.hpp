@@ -192,6 +192,9 @@ struct FrameOptions {
     int fsrQuality = 1;           // 0 native AA, 1 quality (1.5x), 2 balanced (1.7x), 3 performance (2x), 4 ultra (3x)
     float sharpness = 0.5f;       // FSR sharpening (RCAS) 0..1, 0 = off
     bool frameGeneration = false;
+    // AMD Anti-Lag (VK_AMD_anti_lag, docs/RENDERING.md "Anti-Lag"): the driver delays the CPU so input is sampled as
+    // late as possible. Backends without it ignore it (Renderer::antiLagSupported).
+    bool antiLag = false;
     // Original effects, drawn after the water surfaces / splashes, depth-tested, no depth writes, batches in order.
     std::span<const FxVertex> fxVertices;
     std::span<const FxBatch> fxBatches;
@@ -248,6 +251,11 @@ public:
     virtual bool fsrSupported() const { return false; }
     // FSR frame generation: generated frames presented so far (the overlay's FPS counts them with the real ones).
     virtual uint64_t generatedFrames() const { return 0; }
+    // VK_AMD_anti_lag is enabled on this device (after init). Menus grey the Anti-Lag row otherwise.
+    virtual bool antiLagSupported() const { return false; }
+    // Call right before the app samples input for the next frame (Anti-Lag INPUT marker; may sleep). The frame's
+    // drawFrame + present then follow. No-op without Anti-Lag or with FrameOptions::antiLag off.
+    virtual void beginInput() {}
     virtual void shutdown() = 0;
 };
 

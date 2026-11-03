@@ -105,7 +105,7 @@ void usage() {
                  "               [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
                  "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"
-                 "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only) [--fx on|off]\n"
+                 "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only) [--fx on|off] [--anti-lag on|off]\n"
                  "               [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
@@ -1722,6 +1722,7 @@ int main(int argc, char** argv) {
         menus.graphics = ou::app::graphicsMenu(opt.graphics, display(), dm ? std::pair(dm->w, dm->h) : std::pair(0, 0));
         menus.graphics.rtSupported = renderer->rtStatus().supported;
         menus.graphics.fsrSupported = renderer->fsrSupported();
+        menus.graphics.antiLagSupported = renderer->antiLagSupported();
     };
     fillGraphicsMenu();
     ou::ui::GraphicsOptions appliedGraphics = menus.graphics;
@@ -2186,6 +2187,7 @@ int main(int argc, char** argv) {
     while (running) {
         const bool inMenu = menus.screen() != ou::ui::Screen::None;
         const bool mainMenu = menus.mainMenu();
+        renderer->beginInput(); // Anti-Lag INPUT marker: the driver's wait lands before input is sampled, not after
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
@@ -2401,6 +2403,7 @@ int main(int argc, char** argv) {
             }
             swapFrom.reset();
             menus.graphics.rtSupported = renderer->rtStatus().supported, menus.graphics.fsrSupported = renderer->fsrSupported();
+            menus.graphics.antiLagSupported = renderer->antiLagSupported();
             appliedGraphics = menus.graphics;
         }
         try { // a level load or save changed the outfit: new Lara meshes, rig and waves
@@ -2625,6 +2628,7 @@ int main(int argc, char** argv) {
         fo.brightness = opt.gfx.brightness, fo.screenFade = world->script().screenFade();
         fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;
         fo.fsrQuality = opt.gfx.fsrQuality, fo.sharpness = opt.gfx.sharpness, fo.frameGeneration = opt.gfx.frameGeneration;
+        fo.antiLag = opt.gfx.antiLag;
         fo.water = ou::render::WaterQuality(opt.gfx.water);
         const auto& ws = world->water();
         if (opt.gfx.water && ws.active())

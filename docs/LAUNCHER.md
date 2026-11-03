@@ -16,8 +16,8 @@ The launcher is one window with six tabs and a bottom bar with **Save settings**
 | Diagnostics | Report with versions (launcher, Qt, SDL), OS/session, game and viewer paths, updater state, config, last scan summary, and the last 60 lines of the newest game/viewer log. Export to a text file. | report observed |
 | Version & Updates | Version, updater-managed install, whether a release key is compiled in, changelog, enable switch, channel, manifest URL, Check / Download & install / Roll back / Restart (AppImage mode: the update is installed as `OpenUnderworld-<version>-x86_64.AppImage`, desktop entries follow, Restart starts the new file). See `docs/UPDATES.md`. | UI clicked on Xvfb 2026-10-30 against a local HTTPS server with a test-key-signed manifest (docs/UPDATES.md) |
 
-**Play** saves the config, then starts `ou-game --config <config.json>` detached; it refuses to start until a game directory is set. Without `--level`, ou-game opens the main menu, where New Game starts chapter 0. **Viewer** does the same with `ou-viewer --config <config.json>` (debug fly camera over `drm`). stdout and stderr go to `$XDG_STATE_HOME/openunderworld/logs/game-<timestamp>.log` / `viewer-<timestamp>.log`. Each binary is looked up in this order:
-1. `install/current/bin/ou-game` / `ou-viewer` (the updater-managed copy; skipped inside the AppImage)
+**Play** saves the config, then starts `ou-game --config <config.json>` detached; it refuses to start until a game directory is set. Without `--level`, ou-game opens the main menu, where New Game starts chapter 0. **Viewer** does the same with `ou-viewer --config <config.json>` (debug fly camera over `drm`). stdout and stderr go to `$XDG_STATE_HOME/openunderworld/logs/game-<timestamp>.log` / `viewer-<timestamp>.log`. Inside the AppImage it runs `$APPIMAGE game|viewer --config <config.json>`, so after an in-place update Play starts the new version even before Restart (the running launcher's own mount still holds the old binaries). Otherwise each binary is looked up in this order:
+1. `install/current/bin/ou-game` / `ou-viewer` (the updater-managed copy)
 2. next to the launcher binary
 3. `$PATH`
 

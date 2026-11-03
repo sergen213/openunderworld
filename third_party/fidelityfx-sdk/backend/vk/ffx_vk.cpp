@@ -1726,13 +1726,17 @@ FfxErrorCode CreateBackendContextVK(FfxInterface* backendInterface, FfxEffect ef
 
         // create a global descriptor pool to hold all descriptors we'll need
         VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {};
+        // ou patch 7: per type, maxSets x what one set can hold (FFX_MAX_SAMPLERS / NUM_SRVS / NUM_UAVS / NUM_CONST_BUFFERS)
+        // instead of maxSets x FFX_MAX_RESOURCE_COUNT (512). RADV puts every descriptor pool in one 4 GiB 32-bit address
+        // window; the upstream sizes (~1.4 GiB upscaler + ~2.9 GiB frame generation with patch 6) no longer fit once a
+        // second scene's pools exist, and the frame generation context failed with VK_ERROR_OUT_OF_DEVICE_MEMORY.
+        const uint32_t ouSets = backendContext->maxEffectContexts * FFX_MAX_PASS_COUNT * FFX_MAX_QUEUED_FRAMES * MAX_PIPELINE_USAGE_PER_FRAME;
         VkDescriptorPoolSize poolSizes[] = {
-            { VK_DESCRIPTOR_TYPE_SAMPLER, backendContext->maxEffectContexts * FFX_MAX_RESOURCE_COUNT * FFX_MAX_PASS_COUNT * FFX_MAX_QUEUED_FRAMES * MAX_PIPELINE_USAGE_PER_FRAME },
-            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, backendContext->maxEffectContexts * FFX_MAX_RESOURCE_COUNT * FFX_MAX_PASS_COUNT * FFX_MAX_QUEUED_FRAMES * MAX_PIPELINE_USAGE_PER_FRAME },
-            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, backendContext->maxEffectContexts * FFX_MAX_RESOURCE_COUNT * FFX_MAX_PASS_COUNT * FFX_MAX_QUEUED_FRAMES * MAX_PIPELINE_USAGE_PER_FRAME },
-            { VK_DESCRIPTOR_TYPE_SAMPLER, backendContext->maxEffectContexts * FFX_MAX_RESOURCE_COUNT * FFX_MAX_PASS_COUNT * FFX_MAX_QUEUED_FRAMES * MAX_PIPELINE_USAGE_PER_FRAME },
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, backendContext->maxEffectContexts * FFX_MAX_RESOURCE_COUNT * FFX_MAX_PASS_COUNT * FFX_MAX_QUEUED_FRAMES * MAX_PIPELINE_USAGE_PER_FRAME },
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, backendContext->maxEffectContexts * FFX_MAX_RESOURCE_COUNT * FFX_MAX_PASS_COUNT * FFX_MAX_QUEUED_FRAMES * MAX_PIPELINE_USAGE_PER_FRAME },
+            { VK_DESCRIPTOR_TYPE_SAMPLER, ouSets * FFX_MAX_SAMPLERS },
+            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ouSets * FFX_MAX_NUM_SRVS },
+            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, ouSets * FFX_MAX_NUM_UAVS },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, ouSets * FFX_MAX_NUM_CONST_BUFFERS },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, ouSets * (FFX_MAX_NUM_SRVS + FFX_MAX_NUM_UAVS) }, // buffer SRVs + UAVs
         };
 
         descriptorPoolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

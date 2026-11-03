@@ -1727,10 +1727,10 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   VSYNC, FIELD OF VIEW (30–120, step 5). DISPLAY SETTINGS opens QUALITY (PRESET, ANTI ALIASING, SHADOWS, ORIGINAL
   SHADERS, PARTICLE EFFECTS), RAY TRACING (mode, RT QUALITY, LOCAL LIGHT SHADOWS, REFLECTIONS, AMBIENT OCCLUSION, SUN
   BOUNCE; tri-state rows DEFAULT / ON / OFF), WATER & SKY (WATER EFFECTS, WATER DETAIL, ATMOSPHERE, SUN SHAFTS,
-  WEATHER) and UPSCALING (AMD FSR, FSR QUALITY, SHARPNESS slider, FRAME GENERATION). Values sit centred over the slider
+  WEATHER) and UPSCALING (AMD FSR, FSR QUALITY, SHARPNESS slider, FRAME GENERATION, AMD ANTI-LAG). Values sit centred over the slider
   track with its arrows on the selected row; Left/Right step and stop at the ends, Return steps forward and wraps.
   Rows that cannot apply are dim and skipped: RT rows with preset ORIGINAL or no ray-query device, the RT detail rows
-  with RAY TRACING OFF, the FSR rows with FSR off, AMD FSR without FSR support. PRESET ORIGINAL resets an explicit RAY
+  with RAY TRACING OFF, the FSR rows with FSR off, AMD FSR without FSR support, AMD ANTI-LAG without VK_AMD_anti_lag. PRESET ORIGINAL resets an explicit RAY
   TRACING SHADOWS / FULL to AUTO and FSR off clears FRAME GENERATION, so the settings always resolve.
 - PLAYER TAILORING [O]: box 106 stretched to 672×237 at y 216 over the backdrop alone; title 484 cap 117.8 scale 0.8,
   line under it (y 139.6, 190 wide); 481/482/483 centred at 176.9 + 28.9·i, scale 0.66, selected white on a (30, 90, 127)

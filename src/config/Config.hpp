@@ -46,6 +46,7 @@ struct GraphicsConfig {
     bool frameGeneration = false;           // needs upscaler "fsr"
     bool effects = true;                    // the original particle effects (src/fx: particles, ribbons, lightning,
                                             // glows, effect lights, screen filters); false = none (sounds stay)
+    bool antiLag = false;                   // AMD Anti-Lag (VK_AMD_anti_lag, Vulkan only; docs/RENDERING.md "Anti-Lag")
 };
 struct GraphicsSettings {
     int msaa = 1;
@@ -68,6 +69,7 @@ struct GraphicsSettings {
     bool rtReflections = false; // ray-traced water reflections (render::FrameOptions::rtReflections); needs rt > 0
     // Last, so positional initialisers of the fields above keep working.
     bool rtAo = false, rtGi = false; // RT ambient occlusion / sun bounce (rt on; rtAo / rtGi unset = rt full)
+    bool antiLag = false; // AMD Anti-Lag (render::FrameOptions::antiLag); last, like the fields above
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without
@@ -75,8 +77,8 @@ struct GraphicsSettings {
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
 // --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail,
-// --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off.
-// false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
+// --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off,
+// --anti-lag on|off. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 
 // Control bindings: action -> inputs, any of which triggers it. Input names (case-insensitive): SDL scancode

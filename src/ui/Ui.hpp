@@ -198,8 +198,9 @@ struct GraphicsOptions {
     int sharpness = 5;                             // 0..10 slider = config sharpness * 10
     bool frameGeneration = false;                  // needs fsr
     bool effects = true;
+    bool antiLag = false;                          // AMD Anti-Lag (Vulkan, VK_AMD_anti_lag)
     // Set by the app from the live renderer: rows that cannot apply are greyed (shown, not selectable).
-    bool rtSupported = true, fsrSupported = true;
+    bool rtSupported = true, fsrSupported = true, antiLagSupported = true;
     bool operator==(const GraphicsOptions&) const = default;
 };
 

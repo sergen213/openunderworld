@@ -691,6 +691,20 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
   queued frames) fixed FG destroying image views still in flight. Unsupported devices (no formatless storage images, compute derivatives, independent blend,
   subgroup ops) or a build without DXC fall back to native rendering with the reason in F1.
 
+## Anti-Lag (Vulkan only; `graphics.anti_lag`, `--anti-lag on|off`, default off)
+AMD Anti-Lag through `VK_AMD_anti_lag`: the driver delays the CPU at the start of a frame so input is sampled closer to
+when the GPU gets to it, instead of the frame waiting in the queue. RADV has no such extension; Mesa's implicit layer
+`VK_LAYER_MESA_anti_lag` provides it but loads only with `ENABLE_LAYER_MESA_ANTI_LAG=1`, so `createInstance` requests it
+by name whenever the loader lists it (AMD's proprietary driver exposes the extension itself). The extension is enabled at
+device creation whenever available (`ou: AMD Anti-Lag available` on stderr), so the setting switches live; off, nothing
+calls `vkAntiLagUpdateAMD` after one OFF update. Launcher: Graphics page checkbox; in game: DISPLAY SETTINGS > UPSCALING
+> AMD ANTI-LAG (dim without the extension); F1 shows `Anti-Lag on|off|unavailable` in the renderer line.
+- **Markers**: `Renderer::beginInput()` (INPUT stage) runs in ou-game's loop right before `SDL_PollEvent`, so the layer's
+  wait comes before input is read. PRESENT is sent in `present()` on the render thread after the frame's submits. With
+  frame generation the present thread still paces the real image half an interval behind the generated one; that delay
+  is display pacing, not frame work, so the marker does not wait for it, and generated images get no markers.
+- The mode follows the previous `drawFrame`'s `FrameOptions::antiLag` (one frame behind a menu toggle). `maxFPS` = 0.
+
 ## Portal clipping (GL + Vulkan; `FrameOptions::unitClips`, RenderCommon `portalClips`)
 
 tru.exe binds every stream portal (0x5CEC60 / 0x5CF070) as a `cdc::ScenePortal` of its unit's cell group, so a
