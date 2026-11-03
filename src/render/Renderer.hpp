@@ -246,6 +246,8 @@ public:
     virtual std::string upscalerSummary() const { return "FSR: Vulkan only"; }
     // FSR / frame generation can run on this device (after init; Vulkan only). Menus grey the upscaler rows otherwise.
     virtual bool fsrSupported() const { return false; }
+    // FSR frame generation: generated frames presented so far (the overlay's FPS counts them with the real ones).
+    virtual uint64_t generatedFrames() const { return 0; }
     virtual void shutdown() = 0;
 };
 

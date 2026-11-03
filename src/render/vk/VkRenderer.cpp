@@ -1575,6 +1575,7 @@ public:
                       (unsigned long long)presentedGenerated_);
         return line;
     }
+    uint64_t generatedFrames() const override { return presentedGenerated_; }
 
     std::string description() const override {
         auto ver = [](uint32_t v) {

@@ -676,6 +676,9 @@ FSR 3.1.6 frame generation, Vulkan backend, providers linked statically. OpenGL 
   display-resolution detail; recreated with the swapchain, native rendering keeps the unbiased sampler (and so do the
   RT alpha tests).
 - **Diagnostics**: F1 line `FSR 3.1.6 quality 1280x720 -> 1920x1080 | frame generation on, FG 3.1.6 (N generated)`.
+  The overlay's FPS counts presented frames, generated ones included, with the real rate after it
+  (`398.4 FPS (199.2 rendered)`); FG costs ~1.9 ms GPU per real frame at 2160p (l2_cliffclimb, FSR balanced, RT full:
+  122 real fps without, 94 real / 188 presented with).
   `OU_VK_PRESENT_STATS=1` prints presented images/s, present spacing (mean / median / sd / p99, alternating intervals)
   and the render thread's per-frame fence / acquire waits and `vkQueuePresentKHR` time at exit, and the GPU time per
   frame of vertex uploads + BLAS refits, TLAS update, shadow map, scene, FSR masks + post and FSR / FG (timestamp

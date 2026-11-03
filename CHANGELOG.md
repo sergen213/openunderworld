@@ -4,6 +4,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.22.1] - 2026-11-02
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- The FPS counter now includes the frames made by frame generation, so turning it on shows the higher frame rate you
+  actually see (with the rendered rate in brackets). Before, it counted only rendered frames, which drop slightly
+  because frame generation itself takes GPU time.
+
 ## [0.22.0] - 2026-11-02
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

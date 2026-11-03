@@ -2178,8 +2178,9 @@ int main(int argc, char** argv) {
     glm::vec2 mouse(0);
     bool overlay = !opt.noOverlay;
     uint64_t last = SDL_GetTicksNS(), fpsStart = last, appTicks = 0; // appTicks: script time, runs on in menus
+    uint64_t fpsGenerated = 0; // renderer->generatedFrames() at fpsStart
     int frame = 0, fpsFrames = 0;
-    double fps = 0;
+    double fps = 0, renderedFps = 0;
     std::vector<double> frameMs; // --frames: wall frame times for the final report
 
     while (running) {
@@ -2465,18 +2466,23 @@ int main(int argc, char** argv) {
         if (audioOn) // halfway between the camera and Lara (tru.exe 0x57FD50, ou::audio::kSoundListenerToPlayer)
             mixer.setListener({glm::mix(c.position, s.pos, ou::audio::kSoundListenerToPlayer), glm::normalize(c.target - c.position), {0, 0, 1}});
 
+        // Presented frames: with frame generation the real ones (fpsFrames) plus the generated ones in between.
         ++fpsFrames;
         if (now - fpsStart >= 500'000'000ull) {
-            fps = fpsFrames / (double(now - fpsStart) * 1e-9);
-            fpsStart = now;
+            const uint64_t generated = renderer->generatedFrames();
+            const double seconds = double(now - fpsStart) * 1e-9;
+            const double extra = generated >= fpsGenerated ? double(generated - fpsGenerated) : 0.0; // 0: renderer swapped
+            fps = (fpsFrames + extra) / seconds, renderedFps = fpsFrames / seconds;
+            fpsStart = now, fpsGenerated = generated;
             fpsFrames = 0;
         }
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window.get(), &w, &h);
         std::vector<std::string> lines;
         if (overlay && !mainMenu) {
-            lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS | tick %llu%s%s", world->currentUnit().data.name.c_str(), fps,
-                                (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
+            const std::string rendered = fps > renderedFps + 0.5 ? fmt(" (%.1f rendered)", renderedFps) : "";
+            lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS%s | tick %llu%s%s", world->currentUnit().data.name.c_str(), fps,
+                                rendered.c_str(), (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
             lines.push_back(renderer->description());
             lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));
             lines.push_back(renderer->upscalerSummary());
