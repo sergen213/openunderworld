@@ -14,7 +14,8 @@ layout(location = 1) in vec2 aUv;
 layout(location = 2) in float aAlpha;
 layout(location = 0) out vec2 vUv;
 layout(location = 1) out float vAlpha;
+layout(location = 2) out vec3 vWorld; // splash_splat.frag: sphere depth (the radius comes from its derivatives)
 void main() {
-    vUv = aUv; vAlpha = aAlpha;
+    vUv = aUv; vAlpha = aAlpha; vWorld = aPos;
     gl_Position = w.viewProj * vec4(aPos, 1.0);
 }

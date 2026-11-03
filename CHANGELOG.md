@@ -4,6 +4,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.22.0] - 2026-11-02
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Enhanced water: splashes now look like liquid instead of loose white dots. Droplets that overlap merge into
+  connected water that reflects the sky and sun and lets light through where it is thin (both renderers). Adapted
+  from talvinckb's OpenGL-Water-Simulation (MIT).
+
 ## [0.21.1] - 2026-11-02
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

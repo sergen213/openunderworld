@@ -497,6 +497,11 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
 - **"Seascape"** by TDM (Alexander Alekseev, 2014), https://www.shadertoy.com/view/Ms2SD1 — CC BY-NC-SA 3.0,
   incompatible with GPLv3: look inspired by Shadertoy Ms2SD1 Seascape (CC BY-NC-SA, no code used; clean-room from
   general techniques). Its source was not read for this work.
+- **OpenGL-Water-Simulation** by Talvin Ackbaraly (2026), https://github.com/talvinckb/OpenGL-Water-Simulation — MIT
+  (full text: `third_party/opengl-water-simulation/LICENSE`). Its screen-space fluid rendering (sphere depth +
+  thickness splat, bilateral depth blur, normal reconstruction from depth) is adapted into the splash shaders
+  `splash_splat.frag`, `splash_blur.frag`, `splash_composite.frag`. Its SPH simulation is not used (TRU's water is
+  the deterministic wave field; particle fluid only suits small boxes).
 
 ### 8.9 Caustics references (2026-10-30)
 

@@ -324,7 +324,14 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
 - Interactive waves (ours, `game::WaveField`): bend the normals, displace, light crests / darken troughs in
   proportion to the curvature (a splash crater is a bright line, a swim-stroke ring a tint) and foam splash craters
   and sharp crests (the Joan port, docs/RESEARCH.md §8.7).
-- Splash droplets (ours): camera-facing soft discs (`render::splashVertices`, `splash.{vert,frag}`).
+- Splash droplets (ours, screen-space fluid rendering adapted from talvinckb/OpenGL-Water-Simulation, MIT,
+  docs/RESEARCH.md §8.8): each droplet quad (`render::splashVertices`, `splash.vert`) splats a sphere's front
+  distance and thickness into an RG32F target with MAX blending, rejected against the opaque depth copy
+  (`splash_splat.frag`); a separable depth-aware blur (`splash_blur.frag`, 8 px at 1080p, twice) merges overlapping
+  spheres into one surface and spreads a tapering thickness into nearby empty pixels, so droplets a few pixels apart join;
+  `splash_composite.frag` rebuilds normals from it and blends premultiplied liquid over the
+  scene: Fresnel sky / sun reflection as water.frag, an aerated white body, transmittance e^(−0.15 · thickness),
+  distance fog. No screen refraction (it would read the pre-water copy). The three passes run only while droplets exist.
 - Underwater: the original's under-water look ("Under water" below) in both qualities.
 - Caustics (ours, Enhanced only; tru.exe draws none [O: no caustic pass or texture; its UnderWaterRayDrawable is
   the full-screen pass, the light rays and the flashlight beam, 0x6D8C20; the original captures show none]): `ouCausticLight` in

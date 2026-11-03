@@ -340,6 +340,9 @@ struct Targets {
     // underwater fog). Blitted after the opaque/blended pass, before the water surfaces draw.
     Texture opaqueColor, opaqueDepth;
     Framebuffer opaqueColorFbo, opaqueDepthFbo;
+    // Enhanced water splashes as liquid (render/Water.hpp SplashVertex): RG32F splat target and blur ping-pong.
+    std::array<Texture, 2> splash;
+    std::array<Framebuffer, 2> splashFbo;
     // Original screen filters (FrameOptions::screenFilter): the half-size scene and its mip chain (blur levels).
     Texture filterBlur;
     Framebuffer filterFbo;
@@ -351,7 +354,7 @@ struct Targets {
 
 struct Resources {
     Program sceneProgram, textProgram, lineProgram, shadowProgram, postProgram;
-    Program waterProgram, splashProgram; // Enhanced water (render/Water.cpp sources)
+    Program waterProgram, splashSplatProgram, splashBlurProgram, splashCompositeProgram; // Enhanced water (render/Water.cpp sources)
     Buffer waterUbo;                     // WaterBlock, UBO binding 4 (water, splash, post)
     Texture ripples;                     // R32F height field, game::WaterSim
     uint64_t rippleVersion = 0;
@@ -442,9 +445,15 @@ public:
         const std::string waterVs = waterVertexSource(false), waterFs = waterFragmentSource(false);
         r.waterProgram = linkProgram(waterVs.c_str(), waterFs.c_str(), error);
         if (!r.waterProgram.get()) return false;
-        const std::string splashVs = splashVertexSource(false), splashFs = splashFragmentSource(false);
-        r.splashProgram = linkProgram(splashVs.c_str(), splashFs.c_str(), error);
-        if (!r.splashProgram.get()) return false;
+        const std::string splashVs = splashVertexSource(false), splatFs = splashSplatSource(false),
+                          screenVs = splashScreenVertexSource(false), blurFs = splashBlurSource(false),
+                          compositeFs = splashCompositeSource(false);
+        r.splashSplatProgram = linkProgram(splashVs.c_str(), splatFs.c_str(), error);
+        if (!r.splashSplatProgram.get()) return false;
+        r.splashBlurProgram = linkProgram(screenVs.c_str(), blurFs.c_str(), error);
+        if (!r.splashBlurProgram.get()) return false;
+        r.splashCompositeProgram = linkProgram(screenVs.c_str(), compositeFs.c_str(), error);
+        if (!r.splashCompositeProgram.get()) return false;
         r.waterUbo = newBuffer();
         glNamedBufferStorage(r.waterUbo.get(), sizeof(WaterBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
         r.splashVao = newVertexArray();
@@ -808,6 +817,16 @@ private:
         t.opaqueDepthFbo = newFramebuffer();
         glNamedFramebufferTexture(t.opaqueDepthFbo.get(), GL_DEPTH_ATTACHMENT, t.opaqueDepth.get(), 0);
         glNamedFramebufferDrawBuffer(t.opaqueDepthFbo.get(), GL_NONE);
+        for (int i = 0; i < 2; ++i) {
+            t.splash[i] = newTexture();
+            glTextureStorage2D(t.splash[i].get(), 1, GL_RG32F, vp.width, vp.height);
+            glTextureParameteri(t.splash[i].get(), GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTextureParameteri(t.splash[i].get(), GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTextureParameteri(t.splash[i].get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTextureParameteri(t.splash[i].get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            t.splashFbo[i] = newFramebuffer();
+            glNamedFramebufferTexture(t.splashFbo[i].get(), GL_COLOR_ATTACHMENT0, t.splash[i].get(), 0);
+        }
         const int bw = std::max(1, vp.width / 2), bh = std::max(1, vp.height / 2);
         t.filterBlur = newTexture();
         glTextureStorage2D(t.filterBlur.get(), std::min(6, 1 + int(std::log2(float(std::max(bw, bh))))), format, bw, bh);
@@ -1264,12 +1283,37 @@ private:
             if (!verts.empty()) {
                 glNamedBufferData(r.splashVbo.get(), GLsizeiptr(verts.size() * sizeof(SplashVertex)), verts.data(),
                                   GL_STREAM_DRAW);
-                glUseProgram(r.splashProgram.get());
+                // 1 splat: max-blend per-droplet depth/thickness, tested against the opaque depth copy (unit 6).
+                glDisable(GL_DEPTH_TEST);
+                const float empty[4] = {kSplashEmpty, 0.0f, 0.0f, 0.0f};
+                glClearNamedFramebufferfv(t.splashFbo[0].get(), GL_COLOR, 0, empty);
+                glBindFramebuffer(GL_FRAMEBUFFER, t.splashFbo[0].get());
+                glUseProgram(r.splashSplatProgram.get());
                 glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glBlendEquation(GL_MAX);
+                glBlendFunc(GL_ONE, GL_ONE);
                 glBindVertexArray(r.splashVao.get());
                 glDrawArrays(GL_TRIANGLES, 0, GLsizei(verts.size()));
+                glBlendEquation(GL_FUNC_ADD);
                 glDisable(GL_BLEND);
+                // 2 blur: horizontal into splash[1], vertical back into splash[0].
+                glUseProgram(r.splashBlurProgram.get());
+                glBindVertexArray(r.emptyVao.get());
+                for (int pass = 0; pass < 2; ++pass) {
+                    glBindFramebuffer(GL_FRAMEBUFFER, t.splashFbo[1 - pass].get());
+                    glBindTextureUnit(10, t.splash[pass].get());
+                    glUniform2f(0, pass == 0 ? 1.0f : 0.0f, pass == 0 ? 0.0f : 1.0f);
+                    glDrawArrays(GL_TRIANGLES, 0, 3);
+                }
+                // 3 composite: premultiplied liquid over the scene.
+                glBindFramebuffer(GL_FRAMEBUFFER, t.scene.get());
+                glBindTextureUnit(10, t.splash[0].get());
+                glUseProgram(r.splashCompositeProgram.get());
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                glDisable(GL_BLEND);
+                glEnable(GL_DEPTH_TEST);
             }
         }
         glDepthMask(GL_TRUE);

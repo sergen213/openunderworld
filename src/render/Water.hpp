@@ -84,13 +84,25 @@ struct UnderwaterRays {
 // Water surface shaders (same mesh vertex layout as the scene pass).
 std::string waterVertexSource(bool vulkan);
 std::string waterFragmentSource(bool vulkan);
-// Splash droplets: camera-facing quads expanded on the CPU (SplashVertex), soft disc in the fragment.
+// Splash droplets as liquid (screen-space fluid rendering, docs/RENDERING.md "Water"; technique and shaders adapted
+// from talvinckb/OpenGL-Water-Simulation, MIT). Camera-facing quads expanded on the CPU (SplashVertex), then:
+//  1 splat:     splash.vert + splash_splat.frag -> RG32F target cleared to (kSplashEmpty, 0), blend MAX (factors ONE),
+//               no depth attachment (the shader tests the opaque depth copy: GL unit 6 / VK set 0 binding 1).
+//  2 blur:      splash_screen.vert + splash_blur.frag, twice (dir (1,0) then (0,1); GL uniform location 0, VK push
+//               constant vec2), RG32F -> RG32F, no blending. Input: GL unit 10 / VK set 0 binding 1.
+//  3 composite: splash_screen.vert + splash_composite.frag into the scene colour, blend ONE, ONE_MINUS_SRC_ALPHA,
+//               no depth test. Input: GL unit 10 / VK set 0 binding 1.
+// All three read the WaterBlock prefix up to `ambient` (GL UBO binding 4 / VK set 0 binding 0); targets are render-size.
 struct SplashVertex {
     float pos[3], uv[2], alpha;
 };
+inline constexpr float kSplashEmpty = -1e20f;
 std::vector<SplashVertex> splashVertices(const Camera& camera, std::span<const WaterParticle> splashes);
 std::string splashVertexSource(bool vulkan);
-std::string splashFragmentSource(bool vulkan);
+std::string splashSplatSource(bool vulkan);
+std::string splashScreenVertexSource(bool vulkan);
+std::string splashBlurSource(bool vulkan);
+std::string splashCompositeSource(bool vulkan);
 // Post pass: declarations + `vec3 ouUnderwater(vec3 c, vec2 uv)` and `vec3 ouAtmosphere(vec3 c, vec2 uv)`
 // (shaders/atmosphere.glsl: height fog, sun shafts, precipitation). Both sample uDepth at uv themselves and return
 // `c` unchanged when their effect is off (Original output stays byte-identical).

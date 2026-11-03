@@ -24,8 +24,17 @@ const char* kWaterFrag =
 const char* kSplashVert =
 #include "splash.vert.inc"
     ;
-const char* kSplashFrag =
-#include "splash.frag.inc"
+const char* kSplashSplat =
+#include "splash_splat.frag.inc"
+    ;
+const char* kSplashScreen =
+#include "splash_screen.vert.inc"
+    ;
+const char* kSplashBlur =
+#include "splash_blur.frag.inc"
+    ;
+const char* kSplashComposite =
+#include "splash_composite.frag.inc"
     ;
 const char* kUnderwater =
 #include "underwater.glsl.inc"
@@ -326,7 +335,10 @@ std::vector<SplashVertex> splashVertices(const Camera& camera, std::span<const W
 }
 
 std::string splashVertexSource(bool vulkan) { return withVersion(kSplashVert, vulkan); }
-std::string splashFragmentSource(bool vulkan) { return withVersion(kSplashFrag, vulkan); }
+std::string splashSplatSource(bool vulkan) { return withVersion(kSplashSplat, vulkan); }
+std::string splashScreenVertexSource(bool vulkan) { return withVersion(kSplashScreen, vulkan); }
+std::string splashBlurSource(bool vulkan) { return withVersion(kSplashBlur, vulkan); }
+std::string splashCompositeSource(bool vulkan) { return withVersion(kSplashComposite, vulkan); }
 
 std::string underwaterPostSource(bool vulkan) {
     return expandIncludes(std::string(vulkan ? "#define VULKAN 1\n" : "") + kUnderwater + kAtmosphere + kFilter);
