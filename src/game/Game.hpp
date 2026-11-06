@@ -360,8 +360,16 @@ private:
     void startHurdleFollowUp(bool low); // the onto / over / far-side hang clip after the attach (or S958)
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
+    // A ledge (markup 1) to jump onto: segment point, hang side, and the jump query frame it is met at.
+    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; };
+    JumpTarget hangJumpTarget(int kind) const; // startHangJump's target; markup -1 = none
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge)
-    void launchHangJump();        // HangJump velocity / flight time from here onto the target (after the take-off clip)
+    // The first ledge whose hang root a jump query's arc meets: root launched from `from` at `v` a 30 Hz frame under
+    // gravity 5.72443 a frame^2, frames 1..`frames`, Lara facing `facing` into the ledge's wall (Player.cpp).
+    JumpTarget ledgeOnArc(vec3 from, vec3 v, float frames, vec2 facing) const;
+    // HangJump velocity / flight time from here onto the target (after the take-off clip); vz: the take-off vertical
+    // speed (units/s; 0 = the hang jump's by its clip)
+    void launchHangJump(float vz = 0);
     void assistJump();
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
     // root, yaw; poles: `para` = the parallel hang

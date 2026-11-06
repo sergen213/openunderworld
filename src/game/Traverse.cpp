@@ -132,8 +132,26 @@ bool Player::tryLadder(bool fromAir) {
     return false;
 }
 
+namespace {
+// Jumping up a ladder (tru.exe player chart, ladder group: jump with the stick up, T1871 / T1872 [O-data]): from the
+// top kJumpUpRung + 1 rungs (0x72B920's rung <= chart variable 195 = 2; [U] the LookaheadResult 642 they exclude),
+// with nothing within kJumpUpHeadroom over her (cond 0x20: variable 396 = 325 x 3.1605). With the
+// top clear (cond 0x28A: player +0xEDC == 2, two 0x4935F0 sweeps: up to the ladder top + 110.62 (+0x770), then 297
+// (+0x788) on over the top, both clear) ladder_jump_up_at_top leaps her off the top onto the floor up there, else
+// ladder_jump_up leaps with query q23 (80.15 up a 30 Hz frame, gravity 5.72443, lara.drm query table) onto the ledge its
+// arc meets, or straight up. Climbing off the top (T1817) needs the same clear top [O-data]; with it blocked, the stick
+// up on the top rung leans into the jump (ladder_idle_to_jump_up_prepare, the ladder_jump_up_prepare loop, released:
+// ladder_jump_up_prepare_to_idle) [I: which ladder-group request plays them is not decoded].
+constexpr int kJumpUpRung = 2;
+constexpr float kJumpUpHeadroom = 325.0f * 3.1605f, kTopOver = 297.0f, kLadderJumpVz = 80.15f;
+bool topClear(const collision::CollisionMesh& col, const collision::Markup& m, vec3 root, vec3 out) {
+    const float z = m.points[0].z + kRungSpacing;
+    return !col.raycast(root, {0, 0, 1}, std::max(z - root.z, 1.0f)) && !col.raycast(vec3(xy(root), z), -out, kTopOver);
+}
+} // namespace
+
 // On a ladder: rung to rung (ladder_climb_up / _down, one rung per clip, carried onto the rung as the exe's rung-align
-// anim target does), off the top / bottom rung onto the floor, jump back, let go.
+// anim target does), off the top / bottom rung onto the floor, jump up / back, let go.
 void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size()) { startFall(s_.vel); return; }
     const auto& m = col_.markup[size_t(s_.ledge)];
@@ -141,16 +159,46 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const std::string clip = s_.clip;
     if (clip == "ladder_attach_M" || clip == "ladder_attach_ground_bottom" || clip == "ladder_attach_ground_top" ||
         clip == "ladder_climb_up" || clip == "ladder_climb_down" || clip == "ladder_detach_ground_top" ||
-        clip == "ladder_detach_ground_bottom") {
+        clip == "ladder_detach_ground_bottom" || clip == "ladder_jump_up_at_top") {
         if (!warpStep(dt)) return;
-        if (clip.starts_with("ladder_detach")) {
-            s_.state = State::Idle;
+        if (clip.starts_with("ladder_detach") || clip == "ladder_jump_up_at_top") {
             s_.ledge = -1;
             s_.regrabCooldown = 0.3f;
+            if (clip == "ladder_jump_up_at_top" && !col_.groundProbe(s_.pos + vec3(0, 0, 50), 100)) { startFall(vec3(0)); return; }
+            s_.state = State::Idle;
             play("ng_idle", true);
             return;
         }
         play("ladder_idle", true);
+    }
+    const float climb = glm::dot(vec3(move, 0), -out);
+    const int r = rungAt(m, s_.pos.z);
+    const auto start = [&](std::string_view c, vec3 to, float yawTo) {
+        s_.climbFrom = s_.pos, s_.climbTo = to, s_.climbYawFrom = s_.yaw, s_.climbYawTo = yawTo;
+        play(c, false);
+    };
+    if (jumpPressed && climb > 0.5f) { // the stick up: jump up, else nothing (no jump back, T1868)
+        if (r > kJumpUpRung || col_.raycast(s_.pos, {0, 0, 1}, kJumpUpHeadroom)) return;
+        s_.regrabCooldown = 0.3f;
+        if (topClear(col_, m, s_.pos, out)) { // onto the floor at the top: the clip's root motion, its end on the floor
+            vec3 to = s_.pos + rotYaw(s_.yaw, clipMove(anims_, "ladder_jump_up_at_top"));
+            if (const auto g = col_.groundProbe(vec3(xy(to), m.points[0].z + 300.0f), 600.0f)) to.z = g->point.z;
+            start("ladder_jump_up_at_top", to, s_.yaw);
+            return;
+        }
+        const JumpTarget j = ledgeOnArc(s_.pos, vec3(0, 0, kLadderJumpVz), 40.0f, xy(-out));
+        s_.fallStartZ = s_.pos.z;
+        play("ladder_jump_up", false);
+        if (j.markup >= 0) {
+            s_.ledge = j.markup, s_.ledgeSeg = j.seg, s_.ledgeT = j.t, s_.ledgeSide = j.side, s_.polePara = false;
+            s_.state = State::HangJump;
+            launchHangJump(kLadderJumpVz * 30.0f);
+            return;
+        }
+        s_.ledge = -1;
+        s_.state = State::Jump;
+        s_.vel = vec3(0, 0, kLadderJumpVz * 30.0f);
+        return;
     }
     if (jumpPressed) { // ladder_jump_back turns her away from the ladder; the leap's speeds are [I]
         s_.ledge = -1;
@@ -167,12 +215,18 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         play("ladder_detach_drop", false);
         return;
     }
-    const float climb = glm::dot(vec3(move, 0), -out);
-    const int r = rungAt(m, s_.pos.z);
-    const auto start = [&](std::string_view c, vec3 to, float yawTo) {
-        s_.climbFrom = s_.pos, s_.climbTo = to, s_.climbYawFrom = s_.yaw, s_.climbYawTo = yawTo;
-        play(c, false);
-    };
+    const bool leaning = clip == "ladder_idle_to_jump_up_prepare" || clip == "ladder_jump_up_prepare";
+    if (climb > 0.5f && r == 0 && !topClear(col_, m, s_.pos, out)) { // blocked top: lean into the jump
+        if (!leaning) play("ladder_idle_to_jump_up_prepare", false);
+        else if (clip == "ladder_idle_to_jump_up_prepare" && clipDone()) play("ladder_jump_up_prepare", true);
+        advanceClip(dt);
+        return;
+    }
+    if (leaning || (clip == "ladder_jump_up_prepare_to_idle" && !clipDone())) {
+        if (leaning) play("ladder_jump_up_prepare_to_idle", false);
+        advanceClip(dt);
+        return;
+    }
     if (climb > 0.5f) {
         if (r > 0) start("ladder_climb_up", rungPos(m, r - 1, out), s_.yaw);
         else start("ladder_detach_ground_top", s_.pos + rotYaw(s_.yaw, clipMove(anims_, "ladder_detach_ground_top")), s_.yaw);

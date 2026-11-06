@@ -129,6 +129,8 @@ bool openBelow(const collision::CollisionMesh& col, const collision::Markup& m, 
 
 bool swimSprintClip(std::string_view c) { return c == "swim_surface_sprint_forward" || c == "swim_submerged_sprint"; }
 bool swimExhaustedClip(std::string_view c) { return c == "swim_surface_exhausted" || c == "swim_submerged_exhausted"; }
+// Take-off clips of hang leaps whose root motion (and turn) plays before the launch.
+bool hangTakeOff(std::string_view c) { return c == "ledgeb_jump_back" || c == "ledgeb_jump_right" || c == "ledgeb_jump_right_from_antic"; }
 
 } // namespace
 
@@ -987,15 +989,15 @@ bool Player::hurdleTick(vec2 move, float dt) {
 // back, the take-off clip plays first with its root motion (tru.exe under Wine: ledgeb_jump_right / _back carry her
 // 122 aside + 107 up / 62 out + 32 up and turn her before she leaves); launchHangJump() then aims the flight.
 // (Pole flings: Player::poleFling.)
-bool Player::startHangJump(int kind) {
+Player::JumpTarget Player::hangJumpTarget(int kind) const {
     const vec3 hands = s_.pos + toWorld(anims_.hangHandOffset);
     const vec2 f = xy(forward()), r(std::sin(s_.yaw), -std::cos(s_.yaw));
     const vec2 newF = kind == 2 ? -f : f;
     const vec3 ideal = hands + (kind == 0   ? vec3(0, 0, 400)
                                 : kind == 2 ? vec3(-f * 700.0f, -100)
                                             : vec3(r * (400.0f * float(kind)), 0));
-    int bestLi = -1, bestSeg = 0;
-    float bestT = 0, bestSide = 1, bestDist = 1e30f;
+    JumpTarget best;
+    float bestDist = 1e30f;
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
         if (m.type != 1 || int(li) == s_.ledge) continue; // along the same one: shimmy
@@ -1014,12 +1016,16 @@ bool Player::startHangJump(int kind) {
             default: ok = fw <= -200 && fw >= -t_.hangJumpBack && std::abs(lat) <= 200 && up >= -700 && up <= 200; break;
             }
             const float score = glm::distance(pointOn(m, si, t), ideal);
-            if (ok && score < bestDist && openBelow(col_, m, si, t, side))
-                bestDist = score, bestLi = int(li), bestSeg = si, bestT = t, bestSide = side;
+            if (ok && score < bestDist && openBelow(col_, m, si, t, side)) bestDist = score, best = {int(li), si, t, side};
         }
     }
-    if (bestLi < 0) return false;
-    s_.ledge = bestLi, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide, s_.polePara = false;
+    return best;
+}
+
+bool Player::startHangJump(int kind) {
+    const JumpTarget j = hangJumpTarget(kind);
+    if (j.markup < 0) return false;
+    s_.ledge = j.markup, s_.ledgeSeg = j.seg, s_.ledgeT = j.t, s_.ledgeSide = j.side, s_.polePara = false;
     s_.state = State::HangJump;
     s_.fallStartZ = s_.pos.z;
     // Left: ledgeb_jump_right mirrored (lara.drm request 979 has the mirror bit, 1009 is the same clip unmirrored) [O].
@@ -1029,17 +1035,54 @@ bool Player::startHangJump(int kind) {
     return true;
 }
 
+// Jump queries meeting ledges (ladder q23, DICE q31 / q28 / q29): tru.exe 0x710100 keeps the first markup box the arc
+// enters (frames 1..40), each target type offset by the query's +0x8C [O]; for type 1 those offsets equal the start
+// offsets, so the root itself meets the ledge's box [I: taken as within kArcRadius (+0x6C, 25) of the ledge's hang root
+// height, along the ledge within its ends + 25, and within kArcOut of it out from the wall — the box extents are not
+// decoded].
+Player::JumpTarget Player::ledgeOnArc(vec3 from, vec3 v, float frames, vec2 facing) const {
+    constexpr float kG = 5.72443f, kArcRadius = 25.0f, kArcOut = 200.0f;
+    JumpTarget best;
+    best.frames = 1e9f;
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 1 || int(li) == s_.ledge) continue;
+        for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
+            const float len = segLen(m, si);
+            if (len < 1e-2f) continue;
+            const vec2 dir = segDir(m, si), n(-dir.y, dir.x);
+            if (std::abs(glm::dot(n, facing)) < 0.7f) continue; // her heading into its wall
+            const float side = glm::dot(n, -facing) > 0 ? 1.0f : -1.0f;
+            const vec3 hang0 = attachPose(int(li), si, 0, side).first; // the hang root at the segment start
+            for (float f = 1; f <= frames && f < best.frames; f += 0.25f) {
+                const vec3 p = from + v * f - vec3(0, 0, 0.5f * kG * f * f), d = p - hang0;
+                const float along = glm::dot(xy(d), dir);
+                const float t = std::clamp(along, 0.0f, len);
+                const vec3 e = d - vec3(dir * t, (m.points[size_t(si) + 1].z - m.points[size_t(si)].z) * t / len);
+                if (std::abs(along - t) > kArcRadius || std::abs(e.z) > kArcRadius || glm::length(xy(e)) > kArcOut) continue;
+                if (openBelow(col_, m, si, t, side)) best = {int(li), si, t, side, f};
+                break;
+            }
+        }
+    }
+    if (best.markup < 0) best.frames = 0;
+    return best;
+}
+
 // The flight onto the HangJump target, as tru.exe's jump-to-target solver 0x73EDC0 aims it: v = (target - pos -
 // g t^2 / 2) / t, the root arriving exactly on the target's hang pose after t. The take-off vertical speed is the jump
 // query's (q10 up 75.85, q7 / q8 sideways 34.77, q9 back 42.54 a frame) and t when that rise and fall reaches the
 // target's height (rising for a target above, else falling) [I: tru.exe times it by the query arc's first box hit];
 // a target above that arc rises hangJumpApex above the higher end instead [I].
-void Player::launchHangJump() {
+void Player::launchHangJump(float vz) {
     const vec3 delta = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide).first - s_.pos;
     const float g = t_.gravity;
-    const float vq = s_.clip == "ledgeb_jump_up" ? t_.hangJumpUpVz : s_.clip == "ledgeb_jump_back" ? t_.hangJumpBackVz
-                     : s_.clip == "ledgeb_jump_right"                ? t_.hangJumpSideVz : 0.0f;
-    float vz = vq, time = -1;
+    const float vq = vz > 0                         ? vz
+                     : s_.clip == "ledgeb_jump_up"   ? t_.hangJumpUpVz
+                     : s_.clip == "ledgeb_jump_back" ? t_.hangJumpBackVz
+                     : s_.clip.starts_with("ledgeb_jump_right") ? t_.hangJumpSideVz : 0.0f;
+    float time = -1;
+    vz = vq;
     if (const float disc = vq * vq - 2 * g * delta.z; vq > 0 && disc >= 0)
         time = (delta.z > 0 ? vq - std::sqrt(disc) : vq + std::sqrt(disc)) / g;
     if (time <= 1e-3f) {
@@ -1554,7 +1597,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Jump:
     case State::Fall:
         // A free leap off a hang: the take-off clip carries her (root motion, turn), then the stored velocity launches.
-        if (s_.state == State::Jump && (s_.clip == "ledgeb_jump_back" || s_.clip == "ledgeb_jump_right") && !clipDone()) {
+        if (s_.state == State::Jump && hangTakeOff(s_.clip) && !clipDone()) {
             s_.pos += advanceRoot(dt);
             break;
         }
@@ -1573,7 +1616,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         break;
     case State::HangJump: {
         if (s_.ledge < 0) { startFall(s_.vel); break; } // target lost (loaded mid-flight)
-        const bool takeOff = s_.clip == "ledgeb_jump_back" || s_.clip == "ledgeb_jump_right";
+        const bool takeOff = hangTakeOff(s_.clip);
         if (takeOff && s_.vel == vec3(0)) { // the take-off clip's root motion (and turn), then the launch
             s_.pos += advanceRoot(dt);
             if (clipDone()) launchHangJump();
@@ -1621,9 +1664,26 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             startFall(vec3(0));
             break;
         }
+        // Leaning into a jump while the stick points that way (lara.drm hang group: S435 up with the up-jump query q10,
+        // S449 / S450 sideways at the ledge's end (LookaheadResult 642) with q7 / q8, S436 / S457 back with q9 / q110 [O-data]):
+        // ledgeb_idle_to_jump_<way>_antic, the ledgeb_jump_<way>_antic loop, released ledgeb_jump_<way>_antic_to_idle
+        // (left: the right ones mirrored). ledgeb_jump_back starts in the back lean's pose and ledgeb_jump_right_from_antic
+        // in the side one's [O: clip poses]. tru.exe under Wine (l3_main_bedroom ledge 973, a climbable top): the stick held
+        // up keeps her in S434 (no climb), right in S457 -> S449, until released (back to S444) [O]; which clip each
+        // lean state's request plays is [I: by name] (the group's requests are not decoded).
+        const float fw = glm::dot(move, xy(forward()));
+        const auto& lm = col_.markup[size_t(s_.ledge)];
+        const float along = glm::dot(right, segDir(lm, s_.ledgeSeg)) * lateral; // > 0: toward the polyline's end
+        const bool atEnd = along > 0 ? size_t(s_.ledgeSeg) + 2 >= lm.points.size() && s_.ledgeT >= segLen(lm, s_.ledgeSeg) - 1.0f
+                                     : s_.ledgeSeg == 0 && s_.ledgeT <= 1.0f;
+        const std::string_view way = std::abs(lateral) > 0.5f ? (atEnd ? "right" : "")
+                                     : fw < -0.5f           ? "back"
+                                     : fw > 0.5f            ? "up" : "";
+        const bool leaning = s_.clip.starts_with("ledgeb_idle_to_jump_") ||
+                             (s_.clip.starts_with("ledgeb_jump_") && s_.clip.ends_with("_antic") && !s_.clip.ends_with("from_antic"));
         if (jumpPressed) {
-            const float fw = glm::dot(move, xy(forward()));
             const int kind = std::abs(lateral) > 0.5f ? (lateral > 0 ? 1 : -1) : fw < -0.5f ? 2 : 0;
+            const bool fromLean = leaning && kind != 0 && kind != 2; // the side lean's own take-off
             const auto climb = [&] {
                 s_.state = State::ClimbUp;
                 play("ledgeb_climbup_fast", false);
@@ -1637,20 +1697,39 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 }
             };
             if (kind == 0 && canClimbUp()) climb();
-            else if (startHangJump(kind)) {}
-            else if (kind != 0) { // nothing there: a free leap, launched when the take-off clip ends (State::Jump)
+            else if (startHangJump(kind)) {
+                if (fromLean) play("ledgeb_jump_right_from_antic", false, 1, kind == -1);
+            } else if (kind != 0) { // nothing there: a free leap, launched when the take-off clip ends (State::Jump)
                 const vec2 dir = kind == 2 ? -xy(forward()) : glm::vec2(right * float(kind));
                 s_.vel = vec3(dir * (kind == 2 ? t_.hangLeapBack : t_.hangLeapSide), t_.hangLeapVz);
                 s_.ledge = -1;
                 s_.regrabCooldown = 0.55f; // take-off clip (0.23 s) + 0.3
                 s_.state = State::Jump;
                 s_.fallStartZ = s_.pos.z;
-                play(kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false, 1, kind == -1);
+                play(kind == 2 ? "ledgeb_jump_back" : fromLean ? "ledgeb_jump_right_from_antic" : "ledgeb_jump_right", false, 1, kind == -1);
             } else climb();
             break;
         }
-        if (s_.state == State::Hang && (s_.clip.starts_with("ledgeb_attach") || s_.clip.starts_with("ledgeb_bad_attach")) && !clipDone()) {
+        if (s_.state == State::Hang && (s_.clip.starts_with("ledgeb_attach") || s_.clip.starts_with("ledgeb_bad_attach") ||
+                                        s_.clip.ends_with("_antic_to_idle")) && !clipDone()) {
             advanceClip(dt);
+            break;
+        }
+        if (!way.empty()) {
+            const std::string in = "ledgeb_idle_to_jump_" + std::string(way) + "_antic", loop = "ledgeb_jump_" + std::string(way) + "_antic";
+            const bool mirror = way == "right" && lateral < 0;
+            s_.state = State::Hang;
+            if (s_.clip == in && clipDone()) play(loop, true, 1, mirror);
+            else if (s_.clip != in && s_.clip != loop) play(in, false, 1, mirror);
+            advanceClip(dt);
+            placeOnLedge();
+            break;
+        }
+        if (leaning) { // released: back to the idle hang
+            const std::string w = s_.clip.substr(s_.clip.starts_with("ledgeb_idle_to_jump_") ? 20 : 12);
+            play("ledgeb_jump_" + w.substr(0, w.find('_')) + "_antic_to_idle", false, 1, s_.mirror);
+            advanceClip(dt);
+            placeOnLedge();
             break;
         }
         if (std::abs(lateral) > 0.3f) {
@@ -1663,8 +1742,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         const vec3 d = toWorld(advanceClip(dt));
         if (s_.state == State::Shimmy) {
             // Move along the polyline by the root motion's component along the ledge; its ends stop the shimmy.
-            const auto& m = col_.markup[size_t(s_.ledge)];
-            moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(d), segDir(m, s_.ledgeSeg)));
+            moveAlong(lm, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(d), segDir(lm, s_.ledgeSeg)));
         }
         placeOnLedge();
         break;

@@ -905,9 +905,15 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   300 [I]) to where the stance's attach clip ends — ground: its root motion from her feet (`DICE_B_ground_attach`
   268 forward, 185 up; `DICE_L_ground_attach` 134, 317), air: where she is (`DICE_<L/LW/R/Rw>_air_attach_mid` have
   none) — and that clip carries her onto it as a hold-to-hold step does, then its idle.
-- Top out: lara.drm has no DICE top-out clip (anim-list survey: no `DICE_*climb*` / `*top*`) [O]; no hold above but a ledge (markup 1) along this rock within 200 horizontally and −50..450 above her hands
-  (root + 300) = `DICE_<s>_jump_up` and a targeted jump onto it (as `ledgeb_jump_up`: `ledgeb_attach_U`, then the
-  ledge's climb up). l2_cliffclimb's wall ends that way: hold 5 (z 2480) → ledge 45 (z 2891). Foot: no hold below but a
+- Top out / jumps to ledges: lara.drm has no DICE top-out clip (anim-list survey: no `DICE_*climb*` / `*top*`) [O].
+  The jump queries' target type 1 offsets (+0x8C) equal their start offsets, so q31 (up) and q28 / q29 (sideways) meet
+  ledges (markup 1) as they meet holds [O-data]; ours (`Player::ledgeOnArc`) takes the first ledge whose hang root her
+  root's arc passes within 25 vertically, along the ledge within its ends + 25 and within 200 out from the wall [I: the
+  box extents], up ones not more than one hold step below her [I]. With no hold that way for the move query but such a
+  ledge (or a far hold) for the jump query, the stick leans (`DICE_<s>_antic_<dir>`) and jump leaps
+  (`DICE_<s>_jump_up` / `_right` / `_left`, take-off 74.12 / 34.77 up a frame) onto it, `ledgeb_attach_U` / `_S`, the
+  hang. The jump goes on the button only (chart S601..S605); with no target at all up + jump leaps straight up with
+  q31's launch. l2_cliffclimb's wall ends that way: hold 5 (z 2480) → ledge 45 (z 2891). Foot: no hold below but a
   floor where `DICE_<L/LW/R>_step_off_ground` ends (226 back, 317 down; B and RW have none) = that clip onto it, Idle.
   Free leaps (no jump target) use the queries' launch velocities (above); drop = its `drop` clip and fall. Cooldown
   0.4 s before re-attaching.
@@ -1041,6 +1047,22 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   turns her round onto rung 0). Off rung 0 upward `ladder_detach_ground_top` (216.4 forward, 575.4 up), off the lowest
   downward `ladder_detach_ground_bottom` (95 back, half turn), Space = `ladder_jump_back` (half turn; out 500, up 900
   [I]), Ctrl = `ladder_detach_drop`.
+- Ladder jump up [O-data, player chart ladder group T1871 / T1872 / T1817]: jump with the stick up, only on the top
+  three rungs (0x72B920's rung ≤ chart variable 195 = 2; [U] the LookaheadResult 642 the chart also excludes) and
+  with nothing within 1027 over her (cond 0x20, variable 396 = 325 × 3.1605). Top clear (cond 0x28A, player +0xEDC
+  == 2: sweeps from her root up to 110.62 over the ladder top, then 297 (+0x788) on over it): `ladder_jump_up_at_top`
+  (910 up, 215 forward of root motion; ours ends on the floor there, or falls) — else `ladder_jump_up` with query q23
+  (80.15 up a 30 Hz frame) onto the ledge its arc meets (as the DICE jumps above; `ledgeb_attach_U`), or straight up.
+  Climbing off the top needs the clear top too; with it blocked the stick up on rung 0 leans
+  (`ladder_idle_to_jump_up_prepare`, the `ladder_jump_up_prepare` loop, released `_prepare_to_idle`) [I: which request
+  of the ladder group plays them is not decoded]. Real ladders are few (7 in 97 units); none in the main game has a
+  ledge above a blocked top [O-data survey].
+- Hang leans [O: tru.exe under Wine, l3_main_bedroom ledge 973, chart states read at *(player+0xF10)+0x510]: the stick
+  held up keeps her in S434 (no climb, the top climbable), back S456, right at the ledge's end S457 → S449, until
+  released (S444, the idle). These states run the hang jump queries (q10 up, q7 / q8 sides, q9 back). Ours plays
+  `ledgeb_idle_to_jump_<up|right|back>_antic`, its `ledgeb_jump_<…>_antic` loop, and `_antic_to_idle` on release
+  (left: right mirrored); jump from the side lean takes off with `ledgeb_jump_right_from_antic` (it starts in the
+  lean's pose, as `ledgeb_jump_back` starts in the back lean's) [I: clip by name, the group's requests are not decoded].
 - Pillars: attach facing the shaft from the floor (`pillar_attach_ground`, **199** up the shaft: player data short
   +0x7EE read by the `PillarAttachGroundAnimTarget` 0x753F80 [O]) or the air (`pillar_attach_M`); the root on the axis
   (tru.exe under Wine, l4_temple 1189 / 1194: Lara's instance stays on it; the clips hold her body round the shaft) [O].

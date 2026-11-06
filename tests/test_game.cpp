@@ -1860,6 +1860,39 @@ TEST(GameReal, HangLeapsMatchTruTraces) {
     EXPECT_NEAR(l.v.z, 34.77f, 0.01f);
 }
 
+// Leaning into hang jumps (l3_main_bedroom ledge 973). tru.exe under Wine: the stick held up keeps her in the up-lean
+// state S434 (no climb, though the top is climbable), back in S456, right at the ledge's end S457 -> S449, until released.
+// Ours: ledgeb_idle_to_jump_<way>_antic, its loop while held, _antic_to_idle when released; jump from the up lean climbs.
+TEST(GameReal, HangJumpLeans) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l3_main_bedroom", {{-8484.3f, -4330, 244}, glm::radians(-90.0f)});
+    const auto& s = w.player().state();
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 120 && !(s.state == State::Hang && s.clip == "ledgeb_idle"); ++i) w.tick(i == 5 ? jump : Actions{});
+    ASSERT_EQ(s.clip, "ledgeb_idle");
+    w.restore(s, s.yaw, -0.25f); // camera behind her
+    const vec3 hang = s.pos;
+    for (const auto& [stick, way] : {std::pair{forward(), "up"}, std::pair{forward(-1), "back"}}) {
+        w.tick(stick);
+        EXPECT_EQ(s.clip, "ledgeb_idle_to_jump_" + std::string(way) + "_antic");
+        for (int i = 0; i < 90; ++i) w.tick(stick);
+        EXPECT_EQ(s.clip, "ledgeb_jump_" + std::string(way) + "_antic") << "the lean loops while held";
+        EXPECT_EQ(s.state, State::Hang);
+        EXPECT_LT(glm::distance(s.pos, hang), 1.0f);
+        w.tick({});
+        EXPECT_EQ(s.clip, "ledgeb_jump_" + std::string(way) + "_antic_to_idle");
+        for (int i = 0; i < 60; ++i) w.tick({});
+        EXPECT_EQ(s.clip, "ledgeb_idle");
+    }
+    for (int i = 0; i < 60; ++i) w.tick(forward());
+    Actions upJump = forward();
+    upJump.jump = true;
+    w.tick(upJump);
+    EXPECT_EQ(s.state, State::ClimbUp) << "the climbable top: jump from the up lean climbs";
+}
+
 // l4_traprooms poles 1336 and 1337 (markup 4, z 7133, 1264 apart in y, floor 6358 beside them): a standing
 // jump towards 1336 from 345 short grabs it; swing, fling to 1337.
 TEST(GameReal, TrapRoomsPoleFling) {
@@ -2142,7 +2175,8 @@ std::unique_ptr<game::World> climbWorld(CollisionMesh m, vec3 spawn) {
 } // namespace
 
 // Pushing into the rock attaches at a hold (root at point 0 - 158.025, tru.exe 0x707C60); each push up steps one hold
-// with DICE_B_to_B_Up's root motion; no hold above but the ledge in reach: DICE_B_jump_up onto it, hang, climb up.
+// with DICE_B_to_B_Up's root motion; no hold above but the ledge on the up-jump query's arc (q31): pushing up leans into
+// the jump (DICE_B_antic_Up), jump leaps (DICE_B_jump_up) onto it, hang, climb up.
 TEST(GameReal, ClimbAttachClimbUpTopOut) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     auto w = climbWorld(climbMesh(true), {300, 0, 0});
@@ -2160,12 +2194,20 @@ TEST(GameReal, ClimbAttachClimbUpTopOut) {
     EXPECT_TRUE(up);
     EXPECT_NEAR(w->player().state().pos.z, z0 + 158.0f, 1.0f) << "one hold up";
     EXPECT_NEAR(w->player().state().pos.x, 380.0f, 1e-2f);
-    bool jumpUp = false;
-    for (int i = 0; i < 1500 && w->player().state().state != State::Hang; ++i) {
+    bool lean = false;
+    for (int i = 0; i < 400 && !lean; ++i) {
         w->tick(forward());
-        jumpUp |= w->player().state().clip == "DICE_B_jump_up";
+        lean = w->player().state().clip == "DICE_B_antic_Up";
     }
-    EXPECT_TRUE(jumpUp);
+    ASSERT_TRUE(lean) << "no hold above, the ledge in the jump's reach: the lean";
+    for (int i = 0; i < 30; ++i) w->tick(forward());
+    EXPECT_EQ(w->player().state().state, State::Climb) << "no jump without the button";
+    Actions upJump = forward();
+    upJump.jump = true;
+    w->tick(upJump);
+    EXPECT_EQ(w->player().state().clip, "DICE_B_jump_up");
+    EXPECT_EQ(w->player().state().state, State::HangJump);
+    for (int i = 0; i < 300 && w->player().state().state != State::Hang; ++i) w->tick({});
     ASSERT_EQ(w->player().state().state, State::Hang);
     for (int i = 0; i < 60; ++i) w->tick({}); // ledgeb_attach_U
     Actions jump;
@@ -2293,7 +2335,8 @@ TEST(GameReal, CliffclimbStances) {
             const vec3 n = s.climbNormal, right = glm::normalize(glm::cross(-n, vec3(0, 0, 1)));
             a.move = glm::normalize(vec2(glm::dot(d, right), d.z));
         } else {
-            a.move = {0, 1}; // up from the last hold: the ledge
+            a.move = {0, 1}; // up from the last hold: the lean toward ledge 45, then the jump
+            a.jump = s.clip == "DICE_B_antic_Up";
         }
         w.tick(a);
         if (s.climbHold != route.back() && s.climbHold >= 0) route.push_back(s.climbHold);
@@ -2365,6 +2408,7 @@ TEST(GameReal, CliffclimbIndependentOfRenderRate) {
                         a.move = glm::normalize(vec2(glm::dot(d, right), d.z));
                     } else {
                         a.move = {0, 1};
+                        a.jump = s.clip == "DICE_B_antic_Up";
                     }
                 }
                 w.tick(a);
@@ -2952,6 +2996,34 @@ TEST(GameReal, LadderRungsClimbOffTop) {
     EXPECT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 1200.0f, 1.0f);
     EXPECT_NEAR(s.pos.x, 400 - 79 - 110.619f + 216.4f, 1.0f);
+}
+
+// Ladder jump up (chart T1871, q23 80.15 up a frame): the top blocked by the wall going on up (the 297 sweep over the top
+// hits it), a ledge 500 over the top: on the top rung the stick up leans (ladder_idle_to_jump_up_prepare) instead of
+// climbing off, jump leaps up the wall onto the ledge (ladder_jump_up, ledgeb_attach_U).
+TEST(GameReal, LadderJumpUpToLedge) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 400, 2000, 0);
+    addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 3000}, {400, -2000, 3000}); // the wall, facing -X
+    m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}});
+    m.markup.push_back({1, 2, {{400, -1000, 1700}, {400, 1000, 1700}}});
+    auto w = climbWorld(std::move(m), {300, 0, 0});
+    const auto& s = w->player().state();
+    w->tick(forward());
+    ASSERT_EQ(s.state, State::Ladder);
+    for (int i = 0; i < 900 && s.clip.find("prepare") == std::string::npos; ++i) w->tick(forward());
+    EXPECT_EQ(s.state, State::Ladder) << "blocked top: no climbing off";
+    EXPECT_NE(s.clip.find("jump_up_prepare"), std::string::npos);
+    Actions upJump = forward();
+    upJump.jump = true;
+    w->tick(upJump);
+    EXPECT_EQ(s.clip, "ladder_jump_up");
+    EXPECT_EQ(s.state, State::HangJump);
+    for (int i = 0; i < 120 && s.state == State::HangJump; ++i) w->tick({});
+    EXPECT_EQ(s.state, State::Hang);
+    EXPECT_EQ(s.clip, "ledgeb_attach_U");
+    EXPECT_EQ(w->collision().markup[size_t(s.ledge)].id, 2);
 }
 
 // Pillar (markup 15, two points): from the floor pillar_attach_ground puts her 199 up the shaft (player data +0x7EE),

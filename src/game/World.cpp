@@ -157,6 +157,10 @@ const std::vector<std::string_view> kLaraClipNames = {
     "bbeam_walk", "bbeam_idle", "bbeam_walk_attach", "bbeam_jumpland", "bbeam_walk_turn180", "drop_to_ledgeb",
     "bbeam_unbalance_walk_left", "bbeam_unbalance_walk_right", "bbeam_idle_wobble_fwd", // off balance (Player::beam)
     "ledgeb_jump_up", "ledgeb_jump_back", "ledgeb_jump_right", "ledgeb_attach_U", "ledgeb_attach_S", "ledgeb_attach_F",
+    // leaning into a hang jump (Player.cpp State::Hang)
+    "ledgeb_idle_to_jump_up_antic", "ledgeb_jump_up_antic", "ledgeb_jump_up_antic_to_idle", "ledgeb_idle_to_jump_right_antic",
+    "ledgeb_jump_right_antic", "ledgeb_jump_right_antic_to_idle", "ledgeb_jump_right_from_antic",
+    "ledgeb_idle_to_jump_back_antic", "ledgeb_jump_back_antic", "ledgeb_jump_back_antic_to_idle",
     "HPole_idleHangPerp", "Hpole_perp_attach_M", "HPole_StartSwing", "HPole_swing", "Hpole_swingstopA", "hpole_perp_fling",
     // poles (Player::pole): parallel hang, hand over hand, turns, swing stops / reverse, drops
     "hpole_IdleHangPara", "Hpole_para_attach_S", "Hpole_PerptoPara", "Hpole_ParatoPerp", "Hpole_Perpturn180",
@@ -258,6 +262,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     // ladders / pillars / perches (Traverse.cpp)
     "ladder_attach_M", "ladder_attach_ground_bottom", "ladder_attach_ground_top", "ladder_idle", "ladder_climb_up",
     "ladder_climb_down", "ladder_detach_ground_top", "ladder_detach_ground_bottom", "ladder_detach_drop", "ladder_jump_back",
+    "ladder_jump_up", "ladder_jump_up_at_top", "ladder_idle_to_jump_up_prepare", "ladder_jump_up_prepare",
+    "ladder_jump_up_prepare_to_idle",
     "pillar_attach_M", "pillar_attach_ground", "pillar_attach_perch", "pillar_idle", "pillar_climb_up", "pillar_climb_right",
     "pillar_slide_down_start", "pillar_slide_down", "pillar_slide_down_stop", "pillar_detach_perch", "pillar_detach_ground",
     "pillar_detach_drop", "pillar_jump_back", "pillar_jump_forward", "pillar_jump_right", "pillar_jump_back_45R", "perch_attach_air", "perch_attach_ground", "perch_idle", "perch_jump_forward",

@@ -302,19 +302,33 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
         }
         return std::pair{best, bestT};
     };
-    // DICE jump target that way (verb 0 up, 1 right, 3 left): q31 / q28 / q29.
+    // DICE jump target that way (verb 0 up, 1 right, 3 left): q31 / q28 / q29. Their target type 1 offsets (+0x8C)
+    // equal their start offsets, so ledges are met by her root's arc as holds are (Player::ledgeOnArc); 0x710100 keeps
+    // the first one met.
+    struct Target { int32_t hold = -1; JumpTarget ledge; float frames = 0; bool any() const { return hold >= 0 || ledge.markup >= 0; } };
     const auto jumpTarget = [&](size_t way) {
-        if (way == 2) return std::pair{-1, 0.0f};
+        Target r;
+        if (way == 2) return r;
         const float side = way == 1 ? 1.0f : way == 3 ? -1.0f : 0.0f;
         const vec2 v = way == 0 ? vec2(0, kJumpUp) : vec2(side * kJumpSide, kJumpSideUp);
         const vec3 start = here + n * kJumpOut;
-        return firstHold(v, kJumpGravity, 1.0f, kJumpFrames, kJumpRadius, [&](vec3 d) {
+        const auto sideways = [&](vec3 to) { // q28 / q29: beyond 410 horizontally, within 120 degrees
+            const vec2 h = xy(to - start);
+            return glm::length(h) > kJumpSideMin && glm::dot(glm::normalize(h), xy(right) * side) >= kJumpSideCone;
+        };
+        const auto [hold, frames] = firstHold(v, kJumpGravity, 1.0f, kJumpFrames, kJumpRadius, [&](vec3 d) {
             // q31: 20 horizontally, 180 degrees (the root launches 63 off the rock: always met); its arc comes back down
             // past the holds below, which a jump up does not catch [I: 0x6FC6B0's direction test, not traced].
-            if (way == 0) return d.z > 0;
-            const vec2 h = xy(here + d - start);
-            return glm::length(h) > kJumpSideMin && glm::dot(glm::normalize(h), xy(right) * side) >= kJumpSideCone;
+            return way == 0 ? d.z > 0 : sideways(here + d);
         });
+        JumpTarget l = ledgeOnArc(here, right * v.x + vec3(0, 0, v.y), kJumpFrames, xy(-n));
+        if (l.markup >= 0) { // up: not below one hold step under her (the arc's fall would meet any) [I]
+            const vec3 to = attachPose(l.markup, l.seg, l.t, l.side).first;
+            if (way == 0 ? to.z < here.z - 158.0f : !sideways(to)) l = {};
+        }
+        if (hold >= 0 && (l.markup < 0 || frames <= l.frames)) r.hold = hold, r.frames = frames;
+        else if (l.markup >= 0) r.ledge = l, r.frames = l.frames;
+        return r;
     };
     // q30 (jump with the stick neutral or down): 50.57 out from the rock + 34.77 up a frame, gravity 5.72443, frames
     // 1..40, to a hold on rock facing back at her (in 3D: the arc within half the hold's extent + the radius of it).
@@ -358,19 +372,29 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
     // Jump (tru.exe player chart, hold idle S571 / lean S583..S587 on the jump button): the stick's quadrant picks the
     // jump query — up q31, right q29, left q28, neutral or down q30.
     if (jumpPressed && held && verb != 2) {
-        if (const auto [target, frames] = jumpTarget(verb); target >= 0) {
-            jumpTo(target, frames, stanceClip(stance, "jump_" + std::string(kSide[verb])));
+        const std::string launch(stanceClip(stance, "jump_" + std::string(kSide[verb])));
+        if (const Target j = jumpTarget(verb); j.hold >= 0) {
+            jumpTo(j.hold, j.frames, launch);
             return;
-        }
-        if (verb != 0) { // nothing that way: the leap still goes, q28 / q29's launch (63.21 sideways, 34.77 up a frame)
+        } else if (j.ledge.markup >= 0) { // onto a ledge: the launch clip, the flight (HangJump), ledgeb_attach_U / _S
+            s_.ledge = j.ledge.markup, s_.ledgeSeg = j.ledge.seg, s_.ledgeT = j.ledge.t, s_.ledgeSide = j.ledge.side;
+            s_.polePara = false;
             s_.climbHold = -1;
-            s_.state = State::Jump;
-            s_.vel = (right * (verb == 1 ? kJumpSide : -kJumpSide) + vec3(0, 0, kJumpSideUp)) * 30.0f;
+            s_.state = State::HangJump;
             s_.fallStartZ = s_.pos.z;
-            s_.regrabCooldown = 0.4f;
-            play(stanceClip(stance, "jump_" + std::string(kSide[verb])), false);
+            play(launch, false);
+            launchHangJump((verb == 0 ? kJumpUp : kJumpSideUp) * 30.0f);
             return;
         }
+        // nothing that way: the leap still goes (S601..S605), q31 / q28 / q29's launch (74.12 up; 63.21 sideways,
+        // 34.77 up a frame)
+        s_.climbHold = -1;
+        s_.state = State::Jump;
+        s_.vel = (verb == 0 ? vec3(0, 0, kJumpUp) : right * (verb == 1 ? kJumpSide : -kJumpSide) + vec3(0, 0, kJumpSideUp)) * 30.0f;
+        s_.fallStartZ = s_.pos.z;
+        s_.regrabCooldown = 0.4f;
+        play(launch, false);
+        return;
     }
     if (jumpPressed && (!held || verb == 2)) {
         if (const auto [target, frames] = backTarget(); target >= 0) {
@@ -409,7 +433,7 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
         const int32_t best = firstHold(vec2(sd.x * kStepSide, sd.y * kStepUp), 0.0f, 0.0f, kStepFrames, kStepRadius, [&](vec3 d) {
             return glm::dot(vec2(glm::dot(d, right), d.z), sd) >= 0; // q73 +0x24: 90 degrees
         }).first;
-        if (best < 0 && jumpTarget(verb).first >= 0) { // a far hold that way: lean toward it until jump is pressed
+        if (best < 0 && jumpTarget(verb).any()) { // a far hold or ledge that way: lean toward it until jump is pressed
             if (const auto antic = stanceClip(stance, "antic_" + std::string(kSide[verb])); !antic.empty()) {
                 play(antic, true);
                 return;
@@ -441,40 +465,6 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
             s_.climbStance = uint8_t(m.type - 16);
             play(bestClip, false);
             return;
-        }
-        if (verb == 0) { // no hold above: a ledge within a leap = jump up and catch it (ledgeb_attach_U)
-            const float hands = s_.pos.z + 300.0f;
-            int bestLi = -1, bestSeg = 0;
-            float bestT = 0, bestSide = 1, bestD = 200.0f;
-            for (size_t li = 0; li < col_.markup.size(); ++li) {
-                const auto& m = col_.markup[li];
-                if (m.type != 1) continue;
-                for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
-                    const vec3 p0 = m.points[size_t(si)], p1 = m.points[size_t(si) + 1];
-                    const float len = glm::length(xy(p1 - p0));
-                    if (len < 1e-2f) continue;
-                    const vec2 sd = xy(p1 - p0) / len, sn(-sd.y, sd.x);
-                    if (std::abs(glm::dot(sn, xy(n))) < 0.7f) continue; // the ledge runs along this rock
-                    const float t = std::clamp(glm::dot(xy(s_.pos - p0), sd), 0.0f, len);
-                    const vec3 q = p0 + vec3(sd * t, (p1.z - p0.z) * t / len);
-                    const float horiz = glm::length(xy(q - s_.pos)), rise = q.z - hands;
-                    if (horiz < bestD && rise > -50.0f && rise < 450.0f)
-                        bestD = horiz, bestLi = int(li), bestSeg = si, bestT = t, bestSide = glm::dot(sn, xy(n)) > 0 ? 1.0f : -1.0f;
-                }
-            }
-            if (bestLi >= 0) {
-                const vec3 delta = attachPose(bestLi, bestSeg, bestT, bestSide).first - s_.pos;
-                const float g = t_.gravity, vz = std::sqrt(2 * g * (std::max(delta.z, 0.0f) + t_.hangJumpApex));
-                const float time = (vz + std::sqrt(vz * vz - 2 * g * delta.z)) / g;
-                s_.vel = vec3(xy(delta) / time, vz);
-                s_.flight = time;
-                s_.ledge = bestLi, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide;
-                s_.climbHold = -1;
-                s_.state = State::HangJump;
-                s_.fallStartZ = s_.pos.z;
-                play(stanceClip(stance, "jump_up"), false);
-                return;
-            }
         }
         if (verb == 2) { // no hold below: a floor within the step-off clip's drop = step down onto it
             const auto name = stanceClip(stance, "step_off_ground");
