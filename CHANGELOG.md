@@ -4,6 +4,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.30.0] - 2026-11-06
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Original preset closer still to the original: fog, ambient light, shadow distances and draw distance now blend
+  between neighbouring areas as you move; the distant sky scenery follows the camera as in the original; the original's
+  rain (stopping under roofs, with splashes and lightning) is back in the jungle. Fixed: rain and lightning from a
+  cutscene area were running on every level, making snowy and other areas far too bright.
+- Combat uses the game's own numbers: fire rates from the weapons' animations (the uzi fires faster), the speargun
+  and tranquilizer fire real projectiles (spears hit harder under water), adrenaline mode (lock on, then E) slows time,
+  the death fade and respawn take 3 seconds, hits from the left mirror Lara's reaction, and Mjolnir's ground pound
+  knocks enemies back.
+- Water: breath lasts as long as in the original (about 2 minutes 13 seconds), currents pull Lara along, she wades in
+  waist-deep water, loose objects float or sink, and scripts can raise and lower water levels.
+- Effects: lights and fires switch with their animations, glows are sized as in the original, the screen feedback
+  effect uses the previous frame, and Lara's animations play their start sounds.
+
 ## [0.29.0] - 2026-11-06
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
