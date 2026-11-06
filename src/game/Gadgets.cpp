@@ -145,12 +145,7 @@ void World::explode(vec3 at) {
     }
     const vec3 chest = player_.state().pos + vec3(0, 0, targeting.eyeHeight);
     if (const float d = glm::distance(at, chest); d < g.radius) damageLara(glm::mix(g.damage, g.edgeDamage, falloff(d)), at, kDamageHeavy);
-    for (auto& b : physics_.bodies) {
-        if (b.invMass <= 0) continue;
-        const float d = glm::distance(at, b.pos);
-        if (d >= g.radius) continue;
-        b.vel += (d > 1e-3f ? (b.pos - at) / d : vec3(0, 0, 1)) * glm::mix(g.impulse, g.edgeImpulse, falloff(d));
-    }
+    physics_.blast(at, g.radius, g.impulse, g.edgeImpulse);
 }
 
 void World::throwLayer(std::vector<anim::LocalTransform>& local) const {

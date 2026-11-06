@@ -1,6 +1,7 @@
 # TRU physics objects, object collision, hinge doors
 
-Code: `src/physics` (`ou_physics`: `loadObjectPhysics`, `solidShape`, `massProps`, `Scene` with bodies, hinges, movers),
+Code: `src/physics` (`ou_physics`: `loadObjectPhysics`, `solidShape`, `massProps`, `Scene` on Jolt Physics: hinge bodies,
+uber joints and links, loose bodies, terrain and object solids),
 `collision::CollisionMesh::dynamics` (moving solids queried with the terrain), `src/game/Objects.cpp` (World glue).
 Tests: `tests/test_physics.cpp` (`Physics.*` synthetic, `PhysicsRealData.*` with `OU_GAME_DIR`).
 
@@ -83,17 +84,21 @@ type 2, is [I].
   its first marker's X axis. Script `multibody` 2/77/78/79 enables physics, changes limits, reads the angle and
   issues drive commands. Function-0 construction and the lever's WAIT-based function-2 polling loop run, so using
   the pole lever drives the door to twice the lever angle through the original bytecode rather than a full-open
-  fallback. Other animated doors still use their script state and clips.
-- Solver (`Scene::step`, fixed tick): semi-implicit Euler, sequential impulses (16 iterations, Baumgarte 0.2):
-  anchor point (3 rows), axis alignment (2), motor (clamped by `maxTorque·dt`), limits; tru.exe gravity
-  5.72443 units/frame². Deterministic: same ticks ⇒ bit-identical bodies at 30/60/144 Hz render rates
-  (`Physics.DeterministicAcrossRenderRates`).
-- Timing rule: physics, movers, uber/multibody commands and the scripts driving them advance only in
-  `World::tick` (one `Scene::step(kTickSeconds)` per 60 Hz tick, no time-based substeps); the render rate, vsync and
-  FSR frame generation never step them (docs/GAMEPLAY.md "Timing", audit table). Real puzzles are checked
-  bit-identical tick by tick at 24–1000 Hz and irregular frames: `GameReal.{BallcourtLever,ElevatorUber,PushBlock,
-  SplineMover,GrappleLeverJoint}IndependentOfRenderRate`.
-- Uber joints (class 79 objects, `formats::UberJoint` / `UberParam`, `physics::Joint1`, `World::tickUberJoints`):
+  fallback. Other animated doors still use their script state and clips. The lever's motor lands exactly on its 40°
+  target: the door follows the lever's angle in whole degrees, and a lever settling at 39.99° left the door at 78°,
+  too low for Lara to pass (`GameReal.BallcourtLeverReplayPassesDoor`).
+- Simulation: [Jolt Physics](https://github.com/jrouwe/JoltPhysics) 5.6.0 (CMake `FetchContent`, pinned SHA-256, MIT
+  licence in `third_party/jolt/LICENSE`, `CROSS_PLATFORM_DETERMINISTIC`, single-threaded job system), one
+  `Scene::step(kTickSeconds)` per 60 Hz tick from `World::stepPhysics` (inside `World::tickUber`, after the section
+  updates and before the uber events run; the range watches then read the new joint positions). See "Havok → Jolt"
+  below for the parameter mapping.
+- Timing rule: physics, uber/multibody commands and the scripts driving them advance only in `World::tick` (no
+  time-based substeps); the render rate, vsync and FSR frame generation never step them (docs/GAMEPLAY.md "Timing",
+  audit table). Real puzzles are checked bit-identical tick by tick at 24–1000 Hz and irregular frames:
+  `GameReal.{BallcourtLever,ElevatorUber,PushBlock,SplineMover,GrappleLeverJoint}IndependentOfRenderRate`,
+  `Physics.DeterministicAcrossRenderRates`, ctest `game_render_rate_smoke`.
+- Uber joints (class 79 objects, `formats::UberJoint` / `UberParam`, `physics::Joint1`, `World::stepPhysics`,
+  `World::uberWatches`):
   - [O] State entry actions (0x10 bytes {type, 3 words}, run on entering the state, 0x4D7440 -> 0x4D5C60 -> 0x4D86A0):
     9 creates the joint of the record its first word points at (0x4D8000; nothing if it exists), 10 removes it
     (0x4D6220), 12 sets its limit (0x4D6310 -> 0x4D4510), 13 its motor (0x4D6350 -> 0x4D2B00 prismatic / 0x4D29F0
@@ -105,41 +110,80 @@ type 2, is [I].
     hinge / prismatic constructors 0x4DF5D0 / 0x4DFC10). +0x10 block (0x4D4690): +0x2C / +0x30 limit (hinge degrees),
     +0x34 motor speed per second (× 1/30, hinge × π/180/30, 0x4D1F00), +0x38 motor bound (<= 0: unbounded),
     +0x3C bit 0 limit on, bit 1 motor on. Link (type 11, 0x4D7ED0 -> 0x4E17B0): {type, joint1 ptr, joint2 ptr, ratio};
-    joint2 = ratio × joint1 (degrees per unit when joint1 is prismatic and joint2 a hinge: l4 grapple post 1264 × 0.75
-    = 948, the second joint's limit).
+    joint2 = ratio × joint1 (degrees per unit when joint1 is prismatic and joint2 a hinge). Survey of all object DRMs:
+    222 joints (78 hinges, 42 prismatic, 92 fixed, 3 type 5, 7 type 7; 61 with a body A), links 0 → 0 ×9, 2 → 0 ×6,
+    2 → 2 ×8 (l4 grapple post 6695: prismatic 1264 × 0.75 = 948, the second prismatic's limit); every hinge limit lies
+    within ±180°.
   - [O] Limit / motor / range records {u8 kind, a, b, u8 flag} (0x4D11E0): limit lo, hi, on; motor speed, bound, on;
     range lo, hi. Watch check (0x4937A0, every instance update): value = mode 0 position (prismatic units, hinge
     degrees), 1 velocity per second; `inside` starts true, so a watch registered outside its range reports leaving on
     the first check; `lo <= v < hi` turning true calls back with 1, false with 0 (0x4D5B10 -> 0x4D5A50), which starts the
     watching section's transition of trigger 14 (entered) / 15 (left) with the same mode (+0x1C), joint (+0x20) and
     range (+0x24), only while the section is in a state.
-  - [I] Simulation (`physics::stepJoint`, one per 60 Hz tick = half a 30 Hz frame): each joint is one degree of
-    freedom of body B (its section model's mass, centre of mass and inertia, `massProps`) against a fixed frame, with
-    linked joints folded into one effective mass; gravity 5.72443 units/frame², each motor a velocity row whose impulse
-    is clamped to its bound per step, inelastic limits. A tru.exe solver step of 1/60 s is inferred from the motors: of
-    the vertical prismatic uber joints, five motors are weaker than their body's weight per 30 Hz frame but stronger
+  - Simulation: each joint is a Jolt body (body B: its section model's mass and centre of mass, `massProps`; a hinge's
+    inertia about its axis through the pivot) on a world-fixed Jolt `SliderConstraint` / `HingeConstraint` with the
+    data's limit and a velocity motor (speed, force bound); links are one constraint row `r·q1 − q2 = 0` between the
+    two joint bodies (ours, `LinkConstraint`: Jolt's gear / rack-and-pinion parts lack slider → slider). x and v are
+    written back to `Joint1` after each step; a hinge x is unwrapped across ±π. [I] A tru.exe solver step of 1/60 s:
+    of the vertical prismatic uber joints, five motors are weaker than their body's weight per 30 Hz frame but stronger
     than per 1/60 s (hallway ramps 395 vs 100 × 5.72, wall lever 319 vs 60 × 5.72, cliffclimb ledge, empty throne,
-    windup statue), and only the latter lets them hold their bodies as the states expect. Body A's own motion, the
-    multi-axis types 5 / 7 (push blocks, scales) and fixed joints (8) are not simulated; watches on them never fire.
+    windup statue), and only the latter lets them hold their bodies as the states expect. [I] Body A is the world (its
+    own joint motion does not carry B); fixed joints (8) therefore pin nothing and are not created; the multi-axis
+    types 5 / 7 (push blocks, scales) are not simulated; watches on them never fire.
   - Every uber object's sections start in their default state at spawn (each section component exists from the
     instance's creation, 0x4D3DA0), not when a script first touches it: the l7 Thor towers extend on their motors at
     load. Model 0 of an uber object follows the joint of the section that uses it when it has no travel clip and no
-    loose / carried offset (`World::uberJointPose`). Bullets push watched joints (`World::uberShot`, impulse 3000 [I]
-    along the shot). Lara grips a model-0 body on a level prismatic joint within 120 units of its collision and the stick
+    loose / carried offset (`World::uberJointPose`). Bullets push watched joints (`World::uberShot`: impulse 3000 [I]
+    along the shot at the body's centre of mass, as a velocity change of the joint's degree of freedom that the Jolt
+    body takes on the next step). Lara grips a model-0 body on a level prismatic joint within 120 units of its collision and the stick
     moves it along the axis at 120 units/s, over its motor and gravity, and she follows (`World::pushUberJoints` [I], as
     push blocks): the Thor towers are pushed back out after the fight retracts them (`ProgressionReal.EndgameCredits`).
   - Verified: `ProgressionReal.HallwayRampsJoint` (ramp 6045 falls to -948 and tilts the ramps, rises back on its
     motor), `ProgressionReal.KrakenColumnShot` (the shot column leaves [-15.8, 237)), `GameReal.GrappleLeverJoint
     IndependentOfRenderRate` (l4 grapple post 6695: pulled out, its linked joint enters [158, 1580): trigger 14),
     `StreamReal.UberJointSaveLoad`, `Physics.UberJointFallsLiftsAndLinks`, `RealData.UberJointsDecode`.
-- `Mover`: kinematic ping-pong path for platforms; no moving platform object was identified yet [U], so World does
-  not create any.
+- Loose rigid bodies (`Object::loose`: grapple-pulled `*_rb_grapple*` targets, set-down portables): a dynamic Jolt
+  body from all of the object's primitives (box / sphere / capsule; tru.exe builds the rigid body from every one,
+  0x497270, the "solid" bit gating Lara only [I]; `massProps` mass and inertia; no primitives: a 20-unit ball, mass 666
+  as tru.exe's fallback), starting at rest where it was; it falls, tumbles, slides and stacks on the resident units'
+  terrain (one static `MeshShape` per unit, built the first time a loose body exists, dropped when the unit streams
+  out) and on every other object collision (`collision().dynamics` as kinematic mesh bodies following their
+  transforms: plates, blocks, doors, other uber bodies). Its pose goes back to `Object::offset` (displacement) and
+  `Object::body` (rotation), so its collision, rendering and saves follow. Lara is not a Jolt body (she moves
+  kinematically and does not push them) [I].
+  - A pulled body that still rides a model-0 uber joint keeps riding it, its joint body taking its shape and colliding:
+    l1 snake head 751 sits on a rail (prismatic joint 0, axis 20° off vertical, [0, 15 803]) held by a heavier
+    counterweight (joint 1, link 2 → 2 × 1); section 1 watches joint 0 in [−15.8, 31.6) and, leaving it, removes the
+    link, then (after 0.95 s) the rail [O] (ms_rb_grapple_snake_head). [I] The pull drags the watched joint downhill at
+    240 units/s while it is in range (Lara's rope on the Havok body; our heave runs no force); the head then slides
+    down its rail onto grooved plate 752 and drops free when the rail goes.
+  - Pressure plates are still weighed by the footprint rule (`World::tickPlates`: Lara, push blocks or a loose body
+    resting over the plate's top); Jolt contacts are not read, as the plate is a script joint, not a Jolt body. The
+    tumbling rotation is not saved (a load restarts it upright at its offset). `Physics.LooseBodiesLandStackAndTumble`,
+    `ProgressionReal.CriticalGates` (l1_kraken_entrance 748: head 751 on plate 752, weight 750 on plate 753).
+
+## Havok → Jolt
+
+| Havok (tru.exe) | Jolt (ours) | Evidence |
+|---|---|---|
+| Game units, Z up | metres = units / 280 | bike speed unit 0x105B30C: 280 units per metre [O] |
+| gravity 5.72443 units / 30 Hz frame² | `SetGravity(0, 0, −5.72443 · 900 / 280)` m/s² | Lara's gravity [O]; same on bodies [I] |
+| solver step | `Update(1/60 s, 1 collision step)` per game tick | motor bounds vs weights [I] (above) |
+| rigid body mass / inertia (0x497270, 0x48E650 / 0x48E330) | `EOverrideMassProperties::MassAndInertiaProvided`, centre of mass via `OffsetCenterOfMassShape` | `massProps` = the exe's per-shape formulas [O] |
+| primitives 1 sphere, 5 box, 10 capsule (13 mesh-like) | `SphereShape`, `BoxShape` (full sides / 2), `CapsuleShape` (length / 2 along Z) in a `StaticCompoundShape` | HInfo layout [O]; capsule axis [I]; type 13 not decoded [U] |
+| revolute (1) / prismatic (3) joint, frame = model marker × instance, axis = frame Z | `HingeConstraint` / `SliderConstraint`, body 1 = world | 0x4D4240, 0x4DF5D0 / 0x4DFC10 [O]; body A = world [I] |
+| joint limit (degrees / units), on flag | `SetLimits(lo, hi)` (rad / m), hard; the constraint's zero is moved into the limits (Jolt wants 0 inside them, hinges within ±π) | 0x4D4510 [O] |
+| motor speed per second, bound (<= 0 unbounded) | velocity motor: hinge deg/s · π/180 rad/s, slider units/s / 280 m/s; bound · 30 · 60 N (/280 for sliders, /280² N·m for hinges); unbounded = `FLT_MAX` | 0x4D2B00 / 0x4D29F0 [O]; bound = impulse per 1/60 s step [I] |
+| link joint (gear ratio) | `LinkConstraint` row `r·q1 − q2 = 0` (+ Baumgarte drift fix) | 0x4D7ED0 -> 0x4E17B0 [O] |
+| range watch (0x4937A0) | reads `Joint1::x / v` written back after the step | [O] |
+| hinge door / lever (class 34 / 6 marker X axis) | `HingeConstraint`, velocity motor toward the target at up to 1 rad/s, landing on it in the step that reaches it; angular damping 0.5 / s | all [I] (our controller) |
+| friction / restitution / damping of loose bodies | Jolt defaults (friction 0.2, restitution 0, damping 0.05); penetration slop 1 unit | [U] Havok values not decoded |
 
 ## Verification
 
-- `ou_physics_tests` (2026-10-18): box inertia vs the exe formula, motor opens to 80° and closes, limits stop a free
-  swing, render-rate determinism, mover path, dynamic raycast/sweep/closest/ground probe follow the transform and the
-  mask; real data: door decode, all objects parse.
+- `ou_physics_tests`: box inertia vs the exe formula, hinge motor opens to 80° and closes, limits stop a free swing,
+  render-rate determinism, uber joint fall / lift / link, loose bodies land, stack and tumble, dynamic raycast / sweep /
+  closest / ground probe follow the transform and the mask; real data: door decode, all objects parse.
 - Replays (l4_ballcourt, GL screenshots viewed): `tests/replays/ballcourt_door_blocked.txt` with
   `--spawn -18520,14600,3540,-90`: Lara stops at y = 13 944.9, against the closed door (door at 13 706 + box half
   depth 136 + capsule 100). `GameReal.BallcourtLeverDrivesDoorJoint` verifies a 40° lever and 80° door through the

@@ -3032,7 +3032,7 @@ TEST(GameReal, GrappleLeverJointIndependentOfRenderRate) {
     const auto* linked = w->uberJoint(6695, 1);
     ASSERT_TRUE(post && linked);
     EXPECT_GT(post->x, 211.0f) << "pulled out";
-    EXPECT_FLOAT_EQ(linked->x, 0.75f * post->x);
+    EXPECT_NEAR(linked->x, 0.75f * post->x, 0.5f) << "the 0.75 link"; // a Jolt constraint row: holds within its drift fix
     ASSERT_TRUE(w->uberState(6695));
     EXPECT_EQ((*w->uberState(6695))[1], 1u);
 }

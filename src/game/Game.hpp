@@ -694,7 +694,9 @@ private:
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
     void tickPlates(float dt); // pressure-plate joints (Objects.cpp)
-    void tickLoose(float dt);  // loose rigid bodies fall (Objects.cpp)
+    // One Jolt step (Objects.cpp): hinge drives, uber joints, loose rigid bodies (tumbling onto the terrain and object
+    // collision), then the uber range watches.
+    void stepPhysics(float dt);
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
@@ -769,7 +771,6 @@ private:
     std::vector<script::UnitRef> unitRefs() const; // loaded units + cinematic objects, for script_/enemies_ setUnits
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
-    std::map<int32_t, float> fallSpeed_; // loose rigid bodies: fall speed, units/s
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
     void bindMultibody();
     void bindUber();
@@ -811,7 +812,7 @@ private:
     void tickUber(float dt);
     void uberAction(int32_t uid, size_t section, const formats::UberAction& a); // a state's entry action (0x4D86A0)
     std::optional<physics::Joint1> makeUberJoint(int32_t uid, int32_t joint); // frame, mass, gravity; at rest at 0
-    void tickUberJoints(int32_t uid);
+    void uberWatches(int32_t uid); // range watches on the last step's joint positions (triggers 14 / 15)
     std::optional<glm::mat4> uberJointPose(int32_t uid) const;
     int32_t uberModelJoint(int32_t uid) const;
     void pushUberJoints(const Actions& a); // Lara grips / pushes an uber object riding a level prismatic joint

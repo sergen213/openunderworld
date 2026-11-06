@@ -1,5 +1,5 @@
-// Physics objects: the collision primitives and physics class of object DRMs, and a small deterministic
-// rigid-body solver (hinges with limits and motors, kinematic movers) stepped on the fixed game tick.
+// Physics objects: the collision primitives and physics class of object DRMs, and the rigid-body scene (Jolt
+// Physics: hinge doors, uber-object joints, loose bodies landing on the level) stepped on the fixed game tick.
 // Layouts, evidence and what is inferred: docs/formats/PHYSICS.md.
 // Frame: Z-up game units; model space = the object's model, world = intro transform * model.
 #pragma once
@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace ou::physics {
@@ -84,6 +85,10 @@ struct MassProps {
 // capsule 0x4E9230), shifted to the common centre of mass.
 MassProps massProps(const ObjectPhysics& o);
 
+// Jolt simulates in metres: game units / kUnitsPerMetre (tru.exe's bike speed unit, 280 units per metre [O], Vehicle.hpp).
+inline constexpr float kUnitsPerMetre = 280.0f;
+
+// A hinge body as of the last step (read-only mirror of the Jolt body).
 struct Body {
     float invMass = 0;
     mat3 invInertia{0};   // body (model) axes
@@ -94,27 +99,22 @@ struct Body {
     mat4 model() const;   // model -> world
 };
 
-// Revolute joint between a body and the world: anchor and axis fixed in both.
+// Revolute joint between a body and the world: anchor and axis fixed in both. The motor turns the body toward
+// `target` at up to `maxSpeed` rad/s, landing on it in the step that reaches it, with at most `maxTorque`
+// (mass * units^2 / s^2) [I].
 struct Hinge {
     int body = 0;
-    vec3 localAnchor{0}, localAxis{1, 0, 0}, localRef{0, 1, 0}; // model space; ref perpendicular to the axis
-    vec3 worldAnchor{0}, worldAxis{1, 0, 0}, worldRef{0, 1, 0}; // where the body is at angle 0
+    vec3 localAnchor{0}, localAxis{1, 0, 0}; // model space
+    vec3 worldAnchor{0}, worldAxis{1, 0, 0}; // where the body is at angle 0
     float lo = -3.14159265f, hi = 3.14159265f; // angle limits, rad
-    std::optional<float> target;   // motor drives the angle here (rad), at most `maxSpeed`, with `maxTorque`
-    float maxSpeed = 1.0f, gain = 4.0f, maxTorque = 0;
+    std::optional<float> target;
+    float maxSpeed = 1.0f, maxTorque = 0;
 };
 
-// Kinematic mover: follows `points` (world) back and forth at `speed`; not affected by bodies.
-struct Mover {
-    std::vector<vec3> points;
-    float speed = 100; // units/s
-    float s = 0;       // distance travelled along the ping-pong path
-    vec3 position() const;
-};
-
-// One-degree-of-freedom joint of a body against a fixed frame, simulated in its own coordinate (tru.exe uber-object
-// joints, 0x4D8000; docs/formats/PHYSICS.md "Uber joints"). Units are tru.exe's: per 30 Hz frame. Prismatic: x in
-// units along `axis`; hinge: x in radians about `axis` through the pivot, `arm` = pivot -> centre of mass at x = 0.
+// One-degree-of-freedom joint of a body against a fixed frame (tru.exe uber-object joints, 0x4D8000; docs/formats/
+// PHYSICS.md "Uber joints"), simulated by Scene as a Jolt slider / hinge. Units are tru.exe's: per 30 Hz frame.
+// Prismatic: x in units along `axis`; hinge: x in radians about `axis` through the pivot (not wrapped), `arm` = pivot ->
+// centre of mass at x = 0.
 struct Joint1 {
     bool hinge = false;
     float x = 0, v = 0;         // coordinate, its velocity per frame
@@ -124,33 +124,56 @@ struct Joint1 {
     vec3 pivot{0};              // world origin of the joint frame (where the body is posed from)
     float lo = 0, hi = 0;       // limit (x units), when `limited`
     bool limited = false;
-    float speed = 0, force = 0; // motor: target velocity per frame, impulse bound per step (<= 0: unbounded)
+    float speed = 0, force = 0; // motor: target velocity per frame, impulse bound per 1/60 s step (<= 0: unbounded)
     bool motor = false;
-    float push = 0;             // this step only: velocity per frame imposed from outside (Lara pushing), over gravity and motors
-    float effectiveMass() const { return hinge ? inertia : mass; }
-    float gravityForce(float x) const; // generalized gravity force (torque) at coordinate x, per frame^2
+    float push = 0;             // next step only: velocity per frame imposed from outside (Lara pushing), over gravity and motors
 };
-// Gravity on uber joints, units per frame^2 (Lara's, tru.exe 5.72443 at 30 Hz).
+// Gravity, units per 30 Hz frame^2 (Lara's, tru.exe 5.72443).
 inline constexpr float kJointGravity = 5.72443f;
-// Advances `j` and the joints linked to it (joint = ratio * j.x) by `frames` 30 Hz frames: gravity, then each motor
-// row (impulse clamped to its bound), then the position, clamped to every limit (inelastic). Deterministic.
-void stepJoint(Joint1& j, std::span<const std::pair<Joint1*, float>> linked, float frames);
 
 class Scene {
 public:
-    vec3 gravity{0, 0, -5.72443f * 900.0f}; // tru.exe gravity, 5.72443 units per 30 Hz frame^2
-    float angularDamping = 0.5f;            // 1/s [I]
-    int iterations = 16;
-    std::vector<Body> bodies;
-    std::vector<Hinge> hinges;
-    std::vector<Mover> movers;
+    Scene();
+    ~Scene();
+    Scene(Scene&&) noexcept;
+    Scene& operator=(Scene&&) noexcept;
 
+    std::vector<Body> bodies;   // hinge bodies, as of the last step
+    std::vector<Hinge> hinges;  // limits and motor read by step()
     int addBody(const MassProps& m, const mat4& model);
     // Hinge at model-space `anchor` about model-space `axis`, angle 0 = the body's current pose.
     int addHinge(int body, vec3 anchor, vec3 axis, float lo, float hi);
-    float angle(int hinge) const;   // rad, signed about worldAxis
+    float angle(int hinge) const;      // rad, signed about worldAxis
     void setAngle(int hinge, float a); // places the body at `a`, at rest (load, streaming)
-    void step(float dt);            // one fixed tick
+    void clearHinges();                // drops bodies and hinges; joints, loose bodies and solids stay
+
+    // Uber joints for the next step, keyed by the caller. A key not passed is dropped; a new one, or one whose x / v
+    // changed outside the simulation (a load, a re-creation, a shot), is placed at x moving at v. step() writes x and v
+    // back (the pointers are used by that step only). Links: follower = ratio * driver in game units (hinge radians).
+    struct JointLink { uint64_t driver = 0, follower = 0; float ratio = 0; };
+    void setJoints(std::vector<std::pair<uint64_t, Joint1*>> joints, std::vector<JointLink> links);
+
+    // Loose rigid bodies (shape, mass and inertia from the object's primitives), keyed by the caller. A new key starts
+    // at `model` (model -> world) at rest; existing ones keep simulating (`model` is ignored); missing keys are dropped.
+    // `rail`: the body still rides that joint (setJoints key): the joint's body takes its shape and collides, posed by
+    // the joint (`model` = the object's pose at joint coordinate 0); loose(id) is empty then.
+    struct Loose { int32_t id = 0; const ObjectPhysics* physics = nullptr; mat4 model{1}; uint64_t rail = 0; };
+    void setLoose(std::span<const Loose> loose);
+    std::optional<mat4> loose(int32_t id) const; // model -> world as of the last step
+    // What loose bodies land on: resident unit terrain (static meshes, built once a loose body exists) and the moving
+    // object collision (kinematic, following each Dynamic::transform; pass without the loose bodies' own).
+    struct Terrain { std::string name; const collision::CollisionMesh* mesh = nullptr; vec3 offset{0}; };
+    void setTerrain(std::span<const Terrain> units);
+    void setColliders(std::span<const collision::Dynamic> dynamics);
+
+    // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge and
+    // loose bodies.
+    void blast(vec3 at, float radius, float near, float edge);
+    void step(float dt); // one fixed tick
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace ou::physics

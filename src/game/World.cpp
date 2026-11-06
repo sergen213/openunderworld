@@ -983,7 +983,6 @@ uint64_t World::stateHash() const {
     add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch), add(health_.value()), add(air_);
     for (const auto& m : bones_) add(m);
     for (const auto& b : physics_.bodies) add(b.pos), add(b.rot), add(b.vel), add(b.angVel);
-    for (const auto& m : physics_.movers) add(m.s);
     for (const auto& d : col_.dynamics) add(d.transform);
     for (const auto& o : script_.objects()) {
         add(o.uid), add(o.state), add(o.t), add(o.pos), add(o.offset), add(o.body), add(o.inside), add(o.hidden), add(o.dead);

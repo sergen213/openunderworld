@@ -103,18 +103,6 @@ TEST(Physics, DeterministicAcrossRenderRates) {
     EXPECT_EQ(std::memcmp(&b60, &b144, sizeof b60), 0);
 }
 
-TEST(Physics, MoverPingPongs) {
-    physics::Mover m;
-    m.points = {{0, 0, 0}, {100, 0, 0}, {100, 100, 0}};
-    m.speed = 50;
-    m.s = 150;
-    EXPECT_EQ(m.position(), vec3(100, 50, 0));
-    m.s = 250; // 200 out, 50 back
-    EXPECT_EQ(m.position(), vec3(100, 50, 0));
-    m.s = 400;
-    EXPECT_EQ(m.position(), vec3(0, 0, 0));
-}
-
 TEST(Physics, DynamicCollisionQueriesFollowTheTransform) {
     collision::CollisionMesh world;
     auto shape = std::make_shared<collision::CollisionMesh>();
@@ -236,36 +224,67 @@ TEST(PhysicsRealData, AllObjectsParse) {
                 capsules, rigid);
 }
 
-// Uber joints (Joint1, 1/60 s = half a 30 Hz frame per tick): a vertical prismatic body falls to its lower limit and
-// stops there; a motor whose impulse bound exceeds the body's weight per step (mass 100, 395: tru.exe's hallway ramps)
-// lifts it at the motor speed to the upper limit; a link drives its second joint at the ratio; same steps, same result.
+// Uber joints on the Jolt scene (one step per 60 Hz tick): a vertical prismatic body falls to its lower limit and
+// stops there, its linked follower at half its travel; a motor whose impulse bound exceeds the body's weight per step
+// (mass 100, 395: tru.exe's hallway ramps) lifts it to the upper limit; a weaker one (250 < m * g per step, 286) lets it
+// slide down; same steps, same result.
 TEST(Physics, UberJointFallsLiftsAndLinks) {
+    physics::Scene s;
     physics::Joint1 ramp;
-    ramp.mass = 100, ramp.axis = {0, 0, 1};
+    ramp.mass = 100, ramp.axis = {0, 0, 1}, ramp.pivot = {1000, 2000, 500};
     ramp.limited = true, ramp.lo = -948.167f, ramp.hi = 0;
     physics::Joint1 follower = ramp;
-    follower.limited = false;
-    const std::pair<physics::Joint1*, float> link{&follower, 0.5f};
-    for (int i = 0; i < 60; ++i) physics::stepJoint(ramp, {&link, 1}, 0.5f);
-    EXPECT_EQ(ramp.x, ramp.lo);
-    EXPECT_EQ(ramp.v, 0.0f);
-    EXPECT_FLOAT_EQ(follower.x, 0.5f * ramp.lo);
+    follower.pivot.x += 500, follower.limited = false;
+    for (int i = 0; i < 120; ++i) s.setJoints({{1, &ramp}, {2, &follower}}, {{1, 2, 0.5f}}), s.step(kDt);
+    EXPECT_NEAR(ramp.x, ramp.lo, 2.0f);
+    EXPECT_NEAR(ramp.v, 0.0f, 0.5f);
+    EXPECT_NEAR(follower.x, 0.5f * ramp.x, 2.0f);
+    const auto run = [&](physics::Joint1& j, int n) { for (int i = 0; i < n; ++i) s.setJoints({{1, &j}}, {}), s.step(kDt); };
     ramp.motor = true, ramp.speed = 316.056f / 30.0f, ramp.force = 395.07f;
     float before = ramp.x;
-    physics::stepJoint(ramp, {}, 0.5f);
+    run(ramp, 1);
     EXPECT_GT(ramp.x, before) << "the motor beats gravity per step";
-    for (int i = 0; i < 400; ++i) physics::stepJoint(ramp, {}, 0.5f);
-    EXPECT_EQ(ramp.x, 0.0f);
-    ramp.force = 250; // below m * g per step (286): it slides down
+    run(ramp, 400);
+    EXPECT_NEAR(ramp.x, 0.0f, 2.0f);
+    ramp.force = 250;
     before = ramp.x;
-    for (int i = 0; i < 10; ++i) physics::stepJoint(ramp, {}, 0.5f);
-    EXPECT_LT(ramp.x, before);
+    run(ramp, 10);
+    EXPECT_LT(ramp.x, before - 1.0f);
     physics::Joint1 a = ramp, b = ramp;
-    for (int i = 0; i < 100; ++i) physics::stepJoint(a, {}, 0.5f), physics::stepJoint(b, {}, 0.5f);
+    physics::Scene sa, sb;
+    for (int i = 0; i < 100; ++i) sa.setJoints({{1, &a}}, {}), sa.step(kDt), sb.setJoints({{1, &b}}, {}), sb.step(kDt);
     EXPECT_EQ(a.x, b.x);
+    EXPECT_EQ(a.v, b.v);
     // A hinge with its centre of mass beside the axis swings down toward hanging below the pivot.
     physics::Joint1 arm;
     arm.hinge = true, arm.mass = 10, arm.inertia = 10 * 100.0f * 100.0f, arm.axis = {1, 0, 0}, arm.arm = {0, 100, 0};
-    for (int i = 0; i < 30; ++i) physics::stepJoint(arm, {}, 0.5f);
+    for (int i = 0; i < 60; ++i) s.setJoints({{3, &arm}}, {}), s.step(kDt);
     EXPECT_LT(arm.x, -0.1f) << "turned about +X so the arm points down";
+}
+
+// Loose bodies (World: grapple-pulled weights): boxes dropped onto the floor land, stack and settle; one dropped
+// tilted tumbles onto a face.
+TEST(Physics, LooseBodiesLandStackAndTumble) {
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {0, 0, -50}), {6000, 6000, 100});
+    floor.build();
+    physics::ObjectPhysics o;
+    o.segments = {glm::mat4(1)};
+    physics::Prim p;
+    p.kind = physics::PrimKind::Box, p.size = {100, 100, 100}, p.pos = {0, 0, 50}, p.mass = 50, p.head[1] = 0x11;
+    o.prims = {p};
+    physics::Scene s;
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    const std::vector<physics::Scene::Loose> loose{
+        {1, &o, glm::translate(glm::mat4(1), {0, 0, 300})},
+        {2, &o, glm::translate(glm::mat4(1), {10, 0, 500})},
+        {3, &o, glm::translate(glm::mat4(1), {1500, 0, 400}) * glm::rotate(glm::mat4(1), 0.6f, {1, 0, 0})}};
+    for (int i = 0; i < 6 * 60; ++i) s.setTerrain(terrain), s.setLoose(loose), s.step(kDt);
+    const auto m1 = *s.loose(1), m2 = *s.loose(2), m3 = *s.loose(3);
+    EXPECT_NEAR(m1[3].z, 0, 5);
+    EXPECT_NEAR(m2[3].z, 100, 8) << "stacked on the first";
+    EXPECT_NEAR(std::max({std::abs(m3[0].z), std::abs(m3[1].z), std::abs(m3[2].z)}), 1.0f, 0.01f) << "tumbled onto a face";
+    EXPECT_LT(m3[3].z, 60) << "fell";
+    s.setLoose({}), s.step(kDt);
+    EXPECT_FALSE(s.loose(1));
 }

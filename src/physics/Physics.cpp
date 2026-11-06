@@ -1,15 +1,36 @@
-// Object physics data (HInfo primitives, model markers, physical class) and the rigid-body solver.
-// Evidence: docs/formats/PHYSICS.md.
+// Object physics data (HInfo primitives, model markers, physical class) and the rigid-body scene on Jolt Physics.
+// Evidence and the Havok -> Jolt mapping: docs/formats/PHYSICS.md.
 #include "physics/Physics.hpp"
 
 #include "formats/Formats.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <Jolt/Jolt.h>
+
+#include <Jolt/Core/Factory.h>
+#include <Jolt/Core/JobSystemSingleThreaded.h>
+#include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
+#include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
+#include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/RegisterTypes.h>
+
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
-#include <utility>
 
 namespace ou::physics {
 namespace {
@@ -26,7 +47,6 @@ vec3 vec(const cdc::Section& s, size_t off) { return {at<float>(s, off), at<floa
 quat quatXyzw(const cdc::Section& s, size_t off) {
     return glm::normalize(quat(at<float>(s, off + 12), at<float>(s, off), at<float>(s, off + 4), at<float>(s, off + 8)));
 }
-mat3 skew(vec3 v) { return mat3(0, v.z, -v.y, -v.z, 0, v.x, v.y, -v.x, 0); } // skew(v) * u = v x u
 mat3 diag(float a, float b, float c) { return mat3(a, 0, 0, 0, b, 0, 0, 0, c); }
 
 // HInfo (segment +0x3C): {u32 count, ptr list} pairs; slot 0 spheres, 1 boxes, 2 markers, 3 capsules.
@@ -185,20 +205,351 @@ MassProps massProps(const ObjectPhysics& o) {
 
 mat4 Body::model() const { return glm::translate(mat4(1), pos) * glm::mat4_cast(rot) * glm::translate(mat4(1), -com); }
 
-vec3 Mover::position() const {
-    if (points.size() < 2) return points.empty() ? vec3(0) : points[0];
-    float len = 0;
-    for (size_t i = 1; i < points.size(); ++i) len += glm::distance(points[i - 1], points[i]);
-    if (len <= 0) return points[0];
-    float u = std::fmod(s, 2 * len);
-    if (u > len) u = 2 * len - u; // ping-pong
-    for (size_t i = 1; i < points.size(); ++i) {
-        const float l = glm::distance(points[i - 1], points[i]);
-        if (u <= l) return points[i - 1] + (points[i] - points[i - 1]) * (l > 0 ? u / l : 0.f);
-        u -= l;
-    }
-    return points.back();
+// ---- Jolt scene -----------------------------------------------------------------------------------------------------
+namespace {
+
+constexpr float kM = 1.0f / kUnitsPerMetre;
+constexpr float kFrame = 30.0f;  // tru.exe joint units are per 30 Hz frame
+constexpr float kSolver = 60.0f; // [I] motor impulse bounds are per 1/60 s solver step (PHYSICS.md "Uber joints")
+enum : JPH::ObjectLayer { kLayerJoint, kLayerSolid, kLayerLoose, kLayers };
+
+JPH::Vec3 J(vec3 v) { return {v.x, v.y, v.z}; }
+JPH::Vec3 Jm(vec3 p) { return J(p * kM); } // game units -> metres
+JPH::Quat J(quat q) { return {q.x, q.y, q.z, q.w}; }
+vec3 G(JPH::Vec3 v) { return {v.GetX(), v.GetY(), v.GetZ()}; }
+quat G(JPH::Quat q) { return {q.GetW(), q.GetX(), q.GetY(), q.GetZ()}; }
+vec3 perpendicular(vec3 a) { return glm::normalize(glm::cross(a, std::abs(a.x) < 0.9f ? vec3(1, 0, 0) : vec3(0, 1, 0))); }
+float wrap(float a) { return a - 6.2831853f * std::floor((a + 3.14159265f) / 6.2831853f); } // [-pi, pi)
+
+void initJolt() {
+    static const bool once = [] {
+        JPH::RegisterDefaultAllocator();
+        JPH::Factory::sInstance = new JPH::Factory();
+        JPH::RegisterTypes();
+        return true;
+    }();
+    (void)once;
 }
+
+// A world-fixed one-degree-of-freedom Jolt constraint (hinge or slider) of one body. Jolt wants its limits around 0
+// (hinge limits within ±π), so our coordinate q (rad / m) = Jolt's value + ref; Impl::limits moves ref (rebuilding the
+// constraint) when the data's limits leave it, as a locked joint (lo == hi != 0) does.
+struct Axis {
+    bool hinge = false;
+    vec3 pivot{0}, axis{0, 0, 1}; // world, game units
+    JPH::BodyID body;
+    JPH::Ref<JPH::TwoBodyConstraint> c;
+    float ref = 0;
+    JPH::HingeConstraint* h() const { return static_cast<JPH::HingeConstraint*>(c.GetPtr()); }
+    JPH::SliderConstraint* s() const { return static_cast<JPH::SliderConstraint*>(c.GetPtr()); }
+    float q() const { return ref + (hinge ? h()->GetCurrentAngle() : s()->GetCurrentPosition()); }
+};
+
+// follower = ratio * driver for any pair of world-fixed 1-DOF joints (tru.exe link joints, 0x4E17B0): Jolt's gear and
+// rack-and-pinion parts cover hinge-hinge and hinge-slider but not slider-slider (the l4 grapple post's 2 -> 2 link).
+// Both bodies are dynamic and their axes fixed in the world (each sits on a world-fixed hinge or slider).
+class LinkConstraint final : public JPH::TwoBodyConstraint {
+public:
+    struct Side { const Axis* joint; bool hinge; JPH::Vec3 axis; };
+    struct Settings final : JPH::TwoBodyConstraintSettings {
+        JPH::TwoBodyConstraint* Create(JPH::Body&, JPH::Body&) const override { return nullptr; }
+    };
+    LinkConstraint(JPH::Body& a, JPH::Body& b, Side da, Side db, float ratio)
+        : TwoBodyConstraint(a, b, Settings{}), a_(da), b_(db), r_(ratio) {}
+    JPH::EConstraintSubType GetSubType() const override { return JPH::EConstraintSubType::User1; }
+    void NotifyShapeChanged(const JPH::BodyID&, JPH::Vec3Arg) override {}
+    void SetupVelocityConstraint(float) override {
+        ka_ = response(*mBody1, a_), kb_ = response(*mBody2, b_);
+        const float k = r_ * r_ * dot(a_, ka_) + dot(b_, kb_);
+        mass_ = k > 0 ? 1 / k : 0;
+    }
+    void ResetWarmStart() override { total_ = 0; }
+    void WarmStartVelocityConstraint(float ratio) override { total_ *= ratio, apply(total_, false); }
+    bool SolveVelocityConstraint(float) override {
+        if (mass_ == 0) return false;
+        const float lambda = -mass_ * (r_ * speed(*mBody1, a_) - speed(*mBody2, b_));
+        total_ += lambda;
+        return apply(lambda, false);
+    }
+    bool SolvePositionConstraint(float, float baumgarte) override {
+        float c = r_ * position(a_) - position(b_);
+        if (b_.hinge) c = wrap(c);
+        if (c == 0 || mass_ == 0) return false;
+        return apply(-mass_ * baumgarte * c, true);
+    }
+    JPH::Ref<JPH::ConstraintSettings> GetConstraintSettings() const override { return new Settings; }
+    JPH::Mat44 GetConstraintToBody1Matrix() const override { return JPH::Mat44::sIdentity(); }
+    JPH::Mat44 GetConstraintToBody2Matrix() const override { return JPH::Mat44::sIdentity(); }
+#ifdef JPH_DEBUG_RENDERER
+    void DrawConstraint(JPH::DebugRenderer*) const override {}
+#endif
+
+private:
+    static JPH::Vec3 response(const JPH::Body& b, const Side& s) { // M^-1 J for the side's row
+        return s.hinge ? b.GetMotionProperties()->MultiplyWorldSpaceInverseInertiaByVector(b.GetRotation(), s.axis)
+                       : b.GetMotionProperties()->GetInverseMass() * s.axis;
+    }
+    static float dot(const Side& s, JPH::Vec3 k) { return s.axis.Dot(k); }
+    static float speed(const JPH::Body& b, const Side& s) { return s.axis.Dot(s.hinge ? b.GetAngularVelocity() : b.GetLinearVelocity()); }
+    static float position(const Side& s) { return s.joint->q(); }
+    bool apply(float lambda, bool position) {
+        if (lambda == 0) return false;
+        const auto one = [&](JPH::Body& b, const Side& s, JPH::Vec3 k, float l) {
+            if (position) s.hinge ? b.AddRotationStep(l * k) : b.AddPositionStep(l * k);
+            else if (s.hinge) b.GetMotionProperties()->AddAngularVelocityStep(l * k);
+            else b.GetMotionProperties()->AddLinearVelocityStep(l * k);
+        };
+        one(*mBody1, a_, ka_, r_ * lambda), one(*mBody2, b_, kb_, -lambda);
+        return true;
+    }
+    Side a_, b_;
+    float r_, mass_ = 0, total_ = 0;
+    JPH::Vec3 ka_ = JPH::Vec3::sZero(), kb_ = JPH::Vec3::sZero();
+};
+
+JPH::RefConst<JPH::Shape> made(const JPH::ShapeSettings& s) {
+    auto r = s.Create();
+    return r.IsValid() ? r.Get() : nullptr;
+}
+
+// Triangles of `mesh` (offset, in metres) as a Jolt mesh shape; null without triangles.
+JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, vec3 offset) {
+    JPH::VertexList v;
+    JPH::IndexedTriangleList t;
+    v.reserve(mesh.vertices.size()), t.reserve(mesh.faces.size());
+    for (const vec3& p : mesh.vertices) {
+        const vec3 q = (p + offset) * kM;
+        v.push_back({q.x, q.y, q.z});
+    }
+    for (const auto& f : mesh.faces) t.push_back({f.v[0], f.v[1], f.v[2]});
+    return t.empty() ? nullptr : made(JPH::MeshShapeSettings(std::move(v), std::move(t)));
+}
+
+// A loose body's collision: every primitive of its model, as tru.exe builds the rigid body from all of them (0x497270;
+// the flag bit we call solid gates Lara's collision only [I]), in its centre-of-mass frame; no primitives: a 20-unit
+// ball resting on the model origin.
+JPH::RefConst<JPH::Shape> looseShape(const ObjectPhysics& o, vec3 com) {
+    JPH::StaticCompoundShapeSettings c;
+    for (const Prim& p : o.prims) {
+        const mat4 seg = p.segment < int(o.segments.size()) ? o.segments[size_t(p.segment)] : mat4(1);
+        const mat4 f = seg * glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot);
+        quat r = glm::normalize(glm::quat_cast(mat3(f)));
+        JPH::Ref<JPH::ShapeSettings> s;
+        if (p.kind == PrimKind::Box) {
+            const vec3 h = glm::max(p.size * (0.5f * kM), vec3(0.002f));
+            s = new JPH::BoxShapeSettings(J(h), std::min(JPH::cDefaultConvexRadius, 0.5f * std::min({h.x, h.y, h.z})));
+        } else if (p.kind == PrimKind::Capsule && p.length > 0) {
+            s = new JPH::CapsuleShapeSettings(0.5f * p.length * kM, std::max(p.radius * kM, 0.002f));
+            r = r * glm::angleAxis(1.5707964f, vec3(1, 0, 0)); // Jolt capsules run along Y, ours along Z [I]
+        } else {
+            s = new JPH::SphereShapeSettings(std::max(p.radius * kM, 0.002f));
+        }
+        c.AddShape(Jm(vec3(f[3]) - com), J(r), s);
+    }
+    if (c.mSubShapes.empty()) c.AddShape(Jm(vec3(0, 0, 20) - com), JPH::Quat::sIdentity(), new JPH::SphereShapeSettings(20 * kM));
+    const auto shape = made(c);
+    if (!shape) return new JPH::SphereShape(20 * kM);
+    return made(JPH::OffsetCenterOfMassShapeSettings(-shape->GetCenterOfMass(), shape)); // the data's centre of mass
+}
+
+} // namespace
+
+struct Scene::Impl {
+    struct Init { Init() { initJolt(); } } init; // before any Jolt member allocates
+    JPH::BroadPhaseLayerInterfaceTable layers{kLayers, 2};
+    JPH::ObjectLayerPairFilterTable pairs{kLayers};
+    std::optional<JPH::ObjectVsBroadPhaseLayerFilterTable> broad;
+    JPH::TempAllocatorMalloc temp;
+    JPH::JobSystemSingleThreaded jobs{JPH::cMaxPhysicsJobs};
+    JPH::PhysicsSystem sys;
+    JPH::BodyInterface* bi = nullptr;
+
+    std::vector<JPH::BodyID> hingeBodies;             // Scene::bodies
+    std::vector<std::unique_ptr<Axis>> hingeJoints;   // Scene::hinges
+
+    struct JointE {
+        uint64_t key;
+        Joint1 j; // frame and body as created
+        JPH::BodyID body;
+        std::unique_ptr<Axis> ax;
+        float x = 0, v = 0; // as last written back
+        Joint1* live = nullptr;
+        bool solid = false; // carries a rail-riding loose body's shape (Scene::Loose::rail)
+    };
+    std::vector<JointE> joints;
+    struct LinkE { JointLink l; JPH::Ref<LinkConstraint> c; };
+    std::vector<LinkE> links;
+
+    struct LooseE { int32_t id; JPH::BodyID body; vec3 com; };
+    std::vector<LooseE> loose;
+    struct TerrainE { Terrain t; JPH::RefConst<JPH::Shape> shape; JPH::BodyID body; bool built = false; };
+    std::vector<TerrainE> terrain;
+    struct ProxyE { std::shared_ptr<const collision::CollisionMesh> shape; mat4 transform; JPH::BodyID body; };
+    std::vector<ProxyE> proxies;
+
+    Impl() {
+        layers.MapObjectToBroadPhaseLayer(kLayerJoint, JPH::BroadPhaseLayer(1));
+        layers.MapObjectToBroadPhaseLayer(kLayerSolid, JPH::BroadPhaseLayer(0));
+        layers.MapObjectToBroadPhaseLayer(kLayerLoose, JPH::BroadPhaseLayer(1));
+        pairs.EnableCollision(kLayerSolid, kLayerLoose), pairs.EnableCollision(kLayerLoose, kLayerLoose);
+        broad.emplace(layers, 2, pairs, kLayers);
+        sys.Init(4096, 0, 8192, 8192, layers, *broad, pairs);
+        sys.SetGravity(Jm(vec3(0, 0, -kJointGravity * kFrame * kFrame)));
+        JPH::PhysicsSettings ps;
+        ps.mPenetrationSlop = 1.0f * kM; // resting bodies sink at most a unit (Jolt's 2 cm = 5.6 units shows) [I]
+        sys.SetPhysicsSettings(ps);
+        bi = &sys.GetBodyInterfaceNoLock();
+    }
+    ~Impl() {
+        for (auto& l : links) sys.RemoveConstraint(l.c);
+        for (auto& e : joints) sys.RemoveConstraint(e.ax->c);
+        for (auto& a : hingeJoints) sys.RemoveConstraint(a->c);
+    }
+    // The constraint of `a` with its zero at the body's current pose.
+    JPH::Ref<JPH::TwoBodyConstraint> constraint(const Axis& a) {
+        JPH::Ref<JPH::TwoBodyConstraint> c;
+        if (a.hinge) {
+            JPH::HingeConstraintSettings s;
+            s.mPoint1 = s.mPoint2 = Jm(a.pivot);
+            s.mHingeAxis1 = s.mHingeAxis2 = J(a.axis);
+            s.mNormalAxis1 = s.mNormalAxis2 = J(perpendicular(a.axis));
+            c = bi->CreateConstraint(&s, JPH::BodyID(), a.body);
+        } else {
+            JPH::SliderConstraintSettings s;
+            s.mPoint1 = s.mPoint2 = Jm(a.pivot);
+            s.mSliderAxis1 = s.mSliderAxis2 = J(a.axis);
+            s.mNormalAxis1 = s.mNormalAxis2 = J(perpendicular(a.axis));
+            c = bi->CreateConstraint(&s, JPH::BodyID(), a.body);
+        }
+        sys.AddConstraint(c);
+        return c;
+    }
+    std::unique_ptr<Axis> axis(JPH::BodyID body, bool hinge, vec3 pivot, vec3 dir) {
+        auto a = std::make_unique<Axis>();
+        a->hinge = hinge, a->pivot = pivot, a->axis = glm::normalize(dir), a->body = body;
+        a->c = constraint(*a);
+        return a;
+    }
+    // Moves the zero of `a` to coordinate `ref`: the body posed there, the constraint rebuilt, the body put back.
+    void rebase(Axis& a, float ref) {
+        JPH::RVec3 p;
+        JPH::Quat r;
+        bi->GetPositionAndRotation(a.body, p, r);
+        const float d = ref - a.q();
+        const quat turn = glm::angleAxis(a.hinge ? d : 0.0f, a.axis);
+        const vec3 at = G(p) * kUnitsPerMetre;
+        const vec3 moved = a.hinge ? a.pivot + turn * (at - a.pivot) : at + a.axis * (d * kUnitsPerMetre);
+        bi->SetPositionAndRotation(a.body, Jm(moved), J(glm::normalize(turn * G(r))), JPH::EActivation::DontActivate);
+        sys.RemoveConstraint(a.c);
+        a.c = constraint(a);
+        bi->SetPositionAndRotation(a.body, p, r, JPH::EActivation::DontActivate);
+        a.ref = ref;
+    }
+    // Limits of `a` (rad / m) for this step.
+    void limits(Axis& a, bool on, float lo, float hi) {
+        constexpr float pi = JPH::JPH_PI;
+        if (!on) return a.hinge ? a.h()->SetLimits(-pi, pi) : a.s()->SetLimits(-FLT_MAX, FLT_MAX);
+        if (lo > hi) std::swap(lo, hi);
+        if (lo > a.ref || hi < a.ref || (a.hinge && (a.ref - lo > pi || hi - a.ref > pi))) rebase(a, 0.5f * (lo + hi));
+        const float l = std::min(0.0f, lo - a.ref), u = std::max(0.0f, hi - a.ref);
+        if (a.hinge) a.h()->SetLimits(std::max(l, -pi), std::min(u, pi));
+        else a.s()->SetLimits(l, u);
+    }
+    void remove(JPH::BodyID& id) {
+        if (id.IsInvalid()) return;
+        bi->RemoveBody(id), bi->DestroyBody(id);
+        id = JPH::BodyID();
+    }
+    // A dynamic body at world centre of mass `com` with the data's mass and inertia (about com, body axes, game units).
+    JPH::BodyID body(JPH::RefConst<JPH::Shape> shape, vec3 com, quat rot, JPH::ObjectLayer layer, float mass, mat3 inertia,
+                     float angularDamping = 0) {
+        JPH::BodyCreationSettings s(shape, Jm(com), J(rot), JPH::EMotionType::Dynamic, layer);
+        s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+        s.mMassPropertiesOverride.mMass = mass;
+        const mat3 i = inertia * (kM * kM);
+        s.mMassPropertiesOverride.mInertia = JPH::Mat44(JPH::Vec4(i[0][0], i[0][1], i[0][2], 0), JPH::Vec4(i[1][0], i[1][1], i[1][2], 0),
+                                                        JPH::Vec4(i[2][0], i[2][1], i[2][2], 0), JPH::Vec4(0, 0, 0, 1));
+        s.mAllowSleeping = layer == kLayerLoose;
+        if (layer == kLayerLoose) s.mMotionQuality = JPH::EMotionQuality::LinearCast;
+        else s.mLinearDamping = 0, s.mAngularDamping = angularDamping;
+        return bi->CreateAndAddBody(s, JPH::EActivation::Activate);
+    }
+    void placeJoint(const JointE& e, float x, float v) {
+        const Joint1& j = e.j;
+        const quat rot = j.hinge ? glm::angleAxis(x, j.axis) : quat(1, 0, 0, 0);
+        const vec3 com = j.hinge ? j.pivot + rot * j.arm : j.pivot + j.arm + j.axis * x;
+        const vec3 ang = j.hinge ? j.axis * (v * kFrame) : vec3(0);
+        const vec3 lin = j.hinge ? glm::cross(ang, com - j.pivot) : j.axis * (v * kFrame);
+        bi->SetPositionRotationAndVelocity(e.body, Jm(com), J(rot), Jm(lin), J(ang));
+    }
+    JointE makeJoint(uint64_t key, const Joint1& j) {
+        JointE e{key, j, {}, {}, j.x, j.v, nullptr};
+        const float mass = j.mass > 0 ? j.mass : 1.0f; // massless: the motor sets the speed (unbounded below), no gravity
+        float inertia = mass * kUnitsPerMetre * kUnitsPerMetre; // sliders lock rotation: any positive value
+        if (j.hinge) // the data's inertia about the axis through the pivot, minus the centre of mass's parallel-axis share
+            if (const float c = j.inertia - j.mass * (glm::dot(j.arm, j.arm) - glm::dot(j.arm, j.axis) * glm::dot(j.arm, j.axis)); c > 0) inertia = c;
+        e.body = body(new JPH::SphereShape(0.05f), j.pivot + j.arm, quat(1, 0, 0, 0), kLayerJoint, mass, mat3(inertia));
+        if (j.mass <= 0) bi->SetGravityFactor(e.body, 0);
+        e.ax = axis(e.body, j.hinge, j.pivot, j.axis);
+        placeJoint(e, j.x, j.v);
+        return e;
+    }
+    void dropJoint(JointE& e) { sys.RemoveConstraint(e.ax->c), remove(e.body); }
+    // Limits and motor of a live joint for this step (Jolt units).
+    void driveJoint(JointE& e, const Joint1& j, bool motorOff) {
+        const float lin = j.hinge ? 1.0f : kM; // per-frame velocity -> rad/s or m/s
+        const auto state = j.push != 0 || (j.motor && !motorOff) ? JPH::EMotorState::Velocity : JPH::EMotorState::Off;
+        const float target = (j.push != 0 ? j.push : j.speed) * kFrame * lin;
+        // impulse per 1/60 s step (mass * units per frame) -> force (N) / torque (N m); unbounded: <= 0, massless, pushed
+        const float bound = j.push != 0 || j.force <= 0 || j.mass <= 0 ? FLT_MAX : j.force * kFrame * kSolver * kM * (j.hinge ? kM : 1.0f);
+        limits(*e.ax, j.limited, j.lo * lin, j.hi * lin);
+        if (j.hinge) {
+            auto* h = e.ax->h();
+            h->GetMotorSettings().SetTorqueLimit(bound);
+            h->SetMotorState(state), h->SetTargetAngularVelocity(target);
+        } else {
+            auto* s = e.ax->s();
+            s->GetMotorSettings().SetForceLimit(bound);
+            s->SetMotorState(state), s->SetTargetVelocity(target);
+        }
+    }
+    JointE* findJoint(uint64_t key) {
+        for (auto& e : joints)
+            if (e.key == key) return &e;
+        return nullptr;
+    }
+    void syncSolids(float dt) {
+        // nothing to land: no terrain meshes, no proxies
+        const bool active = !loose.empty() || std::ranges::any_of(joints, &JointE::solid);
+        for (auto& t : terrain) {
+            if (!active) { remove(t.body); continue; }
+            if (!t.built) t.shape = meshShape(*t.t.mesh, t.t.offset), t.built = true;
+            if (t.shape && t.body.IsInvalid())
+                t.body = bi->CreateAndAddBody(JPH::BodyCreationSettings(t.shape, JPH::RVec3::sZero(), JPH::Quat::sIdentity(),
+                                                                        JPH::EMotionType::Static, kLayerSolid), JPH::EActivation::DontActivate);
+        }
+        for (auto& p : proxies) {
+            if (!active) { remove(p.body); continue; }
+            const vec3 pos(p.transform[3]);
+            const quat rot = glm::normalize(glm::quat_cast(mat3(p.transform)));
+            if (p.body.IsInvalid()) {
+                if (const auto shape = meshShape(*p.shape, vec3(0))) {
+                    JPH::BodyCreationSettings s(shape, Jm(pos), J(rot), JPH::EMotionType::Kinematic, kLayerSolid);
+                    s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided; // meshes have no volume
+                    s.mMassPropertiesOverride.mMass = 1, s.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
+                    p.body = bi->CreateAndAddBody(s, JPH::EActivation::Activate);
+                }
+            } else {
+                bi->MoveKinematic(p.body, Jm(pos), J(rot), dt);
+            }
+        }
+    }
+};
+
+Scene::Scene() : impl_(std::make_unique<Impl>()) {}
+Scene::~Scene() = default;
+Scene::Scene(Scene&&) noexcept = default;
+Scene& Scene::operator=(Scene&&) noexcept = default;
 
 int Scene::addBody(const MassProps& m, const mat4& model) {
     Body b;
@@ -206,131 +557,214 @@ int Scene::addBody(const MassProps& m, const mat4& model) {
     b.com = m.com;
     b.rot = glm::normalize(glm::quat_cast(mat3(model)));
     b.pos = vec3(model * glm::vec4(m.com, 1));
+    // angular damping 0.5 / s [I], as the hand-written solver before it
+    const auto id = impl_->body(new JPH::SphereShape(0.05f), b.pos, b.rot, kLayerJoint, m.mass > 0 ? m.mass : 1.0f,
+                                m.mass > 0 ? m.inertia : mat3(kUnitsPerMetre * kUnitsPerMetre), 0.5f);
+    if (m.mass <= 0) impl_->bi->SetMotionType(id, JPH::EMotionType::Static, JPH::EActivation::DontActivate);
+    impl_->hingeBodies.push_back(id);
     bodies.push_back(b);
     return int(bodies.size()) - 1;
 }
 
 int Scene::addHinge(int body, vec3 anchor, vec3 axis, float lo, float hi) {
-    const Body& b = bodies.at(body);
+    const Body& b = bodies.at(size_t(body));
     Hinge h;
     h.body = body, h.lo = lo, h.hi = hi;
     h.localAnchor = anchor;
     h.localAxis = glm::normalize(axis);
-    h.localRef = glm::normalize(glm::cross(h.localAxis, std::abs(h.localAxis.x) < 0.9f ? vec3(1, 0, 0) : vec3(0, 1, 0)));
     const mat4 m = b.model();
     h.worldAnchor = vec3(m * glm::vec4(anchor, 1));
     h.worldAxis = mat3(m) * h.localAxis;
-    h.worldRef = mat3(m) * h.localRef;
+    impl_->hingeJoints.push_back(impl_->axis(impl_->hingeBodies[size_t(body)], true, h.worldAnchor, h.worldAxis));
     hinges.push_back(h);
     return int(hinges.size()) - 1;
 }
 
-float Scene::angle(int i) const {
-    const Hinge& h = hinges.at(i);
-    const vec3 ref = glm::mat3_cast(bodies[h.body].rot) * h.localRef;
-    return std::atan2(glm::dot(glm::cross(h.worldRef, ref), h.worldAxis), glm::dot(h.worldRef, ref));
-}
+float Scene::angle(int i) const { return impl_->hingeJoints.at(size_t(i))->q(); }
 
 void Scene::setAngle(int i, float a) {
-    const Hinge& h = hinges.at(i);
-    Body& b = bodies[h.body];
+    const Hinge& h = hinges.at(size_t(i));
+    Body& b = bodies[size_t(h.body)];
     b.rot = glm::normalize(glm::angleAxis(a - angle(i), h.worldAxis) * b.rot);
     b.pos = h.worldAnchor - glm::mat3_cast(b.rot) * (h.localAnchor - b.com);
     b.vel = b.angVel = vec3(0);
+    impl_->bi->SetPositionRotationAndVelocity(impl_->hingeBodies[size_t(h.body)], Jm(b.pos), J(b.rot), JPH::Vec3::sZero(), JPH::Vec3::sZero());
 }
 
-// Sequential impulses on velocities (Baumgarte position feedback), then semi-implicit Euler. Same inputs and dt
-// give the same result: no time- or order-dependent state besides the bodies.
-void Scene::step(float dt) {
-    constexpr float kBeta = 0.2f;
-    for (auto& m : movers) m.s += m.speed * dt;
-    for (auto& b : bodies) {
-        if (b.invMass <= 0) continue;
-        b.vel += gravity * dt;
-        b.angVel *= std::exp(-angularDamping * dt);
+void Scene::clearHinges() {
+    for (auto& a : impl_->hingeJoints) impl_->sys.RemoveConstraint(a->c);
+    for (auto& id : impl_->hingeBodies) impl_->remove(id);
+    impl_->hingeJoints.clear(), impl_->hingeBodies.clear(), bodies.clear(), hinges.clear();
+}
+
+void Scene::setJoints(std::vector<std::pair<uint64_t, Joint1*>> joints, std::vector<JointLink> links) {
+    Impl& m = *impl_;
+    for (auto& l : m.links) m.sys.RemoveConstraint(l.c); // before any of their bodies goes; re-added below
+    std::vector<Impl::JointE> next;
+    std::vector<uint64_t> made; // joints (re)created now: their links are new too
+    next.reserve(joints.size());
+    for (auto& [key, j] : joints) {
+        Impl::JointE* e = m.findJoint(key);
+        const bool same = e && e->j.hinge == j->hinge && e->j.axis == j->axis && e->j.pivot == j->pivot && e->j.arm == j->arm &&
+                          e->j.mass == j->mass && e->j.inertia == j->inertia;
+        if (e && !same) m.dropJoint(*e), e->key = ~uint64_t(0), e = nullptr;
+        if (!e) made.push_back(key);
+        Impl::JointE n = e ? std::move(*e) : m.makeJoint(key, *j);
+        if (e) e->key = ~uint64_t(0); // moved
+        if (n.x != j->x || n.v != j->v) m.placeJoint(n, j->x, j->v), n.x = j->x, n.v = j->v; // set from outside
+        n.live = j;
+        next.push_back(std::move(n));
     }
-    std::vector<float> accLo(hinges.size()), accHi(hinges.size()), accMotor(hinges.size());
-    std::vector<float> theta(hinges.size());
-    for (size_t i = 0; i < hinges.size(); ++i) theta[i] = angle(int(i));
-    for (int it = 0; it < iterations; ++it)
-        for (size_t i = 0; i < hinges.size(); ++i) {
-            const Hinge& h = hinges[i];
-            Body& b = bodies[h.body];
-            if (b.invMass <= 0) continue;
-            const mat3 R = glm::mat3_cast(b.rot), invI = R * b.invInertia * glm::transpose(R);
-            const vec3 ax = h.worldAxis;
-            auto angular = [&](vec3 dir, float bias, float lo, float hi, float& acc) {
-                const float k = glm::dot(dir, invI * dir);
-                if (k <= 0) return;
-                const float old = acc;
-                acc = std::clamp(acc - (glm::dot(b.angVel, dir) + bias) / k, lo, hi);
-                b.angVel += invI * dir * (acc - old);
-            };
-            // Keep the body axis on the hinge axis (two rows perpendicular to it).
-            const vec3 err = glm::cross(R * h.localAxis, ax);
-            const vec3 t1 = glm::normalize(glm::cross(ax, std::abs(ax.x) < 0.9f ? vec3(1, 0, 0) : vec3(0, 1, 0))), t2 = glm::cross(ax, t1);
-            for (const vec3 t : {t1, t2}) {
-                float acc = 0; // unbounded rows: nothing to accumulate
-                angular(t, -kBeta / dt * glm::dot(err, t), -1e30f, 1e30f, acc);
-            }
-            // Motor toward the target angle, then the limits.
-            const float inf = 1e30f, th = theta[i];
-            if (h.target) {
-                const float speed = std::clamp(h.gain * (*h.target - th), -h.maxSpeed, h.maxSpeed);
-                angular(ax, -speed, -h.maxTorque * dt, h.maxTorque * dt, accMotor[i]);
-            }
-            if (th < h.lo) angular(ax, kBeta / dt * (th - h.lo), 0, inf, accLo[i]);
-            if (th > h.hi) angular(ax, kBeta / dt * (th - h.hi), -inf, 0, accHi[i]);
-            // Anchor point.
-            const vec3 r = R * (h.localAnchor - b.com);
-            const mat3 K = b.invMass * mat3(1) - skew(r) * invI * skew(r);
-            const vec3 cdot = b.vel + glm::cross(b.angVel, r) + kBeta / dt * (b.pos + r - h.worldAnchor);
-            const vec3 P = -(glm::inverse(K) * cdot);
-            b.vel += b.invMass * P;
-            b.angVel += invI * glm::cross(r, P);
+    for (auto& e : m.joints)
+        if (e.key != ~uint64_t(0)) m.dropJoint(e);
+    m.joints = std::move(next);
+    std::vector<Impl::LinkE> keep;
+    for (const auto& l : links) {
+        Impl::JointE* a = m.findJoint(l.driver);
+        Impl::JointE* b = m.findJoint(l.follower);
+        if (!a || !b || a == b || l.ratio == 0) continue;
+        const auto old = std::ranges::find_if(m.links, [&](const Impl::LinkE& e) {
+            return e.c && e.l.driver == l.driver && e.l.follower == l.follower && e.l.ratio == l.ratio;
+        });
+        JPH::Ref<LinkConstraint> c;
+        if (old != m.links.end() && std::ranges::find(made, l.driver) == made.end() && std::ranges::find(made, l.follower) == made.end()) {
+            c = old->c;
+        } else {
+            auto& lock = m.sys.GetBodyLockInterfaceNoLock();
+            JPH::Body* ba = lock.TryGetBody(a->body);
+            JPH::Body* bb = lock.TryGetBody(b->body);
+            if (!ba || !bb) continue;
+            // follower = ratio * driver in Jolt units (rad, m)
+            const float r = l.ratio * (a->j.hinge ? 1.0f : kUnitsPerMetre) * (b->j.hinge ? 1.0f : kM);
+            c = new LinkConstraint(*ba, *bb, {a->ax.get(), a->j.hinge, J(a->j.axis)}, {b->ax.get(), b->j.hinge, J(b->j.axis)}, r);
         }
-    for (auto& b : bodies) {
-        if (b.invMass <= 0) continue;
-        b.pos += b.vel * dt;
-        b.rot = glm::normalize(b.rot + quat(0, b.angVel.x, b.angVel.y, b.angVel.z) * b.rot * (0.5f * dt));
+        m.sys.AddConstraint(c);
+        keep.push_back({l, c});
     }
+    m.links = std::move(keep);
 }
 
-float Joint1::gravityForce(float q) const {
-    const vec3 g(0, 0, -kJointGravity);
-    if (!hinge) return mass * glm::dot(g, axis);
-    return glm::dot(glm::cross(glm::angleAxis(q, axis) * arm, mass * g), axis);
+void Scene::setLoose(std::span<const Loose> loose) {
+    Impl& m = *impl_;
+    std::vector<Impl::LooseE> next;
+    for (const auto& l : loose) {
+        const auto it = std::ranges::find(m.loose, l.id, &Impl::LooseE::id);
+        if (it != m.loose.end()) {
+            next.push_back(*it), it->id = INT32_MIN;
+            continue;
+        }
+        if (!l.physics) continue;
+        if (l.rail) { // the joint body becomes the object, colliding, in the frame it has at coordinate 0
+            if (auto* e = m.findJoint(l.rail); e && !e->solid) {
+                const MassProps mp = massProps(*l.physics);
+                m.bi->SetShape(e->body, new JPH::RotatedTranslatedShape(JPH::Vec3::sZero(), J(glm::normalize(glm::quat_cast(mat3(l.model)))),
+                                                                        looseShape(*l.physics, mp.com)), false, JPH::EActivation::Activate);
+                m.bi->SetObjectLayer(e->body, kLayerLoose);
+                m.bi->SetMotionQuality(e->body, JPH::EMotionQuality::LinearCast);
+                e->solid = true;
+            }
+            continue;
+        }
+        MassProps mp = massProps(*l.physics);
+        if (mp.mass <= 0) mp.mass = 666, mp.com = vec3(0, 0, 20), mp.inertia = mat3(0.4f * 666 * 20 * 20); // tru.exe's fallback mass [O]
+        const quat rot = glm::normalize(glm::quat_cast(mat3(l.model)));
+        next.push_back({l.id, m.body(looseShape(*l.physics, mp.com), vec3(l.model * glm::vec4(mp.com, 1)), rot, kLayerLoose, mp.mass, mp.inertia), mp.com});
+    }
+    for (auto& e : m.loose)
+        if (e.id != INT32_MIN) m.remove(e.body);
+    m.loose = std::move(next);
 }
 
-// Reduced coordinates: the linked joints follow j (joint = ratio * j.x), so the chain has one mass M and one
-// generalized force. Each motor is a velocity row on its own joint, its impulse bounded per step [I: tru.exe steps its
-// solver at 60 Hz; with that every motor of a vertical uber joint holds its body against gravity, PHYSICS.md].
-void stepJoint(Joint1& j, std::span<const std::pair<Joint1*, float>> linked, float frames) {
-    float M = j.effectiveMass(), F = j.gravityForce(j.x);
-    for (const auto& [o, r] : linked) M += r * r * o->effectiveMass(), F += r * o->gravityForce(r * j.x);
-    const float push = std::exchange(j.push, 0.0f);
-    j.v = push != 0 ? push : M > 0 ? j.v + F / M * frames : 0.0f;
-    const auto motor = [&](const Joint1& m, float r) {
-        if (!m.motor || r == 0) return;
-        if (M <= 0) { j.v = m.speed / r; return; } // massless: the motor sets the speed
-        float impulse = (m.speed - r * j.v) * M / (r * r);
-        if (m.force > 0) impulse = std::clamp(impulse, -m.force, m.force);
-        j.v += r * impulse / M;
-    };
-    if (push == 0) {
-        motor(j, 1);
-        for (const auto& [o, r] : linked) motor(*o, r);
+std::optional<mat4> Scene::loose(int32_t id) const {
+    const auto it = std::ranges::find(impl_->loose, id, &Impl::LooseE::id);
+    if (it == impl_->loose.end()) return std::nullopt;
+    JPH::RVec3 p;
+    JPH::Quat q;
+    impl_->bi->GetPositionAndRotation(it->body, p, q);
+    return glm::translate(mat4(1), G(p) * kUnitsPerMetre) * glm::mat4_cast(G(q)) * glm::translate(mat4(1), -it->com);
+}
+
+void Scene::setTerrain(std::span<const Terrain> units) {
+    Impl& m = *impl_;
+    std::vector<Impl::TerrainE> next;
+    for (const auto& u : units) {
+        const auto it = std::ranges::find_if(m.terrain, [&](const Impl::TerrainE& e) { return e.t.name == u.name && e.t.offset == u.offset && e.t.mesh == u.mesh; });
+        if (it != m.terrain.end()) next.push_back(std::move(*it)), it->t.mesh = nullptr;
+        else next.push_back({u, nullptr, {}, false});
     }
-    j.x += j.v * frames;
-    const auto limit = [&](const Joint1& m, float r) {
-        if (!m.limited || r == 0) return;
-        const float lo = std::min(m.lo / r, m.hi / r), hi = std::max(m.lo / r, m.hi / r);
-        if (j.x < lo) j.x = lo, j.v = std::max(j.v, 0.0f);
-        else if (j.x > hi) j.x = hi, j.v = std::min(j.v, 0.0f);
+    for (auto& e : m.terrain)
+        if (e.t.mesh) m.remove(e.body);
+    m.terrain = std::move(next);
+}
+
+void Scene::setColliders(std::span<const collision::Dynamic> dynamics) {
+    Impl& m = *impl_;
+    std::vector<Impl::ProxyE> next;
+    for (const auto& d : dynamics) {
+        if (!d.shape) continue;
+        const auto it = std::ranges::find(m.proxies, d.shape, &Impl::ProxyE::shape);
+        if (it != m.proxies.end()) next.push_back({std::move(it->shape), d.transform, it->body}), it->body = JPH::BodyID();
+        else next.push_back({d.shape, d.transform, {}});
+    }
+    for (auto& p : m.proxies) m.remove(p.body);
+    m.proxies = std::move(next);
+}
+
+void Scene::blast(vec3 at, float radius, float near, float edge) {
+    const auto push = [&](JPH::BodyID id) {
+        const vec3 p = G(impl_->bi->GetCenterOfMassPosition(id)) * kUnitsPerMetre, d = p - at;
+        const float l = glm::length(d);
+        if (l >= radius) return;
+        impl_->bi->AddLinearVelocity(id, Jm((l > 1e-3f ? d / l : vec3(0, 0, 1)) * glm::mix(near, edge, l / radius)));
     };
-    limit(j, 1);
-    for (const auto& [o, r] : linked) limit(*o, r);
-    for (const auto& [o, r] : linked) o->x = r * j.x, o->v = r * j.v;
+    for (size_t i = 0; i < bodies.size(); ++i)
+        if (bodies[i].invMass > 0) push(impl_->hingeBodies[i]);
+    for (const auto& l : impl_->loose) push(l.body);
+}
+
+void Scene::step(float dt) {
+    Impl& m = *impl_;
+    for (size_t i = 0; i < hinges.size(); ++i) { // limits; motor toward the target, rate-limited, landing on it
+        const Hinge& h = hinges[i];
+        Axis& a = *m.hingeJoints[i];
+        m.limits(a, true, h.lo, h.hi);
+        if (h.target && h.maxTorque > 0) {
+            a.h()->GetMotorSettings().SetTorqueLimit(h.maxTorque * kM * kM);
+            a.h()->SetMotorState(JPH::EMotorState::Velocity);
+            a.h()->SetTargetAngularVelocity(std::clamp((*h.target - a.q()) / dt, -h.maxSpeed, h.maxSpeed));
+        } else {
+            a.h()->SetMotorState(JPH::EMotorState::Off);
+        }
+    }
+    for (auto& e : m.joints) { // a pushed driver's followers drop their motors (tru.exe: her push drives the chain)
+        bool followerOfPush = false;
+        for (const auto& l : m.links)
+            if (l.l.follower == e.key)
+                if (const auto* d = m.findJoint(l.l.driver); d && d->live && d->live->push != 0) followerOfPush = true;
+        m.driveJoint(e, *e.live, followerOfPush);
+    }
+    m.syncSolids(dt);
+    m.sys.Update(dt, 1, &m.temp, &m.jobs);
+    for (size_t i = 0; i < bodies.size(); ++i) {
+        JPH::RVec3 p;
+        JPH::Quat q;
+        const auto id = m.hingeBodies[i];
+        m.bi->GetPositionAndRotation(id, p, q);
+        bodies[i].pos = G(p) * kUnitsPerMetre, bodies[i].rot = G(q);
+        bodies[i].vel = G(m.bi->GetLinearVelocity(id)) * kUnitsPerMetre, bodies[i].angVel = G(m.bi->GetAngularVelocity(id));
+    }
+    for (auto& e : m.joints) {
+        Joint1& j = *e.live;
+        if (j.hinge) {
+            j.x = e.x + wrap(e.ax->q() - wrap(e.x));
+            j.v = glm::dot(G(m.bi->GetAngularVelocity(e.body)), j.axis) / kFrame;
+        } else {
+            j.x = e.ax->q() * kUnitsPerMetre;
+            j.v = glm::dot(G(m.bi->GetLinearVelocity(e.body)), j.axis) * kUnitsPerMetre / kFrame;
+        }
+        j.push = 0;
+        e.x = j.x, e.v = j.v, e.live = nullptr;
+    }
 }
 
 } // namespace ou::physics

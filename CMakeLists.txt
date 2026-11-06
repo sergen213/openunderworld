@@ -219,9 +219,27 @@ if(OU_BUILD_TESTS)
   gtest_discover_tests(ou_collision_tests DISCOVERY_TIMEOUT 30)
 endif()
 
-# ---- ou_physics: object collision primitives, rigid bodies, hinges, movers (docs/formats/PHYSICS.md) ----
+# ---- ou_physics: object collision primitives; rigid bodies, joints, loose bodies on Jolt (docs/formats/PHYSICS.md) ----
+# Jolt Physics 5.6.0 (MIT, third_party/jolt/LICENSE), fetched once into the build tree (as DXC: _deps keeps it, so a
+# reconfigure or rebuild is offline). Deterministic float math, no AVX (the AppImage runs on any x86-64-v2 CPU), no
+# samples/tests/GPU compute. Linked PRIVATE: only Physics.cpp sees Jolt headers and flags.
+include(FetchContent)
+foreach(v USE_AVX USE_AVX2 USE_AVX512 USE_LZCNT USE_TZCNT USE_F16C USE_FMADD ENABLE_ALL_WARNINGS OVERRIDE_CXX_FLAGS
+          INTERPROCEDURAL_OPTIMIZATION GENERATE_DEBUG_SYMBOLS DEBUG_RENDERER_IN_DEBUG_AND_RELEASE PROFILER_IN_DEBUG_AND_RELEASE
+          ENABLE_OBJECT_STREAM ENABLE_INSTALL JPH_USE_DX12 JPH_USE_VK JPH_USE_MTL JPH_USE_CPU_COMPUTE
+          FLOATING_POINT_EXCEPTIONS_ENABLED)
+  set(${v} OFF)
+endforeach()
+set(CROSS_PLATFORM_DETERMINISTIC ON)
+set(CPP_RTTI_ENABLED ON) # our code (and UBSan's vptr checks) subclasses / inspects Jolt types
+FetchContent_Declare(ou_jolt
+  URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.6.0.tar.gz
+  URL_HASH SHA256=6e069ee0172478cc78182047aac87e5310ba14a67a53348ae14cc37801fd3f8e
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR Build)
+FetchContent_MakeAvailable(ou_jolt)
 add_library(ou_physics STATIC src/physics/Physics.cpp)
-target_link_libraries(ou_physics PUBLIC ou_collision ou_formats glm::glm)
+target_link_libraries(ou_physics PUBLIC ou_collision ou_formats glm::glm PRIVATE Jolt)
 if(OU_BUILD_TESTS)
   add_executable(ou_physics_tests tests/test_physics.cpp)
   target_link_libraries(ou_physics_tests PRIVATE ou_physics GTest::gtest_main)
