@@ -299,6 +299,11 @@ public:
     using EnemyNative = std::function<bool(int32_t uid, std::string_view type, uint32_t function,
                                            std::span<const vm::Value> args, uint32_t& result)>;
     void setEnemyNative(EnemyNative native) { enemy_ = std::move(native); }
+    // watervolumebase natives (bind 0x7B6930) on the volume `water` (intro uid): `args` with instance arguments resolved
+    // to intro uids; `type` "watervolumebase" (World::bindWater).
+    using WaterNative = std::function<bool(int32_t water, std::string_view type, uint32_t function,
+                                           std::span<const int32_t> args, uint32_t& result)>;
+    void setWaterNative(WaterNative native) { water_ = std::move(native); }
     // Spline camera requests. op 0: autosplinecamera 0 (thunk 0x7B37D0 -> 0x7759F0 -> AutoSplineCamera 0x5E26F0)
     // plays camera spline `index` of `unit` (the cameraspline value: {initial data, stream unit of the owner, data
     // word 0}, 0x775760); `value` identifies it to cameraSplineDone. op 1: gamebase 52 (0x7767A0 -> CameraManager
@@ -477,6 +482,7 @@ private:
     std::vector<int32_t> mounts_;
     int32_t lastBike_ = 0; // larabase 52's bike (Lara +0xF00) for larabase 53; saved
     EnemyNative enemy_;
+    WaterNative water_;
     std::array<uint8_t, 256> gameValues_{};
     std::vector<Popup> popups_; // takePopups
     std::map<uint16_t, std::string> objectNames_;

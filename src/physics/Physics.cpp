@@ -445,6 +445,8 @@ struct Scene::Impl {
     std::vector<Weight> weights;          // Scene::setPlates, for the next step
     std::map<uint64_t, std::vector<collision::Dynamic>> plateMeshes; // Scene::setPlates: plate joint key -> collision
     std::optional<Character> character;   // Scene::setCharacter
+    std::vector<Water> water;             // Scene::setWater
+    void buoyancy(float dt);
     JPH::BodyID lara;                     // its proxy body (key "a")
 
     // Body IDs are ours, not Jolt's allocation order: the lowest free index (sequence 0), or the ID a restored state
@@ -937,6 +939,36 @@ void Scene::setCharacter(const Character* c) {
     else impl_->character.reset();
 }
 
+void Scene::setWater(std::span<const Water> water) { impl_->water.assign(water.begin(), water.end()); }
+
+// tru.exe 0x6AD070: each physics body overlapping a water volume gets Havok buoyancy with the volume's density +0x80
+// (4.5555e-5 kg per unit^3 = 1000 kg/m^3), linear drag +0x84 0.5, angular +0x88 0.01 (scaled per object by its physics
+// property bytes [I: 1]) and the current (0x6ACB60's per-frame vector as the fluid velocity). Jolt's factor is the
+// fluid density over the body's: 1000 x volume / mass.
+void Scene::Impl::buoyancy(float dt) {
+    if (water.empty()) return;
+    for (const auto& l : loose) {
+        const vec3 c = G(bi->GetCenterOfMassPosition(l.body)) * kUnitsPerMetre;
+        for (const Water& w : water) {
+            const vec3 d = c - w.centre;
+            const glm::vec2 local(w.yaw.x * d.x + w.yaw.y * d.y, -w.yaw.y * d.x + w.yaw.x * d.y);
+            if (std::abs(local.x) > w.half.x || std::abs(local.y) > w.half.y || std::abs(d.z) > w.half.z) continue;
+            float volume = 0, invMass = 0;
+            {
+                JPH::BodyLockRead lock(sys.GetBodyLockInterfaceNoLock(), l.body);
+                if (!lock.Succeeded()) break;
+                volume = lock.GetBody().GetShape()->GetVolume(), invMass = lock.GetBody().GetMotionProperties()->GetInverseMass();
+            }
+            const float mass = invMass > 0 ? 1.0f / invMass : 0.0f;
+            if (mass <= 0 || volume <= 0) break;
+            const vec3 fluid = w.flow ? w.flow(w.user, c) / 30.0f : vec3(0);
+            bi->ApplyBuoyancyImpulse(l.body, JPH::RVec3(Jm(vec3(c.x, c.y, w.surface))), JPH::Vec3::sAxisZ(), 1000.0f * volume / mass,
+                                     0.5f, 0.01f, Jm(fluid), sys.GetGravity(), dt);
+            break;
+        }
+    }
+}
+
 void Scene::blast(vec3 at, float radius, float near, float edge) {
     const auto push = [&](JPH::BodyID id) {
         const vec3 p = G(impl_->bi->GetCenterOfMassPosition(id)) * kUnitsPerMetre, d = p - at;
@@ -1130,6 +1162,7 @@ void Scene::step(float dt) {
     m.driveVehicles();
     m.moveProxies(dt);
     m.driveCharacter(dt);
+    m.buoyancy(dt);
     m.reorder();
     m.sys.Update(dt, 1, &m.temp, &m.jobs);
     for (size_t i = 0; i < bodies.size(); ++i) {

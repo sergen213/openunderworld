@@ -502,3 +502,30 @@ TEST(PhysicsRealData, PoacherRagdoll) {
     EXPECT_EQ(r->bones[1].friction, 150.0f);
     EXPECT_FALSE(physics::loadRagdoll(cdc::parseDrm(*bf->read("pc-w\\ca_rb_wall_hpole_door.drm"))));
 }
+
+// Buoyancy (Scene::setWater, tru.exe 0x6AD070): a 100-unit box of 10 kg (220 kg/m^3) floats with 22 % of it under the
+// surface; one of 100 kg (2200 kg/m^3) sinks to the floor.
+TEST(Physics, LooseBodiesFloatOrSinkInWater) {
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {0, 0, -50}), {6000, 6000, 100});
+    floor.build();
+    const auto box = [](float mass) {
+        physics::ObjectPhysics o;
+        o.segments = {glm::mat4(1)};
+        physics::Prim p;
+        p.kind = physics::PrimKind::Box, p.size = {100, 100, 100}, p.pos = {0, 0, 50}, p.mass = mass, p.head[1] = 0x11;
+        o.prims = {p};
+        return o;
+    };
+    const physics::ObjectPhysics light = box(10), heavy = box(100);
+    physics::Scene s;
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    const std::vector<physics::Scene::Loose> loose{{1, &light, glm::translate(glm::mat4(1), {0, 0, 300})},
+                                                   {2, &heavy, glm::translate(glm::mat4(1), {1000, 0, 300})}};
+    const std::vector<physics::Scene::Water> water{{vec3(0, 0, 0), vec3(3000, 3000, 500), {1, 0}, 500.0f}};
+    for (int i = 0; i < 20 * 60; ++i) s.setTerrain(terrain), s.setLoose(loose), s.setWater(water), s.step(kDt);
+    const float z = (*s.loose(1))[3].z; // bottom face; Jolt's convex radius rounds the box, so not exactly 22 under
+    EXPECT_GT(z, 500 - 60.0f) << "floats";
+    EXPECT_LT(z, 500 - 10.0f) << "partly under the surface";
+    EXPECT_NEAR((*s.loose(2))[3].z, 0, 5) << "sinks";
+}

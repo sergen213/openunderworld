@@ -800,13 +800,18 @@ nlohmann::json World::serializeCombat() const {
              return a;
          }()}};
     return {{"weapon", weaponName(c.weapon)}, {"secondary", weaponName(c.secondary)}, {"guns", guns}, {"adrenaline", c.adrenaline},
-            {"state", state}};
+            {"state", state}, {"healthClocks", [&] {
+                const auto h = health_.clocks();
+                return nlohmann::json{h.now, h.regenStart, h.regenBase, h.invuln, h.lastType};
+            }()}};
 }
 
 void World::restoreCombat(const nlohmann::json& j) {
     if (!j.is_object()) return;
     const auto weapon = weaponByName(j.value("weapon", std::string{})), secondary = weaponByName(j.value("secondary", std::string{}));
     if (!weapon || !secondary) return;
+    if (const auto h = j.find("healthClocks"); h != j.end() && h->is_array() && h->size() == 5) // older saves: idle clocks
+        health_.setClocks({h->at(0).get<double>(), h->at(1).get<double>(), h->at(2).get<float>(), h->at(3).get<float>(), h->at(4).get<int>()});
     CombatState c = fullClips(anims_.weapons); // holstered, as a respawn
     c.weapon = c.want = c.previous = *weapon, c.secondary = *secondary;
     const nlohmann::json guns = j.value("guns", nlohmann::json::object());
@@ -1147,7 +1152,9 @@ void World::tickCombat(const Actions& a, float dt) {
         return;
     }
     if (health_.dead() && !airborne(s.state)) { // [I] dies on the ground; fatal falls die on landing
-        player_.die(health_.lastType() == kDamageAbsolute ? "death_fall_normal" : "death_toknee");
+        // out of breath (0x755230: periodic damage, death type 8) under water: death_drown [I: the type-8 clip]
+        const bool drowned = health_.lastType() == kDamagePeriodic && s.water >= 0;
+        player_.die(drowned ? "death_drown" : health_.lastType() == kDamageAbsolute ? "death_fall_normal" : "death_toknee");
         CombatState d; // holstered; the weapons and their rounds are kept [I]
         d.weapon = d.want = c.weapon, d.previous = c.previous, d.secondary = c.secondary;
         std::copy(&c.clip[0][0], &c.clip[0][0] + 2 * kWeaponCount, &d.clip[0][0]);

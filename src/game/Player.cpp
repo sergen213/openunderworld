@@ -375,13 +375,24 @@ void Player::land(vec2 move) {
     if (tryBeam("bbeam_jumpland", true)) return;
     const float speed = glm::length(xy(s_.vel));
     s_.vel = vec3(0);
-    if (speed > 600.0f && glm::length(move) > 0.5f) {
+    if (wading() && anims_.find("swim_land_wading")) { // into class-0x100 water
+        s_.state = State::Land;
+        play("swim_land_wading", false);
+    } else if (speed > 600.0f && glm::length(move) > 0.5f) {
         s_.state = State::Run;
         play("ng_running_land", false);
     } else {
         s_.state = State::Land;
         play("ng_generic_land_forwards", false);
     }
+}
+
+// tru.exe 0x5D3860 classes the water under her by floor depth (surface - feet on the floor): class 0x100 = wading.
+bool Player::wading() const {
+    const int w = waterAt(s_.pos);
+    if (w < 0 || !anims_.find("wading_idle") || !anims_.find("wading_walk")) return false;
+    const float d = waterSurface(col_.markup[size_t(w)], vec2(s_.pos), waveSeconds_) - s_.pos.z;
+    return d >= t_.wadeDepth && d < t_.swimDepth;
 }
 
 void Player::airMove(float dt, vec2 move) {
@@ -1034,6 +1045,20 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             play("crouch_idleToCrouch", false);
             break;
         }
+        // Wading (class 0x100): wading_idle, and wading_walk at any stick [I: the original's wading graph not decoded;
+        // wading_walk_low and the wading turns / jumps unused]. Leaving it, the on-foot clips come back.
+        const bool wade = s_.state != State::Land && wading();
+        if (!wade && s_.clip.starts_with("wading_")) play(s_.state == State::Walk ? "ng_walk" : "ng_idle", true);
+        if (wade) {
+            if (wantsMove) {
+                s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
+                s_.state = State::Walk;
+                play("wading_walk", true);
+            } else {
+                s_.state = State::Idle;
+                play("wading_idle", true);
+            }
+        } else
         switch (s_.state) {
         case State::Idle:
             if (!wantsMove) break;
@@ -1545,6 +1570,7 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         s_.state = State::Idle;
         s_.fallStartZ = floorZ;
         play("ng_idle", true);
+        if (wading() && anims_.find("swim_to_wade")) s_.state = State::Land, play("swim_to_wade", false); // [I] its use
     };
     const float surf = surfaceZ();
     // Stroke of a swim that moves: at the surface swim_surface_fast_forward, under water swim_sub; with Shift held the

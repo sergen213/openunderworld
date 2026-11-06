@@ -1458,11 +1458,29 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 events_.push_back({EventKind::Checkpoint, self->uid, self->uid, tick_});
                 return true;
             }
-            // watervolumebase (bind 0x7B6930; docs/GAMEPLAY.md "Water"): 3 SetFlowStrength (0x778430 posts 0x1B3 with no
-            // marker change) [U: not applied], 4 GetDepth = (surface - bottom) x 0.3164 (0x778470) [I: 0; static water].
-            if (!std::strcmp(name, "watervolumebase") && nc.function == 3 && nc.args.size() <= 1) return true;
-            if (!std::strcmp(name, "watervolumebase") && nc.function == 4 && nc.args.empty()) {
-                nc.result = vm::Value::scalar(0);
+            // watervolumebase (thunks 0x79E080..0x79E130, bind 0x7B6930): 0 SetFlow(source, sink, strength), 1 SetLevel(depth,
+            // speed), 2 SetLevelToMarker(instance, speed), 3 SetFlowStrength(strength), 4 GetDepth. The volume is the
+            // receiver (its own script) or the calling object. larabase 3 (0x777780, Lara in the argument volume) is not
+            // bound: it lets l4_pool's 5608 run its goo-damage loop (health 2), which a save does not continue [U].
+            if (water_ && !std::strcmp(name, "watervolumebase") && nc.function <= 4) {
+                const auto uidOf = [&](const vm::Value& a) -> int32_t {
+                    if (a.kind == vm::Value::Kind::Object) return a.uid;
+                    if (a.kind != vm::Value::Kind::Member) return int32_t(a.bits);
+                    const auto holder = resolve(a.uid);
+                    if (!holder) return 0;
+                    if (const auto f = holder->fields.find(a.offset); f != holder->fields.end()) return int32_t(f->second);
+                    const Member* m = holder->program ? holder->program->member(holder->typeId, a.offset) : nullptr;
+                    return m && m->init ? int32_t(*m->init) : 0;
+                };
+                static constexpr uint8_t kInstanceArgs[] = {2 | 1, 0, 1, 0, 0}; // per function: argument bits holding instances
+                std::array<int32_t, 3> args{};
+                for (size_t i = 0; i < nc.args.size() && i < args.size(); ++i)
+                    args[i] = kInstanceArgs[nc.function] >> i & 1 ? uidOf(nc.args[i]) : int32_t(nc.args[i].bits);
+                const int32_t volume = nc.receiver.kind == vm::Value::Kind::Object ? nc.receiver.uid : self->uid;
+                uint32_t result = 0;
+                const size_t n = std::min(nc.args.size(), args.size());
+                if (!water_(volume, name, nc.function, std::span<const int32_t>(args.data(), n), result)) return false;
+                nc.result = vm::Value::scalar(result);
                 return true;
             }
             if (!std::strcmp(name, "playersensor") && nc.function == 2) return true; // void native sensor interface call

@@ -141,6 +141,10 @@ public:
     void tick(float dt);                            // 0x6F5160: regeneration, overheal decay, window
     void reset();                                   // 0x700060: full health (level start / respawn)
     void set(float v) { reset(), value_ = v, regenBase_ = v; } // saves: restored health, window/regen clocks idle
+    // The window / regeneration clocks (+0x630..+0x63C) for saves, so damage over time continues bit for bit.
+    struct Clocks { double now = 0, regenStart = 0; float regenBase = 0, invuln = 0; int lastType = 0; };
+    Clocks clocks() const { return {now_, regenStart_, regenBase_, invuln_, lastType_}; }
+    void setClocks(const Clocks& c) { now_ = c.now, regenStart_ = c.regenStart, regenBase_ = c.regenBase, invuln_ = c.invuln, lastType_ = c.lastType; }
     // PLAYER TAILORING changed Lara's max (tru.exe 0x6F5160): health keeps its fraction of the max.
     void setMax(float m) {
         if (m == t_.max || !(m > 0)) return;

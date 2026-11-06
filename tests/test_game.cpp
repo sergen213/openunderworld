@@ -3836,3 +3836,81 @@ TEST(GameReal, SwimWaterDataDecoded) {
     EXPECT_EQ(v->points[game::kWaterIds], vec3(0, 1, 0));
     EXPECT_GT(glm::length(game::waterFlow(*v, v->points[2])), 0.0f);
 }
+
+// Wading (tru.exe 0x5D3860 class 0x100: floor 154..391 under the surface): wading_idle standing, wading_walk moving;
+// shallower water keeps the on-foot clips.
+TEST(Game, WadingClipsAtTheDecodedDepth) {
+    for (const float depth : {250.0f, 100.0f}) {
+        CollisionMesh m;
+        addFloor(m, -5000, -5000, 5000, 5000, 0);
+        m.markup.push_back({10, 1, {{-5000, -5000, -2000}, {5000, 5000, depth}}});
+        auto anims = syntheticAnims();
+        anims.clips["wading_idle"] = rootClip(30, 0);
+        anims.clips["wading_walk"] = rootClip(30, 8.0f);
+        m.build();
+        game::World w(std::move(m), std::move(anims), game::Spawn{{0, 0, 0}, 0});
+        for (int i = 0; i < 30; ++i) w.tick({});
+        EXPECT_EQ(w.player().state().clip, depth == 250 ? "wading_idle" : "ng_idle") << depth;
+        for (int i = 0; i < 30; ++i) w.tick(forward());
+        EXPECT_EQ(w.player().state().clip, depth == 250 ? "wading_walk" : "ng_run") << depth;
+        EXPECT_LT(w.player().state().water, 0) << "walked, not swum";
+    }
+}
+
+// Scripted water (watervolumebase natives, tru.exe 0x6AC340 / 0x6C10D0): the water scripts of l7_yggdrasil_end (8309
+// SetLevelToMarker on load, 8209 / l4_pool 5608 GetDepth) run their watervolumebase calls without stopping. 8309's instance
+// argument is null in our runtime (its instanceref is unbound) and the exe's thunk 0x79E0E0 skips a null one, so its
+// level stays: the motion itself is GameReal.ScriptedWaterLevelMoves.
+TEST(GameReal, ScriptedWaterLevelsRun) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const std::string unit : {"l7_yggdrasil_end", "l4_pool"}) {
+        std::map<std::string, game::UnitData> cache;
+        game::World w(game::UnitLoader([&](const std::string& name) {
+                          auto& d = cache[name];
+                          if (!d.drm) d = game::loadUnitData(bf, name);
+                          return d;
+                      }),
+                      unit, game::loadLaraAnims(bf), game::Spawn{{0, 0, 0}, 0});
+        w.script().setBigfile(&bf);
+        for (int i = 0; i < 600; ++i) w.tick({});
+        for (const auto& [key, count] : w.script().failures())
+            EXPECT_TRUE(key.second.find("watervolumebase") == std::string::npos )
+                << unit << " " << key.first << " " << key.second;
+    }
+}
+
+// SetLevel (watervolumebase 1, 0x7782D0 -> 0x1B4 mode 2): depth and speed in script lengths (x 3.1605 + 0.5, ints): 100
+// -> 316 over the volume's bottom, 10 -> 32 units per 30 Hz frame; the surface moves there (0x6C10D0), GetDepth reads
+// it back x 0.3164, and a save carries the moving level on bit for bit.
+TEST(GameReal, ScriptedWaterLevelMoves) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    const auto loader = game::UnitLoader([&](const std::string& name) {
+        auto& d = cache[name];
+        if (!d.drm) d = game::loadUnitData(bf, name);
+        return d;
+    });
+    game::World w(loader, "l7_yggdrasil_end", game::loadLaraAnims(bf), game::Spawn{{0, 0, 0}, 0});
+    const auto surface = [](const game::World& v) {
+        for (const auto& m : v.collision().markup)
+            if (m.type == 10 && m.id == 8309) return std::pair{m.points[0].z, m.points[1].z};
+        return std::pair{0.0f, 0.0f};
+    };
+    const auto [bottom, top] = surface(w);
+    ASSERT_GT(top - bottom, 316 + 32 * 10.0f);
+    uint32_t r = 0;
+    const int32_t set[] = {100, 10};
+    ASSERT_TRUE(w.waterNative(8309, "watervolumebase", 1, set, r));
+    for (int i = 0; i < 20; ++i) w.tick({});
+    EXPECT_NEAR(top - surface(w).second, 32 * 10.0f, 0.5f) << "32 units per 30 Hz frame for 10 frames";
+    const auto saved = w.serializeRuntime();
+    for (int i = 0; i < 1200; ++i) w.tick({});
+    EXPECT_NEAR(surface(w).second - surface(w).first, 316, 1e-2f) << "landed on the target (streaming may move the unit)";
+    ASSERT_TRUE(w.waterNative(8309, "watervolumebase", 4, {}, r));
+    EXPECT_NEAR(std::bit_cast<float>(r), 316 * 0.31640562f, 1e-3f);
+    game::World l(loader, "l7_yggdrasil_end", game::loadLaraAnims(bf), game::Spawn{{0, 0, 0}, 0});
+    l.restoreRuntime(saved);
+    EXPECT_NEAR(top - surface(l).second, 32 * 10.0f, 0.5f) << "the level is saved";
+}

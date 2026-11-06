@@ -315,7 +315,13 @@ nlohmann::json World::serializeRuntime() const {
                                    o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint}},
                         {"spline", std::move(spline)}, {"blendOut", blendOut_}, {"blendFrom", pose(blendFrom_)}}},
             {"hair", std::move(hair)}, {"playerUnit", playerUnit_}, {"air", air_}, {"submerged", submerged_},
-            {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)}};
+            {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)},
+            {"water", [&] {
+                 nlohmann::json w = nlohmann::json::array();
+                 for (const auto& [uid, s] : waterStates_)
+                     w.push_back({uid, s.surface, s.target, s.rate, s.source, s.sink, s.strength, v(s.sourceAt), v(s.sinkAt)});
+                 return w;
+             }()}};
 }
 
 void World::restoreRuntime(const nlohmann::json& j) {
@@ -355,6 +361,12 @@ void World::restoreRuntime(const nlohmann::json& j) {
         const double aimTime = j.at("aimTime");
         const auto bones = j.at("bones").get<std::vector<float>>();
         air_ = air, submerged_ = submerged;
+        waterStates_.clear(); // scripted water levels (older saves: none)
+        for (const auto& e : j.value("water", nlohmann::json::array()))
+            waterStates_[e.at(0).get<int32_t>()] = {e.at(1).get<float>(), e.at(2).get<float>(), e.at(3).get<float>(), e.at(4).get<int16_t>(),
+                                                    e.at(5).get<int16_t>(), e.at(6).get<float>(), v(e.at(7)), v(e.at(8))};
+        for (const auto& [uid, s] : waterStates_)
+            if (const auto [m, u] = waterVolume(uid); m) applyWaterState(*m, u->offset);
         multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
         syncedObjects_ = ~size_t(0);
         focus_ = focus, orbit_ = o, cam_ = prevCam_ = c;

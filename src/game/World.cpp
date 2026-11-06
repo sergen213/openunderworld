@@ -135,7 +135,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ledgeb_bad_attach_M", "ledgeb_bad_attach_recover", // saving grab (Player::tryGrab)
     "obj_block_grab", "obj_block_idle", "obj_block_release", "obj_block_front", "obj_block_back", // push blocks (Player::grip)
     "gear_weapon_pickup", "gear_weapon_pickup_crouch", // pickups (World::collectPickups)
-    "death_fall_normal", "death_toknee", // combat (Combat.cpp)
+    "death_fall_normal", "death_toknee", "death_drown", // combat (Combat.cpp)
+    "wading_idle", "wading_walk", "swim_to_wade", "swim_land_wading", // wading (Player: water class 0x100)
     "hit_light_front", "hit_light_back", "hit_light_side", "hit_mediumfront", "hit_mediumback", "hit_mediumright",
     "hit_light_front_swim", "hit_light_back_swim", "hit_light_side_swim", "hit_mediumfront_swim", "hit_mediumback_swim",
     "hit_mediumright_swim",
@@ -346,6 +347,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     bindLightHealth();
     bindMarkup();
     bindEnemies();
+    bindWater();
     setTailoring(tailoring_);
     script_.setCameraNative([this](int op, const std::string& unit, uint32_t index, uint32_t value) {
         return cameraNative(op, unit, index, value);
@@ -522,6 +524,7 @@ void World::tick(const Actions& input) {
     tickCombat(a, dt); // after the camera: free aim follows it
     if (!combat_.shots.empty()) enemies_.disturb(player_.state().pos); // her shots: disturbance message 0xBF (0x6FFFC0)
     tickGadgets(a, dt); // flashlight, grenades (Gadgets.cpp)
+    tickWaterStates(dt); // scripted water levels (0x6C10D0), before Lara's breath reads the surface
     tickAir(dt);
     // Swimming soaks every region (tru.exe under Wine: mask 0x7F while she swims); out of the water the mask is clear
     // and she dries (Wetness::tick). Not behind a black screen fade: l1_seatop's chapter start drops her into the sea
@@ -1089,6 +1092,10 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     }
     for (const auto& [uid, m] : uberMotion_) part("motion " + std::to_string(uid)), add(uid), add(m.t), add(m.active);
     part("held"), add(held_);
+    for (const auto& [uid, w] : waterStates_) {
+        part("water " + std::to_string(uid));
+        add(uid), add(w.surface), add(w.target), add(w.rate), add(w.source), add(w.sink), add(w.strength), add(w.sourceAt), add(w.sinkAt);
+    }
     return out;
 }
 

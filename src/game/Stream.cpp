@@ -245,6 +245,7 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     if (const auto p = names.find(unit.playerObjectId); unit.playerObjectId && p != names.end()) u.playerObject = p->second;
     if (const auto p = names.find(unit.weatherObjectId); unit.weatherObjectId && p != names.end()) u.weatherObject = p->second;
     for (const auto& in : unit.intros) {
+        u.markers.push_back({in.uniqueId, in.marker, v3(in.position)});
         const auto n = names.find(in.objectId);
         if (n == names.end()) continue;
         if (n->second == "checkpoint" || n->second == "invis_checkpoint")
@@ -455,7 +456,10 @@ void World::rebuildCollision() {
             // first three and the two markers are positions.
             const bool box = m.type == 10 && m.points.size() >= 5;
             for (size_t i = 0; i < (box ? 3 : m.points.size()); ++i) m.points[i] += u.offset;
-            if (box && m.points.size() > kWaterIds) m.points[kWaterSink] += u.offset, m.points[kWaterSource] += u.offset;
+            if (box && m.points.size() > kWaterIds) {
+                m.points[kWaterSink] += u.offset, m.points[kWaterSource] += u.offset;
+                applyWaterState(m, u.offset);
+            }
             if (m.camera)
                 for (vec3& p : m.camera->pos) p += u.offset;
             if (disabledMarkup_.contains({u.data.name, m.id})) m.type = kMarkupDisabled;

@@ -769,6 +769,112 @@ void World::bindMarkup() {
     });
 }
 
+// ---- scripted water (tru.exe watervolumebase natives -> messages 0x1B3 / 0x1B4, handler 0x6AC340) ----------------
+std::pair<collision::Markup*, const LoadedUnit*> World::waterVolume(int32_t uid) {
+    for (const auto& u : units_)
+        for (size_t i = 0; i < u.data.col.markup.size(); ++i)
+            if (const auto& m = u.data.col.markup[i]; m.type == 10 && m.id == uint16_t(uid) && m.points.size() > kWaterIds)
+                return {&col_.markup[u.markupBase + i], &u};
+    return {nullptr, nullptr};
+}
+
+void World::applyWaterState(collision::Markup& m, vec3 offset) const {
+    const auto it = waterStates_.find(int32_t(m.id));
+    if (it == waterStates_.end()) return;
+    const WaterState& s = it->second;
+    m.points[1].z = s.surface + offset.z;
+    m.points[kWaterSource] = s.sourceAt + offset, m.points[kWaterSink] = s.sinkAt + offset;
+    m.points[kWaterFlow].x = s.strength;
+    m.points[kWaterIds] = vec3(s.source, s.sink, 0);
+}
+
+// Script lengths are 3.1605 units (0x7782D0 / 0x778370: int(v x 3.1605 + 0.5)); GetDepth divides by it (x 0.31640562).
+void World::bindWater() {
+    script_.setWaterNative([this](int32_t uid, std::string_view type, uint32_t function, std::span<const int32_t> a,
+                                  uint32_t& result) { return waterNative(uid, type, function, a, result); });
+}
+
+bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, std::span<const int32_t> a, uint32_t& result) {
+    {
+        const auto [m, u] = waterVolume(uid);
+        if (!m) return false;
+        const collision::Markup* data = nullptr;
+        for (const auto& d : u->data.col.markup)
+            if (d.type == 10 && d.id == m->id) data = &d;
+        const float bottom = data->points[0].z, top = data->points[1].z;
+        auto [it, fresh] = waterStates_.try_emplace(uid);
+        WaterState& s = it->second;
+        if (fresh) {
+            s.surface = s.target = top;
+            s.source = int16_t(data->points[kWaterIds].x), s.sink = int16_t(data->points[kWaterIds].y);
+            s.strength = data->points[kWaterFlow].x;
+            s.sourceAt = data->points[kWaterSource], s.sinkAt = data->points[kWaterSink];
+        }
+        const auto markerOf = [&](int32_t intro) -> std::optional<uint16_t> { // the intro's +0x52 (0x7781D0)
+            for (const auto& i : u->data.markers)
+                if (i.uid == intro) return i.marker;
+            return std::nullopt;
+        };
+        const auto markerAt = [&](int32_t marker) -> std::optional<vec3> { // the last intro naming it (0x69D690)
+            std::optional<vec3> at;
+            for (const auto& i : u->data.markers)
+                if (i.marker == marker) at = i.pos;
+            return at;
+        };
+        const auto length = [](int32_t v) { return int32_t(float(v) * 3.1605f + 0.5f); };
+        const auto level = [&](float target, float speed) { // 0x1B4: the new rate keeps or turns the motion (0x6AC340)
+            const float old = s.rate, diff = target - s.surface;
+            s.target = target;
+            if (speed == 0) s.rate = diff * 100;
+            else if ((speed + old) * diff > 0) s.rate = speed + old;
+            else if (diff * speed > 0) s.rate = speed;
+            else if (!(old * diff > 0)) s.rate = -speed;
+        };
+        switch (function) {
+        case 0: { // SetFlow(source, sink, strength) -> 0x1B3 when both instances are intros of the unit
+            const auto from = markerOf(a[0]), to = markerOf(a[1]);
+            if (!from || !to || a.size() < 3) break;
+            s.source = int16_t(*from), s.sink = int16_t(*to);
+            if (a[2] >= 0) s.strength = float(a[2]);
+            if (const auto p = markerAt(s.source)) s.sourceAt = *p;
+            if (const auto p = markerAt(s.sink)) s.sinkAt = *p;
+            break;
+        }
+        case 1: { // SetLevel(depth, speed) -> 0x1B4 mode 2: bottom + depth, at most the box top
+            if (a.size() < 2) return false;
+            int32_t depth = std::max(0, length(a[0]));
+            if (bottom + float(depth) > top) depth = int32_t(top - bottom);
+            level(bottom + float(depth), float(length(a[1])));
+            break;
+        }
+        case 2: { // SetLevelToMarker(instance, speed) -> 0x1B4 mode 3: the z of the last intro with its marker id
+            if (a.size() < 2) return false;
+            if (const auto id = markerOf(a[0]))
+                if (const auto p = markerAt(*id)) level(p->z, float(length(a[1])));
+            break;
+        }
+        case 3: // SetFlowStrength -> 0x1B3 (-1, -1, strength)
+            if (!a.empty() && a[0] >= 0) s.strength = float(a[0]);
+            break;
+        case 4: result = std::bit_cast<uint32_t>((s.surface - bottom) * 0.31640562f); break;
+        default: return false;
+        }
+        applyWaterState(*m, u->offset);
+        return true;
+    }
+}
+
+// 0x6C10D0: the surface moves rate per 30 Hz frame toward the target, landing on it.
+void World::tickWaterStates(float dt) {
+    for (auto& [uid, s] : waterStates_) {
+        if (s.surface == s.target) continue;
+        const float diff = s.target - s.surface, step = s.rate * dt * 30.0f;
+        if ((diff > 0 && diff > step) || (diff < 0 && diff < step)) s.surface += step;
+        else s.surface = s.target, s.rate = 0;
+        if (const auto [m, u] = waterVolume(uid); m) applyWaterState(*m, u->offset);
+    }
+}
+
 // enemybase (tru.exe bind 0x7B4060): 16/17 Set/Get the AI behaviour index (0x776F10 -> 0x62DE00 selects the
 // behaviour list of the enemy data; 0x776F40 reads it back), 22 selects patrol path n of the intro data (0x777010 ->
 // 0x63AC40; ai::Enemies::selectPatrol), 26 picks the MoveNav animation variant (0x7771E0, field 0x37C0 read by
@@ -1085,6 +1191,12 @@ void World::stepPhysics(float dt) {
     for (const auto& d : col_.dynamics)
         if (!looseIds.contains(d.id) && !plates_.contains(d.id)) solids.push_back(d);
     physics_.setColliders(solids);
+    physicsWater_.clear(); // buoyancy and currents for loose bodies (Scene::setWater, tru.exe 0x6AD070)
+    for (const auto& m : col_.markup)
+        if (m.type == 10 && m.points.size() > kWaterIds)
+            physicsWater_.push_back({m.points[2], m.points[3], vec2(m.points[4]), m.points[1].z,
+                                     [](const void* u, vec3 p) { return waterFlow(*static_cast<const collision::Markup*>(u), p); }, &m});
+    physics_.setWater(physicsWater_);
     syncRagdolls(false); // a loaded scene's ragdolls exist before its recorded state applies
     physics_.step(dt);
     syncRagdolls(true);

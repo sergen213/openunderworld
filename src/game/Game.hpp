@@ -191,6 +191,7 @@ struct Tuning {
     // Water at least this deep (surface - floor) is swum, shallower walked: lara.drm player data +0xAE / +0xB0 = 391, the
     // classes of tru.exe 0x5D3860 (< +0xAC 154: 0x200, < 391: 0x100 wading, then 0x40 surface / 0x20 / 0x10 swimming).
     float swimDepth = 391.0f;
+    float wadeDepth = 154.0f;   // +0xAC: water this deep up to swimDepth is waded (class 0x100), shallower walked (0x200)
     float swimRadius = 100.0f;  // sphere around the swimming root
     // Root under the wave surface treading / swimming at the surface (tru.exe, Wine, l2_cliffclimb sea: z fits
     // player+0x8E0 top + the 0x69DA80 waves - 44.1 at rms < 1 in both states).
@@ -355,6 +356,7 @@ private:
     int waterAt(vec3 feet) const;
     float surfaceZ() const;
     bool enterWater(); // from the ground or the air; false if not in deep enough water
+    bool wading() const; // on her feet in water of class 0x100 (wadeDepth..swimDepth deep, tru.exe 0x5D3860)
     void swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt);
     vec3 swimSlide(vec3 pos, vec3 delta) const;
     bool tryClimbOut();
@@ -439,6 +441,10 @@ struct UnitData {
     std::string weatherObject;             // formats::Unit::weatherObjectId name; empty = none
     uint32_t levelFlags = 0;               // formats::Unit::flags
     formats::Unit::RainMap rainMap;        // formats::Unit::rainMap (unit frame)
+    // Every intro's +0x52 marker id and position (unit frame), in intro order: water volumes resolve their flow and level
+    // markers through them (tru.exe 0x69D690 / 0x7781D0 / 0x6AC340 mode 3; World::bindWater).
+    struct IntroMarker { int32_t uid = 0; uint16_t marker = 0; vec3 pos{0}; };
+    std::vector<IntroMarker> markers;
     // Render payload a UnitLoader may decode off the main thread (ou-game: formats::loadLevelScene); null = none.
     std::shared_ptr<const scene::SceneData> scene;
 };
@@ -669,6 +675,9 @@ public:
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
     float air() const { return std::max(0.0f, air_); }
     bool submerged() const { return submerged_; } // head under water this tick
+    // watervolumebase natives on volume `uid` (script::Runtime::WaterNative; World::bindWater): false =
+    // the volume is not loaded or the call is not a binding.
+    bool waterNative(int32_t uid, std::string_view type, uint32_t function, std::span<const int32_t> args, uint32_t& result);
     const Wetness& wetness() const { return wetness_; }
     const Bends& bends() const { return bends_; } // bend_* plants' bend vectors (game/Bend.hpp)
 
@@ -677,7 +686,8 @@ public:
     void damageLara(float amount, vec3 from, int type = kDamageLight); // enemy blows, hazards (tru.exe 0x6F5030)
     void kill();                                                      // message 4: damage = current health
     const Health& health() const { return health_; }
-    void setHealth(float v) { health_.set(v); } // saves (after restore(), which heals fully)
+    // saves (after restore(), which heals fully, and restoreCombat, which set the window / regeneration clocks)
+    void setHealth(float v) { const auto c = health_.clocks(); health_.set(v); health_.setClocks(c); }
     const CombatState& combat() const { return combat_; }
     // The screen wipe (1 = black): the scripts' FadeOut / FadeIn, and her death's 3 s fade (DeathState, Combat.cpp).
     float screenFade() const;
@@ -862,6 +872,22 @@ private:
     void bindLightHealth();
     void bindMarkup();
     void bindEnemies();
+    // A water volume the scripts changed (tru.exe water data, docs/GAMEPLAY.md "Water"): surface +0x58 moving toward
+    // target +0x5C at rate +0x60 units per 30 Hz frame (0x6C10D0), flow markers +0x64 / +0x66 with their positions
+    // (0x69D690) and strength +0x68. Unit frame; World::applyWaterState writes it into the volume's markup.
+    struct WaterState {
+        float surface = 0, target = 0, rate = 0;
+        int16_t source = 0, sink = 0;
+        float strength = 0;
+        vec3 sourceAt{0}, sinkAt{0};
+    };
+    std::map<int32_t, WaterState> waterStates_; // by watervolume intro uid
+    std::vector<physics::Scene::Water> physicsWater_; // stepPhysics: the loaded volumes for buoyancy (reused)
+    void bindWater();
+    void tickWaterStates(float dt);
+    void applyWaterState(collision::Markup& m, vec3 offset) const; // a volume of rebuildCollision / a changed one
+    // The volume `uid`'s markup in collision() and its unit; nulls when it is not loaded.
+    std::pair<collision::Markup*, const LoadedUnit*> waterVolume(int32_t uid);
     std::map<std::pair<int32_t, uint32_t>, uint32_t> enemyValues_; // (intro uid, enemybase setter fn) -> value
     std::set<std::pair<std::string, uint16_t>> disabledMarkup_; // (unit, markup id)
     const formats::UberObjectData* prepareUber(const script::Object& o);

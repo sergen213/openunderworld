@@ -248,6 +248,17 @@ public:
     // while there are loose bodies or ragdolls, and touches nothing else.
     struct Character { vec3 feet{0}; float radius = 0, height = 0, mass = 0; };
     void setCharacter(const Character* c);
+    // Water for the next steps (tru.exe 0x6AD070 per water volume): a yaw-rotated box (centre, half extents, (cos, sin)
+    // of its yaw) with its surface z; `flow` (user data, point) -> the current's velocity in units/s, null = still.
+    // Loose bodies in it get buoyancy at water density 1000 kg/m^3 and drag 0.5 / 0.01 (0x69D350's defaults).
+    struct Water {
+        vec3 centre{0}, half{0};
+        glm::vec2 yaw{1, 0};
+        float surface = 0;
+        vec3 (*flow)(const void* user, vec3 p) = nullptr;
+        const void* user = nullptr;
+    };
+    void setWater(std::span<const Water> water);
 
     // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge, loose
     // and ragdoll bodies.
