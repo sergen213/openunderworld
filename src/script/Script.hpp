@@ -216,6 +216,12 @@ struct Object {
         int clip = -1;              // playing animation-list index, -1 = bind pose
         double t = 0;               // seconds into it
         bool loop = false;
+        // Anim component +0x18.. / +0x14 / +0x98 (0x699D60, 0x6B4390): per stimulus bit the total posted since the
+        // state's entry, the last posted total (the windows, AnimGraphTransition::window), and the hits' damage of
+        // this update (message 0x11C), posted as stimulus 0x800 on the next update. ponytail: not saved (no route
+        // transition has a window; damage is posted within the tick).
+        std::array<float, 32> sums{};
+        float total = 0, damage = 0;
     };
     std::optional<Graph> graph; // saved: state, transition, frames, clip, t, loop
     // Switches: animation id of the Lara clip in the switch's DRM (obj_pull_lever, else obj_pushbutton /
@@ -370,6 +376,9 @@ public:
     // World points where Lara can use an anim-graph object: its bones' bind positions (the buttress mounts' end bone
     // sits 8041 units out from their intro on Yggdrasil's trunk). Empty without a skeleton.
     static std::vector<glm::vec3> usePoints(const Object& o);
+    // Hit message 0x11C on an anim-graph object (0x6B4440): a mask 0x800 transition listing the damage class starts
+    // (0x6A52E0); the damage is also posted as stimulus 0x800 on the object's next update (0x6B4390). False = no graph.
+    bool graphHit(int32_t uid, uint32_t damageClass, float damage);
     void setBody(int32_t uid, const glm::mat4& model); // physics door transform (Object::body); unknown uids ignored
     // Moves a joint object's prismatic position; each range newly entered runs vt 34 with its id, in range order.
     void setJointPosition(int32_t uid, float position);
@@ -394,10 +403,15 @@ private:
     std::shared_ptr<vm::Instance> auxiliaryInstance(const std::shared_ptr<vm::Program>& program, uint32_t typeId);
     void tickSpline(Object& o);   // 0x5CF260: advance, clip / key / loop handling, range callbacks
     // Anim state graph (Object::Graph): 0x6A5660 enter a state, 0x6A5C50 / 0x6B3DD0 start a transition, a stimulus
-    // (mask, value; value < 0 = any, 0x6B3BD0) starts the current state's first matching transition.
+    // (mask, value; value < 0 = any, 0x6B3BD0) starts one of the state's matching transitions (AnimGraph::pick*).
+    // graphPost adds an engine stimulus to the totals (0x699D60) first. graphUse: Lara's use (0x6B4090).
     void graphEnter(int32_t uid, int state);
     void graphBegin(int32_t uid, int transition);
     bool graphStimulus(int32_t uid, uint32_t mask, float value);
+    bool graphPost(int32_t uid, uint32_t mask, float amount, float value);
+    bool graphUse(int32_t uid, float value);
+    void switchUsed(Object& o);
+    uint32_t graphSeed_ = 0; // tru.exe DAT_00A038E0 (0x48CA30), drawn among several eligible transitions; saved
     void tickGraph(int32_t uid);
     std::shared_ptr<const Object::GraphSet> graphSet(const std::string& name);
     std::map<std::string, std::shared_ptr<const Object::GraphSet>> graphSets_; // object name -> graph + clips

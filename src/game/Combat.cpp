@@ -762,6 +762,8 @@ void World::fire(int hand) {
         }
         if (!struck && object) uberShot(object, dir);
         if (!struck && object) damageObject(object, w.damageAt(best, submerged()), w.hitClass); // breakable uber objects (urns)
+        // the hit message 0x11C reaches an anim-graph object too (docs/formats/ANIMGRAPH.md)
+        if (!struck && object) script_.graphHit(object, uint32_t(w.hitClass), w.damageAt(best, submerged()));
         c.shots.push_back(shot);
     }
     c.spread = std::min(w.maxSpreadDeg, c.spread + w.spreadPerShot);

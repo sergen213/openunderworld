@@ -844,7 +844,10 @@ void World::syncObjects() {
         const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Block || o.kind == script::Kind::Switch;
         // Every uber object runs its section components from spawn (0x4D3DA0), as the l7 Thor towers' joints extend.
         const formats::UberObjectData* uber = prepareUber(o);
-        if (!ordinary && !uber && !o.spline && !lateCollider(o)) continue; // spline movers' collision follows Object::body (pose below)
+        // Anim graphs with hit-gated transitions (sh_ei_combat_crate_*) collide so Lara's shots reach them (World::fire).
+        const bool shootable = o.graph && o.graph->set->graph &&
+                               std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return !t.events.empty(); });
+        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable) continue; // spline movers' collision follows Object::body (pose below)
         if (o.kind == script::Kind::Switch && !uber &&
             (!o.script || !o.script->program->mainFunction(o.script->typeId))) continue;
         const physics::ObjectPhysics* physics = objectPhysics(o.name);

@@ -1,3 +1,4 @@
+#include "formats/AnimGraph.hpp"
 #include "formats/Formats.hpp"
 #include "formats/Uber.hpp"
 
@@ -725,4 +726,50 @@ TEST(RealData, LaraOutfitsDrawTextured) {
         EXPECT_GT(drawn, 20u) << outfit;
     }
     EXPECT_EQ(dropped, 1);
+}
+
+// tru.exe's LCG (0x48CA30, DAT_00A038E0 from 0) and the anim graph transition draws (docs/formats/ANIMGRAPH.md).
+TEST(AnimGraph, LcgAndTransitionPicks) {
+    uint32_t seed = 0;
+    EXPECT_EQ(formats::graphRandom(seed, 1), 0.0);
+    EXPECT_EQ(seed, 0x3039u);
+    EXPECT_NEAR(formats::graphRandom(seed, 1), 21468 / 32767.0, 1e-9);
+    EXPECT_EQ(seed, 0xD3DC167Eu);
+    EXPECT_NEAR(formats::graphRandom(seed, 2), 2 * 9988 / 32767.0, 1e-9);
+    EXPECT_EQ(seed, 0xA70427DFu);
+
+    formats::AnimGraph g;
+    const auto tr = [&](uint32_t mask, float after, std::vector<uint32_t> events = {}, float window = 0) {
+        formats::AnimGraphTransition t;
+        t.index = int16_t(g.transitions.size()), t.mask = mask, t.after = after, t.events = std::move(events), t.window = window;
+        g.transitions.push_back(t);
+        return uint32_t(g.transitions.size() - 1);
+    };
+    g.states.resize(3);
+    // state 0, as sh_ei_combat_crate_*: a hit of damage class 13 or 4 starts 0; the timer one waits 30 frames
+    g.states[0].out = {tr(0x800, 0.1f, {13, 4}), tr(0x8000, 30), tr(0x4000, 10, {}, 15)};
+    seed = 0;
+    EXPECT_EQ(g.pickHit(0, 13, 5, 0, seed), 0);
+    EXPECT_EQ(g.pickHit(0, 4, 5, 0, seed), 0);
+    EXPECT_EQ(g.pickHit(0, 2, 5, 0, seed), -1) << "a damage class it does not list";
+    EXPECT_EQ(g.pickHit(0, 13, 0.05f, 0, seed), -1) << "below the threshold";
+    EXPECT_EQ(g.pick(0, 0x800, 5, 0, seed), -1) << "event-gated: only hits start it";
+    EXPECT_EQ(g.pick(0, 0x8000, 29, 29, seed), -1);
+    EXPECT_EQ(g.pick(0, 0x8000, 30, 30, seed), 1);
+    EXPECT_EQ(g.pick(0, 0x4000, 3, 14, seed), -1);
+    EXPECT_EQ(g.pick(0, 0x4000, 3, 16, seed), 2) << "the window: the running total reached 15";
+    EXPECT_EQ(seed, 0u) << "one eligible transition draws nothing";
+    // state 1: three on one mask; each reached one replaces the pick with probability 1 / (count so far)
+    g.states[1].out = {tr(0x10, 0), tr(0x10, 0), tr(0x10, 0)};
+    EXPECT_EQ(g.pick(1, 0x10, 1, 0, seed), 4); // draws 0 * 2 <= 1 (takes the second), 0.655 * 3 > 1
+    EXPECT_EQ(seed, 0xD3DC167Eu);
+    EXPECT_EQ(g.pickAny(1, 0x10, seed), 4); // 0.305 * 2 < 1, 0.675 * 3 >= 1
+    EXPECT_EQ(seed, 0xD6651C2Cu);
+    // state 2: Lara's use; the nearest (after 0 counts 0.1), ties drawn, farther than 0.1 starts nothing
+    g.states[2].out = {tr(0x1, 0), tr(0x1, 0), tr(0x1, 5)};
+    seed = 0;
+    EXPECT_EQ(g.pickUse(2, 0x1, 0, seed), 7); // tie: 0 * 2 < 1 takes the second
+    g.states[2].out = {8};
+    EXPECT_EQ(g.pickUse(2, 0x1, 0, seed), -1);
+    EXPECT_EQ(g.pickUse(2, 0x1, 5.05f, seed), 8);
 }

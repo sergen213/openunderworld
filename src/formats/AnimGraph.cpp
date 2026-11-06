@@ -2,6 +2,8 @@
 
 #include "formats/Formats.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace ou::formats {
@@ -41,6 +43,62 @@ template <class R> int byId(const std::vector<R>& rs, int32_t id) {
 int AnimGraph::stateById(int32_t id) const { return byId(states, id); }
 int AnimGraph::transitionById(int32_t id) const { return byId(transitions, id); }
 
+double graphRandom(uint32_t& seed, double hi) {
+    seed = seed * 0x41C64E6Du + 0x3039u;
+    return double(float((seed >> 16) & 0x7FFF)) / 32767.0 * hi;
+}
+
+namespace {
+// 0x6B3DD0 / 0x6A52E0: the reached ones (value - after, raised to the window's total - window) form a weighted draw;
+// the first is taken without a draw. ponytail: x87 extended precision of the exe's comparison is double here.
+template <class Eligible>
+int weighted(const AnimGraph& g, int state, float value, float total, uint32_t& seed, Eligible eligible) {
+    float sum = 0;
+    int count = 0, picked = -1;
+    for (const uint32_t ti : g.states[size_t(state)].out) {
+        const auto& t = g.transitions[ti];
+        if (!eligible(t)) continue;
+        float d = value - t.after;
+        d = std::max(d, t.window > 0 ? total - t.window : -1e6f);
+        if (d < 0) continue; // the exe plays the nearest one's miss clip (+8): -1 in all data
+        sum += d;
+        if (++count < 2 || graphRandom(seed, sum) <= d) picked = int(ti);
+    }
+    return picked;
+}
+} // namespace
+
+int AnimGraph::pick(int state, uint32_t mask, float value, float total, uint32_t& seed) const {
+    return weighted(*this, state, value, total, seed, [&](const AnimGraphTransition& t) { return (t.mask & mask) && t.events.empty(); });
+}
+
+int AnimGraph::pickHit(int state, uint32_t damageClass, float damage, float total, uint32_t& seed) const {
+    return weighted(*this, state, damage, total, seed, [&](const AnimGraphTransition& t) {
+        return (t.mask & 0x800) && std::ranges::find(t.events, damageClass) != t.events.end();
+    });
+}
+
+int AnimGraph::pickAny(int state, uint32_t mask, uint32_t& seed) const {
+    int count = 0, picked = -1;
+    for (const uint32_t ti : states[size_t(state)].out)
+        if ((transitions[ti].mask & mask) && (++count < 2 || graphRandom(seed, count) < 1.0)) picked = int(ti);
+    return picked;
+}
+
+int AnimGraph::pickUse(int state, uint32_t mask, float value, uint32_t& seed) const {
+    float best = 1;
+    int count = 0, picked = -1;
+    for (const uint32_t ti : states[size_t(state)].out) {
+        const auto& t = transitions[ti];
+        if (!(t.mask & mask) || !t.events.empty()) continue;
+        const float d = t.after == 0 ? 0.1f : std::abs(value - t.after);
+        ++count;
+        if (picked < 0 || d < best) count = 1, best = d, picked = int(ti);
+        else if (d == best && graphRandom(seed, count) < 1.0) picked = int(ti);
+    }
+    return best <= 0.1f ? picked : -1; // farther: the exe plays its miss clip (+8, -1 in all data) instead
+}
+
 std::optional<AnimGraph> loadAnimGraph(const cdc::Drm& drm) {
     const auto base = objectBaseSection(drm);
     if (!base) return std::nullopt;
@@ -63,7 +121,7 @@ std::optional<AnimGraph> loadAnimGraph(const cdc::Drm& drm) {
     for (const uint32_t o : transitions) {
         AnimGraphTransition t;
         t.index = at<int16_t>(ob, o + 2), t.mask = at<uint32_t>(ob, o + 4), t.anim = at<int8_t>(ob, o + 9);
-        t.after = at<float>(ob, o + 0xC);
+        t.after = at<float>(ob, o + 0xC), t.window = at<float>(ob, o + 0x10);
         if (const auto target = cdc::internalPointer(ob, o + 0x14)) t.target = int32_t(position(states, *target, "states"));
         if (const uint32_t n = at<uint32_t>(ob, o + 0x1C); n) {
             const auto list = cdc::internalPointer(ob, o + 0x20);

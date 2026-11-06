@@ -9,10 +9,12 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <set>
+#include <utility>
 
 namespace ou::script {
 namespace {
@@ -425,6 +427,14 @@ void applyState(Object& o, const nlohmann::json* s) {
         placeSpline(o);
     }
 }
+// The offset of the first `modifiable` member in the instance's type chain (its anim component).
+std::optional<uint16_t> modifiableMember(const vm::Instance& in) {
+    if (!in.program) return std::nullopt;
+    for (const ScriptType* t = in.program->type(in.typeId); t; t = in.program->type(t->superId))
+        for (const Member& m : t->members)
+            if (!std::strcmp(in.program->nativeName(m.typeId), "modifiable")) return m.offset;
+    return std::nullopt;
+}
 } // namespace
 
 void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
@@ -616,23 +626,33 @@ void Runtime::addUnit(const UnitRef& u) {
         // Objects whose scripts reach their anim component (a `modifiable` / `animated` member) run its state graph
         // (docs/formats/ANIMGRAPH.md). [O] The intro's physob data word 15 picks the initial state (record index; <= 0:
         // the first), 0x6B5890 message 0x23 -> 0x6B4440 -> 0x6A5660; its vt 20 is not sent [I: no script yet].
-        if (o.kind == Kind::Scripted && o.script) {
+        // [I] Switches keep their own use flow (Object::state) and get no Object::graph, but their scripts' modifiable
+        // member answers fn 8 (state id, query 0xE8) from its field: it holds the intro's state id, and each use moves
+        // it along the use transition (Runtime::switchUsed). l5_valaskjalf_entryb lever 7188 acts only while switch
+        // 7192 is not in its "on" state 0; 7192 starts in state 1.
+        if ((o.kind == Kind::Scripted || o.kind == Kind::Switch) && o.script) {
             bool uses = false;
+            const auto modifiable = modifiableMember(*o.script);
             for (const ScriptType* t = program->type(o.script->typeId); t && !uses; t = program->type(t->superId))
                 for (const Member& m : t->members) {
                     const char* native = program->nativeName(m.typeId);
                     uses |= !std::strcmp(native, "modifiable") || !std::strcmp(native, "animated");
                 }
-            if (const auto set = uses ? graphSet(o.name) : nullptr) {
+            const auto set = uses ? graphSet(o.name) : nullptr;
+            int initial = 0;
+            if (set && set->graph && in.data) {
+                const auto& d = u.drm->sections.at(in.data->section).data;
+                int32_t first = 0;
+                if (in.data->offset + 0x40 <= d.size()) std::memcpy(&first, d.data() + in.data->offset + 0x3C, 4);
+                if (first > 0 && size_t(first) < set->graph->states.size()) initial = first;
+            }
+            if (set && o.kind == Kind::Switch) {
+                if (set->graph && modifiable)
+                    o.script->fields[*modifiable] = o.script->initial[*modifiable] = uint32_t(int32_t(set->graph->states[size_t(initial)].index));
+            } else if (set) {
                 auto& g = o.graph.emplace();
                 g.set = set;
-                if (set->graph && in.data) {
-                    const auto& d = u.drm->sections.at(in.data->section).data;
-                    int32_t first = 0;
-                    if (in.data->offset + 0x40 <= d.size()) std::memcpy(&first, d.data() + in.data->offset + 0x3C, 4);
-                    if (first > 0 && size_t(first) < set->graph->states.size()) g.initial = first;
-                }
-                g.state = g.initial;
+                g.state = g.initial = initial;
                 if (set->graph && set->graph->states[size_t(g.state)].anim >= 0) {
                     const auto& s = set->graph->states[size_t(g.state)];
                     g.clip = s.anim, g.loop = s.flags & 2;
@@ -852,6 +872,7 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
     case EventKind::Out: vt = kVtOnOut; break;
     case EventKind::Cross: vt = kVtPlaneCross; break;
     case EventKind::Use:
+        if (o.kind == Kind::Switch) switchUsed(o);
         vt = contains(o.name, "phole_lever") ? kVtLeverMoved : kVtSwitchUsed;
         // Switch bases (e.g. 3637) receive the state change in vt 20 and dispatch the used state to vt 55; a script that
         // overrides vt 20 below the vt 55 definer handles the use there with state 0 (l2 elevator switch 10112: vt20(0)
@@ -1281,6 +1302,12 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             if (!std::strcmp(name, "uigamedata") && nc.function == 14 && nc.args.size() == 1) return true;
+            // padshock (NtPadshock: gamepad rumble) and camerashake: not modelled; l5_valaskjalf_entryb lever 7188's vt 55
+            // runs on past them to its sound and WAIT.
+            if (!std::strcmp(name, "padshock") || !std::strcmp(name, "camerashake")) {
+                nc.result = vm::Value::scalar(0);
+                return true;
+            }
             if (!std::strcmp(name, "instance") && (nc.function == 0 || nc.function == 1)) return true; // debug print
             if (!std::strcmp(name, "instanceref") && nc.function == 9 && nc.args.size() == 2) { // SetProperty
                 self->properties[(uint64_t(off) << 32) | nc.args[0].bits] = nc.args[1].bits & 0xFF;
@@ -1488,6 +1515,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (nc.function != 4 || nc.args.size() != 1) return false;
                 const uint32_t value = nc.args[0].bits;
                 field() = value;
+                // [I] A switch's member holds its graph state id (Runtime::addUnit): the transition's target replaces it.
+                if (const Object* sw = findMut(self->uid); sw && sw->kind == Kind::Switch)
+                    if (const auto set = graphSet(sw->name); set && set->graph)
+                        if (const int ti = set->graph->transitionById(int32_t(value)); ti >= 0 && set->graph->transitions[size_t(ti)].target >= 0)
+                            field() = uint32_t(int32_t(set->graph->states[size_t(set->graph->transitions[size_t(ti)].target)].index));
                 if (Object* target = findMut(self->uid); target && target->kind == Kind::Door) {
                     // [I] Values per door family: the house door (clips 0_idle, 10_opening, …) opens on 0 and closes on 1
                     // (literals in its type 12171). Ship hall doors (clips open, idle_open, close, idle_close; type 6519
@@ -1716,14 +1748,16 @@ std::shared_ptr<const Object::GraphSet> Runtime::graphSet(const std::string& nam
     return slot = std::move(set);
 }
 
-// 0x6A5660: the state's clip starts (once, or looping with flag 2; none keeps the pose), its timer restarts, then the
-// script's vt 20 (instance prototype 33, 0x799060) gets the state id.
+// 0x6A5660: the state's clip starts (once, or looping with flag 2; none keeps the pose), its timer and stimulus totals
+// restart, then the script's vt 20 (instance prototype 33, 0x799060) gets the state id. Not modelled: the entry posts
+// INSTANCE message 0x1E2 (state +8, kept in the anim record +0x80; no reader found) and, for state flags 0x800 / 0x400
+// / 0x200 / 0x100 / 0x80, message 0x138 (1 / 3 / 5 / 0 / -1) to the burn component (0x6B0C00; ma_ei_ignitable only).
 void Runtime::graphEnter(int32_t uid, int state) {
     Object* o = findMut(uid);
     if (!o || !o->graph || !o->graph->set->graph) return;
     auto& g = *o->graph;
     const auto& s = g.set->graph->states[size_t(state)];
-    g.state = state, g.transition = -1, g.frames = 0;
+    g.state = state, g.transition = -1, g.frames = 0, g.sums = {}, g.total = 0;
     if (s.anim >= 0) g.clip = s.anim, g.t = 0, g.loop = s.flags & 2;
     const auto arg = vm::Value::scalar(uint32_t(int32_t(s.index)));
     callback(uid, "instance", 33, std::span(&arg, 1));
@@ -1744,40 +1778,93 @@ void Runtime::graphBegin(int32_t uid, int transition) {
     if (o && o->graph && o->graph->transition == transition && t.anim < 0) graphEnter(uid, t.target < 0 ? o->graph->state : t.target);
 }
 
-// 0x6B3DD0: only between transitions (the accepted mask is cleared while one runs); the first of the state's
-// transitions whose mask matches and whose threshold the value reached starts. ponytail: the exe draws among several
-// eligible ones with its LCG (0x48CA30) and has a second window (+0x10) no route data uses; ours takes the first.
+// 0x6B3DD0 / 0x6B3BD0: a value >= 0 is accepted only between transitions (the accepted mask is cleared while one
+// runs) and starts AnimGraph::pick's draw among the reached transitions; a value < 0 (scripts' "any") starts
+// pickAny's, also while one runs (then among the running transition's target state's).
 bool Runtime::graphStimulus(int32_t uid, uint32_t mask, float value) {
     const Object* o = find(uid);
-    if (!o || !o->graph || !o->graph->set->graph || o->graph->transition >= 0) return false;
-    const auto& G = *o->graph->set->graph;
-    for (const uint32_t ti : G.states[size_t(o->graph->state)].out) {
-        const auto& t = G.transitions[ti];
-        if ((t.mask & mask) && t.events.empty() && (value < 0 || value >= t.after)) {
-            graphBegin(uid, int(ti));
-            return true;
-        }
+    if (!o || !o->graph || !o->graph->set->graph) return false;
+    const auto& g = *o->graph;
+    const auto& G = *g.set->graph;
+    int ti = -1;
+    if (value < 0) {
+        const int target = g.transition >= 0 ? G.transitions[size_t(g.transition)].target : -1;
+        ti = G.pickAny(target >= 0 ? target : g.state, mask, graphSeed_);
+    } else if (g.transition < 0) {
+        ti = G.pick(g.state, mask, value, g.total, graphSeed_);
     }
-    return false;
+    if (ti < 0) return false;
+    graphBegin(uid, ti);
+    return true;
 }
 
-// Per tick: the clip advances; a transition ends with its clip; else the timer stimulus (0x8000) carries the frames
-// spent in the state (0x6B4390).
+// 0x699D60 then 0x6B3DD0: an engine stimulus adds `amount` to its lowest bit's total (also while a transition runs),
+// which becomes the last posted total, then `value` is offered.
+bool Runtime::graphPost(int32_t uid, uint32_t mask, float amount, float value) {
+    Object* o = findMut(uid);
+    if (!o || !o->graph || !mask) return false;
+    auto& g = *o->graph;
+    g.total = g.sums[size_t(std::countr_zero(mask))] += amount;
+    return graphStimulus(uid, mask, value);
+}
+
+// 0x6B4090 (messages 0x166 / 0x168): mask 1 [U: 2 while Lara's +0x68 flag 0x40000 is set], AnimGraph::pickUse.
+bool Runtime::graphUse(int32_t uid, float value) {
+    const Object* o = find(uid);
+    if (!o || !o->graph || !o->graph->set->graph || o->graph->transition >= 0) return false;
+    const int ti = o->graph->set->graph->pickUse(o->graph->state, formats::kStimulusUse, value, graphSeed_);
+    if (ti < 0) return false;
+    graphBegin(uid, ti);
+    return true;
+}
+
+// A switch's use moves the state id its modifiable member holds (Runtime::addUnit) along that state's use transition
+// (0x6B4090, AnimGraph::pickUse); a null target stays. No callbacks: the Use event dispatches the switch's handlers.
+void Runtime::switchUsed(Object& o) {
+    const auto off = o.script ? modifiableMember(*o.script) : std::nullopt;
+    const auto set = off ? graphSet(o.name) : nullptr;
+    if (!set || !set->graph) return;
+    const auto& G = *set->graph;
+    uint32_t& id = o.script->fields[*off];
+    const int state = G.stateById(int32_t(id));
+    const int ti = state >= 0 ? G.pickUse(state, formats::kStimulusUse, 0, graphSeed_) : -1;
+    if (ti >= 0 && G.transitions[size_t(ti)].target >= 0) id = uint32_t(int32_t(G.states[size_t(G.transitions[size_t(ti)].target)].index));
+}
+
+// 0x6B4440 message 0x11C: the event mask (+0xA8, the state's transitions' damage classes; cleared while one runs)
+// gates 0x6A52E0. [I] A transition without a clip enters its target at once (the exe flags the clip done, 0x100000).
+bool Runtime::graphHit(int32_t uid, uint32_t damageClass, float damage) {
+    Object* o = findMut(uid);
+    if (!o || !o->graph || !o->graph->set->graph) return false;
+    o->graph->damage += damage;
+    if (o->graph->transition >= 0) return true;
+    const int ti = o->graph->set->graph->pickHit(o->graph->state, damageClass, damage, o->graph->total, graphSeed_);
+    if (ti >= 0) graphBegin(uid, ti);
+    return true;
+}
+
+// Per tick: the clip advances; the hits' damage is posted as stimulus 0x800 (0x6B4390); a transition ends with its
+// clip; else the timer stimulus (0x8000) carries the frames spent in the state.
 void Runtime::tickGraph(int32_t uid) {
     Object* o = findMut(uid);
     if (!o || !o->graph) return;
+    if (o->graph->clip >= 0) o->graph->t += kDt;
+    if (!o->graph->set->graph) return;
+    if (const float d = std::exchange(o->graph->damage, 0.0f); d > 0) {
+        graphPost(uid, formats::kStimulusEvent, d, d);
+        if (!(o = findMut(uid)) || !o->graph) return;
+    }
     auto& g = *o->graph;
     const auto& clips = g.set->clips;
-    if (g.clip >= 0) g.t += kDt;
-    if (!g.set->graph) return;
     if (g.transition >= 0) {
         const bool done = g.clip < 0 || size_t(g.clip) >= clips.size() || g.t >= clips[size_t(g.clip)].durationSeconds();
         const int target = g.set->graph->transitions[size_t(g.transition)].target;
         if (done) graphEnter(uid, target < 0 ? g.state : target);
         return;
     }
-    g.frames += float(kDt * 30);
-    graphStimulus(uid, formats::kStimulusTimer, g.frames);
+    const float step = float(kDt * 30);
+    g.frames += step;
+    graphPost(uid, formats::kStimulusTimer, step, g.frames);
 }
 
 // 0x5CF260 at 60 Hz: time advances dir * 30 frames/s (timeMult); a key target (flag 1) stops there, the clip range
@@ -2042,7 +2129,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         }
     }
     if (useSwitch && useSwitch->graph) {
-        graphStimulus(useSwitch->uid, formats::kStimulusUse, 0);
+        graphUse(useSwitch->uid, 0); // [I] the message's value (0x166 +4)
     } else if (useSwitch) {
         useSwitch->state = useSwitch->clips ? 1 : 2, useSwitch->t = 0;
         used_ = useSwitch->uid;
@@ -2138,6 +2225,7 @@ std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> Runtime::debugLines() co
 nlohmann::json Runtime::serialize() const {
     nlohmann::json j = stash_;
     j["gameValues"] = gameValues_;
+    j["graphSeed"] = graphSeed_;
     for (const auto& o : objects_) {
         if (auto s = stateOf(o); !s.is_null()) j[std::to_string(o.uid)] = std::move(s);
         else j.erase(std::to_string(o.uid));
@@ -2160,6 +2248,8 @@ void Runtime::restore(const nlohmann::json& j) {
             gameValues_[i] = j["gameValues"][i].get<uint8_t>();
     stash_ = j.is_object() ? j : nlohmann::json::object();
     stash_.erase("gameValues");
+    graphSeed_ = stash_.value("graphSeed", 0u);
+    stash_.erase("graphSeed");
     const nlohmann::json player = stash_.value("player", nlohmann::json::object());
     stash_.erase("player");
     if (const uint32_t mask = player.value("hiddenGroups", playerGearGroups_); mask != playerHiddenGroups_)

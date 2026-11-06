@@ -564,6 +564,8 @@ TEST(ProgressionReal, CriticalGates) {
         // the Xibalba exit switch, the plane of 190_mex (6410 -> 6389), then the chapter end 5483
         {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5, {{5469, Action::Use}, {6410, Action::Enter}}}},
         {5, {"l5_valaskjalf_entry", 7228, Action::Use, {7227}}},         // switch -> reward door
+        // silver lever (uber event 709 -> vt 55) -> reward door, only while switch 7192's graph state (modifiable 8) is not "on"
+        {5, {"l5_valaskjalf_entryb", 7188, Action::Use, {7187}}},
         {5, {"l5_valaskjalf", 6866, Action::Enter, {}, 6}},              // chapter end 6846
         {6, {"l6_ship_engine_hall", 7565, Action::Enter, {}, 7}},        // chapter end 1387
     };
@@ -712,6 +714,43 @@ TEST(ProgressionReal, AnimGraphSurvey) {
     for (const auto& [name, n] : byName)
         if (n[1]) std::printf("object %s instances %zu graph %zu posed %zu changed %zu\n", name.c_str(), n[0], n[1], n[2], n[3]);
     std::printf("scripted objects %zu, with an anim graph %zu, posed by a clip %zu, changed state idle %zu\n", objects, graphs, posed, changed);
+}
+
+// Research (OU_ANIMGRAPH_RECORDS=1, or =<object> for that object's whole graph): anim graph records that matter for the
+// runtime: event-gated transitions (+0x1C ids), second windows (+0x10), several transitions on one mask, state entry
+// messages (+8, 0xBEEBBEEB = none) and the flags posting INSTANCE message 0x138.
+TEST(ProgressionReal, AnimGraphRecords) {
+    const char* only = std::getenv("OU_ANIMGRAPH_RECORDS");
+    if (!gameDir() || !only) GTEST_SKIP();
+    const bool all = std::string_view(only) == "1";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    for (const auto& [id, name] : formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})) {
+        if (!all && name != only) continue;
+        const auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        std::optional<formats::AnimGraph> g;
+        try { g = formats::loadAnimGraph(cdc::parseDrm(std::vector<uint8_t>(*bytes))); } catch (const std::exception&) { continue; }
+        if (!g) continue;
+        for (const auto& t : g->transitions)
+            if (!all || !t.events.empty() || t.window > 0) {
+                std::printf("%s transition %d mask %#x after %g window %g anim %d target %d events", name.c_str(), t.index, t.mask,
+                            t.after, t.window, t.anim, t.target);
+                for (const uint32_t e : t.events) std::printf(" %u", e);
+                std::printf("\n");
+            }
+        for (const auto& s : g->states) {
+            uint32_t seen = 0, shared = 0;
+            for (const uint32_t ti : s.out) shared |= seen & g->transitions[ti].mask, seen |= g->transitions[ti].mask;
+            if (!all || shared || (s.message && s.message != 0xBEEBBEEB) || (s.flags & 0x1F80)) {
+                std::printf("%s state %d flags %#x anim %d message %#x shared masks %#x out", name.c_str(), s.index, s.flags, s.anim,
+                            s.message, shared);
+                for (const uint32_t ti : s.out) std::printf(" %d", g->transitions[ti].index);
+                std::printf("\n");
+            }
+        }
+    }
 }
 
 // l4_traprooms seal 5701: with the seal raised (sticky +268) and the four trap rooms done (sticky int +240 = 4), plates
@@ -887,6 +926,34 @@ TEST(ProgressionReal, HallwayRampsJoint) {
     for (int i = 0; i < 600 && (*w.uberState(6045))[0] != 1; ++i) w.tick({});
     EXPECT_EQ((*w.uberState(6045))[0], 1u);
     EXPECT_GE(w.uberJoint(6045, 0)->x, -31.6056f) << "raised back into its top range";
+}
+
+// l1_ship_exterior combat crate 1670 (sh_ei_combat_crate_a, docs/formats/ANIMGRAPH.md): its state 0 leaves only by the
+// event-gated transition 11 (mask 0x800, damage classes 13 / 4, 0.1): a pistol hit (class 0) changes nothing, a class 13
+// hit (pr_thorbolt) enters state 1, whose 0-frame timer plays transition 0 into state 13.
+TEST(ProgressionReal, CombatCrateBreaksOnHit) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_ship_exterior", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 10; ++i) w.tick({});
+    const auto* crate = w.script().find(1670);
+    ASSERT_TRUE(crate && crate->graph && crate->graph->set->graph);
+    const auto& G = *crate->graph->set->graph;
+    const auto id = [&] { return G.states[size_t(crate->graph->state)].index; };
+    EXPECT_EQ(id(), 0);
+    EXPECT_TRUE(w.script().graphHit(1670, 0, 10));
+    for (int i = 0; i < 10; ++i) w.tick({});
+    EXPECT_EQ(id(), 0) << "pistol bullets (damage class 0) are not listed";
+    w.script().graphHit(1670, 13, 10);
+    std::vector<int> states{id()};
+    for (int i = 0; i < 600 && states.back() != 13; ++i) {
+        w.tick({});
+        if (id() != states.back()) states.push_back(id());
+    }
+    EXPECT_EQ(states, (std::vector<int>{1, 13}));
 }
 
 // l4_ballcourt Xibalba exit switch 5469 reopens the temple (docs/formats/ANIMGRAPH.md): its vt 55 calls the temple

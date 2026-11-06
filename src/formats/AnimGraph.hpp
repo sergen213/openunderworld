@@ -28,14 +28,34 @@ struct AnimGraphTransition { // 0x34-byte record, tag 0x2776
     int8_t anim = -1;    // +9: animation-list index played once; at its end the target state is entered
     float after = 0;     // +0xC: the stimulus value (timer: frames in the state) must reach this
     int32_t target = -1; // +0x14: state (index into AnimGraph::states); null = the current one again (0x6A5660)
-    std::vector<uint32_t> events; // +0x1C/+0x20: animation event ids (mask 0x800)
+    std::vector<uint32_t> events; // +0x1C/+0x20: hit damage classes (message 0x11C +0x50) that start it (mask 0x800)
+    float window = 0;             // +0x10: > 0: the stimulus' running total since the state's entry must reach this
+    // +8: clip the exe plays when this is the nearest unreached transition (0x6B3DD0 / 0x6A52E0); -1 in all data
 };
 struct AnimGraph {
     std::vector<AnimGraphState> states;
     std::vector<AnimGraphTransition> transitions;
     int stateById(int32_t id) const;      // -1 if none
     int transitionById(int32_t id) const; // -1 if none
+
+    // Which of `state`'s transitions a stimulus starts (index into transitions, -1 none). Several eligible ones are
+    // drawn with tru.exe's LCG (graphRandom, `seed` = DAT_00A038E0). `total` is the stimulus' running total since the
+    // state's entry (anim component +0x14, the windows +0x10).
+    // 0x6B3DD0: mask and no event ids; reached = max(value - after, window > 0 ? total - window : -1e6) >= 0; among
+    // the reached ones, each replaces the pick with probability reached / (sum of reached so far).
+    int pick(int state, uint32_t mask, float value, float total, uint32_t& seed) const;
+    // 0x6B3BD0 (script stimulus with value < 0): any transition on the mask, thresholds and event ids ignored, uniform.
+    int pickAny(int state, uint32_t mask, uint32_t& seed) const;
+    // 0x6A52E0 (hit message 0x11C): mask 0x800 transitions listing the damage class, drawn as `pick` by the damage.
+    int pickHit(int state, uint32_t damageClass, float damage, float total, uint32_t& seed) const;
+    // 0x6B4090 (Lara's use, messages 0x166 / 0x168): the transition on the mask without event ids nearest the value
+    // (|value - after|, after 0 counts 0.1), ties drawn uniformly; it starts only within 0.1.
+    int pickUse(int state, uint32_t mask, float value, uint32_t& seed) const;
 };
+
+// tru.exe 0x48CA30: DAT_00A038E0 = DAT_00A038E0 * 0x41C64E6D + 0x3039, then bits 16..30 / 32767 scaled to [0, hi].
+// The seed starts at 0 (.bss).
+double graphRandom(uint32_t& seed, double hi);
 
 // nullopt when the object has no class-6 state graph. Throws cdc::FormatError on malformed records.
 std::optional<AnimGraph> loadAnimGraph(const cdc::Drm& object);

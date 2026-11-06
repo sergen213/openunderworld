@@ -80,7 +80,8 @@ Portal order from the start unit; level changes not made by portals are named.
 | 4 | l4_ballcourt | switch 5469, plane 6410 (190_mex), plane 5468 | 5483 → chapter 5 | pass (before gates 4 it passed only through puzzle_cheat_button 6512's vt 20 run at birth) |
 | 5 | l5_valgrind | volumes 7471/7511 | door 7334, cinematic 7464 | pass |
 | 5 | l5_valaskjalf_entry | switch 7228 (use) | reward door 7227 | pass |
-| 5 | l5_valaskjalf_entryb | levers 7188/7189 (use) | reward doors 7187/7227 | **fail** (lever handlers change nothing visible) |
+| 5 | l5_valaskjalf_entryb | lever 7188 (use) | reward door 7187 | pass (`CriticalGates`; acts only while switch 7192 is not in its graph state 0 "on", read by `modifiable` 8) |
+| 5 | l5_valaskjalf_entryb | pole-hole lever 7189 (use) | reward door 7227 | **fail** (`ar_uo_phole_lever`: its graph leaves only by stimuli 0x20 / 0x40 [U: posted once a pole sits in the hole]; Lara's use changes nothing) |
 | 5 | l5_valaskjalf | volumes 7025-7030 | gears / chains | pass |
 | 5 | l5_valaskjalf | volume 6866 | 6846 → chapter 6 | pass |
 | 6 | l6_ship_upper_hallway* | volumes 7622/7623/7644/7646 | ship doors 7621/7642/7643 have no script (the volumes' ISTYPE fails): they stand open | pass (`ChapterSixShipDoorsOpen`) |
@@ -121,8 +122,11 @@ Portal order from the start unit; level changes not made by portals are named.
   work, and 2393 turns out to be only a camera-anchor helper (its instanceref +20 is unset), not a gate. The no-change handlers:
   l1 57 is the "attempt" reaction until the column (gear 32 section 12, physics-limit trigger 15 when shot) has fallen
   [shooting uber physics not modelled]; l4 5469 is the Xibalba-exit reopening (sticky 300), which drives `ca_ani_*`
-  anim graph stimuli (now modelled, below); l5 7188 / 7189 need switch 7192 pulled first; l7 9103's message reaches
-  the unit script and commands drawbridge 9116 [I: the sweep still shows no change, unresolved]. Previously listed as: VM opcode 0x34 DBOUNDS (l2_norsehub
+  anim graph stimuli (now modelled, below); l5 7188 was skipped because our switch 7192 answered `modifiable` 8
+  (graph state id) with 0 = its "on" state: switches now hold their graph state id (intro state 1, then the use
+  transition's target; docs/formats/ANIMGRAPH.md), and 7188 opens 7187 from the start (it does nothing once 7192 is on);
+  l5 7189 is a pole-hole lever [U: its 0x20 / 0x40 stimuli]; l7 9103's message reaches the unit script and
+  commands drawbridge 9116, which the sweep counts as a change (uber transition 0; the table row). Previously listed as: VM opcode 0x34 DBOUNDS (l2_norsehub
   2393); levers / switches whose handlers run but change nothing visible (l1 57, l4 5469, l5 7188/7189, l7 9103);
   l4_traprooms seal 5701 (both plates held: one weight source missing). (gates 4) Solved: sticky Set notifications
   (vt 6 / 7) reach the plates' and the seal's handlers; the scepter weight is carried onto the second plate.

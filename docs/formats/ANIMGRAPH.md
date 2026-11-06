@@ -1,9 +1,11 @@
 # TRU object anim state graphs (physical class 6)
 
-Code: `src/formats/AnimGraph.*` (`loadAnimGraph`), `src/script/Script.cpp` (`Runtime::graphSet`, `graphEnter`,
-`graphBegin`, `graphStimulus`, `tickGraph`, the `modifiable` / `animated` natives, `Runtime::pose`).
-Tests: `ProgressionReal.TempleRevealReopens`, `ProgressionReal.EndgameCredits`, `ProgressionReal.ChapelShadowPillars`,
-`ProgressionReal.CriticalGates`.
+Code: `src/formats/AnimGraph.*` (`loadAnimGraph`, `AnimGraph::pick*`, `graphRandom`), `src/script/Script.cpp`
+(`Runtime::graphSet`, `graphEnter`, `graphBegin`, `graphStimulus`, `graphPost`, `graphUse`, `graphHit`, `tickGraph`,
+the `modifiable` / `animated` natives, `Runtime::pose`).
+Tests: `AnimGraph.LcgAndTransitionPicks`, `ProgressionReal.CombatCrateBreaksOnHit`, `ProgressionReal.TempleRevealReopens`,
+`ProgressionReal.EndgameCredits`, `ProgressionReal.ChapelShadowPillars`, `ProgressionReal.CriticalGates`; research
+`ProgressionReal.AnimGraphRecords` (`OU_ANIMGRAPH_RECORDS=1` or `=<object>`).
 
 Labels: **[O]** observed in game data or our tru.exe decompile (GOG 1.1.0.0 VAs), **[I]** inference, **[U]** unknown.
 
@@ -30,9 +32,9 @@ State, 0x28 bytes, tag `0x2714`:
 |---|---|---|
 | +0 | u16 | tag 0x2714 |
 | +2 | s16 | id (modifiable 7 / 8, script vt 20); negative = lowest id < 32 no other state uses |
-| +4 | u16 | flags: 2 loop the clip (else once and hold); 0x40 reported by modifiable 2 (query 0xED) |
+| +4 | u16 | flags: 2 loop the clip (else once and hold); 0x40 reported by modifiable 2 (query 0xED); 0x800 / 0x400 / 0x200 / 0x100 / 0x80 post INSTANCE message 0x138 with 1 / 3 / 5 / 0 / -1 on entry (`0x6A5660`) to the burn component (`0x6B0C00`; only `ma_ei_ignitable` sets them) [not modelled] |
 | +7 | s8 | animation-list index played on entry, -1 keeps the pose |
-| +8 | u32 | message posted to the instance on entry (INSTANCE message 0x1E2) [I: not modelled] |
+| +8 | u32 | posted on entry as INSTANCE message 0x1E2, which `0x6B5890` stores in the anim record `+0x80` [U: no reader found]; 0xBEEBBEEB in every object but a few 0s [not modelled] |
 | +0x14 / +0x18 | u32 / ptr | count / list of pointers to the transitions leaving the state |
 
 Transition, 0x34 bytes, tag `0x2776`:
@@ -42,11 +44,12 @@ Transition, 0x34 bytes, tag `0x2776`:
 | +0 | u16 | tag 0x2776 |
 | +2 | s16 | id (modifiable 4 / 5 / 6, script vt 19); negative ids assigned as for states |
 | +4 | u32 | stimulus mask that starts it |
+| +8 | s8 | "miss" clip played once when this is the nearest transition the value did not reach (`0x6B3DD0`, `0x6B4090`, `0x6A52E0`); -1 in every object |
 | +9 | s8 | animation-list index played once; its end enters the target |
 | +0xC | f32 | threshold the stimulus value must reach (timer: 30 Hz frames in the state) |
-| +0x10 | f32 | second window [U: no route data uses it] |
+| +0x10 | f32 | > 0: window, the stimulus' running total since the state's entry must reach it instead (only `ca_ei_flame_trap` transition 0, mask 0) |
 | +0x14 | ptr | target state; null = the current state again (`0x6A5660`) |
-| +0x1C / +0x20 | u32 / ptr | count / list of animation event ids (mask 0x800) |
+| +0x1C / +0x20 | u32 / ptr | count / list of hit damage classes (message 0x11C `+0x50`) that start it, with mask 0x800; such a transition ignores plain stimuli |
 
 ## Stimuli
 
@@ -54,12 +57,31 @@ Transition, 0x34 bytes, tag `0x2776`:
   switch reach (200 horizontal) from any bone's bind position (`Runtime::usePoints`) while the state has a use
   transition. The mounts' intros sit on Yggdrasil's trunk axis (x = y = 0, rotated 120° apart); bone 2, 8041 units
   out, is the end at the outer ring where Lara stands.
-- [O] `0x800` animation events (the transition's event ids) [I: event-gated transitions are not started by us].
+- [O] `0x800` hits. Message 0x11C (`0x6B4440`; `+0x4C` damage, `+0x50` damage class): if the class is in the state's
+  event mask (`+0xA8`, bits of its transitions' class lists, cleared while one runs) `0x6A52E0` draws among its mask
+  0x800 transitions listing the class (value = damage). The damage also adds to `+0x98`, posted on the next update as a
+  plain 0x800 stimulus (`0x6B4390`). Only `sh_ei_combat_crate_a`-`_d` (l1_ship_exterior, l1_ship_engine_hall) have
+  event-gated transitions: classes 13 (pr_thorbolt) and 4 [U: no weapon of ours has class 4], threshold 0.1, no clip,
+  to state 1, whose timer plays clip 1 into state 13. Ours: `Runtime::graphHit` from `World::fire` (the crates get
+  dynamics colliders so bullets reach them) [I: the exe flags the clip done (0x100000) instead of entering at once].
 - [O] `0x8000` timer, posted every update with the frames spent in the state (`0x6B4390`).
+- [O] Also posted by the engine [not modelled]: 0x400 / 0x1400 (messages 0x2B, 0x3B, 0x91), 0x4000 (0x30, modifiable
+  1), 0x40000 (0x15D).
 - [O] Scripts post their stimulus members' masks (`modifiable` 3, `0x4AC390` → message 0x33; value < 0 = any).
-- [O] A stimulus is accepted only between transitions (the accepted mask is cleared while one runs); the state's first
-  transition whose mask matches and whose threshold is reached starts. ponytail: the exe picks among several eligible
-  ones with its LCG (`0x48CA30`); ours takes the first. No route data has two eligible ones.
+- [O] Engine stimuli first add to the per-bit totals (`0x699D60`: `+0x18 + 4 * bit`, the last one also `+0x14`;
+  cleared on entry), which the windows read.
+- [O] Selection, all with tru.exe's LCG `0x48CA30` (`DAT_00A038E0 = DAT_00A038E0 * 0x41C64E6D + 0x3039`, bits 16..30
+  / 32767 × hi; the seed is .bss, 0 at start; ours `formats::graphRandom`, one seed per script runtime, saved):
+  - value ≥ 0 (`0x6B3DD0`): only between transitions; the state's transitions on the mask without class lists;
+    reached = max(value − after, window > 0 ? total − window : −10⁶); each reached one replaces the pick with
+    probability reached / (sum of reached so far), the first without a draw (`AnimGraph::pick`).
+  - value < 0 (`0x6B3BD0`): every transition on the mask, thresholds and class lists ignored, uniform (the k-th
+    replaces with probability 1 / k); also while a transition runs, then from its target state (`pickAny`).
+  - use (`0x6B4090`): the nearest by |value − after| (after 0 counts 0.1), ties drawn uniformly; it starts only within
+    0.1, else the miss clip (`pickUse`; mask 1, [U] 2 while Lara's `+0x68` flag 0x40000 is set).
+  - hits (`0x6A52E0`): as value ≥ 0 among the class-listing ones (`pickHit`).
+  No state of any object has two transitions on one mask (`ProgressionReal.AnimGraphRecords`), so the draws never
+  decide in shipped data. Test: `AnimGraph.LcgAndTransitionPicks`.
 
 ## Runtime (ours)
 
@@ -67,6 +89,11 @@ Transition, 0x34 bytes, tag `0x2776`:
   `Object::graph` when its object has a skeleton. [O] The intro's physob data word 15 (`+0x3C`) is the initial state
   (record index; <= 0 the first; `0x6B5890` message 0x23). Its vt 20 is not sent at birth [I: the script is not yet
   attached].
+- [I] Switches (`Kind::Switch`, e.g. `ms_ei_switch_oneway_wall`) keep their own use flow and get no `Object::graph`,
+  but scripts read their graph state through the `modifiable` member: its field holds the state id, the intro's at
+  birth, then each use moves it along the use transition (`Runtime::switchUsed`, `pickUse`) and `modifiable` 4 to the
+  started transition's target; `modifiable` 8 returns it. l5_valaskjalf_entryb lever 7188 opens reward door 7187 only
+  while switch 7192 is not in its state 0 "on" (7192 starts in state 1).
 - Entering a state starts its clip (looping with flag 2), restarts the timer and calls script vt 20 (instance
   prototype 33, `0x799060`) with the state id. Starting a transition plays its clip once and calls vt 19 (prototype
   32, `0x799020`) with its id; without a clip the target is entered at once.
