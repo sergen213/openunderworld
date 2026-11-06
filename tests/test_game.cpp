@@ -1816,9 +1816,15 @@ TEST(Game, WaterAirDrainsRefillsAndDrowns) {
     ASSERT_EQ(w->player().state().state, State::SwimTread);
     for (int i = 0; i < 30; ++i) w->tick({}); // treading: the head is out (root swimSurfaceDepth under the surface)
     EXPECT_GT(w->air(), low) << "surfacing refills the meter";
-    for (int i = 0; i < 60 * 50 && w->health().value() >= w->health().max(); ++i) w->tick(dive);
+    // tru.exe 0x755230: 4000 frames of breath (133.3 s), then 10 % of max health 20 frames after it ran out
+    for (int i = 0; i < 300 && w->air() < 1.0f; ++i) w->tick({}); // full again in 60 frames
+    ASSERT_EQ(w->air(), 1.0f);
+    int ticks = 0;
+    for (; ticks < 60 * 200 && w->health().value() >= w->health().max(); ++ticks) w->tick(dive);
     EXPECT_EQ(w->air(), 0.0f);
-    EXPECT_LT(w->health().value(), w->health().max()) << "an empty meter drowns Lara";
+    EXPECT_NEAR(w->health().value(), 0.9f * w->health().max(), 1e-3f) << "an empty meter drowns Lara";
+    EXPECT_GT(ticks / 60.0f, 133.0f);
+    EXPECT_LT(ticks / 60.0f, 136.5f); // + the dive back down and the 0.67 s period
 }
 
 // ---- free climbing (src/game/Climb) ----
@@ -3779,4 +3785,52 @@ TEST(Game, FieldCameraTogglesEyeView) {
     w->tick({});
     w->tick(c);
     EXPECT_FALSE(w->fieldCamera());
+}
+
+// tru.exe 0x6ACB60: a sink-only current pulls toward its marker at the strength (units per 30 Hz frame), falling off as
+// (radius / d)^2 beyond the radius; flag bit 0 keeps it level.
+TEST(Game, WaterFlowPullsTowardTheSink) {
+    collision::Markup m{10, 1, std::vector<vec3>(game::kWaterIds + 1, vec3(0))};
+    m.points[1] = vec3(1000, 1000, 500);                     // surface 500
+    m.points[game::kWaterSink] = vec3(1000, 0, 0);
+    m.points[game::kWaterFlow] = vec3(47.41f, 0, 0);         // l7_yggdrasil_end's volumes
+    m.points[game::kWaterIds] = vec3(0, 1, 0);               // source off, sink marker 1
+    const vec3 f = game::waterFlow(m, vec3(0, 0, 0));
+    EXPECT_NEAR(f.x, 47.41f * 30, 0.1f);
+    EXPECT_NEAR(f.y, 0, 1e-3f);
+    m.points[game::kWaterFlow].y = 250; // radius: (250 / 1000)^2
+    EXPECT_NEAR(game::waterFlow(m, vec3(0)).x, 47.41f * 30 / 16, 0.1f);
+    m.points[game::kWaterIds] = vec3(0, 0, 0); // no markers: still
+    EXPECT_EQ(game::waterFlow(m, vec3(0)), vec3(0));
+}
+
+// Decoded values pinned against the data: Lara's breath and water-depth classes (lara.drm ObjectBase +0xC8 player
+// data, every outfit the same) and the l7 currents (watervolume intro data +0x38..+0x40).
+TEST(GameReal, SwimWaterDataDecoded) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto drm = cdc::parseDrm(std::move(*bf.read("pc-w\\lara.drm")));
+    const auto obj = std::find_if(drm.sections.begin(), drm.sections.end(), [](const cdc::Section& s) { return s.type == cdc::SectionType::Object; });
+    ASSERT_NE(obj, drm.sections.end());
+    uint32_t base;
+    std::memcpy(&base, obj->data.data(), 4);
+    for (uint32_t i = 0; i < drm.sections.size(); ++i) {
+        if (drm.sections[i].type != cdc::SectionType::DtpData || drm.sections[i].id != base) continue;
+        const auto p = cdc::sectionPointers(drm, i).at(0xC8);
+        const auto s16 = [&](uint32_t o) { int16_t v; std::memcpy(&v, drm.sections[p.section].data.data() + p.offset + o, 2); return v; };
+        EXPECT_EQ(s16(0xF8), 4000); // World::kAirSeconds = 4000 / 30
+        EXPECT_EQ(s16(0xFA), 60);
+        EXPECT_EQ(s16(0xFC), 10);
+        EXPECT_EQ(s16(0xFE), 20);
+        EXPECT_EQ(s16(0xAC), 154);
+        EXPECT_EQ(float(s16(0xAE)), game::defaultTuning().swimDepth);
+        EXPECT_EQ(s16(0xB0), 391);
+        EXPECT_EQ(s16(0xB2), 948);
+    }
+    const auto ygg = game::findWater(bf, cdc::parseDrm(std::move(*bf.read("pc-w\\l7_yggdrasil_end.drm"))));
+    const auto v = std::find_if(ygg.begin(), ygg.end(), [](const collision::Markup& m) { return m.id == 8209; });
+    ASSERT_NE(v, ygg.end());
+    EXPECT_NEAR(v->points[game::kWaterFlow].x, 47.41f, 0.01f);
+    EXPECT_EQ(v->points[game::kWaterIds], vec3(0, 1, 0));
+    EXPECT_GT(glm::length(game::waterFlow(*v, v->points[2])), 0.0f);
 }

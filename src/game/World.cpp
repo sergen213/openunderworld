@@ -881,8 +881,9 @@ void Wetness::tick(float t) {
     chain({55, 56, 57, 59, 62, 65, 68, 58, 60, 63, 66, 69, 61, 64, 67, 70}, 2, arm);
 }
 
-// Oxygen: the head is under water in the submerged swim states (root + 150 = head height [I]).
-// At 0 air Lara takes max/6 health per second until she surfaces or dies [I rates].
+// Breath (tru.exe 0x755230): while the head is under water (state-chart variable 0x322; ours: the submerged swim states
+// with root + 150 under the surface [I]) it drains a frame per frame from kAirSeconds; kDrownPeriodSeconds after it runs
+// out Lara takes kDrownDamage x max health (type 3) and the period restarts. Out of it, it refills in kAirRefillSeconds.
 void World::tickAir(float dt) {
     const PlayerState& ps = player_.state();
     submerged_ = false;
@@ -898,10 +899,13 @@ void World::tickAir(float dt) {
     }
     if (health_.dead()) { air_ = 1.0f; return; }
     if (submerged_) {
-        air_ = std::max(0.0f, air_ - dt / kAirSeconds);
-        if (air_ <= 0.0f) damageLara(health_.max() / 6.0f * dt, ps.pos, kDamageBypass);
+        air_ -= dt / kAirSeconds;
+        if (constexpr float period = kDrownPeriodSeconds / kAirSeconds; air_ <= -period) {
+            air_ += period;
+            damageLara(health_.max() * kDrownDamage, ps.pos, kDamagePeriodic);
+        }
     } else {
-        air_ = std::min(1.0f, air_ + dt / kAirRefillSeconds);
+        air_ = std::min(1.0f, std::max(0.0f, air_) + dt / kAirRefillSeconds); // 0x756C40: a spent meter restarts at 0
     }
 }
 
@@ -1091,10 +1095,10 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
 // 0x100000): centred on the instance, rotated with it, half extents = intro data +0x54/+0x58/+0x5C (the centre
 // offsets +0x60/+0x64 are 0 in all 82 units); the water data takes bottom/top from that box (0x69D350) and the
 // surface is its top [O: l2_cliffclimb's sea 2563 tops out at z 108, l7_arctic_sea's 11 volumes, l4_pool 2661.5
-// under the goo plane at 2699]. The player tests its water probe box against those (0x710A20). Intro data +0x12 /
-// +0x10 are marker ids (0x69D690), not the surface.
-// Markup points: {world AABB min, world AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0)}.
-// Only yaw rotations occur (l5_valaskjalf, l7_yggdrasil_end).
+// under the goo plane at 2699]. The player tests its water probe box against those (0x710A20).
+// Markup points: {world AABB min, world AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0),
+// 4 x wave (kx, ky, speed), 4 x (wave height, 0, 0), sink, source, (flow strength, radius, flat), (source id, sink id, 0)}
+// (kWaterSink.. in Game.hpp). Only yaw rotations occur (l5_valaskjalf, l7_yggdrasil_end).
 std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit) {
     const auto u = formats::parseUnit(unit);
     const auto listBytes = bigfile.read("\\tr8\\pc-w\\objectlist.txt");
@@ -1105,23 +1109,71 @@ std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const c
         const auto n = names.find(vol.objectId);
         if (n == names.end() || n->second != "watervolume" || !vol.data) continue;
         const auto& bytes = unit.sections.at(vol.data->section).data;
-        if (vol.data->offset + 0x60 > bytes.size()) continue;
-        vec3 half;
-        std::memcpy(&half, bytes.data() + vol.data->offset + 0x54, sizeof half);
+        if (vol.data->offset + 0xB0 > bytes.size()) continue;
+        const auto f = [&](size_t o) { float v; std::memcpy(&v, bytes.data() + vol.data->offset + o, 4); return v; };
+        const auto s16 = [&](size_t o) { int16_t v; std::memcpy(&v, bytes.data() + vol.data->offset + o, 2); return v; };
+        const vec3 half(f(0x54), f(0x58), f(0x5C));
         const vec3 c(vol.position[0], vol.position[1], vol.position[2]);
         const float cs = std::cos(vol.rotation[2]), sn = std::sin(vol.rotation[2]);
         const vec3 ext(std::abs(cs) * half.x + std::abs(sn) * half.y, std::abs(sn) * half.x + std::abs(cs) * half.y, half.z);
         auto& m = out.emplace_back(collision::Markup{10, uint16_t(vol.uniqueId), {c - ext, c + ext, c, half, vec3(cs, sn, 0)}});
-        // Waves (0x6AC720 reads the hook data = intro data + 4): +0x4E bit 1 on; +0x6C height scale; wave i: kx +0x70 + 8i,
-        // ky +0x74 + 8i, height share +0x90 + 4i, speed +0xA0 + 4i (rad/s). l1_seatop / l2_cliffclimb / l1_ship_exterior /
-        // l6_ship_exterior's seas.
-        const auto f = [&](size_t o) { float v; std::memcpy(&v, bytes.data() + vol.data->offset + o, 4); return v; };
-        uint16_t flags;
-        std::memcpy(&flags, bytes.data() + vol.data->offset + 0x4E, 2);
-        if (!(flags & 2) || vol.data->offset + 0xB0 > bytes.size()) continue;
-        for (int i = 0; i < 4; ++i) m.points.push_back({f(0x70 + 8 * i), f(0x74 + 8 * i), f(0xA0 + 4 * i)});
-        for (int i = 0; i < 4; ++i) m.points.push_back({f(0x6C) * f(0x90 + 4 * i), 0, 0});
+        // 0x6AC720 reads the hook data = intro data + 4. Depth +0x34 > 0: the surface that far over the bottom (0 in
+        // every unit: the box top). Waves: +0x4E bit 1 on; +0x6C height scale; wave i: kx +0x70 + 8i, ky +0x74 + 8i, height
+        // share +0x90 + 4i, speed +0xA0 + 4i (rad/s) (l1_seatop / l2_cliffclimb / l1_ship_exterior / l6_ship_exterior's
+        // seas); without bit 1 the heights are 0.
+        if (f(0x34) > 0) m.points[1].z = m.points[0].z + f(0x34);
+        const bool waves = s16(0x4E) & 2;
+        for (int i = 0; i < 4; ++i) m.points.push_back(waves ? vec3(f(0x70 + 8 * i), f(0x74 + 8 * i), f(0xA0 + 4 * i)) : vec3(0));
+        for (int i = 0; i < 4; ++i) m.points.push_back({waves ? f(0x6C) * f(0x90 + 4 * i) : 0.0f, 0, 0});
+        // Current (waterFlow): source / sink marker ids +0x38 / +0x3A (>= 1 on), strength +0x3C (units per 30 Hz frame), radius
+        // +0x40, +0x4E bit 0 = horizontal only. A marker id names the last intro whose +0x52 is it (0x69D690); none: (0, 0, 0).
+        const int16_t source = s16(0x38), sink = s16(0x3A);
+        vec3 at[2]{vec3(0), vec3(0)};
+        for (const auto& i : u.intros)
+            for (int k = 0; k < 2; ++k)
+                if (int(i.marker) == (k ? source : sink)) at[k] = vec3(i.position[0], i.position[1], i.position[2]);
+        m.points.push_back(at[0]), m.points.push_back(at[1]);
+        m.points.push_back({f(0x3C), f(0x40), float(s16(0x4E) & 1)});
+        m.points.push_back({float(source), float(sink), 0});
     }
+    return out;
+}
+
+// tru.exe 0x6ACB60 (Lara's swim velocity 0x755A00 adds it, floating bodies 0x6AD070 take it as the fluid velocity):
+// toward the sink / away from the source at the strength, within `radius` of them (or of the source -> sink line)
+// and everywhere for radius 0; farther out it falls off as (radius / d)^2 and, between two markers, the push from
+// the source and the pull to the sink share it by the position along the line (past either end it turns back).
+vec3 waterFlow(const collision::Markup& m, vec3 p) {
+    if (m.points.size() <= kWaterIds) return vec3(0);
+    const vec3 sink = m.points[kWaterSink], source = m.points[kWaterSource], k = m.points[kWaterFlow];
+    const int src = int(m.points[kWaterIds].x), snk = int(m.points[kWaterIds].y);
+    const float strength = k.x * 30.0f, radius = k.y, surface = m.points[1].z;
+    if (strength == 0 || src == snk || (src < 1 && snk < 1)) return vec3(0);
+    const auto falloff = [&](float d) { return radius > 0 && d > radius ? (radius / d) * (radius / d) : 1.0f; };
+    const auto unit = [](vec3 v) { const float l = glm::length(v); return l > 0 ? v / l : vec3(0); };
+    const auto flat = [&](vec3 v) { return surface - p.z < 64.0f ? vec3(v.x, v.y, 0) : v; }; // at the surface: no lift
+    vec3 out(0);
+    if (snk < 1) {
+        out = unit(flat(p - source)) * strength * falloff(glm::length(p - source));
+    } else if (src < 1) {
+        out = unit(sink - p) * strength * falloff(glm::length(sink - p));
+    } else {
+        const vec3 axis = sink - source;
+        const float length = glm::length(axis);
+        if (length == 0) return vec3(0);
+        const vec3 dir = axis / length, a = p - source, b = sink - p;
+        const float along = glm::dot(a, dir), off = std::sqrt(std::max(0.0f, glm::dot(a, a) - along * along));
+        if (radius <= 0 || off <= radius) {
+            out = dir * strength;
+        } else {
+            const float s = strength * falloff(off), t1 = 1 - along / length, t2 = 1 - glm::dot(b, dir) / length;
+            // the source's push is level at the surface throughout, the sink's pull only past the sink
+            const vec3 push = t1 > 1 ? -s * unit(flat(a)) : t1 >= 0 ? t1 * s * unit(flat(a)) : vec3(0);
+            const vec3 pull = t2 > 1 ? -s * unit(flat(b)) : t2 >= 0 ? t2 * s * unit(b) : vec3(0);
+            out = push + pull;
+        }
+    }
+    if (k.z != 0) out.z = 0;
     return out;
 }
 

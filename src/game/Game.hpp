@@ -187,7 +187,9 @@ struct Tuning {
     // Sprint (Shift held) swims 1.2x as fast, surface and under water: 53.94 vs 44.95 units per 30 Hz frame (tru.exe,
     // Wine, l2_cliffclimb sea; player +0x2A0 velocity), on the run sprint's stamina (sprintSeconds, sprintResume).
     float swimSprintFactor = 1.2f;
-    float swimDepth = 400.0f;   // water at least this deep under the surface is swum, shallower walked
+    // Water at least this deep (surface - floor) is swum, shallower walked: lara.drm player data +0xAE / +0xB0 = 391, the
+    // classes of tru.exe 0x5D3860 (< +0xAC 154: 0x200, < 391: 0x100 wading, then 0x40 surface / 0x20 / 0x10 swimming).
+    float swimDepth = 391.0f;
     float swimRadius = 100.0f;  // sphere around the swimming root
     // Root under the wave surface treading / swimming at the surface (tru.exe, Wine, l2_cliffclimb sea: z fits
     // player+0x8E0 top + the 0x69DA80 waves - 44.1 at rms < 1 in both states).
@@ -655,8 +657,8 @@ public:
     void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling) { player_.attachGrapple(anchor, uid, kind); }
     int32_t lastPulled() const { return lastPulled_; } // grapple target whose pull handler ran last (World::tick), 0 = none
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
-    // Breath: 1 = full, 0 = drowning (kAirSeconds while the head is under water). [I] 45 s, refill 2 s.
-    float air() const { return air_; }
+    // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
+    float air() const { return std::max(0.0f, air_); }
     bool submerged() const { return submerged_; } // head under water this tick
     const Wetness& wetness() const { return wetness_; }
     const Bends& bends() const { return bends_; } // bend_* plants' bend vectors (game/Bend.hpp)
@@ -770,8 +772,10 @@ private:
     void reloadWeapon(); // refill the current weapon's clips from its reserve
     void collectPickups(bool pressed);
     void tickAir(float dt); // oxygen / drowning (World.cpp)
-    static constexpr float kAirSeconds = 45.0f;   // [I] no tru.exe number decoded yet
-    static constexpr float kAirRefillSeconds = 2.0f; // [I]
+    // lara.drm player data (every outfit): breath +0xF8 = 4000 frames, refilled from empty in +0xFA = 60 frames; once spent,
+    // +0xFC = 10 % of max health (damage type 3) every +0xFE = 20 frames (tru.exe 0x755230 / 0x756C40).
+    static constexpr float kAirSeconds = 4000 / 30.0f, kAirRefillSeconds = 60 / 30.0f;
+    static constexpr float kDrownDamage = 0.10f, kDrownPeriodSeconds = 20 / 30.0f;
     // Script Activate of a cinematic_object: cinematic event 0, onCinematic, placeAfterCinematic, event 1, the post-stream
     // helper; a level end's -> startChapter(next).
     void checkLevelEnd();
@@ -944,12 +948,16 @@ private:
 std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
 // Water volumes of a unit as type-10 ("water", MUD flag 0x100000) markup boxes, as tru.exe builds them
 // for each `watervolume` instance (0x5D7130): its intro data's box around the instance, surface = top.
-// points = {AABB min, AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0)}, then for volumes with
-// waves (data +0x4E bit 1) 4 x (kx, ky, speed) and 4 x (height, 0, 0)
+// points = {AABB min, AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0), 4 x wave (kx, ky, speed),
+// 4 x (height, 0, 0) (zero without waves: data +0x4E bit 1), then the current: kWaterSink / kWaterSource positions,
+// kWaterFlow (strength in units per 30 Hz frame, radius, horizontal only), kWaterIds (source, sink marker ids)
 // (docs/GAMEPLAY.md "Water").
 std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
 // `p` inside water box `m` (a findWater markup) grown by `grow` per axis in the box frame.
 bool insideWater(const collision::Markup& m, vec3 p, vec3 grow = vec3(0));
+inline constexpr size_t kWaterSink = 13, kWaterSource = 14, kWaterFlow = 15, kWaterIds = 16;
+// The current at `p` in volume `m` (tru.exe 0x6ACB60), units/s; zero for still water and two-point markups.
+vec3 waterFlow(const collision::Markup& m, vec3 p);
 // Sea waves of a water volume (tru.exe 0x69DA80): sum_i height_i (cos(kx_i x + ky_i y + speed_i t) - 1), <= 0, with t =
 // game seconds mod 200 pi (0x6ADB70, 0x6C10D0); 0 for volumes without waves.
 float waveHeight(const collision::Markup& m, vec2 xy, double seconds);

@@ -1434,10 +1434,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 events_.push_back({EventKind::Checkpoint, self->uid, self->uid, tick_});
                 return true;
             }
-            // Reset water level (0x778430 posts 0x1B3 with the default; static water already sits at it).
+            // watervolumebase (bind 0x7B6930; docs/GAMEPLAY.md "Water"): 3 SetFlowStrength (0x778430 posts 0x1B3 with no
+            // marker change) [U: not applied], 4 GetDepth = (surface - bottom) x 0.3164 (0x778470) [I: 0; static water].
             if (!std::strcmp(name, "watervolumebase") && nc.function == 3 && nc.args.size() <= 1) return true;
             if (!std::strcmp(name, "watervolumebase") && nc.function == 4 && nc.args.empty()) {
-                nc.result = vm::Value::scalar(0); // static water: zero depth offset
+                nc.result = vm::Value::scalar(0);
                 return true;
             }
             if (!std::strcmp(name, "playersensor") && nc.function == 2) return true; // void native sensor interface call

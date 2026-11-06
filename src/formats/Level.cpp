@@ -219,6 +219,7 @@ Unit parseUnit(const cdc::Drm& d) {
                 in.splineFrom = il.at<int16_t>(b + 0x6C);
                 in.splineTo = il.at<int16_t>(b + 0x6E);
             }
+            in.marker = il.at<uint16_t>(b + 0x52);
             if (in.data) patrol(in);
             u.intros.push_back(in);
         }

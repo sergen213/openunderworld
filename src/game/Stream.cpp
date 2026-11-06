@@ -447,9 +447,11 @@ void World::rebuildCollision() {
         col_.appendPart(c, u.offset);
         u.markupBase = col_.markup.size();
         for (collision::Markup m : c.markup) {
-            // Water boxes (findWater) carry {min, max, centre, half extents, rotation, waves}: only the first three are positions.
-            const size_t positions = m.type == 10 && m.points.size() >= 5 ? 3 : m.points.size();
-            for (size_t i = 0; i < positions; ++i) m.points[i] += u.offset;
+            // Water boxes (findWater) carry {min, max, centre, half extents, rotation, waves, sink, source, flow}: the
+            // first three and the two markers are positions.
+            const bool box = m.type == 10 && m.points.size() >= 5;
+            for (size_t i = 0; i < (box ? 3 : m.points.size()); ++i) m.points[i] += u.offset;
+            if (box && m.points.size() > kWaterIds) m.points[kWaterSink] += u.offset, m.points[kWaterSource] += u.offset;
             if (m.camera)
                 for (vec3& p : m.camera->pos) p += u.offset;
             if (disabledMarkup_.contains({u.data.name, m.id})) m.type = kMarkupDisabled;

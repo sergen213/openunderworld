@@ -1574,7 +1574,8 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         const float next = want > speed ? std::min(want, speed + t_.swimAccel * dt) : std::max(want, speed - t_.swimDecel * dt);
         if (wish <= 0 && speed > 1e-4f) dir = s_.vel / speed; // coasting keeps its heading
         s_.vel = dir * next;
-        s_.pos = swimSlide(s_.pos, s_.vel * dt);
+        // plus the volume's current (0x755A00 adds 0x6ACB60 to the swim velocity it steers to [I: added straight on])
+        s_.pos = swimSlide(s_.pos, (s_.vel + waterFlow(col_.markup[size_t(s_.water)], s_.pos)) * dt);
     };
     switch (s_.state) {
     case State::SwimSplash: { // tru.exe SwimSplashDownState; drag constant [I]

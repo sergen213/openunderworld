@@ -107,6 +107,7 @@ struct Intro {
     float scale[3];    // only applied when (flags[1] & 0x10), else 1 (INSTANCE_IntroduceInstance 0x5BCC30)
     uint16_t objectId; // objectlist.txt id; 0xFFFA (-6) = marker, no object
     int32_t uniqueId;
+    uint16_t marker = 0; // +0x52: the id water volumes name their flow / level markers by (0x69D690, message 0x1B4 mode 3)
     uint8_t flags[4];  // bytes +0x70..+0x73
     std::optional<cdc::Pointer> data; // +0x78 intro data (trigger shapes etc., docs/formats/SCRIPTS.md); none if null
     uint32_t scriptId = 0;             // +0x7C intro script: type-8 section id in the unit DRM, 0 = none
