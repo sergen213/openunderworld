@@ -169,6 +169,46 @@ type 2, is [I].
   applies the recorded state: the run continues bit for bit (`StreamReal.UberJointSaveLoad`,
   `StreamReal.UberStateSaveLoad`, `Physics.SavedSceneContinuesBitIdentically`). Saves without it (older ones) rebuild
   the scene from the objects; a loose body's rotation is also saved with its object (`body`), for those.
+- Ragdolls (`physics::loadRagdoll`, `Scene::setRagdolls` / `ragdoll`, `World::syncRagdolls`, `ai::EnemyState::ragdoll*`):
+  - [O] Data: ObjectBase +0x78 non-zero, +0x7C -> record {+0 0xBEEBBEEB, +4 total mass (poacher 60, panther 90, naga
+    400), +8 radius scale (soldiers / thralls 2, animals 1), +0x2C bones, +0x30 count; +0xC / +0x10..+0x28 passed to the
+    Havok system (0x4EC0B0) [U]}; 32 objects carry one: Lara and her outfits (15 bones), poacher / merc / thralls (15),
+    cats / tiger (16), nagas (21), tarantulas (17), sharks / bats (5), small spiders (1). Bone (0x78 bytes, 0x4F1390;
+    at most 24, 0x4F0B40): +4 s16 start segment (+6 overrides when >= 0), +8 offset, +0x14 s16 end segment (else the
+    start), +0x18 offset, +0x24 parent bone, +0x28 % of the total mass (sum 100), +0x2C radius × scale, +0x30 / +0x34
+    [U] (+0x34 goes to the body's +0x74), +0x38 joint type, +0x3C pivot (from the start point), +0x48 axis 1, +0x54
+    axis 2, +0x60 / +0x64 / +0x68 / +0x6C / +0x70 limits in degrees, +0x74 friction (max with 0.01, written to the
+    joint's per-axis +0x10C / +0x114 / +0x11C). 0x4F0B40 builds a capsule body from the start to the end point
+    (capsule inertia 0x4E9230) named "ragdoll bone %d" and its joint to the parent: type 1 hinge (0x4DF5D0, axis 1,
+    limits +0x60 / +0x64), 2 (0x4E08A0, axes 1 and 2, limits +0x60..+0x6C), 3 (0x4EE5C0: pivot, axis 1, a twist axis =
+    axis 1, or the bone direction when 0x49AFA0 rejects axis 1, cone +0x70, limits +0x60 / +0x64); 0 = the root
+    (pelvis). Poacher: pelvis, spine (2), head (3), upper arms (3), forearms (1), hands (2), thighs (3), shins (1), feet (2).
+  - [O] Trigger: an enemy's death timer (0x66C950) runs the death record's chunk path (+0x46 object: thralls break
+    into `*_chunkdoll` pieces, impulse +0x4C × the hit direction × 2.5 via 0x696A60) or 0x617EE0 -> 0x60EF50 (at most 6
+    ragdolls, the object's +0x78) -> 0x4F1920; a failed ragdoll re-arms the timer for +0x1C counts. Anim graph
+    `AnimRagdollNode` / `AnimDrivenRagdollNode` (0x44EF10) also start one. [I] Ours starts once the death clip is done
+    (the timer's start is not decoded), for every enemy type with a ragdoll except sharks (they float); thralls, whose
+    record names a chunk object, ragdoll too, as the chunks are not implemented.
+  - Simulation [I]: one dynamic Jolt body per bone (layer loose: it lands on the terrain, the colliders and loose
+    bodies), its frame the start segment's (the model's bind frames are rotation-free), a capsule from start to end
+    (radius ≥ 1 unit), mass = share × total, inertia from the shape; friction 0.6, angular damping 0.5. Joints: Jolt
+    `SixDOFConstraint` (pyramid swing), translation fixed at start + pivot; type 1 rotation about axis 1 in
+    [+0x60, +0x64], others fixed; type 2 axis 1 in [+0x60, +0x64], axis 2 in [+0x68, +0x6C], the third fixed; type 3
+    twist about axis 1 (else the bone) in [+0x60, +0x64], swing within ±+0x70 about the other two. Joints are built with
+    the bodies in the bind pose, so a joint's zero is the bind pose: then the poacher's death pose (l4_ballcourt 6540)
+    lies inside every limit to a few degrees (knees 43° in −10..140 and −51° in −140..10, elbows −5° / 3° at their
+    −125..−5 / 5..125 ends, hips −22° / 30°, shoulders −3° / 17°, head −13° in ±20°) [O measured]; friction
+    as the motor bounds, × 30 × 60 / 280² N·m. Parent and child bones do not collide (`GroupFilterTable`). It starts at
+    the death clip's last pose, each body moving as its segment did over the last tick, with the killing hit's impulse
+    (death record +0x4C × 2.5 along the shot as 0x696A60; [I] 2000 when the record has none: soldiers, cats) at the bone
+    nearest the hit point. Every other skeleton segment follows its nearest ancestor-or-self that starts a bone, with its
+    death-pose offset. When every body sleeps (Jolt's 0.5 s rest) or 20 s after the death [I], the pose freezes and the
+    bodies go (`ragdollPhase` 3).
+  - Timing and saves: bodies are made right after the enemy tick that starts the ragdoll (so a save between ticks holds
+    them), poses are read after each `World::stepPhysics`; enemy saves carry `ragdollPhase`, each bone's frame in
+    model space and the killing hit; the scene's save keys the bodies `r<uid>.<bone>` and lists the joints after the
+    vehicles, so a load re-creates them at the saved IDs and the fall continues bit for bit
+    (`GameReal.KilledPoacherRagdollIndependentOfRenderRate`, `StreamReal.RagdollSaveLoad`).
 
 ## Havok → Jolt
 
@@ -186,6 +226,8 @@ type 2, is [I].
 | range watch (0x4937A0) | reads `Joint1::x / v` written back after the step | [O] |
 | hinge door / lever (class 34 / 6 marker X axis) | `HingeConstraint`, velocity motor toward the target at up to 1 rad/s, landing on it in the step that reaches it; angular damping 0.5 / s | all [I] (our controller) |
 | friction / restitution / damping of loose bodies | Jolt defaults (friction 0.2, restitution 0, damping 0.05); penetration slop 1 unit | [U] Havok values not decoded |
+| ragdoll bone capsule (0x4F0B40), mass share, radius × scale | dynamic body per bone, `CapsuleShape` from start to end, `CalculateInertia` with the given mass | [O] layout; Havok friction / damping not decoded [U] |
+| ragdoll joints 1 / 2 / 3 (0x4DF5D0 / 0x4E08A0 / 0x4EE5C0) | `SixDOFConstraint`, pyramid swing, zero = bind pose (above) | constructors [O]; axis roles and zero [I] |
 
 ## Verification
 

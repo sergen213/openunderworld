@@ -165,6 +165,27 @@ struct VehicleState {
     float rpm = 0;
 };
 
+// Ragdoll of an object (ObjectBase +0x78 flag, +0x7C -> record; tru.exe 0x4F1920 builds it, 0x4F1390 a bone,
+// 0x4F0B40 its Havok body and joint; docs/formats/PHYSICS.md "Ragdolls"). One capsule body per bone; offsets and axes
+// in the model's (rotation-free) bind frame [I].
+struct RagdollBone {
+    int segment = 0, endSegment = 0;   // +4 (+6 when >= 0): capsule start; +0x14 (else the start's): its end
+    vec3 startOffset{0}, endOffset{0}; // +8, +0x18
+    int parent = -1;                   // +0x24: ragdoll bone it hangs from
+    float massShare = 0;               // +0x28: % of RagdollDef::mass
+    float radius = 0;                  // +0x2C x RagdollDef::radiusScale
+    int joint = 0;                     // +0x38: 0 none (the root), 1 hinge, 2 two axes, 3 cone + twist
+    vec3 pivot{0}, axis1{0}, axis2{0}; // +0x3C (from the capsule start), +0x48, +0x54
+    float limits[5] = {};              // +0x60..+0x70 degrees: axis 1 lo, hi; axis 2 lo, hi; cone
+    float friction = 0;                // +0x74 (at least 0.01)
+};
+struct RagdollDef {
+    float mass = 0, radiusScale = 1; // record +4 (kg), +8
+    std::vector<RagdollBone> bones;
+};
+// The object's ragdoll; nullopt when it has none. Throws cdc::FormatError on bad layouts.
+std::optional<RagdollDef> loadRagdoll(const cdc::Drm& object);
+
 class Scene {
 public:
     Scene();
@@ -200,8 +221,8 @@ public:
     void setTerrain(std::span<const Terrain> units);
     void setColliders(std::span<const collision::Dynamic> dynamics);
 
-    // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge and
-    // loose bodies.
+    // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge, loose
+    // and ragdoll bodies.
     void blast(vec3 at, float radius, float near, float edge);
     // Vehicles, keyed by the caller. A new key starts at `model` (model -> world) at rest; existing ones keep simulating
     // with this step's `drive`, moved by `shift` (the caller's frame moved) and given `kick` (units/s, a hop or a hit);
@@ -209,6 +230,22 @@ public:
     struct Vehicle { int32_t id = 0; const VehicleSpec* spec = nullptr; mat4 model{1}; VehicleDrive drive; vec3 shift{0}, kick{0}; };
     void setVehicles(std::span<const Vehicle> vehicles);
     std::optional<VehicleState> vehicle(int32_t id) const; // as of the last step
+    // Ragdolls, keyed by the caller (missing keys are dropped). A new key is built from `def` and `bind` (each skeleton
+    // segment's bind position, model space) and starts at `frames` (world frame of each bone's start segment) moving at
+    // `velocity` (units/s per bone), with `impulse` (mass * units/s) at `hitPoint` on the nearest bone; existing keys
+    // keep simulating (the spans are ignored). They collide with the terrain, the colliders and loose bodies.
+    struct Ragdoll {
+        int32_t id = 0;
+        const RagdollDef* def = nullptr;
+        std::span<const vec3> bind;
+        std::span<const mat4> frames;
+        std::span<const vec3> velocity;
+        vec3 hitPoint{0}, impulse{0};
+    };
+    void setRagdolls(std::span<const Ragdoll> ragdolls);
+    // World frame of each bone's start segment as of the last step; asleep: every body of it sleeps.
+    struct RagdollPose { std::vector<mat4> frames; bool asleep = false; };
+    std::optional<RagdollPose> ragdoll(int32_t id) const;
     void step(float dt); // one fixed tick
     // The scene's state for a save: body IDs by entity, constraint zeros and Jolt's recorded state (bodies, contact
     // cache, constraints). restore() drops the scene; as the caller re-creates the same entities they get the saved IDs

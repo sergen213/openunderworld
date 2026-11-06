@@ -97,9 +97,12 @@ Jolt as static mesh shapes per streamed unit.
 2. **Motorcycle.** `Vehicle.cpp` drives a Jolt `WheeledVehicleController` (suspension, engine, gears) from the bike
    object's Havok vehicle data where decoded; jumps, ramps and crashes come out of the simulation. Acceptance: the
    `VehicleReal` ride replays complete; handling numbers documented [O]/[I].
-3. **Ragdolls.** Enemy deaths (and Lara's where the data has a ragdoll) use Jolt ragdolls built from the skeleton and
-   the model's HInfo; the animation blends into the ragdoll at death. Acceptance: killed enemies fall onto the level
-   geometry, deterministic across render rates.
+3. **Ragdolls (done for enemies, docs/formats/PHYSICS.md "Ragdolls").** Dead enemies become Jolt ragdolls from their
+   object's ragdoll record (ObjectBase +0x7C: capsule per bone, hinge / two-axis / cone-twist joints with the data's
+   limits) once the death clip is done, with the killing hit's impulse; they land on the terrain, colliders and loose
+   bodies, freeze when asleep and save bit for bit (`GameReal.KilledPoacherRagdollIndependentOfRenderRate`,
+   `StreamReal.RagdollSaveLoad`, `Physics.RagdollFallsDownAStepJointsHoldAndSaves`). Open: Lara's ragdoll (her data
+   has one), the death timer's start, the clip blending into the ragdoll (`AnimDrivenRagdollNode`), thralls' chunks.
 
 
 ## Principles

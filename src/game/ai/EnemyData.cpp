@@ -7,6 +7,8 @@
 #include "game/Game.hpp"
 #include "physics/Physics.hpp"
 
+#include <glm/gtc/type_ptr.hpp>
+
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -167,6 +169,7 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
         rg.clip = clipRef(s, p->offset + 0x20);
         rg.up = clipRef(s, p->offset + 0x24);
         rg.time = read<float>(s, p->offset + 0x28) * (1.0f / 30.0f);
+        t->tuning.deathImpulse = read<float>(s, p->offset + 0x4C);
         const uint32_t kills = std::min(read<uint32_t>(s, p->offset + 0x64), 16u);
         for (uint32_t k = 0; k < kills; ++k) {
             const uint32_t e = p->offset + 0x68 + 0xC * k;
@@ -185,6 +188,12 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
     float top = 0;
     for (const vec3 p : anim::bindPositions(t->skeleton)) top = std::max(top, p.z);
     if (top > t->tuning.radius) t->tuning.height = top; // [I] capsule up to the highest bind-pose bone
+    t->bind = anim::bindPositions(t->skeleton);
+    t->ragdoll = physics::loadRagdoll(*drm);
+    if (t->ragdoll && std::ranges::any_of(t->ragdoll->bones, [&](const physics::RagdollBone& b) {
+            return size_t(b.segment) >= t->bind.size() || size_t(b.endSegment) >= t->bind.size();
+        }))
+        t->ragdoll.reset();
 
     const auto loadClip = [&](std::string_view want) {
         if (want.empty() || t->clips.count(want)) return !want.empty();
@@ -431,6 +440,8 @@ nlohmann::json vec(vec3 v) { return {v.x, v.y, v.z}; }
 vec3 vec(const nlohmann::json& j) { return {j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>()}; }
 
 nlohmann::json toJson(const EnemyState& s) {
+    nlohmann::json ragdoll = nlohmann::json::array();
+    for (const glm::mat4& m : s.ragdoll) ragdoll.push_back(std::vector<float>(&m[0][0], &m[0][0] + 16));
     return {{"mode", int(s.mode)}, {"pos", vec(s.pos)}, {"yaw", s.yaw}, {"vz", s.vz}, {"clip", s.clip}, {"clipTime", s.clipTime},
             {"loop", s.loop}, {"health", s.health}, {"modeTime", s.modeTime}, {"unseenTime", s.unseenTime},
             {"cooldown", s.cooldown}, {"blowLanded", s.blowLanded}, {"damageSinceReaction", s.damageSinceReaction},
@@ -439,7 +450,8 @@ nlohmann::json toJson(const EnemyState& s) {
             {"tilt", {s.tilt.x, s.tilt.y}}, {"down", s.down}, {"melee", s.melee}, {"cover", vec(s.cover)},
             {"coverCooldown", s.coverCooldown}, {"path", s.path}, {"patrolIndex", s.patrolIndex}, {"patrolStep", s.patrolStep},
             {"visited", s.visited}, {"phase", s.phase}, {"phaseTime", s.phaseTime}, {"phaseLength", s.phaseLength},
-            {"goal", vec(s.goal)}, {"searchTime", s.searchTime}};
+            {"goal", vec(s.goal)}, {"searchTime", s.searchTime}, {"ragdollPhase", s.ragdollPhase}, {"ragdoll", std::move(ragdoll)},
+            {"killAt", vec(s.killAt)}, {"killDir", vec(s.killDir)}};
 }
 
 EnemyState stateFromJson(const nlohmann::json& j) {
@@ -461,6 +473,14 @@ EnemyState stateFromJson(const nlohmann::json& j) {
     s.visited = j.value("visited", 0u), s.phase = j.value("phase", 0), s.phaseTime = j.value("phaseTime", 0.0f);
     s.phaseLength = j.value("phaseLength", 0.0f), s.searchTime = j.value("searchTime", 0.0f);
     if (const auto g = j.find("goal"); g != j.end()) s.goal = vec(*g);
+    s.ragdollPhase = j.value("ragdollPhase", 0); // older saves: none (dead bodies hold their clip's last frame)
+    for (const auto& m : j.value("ragdoll", nlohmann::json::array())) {
+        const auto f = m.get<std::vector<float>>();
+        if (f.size() != 16) throw std::runtime_error("enemy ragdoll frame of " + std::to_string(f.size()) + " values");
+        s.ragdoll.push_back(glm::make_mat4(f.data()));
+    }
+    if (const auto k = j.find("killAt"); k != j.end()) s.killAt = vec(*k);
+    if (const auto k = j.find("killDir"); k != j.end()) s.killDir = vec(*k);
     return s;
 }
 } // namespace

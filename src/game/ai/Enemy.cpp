@@ -447,6 +447,7 @@ void Enemy::die(const Hit& hit) {
     const bool running = s_.clip == type_->clipName(Role::Run) && s_.mode == Mode::Chase;
     if (s_.tilt != glm::vec2(0)) s_.pos += up() * type_->tuning.radius, s_.tilt = glm::vec2(0); // falls off the wall
     setMode(Mode::Dead);
+    s_.killAt = hit.point - s_.pos, s_.killDir = hit.dir;
     const float a = std::atan2(-hit.dir.y, -hit.dir.x), rel = wrapAngle(a - s_.yaw); // bearing to the attacker
     const int quadrant = std::abs(rel) <= kPi / 4 ? 1 : std::abs(rel) > 3 * kPi / 4 ? 5 : rel > 0 ? 3 : 7;
     const auto find = [&](int cat, int flag) -> const DeathClip* {
@@ -584,6 +585,10 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     s_.cooldown = std::max(0.0f, s_.cooldown - dt);
     for (float& c : s_.fireCooldown) c = std::max(0.0f, c - dt);
     s_.coverCooldown = std::max(0.0f, s_.coverCooldown - dt);
+    if (s_.ragdollPhase) { // physics owns the body (World::stepRagdolls)
+        updatePose(dt, false);
+        return;
+    }
     const bool sees = s_.mode != Mode::Dead && lara.alive && perceives(col, lara);
     if (sees) {
         s_.unseenTime = 0, s_.lastSeen = lara.pos;
@@ -825,7 +830,16 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     case Mode::Dead:
         if (aquatic && clipDone() && s_.clip != "death_float_loop" && type_->clips.count("death_float_loop"))
             playClip("death_float_loop", true);
-        if (clipDone() && !flyer && !type_->lyingDeaths.count(s_.clip)) s_.tip = std::min(kPi / 2, s_.tip + dt * kPi / 2 / kTipSeconds);
+        // Ragdoll once the death clip is done [I: tru.exe hands the body over when the enemy's death timer runs out,
+        // 0x66C950 -> 0x617EE0 -> 0x60EF50 -> 0x4F1920, its start not decoded]; without one it tips onto its side.
+        if (type_->ragdoll && !aquatic && clipDone()) {
+            ragdollOffsets(bones_);
+            s_.ragdoll.clear();
+            for (const auto& b : type_->ragdoll->bones) s_.ragdoll.push_back(bones_[size_t(b.segment)]);
+            s_.ragdollPhase = 1;
+        } else if (clipDone() && !flyer && !type_->ragdoll && !type_->lyingDeaths.count(s_.clip)) {
+            s_.tip = std::min(kPi / 2, s_.tip + dt * kPi / 2 / kTipSeconds);
+        }
         break;
     }
     if (flyer && (s_.mode != Mode::Dead || aquatic)) {
@@ -854,6 +868,11 @@ EnemyState Enemy::interpolated(double alpha) const {
 }
 
 void Enemy::updatePose(float dt, bool reset) {
+    if (s_.ragdollPhase && !reset && !bones_.empty() && !ragdollOffset_.empty()) {
+        prevBones_ = std::move(bones_);
+        bones_ = ragdollBones();
+        return;
+    }
     if (reset || bones_.empty()) {
         anim_ = anim::AnimController(type_->skeleton);
         anim_.play(type_->clips.count(s_.clip) ? &type_->clips.find(s_.clip)->second : nullptr, 0, s_.loop, 1, s_.clipTime);
@@ -870,8 +889,37 @@ void Enemy::updatePose(float dt, bool reset) {
     auto local = anim_.pose();
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(type_->skeleton.bones[0].pivot)}; // root motion is in pos
     auto m = anim::worldMatrices(type_->skeleton, local);
+    if (s_.ragdollPhase && type_->ragdoll && s_.ragdoll.size() == type_->ragdoll->bones.size()) // loaded: the death pose's offsets
+        ragdollOffsets(m), m = ragdollBones();
+    else if (reset)
+        ragdollOffset_.clear();
     prevBones_ = reset || bones_.empty() ? m : std::move(bones_);
     bones_ = std::move(m);
+}
+
+void Enemy::ragdollOffsets(const std::vector<glm::mat4>& pose) {
+    const auto& sk = type_->skeleton.bones;
+    const auto& rb = type_->ragdoll->bones;
+    ragdollOwner_.assign(sk.size(), 0);
+    ragdollOffset_.assign(sk.size(), glm::mat4(1));
+    for (size_t s = 0; s < sk.size(); ++s) {
+        const auto own = std::ranges::find(rb, int(s), &physics::RagdollBone::segment);
+        ragdollOwner_[s] = own != rb.end() ? int(own - rb.begin()) : sk[s].parent >= 0 ? ragdollOwner_[size_t(sk[s].parent)] : 0;
+        ragdollOffset_[s] = glm::inverse(pose[size_t(rb[size_t(ragdollOwner_[s])].segment)]) * pose[s];
+    }
+}
+
+std::vector<glm::mat4> Enemy::ragdollBones() const {
+    std::vector<glm::mat4> out(ragdollOffset_.size());
+    for (size_t s = 0; s < out.size(); ++s) out[s] = s_.ragdoll[size_t(ragdollOwner_[s])] * ragdollOffset_[s];
+    return out;
+}
+
+void Enemy::setRagdoll(std::span<const glm::mat4> world, bool asleep) {
+    const glm::mat4 toModel = glm::inverse(modelMatrix(s_.pos, s_.yaw, 0, s_.tilt));
+    s_.ragdoll.assign(world.size(), glm::mat4(1));
+    for (size_t i = 0; i < world.size(); ++i) s_.ragdoll[i] = toModel * world[i];
+    s_.ragdollPhase = asleep || s_.modeTime > kRagdollSeconds ? 3 : 2;
 }
 
 std::vector<glm::mat4> Enemy::pose(double alpha) const {

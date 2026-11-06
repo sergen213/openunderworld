@@ -380,3 +380,74 @@ TEST(Physics, VehicleDrivesBrakesAndSavesBitIdentically) {
     a.setVehicles({}), a.step(kDt);
     EXPECT_FALSE(a.vehicle(5));
 }
+
+// Ragdolls (Scene::setRagdolls): a three-bone chain (root, a hinged bone, a cone-twist bone) dropped over a 300-unit
+// step falls, lands on both levels and sleeps; its joints keep the bones together; a scene saved mid-fall and restored
+// into a fresh scene whose caller re-creates the same ragdoll continues bit for bit.
+TEST(Physics, RagdollFallsDownAStepJointsHoldAndSaves) {
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {0, 0, -50}), {6000, 6000, 100});
+    collision::addBox(floor, glm::translate(glm::mat4(1), {-1500, 0, 150}), {3000, 6000, 300}); // a 300-unit ledge at x < 0
+    floor.build();
+    physics::RagdollDef def;
+    def.mass = 60;
+    physics::RagdollBone root, hinge, cone;
+    root.segment = 0, root.endSegment = 1, root.massShare = 50, root.radius = 30;
+    hinge.segment = 1, hinge.endSegment = 2, hinge.parent = 0, hinge.massShare = 30, hinge.radius = 20, hinge.joint = 1;
+    hinge.axis1 = {1, 0, 0}, hinge.limits[0] = -90, hinge.limits[1] = 0, hinge.friction = 10;
+    cone.segment = 2, cone.endSegment = 3, cone.parent = 1, cone.massShare = 20, cone.radius = 15, cone.joint = 3;
+    cone.axis1 = {1, 0, 0}, cone.limits[0] = -20, cone.limits[1] = 20, cone.limits[4] = 40, cone.friction = 10;
+    def.bones = {root, hinge, cone};
+    const std::vector<vec3> bind{{0, 0, 0}, {0, 0, 200}, {0, 0, 400}, {0, 0, 550}};
+    // lying along +X across the ledge's edge, 200 above the lower floor
+    const glm::mat4 lie = glm::rotate(glm::mat4(1), 1.5707964f, vec3(0, 1, 0));
+    std::vector<glm::mat4> frames;
+    for (const vec3& b : {bind[0], bind[1], bind[2]}) frames.push_back(glm::translate(glm::mat4(1), vec3(-250, 0, 500)) * lie * glm::translate(glm::mat4(1), b));
+    const std::vector<vec3> velocity(3, vec3(0));
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    const physics::Scene::Ragdoll r{4, &def, bind, frames, velocity, vec3(0, 0, 500), vec3(0, 0, -3000)};
+    const auto tick = [&](physics::Scene& s) { s.setTerrain(terrain), s.setRagdolls({&r, 1}), s.step(kDt); };
+    physics::Scene a;
+    for (int i = 0; i < 20; ++i) tick(a);
+    const std::string saved = a.save();
+    physics::Scene b;
+    ASSERT_TRUE(b.restore(saved));
+    std::optional<physics::Scene::RagdollPose> pa, pb;
+    for (int i = 0; i < 600 && !(pa && pa->asleep); ++i) tick(a), tick(b), pa = a.ragdoll(4), pb = b.ragdoll(4);
+    ASSERT_TRUE(pa && pb);
+    EXPECT_TRUE(pa->asleep) << "settled";
+    ASSERT_EQ(pa->frames.size(), 3u);
+    EXPECT_EQ(std::memcmp(pa->frames.data(), pb->frames.data(), sizeof(glm::mat4) * 3), 0) << "bit for bit after the load";
+    EXPECT_EQ(a.save(), b.save());
+    const auto end = [&](size_t k) { return vec3(pa->frames[k] * glm::vec4(bind[k + 1] - bind[k], 1)); };
+    for (size_t k = 0; k < 2; ++k) // each bone's end stays at its child's start (the joint pivots)
+        EXPECT_LT(glm::distance(end(k), vec3(pa->frames[k + 1][3])), 5.0f) << "joint " << k + 1;
+    EXPECT_NEAR(pa->frames[0][3].z, 300 + 30, 15) << "the root rests on the ledge";
+    EXPECT_LT(end(2).z, 300.0f) << "the far end hangs or lies below the ledge top";
+    a.setRagdolls({}), a.step(kDt);
+    EXPECT_FALSE(a.ragdoll(4));
+}
+
+// Poacher ragdoll record (ObjectBase +0x7C): 15 bones, mass shares summing to 100, the pelvis root on segments 2 -> 3.
+TEST(PhysicsRealData, PoacherRagdoll) {
+    const auto* bf = bigfile();
+    if (!bf) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto r = physics::loadRagdoll(cdc::parseDrm(*bf->read("pc-w\\poacher.drm")));
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->mass, 60.0f);
+    EXPECT_EQ(r->radiusScale, 2.0f);
+    ASSERT_EQ(r->bones.size(), 15u);
+    float share = 0;
+    for (const auto& b : r->bones) share += b.massShare;
+    EXPECT_NEAR(share, 100, 1e-3f);
+    EXPECT_EQ(r->bones[0].segment, 2);
+    EXPECT_EQ(r->bones[0].endSegment, 3);
+    EXPECT_EQ(r->bones[0].parent, -1);
+    EXPECT_EQ(r->bones[0].joint, 0);
+    EXPECT_EQ(r->bones[5].joint, 1);                // forearm hinge
+    EXPECT_EQ(r->bones[5].limits[0], -125.0f);
+    EXPECT_EQ(r->bones[2].joint, 3);                // head cone
+    EXPECT_EQ(r->bones[2].radius, 30.0f);           // 15 x 2
+    EXPECT_EQ(r->bones[1].friction, 150.0f);
+    EXPECT_FALSE(physics::loadRagdoll(cdc::parseDrm(*bf->read("pc-w\\ca_rb_wall_hpole_door.drm"))));
+}

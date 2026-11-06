@@ -7,6 +7,7 @@
 #include "anim/Anim.hpp"
 #include "collision/Collision.hpp"
 #include "game/Combat.hpp"
+#include "physics/Physics.hpp"
 #include "script/Script.hpp"
 
 #include <glm/glm.hpp>
@@ -98,6 +99,7 @@ struct EnemyTuning {
     std::vector<Attack> attacks;   // every record, node order
     std::vector<DeathClip> deaths;
     Regenerate regenerate;
+    float deathImpulse = 0;        // death record +0x4C (thralls 2000 for their chunks; soldiers, cats 0)
 };
 
 // Weighted animation list entry (tru.exe 0x60F450: list +0x0C count, 0xC-byte entries at +0x10 {clip ref, u32
@@ -151,6 +153,9 @@ struct EnemyType {
     int spit = -1;           // attacks[] index of a ranged spit (green naga +0x88 spit_attack), -1 none
     PatrolStyle patrol;      // behaviour-list node +0x48
     SearchStyle search;      // behaviour-list node +0xD8; time 0: no search (spiders), loses Lara straight to idle
+    // Ragdoll (ObjectBase +0x7C, physics::loadRagdoll) and each skeleton segment's bind position (model space).
+    std::optional<physics::RagdollDef> ragdoll;
+    std::vector<vec3> bind;
     // Wall crawlers (enemy data class 5 / 6 nagas, 7 spiders): their tilted intros cling to walls and ceilings.
     bool crawler() const { return enemyClass == 5 || enemyClass == 6 || enemyClass == 7; }
     bool regenerates() const { return !tuning.regenerate.clip.empty() || !tuning.regenerate.up.empty(); }
@@ -236,6 +241,11 @@ struct EnemyState {
     float phaseTime = 0, phaseLength = 0; // s in the phase, s it lasts (idles)
     vec3 goal{0};            // Search: where it walks
     float searchTime = 0;    // s searching
+    // Ragdoll (EnemyType::ragdoll; dead, once the death clip is done): 0 none, 1 starting (World builds the bodies at
+    // `ragdoll` with the killing hit's impulse), 2 simulating, 3 settled (the pose stays, the bodies are gone).
+    int ragdollPhase = 0;
+    std::vector<glm::mat4> ragdoll; // each ragdoll bone's start-segment frame, model space (modelMatrix(pos, yaw, 0, tilt))
+    vec3 killAt{0}, killDir{0};     // the killing hit: point relative to pos, direction
 };
 
 // A guard zone (enemybase 27 GuardNode, tru.exe 0x61F7A0: up to six {point, inner, outer = max(r1, r2)}).
@@ -290,6 +300,10 @@ public:
     std::vector<glm::mat4> pose(double alpha) const;
     // Root at pos, model -Y = heading; tip: rolled onto its side; tilt: clinging (Rx(x) Ry(y) before the heading).
     static glm::mat4 modelMatrix(vec3 pos, float yaw, float tip = 0, glm::vec2 tilt = {});
+    // The ragdoll's bone frames (world) after a physics step (World::stepRagdolls); asleep or kRagdollSeconds after the
+    // death: settled.
+    void setRagdoll(std::span<const glm::mat4> world, bool asleep);
+    static constexpr float kRagdollSeconds = 20.0f; // [I] then the pose freezes even if a body still moves
 
 private:
     void setMode(Mode m);
@@ -317,6 +331,8 @@ private:
     void playIdle(const std::vector<IdleAnim>& idles); // a weighted pick; sets phaseLength
     bool walkTo(vec3 goal, float arrive, const std::string& clip, float dt); // true: arrived
     void startSearch();
+    void ragdollOffsets(const std::vector<glm::mat4>& pose); // ragdollOwner_ / ragdollOffset_ from a death pose
+    std::vector<glm::mat4> ragdollBones() const;             // model space, from s_.ragdoll
 
     std::shared_ptr<const EnemyType> type_;
     int32_t uid_ = 0;
@@ -324,6 +340,10 @@ private:
     anim::AnimController anim_;
     std::vector<glm::mat4> bones_, prevBones_;
     uint32_t clipSerial_ = 0, poseSerial_ = 0; // playClip count; the one anim_ plays
+    // Each skeleton segment follows a ragdoll bone (its nearest ancestor-or-self that starts one) with its death-pose
+    // offset from that bone's segment [I].
+    std::vector<int> ragdollOwner_;
+    std::vector<glm::mat4> ragdollOffset_;
 };
 
 // A spawn generator intro (objectlist "*_generator"): spawns its object (generator ObjectBase +0xDE) once.

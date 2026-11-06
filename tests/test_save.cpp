@@ -956,6 +956,55 @@ TEST(StreamReal, UberJointSaveLoad) {
     EXPECT_EQ(fresh.serializeObjects(), expect);
 }
 
+// Ragdolls save and load mid-fall: l4_ballcourt poacher 6540 (killed by the unit's scripts at its start) slides off its
+// ledge as a ragdoll; a save while it falls restores its bodies (IDs, velocities, contacts) and its enemy state, so the
+// fall and the settled pose come out bit for bit. Only the ragdoll is compared: other state of this unit does not yet
+// survive a load at this point (uber 6045's command, poacher 6539's fire mode), which also reorders Jolt's contacts
+// for the other corpses.
+TEST(StreamReal, RagdollSaveLoad) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    const auto make = [&] {
+        auto w = std::make_unique<game::World>(load, "l4_ballcourt", anims, game::Spawn{{-20066, 14150, 3540}, 0});
+        w->script().setBigfile(&bf);
+        w->enemies().setBigfile(&bf);
+        w->onCinematic = [](const std::string&, bool) {};
+        return w;
+    };
+    const auto poacher = [](const game::World& w) -> const game::ai::Enemy* {
+        for (const auto& e : w.enemies().all())
+            if (e->uid() == 6540) return e.get();
+        return nullptr;
+    };
+    const auto pelvisZ = [](const game::ai::EnemyState& s) {
+        return (game::ai::Enemy::modelMatrix(s.pos, s.yaw, 0, s.tilt) * s.ragdoll.at(0)[3]).z;
+    };
+    auto w = make();
+    w->tick({});
+    ASSERT_TRUE(poacher(*w));
+    for (int i = 0; i < 600 && poacher(*w)->state().ragdollPhase != 2; ++i) w->tick({});
+    ASSERT_EQ(poacher(*w)->state().ragdollPhase, 2);
+    const float top = pelvisZ(poacher(*w)->state());
+    for (int i = 0; i < 20; ++i) w->tick({});
+    ASSERT_EQ(poacher(*w)->state().ragdollPhase, 2);
+    EXPECT_LT(pelvisZ(poacher(*w)->state()), top - 50) << "mid-fall";
+    const auto bytes = save::serialize(save::capture(*w));
+    for (int i = 0; i < 400; ++i) w->tick({});
+    const auto& end = poacher(*w)->state();
+    EXPECT_EQ(end.ragdollPhase, 3) << "settled";
+    EXPECT_LT(pelvisZ(end), top - 300) << "fell off the ledge";
+
+    auto fresh = make();
+    save::apply(save::parse(bytes), *fresh);
+    ASSERT_TRUE(poacher(*fresh));
+    EXPECT_EQ(poacher(*fresh)->state().ragdollPhase, 2);
+    for (int i = 0; i < 400; ++i) fresh->tick({});
+    EXPECT_EQ(poacher(*fresh)->state().ragdollPhase, 3);
+    EXPECT_EQ(poacher(*fresh)->state().ragdoll, end.ragdoll);
+}
+
 // Breakable urns (docs/GAMEPLAY.md "Breakables"): a Mjolnir hit on l7_yggdrasil_hall01 urn 8814 (ar_pt_weightbreak_b:
 // section health 30, trigger 17 on any damage) breaks it: state 2 (collision off), fx_smash for 1 s, state 1
 // (removed). A save after that loads it broken.

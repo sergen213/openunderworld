@@ -1024,7 +1024,9 @@ void World::stepPhysics(float dt) {
     for (const auto& d : col_.dynamics)
         if (!looseIds.contains(d.id)) solids.push_back(d);
     physics_.setColliders(solids);
+    syncRagdolls(false); // a loaded scene's ragdolls exist before its recorded state applies
     physics_.step(dt);
+    syncRagdolls(true);
     for (const auto& o : script_.objects()) // World owns object motion, as for pulled blocks
         if (const auto m = o.loose ? physics_.loose(o.uid) : std::nullopt) {
             auto& w = const_cast<script::Object&>(o);
@@ -1033,6 +1035,45 @@ void World::stepPhysics(float dt) {
         }
     for (auto& [uid, rt] : uberRuntime_)
         if (const auto d = uberData_.find(uid); d != uberData_.end() && d->second) uberWatches(uid);
+}
+
+// Dead enemies' ragdolls (physics::Scene::setRagdolls, ai::EnemyState::ragdollPhase): a starting one (1) gets bodies at
+// its death pose, moving as the clip last did, with the killing hit's impulse at the hit point: death record +0x4C x 2.5
+// along the shot as 0x696A60 applies it to a dying body, [I] 2000 when the record has none (soldiers, cats). Simulating
+// ones (2) keep theirs; settled (3), alive or streamed-out enemies have none. `step`: after a physics step each body's
+// pose goes back to its enemy, which settles once they sleep (World owns the motion, as for loose bodies).
+void World::syncRagdolls(bool step) {
+    if (step) {
+        for (const auto& e : enemies_.all())
+            if (e->state().ragdollPhase == 2)
+                if (const auto p = physics_.ragdoll(e->uid())) e->setRagdoll(p->frames, p->asleep);
+        return;
+    }
+    const auto& all = enemies_.all();
+    std::vector<physics::Scene::Ragdoll> list;
+    std::vector<std::vector<glm::mat4>> frames(all.size());
+    std::vector<std::vector<vec3>> velocity(all.size());
+    for (size_t k = 0; k < all.size(); ++k) {
+        const auto& e = *all[k];
+        const auto& s = e.state();
+        const auto& t = e.type();
+        if (!t.ragdoll || (s.ragdollPhase != 1 && s.ragdollPhase != 2)) continue;
+        const glm::mat4 model = ai::Enemy::modelMatrix(s.pos, s.yaw, 0, s.tilt);
+        for (const glm::mat4& m : s.ragdoll) frames[k].push_back(model * m);
+        physics::Scene::Ragdoll r{e.uid(), &*t.ragdoll, t.bind, frames[k], {}, {}, {}};
+        if (s.ragdollPhase == 1) {
+            const auto now = e.pose(1.0), before = e.pose(0.0);
+            for (const auto& b : t.ragdoll->bones)
+                velocity[k].push_back(glm::mat3(model) * vec3(now[size_t(b.segment)][3] - before[size_t(b.segment)][3]) / float(kTickSeconds));
+            r.velocity = velocity[k];
+            r.hitPoint = s.pos + s.killAt;
+            r.impulse = s.killDir * (2.5f * (t.tuning.deathImpulse > 0 ? t.tuning.deathImpulse : 2000.0f));
+        }
+        list.push_back(r);
+    }
+    physics_.setRagdolls(list);
+    for (size_t k = 0; k < all.size(); ++k)
+        if (all[k]->state().ragdollPhase == 1 && !frames[k].empty()) all[k]->setRagdoll(frames[k], false);
 }
 
 // Pressure plates (prismatic joints, Runtime::Object::Joint): weight on the plate — Lara standing on it, a push block

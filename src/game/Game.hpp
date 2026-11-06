@@ -697,6 +697,9 @@ private:
     // One Jolt step (Objects.cpp): hinge drives, uber joints, loose rigid bodies (tumbling onto the terrain and object
     // collision), then the uber range watches.
     void stepPhysics(float dt);
+    // Dead enemies' ragdolls (Objects.cpp): starting ones get their bodies (with the killing hit's impulse), settled or
+    // streamed-out ones lose theirs; after a step (`step`) each body's pose goes back to its enemy.
+    void syncRagdolls(bool step);
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point

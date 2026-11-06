@@ -1142,7 +1142,8 @@ by ±90°, then front; picks randomly among matching entries with the requested 
 for 3/5/7 (a − 90°, a + 180°, a + 90°). Poacher: 3/7 `death_shot_3`, 5 `death_shot_back`, 1 a type-2 ref, flag 3
 `death_placed_shot`, flag 7 `hosted_enemy_vault`. Panther: 5 `hitreact_thrown_forward`, 1 a type-2 ref, flag 3
 `death_adren`, flag 5 `death_running`, flag 7 `hitreact_thrown_forward`. Bat: 1 `death`. After the timer the exe
-hands the body to physics (0x696F90 budget check → impulse 0x696A60) [I: ragdoll].
+hands the body to physics: the chunk object (+0x46, thralls; 0x696F90 budget check → impulse +0x4C via 0x696A60) or
+its ragdoll (0x617EE0 → 0x60EF50 → 0x4F1920; docs/formats/PHYSICS.md "Ragdolls") [O].
 
 Regenerate (death record +0x20..+0x70; tru.exe EnemyRegenerateData 0x67ED20, decision 0x620380, hit filter
 0x682490) [O]: +0x20 / +0x24 clip refs (fall, get up), +0x28 time (counts; [I] 1/30 s), +0x64 count of 0xC-byte
@@ -1223,10 +1224,13 @@ radii. Panther `run_forward_2` root speed 2323 units/s [O].
   EnemyState_FlyerMove's numbers were not read.
 - Death clip as FUN_00642210 (above) with flag 3 on a head shot (`Hit::headshot`), 5 when hit while running, else 0
   [I]; first matching entry instead of a random one; type-2 entries are skipped, so a plain front kill plays the role
-  clip (`death_static`, `death_shot`). No ragdoll: the clip's last frame is held. Clips whose last frame has its median
+  clip (`death_static`, `death_shot`). Once the clip is done the body becomes a Jolt ragdoll (every enemy object with
+  ragdoll data except sharks; docs/formats/PHYSICS.md "Ragdolls"), which falls off ledges and down stairs and freezes
+  when it sleeps. Without ragdoll data the clip's last frame is held. Clips whose last frame has its median
   bone under a third of the bind pose's median count as lying (panther `death_static` 37 vs 306, `death_running` 47,
   `death_adren` 53; poacher `death_shot` 55 vs 473, `death_shot_3` 40, `death_shot_back` 69; not `death_placed_shot`
-  178) [O measured]; others tip onto their side over 0.5 s about the forward axis at the feet [I] (flyers do not).
+  178) [O measured]; others without a ragdoll tip onto their side over 0.5 s about the forward axis at the feet [I]
+  (flyers do not).
 
 | Quantity | Value | Provenance |
 |---|---|---|
@@ -1356,7 +1360,7 @@ placed), generator spawns' paths, Investigate, Flank (EnemyBehavior_Flank: an at
 from the planner graph, not decoded).
 
 Not done: the remaining behaviour-tree nodes (flank, investigate, taunt, dodge, jump/vault), long-range specifics
-beyond their records, rifle mesh, bat latch, the original's wall-walking transitions, navmesh/routing, ragdoll.
+beyond their records, rifle mesh, bat latch, the original's wall-walking transitions, navmesh/routing, thralls' chunks.
 
 Verification [O] (ou-game, Vulkan, 1280×720, invisible KWin; screenshots viewed, kept privately; 2026-10-29):
 replay `tests/replays/thrall_regenerate.txt` (l7_yggdrasil_hall01, `--spawn 1000,0,0,90`): viking 8833 charges, bites,

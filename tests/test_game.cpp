@@ -2938,6 +2938,34 @@ TEST(GameReal, BallcourtWithEnemiesIndependentOfRenderRate) {
     EXPECT_FALSE(w->enemies().all().empty());
 }
 
+// Ragdolls (docs/formats/PHYSICS.md "Ragdolls"): l4_ballcourt's scripts kill poachers 6540..6542 as the unit starts
+// (enemybase damage); each plays its death clip, then its ragdoll (poacher.drm's 15 bones) takes the body. 6540 lies on
+// the edge of a ledge: it slides off, falls about 500 units onto the floor below and settles. Every tick is
+// bit-identical at any render rate.
+TEST(GameReal, KilledPoacherRagdollIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true),
+                                         game::InputScript::parse(""), 600);
+    const game::ai::Enemy* poacher = nullptr;
+    for (const auto& e : w->enemies().all())
+        if (e->uid() == 6540) poacher = e.get();
+    ASSERT_TRUE(poacher);
+    const auto& s = poacher->state();
+    EXPECT_EQ(s.mode, game::ai::Mode::Dead);
+    ASSERT_TRUE(poacher->type().ragdoll);
+    EXPECT_EQ(poacher->type().ragdoll->bones.size(), 15u);
+    EXPECT_EQ(s.ragdollPhase, 3) << "settled";
+    ASSERT_EQ(s.ragdoll.size(), 15u);
+    const glm::mat4 model = game::ai::Enemy::modelMatrix(s.pos, s.yaw, 0, s.tilt);
+    const vec3 pelvis(model * s.ragdoll[0][3]);
+    EXPECT_LT(pelvis.z, s.pos.z - 300) << "fell off the ledge";
+    const auto floor = w->collision().groundProbe(pelvis + vec3(0, 0, 100), 1000, 0x0F);
+    ASSERT_TRUE(floor);
+    EXPECT_LT(pelvis.z - floor->point.z, 80.0f) << "lying on the floor";
+    EXPECT_GT(pelvis.z - floor->point.z, -10.0f) << "not through it";
+}
+
 // Interactions (docs/GAMEPLAY.md "Interactions"): l3_main_bedroom wall switch 4525 — Lara stands in front of it and plays
 // its own Lara clip (obj_pull_lever from the switch DRM) with the input locked while the switch's use handler still runs
 // at the switch clip's end; l4_ballcourt push block 6504 — grab, push clip, Lara carried with the block, release.

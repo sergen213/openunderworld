@@ -468,6 +468,7 @@ void World::tick(const Actions& input) {
     if (!onBike) player_.grip(grip, carry == vec3(0) ? 0 : glm::dot(carry, grip) > 0 ? 1 : -1);
     enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height, player_.tuning().radius, player_.state().water >= 0},
                   [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, dt * combat_.timeScale);
+    syncRagdolls(false); // bodies for this tick's starting ragdolls, so a save between ticks holds them
     updateCamera(a, dt); // Camera.cpp: a playing spline camera, else the orbit camera
     if (std::exchange(cameraCut_, false)) prevCam_ = cam_; // a spline camera cuts in
     tickCombat(a, dt); // after the camera: free aim follows it
@@ -997,7 +998,8 @@ uint64_t World::stateHash() const {
     }
     for (const auto& e : enemies_.all()) {
         const auto& es = e->state();
-        add(e->uid()), add(es.mode), add(es.pos), add(es.yaw), add(es.clipTime), add(es.health), str(es.clip);
+        add(e->uid()), add(es.mode), add(es.pos), add(es.yaw), add(es.clipTime), add(es.health), str(es.clip), add(es.ragdollPhase);
+        for (const auto& m : es.ragdoll) add(m);
     }
     for (const auto& [uid, rt] : uberRuntime_) {
         add(uid), add(rt.fired), add(rt.commanded);

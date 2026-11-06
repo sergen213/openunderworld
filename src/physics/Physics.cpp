@@ -14,6 +14,8 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -155,6 +157,41 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
             o.markers.push_back({vec(*m, q), vec(*m, q + 0x10), at<uint32_t>(*m, q + 0x20), at<int32_t>(*m, q + 0x24)});
         }
     return o;
+}
+
+// ObjectBase +0x78 != 0: +0x7C -> {+4 mass, +8 radius scale, +0x2C bones, +0x30 count (at most 24, 0x4F1920 /
+// 0x4F0B40)}, 0x78-byte bones read by 0x4F1390 (layout: RagdollBone).
+std::optional<RagdollDef> loadRagdoll(const cdc::Drm& d) {
+    const auto base = formats::objectBaseSection(d);
+    if (!base || !at<uint32_t>(d.sections[*base], 0x78)) return std::nullopt;
+    const auto ptrs = cdc::sectionPointers(d, *base);
+    const auto rec = ptrs.find(0x7C);
+    if (rec == ptrs.end()) return std::nullopt;
+    const auto& s = d.sections[rec->second.section];
+    const uint32_t r = rec->second.offset, n = at<uint32_t>(s, r + 0x30);
+    if (n > 24) throw FormatError("physics: ragdoll of " + std::to_string(n) + " bones");
+    const auto inner = cdc::sectionPointers(d, rec->second.section);
+    const auto list = inner.find(r + 0x2C);
+    if (!n || list == inner.end()) return std::nullopt;
+    const auto& ls = d.sections[list->second.section];
+    RagdollDef def{at<float>(s, r + 4), at<float>(s, r + 8), {}};
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t b = list->second.offset + 0x78 * i;
+        RagdollBone o;
+        const int16_t start = at<int16_t>(ls, b + 4), alt = at<int16_t>(ls, b + 6), end = at<int16_t>(ls, b + 0x14);
+        o.segment = alt >= 0 ? alt : start;
+        o.endSegment = end >= 0 ? end : start;
+        o.startOffset = vec(ls, b + 8), o.endOffset = vec(ls, b + 0x18);
+        o.parent = at<int32_t>(ls, b + 0x24);
+        if (o.parent >= int(i)) throw FormatError("physics: ragdoll bone parent out of order");
+        o.massShare = at<float>(ls, b + 0x28), o.radius = at<float>(ls, b + 0x2C) * def.radiusScale;
+        o.joint = at<int32_t>(ls, b + 0x38);
+        o.pivot = vec(ls, b + 0x3C), o.axis1 = vec(ls, b + 0x48), o.axis2 = vec(ls, b + 0x54);
+        for (int k = 0; k < 5; ++k) o.limits[k] = at<float>(ls, b + 0x60 + 4 * k);
+        o.friction = std::max(at<float>(ls, b + 0x74), 0.01f);
+        def.bones.push_back(o);
+    }
+    return def;
 }
 
 std::shared_ptr<const collision::CollisionMesh> solidShape(const ObjectPhysics& o, int segment) {
@@ -412,6 +449,15 @@ struct Scene::Impl {
     std::unique_ptr<JPH::StateRecorderImpl> pending; // the recorded Jolt state, applied in the next step
     uint32_t pendingConstraints = 0;
 
+    // Ragdolls (Scene::setRagdolls), by id: a body per bone (keys "r<id>.<bone>"), a joint per bone with a parent.
+    struct RagdollE { int32_t id; std::vector<JPH::BodyID> bodies; std::vector<JPH::Ref<JPH::Constraint>> joints; };
+    std::vector<RagdollE> ragdolls;
+    void dropRagdoll(RagdollE& r) {
+        for (auto& c : r.joints) sys.RemoveConstraint(c);
+        for (auto& b : r.bodies) remove(b);
+        r.joints.clear(), r.bodies.clear();
+    }
+
     JPH::BodyID add(const JPH::BodyCreationSettings& s, const std::string& key, JPH::EActivation act) {
         JPH::BodyID id;
         if (const auto it = pendingIds.find(key); it != pendingIds.end()) {
@@ -572,7 +618,7 @@ struct Scene::Impl {
         return nullptr;
     }
     // Terrain and object solids exist only while something can land on them.
-    bool landing() const { return !loose.empty() || !vehicles.empty() || std::ranges::any_of(joints, &JointE::solid); }
+    bool landing() const { return !loose.empty() || !vehicles.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid); }
     void createSolids() {
         const bool active = landing();
         for (auto& t : terrain) {
@@ -608,6 +654,8 @@ struct Scene::Impl {
         for (const auto& e : joints) all.push_back(e.ax->c.GetPtr());
         for (const auto& l : links) all.push_back(l.c.GetPtr());
         for (const auto& v : vehicles) all.push_back(v.c.GetPtr());
+        for (const auto& r : ragdolls)
+            for (const auto& c : r.joints) all.push_back(c.GetPtr());
         return all;
     }
     void reorder() {
@@ -807,6 +855,8 @@ void Scene::blast(vec3 at, float radius, float near, float edge) {
     for (size_t i = 0; i < bodies.size(); ++i)
         if (bodies[i].invMass > 0) push(impl_->hingeBodies[i]);
     for (const auto& l : impl_->loose) push(l.body);
+    for (const auto& r : impl_->ragdolls)
+        for (const auto b : r.bodies) push(b);
 }
 
 // ---- vehicles ---------------------------------------------------------------------------------------------------------
@@ -984,6 +1034,8 @@ std::string Scene::save() const {
     for (const auto& e : m.joints) ids.push_back({Impl::jointKey(e.key), e.body}), refs.push_back({Impl::jointKey(e.key), e.ax->ref});
     for (const auto& l : m.loose) ids.push_back({"l" + std::to_string(l.id), l.body});
     for (const auto& v : m.vehicles) ids.push_back({"v" + std::to_string(v.id), v.body});
+    for (const auto& r : m.ragdolls)
+        for (size_t b = 0; b < r.bodies.size(); ++b) ids.push_back({"r" + std::to_string(r.id) + "." + std::to_string(b), r.bodies[b]});
     for (const auto& t : m.terrain)
         if (!t.body.IsInvalid()) ids.push_back({"t" + t.t.name, t.body});
     for (size_t i = 0; i < m.proxies.size(); ++i)
@@ -1005,9 +1057,10 @@ bool Scene::restore(std::string_view state) {
     clearHinges();
     for (auto& l : m.loose) m.remove(l.body);
     for (auto& v : m.vehicles) m.dropVehicle(v);
+    for (auto& r : m.ragdolls) m.dropRagdoll(r);
     for (auto& t : m.terrain) m.remove(t.body);
     for (auto& p : m.proxies) m.remove(p.body);
-    m.links.clear(), m.joints.clear(), m.loose.clear(), m.vehicles.clear(), m.proxies.clear();
+    m.links.clear(), m.joints.clear(), m.loose.clear(), m.vehicles.clear(), m.proxies.clear(), m.ragdolls.clear();
     m.pending.reset(), m.pendingIds.clear(), m.reserved.clear(), m.pendingRefs.clear();
     auto r = std::make_unique<JPH::StateRecorderImpl>();
     r->WriteBytes(state.data(), state.size());
@@ -1038,6 +1091,110 @@ bool Scene::restore(std::string_view state) {
     if (r->IsFailed()) return m.pendingIds.clear(), m.reserved.clear(), m.pendingRefs.clear(), false;
     m.pending = std::move(r);
     return true;
+}
+
+// ---- ragdolls ---------------------------------------------------------------------------------------------------------
+// tru.exe 0x4F0B40 per bone: a capsule from the start to the end point (radius, the total mass x share), and a joint to
+// its parent at start + pivot: 1 a hinge about axis 1 (0x4DF5D0), 2 limits about axes 1 and 2 (0x4E08A0), 3 a cone
+// and limits about its twist axis (0x4EE5C0): axis 1, or the bone when 0x49AFA0 says axis 1 is unset [I]. Ours: a Jolt
+// SixDOF constraint (pyramid swing), translation fixed, X = axis 1 (type 3: the twist axis, swinging within the cone
+// about Y and Z), Y = axis 2; built with the bodies in the bind pose, so a joint's zero is the bind pose [I] (the
+// poacher's death pose lies inside the limits so measured, knees and elbows included); joint friction like the motor
+// bounds (impulse per 1/60 s step, PHYSICS.md "Havok -> Jolt") [I]. Parent and child do not collide (Jolt's filter).
+void Scene::setRagdolls(std::span<const Ragdoll> ragdolls) {
+    constexpr float pi = JPH::JPH_PI, kFriction = 0.6f; // surface friction [I] (Jolt's 0.2 lets bodies slide down stairs)
+    Impl& m = *impl_;
+    std::vector<const Ragdoll*> sorted; // by id: a fixed constraint order (Impl::ordered)
+    for (const auto& r : ragdolls) sorted.push_back(&r);
+    std::ranges::sort(sorted, {}, [](const Ragdoll* r) { return r->id; });
+    std::vector<Impl::RagdollE> next;
+    for (const Ragdoll* r : sorted) {
+        if (const auto it = std::ranges::find(m.ragdolls, r->id, &Impl::RagdollE::id); it != m.ragdolls.end()) {
+            next.push_back(std::move(*it)), it->id = INT32_MIN;
+            continue;
+        }
+        if (!r->def || r->def->bones.empty() || r->frames.size() < r->def->bones.size()) continue;
+        const RagdollDef& d = *r->def;
+        const size_t n = d.bones.size();
+        Impl::RagdollE e{r->id, {}, {}};
+        JPH::Ref<JPH::GroupFilterTable> filter = new JPH::GroupFilterTable(uint32_t(n));
+        for (size_t b = 0; b < n; ++b)
+            if (d.bones[b].parent >= 0) filter->DisableCollision(JPH::CollisionGroup::SubGroupID(b), JPH::CollisionGroup::SubGroupID(d.bones[b].parent));
+        const auto bind = [&](int s) { return s >= 0 && size_t(s) < r->bind.size() ? r->bind[size_t(s)] : vec3(0); };
+        std::vector<vec3> from(n), to(n);
+        for (size_t b = 0; b < n; ++b) { // in the bind pose: body frame = its start segment's (rotation-free) bind frame
+            const RagdollBone& o = d.bones[b];
+            const vec3 seg = bind(o.segment);
+            from[b] = seg + o.startOffset, to[b] = bind(o.endSegment) + o.endOffset;
+            const vec3 dir = to[b] - from[b];
+            const float len = glm::length(dir), radius = std::max(o.radius, 1.0f) * kM;
+            JPH::Ref<JPH::ShapeSettings> s;
+            if (len > 1e-3f) s = new JPH::CapsuleShapeSettings(0.5f * len * kM, radius);
+            else s = new JPH::SphereShapeSettings(radius);
+            const quat rot = len > 1e-3f ? quat(vec3(0, 1, 0), dir / len) : quat(1, 0, 0, 0); // Jolt capsules run along Y
+            JPH::BodyCreationSettings bs(made(JPH::RotatedTranslatedShapeSettings(Jm(0.5f * (from[b] + to[b]) - seg), J(rot), s)), Jm(seg),
+                                         JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic, kLayerLoose);
+            bs.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            bs.mMassPropertiesOverride.mMass = std::max(d.mass * o.massShare * 0.01f, 0.1f);
+            bs.mCollisionGroup = JPH::CollisionGroup(filter, JPH::CollisionGroup::GroupID(uint32_t(r->id)), JPH::CollisionGroup::SubGroupID(b));
+            bs.mMotionQuality = JPH::EMotionQuality::LinearCast;
+            bs.mFriction = kFriction, bs.mAngularDamping = 0.5f; // as the hinge bodies [I]
+            e.bodies.push_back(m.add(bs, "r" + std::to_string(r->id) + "." + std::to_string(b), JPH::EActivation::Activate));
+        }
+        for (size_t b = 0; b < n; ++b) {
+            const RagdollBone& o = d.bones[b];
+            if (o.parent < 0 || o.joint < 1 || o.joint > 3) continue;
+            const vec3 bone = to[b] - from[b];
+            const bool axis = glm::length(o.axis1) > 1e-6f;
+            const vec3 x = axis ? glm::normalize(o.axis1) : o.joint == 3 && glm::length(bone) > 1e-3f ? glm::normalize(bone) : vec3(1, 0, 0);
+            const vec3 hint = o.joint == 2 ? o.axis2 : vec3(0);
+            const vec3 y0 = hint - x * glm::dot(hint, x);
+            const vec3 y = glm::length(y0) > 1e-3f ? glm::normalize(y0) : perpendicular(x);
+            JPH::SixDOFConstraintSettings s; // world space, bodies in the bind pose
+            s.mPosition1 = s.mPosition2 = Jm(from[b] + o.pivot);
+            s.mAxisX1 = s.mAxisX2 = J(x), s.mAxisY1 = s.mAxisY2 = J(y);
+            s.mSwingType = JPH::ESwingType::Pyramid;
+            using A = JPH::SixDOFConstraintSettings::EAxis;
+            for (const A a : {A::TranslationX, A::TranslationY, A::TranslationZ}) s.MakeFixedAxis(a);
+            const auto rad = [&](int k) { return std::clamp(glm::radians(o.limits[k]), -pi, pi); };
+            const auto limit = [&](A a, float lo, float hi) { s.SetLimitedAxis(a, std::min(lo, hi), std::max(lo, hi)); };
+            limit(A::RotationX, rad(0), rad(1));
+            if (o.joint == 1) s.MakeFixedAxis(A::RotationY), s.MakeFixedAxis(A::RotationZ);
+            else if (o.joint == 2) limit(A::RotationY, rad(2), rad(3)), s.MakeFixedAxis(A::RotationZ);
+            else limit(A::RotationY, -std::abs(rad(4)), std::abs(rad(4))), limit(A::RotationZ, -std::abs(rad(4)), std::abs(rad(4)));
+            for (const A a : {A::RotationX, A::RotationY, A::RotationZ}) s.mMaxFriction[a] = o.friction * kFrame * kSolver * kM * kM;
+            JPH::Ref<JPH::Constraint> c = m.bi->CreateConstraint(&s, e.bodies[size_t(o.parent)], e.bodies[b]);
+            m.sys.AddConstraint(c);
+            e.joints.push_back(c);
+        }
+        size_t hit = 0; // the bone nearest the hit point takes the impulse
+        for (size_t b = 0; b < n; ++b) {
+            const mat4& f = r->frames[b];
+            const vec3 v = b < r->velocity.size() ? r->velocity[b] : vec3(0);
+            m.bi->SetPositionRotationAndVelocity(e.bodies[b], Jm(vec3(f[3])), J(glm::normalize(glm::quat_cast(mat3(f)))), Jm(v), JPH::Vec3::sZero());
+            if (glm::distance(vec3(f[3]), r->hitPoint) < glm::distance(vec3(r->frames[hit][3]), r->hitPoint)) hit = b;
+        }
+        if (r->impulse != vec3(0)) m.bi->AddImpulse(e.bodies[hit], Jm(r->impulse), m.bi->GetCenterOfMassPosition(e.bodies[hit]));
+        next.push_back(std::move(e));
+    }
+    for (auto& e : m.ragdolls)
+        if (e.id != INT32_MIN) m.dropRagdoll(e);
+    m.ragdolls = std::move(next);
+}
+
+std::optional<Scene::RagdollPose> Scene::ragdoll(int32_t id) const {
+    const auto it = std::ranges::find(impl_->ragdolls, id, &Impl::RagdollE::id);
+    if (it == impl_->ragdolls.end()) return std::nullopt;
+    RagdollPose p;
+    p.asleep = true;
+    for (const auto b : it->bodies) {
+        JPH::RVec3 at;
+        JPH::Quat q;
+        impl_->bi->GetPositionAndRotation(b, at, q);
+        p.frames.push_back(glm::translate(mat4(1), G(at) * kUnitsPerMetre) * glm::mat4_cast(G(q)));
+        if (impl_->bi->IsActive(b)) p.asleep = false;
+    }
+    return p;
 }
 
 } // namespace ou::physics
