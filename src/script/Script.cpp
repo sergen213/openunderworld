@@ -1038,6 +1038,18 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 fadeStep_ = 1.0f / float(std::max<int32_t>(int32_t(nc.args[0].bits), 1));
                 return true;
             }
+            // globaleffect 8 Snow(%) (0x4A4F90 -> 0x52E130) and 11 Rain(%) (0x4A4FC0 -> 0x53AB30): the weather amounts
+            // (one clears the other); 12 Lightning(min s, max s) (0x4A4FD0 -> 0x52E080). fx::Precipitation runs them.
+            if (!std::strcmp(name, "globaleffect") && (nc.function == 8 || nc.function == 11) && nc.args.size() == 1) {
+                const int32_t p = int32_t(nc.args[0].bits);
+                (nc.function == 8 ? weather_.snow : weather_.rain) = p;
+                if (p) (nc.function == 8 ? weather_.rain : weather_.snow) = 0;
+                return true;
+            }
+            if (!std::strcmp(name, "globaleffect") && nc.function == 12 && nc.args.size() == 2) {
+                weather_.lightningMin = int32_t(nc.args[0].bits), weather_.lightningMax = int32_t(nc.args[1].bits);
+                return true;
+            }
             if (!std::strcmp(name, "larabase") && (nc.function == 59 || nc.function == 60) && nc.args.empty()) {
                 // INSTANCE_Post(player, 0x1D5 | 0x1D6, 0) (0x778020 / 0x778040); the message's meaning is [U].
                 events_.push_back({EventKind::PlayerMessage, source, nc.function == 59 ? 0x1D5 : 0x1D6, tick_});
@@ -2367,7 +2379,8 @@ nlohmann::json Runtime::serialize() const {
                     {"nextAux", nextAuxiliaryUid_}, {"live", live}, {"machines", std::move(machines)}, {"threads", std::move(threads)},
                     {"clocks", std::move(clocks)}, {"messages", std::move(messages)}, {"tick", tick_}, {"playerUnit", playerUnit},
                     {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
-                    {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_}};
+                    {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
+                    {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}}};
     return j;
 }
 
@@ -2473,6 +2486,9 @@ void Runtime::restoreRuntime(const nlohmann::json& r) {
     const auto& last = r.at("last");
     lastPos_ = vec3(last.at(0).get<float>(), last.at(1).get<float>(), last.at(2).get<float>()), hasLast_ = last.at(3);
     interactHeld_ = r.at("interactHeld");
+    weather_ = {};
+    if (const auto it = r.find("weather"); it != r.end()) // saves from before 0.30 have none
+        weather_ = {it->at(0).get<int32_t>(), it->at(1).get<int32_t>(), it->at(2).get<int32_t>(), it->at(3).get<int32_t>()};
 }
 
 } // namespace ou::script

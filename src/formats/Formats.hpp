@@ -242,6 +242,20 @@ struct Unit {
         float frequency = 0;      // +0x24: Hz of the rectified sine (x 2 pi / 60 per 60 Hz tick)
     };
     std::vector<Wind> wind;
+    // Level+0x70 DTP +0x290 u16: objectlist.txt id of the unit's weather object (rainfx_mex in the l4 jungle units),
+    // 0 = none: tru.exe 0x546FC0 then uses the always-loaded `rainfx` (0x8AA774). docs/formats/EFFECTS.md "Weather".
+    uint16_t weatherObjectId = 0;
+    // Level+0x54 precipitation height map (tru.exe 0x5C30E0): the highest surface rain stops at, unit frame, 256-unit
+    // steps over x, y in [-0x40000, 0x40000): 16 x 16 cells of 0x8000, each 16 x 16 blocks of 8 x 8 heights.
+    struct RainMap {
+        static constexpr int32_t kNone = -8000000;
+        std::array<int32_t, 256> cells{};                // block table per cell, -1 none (filled by parseUnit)
+        std::vector<std::array<int32_t, 256>> tables;    // per cell: leaf index per block, -1 none
+        std::vector<std::array<int32_t, 64>> leaves;     // heights, kNone where the leaf has none
+        glm::vec3 origin{0};                             // Level+0x80: the map is in tru.exe's frame, unit frame - origin
+        int32_t height(float x, float y) const;          // unit frame; kNone outside or without data
+    };
+    RainMap rainMap;
 };
 // Point/spot light from a light DTP (section `dtpIndex`): type, DTP radius, cone, near width, falloff curve, flicker,
 // shadow flag, colour = DTP intensity (+0x08) x rgb (+0x18) (LEVELS.md "Lights"); position/direction 0. nullopt for

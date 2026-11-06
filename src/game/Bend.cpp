@@ -202,4 +202,9 @@ std::span<const glm::vec4> Bends::bend(int32_t uid) const {
     return it == index_.end() ? std::span<const glm::vec4>{} : std::span<const glm::vec4>(instances_[it->second].out);
 }
 
+glm::vec2 Bends::wind(const std::string& unit, glm::vec3 pos) const {
+    const auto it = winds_.find(unit);
+    return it == winds_.end() ? glm::vec2(0) : it->second.at(pos);
+}
+
 } // namespace ou::game

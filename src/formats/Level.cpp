@@ -144,6 +144,17 @@ std::array<float, 4> evalSpline(const SplineTrack& track, float t, bool rotation
     return out;
 }
 
+int32_t Unit::RainMap::height(float x, float y) const { // tru.exe 0x5C30E0 in its frame (unit frame - origin)
+    const uint32_t ux = uint32_t(int32_t(x - origin.x) + 0x40000), uy = uint32_t(int32_t(y - origin.y) + 0x40000);
+    if (ux >= 0x80000 || uy >= 0x80000) return kNone;
+    const int32_t c = cells[(uy >> 15) * 16 + (ux >> 15)];
+    if (c < 0 || size_t(c) >= tables.size()) return kNone;
+    const uint32_t sx = (ux >> 8) & 127, sy = (uy >> 8) & 127;
+    const int32_t leaf = tables[size_t(c)][(sy >> 3) * 16 + (sx >> 3)];
+    const int32_t h = leaf < 0 ? kNone : leaves[size_t(leaf)][(sy & 7) * 8 + (sx & 7)];
+    return h == kNone ? h : h + int32_t(origin.z);
+}
+
 Unit parseUnit(const cdc::Drm& d) {
     if (d.sections.empty() || d.sections[0].type != cdc::SectionType::General)
         throw FormatError("unit DRM: section 0 is not a general (level) section");
@@ -209,6 +220,7 @@ Unit parseUnit(const cdc::Drm& d) {
             }
             in.objectId = il.at<uint16_t>(b + 0x50);
             in.uniqueId = il.at<int32_t>(b + 0x58);
+            in.marker = il.at<uint16_t>(b + 0x52);
             for (int i = 0; i < 4; ++i) in.flags[i] = il.at<uint8_t>(b + 0x70 + i);
             if (const auto it = il.ptrs.find(uint32_t(b + 0x78)); it != il.ptrs.end()) in.data = it->second;
             in.scriptId = il.at<uint32_t>(b + 0x7C);
@@ -219,7 +231,6 @@ Unit parseUnit(const cdc::Drm& d) {
                 in.splineFrom = il.at<int16_t>(b + 0x6C);
                 in.splineTo = il.at<int16_t>(b + 0x6E);
             }
-            in.marker = il.at<uint16_t>(b + 0x52);
             if (in.data) patrol(in);
             u.intros.push_back(in);
         }
@@ -426,6 +437,37 @@ Unit parseUnit(const cdc::Drm& d) {
         }
     }
 
+    // Level+0x54 precipitation height map (tru.exe 0x5C30E0): 16 x 16 cell pointers -> 16 x 16 leaf pointers -> leaf
+    // {i32 header, s16[64]}: header low byte != 0 = one height header >> 8, else header >> 8 + s16 (-0x7FFF none).
+    u.rainMap.cells.fill(-1);
+    u.rainMap.origin = {level.at<float>(0x80), level.at<float>(0x84), level.at<float>(0x88)};
+    if (const auto it = level.ptrs.find(0x54); it != level.ptrs.end()) {
+        std::map<std::pair<uint32_t, uint32_t>, int32_t> leafIndex; // leaves may be shared
+        const View cv(d, it->second.section);
+        for (uint32_t c = 0; c < 256; ++c) {
+            const auto cp = cv.ptrs.find(it->second.offset + 4 * c);
+            if (cp == cv.ptrs.end()) continue;
+            const View bv(d, cp->second.section);
+            auto& table = u.rainMap.tables.emplace_back();
+            table.fill(-1);
+            u.rainMap.cells[c] = int32_t(u.rainMap.tables.size() - 1);
+            for (uint32_t b = 0; b < 256; ++b) {
+                const auto lp = bv.ptrs.find(cp->second.offset + 4 * b);
+                if (lp == bv.ptrs.end()) continue;
+                const auto [li, fresh] = leafIndex.try_emplace({lp->second.section, lp->second.offset}, int32_t(u.rainMap.leaves.size()));
+                table[b] = li->second;
+                if (!fresh) continue;
+                const View lv(d, lp->second.section);
+                const int32_t header = lv.at<int32_t>(lp->second.offset);
+                auto& leaf = u.rainMap.leaves.emplace_back();
+                for (uint32_t k = 0; k < 64; ++k) {
+                    const int16_t h = (header & 0xFF) ? 0 : lv.at<int16_t>(lp->second.offset + 4 + 2 * k);
+                    leaf[k] = h == -0x7FFF ? Unit::RainMap::kNone : (header >> 8) + h;
+                }
+            }
+        }
+    }
+
     // Level+0x70 -> render-settings DTP: fog colour u8[3] +0x18, far plane +0x38, fog far +0x3C (0 = far plane),
     // fog near +0x40, ambient u8[3] +0x1E4 x f32 +0x1E8 (tru.exe 0x5C7CA0, 0x5CAFF0; SHADERS.md).
     if (const auto it = level.ptrs.find(0x70); it != level.ptrs.end()) {
@@ -447,6 +489,7 @@ Unit parseUnit(const cdc::Drm& d) {
         e.valid = true;
         u.playerObjectId = rs.at<uint16_t>(o + 0x294);
         u.scriptId = rs.at<uint32_t>(o + 0x1C0);
+        u.weatherObjectId = rs.at<uint16_t>(o + 0x290);
         if (const auto f = rs.ptrs.find(o + 0x2B4); f != rs.ptrs.end())
             u.flashlightSpot = View(d, f->second.section).at<uint8_t>(f->second.offset + 0x0A) != 0;
         if (const auto w = rs.ptrs.find(o + 0x2B0); w != rs.ptrs.end() && rs.at<uint32_t>(o + 0x2AC) < 32) {

@@ -1006,6 +1006,7 @@ struct EffectsView {
         dyn.resize(gadget.size() + kLightSlots, slotLight());
         std::copy(gadget.begin(), gadget.end(), dyn.begin());
         system.lights(live);
+        if (const auto f = weather.flash()) live.insert(live.begin(), {f->pos, {0, 0, -1}, f->colour, f->radius, nullptr, -1, false});
         size_t n = gadget.size();
         for (const auto& l : live)
             if (!(l.forever && l.owner >= 0) && n < dyn.size()) {
@@ -1018,12 +1019,73 @@ struct EffectsView {
         for (; n < dyn.size(); ++n) dyn[n].position[0] = dyn[n].position[1] = dyn[n].position[2] = 1e9f, dyn[n].color[0] = dyn[n].color[1] = dyn[n].color[2] = 0;
     }
 
+    // The original weather (fx::Weather, docs/formats/EFFECTS.md "Weather"): script rain on the camera unit's weather
+    // object (formats::Unit::weatherObjectId, else rainfx as tru.exe 0x546FC0), its splashes and lightning run as that
+    // object's events on Lara (owner -1).
+    ou::fx::Weather weather;
+    std::string weatherObject;
+    const ou::fx::WeatherDef* weatherDef = nullptr;
+    std::shared_ptr<const ou::fx::ObjectFx> weatherFx;
+    float weatherAspect = 16.0f / 9.0f; // the last frame's
+    bool drawWeather = true;            // off while the Enhanced weather layer shows the unit's rain / snow
+    static ou::fx::Weather::Camera weatherCamera(const ou::render::Camera& c, float aspect) {
+        ou::fx::Weather::Camera w;
+        w.eye = c.position, w.forward = c.forward();
+        w.right = glm::normalize(glm::cross(w.forward, c.up));
+        w.down = glm::cross(w.forward, w.right);
+        w.tanHalfFovY = std::tan(glm::radians(c.verticalFovDeg) * 0.5f), w.aspect = aspect;
+        return w;
+    }
+    void weatherTick(const ou::game::World& w, const ou::render::Camera& cam) {
+        if (!library || w.units().empty()) return;
+        const auto& unit = w.currentUnit().data;
+        if (const std::string name = unit.weatherObject.empty() ? "rainfx" : unit.weatherObject; name != weatherObject)
+            weatherObject = name, weatherDef = library->weather(name), weatherFx = library->get(name);
+        const auto& s = w.script().weather();
+        weather.setScript(s.rain, s.lightningMin, s.lightningMax);
+        if (!system.visuals) return;
+        ou::fx::Weather::World q;
+        q.ceiling = [&w](glm::vec3 p) { // 0x5C32C0: the current unit, then the first other loaded unit with data
+            const auto at = [&](const ou::game::LoadedUnit& u) {
+                const int32_t h = u.data.rainMap.height(p.x - u.offset.x, p.y - u.offset.y);
+                return h == ou::formats::Unit::RainMap::kNone ? h : h + int32_t(u.offset.z);
+            };
+            int32_t best = at(w.currentUnit());
+            for (const auto& u : w.units())
+                if (&u != &w.currentUnit())
+                    if (const int32_t h = at(u); h != ou::formats::Unit::RainMap::kNone) return std::max(best, h);
+            return best;
+        };
+        q.water = [&w](glm::vec3 p) -> std::optional<float> { // 0x5C8F50: a water volume within +3160 / -9481 of p [I: no waves]
+            for (const auto& m : w.collision().markup)
+                if (m.type == 10 && m.points.size() >= 2 && m.points[1].z > p.z - 9481.5f && m.points[1].z < p.z + 3160.5f &&
+                    ou::game::insideWater(m, {p.x, p.y, m.points[1].z - 1}))
+                    return m.points[1].z;
+            return std::nullopt;
+        };
+        q.wind = [&w, &unit](glm::vec3 p) { return w.bends().wind(unit.name, p); };
+        q.ray = [&w](glm::vec3 a, glm::vec3 b) -> std::optional<std::pair<glm::vec3, uint8_t>> {
+            const glm::vec3 d = b - a;
+            const float len = glm::length(d);
+            if (len < 1) return std::nullopt;
+            const auto h = w.collision().raycast(a, d / len, len);
+            if (!h) return std::nullopt;
+            return std::pair{h->point, material(w.collision(), *h)};
+        };
+        weather.tick(weatherDef, weatherCamera(cam, weatherAspect), q);
+        for (const auto& e : weather.events()) system.runEvent(weatherFx, e.event, glm::translate(glm::mat4(1), e.pos), -1, e.material);
+    }
+
     void sync(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
         if (!library) {
             library.emplace(bf);
             if (const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt"))
                 names = ou::formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
         }
+        // Weather objects (fx::Weather): the units' own, else rainfx; loaded now so their sheets reach the scene.
+        library->weather("rainfx", &warnings);
+        for (const auto& u : w.units())
+            if (!u.data.weatherObject.empty()) library->weather(u.data.weatherObject, &warnings);
         auto loaded = [&](const std::string& n) {
             return std::any_of(w.units().begin(), w.units().end(), [&](const auto& u) { return u.data.name == n; });
         };
@@ -1243,6 +1305,8 @@ struct EffectsView {
     // their fog blocks join the frame's fog.
     void frame(const ou::render::Camera& cam, float aspect, const ou::game::World& w, ou::render::FrameOptions& fo) {
         system.build(cam, aspect, vertices, batches);
+        weatherAspect = aspect;
+        if (drawWeather && weatherDef) weather.build(*weatherDef, weatherCamera(cam, aspect), vertices, batches);
         fo.fxVertices = vertices, fo.fxBatches = batches;
         // Sun-glare filters fade while the owner point is occluded (0x535C50): a collision ray from the camera [I].
         const glm::mat4 viewProj = cam.projection(aspect) * cam.view();
@@ -2665,6 +2729,16 @@ int main(int argc, char** argv) {
             // The emitters' camera-range gate uses the tick's camera, not the last rendered (interpolated) one: spawns and
             // the shared random stream must not depend on the render rate.
             effects.system.tick(opt.camera ? glm::vec3((*opt.camera)[0], (*opt.camera)[1], (*opt.camera)[2]) : world->camera().position);
+            {
+                const auto& c = world->camera();
+                ou::render::Camera tc;
+                tc.verticalFovDeg = c.fovDeg > 0 ? c.fovDeg : world->fovDeg;
+                tc.position = c.position, tc.lookAt(c.target), tc.up = c.up;
+                if (const auto& k = opt.camera)
+                    tc.position = {(*k)[0], (*k)[1], (*k)[2]}, tc.lookAt({(*k)[3], (*k)[4], (*k)[5]}), tc.up = {(*k)[6], (*k)[7], (*k)[8]};
+                if (opt.camera && (*opt.camera)[9] > 0) tc.verticalFovDeg = (*opt.camera)[9];
+                effects.weatherTick(*world, tc); // after the prims, as 0x547807 after their update loop
+            }
             if (const auto* b = world->ridden(); b || bikePhase != "parked") { // bike phase changes + 1 Hz while riding
                 const std::string phase(b ? ou::game::bikePhaseName(b->phase) : "parked");
                 if (b && (phase != bikePhase || world->ticks() % 60 == 0)) {
@@ -3048,6 +3122,7 @@ int main(int argc, char** argv) {
         fo.meshOpacity = meshOpacity;
         fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
         fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;
+        effects.drawWeather = true; // the original rain, unless the Enhanced layer shows this unit's weather
         if (opt.gfx.weather && !mainMenu) {
             using P = ou::game::Precipitation;
             ou::game::UnitWeather uw{opt.gfx.weather == 2 ? P::Rain : P::Snow, opt.gfx.weather == 2 ? 0.8f : 1.0f};
@@ -3074,6 +3149,7 @@ int main(int argc, char** argv) {
                 uw.kind = it->second.kind;
                 uw.intensity = it->second.intensity * ou::game::weatherCoverage(it->second, cam.position - unit.offset);
             }
+            effects.drawWeather = uw.kind == P::None;
             const bool roof = world->collision().raycast(cam.position, {0, 0, 1}, 3000.0f).has_value();
             shelter += (float(roof) - shelter) * (1.0f - std::exp(-3.0f * float(dt))); // same fade at any render rate
             fo.weather.kind = uw.kind == P::Rain ? ou::render::Weather::Kind::Rain

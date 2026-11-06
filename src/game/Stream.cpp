@@ -235,12 +235,14 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     u.flashlightSpot = unit.flashlightSpot;
     u.cameraSplines = std::move(unit.cameraSplines);
     u.wind = std::move(unit.wind);
+    u.rainMap = std::move(unit.rainMap);
     // tru.exe 0x5D40C0 picks the respawn intro among objects "checkpoint" / "invis_checkpoint".
     const auto list = bigfile.read("\\tr8\\pc-w\\objectlist.txt");
     const auto names = list ? formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()})
                             : std::map<uint16_t, std::string>{};
     // tru.exe 0x5DE2B0: the level loads Lara as the object named by its settings DTP (GAMEPLAY.md "Outfits").
     if (const auto p = names.find(unit.playerObjectId); unit.playerObjectId && p != names.end()) u.playerObject = p->second;
+    if (const auto p = names.find(unit.weatherObjectId); unit.weatherObjectId && p != names.end()) u.weatherObject = p->second;
     for (const auto& in : unit.intros) {
         const auto n = names.find(in.objectId);
         if (n == names.end()) continue;

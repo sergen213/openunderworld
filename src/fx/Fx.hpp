@@ -4,6 +4,7 @@
 
 #include "cdc/Cdc.hpp"
 #include "render/Renderer.hpp"
+#include "fx/Weather.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -354,6 +355,10 @@ public:
     // (tru.exe 0x5B26C0 with a variant: no frame window). Rewards' "pickup" lists keep their fade-out there (0x2401).
     int runVariant(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
                    int32_t owner, int variant, uint8_t material = 0);
+    // An object list's records of event byte `event` (tru.exe 0x5BA000: not disabled, material filter), effects and
+    // sounds at once: the weather's splashes (0x2E / 0x2F) and lightning (0x30) on fx->events.
+    int runEvent(const std::shared_ptr<const ObjectFx>& fx, uint8_t event, const glm::mat4& world, int32_t owner,
+                 uint8_t material = 0);
     // A one-shot instance playing `events` from frame 0 at a fixed `world` as the game ticks (bullet hits, weapon
     // fire: tru.exe births the hit object, whose clip events filter on its material, 0x6B7030).
     // `target`: the shot's end, the position of segment -100 (lightning tracers: wp_* `fire` class 3 records) [I].
@@ -535,6 +540,9 @@ public:
     uint32_t flags(const std::string& objectName) const;
     // u16 at `off` of the object data block (ObjectBase +0xC8), 0 when absent (loads the object like get()).
     uint16_t dataU16(const std::string& objectName, uint32_t off);
+    // The weather data block of a weather object (fx::parseWeatherDef on the +0xC8 block) with its sheet textures
+    // loaded; null when the object or its block is missing.
+    const WeatherDef* weather(const std::string& objectName, std::vector<std::string>* warnings = nullptr);
     // A unit's FX point sets (parsed once per unit name) with their textures loaded from the unit DRM.
     const std::vector<PointSet>& pointSets(const cdc::Drm& unit, const std::string& unitName,
                                            std::vector<std::string>* warnings = nullptr);
@@ -544,7 +552,7 @@ public:
     const std::vector<scene::TextureData>& textures() const { return textures_; }
 
 private:
-    struct Entry { std::shared_ptr<const ObjectFx> fx; uint32_t flags = 0; std::vector<uint8_t> data; };
+    struct Entry { std::shared_ptr<const ObjectFx> fx; uint32_t flags = 0; std::vector<uint8_t> data; std::optional<WeatherDef> weather; bool weatherRead = false; };
     void loadTextures(const cdc::Drm& drm, const std::string& name, const std::vector<uint32_t>& ids,
                       std::vector<std::string>* warnings);
     const cdc::BigfileSet& bigfile_;

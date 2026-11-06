@@ -847,6 +847,18 @@ int System::runVariant(const std::shared_ptr<const ObjectFx>& fx, const std::vec
     return n;
 }
 
+int System::runEvent(const std::shared_ptr<const ObjectFx>& fx, uint8_t event, const glm::mat4& world, int32_t owner,
+                     uint8_t material) {
+    if (!fx) return 0;
+    int n = 0;
+    for (const auto& e : fx->events) {
+        if (e.event != event || (e.material() && e.material() != material)) continue;
+        if (e.effect()) n += runCommand(fx, e.cmd, world, owner);
+        else if (sound && e.isSound()) sound(*fx, e, glm::vec3(world[3]), material);
+    }
+    return n;
+}
+
 void System::setFade(int32_t owner, float from, float to, int frames) {
     Fade& f = fades_[owner];
     if (from >= 0) f.value = from;
@@ -1546,6 +1558,18 @@ uint16_t Library::dataU16(const std::string& name, uint32_t off) {
     get(name);
     const auto& d = objects_[name].data;
     return rd<uint16_t>(d, off);
+}
+
+const WeatherDef* Library::weather(const std::string& name, std::vector<std::string>* warnings) {
+    const auto fx = get(name, warnings);
+    Entry& e = objects_[name];
+    if (!e.weatherRead) {
+        e.weatherRead = true;
+        e.weather = parseWeatherDef(e.data);
+        if (e.weather && fx && fx->drm)
+            loadTextures(*fx->drm, name, {e.weather->textures.begin(), e.weather->textures.end()}, warnings);
+    }
+    return e.weather ? &*e.weather : nullptr;
 }
 
 } // namespace ou::fx

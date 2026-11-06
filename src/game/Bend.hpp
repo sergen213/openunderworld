@@ -77,6 +77,8 @@ public:
     void tick(glm::vec3 lara, glm::vec3 laraPrev);
     // Bend vectors of intro `uid`, one per model segment: (a.x, a.y, b.x, b.y), s = a * v.xy + b; empty if none.
     std::span<const glm::vec4> bend(int32_t uid) const;
+    // The wind of loaded unit `unit` (world frame) at `pos`; 0 for units without one (the rain drops' drift, 0x53C9F0).
+    glm::vec2 wind(const std::string& unit, glm::vec3 pos) const;
     size_t size() const { return instances_.size(); }
 
 private:

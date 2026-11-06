@@ -370,6 +370,10 @@ public:
     const std::set<std::string>& playerObjects() const { return playerObjects_; } // carried gear (g_belt, ...)
     void setPlayerObjects(std::set<std::string> objects) { playerObjects_ = std::move(objects); } // chapter starts
     uint32_t unitEffect() const { return unitEffect_; }
+    // Script weather (globaleffect 8 / 11 / 12, docs/formats/EFFECTS.md "Weather"): snow / rain % and lightning
+    // interval seconds (tru.exe's defaults 20 / 30 s, 0x53AB30's init).
+    struct Weather { int32_t snow = 0, rain = 0, lightningMin = 20, lightningMax = 30; };
+    const Weather& weather() const { return weather_; }
     // globaleffect FadeOut/FadeIn screen wipe: 0 = clear, 1 = black; moves by 1/frames each tick.
     float screenFade() const { return fade_; }
     bool holding() const { return holding_; }  // last tick: Lara grips a push block (interact held next to it)
@@ -492,6 +496,7 @@ private:
     uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
     uint32_t unitEffect_ = 0;
+    Weather weather_;
     uint64_t tick_ = 0;
     std::map<std::pair<int32_t, std::string>, size_t> failures_;
     int fallbackDepth_ = 0;

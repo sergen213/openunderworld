@@ -189,7 +189,7 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_fx: original particle effects (GenericFXObject), deterministic sim, sprites (docs/formats/EFFECTS.md) ----
-add_library(ou_fx STATIC src/fx/Fx.cpp)
+add_library(ou_fx STATIC src/fx/Fx.cpp src/fx/Weather.cpp)
 target_link_libraries(ou_fx PUBLIC ou_formats ou_physics glm::glm)
 if(OU_BUILD_TESTS)
   add_executable(ou_fx_tests tests/test_fx.cpp)

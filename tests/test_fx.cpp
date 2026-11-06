@@ -726,3 +726,77 @@ TEST(FxReal, UnitFilterFogMatchesOriginal) {
     EXPECT_NEAR(half.nearZ, env.fogNear * 0.5f, 1.0f);
     EXPECT_EQ(half.curve[255], std::lround(0x63 * 0.5) + 128);
 }
+
+// fx::Weather (EFFECTS.md "Weather"): the pool refills to 512 at 32 a tick above the height map, drops fall and end
+// at it, the sheets draw as additive quads of the tier textures, lightning starts its event 0x30 and flicker light.
+TEST(Fx, WeatherRainFillsFallsAndFlashes) {
+    fx::WeatherDef d;
+    d.textures = {3711, 757, 3712};
+    d.levels = {0, 0.2167f, 0.6067f, 1};
+    d.minWidth = 160, d.width = 256, d.length = 10, d.nearZ = 448, d.farZ = 6000, d.wind = 3;
+    d.colourA = d.colourB = 0x141414, d.farColour = 0x101010, d.alpha = 0x80000000u, d.flags = 2;
+    d.flashColour = 0x806855, d.flashLight = 4214, d.flashRadius = 100000;
+    fx::Weather w;
+    fx::Weather::World q;
+    q.ceiling = [](glm::vec3) { return 0; };          // open ground at z 0
+    q.wind = [](glm::vec3) { return glm::vec2(1, 0); };
+    q.ray = [](glm::vec3 a, glm::vec3) { return std::optional<std::pair<glm::vec3, uint8_t>>({{a.x, a.y, 0}, 2}); };
+    fx::Weather::Camera cam;
+    cam.eye = {0, 0, 300};
+    w.setScript(40, 1, 1); // ballcourt's rain (DAT_00AE4D84 0x199 under Wine), lightning every second
+    EXPECT_EQ(w.rain(), 0x199);
+    w.tick(&d, cam, q);
+    EXPECT_EQ(w.dropCount(), 32u);
+    bool splash = false, bolt = false;
+    for (int t = 0; t < 120; ++t) {
+        w.tick(&d, cam, q);
+        for (const auto& e : w.events()) splash |= e.event == 0x2E && e.material == 2, bolt |= e.event == 0x30;
+    }
+    EXPECT_GT(w.dropCount(), 400u); // drops end at the ground or their life, the pool refills
+    EXPECT_TRUE(splash);
+    EXPECT_TRUE(bolt);
+    std::vector<render::FxVertex> v;
+    std::vector<render::FxBatch> b;
+    w.build(d, cam, v, b);
+    ASSERT_EQ(b.size(), 2u); // 0.4: tier 3712 for the first drops, 757 for the rest
+    EXPECT_EQ(b[0].textureId, 3712u);
+    EXPECT_EQ(b[1].textureId, 757u);
+    EXPECT_EQ(b[0].blend, 1);
+    EXPECT_EQ(v.size() % 6, 0u);
+    w.setScript(0, 1, 1);
+    for (int t = 0; t < 200; ++t) w.tick(&d, cam, q);
+    EXPECT_EQ(w.dropCount(), 0u); // no new drops, the last ones fell
+    EXPECT_FALSE(w.flash());
+}
+
+// The weather objects' data blocks (ObjectBase +0xC8) and the l4 units' weather object / height map (Level+0x70 DTP
+// +0x290, Level+0x54), against tru.exe's memory under Wine (weather object +0x5C, 0x546FC0's 0xAE4DA0).
+TEST(FxReal, WeatherObjectAndRainMap) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    fx::Library lib(bf);
+    const auto* d = lib.weather("rainfx_mex");
+    ASSERT_TRUE(d);
+    EXPECT_EQ(d->textures[0], 3711u);
+    EXPECT_EQ(d->textures[2], 3712u);
+    EXPECT_NEAR(d->levels[1], 0.2167f, 1e-4f);
+    EXPECT_FLOAT_EQ(d->minWidth, 160.0f);
+    EXPECT_FLOAT_EQ(d->farZ, 6000.0f);
+    EXPECT_FLOAT_EQ(d->wind, 3.0f);
+    EXPECT_EQ(d->alpha, 0x80000000u);
+    EXPECT_EQ(d->flags, 2);
+    EXPECT_EQ(d->flashLight, 4214u);
+    EXPECT_EQ(d->flashColour, 0x80806855u);
+    std::set<uint32_t> tex;
+    for (const auto& t : lib.textures()) tex.insert(t.id);
+    EXPECT_TRUE(tex.contains(757));
+    ASSERT_TRUE(lib.weather("rainfx"));
+    const auto drm = cdc::parseDrm(std::move(*bf.read("pc-w\\l4_ballcourt.drm")));
+    const auto u = formats::parseUnit(drm);
+    EXPECT_EQ(u.weatherObjectId, 541); // rainfx_mex
+    EXPECT_FALSE(u.rainMap.leaves.empty());
+    const int32_t h = u.rainMap.height(26968.7f, 23597.2f); // the Wine pair's Lara, open sky
+    EXPECT_NE(h, formats::Unit::RainMap::kNone);
+    EXPECT_LT(h, 2646 + 600);
+    EXPECT_EQ(u.rainMap.height(0x41000, 0), formats::Unit::RainMap::kNone);
+}

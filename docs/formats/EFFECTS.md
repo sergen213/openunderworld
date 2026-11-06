@@ -427,3 +427,53 @@ lightning's exact jitter tables; the feedback filter
 uses the current frame's blur instead of the previous frame; noise uses a hash, not the device texture; skydomes,
 particles that follow their segment (mode 1), casing meshes, per-enemy hit materials, the line emitters' view-angle
 density rule (def `+0x8C / +0x90`, 0x5386F0 second branch: no data sets it in the fire defs checked).
+
+## Weather [O unless marked]
+
+Code: `src/fx/Weather.*` (`fx::Weather`, `fx::WeatherDef`), `ou-game` `EffectsView::weatherTick`. Tests
+`Fx.WeatherRainFillsFallsAndFlashes`, `FxReal.WeatherObjectAndRainMap`.
+
+tru.exe's weather (0x546FC0 each frame, after the prims) is a legacy system beside the GenericFXObject effects:
+- Amounts come from scripts: `globaleffect` 11 Rain(%) (0x4A4FC0 -> 0x53AB30, DAT_00AE4D84 = % x 1024 / 100), 8
+  Snow(%) (0x4A4F90 -> 0x52E130, DAT_00AE4D80; each clears the other), 12 Lightning(min s, max s) (0x4A4FD0 -> 0x52E080;
+  default 20 / 30 s, 0x539A60). Command types 7 / 8 of 0x547B40 call the same setters (no data uses them). Under Wine
+  l4_ballcourt runs rain 40 % (0x199) with 509 of the 512 drops alive; `script::Runtime::weather` keeps the values
+  (saved). No script sets snow in the units checked (l5_startsnow reads 0 under Wine): the snow there is the placed
+  `fx_snow_*` particle objects; the flake pool (0x539EF0 / 0x539CD0, drawn by 0x534DF0) is not reimplemented.
+- The weather object: Level+0x70 DTP +0x290 (objectlist id; l4_ballcourt / temple / templepath / trailstart
+  `rainfx_mex`, l6_ship_upper_hallway `rainfx`), else the always-loaded `rainfx` (0x8AA774, the 0x8AA768 name table).
+  Its ObjectBase +0xC8 data block (Object +0x5C at run time) is `fx::WeatherDef`: +0x00 three sheet textures (3711 /
+  757 / 3712: 256x256 DXT1 tiles of white streaks on black), +0x0C..+0x18 rain levels of the tiers (0, 0.2167, 0.6067,
+  1), +0x20 min half-width 160, +0x24 width 256, +0x28 streak length 10, +0x2C near 448, +0x30 far 6000, +0x34 wind
+  3, +0x38 / +0x3C colours 0x141414, +0x40 far colour 0x101010, +0x44 alpha 0x80, +0x48 flags (1 cross-fade, 2
+  lightning), +0x4C light colour, +0x50 light DTP 4214, +0x54 radius 100000, +0x64 / +0x68 light placement [I].
+- Drops (0x545950, pool 0xAD7E00, 28 bytes): refilled to 512 at up to 32 a frame at screen y 5 of the 512 x 448
+  virtual screen (0x539C00: x' = (sx - 256) / ((4/3) / aspect) x d tan(fov/2) / 192, y' = (sy - 224) x the same, along
+  the camera's right / down / forward), depth `rand & 0x1FFF` scaled down when the camera pitches past +-1500 / 4096
+  rad (looking down also widens x). A drop starts only above the unit's precipitation height map (Level+0x54,
+  tru.exe's frame = unit frame - Level+0x80; the max over the loaded units, 0x5C32C0) and a water surface below it
+  (0x5C8F50), else retries once anywhere in view. Velocity z (-14 - rand & 3) x 8 / 3 per 60 Hz frame (x depth / 4096
+  beyond 4096), x / y = the unit wind x +0x34 (0x53C9F0), life 30 + depth x 45 / 8000 frames; it ends at the map
+  height (0x52DFA0).
+- Drawn (0x5346A0, from the effect draw 0x548CF0 unless 0x5EA390): each drop a quad from its head to head - velocity
+  x 10 + the camera's motion, in tru.exe's scaled view space (x x (4/3)/aspect, y x 7/6 [I: one 16:9 sample]), half
+  width max(256 x 512 / head depth, 160) across the (dy, dx) of the streak, one of four UV flips (rand & 3); only
+  where the tail is deeper than 448. The rain level picks two tier textures: drops below a split index (slot order)
+  take the denser one, the split = (1 - (level - lo) / (hi - lo)) x live drops; flag 1 or the lightest tier: half and
+  half, cross-faded by alpha. Colour 0x80141414 | far colour x depth / 6000. Ours: additive FxBatches (tex x colour x 2)
+  [I: the device flags 0x611045 are not decoded; the black tiles need additive]; drawn unless the Enhanced weather
+  layer shows the unit's rain / snow.
+- Splashes (0x53A860): (ramp x level x 10) >> 22 a frame (3 at 40 %): a vertical screen line at depth 512..4607 meets
+  the height map, a segment +-128 there finds the surface; the weather object's event 0x2E runs on Lara at the hit,
+  filtered by its material (rainfx_mex: particles 0 and 2, 1 on material 2, and a sound); half as many behind the
+  camera run event 0x2F (sounds only). Ours: `fx::System::runEvent`.
+- Lightning (0x545950 -> 0x53A650, 0x53A550): every min..max seconds a flash of one of six patterns (0x8A3804
+  intensities / 4096 per 30 Hz frame; 2-4 twice, 5 reversed, 6 short) on a light of the +0x4C colour and +0x54
+  radius, and the object's event 0x30 there (particles 3 and 6, bolt 0, screen filter 1, thunder). Ours: the light
+  takes the first effect-light slot; it stands flashDistance ahead of the camera and flashHeight above it [I: the
+  0x4532A0 placement from the camera's angles is not decoded].
+- Not done: the rain sound bus 0x583D30, event 0x2E on every instance when rain starts, unit flag 0x20000's deeper
+  drops (rand % 18000), 0x539A60's reset at load.
+
+Same-camera pair l4_ballcourt (Wine capture `orig_bc.png`, 1280x720, `postfx/cmp.py`): region |diff| 8.8 -> 8.2
+(Vulkan), 7.9 (OpenGL); the streak sheets now show as in the capture.
