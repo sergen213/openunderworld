@@ -120,6 +120,48 @@ TEST(VehicleReal, RamsEnemyOnTheTrail) {
     w.targets.clear();
 }
 
+// The ride replay with a pistol drawn once riding and fire held: the right gun alone shoots the target ahead on the
+// trail through the hitscan path, the bike still steers, and the gun goes away for the dismount.
+TEST(VehicleReal, ShootsFromTheBike) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(loader(bf), "l4_trailstart", game::loadLaraAnims(bf), kMountSpot);
+    game::DummyTarget dummy;
+    dummy.pos = {40634, -53906, 1161}; // on the route (RamsEnemyOnTheTrail)
+    dummy.hp = 1e6f;                   // survives the ram: only shots are counted
+    w.targets.push_back(&dummy);
+    std::string text;
+    {
+        std::FILE* f = std::fopen(OU_SOURCE_DIR "/tests/replays/bike_ride.txt", "rb");
+        ASSERT_TRUE(f);
+        for (int ch; (ch = std::fgetc(f)) != EOF;) text += char(ch);
+        std::fclose(f);
+    }
+    const auto script = game::InputScript::parse(text + "1.5 draw 1\n1.6 draw 0\n1.7 fire 1\n6.0 fire 0\n");
+    int onTarget = 0, leftGun = 0;
+    float shotDamage = 0; // the ram's hit is not a shot
+    float minYaw = 10, maxYaw = -10;
+    bool drawnRiding = false;
+    for (uint64_t i = 0; i < 9 * 60; ++i) {
+        w.tick(script.at(i));
+        for (const auto& s : w.combat().shots) onTarget += s.target == &dummy, leftGun += s.hand != 0, shotDamage += s.target == &dummy ? s.damage : 0;
+        if (const auto* b = w.ridden(); b && b->phase == game::BikePhase::Ride) {
+            minYaw = std::min(minYaw, b->yaw), maxYaw = std::max(maxYaw, b->yaw);
+            drawnRiding |= w.combat().drawn && w.combat().drawT >= 1;
+        }
+    }
+    std::printf("bike shooting: %d shots on target (%llu fired), %.0f damage, yaw %.2f..%.2f\n", onTarget,
+                (unsigned long long)w.combat().shotsFired, shotDamage, minYaw, maxYaw);
+    EXPECT_TRUE(drawnRiding);
+    EXPECT_GE(onTarget, 3); // three refires (10/30 s) while it is ahead, then it is behind
+    EXPECT_GE(shotDamage, 3 * w.anims().weapons[0].damage[2]);
+    EXPECT_EQ(leftGun, 0);
+    EXPECT_GT(maxYaw - minYaw, 0.5f); // the replay's right curve
+    EXPECT_EQ(w.ridden(), nullptr);   // dismounted
+    EXPECT_FALSE(w.combat().drawn);
+    w.targets.clear();
+}
+
 // A save taken mid-ride restores the ridden bike and Lara on it; both worlds then drive the same.
 TEST(VehicleReal, SaveRestoreMidRide) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

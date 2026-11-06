@@ -822,6 +822,7 @@ std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& u
 // points = {AABB min, AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0)}, then for volumes with
 // waves (data +0x4E bit 1) 4 x (kx, ky, speed) and 4 x (height, 0, 0)
 // (docs/GAMEPLAY.md "Water").
+    bool ridingBike() const;                       // on a bike in its ride phase (not mounting / dismounting): guns allowed
 std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
 // `p` inside water box `m` (a findWater markup) grown by `grow` per axis in the box frame.
 bool insideWater(const collision::Markup& m, vec3 p, vec3 grow = vec3(0));

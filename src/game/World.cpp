@@ -335,10 +335,11 @@ void World::tick(const Actions& input) {
     prev_ = player_.state();
     prevCam_ = cam_;
     const float dt = float(kTickSeconds);
-    // On the motorcycle the bike drives Lara (Vehicle.cpp); weapons, use and the grapple wait until she is off it.
+    // On the motorcycle the bike drives Lara (Vehicle.cpp); use and the grapple wait until she is off it. Weapons stay
+    // live: she rides with a pistol / uzi out (Combat.cpp).
     const bool onBike = tickVehicles(input, dt);
     Actions a = input;
-    if (onBike) a.move = vec2(0), a.jump = a.drop = a.interact = a.draw = a.fire = a.aim = a.switchTarget = a.weapon = a.grapple = false;
+    if (onBike) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = false;
     // Stick is camera-relative.
     const vec2 fwd(std::cos(cam_.yaw), std::sin(cam_.yaw)), right(std::sin(cam_.yaw), -std::cos(cam_.yaw));
     vec2 move = right * a.move.x + fwd * a.move.y;

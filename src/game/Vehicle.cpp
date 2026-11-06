@@ -367,7 +367,7 @@ bool World::tickVehicles(const Actions& a, float dt) {
         if (best >= t.mountReach) return false;
         riding_ = it->first;
         it->second.phase = BikePhase::Mount, it->second.t = 0, it->second.speed = 0, it->second.steer = 0;
-        combat_.drawn = combat_.redraw = false, combat_.drawT = 0; // [I] weapons go away on the bike
+        combat_.drawn = combat_.redraw = false, combat_.drawT = 0; // [I] guns away to mount; drawn again once riding (Combat.cpp)
         ++bikeMounts;
         s.clip.clear(); // the mount clip starts now
     }
@@ -431,6 +431,11 @@ bool World::tickVehicles(const Actions& a, float dt) {
     s.fallStartZ = s.pos.z, s.fallHeight = 0;
     player_.restore(s);
     return true;
+}
+
+bool World::ridingBike() const {
+    const auto it = bikes_.find(riding_);
+    return riding_ && it != bikes_.end() && it->second.phase == BikePhase::Ride;
 }
 
 nlohmann::json World::serializeVehicles() const {

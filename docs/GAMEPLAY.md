@@ -874,7 +874,8 @@ outfit (the original only reads `+0x294` on a level load).
 Lara mounts the bike with E (interact) next to its left side, rides it with the move stick (forward = throttle, back =
 brake then reverse, left/right = steer; raw stick, not camera-relative), hops with Space and gets off with E once it is
 almost stopped. While she is on it, `World::tick` skips `Player::tick`, drives her from the bike and masks move, jump,
-drop, use, weapons and the grapple; the camera pulls back and swings behind the moving bike. No new bindable actions.
+drop, use and the grapple; the weapon keys stay live (see "Weapons on the bike" below); the camera pulls back and swings
+behind the moving bike. No new bindable actions.
 
 Evidence:
 
@@ -900,9 +901,21 @@ Evidence:
   motion: Lara's root is the bike's origin. `motorcycle_mount_cycle` ends with her root at (180.1, -124.9) turned +90°,
   so she starts at bike-model (124.9, 180.1) — the bike's left, behind the seat — facing it; `motorcycle_dismount_cycle`
   ends at (158.3, 52.1) turned +90°. Their root yaw passes ±180° (axis-angle sign flip): Vehicle.cpp unwraps the keys.
-- Weapons on the bike [V-data]: `wp_handgun`/`wp_uzi` carry `combat_pistol_motorcycle_*` (arm, disarm, reload,
-  switch hands, a left-side aim grid straight/front/side/back × level/up/down) and lara.drm `hit_motorcycle_*` hit
-  reactions. Not implemented: weapons are holstered on mount and stay holstered [I].
+- Weapons on the bike [V-data]: `wp_handgun`/`wp_uzi` carry `combat_pistol_motorcycle_*` (arm 19 keys, disarm 25,
+  reload 31, switch_hands 15, an aim grid straight/left_front_diag/left_side/left_back_diag/left_back × level/`_u`/`_d`)
+  and lara.drm `hit_motorcycle_*` hit reactions. No other weapon DRM has bike clips.
+  - Grid [O, measured]: every aim pose points the **right** arm (bones 78 → 80, model space) and keeps the left hand on
+    the handlebar, despite the names: straight −2°, front_diag −47°, side −94°, back_diag −134°, back −189° (her right
+    round to behind); rows `_u` +33°, `_d` −30° (means; `_left_front_diag_d` is a copy of `_u` in the data;
+    `_straight_u` is a 40-key move into its pose, the others hold one pose). How the original aims to her left
+    (`switch_hands`, mirroring?) [U].
+  - ou-game (Combat.cpp): while riding (not mounting / dismounting) the pistols or the uzi can be drawn (F, or fire / lock
+    draw as on foot); with another weapon ready, drawing takes the pistols and X cycles only pistols/uzi [I]. One gun,
+    the right; the left stays holstered. The upper body plays the bike grid (each cell at its last key) over the riding
+    clip, arm / disarm / reload use the bike clips' lengths [O]; refire, damage, spread, ammo, targeting (soft target
+    in front, lock tiers) and the hitscan are the on-foot ones [I]. Aims to her left clamp to straight; behind-left
+    counts as behind. Mount holsters at once; dismount plays disarm and she stays holstered [I]. Steering is untouched
+    (the stick drives the bike; the adrenaline window cannot open: E is the dismount).
 - Skeleton [V-data] 19 bones: front wheel 5 (axle (0, -206.6, 104.1)), rear wheel 8 ((0, 256.8, 98.8)), fork/bars 3-4,
   swingarm 7, frame 17. ou-game spins 5 and 8 about model X and turns 3 about the steering head axis [I].
 - Collision: every l4 unit's faces use mask 3 like Lara's; no bike-only faces or markup were found [U how the original
@@ -933,7 +946,10 @@ phase) and the ridden one; Lara's state `vehicle` + clip are in `player`.
 
 Tests: `VehicleReal.BikeIntrosTuningAndClips`, `VehicleReal.TrailstartRideReplay` (replay `tests/replays/bike_ride.txt`:
 mount, 4429 units/s top speed down the trail, left curve up the steps, hop, brake, dismount; bike parked 8 300 units
-away, no damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide`.
+away, no damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide`, `VehicleReal.ShootsFromTheBike`
+(the replay with the pistols drawn and fire held: three right-gun hits on a dummy ahead on the trail, the right curve
+still steered, holstered after the dismount). ou-game run [O]: the same script with `--target 40634,-53906,1161` logs
+`shot pistols right ... TARGET` at ticks 128 and 148 (Vulkan frame 160 viewed: Lara riding, HUD clip 10+12).
 
 Verification [O] (ou-game, Vulkan, 1280×720, the replay with `--spawn 37981,-51758,1463,-126.7`; screenshots viewed,
 kept privately): frame 40 Lara swings her leg over the bike's left side (mount clip), 200 leaning into the left curve
@@ -941,7 +957,7 @@ towards the steps, 262 in the hop clip over the stones at the top, 420 stepping 
 the slope; wheels and Lara stay on the bike through slope pitch. One OpenGL frame (200) matched.
 
 Not done [U/I]: gears, engine/skid/landing sounds, wheelies, power slides, donuts, crash braces and crashes, the jump
-dismounts, PDA on the bike, shooting from the bike, hit reactions while riding (damage applies without a clip), dismount
+dismounts, PDA on the bike, aiming to her left from the bike, hit reactions while riding (damage applies without a clip), dismount
 clearance checks (`PSCCF_Vehicle_DismountClearance`), the revisit spawner, water.
 
 ## Enemies
