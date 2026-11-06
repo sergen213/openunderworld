@@ -731,18 +731,66 @@ TEST(Progress, ProfileAndTreasureHuntSave) {
     EXPECT_FALSE(save::parse(save::serialize(g)).treasureHunt);
 }
 
-TEST(Menus, TextAndCanvas) {
-    EXPECT_EQ(ui::atlasText("\xE1\xA0\x83 RESUME"), " RESUME");       // U+1803 button glyph dropped
-    EXPECT_EQ(ui::atlasText("RAGNAR\xC3\x96K"), "RAGNAROK");          // Latin-1 accent
-    EXPECT_EQ(ui::atlasText("ONE WEEK EARLIER\xE2\x80\xA6"), "ONE WEEK EARLIER...");
+TEST(Menus, WrapText) {
     const auto lines = ui::wrap("aaa bbb ccc\\ndd", 7);
     ASSERT_EQ(lines.size(), 3u);
     EXPECT_EQ(lines[0], "aaa bbb");
     EXPECT_EQ(lines[2], "dd");
-    ui::Canvas c(640, 480);
-    c.text(0, 0, 8, "AB", ui::kWhite);
-    EXPECT_EQ(c.vertices.size(), 12u);
-    EXPECT_EQ(ui::Canvas::textWidth("AB", 8), 16);
+}
+
+// Button placeholders (tru.exe 0x5A7C20 / 0x8A9EF8) and how the font draws the result (0x476D80, 0x476540).
+TEST(Menus, ButtonPrompts) {
+    EXPECT_EQ(ui::promptControl(0x1800), 1);  // X: grapple
+    EXPECT_EQ(ui::promptControl(0x1803), 3);  // A: jump
+    EXPECT_EQ(ui::promptControl(0x1811), 11); // Back: PDA
+    EXPECT_EQ(ui::promptControl(0x1814), 19); // up
+    EXPECT_EQ(ui::promptControl(0x1829), 24); // vehicle reverse
+    EXPECT_EQ(ui::promptControl(0x182A), 25); // Return
+    EXPECT_EQ(ui::promptControl(0x182C), 27); // BackSpace
+    EXPECT_EQ(ui::promptControl(0x180C), -1); // left stick icon: stays
+    EXPECT_EQ(ui::promptControl(0x182D), -1);
+    EXPECT_EQ(ui::promptControl('A'), -1);
+
+    ui::PromptNames names;
+    names[1] = "Q", names[3] = "\xE1\xA0\x83"; // jump on the pad: the A icon
+    EXPECT_EQ(ui::expandPrompts("Press \xE1\xA0\x80 to fire", names), "Press \x1BQ\x1B to fire");
+    EXPECT_EQ(ui::expandPrompts("\xE1\xA0\x83 RESUME", names), "\x1B\xE1\xA0\x83\x1B RESUME");
+    EXPECT_EQ(ui::expandPrompts("\xE1\xA0\x89!", names), "\x1B<Unknown>\x1B!"); // d-pad down: unbound
+    EXPECT_EQ(ui::expandPrompts("\xE1\xA0\x8D ROTATE \xC3\x96", names), "\xE1\xA0\x8D ROTATE \xC3\x96");
+
+    ui::Art art;
+    art.textures[1] = {0, 0, 1, 1, 64, 64};
+    art.font.texture = art.font.texture2 = 1;
+    art.font.cellHeight = 8;
+    for (const uint32_t cp : {uint32_t('Q'), uint32_t('/'), 0x1803u}) art.font.glyphs[cp] = {4, 0, 0, cp >= 0x1800};
+    ui::Canvas c(640, 480, &art);
+    c.prompts = &names;
+    const float w = c.fontText(0, 0, 1, "\x01Q\xE1\xA0\x80\\\xE1\xA0\x83", 0x80112233u); // ctrl, Q, grapple, '\', jump
+    ASSERT_EQ(c.vertices.size(), 4u * 6u); // Q, Q (key name), '/', A icon
+    EXPECT_EQ(c.vertices[0].color, 0x80112233u);  // plain
+    EXPECT_EQ(c.vertices[6].color, 0x80F7D163u);  // key name: highlight, alpha kept
+    EXPECT_EQ(c.vertices[12].color, 0x80112233u); // '\' as '/'
+    EXPECT_EQ(c.vertices[18].color, 0x80FFFFFFu); // pad icon: white, alpha kept
+    EXPECT_FLOAT_EQ(w, 4 * 3.0f);                 // (spacing 0 + width 4) - 1 per glyph
+    EXPECT_FLOAT_EQ(c.fontWidth("\x01Q\xE1\xA0\x80\\\xE1\xA0\x83", 1, 2), w + 4 * 2);
+}
+
+// promptNames: the default controls as tru.exe names them.
+TEST(ChaptersReal, PromptNames) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto strings = locale::loadStrings(gameDir(), locale::Language::English);
+    ASSERT_TRUE(strings);
+    const game::Controls controls;
+    const auto kb = game::promptNames(controls, false, *strings), pad = game::promptNames(controls, true, *strings);
+    EXPECT_EQ(kb[1], "Q");
+    EXPECT_EQ(kb[3], "Space");
+    EXPECT_EQ(kb[4], "G"); // a key before the mouse button
+    EXPECT_EQ(kb[25], "Return");
+    EXPECT_EQ(kb[13], "");  // field camera: not ours
+    EXPECT_EQ(pad[1], "\xE1\xA0\x80"); // X
+    EXPECT_EQ(pad[5], "\xE1\xA0\x87"); // right trigger
+    EXPECT_EQ(pad[11], "Back Button");
+    EXPECT_EQ(pad[19], "\xE1\xA0\x94"); // forward: no pad button, the placeholder's own icon
 }
 
 // ---- real data ----------------------------------------------------------------------------------------

@@ -22,6 +22,7 @@
 #include "formats/Formats.hpp"
 #include "locale/Locale.hpp"
 #include "render/RenderCommon.hpp"
+#include "ui/Art.hpp"
 #include "ui/Ui.hpp"
 
 namespace ou::app {
@@ -217,7 +218,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         cam.farZ = 200000.0f;
         if (v.mixer) v.mixer->setListener({pose.position, pose.forward, pose.up});
 
-        ui::Canvas canvas(w, hgt);
+        ui::Canvas canvas(w, hgt, v.art);
         drawSubtitles(canvas, ticker);
         overlay.clear();
         if (v.overlay) {
@@ -229,6 +230,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         fo.overlay = overlay;
         fo.debugLines = {};
         fo.ui = canvas.vertices;
+        if (v.art) fo.uiImages[0] = {v.art->rgba, v.art->width, v.art->height, v.art->version};
         const auto clips = unitClips(v.world, v.unitMeshes, lower(h.unitName), cam, hgt > 0 ? float(w) / float(hgt) : 1.0f);
         fo.unitClips = clips;
         v.renderer.drawFrame(cam, {w, hgt}, fo);

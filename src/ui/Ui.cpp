@@ -3,7 +3,6 @@
 #include "ui/Ui.hpp"
 
 #include "locale/Locale.hpp"
-#include "render/RenderCommon.hpp"
 #include "ui/Art.hpp"
 
 #include <algorithm>
@@ -14,26 +13,24 @@
 
 namespace ou::ui {
 
-std::string atlasText(std::string_view s) {
-    // Latin-1 U+00C0..U+00FF without accents ('?' for the few with no ASCII base).
-    static constexpr std::string_view kLatin1 = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
+int promptControl(char32_t cp) {
+    // tru.exe 0x8A9EF8: virtual button per placeholder U+1800 + i, -1 none; 0x9C / 0x81 / 0x8E (keys) -> 25..27.
+    static constexpr int8_t kTable[] = {1,  0,  2,  3,  6,  4,  7,  5,  12, 13, 15, 14, -1, -1, 8,  9,  10, 11, -1, -1, 19, 18, 17, 16,
+                                        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 21, 22, 23, 24, 25, 26, 27};
+    return cp >= 0x1800 && cp < 0x1800 + std::size(kTable) ? kTable[cp - 0x1800] : -1;
+}
+
+std::string expandPrompts(std::string_view s, const PromptNames& names) {
     std::string out;
     for (size_t i = 0; i < s.size();) {
-        const auto c = uint8_t(s[i]);
-        uint32_t cp = c;
-        size_t n = 1;
-        if (c >= 0xF0) n = 4, cp = c & 0x07;
-        else if (c >= 0xE0) n = 3, cp = c & 0x0F;
-        else if (c >= 0xC0) n = 2, cp = c & 0x1F;
-        for (size_t k = 1; k < n && i + k < s.size(); ++k) cp = (cp << 6) | (uint8_t(s[i + k]) & 0x3F);
+        const auto b = uint8_t(s[i]);
+        const size_t n = std::min(s.size() - i, size_t(b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4));
+        const std::u32string cp = decodeUtf8(s.substr(i, n));
+        if (const int k = cp.size() == 1 ? promptControl(cp[0]) : -1; k >= 0)
+            out += '\x1B', out += names[size_t(k)].empty() ? "<Unknown>" : names[size_t(k)], out += '\x1B'; // 0x851C68
+        else
+            out.append(s.substr(i, n));
         i += n;
-        if (cp >= 32 && cp < 127) out += char(cp);
-        else if (cp >= 0xC0 && cp <= 0xFF) out += kLatin1[cp - 0xC0];
-        else if (cp == 0x2026) out += "...";
-        else if (cp == 0x2018 || cp == 0x2019) out += '\'';
-        else if (cp == 0x201C || cp == 0x201D) out += '"';
-        else if ((cp >= 0x1800 && cp <= 0x18FF) || cp < 32) continue; // button glyphs, controls
-        else out += '?';
     }
     return out;
 }
@@ -83,52 +80,45 @@ void Canvas::sprite(uint32_t id, float cx, float cy, float w, float h, uint32_t 
     image(0, sx(cx - w / 2), sy(cy - h / 2), w * unit(), h * unit(), u0, v0, u1, v1, c);
 }
 
-float Canvas::fontWidth(std::string_view utf8, float scale) const {
+float Canvas::fontWidth(std::string_view utf8, float scale, float tracking) const {
     if (!art) return 0;
+    const std::string expanded = prompts ? expandPrompts(utf8, *prompts) : std::string();
     const Font& f = art->font;
     float w = 0;
-    for (const char32_t cp : decodeUtf8(utf8))
-        if (const Glyph* g = f.find(uint32_t(cp))) w += float(f.spacing + g->width) * f.scaleX * scale - 1;
+    for (const char32_t cp : decodeUtf8(prompts ? std::string_view(expanded) : utf8))
+        if (cp != 1 && cp != 2 && cp != 0x1B)
+            if (const Glyph* g = f.find(cp == '\\' ? '/' : uint32_t(cp))) w += float(f.spacing + g->width) * f.scaleX * scale - 1 + tracking;
     return w;
 }
 
-float Canvas::fontText(float x, float y, float scale, std::string_view utf8, uint32_t c) {
+float Canvas::fontText(float x, float y, float scale, std::string_view utf8, uint32_t c, float tracking) {
     if (!art) return 0;
+    // Key names: tru.exe 0x476D80 sets 0x7D6932 (alpha kept), (50, 105, 125) doubled on screen [O captures (99, 209, 247)].
+    constexpr uint32_t kHighlight = 0x00F7D163u;
+    const std::string expanded = prompts ? expandPrompts(utf8, *prompts) : std::string();
     const Font& f = art->font;
     const AtlasRect* pages[2] = {art->find(f.texture), art->find(f.texture2)};
     const float x0 = x, h = float(f.cellHeight) * f.scaleY * scale;
-    for (const char32_t cp : decodeUtf8(utf8)) {
+    bool highlight = false;
+    for (char32_t cp : decodeUtf8(prompts ? std::string_view(expanded) : utf8)) {
+        if (cp == 0x1B) highlight = !highlight;
+        if (cp == 1 || cp == 2 || cp == 0x1B) continue;
+        if (cp == '\\') cp = '/';
         const Glyph* g = f.find(uint32_t(cp));
         if (!g) continue;
+        const bool icon = cp >= 0x1800 && cp < 0x18B0 && cp != 0x1820 && cp != 0x1821;
+        const uint32_t col = icon ? c | 0x00FFFFFFu : highlight ? (c & 0xFF000000u) | kHighlight : c;
         if (const AtlasRect* p = pages[g->second ? 1 : 0]) {
             const float du = (p->u1 - p->u0) / float(p->width), dv = (p->v1 - p->v0) / float(p->height);
             const float u0 = p->u0 + float(g->x) * du, v0 = p->v0 + float(g->y) * dv;
             const float w = float(g->width) * f.scaleX * scale;
             // Half-texel inset: bilinear taps at large scales would pick up the neighbouring glyphs' edges.
             image(0, sx(x), sy(y), w * unit(), h * unit(), u0 + du / 2, v0 + dv / 2, u0 + (float(g->width) - 0.5f) * du,
-                  v0 + (float(f.cellHeight) - 0.5f) * dv, c);
+                  v0 + (float(f.cellHeight) - 0.5f) * dv, col);
         }
-        x += float(f.spacing + g->width) * f.scaleX * scale - 1;
+        x += float(f.spacing + g->width) * f.scaleX * scale - 1 + tracking;
     }
     return x - x0;
-}
-
-void Canvas::text(float x, float y, float g, std::string_view utf8, uint32_t c) {
-    using namespace render;
-    for (const char ch : atlasText(utf8)) {
-        const int i = ch - 32;
-        const float u0 = float(i % kAtlasCols * kGlyph) / kAtlasW, v0 = float(i / kAtlasCols * kGlyph) / kAtlasH;
-        const float u1 = u0 + float(kGlyph) / kAtlasW, v1 = v0 + float(kGlyph) / kAtlasH;
-        vertices.insert(vertices.end(), {{x, y, u0, v0, c}, {x + g, y, u1, v0, c}, {x + g, y + g, u1, v1, c},
-                                         {x, y, u0, v0, c}, {x + g, y + g, u1, v1, c}, {x, y + g, u0, v1, c}});
-        x += g;
-    }
-}
-
-float Canvas::textWidth(std::string_view utf8, float g) { return float(atlasText(utf8).size()) * g; }
-
-void Canvas::textCentered(float cx, float y, float g, std::string_view utf8, uint32_t c) {
-    text(std::round(cx - textWidth(utf8, g) / 2), y, g, utf8, c);
 }
 
 // ---- menus ------------------------------------------------------------------------------------------
@@ -206,7 +196,7 @@ constexpr float kLoadBand0 = 88.9f, kLoadBand1 = 390.2f, kLoadTitleCap = 220.4f,
 constexpr float kLoadTextCap = 256.9f, kLoadTextScale = 0.66f, kLoadTextStep = 13.15f, kLoadTextW = 540;
 
 constexpr uint32_t rgba(uint32_t r, uint32_t g, uint32_t b, uint32_t a = 255) { return r | g << 8 | b << 16 | a << 24; }
-constexpr uint32_t kIconBlue = rgba(50, 115, 185), kLabel = rgba(203, 203, 203), kKeyBlue = rgba(99, 209, 247),
+constexpr uint32_t kIconBlue = rgba(50, 115, 185), kLabel = rgba(203, 203, 203),
                    kLineBlue = rgba(43, 105, 140), kButtonBlue = rgba(25, 73, 103), kBlack = rgba(0, 0, 0),
                    kSlotIcon = rgba(114, 124, 165), kTitleBlue = rgba(110, 165, 200), kRowGrey = rgba(129, 130, 131),
                    kSelBar = rgba(23, 69, 97), kSliderFrame = rgba(5, 50, 80), kSliderFill = rgba(185, 230, 255),
@@ -273,69 +263,20 @@ void ring(Canvas& c, float cx, float cy, float r, float width, uint32_t color) {
 // Text placed by its cap top (the measured ink top of capitals).
 // `tracking`: extra advance per glyph (the PDA prompts are letter-spaced [O captures]).
 float capText(Canvas& c, float x, float capTop, float scale, std::string_view t, uint32_t color, float tracking = 0) {
-    if (tracking == 0) return c.fontText(x, capTop - kCapTop * scale, scale, t, color);
-    const float x0 = x;
-    for (size_t p = 0; p < t.size();) {
-        const uint8_t b = uint8_t(t[p]);
-        const size_t n = std::min(t.size() - p, size_t(b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4));
-        x += c.fontText(x, capTop - kCapTop * scale, scale, t.substr(p, n), color) + tracking;
-        p += n;
-    }
-    return x - x0;
+    return c.fontText(x, capTop - kCapTop * scale, scale, t, color, tracking);
 }
-float trackedWidth(const Canvas& c, std::string_view t, float scale, float tracking) {
-    return c.fontWidth(t, scale) + tracking * float(decodeUtf8(t).size());
-}
+float trackedWidth(const Canvas& c, std::string_view t, float scale, float tracking) { return c.fontWidth(t, scale, tracking); }
 
-// locals.bin prompts carry control placeholders (U+1800..U+18FF) that the game replaces with the bound control's
-// name, drawn in blue: the keyboard defaults as tru.exe shows them [O captures].
-std::string_view placeholderKey(char32_t cp, std::string_view select) {
-    switch (cp) {
-    case 0x182A: return select;      // SELECT
-    case 0x182B: return "Escape";    // BACK
-    case 0x182C: return "BackSpace"; // DELETE
-    case 0x1803: return "space";     // jump (PDA "PRESS ... TO")
-    case 0x1801: return "E";         // interact
-    case 0x1805: return "G";         // sonar map DOWN
-    case 0x1807: return "H";         // sonar map UP
-    default: return {};
-    }
-}
-struct Run { std::string text; bool key; };
-std::vector<Run> keyRuns(std::string_view utf8, std::string_view select) {
-    std::vector<Run> runs;
-    size_t p = 0;
-    while (p < utf8.size()) {
-        const uint8_t b = uint8_t(utf8[p]);
-        const size_t n = b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4;
-        const auto cps = decodeUtf8(utf8.substr(p, n));
-        const char32_t cp = cps.empty() ? 0 : cps[0];
-        if (cp >= 0x1800 && cp < 0x1900) {
-            if (const auto k = placeholderKey(cp, select); !k.empty()) runs.push_back({std::string(k), true});
-        } else {
-            if (runs.empty() || runs.back().key) runs.push_back({{}, false});
-            runs.back().text.append(utf8.substr(p, n));
-        }
-        p += n;
-    }
-    return runs;
-}
-float keyedWidth(const Canvas& c, std::string_view t, float scale, std::string_view select, float tracking = 0) {
-    float w = 0;
-    for (const auto& r : keyRuns(t, select)) w += trackedWidth(c, r.text, scale, tracking);
-    return w;
-}
-// Prompt text centred on `cx` (cap top `capTop`): placeholders as key names in blue, the rest in `color`.
-void keyed(Canvas& c, float cx, float capTop, float scale, std::string_view t, std::string_view select, float tracking = 0) {
-    float x = cx - keyedWidth(c, t, scale, select, tracking) / 2;
-    for (const auto& r : keyRuns(t, select)) x += capText(c, x, capTop, scale, r.text, r.key ? kKeyBlue : kWhite, tracking);
+// Prompt text centred on `cx` (cap top `capTop`); its button placeholders name the bound controls (Canvas::prompts).
+void keyed(Canvas& c, float cx, float capTop, float scale, std::string_view t, float tracking = 0) {
+    capText(c, cx - c.fontWidth(t, scale, tracking) / 2, capTop, scale, t, kWhite, tracking);
 }
 
 // Footer lines and prompts (centres in virtual x).
-void footer(Canvas& c, const locale::Strings& s, std::string_view key, std::initializer_list<std::pair<float, int16_t>> prompts) {
+void footer(Canvas& c, const locale::Strings& s, std::initializer_list<std::pair<float, int16_t>> prompts) {
     c.sprite(kLine, 320, kFooterLine0, 1024 * kTexel, 1.8f, kLineBlue);
     c.sprite(kLine, 320, kFooterLine1, 1024 * kTexel, 1.8f, kLineBlue);
-    for (const auto& [cx, id] : prompts) keyed(c, cx, kFooterY + kCapTop * kTextScale, kTextScale, s.get(id), key);
+    for (const auto& [cx, id] : prompts) keyed(c, cx, kFooterY + kCapTop * kTextScale, kTextScale, s.get(id));
 }
 
 // Breaks `text` (locals.bin "\n" escapes too) into lines no wider than `width` virtual pixels.
@@ -1155,8 +1096,8 @@ void Menus::drawTailoring(Canvas& c, const locale::Strings& s) {
     }
     c.sprite(kLine, 320, kTailorFootLine, 190, 1.8f, kLineBlue);
     const float cap = kTailorFootY - kCapHeight * kTailorFoot / 2;
-    keyed(c, kTailorFootL, cap, kTailorFoot, s.get(120), "Return");
-    keyed(c, kTailorFootR, cap, kTailorFoot, s.get(375), "Return");
+    keyed(c, kTailorFootL, cap, kTailorFoot, s.get(120));
+    keyed(c, kTailorFootR, cap, kTailorFoot, s.get(375));
 }
 
 void Menus::drawPda(Canvas& c, const locale::Strings& s) {
@@ -1191,7 +1132,7 @@ void Menus::drawPda(Canvas& c, const locale::Strings& s) {
     auto prompt = [&](int16_t id, float mid) {
         const auto lines = fontWrap(c, s.get(id), pdaX(kPdaPromptW) - pdaX(0), kPdaSmall, kPdaTracking);
         float cap = mid - (float(lines.size()) * kPdaPromptStep - (kPdaPromptStep - 12)) / 2;
-        for (const auto& l : lines) keyed(c, pdaX((kPdaPicX + kPdaPicRight) / 2), pdaY(cap), kPdaSmall, l, "Return", kPdaTracking), cap += kPdaPromptStep;
+        for (const auto& l : lines) keyed(c, pdaX((kPdaPicX + kPdaPicRight) / 2), pdaY(cap), kPdaSmall, l, kPdaTracking), cap += kPdaPromptStep;
     };
     auto picture = [&](uint32_t tex, int16_t tab) {
         c.sprite(tex, pdaX(kPdaPicX + 256), pdaY(kPdaPicY + 128), pdaX(512) - pdaX(0), pdaY(256), kWhite);
@@ -1265,8 +1206,7 @@ void Menus::drawPda(Canvas& c, const locale::Strings& s) {
     {
         const float cap = pdaY(kPdaFootCap);
         auto left = [&](float x, int16_t id) { // left-aligned prompt
-            float px = pdaX(x);
-            for (const auto& r : keyRuns(s.get(id), "Return")) px += capText(c, px, cap, kPdaSmall, r.text, r.key ? kKeyBlue : kWhite, kPdaTracking);
+            capText(c, pdaX(x), cap, kPdaSmall, s.get(id), kWhite, kPdaTracking);
         };
         left(kPdaFootBack, 375);
         const int16_t select = !sub ? (cursor_ != kAreaInfo ? 120 : 0) : scr == Screen::PdaWeapons ? 1104 : scr == Screen::PdaInventory ? 120 : 0;
@@ -1329,8 +1269,8 @@ void Menus::drawSonar(Canvas& c, const locale::Strings& s) {
         tri(t0, t1, t2, grey), tri(t0, t2, t3, grey);
     }
     const float top = 88 / 2.25f, bottom = 974 / 2.25f, scale = 0.57f;
-    keyed(c, 320 - 240 / 2.25f, top, scale, s.get(1141), "Return"), keyed(c, 320 + 237 / 2.25f, top, scale, s.get(1142), "Return");
-    keyed(c, 320 - 462 / 2.25f, bottom, scale, s.get(1140), "Return"), keyed(c, 320 + 450 / 2.25f, bottom, scale, s.get(375), "Return");
+    keyed(c, 320 - 240 / 2.25f, top, scale, s.get(1141)), keyed(c, 320 + 237 / 2.25f, top, scale, s.get(1142));
+    keyed(c, 320 - 462 / 2.25f, bottom, scale, s.get(1140)), keyed(c, 320 + 450 / 2.25f, bottom, scale, s.get(375));
 }
 
 const std::vector<Reward>* Menus::rewardList() const {
@@ -1399,8 +1339,7 @@ void Menus::drawPdaList(Canvas& c, const locale::Strings& s) {
     }
     const float cap = pdaY(kPdaFootCap);
     auto left = [&](float x, int16_t id) {
-        float px = pdaX(x);
-        for (const auto& r : keyRuns(s.get(id), "Return")) px += capText(c, px, cap, kPdaSmall, r.text, r.key ? kKeyBlue : kWhite, kPdaTracking);
+        capText(c, pdaX(x), cap, kPdaSmall, s.get(id), kWhite, kPdaTracking);
     };
     left(kPdaFootBack, 375);
     if (scr == Screen::Revisit) left(kPdaFootSelect, 120);
@@ -1434,7 +1373,7 @@ void Menus::drawConfirm(Canvas& c, const locale::Strings& s) {
     capText(c, (quit ? 319 : 320) - c.fontWidth(slash, kConfirmScale) / 2, labelCap, kConfirmScale, slash, kWhite);
 }
 
-void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
+void Menus::draw(Canvas& c, const locale::Strings& s) {
     const Screen scr = screen();
     if (scr == Screen::None) return;
     if (scr == Screen::Pda || scr == Screen::PdaWeapons || scr == Screen::PdaInventory || scr == Screen::PdaItems) return drawPda(c, s);
@@ -1443,8 +1382,8 @@ void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
     if (scr == Screen::ExtrasView) return drawExtrasView(c);
     if (!mainMenu()) c.rect(0, 0, float(c.width), float(c.height), 0x70000000u); // the paused game, dimmed
     if (scr == Screen::Tailoring) return drawTailoring(c, s); // these two over the backdrop alone [O captures]
-    if (scr == Screen::Message) return drawMessage(c, s), footer(c, s, key, {{320, 120}});
-    if (scr == Screen::Confirm) return drawConfirm(c, s), footer(c, s, key, {{320, 120}});
+    if (scr == Screen::Message) return drawMessage(c, s), footer(c, s, {{320, 120}});
+    if (scr == Screen::Confirm) return drawConfirm(c, s), footer(c, s, {{320, 120}});
     // Backdrop of the ring and list screens: the glyph art and the ring's shadow.
     c.sprite(kFrontArt, kArtX, kArtY, kArtSize, kArtSize, withAlpha(kWhite, kArtAlpha));
     const bool extrasList = scr == Screen::ExtrasCategory; // its ring shade surrounds the preview
@@ -1454,26 +1393,26 @@ void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
                  q & 1, q & 2);
     if (radial(scr)) {
         drawRadial(c, s, scr, cursor_, false);
-        footer(c, s, key, {{320, 120}});
+        footer(c, s, {{320, 120}});
     } else if (slots(scr)) {
         drawRadial(c, s, stack_[stack_.size() - 2], cursors_.back(), true);
         drawSlots(c, s);
-        footer(c, s, key, {});
+        footer(c, s, {});
         const std::string both(s.get(121)); // "<select> SELECT      <delete> DELETE"
         const size_t gap = both.find("  "), right = both.find_first_not_of(' ', gap);
         const float cap = kFooterY + kCapTop * kTextScale;
-        keyed(c, kSlotFooterL, cap, kTextScale, std::string_view(both).substr(0, gap), key);
-        if (right != std::string::npos) keyed(c, kSlotFooterR, cap, kTextScale, std::string_view(both).substr(right), key);
+        keyed(c, kSlotFooterL, cap, kTextScale, std::string_view(both).substr(0, gap));
+        if (right != std::string::npos) keyed(c, kSlotFooterR, cap, kTextScale, std::string_view(both).substr(right));
     } else if (scr == Screen::Extras) {
         drawRadial(c, s, stack_[stack_.size() - 2], cursors_.back(), true, cursor_ < 0); // a category selected: the centre too
         drawExtras(c, s);
-        footer(c, s, key, {{320, 120}});
+        footer(c, s, {{320, 120}});
     } else if (scr == Screen::ExtrasCategory) {
         drawExtrasCategory(c, s);
-        footer(c, s, key, {{kExtrasFootL, int16_t(extras_ == kExtrasOutfits ? 120 : extras_ == 4 ? 468 : 472)}, {kExtrasFootR, 375}});
+        footer(c, s, {{kExtrasFootL, int16_t(extras_ == kExtrasOutfits ? 120 : extras_ == 4 ? 468 : 472)}, {kExtrasFootR, 375}});
     } else {
         drawList(c, s);
-        footer(c, s, key, {{kListFooterL, 120}, {kListFooterR, 375}});
+        footer(c, s, {{kListFooterL, 120}, {kListFooterR, 375}});
     }
 }
 

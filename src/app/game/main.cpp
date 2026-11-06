@@ -1779,6 +1779,10 @@ int main(int argc, char** argv) {
         try {
             ou::video::PlayOptions po;
             po.maxFrames = opt.introFrames;
+            po.art = art ? &*art : nullptr;
+            const std::string stem = std::filesystem::path(file).stem().string();
+            if (const auto sch = bigfile->read(ou::locale::movieSchemaPath(stem))) // subtitled movies (prevontr)
+                po.subtitles = ou::locale::parseMovieSchema({reinterpret_cast<const char*>(sch->data()), sch->size()}, ou::locale::Language::English);
             const auto st = ou::video::playMovie(movieWindow.get(), opt.gameDir / "Movies" / file, po);
             std::fprintf(stderr, "ou-game: movie %s %d frames%s\n", file, st.frames, st.skipped ? " (skipped)" : "");
         } catch (const std::exception& e) {
@@ -2116,11 +2120,19 @@ int main(int argc, char** argv) {
         else screenImage = {}, std::fprintf(stderr, "ou-game: pc-w\\image\\%s.raw missing\n", screenName.c_str());
         ++screenVersion;
     };
+    // Button prompts in locals.bin text name the controls of the device used last (tru.exe: the XInput pad's icons, else
+    // the keyboard's key names).
+    bool padActive = false;
+    ou::ui::PromptNames prompts = ou::game::promptNames(opt.controls, padActive, *strings);
+    auto useDevice = [&](bool pad) {
+        if (pad != padActive) padActive = pad, prompts = ou::game::promptNames(opt.controls, padActive, *strings);
+    };
     auto showLoading = [&](int chapter) {
         useScreenImage(ou::ui::loadingImage(chapter));
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window.get(), &w, &h);
         ou::ui::Canvas cv(w, h, &*art);
+        cv.prompts = &prompts;
         cv.rect(0, 0, float(w), float(h), 0xFF000000u);
         ou::ui::drawLoading(cv, *strings, chapter);
         ou::render::FrameOptions fo{};
@@ -2341,6 +2353,7 @@ int main(int argc, char** argv) {
         v.frame.rtAo = opt.gfx.rtAo, v.frame.rtGi = opt.gfx.rtGi;
         v.frame.originalShaders = opt.gfx.originalShaders, v.frame.brightness = opt.gfx.brightness;
         v.overlay = !opt.noOverlay;
+        v.art = art ? &*art : nullptr;
         v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
         return v;
     };
@@ -2395,6 +2408,7 @@ int main(int argc, char** argv) {
             switch (e.type) {
             case SDL_EVENT_QUIT: running = false; break;
             case SDL_EVENT_KEY_DOWN:
+                useDevice(false);
                 if (e.key.key == SDLK_F1 && !e.key.repeat) overlay = !overlay;
                 else if (e.key.key == SDLK_F7 && !e.key.repeat) opt.waterDebug = (opt.waterDebug + 1) % ou::render::kWaterDebugViews;
                 else if (menus.screen() != ou::ui::Screen::None) {
@@ -2402,6 +2416,7 @@ int main(int argc, char** argv) {
                 } else if (e.key.key == SDLK_ESCAPE && !e.key.repeat) openPause();
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                useDevice(true);
                 if (menus.screen() != ou::ui::Screen::None) {
                     if (const auto n = padNav(e.gbutton.button)) nav(*n);
                 } else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) openPause();
@@ -2413,7 +2428,11 @@ int main(int argc, char** argv) {
                 if (!pad) pad.reset(SDL_OpenGamepad(e.gdevice.which));
                 break;
             case SDL_EVENT_GAMEPAD_REMOVED:
-                if (pad && SDL_GetGamepadID(pad.get()) == e.gdevice.which) pad.reset();
+                if (pad && SDL_GetGamepadID(pad.get()) == e.gdevice.which) pad.reset(), useDevice(false);
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN: useDevice(false); break;
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                if (std::abs(e.gaxis.value) > 16000) useDevice(true);
                 break;
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: // not a window left by a renderer swap
                 if (e.window.windowID == SDL_GetWindowID(window.get())) renderer->resize({e.window.data1, e.window.data2});
@@ -2747,6 +2766,7 @@ int main(int argc, char** argv) {
         }
         menus.tick(dt);
         ou::ui::Canvas canvas(w, h, &*art);
+        canvas.prompts = &prompts;
         // Main menu backdrop (tru.exe): black, the menu movie fitted to the window width and centred, dimmed [V
         // captures: ~0.66 of the decoded frame].
         ou::render::RgbaImage movieImage;

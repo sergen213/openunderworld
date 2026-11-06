@@ -8,6 +8,7 @@
 #include "locale/Locale.hpp"
 
 struct SDL_Window;
+namespace ou::ui { struct Art; }
 
 namespace ou::video {
 
@@ -16,7 +17,7 @@ struct PlayOptions {
     int maxFrames = -1;               // stop after this many presented frames (-1 = whole movie)
     std::filesystem::path screenshot; // binary PPM of the last presented frame (with subtitles)
     std::vector<locale::Cue> subtitles;
-    std::filesystem::path font;       // TTF for subtitles; empty = first found system font
+    const ui::Art* art = nullptr;     // the game font for subtitles (ui::loadArt); null: SDL's ASCII debug font
     bool skippable = true;            // any key / mouse button / gamepad button ends playback
 };
 

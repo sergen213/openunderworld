@@ -51,7 +51,7 @@ On Arch Linux:
 
 ```sh
 sudo pacman -S --needed base-devel cmake ninja sdl3 glm libepoxy zlib openssl nlohmann-json gtest \
-  libsodium curl qt6-base vulkan-headers vulkan-icd-loader shaderc ffmpeg sdl3_ttf
+  libsodium curl qt6-base vulkan-headers vulkan-icd-loader shaderc ffmpeg
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure      # tests that need the game read OU_GAME_DIR and skip without it

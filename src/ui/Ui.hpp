@@ -27,9 +27,15 @@ using render::TextVertex;
 // Colours, 0xAABBGGRR as TextVertex::color.
 inline constexpr uint32_t kWhite = 0xFFFFFFFFu, kGold = 0xFF40C0FFu, kGrey = 0xFFA0A0A0u, kShade = 0xB0000000u;
 
-// Atlas text: UTF-8 -> ASCII 32..126. Controller-button placeholders U+1800..U+18FF (TEXT.md §1) and
-// control characters are dropped, Latin-1 letters lose their accent, anything else becomes '?'.
-std::string atlasText(std::string_view utf8);
+// Button prompts (tru.exe 0x5A7C20, run on UI text that asks for it): a placeholder U+1800 + i (TEXT.md) names the
+// control bound to tru.exe virtual button 0x8A9EF8[i] (0..24, GAMEPLAY.md "Controls"; U+182A..U+182C hold the keys
+// Return / Escape / BackSpace, codes 0x9C / 0x81 / 0x8E) and becomes "\x1B" name "\x1B"; placeholders without a
+// virtual button stay (the font draws them as pad icons). promptControl: the PromptNames index (virtual button, 25..27
+// for those three keys) or -1.
+inline constexpr int kPromptControls = 28;
+using PromptNames = std::array<std::string, kPromptControls>; // UTF-8; empty = unbound ("<Unknown>", as tru.exe)
+int promptControl(char32_t cp);
+std::string expandPrompts(std::string_view utf8, const PromptNames& names);
 // Greedy word wrap of `text` to lines of at most `cols` characters; "\n" sequences (as locals.bin
 // escapes them) and '\n' break lines.
 std::vector<std::string> wrap(std::string_view text, size_t cols);
@@ -39,6 +45,7 @@ public:
     Canvas(int width, int height, const Art* art = nullptr) : width(width), height(height), art(art) {}
     const int width, height;
     const Art* const art; // original art; required by the radial menus and fontText
+    const PromptNames* prompts = nullptr; // set: fontText / fontWidth expand button placeholders (expandPrompts)
 
     // The original UI space is 640x480 at uniform height scale, centred horizontally (hor+; tru.exe at 16:9
     // keeps the 4:3 layout in the middle): one virtual pixel in screen pixels, and virtual -> screen.
@@ -47,19 +54,17 @@ public:
     float sy(float y) const { return y * unit(); }
 
     void rect(float x, float y, float w, float h, uint32_t color); // screen pixels
-    // `size`: 8x8 atlas glyph cell in pixels; text is atlasText()-converted.
-    void text(float x, float y, float size, std::string_view utf8, uint32_t color);
-    void textCentered(float cx, float y, float size, std::string_view utf8, uint32_t color);
-    static float textWidth(std::string_view utf8, float size);
 
     // Screen-pixel quad sampling FrameOptions::uiImages[image] at uv [u0, u1] x [v0, v1].
     void image(int image, float x, float y, float w, float h, float u0, float v0, float u1, float v1, uint32_t color);
     // Art texture `id` centred at virtual (cx, cy), `w` x `h` virtual pixels; flipX/flipY mirror it.
     void sprite(uint32_t id, float cx, float cy, float w, float h, uint32_t color, bool flipX = false, bool flipY = false);
-    // Original font at virtual (x, y) = top-left of the glyph cells; `scale` multiplies the font's own scale.
-    // Returns the advance (tru.exe Font_GetTextWidth): sum of (spacing + width) * scale - 1 per glyph.
-    float fontText(float x, float y, float scale, std::string_view utf8, uint32_t color);
-    float fontWidth(std::string_view utf8, float scale) const;
+    // Original font at virtual (x, y) = top-left of the glyph cells; `scale` multiplies the font's own scale; `tracking`
+    // adds virtual pixels per glyph. As tru.exe's text draw (0x476D80): "\x1B" toggles the highlight colour (bound key
+    // names), 0x01 / 0x02 draw nothing, '\\' draws '/', pad icons (U+1800..U+18AF but U+1820/1821) keep only `color`'s
+    // alpha (0x476540). Returns the advance (Font_GetTextWidth 0x4758C0): sum of (spacing + width) * scale - 1 per glyph.
+    float fontText(float x, float y, float scale, std::string_view utf8, uint32_t color, float tracking = 0);
+    float fontWidth(std::string_view utf8, float scale, float tracking = 0) const;
 
     std::vector<TextVertex> vertices;
 };
@@ -275,8 +280,8 @@ public:
     std::string outfit;
     Unlocks unlocks;
 
-    // `keyName`: the key shown in the footer prompt (tru.exe shows the bound key's name, "Return").
-    void draw(Canvas& c, const locale::Strings& s, std::string_view keyName = "Return");
+    // Footer prompts name the bound controls through Canvas::prompts (unset: the placeholders draw as pad icons).
+    void draw(Canvas& c, const locale::Strings& s);
 
 private:
     // `opened`: under the Load/Save / EXTRAS ring, the centre still selected and labelled unless `centre` is false.

@@ -7,13 +7,12 @@
   `openssl nlohmann-json` (importer), `libsodium curl` (updater, `ou-sign`), `ffmpeg`
   (libavformat/libavcodec/libswscale/libswresample: `ou-movie`, `ou_video`).
 - Optional: `qt6-base` 6.5 or newer (`ou-launcher`; skipped with a CMake notice if Qt 6 is missing),
-  `sdl3_ttf` (movie subtitles in a system font, else SDL's ASCII debug font; `docs/formats/VIDEO.md`),
   `python` and DXC for AMD FSR (below).
 - One line, as used by CI (`.github/workflows/ci.yml`):
 
   ```sh
   sudo pacman -S --needed base-devel cmake ninja sdl3 glm libepoxy zlib openssl nlohmann-json gtest \
-    libsodium curl qt6-base vulkan-headers vulkan-icd-loader shaderc ffmpeg sdl3_ttf
+    libsodium curl qt6-base vulkan-headers vulkan-icd-loader shaderc ffmpeg
   ```
 
 Launcher and updater: `docs/LAUNCHER.md`, `docs/UPDATES.md`.

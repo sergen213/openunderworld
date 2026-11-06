@@ -57,8 +57,9 @@ Unnamed functions `0x4A0C70` (open) / `0x4A12B0` (loop) / `0x4A0F70` (per frame)
   continues on `SDL_GetTicksNS`. Up to 16 frames are decoded ahead while the audio queue holds < 0.25 s.
 - **Skip**: any key, mouse button or gamepad button, or closing the window.
 - **Subtitles**: the exe's two-line ticker (see TEXT.md §4) at the exe's place (y 352 and 374 of 480,
-  centred), SDL3_ttf with a system sans font (Noto Sans → DejaVu Sans → Liberation Sans, or `--font`);
-  without SDL3_ttf, SDL's 8×8 debug font (ASCII only). The original game font is not used.
+  centred), in the game font (generalbank.drm, `ui::Art`) at the scale and drop shadow ou-game's cutscene
+  ticker uses (`ui::Hud::subtitles`, font scale 0.6 [I]); without the game's bigfiles, SDL's 8×8 debug font (ASCII
+  only). ou-game plays its movies with the `.sch` cues of the chosen language, as ou-movie does.
 
 `ou-movie <file.bik> [--frames N --screenshot out.ppm] [--lang xx] [--track ID] [--no-audio] [--no-subs] [--stats]`
 

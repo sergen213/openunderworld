@@ -1,16 +1,18 @@
 #include "video/Player.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <deque>
 #include <fstream>
+#include <memory>
 #include <stdexcept>
+#include <string_view>
 
 #include <SDL3/SDL.h>
-#ifdef OU_HAVE_TTF
-#include <SDL3_ttf/SDL_ttf.h>
-#endif
 
+#include "ui/Art.hpp"
+#include "ui/Ui.hpp"
 #include "video/Movie.hpp"
 
 namespace ou::video {
@@ -66,75 +68,56 @@ void writePpm(SDL_Renderer* r, const std::filesystem::path& path) {
     if (!f) throw std::runtime_error("screenshot: cannot write " + path.string());
 }
 
-// Subtitle lines at tru.exe's place: a 640x480 virtual screen, y 352 and 374 (0x583E20), centred.
+struct RendererDeleter { void operator()(SDL_Renderer* r) const { SDL_DestroyRenderer(r); } };
+struct TextureDeleter { void operator()(SDL_Texture* t) const { SDL_DestroyTexture(t); } };
+
+// The ticker's two lines at tru.exe's place (a 640x480 virtual screen, y 352 and 374, 0x583E20) in the game font, as
+// ou-game draws them (ui::Hud::subtitles); SDL's ASCII debug font without the font (ui::Art).
 class SubtitleDrawer {
 public:
-    SubtitleDrawer(SDL_Renderer* r, int height, const std::filesystem::path& fontPath) : r_(r), h_(height) {
-#ifdef OU_HAVE_TTF
-        static const std::array<const char*, 3> kFonts = {"/usr/share/fonts/noto/NotoSans-Regular.ttf",
-                                                          "/usr/share/fonts/TTF/DejaVuSans.ttf",
-                                                          "/usr/share/fonts/liberation/LiberationSans-Regular.ttf"};
-        if (!TTF_Init()) return;
-        for (const char* p : kFonts) {
-            const std::string path = fontPath.empty() ? p : fontPath.string();
-            if ((font_ = TTF_OpenFont(path.c_str(), float(height) * 0.04f))) break;
-            if (!fontPath.empty()) break;
-        }
-        if (font_) engine_ = TTF_CreateRendererTextEngine(r);
-#else
-        (void)fontPath;
-#endif
+    SubtitleDrawer(SDL_Renderer* r, int width, int height, const ui::Art* art) : r_(r), w_(width), h_(height), art_(art) {
+        if (!art) return;
+        atlas_.reset(SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, art->width, art->height));
+        if (!atlas_) return;
+        SDL_UpdateTexture(atlas_.get(), nullptr, art->rgba.data(), art->width * 4);
+        SDL_SetTextureBlendMode(atlas_.get(), SDL_BLENDMODE_BLEND);
     }
-    ~SubtitleDrawer() {
-#ifdef OU_HAVE_TTF
-        if (engine_) TTF_DestroyRendererTextEngine(engine_);
-        if (font_) TTF_CloseFont(font_);
-        TTF_Quit();
-#endif
-    }
-    SubtitleDrawer(const SubtitleDrawer&) = delete;
-    SubtitleDrawer& operator=(const SubtitleDrawer&) = delete;
 
-    // Logical (movie) coordinates; centred at `width`/2.
-    void draw(const std::string& line, int slot, int width) {
-        if (line.empty()) return;
-        const float y = (352.0f + 22.0f * slot) / 480.0f * h_;
-#ifdef OU_HAVE_TTF
-        if (engine_) {
-            TTF_Text* t = TTF_CreateText(engine_, font_, line.c_str(), 0);
-            int tw = 0, th = 0;
-            TTF_GetTextSize(t, &tw, &th);
-            const float x = (width - tw) / 2.0f;
-            TTF_SetTextColor(t, 0, 0, 0, 255);
-            TTF_DrawRendererText(t, x + 2, y + 2);
-            TTF_SetTextColor(t, 255, 255, 255, 255);
-            TTF_DrawRendererText(t, x, y);
-            TTF_DestroyText(t);
+    // Logical (movie) coordinates.
+    void draw(std::string_view top, std::string_view bottom) {
+        if (atlas_) {
+            ui::Canvas c(w_, h_, art_);
+            ui::Hud::subtitles(c, top, bottom);
+            std::vector<SDL_Vertex> v;
+            v.reserve(c.vertices.size());
+            for (const auto& t : c.vertices) // TextVertex: uiImages[0] at u - 2
+                v.push_back({{t.x, t.y},
+                             {float(t.color & 0xFF) / 255, float(t.color >> 8 & 0xFF) / 255, float(t.color >> 16 & 0xFF) / 255,
+                              float(t.color >> 24) / 255},
+                             {t.u - 2, t.v}});
+            SDL_RenderGeometry(r_, atlas_.get(), v.data(), int(v.size()), nullptr, 0);
             return;
         }
-#endif
-        // ponytail: SDL debug font (ASCII only, other bytes show as '?') when SDL3_ttf or a font is missing.
-        const float s = std::max(1.0f, h_ / 240.0f);
+        const float s = std::max(1.0f, float(h_) / 240.0f);
         SDL_SetRenderScale(r_, s, s);
-        const float x = (width / s - 8.0f * float(line.size())) / 2.0f;
-        SDL_SetRenderDrawColor(r_, 0, 0, 0, 255);
-        SDL_RenderDebugText(r_, x + 1 / s, y / s + 1 / s, line.c_str());
-        SDL_SetRenderDrawColor(r_, 255, 255, 255, 255);
-        SDL_RenderDebugText(r_, x, y / s, line.c_str());
+        const std::string_view lines[2] = {top, bottom};
+        for (int k = 0; k < 2; ++k) {
+            const std::string line(lines[k]);
+            const float y = (352.0f + 22.0f * float(k)) / 480.0f * float(h_) / s, x = (float(w_) / s - 8.0f * float(line.size())) / 2;
+            SDL_SetRenderDrawColor(r_, 0, 0, 0, 255);
+            SDL_RenderDebugText(r_, x + 1 / s, y + 1 / s, line.c_str());
+            SDL_SetRenderDrawColor(r_, 255, 255, 255, 255);
+            SDL_RenderDebugText(r_, x, y, line.c_str());
+        }
         SDL_SetRenderScale(r_, 1, 1);
     }
 
 private:
     SDL_Renderer* r_;
-    float h_;
-#ifdef OU_HAVE_TTF
-    TTF_Font* font_ = nullptr;
-    TTF_TextEngine* engine_ = nullptr;
-#endif
+    int w_, h_;
+    const ui::Art* art_;
+    std::unique_ptr<SDL_Texture, TextureDeleter> atlas_;
 };
-
-struct RendererDeleter { void operator()(SDL_Renderer* r) const { SDL_DestroyRenderer(r); } };
-struct TextureDeleter { void operator()(SDL_Texture* t) const { SDL_DestroyTexture(t); } };
 
 } // namespace
 
@@ -151,7 +134,7 @@ PlayStats playMovie(SDL_Window* window, const std::filesystem::path& file, const
         SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, info.width, info.height));
     if (!texture) throw std::runtime_error(std::string("SDL_CreateTexture: ") + SDL_GetError());
 
-    SubtitleDrawer drawer(r, info.height, options.font);
+    SubtitleDrawer drawer(r, info.width, info.height, options.art);
     locale::MovieSubtitles subtitles(options.subtitles);
     AudioOut audio(movie.audioTrack());
 
@@ -228,8 +211,7 @@ PlayStats playMovie(SDL_Window* window, const std::filesystem::path& file, const
         SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
         SDL_RenderClear(r);
         SDL_RenderTexture(r, texture.get(), nullptr, nullptr);
-        drawer.draw(subtitles.ticker().top(), 0, info.width);
-        drawer.draw(subtitles.ticker().bottom(), 1, info.width);
+        drawer.draw(subtitles.ticker().top(), subtitles.ticker().bottom());
         if (newFrame && options.maxFrames > 0 && stats.frames >= options.maxFrames) {
             if (!options.screenshot.empty()) writePpm(r, options.screenshot);
             break;

@@ -32,6 +32,7 @@
 #include <vector>
 
 namespace ou::cdc { class BigfileSet; }
+namespace ou::locale { class Strings; }
 struct SDL_Gamepad;
 
 namespace ou::game {
@@ -938,6 +939,12 @@ struct Controls {
     explicit Controls(const config::InputConfig& c); // throws std::runtime_error naming an unknown input
 };
 Actions readDevices(const Controls& controls, const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons = 0);
+// What button placeholders in locals.bin text name (ui::PromptNames, tru.exe 0x5A7C20): per tru.exe virtual button
+// 0..24 (GAMEPLAY.md "Controls") and the keys Return / Escape / BackSpace (25..27), the control bound in `controls` on the
+// device in use. Keyboard: the first key, else the mouse button ("L Mouse", locals.bin 5050..5052); the pad: the first
+// pad control's name as the Xbox 360 pad lists them (5061..5076: icon code points, "Start Button" / "Back Button"),
+// else the placeholder's own icon. Empty: nothing bound (draws "<Unknown>").
+std::array<std::string, 28> promptNames(const Controls& controls, bool gamepad, const locale::Strings& strings);
 
 // Scripted input for deterministic replays. Text, one event per line: `<seconds> <action> [value]`.
 // Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load, draw, fire, aim, switch,

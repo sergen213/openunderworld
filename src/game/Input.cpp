@@ -1,5 +1,6 @@
 // Device mapping (SDL3) and scripted input replays.
 #include "game/Game.hpp"
+#include "locale/Locale.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -46,6 +47,59 @@ Actions readDevices(const Controls& c, const bool* keys, SDL_Gamepad* pad, uint3
     a.heal = on(Heal), a.grapple = on(Grapple), a.save = on(Save), a.load = on(Load);
     a.hint = on(Hint), a.answer = on(Answer), a.pda = on(Pda), a.light = on(Light), a.grenade = on(Grenade);
     return a;
+}
+
+std::array<std::string, 28> promptNames(const Controls& c, bool gamepad, const locale::Strings& strings) {
+    using platform::InputRef;
+    auto utf8 = [](char32_t cp) { // U+0800..U+FFFF
+        return std::string{char(0xE0 | cp >> 12), char(0x80 | (cp >> 6 & 0x3F)), char(0x80 | (cp & 0x3F))};
+    };
+    // Xbox 360 pad names (locals.bin 5061..5076 [O]): icon per SDL button; 0 = the text string 5071 / 5072.
+    auto padName = [&](const InputRef& r) -> std::string {
+        if (r.kind == InputRef::Kind::PadTrigger) return utf8(r.code == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? 0x1805 : 0x1807);
+        switch (r.code) {
+        case SDL_GAMEPAD_BUTTON_SOUTH: return utf8(0x1803);
+        case SDL_GAMEPAD_BUTTON_EAST: return utf8(0x1802);
+        case SDL_GAMEPAD_BUTTON_WEST: return utf8(0x1800);
+        case SDL_GAMEPAD_BUTTON_NORTH: return utf8(0x1801);
+        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return utf8(0x1804);
+        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return utf8(0x1806);
+        case SDL_GAMEPAD_BUTTON_LEFT_STICK: return utf8(0x180C);
+        case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return utf8(0x180D);
+        case SDL_GAMEPAD_BUTTON_DPAD_UP: return utf8(0x1808);
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return utf8(0x1809);
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return utf8(0x180B);
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return utf8(0x180A);
+        case SDL_GAMEPAD_BUTTON_START: return std::string(strings.get(5071));
+        case SDL_GAMEPAD_BUTTON_BACK: return std::string(strings.get(5072));
+        default: return platform::inputName(r);
+        }
+    };
+    // Virtual button -> config::bindableActions() index (-1: none of ours: 8 recenter camera, 13 field camera; 10 pause is
+    // fixed); and the placeholder naming it by default (tru.exe 0x8A9EF8 inverted), shown on the pad when it is unbound.
+    static constexpr int8_t kAction[25] = {8, 15, 7, 6, 11, 10, 5, 22, -1, 12, -1, 20, 14, -1, 21, 13, 3, 2, 1, 0, 4, 10, 7, 0, 1};
+    static constexpr char32_t kIcon[25] = {0x1801, 0x1800, 0x1802, 0x1803, 0x1805, 0x1807, 0x1804, 0x1806, 0x180E, 0x180F, 0x1810, 0x1811, 0x1808,
+                                           0x1809, 0x180B, 0x180A, 0x1817, 0x1816, 0x1815, 0x1814, 0, 0x1826, 0x1827, 0x1828, 0x1829};
+    std::array<std::string, 28> names;
+    for (int b = 0; b < 25; ++b) {
+        const auto& refs = kAction[b] >= 0 ? c.actions[size_t(kAction[b])] : std::vector<InputRef>{};
+        auto first = [&](auto pred) { return std::find_if(refs.begin(), refs.end(), pred); };
+        if (gamepad) {
+            const auto it = first([](const InputRef& r) { return r.kind == InputRef::Kind::PadButton || r.kind == InputRef::Kind::PadTrigger; });
+            names[size_t(b)] = it != refs.end() ? padName(*it) : kIcon[b] ? utf8(kIcon[b]) : std::string();
+        } else if (auto it = first([](const InputRef& r) { return r.kind == InputRef::Kind::Key; }); it != refs.end()) {
+            names[size_t(b)] = platform::inputName(*it);
+        } else if (it = first([](const InputRef& r) { return r.kind == InputRef::Kind::Mouse; }); it != refs.end()) {
+            names[size_t(b)] = it->code >= 1 && it->code <= 3 ? std::string(strings.get(5049 + it->code)) : platform::inputName(*it);
+        }
+    }
+    // Fixed controls: pause (Esc / Start) and the menu keys Return / Escape / BackSpace (ou-game's menu navigation: pad
+    // South / East / North; the names as tru.exe shows them [O captures]).
+    names[10] = gamepad ? std::string(strings.get(5071)) : "Escape";
+    names[25] = gamepad ? utf8(0x1803) : "Return";
+    names[26] = gamepad ? utf8(0x1802) : "Escape";
+    names[27] = gamepad ? utf8(0x1801) : "BackSpace";
+    return names;
 }
 
 InputScript InputScript::parse(std::string_view text) {

@@ -14,6 +14,7 @@
 #include "render/Renderer.hpp"
 
 struct SDL_Window;
+namespace ou::ui { struct Art; }
 
 namespace ou::app {
 
@@ -32,6 +33,7 @@ struct CineView {
     int maxFrames = 0;                 // > 0: stop after this many frames and keep the last image
     float musicVolume = 1, sfxVolume = 1; // Music / Sfx bus volumes restored afterwards (muted while playing)
     bool overlay = false;
+    const ui::Art* art = nullptr;      // the game font for the subtitles (null: none drawn)
 };
 
 struct CineResult {

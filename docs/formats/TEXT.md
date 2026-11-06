@@ -54,8 +54,13 @@ bit on continuation bytes (no overlong/surrogate checks). **Getter** `0x49A7A0`:
   and descriptions, control prompts), 5000–5015 (PC error dialogs), 5050–5052 (mouse buttons), 5060–5080
   (controller names), 5100–5135 (PC setup dialog). 3688 of the 5136 offsets are 0.
 - Strings use U+1800–U+180D (Mongolian block) as controller-button placeholders, e.g. 1320 "Press ᠀ to fire
-  the grapple"; ids 5061–5076 list them in controller-button order. The game font draws them as button
-  icons. [V-data] for the code points, [I] for the icon mapping.
+  the grapple"; ids 5061–5076 are the Xbox 360 pad's button names in its order (Y, X, B, A, LT, RT, LB, RB, LS,
+  RS, Start, Back, d-pad up / down / left / right): icons U+1801, 1800, 1802, 1803, 1805, 1807, 1804, 1806, 180C,
+  180D, "Start Button", "Back Button", 1808, 1809, 180B, 180A. Text UI elements with the prompt flag (+0x229) run
+  `0x5A7C20`: U+1800 + i becomes "\x1B" + the name of the control bound to virtual button `0x8A9EF8[i]` + "\x1B"
+  (U+182A..182C: the keys Return / Escape / BackSpace, codes 0x9C / 0x81 / 0x8E; unmapped placeholders stay as
+  icons; no binding: "\x1B<Unknown>\x1B"). The font draws 0x1B as a highlight toggle (`0x476D80`) and the icons
+  white (`0x476540`). Port: GAMEPLAY.md "Menus". [V-data] code points and names, [V-exe] the substitution.
 - Printf formats occur (`2` = `%02d:%02d:%02d`, `5101` = `%d by %d`). [V-data]
 
 **How string ids are referenced** [V-exe] (125 call sites of `0x49A7A0`):

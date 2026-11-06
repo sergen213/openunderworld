@@ -1848,8 +1848,12 @@ plus g_pda.drm 680–705 packed into one atlas (`ui::Art`, `FrameOptions::uiImag
 B,G,R,A pixels) in `uiImages[1]` (the menu movie in the main menu, else the PDA or loading background). Font = DTP 46
 (header and 12-byte glyph table over textures 109/110, advance `(spacing + width) · scale − 1` as `Font_GetTextWidth`
 0x4758C0; text scale 0.625 × the font's 0.5; glyphs sampled with a half-texel inset); text below is placed by its cap
-top (cell top + 4.52·scale, cap height 14·scale). Locals placeholders U+182A/182B/182C/1803/1801 draw as the key names
-Return/Escape/BackSpace/space/E in (99, 209, 247).
+top (cell top + 4.52·scale, cap height 14·scale). Button placeholders in locals text (U+1800 + i, TEXT.md) become the
+bound control of tru.exe virtual button `0x8A9EF8[i]` (0x5A7C20; U+182A/182B/182C = the keys Return/Escape/BackSpace)
+between two 0x1B: on the keyboard its key name, drawn in the highlight 0x7D6932 that 0x1B toggles (0x476D80; on screen
+(99, 209, 247) [O captures]); on the pad its Xbox 360 name (5061..5076: an icon, "Start Button", "Back Button"). Icons
+(U+1800..18AF but 1820/1821) draw white with the text's alpha (0x476540). ou-game names the device used last
+(`game::promptNames`, `ui::expandPrompts`); unbound controls read "<Unknown>" (0x851C68) [O].
 - Radial ring: texture 17 glyph art 672² at (317.5, 242.25), ¾ opaque; texture 50 quarter ring 208² mirrored four times
   around the centre (320.3, 240.3); ring radius 136.8, 7 items from −90° in steps of 180°/7; discs (15) and icons
   (18–26) at 0.67 per texel, unselected icons tinted (50, 115, 185); the selected item: black disc 51 (×1.17 on the ring,
