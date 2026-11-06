@@ -7,6 +7,8 @@
 #include "render/ShaderTranslate.hpp"
 #include "scene/Assets.hpp"
 
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -45,6 +47,36 @@ void fillObject(sm3::ObjectBlock& o, const glm::mat4& viewProjD3D, const glm::ma
 void fillWaves(sm3::ObjectBlock& o, std::span<const WaterVolume> volumes, glm::vec3 center, float radius);
 // AttenuationSampler row of each env.lights entry (distinct falloff curves share rows 0-95).
 std::vector<int> falloffRows(const scene::Environment& env);
+
+// IrradianceState (PS c70-c76) of 9 SH coefficients x rgb: tru.exe 0x508570 (Red0/Green0/Blue0 = xy, xz, yz, zz
+// terms, Red1/Green1/Blue1 = x, y, z, x²-y² terms, Base = constant).
+void irradianceState(const float sh[9][3], float out[7][4]);
+// Per-frame IrradianceState slots (FrameBlock::irradiance, ObjectBlock::irradiance). Slot 0: the SH of the ambient alone
+// (tru.exe's default state 0x507D60: Base = ambient). A mesh whose programs read c70-c76 gets the state of the scene's
+// light probes at its bounding centre (formats::sampleIrradiance; tru.exe samples at each drawn entity's bounding
+// centre, 0x55FB60 -> 0x55F530), recomputed only when the centre moves; scenes without probes leave it on slot 0.
+class IrradianceSlots {
+public:
+    void reset() { cache_.clear(); } // the scene (environment, mesh indices) changed
+    // `M`: .center (world) and .irradiance (bool: reads c70-c76). Call once per frame before fill() / slot().
+    template <class M>
+    void assign(const scene::Environment& env, const std::vector<M>& meshes) {
+        begin(meshes.size());
+        for (size_t i = 0; i < meshes.size(); ++i)
+            if (meshes[i].irradiance) slot_[i] = place(env, i, meshes[i].center);
+    }
+    void fill(sm3::FrameBlock& f) const; // slots 1..: after fillFrame (which writes slot 0)
+    uint32_t slot(size_t mesh) const { return mesh < slot_.size() ? slot_[mesh] : 0; }
+
+private:
+    using State = std::array<float, 28>;
+    struct Cached { glm::vec3 center{NAN}; State state{}; };
+    void begin(size_t meshes);
+    uint32_t place(const scene::Environment& env, size_t mesh, glm::vec3 center);
+    std::vector<Cached> cache_;
+    std::vector<uint32_t> slot_;
+    std::vector<State> states_; // slots 1..
+};
 
 // Engine-owned textures bound to the high samplers when no material entry claims them.
 // s11 = sun cookie (Environment::sunCookie, else white); s12/s13 spot cookies stay white (not bound per object).

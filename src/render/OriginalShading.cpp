@@ -1,4 +1,5 @@
 #include "render/OriginalShading.hpp"
+#include "formats/Formats.hpp"
 #include "render/RenderCommon.hpp"
 
 #include <algorithm>
@@ -72,12 +73,10 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     if (env.valid) put(f.ps, 15, env.ambient[0], env.ambient[1], env.ambient[2], 0); // g_Ambient
     put(f.ps, 53, time, dt, 0, 0);                   // TimeVectorPS
     put(f.ps, 54, 0, 0, (kFogRow + 0.5f) / kLutRows, 0); // HeightFogParams: no fog volumes -> (0, 0, fog row)
-    // IrradianceState (dynamic objects' SH, c70-c76 = tru.exe 0x508570's layout: Red0/Green0/Blue0 = xy, xz, yz, zz
-    // terms, Red1.. = x, y, z, x²-y² terms, Base = constant). The engine builds the SH from the ambient (L00 =
-    // ambient · 1.128, 0x507D60) plus directional terms of lights it selects [U]; with the ambient alone the
-    // conversion leaves Base = ambient and every other term 0. The point/spot lights reach dynamic objects through
-    // their light set (slots 0-5) as on level geometry.
-    if (env.valid) put(f.ps, 76, env.ambient[0], env.ambient[1], env.ambient[2], 0);
+    // IrradianceState (c70-c76, per object: FrameBlock::irradiance slots, IrradianceSlots). Slot 0 = tru.exe's default
+    // state, the SH of the ambient alone (L00 = ambient · 1.128, 0x507D60): Base = ambient, every other term 0. Objects
+    // in units with light probes get theirs (IrradianceSlots); point/spot lights reach them through their light set.
+    if (env.valid) put(f.irradiance, 6, env.ambient[0], env.ambient[1], env.ambient[2], 0);
     // GlobalParams: c140-c146 player position / bones (foliage interaction; unknown here, so far away),
     // c148/c149 light-map scale sets (default 1, 0x7731B0).
     for (int r = 140; r < 147; ++r) put(f.ps, r, 0, 0, -1e9f, 1); // ponytail: no player -> no foliage bending
@@ -150,6 +149,44 @@ void fillWaves(sm3::ObjectBlock& o, std::span<const WaterVolume> volumes, glm::v
             return;
         }
     }
+}
+
+void irradianceState(const float sh[9][3], float out[7][4]) {
+    // 0x508570: c1 = 0.429043, c2 = 0.511664, c3 = 0.743125, c4 = 0.886227, c5 = 0.247708 (Ramamoorthi-Hanrahan).
+    for (int c = 0; c < 3; ++c) {
+        out[c][0] = sh[4][c] * 0.429043f * 2, out[c][1] = sh[7][c] * 0.429043f * 2;
+        out[c][2] = sh[5][c] * 0.429043f * 2, out[c][3] = sh[6][c] * 0.743125f;
+        out[3 + c][0] = sh[3][c] * 0.511664f * 2, out[3 + c][1] = sh[1][c] * 0.511664f * 2;
+        out[3 + c][2] = sh[2][c] * 0.511664f * 2, out[3 + c][3] = sh[8][c] * 0.429043f;
+        out[6][c] = sh[0][c] * 0.886227f - sh[6][c] * 0.247708f;
+    }
+    out[6][3] = 0;
+}
+
+void IrradianceSlots::begin(size_t meshes) {
+    if (cache_.size() != meshes) cache_.assign(meshes, {});
+    slot_.assign(meshes, 0);
+    states_.clear();
+}
+
+uint32_t IrradianceSlots::place(const scene::Environment& env, size_t mesh, glm::vec3 center) {
+    Cached& c = cache_[mesh];
+    if (c.center != center) {
+        float sh[9][3];
+        if (!formats::sampleIrradiance(env.irradiance, center, sh)) return 0;
+        c.center = center;
+        irradianceState(sh, reinterpret_cast<float(*)[4]>(c.state.data()));
+    }
+    for (size_t i = 0; i < states_.size(); ++i)
+        if (states_[i] == c.state) return uint32_t(i + 1);
+    if (states_.size() + 1 >= size_t(sm3::kIrradianceSlots)) return 0; // ponytail: full -> ambient; grow the table if a scene hits it
+    states_.push_back(c.state);
+    return uint32_t(states_.size());
+}
+
+void IrradianceSlots::fill(sm3::FrameBlock& f) const {
+    for (size_t i = 0; i < states_.size(); ++i)
+        std::memcpy(f.irradiance[(i + 1) * sm3::kIrradianceRegs], states_[i].data(), sizeof(State));
 }
 
 std::vector<int> falloffRows(const scene::Environment& env) {

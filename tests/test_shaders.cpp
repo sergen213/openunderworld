@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -304,13 +305,65 @@ TEST(Sm3Real, CharacterProgramsCompile) {
         EXPECT_GT(withPrograms, 5u);
         EXPECT_EQ(prep.translated, withPrograms);
         for (const auto& p : prep.programs) {
-            irradiance += p.psGlsl.source.find("ouFrame.ps[76]") != std::string::npos;
+            irradiance += p.psGlsl.readsIrradiance && p.psGlsl.source.find("ouFrame.irradiance[") != std::string::npos;
             std::string err;
             EXPECT_FALSE(render::sm3::compileSpirv(p.vsGlsl.source, false, vk, err).empty()) << err;
             EXPECT_FALSE(render::sm3::compileSpirv(p.psGlsl.source, true, vk, err).empty()) << err;
         }
         EXPECT_GT(irradiance, 0u);
     }
+}
+
+// Light probes (formats::sampleIrradiance, LEVELS.md "Irradiance volume") at l1_kraken_entrance's snake head 751 and
+// press plate 752 match tru.exe: their SceneEntity irradiance caches (+0x13C: bounding centre +0x10, raw SH +0x60, region
+// tint +0x20, scale +0x34, L00 offset +0x30) read under Wine, and the IrradianceState Base hooked at 0x5043D0 (~0.095,
+// 0.098, 0.143).
+TEST(OriginalShading, KrakenHeadIrradianceMatchesOriginal) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto unit = formats::parseUnit(cdc::parseDrm(*bf.read("pc-w\\l1_kraken_entrance.drm")));
+    const auto& v = unit.environment.irradiance;
+    ASSERT_EQ(v.probes.size(), 84u);
+    ASSERT_EQ(v.regions.size(), 2u);
+    // Bounding centres: tru.exe world minus the cell group origin (558.18, -2202.97, -882.69) = our unit frame.
+    const glm::vec3 origin(558.176f, -2202.97f, -882.692f);
+    struct Case { glm::vec3 world; float raw[9][3]; };
+    const Case cases[] = {
+        {{-1155.5076f, -5346.541f, 1459.2693f}, // head 751
+         {{0.02855f, 0.03177f, 0.04444f}, {0.00051f, 0.00024f, -0.00069f}, {0.00058f, 0.00062f, 0.00068f},
+          {0.00135f, 0.00112f, 0.00084f}, {0.00131f, 0.00147f, 0.00185f}, {-0.00064f, -0.00061f, -0.00077f},
+          {0.00003f, -0.00007f, -0.00006f}, {0.00062f, 0.00081f, 0.00083f}, {-0.00031f, -0.00061f, -0.00045f}}},
+        {{-1155.3252f, -4853.8184f, -866.5247f}, // plate 752
+         {{0.02845f, 0.03167f, 0.04418f}, {0.00116f, 0.00121f, 0.00104f}, {-0.00053f, -0.00045f, -0.00124f},
+          {0.00297f, 0.00311f, 0.00385f}, {0.00050f, 0.00071f, 0.00081f}, {0.00002f, 0.00009f, -0.00053f},
+          {0.00058f, 0.00064f, 0.00105f}, {-0.00065f, -0.00025f, -0.00043f}, {-0.00007f, -0.00028f, -0.00003f}}},
+    };
+    const float tint[3] = {0.0f, 17.0f / 255.0f, 1.0f}, scale = 1.20432f, add = 0.10752f;
+    float sh[9][3];
+    for (const auto& c : cases) {
+        ASSERT_TRUE(formats::sampleIrradiance(v, c.world - origin, sh));
+        for (int k = 0; k < 9; ++k)
+            for (int i = 0; i < 3; ++i)
+                EXPECT_NEAR(sh[k][i], c.raw[k][i] * tint[i] * scale + (k == 0 ? add : 0.0f), 2e-5f) << k << " " << i;
+    }
+    ASSERT_TRUE(formats::sampleIrradiance(v, cases[0].world - origin, sh));
+    const glm::vec3 centre = cases[0].world - origin;
+    float state[7][4];
+    render::original::irradianceState(sh, state);
+    EXPECT_NEAR(state[6][0], 0.095f, 2e-3f);
+    EXPECT_NEAR(state[6][1], 0.098f, 2e-3f);
+    EXPECT_NEAR(state[6][2], 0.143f, 2e-3f);
+    // Our head meshes (scene " @intro 751") are centred where tru.exe's entity is: the renderers sample there.
+    const auto scene = formats::loadLevelScene(bf, "pc-w\\l1_kraken_entrance.drm");
+    glm::vec3 lo(INFINITY), hi(-INFINITY);
+    for (const auto& m : scene.meshes)
+        if (m.origin.ends_with(" @intro 751")) {
+            const glm::vec4 s = render::original::boundingSphere(m.vertices, glm::make_mat4(m.transform));
+            lo = glm::min(lo, glm::vec3(s) - s.w), hi = glm::max(hi, glm::vec3(s) + s.w);
+        }
+    ASSERT_LE(lo.x, hi.x);
+    EXPECT_LT(glm::distance((lo + hi) * 0.5f, centre), 100.0f);
 }
 
 // Light registers and light sets (render/OriginalShading, SHADERS.md "Engine inputs").

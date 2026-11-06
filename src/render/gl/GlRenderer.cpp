@@ -326,6 +326,7 @@ struct GpuMesh {
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
     bool water = false;                 // *watersurface* mesh (render/Water.hpp): Enhanced water draws it separately
+    bool irradiance = false;            // a submesh's program reads IrradianceState (original::IrradianceSlots)
     std::vector<uint8_t> reflective;    // per submesh: a planar-reflection material (render::reflectsWater candidates)
     size_t source = 0, vertexCount = 0, indexCount = 0; // SceneData::meshes index, vertex / index counts
     // Residency (Renderer::upload): MeshData::key (0: sent each upload), the part holding it (0: none), changed by
@@ -591,6 +592,7 @@ public:
         std::erase_if(r.resident, [&](const auto& kv) { return kv.second.upload != uploads_ && !parts_.contains(kv.second.part); });
         r.transientTextures = std::move(transient);
         environment_ = scene.environment;
+        irradiance_.reset(); // mesh indices and probes change with the scene
         // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
         const auto lut = original::attenuationLut(environment_);
         glTextureSubImage2D(r.attenuation.get(), 0, 0, 0, lut.width, lut.height, GL_RGBA, GL_UNSIGNED_BYTE, lut.rgba.data());
@@ -1099,6 +1101,7 @@ private:
     void bindOriginals(GpuMesh& g, const scene::MeshData& m) {
         g.program.clear(), g.materialOffset.clear(), g.samplers.clear(), g.screenSamplers.clear(), g.reflection.clear();
         g.reflective.clear();
+        g.irradiance = false;
         for (const auto& s : g.submeshes) addOriginal(g, s);
         g.reflectZ = original::reflectionPlaneZ(m, g.model, prepared_.materials);
         for (const auto& s : g.submeshes) {
@@ -1195,6 +1198,7 @@ private:
         materialBlocks_.resize(materialBlocks_.size() + stride);
         original::fillMaterial(*reinterpret_cast<sm3::MaterialBlock*>(&materialBlocks_[size_t(g.materialOffset.back())]), mat, s);
         const auto& prog = prepared_.programs[size_t(p)];
+        g.irradiance |= prog.psGlsl.readsIrradiance;
         for (int n = 0; n < 16; ++n) {
             if (!(prog.psGlsl.samplers >> n & 1)) continue;
             // Unbound cube samplers read black (D3D9 without a texture), others white; the type must match the sampler.
@@ -1363,6 +1367,8 @@ private:
         Resources& r = *res_;
         sm3::FrameBlock f;
         original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater); // screen copies are bottom-up
+        irradiance_.assign(environment_, r.meshes);
+        irradiance_.fill(f);
         glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
         const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
         const size_t stride = size_t(objectStride()), n = r.meshes.size();
@@ -1372,6 +1378,7 @@ private:
             original::fillObject(block, vpD3D, r.meshes[i].model, original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius),
                                  i < opacity_.size() ? opacity_[i] : 1.0f);
             original::fillWaves(block, o.waterVolumes, r.meshes[i].center, r.meshes[i].radius);
+            block.irradiance = irradiance_.slot(i);
             if (!reflection || std::isnan(r.meshes[i].reflectZ)) continue;
             auto& lit = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(n + i) * stride]);
             lit = block;
@@ -1576,6 +1583,7 @@ private:
     std::optional<Resources> res_;
     original::Prepared prepared_;         // during upload()
     scene::Environment environment_;
+    original::IrradianceSlots irradiance_; // per frame, cached per mesh between uploads
     std::unordered_set<uint32_t> cubes_; // texture ids uploaded as cube maps
     // Renderer::uploadPart: a part's scene until pumpParts sent it all (next texture / mesh to look at), by part id.
     struct Part {

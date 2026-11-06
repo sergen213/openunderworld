@@ -123,6 +123,25 @@ struct Light {
     std::vector<float> flicker;  // DTP +0x424: 256 intensity multipliers over one period
 };
 
+// Light probes of a unit (docs/formats/LEVELS.md "Irradiance volume"): the DTP of cell group +0x1C. Dynamic objects
+// sample them for their spherical-harmonic lighting (formats::sampleIrradiance), which the render device turns into the
+// shaders' IrradianceState c70-c76 (render::original::irradianceState, tru.exe 0x508570).
+struct IrradianceVolume {
+    struct Probe {
+        float pos[3] = {};                // unit frame (or the scene's world frame once merged)
+        float sh[9][3] = {};              // L00, L1-1, L10, L11, L2-2, L2-1, L20, L21, L22 x rgb
+        std::vector<uint32_t> neighbours; // probe indices
+        uint32_t region = 0;
+    };
+    // Region settings (region +0x18 -> record): +0x4A..+0x4C tint bytes / 255, +0x50 SH scale, +0x54 added to L00.
+    struct Region {
+        float color[3] = {1, 1, 1};
+        float scale = 1, add = 0;
+    };
+    std::vector<Probe> probes;
+    std::vector<Region> regions;
+};
+
 // Per-unit render settings (unit DTP at Level+0x70; SHADERS.md "Engine inputs"). valid = false: none loaded.
 struct Environment {
     bool valid = false;
@@ -168,6 +187,7 @@ struct Environment {
         float vsExtinction = 0;    // +0x68 material VS MaterialParams c25.x
     } waterRays;
     std::vector<Light> lights; // point and spot lights (type 0/1 records), unit frame
+    IrradianceVolume irradiance; // unit frame
 };
 
 // Optional skinning. Up to 4 influences per vertex; `bone` indexes Skeleton::bones.

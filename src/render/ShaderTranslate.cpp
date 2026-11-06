@@ -28,12 +28,12 @@ const char* kPrelude = R"(#version 450
 #define OU_SAMPLER(n) layout(binding = n)
 #define OU_DFDY_SIGN -1.0
 #endif
-OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[320]; } ouFrame;
+OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[320]; vec4 irradiance[896]; } ouFrame;
 OU_UBO(1, 0, 1) uniform OuMaterial { vec4 vs[40]; vec4 ps[40]; vec4 fixedParams; } ouMat;
 #ifdef OU_VULKAN
-layout(push_constant) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; float pad; vec4 inst[3]; vec4 waves[4]; } ouObj;
+layout(push_constant) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; uint irradiance; vec4 inst[3]; vec4 waves[4]; } ouObj;
 #else
-layout(std140, binding = 2) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; float pad; vec4 inst[3]; vec4 waves[4]; } ouObj;
+layout(std140, binding = 2) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; uint irradiance; vec4 inst[3]; vec4 waves[4]; } ouObj;
 #endif
 // Light table index of PS light slot s (0-5), 255 = slot empty.
 #define OU_LIGHT(s) ((ouObj.lightSet[(s) >> 2] >> (8u * uint((s) & 3))) & 255u)
@@ -257,6 +257,10 @@ private:
         // SunLight colour (slot 6, c208 + 4): times the sun visibility (shadow map / rays) of OU_SUN builds.
         if (n == 212) return out_.sunLit = true, "(ouFrame.ps[212] * ouSunVis)";
         if (n == 77) out_.readsDepth = true; // DepthToW: a depth-buffer reader (original::screenSamplers)
+        // IrradianceState: the object's slot (tru.exe sets c70-c76 per drawable from device +0xFC88, 0x5043D0).
+        if (n >= unsigned(kIrradianceBase) && n < unsigned(kIrradianceBase + kIrradianceRegs))
+            return out_.readsIrradiance = true, "ouFrame.irradiance[min(ouObj.irradiance, " + std::to_string(kIrradianceSlots - 1) +
+                                                    "u) * 7u + " + std::to_string(n - kIrradianceBase) + "u]";
         return "ouFrame.ps[" + std::to_string(n) + "]";
     }
 

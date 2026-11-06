@@ -510,6 +510,7 @@ Unit parseUnit(const cdc::Drm& d) {
             u.imfs.push_back(std::move(p));
         }
     }
+    u.environment.irradiance = parseIrradianceVolume(d);
     // Level+0 -> Terrain {i16 ?, i16 numPortals, StreamUnitPortal*, ...}; portals are 0x100 bytes, stored like
     // the collision meshes relative to the Level+0x80 offset, which we add (LEVELS.md "Streaming").
     if (!level.ptrs.count(0)) return u; // no Terrain (synthetic levels): no portals
@@ -535,6 +536,118 @@ Unit parseUnit(const cdc::Drm& d) {
         }
     }
     return u;
+}
+
+scene::IrradianceVolume parseIrradianceVolume(const cdc::Drm& d) {
+    // DTP {u32 regions, root*, region*[regions]}; region {f32[6] ?, settings* @+0x18, u32 tint slot @+0x1C (tru.exe
+    // 0xAD7C90 table, set by 0x773BF0, 1 in l1_kraken_entrance), u32 probes @+0x20, probe*[] @+0x24}; probe {pos, f32
+    // sh[27] @+0x0C, u32 neighbours @+0x78, probe*[] @+0x7C}. The root is a sphere tree over the probes (node {centre,
+    // radius, region*, probe index or -1, child*[] null-ended}) that tru.exe searches for the nearest probe
+    // (0x529B00); we take the probes from the regions instead.
+    scene::IrradianceVolume out;
+    const View level(d, 0);
+    const auto lit = level.ptrs.find(0x90);
+    if (lit == level.ptrs.end()) return out;
+    uint32_t dtp = 0;
+    const uint32_t id = resourceId(d.sections[lit->second.section], lit->second.offset + 0x1C, cdc::SectionType::DtpData);
+    if (!id || !findSection(d, cdc::SectionType::DtpData, id, &dtp)) return out;
+    const View v(d, dtp);
+    std::map<uint32_t, uint32_t> index; // probe offset -> probe index
+    std::vector<uint32_t> offsets;
+    const uint32_t regions = v.at<uint32_t>(0);
+    for (uint32_t r = 0; r < regions; ++r) {
+        const auto rp = v.ptr(8 + 4 * r, "irradiance region");
+        if (rp.section != dtp) throw FormatError("irradiance region outside its DTP");
+        auto& reg = out.regions.emplace_back();
+        if (const auto s = v.ptrs.find(rp.offset + 0x18); s != v.ptrs.end()) {
+            const View sv(d, s->second.section);
+            for (int c = 0; c < 3; ++c) reg.color[c] = float(sv.at<uint8_t>(s->second.offset + 0x4A + c)) / 255.0f;
+            reg.scale = sv.at<float>(s->second.offset + 0x50), reg.add = sv.at<float>(s->second.offset + 0x54);
+        }
+        const uint32_t n = v.at<uint32_t>(rp.offset + 0x20);
+        for (uint32_t k = 0; k < n; ++k) {
+            const auto pp = v.ptr(rp.offset + 0x24 + 4 * k, "irradiance probe");
+            if (pp.section != dtp) throw FormatError("irradiance probe outside its DTP");
+            if (!index.try_emplace(pp.offset, uint32_t(offsets.size())).second) continue;
+            offsets.push_back(pp.offset);
+            auto& p = out.probes.emplace_back();
+            p.region = r;
+            for (int c = 0; c < 3; ++c) p.pos[c] = v.at<float>(pp.offset + 4 * c);
+            for (int i = 0; i < 27; ++i) p.sh[i / 3][i % 3] = v.at<float>(pp.offset + 0x0C + 4 * i);
+        }
+    }
+    for (size_t i = 0; i < offsets.size(); ++i) {
+        const uint32_t n = v.at<uint32_t>(offsets[i] + 0x78);
+        for (uint32_t k = 0; k < n; ++k) {
+            const auto np = v.ptr(offsets[i] + 0x7C + 4 * k, "irradiance neighbour");
+            if (const auto it = index.find(np.offset); np.section == dtp && it != index.end())
+                out.probes[i].neighbours.push_back(it->second);
+        }
+    }
+    return out;
+}
+
+namespace {
+using Probe = scene::IrradianceVolume::Probe;
+glm::vec3 posOf(const Probe& p) { return {p.pos[0], p.pos[1], p.pos[2]}; }
+// tru.exe 0x529D40: weight of neighbour n along `axis` = projection of (pos - from) on (n - from), over |n - from|^2.
+float axisWeight(const Probe& from, const Probe& n, glm::vec3 pos, int axis) {
+    const glm::vec3 e = posOf(n) - posOf(from);
+    const float l = glm::dot(e, e);
+    return l > 0 ? e[axis] * (pos[axis] - from.pos[axis]) / l : 0.0f;
+}
+// tru.exe 0x529D40: the probe's SH offset toward `pos` from its best x neighbour (weight wx) and, through its best y
+// neighbour, that one's best x neighbour (weight wy); the best z neighbour is returned for the caller's z blend.
+const Probe* blendNeighbours(const scene::IrradianceVolume& v, const Probe& p, glm::vec3 pos, float out[27], bool wantZ) {
+    const Probe *nx = nullptr, *ny = nullptr, *nz = nullptr;
+    float wx = 0, wy = 0, wz = 0;
+    for (const uint32_t i : p.neighbours)
+        if (const float f = axisWeight(p, v.probes[i], pos, 0); f > wx) wx = f, nx = &v.probes[i];
+    for (const uint32_t i : p.neighbours)
+        if (const float f = axisWeight(p, v.probes[i], pos, 1); f > wy && &v.probes[i] != nx) wy = f, ny = &v.probes[i];
+    if (wantZ)
+        for (const uint32_t i : p.neighbours)
+            if (const float f = axisWeight(p, v.probes[i], pos, 2); f > wz && &v.probes[i] != nx && &v.probes[i] != ny)
+                wz = f, nz = &v.probes[i];
+    if (nx)
+        for (int i = 0; i < 27; ++i) out[i] = (nx->sh[i / 3][i % 3] - p.sh[i / 3][i % 3]) * wx;
+    if (!ny) return nz;
+    const Probe* m = nullptr;
+    float wm = 0;
+    for (const uint32_t i : ny->neighbours)
+        if (const float f = axisWeight(*ny, v.probes[i], pos, 0); f > wm && &v.probes[i] != nx && &v.probes[i] != nz)
+            wm = f, m = &v.probes[i];
+    if (m) // no x neighbour of the y neighbour: the y step adds nothing (as tru.exe)
+        for (int i = 0; i < 27; ++i) {
+            const float py = ny->sh[i / 3][i % 3];
+            out[i] = out[i] * (1 - wy) + ((m->sh[i / 3][i % 3] - py) * wm + py - p.sh[i / 3][i % 3]) * wy;
+        }
+    return nz;
+}
+} // namespace
+
+bool sampleIrradiance(const scene::IrradianceVolume& v, glm::vec3 pos, float sh[9][3]) {
+    if (v.probes.empty()) return false;
+    // ponytail: brute-force nearest probe (tru.exe walks its sphere tree, same result); tree walk if units grow past ~1k probes
+    const Probe* p = &v.probes[0];
+    float best = INFINITY;
+    for (const auto& q : v.probes)
+        if (const glm::vec3 e = posOf(q) - pos; glm::dot(e, e) < best) best = glm::dot(e, e), p = &q;
+    float a[27] = {}, b[27] = {}, t = 0;
+    const Probe* z = blendNeighbours(v, *p, pos, a, true);
+    if (z) {
+        const glm::vec3 e = posOf(*z) - posOf(*p);
+        t = e.z * (pos.z - p->pos[2]) / glm::dot(e, e); // not clamped (0x52A450)
+        blendNeighbours(v, *z, pos, b, false);
+    }
+    // 0x52ABF0: x region tint x scale (the tint table / global multipliers are 1 [O l1_kraken_entrance]), + L00 offset.
+    const auto& r = v.regions.at(p->region);
+    for (int i = 0; i < 27; ++i) {
+        const float s = p->sh[i / 3][i % 3];
+        const float raw = (z ? b[i] + z->sh[i / 3][i % 3] - s : 0.0f) * t + a[i] * (1 - t) + s;
+        sh[i / 3][i % 3] = raw * r.color[i % 3] * r.scale + (i < 3 ? r.add : 0.0f);
+    }
+    return true;
 }
 
 std::map<uint16_t, std::string> parseObjectList(std::string_view text) {

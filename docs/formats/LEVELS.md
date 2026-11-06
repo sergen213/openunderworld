@@ -131,7 +131,27 @@ channels).
 | +0x10 | cells*[numTotalCells] → `CellData {header*, terrainData*, …, renderMesh* @+0x20}` | [O] |
 | +0x14 | exterior terrains* `{count, CellTerrainData[count] {terrain ref, flags, light mask, user data}}` (`Unit::exteriorTerrains`): panorama cylinders / sky domes added to the scene's "Exterior Cellgroup" (0x572BD0 → 0x56DE80). 18 units have them (l2_junglehub 10635: four painted quarter cylinders of radius 3072 round the start + a light card) | [O] |
 | +0x18 | IMF records*, 0x70 bytes each | [O] |
-| +0x1C | resource ref to a DTP | [O]; content [U] |
+| +0x1C | resource ref to the **irradiance volume** DTP (light probes, below) | [O] |
+
+#### Irradiance volume (cell group +0x1C DTP)
+
+[O] tru.exe 0x55D360 / 0x52A450 / 0x529B00 / 0x529D40, values checked against a running tru.exe (Wine, entity caches
+at +0x13C). `SceneCellGroup` vtable +0x44 (0x571D20) returns it; 95 of 97 units have one (8–187 probes).
+
+| Offset | Meaning |
+|---|---|
+| +0x00 | u32 region count |
+| +0x04 | sphere-tree root: node {centre xyz, radius, region*, probe index (−1 inner), child*[] null-ended}; leaves = probes |
+| +0x08 | region*[count]: {f32[6] [U], +0x18 settings* (record: +0x4A..+0x4C tint bytes, +0x50 SH scale, +0x54 L00 offset), +0x1C tint-table slot (0xAD7C90, 1.0 in every observed case), +0x20 u32 probes, +0x24 probe*[]} |
+| probe | {pos xyz, +0x0C f32 SH[9][3] (L00, L1−1, L10, L11, L2−2, L2−1, L20, L21, L22), +0x78 u32 neighbours, +0x7C probe*[]} |
+
+- Positions are in our unit frame (the render-terrain frame): tru.exe subtracts the group origin (+0xB0 = its world
+  placement of the unit frame) before sampling.
+- Sampling: nearest probe P; offsets toward P's best x neighbour (weight = projection on x / |n − P|²) and, through its
+  best y neighbour, that probe's best x neighbour; the best z neighbour Q blended by t = (Q−P).z (pos−P).z / |Q−P|²
+  (unclamped); then × region tint × scale, + offset on L00 (0x52ABF0). No volume: the cell group's SH (+0xC4, zero at
+  runtime in l1). [I] tru.exe freezes an entity's region tint at its first sample until 0x558EA0 resets the cache; we
+  use the current region.
 
 - Stream groups [O]: `streamFileName` is null for some groups ("default", "group_ballcourt_edges"). The others name
   `pc-w\streamgroups\<file>.drm` (`LOAD_StreamGroupFileName` 0x477990). Ballcourt: 10 groups, 8 DRMs. All 8 exist and

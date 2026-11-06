@@ -341,6 +341,7 @@ struct GpuMesh {
     // Ray tracing (empty without RT support): one BLAS geometry per traced submesh (Opaque + Alpha
     // blends, as the shadow map). Skinned meshes are refitted, others rebuilt, on updateVertices.
     bool skinned = false, water = false;
+    bool irradiance = false; // a submesh's program reads IrradianceState (original::IrradianceSlots)
     std::vector<RtBlas> blases;
     bool rtStatic = false; // traced through a merged static BLAS (RtGroup; never moved by updateVertices)
     std::vector<std::pair<uint32_t, uint32_t>> rtMerged; // its geometries there: (rtGroups_ index, geometry index)
@@ -949,9 +950,11 @@ public:
         VkDescriptorSet frameSet = origFrameSet_[frameIndex_];
         std::optional<original::Reflection> reflection; // the planar reflection the reflecting draws sample this frame
         if (originals) {
+            irradiance_.assign(environment_, meshes_);
             sm3::FrameBlock fb;
             original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_, false,
                                 options.underwater);
+            irradiance_.fill(fb);
             std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
         }
         // Sets shared by every draw of a pipeline layout (binding with the other layout disturbs them).
@@ -981,6 +984,7 @@ public:
             if (stamp != frameCounter_ + 1) stamp = frameCounter_ + 1, lights = original::lightSet(environment_, m.center, m.radius);
             original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
             original::fillWaves(ob, options.waterVolumes, m.center, m.radius);
+            ob.irradiance = irradiance_.slot(d.mesh);
             if (reflection && od.reflection) std::memcpy(ob.inst, reflection->rows, sizeof ob.inst);
             vkCmdPushConstants(cmd, origLayout_, kPushStages, 0, sizeof ob, &ob);
             bindMesh(d.mesh);
@@ -1008,6 +1012,7 @@ public:
             sm3::FrameBlock fb;
             original::fillFrame(fb, reflection->camera, {int(half.width), int(half.height)}, options.time, environment_, false,
                                 options.underwater);
+            irradiance_.fill(fb);
             std::memcpy(reflFrameUbo_[frameIndex_].mapped, &fb, sizeof fb);
             std::vector<VkImageMemoryBarrier2> rb = {
                 imageBarrier(reflColor_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -1880,6 +1885,7 @@ private:
     // block + descriptor set per distinct (program, material, instance textures, alpha ref) of the uploaded submeshes.
     void uploadOriginals(const scene::SceneData& scene, std::vector<std::string>& warnings) {
         environment_ = scene.environment;
+        irradiance_.reset(); // mesh indices and probes change with the scene
         const original::Prepared prep = original::prepare(scene, true);
         for (const auto& w : prep.warnings) warnings.push_back(w);
         const size_t n = prep.programs.size();
@@ -1953,7 +1959,8 @@ private:
         std::vector<std::pair<Key, const scene::SubMesh*>> unique;
         std::vector<std::vector<size_t>> slot(meshes_.size());
         origDraws_.assign(meshes_.size(), {});
-        for (size_t mi = 0; mi < meshes_.size(); ++mi)
+        for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+            meshes_[mi].irradiance = false;
             for (const auto& s : meshes_[mi].submeshes) {
                 OrigDraw d;
                 d.program = prep.program(s.materialId);
@@ -1962,6 +1969,7 @@ private:
                     d.screen = original::screenSamplers(*prep.materials.at(s.materialId), s.instanceTextures,
                                                         prep.programs[size_t(d.program)].psGlsl.readsDepth);
                     d.reflection = original::reflectionSamplers(*prep.materials.at(s.materialId));
+                    meshes_[mi].irradiance |= prep.programs[size_t(d.program)].psGlsl.readsIrradiance;
                 }
                 size_t k = SIZE_MAX;
                 if (d.program >= 0) {
@@ -1974,6 +1982,7 @@ private:
                 origDraws_[mi].push_back(d);
                 slot[mi].push_back(k);
             }
+        }
         if (unique.empty()) return;
         origMaterialUbo_ = createBuffer(gen_->memory, stride * unique.size(), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -4895,6 +4904,7 @@ private:
     std::vector<DrawRef> screenDraws_;                               // per frame: their draws, for the second pass
     Buffer origMaterialUbo_;
     scene::Environment environment_;
+    original::IrradianceSlots irradiance_; // per frame, cached per mesh between uploads
 
     // Ray tracing.
     RtStatus rtStatus_;

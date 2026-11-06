@@ -807,11 +807,22 @@ struct StreamedScene {
                 if (materialIds.insert(m.id).second) out.materials.push_back(take(old.materials, oldMaterials, m.id, m));
             for (const auto& c : s.shaders)
                 if (shaderIds.insert(c.hash).second) out.shaders.push_back(take(old.shaders, oldShaders, c.hash, c));
-            // First unit's render settings; every unit's point/spot lights, moved by its stream offset.
+            // First unit's render settings; every unit's point/spot lights and light probes, moved by its stream offset
+            // (one probe set: an object samples the nearest probe's unit, as tru.exe the cell group at its position).
             if (!out.environment.valid && s.environment.valid) {
                 out.environment = s.environment;
                 out.environment.lights.clear();
+                out.environment.irradiance = {};
                 for (int c = 0; c < 3; ++c) out.environment.sunOrigin[c] += offset[c];
+            }
+            auto& irr = out.environment.irradiance;
+            const auto probeBase = uint32_t(irr.probes.size()), regionBase = uint32_t(irr.regions.size());
+            irr.regions.insert(irr.regions.end(), s.environment.irradiance.regions.begin(), s.environment.irradiance.regions.end());
+            for (auto p : s.environment.irradiance.probes) {
+                for (int c = 0; c < 3; ++c) p.pos[c] += offset[c];
+                for (auto& n : p.neighbours) n += probeBase;
+                p.region += regionBase;
+                irr.probes.push_back(std::move(p));
             }
             for (size_t i = 0; i < s.environment.lights.size(); ++i) {
                 if (unitName && !w.lightEnabled(*unitName, uint32_t(i))) continue;

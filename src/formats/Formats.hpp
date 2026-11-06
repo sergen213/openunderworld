@@ -217,6 +217,14 @@ std::vector<scene::Light> objectLights(const cdc::Drm& object);
 // Parses the level struct (section 0) of a unit DRM. Throws cdc::FormatError on layout mismatch.
 Unit parseUnit(const cdc::Drm& unit);
 
+// Light probes of a unit (scene::IrradianceVolume, docs/formats/LEVELS.md "Irradiance volume"): the DTP of cell group
+// +0x1C, in the unit frame. Empty volume when the unit has none.
+scene::IrradianceVolume parseIrradianceVolume(const cdc::Drm& unit);
+// Spherical harmonics of a dynamic object at `pos` (the volume's frame): tru.exe 0x55F530 -> 0x55D360 -> 0x52A450
+// (nearest probe, its x / y / z neighbours blended in), then the probe region's tint, scale and L00 offset (0x52ABF0).
+// False (sh untouched) when the volume is empty.
+bool sampleIrradiance(const scene::IrradianceVolume& v, glm::vec3 pos, float sh[9][3]);
+
 // objectlist.txt ("count\r\n" then "id,name" lines) -> id → lower-case name.
 std::map<uint16_t, std::string> parseObjectList(std::string_view text);
 
