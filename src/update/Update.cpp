@@ -194,8 +194,8 @@ Result fetchVerified(const Options& opt, Bytes& manifestBytes, Bytes& sig) {
     if (!opt.fetch) throw Error("no transport");
     checkHttps(opt.manifestUrl);
     say(opt.progress, "fetching " + opt.manifestUrl);
-    manifestBytes = opt.fetch(opt.manifestUrl, kMaxManifestBytes);
-    sig = opt.fetch(opt.manifestUrl + ".sig", crypto_sign_BYTES);
+    manifestBytes = fetchAll(opt.fetch, opt.manifestUrl, kMaxManifestBytes);
+    sig = fetchAll(opt.fetch, opt.manifestUrl + ".sig", crypto_sign_BYTES);
     r.manifest = verifyAndParse(manifestBytes, sig, opt.key);
     if (r.manifest.channel != opt.channel)
         throw Error("manifest channel '" + r.manifest.channel + "' != configured '" + opt.channel + "'");
@@ -326,17 +326,24 @@ std::optional<std::string> versionOf(const fs::path& dir) {
 std::optional<std::string> installedVersion(const fs::path& root) { return versionOf(root / "current"); }
 
 Fetch httpsFetch() {
-    return [](const std::string& url, uint64_t maxBytes) -> Bytes {
+    return [](const std::string& url, uint64_t offset, uint64_t maxBytes, const Sink& sink) {
         checkHttps(url);
         static std::once_flag once;
         std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
         std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> c(curl_easy_init(), curl_easy_cleanup);
         if (!c) throw Error("curl_easy_init failed");
-        struct Sink { Bytes data; uint64_t max; } sink{{}, maxBytes};
+        // The sink may throw; exceptions must not cross libcurl, so it is caught here and rethrown after perform.
+        struct State { const Sink& sink; uint64_t got, max; std::exception_ptr error; } st{sink, offset, maxBytes, nullptr};
         auto write = +[](char* p, size_t sz, size_t n, void* ud) -> size_t {
-            auto* s = static_cast<Sink*>(ud);
-            if (s->data.size() + sz * n > s->max) return 0; // aborts the transfer
-            s->data.insert(s->data.end(), p, p + sz * n);
+            auto* s = static_cast<State*>(ud);
+            if (s->got + sz * n > s->max) return 0; // aborts the transfer
+            try {
+                s->sink({reinterpret_cast<const uint8_t*>(p), sz * n});
+            } catch (...) {
+                s->error = std::current_exception();
+                return 0;
+            }
+            s->got += sz * n;
             return sz * n;
         };
         char err[CURL_ERROR_SIZE] = {};
@@ -352,15 +359,94 @@ Fetch httpsFetch() {
         curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 30L);
         curl_easy_setopt(h, CURLOPT_LOW_SPEED_LIMIT, 1024L);
         curl_easy_setopt(h, CURLOPT_LOW_SPEED_TIME, 60L);
-        curl_easy_setopt(h, CURLOPT_MAXFILESIZE_LARGE, curl_off_t(maxBytes));
+        curl_easy_setopt(h, CURLOPT_MAXFILESIZE_LARGE, curl_off_t(maxBytes - std::min(offset, maxBytes)));
+        if (offset) curl_easy_setopt(h, CURLOPT_RESUME_FROM_LARGE, curl_off_t(offset)); // Range: bytes=offset-
         curl_easy_setopt(h, CURLOPT_USERAGENT, "OpenUnderworld-updater");
         curl_easy_setopt(h, CURLOPT_ERRORBUFFER, err);
         curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, write);
-        curl_easy_setopt(h, CURLOPT_WRITEDATA, &sink);
+        curl_easy_setopt(h, CURLOPT_WRITEDATA, &st);
         CURLcode rc = curl_easy_perform(h);
+        if (st.error) std::rethrow_exception(st.error);
+        if (rc == CURLE_RANGE_ERROR) throw RangeUnsupported(url + ": server cannot resume at byte " + std::to_string(offset));
         if (rc != CURLE_OK) throw Error(url + ": " + (*err ? err : curl_easy_strerror(rc)));
-        return std::move(sink.data);
     };
+}
+
+Bytes fetchAll(const Fetch& fetch, const std::string& url, uint64_t maxBytes) {
+    Bytes out;
+    fetch(url, 0, maxBytes, [&](std::span<const uint8_t> d) {
+        if (out.size() + d.size() > maxBytes) throw Error(url + ": more than " + std::to_string(maxBytes) + " bytes");
+        out.insert(out.end(), d.begin(), d.end());
+    });
+    return out;
+}
+
+void download(const Fetch& fetch, const FileEntry& f, const fs::path& part, unsigned mode,
+              const std::function<void(const std::string&)>& progress) {
+    int fd = ::open(part.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, mode_t(mode));
+    if (fd < 0) throw Error("cannot create " + part.string() + ": " + std::strerror(errno));
+    std::unique_ptr<int, void (*)(int*)> closer(&fd, [](int* p) { ::close(*p); });
+    const auto fail = [&](const std::string& why) { // the partial file cannot be the right one: start over next time
+        ::unlink(part.c_str());
+        throw Error(f.path + ": " + why);
+    };
+    uint64_t have = uint64_t(std::max<off_t>(::lseek(fd, 0, SEEK_END), 0));
+    const auto restart = [&] {
+        if (::ftruncate(fd, 0) != 0 || ::lseek(fd, 0, SEEK_SET) != 0) throw Error("cannot truncate " + part.string());
+        have = 0;
+    };
+    if (have > f.size) restart();
+    for (bool resumed = have > 0; have < f.size;) {
+        if (have) say(progress, "resuming " + f.path + " at byte " + std::to_string(have));
+        uint64_t got = have;
+        int shown = -1;
+        bool overflow = false;
+        try {
+            fetch(f.url, have, f.size, [&](std::span<const uint8_t> d) {
+                if ((overflow = got + d.size() > f.size)) throw Error("server sent more than " + std::to_string(f.size) + " bytes");
+                for (size_t off = 0; off < d.size();) {
+                    ssize_t n = ::write(fd, d.data() + off, d.size() - off);
+                    if (n < 0 && errno == EINTR) continue;
+                    if (n <= 0) throw Error("write failed: " + part.string() + ": " + std::strerror(errno));
+                    off += size_t(n);
+                }
+                got += d.size();
+                if (int pct = int(got * 100 / std::max<uint64_t>(f.size, 1)); pct != shown && progress) {
+                    shown = pct;
+                    say(progress, "downloading " + f.path + ": " + std::to_string(pct) + "% (" + std::to_string(got >> 20) + " of " +
+                                      std::to_string(f.size >> 20) + " MiB)");
+                }
+            });
+        } catch (const RangeUnsupported&) {
+            if (!resumed) throw;
+            resumed = false; // the server ignores Range: download it whole once
+            restart();
+            continue;
+        } catch (const Error& e) {
+            if (overflow) fail(e.what());
+            throw; // transport failure: keep the partial file for resuming
+        }
+        if (got != f.size) fail("size mismatch (" + std::to_string(got) + " != " + std::to_string(f.size) + ")");
+        have = got;
+    }
+    if (::fsync(fd) != 0) throw Error("fsync failed: " + part.string());
+    sodium();
+    crypto_hash_sha256_state st;
+    crypto_hash_sha256_init(&st);
+    std::vector<uint8_t> buf(1 << 20);
+    uint64_t at = 0;
+    for (ssize_t n; (n = ::pread(fd, buf.data(), buf.size(), off_t(at))) != 0; at += uint64_t(n)) {
+        if (n < 0 && errno == EINTR) { n = 0; continue; }
+        if (n < 0) throw Error("read failed: " + part.string());
+        crypto_hash_sha256_update(&st, buf.data(), size_t(n));
+    }
+    unsigned char h[crypto_hash_sha256_BYTES];
+    crypto_hash_sha256_final(&st, h);
+    char hex[2 * sizeof h + 1];
+    sodium_bin2hex(hex, sizeof hex, h, sizeof h);
+    if (at != f.size) fail("size mismatch (" + std::to_string(at) + " != " + std::to_string(f.size) + ")");
+    if (hex != f.sha256) fail("sha256 mismatch");
+    fs::permissions(part, fs::perms(mode), fs::perm_options::replace);
 }
 
 Result check(const Options& opt) {
@@ -387,18 +473,18 @@ void install(const fs::path& root, const Manifest& m, std::span<const uint8_t> m
     if (auto cur = installedVersion(root); cur && compareVersions(m.version, *cur) <= 0)
         throw Error("rollback refused: " + m.version + " is not newer than installed " + *cur);
 
-    const fs::path stg = root / ".staging";
+    // Downloads go to .partial/<sha256> first: they survive a failed attempt (and recover()), so the next one
+    // resumes them; content-addressed, a partial file is only ever continued for the same expected bytes.
+    const fs::path stg = root / ".staging", partials = root / ".partial";
     try {
         fs::create_directories(stg);
+        fs::create_directories(partials);
         for (const auto& f : m.files) {
             say(progress, "downloading " + f.path);
-            Bytes data = fetch(f.url, f.size);
-            if (data.size() != f.size)
-                throw Error(f.path + ": size mismatch (" + std::to_string(data.size()) + " != " + std::to_string(f.size) + ")");
-            if (sha256Hex(data) != f.sha256) throw Error(f.path + ": sha256 mismatch");
-            fs::path dst = stg / f.path;
+            const fs::path part = partials / f.sha256, dst = stg / f.path;
+            download(fetch, f, part, f.executable ? 0755 : 0644, progress);
             fs::create_directories(dst.parent_path());
-            writeFileSync(dst, data, f.executable ? 0755 : 0644);
+            fs::rename(part, dst);
         }
         writeFileSync(stg / kManifestName, manifestBytes, 0644);
         writeFileSync(stg / (std::string(kManifestName) + ".sig"), signature, 0644);
@@ -408,6 +494,7 @@ void install(const fs::path& root, const Manifest& m, std::span<const uint8_t> m
         fs::remove_all(stg, ec); // nothing was swapped; the current version is untouched
         throw;
     }
+    fs::remove_all(partials); // leftovers of other, abandoned releases
 
     std::string journal = json{{"version", m.version}}.dump();
     writeFileSync(root / ".journal", {reinterpret_cast<const uint8_t*>(journal.data()), journal.size()}, 0644);
@@ -553,15 +640,10 @@ fs::path installAppImage(const fs::path& appImage, const Manifest& m, const Fetc
     std::unique_ptr<int, void (*)(int*)> unlock(&fd, [](int* f) { ::close(*f); });
     const fs::path dir = target.parent_path(), next = dir / ("OpenUnderworld-" + m.version + "-x86_64.AppImage");
     const fs::path stg = next.string() + ".new", bak = target.string() + ".bak";
-    fs::remove(stg); // leftover of an interrupted download
     say(progress, "downloading " + it->path);
-    // ponytail: whole AppImage buffered in memory (~100 MB); stream to disk if it grows much larger.
-    Bytes data = fetch(it->url, it->size);
-    if (data.size() != it->size)
-        throw Error(it->path + ": size mismatch (" + std::to_string(data.size()) + " != " + std::to_string(it->size) + ")");
-    if (sha256Hex(data) != it->sha256) throw Error(it->path + ": sha256 mismatch");
+    // Streamed to disk; an interrupted download stays as .new and the next attempt resumes it.
+    download(fetch, *it, stg, 0755, progress);
     try {
-        writeFileSync(stg, data, 0755);
         for (const auto& b : backups(dir)) fs::remove(b); // one backup only: the version being replaced
         fs::remove(bak);
         linkOrCopy(target, bak);

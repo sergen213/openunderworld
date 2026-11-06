@@ -44,12 +44,13 @@ All of these are covered by the `OnlyProjectFilesAndOwnedRoots` test (observed).
 ## Client flow (`ou::update::update`, install-root mode)
 
 1. **Disable switch.** If config `updates.enabled` is false, or `OU_DISABLE_UPDATES` is set to anything other than `0`, return `Disabled` without touching the network.
-2. **Fetch.** Download `manifest.json` (≤1 MiB) and `manifest.json.sig` (≤64 bytes) from the configured HTTPS URL. The transport is libcurl:
+2. **Fetch.** Download `manifest.json` (≤1 MiB) and `manifest.json.sig` (≤64 bytes) from the configured HTTPS URL. The transport is libcurl, streaming each body chunk by chunk into a sink (`Fetch(url, offset, maxBytes, sink)`):
    - `CURLOPT_PROTOCOLS_STR`/`REDIR_PROTOCOLS_STR = "https"`, so redirects are https-only too
    - TLS ≥ 1.2 with the system CA store
    - at most 5 redirects
    - a byte cap per transfer
    - low-speed abort
+   - `offset > 0` resumes with an HTTP Range request (`CURLOPT_RESUME_FROM_LARGE`); a server that cannot resume raises `RangeUnsupported`
 3. **Verify, then parse.** Check the signature against the **compiled-in** public key (`crypto_sign_verify_detached`), then validate the JSON.
 4. **Channel and anti-rollback.**
    - The manifest channel must equal the configured channel.
@@ -58,7 +59,8 @@ All of these are covered by the `OnlyProjectFilesAndOwnedRoots` test (observed).
    - `install()` re-checks this under the lock.
 5. **Stage.**
    - Take `flock(install/.lock)` and run recovery.
-   - Download each file with a cap equal to its declared size, check the exact size and SHA-256, and write it into `install/.staging/` with fsync and mode 0755/0644.
+   - Stream each file (`download()`) to `install/.partial/<sha256>`, never holding it in memory: written as it arrives, capped at its declared size, then fsynced, re-read for the SHA-256 and checked for the exact size. A verified file is renamed into `install/.staging/` with mode 0755/0644.
+   - Resume: a transport failure keeps `.partial/<sha256>` (recovery leaves it alone), and the next attempt continues it from its length with a Range request. Content-addressed, a partial file only ever continues the same expected bytes. A size/hash mismatch deletes it (the next attempt starts from zero); a server that ignores Range restarts it from zero once. `.partial` is removed after a successful install.
    - Store the signed manifest and signature as `.staging/.ou-manifest.json[.sig]`.
    - On any failure, `.staging` is deleted and `current` is untouched.
 6. **Journal.** Write `install/.journal` = `{"version": "<new>"}` with fsync, plus a directory fsync. From here on, the staged copy is known complete.
@@ -78,8 +80,7 @@ All of these are covered by the `OnlyProjectFilesAndOwnedRoots` test (observed).
    - Resolves `$APPIMAGE` with `canonical()`, so a symlinked AppImage updates the real file; the link is repointed at the new file (atomically) and stays the path to run.
    - Takes `flock(LOCK_EX|LOCK_NB)` on the AppImage file itself, so no lock file appears next to it.
    - Picks the manifest's single top-level `*.AppImage` entry; if there is none, it errors.
-   - Downloads it with a cap equal to the declared size, then checks the exact size and SHA-256.
-   - Writes `OpenUnderworld-<version>-x86_64.AppImage.new` in the same directory (same filesystem) with fsync and mode 0755. A stale `.new` from an interrupted download is deleted first.
+   - Streams it (`download()`, as above) to `OpenUnderworld-<version>-x86_64.AppImage.new` in the same directory (same filesystem), mode 0755, fsynced, then checks the exact size and SHA-256. An interrupted download stays as `.new`; the next press resumes it with a Range request (a `.new` longer than the release restarts from zero).
    - Deletes older `OpenUnderworld*.AppImage.bak` siblings (only one backup is kept), then hard-links the running file to `<old>.bak`; filesystems without hard links get a copy.
    - `rename(.new, OpenUnderworld-<version>-x86_64.AppImage)`: atomic. Until the next step both names run.
    - Rewrites every `.desktop` in `Options::applicationsDir` (the launcher passes `$XDG_DATA_HOME/applications`) whose `Exec=`/`TryExec=` runs the old path: both lines point at the new file, `X-AppImage-Version=` (if present) becomes the new version, and an entry named after the old file stem (e.g. `openunderworld-0.10.0-x86_64.desktop`, case style kept) is renamed. Written via a temp file + rename. `Icon=` and other entries are left alone.
@@ -87,6 +88,8 @@ All of these are covered by the `OnlyProjectFilesAndOwnedRoots` test (observed).
    - Returns the path to run from now on (`Result::appImage`). The launcher sets `$APPIMAGE` to it; its **Restart** button starts it and quits; the next rollback starts from it.
 
    On a size/hash mismatch nothing is renamed and `.new` is removed. A crash leaves at least one runnable name, and the desktop entry still points at a file until the old name is deleted.
+
+   The launcher's **Download & install** shows the progress (`downloading …: N% (x of y MiB)`, `resuming … at byte N`) and disables Check / Download / Roll back until the operation ends.
 4. `rollbackAppImage` restores `<AppImage>.bak`, or else the single `OpenUnderworld*.AppImage.bak` sibling, under its old name. The current file becomes `<current>.bak`, the desktop entries point back (X-AppImage-Version = the version in the restored `OpenUnderworld-<v>-x86_64.AppImage` name, unchanged for other names), and the restored path is returned. A backup with the current name is exchanged with `renameat2(RENAME_EXCHANGE)`. It is the launcher's "Roll back to previous" in AppImage mode; pressing it again re-applies the newer one.
 
 Headless: `OpenUnderworld.AppImage --check-update` / `--update` print one line (with the new path) and exit (0 = success). Without a display, set `QT_QPA_PLATFORM=offscreen`.
@@ -123,7 +126,7 @@ Every crash point has a test in `InterruptedSwapRecovery` (observed): before any
 
 ## Tests
 
-`ou_update_tests`: 15 updater tests (+ 5 Config) (14 under ASan/UBSan on 2026-10-18 [O]; the AppImage ones rewritten 2026-10-30 [O]).
+`ou_update_tests`: 18 updater tests (+ 5 Config) (14 under ASan/UBSan on 2026-10-18 [O]; the AppImage ones rewritten 2026-10-30 [O]; streaming ones 2026-11-06 [O]).
 
 - No network. A test-only transport maps `https://updates.test/<rel>` to `file://<tmp>/srv/<rel>`, so the `https://` rules stay in force.
 - Coverage: good signature; bad signature (wrong key, truncated signature, no payload fetched); tampered manifest (field edit, bit flip); size too small and too large; hash mismatch; rollback attempt (older, signed, via both `update` and `install`); `min_version`; user rollback; interrupted-swap recovery; disable switch (config and environment, transport never called); unsafe paths, game-data paths, non-https URLs, duplicates, foreign root, game-dir overlap.
@@ -131,9 +134,14 @@ Every crash point has a test in `InterruptedSwapRecovery` (observed): before any
   - `RefusalsLeaveTheAppImageAlone`: up to date and older refused against `runningVersion`; hash mismatch and a manifest without an AppImage leave the file, desktop entry and directory untouched;
   - `UpdateRenamesAndRetargetsDesktopEntry`: new name, executable, `<old>.bak`, stale `.new` and older OpenUnderworld `.bak` removed, unrelated files kept; desktop entry rewritten (Exec with `%U`, TryExec, version) and renamed, entries for other paths or for `.bak` untouched; a second update keeps one backup;
   - `RollbackRestoresOldNameAndDesktopEntry`: rollback from the returned path restores the old name and the exact original desktop entry; again re-applies the newer one;
-  - `CustomNameAndSymlink`: a user-named file is renamed and rolled back to its name; a symlinked `$APPIMAGE` is repointed and stays the returned path.
+  - `CustomNameAndSymlink`: a user-named file is renamed and rolled back to its name; a symlinked `$APPIMAGE` is repointed and stays the returned path;
+  - `StreamedDownloadResumesThenRollsBack`: a 300 000-byte AppImage in 4 KiB chunks; the connection drops after 102 400 bytes (the `.new` keeps them, the old AppImage and desktop entry are untouched); the next update requests offset 102 400, only the remaining bytes cross the transport, the progress reports "resuming … at byte 102400" and 100%; then rollback restores the old name and entry;
+  - `BadPartialAndServerWithoutRanges`: a `.new` that is not a prefix of the release is resumed, fails the hash and is deleted; a dropped download against a server refusing Range restarts from byte 0 once and installs.
+- `InstallRootResumesPartialDownload`: install-root mode; a dropped download leaves `.partial/<sha256>` (no `.staging`, nothing installed, `recover()` keeps it); the next update resumes it and removes `.partial`.
 - `HttpsTransportRefusesOtherSchemes` checks that the libcurl transport rejects `http://`, `file://` and `ftp://` before connecting.
+- `launcher_gui_tests` (docs/LAUNCHER.md) presses the GUI buttons against a local signed release: check, a dropped then resumed download, install, Restart shown, rollback, disable; AppImage and install-root mode.
 - The live HTTPS path against GitHub releases: see the v0.1.0 verification below.
+- [O] 2026-11-06, live resume against the v0.30.0 GitHub release: the verified manifest's 98 683 384-byte AppImage was streamed through `httpsFetch`, dropped after 5 MiB, then resumed with `Range` at byte 5 240 817 (through GitHub's `releases/download` redirect); size and SHA-256 verified (scratch program `openunderworld-work/resume-live/`).
 
 ### Live verification against the v0.1.0 GitHub release (2026-10-18)
 
@@ -180,5 +188,3 @@ Key hygiene and rotation:
 ## Not done / open
 
 - No per-channel persistent highwater against an attacker who downgrades `current` locally. Anyone who can write the install root can already replace the binaries.
-- Downloads are buffered in memory (`ponytail` limit: an ~86 MB AppImage is fine; stream to disk if it grows much larger).
-- The AppImage update is not resumable; an interrupted download restarts.

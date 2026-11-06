@@ -312,6 +312,13 @@ if(Qt6_FOUND)
   if(OU_BUILD_TESTS)
     add_test(NAME launcher_self_test COMMAND ou-launcher --self-test --config ${CMAKE_CURRENT_BINARY_DIR}/launcher-test-config.json)
     set_tests_properties(launcher_self_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;OU_DISABLE_UPDATES=1")
+    # Every launcher page driven through its widgets, offscreen (tests/test_launcher_gui.cpp; real scan with OU_GAME_DIR).
+    add_executable(launcher_gui_tests tests/test_launcher_gui.cpp)
+    set_target_properties(launcher_gui_tests PROPERTIES AUTOMOC ON)
+    target_compile_definitions(launcher_gui_tests PRIVATE OU_VERSION="${PROJECT_VERSION}")
+    target_link_libraries(launcher_gui_tests PRIVATE ou_config ou_input ou_update ou_importer ou_locale SDL3::SDL3
+                          Qt6::Widgets Qt6::Concurrent PkgConfig::SODIUM GTest::gtest)
+    gtest_discover_tests(launcher_gui_tests DISCOVERY_TIMEOUT 30 PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
   endif()
 else()
   message(STATUS "Qt6 Widgets not found: ou-launcher not built")

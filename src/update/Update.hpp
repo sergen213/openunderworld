@@ -11,6 +11,7 @@
 //   current/                  active version (contains .ou-manifest.json + .ou-manifest.json.sig)
 //   previous/                 backup of the version before the last swap (rollback target)
 //   .staging/                 fully verified download of the next version
+//   .partial/<sha256>         downloads in progress (resumed by the next attempt; removed after a successful install)
 //   .journal                  present only while a swap is in progress: {"version": "<target>"}
 #pragma once
 
@@ -65,9 +66,21 @@ Manifest verifyAndParse(std::span<const uint8_t> manifest, std::span<const uint8
 int compareVersions(std::string_view a, std::string_view b);
 std::string sha256Hex(std::span<const uint8_t> data);
 
-// Transport: returns the body or throws. Must abort once more than maxBytes arrive.
-using Fetch = std::function<Bytes(const std::string& url, uint64_t maxBytes)>;
+// Transport: streams the resource's bytes from `offset` on into `sink`, chunk by chunk (an HTTP Range request
+// when offset > 0), or throws. Must abort once offset + delivered bytes exceed maxBytes; an exception thrown
+// by the sink aborts the transfer too. Throws RangeUnsupported when the server cannot resume at offset > 0.
+using Sink = std::function<void(std::span<const uint8_t>)>;
+using Fetch = std::function<void(const std::string& url, uint64_t offset, uint64_t maxBytes, const Sink& sink)>;
+struct RangeUnsupported : Error {
+    using Error::Error;
+};
 Fetch httpsFetch(); // libcurl, https only (redirects too), TLS >= 1.2
+Bytes fetchAll(const Fetch& fetch, const std::string& url, uint64_t maxBytes); // small bodies (manifest, signature)
+// Streams `f` into the file `part` (created with `mode`), resuming after the bytes a previous, interrupted
+// attempt left there. On return `part` holds exactly f.size bytes hashing to f.sha256, fsynced. A size or hash
+// mismatch deletes `part` and throws; a transport failure keeps it for the next attempt.
+void download(const Fetch& fetch, const FileEntry& f, const fs::path& part, unsigned mode,
+              const std::function<void(const std::string&)>& progress = {});
 
 struct Options {
     fs::path root;
@@ -108,9 +121,9 @@ std::string recover(const fs::path& root);   // repair an interrupted swap; "" i
 std::optional<std::string> installedVersion(const fs::path& root);
 std::optional<std::string> versionOf(const fs::path& versionDir);
 
-// AppImage self-update. Downloads the manifest's single top-level *.AppImage entry to
-// <dir>/OpenUnderworld-<version>-x86_64.AppImage.new (same directory: atomic rename), checks size +
-// SHA-256, keeps the running file as <old>.bak (older OpenUnderworld*.AppImage.bak siblings are
+// AppImage self-update. Streams the manifest's single top-level *.AppImage entry to
+// <dir>/OpenUnderworld-<version>-x86_64.AppImage.new (same directory: atomic rename; an interrupted download
+// stays and the next attempt resumes it), checks size + SHA-256, keeps the running file as <old>.bak (older OpenUnderworld*.AppImage.bak siblings are
 // deleted), renames .new into place, rewrites Exec/TryExec/X-AppImage-Version of every .desktop in
 // applicationsDir that launched the old path (renaming the entry when its name holds the old file
 // stem), then deletes the old-named file. A symlinked appImage is repointed and kept. Returns the

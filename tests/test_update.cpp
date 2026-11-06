@@ -45,6 +45,13 @@ protected:
     fs::path tmp, srv, root;
     Keys keys, otherKeys;
     int fetches = 0;
+    // Transport knobs: deliver in chunks of `chunk` bytes; drop the connection after `cutAfter` bytes (once);
+    // refuse Range requests. `offsets` records each request's start byte.
+    size_t chunk = 7;
+    std::optional<uint64_t> cutAfter;
+    bool noRanges = false;
+    std::vector<uint64_t> offsets;
+    std::map<std::string, uint64_t> delivered; // bytes per URL
 
     void SetUp() override {
         tmp = fs::temp_directory_path() / ("ou_update_" + std::to_string(::getpid()) + "_" +
@@ -58,15 +65,25 @@ protected:
     void TearDown() override { fs::remove_all(tmp); }
 
     Fetch fileFetch() {
-        return [this](const std::string& url, uint64_t maxBytes) -> Bytes {
+        return [this](const std::string& url, uint64_t offset, uint64_t maxBytes, const Sink& sink) {
             ++fetches;
+            offsets.push_back(offset);
             if (!url.starts_with(kBase)) throw Error("test transport: unexpected url " + url);
-            std::string fileUrl = "file://" + srv.string() + "/" + url.substr(kBase.size());
-            fs::path p = fileUrl.substr(7);
+            fs::path p = srv / url.substr(kBase.size());
             if (!fs::exists(p)) throw Error("404 " + url);
+            if (offset && noRanges) throw RangeUnsupported("416 " + url);
             Bytes b = readAll(p);
             if (b.size() > maxBytes) throw Error("transfer exceeds " + std::to_string(maxBytes) + " bytes");
-            return b;
+            if (offset > b.size()) throw Error("416 " + url);
+            for (size_t at = offset; at < b.size(); at += chunk) {
+                if (cutAfter && at - offset >= *cutAfter) {
+                    cutAfter.reset();
+                    throw Error("connection reset");
+                }
+                size_t n = std::min(chunk, b.size() - at);
+                sink({b.data() + at, n});
+                delivered[url.substr(kBase.size())] += n;
+            }
         };
     }
 
@@ -314,6 +331,92 @@ TEST_F(AppImageUpdateTest, CustomNameAndSymlink) {
     EXPECT_EQ(text(tmp / "link.AppImage"), "appimage 0.1.0");
 }
 
+// An AppImage-sized payload streamed in chunks; the connection drops mid-way, the next update resumes it,
+// then the user rolls back.
+TEST_F(AppImageUpdateTest, StreamedDownloadResumesThenRollsBack) {
+    std::string big(300000, '\0');
+    for (size_t i = 0; i < big.size(); ++i) big[i] = char('a' + (i * 7919) % 26);
+    const fs::path old = named("0.1.0"), next = named("0.2.0"), part = next.string() + ".new";
+    auto opts = [&] {
+        Options o = publish("0.2.0", release("0.2.0", {{next.filename().string(), big}}));
+        o.appImage = old;
+        o.runningVersion = "0.1.0";
+        o.applicationsDir = apps;
+        return o;
+    };
+    chunk = 4096;
+    cutAfter = 100000;
+    EXPECT_THROW(update(opts()), Error);
+    EXPECT_EQ(fs::file_size(part), 102400u); // 25 chunks arrived before the drop
+    EXPECT_EQ(text(old), "appimage 0.1.0");
+    EXPECT_EQ(text(desktop), entry(old, "0.1.0"));
+
+    std::vector<std::string> said;
+    Options o = opts();
+    o.progress = [&](const std::string& s) { said.push_back(s); };
+    delivered.clear();
+    Result r = update(o);
+    EXPECT_EQ(r.status, Status::Installed);
+    EXPECT_EQ(offsets.back(), 102400u);
+    EXPECT_EQ(delivered["0.2.0/" + next.filename().string()], big.size() - 102400); // only the rest crossed the wire
+    EXPECT_NE(std::find(said.begin(), said.end(), "resuming " + next.filename().string() + " at byte 102400"), said.end());
+    EXPECT_NE(std::find(said.begin(), said.end(), "downloading " + next.filename().string() + ": 100% (0 of 0 MiB)"), said.end());
+    EXPECT_EQ(text(next), big);
+    EXPECT_FALSE(fs::exists(part));
+    EXPECT_NE(fs::status(next).permissions() & fs::perms::owner_exec, fs::perms::none);
+
+    EXPECT_EQ(rollbackAppImage(next, apps), old);
+    EXPECT_EQ(text(old), "appimage 0.1.0");
+    EXPECT_EQ(text(next.string() + ".bak"), big);
+    EXPECT_EQ(text(desktop), entry(old, "0.1.0"));
+}
+
+TEST_F(AppImageUpdateTest, BadPartialAndServerWithoutRanges) {
+    std::string big(50000, 'z');
+    const fs::path old = named("0.1.0"), next = named("0.2.0"), part = next.string() + ".new";
+    auto opts = [&] {
+        Options o = publish("0.2.0", release("0.2.0", {{next.filename().string(), big}}));
+        o.appImage = old;
+        o.runningVersion = "0.1.0";
+        return o;
+    };
+    // A partial file that is not a prefix of the release: resumed, then the hash check deletes it ...
+    writeAll(part, bytes(std::string(5000, 'x')));
+    EXPECT_THROW(update(opts()), Error);
+    EXPECT_FALSE(fs::exists(part));
+    EXPECT_EQ(text(old), "appimage 0.1.0");
+    // ... and a server that ignores Range: the dropped download restarts from byte 0 once.
+    chunk = 1000;
+    cutAfter = 20000;
+    EXPECT_THROW(update(opts()), Error);
+    EXPECT_EQ(fs::file_size(part), 20000u);
+    noRanges = true;
+    offsets.clear();
+    EXPECT_EQ(update(opts()).status, Status::Installed);
+    EXPECT_EQ(offsets, (std::vector<uint64_t>{0, 0, 20000, 0})); // manifest, signature, refused resume, whole file
+    EXPECT_EQ(text(next), big);
+}
+
+TEST_F(UpdateTest, InstallRootResumesPartialDownload) {
+    std::string big(80000, 'q');
+    nlohmann::json m = release("0.2.0", {{"bin/ou-game", big}, {"share/readme.txt", "hi"}});
+    chunk = 1024;
+    cutAfter = 30000;
+    EXPECT_THROW(update(publish("0.2.0", m)), Error);
+    EXPECT_FALSE(fs::exists(root / ".staging"));
+    EXPECT_FALSE(installedVersion(root));
+    const fs::path part = root / ".partial" / sha256Hex(bytes(big));
+    EXPECT_EQ(fs::file_size(part), 30720u);
+    EXPECT_EQ(recover(root), ""); // a partial download is not an interrupted swap
+    EXPECT_TRUE(fs::exists(part));
+    delivered.clear();
+    EXPECT_EQ(update(publish("0.2.0", m)).status, Status::Installed);
+    EXPECT_EQ(delivered["0.2.0/bin/ou-game"], big.size() - 30720);
+    EXPECT_EQ(text(root / "current/bin/ou-game"), big);
+    EXPECT_NE(fs::status(root / "current/bin/ou-game").permissions() & fs::perms::owner_exec, fs::perms::none);
+    EXPECT_FALSE(fs::exists(root / ".partial"));
+}
+
 TEST_F(UpdateTest, InterruptedSwapRecovery) {
     // Crash after staging + journal, before anything moved: roll forward.
     fakeRoot();
@@ -417,9 +520,9 @@ TEST(UpdateCore, VersionsAndKeys) {
 
 TEST(UpdateCore, HttpsTransportRefusesOtherSchemes) {
     Fetch f = httpsFetch(); // rejected before any connection attempt
-    EXPECT_THROW(f("http://example.invalid/manifest.json", 10), Error);
-    EXPECT_THROW(f("file:///etc/passwd", 10), Error);
-    EXPECT_THROW(f("ftp://example.invalid/x", 10), Error);
+    EXPECT_THROW(fetchAll(f, "http://example.invalid/manifest.json", 10), Error);
+    EXPECT_THROW(fetchAll(f, "file:///etc/passwd", 10), Error);
+    EXPECT_THROW(f("ftp://example.invalid/x", 5, 10, [](std::span<const uint8_t>) {}), Error);
 }
 
 TEST(Config, RoundTripAndDefaults) {

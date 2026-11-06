@@ -84,12 +84,14 @@ struct Paths {
     fs::path logs = ou::config::stateHome() / "openunderworld" / "logs";
     fs::path installRoot = ou::config::dataHome() / "openunderworld" / "install"; // updater-managed copy
     fs::path appImage = [] { const char* a = std::getenv("APPIMAGE"); return fs::path(a ? a : ""); }(); // set by the AppImage runtime
+    // Update transport and trust anchor (tests substitute a local server and their own key).
+    ou::update::Fetch fetch = ou::update::httpsFetch();
+    std::optional<ou::update::PublicKey> key = ou::update::releasePublicKey();
 };
 
 // Update options from config; AppImage mode replaces $APPIMAGE itself instead of the install root.
 ou::update::Options updateOptions(const Paths& paths, const ou::config::Config& c) {
-    auto key = ou::update::releasePublicKey();
-    if (!key) throw std::runtime_error("this build has no release key compiled in; updates are unavailable");
+    if (!paths.key) throw std::runtime_error("this build has no release key compiled in; updates are unavailable");
     ou::update::Options o;
     o.root = paths.installRoot;
     o.appImage = paths.appImage;
@@ -97,8 +99,8 @@ ou::update::Options updateOptions(const Paths& paths, const ou::config::Config& 
     o.runningVersion = OU_VERSION;
     o.manifestUrl = c.updateManifestUrl;
     o.channel = c.updateChannel;
-    o.key = *key;
-    o.fetch = ou::update::httpsFetch();
+    o.key = *paths.key;
+    o.fetch = paths.fetch;
     o.enabled = c.updatesEnabled;
     if (!c.gameDir.empty()) o.forbiddenRoots = {c.gameDir};
     return o;
@@ -250,6 +252,7 @@ public:
         play->setToolTip("Start ou-game at the main menu (New Game starts chapter 0)");
         play->setDefault(true);
         status_ = new QLabel;
+        status_->setObjectName("status"); // object names: accessibility tools and the GUI test find widgets by them
         status_->setWordWrap(true);
         connect(save, &QPushButton::clicked, this, [this] { saveConfig(); });
         connect(viewer, &QPushButton::clicked, this, [this] { launch("ou-viewer"); });
@@ -288,6 +291,7 @@ private:
     QCheckBox *hashFiles_, *fullscreen_, *vsync_, *updatesEnabled_;
     QPushButton* scanBtn_;
     QPushButton* restartBtn_ = nullptr;
+    std::vector<QPushButton*> updateButtons_; // check / install / rollback: disabled while one runs
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
     QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_;
@@ -319,6 +323,7 @@ private:
         scanBtn_ = new QPushButton("Scan / validate");
         connect(scanBtn_, &QPushButton::clicked, this, [this] { scan(); });
         scanOut_ = new QPlainTextEdit;
+        scanOut_->setObjectName("scanOut");
         scanOut_->setReadOnly(true);
         scanOut_->setPlaceholderText("Scan the install to detect the build and validate the archives. Read-only: nothing in the game directory is modified.");
         auto* row = new QHBoxLayout;
@@ -542,6 +547,7 @@ private:
         // Bindings: one row per action, inputs comma-separated (editable; names in docs/GAMEPLAY.md "Controls").
         const auto& actions = ou::config::bindableActions();
         bindings_ = new QTableWidget(int(actions.size()), 1);
+        bindings_->setObjectName("bindings");
         bindings_->setHorizontalHeaderLabels({"Inputs (comma-separated)"});
         bindings_->horizontalHeader()->setStretchLastSection(true);
         bindings_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -641,6 +647,7 @@ private:
     QWidget* savesPage() {
         auto* w = new QWidget;
         backups_ = new QListWidget;
+        backups_->setObjectName("backups");
         auto* backup = new QPushButton("Back up now");
         auto* restore = new QPushButton("Restore selected…");
         auto* open = new QPushButton("Open save folder");
@@ -675,28 +682,37 @@ private:
         if (names.empty()) backups_->addItem("(no backups yet)");
     }
 
-    void backupSaves(const QString& suffix = {}) {
+    // False only when saves exist but could not be backed up.
+    bool backupSaves(const QString& suffix = {}) {
         std::error_code ec;
-        if (!fs::exists(paths_.saves) || fs::is_empty(paths_.saves, ec)) { status_->setText("Nothing to back up: save directory is empty."); return; }
-        fs::path dst = paths_.backups / s(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + suffix);
+        if (!fs::exists(paths_.saves) || fs::is_empty(paths_.saves, ec)) { status_->setText("Nothing to back up: save directory is empty."); return true; }
+        const QString name = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + suffix;
+        fs::path dst = paths_.backups / s(name);
+        for (int n = 2; fs::exists(dst); ++n) dst = paths_.backups / s(name + QString("-%1").arg(n)); // same second: never merge into a backup
+        bool ok = true;
         try {
             copyTree(paths_.saves, dst);
             status_->setText("Saves backed up to " + q(dst));
-        } catch (const std::exception& e) { status_->setText("Backup failed: " + q(e.what())); }
+        } catch (const std::exception& e) {
+            status_->setText("Backup failed: " + q(e.what()));
+            ok = false;
+        }
         listBackups();
+        return ok;
     }
 
     void restoreSaves() {
         auto* item = backups_->currentItem();
-        fs::path src = item ? paths_.backups / s(item->text()) : fs::path();
+        const QString name = item ? item->text() : QString(); // listBackups() below deletes the item
+        fs::path src = paths_.backups / s(name);
         if (!item || !fs::is_directory(src)) { status_->setText("Select a backup first."); return; }
-        if (QMessageBox::question(this, "Restore saves", "Replace the current saves with backup " + item->text() +
+        if (QMessageBox::question(this, "Restore saves", "Replace the current saves with backup " + name +
                                   "?\nThe current saves are backed up first.") != QMessageBox::Yes) return;
+        if (!backupSaves("-before-restore")) return; // never delete saves that are not backed up
         try {
-            backupSaves("-before-restore");
             fs::remove_all(paths_.saves);
             copyTree(src, paths_.saves);
-            status_->setText("Restored saves from " + item->text());
+            status_->setText("Restored saves from " + name);
         } catch (const std::exception& e) { status_->setText("Restore failed: " + q(e.what())); }
         listBackups();
     }
@@ -705,17 +721,21 @@ private:
     QWidget* diagnosticsPage() {
         auto* w = new QWidget;
         diag_ = new QPlainTextEdit;
+        diag_->setObjectName("diagnostics");
         diag_->setReadOnly(true);
         auto* refresh = new QPushButton("Refresh");
         auto* exportBtn = new QPushButton("Export report…");
         auto* logs = new QPushButton("Open logs folder");
         connect(refresh, &QPushButton::clicked, this, [this] { diag_->setPlainText(report()); });
         connect(exportBtn, &QPushButton::clicked, this, [this] {
-            QString f = QFileDialog::getSaveFileName(this, "Export diagnostic report",
-                                                     "openunderworld-report-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".txt");
+            // Default in $HOME, not the launcher's working directory (an AppImage or desktop entry may start anywhere).
+            QString f = QFileDialog::getSaveFileName(this, "Export diagnostic report", QDir::homePath() + "/openunderworld-report-" +
+                                                     QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".txt");
             if (f.isEmpty()) return;
-            std::ofstream(s(f)) << s(report());
-            status_->setText("Report written to " + f);
+            std::ofstream out(s(f));
+            out << s(report());
+            out.close();
+            status_->setText(out ? "Report written to " + f : "Could not write " + f);
         });
         connect(logs, &QPushButton::clicked, this, [this] {
             fs::create_directories(paths_.logs);
@@ -743,7 +763,7 @@ private:
         r << "Game: " + q(toolPath("ou-game"));
         r << "Viewer: " + q(toolPath("ou-viewer"));
         r << "Updater: installed " + q(ou::update::installedVersion(paths_.installRoot).value_or("none")) + " at " + q(paths_.installRoot) +
-                 (ou::update::releasePublicKey() ? ", release key compiled in" : ", NO release key compiled in");
+                 (paths_.key ? ", release key compiled in" : ", NO release key compiled in");
         r << "\n--- config (" + q(paths_.config) + ") ---";
         std::ifstream cf(paths_.config);
         r << (cf ? QString::fromStdString(std::string(std::istreambuf_iterator<char>(cf), {})) : QString("(not saved yet)"));
@@ -769,6 +789,7 @@ private:
         auto* w = new QWidget;
         versionLabel_ = new QLabel;
         changelog_ = new QPlainTextEdit;
+        changelog_->setObjectName("changelog");
         changelog_->setReadOnly(true);
         updatesEnabled_ = new QCheckBox("Enable updates (OU_DISABLE_UPDATES=1 also disables)");
         updatesEnabled_->setChecked(cfg_.updatesEnabled);
@@ -779,12 +800,14 @@ private:
         manifestUrl_ = new QLineEdit(q(cfg_.updateManifestUrl));
         manifestUrl_->setPlaceholderText("https://…/manifest.json (signature: manifest.json.sig)");
         updateStatus_ = new QLabel;
+        updateStatus_->setObjectName("updateStatus");
         updateStatus_->setWordWrap(true);
         auto* checkBtn = new QPushButton("Check for updates");
         auto* installBtn = new QPushButton("Download && install");
         auto* rollbackBtn = new QPushButton("Roll back to previous");
         connect(checkBtn, &QPushButton::clicked, this, [this] { runUpdate(false); });
         connect(installBtn, &QPushButton::clicked, this, [this] { runUpdate(true); });
+        updateButtons_ = {checkBtn, installBtn, rollbackBtn};
         restartBtn_ = new QPushButton("Restart");
         restartBtn_->hide();
         connect(restartBtn_, &QPushButton::clicked, this, [this] {
@@ -837,12 +860,14 @@ private:
                                                    : QString("none");
         versionLabel_->setText(QString("<b>OpenUnderworld %1</b> (this launcher)<br>Updater-managed: %2<br>%3")
                                    .arg(OU_VERSION).arg(managed)
-                                   .arg(ou::update::releasePublicKey() ? "Release signing key compiled in." : "No release key compiled in: updates unavailable."));
+                                   .arg(paths_.key ? "Release signing key compiled in." : "No release key compiled in: updates unavailable."));
         std::ifstream mf(paths_.installRoot / "current" / ou::update::kManifestName);
         try {
             if (mf) changelog_->setPlainText(q(json::parse(mf).value("changelog", "")));
         } catch (const std::exception&) {}
-        if (changelog_->toPlainText().isEmpty()) changelog_->setPlaceholderText("No changelog: no updater-managed version installed yet.");
+        if (changelog_->toPlainText().isEmpty())
+            changelog_->setPlaceholderText(paths_.appImage.empty() ? "No changelog: no updater-managed version installed yet."
+                                                                   : "Check for updates to see the latest release's changelog.");
     }
 
     void runUpdate(bool install) {
@@ -850,10 +875,13 @@ private:
         ou::update::Options o;
         try { o = updateOptions(paths_, cfg_); } catch (const std::exception& e) { updateStatus_->setText(q(e.what())); return; }
         updateStatus_->setText(install ? "Downloading…" : "Checking…");
+        for (auto* b : updateButtons_) b->setEnabled(false); // one update operation at a time
+        o.progress = [this](const std::string& m) { QMetaObject::invokeMethod(updateStatus_, [this, t = q(m)] { updateStatus_->setText(t); }); };
         auto* watcher = new QFutureWatcher<QString>(this);
         connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher] {
             updateStatus_->setText(watcher->result());
             watcher->deleteLater();
+            for (auto* b : updateButtons_) b->setEnabled(true);
             refreshVersion();
         });
         watcher->setFuture(QtConcurrent::run([o, install, this]() -> QString {
@@ -866,7 +894,10 @@ private:
                 if (!r.appImage.empty())
                     QMetaObject::invokeMethod(this, [this, p = r.appImage] { followAppImage(p); }, Qt::BlockingQueuedConnection);
                 return describe(r);
-            } catch (const std::exception& e) { return QString("Update failed: ") + e.what(); }
+            } catch (const std::exception& e) {
+                // A dropped download is kept and resumed by the next press.
+                return QString("Update failed: ") + e.what();
+            }
         }));
     }
 
@@ -1016,6 +1047,7 @@ private:
 
 } // namespace
 
+#ifndef OU_LAUNCHER_NO_MAIN // tests/test_launcher_gui.cpp includes this file and drives Launcher itself
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("ou-launcher");
@@ -1072,3 +1104,4 @@ int main(int argc, char** argv) {
     SDL_Quit();
     return rc;
 }
+#endif
