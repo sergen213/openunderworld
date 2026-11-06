@@ -1,0 +1,21 @@
+# ou-game --replay-input (docs/GAMEPLAY.md "Recorded input"): l4_ballcourt, --spawn -20066,14150,3540,0.
+# ballcourt_door_lever.txt on gamepads with a hotplug: pad 1 opens the pause menu (Start), moves the selection (d-pad
+# down) and closes it (B), then is unplugged; pad 2 is plugged in and plays: Y pulls the lever, the left stick runs east
+# and turns into the passage, the right stick looks around once she stands. The world runs 4 ticks later.
+0 padadd 1
+2 button 1 6 1
+2 button 1 6 0
+3 button 1 12 1
+3 button 1 12 0
+6 button 1 1 1
+6 button 1 1 0
+8 padremove 1
+9 padadd 2
+22 button 2 3 1
+28 button 2 3 0
+40 axis 2 1 -32768
+109 axis 2 1 0
+112 axis 2 0 32767
+304 axis 2 0 0
+330 axis 2 2 20000
+340 axis 2 2 0

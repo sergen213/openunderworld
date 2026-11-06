@@ -494,23 +494,34 @@ TEST(Game, ControlBindings) {
             EXPECT_EQ(platform::parseInput(platform::inputName(*r)), r) << n;
         }
     EXPECT_EQ(platform::parseInput("left shift"), platform::parseInput("Left Shift")); // case-insensitive
-    EXPECT_FALSE(platform::parseInput("Pad leftx")); // sticks are not bindable
+    EXPECT_FALSE(platform::parseInput("Pad leftx")); // sticks bind through move_stick / look_stick
     EXPECT_FALSE(platform::parseInput("Mouse Wheel"));
 
-    bool keys[512] = {};
-    const auto press = [&](const char* name, bool down) { keys[platform::parseInput(name)->code] = down; };
+    platform::DeviceState d;
+    const auto press = [&](const char* name, bool down) {
+        SDL_Event e{};
+        e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP, e.key.down = down;
+        e.key.scancode = SDL_Scancode(platform::parseInput(name)->code);
+        d.apply(e);
+    };
     const game::Controls standard;
     press("Space", true);
-    EXPECT_TRUE(game::readDevices(standard, keys, nullptr).jump);
+    EXPECT_TRUE(game::readDevices(standard, d).jump);
     press("Space", false);
-    EXPECT_TRUE(game::readDevices(standard, keys, nullptr, 1u << 2).aim); // SDL_BUTTON_RMASK
+    SDL_Event click{};
+    click.type = SDL_EVENT_MOUSE_BUTTON_DOWN, click.button.button = SDL_BUTTON_RIGHT, click.button.down = true;
+    d.apply(click);
+    EXPECT_TRUE(game::readDevices(standard, d).aim);
+    click.type = SDL_EVENT_MOUSE_BUTTON_UP, click.button.down = false;
+    d.apply(click);
+    EXPECT_FALSE(game::readDevices(standard, d).aim);
     press("W", true);
-    EXPECT_EQ(game::readDevices(standard, keys, nullptr).move.y, 1);
+    EXPECT_EQ(game::readDevices(standard, d).move.y, 1);
     press("Down", true); // forward and back cancel
-    EXPECT_EQ(game::readDevices(standard, keys, nullptr).move.y, 0);
+    EXPECT_EQ(game::readDevices(standard, d).move.y, 0);
     press("W", false), press("Down", false);
     press("F5", true); // each action maps to its own Actions field (enum order == bindableActions())
-    auto a = game::readDevices(standard, keys, nullptr);
+    auto a = game::readDevices(standard, d);
     EXPECT_TRUE(a.save);
     EXPECT_FALSE(a.load || a.grapple || a.heal || a.jump);
     press("F5", false);
@@ -521,7 +532,7 @@ TEST(Game, ControlBindings) {
                                      std::pair{"R", &game::Actions::weapon}, std::pair{"G", &game::Actions::aim},
                                      std::pair{"H", &game::Actions::fire}, std::pair{"Left Ctrl", &game::Actions::drop}}) {
         press(key, true);
-        a = game::readDevices(standard, keys, nullptr);
+        a = game::readDevices(standard, d);
         EXPECT_TRUE(a.*field) << key;
         EXPECT_FALSE(key != std::string_view("Left Shift") && a.sprint) << key;
         EXPECT_FALSE(key != std::string_view("Left Alt") && a.walk) << key;
@@ -533,11 +544,165 @@ TEST(Game, ControlBindings) {
     custom.bindings["grapple"] = {"Space"};
     const game::Controls rebound(custom);
     press("Space", true);
-    a = game::readDevices(rebound, keys, nullptr);
+    a = game::readDevices(rebound, d);
     EXPECT_FALSE(a.jump);
     EXPECT_TRUE(a.grapple);
     custom.bindings["heal"] = {"Hyperspace"};
     EXPECT_THROW(game::Controls{custom}, std::runtime_error);
+}
+
+namespace {
+SDL_Event padEvent(Uint32 type, SDL_JoystickID pad, int what = 0, int value = 0) {
+    SDL_Event e{};
+    e.type = type;
+    if (type == SDL_EVENT_GAMEPAD_AXIS_MOTION) e.gaxis.which = pad, e.gaxis.axis = uint8_t(what), e.gaxis.value = int16_t(value);
+    else if (type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || type == SDL_EVENT_GAMEPAD_BUTTON_UP)
+        e.gbutton.which = pad, e.gbutton.button = uint8_t(what), e.gbutton.down = type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    else e.gdevice.which = pad;
+    return e;
+}
+} // namespace
+
+// Sticks (controls.move_stick / look_stick, invert_x / invert_y) and the menu keys (menu_*) rebind; the in-game BUTTON
+// CONFIGURATION capture (rebind / unmap) replaces one device's inputs; Steam Deck / Elite back paddles and the positional
+// face buttons are bindable names.
+TEST(Game, SticksAndMenuNavigationRebind) {
+    platform::DeviceState d;
+    d.apply(padEvent(SDL_EVENT_GAMEPAD_ADDED, 7));
+    d.apply(padEvent(SDL_EVENT_GAMEPAD_AXIS_MOTION, 7, SDL_GAMEPAD_AXIS_LEFTY, -32768)); // left stick fully up
+    d.apply(padEvent(SDL_EVENT_GAMEPAD_AXIS_MOTION, 7, SDL_GAMEPAD_AXIS_RIGHTX, 32767)); // right stick fully right
+    const game::Controls standard;
+    auto a = game::readDevices(standard, d);
+    EXPECT_NEAR(a.move.y, 1, 1e-4f);
+    EXPECT_NEAR(a.look.x, -2.5f, 1e-3f); // turns the camera right
+    config::InputConfig southpaw;
+    southpaw.moveStick = "right", southpaw.lookStick = "left", southpaw.invertX = true;
+    a = game::readDevices(game::Controls(southpaw), d);
+    EXPECT_NEAR(a.move.x, 1, 1e-4f);
+    EXPECT_NEAR(a.move.y, 0, 1e-4f);
+    EXPECT_NEAR(a.look.y, 2.5f, 1e-3f); // left stick up looks up
+    EXPECT_NEAR(a.look.x, 0, 1e-4f);
+    southpaw.moveStick = "none";
+    EXPECT_EQ(game::readDevices(game::Controls(southpaw), d).move, glm::vec2(0));
+    config::InputConfig inverted;
+    inverted.invertX = true;
+    EXPECT_NEAR(game::readDevices(game::Controls(inverted), d).look.x, 2.5f, 1e-3f);
+
+    // Menus: the defaults are ou-game's former fixed keys; a rebound menu key navigates, the old one no longer does.
+    using K = platform::InputRef::Kind;
+    const auto key = [](const char* n) { return *platform::parseInput(n); };
+    EXPECT_EQ(standard.menuNav(key("Up")), 0);
+    EXPECT_EQ(standard.menuNav(key("S")), 1);
+    EXPECT_EQ(standard.menuNav(key("Return")), 4);
+    EXPECT_EQ(standard.menuNav(key("Escape")), 5);
+    EXPECT_EQ(standard.menuNav(key("Backspace")), 6);
+    EXPECT_EQ(standard.menuNav(key("E")), 7);
+    EXPECT_EQ(standard.menuNav({K::PadButton, SDL_GAMEPAD_BUTTON_SOUTH}), 4);
+    EXPECT_EQ(standard.menuNav({K::PadButton, SDL_GAMEPAD_BUTTON_EAST}), 5);
+    EXPECT_EQ(standard.menuNav({K::PadButton, SDL_GAMEPAD_BUTTON_START}), 5);
+    EXPECT_TRUE(standard.bound(game::Controls::Pause, key("Escape")));
+    EXPECT_EQ(standard.menuNav(key("K")), -1);
+    config::InputConfig menus;
+    game::rebind(menus, "menu_accept", key("K"));
+    EXPECT_EQ(menus.bindings["menu_accept"], (std::vector<std::string>{"Pad a", "K"})); // the pad's stays
+    const game::Controls reboundMenus(menus);
+    EXPECT_EQ(reboundMenus.menuNav(key("K")), 4);
+    EXPECT_EQ(reboundMenus.menuNav(key("Return")), -1);
+    game::unmap(menus, "menu_accept", true);
+    EXPECT_EQ(menus.bindings["menu_accept"], std::vector<std::string>{"K"});
+    game::rebind(menus, "fire", {K::PadButton, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1});
+    EXPECT_EQ(menus.bindings["fire"].back(), platform::inputName({K::PadButton, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1}));
+    EXPECT_EQ(platform::parseInput(menus.bindings["fire"].back())->code, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1);
+    EXPECT_EQ(menus.bindings["fire"].size(), 3u); // keyboard + mouse kept
+    // Steam Deck back buttons (L4 / R4 / L5 / R5 = SDL paddles) and the misc button are bindable; a / b are positional.
+    for (const char* n : {"Pad paddle1", "Pad paddle2", "Pad paddle3", "Pad paddle4", "Pad misc1"}) EXPECT_TRUE(platform::parseInput(n)) << n;
+    EXPECT_EQ(platform::parseInput("Pad a")->code, SDL_GAMEPAD_BUTTON_SOUTH);
+    EXPECT_EQ(platform::parseInput("Pad b")->code, SDL_GAMEPAD_BUTTON_EAST);
+    // Every in-game row names a bindable action; every bindable action has a row.
+    EXPECT_EQ(game::kControlRows.size(), config::bindableActions().size());
+    for (const auto& r : game::kControlRows) EXPECT_TRUE(std::ranges::count(config::bindableActions(), std::string(r.action)) == 1) << r.action;
+}
+
+// Recorded device sessions (--record-input / --replay-input): every event round-trips through its line, and replaying the
+// lines through DeviceState gives readDevices the same actions per tick as the live events did. Gamepad hotplug: the
+// first pad added is used, others are ignored; once it is removed the next one to press takes over.
+TEST(Game, ReplayedDeviceSessions) {
+    struct Timed { uint64_t tick; SDL_Event e; };
+    const auto key = [](SDL_Scancode s, bool down) {
+        SDL_Event e{};
+        e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP, e.key.scancode = s, e.key.down = down;
+        return e;
+    };
+    SDL_Event motion{}, button{};
+    motion.type = SDL_EVENT_MOUSE_MOTION, motion.motion.xrel = 12.5f, motion.motion.yrel = -3;
+    button.type = SDL_EVENT_MOUSE_BUTTON_DOWN, button.button.button = SDL_BUTTON_LEFT, button.button.down = true;
+    SDL_Event release = button;
+    release.type = SDL_EVENT_MOUSE_BUTTON_UP, release.button.down = false;
+    const std::vector<Timed> keyboardMouse = {{10, key(SDL_SCANCODE_W, true)}, {12, motion}, {20, button}, {25, release},
+                                              {30, key(SDL_SCANCODE_W, false)}, {30, key(SDL_SCANCODE_SPACE, true)},
+                                              {32, key(SDL_SCANCODE_SPACE, false)}};
+    const std::vector<Timed> gamepad = {
+        {0, padEvent(SDL_EVENT_GAMEPAD_ADDED, 3)},
+        {1, padEvent(SDL_EVENT_GAMEPAD_ADDED, 4)},
+        {5, padEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, 4, SDL_GAMEPAD_BUTTON_SOUTH)}, // not the pad in use
+        {6, padEvent(SDL_EVENT_GAMEPAD_AXIS_MOTION, 3, SDL_GAMEPAD_AXIS_LEFTY, -32768)},
+        {8, padEvent(SDL_EVENT_GAMEPAD_AXIS_MOTION, 3, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 32767)},
+        {12, padEvent(SDL_EVENT_GAMEPAD_REMOVED, 3)}, // unplugged mid-walk: its stick and trigger let go
+        {14, padEvent(SDL_EVENT_GAMEPAD_BUTTON_UP, 4, SDL_GAMEPAD_BUTTON_SOUTH)},
+        {15, padEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, 4, SDL_GAMEPAD_BUTTON_NORTH)}, // the other pad takes over
+        {18, padEvent(SDL_EVENT_GAMEPAD_BUTTON_UP, 4, SDL_GAMEPAD_BUTTON_NORTH)}};
+    const game::Controls controls;
+    for (const auto* session : {&keyboardMouse, &gamepad}) {
+        // Live: events applied before their tick, actions read every tick; recorded to text on the way.
+        platform::DeviceState live;
+        std::string text = "# session\n";
+        std::vector<std::string> lines;
+        std::vector<game::Actions> want;
+        size_t next = 0;
+        for (uint64_t t = 0; t < 40; ++t) {
+            for (; next < session->size() && (*session)[next].tick <= t; ++next) {
+                const auto& ev = (*session)[next];
+                live.apply(ev.e);
+                const std::string line = platform::eventLine(ev.tick, ev.e);
+                ASSERT_FALSE(line.empty());
+                text += line + "\n", lines.push_back(line);
+            }
+            want.push_back(game::readDevices(controls, live));
+        }
+        auto log = platform::EventLog::parse(text);
+        EXPECT_EQ(log.size(), session->size());
+        platform::DeviceState replayed;
+        size_t replayedEvents = 0;
+        for (uint64_t t = 0; t < 40; ++t) {
+            while (const auto e = log.next(t)) {
+                EXPECT_EQ(platform::eventLine(t, *e), lines[replayedEvents++]); // lossless
+                replayed.apply(*e);
+            }
+            const auto a = game::readDevices(controls, replayed), &b = want[t];
+            EXPECT_EQ(a.move, b.move) << t;
+            EXPECT_EQ(a.look, b.look) << t;
+            EXPECT_EQ(std::tuple(a.jump, a.fire, a.interact), std::tuple(b.jump, b.fire, b.interact)) << t;
+        }
+        EXPECT_TRUE(log.done());
+        if (session == &keyboardMouse) {
+            EXPECT_EQ(want[11].move.y, 1);
+            EXPECT_TRUE(want[22].fire); // mouse left
+            EXPECT_TRUE(want[31].jump);
+            EXPECT_EQ(want[31].move.y, 0);
+        } else {
+            EXPECT_EQ(want[5].jump, false);     // pad 4's A while pad 3 is in use
+            EXPECT_NEAR(want[7].move.y, 1, 1e-4f);
+            EXPECT_TRUE(want[9].fire);          // right trigger past half
+            EXPECT_EQ(want[12].move, glm::vec2(0));  // pad 3 gone
+            EXPECT_FALSE(want[12].fire);
+            EXPECT_TRUE(want[16].interact);     // pad 4's Y: it is the pad in use now
+            EXPECT_EQ(replayed.pad, SDL_JoystickID(4));
+        }
+    }
+    // A pad's A press is a menu Accept once it is the pad in use (ou-game: platform::pressedBy -> Controls::menuNav).
+    EXPECT_EQ(controls.menuNav(*platform::pressedBy(padEvent(SDL_EVENT_GAMEPAD_BUTTON_DOWN, 4, SDL_GAMEPAD_BUTTON_SOUTH))), 4);
+    EXPECT_THROW(platform::EventLog::parse("5 key 26 1\n4 key 26 0\n"), std::runtime_error); // ticks go backwards
+    EXPECT_THROW(platform::EventLog::parse("5 wiggle 1\n"), std::runtime_error);
 }
 
 // ---- real data (OU_GAME_DIR) ------------------------------------------------------------------

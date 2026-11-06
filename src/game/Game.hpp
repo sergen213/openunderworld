@@ -20,6 +20,7 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -34,7 +35,6 @@
 
 namespace ou::cdc { class BigfileSet; }
 namespace ou::locale { class Strings; }
-struct SDL_Gamepad;
 
 namespace ou::game {
 
@@ -1016,28 +1016,57 @@ struct EyeWater { int markup; float surface; };
 std::optional<EyeWater> eyeWater(const World& w, vec3 eye, double seconds);
 
 // ---- input ------------------------------------------------------------------------------------
-// Keyboard (SDL_GetKeyboardState) + mouse buttons (SDL_GetMouseState mask) + optional gamepad -> actions, through
+// Keyboard + mouse buttons + the gamepad in use (platform::DeviceState, built from SDL events) -> actions, through
 // the user's bindings (config::InputConfig; defaults are tru.exe's, docs/GAMEPLAY.md "Controls": WASD/arrows move,
 // Shift sprint, Alt walk, Space jump, Ctrl drop, E interact, Q grapple, mouse right / G target lock, left / H fire,
 // R weapon, V health pack, F light, Caps Lock grenade, Tab PDA; pad A jump, B drop, X grapple, Y interact, LB sprint,
-// RB grenade, LT lock, RT fire, Back PDA, d-pad up / left / right health / light / weapon). Sticks are fixed: left
-// moves (lightly = walk), right looks.
+// RB grenade, LT lock, RT fire, Back PDA, d-pad up / left / right health / light / weapon). The move stick (default left;
+// lightly = walk) and look stick (default right) are config moveStick / lookStick.
 // Mouse look is added by the app: it accumulates relative motion per frame and feeds it to the next tick as a rate
-// (see ou-game), scaled by mouseScale and flipped by invertY.
+// (see ou-game), scaled by mouseScale and flipped by invertX / invertY.
 struct Controls {
+    enum Action { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple,
+                  Save, Load, Hint, Answer, Pda, Light, Grenade, Recenter, Camera, Pause, MenuUp }; // config::bindableActions() order
     std::vector<std::vector<platform::InputRef>> actions; // per config::bindableActions() entry
     float mouseScale = 1.0f;
-    bool invertY = false;
+    bool invertY = false, invertX = false;
+    int moveStick = 0, lookStick = 1; // 0 left, 1 right, -1 none
     Controls() : Controls(config::InputConfig{}) {}
     explicit Controls(const config::InputConfig& c); // throws std::runtime_error naming an unknown input
+    bool bound(Action a, const platform::InputRef& r) const { return std::ranges::find(actions[a], r) != actions[a].end(); }
+    // The menu navigation `r` is bound to (ui::Nav order: up, down, left, right, accept, back, delete, alt); -1 = none.
+    int menuNav(const platform::InputRef& r) const;
 };
-Actions readDevices(const Controls& controls, const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons = 0);
+Actions readDevices(const Controls& controls, const platform::DeviceState& devices);
 // What button placeholders in locals.bin text name (ui::PromptNames, tru.exe 0x5A7C20): per tru.exe virtual button
-// 0..24 (GAMEPLAY.md "Controls") and the keys Return / Escape / BackSpace (25..27), the control bound in `controls` on the
-// device in use. Keyboard: the first key, else the mouse button ("L Mouse", locals.bin 5050..5052); the pad: the first
-// pad control's name as the Xbox 360 pad lists them (5061..5076: icon code points, "Start Button" / "Back Button"),
-// else the placeholder's own icon. Empty: nothing bound (draws "<Unknown>").
+// 0..24 (GAMEPLAY.md "Controls") and the keys Return / Escape / BackSpace (25..27: menu_accept / menu_back / menu_delete),
+// the control bound in `controls` on the device in use. Keyboard: the first key, else the mouse button ("L Mouse",
+// locals.bin 5050..5052); the pad: the first pad control's name as the Xbox 360 pad lists them (5061..5076: icon code
+// points, "Start Button" / "Back Button"), else the placeholder's own icon. Empty: nothing bound (draws "<Unknown>").
 std::array<std::string, 28> promptNames(const Controls& controls, bool gamepad, const locale::Strings& strings);
+
+// CONTROL CONFIGURATION > BUTTON CONFIGURATION rows: tru.exe's list [O buttons1/2 captures; its four VEHICLE rows are
+// our forward / back / jump / fire and not listed], then ours (`label`, no locals.bin name).
+struct ControlRow {
+    int16_t name;       // locals.bin, 0 = label
+    const char* label;
+    const char* action; // config::bindableActions() entry
+};
+inline constexpr std::array<ControlRow, 34> kControlRows{{
+    {1038, "", "forward"}, {1039, "", "back"}, {1040, "", "left"}, {1041, "", "right"}, {1042, "", "drop"}, {1043, "", "jump"},
+    {1044, "", "grapple"}, {1045, "", "interact"}, {1046, "", "fire"}, {1047, "", "grenade"}, {1048, "", "switch"},
+    {1049, "", "pause"}, {1050, "", "pda"}, {1051, "", "heal"}, {1052, "", "weapon"}, {1053, "", "walk"}, {1055, "", "light"},
+    {1054, "", "camera"}, {1056, "", "aim"}, {1057, "", "sprint"}, {0, "RECENTER CAMERA", "recenter"},
+    {0, "DRAW / HOLSTER", "draw"}, {0, "QUICK SAVE", "save"}, {0, "QUICK LOAD", "load"}, {0, "HINT", "hint"}, {0, "ANSWER", "answer"},
+    {0, "MENU UP", "menu_up"}, {0, "MENU DOWN", "menu_down"}, {0, "MENU LEFT", "menu_left"}, {0, "MENU RIGHT", "menu_right"},
+    {0, "MENU SELECT", "menu_accept"}, {0, "MENU BACK", "menu_back"}, {0, "MENU DELETE", "menu_delete"}, {0, "MENU TASK", "menu_alt"}}};
+// The inputs bound to `action` on one device class (keyboard + mouse, or the pad), as tru.exe's list shows them: names
+// joined by "/" ("H/L Mouse"), pad buttons as their icons. Empty = unmapped.
+std::string boundNames(const config::InputConfig& c, const std::string& action, bool gamepad, const locale::Strings& strings);
+// The original's capture: `r` replaces the inputs of its device class (keyboard + mouse, or the pad) bound to `action`;
+// unmap removes them (BackSpace UNMAP).
+void rebind(config::InputConfig& c, const std::string& action, const platform::InputRef& r);
+void unmap(config::InputConfig& c, const std::string& action, bool gamepad);
 
 // Scripted input for deterministic replays. Text, one event per line: `<seconds> <action> [value]`.
 // Actions: forward, right (stick axes -1..1), walk, jump, drop, interact, save, load, draw, fire, aim, switch,

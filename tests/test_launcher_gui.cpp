@@ -300,26 +300,53 @@ TEST_F(LauncherGui, ControlsCaptureClearResetAndValidate) {
     });
     button("Add input…")->click();
     EXPECT_EQ(t->item(jump, 0)->text(), "Space, K");
+    // A pad button binds too: a virtual Steam Deck-style pad (SDL's virtual joystick with every gamepad button and axis),
+    // pressing a back paddle while the dialog waits.
+    SDL_VirtualJoystickDesc desc;
+    SDL_INIT_INTERFACE(&desc);
+    desc.type = SDL_JOYSTICK_TYPE_GAMEPAD, desc.naxes = SDL_GAMEPAD_AXIS_COUNT, desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+    desc.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1, desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+    desc.name = "Virtual Steam Deck";
+    const SDL_JoystickID vid = SDL_AttachVirtualJoystick(&desc);
+    ASSERT_NE(vid, 0u) << SDL_GetError();
+    SDL_Joystick* vj = SDL_OpenJoystick(vid);
+    ASSERT_TRUE(vj) << SDL_GetError();
+    onModal([vj](QWidget*) { SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1, true); });
+    button("Add input…")->click();
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1, false);
+    const std::string paddle = ou::platform::inputName({ou::platform::InputRef::Kind::PadButton, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1});
+    EXPECT_EQ(t->item(jump, 0)->text(), "Space, K, " + q(paddle));
+    auto* pads = w->tabs()->widget(2)->findChild<QListWidget*>();
+    button("Refresh", 2)->click();
+    EXPECT_FALSE(pads->findItems("Virtual Steam Deck", Qt::MatchStartsWith).isEmpty());
+    SDL_CloseJoystick(vj);
+    SDL_DetachVirtualJoystick(vid);
     for (auto* sb : w->findChildren<QDoubleSpinBox*>())
         if (sb->maximum() == 10.0 && sb->minimum() == 0.1) sb->setValue(2.5);
     box("Invert look Y (mouse and right stick)")->setChecked(true);
+    box("Invert look X")->setChecked(true);
+    std::vector<QComboBox*> sticks; // Move with, Look with
+    for (auto* cb : w->tabs()->widget(2)->findChildren<QComboBox*>())
+        if (cb->findData("none") >= 0) sticks.push_back(cb);
+    ASSERT_EQ(sticks.size(), 2u);
+    sticks[0]->setCurrentIndex(sticks[0]->findData("right")), sticks[1]->setCurrentIndex(sticks[1]->findData("left"));
     shot("3-controllers");
     button("Save settings")->click();
     auto c = ou::config::load(paths.config);
-    EXPECT_EQ(c.controls.bindings.at("jump"), (std::vector<std::string>{"Space", "K"}));
+    EXPECT_EQ(c.controls.bindings.at("jump"), (std::vector<std::string>{"Space", "K", paddle}));
     EXPECT_FLOAT_EQ(c.controls.mouseSensitivity, 2.5f);
-    EXPECT_TRUE(c.controls.invertY);
+    EXPECT_TRUE(c.controls.invertY && c.controls.invertX);
+    EXPECT_EQ(std::pair(c.controls.moveStick, c.controls.lookStick), std::pair(std::string("right"), std::string("left")));
     // An unknown input name is refused, not saved.
     t->item(jump, 0)->setText("Bogus");
     button("Save settings")->click();
     EXPECT_TRUE(status().startsWith("Not saved: control jump: unknown input 'Bogus'")) << s(status());
-    EXPECT_EQ(ou::config::load(paths.config).controls.bindings.at("jump"), (std::vector<std::string>{"Space", "K"}));
+    EXPECT_EQ(ou::config::load(paths.config).controls.bindings.at("jump"), (std::vector<std::string>{"Space", "K", paddle}));
     button("Clear")->click();
     EXPECT_EQ(t->item(jump, 0)->text(), "");
     button("Reset all to defaults")->click();
     button("Save settings")->click();
     EXPECT_EQ(ou::config::load(paths.config).controls.bindings, ou::config::InputConfig{}.bindings);
-    auto* pads = w->tabs()->widget(2)->findChild<QListWidget*>();
     pads->clear();
     button("Refresh", 2)->click();
     EXPECT_GT(pads->count(), 0); // a pad or "No gamepads detected…"

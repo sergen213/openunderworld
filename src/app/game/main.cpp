@@ -67,7 +67,8 @@ struct Options {
     int frames = 0; // 0 = until closed
     int waterDebug = 0; // Enhanced water debug view (render::kWaterDebugViews; F7 cycles)
     std::filesystem::path screenshot, inputScript;
-    double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script
+    std::filesystem::path recordInput, replayInput; // --record-input / --replay-input FILE: device events (platform::EventLog)
+    double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script / --replay-input
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
     std::optional<std::array<float, 11>> camera; // --camera: fixed view (eye, target, up, vertical FOV, near; 0 = default) for screenshots
     bool intro = false;  // --intro: play Movies/intro.bik first (skippable)
@@ -83,10 +84,11 @@ struct Options {
     std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
     std::optional<ou::game::Weapon> weapon;    // --weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer: carried secondary with max reserve (thorhammer: Mjolnir)
     ou::config::GraphicsConfig graphics; // --preset/--msaa/--shadows/--fxaa/--hdr/--rt/--rt-quality (or --config)
-    ou::game::Controls controls;         // --config "controls" (default bindings without it)
+    ou::config::InputConfig input;       // --config "controls" (default bindings without it); the menus edit it
+    ou::game::Controls controls;         // `input` compiled
     ou::config::GameConfig game;         // --config "game": in-game menu settings
     std::filesystem::path configPath;    // --config FILE: the menus write their settings back to it
-    bool configInvertY = false;          // its controls.invert_y as last read / written
+    ou::config::InputConfig configInput; // its controls as last read / written
     ou::config::GraphicsSettings gfx;    // resolved
 };
 
@@ -94,6 +96,7 @@ void usage() {
     std::fprintf(stderr,
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer auto|opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
+                 "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
@@ -121,7 +124,8 @@ void usage() {
                  "motorcycle: E beside it gets on / off (almost stopped); forward throttle, back brake/reverse, left/right steer,\n"
                  "          Space hop\n"
                  "menus: arrows/WASD or d-pad navigate, Enter/Space or A accept, E or X alt (PDA task), Esc or B back,\n"
-                 "          Backspace or Y deletes a save slot; 1 opens the PDA\n"
+                 "          Backspace or Y deletes a save slot (controls.menu_* in --config; GAME OPTIONS > CONTROL / GAMEPAD\n"
+                 "          CONFIGURATION rebinds them, the sticks and the game's actions)\n"
                  "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|weapon|heal|pause|\n"
                  "                    grapple|sprint|hint|answer|pda|light|grenade|recenter|camera|lookx|looky>\n"
                  "                    [value]  (in menus forward/right +-1 navigate, jump accepts, interact is alt, drop goes back;\n"
@@ -135,7 +139,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
             const auto c = ou::config::load(argv[i + 1]);
             o.gameDir = c.gameDir, o.renderer = c.renderer, o.width = c.width, o.height = c.height;
             o.fov = c.fov, o.vsync = c.vsync, o.fullscreen = c.fullscreen, o.graphics = c.graphics;
-            o.game = c.game, o.configPath = argv[i + 1], o.configInvertY = c.controls.invertY;
+            o.game = c.game, o.configPath = argv[i + 1], o.input = o.configInput = c.controls;
             o.controls = ou::game::Controls(c.controls);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "--config: %s\n", e.what());
@@ -178,6 +182,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--water-debug") o.waterDebug = std::atoi(v);
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--input-script") o.inputScript = v;
+        else if (a == "--record-input") o.recordInput = v;
+        else if (a == "--replay-input") o.replayInput = v;
         else if (a == "--render-hz") o.renderHz = std::atof(v);
         else if (a == "--intro-frames") o.intro = true, o.introFrames = std::atoi(v);
         else if (a == "--spawn") {
@@ -232,7 +238,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         o.game.language = ou::locale::languageCode(*l);
     }
     if (!o.screenshot.empty() && o.frames == 0) o.frames = 1;
-    if (!o.inputScript.empty() && o.renderHz == 0) o.renderHz = 60;
+    if ((!o.inputScript.empty() || !o.replayInput.empty()) && o.renderHz == 0) o.renderHz = 60;
+    if (!o.inputScript.empty() && !o.replayInput.empty()) { std::fprintf(stderr, "--input-script and --replay-input exclude each other\n"); return false; }
     return true;
 }
 
@@ -1781,34 +1788,6 @@ std::optional<ou::ui::Nav> scriptNav(const ou::game::Actions& a, const ou::game:
     if (edge(a.drop, was.drop) || edge(a.pause, was.pause)) return Nav::Back;
     return std::nullopt;
 }
-std::optional<ou::ui::Nav> keyNav(SDL_Keycode k) {
-    using ou::ui::Nav;
-    switch (k) {
-    case SDLK_UP: case SDLK_W: return Nav::Up;
-    case SDLK_DOWN: case SDLK_S: return Nav::Down;
-    case SDLK_LEFT: case SDLK_A: return Nav::Left;
-    case SDLK_RIGHT: case SDLK_D: return Nav::Right;
-    case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: return Nav::Accept;
-    case SDLK_E: return Nav::Alt; // Accept except on the PDA's Field Assistance (TASK)
-    case SDLK_ESCAPE: return Nav::Back;
-    case SDLK_BACKSPACE: case SDLK_DELETE: return Nav::Delete; // Save/Load slots; Back elsewhere
-    default: return std::nullopt;
-    }
-}
-std::optional<ou::ui::Nav> padNav(uint8_t b) {
-    using ou::ui::Nav;
-    switch (b) {
-    case SDL_GAMEPAD_BUTTON_DPAD_UP: return Nav::Up;
-    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return Nav::Down;
-    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return Nav::Left;
-    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return Nav::Right;
-    case SDL_GAMEPAD_BUTTON_SOUTH: return Nav::Accept;
-    case SDL_GAMEPAD_BUTTON_WEST: return Nav::Alt;
-    case SDL_GAMEPAD_BUTTON_NORTH: return Nav::Delete;
-    case SDL_GAMEPAD_BUTTON_EAST: case SDL_GAMEPAD_BUTTON_START: return Nav::Back;
-    default: return std::nullopt;
-    }
-}
 
 // The main menu's medsea_loop.bik (frontend 0x5DAE20 replays it through the movie player 0x4A12B0 while the menu runs).
 // Its sound track loops with it: decoded once, trimmed / padded to the movie's duration so both share one period.
@@ -1875,6 +1854,8 @@ int main(int argc, char** argv) {
 
     // ---- load: simulation data first (no window needed to fail early) ----
     std::optional<ou::game::InputScript> script;
+    std::optional<ou::platform::EventLog> replay; // --replay-input: recorded device events instead of the devices
+    std::ofstream record;                         // --record-input
     std::unique_ptr<ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
     // Text, voice and subtitle language (config game.language / --lang; AUDIO/VISUAL > LANGUAGE switches it live):
     // the archives' spec mask (voice streams, cinematics), locals.bin (locale::textLanguage) and the subtitle lines.
@@ -1900,6 +1881,12 @@ int main(int argc, char** argv) {
     bool spawnFromIntro = false;
     try {
         if (!opt.inputScript.empty()) script = ou::game::InputScript::load(opt.inputScript);
+        if (!opt.replayInput.empty()) replay = ou::platform::EventLog::load(opt.replayInput);
+        if (!opt.recordInput.empty()) {
+            record.open(opt.recordInput, std::ios::trunc);
+            if (!record) throw std::runtime_error("cannot write " + opt.recordInput.string());
+            record << "# ou-game input recording (docs/GAMEPLAY.md \"Recorded input\"): <tick> <event> <args>\n";
+        }
         bigfile = std::make_unique<ou::cdc::BigfileSet>(opt.gameDir, ou::locale::specMask(language));
         const auto& bf = *bigfile;
         strings = ou::locale::loadStrings(opt.gameDir, ou::locale::textLanguage(language));
@@ -2111,7 +2098,39 @@ int main(int argc, char** argv) {
     menus.sfxVolume = opt.game.sfxVolume, menus.musicVolume = opt.game.musicVolume, menus.cinematicVolume = opt.game.cinematicVolume;
     menus.subtitles = opt.game.subtitles, menus.reticles = opt.game.reticles;
     menus.helperButtons = opt.game.helperButtons, menus.trainingText = opt.game.trainingText;
-    menus.invertY = opt.controls.invertY;
+    // GAME OPTIONS > CONTROL / GAMEPAD CONFIGURATION edit opt.input (mouse sensitivity 0..10 = 2^((v - 5) / 2.5), the
+    // launcher's finer value staying until the slider moves; the stick layouts [I]; BUTTON CONFIGURATION rows: below).
+    static constexpr struct { const char *move, *look, *name; } kStickLayouts[] = {
+        {"left", "right", "DEFAULT"}, {"right", "left", "SOUTHPAW"}, {"left", "none", "MOVE STICK ONLY"}, {"none", "right", "LOOK STICK ONLY"}};
+    int menuSensitivity = 0;
+    auto fillControls = [&] {
+        const auto& in = opt.input;
+        menus.invertY = in.invertY, menus.invertX = in.invertX;
+        menus.mouseSensitivity = menuSensitivity = std::clamp(int(std::lround(5 + 2.5 * std::log2(in.mouseSensitivity))), 0, 10);
+        menus.stickLayouts.clear(), menus.stickLayout = -1;
+        for (const auto& l : kStickLayouts) {
+            if (in.moveStick == l.move && in.lookStick == l.look) menus.stickLayout = int(menus.stickLayouts.size());
+            menus.stickLayouts.emplace_back(l.name);
+        }
+        if (menus.stickLayout < 0) menus.stickLayout = int(menus.stickLayouts.size()), menus.stickLayouts.emplace_back("CUSTOM");
+    };
+    fillControls();
+    ou::config::InputConfig appliedInput = opt.input;
+    bool controlsChanged = false; // prompts and BUTTON CONFIGURATION rows to rebuild (nav)
+    auto applyControls = [&] {
+        auto& in = opt.input;
+        in.invertY = menus.invertY, in.invertX = menus.invertX;
+        if (menus.mouseSensitivity != menuSensitivity)
+            menuSensitivity = menus.mouseSensitivity, in.mouseSensitivity = std::exp2(float(menus.mouseSensitivity - 5) / 2.5f);
+        if (menus.stickLayout < int(std::size(kStickLayouts)))
+            in.moveStick = kStickLayouts[menus.stickLayout].move, in.lookStick = kStickLayouts[menus.stickLayout].look;
+        if (in == appliedInput) return;
+        opt.controls = ou::game::Controls(in); // names came from parseInput / the defaults: cannot throw
+        appliedInput = in, controlsChanged = true;
+        std::fprintf(stderr, "ou-game: tick %llu controls: move %s look %s sensitivity %.2f invert x %d y %d\n",
+                     (unsigned long long)world->ticks(), in.moveStick.c_str(), in.lookStick.c_str(), in.mouseSensitivity,
+                     int(in.invertX), int(in.invertY));
+    };
     menus.brightness = std::clamp(int(std::lround(5 * std::log2(2 * opt.gfx.brightness))), 0, 10);
     int menuBrightness = menus.brightness; // the launcher's finer value stays until the slider moves
     // AUDIO/VISUAL > GRAPHICS: the launcher's graphics + display settings (app/game/Graphics.hpp), applied live. A renderer
@@ -2187,19 +2206,19 @@ int main(int argc, char** argv) {
         if (const auto l = ou::locale::kInstallLanguages[size_t(menus.language)]; l != language) applyLanguage(l);
         mixer.setBusVolume(ou::audio::Bus::Music, float(menus.musicVolume) / 10);
         mixer.setBusVolume(ou::audio::Bus::Sfx, float(menus.sfxVolume) / 10);
-        opt.controls.invertY = menus.invertY;
+        applyControls();
         if (menus.brightness != menuBrightness) menuBrightness = menus.brightness, opt.gfx.brightness = 0.5f * std::exp2(float(menus.brightness) / 5);
         if (menus.graphics != appliedGraphics) applyGraphics();
         const ou::config::GameConfig g{menus.sfxVolume, menus.musicVolume, menus.cinematicVolume, menus.subtitles,
                                        menus.reticles, menus.helperButtons, menus.trainingText,
                                        std::string(ou::locale::languageCode(language))};
         if (opt.configPath.empty() ||
-            (g == opt.game && opt.controls.invertY == opt.configInvertY && opt.gfx.brightness == opt.graphics.brightness && !graphicsDirty))
+            (g == opt.game && opt.input == opt.configInput && opt.gfx.brightness == opt.graphics.brightness && !graphicsDirty))
             return;
         try { // re-read: the launcher may have changed other keys meanwhile
             auto c = ou::config::load(opt.configPath);
             c.game = opt.game = g;
-            c.controls.invertY = opt.configInvertY = opt.controls.invertY;
+            c.controls = opt.configInput = opt.input;
             if (graphicsDirty) {
                 c.graphics = opt.graphics;
                 c.renderer = opt.renderer, c.width = opt.width, c.height = opt.height, c.fullscreen = opt.fullscreen;
@@ -2358,11 +2377,18 @@ int main(int argc, char** argv) {
         ++screenVersion;
     };
     // Button prompts in locals.bin text name the controls of the device used last (tru.exe: the XInput pad's icons, else
-    // the keyboard's key names).
+    // the keyboard's key names); so do BUTTON CONFIGURATION's rows (ou::game::kControlRows).
     bool padActive = false;
-    ou::ui::PromptNames prompts = ou::game::promptNames(opt.controls, padActive, *strings);
+    ou::ui::PromptNames prompts;
+    auto refreshPrompts = [&] {
+        prompts = ou::game::promptNames(opt.controls, padActive, *strings);
+        menus.bindings.clear();
+        for (const auto& r : ou::game::kControlRows)
+            menus.bindings.push_back({r.name, r.label, ou::game::boundNames(opt.input, r.action, padActive, *strings)});
+    };
+    refreshPrompts();
     auto useDevice = [&](bool pad) {
-        if (pad != padActive) padActive = pad, prompts = ou::game::promptNames(opt.controls, padActive, *strings);
+        if (pad != padActive) padActive = pad, refreshPrompts();
     };
     auto showLoading = [&](int chapter) {
         useScreenImage(ou::ui::loadingImage(chapter));
@@ -2427,7 +2453,7 @@ int main(int argc, char** argv) {
     // Autosave (slot "autosave", ui::kAutosaveSlot) at every chapter start and checkpoint of a game started from the main
     // menu [I: the original autosaves at checkpoints] and when a script requests one (uisavemenu 5, after cinematics);
     // key = (chapter, checkpoint, requests) last saved, chapter -1 = save at the next tick.
-    const bool autosaves = menuStart && !script;
+    const bool autosaves = menuStart && !script && !replay;
     using AutoKey = std::tuple<int, std::optional<ou::game::CheckpointRef>, uint32_t>;
     std::optional<AutoKey> autoKey;
     auto autosaveKey = [&] { return AutoKey{world->chapter, world->checkpoint(), world->autosaveRequests()}; };
@@ -2486,6 +2512,16 @@ int main(int argc, char** argv) {
             break;
         }
         case Action::Resume: break;
+        case Action::Rebind: break; // Menus::capturing: handleInput binds the next input
+        case Action::Unmap: { // BackSpace UNMAP on the device in use; the menu keys keep theirs [I: no way back otherwise]
+            const std::string row = ou::game::kControlRows[size_t(menus.cursor())].action;
+            if (!row.starts_with("menu_")) ou::game::unmap(opt.input, row, padActive), applyVolumes(), refreshPrompts();
+            break;
+        }
+        case Action::RestoreControls: // RESTORE DEFAULTS
+            opt.input = ou::config::InputConfig{};
+            fillControls(), applyVolumes(), refreshPrompts();
+            break;
         case Action::Save: { // a used slot is overwritten, an empty one becomes the first free "savegame-<n>"
             std::string name = menus.selectedSave();
             for (int n = 1; name.empty(); ++n)
@@ -2559,7 +2595,7 @@ int main(int argc, char** argv) {
             if (dtp) sound->menuSound(dtp);
         }
         applyVolumes();
-        if (std::exchange(languageChanged, false)) prompts = ou::game::promptNames(opt.controls, padActive, *strings);
+        if (std::exchange(languageChanged, false) | std::exchange(controlsChanged, false)) refreshPrompts();
         // PLAYER TAILORING: a preset picked (START NEW GAME) sets every level (game::Tailoring); GAME OPTIONS sets one.
         if (menus.tailoring != tailoring || a == ou::ui::Action::NewGame)
             world->setTailoring(ou::game::Tailoring::preset(menus.tailoring));
@@ -2637,9 +2673,10 @@ int main(int argc, char** argv) {
         streamed.version = ~0ull; // re-upload the game scene
     };
 
-    const bool interactive = !script;
+    const bool interactive = !script && !replay;
     SDL_SetWindowRelativeMouseMode(window.get(), interactive && !menuStart);
-    ou::platform::GamepadPtr pad;
+    ou::platform::DeviceState devices;
+    std::map<SDL_JoystickID, ou::platform::GamepadPtr> pads; // every connected gamepad stays open (SDL sends only their events)
     ou::engine::FrameClock clock(ou::game::kTickSeconds);
     glm::vec2 mouse(0);
     bool overlay = !opt.noOverlay;
@@ -2648,47 +2685,84 @@ int main(int argc, char** argv) {
     int frame = 0, fpsFrames = 0;
     double fps = 0, renderedFps = 0;
     std::vector<double> frameMs; // --frames: wall frame times for the final report
+    // GAMEPAD SELECTION shows the pad in use (locals.bin 7 "Disabled" without one).
+    auto showPad = [&] {
+        const char* name = devices.pad ? SDL_GetGamepadNameForID(devices.pad) : nullptr;
+        menus.padName = devices.pad ? (name ? name : "Gamepad") : std::string(strings->get(7));
+    };
+    showPad();
+    // Every keyboard / mouse / gamepad event, live or replayed (--replay-input), goes through here: the device state
+    // readDevices reads, menu navigation and BUTTON CONFIGURATION captures by the bindings, the pause key, mouse look.
+    // --record-input writes each one with the tick it precedes.
+    auto handleInput = [&](const SDL_Event& e) {
+        if (record.is_open())
+            if (const auto line = ou::platform::eventLine(appTicks, e); !line.empty()) record << line << '\n';
+        const bool trigger = e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+                             (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+        const bool stillDown = trigger && e.gaxis.which == devices.pad && devices.padAxes[e.gaxis.axis] > 16384; // no new press
+        const SDL_JoystickID before = devices.pad;
+        const bool ours = devices.apply(e);
+        if (devices.pad != before) {
+            showPad();
+            std::fprintf(stderr, "ou-game: tick %llu gamepad %s\n", (unsigned long long)appTicks, devices.pad ? menus.padName.c_str() : "none");
+            if (!devices.pad) useDevice(false);
+        }
+        switch (e.type) {
+        case SDL_EVENT_KEY_DOWN:
+            useDevice(false);
+            if (e.key.scancode == SDL_SCANCODE_F1 && !e.key.repeat) return void(overlay = !overlay);
+            if (e.key.scancode == SDL_SCANCODE_F7 && !e.key.repeat)
+                return void(opt.waterDebug = (opt.waterDebug + 1) % ou::render::kWaterDebugViews);
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN: useDevice(false); break;
+        case SDL_EVENT_MOUSE_MOTION:
+            if (menus.screen() == ou::ui::Screen::None) mouse += glm::vec2(e.motion.xrel, e.motion.yrel);
+            return;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            if (!ours) return; // another pad
+            if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && std::abs(int(e.gaxis.value)) > 16000))
+                useDevice(true);
+            break;
+        default: break;
+        }
+        const auto r = stillDown ? std::nullopt : ou::platform::pressedBy(e);
+        if (!r) return;
+        const bool repeat = e.type == SDL_EVENT_KEY_DOWN && e.key.repeat;
+        if (menus.capturing) { // BUTTON CONFIGURATION: this input replaces the row's on its device; Escape cancels [I]
+            if (repeat) return;
+            menus.capturing = false;
+            if (!(r->kind == ou::platform::InputRef::Kind::Key && r->code == SDL_SCANCODE_ESCAPE)) {
+                ou::game::rebind(opt.input, ou::game::kControlRows[size_t(menus.cursor())].action, *r);
+                applyVolumes(), refreshPrompts();
+            }
+            return;
+        }
+        if (menus.screen() != ou::ui::Screen::None) {
+            if (const int n = opt.controls.menuNav(*r); n >= 0) nav(ou::ui::Nav(n)); // key repeat navigates too
+        } else if (!repeat && opt.controls.bound(ou::game::Controls::Pause, *r)) {
+            openPause();
+        }
+    };
 
     while (running) {
-        const bool inMenu = menus.screen() != ou::ui::Screen::None;
         const bool mainMenu = menus.mainMenu();
         renderer->beginInput(); // Anti-Lag INPUT marker: the driver's wait lands before input is sampled, not after
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
             case SDL_EVENT_QUIT: running = false; break;
-            case SDL_EVENT_KEY_DOWN:
-                useDevice(false);
-                if (e.key.key == SDLK_F1 && !e.key.repeat) overlay = !overlay;
-                else if (e.key.key == SDLK_F7 && !e.key.repeat) opt.waterDebug = (opt.waterDebug + 1) % ou::render::kWaterDebugViews;
-                else if (menus.screen() != ou::ui::Screen::None) {
-                    if (const auto n = keyNav(e.key.key)) nav(*n);
-                } else if (e.key.key == SDLK_ESCAPE && !e.key.repeat) openPause();
-                break;
-            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-                useDevice(true);
-                if (menus.screen() != ou::ui::Screen::None) {
-                    if (const auto n = padNav(e.gbutton.button)) nav(*n);
-                } else if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) openPause();
-                break;
-            case SDL_EVENT_MOUSE_MOTION:
-                if (interactive && !inMenu) mouse += glm::vec2(e.motion.xrel, e.motion.yrel);
-                break;
-            case SDL_EVENT_GAMEPAD_ADDED:
-                if (!pad) pad.reset(SDL_OpenGamepad(e.gdevice.which));
-                break;
-            case SDL_EVENT_GAMEPAD_REMOVED:
-                if (pad && SDL_GetGamepadID(pad.get()) == e.gdevice.which) pad.reset(), useDevice(false);
-                break;
-            case SDL_EVENT_MOUSE_BUTTON_DOWN: useDevice(false); break;
-            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-                if (std::abs(e.gaxis.value) > 16000) useDevice(true);
+            case SDL_EVENT_GAMEPAD_ADDED: // hotplug: open it (a replay's pads come from the recording)
+                if (!replay) pads[e.gdevice.which].reset(SDL_OpenGamepad(e.gdevice.which));
                 break;
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: // not a window left by a renderer swap
                 if (e.window.windowID == SDL_GetWindowID(window.get())) renderer->resize({e.window.data1, e.window.data2});
                 break;
             default: break;
             }
+            if (!replay) handleInput(e);
+            if (e.type == SDL_EVENT_GAMEPAD_REMOVED) pads.erase(e.gdevice.which);
         }
         if (interactive) SDL_SetWindowRelativeMouseMode(window.get(), menus.screen() == ou::ui::Screen::None);
         const uint64_t now = SDL_GetTicksNS();
@@ -2697,9 +2771,9 @@ int main(int argc, char** argv) {
         last = now;
 
         for (int n = clock.advance(dt); n > 0 && running; --n) {
-            ou::game::Actions a = script ? script->at(appTicks)
-                                         : ou::game::readDevices(opt.controls, SDL_GetKeyboardState(nullptr), pad.get(),
-                                                                 interactive ? SDL_GetMouseState(nullptr, nullptr) : 0);
+            if (replay)
+                while (const auto ev = replay->next(appTicks)) handleInput(*ev);
+            ou::game::Actions a = script ? script->at(appTicks) : ou::game::readDevices(opt.controls, devices);
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)
@@ -2715,7 +2789,7 @@ int main(int argc, char** argv) {
                 if (script)
                     if (const auto n = scriptNav(a, menuHeld)) nav(*n);
                 if (menus.screen() == ou::ui::Screen::PdaSonar) { // SONAR MAP: the move keys turn / fly, H up, G down
-                    const bool* k = SDL_GetKeyboardState(nullptr);
+                    const auto& k = devices.keys;
                     const float rise = (k[SDL_SCANCODE_H] ? 1.0f : 0.0f) - (k[SDL_SCANCODE_G] ? 1.0f : 0.0f);
                     sonarCam.fly({-a.move.x, a.move.y, rise}, float(ou::game::kTickSeconds));
                 }
@@ -2736,6 +2810,7 @@ int main(int argc, char** argv) {
             }
             // Mouse motion since the last tick, as a rate over this tick.
             if (opt.controls.invertY) mouse.y = -mouse.y;
+            if (opt.controls.invertX) mouse.x = -mouse.x;
             a.look -= mouse * kMouseSensitivity * opt.controls.mouseScale / float(ou::game::kTickSeconds);
             mouse = glm::vec2(0);
             if (a.save && !held.save) quickSave(*world, "quick");
@@ -2990,7 +3065,8 @@ int main(int argc, char** argv) {
         if (overlay && !mainMenu) {
             const std::string rendered = fps > renderedFps + 0.5 ? fmt(" (%.1f rendered)", renderedFps) : "";
             lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS%s | tick %llu%s%s", world->currentUnit().data.name.c_str(), fps,
-                                rendered.c_str(), (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
+                                rendered.c_str(), (unsigned long long)world->ticks(), script || replay ? " | REPLAY " : "",
+                                devices.pad ? " | gamepad" : ""));
             lines.push_back(renderer->description());
             lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));
             lines.push_back(renderer->upscalerSummary());

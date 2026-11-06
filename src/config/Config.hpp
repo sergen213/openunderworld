@@ -83,21 +83,28 @@ GraphicsSettings resolve(const GraphicsConfig& g);
 // --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off,
 // --anti-lag on|off. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
-
 // Control bindings: action -> inputs, any of which triggers it. Input names (case-insensitive): SDL scancode
 // names ("W", "Space", "Left Shift", "F5"), "Mouse Left" / "Mouse Right" / "Mouse Middle", or "Pad <button>"
-// with SDL gamepad button names ("Pad a", "Pad dpright", "Pad leftshoulder", "Pad leftstick") plus
-// "Pad lefttrigger" / "Pad righttrigger" (pressed past half). Sticks are fixed: left moves, right looks.
+// with SDL gamepad button names ("Pad a", "Pad dpright", "Pad leftshoulder", "Pad leftstick", "Pad paddle1" .. "Pad
+// paddle4" for Steam Deck / Elite back buttons, "Pad misc1") plus "Pad lefttrigger" / "Pad righttrigger" (pressed past
+// half). Pad buttons are positional (SDL's a/b/x/y = south/east/west/north on every layout). The sticks: moveStick /
+// lookStick ("left" | "right" | "none"; the same stick may do both). The menu_* actions navigate the menus.
 // Names are checked by ou::platform::parseInput (SDL); this layer only stores them.
 struct InputConfig {
     std::map<std::string, std::vector<std::string>> bindings; // every bindableActions() entry
     float mouseSensitivity = 1.0f; // multiplier, 0.1..10
-    bool invertY = false;          // mouse and right stick
+    bool invertY = false;          // mouse and look stick
+    std::string moveStick = "left", lookStick = "right";
+    bool invertX = false;          // mouse and look stick
     InputConfig();                 // default bindings
+    bool operator==(const InputConfig&) const = default;
 };
 // Bindable actions in display order: forward, back, left, right, walk, sprint, jump, drop, interact, draw, fire,
-// aim, switch, weapon, heal, grapple, save, load, hint, answer.
+// aim, switch, weapon, heal, grapple, save, load, hint, answer, pda, light, grenade, recenter, camera, pause, then the menu
+// navigation menu_up, menu_down, menu_left, menu_right, menu_accept, menu_back, menu_delete, menu_alt (ui::Nav order).
 const std::vector<std::string>& bindableActions();
+// The stick names moveStick / lookStick accept.
+inline bool validStick(const std::string& s) { return s == "left" || s == "right" || s == "none"; }
 
 // In-game menu settings (ou-game GAME OPTIONS / AUDIO/VISUAL / VOLUME SETTINGS write them back to the config they were
 // started with). Y inversion is InputConfig::invertY, brightness GraphicsConfig::brightness.

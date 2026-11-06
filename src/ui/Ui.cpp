@@ -344,6 +344,22 @@ constexpr float kPdaAmmoScale = 0.55f, kPdaAmmoTracking = 1.0f;
 constexpr float kPdaDescTop = 370, kPdaDescBottom = 544, kPdaDescX = 558, kPdaDescCap = 445, kPdaDescStep = 16.7f,
                 kPdaDescW = 462, kPdaDescScale = 0.58f; // [V inventory_view]
 constexpr int kWeaponPanel[4] = {573, 214, 422, 163}, kItemPanel[4] = {580, 193, 433, 167}; // x, y, w, h
+// The option lists' black panel between the line under the title and the line at `bottom` (virtual y).
+void listPanel(Canvas& c, float bottom) {
+    const float top = c.sy(kListLineTop), bot = c.sy(bottom);
+    hquad(c, c.sx(320 - kListPanelFade), top, c.sx(320 - kListPanelSolid), bot, withAlpha(kBlack, 0), kBlack);
+    hquad(c, c.sx(320 - kListPanelSolid), top, c.sx(320 + kListPanelSolid), bot, kBlack, kBlack);
+    hquad(c, c.sx(320 + kListPanelSolid), top, c.sx(320 + kListPanelFade), bot, kBlack, withAlpha(kBlack, 0));
+    c.sprite(kLine, 320, kListLineTop + 0.65f, kListLineW, 1.8f, kWhite);
+    c.sprite(kLine, 320, bottom + 0.65f, kListLineW, 1.8f, kWhite);
+}
+// BUTTON CONFIGURATION [O buttons1 / buttons2 at 1280x720]: 15 rows from cap 119.3 every 18.43 (scale 0.57), names at
+// x 176, inputs right-aligned at 463.3, the panel's bottom line at 393.3, BACK TO PREVIOUS MENU centred under it (cap
+// 403.3); the rows scroll with the selection. Footer Return SELECT / Escape BACK / BackSpace UNMAP centred at 175.7 /
+// 319.3 / 463.3. [I] no scroll arrows (their texture is not identified).
+constexpr int kButtonRows = 15;
+constexpr float kButtonCap = 119.3f, kButtonStep = 18.43f, kButtonScale = 0.57f, kButtonX = 176, kButtonRight = 463.3f;
+constexpr float kButtonBottom = 393.3f, kButtonBackCap = 403.3f, kButtonFoot[3] = {175.7f, 319.3f, 463.3f};
 // PDA list pages (JOURNAL ENTRIES [O j3..j5]; REVISIT LOCATION [I] the same), bg pixels: header at x 243.3 cap 153.3 (0.605,
 // kPdaHead) over a line at 174 (x 242.7..505.3); nine rows right-aligned at 504.7, caps 185.3 + 40 i, scale 0.51, the
 // selected one kPdaHead, a line 33.4 below each (to 509.3); BACK TO PREVIOUS MENU (a label: Esc) right at 505.3 cap 551.3,
@@ -498,7 +514,7 @@ void Menus::tick(double seconds) {
 std::vector<Item> Menus::items() { return itemsOf(screen()); }
 
 std::vector<Item> Menus::itemsOf(Screen screen) {
-    const int16_t unavailable = 456; // "Unavailable": not ported (the launcher configures controls)
+    const int16_t unavailable = 456; // "Unavailable": not ported
     switch (screen) {
     case Screen::Main:
     case Screen::Pause: {
@@ -537,11 +553,29 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         return {{.stringId = 132, .toggle = &reticles, .onId = 133, .offId = 134},
                 {.stringId = 135, .toggle = &helperButtons, .onId = 133, .offId = 134},
                 {.stringId = 136, .toggle = &trainingText, .onId = 133, .offId = 134},
-                {.stringId = 492, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 492, .opens = Screen::GamepadConfig},
                 {.stringId = 138, .toggle = &invertY, .onId = 45, .offId = 46, .pair = true},
                 {.stringId = 140, .opens = Screen::TailoringOptions},
-                {.stringId = 493, .opens = Screen::Message, .message = unavailable},
+                {.stringId = 493, .opens = Screen::ControlConfig},
                 {.stringId = 469}};
+    // CONTROL / GAMEPAD CONFIGURATION [O keyboard1 / gamepad1 captures; the rows' layout is the other lists' I]. VIBRATION
+    // stays dim (no rumble [U]); GAMEPAD AXES picks the stick layout [I: the original's values were not captured].
+    case Screen::ControlConfig:
+        return {{.stringId = 1009, .value = &mouseSensitivity}, {.stringId = 1010, .opens = Screen::ButtonConfig},
+                {.stringId = 1011, .action = Action::RestoreControls}, {.stringId = 469}};
+    case Screen::GamepadConfig:
+        return {{.stringId = 1014, .choice = &padChoice_, .choices = {padName}},
+                {.stringId = 137, .toggle = &vibration_, .onId = 45, .offId = 46, .pair = true, .greyed = true},
+                {.stringId = 1015, .choice = &stickLayout, .choices = stickLayouts},
+                {.stringId = 501, .toggle = &invertX, .onId = 384, .offId = 385, .pair = true},
+                {.stringId = 502, .toggle = &invertY, .onId = 384, .offId = 385, .pair = true},
+                {.stringId = 469}};
+    case Screen::ButtonConfig: {
+        std::vector<Item> v;
+        for (const auto& b : bindings) v.push_back({.stringId = b.stringId, .label = b.label, .action = Action::Rebind});
+        v.push_back({.stringId = 469});
+        return v;
+    }
     case Screen::AudioVisual:
         return {{.stringId = 145, .greyed = languages.empty(), .choice = &language, .choices = languages},
                 {.stringId = 144, .toggle = &subtitles, .onId = 45, .offId = 46, .pair = true},
@@ -727,6 +761,22 @@ Action Menus::input(Nav n) {
             selected_ = r.movie + ".bik"; // in play: "requires you to exit the current game" (471)
             return activate({.action = Action::PlayMovie, .confirm = int16_t(mainMenu() ? 0 : 471)});
         }
+        default: return Action::None;
+        }
+    }
+    if (scr == Screen::ButtonConfig) { // the rows scroll; the last item is BACK TO PREVIOUS MENU
+        if (capturing) return Action::None;
+        switch (n) {
+        case Nav::Up: case Nav::Down:
+            select((cursor_ + (n == Nav::Up ? -1 : 1) + count) % count);
+            if (cursor_ < count - 1) top_ = std::clamp(top_, cursor_ - kButtonRows + 1, cursor_);
+            return Action::None;
+        case Nav::Back: back(); return Action::None;
+        case Nav::Delete: return cursor_ < count - 1 ? Action::Unmap : Action::None;
+        case Nav::Accept: case Nav::Alt:
+            if (cursor_ == count - 1) { back(); return Action::None; }
+            capturing = true;
+            return Action::Rebind;
         default: return Action::None;
         }
     }
@@ -1013,10 +1063,12 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
     const int n = int(list.size());
     // Title: icon | white line 1 / blue line 2 (GAME OPTIONS, AUDIO/VISUAL OPTIONS, VOLUME SETTINGS AUDIO/VISUAL; the
     // graphics screens DISPLAY MODE SELECTION, DISPLAY SETTINGS and <page> SETTINGS under the AUDIO/VISUAL icon).
-    const bool tailor = scr == Screen::TailoringOptions, g = gfx(scr);
-    const uint32_t icon = scr == Screen::GameOptions ? kIconOptions : scr == Screen::AudioVisual || g ? kIconAv : tailor ? kIconTailor : kIconVolume;
-    const int16_t t1 = scr == Screen::GameOptions ? 490 : scr == Screen::AudioVisual ? 497 : tailor ? 366 : 486;
-    const int16_t t2 = scr == Screen::Volume ? 497 : tailor ? 125 : 491;
+    const bool tailor = scr == Screen::TailoringOptions, g = gfx(scr), pad = scr == Screen::GamepadConfig;
+    const bool ctrl = scr == Screen::ControlConfig || scr == Screen::ButtonConfig;
+    const bool options = scr == Screen::GameOptions || ctrl || pad; // [I] the mouse / pad icons not identified
+    const uint32_t icon = options ? kIconOptions : scr == Screen::AudioVisual || g ? kIconAv : tailor ? kIconTailor : kIconVolume;
+    const int16_t t1 = scr == Screen::GameOptions ? 490 : ctrl ? 1007 : pad ? 1012 : scr == Screen::AudioVisual ? 497 : tailor ? 366 : 486;
+    const int16_t t2 = scr == Screen::Volume ? 497 : tailor ? 125 : ctrl ? 1008 : pad ? 1013 : 491;
     const std::string_view title1 = !g ? s.get(t1)
                                   : scr == Screen::GfxQuality    ? "QUALITY"
                                   : scr == Screen::GfxRayTracing ? "RAY TRACING"
@@ -1028,17 +1080,13 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
     vrect(c, kListDivX, kListDivTop, 0.9f, kListDivBottom - kListDivTop, kWhite);
     capText(c, kTitle1X, kTitle1Cap, kTitle1Scale, title1, kWhite);
     capText(c, kTitle2X, kTitle2Cap, kTitle2Scale, title2, kTitleBlue);
+    if (scr == Screen::ButtonConfig) return drawButtons(c, s);
     // Panel between the two lines; rows.
     const float row0 = kRowCap + (n < 5 ? kFewRowsDrop : 0);
     const float bottom = std::max(row0 + float(n - 1) * kRowStep + kRowsBelow, kListMinBottom);
-    const float top = c.sy(kListLineTop), bot = c.sy(bottom);
-    hquad(c, c.sx(320 - kListPanelFade), top, c.sx(320 - kListPanelSolid), bot, withAlpha(kBlack, 0), kBlack);
-    hquad(c, c.sx(320 - kListPanelSolid), top, c.sx(320 + kListPanelSolid), bot, kBlack, kBlack);
-    hquad(c, c.sx(320 + kListPanelSolid), top, c.sx(320 + kListPanelFade), bot, kBlack, withAlpha(kBlack, 0));
-    c.sprite(kLine, 320, kListLineTop + 0.65f, kListLineW, 1.8f, kWhite);
-    c.sprite(kLine, 320, bottom + 0.65f, kListLineW, 1.8f, kWhite);
+    listPanel(c, bottom);
     const float labelX = scr == Screen::Volume || tailor ? kRowXVolume : kRowX;
-    const float valueRight = scr == Screen::GameOptions ? 498.7f : tailor ? kTailorValueRight : 492.6f;
+    const float valueRight = scr == Screen::GameOptions || pad ? 498.7f : tailor ? kTailorValueRight : 492.6f;
     const float capMid = kCapHeight * kRowScale / 2;
     for (int i = 0; i < n; ++i) {
         const Item& it = list[size_t(i)];
@@ -1083,6 +1131,24 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
             capText(c, valueRight - c.fontWidth(v, kRowScale), y, kRowScale, v, kWhite);
         }
     }
+}
+
+void Menus::drawButtons(Canvas& c, const locale::Strings& s) {
+    listPanel(c, kButtonBottom);
+    const int n = int(bindings.size());
+    const float capMid = kCapHeight * kButtonScale / 2;
+    for (int i = top_; i < std::min(n, top_ + kButtonRows); ++i) {
+        const float y = kButtonCap + float(i - top_) * kButtonStep;
+        const bool sel = i == cursor_;
+        if (sel) fadeBar(c, y + capMid - kSelBarH / 2, kSelBarH, kSelBarSolid, kSelBarFade, kSelBar);
+        const BindingRow& b = bindings[size_t(i)];
+        capText(c, kButtonX, y, kButtonScale, b.stringId ? s.get(b.stringId) : std::string_view(b.label), sel ? kWhite : kRowGrey);
+        const std::string v = sel && capturing ? "..." : b.inputs; // [I] the row waiting for its input
+        capText(c, kButtonRight - c.fontWidth(v, kButtonScale), y, kButtonScale, v, sel ? kWhite : kRowGrey);
+    }
+    if (cursor_ == n) fadeBar(c, kButtonBackCap + kCapHeight * kRowScale / 2 - kSelBarH / 2, kSelBarH, kSelBarSolid, kSelBarFade, kSelBar);
+    const std::string back(s.get(469));
+    capText(c, 320 - c.fontWidth(back, kRowScale) / 2, kButtonBackCap, kRowScale, back, kWhite);
 }
 
 void Menus::drawTailoring(Canvas& c, const locale::Strings& s) {
@@ -1416,7 +1482,9 @@ void Menus::draw(Canvas& c, const locale::Strings& s) {
         footer(c, s, {{kExtrasFootL, int16_t(extras_ == kExtrasOutfits ? 120 : extras_ == 4 ? 468 : 472)}, {kExtrasFootR, 375}});
     } else {
         drawList(c, s);
-        footer(c, s, {{kListFooterL, 120}, {kListFooterR, 375}});
+        if (scr != Screen::ButtonConfig) footer(c, s, {{kListFooterL, 120}, {kListFooterR, 375}});
+        else if (!capturing) footer(c, s, {{kButtonFoot[0], 120}, {kButtonFoot[1], 375}, {kButtonFoot[2], 1037}});
+        else footer(c, s, {}), keyed(c, 320, kFooterY + kCapTop * kTextScale, kTextScale, s.get(1063)); // [I] where the request shows
     }
 }
 

@@ -471,11 +471,30 @@ outfit (the original only reads `+0x294` on a level load).
 ## Controls
 
 - Bindings live in `config.json` under `controls` (`bindings`: action → list of inputs; `mouse_sensitivity` 0.1..10,
-  a multiplier on 0.0025 rad/pixel; `invert_y` for mouse and right stick). `ou-game --config` reads them; actions a
-  file omits keep their defaults, an unknown action or input name is an error. Edit them on the launcher's
-  Controllers tab (Add input… captures a key, mouse button, pad button or trigger; Esc cancels).
+  a multiplier on 0.0025 rad/pixel; `invert_y` / `invert_x` for mouse and look stick; `move_stick` / `look_stick`
+  `left` | `right` | `none`, defaults left / right). `ou-game --config` reads them; actions a file omits keep their
+  defaults, an unknown action, input or stick name is an error. Edit them on the launcher's Controllers tab (Add input…
+  captures a key, mouse button, pad button or trigger; Esc cancels; "Move with" / "Look with" pick the sticks) or in the
+  game (below); either adopts what the other wrote.
 - Actions: forward, back, left, right, walk, sprint, jump, drop, interact, draw, fire, aim, switch, weapon, heal,
-  grapple, save, load, hint, answer, pda, light, grenade, recenter, camera.
+  grapple, save, load, hint, answer, pda, light, grenade, recenter, camera, pause (Esc / Start), and the menu keys
+  menu_up / menu_down / menu_left / menu_right (arrows, WASD, d-pad), menu_accept (Return, Keypad Enter, Space, A),
+  menu_back (Esc, B, Start), menu_delete (BackSpace, Delete, Y: deletes a save slot, UNMAP), menu_alt (E, X: the PDA's
+  TASK). Prompts name the bound pause / menu keys (Return / Escape / BackSpace placeholders 25..27).
+- In-game GAME OPTIONS (tru.exe's screens [O `openunderworld-work/screens/controls/keyboard1.png`, `gamepad1.png`,
+  `buttons1.png`, `buttons2.png`; locals.bin 492 / 493, 1007..1015, 1037..1063]): CONTROL CONFIGURATION has MOUSE
+  SENSITIVITY (slider 0..10 = 2^((v − 5) / 2.5) [I]), BUTTON CONFIGURATION (one row per action in tru.exe's order, ours
+  after it; the inputs of the device in use joined by "/", pad buttons as their icons; 15 rows scroll; Return SELECT
+  waits for the next key / mouse button / pad button / trigger ("Press a button for the selected action", 1063) and
+  makes it that device's only input for the action, Escape cancels [I]; BackSpace UNMAP clears the device's inputs,
+  refused on the menu keys [I]; its VEHICLE rows are our forward / back / jump / fire and not listed), RESTORE DEFAULTS.
+  GAMEPAD CONFIGURATION shows the pad in use (else "Disabled", 7), VIBRATION dim (no rumble [U]), GAMEPAD AXES (the
+  stick layout: default, southpaw, move stick only, look stick only [I: the original's values were not captured]),
+  INVERT X-AXIS / Y-AXIS. Every change applies at once and is written back to `--config`.
+- Gamepads: every connected pad is opened (hotplug); the first one added is used, the others are ignored; when it is
+  unplugged the next pad to press a button or push an axis past half takes over. Buttons are positional (SDL's a / b /
+  x / y = south / east / west / north on Xbox, PlayStation, Nintendo and Steam Deck layouts); the Steam Deck's / Elite
+  pad's back buttons bind as `Pad paddle1` .. `Pad paddle4`, Steam Deck trackpads reach the game as Steam Input's mouse.
 - Recenter camera [I: the press snaps the orbit camera's yaw behind Lara at the rest pitch; the orbit reseeds from those
   angles at its distance]. Q is also the grapple's key, as in the original.
 - Field camera (tru.exe `LookAroundState`, vtable 0x8842C0; viewfinder `pc-w\g_binoculars.drm` texture 649, a
@@ -504,7 +523,7 @@ outfit (the original only reads `+0x294` on a level load).
   | 5 | Shoot | H, mouse left | RT | fire |
   | 7 | Grenade (throw held object) | Caps Lock | RB | grenade |
   | 9 | Manual Aim | Z | right stick click | switch (change target; no manual aim yet) |
-  | 10 | Pause | Esc | Start | fixed |
+  | 10 | Pause | Esc | Start | pause |
   | 11 | Access PDA | Tab | Back | pda |
   | 12 | Use Medipack | V | d-pad up | heal |
   | 15 | Change Weapon | R | d-pad right | weapon |
@@ -526,8 +545,23 @@ outfit (the original only reads `+0x294` on a level load).
   Stamina refills a second per second of anything else; a sprint starts again once 0.9 s is back (held throughout:
   ~2.2 s running, 0.9 s sprinting; 4 s without it after exhaustion: 4.1 s). Crouch while sprinting rolls with
   `ng_roll_front_sprinting`.
-- Fixed: left stick moves, right stick looks (2.5 rad/s at full deflection, 0.15 dead zone), Esc / Start opens the
-  pause menu, F1 toggles the overlay, menu navigation (arrows / Return / Esc, d-pad / South / East).
+- Fixed: F1 toggles the overlay, F7 cycles the water debug view; the look stick turns at 2.5 rad/s at full deflection,
+  both sticks have a 0.15 dead zone.
+
+### Recorded input
+
+Every keyboard, mouse and gamepad event ou-game handles goes through one function (`handleInput` in
+`src/app/game/main.cpp`): it updates `platform::DeviceState` (keys, mouse buttons, the pad in use and its buttons /
+axes, built from SDL events alone), which `game::readDevices` maps through the bindings each tick, and it drives menu
+navigation, BUTTON CONFIGURATION captures, the pause key and mouse look. `ou-game --record-input FILE` writes each event
+with the tick it preceded; `--replay-input FILE` feeds a recording back through the same function before that tick
+(live devices are ignored; render rate 60 Hz unless `--render-hz`). Lines (`platform::eventLine` / `EventLog`, SDL
+numbers): `<tick> key <scancode> <0|1> [repeat]`, `mouse <button> <0|1>`, `motion <dx> <dy>`, `padadd <id>`,
+`padremove <id>`, `button <id> <button> <0|1>`, `axis <id> <axis> <value>`; `#` comments. Not recorded: cinematic skips
+(the movie player polls its own events). Tests: `Game.ReplayedDeviceSessions` (keyboard + mouse and gamepad sessions with
+a hotplug, synthesised SDL events, recorded and replayed tick for tick), `game_input_replay_smoke` (ou-game replays
+`tests/replays/ballcourt_door_lever_keyboard.events` and `_gamepad.events`, each through the pause menu, and must end
+where `ballcourt_door_lever.txt`'s scripted actions do).
 
 ## Controller
 
@@ -2053,7 +2087,7 @@ between two 0x1B: on the keyboard its key name, drawn in the highlight 0x7D6932 
   ±217.5; sliders: frame (5, 50, 80), fill (185, 230, 255), x 322.7–461.3, 7 tall, arrows 113/114 at 307.6 / 475.6 on
   the selected row; footer 120 / 375 at 271.6 / 379. Rows and what they drive: COMBAT RETICLES (HUD reticle), HELPER
   BUTTONS (stored only), TRAINING TEXT (the tutorial popups, below), GAMEPAD / CONTROL
-  CONFIGURATION (message 456: the launcher configures them), VIEW AXIS INVERSION (ON/OFF
+  CONFIGURATION (their screens: "Controls" above), VIEW AXIS INVERSION (ON/OFF
   inline, mouse/stick Y [I: the original opens a 501–504 sub-screen, not captured]), PLAYER TAILORING; LANGUAGE (the
   install languages by their names 110..119, right-aligned like ON / OFF; Left / Right / Return step; applies at once:
   TEXT.md §0), SUBTITLES ON / OFF, VOLUME SETTINGS, BRIGHTNESS (inline slider, graphics brightness 0.5·2^(v/5) [I: the

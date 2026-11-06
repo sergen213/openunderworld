@@ -127,7 +127,8 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
 const std::vector<std::string>& bindableActions() {
     static const std::vector<std::string> a = {"forward", "back", "left", "right", "walk", "sprint", "jump", "drop", "interact",
                                                "draw", "fire", "aim", "switch", "weapon", "heal", "grapple", "save", "load", "hint", "answer", "pda",
-                                               "light", "grenade", "recenter", "camera"};
+                                               "light", "grenade", "recenter", "camera", "pause", "menu_up", "menu_down", "menu_left",
+                                               "menu_right", "menu_accept", "menu_back", "menu_delete", "menu_alt"};
     return a;
 }
 
@@ -158,7 +159,18 @@ InputConfig::InputConfig()
                {"light", {"F", "Pad dpleft"}},                 // 14
                {"grenade", {"CapsLock", "Pad rightshoulder"}},  // 7 (RB)
                {"recenter", {"Q", "Pad leftstick"}},           // 8 (LS click; patch 1.1, Q as the grapple)
-               {"camera", {"T", "Pad dpdown"}}} {}             // 13: the field camera
+               {"camera", {"T", "Pad dpdown"}},                // 13: the field camera
+               {"pause", {"Escape", "Pad start"}},             // 10
+               // Menus: tru.exe's arrows / Return / Escape / BackSpace (prompt keys 25..27) and the pad's d-pad / A / B / Y [O];
+               // WASD and Space as ou-game had them, E / pad X the PDA's second prompt (TASK) [I].
+               {"menu_up", {"Up", "W", "Pad dpup"}},
+               {"menu_down", {"Down", "S", "Pad dpdown"}},
+               {"menu_left", {"Left", "A", "Pad dpleft"}},
+               {"menu_right", {"Right", "D", "Pad dpright"}},
+               {"menu_accept", {"Return", "Keypad Enter", "Space", "Pad a"}},
+               {"menu_back", {"Escape", "Pad b", "Pad start"}},
+               {"menu_delete", {"Backspace", "Delete", "Pad y"}},
+               {"menu_alt", {"E", "Pad x"}}} {}
 
 namespace {
 // Defaults before 0.12 (Shift walked, Alt sprinted): a config that still holds one of these gets today's default.
@@ -226,6 +238,11 @@ Config load(const fs::path& path) {
         if (auto in = j.find("controls"); in != j.end()) {
             c.controls.mouseSensitivity = in->value("mouse_sensitivity", c.controls.mouseSensitivity);
             c.controls.invertY = in->value("invert_y", c.controls.invertY);
+            c.controls.invertX = in->value("invert_x", c.controls.invertX);
+            c.controls.moveStick = in->value("move_stick", c.controls.moveStick);
+            c.controls.lookStick = in->value("look_stick", c.controls.lookStick);
+            if (!validStick(c.controls.moveStick) || !validStick(c.controls.lookStick))
+                throw std::runtime_error("controls.move_stick / look_stick must be left, right or none");
             if (auto b = in->find("bindings"); b != in->end())
                 for (const auto& [action, inputs] : b->items()) { // missing actions keep their defaults
                     if (!c.controls.bindings.contains(action)) throw std::runtime_error("unknown control action " + action);
@@ -283,7 +300,8 @@ void save(const fs::path& path, const Config& c) {
     if (c.graphics.rtLights) g["rt_lights"] = *c.graphics.rtLights;
     if (c.graphics.rtReflections) g["rt_reflections"] = *c.graphics.rtReflections;
     j["controls"] = {{"mouse_sensitivity", c.controls.mouseSensitivity}, {"invert_y", c.controls.invertY},
-                     {"bindings", c.controls.bindings}};
+                     {"invert_x", c.controls.invertX}, {"move_stick", c.controls.moveStick},
+                     {"look_stick", c.controls.lookStick}, {"bindings", c.controls.bindings}};
     j["game"] = {{"sfx_volume", c.game.sfxVolume}, {"music_volume", c.game.musicVolume}, {"cinematic_volume", c.game.cinematicVolume},
                  {"subtitles", c.game.subtitles}, {"reticles", c.game.reticles}, {"helper_buttons", c.game.helperButtons},
                  {"training_text", c.game.trainingText}, {"language", c.game.language}};

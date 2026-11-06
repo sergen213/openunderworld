@@ -278,9 +278,9 @@ find_package(CURL REQUIRED)
 add_library(ou_config STATIC src/config/Config.cpp)
 target_include_directories(ou_config PUBLIC src)
 target_link_libraries(ou_config PUBLIC nlohmann_json::nlohmann_json)
-# ---- ou_input: control binding names <-> SDL3 devices (ou-game, launcher) ----
+# ---- ou_input: control binding names <-> SDL3 devices, device state from events, recordings (ou-game, launcher) ----
 add_library(ou_input STATIC src/platform/Input.cpp)
-target_link_libraries(ou_input PUBLIC ou_config PRIVATE SDL3::SDL3)
+target_link_libraries(ou_input PUBLIC ou_config SDL3::SDL3)
 target_link_libraries(ou-viewer PRIVATE ou_config)
 
 # Release public key (hex). Default: packaging/release-pubkey.hex; empty = updates unavailable.
@@ -401,6 +401,28 @@ if(OU_BUILD_TESTS)
     a=$(cat "$out/30") b=$(cat "$out/240"); rm -rf "$out"; echo "30 Hz:  $a"; echo "240 Hz: $b"
     [ -n "$a" ] && [ "$a" = "$b" ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays/ballcourt_door_lever.txt)
   set_tests_properties(game_render_rate_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+  # Recorded device sessions through ou-game's own input path (--replay-input, docs/GAMEPLAY.md "Recorded input"): the
+  # ballcourt lever replay as keyboard + mouse events and as gamepad events with a hotplug, each after a trip through the
+  # pause menu, must end where the scripted actions do (keyboard within 5 units, the stick within 60).
+  add_test(NAME game_input_replay_smoke COMMAND sh -c [=[
+    [ -n "$OU_GAME_DIR" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || exit 77
+    game=$0 dir=$1 out=$(mktemp -d)
+    run() { "$game" --game-dir "$OU_GAME_DIR" --renderer opengl --level 'pc-w\l4_ballcourt.drm' --spawn -20066,14150,3540,0 \
+              "$@" --no-audio --no-movies --no-overlay --draw-last --width 160 --height 120 --frames 360 2>&1; }
+    run --input-script "$dir/ballcourt_door_lever.txt" > "$out/script" &
+    run --replay-input "$dir/ballcourt_door_lever_keyboard.events" > "$out/keyboard" &
+    run --replay-input "$dir/ballcourt_door_lever_gamepad.events" > "$out/gamepad" & wait
+    pos() { grep 'final tick' "$out/$1" | sed 's/.* pos \([^ ]*\) \([^ ]*\) \([^ ]*\) .*/\1 \2 \3/'; }
+    near() { echo "$(pos script) $(pos $1) $2" | awk '{ d = 0; for (i = 1; i <= 3; ++i) { e = $i - $(i + 3); d += e * e }
+                                                       exit !(NF == 7 && d <= $7 * $7) }'; }
+    for f in script keyboard gamepad; do echo "$f: $(grep 'final tick' "$out/$f")"; done
+    grep -E 'gamepad|menu action' "$out/gamepad"
+    ok=1
+    near keyboard 5 || { echo "keyboard replay ended elsewhere"; ok=0; }
+    near gamepad 60 || { echo "gamepad replay ended elsewhere"; ok=0; }
+    grep -q 'tick 8 gamepad none' "$out/gamepad" && grep -q 'tick 9 gamepad ' "$out/gamepad" || { echo "no hotplug"; ok=0; }
+    rm -rf "$out"; [ $ok = 1 ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays)
+  set_tests_properties(game_input_replay_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
   # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,
   # docs/RENDERING.md "Ray tracing"); 77 = skipped (no OU_GAME_DIR, display or ray-query device).
   add_test(NAME game_vulkan_rt_smoke COMMAND sh -c [=[

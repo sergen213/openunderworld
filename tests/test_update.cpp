@@ -572,6 +572,16 @@ TEST(Config, ControlsOverridePerActionAndRoundTrip) {
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
     std::ofstream(p) << R"({"controls":{"mouse_sensitivity":0}})";
     EXPECT_THROW(ou::config::load(p), std::runtime_error);
+    // Sticks, look X inversion and the menu keys: stored, round-tripped, validated.
+    std::ofstream(p) << R"({"controls":{"move_stick":"right","look_stick":"left","invert_x":true,"bindings":{"menu_accept":["K"]}}})";
+    c = ou::config::load(p);
+    EXPECT_EQ(std::tuple(c.controls.moveStick, c.controls.lookStick, c.controls.invertX), std::tuple("right", "left", true));
+    EXPECT_EQ(c.controls.bindings.at("menu_accept"), std::vector<std::string>{"K"});
+    EXPECT_EQ(c.controls.bindings.at("menu_back"), defaults.bindings.at("menu_back"));
+    ou::config::save(p, c);
+    EXPECT_EQ(ou::config::load(p).controls, c.controls);
+    std::ofstream(p) << R"({"controls":{"move_stick":"middle"}})";
+    EXPECT_THROW(ou::config::load(p), std::runtime_error);
     fs::remove_all(p.parent_path());
 }
 

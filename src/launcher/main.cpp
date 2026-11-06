@@ -307,6 +307,8 @@ private:
     QTableWidget* bindings_;
     QDoubleSpinBox* mouseSensitivity_;
     QCheckBox* invertY_;
+    QCheckBox* invertX_;
+    QComboBox *moveStick_, *lookStick_; // config controls.move_stick / look_stick
     QLabel *updateStatus_, *versionLabel_;
 
     // ---------------------------------------------------------------------------------------
@@ -560,7 +562,9 @@ private:
             {"aim", "Target lock (draws)"}, {"switch", "Change target"}, {"weapon", "Change weapon"},
             {"heal", "Use health pack"}, {"grapple", "Grapple"}, {"save", "Quick save"}, {"load", "Quick load"},
             {"hint", "Hint"}, {"answer", "Answer"}, {"pda", "PDA"}, {"light", "Utility light"}, {"grenade", "Grenade / throw"},
-            {"recenter", "Recenter camera"}, {"camera", "Field camera"}};
+            {"recenter", "Recenter camera"}, {"camera", "Field camera"}, {"pause", "Pause"}, {"menu_up", "Menu up"},
+            {"menu_down", "Menu down"}, {"menu_left", "Menu left"}, {"menu_right", "Menu right"}, {"menu_accept", "Menu select"},
+            {"menu_back", "Menu back"}, {"menu_delete", "Menu delete / unmap"}, {"menu_alt", "Menu PDA task"}};
         for (int i = 0; i < int(actions.size()); ++i) {
             const auto l = kLabels.find(actions[i]);
             bindings_->setVerticalHeaderItem(i, new QTableWidgetItem(l == kLabels.end() ? q(actions[i]) : l->second));
@@ -588,6 +592,15 @@ private:
         mouseSensitivity_->setValue(cfg_.controls.mouseSensitivity);
         invertY_ = new QCheckBox("Invert look Y (mouse and right stick)");
         invertY_->setChecked(cfg_.controls.invertY);
+        invertX_ = new QCheckBox("Invert look X");
+        invertX_->setChecked(cfg_.controls.invertX);
+        auto stickCombo = [](const std::string& v) {
+            auto* c = new QComboBox;
+            c->addItem("Left stick", "left"), c->addItem("Right stick", "right"), c->addItem("None", "none");
+            c->setCurrentIndex(std::max(0, c->findData(q(v))));
+            return c;
+        };
+        moveStick_ = stickCombo(cfg_.controls.moveStick), lookStick_ = stickCombo(cfg_.controls.lookStick);
         pads_ = new QListWidget;
         auto* refresh = new QPushButton("Refresh");
         connect(refresh, &QPushButton::clicked, this, [this] { listPads(); });
@@ -598,13 +611,21 @@ private:
         mouse->addWidget(new QLabel("Mouse sensitivity"));
         mouse->addWidget(mouseSensitivity_);
         mouse->addWidget(invertY_);
+        mouse->addWidget(invertX_);
         mouse->addStretch();
+        auto* sticks = new QHBoxLayout;
+        sticks->addWidget(new QLabel("Move with"));
+        sticks->addWidget(moveStick_);
+        sticks->addWidget(new QLabel("Look with"));
+        sticks->addWidget(lookStick_);
+        sticks->addStretch();
         auto* lay = new QVBoxLayout(w);
-        lay->addWidget(new QLabel("Controls for ou-game (left stick moves and right stick looks on every gamepad):"));
+        lay->addWidget(new QLabel("Controls for ou-game (also GAME OPTIONS > CONTROL / GAMEPAD CONFIGURATION in the game):"));
         lay->addWidget(bindings_, 3);
         lay->addLayout(buttons);
         lay->addLayout(mouse);
-        lay->addWidget(new QLabel("Gamepads seen by SDL3 (the game uses the first one):"));
+        lay->addLayout(sticks);
+        lay->addWidget(new QLabel("Gamepads seen by SDL3 (the game uses the first one, then whichever presses next):"));
         lay->addWidget(pads_, 1);
         lay->addWidget(refresh, 0, Qt::AlignLeft);
         listPads();
@@ -950,6 +971,9 @@ private:
         cfg_.game.language = s(language_->currentData().toString());
         cfg_.controls.mouseSensitivity = float(mouseSensitivity_->value());
         cfg_.controls.invertY = invertY_->isChecked();
+        cfg_.controls.invertX = invertX_->isChecked();
+        cfg_.controls.moveStick = s(moveStick_->currentData().toString());
+        cfg_.controls.lookStick = s(lookStick_->currentData().toString());
     }
 
     bool saveConfig() {
@@ -960,7 +984,13 @@ private:
             const auto disk = ou::config::load(paths_.config);
             cfg_.game = disk.game;
             if (disk.game.language != written_.game.language) language_->setCurrentIndex(std::max(0, language_->findData(q(disk.game.language))));
-            if (disk.controls.invertY != written_.controls.invertY) invertY_->setChecked(disk.controls.invertY);
+            const auto &dc = disk.controls, &oc = written_.controls; // ou-game's CONTROL / GAMEPAD CONFIGURATION
+            if (dc.invertY != oc.invertY) invertY_->setChecked(dc.invertY);
+            if (dc.invertX != oc.invertX) invertX_->setChecked(dc.invertX);
+            if (dc.mouseSensitivity != oc.mouseSensitivity) mouseSensitivity_->setValue(dc.mouseSensitivity);
+            if (dc.moveStick != oc.moveStick) moveStick_->setCurrentIndex(std::max(0, moveStick_->findData(q(dc.moveStick))));
+            if (dc.lookStick != oc.lookStick) lookStick_->setCurrentIndex(std::max(0, lookStick_->findData(q(dc.lookStick))));
+            if (dc.bindings != oc.bindings) showBindings(dc);
             const auto &d = disk.graphics, &o = written_.graphics;
             const auto pick = [](QComboBox* c, const QVariant& v) { c->setCurrentIndex(std::max(0, c->findData(v))); };
             const auto tri = [](QComboBox* c, std::optional<bool> v) { c->setCurrentIndex(!v ? 0 : *v ? 1 : 2); }; // overrideCombo

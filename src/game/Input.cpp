@@ -14,11 +14,18 @@ namespace ou::game {
 
 namespace {
 float deadzone(float v) { return std::abs(v) < 0.15f ? 0.0f : (v - std::copysign(0.15f, v)) / 0.85f; }
-float axis(SDL_Gamepad* g, SDL_GamepadAxis a) { return g ? deadzone(SDL_GetGamepadAxis(g, a) / 32767.0f) : 0.0f; }
 constexpr float kPadLookRate = 2.5f; // rad/s at full deflection
+int stick(const std::string& s) { return s == "left" ? 0 : s == "right" ? 1 : -1; }
+// A stick (0 left, 1 right) with its dead zone, y up; zero for none / no pad.
+vec2 stickAxes(const platform::DeviceState& d, int s) {
+    if (s < 0 || !d.pad) return vec2(0);
+    const auto x = s ? SDL_GAMEPAD_AXIS_RIGHTX : SDL_GAMEPAD_AXIS_LEFTX, y = s ? SDL_GAMEPAD_AXIS_RIGHTY : SDL_GAMEPAD_AXIS_LEFTY;
+    return {deadzone(d.padAxes[x] / 32767.0f), -deadzone(d.padAxes[y] / 32767.0f)};
+}
 } // namespace
 
-Controls::Controls(const config::InputConfig& c) : mouseScale(c.mouseSensitivity), invertY(c.invertY) {
+Controls::Controls(const config::InputConfig& c)
+    : mouseScale(c.mouseSensitivity), invertY(c.invertY), invertX(c.invertX), moveStick(stick(c.moveStick)), lookStick(stick(c.lookStick)) {
     for (const auto& action : config::bindableActions()) {
         auto& refs = actions.emplace_back();
         if (const auto it = c.bindings.find(action); it != c.bindings.end())
@@ -30,77 +37,109 @@ Controls::Controls(const config::InputConfig& c) : mouseScale(c.mouseSensitivity
     }
 }
 
-Actions readDevices(const Controls& c, const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
-    enum { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple, Save, Load, Hint, Answer, Pda, Light, Grenade, Recenter, Camera };
-    const auto on = [&](int action) {
-        return std::any_of(c.actions[action].begin(), c.actions[action].end(),
-                           [&](const platform::InputRef& r) { return platform::pressed(r, keys, pad, mouseButtons); });
+int Controls::menuNav(const platform::InputRef& r) const {
+    for (int n = 0; n < 8; ++n)
+        if (bound(Action(MenuUp + n), r)) return n;
+    return -1;
+}
+
+Actions readDevices(const Controls& c, const platform::DeviceState& d) {
+    using A = Controls::Action;
+    const auto on = [&](A action) {
+        return std::ranges::any_of(c.actions[action], [&](const platform::InputRef& r) { return platform::pressed(r, d); });
     };
     Actions a;
-    a.move.y = float(on(Forward) - on(Back)) - axis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-    a.move.x = float(on(Right) - on(Left)) + axis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+    a.move = vec2(float(on(A::Right) - on(A::Left)), float(on(A::Forward) - on(A::Back))) + stickAxes(d, c.moveStick);
     if (glm::length(a.move) > 1) a.move = glm::normalize(a.move);
-    a.look = {-axis(pad, SDL_GAMEPAD_AXIS_RIGHTX) * kPadLookRate, -axis(pad, SDL_GAMEPAD_AXIS_RIGHTY) * kPadLookRate};
-    if (c.invertY) a.look.y = -a.look.y;
-    a.walk = on(Walk), a.sprint = on(Sprint), a.jump = on(Jump), a.drop = on(Drop), a.interact = on(Interact);
-    a.draw = on(Draw), a.fire = on(Fire), a.aim = on(Aim), a.switchTarget = on(Switch), a.weapon = on(Weapon);
-    a.heal = on(Heal), a.grapple = on(Grapple), a.save = on(Save), a.load = on(Load);
-    a.hint = on(Hint), a.answer = on(Answer), a.pda = on(Pda), a.light = on(Light), a.grenade = on(Grenade);
-    a.recenter = on(Recenter), a.fieldCamera = on(Camera);
+    const vec2 look = stickAxes(d, c.lookStick); // right / up turn the camera right / up
+    a.look = vec2(c.invertX ? look.x : -look.x, c.invertY ? -look.y : look.y) * kPadLookRate;
+    a.walk = on(A::Walk), a.sprint = on(A::Sprint), a.jump = on(A::Jump), a.drop = on(A::Drop), a.interact = on(A::Interact);
+    a.draw = on(A::Draw), a.fire = on(A::Fire), a.aim = on(A::Aim), a.switchTarget = on(A::Switch), a.weapon = on(A::Weapon);
+    a.heal = on(A::Heal), a.grapple = on(A::Grapple), a.save = on(A::Save), a.load = on(A::Load);
+    a.hint = on(A::Hint), a.answer = on(A::Answer), a.pda = on(A::Pda), a.light = on(A::Light), a.grenade = on(A::Grenade);
+    a.recenter = on(A::Recenter), a.fieldCamera = on(A::Camera);
     return a;
 }
 
+namespace {
+std::string utf8(char32_t cp) { // U+0800..U+FFFF
+    return std::string{char(0xE0 | cp >> 12), char(0x80 | (cp >> 6 & 0x3F)), char(0x80 | (cp & 0x3F))};
+}
+// Xbox 360 pad names (locals.bin 5061..5076 [O]): icon per SDL button, Start / Back the text strings 5071 / 5072.
+std::string padName(const platform::InputRef& r, const locale::Strings& strings) {
+    if (r.kind == platform::InputRef::Kind::PadTrigger) return utf8(r.code == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? 0x1805 : 0x1807);
+    switch (r.code) {
+    case SDL_GAMEPAD_BUTTON_SOUTH: return utf8(0x1803);
+    case SDL_GAMEPAD_BUTTON_EAST: return utf8(0x1802);
+    case SDL_GAMEPAD_BUTTON_WEST: return utf8(0x1800);
+    case SDL_GAMEPAD_BUTTON_NORTH: return utf8(0x1801);
+    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return utf8(0x1804);
+    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return utf8(0x1806);
+    case SDL_GAMEPAD_BUTTON_LEFT_STICK: return utf8(0x180C);
+    case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return utf8(0x180D);
+    case SDL_GAMEPAD_BUTTON_DPAD_UP: return utf8(0x1808);
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return utf8(0x1809);
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return utf8(0x180B);
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return utf8(0x180A);
+    case SDL_GAMEPAD_BUTTON_START: return std::string(strings.get(5071));
+    case SDL_GAMEPAD_BUTTON_BACK: return std::string(strings.get(5072));
+    default: return platform::inputName(r);
+    }
+}
+// Keys and mouse buttons as tru.exe names them ("BackSpace", "L Mouse" = locals.bin 5050..5052) [O].
+std::string keyName(const platform::InputRef& r, const locale::Strings& strings) {
+    if (r.kind == platform::InputRef::Kind::Mouse && r.code >= 1 && r.code <= 3) return std::string(strings.get(int16_t(5049 + r.code)));
+    return r.kind == platform::InputRef::Kind::Key && r.code == SDL_SCANCODE_BACKSPACE ? "BackSpace" : platform::inputName(r);
+}
+} // namespace
+
 std::array<std::string, 28> promptNames(const Controls& c, bool gamepad, const locale::Strings& strings) {
     using platform::InputRef;
-    auto utf8 = [](char32_t cp) { // U+0800..U+FFFF
-        return std::string{char(0xE0 | cp >> 12), char(0x80 | (cp >> 6 & 0x3F)), char(0x80 | (cp & 0x3F))};
-    };
-    // Xbox 360 pad names (locals.bin 5061..5076 [O]): icon per SDL button; 0 = the text string 5071 / 5072.
-    auto padName = [&](const InputRef& r) -> std::string {
-        if (r.kind == InputRef::Kind::PadTrigger) return utf8(r.code == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? 0x1805 : 0x1807);
-        switch (r.code) {
-        case SDL_GAMEPAD_BUTTON_SOUTH: return utf8(0x1803);
-        case SDL_GAMEPAD_BUTTON_EAST: return utf8(0x1802);
-        case SDL_GAMEPAD_BUTTON_WEST: return utf8(0x1800);
-        case SDL_GAMEPAD_BUTTON_NORTH: return utf8(0x1801);
-        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return utf8(0x1804);
-        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return utf8(0x1806);
-        case SDL_GAMEPAD_BUTTON_LEFT_STICK: return utf8(0x180C);
-        case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return utf8(0x180D);
-        case SDL_GAMEPAD_BUTTON_DPAD_UP: return utf8(0x1808);
-        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return utf8(0x1809);
-        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return utf8(0x180B);
-        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return utf8(0x180A);
-        case SDL_GAMEPAD_BUTTON_START: return std::string(strings.get(5071));
-        case SDL_GAMEPAD_BUTTON_BACK: return std::string(strings.get(5072));
-        default: return platform::inputName(r);
-        }
-    };
-    // Virtual button -> config::bindableActions() index (-1: none of ours; 10 pause is fixed); and the placeholder naming it
-    // by default (tru.exe 0x8A9EF8 inverted), shown on the pad when it is unbound.
-    static constexpr int8_t kAction[25] = {8, 15, 7, 6, 11, 10, 5, 22, 23, 12, -1, 20, 14, 24, 21, 13, 3, 2, 1, 0, 4, 10, 7, 0, 1};
-    static constexpr char32_t kIcon[25] = {0x1801, 0x1800, 0x1802, 0x1803, 0x1805, 0x1807, 0x1804, 0x1806, 0x180E, 0x180F, 0x1810, 0x1811, 0x1808,
-                                           0x1809, 0x180B, 0x180A, 0x1817, 0x1816, 0x1815, 0x1814, 0, 0x1826, 0x1827, 0x1828, 0x1829};
+    // Virtual button -> config::bindableActions() index (-1: none of ours), then the menu keys Return / Escape / BackSpace
+    // (25..27: menu_accept / menu_back / menu_delete); and the placeholder naming it by default (tru.exe 0x8A9EF8
+    // inverted), shown on the pad when it is unbound.
+    static constexpr int8_t kAction[28] = {8, 15, 7, 6, 11, 10, 5, 22, 23, 12, 25, 20, 14, 24, 21, 13, 3, 2, 1, 0, 4, 10, 7, 0, 1, 30, 31, 32};
+    static constexpr char32_t kIcon[28] = {0x1801, 0x1800, 0x1802, 0x1803, 0x1805, 0x1807, 0x1804, 0x1806, 0x180E, 0x180F, 0x1810, 0x1811, 0x1808,
+                                           0x1809, 0x180B, 0x180A, 0x1817, 0x1816, 0x1815, 0x1814, 0, 0x1826, 0x1827, 0x1828, 0x1829,
+                                           0x1803, 0x1802, 0x1801};
     std::array<std::string, 28> names;
-    for (int b = 0; b < 25; ++b) {
+    for (int b = 0; b < 28; ++b) {
         const auto& refs = kAction[b] >= 0 ? c.actions[size_t(kAction[b])] : std::vector<InputRef>{};
         auto first = [&](auto pred) { return std::find_if(refs.begin(), refs.end(), pred); };
         if (gamepad) {
-            const auto it = first([](const InputRef& r) { return r.kind == InputRef::Kind::PadButton || r.kind == InputRef::Kind::PadTrigger; });
-            names[size_t(b)] = it != refs.end() ? padName(*it) : kIcon[b] ? utf8(kIcon[b]) : std::string();
+            const auto it = first(platform::isPad);
+            names[size_t(b)] = it != refs.end() ? padName(*it, strings) : kIcon[b] ? utf8(kIcon[b]) : std::string();
         } else if (auto it = first([](const InputRef& r) { return r.kind == InputRef::Kind::Key; }); it != refs.end()) {
-            names[size_t(b)] = platform::inputName(*it);
+            names[size_t(b)] = keyName(*it, strings);
         } else if (it = first([](const InputRef& r) { return r.kind == InputRef::Kind::Mouse; }); it != refs.end()) {
-            names[size_t(b)] = it->code >= 1 && it->code <= 3 ? std::string(strings.get(5049 + it->code)) : platform::inputName(*it);
+            names[size_t(b)] = keyName(*it, strings);
         }
     }
-    // Fixed controls: pause (Esc / Start) and the menu keys Return / Escape / BackSpace (ou-game's menu navigation: pad
-    // South / East / North; the names as tru.exe shows them [O captures]).
-    names[10] = gamepad ? std::string(strings.get(5071)) : "Escape";
-    names[25] = gamepad ? utf8(0x1803) : "Return";
-    names[26] = gamepad ? utf8(0x1802) : "Escape";
-    names[27] = gamepad ? utf8(0x1801) : "BackSpace";
     return names;
+}
+
+std::string boundNames(const config::InputConfig& c, const std::string& action, bool gamepad, const locale::Strings& strings) {
+    std::string out;
+    for (const auto& n : c.bindings.at(action))
+        if (const auto r = platform::parseInput(n); r && platform::isPad(*r) == gamepad)
+            out += (out.empty() ? "" : "/") + (gamepad ? padName(*r, strings) : keyName(*r, strings));
+    return out;
+}
+
+void rebind(config::InputConfig& c, const std::string& action, const platform::InputRef& r) {
+    auto& names = c.bindings.at(action);
+    std::erase_if(names, [&](const std::string& n) {
+        const auto o = platform::parseInput(n);
+        return !o || platform::isPad(*o) == platform::isPad(r);
+    });
+    names.push_back(platform::inputName(r));
+}
+
+void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
+    std::erase_if(c.bindings.at(action), [&](const std::string& n) {
+        const auto o = platform::parseInput(n);
+        return !o || platform::isPad(*o) == gamepad;
+    });
 }
 
 InputScript InputScript::parse(std::string_view text) {

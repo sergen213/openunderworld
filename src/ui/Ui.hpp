@@ -77,17 +77,22 @@ enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
 // the PDA's REVISIT LOCATION list (Treasure Hunt) and JOURNAL ENTRIES. Extras: the EXTRAS categories on a mirrored ring; ExtrasCategory: one's rewards
 // (Menus::rewards; the sixth, OUTFITS, kCostumes) with a preview; ExtrasView: an unlocked image full screen. TailoringOptions: GAME OPTIONS > PLAYER
 // TAILORING, its four levels one by one (Menus::tailor). Gfx*: AUDIO/VISUAL > DISPLAY MODE SELECTION (GfxDisplay) and
-// DISPLAY SETTINGS (GfxSettings: QUALITY, RAY TRACING, WATER & SKY, UPSCALING), editing Menus::graphics.
+// DISPLAY SETTINGS (GfxSettings: QUALITY, RAY TRACING, WATER & SKY, UPSCALING), editing Menus::graphics. GAME OPTIONS >
+// CONTROL CONFIGURATION (ControlConfig: MOUSE SENSITIVITY, BUTTON CONFIGURATION = ButtonConfig, RESTORE DEFAULTS) and
+// GAMEPAD CONFIGURATION (GamepadConfig: the pad in use, GAMEPAD AXES = the stick layout, INVERT X / Y-AXIS).
 enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
                               PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit, Extras, ExtrasCategory, ExtrasView, Journal,
-                              TailoringOptions, GfxDisplay, GfxSettings, GfxQuality, GfxRayTracing, GfxWater, GfxUpscaling };
+                              TailoringOptions, GfxDisplay, GfxSettings, GfxQuality, GfxRayTracing, GfxWater, GfxUpscaling,
+                              ControlConfig, ButtonConfig, GamepadConfig };
 // Continue: load the autosave, else the newest save (the app starts a new game when there is none). Save/Load/Delete act
 // on selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
 // Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW). TreasureHunt: the
 // main menu's centre after the ending. Revisit: start revisitChapter(). PlayMovie: EXTRAS TRAILERS & CREDITS, the
-// Movies\ file in selectedSave(). Outfit: EXTRAS OUTFITS wears Menus::outfit.
+// Movies\ file in selectedSave(). Outfit: EXTRAS OUTFITS wears Menus::outfit. Rebind / Unmap: BUTTON CONFIGURATION's
+// Return SELECT (the app captures the next input, Menus::capturing) / BackSpace UNMAP on row cursor(); RestoreControls:
+// CONTROL CONFIGURATION > RESTORE DEFAULTS.
 enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer, Equip, SonarReset,
-                              TreasureHunt, Revisit, PlayMovie, Outfit };
+                              TreasureHunt, Revisit, PlayMovie, Outfit, Rebind, Unmap, RestoreControls };
 
 struct Item {
     int16_t stringId = 0;  // locals.bin label; 0 = `label`
@@ -284,6 +289,21 @@ public:
     // sets it and returns Action::Outfit; the app keeps it in sync.
     std::string outfit;
     Unlocks unlocks;
+    // CONTROL CONFIGURATION: mouse sensitivity 0..10 (the app maps it); BUTTON CONFIGURATION rows (the app fills them: the
+    // action's name and its inputs on the device in use, "" = unmapped); `capturing`: the selected row waits for an input
+    // ("Press a button for the selected action", 1063). GAMEPAD CONFIGURATION: the pad in use (empty = "Disabled", 7),
+    // the stick layout index into `stickLayouts`, look X inversion (Y: invertY).
+    struct BindingRow {
+        int16_t stringId = 0;
+        std::string label, inputs;
+    };
+    int mouseSensitivity = 5;
+    std::vector<BindingRow> bindings;
+    bool capturing = false;
+    std::string padName;
+    int stickLayout = 0;
+    std::vector<std::string> stickLayouts;
+    bool invertX = false;
 
     // Footer prompts name the bound controls through Canvas::prompts (unset: the placeholders draw as pad icons).
     void draw(Canvas& c, const locale::Strings& s);
@@ -293,6 +313,7 @@ private:
     void drawRadial(Canvas& c, const locale::Strings& s, Screen ring, int cursor, bool opened, bool centre = true);
     void drawSlots(Canvas& c, const locale::Strings& s);
     void drawList(Canvas& c, const locale::Strings& s);
+    void drawButtons(Canvas& c, const locale::Strings& s); // BUTTON CONFIGURATION
     void drawTailoring(Canvas& c, const locale::Strings& s);
     void drawPda(Canvas& c, const locale::Strings& s);
     void drawSonar(Canvas& c, const locale::Strings& s);
@@ -322,6 +343,8 @@ private:
     std::string selected_;
     std::array<float, 8> grow_{}; // per radial / slot item: 0 = idle .. 1 = selected (eased)
     float label_ = 0;             // label fade-in of the selected radial item, 0..1
+    int padChoice_ = 0;           // GAMEPAD SELECTION shows padName alone
+    bool vibration_ = false;      // VIBRATION (dim)
 };
 
 // ---- HUD: the original display groups, reticles, notifications, title cards, subtitles ---------------
