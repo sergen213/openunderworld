@@ -897,13 +897,13 @@ PlayerState World::interpolated(double alpha) const {
     s.pos = glm::mix(prev_.pos, s.pos, t);
     s.yaw = lerpAngle(prev_.yaw, s.yaw, t);
     s.pitch = glm::mix(prev_.pitch, s.pitch, t);
+    s.roll = glm::mix(prev_.roll, s.roll, t);
     if (prev_.clip == s.clip) s.clipTime = prev_.clipTime + (s.clipTime - prev_.clipTime) * alpha;
     return s;
 }
 
 CameraState World::interpolatedCamera(double alpha) const {
     const float t = float(alpha);
-    s.roll = glm::mix(prev_.roll, s.roll, t);
     CameraState c = cam_;
     c.position = glm::mix(prevCam_.position, cam_.position, t);
     c.target = glm::mix(prevCam_.target, cam_.target, t);

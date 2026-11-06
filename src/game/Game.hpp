@@ -245,11 +245,11 @@ struct PlayerState {
     float savingGrab = 0; // Hang: seconds left of a saving grab (one hand); 0 = a firm hang
     int water = -1;  // swimming: index of the water markup (type 10) in collision().markup
     float pitch = 0; // under water: swim direction pitch, rad (+ = up); the model is pitched by it
+    float roll = 0;  // on the motorcycle: its roll, rad (+ = left side down); the model is rolled by it
     float flight = 0; // HangJump: seconds left until the target is reached
     float fallStartZ = 0; // z when Lara last became airborne (tru.exe player +0x6DC, set on FallState entry 0x75C550)
     float fallHeight = 0; // set by land(): fallStartZ - pos.z; 0 on every other tick
     // Free climbing (State::Climb): the hold she is at (CollisionMesh::markup index, -1 = not on a wall), its hand stance
-    float roll = 0;  // on the motorcycle: its roll, rad (+ = left side down); the model is rolled by it
     // (0..4 = DICE B / L / LW / R / RW, markup type - 16) and the rock's outward normal there. climbWarp: an attach /
     // hold-to-hold / step-off clip is carrying her from climbFrom (heading climbYawFrom) to climbTo (climbYawTo); the
     // ladder climb-off clips use climbFrom / climbTo too.
