@@ -33,7 +33,8 @@ docker run --rm --memory=12g "${MOUNTS[@]}" "${GPU[@]}" -e HAVE_GAME="${GAME:+1}
   test -s /tmp/manifest.json
   xvfb-run -a -s "-screen 0 1280x720x24" /app/OU.AppImage game --game-dir /game --level "pc-w\\l4_pool.drm" \
     --renderer opengl --frames 30 --screenshot /shots/game.ppm --no-audio
-  SDL_VIDEO_DRIVER=offscreen VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json /app/OU.AppImage game \
+  # lvp_icd.json since Mesa 25 (noble-updates), lvp_icd.x86_64.json before
+  SDL_VIDEO_DRIVER=offscreen VK_DRIVER_FILES="$(echo /usr/share/vulkan/icd.d/lvp_icd*.json)" /app/OU.AppImage game \
     --game-dir /game --level "pc-w\\l4_pool.drm" --renderer vulkan --frames 10 --screenshot /shots/game_lvp.ppm --no-audio
   if [ -n "${HAVE_GPU:-}" ]; then
     SDL_VIDEO_DRIVER=offscreen VK_LOADER_DRIVERS_DISABLE="*lvp*" /app/OU.AppImage viewer --game-dir /game --level \
