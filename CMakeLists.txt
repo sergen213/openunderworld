@@ -1,13 +1,26 @@
 cmake_minimum_required(VERSION 3.25)
 project(OpenUnderworld VERSION 0.31.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(OU_BUILD_TESTS "Build unit tests" ON)
 option(OU_SANITIZE "Build with ASan+UBSan" OFF)
+option(OU_LTO "Link-time optimisation (IPO) for Release / RelWithDebInfo builds, Jolt and FidelityFX included" ON)
+
+# IPO per configuration, so Debug and sanitizer builds never get it. Set before any target (Jolt, ou_ffx included).
+if(OU_LTO AND NOT OU_SANITIZE)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT OU_IPO_OK OUTPUT OU_IPO_ERR LANGUAGES CXX)
+  if(OU_IPO_OK)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+  else()
+    message(STATUS "OU_LTO: IPO not supported by this toolchain (${OU_IPO_ERR}), building without")
+  endif()
+endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -225,12 +238,17 @@ endif()
 # samples/tests/GPU compute. Linked PRIVATE: only Physics.cpp sees Jolt headers and flags.
 include(FetchContent)
 foreach(v USE_AVX USE_AVX2 USE_AVX512 USE_LZCNT USE_TZCNT USE_F16C USE_FMADD ENABLE_ALL_WARNINGS OVERRIDE_CXX_FLAGS
-          INTERPROCEDURAL_OPTIMIZATION GENERATE_DEBUG_SYMBOLS DEBUG_RENDERER_IN_DEBUG_AND_RELEASE PROFILER_IN_DEBUG_AND_RELEASE
+          GENERATE_DEBUG_SYMBOLS DEBUG_RENDERER_IN_DEBUG_AND_RELEASE PROFILER_IN_DEBUG_AND_RELEASE
           ENABLE_OBJECT_STREAM ENABLE_INSTALL JPH_USE_DX12 JPH_USE_VK JPH_USE_MTL JPH_USE_CPU_COMPUTE
           FLOATING_POINT_EXCEPTIONS_ENABLED)
   set(${v} OFF)
 endforeach()
 set(CROSS_PLATFORM_DETERMINISTIC ON)
+# Jolt's Build/ resets CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE from its own option: follow OU_LTO (Release only).
+set(INTERPROCEDURAL_OPTIMIZATION OFF)
+if(OU_IPO_OK)
+  set(INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
 set(CPP_RTTI_ENABLED ON) # our code (and UBSan's vptr checks) subclasses / inspects Jolt types
 FetchContent_Declare(ou_jolt
   URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.6.0.tar.gz

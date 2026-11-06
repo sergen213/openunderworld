@@ -9,6 +9,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -504,7 +505,9 @@ void World::tick(const Actions& input) {
     Actions push = a;
     const bool grabbing = player_.state().state == State::Block ? !player_.gripping() : player_.canInteract();
     if (grabbing && anims_.find("obj_block_grab")) push.move = vec2(0);
+    const auto scriptStart = std::chrono::steady_clock::now();
     script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact}, &col_);
+    tickTimes.scriptMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - scriptStart).count();
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.
     if (!units_.empty() && units_[current_].data.name != playerUnit_) {

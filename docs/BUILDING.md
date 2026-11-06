@@ -2,7 +2,7 @@
 
 ## Dependencies (Arch / CachyOS package names)
 
-- Required: `cmake ninja gcc` (or clang), `zlib` (or `zlib-ng-compat`), `sdl3`, `libepoxy`, `glm`, `gtest`
+- Required: `cmake ninja gcc` (or clang; C++23: GCC 14 or newer, built with GCC 14 and 16 and Clang 23), `zlib` (or `zlib-ng-compat`), `sdl3`, `libepoxy`, `glm`, `gtest`
   (with tests), `vulkan-headers vulkan-icd-loader shaderc` (glslc; the Vulkan backend is always built),
   `openssl nlohmann-json` (importer), `libsodium curl` (updater, `ou-sign`), `ffmpeg`
   (libavformat/libavcodec/libswscale/libswresample: `ou-movie`, `ou_video`).
@@ -41,6 +41,13 @@ ctest --test-dir build --output-on-failure
 
 Release: `-DCMAKE_BUILD_TYPE=Release -DOU_SANITIZE=OFF`; `-DOU_BUILD_TESTS=OFF` skips the tests. Debug builds
 request a GL debug context and print `KHR_debug` messages (non-notification severities) to stderr.
+
+Link-time optimisation: `-DOU_LTO=ON` (default) turns on CMake IPO for Release and RelWithDebInfo builds only,
+our code, Jolt and the FidelityFX subset alike (GCC `-flto=auto`, Clang ThinLTO), when `CheckIPOSupported`
+accepts the toolchain; Debug and `OU_SANITIZE` builds never get it. `-DOU_LTO=OFF` for faster Release links.
+Measured on 2026-11-06 (GCC 16, Release, `--frames` report, 3 runs each, invisible KWin, Vulkan 640x360, no vsync):
+`merc_squad` replay frame 4.88 → 4.56 ms, tick median 0.659 → 0.635 ms; `bike_ride` frame 3.41 → 3.42 ms, tick
+median 0.172 → 0.160 ms (noise ±0.3 ms); same `sim` hashes; `ou-game` 12.5 → 10.8 MB.
 
 The programs are written to `build/`: `ou-game` (the game), `ou-launcher`, `ou-viewer`, and the tools
 `ou-movie`, `ou-audio`, `ou-import`, `ou-asset`, `ou-text`, `ou-sign`, `ou-imgdiff`. `cmake --install build`

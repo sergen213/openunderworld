@@ -143,7 +143,7 @@ HairRig decodeHair(const cdc::Drm& drm, const scene::Skeleton& sk) {
             const float rest = r.f32(L);
             rig.links.push_back({base + a, base + b, rest});
             // Orientation reference: the shortest link to the previous segment of the same strand.
-            for (const auto [c, p] : {std::pair{a, b}, std::pair{b, a}})
+            for (const auto& [c, p] : {std::pair{a, b}, std::pair{b, a}})
                 if (strandIndex[c] == strandIndex[p] + 1 && rest < best[c]) {
                     best[c] = rest;
                     rig.particles[base + c].pred = int32_t(base + p);

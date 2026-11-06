@@ -35,7 +35,7 @@ struct View {
         uint32_t c[5];
         std::memcpy(c, r.data(), sizeof c);
         const size_t t3 = 20 + 8 * size_t(c[0]) + 8 * size_t(c[1]), t5 = t3 + 4 * (size_t(c[2]) + c[3]);
-        for (const auto [p0, n] : {std::pair{t3, c[2]}, std::pair{t5, c[4]}})
+        for (const auto& [p0, n] : {std::pair{t3, c[2]}, std::pair{t5, c[4]}})
             for (uint32_t k = 0; k < n; ++k) {
                 if (p0 + 4 * (k + 1ull) > r.size()) throw FormatError("resource relocation table truncated");
                 uint32_t v;
@@ -389,7 +389,7 @@ void applyState(Object& o, const nlohmann::json* s) {
         o.script->properties = o.script->initialProperties;
     }
     if (const float p = s && s->is_object() ? s->value("joint", 0.0f) : 0.0f; o.joint || p != 0) {
-        auto& j = o.joint ? *o.joint : o.joint.emplace();
+        auto& j = o.joint ? *o.joint : o.joint.emplace(Object::Joint{});
         j.position = p, j.speed = 0; // a saved object's watches and motor: its setup (resume)
         for (auto& r : j.ranges) r.inside = true;
     }
@@ -677,7 +677,7 @@ void Runtime::addUnit(const UnitRef& u) {
                 if (set->graph && modifiable)
                     o.script->fields[*modifiable] = o.script->initial[*modifiable] = uint32_t(int32_t(set->graph->states[size_t(initial)].index));
             } else if (set) {
-                auto& g = o.graph.emplace();
+                auto& g = o.graph.emplace(Object::Graph{});
                 g.set = set;
                 g.state = g.initial = initial;
                 if (set->graph && set->graph->states[size_t(g.state)].anim >= 0) {
@@ -751,7 +751,7 @@ bool Runtime::resume(Object& o) {
         o.mainPending = it->second.at(2);
         const auto& setup = it->second.at(3);
         if (const auto j = setup.find("joint"); j != setup.end()) {
-            auto& joint = o.joint ? *o.joint : o.joint.emplace(); // its position: the object state (applyState)
+            auto& joint = o.joint ? *o.joint : o.joint.emplace(Object::Joint{}); // its position: the object state (applyState)
             joint.prismatic = j->at(0), joint.ranges.clear();
             for (const auto& r : j->at(1)) joint.ranges.push_back({r.at(0).get<float>(), r.at(1).get<float>(), r.at(2).get<int32_t>(), r.at(3).get<bool>()});
             joint.speed = j->size() > 2 ? j->at(2).get<float>() : 0.0f;
@@ -1823,7 +1823,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             if (Object* jo = findMut(self->uid); jo && ((!std::strcmp(name, "multibody") && (nc.function == 1 || nc.function == 79)) ||
                                                         (!std::strcmp(name, "joint") && nc.function == 17) ||
                                                         (!std::strcmp(name, "limit") && nc.function == 3))) {
-                if (!jo->joint) jo->joint.emplace();
+                if (!jo->joint) jo->joint.emplace(Object::Joint{});
                 auto& j = *jo->joint;
                 const auto range = [&](const vm::Value& lo, const vm::Value& hi, const vm::Value& id) {
                     const float a = std::bit_cast<float>(lo.bits), b = std::bit_cast<float>(hi.bits);

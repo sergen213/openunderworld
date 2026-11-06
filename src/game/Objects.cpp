@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 
 namespace ou::game {
 namespace {
@@ -541,7 +542,9 @@ void World::tickUber(float dt) {
             }
         }
     }
+    const auto physicsStart = std::chrono::steady_clock::now();
     stepPhysics(dt);
+    tickTimes.physicsMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - physicsStart).count();
     for (size_t i = 0; i < uberEvents_.size(); ++i) { // handlers may send commands that queue more events
         const auto [uid, event] = uberEvents_[i];
         script_.uberEvent(uid, event);
@@ -962,7 +965,7 @@ void World::bindMultibody() {
         // 0x4DA160). l1_baldrs_tomb locks 69 / 70 engage at +10 and disengage at -10; tickJoints moves the joint.
         if (function == 89 && args.size() == 3 && args[0].bits == 0 && args[1].bits >= 1 && args[1].bits <= 3) {
             if (!o) return false;
-            (o->joint ? *o->joint : o->joint.emplace()).speed = std::bit_cast<float>(args[2].bits);
+            (o->joint ? *o->joint : o->joint.emplace(script::Object::Joint{})).speed = std::bit_cast<float>(args[2].bits);
             return true;
         }
         if (function != 77 && function != 78 && function != 79) return false;

@@ -441,7 +441,7 @@ std::vector<MaterialTexture> materialTextures(const cdc::Section& material) {
     const size_t t3 = 20 + 8 * size_t(counts[0]) + 8 * size_t(counts[1]);
     const size_t t5 = t3 + 4 * size_t(counts[2]) + 4 * size_t(counts[3]);
     const Reader m{material.data};
-    for (const auto [p0, n] : {std::pair{t3, counts[2]}, std::pair{t5, counts[4]}})
+    for (const auto& [p0, n] : {std::pair{t3, counts[2]}, std::pair{t5, counts[4]}})
         for (uint32_t k = 0; k < n; ++k) {
             const uint32_t v = r.u32(p0 + 4 * size_t(k));
             if ((v >> 25) != uint32_t(cdc::SectionType::Texture)) continue;

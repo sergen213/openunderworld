@@ -39,7 +39,9 @@ Input scripts: one event per line, `<seconds> <action> [value]`, `#` comments. A
 axes −1..1), `walk`, `jump`, `drop`, `interact`, `save`, `load` (0/1, default value 1; `save`/`load` = F5 quicksave /
 F9 quickload, docs/SAVES.md), `lookx`, `looky` (camera rate, rad/s). A value holds
 until changed; an event at `t` applies from tick `round(t · 60)`. With `--input-script` each rendered frame advances
-`1/--render-hz` seconds (default 60), so `--frames N` screenshots are reproducible.
+`1/--render-hz` seconds (default 60), so `--frames N` screenshots are reproducible. At the end, `--frames` prints
+`frame time mean / p95 / max` (wall time per frame) and `tick time mean / median / p95` (`World::tick` CPU time) with
+its script runtime and physics step means, all after 30 warm-up frames; with `--no-vsync` they compare builds.
 
 Audio (`ou_audio`, docs/formats/AUDIO.md; `--no-audio` turns it off): lara.drm Wave sections are registered and the
 unit's music stream `pc-w\music\<unit>_mus_01\<unit>_mus_01.mul` loops (all stems at gain 1; [I] the naming is seen

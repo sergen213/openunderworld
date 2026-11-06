@@ -2730,7 +2730,7 @@ int main(int argc, char** argv) {
     uint64_t fpsGenerated = 0; // renderer->generatedFrames() at fpsStart
     int frame = 0, fpsFrames = 0;
     double fps = 0, renderedFps = 0;
-    std::vector<double> frameMs; // --frames: wall frame times for the final report
+    std::vector<double> frameMs, tickMs; // --frames: wall frame times and World::tick CPU times for the final report
     // GAMEPAD SELECTION shows the pad in use (locals.bin 7 "Disabled" without one).
     auto showPad = [&] {
         const char* name = devices.pad ? SDL_GetGamepadNameForID(devices.pad) : nullptr;
@@ -2868,8 +2868,10 @@ int main(int argc, char** argv) {
                 world->kill(); // death clip, then World respawns her at the last checkpoint
                 logState("killed (--die)", *world);
             }
+            if (opt.frames && frame > 30 && tickMs.empty()) world->tickTimes = {}; // after the warm-up frames, as frameMs
             const uint64_t tickStart = SDL_GetTicksNS(), unitsBefore = world->unitsVersion();
             world->tick(a);
+            if (opt.frames && frame > 30) tickMs.push_back(double(SDL_GetTicksNS() - tickStart) * 1e-6);
             if (world->unitsVersion() != unitsBefore) // streaming cost on the main thread (ROADMAP "Unit streaming")
                 std::fprintf(stderr, "ou-game: tick %llu stream world %.2f ms\n", (unsigned long long)world->ticks(),
                              double(SDL_GetTicksNS() - tickStart) * 1e-6);
@@ -3373,6 +3375,16 @@ int main(int argc, char** argv) {
                 std::sort(sorted.begin(), sorted.end());
                 std::fprintf(stderr, "ou-game: frame time mean %.3f ms p95 %.3f ms max %.3f ms (%zu frames)\n", sum / double(sorted.size()),
                              sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)], sorted.back(), sorted.size());
+            }
+            if (!tickMs.empty()) { // World::tick CPU time (streaming joins included), its script and physics shares
+                auto sorted = tickMs;
+                std::sort(sorted.begin(), sorted.end());
+                double sum = 0;
+                for (const double t : sorted) sum += t;
+                const double n = double(sorted.size());
+                std::fprintf(stderr, "ou-game: tick time mean %.3f ms median %.3f ms p95 %.3f ms, script %.3f ms, physics %.3f ms (%zu ticks)\n",
+                             sum / n, sorted[sorted.size() / 2], sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)],
+                             world->tickTimes.scriptMs / n, world->tickTimes.physicsMs / n, sorted.size());
             }
             if (!opt.screenshot.empty()) {
                 if (!writePpm(opt.screenshot, renderer->readBackbuffer({w, h}))) {

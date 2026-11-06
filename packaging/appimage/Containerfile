@@ -1,5 +1,6 @@
-# Build environment for the release AppImage: Ubuntu 24.04 (glibc 2.39, GCC 13), so the AppImage runs on
-# every distro with glibc >= 2.39 (docs/RELEASING.md). Used by packaging/appimage/build-in-container.sh.
+# Build environment for the release AppImage: Ubuntu 24.04 (glibc 2.39, GCC 14 for C++23), so the AppImage runs on
+# every distro with glibc >= 2.39 (docs/RELEASING.md). Used by packaging/appimage/build-in-container.sh. 24.04's
+# libstdc++6 already comes from GCC 14, so g++-14 does not raise the libstdc++ floor past what 24.04 has.
 # Distro packages where 24.04's are new enough; SDL3, Vulkan-Headers (VK_AMD_anti_lag), glm 1.x and
 # Qt >= 6.5 are pinned downloads checked by SHA-256 (Qt: the official online-installer archives, whose
 # published .sha1 files match these digests; built on RHEL 8, so they need nothing newer than 24.04).
@@ -7,7 +8,7 @@ FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential cmake ninja-build git pkg-config python3 curl ca-certificates p7zip-full file zsync \
+      build-essential g++-14 cmake ninja-build git pkg-config python3 curl ca-certificates p7zip-full file zsync \
       zlib1g-dev libepoxy-dev libssl-dev nlohmann-json3-dev libsodium-dev libcurl4-openssl-dev \
       libshaderc-dev glslc libvulkan-dev \
       libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
@@ -18,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
       libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 libxcb-util1 libwayland-cursor0 libwayland-egl1 \
  && rm -rf /var/lib/apt/lists/*
+ENV CC=gcc-14 CXX=g++-14
 
 WORKDIR /tmp/deps
 RUN set -e; get() { curl -fsSL --proto '=https' -o "$3" "$1" && echo "$2  $3" | sha256sum -c --quiet -; }; \

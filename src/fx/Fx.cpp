@@ -181,7 +181,7 @@ ParticleDef parseParticleDef(std::span<const uint8_t> d) {
     // Keys (0x544078..0x5442B9): key 0 always; middle keys when their colour is set or their size is >= 0; last key.
     const auto size = [](float s) { return s >= 0 ? std::trunc(s) : -1.0f; };
     p.keys.push_back({p.colour0, std::trunc(p.size0), rd<int16_t>(d, 0x86), 0.0f, rd<uint8_t>(d, 0x11C), rd<float>(d, 0xE0)});
-    for (const auto [c, s, v, t, k] : {std::tuple{0xB8, 0xBC, 0xC0, 0xCE, 1}, std::tuple{0xC4, 0xC8, 0xCC, 0xD0, 2}})
+    for (const auto& [c, s, v, t, k] : {std::tuple{0xB8, 0xBC, 0xC0, 0xCE, 1}, std::tuple{0xC4, 0xC8, 0xCC, 0xD0, 2}})
         if (rd<uint32_t>(d, c) != 0 || rd<float>(d, s) >= 0)
             p.keys.push_back({rd<uint32_t>(d, c), size(rd<float>(d, s)), rd<int16_t>(d, v), frac(rd<int16_t>(d, t)),
                               rd<uint8_t>(d, 0x11C + k), rd<float>(d, 0xE0 + 4 * k)});

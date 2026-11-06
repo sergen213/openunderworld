@@ -54,7 +54,7 @@ uint32_t resourceRef(const cdc::Section& s, uint32_t off) {
     uint32_t c[5];
     std::memcpy(c, r.data(), sizeof c);
     const size_t t3 = 20 + 8 * size_t(c[0]) + 8 * size_t(c[1]), t5 = t3 + 4 * (size_t(c[2]) + c[3]);
-    for (const auto [p0, n] : {std::pair{t3, c[2]}, std::pair{t5, c[4]}})
+    for (const auto& [p0, n] : {std::pair{t3, c[2]}, std::pair{t5, c[4]}})
         for (uint32_t k = 0; k < n; ++k) {
             if (p0 + 4 * (k + 1ull) > r.size()) throw FormatError("resource relocation table truncated");
             uint32_t v;
@@ -86,7 +86,7 @@ std::shared_ptr<const MultiSpline> parseMultiSpline(const cdc::Drm& d, cdc::Poin
     auto out = std::make_shared<MultiSpline>();
     const View level(d, 0);
     for (int c = 0; c < 3; ++c) out->origin[c] = level.at<float>(0x80 + 4 * c);
-    for (const auto [off, rotation] : {std::pair{0x40u, false}, std::pair{0x44u, true}}) {
+    for (const auto& [off, rotation] : {std::pair{0x40u, false}, std::pair{0x44u, true}}) {
         const auto it = v.ptrs.find(p.offset + off);
         if (it == v.ptrs.end()) continue;
         const View t(d, it->second.section);
@@ -205,7 +205,7 @@ Unit parseUnit(const cdc::Drm& d) {
             if (const auto p = dv.ptrs.find(o + 0x3C + 4 * k); p != dv.ptrs.end()) in.patrolPaths.push_back(path(p->second));
             else in.patrolPaths.emplace_back();
     };
-    for (const auto [countOff, listOff] : {std::pair{0x0Cu, 0x10u}, std::pair{0x1Cu, 0x20u}}) {
+    for (const auto& [countOff, listOff] : {std::pair{0x0Cu, 0x10u}, std::pair{0x1Cu, 0x20u}}) {
         const auto n = ud.at<uint32_t>(up.offset + countOff);
         if (n == 0) continue;
         const auto lp = ud.ptr(up.offset + listOff, "unit intro list");

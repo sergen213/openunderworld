@@ -53,8 +53,9 @@ export PATCHELF="$CACHE/patchelf-0.19.2"
 export APPIMAGE_EXTRACT_AND_RUN=1 # the tools themselves need no FUSE (containers, CI)
 
 # ---- Release build (no sanitizers, no tests) -------------------------------------------------------
+# $CXX (the container's g++-14) by full path: an existing build dir's cache made with another compiler is then redone.
 cmake -S "$SRC" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DOU_SANITIZE=OFF -DOU_BUILD_TESTS=OFF \
-  -DCMAKE_INSTALL_PREFIX=/usr >/dev/null
+  ${CXX:+-DCMAKE_CXX_COMPILER="$(command -v "$CXX")"} -DCMAKE_INSTALL_PREFIX=/usr >/dev/null
 cmake --build "$BUILD" -j "${OU_JOBS:-12}"
 rm -rf "$APPDIR"
 DESTDIR="$APPDIR" cmake --install "$BUILD" >/dev/null

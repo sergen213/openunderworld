@@ -949,7 +949,7 @@ void Menus::drawSlots(Canvas& c, const locale::Strings& s) {
         const auto [x, y] = radialPos(size_t(cursor_) + 2, true);
         const float a = label_;
         const float x0 = x + kSlotBoxLeft, w = kSlotBoxRight - x0, h = kSlotBoxTop + kSlotBoxBottom;
-        for (const auto [d, rim] : {std::pair{2.6f, 0.12f}, {1.6f, 0.25f}, {0.7f, 0.6f}}) // the rim's soft glow
+        for (const auto& [d, rim] : {std::pair{2.6f, 0.12f}, {1.6f, 0.25f}, {0.7f, 0.6f}}) // the rim's soft glow
             vrect(c, x0 - d, y - kSlotBoxTop - d, w + 2 * d, h + 2 * d, withAlpha(kSlotRim, a * rim));
         vrect(c, x0, y - kSlotBoxTop, w, h, withAlpha(kBlack, a));
         text0 = c.vertices.size();

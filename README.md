@@ -1,6 +1,6 @@
 # OpenUnderworld
 
-A native Linux reimplementation of the engine of **Tomb Raider: Underworld** (2008, Crystal Dynamics' cdc engine), written from scratch in C++20 with OpenGL and Vulkan 1.3 renderers.
+A native Linux reimplementation of the engine of **Tomb Raider: Underworld** (2008, Crystal Dynamics' cdc engine), written from scratch in C++23 with OpenGL and Vulkan 1.3 renderers.
 
 ## Status
 
