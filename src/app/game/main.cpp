@@ -2503,6 +2503,7 @@ int main(int argc, char** argv) {
         if (overlay && !mainMenu) {
             const std::string rendered = fps > renderedFps + 0.5 ? fmt(" (%.1f rendered)", renderedFps) : "";
             lines.push_back(fmt("OpenUnderworld ou-game | %s | %.1f FPS%s | tick %llu%s%s", world->currentUnit().data.name.c_str(), fps,
+        objects.hide(world->removedObjects(), scene, *renderer, effects.system); // broken urns, exploded barrels
                                 rendered.c_str(), (unsigned long long)world->ticks(), script ? " | REPLAY " : "", pad ? " | gamepad" : ""));
             lines.push_back(renderer->description());
             lines.push_back(ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays));

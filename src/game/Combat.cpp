@@ -79,9 +79,6 @@ const WeaponInfo kWeapons[kWeaponCount] = {
 };
 const WeaponInfo& info(Weapon w) { return kWeapons[size_t(w)]; }
 constexpr float kHammerShot = 10 / 30.0f, kHammerPound = 12 / 30.0f; // events 0x75 / 0x4B
-// [I] the ground pound's reach: its lightning (wp_thorhammer bolt 1, three at frame 12) ends up to +-948 from Lara.
-// tru.exe applies 0x69F1E0 area hits from a runtime table (0x6E68B0) not traced to the data: damage [U], ours 0.
-constexpr float kPoundRadius = 948.0f;
 // Mjolnir's aim poses ground_aim_right / _front / _left by aim yaw; no pitch rows. Yaws [I]: the pointing (right) hand's
 // shoulder -> hand direction in each pose relative to _front's (which points 9 deg right of the heading): -52, 0, +32.
 const float kHammerCols[] = {-52 * kPi / 180, 0, 32 * kPi / 180};
@@ -764,6 +761,7 @@ void World::fire(int hand) {
             c.adrenaline = std::min(1.0f, c.adrenaline + shot.damage / kAdrenalineFill); // "damaging enemies" (locals 1310)
         }
         if (!struck && object) uberShot(object, dir);
+        if (!struck && object) damageObject(object, w.damageAt(best, submerged()), w.hitClass); // breakable uber objects (urns)
         c.shots.push_back(shot);
     }
     c.spread = std::min(w.maxSpreadDeg, c.spread + w.spreadPerShot);
@@ -771,16 +769,34 @@ void World::fire(int hand) {
     ++c.shotsFired;
 }
 
+// 0x6E68B0 (event 0x4B) runs one 0x69F1E0 area hit per ring of the current attack record (weapon controller +0xC4,
+// Lara's object data: the record with damage class 13, rings at +0x24 / count +0x20; GAMEPLAY.md "Mjolnir").
+// 0x69F1E0: every instance but Lara whose origin lies strictly between the inner and outer radius (3D) takes hit
+// message 0x11C, damage lerped from `damage` at the inner to `edge` at the outer radius, class 13, type 0; rings with a
+// knock-back speed (+0x14 > 0) also throw it off its feet (message 0x91; ours Hit::knock).
 void World::groundPound() {
     const vec3 p = player_.state().pos;
+    const auto ring = [&](vec3 at) -> const PoundRing* {
+        const float d = glm::length(at - p);
+        for (const PoundRing& r : kPoundRings)
+            if (d > r.inner && d < r.outer) return &r;
+        return nullptr;
+    };
+    const auto damage = [&](const PoundRing& r, vec3 at) {
+        return glm::mix(r.damage, r.edge, (glm::length(at - p) - r.inner) / (r.outer - r.inner));
+    };
     for (Damageable* t : targets) {
         if (!t || !t->alive() || t->team() != Team::Enemy) continue;
+        const PoundRing* r = ring(t->position());
+        if (!r) continue;
         const vec3 d = t->position() - p;
-        if (glm::length(vec2(d)) > kPoundRadius + t->radius() || std::abs(d.z) > kPoundRadius) continue;
-        Hit hit{0, t->aimPoint(), glm::normalize(vec3(vec2(d), 0) + vec3(1e-4f, 0, 0)), Team::Player, false, true};
-        hit.damageClass = 13, hit.damageType = 3; // [I] as pr_thorbolt: Mjolnir's blows finish thralls
+        Hit hit{damage(*r, t->position()), t->aimPoint(), glm::normalize(vec3(vec2(d), 0) + vec3(1e-4f, 0, 0)), Team::Player, false,
+                r->knock > 0};
+        hit.damageClass = 13, hit.damageType = 0;
         t->onHit(hit);
     }
+    for (const auto& o : script_.objects())
+        if (const PoundRing* r = uberRuntime_.contains(o.uid) ? ring(o.pos) : nullptr) damageObject(o.uid, damage(*r, o.pos), 13);
 }
 
 void World::tickCombat(const Actions& a, float dt) {

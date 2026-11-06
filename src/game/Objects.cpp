@@ -133,12 +133,13 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                 uberMotion_[o.uid] = {motion->delta, motion->rotation, motion->duration, 0, false, motion->clip};
             auto& rt = uberRuntime_[o.uid];
             rt.sections.assign(data->sections.size(), {});
+            for (size_t i = 0; i < rt.sections.size(); ++i) rt.sections[i].health = data->sections[i].health;
             // Transition animations: the object's animation list by index (transition +0x2A).
             for (const auto& e : anim::animList(*drm->second)) {
                 float length = 0;
                 for (const auto& sec : drm->second->sections)
                     if (sec.type == cdc::SectionType::Animation && sec.id == e.animId) length = float(anim::decodeClip(sec.data).durationSeconds());
-                rt.animLength.push_back(length);
+                rt.animLength.push_back(length), rt.animNames.push_back(e.name);
             }
         }
     }
@@ -154,9 +155,10 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
             for (size_t i = 0; i < s.size(); ++i) {
                 auto& sec = rt.sections[i];
                 sec.state = s[i].at(0), sec.transition = s[i].at(1), sec.time = s[i].at(2), sec.length = s[i].at(3);
+                if (s[i].size() >= 6) sec.health = s[i].at(4), sec.removed = s[i].at(5);
                 if (sec.state >= 0) uberStates_[o.uid][i] = uint32_t(sec.state);
             }
-            rt.fired = j.at("fired"), rt.commanded = j.at("commanded");
+            rt.fired = j.at("fired"), rt.commanded = j.at("commanded"), rt.intangible = j.value("intangible", false);
             if (const auto m = uberMotion_.find(o.uid); m != uberMotion_.end() && j.contains("motion"))
                 m->second.t = j["motion"].at(0), m->second.active = j["motion"].at(1);
             for (const auto& e : j.value("joints", nlohmann::json::array())) // state: x, v, limit, motor
@@ -185,8 +187,9 @@ nlohmann::json World::serializeObjects() const {
     for (const auto& [uid, rt] : uberRuntime_) {
         if (const auto d = uberData_.find(uid); d == uberData_.end() || !d->second) continue;
         nlohmann::json sections = nlohmann::json::array();
-        for (const auto& s : rt.sections) sections.push_back({s.state, s.transition, s.time, s.length});
-        nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded}};
+        for (const auto& s : rt.sections) sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed});
+        nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded},
+                                                         {"intangible", rt.intangible}};
         if (const auto m = uberMotion_.find(uid); m != uberMotion_.end()) e["motion"] = {m->second.t, m->second.active};
         nlohmann::json joints = nlohmann::json::array(), watches = nlohmann::json::array();
         for (const auto& [index, jt] : rt.joints)
@@ -205,11 +208,11 @@ void World::restoreObjects(const nlohmann::json& j) {
             const nlohmann::json uber = j.value("uber", nlohmann::json::object());
             for (const auto& [key, e] : uber.items()) {
                 const auto& s = e.at("sections");
-                for (const auto& sec : s) // validate the shape now: prepareUber reads it later (older saves: 5 entries)
+                for (const auto& sec : s) // validate the shape now: prepareUber reads it later (older saves: 4 / 5 entries)
                     if (!sec.is_array() || sec.size() < 4 || !sec[0].is_number_integer() || !sec[1].is_number_integer() ||
-                        !sec[2].is_number() || !sec[3].is_number())
+                        !sec[2].is_number() || !sec[3].is_number() || (sec.size() >= 6 && (!sec[4].is_number() || !sec[5].is_boolean())))
                         throw std::runtime_error("bad uber section of " + key);
-                (void)e.at("fired").get<uint64_t>(), (void)e.at("commanded").get<bool>();
+                (void)e.at("fired").get<uint64_t>(), (void)e.at("commanded").get<bool>(), (void)e.value("intangible", false);
                 if (e.contains("motion")) (void)e["motion"].at(0).get<float>(), (void)e["motion"].at(1).get<bool>();
                 for (const auto& jt : e.value("joints", nlohmann::json::array())) {
                     (void)jt.at(0).get<int32_t>();
@@ -314,6 +317,14 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
             rt.watches.push_back({int32_t(section), a.joint, a.param, a.value, true});
         break;
     }
+    case 5: // instance +0x18 |= 0x20000000: collision callbacks skip it (0x48D590, 0x697970) [O]; ours drops its collider
+        rt.intangible = true, syncedObjects_ = ~size_t(0);
+        break;
+    case 28: // 0x6D5D90 -> 0x6D54F0: the section's removal record (all in the data: one fade-out over 0 s) runs, then the
+             // instance goes (0x6D5E20 -> 0x4D6480). ponytail: removed at once; record entries of type 1 (a clip first) and
+             // fade times > 0 do not occur.
+        rt.sections[section].removed = true, syncedObjects_ = ~size_t(0);
+        break;
     default: break;
     }
 }
@@ -517,7 +528,8 @@ void World::tickUber(float dt) {
                 // ponytail: probability (flags 0x10, tru.exe's LCG 0x8A9788) ignored; no state machine uses it on the route.
                 // Triggers 14 / 15 come from the joint simulation (tickUberJoints).
                 const bool go = t.trigger == 3 || (t.trigger == 1 && s.time > std::bit_cast<float>(t.param) - 0.001f) ||
-                                (t.trigger == 9 && uberHolds(uid, t.conditions));
+                                (t.trigger == 9 && uberHolds(uid, t.conditions)) ||
+                                (t.trigger == 18 && sec.takesDamage && s.health <= std::bit_cast<float>(t.param) + 0.001f); // 0x6D49D0
                 if (go) { uberBegin(uid, i, ti); break; }
             }
         }
@@ -578,6 +590,39 @@ void World::uberShot(int32_t uid, vec3 dir) {
     }
 }
 
+// 0x6D4690, per section with +0x52 bit 0: health -= damage (floored at 0); an idle section in a state then starts its
+// first transition of trigger 17 whose parameter the damage exceeds, or 19 whose parameter is the damage class. The
+// hit message reaches every instance the area hits (0x69F1E0) or the bullet (World::fire) strike. [I] every section of
+// the object takes it (the urns and barrels have one).
+void World::damageObject(int32_t uid, float damage, int damageClass) {
+    const auto rt = uberRuntime_.find(uid);
+    const auto data = uberData_.find(uid);
+    if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return;
+    for (size_t i = 0; i < rt->second.sections.size(); ++i) {
+        const auto& sec = data->second->sections[i];
+        auto& s = rt->second.sections[i];
+        if (!sec.takesDamage || s.removed) continue;
+        s.health = std::max(0.0f, s.health - damage);
+        if (s.transition >= 0 || s.state < 0 || size_t(s.state) >= sec.stateOut.size()) continue;
+        for (const uint32_t ti : sec.stateOut[size_t(s.state)]) {
+            const auto& t = sec.transitions[ti];
+            if ((t.trigger == 17 && damage > std::bit_cast<float>(t.param)) || (t.trigger == 19 && uint32_t(damageClass) == t.param)) {
+                uberBegin(uid, i, ti);
+                break;
+            }
+        }
+    }
+}
+
+std::set<int32_t> World::removedObjects() const {
+    std::set<int32_t> out;
+    for (const auto& [uid, rt] : uberRuntime_)
+        if (const auto d = uberData_.find(uid); d != uberData_.end() && d->second)
+            for (size_t i = 0; i < rt.sections.size(); ++i)
+                if (rt.sections[i].removed && d->second->sections[i].model == 0) out.insert(uid);
+    return out;
+}
+
 std::vector<World::ObjectClip> World::objectClips() const {
     std::vector<ObjectClip> out;
     for (const auto& o : script_.objects()) {
@@ -586,6 +631,17 @@ std::vector<World::ObjectClip> World::objectClips() const {
                            o.state == 2, introModel(o)});
         else if (const auto m = uberMotion_.find(o.uid); m != uberMotion_.end() && m->second.active && m->second.t < m->second.duration)
             out.push_back({o.uid, o.name, m->second.clip, m->second.t, m->second.duration, false, introModel(o)});
+        else if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end()) {
+            // a transition playing its animation (flags 1): its events (fx_smash: the urn's shards and sound)
+            const auto& data = uberData_.at(o.uid);
+            for (size_t i = 0; data && i < rt->second.sections.size(); ++i) {
+                const auto& s = rt->second.sections[i];
+                if (s.transition < 0) continue;
+                const auto& t = data->sections[i].transitions[size_t(s.transition)];
+                if ((t.flags & 1) && t.anim >= 0 && size_t(t.anim) < rt->second.animNames.size())
+                    out.push_back({o.uid, o.name, rt->second.animNames[size_t(t.anim)], s.time, s.length, false, introModel(o)});
+            }
+        }
     }
     return out;
 }
@@ -796,6 +852,7 @@ void World::syncObjects() {
         const physics::ObjectPhysics& p = *physics;
         const glm::mat4 intro = introModel(o);
         int hinge = -1;
+        if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end() && rt->second.intangible) continue;
         // [I] Rigid doors (class 34) and joint levers (class 6) swing about the X axis of their first model marker.
         if ((o.kind == script::Kind::Door || o.kind == script::Kind::Switch) && !o.clips &&
             (o.kind == script::Kind::Switch || p.physClass == physics::kClassRigidBody) && !p.markers.empty()) {

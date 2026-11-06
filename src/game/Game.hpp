@@ -498,6 +498,10 @@ public:
     ai::Enemies& enemies() { return enemies_; }
     // FNV-1a digest of the simulated state (Lara, camera, health/air, rigid bodies, object collision, script objects
     // and their fields, enemies): equal digests at a tick = the same simulation (render-rate tests, ou-game log).
+    // Uber objects whose model-0 section was removed (action 28: broken urns, exploded barrels); drawn no more.
+    std::set<int32_t> removedObjects() const;
+    // Hit message 0x11C on an uber object's sections (0x6D4690): shots, Mjolnir's bolts, the ground pound.
+    void damageObject(int32_t uid, float damage, int damageClass);
     uint64_t stateHash() const;
     // Save games (src/save): ai::Enemies::restore, then the loaded units' enemies come back from it at once.
     void restoreEnemies(const nlohmann::json& j);
@@ -757,7 +761,8 @@ private:
     // state (+0x88) / transition; events fired once (+0x60); commanded: a command changed a section (travel latch).
     // Joints: the simulated physics joints (action 9 creates, 10 removes; types 0 / 2, links 11); watches: range watches
     // (action 0x14, 0x49A5C0 record: inside starts true, 0x4937A0).
-    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0; };
+    // health: section +0xDC (damage lowers it, 0x6D4690); removed: action 28 took the section's instance away.
+    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; };
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };
     struct UberRuntime {
         std::vector<UberSectionState> sections;
@@ -791,6 +796,8 @@ private:
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;
     uint64_t lightsVersion_ = 0;
     // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()).
+        std::vector<std::string> animNames; // the object's animation list, as animLength
+        bool intangible = false;            // action 5: instance +0x18 bit 0x20000000, collision callbacks skip it
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
     std::vector<ObjectCollider> colliders_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none

@@ -342,7 +342,7 @@ TEST(Combat, WeaponSwitchKeepsRoundsAndReloadsFromReserve) {
 
 // Mjolnir: Change Weapon cycles pistols -> secondary -> hammer (tru.exe 0x704930); fire swings and the bolt leaves at
 // frame 10 of the swing (1000 damage: a 700-hp target dies), no clip or reload; target lock + interact = the ground pound,
-// which knocks targets within its 948-unit reach at frame 12 and spares the rest.
+// which hits targets by its two decoded rings at frame 12 (0x6E68B0) and spares those beyond 3000.
 TEST(Combat, MjolnirCycleSwingAndGroundPound) {
     CollisionMesh m;
     addFloor(m, -5000, -5000, 5000, 5000, 0);
@@ -383,10 +383,10 @@ TEST(Combat, MjolnirCycleSwingAndGroundPound) {
     for (int i = 0; i < 60; ++i) w->tick(guns(false));
     EXPECT_TRUE(w->combat().hammer.clip.empty()); // the swing (29/30 s) is over
 
-    game::DummyTarget nearT, farT;
-    nearT.pos = {800, 0, 0}, nearT.hp = farT.hp = 1e9f;
-    farT.pos = {-1500, 0, 0};
-    w->targets = {&nearT, &farT};
+    game::DummyTarget nearT, midT, farT; // rings (game::kPoundRings): 1200 inside 500; 400 at 500 .. 100 at 3000
+    nearT.pos = {300, 0, 0}, midT.pos = {0, 1500, 0}, farT.pos = {-3500, 0, 0};
+    nearT.hp = midT.hp = farT.hp = 1e6f;
+    w->targets = {&nearT, &midT, &farT};
     for (int i = 0; i < 10; ++i) w->tick(guns(false)); // lock on
     ASSERT_TRUE(w->combat().locked);
     Actions pound = guns(false);
@@ -397,7 +397,9 @@ TEST(Combat, MjolnirCycleSwingAndGroundPound) {
     EXPECT_EQ(nearT.hits, 0);
     for (int i = 0; i < 3; ++i) w->tick(guns(false)); // frame 12
     EXPECT_EQ(nearT.hits, 1);
-    EXPECT_EQ(nearT.hp, 1e9f); // knocked, not hurt [U damage]
+    EXPECT_FLOAT_EQ(1e6f - nearT.hp, 1200);
+    EXPECT_EQ(midT.hits, 1);
+    EXPECT_NEAR(1e6f - midT.hp, 280, 0.5f); // 1000 of 2500 into the ring
     EXPECT_EQ(farT.hits, 0);
     w->targets.clear();
 }
@@ -550,6 +552,28 @@ TEST(Combat, InputScriptCombatActions) {
 }
 
 // ---- real data (OU_GAME_DIR) --------------------------------------------------------------------
+// The ground pound's rings (game::kPoundRings) as lara.drm holds them: section 850, attack record +0x35EB8 (class 13,
+// 2 rings at +0x24 -> +0x399F0, 0x1C bytes each).
+TEST(CombatReal, GroundPoundRings) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto drm = cdc::parseDrm(*bf.read("pc-w\\lara.drm"));
+    const auto s = std::find_if(drm.sections.begin(), drm.sections.end(), [](const cdc::Section& x) { return x.id == 850; });
+    ASSERT_NE(s, drm.sections.end());
+    const auto u32 = [&](uint32_t o) { uint32_t v; std::memcpy(&v, s->data.data() + o, 4); return v; };
+    constexpr uint32_t kRecord = 0x35EB8, kRings = 0x399F0;
+    EXPECT_EQ(u32(kRecord + 0xC), 13u);
+    EXPECT_EQ(u32(kRecord + 0x20), std::size(game::kPoundRings));
+    EXPECT_EQ(cdc::internalPointer(*s, kRecord + 0x24), kRings);
+    for (size_t i = 0; i < std::size(game::kPoundRings); ++i) {
+        game::PoundRing r;
+        std::memcpy(&r, s->data.data() + kRings + 0x1C * i, sizeof r);
+        const auto& want = game::kPoundRings[i];
+        EXPECT_EQ(std::memcmp(&r, &want, sizeof r), 0) << "ring " << i;
+    }
+}
+
 TEST(CombatReal, WeaponData) {
     const char* dir = std::getenv("OU_GAME_DIR");
     if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";

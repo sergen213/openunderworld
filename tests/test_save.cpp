@@ -872,6 +872,44 @@ TEST(StreamReal, UberJointSaveLoad) {
     EXPECT_EQ(fresh.serializeObjects(), expect);
 }
 
+// Breakable urns (docs/GAMEPLAY.md "Breakables"): a Mjolnir hit on l7_yggdrasil_hall01 urn 8814 (ar_pt_weightbreak_b:
+// section health 30, trigger 17 on any damage) breaks it: state 2 (collision off), fx_smash for 1 s, state 1
+// (removed). A save after that loads it broken.
+TEST(StreamReal, MjolnirHitBreaksUrnAndItStaysBroken) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    game::World w(load, "l7_yggdrasil_hall01", anims);
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto* urn = w.script().find(8814);
+    ASSERT_TRUE(urn);
+    ASSERT_TRUE(w.uberState(8814));
+    EXPECT_EQ((*w.uberState(8814))[0], 0u);
+    // What the pound's outer ring (game::kPoundRings) deals 600 units away: 400 - 300 * 100 / 2500 = 388, class 13
+    // (World::groundPound; Combat.MjolnirCycleSwingAndGroundPound covers the rings). A bolt hit is the same call.
+    w.damageObject(8814, 388, 13);
+    w.tick({});
+    EXPECT_EQ((*w.uberState(8814))[0], 2u) << "broken: collision off, then fx_smash (transition 2 -> 1)";
+    for (int i = 0; i < 70; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(8814))[0], 1u);
+    EXPECT_TRUE(w.removedObjects().contains(8814));
+    EXPECT_FALSE(w.removedObjects().contains(8815)); // the hall's other urn, untouched
+    const auto bytes = save::serialize(save::capture(w));
+
+    game::World fresh(load, "l7_yggdrasil_hall01", anims);
+    fresh.script().setBigfile(&bf);
+    fresh.onCinematic = [](const std::string&, bool) {};
+    save::apply(save::parse(bytes), fresh);
+    for (int i = 0; i < 5; ++i) fresh.tick({});
+    ASSERT_TRUE(fresh.uberState(8814));
+    EXPECT_EQ((*fresh.uberState(8814))[0], 1u);
+    EXPECT_TRUE(fresh.removedObjects().contains(8814));
+    EXPECT_FALSE(fresh.removedObjects().contains(8815));
+}
+
 // The New Game flow in the prologue (tru.exe under Wine, 2026-10-30, wmem trace; l3_main_bedroom = ours + (9622, 333,
 // -2977)): after 001_pro_corridor Lara stands on the player intro 4456 facing down the corridor (-y), the camera 1261
 // behind her; running down the corridor she climbs onto the 253-high debris slab (ledge 974) without a jump, in 0.27 s;

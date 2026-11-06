@@ -25,7 +25,10 @@ struct UberCondition {
 struct UberTransition {
     uint32_t from = 0, to = 0;
     uint32_t trigger = 0, param = 0; // +0x18 / +0x1C: 1 seconds in state (float), 2 command, 3 always, 9 conditions,
-                                     // 14 / 15 joint value entered / left a range (param = watch mode, 0x4D5A50)
+                                     // 14 / 15 joint value entered / left a range (param = watch mode, 0x4D5A50),
+                                     // 17 a hit of more than `param` (float) damage, 19 a hit of damage class `param`
+                                     // (0x6D4690), 18 health <= `param` (float) + 0.001 (0x6D49D0); 6 / 7 / 8 contact
+                                     // impulses (0x4D5560, not simulated)
     std::vector<UberCondition> conditions; // trigger 9
     int32_t joint = -1, range = -1;        // trigger 14 / 15: +0x20 joint, +0x24 range record (indices below)
     int32_t anim = -1;                     // +0x2A animation-list index, -1 none
@@ -63,6 +66,10 @@ struct UberSection {
     std::vector<std::vector<uint32_t>> stateOut; // per state: indices into transitions it can leave by
     std::vector<std::vector<UberAction>> stateActions; // per state: its entry actions
     std::vector<UberTransition> transitions;
+    // +0x3C health and +0x52 bit 0 "takes damage" (UberObjectSection_TR8 ctor 0x6D60B0: +0xDC = record +0x3C; 0x6D4690
+    // ignores hits without the bit). Urns (*_pt_weightbreak*, ma_ei_breakable_*) 30, sh_ei_exploading_barrel 50.
+    float health = 0;
+    bool takesDamage = false;
 };
 // Event (0x4D3EC0): fires when section `section` does `kind` (1 enters state, 2 leaves state, 3 starts transition,
 // 4 finishes transition) with `value` (state / transition index) and every condition list holds.

@@ -359,9 +359,8 @@ outfit (the original only reads `+0x294` on a level load).
 - [O] Clips in wp_thorhammer.drm: ground_equip / ground_unequip (26 keys), aim poses ground_aim_right / _front / _left
   (ours: by aim yaw −52 / 0 / +32 deg [I], measured from the pointing right hand), the throw ground_fire_idle (29 keys,
   Lara animation event 0x75 at frame 10 fires), the ground pound ground_melee_idle (61 keys, event 0x4B at frame 12 ->
-  0x6E68B0: 0x69F1E0 area hits from a runtime table, not traced: [U] damage, ours knocks enemies within 948 units — the
-  reach of its bolt-1 lightning — into a hit reaction without damage), under water swim_submerge_thorhammer_attack_*
-  (ours: _front, shot at frame 10 [I]). Fire = throw, target lock + interact = ground pound (walkthroughs).
+  0x6E68B0: one 0x69F1E0 area hit per ring of the weapon controller's attack record (+0xC4 -> +0x20 count, +0x24
+  rings), under water swim_submerge_thorhammer_attack_* (ours: _front, shot at frame 10 [I]). Fire = throw, target lock + interact = ground pound (walkthroughs).
 - [O] Mount: weapon data +0xB8 / +0xB9 = Lara HInfo markers 5 (segment 71, the LEFT hand's grip child of 55) and 31
   (chest segment 15, on her back): she draws it from her back with the left hand, holds it up and points with the
   right. (Handgun +0xB8..BB = markers 7/6/5/4: right grip seg 96, right thigh, left grip seg 71, left thigh.)
@@ -369,8 +368,42 @@ outfit (the original only reads `+0x294` on a level load).
   sparks, glow, light, filter) and bullet_hit_thor at the impact; wp_thorhammer's events of the swing / pound clips run
   on Lara (ground pound: three bolt-1 arcs from her root). Shot sound `thor_hammer_shot_c/_d`.
 - Effect on enemies: 1000 per bolt kills viking thralls (500 hp) in one hit, yeti thralls in two on Normal (l7
-  replay `tests/replays/mjolnir_thralls.txt`, viewed GL + Vulkan). No breakable objects or scripted Thor mechanisms
-  check for the hammer in our data survey (Thor doors / pillars / rune switches react to the gauntlets' sensors).
+  replay `tests/replays/mjolnir_thralls.txt`, viewed GL + Vulkan). No scripted Thor mechanism checks for the hammer in
+  our data survey (Thor doors / pillars / rune switches react to the gauntlets' sensors); its hits break urns (below).
+- [O] Ground pound rings (`game::kPoundRings`, `CombatReal.GroundPoundRings`): lara.drm section 850, attack record
+  +0x35EB8 {+4 120.0, +0xC damage class 13, +0x20 2, +0x24 -> +0x399F0}; rings of 0x1C bytes {inner, outer, damage at
+  outer, damage at inner, knock at outer, knock at inner, knock angle}: {0, 500, 1200, 1200, 400, 500, 65°},
+  {500, 3000, 100, 400, −1, 0, 0}. 0x69F1E0 (disassembly at 0x6E68B0: 17 stack arguments, 0x814D20 = ftol): every
+  instance but Lara whose origin is strictly inside (inner, outer) in 3D takes message 0x11C, damage lerped
+  inner → outer, class 13, type ((class != 4) − 1) & 3 = 0; rings with a knock speed post 0x91 (knock lerped the same
+  way unless knock-at-outer < 0, angle × π/180). [I] which record +0xC4 holds: the only one with rings and class 13.
+  Ours: enemies take the damage (the inner ring knocks them, Hit::knock; speed / angle unused), uber objects their sections'.
+
+## Breakables
+
+- [O] Uber sections take hit message 0x11C (UberObjectSection_TR8 0x6D4690) when section record +0x52 bit 0 is set:
+  health (+0xDC, from record +0x3C) −= damage, floored at 0; an idle section in a state starts its first transition of
+  trigger 17 (damage > param float) or 19 (damage class == param); trigger 18 (0x6D49D0) fires when health <= param +
+  0.001. Triggers 6 / 7 / 8 are contact impulses (0x4D5560: 7 = impulse above param) — not simulated, so urns do not
+  break from falls or the bike.
+- [O] Users (survey of all class-79 objects): the urns `*_pt_weightbreak(_b)` (l1 32, l2 48, l4 41, l5 78, l7 50) and
+  l3's `ma_ei_breakable_b..v`: health 30, 0 → 2 on trigger 17 param 0 (any hit), 7 (impulse > 379.3) or 6; state 2
+  actions 5 (instance +0x18 |= 0x20000000: collision callbacks skip it, 0x48D590 / 0x697970) and 29 (section +0xD4 = 0);
+  2 → 1 always, playing `fx_smash` (1 s, effects only) to its end; state 1 action 28 (0x6D5D90 -> 0x6D54F0: the
+  section's removal record, all of them one fade over 0 s, then 0x6D5E20 removes the instance). `sh_ei_exploading_barrel`
+  (health 50): 0 → 2 on trigger 18, state 2 = 5 + two action-19 births (explosion objects, not modelled: no blast
+  damage), `fx_boom` (3 s), removed.
+- Ours (`World::damageObject`): Lara's bullets / bolts on an uber object's collider and the pound's rings; action 5
+  drops the collider, action 28 marks the section removed and the game hides the object's meshes when model 0's section
+  is gone (`World::removedObjects`); transition clips with flag 1 run their events (`objectClips`). Health, removal and
+  collision state are saved (`StreamReal.MjolnirHitBreaksUrnAndItStaysBroken`). [U] the urn rewards
+  (`*_weightbreak_reward`) are separate intros, untouched.
+- [O] Class-30 breakables (0x6D3160; `ca_uo_ledgebreak*`, `ar_ei_break_braced_*`, `ar_ei_breakable_hpole`,
+  `ar_rb_falling_floor_straight`, `ca_rb_breakable_temple_floor`): record +0x10 hits (3), +0x18 / +0x1C pieces
+  (0x20 each, spawned as instances), +0x28 / +0x34 break conditions (0x1C: flags, two floats, damage-class list). 0x11C
+  counts a hit when the class is listed (0x69BFC0; only the temple floor lists one: 6, explosions) or by flags 0x400
+  (class 6) / 0x800.. (classes 0-2 from Lara); the others break on Lara's contact (message 0x2B, 0x69C0A0). None lists
+  Mjolnir's class 13. Not implemented.
 
 ## Thor's gear (draw groups)
 

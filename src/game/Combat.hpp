@@ -221,6 +221,17 @@ struct HammerAction {
     float t = 0, prevT = 0;
 };
 
+// The ground pound's area hits (0x6E68B0 -> 0x69F1E0 per 0x1C-byte ring) [O]: lara.drm object data, the attack record
+// {+4 120.0, +0xC damage class 13, +0x20 2 rings, +0x24 rings} (section 850 +0x35EB8 -> rings +0x399F0). Which record
+// tru.exe's weapon controller +0xC4 holds during the pound is [I]: the only one with rings and class 13.
+struct PoundRing {
+    float inner, outer;   // +0 / +4 radii: inner < distance < outer
+    float edge, damage;   // +8 at the outer radius, +0xC at the inner
+    float knockEdge, knock; // +0x10 / +0x14 knock-back speed at the outer / inner radius (knock 0: none; knockEdge < 0: no lerp)
+    float angle;          // +0x18 degrees up of the knock-back
+};
+inline constexpr PoundRing kPoundRings[] = {{0, 500, 1200, 1200, 400, 500, 65}, {500, 3000, 100, 400, -1, 0, 0}};
+
 // Lara's weapon/target state, advanced by World every tick.
 struct CombatState {
     Weapon weapon = Weapon::Pistols;    // in hand or holstered ready (inventory +0x134)

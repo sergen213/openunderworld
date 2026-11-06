@@ -95,6 +95,7 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
         bounded(ntr, transitions, 0x38, ob.data.size());
         section.defaultState = at<uint32_t>(ob, sec + 0x14);
         section.model = at<uint32_t>(ob, sec + 0x18);
+        section.health = at<float>(ob, sec + 0x3C), section.takesDamage = at<uint8_t>(ob, sec + 0x52) & 1;
         for (uint32_t t = 0; t < ntr; ++t) {
             const uint32_t tr = transitions + 0x38 * t;
             UberTransition x;
