@@ -445,10 +445,11 @@ struct EnemyMeshes {
     // per entry: its gun's mesh (EnemyType::weaponObject riding its marker, gunSegment >= 0; drawn on the body after
     // death too [I]), SIZE_MAX none
     std::vector<size_t> gunIndices;
-    // per entry: its chunk object's meshes (EnemyType::chunks) as {piece, scene mesh}, drawn rigid at each piece's pose
-    // once the body broke (EnemyState::ragdollPhase 4; the body collapses then), uploaded collapsed until then
-    std::vector<std::vector<std::pair<size_t, size_t>>> pieceIndices;
-    struct SkinJob { size_t mesh, palette; glm::mat4 model; }; // palette SIZE_MAX: rigid (a gun)
+    // per entry: its chunk object's meshes (EnemyType::chunks), drawn rigid at each piece's pose once the body broke
+    // (EnemyState::ragdollPhase 4; the body shrinks to a speck then), uploaded shrunk to a speck until then
+    struct PieceMesh { size_t piece, mesh; const ou::scene::MeshData* source; }; // source: the unshrunk model (types)
+    std::vector<std::vector<PieceMesh>> pieceIndices;
+    struct SkinJob { size_t mesh, palette; glm::mat4 model; const ou::scene::MeshData* source = nullptr; }; // palette SIZE_MAX: rigid (a gun)
     std::vector<SkinJob> jobs;
     std::vector<std::vector<glm::mat4>> palettes;     // per posed enemy this frame
     std::vector<std::vector<ou::scene::Vertex>> outs; // per job, reused across frames
@@ -489,8 +490,15 @@ struct EnemyMeshes {
                 const auto ids = ou::formats::objectRenderModels(ou::cdc::parseDrm(std::move(*bytes)));
                 if (size_t(model) < ids.size()) id = ids[size_t(model)];
             }
-            std::erase_if(s.meshes, [&](const auto& m) { return m.skeleton < 0 || s.skeletons[size_t(m.skeleton)].renderModelId != id; });
-            for (auto& m : s.meshes) m.skeleton = -1, m.skin.clear();
+            // rigid meshes (no skeleton): the model by its render resource section ("#section <id> ")
+            const std::string tag = "#section " + std::to_string(id) + " ";
+            std::erase_if(s.meshes, [&](const auto& m) {
+                return m.skeleton >= 0 ? s.skeletons[size_t(m.skeleton)].renderModelId != id : m.origin.find(tag) == std::string::npos;
+            });
+            for (auto& m : s.meshes) { // CPU-posed in world space, as gunModel
+                m.skeleton = -1, m.skin.clear();
+                for (int k = 0; k < 16; ++k) m.transform[k] = k % 5 == 0 ? 1.0f : 0.0f;
+            }
             if (s.meshes.empty()) warnings.push_back("pc-w\\" + object + ".drm: no mesh for model " + std::to_string(model));
         } catch (const std::exception& e) {
             warnings.push_back(object + ": " + e.what());
@@ -532,8 +540,8 @@ struct EnemyMeshes {
             const bool broken = s.ragdollPhase == 4 && k < pieceIndices.size() && !pieceIndices[k].empty() && !s.pieces.empty();
             for (const size_t i : meshIndices[k]) jobs.push_back({i, broken ? SIZE_MAX : palettes.size() - 1, broken ? m * glm::mat4(glm::mat3(1e-4f)) : m});
             if (broken) // ponytail: pieces at the last tick's pose (no interpolation; 60 Hz)
-                for (const auto& [piece, mesh] : pieceIndices[k])
-                    if (piece < s.pieces.size()) jobs.push_back({mesh, SIZE_MAX, m * s.pieces[piece]});
+                for (const auto& p : pieceIndices[k])
+                    if (p.piece < s.pieces.size()) jobs.push_back({p.mesh, SIZE_MAX, m * s.pieces[p.piece], p.source});
             if (const int seg = e.type().gunSegment; k < gunIndices.size() && gunIndices[k] != SIZE_MAX && size_t(seg) < bones.size())
                 jobs.push_back({gunIndices[k], SIZE_MAX, m * bones[size_t(seg)] * e.type().gunMount});
         }
@@ -541,7 +549,7 @@ struct EnemyMeshes {
         std::atomic<size_t> next{0};
         auto work = [&] {
             for (size_t j; (j = next++) < jobs.size();)
-                ou::anim::skinVertices(scene.meshes[jobs[j].mesh], jobs[j].palette == SIZE_MAX ? std::span<const glm::mat4>() : palettes[jobs[j].palette],
+                ou::anim::skinVertices(jobs[j].source ? *jobs[j].source : scene.meshes[jobs[j].mesh], jobs[j].palette == SIZE_MAX ? std::span<const glm::mat4>() : palettes[jobs[j].palette],
                                        outs[j], jobs[j].model);
         };
         {
@@ -892,10 +900,12 @@ struct StreamedScene {
             if (const auto& c = e->type().chunks)
                 for (size_t k = 0; k < c->pieces.size(); ++k) {
                     std::vector<size_t> meshes;
-                    append(enemyMeshes.chunk(bf, c->object, c->pieces[k].model, warnings), glm::vec3(0), &meshes);
-                    for (const size_t i : meshes) {
-                        for (auto& v : out.meshes[i].vertices) std::fill_n(v.position, 3, 0.0f); // collapsed until it breaks
-                        enemyMeshes.pieceIndices.back().push_back({k, i});
+                    const auto& model = enemyMeshes.chunk(bf, c->object, c->pieces[k].model, warnings);
+                    append(model, glm::vec3(0), &meshes);
+                    for (size_t n = 0; n < meshes.size() && n < model.meshes.size(); ++n) {
+                        for (auto& v : out.meshes[meshes[n]].vertices) // a speck (not degenerate: it must upload) until it breaks
+                            for (float& x : v.position) x *= 1e-3f;
+                        enemyMeshes.pieceIndices.back().push_back({k, meshes[n], &model.meshes[n]});
                     }
                 }
         }
