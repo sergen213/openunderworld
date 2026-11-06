@@ -4,6 +4,22 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.33.0] - 2026-11-06
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: jumps from a pole (the swing fling and the jumps from the pole's top) now reach a ledge or the next platform
+  ahead, not only another pole. As in the original (measured under Wine in l3_main_hall), she lands on a platform
+  edge or catches the ledge.
+- Fixed: running and standing jumps toward a ledge on a higher platform are now aimed onto it, the way the
+  original's jump queries aim them, so she catches it instead of falling short.
+- Added: jumping up from a ladder. On the top rungs, stick up makes her lean; jump then leaps onto the floor above,
+  or up to a ledge over the ladder.
+- Added: on a free-climb rock, jumping up or sideways can now reach a ledge as well as a hold. Holding the stick
+  makes her lean toward the jump first; the old automatic top-out is gone, so press jump.
+- Added: when hanging from a ledge, holding the stick up, back or sideways makes her lean before the jump, as in the
+  original.
+
 ## [0.32.0] - 2026-11-06
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
