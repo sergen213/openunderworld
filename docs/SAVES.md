@@ -62,7 +62,7 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | Field | Type | Meaning |
 |---|---|---|
 | `unit` | string | unit base name (`pc-w\<unit>.drm`) |
-| `ticks` | int | simulation ticks played when saved (informational; replays keep their own clock) |
+| `ticks` | int | simulation ticks played when saved; a load sets the World's clock to it (waves, stream timers) |
 | `player.state` | string | `game::stateName` (`idle`, `run`, `hang`, `swimtread`, …) |
 | `player.pos`, `vel` | [x, y, z] | feet position (unit frame), air velocity |
 | `player.yaw`, `pitch` | number | heading; swim pitch |
@@ -71,6 +71,8 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `player.water` | null or `{unit, index}` | water volume Lara swims in, same addressing |
 | `player.runJump`, `regrabCooldown` | | controller details |
 | `camera.yaw`, `camera.pitch` | number | follow-camera orbit |
+| `runtime` | object or null | `World::serializeRuntime()`: `camera` (orbit camera position, target, angles, `focus` and `orbit` = its lag, desired point, distance, mode blend, look-idle clock, last moves, level-camera hint as (unit, markup index)), `hair` (Lara's hair particles: current, previous, animated positions), `anim` (her crossfade layers: clip names, times, fades), `aimTime`, `bones` (her pose, which the next tick's camera reads), `playerUnit` (the unit the scripts were last told she is in: no level-load callbacks again), `air`, `submerged`, `hingeLimits` (multibody 77 limits per object); missing/null (older saves) = seeded as `World::restore` does |
+| `combat` | object or null | `World::serializeCombat()`: `weapon`, `secondary`, `guns` (clips, reserves), `adrenaline`, and `state` (draw, aim, lock target as enemy uid, cooldowns, reload, recoil clocks, spread RNG, held buttons, head-shot window); missing `state` (older saves) = holstered |
 | `checkpoint` | null or `{unit, id}` | last checkpoint: intro unique id in `unit` |
 | `collected` | [int] | intro unique ids of picked-up rewards (`World::collected`, src/game/Progress.hpp) |
 | `chapter` | int | `game::kChapters` index; missing (older saves) = the unit's `l<N>_` prefix, else 0 |
@@ -79,7 +81,7 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `flashlight` | bool | the personal light is on; missing = off |
 | `treasureHunt` | bool | a Treasure Hunt game (`World::treasureHunt`); missing = off |
 | `health` | number or null | Lara's health (`World::health`); missing/null (older saves, or saved while dead) = full; must be > 0 |
-| `script` | object | `script::Runtime::serialize()` (src/script): per-intro trigger/switch/door/block state, opaque here |
+| `script` | object | `script::Runtime::serialize()` (src/script): per-intro trigger/switch/door/block state (anim-graph clocks included), opaque here. Its `runtime` block (version 1) holds the running scripts: `aux` (unit / global script instances by (unit, type): uid, fields, strings, properties), `player` (Lara's script uid), `nextAux`, `live` (intros alive when saved), `machines` (per intro: the suspended VM thread and sleeping fibers as frames of object uid, function owner type + index, pc, locals, stack; `mainPending`; constructor-made setup: joint ranges, Lara tracking, spline ranges), `threads` (unit scripts' threads by uid), `clocks`, queued `messages`, `tick`, `playerUnit`, the screen fade, control / UI flags, the last plane-crossing position. A load gives the unit scripts their saved uids and resumes live intros and unit scripts when their unit loads, without running their constructors or startup again; missing (older saves) = threads start afresh |
 | `enemies` | object or null | `ai::Enemies::serialize()`: `states` (intro uid → full enemy state in its unit's frame: mode, pos, yaw, clip + time, health, AI timers, aim RNG; generator spawns under their generator's uid; loaded and streamed-out enemies), `firedGenerators`, `deadAtCheckpoint`, `guards` (intro uid → guard zones `[record, node, inner, outer]`; older saves: none until the intro scripts' constructors set them); states also hold the cover node and its cooldown (modes 14 return, 15 cover, 16 crawl); missing/null (older saves) = enemies left as they are |
 | `vehicles` | object or null | `World::serializeVehicles()`: `riding` (uid of the bike Lara is on, 0 = none), `mounts`, `bikes` (per motorcycle intro uid: `unit` and `pos` in that unit's frame, `yaw`, `pitch`, `speed`, `steer`, `wheel`, `air`, `vel`, `airStartZ`, `kick`, `brakeT`, `hopT`, `landT`, `phase` parked/mount/ride/dismount, `t`); missing/null (older saves) = bikes left as they are. The ridden bike's Jolt body is in `objects.physics` (key `v<uid>`). Lara on a bike is `player.state` `vehicle` (GAMEPLAY.md "Motorcycle") |
 | `objects` | object or null | `World::serializeObjects()`: `uber` (per uber object uid: `sections` [state, transition, seconds, transition length] (older saves have a fifth entry, ignored), `fired` once-events mask, `commanded`, `motion` [t, active], `joints` [joint index, position, velocity per frame, limit lo, hi, limit on, motor speed per frame, bound, motor on], `links` (created link joints), `watches` [section, joint, range, mode, inside]), `held` (uid of the portable Lara carries, 0 = none), `physics` {`version` 1, `state` hex of `physics::Scene::save`: body IDs by entity, constraint zeros, Jolt's recorded state; a load continues the simulation bit for bit, docs/formats/PHYSICS.md "Saves"; missing = the scene is rebuilt from the objects}; missing/null (older saves) = uber objects start in their default states. Objects not streamed in since a load keep their saved entry |
@@ -108,19 +110,31 @@ Saves are always written as the current version. Newer versions are rejected, ne
 
 `save::apply` does the following:
 
-1. `World::enterUnit(unit, saved position)`. This drops the stream and loads the save's unit at offset 0 plus its
-   portal neighbours (LEVELS.md "Streaming").
+1. Sets the World's clock (`ticks`), then `World::enterUnit(unit, saved position)`. This drops the stream and loads
+   the save's unit at offset 0 plus its portal neighbours (LEVELS.md "Streaming").
 2. Maps ledge/water back to merged-mesh indices.
-3. `World::restore` sets the full player state and the camera. It does not blend from the previous frame; the
-   animation pose is reset.
+3. `World::restore` sets the full player state and the camera, then `World::restoreRuntime` the orbit camera's lag,
+   Lara's hair, crossfade and pose, air and the scripts' player unit (`runtime`).
 4. Restores the checkpoint, the collected items, the script state, Lara's health (`World::setHealth`;
-   `Save.HealthRoundTrip`) and the enemies (`World::restoreEnemies`: every enemy of the loaded units is recreated
-   from the saved state or, if the save never saw it, from its intro; `AiReal.EnemyStateSaveRestore`).
+   `Save.HealthRoundTrip`), the enemies (`World::restoreEnemies`: every enemy of the loaded units is recreated
+   from the saved state or, if the save never saw it, from its intro; `AiReal.EnemyStateSaveRestore`), the bikes,
+   the weapons (in hand as saved) and the objects.
 
-The simulation then continues exactly. `StreamReal.PoolToRagnarokOnFootThenSaveLoad` saves in `l4_ragnarok_room`
-(streamed in from `l4_pool` at offset (−20475.4, −2872.2, 12591.4)) and runs 40 more ticks. It then loads, which puts
-ragnarok at offset 0, and runs the same 40 ticks again. States and clips match on every tick; positions match within
-0.5 units, which is the float rounding of the other frame.
+The scripted objects themselves come with their units on the next tick (`script::Runtime::setUnits`): intros alive in
+the save take their saved state and threads instead of running their constructors (`resume`), and the unit scripts
+their saved uids, fields and threads instead of their startup.
+
+The simulation then continues bit for bit. `StreamReal.SaveContinuesBitIdentically` ticks N, saves, loads into a
+fresh World and ticks M more beside the uninterrupted run on `l4_ballcourt` (the scripts kill poachers, ragdolls),
+`l1_ship_exterior` (Lara runs at the mercs firing, locked on: alerts, a kill), `l4_pool` (running, jumping, swimming)
+and `l2_cliffclimb`: `World::stateHash` equal on every tick and the same capture at the end. On a mismatch it names
+the `World::stateParts` that differ at the first such tick and the JSON fields of the two captures.
+`StreamReal.PoolToRagnarokOnFootThenSaveLoad` saves in `l4_ragnarok_room` (streamed in from `l4_pool` at offset
+(−20475.4, −2872.2, 12591.4)), loads it at offset 0: states and clips match on every tick; positions within 0.5 units,
+the float rounding of the other frame.
+
+Not saved [I]: a playing spline camera (a load resumes on the orbit camera); Player controller internals beyond
+`player.*`; VM constant texts come back as copies (a string member written after the save no longer aliases them).
 
 ## Checkpoints and respawn
 

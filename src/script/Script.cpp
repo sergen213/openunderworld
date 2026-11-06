@@ -354,7 +354,8 @@ nlohmann::json stateOf(const Object& o) {
         }
     }
     if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && !o.dead && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline &&
-        (!o.joint || o.joint->position == 0) && !o.loose && (!o.graph || (o.graph->state == o.graph->initial && o.graph->transition < 0)))
+        (!o.joint || o.joint->position == 0) && !o.loose &&
+        (!o.graph || (o.graph->state == o.graph->initial && o.graph->transition < 0 && o.graph->frames == 0 && o.graph->t == 0)))
         return nullptr; // birth state
     nlohmann::json out = {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
             {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"dead", o.dead}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
@@ -503,6 +504,14 @@ void Runtime::addUnit(const UnitRef& u) {
     for (uint32_t i = 0; i < u.drm->sections.size(); ++i)
         if (u.drm->sections[i].type == cdc::SectionType::Script) types.push_back(parseScriptType(*u.drm, i));
     auto program = std::make_shared<vm::Program>(std::move(types));
+    program->unit = u.name;
+    const bool unitResumed = savedAux_.contains({u.name, unit.scriptId});
+    { // a load: the unit / global scripts of the save exist before the intros resume (their threads address them)
+        std::vector<uint32_t> saved;
+        for (const auto& [key, a] : savedAux_)
+            if (key.first == u.name && program->type(key.second)) saved.push_back(key.second);
+        for (const uint32_t typeId : saved) auxiliaryInstance(program, typeId);
+    }
 
     for (const auto& in : unit.intros) {
         const auto n = objectNames_.find(in.objectId);
@@ -676,7 +685,10 @@ void Runtime::addUnit(const UnitRef& u) {
         addObject(std::move(o), false);
         if (Object* added = openDoor ? findMut(uid) : nullptr; added && added->state == 0) added->state = 2;
     }
+    std::vector<bool> resumed(objects_.size() - firstNew);
+    for (size_t i = firstNew; i < objects_.size(); ++i) resumed[i - firstNew] = resume(objects_[i]);
     for (size_t i = firstNew; i < objects_.size(); ++i) {
+        if (resumed[i - firstNew]) continue;
         fire(EventKind::Start, objects_[i]);
         objects_[i].mainPending = true;
         fire(EventKind::Main, objects_[i]);
@@ -685,24 +697,65 @@ void Runtime::addUnit(const UnitRef& u) {
     // enters state 0 as its own thread (e.g. l3_main_bedroom: Run, then the hint_01 help condition via vt 28).
     // unitref.Get returns the same instance. [I: started after the unit's intros so its instancerefs resolve]
     // A unit script without a startup function still listens (l1_cine_ship_sinking 5997: only vt 11 / 13).
+    // A load resumes the saved one instead (its threads: attachSavedThreads).
     if (program->type(unit.scriptId)) {
         const auto self = auxiliaryInstance(program, unit.scriptId);
         unitScripts_[u.name] = {program.get(), unit.scriptId};
-        if (const Function* f = program->startup(unit.scriptId)) {
-            const auto thread = makeMachine(self->uid);
-            if (!thread->start(*self, *f)) recordFailure(self->uid, u.name + " unit script", *thread);
-            if (thread->active()) threads_.push_back({self->uid, thread});
-            adopt(thread);
+        if (!unitResumed) {
+            if (const Function* f = program->startup(unit.scriptId)) {
+                const auto thread = makeMachine(self->uid);
+                if (!thread->start(*self, *f)) recordFailure(self->uid, u.name + " unit script", *thread);
+                if (thread->active()) threads_.push_back({self->uid, thread});
+                adopt(thread);
+            }
+            notifyPlayerUnit(self->uid); // 0x4B0050: a new listener gets the player's current unit(s)
         }
-        notifyPlayerUnit(self->uid); // 0x4B0050: a new listener gets the player's current unit(s)
     }
+    attachSavedThreads();
+}
+
+bool Runtime::resume(Object& o) {
+    if (!savedLive_.erase(o.uid)) return false;
+    o.machine.reset(), o.fibers.clear(), o.mainPending = false;
+    const auto it = savedMachines_.find(o.uid);
+    if (it == savedMachines_.end()) return true;
+    const auto machine = [&](const nlohmann::json& m) {
+        auto out = makeMachine(o.uid);
+        return out->load(m) && out->active() ? out : nullptr;
+    };
+    try {
+        if (!it->second.at(0).is_null()) o.machine = machine(it->second.at(0));
+        for (const auto& f : it->second.at(1))
+            if (auto m = machine(f)) o.fibers.push_back(std::move(m));
+        o.mainPending = it->second.at(2);
+        const auto& setup = it->second.at(3);
+        if (const auto j = setup.find("joint"); j != setup.end()) {
+            auto& joint = o.joint ? *o.joint : o.joint.emplace(); // its position: the object state (applyState)
+            joint.prismatic = j->at(0), joint.ranges.clear();
+            for (const auto& r : j->at(1)) joint.ranges.push_back({r.at(0).get<float>(), r.at(1).get<float>(), r.at(2).get<int32_t>(), r.at(3).get<bool>()});
+        }
+        o.tracksLara = setup.value("tracksLara", false);
+        if (const auto s = setup.find("splineRanges"); s != setup.end() && o.spline) o.spline->ranges = s->get<std::vector<std::array<int32_t, 3>>>();
+    } catch (const nlohmann::json::exception&) { // checked by restoreRuntime; an odd entry resumes idle
+    }
+    savedMachines_.erase(it);
+    return true;
+}
+
+void Runtime::attachSavedThreads() {
+    std::erase_if(savedThreads_, [&](const auto& t) {
+        if (!instance(t.first)) return false; // its unit script is not created yet
+        auto m = makeMachine(t.first);
+        if (m->load(t.second) && m->active()) threads_.emplace_back(t.first, std::move(m));
+        return true;
+    });
 }
 
 void Runtime::addObject(Object o, bool start) {
     const auto key = std::to_string(o.uid);
     if (stash_.contains(key)) applyState(o, &stash_[key]), stash_.erase(key); // restored / streamed back in
     objects_.push_back(std::move(o));
-    if (!start) return;
+    if (!start || resume(objects_.back())) return;
     fire(EventKind::Start, objects_.back());
     objects_.back().mainPending = true;
     fire(EventKind::Main, objects_.back());
@@ -931,7 +984,9 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
 std::shared_ptr<vm::Instance> Runtime::auxiliaryInstance(const std::shared_ptr<vm::Program>& program, uint32_t typeId) {
     auto& slot = auxiliary_[std::make_pair(program.get(), typeId)];
     if (slot) return slot;
-    const auto instance = slot = program->instantiate(nextAuxiliaryUid_--, typeId);
+    const auto saved = savedAux_.find({program->unit, typeId}); // a load: the saved uid, then the saved state below
+    const int32_t uid = saved != savedAux_.end() ? saved->second.at(0).get<int32_t>() : nextAuxiliaryUid_--;
+    const auto instance = slot = program->instantiate(uid, typeId);
     // The globals (gameglobalsbase) hold engine-created script objects in SCRIPT members that have no initial value
     // (type 5 +4/+8/+12/+272/+356/+432/+436 -> types 76/75/74/72/73/60/77; l5 soundvolumes call `globals.member12`
     // vt 20 of type 74) [O bytecode]; ours are auxiliary instances like the globals [I: the engine's construction].
@@ -942,6 +997,13 @@ std::shared_ptr<vm::Instance> Runtime::auxiliaryInstance(const std::shared_ptr<v
                     instance->fields[m.offset] = instance->initial[m.offset] = uint32_t(auxiliaryInstance(program, m.typeId)->uid);
             break;
         }
+    if (const auto again = savedAux_.find({program->unit, typeId}); again != savedAux_.end()) {
+        const auto& a = again->second;
+        instance->fields = a.at(1).get<std::map<uint32_t, uint32_t>>();
+        instance->strings = a.at(2).get<std::map<uint32_t, std::string>>();
+        instance->properties = a.at(3).get<std::map<uint64_t, uint32_t>>();
+        savedAux_.erase(again);
+    }
     return instance;
 }
 
@@ -2245,12 +2307,58 @@ nlohmann::json Runtime::serialize() const {
             if (const auto it = playerScript_->initial.find(offset); it == playerScript_->initial.end() || it->second != value)
                 fields[std::to_string(offset)] = value;
     j["player"] = {{"hiddenGroups", playerHiddenGroups_}, {"objects", playerObjects_}, {"scriptFields", std::move(fields)}, {"lastBike", lastBike_}};
+    // The running script itself (version 1): sleeping threads, unit / global script instances (by unit and type: their
+    // uids depend on load order, so a load gives them the saved ones), the objects then alive (a load resumes them rather
+    // than constructing them again), clocks, queued messages, the fade. A load's entries still waiting for their unit
+    // are kept. Older saves: objects and unit scripts start afresh when their unit loads.
+    std::map<std::pair<std::string, uint32_t>, nlohmann::json> auxOf = savedAux_;
+    for (const auto& [key, in] : auxiliary_)
+        if (!key.first->unit.empty()) auxOf[{key.first->unit, key.second}] = {in->uid, in->fields, in->strings, in->properties};
+    nlohmann::json aux = nlohmann::json::array(), threads = nlohmann::json::array();
+    nlohmann::json clocks = nlohmann::json::array(), messages = nlohmann::json::array();
+    for (const auto& [key, a] : auxOf) aux.push_back({key.first, key.second, a.at(0), a.at(1), a.at(2), a.at(3)});
+    std::set<int32_t> live = savedLive_;
+    std::map<int32_t, nlohmann::json> machinesOf = savedMachines_;
+    for (const auto& o : objects_) {
+        live.insert(o.uid);
+        nlohmann::json fibers = nlohmann::json::array();
+        for (const auto& f : o.fibers)
+            if (f->active()) fibers.push_back(f->save());
+        const bool running = o.machine && o.machine->active();
+        // What its constructor set up that a resumed object does not build again: joint ranges, Lara tracking, spline
+        // ranges (natives multibody 1 / 79, joint 17, limit 3; triggervolumebase Add; spline AddRange).
+        nlohmann::json setup = nlohmann::json::object();
+        if (o.joint) {
+            nlohmann::json ranges = nlohmann::json::array();
+            for (const auto& r : o.joint->ranges) ranges.push_back({r.lo, r.hi, r.id, r.inside});
+            setup["joint"] = {o.joint->prismatic, std::move(ranges)};
+        }
+        if (o.tracksLara) setup["tracksLara"] = true;
+        if (o.spline && !o.spline->ranges.empty()) setup["splineRanges"] = o.spline->ranges;
+        if (running || !fibers.empty() || o.mainPending || !setup.empty())
+            machinesOf[o.uid] = {running ? o.machine->save() : nlohmann::json(nullptr), std::move(fibers), o.mainPending, std::move(setup)};
+    }
+    nlohmann::json machines = nlohmann::json::object();
+    for (auto& [uid, m] : machinesOf) machines[std::to_string(uid)] = std::move(m);
+    for (const auto& [uid, m] : threads_)
+        if (m->active()) threads.push_back({uid, m->save()});
+    for (const auto& [uid, m] : savedThreads_) threads.push_back({uid, m});
+    for (const auto& [key, c] : clocks_) clocks.push_back({int32_t(uint32_t(key >> 32)), uint32_t(key), c.state, c.elapsed, c.alarm, c.fired});
+    for (const auto& m : messages_) messages.push_back({m.channel, m.id, m.payload, m.sender});
+    nlohmann::json playerUnit = nullptr;
+    if (playerUnit_) playerUnit = {playerUnit_->first, playerUnit_->second ? nlohmann::json(*playerUnit_->second) : nlohmann::json(nullptr)};
+    j["runtime"] = {{"version", 1}, {"aux", std::move(aux)}, {"player", playerScript_ ? playerScript_->uid : 0},
+                    {"nextAux", nextAuxiliaryUid_}, {"live", live}, {"machines", std::move(machines)}, {"threads", std::move(threads)},
+                    {"clocks", std::move(clocks)}, {"messages", std::move(messages)}, {"tick", tick_}, {"playerUnit", playerUnit},
+                    {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
+                    {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_}};
     return j;
 }
 
 void Runtime::restore(const nlohmann::json& j) {
     gameValues_.fill(0);
     messages_.clear(), mounts_.clear(); // a load replaces a chapter start still being announced
+    savedAux_.clear(), savedMachines_.clear(), savedLive_.clear(), savedThreads_.clear();
     if (j.is_object() && j.contains("gameValues") && j["gameValues"].is_array())
         for (size_t i = 0; i < gameValues_.size() && i < j["gameValues"].size(); ++i)
             gameValues_[i] = j["gameValues"][i].get<uint8_t>();
@@ -2260,6 +2368,8 @@ void Runtime::restore(const nlohmann::json& j) {
     stash_.erase("graphSeed");
     const nlohmann::json player = stash_.value("player", nlohmann::json::object());
     stash_.erase("player");
+    const nlohmann::json runtime = stash_.value("runtime", nlohmann::json::object());
+    stash_.erase("runtime");
     if (const uint32_t mask = player.value("hiddenGroups", playerGearGroups_); mask != playerHiddenGroups_)
         playerHiddenGroups_ = mask, ++visibilityVersion_;
     playerObjects_ = player.value("objects", std::set<std::string>{});
@@ -2276,8 +2386,77 @@ void Runtime::restore(const nlohmann::json& j) {
         applyState(o, stash_.contains(key) ? &stash_[key] : nullptr);
         stash_.erase(key);
     }
-    threads_.clear(); // active sleep frames do not persist
-    hasLast_ = false; // no plane crossings across the jump
+    threads_.clear();
+    hasLast_ = false; // older saves: no plane crossings across the jump
+    if (runtime.value("version", 0) == 1) {
+        try {
+            restoreRuntime(runtime);
+        } catch (const std::exception& e) { // a bad block: threads start afresh, as for older saves
+            savedAux_.clear(), savedMachines_.clear(), savedLive_.clear(), savedThreads_.clear();
+            threads_.clear(), clocks_.clear(), messages_.clear();
+            for (auto& o : objects_) o.machine.reset(), o.fibers.clear();
+            std::fprintf(stderr, "script: saved runtime state not restored: %s\n", e.what());
+        }
+    }
+}
+
+void Runtime::restoreRuntime(const nlohmann::json& r) {
+    // Validate first: what waits for later units is read without checks.
+    const auto machineShape = [](const nlohmann::json& m) {
+        if (!m.is_null()) (void)m.at("frames").get<std::vector<nlohmann::json>>(), (void)m.at("steps").get<size_t>(), (void)m.at("wait").get<float>();
+    };
+    for (const auto& a : r.at("aux")) {
+        (void)a.at(0).get<std::string>(), (void)a.at(1).get<uint32_t>(), (void)a.at(2).get<int32_t>();
+        (void)a.at(3).get<std::map<uint32_t, uint32_t>>(), (void)a.at(4).get<std::map<uint32_t, std::string>>();
+        (void)a.at(5).get<std::map<uint64_t, uint32_t>>();
+    }
+    for (const auto& [key, m] : r.at("machines").items()) {
+        (void)std::stoi(key), machineShape(m.at(0)), (void)m.at(2).get<bool>();
+        if (!m.at(3).is_object()) throw std::runtime_error("object setup of " + key);
+        for (const auto& f : m.at(1)) machineShape(f);
+    }
+    for (const auto& t : r.at("threads")) (void)t.at(0).get<int32_t>(), machineShape(t.at(1));
+    // Unit / global script instances and Lara's take their saved uids, the ones not in the save go below them all.
+    int32_t lowest = std::min(r.at("nextAux").get<int32_t>(), r.at("player").get<int32_t>() - 1);
+    for (const auto& a : r.at("aux")) {
+        savedAux_[{a.at(0).get<std::string>(), a.at(1).get<uint32_t>()}] = {a.at(2), a.at(3), a.at(4), a.at(5)};
+        lowest = std::min(lowest, a.at(2).get<int32_t>() - 1);
+    }
+    savedLive_ = r.at("live").get<std::set<int32_t>>();
+    for (const auto& [key, m] : r.at("machines").items()) savedMachines_[std::stoi(key)] = m;
+    for (const auto& t : r.at("threads")) savedThreads_.emplace_back(t.at(0).get<int32_t>(), t.at(1));
+    if (playerScript_ && r.at("player").get<int32_t>() < 0) playerScript_->uid = r.at("player");
+    for (auto& [key, in] : auxiliary_) { // alive already (a load into a running World)
+        const auto a = savedAux_.find({key.first->unit, key.second});
+        if (a == savedAux_.end()) {
+            in->uid = lowest--;
+            continue;
+        }
+        in->uid = a->second.at(0);
+        in->fields = a->second.at(1).get<std::map<uint32_t, uint32_t>>();
+        in->strings = a->second.at(2).get<std::map<uint32_t, std::string>>();
+        in->properties = a->second.at(3).get<std::map<uint64_t, uint32_t>>();
+        savedAux_.erase(a);
+    }
+    nextAuxiliaryUid_ = lowest;
+    for (auto& o : objects_) resume(o);
+    attachSavedThreads();
+    clocks_.clear();
+    for (const auto& c : r.at("clocks"))
+        clocks_[uint64_t(uint32_t(c.at(0).get<int32_t>())) << 32 | c.at(1).get<uint32_t>()] =
+            Clock{c.at(2).get<int>(), c.at(3).get<float>(), c.at(4).get<float>(), c.at(5).get<bool>()};
+    for (const auto& m : r.at("messages"))
+        messages_.push_back({m.at(0).get<uint32_t>(), m.at(1).get<uint32_t>(), m.at(2).get<std::string>(), m.at(3).get<int32_t>()});
+    tick_ = r.at("tick");
+    if (const auto& p = r.at("playerUnit"); p.is_array())
+        playerUnit_ = {p.at(0).get<uint32_t>(), p.at(1).is_null() ? std::nullopt : std::optional<uint32_t>(p.at(1).get<uint32_t>())};
+    else
+        playerUnit_.reset();
+    fade_ = r.at("fade").at(0), fadeTarget_ = r.at("fade").at(1), fadeStep_ = r.at("fade").at(2);
+    playerControl_ = r.at("control"), uiFlag_ = r.at("uiFlag"), unitEffect_ = r.at("unitEffect");
+    const auto& last = r.at("last");
+    lastPos_ = vec3(last.at(0).get<float>(), last.at(1).get<float>(), last.at(2).get<float>()), hasLast_ = last.at(3);
+    interactHeld_ = r.at("interactHeld");
 }
 
 } // namespace ou::script

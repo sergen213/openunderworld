@@ -266,4 +266,83 @@ void World::updateCamera(const Actions& a, float dt) {
     cam_.fovDeg = blendOut_ > 0 ? glm::mix(blendFrom_.fovDeg, fovDeg, s) : 0;
 }
 
+// A playing spline camera is not saved (a load resumes on the orbit camera) [I].
+nlohmann::json World::serializeRuntime() const {
+    const auto v = [](vec3 p) { return nlohmann::json{p.x, p.y, p.z}; };
+    const auto limits = [&](const OrbitState::Limits& l) { return nlohmann::json{v(l.offset), v(l.zones), l.yawRange, l.pitchLo, l.pitchHi}; };
+    const auto& o = orbit_;
+    nlohmann::json hint = nullptr; // the markup as (unit, local index): global indices depend on the streamed set
+    if (const auto owner = o.hintMarkup >= 0 ? markupOwner(o.hintMarkup) : std::nullopt) hint = {owner->first, owner->second};
+    nlohmann::json hair = nlohmann::json::array();
+    for (const vec3& p : hair_.state()) hair.push_back(v(p));
+    // Lara's crossfade in progress (clips by name), the aim poses' clock and the pose itself (the camera focus reads it).
+    const auto clipName = [&](const anim::Clip* c) -> nlohmann::json {
+        for (const auto& [name, clip] : anims_.clips)
+            if (&clip == c) return name;
+        return nullptr;
+    };
+    nlohmann::json layers = nlohmann::json::array(), bones = nlohmann::json::array();
+    for (const auto& l : anim_.layerStates())
+        layers.push_back({clipName(l.clip), l.time, l.rate, l.fade, l.elapsed, l.loop, l.additive, clipName(l.mixClip), l.mix});
+    for (const glm::mat4& m : bones_)
+        for (int k = 0; k < 16; ++k) bones.push_back(m[k / 4][k % 4]);
+    return {{"camera", {{"position", v(cam_.position)}, {"target", v(cam_.target)}, {"yaw", cam_.yaw}, {"pitch", cam_.pitch},
+                        {"focus", focus_ ? v(*focus_) : nlohmann::json(nullptr)},
+                        {"orbit", {v(o.desired), o.dist, o.speed, o.valid, o.yaw, o.pitch, limits(o.from), limits(o.now), o.mode,
+                                   o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint}}}},
+            {"hair", std::move(hair)}, {"playerUnit", playerUnit_}, {"air", air_}, {"submerged", submerged_},
+            {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)}};
+}
+
+void World::restoreRuntime(const nlohmann::json& j) {
+    if (!j.is_object()) return;
+    try {
+        const auto v = [](const nlohmann::json& a) { return vec3(a.at(0).get<float>(), a.at(1).get<float>(), a.at(2).get<float>()); };
+        const auto limits = [&](const nlohmann::json& a) {
+            return OrbitState::Limits{v(a.at(0)), v(a.at(1)), a.at(2).get<float>(), a.at(3).get<float>(), a.at(4).get<float>()};
+        };
+        const auto& cam = j.at("camera");
+        const auto& a = cam.at("orbit");
+        OrbitState o;
+        o.desired = v(a.at(0)), o.dist = a.at(1), o.speed = a.at(2), o.valid = a.at(3), o.yaw = a.at(4), o.pitch = a.at(5);
+        o.from = limits(a.at(6)), o.now = limits(a.at(7)), o.mode = a.at(8), o.modeTime = a.at(9), o.idle = a.at(10);
+        const auto moves = a.at(11).get<std::vector<float>>();
+        if (moves.size() != 10) return;
+        std::copy(moves.begin(), moves.end(), o.moves);
+        o.lastPos = v(a.at(12)), o.hint = v(a.at(13));
+        if (const auto& h = a.at(14); h.is_array()) o.hintMarkup = markupIndex(h.at(0).get<std::string>(), h.at(1).get<int>());
+        const auto& f = cam.at("focus");
+        const std::optional<vec3> focus = f.is_null() ? std::nullopt : std::optional<vec3>(v(f));
+        CameraState c = cam_;
+        c.position = v(cam.at("position")), c.target = v(cam.at("target")), c.yaw = cam.at("yaw"), c.pitch = cam.at("pitch");
+        std::vector<vec3> hair;
+        for (const auto& p : j.at("hair")) hair.push_back(v(p));
+        const std::string playerUnit = j.at("playerUnit");
+        const float air = j.at("air");
+        const bool submerged = j.at("submerged");
+        auto lo = j.at("hingeLimits").at(0).get<std::map<int32_t, float>>(), hi = j.at("hingeLimits").at(1).get<std::map<int32_t, float>>();
+        std::vector<anim::AnimController::Layer> layers;
+        for (const auto& l : j.at("anim")) {
+            const auto clip = [&](const nlohmann::json& n) { return n.is_null() ? nullptr : anims_.find(n.get<std::string>()); };
+            layers.push_back({clip(l.at(0)), l.at(1).get<double>(), l.at(2).get<float>(), l.at(3).get<float>(), l.at(4).get<float>(),
+                              l.at(5).get<bool>(), l.at(6).get<bool>(), clip(l.at(7)), l.at(8).get<float>()});
+        }
+        const double aimTime = j.at("aimTime");
+        const auto bones = j.at("bones").get<std::vector<float>>();
+        air_ = air, submerged_ = submerged;
+        multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
+        syncedObjects_ = ~size_t(0);
+        focus_ = focus, orbit_ = o, cam_ = prevCam_ = c;
+        playerUnit_ = playerUnit; // the scripts heard of this unit already: no level-load vt 13 again (World::tick)
+        hair_.setState(hair);
+        if (bones.size() == bones_.size() * 16)
+            for (size_t i = 0; i < bones_.size(); ++i)
+                for (int k = 0; k < 16; ++k) bones_[i][k / 4][k % 4] = bones[i * 16 + size_t(k)];
+        prevBones_ = bones_;
+        anim_.setLayers(std::move(layers));
+        aimTime_ = aimTime;
+    } catch (const nlohmann::json::exception&) { // older / odd saves: as restore() seeded them
+    }
+}
+
 } // namespace ou::game

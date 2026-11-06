@@ -7,6 +7,7 @@
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <stdexcept>
 
 namespace ou::script::vm {
 namespace {
@@ -644,6 +645,51 @@ Machine::Step Machine::step() {
         }
     }
     return done();
+}
+
+nlohmann::json Machine::save() const {
+    const auto value = [](const Value& v) {
+        return nlohmann::json{int(v.kind), v.bits, v.uid, v.offset, v.frame, v.ptr.section, v.ptr.offset,
+                              v.text ? nlohmann::json(*v.text) : nlohmann::json(nullptr)};
+    };
+    nlohmann::json frames = nlohmann::json::array();
+    for (const Frame& fr : frames_) {
+        nlohmann::json locals = nlohmann::json::array(), stack = nlohmann::json::array();
+        for (const Value& v : fr.locals) locals.push_back(value(v));
+        for (const Value& v : fr.stack) stack.push_back(value(v));
+        const Program& p = *fr.object->program;
+        frames.push_back({fr.object->uid, p.owner(fr.function), p.functionIndex(fr.function), fr.pc, std::move(locals), std::move(stack)});
+    }
+    return {{"frames", std::move(frames)}, {"steps", steps_}, {"wait", wait_}};
+}
+
+bool Machine::load(const nlohmann::json& j) {
+    frames_.clear(), texts_.clear(), failure_.clear(), stateChanged_.reset(), starts_.clear();
+    try {
+        const auto value = [&](const nlohmann::json& a) {
+            Value v;
+            v.kind = Value::Kind(a.at(0).get<int>()), v.bits = a.at(1), v.uid = a.at(2), v.offset = a.at(3), v.frame = a.at(4);
+            v.ptr = {a.at(5).get<uint32_t>(), a.at(6).get<uint32_t>()};
+            if (!a.at(7).is_null()) v.text = &texts_.emplace_back(a.at(7).get<std::string>());
+            if (int(v.kind) > int(Value::Kind::Constant)) throw std::runtime_error("value kind");
+            return v;
+        };
+        for (const auto& f : j.at("frames")) {
+            const auto object = resolve_(f.at(0).get<int32_t>());
+            const ScriptType* type = object && object->program ? object->program->type(f.at(1).get<uint32_t>()) : nullptr;
+            const size_t index = f.at(2);
+            if (!type || index >= type->functions.size()) throw std::runtime_error("frame function");
+            Frame& fr = frames_.emplace_back();
+            fr.object = object.get(), fr.function = &type->functions[index], fr.pc = f.at(3);
+            for (const auto& v : f.at(4)) fr.locals.push_back(value(v));
+            for (const auto& v : f.at(5)) fr.stack.push_back(value(v));
+        }
+        steps_ = j.at("steps"), wait_ = j.at("wait");
+        return true;
+    } catch (const std::exception&) { // nlohmann errors derive from std::exception
+        frames_.clear(), texts_.clear();
+        return false;
+    }
 }
 
 } // namespace ou::script::vm

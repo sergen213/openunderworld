@@ -392,6 +392,15 @@ public:
 
 private:
     void addUnit(const UnitRef& u);
+    void restoreRuntime(const nlohmann::json& r); // restore(): the "runtime" block (threads, unit scripts, clocks); throws
+    // A load's running scripts wait here for their objects / unit scripts, which a load creates later (setUnits):
+    // those come back as saved, without running their constructors again (resume, auxiliaryInstance, addUnit).
+    std::map<std::pair<std::string, uint32_t>, nlohmann::json> savedAux_; // (unit, type) -> [uid, fields, strings, properties]
+    std::map<int32_t, nlohmann::json> savedMachines_;                    // object uid -> [machine, fibers, mainPending]
+    std::set<int32_t> savedLive_;                                        // objects that existed when saved
+    std::vector<std::pair<int32_t, nlohmann::json>> savedThreads_;       // (source uid, machine)
+    bool resume(Object& o);   // o was live in the save: its saved threads, true (no birth); false = a new object
+    void attachSavedThreads();
     void fire(EventKind k, Object& o, bool announce = true);
     Object* findMut(int32_t uid);
     void recordFailure(const Object& o);

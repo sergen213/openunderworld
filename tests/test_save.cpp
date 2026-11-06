@@ -958,9 +958,8 @@ TEST(StreamReal, UberJointSaveLoad) {
 
 // Ragdolls save and load mid-fall: l4_ballcourt poacher 6540 (killed by the unit's scripts at its start) slides off its
 // ledge as a ragdoll; a save while it falls restores its bodies (IDs, velocities, contacts) and its enemy state, so the
-// fall and the settled pose come out bit for bit. Only the ragdoll is compared: other state of this unit does not yet
-// survive a load at this point (uber 6045's command, poacher 6539's fire mode), which also reorders Jolt's contacts
-// for the other corpses.
+// fall and the settled pose come out bit for bit, for every corpse (6540-6542) and the whole world (uber 6045's
+// command, poacher 6539's fire mode and the scripts' threads load as they were).
 TEST(StreamReal, RagdollSaveLoad) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1002,7 +1001,97 @@ TEST(StreamReal, RagdollSaveLoad) {
     EXPECT_EQ(poacher(*fresh)->state().ragdollPhase, 2);
     for (int i = 0; i < 400; ++i) fresh->tick({});
     EXPECT_EQ(poacher(*fresh)->state().ragdollPhase, 3);
-    EXPECT_EQ(poacher(*fresh)->state().ragdoll, end.ragdoll);
+    for (const int32_t uid : {6540, 6541, 6542}) {
+        const auto find = [&](const game::World& x) -> const game::ai::Enemy* {
+            for (const auto& e : x.enemies().all())
+                if (e->uid() == uid) return e.get();
+            return nullptr;
+        };
+        ASSERT_TRUE(find(*w) && find(*fresh)) << uid;
+        EXPECT_EQ(find(*fresh)->state().ragdollPhase, find(*w)->state().ragdollPhase) << uid;
+        EXPECT_EQ(find(*fresh)->state().ragdoll, find(*w)->state().ragdoll) << uid;
+    }
+    EXPECT_EQ(fresh->stateHash(), w->stateHash());
+}
+
+// A save continues the game exactly (docs/SAVES.md): on real units with enemies, uber objects, scripts and physics,
+// ticking N, saving, loading into a fresh World and ticking M more comes out bit for bit like the uninterrupted run:
+// the same World::stateHash and the same capture (every subsystem's saved state). On a mismatch the JSON patch
+// between the two captures names the fields that differ.
+TEST(StreamReal, SaveContinuesBitIdentically) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    struct Case {
+        const char* unit;
+        std::optional<game::Spawn> spawn;
+        int n, m;
+        game::Actions (*input)(uint64_t tick); // the same pad on both runs, by world tick
+    };
+    const auto idle = [](uint64_t) { return game::Actions{}; };
+    const Case cases[] = {
+        {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle}, // its scripts kill poachers, ragdolls fall
+        {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 600, [](uint64_t t) { // runs at the mercs, locked on, firing
+             game::Actions a;
+             a.move = t % 200 < 120 ? game::vec2(0, 1) : game::vec2(0);
+             a.fire = a.aim = t >= 40;
+             return a;
+         }},
+        {"l4_pool", game::Spawn{{-4000, 0, 2000}, 0}, 60, 300, [](uint64_t t) { // runs and jumps about
+             game::Actions a;
+             a.move = game::vec2(std::sin(float(t) * 0.02f), 1);
+             a.jump = t % 90 < 5;
+             return a;
+         }},
+        {"l2_cliffclimb", game::Spawn{{-34749.2f, -14716.0f, 71.3f}, 2.35f}, 60, 300, idle},
+    };
+    const auto dump = [](const game::World& w) {
+        const std::string s = save::serialize(save::capture(w));
+        return nlohmann::json::parse(s.substr(s.find('\n') + 1));
+    };
+    for (const auto& c : cases) {
+        const auto make = [&] {
+            auto w = std::make_unique<game::World>(load, c.unit, anims, c.spawn);
+            w->script().setBigfile(&bf);
+            w->enemies().setBigfile(&bf);
+            w->onCinematic = [](const std::string&, bool) {};
+            return w;
+        };
+        auto w = make();
+        for (int i = 0; i < c.n; ++i) w->tick(c.input(w->ticks()));
+        const auto bytes = save::serialize(save::capture(*w));
+        auto l = make();
+        save::apply(save::parse(bytes), *l);
+        const auto compare = [&](const std::string& when) {
+            const auto a = dump(*w), b = dump(*l);
+            if (a == b) return;
+            const auto patch = nlohmann::json::diff(a, b);
+            std::string lines;
+            for (size_t i = 0; i < patch.size() && i < 40; ++i) {
+                const nlohmann::json::json_pointer at(patch[i].at("path").get<std::string>());
+                lines += patch[i].at("path").get<std::string>() + ": " + (a.contains(at) ? a.at(at).dump().substr(0, 200) : "-") +
+                         " / loaded " + (b.contains(at) ? b.at(at).dump().substr(0, 200) : "-") + "\n";
+            }
+            ADD_FAILURE() << c.unit << " " << when << ": " << patch.size() << " differences (uninterrupted / loaded):\n" << lines;
+        };
+        // A just-loaded World holds the saved physics state until its first step: compared from the first tick on.
+        for (int i = 0; i < c.m; ++i) {
+            w->tick(c.input(w->ticks())), l->tick(c.input(l->ticks()));
+            if (l->stateHash() != w->stateHash()) { // the first tick that differs, and how
+                const auto pa = w->stateParts(), pb = l->stateParts();
+                std::string parts = pa.size() == pb.size() ? "" : "part counts differ\n";
+                for (size_t k = 0; k < pa.size() && k < pb.size(); ++k)
+                    if (pa[k] != pb[k]) parts += pa[k].first + (pa[k].first == pb[k].first ? "" : " / loaded " + pb[k].first) + "\n";
+                ADD_FAILURE() << c.unit << ": the hash differs " << i + 1 << " ticks after the load in\n" << parts;
+                compare("then");
+                break;
+            }
+        }
+        compare("at the end");
+        if (std::string_view(c.unit) == "l1_ship_exterior") // the run did fight: a merc is down
+            EXPECT_TRUE(std::ranges::any_of(w->enemies().all(), [](const auto& e) { return e->state().mode == game::ai::Mode::Dead; }));
+    }
 }
 
 // Breakable urns (docs/GAMEPLAY.md "Breakables"): a Mjolnir hit on l7_yggdrasil_hall01 urn 8814 (ar_pt_weightbreak_b:

@@ -63,6 +63,21 @@ void HairSim::reset(std::span<const glm::mat4> bones, const glm::mat4& toWorld) 
     prev_ = target_ = pos_;
 }
 
+std::vector<glm::vec3> HairSim::state() const {
+    std::vector<glm::vec3> out(pos_);
+    out.insert(out.end(), prev_.begin(), prev_.end());
+    out.insert(out.end(), target_.begin(), target_.end());
+    return out;
+}
+
+void HairSim::setState(const std::vector<glm::vec3>& s) {
+    const size_t n = rig_.particles.size();
+    if (s.size() != 3 * n) return;
+    pos_.assign(s.begin(), s.begin() + std::ptrdiff_t(n));
+    prev_.assign(s.begin() + std::ptrdiff_t(n), s.begin() + std::ptrdiff_t(2 * n));
+    target_.assign(s.begin() + std::ptrdiff_t(2 * n), s.end());
+}
+
 void HairSim::step(std::span<const glm::mat4> bones, const glm::mat4& toWorld, float dt) {
     if (empty()) return;
     if (pos_.size() != rig_.particles.size()) reset(bones, toWorld);

@@ -29,6 +29,7 @@ struct SaveGame {
     std::string waterUnit;     // empty = not swimming
     int waterIndex = -1;       // water markup index within waterUnit
     float cameraYaw = 0, cameraPitch = -0.25f;
+    nlohmann::json runtime; // World::serializeRuntime() (orbit camera lag, hair, scripts' player unit); null (older saves) = seeded afresh
     std::optional<game::CheckpointRef> checkpoint;
     std::set<int32_t> collected; // World::collected (pickup intro ids)
     int chapter = 0; // game::kChapters index; saves without it: chapterOfUnit(unit), else 0

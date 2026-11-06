@@ -96,7 +96,6 @@ public:
     float weight() const;                  // newest layer's fade-in weight, 1 = no blend in progress
     size_t layers() const { return layers_.size(); }
 
-private:
     struct Layer {
         const Clip* clip;
         double time;
@@ -106,6 +105,11 @@ private:
         float mix;
         float weight() const { return fade <= 0 ? 1.0f : std::min(1.0f, elapsed / fade); }
     };
+    // Saves: the crossfade in progress (oldest first); setLayers replaces it.
+    const std::vector<Layer>& layerStates() const { return layers_; }
+    void setLayers(std::vector<Layer> layers) { layers_ = std::move(layers); }
+
+private:
     std::vector<LocalTransform> sampleLayer(const Layer& l) const;
     const scene::Skeleton* skeleton_;
     std::vector<Layer> layers_; // oldest first
@@ -154,6 +158,9 @@ public:
     void apply(std::span<glm::mat4> bones, const glm::mat4& toWorld) const;
     const std::vector<glm::vec3>& positions() const { return pos_; } // world space, per particle
     const HairParams& params() const { return p_; }
+    // Saves: the particles' current, previous and animated positions; setState ignores a state of another size.
+    std::vector<glm::vec3> state() const;
+    void setState(const std::vector<glm::vec3>& s);
 
 private:
     glm::vec3 capsulePoint(const HairCapsule& c, std::span<const glm::mat4> bones, const glm::mat4& toWorld, bool end) const;

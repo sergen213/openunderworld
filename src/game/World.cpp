@@ -967,6 +967,14 @@ std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& u
 
 uint64_t World::stateHash() const {
     uint64_t h = 1469598103934665603ull;
+    for (const auto& [name, part] : stateParts()) h = (h ^ part) * 1099511628211ull;
+    return h;
+}
+
+std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
+    std::vector<std::pair<std::string, uint64_t>> out;
+    uint64_t h = 0;
+    auto part = [&](std::string name) { out.emplace_back(std::move(name), 0), h = 1469598103934665603ull; };
     auto bytes = [&](const void* p, size_t n) { // FNV-1a over 64-bit words, then the tail bytes
         const auto* c = static_cast<const unsigned char*>(p);
         for (; n >= 8; c += 8, n -= 8) {
@@ -975,17 +983,26 @@ uint64_t World::stateHash() const {
             h = (h ^ w) * 1099511628211ull;
         }
         for (; n; ++c, --n) h = (h ^ *c) * 1099511628211ull;
+        out.back().second = h;
     };
     auto add = [&](const auto& v) { bytes(&v, sizeof v); }; // padding-free values only (scalars, glm types)
     auto str = [&](const std::string& s) { bytes(s.data(), s.size()), add(s.size()); };
     const PlayerState& s = player_.state();
+    part("player");
     add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), add(s.ledge);
     add(s.ledgeT), add(s.water), add(s.climbHold), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
-    add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch), add(health_.value()), add(air_);
+    add(health_.value()), add(air_);
+    part("camera");
+    add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch);
+    part("bones");
     for (const auto& m : bones_) add(m);
-    for (const auto& b : physics_.bodies) add(b.pos), add(b.rot), add(b.vel), add(b.angVel);
-    for (const auto& d : col_.dynamics) add(d.transform);
+    for (size_t i = 0; i < physics_.bodies.size(); ++i) {
+        const auto& b = physics_.bodies[i];
+        part("body " + std::to_string(i)), add(b.pos), add(b.rot), add(b.vel), add(b.angVel);
+    }
+    for (size_t i = 0; i < col_.dynamics.size(); ++i) part("dynamic " + std::to_string(col_.dynamics[i].id)), add(col_.dynamics[i].transform);
     for (const auto& o : script_.objects()) {
+        part("object " + std::to_string(o.uid) + " " + o.name);
         add(o.uid), add(o.state), add(o.t), add(o.pos), add(o.offset), add(o.body), add(o.inside), add(o.hidden), add(o.dead);
         if (o.spline) add(o.spline->t), add(o.spline->dir), add(o.spline->playing);
         if (o.joint) add(o.joint->position);
@@ -998,19 +1015,21 @@ uint64_t World::stateHash() const {
     }
     for (const auto& e : enemies_.all()) {
         const auto& es = e->state();
+        part("enemy " + std::to_string(e->uid()));
         add(e->uid()), add(es.mode), add(es.pos), add(es.yaw), add(es.clipTime), add(es.health), str(es.clip), add(es.ragdollPhase);
         for (const auto& m : es.ragdoll) add(m);
     }
     for (const auto& [uid, rt] : uberRuntime_) {
+        part("uber " + std::to_string(uid));
         add(uid), add(rt.fired), add(rt.commanded);
         for (const auto& s : rt.sections) add(s.state), add(s.transition), add(s.time), add(s.length);
         for (const auto& [index, j] : rt.joints) add(index), add(j.x), add(j.v), add(j.lo), add(j.hi), add(j.speed), add(j.force), add(j.motor), add(j.limited);
         for (const int32_t l : rt.links) add(l);
         for (const auto& w : rt.watches) add(w.section), add(w.joint), add(w.range), add(w.mode), add(w.inside);
     }
-    for (const auto& [uid, m] : uberMotion_) add(uid), add(m.t), add(m.active);
-    add(held_);
-    return h;
+    for (const auto& [uid, m] : uberMotion_) part("motion " + std::to_string(uid)), add(uid), add(m.t), add(m.active);
+    part("held"), add(held_);
+    return out;
 }
 
 // tru.exe: a water volume instance (object `watervolume`) gets a type-10 markup box (0x5D7130, MUD flag

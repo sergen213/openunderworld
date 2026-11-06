@@ -627,7 +627,21 @@ nlohmann::json World::serializeCombat() const {
     nlohmann::json guns = nlohmann::json::object();
     for (int i = 0; i < kWeaponCount; ++i)
         guns[std::string(weaponName(Weapon(i)))] = {{"clip", {c.clip[i][0], c.clip[i][1]}}, {"reserve", c.reserve[i]}};
-    return {{"weapon", weaponName(c.weapon)}, {"secondary", weaponName(c.secondary)}, {"guns", guns}, {"adrenaline", c.adrenaline}};
+    // In hand: the draw, aim, lock, cooldowns, recoil clocks and the spread generator, so a load continues mid-fight
+    // exactly (the target by enemy uid). Older saves load holstered.
+    int32_t target = 0;
+    for (const auto& e : enemies_.all())
+        if (static_cast<const Damageable*>(e.get()) == c.target) target = e->uid();
+    const nlohmann::json state = {
+        {"previous", weaponName(c.previous)}, {"want", weaponName(c.want)}, {"hammer", {c.hammer.clip, c.hammer.t, c.hammer.prevT}},
+        {"drawn", c.drawn}, {"redraw", c.redraw}, {"drawT", c.drawT}, {"target", target}, {"locked", c.locked},
+        {"aim", {c.aim.x, c.aim.y}}, {"aimPoint", {c.aimPoint.x, c.aimPoint.y, c.aimPoint.z}}, {"reload", c.reload},
+        {"cooldown", c.cooldown}, {"hand", c.hand}, {"sinceShot", {c.sinceShot[0], c.sinceShot[1]}}, {"spread", c.spread},
+        {"shotsFired", c.shotsFired}, {"rng", c.rng}, {"deathTime", c.deathTime},
+        {"held", {c.drawHeld, c.switchHeld, c.weaponHeld, c.healHeld, c.interactHeld, c.fireHeld}}, {"healCooldown", c.healCooldown},
+        {"healthPacksUsed", c.healthPacksUsed}, {"slowMo", c.slowMo}, {"pip", {c.pip.x, c.pip.y}}, {"timeScale", c.timeScale}};
+    return {{"weapon", weaponName(c.weapon)}, {"secondary", weaponName(c.secondary)}, {"guns", guns}, {"adrenaline", c.adrenaline},
+            {"state", state}};
 }
 
 void World::restoreCombat(const nlohmann::json& j) {
@@ -649,6 +663,33 @@ void World::restoreCombat(const nlohmann::json& j) {
     c.adrenaline = std::clamp(j.value("adrenaline", 0.0f), 0.0f, 1.0f);
     c.spread = anims_.weapons[size_t(c.weapon)].spreadDeg;
     c.rng = combat_.rng;
+    if (const auto s = j.find("state"); s != j.end() && s->is_object()) {
+        try {
+            CombatState d = c;
+            const auto w = [&](const char* key) {
+                const auto x = weaponByName(s->at(key).get<std::string>());
+                if (!x) throw std::runtime_error("weapon");
+                return *x;
+            };
+            d.previous = w("previous"), d.want = w("want");
+            d.hammer = {s->at("hammer").at(0).get<std::string>(), s->at("hammer").at(1).get<float>(), s->at("hammer").at(2).get<float>()};
+            d.drawn = s->at("drawn"), d.redraw = s->at("redraw"), d.drawT = s->at("drawT"), d.locked = s->at("locked");
+            d.target = nullptr;
+            for (const auto& e : enemies_.all())
+                if (e->uid() == s->at("target").get<int32_t>()) d.target = e.get();
+            d.aim = {s->at("aim").at(0).get<float>(), s->at("aim").at(1).get<float>()};
+            d.aimPoint = {s->at("aimPoint").at(0).get<float>(), s->at("aimPoint").at(1).get<float>(), s->at("aimPoint").at(2).get<float>()};
+            d.reload = s->at("reload"), d.cooldown = s->at("cooldown"), d.hand = s->at("hand");
+            d.sinceShot[0] = s->at("sinceShot").at(0), d.sinceShot[1] = s->at("sinceShot").at(1);
+            d.spread = s->at("spread"), d.shotsFired = s->at("shotsFired"), d.rng = s->at("rng"), d.deathTime = s->at("deathTime");
+            const auto& h = s->at("held");
+            d.drawHeld = h.at(0), d.switchHeld = h.at(1), d.weaponHeld = h.at(2), d.healHeld = h.at(3), d.interactHeld = h.at(4), d.fireHeld = h.at(5);
+            d.healCooldown = s->at("healCooldown"), d.healthPacksUsed = s->at("healthPacksUsed"), d.slowMo = s->at("slowMo");
+            d.pip = {s->at("pip").at(0).get<float>(), s->at("pip").at(1).get<float>()}, d.timeScale = s->at("timeScale");
+            c = d;
+        } catch (const std::exception&) { // nlohmann errors too: holstered, as older saves
+        }
+    }
     combat_ = c;
 }
 

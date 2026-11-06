@@ -817,13 +817,14 @@ void World::bindMultibody() {
             if (args.size() != 4 || args[1].bits < 1 || args[1].bits > 3) return false;
             const float lo = glm::radians(std::bit_cast<float>(args[2].bits));
             const float hi = glm::radians(std::bit_cast<float>(args[3].bits));
+            // Kept per object too: a rebuilt hinge (syncObjects) and a load (serializeRuntime) take them again.
             if (args[1].bits != 3) {
                 if (index >= 0) physics_.hinges[index].lo = lo;
-                else multibodyLo_[uid] = lo;
+                multibodyLo_[uid] = lo;
             }
             if (args[1].bits != 2) {
                 if (index >= 0) physics_.hinges[index].hi = hi;
-                else multibodyHi_[uid] = hi;
+                multibodyHi_[uid] = hi;
             }
             return true;
         }

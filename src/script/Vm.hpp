@@ -34,6 +34,7 @@ public:
     std::shared_ptr<Instance> instantiate(int32_t uid, uint32_t typeId);
     uint32_t functionIndex(const Function* f) const;
     uint32_t owner(const Function* f) const;
+    std::string unit; // the unit whose DRM holds these types (Runtime::addUnit); keys unit / global scripts in saves
 
 private:
     std::vector<ScriptType> types_;
@@ -78,6 +79,11 @@ public:
     std::optional<int32_t> takeStateChange() { return std::exchange(stateChanged_, std::nullopt); }
     // States entered by objects called from another object's frames: the runtime starts each as its own thread.
     std::vector<std::pair<int32_t, const Function*>> takeStarts() { return std::exchange(starts_, {}); }
+    // Saves (Runtime::serialize): the suspended frames (object uid, function as owner type + index, pc, locals, stack),
+    // the WAIT time and the step budget. load() resolves the objects through Resolve; false (and inactive) when a frame's
+    // object or function no longer exists. Constant texts come back as copies the machine owns.
+    nlohmann::json save() const;
+    bool load(const nlohmann::json& j);
 
 private:
     struct Frame {
@@ -107,6 +113,7 @@ private:
     std::string failure_;
     std::optional<int32_t> stateChanged_;
     std::vector<std::pair<int32_t, const Function*>> starts_;
+    std::deque<std::string> texts_; // Constant texts of loaded frames (load())
 };
 
 } // namespace ou::script::vm

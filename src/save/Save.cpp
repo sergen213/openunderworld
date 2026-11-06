@@ -59,6 +59,7 @@ json toJson(const SaveGame& s) {
                     {"ledge", ledge}, {"runJump", p.runJump}, {"regrabCooldown", p.regrabCooldown},
                     {"water", water}, {"pitch", p.pitch}, {"fallStartZ", p.fallStartZ}}},
         {"camera", {{"yaw", s.cameraYaw}, {"pitch", s.cameraPitch}}},
+        {"runtime", s.runtime},
         {"checkpoint", cp},
         {"collected", s.collected},
         {"chapter", s.chapter},
@@ -119,6 +120,7 @@ SaveGame fromJson(const json& j) {
     if (const auto c = j.find("camera"); c != j.end()) {
         s.cameraYaw = c->at("yaw").get<float>();
         s.cameraPitch = c->at("pitch").get<float>();
+        s.runtime = j.value("runtime", json(nullptr)); // written beside the camera angles
     } else {
         s.cameraYaw = ps.yaw;
     }
@@ -182,6 +184,7 @@ SaveGame capture(const game::World& world) {
     s.player.ledge = s.player.water = -1;
     s.cameraYaw = world.camera().yaw;
     s.cameraPitch = world.camera().pitch;
+    s.runtime = world.serializeRuntime();
     s.checkpoint = world.checkpoint();
     s.collected = world.collected;
     s.chapter = world.chapter;
@@ -202,6 +205,7 @@ SaveGame capture(const game::World& world) {
 
 void apply(const SaveGame& save, game::World& world) {
     if (save.tailoring) world.setTailoring(*save.tailoring); // first: the units' enemies spawn with its health level
+    world.setTicks(save.ticks); // before enterUnit: its stream timers count from the saved clock (waves run on it too)
     // An airborne save resumes at its checkpoint (else its unit's spawn), as tru.exe's loads always do (checkpoint
     // restore 0x556E90): one taken mid-fall holds no place to come down on. The chapter-1 start slot of older builds held
     // Lara on l1_cineseatop's set, 166000 units off the yacht, falling through the sky [user report].
@@ -220,6 +224,7 @@ void apply(const SaveGame& save, game::World& world) {
         p.ledge = markup(save.ledgeUnit, save.ledgeIndex, "ledge");
         p.water = markup(save.waterUnit, save.waterIndex, "water volume");
         world.restore(p, save.cameraYaw, save.cameraPitch);
+        world.restoreRuntime(save.runtime);
     }
     world.setCheckpoint(save.checkpoint);
     world.collected = save.collected;
@@ -233,6 +238,7 @@ void apply(const SaveGame& save, game::World& world) {
     if (!save.outfit.empty()) world.levelOutfit = save.unit == "l1_seatop" ? "lara_wetsuit_warm" : save.outfit;
     world.wear(world.costume);
     world.script().restore(save.script);
+    if (airborne) world.script().playerJumped(); // she resumes elsewhere: no plane crossings across the jump
     if (!save.script.is_object() || !save.script.contains("player")) // older saves: what the chapter starts with
         world.script().setPlayerObjects(game::chapterGear(save.chapter));
     if (!save.enemies.is_null()) {

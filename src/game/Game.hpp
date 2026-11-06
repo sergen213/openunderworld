@@ -461,6 +461,7 @@ public:
     const CameraState& camera() const { return cam_; }
     const CameraState& previousCamera() const { return prevCam_; }
     uint64_t ticks() const { return ticks_; }
+    void setTicks(uint64_t t) { ticks_ = t; } // a load (save::apply): the clock the waves and stream timers run on
     // Switches, doors, trigger volumes/planes, push blocks (src/script). Set its bigfile before ticking;
     // the single-mesh constructor has no units: give it them with script().setUnits.
     script::Runtime& script() { return script_; }
@@ -508,8 +509,16 @@ public:
     // FNV-1a digest of the simulated state (Lara, camera, health/air, rigid bodies, object collision, script objects
     // and their fields, enemies): equal digests at a tick = the same simulation (render-rate tests, ou-game log).
     uint64_t stateHash() const;
+    // stateHash's digest per subsystem part ("player", "camera", "bones", "body <i>", "object <uid> <name>",
+    // "enemy <uid>", "uber <uid>", ...), in a fixed order: where two runs differ (save tests).
+    std::vector<std::pair<std::string, uint64_t>> stateParts() const;
     // Save games (src/save): ai::Enemies::restore, then the loaded units' enemies come back from it at once.
     void restoreEnemies(const nlohmann::json& j);
+    // The World's own running state for saves: the orbit camera (focus lag, desired point, mode blend, look-idle clock),
+    // Lara's hair particles, the unit the scripts were last told she is in. restoreRuntime after restore() (a load
+    // continues them bit for bit); bad / null json: left as restore() seeded them.
+    nlohmann::json serializeRuntime() const;
+    void restoreRuntime(const nlohmann::json& j);
     const ai::Enemies& enemies() const { return enemies_; }
     float fovDeg = 60.0f; // vertical FOV, from config
     // Scripted reveal camera (Camera.cpp, docs/GAMEPLAY.md "Cameras"): a unit camera spline replaces the orbit
