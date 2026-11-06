@@ -639,7 +639,18 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   pole ahead with query q33's vertical take-off (**52.10** up a 30 Hz frame, gravity 5.72443) and the horizontal speed
   that brings her down to the catch point **242** short of it and **357** below it — 23.5 frames, the root 237 over the
   pole at the top, 1303 units/s across 1264 [O]; ours times the flight by that rule and aims the root at the hang pose
-  (no jump at the catch) [I]. No pole in reach: q33 as it is (**73.72** forward, 52.10 up a frame) [O]. Drop lets go
+  (no jump at the catch) [I]. No pole in reach: q33 as it is (**73.72** forward, 52.10 up a frame) [O]. Jump from the
+  idle hang with the stick neither along nor across (chart T1231 / T1235 [O]) climbs onto the pole's top instead
+  (`hpole_to_perch`, along it `hpole_para_to_perch`; root **19** over the axis, Wine 19.9): there `hpole_perch_ready`,
+  the stick across leans into a jump (`hpole_perch_Jump_forward_Antic` / `_back_Antic`), jump leaps forward / back
+  (`hpole_perch_Jump_forward` / `_back`, q33 / q34, aimed at a pole as the fling), along it sideways
+  (`hpole_perch_Jump_left` / `_right`, q69 / q70: 45 out + 70 up a frame after the clip's quarter turn), alone straight
+  up (`hpole_perch_Jump_up`, q35 53.73 up), Ctrl back down onto the hang (`hpole_perch_fall_to_hpole`) [O]; falling
+  through a pole's top within 40 of its axis lands her on it [I]; the 45° stick bands are [I]; the top run along it
+  (`hpole_perch_to_top_run`, balance-beam states) and the chart's clearance check are not ported. A jump (from the
+  floor or a run) with a pole's hang **330** out and **0–250** up of her root [I] flies her straight there, no gravity,
+  in **11 frames at 60 Hz** (0.183 s; Wine on 1336: a standing jump 315 out at 1718 units/s, a running one 208 out at
+  1135, both 11 frames) [O]. Drop lets go
   (`Hpole_detach_dropPerp` / `_dropPara`). Clip choice by the stick against the hang [I] (the chart's conditions
   0x195 / 0x196, orientation values 450–453 [O]); the swing is clip-driven: no physics condition sits on the swing
   states [O], so there is no swing simulation to port.
@@ -1034,9 +1045,11 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   +0x7EE read by the `PillarAttachGroundAnimTarget` 0x753F80 [O]) or the air (`pillar_attach_M`); the root on the axis
   (tru.exe under Wine, l4_temple 1189 / 1194: Lara's instance stays on it; the clips hold her body round the shaft) [O].
   The stick is screen-relative like the original's quadrant (cond 0x195; Wine: W climbed whichever way she faced):
-  up = `pillar_climb_up` at a steady **312 units/s** (10.40 a frame [O]), down = `pillar_slide_down_start` →
-  `pillar_slide_down` → `_stop` (Wine: speeding up to 900 units/s; ours the clips' root motion), right / left =
-  `pillar_climb_right` (mirrored to the left) taking her round the shaft at **π/2 rad/s** [O]. At the top a perch on it: `pillar_detach_perch` (341.8 up) onto it;
+  up = `pillar_climb_up` at a steady **312 units/s** (10.40 a frame [O]), down = `pillar_slide_down_start` (its root
+  motion: 237 in 0.33 s, as the Wine trace) → `pillar_slide_down` at the code's speed, not the loop's root motion: 10 a
+  60 Hz frame for three frames, then a steady **900 units/s** (Wine, 1194 [O]) → `_stop`; right / left =
+  `pillar_climb_right` (mirrored to the left) taking her round the shaft at **π/2 rad/s** [O]. Screenshots (Vulkan,
+  mid-climb and mid-round): her body stays outside the shaft with the root on the axis. At the top a perch on it: `pillar_detach_perch` (341.8 up) onto it;
   at the foot `pillar_detach_ground` (193 down, half turn). Space jumps by the stick's angle from straight out
   (state S1213, conds 0x1A9 / 0x1AA [O]): within 22° `pillar_jump_forward`, to 78° the same mirrored on the left, to
   112° `pillar_jump_right`, to 155° `pillar_jump_back_45R` (left mirrored; which side mirrors is [I]), else or no stick

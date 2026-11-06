@@ -58,6 +58,11 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"HPole_ParaForward_to_idle_L_hand", 8, 6}, {"HPole_ParaForward_to_idle_R_hand", 8, 6}, {"hpole_para_fling", 1, 1},
         {"Hpole_swingstopA", 2, 10}, {"Hpole_swingstopB", 2, 5}, {"Hpole_swingstopC", 8, 4}, {"Hpole_startswing_endA", 3, 3},
         {"Hpole_swingreverseA", 1, 1}, {"Hpole_detach_dropPerp", 3, 1}, {"Hpole_detach_dropPara", 3, 1},
+        // pole top (Player::poleTop): requests 1306, 1365, 1291, 1299, 1292, 1293, 1294, 1295, 1296, 1297, 1298
+        {"hpole_to_perch", 1, 1}, {"hpole_para_to_perch", 1, 1}, {"hpole_perch_ready", 4, 4}, {"hpole_perch_fall_to_hpole", 1, 1},
+        {"hpole_perch_Jump_up", 10, 10}, {"hpole_perch_Jump_right", 10, 10}, {"hpole_perch_Jump_left", 10, 10},
+        {"hpole_perch_Jump_forward_Antic", 15, 15}, {"hpole_perch_Jump_forward", 5, 5}, {"hpole_perch_Jump_back_Antic", 15, 15},
+        {"hpole_perch_Jump_back", 10, 10},
         // ladders: requests 1161 (attach_M), 1163, 1165, 1175, 1169, 1168, 1173, 1172, 1171, 1176
         {"ladder_attach_M", 3, 1}, {"ladder_attach_ground_bottom", 14, 14}, {"ladder_attach_ground_top", 4, 0},
         {"ladder_idle", 3, 3}, {"ladder_climb_up", 3, 3}, {"ladder_climb_down", 3, 3}, {"ladder_detach_ground_top", 3, 1},
@@ -158,6 +163,9 @@ const std::vector<std::string_view> kLaraClipNames = {
     "Hpole_Paraturn180", "HPole_ParaForward_trans", "HPole_ParaForward", "HPole_ParaForward_to_idle_L_hand",
     "HPole_ParaForward_to_idle_R_hand", "hpole_para_fling", "Hpole_swingstopB", "Hpole_swingstopC", "Hpole_startswing_endA",
     "Hpole_swingreverseA", "Hpole_detach_dropPerp", "Hpole_detach_dropPara",
+    "hpole_to_perch", "hpole_para_to_perch", "hpole_perch_ready", "hpole_perch_fall_to_hpole", "hpole_perch_Jump_up", // pole top
+    "hpole_perch_Jump_right", "hpole_perch_Jump_left", "hpole_perch_Jump_forward_Antic", "hpole_perch_Jump_forward",
+    "hpole_perch_Jump_back_Antic", "hpole_perch_Jump_back",
     "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
     "sprint_loop", "ng_sprint_to_exhaust", "ng_run_exhaust", "ng_roll_front_sprinting", // sprint (Player::tick)
     "ledgeb_bad_attach_M", "ledgeb_bad_attach_recover", // saving grab (Player::tryGrab)

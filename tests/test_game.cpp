@@ -2983,11 +2983,17 @@ TEST(GameReal, PillarAttachRoundUpSlideOff) {
     for (int i = 0; i < 120; ++i) w->tick(forward()); // stick up climbs, whichever way she faces (screen-relative)
     EXPECT_NEAR((s.pos.z - z0) / 2.0f, 312.0f, 40.0f) << "tru.exe: a steady 312 units/s";
     bool slid = false;
+    std::vector<float> loop; // the slide loop's drop a tick
     for (int i = 0; i < 600 && s.state == State::Pillar; ++i) {
+        const float zp = s.pos.z;
         w->tick(forward(-1));
         slid |= s.clip == "pillar_slide_down";
+        if (s.clip == "pillar_slide_down" && s.pos.z > 193.5f) loop.push_back(zp - s.pos.z);
     }
     EXPECT_TRUE(slid);
+    ASSERT_GE(loop.size(), 6u);
+    // tru.exe under Wine (l4_temple 1194): 10 a 60 Hz frame for three frames, then a steady 15 (900 units/s)
+    for (size_t i = 0; i < loop.size(); ++i) EXPECT_NEAR(loop[i], i < 3 ? 10.0f : 15.0f, 0.01f) << i;
     EXPECT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 0, 0.1);
 }
@@ -4376,6 +4382,97 @@ TEST(GameReal, TrapRoomsPoleAttachBackAndTurnTimes) {
     for (; turn < 120 && s.clip == "Hpole_PerptoPara"; ++turn) w.tick(worldStick(w, {1, 0}));
     EXPECT_NEAR(turn / 60.0, 0.30, 0.04);
     EXPECT_TRUE(s.polePara);
+}
+
+// A jump at a pole in reach flies her root in a straight line, no gravity, onto the hang in 11 frames at 60 Hz
+// (tru.exe under Wine on 1336 from this spot: 0.17-0.20 s in the air, 1718 units/s for 315 out) [O].
+TEST(GameReal, TrapRoomsJumpToPoleStraightLine) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = trapRooms(bf);
+    const auto& s = w.player().state();
+    Actions go = forward();
+    go.jump = true;
+    std::vector<vec3> path;
+    for (int t = 0; t < 120 && s.state != State::PoleHang; ++t) {
+        w.tick(t < 20 ? go : Actions{});
+        if (s.state == State::HangJump) path.push_back(s.pos);
+    }
+    ASSERT_EQ(s.state, State::PoleHang);
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1336);
+    ASSERT_GE(path.size(), 2u);
+    EXPECT_NEAR(path.size() / 60.0, 0.183, 0.02) << "in the air";
+    const vec3 a = path.front(), b = path.back();
+    for (const vec3& p : path) EXPECT_LT(glm::length(glm::cross(p - a, glm::normalize(b - a))), 0.5f) << "off the line";
+}
+
+// Onto the top of a pole and off it (lara.drm's state chart, Player::poleTop): jump from the idle hang with no stick
+// climbs up (hpole_to_perch, root 19 over the axis; Wine 19.9), drop lowers her back onto the hang, jump alone leaps
+// straight up (q35 53.73 a frame) and lands back on top, the stick along it leaps that way (q69 / q70: 45 out + 70 up),
+// the stick across leans in (_Antic) and jump leaps to the next pole (q33, as the fling).
+TEST(GameReal, TrapRoomsPoleTop) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    Actions jump;
+    jump.jump = true;
+    const auto climbUp = [&](game::World& w) {
+        const auto& s = w.player().state();
+        w.tick(jump);
+        EXPECT_EQ(s.state, State::Perch);
+        EXPECT_EQ(s.clip, "hpole_to_perch");
+        for (int i = 0; i < 200 && s.clip == "hpole_to_perch"; ++i) w.tick({});
+        EXPECT_EQ(s.clip, "hpole_perch_ready");
+        EXPECT_NEAR(s.pos.z, 7133 + 19, 2) << "on top: 19 over the axis";
+    };
+    {
+        auto w = trapRooms(bf);
+        hangOnPole(w);
+        const auto& s = w.player().state();
+        ASSERT_EQ(s.clip, "HPole_idleHangPerp");
+        const float hangYaw = s.yaw;
+        climbUp(w);
+        Actions drop;
+        drop.drop = true;
+        w.tick(drop);
+        EXPECT_EQ(s.clip, "hpole_perch_fall_to_hpole");
+        for (int i = 0; i < 200 && s.state == State::Perch; ++i) w.tick({});
+        ASSERT_EQ(s.state, State::PoleHang);
+        EXPECT_EQ(s.clip, "HPole_idleHangPerp");
+        EXPECT_NEAR(handsOf(w, w.anims().poleHandOffset).z, 7133, 1);
+        EXPECT_NEAR(std::remainder(s.yaw - hangYaw, 6.2831853f), 0, 1e-3);
+        for (int i = 0; i < 5; ++i) w.tick({});
+        climbUp(w);
+        w.tick(jump);
+        EXPECT_EQ(s.state, State::Jump);
+        EXPECT_EQ(s.clip, "hpole_perch_Jump_up");
+        EXPECT_NEAR(s.vel.z, 53.73f * 30, 30) << "q35";
+        int air = 1;
+        for (; air < 120 && s.state == State::Jump; ++air) w.tick({});
+        ASSERT_EQ(s.state, State::Perch) << "back on top";
+        EXPECT_NEAR(air / 60.0, 2 * 53.73 / 5.72443 / 30, 0.05);
+        EXPECT_NEAR(s.pos.z, 7133 + 19, 1);
+        for (int i = 0; i < 30; ++i) w.tick(worldStick(w, {0, 1}));
+        EXPECT_EQ(s.clip, "hpole_perch_Jump_forward_Antic");
+        Actions go = worldStick(w, {0, 1});
+        go.jump = true;
+        w.tick(go);
+        ASSERT_EQ(s.state, State::HangJump);
+        EXPECT_EQ(s.clip, "hpole_perch_Jump_forward");
+        for (int i = 0; i < 120 && s.state == State::HangJump; ++i) w.tick({});
+        ASSERT_EQ(s.state, State::PoleHang);
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1337);
+    }
+    auto w = trapRooms(bf);
+    hangOnPole(w);
+    const auto& s = w.player().state();
+    climbUp(w);
+    Actions side = worldStick(w, {1, 0});
+    side.jump = true;
+    w.tick(side);
+    ASSERT_EQ(s.state, State::Jump);
+    EXPECT_TRUE(s.clip == "hpole_perch_Jump_left" || s.clip == "hpole_perch_Jump_right") << s.clip;
+    EXPECT_NEAR(glm::length(vec2(s.vel)), 45.0f * 30, 1) << "q69 / q70";
+    EXPECT_NEAR(s.vel.x, 45.0f * 30, 1) << "along the stick";
 }
 
 TEST(GameReal, TrapRoomsPoleSwingStops) {

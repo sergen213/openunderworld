@@ -352,6 +352,7 @@ private:
     void startSlide(vec3 vel);
     bool tryGrab(vec3 prevPos);
     bool tryGrabPole(vec3 prevPos);
+    bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
     bool canClimbUp() const;
@@ -366,7 +367,8 @@ private:
     // root, yaw; poles: `para` = the parallel hang
     std::pair<vec3, float> attachPose(int markup, int seg, float t, float side, bool para = false) const;
     void pole(vec2 move, bool jumpPressed, bool dropPressed, float dt); // State::PoleHang
-    void poleFling(); // the leap off a pole once the fling clip has played
+    void poleFling(float dirSign = 1); // the leap off a pole once the fling clip has played; -1: backwards (pole-top jump back)
+    void poleTop(vec2 move, bool jumpPressed, bool dropPressed, float dt); // State::Perch on a pole (markup 4 / 6)
     void beam(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     float surfaceZ() const;
     bool enterWater(); // from the ground or the air; false if not in deep enough water

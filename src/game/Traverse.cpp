@@ -59,6 +59,9 @@ constexpr float kPillarReach = 200.0f, kPillarGroundRise = 199.0f;
 constexpr float kPillarClimbSpeed = 10.40f * 30.0f, kPillarRoundRate = 1.5708f; // units/s, rad/s
 // Jumps off (state S1213): query q48, 55.63 out and 28.45 up a 30 Hz frame (lara.drm query table) [O].
 constexpr float kPillarJumpSpeed = 55.63f * 30.0f, kPillarJumpVz = 28.45f * 30.0f;
+// Sliding down (Wine, 1194, from idle): pillar_slide_down_start is its root motion (8.9, 26.8 then 39.9 a 30 Hz frame,
+// 237 in 0.33 s); the slide loop then runs 10 a 60 Hz frame for three frames and a steady 15 (900 units/s) after [O].
+constexpr float kPillarSlideFirst = 600.0f, kPillarSlideSpeed = 900.0f, kPillarSlideRamp = 2.5f / 60.0f;
 constexpr float kPillarTopDrop = 341.8f, kPillarFootRise = 193.0f;
 float pillarMaxZ(const collision::Markup& m) { return std::max(m.points[0].z - kPillarTopDrop, m.points[1].z + kPillarFootRise); }
 float pillarMinZ(const collision::Markup& m) { return m.points[1].z + kPillarFootRise; }
@@ -274,7 +277,14 @@ void Player::pillar(vec2 move, vec2 stick, bool jumpPressed, bool dropPressed, f
         } else {
             if (climb < -0.5f && s_.pos.z > minZ) {
                 if (clip == "pillar_slide_down_start" && clipDone()) play("pillar_slide_down", true);
-                s_.pos.z = std::max(minZ, s_.pos.z + advanceClip(dt).z);
+                if (s_.clip == "pillar_slide_down") { // the loop's speed is the code's, not its root motion (18.3 a frame)
+                    const double t0 = clipBlend("", "pillar_slide_down").startSeconds; // the loop starts at its frame 3
+                    const float v = s_.clipTime < t0 + kPillarSlideRamp ? kPillarSlideFirst : kPillarSlideSpeed;
+                    advanceClip(dt);
+                    s_.pos.z = std::max(minZ, s_.pos.z - v * dt);
+                } else {
+                    s_.pos.z = std::max(minZ, s_.pos.z + advanceClip(dt).z);
+                }
             } else {
                 play("pillar_slide_down_stop", false);
             }
