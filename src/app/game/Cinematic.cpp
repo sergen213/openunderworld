@@ -334,7 +334,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         cam.up = pose.up;
         cam.verticalFovDeg = glm::degrees(pose.verticalFov(hgt > 0 ? float(w) / float(hgt) : 1.0f));
         cam.nearZ = 2.0f;
-        cam.farZ = 200000.0f;
+        cam.farZ = v.farZ;
         if (v.mixer) v.mixer->setListener({pose.position, pose.forward, pose.up});
         // Depth of field (camera flag bit 6, 0x4547D0): globalaniminfo's filter with the camera's depthOfField. That
         // filter has its ColorDOF block off (+0x130E 0), so the original draws nothing; Enhanced turns it on (without
@@ -367,6 +367,14 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         fo.unitClips = clips;
         fo.dynamicLights = posedLights;
         fo.screenFilter = screenFilter;
+        render::Fog fog;
+        if (v.fog) {
+            fx::FogSum sum;
+            if (v.unitFilter) sum.add(*v.unitFilter, 1.0f);
+            if (pose.dof && settings.dofFilter) sum.add(*settings.dofFilter, 1.0f);
+            fog = sum.resolve(v.fogSet);
+            fo.fog = &fog;
+        }
         v.renderer.drawFrame(cam, {w, hgt}, fo);
         ++r.frames;
         if (v.maxFrames && r.frames >= v.maxFrames) {

@@ -435,10 +435,10 @@ Unit parseUnit(const cdc::Drm& d) {
             e.fogColor[k] = rs.at<uint8_t>(o + 0x18 + k) / 255.0f;
             e.ambient[k] = rs.at<uint8_t>(o + 0x1E4 + k) * rs.at<float>(o + 0x1E8) / 255.0f;
         }
-        e.fogNear = rs.at<float>(o + 0x40);
         e.fogFar = rs.at<float>(o + 0x3C);
         e.farPlane = rs.at<float>(o + 0x38);
         if (e.fogFar == 0) e.fogFar = rs.at<float>(o + 0x38);
+        e.fogNear = std::min(rs.at<float>(o + 0x40), e.fogFar - 1); // near >= far -> far - 1 (0x5C1F50)
         // PSSM split fractions +0x28..+0x34, kept ordered and the last <= 1 as device vfunc 0x80 (0x508350) stores them.
         float split = 0;
         for (int k = 0; k < 4; ++k)
@@ -585,6 +585,7 @@ Unit parseUnit(const cdc::Drm& d) {
             p.toUnit = pv.str({pp.section, uint32_t(b)});
             if (p.toUnit.size() >= 128) throw FormatError("portal unit name not terminated");
             p.toSignal = pv.at<int16_t>(b + 0x80), p.signal = pv.at<int16_t>(b + 0x82), p.toStreamId = pv.at<int16_t>(b + 0x84);
+            p.radius = pv.at<float>(b + 0x88);
             for (int i = 0; i < 3; ++i) {
                 p.min[i] = pv.at<float>(b + 0x90 + 4 * i) + frame[i], p.max[i] = pv.at<float>(b + 0xA0 + 4 * i) + frame[i];
                 p.normal[i] = pv.at<float>(b + 0xF0 + 4 * i);

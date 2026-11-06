@@ -289,6 +289,14 @@ EngineTexture cookieArray(std::span<const uint32_t> ids, std::span<const scene::
     return a;
 }
 
+void applyUnitLook(scene::Environment& env, const scene::Environment& look) {
+    if (!env.valid || !look.valid) return;
+    std::copy_n(look.fogColor, 3, env.fogColor), env.fogNear = look.fogNear, env.fogFar = look.fogFar;
+    std::copy_n(look.waterFogColor, 3, env.waterFogColor), env.waterFogNear = look.waterFogNear, env.waterFogFar = look.waterFogFar;
+    env.farPlane = look.farPlane;
+    std::copy_n(look.ambient, 3, env.ambient), std::copy_n(look.pssmSplits, 4, env.pssmSplits);
+}
+
 float lightFade(const scene::Light& l, glm::vec3 eye) {
     // tru.exe 0x5CC190 per unit light and frame: off unless record +0x8A; with the +0x80 fade, the distance d from the
     // camera (0x5CBFA0: points |eye - position| - DTP radius, >= 0; spots [I] |eye - position|, the decompiled segment

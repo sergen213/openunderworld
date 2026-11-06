@@ -147,6 +147,7 @@ struct Portal {
     int16_t toSignal = 0;   // +0x80 signal id of the matching portal in toUnit
     int16_t signal = 0;     // +0x82 this portal's signal id
     int16_t toStreamId = 0; // +0x84 stream unit id of toUnit
+    float radius = 0;       // +0x88 environment blend radius (tru.exe 0x5C7CA0; RENDERING.md "Neighbour units")
     float min[3], max[3];   // +0x90, +0xA0 bounds; min is the relocation anchor
     float quad[4][3];       // +0xB0 corners (float4 each)
     float normal[3];        // +0xF0

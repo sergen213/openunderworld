@@ -11,6 +11,7 @@
 #include "audio/Mixer.hpp"
 #include "cdc/Cdc.hpp"
 #include "game/Game.hpp"
+#include "fx/Fx.hpp"
 #include "render/Renderer.hpp"
 
 struct SDL_Window;
@@ -36,6 +37,12 @@ struct CineView {
     bool depthOfField = false;         // graphics cine_dof: draw the DOF cameras' focus (the original's filter has it off)
     const ui::Art* art = nullptr;      // the game font for the subtitles (null: none drawn)
     int language = 0;                  // subtitle language (locale::Language index)
+    // The frame's fog (RENDERING.md "After geometry"): the unit's own filter (weight 1, 0x5C78A0) and the DOF cameras'
+    // filter (0x4547D0, while the camera has the flag) sum their fog blocks, topped up by fogSet (the unit look's set).
+    bool fog = false;
+    const fx::FilterResource* unitFilter = nullptr;
+    render::Fog fogSet;
+    float farZ = 200000.0f; // camera far plane (Original: the unit look's, as in play)
 };
 
 struct CineResult {

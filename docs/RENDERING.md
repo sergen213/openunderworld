@@ -259,18 +259,37 @@ much darker than the generic lambert; the 060_med_natla cutscene keeps Lara/acto
   draws (junglehub: blur 4, amount 0.2); ours through the existing post-pass filter (`--fx on`).
 - **Brightness** [O]: 0x5222D0 sets a D3D gamma ramp `(k/255)^(1 − 8(b − 0.05))`, b = registry `Brightness` / 1000 in
   [0, 0.1] (default 50 → identity). Ours `brightness` = 1 / that exponent (1 = the default).
-- **Neighbour units** [O decode, not implemented]: 0x5C7CA0 blends the fog set (rgb, near, far), ambient, PSSM fractions
-  and render settings +0x78/+0x7C/+0x80 over loaded neighbours whose portal (record +0x88 radius, box ± radius, flag
-  tracker +6 & 8) is within the radius of the camera: w = (r − d) / r, d = distance to the portal plane, or to its
-  nearest edge when the camera is outside the quad (0x5C7690 / 0x4A03B0); results / (1 + Σw). Visible as the far
-  clamp: l4_ballcourt's view far is 114 494 there, ours the unit's 94 817.
+- **Neighbour units** [O]: every frame 0x5C7CA0 blends the camera unit's look with its loaded neighbours' (stream tracker
+  state 2, +6 & 8): for each of the unit's portals whose box grown by its radius (record +0x88, 2500) holds the camera's
+  focus instance (camera vfunc 0x48, else Lara; its +0x20), w = (r − d) / r, d = the distance to the portal plane, or
+  to the quad's nearest edge when the point projects outside the quad (two triangles on the normal's dominant plane,
+  0x5C7690 / 0x4A03B0); the unit itself weighs 1. Each unit's fog set (0x5C1F50: rgb, near, far, the far plane +0x38;
+  under water the water set; near ≥ far → far − 1), ambient (+0x1E4 × +0x1E8), PSSM fractions (+0x28..+0x34) and
+  +0x1E0 / +0x78 / +0x7C / +0x80 [U] are summed by weight and divided by 1 + Σw; the trackers keep w / (1 + Σw) at
+  +0xA4. The far plane is the view's far (view +0x3C) and the PSSM far. Read under Wine at the l4_ballcourt start
+  (Lara 1445 units from the l4_trailtube portal): trackers 0.7033 / 0.2967, view far 113 569.9 (the unit's 94 817),
+  fog near 9376.6, colour 63.3 / 71.7 / 78.1, g_Ambient 14.47 / 16.75 / 20.89 (/ 255); l2_junglehub start: 0.6815 /
+  0.3185 (l2_cliffhall_b), far 105 585.4. Ours: `game::portalBlendWeight` / `blendUnitLook` / `unitLook` at Lara →
+  `EffectsView::look` → the fog set (`fogBase`), `FrameOptions::unitLook` (both backends copy its ambient, PSSM
+  fractions, far plane and fog sets into their environment, `original::applyUnitLook`) and, with the Original preset,
+  the camera's far plane. Tests `Game.NeighbourUnitBlendWeights`, `GameReal.NeighbourUnitBlendMatchesOriginal`. The
+  under-water far plane (+0x44) and +0x1E0 / +0x78..+0x80 are not used [U].
+- **Cutscenes** [O filter fog, I which filters]: cinematics take the same fog: the unit's own filter (weight 1) and,
+  while the camera has its DOF flag, globalaniminfo's DOF filter (0x4547D0) sum their fog blocks, topped up by the
+  unit look's set; the camera's far plane is the look's (Original).
 
 Compared at the original's camera (`ou-game --camera eye,target,up,fov,near` from tru.exe's view +0x38..+0x8C read under
 Wine, moved into our frame by Level+0x80; openunderworld-work/postfx: camarg.sh, ourargs.py, cmp.py, `*_pair.png` = VK,
-GL, original). Mean |Δ| of the 4×3 region mean colours (0–255), before → after: l2_junglehub start 15.0 → 3.2 (luma
-−15.0 → −0.3), l4_ballcourt start 12.5 → 7.7 (−11.7 → −4.7), l3_main_bedroom start 1.6 → 2.1 (dark corridor; the
-original's corridor fire and smoke differ). GL and Vulkan match. Remaining: the junglehub sky is bluer (the original's
-hazier sky and the far mountain from a neighbour unit), ballcourt is still darker (neighbour blending, far clamp).
+GL, original). Mean |Δ| of the 4×3 region mean colours (0–255): l2_junglehub start 15.0 → 3.2 (luma −15.0 → −0.3)
+with the unit filter's fog, 3.2 with neighbour blending; l4_ballcourt start 12.5 → 7.7 (−11.7 → −4.7) → 8.8 (−6.4: the
+l4_trailtube blend darkens the ambient as the original's g_Ambient, read above; the original's frame has a foreground
+plant and rain haze ours lacks); l3_main_bedroom start 1.6 → 2.1 → 1.8 (+0.3; the original's corridor fire and smoke
+differ). GL and Vulkan match. The junglehub sky [O at the start]: tru.exe has the same three units loaded as ours
+(l2_junglehub, l2_cliffhall_b, l2_hubhall). The original's hazy cliffs (top right) are the sky cylinder's own textures
+(l2_junglehub exterior terrain, materials 10539–10542, textures 3447–3450, shared by all three units), seen higher and
+fogged; neither drawing the neighbours' exterior terrain unclipped (hubhall's cliff cards 8275–8278 included, with or
+without a depth clear per unit) nor every unit unclipped shows them in ours. How tru.exe places / fogs the exterior
+(camera-centred? fog at the far plane?) is [U].
 
 ### Instance opacity (`FrameOptions::meshOpacity`, GL + Vulkan)
 

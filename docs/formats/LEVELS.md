@@ -209,7 +209,8 @@ Portals are 0x100 bytes:
 | +0x80 | i16 **toSignal**: signal id of the matching portal in the target unit | [O] `0x5D13E0` compares it with the other unit's +0x82 |
 | +0x82 | i16 **signal**: this portal's own signal id | [O] same |
 | +0x84 | i16 **toStreamId**: stream-unit id of the target | [O] `0x5D13E0` / `0x5D2AA0` compare it with `StreamUnit.id` |
-| +0x86..+0x8E | i16s (0/1, 16384, 17692, 0, …) | [U] |
+| +0x86 | i16 | [U] |
+| +0x88 | f32 **radius** of the environment blend (2500 in the units checked) | [O] `0x5C7CA0` (RENDERING.md "Neighbour units"; Wine-read weights) |
 | +0x8C | runtime `StreamUnit*` of the target (written by `0x5D13E0`) | [O] |
 | +0x90 / +0xA0 | min / max, float4 | [O] |
 | +0xB0 | quad[4], float4 each | [O] |

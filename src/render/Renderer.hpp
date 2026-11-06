@@ -214,6 +214,9 @@ struct FrameOptions {
     std::span<const UnitClip> unitClips;     // meshes in no range: unclipped
     const Underwater* underwater = nullptr;  // nullptr = above water
     const Fog* fog = nullptr;                // nullptr = the uploaded scene's unit fog, identity curve
+    // The camera unit's look blended with its neighbours' (game::unitLook, tru.exe 0x5C7CA0): its ambient, PSSM split
+    // fractions, far plane and fog far replace the uploaded scene's for this frame. nullptr = the uploaded unit's.
+    const scene::Environment* unitLook = nullptr;
 };
 
 // Ray-tracing state for diagnostics and tests.

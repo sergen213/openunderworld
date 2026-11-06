@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -446,6 +447,21 @@ struct LoadedUnit {
 };
 // tru.exe 0x5D13E0 (LEVELS.md "Streaming"): offset that places `unit` (its portal to `from`) at `from`'s matching portal.
 std::optional<vec3> relocation(const UnitData& unit, const LoadedUnit& from);
+// tru.exe 0x5C7CA0 (docs/RENDERING.md "Neighbour units"): the weight a unit's look takes from the neighbour behind portal
+// `p` (unit frame, moved by `offset`) at `pos` (the camera's focus: Lara). Inside the portal box grown by its radius r:
+// (r - d) / r, d = distance to the portal plane, or to the quad's nearest edge when `pos` projects outside the quad
+// (0x5C7690 / 0x4A03B0); 0 elsewhere.
+float portalBlendWeight(const formats::Portal& p, vec3 offset, vec3 pos);
+// The camera unit's look blended with its neighbours' (`others`: environment, portalBlendWeight): fog and water fog
+// sets (colour, near, far), far plane, ambient and PSSM split fractions = (own + sum w x other) / (1 + sum w).
+// Writes only those fields (and valid) of `out`.
+void blendUnitLook(scene::Environment& out, const scene::Environment& own,
+                   std::span<const std::pair<const scene::Environment*, float>> others);
+class World;
+// The look of World::currentUnit() at Lara (0x5C7CA0 over its loaded portal neighbours). `environment` returns a
+// loaded unit's render settings by name (null: skipped).
+void unitLook(const World& w, const std::function<const scene::Environment*(const std::string&)>& environment,
+              scene::Environment& out);
 struct CheckpointRef {
     std::string unit;
     int32_t id = 0;

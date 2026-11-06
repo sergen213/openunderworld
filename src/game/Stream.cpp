@@ -154,6 +154,72 @@ std::optional<vec3> relocation(const UnitData& unit, const LoadedUnit& from) {
     return std::nullopt;
 }
 
+float portalBlendWeight(const formats::Portal& p, vec3 offset, vec3 pos) {
+    const float r = p.radius;
+    if (r <= 0) return 0;
+    for (int i = 0; i < 3; ++i)
+        if (!(p.min[i] + offset[i] - r < pos[i] && pos[i] < p.max[i] + offset[i] + r)) return 0;
+    const vec3 n = v3(p.normal);
+    vec3 q[4];
+    for (int c = 0; c < 4; ++c) q[c] = v3(p.quad[c]) + offset;
+    const vec3 on = pos - (glm::dot(n, pos) - glm::dot(n, q[0])) * n; // 0x49F290: the plane point under pos
+    float d = glm::distance(pos, on);
+    if (d >= r) return 0;
+    // 0x5C7690 (the quad as two triangles, the normal's largest axis dropped); outside: the nearest edge (0x4A03B0).
+    const vec3 a = glm::abs(n);
+    const int u = a.x > a.y && a.x > a.z ? 1 : 0, v = a.z >= a.x && a.z >= a.y ? 1 : 2;
+    const auto cross = [&](vec3 o, vec3 b, vec3 c) { return (b[u] - o[u]) * (c[v] - o[v]) - (b[v] - o[v]) * (c[u] - o[u]); };
+    const auto inTriangle = [&](vec3 x, vec3 y, vec3 z) {
+        const float s0 = cross(x, y, on), s1 = cross(y, z, on), s2 = cross(z, x, on);
+        return (s0 >= 0 && s1 >= 0 && s2 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0);
+    };
+    if (!inTriangle(q[0], q[1], q[2]) && !inTriangle(q[0], q[2], q[3])) {
+        d = r + 1;
+        for (int c = 0; c < 4; ++c) {
+            const vec3 e = q[(c + 1) % 4] - q[c];
+            const float len2 = glm::dot(e, e), t = len2 > 0 ? std::clamp(glm::dot(pos - q[c], e) / len2, 0.0f, 1.0f) : 0.0f;
+            d = std::min(d, glm::distance(pos, q[c] + t * e));
+        }
+    }
+    return d < r ? (r - d) / r : 0.0f;
+}
+
+void blendUnitLook(scene::Environment& out, const scene::Environment& own,
+                   std::span<const std::pair<const scene::Environment*, float>> others) {
+    const auto fields = [](scene::Environment& e, const scene::Environment& s, auto&& f) {
+        f(e.fogColor, s.fogColor, 3), f(&e.fogNear, &s.fogNear, 1), f(&e.fogFar, &s.fogFar, 1);
+        f(e.waterFogColor, s.waterFogColor, 3), f(&e.waterFogNear, &s.waterFogNear, 1), f(&e.waterFogFar, &s.waterFogFar, 1);
+        f(&e.farPlane, &s.farPlane, 1), f(e.ambient, s.ambient, 3), f(e.pssmSplits, s.pssmSplits, 4);
+    };
+    out.valid = own.valid;
+    fields(out, own, [](float* d, const float* s, int n) { std::copy(s, s + n, d); });
+    float sum = 1;
+    for (const auto& [o, w] : others) {
+        if (!o || !o->valid || !(w > 0)) continue;
+        sum += w;
+        fields(out, *o, [w](float* d, const float* s, int n) { for (int k = 0; k < n; ++k) d[k] += w * s[k]; });
+    }
+    fields(out, own, [sum](float* d, const float*, int n) { for (int k = 0; k < n; ++k) d[k] /= sum; });
+}
+
+void unitLook(const World& w, const std::function<const scene::Environment*(const std::string&)>& environment,
+              scene::Environment& out) {
+    const LoadedUnit& cur = w.currentUnit();
+    const scene::Environment* own = environment(cur.data.name);
+    if (!own) return void(out.valid = false);
+    std::pair<const scene::Environment*, float> others[16];
+    size_t n = 0;
+    const vec3 at = w.player().state().pos;
+    for (const auto& p : cur.data.portals) {
+        if (n == std::size(others)) break;
+        const float k = portalBlendWeight(p, cur.offset, at);
+        if (k <= 0) continue;
+        const bool loaded = std::any_of(w.units().begin(), w.units().end(), [&](const LoadedUnit& u) { return u.data.name == p.toUnit; });
+        if (loaded) others[n++] = {environment(p.toUnit), k};
+    }
+    blendUnitLook(out, *own, std::span(others, n));
+}
+
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     const std::string path = "pc-w\\" + name + ".drm";
     auto bytes = bigfile.read(path);

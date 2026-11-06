@@ -35,6 +35,9 @@ void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSec
                 const glm::vec3* eye = nullptr);
 // Intensity scale 0..1 of a light seen from `eye` (tru.exe 0x5CC190; scene::Light::lit / fade*): 0 = switched off.
 float lightFade(const scene::Light& l, glm::vec3 eye);
+// FrameOptions::unitLook into the backend's copy of the uploaded environment: fog and water fog sets, far plane,
+// ambient, PSSM split fractions (the fields game::blendUnitLook writes). Kept until the next look or upload.
+void applyUnitLook(scene::Environment& env, const scene::Environment& look);
 
 // tru.exe's sun shadows (PSSM, 0x50CCB0; SHADERS.md "PSSM"): kPssmSplits splits, far to near, each an orthographic view
 // of the bounding sphere of its camera-frustum slice, rendered into one kPssmTile² tile of a kPssmWidth x kPssmHeight

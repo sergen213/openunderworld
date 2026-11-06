@@ -704,6 +704,7 @@ public:
         Resources& r = *res_;
         if (vp.width <= 0 || vp.height <= 0) return;
         for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
+        if (options.unitLook) original::applyUnitLook(environment_, *options.unitLook);
         {
             std::vector<std::string> ignored; // the upload listing them reports them
             pumpParts(kPartBytesPerFrame, ignored);

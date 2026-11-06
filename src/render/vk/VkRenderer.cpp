@@ -746,6 +746,7 @@ public:
         frameActive_ = false;
         if (vp.width <= 0 || vp.height <= 0) return; // minimised
         for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
+        if (options.unitLook) original::applyUnitLook(environment_, *options.unitLook);
         if (vp.width != requested_.width || vp.height != requested_.height) swapchainDirty_ = true;
         if (presentOutOfDate_.exchange(false)) swapchainDirty_ = true; // reported by the present thread
         applySettings(options);

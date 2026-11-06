@@ -531,13 +531,13 @@ TEST(OriginalShading, PssmSplitsMatchOriginal) {
     EXPECT_LT(glm::distance(glm::make_vec3(env.sunDirection), Z), 1e-4f);
     EXPECT_NEAR(env.shadowBias[0], 1.52587891e-5f, 1e-10f);
     EXPECT_NEAR(env.shadowBias[1], 2.2f, 1e-6f);
-    // The unit's own split fractions (render settings +0x28..); tru.exe had them blended with its neighbours' by
-    // 0x5C7CA0 [I: weights not decoded], so the fitting below gets the fractions it used.
+    // The unit's own split fractions (render settings +0x28..); tru.exe blends them with l2_cliffhall_b's by 0x5C7CA0
+    // (tracker weights 0.6815 / 0.3185 there, RENDERING.md "Neighbour units"), so the fitting below gets the fractions it used.
     EXPECT_NEAR(env.pssmSplits[0], 0.02622f, 1e-6f);
     EXPECT_NEAR(env.pssmSplits[2], 0.14847f, 1e-6f);
     const float dist[4] = {105585.445f, 17098.0059f, 7683.95605f, 2986.06616f};
     for (int k = 0; k < 4; ++k) env.pssmSplits[k] = dist[3 - k] / dist[0];
-    EXPECT_NEAR(env.farPlane, 110619, 1); // blended likewise: the camera context had 105585.445
+    EXPECT_NEAR(env.farPlane, 110619, 1); // blended likewise (cliffhall_b's 94817): the camera context had 105585.445
     env.farPlane = dist[0];
     render::Camera cam;
     cam.position = {-14841.0146f, -12219.7852f, -9989.26562f};

@@ -1267,6 +1267,32 @@ struct EffectsView {
         std::shared_ptr<const ou::fx::FilterResource> own;
     };
     std::map<std::string, UnitWater> unitWater;
+    const UnitWater& unitEntry(const ou::game::UnitData& unit) {
+        auto it = unitWater.find(unit.name);
+        if (it != unitWater.end()) return it->second;
+        it = unitWater.emplace(unit.name, UnitWater{}).first;
+        if (unit.drm) {
+            it->second.env = ou::formats::parseUnit(*unit.drm).environment;
+            it->second.env.lights.clear();
+            for (int k = 0; k < 2; ++k) it->second.filter[k] = ou::fx::loadFilterResource(*unit.drm, it->second.env.waterFilter[k]);
+            if (const auto own = ou::fx::loadFilterResource(*unit.drm, it->second.env.filter)) {
+                auto f = std::make_shared<ou::fx::FilterResource>(*own);
+                f->colorDof = false;
+                it->second.own = std::move(f);
+            }
+        }
+        return it->second;
+    }
+    // The camera unit's look blended with its loaded neighbours' at Lara (game::unitLook, tru.exe 0x5C7CA0; RENDERING.md
+    // "Neighbour units"): FrameOptions::unitLook, the fog set below, the Original preset's far plane.
+    ou::scene::Environment look;
+    void updateLook(const ou::game::World& w) {
+        ou::game::unitLook(w, [&](const std::string& name) -> const ou::scene::Environment* {
+            for (const auto& u : w.units())
+                if (u.data.name == name) return &unitEntry(u.data).env;
+            return nullptr;
+        }, look);
+    }
     std::vector<std::pair<const ou::fx::FilterResource*, float>> waterFilters; // the unit's own + water filters
     // The frame's fog for TRU's shaders (render::Fog): the filters' fog blocks (waterFilters' in water(), the effect
     // filters' in frame()) topped up by the camera unit's fog set (fogBase: under water its water set).
@@ -1294,20 +1320,9 @@ struct EffectsView {
                bool lists, std::vector<std::string>& warnings) {
         waterFilters.clear();
         const auto& unit = w.currentUnit().data;
-        auto it = unitWater.find(unit.name);
-        if (it == unitWater.end()) {
-            it = unitWater.emplace(unit.name, UnitWater{}).first;
-            if (unit.drm) {
-                it->second.env = ou::formats::parseUnit(*unit.drm).environment;
-                for (int k = 0; k < 2; ++k) it->second.filter[k] = ou::fx::loadFilterResource(*unit.drm, it->second.env.waterFilter[k]);
-                if (const auto own = ou::fx::loadFilterResource(*unit.drm, it->second.env.filter)) {
-                    auto f = std::make_shared<ou::fx::FilterResource>(*own);
-                    f->colorDof = false;
-                    it->second.own = std::move(f);
-                }
-            }
-        }
-        const auto& uw = it->second;
+        const auto& uw = unitEntry(unit);
+        updateLook(w);
+        fo.unitLook = look.valid ? &look : nullptr;
         const glm::vec3 lara = w.player().state().pos, eye = cam.position;
         bool under = false;
         float ownWeight = 1; // the unit's own filter (0x5C78A0): crossfaded with the water filters near / under water
@@ -1333,9 +1348,9 @@ struct EffectsView {
         std::copy(&uw.env.waterPass[0][0], &uw.env.waterPass[0][0] + 8, &underwater.pass[0][0]);
         // The fog set (0x5C1F50: under water the water set), replaced by the filters' fog blocks as far as their
         // weights go (finishFog).
-        fogValid = uw.env.valid;
-        fogBase.nearZ = under ? uw.env.waterFogNear : uw.env.fogNear, fogBase.farZ = under ? uw.env.waterFogFar : uw.env.fogFar;
-        for (int k = 0; k < 3; ++k) fogBase.color[k] = under ? uw.env.waterFogColor[k] : uw.env.fogColor[k];
+        fogValid = look.valid;
+        fogBase.nearZ = under ? look.waterFogNear : look.fogNear, fogBase.farZ = under ? look.waterFogFar : look.fogFar;
+        for (int k = 0; k < 3; ++k) fogBase.color[k] = under ? look.waterFogColor[k] : look.fogColor[k];
         if (under) {
             underwater.fog = true, underwater.fogNear = fogBase.nearZ, underwater.fogFar = fogBase.farZ;
             for (int k = 0; k < 3; ++k) underwater.fogColor[k] = fogBase.color[k];
@@ -2475,6 +2490,15 @@ int main(int argc, char** argv) {
         v.depthOfField = opt.gfx.cineDof && opt.gfx.effects;
         v.art = art ? &*art : nullptr;
         v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
+        // The unit look and its fog (EffectsView::water, without the water look: the camera is not Lara's here).
+        effects.updateLook(*world);
+        if (effects.look.valid) {
+            v.frame.unitLook = &effects.look;
+            v.fog = true, v.unitFilter = effects.unitEntry(world->currentUnit().data).own.get();
+            v.fogSet.nearZ = effects.look.fogNear, v.fogSet.farZ = effects.look.fogFar;
+            std::copy_n(effects.look.fogColor, 3, v.fogSet.color);
+            if (opt.graphics.preset == "original" && effects.look.farPlane > 0) v.farZ = effects.look.farPlane;
+        }
         return v;
     };
     if (!opt.cine.empty()) {
@@ -3057,6 +3081,8 @@ int main(int argc, char** argv) {
             fo.weather.intensity = uw.intensity * (1.0f - shelter);
         }
         if (!mainMenu) effects.water(cam, float(w) / float(std::max(1, h)), float(dt), *world, fo, opt.gfx.effects, warnings);
+        // Original: the camera's far plane is the blended unit look's (0x5C7CA0 -> view +0x3C; l4_ballcourt 113 570 [O]).
+        if (!mainMenu && fo.unitLook && fo.unitLook->farPlane > 0 && opt.graphics.preset == "original") cam.farZ = fo.unitLook->farPlane;
         if (!mainMenu && opt.gfx.effects) effects.frame(cam, float(w) / float(std::max(1, h)), *world, fo);
         effects.lightSlots(gadgets.update(*world, clock.alpha()), dynamicLights);
         fo.dynamicLights = dynamicLights;

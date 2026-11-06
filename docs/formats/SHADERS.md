@@ -78,7 +78,7 @@ PS samplers: 49 933 2D + 1 205 cube declarations. Full opcode / declaration / CT
 | VS c254 `TexcoordScales` | (1, 1): the loader applies 1/2048 to SHORT texcoords (engine: per decl, 0x52924B) | [O] |
 | VS c23 / PS c53 `TimeVector` | (seconds mod 1000, 1/30) (engine 0x509630: (ms % 10⁶ · 0.001, dt)) | [O] |
 | VS c22 `fogScaleAndOffset` | (−n/(f−n), 1/(f−n), 0, f) of the frame's fog (`render::Fog`: the filters' +0x2FA4 fog blocks, the unit's own filter included, topped up by the unit's fog set; RENDERING.md "After geometry") | 0x514680, 0x514D90 [O] |
-| PS c0 `FogColor`, c15 `g_Ambient` | the frame's fog colour (as c22); unit render settings ambient rgb +0x1E4 × +0x1E8 / 255 (the unit fog set: rgb +0x18, near +0x40, far +0x3C/+0x38) | 0x5C7CA0, 0x5CAFF0 [O]; neighbour-unit blending decoded, not done |
+| PS c0 `FogColor`, c15 `g_Ambient` | the frame's fog colour (as c22); unit render settings ambient rgb +0x1E4 × +0x1E8 / 255 (the unit fog set: rgb +0x18, near +0x40, far +0x3C/+0x38), both blended with the loaded neighbours' by portal distance (`FrameOptions::unitLook`; RENDERING.md "Neighbour units") | 0x5C7CA0, 0x5CAFF0 [O] |
 | PS c54 `HeightFogParams` | (0, 0, (96 + 0.5)/128, 0): no fog volumes | 0x514680 [O] |
 | s15 `AttenuationSampler` | 256×128, rebuilt per scene: rows 0–95 = the distinct light falloff curves (light DTP +0x1C, texel k = curve[k]·255 in R, texel 255 = 0; LEVELS.md "Lights"), row 96 = the frame's fog curve in R (the filters' fog-block curves + the identity for the weight left, 0x514ED0; junglehub 0..99/255), identity height-fog ramp in G | 0x504A60, 0x50AFB0, 0x512CF0 [O] |
 | PS c148/c149 `GlobalParams` light-map scales | (1, 1, 1, 1) (engine default; scripts fade them) | 0x7731B0 [O] |
@@ -128,8 +128,8 @@ reflections and depth fade in GL and Vulkan.
   bilinear compare (plain float depth), | 6 = hardware PCF (`texldl` 4 taps averaged); selected by device +0x11484
   when shadows are enabled (devmgr +0x184; Wine/DXVK: +0x11484 = 6, +0x184 = 1). Light-space xy translation is rounded
   up (0x815520 = ceil), ortho z from 0x849684[k] to the slice radius, split far depths = min(far plane, fog far) x the
-  render settings +0x28..+0x34 fractions (device vfunc 0x80 = 0x508350; tru.exe blends the loaded units' values in
-  0x5C7CA0, weights [U]); PSSMToMap = per-axis ratio of split n's and split 0's coefficient sums. Implemented
+  render settings +0x28..+0x34 fractions (device vfunc 0x80 = 0x508350; far plane, fog far and fractions blended over the
+  loaded units by 0x5C7CA0, RENDERING.md "Neighbour units"); PSSMToMap = per-axis ratio of split n's and split 0's coefficient sums. Implemented
   (`original::pssm` / `fillPssm`, GL + Vulkan, FrameOptions::pssm = the Original preset's shadows): PS slot 6 with s14 as
   sampler2DShadow (LESS_OR_EQUAL, bilinear), the atlas rendered with the shadow-map casters, depth bias in the split
   matrix, slope bias as polygon offset; the ShadowLights' WorldToShadowMap c158–c169 point at a lit texel (no light

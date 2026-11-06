@@ -545,6 +545,65 @@ namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }
 }
 
+// tru.exe 0x5C7CA0 (docs/RENDERING.md "Neighbour units"): portal weights by plane / edge distance, and the blend.
+TEST(Game, NeighbourUnitBlendWeights) {
+    formats::Portal p{};
+    p.radius = 2500;
+    const float quad[4][3] = {{0, 0, 0}, {1000, 0, 0}, {1000, 0, 1000}, {0, 0, 1000}};
+    std::copy(&quad[0][0], &quad[0][0] + 12, &p.quad[0][0]);
+    p.max[0] = p.max[2] = 1000, p.normal[1] = 1;
+    EXPECT_NEAR(game::portalBlendWeight(p, vec3(0), {500, 1000, 500}), 0.6f, 1e-6f);   // over the quad: its plane
+    EXPECT_NEAR(game::portalBlendWeight(p, vec3(0), {1500, 0, 500}), 0.8f, 1e-6f);    // beside it: the nearest edge
+    EXPECT_NEAR(game::portalBlendWeight(p, vec3(100, 0, 0), {1500, 0, 500}), 0.84f, 1e-6f); // moved with its unit
+    EXPECT_EQ(game::portalBlendWeight(p, vec3(0), {500, 2600, 500}), 0.0f);            // outside the grown box
+    scene::Environment a, b, out;
+    a.valid = b.valid = true, a.farPlane = 100, b.farPlane = 200, a.ambient[1] = 0.3f;
+    const std::pair<const scene::Environment*, float> o[] = {{&b, 1.0f}, {nullptr, 1.0f}};
+    game::blendUnitLook(out, a, o);
+    EXPECT_TRUE(out.valid);
+    EXPECT_FLOAT_EQ(out.farPlane, 150.0f);
+    EXPECT_FLOAT_EQ(out.ambient[1], 0.15f);
+}
+
+// The same blend at the l4_ballcourt start, against tru.exe read under Wine (Lara at 33313.004, 12734.549, -12879.648
+// in its frame, + Level+0x80 in ours): stream trackers +0xA4 = 0.703324 (ballcourt) / 0.296676 (l4_trailtube) =
+// 1 / (1 + w), w / (1 + w); view near / far 16 / 113569.9; fog DB6A54 near 9376.6, DBC690 colour 63.263, 71.747,
+// 78.120; ambient DBA290 14.474, 16.755, 20.887 (x 1/255 = device +0xFAD4, g_Ambient).
+TEST(GameReal, NeighbourUnitBlendMatchesOriginal) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto unit = [&](const char* n) { return formats::parseUnit(cdc::parseDrm(std::move(*bf.read(std::string("pc-w\\") + n + ".drm")))); };
+    const auto court = unit("l4_ballcourt"), tube = unit("l4_trailtube");
+    const vec3 lara = vec3(33313.004f, 12734.549f, -12879.648f) + vec3(-5881.4f, 10787.2f, 15435.9f);
+    std::vector<std::pair<const scene::Environment*, float>> others;
+    for (const auto& p : court.portals) {
+        const float w = game::portalBlendWeight(p, vec3(0), lara);
+        if (p.toUnit != "l4_trailtube") {
+            EXPECT_EQ(w, 0.0f) << p.toUnit;
+            continue;
+        }
+        EXPECT_NEAR(w, 0.296676f / 0.703324f, 1e-4f);
+        others.push_back({&tube.environment, w});
+    }
+    scene::Environment look;
+    game::blendUnitLook(look, court.environment, others);
+    EXPECT_NEAR(look.farPlane, 113569.9f, 10.0f);
+    EXPECT_NEAR(look.fogFar, 113569.9f, 10.0f);
+    EXPECT_NEAR(look.fogNear, 9376.6f, 2.0f);
+    const float fog[3] = {63.263f, 71.747f, 78.120f}, ambient[3] = {14.474f, 16.755f, 20.887f};
+    for (int k = 0; k < 3; ++k) {
+        EXPECT_NEAR(look.fogColor[k] * 255, fog[k], 0.01f);
+        EXPECT_NEAR(look.ambient[k] * 255, ambient[k], 0.01f);
+    }
+    // l2_junglehub start: trackers 0.68145 / 0.31855 (l2_cliffhall_b); the view far 105585.445 and the PSSM split depths
+    // (OriginalShading.PssmSplitsMatchOriginal: nearest 2986.066) are the blend's far plane x its fractions.
+    const auto hub = unit("l2_junglehub"), hall = unit("l2_cliffhall_b");
+    const std::pair<const scene::Environment*, float> h[] = {{&hall.environment, 0.31855f / 0.68145f}};
+    game::blendUnitLook(look, hub.environment, h);
+    EXPECT_NEAR(look.farPlane, 105585.445f, 5.0f);
+    EXPECT_NEAR(look.farPlane * look.pssmSplits[0], 2986.066f, 1.0f);
+}
+
 TEST(GameReal, LaraClipsAndRootMotion) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
