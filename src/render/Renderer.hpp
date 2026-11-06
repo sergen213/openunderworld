@@ -231,6 +231,7 @@ struct RtStatus {
     bool lights = false;      // the last frame traced local-light shadows (FrameOptions::rtLights)
     bool ao = false, gi = false; // the last frame traced RT ambient occlusion / sun bounce
     uint32_t blas = 0, instances = 0, geometries = 0, waterInstances = 0; // current scene
+    uint32_t lodHidden = 0; // last frame: TLAS instances masked out by their batch LOD (Vulkan)
     bool reflections = false; // the last frame traced water reflections (FrameOptions::rtReflections)
     uint32_t tlasBuilds = 0, tlasUpdates = 0, blasRefits = 0, blasRebuilds = 0; // since init
     uint32_t blasBuilds = 0; // since init: BLASes built for uploads (new meshes / merged groups; resident ones are kept)

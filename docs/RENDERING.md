@@ -892,6 +892,13 @@ Root causes and fixes:
   instances up front; the group is rebuilt without it by the next upload, and its key stays out of merged BLASes).
   l2_junglehub 12.6 → 7.9 ms, l4_trailstart 6.2 → 3.5. Differs from per-mesh instances in ≤ 0.001 % of pixels
   (triangle intersection precision). l1_kraken_room's scene got 0.4 ms slower.
+- **Batch LODs in the TLAS**: every LOD of a model was traced at once (enemies' three overlapping LODs: doubled
+  shadows / AO). Static meshes at one LOD point with several ranges get one merged group per LOD; the groups and the
+  moving meshes' instances get mask 0 while their LOD is out of range (`updateRtLods`, the raster passes' `lodShown`
+  test from the same eye). A changed LOD rewrites the instance list and rebuilds the TLAS, never a BLAS. A lone LOD (a
+  far cut-off: l4_ballcourt's plants) stays merged and traced past its range [I], as one instance per plant cost more
+  scene time than it saved. l4_ballcourt 1080p RT full: 572 → 2843 instances (1853 masked), 18787 → 18284 geometries,
+  scene 5.56 → 5.80 ms, frame 8.16 → 7.44 ms mean (uploads + BLAS 1.62 → 0.84 ms).
 - **Motorcycle sound bank re-read every tick** (CPU 35 ms a frame in ch4 / ch5): `PlexBank::find` cached the miss for the
   engine DTP 13589 asked for before motorcycle.drm was added, so GameSound re-parsed and re-decoded the DRM every tick
   and the engine never sounded. `PlexBank::add` now drops cached misses for the ids it adds

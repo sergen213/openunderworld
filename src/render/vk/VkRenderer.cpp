@@ -26,6 +26,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
@@ -353,7 +354,8 @@ struct GpuMesh {
     bool skinned = false, water = false;
     bool irradiance = false; // a submesh's program reads IrradianceState (original::IrradianceSlots)
     std::vector<RtBlas> blases;
-    bool rtStatic = false; // traced through a merged static BLAS (RtGroup; never moved by updateVertices)
+    bool rtStatic = false; // traced through a merged static BLAS (RtGroup; never moved by updateVertices, no batch LOD)
+    bool rtLodHidden = false; // its TLAS instances have mask 0: batch LOD out of range (updateRtLods)
     std::vector<std::pair<uint32_t, uint32_t>> rtMerged; // its geometries there: (rtGroups_ index, geometry index)
     uint64_t rtSerial = 0;        // identity of its BLAS geometries for RtGroup::members (new mesh / new masks)
     std::vector<uint8_t> rtMasks; // per submesh: the ray mask its BLASes were made with (0: not traced)
@@ -374,6 +376,11 @@ struct RtGroup {
     Buffer transformBuffer;
     RtBlas blas;
     bool stale = false; // a member left it (evictStatic): rebuilt by the next upload
+    // Batch LOD shared by every member (render::lodShown fields; center = the members' LOD point, offset 0): the group's
+    // instance is masked out while out of range (updateRtLods).
+    float lodNear = 0, lodFar = std::numeric_limits<float>::max();
+    glm::vec3 center{0.0f}, lodOffset{0.0f};
+    bool lodHidden = false;
 };
 
 struct Frame {
@@ -863,6 +870,7 @@ public:
         for (size_t i = 0; i < meshSlot_.size(); ++i)
             if (meshSlot_[i] < meshes_.size()) meshClip_[meshSlot_[i]] = clipIndex(unitClips_, i);
         std::erase_if(order_, [&](const DrawRef& d) { return clippedAway(d.mesh); });
+        if (rtOn) updateRtLods(cmd);
         if (rtOn && tlasDirty_) recordTlasUpdate(cmd);
         gpuMark(cmd, 2);
         // RT AO / sun bounce (recordIndirect): traced from the opaque pre-pass depth, between the pre-pass and the draws.
@@ -4186,17 +4194,39 @@ private:
             meshInstances += m.blases.size();
             rtStatus_.waterInstances += m.water && !m.blases.empty();
         }
-        // The merged BLASes: the static meshes per group, by serial (independent of the scene's mesh order).
-        std::map<uint64_t, std::vector<GpuMesh*>> statics;
+        // The merged BLASes: the static meshes per group, by serial (independent of the scene's mesh order). Models with
+        // several batch LODs (meshes at one LOD point with different ranges) get one group per LOD, masked per frame
+        // (updateRtLods); a lone LOD (a far cut-off: l4_ballcourt's thousands of plants) stays merged, still traced past
+        // its range [I], as one instance per plant cost more scene time than the hidden geometry saved.
+        using LodPoint = std::tuple<uint64_t, float, float, float>;
+        std::map<LodPoint, std::set<std::pair<float, float>>> lodRanges;
+        auto lodPoint = [&](const GpuMesh& m) -> LodPoint {
+            const glm::vec3 p = m.center + m.lodOffset;
+            return {m.key ? m.part : kUnkeyedGroup, p.x, p.y, p.z};
+        };
+        for (const GpuMesh& m : meshes_)
+            if (m.rtStatic && hasLod(m)) lodRanges[lodPoint(m)].insert({m.lodNear, m.lodFar});
+        using GroupKey = std::tuple<uint64_t, float, float, float, float, float>;
+        std::map<GroupKey, std::vector<GpuMesh*>> statics;
         for (GpuMesh& m : meshes_)
-            if (m.rtStatic) statics[m.key ? m.part : kUnkeyedGroup].push_back(&m);
+            if (m.rtStatic) {
+                const uint64_t id = m.key ? m.part : kUnkeyedGroup;
+                if (!hasLod(m) || lodRanges[lodPoint(m)].size() < 2) statics[{id, 0.0f, std::numeric_limits<float>::max(), 0.0f, 0.0f, 0.0f}].push_back(&m);
+                else {
+                    const auto [_, x, y, z] = lodPoint(m);
+                    statics[{id, m.lodNear, m.lodFar, x, y, z}].push_back(&m);
+                }
+            }
         const VkBufferUsageFlags copyDst = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         const VkBufferUsageFlags asInput = copyDst | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
         UploadBatch batch;
         std::vector<RtGroup> old = std::move(rtGroups_);
         rtGroups_.clear();
         rtGroups_.reserve(statics.size() * std::size(kMasks)); // stable addresses for `pending`
-        for (auto& [id, ms] : statics) {
+        for (auto& [gk, ms] : statics) {
+            const uint64_t id = std::get<0>(gk);
+            const auto [_, lodNear, lodFar, px, py, pz] = gk;
+            const glm::vec3 point{px, py, pz};
             std::sort(ms.begin(), ms.end(), [](const GpuMesh* a, const GpuMesh* b) { return a->rtSerial < b->rtSerial; });
             std::vector<uint64_t> members;
             std::vector<VkTransformMatrixKHR> transforms;
@@ -4210,7 +4240,8 @@ private:
                 if (std::none_of(ms.begin(), ms.end(), [&](const GpuMesh* m) { return std::ranges::find(m->rtMasks, mask) != m->rtMasks.end(); }))
                     continue;
                 const auto same = std::find_if(old.begin(), old.end(), [&](const RtGroup& g) {
-                    return !g.stale && g.id == id && g.blas.mask == mask && g.members == members &&
+                    return !g.stale && g.id == id && g.lodNear == lodNear && g.lodFar == lodFar && g.center == point &&
+                           g.blas.mask == mask && g.members == members &&
                            std::memcmp(g.transforms.data(), transforms.data(), transforms.size() * sizeof(transforms[0])) == 0;
                 });
                 if (same != old.end()) {
@@ -4219,6 +4250,7 @@ private:
                 } else {
                     RtGroup& g = rtGroups_.emplace_back();
                     g.id = id, g.members = members, g.transforms = transforms;
+                    g.lodNear = lodNear, g.lodFar = lodFar, g.center = point;
                     g.gen = std::make_shared<Generation>();
                     g.gen->device = device_;
                     g.gen->memory.init(device_, gpu_, 0, true);
@@ -4381,14 +4413,54 @@ private:
         if (tlasDirty_) asBarrier(cmd, kAsBuild, kAsWrite, kAsBuild | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, kAsRead);
     }
 
-    // TLAS instances: the merged static BLASes, then every BLAS of the meshes that move.
+    // TLAS instances: the merged static BLASes, then every BLAS of the meshes that move; mask 0 while their batch LOD is
+    // out of range (updateRtLods).
     std::vector<VkAccelerationStructureInstanceKHR> tlasInstances() const {
         std::vector<VkAccelerationStructureInstanceKHR> out;
-        for (const RtGroup& g : rtGroups_) out.push_back(g.blas.instance);
+        for (const RtGroup& g : rtGroups_) {
+            out.push_back(g.blas.instance);
+            if (g.lodHidden) out.back().mask = 0;
+        }
         for (const GpuMesh& m : meshes_)
             if (!m.rtStatic)
-                for (const RtBlas& b : m.blases) out.push_back(b.instance);
+                for (const RtBlas& b : m.blases) {
+                    out.push_back(b.instance);
+                    if (m.rtLodHidden) out.back().mask = 0;
+                }
         return out;
+    }
+
+    // The instance list into instanceBuffer_ (earlier frames' TLAS builds read the old one), then a TLAS rebuild.
+    void writeInstances(VkCommandBuffer cmd) {
+        const auto instances = tlasInstances();
+        tlasInstanceCount_ = uint32_t(instances.size());
+        constexpr VkDeviceSize kChunk = 65536; // vkCmdUpdateBuffer limit
+        const VkDeviceSize bytes = instances.size() * sizeof(instances[0]);
+        asBarrier(cmd, kAsBuild, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        for (VkDeviceSize o = 0; o < bytes; o += kChunk)
+            vkCmdUpdateBuffer(cmd, instanceBuffer_.buffer, o, std::min(kChunk, bytes - o), reinterpret_cast<const char*>(instances.data()) + o);
+        asBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, kAsBuild, VK_ACCESS_2_SHADER_READ_BIT | kAsRead);
+        rtStatus_.instances = tlasInstanceCount_;
+        tlasRebuild_ = tlasDirty_ = true;
+    }
+
+    static bool hasLod(const GpuMesh& m) { return m.lodNear > 0 || m.lodFar < std::numeric_limits<float>::max(); }
+
+    // Per frame after lodEye_: batch LODs (as the raster passes, 0x50F7C0) mask their merged groups' and moving meshes'
+    // TLAS instances. Only a changed LOD rewrites the instance list (TLAS rebuild, no BLAS work).
+    void updateRtLods(VkCommandBuffer cmd) {
+        bool changed = false;
+        uint32_t hidden = 0;
+        auto set = [&](bool& flag, bool h, uint32_t n) {
+            changed |= h != flag;
+            flag = h;
+            hidden += h ? n : 0;
+        };
+        for (RtGroup& g : rtGroups_) set(g.lodHidden, !lodShown(g, lodEye_), 1);
+        for (GpuMesh& m : meshes_)
+            if (!m.rtStatic) set(m.rtLodHidden, !lodShown(m, lodEye_), uint32_t(m.blases.size()));
+        rtStatus_.lodHidden = hidden;
+        if (changed) writeInstances(cmd);
     }
 
     // After rebuildBlases: meshes updateVertices moved for the first time leave the merged BLASes (their geometries
@@ -4412,17 +4484,7 @@ private:
             vkCmdBuildAccelerationStructuresKHR_(cmd, 1, &bi, &r);
             ++rtStatus_.blasRebuilds;
         }
-        const auto instances = tlasInstances();
-        tlasInstanceCount_ = uint32_t(instances.size());
-        constexpr VkDeviceSize kChunk = 65536; // vkCmdUpdateBuffer limit
-        const VkDeviceSize bytes = instances.size() * sizeof(instances[0]);
-        // Earlier frames' TLAS builds read the old list.
-        asBarrier(cmd, kAsBuild, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-        for (VkDeviceSize o = 0; o < bytes; o += kChunk)
-            vkCmdUpdateBuffer(cmd, instanceBuffer_.buffer, o, std::min(kChunk, bytes - o), reinterpret_cast<const char*>(instances.data()) + o);
-        asBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, kAsBuild, VK_ACCESS_2_SHADER_READ_BIT | kAsRead);
-        rtStatus_.instances = tlasInstanceCount_;
-        tlasRebuild_ = tlasDirty_ = true;
+        writeInstances(cmd);
     }
 
     // Per frame when a BLAS changed: TLAS update in place (same instances; BLAS bounds moved), or a rebuild after

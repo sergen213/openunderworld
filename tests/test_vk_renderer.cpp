@@ -192,6 +192,32 @@ TEST(VulkanRenderer, RayTracingBuildsUpdatesAndTearsDown) {
     EXPECT_EQ(v.r->rtStatus().tlasUpdates, 2u);
 }
 
+// Batch LODs in the TLAS: a model's three overlapping LODs are merged per LOD (one instance each) and only the one in
+// range is traced; the others are masked out (mask 0), as the raster passes skip them.
+TEST(VulkanRenderer, RayTracingTracesOneBatchLod) {
+    using ou::render::RayTracing;
+    VkWindow v;
+    if (!v.skip.empty()) GTEST_SKIP() << v.skip;
+    if (!v.r->rtStatus().supported) GTEST_SKIP() << "no ray tracing: " << v.r->rtStatus().reason;
+    ou::scene::SceneData scene = ou::scene::makePlaceholderScene();
+    const ou::scene::MeshData base = scene.meshes[0];
+    const float ranges[3][2] = {{0.0f, 1e30f}, {1e30f, 2e30f}, {2e30f, std::numeric_limits<float>::max()}};
+    for (const auto& r : ranges) {
+        ou::scene::MeshData& m = scene.meshes.emplace_back(base);
+        m.lodNear = r[0], m.lodFar = r[1];
+    }
+    EXPECT_TRUE(v.r->upload(scene).empty());
+    v.frame(enhanced(RayTracing::Shadows));
+    const auto st = v.r->rtStatus();
+    EXPECT_TRUE(st.active);
+    EXPECT_EQ(st.instances, 4u); // the merged static group + one merged group per LOD
+    EXPECT_EQ(st.lodHidden, 2u); // only the near LOD traced
+    EXPECT_EQ(st.tlasBuilds, 2u); // the upload's build, then the LOD masks (no BLAS work)
+    v.frame(enhanced(RayTracing::Shadows));
+    EXPECT_EQ(v.r->rtStatus().tlasBuilds, 2u); // unchanged LODs: no TLAS work
+    EXPECT_EQ(v.r->rtStatus().tlasUpdates, 0u);
+}
+
 // OU_VK_NO_RT=1 simulates a device without ray queries: RT requests fall back to the shadow map.
 TEST(VulkanRenderer, RayTracingFallsBackToShadowMap) {
     using ou::render::RayTracing;
