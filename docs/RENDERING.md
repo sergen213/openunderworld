@@ -142,13 +142,13 @@ bounce ("RT AO / GI" below; `--rt-ao` / `--rt-gi on|off`). Each override wins ov
 enhanced` (`config::resolve` rejects RT with `original`); default `auto` = shadows. Works inside the original
 translated shaders ("Sun shadows": the traced visibility scales c212) and the generic ones alike. `--rt-quality low|medium|high`
 = 1 / 2 / 4 shadow rays per pixel. The overlay line `RT ...` shows the mode, whether rays are
-traced, BLAS / geometry / instance counts (water instances), TLAS builds / updates and BLAS refits /
-rebuilds (`Renderer::rtStatus()`, `rtSummary`).
+traced, BLAS / geometry / instance counts (water instances), TLAS builds / updates and BLAS builds (for uploads) /
+refits / rebuilds (`Renderer::rtStatus()`, `rtSummary`).
 
 | Piece | Choice |
 |---|---|
 | Support | `probeRayTracing()`: the extensions + features above and ≥ 4098 sampled images per stage. Anything missing (or `OU_VK_NO_RT=1`, the simulated-unsupported switch) leaves the device without RT: `rtStatus().supported = false` with the reason, and a requested RT mode renders with the shadow map (`--rt` never fails). The GL backend reports unsupported. |
-| Acceleration structures | Built by the first frame that asks for RT after `upload()` (nothing is built while RT is off). One BLAS per mesh with one triangle geometry per submesh that casts in the shadow map too (`Blend::Opaque` + `Blend::Alpha`; Additive / Average neither cast nor reflect), vertex/index buffers used in place via buffer device addresses. Static BLASes `PREFER_FAST_TRACE`; skinned meshes (`MeshData::skin`) `ALLOW_UPDATE + PREFER_FAST_BUILD`. One TLAS instance per BLAS with the mesh's model matrix (static: `GpuMesh::model` never changes), both faces (`TRIANGLE_FACING_CULL_DISABLE`), custom index = first geometry record; mask 2 for water, 1 otherwise. TLAS `ALLOW_UPDATE + PREFER_FAST_TRACE`. Upload builds are batched into ≤ 64 MiB of shared scratch. |
+| Acceleration structures | Built by the first frame that asks for RT after `upload()` (nothing is built while RT is off). One BLAS per mesh with one triangle geometry per submesh that casts in the shadow map too (`Blend::Opaque` + `Blend::Alpha`; Additive / Average neither cast nor reflect), vertex/index buffers used in place via buffer device addresses. Static BLASes `PREFER_FAST_TRACE`; skinned meshes (`MeshData::skin`) `ALLOW_UPDATE + PREFER_FAST_BUILD`. One TLAS instance per BLAS with the mesh's model matrix (static: `GpuMesh::model` never changes), both faces (`TRIANGLE_FACING_CULL_DISABLE`), custom index = first geometry record; mask 2 for water, 1 otherwise. TLAS `ALLOW_UPDATE + PREFER_FAST_TRACE`. BLASes live with their mesh (resident meshes keep them across uploads, see "Resident units"); an upload builds only new meshes' BLASes and changed merged BLASes, batched into ≤ 64 MiB of shared scratch, then the TLAS. Not compacted. |
 | Dynamic meshes | The frame's recorded vertex copies are followed by the BLAS work: refit (mode UPDATE) for skinned meshes (Lara, enemies), full in-place rebuild for others (pistols in ou-game are rigid and rebuilt), once per frame however often the mesh was updated, batched into as few build calls as the shared scratch holds. The TLAS is then updated in place once (not rebuilt). Choice [I]: refits keep the bind-pose BVH topology, so traversal degrades with large poses but stays correct. |
 | Geometry records | storage buffer, one `{vertex address, index address, first index, texture slot, alpha ref}` per geometry, indexed by `instanceCustomIndex + geometryIndex` in the shader. |
 | Alpha test (any-hit equivalent) | Non-opaque geometries (alpha ref ≠ 0: `Blend::Alpha` cut at 50 % as the shadow map, or an alpha-tested opaque material) are tested in the `rayQueryProceedEXT` loop: barycentric UV from the index/vertex buffers, `textureLod(..., 0)` of the bindless texture array (set 2, 4096 slots, partially bound), texture alpha only (as `shadow.frag`); candidates that pass are confirmed. |
@@ -814,11 +814,13 @@ Root causes and fixes:
   needs no alpha test. l4_trailstart scene 17 → 6 ms, l2_junglehub 102 → 12.6 ms. Byte-identical where checked
   (l4_trailstart).
 - **Overlapping per-mesh instances**: thousands of instances made rays descend into dozens of BLASes. Meshes never moved
-  by `updateVertices` are traced through one merged BLAS per mask (mesh models as geometry transforms; records carry the
-  transform for reflection normals); their own BLASes are built too and take over the first time a mesh moves
-  (`evictStatic`: its merged geometries rebuilt with 0 triangles so record indices stay, TLAS rebuilt with the new
-  instance list, sized for all instances up front). l2_junglehub 12.6 → 7.9 ms, l4_trailstart 6.2 → 3.5. Differs from
-  per-mesh instances in ≤ 0.001 % of pixels (triangle intersection precision). l1_kraken_room's scene got 0.4 ms slower.
+  by `updateVertices` are traced through merged BLASes, one per mask and renderer part (`RtGroup`; keyed meshes outside
+  parts and unkeyed meshes form one group each; mesh models as geometry transforms; records carry the transform for
+  reflection normals). Their own BLASes are created but first built when a mesh moves (`evictStatic`: its merged
+  geometries rebuilt with 0 triangles so record indices stay, TLAS rebuilt with the new instance list, sized for all
+  instances up front; the group is rebuilt without it by the next upload, and its key stays out of merged BLASes).
+  l2_junglehub 12.6 → 7.9 ms, l4_trailstart 6.2 → 3.5. Differs from per-mesh instances in ≤ 0.001 % of pixels
+  (triangle intersection precision). l1_kraken_room's scene got 0.4 ms slower.
 - **Motorcycle sound bank re-read every tick** (CPU 35 ms a frame in ch4 / ch5): `PlexBank::find` cached the miss for the
   engine DTP 13589 asked for before motorcycle.drm was added, so GameSound re-parsed and re-decoded the DRM every tick
   and the engine never sounded. `PlexBank::add` now drops cached misses for the ids it adds
@@ -850,4 +852,8 @@ live part is freed. `residentCount()` counts it.
 - Vulkan: each upload and each part allocates from its own `Generation` (memory blocks + texture descriptor pool),
   freed with its last resource. Nothing waits for the device: dropped objects go to a graveyard destroyed
   `kFramesInFlight` frames later, new data is staged in host memory and copied at the start of the next frame's
-  command buffer, and the RT structures (rebuilt per upload) are built in that command buffer too.
+  command buffer, and the RT structures are built in that command buffer too. BLASes stay with their mesh (freed with
+  it) and merged BLASes with their part while members and models are unchanged (`RtGroup::members` = mesh serials):
+  the upload builds only new meshes' BLASes and changed groups, then the TLAS. pool_to_ragnarok `--rt full` join frame
+  (RX 7900 XTX, 1280x720, GPU uploads + AS span): 10.0 → 4.4 ms; `buildRayTracing` CPU 0.30 → 0.19 ms (35 mesh BLASes
+  of moved / skinned / unkeyed meshes and 1 new group remain). Test `VulkanRenderer.ResidentMeshesKeepBlases`.

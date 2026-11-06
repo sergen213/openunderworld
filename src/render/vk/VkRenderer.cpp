@@ -295,14 +295,19 @@ struct UiImage {
     int width = 0, height = 0;
 };
 
-// One BLAS (and TLAS instance) per ray mask of a mesh's traced submeshes (sun.glsl kOuMask*).
+// One BLAS (and TLAS instance) per ray mask of a mesh's traced submeshes (sun.glsl kOuMask*), kept with the mesh.
 struct RtBlas {
     VkAccelerationStructureKHR as = VK_NULL_HANDLE;
     Buffer buffer;
     std::vector<VkAccelerationStructureGeometryKHR> geometries;
     std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
+    std::vector<RtGeometry> records; // per geometry, texture = 0 (each upload resolves the slot from `textures`)
+    std::vector<uint32_t> textures;  // per geometry: SubMesh::textureId
     VkDeviceSize scratch = 0; // aligned max(build, update) scratch size
-    VkAccelerationStructureInstanceKHR instance{}; // its TLAS instance
+    VkAccelerationStructureInstanceKHR instance{}; // its TLAS instance (custom index set per upload)
+    uint32_t mask = 0;
+    bool skinned = false; // built for refits (ALLOW_UPDATE)
+    bool built = false;   // holds its geometries' current vertices
 };
 
 // Device memory + descriptor pool of the scene resources created together (one upload, or one renderer part), freed
@@ -337,13 +342,27 @@ struct GpuMesh {
     // blends, as the shadow map). Skinned meshes are refitted, others rebuilt, on updateVertices.
     bool skinned = false, water = false;
     std::vector<RtBlas> blases;
-    bool rtStatic = false; // traced through the merged static BLASes (never moved by updateVertices)
-    std::vector<std::pair<uint32_t, uint32_t>> rtMerged; // its geometries there: (staticBlases_ index, geometry index)
+    bool rtStatic = false; // traced through a merged static BLAS (RtGroup; never moved by updateVertices)
+    std::vector<std::pair<uint32_t, uint32_t>> rtMerged; // its geometries there: (rtGroups_ index, geometry index)
+    uint64_t rtSerial = 0;        // identity of its BLAS geometries for RtGroup::members (new mesh / new masks)
+    std::vector<uint8_t> rtMasks; // per submesh: the ray mask its BLASes were made with (0: not traced)
     // FSR motion vectors of meshes moved by updateVertices: the previous drawn frame's vertices (GPU copy at the start
     // of the frame) and the frame counter of the last update; the staging slot of a pending updateVertices.
     Buffer prevVertices;
     uint64_t movedFrame = 0, stagingFrame = 0;
     VkDeviceSize stagingOffset = 0;
+};
+
+// Merged BLAS over the static meshes of one renderer part (or the keyed meshes outside parts, or the unkeyed ones) for
+// one ray mask, kept while its members (GpuMesh::rtSerial, sorted) and their models stay the same.
+struct RtGroup {
+    uint64_t id = 0;
+    std::vector<uint64_t> members;
+    std::vector<VkTransformMatrixKHR> transforms; // per member: geometry transform (its model, VkTransformMatrixKHR rows)
+    std::shared_ptr<Generation> gen;              // the BLAS's and transform buffer's memory
+    Buffer transformBuffer;
+    RtBlas blas;
+    bool stale = false; // a member left it (evictStatic): rebuilt by the next upload
 };
 
 struct Frame {
@@ -486,13 +505,19 @@ public:
         std::unordered_map<uint64_t, GpuMesh> pool = std::move(parked_);
         parked_.clear();
         for (auto& g : meshes_) {
-            buryRt(g);
+            g.rtStatic = false, g.rtMerged.clear(); // until buildRayTracing; its BLASes stay with it
             if (!g.key || g.dirty || !pool.try_emplace(g.key, std::move(g)).second) buryMesh(g);
         }
         meshes_.clear();
         meshSlot_.clear();
         for (auto& st : staging_) st.meshes.clear(), st.used = 0; // pending updateVertices copies of the old slots
         retireScene();
+        // Merged BLASes of live parts wait for buildRayTracing to reuse them; released parts' and unkeyed meshes' go.
+        std::erase_if(rtGroups_, [&](RtGroup& g) {
+            if (!g.stale && (g.id == 0 || parts_.contains(g.id))) return false;
+            buryGroup(g);
+            return true;
+        });
         gen_ = newGeneration(kBlockSize, scene.textures.size());
 
         UploadBatch batch;
@@ -639,7 +664,10 @@ public:
                                           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         g.movedFrame = frameCounter_ + 1;
-        if (g.rtStatic) g.rtStatic = false, rtEvicted_.push_back(slot); // evictStatic, after this frame's BLAS rebuilds
+        if (g.rtStatic) { // evictStatic, after this frame's BLAS rebuilds; later uploads keep it out of the merged BLASes
+            g.rtStatic = false, rtEvicted_.push_back(slot);
+            if (g.key) movers_.insert(g.key);
+        }
         return true;
     }
 
@@ -3855,11 +3883,11 @@ private:
     }
 
     // Build (or refit: mode UPDATE) info for a BLAS. Skinned meshes are built for refits, the rest for tracing speed.
-    VkAccelerationStructureBuildGeometryInfoKHR blasInfo(const RtBlas& b, bool skinned, VkBuildAccelerationStructureModeKHR mode) const {
+    VkAccelerationStructureBuildGeometryInfoKHR blasInfo(const RtBlas& b, VkBuildAccelerationStructureModeKHR mode) const {
         VkAccelerationStructureBuildGeometryInfoKHR bi{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
         bi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-        bi.flags = skinned ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR
-                           : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        bi.flags = b.skinned ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR
+                             : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
         bi.mode = mode;
         bi.srcAccelerationStructure = mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR ? b.as : VK_NULL_HANDLE;
         bi.dstAccelerationStructure = b.as;
@@ -3880,9 +3908,9 @@ private:
         return bi;
     }
 
-    // Acceleration structure + its backing buffer (scene arena) of `size` bytes.
-    VkAccelerationStructureKHR createAs(VkAccelerationStructureTypeKHR type, VkDeviceSize size, Buffer& backing) {
-        backing = createBuffer(gen_->memory, size,
+    // Acceleration structure + its backing buffer (from `memory`) of `size` bytes.
+    VkAccelerationStructureKHR createAs(VkAccelerationStructureTypeKHR type, VkDeviceSize size, Buffer& backing, LinearAllocator& memory) {
+        backing = createBuffer(memory, size,
                                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
@@ -3908,14 +3936,16 @@ private:
     // solid and not shadow-only, 2 water, 4 shadow rays = casters), the geometry record buffer and the set-2 descriptors.
     // The masks keep shadow rays out of non-casters instead of rejecting every candidate in the shader (l4_trailstart:
     // 1786 of its 2996 traced submeshes are non-casters; rejecting them cost 15 of the scene pass's 17 ms at 4K/FSR).
-    // Meshes never moved by updateVertices (GpuMesh::rtStatic) are traced through one merged BLAS per mask instead (the
-    // mesh model as the geometry transform): thousands of overlapping per-mesh instances made every ray descend into
-    // dozens of BLASes (l2_junglehub scene pass 12.6 -> 7.9 ms). Their own BLASes are built too and take over when
-    // updateVertices first moves them (evictStatic). Static meshes don't move (GpuMesh::model is fixed).
+    // Meshes never moved by updateVertices (GpuMesh::rtStatic) are traced through merged BLASes instead (the mesh model
+    // as the geometry transform): thousands of overlapping per-mesh instances made every ray descend into dozens of
+    // BLASes (l2_junglehub scene pass 12.6 -> 7.9 ms). One merged BLAS per ray mask and renderer part (RtGroup; keyed
+    // meshes outside parts and unkeyed meshes form one group each). BLASes live with their mesh / group: an upload builds
+    // those of new meshes and changed groups only, then the TLAS. A static mesh's own BLAS is created but first built
+    // when updateVertices moves it (rebuildBlases, then evictStatic moves it out of its group). Models are fixed between
+    // uploads (GpuMesh::model; a moved resident mesh changes its group's transforms: rebuilt).
     void buildRayTracing(VkCommandBuffer cmd) {
         std::vector<RtGeometry> records;
-        struct Pending { RtBlas* blas; bool skinned; };
-        std::vector<Pending> pending;
+        std::vector<RtBlas*> pending; // built below
         VkDeviceSize maxScratch = 0, sumScratch = 0;
         auto maskOf = [](const GpuMesh& m, const scene::SubMesh& s) -> uint32_t {
             // Exterior terrain is a backdrop placed somewhere in the world (a 3072-unit cylinder round l2_junglehub's
@@ -3927,106 +3957,151 @@ private:
             const bool water = m.water || (i < m.reflective.size() && m.reflective[i]);
             return (s.shadowOnly ? 0u : water ? 2u : 1u) | (s.castsShadow ? 4u : 0u);
         };
-        auto geometry = [&](const GpuMesh& m, const scene::SubMesh& s, RtBlas& b, VkDeviceAddress transform) {
+        // Geometries of `mask` (GpuMesh::rtMasks) into `b`.
+        auto geometries = [&](const GpuMesh& m, uint32_t mask, RtBlas& b, VkDeviceAddress transform) {
             const VkDeviceAddress va = address(m.vertices.buffer), ia = address(m.indices.buffer);
-            const uint8_t ref = s.blend == scene::Blend::Alpha ? std::max<uint8_t>(s.alphaRef, 128) : s.alphaRef;
-            VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-            g.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-            g.flags = ref == 0 ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0; // non-opaque: alpha test in sun.glsl
-            auto& t = g.geometry.triangles;
-            t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-            t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-            t.vertexData.deviceAddress = va;
-            t.vertexStride = sizeof(scene::Vertex);
-            t.maxVertex = uint32_t(m.vertexCount - 1);
-            t.indexType = VK_INDEX_TYPE_UINT32;
-            t.indexData.deviceAddress = ia;
-            t.transformData.deviceAddress = transform;
-            b.geometries.push_back(g);
-            b.ranges.push_back({s.indexCount / 3, s.firstIndex * uint32_t(sizeof(uint32_t)), 0, 0});
-            auto tex = textures_.find(s.textureId);
-            records.push_back({va, ia, s.firstIndex, tex != textures_.end() ? tex->second.slot : 0, ref / 255.0f, 0, transform});
+            for (size_t i = 0; i < m.submeshes.size(); ++i) {
+                if (m.rtMasks[i] != mask) continue;
+                const scene::SubMesh& s = m.submeshes[i];
+                const uint8_t ref = s.blend == scene::Blend::Alpha ? std::max<uint8_t>(s.alphaRef, 128) : s.alphaRef;
+                VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+                g.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+                g.flags = ref == 0 ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0; // non-opaque: alpha test in sun.glsl
+                auto& t = g.geometry.triangles;
+                t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+                t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+                t.vertexData.deviceAddress = va;
+                t.vertexStride = sizeof(scene::Vertex);
+                t.maxVertex = uint32_t(m.vertexCount - 1);
+                t.indexType = VK_INDEX_TYPE_UINT32;
+                t.indexData.deviceAddress = ia;
+                t.transformData.deviceAddress = transform;
+                b.geometries.push_back(g);
+                b.ranges.push_back({s.indexCount / 3, s.firstIndex * uint32_t(sizeof(uint32_t)), 0, 0});
+                b.records.push_back({va, ia, s.firstIndex, 0, ref / 255.0f, 0, transform});
+                b.textures.push_back(s.textureId);
+            }
         };
-        auto finish = [&](RtBlas& b, bool skinned, const glm::mat4& model, uint32_t base, uint32_t mask) {
-            if (records.size() >= (1u << 24)) throw std::runtime_error("RT: more than 2^24 geometries");
+        auto create = [&](RtBlas& b, bool skinned, uint32_t mask, LinearAllocator& memory) {
+            b.mask = mask, b.skinned = skinned;
             std::vector<uint32_t> counts;
             for (const auto& r : b.ranges) counts.push_back(r.primitiveCount);
-            const auto bi = blasInfo(b, skinned, VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
+            const auto bi = blasInfo(b, VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
             VkAccelerationStructureBuildSizesInfoKHR sz{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
             vkGetAccelerationStructureBuildSizesKHR_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bi, counts.data(), &sz);
-            b.as = createAs(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sz.accelerationStructureSize, b.buffer);
+            b.as = createAs(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sz.accelerationStructureSize, b.buffer, memory);
             b.scratch = alignUp(std::max(sz.buildScratchSize, sz.updateScratchSize));
-            maxScratch = std::max(maxScratch, b.scratch);
-            sumScratch += b.scratch;
-            VkAccelerationStructureInstanceKHR inst{};
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 4; ++c) inst.transform.matrix[r][c] = model[c][r]; // glm is column-major
-            inst.instanceCustomIndex = base;
-            inst.mask = mask;
-            inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR; // both faces, as the shadow pass
             VkAccelerationStructureDeviceAddressInfoKHR ai{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR, nullptr, b.as};
-            inst.accelerationStructureReference = vkGetAccelerationStructureDeviceAddressKHR_(device_, &ai);
-            b.instance = inst;
+            b.instance.accelerationStructureReference = vkGetAccelerationStructureDeviceAddressKHR_(device_, &ai);
+            b.instance.mask = mask;
+            b.instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR; // both faces, as the shadow pass
+        };
+        // This upload's instance of `b` (custom index = its first geometry record) and records (texture slots resolved).
+        auto emit = [&](RtBlas& b, const glm::mat4& model) {
+            if (records.size() >= (1u << 24)) throw std::runtime_error("RT: more than 2^24 geometries");
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 4; ++c) b.instance.transform.matrix[r][c] = model[c][r]; // glm is column-major
+            b.instance.instanceCustomIndex = uint32_t(records.size());
+            for (size_t i = 0; i < b.records.size(); ++i) {
+                RtGeometry& r = records.emplace_back(b.records[i]);
+                const auto tex = textures_.find(b.textures[i]);
+                r.texture = tex != textures_.end() ? tex->second.slot : 0;
+            }
+            maxScratch = std::max(maxScratch, b.scratch); // rebuildBlases / evictStatic rebuild any of them later
         };
         constexpr uint32_t kMasks[] = {1u, 2u, 4u, 5u, 6u};
         size_t meshInstances = 0;
         for (GpuMesh& m : meshes_) {
-            for (const uint32_t mask : kMasks) {
-                RtBlas b;
-                const uint32_t base = uint32_t(records.size());
-                for (const scene::SubMesh& s : m.submeshes)
-                    if (maskOf(m, s) == mask) geometry(m, s, b, 0);
-                if (b.geometries.empty()) continue;
-                finish(b, m.skinned, m.model, base, mask);
-                m.blases.push_back(std::move(b));
+            std::vector<uint8_t> masks;
+            for (const scene::SubMesh& s : m.submeshes) masks.push_back(uint8_t(maskOf(m, s)));
+            if (masks != m.rtMasks) { // new mesh (or its materials changed)
+                buryRt(m);
+                m.rtSerial = ++rtSerials_; // groups holding its old geometries no longer match
+                m.rtMasks = std::move(masks);
+                for (const uint32_t mask : kMasks) {
+                    RtBlas b;
+                    geometries(m, mask, b, 0);
+                    if (b.geometries.empty()) continue;
+                    create(b, m.skinned, mask, m.gen->memory);
+                    m.blases.push_back(std::move(b));
+                }
             }
-            for (RtBlas& b : m.blases) pending.push_back({&b, m.skinned}); // after the pushes: stable addresses
-            m.rtStatic = !m.skinned && !m.movedFrame && !m.blases.empty();
+            m.rtMerged.clear();
+            m.rtStatic = !m.skinned && !m.movedFrame && !m.blases.empty() && !movers_.contains(m.key);
+            for (RtBlas& b : m.blases) {
+                emit(b, m.model);
+                if (!b.built && !m.rtStatic) pending.push_back(&b); // after the pushes: stable addresses
+            }
             meshInstances += m.blases.size();
             rtStatus_.waterInstances += m.water && !m.blases.empty();
         }
-        // The merged BLASes: geometry transforms (VkTransformMatrixKHR rows) in one buffer, one per static mesh.
-        std::vector<VkTransformMatrixKHR> transforms;
-        for (const GpuMesh& m : meshes_)
-            if (m.rtStatic) {
-                VkTransformMatrixKHR& x = transforms.emplace_back();
-                for (int r = 0; r < 3; ++r)
-                    for (int c = 0; c < 4; ++c) x.matrix[r][c] = m.model[c][r];
-            }
+        // The merged BLASes: the static meshes per group, by serial (independent of the scene's mesh order).
+        std::map<uint64_t, std::vector<GpuMesh*>> statics;
+        for (GpuMesh& m : meshes_)
+            if (m.rtStatic) statics[m.key ? m.part : kUnkeyedGroup].push_back(&m);
         const VkBufferUsageFlags copyDst = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         const VkBufferUsageFlags asInput = copyDst | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
         UploadBatch batch;
-        if (!transforms.empty()) {
-            transformBuffer_ = createBuffer(gen_->memory, transforms.size() * sizeof(VkTransformMatrixKHR), asInput | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            batch.buffers.push_back({transformBuffer_.buffer, {transforms.data(), transforms.size() * sizeof(transforms[0]), 0, 0}});
-        }
-        staticBlases_.reserve(std::size(kMasks)); // stable addresses for `pending`
-        for (const uint32_t mask : kMasks) {
-            RtBlas b;
-            const uint32_t base = uint32_t(records.size());
-            VkDeviceAddress transform = transforms.empty() ? 0 : address(transformBuffer_.buffer);
-            for (GpuMesh& m : meshes_) {
-                if (!m.rtStatic) continue;
-                for (const scene::SubMesh& s : m.submeshes)
-                    if (maskOf(m, s) == mask) {
-                        m.rtMerged.push_back({uint32_t(staticBlases_.size()), uint32_t(b.geometries.size())});
-                        geometry(m, s, b, transform);
-                    }
-                transform += sizeof(VkTransformMatrixKHR);
+        std::vector<RtGroup> old = std::move(rtGroups_);
+        rtGroups_.clear();
+        rtGroups_.reserve(statics.size() * std::size(kMasks)); // stable addresses for `pending`
+        for (auto& [id, ms] : statics) {
+            std::sort(ms.begin(), ms.end(), [](const GpuMesh* a, const GpuMesh* b) { return a->rtSerial < b->rtSerial; });
+            std::vector<uint64_t> members;
+            std::vector<VkTransformMatrixKHR> transforms;
+            for (const GpuMesh* m : ms) {
+                members.push_back(m->rtSerial);
+                VkTransformMatrixKHR& x = transforms.emplace_back();
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < 4; ++c) x.matrix[r][c] = m->model[c][r];
             }
-            if (b.geometries.empty()) continue;
-            finish(b, false, glm::mat4(1.0f), base, mask);
-            pending.push_back({&staticBlases_.emplace_back(std::move(b)), false});
+            for (const uint32_t mask : kMasks) {
+                if (std::none_of(ms.begin(), ms.end(), [&](const GpuMesh* m) { return std::ranges::find(m->rtMasks, mask) != m->rtMasks.end(); }))
+                    continue;
+                const auto same = std::find_if(old.begin(), old.end(), [&](const RtGroup& g) {
+                    return !g.stale && g.id == id && g.blas.mask == mask && g.members == members &&
+                           std::memcmp(g.transforms.data(), transforms.data(), transforms.size() * sizeof(transforms[0])) == 0;
+                });
+                if (same != old.end()) {
+                    rtGroups_.push_back(std::move(*same));
+                    old.erase(same);
+                } else {
+                    RtGroup& g = rtGroups_.emplace_back();
+                    g.id = id, g.members = members, g.transforms = transforms;
+                    g.gen = std::make_shared<Generation>();
+                    g.gen->device = device_;
+                    g.gen->memory.init(device_, gpu_, 0, true);
+                    const VkDeviceSize bytes = transforms.size() * sizeof(VkTransformMatrixKHR);
+                    g.transformBuffer = createBuffer(g.gen->memory, bytes, asInput | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                    batch.buffers.push_back({g.transformBuffer.buffer, {g.transforms.data(), bytes, 0, 0}});
+                    VkDeviceAddress transform = address(g.transformBuffer.buffer);
+                    for (const GpuMesh* m : ms) {
+                        geometries(*m, mask, g.blas, transform);
+                        transform += sizeof(VkTransformMatrixKHR);
+                    }
+                    create(g.blas, false, mask, g.gen->memory);
+                    pending.push_back(&g.blas);
+                }
+                RtGroup& g = rtGroups_.back();
+                uint32_t geo = 0;
+                for (GpuMesh* m : ms)
+                    for (const uint8_t k : m->rtMasks)
+                        if (k == mask) m->rtMerged.push_back({uint32_t(rtGroups_.size() - 1), geo++});
+                emit(g.blas, glm::mat4(1.0f));
+            }
         }
-        rtStatus_.blas = uint32_t(meshInstances + staticBlases_.size());
+        for (RtGroup& g : old) buryGroup(g);
+        for (const RtBlas* b : pending) sumScratch += b->scratch;
+        rtStatus_.blas = uint32_t(meshInstances + rtGroups_.size());
+        rtStatus_.blasBuilds += uint32_t(pending.size());
         rtStatus_.geometries = uint32_t(records.size());
         const std::vector<VkAccelerationStructureInstanceKHR> instances = tlasInstances();
         rtStatus_.instances = tlasInstanceCount_ = uint32_t(instances.size());
 
         // Instance + record buffers (a 0-instance TLAS is valid and keeps set 2 complete). Sized and the TLAS built for
         // every instance there can be (all meshes evicted): evictStatic rewrites the list and rebuilds the TLAS in place.
-        tlasInstanceCapacity_ = uint32_t(meshInstances + staticBlases_.size());
+        tlasInstanceCapacity_ = uint32_t(meshInstances + rtGroups_.size());
         instanceBuffer_ = createBuffer(gen_->memory, std::max<size_t>(1, tlasInstanceCapacity_) * sizeof(VkAccelerationStructureInstanceKHR),
                                        asInput, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         geometryBuffer_ = createBuffer(gen_->memory, std::max<size_t>(1, records.size()) * sizeof(RtGeometry),
@@ -4043,7 +4118,7 @@ private:
         auto ti = tlasInfo(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
         VkAccelerationStructureBuildSizesInfoKHR tsz{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
         vkGetAccelerationStructureBuildSizesKHR_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &ti, &tlasInstanceCapacity_, &tsz);
-        tlas_ = createAs(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, tsz.accelerationStructureSize, tlasBuffer_);
+        tlas_ = createAs(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, tsz.accelerationStructureSize, tlasBuffer_, gen_->memory);
         ti.dstAccelerationStructure = tlas_;
 
         // Scratch: a shared BLAS region (upload batches, later refits/rebuilds one at a time) + the TLAS's own.
@@ -4056,9 +4131,10 @@ private:
         scratchTlas_ = scratchBlas_ + blasScratch;
 
         {
-            // Vertex/index/instance copies (recordPending) → build inputs and fragment-shader reads.
-            asBarrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                      kAsBuild | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT | kAsRead);
+            // Vertex/index/instance copies (recordPending) → build inputs and fragment-shader reads; earlier frames may
+            // still trace kept BLASes (not rebuilt here) and read the scratch of their last refits.
+            asBarrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT | kAsBuild, VK_ACCESS_2_TRANSFER_WRITE_BIT | kAsWrite,
+                      kAsBuild | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT | kAsRead | kAsWrite);
             std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
             std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> ranges;
             VkDeviceSize used = 0;
@@ -4068,13 +4144,14 @@ private:
                 asBarrier(cmd, kAsBuild, kAsWrite, kAsBuild, kAsRead | kAsWrite); // scratch reuse + TLAS input
                 infos.clear(), ranges.clear(), used = 0;
             };
-            for (const Pending& p : pending) {
-                if (used + p.blas->scratch > blasScratch) submit();
-                auto bi = blasInfo(*p.blas, p.skinned, VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
+            for (RtBlas* b : pending) {
+                if (used + b->scratch > blasScratch) submit();
+                auto bi = blasInfo(*b, VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
                 bi.scratchData.deviceAddress = scratchBlas_ + used;
-                used += p.blas->scratch;
+                used += b->scratch;
                 infos.push_back(bi);
-                ranges.push_back(p.blas->ranges.data());
+                ranges.push_back(b->ranges.data());
+                b->built = true;
             }
             submit();
             ti.scratchData.deviceAddress = scratchTlas_;
@@ -4119,6 +4196,11 @@ private:
     // builds as the shared scratch allows (one barrier pair per batch; serialising one build + two barriers per mesh
     // held l4_ballcourt 1440p at 51 instead of 58 fps). Earlier frames may still trace them.
     void rebuildBlases(VkCommandBuffer cmd, std::span<const size_t> slots) {
+        if (!tlas_) { // no structures for this upload yet: buildRayTracing builds these with the new vertices
+            for (const size_t slot : slots)
+                for (RtBlas& b : meshes_[slot].blases) b.built = false;
+            return;
+        }
         std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
         std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> ranges;
         VkDeviceSize used = 0;
@@ -4131,15 +4213,16 @@ private:
             infos.clear(), ranges.clear(), used = 0;
         };
         for (const size_t slot : slots) {
-            const GpuMesh& m = meshes_[slot];
-            for (const RtBlas& b : m.blases) {
+            for (RtBlas& b : meshes_[slot].blases) {
                 if (used + b.scratch > capacity) submit();
-                auto bi = blasInfo(b, m.skinned, m.skinned ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
+                const bool refit = b.skinned && b.built; // a static mesh's own BLAS: first built now
+                auto bi = blasInfo(b, refit ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
                 bi.scratchData.deviceAddress = scratchBlas_ + used;
                 used += b.scratch;
                 infos.push_back(bi);
                 ranges.push_back(b.ranges.data());
-                ++(m.skinned ? rtStatus_.blasRefits : rtStatus_.blasRebuilds);
+                ++(refit ? rtStatus_.blasRefits : rtStatus_.blasRebuilds);
+                b.built = true;
                 tlasDirty_ = true;
             }
         }
@@ -4150,7 +4233,7 @@ private:
     // TLAS instances: the merged static BLASes, then every BLAS of the meshes that move.
     std::vector<VkAccelerationStructureInstanceKHR> tlasInstances() const {
         std::vector<VkAccelerationStructureInstanceKHR> out;
-        for (const RtBlas& b : staticBlases_) out.push_back(b.instance);
+        for (const RtGroup& g : rtGroups_) out.push_back(g.blas.instance);
         for (const GpuMesh& m : meshes_)
             if (!m.rtStatic)
                 for (const RtBlas& b : m.blases) out.push_back(b.instance);
@@ -4163,17 +4246,18 @@ private:
     // door when it first opens).
     void evictStatic(VkCommandBuffer cmd) {
         if (rtEvicted_.empty() || !tlas_) return;
-        std::vector<uint8_t> dirty(staticBlases_.size(), 0);
+        std::vector<uint8_t> dirty(rtGroups_.size(), 0);
         for (const size_t slot : rtEvicted_)
-            for (const auto& [blas, geo] : meshes_[slot].rtMerged) staticBlases_[blas].ranges[geo].primitiveCount = 0, dirty[blas] = 1;
+            for (const auto& [group, geo] : meshes_[slot].rtMerged) rtGroups_[group].blas.ranges[geo].primitiveCount = 0, dirty[group] = 1;
         rtEvicted_.clear();
-        for (size_t i = 0; i < staticBlases_.size(); ++i) {
+        for (size_t i = 0; i < rtGroups_.size(); ++i) {
             if (!dirty[i]) continue;
+            rtGroups_[i].stale = true;
             // Earlier frames may still trace it; the scratch may still be in use by rebuildBlases.
             asBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | kAsBuild, kAsWrite, kAsBuild, kAsRead | kAsWrite);
-            auto bi = blasInfo(staticBlases_[i], false, VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
+            auto bi = blasInfo(rtGroups_[i].blas, VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR);
             bi.scratchData.deviceAddress = scratchBlas_;
-            const VkAccelerationStructureBuildRangeInfoKHR* r = staticBlases_[i].ranges.data();
+            const VkAccelerationStructureBuildRangeInfoKHR* r = rtGroups_[i].blas.ranges.data();
             vkCmdBuildAccelerationStructuresKHR_(cmd, 1, &bi, &r);
             ++rtStatus_.blasRebuilds;
         }
@@ -4281,6 +4365,7 @@ private:
         }
         if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
         g.gen = gen;
+        g.rtSerial = ++rtSerials_;
         g.model = glm::make_mat4(m.transform);
         g.skinned = !m.skin.empty();
         // [I] Water surfaces are objects named *watersurface* (l4_pool: ca_goo_pool_watersurface, the
@@ -4370,7 +4455,7 @@ private:
         while (n < graves_.size() && (all || graves_[n].first + kFramesInFlight <= frameCounter_)) graves_[n++].second();
         graves_.erase(graves_.begin(), graves_.begin() + ptrdiff_t(n));
     }
-    void destroyBlases(const std::vector<RtBlas>& blases) {
+    void destroyBlases(std::span<const RtBlas> blases) {
         for (const RtBlas& b : blases) {
             if (b.as) vkDestroyAccelerationStructureKHR_(device_, b.as, nullptr);
             vkDestroyBuffer(device_, b.buffer.buffer, nullptr);
@@ -4380,7 +4465,14 @@ private:
         if (!g.blases.empty()) bury([this, b = std::move(g.blases)] { destroyBlases(b); });
         g.blases.clear();
         g.rtMerged.clear();
+        g.rtMasks.clear();
         g.rtStatic = false;
+    }
+    void buryGroup(RtGroup& g) {
+        bury([this, b = std::move(g.blas), t = g.transformBuffer, gen = std::move(g.gen)] {
+            destroyBlases(std::span(&b, 1));
+            vkDestroyBuffer(device_, t.buffer, nullptr);
+        });
     }
     void buryMesh(GpuMesh& g) {
         bury([this, v = g.vertices, i = g.indices, prev = g.prevVertices, b = std::move(g.blases), gen = std::move(g.gen)] {
@@ -4392,8 +4484,9 @@ private:
         bury([this, img = t.img, gen = std::move(t.gen)]() mutable { destroyImage(img); });
     }
 
-    // The previous upload's per-upload state to the graveyard: material sets + UBO, RT structures, unkeyed textures and
-    // its Generation. Its programs wait in origStash_ for uploadOriginals to take the ones the new scene still uses.
+    // The previous upload's per-upload state to the graveyard: material sets + UBO, TLAS + instance / record buffers,
+    // unkeyed textures and its Generation (BLASes stay with their meshes / RtGroups). Its programs wait in origStash_
+    // for uploadOriginals to take the ones the new scene still uses.
     void retireScene() {
         if (!origStash_.empty()) bury([this, s = std::move(origStash_)]() mutable { destroyPipelines(device_, s); });
         origStash_ = std::move(origPrograms_);
@@ -4404,13 +4497,12 @@ private:
         reflectSets_.clear();
         origMaterialImages_.clear();
         bury([this, ubo = std::exchange(origMaterialUbo_, {}), pool = std::exchange(origScenePool_, VK_NULL_HANDLE),
-              statics = std::move(staticBlases_), tlas = std::exchange(tlas_, VK_NULL_HANDLE),
+              tlas = std::exchange(tlas_, VK_NULL_HANDLE),
               buffers = std::array{std::exchange(tlasBuffer_, {}), std::exchange(instanceBuffer_, {}), std::exchange(geometryBuffer_, {}),
-                                   std::exchange(scratch_, {}), std::exchange(transformBuffer_, {})},
+                                   std::exchange(scratch_, {})},
               rtPool = std::exchange(rtPool_, VK_NULL_HANDLE), images = std::move(transient_), gen = std::move(gen_)] {
             vkDestroyBuffer(device_, ubo.buffer, nullptr);
             vkDestroyDescriptorPool(device_, pool, nullptr);
-            destroyBlases(statics);
             if (tlas) vkDestroyAccelerationStructureKHR_(device_, tlas, nullptr);
             for (const Buffer& b : buffers) vkDestroyBuffer(device_, b.buffer, nullptr);
             vkDestroyDescriptorPool(device_, rtPool, nullptr);
@@ -4419,7 +4511,6 @@ private:
                 destroyImage(img);
             }
         });
-        staticBlases_.clear();
         transient_.clear();
         textures_.clear();
         rtSet_ = VK_NULL_HANDLE;
@@ -4502,7 +4593,9 @@ private:
 
     // Shutdown (device idle): everything at once.
     void destroySceneResources() {
-        for (auto& g : meshes_) buryRt(g), buryMesh(g);
+        for (auto& g : meshes_) buryMesh(g);
+        for (auto& g : rtGroups_) buryGroup(g);
+        rtGroups_.clear(), movers_.clear();
         for (auto& [_, g] : parked_) buryMesh(g);
         for (auto& [_, t] : resident_) buryTexture(t);
         meshes_.clear(), parked_.clear(), resident_.clear(), meshSlot_.clear(), parts_.clear();
@@ -4829,8 +4922,11 @@ private:
     glm::dvec3 indPrevEye_{0.0};
     uint64_t indLast_ = 0;
     VkAccelerationStructureKHR tlas_ = VK_NULL_HANDLE;
-    Buffer tlasBuffer_, instanceBuffer_, geometryBuffer_, scratch_, transformBuffer_;
-    std::vector<RtBlas> staticBlases_; // one merged BLAS per ray mask over the GpuMesh::rtStatic meshes
+    Buffer tlasBuffer_, instanceBuffer_, geometryBuffer_, scratch_;
+    std::vector<RtGroup> rtGroups_; // merged BLASes over the GpuMesh::rtStatic meshes (this upload's after buildRayTracing)
+    static constexpr uint64_t kUnkeyedGroup = ~0ull; // RtGroup::id of unkeyed meshes (others: GpuMesh::part)
+    std::unordered_set<uint64_t> movers_; // keys of meshes updateVertices moved out of a merged BLAS: kept out
+    uint64_t rtSerials_ = 0;              // GpuMesh::rtSerial counter
     std::vector<size_t> rtEvicted_;    // meshes that left them since the last frame (evictStatic)
     VkDeviceAddress scratchBlas_ = 0, scratchTlas_ = 0; // aligned scratch regions: shared BLAS builds, TLAS
     VkAccelerationStructureGeometryKHR tlasGeometry_{};

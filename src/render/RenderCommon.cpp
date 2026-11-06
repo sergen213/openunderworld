@@ -215,8 +215,9 @@ std::string rtSummary(const RtStatus& s, RayTracing requested, int rays) {
     if (s.ao || s.gi) line += std::string(" | ") + (s.ao && s.gi ? "AO + sun GI" : s.ao ? "AO" : "sun GI");
     return line + " | " + std::to_string(s.blas) + " BLAS, " + std::to_string(s.geometries) + " geometries, " +
            std::to_string(s.instances) + " instances (" + std::to_string(s.waterInstances) + " water) | TLAS builds " +
-           std::to_string(s.tlasBuilds) + " updates " + std::to_string(s.tlasUpdates) + " | BLAS refits " +
-           std::to_string(s.blasRefits) + " rebuilds " + std::to_string(s.blasRebuilds) + (s.lights ? " | local-light shadows" : "");
+           std::to_string(s.tlasBuilds) + " updates " + std::to_string(s.tlasUpdates) + " | BLAS builds " +
+           std::to_string(s.blasBuilds) + " refits " + std::to_string(s.blasRefits) + " rebuilds " +
+           std::to_string(s.blasRebuilds) + (s.lights ? " | local-light shadows" : "");
 }
 
 std::unique_ptr<Renderer> selectRenderer(std::string_view name, const std::function<std::unique_ptr<Renderer>(bool)>& create,

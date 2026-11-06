@@ -213,6 +213,7 @@ struct RtStatus {
     uint32_t blas = 0, instances = 0, geometries = 0, waterInstances = 0; // current scene
     bool reflections = false; // the last frame traced water reflections (FrameOptions::rtReflections)
     uint32_t tlasBuilds = 0, tlasUpdates = 0, blasRefits = 0, blasRebuilds = 0; // since init
+    uint32_t blasBuilds = 0; // since init: BLASes built for uploads (new meshes / merged groups; resident ones are kept)
     std::string reason; // why unsupported
 };
 // One overlay line: requested mode, whether it is traced or falls back to the shadow map, scene counts.

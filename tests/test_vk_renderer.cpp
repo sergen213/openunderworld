@@ -315,3 +315,40 @@ TEST(VulkanRenderer, ResidentPartsMatchFullUpload) {
     EXPECT_EQ(v.r->residentCount(), 0u);
     EXPECT_EQ(meanAbsDiff(v.frame(enhanced()), full), 0.0);
 }
+
+// Resident meshes keep their BLASes (and the merged static BLASes of their part): a second upload of the same keyed
+// scene builds no BLAS, only the TLAS, and traces the same image. A mesh moved by updateVertices is re-sent by the next
+// upload (new BLAS, merged BLAS rebuilt without it), after which uploads build nothing again.
+TEST(VulkanRenderer, ResidentMeshesKeepBlases) {
+    using ou::render::RayTracing;
+    VkWindow v;
+    if (!v.skip.empty()) GTEST_SKIP() << v.skip;
+    if (!v.r->rtStatus().supported) GTEST_SKIP() << "no ray tracing: " << v.r->rtStatus().reason;
+    auto keyed = std::make_shared<ou::scene::SceneData>(ou::scene::makePlaceholderScene());
+    ou::scene::assignKeys(*keyed);
+    v.r->uploadPart(1, keyed);
+    EXPECT_TRUE(v.r->upload(*keyed).empty());
+    const ou::render::Image first = v.frame(enhanced(RayTracing::Full));
+    const auto st = v.r->rtStatus();
+    EXPECT_GT(st.blasBuilds, 0u);
+    EXPECT_EQ(st.blasBuilds, st.instances); // static meshes' own BLASes are only created: the merged one is built
+    EXPECT_TRUE(v.r->upload(*keyed).empty());
+    EXPECT_LT(meanAbsDiff(v.frame(enhanced(RayTracing::Full)), first), 0.5);
+    auto again = v.r->rtStatus();
+    EXPECT_EQ(again.blasBuilds, st.blasBuilds);
+    EXPECT_EQ(again.tlasBuilds, st.tlasBuilds + 1);
+    EXPECT_EQ(again.blas, st.blas);
+    EXPECT_EQ(again.instances, st.instances);
+    EXPECT_EQ(again.geometries, st.geometries);
+
+    EXPECT_TRUE(v.r->updateVertices(0, keyed->meshes[0].vertices));
+    v.frame(enhanced(RayTracing::Full));
+    EXPECT_TRUE(v.r->upload(*keyed).empty()); // mesh 0 re-sent: its BLAS + the merged one without it
+    v.frame(enhanced(RayTracing::Full));
+    const uint32_t builds = v.r->rtStatus().blasBuilds;
+    EXPECT_GT(builds, again.blasBuilds);
+    EXPECT_EQ(v.r->rtStatus().instances, again.instances + 1); // mesh 0 traced through its own instance from now on
+    EXPECT_TRUE(v.r->upload(*keyed).empty());
+    v.frame(enhanced(RayTracing::Full));
+    EXPECT_EQ(v.r->rtStatus().blasBuilds, builds);
+}
