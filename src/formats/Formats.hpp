@@ -119,9 +119,12 @@ struct Intro {
     bool scaled() const { return flags[1] & 0x10; }
     // Enemy intro data (data +0x00 == 13; tru.exe 0x63C7A0 -> 0x63AC40 -> 0x62F520 / 0x62F2C0, LEVELS.md "Enemy
     // intro data"): +0x34 -> planner record (index into Unit::plannerNodes, -1 none); paths of node indices into it:
-    // [0] the +0x38 path {byte +2 speed, u32 +4 count, +8 -> u32 nodes} or, with +0x6C bit 31, every node of the
+    // [0] the +0x38 path {byte +2 point mode, u32 +4 count, +8 -> u32 nodes} or, with +0x6C bit 31, every node of the
     // record; [n] the +0x3C byte count of alternatives at +0x40 + 4 (n - 1) (enemybase 22 n). +0x88 order mode.
-    struct PatrolPath { std::vector<uint32_t> nodes; uint8_t speed = 0; };
+    // Point mode (0x62F520 copies it to the AI's path +0x48): the default of a point whose node +0x40 byte is < 1;
+    // 2 / 3 select the patrol record's +0x10 / +0x14 attack (EnemyBehavior_PatrolAttack 0x635920), <= 3 also sets
+    // AI flag 0x20000000 (0x61B220, [U]).
+    struct PatrolPath { std::vector<uint32_t> nodes; uint8_t pointMode = 0; };
     int32_t patrolRecord = -1;
     std::vector<PatrolPath> patrolPaths;
     uint32_t patrolMode = 0; // 0 loop, 1 once, 2 ping-pong, 3 random free node, 4 random unvisited (0x637870)
@@ -181,6 +184,33 @@ struct CameraSpline {
     bool targetFitsCamera = false; // +0x5D: target key times scaled to the camera track's length
 };
 
+// Planner node (unit data +0x11C records, +0x50 -> 0x60-byte nodes; tru.exe 0x5C8EA0 / 0x669D00). `frame` = record
+// matrix x node matrix (unit frame); cdc model -Y is its facing. +0x44 angle (|.|, at most 85 degrees), +0x48 depth,
+// +0x4C height: the cover cone 0x623610 tests the threat against (Lara in front beyond depth + 632.1, within the angle,
+// below the height line). +0x40 point mode (< 1: the path's), +0x50 bit 0 copied to the planner, bit 1 PatrolLookTurn.
+struct PlannerNode {
+    glm::mat4 frame{1};
+    float angle = 0, depth = 0, height = 0;
+    int8_t mode = -1;
+    uint32_t flags = 0;
+    glm::vec3 pos() const { return glm::vec3(frame[3]); }
+};
+
+// NavPower nav mesh (Level +0x60 -> resource at +0x1C: u8 endian, u32 version 8, u32 graph count, graphs {u32, u32
+// layer, u32 area bytes, u32 size, f[4] params, bbox, ...}, convex areas from graph +0x138; LEVELS.md "Nav graphs").
+// Area: +0x00 centre, +0x0C normal, +0x18 radius, +0x30 low 7 bits edge count, then 0x14-byte edges {vertex, u32
+// adjacent area (graph offset, 0 none), u32 flags}. Unit frame.
+struct NavGraph {
+    uint32_t layer = 0;
+    float radius = 0, height = 0; // params [1] / [3]: the agent the graph was built for
+    struct Area {
+        glm::vec3 centre{0}, normal{0, 0, 1};
+        std::vector<glm::vec3> verts; // edge k runs verts[k] -> verts[k + 1]
+        std::vector<int32_t> adj;     // area index across edge k, -1 none
+    };
+    std::vector<Area> areas;
+};
+
 struct Unit {
     std::vector<Intro> intros;
     std::vector<std::string> streamGroups; // stream DRM base names ("pc-w\\streamgroups\\<name>.drm")
@@ -188,7 +218,8 @@ struct Unit {
     std::vector<ImfPlacement> imfs;
     std::vector<Portal> portals;
     std::vector<CameraSpline> cameraSplines; // index = the cameraspline script value's first word
-    std::vector<std::vector<glm::vec3>> plannerNodes; // [record][node] unit-frame points (noderef {record, node})
+    std::vector<std::vector<PlannerNode>> plannerNodes; // [record][node] (noderef {record, node})
+    std::vector<NavGraph> navGraphs;
     scene::Environment environment; // Level+0x70 render settings (fog, ambient)
     // Level+0x70 DTP +0x294 u16: objectlist.txt id of the Lara outfit object the unit loads (tru.exe 0x5DE2B0,
     // 0x5D4340); 0 without a settings DTP. docs/GAMEPLAY.md "Outfits".

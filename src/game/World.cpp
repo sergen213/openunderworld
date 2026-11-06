@@ -519,6 +519,7 @@ void World::tick(const Actions& input) {
     updateCamera(a, dt); // Camera.cpp: a playing spline camera, else the orbit camera
     if (std::exchange(cameraCut_, false)) prevCam_ = cam_; // a spline camera cuts in
     tickCombat(a, dt); // after the camera: free aim follows it
+    if (!combat_.shots.empty()) enemies_.disturb(player_.state().pos); // her shots: disturbance message 0xBF (0x6FFFC0)
     tickGadgets(a, dt); // flashlight, grenades (Gadgets.cpp)
     tickAir(dt);
     // Swimming soaks every region (tru.exe under Wine: mask 0x7F while she swims); out of the water the mask is clear

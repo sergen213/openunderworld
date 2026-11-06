@@ -355,6 +355,18 @@ re-bases coordinates when the player moves far from the first unit.
   (0x669D00: 14 probes of radius 200 per node) [O]; scripts name one as a noderef {record, node} (enemybase 27
   GuardNode). `formats::Unit::plannerNodes`. Their +0x44..+0x4C meaning is [U].
 
+## Nav graphs (Level +0x60 -> NavPower resource)
+
+- [O] Level +0x60 → section +0 {−1, 0, 1, size, hash, 0x10000, size}, resource at +0x1C (+0x68 → its end): u8 endian
+  (0 little), u32 version 8 (AddResource 0x41C8C0 refuses others), u32 graph count, then graphs {u32, u32 layer (0..31,
+  plus the unit's layer base), u32 area bytes, u32 size (next graph), f[4] params ([1] agent radius, [3] height), f[6]
+  bbox, ...}; convex areas from graph +0x138 for `area bytes`: 0x38-byte header {+0x00 centre, +0x0C normal, +0x18
+  radius, +0x28 FLT_MAX, +0x30 low 7 bits edge count} then 0x14-byte edges {vertex, u32 adjacent area as a graph
+  offset (0 none), u32 flags 0xFFFF0000}; kd-tree and link records follow [U]. Areas float ~50 above the floor, in the
+  planner nodes' frame. Surveyed: l1_ship_exterior 1 graph (layer 3, radius 100, 398 areas), l4_ballcourt 2 (layers
+  4 / 3, radius 250 / 100), l2_norsehub 2 (6 / 1, 250 / 70), l2_cliffclimb 1 (1, 70), l7_yggdrasil_hall01 2 (12 / 11).
+  Other units point +0x60 elsewhere (no graph). `formats::Unit::navGraphs`; use: GAMEPLAY.md "Navigation".
+
 ## Enemy intro data (intro +0x78, type 13)
 
 - [O] tru.exe birth 0x63C7A0 reads it as instance +0x104: +0x30 → 0x698250 [U], +0x34 → a planner record of the

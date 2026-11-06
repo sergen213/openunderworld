@@ -36,6 +36,9 @@ constexpr float kCoverRunSeconds = 4.0f; // [I] gives up a cover it has not reac
 constexpr float kPatrolGiveUp = 20.0f;   // [I] s walking to a patrol point before taking the next one
 constexpr float kSearchWalkSeconds = 8.0f; // [I] s walking to a search position before idling there anyway
 constexpr int kSearchTries = 4;          // [I] random possible positions tried per step
+constexpr float kFlankRest = 600 * kCount; // [I] s between flank tries (0x62D930 re-evaluates its side 600 counts on)
+constexpr float kFlankRunSeconds = 8.0f;   // [I] gives up a flank node it has not reached by then
+constexpr float kInvestigateSeconds = 40.0f; // [I] gives up walking to a disturbance by then
 
 glm::mat3 tiltMatrix(glm::vec2 tilt) { // Rx(x) * Ry(y), as formats::introMatrix before the heading
     return glm::mat3(glm::rotate(glm::rotate(glm::mat4(1), tilt.x, vec3(1, 0, 0)), tilt.y, vec3(0, 1, 0)));
@@ -76,7 +79,8 @@ const anim::Clip* EnemyType::clip(Role r) const {
 
 std::string_view modeName(Mode m) {
     static constexpr std::string_view k[] = {"idle", "alert", "chase", "attack", "hit", "dead", "spawning", "fire", "reload", "sleep",
-                                             "cling", "drop", "down", "rise", "return", "cover", "crawl", "patrol", "search"};
+                                             "cling", "drop", "down", "rise", "return", "cover", "crawl", "patrol", "search",
+                                             "flank", "dodge", "investigate"};
     return size_t(m) < std::size(k) ? k[size_t(m)] : "unknown";
 }
 
@@ -178,6 +182,15 @@ void Enemy::setMode(Mode m) {
     case Mode::Crawl: play(Role::Run, true); break;
     case Mode::Patrol: s_.phase = 0, s_.phaseTime = 0; break; // walks on in tick (PatrolMove)
     case Mode::Search: startSearch(); break;
+    case Mode::Flank: // MoveNav with the flank set's clip (soldiers' is an anim request: the run clip)
+        if (type_->clips.count(type_->flank.run)) playClip(type_->flank.run, true);
+        else play(Role::Run, true);
+        break;
+    case Mode::Dodge: break; // dodge() plays the side's clip
+    case Mode::Investigate: // InvestigateStart: the record's +0x0C clip, then InvestigateMove
+        s_.phase = 1, s_.phaseTime = 0;
+        if (!type_->investigate.start.empty()) s_.phase = 0, playClip(type_->investigate.start, false);
+        break;
     }
 }
 
@@ -204,13 +217,25 @@ void Enemy::notice() {
     if (type_->clips.count(bark)) playClip(bark, false);
 }
 
+static bool calm(Mode m) { return m == Mode::Idle || m == Mode::Return || m == Mode::Patrol || m == Mode::Search || m == Mode::Investigate; }
+
 void Enemy::alert(vec3 at) {
-    if (s_.mode != Mode::Idle && s_.mode != Mode::Return && s_.mode != Mode::Patrol && s_.mode != Mode::Search) return;
+    if (!calm(s_.mode)) return;
     s_.lastSeen = at, s_.unseenTime = 0;
     setMode(Mode::Alert);
 }
 
-const std::vector<vec3>* Enemy::patrolPoints() const {
+// 0x61DD10 (message 0xBF): a disturbance more than 1580 from the one it investigates (0x611BA0) restarts it; the
+// behaviour runs when its time is within 30 counts of the message (0x61DA60) [I: at once].
+void Enemy::hear(vec3 at) {
+    const InvestigateStyle& iv = type_->investigate;
+    if (!alive() || iv.walk.empty() || !calm(s_.mode) || flatDist(s_.pos, at) > iv.hear) return;
+    if (s_.mode == Mode::Investigate && glm::distance(s_.goal, at) <= 1580.25f) return;
+    s_.goal = at;
+    setMode(Mode::Investigate);
+}
+
+const std::vector<PatrolPoint>* Enemy::patrolPoints() const {
     return s_.path >= 0 && size_t(s_.path) < patrolPaths.size() && !patrolPaths[size_t(s_.path)].empty() ? &patrolPaths[size_t(s_.path)] : nullptr;
 }
 
@@ -250,7 +275,7 @@ bool Enemy::nextPatrolPoint(uint32_t mode) {
         break;
     case 3:
         s_.patrolIndex = n < 2 ? -1 : pick([&](int k) {
-            return k != i && std::none_of(claimed.begin(), claimed.end(), [&](vec3 c) { return glm::distance(c, (*p)[size_t(k)]) < 1.0f; });
+            return k != i && std::none_of(claimed.begin(), claimed.end(), [&](vec3 c) { return glm::distance(c, (*p)[size_t(k)].pos) < 1.0f; });
         });
         break;
     case 4:
@@ -279,11 +304,23 @@ void Enemy::playIdle(const std::vector<IdleAnim>& idles) {
     }
 }
 
-bool Enemy::walkTo(vec3 goal, float arrive, const std::string& clip, float dt) {
+vec3 Enemy::steer(vec3 goal) const { return nav ? nav->steer(s_.pos, goal) : goal; }
+
+bool Enemy::walkTo(vec3 goal, float arrive, const std::string& clip, float dt, vec3* flight) {
+    if (type_->flyer()) { // [I] straight through the air / water at half the chase speed
+        const vec3 to = goal - s_.pos;
+        const float d = glm::length(to);
+        if (d <= arrive) return true;
+        if (clip.empty()) play(Role::Walk, true);
+        else playClip(clip, true);
+        turnTowards(goal, dt);
+        if (flight) *flight = to / d * std::min(d, type_->tuning.flySpeed * 0.5f * dt);
+        return false;
+    }
     if (flatDist(s_.pos, goal) <= arrive) return true;
     if (clip.empty()) play(Role::Walk, true);
     else playClip(clip, true);
-    turnTowards(goal, dt);
+    turnTowards(steer(goal), dt);
     return false;
 }
 
@@ -299,16 +336,17 @@ void Enemy::startSearch() {
 // the guard zone), not towards her, reachable in a straight run, where a crouched body's view of Lara is blocked. It stands up after a while and
 // hunts on (a tall cover: it steps out, as AtCoverStepOutOfCover).
 bool Enemy::seekCover(const collision::CollisionMesh& col, const Target& lara) {
-    if (s_.coverCooldown > 0 || coverNodes.empty() || !type_->clips.count("combat_idle_crouch")) return false;
+    if (s_.coverCooldown > 0 || nodes.empty() || !type_->clips.count("combat_idle_crouch")) return false;
     const vec3 chest = lara.pos + vec3(0, 0, lara.height * 0.6f);
     const auto clear = [&](vec3 from) {
         const float d = glm::length(chest - from);
         const auto hit = d < 1 ? std::nullopt : col.raycast(from, (chest - from) / d, d);
         return !hit || hit->t >= d - 1.0f;
     };
-    const vec3* best = nullptr;
+    std::optional<vec3> best;
     float bestDist = kCoverReach;
-    for (const vec3& n : coverNodes) {
+    for (const auto& node : nodes) {
+        const vec3 n = node.pos();
         const float d = flatDist(s_.pos, n);
         if (d >= bestDist || d < type_->tuning.radius || std::abs(n.z - s_.pos.z) >= kZoneHeight) continue;
         if (!zones.empty() && !std::any_of(zones.begin(), zones.end(), [&](const GuardZone& z) { return z.contains(n, true); })) continue;
@@ -316,11 +354,94 @@ bool Enemy::seekCover(const collision::CollisionMesh& col, const Target& lara) {
         if (clear(n + vec3(0, 0, kCoverLow))) continue;
         const vec3 knee = s_.pos + vec3(0, 0, type_->tuning.stepUp + type_->tuning.radius), to = n + vec3(0, 0, type_->tuning.stepUp + type_->tuning.radius);
         if (col.raycast(knee, glm::normalize(to - knee), glm::distance(knee, to))) continue; // [I] a straight run there
-        best = &n, bestDist = d;
+        best = n, bestDist = d;
     }
     if (!best) return false;
     s_.cover = *best;
     setMode(Mode::Cover);
+    return true;
+}
+
+// EnemyBehavior_Flank (0x639B20 -> 0x637D10 -> 0x632F80). Lara must be inside [min, max) of it (R+0x04 bit 0; else
+// outside). The side (0x62D930): out of the side range (s16 R+0x3A) 3; closer than R+0x1C and more than R+0x28 degrees
+// off its facing 4; else 1 / 2 by the sign. The query direction (0x615090) = towards Lara, turned +45 (1) / -45 (2)
+// degrees, kept (3) or reversed (4). Candidates: planner nodes in a box of `gather` around it (0x660CE0), not claimed
+// (0x61F5D0), in a guard zone (0x622C80); cost (0x622670):
+//   |dist(node, it) - travel| travelW + |dist(node, Lara) - lara| laraW + (1 - dir . toward(node)) dirW / 2
+//   + closeCost (closer than closeDist to Lara) + nearCost (closer than nearDist to it) + coneW (Lara outside the
+//   node's cover cone, 0x623610) + 2000 (one of its last 8 destinations within 640, 0x61F6B0);
+// the cheapest under maxCost wins (strictly: the first of equals [I: nearest first, for tru.exe's kd-tree order]),
+// if it can get there (0x6498D0: its nav mesh). Every soldier type reads the same record: all weights 0, closeCost /
+// nearCost 1e11 (4 m from Lara, 0.8 m from itself), so it takes the nearest free node at least 4 m from her.
+bool Enemy::flank(const Target& lara) {
+    const FlankStyle& f = type_->flank;
+    if (!f.valid || s_.flankWait > 0 || nodes.empty()) return false;
+    s_.flankWait = kFlankRest;
+    const vec3 ai = s_.pos, to = lara.pos - ai;
+    const float d = glm::length(to), lo = std::min(f.minRange, f.maxRange), hi = std::max(f.minRange, f.maxRange);
+    if (f.inside ? d < lo || d >= hi : d >= lo || d < hi) return false;
+    const vec3 facing(std::cos(s_.yaw), std::sin(s_.yaw), 0);
+    const float off = std::atan2(facing.x * to.y - facing.y * to.x, facing.x * to.x + facing.y * to.y); // + = Lara on its left [I]
+    const int side = f.lara * f.lara <= d * d ? 3 : d < f.frontRange && std::abs(off) > glm::radians(f.frontAngle) ? 4 : off < 0 ? 1 : 2;
+    const glm::vec2 base = glm::length(glm::vec2(to)) > 1e-3f ? glm::normalize(glm::vec2(to)) : glm::vec2(facing);
+    const float turn = side == 1 ? kPi / 4 : side == 2 ? -kPi / 4 : side == 4 ? kPi : 0;
+    const glm::vec2 dir(base.x * std::cos(turn) - base.y * std::sin(turn), base.x * std::sin(turn) + base.y * std::cos(turn));
+    std::vector<std::pair<float, size_t>> order; // nearest first
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const vec3 p = nodes[i].pos();
+        if (glm::any(glm::greaterThan(glm::abs(p - ai), vec3(f.gather)))) continue;
+        order.push_back({flatDist(ai, p), i});
+    }
+    std::sort(order.begin(), order.end());
+    const float eye = type_->tuning.height * 0.5f; // [I] 0x6746C0: crouched half height (or the eye marker)
+    bool best = false;
+    float bestCost = f.maxCost;
+    for (const auto& [travel, i] : order) {
+        const formats::PlannerNode& n = nodes[i];
+        const vec3 p = n.pos();
+        if (std::any_of(claimed.begin(), claimed.end(), [&](vec3 c) { return glm::distance(c, p) < 1.0f; })) continue;
+        if (!zones.empty() && !std::any_of(zones.begin(), zones.end(), [&](const GuardZone& z) { return z.contains(p, true); })) continue;
+        const vec3 local(glm::inverse(n.frame) * glm::vec4(lara.pos, 1)); // 0x623610: Lara in the node's cover cone
+        const float ahead = -local.y, across = glm::length(glm::vec2(local));
+        const bool cone = ahead > n.depth + 632.1f && std::abs(std::atan2(local.x, ahead)) < glm::radians(n.angle) && across > 0 &&
+                          (local.z - eye) / across <= (n.height - eye) / (n.depth + 632.1f);
+        const bool recent = std::any_of(s_.recent.begin(), s_.recent.begin() + s_.recentCount,
+                                        [&](vec3 r) { return glm::all(glm::lessThan(glm::abs(r - p), vec3(640.0f))); });
+        const float fromLara = flatDist(p, lara.pos);
+        float cost = std::abs(travel - f.travel) * f.travelW + std::abs(fromLara - f.lara) * f.laraW + (cone ? 0 : f.coneW) + (recent ? 2000.0f : 0);
+        if (travel > 0) cost += (1 - glm::dot(dir, glm::vec2(p - ai) / travel)) * f.dirW * 0.5f;
+        if (fromLara < f.closeDist) cost += f.closeCost;
+        if (travel < f.nearDist) cost += f.nearCost;
+        if (cost < bestCost) best = true, bestCost = cost, s_.goal = p;
+    }
+    if (!best || (nav && nav->locate(ai) >= 0 && nav->path(ai, s_.goal).empty())) return false;
+    s_.recent[size_t(s_.recentNext)] = s_.goal;
+    s_.recentNext = (s_.recentNext + 1) % int(s_.recent.size()), s_.recentCount = std::min(s_.recentCount + 1, int(s_.recent.size()));
+    setMode(Mode::Flank);
+    return true;
+}
+
+// EnemyBehavior_Sidestep (0x677D70: Lara closer than `trigger`, its timer run out; 0x678530: a random side, `step`
+// away, checked on the nav mesh by 0x67A560; 0x678B50 / 0x674320 re-arm the timer with +0x10 after a failed try, +0x0C
+// after a step). Ours: it faces her and plays the side's clip (root motion carries it).
+bool Enemy::dodge(const collision::CollisionMesh& col, const Target& lara) {
+    const DodgeStyle& d = type_->dodge;
+    if (d.left.empty() || s_.dodgeWait > 0 || flatDist(s_.pos, lara.pos) >= d.trigger) return false;
+    const bool left = (lcg(s_.rng) >> 16) & 1;
+    const float b = bearing(s_.pos, lara.pos), a = b + (left ? kPi / 2 : -kPi / 2);
+    const vec3 to = s_.pos + vec3(std::cos(a), std::sin(a), 0) * d.step;
+    const vec3 knee(0, 0, type_->tuning.stepUp + type_->tuning.radius);
+    const bool ok = nav && nav->locate(s_.pos) >= 0
+                        ? nav->locate(to) >= 0
+                        : !col.raycast(s_.pos + knee, glm::normalize(to - s_.pos), d.step) &&
+                              col.groundProbe(to + vec3(0, 0, type_->tuning.stepUp), type_->tuning.stepUp + type_->tuning.stepDown).has_value();
+    if (!ok) {
+        s_.dodgeWait = d.retry;
+        return false;
+    }
+    setMode(Mode::Dodge);
+    s_.yaw = b;
+    playClip(left ? d.left : d.right, false);
     return true;
 }
 
@@ -433,7 +554,7 @@ void Enemy::onHit(const Hit& hit) {
         // one per pistol round pushed them back for good); a reaction plays out, hits during it add up
         s_.damageSinceReaction = 0;
         setMode(Mode::Hit);
-    } else if (s_.mode == Mode::Idle || s_.mode == Mode::Return || s_.mode == Mode::Patrol || s_.mode == Mode::Search) {
+    } else if (calm(s_.mode)) {
         setMode(Mode::Alert); // shot from out of sight: turns to the shooter
     }
 }
@@ -595,6 +716,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     s_.cooldown = std::max(0.0f, s_.cooldown - dt);
     for (float& c : s_.fireCooldown) c = std::max(0.0f, c - dt);
     s_.coverCooldown = std::max(0.0f, s_.coverCooldown - dt);
+    s_.flankWait = std::max(0.0f, s_.flankWait - dt), s_.dodgeWait = std::max(0.0f, s_.dodgeWait - dt);
     if (s_.ragdollPhase) { // physics owns the body (World::stepRagdolls)
         updatePose(dt, false);
         return;
@@ -604,8 +726,8 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         s_.unseenTime = 0, s_.lastSeen = lara.pos;
     } else {
         s_.unseenTime += dt;
-        if (s_.mode != Mode::Idle && s_.mode != Mode::Patrol && s_.mode != Mode::Dead && lara.alive && (lara.inWater || !aquatic) &&
-            glm::distance(s_.pos, lara.pos) < senses().loseTrack)
+        if (s_.mode != Mode::Idle && s_.mode != Mode::Patrol && s_.mode != Mode::Investigate && s_.mode != Mode::Dead && lara.alive &&
+            (lara.inWater || !aquatic) && glm::distance(s_.pos, lara.pos) < senses().loseTrack)
             s_.lastSeen = lara.pos; // [I] senses +0x20: still tracked this close, unseen
     }
     // Ground enemies measure Lara flat, centre to centre; flyers from their centre to her head.
@@ -646,33 +768,53 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     case Mode::Idle: // NonCombat: Patrol (priority 15) before MoveToGuardZone (10) before Idle (soldier tree 0x612030)
         if (sees) {
             notice();
-        } else if (!flyer && patrolPoints() && s_.patrolIndex >= 0) {
+        } else if (patrolPoints() && s_.patrolIndex >= 0) {
             setMode(Mode::Patrol);
         } else if (!inZone(false)) {
             setMode(Mode::Return);
         }
         break;
-    case Mode::Patrol: { // PatrolMove to the point (pulled into the guard zone, 0x61F990), PatrolAnim there, PatrolIncr
-        if (sees) {
-            notice();
-            break;
-        }
+    case Mode::Patrol: { // PatrolMove to the point (pulled into the guard zone, 0x61F990), PatrolLookTurn, PatrolAnim, PatrolIncr
         const auto* p = patrolPoints();
         if (!p || s_.patrolIndex < 0 || size_t(s_.patrolIndex) >= p->size()) {
-            setMode(Mode::Idle);
+            if (sees) notice();
+            else setMode(Mode::Idle);
             break;
         }
+        const PatrolPoint& point = (*p)[size_t(s_.patrolIndex)];
         const PatrolStyle& ps = type_->patrol;
+        if (sees) { // PatrolAttack (priority 20, 0x635920): a point of mode 2 / 3 attacks with record +0x10 / +0x14 at once
+            const int a = point.mode == 2 || point.mode == 3 ? ps.attack[size_t(point.mode - 2)] : -1;
+            const Attack* rec = a >= 0 ? &t.attacks[size_t(a)] : nullptr;
+            if (rec && rec->ranged() && type_->clips.count(rec->shotClip) && dist <= senses().eye.range && size_t(a) < s_.fireCooldown.size()) {
+                s_.fire = a, s_.lastSeen = lara.pos;
+                setMode(Mode::Fire);
+            } else if (rec && !rec->ranged() && type_->clips.count(rec->clip) && dist <= t.attackRange) { // [I] the 0x634B20 range
+                s_.melee = a;
+                setMode(Mode::Attack);
+            } else {
+                notice();
+            }
+            break;
+        }
         s_.phaseTime += dt;
         if (s_.phase == 0) {
-            if (walkTo(zoneGoal((*p)[size_t(s_.patrolIndex)]), ps.arrive > 0 ? ps.arrive : 2 * t.radius, ps.walk, dt) ||
+            if (walkTo(flyer ? point.pos : zoneGoal(point.pos), ps.arrive > 0 ? ps.arrive : 2 * t.radius, ps.walk, dt, &flight) ||
                 s_.phaseTime > kPatrolGiveUp) {
-                s_.phase = 1, s_.phaseTime = 0;
-                playIdle(ps.idles); // none (cats): straight on
-                delta = vec3(0);
+                s_.phase = point.look && !flyer ? 2 : 1, s_.phaseTime = 0;
+                if (s_.phase == 1) playIdle(ps.idles); // none (cats): straight on
+                delta = flight = vec3(0);
             }
+        } else if (s_.phase == 2) { // PatrolLookTurn (0x628800): faces the node with the set's turn clips
+            delta = vec3(0);
+            const vec3 look = s_.pos + point.facing * 100.0f;
+            const float off = wrapAngle(bearing(s_.pos, look) - s_.yaw);
+            if (const std::string& c = off > 0 ? ps.turnLeft : ps.turnRight; !c.empty()) playClip(c, true);
+            turnTowards(look, dt);
+            if (std::abs(off) < 0.05f) s_.phase = 1, s_.phaseTime = 0, playIdle(ps.idles);
         } else {
             delta = vec3(0);
+            if (!aquatic) flight = vec3(0);
             if (s_.phaseTime >= s_.phaseLength) {
                 s_.phase = 0, s_.phaseTime = 0;
                 if (!nextPatrolPoint(patrolMode)) setMode(Mode::Idle); // a finished path: stays where it is
@@ -721,7 +863,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
             break;
         }
         play(Role::Walk, true);
-        turnTowards(zones.empty() ? s_.pos : zones[0].point, dt);
+        turnTowards(zones.empty() ? s_.pos : steer(zones[0].point), dt);
         if (zones.empty() || flatDist(s_.pos, zones[0].point) < zones[0].inner * kZoneClamp) setMode(Mode::Idle);
         break;
     case Mode::Alert:
@@ -745,7 +887,7 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
             for (float& c : s_.fireCooldown) c = 0;
         } else { // runs there
             play(Role::Run, true);
-            turnTowards(s_.cover, dt);
+            turnTowards(steer(s_.cover), dt);
             delta = run;
         }
         break;
@@ -753,7 +895,8 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     case Mode::Chase: {
         const vec3 goal = zoneGoal(s_.lastSeen); // the guard zone bounds the chase (0x61F990)
         const bool held = flatDist(s_.pos, goal) < t.radius; // at the last seen spot, or the zone's edge
-        turnTowards(sees || held ? s_.lastSeen : goal, dt);
+        const bool stands = sees && (dist <= t.attackRange || (type_->ranged() && dist <= senses().eye.range));
+        turnTowards(stands || held || (sees && flyer) ? s_.lastSeen : flyer ? goal : steer(goal), dt);
         const bool facing = aimError(lara.pos) < kFaceToAttack;
         const int fire = type_->ranged() ? readyFire() : -1;
         if (!lara.alive) {
@@ -768,7 +911,8 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
             s_.melee = type_->spit;
             s_.fireCooldown[0] = t.attacks[size_t(type_->spit)].cooldown;
             setMode(Mode::Attack);
-        } else if (sees && (dist <= t.attackRange || (type_->ranged() && dist <= senses().eye.range))) {
+        } else if (!flyer && sees && dodge(col, lara)) { // CloseCombat: Sidestep (priority 30) under Melee / Close
+        } else if (stands) {
             play(Role::Alert, true); // in reach, or in rifle range with a clear line: stand (and aim)
             delta = vec3(0);
             flight = vec3(0);
@@ -821,13 +965,40 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         }
         if (s_.shotsLeft == 0 && clipDone()) {
             s_.fireCooldown[size_t(s_.fire)] = a.cooldown;
-            if (!seekCover(col, lara)) setMode(type_->clips.count(a.followClip) ? Mode::Reload : Mode::Chase);
+            if (!seekCover(col, lara) && !(!flyer && flank(lara))) setMode(type_->clips.count(a.followClip) ? Mode::Reload : Mode::Chase);
         }
         break;
     }
     case Mode::Reload:
         if (clipDone()) setMode(Mode::Chase);
         break;
+    case Mode::Flank: // runs (nav path) to the node, then fights on from there; [I] gives up after kFlankRunSeconds
+        if (walkTo(s_.goal, std::max(type_->flank.arrive, t.radius), type_->clips.count(type_->flank.run) ? type_->flank.run : type_->clipName(Role::Run), dt) ||
+            s_.modeTime > kFlankRunSeconds)
+            setMode(Mode::Chase), delta = vec3(0);
+        break;
+    case Mode::Dodge: // the side clip's root motion; then the step's timer (+0x0C)
+        if (clipDone()) s_.dodgeWait = type_->dodge.rest, setMode(Mode::Chase);
+        break;
+    case Mode::Investigate: { // InvestigateStart clip, InvestigateMove (pulled into its zone: 0x61F990 x 0.8), InvestigateEnd
+        if (sees) {
+            notice();
+            break;
+        }
+        const InvestigateStyle& iv = type_->investigate;
+        s_.phaseTime += dt;
+        if (s_.phase == 1) {
+            if (walkTo(zoneGoal(s_.goal), iv.arrive > 0 ? iv.arrive : 2 * t.radius, iv.walk, dt) || s_.phaseTime > kInvestigateSeconds) {
+                s_.phase = 2, s_.phaseTime = 0, delta = vec3(0);
+                if (!iv.end.empty()) playClip(iv.end, false);
+            }
+        } else {
+            delta = vec3(0);
+            if (s_.phase == 0 && clipDone()) s_.phase = 1, s_.phaseTime = 0;
+            else if (s_.phase == 2 && (iv.end.empty() || clipDone())) setMode(Mode::Idle); // back to its patrol or post
+        }
+        break;
+    }
     case Mode::Sleep: // sleep_start, sleep_loop for kSleepSeconds, sleep_end, then awake and alert
         if (s_.clip == "sleep_start" && clipDone()) playClip("sleep_loop", true);
         else if (s_.clip == "sleep_loop" && (s_.sleep -= dt) <= 0) playClip("sleep_end", false);
@@ -1002,20 +1173,22 @@ void Enemies::tick(const collision::CollisionMesh& col, const Target& lara, cons
         if (!g.fired && g.enabled && flatDist(g.pos, lara.pos) <= g.range && std::abs(g.pos.z - lara.pos.z) <= 2000.0f)
             spawn(g);
     shots.clear();
-    // Patrol claims (0x633F10 / 0x633F60 reserve a planner node): the point each patrolling enemy walks to or idles at,
-    // kept current within the tick so two mode-3 patrollers never pick the same one.
+    // Claims (0x633F10 / 0x633F60 / 0x61F5D0 reserve a planner node): the patrol point each patrolling enemy walks to
+    // or idles at, a flanker's node; kept current within the tick so two enemies never pick the same one.
     const auto claim = [](const Enemy& e) {
         const auto& s = e.state();
+        if (e.alive() && s.mode == Mode::Flank) return s.goal;
         const bool on = e.alive() && (s.mode == Mode::Patrol || s.mode == Mode::Idle) && s.patrolIndex >= 0 && s.path >= 0 &&
                         size_t(s.path) < e.patrolPaths.size() && size_t(s.patrolIndex) < e.patrolPaths[size_t(s.path)].size();
-        return on ? e.patrolPaths[size_t(s.path)][size_t(s.patrolIndex)] : vec3(std::nanf(""));
+        return on ? e.patrolPaths[size_t(s.path)][size_t(s.patrolIndex)].pos : vec3(std::nanf(""));
     };
     claims_.clear();
     for (const auto& e : enemies_) claims_.push_back(claim(*e));
     for (size_t k = 0; k < enemies_.size(); ++k) {
         auto& e = enemies_[k];
         if (const auto g = guards_.find(e->uid()); g != guards_.end() && e->zones.size() != g->second.size()) resolveZones(*e);
-        e->coverNodes = worldNodes_;
+        e->nodes = worldNodes_;
+        e->nav = navFor(e->type());
         e->claimed = claims_;
         e->ragdolls = e->chunkSets = 0;
         for (const auto& o : enemies_)
@@ -1039,7 +1212,6 @@ void Enemies::tick(const collision::CollisionMesh& col, const Target& lara, cons
     for (const auto& e : enemies_) {
         if (!e->type().ranged()) continue;
         const Mode was = e->previous().mode, now = e->state().mode;
-        const auto calm = [](Mode m) { return m == Mode::Idle || m == Mode::Return || m == Mode::Patrol || m == Mode::Search; };
         if (now == Mode::Alert && calm(was)) {
             if (!e->state().loop) bark(*e, "EAR"); // the spotter (its bark clip)
             spotters.push_back(e.get());
@@ -1058,6 +1230,22 @@ void Enemies::tick(const collision::CollisionMesh& col, const Target& lara, cons
     for (const Enemy* e : spotters)
         for (auto& o : enemies_)
             if (o.get() != e && o->type().ranged() && glm::distance(o->position(), e->position()) < kSquadRadius) o->alert(e->state().lastSeen);
+}
+
+void Enemies::disturb(vec3 at) {
+    for (auto& e : enemies_) e->hear(at);
+}
+
+// [I] the smallest loaded layer built for at least its radius (soldiers 94.8 -> 100), else the widest; tru.exe picks
+// the layer from AI +0x1C50 (not traced). Flyers swim / fly free (NavPower's VolumeGraph is not decoded).
+const NavMesh* Enemies::navFor(const EnemyType& t) const {
+    if (t.flyer()) return nullptr;
+    const NavMesh* best = nullptr;
+    for (const auto& [layer, m] : navs_) {
+        const bool fits = m.radius >= t.tuning.radius, bestFits = best && best->radius >= t.tuning.radius;
+        if (!best || (fits && (!bestFits || m.radius < best->radius)) || (!fits && !bestFits && m.radius > best->radius)) best = &m;
+    }
+    return best;
 }
 
 void Enemies::guard(int32_t uid, uint32_t record, uint32_t node, float r1, float r2) {
@@ -1084,7 +1272,7 @@ void Enemies::resolveZones(Enemy& e) const {
     if (g == guards_.end() || n == nodes_.end() || o == offsets_.end()) return;
     for (const Guard& z : g->second)
         if (z.record < n->second.size() && z.node < n->second[z.record].size())
-            e.zones.push_back({n->second[z.record][z.node] + o->second, z.inner, z.outer});
+            e.zones.push_back({n->second[z.record][z.node].pos() + o->second, z.inner, z.outer});
 }
 
 void Enemies::spawn(Generator& g) {
@@ -1093,6 +1281,8 @@ void Enemies::spawn(Generator& g) {
         auto& e = add(std::move(type), g.uid, g.pos, g.yaw, true);
         e.unit = g.unit;
         e.generator = g.uid;
+        e.patrolPaths = g.patrolPaths, e.patrolMode = g.patrolMode; // the generator intro's own enemy data
+        e.setPatrol(0);
     }
 }
 

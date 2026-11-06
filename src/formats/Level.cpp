@@ -173,7 +173,7 @@ Unit parseUnit(const cdc::Drm& d) {
         const auto path = [&](cdc::Pointer p) { // 0x62F520: {?, ?, byte speed, ?, u32 count, -> u32 nodes}, at most 16
             const View& pv = view(p.section);
             Intro::PatrolPath r;
-            r.speed = pv.at<uint8_t>(p.offset + 2);
+            r.pointMode = pv.at<uint8_t>(p.offset + 2);
             const auto list = pv.ptrs.find(p.offset + 8);
             if (list == pv.ptrs.end()) return r;
             const View& lv = view(list->second.section);
@@ -225,23 +225,67 @@ Unit parseUnit(const cdc::Drm& d) {
     }
 
     // Planner nodes (0x5C8EA0 / 0x669D00): +0x118 count, +0x11C -> 0x60-byte records {matrix, +0x4C node count,
-    // +0x50 -> 0x60-byte nodes {matrix, ...}}; a node's point = record matrix * node translation. Scripts name one
-    // as a noderef {record, node} (enemybase 27 GuardNode).
+    // +0x50 -> 0x60-byte nodes {matrix, +0x40 u8 mode, +0x44 angle, +0x48 depth, +0x4C height, +0x50 flags}}
+    // (PlannerNode). Scripts name one as a noderef {record, node} (enemybase 27 GuardNode).
     if (const auto n = ud.at<uint32_t>(up.offset + 0x118); n && ud.ptrs.count(up.offset + 0x11C)) {
         const auto rp = ud.ptr(up.offset + 0x11C, "unit planner records");
         const View rv(d, rp.section);
+        const auto matrix = [](const View& v, size_t b) {
+            glm::mat4 m;
+            for (int i = 0; i < 16; ++i) m[i / 4][i % 4] = v.at<float>(b + 4 * i);
+            return m;
+        };
         for (uint32_t r = 0; r < n; ++r) {
             const size_t b = rp.offset + 0x60 * size_t(r);
-            glm::mat4 rm;
-            for (int i = 0; i < 16; ++i) rm[i / 4][i % 4] = rv.at<float>(b + 4 * i);
+            const glm::mat4 rm = matrix(rv, b);
             auto& nodes = u.plannerNodes.emplace_back();
             const auto np = rv.ptrs.find(uint32_t(b + 0x50));
             if (np == rv.ptrs.end()) continue;
             const View nv(d, np->second.section);
             for (uint32_t k = 0, nk = rv.at<uint32_t>(b + 0x4C); k < nk; ++k) {
                 const size_t q = np->second.offset + 0x60 * size_t(k);
-                nodes.push_back(glm::vec3(rm * glm::vec4(nv.at<float>(q + 0x30), nv.at<float>(q + 0x34), nv.at<float>(q + 0x38), 1)));
+                nodes.push_back({rm * matrix(nv, q), std::min(std::abs(nv.at<float>(q + 0x44)), 85.0f), std::abs(nv.at<float>(q + 0x48)),
+                                 std::abs(nv.at<float>(q + 0x4C)), nv.at<int8_t>(q + 0x40), nv.at<uint32_t>(q + 0x50)});
             }
+        }
+    }
+
+    // Nav graphs (NavGraph; tru.exe NavPower AddResource 0x41C8C0 / AddNavGraph 0x41C7D0): Level +0x60 -> the
+    // section holding the resource at +0x1C after a {-1, 0, 1, size, ...} header; other units point it elsewhere.
+    if (const auto np = level.ptrs.find(0x60); np != level.ptrs.end() && np->second.offset == 0 &&
+                                               d.sections[np->second.section].data.size() >= 0x28 &&
+                                               View(d, np->second.section).at<uint32_t>(0) == 0xFFFFFFFFu) {
+        const View nv(d, np->second.section);
+        const size_t res = 0x1C;
+        if (nv.at<uint8_t>(res) != 0 || nv.at<uint32_t>(res + 4) != 8) throw FormatError("nav graph: not a little-endian version 8 resource");
+        size_t g = res + 0xC;
+        for (uint32_t i = 0, count = nv.at<uint32_t>(res + 8); i < count; ++i) {
+            auto& graph = u.navGraphs.emplace_back();
+            graph.layer = nv.at<uint32_t>(g + 4);
+            graph.radius = nv.at<float>(g + 0x14), graph.height = nv.at<float>(g + 0x1C);
+            const size_t end = g + 0x138 + nv.at<uint32_t>(g + 8);
+            std::map<uint32_t, int32_t> index; // graph offset -> area
+            std::vector<std::vector<uint32_t>> links;
+            for (size_t a = g + 0x138; a < end;) {
+                const uint32_t edges = nv.at<uint32_t>(a + 0x30) & 0x7F;
+                index[uint32_t(a - g)] = int32_t(graph.areas.size());
+                auto& area = graph.areas.emplace_back();
+                const auto v3 = [&](size_t o) { return glm::vec3(nv.at<float>(o), nv.at<float>(o + 4), nv.at<float>(o + 8)); };
+                area.centre = v3(a), area.normal = v3(a + 0xC);
+                auto& l = links.emplace_back();
+                for (uint32_t e = 0; e < edges; ++e) {
+                    const size_t q = a + 0x38 + 0x14 * e;
+                    area.verts.push_back(v3(q));
+                    l.push_back(nv.at<uint32_t>(q + 0xC));
+                }
+                a += 0x38 + 0x14 * edges;
+            }
+            for (size_t a = 0; a < links.size(); ++a)
+                for (const uint32_t off : links[a]) {
+                    const auto it = off ? index.find(off) : index.end();
+                    graph.areas[a].adj.push_back(it == index.end() ? -1 : it->second);
+                }
+            g += nv.at<uint32_t>(g + 0xC);
         }
     }
 

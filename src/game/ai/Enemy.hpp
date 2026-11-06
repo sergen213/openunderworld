@@ -7,6 +7,7 @@
 #include "anim/Anim.hpp"
 #include "collision/Collision.hpp"
 #include "game/Combat.hpp"
+#include "formats/Formats.hpp"
 #include "physics/Physics.hpp"
 #include "script/Script.hpp"
 
@@ -132,11 +133,13 @@ struct IdleAnim {
 };
 // Patrol parameters (behaviour-list node +0x48; EnemyBehavior_Patrol* 0x61AED0 / 0x628990 / 0x6285F0): the walk
 // clip of its MoveNav set (+0x00 -> set +0x18), the idles played at each point (+0x04 list, when +0x0C > 0), the
-// arrival distance (set s16 max(+0x1C0, +0x1C2)).
+// arrival distance (set s16 max(+0x1C0, +0x1C2)). PatrolLookTurn (0x628730 / 0x628800) turns with the set's +0x58 /
+// +0x5C clips (90 left / right); PatrolAttack (0x635920 / 0x61B260) uses record +0x10 (point mode 2) / +0x14 (3).
 struct PatrolStyle {
-    std::string walk;
+    std::string walk, turnLeft, turnRight;
     std::vector<IdleAnim> idles;
     float arrive = 0;
+    std::array<int, 2> attack{-1, -1}; // tuning.attacks index, -1 none
 };
 // Search parameters (behaviour-list node +0xD8; EnemyBehavior_Search* 0x61E480..0x637130): its MoveNav walk clip
 // (+0x00 -> set +0x18), the start clip (+0x04), the idles (+0x24 list), [I] the whole search time (s32 +0x18
@@ -146,6 +149,34 @@ struct SearchStyle {
     std::vector<IdleAnim> idles;
     float time = 0, step = 0, angle = 0; // s, units, rad
     float arrive = 0;
+};
+// Flank (behaviour-list node +0xCC record R = +0x10; EnemyBehavior_Flank 0x6365B0 / 0x639B20 / 0x62A180, position
+// search 0x637D10 -> 0x632F80, cost 0x622670, side 0x62D930). Gathers the planner nodes within `gather` (enemy data
+// s16 +0x0E) of it and takes the cheapest under `maxCost`; costs and fields in docs/GAMEPLAY.md "Flank".
+struct FlankStyle {
+    bool valid = false;
+    std::string run;    // R+0x00 MoveNav set +0x18 (type-2 for soldiers: "" = the run role clip)
+    float arrive = 0;   // the set's s16 max(+0x1C0, +0x1C2)
+    bool inside = false; // R+0x04 bit 0: Lara must be inside [minRange, maxRange) (else outside)
+    float travelW = 0, laraW = 0, dirW = 0, coneW = 0, maxCost = 0; // R+0x08, +0x0C, +0x10, +0x14, +0x18
+    float frontRange = 0, frontAngle = 0; // R+0x1C, R+0x28 degrees (0x62D930: Lara behind it)
+    float minRange = 0, maxRange = 0;     // R+0x20 / +0x24
+    float closeDist = 0, closeCost = 0, nearCost = 0, travel = 0, lara = 0, nearDist = 0; // s16 +0x2C, +0x30, +0x34, s16 +0x38, +0x3A, +0x44
+    float gather = 0;
+};
+// Sidestep (node +0xE4; EnemyBehavior_Sidestep 0x677D70 / 0x678530 / 0x678B50 / 0x674320): Lara closer than `trigger`
+// -> a random side, `step` away; its MoveNav set's +0x34 / +0x38 clips (left / right). Cooldowns +0x0C after a step,
+// +0x10 after a failed try ([I] 30 Hz counts).
+struct DodgeStyle {
+    std::string left, right;
+    float step = 0, trigger = 0, rest = 0, retry = 0;
+};
+// Investigate (node +0x4C; EnemyBehavior_Investigate 0x61DA60 / 0x61DD10, InvestigateStart / Move / End
+// 0x61DF40 / 0x62C070 / 0x61E320): a disturbance message (0xBF: Lara's shots, 0x6FFFC0 / 0x69E510) far (> 1580) from the
+// last one makes it walk there (+0x08 MoveNav set) between its +0x0C / +0x10 clips; [I] `hear`: +0x18.
+struct InvestigateStyle {
+    std::string walk, start, end;
+    float arrive = 0, hear = 0;
 };
 
 struct EnemyType {
@@ -174,6 +205,9 @@ struct EnemyType {
     int spit = -1;           // attacks[] index of a ranged spit (green naga +0x88 spit_attack), -1 none
     PatrolStyle patrol;      // behaviour-list node +0x48
     SearchStyle search;      // behaviour-list node +0xD8; time 0: no search (spiders), loses Lara straight to idle
+    FlankStyle flank;        // node +0xCC
+    DodgeStyle dodge;        // node +0xE4; no clips: no sidestep
+    InvestigateStyle investigate; // node +0x4C; no walk clip: does not investigate
     // Ragdoll (ObjectBase +0x7C, physics::loadRagdoll) and each skeleton segment's bind position (model space).
     std::optional<physics::RagdollDef> ragdoll;
     std::vector<vec3> bind;
@@ -206,8 +240,10 @@ bool isEnemyObject(const cdc::BigfileSet& bigfile, const std::string& name);
 // Patrol: walking its intro's patrol path, an idle at each point (EnemyBehavior_Patrol / PatrolMove / PatrolAnim /
 // PatrolIncr). Search: lost Lara: start clip, to where she was, idles and steps to possible positions, then back to
 // its patrol or post (EnemyBehavior_Search / SearchStart / SearchToLastKnownPos / SearchIdle / SearchToPossiblePos).
+// Flank: running to a planner node chosen around Lara (EnemyBehavior_Flank). Dodge: a sidestep (EnemyBehavior_Sidestep).
+// Investigate: walking to a disturbance (EnemyBehavior_Investigate*).
 enum class Mode { Idle, Alert, Chase, Attack, Hit, Dead, Spawning, Fire, Reload, Sleep, Cling, Drop, Down, Rise, Return, Cover, Crawl,
-                  Patrol, Search };
+                  Patrol, Search, Flank, Dodge, Investigate };
 std::string_view modeName(Mode m);
 
 // What enemies hunt: Lara's feet and whether she can still be hurt.
@@ -259,10 +295,14 @@ struct EnemyState {
     int patrolIndex = -1;    // point it walks to / idles at; -1 none or done (0x637870 +0x34)
     int patrolStep = 1;      // ping-pong direction (+0x44)
     uint32_t visited = 0;    // mode 4: points visited this round (+0x654)
-    int phase = 0;           // Patrol: 0 walking, 1 idle at the point; Search: 0 start, 1 to last known, 2 idle, 3 to a possible position
+    int phase = 0;           // Patrol: 0 walking, 1 idle at the point, 2 look-turn; Search: 0 start, 1 to last known, 2 idle, 3 to a
+                             // possible position; Investigate: 0 start clip, 1 walking there, 2 end clip
     float phaseTime = 0, phaseLength = 0; // s in the phase, s it lasts (idles)
-    vec3 goal{0};            // Search: where it walks
+    vec3 goal{0};            // Search / Flank / Investigate: where it walks
     float searchTime = 0;    // s searching
+    float flankWait = 0, dodgeWait = 0; // s before it flanks / sidesteps again
+    std::array<vec3, 8> recent{};       // its last flank destinations (0x61F6B0's 8 positions: +2000 cost within 640)
+    int recentNext = 0, recentCount = 0;
     // Physics takeover of a dead body, `ragdollAt` s into Mode::Dead (the death entry's delay): ragdoll
     // (EnemyType::ragdoll) 0 none, 1 starting (World builds the bodies at `ragdoll` with the killing hit's impulse), 2
     // simulating, 3 settled (the pose stays, the bodies are gone); 4 broken into chunks (EnemyType::chunks; the body is
@@ -283,6 +323,38 @@ struct GuardZone {
     bool contains(vec3 p, bool outerRadius) const;
 };
 
+// The loaded units' nav graphs of one layer, world frame (Nav.cpp): the areas, A* through their shared edges, funnel.
+class NavMesh {
+public:
+    void add(const formats::NavGraph& g, vec3 offset); // appends the graph's areas (adjacency stays within it)
+    bool empty() const { return areas_.empty(); }
+    size_t size() const { return areas_.size(); }
+    float radius = 0;                    // the agent radius it was built for
+    int locate(vec3 feet) const;         // area under / around these feet, -1 off the mesh
+    // Corners from `from` to `to` (the last one `to`); empty when either end is off the mesh or no route joins them.
+    std::vector<vec3> path(vec3 from, vec3 to) const;
+    vec3 steer(vec3 from, vec3 to) const; // the first corner more than 10 away; `to` without a route
+
+private:
+    struct Area {
+        vec3 centre{0}, normal{0, 0, 1};
+        std::vector<vec3> verts;
+        std::vector<int> adj;
+        glm::vec2 lo{0}, hi{0};
+        bool ccw = true;
+    };
+    float floorZ(const Area& a, vec3 p) const;
+    std::vector<Area> areas_;
+};
+
+// A patrol point: its planner node's position, facing (cdc -Y of the node frame), PatrolLookTurn flag (node +0x50
+// bit 1) and point mode (node +0x40, < 1: the path's; Intro::PatrolPath::pointMode).
+struct PatrolPoint {
+    vec3 pos{0}, facing{0, -1, 0};
+    bool look = false;
+    int mode = 0;
+};
+
 class Enemy final : public Damageable {
 public:
     // `healthLevel`: Tailoring::enemyHealth (EnemyTuning::healthAt).
@@ -293,7 +365,9 @@ public:
     // Appends this tick's shots to `shots` (may be null).
     void tick(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, float dt, std::vector<Shot>* shots = nullptr);
     bool perceives(const collision::CollisionMesh& col, const Target& lara) const;
-    const Senses& senses() const { return s_.mode == Mode::Idle || s_.mode == Mode::Patrol ? type_->tuning.senses : type_->tuning.combatSenses; }
+    const Senses& senses() const {
+        return s_.mode == Mode::Idle || s_.mode == Mode::Patrol || s_.mode == Mode::Investigate ? type_->tuning.senses : type_->tuning.combatSenses;
+    }
 
     // Damageable
     vec3 position() const override { return s_.pos; }
@@ -310,14 +384,19 @@ public:
     std::string unit;     // owning unit (streaming); "" = added by hand
     int32_t generator = 0; // spawned by this generator intro (0 = placed)
     std::vector<GuardZone> zones;     // world frame; empty: guards nothing
-    std::span<const vec3> coverNodes; // planner nodes of the loaded units (world frame), set by Enemies each tick
+    // Planner nodes of the loaded units (world frame) and the nav mesh of its layer (null: none, straight lines), set by
+    // Enemies each tick.
+    std::span<const formats::PlannerNode> nodes;
+    const NavMesh* nav = nullptr;
     void alert(vec3 at);              // a squad mate saw Lara at `at` (idle / patrolling / searching / returning: turns, then hunts)
+    void hear(vec3 at);               // a disturbance (Lara's shot) at `at`: investigates it when calm (EnemyBehavior_Investigate)
     // Patrol paths from the intro data (world frame; [0] its own, [n] enemybase 22 alternatives) and their order
     // mode (Intro::patrolMode). setPatrol starts path `path` at its first point (modes 3 / 4: a random one).
-    std::vector<std::vector<vec3>> patrolPaths;
+    std::vector<std::vector<PatrolPoint>> patrolPaths;
     uint32_t patrolMode = 0;
     void setPatrol(int path);
-    // Points other enemies walk to or stand at this tick (mode 3 picks a free one: 0x633F10), set by Enemies.
+    // Points other enemies walk to or stand at this tick (patrol points, flank nodes; mode 3 and flanks pick a free
+    // one: 0x633F10 / 0x61F5D0), set by Enemies.
     std::span<const vec3> claimed;
     // Live ragdolls (phases 1 / 2) and chunk sets (4) of the other enemies, set by Enemies: tru.exe allows 6 ragdolls
     // (0x60EF50) and 4 chunk sets (0x696F90).
@@ -358,11 +437,15 @@ private:
     vec3 zoneGoal(vec3 p) const;   // 0x61F990: p pulled inside zone 0 (0.8 x outer)
     bool inZone(bool outerRadius) const;
     bool seekCover(const collision::CollisionMesh& col, const Target& lara);
+    bool flank(const Target& lara);  // picks a flank node and runs (Mode::Flank); false: none
+    bool dodge(const collision::CollisionMesh& col, const Target& lara); // a sidestep (Mode::Dodge); false: none now
     bool crawl(const collision::CollisionMesh& col, const Target& lara, float dt);
-    const std::vector<vec3>* patrolPoints() const; // the current path, null without one
+    const std::vector<PatrolPoint>* patrolPoints() const; // the current path, null without one
     bool nextPatrolPoint(uint32_t mode);            // 0x637870 in that order mode; false: the path is done
     void playIdle(const std::vector<IdleAnim>& idles); // a weighted pick; sets phaseLength
-    bool walkTo(vec3 goal, float arrive, const std::string& clip, float dt); // true: arrived
+    vec3 steer(vec3 goal) const;     // the next nav corner towards goal (goal itself without a nav mesh)
+    // Turns along the nav path (flyers: straight, and `flight` set to the step there); true: arrived.
+    bool walkTo(vec3 goal, float arrive, const std::string& clip, float dt, vec3* flight = nullptr);
     void startSearch();
     void ragdollOffsets(const std::vector<glm::mat4>& pose); // ragdollOwner_ / ragdollOffset_ from a death pose
     std::vector<glm::mat4> ragdollBones() const;             // model space, from s_.ragdoll
@@ -389,6 +472,9 @@ struct Generator {
     float range = 2528.45f; // [I] spawns when Lara comes this close (8 m), at most 2000 units above/below
     bool fired = false;
     bool enabled = true; // generatorbase Enable (3) / Disable (4): tru.exe generator flag 0x84 bit 0 clear / set
+    // The generator intro's own enemy data (type 13): its spawn walks these paths (as a placed enemy's).
+    std::vector<std::vector<PatrolPoint>> patrolPaths;
+    uint32_t patrolMode = 0;
 };
 
 // Every enemy of the loaded units: placed enemy intros and generator spawns. World ticks it after Lara.
@@ -423,6 +509,10 @@ public:
     void restore(const nlohmann::json& j);
     // Ticks every enemy; `shots` then holds this tick's enemy shots.
     void tick(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, float dt);
+    // A disturbance message (tru.exe 0xBF, broadcast to every enemy by 0x655280; Lara's shots): calm enemies with an
+    // investigate record that hear it walk there (Enemy::hear).
+    void disturb(vec3 at);
+    const NavMesh* navFor(const EnemyType& t) const; // the loaded layer built for its radius (null: none / flyers)
     std::vector<Shot> shots;
     struct Bark { int32_t uid = 0; std::string category; vec3 pos{0}; }; // a soldier's chatter line this tick
     std::vector<Bark> barks;
@@ -451,9 +541,11 @@ private:
     std::set<int32_t> deadAtCheckpoint_;  // checkpoint()
     std::vector<std::string> units_;      // units whose intros were spawned
     std::map<std::string, glm::vec3> offsets_; // their stream offsets
-    std::map<std::string, std::vector<std::vector<vec3>>> nodes_; // their planner nodes (unit frame)
-    std::vector<vec3> worldNodes_;                                // all of them, world frame
-    std::vector<vec3> claims_;                                    // patrol points enemies walk to / idle at this tick
+    std::map<std::string, std::vector<std::vector<formats::PlannerNode>>> nodes_; // their planner nodes (unit frame)
+    std::vector<formats::PlannerNode> worldNodes_;                                // all of them, world frame
+    std::map<std::string, std::vector<formats::NavGraph>> graphs_;                // their nav graphs (unit frame)
+    std::map<uint32_t, NavMesh> navs_;                                            // all of them by layer, world frame
+    std::vector<vec3> claims_; // patrol points / flank nodes enemies walk to / idle at this tick
     struct Guard { uint32_t record = 0, node = 0; float inner = 0, outer = 0; auto operator<=>(const Guard&) const = default; };
     std::map<int32_t, std::vector<Guard>> guards_; // by intro uid; saved
     void resolveZones(Enemy& e) const;

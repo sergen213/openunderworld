@@ -1449,15 +1449,61 @@ again alerts it (bark). Searchers keep the combat senses, patrollers the default
 changes `patrol` / `search`. Tests: `Ai.PatrolsAlertsSearchesAndReturnsToPost` (synthetic: ping-pong path, alert,
 chase, search, back on the path), `AiReal.MercPatrolsSearchesAndReturns` (l1_ship_exterior: the decoded paths and
 records, merc 1650 idles at 5 of its points in 60 s, searches after an alert and patrols again).
-[I] / [U]: speed byte +2 (only compared with 1 and 3 by MoveNav / 0x61B220: ours always walks), the idle counts'
-unit, the search time's meaning (ours: total length), possible positions (ours: 4 m within ±90° of its heading by a
-straight walk onto floor, 4 tries), a point it cannot reach in 20 s is skipped; not done: PatrolLookTurn (node +0x50
-bit 1 faces the node with the set's turn clips), PatrolAttack, flyers' and sharks' paths (bats / sharks stay where
-placed), generator spawns' paths, Investigate, Flank (EnemyBehavior_Flank: an attack position beside Lara chosen
-from the planner graph, not decoded).
+[I] / [U]: the idle counts' unit, the search time's meaning (ours: total length), possible positions (ours: 4 m
+within ±90° of its heading by a straight walk onto floor, 4 tries), a point it cannot reach in 20 s is skipped.
+The path byte +2 (was "speed") is the default point mode [O] (0x62F520 → AI path +0x48): a point's node +0x40 byte
+when ≥ 1, else the path's; 2 / 3 select the patrol record's +0x10 / +0x14 attack (PatrolAttack 0x635920 / 0x61B260,
+MeleeWindup), ≤ 3 also sets AI flag 0x20000000 (0x61B220, [U]). Ours: patrolling at a mode-2/3 point and seeing Lara
+in reach ([I] attack range / eye range for 0x634B20) it attacks with that record without an alert. PatrolLookTurn
+[O] (0x628730 / 0x628800): a point whose node +0x50 has bit 1 turns to the node's facing (cdc -Y of its frame) with
+the set's +0x58 / +0x5C turn clips before PatrolAnim; no node of the surveyed units sets it. Flyers (bats, sharks)
+and generator spawns (the generator intro's own type-13 data) now patrol too; flyers fly straight to the 3D point at
+[I] half the chase speed.
 
-Not done: the remaining behaviour-tree nodes (flank, investigate, taunt, dodge, jump/vault), long-range specifics
-beyond their records, rifle mesh, bat latch, the original's wall-walking transitions, navmesh/routing, thralls' chunks.
+### Navigation, flank, investigate, sidestep, taunt
+
+Nav graph [O] (LEVELS.md "Nav graphs"): tru.exe links NavPower (`<bfx_replay NavPower_version>`, bfx::NavGraph); each
+unit's Level +0x60 holds a version-8 resource of graphs per layer (l1_ship_exterior: layer 3, agent radius 100,
+height 700, 398 convex areas, 710 links; l4_ballcourt layers 4 (radius 250) and 3 (100); l2_norsehub 6 (250) and
+1 (70)). Ours (`ai::NavMesh`, Nav.cpp; `Enemies::navFor`): the loaded units' graphs merged per layer (unit-name
+order), each ground enemy on the smallest layer built for at least its radius [I: tru.exe reads AI +0x1C50]; A*
+over the areas through their shared edges, funnel for the corners; chase, return, patrol, search, cover, flank and
+investigate steer to the next corner every tick (no stored path: saves continue bit for bit). Off the mesh or
+without a route: straight, as before. Flyers have none (NavPower VolumeGraph, bfx::Fish / Surfer3D, not decoded).
+
+Flank [O] (EnemyBehavior_Flank 0x6365B0 / 0x639B20 / 0x62A180; position 0x637D10 → 0x632F80; cost 0x622670; side
+0x62D930; Soldier / Creature / Thrall trees): behaviour-list node +0xCC, record R = +0x10 {+0 MoveNav set, +4 bit 0
+Lara inside [min, max) (+0x20 / +0x24), +8 / +0xC / +0x10 / +0x14 weights travel / Lara distance / direction / outside
+the node's cover cone, +0x18 max cost, +0x1C / +0x28 the side test's front range and degrees, s16 +0x2C close distance
+with +0x30 cost, s16 +0x38 / +0x3A preferred travel / Lara distance, s16 +0x44 near distance with +0x34 cost};
+candidates = planner nodes in a box of enemy data s16 +0x0E (merc 7901) around it, not reserved (0x61F5D0), inside a
+guard zone (0x622C80); +2000 for one of its last 8 destinations within 640 (0x61F6B0); the cover cone (0x623610) is
+the node frame's −Y: Lara farther than node +0x48 + 632.1, within node +0x44°, under the node +0x4C height line.
+Every soldier, cat, naga, spider type reads the same record: weights 0, close / near cost 1e11 (1264 from Lara, 252
+from itself), so the first free node ≥ 4 m from Lara and ≥ 0.8 m from it wins. Ours: a ranged ground soldier after a
+burst without cover flanks ([I] every 600 counts = 20 s; ties: nearest first for the kd-tree order); runs there
+(the set's clip is an anim request: run clip), [I] gives up after 8 s, then fights on. Tests `Ai.MercFlanksToANodeBesideLara`,
+`AiReal.ShipNavGraphFlankAndInvestigate` (merc 1650 flanks, the save taken then continues identically).
+
+Investigate [O] (0x61DA60 / 0x61DD10, InvestigateStart / Move / End 0x61DF40 / 0x62C070 / 0x61E320; node +0x4C
+{+8 MoveNav set, +0xC / +0x10 clip refs (merc: anim requests), +0x18 4740.83}): message 0xBF (a disturbance;
+0x6FFFC0 / 0x69E510 send it from Lara's position, broadcast 0x655280) more than 1580 from the current one
+(0x611BA0) restarts it; it walks there (pulled into its zone at 0.8, 0x61F990). Ours: every Lara shot
+(`World` → `Enemies::disturb`) reaches calm enemies (idle, patrol, return, search, investigate) within [I] +0x18;
+[I] 40 s give-up; seeing Lara alerts. Test `Ai.InvestigatesAGunshot`.
+
+Sidestep (dodge) [O] (0x677D70 / 0x678530 / 0x678B50 / 0x674320; node +0xE4 {+0 s32 step 300, +4 → MoveNav set,
++8 trigger 948, +0xC / +0x10 timer after a step / a failed try}): Lara closer than the trigger → a random side, the
+step checked on the mesh. Ours: in a chase, the set's +0x34 / +0x38 clips (cats `strafe_left` / `strafe_right`);
+soldiers' are anim requests, so mercs / poachers do not sidestep [U]. [I] timers in 30 Hz counts. Test
+`Ai.SidestepsWhenLaraIsClose`.
+
+Taunt [O]: only `panther_thrall` has a taunt record (node +0xC8, flag AI +0x3718 set when its Adrenaline behaviour
+ends, 0x6116E0); its clip ref is {0, −1} and +0x10 is null, so Taunt_Anim (0x61F2D0 needs s16 +2 ≠ −1) and
+Taunt_Turn never start: no enemy taunts.
+
+Not done: JumpOver (NavPower links after the areas, not decoded), long-range specifics beyond their records, rifle
+mesh, bat latch, the original's wall-walking transitions, thralls' chunks.
 
 Verification [O] (ou-game, Vulkan, 1280×720, invisible KWin; screenshots viewed, kept privately; 2026-10-29):
 replay `tests/replays/thrall_regenerate.txt` (l7_yggdrasil_hall01, `--spawn 1000,0,0,90`): viking 8833 charges, bites,

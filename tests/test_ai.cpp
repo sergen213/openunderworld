@@ -500,7 +500,7 @@ TEST(Ai, PatrolsAlertsSearchesAndReturnsToPost) {
     t->search.time = 12, t->search.step = 600, t->search.angle = 1.5f, t->search.arrive = 100;
     game::ai::Enemies es;
     auto& e = es.add(t, 1, {0, 0, 0}, 0);
-    const std::vector<vec3> path{{1500, 0, 0}, {1500, 1500, 0}};
+    const std::vector<game::ai::PatrolPoint> path{{{1500, 0, 0}}, {{1500, 1500, 0}}};
     e.patrolPaths = {path};
     e.patrolMode = 2; // ping-pong
     e.setPatrol(0);
@@ -511,7 +511,7 @@ TEST(Ai, PatrolsAlertsSearchesAndReturnsToPost) {
         for (int i = 0; i < int(seconds / kDt); ++i) {
             es.tick(col, lara, {}, kDt);
             if (modes.empty() || modes.back() != e.state().mode) modes.push_back(e.state().mode);
-            for (size_t k = 0; k < 2; ++k) nearest[k] = std::min(nearest[k], glm::length(glm::vec2(e.position() - path[k])));
+            for (size_t k = 0; k < 2; ++k) nearest[k] = std::min(nearest[k], glm::length(glm::vec2(e.position() - path[k].pos)));
         }
     };
     run(away, 26); // 10 s to the first point, 1 s there, 10 s to the second, 1 s, back
@@ -536,6 +536,218 @@ TEST(Ai, PatrolsAlertsSearchesAndReturnsToPost) {
     EXPECT_EQ(k, order.size());
     for (const Mode md : modes) std::fprintf(stderr, "%s ", std::string(game::ai::modeName(md)).c_str());
     std::fprintf(stderr, "\n");
+}
+
+namespace {
+// Nav graph area from CCW corners; adjacency filled by navLink.
+formats::NavGraph::Area navArea(std::vector<vec3> v) {
+    formats::NavGraph::Area a;
+    for (const vec3 p : v) a.centre += p / float(v.size());
+    a.verts = std::move(v);
+    a.adj.assign(a.verts.size(), -1);
+    return a;
+}
+// Joins every pair of areas sharing an edge (reversed vertex order).
+void navLink(formats::NavGraph& g) {
+    for (size_t a = 0; a < g.areas.size(); ++a)
+        for (size_t k = 0; k < g.areas[a].verts.size(); ++k)
+            for (size_t b = 0; b < g.areas.size(); ++b)
+                for (size_t l = 0; l < g.areas[b].verts.size() && b != a; ++l) {
+                    const auto& va = g.areas[a].verts;
+                    const auto& vb = g.areas[b].verts;
+                    if (va[k] == vb[(l + 1) % vb.size()] && va[(k + 1) % va.size()] == vb[l]) g.areas[a].adj[k] = int32_t(b);
+                }
+}
+// An L of three 1000-unit squares: A [0,1]x[0,1], B [0,1]x[1,2], C [1,2]x[1,2] (thousands); [1,2]x[0,1] is a wall.
+formats::NavGraph lGraph() {
+    formats::NavGraph g;
+    g.radius = 100;
+    g.areas = {navArea({{0, 0, 0}, {1000, 0, 0}, {1000, 1000, 0}, {0, 1000, 0}}),
+               navArea({{0, 1000, 0}, {1000, 1000, 0}, {1000, 2000, 0}, {0, 2000, 0}}),
+               navArea({{1000, 1000, 0}, {2000, 1000, 0}, {2000, 2000, 0}, {1000, 2000, 0}})};
+    navLink(g);
+    return g;
+}
+} // namespace
+
+// The nav mesh routes around the missing square through the corner both areas share; off the mesh there is no route.
+TEST(Ai, NavMeshRoutesAroundAWall) {
+    game::ai::NavMesh nav;
+    nav.add(lGraph(), vec3(0));
+    EXPECT_EQ(nav.locate({500, 500, 30}), 0);
+    EXPECT_EQ(nav.locate({1500, 1500, 0}), 2);
+    EXPECT_EQ(nav.locate({1500, 500, 0}), -1);
+    EXPECT_EQ(nav.locate({500, 500, 900}), -1); // too far above the floor
+    const auto p = nav.path({500, 500, 0}, {1800, 1100, 0}); // the straight line would cross the missing square
+    ASSERT_EQ(p.size(), 2u);
+    EXPECT_LT(glm::distance(p[0], vec3(1000, 1000, 0)), 1.0f); // the inner corner
+    EXPECT_EQ(p[1], vec3(1800, 1100, 0));
+    EXPECT_EQ(nav.path({500, 500, 0}, {500, 1500, 0}).size(), 1u); // straight through the shared edge
+    EXPECT_TRUE(nav.path({500, 500, 0}, {1500, 500, 0}).empty());
+    EXPECT_LT(glm::distance(nav.steer({500, 500, 0}, {1800, 1100, 0}), vec3(1000, 1000, 0)), 1.0f);
+}
+
+namespace {
+// The merc's decoded flank record (every soldier type's: AiReal.ShipNavGraphFlankAndInvestigate).
+game::ai::FlankStyle mercFlank() {
+    game::ai::FlankStyle f;
+    f.valid = f.inside = true;
+    f.maxCost = f.closeCost = f.nearCost = 1e11f;
+    f.minRange = 1580278.1f, f.maxRange = 0, f.frontRange = 3160.56f, f.frontAngle = 100;
+    f.closeDist = 1264, f.nearDist = 252, f.gather = 7901;
+    return f;
+}
+formats::PlannerNode node(vec3 p) {
+    formats::PlannerNode n;
+    n.frame[3] = glm::vec4(p, 1);
+    return n;
+}
+} // namespace
+
+// After a burst without cover a soldier flanks (EnemyBehavior_Flank): of the planner nodes around it, the one 800 from
+// Lara costs closeCost and the one under its feet nearCost, so it runs to the node beside her, along the nav mesh.
+TEST(Ai, MercFlanksToANodeBesideLara) {
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, 0);
+    const auto col = built(m);
+    auto t = std::make_shared<game::ai::EnemyType>(*syntheticPoacher());
+    t->flank = mercFlank();
+    const std::vector<formats::PlannerNode> nodes{node({2200, 0, 0}), node({3000, 1500, 0}), node({50, 0, 0})};
+    const auto run = [&](std::vector<Mode>* modes) {
+        game::ai::Enemy e(t, 1, {0, 0, 0}, 0);
+        e.nodes = nodes; // what Enemies hands over each tick: the loaded units' planner nodes
+        const game::ai::Target lara{{3000, 0, 0}};
+        std::vector<game::ai::EnemyState> states;
+        for (int i = 0; i < int(12 / kDt); ++i) {
+            e.tick(col, lara, {}, kDt);
+            if (modes && (modes->empty() || modes->back() != e.state().mode)) modes->push_back(e.state().mode);
+            states.push_back(e.state());
+        }
+        return states;
+    };
+    std::vector<Mode> modes;
+    const auto a = run(&modes), b = run(nullptr);
+    for (const Mode md : modes) std::fprintf(stderr, "%s ", std::string(game::ai::modeName(md)).c_str());
+    std::fprintf(stderr, "\n");
+    const auto flanking = std::find_if(a.begin(), a.end(), [](const auto& s) { return s.mode == Mode::Flank; });
+    ASSERT_NE(flanking, a.end());
+    EXPECT_EQ(flanking->goal, vec3(3000, 1500, 0));
+    EXPECT_LT(glm::length(glm::vec2(a.back().pos - vec3(3000, 1500, 0))), 120.0f); // got there (arrival: its radius)
+    EXPECT_EQ(a.back().recentCount, 1);
+    EXPECT_GT(a.back().flankWait, 0.0f);
+    for (size_t i = 0; i < a.size(); ++i) // deterministic
+        ASSERT_TRUE(a[i].pos == b[i].pos && a[i].yaw == b[i].yaw && a[i].mode == b[i].mode) << i;
+    for (const Mode md : modes) std::fprintf(stderr, "%s ", std::string(game::ai::modeName(md)).c_str());
+    std::fprintf(stderr, "\n");
+}
+
+// A gunshot (Enemies::disturb) behind a calm enemy with an investigate record: it walks there (InvestigateMove) and
+// goes back to idle; a second shot within 1580 of the first does not restart it, one farther does; out of hearing
+// (+0x18) it stays put.
+TEST(Ai, InvestigatesAGunshot) {
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, 0);
+    const auto col = built(m);
+    auto t = std::make_shared<game::ai::EnemyType>(*syntheticType());
+    t->clips["walk_forward_2"] = rootClip(20, 5); // 150 units/s
+    t->investigate.walk = "walk_forward_2", t->investigate.arrive = 100, t->investigate.hear = 4740.83f;
+    game::ai::Enemies es;
+    auto& e = es.add(t, 1, {0, 0, 0}, 0);
+    auto& deaf = es.add(t, 2, {9000, 0, 0}, 0);
+    const game::ai::Target away{{0, 0, -50000}};
+    es.disturb({-2000, 0, 0});
+    EXPECT_EQ(e.state().mode, Mode::Investigate);
+    EXPECT_EQ(deaf.state().mode, Mode::Idle); // 11000 away
+    for (int i = 0; i < int(2 / kDt); ++i) es.tick(col, away, {}, kDt);
+    const float walked = e.state().phaseTime;
+    es.disturb({-2500, 500, 0}); // the same disturbance
+    EXPECT_EQ(e.state().phaseTime, walked);
+    EXPECT_EQ(e.state().goal, vec3(-2000, 0, 0));
+    bool arrived = false;
+    for (int i = 0; i < int(20 / kDt) && !arrived; ++i) {
+        es.tick(col, away, {}, kDt);
+        arrived = e.state().mode == Mode::Idle;
+    }
+    EXPECT_TRUE(arrived);
+    EXPECT_LT(glm::length(glm::vec2(e.position() - vec3(-2000, 0, 0))), 110.0f);
+    es.disturb({1000, 0, 0});
+    EXPECT_EQ(e.state().mode, Mode::Investigate);
+    EXPECT_EQ(e.state().goal, vec3(1000, 0, 0));
+}
+
+// Lara inside the sidestep trigger (+0x08) but out of reach: the cat steps to a random side with its strafe clip;
+// then waits +0x0C before the next one.
+TEST(Ai, SidestepsWhenLaraIsClose) {
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, 0);
+    const auto col = built(m);
+    auto t = std::make_shared<game::ai::EnemyType>(*syntheticType());
+    for (const auto& [name, x] : {std::pair{"strafe_left", 10.0f}, std::pair{"strafe_right", -10.0f}}) { // model +X is its left
+        anim::Clip c = rootClip(15, 0);
+        for (int i = 0; i < 15; ++i) c.tracks[0][anim::TransX].push_back(x * float(i + 1));
+        t->clips[name] = c;
+    }
+    t->dodge = {"strafe_left", "strafe_right", 300, 948.17f, 0.5f, 2.0f};
+    game::ai::Enemies es;
+    auto& e = es.add(t, 1, {0, 0, 0}, 0);
+    const game::ai::Target lara{{800, 0, 0}};
+    bool dodged = false;
+    for (int i = 0; i < int(2 / kDt) && !dodged; ++i) {
+        es.tick(col, lara, {}, kDt);
+        dodged = e.state().mode == Mode::Dodge;
+    }
+    ASSERT_TRUE(dodged);
+    while (e.state().mode == Mode::Dodge) es.tick(col, lara, {}, kDt);
+    EXPECT_GT(std::abs(e.position().y), 100.0f); // stepped sideways
+    EXPECT_LT(std::abs(e.position().x), 60.0f);
+    EXPECT_GT(e.state().dodgeWait, 0.0f);
+}
+
+// PatrolLookTurn: a point whose node has the look flag turns it to the node's facing before the idle; PatrolAttack:
+// at a point of mode 2 it attacks a Lara in reach with the patrol record's +0x10 attack, without an alert. Flyers
+// patrol too (straight through the air).
+TEST(Ai, PatrolLookTurnAttackAndFlyers) {
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, 0);
+    const auto col = built(m);
+    auto t = std::make_shared<game::ai::EnemyType>(*syntheticType());
+    t->clips["look"] = rootClip(30, 0);
+    t->clips["pounce"] = rootClip(30, 0);
+    t->patrol.idles = {{"look", 1, 1.0f, 1.0f}};
+    t->patrol.arrive = 100;
+    game::ai::Attack pounce;
+    pounce.clip = "pounce", pounce.damage = 40;
+    t->tuning.attacks = {pounce};
+    t->patrol.attack = {0, -1};
+    game::ai::Enemies es;
+    auto& e = es.add(t, 1, {0, 0, 0}, 0);
+    e.patrolPaths = {{{{1000, 0, 0}, {0, 1, 0}, true, 0}, {{0, 0, 0}, {0, -1, 0}, false, 2}}};
+    e.setPatrol(0);
+    const game::ai::Target away{{0, 0, -50000}};
+    float facing = 0;
+    for (int i = 0; i < int(12 / kDt) && e.state().patrolIndex == 0; ++i) {
+        es.tick(col, away, {}, kDt);
+        if (e.state().phase == 1) facing = e.state().yaw;
+    }
+    EXPECT_NEAR(facing, 3.14159265f / 2, 0.06f); // turned to +Y, the node's facing
+    for (int i = 0; i < int(20 / kDt) && e.state().phase != 1; ++i) es.tick(col, away, {}, kDt); // at the mode-2 point
+    Hurt hurt;
+    std::vector<Mode> modes;
+    for (int i = 0; i < int(2 / kDt); ++i, ++hurt.tick) {
+        es.tick(col, {e.position() + vec3(std::cos(e.state().yaw), std::sin(e.state().yaw), 0) * 400.0f}, hurt.fn(), kDt);
+        if (modes.empty() || modes.back() != e.state().mode) modes.push_back(e.state().mode);
+    }
+    ASSERT_GE(modes.size(), 2u);
+    EXPECT_EQ(modes[0], Mode::Attack); // straight from the patrol
+    ASSERT_FALSE(hurt.blows.empty());
+    EXPECT_EQ(hurt.blows[0].second, 40.0f);
+
+    auto& bat = es.add(syntheticBat(), 2, {0, 3000, 500}, 0);
+    bat.patrolPaths = {{{{0, 5000, 1500}}, {{0, 3000, 500}}}};
+    bat.setPatrol(0);
+    float nearest = 1e9f;
+    for (int i = 0; i < int(10 / kDt); ++i) es.tick(col, away, {}, kDt), nearest = std::min(nearest, glm::distance(bat.position(), vec3(0, 5000, 1500)));
+    EXPECT_LT(nearest, 2 * bat.radius() + 1);
 }
 
 // ---- real data (OU_GAME_DIR) ------------------------------------------------------------------
@@ -1235,7 +1447,9 @@ TEST(AiReal, MercsGuardZonesCoverAndAlert) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     auto u = game::loadUnitData(bf, "l1_ship_exterior");
-    const auto nodes = formats::parseUnit(*u.drm).plannerNodes;
+    std::vector<std::vector<vec3>> nodes; // positions
+    for (const auto& r : formats::parseUnit(*u.drm).plannerNodes)
+        for (auto& n = nodes.emplace_back(); const auto& p : r) n.push_back(p.pos());
     ASSERT_EQ(nodes.size(), 1u);
     ASSERT_EQ(nodes[0].size(), 187u);
     EXPECT_NEAR(nodes[0][127].x, 4260.1f, 0.5f);
@@ -1397,7 +1611,7 @@ TEST(AiReal, MercPatrolsSearchesAndReturns) {
     EXPECT_EQ(in->patrolMode, 2u);
     ASSERT_EQ(in->patrolPaths.size(), 1u);
     EXPECT_EQ(in->patrolPaths[0].nodes, (std::vector<uint32_t>{128, 126, 108, 114, 117, 131}));
-    EXPECT_EQ(in->patrolPaths[0].speed, 4);
+    EXPECT_EQ(in->patrolPaths[0].pointMode, 4);
     int patrolling = 0, once = 0;
     for (const auto& i : parsed.intros) patrolling += !i.patrolPaths.empty() && !i.patrolPaths[0].nodes.empty(), once += i.patrolMode == 1 && !i.patrolPaths.empty();
     EXPECT_EQ(patrolling, 18); // 1650-1652, 1654-1659, 1661-1669 (1653 / 1660 have a record but no path)
@@ -1423,7 +1637,7 @@ TEST(AiReal, MercPatrolsSearchesAndReturns) {
     ASSERT_EQ(ty.search.idles.size(), 2u);
     EXPECT_EQ(ty.search.idles[1].clip, "idle_combat_stand");
     ASSERT_EQ(m.patrolPaths.size(), 1u);
-    EXPECT_LT(glm::distance(m.patrolPaths[0][0], parsed.plannerNodes[0][128]), 1.0f);
+    EXPECT_LT(glm::distance(m.patrolPaths[0][0].pos, parsed.plannerNodes[0][128].pos()), 1.0f);
 
     const game::ai::Target away{{0, 0, -50000}};
     const auto run = [&](float seconds, auto&& each) {
@@ -1446,6 +1660,124 @@ TEST(AiReal, MercPatrolsSearchesAndReturns) {
     });
     EXPECT_TRUE(searched);
     EXPECT_TRUE(back);
+}
+
+// l1_ship_exterior: the NavPower graph (Level +0x60) decodes to 398 convex areas with symmetric adjacency; mercs walk
+// its layer 3 (radius 100); every soldier reads the same flank record; a gunshot on the deck makes merc 1650
+// investigate it along the mesh; fighting Lara it flanks to a free planner node at least 4 m from her, inside its
+// guard zone; a save taken as it flanks continues bit for bit.
+TEST(AiReal, ShipNavGraphFlankAndInvestigate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto u = game::loadUnitData(bf, "l1_ship_exterior");
+    const auto parsed = formats::parseUnit(*u.drm);
+    ASSERT_EQ(parsed.navGraphs.size(), 1u);
+    const auto& g = parsed.navGraphs[0];
+    EXPECT_EQ(g.layer, 3u);
+    EXPECT_EQ(g.radius, 100.0f);
+    EXPECT_EQ(g.height, 700.0f);
+    ASSERT_EQ(g.areas.size(), 398u);
+    size_t links = 0;
+    for (size_t a = 0; a < g.areas.size(); ++a)
+        for (const int32_t b : g.areas[a].adj)
+            if (b >= 0) {
+                ++links;
+                EXPECT_TRUE(std::ranges::count(g.areas[size_t(b)].adj, int32_t(a))) << a << " -> " << b;
+            }
+    EXPECT_EQ(links, 710u);
+    EXPECT_EQ(g.areas[0].verts.size(), 3u);
+    EXPECT_EQ(g.areas[0].centre, vec3(4000, 27328, 5472));
+
+    u.col.build();
+    const auto fresh = [&] {
+        auto es = std::make_unique<game::ai::Enemies>();
+        es->setBigfile(&bf);
+        es->setUnits({{u.name, u.drm, vec3(0)}});
+        es->guard(1650, 0, 127, 2500, 4000); // its script's GuardNode
+        return es;
+    };
+    auto es = fresh();
+    const auto find = [](game::ai::Enemies& e, int32_t uid) -> game::ai::Enemy& {
+        return **std::find_if(e.all().begin(), e.all().end(), [&](const auto& x) { return x->uid() == uid; });
+    };
+    auto& m = find(*es, 1650);
+    const auto& f = m.type().flank;
+    EXPECT_TRUE(f.valid && f.inside);
+    EXPECT_EQ(f.closeDist, 1264.0f);
+    EXPECT_EQ(f.nearDist, 252.0f);
+    EXPECT_EQ(f.gather, 7901.0f);
+    EXPECT_EQ(f.travelW + f.laraW + f.dirW + f.coneW, 0.0f);
+    EXPECT_NEAR(f.closeCost, 1e11f, 1e6f);
+    EXPECT_NEAR(m.type().investigate.hear, 4740.83f, 0.01f);
+    EXPECT_EQ(m.type().investigate.walk, "combat_walk_search");
+    EXPECT_TRUE(m.type().dodge.left.empty()); // the merc's sidestep clips are anim requests
+    const auto* nav = es->navFor(m.type());
+    ASSERT_NE(nav, nullptr);
+    EXPECT_EQ(nav->radius, 100.0f);
+    const auto& path = m.patrolPaths[0];
+    EXPECT_FALSE(nav->path(path[0].pos, path[5].pos).empty()); // its patrol's ends are joined on the mesh
+
+    // A gunshot 1.5..4 km from it on the mesh.
+    std::optional<vec3> shot;
+    for (const auto& r : parsed.plannerNodes)
+        for (const auto& n : r) {
+            const float d = glm::length(glm::vec2(n.pos() - m.position()));
+            if (!shot && d > 1500 && d < 4000 && std::abs(n.pos().z - m.position().z) < 200 && !nav->path(m.position(), n.pos()).empty()) shot = n.pos();
+        }
+    ASSERT_TRUE(shot);
+    const game::ai::Target away{{0, 0, -50000}};
+    es->disturb(*shot);
+    EXPECT_EQ(m.state().mode, Mode::Investigate);
+    float nearest = 1e9f;
+    for (int i = 0; i < int(45 / kDt) && m.state().mode == Mode::Investigate; ++i)
+        es->tick(u.col, away, {}, kDt), nearest = std::min(nearest, glm::length(glm::vec2(m.position() - *shot)));
+    EXPECT_LT(nearest, 400.0f);
+    EXPECT_NE(m.state().mode, Mode::Investigate);
+    std::fprintf(stderr, "merc 1650 investigated (%.0f %.0f %.0f), came within %.0f (arrival %.0f), now %s at (%.0f %.0f %.0f)\n", shot->x,
+                 shot->y, shot->z, nearest, m.type().investigate.arrive, std::string(game::ai::modeName(m.state().mode)).c_str(),
+                 m.position().x, m.position().y, m.position().z);
+
+    // A fight: Lara on a node it sees.
+    std::optional<vec3> spot;
+    for (const auto& r : parsed.plannerNodes)
+        for (const auto& n : r) {
+            const float d = glm::length(glm::vec2(n.pos() - m.position()));
+            if (!spot && d > 1500 && d < 4000 && std::abs(n.pos().z - m.position().z) < 200 && m.perceives(u.col, {n.pos()})) spot = n.pos();
+        }
+    ASSERT_TRUE(spot);
+    const game::ai::Target lara{*spot};
+    std::vector<Mode> modes;
+    for (int i = 0; i < int(60 / kDt) && m.state().mode != Mode::Flank; ++i) {
+        es->tick(u.col, lara, {}, kDt);
+        if (modes.empty() || modes.back() != m.state().mode) modes.push_back(m.state().mode);
+    }
+    for (const Mode md : modes) std::fprintf(stderr, "%s ", std::string(game::ai::modeName(md)).c_str());
+    std::fprintf(stderr, "\n");
+    ASSERT_EQ(m.state().mode, Mode::Flank);
+    const vec3 goal = m.state().goal;
+    EXPECT_TRUE(std::ranges::any_of(parsed.plannerNodes[0], [&](const auto& n) { return glm::distance(n.pos(), goal) < 1; }));
+    EXPECT_GE(glm::length(glm::vec2(goal - *spot)), 1264.0f);
+    EXPECT_GE(glm::length(glm::vec2(goal - m.position())), 252.0f);
+    ASSERT_FALSE(m.zones.empty());
+    EXPECT_TRUE(m.zones[0].contains(goal, true));
+    std::fprintf(stderr, "merc 1650 flanks from (%.0f %.0f) to (%.0f %.0f), Lara at (%.0f %.0f)\n", m.position().x, m.position().y, goal.x,
+                 goal.y, spot->x, spot->y);
+
+    // Save now, load into fresh enemies: both continue identically.
+    auto loaded = fresh();
+    loaded->restore(es->serialize());
+    loaded->setUnits({{u.name, u.drm, vec3(0)}});
+    ASSERT_EQ(loaded->all().size(), es->all().size());
+    float closest = 1e9f;
+    for (int i = 0; i < int(10 / kDt); ++i) {
+        es->tick(u.col, lara, {}, kDt), loaded->tick(u.col, lara, {}, kDt);
+        closest = std::min(closest, glm::length(glm::vec2(m.position() - goal)));
+        for (size_t k = 0; k < es->all().size(); ++k) {
+            const auto &a = es->all()[k]->state(), &b = loaded->all()[k]->state();
+            ASSERT_TRUE(a.pos == b.pos && a.yaw == b.yaw && a.mode == b.mode && a.clipTime == b.clipTime && a.rng == b.rng) << i << " " << k;
+        }
+    }
+    EXPECT_LT(closest, std::max(f.arrive, m.radius()) + 30.0f);
 }
 
 // Survey (OU_AI_SURVEY=1): every enemy intro and generator spawn of every unit, and each enemy type's data and clips.
