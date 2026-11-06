@@ -197,11 +197,26 @@ struct FilterResource {
     bool noise = false;                                  // +0x10
     uint32_t noiseColour = 0;
     float noiseAlpha = 0, noiseCells = 0;
-    // Fog block (+0x2FA4, 0x512D60 into the view's fog): +0 enable, +4 colour bytes R, G, B, +8 near, +0xC far.
-    // Its +0x10 curve and +0x110 height fog are not used [U].
+    // Fog block (+0x2FA4, 0x512D60 into the view's fog): +0 enable, +4 colour bytes R, G, B, +8 near, +0xC far,
+    // +0x10 the fog curve (256 bytes: fog amount over the fog coordinate, the attenuation LUT's fog row, R).
+    // Its +0x110 / +0x114 / +0x118 height fog (near, far, curve: LUT G, PS HeightFogParams c54.xy) is not used: no
+    // pixel shader of l1_seatop, l2_junglehub, l3_main_bedroom, l4_ballcourt, l7_arctic_sea reads c54.xy.
     bool fog = false;
     uint32_t fogColour = 0;
     float fogNear = 0, fogFar = 0;
+    std::array<uint8_t, 256> fogCurve{};
+};
+// Fog blocks summed as tru.exe 0x512D60 sums them into the view (+0x224 weight, +0x230 colour, +0x234 near,
+// +0x238 far, +0x23C curve): bytes and curve + round(value x weight) saturating at 255 (0x512B80 / 0x512C80).
+struct FogSum {
+    float weight = 0, nearZ = 0, farZ = 0;
+    std::array<uint8_t, 3> colour{};
+    std::array<uint8_t, 256> curve{};
+    void add(const FilterResource& r, float w); // no-op unless r.fog
+    void add(const FogSum& o);
+    // The view's fog (0x514D90 / 0x514680): what the weights leave below 1 filled with `set` (the unit's fog set, under
+    // water its water set) and the identity curve; far at most set.farZ, far - near >= 1.
+    render::Fog resolve(const render::Fog& set) const;
 };
 FilterResource parseFilterResource(std::span<const uint8_t> data); // data.size() >= 0x31C0
 // The filter resource DTP `id` of `drm` (null when absent or too small).
@@ -378,10 +393,11 @@ public:
     // The running screen filters at the camera / player, summed as tru.exe's PCColorDOF / PCFinish / PCFeedback /
     // PCNoise accumulators plus the tints. `viewProj` + `visible` (owner point not occluded): screen-centre filters
     // (sun glares, record +0x18); without them those filters are skipped.
-    // `extra`: resources added at a weight without a filter record (the unit's under-water filters, 0x5C78A0).
+    // `extra`: resources added at a weight without a filter record (the unit's default and water filters, 0x5C78A0).
+    // `fog`: also sums the running filters' fog blocks (not the extras') into it.
     void screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out,
                       const glm::mat4* viewProj = nullptr, const std::function<bool(const glm::vec3&)>& visible = {},
-                      std::span<const std::pair<const FilterResource*, float>> extra = {}) const;
+                      std::span<const std::pair<const FilterResource*, float>> extra = {}, FogSum* fog = nullptr) const;
     size_t ribbonCount() const { return ribbons_.size(); }
     size_t faceCount() const { return faces_.size(); }
     size_t boltCount() const { return bolts_.size(); }

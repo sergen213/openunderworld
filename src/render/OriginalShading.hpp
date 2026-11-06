@@ -27,7 +27,8 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect);
 // `underwater` with fog: its fog replaces the unit's (FrameOptions::underwater).
 // `cookies`: the backend's spot cookie array layers (cookieIds of the uploaded scene).
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float timeSeconds, const scene::Environment& env,
-               bool flipY = false, const Underwater* underwater = nullptr, std::span<const uint32_t> cookies = {});
+               bool flipY = false, const Underwater* underwater = nullptr, std::span<const uint32_t> cookies = {},
+               const Fog* fog = nullptr);
 // The point/spot light table (FrameBlock::lights, first kMaxLights of env.lights) at time t (flicker); part of fillFrame.
 // `eye`: the camera position, for the lights' distance switch (lightFade); nullptr = every light at full intensity.
 void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds, std::span<const uint32_t> cookies = {},
@@ -115,8 +116,12 @@ inline constexpr int kAttenuationSampler = 15, kShadowMapSampler = 14, kSunCooki
 struct EngineTexture { int width = 0, height = 0; std::vector<uint8_t> rgba; int layers = 1; }; // layers back to back
 // AttenuationSampler (s15): 256x128 curve atlas (tru.exe PCLightManager, filled by 0x504A60): rows 0-95 light
 // falloff curves (R, one per distinct env.lights curve), rows 96+ fog (R fog curve, G height-fog curve);
-// v = (row + 0.5) / 128. Per scene: backends rebuild it in upload().
-EngineTexture attenuationLut(const scene::Environment& env = {});
+// v = (row + 0.5) / 128. Per scene: backends rebuild it in upload(), and when FrameOptions::fog's curve changes.
+// fog = nullptr: the engine's default identity fog curve.
+EngineTexture attenuationLut(const scene::Environment& env = {}, const Fog* fog = nullptr);
+// The LUT's fog row alone (256 x 1 RGBA at y = kFogLutRow), for the per-frame update when the fog curve changes.
+inline constexpr int kFogLutRow = 96;
+std::array<uint8_t, 256 * 4> fogLutRow(const Fog* fog);
 // Spot cookies (tru.exe binds a slot 0/1 light's cookie texture to s12 + slot, 0x50A5F0): one RGBA8 2D array of
 // kCookieLayers x kCookieSize² holding each distinct env.lights cookie (mip 0, resampled), unused layers white. The
 // translated programs read it at the layer in the light table (row 8). Per scene: backends rebuild it in upload().

@@ -250,7 +250,7 @@ weight × value (tables + round(t × w), saturating) and is topped up with the i
 | +0x2640 | PCFinishEffect (sum 0x51AAB0, draw 0x51AEF0) | `+0x909` enable, `+0x900` blur (≤ 4), `+0x904` amount (≤ 2), `+0x90A` curves, `+0x908` all 9 tables (else the diagonal) | half-size copy blurred (0x519F20: down to level ceil(r), back up by 4-tap bilinear steps, the fraction blended), through the curves, added (SRCALPHA/ONE, alpha = amount × 127.5) |
 | +0x2F74 | PCFeedbackEffect (sum 0x51A190, draw 0x51A530) | floats keep (<= 1), amount (<= 1), blur (<= 4), zoom x / y (<= 4), two angles; `+0x1C` colour, `+0x20` enable | scene x keep, + the (blurred, zoomed / turned) previous frame x colour x amount; ours feeds back the current frame's blur [I] |
 | +0x2F60 | PCNoiseEffect (sum 0x51B110, draw 0x51B1D0) | `+0` colour, `+4` alpha (<= 255), `+8` cells (<= 255), `+0xC` [U], `+0x10` enable | 10 x 8 quads of a noise texture at random offsets, alpha-blended; ours: hash noise |
-| +0x2FA4 | device 0x512D60 (always, fog-like [U]) | `+0` enable | not drawn |
+| +0x2FA4 | view fog (0x512D60, always, also with fullscreen effects off) | `+0` enable, `+4` colour R, G, B, `+8` near, `+0xC` far, `+0x10` curve (256), `+0x110`/`+0x114`/`+0x118` height fog near / far / curve | the frame's fog for TRU's shaders (`fx::FogSum`, RENDERING.md "After geometry"); height fog unused |
 
 Ours: `fx::System::screenFilter` sums the running filters (camera, Lara) into `render::ScreenFilter`; the post pass
 (`shaders/filter.glsl`, GL + Vulkan) applies the scene matrix, the ColorDOF overlay and the finish bloom; blur level r =

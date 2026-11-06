@@ -69,7 +69,7 @@ struct Options {
     std::filesystem::path screenshot, inputScript;
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
-    std::optional<std::array<float, 6>> camera; // --camera X,Y,Z,TX,TY,TZ: fixed view (eye, target) for screenshots
+    std::optional<std::array<float, 11>> camera; // --camera: fixed view (eye, target, up, vertical FOV, near; 0 = default) for screenshots
     bool intro = false;  // --intro: play Movies/intro.bik first (skippable)
     int introFrames = -1; // --intro-frames N: stop the intro / the New Game movie after N frames
     bool noMovies = false; // --no-movies: New Game skips Movies/explode.bik
@@ -95,7 +95,7 @@ void usage() {
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer auto|opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
-                 "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
+                 "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
@@ -185,9 +185,14 @@ bool parseArgs(int argc, char** argv, Options& o) {
             if (std::sscanf(v, "%f,%f,%f,%f", &s[0], &s[1], &s[2], &s[3]) != 4) { std::fprintf(stderr, "--spawn wants X,Y,Z,YAWDEG\n"); return false; }
             o.spawn = s;
         }
-        else if (a == "--camera") {
-            std::array<float, 6> c{};
-            if (std::sscanf(v, "%f,%f,%f,%f,%f,%f", &c[0], &c[1], &c[2], &c[3], &c[4], &c[5]) != 6) { std::fprintf(stderr, "--camera wants X,Y,Z,TX,TY,TZ\n"); return false; }
+        else if (a == "--camera") { // eye, target[, up (tru.exe camera matrix row 1)[, vertical FOV deg[, near]]]
+            std::array<float, 11> c{0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0};
+            const int n = std::sscanf(v, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", &c[0], &c[1], &c[2], &c[3], &c[4], &c[5], &c[6], &c[7],
+                                      &c[8], &c[9], &c[10]);
+            if (n != 6 && n != 9 && n != 10 && n != 11) {
+                std::fprintf(stderr, "--camera wants X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]\n");
+                return false;
+            }
             o.camera = c;
         }
         else if (a == "--load") o.loadSlot = v;
@@ -1234,6 +1239,8 @@ struct EffectsView {
         return library ? std::span<const ou::scene::TextureData>(library->textures()) : std::span<const ou::scene::TextureData>{};
     }
     ou::render::ScreenFilter filter; // class-5 screen filters (docs/formats/EFFECTS.md "Screen filters")
+    // After water(), with effects on: the running effect filters (and the unit's, waterFilters) for the post pass;
+    // their fog blocks join the frame's fog.
     void frame(const ou::render::Camera& cam, float aspect, const ou::game::World& w, ou::render::FrameOptions& fo) {
         system.build(cam, aspect, vertices, batches);
         fo.fxVertices = vertices, fo.fxBatches = batches;
@@ -1243,19 +1250,40 @@ struct EffectsView {
             const glm::vec3 d = p - cam.position;
             const float len = glm::length(d);
             return len < 1 || !w.collision().raycast(cam.position, d / len, len - 1.0f).has_value();
-        }, waterFilters);
+        }, waterFilters, &effectFog);
         fo.screenFilter = filter.active() ? &filter : nullptr;
+        finishFog(fo, &effectFog);
     }
     // Under water (docs/RENDERING.md "Under water"; tru.exe 0x6D9DA0, 0x5C1F50, 0x5C78A0, 0x5C7CA0): while Lara is in a
     // water volume, the camera unit's water look below its surface (full-screen pass, fog set + the filters' fog, the
     // deep / surface screen filters by depth, enter / leave lists on Lara) and less than 600 units above it (the
     // surface filter, the pass fading out). Before frame(): it passes waterFilters on.
     struct UnitWater {
-        ou::scene::Environment env; // the water* fields
+        ou::scene::Environment env; // the water* fields, the unit fog set
         std::shared_ptr<const ou::fx::FilterResource> filter[2]; // deep, surface
+        // The unit's own filter (Environment::filter) without its ColorDOF block: tru.exe draws ColorDOF only with
+        // the EnableDepthOfField display setting (0x516E70, device manager +0x182), off by default and in the Wine
+        // reference [O]. Its Finish (bloom) and fog blocks apply.
+        std::shared_ptr<const ou::fx::FilterResource> own;
     };
     std::map<std::string, UnitWater> unitWater;
-    std::vector<std::pair<const ou::fx::FilterResource*, float>> waterFilters;
+    std::vector<std::pair<const ou::fx::FilterResource*, float>> waterFilters; // the unit's own + water filters
+    // The frame's fog for TRU's shaders (render::Fog): the filters' fog blocks (waterFilters' in water(), the effect
+    // filters' in frame()) topped up by the camera unit's fog set (fogBase: under water its water set).
+    ou::fx::FogSum unitFog, effectFog;
+    ou::render::Fog fog, fogBase;
+    bool fogValid = false;
+    void finishFog(ou::render::FrameOptions& fo, const ou::fx::FogSum* more) {
+        if (!fogValid) return;
+        ou::fx::FogSum s = unitFog;
+        if (more) s.add(*more);
+        fog = s.resolve(fogBase);
+        fo.fog = &fog;
+        if (underwater.fog) { // Enhanced water / atmosphere under water see the same fog
+            underwater.fogNear = fog.nearZ, underwater.fogFar = fog.farZ;
+            for (int k = 0; k < 3; ++k) underwater.fogColor[k] = fog.color[k];
+        }
+    }
     ou::render::Underwater underwater;
     ou::render::UnderwaterRays rays; // the camera unit's light rays (tru.exe 0x6D8C20), reset on a unit change
     std::string raysUnit;
@@ -1272,11 +1300,17 @@ struct EffectsView {
             if (unit.drm) {
                 it->second.env = ou::formats::parseUnit(*unit.drm).environment;
                 for (int k = 0; k < 2; ++k) it->second.filter[k] = ou::fx::loadFilterResource(*unit.drm, it->second.env.waterFilter[k]);
+                if (const auto own = ou::fx::loadFilterResource(*unit.drm, it->second.env.filter)) {
+                    auto f = std::make_shared<ou::fx::FilterResource>(*own);
+                    f->colorDof = false;
+                    it->second.own = std::move(f);
+                }
             }
         }
         const auto& uw = it->second;
         const glm::vec3 lara = w.player().state().pos, eye = cam.position;
         bool under = false;
+        float ownWeight = 1; // the unit's own filter (0x5C78A0): crossfaded with the water filters near / under water
         underwater = {};
         // tru.exe 0x5EA200: only the water Lara is in, against its wave surface at the eye (the l2 yacht deck lies inside
         // the sea's box, under its top, but above the waves: no water look there).
@@ -1288,24 +1322,27 @@ struct EffectsView {
             under = xy && h < 0 && eye.z >= lo.z;
             underwater.strength = under ? 1.0f : xy && h >= 0 && h < 600 ? 1.0f - h / 600.0f : 0.0f;
             const float range = uw.env.waterFilterRange[under ? 0 : 1];
-            const float ws = range > 0 ? 1.0f - std::min(d, range) / range : 0.0f;
-            waterFilters.push_back({uw.filter[1].get(), ws});
-            if (under) waterFilters.push_back({uw.filter[0].get(), 1.0f - ws});
+            if (range > 0) { // 0 range: no water filters, the unit's own stays (0x5C78A0)
+                const float ws = 1.0f - std::min(d, range) / range;
+                waterFilters.push_back({uw.filter[1].get(), ws});
+                if (under) waterFilters.push_back({uw.filter[0].get(), 1.0f - ws});
+                ownWeight = under ? 0.0f : 1.0f - ws;
+            }
         }
+        if (uw.own && ownWeight > 0) waterFilters.push_back({uw.own.get(), ownWeight});
         std::copy(&uw.env.waterPass[0][0], &uw.env.waterPass[0][0] + 8, &underwater.pass[0][0]);
-        if (under) { // the water fog set, replaced by the filters' fog blocks as far as their weights go (0x514D90)
-            float rest = 1, n = 0, f = 0;
-            glm::vec3 c(0);
-            for (const auto& [r, k] : waterFilters)
-                if (r && r->fog && k > 0) {
-                    const glm::vec3 rc(float(r->fogColour & 0xFF), float((r->fogColour >> 8) & 0xFF), float((r->fogColour >> 16) & 0xFF));
-                    c += rc / 255.0f * k, n += r->fogNear * k, f += r->fogFar * k, rest -= k;
-                }
-            rest = std::max(rest, 0.0f);
-            c += glm::vec3(uw.env.waterFogColor[0], uw.env.waterFogColor[1], uw.env.waterFogColor[2]) * rest;
-            underwater.fog = true, underwater.fogNear = n + uw.env.waterFogNear * rest, underwater.fogFar = f + uw.env.waterFogFar * rest;
-            for (int k = 0; k < 3; ++k) underwater.fogColor[k] = c[k];
+        // The fog set (0x5C1F50: under water the water set), replaced by the filters' fog blocks as far as their
+        // weights go (finishFog).
+        fogValid = uw.env.valid;
+        fogBase.nearZ = under ? uw.env.waterFogNear : uw.env.fogNear, fogBase.farZ = under ? uw.env.waterFogFar : uw.env.fogFar;
+        for (int k = 0; k < 3; ++k) fogBase.color[k] = under ? uw.env.waterFogColor[k] : uw.env.fogColor[k];
+        if (under) {
+            underwater.fog = true, underwater.fogNear = fogBase.nearZ, underwater.fogFar = fogBase.farZ;
+            for (int k = 0; k < 3; ++k) underwater.fogColor[k] = fogBase.color[k];
         }
+        unitFog = {}, effectFog = {};
+        for (const auto& [r, k] : waterFilters)
+            if (r && k > 0) unitFog.add(*r, k);
         if (raysUnit != unit.name) { // the record's frame is the unit's: move it by the unit offset
             auto r = uw.env.waterRays;
             const glm::vec3 off = w.currentUnit().offset;
@@ -1322,6 +1359,7 @@ struct EffectsView {
                     break;
                 }
         fo.underwater = &underwater; // the colours tint Enhanced water from above too; strength 0 = no pass, no fog
+        finishFog(fo, nullptr);
         if (lists && library && unit.drm && under != submerged) {
             const auto& ps = w.player().state();
             const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch, ps.roll);
@@ -2786,7 +2824,11 @@ int main(int argc, char** argv) {
         cam.position = c.position;
         cam.lookAt(c.target);
         cam.up = c.up;
-        if (opt.camera) cam.position = {(*opt.camera)[0], (*opt.camera)[1], (*opt.camera)[2]}, cam.lookAt({(*opt.camera)[3], (*opt.camera)[4], (*opt.camera)[5]});
+        if (const auto& k = opt.camera) {
+            cam.position = {(*k)[0], (*k)[1], (*k)[2]}, cam.lookAt({(*k)[3], (*k)[4], (*k)[5]}), cam.up = {(*k)[6], (*k)[7], (*k)[8]};
+            if ((*k)[9] > 0) cam.verticalFovDeg = (*k)[9];
+            if ((*k)[10] > 0) cam.nearZ = (*k)[10];
+        }
         if (audioOn) // halfway between the camera and Lara (tru.exe 0x57FD50, ou::audio::kSoundListenerToPlayer)
             mixer.setListener({glm::mix(c.position, s.pos, ou::audio::kSoundListenerToPlayer), glm::normalize(c.target - c.position), {0, 0, 1}});
 

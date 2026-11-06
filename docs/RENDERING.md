@@ -53,9 +53,9 @@ The original's screen filters (class-5 effects: ColorDOF overlay / scene matrix,
 "Screen filters") are applied in the post pass before the brightness gamma (`shaders/filter.glsl`, both renderers): blur
 levels are mips of a half-size copy of the resolved scene, taken only while a filter runs.
 
-Brightness is a display gamma in the post pass (`out = in^(1 / brightness)`, after tonemap/FXAA), standing in for the
-original's Brightness option (tru.exe stores it as registry `Brightness` × 1000, clamped to [0, 0.1], 0x51E3xx [O];
-how the engine applies it is [U]).
+Brightness is a display gamma in the post pass (`out = in^(1 / brightness)`, after tonemap/FXAA), as the original's
+Brightness option: tru.exe's gamma ramp `in^(1 − 8(b − 0.05))`, b = registry `Brightness` / 1000 in [0, 0.1] (0x51E3xx,
+0x5222D0 [O]; "After geometry" under Original shaders).
 
 Colour space [O]: tru.exe's sampler-state manager only sets address/filter/anisotropy states (5-8, 10, 1-3; decomp
 around 0x5274xx) and never `D3DSAMP_SRGBTEXTURE` (11) or `D3DRS_SRGBWRITEENABLE` (194): the original samples, shades and
@@ -235,6 +235,42 @@ instructions vs our 20-line lambert).
 Viewed: ballcourt path/court show light-mapped multi-layer terrain, sun-lit court, foliage with wind; l4_pool water uses
 the original swirl shader; the l3_main_bedroom corridor is light-map + ambient only (its torch lights are not fed) and so
 much darker than the generic lambert; the 060_med_natla cutscene keeps Lara/actors on generic shading.
+
+### After geometry: the unit filter, fog, bloom, brightness (tru.exe, decoded 2026-11-06 under Wine)
+
+- **Unit filter** [O]: every unit's render settings (Level+0x70) +0x0C point at {u32 filter DTP, f32 [U], u8 enable}
+  (used when +0x08 != 0; `scene::Environment::filter`). 0x5D2310 starts it on load through 0x5C2170 (4 slots at
+  0xE498D0, 0x30 bytes: start position, base / current weight, radius −1 = forever, DTP id); 0x5C78A0 adds it every frame
+  (0x52C480 → device vfunc 0x5C = 0x5074E0) at weight 1 (× 0xAE3C94 = 1), and, while Lara's water look is active with a
+  non-zero filter range, at 1 − w against the surface filter's w (under water: 0). Read live at the l2_junglehub start:
+  slot 0 = DTP 10643, weight 1. Ours: `EffectsView::water` passes it with the water filters to `fx::System::screenFilter`.
+- **Fog** [O]: 0x5074E0 sums every filter's +0x2FA4 fog block into the view (0x512D60: weight +0x224, colour +0x230,
+  near +0x234, far +0x238, curve +0x23C, bytes saturating); 0x514D90 fills the weight left below 1 with the unit's fog set
+  (0x5C1F50, under water its water set) and the identity curve; 0x514680 clamps far to the set's far, uploads VS c22 =
+  (−n/(f−n), 1/(f−n), ., f), PS c0 = colour, and 0x514ED0 writes the curve into the attenuation LUT's fog row (R; G the
+  height-fog curve). That block is the levels' haze: junglehub (0.643, 0.675, 0.706) from 0 to 56 890 with a curve
+  rising to 99/255 (the unit set itself, 790k..1.1M, is invisible). Ours: `fx::FogSum` → `render::Fog`
+  (`FrameOptions::fog`), used by `original::fillFrame`; both backends rewrite the LUT when the curve changes (GL the row,
+  Vulkan the image staged after `upload()`'s). Test `FxReal.UnitFilterFogMatchesOriginal` (the Wine-read registers).
+- **ColorDOF** [O]: 0x516E70 accumulates only with device manager +0x182 = the `EnableDepthOfField` display setting
+  (registry, missing = off; off in the Wine reference) and +0x181. The unit filters' ColorDOF (distance blur) is dropped;
+  effect filters keep theirs [I: tru.exe gates them too].
+- **Finish / bloom** [O]: with `EnableFullscreenEffects` (device +0xFDD4 object byte 0) the unit filter's Finish block
+  draws (junglehub: blur 4, amount 0.2); ours through the existing post-pass filter (`--fx on`).
+- **Brightness** [O]: 0x5222D0 sets a D3D gamma ramp `(k/255)^(1 − 8(b − 0.05))`, b = registry `Brightness` / 1000 in
+  [0, 0.1] (default 50 → identity). Ours `brightness` = 1 / that exponent (1 = the default).
+- **Neighbour units** [O decode, not implemented]: 0x5C7CA0 blends the fog set (rgb, near, far), ambient, PSSM fractions
+  and render settings +0x78/+0x7C/+0x80 over loaded neighbours whose portal (record +0x88 radius, box ± radius, flag
+  tracker +6 & 8) is within the radius of the camera: w = (r − d) / r, d = distance to the portal plane, or to its
+  nearest edge when the camera is outside the quad (0x5C7690 / 0x4A03B0); results / (1 + Σw). Visible as the far
+  clamp: l4_ballcourt's view far is 114 494 there, ours the unit's 94 817.
+
+Compared at the original's camera (`ou-game --camera eye,target,up,fov,near` from tru.exe's view +0x38..+0x8C read under
+Wine, moved into our frame by Level+0x80; openunderworld-work/postfx: camarg.sh, ourargs.py, cmp.py, `*_pair.png` = VK,
+GL, original). Mean |Δ| of the 4×3 region mean colours (0–255), before → after: l2_junglehub start 15.0 → 3.2 (luma
+−15.0 → −0.3), l4_ballcourt start 12.5 → 7.7 (−11.7 → −4.7), l3_main_bedroom start 1.6 → 2.1 (dark corridor; the
+original's corridor fire and smoke differ). GL and Vulkan match. Remaining: the junglehub sky is bluer (the original's
+hazier sky and the far mountain from a neighbour unit), ballcourt is still darker (neighbour blending, far clamp).
 
 ### Instance opacity (`FrameOptions::meshOpacity`, GL + Vulkan)
 

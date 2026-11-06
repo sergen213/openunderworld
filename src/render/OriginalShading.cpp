@@ -27,7 +27,7 @@ void putMatrix(float (*regs)[4], int reg, const glm::mat4& m) {
     for (int c = 0; c < 4; ++c) put(regs, reg + c, m[c][0], m[c][1], m[c][2], m[c][3]);
 }
 
-constexpr int kLutWidth = 256, kLutRows = 128, kFogRow = 96, kLightRow = 0;
+constexpr int kLutWidth = 256, kLutRows = 128, kFogRow = kFogLutRow, kLightRow = 0;
 
 } // namespace
 
@@ -37,7 +37,7 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect) {
 }
 
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env, bool flipY,
-               const Underwater* underwater, std::span<const uint32_t> cookies) {
+               const Underwater* underwater, std::span<const uint32_t> cookies, const Fog* fog) {
     std::memset(&f, 0, sizeof f);
     const float aspect = vp.height > 0 ? float(vp.width) / float(vp.height) : 1.0f;
     const glm::vec3 eye = camera.position;
@@ -68,6 +68,11 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
         const float range = std::max(u->fogFar - u->fogNear, 1.0f);
         put(f.vs, 22, -u->fogNear / range, 1.0f / range, 0, u->fogFar);
         put(f.ps, 0, u->fogColor[0], u->fogColor[1], u->fogColor[2], 0);
+    }
+    if (fog) { // the frame's fog (filters' fog blocks + the unit's set, Fog); its curve is in the LUT's fog row
+        const float range = std::max(fog->farZ - fog->nearZ, 1.0f);
+        put(f.vs, 22, -fog->nearZ / range, 1.0f / range, 0, fog->farZ);
+        put(f.ps, 0, fog->color[0], fog->color[1], fog->color[2], 0);
     }
     put(f.ps, 1, eye.x, eye.y, eye.z, 0);            // g_CameraPosition
     if (env.valid) put(f.ps, 15, env.ambient[0], env.ambient[1], env.ambient[2], 0); // g_Ambient
@@ -451,7 +456,7 @@ glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat
     return glm::vec4((lo + hi) * 0.5f, glm::length(hi - lo) * 0.5f);
 }
 
-EngineTexture attenuationLut(const scene::Environment& env) {
+EngineTexture attenuationLut(const scene::Environment& env, const Fog* fog) {
     EngineTexture t{kLutWidth, kLutRows, std::vector<uint8_t>(size_t(kLutWidth) * kLutRows * 4, 0)};
     std::vector<const std::vector<uint8_t>*> curves(kFogRow, nullptr);
     const std::vector<int> rows = falloffRows(env);
@@ -460,15 +465,26 @@ EngineTexture attenuationLut(const scene::Environment& env) {
     for (int y = 0; y < kLutRows; ++y)
         for (int x = 0; x < kLutWidth; ++x) {
             uint8_t* p = &t.rgba[(size_t(y) * kLutWidth + x) * 4];
-            // Fog row: the engine's default curve is the identity ramp k -> k in R and G (0x512CF0): linear fog.
-            // Light rows: each distinct light falloff curve (Light::falloff, 0x50AFB0); unused rows linear.
+            // Fog row: R the fog curve (Fog::curve; the engine's default, the identity ramp k -> k, 0x512CF0), G the
+            // height-fog curve (identity). Light rows: each distinct light falloff curve (Light::falloff, 0x50AFB0);
+            // unused rows linear.
             int v = 0;
             if (y == kFogRow) v = x;
             else if (y < kFogRow) v = curves[size_t(y)] ? (*curves[size_t(y)])[size_t(x)] : 255 - x;
             p[0] = p[1] = uint8_t(v);
+            if (y == kFogRow && fog) p[0] = fog->curve[size_t(x)];
             p[3] = 255;
         }
     return t;
+}
+
+std::array<uint8_t, 256 * 4> fogLutRow(const Fog* fog) {
+    std::array<uint8_t, 256 * 4> row{};
+    for (int x = 0; x < 256; ++x) {
+        row[size_t(4 * x)] = fog ? fog->curve[size_t(x)] : uint8_t(x);
+        row[size_t(4 * x + 1)] = uint8_t(x), row[size_t(4 * x + 3)] = 255;
+    }
+    return row;
 }
 
 Prepared prepare(const scene::SceneData& scene, bool vulkan) {

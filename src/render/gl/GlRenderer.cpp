@@ -624,6 +624,7 @@ public:
         // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
         const auto lut = original::attenuationLut(environment_);
         glTextureSubImage2D(r.attenuation.get(), 0, 0, 0, lut.width, lut.height, GL_RGBA, GL_UNSIGNED_BYTE, lut.rgba.data());
+        fogRow_ = original::fogLutRow(nullptr);
         cookieIds_ = original::cookieIds(environment_);
         const auto cookies = original::cookieArray(cookieIds_, scene.textures);
         glTextureSubImage3D(r.cookies.get(), 0, 0, 0, 0, cookies.width, cookies.height, cookies.layers, GL_RGBA, GL_UNSIGNED_BYTE,
@@ -1455,7 +1456,9 @@ private:
     void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o, const original::Reflection* reflection = nullptr) {
         Resources& r = *res_;
         sm3::FrameBlock f;
-        original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater, cookieIds_); // screen copies are bottom-up
+        original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater, cookieIds_, o.fog); // screen copies are bottom-up
+        if (const auto row = original::fogLutRow(o.fog); row != fogRow_) // the fog curve (Fog) changed: its LUT row
+            fogRow_ = row, glTextureSubImage2D(r.attenuation.get(), 0, 0, original::kFogLutRow, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, row.data());
         original::fillPssm(f, pssm_, pssmCamera_);
         irradiance_.assign(environment_, r.meshes);
         irradiance_.fill(f);
@@ -1682,6 +1685,7 @@ private:
     original::Prepared prepared_;         // during upload()
     scene::Environment environment_;
     std::vector<uint32_t> cookieIds_;     // layers of the spot cookie array (upload)
+    std::array<uint8_t, 256 * 4> fogRow_ = original::fogLutRow(nullptr); // the LUT's fog row as uploaded
     original::IrradianceSlots irradiance_; // per frame, cached per mesh between uploads
     original::Pssm pssm_;                  // this frame's splits (inactive: the PSSM programs read lit)
     Camera pssmCamera_;                    // the frame's camera (WorldToPSSM0's view depth; reflections reuse it)

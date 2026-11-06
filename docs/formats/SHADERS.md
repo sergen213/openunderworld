@@ -77,10 +77,10 @@ PS samplers: 49 933 2D + 1 205 cube declarations. Full opcode / declaration / CT
 | VS c21 `NormalScaleOffset` | (1, 0): our normals/tangents are decoded to [−1, 1] (engine: (2, −1) for D3DCOLOR, (1, 0) for FLOAT3, 0x529020) | [O] |
 | VS c254 `TexcoordScales` | (1, 1): the loader applies 1/2048 to SHORT texcoords (engine: per decl, 0x52924B) | [O] |
 | VS c23 / PS c53 `TimeVector` | (seconds mod 1000, 1/30) (engine 0x509630: (ms % 10⁶ · 0.001, dt)) | [O] |
-| VS c22 `fogScaleAndOffset` | (−n/(f−n), 1/(f−n), 0, f) from the unit render settings | 0x514680 [O] |
-| PS c0 `FogColor`, c15 `g_Ambient` | unit render settings (Level+0x70 DTP: fog rgb +0x18, near +0x40, far +0x3C/+0x38; ambient rgb +0x1E4 × +0x1E8 / 255) | 0x5C7CA0, 0x5CAFF0 [O]; neighbour-unit blending not done |
+| VS c22 `fogScaleAndOffset` | (−n/(f−n), 1/(f−n), 0, f) of the frame's fog (`render::Fog`: the filters' +0x2FA4 fog blocks, the unit's own filter included, topped up by the unit's fog set; RENDERING.md "After geometry") | 0x514680, 0x514D90 [O] |
+| PS c0 `FogColor`, c15 `g_Ambient` | the frame's fog colour (as c22); unit render settings ambient rgb +0x1E4 × +0x1E8 / 255 (the unit fog set: rgb +0x18, near +0x40, far +0x3C/+0x38) | 0x5C7CA0, 0x5CAFF0 [O]; neighbour-unit blending decoded, not done |
 | PS c54 `HeightFogParams` | (0, 0, (96 + 0.5)/128, 0): no fog volumes | 0x514680 [O] |
-| s15 `AttenuationSampler` | 256×128, rebuilt per scene: rows 0–95 = the distinct light falloff curves (light DTP +0x1C, texel k = curve[k]·255 in R, texel 255 = 0; LEVELS.md "Lights"), row 96 = identity fog ramp (R, G) as the engine default curve | 0x504A60, 0x50AFB0, 0x512CF0 [O] |
+| s15 `AttenuationSampler` | 256×128, rebuilt per scene: rows 0–95 = the distinct light falloff curves (light DTP +0x1C, texel k = curve[k]·255 in R, texel 255 = 0; LEVELS.md "Lights"), row 96 = the frame's fog curve in R (the filters' fog-block curves + the identity for the weight left, 0x514ED0; junglehub 0..99/255), identity height-fog ramp in G | 0x504A60, 0x50AFB0, 0x512CF0 [O] |
 | PS c148/c149 `GlobalParams` light-map scales | (1, 1, 1, 1) (engine default; scripts fade them) | 0x7731B0 [O] |
 | PS c140–c146 player/bone positions | far away (no foliage interaction) | 0x773A70 [O] / ours [I] |
 | PS c208–c212 `SunLight`, b6 | the unit's type-2 light record (unit data +0x04 list, record row 2 = direction, DTP +0x08 intensity, +0x18 colour); 23 units have one, e.g. l4_ballcourt dir (−0.544, −0.351, −0.762), colour (0.82, 0.96, 1.20) | 0x5C6530, 0x50B910 [O] |

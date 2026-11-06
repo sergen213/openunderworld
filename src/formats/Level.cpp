@@ -471,6 +471,10 @@ Unit parseUnit(const cdc::Drm& d) {
         e.waterFilter[0] = rs.at<uint32_t>(o + 0x84), e.waterFilter[1] = rs.at<uint32_t>(o + 0x88);
         e.waterFilterRange[0] = rs.at<float>(o + 0x90), e.waterFilterRange[1] = rs.at<float>(o + 0x8C);
         e.waterList[0] = rs.at<uint32_t>(o + 0x68), e.waterList[1] = rs.at<uint32_t>(o + 0x6C);
+        if (const auto f = rs.ptrs.find(o + 0x0C); f != rs.ptrs.end() && rs.at<uint32_t>(o + 0x08)) {
+            const View fv(d, f->second.section);
+            if (fv.at<uint8_t>(f->second.offset + 8)) e.filter = fv.at<uint32_t>(f->second.offset);
+        }
     }
     // Full-screen water pass (tru.exe 0x5D4AB0 -> 0x6DA130 registers unit data +0x160 count / +0x164 0x100-byte
     // records; 0x6D9DA0 draws those with +0x84 bit 0 through 0x6D8C20 while the camera is under water): the +0x74

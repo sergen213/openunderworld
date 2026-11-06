@@ -116,6 +116,34 @@ FilterResource parseFilterResource(std::span<const uint8_t> d) {
     constexpr size_t fog = 0x2FA4;
     f.fog = rd<uint8_t>(d, fog) != 0, f.fogColour = rd<uint32_t>(d, fog + 4) & 0xFFFFFF;
     f.fogNear = rd<float>(d, fog + 8), f.fogFar = rd<float>(d, fog + 0xC);
+    std::memcpy(f.fogCurve.data(), d.data() + fog + 0x10, f.fogCurve.size());
+    return f;
+}
+
+void FogSum::add(const FilterResource& r, float w) {
+    if (!r.fog) return;
+    auto sat = [](uint8_t& b, float v) { b = uint8_t(std::min(255L, long(b) + std::lround(v))); };
+    weight += w, nearZ += r.fogNear * w, farZ += r.fogFar * w;
+    for (int k = 0; k < 3; ++k) sat(colour[size_t(k)], float((r.fogColour >> (8 * k)) & 0xFF) * w);
+    for (size_t k = 0; k < curve.size(); ++k) sat(curve[k], float(r.fogCurve[k]) * w);
+}
+
+void FogSum::add(const FogSum& o) {
+    auto sat = [](uint8_t& b, uint8_t v) { b = uint8_t(std::min(255, b + v)); };
+    weight += o.weight, nearZ += o.nearZ, farZ += o.farZ;
+    for (size_t k = 0; k < 3; ++k) sat(colour[k], o.colour[k]);
+    for (size_t k = 0; k < curve.size(); ++k) sat(curve[k], o.curve[k]);
+}
+
+render::Fog FogSum::resolve(const render::Fog& set) const {
+    render::Fog f;
+    const float rest = std::clamp(1.0f - weight, 0.0f, 1.0f);
+    auto sat = [](uint8_t b, float v) { return uint8_t(std::min(255L, long(b) + std::lround(v))); };
+    for (size_t k = 0; k < 3; ++k) f.color[k] = float(sat(colour[k], set.color[k] * 255.0f * rest)) / 255.0f;
+    for (size_t k = 0; k < curve.size(); ++k) f.curve[k] = sat(curve[k], float(k) * rest);
+    f.nearZ = nearZ + set.nearZ * rest;
+    f.farZ = std::min(farZ + set.farZ * rest, set.farZ);
+    if (f.farZ - f.nearZ < 1) f.farZ = f.nearZ + 1;
     return f;
 }
 
@@ -1303,7 +1331,7 @@ void System::lights(std::vector<LiveLight>& out) const {
 
 void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, render::ScreenFilter& out,
                           const glm::mat4* viewProj, const std::function<bool(const glm::vec3&)>& visible,
-                          std::span<const std::pair<const FilterResource*, float>> extra) const {
+                          std::span<const std::pair<const FilterResource*, float>> extra, FogSum* fog) const {
     out = {};
     if (filters_.empty() && extra.empty()) return;
     // tru.exe sums each running filter's resource x weight into the effects' accumulators (0x516E70 ColorDOF,
@@ -1385,7 +1413,10 @@ void System::screenFilter(const glm::vec3& camera, const glm::vec3& player, rend
             f.hidden = std::clamp(f.hidden + (seen ? -0.125f : 0.125f), 0.0f, 1.0f);
             w *= 1 - f.hidden;
         }
-        if (w > 0) accumulate(r, w);
+        if (w > 0) {
+            accumulate(r, w);
+            if (fog) fog->add(r, w);
+        }
     }
     // Resources added without a filter record: the unit's under-water filters (0x5C78A0 -> 0x52C480).
     for (const auto& [r, w] : extra)

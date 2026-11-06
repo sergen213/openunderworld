@@ -143,6 +143,14 @@ struct Underwater {
     float rayWeight = 0;
     std::array<uint8_t, 2500> rays{};
 };
+// TRU's distance fog for the translated shaders this frame (tru.exe 0x514D90 / 0x514680): the running screen filters'
+// fog blocks (the unit's own filter is the level's haze), topped up to weight 1 by the camera unit's fog set (under
+// water: its water set) with the identity curve. VS c22 = (-near / (far - near), 1 / (far - near), ., far), PS c0 =
+// colour, the attenuation LUT's fog row (R) = curve.
+struct Fog {
+    float color[3] = {}, nearZ = 0, farZ = 1;
+    std::array<uint8_t, 256> curve{};
+};
 
 struct FrameOptions {
     bool lighting = true;                   // simple lambert vs unlit
@@ -205,6 +213,7 @@ struct FrameOptions {
     std::span<const MeshOpacity> meshOpacity; // unlisted meshes: 1
     std::span<const UnitClip> unitClips;     // meshes in no range: unclipped
     const Underwater* underwater = nullptr;  // nullptr = above water
+    const Fog* fog = nullptr;                // nullptr = the uploaded scene's unit fog, identity curve
 };
 
 // Ray-tracing state for diagnostics and tests.

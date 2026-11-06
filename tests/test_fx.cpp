@@ -692,3 +692,37 @@ TEST(FxReal, UnderwaterSettings) {
     EXPECT_NEAR(arctic.waterPass[1][3], 60000.0f, 1.0f);
     EXPECT_EQ(arctic.waterFilter[0], 859u);
 }
+
+// Every unit's own screen filter (render settings +0x0C) carries the level's haze in its fog block. At the l2_junglehub
+// start tru.exe's view held (Wine, 2026-11-06): filter slot 0 = DTP 10643 at weight 1, fog +0x200 = (-0, 1/56890),
+// colour +0x210 = (0.6431, 0.6745, 0.7059), LUT fog row ending 0x5F..0x63; the unit set (near 889495, far 1105858) adds
+// nothing at weight 1.
+TEST(FxReal, UnitFilterFogMatchesOriginal) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto drm = cdc::parseDrm(std::move(*bf.read("pc-w\\l2_junglehub.drm")));
+    const auto env = formats::parseUnit(drm).environment;
+    EXPECT_EQ(env.filter, 10643u);
+    const auto f = fx::loadFilterResource(drm, env.filter);
+    ASSERT_TRUE(f && f->fog);
+    fx::FogSum s;
+    s.add(*f, 1.0f);
+    render::Fog set;
+    set.nearZ = env.fogNear, set.farZ = env.fogFar;
+    for (int k = 0; k < 3; ++k) set.color[k] = env.fogColor[k];
+    const auto fog = s.resolve(set);
+    EXPECT_FLOAT_EQ(fog.nearZ, 0.0f);
+    EXPECT_NEAR(1.0f / (fog.farZ - fog.nearZ), 1.758e-5f, 1e-8f);
+    EXPECT_NEAR(fog.color[0], 0.6431f, 1e-3f);
+    EXPECT_NEAR(fog.color[1], 0.6745f, 1e-3f);
+    EXPECT_NEAR(fog.color[2], 0.7059f, 1e-3f);
+    EXPECT_EQ(fog.curve[0], 0);
+    EXPECT_EQ(fog.curve[255], 0x63);
+    EXPECT_EQ(fog.curve[244], 0x5F);
+    // Half weight: the rest is the unit set (far clamped to it) and half the identity curve.
+    fx::FogSum h;
+    h.add(*f, 0.5f);
+    const auto half = h.resolve(set);
+    EXPECT_NEAR(half.nearZ, env.fogNear * 0.5f, 1.0f);
+    EXPECT_EQ(half.curve[255], std::lround(0x63 * 0.5) + 128);
+}

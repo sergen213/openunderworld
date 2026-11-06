@@ -592,6 +592,7 @@ public:
         // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
         const auto lut = original::attenuationLut(scene.environment);
         batch.images.push_back({attenuation_.image, {{lut.rgba.data(), lut.rgba.size(), uint32_t(lut.width), uint32_t(lut.height)}}});
+        fogRow_ = original::fogLutRow(nullptr);
         cookieIds_ = original::cookieIds(scene.environment);
         const auto cookies = original::cookieArray(cookieIds_, scene.textures);
         batch.images.push_back({cookies_.image, {{cookies.rgba.data(), cookies.rgba.size(), uint32_t(cookies.width), uint32_t(cookies.height)}},
@@ -965,10 +966,18 @@ public:
         VkDescriptorSet frameSet = origFrameSet_[frameIndex_];
         std::optional<original::Reflection> reflection; // the planar reflection the reflecting draws sample this frame
         if (originals) {
+            // The fog curve (Fog) changed: the LUT again, staged after upload()'s (recorded with the next frame).
+            if (const auto row = original::fogLutRow(options.fog); row != fogRow_) {
+                const auto lut = original::attenuationLut(environment_, options.fog);
+                UploadBatch b;
+                b.images.push_back({attenuation_.image, {{lut.rgba.data(), lut.rgba.size(), uint32_t(lut.width), uint32_t(lut.height)}}});
+                stage(b);
+                fogRow_ = row;
+            }
             irradiance_.assign(environment_, meshes_);
             sm3::FrameBlock fb;
             original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_, false,
-                                options.underwater, cookieIds_);
+                                options.underwater, cookieIds_, options.fog);
             original::fillPssm(fb, pssm, camera);
             irradiance_.fill(fb);
             std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
@@ -1033,7 +1042,7 @@ public:
             const VkExtent2D half{std::max(1u, extent_.width / 2), std::max(1u, extent_.height / 2)};
             sm3::FrameBlock fb;
             original::fillFrame(fb, reflection->camera, {int(half.width), int(half.height)}, options.time, environment_, false,
-                                options.underwater, cookieIds_);
+                                options.underwater, cookieIds_, options.fog);
             original::fillPssm(fb, pssm, camera);
             irradiance_.fill(fb);
             std::memcpy(reflFrameUbo_[frameIndex_].mapped, &fb, sizeof fb);
@@ -4999,6 +5008,7 @@ private:
     std::array<VkDescriptorSet, kFramesInFlight> reflFrameSet_{};
     GpuImage attenuation_, blackCube_, cookies_; // cookies_: s12/s13 spot cookie array (original::cookieArray)
     std::vector<uint32_t> cookieIds_;            // its layers (upload)
+    std::array<uint8_t, 256 * 4> fogRow_ = original::fogLutRow(nullptr); // the attenuation LUT's fog row as uploaded
     std::vector<OrigProgram> origPrograms_;
     std::vector<OrigProgram> origStash_; // the previous upload's programs, during the next upload (destroyOriginalScene)
     int origWarmKey_ = -1; // warmOriginalPipelines' settings since the pipelines were last destroyed
