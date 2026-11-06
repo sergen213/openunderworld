@@ -28,6 +28,9 @@ struct SaveGame {
     int ledgeIndex = -1;       // markup index within ledgeUnit
     std::string waterUnit;     // empty = not swimming
     int waterIndex = -1;       // water markup index within waterUnit
+    // The rest of the controller (player.controller): blend space, obstacle move, climb / grapple / swing details,
+    // markup as (unit, index), positions in the unit's frame; null (older saves) = their defaults.
+    nlohmann::json controller;
     float cameraYaw = 0, cameraPitch = -0.25f;
     nlohmann::json runtime; // World::serializeRuntime() (orbit camera lag, hair, scripts' player unit); null (older saves) = seeded afresh
     std::optional<game::CheckpointRef> checkpoint;

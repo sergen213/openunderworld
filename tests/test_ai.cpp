@@ -798,7 +798,7 @@ TEST(AiReal, PoolGeneratorSpawnsThrall) {
     EXPECT_EQ(es.all().size(), placed); // Lara out of range
     es.tick(unit.col, {g->pos + vec3(1500, 0, 0)}, {}, kDt);
     ASSERT_EQ(es.all().size(), placed + 1);
-    const auto& e = *es.all().back();
+    const auto& e = **std::ranges::find_if(es.all(), [](const auto& x) { return x->generator == 5637; }); // kept in uid order
     EXPECT_EQ(e.type().name, "mayan_thrall");
     EXPECT_EQ(e.generator, 5637);
     EXPECT_EQ(e.state().mode, Mode::Spawning);

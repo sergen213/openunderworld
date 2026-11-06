@@ -1021,10 +1021,17 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     part("player");
     add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), add(s.ledge);
     add(s.ledgeT), add(s.water), add(s.climbHold), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
+    add(s.loop), str(s.clipMix), add(s.mix), add(s.ledgeSeg), add(s.ledgeSide), add(s.runJump), add(s.regrabCooldown), add(s.savingGrab);
+    add(s.flight), add(s.fallStartZ), add(s.fallHeight), add(s.climbStance), add(s.climbWarp), add(s.climbFrom), add(s.climbTo);
+    add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
+    const auto& hu = s.hurdle;
+    add(hu.next), add(hu.mix), add(hu.alt), add(hu.draw), add(hu.drawOff), add(hu.edge), add(hu.out), add(hu.h), add(hu.endZ);
+    add(hu.farLedge), add(hu.farSeg), add(hu.farT), add(hu.farSide);
     add(health_.value()), add(air_), add(combat_.ragdollPhase);
     for (const auto& m : combat_.ragdoll) add(m);
     part("camera");
-    add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch);
+    add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch), add(cam_.up), add(cam_.fovDeg), add(blendOut_);
+    add(splineCameraActive());
     part("bones");
     for (const auto& m : bones_) add(m);
     for (size_t i = 0; i < physics_.bodies.size(); ++i) {

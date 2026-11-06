@@ -958,11 +958,14 @@ std::vector<glm::mat4> Enemy::pose(double alpha) const {
 
 // ---- Enemies ----------------------------------------------------------------------------------
 
+// Kept in uid order: the tick order (claims, shots) then does not depend on the order units streamed in, so a load
+// (which streams its units afresh) ticks them as the saving run did.
 Enemy& Enemies::add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning, glm::vec2 tilt) {
-    enemies_.push_back(std::make_unique<Enemy>(std::move(type), uid, pos, yaw, spawning, healthLevel_, tilt));
+    const auto at = std::upper_bound(enemies_.begin(), enemies_.end(), uid, [](int32_t u, const auto& e) { return u < e->uid(); });
+    Enemy& e = **enemies_.insert(at, std::make_unique<Enemy>(std::move(type), uid, pos, yaw, spawning, healthLevel_, tilt));
     ++version_;
     sync();
-    return *enemies_.back();
+    return e;
 }
 
 void Enemies::sync() {

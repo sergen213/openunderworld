@@ -266,7 +266,8 @@ void World::updateCamera(const Actions& a, float dt) {
     cam_.fovDeg = blendOut_ > 0 ? glm::mix(blendFrom_.fovDeg, fovDeg, s) : 0;
 }
 
-// A playing spline camera is not saved (a load resumes on the orbit camera) [I].
+// A playing spline camera is saved as its spline (unit, index) and both tracks' clocks; the rest is rebuilt from the
+// unit's spline data as startSplineCamera does. Positions are in the spline unit's frame.
 nlohmann::json World::serializeRuntime() const {
     const auto v = [](vec3 p) { return nlohmann::json{p.x, p.y, p.z}; };
     const auto limits = [&](const OrbitState::Limits& l) { return nlohmann::json{v(l.offset), v(l.zones), l.yawRange, l.pitchLo, l.pitchHi}; };
@@ -286,10 +287,22 @@ nlohmann::json World::serializeRuntime() const {
         layers.push_back({clipName(l.clip), l.time, l.rate, l.fade, l.elapsed, l.loop, l.additive, clipName(l.mixClip), l.mix});
     for (const glm::mat4& m : bones_)
         for (int k = 0; k < 16; ++k) bones.push_back(m[k / 4][k % 4]);
+    nlohmann::json spline = nullptr;
+    if (const SplineCamera* c = splineCam_.get(); c && c->spline) {
+        const auto track = [&](const SplineCamera::Track& t) {
+            return nlohmann::json{t.state, t.resume, t.pause, t.time, t.u, t.node, v(t.pos - c->unitOffset), t.next};
+        };
+        spline = {{"unit", c->unit}, {"index", c->spline - c->splines.data()}, {"value", c->value}, {"camera", track(c->camera)},
+                  {"target", c->hasTarget ? track(c->target) : nlohmann::json(nullptr)}, {"ended", c->ended}, {"notified", c->notified},
+                  {"held", c->held}, {"fov", {c->fovMode, c->fov, c->fovTo, c->fovFrom, c->fovTime, c->fovDuration}}};
+    }
+    const auto pose = [&](const CameraState& c) { return nlohmann::json{v(c.position), v(c.target), v(c.up), c.fovDeg}; };
     return {{"camera", {{"position", v(cam_.position)}, {"target", v(cam_.target)}, {"yaw", cam_.yaw}, {"pitch", cam_.pitch},
+                        {"up", v(cam_.up)}, {"fov", cam_.fovDeg},
                         {"focus", focus_ ? v(*focus_) : nlohmann::json(nullptr)},
                         {"orbit", {v(o.desired), o.dist, o.speed, o.valid, o.yaw, o.pitch, limits(o.from), limits(o.now), o.mode,
-                                   o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint}}}},
+                                   o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint}},
+                        {"spline", std::move(spline)}, {"blendOut", blendOut_}, {"blendFrom", pose(blendFrom_)}}},
             {"hair", std::move(hair)}, {"playerUnit", playerUnit_}, {"air", air_}, {"submerged", submerged_},
             {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)}};
 }
@@ -341,6 +354,38 @@ void World::restoreRuntime(const nlohmann::json& j) {
         prevBones_ = bones_;
         anim_.setLayers(std::move(layers));
         aimTime_ = aimTime;
+        // Newer saves: the camera's roll / FOV, the blend out of a spline, a playing spline camera.
+        if (cam.contains("up")) cam_.up = prevCam_.up = v(cam.at("up")), cam_.fovDeg = prevCam_.fovDeg = cam.at("fov").get<float>();
+        if (const auto& b = cam.value("blendFrom", nlohmann::json(nullptr)); b.is_array()) {
+            blendFrom_.position = v(b.at(0)), blendFrom_.target = v(b.at(1)), blendFrom_.up = v(b.at(2)), blendFrom_.fovDeg = b.at(3).get<float>();
+            blendOut_ = cam.at("blendOut").get<float>();
+        }
+        splineCam_.reset();
+        const auto& sp = cam.value("spline", nlohmann::json(nullptr));
+        const LoadedUnit* u = sp.is_object() ? findUnit(sp.at("unit").get<std::string>()) : nullptr;
+        const size_t index = u ? sp.at("index").get<size_t>() : 0;
+        if (u && index < u->data.cameraSplines.size() && !u->data.cameraSplines[index].camera.keys.empty()) {
+            auto s = std::make_shared<SplineCamera>();
+            s->unit = u->data.name, s->splines = u->data.cameraSplines, s->unitOffset = u->offset;
+            s->spline = &s->splines[index];
+            s->value = sp.at("value").get<uint32_t>();
+            const vec3 offset = s->unitOffset + v3(s->spline->offset), lara = player_.state().pos;
+            const auto track = [&](SplineCamera::Track& t, const formats::CameraSplineTrack& data, float duration, const nlohmann::json& a) {
+                setup(t, data, offset, duration, lara);
+                t.state = a.at(0), t.resume = a.at(1), t.pause = a.at(2), t.time = a.at(3), t.u = a.at(4);
+                t.node = std::min(a.at(5).get<size_t>(), data.keys.size() - 1);
+                t.pos = v(a.at(6)) + s->unitOffset;
+                t.events = &data.keys[t.node].events, t.next = a.at(7);
+            };
+            track(s->camera, s->spline->camera, 0, sp.at("camera"));
+            s->hasTarget = s->spline->target && sp.at("target").is_array();
+            if (s->hasTarget)
+                track(s->target, *s->spline->target, s->spline->targetFitsCamera ? trackLength(s->spline->camera) : 0, sp.at("target"));
+            s->ended = sp.at("ended"), s->notified = sp.at("notified"), s->held = sp.at("held");
+            const auto& f = sp.at("fov");
+            s->fovMode = f.at(0), s->fov = f.at(1), s->fovTo = f.at(2), s->fovFrom = f.at(3), s->fovTime = f.at(4), s->fovDuration = f.at(5);
+            splineCam_ = std::move(s);
+        }
     } catch (const nlohmann::json::exception&) { // older / odd saves: as restore() seeded them
     }
 }

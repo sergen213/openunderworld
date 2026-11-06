@@ -57,7 +57,7 @@ json toJson(const SaveGame& s) {
         {"player", {{"state", std::string(game::stateName(p.state))}, {"pos", vec(p.pos)}, {"yaw", p.yaw}, {"vel", vec(p.vel)},
                     {"clip", p.clip}, {"clipTime", p.clipTime}, {"clipRate", p.clipRate}, {"loop", p.loop},
                     {"ledge", ledge}, {"runJump", p.runJump}, {"regrabCooldown", p.regrabCooldown},
-                    {"water", water}, {"pitch", p.pitch}, {"fallStartZ", p.fallStartZ}}},
+                    {"water", water}, {"pitch", p.pitch}, {"fallStartZ", p.fallStartZ}, {"controller", s.controller}}},
         {"camera", {{"yaw", s.cameraYaw}, {"pitch", s.cameraPitch}}},
         {"runtime", s.runtime},
         {"checkpoint", cp},
@@ -108,6 +108,8 @@ SaveGame fromJson(const json& j) {
     ps.regrabCooldown = p.value("regrabCooldown", 0.0f);
     ps.pitch = p.value("pitch", 0.0f);
     ps.fallStartZ = p.value("fallStartZ", ps.pos.z); // older saves: falls count from where she stands
+    s.controller = p.value("controller", json(nullptr));
+    if (!s.controller.is_null() && !s.controller.is_object()) throw SaveError("player controller is not an object");
     if (const auto w = p.find("water"); w != p.end() && !w->is_null())
         s.waterUnit = w->at("unit").get<std::string>(), s.waterIndex = w->at("index").get<int>();
     if (const auto l = p.find("ledge"); l != p.end() && !l->is_null()) {
@@ -169,6 +171,54 @@ void fsyncPath(const fs::path& p, int flags) {
     if (r != 0) throw SaveError("fsync " + p.string() + " failed");
 }
 
+json markupRef(const game::World& w, int index) {
+    const auto owner = w.markupOwner(index);
+    return owner ? json{owner->first, owner->second} : json(nullptr);
+}
+
+json vec2j(game::vec2 v) { return json::array({v.x, v.y}); }
+game::vec2 vec2j(const json& j) { return {j.at(0).get<float>(), j.at(1).get<float>()}; }
+
+// player.controller: the PlayerState fields the player block above leaves out. `p` in the world frame.
+json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3 offset) {
+    const auto& h = p.hurdle;
+    return {{"clipMix", p.clipMix}, {"mix", p.mix},
+            {"hurdle", {int(h.next), h.mix, h.alt, h.draw, vec2j(h.drawOff), vec(h.edge - offset), vec2j(h.out), h.h, h.endZ - offset.z,
+                        markupRef(w, h.farLedge), h.farSeg, h.farT, h.farSide}},
+            {"savingGrab", p.savingGrab}, {"flight", p.flight}, {"fallHeight", p.fallHeight},
+            {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
+                       vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
+            {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind)}},
+            {"sprintUsed", p.sprintUsed}};
+}
+
+// Into `p` (the save's unit at offset 0, as apply loads it). Throws json / SaveError on a malformed block.
+void applyController(const json& c, const game::World& w, game::PlayerState& p) {
+    const auto ref = [&](const json& r) {
+        if (r.is_null()) return -1;
+        const int i = w.markupIndex(r.at(0).get<std::string>(), r.at(1).get<int>());
+        if (i < 0) throw SaveError("markup " + r.dump() + " is not loaded");
+        return i;
+    };
+    p.clipMix = c.at("clipMix").get<std::string>(), p.mix = c.at("mix").get<float>();
+    const auto& h = c.at("hurdle");
+    auto& d = p.hurdle;
+    const int next = h.at(0).get<int>();
+    if (next < 0 || next > game::PlayerState::Hurdle::Down) throw SaveError("bad hurdle " + h.dump());
+    d.next = game::PlayerState::Hurdle::Next(next), d.mix = h.at(1), d.alt = h.at(2), d.draw = h.at(3), d.drawOff = vec2j(h.at(4));
+    d.edge = vec(h.at(5)), d.out = vec2j(h.at(6)), d.h = h.at(7), d.endZ = h.at(8), d.farLedge = ref(h.at(9));
+    d.farSeg = h.at(10), d.farT = h.at(11), d.farSide = h.at(12);
+    p.savingGrab = c.at("savingGrab"), p.flight = c.at("flight"), p.fallHeight = c.at("fallHeight");
+    const auto& cl = c.at("climb");
+    p.climbHold = ref(cl.at(0)), p.climbStance = cl.at(1), p.climbWarp = cl.at(2), p.climbNormal = vec(cl.at(3));
+    p.climbFrom = vec(cl.at(4)), p.climbTo = vec(cl.at(5)), p.climbYawFrom = cl.at(6), p.climbYawTo = cl.at(7);
+    const auto& g = c.at("grapple");
+    const int kind = g.at(3).get<int>();
+    if (kind < 0 || kind > int(game::GrappleKind::Mounted)) throw SaveError("bad grapple kind " + g.dump());
+    p.grappleUid = g.at(0), p.grappleAnchor = vec(g.at(1)), p.ropeLength = g.at(2), p.grappleKind = game::GrappleKind(kind);
+    p.sprintUsed = c.at("sprintUsed");
+}
+
 } // namespace
 
 SaveGame capture(const game::World& world) {
@@ -180,6 +230,7 @@ SaveGame capture(const game::World& world) {
     s.player.pos -= unit.offset;
     s.player.fallStartZ -= unit.offset.z;
     if (const auto owner = world.markupOwner(s.player.ledge)) s.ledgeUnit = owner->first, s.ledgeIndex = owner->second;
+    s.controller = controllerJson(world, world.player().state(), unit.offset);
     if (const auto owner = world.markupOwner(s.player.water)) s.waterUnit = owner->first, s.waterIndex = owner->second;
     s.player.ledge = s.player.water = -1;
     s.cameraYaw = world.camera().yaw;
@@ -223,6 +274,13 @@ void apply(const SaveGame& save, game::World& world) {
         };
         p.ledge = markup(save.ledgeUnit, save.ledgeIndex, "ledge");
         p.water = markup(save.waterUnit, save.waterIndex, "water volume");
+        if (!save.controller.is_null()) {
+            try {
+                applyController(save.controller, world, p);
+            } catch (const json::exception& e) {
+                throw SaveError(std::string("player controller: ") + e.what());
+            }
+        }
         world.restore(p, save.cameraYaw, save.cameraPitch);
         world.restoreRuntime(save.runtime);
     }

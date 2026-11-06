@@ -70,8 +70,9 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `player.ledge` | null or `{unit, index, seg, t, side}` | hung-on ledge: markup `index` within `unit`'s markup |
 | `player.water` | null or `{unit, index}` | water volume Lara swims in, same addressing |
 | `player.runJump`, `regrabCooldown` | | controller details |
+| `player.controller` | object or null | the rest of `game::PlayerState`: `clipMix`, `mix` (blend space), `hurdle` (obstacle move: next, mix, alt, draw, draw offset, edge, out, height, end z, far ledge as `[unit, index]` or null, its segment, t, side), `savingGrab`, `flight` (HangJump), `fallHeight`, `climb` (hold as `[unit, index]`, stance, warp, rock normal, warp from / to, their yaws), `grapple` (anchor uid, anchor, rope length, kind), `sprintUsed`; positions in the unit's frame; missing/null (older saves) = their defaults |
 | `camera.yaw`, `camera.pitch` | number | follow-camera orbit |
-| `runtime` | object or null | `World::serializeRuntime()`: `camera` (orbit camera position, target, angles, `focus` and `orbit` = its lag, desired point, distance, mode blend, look-idle clock, last moves, level-camera hint as (unit, markup index)), `hair` (Lara's hair particles: current, previous, animated positions), `anim` (her crossfade layers: clip names, times, fades), `aimTime`, `bones` (her pose, which the next tick's camera reads), `playerUnit` (the unit the scripts were last told she is in: no level-load callbacks again), `air`, `submerged`, `hingeLimits` (multibody 77 limits per object); missing/null (older saves) = seeded as `World::restore` does |
+| `runtime` | object or null | `World::serializeRuntime()`: `camera` (orbit camera position, target, angles, `up` and `fov`, `focus` and `orbit` = its lag, desired point, distance, mode blend, look-idle clock, last moves, level-camera hint as (unit, markup index); `spline` = a playing reveal camera: its unit, spline index, script value, camera and target tracks [state, resume, pause, time, u, node, position in the spline unit's frame, next key event], ended / notified / held, FOV blend; `blendOut` and `blendFrom` = the blend back to the orbit camera), `hair` (Lara's hair particles: current, previous, animated positions), `anim` (her crossfade layers: clip names, times, fades), `aimTime`, `bones` (her pose, which the next tick's camera reads), `playerUnit` (the unit the scripts were last told she is in: no level-load callbacks again), `air`, `submerged`, `hingeLimits` (multibody 77 limits per object); missing/null (older saves) = seeded as `World::restore` does (no spline camera) |
 | `combat` | object or null | `World::serializeCombat()`: `weapon`, `secondary`, `guns` (clips, reserves), `adrenaline`, and `state` (draw, aim, lock target as enemy uid, cooldowns, reload, recoil clocks, spread RNG, held buttons, head-shot window); missing `state` (older saves) = holstered |
 | `checkpoint` | null or `{unit, id}` | last checkpoint: intro unique id in `unit` |
 | `collected` | [int] | intro unique ids of picked-up rewards (`World::collected`, src/game/Progress.hpp) |
@@ -127,14 +128,22 @@ their saved uids, fields and threads instead of their startup.
 The simulation then continues bit for bit. `StreamReal.SaveContinuesBitIdentically` ticks N, saves, loads into a
 fresh World and ticks M more beside the uninterrupted run on `l4_ballcourt` (the scripts kill poachers, ragdolls),
 `l1_ship_exterior` (Lara runs at the mercs firing, locked on: alerts, a kill), `l4_pool` (running, jumping, swimming)
-and `l2_cliffclimb`: `World::stateHash` equal on every tick and the same capture at the end. On a mismatch it names
-the `World::stateParts` that differ at the first such tick and the JSON fields of the two captures.
+and `l2_cliffclimb`, and with the save taken in each controller state: hanging (l4_temple ledge 1187), shimmying
+along it, free climbing mid-step (l2_cliffclimb DICE holds), swinging on l4_pool's grapple anchor 5511, on
+l1_ship_sinking_hall's ladder 234, on l4_temple's balance beam 1079, under l4_pool's goo, mid chapter-intro sequence
+(chapter 5 after `230_val_intro`, before its handler mounts her), riding bike 5482 (chapter 4) and with
+l1_kraken_room's reveal camera (spline 9) playing: `World::stateHash` equal on every tick and the same capture at the
+end. On a mismatch it names the `World::stateParts` that differ at the first such tick and the JSON fields of the two
+captures. Enemies are kept in uid order (`ai::Enemies::add`), so a load, which streams its units afresh, ticks them in
+the saving run's order.
 `StreamReal.PoolToRagnarokOnFootThenSaveLoad` saves in `l4_ragnarok_room` (streamed in from `l4_pool` at offset
 (−20475.4, −2872.2, 12591.4)), loads it at offset 0: states and clips match on every tick; positions within 0.5 units,
 the float rounding of the other frame.
 
-Not saved [I]: a playing spline camera (a load resumes on the orbit camera); Player controller internals beyond
-`player.*`; VM constant texts come back as copies (a string member written after the save no longer aliases them).
+Not saved [I]: FMV cinematics play inside one World tick (`World::onCinematic`), so there is no save point inside one;
+a save taken airborne (`fall`, `jump`) resumes at the checkpoint, as tru.exe's loads do; VM constant texts come back
+as copies (a string member written after the save no longer aliases them); the World's own button-held latches
+(interact, grapple, light, grenade, bike) restart held, so a press on the first tick after a load is not an edge.
 
 ## Checkpoints and respawn
 

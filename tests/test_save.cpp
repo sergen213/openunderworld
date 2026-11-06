@@ -5,6 +5,7 @@
 #include "render/OriginalShading.hpp"
 #include "render/ShaderTranslate.hpp"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <gtest/gtest.h>
 
@@ -1028,8 +1029,11 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
         std::optional<game::Spawn> spawn;
         int n, m;
         game::Actions (*input)(uint64_t tick); // the same pad on both runs, by world tick
+        void (*setup)(game::World&) = nullptr; // after construction, before the n ticks (the saving run only)
+        bool (*saving)(const game::World&) = nullptr; // the state the save is taken in
     };
     const auto idle = [](uint64_t) { return game::Actions{}; };
+    using game::State;
     const Case cases[] = {
         {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle}, // its scripts kill poachers, ragdolls fall
         {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 600, [](uint64_t t) { // runs at the mercs, locked on, firing
@@ -1045,12 +1049,84 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              return a;
          }},
         {"l2_cliffclimb", game::Spawn{{-34749.2f, -14716.0f, 71.3f}, 2.35f}, 60, 300, idle},
+        // Hanging on l4_temple ledge 1187 (a standing jump), then shimmying along it.
+        {"l4_temple", game::Spawn{{-8771.2f, -9922.7f, 2600}, 0}, 85, 240, [](uint64_t t) {
+             game::Actions a;
+             a.jump = t == 5;
+             a.move.x = t >= 120 && t < 260 ? 1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().state == State::Hang; }},
+        {"l4_temple", game::Spawn{{-8771.2f, -9922.7f, 2600}, 0}, 140, 240, [](uint64_t t) {
+             game::Actions a;
+             a.jump = t == 5;
+             a.move.x = t >= 120 && t < 260 ? 1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().state == State::Shimmy; }},
+        // Free climbing on l2_cliffclimb's DICE holds, mid-step (a warp clip carrying her between holds).
+        {"l2_cliffclimb", game::Spawn{{-23835, -3600, 300}, 1.5707963f}, 100, 300, [](uint64_t) {
+             game::Actions a;
+             a.move.y = 1;
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().state == State::Climb; }},
+        // Swinging on l4_pool's ceiling anchor 5511.
+        {"l4_pool", game::Spawn{{4362, -400, 2000}, 0}, 120, 300, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t % 120 < 60 ? 1.0f : -1.0f;
+             return a;
+         }, [](game::World& w) {
+             w.restore(w.player().state(), 1.5707963f, 0.7f);
+             if (const auto t = w.grappleTarget()) w.attachGrapple(t->pos, t->uid);
+         }, [](const game::World& w) { return w.player().state().state == State::GrappleSwing; }},
+        // On l1_ship_sinking_hall's ladder 234, climbing.
+        {"l1_ship_sinking_hall", game::Spawn{{1550, 29, 1000}, 3.1415927f}, 40, 240, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t < 150 ? 1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().state == State::Ladder; }},
+        // Walking l4_temple's balance beam 1079.
+        {"l4_temple", game::Spawn{{-5500, -8099, 3100}, 0}, 100, 300, [](uint64_t) {
+             game::Actions a;
+             a.move.y = 0.3f;
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().state == State::Beam; }},
+        // Swimming under l4_pool's goo.
+        {"l4_pool", game::Spawn{{-4000, 0, 2000}, 0}, 30, 300, [](uint64_t t) {
+             game::Actions a;
+             a.drop = t == 1;
+             a.move = game::vec2(std::sin(float(t) * 0.03f), 1);
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().state == State::SwimUnder; }},
+        // Mid-cutscene: chapter 5's start, after 230_val_intro, before its handler mounts her on bike 7229 (0.6 s).
+        {"l3_main_bedroom", std::nullopt, 15, 300, idle, [](game::World& w) { w.startChapter(5); },
+         [](const game::World& w) { return !w.ridden(); }},
+        // Riding: chapter 4's start puts her on bike 5482 (l4_trailstart), throttle on.
+        {"l3_main_bedroom", std::nullopt, 90, 300, [](uint64_t) {
+             game::Actions a;
+             a.move.y = 1;
+             return a;
+         }, [](game::World& w) { w.startChapter(4); }, [](const game::World& w) { return w.player().state().state == State::Vehicle; }},
+        // A reveal camera playing: l1_kraken_room plane 37 starts camera spline 9 (GameReal.RevealCameraPlaysUnitSpline).
+        {"l1_kraken_room", std::nullopt, 60, 300, idle, [](game::World& w) {
+             w.tick({});
+             const auto* t = w.script().find(37);
+             if (!t) return;
+             const glm::mat4 rot = glm::rotate(glm::mat4(1), t->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), t->rot.y, {0, 1, 0}) *
+                                   glm::rotate(glm::mat4(1), t->rot.z, {0, 0, 1});
+             const game::vec3 n = glm::normalize(game::vec3(rot * glm::vec4(0, 1, 0, 0)));
+             const game::vec3 base = t->pos - game::vec3(0, 0, script::kTestPointHeight);
+             const game::PlayerState start = w.player().state();
+             game::PlayerState s = start;
+             for (const game::vec3 p : {base + n * 300.0f, base - n * 300.0f}) s.pos = p, w.restore(s, 0, 0), w.tick({});
+             w.restore(start, 0, 0); // back on the floor: an airborne save resumes at the checkpoint
+         }, [](const game::World& w) { return w.splineCameraActive(); }},
     };
     const auto dump = [](const game::World& w) {
         const std::string s = save::serialize(save::capture(w));
         return nlohmann::json::parse(s.substr(s.find('\n') + 1));
     };
-    for (const auto& c : cases) {
+    for (size_t ci = 0; ci < std::size(cases); ++ci) {
+        const auto& c = cases[ci];
+        const std::string label = std::string(c.unit) + " (case " + std::to_string(ci) + ")";
         const auto make = [&] {
             auto w = std::make_unique<game::World>(load, c.unit, anims, c.spawn);
             w->script().setBigfile(&bf);
@@ -1059,7 +1135,9 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
             return w;
         };
         auto w = make();
+        if (c.setup) c.setup(*w);
         for (int i = 0; i < c.n; ++i) w->tick(c.input(w->ticks()));
+        if (c.saving) EXPECT_TRUE(c.saving(*w)) << label << ": not in the state to save in (" << game::stateName(w->player().state().state) << ")";
         const auto bytes = save::serialize(save::capture(*w));
         auto l = make();
         save::apply(save::parse(bytes), *l);
@@ -1073,7 +1151,7 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
                 lines += patch[i].at("path").get<std::string>() + ": " + (a.contains(at) ? a.at(at).dump().substr(0, 200) : "-") +
                          " / loaded " + (b.contains(at) ? b.at(at).dump().substr(0, 200) : "-") + "\n";
             }
-            ADD_FAILURE() << c.unit << " " << when << ": " << patch.size() << " differences (uninterrupted / loaded):\n" << lines;
+            ADD_FAILURE() << label << " " << when << ": " << patch.size() << " differences (uninterrupted / loaded):\n" << lines;
         };
         // A just-loaded World holds the saved physics state until its first step: compared from the first tick on.
         for (int i = 0; i < c.m; ++i) {
@@ -1083,7 +1161,7 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
                 std::string parts = pa.size() == pb.size() ? "" : "part counts differ\n";
                 for (size_t k = 0; k < pa.size() && k < pb.size(); ++k)
                     if (pa[k] != pb[k]) parts += pa[k].first + (pa[k].first == pb[k].first ? "" : " / loaded " + pb[k].first) + "\n";
-                ADD_FAILURE() << c.unit << ": the hash differs " << i + 1 << " ticks after the load in\n" << parts;
+                ADD_FAILURE() << label << ": the hash differs " << i + 1 << " ticks after the load in\n" << parts;
                 compare("then");
                 break;
             }
