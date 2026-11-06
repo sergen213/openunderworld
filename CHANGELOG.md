@@ -4,6 +4,27 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.32.0] - 2026-11-06
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: jumps from a ledge hang now match the original (back and side leaps play their take-off first, with the
+  original's arcs; ledge-to-ledge jumps use the original's launch speeds and land on the target).
+- Fixed: pole and pillar climbing measured against the original: higher, delayed pole flings, faster catches and
+  turns, straight-line jumps onto poles, pillar controls relative to the screen, pillar climb / slide / round speeds,
+  pillar jumps in every direction. New: standing on top of a pole, with jumps off it.
+- Fixed: turning the camera no longer gets stuck against objects (it goes round them as in the original).
+- Fixed: ray-traced ambient occlusion and bounce light flickered and popped in and out; much steadier now.
+- Fixed: underwater bubble effects appeared when firing guns out of water.
+- Fixed: enemies that the original only brings in during an encounter (for example the ballcourt panthers and
+  poachers) were already standing there when the level loaded.
+- Cutscenes: all 53 checked to the end; removed stray grey planes and white placeholder boxes, a wrong model in the
+  kraken's death, a stray T-posed figure in 275, and effects (fire, smoke) now keep running during cutscenes.
+- Models switch between their detail levels by distance as in the original (enemies drew all three at once), also in
+  the ray-traced scene.
+- Built as C++23 with link-time optimisation. The AppImage now needs glibc 2.38 and GCC 14's libstdc++ (Ubuntu
+  24.04, Debian 13, Fedora 40 or newer).
+
 ## [0.31.0] - 2026-11-06
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
