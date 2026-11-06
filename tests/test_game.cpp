@@ -925,6 +925,38 @@ TEST(Game, BalanceBeamWalkTurnStepOff) {
     EXPECT_NEAR(s.pos.z, 0, 1e-3);
 }
 
+// Off balance [I]: the stick across the beam while walking blends in bbeam_unbalance_walk_<side> (request 192's blend
+// space; same root motion as bbeam_walk), standing she wobbles (bbeam_idle_wobble_fwd); straight on she walks plainly.
+TEST(Game, BeamUnbalanceAndWobble) {
+    CollisionMesh m;
+    addFloor(m, -2000, -1000, 3000, 1000, -2000);
+    m.markup.push_back({14, 9, {{0, 0, 0}, {2400, 0, 0}}});
+    auto w = makeWorld(std::move(m), {600, 0, 400});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 120 && s.state != State::Beam; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Beam);
+    for (int i = 0; i < 120; ++i) w->tick({}); // the landing clip
+    const auto pushed = [&](game::vec2 stick) { // camera fixed along +X: stick up = +X, right = -Y
+        Actions a;
+        a.move = stick;
+        w->tick(fixedCamera(*w, a, 0));
+    };
+    pushed({0.5f, 1}); // along +X, a little across
+    EXPECT_EQ(s.clip, "bbeam_walk");
+    EXPECT_FALSE(s.clipMix.empty()) << "off balance";
+    EXPECT_EQ(s.mix, 1.0f);
+    const float x0 = s.pos.x;
+    for (int i = 0; i < 60; ++i) pushed({0.5f, 1});
+    EXPECT_NEAR(s.pos.x - x0, 4.67f * 30 * 1, 10) << "bbeam_walk's root speed";
+    pushed({0, 1});
+    EXPECT_TRUE(s.clipMix.empty());
+    pushed({1, 0}); // straight across
+    EXPECT_EQ(s.clip, "bbeam_idle_wobble_fwd");
+    EXPECT_EQ(s.state, State::Beam);
+    pushed({0, 0});
+    EXPECT_EQ(s.clip, "bbeam_idle");
+}
+
 // Falling through a beam's line (no collision needed) lands on it; fallHeight reports the drop.
 TEST(Game, FallingOntoBeamCatchesIt) {
     CollisionMesh m;
@@ -996,7 +1028,8 @@ TEST(Game, DropToHangFromEdge) {
     EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4); // facing the wall
 }
 
-// Targeted jumps from a hang: up to the ledge above, right to the next one, back across to the far wall.
+// Targeted jumps from a hang: up to the ledge above, right to the next one, back across to the far wall, then left
+// along it (ledgeb_jump_right mirrored: lara.drm request 979).
 TEST(Game, HangJumpsUpRightAndBack) {
     CollisionMesh m;
     addBox(m, {0, -3000, -100}, {1000, 3000, 3000});     // wall, face x = 0
@@ -1006,18 +1039,24 @@ TEST(Game, HangJumpsUpRightAndBack) {
     m.markup.push_back({1, 2, {{0, 300, 900}, {0, -300, 900}}});      // 400 above
     m.markup.push_back({1, 3, {{0, -600, 900}, {0, -1100, 900}}});    // right of it (facing +X, right = -Y)
     m.markup.push_back({1, 4, {{-700, -1100, 700}, {-700, -500, 700}}}); // behind, on the far wall
+    m.markup.push_back({1, 5, {{-700, -1700, 700}, {-700, -1300, 700}}}); // left of it (facing -X, left = -Y)
     auto w = makeWorld(std::move(m), {-300, 0, -100});
     game::PlayerState h;
     h.state = State::Hang, h.ledge = 0, h.ledgeT = 300, h.ledgeSide = -1, h.clip = "ledgeb_idle";
     w->restore(h, 0, -0.25f);
     w->tick({});
     const auto& s = w->player().state();
+    int lefts = 0;
     auto jump = [&](float right, float fwd, int ledge, vec3 at) {
         Actions a;
         a.jump = true, a.move = {right, fwd};
+        const vec3 from = handsOf(*w, w->anims().hangHandOffset);
+        const bool left = glm::dot(glm::vec2(at - from), glm::vec2(std::sin(s.yaw), -std::cos(s.yaw))) < -100; // to her left
+        lefts += left;
         w->tick(fixedCamera(*w, a, 0));
         ASSERT_EQ(s.state, State::HangJump);
         EXPECT_EQ(s.ledge, ledge);
+        EXPECT_EQ(s.mirror, left) << s.clip;
         float maxStep = 0;
         for (int i = 0; i < 120 && s.state == State::HangJump; ++i) {
             const vec3 p = s.pos;
@@ -1034,6 +1073,8 @@ TEST(Game, HangJumpsUpRightAndBack) {
     jump(1, 0, 2, {0, -600, 900});
     jump(0, -1, 3, {-700, -600, 700});
     EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4); // turned round to face the far wall
+    jump(1, 0, 4, {-700, -1300, 700}); // stick right on screen (-Y): her left, facing -X
+    EXPECT_EQ(lefts, 1) << "the last jump goes to her left";
 }
 
 // Horizontal poles (markup 4): grab from a standing jump, swing, fling to the next pole, drop.
@@ -1945,6 +1986,103 @@ TEST(GameReal, CliffclimbStances) {
     EXPECT_LT(maxTurn, 0.02f) << "the heading turns smoothly (re-pinned to each face it jumped by up to 0.067 rad)";
     EXPECT_GT(minCamera, 1000.0f) << "the camera stays back (its probe started touching the rock and collapsed onto the "
                                      "pivot: position = target, a NaN view, the screen white)";
+}
+
+// The same hold-to-hold route at 30 / 60 / 144 Hz render rates: the fixed 60 Hz simulation steps identically, so the
+// transitions, the route and the final state come out bit for bit, ending on ledge 45 (DICE_B_jump_up, ledgeb_attach_U).
+TEST(GameReal, CliffclimbIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    auto base = collision::loadLevelCollision(cdc::parseDrm(std::move(*bf.read("pc-w\\l2_cliffclimb.drm"))));
+    base.build();
+    const std::vector<int> plan = {21, 11, 38, 12, 7, 19, 17, 13, 18, 14, 16, 15, 6, 4, 40, 8, 3, 9, 5};
+    struct Run { game::PlayerState end; std::vector<std::string> clips; };
+    const auto run = [&](double renderHz) {
+        game::World w(collision::CollisionMesh(base), anims, {{-23835, -3600, 300}, glm::radians(90.0f)});
+        engine::FrameClock clock(game::kTickSeconds);
+        size_t next = 1;
+        Run r;
+        const auto done = [&] { return w.ticks() >= 4000 || (w.player().state().state == State::Hang && w.player().state().clip == "ledgeb_idle"); };
+        while (!done())
+            for (int n = clock.advance(1.0 / renderHz); n > 0 && !done(); --n) {
+                const auto& s = w.player().state();
+                Actions a;
+                if (s.state != State::Climb) a = w.ticks() < 60 ? forward() : Actions{};
+                else {
+                    if (next < plan.size() && s.climbHold == plan[next] && !s.climbWarp) ++next;
+                    if (next < plan.size()) {
+                        const vec3 d = w.collision().markup[size_t(plan[next])].points[0] - w.collision().markup[size_t(s.climbHold)].points[0];
+                        const vec3 right = glm::normalize(glm::cross(-s.climbNormal, vec3(0, 0, 1)));
+                        a.move = glm::normalize(vec2(glm::dot(d, right), d.z));
+                    } else {
+                        a.move = {0, 1};
+                    }
+                }
+                w.tick(a);
+                if (r.clips.empty() || r.clips.back() != w.player().state().clip) r.clips.push_back(w.player().state().clip);
+            }
+        r.end = w.player().state();
+        return r;
+    };
+    const Run a = run(30), b = run(60), c = run(144);
+    EXPECT_EQ(a.end.state, State::Hang);
+    EXPECT_EQ(a.end.ledge, 45);
+    EXPECT_TRUE(std::ranges::find(a.clips, "DICE_B_jump_up") != a.clips.end());
+    EXPECT_GT(std::ranges::count_if(a.clips, [](const std::string& n) { return n.find("_to_") != std::string::npos; }), 15);
+    for (const Run* o : {&b, &c}) {
+        EXPECT_EQ(o->clips, a.clips);
+        EXPECT_EQ(o->end.pos, a.end.pos);
+        EXPECT_EQ(o->end.yaw, a.end.yaw);
+        EXPECT_EQ(o->end.clipTime, a.end.clipTime);
+    }
+}
+
+// Caught falling too fast for a firm catch (faster than grabMinVz, up to twice: as a ledge's saving grab [I]) the
+// stance's bad attach holds: DICE_B_air_attach_bad_start onto the hold, its loop for the saving-grab time; jump pulls
+// her back up (DICE_B_air_attach_bad_end, then DICE_B_Idle), else she lets go. A slow fall catches firmly.
+TEST(GameReal, ClimbBadAttach) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto mesh = [](float z) {
+        CollisionMesh m;
+        addFloor(m, -2000, -2000, 2000, 2000, 0);
+        addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 3000}, {400, -2000, 3000});
+        m.markup.push_back({16, 350, {{380, 0, z}, {380, 70, z + 144}, {380, -70, z + 174}}});
+        return m;
+    };
+    const vec3 anchor(380, 0, 350 - 158.025f);
+    for (const bool pull : {true, false}) {
+        auto w = climbWorld(mesh(350), {300, 0, 1400});
+        const auto& s = w->player().state();
+        float vz = 0;
+        for (int i = 0; i < 120 && s.state != State::Climb; ++i) vz = s.vel.z, w->tick(forward());
+        ASSERT_EQ(s.state, State::Climb);
+        EXPECT_LT(vz, w->player().tuning().grabMinVz);
+        EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_start");
+        EXPECT_GT(s.savingGrab, 0);
+        for (int i = 0; i < 45; ++i) w->tick({}); // the start clip (0.57 s) carries her onto the hold
+        EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_loop");
+        EXPECT_NEAR(glm::distance(s.pos, anchor), 0, 1e-2f);
+        if (pull) {
+            Actions jump;
+            jump.jump = true;
+            w->tick(jump);
+            EXPECT_EQ(s.clip, "DICE_B_air_attach_bad_end");
+            for (int i = 0; i < 60; ++i) w->tick({});
+            EXPECT_EQ(s.state, State::Climb);
+            EXPECT_EQ(s.clip, "DICE_B_Idle");
+            EXPECT_EQ(s.savingGrab, 0);
+            EXPECT_NEAR(glm::distance(s.pos, anchor), 0, 1e-2f);
+        } else {
+            for (int i = 0; i < 150 && s.state == State::Climb; ++i) w->tick({});
+            EXPECT_NE(s.state, State::Climb) << "let go when the saving-grab time ran out";
+        }
+    }
+    auto w = climbWorld(mesh(1350), {300, 0, 1450}); // a short fall onto a high hold
+    for (int i = 0; i < 120 && w->player().state().state != State::Climb; ++i) w->tick(forward());
+    ASSERT_EQ(w->player().state().state, State::Climb);
+    EXPECT_EQ(w->player().state().clip, "DICE_B_air_attach_M");
+    EXPECT_EQ(w->player().state().savingGrab, 0);
 }
 
 // l2_cliffclimb's hold wall carries a level camera record (type 3, 2 Hermite points, 11 holds, 300 deg/s, force 5 x

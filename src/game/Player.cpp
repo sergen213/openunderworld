@@ -167,8 +167,8 @@ float Player::capHeight() const {
     return s_.state == State::Crouch || s_.state == State::Roll ? t_.crouchHeight : t_.capsuleTop;
 }
 
-void Player::play(std::string_view clip, bool loop, float rate) {
-    if (s_.clip == clip && s_.loop == loop && s_.clipRate == rate) return;
+void Player::play(std::string_view clip, bool loop, float rate, bool mirror) {
+    if (s_.clip == clip && s_.loop == loop && s_.clipRate == rate && s_.mirror == mirror) return;
     // A new clip starts at the original request's start frame (clipBlend); swapping between the looping
     // gaits of one blend space keeps the stride phase instead (walk and run line up at phase 0).
     double t = 0;
@@ -184,6 +184,7 @@ void Player::play(std::string_view clip, bool loop, float rate) {
     s_.clip = clip;
     s_.loop = loop;
     s_.clipRate = rate;
+    s_.mirror = mirror;
     s_.clipTime = t;
     s_.clipMix.clear();
     s_.mix = 0;
@@ -203,6 +204,7 @@ static vec3 rootDelta(const AnimLibrary& anims, const PlayerState& s, const anim
         const double k = m->durationSeconds() / c.durationSeconds();
         d = glm::mix(d, rootTranslation(*m, t1 * k, s.loop) - rootTranslation(*m, t0 * k, s.loop), s.mix);
     }
+    if (s.mirror) d.x = -d.x; // tru.exe 0x441FB0: a mirrored request's root translation x negated
     return d;
 }
 
@@ -951,8 +953,9 @@ bool Player::startHangJump(int kind) {
     s_.ledge = bestLi, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide;
     s_.state = State::HangJump;
     s_.fallStartZ = s_.pos.z;
-    // [I] no mirrored clip exists for jumping left; ledgeb_jump_right plays for both sides.
-    play(fling ? "hpole_perp_fling" : kind == 0 ? "ledgeb_jump_up" : kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false);
+    // Left: ledgeb_jump_right mirrored (lara.drm request 979 has the mirror bit, 1009 is the same clip unmirrored) [O].
+    play(fling ? "hpole_perp_fling" : kind == 0 ? "ledgeb_jump_up" : kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false, 1,
+         kind == -1);
     return true;
 }
 
@@ -1406,8 +1409,18 @@ void Player::beam(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         play("bbeam_walk_turn180", false);
         return;
     }
-    if (along > 0.3f) play("bbeam_walk", true);
-    else if ((s_.clip != "bbeam_walk_attach" && s_.clip != "bbeam_jumpland") || clipDone()) play("bbeam_idle", true);
+    // Off balance with the stick across the beam [I: the weight and the threshold; tru.exe's PSCCF_MoveDirUnbalanced
+    // condition is not decoded]: walking blends in bbeam_unbalance_walk_left / _right (lara.drm anim request 192: the
+    // walk's blend space with them [O]); standing she wobbles (bbeam_idle_wobble_fwd, requests 158 / 159 [O]).
+    const float side = glm::length(move) > 0.1f ? glm::dot(glm::normalize(move), vec2(dir.y, -dir.x)) : 0.0f;
+    const bool landing = (s_.clip == "bbeam_walk_attach" || s_.clip == "bbeam_jumpland") && !clipDone();
+    if (along > 0.3f) {
+        play("bbeam_walk", true);
+        s_.clipMix = std::abs(side) > 0.3f ? (side > 0 ? "bbeam_unbalance_walk_right" : "bbeam_unbalance_walk_left") : "";
+        s_.mix = s_.clipMix.empty() ? 0.0f : 1.0f;
+    } else if (!landing) {
+        play(std::abs(side) > 0.5f ? "bbeam_idle_wobble_fwd" : "bbeam_idle", true);
+    }
     const float ds = -advanceClip(dt).y; // model -Y = forward along the beam
     const bool end = moveAlong(m, s_.ledgeSeg, s_.ledgeT, ds * s_.ledgeSide) && ds > 0;
     s_.pos = pointOn(m, s_.ledgeSeg, s_.ledgeT);

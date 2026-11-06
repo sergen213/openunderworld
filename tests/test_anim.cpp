@@ -193,6 +193,40 @@ TEST(AnimReal, LaraSkeletonHierarchy) {
     EXPECT_GT(bind[17].z, 420.0f);
 }
 
+// Mirrored anim requests (lara.drm request +0x20 bit 0x80) reflect the pose in X: each bone takes its twin's transform.
+// The twins pair up (legs 4..8 / 9..13, arms 52..55 / 77..80), centre bones are their own, and mirroring twice is a
+// no-op.
+TEST(AnimReal, LaraMirrorTwins) {
+    const Lara* l = lara();
+    if (!l) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const scene::Skeleton* sk = nullptr;
+    for (const auto& s : l->skeletons)
+        if (s.renderModelId == 2366) sk = &s;
+    ASSERT_NE(sk, nullptr);
+    const auto twins = anim::mirrorBones(*sk);
+    for (auto [a, b] : {std::pair{4u, 9u}, {8u, 13u}, {52u, 77u}, {55u, 80u}}) {
+        EXPECT_EQ(twins[a], b);
+        EXPECT_EQ(twins[b], a);
+    }
+    EXPECT_EQ(twins[1], 1u); // pelvis
+    size_t paired = 0;
+    for (size_t i = 0; i < twins.size(); ++i) {
+        EXPECT_EQ(twins[twins[i]], i);
+        paired += twins[i] != i;
+    }
+    EXPECT_GT(paired, 40u);
+    std::vector<anim::LocalTransform> pose(sk->bones.size());
+    for (size_t i = 0; i < pose.size(); ++i) pose[i] = {{0.1f * float(i % 7), 0.2f, -0.3f}, {1, 1, 1}, {float(i), 2, 3}};
+    auto twice = pose;
+    anim::mirrorPose(twice, twins);
+    EXPECT_EQ(twice[52].trans.x, -pose[77].trans.x);
+    anim::mirrorPose(twice, twins);
+    for (size_t i = 0; i < pose.size(); ++i) {
+        EXPECT_EQ(twice[i].rot, pose[i].rot);
+        EXPECT_EQ(twice[i].trans, pose[i].trans);
+    }
+}
+
 TEST(AnimReal, AllLaraClipsDecodeAndKeepBoneLengths) {
     const Lara* l = lara();
     if (!l) GTEST_SKIP() << "OU_GAME_DIR not set";

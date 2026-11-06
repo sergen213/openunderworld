@@ -45,13 +45,39 @@ double syncedStartTime(const Clip& from, double fromTime, const Clip& to) {
     return phase * dt;
 }
 
+std::vector<uint32_t> mirrorBones(const scene::Skeleton& skeleton) {
+    const auto bind = bindPositions(skeleton);
+    std::vector<uint32_t> twins(bind.size());
+    for (size_t i = 0; i < bind.size(); ++i) {
+        twins[i] = uint32_t(i);
+        const glm::vec3 want(-bind[i].x, bind[i].y, bind[i].z);
+        // Coincident bones (helpers at one spot): the one under the parent's twin (parents come first).
+        const int32_t p = skeleton.bones[i].parent, wantParent = p >= 0 ? int32_t(twins[size_t(p)]) : -1;
+        float best = 1.0f;
+        for (size_t j = 0; j < bind.size(); ++j)
+            if (const float d = glm::distance(bind[j], want) + (skeleton.bones[j].parent == wantParent ? 0.0f : 0.5f); d < best)
+                best = d, twins[i] = uint32_t(j);
+    }
+    for (size_t i = 0; i < twins.size(); ++i) // one-sided matches (asymmetric helpers, hair) stay themselves
+        if (twins[twins[i]] != i) twins[i] = uint32_t(i);
+    return twins;
+}
+
+void mirrorPose(std::span<LocalTransform> pose, std::span<const uint32_t> twins) {
+    const std::vector<LocalTransform> in(pose.begin(), pose.end());
+    for (size_t i = 0; i < pose.size() && i < twins.size(); ++i) {
+        const LocalTransform& t = in[twins[i] < in.size() ? twins[i] : i];
+        pose[i] = {{t.rot.x, -t.rot.y, -t.rot.z}, t.scale, {-t.trans.x, t.trans.y, t.trans.z}};
+    }
+}
+
 AnimController::AnimController(const scene::Skeleton& skeleton) : skeleton_(&skeleton) {}
 
 void AnimController::play(const Clip* clip, float blendSeconds, bool loop, float rate, double startTime, bool additive,
-                          const Clip* mixClip, float mix) {
+                          const Clip* mixClip, float mix, bool mirror) {
     // ponytail: at most 4 layers; the oldest is dropped (a small jump) if transitions pile up faster than they fade.
     if (layers_.size() >= 4) layers_.erase(layers_.begin());
-    layers_.push_back({clip, startTime, rate, layers_.empty() ? 0.0f : blendSeconds, 0.0f, loop, additive, mixClip, mix});
+    layers_.push_back({clip, startTime, rate, layers_.empty() ? 0.0f : blendSeconds, 0.0f, loop, additive, mixClip, mix, mirror});
 }
 
 void AnimController::update(double dt) {
@@ -80,6 +106,10 @@ std::vector<LocalTransform> AnimController::sampleLayer(const Layer& l) const {
     // Blend space (a multi-clip anim request): the other clip at the same phase (tru.exe 0x4428A0: t_i = t_0/len_0 * len_i).
     if (l.mixClip && l.mix > 0)
         blendPoses(out, sample(*l.mixClip, *skeleton_, l.time / l.clip->durationSeconds() * l.mixClip->durationSeconds(), l.loop), l.mix, out);
+    if (l.mirror) {
+        if (twins_.size() != skeleton_->bones.size()) twins_ = mirrorBones(*skeleton_); // the skeleton may be re-rigged
+        mirrorPose(out, twins_);
+    }
     return out;
 }
 

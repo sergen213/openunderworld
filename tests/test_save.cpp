@@ -1111,12 +1111,15 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              a.move.x = t >= 120 && t < 260 ? 1.0f : 0.0f;
              return a;
          }, nullptr, [](const game::World& w) { return w.player().state().state == State::Shimmy; }},
-        // Free climbing on l2_cliffclimb's DICE holds, mid-step (a warp clip carrying her between holds).
+        // Free climbing on l2_cliffclimb's DICE holds, mid-step (a DICE_<s>_to_<s>_<dir> clip carrying her between holds).
         {"l2_cliffclimb", game::Spawn{{-23835, -3600, 300}, 1.5707963f}, 100, 300, [](uint64_t) {
              game::Actions a;
              a.move.y = 1;
              return a;
-         }, nullptr, [](const game::World& w) { return w.player().state().state == State::Climb; }},
+         }, nullptr, [](const game::World& w) {
+             const auto& s = w.player().state();
+             return s.state == State::Climb && s.climbWarp && s.clip.find("_to_") != std::string::npos && s.clipTime > 0.1;
+         }},
         // Swinging on l4_pool's ceiling anchor 5511.
         {"l4_pool", game::Spawn{{4362, -400, 2000}, 0}, 120, 300, [](uint64_t t) {
              game::Actions a;

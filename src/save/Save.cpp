@@ -182,7 +182,7 @@ game::vec2 vec2j(const json& j) { return {j.at(0).get<float>(), j.at(1).get<floa
 // player.controller: the PlayerState fields the player block above leaves out. `p` in the world frame.
 json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3 offset) {
     const auto& h = p.hurdle;
-    return {{"clipMix", p.clipMix}, {"mix", p.mix},
+    return {{"clipMix", p.clipMix}, {"mix", p.mix}, {"mirror", p.mirror},
             {"hurdle", {int(h.next), h.mix, h.alt, h.draw, vec2j(h.drawOff), vec(h.edge - offset), vec2j(h.out), h.h, h.endZ - offset.z,
                         markupRef(w, h.farLedge), h.farSeg, h.farT, h.farSide}},
             {"savingGrab", p.savingGrab}, {"flight", p.flight}, {"fallHeight", p.fallHeight},
@@ -200,7 +200,7 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
         if (i < 0) throw SaveError("markup " + r.dump() + " is not loaded");
         return i;
     };
-    p.clipMix = c.at("clipMix").get<std::string>(), p.mix = c.at("mix").get<float>();
+    p.clipMix = c.at("clipMix").get<std::string>(), p.mix = c.at("mix").get<float>(), p.mirror = c.value("mirror", false);
     const auto& h = c.at("hurdle");
     auto& d = p.hurdle;
     const int next = h.at(0).get<int>();

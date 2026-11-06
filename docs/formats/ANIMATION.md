@@ -211,6 +211,7 @@ code offsets +0x64/+0x68 of the object data) are 0 in lara.drm; a scan for dtp `
 | +0x19 | **crossfade length in 30 Hz frames**: weight step `1/frames` per frame (0x4428A0 `param_1[0x2A] = 1/frames`; 0 = cut) |
 | +0x1A | **start frame**: start time `frame·100` anim units passed to 0x441FB0 (if `blend > 0 && timePerKey > 100 && start < timePerKey`: `start = timePerKey`, blend extended — not ported) |
 | +0x1B | interp override for the *next* request (−1 none) |
+| +0x20 | bit 0x80 **mirror**: 0x4428A0 sets controller +0xF4 bit 0x200 (cleared otherwise); 0x441FB0 (the clip start / root motion) negates the root translation x and the rotation quaternion's y / z when that bit differs from the instance's +0xF4 bit 0x20 [O]. 27 of the 1502 requests have it (+ 4 with 0x40 [U]): e.g. 979 `ledgeb_jump_right` (1009 is the same clip unmirrored: the jump left), 956 `ledgeb_idlertol` (955 not), 1104 `hit_mediumright`, 623 / 637 pillar climb / jump right, 671-673 perch turns right, 288 / 299 `DICE_shared_air_attach_bad_*`, 300 `DICE_attach_*` [O]. Ours: `PlayerState::mirror`, `AnimController` layers mirror the pose through bone twins found by bind position (`anim::mirrorBones`, [I]: `cdc::AnimMirrorNode` / Mirror.dtp's table not decoded) and `Player` negates the root motion's x |
 
 Interp frame histogram over the 1502 requests: 3 (365), 1 (275), 4 (195), 8 (176), 5 (157), 6 (135) … [O]. Other
 clips of one request are time-synced to the first by normalised phase (0x4428A0: `t_i = t_0/len_0 · len_i`) [O].

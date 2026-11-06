@@ -566,6 +566,10 @@ outfit (the original only reads `+0x294` on a level load).
   `bbeam_walk_turn180` turns her round by its root rotation. At an end: another beam ending within 60 takes over (she
   turns onto it), a standable floor 80 beyond is stepped onto (Walk; 0.5 s before a beam can catch her again), else she
   stops. Jump = standing jump (the assist below puts the landing back on the line), drop = falls off to her right [I].
+  Off balance [I: the stick rule; `PSCCF_MoveDirUnbalanced` not decoded]: walking with the stick more than 0.3 across
+  the beam plays `bbeam_walk`'s blend space (lara.drm request 192) fully toward `bbeam_unbalance_walk_right` /
+  `_left` (same root motion, 501 per 3.57 s cycle), standing with it more than 0.5 across `bbeam_idle_wobble_fwd`
+  (request 158). She never falls off from it (`bbeam_aboutfall_*`, `bbeam_fall_*` unused).
 - Jump assist: at take-off the landing is pulled onto the nearest jump-landing (2) or beam (14) line point within 300 of
   the natural landing (Numbers).
 - Drop to hang: drop pressed standing within 200 of a ledge line at floor height (±40) whose far side drops away plays
@@ -576,7 +580,9 @@ outfit (the original only reads `+0x294` on a level load).
   (turning round with `ledgeb_jump_back`'s root rotation), or with nothing in reach leaps off backwards. Targets
   (Numbers) exclude the ledge she hangs on (that is shimmying) and ledges whose hang side has floor (platform edges
   hung from the platform). Flight: ballistic with the exe gravity, rising 60 above the higher end, timed to arrive
-  exactly on the target's hang pose; then `ledgeb_attach_U/S/F`.
+  exactly on the target's hang pose; then `ledgeb_attach_U/S/F`. The jump left is `ledgeb_jump_right` mirrored: lara.drm
+  request 979 (its +0x20 bit 0x80; 1009 is the clip unmirrored) [O], pose reflected through the bone twins
+  (docs/formats/ANIMATION.md "+0x20").
 - Poles (markup 4 / 6): grabbed like ledges while falling, squared to the pole; forward held swings
   (`HPole_StartSwing` → `HPole_swing`, root fixed), letting go stops; jump flings to the next pole ahead (same flight
   solver as hang jumps) or leaps off at run-jump speeds; drop lets go.
@@ -822,17 +828,28 @@ outfit (the original only reads `+0x294` on a level load).
   300 [I]) to where the stance's attach clip ends — ground: its root motion from her feet (`DICE_B_ground_attach`
   268 forward, 185 up; `DICE_L_ground_attach` 134, 317), air: where she is (`DICE_<L/LW/R/Rw>_air_attach_mid` have
   none) — and that clip carries her onto it as a hold-to-hold step does, then its idle.
-- Top out: no hold above but a ledge (markup 1) along this rock within 200 horizontally and −50..450 above her hands
+- Top out: lara.drm has no DICE top-out clip (anim-list survey: no `DICE_*climb*` / `*top*`) [O]; no hold above but a ledge (markup 1) along this rock within 200 horizontally and −50..450 above her hands
   (root + 300) = `DICE_<s>_jump_up` and a targeted jump onto it (as `ledgeb_jump_up`: `ledgeb_attach_U`, then the
   ledge's climb up). l2_cliffclimb's wall ends that way: hold 5 (z 2480) → ledge 45 (z 2891). Foot: no hold below but a
   floor where `DICE_<L/LW/R>_step_off_ground` ends (226 back, 317 down; B and RW have none) = that clip onto it, Idle.
   Free leaps (no jump target) use the queries' launch velocities (above); drop = its `drop` clip and fall. Cooldown
   0.4 s before re-attaching.
+- Bad attach [I: trigger]: caught from the air falling faster than a firm ledge grab (grabMinVz, −13 × 5.72443 a
+  30 Hz frame) and up to twice that — the ledge saving-grab rule; faster still she falls past — the stance's
+  `DICE_<B/LW/R/Rw>_air_attach_bad_start` carries her onto the hold (the hands end ~115 below the idle pose's), its
+  `_loop` holds her there for the saving-grab time (difficulty "TIME FOR SAVING GRABS"); jump plays `_end` (back to the
+  idle pose: hands at the idle's 301.5) and the idle, else she drops (`drop`, fall). L has `DICE_L_air_attach_bad`
+  (ending low) and `DICE_L_air_attach_bad_recovery`. Request fades from lara.drm (B 256 / 255 / 254, LW 226 / 224 /
+  225, R 231 / 229 / 230, Rw 280 / 281 / 282, L 228 / 227) [O]. Not used [U]: `DICE_shared_air_attach_bad_D / _FD /
+  _F` (request 299, 3.17 s with root motion from 225 out / 149 down: a bad catch out of a DICE jump; chart state S612
+  has no incoming transition, so what enters it is unread), `DICE_<s>_bad_attach_recover_*_hand`, the wrestle clips.
 - Tests `GameReal.ClimbAttachClimbUpTopOut` (a synthetic hold column with lara.drm's clips: attach at hold 0 exactly,
   one `DICE_B_to_B_Up` = 158 up, `DICE_B_jump_up` onto the top ledge, hang, climb up), `GameReal.ClimbJumpOff`,
   `GameReal.ClimbNeedsHolds`, `GameReal.ClimbStaysWithinHolds` (reach, no movement), `GameReal.ClimbStanceFollowsHolds`
   (L → R → LW → RW → B with `DICE_L_to_R_UpL`, `DICE_R_to_LW_UpR`, `DICE_Lw_to_Rw_UpL`, `DICE_Rw_to_B_UpR`, then
-  `DICE_B_Idle`), `Game.DiceTransitionNames`, `GameReal.CliffclimbStances` (the l2_cliffclimb wall's whole route,
+  `DICE_B_Idle`), `Game.DiceTransitionNames`, `GameReal.ClimbBadAttach` (a 1200 fall: bad start / loop, jump pulls
+  up to `DICE_B_Idle`, or she lets go; a short fall catches firmly), `GameReal.CliffclimbIndependentOfRenderRate` (the
+  whole route at 30 / 60 / 144 Hz: same clips, same end on ledge 45), `GameReal.CliffclimbStances` (the l2_cliffclimb wall's whole route,
   holds 21 11 38 12 7 19 17 13 18 14 16 15 6 4 40 8 3 9 5, then `DICE_B_jump_up` onto ledge 45: the root exactly at a
   hold whenever a step ends, chest (bone 14) step change < 16 units a tick, heading ≤ 0.02 rad a tick; on a fixed
   zig-zag stick script the old code changed the chest's step by > 3 units on 212 of 749 ticks, the root's on 32,

@@ -49,6 +49,14 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"HPole_idleHangPerp", 0, 0}, {"Hpole_perp_attach_M", 2, 4}, {"HPole_StartSwing", 4, 4}, {"HPole_swing", 1, 1},
         {"hpole_perp_fling", 1, 1}, {"crouch_Idle", 6, 6}, {"crouch_idleToCrouch", 4, 6}, {"Crouch_Front", 6, 3},
         {"ng_roll_front", 3, 1}, {"slope_slidefront", 6, 1},
+        {"bbeam_idle_wobble_fwd", 3, 3}, // request 158
+        // DICE bad attach: requests 256 / 255 / 254 (B), 226 / 224 / 225 (LW), 231 / 229 / 230 (R), 280 / 281 / 282 (Rw),
+        // 228 / 227 (L)
+        {"DICE_B_air_attach_bad_start", 5, 5}, {"DICE_B_air_attach_bad_loop", 1, 1}, {"DICE_B_air_attach_bad_end", 5, 5},
+        {"DICE_LW_air_attach_bad_start", 3, 3}, {"DICE_LW_air_attach_bad_loop", 1, 1}, {"DICE_LW_air_attach_bad_end", 5, 5},
+        {"DICE_R_air_attach_bad_start", 3, 3}, {"DICE_R_air_attach_bad_loop", 1, 1}, {"DICE_R_air_attach_bad_end", 5, 5},
+        {"DICE_Rw_air_attach_bad_start", 5, 5}, {"DICE_Rw_air_attach_bad_loop", 1, 1}, {"DICE_Rw_air_attach_bad_end", 3, 3},
+        {"DICE_L_air_attach_bad", 3, 3}, {"DICE_L_air_attach_bad_recovery", 3, 3},
         // obstacles: requests 127 / 128 / 129 attach low / mid / high, 130 / 131 over, 132 / 133 onto, 134 / 135 onto the
         // far side into a hang, 139 / 140 / 141 down, 147 / 148 / 149 cancel (blend space: each request's first clip)
         {"hurdle_ground_attach_low_50", 3, 3}, {"hurdle_ground_attach_mid_100", 2, 2}, {"hurdle_ground_attach_high_150", 4, 4},
@@ -119,6 +127,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "swim_surface", "swim_surfaceidle_to_swim",
     "swim_surfacedive", "swim_submerged_idle", "swim_sub", "swim_sub_up", "swim_sub_down", "swim_climbout",
     "bbeam_walk", "bbeam_idle", "bbeam_walk_attach", "bbeam_jumpland", "bbeam_walk_turn180", "drop_to_ledgeb",
+    "bbeam_unbalance_walk_left", "bbeam_unbalance_walk_right", "bbeam_idle_wobble_fwd", // off balance (Player::beam)
     "ledgeb_jump_up", "ledgeb_jump_back", "ledgeb_jump_right", "ledgeb_attach_U", "ledgeb_attach_S", "ledgeb_attach_F",
     "HPole_idleHangPerp", "Hpole_perp_attach_M", "HPole_StartSwing", "HPole_swing", "Hpole_swingstopA", "hpole_perp_fling",
     "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
@@ -135,6 +144,11 @@ const std::vector<std::string_view> kLaraClipNames = {
     // spells it (stance capitalisation varies: Lw/LW, Rw/RW; Climb.cpp looks them up case-insensitively)
     "DICE_B_ground_attach", "DICE_B_air_attach_M", "DICE_B_Idle", "DICE_B_Settle_up", "DICE_B_Settle_down",
     "DICE_B_Settle_Left", "DICE_B_Settle_right", "DICE_B_Jump_Back", "DICE_B_Drop",
+    // bad attach (Climb.cpp badClip)
+    "DICE_B_air_attach_bad_start", "DICE_B_air_attach_bad_loop", "DICE_B_air_attach_bad_end", "DICE_L_air_attach_bad",
+    "DICE_L_air_attach_bad_recovery", "DICE_LW_air_attach_bad_start", "DICE_LW_air_attach_bad_loop",
+    "DICE_LW_air_attach_bad_end", "DICE_R_air_attach_bad_start", "DICE_R_air_attach_bad_loop", "DICE_R_air_attach_bad_end",
+    "DICE_Rw_air_attach_bad_start", "DICE_Rw_air_attach_bad_loop", "DICE_Rw_air_attach_bad_end",
     "DICE_L_air_attach_mid", "DICE_L_drop", "DICE_L_ground_attach", "DICE_L_Idle", "DICE_L_jump_back",
     "DICE_L_settle_down", "DICE_L_settle_left", "DICE_L_settle_right", "DICE_L_settle_up", "DICE_LW_air_attach_mid",
     "DICE_LW_drop", "DICE_LW_ground_attach", "DICE_LW_Idle", "DICE_LW_jump_back", "DICE_LW_settle_down",
@@ -949,15 +963,15 @@ void World::updatePose(float dt, bool reset) {
     if (reset) {
         anim_ = anim::AnimController(anims_.skeleton);
         if (overlay) anim_.play(anims_.find(s.water >= 0 ? "swim_submerged_idle" : "ng_idle"), 0, true); // [I] a base under it
-        anim_.play(anims_.find(s.clip), 0, s.loop, s.clipRate, s.clipTime, overlay, anims_.find(s.clipMix), s.mix);
+        anim_.play(anims_.find(s.clip), 0, s.loop, s.clipRate, s.clipTime, overlay, anims_.find(s.clipMix), s.mix, s.mirror);
         hair_ = anim::HairSim(anims_.hair, anims_.skeleton, laraHair());
     } else {
         anim_.update(dt);
         // Player::play changed the clip (or restarted it): fade the new one in over what is showing.
         if (s.clip != prev_.clip || s.loop != prev_.loop || s.clipRate != prev_.clipRate || s.clipTime < prev_.clipTime ||
-            s.clipMix != prev_.clipMix || s.mix != prev_.mix)
+            s.clipMix != prev_.clipMix || s.mix != prev_.mix || s.mirror != prev_.mirror)
             anim_.play(anims_.find(s.clip), clipBlend(prev_.clip, s.clip).blendSeconds, s.loop, s.clipRate, s.clipTime, overlay,
-                       anims_.find(s.clipMix), s.mix);
+                       anims_.find(s.clipMix), s.mix, s.mirror);
         else
             anim_.setTime(s.clipTime); // the player's clock is authoritative (root motion comes from it)
     }
@@ -1046,7 +1060,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     part("player");
     add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), add(s.ledge);
     add(s.ledgeT), add(s.water), add(s.climbHold), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
-    add(s.loop), str(s.clipMix), add(s.mix), add(s.ledgeSeg), add(s.ledgeSide), add(s.runJump), add(s.regrabCooldown), add(s.savingGrab);
+    add(s.loop), str(s.clipMix), add(s.mix), add(s.mirror), add(s.ledgeSeg), add(s.ledgeSide), add(s.runJump), add(s.regrabCooldown), add(s.savingGrab);
     add(s.flight), add(s.fallStartZ), add(s.fallHeight), add(s.climbStance), add(s.climbWarp), add(s.climbFrom), add(s.climbTo);
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
     const auto& hu = s.hurdle;

@@ -224,6 +224,10 @@ struct PlayerState {
     std::string clipMix;
     float mix = 0;
     // Obstacle move in progress (State::ClimbUp hurdle_* clips, Player::tryHurdle / tryHurdleDown): what follows the
+    // `clip` reflected left / right (lara.drm anim request +0x20 bit 0x80, e.g. request 979 = ledgeb_jump_right mirrored:
+    // the jump left; 1009 is the unmirrored one). The pose and the root motion's X are mirrored (tru.exe 0x4428A0 /
+    // 0x441FB0).
+    bool mirror = false;
     // attach clip, its blend weight and pair (over: the long clips; onto the far side: 65 / 100 cm deep), the
     // obstacle's top edge on her side and outward normal (toward where she came from), its height above her start,
     // the floor z she ends on, and for onto-the-far-side the ledge she ends hanging from.
@@ -303,7 +307,7 @@ public:
     bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab"; } // grab clip done
 
 private:
-    void play(std::string_view clip, bool loop, float rate = 1);
+    void play(std::string_view clip, bool loop, float rate = 1, bool mirror = false);
     void playMix(std::string_view clip, std::string_view other, float mix); // blend-space request, played once
     vec3 rootLeft() const; // model-space root motion from now to the clip end (blend space included)
     bool clipDone() const;

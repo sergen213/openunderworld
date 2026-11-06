@@ -295,7 +295,7 @@ nlohmann::json World::serializeRuntime() const {
     };
     nlohmann::json layers = nlohmann::json::array(), bones = nlohmann::json::array();
     for (const auto& l : anim_.layerStates())
-        layers.push_back({clipName(l.clip), l.time, l.rate, l.fade, l.elapsed, l.loop, l.additive, clipName(l.mixClip), l.mix});
+        layers.push_back({clipName(l.clip), l.time, l.rate, l.fade, l.elapsed, l.loop, l.additive, clipName(l.mixClip), l.mix, l.mirror});
     for (const glm::mat4& m : bones_)
         for (int k = 0; k < 16; ++k) bones.push_back(m[k / 4][k % 4]);
     nlohmann::json spline = nullptr;
@@ -349,7 +349,8 @@ void World::restoreRuntime(const nlohmann::json& j) {
         for (const auto& l : j.at("anim")) {
             const auto clip = [&](const nlohmann::json& n) { return n.is_null() ? nullptr : anims_.find(n.get<std::string>()); };
             layers.push_back({clip(l.at(0)), l.at(1).get<double>(), l.at(2).get<float>(), l.at(3).get<float>(), l.at(4).get<float>(),
-                              l.at(5).get<bool>(), l.at(6).get<bool>(), clip(l.at(7)), l.at(8).get<float>()});
+                              l.at(5).get<bool>(), l.at(6).get<bool>(), clip(l.at(7)), l.at(8).get<float>(),
+                              l.size() > 9 && l.at(9).get<bool>()}); // older saves: no mirror
         }
         const double aimTime = j.at("aimTime");
         const auto bones = j.at("bones").get<std::vector<float>>();

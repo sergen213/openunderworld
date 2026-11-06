@@ -78,6 +78,12 @@ LocalTransform blend(const LocalTransform& a, const LocalTransform& b, float w);
 void blendPoses(std::span<const LocalTransform> a, std::span<const LocalTransform> b, float w, std::span<LocalTransform> out);
 // Phase sync for looping locomotion: the time in `to` at the same cycle fraction as `fromTime` in `from`.
 double syncedStartTime(const Clip& from, double fromTime, const Clip& to);
+// Left/right twin of every bone: the bone whose bind position is this one's reflected in X (within 1 unit), else
+// itself [I: tru.exe's cdc::AnimMirrorNode (Mirror.dtp) table is not decoded; Lara's legs / arms mirror in X].
+std::vector<uint32_t> mirrorBones(const scene::Skeleton& skeleton);
+// The pose reflected in the model's X = 0 plane: bone i takes its twin's transform with X translation and the
+// Y / Z rotation axes negated (as tru.exe mirrors a mirrored request's root motion, 0x441FB0: -x, -qy, -qz).
+void mirrorPose(std::span<LocalTransform> pose, std::span<const uint32_t> twins);
 
 // Crossfading player. Each play() fades the new clip in over `blendSeconds` (linear weight, as tru.exe's
 // anim request: weight += 1/interpFrames per 30 Hz frame) on top of whatever was showing; older layers keep
@@ -88,8 +94,9 @@ public:
     explicit AnimController(const scene::Skeleton& skeleton);
     // `clip` may be null (bind pose). `startTime` in seconds; looping clips may pass unbounded times.
     // `mixClip` / `mix`: the second clip of a blend-space request, weighted `mix` and phase-synced to `clip`.
+    // `mirror`: the clip reflected left / right (anim request +0x20 bit 0x80, tru.exe 0x4428A0 -> controller +0xF4 0x200).
     void play(const Clip* clip, float blendSeconds, bool loop, float rate = 1, double startTime = 0, bool additive = false,
-              const Clip* mixClip = nullptr, float mix = 0);
+              const Clip* mixClip = nullptr, float mix = 0, bool mirror = false);
     void update(double dt);                // advances every layer and the fades
     void setTime(double seconds);          // newest layer's time (when the caller owns the clock)
     std::vector<LocalTransform> pose() const;
@@ -103,6 +110,7 @@ public:
         bool loop, additive;
         const Clip* mixClip;
         float mix;
+        bool mirror = false;
         float weight() const { return fade <= 0 ? 1.0f : std::min(1.0f, elapsed / fade); }
     };
     // Saves: the crossfade in progress (oldest first); setLayers replaces it.
@@ -113,6 +121,7 @@ private:
     std::vector<LocalTransform> sampleLayer(const Layer& l) const;
     const scene::Skeleton* skeleton_;
     std::vector<Layer> layers_; // oldest first
+    mutable std::vector<uint32_t> twins_; // mirrorBones, built on first use
 };
 
 // ---- hair (render-model cloth chains, docs/formats/ANIMATION.md "Hair") ----------------------------
