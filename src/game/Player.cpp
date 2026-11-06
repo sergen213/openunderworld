@@ -256,11 +256,11 @@ void Player::die(std::string_view clip) {
     play(clip, false);
 }
 
-void Player::hitReact(std::string_view clip) {
+void Player::hitReact(std::string_view clip, bool mirror) {
     s_.state = State::Hit;
     s_.vel = vec3(0);
     s_.clip.clear(); // restart even when the same reaction is playing
-    play(clip, false);
+    play(clip, false, 1, mirror);
 }
 
 bool Player::canInteract() const {

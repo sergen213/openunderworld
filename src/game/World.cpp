@@ -290,6 +290,7 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         lib.bike = loadBikeTuning(bd);
     }
     if (auto t = loadGrappleTuning(bigfile)) lib.grapple = *t;
+    if (auto t = loadAdrenalineTuning(bigfile)) lib.adrenaline = *t;
     rigOutfit(lib, drm);
     for (const auto& m : physics::loadObjectPhysics(drm).hmarkers) { // weapon mounts (WeaponDef::hand / stow)
         const glm::quat q = glm::angleAxis(m.rot.x, vec3(1, 0, 0)) * glm::angleAxis(m.rot.y, vec3(0, 1, 0)) *

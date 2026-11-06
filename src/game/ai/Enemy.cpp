@@ -527,6 +527,7 @@ bool Enemy::perceives(const collision::CollisionMesh& col, const Target& lara) c
 
 void Enemy::onHit(const Hit& hit) {
     if (!alive()) return;
+    if (hit.knockVel != vec3(0)) s_.knock = hit.knockVel, s_.vz = std::max(s_.vz, hit.knockVel.z);
     s_.lastSeen = s_.pos - hit.dir * 1000.0f; // [I] turns towards where the shot came from
     s_.unseenTime = 0;
     if (s_.mode == Mode::Down || s_.mode == Mode::Rise) { // 0x682490: hits it would get up from are absorbed
@@ -1045,7 +1046,9 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         const float along = glm::length(to) > 1e-3f ? glm::dot(d2, glm::normalize(to)) : 0;
         if (along > 0 && dist - along < minGap) delta -= vec3(glm::normalize(to) * std::min(along, along - (dist - minGap)), 0);
     }
+    if (s_.knock != vec3(0)) delta += vec3(vec2(s_.knock) * dt, 0); // thrown: flies on until it lands
     move(col, delta, dt);
+    if (s_.vz == 0 && s_.mode != Mode::Dead) s_.knock = vec3(0);
     updatePose(dt, false);
 }
 

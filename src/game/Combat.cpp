@@ -2,6 +2,7 @@
 // (stats from wp_handgun / pr_handgunbullet, aim grid + fire clips from wp_handgun.drm), lock-on targeting
 // (Lara's targeting tiers) and hitscan. Numbers and provenance: Combat.hpp, docs/GAMEPLAY.md "Combat".
 #include "game/Combat.hpp"
+#include "anim/Anim.hpp"
 #include "game/Game.hpp"
 #include "physics/Physics.hpp"
 
@@ -37,54 +38,61 @@ float angleBetween(glm::vec3 a, glm::vec3 b) {
     return l > 0 ? std::acos(std::clamp(glm::dot(a, b) / l, -1.0f, 1.0f)) : 0.0f;
 }
 
-// Per weapon: Lara's clips in its DRM and their lengths [O] (keys at 30 Hz), used as timings [I]: the exe fires on
-// an animation event (0x75) of the fire clip and no refire field was found.
-// - pistols: one shot per hand's fire clip (combat_pistol_RfireE/LfireE, 10 keys), hands alternate; equip 6 keys,
-//   unequip 19, reload 21 (wp_handgun).
-// - uzi: one shot per the uzi's own `fire` clip (5 keys), hands alternate; wp_uzi's own combat_pistols_equip /
+// Per weapon: Lara's clips in its DRM and their lengths [O] (keys at 30 Hz). The shot is the fire clip's animation event
+// 0x75 (0x716F30 -> message 0x19B -> fire 0x6C9E50), at frame 0 of every such clip [O]; the next shot waits for the clip
+// to end (WeaponDef::refire, decoded from the clip's length).
+// - pistols: one shot per hand's fire clip (combat_pistol_RfireA/LfireA, 10 keys, the 0x75 hand byte 0 / 1), hands
+//   alternate; equip 6 keys, unequip 19, reload 21 (wp_handgun).
+// - uzi: one shot per the uzi's own combat_fire_overlay (3 keys), hands alternate; wp_uzi's own combat_pistols_equip /
 //   unequip (15 keys each) and reload (21); the pistol aim grid and fire clips of wp_uzi.
-// - shotgun: combat_shotgun_fire_* (13 keys) then combat_shotgun_pump (25) before the next shot; equip / unequip
-//   24 keys, reload 117 (the whole clip per reload, however many shells are missing [I]).
+// - shotgun: combat_shotgun_fire_* (13 keys; the 0x75 is on _UL) then combat_shotgun_pump (25) before the next shot;
+//   equip / unequip 24 keys, reload 117 (the whole clip per reload, however many shells are missing [I]).
 // - speargun: the shotgun aim/fire set of wp_speargun; clip 1, so combat_speargun_reload (31 keys) after every
 //   shot; under water combat_shotgun_equip_submerged (17) / unequip_submerged (19), combat_speargun_reload_submerged.
 // - Mjolnir (wp_thorhammer): ground_equip / ground_unequip (26 keys), aim poses ground_aim_right / _front / _left, the
-//   throw ground_fire_idle (29 keys, shot on event 0x75 at frame 10), the ground pound ground_melee_idle (61 keys,
-//   event 0x4B at frame 12); under water combat_water_submerged_equip / _unequip and swim_submerge_thorhammer_attack_front
-//   (31 keys) [I: its shot at frame 10 too, the swim attack clips carry no event list]. No clip, so no reload.
+//   throw ground_fire_idle (29 keys, 0x75 at frame 10), the ground pound ground_melee_idle (61 keys, 0x4B at frame 12);
+//   under water combat_water_submerged_equip / _unequip and swim_submerge_thorhammer_attack_front (31 keys, 0x75 at
+//   frame 12). No clip, so no reload.
 // - assault rifle / tranquilizer (wp_assault_rifle / wp_tranq): Lara's 3x5 combat_rifle_aim_* / combat_rifle_fire_*
-//   (3 keys) grids of each DRM; combat_rifle_equip 19, unequip 24; reload combat_rifle_reload 41 (30 rounds) /
-//   combat_tranqgun_reload 19 (one dart per clip, so after every shot).
+//   (3 keys; 0x75 on _UL) grids of each DRM; combat_rifle_equip 19, unequip 24; reload combat_rifle_reload 41 (30 rounds)
+//   / combat_tranqgun_reload 19 (one dart per clip, so after every shot).
+// The gun moves between holster and hand on the equip clip's 0x76 / 0x77 / 0x78 and the unequip clip's 0x74 events.
 struct WeaponInfo {
     std::string_view object, name;
     bool rifle; // two-handed: one gun, the 3x5 aim grid
-    float refire, equip, unequip, reload; // seconds
+    std::string_view fireClip; // the clip carrying the shot event 0x75 (WeaponDef::refire = its length)
+    float equip, unequip, reload; // seconds
     std::string_view equipClip, unequipClip, reloadClip;
     std::string_view grid = "combat_shotgun_"; // two-handed: <grid>aim_* / <grid>fire_*
     float fire = 13 / 30.0f;                   // two-handed: length of the fire_* cells
 };
 const WeaponInfo kWeapons[kWeaponCount] = {
-    {"wp_handgun", "pistols", false, 10 / 30.0f, 6 / 30.0f, 19 / 30.0f, 21 / 30.0f, "combat_pistols_equip", "combat_pistols_unequip",
-     "combat_pistols_reload"},
-    {"wp_uzi", "uzi", false, 5 / 30.0f, 15 / 30.0f, 15 / 30.0f, 21 / 30.0f, "combat_pistols_equip", "combat_pistols_unequip",
-     "combat_pistols_reload"},
-    {"wp_shotgun", "shotgun", true, (13 + 25) / 30.0f, 24 / 30.0f, 24 / 30.0f, 117 / 30.0f, "combat_shotgun_equip",
+    {"wp_handgun", "pistols", false, "combat_pistol_RfireA", 6 / 30.0f, 19 / 30.0f, 21 / 30.0f, "combat_pistols_equip",
+     "combat_pistols_unequip", "combat_pistols_reload"},
+    {"wp_uzi", "uzi", false, "combat_fire_overlay", 15 / 30.0f, 15 / 30.0f, 21 / 30.0f, "combat_pistols_equip",
+     "combat_pistols_unequip", "combat_pistols_reload"},
+    {"wp_shotgun", "shotgun", true, "combat_shotgun_fire_UL", 24 / 30.0f, 24 / 30.0f, 117 / 30.0f, "combat_shotgun_equip",
      "combat_shotgun_unequip", "combat_shotgun_reload"},
-    {"wp_speargun", "speargun", true, 13 / 30.0f, 24 / 30.0f, 24 / 30.0f, 31 / 30.0f, "combat_shotgun_equip",
+    {"wp_speargun", "speargun", true, "combat_shotgun_fire_UL", 24 / 30.0f, 24 / 30.0f, 31 / 30.0f, "combat_shotgun_equip",
      "combat_shotgun_unequip", "combat_speargun_reload"},
-    {"wp_thorhammer", "thorhammer", false, 29 / 30.0f, 26 / 30.0f, 26 / 30.0f, 0, "ground_equip", "ground_unequip", ""},
-    {"wp_assault_rifle", "rifle", true, 3 / 30.0f, 19 / 30.0f, 24 / 30.0f, 41 / 30.0f, "combat_rifle_equip",
+    {"wp_thorhammer", "thorhammer", false, "ground_fire_idle", 26 / 30.0f, 26 / 30.0f, 0, "ground_equip", "ground_unequip", ""},
+    {"wp_assault_rifle", "rifle", true, "combat_rifle_fire_UL", 19 / 30.0f, 24 / 30.0f, 41 / 30.0f, "combat_rifle_equip",
      "combat_rifle_unequip", "combat_rifle_reload", "combat_rifle_", 3 / 30.0f},
-    {"wp_tranq", "tranquilizer", true, 3 / 30.0f, 19 / 30.0f, 24 / 30.0f, 19 / 30.0f, "combat_rifle_equip",
+    {"wp_tranq", "tranquilizer", true, "combat_rifle_fire_UL", 19 / 30.0f, 24 / 30.0f, 19 / 30.0f, "combat_rifle_equip",
      "combat_rifle_unequip", "combat_tranqgun_reload", "combat_rifle_", 3 / 30.0f},
 };
 const WeaponInfo& info(Weapon w) { return kWeapons[size_t(w)]; }
-constexpr float kHammerShot = 10 / 30.0f, kHammerPound = 12 / 30.0f; // events 0x75 / 0x4B
+// Defaults without the data (synthetic tests): the decoded event frames (CombatReal.WeaponData checks them).
+constexpr float kHammerShot = 10 / 30.0f, kHammerSwimShot = 12 / 30.0f, kHammerPound = 12 / 30.0f; // events 0x75 / 0x4B
 // Mjolnir's aim poses ground_aim_right / _front / _left by aim yaw; no pitch rows. Yaws [I]: the pointing (right) hand's
 // shoulder -> hand direction in each pose relative to _front's (which points 9 deg right of the heading): -52, 0, +32.
 const float kHammerCols[] = {-52 * kPi / 180, 0, 32 * kPi / 180};
 constexpr float kPump = 25.0f / 30.0f;                                   // combat_shotgun_pump
 constexpr float kSubEquip = 17.0f / 30.0f, kSubUnequip = 19.0f / 30.0f; // speargun under water
-constexpr float kRespawnDelay = 1.0f; // after the death clip ends [I]
+// DeathState (0x75AA50 entry, 0x75AF90 process): at once the screen wipe 10 fades to black over 90 frames
+// (GAMELOOP_SetScreenWipe(10, 100, 90); 210 for death type 1, or the request's own count [U: which deaths those are]);
+// when it is done, 0x6F55A0 reloads the checkpoint (flag 0x80000), whose level load clears the wipes (0x52E850).
+constexpr float kDeathFade = 90 / 30.0f;
 constexpr float kShoulderHeight = 418.0f; // bind-pose shoulder joints 53 / 78 above the feet
 constexpr float kDeg = kPi / 180;
 // Aim grids: columns right .. left with the aim yaw each was measured at, rows up / middle / down.
@@ -170,10 +178,7 @@ Handling handling(const AnimLibrary& lib, const PlayerState& s, Weapon w) {
 // Health packs (g_healthpack data; use = gadget fnC 0x6CBB20): heal +0xF0 = 640 through 0x6F4EF0 (clamped to max),
 // cooldown +0xEA = 60 frames [I 30 Hz]; no full-health check in the exe.
 constexpr float kHealthPackHeal = 640.0f, kHealthPackCooldown = 2.0f;
-// Adrenaline [I]: the meter's fill rate and the slow-motion factor are not in the data we decoded (the world time
-// scale DAT_00e7f1a0 is eased by script natives 0x776030 / 0x78C4E0; docs/GAMEPLAY.md "Combat").
-constexpr float kAdrenalineFill = 1000.0f; // damage dealt to fill the meter
-constexpr float kSlowScale = 0.2f, kSlowEase = 0.25f; // world time scale in the window, seconds to ease in / out
+// Adrenaline numbers: AdrenalineTuning (Lara data). The head-shot window's length and the pip are [I].
 constexpr float kSlowWindow = 3.0f;  // real seconds to steer the pip in and fire
 constexpr float kPipStart = 2.5f, kPipSpeed = 2.0f; // pip start distance / stick speed, reticle radii (per second)
 
@@ -194,6 +199,7 @@ bool airborne(State s) { return s == State::Jump || s == State::Fall || s == Sta
 struct ObjectData {
     cdc::Drm drm;
     uint32_t section = 0, offset = 0; // the data block
+    uint32_t base = 0;                // the ObjectBase section
     template <class T>
     std::optional<T> at(uint32_t off) const {
         const auto& d = drm.sections[section].data;
@@ -217,9 +223,57 @@ std::optional<ObjectData> objectData(const cdc::BigfileSet& bf, std::string_view
         const auto ptrs = cdc::sectionPointers(o.drm, i);
         const auto it = ptrs.find(0xC8);
         if (it == ptrs.end()) return std::nullopt;
-        o.section = it->second.section, o.offset = it->second.offset;
+        o.section = it->second.section, o.offset = it->second.offset, o.base = i;
         return o;
     }
+    return std::nullopt;
+}
+
+template <class T>
+T rd(std::span<const uint8_t> d, size_t o) {
+    T v{};
+    if (o + sizeof(T) <= d.size()) std::memcpy(&v, d.data() + o, sizeof(T));
+    return v;
+}
+// The ObjectBase animation list (+0x54 count, +0x58 {i16 anim, i16, u32 event-list DTP id, char* name}) -> each clip's
+// event list (DTP: u32 header, records {u16 info, u16 frame, ...} of 8 + (info >> 12) * 4 bytes until 0xFFFF; EFFECTS.md):
+// the command records (info & 3 == 2), {record +8, frame}, by clip name.
+std::map<std::string, std::vector<std::pair<int, int>>, std::less<>> clipCommands(const ObjectData& o) {
+    std::map<std::string, std::vector<std::pair<int, int>>, std::less<>> out;
+    const auto& s = o.drm.sections[o.base];
+    const auto ptrs = cdc::sectionPointers(o.drm, o.base);
+    const auto list = ptrs.find(0x58);
+    const uint32_t n = rd<uint32_t>(s.data, 0x54);
+    if (list == ptrs.end() || n > 4096) return out;
+    const auto& ls = o.drm.sections[list->second.section];
+    const auto lptrs = list->second.section == o.base ? ptrs : cdc::sectionPointers(o.drm, list->second.section);
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t e = list->second.offset + 12 * i;
+        const auto name = lptrs.find(e + 8);
+        if (name == lptrs.end()) continue;
+        std::string nm;
+        const auto& nd = o.drm.sections[name->second.section].data;
+        for (size_t k = name->second.offset; k < nd.size() && nd[k]; ++k) nm += char(nd[k]);
+        const uint32_t id = rd<uint32_t>(ls.data, e + 4);
+        const auto ev = std::ranges::find_if(o.drm.sections, [&](const cdc::Section& x) { return x.type == cdc::SectionType::DtpData && x.id == id; });
+        if (ev == o.drm.sections.end()) continue;
+        std::vector<std::pair<int, int>> cmds;
+        for (size_t at = 4; at + 8 <= ev->data.size();) {
+            const auto info = rd<uint16_t>(ev->data, at);
+            if (info == 0xFFFF) break;
+            if ((info & 3) == 2) cmds.emplace_back(ev->data[at + 8], rd<uint16_t>(ev->data, at + 2));
+            at += 8 + size_t(info >> 12) * 4;
+        }
+        if (!cmds.empty()) out.emplace(std::move(nm), std::move(cmds));
+    }
+    return out;
+}
+// Length in seconds of the clip `name` of the DRM's animation list; nullopt when missing.
+std::optional<float> clipLength(const cdc::Drm& drm, std::string_view name) {
+    for (const auto& e : anim::animList(drm))
+        if (e.name == name)
+            for (const auto& s : drm.sections)
+                if (s.type == cdc::SectionType::Animation && s.id == e.animId) return float(anim::decodeClip(s.data).durationSeconds());
     return std::nullopt;
 }
 } // namespace
@@ -302,6 +356,7 @@ WeaponDef weaponDefaults(Weapon w) {
         d.shortRange = 2000, d.maxRange = 4500, d.maxSpreadDeg = 5, d.spreadPerShot = 1, d.spreadRecovery = 0.1f;
         d.damage[0] = 25, d.damage[1] = 25, d.damage[2] = 10;
         d.wetDamage[0] = 25, d.wetDamage[1] = 25, d.wetDamage[2] = 10;
+        d.refire = 3 / 30.0f; // wp_uzi combat_fire_overlay: 3 keys
         break;
     case Weapon::Shotgun:
         d.object = "wp_shotgun", d.ammo = "pr_shotgunbullet", d.ammoSlot = 1, d.maxReserve = {90, 72, 42}, d.pellets = 7, d.clip = 6;
@@ -310,12 +365,15 @@ WeaponDef weaponDefaults(Weapon w) {
         d.damage[0] = 50, d.damage[1] = 50, d.damage[2] = 40;
         d.wetDamage[0] = 50, d.wetDamage[1] = 50, d.wetDamage[2] = 40;
         d.hitClass = 2;
+        d.refire = (13 + 25) / 30.0f;
         break;
     case Weapon::Speargun:
         d.object = "wp_speargun", d.ammo = "pr_spear", d.ammoSlot = 4, d.maxReserve = {40, 25, 15}, d.clip = 1, d.infinite = d.dual = false;
         d.hand = {5, 7}, d.stow = {15, 6};
         d.shortRange = 2500, d.maxRange = 5000, d.mode = 2, d.damage[0] = d.damage[1] = d.damage[2] = 250;
-        d.wetDamage[0] = d.wetDamage[1] = d.wetDamage[2] = 250;
+        d.wetDamage[0] = d.wetDamage[1] = d.wetDamage[2] = 550;
+        d.hitClass = 4, d.hitType = 0, d.projectileSpeed = 1000 * 30.0f, d.projectileGravity = {2 * 900.0f, 6 * 900.0f};
+        d.refire = 13 / 30.0f;
         break;
     case Weapon::ThorHammer: // pr_thorbolt: 1000 at every range on land, 1000 / 400 / 100 under water
         d.object = "wp_thorhammer", d.ammo = "pr_thorbolt", d.clip = -1, d.dual = false, d.shortRange = 1000, d.maxRange = 8000;
@@ -323,6 +381,7 @@ WeaponDef weaponDefaults(Weapon w) {
         d.damage[0] = d.damage[1] = d.damage[2] = 1000;
         d.wetDamage[0] = 1000, d.wetDamage[1] = 400, d.wetDamage[2] = 100;
         d.hitClass = 13, d.hitType = 3;
+        d.refire = 29 / 30.0f;
         break;
     case Weapon::AssaultRifle: // pr_akriflebullet (as wp_akrifle, the poachers' gun)
         d.object = "wp_assault_rifle", d.ammo = "pr_akriflebullet", d.ammoSlot = 2, d.maxReserve = {300, 210, 120}, d.clip = 30;
@@ -331,6 +390,7 @@ WeaponDef weaponDefaults(Weapon w) {
         d.maxSpreadDeg = 5, d.spreadPerShot = 1.2f, d.spreadRecovery = 0.125f;
         d.damage[0] = 27, d.damage[1] = 27, d.damage[2] = 21;
         d.wetDamage[0] = 23, d.wetDamage[1] = 23, d.wetDamage[2] = 18;
+        d.refire = 3 / 30.0f;
         break;
     case Weapon::Tranquilizer: // pr_tranquilizerdart: a projectile (mode 2) whose +0x1C is the 500 dose
         d.object = "wp_tranq", d.ammo = "pr_tranquilizerdart", d.ammoSlot = 3, d.maxReserve = {25, 15, 10}, d.clip = 1;
@@ -338,6 +398,8 @@ WeaponDef weaponDefaults(Weapon w) {
         d.infinite = d.dual = false, d.shortRange = 4000, d.maxRange = 6000, d.spreadDeg = d.maxSpreadDeg = 5, d.mode = 2;
         d.damage[0] = d.damage[1] = d.damage[2] = 500;
         d.wetDamage[0] = d.wetDamage[1] = d.wetDamage[2] = 500;
+        d.hitClass = 4, d.hitType = 0, d.projectileSpeed = 1500 * 30.0f, d.projectileGravity = {1 * 900.0f, 3 * 900.0f};
+        d.refire = 3 / 30.0f;
         break;
     }
     return d;
@@ -412,6 +474,23 @@ float WeaponDef::damageAt(float d, bool wet) const {
     return glm::mix(v[1], v[2], std::min(1.0f, (d - shortRange) / (maxRange - shortRange)));
 }
 
+std::optional<int> WeaponDef::commandFrame(std::string_view clip, std::initializer_list<int> wanted) const {
+    const auto it = commands.find(clip);
+    if (it != commands.end())
+        for (const auto& [cmd, frame] : it->second)
+            if (std::ranges::find(wanted, cmd) != wanted.end()) return frame;
+    return std::nullopt;
+}
+
+std::optional<AdrenalineTuning> loadAdrenalineTuning(const cdc::BigfileSet& bf) {
+    const auto l = objectData(bf, "lara");
+    if (!l) return std::nullopt;
+    const auto max = l->at<float>(0x2D0), drain = l->at<float>(0x2D4), mode = l->at<float>(0x2D8), modeScale = l->at<float>(0x31C),
+               shot = l->at<float>(0x2C8), ease = l->at<float>(0x2CC);
+    if (!max || !drain || !mode || !modeScale || !shot || !ease || !(*max > 0)) return std::nullopt;
+    return AdrenalineTuning{*max, *drain, *mode, *modeScale, *shot, std::round(*ease) / 30.0f};
+}
+
 std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view object) {
     const auto w = objectData(bf, object);
     if (!w) return std::nullopt;
@@ -440,10 +519,11 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     const auto d0 = ammo->at<float>(*mode == 2 ? R + 0x1C : R + 4), d1 = ammo->at<float>(*mode == 2 ? R + 0x1C : R + 0x10),
                d2 = ammo->at<float>(*mode == 2 ? R + 0x1C : R + 0x14);
     if (!d0 || !d1 || !d2) return std::nullopt;
-    // the second record's hitscan damage; projectiles (mode 2: its layout not decoded) keep the first's
+    // the second record's hitscan damage; a projectile's at its +0x1C as the first's
     const bool wetScan = ammo->at<int32_t>(R2) == 1;
-    const auto w0 = ammo->at<float>(R2 + 4), w1 = ammo->at<float>(R2 + 0x10), w2 = ammo->at<float>(R2 + 0x14);
-    if (wetScan && (!w0 || !w1 || !w2)) return std::nullopt;
+    const auto w0 = ammo->at<float>(*mode == 2 ? R2 + 0x1C : R2 + 4), w1 = ammo->at<float>(*mode == 2 ? R2 + 0x1C : R2 + 0x10),
+               w2 = ammo->at<float>(*mode == 2 ? R2 + 0x1C : R2 + 0x14);
+    if ((wetScan || *mode == 2) && (!w0 || !w1 || !w2)) return std::nullopt;
     WeaponDef def;
     def.object = std::string(object), def.ammo = ammoName->second;
     def.ammoSlot = *slot == 0xFF ? -1 : *slot;
@@ -462,11 +542,25 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     def.spreadDeg = *spread, def.maxSpreadDeg = *maxSpread, def.spreadPerShot = *perShot, def.spreadRecovery = *recovery;
     def.mode = *mode;
     if (*mode == 1) def.hitClass = ammo->at<int32_t>(R + 8).value_or(0), def.hitType = ammo->at<int32_t>(R + 0xC).value_or(1);
+    else def.hitClass = 4, def.hitType = 0; // 0x6C9670 posts every projectile hit as class 4, type 0
+    if (*mode == 2) {
+        const auto speed = w->at<float>(S + 0x10), g0 = ammo->at<float>(R + 0x4C), g1 = ammo->at<float>(R2 + 0x4C);
+        if (!speed || !g0 || !g1) return std::nullopt;
+        def.projectileSpeed = *speed * 30, def.projectileGravity = {-*g0 * 900, -*g1 * 900};
+    }
+    def.commands = clipCommands(*w);
+    const auto wi = std::ranges::find(kWeapons, object, &WeaponInfo::object);
+    if (wi != std::end(kWeapons)) {
+        const auto fire = clipLength(w->drm, wi->fireClip);
+        const auto pump = wi->object == "wp_shotgun" ? clipLength(w->drm, "combat_shotgun_pump") : std::optional<float>(0.0f);
+        if (!fire || !pump) return std::nullopt;
+        def.refire = *fire + *pump;
+    }
     def.hand = {(*markers)[0], (*markers)[2]}, def.stow = {(*markers)[1], (*markers)[3]};
     def.muzzleMarker = *muzzle;
     if (const auto f = physics::loadObjectPhysics(w->drm).frame(def.muzzleMarker)) def.muzzle = *f;
     def.damage[0] = *d0, def.damage[1] = *d1, def.damage[2] = *d2;
-    if (wetScan) def.wetDamage[0] = *w0, def.wetDamage[1] = *w1, def.wetDamage[2] = *w2;
+    if (wetScan || *mode == 2) def.wetDamage[0] = *w0, def.wetDamage[1] = *w1, def.wetDamage[2] = *w2;
     else std::copy(def.damage, def.damage + 3, def.wetDamage);
     return def;
 }
@@ -553,19 +647,28 @@ std::optional<float> rayCapsule(glm::vec3 ro, glm::vec3 rd, glm::vec3 base, floa
 // heavy (2) hit_medium*; front within 45 deg of her heading, back beyond 135, else side (no mirroring: the side /
 // right clip plays for both sides); swimming the *_swim variants. Only on the ground or swimming, and only when
 // Health::damage accepted the hit.
+int hitReaction(int damageClass, float damage) {
+    if (damageClass == 2) return 2;
+    if (damageClass == 1) return 1;
+    if (damageClass == 6) return damage >= kHeavyHit ? 2 : damage >= kLightHit ? 1 : 0;
+    return 0;
+}
+
 void World::damageLara(float amount, vec3 from, int type) {
-    if (!health_.damage(amount, type) || health_.dead() || (type != kDamageLight && type != kDamageHeavy)) return;
+    const int react = hitReaction(type, amount);
+    if (!health_.damage(amount, type) || health_.dead() || !react) return;
     const PlayerState& s = player_.state();
     const bool swim = s.water >= 0;
     if (swim ? !(swimHit(s.state) || s.state == State::SwimTread || s.state == State::SwimSurface)
              : !(s.state == State::Idle || s.state == State::Walk || s.state == State::Run || s.state == State::Stop ||
                  s.state == State::Turn || s.state == State::Land || s.state == State::Hit))
         return;
-    const float a = std::abs(wrapAngle(std::atan2(from.y - s.pos.y, from.x - s.pos.x) - s.yaw));
+    const float rel = wrapAngle(std::atan2(from.y - s.pos.y, from.x - s.pos.x) - s.yaw), a = std::abs(rel);
     const int dir = a <= 45 * kDeg ? 0 : a >= 135 * kDeg ? 1 : 2;
     static constexpr std::string_view kLight[] = {"hit_light_front", "hit_light_back", "hit_light_side"};
     static constexpr std::string_view kHeavy[] = {"hit_mediumfront", "hit_mediumback", "hit_mediumright"};
-    player_.hitReact(std::string(type == kDamageHeavy ? kHeavy[dir] : kLight[dir]) + (swim ? "_swim" : ""));
+    // 0x6EB320: the anim graph's mirror flag 0x20 is set when the attacker's angle from her heading is positive (her left)
+    player_.hitReact(std::string(react == 2 ? kHeavy[dir] : kLight[dir]) + (swim ? "_swim" : ""), rel > 0);
 }
 
 void World::kill() { health_.damage(health_.value(), kDamageKill); }
@@ -573,8 +676,19 @@ void World::kill() { health_.damage(health_.value(), kDamageKill); }
 // ---- World: guns --------------------------------------------------------------------------------
 std::optional<std::pair<int, glm::mat4>> World::gunMount(Weapon w, int hand) const {
     const CombatState& c = combat_;
-    const bool inHand = w == c.weapon && c.drawT >= 0.5f; // [I] the gun changes bones half way through equip / unequip
     const WeaponDef& d = anims_.weapons[size_t(w)];
+    // [O] the gun goes into her hand on the equip clip's event 0x76 / 0x77 / 0x78 (0x6F64C0) and back on the unequip
+    // clip's 0x74 (0x6E8FC0); without the data half way through [I].
+    const bool inHand = [&] {
+        if (w != c.weapon) return false;
+        const Handling hd = handling(anims_, player_.state(), w);
+        if (c.drawn) {
+            const auto f = d.commandFrame(hd.equipClip, {0x76, 0x77, 0x78});
+            return c.drawT * hd.equip >= (f ? float(*f) / 30.0f : 0.5f * hd.equip);
+        }
+        const auto f = d.commandFrame(hd.unequipClip, {0x74});
+        return (1 - c.drawT) * hd.unequip < (f ? float(*f) / 30.0f : 0.5f * hd.unequip);
+    }();
     // [O] the weapon model sits at one of Lara's HInfo markers (WeaponDef::hand / stow, data +0xB8..+0xBB) with the
     // marker's frame as its own: in hand the grips 7 (right, segment 96) / 5 (left, 71; two-handed guns and Mjolnir).
     // A library without markers (synthetic tests) draws no stowed weapon and holds the gun at the hand bone.
@@ -677,7 +791,14 @@ nlohmann::json World::serializeCombat() const {
         {"cooldown", c.cooldown}, {"hand", c.hand}, {"sinceShot", {c.sinceShot[0], c.sinceShot[1]}}, {"spread", c.spread},
         {"shotsFired", c.shotsFired}, {"rng", c.rng}, {"deathTime", c.deathTime}, {"ragdollPhase", c.ragdollPhase}, {"ragdoll", ragdoll},
         {"held", {c.drawHeld, c.switchHeld, c.weaponHeld, c.healHeld, c.interactHeld, c.fireHeld}}, {"healCooldown", c.healCooldown},
-        {"healthPacksUsed", c.healthPacksUsed}, {"slowMo", c.slowMo}, {"pip", {c.pip.x, c.pip.y}}, {"timeScale", c.timeScale}};
+        {"healthPacksUsed", c.healthPacksUsed}, {"slowMo", c.slowMo}, {"pip", {c.pip.x, c.pip.y}}, {"timeScale", c.timeScale},
+        {"adrenalineMode", c.adrenalineMode}, {"timeRamp", {c.timeTarget, c.timeRate}}, {"projectiles", [&] {
+             nlohmann::json a = nlohmann::json::array();
+             for (const Projectile& p : c.projectiles)
+                 a.push_back({{p.from.x, p.from.y, p.from.z}, {p.pos.x, p.pos.y, p.pos.z}, {p.vel.x, p.vel.y, p.vel.z}, p.gravity,
+                              p.travelled, weaponName(p.weapon), p.hand, p.wet});
+             return a;
+         }()}};
     return {{"weapon", weaponName(c.weapon)}, {"secondary", weaponName(c.secondary)}, {"guns", guns}, {"adrenaline", c.adrenaline},
             {"state", state}};
 }
@@ -730,6 +851,15 @@ void World::restoreCombat(const nlohmann::json& j) {
             d.drawHeld = h.at(0), d.switchHeld = h.at(1), d.weaponHeld = h.at(2), d.healHeld = h.at(3), d.interactHeld = h.at(4), d.fireHeld = h.at(5);
             d.healCooldown = s->at("healCooldown"), d.healthPacksUsed = s->at("healthPacksUsed"), d.slowMo = s->at("slowMo");
             d.pip = {s->at("pip").at(0).get<float>(), s->at("pip").at(1).get<float>()}, d.timeScale = s->at("timeScale");
+            d.adrenalineMode = s->value("adrenalineMode", false);
+            if (const auto r = s->find("timeRamp"); r != s->end()) d.timeTarget = r->at(0), d.timeRate = r->at(1);
+            d.projectiles.clear();
+            for (const auto& p : s->value("projectiles", nlohmann::json::array())) {
+                const auto v = [&](int i) { return vec3(p.at(i).at(0).get<float>(), p.at(i).at(1).get<float>(), p.at(i).at(2).get<float>()); };
+                const auto wpn = weaponByName(p.at(5).get<std::string>());
+                if (!wpn) throw std::runtime_error("projectile weapon");
+                d.projectiles.push_back({v(0), v(1), v(2), p.at(3), p.at(4), *wpn, p.at(6), p.at(7)});
+            }
             c = d;
         } catch (const std::exception&) { // nlohmann errors too: holstered, as older saves
         }
@@ -859,6 +989,41 @@ float rnd(uint64_t& rng) {
 }
 } // namespace
 
+void World::gainAdrenaline(float dealt) {
+    if (dealt > 0) combat_.adrenaline = std::min(1.0f, combat_.adrenaline + std::round(dealt) / anims_.adrenaline.max);
+}
+
+bool World::strike(Weapon wpn, vec3 from, vec3 dir, float len, float dist0, bool wet, Shot& shot) {
+    const WeaponDef& w = anims_.weapons[size_t(wpn)];
+    float best = len;
+    bool hitAny = false;
+    int32_t object = 0; // the dynamic collider (script object) it hit
+    if (const auto g = col_.raycast(from, dir, best))
+        best = g->t, hitAny = true, object = g->dynamic >= 0 ? col_.dynamics[size_t(g->dynamic)].id : 0;
+    Damageable* struck = nullptr;
+    for (Damageable* t : targets) {
+        if (!t || !t->alive() || t->team() == Team::Player) continue;
+        if (const auto d = rayCapsule(from, dir, t->position(), t->radius(), t->height(), best)) best = *d, struck = t, hitAny = true;
+    }
+    shot.to = from + dir * best, shot.hit = hitAny, shot.target = struck;
+    const float damage = w.damageAt(dist0 + best, wet);
+    if (struck) {
+        shot.damage = damage;
+        Hit hit{damage, shot.to, dir, Team::Player};
+        hit.tranq = wpn == Weapon::Tranquilizer; // pr_tranquilizerdart: the damage is its dose
+        hit.damageClass = w.hitClass, hit.damageType = w.hitType;
+        const float before = struck->health();
+        struck->onHit(hit);
+        gainAdrenaline(before - std::max(0.0f, struck->health())); // message 0xD9: the health it lost (0x63AD50)
+    }
+    if (!struck && object) { // the hit message 0x11C reaches an anim-graph object too (docs/formats/ANIMGRAPH.md)
+        uberShot(object, dir);
+        script_.graphHit(object, uint32_t(w.hitClass), damage);
+        damageObject(object, damage, w.hitClass); // breakable uber objects (urns)
+    }
+    return hitAny;
+}
+
 void World::fire(int hand) {
     CombatState& c = combat_;
     const WeaponDef& w = anims_.weapons[size_t(c.weapon)];
@@ -868,39 +1033,49 @@ void World::fire(int hand) {
     if (glm::length(aim) < 1) aim = vec3(std::cos(player_.state().yaw), std::sin(player_.state().yaw), 0);
     aim = glm::normalize(aim);
     const vec3 right = glm::normalize(glm::cross(aim, vec3(0, 0, 1)) + vec3(1e-6f, 0, 0));
+    const bool wet = submerged();
     for (int pellet = 0; pellet < std::max(1, w.pellets); ++pellet) {
         // spread: yaw and pitch offsets within +-spread/2 degrees (0x69E300), per pellet
         const float dy = rnd(c.rng) * c.spread * kDeg, dp = rnd(c.rng) * c.spread * kDeg;
         const vec3 dir = glm::normalize(glm::angleAxis(dy, vec3(0, 0, 1)) * (glm::angleAxis(dp, right) * aim));
-        float best = w.maxRange;
-        bool hitAny = false;
-        int32_t object = 0; // the dynamic collider (script object) the bullet hit
-        if (const auto g = col_.raycast(from, dir, best))
-            best = g->t, hitAny = true, object = g->dynamic >= 0 ? col_.dynamics[size_t(g->dynamic)].id : 0;
-        Damageable* struck = nullptr;
-        for (Damageable* t : targets) {
-            if (!t || !t->alive() || t->team() == Team::Player) continue;
-            if (const auto d = rayCapsule(from, dir, t->position(), t->radius(), t->height(), best)) best = *d, struck = t, hitAny = true;
-        }
-        Shot shot{from, from + dir * best, hand, hitAny, struck, 0, gun};
-        if (struck) {
-            shot.damage = w.damageAt(best, submerged());
-            Hit hit{shot.damage, shot.to, dir, Team::Player};
-            hit.tranq = c.weapon == Weapon::Tranquilizer; // pr_tranquilizerdart: the damage is its dose
-            hit.damageClass = w.hitClass, hit.damageType = w.hitType;
-            struck->onHit(hit);
-            c.adrenaline = std::min(1.0f, c.adrenaline + shot.damage / kAdrenalineFill); // "damaging enemies" (locals 1310)
-        }
-        if (!struck && object) { // the hit message 0x11C reaches an anim-graph object too (docs/formats/ANIMGRAPH.md)
-            uberShot(object, dir);
-            script_.graphHit(object, uint32_t(w.hitClass), w.damageAt(best, submerged()));
-            damageObject(object, w.damageAt(best, submerged()), w.hitClass); // breakable uber objects (urns)
-        }
+        Shot shot{from, from, hand, false, nullptr, 0, gun};
+        if (w.mode == 2 && w.projectileSpeed > 0) // a projectile (0x6C95F0): flies from the muzzle, World::tickProjectiles
+            c.projectiles.push_back({from, from, dir * w.projectileSpeed, w.projectileGravity[wet ? 1 : 0], 0, c.weapon, hand, wet});
+        else
+            strike(c.weapon, from, dir, w.maxRange, 0, wet, shot);
         c.shots.push_back(shot);
     }
     c.spread = std::min(w.maxSpreadDeg, c.spread + w.spreadPerShot);
     c.sinceShot[hand] = 0;
     ++c.shotsFired;
+}
+
+// Projectiles in flight: gravity (pos += v t - g t^2 / 2, as the player integrator), the swept segment tested as a ray;
+// a hit (world or target) ends it with an impact shot, as does flying past the weapon's max range [I].
+void World::tickProjectiles(float dt) {
+    CombatState& c = combat_;
+    for (size_t i = 0; i < c.projectiles.size();) {
+        Projectile& p = c.projectiles[i];
+        const vec3 next = p.pos + p.vel * dt - vec3(0, 0, 0.5f * p.gravity * dt * dt);
+        p.vel.z -= p.gravity * dt;
+        const vec3 seg = next - p.pos;
+        const float len = glm::length(seg);
+        Shot shot{p.from, p.pos, p.hand, false, nullptr, 0, glm::mat4(1)};
+        shot.impact = true;
+        const bool hit = len > 0 && strike(p.weapon, p.pos, seg / len, len, p.travelled, p.wet, shot);
+        p.pos = next, p.travelled += len;
+        if (hit || p.travelled > anims_.weapons[size_t(p.weapon)].maxRange) {
+            if (hit) c.shots.push_back(shot);
+            c.projectiles.erase(c.projectiles.begin() + std::ptrdiff_t(i));
+        } else {
+            ++i;
+        }
+    }
+}
+
+float World::screenFade() const {
+    const float death = combat_.deathTime >= 0 ? std::min(1.0f, combat_.deathTime / kDeathFade) : 0.0f;
+    return std::max(script_.screenFade(), death);
 }
 
 // 0x6E68B0 (event 0x4B) runs one 0x69F1E0 area hit per ring of the current attack record (weapon controller +0xC4,
@@ -927,6 +1102,12 @@ void World::groundPound() {
         Hit hit{damage(*r, t->position()), t->aimPoint(), glm::normalize(vec3(vec2(d), 0) + vec3(1e-4f, 0, 0)), Team::Player, false,
                 r->knock > 0};
         hit.damageClass = 13, hit.damageType = 0;
+        if (r->knock > 0) { // message 0x91: speed lerped inner -> outer (knockEdge >= 0), r->angle up, away from Lara
+            const float dist = glm::length(t->position() - p);
+            const float speed = r->knockEdge >= 0 ? glm::mix(r->knock, r->knockEdge, (dist - r->inner) / (r->outer - r->inner)) : r->knock;
+            const float up = r->angle * kDeg;
+            hit.knockVel = (hit.dir * std::cos(up) + vec3(0, 0, std::sin(up))) * speed;
+        }
         t->onHit(hit);
     }
     for (const auto& o : script_.objects())
@@ -936,6 +1117,7 @@ void World::groundPound() {
 void World::tickCombat(const Actions& a, float dt) {
     CombatState& c = combat_;
     c.shots.clear();
+    tickProjectiles(dt);
     const PlayerState& s = player_.state();
     if (s.fallHeight > 0) health_.fall(s.fallHeight); // landing (tru.exe 0x75D080 -> 0x702FC0)
     health_.tick(dt);
@@ -952,12 +1134,16 @@ void World::tickCombat(const Actions& a, float dt) {
         c.healCooldown = kHealthPackCooldown;
         ++c.healthPacksUsed;
     }
-    // world (enemy) time eases into / out of the adrenaline window; Lara keeps real time
-    c.timeScale = approach(c.timeScale, c.slowMo > 0 ? kSlowScale : 1.0f, (1 - kSlowScale) * dt / kSlowEase);
+    // adrenaline: the meter drains (0x6F2930), the mode ends with it; world time ramps to the window's / mode's scale
+    const AdrenalineTuning& at = anims_.adrenaline;
+    if (c.adrenaline > 0) c.adrenaline = std::max(0.0f, c.adrenaline - (c.adrenalineMode ? at.modeDrain : at.drain) / at.max * dt);
+    if (c.adrenaline <= 0 && c.slowMo <= 0) c.adrenalineMode = false;
+    const float timeTarget = c.slowMo > 0 ? at.headShotScale : c.adrenalineMode ? at.modeScale : 1.0f;
+    if (timeTarget != c.timeTarget) c.timeTarget = timeTarget, c.timeRate = std::abs(timeTarget - c.timeScale) / at.ease;
+    c.timeScale = approach(c.timeScale, c.timeTarget, c.timeRate * dt);
     if (s.state == State::Dead) {
         c.deathTime += dt;
-        const anim::Clip* clip = anims_.find(s.clip);
-        if (c.deathTime >= (clip ? clip->durationSeconds() : 0) + kRespawnDelay) respawn();
+        if (c.deathTime >= kDeathFade) respawn(); // the wipe is black (DeathState_Process 0x75AF90)
         return;
     }
     if (health_.dead() && !airborne(s.state)) { // [I] dies on the ground; fatal falls die on landing
@@ -1065,6 +1251,7 @@ void World::tickCombat(const Actions& a, float dt) {
         c.aim = {std::clamp(yaw, yawLo, yawHi), hammer ? 0.0f : std::clamp(pitch, -gridDown(in.rifle), gridUp(in.rifle))};
     }
 
+    if (!c.locked && c.slowMo <= 0) c.adrenalineMode = false; // 0x718BD0: the mode needs her lock (flag 0x400)
     const int hand = dual ? c.hand : 0;
     if (hammer) { // Mjolnir: swings and ground pounds play out; no adrenaline head shot [I]
         HammerAction& h = c.hammer;
@@ -1072,12 +1259,14 @@ void World::tickCombat(const Actions& a, float dt) {
             h.prevT = h.t, h.t += dt;
             const auto reached = [&](float at) { return h.prevT < at && h.t >= at; };
             if (h.clip == "ground_melee_idle") {
-                if (reached(kHammerPound)) groundPound();
-            } else if (reached(kHammerShot)) {
+                const auto f = anims_.weapons[size_t(Weapon::ThorHammer)].commandFrame(h.clip, {0x4B});
+                if (reached(f ? float(*f) / 30.0f : kHammerPound)) groundPound();
+            } else if (const auto f = anims_.weapons[size_t(Weapon::ThorHammer)].commandFrame(h.clip, {0x75});
+                       reached(f ? float(*f) / 30.0f : s.water >= 0 ? kHammerSwimShot : kHammerShot)) {
                 fire(0);
             }
             const anim::Clip* k = anims_.weaponClip(Weapon::ThorHammer, h.clip);
-            if (h.t >= (k ? float(k->durationSeconds()) : in.refire)) h = {};
+            if (h.t >= (k ? float(k->durationSeconds()) : w.refire)) h = {};
         } else if (c.drawT >= 1 && interactPressed && c.locked && s.water < 0) {
             h = {"ground_melee_idle", 0, -1 / 30.0f}; // target lock + interact
         } else if (c.drawT >= 1 && a.fire) {
@@ -1101,13 +1290,15 @@ void World::tickCombat(const Actions& a, float dt) {
             }
             c.slowMo = 0; // one shot per window [I]
         }
-        if (c.slowMo <= 0) c.adrenaline = 0; // spent
-    } else if (interactPressed && c.adrenaline >= 1 && c.locked && c.target && c.drawT >= 1 &&
+        if (c.slowMo <= 0) c.adrenaline = 0, c.adrenalineMode = false; // spent
+    } else if (interactPressed && c.adrenalineMode && c.locked && c.target && c.drawT >= 1 && // in the mode, close [I]
                glm::length(c.target->aimPoint() - (s.pos + vec3(0, 0, targeting.eyeHeight))) <= targeting.closeRange) {
         // "full meter, lock on, get close and press X" (locals 1333/1334); close = the close lock tier [I]
         const float ang = (rnd(c.rng) + 0.5f) * 2 * kPi;
         c.slowMo = kSlowWindow;
         c.pip = kPipStart * vec2(std::cos(ang), std::sin(ang));
+    } else if (interactPressed && c.locked && c.target && c.drawT >= 1 && (c.adrenalineMode || c.adrenaline > 0)) {
+        c.adrenalineMode = !c.adrenalineMode; // 0x718BD0 toggles it (0x7189C0 / 0x718AD0); interact as the button [I]
     } else if (a.fire && c.drawT >= 1 && c.reload <= 0 && c.cooldown <= 0) {
         const bool canReload = w.infinite || c.reserve[wi] > 0;
         if (c.clip[wi][hand] <= 0) {
@@ -1117,7 +1308,7 @@ void World::tickCombat(const Actions& a, float dt) {
             fire(hand);
             --c.clip[wi][hand]; // the clip empties even with infinite reserve (0x6C9E50)
             if (dual) c.hand ^= 1;
-            c.cooldown = in.refire;
+            c.cooldown = w.refire;
             if ((dual ? c.clip[wi][0] <= 0 && c.clip[wi][1] <= 0 : c.clip[wi][0] <= 0) && canReload) c.reload = hd.reload;
         }
     }

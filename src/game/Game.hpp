@@ -88,6 +88,7 @@ struct AnimLibrary {
     BikeTuning bike; // motorcycle.drm (loadBikeTuning); its riding clips are in `clips` as "motorcycle:<name>"
     GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
     GrappleTuning grapple; // g_grapple data (loadGrappleTuning): throw range, rope limits, bend pool
+    AdrenalineTuning adrenaline; // Lara data +0x2C8..+0x31C (loadAdrenalineTuning): meter, drains, time scales
     DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
     // Lara's HInfo markers (lara.drm model): id -> (segment, frame in it, R = Rx * Ry * Rz); weapons mount there.
     std::map<int, std::pair<int, glm::mat4>> markers;
@@ -309,7 +310,7 @@ public:
     void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling); // Grapple.cpp: target attachment
     void releaseGrapple(bool jump);               // let go, keeping the swing's momentum
     void die(std::string_view clip);       // State::Dead playing `clip` once
-    void hitReact(std::string_view clip);  // State::Hit playing `clip` once (restarts it)
+    void hitReact(std::string_view clip, bool mirror = false); // State::Hit playing `clip` once (restarts it)
     // Interactions (World): where they can start: on her feet (standing, walking, running, landing) or crouched, out of
     // the water. use() plays `clip` once in State::Use at `pos` facing `yaw` with the input locked, then Idle; false
     // (nothing changes) when she cannot interact or without the clip.
@@ -670,6 +671,8 @@ public:
     const Health& health() const { return health_; }
     void setHealth(float v) { health_.set(v); } // saves (after restore(), which heals fully)
     const CombatState& combat() const { return combat_; }
+    // The screen wipe (1 = black): the scripts' FadeOut / FadeIn, and her death's 3 s fade (DeathState, Combat.cpp).
+    float screenFade() const;
     // The upper-body combat clip aimLayer plays now (reload, equip / unequip) and its time; empty name when none.
     // Lara's and the weapon object's animation event lists for that clip name run on it (sounds, AUDIO.md §9.7).
     std::pair<std::string, double> combatLayerClip() const;
@@ -768,6 +771,11 @@ private:
     void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // weapon upper body over `local`
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order
     void fire(int hand);
+    // One ray of a shot (from, unit dir, len; dist0 = range already flown, for the damage falloff): the nearest world
+    // face or living target; a struck target / script object takes the hit. Fills shot.to / hit / target / damage.
+    bool strike(Weapon w, vec3 from, vec3 dir, float len, float dist0, bool wet, Shot& shot);
+    void tickProjectiles(float dt);
+    void gainAdrenaline(float dealt); // the meter += the health her hit took (message 0xD9)
     void groundPound(); // Mjolnir's shock (event 0x4B): knocks every enemy within kPoundRadius off balance
     void reloadWeapon(); // refill the current weapon's clips from its reserve
     void collectPickups(bool pressed);

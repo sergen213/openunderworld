@@ -61,7 +61,7 @@ Transition, 0x34 bytes, tag `0x2776`:
   event mask (`+0xA8`, bits of its transitions' class lists, cleared while one runs) `0x6A52E0` draws among its mask
   0x800 transitions listing the class (value = damage). The damage also adds to `+0x98`, posted on the next update as a
   plain 0x800 stimulus (`0x6B4390`). Only `sh_ei_combat_crate_a`-`_d` (l1_ship_exterior, l1_ship_engine_hall) have
-  event-gated transitions: classes 13 (pr_thorbolt) and 4 [U: no weapon of ours has class 4], threshold 0.1, no clip,
+  event-gated transitions: classes 13 (pr_thorbolt) and 4 (every projectile hit: pr_spear, pr_tranquilizerdart; 0x6C9670) [O], threshold 0.1, no clip,
   to state 1, whose timer plays clip 1 into state 13. Ours: `Runtime::graphHit` from `World::fire` (the crates get
   dynamics colliders so bullets reach them) [I: the exe flags the clip done (0x100000) instead of entering at once].
 - [O] `0x8000` timer, posted every update with the frames spent in the state (`0x6B4390`).

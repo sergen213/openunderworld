@@ -129,7 +129,7 @@ TEST(Combat, FallDamageDeathAndRespawn) {
     ASSERT_TRUE(died);
     EXPECT_TRUE(d->health().dead());
     EXPECT_EQ(d->player().state().clip, "death_fall_normal");
-    for (int i = 0; i < 120 && d->player().state().state == State::Dead; ++i) d->tick({});
+    for (int i = 0; i < 200 && d->player().state().state == State::Dead; ++i) d->tick({}); // 3 s death fade
     EXPECT_EQ(d->player().state().state, State::Idle); // respawned at the spawn with full health
     EXPECT_NEAR(d->player().state().pos.z, 2500, 1e-3);
     EXPECT_EQ(d->health().value(), 1000);
@@ -482,14 +482,18 @@ TEST(Combat, AdrenalineHeadShot) {
     w->targets.push_back(&t);
     for (int i = 0; i < 60 * 15 && w->combat().adrenaline < 1; ++i) w->tick(guns(true)); // fill by damage dealt
     ASSERT_EQ(w->combat().adrenaline, 1);
-    EXPECT_NEAR(5000 - t.hp, 1000, 45); // 1000 damage fills it [I]
+    EXPECT_GE(5000 - t.hp, 500); // Lara data +0x2D0: 500 damage dealt fills it, plus what drained (20/s) meanwhile
+    EXPECT_LE(5000 - t.hp, 700);
     Actions lock = guns(false), go = guns(false);
     go.interact = true;
     w->tick(lock);
-    w->tick(go); // full + locked + close + interact: the window opens
+    w->tick(go); // meter + locked + interact: adrenaline mode
+    w->tick(lock);
+    ASSERT_TRUE(w->combat().adrenalineMode);
+    w->tick(go); // in the mode + close + interact: the window opens
     ASSERT_GT(w->combat().slowMo, 0);
-    for (int i = 0; i < 15; ++i) w->tick(lock);
-    EXPECT_NEAR(w->combat().timeScale, 0.2f, 1e-4); // eased down in 0.25 s
+    for (int i = 0; i < 21; ++i) w->tick(lock);
+    EXPECT_NEAR(w->combat().timeScale, 0.2f, 1e-4); // +0x2C8, eased down in +0x2CC = 10 frames
     const vec3 at = w->player().state().pos;
     for (int i = 0; i < 120 && glm::length(w->combat().pip) > 0.3f; ++i) { // steer the pip into the reticle
         Actions steer = lock;
@@ -507,8 +511,37 @@ TEST(Combat, AdrenalineHeadShot) {
     EXPECT_EQ(w->combat().shots.back().damage, hp);
     EXPECT_EQ(w->combat().slowMo, 0);
     EXPECT_EQ(w->combat().adrenaline, 0);
-    for (int i = 0; i < 16; ++i) w->tick({});
+    for (int i = 0; i < 21; ++i) w->tick({});
     EXPECT_EQ(w->combat().timeScale, 1); // time scale restored
+}
+
+// Adrenaline mode (0x718BD0): meter not empty + lock + interact toggles it; world time 0.5 over 10 frames, the meter
+// drains 225 / s, the mode ends with it.
+TEST(Combat, AdrenalineModeDrainsAndSlowsTime) {
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget t;
+    t.pos = {3000, 0, 0}, t.hp = 1e6f; // out of the close range: no head shot
+    w->targets.push_back(&t);
+    for (int i = 0; i < 60 * 6; ++i) w->tick(guns(true));
+    const float meter = w->combat().adrenaline;
+    ASSERT_GT(meter, 0.5f);
+    Actions lock = guns(false), go = guns(false);
+    go.interact = true;
+    w->tick(lock);
+    w->tick(go);
+    ASSERT_TRUE(w->combat().adrenalineMode);
+    for (int i = 0; i < 21; ++i) w->tick(lock);
+    EXPECT_NEAR(w->combat().timeScale, 0.5f, 1e-4);
+    const float before = w->combat().adrenaline;
+    for (int i = 0; i < 60; ++i) w->tick(lock);
+    EXPECT_NEAR(before - w->combat().adrenaline, 225.0f / 500.0f, 0.01f);
+    for (int i = 0; i < 60 * 4 && w->combat().adrenalineMode; ++i) w->tick(lock);
+    EXPECT_FALSE(w->combat().adrenalineMode);
+    EXPECT_EQ(w->combat().adrenaline, 0);
+    for (int i = 0; i < 21; ++i) w->tick(lock);
+    EXPECT_EQ(w->combat().timeScale, 1);
 }
 
 TEST(Combat, ReplayWithSwitchingIndependentOfRenderRate) {
@@ -669,8 +702,8 @@ TEST(CombatReal, PoolFallDamageDeathAndPistols) {
     }
     ASSERT_GE(diedAt, 0);
     ASSERT_GE(respawnedAt, 0);
-    // death_fall_normal is 1.067 s; respawn 1 s after it ends
-    EXPECT_NEAR(respawnedAt - diedAt, std::lround((anims.find("death_fall_normal")->durationSeconds() + 1.0) * 60), 2);
+    // DeathState: the screen fades to black over 90 frames, then the checkpoint reloads (3 s after the death)
+    EXPECT_NEAR(respawnedAt - diedAt, 180, 2);
     EXPECT_EQ(w.health().value(), 1000);
 
     game::World p(loader, "l4_pool", anims);
@@ -722,7 +755,7 @@ TEST(CombatReal, PoolSpeargunUnderWater) {
     EXPECT_EQ(w.player().state().state, State::SwimUnder);
     EXPECT_EQ(w.combat().shotsFired, 2u);
     EXPECT_EQ(t.hits, 2);
-    EXPECT_EQ(t.hp, 700 - 2 * 250);
+    EXPECT_EQ(t.hp, 700 - 2 * 550); // under water the +0x84 record: 550 a spear
     EXPECT_LE(w.combat().reserve[3], 4);
     w.targets.clear();
 }
@@ -973,4 +1006,70 @@ TEST(CombatReal, MuzzleAtGunMarkers) {
         }
         EXPECT_EQ(hands.size(), wp == game::Weapon::Pistols ? 2u : 1u);
     }
+}
+
+// Decoded numbers (docs/GAMEPLAY.md "Combat"): fire rates from the clips carrying the shot event 0x75, the projectiles'
+// speed / gravity / damage / class 4, the gun-to-hand / stow / Mjolnir event frames, Lara's adrenaline data.
+TEST(CombatReal, DecodedCombatNumbers) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    using game::Weapon;
+    for (int i = 0; i < game::kWeaponCount; ++i) {
+        const auto p = game::loadWeapon(bf, game::weaponObject(Weapon(i)));
+        ASSERT_TRUE(p);
+        const auto d = game::weaponDefaults(Weapon(i));
+        SCOPED_TRACE(d.object);
+        EXPECT_FLOAT_EQ(p->refire, d.refire);
+        EXPECT_FLOAT_EQ(p->projectileSpeed, d.projectileSpeed);
+        EXPECT_FLOAT_EQ(p->projectileGravity[0], d.projectileGravity[0]);
+        EXPECT_FLOAT_EQ(p->projectileGravity[1], d.projectileGravity[1]);
+    }
+    const auto spear = *game::loadWeapon(bf, "wp_speargun"), dart = *game::loadWeapon(bf, "wp_tranq");
+    EXPECT_EQ(spear.mode, 2);
+    EXPECT_EQ(spear.hitClass, 4);
+    EXPECT_EQ(spear.hitType, 0);
+    EXPECT_EQ(spear.damage[0], 250.0f);
+    EXPECT_EQ(spear.wetDamage[0], 550.0f);
+    EXPECT_FLOAT_EQ(spear.projectileSpeed, 30000.0f);                       // S+0x10 = 1000 per frame
+    EXPECT_FLOAT_EQ(spear.projectileGravity[0], 1800.0f);                   // record +0x4C = -2 per frame^2
+    EXPECT_FLOAT_EQ(spear.projectileGravity[1], 5400.0f);                   // +0x84 record: -6
+    EXPECT_FLOAT_EQ(dart.projectileSpeed, 45000.0f);
+    EXPECT_EQ(dart.hitClass, 4);
+    const auto hg = *game::loadWeapon(bf, "wp_handgun"), uzi = *game::loadWeapon(bf, "wp_uzi"),
+               sg = *game::loadWeapon(bf, "wp_shotgun"), ham = *game::loadWeapon(bf, "wp_thorhammer");
+    EXPECT_EQ(hg.commandFrame("combat_pistol_RfireA", {0x75}), 0);
+    EXPECT_EQ(hg.commandFrame("combat_pistols_equip", {0x76}), 3);
+    EXPECT_EQ(hg.commandFrame("combat_pistols_unequip", {0x74}), 10);
+    EXPECT_EQ(uzi.commandFrame("combat_pistols_equip", {0x76}), 7);
+    EXPECT_EQ(uzi.commandFrame("combat_fire_overlay", {0x75}), 0);
+    EXPECT_EQ(sg.commandFrame("combat_shotgun_equip", {0x76}), 5);
+    EXPECT_EQ(sg.commandFrame("combat_shotgun_unequip", {0x74}), 10);
+    EXPECT_EQ(hg.commandFrame("combat_pistol_motorcycle_arm", {0x76, 0x77, 0x78}), 15);
+    EXPECT_EQ(ham.commandFrame("ground_fire_idle", {0x75}), 10);
+    EXPECT_EQ(ham.commandFrame("swim_submerge_thorhammer_attack_front", {0x75}), 12);
+    EXPECT_EQ(ham.commandFrame("ground_melee_idle", {0x4B}), 12);
+    EXPECT_EQ(ham.commandFrame("ground_equip", {0x76}), 2);
+    EXPECT_EQ(ham.commandFrame("ground_unequip", {0x74}), 14);
+    const auto a = game::loadAdrenalineTuning(bf);
+    ASSERT_TRUE(a);
+    const game::AdrenalineTuning def;
+    EXPECT_EQ(a->max, 500.0f);
+    EXPECT_EQ(a->drain, 20.0f);
+    EXPECT_EQ(a->modeDrain, 225.0f);
+    EXPECT_EQ(a->modeScale, 0.5f);
+    EXPECT_FLOAT_EQ(a->headShotScale, 0.2f);
+    EXPECT_FLOAT_EQ(a->ease, 10 / 30.0f);
+    EXPECT_EQ(a->max, def.max);
+    EXPECT_EQ(a->modeScale, def.modeScale);
+    EXPECT_FLOAT_EQ(a->ease, def.ease);
+}
+
+TEST(Combat, HitReactionThresholds) {
+    EXPECT_EQ(game::hitReaction(1, 5), 1);
+    EXPECT_EQ(game::hitReaction(2, 5), 2);
+    EXPECT_EQ(game::hitReaction(6, 99), 0);
+    EXPECT_EQ(game::hitReaction(6, 100), 1);
+    EXPECT_EQ(game::hitReaction(6, 250), 2);
+    EXPECT_EQ(game::hitReaction(3, 900), 0);
 }

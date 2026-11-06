@@ -1572,8 +1572,9 @@ damage type +0x63C):
   count is `World::found[2]` (picked-up `ca_rw_shard` packs, saved) and drops by one per use. Lara has no use clip
   [O]: g_healthpack.drm's `use` (1.03 s) animates the pack object, so nothing plays on her. Max carried 100 (+0xE2..E6)
   and +1 per pickup (+0xE8) are not enforced (Progression counts pickups).
-- Death [I]: at health ≤ 0 on the ground, `death_fall_normal` (fall) or `death_toknee` (other damage) plays; 1 s
-  after it ends World::respawn (last checkpoint, full health as `0x700060`). The weapons, clips and reserves are kept.
+- Death: at health ≤ 0 on the ground, `death_fall_normal` (fall) or `death_toknee` (other damage) plays [I]; DeathState
+  (0x75AA50) fades the screen to black over 90 frames (wipe 10; `World::screenFade`) and respawns when it is black
+  (0x75AF90 -> 0x6F55A0 checkpoint reload, 3 s) [O]. The weapons, clips and reserves are kept [I].
 - Hit reactions: the exe turns an accepted enemy hit (message 0x11C → 0x719DD0 → 0x6F5030) into a reaction by type
   (0x6EB590: type 1 light → state value +0x204, type 2 heavy → +0x208) and writes the attacker's angle from Lara's heading
   into the anim graph (0x6EB250; mirror flag 0x20 when positive), which picks the clip; the graph's thresholds are
@@ -1625,8 +1626,10 @@ pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary re
   +0x87C, taking `other` (1) to be Normal [I]. Live counts sit at `fadb58+0x51C` + 2·slot [O]. Reloads move rounds
   from the reserve into each gun's clip; the pistols' reserve is infinite; a secondary out of rounds and reserve falls
   back to the pistols [I].
-- The speargun's pr_spear record is a projectile (mode 2, 0x6C95F0 → 0x6C9300; its fields +0x34 = 250, +0x38 = 100,
-  +0x50 = 10000, +0x54 = 45 are not decoded): we fire it as hitscan with 250 damage [I].
+- Projectiles [O] (pr_spear, pr_tranquilizerdart; mode 2, 0x6C95F0 → 0x6C9300, update 0x6C91D0, hits 0x6C9670): launch
+  speed weapon S+0x10 (1000 / 1500), gravity record +0x4C (−2 / −1; the +0x84 record −6 / −3), per 30 Hz frame [I unit];
+  damage record +0x1C (spear 250, +0x84 record 550; dart 500 dose); every hit posts class 4, type 0. `World::tickProjectiles`
+  sweeps each tick's segment as a ray; past the max range it is dropped [I].
 - Spread: per pellet, yaw and pitch offsets within ±spread/2 (0x69E300) from a 32-bit LCG (deterministic replays);
   grows per shot to the max, recovers per frame, resets on draw (0x6E6C60).
 - Switching (`Actions::weapon`: X, pad d-pad right [I U+180A per locals 1298]; script `weapon`): pistols ↔ the secondary
@@ -1669,7 +1672,9 @@ aim not held): nearest within 5000 (2D) and 27.5° of her facing. LOS from 375 a
 Switch target cycles through the hard-lock order [I]. Locked and standing, Lara turns toward the target [I]. No
 target: free aim along the camera ray.
 
-Adrenaline [O strings, I numbers]: locals 1310 "Build up adrenaline for combat by damaging enemies", 1333–1335 "When
+Adrenaline [O numbers: Lara data +0x2D0 max 500, +0x2D4 / +0x2D8 drain 20 / 225 per s, +0x31C mode scale 0.5, +0x2C8
+head-shot scale 0.2, +0x2CC ramp 10 frames; gain = the health her hit took, message 0xD9 from 0x63AD50; mode toggle
+0x718BD0 (ours: interact with a lock [I]), head shot in the mode when close (ours) [I]. The text below predates them]: locals 1310 "Build up adrenaline for combat by damaging enemies", 1333–1335 "When
 the adrenaline meter is full … hold LT to lock on, get close, and press X … Steer the pip into the target reticle and
 then press RT for a Headshot". The world time scale `_DAT_00e7f1a0` (setter 0x4A3DC0; eased by the script natives
 0x776030 / 0x78C4E0) multiplies `gameTracker_timeMult`, and Lara's update divides it back out (0x622418), so she runs

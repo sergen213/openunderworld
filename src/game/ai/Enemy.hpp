@@ -268,6 +268,7 @@ struct EnemyState {
     vec3 pos{0}; // feet
     float yaw = 0; // heading: forward = (cos yaw, sin yaw, 0)
     float vz = 0;  // falling speed
+    vec3 knock{0}; // thrown (Hit::knockVel, message 0x91): horizontal speed until it lands; a ragdoll starts with it
     std::string clip;
     double clipTime = 0;
     bool loop = true;

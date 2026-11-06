@@ -559,7 +559,7 @@ nlohmann::json toJson(const EnemyState& s) {
             {"coverCooldown", s.coverCooldown}, {"path", s.path}, {"patrolIndex", s.patrolIndex}, {"patrolStep", s.patrolStep},
             {"visited", s.visited}, {"phase", s.phase}, {"phaseTime", s.phaseTime}, {"phaseLength", s.phaseLength},
             {"goal", vec(s.goal)}, {"searchTime", s.searchTime}, {"ragdollPhase", s.ragdollPhase}, {"ragdoll", std::move(ragdoll)},
-            {"killAt", vec(s.killAt)}, {"killDir", vec(s.killDir)}, {"ragdollAt", s.ragdollAt}, {"pieces", std::move(pieces)},
+            {"killAt", vec(s.killAt)}, {"killDir", vec(s.killDir)}, {"knock", vec(s.knock)}, {"ragdollAt", s.ragdollAt}, {"pieces", std::move(pieces)},
             {"pieceVel", std::move(pieceVel)}, {"flankWait", s.flankWait}, {"dodgeWait", s.dodgeWait}, {"recent", std::move(recent)},
             {"recentNext", s.recentNext}, {"recentCount", s.recentCount}};
 }
@@ -595,6 +595,7 @@ EnemyState stateFromJson(const nlohmann::json& j) {
     }
     if (const auto k = j.find("killAt"); k != j.end()) s.killAt = vec(*k);
     if (const auto k = j.find("killDir"); k != j.end()) s.killDir = vec(*k);
+    if (const auto k = j.find("knock"); k != j.end()) s.knock = vec(*k);
     s.ragdollAt = j.value("ragdollAt", 0.0f); // older saves: at once (they took over at the clip's end)
     for (const auto& m : j.value("pieces", nlohmann::json::array())) {
         const auto f = m.get<std::vector<float>>();

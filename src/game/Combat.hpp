@@ -6,6 +6,8 @@
 
 #include <array>
 #include <cstdint>
+#include <initializer_list>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -46,12 +48,19 @@ struct Hit {
     Team source = Team::Neutral;
     bool headshot = false; // adrenaline head shot (kills; the enemy may pick a special death clip)
     bool knock = false;    // knocked off balance whatever the damage (Mjolnir's ground pound)
+    // Thrown (message 0x91 from the area hit 0x69F1E0): world velocity, units/s [I unit, as the grenade's]; 0 none.
+    glm::vec3 knockVel{0};
     bool tranq = false;    // tranquilizer dart: animals with sleep clips are dosed instead of hurt (ai::Mode::Sleep)
     // tru.exe hit message 0x11C (built by 0x63C9B0): +0x50 damage class, +0x64 damage type. Lara's bullets: the ammo
-    // record's +0x20 / +0x24 (pr_*bullet 0 / 1, pr_shotgunbullet 2 / 1, pr_thorbolt 13 / 3); 0 / 0 raw (the bike's ram,
-    // 0x6AE240). Thralls pick get-up or death by them (ai::Regenerate::kills).
+    // object data's +0x20 / +0x24 (record +8 / +0xC: pr_*bullet 0 / 1, pr_shotgunbullet 2 / 1, pr_thorbolt 13 / 3);
+    // projectiles (pr_spear, pr_tranquilizerdart: 0x6C9670) class 4, type 0; 0 / 0 raw (the bike's ram, 0x6AE240).
+    // Thralls pick get-up or death by them (ai::Regenerate::kills).
     int damageClass = 0, damageType = 0;
 };
+// Lara's reaction to an accepted hit (0x6EB590 by the message's damage class): 2 heavy (state value +0x208), 1 light
+// (+0x204); class 6 by damage: >= Lara data +0x64 (250) heavy, >= +0x66 (100) light; 0 none.
+inline constexpr float kHeavyHit = 250.0f, kLightHit = 100.0f;
+int hitReaction(int damageClass, float damage);
 
 // Anything Lara can target and shoot. Enemies (src/game/ai) implement it and register the pointer in
 // World::targets; they must remove it before destroying the object. Body = vertical capsule from
@@ -184,14 +193,30 @@ struct WeaponDef {
     float spreadDeg = 1.0f, maxSpreadDeg = 1.0f, spreadPerShot = 0.0f; // S+0x1C / +0x2C / +0x30
     float spreadRecovery = 0.0f;  // S+0x34, degrees per 30 Hz frame [I unit]
     int mode = 1;                 // record +0: 1 hitscan, 2 projectile
-    // Hitscan: record +4 / +0x10 / +0x14 = damage at 0, shortRange, maxRange. Projectile (mode 2, pr_spear): the
-    // record's +0x1C (250) for all three [I]; we fire projectiles as hitscan (the projectile record is not decoded).
+    // Hitscan: record +4 / +0x10 / +0x14 = damage at 0, shortRange, maxRange. Projectile (mode 2): record +0x1C (pr_spear
+    // 250, pr_tranquilizerdart 500) at every range, carried by the projectile (instance +0x54, 0x6C9670).
     float damage[3] = {40.0f, 30.0f, 20.0f};
     // The ammo's second fire record (+0x84), which 0x69E770 picks while instance +0x131 is set: [I] under water (its hit
-    // object +0xA8 is the *_underwater one). Mjolnir 1000 / 400 / 100.
+    // object +0xA8 is the *_underwater one). Mjolnir 1000 / 400 / 100; pr_spear 550.
     float wetDamage[3] = {40.0f, 40.0f, 20.0f};
-    // Hit class / type (record +8 / +0xC, the hit message's +0x50 / +0x64: 0x6C64D0); projectiles (not decoded) [I] as bullets.
+    // Hit class / type (hitscan: record +8 / +0xC, the hit message's +0x50 / +0x64: 0x6C64D0); projectile hits always
+    // post class 4, type 0 (0x6C9670), whatever the record holds.
     int hitClass = 0, hitType = 1;
+    // Projectiles (0x6C9E50 mode 2 -> 0x6C95F0 -> 0x6C9300): launch speed S+0x10 (fire message +0x30, 0x719990) and
+    // gravity record +0x4C (0x6B6D10 query 0x3A = record +4, its +0x48: 0x6C91D0 adds (g + 3) x mass against the world's
+    // -3 per frame^2), both per 30 Hz frame [I unit], here x30 / x900: units/s, units/s^2 (down). [0] dry, [1] the +0x84
+    // record. pr_spear 1000 / 2, 6; pr_tranquilizerdart 1500 / 1, 3. 0 for hitscan weapons.
+    float projectileSpeed = 0;
+    std::array<float, 2> projectileGravity{0, 0};
+    // Seconds between shots: the length of the clip whose event 0x75 fires (0x716F30 -> message 0x19B -> 0x6C9E50; every
+    // such clip has it at frame 0), plus the shotgun's pump: pistols / uzi combat_pistol_RfireA / the uzi's
+    // combat_fire_overlay, two-handed combat_shotgun_fire_UL / combat_rifle_fire_UL, Mjolnir ground_fire_idle.
+    float refire = 10 / 30.0f;
+    // Event 0x7x commands of the weapon DRM's animation lists (info & 3 == 2: record +8 = command, frame +2): per clip name,
+    // {command, 30 Hz frame}. 0x75 shot (byte +2: hand), 0x76 / 0x77 / 0x78 gun into the hand (0x6F64C0), 0x74 gun
+    // stowed (0x6E8FC0), 0x4B Mjolnir's ground pound (0x6E68B0). Empty without the data.
+    std::map<std::string, std::vector<std::pair<int, int>>, std::less<>> commands;
+    std::optional<int> commandFrame(std::string_view clip, std::initializer_list<int> commands) const; // first match
     // Data +0xB8 / +0xB9 (gun 0) and +0xBA / +0xBB (gun 1): Lara's HInfo markers in hand and stowed (the weapon model is
     // mounted at the marker; its frame is the model's). Handgun 7/6, 5/4 (grips, thighs); uzi 7/36, 5/37 (back);
     // two-handed 5/15 (left grip, across her back); Mjolnir 5/31.
@@ -217,6 +242,19 @@ struct Shot {
     Damageable* target = nullptr;
     float damage = 0;
     glm::mat4 gun{1};         // the gun model's world frame (World::gunMatrix): its "fire" events play there
+    bool impact = false;      // a projectile arriving (from = its launch point): no muzzle flash
+};
+
+// A projectile in flight (pr_spear / pr_tranquilizerdart), advanced every tick: gravity, then the segment it swept
+// tested against the world and the targets as a hitscan ray.
+struct Projectile {
+    glm::vec3 from{0};           // muzzle at launch
+    glm::vec3 pos{0}, vel{0};    // units, units/s
+    float gravity = 0;           // units/s^2, down
+    float travelled = 0;         // units; it is dropped past WeaponDef::maxRange [I]
+    Weapon weapon = Weapon::Speargun;
+    int hand = 0;
+    bool wet = false;            // fired under water (the +0x84 record)
 };
 
 // Mjolnir's actions (wp_thorhammer's clips of Lara, docs/GAMEPLAY.md "Mjolnir"): fire = the swing that throws the bolt
@@ -269,12 +307,19 @@ struct CombatState {
     bool drawHeld = false, switchHeld = false, weaponHeld = false, healHeld = false, interactHeld = false, fireHeld = false;
     float healCooldown = 0;   // seconds until the next health pack (g_healthpack data +0xEA: 60 frames)
     int healthPacksUsed = 0;  // count, for logs
-    // Adrenaline (head shot): meter filled by damage dealt; full + hard lock + close + interact opens a window of
-    // slowed world time in which the move stick steers the pip into the reticle and fire kills.
-    float adrenaline = 0;     // meter 0..1
+    // Adrenaline (Lara data, 0x6F28C0 / 0x6F2930 / 0x718BD0): meter += the damage she deals (message 0xD9, 0x63AD50),
+    // up to +0x2D0 = 500; it drains +0x2D4 = 20 per second, +0x2D8 = 225 in adrenaline mode. With the meter not empty
+    // and a hard lock, interact toggles the mode (world time -> +0x31C = 0.5 over +0x2CC = 10 frames, 0x7189C0; back to
+    // 1 when it ends, 0x718AD0). Full meter + lock + close + interact opens the head-shot window instead (time -> +0x2C8 =
+    // 0.2, the accurate-aim events 5 / 4, 0x715020 / 0x718EA0), in which the move stick steers the pip into the reticle
+    // and fire kills.
+    float adrenaline = 0;     // meter 0..1 (x 500)
+    bool adrenalineMode = false;
     float slowMo = 0;         // real seconds left of the head-shot window; 0 = closed
     glm::vec2 pip{0};         // pip offset from the reticle, reticle radii (inside 1 = on target)
     float timeScale = 1;      // world (enemy) time scale; adrenaline slows it, Lara keeps real time (tru.exe 0x622418)
+    float timeTarget = 1, timeRate = 0; // the ramp in progress (0x78C160): toward timeTarget at timeRate per second
+    std::vector<Projectile> projectiles;
 };
 
 // ---- sticky grenades (gadget "Sticky Bomb", tru.exe gadget table 0x8AFC70 entry 4; docs/GAMEPLAY.md "Grenades") ----
@@ -330,5 +375,16 @@ struct TargetingTuning {
     float softRange = 5000.0f;   // +0x470: 2D distance
     float softConeDeg = 27.5f;   // +0x470: angle from Lara's facing
 };
+
+// Lara's adrenaline numbers (player data = lara.drm ObjectBase+0xC8; CombatState::adrenaline describes the use).
+struct AdrenalineTuning {
+    float max = 500.0f;           // +0x2D0: the full meter, in damage dealt
+    float drain = 20.0f;          // +0x2D4 per second (0x6F2930: x timeMult / 30 per frame)
+    float modeDrain = 225.0f;     // +0x2D8 per second in adrenaline mode (flag 0x8000000)
+    float modeScale = 0.5f;       // +0x31C world time scale in adrenaline mode (0x7189C0)
+    float headShotScale = 0.2f;   // +0x2C8 world time scale while aiming the head shot (0x715020)
+    float ease = 10 / 30.0f;      // +0x2CC frames for each time-scale ramp (x 33.33 ms, 0x78C160)
+};
+std::optional<AdrenalineTuning> loadAdrenalineTuning(const cdc::BigfileSet& bigfile); // nullopt: lara.drm missing
 
 } // namespace ou::game

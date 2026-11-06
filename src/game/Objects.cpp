@@ -1140,7 +1140,8 @@ void World::syncRagdolls(bool step) {
         if (s.ragdollPhase == 1) {
             const auto now = e.pose(1.0), before = e.pose(0.0);
             for (const auto& b : t.ragdoll->bones)
-                velocity[k].push_back(glm::mat3(model) * vec3(now[size_t(b.segment)][3] - before[size_t(b.segment)][3]) / float(kTickSeconds));
+                velocity[k].push_back(glm::mat3(model) * vec3(now[size_t(b.segment)][3] - before[size_t(b.segment)][3]) / float(kTickSeconds) +
+                                      s.knock);
             r.velocity = velocity[k];
             r.hitPoint = s.pos + s.killAt;
             r.impulse = s.killDir * (2.5f * (t.tuning.deathImpulse > 0 ? t.tuning.deathImpulse : 2000.0f));

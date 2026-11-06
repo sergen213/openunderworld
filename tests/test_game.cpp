@@ -3267,7 +3267,9 @@ TEST(GameReal, LaraRagdollIndependentOfRenderRate) {
     const auto base = worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0});
     const auto make = [&] {
         auto w = base();
-        w->kill();
+        // an absolute (fall) death: death_fall_normal (1.07 s) ends well inside the 3 s death fade; death_toknee (4.7 s)
+        // would still be playing at the respawn
+        w->damageLara(1e6f, w->player().state().pos, game::kDamageAbsolute);
         return w;
     };
     float clip = 0;
@@ -3280,7 +3282,7 @@ TEST(GameReal, LaraRagdollIndependentOfRenderRate) {
         ASSERT_EQ(w->player().state().state, game::State::Dead);
         clip = w->anims().find(w->player().state().clip)->durationSeconds();
     }
-    const int ticks = int((clip + 0.9f) / game::kTickSeconds); // respawn: clip + 1 s
+    const int ticks = int(std::min(clip + 0.9f, 2.95f) / game::kTickSeconds); // before the respawn (3 s after the death)
     const auto w = expectRateIndependent(make, game::InputScript::parse(""), ticks);
     ASSERT_EQ(w->player().state().state, game::State::Dead);
     const auto& c = w->combat();

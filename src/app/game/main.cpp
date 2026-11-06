@@ -1160,7 +1160,7 @@ struct EffectsView {
         const std::string gun(ou::game::weaponObject(c.weapon));
         int flashed = 0; // hands whose fire events ran this tick: one flash per trigger pull, not per pellet
         for (const auto& s : c.shots) {
-            shot(w, gun, s.gun, !(flashed & (1 << s.hand)), s.from, s.to, s.target != nullptr, s.hit, w.submerged());
+            shot(w, gun, s.gun, !s.impact && !(flashed & (1 << s.hand)), s.from, s.to, s.target != nullptr, s.hit, w.submerged());
             flashed |= 1 << s.hand;
         }
         for (const auto& s : w.enemies().shots) {
@@ -3018,7 +3018,7 @@ int main(int argc, char** argv) {
         fo.rtReflections = opt.gfx.rtReflections;
         fo.rtAo = opt.gfx.rtAo, fo.rtGi = opt.gfx.rtGi;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
-        fo.brightness = opt.gfx.brightness, fo.screenFade = world->script().screenFade();
+        fo.brightness = opt.gfx.brightness, fo.screenFade = world->screenFade();
         fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;
         fo.fsrQuality = opt.gfx.fsrQuality, fo.sharpness = opt.gfx.sharpness, fo.frameGeneration = opt.gfx.frameGeneration;
         fo.antiLag = opt.gfx.antiLag;
