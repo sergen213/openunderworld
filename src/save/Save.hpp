@@ -76,6 +76,7 @@ SaveGame readFile(const std::filesystem::path& path, bool* usedBackup = nullptr)
 struct Profile {
     uint32_t chapters = 0;
     bool finished = false, treasures = false, relics = false;
+    std::string outfit; // EXTRAS OUTFITS choice (World::costume, objectlist name); empty = each level's own
     bool operator==(const Profile&) const = default;
 };
 Profile readProfile(const std::filesystem::path& dir = saveDir()); // missing / unreadable = nothing reached

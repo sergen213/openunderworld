@@ -70,7 +70,7 @@ public:
 enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
 // Confirm: a YES / NO question (Item::confirm) over the backdrop alone, NO selected; YES runs the item. Revisit / Journal:
 // the PDA's REVISIT LOCATION list (Treasure Hunt) and JOURNAL ENTRIES. Extras: the EXTRAS categories on a mirrored ring; ExtrasCategory: one's rewards
-// (Menus::rewards) with a preview; ExtrasView: an unlocked image full screen. TailoringOptions: GAME OPTIONS > PLAYER
+// (Menus::rewards; the sixth, OUTFITS, kCostumes) with a preview; ExtrasView: an unlocked image full screen. TailoringOptions: GAME OPTIONS > PLAYER
 // TAILORING, its four levels one by one (Menus::tailor). Gfx*: AUDIO/VISUAL > DISPLAY MODE SELECTION (GfxDisplay) and
 // DISPLAY SETTINGS (GfxSettings: QUALITY, RAY TRACING, WATER & SKY, UPSCALING), editing Menus::graphics.
 enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
@@ -80,9 +80,9 @@ enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioV
 // on selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
 // Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW). TreasureHunt: the
 // main menu's centre after the ending. Revisit: start revisitChapter(). PlayMovie: EXTRAS TRAILERS & CREDITS, the
-// Movies\ file in selectedSave().
+// Movies\ file in selectedSave(). Outfit: EXTRAS OUTFITS wears Menus::outfit.
 enum class Action : uint8_t { None, Continue, NewGame, Resume, Save, Load, Delete, QuitToMenu, Quit, Hint, Answer, Equip, SonarReset,
-                              TreasureHunt, Revisit, PlayMovie };
+                              TreasureHunt, Revisit, PlayMovie, Outfit };
 
 struct Item {
     int16_t stringId = 0;  // locals.bin label; 0 = `label`
@@ -131,6 +131,28 @@ struct Unlocks {
 // chapter ended: 3 Mediterranean Sea, 4 the prologue, 5..10 Coastal Thailand .. Arctic Sea; 11 the game finished
 // (storyboards); 12 every treasure (creatures); 13 every relic (Lara's outfits).
 bool unlocked(int code, const Unlocks& u);
+// EXTRAS OUTFITS: Lara's outfit objects (objectlist.txt names; pc-w\<object>.drm) by their locals.bin names 67..75, the
+// character concept (`concept`, Rewards::character name) shown beside, and when each unlocks (`unlock`, as
+// Reward::unlock). [O] tru.exe's own costume list (generalbank DTP 36 +0x44, the `unlockablecostume` natives
+// 0x778C60..0x778CA0) holds all twelve lara* objects (objectlist 8..19) under leftover names 357..359 ("Legend",
+// "Biker", "Evening Gown") and unlock record 1, which needs no unlock bit; only g_pda's game globals script uses it.
+// [I] the name-to-object mapping, and the unlocks: each chapter's outfit when that chapter ends, the two no level
+// wears (Snow Light, Bathing Suit) when the game is finished.
+struct Costume {
+    int16_t name;
+    std::string_view object;
+    int unlock;
+    int16_t art;
+};
+inline constexpr std::array<Costume, 9> kCostumes{{{74, "lara_casual", 4, 295},
+                                                  {70, "lara_wetsuit_warm", 3, 303},
+                                                  {67, "lara_jungle_a", 5, 301},
+                                                  {69, "lara_jungle_heavy", 7, 297},
+                                                  {72, "lara_snow_heavy", 8, 298},
+                                                  {68, "lara_jungle_b", 9, 301},
+                                                  {71, "lara_wetsuit_cold", 10, 303},
+                                                  {73, "lara_snow_light", 11, 298},
+                                                  {75, "lara_bikini", 11, 301}}};
 // JOURNAL entries (locals.bin 1145.., text id + 45) available in chapter `chapter` (kChapters index) [I: the entries by
 // their topics up to that chapter's: 1145 Mediterranean Sea .. 1184..1189 Arctic Sea; tru.exe unlocks them by script].
 int journalEntries(int chapter);
@@ -248,6 +270,9 @@ public:
     // in `saves`, else PLAY GAME (123). `treasureHunt`: the game being played is one (PDA REVISIT LOCATION).
     bool finished = false, treasureHunt = false;
     const Rewards* rewards = nullptr; // EXTRAS (ui::loadRewards); null = EXTRAS shows "Unavailable"
+    // EXTRAS OUTFITS: the outfit worn (a kCostumes object; empty = DEFAULT, each level's own). Accept on an unlocked row
+    // sets it and returns Action::Outfit; the app keeps it in sync.
+    std::string outfit;
     Unlocks unlocks;
 
     // `keyName`: the key shown in the footer prompt (tru.exe shows the bound key's name, "Return").
@@ -283,7 +308,7 @@ private:
     int equip_ = 0;
     int revisit_ = 1;
     int top_ = 0;          // PDA list pages, EXTRAS lists: first row shown
-    int extras_ = 0;       // EXTRAS category (environment, character, gear, storyboards, trailers & credits)
+    int extras_ = 0;       // EXTRAS category (environment, character, gear, storyboards, trailers & credits, outfits)
     std::string selected_;
     std::array<float, 8> grow_{}; // per radial / slot item: 0 = idle .. 1 = selected (eased)
     float label_ = 0;             // label fade-in of the selected radial item, 0..1

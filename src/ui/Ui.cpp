@@ -425,8 +425,15 @@ constexpr float kPdaListTrack = 0.7f, kPdaListBackTrack = 0.55f, kPdaPaneTrack =
 // the name ("LOCKED" 470) from 147.6, its number "01".. right-aligned at 492.2; arrows 111 / 112 (0.56 per texel) left
 // of the first / last row while the list scrolls; BACK TO PREVIOUS MENU (a label: Esc) centred at 316.4, cap 412.9,
 // 0.57 tracked 0.65; prompts 472 (468 for movies) / 375 at 271.8 / 403.8.
-constexpr uint32_t kExtrasIcons[] = {43, 44, 45, 46, 48}, kArrowUp = 111, kArrowDown = 112;
-constexpr int16_t kExtrasLabels[] = {146, 147, 148, 149, 151};
+// OUTFITS (ours, kCostumes) is a sixth category at ring position 7 under the CHARACTER CONCEPTS icon [I: no outfit icon
+// or label in the data].
+constexpr uint32_t kExtrasIcons[] = {43, 44, 45, 46, 48, 44}, kArrowUp = 111, kArrowDown = 112;
+constexpr int16_t kExtrasLabels[] = {146, 147, 148, 149, 151, 0};
+constexpr int kExtrasOutfits = 5;
+std::string_view extrasLabel(const locale::Strings& s, int category) {
+    return category == kExtrasOutfits ? "OUTFITS" : s.get(kExtrasLabels[category]);
+}
+std::string_view itemText(const locale::Strings& s, const Item& it) { return it.stringId ? s.get(it.stringId) : std::string_view(it.label); }
 constexpr float kExtrasLabelGap = 39.2f, kExtrasTitle1X = 228.4f, kExtrasTitle2X = 247.6f, kExtrasTitle2Cap = 93.8f, kExtrasTitle2Scale = 0.72f;
 constexpr float kExtrasPreview[4] = {200.4f, 114.2f, 440, 294.2f};
 // Behind it [O extras_gear]: the ring shade (texture 50) centred at y 218 x 1.23, its inside filled (3, 16, 24) to radius
@@ -701,12 +708,17 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
     case Screen::PdaSonar: break;
     case Screen::Extras: {
         std::vector<Item> v;
-        for (size_t i = 0; i < 5; ++i) v.push_back({.stringId = kExtrasLabels[i], .opens = Screen::ExtrasCategory, .icon = kExtrasIcons[i]});
+        for (size_t i = 0; i < 6; ++i)
+            v.push_back({.stringId = kExtrasLabels[i], .label = i == kExtrasOutfits ? "OUTFITS" : "", .opens = Screen::ExtrasCategory,
+                         .icon = kExtrasIcons[i]});
         return v;
     }
     case Screen::ExtrasCategory: { // LOCKED (470) until unlocked
         std::vector<Item> v;
-        if (const auto* l = rewardList())
+        if (extras_ == kExtrasOutfits) { // DEFAULT (each level's own), then the outfits
+            v.push_back({.label = "DEFAULT"});
+            for (const Costume& c : kCostumes) v.push_back({.stringId = unlocked(c.unlock, unlocks) ? c.name : int16_t(470)});
+        } else if (const auto* l = rewardList())
             for (const Reward& r : *l) v.push_back({.stringId = unlocked(r.unlock, unlocks) ? r.name : int16_t(470)});
         return v;
     }
@@ -762,6 +774,11 @@ Action Menus::input(Nav n) {
             return Action::None;
         case Nav::Back: back(); return Action::None;
         case Nav::Accept: case Nav::Alt: {
+            if (extras_ == kExtrasOutfits) { // wear it (stays on the list)
+                if (cursor_ > 0 && !unlocked(kCostumes[size_t(cursor_ - 1)].unlock, unlocks)) return Action::None;
+                outfit = cursor_ > 0 ? std::string(kCostumes[size_t(cursor_ - 1)].object) : std::string();
+                return Action::Outfit;
+            }
             const Reward& r = (*rewardList())[size_t(cursor_)];
             if (!unlocked(r.unlock, unlocks)) return Action::None;
             if (r.movie.empty()) { open(Screen::ExtrasView); return Action::None; }
@@ -1003,7 +1020,7 @@ void Menus::drawExtras(Canvas& c, const locale::Strings& s) {
     if (cursor_ < 0 || size_t(cursor_) >= list.size()) return;
     const auto [x, y] = radialPos(size_t(cursor_) + 2, true);
     c.sprite(kBarLeft, x + kSideBarEnd + kSideBarW / 2, y, kSideBarW, kBarH, withAlpha(kWhite, label_), true);
-    c.fontText(x + kExtrasLabelGap, y - kCapMid, kTextScale, s.get(list[size_t(cursor_)].stringId), withAlpha(kWhite, label_));
+    c.fontText(x + kExtrasLabelGap, y - kCapMid, kTextScale, itemText(s, list[size_t(cursor_)]), withAlpha(kWhite, label_));
 }
 
 void Menus::drawExtrasCategory(Canvas& c, const locale::Strings& s) {
@@ -1013,7 +1030,7 @@ void Menus::drawExtrasCategory(Canvas& c, const locale::Strings& s) {
     fadeBar(c, kExtrasLine0, kExtrasLine1 - kExtrasLine0, kExtrasBandSolid, kExtrasBandFade, kBlack); // under the rows
     c.sprite(kExtrasIcons[extras_], kListIconX, kListIconY, 64 * kTexel, 64 * kTexel, kWhite);
     vrect(c, kListDivX, kListDivTop, 0.9f, kListDivBottom - kListDivTop, kWhite);
-    capText(c, kExtrasTitle1X, kTitle1Cap, kTitle1Scale, s.get(kExtrasLabels[extras_]), kWhite);
+    capText(c, kExtrasTitle1X, kTitle1Cap, kTitle1Scale, extrasLabel(s, extras_), kWhite);
     capText(c, kExtrasTitle2X, kExtrasTitle2Cap, kExtrasTitle2Scale, s.get(129), kTitleBlue);
     const auto [x0, y0, x1, y1] = kExtrasPreview;
     c.image(2, c.sx(x0), c.sy(y0), (x1 - x0) * c.unit(), (y1 - y0) * c.unit(), 0, 0, 1, 1, kWhite);
@@ -1024,8 +1041,10 @@ void Menus::drawExtrasCategory(Canvas& c, const locale::Strings& s) {
         const float cap = kExtrasRowCap + kExtrasRowStep * float(r);
         const bool sel = i == cursor_;
         if (sel) fadeBar(c, cap - kExtrasBarTop, kExtrasBarH, kExtrasBarSolid, kExtrasBarFade, rgba(26, 77, 108));
-        const uint32_t col = sel ? rgba(194, 219, 234) : rgba(192, 192, 192);
-        capText(c, kExtrasRowX, cap, kExtrasRowScale, s.get(list[size_t(i)].stringId), col, kExtrasTrack);
+        // OUTFITS: the one worn in white [I]
+        const bool worn = extras_ == kExtrasOutfits && outfit == (i > 0 ? kCostumes[size_t(i - 1)].object : std::string_view());
+        const uint32_t col = sel ? rgba(194, 219, 234) : worn ? kWhite : rgba(192, 192, 192);
+        capText(c, kExtrasRowX, cap, kExtrasRowScale, itemText(s, list[size_t(i)]), col, kExtrasTrack);
         const std::string num = (i < 9 ? "0" : "") + std::to_string(i + 1);
         capText(c, kExtrasNumRight - trackedWidth(c, num, kExtrasRowScale, kExtrasTrack), cap, kExtrasRowScale, num, col, kExtrasTrack);
     }
@@ -1315,7 +1334,7 @@ void Menus::drawSonar(Canvas& c, const locale::Strings& s) {
 }
 
 const std::vector<Reward>* Menus::rewardList() const {
-    if (!rewards) return nullptr;
+    if (!rewards || extras_ == kExtrasOutfits) return nullptr;
     const std::vector<Reward>* lists[] = {&rewards->environment, &rewards->character, &rewards->gear, &rewards->storyboards,
                                           &rewards->trailers};
     return lists[std::clamp(extras_, 0, 4)];
@@ -1323,9 +1342,18 @@ const std::vector<Reward>* Menus::rewardList() const {
 
 std::string Menus::extrasImage() const {
     const Screen scr = screen();
-    const auto* l = rewardList();
-    if (!l || (scr != Screen::ExtrasCategory && scr != Screen::ExtrasView)) return {};
+    if (scr != Screen::ExtrasCategory && scr != Screen::ExtrasView) return {};
     const int i = scr == Screen::ExtrasView ? cursors_.back() : cursor_;
+    if (extras_ == kExtrasOutfits && rewards) { // the outfit's character concept [I]; DEFAULT: Lara Outfits Suite (301)
+        const bool open = i <= 0 || (size_t(i) <= kCostumes.size() && unlocked(kCostumes[size_t(i - 1)].unlock, unlocks));
+        if (!open) return "locked_concept";
+        const int16_t art = i <= 0 ? int16_t(301) : kCostumes[size_t(i - 1)].art;
+        for (const Reward& r : rewards->character)
+            if (r.name == art) return r.image;
+        return {};
+    }
+    const auto* l = rewardList();
+    if (!l) return {};
     if (i < 0 || size_t(i) >= l->size()) return {};
     const Reward& r = (*l)[size_t(i)];
     return unlocked(r.unlock, unlocks) ? r.image : "locked_concept";
@@ -1442,7 +1470,7 @@ void Menus::draw(Canvas& c, const locale::Strings& s, std::string_view key) {
         footer(c, s, key, {{320, 120}});
     } else if (scr == Screen::ExtrasCategory) {
         drawExtrasCategory(c, s);
-        footer(c, s, key, {{kExtrasFootL, int16_t(extras_ == 4 ? 468 : 472)}, {kExtrasFootR, 375}});
+        footer(c, s, key, {{kExtrasFootL, int16_t(extras_ == kExtrasOutfits ? 120 : extras_ == 4 ? 468 : 472)}, {kExtrasFootR, 375}});
     } else {
         drawList(c, s);
         footer(c, s, key, {{kListFooterL, 120}, {kListFooterR, 375}});

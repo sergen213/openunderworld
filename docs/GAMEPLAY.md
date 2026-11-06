@@ -287,8 +287,22 @@ Selection rule (tru.exe 0x5DE2B0, run by the main-state level load 0x5DE7E0):
   except that a load into `l1_seatop` forces `lara_wetsuit_warm`.
 - [O] Script natives: 0x77BD50 → 0x5D9F40 sets the outfit by object name; `unlockablecostume` 0x778CA0 sets the next
   outfit from the costume record (+8) and reloads the player (0x6F0A90, also `PLAYER_DebugSwitchPlayerCharacter`).
-  [U] which scripts call them; the extras/PDA costume choice is not implemented, so the default rule always applies
-  outside saves.
+- [O] Costume records (0x5D6940): generalbank DTP 36 `+0x40` count / `+0x44` list of 0xC-byte records {u16 locals id,
+  u16, i32 unlock, u16 objectlist id, u16}; natives 0x778C90 name, 0x778C60 unlocked (unlock `-1` or 0x5DB8A0), 0x778CA0
+  wear. The shipped list holds all twelve `lara*` objects, objectlist 8..19 (lara, bikini, casual, doppelganger,
+  jungle_a, jungle_b, jungle_heavy, mom_thrall, snow_heavy, snow_light, wetsuit_cold, wetsuit_warm), named 357..359
+  "Legend" / "Biker" / "Evening Gown" (Legend-era leftovers) four each, all with unlock record 1. Unlock records (DTP
+  `+0xC`, 0x20 bytes, 0x5DB8A0): `+0x17` set = needs the game-state bit (`+0x3EE10`, set by `unlockable` 2 = 0x5D6600);
+  record 1 has it clear and no percentage needs, so data alone does not lock any costume [U: its `+0xC` index 0 test
+  reads before the list]. Of every object and unit DRM only g_pda (its game-globals / REVISIT LOCATION scripts) imports
+  `unlockablecostume`; no level script does. locals.bin names the outfits 67..75 (Jungle Shorts .. Bathing Suit) and
+  1083 says a new outfit is worn from Lara's bedroom in Croft Manor or Load Level; neither screen was captured [U].
+- Ours [I]: EXTRAS OUTFITS (below, "Menus") picks one of the nine outfits with a DRM; each unlocks when its chapter ends
+  (Casual the prologue, Wetsuit the Mediterranean Sea, Jungle Shorts Thailand, Jungle Heavy Mexico, Snow Heavy Jan Mayen,
+  Jungle Pants the Andaman Sea, Drysuit Light the Arctic Sea), Snow Light and Bathing Suit (worn by no level) when the
+  game is finished; unlocks come from `profile.json` and 1083 shows when a chapter end unlocks one. The choice
+  (`World::costume`, `profile.json` `outfit`) overrides the default rule on every level load and save load and is worn at
+  once; saves keep the level's own outfit (`World::levelOutfit`), so DEFAULT restores it.
 
 - [O] Wine (2026-10-29, `GAMELOOP_RequestLevelChangeByName(unit, gameTracker, 4)` from a remote thread): a type-4 level
   change keeps `+0x20C`, so jumping from a new game's prologue (its checkpoint save wrote 10, casual) into
@@ -1691,6 +1705,12 @@ Return/Escape/BackSpace/space/E in (99, 209, 247).
   menu after 471 and then back to the main menu. Unlock codes (`ui::unlocked`) against `profile.json`: −1 always; 3..10 a
   chapter ended (3 Mediterranean Sea, 4 the prologue, 5..10 Thailand .. Arctic Sea), also once the game is finished; 11
   the game finished (storyboards); 12 every treasure, 13 every relic (checked at chapter ends) [O codes, I meanings].
+- EXTRAS OUTFITS (ours, `ui::kCostumes`): a sixth category at ring position 7 under the CHARACTER icon 44, label "OUTFITS"
+  [I: the data has no outfit category, icon or label]. Rows DEFAULT, then the outfits by their locals names 74 Casual,
+  70 Wetsuit, 67 Jungle Shorts, 69 Jungle Heavy, 72 Snow Heavy, 68 Jungle Pants, 71 Drysuit Light, 73 Snow Light,
+  75 Bathing Suit (470 LOCKED until unlocked; the one worn white); the preview is the outfit's character concept (295
+  casual, 297 heavy jungle, 298 heavy snow, 303 wetsuits, 301 Lara Outfits Suite otherwise); prompt 120 SELECT. Return
+  wears it at once, in play too; DEFAULT gives each level its own outfit back. See "Outfits" for the unlocks.
 - Pause [O]: the same ring with 122 RESUME GAME in the centre over the game dimmed to ~0.56 (HUD hidden); SAVE GAME opens
   the Save screen, QUIT GAME returns to the main menu (after 494 [I]). No PDA item: the `pda` action (key Tab as
   tru.exe, rebindable as `controls.pda`; replays `pda`) opens the PDA.

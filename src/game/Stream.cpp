@@ -151,8 +151,10 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
             if (c.id == checkpointId) spawn = Spawn{c.pos, c.yaw, true};
     if (!spawn) spawn = base.data.spawn;
     if (!spawn) throw cdc::FormatError(unit + ": no intro to spawn at");
-    // Level load (also respawns, saves, chapters): Lara becomes the unit's outfit object; streaming keeps hers.
-    if (!base.data.playerObject.empty()) outfit = base.data.playerObject;
+    // Level load (also respawns, saves, chapters): Lara becomes the unit's outfit object, or the chosen costume;
+    // streaming keeps hers.
+    if (!base.data.playerObject.empty()) levelOutfit = base.data.playerObject;
+    if (!costume.empty() || !base.data.playerObject.empty()) wear(costume);
     units_.clear();
     units_.push_back(std::move(base));
     current_ = 0;

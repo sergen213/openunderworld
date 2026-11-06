@@ -522,9 +522,15 @@ public:
     std::array<int, 3> found{};  // pickups collected per PickupKind (PDA counts); saved
     int chapter = 0;             // kChapters index being played; saved
     bool treasureHunt = false;   // Treasure Hunt (after the ending: revisiting chapters for what is left); saved
-    // Lara's outfit object (objectlist.txt name, pc-w\<outfit>.drm): the level-load unit's (UnitData::playerObject,
-    // set by enterUnit), or a save's. Rendering follows it; setOutfitRig re-rigs the pose skeleton. Saved.
+    // Lara's outfit object (objectlist.txt name, pc-w\<outfit>.drm): `costume` when one is chosen, else `levelOutfit`.
+    // Rendering follows it; setOutfitRig re-rigs the pose skeleton.
     std::string outfit = "lara";
+    // The level's own outfit: the level-load unit's (UnitData::playerObject, set by enterUnit), or a save's. Saved.
+    std::string levelOutfit = "lara";
+    // EXTRAS OUTFITS choice (ui::kCostumes object), kept over level loads and saves; empty = levelOutfit. The app keeps
+    // it in save::Profile. wear() sets it and dresses Lara now (the app re-skins her on the next frame).
+    std::string costume;
+    void wear(std::string c) { costume = std::move(c), outfit = costume.empty() ? levelOutfit : costume; }
     void setOutfitRig(const cdc::Drm& drm); // rigOutfit on the pose library, then a pose reset
     // Lara's hidden draw groups (bit n-1 hides group n): the scripts' (script().playerHiddenGroups()) with the
     // wetsuits' face mask (group 1) only while she swims and their stowed gear (2) never (GAMEPLAY.md "Thor's gear").

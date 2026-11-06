@@ -1955,22 +1955,17 @@ int main(int argc, char** argv) {
         }
     };
     bool running = true;
-    // What the player reached across games (save::Profile): chapter ends and the ending (TREASURE HUNT, EXTRAS unlocks).
+    // What the player reached across games (save::Profile): chapter ends and the ending (TREASURE HUNT, EXTRAS unlocks),
+    // and the EXTRAS OUTFITS choice (World::costume).
     ou::save::Profile profile = ou::save::readProfile();
     auto showProfile = [&] {
         menus.finished = profile.finished;
         menus.unlocks = {profile.chapters, profile.finished, profile.treasures, profile.relics};
+        menus.outfit = profile.outfit;
     };
     showProfile();
-    auto reached = [&](uint32_t chapters, bool finished) { // also every treasure / relic found (EXTRAS)
-        bool treasures = true, relics = true;
-        for (int ch = 1; ch <= 7; ++ch) {
-            const auto& r = ou::game::chapterRewards(ch);
-            treasures = treasures && std::all_of(r.treasures.begin(), r.treasures.end(), [&](int32_t id) { return world->collected.contains(id); });
-            relics = relics && (!r.relic || world->collected.contains(r.relic));
-        }
-        const ou::save::Profile p{profile.chapters | chapters, profile.finished || finished, profile.treasures || treasures,
-                                  profile.relics || relics};
+    world->wear(profile.outfit);
+    auto storeProfile = [&](const ou::save::Profile& p) {
         if (p == profile) return;
         profile = p;
         showProfile();
@@ -1979,6 +1974,22 @@ int main(int argc, char** argv) {
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: profile: %s\n", e.what());
         }
+    };
+    auto outfitsUnlocked = [&] {
+        return std::count_if(ou::ui::kCostumes.begin(), ou::ui::kCostumes.end(), [&](const auto& c) { return ou::ui::unlocked(c.unlock, menus.unlocks); });
+    };
+    auto reached = [&](uint32_t chapters, bool finished) { // also every treasure / relic found (EXTRAS)
+        bool treasures = true, relics = true;
+        for (int ch = 1; ch <= 7; ++ch) {
+            const auto& r = ou::game::chapterRewards(ch);
+            treasures = treasures && std::all_of(r.treasures.begin(), r.treasures.end(), [&](int32_t id) { return world->collected.contains(id); });
+            relics = relics && (!r.relic || world->collected.contains(r.relic));
+        }
+        ou::save::Profile p = profile;
+        p.chapters |= chapters, p.finished = p.finished || finished, p.treasures = p.treasures || treasures, p.relics = p.relics || relics;
+        const auto outfits = outfitsUnlocked();
+        storeProfile(p);
+        if (outfitsUnlocked() > outfits) hud.notify(std::string(strings->get(1083)), 6.0); // "You have unlocked a new Outfit, ..."
     };
     // Autosave (slot "autosave", ui::kAutosaveSlot) at every chapter start and checkpoint of a game started from the main
     // menu [I: the original autosaves at checkpoints] and when a script requests one (uisavemenu 5, after cinematics);
@@ -2034,6 +2045,13 @@ int main(int argc, char** argv) {
             startChapter(1, true);
             break;
         case Action::Revisit: startChapter(menus.revisitChapter(), true); break; // PDA REVISIT LOCATION (Treasure Hunt)
+        case Action::Outfit: { // EXTRAS OUTFITS: worn now (re-skinned next frame), kept in the profile
+            world->wear(menus.outfit);
+            auto p = profile;
+            p.outfit = menus.outfit;
+            storeProfile(p);
+            break;
+        }
         case Action::Resume: break;
         case Action::Save: { // a used slot is overwritten, an empty one becomes the first free "savegame-<n>"
             std::string name = menus.selectedSave();

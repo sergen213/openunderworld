@@ -548,7 +548,7 @@ TEST(Menus, ExtrasRingCategoriesAndUnlocks) {
     ASSERT_EQ(m.screen(), ui::Screen::Extras);
     EXPECT_EQ(m.cursor(), -1); // focus on EXTRAS until Right
     const auto ring = m.items();
-    ASSERT_EQ(ring.size(), 5u);
+    ASSERT_EQ(ring.size(), 6u); // and OUTFITS (ours)
     EXPECT_EQ(ring[0].stringId, 146);
     EXPECT_EQ(ring[0].icon, 43u);
     EXPECT_EQ(ring[4].stringId, 151);
@@ -592,6 +592,64 @@ TEST(Menus, ExtrasRingCategoriesAndUnlocks) {
     EXPECT_EQ(m.screen(), ui::Screen::Confirm);
     m.input(ui::Nav::Left);
     EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::PlayMovie);
+}
+
+// EXTRAS OUTFITS (ui::kCostumes): DEFAULT and the outfits, LOCKED until their chapter ends; Accept wears an unlocked one
+// (Action::Outfit, Menus::outfit); save::Profile keeps the choice; World::wear dresses Lara and level loads and saves keep
+// it until DEFAULT gives the level's own back.
+TEST(Menus, ExtrasOutfits) {
+    ui::Rewards r;
+    r.environment = r.gear = r.storyboards = r.trailers = {{304, -1, "x"}};
+    r.character = {{301, -1, "concept_lara_outfits"}, {303, -1, "concept_lara_wetsuit"}};
+    ui::Menus m;
+    m.rewards = &r;
+    m.unlocks.chapters = 1u << 1; // Mediterranean Sea: the wetsuit
+    m.open(ui::Screen::Extras);
+    m.input(ui::Nav::Right);
+    for (int i = 0; i < 5; ++i) m.input(ui::Nav::Down);
+    EXPECT_EQ(m.items()[size_t(m.cursor())].label, "OUTFITS");
+    m.input(ui::Nav::Accept);
+    ASSERT_EQ(m.screen(), ui::Screen::ExtrasCategory);
+    const auto rows = m.items();
+    ASSERT_EQ(rows.size(), 1 + ui::kCostumes.size());
+    EXPECT_EQ(rows[0].label, "DEFAULT");
+    EXPECT_EQ(rows[1].stringId, 470); // Casual: the prologue has not ended
+    EXPECT_EQ(rows[2].stringId, 70);  // Wetsuit
+    EXPECT_EQ(m.extrasImage(), "concept_lara_outfits");
+    m.input(ui::Nav::Down);
+    EXPECT_EQ(m.extrasImage(), "locked_concept");
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::None);
+    m.input(ui::Nav::Down);
+    EXPECT_EQ(m.extrasImage(), "concept_lara_wetsuit");
+    EXPECT_EQ(m.input(ui::Nav::Accept), ui::Action::Outfit);
+    EXPECT_EQ(m.outfit, "lara_wetsuit_warm");
+    EXPECT_EQ(m.screen(), ui::Screen::ExtrasCategory);
+
+    const auto dir = std::filesystem::temp_directory_path() / ("ou_outfit_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    save::writeProfile({.chapters = 1u << 1, .outfit = m.outfit}, dir);
+    const auto p = save::readProfile(dir);
+    std::filesystem::remove_all(dir);
+    EXPECT_EQ(p.outfit, "lara_wetsuit_warm");
+    EXPECT_TRUE(ui::unlocked(ui::kCostumes[1].unlock, {.chapters = p.chapters}));
+
+    const auto dressed = [](const std::string& n) { // "a" in casual, the others in jungle_a
+        auto u = unit(n);
+        u.playerObject = n == "a" ? "lara_casual" : "lara_jungle_a";
+        return u;
+    };
+    game::World w(dressed, "a", idleAnims());
+    EXPECT_EQ(w.outfit, "lara_casual");
+    w.wear(p.outfit);
+    EXPECT_EQ(w.outfit, "lara_wetsuit_warm");
+    const auto saved = save::capture(w);
+    EXPECT_EQ(saved.outfit, "lara_casual"); // the save keeps the level's own
+    w.enterUnit("b", std::nullopt);
+    EXPECT_EQ(w.outfit, "lara_wetsuit_warm");
+    save::apply(saved, w);
+    EXPECT_EQ(w.outfit, "lara_wetsuit_warm");
+    w.wear(""); // DEFAULT
+    EXPECT_EQ(w.outfit, "lara_casual");
 }
 
 // PDA JOURNAL [O j3..j5]: greyed without entries, a list page of the entries reached with each one's text; Tab opens the PDA.
@@ -783,6 +841,11 @@ TEST(MenusReal, RawImagesAndPdaArt) {
     ASSERT_EQ(rewards->trailers.size(), 3u);
     EXPECT_EQ(rewards->trailers[0].movie, "prevontr");
     EXPECT_EQ(rewards->trailers[2].movie, "credits");
+    for (const auto& c : ui::kCostumes) { // EXTRAS OUTFITS: each outfit's DRM and the concept shown beside it
+        EXPECT_TRUE(bf.read("pc-w\\" + std::string(c.object) + ".drm")) << c.object;
+        EXPECT_TRUE(std::any_of(rewards->character.begin(), rewards->character.end(), [&](const auto& w) { return w.name == c.art; }))
+            << c.object;
+    }
     EXPECT_TRUE(ui::loadRaw(bf, "locked_concept"));
     const auto pda = ui::loadRaw(bf, "pda_bg_1280"); // the bezel is blue: B,G,R,A pixels
     const uint8_t* bar = &pda->rgba[(size_t(600) * 1280 + 640) * 4];

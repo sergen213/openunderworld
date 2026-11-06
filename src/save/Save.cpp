@@ -187,7 +187,7 @@ SaveGame capture(const game::World& world) {
     s.chapter = world.chapter;
     s.found = world.found;
     s.grenades = world.grenades, s.flashlight = world.flashlight, s.treasureHunt = world.treasureHunt;
-    s.outfit = world.outfit;
+    s.outfit = world.levelOutfit;
     if (!world.health().dead()) s.health = world.health().value(); // [I] a save taken while dead loads at full
     s.tailoring = world.tailoring();
     s.script = world.script().serialize();
@@ -229,7 +229,9 @@ void apply(const SaveGame& save, game::World& world) {
     world.flashlight = save.flashlight;
     world.treasureHunt = save.treasureHunt;
     // tru.exe 0x5DE2B0: a load keeps the saved outfit (game state +0x20C), except l1_seatop forces lara_wetsuit_warm.
-    if (!save.outfit.empty()) world.outfit = save.unit == "l1_seatop" ? "lara_wetsuit_warm" : save.outfit;
+    // A chosen costume (World::costume, not saved) still wins.
+    if (!save.outfit.empty()) world.levelOutfit = save.unit == "l1_seatop" ? "lara_wetsuit_warm" : save.outfit;
+    world.wear(world.costume);
     world.script().restore(save.script);
     if (!save.script.is_object() || !save.script.contains("player")) // older saves: what the chapter starts with
         world.script().setPlayerObjects(game::chapterGear(save.chapter));
@@ -349,14 +351,19 @@ Profile readProfile(const fs::path& dir) {
     if (!f) return {};
     try {
         const json j = json::parse(f);
-        return {j.value("chapters", 0u), j.value("finished", false), j.value("treasures", false), j.value("relics", false)};
+        Profile p{j.value("chapters", 0u), j.value("finished", false), j.value("treasures", false), j.value("relics", false),
+                  j.value("outfit", std::string{})};
+        if (p.outfit.size() > 64 || p.outfit.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos)
+            p.outfit.clear();
+        return p;
     } catch (const std::exception&) {
         return {};
     }
 }
 
 void writeProfile(const Profile& p, const fs::path& dir) {
-    writeFile(dir / "profile.json", json{{"chapters", p.chapters}, {"finished", p.finished}, {"treasures", p.treasures}, {"relics", p.relics}}.dump());
+    writeFile(dir / "profile.json", json{{"chapters", p.chapters}, {"finished", p.finished}, {"treasures", p.treasures}, {"relics", p.relics},
+                                          {"outfit", p.outfit}}.dump());
 }
 
 } // namespace ou::save
