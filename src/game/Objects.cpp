@@ -722,6 +722,7 @@ void World::bindEnemies() {
         }
         if ((function == 16 || function == 18 || function == 22 || function == 26) && args.size() == 1) {
             enemyValues_[{uid, function}] = args[0].bits;
+            if (function == 22) enemies_.selectPatrol(uid, int32_t(args[0].bits)); // 0x63AC40: patrol path n
             return true;
         }
         if (function == 27 && args.size() == 4) {
@@ -778,7 +779,6 @@ void World::bindMultibody() {
 
 void World::syncObjects() {
     std::map<int32_t, float> angles; // doors that stay loaded keep their swing
-            if (function == 22) enemies_.selectPatrol(uid, int32_t(args[0].bits)); // 0x63AC40: patrol path n
     for (const auto& c : colliders_)
         if (c.hinge >= 0) angles[c.uid] = physics_.angle(c.hinge);
     colliders_.clear();
