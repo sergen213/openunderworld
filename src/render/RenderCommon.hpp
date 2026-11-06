@@ -123,6 +123,19 @@ size_t exteriorCount(const std::vector<GpuMesh>& meshes, std::span<const DrawRef
     while (n < order.size() && meshes[order[n].mesh].submeshes[order[n].sub].exterior) ++n;
     return n;
 }
+// Exterior terrain follows the camera (FrameOptions::exteriorOrigin; tru.exe draws the exterior cell group translated
+// by eye - origin, read from its terrain matrices under Wine): moves each exterior mesh's model and centre by the
+// change of that shift since the last frame. GpuMesh needs .model, .center, .submeshes and .exteriorShift (glm::vec3,
+// zeroed whenever the model is reset).
+template <class GpuMesh>
+void followExterior(std::vector<GpuMesh>& meshes, glm::vec3 eye, const std::optional<glm::vec3>& origin) {
+    const glm::vec3 shift = origin ? eye - *origin : glm::vec3(0.0f);
+    for (auto& m : meshes) {
+        if (m.submeshes.empty() || !m.submeshes[0].exterior || m.exteriorShift == shift) continue;
+        const glm::vec3 d = shift - m.exteriorShift;
+        m.model[3] += glm::vec4(d, 0.0f), m.center += d, m.exteriorShift = shift;
+    }
+}
 
 // ---- Stream-unit portals (docs/RENDERING.md "Portal clipping") ----
 // One loaded unit: its scene meshes and its portals to other loaded units (world space; `normal` points into this unit,

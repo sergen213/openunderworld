@@ -424,7 +424,7 @@ tick 31) in GL and Vulkan, the floor showing through; the tablet's mean grey 3.4
 
 Classes 4, 8, 9 (above); class 7 model crossfades and +0x218 targets; instance fades of particles; ribbon subdivision;
 lightning's exact jitter tables; the feedback filter
-uses the current frame's blur instead of the previous frame; noise uses a hash, not the device texture; skydomes,
+uses the current frame's blur instead of the previous frame; noise uses a hash, not the device texture;
 particles that follow their segment (mode 1), casing meshes, per-enemy hit materials, the line emitters' view-angle
 density rule (def `+0x8C / +0x90`, 0x5386F0 second branch: no data sets it in the fire defs checked).
 

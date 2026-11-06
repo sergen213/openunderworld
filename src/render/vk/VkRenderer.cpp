@@ -336,6 +336,7 @@ struct GpuMesh {
     std::vector<scene::SubMesh> submeshes;
     size_t vertexCount = 0, indexCount = 0;
     glm::mat4 model;
+    glm::vec3 exteriorShift{0.0f}; // exterior terrain: translation added to `model` (followExterior)
     glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;    // world-space bounding-sphere radius (original::lightSet)
     uint32_t lightMask = ~0u; // scene::MeshData::lightMask
@@ -762,6 +763,7 @@ public:
             std::vector<std::string> ignored; // the upload listing them reports them
             pumpParts(kPartBytesPerFrame, ignored);
         }
+        followExterior(meshes_, eye.position, options.exteriorOrigin);
         for (int attempt = 0;; ++attempt) {
             if (swapchainDirty_) recreateSwapchain(vp);
             if (!swapchain_) return;
@@ -4515,7 +4517,7 @@ private:
     static void place(GpuMesh& g, const scene::MeshData& m) {
         const glm::mat4 model = glm::make_mat4(m.transform);
         if (model == g.model) return;
-        g.model = model;
+        g.model = model, g.exteriorShift = glm::vec3(0.0f);
         const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
         g.center = glm::vec3(sphere), g.radius = sphere.w;
         g.bounds = meshBounds(m);

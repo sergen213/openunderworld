@@ -70,7 +70,8 @@ struct SubMesh {
     bool shadowOnly = false;
     // Exterior terrain (Unit::exteriorTerrains: panorama cylinders, sky domes): tru.exe draws it in the far 2 % of the
     // depth range ([0.98, 1], the rest in [0, 0.98]; PCRenderTerrain +0xC8 -> 0x51D0A0), so it lies behind all other
-    // geometry wherever it is placed. Renderers draw exterior submeshes first and then clear the depth.
+    // geometry wherever it is placed. Renderers draw exterior submeshes first and then clear the depth. It follows the
+    // camera (FrameOptions::exteriorOrigin, render::followExterior) and casts no shadows (0x511E20 skips +0xC8 terrain).
     bool exterior = false;
     // Terrain light group (MeshData::lightBoxes index; 0xFFFF = none, lights picked by the mesh's bounding sphere).
     uint16_t lightGroup = 0xFFFF;

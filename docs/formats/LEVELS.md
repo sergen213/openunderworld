@@ -169,6 +169,15 @@ at +0x13C). `SceneCellGroup` vtable +0x44 (0x571D20) returns it; 95 of 97 units 
   l2_junglehub start: the 3 exterior terrains drawn there have +0xC8 = 1, the 8 cell terrains 0]. Renderers draw
   `SubMesh::exterior` first and clear the depth (same result). l2_hubhall's second exterior 10533 has +0xC8 = 0 there
   (not drawn from that spot [U] why).
+- Exterior terrain follows the camera [O: tru.exe memory, 2026-11-06]: the terrain's matrix (+0xC4, per frame) is a
+  pure translation eye − R, and the exterior cell group's OcclusionTree (vtable 0x84DD80) +0x40 holds R, constant while
+  the camera moves (checked over 1 500 units of eye height). R is the spawn of the level load: new game into
+  l2_junglehub → its player intro (−23399.229, 8455.768, 7614.127), the centre of its sky dome; into l2_cliffhall_b →
+  that unit's intro (−21069.605, 16639.426, 6972.023). So the dome is seen from its centre (cliffs up to the frame top,
+  hazy bottom rows at the horizon) wherever Lara walks. Ours: `World::exteriorOrigin` (enterUnit's spawn: intro,
+  checkpoint or save position [I for the last two]) → `FrameOptions::exteriorOrigin` → `render::followExterior` (GL +
+  Vulkan). The exterior materials are unfogged (flags 0x1001: VS c22 = 0, 0x506880); the haze is the textures' own.
+  Exterior terrain casts no shadows (0x511E20 skips +0xC8 terrain).
 - Terrain group `+0x0C` bit 1: the group is skipped by the colour pass (0x511810) but not by the shadow pass
   (0x511E20, bit 2 only) [O]: `SubMesh::shadowOnly`, left out of the draw order, cast shadows (map + RT shadow
   rays), skipped by other RT rays. l2_junglehub's are the speckled rock sheets (material 10914) above the hub that

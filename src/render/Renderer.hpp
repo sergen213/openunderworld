@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -217,6 +218,10 @@ struct FrameOptions {
     // The camera unit's look blended with its neighbours' (game::unitLook, tru.exe 0x5C7CA0): its ambient, PSSM split
     // fractions, far plane and fog far replace the uploaded scene's for this frame. nullptr = the uploaded unit's.
     const scene::Environment* unitLook = nullptr;
+    // tru.exe draws the exterior terrain (SubMesh::exterior: sky domes, panorama cylinders) with the exterior cell group's
+    // view fixed at the level-load spawn: translated by (camera eye - exteriorOrigin), so it follows the camera
+    // (game::World::exteriorOrigin; docs/formats/LEVELS.md). nullopt = drawn where it was built (the viewer).
+    std::optional<glm::vec3> exteriorOrigin;
 };
 
 // Ray-tracing state for diagnostics and tests.

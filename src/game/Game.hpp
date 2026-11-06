@@ -590,6 +590,10 @@ public:
     const std::vector<LoadedUnit>& units() const { return units_; }
     const LoadedUnit& currentUnit() const { return units_.at(current_); } // the unit Lara is in
     uint64_t unitsVersion() const { return unitsVersion_; } // bumped whenever units() changes
+    // Where the last level load put Lara (its spawn: the intro / checkpoint / save position), in the world frame.
+    // tru.exe keeps the exterior cell group's view there: exterior terrain draws translated by (eye - this)
+    // (render::FrameOptions::exteriorOrigin; docs/formats/LEVELS.md).
+    vec3 exteriorOrigin() const { return exteriorOrigin_; }
     std::vector<std::string> warnings;                      // streaming problems (missing neighbours, ...)
     // Background streaming (ou-game): portal neighbours load on a worker thread through `background` (empty = load
     // synchronously, the default) and join the world kStreamTicks after they were asked for, waiting then for a late
@@ -839,6 +843,7 @@ private:
     std::string startUnit_;
     std::string playerUnit_; // unit the scripts were last told Lara is in (Runtime::setPlayerUnit); empty = level load
     std::optional<Spawn> startSpawn_;
+    vec3 exteriorOrigin_{0};
     std::optional<CheckpointRef> checkpoint_;
     uint32_t autosaveRequests_ = 0;
     script::Runtime script_;

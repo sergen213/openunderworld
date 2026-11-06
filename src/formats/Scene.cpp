@@ -224,7 +224,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
         if (!placedModels.contains(id))
             for (auto m : meshes) {
                 if (std::ranges::find(u.exteriorTerrains, id) != u.exteriorTerrains.end())
-                    for (auto& s : m.submeshes) s.exterior = true;
+                    for (auto& s : m.submeshes) s.exterior = true, s.castsShadow = false; // not queued for shadows (0x511E20)
                 sc.meshes.push_back(std::move(m));
             }
     std::map<uint32_t, size_t> unresolvedImf;

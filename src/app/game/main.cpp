@@ -1387,6 +1387,7 @@ struct EffectsView {
         const auto& uw = unitEntry(unit);
         updateLook(w);
         fo.unitLook = look.valid ? &look : nullptr;
+        fo.exteriorOrigin = w.exteriorOrigin(); // the sky follows the camera (FrameOptions::exteriorOrigin)
         const glm::vec3 lara = w.player().state().pos, eye = cam.position;
         bool under = false;
         float ownWeight = 1; // the unit's own filter (0x5C78A0): crossfaded with the water filters near / under water
@@ -2556,6 +2557,7 @@ int main(int argc, char** argv) {
         v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
         // The unit look and its fog (EffectsView::water, without the water look: the camera is not Lara's here).
         effects.updateLook(*world);
+        v.frame.exteriorOrigin = world->exteriorOrigin();
         if (effects.look.valid) {
             v.frame.unitLook = &effects.look;
             v.fog = true, v.unitFilter = effects.unitEntry(world->currentUnit().data).own.get();

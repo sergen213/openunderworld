@@ -326,6 +326,7 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     streamAround(0, true);
     joinStreams(true); // a level load waits for the neighbours
     player_.spawn(spawn->pos, spawn->yaw);
+    exteriorOrigin_ = spawn->pos;
     prev_ = player_.state();
     cam_.yaw = spawn->yaw;
     cam_.pitch = CameraState{}.pitch;

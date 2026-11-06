@@ -284,12 +284,10 @@ GL, original). Mean |Δ| of the 4×3 region mean colours (0–255): l2_junglehub
 with the unit filter's fog, 3.2 with neighbour blending; l4_ballcourt start 12.5 → 7.7 (−11.7 → −4.7) → 8.8 (−6.4: the
 l4_trailtube blend darkens the ambient as the original's g_Ambient, read above; the original's frame has a foreground
 plant and rain haze ours lacks); l3_main_bedroom start 1.6 → 2.1 → 1.8 (+0.3; the original's corridor fire and smoke
-differ). GL and Vulkan match. The junglehub sky [O at the start]: tru.exe has the same three units loaded as ours
-(l2_junglehub, l2_cliffhall_b, l2_hubhall). The original's hazy cliffs (top right) are the sky cylinder's own textures
-(l2_junglehub exterior terrain, materials 10539–10542, textures 3447–3450, shared by all three units), seen higher and
-fogged; neither drawing the neighbours' exterior terrain unclipped (hubhall's cliff cards 8275–8278 included, with or
-without a depth clear per unit) nor every unit unclipped shows them in ours. How tru.exe places / fogs the exterior
-(camera-centred? fog at the far plane?) is [U].
+differ). GL and Vulkan match. The junglehub sky: tru.exe draws the exterior terrain translated by eye − (the level-load spawn) (docs/formats/LEVELS.md
+"Exterior terrain follows the camera", read from its matrices under Wine); ours does the same (`FrameOptions::exteriorOrigin`,
+`render::followExterior`). Same-camera sky band (top 240 rows, region mean |Δ| of the 4 region means) at three Wine
+cameras (start, Lara moved 600 / 780 units): 5.2 / 5.7 / 4.7 → 3.8 / 3.4 / 3.4; whole frame 2.8 / 2.9 / 2.7 → 2.3 / 2.1 / 2.2.
 
 ### Instance opacity (`FrameOptions::meshOpacity`, GL + Vulkan)
 
