@@ -1138,7 +1138,7 @@ reaction; death; spawning (generator clip). Perception uses the decoded senses (
 eye or body cone from the eye (0.8 h; [I] body cones are measured from the eye too) to Lara's chest (0.75 of 512),
 then the ray unless the record says no ray (cats, bats, sharks see through walls inside their cones). Unseen Lara
 closer than the lose-track distance is still tracked [I]; chasing enemies that reach her last seen spot wait there;
-4 s unseen [I] → idle. Clips by role, first present name: idle `passive_idle`/`idle_passive`/`idle`, alert
+4 s unseen [I] → search, or idle without a search record ("Behaviour trees, patrols and search"). Clips by role, first present name: idle `passive_idle`/`idle_passive`/`idle`, alert
 `attack_idle`/`idle_aggresive`/`idle_combat_stand`, walk `walk_forward_2`/`walk`/`combat_walk_forward`/
 `bat_fly_passive`, run `run_forward_2`/`run`/`combat_run_forward`/`bat_fly_aggressive`, attack
 `simple_attack_static1`/`rifle_bash`/`attack_bite`/`simple_attack`/`slash_attack`/`slash`, hit
@@ -1243,7 +1243,8 @@ Mercs (l1 / l6 ship units: `merc`, `merc_deux`, `merc_generator_run`):
   (EnemyBehavior_MoveToGuardZone; `Mode::Return`, walk clip) until within 0.8 × inner [I: the stop]; a chase goal
   outside zone 0's outer radius is pulled to 0.8 × outer from the point (0x61F990, called with factor 0.8 by
   PatrolMove / InvestigateMove / SearchToLastKnownPos / Close) and the merc holds there facing her (and fires when it
-  sees her). Patrol paths: no merc script or intro sets one (EnemyPatrolPath is unused on the ships) [I].
+  sees her). Patrol paths come from the intro data, not the scripts ("Behaviour trees, patrols and search" below;
+  1650 walks nodes 128 126 108 114 117 131 ping-pong, inside its zone).
 - Cover [I]: tru.exe's EnemyBehavior_Cover / AtCover* use the AI's planner node (+0x4E68) with cover flags (+0x84
   bits 6, 12..14) derived at load from 14 probes of radius 200 around each node (0x669D00; node +0x44 angle ≤ 85,
   +0x48 / +0x4C distances 316 / 284 / 474 on about half the ship's nodes, meaning [U]). Ours: after a burst a soldier
@@ -1261,11 +1262,67 @@ Mercs (l1 / l6 ship units: `merc`, `merc_deux`, `merc_generator_run`):
   pace them [O]; `combat_bark_*` clips carry no sound events [O]. Ours (`Enemies::barks`, played by GameSound from the
   loaded units' DTPs of that category at the soldier): EAR on spotting her, CBR on taking cover, FDY by the nearest
   squad mate on a death, SWP on losing her; one per 4 s.
-- Enemy behaviour index (enemybase 16/17, 0x62DE00 selects the n-th behaviour-list node of the enemy data) and 22 /
-  26 are kept for scripts but do not change our AI [U].
+- Enemy behaviour index (enemybase 16/17, 0x62DE00 selects the n-th behaviour-list node of the enemy data) and 26 are
+  kept for scripts but do not change our AI [U]; 22 selects a patrol path (below).
 
-Not done: behaviour trees (search, flank, taunt, dodge, jump/vault), long-range specifics beyond their records, rifle
-mesh, bat latch, the original's wall-walking transitions, navmesh/routing, ragdoll.
+### Behaviour trees, patrols and search
+
+Behaviour trees [O]: four EnemyBehaviorTree classes (RTTI; their one virtual each registers the tree as nested
+`(name, priority, priority)` nodes through 0x672060, children between 0x66FF10 / 0x66FF20): Soldier 0x612030,
+Creature 0x6126B0, CreatureVolumetric 0x612BD0, Thrall 0x612F80, picked by enemy data +0x0C. Soldier, top level:
+Despawn 101, Spawn 100, Death 95, Stand 90, Nap 88, ReactToPlayerDeath 70, ScriptAttack 60, Investigate 30, Puppet,
+ReactGrenadeAttach 84, PanicDive 83, ReactToOutsideNavigableRegion 90, Combat 20 {EmergencyMelee, EmergencyAttack,
+MoveByCombat, CloseInCover {Cover, CloseCombat {Melee, Close, Sidestep, Circle, Flank}}, AtCover {DiveToCover,
+StepIntoCover, Crouch}, RangedCombat {Reload, Attack, Close}, Cover, MoveToGuardZone, Flank, Reload, Search 25
+{SearchStart, SearchToLastKnownPos, SearchIdle, SearchToPossiblePos}, CombatStepIdle}, NonCombat 1 {Patrol 15
+{PatrolMove 4..14, PatrolLookTurn 3..13, PatrolAnim 2..12, PatrolIncr 1..11, PatrolAttack 20}, MoveToGuardZone 10,
+Idle 1}. Creatures have no cover or ranged nodes and add Circle / MoveBy / JumpOver; CreatureVolumetric (bats,
+sharks) has IdleParent {Idle, Circle}, MoveToIdlePosition 2 (back to the birth position instance +0xF0 when more than
+94.8 away, 0x639600) before Patrol. Ours stays a native state machine (Enemy.cpp) following these priorities for the
+parts below; the combat sub-trees are the earlier modes (chase, fire, cover).
+
+Patrol paths [O] (intro +0x78 data, type 13 = enemy; tru.exe birth 0x63C7A0 → 0x63AC40 → 0x62F520): data +0x34 →
+the unit's planner record (LEVELS.md "Enemy intro data"), +0x38 → path {byte +2 speed 1..4, u32 +4 count, +8 → u32
+node indices}, at most 16 points (EnemyPatrolPath, AI +0x3780: points at +0x50, count +0x708); with +0x38 null and
++0x6C bit 31 every node of the record (0x62F2C0); +0x3C byte count of alternative paths at +0x40.. chosen by
+enemybase 22 n (0x777010 → 0x63AC40; n < 1 the own one, n beyond the count: none). Order +0x88 (0x637870): 0 loop,
+1 once (then done), 2 ping-pong (a one-point path is done), 3 a random other point no other enemy has reserved
+(0x633F10 / 0x633F60), 4 a random unvisited point; start point 0, or for 3 / 4 a random free one (0x63A410). Survey:
+280 paths (bats 54, small spiders 65, merc_generator_run 36, thralls 31, tarantulas 17, nagas 20, sharks 18, mercs 12,
+cats 17, poachers 10); orders 1 (160), 3 (96), 2 (13), 0 (9), 4 (2); speeds 1 (81), 2 (35), 3 (11), 4 (153).
+Patrol record [O] (behaviour-list node +0x48): +0x00 → MoveNav set (merc `idle_passive_to_passive_walk` +0x14,
+`walk_forward_passive` +0x18; arrival s16 max(+0x1C0, +0x1C2) = 205, cats 316), +0x04 → weighted idle list (merc:
+`idle_passive` 70, `idle_passive_2..5` 8 each, s16 pairs 90/120, 70/80, 70/80, 145/168, 140/150 counts), +0x0C
+PatrolAnim count (merc 1, cats 0), +0x18 −1, +0x20 → the combat set. Weighted lists (0x60F450): count +0x0C,
+0xC-byte entries at +0x10 {clip ref, u32 weight, s16, s16}, picked by weight.
+Search record [O] (node +0xD8; 0x61E480 needs its +0x00 set): +0x00 → MoveNav set (merc `combat_walk_search`,
+cats `run_forward_2`, nagas `creep_seach`, spiders `walk`), +0x04 SearchStart clip (merc `combat_idle_search`, cats
+`sniff_corpse`, nagas / spiders none), +0x24 → SearchIdle list (merc `combat_idle_search` 70 60/120,
+`idle_combat_stand` 30 30/60; cats / nagas / spiders none, so SearchIdle is skipped), s32 +0x18 (merc 1600, poacher
+240, cats 75, nagas 240, spiders 0). Steps (0x61E570): 0 start, 1 to the last known position, 2 idle, 3 to a possible
+position (navmesh query 0x60F810 / 0x630B90 from where the search began, its heading and a random side), then 2 and
+3 again; a disturbance more than 1580 away restarts it (0x61E630).
+
+Ours (`Mode::Patrol`, `Mode::Search`; `Enemy::patrolPaths`, `EnemyType::patrol` / `search`; saved): an idle ground
+enemy with a path patrols (before returning to its guard zone): walks (the set's walk clip, root motion) to the point
+pulled into zone 0 (0x61F990) until within the arrival distance, plays a weighted idle there for [I] s16 +8..+0xA
+counts (30 Hz; none: goes straight on), takes the next point by the order; mode 3 skips points another enemy walks
+to or idles at. Losing Lara (4 s unseen, [I]) a ground enemy with a search record searches: the start clip, walks to
+where she was (pulled into its zone), idles, walks to a possible position, idles, ... until [I] +0x18 counts (merc
+53 s, poacher 8 s, cats 2.5 s) have passed, then idle → its patrol (from the current point) or its zone; seeing her
+again alerts it (bark). Searchers keep the combat senses, patrollers the default ones. Logged by ou-game as mode
+changes `patrol` / `search`. Tests: `Ai.PatrolsAlertsSearchesAndReturnsToPost` (synthetic: ping-pong path, alert,
+chase, search, back on the path), `AiReal.MercPatrolsSearchesAndReturns` (l1_ship_exterior: the decoded paths and
+records, merc 1650 idles at 5 of its points in 60 s, searches after an alert and patrols again).
+[I] / [U]: speed byte +2 (only compared with 1 and 3 by MoveNav / 0x61B220: ours always walks), the idle counts'
+unit, the search time's meaning (ours: total length), possible positions (ours: 4 m within ±90° of its heading by a
+straight walk onto floor, 4 tries), a point it cannot reach in 20 s is skipped; not done: PatrolLookTurn (node +0x50
+bit 1 faces the node with the set's turn clips), PatrolAttack, flyers' and sharks' paths (bats / sharks stay where
+placed), generator spawns' paths, Investigate, Flank (EnemyBehavior_Flank: an attack position beside Lara chosen
+from the planner graph, not decoded).
+
+Not done: the remaining behaviour-tree nodes (flank, investigate, taunt, dodge, jump/vault), long-range specifics
+beyond their records, rifle mesh, bat latch, the original's wall-walking transitions, navmesh/routing, ragdoll.
 
 Verification [O] (ou-game, Vulkan, 1280×720, invisible KWin; screenshots viewed, kept privately; 2026-10-29):
 replay `tests/replays/thrall_regenerate.txt` (l7_yggdrasil_hall01, `--spawn 1000,0,0,90`): viking 8833 charges, bites,

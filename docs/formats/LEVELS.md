@@ -52,7 +52,7 @@ Unit data `+0x0C u32 count`, `+0x10 Intro*` and a second list `+0x1C count`, `+0
 | +0x58 | i32 unique intro id | [O] |
 | +0x60 | i16 initial animation (−1 = none) | [O] `G2EmulationInstanceSetAnimation` |
 | +0x70..0x73 | flag bytes | [O] several bits are tested in 0x5BCC30; meanings [U] |
-| +0x78 | pointer to intro data | [O] passed to the birth function; layout [U] |
+| +0x78 | pointer to intro data | [O] instance +0x104 (0x5BA810); u32 +0x00 type (13 enemies, below; others [U]) |
 
 Euler order [O]: `cdc_Matrix_Build_XYZOrder` 0x49D500 (disassembled) starts from identity and post-multiplies, in
 D3D row-vector form, a Z rotation by `euler.z`, then Y by `euler.y`, then X by `euler.x`. In column-vector form this
@@ -301,6 +301,18 @@ re-bases coordinates when the player moves far from the first unit.
   (0x669D00: 14 probes of radius 200 per node) [O]; scripts name one as a noderef {record, node} (enemybase 27
   GuardNode). `formats::Unit::plannerNodes`. Their +0x44..+0x4C meaning is [U].
 
+## Enemy intro data (intro +0x78, type 13)
+
+- [O] tru.exe birth 0x63C7A0 reads it as instance +0x104: +0x30 → 0x698250 [U], +0x34 → a planner record of the
+  unit (pointer into the +0x11C array), +0x38 → patrol path {byte +2 speed 1..4, u32 +4 count, +8 → u32 node
+  indices into the record}, +0x3C byte count of alternative paths at +0x40, +0x44, ... (enemybase 22), +0x60 →
+  u16 [U], +0x6C flags (bit 31: the whole record is the path when +0x38 is null; bit 27 skips the +0x60 part), +0x88
+  order mode (0 loop, 1 once, 2 ping-pong, 3 random free node, 4 random unvisited). A point = record matrix × node
+  translation + the unit offset, as the planner nodes (0x62F520 / 0x62F2C0 → 0x621A80, at most 16).
+  `formats::Intro::patrolRecord` / `patrolPaths` / `patrolMode`; behaviour: GAMEPLAY.md "Behaviour trees, patrols
+  and search". 295 type-13 intros have a record, 280 of them a path (l1_ship_exterior merc 1650: nodes 128 126 108
+  114 117 131, ping-pong, speed 4); l2_norsehub's nagas 2412..2419 use bit 31.
+
 ## Survey (Python cross-check of the C++ layouts, 2026-10-18) [O]
 
 All 82 present units:
@@ -358,6 +370,7 @@ Known deviations [O]:
 
 - [U] Which model an instance uses (LOD/`modelNum`); whether `co_monitor_frame` / `fx_*` proxies are hidden by script,
   the effect system or the intro `+0x72 & 0x10` callback.
-- [U] Intro `+0x52`, `+0x70..0x73` flags, intro data at `+0x78`, the second intro list's role (l4_pool: 1 entry).
+- [U] Intro `+0x52`, `+0x70..0x73` flags, the non-enemy intro data types (1, 0x11, 0x404, ...), the second intro
+  list's role (l4_pool: 1 entry).
 - [U] IMF `+0x40`, `+0x4C`, `+0x60`; cell BSP and portals; cell group `+0x14`/`+0x1C`.
 - [U] Why `Level+0x80` exists if intros and terrain already share a frame (collision only?).

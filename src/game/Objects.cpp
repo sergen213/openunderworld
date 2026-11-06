@@ -704,9 +704,9 @@ void World::bindMarkup() {
 }
 
 // enemybase (tru.exe bind 0x7B4060): 16/17 Set/Get the AI behaviour index (0x776F10 -> 0x62DE00 selects the
-// behaviour list of the enemy data; 0x776F40 reads it back), 22 selects entry n of the current target's list and
-// posts 0xE1 (0x777010 -> 0x63AC40), 26 picks the MoveNav animation variant (0x7771E0, field 0x37C0 read by
-// 0x61B0C0). Ours keep the values for Get; our AI has no behaviour lists or variants [U: their effect on it].
+// behaviour list of the enemy data; 0x776F40 reads it back), 22 selects patrol path n of the intro data (0x777010 ->
+// 0x63AC40; ai::Enemies::selectPatrol), 26 picks the MoveNav animation variant (0x7771E0, field 0x37C0 read by
+// 0x61B0C0). Ours keep the values for Get; our AI has no behaviour lists or variants [U: the effect of 16 / 26].
 // 27 GuardNode(unitref, noderef, r1, r2) (0x777210 -> 0x61F7A0): a guard zone at planner node {record, node} of the
 // unit (0x5C8EA0), inner r1, outer max(r1, r2) (Script passes the noderef as record << 16 | node).
 // 18 sets an AI byte (+0xC34, 0x776F70, then 0x63F7F0) [U]; kept like 16.
@@ -778,6 +778,7 @@ void World::bindMultibody() {
 
 void World::syncObjects() {
     std::map<int32_t, float> angles; // doors that stay loaded keep their swing
+            if (function == 22) enemies_.selectPatrol(uid, int32_t(args[0].bits)); // 0x63AC40: patrol path n
     for (const auto& c : colliders_)
         if (c.hinge >= 0) angles[c.uid] = physics_.angle(c.hinge);
     colliders_.clear();

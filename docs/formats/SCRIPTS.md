@@ -233,8 +233,9 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   `instance` Kill (10, 0x5B5740 dead flag) hides the object; `watervolumebase` reset (3) takes no argument;
   `messagechannel` Send always succeeds (unconsumed posts are no-ops in the exe too).
 - [O] More bindings: `enemybase` (bind 0x7B4060) 16/17 Set/Get the AI behaviour index (0x776F10 → 0x62DE00),
-  22 selects list entry n and posts 0xE1 (0x777010 → 0x63AC40), 26 the MoveNav animation variant (0x7771E0, field
-  0x37C0 read by 0x61B0C0) — ours keep the values (`World::enemyValues_`), their AI effect is [U];
+  22 selects patrol path n of the intro data (0x777010 → 0x63AC40: n < 1 its own, 1..count an alternative, else
+  none; LEVELS.md "Enemy intro data") → `ai::Enemies::selectPatrol`, 26 the MoveNav animation variant (0x7771E0,
+  field 0x37C0 read by 0x61B0C0) — ours keep the 16 / 26 values (`World::enemyValues_`), their AI effect is [U];
   27 GuardNode(unitref, noderef, r1, r2) (0x777210 → 0x004AAF20 → 0x5C8EA0 → 0x61F7A0): the noderef is a type-57
   native member {record, node} (its declared value; Script passes it to the World as record << 16 | node) naming a
   planner node of the unit (LEVELS.md "Planner nodes") → `ai::Enemies::guard` (GAMEPLAY.md "Mercs");

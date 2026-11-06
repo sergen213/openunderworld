@@ -484,6 +484,60 @@ TEST(Ai, PoacherAndBatIndependentOfRenderRate) {
     EXPECT_FALSE(std::get<2>(a).empty()); // something hurt Lara
 }
 
+// Patrol (an intro path in ping-pong order: PatrolMove, the point's idle, PatrolIncr), alert on seeing Lara, chase,
+// search after losing her (to where she was, idles, possible positions), then back on its path.
+TEST(Ai, PatrolsAlertsSearchesAndReturnsToPost) {
+    CollisionMesh m;
+    addFloor(m, -6000, -6000, 6000, 6000, 0);
+    const auto col = built(m);
+    auto t = std::make_shared<game::ai::EnemyType>(*syntheticType());
+    t->roles[size_t(Role::Walk)] = "walk_forward_2";
+    t->clips["walk_forward_2"] = rootClip(20, 5); // 150 units/s
+    t->clips["look"] = rootClip(30, 0);
+    t->patrol.idles = {{"look", 1, 1.0f, 1.0f}};
+    t->patrol.arrive = 100;
+    t->search.idles = {{"look", 1, 1.0f, 1.0f}};
+    t->search.time = 12, t->search.step = 600, t->search.angle = 1.5f, t->search.arrive = 100;
+    game::ai::Enemies es;
+    auto& e = es.add(t, 1, {0, 0, 0}, 0);
+    const std::vector<vec3> path{{1500, 0, 0}, {1500, 1500, 0}};
+    e.patrolPaths = {path};
+    e.patrolMode = 2; // ping-pong
+    e.setPatrol(0);
+    const game::ai::Target away{{0, 0, -50000}};
+    std::vector<Mode> modes;
+    std::array<float, 2> nearest{1e9f, 1e9f};
+    const auto run = [&](const game::ai::Target& lara, float seconds) {
+        for (int i = 0; i < int(seconds / kDt); ++i) {
+            es.tick(col, lara, {}, kDt);
+            if (modes.empty() || modes.back() != e.state().mode) modes.push_back(e.state().mode);
+            for (size_t k = 0; k < 2; ++k) nearest[k] = std::min(nearest[k], glm::length(glm::vec2(e.position() - path[k])));
+        }
+    };
+    run(away, 26); // 10 s to the first point, 1 s there, 10 s to the second, 1 s, back
+    EXPECT_LT(nearest[0], 100.5f);
+    EXPECT_LT(nearest[1], 100.5f);
+    EXPECT_EQ(e.state().mode, Mode::Patrol);
+    EXPECT_EQ(e.state().patrolIndex, 0); // ping-pong: back towards the first point
+    const vec3 seen = e.position() + vec3(std::cos(e.state().yaw), std::sin(e.state().yaw), 0) * 1500.0f;
+    run({seen}, 1);    // in front of it: alert, then chase
+    run(away, 5);      // gone for longer than the 4 s lose time: search
+    EXPECT_EQ(e.state().mode, Mode::Search);
+    EXPECT_LT(glm::length(glm::vec2(e.state().lastSeen - seen)), 1.0f);
+    run(away, 7);
+    EXPECT_LT(glm::length(glm::vec2(e.position() - seen)), 1000.0f); // went to where she was, looking round near it
+    nearest = {1e9f, 1e9f};
+    run(away, 30); // search over (12 s): back on its path
+    EXPECT_EQ(e.state().mode, Mode::Patrol);
+    EXPECT_LT(std::min(nearest[0], nearest[1]), 100.5f);
+    const std::vector<Mode> order{Mode::Patrol, Mode::Alert, Mode::Chase, Mode::Search, Mode::Idle, Mode::Patrol};
+    size_t k = 0;
+    for (const Mode md : modes) k += k < order.size() && md == order[k];
+    EXPECT_EQ(k, order.size());
+    for (const Mode md : modes) std::fprintf(stderr, "%s ", std::string(game::ai::modeName(md)).c_str());
+    std::fprintf(stderr, "\n");
+}
+
 // ---- real data (OU_GAME_DIR) ------------------------------------------------------------------
 namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }
@@ -1173,6 +1227,8 @@ TEST(AiReal, MercsGuardZonesCoverAndAlert) {
         auto es = fresh();
         es->guard(1650, 0, 127, 2500, 4000);
         auto& m = find(*es, 1650);
+        m.patrolPaths.clear(); // zone return only (its patrol path below)
+        m.setPatrol(0);
         const vec3 node = nodes[0][127];
         EXPECT_GT(glm::length(glm::vec2(m.position() - node)), 2500);
         bool returned = false;
@@ -1267,6 +1323,71 @@ TEST(AiReal, MercsGuardZonesCoverAndAlert) {
     }
     // Their guns: wp_akrifle (the body's rounds, World::collectPickups).
     EXPECT_EQ(find(*fresh(), 1650).type().weaponObject, "wp_akrifle");
+}
+
+// Merc patrols from their intro data (+0x34 planner record, +0x38 path, +0x88 order) with the patrol / search
+// records of merc.drm; 1650 walks its ping-pong path, idles at the points, searches after losing Lara and returns
+// to its path.
+TEST(AiReal, MercPatrolsSearchesAndReturns) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto u = game::loadUnitData(bf, "l1_ship_exterior");
+    const auto parsed = formats::parseUnit(*u.drm);
+    const auto in = std::find_if(parsed.intros.begin(), parsed.intros.end(), [](const formats::Intro& i) { return i.uniqueId == 1650; });
+    ASSERT_NE(in, parsed.intros.end());
+    EXPECT_EQ(in->patrolRecord, 0);
+    EXPECT_EQ(in->patrolMode, 2u);
+    ASSERT_EQ(in->patrolPaths.size(), 1u);
+    EXPECT_EQ(in->patrolPaths[0].nodes, (std::vector<uint32_t>{128, 126, 108, 114, 117, 131}));
+    EXPECT_EQ(in->patrolPaths[0].speed, 4);
+    int patrolling = 0, once = 0;
+    for (const auto& i : parsed.intros) patrolling += !i.patrolPaths.empty() && !i.patrolPaths[0].nodes.empty(), once += i.patrolMode == 1 && !i.patrolPaths.empty();
+    EXPECT_EQ(patrolling, 18); // 1650-1652, 1654-1659, 1661-1669 (1653 / 1660 have a record but no path)
+    std::fprintf(stderr, "l1_ship_exterior: %d intros with a patrol path, %d of them once\n", patrolling, once);
+
+    u.col.build();
+    game::ai::Enemies es;
+    es.setBigfile(&bf);
+    es.setUnits({{u.name, u.drm, vec3(0)}});
+    es.guard(1650, 0, 127, 2500, 4000);
+    auto& m = **std::find_if(es.all().begin(), es.all().end(), [](const auto& e) { return e->uid() == 1650; });
+    const auto& ty = m.type();
+    EXPECT_EQ(ty.patrol.walk, "walk_forward_passive");
+    ASSERT_EQ(ty.patrol.idles.size(), 5u);
+    EXPECT_EQ(ty.patrol.idles[0].clip, "idle_passive");
+    EXPECT_EQ(ty.patrol.idles[0].weight, 70u);
+    EXPECT_NEAR(ty.patrol.idles[0].minTime, 3.0f, 1e-4f);
+    EXPECT_NEAR(ty.patrol.idles[0].maxTime, 4.0f, 1e-4f);
+    EXPECT_EQ(ty.patrol.arrive, 205.0f);
+    EXPECT_EQ(ty.search.walk, "combat_walk_search");
+    EXPECT_EQ(ty.search.start, "combat_idle_search");
+    EXPECT_NEAR(ty.search.time, 1600.0f / 30.0f, 1e-3f);
+    ASSERT_EQ(ty.search.idles.size(), 2u);
+    EXPECT_EQ(ty.search.idles[1].clip, "idle_combat_stand");
+    ASSERT_EQ(m.patrolPaths.size(), 1u);
+    EXPECT_LT(glm::distance(m.patrolPaths[0][0], parsed.plannerNodes[0][128]), 1.0f);
+
+    const game::ai::Target away{{0, 0, -50000}};
+    const auto run = [&](float seconds, auto&& each) {
+        for (int i = 0; i < int(seconds / kDt); ++i) es.tick(u.col, away, {}, kDt), each();
+    };
+    std::set<int> reached; // patrol points it idled at
+    run(60, [&] {
+        if (m.state().mode == Mode::Patrol && m.state().phase == 1) reached.insert(m.state().patrolIndex);
+    });
+    EXPECT_GE(reached.size(), 2u);
+    EXPECT_TRUE(reached.count(0));
+    std::fprintf(stderr, "merc 1650 idled at %zu patrol points in 60 s, now at (%.0f %.0f %.0f) [%s]\n", reached.size(), m.position().x,
+                 m.position().y, m.position().z, m.state().clip.c_str());
+    // A squad mate's alert, nothing seen after it: chase, search, back on its path.
+    m.alert(m.position() + vec3(std::cos(m.state().yaw), std::sin(m.state().yaw), 0) * 800.0f);
+    bool searched = false, back = false;
+    run(80, [&] {
+        searched |= m.state().mode == Mode::Search;
+        back |= searched && m.state().mode == Mode::Patrol;
+    });
+    EXPECT_TRUE(searched);
+    EXPECT_TRUE(back);
 }
 
 // Survey (OU_AI_SURVEY=1): every enemy intro and generator spawn of every unit, and each enemy type's data and clips.

@@ -17,6 +17,7 @@ namespace {
 constexpr float kPi = 3.14159265f;
 constexpr uint32_t kEnemyDataMagic = 0xDAF00018; // tru.exe 0x63C190 refuses enemy data without it
 constexpr uint32_t kEnemyFamily = 0x400000;     // ObjectBase oflags2 (+4) bit: "enemy" family (0x5BF0E0)
+constexpr int kUnknownPath = -2;                // EnemyState::path of a save without patrol fields
 
 template <class T> T read(const cdc::Section& s, uint32_t off) {
     if (off + sizeof(T) > s.data.size()) throw cdc::FormatError("enemy data: read past the section end");
@@ -191,6 +192,45 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
                 t->roles[r] = std::string(want);
                 break;
             }
+
+    // Patrol (list node +0x48) and search (+0xD8) parameters (Enemy.hpp PatrolStyle / SearchStyle). MoveNav sets
+    // (0x61B0C0): the walk clip at +0x18 (+0x14 start, +0x1C stop, +0x20 end idle in every set read), the arrival
+    // distance s16 max(+0x1C0, +0x1C2) (0x628990). Weighted lists (0x60F450): count +0x0C, entries at +0x10.
+    constexpr float kCount = 1.0f / 30.0f; // [I] record counts are 30 Hz frames (as Enemy.cpp)
+    const auto moveSet = [&](const cdc::Pointer& p, std::string& walk, float& arrive) {
+        const cdc::Section& s = drm->sections[p.section];
+        if (p.offset + 0x1C4 > s.data.size()) return;
+        walk = clipRef(s, p.offset + 0x18);
+        if (!loadClip(walk)) walk.clear();
+        arrive = std::max(read<int16_t>(s, p.offset + 0x1C0), read<int16_t>(s, p.offset + 0x1C2));
+    };
+    const auto idleList = [&](const cdc::Pointer& p) {
+        std::vector<IdleAnim> r;
+        const cdc::Section& s = drm->sections[p.section];
+        for (uint32_t k = 0, n = std::min(read<uint32_t>(s, p.offset + 0xC), 16u); k < n; ++k) {
+            const uint32_t e = p.offset + 0x10 + 0xC * k;
+            IdleAnim a{clipRef(s, e), read<uint32_t>(s, e + 4), read<int16_t>(s, e + 8) * kCount, read<int16_t>(s, e + 0xA) * kCount};
+            if (a.weight && loadClip(a.clip)) r.push_back(std::move(a));
+        }
+        return r;
+    };
+    if (const auto p = field(0x48)) {
+        const cdc::Section& s = drm->sections[p->section];
+        if (const auto set = ptrAt(*drm, p->section, p->offset)) moveSet(*set, t->patrol.walk, t->patrol.arrive);
+        if (const auto l = ptrAt(*drm, p->section, p->offset + 4); l && read<int32_t>(s, p->offset + 0xC) > 0) t->patrol.idles = idleList(*l);
+    }
+    if (const auto p = field(0xD8)) { // 0x61E480: searches when the record's +0x00 set is there
+        const cdc::Section& s = drm->sections[p->section];
+        if (const auto set = ptrAt(*drm, p->section, p->offset)) {
+            auto& se = t->search;
+            moveSet(*set, se.walk, se.arrive);
+            se.start = clipRef(s, p->offset + 4);
+            if (!loadClip(se.start)) se.start.clear();
+            if (const auto l = ptrAt(*drm, p->section, p->offset + 0x24)) se.idles = idleList(*l);
+            se.time = float(read<int32_t>(s, p->offset + 0x18)) * kCount;
+            se.step = 1264.22f, se.angle = kPi / 2; // [I] 4 m within ±90° (merc +0x34 reads 1264 / 90, cats' the eye range)
+        }
+    }
     for (const auto& a : t->tuning.attacks)
         for (const auto* c : {&a.clip, &a.shotClip, &a.followClip}) loadClip(*c);
     for (const auto& d : t->tuning.deaths) loadClip(d.clip);
@@ -289,7 +329,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
     std::erase_if(enemies_, [&](const auto& e) {
         if (e->unit.empty() || loaded(e->unit)) return false;
         EnemyState s = e->state();
-        s.pos -= offsets_[e->unit], s.lastSeen -= offsets_[e->unit], s.cover -= offsets_[e->unit];
+        s.pos -= offsets_[e->unit], s.lastSeen -= offsets_[e->unit], s.cover -= offsets_[e->unit], s.goal -= offsets_[e->unit];
         stash_[e->uid()] = s; // generator spawns: uid = their generator's, re-spawned with it below
         return true;
     });
@@ -342,7 +382,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
                         auto& e = add(std::move(type), in.uniqueId, pos, yaw);
                         e.unit = u.name, e.generator = in.uniqueId;
                         EnemyState st = s->second;
-                        st.pos += u.offset, st.lastSeen += u.offset, st.cover += u.offset;
+                        st.pos += u.offset, st.lastSeen += u.offset, st.cover += u.offset, st.goal += u.offset;
                         e.restore(st);
                     }
                 continue;
@@ -354,10 +394,22 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
             if (!type) continue;
             auto& e = add(std::move(type), in.uniqueId, pos, yaw, false, {in.rotation[0], in.rotation[1]});
             e.unit = u.name;
+            // Patrol paths (intro data +0x34 / +0x38 / +0x40..): planner nodes of its record, world frame.
+            e.patrolMode = in.patrolMode;
+            if (in.patrolRecord >= 0 && size_t(in.patrolRecord) < parsed.plannerNodes.size()) {
+                const auto& rec = parsed.plannerNodes[size_t(in.patrolRecord)];
+                for (const auto& path : in.patrolPaths) {
+                    auto& w = e.patrolPaths.emplace_back();
+                    for (const uint32_t k : path.nodes)
+                        if (k < rec.size()) w.push_back(rec[k] + u.offset);
+                }
+            }
+            e.setPatrol(0);
             if (const auto s = stash_.find(in.uniqueId); s != stash_.end()) {
                 EnemyState st = s->second;
-                st.pos += u.offset, st.lastSeen += u.offset, st.cover += u.offset;
+                st.pos += u.offset, st.lastSeen += u.offset, st.cover += u.offset, st.goal += u.offset;
                 e.restore(st);
+                if (st.path == kUnknownPath) e.setPatrol(0); // a save from before patrols
             }
         }
     }
@@ -374,13 +426,15 @@ nlohmann::json toJson(const EnemyState& s) {
             {"lastSeen", vec(s.lastSeen)}, {"fire", s.fire}, {"shotsLeft", s.shotsLeft}, {"shotTimer", s.shotTimer},
             {"fireCooldown", s.fireCooldown}, {"rng", s.rng}, {"tip", s.tip}, {"sleep", s.sleep}, {"drowsy", s.drowsy},
             {"tilt", {s.tilt.x, s.tilt.y}}, {"down", s.down}, {"melee", s.melee}, {"cover", vec(s.cover)},
-            {"coverCooldown", s.coverCooldown}};
+            {"coverCooldown", s.coverCooldown}, {"path", s.path}, {"patrolIndex", s.patrolIndex}, {"patrolStep", s.patrolStep},
+            {"visited", s.visited}, {"phase", s.phase}, {"phaseTime", s.phaseTime}, {"phaseLength", s.phaseLength},
+            {"goal", vec(s.goal)}, {"searchTime", s.searchTime}};
 }
 
 EnemyState stateFromJson(const nlohmann::json& j) {
     EnemyState s;
     const int mode = j.at("mode").get<int>();
-    if (mode < 0 || mode > int(Mode::Crawl)) throw std::runtime_error("enemy mode " + std::to_string(mode));
+    if (mode < 0 || mode > int(Mode::Search)) throw std::runtime_error("enemy mode " + std::to_string(mode));
     s.mode = Mode(mode);
     s.pos = vec(j.at("pos")), s.yaw = j.at("yaw"), s.vz = j.at("vz"), s.clip = j.at("clip"), s.clipTime = j.at("clipTime");
     s.loop = j.at("loop"), s.health = j.at("health"), s.modeTime = j.at("modeTime"), s.unseenTime = j.at("unseenTime");
@@ -392,6 +446,10 @@ EnemyState stateFromJson(const nlohmann::json& j) {
     s.down = j.value("down", 0.0f), s.melee = j.value("melee", -1);
     if (const auto c = j.find("cover"); c != j.end()) s.cover = vec(*c);
     s.coverCooldown = j.value("coverCooldown", 0.0f);
+    s.path = j.value("path", kUnknownPath), s.patrolIndex = j.value("patrolIndex", -1), s.patrolStep = j.value("patrolStep", 1);
+    s.visited = j.value("visited", 0u), s.phase = j.value("phase", 0), s.phaseTime = j.value("phaseTime", 0.0f);
+    s.phaseLength = j.value("phaseLength", 0.0f), s.searchTime = j.value("searchTime", 0.0f);
+    if (const auto g = j.find("goal"); g != j.end()) s.goal = vec(*g);
     return s;
 }
 } // namespace
@@ -404,7 +462,7 @@ nlohmann::json Enemies::serialize() const {
         EnemyState s = e->state();
         const auto off = offsets_.find(e->unit);
         const vec3 o = off == offsets_.end() ? vec3(0) : off->second;
-        s.pos -= o, s.lastSeen -= o, s.cover -= o;
+        s.pos -= o, s.lastSeen -= o, s.cover -= o, s.goal -= o;
         states[e->uid()] = s;
     }
     for (const auto& g : generators_)

@@ -33,6 +33,9 @@ constexpr float kCoverLow = 150.0f;    // [I] crouched eye height: its ray to La
 constexpr float kCoverSeconds = 2.5f;  // [I] crouched behind cover before standing up to fire
 constexpr float kCoverRest = 6.0f;     // [I] s before seeking cover again
 constexpr float kCoverRunSeconds = 4.0f; // [I] gives up a cover it has not reached by then
+constexpr float kPatrolGiveUp = 20.0f;   // [I] s walking to a patrol point before taking the next one
+constexpr float kSearchWalkSeconds = 8.0f; // [I] s walking to a search position before idling there anyway
+constexpr int kSearchTries = 4;          // [I] random possible positions tried per step
 
 glm::mat3 tiltMatrix(glm::vec2 tilt) { // Rx(x) * Ry(y), as formats::introMatrix before the heading
     return glm::mat3(glm::rotate(glm::rotate(glm::mat4(1), tilt.x, vec3(1, 0, 0)), tilt.y, vec3(0, 1, 0)));
@@ -73,7 +76,7 @@ const anim::Clip* EnemyType::clip(Role r) const {
 
 std::string_view modeName(Mode m) {
     static constexpr std::string_view k[] = {"idle", "alert", "chase", "attack", "hit", "dead", "spawning", "fire", "reload", "sleep",
-                                             "cling", "drop", "down", "rise", "return", "cover", "crawl"};
+                                             "cling", "drop", "down", "rise", "return", "cover", "crawl", "patrol", "search"};
     return size_t(m) < std::size(k) ? k[size_t(m)] : "unknown";
 }
 
@@ -173,6 +176,8 @@ void Enemy::setMode(Mode m) {
     case Mode::Return: play(Role::Walk, true); break;
     case Mode::Cover: play(Role::Run, true); break;
     case Mode::Crawl: play(Role::Run, true); break;
+    case Mode::Patrol: s_.phase = 0, s_.phaseTime = 0; break; // walks on in tick (PatrolMove)
+    case Mode::Search: startSearch(); break;
     }
 }
 
@@ -200,9 +205,93 @@ void Enemy::notice() {
 }
 
 void Enemy::alert(vec3 at) {
-    if (s_.mode != Mode::Idle && s_.mode != Mode::Return) return;
+    if (s_.mode != Mode::Idle && s_.mode != Mode::Return && s_.mode != Mode::Patrol && s_.mode != Mode::Search) return;
     s_.lastSeen = at, s_.unseenTime = 0;
     setMode(Mode::Alert);
+}
+
+const std::vector<vec3>* Enemy::patrolPoints() const {
+    return s_.path >= 0 && size_t(s_.path) < patrolPaths.size() && !patrolPaths[size_t(s_.path)].empty() ? &patrolPaths[size_t(s_.path)] : nullptr;
+}
+
+// 0x63AC40 -> 0x63A410: the first point (modes 3 / 4: 0x637870 mode 3, a random free one). Also the placement state,
+// so a respawn patrols again [I].
+void Enemy::setPatrol(int path) {
+    s_.path = path, s_.patrolIndex = -1, s_.patrolStep = 1, s_.visited = 0;
+    if (patrolPoints()) {
+        if (patrolMode == 3 || patrolMode == 4) nextPatrolPoint(3);
+        else s_.patrolIndex = 0;
+    }
+    if (s_.mode == Mode::Patrol) setMode(Mode::Idle);
+    start_.path = s_.path, start_.patrolIndex = s_.patrolIndex, start_.patrolStep = s_.patrolStep, start_.visited = s_.visited;
+}
+
+// 0x637870 by the path's order mode: 0 loop, 1 once (then done), 2 ping-pong (a one-point path is done), 3 a random
+// other point no other enemy has claimed (0x633F10; ours: one another enemy walks to or idles at), 4 a random point
+// not visited this round ([I] done when all are).
+bool Enemy::nextPatrolPoint(uint32_t mode) {
+    const auto* p = patrolPoints();
+    const int n = p ? int(p->size()) : 0, i = s_.patrolIndex;
+    s_.patrolIndex = -1;
+    if (!n) return false;
+    const auto pick = [&](auto&& ok) {
+        std::vector<int> c;
+        for (int k = 0; k < n; ++k)
+            if (ok(k)) c.push_back(k);
+        return c.empty() ? -1 : c[lcg(s_.rng) % c.size()];
+    };
+    switch (mode) {
+    case 0: s_.patrolIndex = (i + 1) % n; break;
+    case 1: s_.patrolIndex = i < n - 1 ? i + 1 : -1; break;
+    case 2:
+        if (i == n - 1) s_.patrolStep = -1;
+        else if (i == 0) s_.patrolStep = 1;
+        s_.patrolIndex = i + s_.patrolStep;
+        break;
+    case 3:
+        s_.patrolIndex = n < 2 ? -1 : pick([&](int k) {
+            return k != i && std::none_of(claimed.begin(), claimed.end(), [&](vec3 c) { return glm::distance(c, (*p)[size_t(k)]) < 1.0f; });
+        });
+        break;
+    case 4:
+        if (i >= 0 && i < 32) s_.visited |= 1u << i;
+        s_.patrolIndex = pick([&](int k) { return k >= 32 || !(s_.visited >> k & 1); });
+        break;
+    default: break;
+    }
+    return s_.patrolIndex >= 0;
+}
+
+void Enemy::playIdle(const std::vector<IdleAnim>& idles) {
+    uint32_t total = 0;
+    for (const auto& a : idles) total += a.weight;
+    s_.phaseLength = 0;
+    if (!total) return play(Role::Idle, true);
+    uint32_t r = lcg(s_.rng) % total;
+    for (const auto& a : idles) {
+        if (r >= a.weight) {
+            r -= a.weight;
+            continue;
+        }
+        playClip(a.clip, true);
+        s_.phaseLength = a.minTime + (a.maxTime - a.minTime) * frand(s_.rng);
+        return;
+    }
+}
+
+bool Enemy::walkTo(vec3 goal, float arrive, const std::string& clip, float dt) {
+    if (flatDist(s_.pos, goal) <= arrive) return true;
+    if (clip.empty()) play(Role::Walk, true);
+    else playClip(clip, true);
+    turnTowards(goal, dt);
+    return false;
+}
+
+// SearchStart (0x61E8F0: the record's +0x04 clip once), then SearchToLastKnownPos.
+void Enemy::startSearch() {
+    s_.phase = 0, s_.phaseTime = 0, s_.searchTime = 0, s_.goal = s_.lastSeen;
+    if (type_->clips.count(type_->search.start)) playClip(type_->search.start, false);
+    else s_.phase = 1;
 }
 
 // [I] EnemyBehavior_Cover picks the AI's current planner node +0x4E68 with cover flags (+0x84 bits 6 / 12..14) that
@@ -344,7 +433,7 @@ void Enemy::onHit(const Hit& hit) {
         // one per pistol round pushed them back for good); a reaction plays out, hits during it add up
         s_.damageSinceReaction = 0;
         setMode(Mode::Hit);
-    } else if (s_.mode == Mode::Idle || s_.mode == Mode::Return) {
+    } else if (s_.mode == Mode::Idle || s_.mode == Mode::Return || s_.mode == Mode::Patrol || s_.mode == Mode::Search) {
         setMode(Mode::Alert); // shot from out of sight: turns to the shooter
     }
 }
@@ -494,7 +583,8 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         s_.unseenTime = 0, s_.lastSeen = lara.pos;
     } else {
         s_.unseenTime += dt;
-        if (s_.mode != Mode::Idle && s_.mode != Mode::Dead && lara.alive && (lara.inWater || !aquatic) && glm::distance(s_.pos, lara.pos) < senses().loseTrack)
+        if (s_.mode != Mode::Idle && s_.mode != Mode::Patrol && s_.mode != Mode::Dead && lara.alive && (lara.inWater || !aquatic) &&
+            glm::distance(s_.pos, lara.pos) < senses().loseTrack)
             s_.lastSeen = lara.pos; // [I] senses +0x20: still tracked this close, unseen
     }
     // Ground enemies measure Lara flat, centre to centre; flyers from their centre to her head.
@@ -532,13 +622,78 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     case Mode::Spawning:
         if (clipDone()) setMode(Mode::Chase);
         break;
-    case Mode::Idle:
+    case Mode::Idle: // NonCombat: Patrol (priority 15) before MoveToGuardZone (10) before Idle (soldier tree 0x612030)
         if (sees) {
             notice();
+        } else if (!flyer && patrolPoints() && s_.patrolIndex >= 0) {
+            setMode(Mode::Patrol);
         } else if (!inZone(false)) {
             setMode(Mode::Return);
         }
         break;
+    case Mode::Patrol: { // PatrolMove to the point (pulled into the guard zone, 0x61F990), PatrolAnim there, PatrolIncr
+        if (sees) {
+            notice();
+            break;
+        }
+        const auto* p = patrolPoints();
+        if (!p || s_.patrolIndex < 0 || size_t(s_.patrolIndex) >= p->size()) {
+            setMode(Mode::Idle);
+            break;
+        }
+        const PatrolStyle& ps = type_->patrol;
+        s_.phaseTime += dt;
+        if (s_.phase == 0) {
+            if (walkTo(zoneGoal((*p)[size_t(s_.patrolIndex)]), ps.arrive > 0 ? ps.arrive : 2 * t.radius, ps.walk, dt) ||
+                s_.phaseTime > kPatrolGiveUp) {
+                s_.phase = 1, s_.phaseTime = 0;
+                playIdle(ps.idles); // none (cats): straight on
+                delta = vec3(0);
+            }
+        } else {
+            delta = vec3(0);
+            if (s_.phaseTime >= s_.phaseLength) {
+                s_.phase = 0, s_.phaseTime = 0;
+                if (!nextPatrolPoint(patrolMode)) setMode(Mode::Idle); // a finished path: stays where it is
+            }
+        }
+        break;
+    }
+    case Mode::Search: { // 0x61E570 steps 0 start, 1 to last known, 2 idle, 3 to a possible position, then 2 / 3 again
+        if (sees) {
+            notice();
+            break;
+        }
+        const SearchStyle& se = type_->search;
+        s_.phaseTime += dt, s_.searchTime += dt;
+        if (s_.searchTime >= se.time) { // [I] the record's search time: back to its patrol, its zone or idle
+            setMode(Mode::Idle);
+            break;
+        }
+        const auto possible = [&] { // [I] the step's distance within ±angle of its heading, a straight walk onto floor
+            const vec3 lift(0, 0, t.stepUp + t.radius);
+            for (int k = 0; k < kSearchTries && se.step > 0; ++k) {
+                const float a = s_.yaw + (2 * frand(s_.rng) - 1) * se.angle;
+                const vec3 to = s_.pos + vec3(std::cos(a), std::sin(a), 0) * se.step;
+                if (col.raycast(s_.pos + lift, glm::normalize(to - s_.pos), se.step)) continue;
+                if (const auto g = col.groundProbe(to + vec3(0, 0, t.stepUp), t.stepUp + t.maxDrop)) return g->point;
+            }
+            return s_.pos;
+        };
+        const auto advance = [&] {
+            const int next = s_.phase == 0 ? 1 : s_.phase == 2 || se.idles.empty() ? 3 : 2;
+            s_.phase = next, s_.phaseTime = 0;
+            if (next == 2) playIdle(se.idles);
+            if (next == 3) s_.goal = possible();
+        };
+        if (s_.phase == 1 || s_.phase == 3) {
+            if (walkTo(zoneGoal(s_.goal), se.arrive > 0 ? se.arrive : 2 * t.radius, se.walk, dt) || s_.phaseTime > kSearchWalkSeconds) advance();
+        } else {
+            delta = vec3(0);
+            if ((s_.phase == 0 && clipDone()) || (s_.phase == 2 && s_.phaseTime >= s_.phaseLength)) advance();
+        }
+        break;
+    }
     case Mode::Return: // EnemyBehavior_MoveToGuardZone: walks back to zone 0 until inside 0.8 x its inner radius
         if (sees) {
             notice();
@@ -580,8 +735,10 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         turnTowards(sees || held ? s_.lastSeen : goal, dt);
         const bool facing = aimError(lara.pos) < kFaceToAttack;
         const int fire = type_->ranged() ? readyFire() : -1;
-        if (!lara.alive || s_.unseenTime > t.loseTime) {
+        if (!lara.alive) {
             setMode(Mode::Idle);
+        } else if (s_.unseenTime > t.loseTime) { // lost her: searches (ground enemies with a search record), else idle
+            setMode(!flyer && type_->search.time > 0 ? Mode::Search : Mode::Idle);
         } else if (sees && dist <= t.attackRange && facing && s_.cooldown <= 0 && type_->clip(Role::Attack)) {
             s_.melee = -1;
             setMode(Mode::Attack);
@@ -761,10 +918,23 @@ void Enemies::tick(const collision::CollisionMesh& col, const Target& lara, cons
         if (!g.fired && g.enabled && flatDist(g.pos, lara.pos) <= g.range && std::abs(g.pos.z - lara.pos.z) <= 2000.0f)
             spawn(g);
     shots.clear();
-    for (auto& e : enemies_) {
+    // Patrol claims (0x633F10 / 0x633F60 reserve a planner node): the point each patrolling enemy walks to or idles at,
+    // kept current within the tick so two mode-3 patrollers never pick the same one.
+    const auto claim = [](const Enemy& e) {
+        const auto& s = e.state();
+        const bool on = e.alive() && (s.mode == Mode::Patrol || s.mode == Mode::Idle) && s.patrolIndex >= 0 && s.path >= 0 &&
+                        size_t(s.path) < e.patrolPaths.size() && size_t(s.patrolIndex) < e.patrolPaths[size_t(s.path)].size();
+        return on ? e.patrolPaths[size_t(s.path)][size_t(s.patrolIndex)] : vec3(std::nanf(""));
+    };
+    claims_.clear();
+    for (const auto& e : enemies_) claims_.push_back(claim(*e));
+    for (size_t k = 0; k < enemies_.size(); ++k) {
+        auto& e = enemies_[k];
         if (const auto g = guards_.find(e->uid()); g != guards_.end() && e->zones.size() != g->second.size()) resolveZones(*e);
         e->coverNodes = worldNodes_;
+        e->claimed = claims_;
         e->tick(col, lara, hurt, dt, &shots);
+        claims_[k] = claim(*e);
     }
     // [I] EnemyFireTeam (0x62E590) links soldiers; ours: a soldier that spots Lara alerts the idle soldiers within
     // kSquadRadius of it. Barks (the ship units' vo\enemy\merc lines, category = the file names' third token) on
@@ -782,12 +952,13 @@ void Enemies::tick(const collision::CollisionMesh& col, const Target& lara, cons
     for (const auto& e : enemies_) {
         if (!e->type().ranged()) continue;
         const Mode was = e->previous().mode, now = e->state().mode;
-        if (now == Mode::Alert && (was == Mode::Idle || was == Mode::Return)) {
+        const auto calm = [](Mode m) { return m == Mode::Idle || m == Mode::Return || m == Mode::Patrol || m == Mode::Search; };
+        if (now == Mode::Alert && calm(was)) {
             if (!e->state().loop) bark(*e, "EAR"); // the spotter (its bark clip)
             spotters.push_back(e.get());
         } else if (now == Mode::Cover && was != Mode::Cover) {
             bark(*e, "CBR");
-        } else if (now == Mode::Idle && was == Mode::Chase) {
+        } else if ((now == Mode::Idle || now == Mode::Search) && was == Mode::Chase) {
             bark(*e, "SWP");
         } else if (now == Mode::Dead && was != Mode::Dead) {
             for (const auto& o : enemies_)
@@ -808,6 +979,14 @@ void Enemies::guard(int32_t uid, uint32_t record, uint32_t node, float r1, float
     if (g.size() < 6 && std::find(g.begin(), g.end(), z) == g.end()) g.push_back(z);
     for (auto& e : enemies_)
         if (e->uid() == uid) resolveZones(*e);
+}
+
+// 0x63AC40: n < 1 the intro's own path, 1..count an alternative, else none (the point list is cleared first).
+bool Enemies::selectPatrol(int32_t uid, int path) {
+    bool found = false;
+    for (auto& e : enemies_)
+        if (e->uid() == uid) e->setPatrol(std::max(path, 0)), found = true;
+    return found;
 }
 
 void Enemies::resolveZones(Enemy& e) const {

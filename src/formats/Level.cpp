@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -153,6 +154,46 @@ Unit parseUnit(const cdc::Drm& d) {
     // {count @+0x1C, Intro* @+0x20}, 0x90 bytes each (searched by FUN_005B3860).
     const auto up = level.ptr(0x74, "Level.unitData");
     const View ud(d, up.section);
+    // Enemy intro data (LEVELS.md "Enemy intro data"): its +0x34 planner record is named by pointer; the records
+    // array is unit data +0x11C (0x60 bytes each).
+    std::optional<cdc::Pointer> records;
+    if (const auto it = ud.ptrs.find(up.offset + 0x11C); it != ud.ptrs.end()) records = it->second;
+    std::map<uint32_t, View> views; // intro data sections (most intros share one)
+    const auto view = [&](uint32_t s) -> const View& { return views.try_emplace(s, d, s).first->second; };
+    const auto patrol = [&](Intro& in) {
+        const View& dv = view(in.data->section);
+        const uint32_t o = in.data->offset;
+        if (dv.at<uint32_t>(o) != 13) return; // 13: enemy (0x63C7A0)
+        const auto rec = dv.ptrs.find(o + 0x34);
+        if (rec == dv.ptrs.end() || !records || rec->second.section != records->section || rec->second.offset < records->offset ||
+            (rec->second.offset - records->offset) % 0x60)
+            return;
+        in.patrolRecord = int32_t((rec->second.offset - records->offset) / 0x60);
+        in.patrolMode = dv.at<uint32_t>(o + 0x88);
+        const auto path = [&](cdc::Pointer p) { // 0x62F520: {?, ?, byte speed, ?, u32 count, -> u32 nodes}, at most 16
+            const View& pv = view(p.section);
+            Intro::PatrolPath r;
+            r.speed = pv.at<uint8_t>(p.offset + 2);
+            const auto list = pv.ptrs.find(p.offset + 8);
+            if (list == pv.ptrs.end()) return r;
+            const View& lv = view(list->second.section);
+            for (uint32_t k = 0, n = std::min(pv.at<uint32_t>(p.offset + 4), 16u); k < n; ++k)
+                r.nodes.push_back(lv.at<uint32_t>(list->second.offset + 4 * k));
+            return r;
+        };
+        if (const auto p = dv.ptrs.find(o + 0x38); p != dv.ptrs.end()) {
+            in.patrolPaths.push_back(path(p->second));
+        } else if (dv.at<uint32_t>(o + 0x6C) & 0x80000000u) { // 0x62F2C0: the record's nodes in order, at most 16
+            const View& rv = view(records->section);
+            auto& r = in.patrolPaths.emplace_back();
+            for (uint32_t k = 0, n = std::min(rv.at<uint32_t>(rec->second.offset + 0x4C), 16u); k < n; ++k) r.nodes.push_back(k);
+        } else {
+            in.patrolPaths.emplace_back();
+        }
+        for (uint32_t k = 1, n = dv.at<uint8_t>(o + 0x3C); k <= n; ++k)
+            if (const auto p = dv.ptrs.find(o + 0x3C + 4 * k); p != dv.ptrs.end()) in.patrolPaths.push_back(path(p->second));
+            else in.patrolPaths.emplace_back();
+    };
     for (const auto [countOff, listOff] : {std::pair{0x0Cu, 0x10u}, std::pair{0x1Cu, 0x20u}}) {
         const auto n = ud.at<uint32_t>(up.offset + countOff);
         if (n == 0) continue;
@@ -178,6 +219,7 @@ Unit parseUnit(const cdc::Drm& d) {
                 in.splineFrom = il.at<int16_t>(b + 0x6C);
                 in.splineTo = il.at<int16_t>(b + 0x6E);
             }
+            if (in.data) patrol(in);
             u.intros.push_back(in);
         }
     }

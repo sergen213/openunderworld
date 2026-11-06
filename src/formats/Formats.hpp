@@ -114,6 +114,14 @@ struct Intro {
     uint32_t splineMode = 0;
     int16_t splineFrom = 0, splineTo = 0;
     bool scaled() const { return flags[1] & 0x10; }
+    // Enemy intro data (data +0x00 == 13; tru.exe 0x63C7A0 -> 0x63AC40 -> 0x62F520 / 0x62F2C0, LEVELS.md "Enemy
+    // intro data"): +0x34 -> planner record (index into Unit::plannerNodes, -1 none); paths of node indices into it:
+    // [0] the +0x38 path {byte +2 speed, u32 +4 count, +8 -> u32 nodes} or, with +0x6C bit 31, every node of the
+    // record; [n] the +0x3C byte count of alternatives at +0x40 + 4 (n - 1) (enemybase 22 n). +0x88 order mode.
+    struct PatrolPath { std::vector<uint32_t> nodes; uint8_t speed = 0; };
+    int32_t patrolRecord = -1;
+    std::vector<PatrolPath> patrolPaths;
+    uint32_t patrolMode = 0; // 0 loop, 1 once, 2 ping-pong, 3 random free node, 4 random unvisited (0x637870)
 };
 inline constexpr uint16_t kMarkerObjectId = 0xFFFA;
 
