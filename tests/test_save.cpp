@@ -482,6 +482,31 @@ TEST(StreamReal, CliffhallBHubhallPair) {
     }
 }
 
+// The light tru.exe lights the l3_main_bedroom start with at (3547, 6975, -1751) (its frame; ours = tru.exe + (-9623,
+// -331, 2978)) is not an object's: it is l3_chamberrockhall's light 2, a portal neighbour's, with its spot light 5 (Wine,
+// openunderworld-work/tlp/bedroom_dump3.txt: SceneLights of that unit's cell 2). The world places both where tru.exe
+// has them; ou-game merges every loaded unit's lights. [U] tru.exe also has bedroom lights 8, 13, 14, 15, 17 off there
+// (SceneLight +0x64; 0x5CEC60 creates every light disabled, what enables the others is not found); ours has them on.
+TEST(StreamReal, BedroomNeighbourLights) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    const game::LoadedUnit* hall = nullptr;
+    for (const auto& u : w.units())
+        if (u.data.name == "l3_chamberrockhall") hall = &u;
+    ASSERT_TRUE(hall);
+    const auto lights = formats::parseUnit(*hall->data.drm).environment.lights;
+    ASSERT_GT(lights.size(), 5u);
+    const vec3 point = vec3(lights[2].position[0], lights[2].position[1], lights[2].position[2]) + hall->offset;
+    const vec3 spot = vec3(lights[5].position[0], lights[5].position[1], lights[5].position[2]) + hall->offset;
+    EXPECT_LT(glm::distance(point, vec3(-6076, 6644, 1227)), 3.0f);
+    EXPECT_NEAR(lights[2].radius, 2397, 1);
+    EXPECT_LT(glm::distance(spot, vec3(-6253, 6580, 1374)), 3.0f);
+    EXPECT_EQ(lights[5].type, 1);
+    EXPECT_TRUE(w.lightEnabled("l3_chamberrockhall", 2));
+    EXPECT_TRUE(w.lightEnabled("l3_chamberrockhall", 5));
+}
+
 // Units loaded by the background streamer are the ones a synchronous load gives: same units, offsets and collision.
 TEST(StreamReal, AsyncLoadsMatchSync) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

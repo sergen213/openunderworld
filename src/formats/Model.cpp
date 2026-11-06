@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <tuple>
 #include <unordered_map>
 
 namespace ou::formats {
@@ -218,6 +219,7 @@ struct Ctx {
     std::unordered_map<uint32_t, const cdc::Section*> materials;
     std::vector<std::string>& warnings;
     std::string origin;
+    std::span<const scene::Light> lights; // groups terrain leaves (decodeTerrain)
 
     // Texture + pass state of material `index` of a model/terrain material list.
     scene::SubMesh material(const std::vector<uint32_t>& matIds, uint32_t index) {
@@ -271,6 +273,7 @@ void appendIndices(scene::MeshData& m, const Reader& r, size_t indexBase, uint32
     if (!b.empty() && b.back().textureId == sm.textureId && b.back().blend == sm.blend &&
         b.back().alphaRef == sm.alphaRef && b.back().doubleSided == sm.doubleSided && b.back().materialId == sm.materialId &&
         b.back().drawGroup == sm.drawGroup && b.back().castsShadow == sm.castsShadow && b.back().shadowOnly == sm.shadowOnly &&
+        b.back().lightGroup == sm.lightGroup &&
         std::equal(sm.instanceTextures, sm.instanceTextures + 4, b.back().instanceTextures) &&
         b.back().firstIndex + b.back().indexCount == sm.firstIndex)
         b.back().indexCount += count;
@@ -365,18 +368,36 @@ void decodeTerrain(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& 
         if (r.at<uint8_t>(G + 0x0C) & 2) groups.back().material.shadowOnly = true;   // not drawn (0x511810)
         if (groups.back().vb >= vbCount) throw FormatError("terrain group vertex buffer out of range");
     }
-    // Collect chunks per (vertex buffer, group).
-    std::map<std::pair<uint32_t, uint32_t>, std::vector<std::pair<uint32_t, uint32_t>>> chunks;
+    // Node tree (header +0x20 offset, +0x24 count), 0x20 bytes {centre xyz, ?, half extents xyz, u16 subtree size,
+    // u8 children, u8 drawn}; a drawn node's chunk list is header +0x44 [node]. tru.exe draws per leaf with the lights
+    // whose volume reaches its box (0x56ABF0 / 0x55DC20 masks over the cell's light list, 0x511810; Wine-checked at
+    // the l3_main_bedroom start). Leaves reached by the same unit lights share a light group (scene::MeshData::lightBoxes).
+    const uint32_t treeOff = r.u32(H + 0x20);
+    std::map<std::vector<bool>, uint16_t> setGroup;
+    // Chunks per (vertex buffer, light group, material group), each with its leaf box.
+    std::map<std::tuple<uint32_t, uint16_t, uint32_t>, std::vector<std::pair<uint32_t, uint32_t>>> chunks;
+    std::map<std::pair<uint32_t, uint16_t>, std::vector<std::array<float, 6>>> vbBoxes; // (vb, light group) -> leaves
     for (uint32_t n = 0; n < nodeCount; ++n) {
         const uint32_t arr = r.u32(H + geomOff + 4 * size_t(n));
         if (!arr) continue;
+        const size_t N = H + treeOff + 0x20 * size_t(n);
+        std::array<float, 6> box;
+        for (int k = 0; k < 3; ++k) {
+            const float c = r.at<float>(N + 4 * size_t(k)), e = r.at<float>(N + 0x10 + 4 * size_t(k));
+            box[size_t(k)] = c - e, box[size_t(k) + 3] = c + e;
+        }
+        std::vector<bool> set(c.lights.size());
+        for (size_t i = 0; i < set.size(); ++i) set[i] = scene::sphereTouchesBox(c.lights[i].position, c.lights[i].radius, box);
+        const uint16_t lg = setGroup.try_emplace(set, uint16_t(setGroup.size())).first->second;
         const uint16_t count = r.u16(H + arr);
         for (uint16_t k = 0; k < count; ++k) {
             const size_t C = H + arr + 4 + 8 * size_t(k);
             const uint16_t group = r.u16(C), num = r.u16(C + 2);
             const uint32_t first = r.u32(C + 4);
             if (group >= groupCount || first + uint64_t(num) > numIndices) throw FormatError("terrain chunk out of range");
-            chunks[{groups[group].vb, group}].push_back({first, num});
+            chunks[{groups[group].vb, lg, group}].push_back({first, num});
+            auto& boxes = vbBoxes[{groups[group].vb, lg}];
+            if (boxes.empty() || boxes.back() != box) boxes.push_back(box);
         }
     }
     for (uint32_t v = 0; v < vbCount; ++v) {
@@ -388,10 +409,16 @@ void decodeTerrain(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& 
         m.origin = where;
         m.vertices = readVertices(r, H + dataOff, numVerts, decls[decl], c.warnings, where);
         if (m.vertices.empty()) continue;
-        for (const auto& [key, list] : chunks)
-            if (key.first == v)
-                for (const auto& [first, num] : list)
-                    appendIndices(m, r, H + idxOff, first, num, numVerts, groups[key.second].material);
+        std::map<uint16_t, uint16_t> local; // light group -> m.lightBoxes index
+        for (const auto& [key, list] : chunks) {
+            const auto [vb, lg, group] = key;
+            if (vb != v) continue;
+            auto sm = groups[group].material;
+            const auto [it, fresh] = local.try_emplace(lg, uint16_t(m.lightBoxes.size()));
+            if (fresh) m.lightBoxes.push_back(vbBoxes[{vb, lg}]);
+            sm.lightGroup = it->second;
+            for (const auto& [first, num] : list) appendIndices(m, r, H + idxOff, first, num, numVerts, sm);
+        }
         if (!m.indices.empty()) out.push_back(std::move(m));
     }
 }
@@ -486,8 +513,9 @@ scene::Material decodeMaterial(const cdc::Section& material, MaterialShaderLibs*
 }
 
 std::map<uint32_t, std::vector<scene::MeshData>> decodeRenderResources(const cdc::Drm& drm, std::vector<std::string>& warnings,
-                                                                       std::string_view origin) {
-    Ctx c{{}, warnings, std::string(origin)};
+                                                                       std::string_view origin,
+                                                                       std::span<const scene::Light> lights) {
+    Ctx c{{}, warnings, std::string(origin), lights};
     for (const auto& s : drm.sections)
         if (s.type == cdc::SectionType::Material) c.materials[s.id] = &s;
     std::map<uint32_t, std::vector<scene::MeshData>> out;

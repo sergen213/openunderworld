@@ -18,6 +18,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 using namespace ou;
@@ -489,6 +490,41 @@ TEST(OriginalShading, BedroomLightSetMatchesOriginal) {
     EXPECT_EQ(std::min(slot(3), slot(4)), std::min(a, b)); // the order of these two follows tru.exe heap addresses
     EXPECT_EQ(std::max(slot(3), slot(4)), std::max(a, b));
     EXPECT_EQ(slot(5), 0xFF);
+}
+
+// Terrain lights per node-tree leaf (tru.exe 0x56ABF0 / 0x55DC20 masks, drawn by 0x511810). Wine, l3_main_bedroom
+// start (openunderworld-work/tlp/dump3.py, 2026-11-06): each leaf took the cell lights whose sphere reaches its box; on top of that tru.exe
+// left out lights not seen this frame (L1, L11: SceneLight +0x2CA = 0), which we keep (they only free slots).
+TEST(OriginalShading, TerrainLeafLightsMatchOriginal) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto bed = formats::loadLevelScene(bf, "pc-w\\l3_main_bedroom.drm");
+    ASSERT_EQ(bed.environment.lights.size(), 18u);
+    auto lightsAt = [&](glm::vec3 centre) {
+        for (const auto& m : bed.meshes)
+            for (const auto& boxes : m.lightBoxes)
+                for (const auto& b : boxes)
+                    if (glm::distance(centre, glm::vec3(b[0] + b[3], b[1] + b[4], b[2] + b[5]) * 0.5f) < 1) {
+                        const auto s = render::original::lightSet(bed.environment, boxes, glm::make_mat4(m.transform));
+                        std::set<int> out;
+                        for (int k = 0; k < 6; ++k)
+                            if (const int i = int(s.packed[k >> 2] >> (8 * (k & 3)) & 0xFF); i != 0xFF) out.insert(i);
+                        return out;
+                    }
+        ADD_FAILURE() << "no terrain leaf at " << centre.x << " " << centre.y << " " << centre.z;
+        return std::set<int>{};
+    };
+    // Corridor (cell 2): the cell-1 torch spot L7 reaches the corridor's terrain sphere but none of its leaves.
+    EXPECT_EQ(lightsAt({-4237, 8441, 766}), (std::set<int>{2, 4, 6, 11}));
+    EXPECT_EQ(lightsAt({-4259, 2812, 933}), (std::set<int>{2, 4, 5}));
+    EXPECT_EQ(lightsAt({-4307, 5624, 942}), (std::set<int>{2, 4, 6}));
+    EXPECT_EQ(lightsAt({-5409, 169, 1087}), (std::set<int>{0, 1, 2, 5, 7}));
+    // Without lights each vertex buffer keeps one group holding all its leaves.
+    std::vector<std::string> warnings;
+    const auto drm = cdc::parseDrm(*bf.read("pc-w\\l3_main_bedroom.drm"));
+    for (const auto& [id, meshes] : formats::decodeRenderResources(drm, warnings))
+        for (const auto& m : meshes) EXPECT_LE(m.lightBoxes.size(), 1u) << m.origin;
 }
 
 // Shadow cascade culling: only spheres wholly outside the orthographic x / y clip range are skipped.

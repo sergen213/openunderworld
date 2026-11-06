@@ -325,6 +325,9 @@ struct GpuMesh {
     glm::mat4 model;
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
+    // Terrain light groups (scene::MeshData::lightBoxes) and the object slot of the first one (objectSlot).
+    std::vector<std::vector<std::array<float, 6>>> lightBoxes;
+    uint32_t lightSlot = 0;
     bool water = false;                 // *watersurface* mesh (render/Water.hpp): Enhanced water draws it separately
     bool irradiance = false;            // a submesh's program reads IrradianceState (original::IrradianceSlots)
     std::vector<uint8_t> reflective;    // per submesh: a planar-reflection material (render::reflectsWater candidates)
@@ -1071,6 +1074,7 @@ private:
             else g.submeshes.push_back(s);
         }
         if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
+        g.lightBoxes = m.lightBoxes;
         g.model = glm::make_mat4(m.transform);
         const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
         g.center = glm::vec3(sphere), g.radius = sphere.w;
@@ -1264,8 +1268,13 @@ private:
 
     // Object block of an original draw: reflecting submeshes take the second half (beginOriginals) while a reflection
     // was drawn this frame; their reflection samplers read Targets::reflection.
+    // Reflecting draws keep the mesh's light set [I: no reflecting terrain with point lights seen].
     uint32_t objectSlot(const GpuMesh& m, const DrawRef& d) const {
-        return reflecting_ && m.reflection[d.sub] ? uint32_t(res_->meshes.size()) + d.mesh : d.mesh;
+        return reflecting_ && m.reflection[d.sub] ? uint32_t(res_->meshes.size()) + d.mesh : litSlot(m, d);
+    }
+    uint32_t litSlot(const GpuMesh& m, const DrawRef& d) const { // the mesh's block, or its terrain light group's
+        const uint16_t g = m.submeshes[d.sub].lightGroup;
+        return g < m.lightBoxes.size() && m.lightSlot + g < objectSlots_ ? m.lightSlot + g : d.mesh;
     }
     std::array<GLuint, 16> originalTextures(const GpuMesh& m, const DrawRef& d) const {
         auto tex = m.samplers[d.sub];
@@ -1327,7 +1336,7 @@ private:
             if (blend == scene::Blend::Alpha) glDepthMask(drawDepthWrite(s, op) ? GL_TRUE : GL_FALSE);
             if (options.cullBackFaces && !s.doubleSided) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
             if (p >= 0) {
-                glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(d.mesh) * objectStride(), sizeof(sm3::ObjectBlock));
+                glBindBufferRange(GL_UNIFORM_BUFFER, 2, r.objectUbo.get(), GLintptr(litSlot(m, d)) * objectStride(), sizeof(sm3::ObjectBlock));
                 glBindBufferRange(GL_UNIFORM_BUFFER, 1, r.materialUbo.get(), m.materialOffset[d.sub], sizeof(sm3::MaterialBlock));
                 glBindTextures(0, 16, m.samplers[d.sub].data());
                 glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
@@ -1365,12 +1374,16 @@ private:
         Resources& r = *res_;
         r.materialUbo = {};
         r.objectUbo = {};
+        objectSlots_ = 0;
         if (materialBlocks_.empty()) return;
         r.materialUbo = newBuffer();
         glNamedBufferStorage(r.materialUbo.get(), GLsizeiptr(materialBlocks_.size()), materialBlocks_.data(), 0);
         r.objectUbo = newBuffer();
-        // Second half: the same blocks with the planar reflection's InstanceParams, bound by the reflecting draws.
-        glNamedBufferStorage(r.objectUbo.get(), 2 * GLsizeiptr(r.meshes.size()) * objectStride(), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        // Second half: the same blocks with the planar reflection's InstanceParams, bound by the reflecting draws. Then
+        // one block per terrain light group (its own light set).
+        objectSlots_ = 2 * r.meshes.size();
+        for (auto& g : r.meshes) g.lightSlot = uint32_t(objectSlots_), objectSlots_ += g.lightBoxes.size();
+        glNamedBufferStorage(r.objectUbo.get(), GLsizeiptr(objectSlots_) * objectStride(), nullptr, GL_DYNAMIC_STORAGE_BIT);
         materialBlocks_.clear();
         materialBlocks_.shrink_to_fit();
     }
@@ -1385,13 +1398,19 @@ private:
         glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
         const glm::mat4 vpD3D = original::viewProjD3D(camera, float(vp.width) / float(vp.height));
         const size_t stride = size_t(objectStride()), n = r.meshes.size();
-        objectScratch_.assign(2 * n * stride, 0);
+        objectScratch_.assign(std::max(objectSlots_, 2 * n) * stride, 0);
         for (size_t i = 0; i < n; ++i) {
             auto& block = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * stride]);
             original::fillObject(block, vpD3D, r.meshes[i].model, original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius),
                                  i < opacity_.size() ? opacity_[i] : 1.0f);
             original::fillWaves(block, o.waterVolumes, r.meshes[i].center, r.meshes[i].radius);
             block.irradiance = irradiance_.slot(i);
+            const GpuMesh& g = r.meshes[i];
+            for (size_t k = 0; k < g.lightBoxes.size() && g.lightSlot + k < objectSlots_; ++k) {
+                auto& group = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(g.lightSlot + k) * stride]);
+                group = block;
+                std::memcpy(group.lightSet, original::lightSet(environment_, g.lightBoxes[k], g.model).packed, sizeof group.lightSet);
+            }
             if (!reflection || std::isnan(r.meshes[i].reflectZ)) continue;
             auto& lit = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(n + i) * stride]);
             lit = block;
@@ -1608,6 +1627,7 @@ private:
     uint64_t uploads_ = 0; // upload() calls
     std::vector<uint8_t> materialBlocks_; // during upload()
     std::vector<uint8_t> objectScratch_;
+    size_t objectSlots_ = 0; // objectUbo blocks: 2 x meshes + terrain light groups (finishOriginals)
     std::vector<DrawRef> deferred_; // per frame: back/depth-buffer readers (drawScreenReaders)
     std::span<const UnitClip> unitClips_; // per frame: FrameOptions::unitClips
     std::vector<int> meshClip_;           // per frame and GPU mesh: index into unitClips_, -1 = unclipped

@@ -68,7 +68,7 @@ Header fields used (u32, offsets relative to Header) [O]:
 
 | off | meaning |
 |-----|---------|
-| +0x24 | node count |
+| +0x20, +0x24 | node array offset and count (0x20 bytes each) |
 | +0x28, +0x2C | group array offset and count (0x20 bytes each) |
 | +0x30, +0x34 | VertexDecl array offset and count. Decls are packed back to back, `16 + 8·numAttr` bytes each |
 | +0x3C, +0x40 | vertex-buffer array offset and count (16 bytes each: `{dataOff, ?, vertexCount, declIndex}`) |
@@ -78,9 +78,15 @@ Header fields used (u32, offsets relative to Header) [O]:
 - [O] Group: +0 is the material-list index and +4 is the vertex-buffer index.
 - [O] Chunk list: `{u16 count, u16 ?, count × {u16 group, u16 indexCount, u32 firstIndex}}`.
   A chunk is a triangle list drawn from the group's vertex buffer.
-- [I] The nodes form a spatial tree (each node record has a centre and extents). We read only the count.
-- [U] The first header bytes (two vec4s) and the rest of the node records.
-- `decodeTerrain` emits one `MeshData` per vertex buffer, with one submesh per group texture.
+- [O] Node: `{f32 centre[3], ?, f32 half extents[3], u16 subtree size (this node + descendants), u8 children,
+  u8 drawn}`, depth first (tru.exe 0x5128B0, 0x511810, 0x55D830; l3_main_bedroom node centres = the ones tru.exe drew,
+  read under Wine). Drawn nodes (leaves) have a chunk list. tru.exe lights each leaf with the lights whose volume
+  reaches its box (SHADERS.md "light set per object").
+- [U] The first header bytes (two vec4s) and node +0x0C.
+- `decodeTerrain` emits one `MeshData` per vertex buffer. Its submeshes are per (light group, group texture): leaves
+  reached by the same lights of the unit (`decodeRenderResources(…, lights)`) form one light group, whose leaf boxes
+  are `MeshData::lightBoxes[SubMesh::lightGroup]`; renderers pick a group's lights from its boxes each frame
+  (`original::lightSet`). l1_seatop has 5 636 leaves.
 
 ## VertexDecl and attributes
 

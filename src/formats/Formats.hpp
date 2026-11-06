@@ -51,9 +51,12 @@ std::vector<uint8_t> toRgba8(scene::PixelFormat f, uint32_t width, uint32_t heig
 // skipped with a warning.
 std::vector<scene::MeshData> decodeModels(const cdc::Drm& drm, std::vector<std::string>& warnings,
                                           std::string_view origin = {});
-// Same meshes keyed by render-resource section id (failed/skipped resources map to no meshes).
+// Same meshes keyed by render-resource section id (failed/skipped resources map to no meshes). Terrain submeshes are
+// split by node-tree leaf and the leaves merged by the set of `lights` (the unit's, same frame) reaching them
+// (scene::MeshData::lightBoxes).
 std::map<uint32_t, std::vector<scene::MeshData>> decodeRenderResources(const cdc::Drm& drm, std::vector<std::string>& warnings,
-                                                                       std::string_view origin = {});
+                                                                       std::string_view origin = {},
+                                                                       std::span<const scene::Light> lights = {});
 
 // Texture ids of a material section (type 10), in reference order, with their category.
 struct MaterialTexture { uint32_t textureId, category, slot; };

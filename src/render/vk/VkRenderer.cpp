@@ -336,6 +336,7 @@ struct GpuMesh {
     glm::mat4 model;
     glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;    // world-space bounding-sphere radius (original::lightSet)
+    std::vector<std::vector<std::array<float, 6>>> lightBoxes; // terrain light groups (scene::MeshData::lightBoxes)
     float reflectZ = std::numeric_limits<float>::quiet_NaN(); // original::reflectionPlaneZ (NaN: nothing reflects)
     std::vector<uint8_t> reflective; // per submesh: a planar-reflection material (render::reflectsWater candidates)
     // Ray tracing (empty without RT support): one BLAS geometry per traced submesh (Opaque + Alpha
@@ -982,10 +983,15 @@ public:
             const scene::SubMesh& s = m.submeshes[d.sub];
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, origLayout_, 1, 1, &od.set, 0, nullptr);
             sm3::ObjectBlock ob;
-            // Once per mesh and frame (the lights move: dynamicLights), not per submesh and pass.
+            // Once per mesh (or terrain light group) and frame (the lights move: dynamicLights), not per submesh and pass.
             if (meshLights_.size() < meshes_.size()) meshLights_.resize(meshes_.size());
-            auto& [stamp, lights] = meshLights_[d.mesh];
-            if (stamp != frameCounter_ + 1) stamp = frameCounter_ + 1, lights = original::lightSet(environment_, m.center, m.radius);
+            auto& cache = meshLights_[d.mesh];
+            const size_t group = s.lightGroup < m.lightBoxes.size() ? s.lightGroup + 1u : 0u; // 0: the mesh's sphere
+            if (cache.size() <= group) cache.resize(group + 1);
+            auto& [stamp, lights] = cache[group];
+            if (stamp != frameCounter_ + 1)
+                stamp = frameCounter_ + 1, lights = group ? original::lightSet(environment_, m.lightBoxes[group - 1], m.model)
+                                                          : original::lightSet(environment_, m.center, m.radius);
             original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
             original::fillWaves(ob, options.waterVolumes, m.center, m.radius);
             ob.irradiance = irradiance_.slot(d.mesh);
@@ -4386,6 +4392,7 @@ private:
             else g.submeshes.push_back(s);
         }
         if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
+        g.lightBoxes = m.lightBoxes;
         g.gen = gen;
         g.rtSerial = ++rtSerials_;
         g.model = glm::make_mat4(m.transform);
@@ -4911,7 +4918,8 @@ private:
     std::vector<OrigProgram> origPrograms_;
     std::vector<OrigProgram> origStash_; // the previous upload's programs, during the next upload (destroyOriginalScene)
     int origWarmKey_ = -1; // warmOriginalPipelines' settings since the pipelines were last destroyed
-    std::vector<std::pair<uint64_t, original::LightSet>> meshLights_; // meshes_ index -> (frameCounter_ + 1, light set)
+    // meshes_ index -> [0: mesh, 1 + terrain light group] (frameCounter_ + 1, light set)
+    std::vector<std::vector<std::pair<uint64_t, original::LightSet>>> meshLights_;
     std::vector<std::vector<OrigDraw>> origDraws_; // meshes_ index -> per submesh
     std::vector<std::pair<VkDescriptorSet, uint32_t>> screenSets_; // material sets with back/depth-buffer samplers
     std::vector<std::pair<VkDescriptorSet, uint32_t>> reflectSets_; // material sets with planar reflection samplers

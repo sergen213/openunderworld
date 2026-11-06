@@ -284,20 +284,26 @@ EngineTexture cookieArray(std::span<const uint32_t> ids, std::span<const scene::
     return a;
 }
 
-LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius) {
+namespace {
+// Slots of the lights `reaches` accepts, in env.lights order (see lightSet below).
+template <class Reaches>
+LightSet pickLights(const scene::Environment& env, Reaches reaches) {
     // tru.exe per drawn entity (0x55FB60 -> device vfunc 0x70 = 0x5076A0 -> 0x505530) lists the scene lights touching
     // it in scene order; 0x504CC0 keeps, in that order, up to 3 "special" lights (cookie spots, at most 2, and shadow
     // casters, DTP +0x144C) and 3 plain ones (a 4th+ plain light takes a free special place, else is dropped); 0x5042B0
     // then gives cookie spots slots 0, 1.., the other special lights the next slots, plain lights 3-5 (overflow after
     // the special ones). Read under Wine (OriginalShading.BedroomLightSetMatchesOriginal). Ours: "touching" = the
-    // light's sphere reaches the object's bounding sphere [I: tru.exe queries each light's volume in its cells, and
-    // matches receiver masks, record +0x8C..+0xA3 vs the entity's +0xE4, which we do not decode].
+    // light's sphere reaches the object's bounding sphere, or a terrain group's leaf boxes (terrain takes its lights
+    // per leaf the same way, 0x511810). [I] Not done: receiver masks (record +0x8C..+0xB7 vs the entity's +0xE4 /
+    // cell terrain data +0x08; 0x8300000F and 1 in l3_main_bedroom), spot cones (tested as spheres), and tru.exe's
+    // per-frame light visibility (+0x2CA: lights whose volume is not seen through the portals are left out, which
+    // only frees slots).
     std::array<int, sm3::kLightSlots> taken;
     int nTaken = 0, special = 0, plain = 0, cookies = 0;
     const size_t n = std::min(env.lights.size(), size_t(sm3::kMaxLights));
     for (size_t i = 0; i < n && nTaken < sm3::kLightSlots; ++i) {
         const scene::Light& l = env.lights[i];
-        if (glm::distance(glm::make_vec3(l.position), center) - radius >= l.radius) continue;
+        if (!reaches(l)) continue;
         const bool cookie = l.type == 1 && l.cookie && cookies < 2;
         if (cookie || l.shadow) {
             if (special == 3) continue;
@@ -317,6 +323,32 @@ LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius)
         s.packed[slot >> 2] |= uint32_t(taken[size_t(k)]) << (8 * (slot & 3));
     }
     return s;
+}
+} // namespace
+
+LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius) {
+    return pickLights(env, [&](const scene::Light& l) { return glm::distance(glm::make_vec3(l.position), center) - radius < l.radius; });
+}
+
+LightSet lightSet(const scene::Environment& env, std::span<const std::array<float, 6>> boxes, const glm::mat4& model) {
+    // World boxes: centre moved by `model`, half extents by |rotation-scale| (terrain models are translations).
+    thread_local std::vector<std::array<float, 6>> world;
+    world.clear();
+    std::array<float, 6> all{1e30f, 1e30f, 1e30f, -1e30f, -1e30f, -1e30f};
+    const glm::mat3 a(glm::abs(model[0]), glm::abs(model[1]), glm::abs(model[2]));
+    for (const auto& b : boxes) {
+        const glm::vec3 lo(b[0], b[1], b[2]), hi(b[3], b[4], b[5]);
+        const glm::vec3 c(model * glm::vec4((lo + hi) * 0.5f, 1.0f)), e = a * ((hi - lo) * 0.5f);
+        std::array<float, 6>& w = world.emplace_back();
+        for (int k = 0; k < 3; ++k) {
+            w[size_t(k)] = c[k] - e[k], w[size_t(k) + 3] = c[k] + e[k];
+            all[size_t(k)] = std::min(all[size_t(k)], w[size_t(k)]), all[size_t(k) + 3] = std::max(all[size_t(k) + 3], w[size_t(k) + 3]);
+        }
+    }
+    return pickLights(env, [&](const scene::Light& l) {
+        if (!scene::sphereTouchesBox(l.position, l.radius, all)) return false;
+        return std::ranges::any_of(world, [&](const auto& w) { return scene::sphereTouchesBox(l.position, l.radius, w); });
+    });
 }
 
 glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat4& model) {

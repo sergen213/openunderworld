@@ -212,7 +212,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
         for (const auto& s : drm.sections)
             if (s.type == cdc::SectionType::DtpData && imfModel.contains(s.id) && s.data.size() >= 8)
                 std::memcpy(&imfModel[s.id], s.data.data() + 4, 4);
-        for (auto& [id, meshes] : decodeRenderResources(drm, sc.warnings, drms[i].first))
+        for (auto& [id, meshes] : decodeRenderResources(drm, sc.warnings, drms[i].first, u.environment.lights))
             levelModels.emplace(id, std::move(meshes));
         warnUnusedSections(sc, drms[i].first, drm);
     }

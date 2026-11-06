@@ -118,7 +118,13 @@ Survey (`RealData.UnitLightsAllUnits`, 2026-10-18) [O]: 82 units, 218 point + 34
 casters), 23 units with a sun (11 with a cookie), at most 28 lights per unit (l1_ship_sinking_hall). 347 of 586 records
 use a non-linear falloff curve. l3_main_bedroom: 18 lights, its torches are flickering orange point lights.
 Not decoded: lights owned by object intros (torch objects) or cinematic light rigs (`co_light_rig*`, CINE light
-channels).
+channels). The light tru.exe has at the l3_main_bedroom start that the unit lacks, (3547, 6975, −1751), is not an
+object's: it is portal neighbour l3_chamberrockhall's light 2 (Wine, SceneLight +0x04/+0x1F0 → that unit's cell 2;
+`StreamReal.BedroomNeighbourLights`), which ou-game has as it merges every loaded unit's lights.
+Runtime (Wine, l3_main_bedroom start) [O]: SceneLight +0x64 enabled (0x5CEC60 creates every light disabled, vfunc
+0x28; there lights 8, 13, 14, 15, 17 stayed off, [U] what enables the others — ours has them on), +0x154 / +0x158
+light / shadow masks (record bytes above), +0x178 cells reached (1 several, 2 home only), +0x1F0 home cell, +0x2CA
+seen this frame.
 
 ### Cell group data (Level+0x90)
 

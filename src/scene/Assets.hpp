@@ -72,6 +72,8 @@ struct SubMesh {
     // depth range ([0.98, 1], the rest in [0, 0.98]; PCRenderTerrain +0xC8 -> 0x51D0A0), so it lies behind all other
     // geometry wherever it is placed. Renderers draw exterior submeshes first and then clear the depth.
     bool exterior = false;
+    // Terrain light group (MeshData::lightBoxes index; 0xFFFF = none, lights picked by the mesh's bounding sphere).
+    uint16_t lightGroup = 0xFFFF;
 };
 
 // One D3D9 SM3 program of a TRU ShaderLib (formats/Shader.hpp parses it).
@@ -224,10 +226,24 @@ struct MeshData {
     // bend_* plants: per-vertex bend basis (cdc TEXCOORD3-5, FLOAT4 each), empty otherwise. The bend VS moves a vertex by
     // t3 s.x + t4 s.x² + t5 s.y + (t3.w, t4.w, t5.w) s.y² with s = bendA * v.xy + bendB of its bone (game/Bend.hpp).
     std::vector<std::array<float, 12>> bend;
+    // Render terrain (tru.exe 0x511810): a draw takes the lights whose sphere reaches the bounding box of the node tree
+    // leaf it draws, not of the whole terrain. SubMesh::lightGroup indexes this: mesh-space leaf boxes {min xyz, max xyz}
+    // of the submeshes in that group (leaves sharing their unit's light set; formats::decodeRenderResources).
+    std::vector<std::vector<std::array<float, 6>>> lightBoxes;
     // Content identity across uploads (assignKeys): meshes with one key hold the same vertices, indices and submeshes
     // (any transform), so backends keep one GPU copy while uploads list it (Renderer::upload). 0 = none.
     uint64_t key = 0;
 };
+
+// A light's sphere reaches a box {min xyz, max xyz} (terrain leaf light test, MeshData::lightBoxes).
+inline bool sphereTouchesBox(const float c[3], float r, const std::array<float, 6>& b) {
+    float d2 = 0;
+    for (int k = 0; k < 3; ++k) {
+        const float e = c[k] < b[size_t(k)] ? b[size_t(k)] - c[k] : c[k] > b[size_t(k) + 3] ? c[k] - b[size_t(k) + 3] : 0.0f;
+        d2 += e * e;
+    }
+    return d2 < r * r;
+}
 
 // Drops m's primgroups of the draw groups whose bit (group - 1) is set in `hidden` (SubMesh::drawGroup). Returns false
 // when that left nothing of a mesh that had primgroups: drop the mesh then, as renderers draw a mesh without submeshes
