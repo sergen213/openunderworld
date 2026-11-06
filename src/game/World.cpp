@@ -681,7 +681,6 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
         const vec3 look = glm::normalize(target - orbit_.desired);
         cam_.yaw = std::atan2(look.y, look.x), cam_.pitch = std::asin(std::clamp(look.z, -1.0f, 1.0f));
     }
-    cam_.yaw += a.look.x * dt;
     // Forces (0x608B60, x weight 0x5FFA90: 0 until 5 s after the last look input, 1 from 7 s: settings +0xC4 / +0xC8;
     // the clock +0x1E4 caps at 1000), only while the camera is not being turned. Strength = product of the set's
     // forces (0x5F2180); the angle moves toward the set's target by at most speed x strength x weight x dt.
@@ -784,7 +783,10 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     // [I] riding without looking: swing behind the bike, faster the faster it goes
     if (bike && bike->phase == BikePhase::Ride && a.look.x == 0 && bike->speed > 0)
         cam_.yaw = lerpAngle(cam_.yaw, bike->yaw, std::min(1.0f, dt * 3.0f * std::min(1.0f, bike->speed / 1500.0f)));
-    cam_.pitch = std::clamp(cam_.pitch + a.look.y * dt, lim.pitchLo, lim.pitchHi);
+    // Look input does not turn the proposed point (0x600200 skips it when 0x5FFB00 flags the frame as turned): the
+    // camera is turned after it has followed (below).
+    const bool looking = a.look.x != 0 || a.look.y != 0;
+    cam_.pitch = std::clamp(cam_.pitch, lim.pitchLo, lim.pitchHi);
     // Yaw limit (0x608700, command 7 via 0x609C00 / 0x607A30: (0 + 90) deg in her frame = behind her, half-range 90):
     // the camera stays on her back side, its look within yawRange of her heading.
     if (lim.yawRange < 3.14f) cam_.yaw = s.yaw + std::clamp(std::remainder(cam_.yaw - s.yaw, 6.2831853f), -lim.yawRange, lim.yawRange);
@@ -810,16 +812,19 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     // nearer than 97.98 (+0x14). A camera record with +0x6D lets it through within its radius of the record's point
     // (0x606070).
     const auto clear = [&](vec3 to) { return !col_.sweepSphere(target, kRadius, to - target, kMask); };
+    const auto plainPullIn = [&](vec3 p) { // 0x5F0810
+        const float len = glm::length(p - target);
+        if (len <= 10.0f) return p;
+        const vec3 d = (p - target) / len;
+        const auto h = col_.sweepSphere(target + d * 10.0f, kRadius, d * (len - 10.0f), kMask);
+        return h ? target + d * std::clamp(10.0f + (len - 10.0f) * h->t, std::min(97.98f, len), len) : p;
+    };
+    const auto insideRecord = [&] { return orbit_.hintMarkup >= 0 && rec->inside && glm::distance(cam_.position, orbit_.hint) < rec->radius; };
     vec3 out = proposed;
-    if (orbit_.hintMarkup >= 0 && rec->inside && glm::distance(cam_.position, orbit_.hint) < rec->radius) {
+    if (insideRecord()) {
         // inside the record's radius: no collision
     } else if (mode.pullIn) {
-        const float len = glm::length(proposed - target);
-        if (len > 10.0f) {
-            const vec3 d = (proposed - target) / len;
-            if (const auto h = col_.sweepSphere(target + d * 10.0f, kRadius, d * (len - 10.0f), kMask))
-                out = target + d * std::clamp(10.0f + (len - 10.0f) * h->t, std::min(97.98f, len), len);
-        }
+        out = plainPullIn(proposed);
     } else if (!clear(proposed)) {
         vec3 straight = proposed;
         if (const auto h = col_.sweepSphere(target, kRadius, proposed - target, kMask)) straight = target + (proposed - target) * h->t;
@@ -874,17 +879,32 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
         const float f = std::max(300.0f, h ? h->t : far);
         if (f < orbit_.dist) orbit_.dist = f, out = target + d * f, orbit_.speed = 0;
     }
-    // The camera follows that point at 3793.1 units/s plus how far the proposed point moved from the last one (0x600710);
-    // looking around moves it there at once [I].
+    // The camera follows that point at 3793.1 units/s plus how far the proposed point moved from the last one (0x600710).
     const float jump = glm::distance(proposed, orbit_.desired);
     orbit_.desired = out;
     const vec3 toOut = out - cam_.position;
-    const float gapPos = glm::length(toOut);
-    if (a.look.x != 0 || a.look.y != 0 || gapPos <= 0.01f) cam_.position = out;
-    else cam_.position += toOut * std::min(1.0f, (3793.1f * dt + jump) / gapPos);
+    const float gapPos = glm::length(toOut), step = 3793.1f * dt + jump;
+    if (gapPos <= 0.01f) cam_.position = out;
+    else cam_.position += toOut * std::min(1.0f, step / gapPos);
     if (glm::length(target - out) > 1e-3f) { // the angles of where it is headed
         const vec3 look = glm::normalize(target - out);
         cam_.yaw = std::atan2(look.y, look.x), cam_.pitch = std::asin(std::clamp(look.z, -1.0f, 1.0f));
+    }
+    // Turned (0x600710 with the 0x5FFB00 flag): once it got there, the look input turns that point about the pivot at
+    // its distance (pitch and yaw limits 0x608700), only the plain pull-in 0x5F0810 (no swing) brings it in, and the
+    // camera is put there at once. tru.exe: the camera turns freely round Lara on l2_cliffclimb's yacht deck, pulled in
+    // by the cabin to ~960-1110 while turning.
+    if (looking && gapPos < step + 0.001f) {
+        cam_.yaw += a.look.x * dt;
+        cam_.pitch = std::clamp(cam_.pitch + a.look.y * dt, lim.pitchLo, lim.pitchHi);
+        if (lim.yawRange < 3.14f) cam_.yaw = s.yaw + std::clamp(std::remainder(cam_.yaw - s.yaw, 6.2831853f), -lim.yawRange, lim.yawRange);
+        const vec3 d(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw), std::sin(cam_.pitch));
+        vec3 p = target - d * orbit_.dist;
+        if (!insideRecord()) p = plainPullIn(p);
+        cam_.position = orbit_.desired = p;
+        const float turned = glm::distance(p, target);
+        if (turned < orbit_.dist - 0.1f) orbit_.speed = 0;
+        orbit_.dist = turned;
     }
     orbit_.yaw = cam_.yaw, orbit_.pitch = cam_.pitch;
 }

@@ -704,6 +704,44 @@ TEST(StreamReal, YachtDecksAboveSea) {
     EXPECT_GT(heights.size(), 3u) << "she rides the waves";
 }
 
+// User report (v0.31.0): the follow camera stopped against objects. On l2_cliffclimb's yacht deck (the user's
+// chapter-2 save spot) a held look turn froze: ms_uo_yacht (oflags 0x900004FE, bit 2: the camera collides with it)
+// pulled the turned point in and the collider's swing (0x5EC8F0) swung it straight back each tick. tru.exe turns it
+// with the plain pull-in only (0x600710 with 0x5FFB00's look flag). [O] Wine, same spot, mouse turn: full circles,
+// ~845..1130 from the pivot across the cabin side (azimuth ~140..-100 deg), 1264.2 elsewhere.
+TEST(StreamReal, YachtCameraTurnsRoundTheCabin) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w([&](const std::string& n) { return game::loadUnitData(bf, n); }, "l3_main_bedroom", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    w.startChapter(2);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    auto s = w.player().state();
+    s.pos = glm::vec3(-34612.0f, -14793.3f, 83.2f), s.yaw = glm::radians(44.6f);
+    w.restore(s, w.camera().yaw, w.camera().pitch);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    game::Actions look;
+    look.look = {1.0f, 0.0f};
+    std::set<int> bins;
+    float lo = 1e9f, hi = 0;
+    float turned = 0, last = w.camera().yaw;
+    for (int i = 0; i < 420; ++i) {
+        w.tick(look);
+        const auto& c = w.camera();
+        const glm::vec2 off = glm::vec2(c.position) - glm::vec2(w.player().state().pos);
+        bins.insert(int(std::floor((std::atan2(off.y, off.x) + 3.1415927f) / 0.34906585f)));
+        const float d = glm::distance(c.position, c.target);
+        lo = std::min(lo, d), hi = std::max(hi, d);
+        turned += std::remainder(c.yaw - last, 6.2831853f), last = c.yaw;
+    }
+    EXPECT_GT(turned, 6.2831853f) << "a full turn";
+    EXPECT_GE(bins.size(), 18u) << "every 20 deg sector";
+    EXPECT_NEAR(hi, 1264.22f, 1.0f) << "full distance off the cabin";
+    EXPECT_GT(lo, 800.0f);
+    EXPECT_LT(lo, 1150.0f) << "the cabin still pulls it in";
+}
+
 // User report (v0.11.0): the ch2 yacht still sat in the sea. The sim's waves were right, but (1) the sea program got
 // no waves: l2_cliffclimb's sea is part of one terrain mesh (radius ~176000) centred outside the sea box, and
 // fillWaves picked volumes by the mesh centre, so the drawn sea stayed at its static 107.8, above the 71..87 deck; (2)

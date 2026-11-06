@@ -1821,6 +1821,13 @@ dummy from the hip hold, and a health pack picked up after an 1800-unit drop (51
 ## Cameras (src/game/Camera.cpp)
 
 - Orbit camera: "Numbers" table. Scripted reveal cameras replace it while they play.
+- Turning the orbit camera (look input; 0x5FFB00 flags the frame, 0x600200 then leaves the input out of the proposed
+  point): once the camera has followed its point, 0x600710 turns that point about the pivot at its distance (limits
+  0x608700), brings it in with the plain pull-in 0x5F0810 only (no swing) and puts the camera there at once. So a
+  turn goes round whatever is in the way, pulled in, never swung back. [O] Wine, l2_cliffclimb yacht deck
+  (ms_uo_yacht has oflags bit 2, the camera collides with it): full circles, 845..1130 from the pivot across the cabin
+  side, 1264.2 elsewhere (StreamReal.YachtCameraTurnsRoundTheCabin; before: the swing turned it back every tick and
+  the camera stood still).
 - [O] `autosplinecamera` 0 (thunk 0x7B37D0 -> 0x7759F0) starts camera spline `n` of the owner's unit on the
   AutoSplineCamera (camera type 8, 0x5E26F0); the cameraspline value is {initial data, owner's stream unit, data
   word 0} (0x775760). `gamebase` 52 = CameraManager::Switch(type) (0x5EDFC0: 8 the spline camera, 1 gameplay),
