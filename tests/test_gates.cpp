@@ -1091,10 +1091,10 @@ TEST(ProgressionReal, HallwayRampsJoint) {
     ASSERT_TRUE(ramp);
     EXPECT_EQ((*w.uberState(6045))[0], 1u);
     EXPECT_EQ(ramp->x, 0.0f) << "the motor holds it at its upper limit";
-    const auto enter = [&](int32_t uid) {
+    const auto enter = [&](int32_t uid) { // a step onto the trigger: plane 6078 needs the crossing (place `cross`)
         const auto* t = w.script().find(uid);
         ASSERT_TRUE(t);
-        place(w, t->pos - vec3(0, 0, script::kTestPointHeight), 0);
+        place(w, t->pos - vec3(0, 0, script::kTestPointHeight), 0, true);
     };
     enter(6046);
     for (int i = 0; i < 600 && (*w.uberState(6045))[0] != 2; ++i) w.tick({});
