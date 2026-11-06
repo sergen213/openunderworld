@@ -123,6 +123,18 @@ constexpr float kBikeUp = 33 * kDeg, kBikeDown = 30 * kDeg;
 std::string bikeCell(int row, int col) { return "combat_pistol_motorcycle_aim_" + std::string(kBikeCells[row][col]); }
 // Only the pistols and the uzi have bike clips [O data]; the other weapons stay holstered on it [I].
 bool bikeWeapon(Weapon w) { return w == Weapon::Pistols || w == Weapon::Uzi; }
+// On the rope (State::GrappleSwing / GrappleRappel; wp_handgun / wp_uzi combat_pistol_grapple_rappel(_free)_*, _free
+// hanging free, without it feet on a wall): one gun in the right hand, the other holds the rope; a 5 x 3 grid of
+// one-handed aims named by direction, F / FR / R / RB / B, rows U / (none) / D [O names]. Column yaws by those names
+// (0, -45, -90, -135, -180) and rows +-45 [I]; aims to her left clamp as on the bike (_switchhands unused [U]).
+bool onRope(State s) { return s == State::GrappleSwing || s == State::GrappleRappel; }
+constexpr std::string_view kRopeCols[5] = {"B", "RB", "R", "FR", "F"};
+const float kRopeColYaw[] = {-180 * kDeg, -135 * kDeg, -90 * kDeg, -45 * kDeg, 0};
+constexpr float kRopeUp = 45 * kDeg, kRopeDown = 45 * kDeg;
+std::string ropeClip(State s, std::string_view name) {
+    return std::string(s == State::GrappleRappel ? "combat_pistol_grapple_rappel_" : "combat_pistol_grapple_rappel_free_") + std::string(name);
+}
+std::string ropeCell(State s, int row, int col) { return ropeClip(s, std::string(row == 0 ? "1haimU" : row == 2 ? "1haimD" : "1haim") + std::string(kRopeCols[col])); }
 
 // Clips and lengths of the equip / unequip / reload layer: under water (the speargun), on the bike (the motorcycle
 // clips' own lengths [O]), else WeaponInfo.
@@ -143,6 +155,14 @@ Handling handling(const AnimLibrary& lib, const PlayerState& s, Weapon w) {
         return {"combat_pistol_motorcycle_arm", "combat_pistol_motorcycle_disarm", "combat_pistol_motorcycle_reload",
                 len("combat_pistol_motorcycle_arm", in.equip), len("combat_pistol_motorcycle_disarm", in.unequip),
                 len("combat_pistol_motorcycle_reload", in.reload)};
+    }
+    if (onRope(s.state) && bikeWeapon(w)) {
+        const auto len = [&](const std::string& n, float fallback) {
+            const anim::Clip* k = lib.weaponClip(w, n);
+            return k ? float(k->durationSeconds()) : fallback;
+        };
+        const std::string e = ropeClip(s.state, "equip"), u = ropeClip(s.state, "unequip"), r = ropeClip(s.state, "reload");
+        return {e, u, r, len(e, in.equip), len(u, in.unequip), len(r, in.reload)};
     }
     return {std::string(in.equipClip), std::string(in.unequipClip), std::string(in.reloadClip), in.equip, in.unequip, in.reload};
 }
@@ -367,6 +387,11 @@ const std::vector<std::string_view>& weaponClipNames(Weapon w) {
                 for (int r = 0; r < 3; ++r)
                     for (int c = 0; c < 5; ++c) o.push_back(bikeCell(r, c));
                 o.insert(o.end(), {"combat_pistol_motorcycle_arm", "combat_pistol_motorcycle_disarm", "combat_pistol_motorcycle_reload"});
+                for (const State st : {State::GrappleSwing, State::GrappleRappel}) {
+                    for (int r = 0; r < 3; ++r)
+                        for (int c = 0; c < 5; ++c) o.push_back(ropeCell(st, r, c));
+                    for (const char* n : {"equip", "unequip", "reload"}) o.push_back(ropeClip(st, n));
+                }
             }
             if (Weapon(i) == Weapon::Speargun)
                 o.insert(o.end(), {"combat_shotgun_equip_submerged", "combat_shotgun_unequip_submerged", "combat_speargun_reload_submerged"});
@@ -466,6 +491,16 @@ std::optional<GrenadeTuning> loadGrenadeTuning(const cdc::BigfileSet& bf) {
     return t;
 }
 
+std::optional<GrappleTuning> loadGrappleTuning(const cdc::BigfileSet& bf) {
+    const auto g = objectData(bf, "g_grapple");
+    if (!g) return std::nullopt;
+    const auto range = g->at<float>(0x100), maxRope = g->at<float>(0x104), minRope = g->at<float>(0x108);
+    const auto bends = g->at<int32_t>(0x10C);
+    if (!range || !maxRope || !minRope || !bends || !(*range > 0) || !(*minRope > 0) || *maxRope < *minRope || *bends <= 0)
+        return std::nullopt;
+    return GrappleTuning{*range, *maxRope, *minRope, std::min(int(*bends), kRopeBends)};
+}
+
 std::optional<DifficultyTable> loadDifficulty(const cdc::BigfileSet& bf) {
     const auto g = objectData(bf, "generalbank"); // its object data is GlobalInfo (tru.exe DAT_00e7ee50)
     if (!g) return std::nullopt;
@@ -559,8 +594,8 @@ std::optional<std::pair<int, glm::mat4>> World::gunMount(Weapon w, int hand) con
         return marker(inHand ? d.hand[0] : d.stow[0]);
     }
     if (!info(w).rifle) {
-        // on the bike only the right gun is drawn; the left one stays in its holster
-        if (!inHand || (hand == 1 && player_.state().state == State::Vehicle))
+        // on the bike / rope only the right gun is drawn; the left one stays in its holster
+        if (!inHand || (hand == 1 && (player_.state().state == State::Vehicle || onRope(player_.state().state))))
             return w == Weapon::Pistols || w == c.secondary ? marker(d.stow[size_t(hand)]) : std::nullopt;
         return grip(d.hand[size_t(hand)], kHandBone[hand]);
     }
@@ -764,6 +799,58 @@ std::vector<Damageable*> World::candidates(bool hard) const {
     return out;
 }
 
+// Grapple target: Lara's grapple targeting slot, player data +0x464 [O lara.drm]: flags 0xEC000000 (line of sight from
+// her eye, 0x04000000 as the combat slots), six target sets tried in order, the first one with a candidate wins
+// (criteria 0x712090; d = 3D distance from the eye, horiz = horizontal angle from her facing, cam = angle from the
+// camera's view, elevation = the target's angle over the horizontal; range = within GrappleTuning::range of her,
+// criterion 15):
+//   0: horiz <= 25, d <= 2880, cam <= 90       1: range, horiz <= 15, d <= 5120, cam <= 90
+//   2: d <= 2880, cam <= 90                     3: d <= 2880, horiz <= 90, elevation >= -60
+//   4: range, cam <= 90, elevation >= 5         5: range, horiz <= 90, elevation >= 5
+// Candidates are the *_ei_grapple_* anchors only: no enemy or other object has a grapple clip or reaction in the data
+// [O: lara / weapon / kraken DRMs alone name grapple clips], so grappling an enemy is not a thing in TRU. Within a set
+// the one nearest the camera's view wins [I]; the measuring origin (set byte +8) is taken as her eye [I].
+std::optional<GrappleTarget> World::grappleTarget() const {
+    const PlayerState& s = player_.state();
+    if (s.grappleUid) return std::nullopt;
+    const vec3 eye = s.pos + vec3(0, 0, targeting.eyeHeight);
+    const vec3 camFwd = cam_.target - cam_.position;
+    const vec3 laraFwd(std::cos(s.yaw), std::sin(s.yaw), 0);
+    const float rad = kPi / 180, range = anims_.grapple.range;
+    struct C { GrappleTarget t; float d, horiz, cam, elev; };
+    std::vector<C> cs;
+    for (const auto& u : units_)
+        for (const auto& g : u.data.grapples) {
+            GrappleTarget t = g;
+            t.pos += u.offset;
+            const vec3 v = t.pos - eye;
+            const float d = glm::length(v);
+            if (d < 1) continue;
+            if (const auto hit = col_.raycast(eye, v / d, d - 60.0f); // something blocks the hook (not its own object)
+                hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != t.uid))
+                continue;
+            cs.push_back({t, d, angleBetween(laraFwd, vec3(vec2(v), 0)), angleBetween(camFwd, t.pos - cam_.position),
+                          std::asin(std::clamp(v.z / d, -1.0f, 1.0f))});
+        }
+    const auto pass = [&](const C& c, int set) {
+        switch (set) {
+        case 0: return c.horiz <= 25 * rad && c.d <= 2880 && c.cam <= 90 * rad;
+        case 1: return c.d < range && c.horiz <= 15 * rad && c.d <= 5120 && c.cam <= 90 * rad;
+        case 2: return c.d <= 2880 && c.cam <= 90 * rad;
+        case 3: return c.d <= 2880 && c.horiz <= 90 * rad && c.elev >= -60 * rad;
+        case 4: return c.d < range && c.cam <= 90 * rad && c.elev >= 5 * rad;
+        default: return c.d < range && c.horiz <= 90 * rad && c.elev >= 5 * rad;
+        }
+    };
+    for (int set = 0; set < 6; ++set) {
+        const C* best = nullptr;
+        for (const C& c : cs)
+            if (pass(c, set) && (!best || c.cam < best->cam)) best = &c;
+        if (best) return best->t;
+    }
+    return std::nullopt;
+}
+
 namespace {
 // 32-bit LCG in [-0.5, 0.5]: spread and the adrenaline pip stay replay-exact
 float rnd(uint64_t& rng) {
@@ -887,20 +974,21 @@ void World::tickCombat(const Actions& a, float dt) {
     // weapon switch: the weapon in hand holsters (unequip clip), then the next is drawn; tru.exe 0x704930 cycles
     // pistols -> secondary -> Mjolnir, skipping what she lacks
     if (c.want == Weapon::ThorHammer && !hasHammer()) c.want = Weapon::Pistols, c.hammer = {};
-    // On the bike (riding, not mounting / dismounting) only the pistols and the uzi come out (Vehicle.cpp)
-    const bool bike = s.state == State::Vehicle;
-    const auto allowed = [&](Weapon wpn) { return bike ? ridingBike() && bikeWeapon(wpn) : canShoot(s, wpn); };
+    // On the bike (riding, not mounting / dismounting) and on the rope (swinging, on a wall) only the pistols and the
+    // uzi come out, one gun (Vehicle.cpp, Grapple.cpp)
+    const bool bike = s.state == State::Vehicle, rope = onRope(s.state), oneHand = bike || rope;
+    const auto allowed = [&](Weapon wpn) { return bike ? ridingBike() && bikeWeapon(wpn) : rope ? bikeWeapon(wpn) : canShoot(s, wpn); };
     if (weaponPressed && c.slowMo <= 0) {
         Weapon cycle[3] = {Weapon::Pistols};
         int n = 1;
-        if (c.secondary != Weapon::Pistols && (!bike || bikeWeapon(c.secondary))) cycle[n++] = c.secondary;
-        if (hasHammer() && !bike) cycle[n++] = Weapon::ThorHammer;
+        if (c.secondary != Weapon::Pistols && (!oneHand || bikeWeapon(c.secondary))) cycle[n++] = c.secondary;
+        if (hasHammer() && !oneHand) cycle[n++] = Weapon::ThorHammer;
         const auto at = std::find(cycle, cycle + n, c.want);
         if (n > 1 || at == cycle + n) c.want = at == cycle + n || at + 1 == cycle + n ? cycle[0] : *(at + 1);
         c.redraw = c.redraw || (n > 1 && c.drawn);
     }
-    // [I] drawing on the bike with another weapon ready takes the pistols
-    if (bike && ridingBike() && !bikeWeapon(c.want) && (drawPressed || a.fire || a.aim)) c.want = Weapon::Pistols, c.redraw = true;
+    // [I] drawing on the bike / rope with another weapon ready takes the pistols
+    if (((bike && ridingBike()) || rope) && !bikeWeapon(c.want) && (drawPressed || a.fire || a.aim)) c.want = Weapon::Pistols, c.redraw = true;
     if (c.want != c.weapon) {
         c.drawn = false, c.reload = 0, c.hammer = {};
         if (c.drawT <= 0) {
@@ -917,7 +1005,7 @@ void World::tickCombat(const Actions& a, float dt) {
     const WeaponDef& w = anims_.weapons[wi];
     const WeaponInfo& in = info(c.weapon);
     const Handling hd = handling(anims_, s, c.weapon);
-    const bool dual = w.dual && !bike; // one gun on the bike
+    const bool dual = w.dual && !oneHand; // one gun on the bike / rope
     c.drawT = approach(c.drawT, c.drawn ? 1.0f : 0.0f, dt / (c.drawn ? hd.equip : hd.unequip));
     for (float& t : c.sinceShot) t += dt;
     c.cooldown = std::max(0.0f, c.cooldown - dt);
@@ -970,6 +1058,9 @@ void World::tickCombat(const Actions& a, float dt) {
     if (bike) { // the bike grid: straight round her right side to behind (behind-left counts as behind)
         if (yaw > kPi / 2) yaw -= 2 * kPi;
         c.aim = {std::clamp(yaw, kBikeCols[0], kBikeCols[4]), std::clamp(pitch, -kBikeDown, kBikeUp)};
+    } else if (rope) { // the rope grid: front round her right side to behind, the same way
+        if (yaw > kPi / 2) yaw -= 2 * kPi;
+        c.aim = {std::clamp(yaw, kRopeColYaw[0], kRopeColYaw[4]), std::clamp(pitch, -kRopeDown, kRopeUp)};
     } else {
         c.aim = {std::clamp(yaw, yawLo, yawHi), hammer ? 0.0f : std::clamp(pitch, -gridDown(in.rifle), gridUp(in.rifle))};
     }
@@ -1053,14 +1144,16 @@ void World::aimLayer(std::vector<anim::LocalTransform>& local, float dt) {
     const Weapon wpn = c.weapon;
     const WeaponInfo& in = info(wpn);
     const bool rifle = in.rifle, hammer = wpn == Weapon::ThorHammer;
-    // on the bike: its 5 x 3 grid (kBikeCols), each cell held at its last key (_straight_u moves into its pose)
-    const bool bike = player_.state().state == State::Vehicle && bikeWeapon(wpn);
+    // on the bike: its 5 x 3 grid (kBikeCols), each cell held at its last key (_straight_u moves into its pose); on the
+    // rope its own (kRopeColYaw), looping as the ground grids [I]
+    const State st = player_.state().state;
+    const bool bike = st == State::Vehicle && bikeWeapon(wpn), rope = onRope(st) && bikeWeapon(wpn);
     const Handling hd = handling(anims_, player_.state(), wpn);
-    const int cols = bike ? 5 : gridCols(rifle);
-    const auto yawOf = [&](int col) { return bike ? kBikeCols[col] : colYaw(rifle, col); };
-    const auto aimCell = [&](int r, int col) { return bike ? bikeCell(r, col) : cellName(in, false, r, col); };
+    const int cols = bike || rope ? 5 : gridCols(rifle);
+    const auto yawOf = [&](int col) { return bike ? kBikeCols[col] : rope ? kRopeColYaw[col] : colYaw(rifle, col); };
+    const auto aimCell = [&](int r, int col) { return bike ? bikeCell(r, col) : rope ? ropeCell(st, r, col) : cellName(in, false, r, col); };
     const auto clip = [&](std::string_view n) { return anims_.weaponClip(wpn, n); };
-    const anim::Clip* centre = clip(hammer ? std::string("ground_aim_front") : aimCell(1, bike ? 4 : cols / 2));
+    const anim::Clip* centre = clip(hammer ? std::string("ground_aim_front") : aimCell(1, bike || rope ? 4 : cols / 2));
     if (c.drawT <= 0 || local.size() != sk.bones.size() || sk.bones.size() <= size_t(kHandBone[0]) || !centre) return;
     const auto sample = [&](const anim::Clip* k, double t, bool loop) { return anim::sample(*k, sk, t, loop); };
     const auto additive = [&](std::vector<anim::LocalTransform>& p, const anim::Clip* k, double t) {
@@ -1089,7 +1182,7 @@ void World::aimLayer(std::vector<anim::LocalTransform>& local, float dt) {
         while (i0 + 2 < cols && c.aim.x > yawOf(i0 + 1)) ++i0;
         const float u = std::clamp((c.aim.x - yawOf(i0)) / (yawOf(i0 + 1) - yawOf(i0)), 0.0f, 1.0f);
         const int row = c.aim.y >= 0 ? 0 : 2;
-        const float up = bike ? kBikeUp : gridUp(rifle), down = bike ? kBikeDown : gridDown(rifle);
+        const float up = bike ? kBikeUp : rope ? kRopeUp : gridUp(rifle), down = bike ? kBikeDown : rope ? kRopeDown : gridDown(rifle);
         const float v = std::clamp(c.aim.y >= 0 ? c.aim.y / up : -c.aim.y / down, 0.0f, 1.0f);
         const bool firing = rifle && c.sinceShot[0] < in.fire;
         const auto cell = [&](int r, int col) {
@@ -1102,7 +1195,7 @@ void World::aimLayer(std::vector<anim::LocalTransform>& local, float dt) {
         anim::blendPoses(cell(row, i0), cell(row, i0 + 1), u, q);
         anim::blendPoses(p, q, v, p);
         if (!rifle) {
-            for (int hand = 0; hand < (bike ? 1 : 2); ++hand) // recoil (on the bike the right gun only)
+            for (int hand = 0; hand < (bike || rope ? 1 : 2); ++hand) // recoil (on the bike / rope the right gun only)
                 if (const anim::Clip* k = clip(hand == 0 ? "combat_pistol_RfireE" : "combat_pistol_LfireE"); k && c.sinceShot[hand] < k->durationSeconds())
                     additive(p, k, c.sinceShot[hand]);
         } else if (const anim::Clip* k = wpn == Weapon::Shotgun ? clip("combat_shotgun_pump") : nullptr;

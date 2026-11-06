@@ -874,15 +874,40 @@ outfit (the original only reads `+0x294` on a level load).
   2005/2042/2043, l2_norsehub 2383/2394/2395); fixed anchors derive from type 3941]; else wall/post/ceiling by name.
   l4_pool's ceiling anchor is uid 5511 at (4362, -70, 2607). `sa_ei_grapple_wall_rigid_body` (l2_maproom 2676) is a
   plain anchor (script type 4734); its attached-instance field is filled at run time [U].
-- Selection (ours [I]): within 300..5000 units of Lara's eye (+375), inside a 60-degree cone of the camera,
-  clear line of sight (`World::grappleTarget`; the target object's own collision does not block it). Best by angle then distance; a crosshair marks it in ou-game.
+- Tuning [O g_grapple data, `GrappleTuning`]: hook object 77 = `pr_grapplinghook` (+0xF8), hook launch speed 1580.28
+  (+0xFC, the projectile's speed in 0x6C85C0 -> 0x6A1980), throw range 4424.78 = 14 m (+0x100, 0x698AC0), rope
+  553.1..4424.78 (+0x108 / +0x104, clamped along anchor -> bends -> hand by 0x6A4A40), 8 bends (+0x10C, 0x6A3430).
+  A unit (stream data +0x2B4) or a target (its 0x404 block) can override range / rope; not read [U]. The hook does
+  not fly in ours (it attaches at once; at 1580 units per 30 Hz frame [I unit] it would take 1-3 frames) [I].
+- Selection [O lara.drm player data +0x464, criteria 0x712090]: flags 0xEC000000 (line of sight from her eye), six
+  target sets in order, the first with a candidate wins: (0) horizontal angle from her facing <= 25, distance <= 2880,
+  camera angle <= 90; (1) in range, <= 15, <= 5120, camera <= 90; (2) <= 2880, camera <= 90; (3) <= 2880, horizontal <=
+  90, no more than 60 below level; (4) in range, camera <= 90, at least 5 above level; (5) in range, horizontal <= 90,
+  at least 5 above level (`World::grappleTarget`; the target object's own collision does not block it). Within a set
+  nearest the camera's view, distances from her eye [I]. A crosshair marks it in ou-game.
+- Enemies [O]: not grapple targets. No enemy or other object names a grapple clip or reaction (only lara, the weapons
+  and the kraken scripts do), so the original has no grapple pull / disarm; its grapple combat is shooting on the rope:
+  pistols / uzi one-handed in the right hand, `combat_pistol_grapple_rappel(_free)_1haim{U,,D}{F,FR,R,RB,B}` plus
+  `_equip / _unequip / _reload` (wp_handgun / wp_uzi; `_free` hanging free). Column yaws 0 / -45 / -90 / -135 / -180
+  and rows +-45 by the names [I]; aims to her left clamp (`_switchhands` unused) [U].
 - G / pad right shoulder (`Actions::grapple`) throws (`grapple_rappel_free_jumpon`) and attaches; G again or
   Ctrl/C releases. Space jumps off with the swing's momentum (`grapple_rappel_free_jumpoff`).
+- Rope vs world [O rules, tru.exe 0x6C8840 -> 0x6C5490]: the rope wraps. Its bends ("Bend Body", 0x699A50) are a chain
+  from the anchor; she swings on the last one (`ropePivot`), the free part = total - anchor -> bends length. Each tick,
+  from the hand side, a bend whose neighbours see each other slides toward their line by 15 x its clear ticks
+  (15..200) and goes once nearer than that (0x6B3570); then a pivot -> hand segment newly blocked between last tick's
+  hand and this one gets a bend where it first touched, 7.90125 off the surface, none within 15.8 of another
+  (0x6A50B0). Segments are tested shortened by min(9.48, 0.45 x length) at each end (0x6B2CC0). Ours: one ray per
+  segment instead of the 4.74-radius sphere casts, the touch point by bisection [I]. Saved in `player.controller`.
 - Swing (ours [I], no exe numbers): gravity + stick pumping (500 u/s²), a rope constraint at hand = root + 400
-  (outward radial velocity removed), light air drag. `grapple_rappel_free_swing_forward/backward` by travel
-  direction, `grapple_rappel_idle` otherwise. E ascends the rope, Shift descends (300 u/s, clamped 200..6000).
-  Swinging down onto a floor (> 300 u/s down), or coming down just over a floor out at the end of the arc (more than
-  0.3 × rope from under the anchor), lands her: she lets go standing [I].
+  round the pivot (outward radial velocity removed), light air drag. `grapple_rappel_free_swing_forward/backward` by
+  travel direction, `grapple_rappel_idle` otherwise. E ascends the rope, Shift descends (300 u/s [I]). Swinging down
+  onto a floor (> 300 u/s down), or coming down just over a floor out at the end of the arc (more than 0.3 × the free
+  rope from under the pivot), lands her: she lets go standing [I].
+- Overhangs [O PlayerSC_Grapple::OverhangDetected 0x73AB70, player data +0x980..+0xA44]: climbing down a wall, nothing
+  within 553.1 into it at 110.6 below her feet -> `grapple_rappel_overhang_descend_begin`, `_descend` into a free swing
+  (S379 -> S378); climbing the rope with a wall within 63.2 at 316.1 over her root (60..120 degrees from up) whose lip
+  is more than 158 under the pivot -> `grapple_rappel_free_overhang_ascend` onto that wall (S421 -> S314).
 - Pull (Mounted targets): `grapple_pull_<up/mid/down>_light_begin` then the loop by anchor height (±400) [I];
   holding E: push blocks follow her (240 u/s [I]); other uber targets run their pull handler after a 1 s heave
   (`script::Runtime::grapplePulled`: the first overridden void slot 55..60 that does more than return — levers 59/60,
@@ -904,7 +929,10 @@ outfit (the original only reads `+0x294` on a level load).
   l4_traprooms 5752, l5_valaskjalf 6750/6751, l7_helheim01 8897, l7_yggdrasil_end 8165; no markup marks wall-run
   walls (COLLISION.md types). l5_valaskjalf 6750 has ledges 1600 to either side of the anchor over a pit — the
   wall run carries her from one to the other.
-- The rope is drawn from the hand to the anchor in ou-game. Tests `Game.GrappleSwingAndRelease`,
+- ou-game draws `pr_grapplinghook`'s model at the anchor along the rope's last segment (prongs = model +Y [I]) and the
+  rope as a line hand -> bends -> anchor (the original's rope strip is not decoded [U]). Tests `Game.GrappleSwingAndRelease`,
+  `Game.GrappleRopeBendsRoundGeometry`, `Game.GrappleIgnoresEnemies`, `GameReal.GrappleTuningFromData`,
+  `GameReal.GrappleShootsOnTheRope`,
   `Game.GrappleWallRunFromGround`, `GameReal.PoolGrappleTargetAndSwing`, `GameReal.MountedGrapplePullsBlockWithoutSwinging`,
   `GameReal.GrapplePullsUberTargets` (replay `tests/replays/grapple_pull.txt` at l4_trailstart lever 6695,
   l2_norsehall naga statue 2457, l2_puzzleroom shiva 2982), `GameReal.KrakenRoomRappel` (replay

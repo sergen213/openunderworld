@@ -293,6 +293,21 @@ struct GrenadeTuning {
 };
 // Decodes g_grenade_thrower + pr_grenade; nullopt if a DRM or block is missing.
 std::optional<GrenadeTuning> loadGrenadeTuning(const cdc::BigfileSet& bigfile);
+
+// ---- grapple (gadget "Grapple", g_grapple data; docs/GAMEPLAY.md "Grapple") ----
+// g_grapple data [O values]: +0xF8 hook object 77 (pr_grapplinghook), +0xFC hook launch speed (0x6C85C0 -> 0x6A1980,
+// projectile +0x70), +0x100 throw range (0x698AC0: criterion 15 of the target sets, the hook aimed short past it),
+// +0x104 longest rope and +0x108 shortest (0x698B40 / 0x6A4A40 clamp of anchor -> bends -> hand), +0x10C bends in the
+// rope's pool (0x6A3430). A unit (stream data +0x2B4: +0x18 flag, +0x1C / +0x20) or the target (its 0x404 block: flag,
+// +4 / +8) can override range / rope; not read here [U whether any unit / target sets one].
+constexpr int kRopeBends = 8; // PlayerState::ropeBend capacity: g_grapple's pool (+0x10C)
+struct GrappleTuning {
+    float range = 4424.78f;     // +0x100
+    float maxRope = 4424.78f;   // +0x104
+    float minRope = 553.09735f; // +0x108
+    int bends = kRopeBends;     // +0x10C
+};
+std::optional<GrappleTuning> loadGrappleTuning(const cdc::BigfileSet& bigfile);
 // A thrown grenade: flying, then stuck to the world or to a target (moving with it) until the fuse runs out.
 struct Grenade {
     glm::vec3 pos{0}, vel{0};

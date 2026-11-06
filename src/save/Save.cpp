@@ -182,13 +182,15 @@ game::vec2 vec2j(const json& j) { return {j.at(0).get<float>(), j.at(1).get<floa
 // player.controller: the PlayerState fields the player block above leaves out. `p` in the world frame.
 json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3 offset) {
     const auto& h = p.hurdle;
+    json bends = json::array();
+    for (size_t i = 0; i < p.ropeBends; ++i) bends.push_back({vec(p.ropeBend[i] - offset), p.ropeBendClear[i]});
     return {{"clipMix", p.clipMix}, {"mix", p.mix}, {"mirror", p.mirror},
             {"hurdle", {int(h.next), h.mix, h.alt, h.draw, vec2j(h.drawOff), vec(h.edge - offset), vec2j(h.out), h.h, h.endZ - offset.z,
                         markupRef(w, h.farLedge), h.farSeg, h.farT, h.farSide}},
             {"savingGrab", p.savingGrab}, {"flight", p.flight}, {"fallHeight", p.fallHeight},
             {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
-            {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind)}},
+            {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends}},
             {"sprintUsed", p.sprintUsed}};
 }
 
@@ -216,6 +218,13 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     const int kind = g.at(3).get<int>();
     if (kind < 0 || kind > int(game::GrappleKind::Mounted)) throw SaveError("bad grapple kind " + g.dump());
     p.grappleUid = g.at(0), p.grappleAnchor = vec(g.at(1)), p.ropeLength = g.at(2), p.grappleKind = game::GrappleKind(kind);
+    p.ropeBends = 0; // older saves: a straight rope
+    if (g.size() > 4)
+        for (const auto& b : g.at(4)) {
+            if (p.ropeBends == game::kRopeBends) throw SaveError("too many rope bends " + g.dump());
+            p.ropeBend[p.ropeBends] = vec(b.at(0)), p.ropeBendClear[p.ropeBends] = b.at(1).get<uint8_t>();
+            ++p.ropeBends;
+        }
     p.sprintUsed = c.at("sprintUsed");
 }
 

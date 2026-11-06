@@ -2284,6 +2284,68 @@ TEST(Game, GrappleSwingAndRelease) {
     EXPECT_EQ(w->player().state().grappleUid, 0);
 }
 
+// The rope bends round geometry as tru.exe's (Player::wrapRope, 0x6C5490): swinging under a beam below the anchor, the
+// rope catches on its corner, gets a bend 7.9 off the surface there and swings her on it (the hand never farther from
+// the bend than the rope's free part; the total length kept); swinging back out past the corner the straight rope is
+// clear again and the bend slides off and goes.
+TEST(Game, GrappleRopeBendsRoundGeometry) {
+    CollisionMesh m;
+    addBox(m, {150, -2000, 1950}, {200, 2000, 2000}); // beam, its top outer corner at x 200, z 2000
+    auto w = makeWorld(std::move(m), {1800, 0, 600});
+    w->attachGrapple({0, 0, 3000}, 1);
+    for (int i = 0; i < 300 && w->player().state().state == State::GrappleThrow; ++i) w->tick({});
+    ASSERT_EQ(w->player().state().state, State::GrappleSwing);
+    const float len = w->player().state().ropeLength;
+    bool bent = false, straightAgain = false;
+    for (int i = 0; i < 600 && !straightAgain; ++i) {
+        w->tick({});
+        const auto& s = w->player().state();
+        ASSERT_EQ(s.state, State::GrappleSwing) << "tick " << i;
+        EXPECT_FLOAT_EQ(s.ropeLength, len);
+        const vec3 hand = s.pos + vec3(0, 0, 400);
+        if (std::getenv("OU_GRAPPLE_TRACE") && i % 5 == 0)
+            std::printf("tick %3d hand %.0f %.0f bends %d pivot %.1f %.1f\n", i, hand.x, hand.z, s.ropeBends,
+                        game::ropePivot(s).x, game::ropePivot(s).z);
+        EXPECT_LE(glm::distance(hand, game::ropePivot(s)), s.ropeLength - game::ropeBentLength(s) + 1.0f) << "tick " << i;
+        if (s.ropeBends && !bent) {
+            bent = true;
+            EXPECT_NEAR(s.ropeBend[0].x, 200.0f, 12.0f);
+            EXPECT_NEAR(s.ropeBend[0].z, 2000.0f, 12.0f);
+            EXPECT_GT(glm::distance(s.ropeBend[0], vec3(200, s.ropeBend[0].y, 2000)), 5.0f) << "lifted off the surface";
+            EXPECT_LT(hand.x, 600.0f) << "caught as the rope swings under the corner";
+        }
+        straightAgain = bent && !s.ropeBends;
+    }
+    EXPECT_TRUE(bent) << "the rope caught on the beam";
+    EXPECT_TRUE(straightAgain) << "and came off it swinging back";
+    EXPECT_GT(w->player().state().pos.x, 200.0f) << "back out past the corner";
+}
+
+// The grapple takes only *_ei_grapple_* anchors (World::grappleTarget): an enemy in front and in reach is no target,
+// as in TRU (no enemy has a grapple clip or reaction); the anchor beside it is.
+TEST(Game, GrappleIgnoresEnemies) {
+    CollisionMesh m;
+    addFloor(m, -3000, -3000, 3000, 3000, 0);
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    game::DummyTarget enemy;
+    enemy.pos = {800, 0, 0};
+    w->targets.push_back(&enemy);
+    EXPECT_FALSE(w->grappleTarget());
+    w->targets.clear();
+}
+
+// g_grapple's data as GrappleTuning's defaults [O]: range 4424.78 (14 m), rope 553.1..4424.78, 8 bends.
+TEST(GameReal, GrappleTuningFromData) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto t = game::loadGrappleTuning(cdc::BigfileSet(gameDir()));
+    ASSERT_TRUE(t);
+    const game::GrappleTuning d;
+    EXPECT_FLOAT_EQ(t->range, d.range);
+    EXPECT_FLOAT_EQ(t->maxRope, d.maxRope);
+    EXPECT_FLOAT_EQ(t->minRope, d.minRope);
+    EXPECT_EQ(t->bends, d.bends);
+}
+
 TEST(GameReal, PoolGrappleTargetAndSwing) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -2297,6 +2359,34 @@ TEST(GameReal, PoolGrappleTargetAndSwing) {
     for (int i = 0; i < 90; ++i) w.tick({});
     EXPECT_EQ(w.player().state().state, State::GrappleSwing);
     EXPECT_EQ(w.player().state().grappleUid, 5511);
+}
+
+// Grapple combat as TRU's: hanging on the rope the pistols come out one-handed (wp_handgun's
+// combat_pistol_grapple_rappel_free_* clips) and the right gun alone fires.
+TEST(GameReal, GrappleShootsOnTheRope) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l4_pool",
+                  game::loadLaraAnims(bf), game::Spawn{{4362, -400, 2000}, 0});
+    w.attachGrapple({4362, -70, 2607}, 5511);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().state, State::GrappleSwing);
+    Actions draw;
+    draw.draw = true;
+    w.tick(draw);
+    w.tick({});
+    EXPECT_EQ(w.combatLayerClip().first, "combat_pistol_grapple_rappel_free_equip");
+    Actions fire;
+    fire.fire = true;
+    int leftGun = 0;
+    for (int i = 0; i < 120; ++i) {
+        w.tick(fire);
+        for (const auto& s : w.combat().shots) leftGun += s.hand != 0;
+    }
+    EXPECT_EQ(w.player().state().state, State::GrappleSwing);
+    EXPECT_TRUE(w.combat().drawn);
+    EXPECT_GE(w.combat().shotsFired, 3u);
+    EXPECT_EQ(leftGun, 0);
 }
 
 TEST(GameReal, MountedGrapplePullsBlockWithoutSwinging) {

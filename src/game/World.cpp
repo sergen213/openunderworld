@@ -216,7 +216,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     "grapple_rappel_wall_land", "grapple_rappel_wall_land_left", "grapple_rappel_wall_land_right", "grapple_rappel_up",
     "grapple_rappel_up_left_45", "grapple_rappel_up_right_45", "grapple_rappel_down", "grapple_rappel_down_left_45",
     "grapple_rappel_down_right_45", "ng_ground_to_wallrun_left", "ng_ground_to_wallrun_right", "grapple_rappel_left",
-    "grapple_rappel_right", "grapple_rappel_walk_left", "grapple_rappel_walk_right",
+    "grapple_rappel_right", "grapple_rappel_walk_left", "grapple_rappel_walk_right", "grapple_rappel_overhang_descend_begin",
+    "grapple_rappel_overhang_descend", "grapple_rappel_free_overhang_ascend",
     // ladders / pillars / perches (Traverse.cpp)
     "lad_attach_up", "lad_climbup", "lad_climbdown", "lad_Idle", "lad_detach", "lad_detach_drop",
     "lad_ClimbOffTop", "lad_ClimbOffBot", "perch_attach_air", "perch_attach_ground", "perch_idle",
@@ -288,6 +289,7 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         loadClips(bd, kBikeClipNames, "pc-w\\motorcycle.drm", "motorcycle:");
         lib.bike = loadBikeTuning(bd);
     }
+    if (auto t = loadGrappleTuning(bigfile)) lib.grapple = *t;
     rigOutfit(lib, drm);
     for (const auto& m : physics::loadObjectPhysics(drm).hmarkers) { // weapon mounts (WeaponDef::hand / stow)
         const glm::quat q = glm::angleAxis(m.rot.x, vec3(1, 0, 0)) * glm::angleAxis(m.rot.y, vec3(0, 1, 0)) *
@@ -902,34 +904,6 @@ void World::tickAir(float dt) {
     }
 }
 
-// Grapple target: within 5000 units and a 60-degree cone of the camera, with clear line of sight
-// from Lara's eye (range and cone are ours [I]; the exe's state-chart conditions do not decode to a
-// single range check). Units contribute their intros in world frame.
-std::optional<GrappleTarget> World::grappleTarget() const {
-    if (player_.state().grappleUid) return std::nullopt;
-    const vec3 eye = player_.state().pos + vec3(0, 0, targeting.eyeHeight);
-    const vec3 fwd(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw),
-                   std::sin(cam_.pitch));
-    std::optional<GrappleTarget> best;
-    float bestScore = 1e30f;
-    for (const auto& u : units_)
-        for (const auto& g : u.data.grapples) {
-            GrappleTarget t = g;
-            t.pos += u.offset;
-            const vec3 d = t.pos - eye;
-            const float dist = glm::length(d);
-            if (dist < 300.0f || dist > 5000.0f) continue;
-            const float c = glm::dot(d / dist, fwd);
-            if (c < 0.5f) continue;
-            if (const auto hit = col_.raycast(eye, d / dist, dist - 60.0f); // something blocks the hook (not its own object)
-                hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != t.uid))
-                continue;
-            const float score = (1.0f - c) * 2000.0f + dist * 0.2f;
-            if (score < bestScore) bestScore = score, best = t;
-        }
-    return best;
-}
-
 PlayerState World::interpolated(double alpha) const {
     const float t = float(alpha);
     PlayerState s = player_.state();
@@ -1063,6 +1037,8 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.loop), str(s.clipMix), add(s.mix), add(s.mirror), add(s.ledgeSeg), add(s.ledgeSide), add(s.runJump), add(s.regrabCooldown), add(s.savingGrab);
     add(s.flight), add(s.fallStartZ), add(s.fallHeight), add(s.climbStance), add(s.climbWarp), add(s.climbFrom), add(s.climbTo);
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
+    add(s.ropeBends);
+    for (size_t i = 0; i < s.ropeBends; ++i) add(s.ropeBend[i]), add(s.ropeBendClear[i]);
     const auto& hu = s.hurdle;
     add(hu.next), add(hu.mix), add(hu.alt), add(hu.draw), add(hu.drawOff), add(hu.edge), add(hu.out), add(hu.h), add(hu.endZ);
     add(hu.farLedge), add(hu.farSeg), add(hu.farT), add(hu.farSide);

@@ -86,6 +86,7 @@ struct AnimLibrary {
                                                 weaponDefaults(Weapon::Tranquilizer)};
     BikeTuning bike; // motorcycle.drm (loadBikeTuning); its riding clips are in `clips` as "motorcycle:<name>"
     GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
+    GrappleTuning grapple; // g_grapple data (loadGrappleTuning): throw range, rope limits, bend pool
     DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
     // Lara's HInfo markers (lara.drm model): id -> (segment, frame in it, R = Rx * Ry * Rz); weapons mount there.
     std::map<int, std::pair<int, glm::mat4>> markers;
@@ -268,13 +269,23 @@ struct PlayerState {
     vec3 climbNormal{0};
     vec3 climbFrom{0}, climbTo{0};
     float climbYawFrom = 0, climbYawTo = 0;
-    // Grapple (State::GrappleThrow/Swing/Pull/Rappel): anchor intro unique id, world anchor, rope length at hand (root + 400).
+    // Grapple (State::GrappleThrow/Swing/Pull/Rappel): anchor intro unique id, world anchor, rope length at hand (root + 400)
+    // along the rope: anchor -> bends -> hand. The rope wraps round geometry as the original's (Grapple.cpp
+    // wrapRope): ropeBend[0..ropeBends) are its bends from the anchor side (the last one is the pivot she swings on),
+    // ropeBendClear[i] the ticks bend i's straight-through path has been clear (it slides off 15 more per tick).
     int32_t grappleUid = 0;
     vec3 grappleAnchor{0};
     float ropeLength = 0;
     GrappleKind grappleKind = GrappleKind::Ceiling;
+    uint8_t ropeBends = 0;
+    std::array<vec3, kRopeBends> ropeBend{};
+    std::array<uint8_t, kRopeBends> ropeBendClear{};
     float sprintUsed = 0; // sprint stamina spent, seconds (Tuning::sprintSeconds)
 };
+
+// The rope's pivot (its last bend, else the anchor) and its length from the anchor to the pivot along the bends.
+vec3 ropePivot(const PlayerState& s);
+float ropeBentLength(const PlayerState& s);
 
 class Player {
 public:
@@ -358,6 +369,7 @@ private:
     void rappel(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     void rappelOnto(const collision::Hit& wall, vec3 vel, std::string_view clip);
     void standUp(); // let go of the rope, standing
+    void wrapRope(vec3 oldHand, vec3 hand); // bends the rope round geometry / straightens it (Grapple.cpp)
     void land(vec2 move);
 
     const collision::CollisionMesh& col_;

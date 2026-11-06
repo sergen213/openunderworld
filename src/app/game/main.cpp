@@ -709,6 +709,8 @@ struct StreamedScene {
     std::vector<size_t> gunIndices;
     ou::scene::SceneData grenades;                     // GadgetView::kSlots copies of pr_grenade's mesh (GadgetView::pose)
     std::vector<size_t> grenadeIndices;
+    ou::scene::SceneData hook;                         // pr_grapplinghook's mesh, posed at the grapple anchor (GadgetView::pose)
+    std::vector<size_t> hookIndices;
     std::vector<ou::scene::Light> reservedLights;      // GadgetView::base + EffectsView slots: the first environment lights
     std::vector<ou::scene::Light> fixtureLights;       // EffectsView::fixtures: appended to the environment lights
     BikeIndices bikeIndices;
@@ -793,7 +795,7 @@ struct StreamedScene {
                 for (const auto& x : s->warnings) warnings.push_back(x);
                 units.emplace(u.data.name, std::move(s));
             }
-        ou::scene::assignKeys(guns), ou::scene::assignKeys(grenades);
+        ou::scene::assignKeys(guns), ou::scene::assignKeys(grenades), ou::scene::assignKeys(hook);
         std::unordered_map<uint64_t, size_t> oldMeshes, oldTextures, oldShaders;
         std::unordered_map<uint32_t, size_t> oldMaterials;
         for (size_t i = 0; i < old.meshes.size(); ++i)
@@ -927,6 +929,8 @@ struct StreamedScene {
         append(guns, glm::vec3(0), &gunIndices);
         grenadeIndices.clear();
         append(grenades, glm::vec3(0), &grenadeIndices);
+        hookIndices.clear();
+        append(hook, glm::vec3(0), &hookIndices);
         // Effect sprites' textures (fx::Library, loaded as effects need them): cdc section ids, so keyed by id.
         constexpr uint64_t kFxKey = 1ull << 63; // beside assignKeys' counter
         for (const auto& t : fxTextures) {
@@ -1362,6 +1366,17 @@ struct GadgetView {
             lights = base;
             streamed.reservedLights = base;
         }
+        // The grapple's hook (g_grapple data +0xF8: object 77) [O]; its model's prongs point along +Y.
+        if (auto hk = ou::formats::loadDrmScene(bf, "pc-w\\pr_grapplinghook.drm"); !hk.meshes.empty()) {
+            streamed.hook.textures = std::move(hk.textures), streamed.hook.materials = std::move(hk.materials);
+            streamed.hook.shaders = std::move(hk.shaders);
+            auto m = hk.meshes[0];
+            m.skeleton = -1, m.skin.clear();
+            for (int i = 0; i < 16; ++i) m.transform[i] = i % 5 == 0 ? 1.0f : 0.0f;
+            streamed.hook.meshes.push_back(std::move(m));
+        } else {
+            warnings.push_back("pc-w\\pr_grapplinghook.drm: no mesh decoded; no grapple hook drawn");
+        }
         auto sc = ou::formats::loadDrmScene(bf, "pc-w\\pr_grenade.drm");
         if (sc.meshes.empty()) return warnings.push_back("pc-w\\pr_grenade.drm: no mesh decoded");
         streamed.grenades.textures = std::move(sc.textures), streamed.grenades.materials = std::move(sc.materials);
@@ -1409,6 +1424,21 @@ struct GadgetView {
             const size_t i = streamed.grenadeIndices[k];
             if (k < live.size()) {
                 ou::anim::skinVertices(scene.meshes[i], {}, scratch, glm::translate(glm::mat4(1), live[k].pos));
+            } else {
+                scratch = scene.meshes[i].vertices;
+                for (auto& v : scratch) v.position[0] = v.position[1] = v.position[2] = 0;
+            }
+            r.updateVertices(i, scratch);
+        }
+        // The hook at the anchor, prongs (+Y) pointing on along the rope's last segment into what it holds.
+        for (const size_t i : streamed.hookIndices) {
+            const auto& s = w.player().state();
+            if (s.grappleUid && s.state != ou::game::State::GrapplePull) {
+                const glm::vec3 from = s.ropeBends ? s.ropeBend[0] : s.pos + glm::vec3(0, 0, 400);
+                const glm::vec3 y = glm::normalize(s.grappleAnchor - from + glm::vec3(0, 0, 1e-4f));
+                const glm::vec3 x = glm::normalize(glm::cross(y, std::abs(y.z) < 0.9f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0)));
+                glm::mat4 m(glm::vec4(x, 0), glm::vec4(y, 0), glm::vec4(glm::cross(x, y), 0), glm::vec4(s.grappleAnchor, 1));
+                ou::anim::skinVertices(scene.meshes[i], {}, scratch, m);
             } else {
                 scratch = scene.meshes[i].vertices;
                 for (auto& v : scratch) v.position[0] = v.position[1] = v.position[2] = 0;
@@ -2896,10 +2926,13 @@ int main(int argc, char** argv) {
         if (opt.showEnemies) appendEnemyLines(*world, frameLines);
         enemyMeshes.tracerLines(world->ticks(), frameLines);
         combat.lines(*world, frameLines);
-        if (world->player().state().grappleUid) { // the rope from Lara's hand to the anchor
-            const glm::vec3 hand = s.pos + glm::vec3(0, 0, 400);
-            const glm::vec3 anchor = world->player().state().grappleAnchor;
-            frameLines.push_back({{hand.x, hand.y, hand.z}, {anchor.x, anchor.y, anchor.z}, 0xFF60A0C0});
+        if (const auto& ps = world->player().state(); ps.grappleUid) { // the rope: Lara's hand -> its bends -> the anchor
+            glm::vec3 from = s.pos + glm::vec3(0, 0, 400);
+            for (int i = ps.ropeBends; i >= 0; --i) {
+                const glm::vec3 to = i ? ps.ropeBend[size_t(i - 1)] : ps.grappleAnchor;
+                frameLines.push_back({{from.x, from.y, from.z}, {to.x, to.y, to.z}, 0xFF60A0C0});
+                from = to;
+            }
         }
         ou::render::FrameOptions fo{};
         fo.lighting = true, fo.cullBackFaces = true;
