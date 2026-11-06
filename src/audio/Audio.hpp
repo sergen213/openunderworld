@@ -133,7 +133,8 @@ struct MusSequence {           // "QSMa"
     std::vector<std::vector<MusEvent>> tracks; // decoded up to the end-of-track meta 0x44
 };
 struct MusFile {
-    uint32_t header04 = 0, version = 0, header20 = 0; // header04 = first sequence offset - 8 [I]
+    uint32_t header04 = 0, version = 0; // header04 = first sequence offset - 8 [I]
+    uint32_t bpm = 0; // header 0x20 (120 in all retail files): the beat of the stream clock (0x595250)
     std::vector<MusSequence> sequences;
     std::vector<MusStem> stems;
     std::vector<uint32_t> labels; // track byte offsets by label number
@@ -146,28 +147,42 @@ struct MusFile {
 MusFile parseMus(std::span<const uint8_t> d);
 
 // The exe's music sequencer (0x5950A0 tick, 0x594520 track loop, 0x580F80 meta dispatch, stem
-// fades 0x5891B0), reduced to what drives stem gains: variables, branches/gotos, end of track,
-// stem volume/fade/tempo. Other commands (channel/slot/loop/substitution/mute-ramp) are ignored;
-// no retail file uses them. Keeps a reference to `f`.
+// fades 0x5891B0), reduced to what drives stem gains: variables, branches/gotos, loops (0x2E-0x30),
+// operand substitution (0x41-0x43), end of track, stem volume/fade/mute ramp/tempo. Channel, slot and
+// pan commands are ignored (no retail file uses them; pan only reaches mono stems). Keeps a reference to `f`.
 class MusSequencer {
 public:
     explicit MusSequencer(const MusFile& f, size_t sequence = 0);
-    // Ramps fades by `seconds`, advances the tempo clock and runs due events against the global
+    // Ramps fades by `seconds`, advances the music clock and runs due events against the global
     // music variables (exe byte array 0xCCB560). A taken jump ends that track's frame, so scripts
-    // poll their variables once per update.
+    // poll their variables once per update. The clock is the exe's stream clock (0x595250): `seconds`
+    // of the attached .mul played, in beats of `MusFile::bpm`, ticks = beats * PPQN.
     void update(float seconds, std::span<uint8_t, 256> vars);
     std::vector<float> stemGains() const; // per stem: volume * fade * mute (0x5864E0)
     bool finished() const;                // every track hit meta 0x44
+    uint64_t ticks() const { return now_; }
+    double beats() const { return double(now_) / seq_.ppqn; }
+    // Label of the latest taken goto/branch (-1 = none yet). The scripts are polling loops that jump back to their
+    // section's label every update, so a change of section() is a musical transition (AUDIO.md §5.3).
+    int section() const { return section_; }
 
 private:
-    struct Track { size_t pos = 0; uint64_t time = 0; bool active = true; };
-    struct Fade { float target = 0, rate = 0, left = 0; bool on = false; };
+    struct Track {
+        size_t pos = 0;
+        uint64_t time = 0;
+        bool active = true;
+        uint8_t subst = 0;                         // pending 0x41-0x43 (track flags 0x1000/0x2000/0x4000)
+        std::vector<std::pair<size_t, int>> loops; // {event after 0x2E, passes left; -1 = forever}
+    };
+    struct Fade { float target = 0, rate = 0, left = 0; bool on = false; float ramp = 0; }; // ramp: mute step
     const MusFile& f_;
     const MusSequence& seq_;
     std::vector<Track> tracks_;
     std::vector<MusStem> stems_;
     std::vector<Fade> fades_;
     double seconds_ = 0;
+    uint64_t now_ = 0;
+    int section_ = -1;
 };
 
 } // namespace ou::audio

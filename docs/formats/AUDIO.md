@@ -234,7 +234,7 @@ All offsets are file offsets; slot load `0x580E20` relocates them in place.
 | 0x0C–0x17 | u32×3 | 0 in all 75 [U] |
 | 0x18 | u32 | sequence count (1 in all 75) |
 | 0x1C | u32 | stem count (1–3; 137 in total) |
-| 0x20 | u32 | 120 in all 75 [U] |
+| 0x20 | u32 | BPM of the stream clock (§5.3): 120 in all 75 (= the stems' 500 ms/beat; the sequence tempo says 100) |
 | 0x24 | u32 | offset of the stem records (0x58 bytes each) |
 | 0x28 / 0x2C | u32 | label count (11–20) / offset of the label table (u32 track offsets) |
 | 0x30 / 0x34 / 0x38 | u32 | sample / tone / program counts (4 / 52 / 50 in all 75) |
@@ -290,7 +290,7 @@ loops in the scripts re-evaluate their variables once per frame.
 | 0x16–0x19 | 0x581510 … 0x5815A0 | channel / slot volume or pan fade |
 | 0x1A, 0x1C–0x1E | 0x5815D0 … 0x581620 | channel byte 0x80, 0x88, flag 2 set/clear |
 | 0x22–0x29, 0x2C | 0x581630 … 0x581860 | copy slot/channel state into `var[a0]` |
-| 0x2E / 0x2F / 0x30 | 0x5818B0 / 0x581930 / 0x581970 | loop start (a0 times, 0 = forever) / loop end / break to 24-bit offset |
+| 0x2E / 0x2F / 0x30 | 0x5818B0 / 0x581930 / 0x581970 | loop start: push {position after it, a0 passes; 0 = forever} on the track's loop stack (+0x28 depth, +0x2C {pos, count} pairs) / loop end: count down; the last pass pops and falls through, otherwise jump back / break: pop and jump to the 24-bit little-endian track offset a0 a1 a2. The jumps set track flag 4 |
 | 0x31 | none | define label a0: no-op at run time; the label table holds its offset (571 uses) |
 | 0x32, 0x48 | 0x5819B0 | goto label a0 |
 | 0x33 / 0x34 | 0x5819E0 / 0x581A00 | `var[a1] = a0` / `var[a1] = var[a0]` |
@@ -298,7 +298,7 @@ loops in the scripts re-evaluate their variables once per frame.
 | 0x37 / 0x38 | 0x581A60 / 0x581A80 | `var[a1]` \|= a0 / &= ~a0 |
 | 0x39–0x3E | 0x581AA0 … 0x581BE0 | if `var[a0]` ==, ≠, <, >, ≤, ≥ a1 (unsigned): goto label a2 |
 | 0x3F / 0x40 | 0x581C20 / 0x581C60 | if `var[a0] & a1` ≠ 0 / = 0: goto label a2 |
-| 0x41 / 0x42 / 0x43 | 0x581CA0 … 0x581CC0 | the next meta's operand 0/1/2 is replaced by `var[operand]` |
+| 0x41 / 0x42 / 0x43 | 0x581CA0 … 0x581CC0 | set track flag 0x1000 / 0x2000 / 0x4000: `0x580F80` replaces operand 0/1/2 of the next meta that has a handler with `var[operand]` (on its operand copy) and clears the flag |
 | 0x44 | 0x581CD0 | end of track |
 | 0x4E / 0x4F | 0x581E90 / 0x581F00 | per-channel flag 0xAC = 0 / 1 for a 16-bit mask |
 | 0x60 | 0x5865A0 | stem a0 volume (+0x1C) = a1 / 127; cancels the fade |
@@ -317,18 +317,30 @@ Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494
 - Each frame `0x5950A0` advances the slot clock and runs every track (`0x594520`). `0x5891B0`
   ramps stem fade and mute by the frame time. `0x5864E0` then sets each stem's stream volume to
   `fade × volume × mute × slot master (slot +0x38)`; pan goes to the stream only for mono stems.
-- Clock: with the `.mul` stream attached (normal play: loader `0x58BD50` → `0x593B70`),
-  ticks = `(stream +0x20 (u64) × PPQN) >> 8`. What stream +0x20 counts is [U]. Without a stream,
-  beats += dt × 1000 / (tempo / 1000), ticks = beats × PPQN.
+- Clock: with the `.mul` stream attached (normal play: loader `0x58BD50` → `0x593B70` stores the stream at slot
+  +0x10), `0x595250` reads the stream's play position (`0x595E00`: channel 0 sample counter minus half the
+  buffer), converts it to whole milliseconds at stem 0's sample rate (slot +0x18, u64; the ms delta × 0.001 is
+  the frame time slot +0x30 that fades use) and then to 8.8 fixed-point beats at the file's BPM (header 0x20):
+  slot +0x20 = `(ms << 16) / (60000 × 256 / BPM)`. `0x5950A0` makes ticks = `slot +0x20 × PPQN >> 8`. So the
+  scripts run on 120 BPM beats of played music, not on the sequence tempo (100 BPM). A position that went
+  backwards leaves the clock and frame time unchanged. Without a stream, beats += dt × 1000 / (tempo / 1000),
+  ticks = beats × PPQN.
 - The scripts are polling state machines. In 72 of 75 files every delta is 0. Example
   `l4_pool_mus_01`: reset `var[0x7F]`, `var[0x0E]`, `var[0x0F]` to 0, set both stem volumes to
-  0x28, fade both to 0 at once, then labels L0–L8 = intensity level `var[0x7D]`. Each level
-  branches to its neighbours with 0x3B/0x3C and re-issues its fades every frame (level 0: stem 0 →
-  0x7F over 2 beats, stem 1 → 0x5F over 3; level 7: both → 5; level 8: both → 0x7F).
-  - Re-issuing a fade each frame restarts it from the current gain, so the gain approaches the
-    target exponentially with a time constant of the fade length [I].
+  0x28, fade both to 0 at once, then labels L0–L8 = intensity level `var[0x7D]`. Each level first
+  branches to its neighbour with 0x3C (up) / 0x3B (down), then issues its fades and falls into the next
+  level's down-check, which jumps back to its own label (level 0: stem 0 → 0x7F over 2 beats, stem 1 →
+  0x5F over 3; level 7: both → 5; level 8: both → 0x7F; level 8 loops with goto L8).
+  - **Transitions.** A taken jump ends the track's frame, so a change of `var[0x7D]` walks the levels one
+    label per frame without issuing fades (0 → 8 takes 8 frames), and the target level's fades start the
+    frame after. There is no quantisation to a beat or bar: the musical timing is the fade length in beats.
+  - The fades are re-issued every frame: `0x5866B0` calls `0x586650` unconditionally, which recomputes
+    rate = (target − current) / seconds and restarts the countdown. The gain therefore approaches the target
+    exponentially, closing 1 − 1/e of the gap per fade length (per-frame step dt / fade seconds).
 - Timed scripts: `l2_waters_of_thailand`, `l4_escaping_mexico_mus_01` and `l4_laras_new_bike` fade
-  stems at 2400–26 880 ticks.
+  stems at 2400–26 880 ticks, once each, so those fades are linear and exactly their length. `l4_laras_new_bike`:
+  volume 0x66, fade to 0x20 over 3 beats; tick 2400 (beat 5 = 2.5 s) → 0x7F over 2 beats; tick 17 760
+  (beat 37 = 18.5 s) → 0x64 over 6 beats; then goto L0 forever.
 - Variables read by branches: `var[0x7D]` in 51 files, `0x7C` in 2, `0x7B` in 1, `0x0D` in 2. 21
   files have no branch (one-shot pieces such as `l1_intro`). Scripts write `0x7F`, `0x0E`, `0x0F`
   (all files) and `0x0D` (3 files), always 0.
@@ -340,12 +352,16 @@ Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494
   - Data-driven writes with any index: animation command 0x66 (`0x5B69C0`), instance event data
     (`0x5D2CA0`: +0x24 index, +0x28 value), trigger actions 2/3/4 = set/add/subtract
     (`0x594870`), and get/set/add/subtract helpers `0x4A3E00`/`10`/`30`/`50` [I: script natives].
-  - No engine code writes `0x7D` with a constant index, so the intensity level comes from level
-    data or scripts [I]. Which objects set it, and when, is [U].
-- **`MusSequencer`** models the no-stream clock, variable ops, branches, gotos, end of track and
-  stem volume/fade/tempo (0x32–0x40, 0x44, 0x48, 0x50, 0x51, 0x60, 0x62, 0x64–0x66). Commands
-  absent from retail data (channel/slot/loop/substitution/pan/mute ramp) are ignored. Callers feed
-  `stemGains()` to `Mixer::setMusicStemGains` each frame.
+  - No engine code writes `0x7D` with a constant index: the intensity level comes from scripts — soundvolume
+    scripts set it with `gamebase` 5 when Lara enters (384 volumes, values 0–19; §9.4).
+- **`MusSequencer`** models the stream clock (with game time standing in for the stream position), variable
+  ops, branches, gotos, loops (0x2E–0x30), operand substitution (0x41–0x43), end of track and stem
+  volume/fade/mute ramp/tempo (0x32–0x44, 0x48, 0x50, 0x51, 0x60, 0x62, 0x64–0x66, 0x68, 0x69). Channel, slot
+  and pan commands are ignored (absent from retail; stem pan only reaches mono stems). `section()` is the
+  label of the latest taken jump: ou-game logs its changes as `music <name> beat B: section Ln (vars …)`.
+  Callers feed `stemGains()` to `Mixer::setMusicStemGains` each frame. `ou-audio mus <game> <name> --dump`
+  lists a script; `-o out.wav --set T:VAR=VALUE` renders the stems with variable changes and prints the
+  section changes with their beat.
 
 ## 6. `ou_audio` API (implemented)
 
@@ -374,8 +390,8 @@ Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494
   - FMOD DSPs: only the types retail data uses (lowpass / highpass / parametric EQ as RBJ biquads) and a Freeverb-style
     stand-in for FMOD's SFX reverb (§9.15) [I: not FMOD's algorithms]. `reverbVol` and the Wave byte 0x0C are unused.
   - Linear resampling.
-  - Mus! scripts run on `MusSequencer`. It uses the tempo clock instead of the stream-synced one
-    (§5.3) and ignores pan and mute ramps. The variables are the script runtime's `gamebase` values (§9.4).
+  - Mus! scripts run on `MusSequencer`. Its clock counts game time where the exe counts the stream's played
+    samples (§5.3), and it ignores pan. The variables are the script runtime's `gamebase` values (§9.4).
   - Voice-line subtitles go to the two-line ticker in ou-game (§9.6).
 
 ## 7. Verification log
@@ -399,8 +415,8 @@ mixing and the exact FMOD IMA rounding.
 ## 8. Open questions
 
 1. FMOD's IMA expansion inside tru.exe: is it Xbox-IMA rounding, or does it share the cdc MMX decoder?
-2. Mus! clock: what the attached stream's +0x20 counter measures (§5.3). Which level data sets
-   music variable 0x7D (and 0x7B/0x7C/0x0D), and when.
+2. Mus! clock: does the stream sample counter behind `0x595E00` keep counting across the `.mul` loop, or does
+   it restart (which would freeze the music clock for one loop length, §5.3)? Which data sets 0x7B/0x7C/0x0D.
 3. The Wave header byte 0x0C (10 / 100): volume or priority? `.mul` header fields 0x30/0x34.
 4. Where the FSB sync points (mode 0x80004000) are stored.
 5. The sound-plex layer (`cdc::SoundPlex*` RTTI, DTP data): how game objects and materials map to

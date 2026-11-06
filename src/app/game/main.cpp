@@ -1461,6 +1461,7 @@ struct Music {
     std::unique_ptr<ou::audio::MusFile> mus; // the sequencer keeps a reference to it
     std::unique_ptr<ou::audio::MusSequencer> seq;
     std::array<uint8_t, 256>* vars = nullptr; // world->script().gameValues()
+    int section = -2; // last logged MusSequencer::section()
 
     bool play(const ou::cdc::BigfileSet& bf, ou::audio::Mixer& mixer, const std::string& name, const std::string& why, uint64_t tick,
               float fade = 2, int inSlot = 0) {
@@ -1476,6 +1477,7 @@ struct Music {
                 mus = std::make_unique<ou::audio::MusFile>(ou::audio::parseMus(*m));
                 seq = std::make_unique<ou::audio::MusSequencer>(*mus);
                 seq->update(0, *vars);
+                section = -2;
             }
             mixer.playMusic(std::move(pcm), current.empty() ? 1.0f : fade, seq ? seq->stemGains() : std::vector<float>{});
             std::fprintf(stderr, "ou-game: tick %llu music %s (%s)%s\n", (unsigned long long)tick, name.c_str(), why.c_str(),
@@ -1513,10 +1515,19 @@ struct Music {
         }
         current = kTitle, slot = 0; // also on failure: do not retry every time the menu opens
     }
-    void tick(ou::audio::Mixer& mixer, float dt) {
+    // Section changes are the musical transitions (the script jumped to another label); logged with the music beat.
+    void tick(ou::audio::Mixer& mixer, float dt, uint64_t tick) {
         if (!seq) return;
         seq->update(dt, *vars);
         mixer.setMusicStemGains(seq->stemGains());
+        if (seq->section() == section) return;
+        section = seq->section();
+        const auto& v = *vars;
+        std::string gains;
+        for (float g : seq->stemGains()) gains += ' ' + std::to_string(g).substr(0, 5);
+        std::fprintf(stderr, "ou-game: tick %llu music %s beat %.2f: section L%d (vars 7B=%u 7C=%u 7D=%u 0D=%u), stem gains%s\n",
+                     (unsigned long long)tick, current.c_str(), seq->beats(), section, v[0x7B], v[0x7C], v[0x7D], v[0x0D],
+                     gains.c_str());
     }
 };
 
@@ -2583,7 +2594,7 @@ int main(int argc, char** argv) {
                 logUnits();
                 if (audioOn && music.current.empty()) music.play(*bigfile, mixer, world->currentUnit().data.music, "unit " + unitName, tick);
             }
-            if (audioOn) music.tick(mixer, float(ou::game::kTickSeconds));
+            if (audioOn) music.tick(mixer, float(ou::game::kTickSeconds), tick);
             for (const auto& r : world->script().takeMusicRequests()) { // script `music` natives
                 const auto* o = world->script().find(r.owner);
                 const std::string why = "script " + (o ? o->name : std::string("unit")) + " " + std::to_string(r.owner) + " music " +

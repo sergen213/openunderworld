@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace ou::audio {
 namespace {
@@ -79,21 +80,26 @@ size_t eventAt(const std::vector<MusEvent>& track, uint32_t offset) {
 }
 
 // Operands of the commands MusSequencer executes must be in range: {min data size, stem byte,
-// label byte} (-1 = none).
+// label byte} (-1 = none). Operands replaced by variables (0x41-0x43) are checked at run time.
 struct Operands { uint8_t size; int8_t stem, label; };
 Operands operands(uint8_t meta) {
     switch (meta) {
+    case 0x2E: return {1, -1, -1};
+    case 0x30: return {3, -1, -1};
     case 0x32: case 0x48: return {1, -1, 0};
     case 0x33: case 0x34: case 0x35: case 0x36: case 0x37: case 0x38: case 0x50: case 0x51:
         return {2, -1, -1};
     case 0x39: case 0x3A: case 0x3B: case 0x3C: case 0x3D: case 0x3E: case 0x3F: case 0x40:
         return {3, -1, 2};
+    case 0x68: case 0x69: return {1, 0, -1};
     case 0x60: case 0x65: return {2, 0, -1};
     case 0x62: case 0x66: return {3, 0, -1};
     case 0x64: return {4, 0, -1};
     default: return {0, -1, -1};
     }
 }
+
+uint32_t offset24(const uint8_t* a) { return a[0] | uint32_t(a[1]) << 8 | uint32_t(a[2]) << 16; } // 0x581970
 
 } // namespace
 
@@ -103,7 +109,7 @@ MusFile parseMus(std::span<const uint8_t> d) {
     f.header04 = u32(d, 0x04);
     f.version = u32(d, 0x08);
     if (f.version != kMusVersion) throw FormatError("mus: unsupported version");
-    f.header20 = u32(d, 0x20);
+    f.bpm = u32(d, 0x20);
     const uint32_t nSeq = u32(d, 0x18), nStem = u32(d, 0x1C), nLabel = u32(d, 0x28),
                    nSample = u32(d, 0x30), nTone = u32(d, 0x34), nProgram = u32(d, 0x38);
     // 0x580E20 relocates: sequence table {id, offset} at 0x3C, then tone and program offset
@@ -154,14 +160,23 @@ MusFile parseMus(std::span<const uint8_t> d) {
         const uint16_t nTrack = uint16_t(u32(d, o + 0xC));
         for (uint16_t t = 0; t < nTrack; ++t) {
             auto ev = decodeTrack(d, size_t(o) + u32(d, o + 0x10 + 4 * size_t(t)));
+            uint8_t subst = 0; // 0x41-0x43 pending: the next meta's operand k is var[operand k] (0x580F80)
             for (const auto& e : ev) {
                 if (e.status != kMusMeta) continue;
+                if (e.meta >= 0x41 && e.meta <= 0x43) {
+                    subst |= uint8_t(1 << (e.meta - 0x41));
+                    continue;
+                }
                 const Operands op = operands(e.meta);
+                const uint8_t pending = std::exchange(subst, uint8_t(0));
+                const auto fixed = [&](int k) { return k >= 0 && !(pending >> k & 1); };
                 if (e.data.size() < op.size) throw FormatError("mus: short meta event");
-                if (op.stem >= 0 && e.data[op.stem] >= f.stems.size()) throw FormatError("mus: stem out of range");
-                if (op.label >= 0 && (e.data[op.label] >= f.labels.size() ||
-                                      eventAt(ev, f.labels[e.data[op.label]]) == ev.size()))
+                if (fixed(op.stem) && e.data[op.stem] >= f.stems.size()) throw FormatError("mus: stem out of range");
+                if (fixed(op.label) && (e.data[op.label] >= f.labels.size() ||
+                                        eventAt(ev, f.labels[e.data[op.label]]) == ev.size()))
                     throw FormatError("mus: bad label");
+                if (e.meta == 0x30 && fixed(0) && fixed(1) && fixed(2) && eventAt(ev, offset24(e.data.data())) == ev.size())
+                    throw FormatError("mus: bad loop break target");
             }
             s.tracks.push_back(std::move(ev));
         }
@@ -177,19 +192,30 @@ MusSequencer::MusSequencer(const MusFile& f, size_t sequence)
 void MusSequencer::update(float seconds, std::span<uint8_t, 256> v) {
     for (size_t i = 0; i < stems_.size(); ++i) { // 0x5891B0
         Fade& fd = fades_[i];
-        if (!fd.on) continue;
-        if (seconds <= fd.left) {
-            fd.left -= seconds;
-            stems_[i].fade += fd.rate * seconds;
-        } else {
-            stems_[i].fade = fd.target;
-            fd.on = false;
+        if (fd.on) {
+            if (seconds <= fd.left) {
+                fd.left -= seconds;
+                stems_[i].fade += fd.rate * seconds;
+            } else {
+                stems_[i].fade = fd.target;
+                fd.on = false;
+            }
+        }
+        if (fd.ramp != 0) { // mute ramp: a step per update, not per second
+            float& m = stems_[i].mute;
+            m += fd.ramp;
+            if (m < 0 || m > 1) m = std::clamp(m, 0.0f, 1.0f), fd.ramp = 0;
         }
     }
-    // 0x5950A0 clock without an attached stream: beats += dt * 1000 / (tempo / 1000 ms).
-    // ponytail: with the .mul attached the exe derives ticks from the stream instead (AUDIO.md §5 [U]).
+    // Clock with the .mul attached (normal play, 0x593B70): 0x595250 converts the stream position to whole
+    // milliseconds, then to 8.8 fixed-point beats at the file's BPM (header 0x20): (ms << 16) / (60000 * 256 / bpm);
+    // 0x5950A0 makes ticks = beats88 * PPQN >> 8. The sequence tempo (QSMa +4) only clocks a slot without a stream.
+    // ponytail: `seconds` stands in for the stream's played time (the exe reads the FMOD sample position).
     seconds_ += seconds;
-    const auto now = uint64_t(seconds_ * 1000.0 / (seq_.tempo / 1000) * seq_.ppqn);
+    const auto ms = uint64_t(seconds_ * 1000.0 + 1e-6);
+    now_ = f_.bpm && f_.bpm <= 60000u * 256u ? (ms << 16) / (60000u * 256u / f_.bpm) * seq_.ppqn >> 8
+                                             : uint64_t(seconds_ * 1000.0 / (seq_.tempo / 1000) * seq_.ppqn);
+    const uint64_t now = now_;
 
     for (size_t t = 0; t < tracks_.size(); ++t) {
         Track& tr = tracks_[t];
@@ -200,9 +226,36 @@ void MusSequencer::update(float seconds, std::span<uint8_t, 256> v) {
             tr.time += e.delta;
             ++tr.pos;
             if (e.status != kMusMeta) continue;
-            const auto& a = e.data;
+            if (e.meta >= 0x41 && e.meta <= 0x43) {
+                tr.subst |= uint8_t(1 << (e.meta - 0x41));
+                continue;
+            }
+            // 0x580F80 copies the operands and substitutes them before the handler runs.
+            // ponytail: every other meta consumes the substitution; the exe skips metas without a handler [I].
+            uint8_t a[4] = {};
+            std::copy_n(e.data.begin(), std::min<size_t>(e.data.size(), 4), a);
+            for (int k = 0; k < 3; ++k)
+                if (tr.subst >> k & 1) a[k] = v[a[k]];
+            tr.subst = 0;
+            const Operands op = operands(e.meta);
+            if (op.stem >= 0 && a[op.stem] >= stems_.size()) continue; // substituted out of range: skipped [I]
             int label = -1;
+            size_t jump = ev.size() + 1; // event index to continue at; ends the track's frame (track flag 4)
             switch (e.meta) { // 0x8A7B10 handler table
+            case 0x2E: tr.loops.push_back({tr.pos, a[0] ? int(a[0]) : -1}); break; // 0x5818B0, 0 = forever
+            case 0x2F: // 0x581930: count down; the last pass falls through and pops
+                if (!tr.loops.empty()) {
+                    auto& [pos, count] = tr.loops.back();
+                    if (count != -1 && --count == 0) tr.loops.pop_back();
+                    else jump = pos;
+                }
+                break;
+            case 0x30: // 0x581970: leave the innermost loop for a track byte offset
+                if (!tr.loops.empty()) {
+                    tr.loops.pop_back();
+                    jump = eventAt(ev, offset24(a));
+                }
+                break;
             case 0x32: case 0x48: label = a[0]; break;
             case 0x33: v[a[1]] = a[0]; break;
             case 0x34: v[a[1]] = v[a[0]]; break;
@@ -221,6 +274,8 @@ void MusSequencer::update(float seconds, std::span<uint8_t, 256> v) {
             case 0x3F: if (v[a[0]] & a[1]) label = a[2]; break;
             case 0x40: if (!(v[a[0]] & a[1])) label = a[2]; break;
             case 0x44: tr.active = false; break;
+            case 0x68: fades_[a[0]].ramp = -0.2f; break; // 0x582160 / 0x582180
+            case 0x69: fades_[a[0]].ramp = 0.2f; break;
             case 0x60: // 0x5865A0: static stem volume, cancels the fade
                 stems_[a[0]].volume = a[1] / 127.0f;
                 fades_[a[0]].on = false;
@@ -244,8 +299,13 @@ void MusSequencer::update(float seconds, std::span<uint8_t, 256> v) {
                 break;
             default: break; // 0xF0 source path, 0xF1 markers, 0x31 label definitions: no-ops
             }
-            if (label >= 0) { // jumps end the track's frame (track flag 4)
-                tr.pos = eventAt(ev, f_.labels[size_t(label)]);
+            if (label >= 0) {
+                if (size_t(label) >= f_.labels.size()) continue; // substituted out of range [I]
+                jump = eventAt(ev, f_.labels[size_t(label)]);
+                section_ = label;
+            }
+            if (jump <= ev.size()) { // ev.size(): substituted target between events, runs off the track [I]
+                tr.pos = jump;
                 break;
             }
         }

@@ -274,24 +274,9 @@ void putName(std::vector<uint8_t>& v, const char* s) {
     v.insert(v.end(), n, n + sizeof n);
 }
 
-// One sequence (tempo 500000 us, 480 ppqn), 1 tone/program/sample, one stereo stem, 2 labels.
-// Script: volume 64, fade 0 now; L0: if var[0x7D] > 0 goto L1; fade to 127 over 2 beats;
-// goto L0. L1: var[0x0E] = 5; note on + running-status note; 480 ticks later end of track.
-std::vector<uint8_t> makeMus(uint8_t gotoLabel = 0) {
-    std::vector<uint8_t> t; // track
-    auto ev = [&](std::initializer_list<uint8_t> b) { t.insert(t.end(), b); return uint32_t(t.size()); };
-    ev({0x00, 0xFF, 0xF0, 3, 'a', 'b', 'c'});
-    ev({0x00, 0xFF, 0x60, 2, 0, 64});
-    ev({0x00, 0xFF, 0x62, 3, 0, 0, 0});
-    const uint32_t l0 = ev({0x00, 0xFF, 0x31, 1, 0});
-    ev({0x00, 0xFF, 0x3C, 3, 0x7D, 0, 1});
-    ev({0x00, 0xFF, 0x62, 3, 0, 2, 0x7F});
-    const uint32_t l1 = ev({0x00, 0xFF, 0x32, 1, gotoLabel});
-    ev({0x00, 0xFF, 0x33, 2, 5, 0x0E});
-    ev({0x00, 0x90, 0x3C, 0x40});
-    ev({0x00, 0x3C, 0x00});
-    ev({0x83, 0x60, 0xFF, 0x44, 0});
-
+// A Mus! file around one track: sequence tempo 600000 us (100 BPM, as retail) but header BPM 120 (the stream
+// clock), 480 ppqn, 1 tone/program/sample, one stereo stem (500 ms/beat), 2 labels.
+std::vector<uint8_t> wrapMus(const std::vector<uint8_t>& t, uint32_t l0, uint32_t l1) {
     std::vector<uint8_t> v{'M', 'u', 's', '!'};
     const uint32_t stems = 0x12C, labels = stems + 0x58, seq = labels + 8;
     for (uint32_t x : {seq - 8, kMusVersion, 0u, 0u, 0u, 1u, 1u, 120u, stems, 2u, labels, 1u, 1u, 1u}) put32(v, x);
@@ -309,16 +294,35 @@ std::vector<uint8_t> makeMus(uint8_t gotoLabel = 0) {
     v.resize(labels, 0);
     put32(v, l0); put32(v, l1);
     v.insert(v.end(), {'Q', 'S', 'M', 'a'});
-    put32(v, 500000); put16(v, 480); put16(v, 0x106); put16(v, 1); put16(v, 0); put32(v, 0x14);
+    put32(v, 600000); put16(v, 480); put16(v, 0x106); put16(v, 1); put16(v, 0); put32(v, 0x14);
     v.insert(v.end(), t.begin(), t.end());
     return v;
+}
+
+// Script: volume 64, fade 0 now; L0: if var[0x7D] > 0 goto L1; fade to 127 over 2 beats;
+// goto L0. L1: var[0x0E] = 5; note on + running-status note; 480 ticks later end of track.
+std::vector<uint8_t> makeMus(uint8_t gotoLabel = 0) {
+    std::vector<uint8_t> t; // track
+    auto ev = [&](std::initializer_list<uint8_t> b) { t.insert(t.end(), b); return uint32_t(t.size()); };
+    ev({0x00, 0xFF, 0xF0, 3, 'a', 'b', 'c'});
+    ev({0x00, 0xFF, 0x60, 2, 0, 64});
+    ev({0x00, 0xFF, 0x62, 3, 0, 0, 0});
+    const uint32_t l0 = ev({0x00, 0xFF, 0x31, 1, 0});
+    ev({0x00, 0xFF, 0x3C, 3, 0x7D, 0, 1});
+    ev({0x00, 0xFF, 0x62, 3, 0, 2, 0x7F});
+    const uint32_t l1 = ev({0x00, 0xFF, 0x32, 1, gotoLabel});
+    ev({0x00, 0xFF, 0x33, 2, 5, 0x0E});
+    ev({0x00, 0x90, 0x3C, 0x40});
+    ev({0x00, 0x3C, 0x00});
+    ev({0x83, 0x60, 0xFF, 0x44, 0});
+    return wrapMus(t, l0, l1);
 }
 } // namespace
 
 TEST(Mus, ParsesSyntheticScript) {
     const auto f = parseMus(makeMus());
     EXPECT_EQ(f.version, kMusVersion);
-    EXPECT_EQ(f.header20, 120u);
+    EXPECT_EQ(f.bpm, 120u);
     ASSERT_EQ(f.samples.size(), 1u);
     EXPECT_EQ(f.samples[0].name, "Sine_440");
     EXPECT_EQ(f.samples[0].samOffset, 0x40u);
@@ -340,7 +344,7 @@ TEST(Mus, ParsesSyntheticScript) {
     EXPECT_FLOAT_EQ(f.stems[0].pan, 0.5f);
     ASSERT_EQ(f.sequences.size(), 1u);
     const auto& s = f.sequences[0];
-    EXPECT_EQ(s.tempo, 500000u);
+    EXPECT_EQ(s.tempo, 600000u);
     EXPECT_EQ(s.ppqn, 480u);
     ASSERT_EQ(s.tracks.size(), 1u);
     const auto& e = s.tracks[0];
@@ -382,6 +386,76 @@ TEST(Mus, SequencerDrivesStemGainsFromVariables) {
     q.update(0.25f, vars);
     EXPECT_TRUE(q.finished());
     EXPECT_NEAR(q.stemGains()[0], vol * (0.25f + 0.75f * 0.25f), 1e-6);
+}
+
+TEST(Mus, ClockIsTheStreamBeatAtTheHeaderBpm) {
+    // Tick 480 = beat 1 at the header's 120 BPM = 0.5 s of stream (0x595250); the sequence tempo (100 BPM)
+    // would put it at 0.6 s.
+    const auto f = parseMus(makeMus());
+    MusSequencer q(f);
+    std::array<uint8_t, 256> vars{};
+    vars[0x7D] = 1;
+    q.update(0, vars); // L0: branch to L1 (yield)
+    EXPECT_EQ(q.section(), 1);
+    q.update(0, vars); // var[0x0E] = 5, notes; end of track due at tick 480
+    q.update(0.499f, vars);
+    EXPECT_EQ(q.ticks(), 478u); // 499 ms -> 255/256 beat in 8.8 fixed point
+    EXPECT_FALSE(q.finished());
+    q.update(0.001f, vars);
+    EXPECT_DOUBLE_EQ(q.beats(), 1.0);
+    EXPECT_TRUE(q.finished());
+}
+
+TEST(Mus, FadeLengthIsBeatsOfTheStem) {
+    // volume 1, fade 0 now, fade to 1 over 4 beats (2 s at 500 ms/beat); at beat 4: fade to 0 over 64/32 beats.
+    std::vector<uint8_t> t{0x00, 0xFF, 0x60, 2, 0, 0x7F, 0x00, 0xFF, 0x62, 3, 0, 0, 0, 0x00, 0xFF, 0x62, 3, 0, 4, 0x7F};
+    const auto l = uint32_t(t.size());
+    t.insert(t.end(), {0x8F, 0x00, 0xFF, 0x66, 3, 0, 64, 0, 0x00, 0xFF, 0x44, 0}); // delta 1920 ticks
+    const auto f = parseMus(wrapMus(t, l, l));
+    MusSequencer q(f);
+    std::array<uint8_t, 256> vars{};
+    q.update(0, vars);
+    EXPECT_FLOAT_EQ(q.stemGains()[0], 0);
+    q.update(1, vars);
+    EXPECT_FLOAT_EQ(q.stemGains()[0], 0.5f);
+    EXPECT_FALSE(q.finished());
+    q.update(1, vars); // beat 4: the fade lands on the bar line, the timed fade-out starts there
+    EXPECT_FLOAT_EQ(q.stemGains()[0], 1);
+    EXPECT_EQ(q.ticks(), 1920u);
+    EXPECT_TRUE(q.finished());
+    q.update(0.5f, vars);
+    EXPECT_FLOAT_EQ(q.stemGains()[0], 0.5f);
+    q.update(0.5f, vars);
+    EXPECT_FLOAT_EQ(q.stemGains()[0], 0);
+}
+
+TEST(Mus, LoopsSubstitutionAndMuteRamp) {
+    std::vector<uint8_t> t;
+    auto ev = [&](std::initializer_list<uint8_t> b) { const auto o = uint32_t(t.size()); t.insert(t.end(), b); return o; };
+    ev({0x00, 0xFF, 0x41, 0});                // operand 0 of the next meta = var[operand 0]
+    ev({0x00, 0xFF, 0x33, 2, 0x12, 0x20});    // var[0x20] = var[0x12]
+    ev({0x00, 0xFF, 0x68, 1, 0});             // stem 0 mute ramps down 0.2 per update
+    ev({0x00, 0xFF, 0x2E, 1, 3});             // loop 3 passes
+    ev({0x00, 0xFF, 0x35, 2, 1, 0x10});       //   var[0x10] += 1
+    ev({0x00, 0xFF, 0x2F, 0});
+    ev({0x00, 0xFF, 0x2E, 1, 0});             // loop forever
+    ev({0x00, 0xFF, 0x35, 2, 1, 0x11});       //   var[0x11] += 1
+    const uint32_t brk = ev({0x00, 0xFF, 0x30, 3, 0, 0, 0}); // break to the end
+    ev({0x00, 0xFF, 0x2F, 0});
+    const uint32_t end = ev({0x00, 0xFF, 0x44, 0});
+    t[brk + 4] = uint8_t(end);
+    const auto f = parseMus(wrapMus(t, end, end));
+    MusSequencer q(f);
+    std::array<uint8_t, 256> vars{};
+    vars[0x12] = 42;
+    for (int i = 0; i < 3; ++i) q.update(0, vars); // each loop jump ends the frame
+    EXPECT_EQ(vars[0x20], 42);
+    EXPECT_EQ(vars[0x10], 3);
+    EXPECT_EQ(vars[0x11], 1); // the forever loop broke out on its first pass
+    EXPECT_FALSE(q.finished());
+    q.update(0, vars);
+    EXPECT_TRUE(q.finished());
+    EXPECT_NEAR(q.stemGains()[0], 0.4f, 1e-6); // ramp started in update 1: three steps by update 4
 }
 
 // ---- Mixer -----------------------------------------------------------------------------------
@@ -646,6 +720,14 @@ TEST(AudioReal, MusParsesAll75) {
         EXPECT_GT(f.sequences[0].tracks[0].size(), 4u);
         events += f.sequences[0].tracks[0].size();
         stems += f.stems.size();
+        EXPECT_EQ(f.bpm, 120u); // the stream clock's beat = the stems' 500 ms
+        MusSequencer q(f); // every script runs: intensity 0..7 over 20 s, gains stay in range
+        std::array<uint8_t, 256> v{};
+        for (int i = 0; i < 1200; ++i) {
+            v[0x7D] = uint8_t(i / 150);
+            q.update(1 / 60.0f, v);
+            for (float g : q.stemGains()) ASSERT_TRUE(g >= 0 && g <= 1.0001f) << g;
+        }
     }
     EXPECT_EQ(files, 75u);
     EXPECT_EQ(stems, 137u);
@@ -673,6 +755,56 @@ TEST(AudioReal, MusPoolStemGainsFollowVariable7D) {
     EXPECT_NEAR(g0[1], base * 0x5F / 127, 0.005);
     EXPECT_NEAR(g7[0], base * 5 / 127, 0.005);
     EXPECT_NEAR(g8[1], base, 0.005);
+}
+
+// A change of the intensity variable walks the script one section per update (each branch ends the frame; the walk
+// issues no fades). The target section's fade, re-issued every update from the current gain (0x586650), then closes
+// 1 - 1/e of the gap per fade length.
+TEST(AudioReal, MusPoolTransitionStepsSectionsAndFadesInBeats) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    const auto d = bf.read("pc-w\\music\\l4_pool_mus_01\\l4_pool_mus_01.mus");
+    ASSERT_TRUE(d);
+    const auto f = parseMus(*d);
+    MusSequencer q(f);
+    std::array<uint8_t, 256> v{};
+    for (int i = 0; i < 600; ++i) q.update(1 / 60.0f, v);
+    EXPECT_EQ(q.section(), 0);
+    const float base = 0x28 / 127.0f;
+    v[0x7D] = 8;
+    for (int k = 1; k <= 8; ++k) {
+        q.update(1 / 60.0f, v);
+        EXPECT_EQ(q.section(), k);
+    }
+    q.update(1 / 60.0f, v); // the walk only branches; L8's first pass issues its fades (stem 1 -> 0x7F over 3 beats)
+    const float gap = 1 - q.stemGains()[1] / base;
+    EXPECT_GT(gap, 0.2f);
+    for (int i = 0; i < 90; ++i) q.update(1 / 60.0f, v);
+    EXPECT_NEAR(1 - q.stemGains()[1] / base, gap * std::pow(1 - 1 / 90.0f, 90.0f), 1e-3);
+    EXPECT_EQ(q.section(), 8);
+}
+
+// A timed script: l4_laras_new_bike fades its stem at ticks 0, 2400 and 17760 = beats 0, 5 and 37 of the 120 BPM
+// stream clock (2.5 s and 18.5 s), each fade 3, 2 and 6 beats long.
+TEST(AudioReal, MusBikeTimedFadesLandOnBeats) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    const auto d = bf.read("pc-w\\music\\l4_laras_new_bike\\l4_laras_new_bike.mus");
+    ASSERT_TRUE(d);
+    const auto f = parseMus(*d);
+    MusSequencer q(f);
+    std::array<uint8_t, 256> v{};
+    const float vol = 0x66 / 127.0f;
+    auto runTo = [&, t = 0.0](double until) mutable {
+        for (; t + 1e-9 < until; t += 0.01) q.update(0.01f, v);
+        return q.stemGains()[0] / vol;
+    };
+    EXPECT_NEAR(runTo(0.75), 0x20 / 127.0f / 2, 0.01); // halfway through the 3-beat fade-in
+    EXPECT_NEAR(runTo(2.49), 0x20 / 127.0f, 1e-5);
+    EXPECT_NEAR(runTo(3.0), (0x20 + 0x7F) / 254.0f, 0.01); // beat 5 + 1 of 2
+    EXPECT_NEAR(runTo(18.49), 1.0f, 1e-5);
+    EXPECT_NEAR(runTo(20.0), (0x7F + 0x64) / 254.0f, 0.01); // beat 37 + 3 of 6
+    EXPECT_NEAR(runTo(21.6), 0x64 / 127.0f, 1e-5);
 }
 
 // ---- SoundPlex / sfxmarker (AUDIO.md §9) ---------------------------------------------------------

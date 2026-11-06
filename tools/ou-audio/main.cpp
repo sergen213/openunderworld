@@ -34,6 +34,9 @@ int usage() {
                  "  ou-audio render <gameDir> <x.drm> [--id DTP -o out.wav] [--seconds S] [--reverb v0,..,v12]\n"
                  "                  (a SoundPlex DTP rendered offline; without --id: DTPs with Effect nodes;\n"
                  "                   --reverb: the 13 SFX-reverb values ou-game logs)\n"
+                 "  ou-audio mus    <gameDir> <music name> [--dump] [-o out.wav --seconds S] [--set T:VAR=VALUE ...]\n"
+                 "                  (a music track's .mul stems mixed by its .mus script; --set sets music variable\n"
+                 "                   VAR (hex) to VALUE at T seconds; section changes print with their beat)\n"
                  "<path> is a bigfile path: a .mul stream, an FSB4 bank (.sam) or a .drm (Wave sections;\n"
                  "--id = section id). For FSB4 banks --id is the sample index.\n";
     return 2;
@@ -229,6 +232,74 @@ int scan(const fs::path& game) {
     return fails ? 1 : 0;
 }
 
+// A music track (pc-w\music\<name>\<name>.mus/.mul): --dump lists the script; -o renders the stems through
+// MusSequencer + Mixer offline, applying "T:VAR=VALUE" variable changes, and prints every section change.
+int renderMus(const cdc::BigfileSet& bf, const std::string& name, const std::vector<std::string>& sets,
+              const std::string& out, double seconds) {
+    const std::string base = "pc-w\\music\\" + name + "\\" + name;
+    const auto musBytes = bf.read(base + ".mus");
+    if (!musBytes) throw std::runtime_error("not in bigfile: " + base + ".mus");
+    const audio::MusFile mus = audio::parseMus(*musBytes);
+    const auto& seq = mus.sequences.at(0);
+    std::printf("%s: %zu stems, %u BPM stream clock, sequence tempo %u us, %u PPQN, %zu labels\n", name.c_str(),
+                mus.stems.size(), mus.bpm, seq.tempo, seq.ppqn, mus.labels.size());
+    struct Set { double t; uint8_t var, value; };
+    std::vector<Set> changes;
+    for (const auto& s : sets) {
+        if (s == "dump") {
+            uint64_t tick = 0;
+            for (const auto& e : seq.tracks.at(0)) {
+                tick += e.delta;
+                for (size_t l = 0; l < mus.labels.size(); ++l)
+                    if (mus.labels[l] == e.offset) std::printf("L%zu:\n", l);
+                if (e.status == audio::kMusMeta && e.meta == 0xF1) continue; // sequential markers, no-ops
+                std::printf("  %6llu  %02X %02X", (unsigned long long)tick, e.status, e.meta);
+                for (uint8_t b : e.data) std::printf(" %02X", b);
+                std::printf("\n");
+            }
+            continue;
+        }
+        const size_t c = s.find(':'), q = s.find('=');
+        if (c == std::string::npos || q == std::string::npos || q < c) throw std::runtime_error("--set wants T:VAR=VALUE");
+        changes.push_back({std::stod(s.substr(0, c)), uint8_t(std::stoul(s.substr(c + 1, q - c - 1), nullptr, 16)),
+                           uint8_t(std::stoul(s.substr(q + 1), nullptr, 0))});
+    }
+    if (out.empty()) return 0;
+    const auto mulBytes = bf.read(base + ".mul");
+    if (!mulBytes) throw std::runtime_error("not in bigfile: " + base + ".mul");
+    audio::MusSequencer sq(mus);
+    std::array<uint8_t, 256> vars{};
+    audio::Mixer mixer;
+    sq.update(0, vars);
+    mixer.playMusic(std::make_shared<const audio::Pcm>(audio::decodeMul(*mulBytes).pcm), 0, sq.stemGains());
+    const size_t total = size_t((seconds > 0 ? seconds : 30) * mixer.outputRate()), block = 480;
+    audio::Pcm pcm{.sampleRate = mixer.outputRate(), .channels = 2};
+    std::vector<float> buf(block * 2);
+    int section = sq.section();
+    for (size_t done = 0; done < total; done += block) {
+        const double t = double(done) / mixer.outputRate();
+        for (const auto& c : changes)
+            if (c.t <= t && c.t > t - double(block) / mixer.outputRate()) {
+                std::printf("%8.3f s  beat %7.2f  var 0x%02X %u -> %u\n", t, sq.beats(), c.var, vars[c.var], c.value);
+                vars[c.var] = c.value;
+            }
+        sq.update(float(block) / mixer.outputRate(), vars);
+        mixer.setMusicStemGains(sq.stemGains());
+        if (sq.section() != section) {
+            section = sq.section();
+            std::printf("%8.3f s  beat %7.2f  section L%d, stem gains", t, sq.beats(), section);
+            for (float g : sq.stemGains()) std::printf(" %.3f", g);
+            std::printf("\n");
+        }
+        mixer.mix(buf.data(), block);
+        for (float x : buf) pcm.samples.push_back(int16_t(std::lround(std::clamp(x, -1.0f, 1.0f) * 32767)));
+    }
+    writeWav(out, pcm);
+    describe(pcm);
+    std::printf("wrote %s\n", out.c_str());
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -238,6 +309,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> pos;
     std::optional<uint32_t> id;
     std::string out, lang = "en";
+    std::vector<std::string> sets;
     double seconds = 0;
     std::optional<audio::SfxReverbProps> reverb;
     for (int i = 3; i < argc; ++i) {
@@ -250,6 +322,8 @@ int main(int argc, char** argv) {
         else if (a == "--id") id = uint32_t(std::stoul(next(), nullptr, 0));
         else if (a == "--lang") lang = next();
         else if (a == "--seconds") seconds = std::stod(next());
+        else if (a == "--set") sets.push_back(next());
+        else if (a == "--dump") sets.push_back("dump");
         else if (a == "--reverb") { // 13 comma-separated SFX-reverb values (as ou-game logs them)
             std::string v = next();
             audio::SfxReverbProps r{};
@@ -328,6 +402,7 @@ int main(int argc, char** argv) {
             std::printf("DTP %u %s, reverb %s; wrote %s\n", *id, h ? "started" : "silent", reverb ? "on" : "off", out.c_str());
             return 0;
         }
+        if (cmd == "mus") return renderMus(bf, pos[0], sets, out, seconds);
         if (cmd == "play") {
             auto p = std::make_shared<const audio::Pcm>(load(bf, pos[0], id, false));
             if (!p->channels) throw std::runtime_error("nothing to play (missing --id?)");
