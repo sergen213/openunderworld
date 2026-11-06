@@ -8,6 +8,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <set>
 #include <zlib.h>
 
@@ -64,7 +65,7 @@ formats::Portal portal(const std::string& to, int16_t signal, int16_t toSignal, 
 
 // Three units in a row, each in its own frame: A [-2000, 2000] at z 0; B [10000, 14000] at z 500 (world
 // offset -8000, -6000, -500 from the A|B portal pair); C beyond B. One checkpoint in B, one ledge in C.
-int loads = 0;
+std::atomic<int> loads = 0; // the background streamer calls syntheticUnit too
 game::UnitData syntheticUnit(const std::string& name) {
     ++loads;
     game::UnitData u;
@@ -315,6 +316,40 @@ TEST(Stream, MissingNeighbourIsAWarning) {
     EXPECT_THROW(game::World(syntheticUnit, "nope", syntheticAnims()), cdc::FormatError);
 }
 
+// Background streaming (World::setAsyncStreaming) ends the same walk a -> b -> c with the same units, offsets, collision
+// and Lara as synchronous loads; a neighbour asked for joins kStreamTicks later, or at once when she crosses into it.
+TEST(Stream, AsyncLoadsMatchSync) {
+    game::World sync(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    game::World async(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
+    async.setAsyncStreaming(syntheticUnit);
+    bool queued = false, joined = false;
+    uint64_t entered = 0;
+    for (int i = 0; i < 300 && sync.currentUnit().data.name != "c"; ++i) {
+        sync.tick(forward()), async.tick(forward());
+        ASSERT_EQ(async.currentUnit().data.name, sync.currentUnit().data.name) << "tick " << i;
+        if (async.currentUnit().data.name == "b" && !entered) {
+            entered = async.ticks();
+            queued = async.streaming() && async.units().size() == 2; // c queued, not joined yet
+        }
+        if (entered && !async.streaming() && !joined) {
+            joined = true;
+            if (async.currentUnit().data.name == "b") EXPECT_EQ(async.ticks(), entered + game::World::kStreamTicks);
+        }
+    }
+    EXPECT_TRUE(queued);
+    EXPECT_TRUE(joined);
+    ASSERT_EQ(async.currentUnit().data.name, "c");
+    ASSERT_EQ(async.units().size(), sync.units().size());
+    for (size_t i = 0; i < sync.units().size(); ++i) {
+        EXPECT_EQ(async.units()[i].data.name, sync.units()[i].data.name);
+        EXPECT_EQ(async.units()[i].offset, sync.units()[i].offset);
+    }
+    EXPECT_EQ(async.collision().vertices, sync.collision().vertices);
+    EXPECT_EQ(async.collision().faces.size(), sync.collision().faces.size());
+    expectSame(async.player().state(), sync.player().state());
+    EXPECT_TRUE(async.warnings.empty());
+}
+
 TEST(Stream, SaveMoveLoadLandsOnSameState) {
     game::World w(syntheticUnit, "a", syntheticAnims(), game::Spawn{{1500, 0, 0}, 0});
     for (int i = 0; i < 70; ++i) w.tick(forward()); // into b, mid-run
@@ -415,6 +450,55 @@ TEST(StreamReal, PoolPortalPairs) {
     // Portal pair (Level+0x80 applied): pool's doorway floor is where its player intro stands.
     EXPECT_NEAR(pool.portals[0].min[2], pool.spawn->pos.z, 1);
     EXPECT_NEAR(pool.portals[0].max[1], -pool.portals[0].min[1], 1);
+}
+
+// l2_cliffhall_b <-> l2_hubhall: cliffhall_b's portal to hubhall (toSignal 74) is a stale copy of l2_junglehub's,
+// floating at junglehub's far doorway, and hubhall's to cliffhall_b (toSignal 75) is cliffhall_b's doorway into
+// junglehub: each names a signal whose portal leads to junglehub. tru.exe 0x5D13E0 pairs by signal alone, which puts
+// hubhall where the chain cliffhall_b -> junglehub -> hubhall puts it (within the authored 3 units), both ways round.
+TEST(StreamReal, CliffhallBHubhallPair) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto doorway = [](const game::LoadedUnit& u, const char* to) {
+        for (const auto& p : u.data.portals)
+            if (p.toUnit == to) return vec3(p.min[0], p.min[1], p.min[2]) + u.offset;
+        ADD_FAILURE() << u.data.name << " has no portal to " << to;
+        return vec3(0);
+    };
+    for (const char* start : {"l2_cliffhall_b", "l2_hubhall"}) {
+        game::World w(loader, start, game::loadLaraAnims(bf));
+        const game::LoadedUnit *b = nullptr, *hub = nullptr, *jungle = nullptr;
+        for (const auto& u : w.units()) {
+            if (u.data.name == "l2_cliffhall_b") b = &u;
+            if (u.data.name == "l2_hubhall") hub = &u;
+            if (u.data.name == "l2_junglehub") jungle = &u;
+        }
+        ASSERT_TRUE(b && hub && jungle) << start;
+        EXPECT_TRUE(w.warnings.empty()) << start << ": " << w.warnings.front();
+        EXPECT_LT(glm::distance(doorway(*b, "l2_junglehub"), doorway(*jungle, "l2_cliffhall_b")), 5.0f) << start;
+        EXPECT_LT(glm::distance(doorway(*jungle, "l2_hubhall"), doorway(*hub, "l2_junglehub")), 5.0f) << start;
+    }
+}
+
+// Units loaded by the background streamer are the ones a synchronous load gives: same units, offsets and collision.
+TEST(StreamReal, AsyncLoadsMatchSync) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World sync(loader, "l4_pool", game::loadLaraAnims(bf)), async(loader, "l4_pool", game::loadLaraAnims(bf));
+    async.setAsyncStreaming(loader);
+    sync.enterUnit("l4_ragnarok_room", std::nullopt), async.enterUnit("l4_ragnarok_room", std::nullopt);
+    ASSERT_EQ(sync.units().size(), 3u); // + l4_pool, l4_staircase_mictlan
+    ASSERT_EQ(async.units().size(), sync.units().size());
+    for (size_t i = 0; i < sync.units().size(); ++i) {
+        EXPECT_EQ(async.units()[i].data.name, sync.units()[i].data.name);
+        EXPECT_EQ(async.units()[i].offset, sync.units()[i].offset);
+        EXPECT_EQ(async.units()[i].data.drm->sections.size(), sync.units()[i].data.drm->sections.size());
+    }
+    EXPECT_EQ(async.collision().vertices, sync.collision().vertices);
+    EXPECT_EQ(async.collision().markup.size(), sync.collision().markup.size());
+    EXPECT_EQ(async.warnings, sync.warnings);
 }
 
 // Lara runs back out of l4_pool through its doorway into l4_ragnarok_room on continuous floor; then a

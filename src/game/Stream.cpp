@@ -8,7 +8,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
+#include <future>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 
 namespace ou::game {
 
@@ -48,16 +53,20 @@ bool uberScript(const cdc::BigfileSet& bigfile, const cdc::Drm& unit, const std:
 }
 
 // Does pc-w\music\<name>\<name>.mus exist? Cached: the same names recur in every unit of a chapter.
-// ponytail: process-wide cache keyed by name, not per bigfile (one install per process).
+// ponytail: process-wide caches keyed by name, not per bigfile (one install per process); one lock for both, held
+// over the read (the background streamer and the main thread load units).
+std::mutex cacheMutex;
 bool isMusic(const cdc::BigfileSet& bigfile, const std::string& name) {
+    const std::lock_guard lock(cacheMutex);
     static std::map<std::string, bool> cache;
     const auto it = cache.find(name);
     if (it != cache.end()) return it->second;
     return cache[name] = bigfile.read("pc-w\\music\\" + name + "\\" + name + ".mus").has_value();
 }
 
-// Bend data of object `name` (nullptr: none). ponytail: process-wide cache keyed by name, as isMusic.
+// Bend data of object `name` (nullptr: none). Cached as isMusic.
 std::shared_ptr<const BendType> bendType(const cdc::BigfileSet& bigfile, const std::string& name) {
+    const std::lock_guard lock(cacheMutex);
     static std::map<std::string, std::shared_ptr<const BendType>> cache;
     if (const auto it = cache.find(name); it != cache.end()) return it->second;
     std::shared_ptr<const BendType> t;
@@ -65,6 +74,85 @@ std::shared_ptr<const BendType> bendType(const cdc::BigfileSet& bigfile, const s
     return cache[name] = t;
 }
 } // namespace
+
+// One worker thread running a UnitLoader for queued unit names, FIFO; at most kMaxQueued wait (more are loaded by take
+// on the calling thread). Results are handed out once.
+class UnitStreamer {
+public:
+    static constexpr size_t kMaxQueued = 8;
+    explicit UnitStreamer(UnitLoader loader) : loader_(std::move(loader)), worker_([this] { run(); }) {}
+    ~UnitStreamer() {
+        { const std::lock_guard lock(m_); stop_ = true; }
+        cv_.notify_one();
+        worker_.join();
+    }
+    void request(const std::string& name) {
+        const std::lock_guard lock(m_);
+        if (results_.contains(name) || queue_.size() >= kMaxQueued) return;
+        queue_.emplace_back(name, std::promise<UnitData>{});
+        results_[name] = queue_.back().second.get_future();
+        cv_.notify_one();
+    }
+    void cancel(const std::string& name) { // a load already running finishes unseen
+        const std::lock_guard lock(m_);
+        results_.erase(name);
+        std::erase_if(queue_, [&](const auto& j) { return j.first == name; });
+    }
+    UnitData take(const std::string& name) { // waits; rethrows what the loader threw
+        std::future<UnitData> f;
+        {
+            const std::lock_guard lock(m_);
+            const auto it = results_.find(name);
+            if (it == results_.end()) return loader_(name); // never queued (the queue was full)
+            f = std::move(it->second);
+            results_.erase(it);
+        }
+        return f.get();
+    }
+
+private:
+    void run() {
+        for (;;) {
+            std::pair<std::string, std::promise<UnitData>> job;
+            {
+                std::unique_lock lock(m_);
+                cv_.wait(lock, [&] { return stop_ || !queue_.empty(); });
+                if (stop_) return;
+                job = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            try {
+                job.second.set_value(loader_(job.first));
+            } catch (...) {
+                job.second.set_exception(std::current_exception());
+            }
+        }
+    }
+    UnitLoader loader_;
+    std::mutex m_;
+    std::condition_variable cv_;
+    std::deque<std::pair<std::string, std::promise<UnitData>>> queue_;
+    std::map<std::string, std::future<UnitData>> results_;
+    bool stop_ = false;
+    std::thread worker_; // last: starts after the members it uses
+};
+
+// tru.exe 0x5D13E0: (1) a portal P of the new unit to `from` and the portal Q of `from` whose signal is P.toSignal,
+// else (2) a portal Q of `from` to the new unit and the new unit's portal P whose signal is Q.toSignal; offset =
+// Q.min - P.min (the first match; 0x5D10D0 relocates). Neither step checks the other portal's target [O]: it is what
+// pairs l2_cliffhall_b and l2_hubhall, whose portals to each other name signals of portals to l2_junglehub (LEVELS.md
+// "Streaming").
+std::optional<vec3> relocation(const UnitData& unit, const LoadedUnit& from) {
+    for (const auto& p : unit.portals)
+        if (p.toUnit == from.data.name)
+            for (const auto& q : from.data.portals)
+                if (q.signal == p.toSignal) return from.offset + v3(q.min) - v3(p.min);
+    for (const auto& q : from.data.portals)
+        if (q.toUnit == unit.name)
+            for (const auto& p : unit.portals)
+                if (p.signal == q.toSignal) return from.offset + v3(q.min) - v3(p.min);
+    return std::nullopt;
+}
 
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
     const std::string path = "pc-w\\" + name + ".drm";
@@ -138,6 +226,11 @@ World::World(UnitLoader loader, const std::string& unit, AnimLibrary anims, std:
     enterUnit(unit, spawn);
 }
 
+void World::setAsyncStreaming(UnitLoader background) {
+    joinStreams(true); // the old streamer's queue
+    streamer_ = background ? std::make_shared<UnitStreamer>(std::move(background)) : nullptr;
+}
+
 LoadedUnit* World::findUnit(const std::string& name) {
     for (auto& u : units_)
         if (u.data.name == name) return &u;
@@ -155,12 +248,15 @@ void World::enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32
     // streaming keeps hers.
     if (!base.data.playerObject.empty()) levelOutfit = base.data.playerObject;
     if (!costume.empty() || !base.data.playerObject.empty()) wear(costume);
+    for (const auto& p : pending_) streamer_->cancel(p.name);
+    pending_.clear();
     units_.clear();
     units_.push_back(std::move(base));
     current_ = 0;
     playerUnit_.clear(); // a level load: the unit scripts get vt 13 (World::tick)
     player_.restore(PlayerState{}); // the old ledge index means nothing in the new stream
-    streamAround(0);
+    streamAround(0, true);
+    joinStreams(true); // a level load waits for the neighbours
     player_.spawn(spawn->pos, spawn->yaw);
     prev_ = player_.state();
     cam_.yaw = spawn->yaw;
@@ -188,40 +284,78 @@ void World::respawn() {
     enemies_.reset();
 }
 
-// tru.exe STREAM_LevelLoadAdjacentUnits (0x5D2940) keeps the portal neighbours of the player's unit loaded;
-// a newly loaded unit is relocated by 0x5D13E0: for its portal P back to a loaded unit L, the portal Q of L
-// with Q.signal == P.toSignal gives offset = Q.min - P.min (applied by RelocateUnit 0x5C6210 via 0x5D10D0).
-void World::streamAround(size_t center) {
+// tru.exe STREAM_LevelLoadAdjacentUnits (0x5D2940) keeps the portal neighbours of the player's unit loaded; a newly
+// loaded unit is relocated against it (relocation). With setAsyncStreaming the neighbours are queued: joinStreams.
+// A crossing that adds and drops nothing changes only the current unit (no collision rebuild, no new render scene).
+void World::streamAround(size_t center, bool fresh) {
     // Markup indices into the merged mesh change below; keep (unit, local index) and map back.
     const auto ledgeOwner = markupOwner(player_.state().ledge), waterOwner = markupOwner(player_.state().water);
     const std::string centerName = units_[center].data.name;
     std::vector<std::string> keep{centerName};
     for (const auto& p : units_[center].data.portals) keep.push_back(p.toUnit); // copy: units_ grows below
+    const auto kept = [&](const std::string& name) { return std::find(keep.begin(), keep.end(), name) != keep.end(); };
+    std::erase_if(pending_, [&](const PendingUnit& p) {
+        if (kept(p.name)) return false;
+        streamer_->cancel(p.name);
+        return true;
+    });
     for (size_t k = 1; k < keep.size(); ++k) {
         const std::string& name = keep[k];
-        if (findUnit(name)) continue;
-        UnitData d;
+        if (findUnit(name) || std::any_of(pending_.begin(), pending_.end(), [&](const PendingUnit& p) { return p.name == name; }))
+            continue;
+        if (streamer_) {
+            streamer_->request(name);
+            pending_.push_back({name, centerName, ticks_ + kStreamTicks});
+            continue;
+        }
         try {
-            d = loader_(name);
+            fresh |= attach(loader_(name), centerName);
         } catch (const std::exception& e) {
             warnings.push_back("stream " + name + ": " + e.what());
-            continue;
         }
-        const LoadedUnit& from = *findUnit(centerName);
-        std::optional<vec3> offset;
-        for (const auto& p : d.portals)
-            for (const auto& q : from.data.portals)
-                if (!offset && p.toUnit == centerName && q.toUnit == name && q.signal == p.toSignal)
-                    offset = from.offset + v3(q.min) - v3(p.min);
-        if (!offset) {
-            warnings.push_back("stream " + name + ": no portal pair with " + centerName);
-            continue;
-        }
-        units_.push_back({std::move(d), *offset, 0});
     }
-    std::erase_if(units_, [&](const LoadedUnit& u) { return std::find(keep.begin(), keep.end(), u.data.name) == keep.end(); });
+    fresh |= std::erase_if(units_, [&](const LoadedUnit& u) { return !kept(u.data.name); }) > 0;
     for (size_t i = 0; i < units_.size(); ++i)
         if (units_[i].data.name == centerName) current_ = i;
+    if (fresh) unitsChanged(ledgeOwner, waterOwner);
+}
+
+// The safe point for background loads (start of World::tick, crossings, level loads): every neighbour due by this tick
+// (all with `now`) joins, waiting for a load still running. Deterministic: which ones join depends on ticks only.
+void World::joinStreams(bool now) {
+    if (pending_.empty()) return;
+    const auto ledgeOwner = markupOwner(player_.state().ledge), waterOwner = markupOwner(player_.state().water);
+    bool changed = false;
+    for (size_t i = 0; i < pending_.size();) {
+        if (!now && pending_[i].due > ticks_) {
+            ++i;
+            continue;
+        }
+        const PendingUnit p = std::move(pending_[i]);
+        pending_.erase(pending_.begin() + std::ptrdiff_t(i));
+        try {
+            changed |= attach(streamer_->take(p.name), p.from);
+        } catch (const std::exception& e) {
+            warnings.push_back("stream " + p.name + ": " + e.what());
+        }
+    }
+    if (changed) unitsChanged(ledgeOwner, waterOwner);
+}
+
+bool World::attach(UnitData d, const std::string& from) {
+    const LoadedUnit* base = findUnit(from);
+    if (!base) base = &units_[current_]; // `from` streamed out while the load ran
+    const auto offset = relocation(d, *base);
+    if (!offset) {
+        warnings.push_back("stream " + d.name + ": no portal pair with " + base->data.name);
+        return false;
+    }
+    units_.push_back({std::move(d), *offset, 0});
+    return true;
+}
+
+void World::unitsChanged(const std::optional<std::pair<std::string, int>>& ledgeOwner,
+                         const std::optional<std::pair<std::string, int>>& waterOwner) {
     rebuildCollision();
     for (const auto& u : units_) {
         for (const auto& [uid, chapters] : u.data.chapterLinks) cinematicEnds_[uid].chapters = chapters;
@@ -273,7 +407,8 @@ void World::crossPortals(vec3 from, vec3 to) {
         const vec3 x = a + (b - a) * (d0 / (d0 - d1)) - cur.offset;
         if (glm::any(glm::lessThan(x, v3(p.min) - kPortalMargin)) || glm::any(glm::greaterThan(x, v3(p.max) + kPortalMargin))) continue;
         const std::string target = p.toUnit; // `p` dies with the unit list below
-        if (!findUnit(target)) streamAround(current_); // a neighbour that failed before: retry (tru.exe blocks here)
+        if (!findUnit(target)) joinStreams(true); // queued: wait for it (tru.exe blocks here too)
+        if (!findUnit(target)) streamAround(current_), joinStreams(true); // a neighbour that failed before: retry
         for (size_t i = 0; i < units_.size(); ++i)
             if (units_[i].data.name == target) {
                 streamAround(i);

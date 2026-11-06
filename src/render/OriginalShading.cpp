@@ -1,11 +1,15 @@
 #include "render/OriginalShading.hpp"
+#include "render/RenderCommon.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
 #include <map>
+#include <mutex>
+#include <thread>
 #include <tuple>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -354,6 +358,43 @@ Reflection reflection(const Camera& camera, float aspect, float planeZ, bool fli
     const glm::vec3 rows[3] = {0.5f * (row(0) + row(3)), 0.5f * ((flipY ? 1.0f : -1.0f) * row(1) + row(3)), row(3)};
     for (int c = 0; c < 3; ++c) r.rows[c][0] = rows[0][c], r.rows[c][1] = rows[1][c], r.rows[c][2] = rows[2][c], r.rows[c][3] = 0;
     return r;
+}
+
+std::vector<uint32_t> spirv(const std::string& glsl, bool pixel, std::string& error) {
+    // ponytail: one lock, cleared past kMax entries (a few levels' programs), never compiled under the lock.
+    static constexpr size_t kMax = 4096;
+    static std::mutex m;
+    static std::map<std::string, std::vector<uint32_t>> memo; // key: 'v' / 'p' + source
+    const std::string key = (pixel ? "p" : "v") + glsl;
+    {
+        const std::lock_guard lock(m);
+        if (const auto it = memo.find(key); it != memo.end()) return it->second;
+    }
+    auto spv = sm3::compileSpirv(glsl, pixel, true, error);
+    if (spv.empty()) return spv; // failures are not kept: the error message comes with a retry
+    const std::lock_guard lock(m);
+    if (memo.size() >= kMax) memo.clear();
+    memo.emplace(key, spv);
+    return spv;
+}
+
+void warmSpirv(const scene::SceneData& scene, bool rays) {
+    const auto programs = prepare(scene, true).programs;
+    std::atomic<size_t> next{0};
+    auto work = [&] { // one program per task, its variants in order (VkRenderer drops a program without its VS)
+        std::string error;
+        for (size_t i; (i = next++) < programs.size();) {
+            const auto& p = programs[i];
+            if (spirv(p.vsGlsl.source, false, error).empty()) continue;
+            spirv(p.psGlsl.source, true, error);
+            spirv(originalPixelSource(p.psGlsl.source, true, false), true, error);
+            if (rays) spirv(originalPixelSource(p.psGlsl.source, true, true), true, error);
+        }
+    };
+    // Half the cores: the render thread keeps the others.
+    std::vector<std::jthread> pool(std::clamp<size_t>(std::thread::hardware_concurrency() / 2, 1, 8) - 1);
+    for (auto& t : pool) t = std::jthread(work);
+    work();
 }
 
 } // namespace ou::render::original

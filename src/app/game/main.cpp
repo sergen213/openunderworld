@@ -42,6 +42,7 @@
 #include "locale/Locale.hpp"
 #include "platform/Sdl.hpp"
 #include "save/Save.hpp"
+#include "render/OriginalShading.hpp"
 #include "render/Renderer.hpp"
 #include "render/Water.hpp"
 #include "video/Player.hpp"
@@ -74,6 +75,7 @@ struct Options {
     bool noMovies = false; // --no-movies: New Game skips Movies/explode.bik
     bool drawLast = false; // --draw-last: with --frames, every frame runs its ticks but only the last is drawn (render-rate tests)
     bool noAudio = false;
+    bool syncLoads = false; // --sync-loads: neighbour units load on the main thread (World::setAsyncStreaming off)
     std::filesystem::path musicWav; // --music-wav FILE: no device; every tick's mixer output goes to a WAV
     std::string loadSlot; // --load SLOT: start from $XDG_DATA_HOME/openunderworld/saves/SLOT.ousave
     std::string cine;     // --cine NAME: play pc-w\cinstream\NAME.mul in its unit (--frames/--screenshot apply), then exit
@@ -93,7 +95,7 @@ void usage() {
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer auto|opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
-                 "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--music-wav out.wav]\n"
+                 "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
@@ -149,6 +151,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--show-enemies") { o.showEnemies = true; continue; }
         if (a == "--intro") { o.intro = true; continue; }
         if (a == "--no-audio") { o.noAudio = true; continue; }
+        if (a == "--sync-loads") { o.syncLoads = true; continue; }
         if (a == "--no-movies") { o.noMovies = true; continue; }
         if (a == "--draw-last") { o.drawLast = true; continue; }
         if (a == "--help" || a == "-h") return false;
@@ -619,10 +622,11 @@ void appendEnemyLines(const ou::game::World& w, std::vector<ou::render::DebugLin
             line(s.pos + glm::vec3(0, 0, h * 0.8f), lara.pos + glm::vec3(0, 0, lara.height * 0.75f), 0xFF00FFFF);
     }
 }
-// Render scene of the streamed units: each loaded unit's level scene (cached while it stays loaded) moved by
-// its stream offset, then Lara's skinned meshes. Rebuilt and re-uploaded when World::unitsVersion changes.
+// Render scene of the streamed units: each loaded unit's level scene (UnitData::scene, decoded by the background
+// streamer, else here; cached while it stays loaded) moved by its stream offset, then Lara's skinned meshes. Rebuilt
+// and re-uploaded when World::unitsVersion changes.
 struct StreamedScene {
-    std::map<std::string, ou::scene::SceneData> units; // unit frame
+    std::map<std::string, std::shared_ptr<const ou::scene::SceneData>> units; // unit frame
     std::vector<std::pair<uint32_t, uint32_t>> unitMeshes; // per World::units() entry: first scene mesh, count (portal clips)
     ou::scene::SceneData lara;                         // Lara's skinned meshes, skeletons, textures
     ou::scene::SceneData guns;                         // weapon models, one per gunSlots entry (CombatView::pose)
@@ -719,11 +723,13 @@ struct StreamedScene {
         for (const auto& u : w.units()) {
             auto it = units.find(u.data.name);
             if (it == units.end()) {
-                it = units.emplace(u.data.name, ou::formats::loadLevelScene(bf, "pc-w\\" + u.data.name + ".drm")).first;
-                for (const auto& s : it->second.warnings) warnings.push_back(s);
+                auto s = u.data.scene ? u.data.scene
+                                      : std::make_shared<const ou::scene::SceneData>(ou::formats::loadLevelScene(bf, "pc-w\\" + u.data.name + ".drm"));
+                it = units.emplace(u.data.name, std::move(s)).first;
+                for (const auto& s : it->second->warnings) warnings.push_back(s);
             }
             const auto first = uint32_t(out.meshes.size());
-            append(it->second, u.offset, nullptr, &u.data.name);
+            append(*it->second, u.offset, nullptr, &u.data.name);
             unitMeshes.emplace_back(first, uint32_t(out.meshes.size()) - first);
         }
         // Draw groups hidden on Lara (Thor's gear, wetsuit dive gear; GAMEPLAY.md). Lara's meshes are the last block of
@@ -1492,6 +1498,9 @@ int main(int argc, char** argv) {
     // ---- load: simulation data first (no window needed to fail early) ----
     std::optional<ou::game::InputScript> script;
     std::unique_ptr<const ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
+    // The streamer warms the Vulkan programs of the scenes it decodes (original::warmSpirv): 0 = OpenGL, 1 = Vulkan,
+    // 2 = Vulkan with ray queries. Set when the renderer starts or is swapped.
+    std::atomic<int> spirvWarm{0};
     std::unique_ptr<ou::game::World> world;
     std::optional<ou::locale::Strings> strings;
     std::optional<ou::ui::Art> art; // generalbank.drm menu art and font
@@ -1532,6 +1541,14 @@ int main(int argc, char** argv) {
         if (opt.spawn) spawn = ou::game::Spawn{{(*opt.spawn)[0], (*opt.spawn)[1], (*opt.spawn)[2]}, glm::radians((*opt.spawn)[3])};
         world = std::make_unique<ou::game::World>([&bf](const std::string& n) { return ou::game::loadUnitData(bf, n); }, unit,
                                                   ou::game::loadLaraAnims(bf), spawn);
+        // Neighbour units (and their render scenes) load on a worker thread (World::setAsyncStreaming); --sync-loads: inline.
+        if (!opt.syncLoads)
+            world->setAsyncStreaming([b = bigfile.get(), &spirvWarm](const std::string& n) {
+                auto u = ou::game::loadUnitData(*b, n);
+                u.scene = std::make_shared<const ou::scene::SceneData>(ou::formats::loadLevelScene(*b, "pc-w\\" + n + ".drm"));
+                if (const int warm = spirvWarm) ou::render::original::warmSpirv(*u.scene, warm == 2);
+                return u;
+            });
         world->fovDeg = opt.fov;
         world->script().setBigfile(&bf);
         world->enemies().setBigfile(&bf);
@@ -1653,6 +1670,7 @@ int main(int argc, char** argv) {
     if (!window) { std::fprintf(stderr, "ou-game: SDL_CreateWindow: %s\n", SDL_GetError()); return 1; }
     if (!renderer->init(window.get(), error)) { std::fprintf(stderr, "ou-game: %s\n", error.c_str()); return 1; }
     renderer->setVsync(opt.vsync);
+    spirvWarm = chosen != "vulkan" ? 0 : renderer->rtStatus().supported ? 2 : 1;
     std::fprintf(stderr, "ou-game: %s\n", renderer->description().c_str());
     for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
     objects.index(scene);
@@ -2294,7 +2312,11 @@ int main(int argc, char** argv) {
                 world->kill(); // death clip, then World respawns her at the last checkpoint
                 logState("killed (--die)", *world);
             }
+            const uint64_t tickStart = SDL_GetTicksNS(), unitsBefore = world->unitsVersion();
             world->tick(a);
+            if (world->unitsVersion() != unitsBefore) // streaming cost on the main thread (ROADMAP "Unit streaming")
+                std::fprintf(stderr, "ou-game: tick %llu stream world %.2f ms\n", (unsigned long long)world->ticks(),
+                             double(SDL_GetTicksNS() - tickStart) * 1e-6);
             if (autosaves && autoKey && !menus.mainMenu()) {
                 const AutoKey key = autosaveKey();
                 if (key != *autoKey) quickSave(*world, std::string(ou::ui::kAutosaveSlot)), autoKey = key;
@@ -2409,6 +2431,7 @@ int main(int argc, char** argv) {
                 window = std::move(nw);
                 chosen = ch;
                 renderer->setVsync(opt.vsync);
+                spirvWarm = chosen != "vulkan" ? 0 : renderer->rtStatus().supported ? 2 : 1;
                 for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
                 objects.index(scene);
                 plants.index(scene);
@@ -2438,13 +2461,17 @@ int main(int argc, char** argv) {
             world->laraHiddenGroups() != streamed.hiddenGroups) {
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {
+                const uint64_t t0 = SDL_GetTicksNS();
                 effects.sync(*bigfile, *world, warnings);
                 streamed.fixtureLights = effects.fixtures();
                 scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings);
                 effects.addTextures(scene);
+                const uint64_t t1 = SDL_GetTicksNS();
                 for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
                 objects.index(scene);
                 plants.index(scene);
+                std::fprintf(stderr, "ou-game: tick %llu stream scene %.2f ms, upload %.2f ms\n", (unsigned long long)world->ticks(),
+                             double(t1 - t0) * 1e-6, double(SDL_GetTicksNS() - t1) * 1e-6);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "ou-game: streaming the render scene failed: %s\n", e.what());
                 streamed.version = world->unitsVersion();
@@ -2729,8 +2756,8 @@ int main(int argc, char** argv) {
                 for (const double t : frameMs) sum += t;
                 auto sorted = frameMs;
                 std::sort(sorted.begin(), sorted.end());
-                std::fprintf(stderr, "ou-game: frame time mean %.3f ms p95 %.3f ms (%zu frames)\n", sum / double(sorted.size()),
-                             sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)], sorted.size());
+                std::fprintf(stderr, "ou-game: frame time mean %.3f ms p95 %.3f ms max %.3f ms (%zu frames)\n", sum / double(sorted.size()),
+                             sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)], sorted.back(), sorted.size());
             }
             if (!opt.screenshot.empty()) {
                 if (!writePpm(opt.screenshot, renderer->readBackbuffer({w, h}))) {

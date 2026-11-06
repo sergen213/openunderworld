@@ -72,6 +72,11 @@ struct Prepared {
     }
 };
 Prepared prepare(const scene::SceneData& scene, bool vulkan);
+// Vulkan SPIR-V of a translated source (sm3::compileSpirv), memoised process-wide; thread-safe. VkRenderer compiles
+// through it, and warmSpirv fills it ahead with what uploading `scene` will compile (`rays`: the ray-query variants
+// too): ou-game's unit streamer calls it on its worker, so a streamed unit's new programs cost the render thread nothing.
+std::vector<uint32_t> spirv(const std::string& glsl, bool pixel, std::string& error);
+void warmSpirv(const scene::SceneData& scene, bool rays);
 
 // Texture id for sampler register `reg` of a material, with a submesh's per-instance textures
 // (SubMesh::instanceTextures) applied; 0 when the material has no entry for `reg`.

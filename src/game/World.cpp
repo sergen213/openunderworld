@@ -348,6 +348,7 @@ void World::restoreEnemies(const nlohmann::json& j) {
 }
 
 void World::tick(const Actions& input) {
+    joinStreams(false); // background neighbour loads due this tick (Stream.cpp)
     prev_ = player_.state();
     prevCam_ = cam_;
     const float dt = float(kTickSeconds);

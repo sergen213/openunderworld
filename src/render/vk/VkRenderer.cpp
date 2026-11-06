@@ -457,7 +457,7 @@ public:
     std::vector<std::string> upload(const scene::SceneData& scene) override {
         std::vector<std::string> warnings;
         waitIdle();
-        destroySceneResources();
+        destroySceneResources(true);
         sceneMemory_.init(device_, gpu_, kBlockSize, rtStatus_.supported);
 
         VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, uint32_t(std::max<size_t>(1, scene.textures.size()))};
@@ -1721,6 +1721,7 @@ private:
         std::array<std::vector<uint32_t>, 3> ps;   // per OrigVariant (compiled at upload; rays only with RT support)
         uint8_t attributes = 0;                    // vertex attribute locations the VS reads
         std::array<std::array<VkPipeline, 4>, 4> pipelines{}; // created on first use
+        uint64_t vsHash = 0, psHash = 0;           // original::Program::vs / ps: identity across uploads (origStash_)
     };
     struct OrigDraw {
         int program = -1; // origPrograms_ index, -1 = generic shading
@@ -1736,7 +1737,7 @@ private:
             const int v = variant == kOrigPrepass ? kOrigPlain : variant;
             if (o.ps[size_t(v)].empty()) {
                 std::string error;
-                o.ps[size_t(v)] = sm3::compileSpirv(originalPixelSource(o.psGlsl, true, v == kOrigRays), true, true, error);
+                o.ps[size_t(v)] = original::spirv(originalPixelSource(o.psGlsl, true, v == kOrigRays), true, error);
                 if (o.ps[size_t(v)].empty()) { // keep drawing without the sun term
                     std::fprintf(stderr, "[vk] original pixel shader with sun term: %s\n", error.c_str());
                     o.ps[size_t(v)] = o.ps[kOrigPlain];
@@ -1781,15 +1782,25 @@ private:
         work();
     }
 
-    void destroyOriginalPipelines() {
-        for (auto& o : origPrograms_)
+    static void destroyPipelines(VkDevice device, std::vector<OrigProgram>& programs) {
+        for (auto& o : programs)
             for (auto& byBlend : o.pipelines)
-                for (VkPipeline& p : byBlend) vkDestroyPipeline(device_, std::exchange(p, VK_NULL_HANDLE), nullptr);
+                for (VkPipeline& p : byBlend) vkDestroyPipeline(device, std::exchange(p, VK_NULL_HANDLE), nullptr);
+    }
+    void destroyOriginalPipelines() {
+        destroyPipelines(device_, origPrograms_);
+        destroyPipelines(device_, origStash_);
         origWarmKey_ = -1;
     }
 
-    void destroyOriginalScene() {
-        destroyOriginalPipelines();
+    // `keepPrograms` (a re-upload): the programs, with their SPIR-V and pipelines, wait in origStash_ for
+    // uploadOriginals to take the ones the new scene still uses.
+    void destroyOriginalScene(bool keepPrograms) {
+        destroyPipelines(device_, origStash_);
+        origStash_.clear();
+        if (keepPrograms) origStash_ = std::move(origPrograms_);
+        else destroyPipelines(device_, origPrograms_);
+        origWarmKey_ = -1;
         origPrograms_.clear();
         origDraws_.clear();
         screenSets_.clear();
@@ -1799,30 +1810,45 @@ private:
         vkDestroyDescriptorPool(device_, std::exchange(origScenePool_, VK_NULL_HANDLE), nullptr);
     }
 
-    // Translates and compiles each material's programs, then one material UBO block + descriptor set per distinct
-    // (program, material, instance textures, alpha ref) of the uploaded submeshes.
+    // Translates and compiles each material's programs (the previous upload's ones carry over: a streamed unit
+    // re-uploads the scene, and compiling every program again stalled the crossing ~650 ms), then one material UBO
+    // block + descriptor set per distinct (program, material, instance textures, alpha ref) of the uploaded submeshes.
     void uploadOriginals(const scene::SceneData& scene, std::vector<std::string>& warnings) {
         environment_ = scene.environment;
         const original::Prepared prep = original::prepare(scene, true);
         for (const auto& w : prep.warnings) warnings.push_back(w);
-        // Every program's VS and PS variants compile in parallel here (shaderc is reentrant): compiling the sun /
-        // rays variants on first draw cost ~30 % of l4_ballcourt's frames as new materials came into view.
         const size_t n = prep.programs.size();
         origPrograms_.resize(n);
+        std::map<std::pair<uint64_t, uint64_t>, size_t> stashed;
+        for (size_t s = 0; s < origStash_.size(); ++s)
+            if (!origStash_[s].vs.empty()) stashed.emplace(std::pair{origStash_[s].vsHash, origStash_[s].psHash}, s);
+        std::vector<bool> reused(n);
+        for (size_t i = 0; i < n; ++i) {
+            const auto it = stashed.find({prep.programs[i].vs, prep.programs[i].ps});
+            if (it == stashed.end() || origStash_[it->second].psGlsl != prep.programs[i].psGlsl.source) continue;
+            origPrograms_[i] = std::exchange(origStash_[it->second], {});
+            stashed.erase(it);
+            reused[i] = true;
+        }
+        destroyPipelines(device_, origStash_); // not used by this scene
+        origStash_.clear();
+        // Every new program's VS and PS variants compile in parallel here (shaderc is reentrant): compiling the sun /
+        // rays variants on first draw cost ~30 % of l4_ballcourt's frames as new materials came into view.
         std::vector<std::array<std::string, 4>> errors(n); // per task: each written by one thread
         const bool rays = rtStatus_.supported;
         std::atomic<size_t> next{0};
         auto work = [&] {
             for (size_t task; (task = next++) < n * 4;) {
                 const size_t i = task / 4;
+                if (reused[i]) continue;
                 const auto& p = prep.programs[i];
                 OrigProgram& o = origPrograms_[i];
                 std::string& error = errors[i][task % 4];
                 switch (task % 4) {
-                case 0: o.vs = sm3::compileSpirv(p.vsGlsl.source, false, true, error); break;
-                case 1: o.ps[kOrigPlain] = sm3::compileSpirv(p.psGlsl.source, true, true, error); break;
-                case 2: o.ps[kOrigShadowMap] = sm3::compileSpirv(originalPixelSource(p.psGlsl.source, true, false), true, true, error); break;
-                case 3: if (rays) o.ps[kOrigRays] = sm3::compileSpirv(originalPixelSource(p.psGlsl.source, true, true), true, true, error); break;
+                case 0: o.vs = original::spirv(p.vsGlsl.source, false, error); break;
+                case 1: o.ps[kOrigPlain] = original::spirv(p.psGlsl.source, true, error); break;
+                case 2: o.ps[kOrigShadowMap] = original::spirv(originalPixelSource(p.psGlsl.source, true, false), true, error); break;
+                case 3: if (rays) o.ps[kOrigRays] = original::spirv(originalPixelSource(p.psGlsl.source, true, true), true, error); break;
                 }
             }
         };
@@ -1837,6 +1863,7 @@ private:
             OrigProgram& o = origPrograms_[i];
             o.attributes = prep.programs[i].vsGlsl.attributes;
             o.psGlsl = prep.programs[i].psGlsl.source;
+            o.vsHash = prep.programs[i].vs, o.psHash = prep.programs[i].ps;
             if (o.vs.empty()) o.ps = {};
             for (int v : {kOrigShadowMap, kOrigRays}) { // keep drawing without the sun term
                 if (!o.ps[size_t(v)].empty() || (v == kOrigRays && !rays) || o.ps[kOrigPlain].empty()) continue;
@@ -4138,8 +4165,8 @@ private:
         tlasDirty_ = tlasRebuild_ = false;
     }
 
-    void destroySceneResources() {
-        destroyOriginalScene();
+    void destroySceneResources(bool keepPrograms = false) {
+        destroyOriginalScene(keepPrograms);
         for (auto& [_, img] : textures_) destroyImage(img);
         textures_.clear();
         if (ripples_.image) destroyImage(ripples_); // sceneMemory_ below; updateRipples recreates it and the water sets
@@ -4443,6 +4470,7 @@ private:
     std::array<VkDescriptorSet, kFramesInFlight> reflFrameSet_{};
     GpuImage attenuation_, blackCube_;
     std::vector<OrigProgram> origPrograms_;
+    std::vector<OrigProgram> origStash_; // the previous upload's programs, during the next upload (destroyOriginalScene)
     int origWarmKey_ = -1; // warmOriginalPipelines' settings since the pipelines were last destroyed
     std::vector<std::pair<uint64_t, original::LightSet>> meshLights_; // meshes_ index -> (frameCounter_ + 1, light set)
     std::vector<std::vector<OrigDraw>> origDraws_; // meshes_ index -> per submesh

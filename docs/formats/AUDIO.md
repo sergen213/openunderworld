@@ -556,7 +556,11 @@ Lara. Replay bike_ride: tick 66 `bike engine start`, rpm 4252 / 7224 / 8822 at t
 fade-out s) (0x594320), 3 Stop(fade s) — 0x593EB0 with a null name fades that slot out. Slot = player 0xCC5260 + slot ×
 0x528. `music` locals start at their initial value (Vm), `script::Runtime::takeMusicRequests` hands them to ou-game's
 Music (one voice: a request crossfades, a stop fades only the slot holding the playing track). Unit music follows the
-scripts; `<unit>_mus_01` only plays while no request has started a track [I]. Replay pool_to_ragnarok [O]: tick 1
+scripts: tru.exe has no unit-change switch [V-exe]. Besides the natives, only 0x5B21D0 starts music (slot 0, 2 s fade):
+at a level load (0x5DE040, 0x5DE3E0) with the name the save game keeps at +0x278 (copied from 0xD98F64, which only
+0x5B21D0 itself writes; 0x5DF760 sets it empty [U: when]), and in 0x5B22A0 when the sound it waits for ends. Every unit
+with its own `<unit>_mus_01` names it in its own DRM (31 units, survey of the `*_mus_NN` strings) [V-data]: its scripts
+request it. Ours: `<unit>_mus_01` also plays when Lara enters a unit while nothing plays [I]. Replay pool_to_ragnarok [O]: tick 1
 l4_pool_mus_01; tick 101 soundvolume 5674 vt 58 -> unit script 14147 vt 25 -> `l4_staircase_upper_mus_01` (slot 1), stop
 slot 0 (3 s), 0x7D 0 -> 8 — the original switches there, not on the unit change. l1_ship_lower_hallway: tick 1
 `l1_ship_engine_room_mus_01` (slot 1). 0x7B / 0x0D writers were not reached in a replay. Natives on a null receiver are

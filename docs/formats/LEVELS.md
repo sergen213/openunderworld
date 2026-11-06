@@ -202,17 +202,26 @@ Survey (82 units, `scratch/portalsurvey.py`) [O]:
 - 158 portals, all targets exist.
 - 156 pair with a back portal by signal (`back.signal == toSignal`); 152 of these have equal extents within 2 units,
   the other 4 differ by 30–35 units in one axis (ballcourt↔trailtube, valgrind↔valgrind_tunnel).
-- `l2_cliffhall_b` ↔ `l2_hubhall` do **not** pair: cliffhall_b has to 74 / signal 78, hubhall has to 75 /
-  signal 73. [I] tru.exe would hit its "Can't find signal%d in unit %s" error there. We log a warning and do not
-  stream that neighbour.
+- `l2_cliffhall_b` ↔ `l2_hubhall` have no such back portal: cliffhall_b's portal to hubhall has toSignal 74 /
+  signal 78, hubhall's to cliffhall_b toSignal 75 / signal 73. Signal 74 is hubhall's portal to l2_junglehub and 75
+  cliffhall_b's to junglehub. cliffhall_b's portal to hubhall floats ~20 000 units outside cliffhall_b's collision, at
+  junglehub's doorway to hubhall (relocated by the cliffhall_b → junglehub pair): a stale copy of junglehub's.
+  `0x5D13E0` pairs by signal alone (below), which puts hubhall where the chain cliffhall_b → junglehub → hubhall puts
+  it, within 3 units, from either side (`StreamReal.CliffhallBHubhallPair`). So all 158 pair.
+- Signal records [O 0x5D2940]: unit data (Level+0x74) +0x98 count, +0x9C → 0x40-byte records, u16 signal id at +0x08,
+  flags at +0x0B. A portal's target is loaded only when the record of its signal has bit 0 set (every record checked
+  has it); bit 1 is set on hubhall 73 and cliffhall_b 78 [U]. The ids match the portals' +0x82 in the units checked.
 
 ### How tru.exe streams [O]
 
 - `STREAM_LevelLoadAdjacentUnits` (0x5D2940) keeps the portal neighbours of the player's unit loaded.
-- When a unit loads, `0x5D13E0` hooks it to the loaded units. For each portal P of the new unit N whose
-  `toStreamId` is a loaded unit L, it finds the portal Q of L with `Q.signal == P.toSignal` and relocates N by
-  `Q.min − P.min`. This goes through `0x5D10D0`, which calls RelocateUnit 0x5C6210 ("RelocateUnit (%s, (%g, %g,
-  %g))") and shifts terrain groups, instances, markup, sounds, etc. Only the first match relocates.
+- When a unit loads, `0x5D13E0` hooks it to the loaded units, in two steps. (1) For each portal P of the new unit N
+  whose `toStreamId` is a loaded unit L (the main unit, unless N's Level+0x2C has 0x100000), it finds the portal Q of
+  L with `Q.signal == P.toSignal`, whatever Q's target, and relocates N by `Q.min − P.min`. (2) For each loaded L's
+  portal Q to N, the portal P of N with `P.signal == Q.toSignal`, the same offset. Not finding the signal is
+  `ERROR_Fatal` ("Can't find signal%d in unit %s"). The offset goes through `0x5D10D0`, which calls RelocateUnit
+  0x5C6210 ("RelocateUnit (%s, (%g, %g, %g))") and shifts terrain groups, instances, markup, sounds, etc. Only the
+  first match relocates.
 - So every streamed unit is moved into the frame of the unit that was loaded first. Moving into a new unit
   (`0x5B3A20`) only sets the instance's unit id (`instance+0xE0`). It does **not** move coordinates.
 - Crossing: when an instance's collision hits a signal of the unit's signal terrain group, `0x5D2CA0` calls
@@ -225,16 +234,30 @@ Survey (82 units, `scratch/portalsurvey.py`) [O]:
 ### Ours [I unless marked]
 
 - `World(UnitLoader, unit, …)` loads `unit` at offset 0 plus every portal target. Each target goes at the offset
-  computed exactly as `0x5D13E0` does.
+  computed exactly as `0x5D13E0` does (`game::relocation`, both steps).
 - Collision: the loaded units' meshes and markup are merged into one `CollisionMesh` in the world frame, and its BVH
   is rebuilt on every change. Ledge and water markup indices in Lara's state are remapped across the rebuild.
 - Crossing: each tick, Lara's path at mid-body height (feet + 250) is tested against the planes of the current
   unit's portals, inside their bounds ± 50. Crossing one makes its target the current unit. Then the target's
   neighbours are loaded and every unit that is neither current nor adjacent is dropped. This replaces the signal
-  faces; the signal terrain group is not decoded.
-- A neighbour that failed to load is retried on crossing. Loads are synchronous, as in tru.exe.
+  faces; the signal terrain group is not decoded. A crossing that loads and drops nothing only changes the current
+  unit (no rebuild).
+- Background loads (`World::setAsyncStreaming`, on in `ou-game`; `--sync-loads` turns it off): a worker thread reads,
+  decompresses and parses the neighbour DRMs, builds their gameplay data (`loadUnitData`), their render scene
+  (textures decoded) and warms the Vulkan SPIR-V of their programs (`original::warmSpirv`). A bounded queue (8). A
+  neighbour joins the world `World::kStreamTicks` (60, 1 s [I]) after it was asked for, at the start of a tick,
+  waiting there if its load is late; crossing into a neighbour still loading waits for it (tru.exe blocks there
+  too). The join tick depends on ticks only, so replays stay deterministic. Level loads (enterUnit: respawn, saves,
+  chapters) wait for their neighbours.
+- A neighbour that failed to load is retried on crossing.
 - Rendering (`ou-game`): each loaded unit's level scene, moved by its offset, is re-uploaded when the unit set
-  changes. Unit music stays the start unit's. Script objects follow the unit set (src/script).
+  changes; Vulkan keeps the previous upload's compiled programs and pipelines. Script objects follow the unit set
+  (src/script). Music: the unit scripts request their tracks (AUDIO.md §9.9).
+- Main-thread cost of a stream, `pool_to_ragnarok.txt` on Vulkan with vsync (real-time ticks), logged as `stream
+  world / scene / upload`: before, the crossing frame 45 + 56 + 656 ms (773 ms frame; the upload recompiled every
+  program); now the crossing does nothing and l4_staircase_mictlan joins at tick 164 with 12 + 12 + 53 ms (86 ms
+  frame). The rest is the whole-scene re-upload (both backends) and collision rebuild: keeping each unit's GPU
+  data resident would remove it.
 
 ### Unit script
 

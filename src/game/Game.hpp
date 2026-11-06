@@ -405,15 +405,20 @@ struct UnitData {
     bool flashlightSpot = false; // formats::Unit::flashlightSpot: the flashlight's spot is on here, else only its omni
     std::vector<BendIntro> bends;          // bend_* intros (game/Bend.hpp), unit frame
     std::vector<formats::Unit::Wind> wind; // formats::Unit::wind
+    // Render payload a UnitLoader may decode off the main thread (ou-game: formats::loadLevelScene); null = none.
+    std::shared_ptr<const scene::SceneData> scene;
 };
 // Throws cdc::FormatError if pc-w\<name>.drm is missing or not a unit.
 UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name);
 using UnitLoader = std::function<UnitData(const std::string& name)>;
+class UnitStreamer; // Stream.cpp: the background loader thread
 struct LoadedUnit {
     UnitData data;
     vec3 offset{0};        // world = unit frame + offset (portal relocation, tru.exe 0x5D13E0)
     size_t markupBase = 0; // first index of this unit's markup in World::collision().markup
 };
+// tru.exe 0x5D13E0 (LEVELS.md "Streaming"): offset that places `unit` (its portal to `from`) at `from`'s matching portal.
+std::optional<vec3> relocation(const UnitData& unit, const LoadedUnit& from);
 struct CheckpointRef {
     std::string unit;
     int32_t id = 0;
@@ -526,6 +531,14 @@ public:
     const LoadedUnit& currentUnit() const { return units_.at(current_); } // the unit Lara is in
     uint64_t unitsVersion() const { return unitsVersion_; } // bumped whenever units() changes
     std::vector<std::string> warnings;                      // streaming problems (missing neighbours, ...)
+    // Background streaming (ou-game): portal neighbours load on a worker thread through `background` (empty = load
+    // synchronously, the default) and join the world kStreamTicks after they were asked for, waiting then for a late
+    // load, or at once when Lara crosses into one (tru.exe blocks there too). Level loads still wait for them. Same
+    // units, offsets and collision as synchronous loads, at fixed ticks: replays stay deterministic.
+    static constexpr uint64_t kStreamTicks = 60; // [I] one second
+    void setAsyncStreaming(UnitLoader background);
+    bool streaming() const { return !pending_.empty(); } // neighbour loads asked for, not yet joined
+    void finishStreaming() { joinStreams(true); }         // join them now (tests)
     // Drops every unit, loads `unit` at offset 0 + neighbours, spawns Lara (unit frame) at `spawn`, else
     // at checkpoint `checkpointId` of that unit, else at its player intro.
     void enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32_t checkpointId = 0);
@@ -667,7 +680,12 @@ private:
     bool cameraNative(int op, const std::string& unit, uint32_t index, uint32_t value); // script::Runtime::CameraNative
     bool tickSplineCamera(float dt); // false once no spline camera plays (Camera.cpp)
     LoadedUnit* findUnit(const std::string& name);
-    void streamAround(size_t center); // load portal neighbours of units_[center], unload the rest
+    // Load (or queue) portal neighbours of units_[center], unload the rest; `fresh`: units_ was replaced (level load).
+    void streamAround(size_t center, bool fresh = false);
+    void joinStreams(bool now);       // queued neighbours due by now (all: `now`) join units_ (Stream.cpp)
+    bool attach(UnitData d, const std::string& from); // relocated against loaded unit `from` (else the current one)
+    // After units_ changed: collision, cinematic ends, Lara's ledge / water markup (kept by (unit, local index)).
+    void unitsChanged(const std::optional<std::pair<std::string, int>>& ledge, const std::optional<std::pair<std::string, int>>& water);
     void rebuildCollision();
     void crossPortals(vec3 from, vec3 to);
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
@@ -728,6 +746,12 @@ private:
     bool cameraCut_ = false; // the spline camera started this tick: no interpolation from the previous tick
     uint64_t ticks_ = 0;
     UnitLoader loader_;
+    std::shared_ptr<UnitStreamer> streamer_; // setAsyncStreaming; null = synchronous loads (shared_ptr: incomplete type)
+    struct PendingUnit {
+        std::string name, from; // queued neighbour, the unit it is relocated against
+        uint64_t due = 0;       // tick it joins at
+    };
+    std::vector<PendingUnit> pending_;
     std::vector<LoadedUnit> units_;
     size_t current_ = 0;
     uint64_t unitsVersion_ = 0;
