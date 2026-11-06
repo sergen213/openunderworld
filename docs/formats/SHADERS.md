@@ -116,6 +116,17 @@ reflections and depth fade in GL and Vulkan.
 - Point/spot lights (2026-10-18, viewed l3_main_bedroom): the torch lights reach the walls around their holders as an
   orange, flickering falloff; dynamic objects (Lara, enemies, cutscene actors) now use their own translated programs
   (IrradianceState ambient + their light set + sun) with CPU-skinned normals/tangents.
+- PSSM (Wine, l2_junglehub start 2026-11-06, openunderworld-work/tlp/hook4.py; tru.exe 0x50CCB0) [O]: sun SceneLight
+  +0xF4 = 4 splits; one 4096×3072 atlas, 1024² tiles at (2048,1024) split 0 (farthest), (2048,0), (1024,1024),
+  (1024,0) split 3 (nearest); split far distances (camera ctx +0x444) c96 = (105585, 17098, 7684, 2986) — the PS picks
+  split 0 (VS `WorldToPSSM0` c81–c84, stored as matrix columns with the 4th column replaced by the camera-forward depth
+  plane) and maps to splits 1–3 by `PSSMToMap{n}Lin/Const` (c80/c81 … c84/c85: per-split xyz scale and offset of
+  split 0's coordinates, there (6.18, 2.00), (13.7, 3.15), (34.9, 3.34)); no shadow beyond c96.x. Per split: frustum
+  slice bounding sphere (0x50AC40/0x50CB40), ortho ±512 × 512/radius, light-space xy snapped with floor (0x815520),
+  depth range from 0x849684 (−120000, −90000, −60000, −60000), depth bias / slope bias from the sun record +0x60 / +0x64
+  (1.53e-5 / 2.2, D3DRS 0xC3 / 0xAF). PS variants: slot | 2 = Fetch4 gathers (ATI), | 4 = 4 point taps with manual
+  bilinear compare (plain float depth), | 6 = hardware PCF (`texldl` 4 taps averaged); selected by device +0x11484
+  when shadows are enabled (devmgr +0x184) [which one Wine uses: not read]. Not implemented in our renderers yet.
 - Missing vs the original: light and PSSM shadows (PS slots 2–7 sample one shadow atlas s14 with Fetch4-style 4-tap PCF, `WorldToShadowMap` c158–c169, `PSSMToMap*` c80–c85, `PSSMDistances` c96; we use PS slot 0 with our shadow map / rays as `ouSunVis` / `ouLightVis`), directional SH terms on characters.
 - No original-game screenshot of the same views was available for a pixel comparison (PCGamingWiki's TRU page only has
   settings-menu images); comparison is against our previous renders.
