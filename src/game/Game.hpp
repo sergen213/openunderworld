@@ -113,6 +113,8 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
 // outfits' clips are byte-identical to lara.drm's; their skeletons share its topology with other pivots
 // (docs/GAMEPLAY.md "Outfits"). Throws std::runtime_error without a skeleton.
 void rigOutfit(AnimLibrary& lib, const cdc::Drm& drm);
+// Lara's hair simulation parameters (per 60 Hz tick; World's HairSim, cutscenes).
+anim::HairParams laraHair();
 
 // Segment-0 (root) translation of `clip` at unbounded time `t` seconds. Looping clips are unwrapped:
 // each full cycle adds the cycle displacement, so root(t1) - root(t0) is the motion over [t0, t1]

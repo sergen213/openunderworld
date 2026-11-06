@@ -65,8 +65,6 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
     return {float(r.blend) / 30.0f, double(r.start) / 30.0};
 }
 
-namespace {
-
 // Body capsules for hair collision (Lara's bind pose has no rotations, so offsets are model axes): spine
 // 14 -> below the neck 16, and the head from 17 up. Radii [I]; HairSim shrinks them to clear the bind hair.
 anim::HairParams laraHair() {
@@ -82,6 +80,8 @@ anim::HairParams laraHair() {
     p.follow = 0.8f; // [I] keeps the short strands from lagging the run/jump root motion by whole segment lengths
     return p;
 }
+
+namespace {
 
 // Per-bone matrix interpolation: lerp translation and column lengths, slerp rotation.
 glm::mat4 mixBone(const glm::mat4& a, const glm::mat4& b, float t) {

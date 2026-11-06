@@ -2364,6 +2364,7 @@ int main(int argc, char** argv) {
         v.frame.rtAo = opt.gfx.rtAo, v.frame.rtGi = opt.gfx.rtGi;
         v.frame.originalShaders = opt.gfx.originalShaders, v.frame.brightness = opt.gfx.brightness;
         v.overlay = !opt.noOverlay;
+        v.depthOfField = opt.graphics.preset == "enhanced" && opt.gfx.effects;
         v.art = art ? &*art : nullptr;
         v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
         return v;

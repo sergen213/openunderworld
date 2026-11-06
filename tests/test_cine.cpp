@@ -1,4 +1,6 @@
 // src/cine: CINE stream decode, playback (camera, bones, cuts, subtitles), unit cinematic binding.
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -236,6 +238,47 @@ TEST(Cine, OriginFromMarker) {
     expectNear(glm::vec3(p.originFromMarker(p.header().markers[0], intro)[3]), {5, 6, 7});
 }
 
+// The frame clock follows the sound track's playback position (updated in mixer chunks), runs on by wall time between
+// chunks for at most kSlack, never backwards, and on wall time alone without a track.
+TEST(Cine, ClockFollowsTheSoundTrack) {
+    cine::Clock c;
+    EXPECT_DOUBLE_EQ(c.update(0, 0.0), 0.0);
+    EXPECT_NEAR(c.update(0.016, 0.0), 0.016, 1e-12);      // no new chunk yet: wall time
+    EXPECT_NEAR(c.update(0.016, 0.0), 0.032, 1e-12);
+    EXPECT_NEAR(c.update(0.016, 0.0464), 0.0464, 1e-12);  // a chunk arrived: the audio position
+    EXPECT_NEAR(c.update(0.5, 0.0464), 0.0464 + cine::Clock::kSlack, 1e-12); // a stalled track holds the clock
+    EXPECT_NEAR(c.update(0.016, 0.1), 0.0464 + cine::Clock::kSlack, 1e-12);  // audio behind the clock: no step back
+    EXPECT_NEAR(c.update(0.016, 2.0), 2.0, 1e-12);        // a render hitch: the audio pulls the frames along
+    EXPECT_NEAR(c.update(0.25, std::nullopt), 2.25, 1e-12); // the track ended: wall time
+    // Driven by an audio clock of 1024-frame chunks at 44.1 kHz while frames render at 144 Hz, the frame clock never
+    // strays more than kSlack from the audio position.
+    cine::Clock d;
+    double wall = 0, worst = 0;
+    for (int i = 0; i < 2000; ++i) {
+        wall += 1.0 / 144;
+        const double audio = std::floor(wall * 44100 / 1024) * 1024 / 44100;
+        worst = std::max(worst, std::abs(d.update(1.0 / 144, audio) - audio));
+    }
+    EXPECT_LE(worst, cine::Clock::kSlack + 1e-9);
+}
+
+// tru.exe 0x4545C0: blur 4 / f-stop, the in-focus band around focus x 3.1605 and an alpha curve that is 0 at the focus
+// and saturates away from it; focus nearer than the focal length gives no curve (all the retail non-DOF cameras).
+TEST(Cine, DepthOfFieldAsTheExe) {
+    const auto d = cine::depthOfField(100, 1, 70);
+    EXPECT_FLOAT_EQ(d.blur, 4.0f);
+    const double f = 0.4 * 1 * 30 / 4900.0;
+    EXPECT_NEAR(d.near, 100 / (1 + f) * 3.1605, 1e-3);
+    EXPECT_NEAR(d.far, 100 / (1 - f) * 3.1605, 1e-3);
+    EXPECT_GE(d.curve[0], 254);
+    EXPECT_GE(d.curve[255], 250);
+    EXPECT_LE(d.curve[128], 2);
+    for (int i = 1; i < 128; ++i) EXPECT_LE(d.curve[size_t(i)], d.curve[size_t(i - 1)]) << i;
+    EXPECT_FLOAT_EQ(cine::depthOfField(100, 14.8f, 35).blur, 4.0f / 14.8f);
+    const auto none = cine::depthOfField(5, 5.6f, 45);
+    for (const uint8_t v : none.curve) EXPECT_EQ(v, 0);
+}
+
 // ---- real data (skipped without OU_GAME_DIR) ----------------------------------------------------------------
 
 namespace {
@@ -389,4 +432,59 @@ TEST(CineReal, LaraBonesMatchHerSkeleton) {
     }
     EXPECT_GT(compared, 60);
     EXPECT_GT(close, compared * 9 / 10) << close << "/" << compared;
+}
+
+// Light rigs (co_light_rig*): each light rides on a rig bone with matrix bone x Rx(180 deg), i.e. a spot shines along
+// the bone's -Z. Lit spots aim at the actors: an actor root lies inside 89 % of the lit cones (2179 / 2444 samples),
+// 35 % with the axis flipped (the cones are wide, up to 160 degrees).
+TEST(CineReal, LightRigsAimAtTheActors) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(list);
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    const scene::Skeleton one{{scene::Bone{}}, 0, {}};
+    int lit = 0, inside = 0, insideFlipped = 0;
+    for (const char* n : {"001_pro_corridor", "010_pro_surprise", "030_med_yacht", "220_mex_exit"}) {
+        cine::Player p(stream(bf, n));
+        std::string unit = p.header().unitName;
+        for (auto& ch : unit) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+        const auto intros = formats::parseUnit(cdc::parseDrm(*bf.read("pc-w\\" + unit + ".drm"))).intros;
+        std::vector<std::pair<const cine::Instance*, scene::Skeleton>> rigs;
+        for (const auto& in : p.header().instances) {
+            if (in.lights.empty()) continue;
+            const auto i = std::find_if(intros.begin(), intros.end(), [&](const auto& x) { return x.uniqueId == in.intro; });
+            ASSERT_NE(i, intros.end()) << n;
+            std::vector<std::string> warnings;
+            const auto sk = anim::decodeSkeletons(cdc::parseDrm(*bf.read("pc-w\\" + names.at(i->objectId) + ".drm")), warnings);
+            ASSERT_FALSE(sk.empty()) << names.at(i->objectId);
+            EXPECT_GE(sk[0].bones.size(), in.bones) << names.at(i->objectId);
+            rigs.emplace_back(&in, sk[0]);
+        }
+        ASSERT_FALSE(rigs.empty()) << n;
+        for (double pos = 0; !p.finished(); pos += 10) {
+            p.seek(pos);
+            std::vector<glm::vec3> actors;
+            for (const auto& in : p.header().instances)
+                if (in.lights.empty()) actors.emplace_back(p.bones(in, one)[0][3]);
+            for (const auto& [in, sk] : rigs)
+                for (const auto& l : p.lights(*in, p.bones(*in, sk))) {
+                    if (!l.on || l.type != 1 || l.intensity <= 0) continue;
+                    ++lit;
+                    const glm::vec3 at(l.matrix[3]), axis = glm::normalize(glm::vec3(l.matrix[2]));
+                    float best = 4, bestFlipped = 4;
+                    for (const auto& a : actors) {
+                        const glm::vec3 to = glm::normalize(a - at);
+                        best = std::min(best, std::acos(std::clamp(glm::dot(axis, to), -1.0f, 1.0f)));
+                        bestFlipped = std::min(bestFlipped, std::acos(std::clamp(-glm::dot(axis, to), -1.0f, 1.0f)));
+                    }
+                    inside += best < l.coneOuter * 0.5f;
+                    insideFlipped += bestFlipped < l.coneOuter * 0.5f;
+                }
+        }
+    }
+    std::printf("light rigs: %d lit spot samples, %d with an actor inside the cone, %d with the axis flipped\n", lit, inside, insideFlipped);
+    EXPECT_GT(lit, 500);
+    EXPECT_GT(inside, lit * 85 / 100);
+    EXPECT_LT(insideFlipped, lit * 4 / 10);
 }

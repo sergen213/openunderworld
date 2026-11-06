@@ -94,10 +94,14 @@ Header parseHeader(std::span<const uint8_t> cine) {
             in.boneFix.push_back(fix);
         }
         ch += 14ull * in.bones + 3;
-        in.lights = count(24);
+        const uint32_t nLights = count(24);
         in.lightChannel = r.u32();
-        r.skip(24ull * in.lights); // {bone, type, flag, ?, ?, table} (0x454BD0 light setup)
-        ch += 10ull * in.lights;
+        for (uint32_t k = 0; k < nLights; ++k) {
+            Light l;
+            l.bone = r.u32(), l.type = r.u32(), l.flag = r.u32(), l.unk3 = r.u32(), l.unk4 = r.u32(), l.table = r.u32();
+            in.lights.push_back(l);
+        }
+        ch += 10ull * nLights;
         in.vars = r.u32();
         in.varChannel = r.u32();
         ch += in.vars;
@@ -251,6 +255,8 @@ CameraPose Player::camera() const {
     p.up = glm::normalize(glm::vec3(m[1]));
     p.horizontalFov = value(c + 9);
     p.cut = (int(std::lround(cur_[c + 10])) & 1) != 0;
+    p.dof = (int(std::lround(cur_[c + 10])) & 64) != 0;
+    p.focus = value(c + 11), p.fStop = value(c + 12), p.focalLength = value(c + 13);
     return p;
 }
 
@@ -284,6 +290,65 @@ std::vector<glm::mat4> Player::bones(const Instance& in, const scene::Skeleton& 
         out[b] = base * glm::translate(glm::mat4(1.0f), glm::vec3(sk.bones[b].pivot[0], sk.bones[b].pivot[1], sk.bones[b].pivot[2]));
     }
     return out;
+}
+
+std::vector<LightPose> Player::lights(const Instance& in, std::span<const glm::mat4> bones) const {
+    std::vector<LightPose> out;
+    const glm::mat4 flip = glm::mat4_cast(glm::quat(0, 1, 0, 0)); // (x, y, z, w) = (1, 0, 0, 0): Rx(180 deg)
+    for (size_t i = 0; i < in.lights.size(); ++i) {
+        const Light& l = in.lights[i];
+        const uint32_t c = in.lightChannel + 10 * uint32_t(i);
+        LightPose p;
+        const int flags = int(std::lround(prev_[c + 5]));
+        p.on = (flags & 1) != 0, p.bit2 = (flags & 4) != 0;
+        p.type = l.type == 0 ? 2 : l.type == 1 ? 0 : 1;
+        p.matrix = (l.bone < bones.size() ? bones[l.bone] : origin) * flip;
+        p.colour = glm::vec3(value(c), value(c + 1), value(c + 2));
+        p.intensity = value(c + 8);
+        p.coneInner = value(c + 3), p.coneOuter = p.coneInner + value(c + 9);
+        const uint32_t m7 = uint32_t(std::lround(prev_[c + 7]));
+        p.mask = uint32_t(std::lround(prev_[c + 6])) | 0x83000000u, p.shadowMask = m7 | 0x83000000u;
+        p.shadowMaskOn = m7 != 0;
+        out.push_back(p);
+    }
+    return out;
+}
+
+std::vector<glm::vec4> Player::boneRows(const Instance& in) const {
+    std::vector<glm::vec4> out(in.bones);
+    for (uint32_t b = 0; b < in.bones; ++b) {
+        const uint32_t c = in.boneChannel(b) + 10;
+        out[b] = glm::vec4(value(c), value(c + 1), value(c + 2), value(c + 3));
+    }
+    return out;
+}
+
+DepthOfField depthOfField(float focus, float fStop, float focalLength) {
+    // 0x4545C0, arguments (table, c+11, c+12, c+13); FPU stack traced from the disassembly.
+    const double a = focus, b = fStop, c = focalLength;
+    DepthOfField d;
+    const double q = 4.0 / b; // blur = 4 / f-stop clamped to [0, 4] (+inf -> 4 as the exe's compare)
+    d.blur = q >= 4.0 || std::isnan(q) ? 4.0f : q < 0 ? 0.0f : float(q);
+    const float k = d.blur * 0.1f;
+    const float f = float(b * k * (a - c) / (c * c));
+    const double p1 = std::clamp(f, -0.99f, 0.99f), p2 = std::clamp(f, -0.8f, 0.8f);
+    const float nr = float(a / (p1 + 1)), fr = float(a / (1 - p2));
+    d.near = nr * 3.1605f, d.far = fr * 3.1605f;
+    for (int i = 0; i < 256; ++i) {
+        const float depth = float(((256 - i) * double(nr) + i * double(fr)) * (1.0 / 256)); // lerp(nr, fr, i / 256)
+        const float t = std::fabs(depth - float(a));
+        const float x = float(t * c * c / (depth * b * (a - c)));
+        const double v = double(x) / k * 255.0; // _ftol truncates; NaN / negative -> 0
+        d.curve[size_t(i)] = v >= 255.0 ? 255 : v > 0 ? uint8_t(v) : 0;
+    }
+    return d;
+}
+
+double Clock::update(double dt, std::optional<double> audioSeconds) {
+    if (!audioSeconds) return t_ += dt;
+    if (*audioSeconds != audio_) audio_ = *audioSeconds, since_ = 0;
+    else since_ += dt;
+    return t_ = std::max(t_, audio_ + std::min(since_, kSlack));
 }
 
 glm::mat4 Player::originFromMarker(const Marker& m, const glm::mat4& markerIntroWorld) const {

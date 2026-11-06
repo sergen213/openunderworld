@@ -76,6 +76,8 @@ public:
     VoiceId playVoice(std::shared_ptr<const Pcm> pcm, float volume = 1);
     void stop(VoiceId v, float fadeSeconds = 0);
     bool playing(VoiceId v) const;
+    // Seconds of the voice's source played so far (its playback clock), nullopt once it ended.
+    std::optional<double> position(VoiceId v) const;
     void setVolume(VoiceId v, float volume);
     void setPosition(VoiceId v, glm::vec3 position);
     void setPitch(VoiceId v, float pitch);

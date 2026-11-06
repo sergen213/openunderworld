@@ -226,6 +226,13 @@ bool Mixer::playing(VoiceId id) const {
     return find(id) != nullptr;
 }
 
+std::optional<double> Mixer::position(VoiceId id) const {
+    std::lock_guard lock(mutex_);
+    const Voice* v = find(id);
+    if (!v || !v->pcm || !v->pcm->sampleRate) return std::nullopt;
+    return v->pos / v->pcm->sampleRate;
+}
+
 void Mixer::setVolume(VoiceId id, float volume) {
     std::lock_guard lock(mutex_);
     if (Voice* v = find(id)) v->params.volume = volume;

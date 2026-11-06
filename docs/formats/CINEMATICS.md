@@ -10,8 +10,9 @@ inferred; **[U]** unknown.
 ## 1. Files and binding
 
 - [O] A cutscene is `pc-w\cinstream\<nnn_name>.mul` (MultiplexStream: sound packets + cinematic packets, one record per
-  voice language) plus `pc-w\cinstream\<nnn_name>.drm` (DTP sections only; 12 736-byte = 0x31C0 tables that 0x4547D0
-  hands to the render device as lighting / depth-of-field state [I], not decoded). 53 streams.
+  voice language) plus `pc-w\cinstream\<nnn_name>.drm`, an object DRM (ObjectBase DTP res 32 whose effect list holds
+  e.g. 59 screen-filter records over 0x31C0 tables in 060_med_natla, light DTPs in 220_mex_exit). Who starts those
+  effects is [U]; the camera filter and the light templates of the stream come from `globalaniminfo.drm` (§4). 53 streams.
 - [O] Concatenating the type-1 packet payloads gives the CINE stream (`cine::demux`).
 - [O] Each unit lists its cinematics: `Level+0x70` → level data, `+0x1DC` u32 count, `+0x288` `char*` table
   (`cine::unitCinematics`; 0x4A4D10 opens `table[index]` through 0x5B2460 / 0x58ACE0 "%s%s.mul"). l4_ballcourt:
@@ -101,13 +102,22 @@ the stream's unit first [I].
 
 ### Instances (3 + 14 per bone)
 
-- Instance channels 0–2 [O values]: ch0 −1 in 468 of 469 instances (0x454BD0 stores a clamped value at instance
-  `+0xA1` [I]); ch1 0 or 1, constant per instance [U]; ch2 small integers (0..65) written to the instance's render
-  component `+0x20` [O] (meaning [U]). Not used by our playback.
-- Per bone, relative to `channel + 3 + 14·b` (`Instance::boneChannel`): 0–8 transform; 9 flags; 10–13 four values per
-  bone passed to 0x5B60F0 [U] (non-zero in 792 bones). [O] Flags: bit 0 = divide the local matrix's columns by the
-  parent's scale (translation kept), bit 1 = parent is bone 0; observed values 1 (roots), 5 (16 289 bones), 0 once.
-  The exe reads the flags from the previous frame value, not interpolated.
+- Instance channels 0–2 [O 0x454BD0 at 0x455096]: ch1 rounded → instance `+0xA1` when it is a valid bone index, else
+  0 (values 0 or 1, constant per instance; meaning [U]); ch2 rounded → the instance's render component `+0x20`
+  (values 1..65, 16 for most actors) — [I] the light receiver mask the light masks below test (the rig lights' ch6 is
+  16 / 17 / 32); ch0 (−1 in 468 of 469 instances) is not read by 0x454BD0. Not used by our playback (no receiver
+  masks; LEVELS.md "Lights").
+- Per bone, relative to `channel + 3 + 14·b` (`Instance::boneChannel`): 0–8 transform; 9 flags; 10–13 the bone's
+  skin-palette 4th row. [O] Flags: bit 0 = divide the local matrix's columns by the
+  parent's scale (translation kept), bit 1 = parent is bone 0; observed values 1 (roots), 5 (16 289 bones), 0 once;
+  bone 0's bit 2 moves the instance to the handler's unit (0x5B3A20). The exe reads the flags from the previous frame
+  value, not interpolated.
+- [O] Channels 10–13: when the instance has a render component whose `+0x14 → +0x49` is 0, 0x454BD0 lerps the four
+  values of every stream bone into a zeroed 1000-entry vec4 table and hands it to 0x5B60F0 (mask 0xF), which writes the
+  instance's per-bone rows, uploaded as the 4th row of each skin-palette bone (GAMEPLAY.md "Wetness": x wetness,
+  y dirt). Survey: Lara's face bones 22–30 animate z / w (0..1) in 060, 070, 110, 220; 220_mex_exit's 5464 holds
+  constant x / y (2.37, 6.48 / −1.35, −5.36) on 20 bones. Ours writes the weighted rows into COLOR0 of the skinned
+  meshes whose materials read them (`Material::skinParams`; Lara always), as in play.
 - [O] 0x454BD0 (per instance, per frame): `world[b] = (parent < 0 ? origin : world[parent]) · local[b]`, the parent
   index from the instance's model skeleton; the instance matrix = `world[b] · fix[b]` with world's translation. Model
   bones beyond the stream's count take their parent's matrix with the translation moved to the bind pivot. For the
@@ -119,10 +129,35 @@ the stream's unit first [I].
 - Instances are unit intros of `co_*` objects (co_natla, co_amanda, co_wp_handgun, co_recorder, …), most parked at
   z ≈ −10 723 in the level until the cinematic moves them.
 
-### Lights (10 per light) [U]
+### Lights (10 per light)
 
-0x454BD0 creates a light per entry while `round(ch5)` has bit 0 set (type from the entry, colour/intensity from ch0–3,
-ranges from ch6/ch7, attached to the entry's bone) [I from the call sequence]. Not rendered by us.
+Header entry (24 bytes, `cine::Light`): `{bone, type, flag, ?, ?, table}`. [O] all 53 streams: 6 lights per stream,
+on a `co_light_rig` / `co_light_rig_two` instance, bones 1–4, 6, 7, type 2 (spot), flag 0/1, `?` 1/2,
+`?` 512/1024/2048 [U], table 0/1.
+
+[O] 0x454BD0 at 0x4551B0, per light and frame (p = the frame-floor(pos) value, i = interpolated):
+
+| ch | use |
+|---|---|
+| 5 (p) | bit 0: create the scene light (else destroy it); bit 2 → PCRenderLight 0x58 (`+0xC5` bit 0) [U] |
+| 0–2 (i) | colour → PCRenderLight 0x24 |
+| 8 (i) | intensity → PCRenderLight 0x20 (`+0xB0`) |
+| 3, 9 (i) | SceneLight 0x54 (0x574320) `(ch3, ch3 + ch9)` → PCRenderLight 0x34 (0x50A280): inner / outer cone, full angles (0.35–2.44 / 0.08–0.79 rad) |
+| 6 (p) | `round | 0x83000000` → SceneLight `+0x14` (vfunc 0x6C): receiver mask (16 / 17 / 32) |
+| 7 (p) | `round | 0x83000000` → SceneLight `+0x18` (0x74); `ch7 != 0` → SceneLight 0x58 → PCRenderLight `+0xC5` bit 2 [U: shadow mask] |
+| 4 | not read |
+
+- Template [O]: `globalaniminfo.drm` ObjectBase `+0xC8` (0x4533A0 keeps it at handler `+0x10C`): `+0x14` 20 light DTP
+  ids (`table` picks one: 804 spot radius 40 000, 805 point radius 2741, 806 spot), `+0x64` / `+0x68` two 0x31C0
+  filter ids (807, 808). The 0x14E4-byte DTP is copied, its type replaced (entry type 0 → 2 directional, 1 → 0 point,
+  2 → 1 spot) and created through the render device (vfunc 0xC0). No template: radius 5000, intensity 1, falloff
+  `1 − (k/255)²`.
+- Matrix [O]: the instance bone's matrix × the quaternion (x, y, z, w) = (1, 0, 0, 0) (0x49CF90), i.e. Rx(180°): a spot
+  shines along the bone's −Z. Test `CineReal.LightRigsAimAtTheActors`: an actor root lies inside 89 % of the lit cones
+  (2179 / 2444 samples of 001, 010, 030, 220), 35 % with +Z.
+- Ours: one environment light slot per entry at the front of the cinematic scene's lights (OriginalShading takes the
+  first that reach an object), posed per frame through `FrameOptions::dynamicLights`; off = dark and far away.
+  Receiver masks are not applied [I]: rig lights reach the level as well as the actors.
 
 ### Cameras (16 channels)
 
@@ -130,8 +165,8 @@ ranges from ch6/ch7, attached to the entry's bone) [I from the call sequence]. N
 |---|---|---|
 | 0–8 | transform; world = `origin · M · Rx(−90°)` (the exe camera looks along +Y): forward = −Z of M, up = +Y of M | [O] 0x455910 |
 | 9 | horizontal FOV, radians; vertical = `2 atan(tan(ch9/2) / aspect)`, aspect = device `+0x170` / 10000 | [O] 0x455910 disassembly: `x·0.5`, 0x813870, `/ aspect`, 0x814E10, `·2` [I that these CRT helpers are tan/atan]; e.g. 0.21–1.36 in 060 |
-| 10 | flags: bit 0 cut (this frame starts a shot), bit 2 active camera (first such camera, else camera 0), bit 3 light-region probe under the camera (0x4540E0), bit 6 [U] | [O] 0x453CE0, 0x455910; values 8/9, 12/13, 76/77 |
-| 11–13 | depth of field (focus distance, f-stop 5.6, …) → 0x4545C0 | [O] call; [U] units |
+| 10 | flags: bit 0 cut (this frame starts a shot), bit 2 active camera (first such camera, else camera 0), bit 3 light-region probe under the camera (0x4540E0), bit 6 depth of field (0x4547D0) | [O] 0x453CE0, 0x455910, 0x4547D0; values 8/9, 12/13, 76/77 |
+| 11–13 | depth of field: focus (60–4827), f-stop (1–14.8), focal length (25–600) → 0x4545C0 | [O] |
 | 14 | time scale multiplied into `gameTracker_timeMult` when ≠ 1 | [O] 0x454550; 1.0 in all 55 cameras |
 | 15 | [U] | 0 except one stream (100) |
 
@@ -139,6 +174,23 @@ ranges from ch6/ch7, attached to the entry's bone) [I from the call sequence]. N
 the cut frames jump 119–3970 units (test `CineReal.NatlaSubtitlesCameraAndVoiceLines`). Across a cut our playback holds
 the old shot until the frame boundary instead of interpolating into the new one [I] (the exe resets per-instance
 interpolation state on cuts).
+
+Depth of field [O]: with camera flag bit 6 (045_med_kraken, 110_tha_yachtexit, 150_man_pinned: every frame; no other
+stream) 0x4547D0 copies globalaniminfo's filter 808, applies 0x4545C0 (`cine::depthOfField`, focus a, f-stop N,
+focal f) and hands it to the render device (vfunc 0x5C → 0x517D60, weight 1):
+
+```
+blur (+0x1300) = clamp(4 / N, 0, 4);  k = 0.1 blur;  F = k N (a − f) / f²
+nr = a / (1 + clamp(F, ±0.99));  fr = a / (1 − clamp(F, ±0.8));  +0x1310 = 3.1605 nr, +0x1314 = 3.1605 fr
+curve[i] (+0x1200) = clamp(trunc(255 |D − a| f² / (D N (a − f)) / k), 0, 255),  D = lerp(nr, fr, i / 256)
+```
+
+So the alpha of the blurred overlay is 0 at the focus and saturates away from it over the depth range; a < f (all the
+other cameras: 5 / 5.6 / 25..600) gives an all-zero curve. [O] Filter 808 has both ColorDOF blocks off (`+0x130E`,
+`+0x262E` 0; `+0x130C` DOF 1, `+0x130F` 1 = use its own range) and its fog, noise, feedback and finish blocks off, and
+0x516E70 tests `+0x130E` first: the retail PC game draws no cutscene depth of field. Ours: none with the original
+preset; the enhanced preset (`CineView::depthOfField`) draws 808 with the ColorDOF block on (its scene matrix off)
+through the screen-filter pass (`fx::System::screenFilter`).
 
 ### Events
 
@@ -157,6 +209,10 @@ player intro).
   AUDIO.md §4), one record per voice language (`0xFFFFFFE1` English). [O] Audio sample 0 = frame 0: in 060_med_natla
   the speech-band (300–3400 Hz) energy rises a median 5 frames (0.17 s) after each English subtitle's frame (27 lines
   between frames 109 and 1500; envelope plot viewed). The English track outlasts the frames (060: 110.3 s of audio, 106.0 s of frames).
+- Frame clock: the exe runs the frame position off the stream's playback clock. Ours (`cine::Clock`, test
+  `Cine.ClockFollowsTheSoundTrack`): seconds of the track the mixer has played (`audio::Mixer::position`), carried on
+  by wall time between the mixer's chunk updates for at most 0.1 s, never backwards; wall time without a track and a
+  fixed step with `--render-hz` (replays, screenshots).
 - [O] Subtitles: TEXT.md §3; shown with the exe ticker (TEXT.md §4) at y 352 / 374 of 640×480.
 
 ## 6. Playback in ou-game
@@ -168,11 +224,14 @@ player intro).
   5483 → 220_mex_exit plays (1061 frames), then chapter 5 starts in l5_startsnow. [I] each cinematic plays once per
   session.
 - The game scene is re-used: Lara's skinned meshes are posed from the stream, other actors come from their object DRM
-  (render model 0; rigid models follow bone 0), the actors' static level copies and the pistols are hidden, game music
-  is muted, the camera comes from the stream (with roll), the `.mul` track plays as a voice started with frame 0.
-- Lara wears the level's outfit (GAMEPLAY.md "Outfits"). Not done: lights, depth of field, hair simulation (hair bones
-  ride rigidly), events/vars, instance channels 0–2. [I] Frame position follows wall time; the exe follows the stream's
-  playback clock.
+  (render model 0; rigid models follow bone 0; light rigs only for their bones), the actors' static level copies and
+  the pistols are hidden, game music is muted, the camera comes from the stream (with roll), the `.mul` track plays as a
+  voice started with frame 0 and clocks the frames (§5); lights, depth of field and the palette rows as in §4.
+- Lara (instance −1) is the player instance, so she wears what she wears in play: the unit's outfit or the EXTRAS
+  costume (GAMEPLAY.md "Outfits"). Her hair is simulated on the stream's pose (`anim::HairSim` with `game::laraHair()`,
+  60 Hz steps on the frame clock), reset at the first frame and [I] when her root jumps more than 200 units in a frame
+  (the exe resets at frame 1 and at instance record `+0x3C`'s frame [U]).
+- Not done: events / vars (no retail stream has events), receiver masks, the cinematic DRM's own effects.
 
 Viewed renders (`../openunderworld-work/screens/cine`): 001_pro_corridor frames 40 and 150 (Lara walking into the
 corridor, the rubble actor flying; "My god!"), 060_med_natla frames 130 ("Damn, it's too small..." close-up), 420

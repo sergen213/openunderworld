@@ -2,14 +2,17 @@
 #include "app/game/Cinematic.hpp"
 #include "app/game/Sound.hpp"
 
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <map>
 #include <set>
+#include <optional>
 #include <stdexcept>
 
 #include <SDL3/SDL.h>
@@ -20,6 +23,7 @@
 #include "audio/Audio.hpp"
 #include "cine/Cine.hpp"
 #include "formats/Formats.hpp"
+#include "fx/Fx.hpp"
 #include "locale/Locale.hpp"
 #include "render/RenderCommon.hpp"
 #include "ui/Art.hpp"
@@ -44,9 +48,65 @@ glm::mat4 introWorld(const formats::Intro& in, glm::vec3 offset) {
 
 struct Actor {
     const cine::Instance* inst;
-    const scene::Skeleton* skeleton; // null: rigid meshes follow bone 0
+    const scene::Skeleton* skeleton = nullptr; // null: one bone, rigid meshes follow bone 0
+    int32_t skelIndex = -1;          // into the cinematic scene's skeletons until they stop growing
     std::vector<size_t> meshes;      // into the uploaded scene
+    bool rows = false;               // meshes take the bones' skin-palette 4th rows in COLOR0 (Material::skinParams)
+    size_t firstLight = 0;           // its lights' slots in the scene's environment lights
 };
+
+// globalaniminfo's cinematic settings (ObjectBase +0xC8; tru.exe 0x4533A0 keeps the pointer at handler +0x10C):
+// +0x14 the 20 light DTP templates (cine::Light::table), +0x68 the filter resource of the DOF cameras (0x4547D0).
+struct CineSettings {
+    std::array<std::optional<scene::Light>, 20> lights;
+    std::shared_ptr<const fx::FilterResource> dofFilter;
+};
+
+CineSettings cineSettings(const cdc::BigfileSet& bf) {
+    CineSettings s;
+    auto bytes = bf.read("pc-w\\globalaniminfo.drm");
+    if (!bytes) return s;
+    const auto drm = cdc::parseDrm(std::move(*bytes));
+    const auto ob = formats::objectBaseSection(drm);
+    if (!ob) return s;
+    const auto ptrs = cdc::sectionPointers(drm, *ob);
+    const auto p = ptrs.find(0xC8);
+    if (p == ptrs.end()) return s;
+    const auto& d = drm.sections.at(p->second.section).data;
+    auto id = [&](uint32_t o) {
+        uint32_t v = 0;
+        if (p->second.offset + o + 4 <= d.size()) std::memcpy(&v, d.data() + p->second.offset + o, 4);
+        return v == ~0u ? 0u : v;
+    };
+    for (uint32_t k = 0; k < s.lights.size(); ++k)
+        for (uint32_t i = 0; i < drm.sections.size() && id(0x14 + 4 * k); ++i)
+            if (drm.sections[i].type == cdc::SectionType::DtpData && drm.sections[i].id == id(0x14 + 4 * k))
+                s.lights[k] = formats::lightFromDtp(drm, i);
+    if (const uint32_t f = id(0x68)) s.dofFilter = fx::loadFilterResource(drm, f);
+    return s;
+}
+
+// A light without a template (0x4551B0's defaults): radius 5000, intensity 1, falloff 1 - (d / radius)^2.
+scene::Light defaultCineLight() {
+    scene::Light l;
+    l.radius = 5000;
+    l.falloff.resize(256);
+    for (int k = 0; k < 256; ++k) l.falloff[size_t(k)] = uint8_t(k < 255 ? std::lround((1.0 - (k / 255.0) * (k / 255.0)) * 255.0) : 0);
+    return l;
+}
+
+// The scene light of a posed cinematic light: the template's radius, falloff, flicker and shadow flag, the channels'
+// type, colour x intensity and cone; off = dark and far away (the slot stays reserved).
+void poseLight(scene::Light& l, const cine::LightPose& p) {
+    l.type = p.type == 1 ? 1 : 0;
+    for (int i = 0; i < 3; ++i) {
+        l.position[i] = p.on ? p.matrix[3][i] : 1e9f;
+        l.color[i] = p.on ? p.colour[i] * p.intensity : 0.0f;
+    }
+    const glm::vec3 dir = glm::normalize(glm::vec3(p.matrix[2]));
+    for (int i = 0; i < 3; ++i) l.direction[i] = dir[i];
+    l.coneInner = p.coneInner, l.coneOuter = p.coneOuter;
+}
 
 } // namespace
 
@@ -92,7 +152,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
     std::set<int32_t> actorIntros;
     for (const auto& inst : h.instances) {
         if (inst.intro == -1) {
-            actors.push_back({&inst, &v.world.anims().skeleton, v.laraMeshes});
+            actors.push_back({.inst = &inst, .skeleton = &v.world.anims().skeleton, .meshes = v.laraMeshes});
             continue;
         }
         const auto [in, off] = find(inst.intro);
@@ -120,12 +180,14 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         std::erase_if(s.meshes, [&](const auto& m) {
             return skinned ? m.skeleton < 0 || s.skeletons[size_t(m.skeleton)].renderModelId != model : m.skeleton >= 0;
         });
-        if (s.meshes.empty()) continue; // rigs without geometry (light rigs, cameras)
-        Actor a{&inst, nullptr, {}};
+        // Light rigs (co_light_rig*) have no geometry but bones for their lights.
+        if (s.meshes.empty() && (inst.lights.empty() || s.skeletons.empty())) continue;
+        Actor a{&inst};
         const size_t skelBase = sc.skeletons.size();
         sc.skeletons.insert(sc.skeletons.end(), s.skeletons.begin(), s.skeletons.end());
+        if (s.meshes.empty()) a.skelIndex = int32_t(skelBase);
         for (auto& m : s.meshes) {
-            if (m.skeleton >= 0) m.skeleton += int32_t(skelBase);
+            if (m.skeleton >= 0) m.skeleton += int32_t(skelBase), a.skelIndex = m.skeleton;
             a.meshes.push_back(sc.meshes.size());
             sc.meshes.push_back(std::move(m));
         }
@@ -138,8 +200,32 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         actors.push_back(std::move(a));
     }
     // Pointers into sc.skeletons only now that it no longer grows.
-    for (auto& a : actors)
-        if (a.inst->intro != -1 && sc.meshes[a.meshes[0]].skeleton >= 0) a.skeleton = &sc.skeletons[size_t(sc.meshes[a.meshes[0]].skeleton)];
+    std::set<uint32_t> rowMaterials;
+    for (const auto& m : sc.materials)
+        if (m.skinParams) rowMaterials.insert(m.id);
+    for (auto& a : actors) {
+        if (a.skelIndex >= 0) a.skeleton = &sc.skeletons[size_t(a.skelIndex)];
+        for (const size_t i : a.meshes)
+            for (const auto& sm : sc.meshes[i].submeshes) a.rows |= a.inst->intro == -1 || rowMaterials.contains(sm.materialId);
+    }
+
+    // Lights (0x454BD0): one environment slot each, first in the list (OriginalShading takes the first lights that
+    // reach an object), template from globalaniminfo, posed per frame through FrameOptions::dynamicLights.
+    const CineSettings settings = cineSettings(v.bigfile);
+    std::vector<scene::Light> lights;
+    for (auto& a : actors) {
+        a.firstLight = lights.size();
+        for (const auto& l : a.inst->lights) {
+            auto& s = lights.emplace_back(l.table < settings.lights.size() && settings.lights[l.table] ? *settings.lights[l.table] : defaultCineLight());
+            s.position[0] = s.position[1] = s.position[2] = 1e9f, s.color[0] = s.color[1] = s.color[2] = 0;
+        }
+    }
+    if (sc.environment.valid) sc.environment.lights.insert(sc.environment.lights.begin(), lights.begin(), lights.end());
+    else lights.clear();
+
+    // Lara's hair (render-model cloth chains) simulated on the stream's pose, as in play (World::updatePose).
+    anim::HairSim hair;
+    if (!v.world.anims().hair.particles.empty()) hair = anim::HairSim(v.world.anims().hair, v.world.anims().skeleton, game::laraHair());
 
     for (auto& w : v.renderer.upload(sc)) std::fprintf(stderr, "ou-game: cinematic upload: %s\n", w.c_str());
     std::vector<scene::Vertex> scratch;
@@ -154,8 +240,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         if (const auto at = sc.meshes[i].origin.rfind(" @intro "); at != std::string::npos && actorIntros.contains(std::atoi(sc.meshes[i].origin.c_str() + at + 8)))
             collapse(i);
 
-    // Audio: the .mul's own sound track (voice, music, effects), started with frame 0. [I] kept in step by wall time,
-    // the exe drives the frame position from the stream's playback clock.
+    // Audio: the .mul's own sound track (voice, music, effects), started with frame 0; its playback position is the
+    // frame clock (cine::Clock), as the exe drives the frame position from the stream's playback clock.
     audio::VoiceId voice = 0;
     if (v.mixer) {
         try {
@@ -171,9 +257,14 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
 
     CineResult r;
     locale::SubtitleTicker ticker;
-    double t = 0;
+    cine::Clock clock;
+    double t = 0, hairTime = 0;
+    bool hairFresh = true;
+    glm::vec3 laraRoot(0);
     uint64_t last = SDL_GetTicksNS();
     std::vector<std::string> overlay;
+    std::vector<scene::Light> posedLights = lights;
+    render::ScreenFilter filter;
     for (bool running = true; running;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -186,22 +277,47 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         const uint64_t now = SDL_GetTicksNS();
         const double dt = r.frames == 0 ? 0.0 : v.renderHz > 0 ? 1.0 / v.renderHz : double(now - last) * 1e-9;
         last = now;
-        t += dt;
+        // Fixed frame time (replays, screenshots) stays deterministic; else the sound track's position leads.
+        const double step = clock.update(dt, voice && v.renderHz <= 0 ? v.mixer->position(voice) : std::nullopt) - t;
+        t = clock.seconds();
         const bool more = player.seek(t * cine::kFps);
         if (marker) player.origin = player.originFromMarker(*marker, markerIntro);
-        ticker.advance(dt * cine::kFps);
+        ticker.advance(step * cine::kFps);
         for (const auto& s : player.newSubtitles())
             if (s.language == int(locale::Language::English))
                 for (const auto& line : locale::cineSubtitleLines(s.text)) ticker.push(line);
 
         for (const auto& a : actors) {
             const scene::Skeleton one{{scene::Bone{}}, 0, {}};
-            const auto bones = player.bones(*a.inst, a.skeleton ? *a.skeleton : one);
+            auto bones = player.bones(*a.inst, a.skeleton ? *a.skeleton : one);
+            if (a.inst->intro == -1 && !hair.empty()) { // world-space bones: the hair's model frame is the world
+                const glm::vec3 root(bones[0][3]);
+                // [I] reset when she jumps between shots (the exe resets at frame 1 and at record +0x3C's frame)
+                if (hairFresh || glm::distance(root, laraRoot) > 200.0f) hair.reset(bones, glm::mat4(1.0f)), hairTime = 0;
+                for (hairTime += step; hairTime >= 1.0 / 60; hairTime -= 1.0 / 60) hair.step(bones, glm::mat4(1.0f), 1.0f / 60);
+                hair.apply(bones, glm::mat4(1.0f));
+                hairFresh = false, laraRoot = root;
+            }
+            if (!lights.empty() && !a.inst->lights.empty()) {
+                const auto lp = player.lights(*a.inst, bones);
+                for (size_t k = 0; k < lp.size(); ++k) poseLight(posedLights[a.firstLight + k], lp[k]);
+            }
             const auto palette = a.skeleton ? anim::skinPalette(*a.skeleton, bones) : std::vector<glm::mat4>{};
+            const auto rows = a.rows ? player.boneRows(*a.inst) : std::vector<glm::vec4>{};
             for (const size_t i : a.meshes) {
                 const auto& m = sc.meshes[i];
                 if (a.skeleton && !m.skin.empty()) anim::skinVertices(m, palette, scratch);
                 else anim::skinVertices(m, {}, scratch, bones[0]); // rigid: model space = bone 0
+                // COLOR0 = the weighted 4th palette rows the skinned VS blends (bones the stream lacks: 0, 0x5B60F0
+                // after a memset), each component a byte of the sum (weights sum to 255), as LaraMeshes::pose.
+                for (size_t vx = 0; vx < m.skin.size() && vx < scratch.size() && !rows.empty(); ++vx) {
+                    glm::vec4 s(0);
+                    for (int j = 0; j < 4; ++j)
+                        if (m.skin[vx].bone[j] < rows.size()) s += float(m.skin[vx].weight[j]) * rows[m.skin[vx].bone[j]];
+                    uint32_t c = 0;
+                    for (int j = 0; j < 4; ++j) c |= uint32_t(std::clamp(std::lround(s[j]), 0L, 255L)) << (8 * j);
+                    scratch[vx].color0 = c;
+                }
                 v.renderer.updateVertices(i, scratch);
             }
         }
@@ -217,6 +333,19 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         cam.nearZ = 2.0f;
         cam.farZ = 200000.0f;
         if (v.mixer) v.mixer->setListener({pose.position, pose.forward, pose.up});
+        // Depth of field (camera flag bit 6, 0x4547D0): globalaniminfo's filter with the camera's depthOfField. That
+        // filter has its ColorDOF block off (+0x130E 0), so the original draws nothing; Enhanced turns it on (without
+        // its scene matrix) to show the cameras' focus.
+        render::ScreenFilter* screenFilter = nullptr;
+        if (v.depthOfField && pose.dof && settings.dofFilter) {
+            fx::FilterResource res = *settings.dofFilter;
+            const auto d = cine::depthOfField(pose.focus, pose.fStop, pose.focalLength);
+            res.blur = d.blur, res.dofNear = d.near, res.dofFar = d.far, res.dofCurve = d.curve;
+            res.colorDof = true, res.matrix1 = false;
+            const std::pair<const fx::FilterResource*, float> one{&res, 1.0f};
+            fx::System().screenFilter(pose.position, pose.position, filter, nullptr, {}, std::span(&one, 1));
+            if (filter.active()) screenFilter = &filter;
+        }
 
         ui::Canvas canvas(w, hgt, v.art);
         drawSubtitles(canvas, ticker);
@@ -233,6 +362,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         if (v.art) fo.uiImages[0] = {v.art->rgba, v.art->width, v.art->height, v.art->version};
         const auto clips = unitClips(v.world, v.unitMeshes, lower(h.unitName), cam, hgt > 0 ? float(w) / float(hgt) : 1.0f);
         fo.unitClips = clips;
+        fo.dynamicLights = posedLights;
+        fo.screenFilter = screenFilter;
         v.renderer.drawFrame(cam, {w, hgt}, fo);
         ++r.frames;
         if (v.maxFrames && r.frames >= v.maxFrames) {
