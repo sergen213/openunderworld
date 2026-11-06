@@ -393,13 +393,18 @@ uint32_t findMemoryTypeIndex(VkPhysicalDevice physicalDevice, VkMemoryRequiremen
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
 
     uint32_t bestCandidate = UINT32_MAX;
+    uint32_t visibleFallback = UINT32_MAX; // ou patch 8
 
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
         if ((memRequirements.memoryTypeBits & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & requestedProperties)) {
 
             // if just device-local memory is requested, make sure this is the invisible heap to prevent over-subscribing the local heap
-            if (requestedProperties == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT && (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+            // ou patch 8: ... unless there is none (UMA: lavapipe, APUs), then the first host-visible one.
+            if (requestedProperties == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT && (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+                if (visibleFallback == UINT32_MAX && !(memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD))
+                    visibleFallback = i;
                 continue;
+            }
             // ou patch 2: skip AMD device-coherent (uncached) types unless asked for. Picking the last device-local
             // type chose them on RADV: invalid without the deviceCoherentMemory feature, and uncached.
             if ((memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD) && !(requestedProperties & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD))
@@ -414,6 +419,10 @@ uint32_t findMemoryTypeIndex(VkPhysicalDevice physicalDevice, VkMemoryRequiremen
         }
     }
 
+    if (bestCandidate == UINT32_MAX && visibleFallback != UINT32_MAX) {
+        bestCandidate = visibleFallback;
+        outProperties = memProperties.memoryTypes[visibleFallback].propertyFlags;
+    }
     return bestCandidate;
 }
 

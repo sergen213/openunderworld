@@ -32,6 +32,8 @@ Local patches (marked `ou patch N`):
    `FFX_MAX_NUM_SRVS`, `FFX_MAX_NUM_UAVS`, `FFX_MAX_NUM_CONST_BUFFERS`) instead of `FFX_MAX_RESOURCE_COUNT` per type:
    RADV keeps all descriptor pools in a 4 GiB window and the upstream sizes made frame generation fail to start
    (VK_ERROR_OUT_OF_DEVICE_MEMORY) after a second scene load.
+8. `backend/vk/ffx_vk.cpp` `findMemoryTypeIndex`: a device-local-only request falls back to a host-visible type when
+   the device has no other (UMA: lavapipe, APUs); upstream found none and the context failed to create.
 
 Upgrading: replace the upstream directories, re-apply the patches, rerun the build; the renderer only talks ffx-api
 (`src/render/vk/VkFsr.cpp`).

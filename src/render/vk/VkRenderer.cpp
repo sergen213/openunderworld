@@ -240,8 +240,11 @@ public:
             if ((req.memoryTypeBits & (1u << i)) && (props_.memoryTypes[i].propertyFlags & want) == want) type = i;
         if (type == UINT32_MAX) throw std::runtime_error("no Vulkan memory type for request");
         const VkDeviceSize align = std::max(req.alignment, granularity_);
+        const bool map = want & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
         for (auto it = blocks_.rbegin(); it != blocks_.rend(); ++it) {
-            if (it->type != type) continue;
+            // Mapped and unmapped blocks chain separately: a device-local request can pick a host-visible type
+            // (lavapipe, UMA, ReBAR), and a later mapped request of that type must not land in its unmapped block.
+            if (it->type != type || map != (it->mapped != nullptr)) continue;
             VkDeviceSize off = (it->used + align - 1) / align * align;
             if (off + req.size > it->size) break; // linear: only the newest block of a type is open
             it->used = off + req.size;
@@ -252,7 +255,7 @@ public:
                                         VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
         VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, deviceAddress_ ? &flags : nullptr, b.size, type};
         VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &b.memory));
-        if (want & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+        if (map)
             VK_CHECK(vkMapMemory(device_, b.memory, 0, VK_WHOLE_SIZE, 0, reinterpret_cast<void**>(&b.mapped)));
         blocks_.push_back(b);
         return {b.memory, 0, b.mapped};

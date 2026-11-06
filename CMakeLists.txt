@@ -439,6 +439,24 @@ if(OU_BUILD_TESTS)
         { echo "$out" | tail -n 20; echo "$1: exit $code"; exit 1; }
     done]=] $<TARGET_FILE:ou-game>)
   set_tests_properties(game_vulkan_rt_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "${OU_VK_TEST_ENV}")
+  # Lavapipe (Mesa's CPU Vulkan driver: one memory type, device-local and host-visible): ou_vk_tests, then an ou-game
+  # frame of real data with FSR, under validation. 0.30.0 crashed there (a mapped allocation landed in an unmapped
+  # device-local block) and FSR found no memory type (ffx ou patch 8). OU_LAVAPIPE_ICD = its ICD json; 77 = no lavapipe.
+  find_file(OU_LAVAPIPE_ICD NAMES lvp_icd.json lvp_icd.x86_64.json PATHS /usr/share/vulkan/icd.d /etc/vulkan/icd.d
+            NO_DEFAULT_PATH)
+  add_test(NAME vulkan_lavapipe COMMAND sh -c [=[
+    [ -f "$2" ] || { echo "no lavapipe ICD (OU_LAVAPIPE_ICD)"; exit 77; }
+    export VK_DRIVER_FILES="$2" VK_ICD_FILENAMES="$2" SDL_VIDEO_DRIVER=offscreen OU_VK_VALIDATION=1
+    out=$("$1" 2>&1); code=$?
+    echo "$out" | grep -E '^\[ +(OK|SKIPPED|FAILED) +\]|\[vk error\]'
+    [ $code -eq 0 ] && ! echo "$out" | grep -q '\[vk error\]' || exit 1
+    [ -n "$OU_GAME_DIR" ] || exit 0
+    out=$("$0" --game-dir "$OU_GAME_DIR" --renderer vulkan --level 'pc-w\l4_pool.drm' --upscaler fsr --no-audio \
+            --no-movies --width 320 --height 180 --frames 5 2>&1); code=$?
+    echo "$out" | grep -E '^ou-game: (Vulkan|final tick|RT )|FSR|\[vk error\]'
+    [ $code -eq 0 ] && echo "$out" | grep -q llvmpipe && ! echo "$out" | grep -qE '\[vk error\]|FSR off']=]
+    $<TARGET_FILE:ou-game> $<TARGET_FILE:ou_vk_tests> ${OU_LAVAPIPE_ICD})
+  set_tests_properties(vulkan_lavapipe PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "${OU_VK_TEST_ENV}")
   add_executable(ou_ai_tests tests/test_ai.cpp)
   target_link_libraries(ou_ai_tests PRIVATE ou_game GTest::gtest_main)
   gtest_discover_tests(ou_ai_tests DISCOVERY_TIMEOUT 30)

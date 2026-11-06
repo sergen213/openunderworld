@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Smoke-tests an AppImage in a clean Ubuntu 24.04 container with only desktop runtime packages (Ubuntu's Mesa,
 # Xvfb): --self-test, --version, and with GAME_DIR an import scan, one OpenGL ou-game l4_pool frame (llvmpipe under
-# Xvfb) and, when the host has /dev/dri, one Vulkan ou-viewer frame on the host GPU with Ubuntu's Mesa driver
-# (SDL offscreen video, headless surface), saved as game.ppm / viewer.ppm in SHOT_DIR.
-# lavapipe is not used for Vulkan: VkRenderer::drawFrame crashes on it (Arch builds too).
+# Xvfb), one Vulkan ou-game frame on lavapipe and, when the host has /dev/dri, one Vulkan ou-viewer frame on the host
+# GPU with Ubuntu's Mesa driver (SDL offscreen video, headless surface), saved as game.ppm / game_lvp.ppm / viewer.ppm
+# in SHOT_DIR.
 # Usage: packaging/appimage/smoke-in-container.sh APPIMAGE [GAME_DIR [SHOT_DIR]]
 set -euo pipefail
 APP="$(realpath "$1")"
@@ -33,6 +33,8 @@ docker run --rm --memory=12g "${MOUNTS[@]}" "${GPU[@]}" -e HAVE_GAME="${GAME:+1}
   test -s /tmp/manifest.json
   xvfb-run -a -s "-screen 0 1280x720x24" /app/OU.AppImage game --game-dir /game --level "pc-w\\l4_pool.drm" \
     --renderer opengl --frames 30 --screenshot /shots/game.ppm --no-audio
+  SDL_VIDEO_DRIVER=offscreen VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json /app/OU.AppImage game \
+    --game-dir /game --level "pc-w\\l4_pool.drm" --renderer vulkan --frames 10 --screenshot /shots/game_lvp.ppm --no-audio
   if [ -n "${HAVE_GPU:-}" ]; then
     SDL_VIDEO_DRIVER=offscreen VK_LOADER_DRIVERS_DISABLE="*lvp*" /app/OU.AppImage viewer --game-dir /game --level \
       --drm "pc-w\\l4_pool.drm" --renderer vulkan --frames 30 --screenshot /shots/viewer.ppm
