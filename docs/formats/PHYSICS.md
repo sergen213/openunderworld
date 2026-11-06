@@ -149,19 +149,29 @@ type 2, is [I].
   as tru.exe's fallback), starting at rest where it was; it falls, tumbles, slides and stacks on the resident units'
   terrain (one static `MeshShape` per unit, built the first time a loose body exists, dropped when the unit streams
   out) and on every other object collision (`collision().dynamics` as kinematic mesh bodies following their
-  transforms: plates, blocks, doors, other uber bodies). Its pose goes back to `Object::offset` (displacement) and
-  `Object::body` (rotation), so its collision, rendering and saves follow. Lara is not a Jolt body (she moves
-  kinematically and does not push them) [I].
+  transforms: blocks, doors, other uber bodies; push blocks stay grid / axis driven by the scripts and shove loose bodies
+  as kinematic bodies). Its pose goes back to `Object::offset` (displacement) and `Object::body` (rotation), so its
+  collision, rendering and saves follow. Lara's proxy (`Scene::setCharacter`): a 55 kg capsule of her radius and height
+  (mass: her ragdoll record, lara ObjectBase +0x7C +4 [O]), translation only and no gravity, velocity-driven each step
+  toward her capsule (at most 1000 units/s; more than 60 units away it is moved), colliding only with loose bodies and
+  ragdolls: walking into one shoves it by mass (a 50 kg box slides, a 666 kg weight barely moves) [I: the original's
+  kicks of small objects are not evidenced]. It exists while loose bodies, rail-riding bodies or ragdolls do (key `a`).
   - A pulled body that still rides a model-0 uber joint keeps riding it, its joint body taking its shape and colliding:
     l1 snake head 751 sits on a rail (prismatic joint 0, axis 20° off vertical, [0, 15 803]) held by a heavier
     counterweight (joint 1, link 2 → 2 × 1); section 1 watches joint 0 in [−15.8, 31.6) and, leaving it, removes the
     link, then (after 0.95 s) the rail [O] (ms_rb_grapple_snake_head). [I] The pull drags the watched joint downhill at
     240 units/s while it is in range (Lara's rope on the Havok body; our heave runs no force); the head then slides
     down its rail onto grooved plate 752 and drops free when the rail goes.
-  - Pressure plates are still weighed by the footprint rule (`World::tickPlates`: Lara, push blocks or a loose body
-    resting over the plate's top); Jolt contacts are not read, as the plate is a script joint, not a Jolt body.
-    `Physics.LooseBodiesLandStackAndTumble`, `ProgressionReal.CriticalGates` (l1_kraken_entrance 748: head 751 on plate
-    752, weight 750 on plate 753).
+  - Pressure plates (`Object::Joint`, base 3938; `World::stepPhysics`, `Scene::setPlates`): a Jolt body with the
+    plate's collision mesh on a prismatic joint along its model Z, limited to [its lowest range, 0], the motor lifting it
+    at 120 units/s with the force to hold its own weight (`massProps`, 50 kg without primitive mass [I]) plus 20 kg
+    [I]. It collides with loose bodies, vehicles and ragdolls (not the terrain it sits in), so a landed weight presses
+    it through its contacts; Lara (55 kg) and push blocks (their primitives' mass, 666 without) press it under gravity
+    where a ray below them (40 above to 30 below their base) meets it. `World::tickPlates` hands the joint position
+    (clamped to the limits) to `Runtime::setJointPosition`, whose ranges run vt 34. Saves: the plate body is a joint
+    (`j<uid << 32 | 0xFFFFFFFE>`); a new plate starts at its saved position. [I] the original's plate constraint and
+    motor numbers (Havok data not decoded). `Physics.PlatesWeighedByContactsAndProxyPushesLooseBodies`,
+    `ProgressionReal.CriticalGates` (l1_kraken_entrance 748: head 751 on plate 752, weight 750 on plate 753).
 - Saves: `World::serializeObjects` writes `physics` {version 1, hex of `Scene::save`}: each body's Jolt ID by entity
   key (hinge index, joint key, loose id, unit name, collider index), each constraint's zero (`Axis::ref`), the constraint
   count, then `PhysicsSystem::SaveState(All)` (velocities, sleep, contact cache, warm starts; our link rows record

@@ -112,10 +112,11 @@ Portal order from the start unit; level changes not made by portals are named.
 ## Remaining blockers
 
 - Pressure plates (base 3938) [O bytecode / I weights]: constructor `multibody` 1, `joint` 17 (prismatic), `limit` 3
-  ranges (−60..−40 id 8 pressed, −30..10 id 12 released; subclasses add `multibody` 79 ranges). World::tickPlates moves the
-  joint at 120 units/s toward the lowest range while Lara, a push block or a loose rigid body rests on the plate's
-  footprint, else back to 0; entering a range runs vt 34(…, id) → sticky +92 and vt 54/55. Weights: pulled `*_rb_grapple*`
-  targets fall (Object::loose), `portablebase` objects are carried (interact) and set down. [I] no Havok mass/tumbling.
+  ranges (−60..−40 id 8 pressed, −30..10 id 12 released; subclasses add `multibody` 79 ranges). The plate is a Jolt body
+  on its prismatic joint (docs/formats/PHYSICS.md "Pressure plates"), lifted by its motor and pressed down by real
+  weight: loose bodies through their contacts, Lara (55 kg) and push blocks under gravity where they stand on it;
+  entering a range runs vt 34(…, id) → sticky +92 and vt 54/55. Weights: pulled `*_rb_grapple*` targets fall
+  (Object::loose), `portablebase` objects are carried (interact) and set down. [I] the plate's Havok motor numbers.
 - VM fixes found here: START with a function word calls it; CALL3 is virtual; inline member defaults applied (ship doors:
   modifiable 1 opens, 2/3 close [I]; house door 0 opens / 1 closes).
 - (2026-10-29, gates 3) l2_norsehub 2393's op 0x34 is MOVEU of a getter's return value; it runs since script returns

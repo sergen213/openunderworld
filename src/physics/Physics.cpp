@@ -14,6 +14,10 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
@@ -256,7 +260,7 @@ namespace {
 constexpr float kM = 1.0f / kUnitsPerMetre;
 constexpr float kFrame = 30.0f;  // tru.exe joint units are per 30 Hz frame
 constexpr float kSolver = 60.0f; // [I] motor impulse bounds are per 1/60 s solver step (PHYSICS.md "Uber joints")
-enum : JPH::ObjectLayer { kLayerJoint, kLayerSolid, kLayerLoose, kLayerVehicle, kLayers };
+enum : JPH::ObjectLayer { kLayerJoint, kLayerSolid, kLayerLoose, kLayerVehicle, kLayerPlate, kLayerLara, kLayers };
 
 JPH::Vec3 J(vec3 v) { return {v.x, v.y, v.z}; }
 JPH::Vec3 Jm(vec3 p) { return J(p * kM); } // game units -> metres
@@ -361,13 +365,13 @@ JPH::RefConst<JPH::Shape> made(const JPH::ShapeSettings& s) {
     return r.IsValid() ? r.Get() : nullptr;
 }
 
-// Triangles of `mesh` (offset, in metres) as a Jolt mesh shape; null without triangles.
-JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, vec3 offset) {
+// Triangles of `mesh` (each vertex through `to`, then in metres) as a Jolt mesh shape; null without triangles.
+JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, const mat4& to) {
     JPH::VertexList v;
     JPH::IndexedTriangleList t;
     v.reserve(mesh.vertices.size()), t.reserve(mesh.faces.size());
     for (const vec3& p : mesh.vertices) {
-        const vec3 q = (p + offset) * kM;
+        const vec3 q = vec3(to * glm::vec4(p, 1)) * kM;
         v.push_back({q.x, q.y, q.z});
     }
     for (const auto& f : mesh.faces) t.push_back({f.v[0], f.v[1], f.v[2]});
@@ -424,6 +428,7 @@ struct Scene::Impl {
         float x = 0, v = 0; // as last written back
         Joint1* live = nullptr;
         bool solid = false; // carries a rail-riding loose body's shape (Scene::Loose::rail)
+        bool plate = false; // carries a pressure plate's collision (Scene::setPlates)
     };
     std::vector<JointE> joints;
     struct LinkE { JointLink l; JPH::Ref<LinkConstraint> c; };
@@ -437,6 +442,10 @@ struct Scene::Impl {
     std::vector<TerrainE> terrain;
     struct ProxyE { std::shared_ptr<const collision::CollisionMesh> shape; mat4 transform; JPH::BodyID body; };
     std::vector<ProxyE> proxies;
+    std::vector<Weight> weights;          // Scene::setPlates, for the next step
+    std::map<uint64_t, std::vector<collision::Dynamic>> plateMeshes; // Scene::setPlates: plate joint key -> collision
+    std::optional<Character> character;   // Scene::setCharacter
+    JPH::BodyID lara;                     // its proxy body (key "a")
 
     // Body IDs are ours, not Jolt's allocation order: the lowest free index (sequence 0), or the ID a restored state
     // gives the body's key (Scene::restore), so a loaded scene has the bodies, IDs and constraint order it was saved
@@ -478,8 +487,12 @@ struct Scene::Impl {
         layers.MapObjectToBroadPhaseLayer(kLayerSolid, JPH::BroadPhaseLayer(0));
         layers.MapObjectToBroadPhaseLayer(kLayerLoose, JPH::BroadPhaseLayer(1));
         layers.MapObjectToBroadPhaseLayer(kLayerVehicle, JPH::BroadPhaseLayer(1));
+        layers.MapObjectToBroadPhaseLayer(kLayerPlate, JPH::BroadPhaseLayer(1));
+        layers.MapObjectToBroadPhaseLayer(kLayerLara, JPH::BroadPhaseLayer(1));
         pairs.EnableCollision(kLayerSolid, kLayerLoose), pairs.EnableCollision(kLayerLoose, kLayerLoose);
         pairs.EnableCollision(kLayerSolid, kLayerVehicle), pairs.EnableCollision(kLayerLoose, kLayerVehicle);
+        pairs.EnableCollision(kLayerPlate, kLayerLoose), pairs.EnableCollision(kLayerPlate, kLayerVehicle);
+        pairs.EnableCollision(kLayerLara, kLayerLoose);
         broad.emplace(layers, 2, pairs, kLayers);
         sys.Init(4096, 0, 8192, 8192, layers, *broad, pairs);
         sys.SetGravity(Jm(vec3(0, 0, -kJointGravity * kFrame * kFrame)));
@@ -585,11 +598,34 @@ struct Scene::Impl {
         float inertia = mass * kUnitsPerMetre * kUnitsPerMetre; // sliders lock rotation: any positive value
         if (j.hinge) // the data's inertia about the axis through the pivot, minus the centre of mass's parallel-axis share
             if (const float c = j.inertia - j.mass * (glm::dot(j.arm, j.arm) - glm::dot(j.arm, j.axis) * glm::dot(j.arm, j.axis)); c > 0) inertia = c;
-        e.body = body(new JPH::SphereShape(0.05f), j.pivot + j.arm, quat(1, 0, 0, 0), kLayerJoint, mass, mat3(inertia), jointKey(key));
+        // A pressure plate's body has its collision from creation (a later SetShape would drop its contact cache, so a
+        // restored scene would not continue alike).
+        const auto plate = !j.hinge ? plateShape(key, j.pivot + j.arm) : nullptr;
+        e.plate = plate != nullptr;
+        e.body = body(plate ? plate : new JPH::SphereShape(0.05f), j.pivot + j.arm, quat(1, 0, 0, 0), plate ? kLayerPlate : kLayerJoint, mass,
+                      mat3(inertia), jointKey(key));
         if (j.mass <= 0) bi->SetGravityFactor(e.body, 0);
         e.ax = axis(e.body, j.hinge, j.pivot, j.axis, jointKey(key));
         placeJoint(e, j.x, j.v);
         return e;
+    }
+    // The collision of plate `key` (Scene::setPlates) relative to its body's centre at coordinate 0; null: not a plate.
+    JPH::RefConst<JPH::Shape> plateShape(uint64_t key, vec3 com0) const {
+        const auto it = plateMeshes.find(key);
+        if (it == plateMeshes.end()) return nullptr;
+        JPH::VertexList v;
+        JPH::IndexedTriangleList t;
+        for (const auto& d : it->second) {
+            if (!d.shape) continue;
+            const uint32_t base = uint32_t(v.size());
+            for (const vec3& q : d.shape->vertices) {
+                const vec3 b = (vec3(d.transform * glm::vec4(q, 1)) - com0) * kM;
+                v.push_back({b.x, b.y, b.z});
+            }
+            for (const auto& f : d.shape->faces) t.push_back({base + f.v[0], base + f.v[1], base + f.v[2]});
+        }
+        const auto mesh = t.empty() ? nullptr : made(JPH::MeshShapeSettings(std::move(v), std::move(t)));
+        return mesh ? made(JPH::OffsetCenterOfMassShapeSettings(-mesh->GetCenterOfMass(), mesh)) : nullptr;
     }
     void dropJoint(JointE& e) { sys.RemoveConstraint(e.ax->c), remove(e.body); }
     // Limits and motor of a live joint for this step (Jolt units).
@@ -622,7 +658,7 @@ struct Scene::Impl {
         const bool active = landing();
         for (auto& t : terrain) {
             if (!active) { remove(t.body); continue; }
-            if (!t.built) t.shape = meshShape(*t.t.mesh, t.t.offset), t.built = true;
+            if (!t.built) t.shape = meshShape(*t.t.mesh, glm::translate(mat4(1), t.t.offset)), t.built = true;
             if (t.shape && t.body.IsInvalid())
                 t.body = add(JPH::BodyCreationSettings(t.shape, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static,
                                                        kLayerSolid), "t" + t.t.name, JPH::EActivation::DontActivate);
@@ -631,13 +667,56 @@ struct Scene::Impl {
             auto& p = proxies[i];
             if (!active) { remove(p.body); continue; }
             if (!p.body.IsInvalid()) continue;
-            if (const auto shape = meshShape(*p.shape, vec3(0))) {
+            if (const auto shape = meshShape(*p.shape, mat4(1))) {
                 JPH::BodyCreationSettings s(shape, Jm(vec3(p.transform[3])), J(glm::normalize(glm::quat_cast(mat3(p.transform)))),
                                             JPH::EMotionType::Kinematic, kLayerSolid);
                 s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided; // meshes have no volume
                 s.mMassPropertiesOverride.mMass = 1, s.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
                 p.body = add(s, "p" + std::to_string(i), JPH::EActivation::Activate);
             }
+        }
+        const bool pushes = character && (!loose.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid));
+        if (!pushes) remove(lara);
+        else if (lara.IsInvalid()) {
+            const Character& c = *character;
+            const float r = std::max(c.radius, 1.0f), half = std::max(0.5f * c.height - r, 1.0f);
+            JPH::BodyCreationSettings s(new JPH::CapsuleShape(half * kM, r * kM), Jm(c.feet + vec3(0, 0, half + r)),
+                                        J(glm::angleAxis(1.5707964f, vec3(1, 0, 0))), JPH::EMotionType::Dynamic, kLayerLara);
+            s.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationY | JPH::EAllowedDOFs::TranslationZ;
+            s.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            s.mMassPropertiesOverride.mMass = std::max(c.mass, 1.0f);
+            s.mGravityFactor = 0, s.mAllowSleeping = false, s.mLinearDamping = 0;
+            lara = add(s, "a", JPH::EActivation::Activate);
+        }
+    }
+    // Lara's proxy heads for her capsule this step (a jump of more than 60 units, a spawn or a ledge snap, is a move),
+    // at no more than 1000 units/s [I]; then the kinematic weights press on the plates under them.
+    void driveCharacter(float dt) {
+        if (!lara.IsInvalid()) {
+            const Character& c = *character;
+            const float r = std::max(c.radius, 1.0f), half = std::max(0.5f * c.height - r, 1.0f);
+            const vec3 to = c.feet + vec3(0, 0, half + r), at = G(bi->GetCenterOfMassPosition(lara)) * kUnitsPerMetre;
+            if (glm::length(to - at) > 60.0f) {
+                bi->SetPositionRotationAndVelocity(lara, Jm(to), J(glm::angleAxis(1.5707964f, vec3(1, 0, 0))), JPH::Vec3::sZero(), JPH::Vec3::sZero());
+            } else {
+                vec3 v = (to - at) / dt;
+                if (const float l = glm::length(v); l > 1000.0f) v *= 1000.0f / l;
+                bi->SetLinearVelocity(lara, Jm(v));
+            }
+        }
+        for (const Weight& w : weights) {
+            const JPH::RRayCast ray(Jm(w.at + vec3(0, 0, 40)), Jm(vec3(0, 0, -70)));
+            JPH::RayCastSettings rs;
+            rs.SetBackFaceMode(JPH::EBackFaceMode::CollideWithBackFaces);
+            JPH::BodyID best;
+            float fraction = FLT_MAX;
+            for (const auto& e : joints) {
+                if (!e.plate) continue;
+                JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> hit;
+                bi->GetTransformedShape(e.body).CastRay(ray, rs, hit);
+                if (hit.HadHit() && hit.mHit.mFraction < fraction) fraction = hit.mHit.mFraction, best = e.body;
+            }
+            if (!best.IsInvalid()) bi->AddImpulse(best, sys.GetGravity() * (w.mass * dt), ray.GetPointOnRay(fraction));
         }
     }
     void moveProxies(float dt) {
@@ -846,6 +925,18 @@ void Scene::setColliders(std::span<const collision::Dynamic> dynamics) {
     m.proxies = std::move(next);
 }
 
+void Scene::setPlates(std::span<const Plate> plates, std::span<const Weight> weights) {
+    Impl& m = *impl_;
+    m.weights.assign(weights.begin(), weights.end());
+    m.plateMeshes.clear();
+    for (const auto& p : plates) m.plateMeshes[p.joint].assign(p.meshes.begin(), p.meshes.end());
+}
+
+void Scene::setCharacter(const Character* c) {
+    if (c) impl_->character = *c;
+    else impl_->character.reset();
+}
+
 void Scene::blast(vec3 at, float radius, float near, float edge) {
     const auto push = [&](JPH::BodyID id) {
         const vec3 p = G(impl_->bi->GetCenterOfMassPosition(id)) * kUnitsPerMetre, d = p - at;
@@ -1038,6 +1129,7 @@ void Scene::step(float dt) {
     }
     m.driveVehicles();
     m.moveProxies(dt);
+    m.driveCharacter(dt);
     m.reorder();
     m.sys.Update(dt, 1, &m.temp, &m.jobs);
     for (size_t i = 0; i < bodies.size(); ++i) {
@@ -1081,6 +1173,7 @@ std::string Scene::save() const {
         if (!t.body.IsInvalid()) ids.push_back({"t" + t.t.name, t.body});
     for (size_t i = 0; i < m.proxies.size(); ++i)
         if (!m.proxies[i].body.IsInvalid()) ids.push_back({"p" + std::to_string(i), m.proxies[i].body});
+    if (!m.lara.IsInvalid()) ids.push_back({"a", m.lara});
     r.Write(uint32_t(1));
     r.Write(uint32_t(ids.size()));
     for (const auto& [key, id] : ids) str(key), r.Write(id.GetIndexAndSequenceNumber());
@@ -1101,6 +1194,7 @@ bool Scene::restore(std::string_view state) {
     for (auto& r : m.ragdolls) m.dropRagdoll(r);
     for (auto& t : m.terrain) m.remove(t.body);
     for (auto& p : m.proxies) m.remove(p.body);
+    m.remove(m.lara);
     m.links.clear(), m.joints.clear(), m.loose.clear(), m.vehicles.clear(), m.proxies.clear(), m.ragdolls.clear();
     m.pending.reset(), m.pendingIds.clear(), m.reserved.clear(), m.pendingRefs.clear();
     auto r = std::make_unique<JPH::StateRecorderImpl>();

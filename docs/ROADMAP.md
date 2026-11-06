@@ -90,8 +90,10 @@ Jolt as static mesh shapes per streamed unit.
 1. **Joints and rigid bodies (done, docs/formats/PHYSICS.md).** `physics::Scene` keeps its interface; inside it, Jolt
    bodies come from the HInfo spheres / boxes / capsules with the exe's mass and inertia. Hinge and prismatic joints are
    Jolt constraints with the data's limits and motors; the uber-object range watches (triggers 14 / 15) read the
-   constraint positions. Loose bodies and grapple-pulled weights tumble and stack. Not done: push blocks stay
-   kinematic, pressure plates keep the footprint rule (not contacts), fixed joints and body A motion. Acceptance met:
+   constraint positions. Loose bodies and grapple-pulled weights tumble and stack. Pressure plates are Jolt bodies on
+   their prismatic joints, weighed by contacts (loose bodies) and by Lara / push blocks standing on them; Lara's
+   velocity-driven proxy shoves loose bodies and ragdolls; push blocks stay grid driven, colliding as kinematic bodies.
+   Not done: fixed joints and body A motion; the plates' Havok motor numbers [I]. Acceptance met:
    every `ProgressionReal` gate and `game_render_rate_smoke` pass; tests that pinned our own solver numbers were
    rewritten to the data's behaviour.
 2. **Motorcycle (done, docs/GAMEPLAY.md "Motorcycle", PHYSICS.md "Vehicles").** The bike's Havok vehicle data is

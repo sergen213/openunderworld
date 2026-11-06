@@ -708,7 +708,7 @@ private:
     void crossPortals(vec3 from, vec3 to);
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
-    void tickPlates(float dt); // pressure-plate joints (Objects.cpp)
+    void tickPlates(); // pressure plates take their Jolt joint positions (Objects.cpp)
     // One Jolt step (Objects.cpp): hinge drives, uber joints, loose rigid bodies (tumbling onto the terrain and object
     // collision), then the uber range watches.
     void stepPhysics(float dt);
@@ -794,6 +794,7 @@ private:
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
+    std::map<int32_t, physics::Joint1> plates_; // pressure-plate joints by uid (stepPhysics): Jolt's x and v between steps
     void bindMultibody();
     void bindUber();
     void bindTerrain();

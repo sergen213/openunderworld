@@ -236,6 +236,18 @@ public:
     struct Terrain { std::string name; const collision::CollisionMesh* mesh = nullptr; vec3 offset{0}; };
     void setTerrain(std::span<const Terrain> units);
     void setColliders(std::span<const collision::Dynamic> dynamics);
+    // Pressure plates: each plate's joint (setJoints key, a prismatic joint whose motor lifts it) is built with `meshes`
+    // (world transforms at coordinate 0) as its collision; it collides with loose bodies, vehicles and ragdolls (not
+    // the terrain it sits in). Kinematic weights (Lara, push blocks) press `mass` (kg) under gravity onto the plate a
+    // ray finds below `at` (from 40 above to 30 below); loose bodies weigh through their contacts. Call before setJoints.
+    struct Plate { uint64_t joint = 0; std::span<const collision::Dynamic> meshes; };
+    struct Weight { vec3 at{0}; float mass = 0; };
+    void setPlates(std::span<const Plate> plates, std::span<const Weight> weights);
+    // Lara's proxy (null: none): a `mass` kg capsule standing on `feet`, velocity-driven to follow her each step
+    // (translation only, no gravity), so walking into loose bodies and ragdolls shoves them by mass. It exists only
+    // while there are loose bodies or ragdolls, and touches nothing else.
+    struct Character { vec3 feet{0}; float radius = 0, height = 0, mass = 0; };
+    void setCharacter(const Character* c);
 
     // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge, loose
     // and ragdoll bodies.

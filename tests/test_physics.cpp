@@ -326,6 +326,57 @@ TEST(Physics, SavedSceneContinuesBitIdentically) {
     EXPECT_FALSE(b.restore("not a state"));
 }
 
+// Pressure plates (World::stepPhysics): a plate body on a prismatic joint whose motor lifts it stays up unloaded; a
+// kinematic weight (Lara, 55 kg) over it presses it to its limit and it rises once she leaves; a loose box landing on
+// it presses it by contact. Lara's proxy shoves a loose box she walks into. A scene saved mid-press continues bit for bit.
+TEST(Physics, PlatesWeighedByContactsAndProxyPushesLooseBodies) {
+    auto plateMesh = std::make_shared<collision::CollisionMesh>();
+    collision::addBox(*plateMesh, glm::translate(glm::mat4(1), {0, 0, -10}), {200, 200, 20});
+    plateMesh->build();
+    const std::vector<collision::Dynamic> meshes{{1, plateMesh, glm::mat4(1)}};
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {2000, 0, -50}), {2000, 2000, 100});
+    floor.build();
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    physics::ObjectPhysics o;
+    o.segments = {glm::mat4(1)};
+    physics::Prim p;
+    p.kind = physics::PrimKind::Box, p.size = {60, 60, 60}, p.pos = {0, 0, 30}, p.mass = 50;
+    o.prims = {p};
+    physics::Joint1 plate;
+    plate.mass = 20, plate.limited = true, plate.lo = -60, plate.hi = 0;
+    plate.motor = true, plate.speed = 4, plate.force = (20 + 20) * physics::kJointGravity * 0.5f;
+    std::vector<physics::Scene::Loose> loose;
+    std::vector<physics::Scene::Weight> weights;
+    physics::Scene::Character lara{{1500, 0, 0}, 40, 180, 55};
+    const auto tick = [&](physics::Scene& s, physics::Joint1& j) {
+        s.setPlates(std::vector<physics::Scene::Plate>{{1, meshes}}, weights), s.setJoints({{1, &j}}, {});
+        s.setCharacter(&lara), s.setTerrain(terrain), s.setLoose(loose), s.step(kDt);
+    };
+    physics::Scene s;
+    for (int i = 0; i < 30; ++i) tick(s, plate);
+    EXPECT_NEAR(plate.x, 0, 1) << "unloaded: held up";
+    weights = {{{0, 0, 0}, 55}};
+    for (int i = 0; i < 60; ++i) weights[0].at.z = plate.x, tick(s, plate); // she rides it down
+    EXPECT_NEAR(plate.x, -60, 2) << "Lara on it";
+    weights.clear();
+    for (int i = 0; i < 60; ++i) tick(s, plate);
+    EXPECT_NEAR(plate.x, 0, 1) << "rises back";
+    loose = {{2, &o, glm::translate(glm::mat4(1), {0, 0, 50})}, {3, &o, glm::translate(glm::mat4(1), {1600, 0, 0})}};
+    for (int i = 0; i < 60; ++i) tick(s, plate);
+    EXPECT_NEAR(plate.x, -60, 2) << "a loose box landed on it";
+    EXPECT_NEAR((*s.loose(2))[3].z, -60, 5);
+    const float boxX = (*s.loose(3))[3].x;
+    for (int i = 0; i < 30; ++i) lara.feet.x += 4, tick(s, plate);
+    EXPECT_GT((*s.loose(3))[3].x, boxX + 50) << "shoved by her proxy";
+    physics::Joint1 copy = plate;
+    physics::Scene b;
+    ASSERT_TRUE(b.restore(s.save()));
+    for (int i = 0; i < 30; ++i) lara.feet.x += 4, tick(s, plate), tick(b, copy);
+    EXPECT_EQ(plate.x, copy.x);
+    EXPECT_EQ(s.save(), b.save());
+}
+
 // A two-wheel vehicle (Scene::setVehicles, Jolt VehicleConstraint + MotorcycleController) on a flat floor: it settles on
 // its springs, drives forward under throttle, brakes to a stop, steers, and a scene saved mid-run continues bit for bit.
 TEST(Physics, VehicleDrivesBrakesAndSavesBitIdentically) {

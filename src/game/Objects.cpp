@@ -251,7 +251,7 @@ void World::restoreObjects(const nlohmann::json& j) {
             throw std::runtime_error(std::string("objects: ") + e.what());
         }
     }
-    uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberMotion_.clear(), uberEvents_.clear();
+    uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberMotion_.clear(), uberEvents_.clear(), plates_.clear();
     uberSaved_ = std::move(saved);
     held_ = held;
     // The saved scene's IDs and recorded state (applied once its bodies exist again); older saves: loose bodies start
@@ -904,7 +904,7 @@ void World::tickObjects(float dt) {
     const auto ground = col_.groundProbe(feet + vec3(0, 0, 20), 60);
     const int under = ground && player_.state().state != State::Block ? ground->dynamic : -1;
     const glm::mat4 before = under >= 0 ? col_.dynamics[under].transform : glm::mat4(1);
-    tickPlates(dt);
+    tickPlates();
     for (size_t i = 0; i < colliders_.size(); ++i) {
         const auto& c = colliders_[i];
         const auto* o = script_.find(c.uid);
@@ -1000,6 +1000,54 @@ void World::stepPhysics(float dt) {
             links.push_back({key(uid, lk.link1), key(uid, lk.link2), !a->second.hinge && b->second.hinge ? glm::radians(lk.ratio) : lk.ratio});
         }
     }
+    // Pressure plates (Runtime::Object::Joint, docs/formats/PHYSICS.md "Pressure plates"): a Jolt body with the plate's
+    // collision on a prismatic joint along its model Z, limited to [lowest range, 0], its motor lifting it at 120 units/s
+    // with the force to hold its own weight plus kHold [I]. Weight on it presses it down: loose bodies by their contacts,
+    // Lara (her ragdoll record's 55 kg [O], lara ObjectBase +0x7C +4) and push blocks (their primitives' mass) where a
+    // ray under them meets it. A new plate starts at its saved position; afterwards x and v are Jolt's (plates_).
+    constexpr float kHold = 20.0f, kPlateMass = 50.0f, kLaraMass = 55.0f; // kg; a plate without primitive mass [I]
+    std::map<int32_t, physics::Joint1> plates;
+    std::map<int32_t, std::vector<collision::Dynamic>> plateMeshes;
+    std::vector<physics::Scene::Plate> plateBodies;
+    for (const auto& o : script_.objects()) {
+        if (!o.joint || !o.joint->prismatic || o.joint->ranges.empty()) continue;
+        std::vector<collision::Dynamic> meshes;
+        for (size_t i = 0; i < colliders_.size(); ++i)
+            if (colliders_[i].uid == o.uid) meshes.push_back({o.uid, col_.dynamics[i].shape, colliders_[i].intro * colliders_[i].frame});
+        if (meshes.empty()) continue;
+        const auto* p = objectPhysics(o.name);
+        auto mp = p ? physics::massProps(*p) : physics::MassProps{};
+        if (mp.mass <= 0) mp.mass = kPlateMass, mp.com = vec3(0);
+        const glm::mat4 intro = introModel(o);
+        physics::Joint1 j;
+        j.mass = mp.mass, j.axis = glm::normalize(vec3(intro[2])), j.pivot = vec3(intro[3]), j.arm = glm::mat3(intro) * mp.com;
+        j.limited = true, j.hi = 0;
+        for (const auto& r : o.joint->ranges) j.lo = std::min(j.lo, r.lo);
+        j.motor = true, j.speed = 120.0f / 30.0f, j.force = (mp.mass + kHold) * physics::kJointGravity * 0.5f; // per 1/60 s step
+        if (const auto old = plates_.find(o.uid); old != plates_.end()) j.x = old->second.x, j.v = old->second.v;
+        else j.x = o.joint->position;
+        plates[o.uid] = j;
+        plateMeshes[o.uid] = std::move(meshes);
+    }
+    plates_ = std::move(plates);
+    for (const auto& [uid, meshes] : plateMeshes) plateBodies.push_back({key(uid, -2), meshes});
+    std::vector<physics::Scene::Weight> weights{{player_.state().pos, kLaraMass}};
+    for (const auto& b : script_.objects()) {
+        if (b.kind != script::Kind::Block) continue;
+        vec3 lo(1e30f), hi(-1e30f);
+        for (const auto& d : col_.dynamics)
+            if (d.id == b.uid)
+                for (const vec3& v : d.shape->vertices) {
+                    const vec3 q(d.transform * glm::vec4(v, 1));
+                    lo = glm::min(lo, q), hi = glm::max(hi, q);
+                }
+        if (lo.x > hi.x) continue;
+        const auto* p = objectPhysics(b.name);
+        const float mass = p ? physics::massProps(*p).mass : 0.0f;
+        weights.push_back({vec3(0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y), lo.z), mass > 0 ? mass : 666.0f}); // tru.exe's fallback mass
+    }
+    physics_.setPlates(plateBodies, weights);
+    for (auto& [uid, j] : plates_) joints.push_back({key(uid, -2), &j}); // by uid: a fixed constraint order
     physics_.setJoints(std::move(joints), std::move(links));
     // A body the grapple pulled loose that still rides its uber joint (l1 snake head 751 on its rail, held by a
     // counterweight link): the pull drags its watched prismatic joints downhill at the braced pull speed while they are
@@ -1023,13 +1071,17 @@ void World::stepPhysics(float dt) {
     }
     chunkPieces(loose);
     physics_.setLoose(loose);
-    physics_.setVehicles(bikeVehicles()); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result
+    const auto bikes = bikeVehicles();
+    physics_.setVehicles(bikes); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result
+    // Lara's proxy shoves loose bodies and ragdolls she walks into (by her mass); not while she rides or lies dead.
+    const physics::Scene::Character lara{player_.state().pos, player_.tuning().radius, player_.tuning().height, kLaraMass};
+    physics_.setCharacter(bikes.empty() && player_.state().state != State::Dead ? &lara : nullptr);
     std::vector<physics::Scene::Terrain> terrain;
     for (const auto& u : units_) terrain.push_back({u.data.name, &u.data.col, u.offset});
     physics_.setTerrain(terrain);
-    std::vector<collision::Dynamic> solids; // what loose bodies land on: every collider but their own
+    std::vector<collision::Dynamic> solids; // what loose bodies land on: every collider but their own and the plates'
     for (const auto& d : col_.dynamics)
-        if (!looseIds.contains(d.id)) solids.push_back(d);
+        if (!looseIds.contains(d.id) && !plates_.contains(d.id)) solids.push_back(d);
     physics_.setColliders(solids);
     syncRagdolls(false); // a loaded scene's ragdolls exist before its recorded state applies
     physics_.step(dt);
@@ -1157,44 +1209,18 @@ void World::startChunks(ai::Enemy& e) {
     e.setPieces(world, vel);
 }
 
-// Pressure plates (prismatic joints, Runtime::Object::Joint): weight on the plate — Lara standing on it, a push block
-// resting on it, a loose rigid body landed on it — drives the joint down to its lowest range; unloaded it rises back to 0. Entering a range runs the
-// plate's vt 34 (pressed / released ids). [I] The original simulates the joint and the weights in Havok; ours moves at
-// a fixed speed, and only Lara, push blocks and loose bodies weigh (other physics props do not).
-void World::tickPlates(float dt) {
-    constexpr float kSpeed = 120.0f; // joint units (model z) per second
-    const auto box = [&](int32_t uid) { // world AABB of an object's collision
-        vec3 lo(1e30f), hi(-1e30f);
-        for (const auto& d : col_.dynamics)
-            if (d.id == uid)
-                for (const vec3& v : d.shape->vertices) {
-                    const vec3 p(d.transform * glm::vec4(v, 1));
-                    lo = glm::min(lo, p), hi = glm::max(hi, p);
-                }
-        return std::pair(lo, hi);
-    };
-    const vec3 feet = player_.state().pos;
-    for (const auto& o : script_.objects()) {
-        if (!o.joint || !o.joint->prismatic || o.joint->ranges.empty()) continue;
-        const auto [lo, hi] = box(o.uid);
-        const auto on = [&](vec3 c, float bottom) { // over the plate's footprint, resting on its top
-            return c.x > lo.x && c.x < hi.x && c.y > lo.y && c.y < hi.y && bottom > hi.z - 30.0f && bottom < hi.z + 40.0f;
-        };
-        bool loaded = on(feet, feet.z);
-        for (const auto& b : script_.objects())
-            if ((b.kind == script::Kind::Block || b.loose) && !loaded) {
-                const auto [blo, bhi] = box(b.uid);
-                if (blo.x <= bhi.x) loaded = on((blo + bhi) * 0.5f, blo.z);
-                else if (b.loose) loaded = on(b.pos + b.offset, b.pos.z + b.offset.z); // no collision: origin = base
-            }
-        float bottom = 0;
-        for (const auto& r : o.joint->ranges) bottom = std::min(bottom, r.lo);
-        const float x = o.joint->position, target = loaded ? bottom : 0.0f;
-        if (x == target) continue;
-        const float next = target < x ? std::max(target, x - kSpeed * dt) : std::min(target, x + kSpeed * dt);
-        const int32_t uid = o.uid; // setJointPosition may run scripts
-        script_.setBody(uid, glm::translate(glm::mat4(1), vec3(0, 0, next)));
-        script_.setJointPosition(uid, next);
+// Pressure plates (prismatic joints, Runtime::Object::Joint) take the position the Jolt step left their joint at
+// (stepPhysics), within its limits; entering a range runs the plate's vt 34 (pressed / released ids).
+void World::tickPlates() {
+    std::vector<std::pair<int32_t, float>> moved; // setJointPosition may run scripts
+    for (const auto& [uid, j] : plates_)
+        if (const auto* o = script_.find(uid); o && o->joint) {
+            const float x = std::clamp(j.x, j.lo, 0.0f);
+            if (x != o->joint->position) moved.push_back({uid, x});
+        }
+    for (const auto& [uid, x] : moved) {
+        script_.setBody(uid, glm::translate(glm::mat4(1), vec3(0, 0, x)));
+        script_.setJointPosition(uid, x);
     }
 }
 
