@@ -221,9 +221,13 @@ type 2, is [I].
   and adds share · torque · throttle · ratio / radius along the body's forward axis at each driven wheel on the
   ground, before the step. Jolt's drivetrain is not used: its clutch and light wheels spun the wheels up and starved
   the drive; its `MotorcycleController` lean spring pumped energy into this tall 265 kg chassis and let a parked bike
-  fall over, so the roll about the forward axis is servoed to 0 (angular velocity −roll / 0.1 s, on the ground and in
-  the air) [I]. Inputs arrive with `setVehicles` and are applied after a restored state; `shift` follows the caller's
-  stream offsets, `kick` adds velocity (hop, ram). Saves: the body is keyed `v<id>`, the constraint is listed after the
+  fall over, so the roll about the forward axis (from the world's up) is servoed to the caller's `VehicleDrive::lean`
+  (angular velocity `leanRate` × (lean − roll), on the ground and in the air; tru.exe 0x793680 drives a motor on the body
+  toward its lean target). `VehicleDrive` also carries a yaw torque and a side force at the centre of mass (air control),
+  a force at one wheel's contact (stunts), a horizontal pin of one wheel's contact and a cap on the spin about the up
+  axis (donut / power slide [I]), and the hand brake (`mMaxHandBrakeTorque`). Inputs arrive with `setVehicles` and are
+  applied after a restored state; `shift` follows the caller's stream offsets, `kick` adds velocity (hop, ram). Saves:
+  the body is keyed `v<id>`, the constraint is listed after the
   links (before the ragdoll joints); Jolt's vehicle state (wheel spin, contacts, lambdas, inputs) is in the recorded
   state; the drive reads only the saved contact bodies, so a load continues bit for bit
   (`Physics.VehicleDrivesBrakesAndSavesBitIdentically`, `VehicleReal.SaveRestoreMidRide`).
@@ -246,10 +250,11 @@ type 2, is [I].
 | friction / restitution / damping of loose bodies | Jolt defaults (friction 0.2, restitution 0, damping 0.05); penetration slop 1 unit | [U] Havok values not decoded |
 | ragdoll bone capsule (0x4F0B40), mass share, radius × scale | dynamic body per bone, `CapsuleShape` from start to end, `CalculateInertia` with the given mass | [O] layout; Havok friction / damping not decoded [U] |
 | ragdoll joints 1 / 2 / 3 (0x4DF5D0 / 0x4E08A0 / 0x4EE5C0) | `SixDOFConstraint`, pyramid swing, zero = bind pose (above) | constructors [O]; axis roles and zero [I] |
-| vehicle body (0x6AB960 -> 0x497270) and its upright limit (0x795080, record +0x40) | dynamic body of the model's primitives minus the wheel spheres, `LinearCast`; `VehicleConstraintSettings::mMaxPitchRollAngle`; roll servoed to 0 | [O] data; the servo [I] (below) |
+| vehicle body (0x6AB960 -> 0x497270) and its upright limit (0x795080, record +0x40) | dynamic body of the model's primitives minus the wheel spheres, `LinearCast`; `VehicleConstraintSettings::mMaxPitchRollAngle`; roll servoed to the lean target | [O] data; the servo's rate [I] (above) |
 | wheel: ray from the suspension top, spring constraint at the hit (0x792900 / 0x4E1A40) | `WheelSettingsWV` + `VehicleCollisionTesterRay`: max length = rest, radius = sphere, spring Hz / damping ratio, `mSuspensionForcePoint` at 0.7 of the travel above full extension | [O] layout and formulas; one fixed force point [I] |
 | engine torque on the wheels (0x791D10 / 0x792900) | `Body::AddForce` per driven wheel at its force point (Jolt's engine, gearbox (neutral) and clutch unused) | [O] |
-| wheel friction / brake (0x4E1A40 parameters) | Jolt slip curves scaled to wheel +0x08; `mMaxBrakeTorque` from +0x0C | [I] meanings |
+| wheel friction / brake (0x4E1A40 parameters) | Jolt slip curves scaled to wheel +0x08; `mMaxBrakeTorque` from +0x0C, `mMaxHandBrakeTorque` from +0x10 | [I] meanings |
+| body forces of 0x793680 / 0x7918B0 / 0x790920 (`+0xF0` torque, `+0xE0` force, force at a point) | `AddTorque` / `AddForce` before the step, N·m and N (game units / (280²/30²) and / (280/30²)) | accumulators 0x4DD7E0 / 0x4DD710 / 0x4DD750 [O]; units [I] |
 
 ## Verification
 

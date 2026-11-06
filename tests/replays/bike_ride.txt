@@ -1,6 +1,6 @@
 # l4_trailstart: mount Lara's motorcycle (uid 5482), full throttle down the trail, part throttle into the left curve up
-# its steps, hop at the top, brake; it rolls back off the steep top (Jolt bike, the record's 40 mph engine) and stops;
-# dismount.
+# its steps (leaning into it), hop at the top, brake; it rolls back off the steep top (Jolt bike, the record's 40 mph
+# engine), the hand brake (drop) stops it on the slope below; dismount.
 # ou-game --level 'pc-w\l4_trailstart.drm' --spawn 37981,-51758,1463,-126.7 --input-script tests/replays/bike_ride.txt
 0.3 interact 1
 0.4 interact 0
@@ -12,5 +12,7 @@
 4.3 jump 0
 5.0 forward -1
 5.6 forward 0
+5.6 drop 1
+8.5 drop 0
 8.6 interact 1
 8.7 interact 0

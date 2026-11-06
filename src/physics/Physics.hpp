@@ -146,6 +146,7 @@ struct VehicleSpec {
         float drive = 0;         // share of the engine torque
         float brake = 0;         // N m at full brake
         float steer = 0;         // max steering angle, rad (0 = fixed)
+        float handBrake = 0;     // N m at full hand brake
         float raise = 0;         // the wheel's forces act this fraction of the travel above the contact (roll centre)
         float friction = 0;      // tyre friction peak (Jolt's curves scaled to it; 0 = Jolt's 1.2)
     };
@@ -156,9 +157,20 @@ struct VehicleSpec {
     float reverseRatio = 0, reverseTorque = 0; // the same in reverse (positive); its torque, N m (no curve)
     float maxPitchRoll = 0;    // tilt limit from the world's up, rad
 };
+    float leanRate = 3;        // roll servo: roll rate = leanRate x (VehicleDrive::lean - roll), 1/s
 // Driver input for one step: forward 0..1 (reverse: in the reverse gear), right -1..1 (of each wheel's max steer),
-// brake 0..1.
-struct VehicleDrive { float forward = 0, right = 0, brake = 0; bool reverse = false; };
+// brake / handBrake 0..1; lean: the roll the servo holds, rad (+ = the left side down; the roll is from the world's up);
+// yawTorque (N m about the body's up, + turns left) and sideForce (N along the body's left) at the centre of mass;
+// push: force (N, model axes) at wheel pushWheel's contact (its attachment when off the ground); pinWheel: that wheel's
+// contact point is held still horizontally (the body's velocity is corrected before the step); maxYawRate (rad/s, 0 =
+// none): the spin about the world's up is clamped to it before the step.
+struct VehicleDrive {
+    float forward = 0, right = 0, brake = 0, handBrake = 0;
+    bool reverse = false;
+    float lean = 0, yawTorque = 0, sideForce = 0, maxYawRate = 0;
+    int pushWheel = -1, pinWheel = -1;
+    vec3 push{0};
+};
 struct VehicleState {
     mat4 model{1};       // model -> world
     vec3 vel{0};         // units/s

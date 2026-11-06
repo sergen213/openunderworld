@@ -32,7 +32,7 @@ bool World::flashlightSpot() const { return !units_.empty() && currentUnit().dat
 std::pair<vec3, vec3> World::flashlightPose(double alpha) const {
     const auto s = interpolated(alpha);
     const auto bones = pose(alpha);
-    const glm::mat4 m = player_.modelMatrix(s.pos, s.yaw, s.pitch) * (size_t(kChestBone) < bones.size() ? bones[kChestBone] : glm::mat4(1));
+    const glm::mat4 m = player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll) * (size_t(kChestBone) < bones.size() ? bones[kChestBone] : glm::mat4(1));
     const vec3 dir = glm::normalize(vec3(m * glm::vec4(0, -1, 0, 0)));
     return {vec3(m * glm::vec4(0, -kLightForward, 0, 1)), dir};
 }
@@ -74,7 +74,7 @@ void World::tickGadgets(const Actions& a, float dt) {
         throwT_ += dt;
         if (before < release && throwT_ >= release && grenades > 0) {
             // Launch: fixed vertical speed, horizontal speed so the arc lands on throwAt_ [I].
-            const glm::mat4 model = player_.modelMatrix(s.pos, s.yaw, s.pitch);
+            const glm::mat4 model = player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
             const vec3 from = size_t(kRightHand) < bones_.size() ? vec3(model * bones_[kRightHand][3]) : s.pos + vec3(0, 0, 400);
             const float dz = throwAt_.z - from.z, disc = g.launchVz * g.launchVz - 2 * g.gravity * dz;
             const float t = disc > 0 ? (g.launchVz + std::sqrt(disc)) / g.gravity : g.launchVz / g.gravity;

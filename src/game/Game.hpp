@@ -245,6 +245,7 @@ struct PlayerState {
     float fallStartZ = 0; // z when Lara last became airborne (tru.exe player +0x6DC, set on FallState entry 0x75C550)
     float fallHeight = 0; // set by land(): fallStartZ - pos.z; 0 on every other tick
     // Free climbing (State::Climb): the hold she is at (CollisionMesh::markup index, -1 = not on a wall), its hand stance
+    float roll = 0;  // on the motorcycle: its roll, rad (+ = left side down); the model is rolled by it
     // (0..4 = DICE B / L / LW / R / RW, markup type - 16) and the rock's outward normal there. climbWarp: an attach /
     // hold-to-hold / step-off clip is carrying her from climbFrom (heading climbYawFrom) to climbTo (climbYawTo); the
     // ladder climb-off clips use climbFrom / climbTo too.
@@ -274,8 +275,9 @@ public:
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
     void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
-    // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root).
-    glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0) const;
+    // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
+    // the model's left (+X) side about its forward axis).
+    glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
     void face(float yaw) { s_.yaw = yaw; } // combat: turn toward a locked target
     void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling); // Grapple.cpp: target attachment
     void releaseGrapple(bool jump);               // let go, keeping the swing's momentum

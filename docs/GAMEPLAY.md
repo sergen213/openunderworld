@@ -919,10 +919,12 @@ outfit (the original only reads `+0x294` on a level load).
 ## Motorcycle (src/game/Vehicle.*)
 
 Lara mounts the bike with E (interact) next to its left side, rides it with the move stick (forward = throttle, back =
-brake then reverse, left/right = steer; raw stick, not camera-relative), hops with Space and gets off with E once it is
-almost stopped. While she is on it, `World::tick` skips `Player::tick`, drives her from the bike and masks move, jump,
-drop, use and the grapple; the weapon keys stay live (see "Weapons on the bike" below); the camera pulls back and swings
-behind the moving bike. No new bindable actions.
+brake then reverse, left/right = steer; raw stick, not camera-relative), hand-brakes with Left Ctrl / pad East (drop),
+hops with Space and gets off with E once it is almost stopped. Throttle + hand brake revs a burnout; add the stick
+(standing) for a donut; hand brake or brake with the stick over above 15 mph slides the rear out (power slide).
+While she is on it, `World::tick` skips `Player::tick`, drives her from the bike and masks move, jump, drop, use and the
+grapple; the weapon keys stay live (see "Weapons on the bike" below); the camera pulls back and swings behind the moving
+bike. No new bindable actions.
 
 Evidence:
 
@@ -998,7 +1000,14 @@ Numbers (default tuning record, the wheel definitions, the model):
 | suspension | 1.8 Hz × 1.5 = 2.7 Hz, damping ratio 0.35; forces 0.7 of the travel above the contact | +0xA4 / +0xA8 / wheel +0x18 / +0x28 [V-data], 0x792900 [V-exe]; one fixed point in Jolt [I] |
 | tyres | Jolt's slip curves scaled to peak 1.5 front / 1.7 rear | wheel +0x08 [V-data]; its meaning [I] |
 | brakes | front 5, rear 10 units/frame² per mass share → 783 / 1466 N·m, ramping in over 1.25 s; held at rest (below 2 mph) | wheel +0x0C, record +0x30 / +0x04 [V-data]; units [I] |
-| tilt | the body's up stays within 42.5° of the world's; roll servoed to 0 | +0x40 [V-data], 0x795080 [V-exe]; the roll servo [I] (ou-game draws no lean) |
+| tilt | the body's up stays within 42.5° of the world's | +0x40 [V-data], 0x795080 [V-exe] |
+| lean | the roll servo targets (steer / wheel limit) × min(1, \|v\| / (0.675 × 40 mph)) × 30° into the turn with a wheel down, 0 in the air; 0.1 of the error per 30 Hz frame (3/s) | +0xB0 / +0xB8, 0x793680 (a motor with +0xB4 5000 N·m, target velocity 0.1 / frame × error) [V-exe]; units of the rate and its reference up (the exe blends the wheels' ground normals in above 0.4 steer) [I] |
+| air control | no wheel down: f = (steer / limit) × v / 40 mph; 300 × f N·m about the body's up, 2600 × f N along its side, towards the stick | +0x44 / +0x48, 0x793680 (torque × 280²/30², force × 280/30² into game units) [V-exe]; signs [I] |
+| hand brake | Left Ctrl / pad East: hand brake torque from wheel +0x10 (front 2.8, rear 0.5, as the brakes' units), biting over 0.5 s, no drive | +0x10 / +0x38 / +0x52 bit 2, 0x792900 [V-exe]; the key [I] |
+| burnout (state 7) | throttle + hand brake, stick centred: no drive, hand brake on, the rear wheel spins up to 500 / 286.48 rad per frame (52 rad/s) over 0.2 s; Lara `motorcycle_accelerate_loop` | +0x52 bit 0, +0x34, +0x144, 0x790E40 / 0x793680 [V-exe]; the clip [I] |
+| donut (state 10) | from a standstill (or a burnout) throttle + hand brake + stick past half: hand brake, 6750 N outward on the rear contact (ramped over 10 frames), lean 10° in; the front contact held horizontally, spin capped at 2.5 rad/s; `motorcycle_donut_left/right` | +0xEC / +0xF4 / +0x114, 0x790920 / 0x790E40 [V-exe]; the exe anchors it with a "Donut Anchor Body" (0x78F520, mass ramping to +0x13C 400 at +0x158 90 per frame, pivot ±190, 0, −400 in the body frame) [I: ours pins the front contact; the cap: Jolt's tyres let the push spin it several turns a second] |
+| power slide (state 11) | above 15 mph brake or hand brake + stick past half: the brakes ramp over 4.25 s, the rear contact pushed 1524 N out / 1016 N back / 161 N down for 5 + 10 + 5 frames (in, hold, out), lean 15° in, spin capped at 2.5 rad/s; until the brake or stick is let go or below 2 mph; `motorcycle_power_skid_left/right` | +0xE0 / +0x1B8 / +0x1D4 / +0x1D8 / +0xC4 / +0x1E4 / +0x1EC / +0x1F4 / +0xE4, 0x7918B0 / 0x790E40 [V-exe]; push signs and the cap [I] |
+| wheelie | not in the data: record +0x52 bit 3 (the launch wheelie after a burnout, +0x19C..+0x1A4) is clear | [V-data] |
 | front wheel limit | 30° at low speed → 10° at top speed, blended over [0.3, 1] × top speed | +0x10 / +0x14 / +0x1C, 0x793680 [V-exe] |
 | steering rate | 95°/s → 75°/s, same blend | +0x18 / +0x1B4, 0x793680 [V-exe] |
 | fall damage | drop ≥ 3792.67: (drop−3792.67)/(4819.85−3792.67)·95; > 4819.85: 95 + clamp(…/(4977.88−4819.85))·1550; in the air ≥ 4977.88: 1650 (lethal), type 8; airborne = no wheel on the ground | +0x184..+0x198, 0x793680 [V-exe] |
@@ -1015,26 +1024,30 @@ its ride phase; `World::driveBike` turns the stick into throttle / brake / rever
 bike has no body and stands where it was left (sat on its two wheel contacts when it first loads and when a ride
 starts).
 
-Saves: `vehicles` (docs/SAVES.md) keeps every bike (unit, unit-frame position, heading, pitch, speed, steer, air state,
-brake time, pending kick, hop / landing timers, phase) and the ridden one; the bike's Jolt body, wheels and contacts
-are in `objects.physics` (key `v<uid>`); Lara's state `vehicle` + clip are in `player`.
+Saves: `vehicles` (docs/SAVES.md) keeps every bike (unit, unit-frame position, heading, pitch, roll, speed, steer, wheel
+spins, air state, brake time, pending kick, hop / landing timers, stunt + its time and direction, phase) and the ridden
+one; the bike's Jolt body, wheels and contacts are in `objects.physics` (key `v<uid>`); Lara's state `vehicle` + clip
+are in `player`. Lara's model is rolled with the bike (`PlayerState::roll`, `Player::modelMatrix`).
 
 Tests: `VehicleReal.BikeIntrosTuningAndClips` (record, wheel definitions, engine ratio), `VehicleReal.TrailstartRideReplay`
 (replay `tests/replays/bike_ride.txt`: mount, full throttle down the trail to about 4000 units/s, part throttle into
-the left curve up the steps, hop at the top, brake; the bike rolls back off the steep top and stops; dismount; no
+the left curve up the steps, hop at the top, brake; the bike rolls back off the steep top, the hand brake stops it; dismount; no
 damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide` (bit for bit), `VehicleReal.RideIndependentOfRenderRate`
 (30 / 60 / 144 Hz), `VehicleReal.ShootsFromTheBike` (the replay with the pistols drawn and fire held: right-gun hits on
-a dummy ahead on the trail, the curve still steered, holstered after the dismount); `Physics.VehicleDrivesBrakesAndSavesBitIdentically`.
+a dummy ahead on the trail, the curve still steered, holstered after the dismount); `VehicleReal.LeanFollowsSteeringAtSpeed`
+(roll into the stick both ways, Lara rolled with it), `VehicleReal.AirControlTurnsMidJump` (steering mid-hop yaws the bike
+towards the stick, the same each run), `VehicleReal.DonutAndPowerSlide`; `Physics.VehicleDrivesBrakesAndSavesBitIdentically`.
 
 Verification [O] (ou-game, Vulkan, 1280×720, the replay with `--spawn 37981,-51758,1463,-126.7`, invisible KWin;
 screenshots viewed, kept privately): Jolt bike (2026-11-06) frame 200 Lara leaning into the left curve at the foot of
 the steps (2952 units/s at tick 180), 270 in the jump clip going up the left side of the steps, the bike pitched up
 on them; wheels and Lara stay on the bike. Older stand-in frames (2026-10): 40 mount, 420 dismount beside the bike.
 
-Not done [U/I]: gears beyond the record's one, engine/skid/landing sounds, wheelies (record +0x52 bit 8 is off), power
-slides, donuts, the air control torques (+0x44 / +0x48), crash braces (a crash is only the simulation's), the jump
-dismounts, PDA on the bike, aiming to her left from the bike, hit reactions while riding (damage applies without a
-clip), dismount clearance checks (`PSCCF_Vehicle_DismountClearance`), the revisit spawner, water, the lean (not drawn).
+Not done [U/I]: gears beyond the record's one, engine/skid/landing sounds, the launch wheelie (off in the data), the
+both-wheels-on-steep-ground torques of 0x793680 (+0x15C / +0x160 when two wheels hit slopes past the limit), crash
+braces (a crash is only the simulation's), the jump dismounts, PDA on the bike, aiming to her left from the bike, hit
+reactions while riding (damage applies without a clip), dismount clearance checks (`PSCCF_Vehicle_DismountClearance`),
+the revisit spawner, water, the rear tyre's burnout smoke.
 
 ## Interactions: switches, push blocks, pickups (src/game/Objects.cpp `useSwitchClip`, Player `use` / `grip`)
 

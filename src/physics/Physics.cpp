@@ -888,7 +888,7 @@ Scene::Impl::VehicleE Scene::Impl::makeVehicle(int32_t id, const VehicleSpec& sp
             for (const auto& [slip, f] : {std::pair(0.0f, 0.0f), {0.06f, 1.0f}, {0.2f, 0.833f}}) ws->mLongitudinalFriction.AddPoint(slip, f * w.friction);
             for (const auto& [slip, f] : {std::pair(0.0f, 0.0f), {3.0f, 1.0f}, {20.0f, 0.833f}}) ws->mLateralFriction.AddPoint(slip, f * w.friction);
         }
-        ws->mMaxSteerAngle = w.steer, ws->mMaxBrakeTorque = w.brake, ws->mMaxHandBrakeTorque = 0;
+        ws->mMaxSteerAngle = w.steer, ws->mMaxBrakeTorque = w.brake, ws->mMaxHandBrakeTorque = w.handBrake;
         // tru.exe applies a wheel's forces `raise` x (attach -> contact) above the contact (0x792900); Jolt takes one
         // fixed point: the same fraction of the full travel [I].
         ws->mEnableSuspensionForcePoint = w.raise > 0;
@@ -946,18 +946,32 @@ void Scene::Impl::driveVehicles() {
         if (v.shift != vec3(0)) bi->SetPosition(v.body, bi->GetPosition(v.body) + Jm(v.shift), JPH::EActivation::Activate);
         if (v.kick != vec3(0)) bi->AddLinearVelocity(v.body, Jm(v.kick));
         auto* c = static_cast<JPH::WheeledVehicleController*>(v.c->GetController());
-        c->SetDriverInput(0, v.drive.right, v.drive.brake, 0);
+        c->SetDriverInput(0, v.drive.right, v.drive.brake, v.drive.handBrake);
         drive(v);
-        // Upright [I]: the roll about the forward axis is servoed to 0 (rate -roll / 0.1 s) on the ground and in the air;
-        // pitch is free up to the data's tilt limit (mMaxPitchRollAngle). Jolt's MotorcycleController leans into turns
-        // with a spring that pumped energy into this light, tall chassis (and a parked bike falls over); the original
-        // keeps its bike upright and ou-game draws no roll.
+        // Lean: the roll about the forward axis (from the world's up) is servoed to drive.lean at leanRate on the ground
+        // and in the air (tru.exe 0x793680: a motor on the body; Vehicle.cpp picks the target); pitch is free up to the
+        // data's tilt limit (mMaxPitchRollAngle). Jolt's MotorcycleController leans with a spring that pumped energy
+        // into this light, tall chassis (and a parked bike falls over).
         const JPH::Quat q = bi->GetRotation(v.body);
         const JPH::Vec3 fwd = q * JPH::Vec3(0, -1, 0), up = q * JPH::Vec3(0, 0, 1), side = fwd.Cross(JPH::Vec3(0, 0, 1));
         if (side.LengthSq() > 1e-4f) {
-            const float roll = std::asin(std::clamp(up.Dot(side.Normalized()), -1.0f, 1.0f));
+            const float roll = -std::asin(std::clamp(up.Dot(side.Normalized()), -1.0f, 1.0f)); // + = left side down
             const JPH::Vec3 w = bi->GetAngularVelocity(v.body);
-            bi->SetAngularVelocity(v.body, w + fwd * (-roll / 0.1f - w.Dot(fwd)));
+            bi->SetAngularVelocity(v.body, w + fwd * (-v.spec->leanRate * (v.drive.lean - roll) - w.Dot(fwd)));
+        }
+        if (v.drive.yawTorque != 0) bi->AddTorque(v.body, up * v.drive.yawTorque);
+        if (v.drive.sideForce != 0) bi->AddForce(v.body, q * JPH::Vec3(v.drive.sideForce, 0, 0));
+        if (const auto& wheels = v.c->GetWheels(); v.drive.pushWheel >= 0 && size_t(v.drive.pushWheel) < wheels.size()) {
+            const JPH::Wheel& wh = *wheels[size_t(v.drive.pushWheel)];
+            const JPH::RVec3 at = wh.HasContact() ? wh.GetContactPosition() : bi->GetWorldTransform(v.body) * wh.GetSettings()->mPosition;
+            bi->AddForce(v.body, q * JPH::Vec3(v.drive.push.x, v.drive.push.y, v.drive.push.z), at);
+        }
+        if (const JPH::Vec3 w = bi->GetAngularVelocity(v.body); v.drive.maxYawRate > 0 && std::abs(w.GetZ()) > v.drive.maxYawRate)
+            bi->SetAngularVelocity(v.body, JPH::Vec3(w.GetX(), w.GetY(), std::copysign(v.drive.maxYawRate, w.GetZ())));
+        if (const auto& wheels = v.c->GetWheels(); v.drive.pinWheel >= 0 && size_t(v.drive.pinWheel) < wheels.size() && wheels[size_t(v.drive.pinWheel)]->HasContact()) {
+            const JPH::Vec3 r = JPH::Vec3(wheels[size_t(v.drive.pinWheel)]->GetContactPosition() - bi->GetCenterOfMassPosition(v.body));
+            const JPH::Vec3 lin = bi->GetLinearVelocity(v.body), at = lin + bi->GetAngularVelocity(v.body).Cross(r);
+            bi->SetLinearVelocity(v.body, lin - JPH::Vec3(at.GetX(), at.GetY(), 0));
         }
         v.shift = v.kick = vec3(0);
     }

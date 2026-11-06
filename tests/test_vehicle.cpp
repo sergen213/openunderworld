@@ -236,3 +236,105 @@ TEST(VehicleReal, RideIndependentOfRenderRate) {
     EXPECT_EQ(a, c);
     EXPECT_GT(glm::length(std::get<0>(a) - game::loadUnitData(bf, "l4_trailstart").vehicles[0].pos), 3000); // it rode
 }
+
+namespace {
+// Mounts bike 5482 (interact at 0.3 s; riding from about 1.2 s), then `rest` of an input script; per-tick callback.
+template <class F> void ride(const cdc::BigfileSet& bf, const game::AnimLibrary& anims, const std::string& rest, double seconds, F&& each) {
+    game::World w(loader(bf), "l4_trailstart", anims, kMountSpot);
+    const auto script = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n" + rest);
+    for (uint64_t i = 0; i < uint64_t(seconds * 60); ++i) {
+        w.tick(script.at(i));
+        if (const auto* b = w.ridden(); b && b->phase == game::BikePhase::Ride) {
+            if (std::getenv("OU_VEHICLE_TRACE"))
+                std::printf("tick %3llu stunt %d air %d v %5.0f yaw %6.3f roll %6.3f lean %6.3f pos %.0f %.0f %.0f\n", (unsigned long long)i,
+                            int(b->stunt), b->air, b->speed, b->yaw, b->roll, b->drive.lean, b->pos.x, b->pos.y, b->pos.z);
+            each(i, *b, w);
+        }
+    }
+}
+} // namespace
+
+// Lean (0x793680): at speed the bike rolls into the steering (+ = left side down) and back the other way, up to the
+// record's 30 degrees; Lara is rolled with it.
+TEST(VehicleReal, LeanFollowsSteeringAtSpeed) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    EXPECT_NEAR(anims.bike.leanMax, 30 * 3.14159265f / 180, 1e-4f);
+    EXPECT_NEAR(anims.bike.airYaw, 300, 1e-3f);
+    EXPECT_NEAR(anims.bike.airSide, 2600, 1e-3f);
+    float left = 0, right = 0, straight = 1, maxRoll = 0;
+    ride(bf, anims, "1.3 forward 1\n2.4 right -1\n3.0 right 1\n3.6 right 0\n", 3.6, [&](uint64_t i, const game::Bike& b, const game::World& w) {
+        if (i == 140) {
+            straight = b.roll;
+            EXPECT_GT(b.speed, 1500);
+        }
+        if (i == 177) left = b.roll;
+        if (i == 213) right = b.roll;
+        maxRoll = std::max(maxRoll, std::abs(b.roll));
+        EXPECT_EQ(w.player().state().roll, b.roll);
+    });
+    std::printf("bike lean: straight %.3f, left %.3f, right %.3f, max %.3f rad\n", straight, left, right, maxRoll);
+    EXPECT_LT(std::abs(straight), 0.05f);
+    EXPECT_GT(left, 0.15f);
+    EXPECT_LT(right, -0.15f);
+    EXPECT_LT(maxRoll, anims.bike.leanMax + 0.1f);
+}
+
+// Air control (0x793680, no wheel down): steering during a hop yaws the bike towards the stick, the same each run.
+TEST(VehicleReal, AirControlTurnsMidJump) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const auto jump = [&](const char* steer) {
+        float yaw = 0;
+        bool air = false;
+        ride(bf, anims, std::string("1.3 forward 1\n2.6 jump 1\n2.7 jump 0\n") + steer, 3.1, [&](uint64_t i, const game::Bike& b, const game::World&) {
+            if (i == 172) air = b.air; // mid-hop
+            if (i == 185) yaw = b.yaw;
+        });
+        EXPECT_TRUE(air);
+        return yaw;
+    };
+    const float none = jump(""), left = jump("2.7 right -1\n"), again = jump("2.7 right -1\n"), right = jump("2.7 right 1\n");
+    std::printf("bike air control: yaw %.4f none, %.4f left, %.4f right\n", none, left, right);
+    EXPECT_GT(left - none, 0.05f);
+    EXPECT_LT(right - none, -0.05f);
+    EXPECT_EQ(left, again);
+}
+
+// Stunts (0x790E40): throttle + hand brake from a standstill with the stick over is a donut (the bike spins round its
+// front wheel, leaning in); hand brake + steering at speed is a power slide.
+TEST(VehicleReal, DonutAndPowerSlide) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    float turned = 0, prevYaw = 0, roll = 0;
+    int donut = 0;
+    game::vec3 start{0}, farthest{0};
+    ride(bf, anims, "1.5 forward 1\n1.5 drop 1\n1.5 right -1\n", 4.5, [&](uint64_t i, const game::Bike& b, const game::World& w) {
+        if (i == 89) start = b.pos, prevYaw = b.yaw;
+        if (i < 90) return;
+        turned += std::remainder(b.yaw - prevYaw, 2 * 3.14159265f), prevYaw = b.yaw;
+        donut += b.stunt == game::BikeStunt::Donut;
+        if (glm::length(b.pos - start) > glm::length(farthest)) farthest = b.pos - start;
+        if (b.stunt == game::BikeStunt::Donut) {
+            roll = b.roll;
+            EXPECT_EQ(w.player().state().clip, "motorcycle:motorcycle_donut_left");
+        }
+    });
+    std::printf("bike donut: %d ticks, turned %.2f rad, farthest %.0f, roll %.3f\n", donut, turned, glm::length(farthest), roll);
+    EXPECT_GT(donut, 90);                     // until a bump on the trail's slope throws it
+    EXPECT_GT(turned, 4.0f);                  // well past half a turn
+    EXPECT_LT(glm::length(farthest), 1000);  // about two bike lengths: round its front wheel, not away
+    EXPECT_GT(roll, 0.05f);
+
+    int slide = 0;
+    float slideRoll = 0;
+    ride(bf, anims, "1.3 forward 1\n2.6 forward 0\n2.6 drop 1\n2.6 right -1\n", 3.4, [&](uint64_t, const game::Bike& b, const game::World&) {
+        if (b.stunt == game::BikeStunt::PowerSlide) ++slide, slideRoll = b.roll;
+    });
+    std::printf("bike power slide: %d ticks, roll %.3f\n", slide, slideRoll);
+    EXPECT_GT(slide, 20);
+    EXPECT_GT(slideRoll, 0.05f);
+}

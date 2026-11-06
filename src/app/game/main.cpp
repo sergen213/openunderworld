@@ -266,7 +266,7 @@ struct LaraMeshes {
     void pose(const ou::game::World& world, const ou::game::PlayerState& s, double alpha, const ou::scene::SceneData& scene,
               ou::render::Renderer& r) {
         const auto palette = ou::anim::skinPalette(world.anims().skeleton, world.pose(alpha));
-        const glm::mat4 m = world.player().modelMatrix(s.pos, s.yaw, s.pitch);
+        const glm::mat4 m = world.player().modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
         const auto& wet = world.wetness().bone;
         for (const size_t i : meshIndices) {
             const auto& mesh = scene.meshes[i];
@@ -577,7 +577,7 @@ struct CombatView {
                 scratch = scene.meshes[gunIndices[h]].vertices;
                 for (auto& v : scratch) v.position[0] = v.position[1] = v.position[2] = 0;
             } else {
-                const glm::mat4 m = w.player().modelMatrix(s.pos, s.yaw, s.pitch) * bones[size_t(mount->first)] * mount->second;
+                const glm::mat4 m = w.player().modelMatrix(s.pos, s.yaw, s.pitch, s.roll) * bones[size_t(mount->first)] * mount->second;
                 ou::anim::skinVertices(scene.meshes[gunIndices[h]], {}, scratch, m);
             }
             r.updateVertices(gunIndices[h], scratch);
@@ -1114,7 +1114,7 @@ struct EffectsView {
             const auto colon = ps.clip.find(':');
             const auto split = [&](const std::string& c) { return c.find(':') == std::string::npos ? c : c.substr(c.find(':') + 1); };
             const auto lara = library->get(colon == std::string::npos ? "lara" : ps.clip.substr(0, colon));
-            const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+            const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch, ps.roll);
             std::vector<glm::mat4> pose;
             if (follows(lara)) pose = w.pose(1.0), system.track(kLaraOwner, model, pose);
             clipEvents(lara, split(ps.clip), pp.clip.substr(0, pp.clip.find(':')) == ps.clip.substr(0, colon) ? split(pp.clip) : std::string(),
@@ -1124,7 +1124,7 @@ struct EffectsView {
         // The combat upper-body clip (reload / equip / unequip): Lara's and the weapon object's lists for that clip
         // name (tru.exe keeps weapon-handling sounds in the weapon object's lists, e.g. wp_handgun "reload").
         if (auto [name, t] = w.combatLayerClip(); !name.empty() || !layerClip.empty()) {
-            const auto m = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+            const auto m = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch, ps.roll);
             for (const auto& obj : {std::string("lara"), std::string(ou::game::weaponObject(c.weapon))})
                 clipEvents(library->get(obj), name, layerClip, layerTime, t, 1e9, 0, m, [&] { return w.pose(1.0); });
             layerClip = std::move(name), layerTime = t;
@@ -1134,7 +1134,7 @@ struct EffectsView {
         if (const auto& h = c.hammer; !h.clip.empty())
             if (const auto ham = library->get("wp_thorhammer"))
                 if (const auto* ev = ham->clip(h.clip)) {
-                    const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+                    const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch, ps.roll);
                     const auto pose = w.pose(1.0);
                     if (follows(ham)) system.track(kLaraOwner, model, pose);
                     system.runEvents(ham, *ev, model, kLaraOwner, w.submerged() ? 3 : 0, h.prevT * 30 + 1e-3f, h.t * 30 + 1e-3f, pose);
@@ -1263,7 +1263,7 @@ struct EffectsView {
         fo.underwater = &underwater; // the colours tint Enhanced water from above too; strength 0 = no pass, no fog
         if (lists && library && unit.drm && under != submerged) {
             const auto& ps = w.player().state();
-            const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch);
+            const glm::mat4 model = w.player().modelMatrix(ps.pos, ps.yaw, ps.pitch, ps.roll);
             if (!under) system.stopOwner(kWaterOwner);
             if (const auto* l = library->effectList(*unit.drm, unit.name, uw.env.waterList[under ? 0 : 1], &warnings))
                 system.startPointSet(*l, model, under ? kWaterOwner : kWaterOwner - 1);

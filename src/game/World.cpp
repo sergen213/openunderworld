@@ -546,7 +546,7 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     // Focus goal (0x607D40): bone 108 (a helper the clips carry: 320 over her feet standing, by the pelvis 95 off the
     // rock climbing) through the mode's focus record (settings +0x50, 0x6C bytes: bone, offset, dead zones, speed,
     // 64-byte ease curve): record 1 (0, 0, 142.23) on foot, 10 (0, 0, 79.01) free climbing, 8 (0, 63.21, 316.06) hanging.
-    const glm::mat4 model = player_.modelMatrix(s.pos, s.yaw, s.pitch);
+    const glm::mat4 model = player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
     const vec3 goal = bones_.size() > 108 ? vec3(model * bones_[108] * glm::vec4(lim.offset, 1)) : s.pos + vec3(0, 0, 320.3f) + lim.offset;
     // The focus lags its goal (0x609830 -> 0x609440) per axis of the camera's horizontal frame (0x6091A0: right,
     // forward, up) by the record's dead zones: what is past a zone is caught up at once, the rest at up to 1896.3
@@ -897,6 +897,7 @@ PlayerState World::interpolated(double alpha) const {
 
 CameraState World::interpolatedCamera(double alpha) const {
     const float t = float(alpha);
+    s.roll = glm::mix(prev_.roll, s.roll, t);
     CameraState c = cam_;
     c.position = glm::mix(prevCam_.position, cam_.position, t);
     c.target = glm::mix(prevCam_.target, cam_.target, t);
@@ -934,7 +935,7 @@ void World::updatePose(float dt, bool reset) {
     throwLayer(local);
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(anims_.skeleton.bones[0].pivot)}; // root motion is in pos
     auto m = anim::worldMatrices(anims_.skeleton, local);
-    const glm::mat4 toWorld = player_.modelMatrix(s.pos, s.yaw, s.pitch);
+    const glm::mat4 toWorld = player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
     if (reset) hair_.reset(m, toWorld);
     else hair_.step(m, toWorld, dt);
     hair_.apply(m, toWorld);

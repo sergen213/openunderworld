@@ -151,10 +151,12 @@ vec3 rootTranslation(const anim::Clip& c, double t, bool loop) { return rootChan
 Player::Player(const collision::CollisionMesh& col, const AnimLibrary& anims, Tuning tuning)
     : col_(col), anims_(anims), t_(tuning) {}
 
-glm::mat4 Player::modelMatrix(vec3 pos, float yaw, float pitch) const {
-    // Model -Y is forward: rotate by yaw + 90 degrees about Z; pitch raises -Y towards +Z (about model X).
-    const glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1), pos), yaw + kPi / 2, vec3(0, 0, 1));
-    return pitch == 0 ? m : glm::rotate(m, -pitch, vec3(1, 0, 0));
+glm::mat4 Player::modelMatrix(vec3 pos, float yaw, float pitch, float roll) const {
+    // Model -Y is forward: rotate by yaw + 90 degrees about Z; pitch raises -Y towards +Z (about model X); roll lowers +X
+    // (about model Y).
+    glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1), pos), yaw + kPi / 2, vec3(0, 0, 1));
+    if (pitch != 0) m = glm::rotate(m, -pitch, vec3(1, 0, 0));
+    return roll == 0 ? m : glm::rotate(m, roll, vec3(0, 1, 0));
 }
 
 vec3 Player::forward() const { return {std::cos(s_.yaw), std::sin(s_.yaw), 0}; }

@@ -574,7 +574,7 @@ glm::mat4 World::gunMatrix(int hand) const {
     if (mount) offset = mount->second;
     if (mount && size_t(mount->first) < bones_.size()) b = bones_[size_t(mount->first)];
     else b[3].z = kShoulderHeight;
-    return player_.modelMatrix(s.pos, s.yaw, s.pitch) * b * offset;
+    return player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll) * b * offset;
 }
 
 vec3 World::muzzle(int hand) const { return vec3(gunMatrix(hand) * anims_.weapons[size_t(combat_.weapon)].muzzle[3]); }
