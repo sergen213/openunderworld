@@ -223,11 +223,11 @@ struct PlayerState {
     // `clipMix` is the other, weighted `mix`, phase-synced; root motion is blended the same way. Empty = single clip.
     std::string clipMix;
     float mix = 0;
-    // Obstacle move in progress (State::ClimbUp hurdle_* clips, Player::tryHurdle / tryHurdleDown): what follows the
     // `clip` reflected left / right (lara.drm anim request +0x20 bit 0x80, e.g. request 979 = ledgeb_jump_right mirrored:
     // the jump left; 1009 is the unmirrored one). The pose and the root motion's X are mirrored (tru.exe 0x4428A0 /
     // 0x441FB0).
     bool mirror = false;
+    // Obstacle move in progress (State::ClimbUp hurdle_* clips, Player::tryHurdle / tryHurdleDown): what follows the
     // attach clip, its blend weight and pair (over: the long clips; onto the far side: 65 / 100 cm deep), the
     // obstacle's top edge on her side and outward normal (toward where she came from), its height above her start,
     // the floor z she ends on, and for onto-the-far-side the ledge she ends hanging from.
