@@ -1849,6 +1849,7 @@ std::shared_ptr<const Object::GraphSet> Runtime::graphSet(const std::string& nam
 // 0x6A5660: the state's clip starts (once, or looping with flag 2; none keeps the pose), its timer and stimulus totals
 // restart, then the script's vt 20 (instance prototype 33, 0x799060) gets the state id. Not modelled: the entry posts
 // INSTANCE message 0x1E2 (state +8, kept in the anim record +0x80; no reader found) and, for state flags 0x800 / 0x400
+        set->names.push_back(e.name);
 // / 0x200 / 0x100 / 0x80, message 0x138 (1 / 3 / 5 / 0 / -1) to the burn component (0x6B0C00; ma_ei_ignitable only).
 void Runtime::graphEnter(int32_t uid, int state) {
     Object* o = findMut(uid);

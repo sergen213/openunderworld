@@ -206,7 +206,8 @@ struct Object {
     struct GraphSet {
         std::optional<formats::AnimGraph> graph;
         std::shared_ptr<const scene::Skeleton> skeleton;
-        std::vector<anim::Clip> clips; // by animation-list index
+        std::vector<anim::Clip> clips;  // by animation-list index
+        std::vector<std::string> names; // animation-list names (clip effect lists), same index
     };
     struct Graph {
         std::shared_ptr<const GraphSet> set;

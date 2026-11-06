@@ -171,7 +171,8 @@ struct FadeDef {
     float from = 0, to = 0;  // +0x00 / +0x02 s16 / 4096
     int16_t frames = 0;      // +0x04
     int16_t model = 0;       // +0x06 model index (flags & 0x80)
-    uint8_t flags = 0;       // +0x0B: 0x80 = crossfade to model `model` (instance +0x238, 0x5B3EC0) [not implemented]
+    uint8_t flags = 0;       // +0x0B: 0x80 = crossfade of draw group `model` (instance +0x238, 0x5B3EC0): Lara's 17
+                             // records, which no data reaches (EFFECTS.md "Model crossfades"); skipped
 };
 
 // 0x31C0-byte screen filter resource (DTP rtype 16; EFFECTS.md "Screen filters"): the parts drawn. Curves are 9 tables
@@ -351,10 +352,12 @@ public:
     // `material` (Event::soundOn) go to `sound` at their segment's world position.
     int runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
                   int32_t owner, uint8_t material, float from, float to, std::span<const glm::mat4> bones = {});
-    // The records of `events` of event variant `variant` (info >> 10 & 3, >= 1), all at once whatever their frame
-    // (tru.exe 0x5B26C0 with a variant: no frame window). Rewards' "pickup" lists keep their fade-out there (0x2401).
+    // The records of `events` of event variant `variant` (info >> 10 & 3, >= 1) at once whatever their frame (tru.exe
+    // 0x5B26C0 with a variant: no frame window): effects, sounds and slot sounds. 0x43C9C0 runs them when an animated
+    // instance's clip changes: the new clip's variant 1 ("start"), the clip it leaves variant 2. Rewards' "pickup"
+    // lists keep their fade-out there (0x2401).
     int runVariant(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
-                   int32_t owner, int variant, uint8_t material = 0);
+                   int32_t owner, int variant, uint8_t material = 0, std::span<const glm::mat4> bones = {});
     // An object list's records of event byte `event` (tru.exe 0x5BA000: not disabled, material filter), effects and
     // sounds at once: the weather's splashes (0x2E / 0x2F) and lightning (0x30) on fx->events.
     int runEvent(const std::shared_ptr<const ObjectFx>& fx, uint8_t event, const glm::mat4& world, int32_t owner,

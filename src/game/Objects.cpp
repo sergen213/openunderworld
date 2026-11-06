@@ -649,7 +649,9 @@ std::vector<World::ObjectClip> World::objectClips() const {
                 if ((t.flags & 1) && t.anim >= 0 && size_t(t.anim) < rt->second.animNames.size())
                     out.push_back({o.uid, o.name, rt->second.animNames[size_t(t.anim)], s.time, s.length, false, introModel(o)});
             }
-        }
+        } else if (const auto& g = o.graph; g && g->clip >= 0 && size_t(g->clip) < g->set->names.size()) // anim-graph state /
+            out.push_back({o.uid, o.name, g->set->names[size_t(g->clip)], g->t,           // transition clips (fixtures' on / off)
+                           g->set->clips[size_t(g->clip)].durationSeconds(), g->loop, introModel(o)});
     }
     return out;
 }

@@ -437,6 +437,7 @@ struct UnitData {
     std::vector<BendIntro> bends;          // bend_* intros (game/Bend.hpp), unit frame
     std::vector<formats::Unit::Wind> wind; // formats::Unit::wind
     std::string weatherObject;             // formats::Unit::weatherObjectId name; empty = none
+    uint32_t levelFlags = 0;               // formats::Unit::flags
     formats::Unit::RainMap rainMap;        // formats::Unit::rainMap (unit frame)
     // Render payload a UnitLoader may decode off the main thread (ou-game: formats::loadLevelScene); null = none.
     std::shared_ptr<const scene::SceneData> scene;
@@ -539,7 +540,8 @@ public:
         return it == uberStates_.end() ? nullptr : &it->second;
     }
     // Script objects playing an animation-list clip this tick (switches / doors: their pull / open and held idle
-    // clips; uber objects: their travel clip while it runs forward): for their clip effect events (EFFECTS.md).
+    // clips; uber objects: their travel clip while it runs forward; anim-graph objects: their state / transition clip,
+    // e.g. light fixtures' on / off): for their clip effect events (EFFECTS.md).
     struct ObjectClip {
         int32_t uid = 0;
         std::string object, clip; // objectlist name, animation-list name

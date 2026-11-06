@@ -200,6 +200,8 @@ TEST(Fx, GlowsGrowFadeAndDraw) {
     EXPECT_EQ(b[0].blend, uint8_t(fx::Blend::Additive));
     auto width = [&] { return glm::distance(glm::make_vec3(v[0].pos), glm::make_vec3(v[1].pos)); };
     const float w0 = width();
+    // 0x536280: NDC half-size 2 x 10 / z x 4/3 whatever the fov = 10 x (8/3) tan(fov / 2) world units at our camera.
+    EXPECT_NEAR(w0, 2 * 10 * 8.0f / 3.0f * std::tan(glm::radians(cam.verticalFovDeg) / 2), 0.05f);
     for (int t = 0; t < 5; ++t) s.tick({-500, 0, 0});
     s.build(cam, 1.0f, v, b);
     ASSERT_EQ(b.size(), 1u);
@@ -207,6 +209,29 @@ TEST(Fx, GlowsGrowFadeAndDraw) {
     EXPECT_LT(v[0].rgba & 0xFF, 0x80u);            // fading (RGB) in its last 2 frames
     for (int t = 0; t < 3; ++t) s.tick({-500, 0, 0});
     EXPECT_EQ(s.glowCount(), 0u);
+}
+
+// A faded instance's glows (instance +0x1B4, command 0x21) draw at its opacity instead of their own fade in (0x536280).
+TEST(Fx, GlowsFadeWithTheirInstance) {
+    auto o = std::make_shared<fx::ObjectFx>();
+    fx::GlowDef g;
+    g.flags = 0x01, g.width = g.height = 10, g.fadeIn = 10;
+    g.colours = {0x80808080};
+    o->glows.push_back(g);
+    o->events.push_back({0x2001, 0, 0, {6, 0, 0, 0}});
+    fx::System s;
+    ASSERT_EQ(s.startBirth(o, glm::mat4(1), 1), 1);
+    s.runCommand(o, {0x21, 64, 0, 0}, glm::mat4(1), 1); // fade 0.25 at once
+    render::Camera cam;
+    cam.position = {-500, 0, 0};
+    std::vector<render::FxVertex> v;
+    std::vector<render::FxBatch> b;
+    s.build(cam, 1.0f, v, b);
+    ASSERT_EQ(b.size(), 1u);
+    EXPECT_NEAR(float(v[0].rgba & 0xFF), 0x80 * 0.75f, 1.0f); // age 0: no fade-in, the instance's 0.75
+    s.runCommand(o, {0x21, 255, 0, 0}, glm::mat4(1), 1);
+    s.build(cam, 1.0f, v, b);
+    EXPECT_TRUE(b.empty()); // gone
 }
 
 // ---- Real data (skipped without OU_GAME_DIR) ---------------------------------------------------
@@ -745,8 +770,12 @@ TEST(Fx, WeatherRainFillsFallsAndFlashes) {
     cam.eye = {0, 0, 300};
     w.setScript(40, 1, 1); // ballcourt's rain (DAT_00AE4D84 0x199 under Wine), lightning every second
     EXPECT_EQ(w.rain(), 0x199);
+    EXPECT_TRUE(w.started()); // 0x53AB30: event 0x2E on every instance
     w.tick(&d, cam, q);
     EXPECT_EQ(w.dropCount(), 32u);
+    EXPECT_EQ(w.musicVar(), std::optional<uint8_t>(0)); // unit flag 2 clear (every retail unit)
+    w.setScript(40, 1, 1);
+    EXPECT_FALSE(w.started()); // only when it starts from none
     bool splash = false, bolt = false;
     for (int t = 0; t < 120; ++t) {
         w.tick(&d, cam, q);
@@ -764,9 +793,28 @@ TEST(Fx, WeatherRainFillsFallsAndFlashes) {
     EXPECT_EQ(b[0].blend, 1);
     EXPECT_EQ(v.size() % 6, 0u);
     w.setScript(0, 1, 1);
+    EXPECT_EQ(w.musicVar(), std::optional<uint8_t>(0));
     for (int t = 0; t < 200; ++t) w.tick(&d, cam, q);
     EXPECT_EQ(w.dropCount(), 0u); // no new drops, the last ones fell
     EXPECT_FALSE(w.flash());
+    // Unit flags (Level+0x2C): 2 sets music variable 2 every rain tick; 0x20000 starts drops up to 18000 deep.
+    auto farthest = [&](uint32_t flags) {
+        fx::Weather x;
+        q.unitFlags = flags;
+        x.setScript(100, 0, 0);
+        float far = 0;
+        for (int t = 0; t < 30; ++t) {
+            x.tick(&d, cam, q);
+            std::vector<render::FxVertex> xv;
+            std::vector<render::FxBatch> xb;
+            x.build(d, cam, xv, xb);
+            for (const auto& p : xv) far = std::max(far, glm::dot(glm::make_vec3(p.pos) - cam.eye, cam.forward));
+        }
+        EXPECT_EQ(x.musicVar(), std::optional<uint8_t>((flags & 2) ? 1 : 0));
+        return far;
+    };
+    EXPECT_LT(farthest(0), 8192.0f + 200.0f);
+    EXPECT_GT(farthest(0x20002), 9000.0f);
 }
 
 // The weather objects' data blocks (ObjectBase +0xC8) and the l4 units' weather object / height map (Level+0x70 DTP
@@ -799,4 +847,41 @@ TEST(FxReal, WeatherObjectAndRainMap) {
     EXPECT_NE(h, formats::Unit::RainMap::kNone);
     EXPECT_LT(h, 2646 + 600);
     EXPECT_EQ(u.rainMap.height(0x41000, 0), formats::Unit::RainMap::kNone);
+    EXPECT_EQ(u.flags, 0u); // Level+0x2C: no unit sets 2 (music variable 2) or 0x20000 (deep drops)
+    // Rain starting runs event 0x2E on every instance (0x53AB30): rainfx's splash list, placed once in l6_ship_exterior.
+    const auto rain = lib.get("rainfx");
+    ASSERT_TRUE(rain);
+    EXPECT_EQ(std::count_if(rain->events.begin(), rain->events.end(), [](const auto& e) { return e.event == 0x2E && e.effect(); }), 3);
+    const auto ship = formats::parseUnit(cdc::parseDrm(std::move(*bf.read("pc-w\\l6_ship_exterior.drm"))));
+    EXPECT_TRUE(std::any_of(ship.intros.begin(), ship.intros.end(), [](const auto& in) { return in.uniqueId == 7719; }));
+}
+
+// Clip variant records (0x43C9C0 -> 0x5B26C0): a fixture's clip start / leave records, and Lara's class-7 model
+// crossfades, which nothing in the data reaches (no effect-map class 7, no command 0x22 in her lists).
+TEST(FxReal, FixtureClipVariantsAndLaraCrossfades) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    fx::Library lib(bf);
+    const auto fill = lib.get("fx_light_chapel_fill");
+    ASSERT_TRUE(fill && fill->clip("on") && fill->clip("off"));
+    for (const char* c : {"on", "off"})
+        EXPECT_EQ(std::count_if(fill->clip(c)->begin(), fill->clip(c)->end(), [](const auto& e) { return e.effect() && e.variant() == 1; }), 2) << c;
+    fx::System s;
+    EXPECT_GT(s.runVariant(fill, *fill->clip("on"), glm::mat4(1), 5, 1), 0);
+    std::vector<fx::System::LiveLight> lights;
+    s.lights(lights);
+    EXPECT_FALSE(lights.empty()); // the fill light burns
+    const auto lara = lib.get("lara");
+    ASSERT_TRUE(lara);
+    ASSERT_EQ(lara->fades.size(), 17u);
+    for (const auto& f : lara->fades) {
+        EXPECT_EQ(f.flags, 0x80);
+        EXPECT_TRUE(f.model >= 10 && f.model <= 12); // Thor's gauntlets / belt draw groups
+    }
+    EXPECT_TRUE(std::none_of(lara->effectMap.begin(), lara->effectMap.end(), [](const auto& m) { return m.cls == 7; }));
+    auto noFadeCommand = [](const std::vector<fx::Event>& ev) {
+        return std::none_of(ev.begin(), ev.end(), [](const auto& e) { return e.effect() && (e.cmd.type == 0x22 || e.cmd.type == 0x21); });
+    };
+    EXPECT_TRUE(noFadeCommand(lara->events));
+    for (const auto& [name, ev] : lara->clips) EXPECT_TRUE(noFadeCommand(ev)) << name;
 }

@@ -440,6 +440,7 @@ Unit parseUnit(const cdc::Drm& d) {
     // Level+0x54 precipitation height map (tru.exe 0x5C30E0): 16 x 16 cell pointers -> 16 x 16 leaf pointers -> leaf
     // {i32 header, s16[64]}: header low byte != 0 = one height header >> 8, else header >> 8 + s16 (-0x7FFF none).
     u.rainMap.cells.fill(-1);
+    u.flags = level.at<uint32_t>(0x2C);
     u.rainMap.origin = {level.at<float>(0x80), level.at<float>(0x84), level.at<float>(0x88)};
     if (const auto it = level.ptrs.find(0x54); it != level.ptrs.end()) {
         std::map<std::pair<uint32_t, uint32_t>, int32_t> leafIndex; // leaves may be shared

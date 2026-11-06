@@ -206,7 +206,11 @@ draw mode 2), `+1` kind (1 sprite; all 415 records), `+2` segment, `+8` → colo
 `+0x3C` texture-list rate, `+0x3D` draw condition on 0x5EA390 (a camera mode [U]; 1 = never drawn by us), `+0x40`
 texture (0 → `particle.drm` texture 130, the 0x8AA77C model's first frame), `+0x44` texture list, `+0x48` offset,
 `+0x4E/+0x50` camera-distance fade band. Mode 1 fades RGB (0x52AE20) → drawn additive, mode 2 fades alpha → alpha
-[I: D3D states]. Sizes are taken as world half-sizes [I: the `*2/z` screen scale is not checked against a capture].
+[I: D3D states]. Size [O 0x536280 -> 0x49F820 / 0x52B670]: the sprite's NDC half-size is 2 × size × scale / z × 4/3
+(x also × 1 / aspect: 0x5C59F0), with no projection term, so a glow keeps its screen size whatever the field of view;
+ours draws world half-sizes of size × (8/3) tan(fov y / 2) (1.105 × at 45°). A faded instance (`+0x1B4` ≠ 0, not
+instance flag 0x400000, glow flag 4 clear) draws its glows at 1 − fade (< 4 / 4096: not drawn) in place of their own
+fade in / out.
 Commands 0x15/0x1A fade out the instance's glows with id a1 (−1 all), 0x18/0x1B remove them. Glows of transient
 owners (shots, characters) with no life last 1 s [I]; positions are fixed at the start (no segment tracking).
 Used by: muzzle flashes (`wp_*` `fire`), impact flashes (`bullet_hit` `idle` by material), lamp glows
@@ -219,8 +223,10 @@ Command 0x11 (a1 index, a2 segment). Record: `+0` kind, `+2` timed life, `+6` se
 `+0x20` light DTP id (type, cone, falloff, flicker; `formats::lightFromDtp`). Colour rgb/255 → rgb2 and radius →
 radius2 over a timed life [I]. ou-game: endless lights born with placed objects are scene lights with their DTP
 falloff; all others (muzzle 300 units / 2 frames, metal impacts 400) use 4 reserved slots (linear falloff, point) [I].
-Most fixtures (`fx_light_chapel_fill`, `fx_light_krak_ent_*`) are switched by script-played clips (`on`/`off`,
-variant-1 records), which do not run yet.
+Fixtures switched by clips (`fx_light_chapel_fill` / `fx_light_source_chapel` / `ma_ani_dynamic_light` `on` / `off`
+/ `endallfx`, the `fx_torch_med_*` `on` / `off`, `fx_light_krak_ent_*` `light_on` / `light_off`) are anim-graph
+objects: their state clips run their events as other script objects' ("Script-object clip events"); a light such a
+clip starts or ends rebuilds ou-game's scene lights (`EffectsView::fixtureKey`).
 
 Viewed 2026-10-29 (GL + Vulkan `--rt off`, firefight replay frame 38 as above): the pistol's star flash glow
 (texture 557/558, growing over 2 frames) and its warm muzzle light on the rocks. Vulkan with RT on loses the device at
@@ -248,7 +254,7 @@ weight × value (tables + round(t × w), saturating) and is topped up with the i
 | +0x0000 | PCColorDOFEffect (sum 0x516E70, draw 0x5177E0) | `+0x130E` enable, `+0x130C` depth curve, `+0x130D` scene matrix, `+0x1300` blur (sum ≤ 4) × device +0x1330 [U, 1 here], `+0x1304` alpha (≤ 1), `+0x1308` tint RGB, `+0x1310` / `+0x1314` depth range (own with `+0x130F`, else the scene's [U]), `+0x0000` scene matrix, `+0x0900` overlay matrix, `+0x1200` depth curve | scene through the scene matrix; half-size copy through the overlay matrix [I: ours after the blur], blurred, × tint, blended over by alpha (× depth curve over the view distance [I: distance, not z]) |
 | +0x1320 | second ColorDOF accumulator | as above | not enabled by the data seen [U] |
 | +0x2640 | PCFinishEffect (sum 0x51AAB0, draw 0x51AEF0) | `+0x909` enable, `+0x900` blur (≤ 4), `+0x904` amount (≤ 2), `+0x90A` curves, `+0x908` all 9 tables (else the diagonal) | half-size copy blurred (0x519F20: down to level ceil(r), back up by 4-tap bilinear steps, the fraction blended), through the curves, added (SRCALPHA/ONE, alpha = amount × 127.5) |
-| +0x2F74 | PCFeedbackEffect (sum 0x51A190, draw 0x51A530) | floats keep (<= 1), amount (<= 1), blur (<= 4), zoom x / y (<= 4), two angles; `+0x1C` colour, `+0x20` enable | scene x keep, + the (blurred, zoomed / turned) previous frame x colour x amount; ours feeds back the current frame's blur [I] |
+| +0x2F74 | PCFeedbackEffect (sum 0x51A190, draw 0x51A530) | floats keep (<= 1), amount (<= 1), blur (<= 4), zoom x / y (<= 4), two angles; `+0x1C` colour, `+0x20` enable | scene x keep, + the (blurred, zoomed / turned) previous frame x colour x amount; ours as well: the post output (before the HUD) is copied at the end of each frame the effect runs into a persistent half-size texture with mips (0x509630 -> 0x51A2E0), the next frame draws it (nothing on the first frame: no copy yet, +0x3D) |
 | +0x2F60 | PCNoiseEffect (sum 0x51B110, draw 0x51B1D0) | `+0` colour, `+4` alpha (<= 255), `+8` cells (<= 255), `+0xC` [U], `+0x10` enable | 10 x 8 quads of a noise texture at random offsets, alpha-blended; ours: hash noise |
 | +0x2FA4 | view fog (0x512D60, always, also with fullscreen effects off) | `+0` enable, `+4` colour R, G, B, `+8` near, `+0xC` far, `+0x10` curve (256), `+0x110`/`+0x114`/`+0x118` height fog near / far / curve | the frame's fog for TRU's shaders (`fx::FogSum`, RENDERING.md "After geometry"); height fog unused |
 
@@ -321,7 +327,7 @@ DRM, `scratch/cmdsurvey.py`). Classes by GenericFXObject list:
 | 0x17 | 0x5B3EC0 instance model switch [I] | 41 | no |
 | 0x1C, 0x2F | effect map id -> class 0..8 | 220 (Lara) | yes, classes 0-3, 5, 6, 7 |
 | 0x1E | clears 0xAE5144 (weather lightning timer, 0x545950) | 0 | — |
-| 0x21 / 0x22 | instance fade: 0x52C890 (to a1 / 255 over a2 frames from the current fade; a3 != 0 the instance at +0x218) / class 7 record a1 (0x52C920; a2 != 0 the +0x218 instance) | 0 / 122 (rewards, keys, chunkdolls, natla_end; Lara's 17 records are model crossfades, reached only by effect-map ids) | yes ("Instance fades"; +0x218 targets and model crossfades no) |
+| 0x21 / 0x22 | instance fade: 0x52C890 (to a1 / 255 over a2 frames from the current fade; a3 != 0 the instance at +0x218) / class 7 record a1 (0x52C920; a2 != 0 the +0x218 instance) | 0 / 122 (rewards, keys, chunkdolls, natla_end; none with a2 / a3 != 0) | yes ("Instance fades"; +0x218 targets: no data) |
 | 0x23 | 0x52B2C0: births object list entry a1 as a child instance playing animation a2 (not a fade) | 0 | no |
 | 0x25 | class 8 (0x5310A0, 0x3C bytes): per-vertex burn map on the instance mesh (instance +0x1B0) [I: BurnFX] | 0 (particle.drm records only) | no |
 | 0x26 | class 9 (0x5471A0, 0x10 bytes) | 0 (no records) | no |
@@ -392,27 +398,41 @@ change per step), GL and Vulkan alike.
 
 ## Script-object clip events
 
-ou-game runs the clip events of switches / doors (their pull / open and held idle clips, `World::objectClips`) and of
-uber objects while their travel clip runs, as the characters' (owner = intro uid). Light fixtures switched by script
-clips (`on` / `off`) still do not run: those clips are played by natives not tracked.
+ou-game runs the clip events of switches / doors (their pull / open and held idle clips, `World::objectClips`), of
+uber objects while their travel clip runs and of anim-graph objects' state / transition clips (light fixtures, fire
+4818, plates), as the characters' (owner = intro uid).
+
+Clip variants [O 0x43C9C0 -> 0x5B26C0]: when an animated instance starts a clip, the clip it leaves runs its
+variant-2 records (info 0x800) and the new clip its variant-1 records (0x400), whatever their frame (a request for the
+clip already playing runs variant 3, 0xC00); effects, sounds and slot sounds alike. Data: fixtures' `on` / `off`
+(`fx_light_chapel_fill` 2 + 2, `fx_torch_med_*` `off` 5), Lara's clip-start sounds (162 clips per outfit), enemies'
+and weapons'. Ours (`EffectsView::clipEvents`, `fx::System::runVariant`): Lara, enemies and script objects; a script
+object's clip that ends runs its variant 2 then. Variant 3 is not run [I: re-requests are not visible to ou-game].
 
 ## Instance fades
 
 Class 7 records (`+0x44` count, `+0x48` records of 0x0C bytes) [O 0x52C920]: `+0x00` / `+0x02` s16 fade from / to
 (4096 = 1), `+0x04` s16 frames (0: `to` at once), `+0x06` model index and `+0x08..+0x0A` model parameters, `+0x0B`
-flags (0x80: crossfade to model `+0x06`, fade in instance `+0x238` and switch with 0x5B3EC0 — Lara's 17 records; not
-implemented). The record sets instance `+0x1B4` (fade) = from, `+0x1B8` = to, `+0x1BC` = (to − from) / frames and
+flags (0x80: crossfade, below). The record sets instance `+0x1B4` (fade) = from, `+0x1B8` = to, `+0x1BC` = (to − from) / frames and
 instance flag 0x40000000; 0x5B55D0 adds `+0x1BC × timeMult` every frame (0.5 per 60 Hz tick) until it passes the
 target, and copies the fade to the instances chained from `+0x218`. Fade 0 = drawn, 1 = gone [O: rewards fade 0 → 1
 when picked up, keys' `fx_fade_in` 1 → 0, natla_end's `poof_in` sets 1 then fades to 0]. Command 0x21 (0x52C890) moves
 the fade from its current value to a1 / 255 over a2 frames.
 
+Model crossfades [O 0x52C920 / 0x5B55D0 / 0x5B3EC0]: flag 0x80 stores `+0x1C0` = 0x80 + model − 1, shows draw group
+`model` (clears bit model − 1 of instance `+0x240`, and of `+0x23C` on child models) and moves `+0x238` instead of
+`+0x1B4` from → to; at the end a value ≥ 1 hides the group again and `+0x238` returns to 0. Lara's 17 records (every
+outfit) are of this kind: groups 10 / 11 / 12 (Thor's gauntlets and belt, GAMEPLAY.md), 0 → 1 or 1 → 0 over 1 / 19 /
+49 / 50 frames. Nothing reaches them: no effect map has a class-7 entry and no list of Lara's has command 0x21 /
+0x22 (survey of every object; `FxReal.FixtureClipVariantsAndLaraCrossfades`), and the script's gear natives switch
+the groups at once (0x5B3DD0). Not implemented (unreachable).
+
 Drawing [O 0x5066A0]: a fading instance (opacity = 1 − fade < 1) goes through the translucent pass; opaque materials
 (blob mode 0) draw as mode 4 (SRCALPHA / INVSRCALPHA), the others keep their mode; MaterialOpacity (PS c98) = the
 opacity; no depth writes. Ours: `FrameOptions::meshOpacity` (RENDERING.md "Instance opacity") with alpha = opacity for
 opaque materials and alpha × opacity for the others [I: the opacity PS variant, composite slot 1, is not translated].
-The instance's glows fade with it unless their flag 4 is set [O 0x536280]; particles also scale by it unless their
-prim `+0x83 & 4` [O 0x5364A4] — not done (particles do not keep their owner).
+The instance's glows fade with it unless their flag 4 is set [O 0x536280, "Glows"]. Particles do not: neither the
+particle draw 0x54AEC0 nor the emitter code reads `+0x1B4` [O].
 
 ou-game (`EffectsView::pickedUp`): a collected reward runs its `pickup` list's variant-1 records (the 0x2401 fade,
 0 → 1 over 35 frames = 70 ticks) and is hidden (meshes collapsed, its effects stopped) when the fade ends; rewards
@@ -422,11 +442,17 @@ tick 31) in GL and Vulkan, the floor showing through; the tablet's mean grey 3.4
 
 ## Missing
 
-Classes 4, 8, 9 (above); class 7 model crossfades and +0x218 targets; instance fades of particles; ribbon subdivision;
-lightning's exact jitter tables; the feedback filter
-uses the current frame's blur instead of the previous frame; noise uses a hash, not the device texture;
+Classes 4, 8, 9 (above); class 7 model crossfades (unreached) and +0x218 targets (no data); ribbon subdivision;
+lightning's exact jitter tables; noise uses a hash, not the device texture;
 particles that follow their segment (mode 1), casing meshes, per-enemy hit materials, the line emitters' view-angle
 density rule (def `+0x8C / +0x90`, 0x5386F0 second branch: no data sets it in the fire defs checked).
+
+Fire pair (2026-11-06, l3_main_bedroom corridor, Wine capture `postfx/orig_bed.png`, ours `effectsleft/after_bed_*`):
+region |diff| 1.7 (Vulkan) / 1.8 (OpenGL), unchanged by this round (the scene has no glows). The capture's flames on
+the rubble and the smoke over the arch are `fx_cine_fire` 4508's `collide` particles (13, 14) from the prologue
+cinematic's fireball, which a `--spawn` start skips; ours shows only point set 50002's light, whose floor pool reads
+brighter than the capture's (floor 26.9 / 21.7 / 13.5 vs 20.8 / 17.0 / 11.0) [I: one frame of a flickering light;
+not re-checked with the cinematic played]. Bloom around the flames: not comparable without them [U].
 
 ## Weather [O unless marked]
 
@@ -472,8 +498,15 @@ tru.exe's weather (0x546FC0 each frame, after the prims) is a legacy system besi
   radius, and the object's event 0x30 there (particles 3 and 6, bolt 0, screen filter 1, thunder). Ours: the light
   takes the first effect-light slot; it stands flashDistance ahead of the camera and flashHeight above it [I: the
   0x4532A0 placement from the camera's angles is not decoded].
-- Not done: the rain sound bus 0x583D30, event 0x2E on every instance when rain starts, unit flag 0x20000's deeper
-  drops (rand % 18000), 0x539A60's reset at load.
+- Rain starting from none (0x53AB30) runs event 0x2E on every instance (0x5BA000): only rainfx / rainfx_mex have such
+  records (3 effects and a sound), and only l6_ship_exterior places one (rainfx 7719); ours runs them on placed
+  instances (`EffectsView::rainIntros`, `fx::Weather::started`).
+- The rain sound bus 0x583D30(2, x) is music variable 2 (AUDIO.md §5.3): 0 when rain stops or snow starts, 1 when
+  it starts, then every rain / snow frame unit flag 2 (Level+0x2C, 0x545950 / 0x539EF0). No unit sets the flag (all
+  82 read 0) and no `.mus` reads variable 2: in retail it stays 0. Ours writes it from `Weather::musicVar`.
+- Unit flag 0x20000 (Level+0x2C, also none set): drops start rand % 18000 deep and fall faster only beyond 8192
+  (× depth / 8192). Ours: `Weather::World::unitFlags`.
+- Not done: 0x539A60's reset at load.
 
 Same-camera pair l4_ballcourt (Wine capture `orig_bc.png`, 1280x720, `postfx/cmp.py`): region |diff| 8.8 -> 8.2
 (Vulkan), 7.9 (OpenGL); the streak sheets now show as in the capture.

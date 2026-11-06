@@ -46,7 +46,13 @@ int32_t Weather::rand() {
 }
 
 void Weather::setScript(int32_t rainPercent, int32_t lightningMin, int32_t lightningMax) {
-    rain_ = rainPercent * 0x400 / 100; // 0x53AB30
+    // 0x53AB30: rain stopping sets music variable 2 to 0; rain starting from none sets it to 1 (overwritten by the same
+    // frame's 0x545950), restarts the camera-motion reference and runs event 0x2E on every instance (started()).
+    const int32_t rain = rainPercent * 0x400 / 100;
+    started_ = rain && !rain_;
+    if (started_) ticks_ = 0;
+    if (!rain && rain_) musicVar_ = 0;
+    rain_ = rain;
     if (!rain_) ramp_ = 0;
     if (lightningMin * 30 != lightningMin_ || lightningMax * 30 != lightningMax_) { // 0x52E080
         if (lightningMin) timer_ = step_ = kind_ = 0;
@@ -73,6 +79,7 @@ void Weather::tick(const WeatherDef* def, const Camera& cam, const World& world,
     events_.clear();
     eyeDelta_ = ticks_++ ? cam.eye - prevEye_ : glm::vec3(0);
     prevEye_ = cam.eye;
+    if (rain_) musicVar_ = uint8_t((world.unitFlags & 2) != 0); // 0x545950 every rain frame
     if (!def) return; // 0x546FC0: no weather object, no weather
     if (live_) // 0x52DFA0, one 60 Hz step
         for (auto& d : drops_) {
@@ -109,22 +116,26 @@ void Weather::spawn(const WeatherDef& def, const Camera& cam, const World& world
     if (pitch < -1500) depthScale = std::max(0.28f, (float(pitch) + 4100.0f) / 2600.0f);
     if (pitch > 1500) depthScale = std::max(0.6f, (4100.0f - float(pitch)) / 2600.0f);
     const int32_t spread = pitch < -256 ? std::min(0x4B0, (-256 - pitch) * 0x4B0 / 0xF00) : 0; // looking down: wider
+    // Unit flag 0x20000: drops start up to 18000 deep (rand % 18000) and speed up beyond 8192 (x depth / 8192), else
+    // up to 0x1FFF and beyond 4096 (x depth / 4096).
+    const bool deep = world.unitFlags & 0x20000;
+    const auto depthRand = [&] { return float(deep ? rand() % 18000 : rand() & 0x1FFF) * depthScale; };
     const size_t n = std::min<size_t>(kDrops - live_, 32);
     for (size_t k = 0; k < n; ++k) {
-        float sx = float(rand() % (spread + 512) - spread / 2), depth = float(rand() & 0x1FFF) * depthScale;
+        float sx = float(rand() % (spread + 512) - spread / 2), depth = depthRand();
         glm::vec3 p = fromScreen(cam, sx, 5, depth);
         int32_t ground = world.ceiling ? world.ceiling(p) : kNone;
         if (const auto w = world.water ? world.water(p) : std::nullopt; w && int32_t(*w) > ground) ground = int32_t(*w);
         if (ground == kNone || float(ground) > p.z) {
             sx = float(rand() & 0x1FF);
             const float sy = float(rand() % 0x1C0);
-            depth = float(rand() & 0x1FFF) * depthScale;
+            depth = depthRand();
             p = fromScreen(cam, sx, sy, depth);
             ground = world.ceiling ? world.ceiling(p) : kNone;
             if (ground == kNone || float(ground) > p.z) continue;
         }
         int32_t vz = (-14 - (rand() & 3)) * 8;
-        if (depth > 4096.0f) vz = int32_t(depth) * vz / 4096; // far drops fall faster
+        if (const float far = deep ? 8192.0f : 4096.0f; depth > far) vz = int32_t(depth) * vz / int32_t(far); // far drops fall faster
         const auto slot = std::find_if(drops_.begin(), drops_.end(), [](const Drop& d) { return !d.life; });
         if (slot == drops_.end()) return;
         const glm::vec2 wind = world.wind ? world.wind(p) * def.wind : glm::vec2(0);

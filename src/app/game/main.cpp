@@ -718,6 +718,7 @@ struct StreamedScene {
     std::vector<size_t> hookIndices;
     std::vector<ou::scene::Light> reservedLights;      // GadgetView::base + EffectsView slots: the first environment lights
     std::vector<ou::scene::Light> fixtureLights;       // EffectsView::fixtures: appended to the environment lights
+    uint64_t fixtureKey = 0;                           // EffectsView::fixtureKey when they were taken
     BikeIndices bikeIndices;
     uint64_t version = ~0ull, enemyVersion = ~0ull, lightsVersion = ~0ull, visibilityVersion = ~0ull;
     uint32_t hiddenGroups = 0; // World::laraHiddenGroups() the scene was built with
@@ -1000,6 +1001,14 @@ struct EffectsView {
         }
         return out;
     }
+    // Which fixtures burn: a clip that lights or puts out one (fixtures' `on` / `off`) rebuilds the scene's lights.
+    uint64_t fixtureKey() {
+        system.lights(live);
+        uint64_t k = 0;
+        for (const auto& l : live)
+            if (l.forever && l.owner >= 0) k = k * 0x100000001B3ull ^ (uint64_t(uint32_t(l.owner)) << 20 ^ uint64_t(reinterpret_cast<uintptr_t>(l.dtp)));
+        return k;
+    }
     // dyn = gadget lights, then the kLightSlots transient effect lights (unused slots dark, far away): the order of
     // StreamedScene::reservedLights. Element-wise so the vectors' storage is reused frame to frame.
     void lightSlots(const std::vector<ou::scene::Light>& gadget, std::vector<ou::scene::Light>& dyn) {
@@ -1036,14 +1045,21 @@ struct EffectsView {
         w.tanHalfFovY = std::tan(glm::radians(c.verticalFovDeg) * 0.5f), w.aspect = aspect;
         return w;
     }
-    void weatherTick(const ou::game::World& w, const ou::render::Camera& cam) {
-        if (!library || w.units().empty()) return;
+    // Placed instances whose object list has event-0x2E records, per loaded unit (only rainfx / rainfx_mex in the data;
+    // l6_ship_exterior places rainfx 7719): rain starting runs them (tru.exe 0x53AB30 -> 0x5BA000 on every instance).
+    std::map<std::string, std::vector<std::tuple<std::shared_ptr<const ou::fx::ObjectFx>, glm::mat4, int32_t>>> rainIntros;
+    // Returns music variable 2 as the weather wrote it (fx::Weather::musicVar) for the script's music variables.
+    std::optional<uint8_t> weatherTick(const ou::game::World& w, const ou::render::Camera& cam) {
+        if (!library || w.units().empty()) return std::nullopt;
         const auto& unit = w.currentUnit().data;
         if (const std::string name = unit.weatherObject.empty() ? "rainfx" : unit.weatherObject; name != weatherObject)
             weatherObject = name, weatherDef = library->weather(name), weatherFx = library->get(name);
         const auto& s = w.script().weather();
         weather.setScript(s.rain, s.lightningMin, s.lightningMax);
-        if (!system.visuals) return;
+        if (weather.started())
+            for (const auto& [u, list] : rainIntros)
+                for (const auto& [fx, m, uid] : list) system.runEvent(fx, 0x2E, m, uid);
+        if (!system.visuals) return weather.musicVar();
         ou::fx::Weather::World q;
         q.ceiling = [&w](glm::vec3 p) { // 0x5C32C0: the current unit, then the first other loaded unit with data
             const auto at = [&](const ou::game::LoadedUnit& u) {
@@ -1072,8 +1088,10 @@ struct EffectsView {
             if (!h) return std::nullopt;
             return std::pair{h->point, material(w.collision(), *h)};
         };
+        q.unitFlags = unit.levelFlags;
         weather.tick(weatherDef, weatherCamera(cam, weatherAspect), q);
         for (const auto& e : weather.events()) system.runEvent(weatherFx, e.event, glm::translate(glm::mat4(1), e.pos), -1, e.material);
+        return weather.musicVar();
     }
 
     void sync(const ou::cdc::BigfileSet& bf, const ou::game::World& w, std::vector<std::string>& warnings) {
@@ -1092,6 +1110,7 @@ struct EffectsView {
         for (auto it = unitOwners.begin(); it != unitOwners.end();) {
             if (loaded(it->first)) { ++it; continue; }
             for (const int32_t uid : it->second) system.stopOwner(uid); // streamed out: emitters stop, particles finish
+            rainIntros.erase(it->first);
             it = unitOwners.erase(it);
         }
         for (const auto& u : w.units()) {
@@ -1109,6 +1128,8 @@ struct EffectsView {
                 ou::formats::introMatrix(in, &m[0][0]);
                 m[3] += glm::vec4(u.offset, 0);
                 if (!fx->fades.empty()) intros[in.uniqueId] = {fx, m};
+                if (std::any_of(fx->events.begin(), fx->events.end(), [](const auto& e) { return e.event == 0x2E; }))
+                    rainIntros[u.data.name].emplace_back(fx, m, in.uniqueId);
                 if (library->flags(n->second) & ou::fx::kObjectNoBirthEffects) continue;
                 if (!system.slotSound && !fx->soundSlots.empty()) unheard.push_back({fx, m, in.uniqueId});
                 if (system.startBirth(fx, m, in.uniqueId) || !fx->soundSlots.empty()) owners.push_back(in.uniqueId);
@@ -1181,18 +1202,32 @@ struct EffectsView {
     }
     std::string layerClip; // last tick's combat layer clip (World::combatLayerClip)
     double layerTime = 0;
-    // Clip events of one animated instance between the last tick and this one (30 Hz frames, looping clips wrap).
+    // The variant-`v` records of `clip` (fx::System::runVariant), posing the instance only when one exists.
+    void variant(const std::shared_ptr<const ou::fx::ObjectFx>& fx, const std::string& clip, int v, uint8_t mat, const glm::mat4& world,
+                 std::vector<glm::mat4>& b, const std::function<std::vector<glm::mat4>()>& bones, int32_t owner) {
+        const auto* ev = fx && !clip.empty() ? fx->clip(clip) : nullptr;
+        if (!ev || std::none_of(ev->begin(), ev->end(), [&](const auto& e) { return e.variant() == v; })) return;
+        if (b.empty()) b = bones();
+        system.runVariant(fx, *ev, world, owner, v, mat, b);
+    }
+    // Clip events of one animated instance between the last tick and this one (30 Hz frames, looping clips wrap). A new
+    // clip (tru.exe 0x43C9C0) first runs the left clip's variant-2 records and its own variant-1 records, whatever their
+    // frame (light fixtures' `on` / `off`, Lara's clip-start sounds).
     void clipEvents(const std::shared_ptr<const ou::fx::ObjectFx>& fx, const std::string& clip, const std::string& prevClip,
                     double prevT, double t, double duration, uint8_t mat, const glm::mat4& world,
                     const std::function<std::vector<glm::mat4>()>& bones, int32_t owner = -1) {
         const auto* ev = fx ? fx->clip(clip) : nullptr;
+        std::vector<glm::mat4> b;
+        if (clip != prevClip) {
+            variant(fx, prevClip, 2, mat, world, b, bones, owner);
+            variant(fx, clip, 1, mat, world, b, bones, owner);
+        }
         if (!ev || duration <= 0) return;
         const float f1 = float(std::fmod(t, duration) * 30.0);
         float f0 = clip == prevClip ? float(std::fmod(prevT, duration) * 30.0) : -1.0f;
         std::vector<std::pair<float, float>> spans{{f0, f1}};
         if (f1 < f0) spans = {{f0, 1e9f}, {-1.0f, f1}}; // wrapped
         if (f0 < 0 && f1 <= 0) spans = {{-1.0f, 0.5f}};  // just started
-        std::vector<glm::mat4> b;
         for (const auto& [a, z] : spans)
             if (std::any_of(ev->begin(), ev->end(), [&](const auto& e) {
                     return (e.runsOn(mat) || e.soundOn(mat) || (e.slotSound() && e.matches(mat))) && float(e.frame) >= a && float(e.frame) < z;
@@ -1206,7 +1241,8 @@ struct EffectsView {
     static constexpr int32_t kLaraOwner = -2;
     static int32_t enemyOwner(int32_t uid) { return -(0x10000000 | (uid & 0x0FFFFFFF)); }
     static bool follows(const std::shared_ptr<const ou::fx::ObjectFx>& fx) { return fx && (!fx->ribbons.empty() || !fx->bolts.empty()); }
-    std::map<int32_t, std::pair<std::string, double>> objectClipAt; // script object uid -> last clip, time
+    struct ObjectClipAt { std::string object, clip; double t = 0; glm::mat4 model{1}; };
+    std::map<int32_t, ObjectClipAt> objectClipAt; // script object uid -> last tick's clip
     // Placed objects with class-7 fades (rewards, keys): intro uid -> effects, world matrix.
     std::map<int32_t, std::pair<std::shared_ptr<const ou::fx::ObjectFx>, glm::mat4>> intros;
     // A reward picked up: its "pickup" list's variant-1 records (tru.exe 0x5B26C0 with variant 0x400 [I: the pickup
@@ -1278,21 +1314,25 @@ struct EffectsView {
             clipEvents(fx, s.clip, p.clip, p.clipTime, s.clipTime, it->second.durationSeconds(), floorMaterial(s.pos), model,
                        [&] { return pose.empty() ? e->pose(1.0) : pose; }, enemyOwner(e->uid()));
         }
-        // Script objects (switches, doors, uber objects): their clips' events as the characters' (tru.exe runs every
-        // instance's animation events, 0x5BA0D0), owner = intro uid.
-        std::map<int32_t, std::pair<std::string, double>> seen;
+        // Script objects (switches, doors, uber objects, anim-graph objects such as light fixtures): their clips' events
+        // as the characters' (tru.exe runs every instance's animation events, 0x5BA0D0), owner = intro uid.
+        std::map<int32_t, ObjectClipAt> seen;
         for (const auto& oc : w.objectClips()) {
             const auto fx = library->get(oc.object);
-            const auto* ev = fx ? fx->clip(oc.clip) : nullptr;
             const auto last = objectClipAt.find(oc.uid);
-            seen[oc.uid] = {oc.clip, oc.t};
-            if (!ev) continue;
+            seen[oc.uid] = {oc.object, oc.clip, oc.t, oc.model};
+            if (!fx) continue;
             std::vector<glm::mat4> pose;
             if (follows(fx)) pose = w.objectBones(oc.uid), system.track(oc.uid, oc.model, pose);
-            const bool same = last != objectClipAt.end() && last->second.first == oc.clip;
-            clipEvents(fx, oc.clip, same ? oc.clip : std::string(), same ? last->second.second : 0.0, oc.t,
+            const bool had = last != objectClipAt.end();
+            clipEvents(fx, oc.clip, had ? last->second.clip : std::string(), had ? last->second.t : 0.0, oc.t,
                        oc.loop ? std::max(oc.duration, 1e-3) : 1e9, 0, oc.model, [&] { return pose.empty() ? w.objectBones(oc.uid) : pose; }, oc.uid);
         }
+        for (const auto& [uid, l] : objectClipAt) // clips that ended: their variant-2 records (0x43C9C0 on the next clip)
+            if (!seen.contains(uid)) {
+                std::vector<glm::mat4> b;
+                variant(library->get(l.object), l.clip, 2, 0, l.model, b, [&] { return w.objectBones(uid); }, uid);
+            }
         objectClipAt = std::move(seen);
     }
     // Particle textures for the render scene (StreamedScene::build adds those the level scene does not already hold;
@@ -2739,7 +2779,8 @@ int main(int argc, char** argv) {
                 if (const auto& k = opt.camera)
                     tc.position = {(*k)[0], (*k)[1], (*k)[2]}, tc.lookAt({(*k)[3], (*k)[4], (*k)[5]}), tc.up = {(*k)[6], (*k)[7], (*k)[8]};
                 if (opt.camera && (*opt.camera)[9] > 0) tc.verticalFovDeg = (*opt.camera)[9];
-                effects.weatherTick(*world, tc); // after the prims, as 0x547807 after their update loop
+                // after the prims, as 0x547807 after their update loop; music variable 2 = the rain bus (0x583D30)
+                if (const auto v = effects.weatherTick(*world, tc)) world->script().gameValues()[2] = *v;
             }
             if (const auto* b = world->ridden(); b || bikePhase != "parked") { // bike phase changes + 1 Hz while riding
                 const std::string phase(b ? ou::game::bikePhaseName(b->phase) : "parked");
@@ -2872,12 +2913,13 @@ int main(int argc, char** argv) {
         streamed.syncParts(*renderer); // decoded units go to the GPU ahead of their join
         if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion ||
             world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion ||
-            world->laraHiddenGroups() != streamed.hiddenGroups) {
+            world->laraHiddenGroups() != streamed.hiddenGroups || effects.fixtureKey() != streamed.fixtureKey) {
             // streamed in/out, loaded, respawned or enemies spawned: new render scene
             try {
                 const uint64_t t0 = SDL_GetTicksNS();
                 effects.sync(*bigfile, *world, warnings);
                 streamed.fixtureLights = effects.fixtures();
+                streamed.fixtureKey = effects.fixtureKey();
                 scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings, std::move(scene), effects.textures());
                 const uint64_t t1 = SDL_GetTicksNS();
                 for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));

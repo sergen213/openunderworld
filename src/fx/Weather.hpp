@@ -47,6 +47,7 @@ public:
         std::function<glm::vec2(glm::vec3)> wind;             // unit wind at p
         // Collision segment `from` -> `to`: hit point and surface material (0x4935F0 flags 0x10003).
         std::function<std::optional<std::pair<glm::vec3, uint8_t>>(glm::vec3, glm::vec3)> ray;
+        uint32_t unitFlags = 0; // the camera unit's Level+0x2C (formats::Unit::flags): 2 music variable 2, 0x20000 deep drops
     };
     // An object event the weather runs on Lara with the weather object's list (0x5BA000): 0x2E splash in view, 0x2F
     // splash behind the camera, 0x30 lightning; at `pos`, records filtered by `material`.
@@ -55,6 +56,11 @@ public:
 
     // Script amounts (script::Runtime::Weather): rain %, lightning interval seconds (a min change != 0 restarts it).
     void setScript(int32_t rainPercent, int32_t lightningMin, int32_t lightningMax);
+    // This tick's setScript started rain from none: tru.exe 0x53AB30 runs event 0x2E on every instance (0x5BA000).
+    bool started() const { return started_; }
+    // Music variable 2 (the rain bus, 0x583D30(2, ..)) as the weather last wrote it: 0 when rain stops, unit flag 2 every
+    // rain tick; nullopt until rain first runs. No .mus script reads variable 2 (AUDIO.md §5.3).
+    std::optional<uint8_t> musicVar() const { return musicVar_; }
     // One 60 Hz tick with the weather object's data (null: none loaded): drops fall and spawn, splashes and lightning
     // go to events(). `cinematic`: 0x5EA390 (no new lightning light, no drawing).
     void tick(const WeatherDef* def, const Camera& cam, const World& world, bool cinematic = false);
@@ -79,6 +85,8 @@ private:
     std::array<Drop, kDrops> drops_{};
     size_t live_ = 0;
     int32_t rain_ = 0, ramp_ = 0;          // DAT_00AE4D84 (% x 1024 / 100), DAT_00AE4D8C (0..4096 fade in)
+    bool started_ = false;
+    std::optional<uint8_t> musicVar_;
     int32_t lightningMin_ = 600, lightningMax_ = 900; // 30 Hz frames (DAT_00AE5148 / 514C)
     int32_t timer_ = 0, kind_ = 0, step_ = 0;         // DAT_00AE5144 / 5154 / 5150
     bool flashOn_ = false;                 // DAT_00AE5120: the lightning light exists

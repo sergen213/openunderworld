@@ -245,6 +245,9 @@ struct Unit {
     // Level+0x70 DTP +0x290 u16: objectlist.txt id of the unit's weather object (rainfx_mex in the l4 jungle units),
     // 0 = none: tru.exe 0x546FC0 then uses the always-loaded `rainfx` (0x8AA774). docs/formats/EFFECTS.md "Weather".
     uint16_t weatherObjectId = 0;
+    // Level+0x2C flags read by the weather (tru.exe 0x545950, 0x539EF0): 2 = music variable 2 is 1 while it rains or snows,
+    // 0x20000 = rain drops start up to 18000 deep (else 0x1FFF). 0 in every retail unit (82 units surveyed).
+    uint32_t flags = 0;
     // Level+0x54 precipitation height map (tru.exe 0x5C30E0): the highest surface rain stops at, unit frame, 256-unit
     // steps over x, y in [-0x40000, 0x40000): 16 x 16 cells of 0x8000, each 16 x 16 blocks of 8 x 8 heights.
     struct RainMap {

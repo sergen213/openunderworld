@@ -839,11 +839,16 @@ void System::play(std::shared_ptr<const ObjectFx> fx, const std::vector<Event>& 
 }
 
 int System::runVariant(const std::shared_ptr<const ObjectFx>& fx, const std::vector<Event>& events, const glm::mat4& world,
-                       int32_t owner, int variant, uint8_t material) {
+                       int32_t owner, int variant, uint8_t material, std::span<const glm::mat4> bones) {
     int n = 0;
-    for (const auto& e : events)
-        if (e.effect() && e.variant() == variant && (!e.material() || e.material() == material))
-            n += runCommand(fx, e.cmd, world, owner);
+    if (!fx) return 0;
+    for (const auto& e : events) {
+        if (e.variant() != variant || (e.material() && e.material() != material)) continue;
+        if (e.effect()) n += runCommand(fx, e.cmd, world, owner, bones);
+        else if (sound && e.isSound())
+            sound(*fx, e, glm::vec3((world * (e.sound.kind == 3 ? glm::mat4(1) : fx->frame(e.sound.segment, bones)))[3]), material);
+        else if (e.slotSound()) runSlotSound(*this, *fx, e, world, owner, material, bones);
+    }
     return n;
 }
 
@@ -1170,10 +1175,13 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
             for (int k = 0; k < 32; k += 8)
                 c |= uint32_t(std::lround(float((d.colours[prev] >> k) & 0xFF) * (1 - w) + float((d.colours[cur] >> k) & 0xFF) * w)) << k;
         }
-        float fade = d.flags & 4 ? 1.0f : 1.0f - System::fade(g.owner); // flag 4: ignores its instance's fade [O]
-        if (g.age < 2 * d.fadeIn) fade *= float(g.age) / float(2 * d.fadeIn);
-        else if (g.fadeOut >= 0 && d.fadeOut) fade *= float(g.fadeOut) / float(2 * d.fadeOut);
-        else if (g.left >= 0 && g.left < 2 * d.fadeOut) fade *= float(g.left) / float(2 * d.fadeOut);
+        // 0x536280: a faded instance's opacity (1 - fade, < 4 / 4096 not drawn) replaces the fade in / out, unless flag 4.
+        float fade = 1;
+        if (const float f = d.flags & 4 ? 0.0f : System::fade(g.owner); f != 0) {
+            if ((fade = 1.0f - f) < 4.0f / 4096.0f) continue;
+        } else if (g.age < 2 * d.fadeIn) fade = float(g.age) / float(2 * d.fadeIn);
+        else if (g.fadeOut >= 0 && d.fadeOut) fade = float(g.fadeOut) / float(2 * d.fadeOut);
+        else if (g.left >= 0 && g.left < 2 * d.fadeOut) fade = float(g.left) / float(2 * d.fadeOut);
         if (d.facingMode && d.facingMode != 4 && glm::dot(g.axis, g.axis) > 0) { // 0x52F660 facing threshold
             const float t = glm::dot(glm::normalize(camera.position - g.axisFrom), g.axis) - 1.0f + d.facing;
             if (t <= 0) continue;
@@ -1189,7 +1197,9 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
         if (d.alphaBlend()) rgba[3] *= fade;
         else for (int k = 0; k < 3; ++k) rgba[k] *= fade;
         if (rgba[3] < 0.5f || (!d.alphaBlend() && rgba[0] + rgba[1] + rgba[2] < 1.5f)) continue;
-        const float hw = d.width * g.scaleW, hh = d.height * g.scaleH;
+        // 0x536280 -> 0x52B670: NDC half-size 2 size scale / z x (4/3) (x also / aspect), whatever the field of view: in
+        // world units size x (8/3) tan(fov y / 2) at our camera (1.105 at 45 degrees).
+        const float k = 8.0f / 3.0f / cot, hw = d.width * g.scaleW * k, hh = d.height * g.scaleH * k;
         if (hw <= 0 || hh <= 0) continue;
         const float biased = std::max(20.0f, depth + float(d.depthBias));
         Sprite sp{biased, g.pos, hw, hh, g.rot, 0, 0, 0, 0, 1, 1, uint8_t(d.alphaBlend() ? Blend::Alpha : Blend::Additive), biased / depth};
