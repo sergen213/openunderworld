@@ -130,6 +130,9 @@ struct Intro {
     std::vector<PatrolPath> patrolPaths;
     uint32_t patrolMode = 0; // 0 loop, 1 once, 2 ping-pong, 3 random free node, 4 random unvisited (0x637870)
 };
+// Dormant intro (+0x72 & 0x82; only 0x80 occurs): not introduced when its unit loads (tru.exe 0x5C2360); a script's
+// instanceref Birth (fn 3, 0x4AC0D0 -> 0x5BD080) or a cinematic (0x4561C0) introduces it later.
+inline bool dormant(const Intro& in) { return in.flags[2] & 0x82; }
 inline constexpr uint16_t kMarkerObjectId = 0xFFFA;
 
 // Instanced static mesh ("IMF") placement from the unit's cell group data: 0x70-byte record.

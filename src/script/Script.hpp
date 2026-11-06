@@ -6,10 +6,12 @@
 #include "anim/Anim.hpp"
 #include "cdc/Cdc.hpp"
 #include "formats/AnimGraph.hpp"
+#include "formats/Formats.hpp"
 
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <array>
 #include <functional>
@@ -22,7 +24,6 @@
 #include <vector>
 
 namespace ou::collision { class CollisionMesh; }
-namespace ou::formats { struct MultiSpline; }
 
 namespace ou::script {
 
@@ -389,6 +390,13 @@ public:
     const Object* find(int32_t uid) const;
     const std::vector<Event>& events() const { return events_; } // last tick, dispatch order
     uint64_t visibilityVersion() const { return visibilityVersion_; }
+    // Dormant intros (formats::dormant) of the loaded units exist only once introduced: instanceref Birth (fn 3, tru.exe
+    // 0x4AC0D0: an intro of a loaded unit, not alive and not dead, -> 0x5BD080) queues one; the end of the tick creates
+    // its object (its constructor runs then) and bumps visibilityVersion. Born ones stay born (saved) and are created with
+    // their unit like the others. born: introduced (a dormant intro without it does not exist: its mesh is not drawn).
+    void birth(int32_t uid);
+    bool born(int32_t uid) const { return std::ranges::find(born_, uid) != born_.end(); }
+    std::function<void(int32_t uid)> onBirth; // a birth, before its object exists (World: the enemy spawns for its constructor)
     // Lara's hidden draw groups (Instance +0x23C, tru.exe 0x5B3DD0): bit n-1 hides model primgroups of group n
     // (SubMesh::drawGroup). Changes bump visibilityVersion. Default: the Thor gear groups of lara.drm type 205
     // (+40/+44/+48 = 10, 11 gauntlets, 12 belt) hidden; instance native 61 from scripts shows/hides them.
@@ -432,6 +440,15 @@ public:
 
 private:
     void addUnit(const UnitRef& u);
+    // One intro's object (none for intros without a behaviour or script); `start`: run its constructor now (a birth).
+    void introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& program, const formats::Intro& in, bool start);
+    void introduceBorn(bool start); // the born intros of the loaded units without an object yet, in birth order
+    struct Dormant { UnitRef unit; std::shared_ptr<vm::Program> program; formats::Intro intro; };
+    std::map<int32_t, Dormant> dormant_; // dormant intros of the loaded units, born or not
+    // Dormant intros introduced (any unit), in birth order; saved as "born". Their objects follow every unit's own
+    // (setUnits / restore create them last, in this order), as when they were born during play.
+    std::vector<int32_t> born_;
+    std::vector<int32_t> births_; // birth(): created at the end of the tick
     void restoreRuntime(const nlohmann::json& r); // restore(): the "runtime" block (threads, unit scripts, clocks); throws
     // A load's running scripts wait here for their objects / unit scripts, which a load creates later (setUnits):
     // those come back as saved, without running their constructors again (resume, auxiliaryInstance, addUnit).

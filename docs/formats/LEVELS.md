@@ -435,12 +435,20 @@ Known deviations [O]:
   planes/volumes) [O]. Effect-only objects (oflags `0x40000000`: the 24-vertex `fx_*` / `co_fx_*` proxies, bullet hits,
   squibs) are skipped too: `cdc::InstanceDrawable` returns no draw flags for them (0x5B5CA0) [O]. Intro flag `+0x72 & 0x10`
   also hides an instance when a callback refuses it [O]; the callback is not reversed, so such intros are still drawn.
-- Dormant intros: the unit loader 0x5C2360 introduces only intros with `+0x72 & 0x82 == 0` (0x5BCC30 sets `0x80` once it
-  has introduced one) [O]. 136 of 1084 intros of seven surveyed units are dormant: cinematic props parked at the
-  cinematic origin (`co_*`, `co_monitor_frame`, amanda / zip / winston / alister), enemies and props scripts bring in
-  later. A cinematic introduces its own (0x4561C0) [O]. `loadLevelScene` leaves out the dormant intros that no script
-  section of the unit names by unique id [I] (we have no script introduce): l4_pool's 10 parked props, amanda 9070 on
-  l7_thin_ice (a T-posed figure on the ice through 275_hel_explosion). Enemies come from their intros regardless (AI).
+- Dormant intros (`formats::dormant`): the unit loader 0x5C2360 introduces only intros with `+0x72 & 0x82 == 0`
+  (0x5BCC30 sets `0x80` once it has introduced one) [O]; 839 intros of all units are dormant (all `0x80`, none `0x02`;
+  one, l7_helheim01 `co_empty_tank` 8972, also has `+0x73 & 0x10`: kept after its cinematic, 0x4561C0): cinematic
+  props parked at the cinematic origin (`co_*`, amanda / zip / winston / alister), enemies, trigger planes and props
+  scripts bring in later. Two routes introduce one [O]: a script's `instanceref` Birth (fn 3, thunk 0x799AB0 ->
+  0x4AC0D0: not dead (0x555A10), not alive (0x5B3950) -> the loaded unit holding it (0x5B38F0) -> 0x5BD080 ->
+  0x5BCC30; "InstanceRef::Birth FAILED" otherwise) and a cinematic (0x4561C0, its actors; removed again at its end
+  unless `+0x73 & 0x10`). Ours: `script::Runtime` keeps the dormant intros of the loaded units and creates one's object
+  (constructor included) at the end of the tick its Birth runs, World spawns its enemy first (`ai::Enemies::birth`),
+  `loadLevelScene` tags their meshes " @dormant" and ou-game draws them once born; born intros are saved
+  (`runtime.born`) and come back with their unit. Example: l4_ballcourt plane 6546 (the way in from l4_trailtube) ->
+  dispatcher 6535 vt 63 -> state 1 births the dead poachers 6540..6542, whose constructors kill them (health 1);
+  volume 6551 births planes 6545 / 6547 (panther patrols), planes 6543 / 6544 dispatcher 6536's poachers and panthers.
+  Cinematic actors are drawn by the cinematic player only (the persistent 8972 is not introduced) [I].
 - Foliage renders correctly since materials carry blend/alpha-test/two-sided state (MATERIALS.md); the black ground
   plants came from the `COLOR0` attribute (0 on them) being used as a colour.
 - The unit's dependency objects (`ca_skydome_a`, the `g_*`/`wp_*` gear) are not placed.
@@ -454,8 +462,7 @@ Known deviations [O]:
 
 ## Open questions
 
-- [U] Which model an instance uses (`modelNum`); batch LODs are decoded (MESHES.md). Script introduction of dormant
-  intros is not implemented.
+- [U] Which model an instance uses (`modelNum`); batch LODs are decoded (MESHES.md).
 - [U] Intro `+0x52`, `+0x70..0x73` flags, the non-enemy intro data types (1, 0x11, 0x404, ...), the second intro
   list's role (l4_pool: 1 entry).
 - [U] IMF `+0x40`, `+0x4C`, `+0x60`; cell BSP and portals; cell group `+0x14`/`+0x1C`.

@@ -3594,25 +3594,36 @@ TEST(GameReal, BallcourtLeverIndependentOfRenderRate) {
     EXPECT_GT(w->player().state().pos.x, -18520.0f);
 }
 
-// The same with l4_ballcourt's enemies live, as in ou-game (poacher fire and hit reactions interrupt the run): AI,
-// shots and hit capsules stay tick-based while their skinning is culled per frame by the view.
+// The same with l4_ballcourt's enemies live, as in ou-game (poacher fire and hit reactions interrupt the run): plane
+// 6543 has dispatcher 6536 birth poachers 6537..6539 and panther 6532 ("combat 4 starting"). AI, shots and hit
+// capsules stay tick-based while their skinning is culled per frame by the view.
 TEST(GameReal, BallcourtWithEnemiesIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n1.7 forward 1\n2.85 forward 0\n2.9 right 1\n6.1 right 0\n");
-    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true), input, 430);
+    const auto base = worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true);
+    const auto w = expectRateIndependent([&] {
+        auto x = base();
+        x->script().call(6543, 54); // the crossing
+        return x;
+    }, input, 430);
     EXPECT_FALSE(w->enemies().all().empty());
 }
 
-// Ragdolls (docs/formats/PHYSICS.md "Ragdolls"): l4_ballcourt's scripts kill poachers 6540..6542 as the unit starts
-// (enemybase damage); each plays its death clip, then its ragdoll (poacher.drm's 15 bones) takes the body. 6540 lies on
-// the edge of a ledge: it slides off, falls about 500 units onto the floor below and settles. Every tick is
-// bit-identical at any render rate.
+// Ragdolls (docs/formats/PHYSICS.md "Ragdolls"): l4_ballcourt's dead poachers 6540..6542 are dormant intros; plane 6546
+// (crossed on the way in from l4_trailtube) has dispatcher 6535 birth them (vt 63 -> state 1: instanceref Birth) and
+// their constructors kill them (health 1); each plays its death clip, then its ragdoll (poacher.drm's 15 bones) takes
+// the body. 6540 lies on the edge of a ledge: it slides off, falls about 500 units onto the floor below and settles.
+// Every tick is bit-identical at any render rate.
 TEST(GameReal, KilledPoacherRagdollIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true),
-                                         game::InputScript::parse(""), 600);
+    const auto base = worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true);
+    const auto w = expectRateIndependent([&] {
+        auto x = base();
+        x->script().call(6546, 54); // the crossing
+        return x;
+    }, game::InputScript::parse(""), 600);
     const game::ai::Enemy* poacher = nullptr;
     for (const auto& e : w->enemies().all())
         if (e->uid() == 6540) poacher = e.get();
@@ -3630,6 +3641,35 @@ TEST(GameReal, KilledPoacherRagdollIndependentOfRenderRate) {
     ASSERT_TRUE(floor);
     EXPECT_LT(pelvis.z - floor->point.z, 80.0f) << "lying on the floor";
     EXPECT_GT(pelvis.z - floor->point.z, -10.0f) << "not through it";
+}
+
+// Dormant intros (+0x72 & 0x80) do not exist at unit load (tru.exe 0x5C2360): none of l4_ballcourt's panthers 6531..6534
+// and poachers 6537..6542 is an enemy or born, nor do triggerplanes 6545 / 6547 exist (their scripts do not run).
+// Crossing plane 6546 has dispatcher 6535 birth 6540..6542 (instanceref Birth, 0x4AC0D0): they exist from then on and
+// their constructors kill them; the others stay dormant (saves: StreamReal.SaveContinuesBitIdentically).
+TEST(GameReal, BallcourtDormantIntrosBornByScripts) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto make = worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true);
+    const auto w = make();
+    const auto enemy = [](const game::World& x, int32_t uid) -> const game::ai::Enemy* {
+        for (const auto& e : x.enemies().all())
+            if (e->uid() == uid) return e.get();
+        return nullptr;
+    };
+    const int32_t dormant[] = {6531, 6532, 6533, 6534, 6537, 6538, 6539, 6540, 6541, 6542};
+    for (int i = 0; i < 30; ++i) w->tick({});
+    for (const int32_t uid : dormant) EXPECT_FALSE(enemy(*w, uid) || w->script().born(uid)) << uid;
+    EXPECT_FALSE(w->script().find(6545) || w->script().find(6547));
+    EXPECT_TRUE(w->script().find(6535) && w->script().find(6546));
+    w->script().call(6546, 54);
+    w->tick({}), w->tick({}); // births at the end of the first tick; constructors SLEEP once, then health 1 (10000)
+    for (const int32_t uid : {6540, 6541, 6542}) {
+        EXPECT_TRUE(w->script().born(uid)) << uid;
+        ASSERT_TRUE(enemy(*w, uid)) << uid;
+        EXPECT_FALSE(enemy(*w, uid)->alive()) << uid; // killed by its constructor
+    }
+    for (const int32_t uid : {6531, 6532, 6533, 6534, 6537, 6538, 6539}) EXPECT_FALSE(enemy(*w, uid)) << uid;
 }
 
 // Lara's death ragdoll (AnimLibrary::ragdoll, 55 kg, 15 bones): killed on l4_ballcourt, her death clip plays, then

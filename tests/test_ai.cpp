@@ -1461,6 +1461,8 @@ TEST(AiReal, MercsGuardZonesCoverAndAlert) {
                       game::loadLaraAnims(bf), game::Spawn{{-71, 9794, 5706}, 0});
         w.script().setBigfile(&bf);
         w.enemies().setBigfile(&bf);
+        w.tick({}); // the mercs are dormant intros (+0x72 0x80): born as dispatchers 1645 / 1646 / 1648 do (instanceref Birth)
+        for (const int32_t uid : {1650, 1651, 1652, 1653, 1660}) w.script().birth(uid);
         for (int i = 0; i < 3; ++i) w.tick({});
         const std::map<int32_t, std::tuple<int, float, float>> expected{
             {1650, {127, 2500, 4000}}, {1651, {129, 3000, 4500}}, {1652, {168, 1400, 2800}}, {1653, {8, 500, 1250}}, {1660, {77, 2000, 3500}}};

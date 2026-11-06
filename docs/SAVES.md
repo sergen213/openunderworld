@@ -123,10 +123,12 @@ Saves are always written as the current version. Newer versions are rejected, ne
 
 The scripted objects themselves come with their units on the next tick (`script::Runtime::setUnits`): intros alive in
 the save take their saved state and threads instead of running their constructors (`resume`), and the unit scripts
-their saved uids, fields and threads instead of their startup.
+their saved uids, fields and threads instead of their startup. Dormant intros the scripts introduced (instanceref Birth;
+LEVELS.md "Dormant intros") are listed in `script.runtime.born` and come back with their unit like the others.
 
 The simulation then continues bit for bit. `StreamReal.SaveContinuesBitIdentically` ticks N, saves, loads into a
-fresh World and ticks M more beside the uninterrupted run on `l4_ballcourt` (the scripts kill poachers, ragdolls),
+fresh World and ticks M more beside the uninterrupted run on `l4_ballcourt` (plane 6546 births the poachers its
+scripts kill, ragdolls),
 `l1_ship_exterior` (Lara runs at the mercs firing, locked on: alerts, a kill), `l4_pool` (running, jumping, swimming)
 and `l2_cliffclimb`, and with the save taken in each controller state: hanging (l4_temple ledge 1187), shimmying
 along it, free climbing mid-step (l2_cliffclimb DICE holds), swinging on l4_pool's grapple anchor 5511, on

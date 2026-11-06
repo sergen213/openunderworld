@@ -249,15 +249,8 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
     std::map<uint16_t, ObjectMeshes> objects;
     for (const auto& in : u.intros) {
         if (!listBytes || in.objectId == kMarkerObjectId) continue;
-        // Dormant intros (+0x72 & 0x82: 0x80 = already introduced) are not introduced when the unit loads (0x5C2360);
-        // a cinematic (0x4561C0) or a script brings them in. We have no script introduce, so only those no unit script
-        // names (their unique id nowhere in its script sections [I]) are left out: cinematic-only NPCs and props, e.g.
-        // amanda 9070 standing in a T-pose on l7_thin_ice through 275_hel_explosion.
-        if ((in.flags[2] & 0x82) && std::ranges::none_of(unit->sections, [&](const cdc::Section& s) {
-                const auto id = std::bit_cast<std::array<uint8_t, 4>>(in.uniqueId);
-                return s.type == cdc::SectionType::Script && !std::ranges::search(s.data, id).empty();
-            }))
-            continue;
+        // Dormant intros (formats::dormant) exist only once a script or cinematic introduces them: placed, tagged
+        // " @dormant" (ou-game hides them until then, script::Runtime::born; the viewer drops them).
         auto [it, fresh] = objects.try_emplace(in.objectId);
         auto& o = it->second;
         ++o.intros;
@@ -290,7 +283,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
         if (o.hidden) continue;
         float m[16];
         introMatrix(in, m);
-        place(sc, o.meshes, m, " @intro " + std::to_string(in.uniqueId));
+        place(sc, o.meshes, m, std::string(dormant(in) ? " @dormant" : "") + " @intro " + std::to_string(in.uniqueId));
     }
     for (const auto& [id, o] : objects)
         if (!o.problem.empty())

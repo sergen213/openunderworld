@@ -447,6 +447,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
     std::erase_if(units_, [&](const std::string& n) { return !loaded(n); });
     std::erase_if(nodes_, [&](const auto& kv) { return !loaded(kv.first); });
     std::erase_if(graphs_, [&](const auto& kv) { return !loaded(kv.first); });
+    std::erase_if(dormant_, [&](const auto& kv) { return !loaded(kv.second.first); });
     const auto rebuildNodes = [&] { // in unit-name order (std::map), so streaming order never changes them
         worldNodes_.clear();
         for (const auto& [name, records] : nodes_)
@@ -474,66 +475,86 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
         nodes_[u.name] = parsed.plannerNodes;
         graphs_[u.name] = parsed.navGraphs;
         rebuildNodes();
-        // Patrol paths (intro data +0x34 / +0x38 / +0x40..): planner nodes of its record, world frame.
-        const auto patrol = [&](const formats::Intro& in) {
-            std::vector<std::vector<PatrolPoint>> out;
-            if (in.patrolRecord < 0 || size_t(in.patrolRecord) >= parsed.plannerNodes.size()) return out;
-            const auto& rec = parsed.plannerNodes[size_t(in.patrolRecord)];
-            for (const auto& path : in.patrolPaths) {
-                auto& w = out.emplace_back();
-                for (const uint32_t k : path.nodes)
-                    if (k < rec.size()) {
-                        const auto& n = rec[k];
-                        w.push_back({n.pos() + u.offset, -vec3(n.frame[1]), (n.flags & 2) != 0, n.mode >= 1 ? n.mode : int(path.pointMode)});
-                    }
-            }
-            return out;
-        };
         for (const auto& in : parsed.intros) {
-            const auto n = objectNames_.find(in.objectId);
-            if (n == objectNames_.end()) continue;
-            const vec3 pos = vec3(in.position[0], in.position[1], in.position[2]) + u.offset;
-            const float yaw = in.rotation[2] - kPi / 2; // intro rotation z is the model yaw (as findSpawn)
-            if (n->second.ends_with("_generator")) {
-                // [O] generator ObjectBase +0xDE u16 = the spawned object (mayan_thrall_pool_generator -> 600 mayan_thrall)
-                auto& spawned = generatorObjects_[n->second];
-                if (spawned.empty())
-                    if (const auto d = readObject(*bigfile_, n->second))
-                        if (const auto b = formats::objectBaseSection(*d))
-                            if (const auto it = objectNames_.find(read<uint16_t>(d->sections[*b], 0xDE)); it != objectNames_.end())
-                                spawned = it->second;
-                if (spawned.empty()) continue;
-                const bool fired = firedGenerators_.contains(in.uniqueId);
-                Generator& g = generators_.emplace_back(Generator{in.uniqueId, u.name, spawned, pos, yaw, 2528.45f, fired});
-                g.patrolPaths = patrol(in), g.patrolMode = in.patrolMode;
-                if (const auto s = stash_.find(in.uniqueId); fired && s != stash_.end())
-                    if (auto type = typeOf(spawned)) {
-                        auto& e = add(std::move(type), in.uniqueId, pos, yaw);
-                        e.unit = u.name, e.generator = in.uniqueId;
-                        e.patrolPaths = g.patrolPaths, e.patrolMode = g.patrolMode;
-                        EnemyState st = s->second;
-                        shift(st, u.offset);
-                        e.restore(st);
-                    }
+            if (formats::dormant(in) && born && !born(in.uniqueId)) {
+                dormant_.insert_or_assign(in.uniqueId, std::pair{u.name, in}); // not introduced at load (0x5C2360)
                 continue;
             }
-            auto& isEnemy = enemyObjects_.try_emplace(n->second, -1).first->second;
-            if (isEnemy < 0) isEnemy = isEnemyObject(*bigfile_, n->second);
-            if (!isEnemy) continue;
-            auto type = typeOf(n->second);
-            if (!type) continue;
-            auto& e = add(std::move(type), in.uniqueId, pos, yaw, false, {in.rotation[0], in.rotation[1]});
-            e.unit = u.name;
-            e.patrolMode = in.patrolMode;
-            e.patrolPaths = patrol(in);
-            e.setPatrol(0);
-            if (const auto s = stash_.find(in.uniqueId); s != stash_.end()) {
-                EnemyState st = s->second;
-                shift(st, u.offset);
-                e.restore(st);
-                if (st.path == kUnknownPath) e.setPatrol(0); // a save from before patrols
-            }
+            spawnIntro(u.name, in);
         }
+    }
+}
+
+void Enemies::birth(int32_t uid) {
+    const auto d = dormant_.find(uid);
+    if (d == dormant_.end()) return;
+    auto [unit, in] = std::move(d->second);
+    dormant_.erase(d);
+    spawnIntro(unit, in);
+}
+
+void Enemies::spawnIntro(const std::string& unit, const formats::Intro& in) {
+    const auto n = objectNames_.find(in.objectId);
+    if (n == objectNames_.end()) return;
+    const vec3 offset = offsets_[unit];
+    // Patrol paths (intro data +0x34 / +0x38 / +0x40..): planner nodes of its record, world frame.
+    const auto patrol = [&] {
+        std::vector<std::vector<PatrolPoint>> out;
+        const auto& records = nodes_[unit];
+        if (in.patrolRecord < 0 || size_t(in.patrolRecord) >= records.size()) return out;
+        const auto& rec = records[size_t(in.patrolRecord)];
+        for (const auto& path : in.patrolPaths) {
+            auto& w = out.emplace_back();
+            for (const uint32_t k : path.nodes)
+                if (k < rec.size()) {
+                    const auto& node = rec[k];
+                    w.push_back({node.pos() + offset, -vec3(node.frame[1]), (node.flags & 2) != 0, node.mode >= 1 ? node.mode : int(path.pointMode)});
+                }
+        }
+        return out;
+    };
+    const vec3 pos = vec3(in.position[0], in.position[1], in.position[2]) + offset;
+    const float yaw = in.rotation[2] - kPi / 2; // intro rotation z is the model yaw (as findSpawn)
+    if (n->second.ends_with("_generator")) {
+        // [O] generator ObjectBase +0xDE u16 = the spawned object (mayan_thrall_pool_generator -> 600 mayan_thrall)
+        auto& spawned = generatorObjects_[n->second];
+        if (spawned.empty())
+            if (const auto d = readObject(*bigfile_, n->second))
+                if (const auto b = formats::objectBaseSection(*d))
+                    if (const auto it = objectNames_.find(read<uint16_t>(d->sections[*b], 0xDE)); it != objectNames_.end())
+                        spawned = it->second;
+        if (spawned.empty()) return;
+        const bool fired = firedGenerators_.contains(in.uniqueId);
+        // by uid (as enemies_): a born generator lands where a load puts it
+        Generator& g = *generators_.insert(std::ranges::upper_bound(generators_, in.uniqueId, {}, &Generator::uid),
+                                           Generator{in.uniqueId, unit, spawned, pos, yaw, 2528.45f, fired});
+        g.patrolPaths = patrol(), g.patrolMode = in.patrolMode;
+        if (const auto s = stash_.find(in.uniqueId); fired && s != stash_.end())
+            if (auto type = typeOf(spawned)) {
+                auto& e = add(std::move(type), in.uniqueId, pos, yaw);
+                e.unit = unit, e.generator = in.uniqueId;
+                e.patrolPaths = g.patrolPaths, e.patrolMode = g.patrolMode;
+                EnemyState st = s->second;
+                shift(st, offset);
+                e.restore(st);
+            }
+        return;
+    }
+    auto& isEnemy = enemyObjects_.try_emplace(n->second, -1).first->second;
+    if (isEnemy < 0) isEnemy = isEnemyObject(*bigfile_, n->second);
+    if (!isEnemy) return;
+    auto type = typeOf(n->second);
+    if (!type) return;
+    auto& e = add(std::move(type), in.uniqueId, pos, yaw, false, {in.rotation[0], in.rotation[1]});
+    e.unit = unit;
+    e.patrolMode = in.patrolMode;
+    e.patrolPaths = patrol();
+    e.setPatrol(0);
+    if (const auto s = stash_.find(in.uniqueId); s != stash_.end()) {
+        EnemyState st = s->second;
+        shift(st, offset);
+        e.restore(st);
+        if (st.path == kUnknownPath) e.setPatrol(0); // a save from before patrols
     }
 }
 
@@ -647,7 +668,7 @@ void Enemies::restore(const nlohmann::json& j) {
     }
     std::erase_if(enemies_, [](const auto& e) { return !e->unit.empty(); });
     generators_.clear();
-    units_.clear(); // setUnits() spawns every loaded unit again, from the restored stash
+    units_.clear(), dormant_.clear(); // setUnits() spawns every loaded unit again, from the restored stash
     stash_ = std::move(states), firedGenerators_ = std::move(fired), deadAtCheckpoint_ = std::move(dead);
     ++version_;
     sync();

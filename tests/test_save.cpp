@@ -1020,10 +1020,10 @@ TEST(StreamReal, UberJointSaveLoad) {
     EXPECT_EQ(fresh.serializeObjects(), expect);
 }
 
-// Ragdolls save and load mid-fall: l4_ballcourt poacher 6540 (killed by the unit's scripts at its start) slides off its
-// ledge as a ragdoll; a save while it falls restores its bodies (IDs, velocities, contacts) and its enemy state, so the
-// fall and the settled pose come out bit for bit, for every corpse (6540-6542) and the whole world (uber 6045's
-// command, poacher 6539's fire mode and the scripts' threads load as they were).
+// Ragdolls save and load mid-fall: l4_ballcourt poacher 6540 (born and killed by the scripts as Lara crosses plane 6546)
+// slides off its ledge as a ragdoll; a save while it falls restores its bodies (IDs, velocities, contacts) and its enemy
+// state, so the fall and the settled pose come out bit for bit, for every corpse (6540-6542) and the whole world (uber
+// 6045's command and the scripts' threads load as they were).
 TEST(StreamReal, RagdollSaveLoad) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1045,6 +1045,7 @@ TEST(StreamReal, RagdollSaveLoad) {
         return (game::ai::Enemy::modelMatrix(s.pos, s.yaw, 0, s.tilt) * s.ragdoll.at(0)[3]).z;
     };
     auto w = make();
+    w->script().call(6546, 54); // the crossing: dispatcher 6535 births the dead poachers 6540..6542
     w->tick({});
     ASSERT_TRUE(poacher(*w));
     for (int i = 0; i < 600 && poacher(*w)->state().ragdollPhase != 2; ++i) w->tick({});
@@ -1122,7 +1123,8 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
     const auto idle = [](uint64_t) { return game::Actions{}; };
     using game::State;
     const Case cases[] = {
-        {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle}, // its scripts kill poachers, ragdolls fall
+        {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle, // born by plane 6546, its scripts kill poachers, ragdolls fall
+         [](game::World& w) { w.script().call(6546, 54); }},
         {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 600, [](uint64_t t) { // runs at the mercs, locked on, firing
              game::Actions a;
              a.move = t % 200 < 120 ? game::vec2(0, 1) : game::vec2(0);

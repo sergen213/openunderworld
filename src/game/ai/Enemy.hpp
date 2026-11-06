@@ -489,6 +489,10 @@ public:
     void setHealthLevel(int level) { healthLevel_ = level; } // Tailoring::enemyHealth for enemies added from now on
     // Spawns the enemies and generators of newly loaded units; drops (and remembers) those of unloaded ones.
     void setUnits(const std::vector<script::UnitRef>& units);
+    // Dormant intros (formats::dormant) are not spawned until birth(uid) unless `born` says so (World:
+    // script::Runtime::born, instanceref Birth). Unset: every intro spawns.
+    std::function<bool(int32_t uid)> born;
+    void birth(int32_t uid);
     Enemy& add(std::shared_ptr<const EnemyType> type, int32_t uid, vec3 pos, float yaw, bool spawning = false, glm::vec2 tilt = {});
     void addGenerator(Generator g) { generators_.push_back(std::move(g)); }
     // enemybase 27 GuardNode(unitref, noderef {record, node}, r1, r2) on the intro `uid` (resolved against its unit's
@@ -530,6 +534,8 @@ private:
     std::shared_ptr<const EnemyType> typeOf(const std::string& name);
     void sync(); // targets_ <- enemies_
     void spawn(Generator& g);
+    void spawnIntro(const std::string& unit, const formats::Intro& in); // one intro of a loaded unit (setUnits / birth)
+    std::map<int32_t, std::pair<std::string, formats::Intro>> dormant_; // unborn intros of the loaded units: unit, intro
 
     const cdc::BigfileSet* bigfile_ = nullptr;
     std::map<std::string, std::shared_ptr<const EnemyType>, std::less<>> types_;

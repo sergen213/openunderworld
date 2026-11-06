@@ -494,8 +494,11 @@ void Runtime::setUnits(const std::vector<UnitRef>& units) {
         it = unitScripts_.erase(it);
     }
     std::erase_if(units_, [&](const std::string& n) { return std::none_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == n; }); });
+    std::erase_if(dormant_, [&](const auto& kv) { return !units_.contains(kv.second.unit.name); });
     for (const auto& u : units)
         if (!units_.contains(u.name) && std::none_of(objects_.begin(), objects_.end(), [&](const Object& o) { return o.unit == u.name; })) addUnit(u);
+    introduceBorn(true);
+    attachSavedThreads();
     for (const auto& u : units)
         if (!u.resident && deferredUnits_.erase(u.name)) startUnitScript(u.name);
 }
@@ -524,177 +527,11 @@ void Runtime::addUnit(const UnitRef& u) {
     }
 
     for (const auto& in : unit.intros) {
-        const auto n = objectNames_.find(in.objectId);
-        if (n == objectNames_.end()) continue;
-        auto kind = classify(n->second);
-        // The native base decides plane vs volume, not the object name: l3_main_hall "triggervolume" intros 4128 / 4129
-        // run triggerplane scripts (3529 -> triggerplanebase) whose vt 54 is the crossing handler [O bytecode].
-        if (kind == Kind::Volume || kind == Kind::Plane)
-            for (const ScriptType* t = in.scriptId ? program->type(in.scriptId) : nullptr; t; t = program->type(t->superId))
-                if (t->nativeName == "triggerplanebase" || t->nativeName == "triggervolumebase") {
-                    kind = t->nativeName == "triggerplanebase" ? Kind::Plane : Kind::Volume;
-                    break;
-                }
-        if (!kind && !in.scriptId && !in.spline) continue;
-        Object o;
-        o.uid = in.uniqueId, o.unit = u.name, o.name = n->second, o.kind = kind.value_or(Kind::Scripted);
-        o.pos = vec3(in.position[0], in.position[1], in.position[2]) + u.offset;
-        o.rot = {in.rotation[0], in.rotation[1], in.rotation[2]};
-        if (in.spline) { // 0x5BA280 (no saved spline state): key 0, then the intro's mode, direction, key / clip
-            Object::Spline s;
-            s.path = in.spline, s.offset = u.offset;
-            const uint32_t m = in.splineMode & 0xF;
-            s.mode = m == 1 ? 1 : m == 2 ? 2 : m == 4 ? 3 : m == 8 ? 4 : 0;
-            s.playing = s.mode != 0;
-            s.dir = in.flags[0] & 1 ? -1 : 1;
-            if (in.splineFlags & 1) s.toKey = s.playing = in.splineTo != 0, s.target = in.splineTo;
-            if (in.splineFlags & 2) s.clip = true, s.from = in.splineFrom, s.to = in.splineTo;
-            o.spline = std::move(s);
-            placeSpline(o);
+        if (formats::dormant(in)) { // not introduced at unit load (0x5C2360); born ones: introduceBorn
+            dormant_.insert_or_assign(in.uniqueId, Dormant{u, program, in});
+            continue;
         }
-        if (o.kind == Kind::Volume || o.kind == Kind::Plane) {
-            if (!in.data) continue;
-            const auto shape = parseShape(*u.drm, *in.data, o.kind == Kind::Plane);
-            if (!shape) continue;
-            o.shape = *shape;
-        }
-        if (const ScriptType* t = in.scriptId ? program->type(in.scriptId) : nullptr) {
-            o.script = program->instantiate(o.uid, in.scriptId);
-            if (playerScript_)
-                for (const ScriptType* type = t; type; type = program->type(type->superId))
-                    for (const auto& member : type->members)
-                        if (member.typeId == 205)
-                            o.script->fields[member.offset] = o.script->initial[member.offset] = uint32_t(playerScript_->uid);
-            for (const auto& f : t->functions)
-                if (f.vtIndex >= 0)
-                    for (const int32_t target : functionTargets(*t, f)) o.links[f.vtIndex].push_back(target);
-        }
-        if (o.kind == Kind::Switch || o.kind == Kind::Door) {
-            auto& set = animSets_[o.name];
-            if (!set) {
-                set = std::make_shared<AnimSet>();
-                if (auto bytes = bigfile_->read("pc-w\\" + o.name + ".drm")) {
-                    const auto drm = cdc::parseDrm(std::move(*bytes));
-                    uint32_t model = 0;
-                    for (const uint32_t id : formats::objectRenderModels(drm))
-                        if ((model = id)) break;
-                    std::vector<std::string> warnings;
-                    for (auto& sk : anim::decodeSkeletons(drm, warnings))
-                        if (model && sk.renderModelId == model) set->skeleton = std::make_shared<scene::Skeleton>(std::move(sk));
-                    // [I] clip choice by name: switches pull ("active_pulling") then hold ("active_idle");
-                    // doors play their opening clip ("doors_opening", "10_opening", "gate_opening", "open")
-                    // then hold the open idle ("idle_door_open", "20_idle_open", "gate_open", "idleopen").
-                    const auto list = anim::animList(drm);
-                    auto pick = [&](auto pred) -> const anim::AnimEntry* {
-                        const auto e = std::find_if(list.begin(), list.end(), pred);
-                        return e == list.end() ? nullptr : &*e;
-                    };
-                    const anim::AnimEntry* tr = nullptr;
-                    const anim::AnimEntry* hold = nullptr;
-                    if (o.kind == Kind::Switch) {
-                        tr = pick([](const anim::AnimEntry& e) { return e.name == "active_pulling"; });
-                        hold = pick([](const anim::AnimEntry& e) { return e.name == "active_idle"; });
-                    } else {
-                        tr = pick([](const anim::AnimEntry& e) { return contains(e.name, "opening"); });
-                        if (!tr) tr = pick([](const anim::AnimEntry& e) { return e.name == "open"; });
-                        hold = pick([&](const anim::AnimEntry& e) {
-                            return &e != tr && contains(e.name, "open") && (contains(e.name, "idle") || endsWith(e.name, "_open"));
-                        });
-                    }
-                    auto clips = std::make_shared<std::vector<anim::Clip>>();
-                    auto names = std::make_shared<std::vector<std::string>>();
-                    for (const auto* e : {tr, hold}) {
-                        if (!e) break;
-                        for (const auto& s : drm.sections)
-                            if (s.type == cdc::SectionType::Animation && s.id == e->animId) {
-                                clips->push_back(anim::decodeClip(s.data)), names->push_back(e->name);
-                                break;
-                            }
-                    }
-                    if (set->skeleton && clips->size() == 2) set->clips = std::move(clips), set->names = std::move(names);
-                    // [O] Lara's clip for the switch is in its DRM (113-track lara skeleton animations; ids shared between
-                    // DRMs). [I] choice by name: the lever pull, else the button press, else the rune switches' interact.
-                    if (o.kind == Kind::Switch)
-                        for (const std::string_view want : {"obj_pull_lever", "obj_pushbutton", "hosted_push_button", "interact"})
-                            if (const auto* e = pick([&](const anim::AnimEntry& x) { return x.name == want; }); e && !set->laraClip)
-                                set->laraClip = e->animId;
-                    // [O] Switch reset: physical-class record (object base +0xC8) +0x34 -> its first state record: +4 flags
-                    // (bit 0 one-way: ms_ei_switch_oneway_wall, ma_ei_wall_switch_electric), +0xC reset delay in frames
-                    // (ma_ei_switch_wall_chapel 1, ca_ei_switch_wall_autoreset 60, ms_ei_resetting_switch 150) [I: units].
-                    if (const auto base = formats::objectBaseSection(drm); base && o.kind == Kind::Switch) {
-                        const auto& ob = drm.sections[*base];
-                        const auto rec = cdc::internalPointer(ob, 0xC8);
-                        const auto list = rec ? cdc::internalPointer(ob, *rec + 0x34) : std::nullopt;
-                        const auto first = list ? cdc::internalPointer(ob, *list) : std::nullopt;
-                        if (first && *first + 0x10 <= ob.data.size()) {
-                            uint32_t flags;
-                            float delay;
-                            std::memcpy(&flags, ob.data.data() + *first + 4, 4);
-                            std::memcpy(&delay, ob.data.data() + *first + 0xC, 4);
-                            if (!(flags & 1) && delay > 0) set->resetAfter = delay / 30.0f;
-                        }
-                        // [O] Engagement list (tru.exe 0x719620: instance query 0x53, 0x8C-byte records, shape test
-                        // 0x6F3C60): record +4 -> records, +8 count, at physical record +0x70 on the switches. [I] record
-                        // +0x44 = where Lara stands, units in front of the switch (wall switch 135; 139 from her hand arc).
-                        const auto recs = rec ? cdc::internalPointer(ob, *rec + 0x74) : std::nullopt;
-                        uint32_t count = 0;
-                        if (recs && *rec + 0x7C <= ob.data.size()) std::memcpy(&count, ob.data.data() + *rec + 0x78, 4);
-                        if (recs && count && *recs + 0x48 <= ob.data.size()) std::memcpy(&set->useDistance, ob.data.data() + *recs + 0x44, 4);
-                    }
-                }
-            }
-            o.skeleton = set->skeleton;
-            o.clips = set->clips;
-            o.clipNames = set->names;
-            o.resetAfter = set->resetAfter;
-            o.laraClip = set->laraClip;
-            o.useDistance = set->useDistance;
-        }
-        // Objects whose scripts reach their anim component (a `modifiable` / `animated` member) run its state graph
-        // (docs/formats/ANIMGRAPH.md). [O] The intro's physob data word 15 picks the initial state (record index; <= 0:
-        // the first), 0x6B5890 message 0x23 -> 0x6B4440 -> 0x6A5660; its vt 20 is not sent [I: no script yet].
-        // [I] Switches keep their own use flow (Object::state) and get no Object::graph, but their scripts' modifiable
-        // member answers fn 8 (state id, query 0xE8) from its field: it holds the intro's state id, and each use moves
-        // it along the use transition (Runtime::switchUsed). l5_valaskjalf_entryb lever 7188 acts only while switch
-        // 7192 is not in its "on" state 0; 7192 starts in state 1.
-        if ((o.kind == Kind::Scripted || o.kind == Kind::Switch) && o.script) {
-            bool uses = false;
-            const auto modifiable = modifiableMember(*o.script);
-            for (const ScriptType* t = program->type(o.script->typeId); t && !uses; t = program->type(t->superId))
-                for (const Member& m : t->members) {
-                    const char* native = program->nativeName(m.typeId);
-                    uses |= !std::strcmp(native, "modifiable") || !std::strcmp(native, "animated");
-                }
-            const auto set = uses ? graphSet(o.name) : nullptr;
-            int initial = 0;
-            if (set && set->graph && in.data) {
-                const auto& d = u.drm->sections.at(in.data->section).data;
-                int32_t first = 0;
-                if (in.data->offset + 0x40 <= d.size()) std::memcpy(&first, d.data() + in.data->offset + 0x3C, 4);
-                if (first > 0 && size_t(first) < set->graph->states.size()) initial = first;
-            }
-            if (set && o.kind == Kind::Switch) {
-                if (set->graph && modifiable)
-                    o.script->fields[*modifiable] = o.script->initial[*modifiable] = uint32_t(int32_t(set->graph->states[size_t(initial)].index));
-            } else if (set) {
-                auto& g = o.graph.emplace(Object::Graph{});
-                g.set = set;
-                g.state = g.initial = initial;
-                if (set->graph && set->graph->states[size_t(g.state)].anim >= 0) {
-                    const auto& s = set->graph->states[size_t(g.state)];
-                    g.clip = s.anim, g.loop = s.flags & 2;
-                }
-            }
-        }
-        if (o.kind != Kind::Volume && o.kind != Kind::Plane) o.mover = objectFlags(o.name) & kTriggerMover;
-        // [I] Ship hall doors without a script (chapter 6's l6_ship_upper_hallway_a/b copies of the l1 doors): their
-        // volumes' door calls ISTYPE-fail on them, so nothing can open them, yet chapter 6 walks through. They stand
-        // open, as the l1 doors once opened.
-        const bool openDoor = o.kind == Kind::Door && !o.script && o.clipNames &&
-                              std::ranges::find(*o.clipNames, "idle_open") != o.clipNames->end();
-        const int32_t uid = o.uid;
-        addObject(std::move(o), false);
-        if (Object* added = openDoor ? findMut(uid) : nullptr; added && added->state == 0) added->state = 2;
+        introduce(u, program, in, false);
     }
     std::vector<bool> resumed(objects_.size() - firstNew);
     for (size_t i = firstNew; i < objects_.size(); ++i) resumed[i - firstNew] = resume(objects_[i]);
@@ -721,6 +558,189 @@ void Runtime::addUnit(const UnitRef& u) {
         }
     }
     attachSavedThreads();
+}
+
+void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& program, const formats::Intro& in, bool start) {
+    const auto n = objectNames_.find(in.objectId);
+    if (n == objectNames_.end()) return;
+    auto kind = classify(n->second);
+    // The native base decides plane vs volume, not the object name: l3_main_hall "triggervolume" intros 4128 / 4129
+    // run triggerplane scripts (3529 -> triggerplanebase) whose vt 54 is the crossing handler [O bytecode].
+    if (kind == Kind::Volume || kind == Kind::Plane)
+        for (const ScriptType* t = in.scriptId ? program->type(in.scriptId) : nullptr; t; t = program->type(t->superId))
+            if (t->nativeName == "triggerplanebase" || t->nativeName == "triggervolumebase") {
+                kind = t->nativeName == "triggerplanebase" ? Kind::Plane : Kind::Volume;
+                break;
+            }
+    if (!kind && !in.scriptId && !in.spline) return;
+    Object o;
+    o.uid = in.uniqueId, o.unit = u.name, o.name = n->second, o.kind = kind.value_or(Kind::Scripted);
+    o.pos = vec3(in.position[0], in.position[1], in.position[2]) + u.offset;
+    o.rot = {in.rotation[0], in.rotation[1], in.rotation[2]};
+    if (in.spline) { // 0x5BA280 (no saved spline state): key 0, then the intro's mode, direction, key / clip
+        Object::Spline s;
+        s.path = in.spline, s.offset = u.offset;
+        const uint32_t m = in.splineMode & 0xF;
+        s.mode = m == 1 ? 1 : m == 2 ? 2 : m == 4 ? 3 : m == 8 ? 4 : 0;
+        s.playing = s.mode != 0;
+        s.dir = in.flags[0] & 1 ? -1 : 1;
+        if (in.splineFlags & 1) s.toKey = s.playing = in.splineTo != 0, s.target = in.splineTo;
+        if (in.splineFlags & 2) s.clip = true, s.from = in.splineFrom, s.to = in.splineTo;
+        o.spline = std::move(s);
+        placeSpline(o);
+    }
+    if (o.kind == Kind::Volume || o.kind == Kind::Plane) {
+        if (!in.data) return;
+        const auto shape = parseShape(*u.drm, *in.data, o.kind == Kind::Plane);
+        if (!shape) return;
+        o.shape = *shape;
+    }
+    if (const ScriptType* t = in.scriptId ? program->type(in.scriptId) : nullptr) {
+        o.script = program->instantiate(o.uid, in.scriptId);
+        if (playerScript_)
+            for (const ScriptType* type = t; type; type = program->type(type->superId))
+                for (const auto& member : type->members)
+                    if (member.typeId == 205)
+                        o.script->fields[member.offset] = o.script->initial[member.offset] = uint32_t(playerScript_->uid);
+        for (const auto& f : t->functions)
+            if (f.vtIndex >= 0)
+                for (const int32_t target : functionTargets(*t, f)) o.links[f.vtIndex].push_back(target);
+    }
+    if (o.kind == Kind::Switch || o.kind == Kind::Door) {
+        auto& set = animSets_[o.name];
+        if (!set) {
+            set = std::make_shared<AnimSet>();
+            if (auto bytes = bigfile_->read("pc-w\\" + o.name + ".drm")) {
+                const auto drm = cdc::parseDrm(std::move(*bytes));
+                uint32_t model = 0;
+                for (const uint32_t id : formats::objectRenderModels(drm))
+                    if ((model = id)) break;
+                std::vector<std::string> warnings;
+                for (auto& sk : anim::decodeSkeletons(drm, warnings))
+                    if (model && sk.renderModelId == model) set->skeleton = std::make_shared<scene::Skeleton>(std::move(sk));
+                // [I] clip choice by name: switches pull ("active_pulling") then hold ("active_idle");
+                // doors play their opening clip ("doors_opening", "10_opening", "gate_opening", "open")
+                // then hold the open idle ("idle_door_open", "20_idle_open", "gate_open", "idleopen").
+                const auto list = anim::animList(drm);
+                auto pick = [&](auto pred) -> const anim::AnimEntry* {
+                    const auto e = std::find_if(list.begin(), list.end(), pred);
+                    return e == list.end() ? nullptr : &*e;
+                };
+                const anim::AnimEntry* tr = nullptr;
+                const anim::AnimEntry* hold = nullptr;
+                if (o.kind == Kind::Switch) {
+                    tr = pick([](const anim::AnimEntry& e) { return e.name == "active_pulling"; });
+                    hold = pick([](const anim::AnimEntry& e) { return e.name == "active_idle"; });
+                } else {
+                    tr = pick([](const anim::AnimEntry& e) { return contains(e.name, "opening"); });
+                    if (!tr) tr = pick([](const anim::AnimEntry& e) { return e.name == "open"; });
+                    hold = pick([&](const anim::AnimEntry& e) {
+                        return &e != tr && contains(e.name, "open") && (contains(e.name, "idle") || endsWith(e.name, "_open"));
+                    });
+                }
+                auto clips = std::make_shared<std::vector<anim::Clip>>();
+                auto names = std::make_shared<std::vector<std::string>>();
+                for (const auto* e : {tr, hold}) {
+                    if (!e) break;
+                    for (const auto& s : drm.sections)
+                        if (s.type == cdc::SectionType::Animation && s.id == e->animId) {
+                            clips->push_back(anim::decodeClip(s.data)), names->push_back(e->name);
+                            break;
+                        }
+                }
+                if (set->skeleton && clips->size() == 2) set->clips = std::move(clips), set->names = std::move(names);
+                // [O] Lara's clip for the switch is in its DRM (113-track lara skeleton animations; ids shared between
+                // DRMs). [I] choice by name: the lever pull, else the button press, else the rune switches' interact.
+                if (o.kind == Kind::Switch)
+                    for (const std::string_view want : {"obj_pull_lever", "obj_pushbutton", "hosted_push_button", "interact"})
+                        if (const auto* e = pick([&](const anim::AnimEntry& x) { return x.name == want; }); e && !set->laraClip)
+                            set->laraClip = e->animId;
+                // [O] Switch reset: physical-class record (object base +0xC8) +0x34 -> its first state record: +4 flags
+                // (bit 0 one-way: ms_ei_switch_oneway_wall, ma_ei_wall_switch_electric), +0xC reset delay in frames
+                // (ma_ei_switch_wall_chapel 1, ca_ei_switch_wall_autoreset 60, ms_ei_resetting_switch 150) [I: units].
+                if (const auto base = formats::objectBaseSection(drm); base && o.kind == Kind::Switch) {
+                    const auto& ob = drm.sections[*base];
+                    const auto rec = cdc::internalPointer(ob, 0xC8);
+                    const auto list = rec ? cdc::internalPointer(ob, *rec + 0x34) : std::nullopt;
+                    const auto first = list ? cdc::internalPointer(ob, *list) : std::nullopt;
+                    if (first && *first + 0x10 <= ob.data.size()) {
+                        uint32_t flags;
+                        float delay;
+                        std::memcpy(&flags, ob.data.data() + *first + 4, 4);
+                        std::memcpy(&delay, ob.data.data() + *first + 0xC, 4);
+                        if (!(flags & 1) && delay > 0) set->resetAfter = delay / 30.0f;
+                    }
+                    // [O] Engagement list (tru.exe 0x719620: instance query 0x53, 0x8C-byte records, shape test
+                    // 0x6F3C60): record +4 -> records, +8 count, at physical record +0x70 on the switches. [I] record
+                    // +0x44 = where Lara stands, units in front of the switch (wall switch 135; 139 from her hand arc).
+                    const auto recs = rec ? cdc::internalPointer(ob, *rec + 0x74) : std::nullopt;
+                    uint32_t count = 0;
+                    if (recs && *rec + 0x7C <= ob.data.size()) std::memcpy(&count, ob.data.data() + *rec + 0x78, 4);
+                    if (recs && count && *recs + 0x48 <= ob.data.size()) std::memcpy(&set->useDistance, ob.data.data() + *recs + 0x44, 4);
+                }
+            }
+        }
+        o.skeleton = set->skeleton;
+        o.clips = set->clips;
+        o.clipNames = set->names;
+        o.resetAfter = set->resetAfter;
+        o.laraClip = set->laraClip;
+        o.useDistance = set->useDistance;
+    }
+    // Objects whose scripts reach their anim component (a `modifiable` / `animated` member) run its state graph
+    // (docs/formats/ANIMGRAPH.md). [O] The intro's physob data word 15 picks the initial state (record index; <= 0:
+    // the first), 0x6B5890 message 0x23 -> 0x6B4440 -> 0x6A5660; its vt 20 is not sent [I: no script yet].
+    // [I] Switches keep their own use flow (Object::state) and get no Object::graph, but their scripts' modifiable
+    // member answers fn 8 (state id, query 0xE8) from its field: it holds the intro's state id, and each use moves
+    // it along the use transition (Runtime::switchUsed). l5_valaskjalf_entryb lever 7188 acts only while switch
+    // 7192 is not in its "on" state 0; 7192 starts in state 1.
+    if ((o.kind == Kind::Scripted || o.kind == Kind::Switch) && o.script) {
+        bool uses = false;
+        const auto modifiable = modifiableMember(*o.script);
+        for (const ScriptType* t = program->type(o.script->typeId); t && !uses; t = program->type(t->superId))
+            for (const Member& m : t->members) {
+                const char* native = program->nativeName(m.typeId);
+                uses |= !std::strcmp(native, "modifiable") || !std::strcmp(native, "animated");
+            }
+        const auto set = uses ? graphSet(o.name) : nullptr;
+        int initial = 0;
+        if (set && set->graph && in.data) {
+            const auto& d = u.drm->sections.at(in.data->section).data;
+            int32_t first = 0;
+            if (in.data->offset + 0x40 <= d.size()) std::memcpy(&first, d.data() + in.data->offset + 0x3C, 4);
+            if (first > 0 && size_t(first) < set->graph->states.size()) initial = first;
+        }
+        if (set && o.kind == Kind::Switch) {
+            if (set->graph && modifiable)
+                o.script->fields[*modifiable] = o.script->initial[*modifiable] = uint32_t(int32_t(set->graph->states[size_t(initial)].index));
+        } else if (set) {
+            auto& g = o.graph.emplace(Object::Graph{});
+            g.set = set;
+            g.state = g.initial = initial;
+            if (set->graph && set->graph->states[size_t(g.state)].anim >= 0) {
+                const auto& s = set->graph->states[size_t(g.state)];
+                g.clip = s.anim, g.loop = s.flags & 2;
+            }
+        }
+    }
+    if (o.kind != Kind::Volume && o.kind != Kind::Plane) o.mover = objectFlags(o.name) & kTriggerMover;
+    // [I] Ship hall doors without a script (chapter 6's l6_ship_upper_hallway_a/b copies of the l1 doors): their
+    // volumes' door calls ISTYPE-fail on them, so nothing can open them, yet chapter 6 walks through. They stand
+    // open, as the l1 doors once opened.
+    const bool openDoor = o.kind == Kind::Door && !o.script && o.clipNames &&
+                          std::ranges::find(*o.clipNames, "idle_open") != o.clipNames->end();
+    const int32_t uid = o.uid;
+    addObject(std::move(o), start);
+    if (Object* added = openDoor ? findMut(uid) : nullptr; added && added->state == 0) added->state = 2;
+}
+
+void Runtime::birth(int32_t uid) {
+    if (dormant_.contains(uid) && !born(uid) && std::ranges::find(births_, uid) == births_.end()) births_.push_back(uid);
+}
+
+void Runtime::introduceBorn(bool start) {
+    for (const int32_t uid : born_)
+        if (const auto d = dormant_.find(uid); d != dormant_.end() && !find(uid)) introduce(d->second.unit, d->second.program, d->second.intro, start);
 }
 
 void Runtime::startUnitScript(const std::string& unit) {
@@ -1183,7 +1203,8 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                     nc.result = target ? vm::Value::object(target->uid) : vm::Value::scalar(0);
                     return true;
                 }
-                if ((nc.function == 3 || nc.function == 6) && nc.args.empty()) { nc.wait = !target; return true; }
+                if (nc.function == 3 && nc.args.empty()) { birth(int32_t(localValue)); return true; } // Birth (0x4AC0D0)
+                if (nc.function == 6 && nc.args.empty()) { nc.wait = !target; return true; }
             }
             // instanceref 0 (0x79A940 -> 0x4A52E0, as unitref 0): receiver and argument name the same instance; either may
             // be a member, a local's value or an object (instance 14 GetInstanceRef results; l1_seafloor 978, l7_arctic_sea
@@ -1474,8 +1495,15 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(resolve(int32_t(field())) ? 1u : 0u); // target-present guard
                 return true;
             }
-            if (!std::strcmp(name, "instanceref") && (nc.function == 3 || nc.function == 6)) { // loaded/birthed wait
-                nc.wait = !resolve(int32_t(field())); // blocks until the target's unit streams in
+            // Birth (thunk 0x799AB0 -> 0x4AC0D0): introduces the intro if it is in a loaded unit and neither alive nor dead
+            // (0x555A10 dead bits, 0x5B3950 alive -> 0x5B38F0 -> 0x5BD080); else it prints "InstanceRef::Birth FAILED" and
+            // returns. Not latent. Ours: dormant intros only (every other one is alive while its unit is loaded).
+            if (!std::strcmp(name, "instanceref") && nc.function == 3) {
+                birth(int32_t(field()));
+                return true;
+            }
+            if (!std::strcmp(name, "instanceref") && nc.function == 6) { // birthed wait (latent, 0x4A53B0)
+                nc.wait = !resolve(int32_t(field())); // blocks until the target exists
                 nc.result = vm::Value::scalar(0);
                 return true;
             }
@@ -2378,6 +2406,17 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         if (useSwitch->state == 2) fire(EventKind::Use, *useSwitch);
     }
     tickTrackedInstances();
+    // Births (instanceref Birth): the objects exist from now on, their constructors run (which may birth more).
+    while (!births_.empty()) {
+        const int32_t uid = births_.front();
+        births_.erase(births_.begin());
+        const auto d = dormant_.find(uid);
+        if (d == dormant_.end() || born(uid)) continue; // its unit streamed out meanwhile
+        born_.push_back(uid);
+        if (onBirth) onBirth(uid);
+        introduce(d->second.unit, d->second.program, d->second.intro, true);
+        ++visibilityVersion_;
+    }
     hasLast_ = true, lastPos_ = in.pos, interactHeld_ = in.interact;
 }
 
@@ -2529,7 +2568,7 @@ nlohmann::json Runtime::serialize() const {
                     {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
                     {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
                     {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}},
-                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}};
+                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}, {"born", born_}};
     return j;
 }
 
@@ -2559,11 +2598,18 @@ void Runtime::restore(const nlohmann::json& j) {
                 if (value.is_number_unsigned() || value.is_number_integer())
                     playerScript_->fields[uint32_t(std::stoul(key))] = value.get<uint32_t>();
     }
+    // Born dormant intros as saved (older saves: none): their objects follow the others, created after the state below.
+    births_.clear();
+    if (auto born = runtime.value("born", std::vector<int32_t>{}); born != born_) {
+        std::erase_if(objects_, [&](const Object& o) { return dormant_.contains(o.uid); });
+        born_ = std::move(born), ++visibilityVersion_;
+    }
     for (auto& o : objects_) {
         const auto key = std::to_string(o.uid);
         applyState(o, stash_.contains(key) ? &stash_[key] : nullptr);
         stash_.erase(key);
     }
+    introduceBorn(false); // resumed below (live)
     threads_.clear();
     hasLast_ = false; // older saves: no plane crossings across the jump
     if (runtime.value("version", 0) == 1) {

@@ -253,7 +253,7 @@ player intro).
   no events or vars to fade it [O]. Kept as the data has it (a cut to white before chapter 1) [I that the original shows the same].
 - 275_hel_explosion: the T-posed figure on the ice is `amanda` 9070, a dormant intro of l7_thin_ice at the marker origin
   (intro `+0x72` 0x80; not one of the stream's 9 actors, named by no script): tru.exe never introduces it (0x5C2360),
-  `loadLevelScene` now leaves it out (LEVELS.md "Dormant intros"). Lara's arms-out pose at the last frame is the
+  ou-game does not draw it (LEVELS.md "Dormant intros"). Lara's arms-out pose at the last frame is the
   stream's (her bone rotations are animated through frame 870).
 - Effects: the game's running effects (`EffectsView`) tick on the frame clock and draw with the cinematic camera
   (torches, the burning manor in 170); actors that own effects (`co_fx_hell_gate`, `co_fx_shp_escape`,

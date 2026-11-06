@@ -909,6 +909,9 @@ void World::tickWaterStates(float dt) {
 // 18 sets an AI byte (+0xC34, 0x776F70, then 0x63F7F0) [U]; kept like 16.
 // generatorbase (0x7B4B60) and health 1/2 on an enemy's own script go to ai::Enemies.
 void World::bindEnemies() {
+    // Dormant enemies (formats::dormant) spawn when a script births them (instanceref Birth), before their constructor.
+    enemies_.born = [this](int32_t uid) { return script_.born(uid); };
+    script_.onBirth = [this](int32_t uid) { enemies_.birth(uid); };
     script_.setEnemyNative([this](int32_t uid, std::string_view type, uint32_t function,
                                   std::span<const script::vm::Value> args, uint32_t& result) {
         if (type == "generatorbase") return enemies_.generatorNative(uid, function, result);

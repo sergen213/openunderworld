@@ -169,7 +169,7 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   flag; branches use raw word offsets, including relocated operand words. Inheritance and virtual calls resolve
   against the actual linked instance.
 - [O] Native bindings implemented by behavior observed in the scripts: `playerref.Get` (0) and loaded wait (2),
-  `instanceref` loaded/birthed waits (3/6), Get (7), SetProperty (9), GetProperty (12/15), `unitref.Get` (3),
+  `instanceref` Birth (3) and birthed wait (6), Get (7), SetProperty (9), GetProperty (12/15), `unitref.Get` (3),
   `globalsref.Get` (0), sticky bool/int/float Set (0: notifies the sticky's owner, below), Get (1/2) and identity equality (3), `modifiable` Set/Get (4/8) and its two-argument setter (3), native
   instance debug/marker/modifiable interfaces (0/1, 4–9, 14–16, 28/61), Reset (25), engagement-property selection (59), Hide (60), `playersensor` void interface call (2),
   `checkpointbase` activation (3), static-water reset/depth (3/4), `terraingroup` SetEnabled/IsEnabled (2/3), `light` SetEnabled/IsEnabled (1/2),
@@ -221,8 +221,10 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   local (e.g. `PUSHLA 0` for `this`) are dereferenced before the call.
 - [O] Native function tables: each `*_ScriptType` vtable slot 3 is a bind function calling `FUN_005768f0(index,
   thunk)` per native function (rtti.tsv slots). Added bindings, by the thunks' targets:
-  `instanceref` Get (7) returns null when unbound (0x4AC070) and WaitUntilLoaded/Birthed (3/6) **block** — the VM
-  retries the call each tick (`NativeContext::wait`) until the target's unit is loaded; `clock` 0–10 (Start/Stop/
+  `instanceref` Get (7) returns null when unbound (0x4AC070); Birth (3, thunk 0x799AB0 -> 0x4AC0D0, not latent)
+  introduces a dormant intro (LEVELS.md "Dormant intros"); the birthed wait (6, 0x4A53B0 returns a
+  ScriptInstanceRefIsUnBindableSequence) **blocks** — the VM retries the call each tick (`NativeContext::wait`) until
+  the target exists; `clock` 0–10 (Start/Stop/
   Pause/Resume/IsRunning/GetTime/GetAlarm/SetAlarm/same-clock, 0x4A3450..0x4A34F0, advanced per tick as 0x4A3960;
   reaching the alarm fires once and calls the owner's corebase prototype-25 slot with the clock, 0x7961A0); `globaleffect` FadeOut/FadeIn (5/6, 0x4A4EB0/0x4A4EF0 screen wipe → `Runtime::screenFade`,
   not rendered yet); `larabase` 59/60 post messages 0x1D5/0x1D6 to Lara (`EventKind::PlayerMessage`, meaning [U]);

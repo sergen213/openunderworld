@@ -850,6 +850,7 @@ struct StreamedScene {
                 if (const auto at = src.origin.rfind(" @intro "); at != std::string::npos) {
                     const int32_t uid = std::atoi(src.origin.c_str() + at + 8);
                     if (enemyIntros.contains(uid) || hiddenIntros.contains(uid)) continue;
+                    if (src.origin.find(" @dormant ") != std::string::npos && !w.script().born(uid)) continue; // not introduced
                 }
                 float transform[16];
                 std::copy_n(src.transform, 16, transform);
@@ -978,6 +979,7 @@ struct EffectsView {
     std::map<uint16_t, std::string> names;
     ou::fx::System system;
     std::map<std::string, std::vector<int32_t>> unitOwners; // loaded unit -> its intros with running effects
+    std::map<int32_t, std::pair<std::string, ou::formats::Intro>> dormantIntros; // not born yet: unit, intro (effects at birth)
     std::vector<ou::render::FxVertex> vertices;
     std::vector<ou::render::FxBatch> batches;
     // Effect lights (class 6, docs/formats/EFFECTS.md "Lights"): fixtures (endless lights born with placed objects)
@@ -1120,34 +1122,45 @@ struct EffectsView {
             if (loaded(it->first)) { ++it; continue; }
             for (const int32_t uid : it->second) system.stopOwner(uid); // streamed out: emitters stop, particles finish
             rainIntros.erase(it->first);
+            std::erase_if(dormantIntros, [&](const auto& kv) { return kv.second.first == it->first; });
             it = unitOwners.erase(it);
         }
+        auto start = [&](const ou::game::LoadedUnit& u, const ou::formats::Intro& in) {
+            const auto n = names.find(in.objectId);
+            if (n == names.end()) return;
+            const auto fx = library->get(n->second, &warnings);
+            if (!fx) return;
+            glm::mat4 m;
+            ou::formats::introMatrix(in, &m[0][0]);
+            m[3] += glm::vec4(u.offset, 0);
+            if (!fx->fades.empty()) intros[in.uniqueId] = {fx, m};
+            if (std::any_of(fx->events.begin(), fx->events.end(), [](const auto& e) { return e.event == 0x2E; }))
+                rainIntros[u.data.name].emplace_back(fx, m, in.uniqueId);
+            if (library->flags(n->second) & ou::fx::kObjectNoBirthEffects) return;
+            if (!system.slotSound && !fx->soundSlots.empty()) unheard.push_back({fx, m, in.uniqueId});
+            if (system.startBirth(fx, m, in.uniqueId) || !fx->soundSlots.empty()) unitOwners[u.data.name].push_back(in.uniqueId);
+        };
         for (const auto& u : w.units()) {
             if (unitOwners.contains(u.data.name) || !u.data.drm) continue;
             auto& owners = unitOwners[u.data.name];
             const auto parsed = ou::formats::parseUnit(*u.data.drm);
             for (const uint32_t list : parsed.environment.waterList) // under-water lists: textures before the upload
                 library->effectList(*u.data.drm, u.data.name, list, &warnings);
-            for (const auto& in : parsed.intros) {
-                const auto n = names.find(in.objectId);
-                if (n == names.end()) continue;
-                const auto fx = library->get(n->second, &warnings);
-                if (!fx) continue;
-                glm::mat4 m;
-                ou::formats::introMatrix(in, &m[0][0]);
-                m[3] += glm::vec4(u.offset, 0);
-                if (!fx->fades.empty()) intros[in.uniqueId] = {fx, m};
-                if (std::any_of(fx->events.begin(), fx->events.end(), [](const auto& e) { return e.event == 0x2E; }))
-                    rainIntros[u.data.name].emplace_back(fx, m, in.uniqueId);
-                if (library->flags(n->second) & ou::fx::kObjectNoBirthEffects) continue;
-                if (!system.slotSound && !fx->soundSlots.empty()) unheard.push_back({fx, m, in.uniqueId});
-                if (system.startBirth(fx, m, in.uniqueId) || !fx->soundSlots.empty()) owners.push_back(in.uniqueId);
-            }
+            for (const auto& in : parsed.intros)
+                if (ou::formats::dormant(in) && !w.script().born(in.uniqueId)) dormantIntros[in.uniqueId] = {u.data.name, in};
+                else start(u, in);
             // Unit FX point sets (fires, heat haze without an object): owners 0x40000000 | set id [I: ids beside intros'].
             for (const auto& ps : library->pointSets(*u.data.drm, u.data.name, &warnings)) {
                 const int32_t owner = 0x40000000 | ps.id;
                 if (system.startPointSet(ps, glm::translate(glm::mat4(1), u.offset), owner)) owners.push_back(owner);
             }
+        }
+        // Dormant intros a script has born since (a scene rebuild follows each birth: visibilityVersion).
+        for (auto it = dormantIntros.begin(); it != dormantIntros.end();) {
+            const auto u = std::ranges::find_if(w.units(), [&](const auto& x) { return x.data.name == it->second.first; });
+            if (!w.script().born(it->first) || u == w.units().end()) { ++it; continue; }
+            start(*u, it->second.second);
+            it = dormantIntros.erase(it);
         }
         // Combat / animation-event objects, loaded now so their textures reach the scene (addTextures): every weapon's
         // ammo hit objects too (loaded lazily at the first shot, their sprites drew white until the next rebuild).

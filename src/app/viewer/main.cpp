@@ -197,6 +197,7 @@ ou::scene::SceneData loadScene(const Options& o, std::string& source) {
         try {
             const ou::cdc::BigfileSet bigfile(o.gameDir);
             ou::scene::SceneData s = o.level ? ou::formats::loadLevelScene(bigfile, o.drm) : ou::formats::loadDrmScene(bigfile, o.drm);
+            std::erase_if(s.meshes, [](const auto& m) { return m.origin.find(" @dormant ") != std::string::npos; }); // not yet introduced
             if (!s.meshes.empty()) {
                 source = o.drm + " (original game assets" + (s.placeholder ? ", partly placeholder)" : ")");
                 return s;
