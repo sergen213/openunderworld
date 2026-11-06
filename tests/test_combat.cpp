@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
+#include <set>
 
 using namespace ou;
 using collision::CollisionMesh;
@@ -604,6 +605,7 @@ TEST(CombatReal, WeaponData) {
         EXPECT_EQ(p->hitType, def.hitType);
         EXPECT_EQ(p->hand, def.hand);
         EXPECT_EQ(p->stow, def.stow);
+        EXPECT_EQ(p->muzzleMarker, def.muzzleMarker);
     }
     // Lara's clips of every weapon load (loadLaraAnims throws on a missing one), with the lengths Combat.cpp times by
     const auto anims = game::loadLaraAnims(bf);
@@ -921,4 +923,54 @@ TEST(CombatReal, PoolRifleAndTranquilizer) {
         if (cat.state().mode != game::ai::Mode::Sleep) woke = i;
     }
     EXPECT_GT(woke, 60 * 19);
+}
+
+
+// Shots and their flashes come from the gun model riding Lara's grip marker (7 right / 5 left; two-handed 5) with the
+// marker's frame, at the gun's shot origin (weapon data S+0x14: pistols HInfo marker -10 at the barrel tip, barrel
+// -Y; shotgun segment 0). Each Shot carries the gun's world frame, where its "fire" events (flashes) play.
+TEST(CombatReal, MuzzleAtGunMarkers) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    const auto anims = game::loadLaraAnims(bf);
+    const auto near = [](vec3 a, vec3 b) { return glm::distance(a, b) < 0.1f; };
+    const auto& pistols = anims.weapons[size_t(game::Weapon::Pistols)];
+    EXPECT_EQ(pistols.muzzleMarker, -10);
+    EXPECT_PRED2(near, vec3(pistols.muzzle[3]), vec3(0, -71.9f, 24.6f));
+    EXPECT_PRED2(near, vec3(pistols.muzzle[1]), vec3(0, 1, 0)); // the marker's axes are the model's: -Y the barrel
+    const auto& shotgun = anims.weapons[size_t(game::Weapon::Shotgun)];
+    EXPECT_EQ(shotgun.muzzleMarker, 0);
+    EXPECT_PRED2(near, vec3(shotgun.muzzle[3]), vec3(0, 13.7f, -9.3f));
+    EXPECT_EQ(anims.weapons[size_t(game::Weapon::Tranquilizer)].muzzleMarker, -15);
+    for (const auto wp : {game::Weapon::Pistols, game::Weapon::Shotgun}) {
+        SCOPED_TRACE(game::weaponName(wp));
+        const auto& wd = anims.weapons[size_t(wp)];
+        game::World w(loader, "l4_pool", anims);
+        game::DummyTarget t;
+        t.hp = 1e9f;
+        t.pos = {-13385, -600, 4500};
+        w.targets.push_back(&t);
+        if (wp != game::Weapon::Pistols) {
+            w.giveWeapon(wp, 100);
+            Actions sw;
+            sw.weapon = true;
+            w.tick(sw);
+        }
+        std::set<int> hands;
+        for (int i = 0; i < 300; ++i) {
+            w.tick(guns(i >= 12));
+            for (const auto& s : w.combat().shots) {
+                hands.insert(s.hand);
+                const auto mount = w.gunMount(wp, s.hand);
+                ASSERT_TRUE(mount);
+                EXPECT_EQ(*mount, anims.markers.at(wd.hand[size_t(s.hand)]));
+                EXPECT_PRED2(near, s.from, vec3(s.gun * wd.muzzle[3]));
+                // the barrel points at the target (within the aim grid's fit: pistols ~10, shotgun ~20 degrees)
+                EXPECT_GT(glm::dot(glm::normalize(vec3(-s.gun[1])), glm::normalize(t.aimPoint() - s.from)), std::cos(glm::radians(30.0f)));
+            }
+        }
+        EXPECT_EQ(hands.size(), wp == game::Weapon::Pistols ? 2u : 1u);
+    }
 }

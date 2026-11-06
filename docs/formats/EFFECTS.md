@@ -133,9 +133,16 @@ back-to-front, depth-tested without writes, `tex × colour × 2`.
   the hit (Z on the normal) with the hit material and its `idle` clip events start the surface's particles (stone:
   87–90 + sparks 61/63; flesh: blood 20–24). Weapon data `+0xE6` names the ammo object. Bodies use material 23 [I].
 - Muzzle: the weapon object's `fire` / `fire_submerged` clip events (`wp_handgun` defs 0–7, 9, 10, 22–26 at frame
-  0), in the gun's frame: HInfo markers −10 muzzle (−Y = barrel), −13 ejection port, −20..−24 flash points. We place
-  the gun so marker −10 sits on the shot origin facing the shot [I]. Enemies use their type's weapon object
-  (`EnemyType::weapon`, e.g. 114 `wp_akrifle`).
+  0) run on the weapon instance, so their segment fields resolve to the gun model's own HInfo markers in the gun's
+  world frame (the drawn model). Flashes sit on −10 (handgun, shotgun, speargun, rifles; −30 / −40..−45 the rifles'
+  star), −1 (tranquilizer, which has no −10), −13 the ejection port, −20..−25 points along the barrel; every marker's
+  −Y is the barrel. Lara's guns ride her grip markers (weapon data `+0xB8` / `+0xBA`: 7 right, 5 left; two-handed 5)
+  with the marker's frame; enemies' ride the marker their weapon record names (enemy data component `+0x20` record
+  `{+2 gun object, +8 segment field}`, 0x614950: poachers −75 on segment 48), and ou-game draws that gun there.
+  The shot origin is a separate field, weapon data S+0x14 (`+0xF4`; 0x6ADBB0 → 0x615930, < 0 marker, ≥ 0 segment):
+  handgun / speargun −10, uzi / assault rifle −1, tranquilizer −15, akrifle −30, shotgun / Mjolnir 0 (the root
+  segment). A shotgun blast's pellets share one run of the `fire` list (it is the weapon's animation, once per
+  trigger pull). `CombatReal.MuzzleAtGunMarkers`, `AiReal.PoachersFireAndBatsBite`.
 - `ou-game` runs Lara's and every enemy's current clip events each tick on their posed bones (Lara: `lara` object,
   floor material / 2 swimming / 3 submerged [I]); `object:clip` clips (weapon, vehicle) are skipped.
 - Other commands in these lists: 6 glows and 0x11 lights (muzzle / metal-hit light), 0x15/0x1A/0x18/0x1B stops — see

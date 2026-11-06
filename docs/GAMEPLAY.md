@@ -1185,7 +1185,8 @@ radii. Panther `run_forward_2` root speed 2323 units/s [O].
   seeing Lara inside the combat eye range (poacher 5720) they stand (`idle_combat_stand`), turn to her and, within the
   record's max yaw, enter fire: wait the start delay, start the per-shot clip and fire the burst's shots `gap` apart;
   then the follow-up clip (`reload2`) and the record's cooldown, rotating through the fire records (poacher +0x68,
-  +0x70). Each shot is a ray from the muzzle (eye height, one radius ahead) [I] at Lara's chest; [I] 35 % of shots
+  +0x70). Each shot is a ray from the muzzle [O] (its gun's shot origin, the wp_akrifle on the poacher's marker −75; eye
+  height one radius ahead [I] for a type without one) at Lara's chest; [I] 35 % of shots
   (per-enemy LCG seeded by uid) aim 1.5–3 of her radii aside; it stops at the first wall (line of fire: no damage) or
   Lara's capsule (cylinder), which takes rec+0x154 (75, light). Lara out of range or out of sight: they run
   (`combat_run_forward`) to where she was; within 474 [I]: the melee blow (`rifle_bash`, 100). Mercs: guard zones,
@@ -1446,7 +1447,7 @@ pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary re
 | equip / unequip / reload | 6 / 19 / 21 keys | 15 / 15 / 21 (wp_uzi's own) | 24 / 24 / 117 | 24 / 24 / 31; under water 17 / 19 / 31 | `combat_rifle_equip` 19 / `_unequip` 24 / `_reload` 41 | 19 / 24 / `combat_tranqgun_reload` 19 |
 
 - Rifle and tranquilizer upper body: each DRM's own 3×5 `combat_rifle_aim_*` / `combat_rifle_fire_*` grid, blended with the
-  shotgun grid's columns / rows [I: not measured separately]; muzzles [I] from the mesh bounds.
+  shotgun grid's columns / rows [I: not measured separately]; shot origins from weapon data S+0x14 (docs/formats/EFFECTS.md).
 - Tranquilizer darts (`Hit::tranq`): animals with `sleep_start` / `sleep_loop` / `sleep_end` (cats; nagas'
   `tranq_sleep_start` / `_loop`, waking with `rest_to_idle` [I]; tru.exe EnemyBehavior_Nap / EnemyState_Nap) add the 500 dose instead of damage and fall asleep once the dose reaches their
   health (`ai::Mode::Sleep`, saved): sleep_start, sleep_loop for 20 s [I], sleep_end, then alert. Other enemies take the
@@ -1498,8 +1499,8 @@ left hand 55 → front right hand 80) relative to `_F`: −90° / −47° / 0 / 
 aim cells, then the shotgun adds `combat_shotgun_pump`. The reload clip replaces the layer while reloading. Drawing /
 holstering play the weapon's equip / unequip clip while `drawT` ramps over its length, blended into the aim pose over
 the last / first 30 % of the ramp, the layer fading in / out over 0.1 s at the holstered end [I]; the gun moves
-between holster and hand half way through [I]. In hand [I, fitted on screenshots]: pistols / uzi on hand bones 80/55;
-shotgun / speargun / rifle / tranquilizer with the grip in the left hand along the line to the right hand. Stowed [O]:
+between holster and hand half way through [I]. In hand [O]: weapon data +0xB8 / +0xBA name Lara's grip markers, 7
+(right, segment 96) / 5 (left, 71; two-handed weapons in the left hand), with the marker's frame. Stowed [O]:
 weapon data +0xB9 / +0xBB name Lara's HInfo markers (lara model, `AnimLibrary::markers`) and the model takes the
 marker's frame: pistols thighs 6 / 4 (segments 9 / 4), uzis on her back 36 / 37, every two-handed weapon 15 (chest
 segment 15, across her back), Mjolnir 31. The secondary is shown stowed while it is not in hand.

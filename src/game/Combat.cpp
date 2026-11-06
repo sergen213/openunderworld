@@ -3,6 +3,7 @@
 // (Lara's targeting tiers) and hitscan. Numbers and provenance: Combat.hpp, docs/GAMEPLAY.md "Combat".
 #include "game/Combat.hpp"
 #include "game/Game.hpp"
+#include "physics/Physics.hpp"
 
 #include "cdc/Cdc.hpp"
 
@@ -57,25 +58,23 @@ struct WeaponInfo {
     bool rifle; // two-handed: one gun, the 3x5 aim grid
     float refire, equip, unequip, reload; // seconds
     std::string_view equipClip, unequipClip, reloadClip;
-    glm::vec3 muzzle; // barrel tip in the gun model (barrel -Y, top +Z) [I] from the mesh bounds
     std::string_view grid = "combat_shotgun_"; // two-handed: <grid>aim_* / <grid>fire_*
     float fire = 13 / 30.0f;                   // two-handed: length of the fire_* cells
 };
 const WeaponInfo kWeapons[kWeaponCount] = {
     {"wp_handgun", "pistols", false, 10 / 30.0f, 6 / 30.0f, 19 / 30.0f, 21 / 30.0f, "combat_pistols_equip", "combat_pistols_unequip",
-     "combat_pistols_reload", {0, -64, 22}}, // mesh y -64.2 .. 15.4
+     "combat_pistols_reload"},
     {"wp_uzi", "uzi", false, 5 / 30.0f, 15 / 30.0f, 15 / 30.0f, 21 / 30.0f, "combat_pistols_equip", "combat_pistols_unequip",
-     "combat_pistols_reload", {0, -62, 15}}, // y -62.2 .. 38.5
+     "combat_pistols_reload"},
     {"wp_shotgun", "shotgun", true, (13 + 25) / 30.0f, 24 / 30.0f, 24 / 30.0f, 117 / 30.0f, "combat_shotgun_equip",
-     "combat_shotgun_unequip", "combat_shotgun_reload", {0, -156, 25}}, // y -155.8 .. 58.1
+     "combat_shotgun_unequip", "combat_shotgun_reload"},
     {"wp_speargun", "speargun", true, 13 / 30.0f, 24 / 30.0f, 24 / 30.0f, 31 / 30.0f, "combat_shotgun_equip",
-     "combat_shotgun_unequip", "combat_speargun_reload", {0, -152, 25}}, // y -151.8 .. 15.4
-    {"wp_thorhammer", "thorhammer", false, 29 / 30.0f, 26 / 30.0f, 26 / 30.0f, 0, "ground_equip", "ground_unequip", "",
-     {0, 0, 95}}, // handle along +Z from the grip, head z 60 .. 120
+     "combat_shotgun_unequip", "combat_speargun_reload"},
+    {"wp_thorhammer", "thorhammer", false, 29 / 30.0f, 26 / 30.0f, 26 / 30.0f, 0, "ground_equip", "ground_unequip", ""},
     {"wp_assault_rifle", "rifle", true, 3 / 30.0f, 19 / 30.0f, 24 / 30.0f, 41 / 30.0f, "combat_rifle_equip",
-     "combat_rifle_unequip", "combat_rifle_reload", {0, -170, 20}, "combat_rifle_", 3 / 30.0f}, // y -170.6 .. 71.5
+     "combat_rifle_unequip", "combat_rifle_reload", "combat_rifle_", 3 / 30.0f},
     {"wp_tranq", "tranquilizer", true, 3 / 30.0f, 19 / 30.0f, 24 / 30.0f, 19 / 30.0f, "combat_rifle_equip",
-     "combat_rifle_unequip", "combat_tranqgun_reload", {0, -124, 10}, "combat_rifle_", 3 / 30.0f}, // y -124.6 .. 18.5
+     "combat_rifle_unequip", "combat_tranqgun_reload", "combat_rifle_", 3 / 30.0f},
 };
 const WeaponInfo& info(Weapon w) { return kWeapons[size_t(w)]; }
 constexpr float kHammerShot = 10 / 30.0f, kHammerPound = 12 / 30.0f; // events 0x75 / 0x4B
@@ -278,13 +277,14 @@ WeaponDef weaponDefaults(Weapon w) {
     case Weapon::Pistols: break;
     case Weapon::Uzi:
         d.object = "wp_uzi", d.ammo = "pr_uzibullet", d.ammoSlot = 0, d.maxReserve = {400, 240, 160}, d.clip = 40, d.infinite = false, d.stow = {36, 37};
+        d.muzzleMarker = -1;
         d.shortRange = 2000, d.maxRange = 4500, d.maxSpreadDeg = 5, d.spreadPerShot = 1, d.spreadRecovery = 0.1f;
         d.damage[0] = 25, d.damage[1] = 25, d.damage[2] = 10;
         d.wetDamage[0] = 25, d.wetDamage[1] = 25, d.wetDamage[2] = 10;
         break;
     case Weapon::Shotgun:
         d.object = "wp_shotgun", d.ammo = "pr_shotgunbullet", d.ammoSlot = 1, d.maxReserve = {90, 72, 42}, d.pellets = 7, d.clip = 6;
-        d.hand = {5, 7}, d.stow = {15, 6};
+        d.hand = {5, 7}, d.stow = {15, 6}, d.muzzleMarker = 0;
         d.infinite = d.dual = false, d.shortRange = 2000, d.maxRange = 3000, d.spreadDeg = d.maxSpreadDeg = 15;
         d.damage[0] = 50, d.damage[1] = 50, d.damage[2] = 40;
         d.wetDamage[0] = 50, d.wetDamage[1] = 50, d.wetDamage[2] = 40;
@@ -298,14 +298,14 @@ WeaponDef weaponDefaults(Weapon w) {
         break;
     case Weapon::ThorHammer: // pr_thorbolt: 1000 at every range on land, 1000 / 400 / 100 under water
         d.object = "wp_thorhammer", d.ammo = "pr_thorbolt", d.clip = -1, d.dual = false, d.shortRange = 1000, d.maxRange = 8000;
-        d.hand = {5, 7}, d.stow = {31, 6};
+        d.hand = {5, 7}, d.stow = {31, 6}, d.muzzleMarker = 0;
         d.damage[0] = d.damage[1] = d.damage[2] = 1000;
         d.wetDamage[0] = 1000, d.wetDamage[1] = 400, d.wetDamage[2] = 100;
         d.hitClass = 13, d.hitType = 3;
         break;
     case Weapon::AssaultRifle: // pr_akriflebullet (as wp_akrifle, the poachers' gun)
         d.object = "wp_assault_rifle", d.ammo = "pr_akriflebullet", d.ammoSlot = 2, d.maxReserve = {300, 210, 120}, d.clip = 30;
-        d.hand = {5, 7}, d.stow = {15, 6};
+        d.hand = {5, 7}, d.stow = {15, 6}, d.muzzleMarker = -1;
         d.infinite = d.dual = false, d.shortRange = 5000, d.maxRange = 8000;
         d.maxSpreadDeg = 5, d.spreadPerShot = 1.2f, d.spreadRecovery = 0.125f;
         d.damage[0] = 27, d.damage[1] = 27, d.damage[2] = 21;
@@ -313,7 +313,7 @@ WeaponDef weaponDefaults(Weapon w) {
         break;
     case Weapon::Tranquilizer: // pr_tranquilizerdart: a projectile (mode 2) whose +0x1C is the 500 dose
         d.object = "wp_tranq", d.ammo = "pr_tranquilizerdart", d.ammoSlot = 3, d.maxReserve = {25, 15, 10}, d.clip = 1;
-        d.hand = {5, 7}, d.stow = {15, 6};
+        d.hand = {5, 7}, d.stow = {15, 6}, d.muzzleMarker = -15;
         d.infinite = d.dual = false, d.shortRange = 4000, d.maxRange = 6000, d.spreadDeg = d.maxSpreadDeg = 5, d.mode = 2;
         d.damage[0] = d.damage[1] = d.damage[2] = 500;
         d.wetDamage[0] = d.wetDamage[1] = d.wetDamage[2] = 500;
@@ -397,7 +397,9 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     const auto maxSpread = w->at<float>(S + 0x2C), perShot = w->at<float>(S + 0x30), recovery = w->at<float>(S + 0x34);
     const auto flags = w->at<uint8_t>(S + 0x88);
     const auto markers = w->at<std::array<uint8_t, 4>>(0xB8);
-    if (!slot || !pellets || !clip || !ammoId || !maxRange || !spread || !shortRange || !maxSpread || !perShot || !recovery || !flags || !markers)
+    const auto muzzle = w->at<int16_t>(S + 0x14);
+    if (!slot || !pellets || !clip || !ammoId || !maxRange || !spread || !shortRange || !maxSpread || !perShot || !recovery || !flags || !markers ||
+        !muzzle)
         return std::nullopt;
     const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
     if (!list) return std::nullopt;
@@ -435,6 +437,8 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     def.mode = *mode;
     if (*mode == 1) def.hitClass = ammo->at<int32_t>(R + 8).value_or(0), def.hitType = ammo->at<int32_t>(R + 0xC).value_or(1);
     def.hand = {(*markers)[0], (*markers)[2]}, def.stow = {(*markers)[1], (*markers)[3]};
+    def.muzzleMarker = *muzzle;
+    if (const auto f = physics::loadObjectPhysics(w->drm).frame(def.muzzleMarker)) def.muzzle = *f;
     def.damage[0] = *d0, def.damage[1] = *d1, def.damage[2] = *d2;
     if (wetScan) def.wetDamage[0] = *w0, def.wetDamage[1] = *w1, def.wetDamage[2] = *w2;
     else std::copy(def.damage, def.damage + 3, def.wetDamage);
@@ -536,13 +540,17 @@ std::optional<std::pair<int, glm::mat4>> World::gunMount(Weapon w, int hand) con
     const bool inHand = w == c.weapon && c.drawT >= 0.5f; // [I] the gun changes bones half way through equip / unequip
     const WeaponDef& d = anims_.weapons[size_t(w)];
     // [O] the weapon model sits at one of Lara's HInfo markers (WeaponDef::hand / stow, data +0xB8..+0xBB) with the
-    // marker's frame as its own. A library without markers (synthetic tests) draws no stowed weapon.
+    // marker's frame as its own: in hand the grips 7 (right, segment 96) / 5 (left, 71; two-handed guns and Mjolnir).
+    // A library without markers (synthetic tests) draws no stowed weapon and holds the gun at the hand bone.
     const auto marker = [&](int id) -> std::optional<std::pair<int, glm::mat4>> {
         const auto it = anims_.markers.find(id);
         if (it == anims_.markers.end()) return std::nullopt;
         return it->second;
     };
-    glm::mat4 m(1);
+    const auto grip = [&](int id, int bone) -> std::optional<std::pair<int, glm::mat4>> {
+        if (anims_.markers.empty()) return std::pair{bone, glm::mat4(1)};
+        return marker(id);
+    };
     if (w == Weapon::ThorHammer) {
         // In hand marker 5 (segment 71, the left hand's grip child of 55), stowed 31 (chest segment 15, on her back):
         // the left hand draws it from the back (ground_equip) and holds it up while the right one points.
@@ -553,38 +561,23 @@ std::optional<std::pair<int, glm::mat4>> World::gunMount(Weapon w, int hand) con
         // on the bike only the right gun is drawn; the left one stays in its holster
         if (!inHand || (hand == 1 && player_.state().state == State::Vehicle))
             return w == Weapon::Pistols || w == c.secondary ? marker(d.stow[size_t(hand)]) : std::nullopt;
-        // barrel (gun -Y) along the arm, gun top (+Z) along the thumb (-Y)
-        const float side = hand == 0 ? -1.0f : 1.0f; // right arm extends along -X, left along +X
-        m[0] = glm::vec4(0, 0, side, 0);
-        m[1] = glm::vec4(-side, 0, 0, 0);
-        m[2] = glm::vec4(0, -1, 0, 0);
-        m[3] = glm::vec4(side * 18.0f, 0, 0, 1);
-        return std::pair{kHandBone[hand], m};
+        return grip(d.hand[size_t(hand)], kHandBone[hand]);
     }
     if (hand != 0 || (w != c.weapon && w != c.secondary)) return std::nullopt;
-    if (!inHand) return marker(d.stow[0]); // marker 15: across her back
-    // two-handed: the grip in the rear (left, 55) hand, the barrel along the line to the front (right, 80) hand
-    // (the aim poses' barrel line), gun top toward model up
-    if (bones_.size() <= size_t(kHandBone[0])) return std::pair{kHandBone[1], m}; // synthetic skeleton
-    const vec3 rear(bones_[size_t(kHandBone[1])][3]), front(bones_[size_t(kHandBone[0])][3]);
-    const vec3 fwd = glm::normalize(front - rear + vec3(0, -1e-3f, 0));
-    const vec3 up = glm::normalize(vec3(0, 0, 1) - fwd * fwd.z + vec3(0, 1e-3f, 0));
-    m[1] = glm::vec4(-fwd, 0);
-    m[2] = glm::vec4(up, 0);
-    m[0] = glm::vec4(glm::cross(-fwd, up), 0);
-    m[3] = glm::vec4(rear, 1);
-    return std::pair{kHandBone[1], glm::inverse(bones_[size_t(kHandBone[1])]) * m};
+    return inHand ? grip(d.hand[0], kHandBone[1]) : marker(d.stow[0]); // stowed 15: across her back
 }
 
-vec3 World::muzzle(int hand) const {
-    const PlayerState& s = player_.state();
+glm::mat4 World::gunMatrix(int hand) const {
     const auto mount = gunMount(combat_.weapon, hand);
-    glm::mat4 b(1), offset(1); // no such bone (synthetic skeletons): the gun at shoulder height
+    const PlayerState& s = player_.state();
+    glm::mat4 b(1), offset(1); // no mount / bone (synthetic skeletons): the gun at shoulder height
     if (mount) offset = mount->second;
     if (mount && size_t(mount->first) < bones_.size()) b = bones_[size_t(mount->first)];
     else b[3].z = kShoulderHeight;
-    return vec3(player_.modelMatrix(s.pos, s.yaw, s.pitch) * b * offset * glm::vec4(info(combat_.weapon).muzzle, 1));
+    return player_.modelMatrix(s.pos, s.yaw, s.pitch) * b * offset;
 }
+
+vec3 World::muzzle(int hand) const { return vec3(gunMatrix(hand) * anims_.weapons[size_t(combat_.weapon)].muzzle[3]); }
 
 void World::giveWeapon(Weapon w, int reserve) {
     CombatState& c = combat_;
@@ -732,7 +725,8 @@ float rnd(uint64_t& rng) {
 void World::fire(int hand) {
     CombatState& c = combat_;
     const WeaponDef& w = anims_.weapons[size_t(c.weapon)];
-    const vec3 from = muzzle(hand);
+    const glm::mat4 gun = gunMatrix(hand);
+    const vec3 from(gun * w.muzzle[3]);
     vec3 aim = c.aimPoint - from;
     if (glm::length(aim) < 1) aim = vec3(std::cos(player_.state().yaw), std::sin(player_.state().yaw), 0);
     aim = glm::normalize(aim);
@@ -751,7 +745,7 @@ void World::fire(int hand) {
             if (!t || !t->alive() || t->team() == Team::Player) continue;
             if (const auto d = rayCapsule(from, dir, t->position(), t->radius(), t->height(), best)) best = *d, struck = t, hitAny = true;
         }
-        Shot shot{from, from + dir * best, hand, hitAny, struck, 0};
+        Shot shot{from, from + dir * best, hand, hitAny, struck, 0, gun};
         if (struck) {
             shot.damage = w.damageAt(best, submerged());
             Hit hit{shot.damage, shot.to, dir, Team::Player};
@@ -760,10 +754,11 @@ void World::fire(int hand) {
             struck->onHit(hit);
             c.adrenaline = std::min(1.0f, c.adrenaline + shot.damage / kAdrenalineFill); // "damaging enemies" (locals 1310)
         }
-        if (!struck && object) uberShot(object, dir);
-        if (!struck && object) damageObject(object, w.damageAt(best, submerged()), w.hitClass); // breakable uber objects (urns)
-        // the hit message 0x11C reaches an anim-graph object too (docs/formats/ANIMGRAPH.md)
-        if (!struck && object) script_.graphHit(object, uint32_t(w.hitClass), w.damageAt(best, submerged()));
+        if (!struck && object) { // the hit message 0x11C reaches an anim-graph object too (docs/formats/ANIMGRAPH.md)
+            uberShot(object, dir);
+            script_.graphHit(object, uint32_t(w.hitClass), w.damageAt(best, submerged()));
+            damageObject(object, w.damageAt(best, submerged()), w.hitClass); // breakable uber objects (urns)
+        }
         c.shots.push_back(shot);
     }
     c.spread = std::min(w.maxSpreadDeg, c.spread + w.spreadPerShot);
@@ -955,7 +950,7 @@ void World::tickCombat(const Actions& a, float dt) {
         if (firePressed) {
             if (glm::length(c.pip) <= 1) { // Hit::headshot, damage = the target's remaining health
                 const vec3 from = muzzle(hand), to = c.target->aimPoint();
-                const Shot shot{from, to, hand, true, c.target, c.target->health()};
+                const Shot shot{from, to, hand, true, c.target, c.target->health(), gunMatrix(hand)};
                 Hit hit{shot.damage, to, glm::normalize(to - from + vec3(1e-6f, 0, 0)), Team::Player, true};
                 hit.damageClass = anims_.weapons[size_t(c.weapon)].hitClass, hit.damageType = anims_.weapons[size_t(c.weapon)].hitType;
                 c.target->onHit(hit);

@@ -58,6 +58,9 @@ struct ObjectPhysics {
     std::vector<Prim> prims;
     std::vector<Marker> markers;
     std::vector<HMarker> hmarkers;
+    // Bind-pose model-space frame of a segment field (tru.exe 0x615930): >= 0 a segment, < 0 the HInfo marker -id
+    // (0x46DA20) in its segment's frame; nullopt when there is no such segment / marker.
+    std::optional<mat4> frame(int field) const;
 };
 inline constexpr int kClassRigidBody = 34; // tru.exe 0x6BA570 (0x6D00E0 dispatch); 28 objects, the "*_rb_*" ones
 // Model `model` (ObjectBase +0xA4 list) of an object DRM. Empty without an object section or that model; throws

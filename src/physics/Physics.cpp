@@ -77,6 +77,20 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
 
 } // namespace
 
+std::optional<mat4> ObjectPhysics::frame(int field) const {
+    const auto seg = [&](int s) { return s >= 0 && size_t(s) < segments.size() ? std::optional(segments[size_t(s)]) : std::nullopt; };
+    if (field >= 0) return seg(field);
+    for (const HMarker& m : hmarkers)
+        if (m.id == -field)
+            if (const auto s = seg(m.segment)) {
+                const quat q = glm::angleAxis(m.rot.x, vec3(1, 0, 0)) * glm::angleAxis(m.rot.y, vec3(0, 1, 0)) * glm::angleAxis(m.rot.z, vec3(0, 0, 1));
+                mat4 r = glm::mat4_cast(q);
+                r[3] = glm::vec4(m.pos, 1);
+                return *s * r;
+            }
+    return std::nullopt;
+}
+
 ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
     ObjectPhysics o;
     const auto base = formats::objectBaseSection(d);

@@ -621,7 +621,10 @@ public:
     // thigh / back holster otherwise) and its matrix in that bone's frame; nullopt when it is not shown (not
     // carried, a two-handed weapon's hand 1, the uzi out of hand). World matrix = modelMatrix * pose[bone] * offset.
     std::optional<std::pair<int, glm::mat4>> gunMount(Weapon w, int hand) const;
-    vec3 muzzle(int hand) const; // current weapon, world, this tick's pose
+    // The current weapon's model `hand` in the world, this tick's pose (its "fire" events play in this frame);
+    // muzzle = its shot origin (WeaponDef::muzzle) in it.
+    glm::mat4 gunMatrix(int hand) const;
+    vec3 muzzle(int hand) const;
     // Carries `w` as the secondary (replacing the previous one; Pistols: none), full clip, `reserve` spare rounds
     // capped at its max reserve (ou-game --weapon; the original gets them from pickups). ThorHammer: Mjolnir joins her
     // carried objects (script::Runtime::playerObjects, as larabase 37 "wp_thorhammer"); `reserve` is ignored.

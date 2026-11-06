@@ -139,6 +139,12 @@ struct EnemyType {
     const std::string& clipName(Role r) const { return roles[size_t(r)]; }
     uint16_t weapon = 0;     // list node +0x20 weapon record u16 +2: weapon object id (poacher 114 wp_akrifle); 0 none
     std::string weaponObject; // its objectlist name ("wp_akrifle"): Lara picks it up from the body (World::enemyDrops)
+    // The gun model rides on this model's HInfo marker (weapon record +8, a segment field: poachers -75; 0x614950 -> +0x2C)
+    // with the marker's frame:
+    // `gunSegment` (-1: no such marker, the gun at the shot origin [I]) and the marker in that segment's frame. `muzzle`
+    // = the gun's shot origin in its model (WeaponDef::muzzle).
+    int gunMarker = 0, gunSegment = -1;
+    glm::mat4 gunMount{1}, muzzle{1};
     bool sleeps = false;     // has sleepClips: tranquilizer darts put it to sleep (cats, nagas)
     std::array<std::string, 3> sleepClips; // start, loop, wake: sleep_start/_loop/_end or tranq_sleep_start/_loop, rest_to_idle [I]
     std::string fallClip, landClip; // dropping off a wall (Mode::Drop): fall_loop / falling_loop, jump_end / fall_land_front
@@ -190,6 +196,7 @@ struct Shot {
     int32_t uid = 0;
     vec3 from{0}, to{0};
     bool hit = false;
+    glm::mat4 gun{1}; // the gun model's world frame: its "fire" events play there
 };
 using HurtFn = std::function<void(float damage, vec3 from, int type)>; // type: game::kDamageLight / kDamageHeavy
 

@@ -196,6 +196,11 @@ struct WeaponDef {
     // mounted at the marker; its frame is the model's). Handgun 7/6, 5/4 (grips, thighs); uzi 7/36, 5/37 (back);
     // two-handed 5/15 (left grip, across her back); Mjolnir 5/31.
     std::array<int, 2> hand{7, 5}, stow{6, 4};
+    // S+0x14: the shot origin in the gun model (0x6ADBB0 -> 0x615930: < 0 HInfo marker -id, >= 0 segment): handgun /
+    // speargun -10, uzi / rifle -1, tranquilizer -15, akrifle -30, shotgun / Mjolnir 0 (the root segment). `muzzle` is
+    // its bind frame in the model (barrel -Y); identity without the model. The flashes are the gun's own "fire" events.
+    int muzzleMarker = -10;
+    glm::mat4 muzzle{1};
     float damageAt(float dist, bool wet = false) const; // linear between the three
 };
 // Decodes `object` (pc-w\<object>.drm) and its ammo object, and the max reserve from Lara's data (pc-w\lara.drm);
@@ -211,6 +216,7 @@ struct Shot {
     bool hit = false;         // struck geometry or a target
     Damageable* target = nullptr;
     float damage = 0;
+    glm::mat4 gun{1};         // the gun model's world frame (World::gunMatrix): its "fire" events play there
 };
 
 // Mjolnir's actions (wp_thorhammer's clips of Lara, docs/GAMEPLAY.md "Mjolnir"): fire = the swing that throws the bolt

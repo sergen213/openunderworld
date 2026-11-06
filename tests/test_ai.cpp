@@ -898,7 +898,19 @@ TEST(AiReal, PoachersFireAndBatsBite) {
         std::map<int32_t, int> shots, bites;
         for (int i = 0; i < r.ticks; ++i) {
             es.tick(unit.col, {r.lara}, [&](float d, vec3, int) { hurt.push_back(d); }, kDt);
-            for (const auto& s : es.shots) ++shots[s.uid];
+            for (const auto& s : es.shots) {
+                ++shots[s.uid];
+                // from the wp_akrifle model riding the poacher's marker -75 (segment 48): its shot origin, marker -30
+                const auto e = std::find_if(es.all().begin(), es.all().end(), [&](const auto& x) { return x->uid() == s.uid; });
+                ASSERT_NE(e, es.all().end());
+                const auto& t = (*e)->type();
+                EXPECT_EQ(t.gunMarker, -75);
+                EXPECT_EQ(t.gunSegment, 48);
+                EXPECT_NEAR(glm::distance(s.from, vec3(s.gun * t.muzzle[3])), 0, 1e-2f);
+                EXPECT_NEAR(t.muzzle[3].y, -152.0f, 0.1f);
+                // its barrel (-Y) along the shot: the burst clips hold it within ~20 degrees of Lara
+                EXPECT_GT(glm::dot(glm::normalize(vec3(-s.gun[1])), glm::normalize(s.to - s.from)), std::cos(glm::radians(30.0f)));
+            }
             for (const auto& e : es.all())
                 if (e->state().blowLanded && !e->previous().blowLanded) ++bites[e->uid()];
         }

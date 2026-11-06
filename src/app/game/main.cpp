@@ -421,13 +421,31 @@ std::vector<ou::render::DebugLine> collisionLines(const ou::collision::Collision
     return out;
 }
 
+// A weapon DRM's gun: its first mesh (wp_handgun's others are a low-detail copy and a small part), CPU-posed in world
+// space (identity transform, no skin), with the DRM's textures and materials.
+ou::scene::SceneData gunModel(const ou::cdc::BigfileSet& bf, const std::string& object, std::vector<std::string>& warnings) {
+    auto s = ou::formats::loadDrmScene(bf, "pc-w\\" + object + ".drm");
+    if (s.meshes.empty()) {
+        warnings.push_back("pc-w\\" + object + ".drm: no mesh decoded");
+        return s;
+    }
+    s.meshes.resize(1);
+    auto& m = s.meshes[0];
+    m.skeleton = -1, m.skin.clear();
+    for (int k = 0; k < 16; ++k) m.transform[k] = k % 5 == 0 ? 1.0f : 0.0f;
+    return s;
+}
+
 // Enemies (src/game/ai): each enemy's model-0 skinned meshes, CPU-skinned from Enemy::pose and placed in the
 // world like Lara's. Their intro meshes in the level scene are left out (StreamedScene::build). Enemy shots are
 // drawn as tracers (yellow hit, white miss) for 0.2 s.
 struct EnemyMeshes {
-    std::map<std::string, ou::scene::SceneData> types; // object name -> model-0 skinned meshes + textures
+    std::map<std::string, ou::scene::SceneData> types; // object name -> model-0 skinned meshes + textures; "gun:" + weapon
     std::vector<std::vector<size_t>> meshIndices;       // per World::enemies().all() entry
-    struct SkinJob { size_t mesh, palette; glm::mat4 model; };
+    // per entry: its gun's mesh (EnemyType::weaponObject riding its marker, gunSegment >= 0; drawn on the body after
+    // death too [I]), SIZE_MAX none
+    std::vector<size_t> gunIndices;
+    struct SkinJob { size_t mesh, palette; glm::mat4 model; }; // palette SIZE_MAX: rigid (a gun)
     std::vector<SkinJob> jobs;
     std::vector<std::vector<glm::mat4>> palettes;     // per posed enemy this frame
     std::vector<std::vector<ou::scene::Vertex>> outs; // per job, reused across frames
@@ -455,6 +473,11 @@ struct EnemyMeshes {
         }
         return types.emplace(name, std::move(s)).first->second;
     }
+    const ou::scene::SceneData& gun(const ou::cdc::BigfileSet& bf, const std::string& object, std::vector<std::string>& warnings) {
+        const std::string key = "gun:" + object;
+        auto it = types.find(key);
+        return it != types.end() ? it->second : types.emplace(key, gunModel(bf, object, warnings)).first->second;
+    }
     // Enemies outside the view cone (bounding radius kRadius; everything within kNear of the camera still poses so
     // nearby off-screen shadows follow) keep their last uploaded pose: CPU skinning every enemy was a third of
     // l4_ballcourt's frame. fovDeg >= 180: pose all. The visible meshes skin on worker threads (skinVertices is pure),
@@ -478,15 +501,19 @@ struct EnemyMeshes {
                                         halfDiag + std::asin(std::min(1.0f, kRadius / dist)))
                     continue;
             }
-            palettes.push_back(ou::anim::skinPalette(e.type().skeleton, e.pose(alpha)));
+            const auto bones = e.pose(alpha);
+            palettes.push_back(ou::anim::skinPalette(e.type().skeleton, bones));
             const glm::mat4 m = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip, s.tilt);
             for (const size_t i : meshIndices[k]) jobs.push_back({i, palettes.size() - 1, m});
+            if (const int seg = e.type().gunSegment; k < gunIndices.size() && gunIndices[k] != SIZE_MAX && size_t(seg) < bones.size())
+                jobs.push_back({gunIndices[k], SIZE_MAX, m * bones[size_t(seg)] * e.type().gunMount});
         }
         if (outs.size() < jobs.size()) outs.resize(jobs.size());
         std::atomic<size_t> next{0};
         auto work = [&] {
             for (size_t j; (j = next++) < jobs.size();)
-                ou::anim::skinVertices(scene.meshes[jobs[j].mesh], palettes[jobs[j].palette], outs[j], jobs[j].model);
+                ou::anim::skinVertices(scene.meshes[jobs[j].mesh], jobs[j].palette == SIZE_MAX ? std::span<const glm::mat4>() : palettes[jobs[j].palette],
+                                       outs[j], jobs[j].model);
         };
         {
             // jobs may be empty (nothing posed this frame, or a frame before the first tick): 0 extra threads, not SIZE_MAX
@@ -746,9 +773,14 @@ struct StreamedScene {
         }
         out.meshes.resize(kept);
         enemyMeshes.meshIndices.clear();
+        enemyMeshes.gunIndices.clear();
         for (const auto& e : w.enemies().all()) {
             enemyMeshes.meshIndices.emplace_back();
             append(enemyMeshes.type(bf, e->type().name, warnings), glm::vec3(0), &enemyMeshes.meshIndices.back());
+            std::vector<size_t> gun;
+            if (e->type().gunSegment >= 0 && !e->type().weaponObject.empty())
+                append(enemyMeshes.gun(bf, e->type().weaponObject, warnings), glm::vec3(0), &gun);
+            enemyMeshes.gunIndices.push_back(gun.empty() ? SIZE_MAX : gun[0]);
         }
         bikeIndices.clear();
         for (const auto& [uid, b] : w.bikes())
@@ -894,17 +926,12 @@ struct EffectsView {
         for (const auto& [fx, m, uid] : unheard) system.startBirth(fx, m, uid, false);
         unheard.clear();
     }
-    // Rigid frame at p: muzzle (axis 1, -Y along the shot, Z up) or impact (axis 2, Z = surface normal).
-    static glm::mat4 frameAlong(glm::vec3 p, glm::vec3 d, int axis) {
+    // Rigid frame at an impact p: Z = the surface normal d.
+    static glm::mat4 frameAlong(glm::vec3 p, glm::vec3 d) {
         const glm::vec3 up = std::abs(d.z) < 0.9f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0);
+        const glm::vec3 x = glm::normalize(glm::cross(up, d));
         glm::mat4 m(1);
-        if (axis == 1) {
-            const glm::vec3 x = glm::normalize(glm::cross(d, up));
-            m[0] = glm::vec4(x, 0), m[1] = glm::vec4(d, 0), m[2] = glm::vec4(glm::cross(x, d), 0);
-        } else {
-            const glm::vec3 x = glm::normalize(glm::cross(up, d));
-            m[0] = glm::vec4(x, 0), m[1] = glm::vec4(glm::cross(d, x), 0), m[2] = glm::vec4(d, 0);
-        }
+        m[0] = glm::vec4(x, 0), m[1] = glm::vec4(glm::cross(d, x), 0), m[2] = glm::vec4(d, 0);
         m[3] = glm::vec4(p, 1);
         return m;
     }
@@ -912,17 +939,19 @@ struct EffectsView {
     static uint8_t material(const ou::collision::CollisionMesh& col, const ou::collision::Hit& h) {
         return h.dynamic < 0 && h.face < col.faces.size() ? col.faces[h.face].material : 0;
     }
-    // One bullet: the weapon's "fire" events with its muzzle marker (-10) on `from`, -Y along the shot (tru.exe weapon
-    // instance anim events), then the ammo's hit object (ammo data +0x3C, +0xA8 under water: 0x6C64D0 -> 0x6B7030)
-    // at the impact with Z on the normal, filtered by the surface material (bodies: 23, flesh / blood [I]).
-    void shot(const ou::game::World& w, const std::string& weapon, glm::vec3 from, glm::vec3 to, bool body, bool hit, bool wet) {
+    // One bullet: the weapon's "fire" events in the gun model's world frame `gun` (tru.exe: the weapon instance's anim
+    // events, segment fields its markers: muzzle -10 / -1 / -30 flashes, -13 ejection port), once per trigger pull
+    // (`flash`: not per shotgun pellet), then the ammo's hit object (ammo data +0x3C, +0xA8 under water: 0x6C64D0 ->
+    // 0x6B7030) at the impact with Z on the normal, filtered by the surface material (bodies: 23, flesh / blood [I]).
+    void shot(const ou::game::World& w, const std::string& weapon, const glm::mat4& gun, bool flash, glm::vec3 from, glm::vec3 to,
+              bool body, bool hit, bool wet) {
         const glm::vec3 d = to - from;
         const float len = glm::length(d);
         if (len < 1) return;
         const glm::vec3 dir = d / len;
-        if (const auto gun = library->get(weapon))
-            if (const auto* fire = gun->clip(wet ? "fire_submerged" : "fire"); fire || (fire = gun->clip("fire")))
-                system.play(gun, *fire, frameAlong(from, -dir, 1) * glm::inverse(gun->frame(-10)), -1, 0, to); // tracers end at -100 [I]
+        if (const auto g = flash ? library->get(weapon) : nullptr)
+            if (const auto* fire = g->clip(wet ? "fire_submerged" : "fire"); fire || (fire = g->clip("fire")))
+                system.play(g, *fire, gun, -1, 0, to); // tracers end at -100 [I]
         if (!hit) return;
         const auto ammo = names.find(library->dataU16(weapon, 0xE6)); // weapon data +0xE6: ammo object (game::loadWeapon)
         if (ammo == names.end()) return;
@@ -934,7 +963,7 @@ struct EffectsView {
         uint8_t mat = 23;
         if (!body)
             if (const auto h = w.collision().raycast(from, dir, len + 20.0f)) at = h->point, normal = h->normal, mat = material(w.collision(), *h);
-        system.play(fx, *idle, frameAlong(at, normal, 2), -1, mat);
+        system.play(fx, *idle, frameAlong(at, normal), -1, mat);
     }
     std::string layerClip; // last tick's combat layer clip (World::combatLayerClip)
     double layerTime = 0;
@@ -977,11 +1006,15 @@ struct EffectsView {
         if (!library) return;
         const auto& c = w.combat();
         const std::string gun(ou::game::weaponObject(c.weapon));
-        for (const auto& s : c.shots) shot(w, gun, s.from, s.to, s.target != nullptr, s.hit, w.submerged());
+        int flashed = 0; // hands whose fire events ran this tick: one flash per trigger pull, not per pellet
+        for (const auto& s : c.shots) {
+            shot(w, gun, s.gun, !(flashed & (1 << s.hand)), s.from, s.to, s.target != nullptr, s.hit, w.submerged());
+            flashed |= 1 << s.hand;
+        }
         for (const auto& s : w.enemies().shots) {
             const auto e = std::find_if(w.enemies().all().begin(), w.enemies().all().end(), [&](const auto& x) { return x->uid() == s.uid; });
             const auto n = e == w.enemies().all().end() ? names.end() : names.find((*e)->type().weapon);
-            if (n != names.end()) shot(w, n->second, s.from, s.to, s.hit, true, false);
+            if (n != names.end()) shot(w, n->second, s.gun, true, s.from, s.to, s.hit, true, false);
         }
         auto floorMaterial = [&](glm::vec3 p) -> uint8_t {
             const auto h = w.collision().groundProbe(p + glm::vec3(0, 0, 50), 250);
@@ -1560,24 +1593,16 @@ int main(int argc, char** argv) {
         if (!opt.loadSlot.empty() && !quickLoad(*world, opt.loadSlot)) return 1;
 
         streamed.dress(bf, *world, warnings);
-        // Weapons: each wp_* DRM's first mesh (the gun; wp_handgun's others are a low-detail copy and a small part):
-        // pistols and uzi once per hand, shotgun and speargun once; posed in model space on the CPU (CombatView::pose).
+        // Weapons (gunModel): pistols and uzi once per hand, the others once; posed on the CPU (CombatView::pose).
         for (int i = 0; i < ou::game::kWeaponCount; ++i) {
             const auto wpn = ou::game::Weapon(i);
-            const std::string file = "pc-w\\" + std::string(ou::game::weaponObject(wpn)) + ".drm";
-            auto gunScene = ou::formats::loadDrmScene(bf, file);
-            if (gunScene.meshes.empty()) {
-                warnings.push_back(file + ": no mesh decoded");
-                continue;
-            }
+            auto gunScene = gunModel(bf, std::string(ou::game::weaponObject(wpn)), warnings);
+            if (gunScene.meshes.empty()) continue;
             for (auto& t : gunScene.textures) streamed.guns.textures.push_back(std::move(t));
             for (auto& m : gunScene.materials) streamed.guns.materials.push_back(std::move(m));
             for (auto& c : gunScene.shaders) streamed.guns.shaders.push_back(std::move(c));
             for (int hand = 0; hand < (wpn <= ou::game::Weapon::Uzi ? 2 : 1); ++hand) {
-                auto m = gunScene.meshes[0]; // CPU-posed in world space: identity transform, no skin
-                m.skeleton = -1, m.skin.clear();
-                for (int k = 0; k < 16; ++k) m.transform[k] = k % 5 == 0 ? 1.0f : 0.0f;
-                streamed.guns.meshes.push_back(std::move(m));
+                streamed.guns.meshes.push_back(gunScene.meshes[0]);
                 streamed.gunSlots.emplace_back(wpn, hand);
             }
         }

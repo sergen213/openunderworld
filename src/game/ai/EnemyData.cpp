@@ -5,6 +5,7 @@
 #include "cdc/Cdc.hpp"
 #include "formats/Formats.hpp"
 #include "game/Game.hpp"
+#include "physics/Physics.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -116,10 +117,20 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
     }
     if (const auto s = field(0x30)) t->tuning.senses = t->tuning.combatSenses = readSenses(drm->sections[s->section], s->offset);
     if (const auto s = field(0x38)) t->tuning.combatSenses = readSenses(drm->sections[s->section], s->offset);
-    if (const auto w = field(0x20)) t->weapon = read<uint16_t>(drm->sections[w->section], w->offset + 2); // 0x614400 -> 0x614950 attaches it
+    if (const auto w = field(0x20)) { // 0x614400 -> 0x614950 attaches it: {+2 gun, +8 segment field} (guns 2 / 3 at +4 / +6, none here)
+        t->weapon = read<uint16_t>(drm->sections[w->section], w->offset + 2);
+        t->gunMarker = read<int16_t>(drm->sections[w->section], w->offset + 8);
+    }
     if (const auto list = t->weapon ? bigfile.read("\\tr8\\pc-w\\objectlist.txt") : std::nullopt) {
         const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
         if (const auto n = names.find(t->weapon); n != names.end()) t->weaponObject = n->second;
+        if (const auto gun = t->weaponObject.empty() ? std::nullopt : loadWeapon(bigfile, t->weaponObject)) t->muzzle = gun->muzzle;
+        const auto phys = physics::loadObjectPhysics(*drm); // segment field: < 0 HInfo marker -id (poachers -75), >= 0 segment
+        int seg = t->gunMarker;
+        for (const auto& m : phys.hmarkers)
+            if (-m.id == t->gunMarker) seg = m.segment;
+        if (const auto f = phys.frame(t->gunMarker); f && seg >= 0)
+            t->gunSegment = seg, t->gunMount = glm::inverse(phys.segments[size_t(seg)]) * *f;
     }
 
     // Clip refs {s16 type, s16 idx}: type 1 -> ObjectBase +0x60 table (count +0x5C, 0x24-byte entries), entry +4 -> s16

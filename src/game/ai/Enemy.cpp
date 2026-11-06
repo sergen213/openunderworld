@@ -470,13 +470,19 @@ int Enemy::readyFire() const {
     return -1;
 }
 
-// One shot of the current fire record: a ray from the muzzle ([I] eye height, one radius ahead) at Lara's chest,
-// [I] kMissChance of them aimed 1.5..3 of her radii aside; it stops at the first wall (line of fire) or Lara's
-// capsule, which takes rec+0x154.
+// One shot of the current fire record: a ray from the gun's shot origin (EnemyType::muzzle on the gun riding its
+// marker; [I] eye height, one radius ahead without one) at Lara's chest, [I] kMissChance of them aimed 1.5..3 of her
+// radii aside; it stops at the first wall (line of fire) or Lara's capsule, which takes rec+0x154.
 void Enemy::shoot(const collision::CollisionMesh& col, const Target& lara, const HurtFn& hurt, std::vector<Shot>* shots) {
     const Attack& a = type_->tuning.attacks[size_t(s_.fire)];
     const EnemyTuning& t = type_->tuning;
-    const vec3 from = s_.pos + vec3(0, 0, t.height * 0.8f) + vec3(std::cos(s_.yaw), std::sin(s_.yaw), 0) * t.radius;
+    const int seg = type_->gunSegment;
+    // no gun marker: a gun facing the heading with its shot origin there
+    const glm::mat4 gun = seg >= 0 && size_t(seg) < bones_.size()
+                              ? modelMatrix(s_.pos, s_.yaw, s_.tip, s_.tilt) * bones_[size_t(seg)] * type_->gunMount
+                              : modelMatrix(s_.pos + vec3(0, 0, t.height * 0.8f) + vec3(std::cos(s_.yaw), std::sin(s_.yaw), 0) * t.radius, s_.yaw) *
+                                    glm::inverse(type_->muzzle);
+    const vec3 from(gun * type_->muzzle[3]);
     const vec3 target = lara.alive ? lara.pos : s_.lastSeen;
     vec3 aim = target + vec3(0, 0, lara.height * 0.6f);
     if (frand(s_.rng) < kMissChance) {
@@ -494,7 +500,7 @@ void Enemy::shoot(const collision::CollisionMesh& col, const Target& lara, const
         len = tl;
         if (hurt) hurt(a.damage, from, a.type == 2 ? kDamageHeavy : kDamageLight);
     }
-    if (shots) shots->push_back({uid_, from, from + dir * len, hit});
+    if (shots) shots->push_back({uid_, from, from + dir * len, hit, gun});
 }
 
 // Collide-and-slide of the body capsule (as Player::slide; walls push sideways only), ground snap within
