@@ -326,11 +326,13 @@ LightSet pickLights(const scene::Environment& env, Reaches reaches) {
 }
 } // namespace
 
-LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius) {
-    return pickLights(env, [&](const scene::Light& l) { return glm::distance(glm::make_vec3(l.position), center) - radius < l.radius; });
+LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius, uint32_t receiver) {
+    return pickLights(env, [&](const scene::Light& l) {
+        return (l.mask & receiver) && glm::distance(glm::make_vec3(l.position), center) - radius < l.radius;
+    });
 }
 
-LightSet lightSet(const scene::Environment& env, std::span<const std::array<float, 6>> boxes, const glm::mat4& model) {
+LightSet lightSet(const scene::Environment& env, std::span<const std::array<float, 6>> boxes, const glm::mat4& model, uint32_t receiver) {
     // World boxes: centre moved by `model`, half extents by |rotation-scale| (terrain models are translations).
     thread_local std::vector<std::array<float, 6>> world;
     world.clear();
@@ -346,7 +348,7 @@ LightSet lightSet(const scene::Environment& env, std::span<const std::array<floa
         }
     }
     return pickLights(env, [&](const scene::Light& l) {
-        if (!scene::sphereTouchesBox(l.position, l.radius, all)) return false;
+        if (!(l.mask & receiver) || !scene::sphereTouchesBox(l.position, l.radius, all)) return false;
         return std::ranges::any_of(world, [&](const auto& w) { return scene::sphereTouchesBox(l.position, l.radius, w); });
     });
 }

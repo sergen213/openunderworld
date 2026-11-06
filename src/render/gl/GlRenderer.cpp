@@ -325,6 +325,7 @@ struct GpuMesh {
     glm::mat4 model;
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
+    uint32_t lightMask = ~0u;           // scene::MeshData::lightMask
     // Terrain light groups (scene::MeshData::lightBoxes) and the object slot of the first one (objectSlot).
     std::vector<std::vector<std::array<float, 6>>> lightBoxes;
     uint32_t lightSlot = 0;
@@ -633,6 +634,7 @@ public:
             }
             g.key = keyed ? m.key : 0;
             g.source = i;
+            g.lightMask = m.lightMask;
             bindOriginals(g, m);
             r.bounds.lo = glm::min(r.bounds.lo, g.bounds.lo), r.bounds.hi = glm::max(r.bounds.hi, g.bounds.hi);
             r.meshes.push_back(std::move(g));
@@ -1401,7 +1403,7 @@ private:
         objectScratch_.assign(std::max(objectSlots_, 2 * n) * stride, 0);
         for (size_t i = 0; i < n; ++i) {
             auto& block = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * stride]);
-            original::fillObject(block, vpD3D, r.meshes[i].model, original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius),
+            original::fillObject(block, vpD3D, r.meshes[i].model, original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius, r.meshes[i].lightMask),
                                  i < opacity_.size() ? opacity_[i] : 1.0f);
             original::fillWaves(block, o.waterVolumes, r.meshes[i].center, r.meshes[i].radius);
             block.irradiance = irradiance_.slot(i);
@@ -1409,7 +1411,7 @@ private:
             for (size_t k = 0; k < g.lightBoxes.size() && g.lightSlot + k < objectSlots_; ++k) {
                 auto& group = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(g.lightSlot + k) * stride]);
                 group = block;
-                std::memcpy(group.lightSet, original::lightSet(environment_, g.lightBoxes[k], g.model).packed, sizeof group.lightSet);
+                std::memcpy(group.lightSet, original::lightSet(environment_, g.lightBoxes[k], g.model, g.lightMask).packed, sizeof group.lightSet);
             }
             if (!reflection || std::isnan(r.meshes[i].reflectZ)) continue;
             auto& lit = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(n + i) * stride]);

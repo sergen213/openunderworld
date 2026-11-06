@@ -35,10 +35,11 @@ void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene
 // Light set of one object: env.lights indices for PS light slots 0-5, one byte each (0xFF = empty).
 struct LightSet { uint32_t packed[2] = {~0u, ~0u}; };
 // The lights whose radius reaches the world-space sphere (center, radius), grouped into slots as tru.exe.
-LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius);
+LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius, uint32_t receiver = ~0u);
 // Same for a terrain light group: the lights whose radius reaches one of its mesh-space leaf `boxes` under `model`
-// (scene::MeshData::lightBoxes).
-LightSet lightSet(const scene::Environment& env, std::span<const std::array<float, 6>> boxes, const glm::mat4& model);
+// (scene::MeshData::lightBoxes). Lights whose mask misses `receiver` (scene::MeshData::lightMask) are left out.
+LightSet lightSet(const scene::Environment& env, std::span<const std::array<float, 6>> boxes, const glm::mat4& model,
+                  uint32_t receiver = ~0u);
 // World-space bounding sphere (xyz centre, w radius) of vertices under `model` (lightSet input; skinned meshes
 // recompute it in updateVertices).
 glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat4& model);

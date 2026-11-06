@@ -69,7 +69,7 @@ inline ui::GraphicsOptions graphicsMenu(const config::GraphicsConfig& g, const D
     m.rtLights = toTri(g.rtLights), m.rtReflections = toTri(g.rtReflections), m.rtAo = toTri(g.rtAo), m.rtGi = toTri(g.rtGi);
     m.msaa = indexOf(kMsaa, g.msaa), m.shadows = toTri(g.shadows), m.originalShaders = g.originalShaders.value_or(true);
     m.water = indexOf(kWater, g.water), m.waterDetail = indexOf(kWaterDetail, g.waterDetail);
-    m.atmosphere = indexOf(kAtmosphere, g.atmosphere), m.lightShafts = toTri(g.lightShafts), m.weather = indexOf(kWeather, g.weather);
+    m.atmosphere = indexOf(kAtmosphere, g.atmosphere), m.lightShafts = toTri(g.lightShafts), m.cineDof = toTri(g.cineDof), m.weather = indexOf(kWeather, g.weather);
     m.fsr = g.upscaler == "fsr", m.fsrQuality = indexOf(kFsrQuality, g.fsrQuality), m.sharpness = sharpnessStep(g.sharpness);
     m.frameGeneration = g.frameGeneration, m.effects = g.effects, m.antiLag = g.antiLag;
     return m;
@@ -92,7 +92,7 @@ inline void applyGraphicsMenu(const ui::GraphicsOptions& m, config::GraphicsConf
     g.msaa = at(kMsaa, m.msaa), g.shadows = fromTri(m.shadows);
     g.originalShaders = m.originalShaders ? std::nullopt : std::optional(false); // unset = original (as the launcher writes it)
     g.water = at(kWater, m.water), g.waterDetail = at(kWaterDetail, m.waterDetail);
-    g.atmosphere = at(kAtmosphere, m.atmosphere), g.lightShafts = fromTri(m.lightShafts), g.weather = at(kWeather, m.weather);
+    g.atmosphere = at(kAtmosphere, m.atmosphere), g.lightShafts = fromTri(m.lightShafts), g.cineDof = fromTri(m.cineDof), g.weather = at(kWeather, m.weather);
     g.upscaler = m.fsr ? "fsr" : "off", g.fsrQuality = at(kFsrQuality, m.fsrQuality);
     if (m.sharpness != sharpnessStep(g.sharpness)) g.sharpness = float(std::clamp(m.sharpness, 0, 10)) / 10;
     g.frameGeneration = m.fsr && m.frameGeneration, g.effects = m.effects, g.antiLag = m.antiLag;

@@ -336,6 +336,7 @@ struct GpuMesh {
     glm::mat4 model;
     glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;    // world-space bounding-sphere radius (original::lightSet)
+    uint32_t lightMask = ~0u; // scene::MeshData::lightMask
     std::vector<std::vector<std::array<float, 6>>> lightBoxes; // terrain light groups (scene::MeshData::lightBoxes)
     float reflectZ = std::numeric_limits<float>::quiet_NaN(); // original::reflectionPlaneZ (NaN: nothing reflects)
     std::vector<uint8_t> reflective; // per submesh: a planar-reflection material (render::reflectsWater candidates)
@@ -577,6 +578,7 @@ public:
                 continue;
             }
             g.key = keyed ? m.key : 0;
+            g.lightMask = m.lightMask;
             bounds_.lo = glm::min(bounds_.lo, g.bounds.lo), bounds_.hi = glm::max(bounds_.hi, g.bounds.hi);
             meshSlot_[mi] = meshes_.size();
             meshes_.push_back(std::move(g));
@@ -990,8 +992,8 @@ public:
             if (cache.size() <= group) cache.resize(group + 1);
             auto& [stamp, lights] = cache[group];
             if (stamp != frameCounter_ + 1)
-                stamp = frameCounter_ + 1, lights = group ? original::lightSet(environment_, m.lightBoxes[group - 1], m.model)
-                                                          : original::lightSet(environment_, m.center, m.radius);
+                stamp = frameCounter_ + 1, lights = group ? original::lightSet(environment_, m.lightBoxes[group - 1], m.model, m.lightMask)
+                                                          : original::lightSet(environment_, m.center, m.radius, m.lightMask);
             original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
             original::fillWaves(ob, options.waterVolumes, m.center, m.radius);
             ob.irradiance = irradiance_.slot(d.mesh);

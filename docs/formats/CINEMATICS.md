@@ -157,7 +157,12 @@ on a `co_light_rig` / `co_light_rig_two` instance, bones 1–4, 6, 7, type 2 (sp
   (2179 / 2444 samples of 001, 010, 030, 220), 35 % with +Z.
 - Ours: one environment light slot per entry at the front of the cinematic scene's lights (OriginalShading takes the
   first that reach an object), posed per frame through `FrameOptions::dynamicLights`; off = dark and far away.
-  Receiver masks are not applied [I]: rig lights reach the level as well as the actors.
+  Masks [O Wine, TerrainLightsPssm]: a light reaches a receiver when `light mask & receiver mask != 0` (entities
+  0x55FB60: entity `+0xE4`; terrain 0x56ABF0: cell terrain data `+0x08`, 1 in l3_main_bedroom); unit lights carry
+  0x8300000F. Ours (original shaders, `original::lightSet`): `scene::Light::mask` = the rig light's ch6 mask, the
+  cinematic actors' meshes take instance ch2 as `MeshData::lightMask`, every other mesh 1 [I: level objects as the
+  bedroom terrain] and unit lights all bits, so a rig light with ch6 16 lights the actors only, 17 also the level.
+  Not applied by the generic shading or the RT light shadows.
 
 ### Cameras (16 channels)
 
@@ -188,9 +193,10 @@ curve[i] (+0x1200) = clamp(trunc(255 |D − a| f² / (D N (a − f)) / k), 0, 25
 So the alpha of the blurred overlay is 0 at the focus and saturates away from it over the depth range; a < f (all the
 other cameras: 5 / 5.6 / 25..600) gives an all-zero curve. [O] Filter 808 has both ColorDOF blocks off (`+0x130E`,
 `+0x262E` 0; `+0x130C` DOF 1, `+0x130F` 1 = use its own range) and its fog, noise, feedback and finish blocks off, and
-0x516E70 tests `+0x130E` first: the retail PC game draws no cutscene depth of field. Ours: none with the original
-preset; the enhanced preset (`CineView::depthOfField`) draws 808 with the ColorDOF block on (its scene matrix off)
-through the screen-filter pass (`fx::System::screenFilter`).
+0x516E70 tests `+0x130E` first: the retail PC game draws no cutscene depth of field. Ours: off by default in every
+preset; graphics setting `cine_dof` (launcher "Cutscene depth of field", in-game DISPLAY SETTINGS ▸ Water & Sky
+"CUTSCENE DEPTH OF FIELD", with effects on) draws 808 with the ColorDOF block on (its scene matrix off) through the
+screen-filter pass (`fx::System::screenFilter`). Shallow cameras blur most of the frame (150_man_pinned: f/1).
 
 ### Events
 
@@ -231,7 +237,7 @@ player intro).
   costume (GAMEPLAY.md "Outfits"). Her hair is simulated on the stream's pose (`anim::HairSim` with `game::laraHair()`,
   60 Hz steps on the frame clock), reset at the first frame and [I] when her root jumps more than 200 units in a frame
   (the exe resets at frame 1 and at instance record `+0x3C`'s frame [U]).
-- Not done: events / vars (no retail stream has events), receiver masks, the cinematic DRM's own effects.
+- Not done: events / vars (no retail stream has events), the cinematic DRM's own effects.
 
 Viewed renders (`../openunderworld-work/screens/cine`): 001_pro_corridor frames 40 and 150 (Lara walking into the
 corridor, the rubble actor flying; "My god!"), 060_med_natla frames 130 ("Damn, it's too small..." close-up), 420

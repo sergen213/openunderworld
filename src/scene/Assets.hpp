@@ -123,6 +123,9 @@ struct Light {
     float nearWidth = 0;         // spot: DTP +0x14, cone radius at the light position (apex moved back)
     std::vector<uint8_t> falloff; // 256 AttenuationSampler texels (R) over d / radius: DTP +0x1C floats x 255, last 0
     float flickerPeriod = 0;     // DTP +0x420 seconds when DTP +0x41C is set, else 0 (steady)
+    // Light mask (SceneLight +0x154): the light reaches receivers with (mask & MeshData::lightMask) != 0 (tru.exe
+    // 0x55FB60 entities, 0x56ABF0 terrain). Unit lights: all (their 0x8300000F is not applied); cinematic rigs: ch6.
+    uint32_t mask = ~0u;
     std::vector<float> flicker;  // DTP +0x424: 256 intensity multipliers over one period
     // Spot cookie (DTP +0x824 flag, +0x828 texture; LEVELS.md "Lights"): projected texture id (0 = none), scale
     // (+0x82C), rotation deg/s (+0x830), uv scroll per second (+0x834 / +0x838).
@@ -223,6 +226,9 @@ struct MeshData {
     std::string origin;        // provenance, as for TextureData::origin
     std::vector<SkinInfluence> skin; // empty, or one per vertex (vertices are the bind pose)
     int32_t skeleton = -1;     // SceneData::skeletons index when skinned
+    // Receiver light mask (entity +0xE4, terrain cell data +0x08 = 1 in l3_main_bedroom) tested against Light::mask.
+    // [I] 1 for everything but cinematic actors (their instance channel 2).
+    uint32_t lightMask = 1;
     // bend_* plants: per-vertex bend basis (cdc TEXCOORD3-5, FLOAT4 each), empty otherwise. The bend VS moves a vertex by
     // t3 s.x + t4 s.x² + t5 s.y + (t3.w, t4.w, t5.w) s.y² with s = bendA * v.xy + bendB of its bone (game/Bend.hpp).
     std::vector<std::array<float, 12>> bend;
