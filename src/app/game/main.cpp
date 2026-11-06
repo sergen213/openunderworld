@@ -1461,6 +1461,7 @@ struct EffectsView {
                 ownWeight = under ? 0.0f : 1.0f - ws;
             }
         }
+        system.cameraUnderwater = under; // particle defs' water side (fx::ParticleDef::water): bubbles only under water
         if (uw.own && ownWeight > 0) waterFilters.push_back({uw.own.get(), ownWeight});
         std::copy(&uw.env.waterPass[0][0], &uw.env.waterPass[0][0] + 8, &underwater.pass[0][0]);
         // The fog set (0x5C1F50: under water the water set), replaced by the filters' fog blocks as far as their

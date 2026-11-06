@@ -885,3 +885,58 @@ TEST(FxReal, FixtureClipVariantsAndLaraCrossfades) {
     EXPECT_TRUE(noFadeCommand(lara->events));
     for (const auto& [name, ev] : lara->clips) EXPECT_TRUE(noFadeCommand(ev)) << name;
 }
+
+// Particle defs' water side (def +0x88 >> 5 & 3, tru.exe 0x540B80 / 0x54AEC0 against the camera under water 0x5EA390):
+// a pistol shot above water draws its flash and smoke but not its bubbles, under water only the bubbles; the speargun's
+// defs are all bubbles. bullet_hit's event-0x2D records (dust / sparks) skip water hits (0x5BBFD0).
+TEST(FxReal, GunFireBubblesOnlyUnderWater) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    fx::Library lib(bf);
+    const auto gun = lib.get("wp_handgun");
+    ASSERT_TRUE(gun);
+    ASSERT_EQ(gun->particles.size(), 27u);
+    for (int d : {0, 4, 9, 11}) EXPECT_EQ(gun->particles[size_t(d)].water, 2) << d; // flash, smoke
+    for (int d : {22, 23, 24, 26}) EXPECT_EQ(gun->particles[size_t(d)].water, 1) << d; // bubbles
+    const auto drawn = [&](const char* object, bool underwater) {
+        const auto fx = lib.get(object);
+        fx::System s;
+        s.cameraUnderwater = underwater;
+        s.play(fx, *fx->clip(underwater ? "fire_submerged" : "fire"), glm::mat4(1), -1, 0);
+        render::Camera cam;
+        cam.position = {-500, 0, 0};
+        std::set<uint32_t> textures;
+        size_t particles = 0;
+        for (int t = 0; t < 12; ++t) {
+            s.tick(cam.position);
+            std::vector<render::FxVertex> v;
+            std::vector<render::FxBatch> b;
+            s.build(cam, 16.0f / 9, v, b);
+            for (const auto& x : b) textures.insert(x.textureId);
+            particles = std::max(particles, s.particleCount());
+        }
+        return std::pair{textures, particles};
+    };
+    const auto bubbles = [](const std::set<uint32_t>& t) { return t.contains(147) || t.contains(148) || t.contains(149); }; // defs 22 / 23
+    const auto [dry, dryCount] = drawn("wp_handgun", false);
+    EXPECT_TRUE(dry.contains(162)); // muzzle flash (def 0)
+    EXPECT_FALSE(bubbles(dry));
+    const auto [wet, wetCount] = drawn("wp_handgun", true);
+    EXPECT_TRUE(bubbles(wet));
+    EXPECT_FALSE(wet.contains(162));
+    EXPECT_GT(dryCount, 0u);
+    EXPECT_GT(wetCount, 0u);
+    EXPECT_EQ(drawn("wp_speargun", false).second, 0u); // nothing above water
+    EXPECT_GT(drawn("wp_speargun", true).second, 0u);
+    const auto hit = lib.get("bullet_hit");
+    ASSERT_TRUE(hit);
+    const auto* idle = hit->clip("idle");
+    ASSERT_TRUE(idle);
+    int dust = 0;
+    for (const auto& e : *idle)
+        if (e.event == 0x2D && e.runsOn(2)) {
+            ++dust;
+            EXPECT_TRUE(e.suppressed(2) && e.suppressed(3) && !e.suppressed(1));
+        }
+    EXPECT_EQ(dust, 3);
+}

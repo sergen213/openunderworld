@@ -72,6 +72,7 @@ gated by key frame (0x5BA0D0) [not used yet]. Command: u16 type + 3 u16 args. Pa
 | +0xB8 / +0xBC / +0xC0 / +0xCE | key 1 colour / size / variance / time % [O] |
 | +0xC4 / +0xC8 / +0xCC / +0xD0 | key 2 likewise [O]; key present if colour ≠ 0 or size ≥ 0; colour 0 = interpolated |
 | +0xE0..+0xEC | per-key height/width ×16 [O] |
+| +0x88 | `>> 5 & 3` water side (emitter `+0x3D >> 4`, particle `+0xA7 & 3`): 1 only while the camera is under water (0x5EA390 → DAT_00AD7DBC, view `+0xEC`), 2 only while it is not; checked at spawn (0x540B80, before the camera range) and draw (0x54AEC0 / 0x549C00) [O]. Bubbles are 1 (wp_* fire defs 22–26, the speargun's all, fx_bubbles_*), flashes / smoke / rain / falls 2; 107 objects use it. Class 4 (0x53D100) has the same pair at its def `+0x1D` (0x5488A0) [not implemented] |
 | +0xF4 / +0xF6 / +0xF8 / +0xFC | rotation / range / spin / spin range, degrees (×4096/360) [O]; spin unit [I] |
 | +0x110 / +0x114 | texture id / → texture list (list wins) [O] |
 | +0x11C..+0x11F | per-key blend, low 3 bits: 1 alpha, 2 additive, 3 opaque, 4 rev-subtract, 5 DESTCOLOR/SRCALPHA (0x52AE60) [O] |
@@ -123,6 +124,10 @@ back-to-front, depth-tested without writes, `tex × colour × 2`.
   keep their fade there, info 0x2401). Type-0 records with a pointer at `+0xC` are skipped.
   Parsed into `ObjectFx::clips`; `System::runEvents` (frame span) and `System::play` (one-shot instance, later frames
   fire as ticks pass).
+  An effect record of event byte 0x2C runs only with the snow amount (never set); event byte 0x2D only on an instance
+  not in water (material ≠ 2, 3; 0x5BBFD0): bullet_hit / bullet_hit_shotgun(_underwater) sparks 61/63 (11/14) and
+  glow 2, the only users (`Event::suppressed`). The fire lists themselves carry no water condition: `fire` and
+  `fire_submerged` differ only in their sounds; the water side is the particle defs' (`+0x88` above).
 - Material = collision face byte `+0x10` (tru.exe 0x6F06B0 copies the floor face's to Lara's `+0x186`). From
   bullet_hit's per-material lists and Lara's footstep lists: 1 stone (most faces), 2/3 water (Lara: 2 in water),
   4 dirt, 5 ice, 6 wood, 7 metal, 8 carpet, 9 snow, 11 plaster, 12 glass, 13 unbreakable glass, 14 sand, 15 mud,

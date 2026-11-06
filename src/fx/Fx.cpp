@@ -165,6 +165,7 @@ ParticleDef parseParticleDef(std::span<const uint8_t> d) {
     p.colour0 = rd<uint32_t>(d, 0x38), p.colourLast = rd<uint32_t>(d, 0x3C);
     p.duration = rd<int16_t>(d, 0x44), p.life = std::max<uint16_t>(1, rd<uint16_t>(d, 0x46)), p.lifeVar = rd<uint8_t>(d, 0x7C);
     p.rate = rd<float>(d, 0x48);
+    p.water = (rd<uint8_t>(d, 0x88) >> 5) & 3;
     p.fadeFar = rd<uint16_t>(d, 0x5A), p.fadeNear = rd<uint16_t>(d, 0x5C);
     p.screenFadeStart = rd<float>(d, 0x60), p.screenFadeEnd = rd<float>(d, 0x64);
     p.shape = rd<uint8_t>(d, 0x68);
@@ -830,7 +831,7 @@ int System::runEvents(const std::shared_ptr<const ObjectFx>& fx, const std::vect
         // Effect records with event byte 0x2C (Lara's breath condensation in ng_idle & co.) run only while the snow amount
         // DAT_00ae4d80 is set (tru.exe 0x7181A0 Lara, 0x5B9C40 others). Only globaleffect 8 (0x4A4F90) and effect command
         // 7 (0x547B40) set it, and no script or effect list in the data uses either: the breath never shows.
-        if (e.runsOn(material)) n += e.event == 0x2C ? 0 : runCommand(fx, e.cmd, world, owner, bones);
+        if (e.runsOn(material)) n += e.suppressed(material) ? 0 : runCommand(fx, e.cmd, world, owner, bones);
         else if (sound && fx && e.soundOn(material))
             sound(*fx, e, glm::vec3((world * (e.sound.kind == 3 ? glm::mat4(1) : fx->frame(e.sound.segment, bones)))[3]), material);
         else if (fx && e.slotSound() && e.matches(material))
@@ -855,7 +856,7 @@ int System::runVariant(const std::shared_ptr<const ObjectFx>& fx, const std::vec
     if (!fx) return 0;
     for (const auto& e : events) {
         if (e.variant() != variant || (e.material() && e.material() != material)) continue;
-        if (e.effect()) n += runCommand(fx, e.cmd, world, owner, bones);
+        if (e.effect()) n += e.suppressed(material) ? 0 : runCommand(fx, e.cmd, world, owner, bones);
         else if (sound && e.isSound())
             sound(*fx, e, glm::vec3((world * (e.sound.kind == 3 ? glm::mat4(1) : fx->frame(e.sound.segment, bones)))[3]), material);
         else if (e.slotSound()) runSlotSound(*this, *fx, e, world, owner, material, bones);
@@ -1000,12 +1001,14 @@ void System::tick(const glm::vec3& camera) {
             if (const auto pose = poses_.find(e.owner); pose != poses_.end()) place(e, pose->second.world, pose->second.bones);
         const ParticleDef& d = *e.def;
         const float dist2 = glm::dot(camera - e.origin, camera - e.origin);
-        // Emitter +0x2C / +0x30 = def +0x74 / +0x78 squared: outside that camera range nothing spawns (0x540D82).
+        // Emitter +0x2C / +0x30 = def +0x74 / +0x78 squared: outside that camera range nothing spawns (0x540D82); nor
+        // while the camera's side of the water is not the def's (ParticleDef::water, just before 0x540D82).
         const bool inRange = !(d.maxDistance > 0 && dist2 > d.maxDistance * d.maxDistance) &&
-                             !(d.minDistance > 0 && dist2 < d.minDistance * d.minDistance);
+                             !(d.minDistance > 0 && dist2 < d.minDistance * d.minDistance) && waterShows(d);
+        if (!waterShows(d) && e.burst) e.stopped = true; // a burst on the wrong side never fires later [I]
         if (d.mode == 2) { // one persistent particle (emitter +0x11 == 2) [I]: spawned once, kept alive
             auto it = std::find_if(particles_.begin(), particles_.end(), [&](const Particle& p) { return p.id == e.persistent; });
-            if (it == particles_.end()) spawn(e, camera);
+            if (it == particles_.end()) { if (waterShows(d)) spawn(e, camera); }
             else it->age = std::min(it->age, it->life / 2);
         } else if (inRange) {
             int n = 0;
@@ -1096,7 +1099,7 @@ void System::build(const render::Camera& camera, float aspect, std::vector<rende
     for (const auto& p : particles_) {
         const ParticleDef& d = *p.def;
         const float depth = glm::dot(p.pos - camera.position, fwd);
-        if (depth < 16.0f || d.keys.empty()) continue; // 0x54B0A0: 16 <= z
+        if (depth < 16.0f || d.keys.empty() || !waterShows(d)) continue; // 0x54B0A0: 16 <= z; 0x54AEC0 +0xA7
         // Neither texture, list nor material: nothing to draw.
         if (!d.model() && !d.texture && d.textures.empty() && d.materials.empty()) continue;
         const float t = std::clamp(float(p.age) / float(p.life), 0.0f, 1.0f);

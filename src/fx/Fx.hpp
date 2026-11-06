@@ -62,6 +62,9 @@ struct ParticleDef {
     uint16_t fadeFar = 0, fadeNear = 0;    // +0x5A / +0x5C camera-distance fade-in band
     float screenFadeStart = 0, screenFadeEnd = 0; // +0x60 / +0x64 on-screen size fade (NDC half-size / 2)
     uint8_t shape = 0;                     // +0x68 spawn shape
+    // +0x88 >> 5 & 3 (0x543F70 -> emitter +0x3D >> 4, particle +0xA7): 1 only while the camera is under water
+    // (bubbles), 2 only while it is not (flashes, smoke): spawned (0x540B80) and drawn (0x54AEC0 / 0x549C00) only then.
+    uint8_t water = 0;
     float maxDistance = 0, minDistance = 0; // +0x74 / +0x78 emit only while the camera is in range (0 = off)
     int16_t radialSegment = kNoSegment, velocitySegment = kNoSegment, offsetSegment = kNoSegment; // +0x94/+0x96/+0xAA
     uint8_t animRate = 0;                  // +0xB1 texture frame rate (0 random frame per particle)
@@ -275,6 +278,9 @@ struct Event {
     // Anim-list record that runs on an instance standing on / hit at `material`.
     bool runsOn(uint8_t mat) const { return effect() && matches(mat); }
     bool soundOn(uint8_t mat) const { return isSound() && matches(mat); }
+    // An effect record tru.exe 0x5BBFD0 skips on an instance of material `mat`: event byte 0x2C needs the snow amount
+    // (never set, System::runEvents), 0x2D is dry only (not on material 2 / 3, in water: bullet_hit's dust and sparks).
+    bool suppressed(uint8_t mat) const { return event == 0x2C || (event == 0x2D && (mat == 2 || mat == 3)); }
     // Kind 2 command 0x60 (tru.exe 0x5B69C0 -> 0x593D50): the instance's SoundComponent slot a2 & 0xFF, action a2 >> 8
     // (0 stop = release, 1 start unless it plays, else restart); a1 & 0xFF == 0xFF or slot 0xFF: nothing.
     bool slotSound() const { return (info & 3) == 2 && !(info & 4) && cmd.type == 0x60 && (cmd.a1 & 0xFF) != 0xFF && (cmd.a2 & 0xFF) != 0xFF; }
@@ -383,6 +389,7 @@ public:
     // Pad rumble commands 0xD..0x10 (0x547B40): owner and its position (0x10 scales by the distance to it).
     std::function<void(const Command&, int32_t owner, glm::vec3 position)> rumble;
     bool visuals = true; // false (ou-game --fx off): commands start nothing but instance fades; sequences run for `sound`
+    bool cameraUnderwater = false; // tru.exe 0x5EA390 (DAT_00AD7DBC, view +0xEC): gates ParticleDef::water
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     void moveOwner(int32_t owner, const glm::vec3& delta); // its emitters' origins (effects carried by a moving instance)
     bool hasOwner(int32_t owner) const;
@@ -470,6 +477,7 @@ private:
         uint32_t persistent = 0; // mode 2: id + 1 of its particle
     };
     void place(Emitter& e, const glm::mat4& world, std::span<const glm::mat4> bones) const;
+    bool waterShows(const ParticleDef& d) const { return d.water == 1 ? cameraUnderwater : d.water == 2 ? !cameraUnderwater : true; }
     struct Particle {
         const ParticleDef* def = nullptr;
         std::shared_ptr<const ObjectFx> fx; // keeps def alive
