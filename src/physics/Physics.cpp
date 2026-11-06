@@ -25,12 +25,16 @@
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/StateRecorderImpl.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <map>
+#include <set>
 
 namespace ou::physics {
 namespace {
@@ -240,6 +244,8 @@ struct Axis {
     JPH::BodyID body;
     JPH::Ref<JPH::TwoBodyConstraint> c;
     float ref = 0;
+    JPH::RVec3 pos0;   // the body's pose at coordinate 0 (constraints are built from poses derived from it)
+    JPH::Quat rot0;
     JPH::HingeConstraint* h() const { return static_cast<JPH::HingeConstraint*>(c.GetPtr()); }
     JPH::SliderConstraint* s() const { return static_cast<JPH::SliderConstraint*>(c.GetPtr()); }
     float q() const { return ref + (hinge ? h()->GetCurrentAngle() : s()->GetCurrentPosition()); }
@@ -280,6 +286,8 @@ public:
     JPH::Ref<JPH::ConstraintSettings> GetConstraintSettings() const override { return new Settings; }
     JPH::Mat44 GetConstraintToBody1Matrix() const override { return JPH::Mat44::sIdentity(); }
     JPH::Mat44 GetConstraintToBody2Matrix() const override { return JPH::Mat44::sIdentity(); }
+    void SaveState(JPH::StateRecorder& s) const override { TwoBodyConstraint::SaveState(s), s.Write(total_); }
+    void RestoreState(JPH::StateRecorder& s) override { TwoBodyConstraint::RestoreState(s), s.Read(total_); }
 #ifdef JPH_DEBUG_RENDERER
     void DrawConstraint(JPH::DebugRenderer*) const override {}
 #endif
@@ -387,6 +395,32 @@ struct Scene::Impl {
     struct ProxyE { std::shared_ptr<const collision::CollisionMesh> shape; mat4 transform; JPH::BodyID body; };
     std::vector<ProxyE> proxies;
 
+    // Body IDs are ours, not Jolt's allocation order: the lowest free index (sequence 0), or the ID a restored state
+    // gives the body's key (Scene::restore), so a loaded scene has the bodies, IDs and constraint order it was saved
+    // with and Jolt's recorded state (velocities, contact cache, warm starts) applies bit for bit.
+    std::vector<bool> used;
+    std::map<std::string, JPH::BodyID> pendingIds; // restored key -> ID, until the body exists
+    std::set<uint32_t> reserved;                   // their indices
+    std::map<std::string, float> pendingRefs;      // restored constraint zeros (Axis::ref) by key
+    std::unique_ptr<JPH::StateRecorderImpl> pending; // the recorded Jolt state, applied in the next step
+    uint32_t pendingConstraints = 0;
+
+    JPH::BodyID add(const JPH::BodyCreationSettings& s, const std::string& key, JPH::EActivation act) {
+        JPH::BodyID id;
+        if (const auto it = pendingIds.find(key); it != pendingIds.end()) {
+            id = it->second, reserved.erase(id.GetIndex()), pendingIds.erase(it);
+        } else {
+            uint32_t i = 0;
+            while (i < used.size() && (used[i] || reserved.contains(i))) ++i;
+            id = JPH::BodyID(i, 0);
+        }
+        if (used.size() <= id.GetIndex()) used.resize(id.GetIndex() + 1);
+        used[id.GetIndex()] = true;
+        bi->CreateBodyWithID(id, s);
+        bi->AddBody(id, act);
+        return id;
+    }
+
     Impl() {
         layers.MapObjectToBroadPhaseLayer(kLayerJoint, JPH::BroadPhaseLayer(1));
         layers.MapObjectToBroadPhaseLayer(kLayerSolid, JPH::BroadPhaseLayer(0));
@@ -405,8 +439,21 @@ struct Scene::Impl {
         for (auto& e : joints) sys.RemoveConstraint(e.ax->c);
         for (auto& a : hingeJoints) sys.RemoveConstraint(a->c);
     }
-    // The constraint of `a` with its zero at the body's current pose.
+    // The constraint of `a` with its zero at coordinate a.ref: built with the body posed there (derived from its pose at
+    // 0, so the same everywhere), then the body is put back.
     JPH::Ref<JPH::TwoBodyConstraint> constraint(const Axis& a) {
+        JPH::RVec3 p;
+        JPH::Quat r;
+        bi->GetPositionAndRotation(a.body, p, r);
+        JPH::RVec3 at = a.pos0;
+        JPH::Quat rot = a.rot0;
+        if (a.ref != 0 && a.hinge) {
+            const JPH::Quat t = JPH::Quat::sRotation(J(a.axis), a.ref);
+            rot = (t * a.rot0).Normalized(), at = Jm(a.pivot) + t * (a.pos0 - Jm(a.pivot));
+        } else if (a.ref != 0) {
+            at = a.pos0 + J(a.axis) * a.ref;
+        }
+        bi->SetPositionAndRotation(a.body, at, rot, JPH::EActivation::DontActivate);
         JPH::Ref<JPH::TwoBodyConstraint> c;
         if (a.hinge) {
             JPH::HingeConstraintSettings s;
@@ -421,29 +468,23 @@ struct Scene::Impl {
             s.mNormalAxis1 = s.mNormalAxis2 = J(perpendicular(a.axis));
             c = bi->CreateConstraint(&s, JPH::BodyID(), a.body);
         }
+        bi->SetPositionAndRotation(a.body, p, r, JPH::EActivation::DontActivate);
         sys.AddConstraint(c);
         return c;
     }
-    std::unique_ptr<Axis> axis(JPH::BodyID body, bool hinge, vec3 pivot, vec3 dir) {
+    // The body is at coordinate 0 now; `key` finds a restored zero.
+    std::unique_ptr<Axis> axis(JPH::BodyID body, bool hinge, vec3 pivot, vec3 dir, const std::string& key) {
         auto a = std::make_unique<Axis>();
         a->hinge = hinge, a->pivot = pivot, a->axis = glm::normalize(dir), a->body = body;
+        bi->GetPositionAndRotation(body, a->pos0, a->rot0);
+        if (const auto it = pendingRefs.find(key); it != pendingRefs.end()) a->ref = it->second, pendingRefs.erase(it);
         a->c = constraint(*a);
         return a;
     }
-    // Moves the zero of `a` to coordinate `ref`: the body posed there, the constraint rebuilt, the body put back.
     void rebase(Axis& a, float ref) {
-        JPH::RVec3 p;
-        JPH::Quat r;
-        bi->GetPositionAndRotation(a.body, p, r);
-        const float d = ref - a.q();
-        const quat turn = glm::angleAxis(a.hinge ? d : 0.0f, a.axis);
-        const vec3 at = G(p) * kUnitsPerMetre;
-        const vec3 moved = a.hinge ? a.pivot + turn * (at - a.pivot) : at + a.axis * (d * kUnitsPerMetre);
-        bi->SetPositionAndRotation(a.body, Jm(moved), J(glm::normalize(turn * G(r))), JPH::EActivation::DontActivate);
         sys.RemoveConstraint(a.c);
-        a.c = constraint(a);
-        bi->SetPositionAndRotation(a.body, p, r, JPH::EActivation::DontActivate);
         a.ref = ref;
+        a.c = constraint(a);
     }
     // Limits of `a` (rad / m) for this step.
     void limits(Axis& a, bool on, float lo, float hi) {
@@ -458,11 +499,12 @@ struct Scene::Impl {
     void remove(JPH::BodyID& id) {
         if (id.IsInvalid()) return;
         bi->RemoveBody(id), bi->DestroyBody(id);
+        used[id.GetIndex()] = false;
         id = JPH::BodyID();
     }
     // A dynamic body at world centre of mass `com` with the data's mass and inertia (about com, body axes, game units).
     JPH::BodyID body(JPH::RefConst<JPH::Shape> shape, vec3 com, quat rot, JPH::ObjectLayer layer, float mass, mat3 inertia,
-                     float angularDamping = 0) {
+                     const std::string& key, float angularDamping = 0) {
         JPH::BodyCreationSettings s(shape, Jm(com), J(rot), JPH::EMotionType::Dynamic, layer);
         s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
         s.mMassPropertiesOverride.mMass = mass;
@@ -472,7 +514,7 @@ struct Scene::Impl {
         s.mAllowSleeping = layer == kLayerLoose;
         if (layer == kLayerLoose) s.mMotionQuality = JPH::EMotionQuality::LinearCast;
         else s.mLinearDamping = 0, s.mAngularDamping = angularDamping;
-        return bi->CreateAndAddBody(s, JPH::EActivation::Activate);
+        return add(s, key, JPH::EActivation::Activate);
     }
     void placeJoint(const JointE& e, float x, float v) {
         const Joint1& j = e.j;
@@ -488,9 +530,9 @@ struct Scene::Impl {
         float inertia = mass * kUnitsPerMetre * kUnitsPerMetre; // sliders lock rotation: any positive value
         if (j.hinge) // the data's inertia about the axis through the pivot, minus the centre of mass's parallel-axis share
             if (const float c = j.inertia - j.mass * (glm::dot(j.arm, j.arm) - glm::dot(j.arm, j.axis) * glm::dot(j.arm, j.axis)); c > 0) inertia = c;
-        e.body = body(new JPH::SphereShape(0.05f), j.pivot + j.arm, quat(1, 0, 0, 0), kLayerJoint, mass, mat3(inertia));
+        e.body = body(new JPH::SphereShape(0.05f), j.pivot + j.arm, quat(1, 0, 0, 0), kLayerJoint, mass, mat3(inertia), jointKey(key));
         if (j.mass <= 0) bi->SetGravityFactor(e.body, 0);
-        e.ax = axis(e.body, j.hinge, j.pivot, j.axis);
+        e.ax = axis(e.body, j.hinge, j.pivot, j.axis, jointKey(key));
         placeJoint(e, j.x, j.v);
         return e;
     }
@@ -513,36 +555,65 @@ struct Scene::Impl {
             s->SetMotorState(state), s->SetTargetVelocity(target);
         }
     }
+    static std::string jointKey(uint64_t key) { return "j" + std::to_string(key); }
     JointE* findJoint(uint64_t key) {
         for (auto& e : joints)
             if (e.key == key) return &e;
         return nullptr;
     }
-    void syncSolids(float dt) {
-        // nothing to land: no terrain meshes, no proxies
-        const bool active = !loose.empty() || std::ranges::any_of(joints, &JointE::solid);
+    // Terrain and object solids exist only while something can land on them.
+    bool landing() const { return !loose.empty() || std::ranges::any_of(joints, &JointE::solid); }
+    void createSolids() {
+        const bool active = landing();
         for (auto& t : terrain) {
             if (!active) { remove(t.body); continue; }
             if (!t.built) t.shape = meshShape(*t.t.mesh, t.t.offset), t.built = true;
             if (t.shape && t.body.IsInvalid())
-                t.body = bi->CreateAndAddBody(JPH::BodyCreationSettings(t.shape, JPH::RVec3::sZero(), JPH::Quat::sIdentity(),
-                                                                        JPH::EMotionType::Static, kLayerSolid), JPH::EActivation::DontActivate);
+                t.body = add(JPH::BodyCreationSettings(t.shape, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static,
+                                                       kLayerSolid), "t" + t.t.name, JPH::EActivation::DontActivate);
         }
-        for (auto& p : proxies) {
+        for (size_t i = 0; i < proxies.size(); ++i) {
+            auto& p = proxies[i];
             if (!active) { remove(p.body); continue; }
-            const vec3 pos(p.transform[3]);
-            const quat rot = glm::normalize(glm::quat_cast(mat3(p.transform)));
-            if (p.body.IsInvalid()) {
-                if (const auto shape = meshShape(*p.shape, vec3(0))) {
-                    JPH::BodyCreationSettings s(shape, Jm(pos), J(rot), JPH::EMotionType::Kinematic, kLayerSolid);
-                    s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided; // meshes have no volume
-                    s.mMassPropertiesOverride.mMass = 1, s.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
-                    p.body = bi->CreateAndAddBody(s, JPH::EActivation::Activate);
-                }
-            } else {
-                bi->MoveKinematic(p.body, Jm(pos), J(rot), dt);
+            if (!p.body.IsInvalid()) continue;
+            if (const auto shape = meshShape(*p.shape, vec3(0))) {
+                JPH::BodyCreationSettings s(shape, Jm(vec3(p.transform[3])), J(glm::normalize(glm::quat_cast(mat3(p.transform)))),
+                                            JPH::EMotionType::Kinematic, kLayerSolid);
+                s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided; // meshes have no volume
+                s.mMassPropertiesOverride.mMass = 1, s.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
+                p.body = add(s, "p" + std::to_string(i), JPH::EActivation::Activate);
             }
         }
+    }
+    void moveProxies(float dt) {
+        for (auto& p : proxies)
+            if (!p.body.IsInvalid())
+                bi->MoveKinematic(p.body, Jm(vec3(p.transform[3])), J(glm::normalize(glm::quat_cast(mat3(p.transform)))), dt);
+    }
+    // Constraints in a fixed order (hinges, joints, links as listed): Jolt solves them by their index in its list,
+    // which removals would otherwise shuffle by history.
+    std::vector<JPH::Constraint*> ordered() const {
+        std::vector<JPH::Constraint*> all;
+        for (const auto& a : hingeJoints) all.push_back(a->c.GetPtr());
+        for (const auto& e : joints) all.push_back(e.ax->c.GetPtr());
+        for (const auto& l : links) all.push_back(l.c.GetPtr());
+        return all;
+    }
+    void reorder() {
+        auto all = ordered();
+        if (all.empty()) return;
+        sys.RemoveConstraints(all.data(), int(all.size()));
+        sys.AddConstraints(all.data(), int(all.size()));
+    }
+    // The recorded state of Scene::restore, once every saved body exists again; otherwise the rebuilt scene stands.
+    void applyRestore() {
+        if (pendingIds.empty() && sys.GetConstraints().size() == pendingConstraints) {
+            reorder();
+            if (!sys.RestoreState(*pending)) std::fprintf(stderr, "physics: recorded state did not apply\n");
+        } else {
+            std::fprintf(stderr, "physics: saved scene not rebuilt alike (%zu bodies missing), state not restored\n", pendingIds.size());
+        }
+        pending.reset(), pendingIds.clear(), reserved.clear(), pendingRefs.clear();
     }
 };
 
@@ -559,7 +630,7 @@ int Scene::addBody(const MassProps& m, const mat4& model) {
     b.pos = vec3(model * glm::vec4(m.com, 1));
     // angular damping 0.5 / s [I], as the hand-written solver before it
     const auto id = impl_->body(new JPH::SphereShape(0.05f), b.pos, b.rot, kLayerJoint, m.mass > 0 ? m.mass : 1.0f,
-                                m.mass > 0 ? m.inertia : mat3(kUnitsPerMetre * kUnitsPerMetre), 0.5f);
+                                m.mass > 0 ? m.inertia : mat3(kUnitsPerMetre * kUnitsPerMetre), "h" + std::to_string(bodies.size()), 0.5f);
     if (m.mass <= 0) impl_->bi->SetMotionType(id, JPH::EMotionType::Static, JPH::EActivation::DontActivate);
     impl_->hingeBodies.push_back(id);
     bodies.push_back(b);
@@ -575,7 +646,7 @@ int Scene::addHinge(int body, vec3 anchor, vec3 axis, float lo, float hi) {
     const mat4 m = b.model();
     h.worldAnchor = vec3(m * glm::vec4(anchor, 1));
     h.worldAxis = mat3(m) * h.localAxis;
-    impl_->hingeJoints.push_back(impl_->axis(impl_->hingeBodies[size_t(body)], true, h.worldAnchor, h.worldAxis));
+    impl_->hingeJoints.push_back(impl_->axis(impl_->hingeBodies[size_t(body)], true, h.worldAnchor, h.worldAxis, "h" + std::to_string(hinges.size())));
     hinges.push_back(h);
     return int(hinges.size()) - 1;
 }
@@ -668,7 +739,8 @@ void Scene::setLoose(std::span<const Loose> loose) {
         MassProps mp = massProps(*l.physics);
         if (mp.mass <= 0) mp.mass = 666, mp.com = vec3(0, 0, 20), mp.inertia = mat3(0.4f * 666 * 20 * 20); // tru.exe's fallback mass [O]
         const quat rot = glm::normalize(glm::quat_cast(mat3(l.model)));
-        next.push_back({l.id, m.body(looseShape(*l.physics, mp.com), vec3(l.model * glm::vec4(mp.com, 1)), rot, kLayerLoose, mp.mass, mp.inertia), mp.com});
+        next.push_back({l.id, m.body(looseShape(*l.physics, mp.com), vec3(l.model * glm::vec4(mp.com, 1)), rot, kLayerLoose, mp.mass,
+                                     mp.inertia, "l" + std::to_string(l.id)), mp.com});
     }
     for (auto& e : m.loose)
         if (e.id != INT32_MIN) m.remove(e.body);
@@ -722,8 +794,12 @@ void Scene::blast(vec3 at, float radius, float near, float edge) {
     for (const auto& l : impl_->loose) push(l.body);
 }
 
+// Order: new solids, a pending restored state (Scene::restore), drives (which may rebuild constraints), kinematic
+// moves, the fixed constraint order, Jolt's step. A loaded scene therefore steps exactly as the saved one would have.
 void Scene::step(float dt) {
     Impl& m = *impl_;
+    m.createSolids();
+    if (m.pending) m.applyRestore();
     for (size_t i = 0; i < hinges.size(); ++i) { // limits; motor toward the target, rate-limited, landing on it
         const Hinge& h = hinges[i];
         Axis& a = *m.hingeJoints[i];
@@ -743,7 +819,8 @@ void Scene::step(float dt) {
                 if (const auto* d = m.findJoint(l.l.driver); d && d->live && d->live->push != 0) followerOfPush = true;
         m.driveJoint(e, *e.live, followerOfPush);
     }
-    m.syncSolids(dt);
+    m.moveProxies(dt);
+    m.reorder();
     m.sys.Update(dt, 1, &m.temp, &m.jobs);
     for (size_t i = 0; i < bodies.size(); ++i) {
         JPH::RVec3 p;
@@ -765,6 +842,73 @@ void Scene::step(float dt) {
         j.push = 0;
         e.x = j.x, e.v = j.v, e.live = nullptr;
     }
+}
+
+// Layout (version 1): body count, {key, Jolt BodyID}; constraint zero count, {key, ref}; constraint count; then
+// PhysicsSystem::SaveState(All): global, bodies, contact cache, constraints (our link rows record their warm start).
+std::string Scene::save() const {
+    const Impl& m = *impl_;
+    JPH::StateRecorderImpl r;
+    const auto str = [&](const std::string& s) { r.Write(uint32_t(s.size())), r.WriteBytes(s.data(), s.size()); };
+    std::vector<std::pair<std::string, JPH::BodyID>> ids;
+    std::vector<std::pair<std::string, float>> refs;
+    for (size_t i = 0; i < m.hingeBodies.size(); ++i) ids.push_back({"h" + std::to_string(i), m.hingeBodies[i]});
+    for (size_t i = 0; i < m.hingeJoints.size(); ++i) refs.push_back({"h" + std::to_string(i), m.hingeJoints[i]->ref});
+    for (const auto& e : m.joints) ids.push_back({Impl::jointKey(e.key), e.body}), refs.push_back({Impl::jointKey(e.key), e.ax->ref});
+    for (const auto& l : m.loose) ids.push_back({"l" + std::to_string(l.id), l.body});
+    for (const auto& t : m.terrain)
+        if (!t.body.IsInvalid()) ids.push_back({"t" + t.t.name, t.body});
+    for (size_t i = 0; i < m.proxies.size(); ++i)
+        if (!m.proxies[i].body.IsInvalid()) ids.push_back({"p" + std::to_string(i), m.proxies[i].body});
+    r.Write(uint32_t(1));
+    r.Write(uint32_t(ids.size()));
+    for (const auto& [key, id] : ids) str(key), r.Write(id.GetIndexAndSequenceNumber());
+    r.Write(uint32_t(refs.size()));
+    for (const auto& [key, ref] : refs) str(key), r.Write(ref);
+    r.Write(uint32_t(m.ordered().size()));
+    m.sys.SaveState(r, JPH::EStateRecorderState::All);
+    return r.GetData();
+}
+
+bool Scene::restore(std::string_view state) {
+    Impl& m = *impl_;
+    for (auto& l : m.links) m.sys.RemoveConstraint(l.c);
+    for (auto& e : m.joints) m.dropJoint(e);
+    clearHinges();
+    for (auto& l : m.loose) m.remove(l.body);
+    for (auto& t : m.terrain) m.remove(t.body);
+    for (auto& p : m.proxies) m.remove(p.body);
+    m.links.clear(), m.joints.clear(), m.loose.clear(), m.proxies.clear();
+    m.pending.reset(), m.pendingIds.clear(), m.reserved.clear(), m.pendingRefs.clear();
+    auto r = std::make_unique<JPH::StateRecorderImpl>();
+    r->WriteBytes(state.data(), state.size());
+    const auto str = [&] {
+        uint32_t n = 0;
+        r->Read(n);
+        std::string s(r->IsFailed() || n > state.size() ? 0 : n, '\0');
+        r->ReadBytes(s.data(), s.size());
+        return s;
+    };
+    uint32_t version = 0, count = 0;
+    r->Read(version), r->Read(count);
+    if (version != 1 || r->IsFailed()) return false;
+    for (uint32_t i = 0; i < count && !r->IsFailed(); ++i) {
+        const std::string key = str();
+        uint32_t raw = 0;
+        r->Read(raw);
+        const JPH::BodyID id(raw);
+        if (id.GetIndex() >= 4096) return m.pendingIds.clear(), m.reserved.clear(), false;
+        m.pendingIds[key] = id, m.reserved.insert(id.GetIndex());
+    }
+    r->Read(count);
+    for (uint32_t i = 0; i < count && !r->IsFailed(); ++i) {
+        const std::string key = str();
+        r->Read(m.pendingRefs[key]);
+    }
+    r->Read(m.pendingConstraints);
+    if (r->IsFailed()) return m.pendingIds.clear(), m.reserved.clear(), m.pendingRefs.clear(), false;
+    m.pending = std::move(r);
+    return true;
 }
 
 } // namespace ou::physics

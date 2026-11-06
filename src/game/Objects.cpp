@@ -197,12 +197,16 @@ nlohmann::json World::serializeObjects() const {
         for (const auto& w : rt.watches) watches.push_back({w.section, w.joint, w.range, w.mode, w.inside});
         e["joints"] = std::move(joints), e["links"] = rt.links, e["watches"] = std::move(watches);
     }
-    return {{"uber", std::move(uber)}, {"held", held_}};
+    // The physics scene (src/physics Scene::save, hex): a load continues the simulation bit for bit. Older saves lack it.
+    std::string physics;
+    for (const unsigned char c : physics_.save()) physics += "0123456789abcdef"[c >> 4], physics += "0123456789abcdef"[c & 15];
+    return {{"uber", std::move(uber)}, {"held", held_}, {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
 }
 
 void World::restoreObjects(const nlohmann::json& j) {
     std::map<int32_t, nlohmann::json> saved;
     int32_t held = 0;
+    std::string physicsState;
     if (j.is_object()) {
         try {
             const nlohmann::json uber = j.value("uber", nlohmann::json::object());
@@ -227,6 +231,16 @@ void World::restoreObjects(const nlohmann::json& j) {
                 saved[std::stoi(key)] = e;
             }
             held = j.value("held", 0);
+            if (const auto p = j.find("physics"); p != j.end() && p->value("version", 0) == 1) {
+                const std::string hex = p->at("state").get<std::string>();
+                if (hex.size() % 2) throw std::runtime_error("odd physics state");
+                const auto nibble = [](char c) {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    throw std::runtime_error("bad physics state");
+                };
+                for (size_t i = 0; i < hex.size(); i += 2) physicsState.push_back(char(nibble(hex[i]) << 4 | nibble(hex[i + 1])));
+            }
         } catch (const nlohmann::json::exception& e) {
             throw std::runtime_error(std::string("objects: ") + e.what());
         } catch (const std::logic_error& e) {
@@ -236,7 +250,9 @@ void World::restoreObjects(const nlohmann::json& j) {
     uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberMotion_.clear(), uberEvents_.clear();
     uberSaved_ = std::move(saved);
     held_ = held;
-    physics_.setLoose({}); // loaded loose bodies start again from their saved offset
+    // The saved scene's IDs and recorded state (applied once its bodies exist again); older saves: loose bodies start
+    // again from their saved offset and rotation.
+    if (physicsState.empty() || !physics_.restore(physicsState)) physics_.setLoose({});
     syncedObjects_ = ~size_t(0); // prepare the loaded uber objects on the next tick
 }
 

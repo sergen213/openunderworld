@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ou::physics {
@@ -170,6 +171,12 @@ public:
     // loose bodies.
     void blast(vec3 at, float radius, float near, float edge);
     void step(float dt); // one fixed tick
+    // The scene's state for a save: body IDs by entity, constraint zeros and Jolt's recorded state (bodies, contact
+    // cache, constraints). restore() drops the scene; as the caller re-creates the same entities they get the saved IDs
+    // and zeros, and the next step() applies the recorded state, so the run continues bit for bit. false: not a state
+    // this version wrote (the rebuilt scene stands); a scene rebuilt differently skips the recorded state.
+    std::string save() const;
+    bool restore(std::string_view state);
 
 private:
     struct Impl;

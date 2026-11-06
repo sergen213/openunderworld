@@ -158,9 +158,17 @@ type 2, is [I].
     240 units/s while it is in range (Lara's rope on the Havok body; our heave runs no force); the head then slides
     down its rail onto grooved plate 752 and drops free when the rail goes.
   - Pressure plates are still weighed by the footprint rule (`World::tickPlates`: Lara, push blocks or a loose body
-    resting over the plate's top); Jolt contacts are not read, as the plate is a script joint, not a Jolt body. The
-    tumbling rotation is not saved (a load restarts it upright at its offset). `Physics.LooseBodiesLandStackAndTumble`,
-    `ProgressionReal.CriticalGates` (l1_kraken_entrance 748: head 751 on plate 752, weight 750 on plate 753).
+    resting over the plate's top); Jolt contacts are not read, as the plate is a script joint, not a Jolt body.
+    `Physics.LooseBodiesLandStackAndTumble`, `ProgressionReal.CriticalGates` (l1_kraken_entrance 748: head 751 on plate
+    752, weight 750 on plate 753).
+- Saves: `World::serializeObjects` writes `physics` {version 1, hex of `Scene::save`}: each body's Jolt ID by entity
+  key (hinge index, joint key, loose id, unit name, collider index), each constraint's zero (`Axis::ref`), the constraint
+  count, then `PhysicsSystem::SaveState(All)` (velocities, sleep, contact cache, warm starts; our link rows record
+  theirs). Body IDs are ours (the lowest free index, never Jolt's allocation order) and constraints are re-listed in a
+  fixed order every step, so a load that re-creates the same entities gets the saved IDs and zeros and its next step
+  applies the recorded state: the run continues bit for bit (`StreamReal.UberJointSaveLoad`,
+  `StreamReal.UberStateSaveLoad`, `Physics.SavedSceneContinuesBitIdentically`). Saves without it (older ones) rebuild
+  the scene from the objects; a loose body's rotation is also saved with its object (`body`), for those.
 
 ## Havok → Jolt
 

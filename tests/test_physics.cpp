@@ -288,3 +288,40 @@ TEST(Physics, LooseBodiesLandStackAndTumble) {
     s.setLoose({}), s.step(kDt);
     EXPECT_FALSE(s.loose(1));
 }
+
+// Scene::save / restore: a scene saved mid-tumble (bodies in contact, a body removed earlier so IDs are not in creation
+// order) and restored into a fresh scene whose caller re-creates the same entities continues bit for bit.
+TEST(Physics, SavedSceneContinuesBitIdentically) {
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {0, 0, -50}), {6000, 6000, 100});
+    floor.build();
+    physics::ObjectPhysics o;
+    o.segments = {glm::mat4(1)};
+    physics::Prim p;
+    p.kind = physics::PrimKind::Box, p.size = {100, 100, 100}, p.pos = {0, 0, 50}, p.mass = 50;
+    o.prims = {p};
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    std::vector<physics::Scene::Loose> loose{
+        {7, &o, glm::translate(glm::mat4(1), {0, 0, 200})},
+        {1, &o, glm::translate(glm::mat4(1), {20, 0, 400}) * glm::rotate(glm::mat4(1), 0.6f, {1, 0, 0})},
+        {2, &o, glm::translate(glm::mat4(1), {-30, 10, 650}) * glm::rotate(glm::mat4(1), 0.4f, {0, 1, 0})}};
+    physics::Joint1 ramp; // a joint too: its constraint zero and warm start travel with the state
+    ramp.mass = 100, ramp.axis = {0, 0, 1}, ramp.pivot = {3000, 0, 500}, ramp.limited = true, ramp.lo = 400, ramp.hi = 400;
+    physics::Scene a;
+    const auto tick = [&](physics::Scene& s, physics::Joint1& j) { s.setJoints({{9, &j}}, {}), s.setTerrain(terrain), s.setLoose(loose), s.step(kDt); };
+    for (int i = 0; i < 40; ++i) tick(a, ramp);
+    loose.erase(loose.begin()); // body 7 goes: its ID is free again
+    for (int i = 0; i < 10; ++i) tick(a, ramp);
+    const std::string saved = a.save();
+    physics::Joint1 copy = ramp;
+    physics::Scene b;
+    ASSERT_TRUE(b.restore(saved));
+    for (int i = 0; i < 90; ++i) tick(a, ramp), tick(b, copy);
+    for (const int32_t id : {1, 2}) {
+        const auto ma = *a.loose(id), mb = *b.loose(id);
+        EXPECT_EQ(std::memcmp(&ma, &mb, sizeof ma), 0) << "body " << id;
+    }
+    EXPECT_EQ(ramp.x, copy.x);
+    EXPECT_EQ(a.save(), b.save());
+    EXPECT_FALSE(b.restore("not a state"));
+}

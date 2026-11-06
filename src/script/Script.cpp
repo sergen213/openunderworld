@@ -362,7 +362,12 @@ nlohmann::json stateOf(const Object& o) {
     if (const auto& s = o.spline)
         out["spline"] = {s->t, s->dir, s->mode, s->playing, s->toKey, s->clip, s->target, s->from, s->to, s->count};
     if (o.joint && o.joint->position != 0) out["joint"] = o.joint->position;
-    if (o.loose) out["loose"] = true;
+    if (o.loose) { // its tumbled rotation too (World poses a loose body by offset + body)
+        out["loose"] = true;
+        out["body"] = nlohmann::json::array();
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r) out["body"].push_back(o.body[c][r]);
+    }
     if (const auto& g = o.graph) out["graph"] = {g->state, g->transition, g->frames, g->clip, g->t, g->loop};
     return out;
 }
@@ -401,6 +406,9 @@ void applyState(Object& o, const nlohmann::json* s) {
     o.hidden = s->value("hidden", false), o.dead = s->value("dead", false), o.engagement = s->value("engagement", -1), o.loose = s->value("loose", false);
     const auto off = s->value("offset", std::vector<float>{0, 0, 0});
     if (off.size() == 3) o.offset = {off[0], off[1], off[2]};
+    if (const auto body = s->value("body", std::vector<float>{}); o.loose && body.size() == 16)
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r) o.body[c][r] = body[size_t(c * 4 + r)];
     if (o.script) {
         const auto fields = s->find("scriptFields");
         if (fields != s->end() && fields->is_object())
