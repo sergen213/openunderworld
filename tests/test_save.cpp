@@ -1091,7 +1091,7 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              a.fire = a.aim = t >= 40;
              return a;
          }},
-        {"l4_pool", game::Spawn{{-4000, 0, 2000}, 0}, 60, 300, [](uint64_t t) { // runs and jumps about
+        {"l4_pool", game::Spawn{{-6000, 0, 2900}, 3.1415927f}, 60, 300, [](uint64_t t) { // runs and jumps about (west, off the goo)
              game::Actions a;
              a.move = game::vec2(std::sin(float(t) * 0.02f), 1);
              a.jump = t % 90 < 5;
@@ -1121,11 +1121,15 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              return s.state == State::Climb && s.climbWarp && s.clip.find("_to_") != std::string::npos && s.clipTime > 0.1;
          }},
         // Swinging on l4_pool's ceiling anchor 5511.
-        {"l4_pool", game::Spawn{{4362, -400, 2000}, 0}, 120, 300, [](uint64_t t) {
+        {"l4_pool", game::Spawn{{4362, -400, 3300}, 0}, 120, 300, [](uint64_t t) {
              game::Actions a;
              a.move.y = t % 120 < 60 ? 1.0f : -1.0f;
              return a;
          }, [](game::World& w) {
+             uint32_t depth = 0;
+             const int32_t drain[] = {0, 0}; // SetLevel(0, at once): the goo (5608 kills her in it) drained to its bottom
+             w.waterNative(5608, "watervolumebase", 1, drain, depth);
+             w.tick({});
              w.restore(w.player().state(), 1.5707963f, 0.7f);
              if (const auto t = w.grappleTarget()) w.attachGrapple(t->pos, t->uid);
          }, [](const game::World& w) { return w.player().state().state == State::GrappleSwing; }},
@@ -1210,13 +1214,20 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              a.move.y = 0.3f;
              return a;
          }, nullptr, [](const game::World& w) { return w.player().state().state == State::Beam; }},
-        // Swimming under l4_pool's goo.
-        {"l4_pool", game::Spawn{{-4000, 0, 2000}, 0}, 30, 300, [](uint64_t t) {
+        // Swimming in l2_cliffclimb's open sea (l4_pool's goo kills her).
+        {"l2_cliffclimb", game::Spawn{{-31000, -10000, -500}, 0}, 30, 300, [](uint64_t t) {
              game::Actions a;
              a.drop = t == 1;
              a.move = game::vec2(std::sin(float(t) * 0.03f), 1);
              return a;
          }, nullptr, [](const game::World& w) { return w.player().state().state == State::SwimUnder; }},
+        // l4_pool's goo (volume 5608) kills: its script polls larabase 3 every few ticks and calls health 2 (12345).
+        // Saved on a pool rock with that loop sleeping; she runs into the goo after the load and dies in both runs.
+        {"l4_pool", game::Spawn{{-4190, -183, 2900}, 0}, 10, 300, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t >= 20 ? 1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return !w.health().dead() && w.player().state().state == State::Idle; }},
         // Mid-cutscene: chapter 5's start, after 230_val_intro, before its handler mounts her on bike 7229 (0.6 s).
         {"l3_main_bedroom", std::nullopt, 15, 300, idle, [](game::World& w) { w.startChapter(5); },
          [](const game::World& w) { return !w.ridden(); }},
@@ -1293,6 +1304,8 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
             }
         }
         compare("at the end");
+        if (c.spawn && c.spawn->pos.x == -4190) // the goo case: both runs died in the goo after the load
+            EXPECT_TRUE(w->health().dead() && l->health().dead()) << label;
         if (std::string_view(c.unit) == "l1_ship_exterior") // the run did fight: a merc is down
             EXPECT_TRUE(std::ranges::any_of(w->enemies().all(), [](const auto& e) { return e->state().mode == game::ai::Mode::Dead; }));
     }
@@ -1421,3 +1434,4 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
     EXPECT_TRUE(walkHurdle);
     EXPECT_NEAR(s2.pos.z, 336, 8);
 }
+

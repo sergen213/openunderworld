@@ -4079,7 +4079,8 @@ TEST(Game, WadingClipsAtTheDecodedDepth) {
 }
 
 // Scripted water (watervolumebase natives, tru.exe 0x6AC340 / 0x6C10D0): the water scripts of l7_yggdrasil_end (8309
-// SetLevelToMarker on load, 8209 / l4_pool 5608 GetDepth) run their watervolumebase calls without stopping. 8309's instance
+// SetLevelToMarker on load, 8209 / l4_pool 5608 GetDepth, larabase 3) run their watervolumebase and larabase 3 calls
+// without stopping. 8309's instance
 // argument is null in our runtime (its instanceref is unbound) and the exe's thunk 0x79E0E0 skips a null one, so its
 // level stays: the motion itself is GameReal.ScriptedWaterLevelMoves.
 TEST(GameReal, ScriptedWaterLevelsRun) {
@@ -4096,7 +4097,7 @@ TEST(GameReal, ScriptedWaterLevelsRun) {
         w.script().setBigfile(&bf);
         for (int i = 0; i < 600; ++i) w.tick({});
         for (const auto& [key, count] : w.script().failures())
-            EXPECT_TRUE(key.second.find("watervolumebase") == std::string::npos )
+            EXPECT_TRUE(key.second.find("watervolumebase") == std::string::npos && key.second.find("larabase fn 3") == std::string::npos)
                 << unit << " " << key.first << " " << key.second;
     }
 }

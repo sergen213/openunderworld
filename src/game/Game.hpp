@@ -325,6 +325,8 @@ public:
     // Grips (State::Block, obj_block_grab, facing the axis) from the states use() starts in; lets go (obj_block_release).
     void grip(vec3 axis, int moving);
     bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab"; } // grab clip done
+    // Water: the volume overlapping the water probe box at `feet` (index into the collision markup), else -1.
+    int waterAt(vec3 feet) const;
 
 private:
     void play(std::string_view clip, bool loop, float rate = 1, bool mirror = false);
@@ -358,8 +360,6 @@ private:
     std::pair<vec3, float> attachPose(int markup, int seg, float t, float side, bool para = false) const;
     void pole(vec2 move, bool jumpPressed, bool dropPressed, float dt); // State::PoleHang
     void beam(vec2 move, bool jumpPressed, bool dropPressed, float dt);
-    // water: volume overlapping the water probe box at `feet` (index into col_.markup), its surface z
-    int waterAt(vec3 feet) const;
     float surfaceZ() const;
     bool enterWater(); // from the ground or the air; false if not in deep enough water
     bool wading() const; // on her feet in water of class 0x100 (wadeDepth..swimDepth deep, tru.exe 0x5D3860)
