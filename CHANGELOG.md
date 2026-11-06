@@ -4,6 +4,22 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.26.0] - 2026-11-06
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- New: physics now runs on Jolt Physics (MIT), replacing our simple stand-in for the original's Havok. Doors, levers
+  and moving mechanisms use the game's own joint limits and motors; pulled weights and loose objects really fall,
+  tumble and stack.
+- New: the motorcycle is physically simulated from the game's own bike data (wheels, suspension, engine, 40 mph top
+  speed): jumps, ramps, landings and crashes come from the simulation.
+- New: killed enemies collapse as ragdolls built from the game's own ragdoll data and fall onto stairs and ledges.
+- Fixed: Lara, enemies and moving objects were black in dark areas (for example the kraken entrance). They are now
+  lit from the levels' own light probes, the way the original lights them.
+- Fixed: loading a save now continues exactly where the game was: running scripts, enemies, mechanisms, combat,
+  camera and physics are restored instead of restarting (a mechanism or enemy could come back in the wrong state).
+- Faster: walking into a new area no longer stutters; areas stay on the GPU and only the new one is added.
+
 ## [0.25.0] - 2026-11-05
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
