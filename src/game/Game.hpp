@@ -86,6 +86,10 @@ struct AnimLibrary {
     DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
     // Lara's HInfo markers (lara.drm model): id -> (segment, frame in it, R = Rx * Ry * Rz); weapons mount there.
     std::map<int, std::pair<int, glm::mat4>> markers;
+    // Her death ragdoll (the outfit's ObjectBase +0x7C, physics::loadRagdoll: 15 bones, 55 kg) and each segment's bind
+    // position (model space).
+    std::optional<physics::RagdollDef> ragdoll;
+    std::vector<vec3> bind;
 
     const anim::Clip* find(std::string_view name) const;
     const anim::Clip* weaponClip(Weapon w, std::string_view name) const; // find("<object>:<name>")
@@ -708,9 +712,13 @@ private:
     // One Jolt step (Objects.cpp): hinge drives, uber joints, loose rigid bodies (tumbling onto the terrain and object
     // collision), then the uber range watches.
     void stepPhysics(float dt);
-    // Dead enemies' ragdolls (Objects.cpp): starting ones get their bodies (with the killing hit's impulse), settled or
-    // streamed-out ones lose theirs; after a step (`step`) each body's pose goes back to its enemy.
+    // Dead enemies' and Lara's ragdolls (Objects.cpp): starting ones get their bodies (with the killing hit's impulse),
+    // settled or streamed-out ones lose theirs; after a step (`step`) each body's pose goes back to its owner, and each
+    // chunk piece's to its enemy.
     void syncRagdolls(bool step);
+    // Thralls broken into chunks (ai::EnemyState::ragdollPhase 4): their pieces as loose bodies (Objects.cpp).
+    void chunkPieces(std::vector<physics::Scene::Loose>& out);
+    void startChunks(ai::Enemy& e); // a thrall that just broke: its pieces' poses and velocities (Objects.cpp)
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point

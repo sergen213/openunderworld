@@ -1181,6 +1181,52 @@ TEST(AiReal, ThrallsGetUpUnlessMjolnir) {
     }
 }
 
+// Death timer and chunk data (docs/formats/PHYSICS.md "Ragdolls"): death entries' ragdoll delays (record +4 / +8,
+// counts), the retry timer +0x1C, and the thralls' chunk objects (+0x46): viking / mayan thralls break into the 14
+// pieces of viking_thrall_chunkdoll. A bolt kills a viking; physics takes it 6..45 counts later: chunks.
+TEST(AiReal, DeathTimerAndThrallChunks) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto poacher = game::ai::loadEnemyType(bf, "poacher"), viking = game::ai::loadEnemyType(bf, "viking_thrall"),
+               mayan = game::ai::loadEnemyType(bf, "mayan_thrall"), panther = game::ai::loadEnemyType(bf, "panther_thrall");
+    ASSERT_EQ(poacher->tuning.deaths.size(), 6u);
+    EXPECT_EQ(poacher->tuning.deaths[0].min, 52);
+    EXPECT_EQ(poacher->tuning.deaths[0].max, 60);
+    EXPECT_FLOAT_EQ(poacher->tuning.deathTimer, 4.0f); // 120 counts
+    EXPECT_FALSE(poacher->chunks);
+    ASSERT_TRUE(viking->chunks && mayan->chunks && panther->chunks);
+    EXPECT_EQ(viking->chunks->object, "viking_thrall_chunkdoll");
+    EXPECT_EQ(mayan->chunks->object, "viking_thrall_chunkdoll");
+    EXPECT_EQ(panther->chunks->object, "panther_thrall_chunkdoll");
+    const auto& c = *viking->chunks;
+    ASSERT_EQ(c.pieces.size(), 14u);
+    EXPECT_EQ(c.minimum, -1);
+    EXPECT_EQ(c.pieces[1].model, 2);
+    EXPECT_EQ(c.pieces[1].segA, 42);
+    EXPECT_EQ(c.pieces[1].segB, 43);
+    EXPECT_EQ(c.pieces[6].flags, 1u);
+    EXPECT_EQ(c.models.size(), 6u);
+    for (const auto& p : c.pieces) {
+        EXPECT_LT(size_t(std::max(p.segA, p.segB)), viking->skeleton.bones.size());
+        const auto& m = c.models[size_t(p.model)];
+        EXPECT_FALSE(m.prims.empty()) << "model " << p.model;
+        EXPECT_GT(physics::massProps(m).mass, 0) << "model " << p.model;
+    }
+
+    CollisionMesh m;
+    addFloor(m, -5000, -5000, 5000, 5000, 0);
+    const auto col = built(m);
+    game::ai::Enemies es;
+    auto& t = es.add(viking, 1, {0, 0, 0}, 0);
+    t.onHit(boltHit({1, 0, 0}));
+    ASSERT_EQ(t.state().mode, Mode::Dead);
+    EXPECT_GE(t.state().ragdollAt, 6 / 30.0f - 1e-5f);
+    EXPECT_LE(t.state().ragdollAt, 45 / 30.0f + 1e-5f);
+    const int ticks = tickUntil(es, col, {{4000, 4000, 0}}, {}, 200, [&] { return t.state().ragdollPhase != 0; });
+    EXPECT_NEAR(ticks * kDt, t.state().ragdollAt, 2 * kDt);
+    EXPECT_EQ(t.state().ragdollPhase, 4) << "chunks, not the ragdoll";
+}
+
 // l1_ship_exterior's mercs: each intro script's constructor calls enemybase 27 GuardNode(GetUnit(), noderef, r1, r2)
 // with its own planner node {0, n} (1650: node 127, 2500 / 4000); a merc outside its zone walks back into it, a chase
 // stops at 0.8 x the outer radius; the first to see Lara barks and alerts the soldiers around it; after a burst a merc

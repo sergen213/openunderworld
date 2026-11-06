@@ -439,29 +439,39 @@ void Enemy::onHit(const Hit& hit) {
 }
 
 // Death clip as FUN_00642210: the attacker's quadrant relative to the heading (1 front ±45°, 3 left, 5 back, 7
-// right) picks a record entry (category, flag); not found -> front/back by ±90° -> front. The heading then turns so
-// the clip falls away from the attacker. Flag [I]: 3 on a head shot (death_adren / death_placed_shot), 5 when hit
-// while running (death_running), else 0. ponytail: first match, not the exe's random pick among equals. Nothing
-// usable (type-2 refs): the role death clip.
+// right) picks a record entry (category, flag) at random among the matching ones (FUN_00642170); none -> front/back by
+// ±90° -> front. The heading then turns so the clip falls away from the attacker. Flag [I]: 3 on a head shot
+// (death_adren / death_placed_shot), 5 when hit while running (death_running), else 0. A type-2 entry (anim request,
+// not resolved) plays the role death clip. The entry's min / max set when physics takes the body (0x66C500 ->
+// ragdollAt): min + rand(max - min) counts; no entry: at once. [O] 0x66C500 hands over at once instead when the
+// hits' summed impulses / damage reach death record +8 / +0xC; those are 1e9 / 101138 (soldiers, cats) and 2.8e6
+// (thralls), beyond any hit, so ours always waits.
 void Enemy::die(const Hit& hit) {
     const bool running = s_.clip == type_->clipName(Role::Run) && s_.mode == Mode::Chase;
     if (s_.tilt != glm::vec2(0)) s_.pos += up() * type_->tuning.radius, s_.tilt = glm::vec2(0); // falls off the wall
     setMode(Mode::Dead);
     s_.killAt = hit.point - s_.pos, s_.killDir = hit.dir;
+    s_.ragdollAt = 0;
     const float a = std::atan2(-hit.dir.y, -hit.dir.x), rel = wrapAngle(a - s_.yaw); // bearing to the attacker
     const int quadrant = std::abs(rel) <= kPi / 4 ? 1 : std::abs(rel) > 3 * kPi / 4 ? 5 : rel > 0 ? 3 : 7;
-    const auto find = [&](int cat, int flag) -> const DeathClip* {
-        for (const auto& d : type_->tuning.deaths)
-            if (d.category == cat && d.flag == flag && type_->clips.count(d.clip)) return &d;
-        return nullptr;
-    };
+    const auto& deaths = type_->tuning.deaths;
     for (const int flag : {hit.headshot ? 3 : running ? 5 : 0, 0})
-        for (const int cat : {quadrant, std::abs(rel) > kPi / 2 ? 5 : 1, 1})
-            if (const DeathClip* d = find(cat, flag)) {
-                playClip(d->clip, false);
-                if (cat != 1) s_.yaw = wrapAngle(a + (cat == 3 ? -kPi / 2 : cat == 5 ? kPi : kPi / 2));
-                return;
-            }
+        for (const int cat : {quadrant, std::abs(rel) > kPi / 2 ? 5 : 1, 1}) {
+            const auto match = [&](const DeathClip& d) { return d.valid && d.category == cat && d.flag == flag; };
+            const auto n = std::ranges::count_if(deaths, match);
+            if (!n) continue;
+            auto pick = lcg(s_.rng) % uint32_t(n);
+            const DeathClip* d = nullptr;
+            for (const auto& x : deaths)
+                if (match(x) && !pick--) {
+                    d = &x;
+                    break;
+                }
+            if (type_->clips.count(d->clip)) playClip(d->clip, false);
+            if (cat != 1) s_.yaw = wrapAngle(a + (cat == 3 ? -kPi / 2 : cat == 5 ? kPi : kPi / 2));
+            s_.ragdollAt = float(d->min + (d->max > d->min ? int(lcg(s_.rng) % uint32_t(d->max - d->min)) : 0)) * kCount;
+            return;
+        }
 }
 
 int Enemy::readyFire() const {
@@ -830,13 +840,23 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     case Mode::Dead:
         if (aquatic && clipDone() && s_.clip != "death_float_loop" && type_->clips.count("death_float_loop"))
             playClip("death_float_loop", true);
-        // Ragdoll once the death clip is done [I: tru.exe hands the body over when the enemy's death timer runs out,
-        // 0x66C950 -> 0x617EE0 -> 0x60EF50 -> 0x4F1920, its start not decoded]; without one it tips onto its side.
-        if (type_->ragdoll && !aquatic && clipDone()) {
-            ragdollOffsets(bones_);
-            s_.ragdoll.clear();
-            for (const auto& b : type_->ragdoll->bones) s_.ragdoll.push_back(bones_[size_t(b.segment)]);
-            s_.ragdollPhase = 1;
+        // The death timer (0x66C950, armed by die(): ragdollAt) hands the body to physics mid-clip: the chunk object
+        // when it has one and fewer than 4 sets are live (0x696F90), else its ragdoll when fewer than 6 are live
+        // (0x617EE0 -> 0x60EF50 -> 0x4F1920), else the timer re-arms for death record +0x1C. A pure ragdoll from the
+        // pose and segment velocities the clip had: no blend into it (0x4F1920 builds it unpowered). Without either it
+        // tips onto its side once the clip is done.
+        if ((type_->ragdoll || type_->chunks) && !aquatic && s_.modeTime >= s_.ragdollAt) {
+            if (type_->chunks && chunkSets < 4) {
+                s_.ragdollPhase = 4;
+                s_.pieces.clear();
+            } else if (type_->ragdoll && ragdolls < 6) {
+                ragdollOffsets(bones_);
+                s_.ragdoll.clear();
+                for (const auto& b : type_->ragdoll->bones) s_.ragdoll.push_back(bones_[size_t(b.segment)]);
+                s_.ragdollPhase = 1;
+            } else {
+                s_.ragdollAt = s_.modeTime + t.deathTimer;
+            }
         } else if (clipDone() && !flyer && !type_->ragdoll && !type_->lyingDeaths.count(s_.clip)) {
             s_.tip = std::min(kPi / 2, s_.tip + dt * kPi / 2 / kTipSeconds);
         }
@@ -922,6 +942,13 @@ void Enemy::setRagdoll(std::span<const glm::mat4> world, bool asleep) {
     s_.ragdollPhase = asleep || s_.modeTime > kRagdollSeconds ? 3 : 2;
 }
 
+void Enemy::setPieces(std::span<const glm::mat4> world, std::span<const vec3> vel) {
+    const glm::mat4 toModel = glm::inverse(modelMatrix(s_.pos, s_.yaw, 0, s_.tilt));
+    s_.pieces.assign(world.size(), glm::mat4(1));
+    for (size_t i = 0; i < world.size(); ++i) s_.pieces[i] = toModel * world[i];
+    s_.pieceVel.assign(vel.begin(), vel.end());
+}
+
 std::vector<glm::mat4> Enemy::pose(double alpha) const {
     // ponytail: per-element matrix lerp between ticks (60 Hz; slerp as World::pose if it ever shows)
     std::vector<glm::mat4> out(bones_.size());
@@ -987,6 +1014,9 @@ void Enemies::tick(const collision::CollisionMesh& col, const Target& lara, cons
         if (const auto g = guards_.find(e->uid()); g != guards_.end() && e->zones.size() != g->second.size()) resolveZones(*e);
         e->coverNodes = worldNodes_;
         e->claimed = claims_;
+        e->ragdolls = e->chunkSets = 0;
+        for (const auto& o : enemies_)
+            if (o != e) e->ragdolls += o->state().ragdollPhase == 1 || o->state().ragdollPhase == 2, e->chunkSets += o->state().ragdollPhase == 4;
         e->tick(col, lara, hurt, dt, &shots);
         claims_[k] = claim(*e);
     }

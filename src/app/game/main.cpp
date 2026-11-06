@@ -445,6 +445,9 @@ struct EnemyMeshes {
     // per entry: its gun's mesh (EnemyType::weaponObject riding its marker, gunSegment >= 0; drawn on the body after
     // death too [I]), SIZE_MAX none
     std::vector<size_t> gunIndices;
+    // per entry: its chunk object's meshes (EnemyType::chunks) as {piece, scene mesh}, drawn rigid at each piece's pose
+    // once the body broke (EnemyState::ragdollPhase 4; the body collapses then), uploaded collapsed until then
+    std::vector<std::vector<std::pair<size_t, size_t>>> pieceIndices;
     struct SkinJob { size_t mesh, palette; glm::mat4 model; }; // palette SIZE_MAX: rigid (a gun)
     std::vector<SkinJob> jobs;
     std::vector<std::vector<glm::mat4>> palettes;     // per posed enemy this frame
@@ -473,6 +476,27 @@ struct EnemyMeshes {
         }
         ou::scene::assignKeys(s);
         return types.emplace(name, std::move(s)).first->second;
+    }
+    // A chunk object's meshes of model `model` (its ObjectBase model list), rigid in that model's space.
+    const ou::scene::SceneData& chunk(const ou::cdc::BigfileSet& bf, const std::string& object, int model, std::vector<std::string>& warnings) {
+        const std::string key = "chunk:" + object + ":" + std::to_string(model);
+        if (const auto it = types.find(key); it != types.end()) return it->second;
+        ou::scene::SceneData s;
+        try {
+            s = ou::formats::loadDrmScene(bf, "pc-w\\" + object + ".drm");
+            uint32_t id = 0;
+            if (auto bytes = bf.read("pc-w\\" + object + ".drm")) {
+                const auto ids = ou::formats::objectRenderModels(ou::cdc::parseDrm(std::move(*bytes)));
+                if (size_t(model) < ids.size()) id = ids[size_t(model)];
+            }
+            std::erase_if(s.meshes, [&](const auto& m) { return m.skeleton < 0 || s.skeletons[size_t(m.skeleton)].renderModelId != id; });
+            for (auto& m : s.meshes) m.skeleton = -1, m.skin.clear();
+            if (s.meshes.empty()) warnings.push_back("pc-w\\" + object + ".drm: no mesh for model " + std::to_string(model));
+        } catch (const std::exception& e) {
+            warnings.push_back(object + ": " + e.what());
+        }
+        ou::scene::assignKeys(s);
+        return types.emplace(key, std::move(s)).first->second;
     }
     const ou::scene::SceneData& gun(const ou::cdc::BigfileSet& bf, const std::string& object, std::vector<std::string>& warnings) {
         const std::string key = "gun:" + object;
@@ -505,7 +529,11 @@ struct EnemyMeshes {
             const auto bones = e.pose(alpha);
             palettes.push_back(ou::anim::skinPalette(e.type().skeleton, bones));
             const glm::mat4 m = ou::game::ai::Enemy::modelMatrix(s.pos, s.yaw, s.tip, s.tilt);
-            for (const size_t i : meshIndices[k]) jobs.push_back({i, palettes.size() - 1, m});
+            const bool broken = s.ragdollPhase == 4 && k < pieceIndices.size() && !pieceIndices[k].empty() && !s.pieces.empty();
+            for (const size_t i : meshIndices[k]) jobs.push_back({i, broken ? SIZE_MAX : palettes.size() - 1, broken ? m * glm::mat4(glm::mat3(1e-4f)) : m});
+            if (broken) // ponytail: pieces at the last tick's pose (no interpolation; 60 Hz)
+                for (const auto& [piece, mesh] : pieceIndices[k])
+                    if (piece < s.pieces.size()) jobs.push_back({mesh, SIZE_MAX, m * s.pieces[piece]});
             if (const int seg = e.type().gunSegment; k < gunIndices.size() && gunIndices[k] != SIZE_MAX && size_t(seg) < bones.size())
                 jobs.push_back({gunIndices[k], SIZE_MAX, m * bones[size_t(seg)] * e.type().gunMount});
         }
@@ -852,6 +880,7 @@ struct StreamedScene {
         out.meshes.resize(kept);
         enemyMeshes.meshIndices.clear();
         enemyMeshes.gunIndices.clear();
+        enemyMeshes.pieceIndices.clear();
         for (const auto& e : w.enemies().all()) {
             enemyMeshes.meshIndices.emplace_back();
             append(enemyMeshes.type(bf, e->type().name, warnings), glm::vec3(0), &enemyMeshes.meshIndices.back());
@@ -859,6 +888,16 @@ struct StreamedScene {
             if (e->type().gunSegment >= 0 && !e->type().weaponObject.empty())
                 append(enemyMeshes.gun(bf, e->type().weaponObject, warnings), glm::vec3(0), &gun);
             enemyMeshes.gunIndices.push_back(gun.empty() ? SIZE_MAX : gun[0]);
+            enemyMeshes.pieceIndices.emplace_back();
+            if (const auto& c = e->type().chunks)
+                for (size_t k = 0; k < c->pieces.size(); ++k) {
+                    std::vector<size_t> meshes;
+                    append(enemyMeshes.chunk(bf, c->object, c->pieces[k].model, warnings), glm::vec3(0), &meshes);
+                    for (const size_t i : meshes) {
+                        for (auto& v : out.meshes[i].vertices) std::fill_n(v.position, 3, 0.0f); // collapsed until it breaks
+                        enemyMeshes.pieceIndices.back().push_back({k, i});
+                    }
+                }
         }
         bikeIndices.clear();
         for (const auto& [uid, b] : w.bikes())

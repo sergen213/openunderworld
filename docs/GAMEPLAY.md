@@ -1178,14 +1178,15 @@ type 2, +0x94 `lunge_attack_forward` 125 type 2, +0x98 `stun_attack2` 100 type 2
 type 2. Bat: +0x80 `attach_bite_loop` 75 type 0, cooldown 10000. Thralls: none. Sharks: none.
 
 Death record [O] (node +0x64; poacher and panther identical apart from the clips): timer s16 +0x1C = 120, +0x46,
-+0x4C impulse; count +0xC8 of 0x14-byte entries at +0xCC `{clip ref, ?, ?, category, flag}`. FUN_00642210 takes the
++0x4C impulse; count +0xC8 of 0x14-byte entries at +0xCC `{clip ref, s32 min, s32 max, category, flag}` (min / max:
+the ragdoll delay in counts, docs/formats/PHYSICS.md "Ragdolls"). FUN_00642210 takes the
 attacker's angle relative to the heading: category 1 front (±45°), 3 left, 5 back, 7 right; falls back to front/back
 by ±90°, then front; picks randomly among matching entries with the requested flag (FUN_00642170) and turns the heading
 for 3/5/7 (a − 90°, a + 180°, a + 90°). Poacher: 3/7 `death_shot_3`, 5 `death_shot_back`, 1 a type-2 ref, flag 3
 `death_placed_shot`, flag 7 `hosted_enemy_vault`. Panther: 5 `hitreact_thrown_forward`, 1 a type-2 ref, flag 3
 `death_adren`, flag 5 `death_running`, flag 7 `hitreact_thrown_forward`. Bat: 1 `death`. After the timer the exe
 hands the body to physics: the chunk object (+0x46, thralls; 0x696F90 budget check → impulse +0x4C via 0x696A60) or
-its ragdoll (0x617EE0 → 0x60EF50 → 0x4F1920; docs/formats/PHYSICS.md "Ragdolls") [O].
+its ragdoll (0x617EE0 → 0x60EF50 → 0x4F1920) [O]; both implemented (docs/formats/PHYSICS.md "Ragdolls").
 
 Regenerate (death record +0x20..+0x70; tru.exe EnemyRegenerateData 0x67ED20, decision 0x620380, hit filter
 0x682490) [O]: +0x20 / +0x24 clip refs (fall, get up), +0x28 time (counts; [I] 1/30 s), +0x64 count of 0xC-byte

@@ -49,6 +49,33 @@ std::optional<cdc::Pointer> ptrAt(const cdc::Drm& d, uint32_t section, uint32_t 
 
 float deg(int16_t d) { return float(d) * kPi / 180.0f; }
 
+// Chunk object `id` (objectlist) of a death record (ChunkDoll in Enemy.hpp; tru.exe 0x696F90 / 0x696B90); nullopt when
+// it is missing or has no pieces.
+std::optional<ChunkDoll> loadChunkDoll(const cdc::BigfileSet& bf, uint16_t id) {
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    if (!list) return std::nullopt;
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    const auto name = names.find(id);
+    const auto drm = name == names.end() ? std::nullopt : readObject(bf, name->second);
+    const auto base = drm ? formats::objectBaseSection(*drm) : std::nullopt;
+    const auto data = base ? ptrAt(*drm, *base, 0xC8) : std::nullopt;
+    if (!data) return std::nullopt;
+    const cdc::Section& ds = drm->sections[data->section];
+    const uint32_t o = data->offset;
+    const auto pieces = ptrAt(*drm, data->section, o + 0x1C);
+    const uint32_t n = std::min(read<uint32_t>(ds, o + 0x18), 64u);
+    if (!pieces || !n) return std::nullopt;
+    ChunkDoll c{name->second, read<int32_t>(ds, o + 0x10), read<int32_t>(ds, o + 0x14), {}, {}};
+    const cdc::Section& ps = drm->sections[pieces->section];
+    for (uint32_t k = 0; k < n; ++k) {
+        const uint32_t e = pieces->offset + 0x14 * k;
+        c.pieces.push_back({read<uint8_t>(ps, e), read<int16_t>(ps, e + 2), read<int16_t>(ps, e + 4), read<float>(ps, e + 8),
+                            read<uint32_t>(ps, e + 0x10)});
+        while (c.models.size() <= size_t(c.pieces.back().model)) c.models.push_back(physics::loadObjectPhysics(*drm, uint32_t(c.models.size())));
+    }
+    return c;
+}
+
 // Senses record (layout: Senses in Enemy.hpp).
 Senses readSenses(const cdc::Section& s, uint32_t o) {
     const auto cone = [&](uint32_t c) { return Cone{float(read<int16_t>(s, c)), deg(read<int16_t>(s, c + 2)), deg(read<int16_t>(s, c + 4))}; };
@@ -163,13 +190,16 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
         const uint32_t n = std::min(read<uint32_t>(s, p->offset + 0xC8), 32u);
         for (uint32_t k = 0; k < n; ++k) {
             const uint32_t e = p->offset + 0xCC + 0x14 * k;
-            t->tuning.deaths.push_back({clipRef(s, e), int(read<uint32_t>(s, e + 0xC)), read<uint8_t>(s, e + 0x10)});
+            t->tuning.deaths.push_back({clipRef(s, e), int(read<uint32_t>(s, e + 0xC)), read<uint8_t>(s, e + 0x10), read<int32_t>(s, e + 4),
+                                        read<int32_t>(s, e + 8), read<int16_t>(s, e + 2) != -1});
         }
         auto& rg = t->tuning.regenerate;
         rg.clip = clipRef(s, p->offset + 0x20);
         rg.up = clipRef(s, p->offset + 0x24);
         rg.time = read<float>(s, p->offset + 0x28) * (1.0f / 30.0f);
         t->tuning.deathImpulse = read<float>(s, p->offset + 0x4C);
+        t->tuning.deathTimer = float(read<int16_t>(s, p->offset + 0x1C)) * (1.0f / 30.0f);
+        if (const uint16_t chunk = read<uint16_t>(s, p->offset + 0x46)) t->chunks = loadChunkDoll(bigfile, chunk);
         const uint32_t kills = std::min(read<uint32_t>(s, p->offset + 0x64), 16u);
         for (uint32_t k = 0; k < kills; ++k) {
             const uint32_t e = p->offset + 0x68 + 0xC * k;
@@ -442,6 +472,10 @@ vec3 vec(const nlohmann::json& j) { return {j.at(0).get<float>(), j.at(1).get<fl
 nlohmann::json toJson(const EnemyState& s) {
     nlohmann::json ragdoll = nlohmann::json::array();
     for (const glm::mat4& m : s.ragdoll) ragdoll.push_back(std::vector<float>(&m[0][0], &m[0][0] + 16));
+    nlohmann::json pieces = nlohmann::json::array();
+    for (const glm::mat4& m : s.pieces) pieces.push_back(std::vector<float>(&m[0][0], &m[0][0] + 16));
+    nlohmann::json pieceVel = nlohmann::json::array();
+    for (const vec3 v : s.pieceVel) pieceVel.push_back(vec(v));
     return {{"mode", int(s.mode)}, {"pos", vec(s.pos)}, {"yaw", s.yaw}, {"vz", s.vz}, {"clip", s.clip}, {"clipTime", s.clipTime},
             {"loop", s.loop}, {"health", s.health}, {"modeTime", s.modeTime}, {"unseenTime", s.unseenTime},
             {"cooldown", s.cooldown}, {"blowLanded", s.blowLanded}, {"damageSinceReaction", s.damageSinceReaction},
@@ -451,7 +485,8 @@ nlohmann::json toJson(const EnemyState& s) {
             {"coverCooldown", s.coverCooldown}, {"path", s.path}, {"patrolIndex", s.patrolIndex}, {"patrolStep", s.patrolStep},
             {"visited", s.visited}, {"phase", s.phase}, {"phaseTime", s.phaseTime}, {"phaseLength", s.phaseLength},
             {"goal", vec(s.goal)}, {"searchTime", s.searchTime}, {"ragdollPhase", s.ragdollPhase}, {"ragdoll", std::move(ragdoll)},
-            {"killAt", vec(s.killAt)}, {"killDir", vec(s.killDir)}};
+            {"killAt", vec(s.killAt)}, {"killDir", vec(s.killDir)}, {"ragdollAt", s.ragdollAt}, {"pieces", std::move(pieces)},
+            {"pieceVel", std::move(pieceVel)}};
 }
 
 EnemyState stateFromJson(const nlohmann::json& j) {
@@ -481,6 +516,13 @@ EnemyState stateFromJson(const nlohmann::json& j) {
     }
     if (const auto k = j.find("killAt"); k != j.end()) s.killAt = vec(*k);
     if (const auto k = j.find("killDir"); k != j.end()) s.killDir = vec(*k);
+    s.ragdollAt = j.value("ragdollAt", 0.0f); // older saves: at once (they took over at the clip's end)
+    for (const auto& m : j.value("pieces", nlohmann::json::array())) {
+        const auto f = m.get<std::vector<float>>();
+        if (f.size() != 16) throw std::runtime_error("enemy chunk piece of " + std::to_string(f.size()) + " values");
+        s.pieces.push_back(glm::make_mat4(f.data()));
+    }
+    for (const auto& v : j.value("pieceVel", nlohmann::json::array())) s.pieceVel.push_back(vec(v));
     return s;
 }
 } // namespace

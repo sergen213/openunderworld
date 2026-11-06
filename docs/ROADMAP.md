@@ -100,12 +100,16 @@ Jolt as static mesh shapes per streamed unit.
    the level collision; jumps, ramps, landings and crashes come out of the simulation; saves continue bit for bit.
    Not done: the air control torques, wheelies / power slides / donuts, the lean (servoed upright, not drawn); hop and
    ram stay [I].
-3. **Ragdolls (done for enemies, docs/formats/PHYSICS.md "Ragdolls").** Dead enemies become Jolt ragdolls from their
-   object's ragdoll record (ObjectBase +0x7C: capsule per bone, hinge / two-axis / cone-twist joints with the data's
-   limits) once the death clip is done, with the killing hit's impulse; they land on the terrain, colliders and loose
-   bodies, freeze when asleep and save bit for bit (`GameReal.KilledPoacherRagdollIndependentOfRenderRate`,
-   `StreamReal.RagdollSaveLoad`, `Physics.RagdollFallsDownAStepJointsHoldAndSaves`). Open: Lara's ragdoll (her data
-   has one), the death timer's start, the clip blending into the ragdoll (`AnimDrivenRagdollNode`), thralls' chunks.
+3. **Ragdolls (done, docs/formats/PHYSICS.md "Ragdolls").** Dead enemies become Jolt ragdolls from their object's
+   ragdoll record (ObjectBase +0x7C: capsule per bone, hinge / two-axis / cone-twist joints with the data's limits) when
+   the death timer runs out (the death entry's min..max counts, 0x66C500), mid-clip, with the killing hit's impulse;
+   thralls break into their `*_chunkdoll` pieces instead (death record +0x46: loose bodies at the body's segments,
+   pushed along the hit). Lara ragdolls from her record once her death clip is done. They land on the terrain,
+   colliders and loose bodies, freeze when asleep and save bit for bit (`GameReal.KilledPoacherRagdollIndependentOfRenderRate`,
+   `GameReal.LaraRagdollIndependentOfRenderRate`, `GameReal.KilledThrallBreaksIntoChunks`, `AiReal.DeathTimerAndThrallChunks`,
+   `StreamReal.RagdollSaveLoad`, `Physics.RagdollFallsDownAStepJointsHoldAndSaves`). No clip blend: the original's
+   death takeover is unpowered. Open [U/I]: which Lara deaths ragdoll at once (death types 3 / 4), her 3 s reload
+   after the ragdoll, chunk flags and fading, the count unit (30 Hz).
 
 
 ## Principles

@@ -262,6 +262,10 @@ struct CombatState {
     std::vector<Shot> shots;  // fired this tick
     uint64_t shotsFired = 0, rng = 0x2545F491u;
     float deathTime = -1;     // seconds since death; -1 alive
+    // Lara's death ragdoll (AnimLibrary::ragdoll), as ai::EnemyState's: 0 none, 1 starting (World builds the bodies at
+    // `ragdoll`), 2 simulating, 3 settled; `ragdoll` = each bone's start-segment frame in her model space.
+    int ragdollPhase = 0;
+    std::vector<glm::mat4> ragdoll;
     bool drawHeld = false, switchHeld = false, weaponHeld = false, healHeld = false, interactHeld = false, fireHeld = false;
     float healCooldown = 0;   // seconds until the next health pack (g_healthpack data +0xEA: 60 frames)
     int healthPacksUsed = 0;  // count, for logs

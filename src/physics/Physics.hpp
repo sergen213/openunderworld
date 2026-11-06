@@ -60,6 +60,7 @@ struct ObjectPhysics {
     std::vector<Prim> prims;
     std::vector<Marker> markers;
     std::vector<HMarker> hmarkers;
+    vec3 boxMin{0}, boxMax{0}; // segment 0's box (dtp segment +0 / +0x10): the model's bounds (tru.exe 0x696B00)
     // Bind-pose model-space frame of a segment field (tru.exe 0x615930): >= 0 a segment, < 0 the HInfo marker -id
     // (0x46DA20) in its segment's frame; nullopt when there is no such segment / marker.
     std::optional<mat4> frame(int field) const;
@@ -223,10 +224,11 @@ public:
     void setJoints(std::vector<std::pair<uint64_t, Joint1*>> joints, std::vector<JointLink> links);
 
     // Loose rigid bodies (shape, mass and inertia from the object's primitives), keyed by the caller. A new key starts
-    // at `model` (model -> world) at rest; existing ones keep simulating (`model` is ignored); missing keys are dropped.
+    // at `model` (model -> world) moving at `vel` (units/s) / `angVel` (rad/s, world); existing ones keep simulating
+    // (`model` and the velocities are ignored); missing keys are dropped.
     // `rail`: the body still rides that joint (setJoints key): the joint's body takes its shape and collides, posed by
     // the joint (`model` = the object's pose at joint coordinate 0); loose(id) is empty then.
-    struct Loose { int32_t id = 0; const ObjectPhysics* physics = nullptr; mat4 model{1}; uint64_t rail = 0; };
+    struct Loose { int32_t id = 0; const ObjectPhysics* physics = nullptr; mat4 model{1}; uint64_t rail = 0; vec3 vel{0}, angVel{0}; };
     void setLoose(std::span<const Loose> loose);
     std::optional<mat4> loose(int32_t id) const; // model -> world as of the last step
     // What loose bodies land on: resident unit terrain (static meshes, built once a loose body exists) and the moving

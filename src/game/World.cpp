@@ -232,6 +232,12 @@ void rigOutfit(AnimLibrary& lib, const cdc::Drm& drm) {
     if (const auto* c = lib.find("HPole_idleHangPerp"))
         if (auto h = lib.handsAt(*c, 0)) lib.poleHandOffset = *h;
     lib.hair = anim::decodeHair(drm, lib.skeleton);
+    lib.bind = anim::bindPositions(lib.skeleton);
+    lib.ragdoll = physics::loadRagdoll(drm);
+    if (lib.ragdoll && std::ranges::any_of(lib.ragdoll->bones, [&](const physics::RagdollBone& b) {
+            return size_t(b.segment) >= lib.bind.size() || size_t(b.endSegment) >= lib.bind.size();
+        }))
+        lib.ragdoll.reset();
 }
 
 AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& outfit) {
@@ -935,6 +941,29 @@ void World::updatePose(float dt, bool reset) {
     throwLayer(local);
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(anims_.skeleton.bones[0].pivot)}; // root motion is in pos
     auto m = anim::worldMatrices(anims_.skeleton, local);
+    // Her death ragdoll (combat_.ragdoll*) starts from the death clip's last pose once it is done: tru.exe's death state
+    // builds it (0x6F1400 -> 0x4F1920) on message 1 (0x75B000; [I] sent at the clip's end) or at once for death
+    // types 3 / 4 (DeathState_Entry 0x75AA50; which deaths those are [U]). Each segment then follows its nearest
+    // ancestor-or-self that starts a bone, with its offset in that pose (as ai::Enemy). Respawn timing is unchanged.
+    if (const auto& rd = anims_.ragdoll; rd && s.state == State::Dead) {
+        const anim::Clip* clip = anims_.find(s.clip);
+        if (!combat_.ragdollPhase && (!clip || s.clipTime >= clip->durationSeconds())) {
+            combat_.ragdoll.clear();
+            for (const auto& b : rd->bones) combat_.ragdoll.push_back(m[size_t(b.segment)]);
+            combat_.ragdollPhase = 1;
+        }
+        if (combat_.ragdollPhase && combat_.ragdoll.size() == rd->bones.size()) {
+            const auto& sk = anims_.skeleton.bones;
+            std::vector<int> owner(sk.size(), 0);
+            auto out = m;
+            for (size_t k = 0; k < sk.size() && k < m.size(); ++k) {
+                const auto own = std::ranges::find(rd->bones, int(k), &physics::RagdollBone::segment);
+                owner[k] = own != rd->bones.end() ? int(own - rd->bones.begin()) : sk[k].parent >= 0 ? owner[size_t(sk[k].parent)] : 0;
+                out[k] = combat_.ragdoll[size_t(owner[k])] * glm::inverse(m[size_t(rd->bones[size_t(owner[k])].segment)]) * m[k];
+            }
+            m = std::move(out);
+        }
+    }
     const glm::mat4 toWorld = player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
     if (reset) hair_.reset(m, toWorld);
     else hair_.step(m, toWorld, dt);
@@ -992,7 +1021,8 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     part("player");
     add(ticks_), add(s.state), add(s.pos), add(s.yaw), add(s.vel), add(s.clipTime), add(s.clipRate), add(s.pitch), add(s.ledge);
     add(s.ledgeT), add(s.water), add(s.climbHold), add(s.climbNormal), add(s.grappleUid), add(s.ropeLength), str(s.clip);
-    add(health_.value()), add(air_);
+    add(health_.value()), add(air_), add(combat_.ragdollPhase);
+    for (const auto& m : combat_.ragdoll) add(m);
     part("camera");
     add(cam_.position), add(cam_.target), add(cam_.yaw), add(cam_.pitch);
     part("bones");
@@ -1019,6 +1049,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
         part("enemy " + std::to_string(e->uid()));
         add(e->uid()), add(es.mode), add(es.pos), add(es.yaw), add(es.clipTime), add(es.health), str(es.clip), add(es.ragdollPhase);
         for (const auto& m : es.ragdoll) add(m);
+        for (const auto& m : es.pieces) add(m);
     }
     for (const auto& [uid, rt] : uberRuntime_) {
         part("uber " + std::to_string(uid));

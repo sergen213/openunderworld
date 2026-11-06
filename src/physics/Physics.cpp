@@ -150,6 +150,7 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
         o.segments.push_back((parent >= 0 ? o.segments[parent] : mat4(1)) * glm::translate(mat4(1), vec(*m, s + 0x20)));
         if (const auto h = cdc::internalPointer(*m, s + 0x3C)) readHInfo(*m, *h, int(k), o.prims, o.hmarkers);
     }
+    if (nseg) o.boxMin = vec(*m, *segs), o.boxMax = vec(*m, *segs + 0x10);
     const uint32_t nm = at<uint32_t>(*m, 0x38);
     if (const auto mk = cdc::internalPointer(*m, 0x3C); mk && nm < 4096)
         for (uint32_t i = 0; i < nm; ++i) {
@@ -803,6 +804,7 @@ void Scene::setLoose(std::span<const Loose> loose) {
         const quat rot = glm::normalize(glm::quat_cast(mat3(l.model)));
         next.push_back({l.id, m.body(looseShape(*l.physics, mp.com), vec3(l.model * glm::vec4(mp.com, 1)), rot, kLayerLoose, mp.mass,
                                      mp.inertia, "l" + std::to_string(l.id)), mp.com});
+        if (l.vel != vec3(0) || l.angVel != vec3(0)) m.bi->SetLinearAndAngularVelocity(next.back().body, Jm(l.vel), J(l.angVel));
     }
     for (auto& e : m.loose)
         if (e.id != INT32_MIN) m.remove(e.body);

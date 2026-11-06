@@ -56,12 +56,32 @@ struct Attack {
     float maxYaw = 0;               // byte +0x1F0 degrees, rad: fires only facing Lara this closely
     bool ranged() const { return !shotClip.empty(); }
 };
-// Death record (list node +0x64, tru.exe 0x66C500): count +0xC8, 0x14-byte entries at +0xCC {clip ref, ?, ?,
-// category, flag}; FUN_00642210 picks by the attacker's quadrant (1 front, 3 left, 5 back, 7 right).
+// Death record (list node +0x64, tru.exe 0x66C500): count +0xC8, 0x14-byte entries at +0xCC {clip ref, s32 min,
+// s32 max, category, flag}; FUN_00642210 picks by the attacker's quadrant (1 front, 3 left, 5 back, 7 right) and
+// FUN_00642170 returns the entry's min / max: the physics takeover (ragdoll / chunks) comes min + rand(max - min) counts
+// after the death (0x66C500 arms the death timer +0x10 with it, 0x66C950 runs when it expires).
 struct DeathClip {
     std::string clip; // "" = a type-2 ref (anim request) we do not resolve
     int category = 1;
     int flag = 0;     // 0 plain, 3 adrenaline / head shot, 5 running, 7 special (vault, thrown)
+    int min = 0, max = 0; // ragdoll delay, counts ([I] 30 Hz as the other record counts)
+    bool valid = true;    // clip ref index != -1 (FUN_00642210 skips -1 entries)
+};
+// Chunk object (death record s16 +0x46 -> objectlist id, e.g. viking_thrall_chunkdoll): ObjectBase +0xC8 data {+0x10
+// s32 minimum, +0x14 s32 kept, +0x18 count, +0x1C -> 0x14-byte pieces} (tru.exe 0x696F90 / 0x696B90). Each piece is an
+// instance of the chunk object showing `model`, placed at mix(segment B, segment A, t) of the dying body and moving as
+// those segments did; 0x696A60 then pushes every piece with death record +0x4C x 2.5 along the hit.
+struct ChunkPiece {
+    int model = 0;          // +0 u8: chunk object model index
+    int segA = 0, segB = 0; // +2 / +4 s16: body segments
+    float t = 1;            // +8
+    uint32_t flags = 0;     // +0x10: bit 0 [U] (instance +0x14 bit 0x40000000 cleared, else +0x18 |= 0x20000)
+};
+struct ChunkDoll {
+    std::string object;
+    int32_t minimum = -1, kept = 0; // +0x10 / +0x14: budget checks against the free instance slots (0x696F90)
+    std::vector<physics::ObjectPhysics> models; // per model: shape (its primitives) and bounds
+    std::vector<ChunkPiece> pieces;
 };
 // Regenerate (death record +0x20..+0x70, tru.exe EnemyRegenerateData 0x67ED20 / hit filter 0x682490): a body with
 // time > 0 lies down for that long and gets back up at full health (thralls), unless a hit matching one of `kills`
@@ -100,6 +120,7 @@ struct EnemyTuning {
     std::vector<DeathClip> deaths;
     Regenerate regenerate;
     float deathImpulse = 0;        // death record +0x4C (thralls 2000 for their chunks; soldiers, cats 0)
+    float deathTimer = 4.0f;       // death record s16 +0x1C (120 counts): a ragdoll refused (6 live) is retried this late
 };
 
 // Weighted animation list entry (tru.exe 0x60F450: list +0x0C count, 0xC-byte entries at +0x10 {clip ref, u32
@@ -156,6 +177,7 @@ struct EnemyType {
     // Ragdoll (ObjectBase +0x7C, physics::loadRagdoll) and each skeleton segment's bind position (model space).
     std::optional<physics::RagdollDef> ragdoll;
     std::vector<vec3> bind;
+    std::optional<ChunkDoll> chunks; // thralls: death record +0x46
     // Wall crawlers (enemy data class 5 / 6 nagas, 7 spiders): their tilted intros cling to walls and ceilings.
     bool crawler() const { return enemyClass == 5 || enemyClass == 6 || enemyClass == 7; }
     bool regenerates() const { return !tuning.regenerate.clip.empty() || !tuning.regenerate.up.empty(); }
@@ -241,9 +263,14 @@ struct EnemyState {
     float phaseTime = 0, phaseLength = 0; // s in the phase, s it lasts (idles)
     vec3 goal{0};            // Search: where it walks
     float searchTime = 0;    // s searching
-    // Ragdoll (EnemyType::ragdoll; dead, once the death clip is done): 0 none, 1 starting (World builds the bodies at
-    // `ragdoll` with the killing hit's impulse), 2 simulating, 3 settled (the pose stays, the bodies are gone).
+    // Physics takeover of a dead body, `ragdollAt` s into Mode::Dead (the death entry's delay): ragdoll
+    // (EnemyType::ragdoll) 0 none, 1 starting (World builds the bodies at `ragdoll` with the killing hit's impulse), 2
+    // simulating, 3 settled (the pose stays, the bodies are gone); 4 broken into chunks (EnemyType::chunks; the body is
+    // gone, World builds the pieces at the body's last pose when `pieces` is empty).
     int ragdollPhase = 0;
+    float ragdollAt = 0;
+    std::vector<glm::mat4> pieces; // phase 4: each chunk piece's model -> enemy model space (modelMatrix(pos, yaw, 0, tilt))
+    std::vector<vec3> pieceVel;    // pieces made this tick: each one's velocity (units/s) and spin (rad/s), world
     std::vector<glm::mat4> ragdoll; // each ragdoll bone's start-segment frame, model space (modelMatrix(pos, yaw, 0, tilt))
     vec3 killAt{0}, killDir{0};     // the killing hit: point relative to pos, direction
 };
@@ -292,6 +319,9 @@ public:
     void setPatrol(int path);
     // Points other enemies walk to or stand at this tick (mode 3 picks a free one: 0x633F10), set by Enemies.
     std::span<const vec3> claimed;
+    // Live ragdolls (phases 1 / 2) and chunk sets (4) of the other enemies, set by Enemies: tru.exe allows 6 ragdolls
+    // (0x60EF50) and 4 chunk sets (0x696F90).
+    int ragdolls = 0, chunkSets = 0;
 
     void restore(const EnemyState& s); // streamed back in / loaded: no interpolation, no blend
     const EnemyState& start() const { return start_; } // as constructed (placement, full health)
@@ -303,6 +333,9 @@ public:
     // The ragdoll's bone frames (world) after a physics step (World::stepRagdolls); asleep or kRagdollSeconds after the
     // death: settled.
     void setRagdoll(std::span<const glm::mat4> world, bool asleep);
+    // Phase 4: each chunk piece's world model matrix (World::startChunks with their starting velocities, then after
+    // every physics step).
+    void setPieces(std::span<const glm::mat4> world, std::span<const vec3> vel = {});
     static constexpr float kRagdollSeconds = 20.0f; // [I] then the pose freezes even if a body still moves
 
 private:

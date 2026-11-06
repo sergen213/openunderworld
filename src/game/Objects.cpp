@@ -20,6 +20,10 @@ glm::mat4 introModel(const script::Object& o) { // T * Rx * Ry * Rz, as the intr
            glm::rotate(glm::mat4(1), o.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), o.rot.z, {0, 0, 1});
 }
 
+// Scene keys beside the intro uids: Lara's ragdoll; chunk piece k of enemy `uid` as a loose body.
+constexpr int32_t kLaraRagdoll = -1;
+int32_t pieceId(int32_t uid, size_t k) { return -(uid * 64 + int32_t(k) + 1); }
+
 } // namespace
 
 const physics::ObjectPhysics* World::objectPhysics(const std::string& name) {
@@ -1017,6 +1021,7 @@ void World::stepPhysics(float dt) {
         loose.push_back({o.uid, objectPhysics(o.name), glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body});
         looseIds.insert(o.uid);
     }
+    chunkPieces(loose);
     physics_.setLoose(loose);
     physics_.setVehicles(bikeVehicles()); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result
     std::vector<physics::Scene::Terrain> terrain;
@@ -1046,12 +1051,28 @@ void World::stepPhysics(float dt) {
 // ones (2) keep theirs; settled (3), alive or streamed-out enemies have none. `step`: after a physics step each body's
 // pose goes back to its enemy, which settles once they sleep (World owns the motion, as for loose bodies).
 void World::syncRagdolls(bool step) {
+    const PlayerState& lara = player_.state();
+    const glm::mat4 laraModel = player_.modelMatrix(lara.pos, lara.yaw, lara.pitch);
     if (step) {
         for (const auto& e : enemies_.all())
-            if (e->state().ragdollPhase == 2)
+            if (e->state().ragdollPhase == 2) {
                 if (const auto p = physics_.ragdoll(e->uid())) e->setRagdoll(p->frames, p->asleep);
+            } else if (e->state().ragdollPhase == 4 && !e->state().pieces.empty()) {
+                std::vector<glm::mat4> pieces;
+                for (size_t k = 0; k < e->state().pieces.size(); ++k)
+                    if (const auto m = physics_.loose(pieceId(e->uid(), k))) pieces.push_back(*m);
+                if (pieces.size() == e->state().pieces.size()) e->setPieces(pieces);
+            }
+        if (combat_.ragdollPhase == 2)
+            if (const auto p = physics_.ragdoll(kLaraRagdoll)) {
+                const glm::mat4 toModel = glm::inverse(laraModel);
+                for (size_t i = 0; i < p->frames.size() && i < combat_.ragdoll.size(); ++i) combat_.ragdoll[i] = toModel * p->frames[i];
+                if (p->asleep) combat_.ragdollPhase = 3;
+            }
         return;
     }
+    for (const auto& e : enemies_.all())
+        if (e->state().ragdollPhase == 4 && e->state().pieces.empty() && e->type().chunks) startChunks(*e);
     const auto& all = enemies_.all();
     std::vector<physics::Scene::Ragdoll> list;
     std::vector<std::vector<glm::mat4>> frames(all.size());
@@ -1074,9 +1095,66 @@ void World::syncRagdolls(bool step) {
         }
         list.push_back(r);
     }
+    // Lara's (AnimLibrary::ragdoll, CombatState::ragdollPhase): no hit impulse, at rest (the death clip is done).
+    std::vector<glm::mat4> laraFrames;
+    if (anims_.ragdoll && (combat_.ragdollPhase == 1 || combat_.ragdollPhase == 2) && combat_.ragdoll.size() == anims_.ragdoll->bones.size()) {
+        for (const glm::mat4& m : combat_.ragdoll) laraFrames.push_back(laraModel * m);
+        list.push_back({kLaraRagdoll, &*anims_.ragdoll, anims_.bind, laraFrames, {}, {}, {}});
+        combat_.ragdollPhase = 2;
+    }
     physics_.setRagdolls(list);
     for (size_t k = 0; k < all.size(); ++k)
         if (all[k]->state().ragdollPhase == 1 && !frames[k].empty()) all[k]->setRagdoll(frames[k], false);
+}
+
+// Thralls broken into chunks (EnemyType::chunks, tru.exe 0x696F90 / 0x696B90 / 0x696A60): when one starts (phase 4,
+// no pieces yet; syncRagdolls right after the enemy tick, so a save between ticks holds them) each piece of its chunk
+// object appears at mix(segment B, segment A, t) of the body's pose, rotated as slerp(B, A, t) [I: the pairing], its
+// model's box centre there (0x696B00), moving as those segments did over the last tick (0x78DED0 mean velocity;
+// 0x78DF80 [I] segment B's spin), plus death record +0x4C x 2.5 along the hit (0x696A60, one impulse per piece; as the
+// ragdolls', mass x units/s). Then they are loose bodies like any other (chunkPieces -> Scene::setLoose; World owns
+// their pose, syncRagdolls reads it back). [U] piece flags bit 0, the +0x71 mark of the first unflagged piece, how the
+// set counter 0xECFC70 drops (ours: live sets among the loaded enemies).
+void World::chunkPieces(std::vector<physics::Scene::Loose>& out) {
+    for (const auto& e : enemies_.all()) {
+        const auto& s = e->state();
+        const auto& c = e->type().chunks;
+        if (s.ragdollPhase != 4 || !c || s.pieces.size() != c->pieces.size()) continue;
+        const glm::mat4 model = ai::Enemy::modelMatrix(s.pos, s.yaw, 0, s.tilt);
+        const bool moving = s.pieceVel.size() == 2 * s.pieces.size();
+        for (size_t k = 0; k < s.pieces.size(); ++k)
+            out.push_back({pieceId(e->uid(), k), &c->models[size_t(c->pieces[k].model)], model * s.pieces[k], 0,
+                           moving ? s.pieceVel[2 * k] : vec3(0), moving ? s.pieceVel[2 * k + 1] : vec3(0)});
+    }
+}
+
+void World::startChunks(ai::Enemy& e) {
+    const auto& s = e.state();
+    const ai::ChunkDoll& c = *e.type().chunks;
+    const glm::mat4 model = ai::Enemy::modelMatrix(s.pos, s.yaw, 0, s.tilt);
+    const auto now = e.pose(1.0), before = e.pose(0.0);
+    const auto seg = [&](int i) { return size_t(std::clamp(i, 0, int(now.size()) - 1)); };
+    std::vector<glm::mat4> world;
+    std::vector<vec3> vel;
+    for (const ai::ChunkPiece& p : c.pieces) {
+        const physics::ObjectPhysics& shape = c.models[size_t(p.model)];
+        const glm::mat4 &a = now[seg(p.segA)], &b = now[seg(p.segB)];
+        const glm::quat rot = glm::slerp(glm::normalize(glm::quat_cast(glm::mat3(b))), glm::normalize(glm::quat_cast(glm::mat3(a))), p.t);
+        glm::mat4 m = glm::mat4_cast(rot);
+        m[3] = glm::vec4(glm::mix(vec3(b[3]), vec3(a[3]), p.t), 1);
+        world.push_back(model * m * glm::translate(glm::mat4(1), -0.5f * (shape.boxMin + shape.boxMax)));
+        const vec3 va = vec3(a[3] - before[seg(p.segA)][3]), vb = vec3(b[3] - before[seg(p.segB)][3]);
+        vec3 v = glm::mat3(model) * (0.5f * (va + vb)) / float(kTickSeconds);
+        glm::quat spin = glm::normalize(glm::quat_cast(glm::mat3(b)) * glm::inverse(glm::quat_cast(glm::mat3(before[seg(p.segB)]))));
+        if (spin.w < 0) spin = -spin;
+        if (const float imp = e.type().tuning.deathImpulse; imp > 0) {
+            const float mass = physics::massProps(shape).mass;
+            v += s.killDir * (2.5f * imp / (mass > 0 ? mass : 666.0f)); // Scene::setLoose's fallback mass
+        }
+        vel.push_back(v);
+        vel.push_back(glm::mat3(model) * (glm::axis(spin) * glm::angle(spin)) / float(kTickSeconds));
+    }
+    e.setPieces(world, vel);
 }
 
 // Pressure plates (prismatic joints, Runtime::Object::Joint): weight on the plate — Lara standing on it, a push block

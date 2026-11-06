@@ -8,6 +8,7 @@
 #include "cdc/Cdc.hpp"
 
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -632,12 +633,14 @@ nlohmann::json World::serializeCombat() const {
     int32_t target = 0;
     for (const auto& e : enemies_.all())
         if (static_cast<const Damageable*>(e.get()) == c.target) target = e->uid();
+    nlohmann::json ragdoll = nlohmann::json::array();
+    for (const glm::mat4& m : c.ragdoll) ragdoll.push_back(std::vector<float>(&m[0][0], &m[0][0] + 16));
     const nlohmann::json state = {
         {"previous", weaponName(c.previous)}, {"want", weaponName(c.want)}, {"hammer", {c.hammer.clip, c.hammer.t, c.hammer.prevT}},
         {"drawn", c.drawn}, {"redraw", c.redraw}, {"drawT", c.drawT}, {"target", target}, {"locked", c.locked},
         {"aim", {c.aim.x, c.aim.y}}, {"aimPoint", {c.aimPoint.x, c.aimPoint.y, c.aimPoint.z}}, {"reload", c.reload},
         {"cooldown", c.cooldown}, {"hand", c.hand}, {"sinceShot", {c.sinceShot[0], c.sinceShot[1]}}, {"spread", c.spread},
-        {"shotsFired", c.shotsFired}, {"rng", c.rng}, {"deathTime", c.deathTime},
+        {"shotsFired", c.shotsFired}, {"rng", c.rng}, {"deathTime", c.deathTime}, {"ragdollPhase", c.ragdollPhase}, {"ragdoll", ragdoll},
         {"held", {c.drawHeld, c.switchHeld, c.weaponHeld, c.healHeld, c.interactHeld, c.fireHeld}}, {"healCooldown", c.healCooldown},
         {"healthPacksUsed", c.healthPacksUsed}, {"slowMo", c.slowMo}, {"pip", {c.pip.x, c.pip.y}}, {"timeScale", c.timeScale}};
     return {{"weapon", weaponName(c.weapon)}, {"secondary", weaponName(c.secondary)}, {"guns", guns}, {"adrenaline", c.adrenaline},
@@ -682,6 +685,12 @@ void World::restoreCombat(const nlohmann::json& j) {
             d.reload = s->at("reload"), d.cooldown = s->at("cooldown"), d.hand = s->at("hand");
             d.sinceShot[0] = s->at("sinceShot").at(0), d.sinceShot[1] = s->at("sinceShot").at(1);
             d.spread = s->at("spread"), d.shotsFired = s->at("shotsFired"), d.rng = s->at("rng"), d.deathTime = s->at("deathTime");
+            d.ragdollPhase = s->value("ragdollPhase", 0);
+            for (const auto& m : s->value("ragdoll", nlohmann::json::array())) {
+                const auto f = m.get<std::vector<float>>();
+                if (f.size() != 16) throw std::runtime_error("ragdoll frame");
+                d.ragdoll.push_back(glm::make_mat4(f.data()));
+            }
             const auto& h = s->at("held");
             d.drawHeld = h.at(0), d.switchHeld = h.at(1), d.weaponHeld = h.at(2), d.healHeld = h.at(3), d.interactHeld = h.at(4), d.fireHeld = h.at(5);
             d.healCooldown = s->at("healCooldown"), d.healthPacksUsed = s->at("healthPacksUsed"), d.slowMo = s->at("slowMo");

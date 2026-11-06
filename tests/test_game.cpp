@@ -2966,6 +2966,93 @@ TEST(GameReal, KilledPoacherRagdollIndependentOfRenderRate) {
     EXPECT_GT(pelvis.z - floor->point.z, -10.0f) << "not through it";
 }
 
+// Lara's death ragdoll (AnimLibrary::ragdoll, 55 kg, 15 bones): killed on l4_ballcourt, her death clip plays, then
+// her ragdoll takes the last pose and collapses; bit-identical at any render rate up to just before the respawn.
+TEST(GameReal, LaraRagdollIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto base = worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0});
+    const auto make = [&] {
+        auto w = base();
+        w->kill();
+        return w;
+    };
+    float clip = 0;
+    {
+        const auto w = make();
+        ASSERT_TRUE(w->anims().ragdoll);
+        EXPECT_EQ(w->anims().ragdoll->bones.size(), 15u);
+        EXPECT_FLOAT_EQ(w->anims().ragdoll->mass, 55.0f);
+        w->tick({});
+        ASSERT_EQ(w->player().state().state, game::State::Dead);
+        clip = w->anims().find(w->player().state().clip)->durationSeconds();
+    }
+    const int ticks = int((clip + 0.9f) / game::kTickSeconds); // respawn: clip + 1 s
+    const auto w = expectRateIndependent(make, game::InputScript::parse(""), ticks);
+    ASSERT_EQ(w->player().state().state, game::State::Dead);
+    const auto& c = w->combat();
+    EXPECT_GE(c.ragdollPhase, 2);
+    ASSERT_EQ(c.ragdoll.size(), 15u);
+    const auto& s = w->player().state();
+    const glm::mat4 model = w->player().modelMatrix(s.pos, s.yaw, s.pitch);
+    const float pelvis = (model * c.ragdoll[0][3]).z, head = (model * c.ragdoll[2][3]).z;
+    EXPECT_LT(head - s.pos.z, 400.0f) << "collapsed";
+    EXPECT_GT(pelvis - s.pos.z, -60.0f) << "not through the floor";
+}
+
+// A Mjolnir bolt kills l7_yggdrasil_hall01's viking thrall 8833: the death timer breaks it into
+// viking_thrall_chunkdoll's 14 pieces (loose bodies at its pose, pushed along the bolt), which scatter and come to rest
+// on the hall's floor.
+TEST(GameReal, KilledThrallBreaksIntoChunks) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto w = worldMaker(bf, "l7_yggdrasil_hall01", game::Spawn{{1000, 0, 0}, glm::half_pi<float>()}, true)();
+    w->tick({});
+    game::ai::Enemy* thrall = nullptr;
+    for (const auto& e : w->enemies().all())
+        if (e->uid() == 8833) thrall = e.get();
+    ASSERT_TRUE(thrall);
+    ASSERT_EQ(thrall->type().name, "viking_thrall");
+    const auto uid = thrall->uid();
+    const game::vec3 at = thrall->position();
+    game::Hit bolt{1000, at + game::vec3(0, 0, 200), {1, 0, 0}, game::Team::Player};
+    bolt.damageClass = 13, bolt.damageType = 3;
+    thrall->onHit(bolt);
+    ASSERT_EQ(thrall->state().mode, game::ai::Mode::Dead);
+    const auto find = [&]() -> const game::ai::Enemy* {
+        for (const auto& e : w->enemies().all())
+            if (e->uid() == uid) return e.get();
+        return nullptr;
+    };
+    for (int i = 0; i < 120 && find()->state().pieces.empty(); ++i) w->tick({});
+    ASSERT_EQ(find()->state().ragdollPhase, 4);
+    ASSERT_EQ(find()->state().pieces.size(), 14u);
+    const auto where = [&] {
+        const auto& s = find()->state();
+        const glm::mat4 model = game::ai::Enemy::modelMatrix(s.pos, s.yaw, 0, s.tilt);
+        std::vector<game::vec3> out;
+        for (const auto& p : s.pieces) out.emplace_back(model * p[3]);
+        return out;
+    };
+    for (int i = 0; i < 570; ++i) w->tick({});
+    const auto before = where();
+    for (int i = 0; i < 30; ++i) w->tick({});
+    const auto after = where();
+    EXPECT_EQ(find()->state().ragdollPhase, 4);
+    ASSERT_EQ(after.size(), 14u);
+    float spread = 0;
+    for (size_t k = 0; k < after.size(); ++k) {
+        const game::vec3 q = after[k];
+        spread = std::max(spread, glm::length(game::vec2(q - at)));
+        EXPECT_LT(std::abs(q.z - before[k].z), 5.0f) << "piece " << k << " landed"; // the head may still roll
+        const auto floor = w->collision().groundProbe(q + game::vec3(0, 0, 100), 1000, 0x0F);
+        ASSERT_TRUE(floor) << "piece " << k << " above a floor";
+        EXPECT_LT(q.z - floor->point.z, 150.0f) << "piece " << k << " lying on it";
+        EXPECT_GT(q.z - floor->point.z, -20.0f) << "piece " << k << " not through it";
+    }
+    EXPECT_GT(spread, 60.0f) << "scattered";
+}
+
 // Interactions (docs/GAMEPLAY.md "Interactions"): l3_main_bedroom wall switch 4525 — Lara stands in front of it and plays
 // its own Lara clip (obj_pull_lever from the switch DRM) with the input locked while the switch's use handler still runs
 // at the switch clip's end; l4_ballcourt push block 6504 — grab, push clip, Lara carried with the block, release.

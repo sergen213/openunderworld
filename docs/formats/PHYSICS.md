@@ -184,12 +184,42 @@ type 2, is [I].
     limits +0x60 / +0x64), 2 (0x4E08A0, axes 1 and 2, limits +0x60..+0x6C), 3 (0x4EE5C0: pivot, axis 1, a twist axis =
     axis 1, or the bone direction when 0x49AFA0 rejects axis 1, cone +0x70, limits +0x60 / +0x64); 0 = the root
     (pelvis). Poacher: pelvis, spine (2), head (3), upper arms (3), forearms (1), hands (2), thighs (3), shins (1), feet (2).
-  - [O] Trigger: an enemy's death timer (0x66C950) runs the death record's chunk path (+0x46 object: thralls break
-    into `*_chunkdoll` pieces, impulse +0x4C × the hit direction × 2.5 via 0x696A60) or 0x617EE0 -> 0x60EF50 (at most 6
-    ragdolls, the object's +0x78) -> 0x4F1920; a failed ragdoll re-arms the timer for +0x1C counts. Anim graph
-    `AnimRagdollNode` / `AnimDrivenRagdollNode` (0x44EF10) also start one. [I] Ours starts once the death clip is done
-    (the timer's start is not decoded), for every enemy type with a ragdoll except sharks (they float); thralls, whose
-    record names a chunk object, ragdoll too, as the chunks are not implemented.
+  - [O] Trigger (enemies): death state entry 0x66C500 picks the death entry (FUN_00642210 / 0x642170: a random one of
+    the attacker's quadrant and flag) and arms the death timer (state block +0x10) for min + rand(max - min) counts, the
+    entry's s32 +4 / +8 (poacher 52..60, panther 1..3 / 18..26, thralls 6..46; no entry: 0); at once instead when the
+    summed impulses / damage of the hits it took (enemy +0x4380: +8 count of vec4s at +0xA0, +0x140 count of floats at
+    +0x204) reach death record +8 / +0xC, or a hit flag +0x18 / the +0x45D0 counters say so — the thresholds (1e9 /
+    101138 soldiers and cats, 2.8e6 thralls) are beyond any hit, so ours always waits (`EnemyState::ragdollAt`). When it
+    expires 0x66C950 runs the chunk path (death record s16 +0x46 object: thralls) if the set budget allows (below), else
+    0x617EE0 -> 0x60EF50 (at most 6 live ragdolls, the object's +0x78, else ObjectBase +0x50 +0x24's object) ->
+    0x4F1920; a refused ragdoll re-arms the timer for death record s16 +0x1C counts (120). Anim graph `AnimRagdollNode` /
+    `AnimDrivenRagdollNode` (0x44EF10) also start one (posting message 1). Counts are [I] 30 Hz (the timer's high dword,
+    0x670470; the clock's unit is not found). The clip keeps playing until the takeover, which is a pure ragdoll from
+    the pose and the segments' last motion (0x4F1920 builds it unpowered): no blend from the clip [O]. Sharks keep
+    floating (no ragdoll).
+  - [O] Lara: her outfit's record (lara / lara_* ObjectBase +0x7C: 55 kg, radius scale 1.25, 15 bones) is built by
+    0x6F1400 -> 0x4F1920 from DeathState_Entry (0x75AA50) for death types 3 / 4 (at once; which deaths those are [U]) or
+    from its message handler 0x75B000 on message 1 ([I] at the death clip's end; ours: when the clip is done). The
+    death timer is then cut to 90 counts (3 s) before the reload [O]; ours keeps its respawn timing (clip + 1 s).
+    `CombatState::ragdoll*`, scene key -1, no hit impulse; saved with the combat state (`ragdollPhase`, frames in her
+    model space) and `World::stateParts` "player"; `GameReal.LaraRagdollIndependentOfRenderRate`.
+  - [O] Chunks (thralls; `ai::ChunkDoll`, `World::startChunks` / `chunkPieces`): death record s16 +0x46 = objectlist id
+    of a `*_chunkdoll` object (viking / mayan 602 `viking_thrall_chunkdoll`, panther 518, yeti 706). 0x696F90: at most 4
+    sets (0xECFC70), pieces limited by the free instance slots (0x3FC - live instances) against data +0x10 (minimum) /
+    +0x14 (kept); its ObjectBase +0xC8 data {+0x18 count, +0x1C -> 0x14-byte pieces {+0 u8 model, +2 s16 segment A, +4
+    s16 segment B, +8 t, +0xC -> body properties {0.4, 0.2, 0.005, 0.005, 1, 0.03, 30} [U], +0x10 flags}}; viking: 14
+    pieces of 6 models (100 kg each by their primitives). 0x696B90 makes each an instance of that model at mix(B, A, t)
+    of the body's world segments, rotated by 0x696870's slerp of the two ([I] which end t = 1 takes), centred on the
+    model's segment-0 box (0x696B00), velocity = mean of the two segments' (0x78DED0), spin from 0x78DF80 ([I] ours:
+    segment B's), a Havok body from its model's primitives (0x497270, "ChunkDoll: failed to create geom"); then
+    0x696A60 gives every piece whose owner (+0x58) is the enemy death record +0x4C x 2.5 along the hit (thralls 2000;
+    ours: velocity += that / piece mass, as the ragdolls' impulse). The enemy instance is hidden (+0x14 |= 0x20). Ours:
+    loose bodies keyed -(uid x 64 + k + 1), made right after the enemy tick (`EnemyState::pieces` / `pieceVel`, so a save
+    between ticks holds them), poses read back after each step, drawn by ou-game in place of the body; saved with the
+    enemy and in the scene's state. [U]: piece flags bit 0 (instance +0x14 bit 0x40000000 vs +0x18 0x20000), the +0x71
+    mark on the first unflagged piece, piece 0's 0x69A900 (when the object's s16 +0x3C > 0), when 0xECFC70 drops (ours:
+    live sets among the loaded enemies), fading pieces out. `AiReal.DeathTimerAndThrallChunks`,
+    `GameReal.KilledThrallBreaksIntoChunks`.
   - Simulation [I]: one dynamic Jolt body per bone (layer loose: it lands on the terrain, the colliders and loose
     bodies), its frame the start segment's (the model's bind frames are rotation-free), a capsule from start to end
     (radius ≥ 1 unit), mass = share × total, inertia from the shape; friction 0.6, angular damping 0.5. Joints: Jolt
@@ -200,10 +230,10 @@ type 2, is [I].
     lies inside every limit to a few degrees (knees 43° in −10..140 and −51° in −140..10, elbows −5° / 3° at their
     −125..−5 / 5..125 ends, hips −22° / 30°, shoulders −3° / 17°, head −13° in ±20°) [O measured]; friction
     as the motor bounds, × 30 × 60 / 280² N·m. Parent and child bones do not collide (`GroupFilterTable`). It starts at
-    the death clip's last pose, each body moving as its segment did over the last tick, with the killing hit's impulse
+    the pose at the takeover, each body moving as its segment did over the last tick, with the killing hit's impulse
     (death record +0x4C × 2.5 along the shot as 0x696A60; [I] 2000 when the record has none: soldiers, cats) at the bone
     nearest the hit point. Every other skeleton segment follows its nearest ancestor-or-self that starts a bone, with its
-    death-pose offset. When every body sleeps (Jolt's 0.5 s rest) or 20 s after the death [I], the pose freezes and the
+    takeover pose offset. When every body sleeps (Jolt's 0.5 s rest) or 20 s after the death [I], the pose freezes and the
     bodies go (`ragdollPhase` 3).
   - Timing and saves: bodies are made right after the enemy tick that starts the ragdoll (so a save between ticks holds
     them), poses are read after each `World::stepPhysics`; enemy saves carry `ragdollPhase`, each bone's frame in
