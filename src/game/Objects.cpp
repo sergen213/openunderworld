@@ -923,6 +923,19 @@ void World::bindMultibody() {
         for (const auto& c : colliders_)
             if (c.uid == uid && c.hinge >= 0) { index = c.hinge; break; }
         if (function == 2) return true; // Enable: bodies are already active once their hinge exists
+        // 4 (0x4A7070): 1 while an atom's body is still fixed (body +0x15C bit 0, cleared by Enable 0x4A6F70 -> 0x4D8FD0).
+        // Ours: fixed unless simulated, on a hinge or loose [I] (l4_temple floor 5234 polls statue head 5236).
+        auto* o = const_cast<script::Object*>(script_.find(uid)); // World owns object motion
+        if (function == 4 && args.empty()) {
+            result = index < 0 && !(o && o->loose);
+            return true;
+        }
+        // 59 (0x4A93E0): INSTANCE_Post(0x35, joint) breaks a joint (l5_valaskjalf falling bridge 6974 breaks 0, then 1).
+        // [I] Ours has one body per object: the first break lets it fall as a loose body.
+        if (function == 59 && args.size() == 1) {
+            if (o && !o->loose) o->loose = true;
+            return true;
+        }
         if (function != 77 && function != 78 && function != 79) return false;
         if (args.empty() || args[0].bits != 0) return false; // one hinge per current rigid-body object
         if (function == 77) {

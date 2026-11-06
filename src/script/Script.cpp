@@ -115,6 +115,7 @@ constexpr float kReach = 200;          // [I] switch / block use distance (horiz
 constexpr float kReachHeight = 250;    // [I]
 constexpr float kBlockSpeed = 120;     // [I] units per second
 constexpr double kDt = 1.0 / 60.0;     // ticks are game::kTickSeconds
+constexpr uint32_t kTriggerMover = 0x100; // ObjectBase oflags: the instance is on the triggers' list (0x5BA810 -> 0x5CF680)
 
 } // namespace
 
@@ -354,7 +355,7 @@ nlohmann::json stateOf(const Object& o) {
         }
     }
     if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && !o.dead && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline &&
-        (!o.joint || o.joint->position == 0) && !o.loose &&
+        (!o.joint || o.joint->position == 0) && !o.loose && o.holds.empty() && (!o.lastAt || *o.lastAt == o.pos + o.offset) &&
         (!o.graph || (o.graph->state == o.graph->initial && o.graph->transition < 0 && o.graph->frames == 0 && o.graph->t == 0)))
         return nullptr; // birth state
     nlohmann::json out = {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
@@ -370,11 +371,14 @@ nlohmann::json stateOf(const Object& o) {
             for (int r = 0; r < 4; ++r) out["body"].push_back(o.body[c][r]);
     }
     if (const auto& g = o.graph) out["graph"] = {g->state, g->transition, g->frames, g->clip, g->t, g->loop};
+    if (!o.holds.empty()) out["holds"] = o.holds;
+    if (o.lastAt && *o.lastAt != o.pos + o.offset) out["lastAt"] = {o.lastAt->x, o.lastAt->y, o.lastAt->z};
     return out;
 }
 void applyState(Object& o, const nlohmann::json* s) {
     o.state = 0, o.t = 0, o.inside = o.firstIn = false, o.offset = vec3(0);
     o.hidden = o.dead = false, o.engagement = -1, o.loose = false;
+    o.holds.clear(), o.lastAt.reset(); // a missing lastAt is the current point (Runtime::tickTrackedInstances)
     o.machine.reset();
     o.fibers.clear();
     if (o.script) {
@@ -407,6 +411,8 @@ void applyState(Object& o, const nlohmann::json* s) {
     o.hidden = s->value("hidden", false), o.dead = s->value("dead", false), o.engagement = s->value("engagement", -1), o.loose = s->value("loose", false);
     const auto off = s->value("offset", std::vector<float>{0, 0, 0});
     if (off.size() == 3) o.offset = {off[0], off[1], off[2]};
+    o.holds = s->value("holds", std::set<int32_t>{});
+    if (const auto at = s->value("lastAt", std::vector<float>{}); at.size() == 3) o.lastAt = vec3(at[0], at[1], at[2]);
     if (const auto body = s->value("body", std::vector<float>{}); o.loose && body.size() == 16)
         for (int c = 0; c < 4; ++c)
             for (int r = 0; r < 4; ++r) o.body[c][r] = body[size_t(c * 4 + r)];
@@ -678,6 +684,7 @@ void Runtime::addUnit(const UnitRef& u) {
                 }
             }
         }
+        if (o.kind != Kind::Volume && o.kind != Kind::Plane) o.mover = objectFlags(o.name) & kTriggerMover;
         // [I] Ship hall doors without a script (chapter 6's l6_ship_upper_hallway_a/b copies of the l1 doors): their
         // volumes' door calls ISTYPE-fail on them, so nothing can open them, yet chapter 6 walks through. They stand
         // open, as the l1 doors once opened.
@@ -747,6 +754,7 @@ bool Runtime::resume(Object& o) {
             for (const auto& r : j->at(1)) joint.ranges.push_back({r.at(0).get<float>(), r.at(1).get<float>(), r.at(2).get<int32_t>(), r.at(3).get<bool>()});
         }
         o.tracksLara = setup.value("tracksLara", false);
+        o.added = setup.value("added", std::vector<int32_t>{});
         if (const auto s = setup.find("splineRanges"); s != setup.end() && o.spline) o.spline->ranges = s->get<std::vector<std::array<int32_t, 3>>>();
     } catch (const nlohmann::json::exception&) { // checked by restoreRuntime; an odd entry resumes idle
     }
@@ -1327,16 +1335,19 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             }
             if (!std::strcmp(name, "triggerplanebase") && (nc.function == 0 || nc.function == 1)) return true; // 0x79D8E0: empty
             if (!std::strcmp(name, "triggervolumebase") && (nc.function == 0 || nc.function == 1) && nc.args.size() == 1) {
-                // Add (0x4A43E0) / Remove (0x4A4410) an instance the volume tests. Ours test Lara only, so adding or
-                // removing her (or null) is satisfied; other instances are not tracked.
+                // Add (0x4A43E0) / Remove (0x4A4410) an instance the volume tests: Lara (Object::tracksLara) or another
+                // instance (Object::added, tickTrackedInstances; l4_ballcourt 6519 adds push block 6504). Null: nothing.
                 const vm::Value& a = nc.args[0];
                 int32_t uid = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
                 if (a.kind == vm::Value::Kind::Member) {
                     const auto holder = resolve(a.uid);
                     uid = holder ? int32_t(holder->fields[a.offset]) : 0;
                 }
-                if (uid != 0 && !(playerScript_ && uid == playerScript_->uid)) return false;
-                if (Object* o = uid ? findMut(self->uid) : nullptr) o->tracksLara = nc.function == 0;
+                Object* o = uid ? findMut(self->uid) : nullptr;
+                if (!o) return true;
+                if (playerScript_ && uid == playerScript_->uid) o->tracksLara = nc.function == 0;
+                else if (nc.function == 1) std::erase(o->added, uid), o->holds.erase(uid);
+                else if (std::ranges::find(o->added, uid) == o->added.end()) o->added.push_back(uid);
                 return true;
             }
             if (!std::strcmp(name, "markup") && (nc.function == 0 || nc.function == 1) && markup_) {
@@ -1835,6 +1846,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             return false;
         };
         auto cinematic = [this, source](vm::Instance& target, int16_t vt) {
+            if (onCall) onCall(source, target.uid, vt);
             // vt 57 plays (cinematic base 3523 fn 0 -> STATE 1); vt 63 only preloads (STATE 2 = fn 13 creates the stream
             // and waits) [O bytecode], so it is not an activation (l3_main_hall 4137 OnIn preloads 4108, 4128 plays it).
             if (vt != 57) return false;
@@ -1875,6 +1887,57 @@ std::shared_ptr<const Object::GraphSet> Runtime::graphSet(const std::string& nam
             }
     }
     return slot = std::move(set);
+}
+
+uint32_t Runtime::objectFlags(const std::string& name) {
+    if (const auto it = objectFlags_.find(name); it != objectFlags_.end()) return it->second;
+    uint32_t flags = 0;
+    if (auto bytes = bigfile_ ? bigfile_->read("pc-w\\" + name + ".drm") : std::nullopt) {
+        try { flags = formats::objectFlags(cdc::parseDrm(std::move(*bytes))); } catch (const FormatError&) {}
+    }
+    return objectFlags_[name] = flags;
+}
+
+// Instances besides Lara on the triggers (0x5CD520, after Lara's tests): a volume tests the instances it added
+// (triggervolumebase Add) and every mover (oflags 0x100); one entering / leaving runs its prototype 8 / 9 (vt 56 / 57,
+// 0x79CD00 / 0x79CD40) with the instance, an added one then prototype 16 / 17 (0x5C8A40 -> 0x79CEC0 / 0x79CF10) with
+// reason 1 [I: as Lara's] and the instance. A plane runs prototype 7 (vt 55, 0x79CB60) with each mover crossing it
+// (l4_temple 5247: the falling statue head 5236 breaks floor 5234). [I] An instance's point is its origin plus its
+// displacement (Object::offset); enemies' AI positions are not mirrored here.
+void Runtime::tickTrackedInstances() {
+    const auto at = [&](int32_t uid) -> std::optional<vec3> {
+        const Object* o = find(uid);
+        return o && !o->dead ? std::optional(o->pos + o->offset) : std::nullopt;
+    };
+    std::vector<int32_t> movers;
+    for (const auto& o : objects_)
+        if (o.mover && !o.dead) movers.push_back(o.uid);
+    for (size_t i = 0; i < objects_.size(); ++i) {
+        if (objects_[i].dead || (objects_[i].kind != Kind::Volume && objects_[i].kind != Kind::Plane)) continue;
+        const int32_t uid = objects_[i].uid;
+        std::vector<int32_t> tested = objects_[i].kind == Kind::Volume ? objects_[i].added : std::vector<int32_t>{};
+        for (const int32_t m : movers)
+            if (std::ranges::find(tested, m) == tested.end()) tested.push_back(m);
+        for (const int32_t id : tested) {
+            const auto p = at(id);
+            Object* t = findMut(uid);
+            if (!p || !t) continue;
+            const std::array arg{vm::Value::object(id)};
+            if (t->kind == Kind::Plane) {
+                if (const Object* m = find(id); m && m->lastAt && crosses(t->shape, t->pos, t->rot, *m->lastAt, *p))
+                    callback(uid, "triggerplanebase", 7, arg);
+                continue;
+            }
+            const bool now = inside(t->shape, t->pos, t->rot, *p);
+            if (now == t->holds.contains(id)) continue;
+            now ? (void)t->holds.insert(id) : (void)t->holds.erase(id);
+            const bool added = std::ranges::find(t->added, id) != t->added.end();
+            callback(uid, "triggervolumebase", now ? 8 : 9, arg);
+            if (added) callback(uid, "triggervolumebase", now ? 16 : 17, std::array{vm::Value::scalar(1), vm::Value::object(id)});
+        }
+    }
+    for (const int32_t id : movers)
+        if (Object* m = findMut(id)) m->lastAt = m->pos + m->offset;
 }
 
 // 0x6A5660: the state's clip starts (once, or looping with flag 2; none keeps the pose), its timer and stimulus totals
@@ -2264,6 +2327,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         used_ = useSwitch->uid;
         if (useSwitch->state == 2) fire(EventKind::Use, *useSwitch);
     }
+    tickTrackedInstances();
     hasLast_ = true, lastPos_ = in.pos, interactHeld_ = in.interact;
 }
 
@@ -2393,6 +2457,7 @@ nlohmann::json Runtime::serialize() const {
             setup["joint"] = {o.joint->prismatic, std::move(ranges)};
         }
         if (o.tracksLara) setup["tracksLara"] = true;
+        if (!o.added.empty()) setup["added"] = o.added;
         if (o.spline && !o.spline->ranges.empty()) setup["splineRanges"] = o.spline->ranges;
         if (running || !fibers.empty() || o.mainPending || !setup.empty())
             machinesOf[o.uid] = {running ? o.machine->save() : nlohmann::json(nullptr), std::move(fibers), o.mainPending, std::move(setup)};

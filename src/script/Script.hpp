@@ -166,6 +166,13 @@ struct Object {
     double t = 0;           // seconds into the current clip
     bool inside = false, firstIn = false;
     bool tracksLara = false; // triggervolumebase Add(Lara): her enter/exit also call prototypes 10/11 (vt 58/59)
+    // Instances besides Lara a trigger tests (tru.exe 0x5CD520): `added` by triggervolumebase Add (saved with the
+    // constructor's setup), and every `mover` (ObjectBase oflags 0x100, listed at birth by 0x5BA810 -> 0x5CF680). `holds`:
+    // the instances inside this volume; `lastAt`: a mover's point at the previous tick (plane crossings). Saved.
+    std::vector<int32_t> added;
+    std::set<int32_t> holds;
+    bool mover = false;
+    std::optional<vec3> lastAt;
     vec3 offset{0};         // Block displacement; a loose rigid body's fall
     // A rigid-body grapple target ("_rb_grapple") a pull knocked loose (Runtime::grapplePulled): it falls under gravity onto what is
     // below (World::tickObjects; it weighs on pressure plates). [I] tru.exe's Havok body; saved.
@@ -355,6 +362,8 @@ public:
     // Runs `uid`'s override of vtable slot `vt` (no arguments) at the start of the next tick, as an engine callback
     // would: the gate tests call handlers no data path of ours reaches yet.
     void call(int32_t uid, int16_t vt) { calls_.emplace_back(uid, vt); }
+    // Research (ProgressionReal.GateSweep): every script-to-script virtual call as (thread source uid, callee uid, vt).
+    std::function<void(int32_t source, int32_t target, int16_t vt)> onCall;
     // The player's stream unit (stream unit id, Portal::toStreamId) for the unit scripts (gamebase callbacks): on a level
     // load (tru.exe 0x5D2310 -> 0x4B0150) vt 13(unit); moving into a new stream unit (STREAM_MoveIntoNewStreamUnit
     // 0x5C1BF0 -> 0x4B01E0) vt 11(unit) and vt 12(previous). Unit scripts created later get the current state (0x4B0050).
@@ -444,6 +453,9 @@ private:
     void tickGraph(int32_t uid);
     std::shared_ptr<const Object::GraphSet> graphSet(const std::string& name);
     std::map<std::string, std::shared_ptr<const Object::GraphSet>> graphSets_; // object name -> graph + clips
+    uint32_t objectFlags(const std::string& name); // ObjectBase oflags of an object DRM, read once per name
+    std::map<std::string, uint32_t> objectFlags_;
+    void tickTrackedInstances(); // Object::added / mover instances against the volumes and planes
     bool splineNative(Object& o, uint32_t function, std::span<const vm::Value> args, uint32_t& result);
     std::vector<std::pair<int32_t, std::shared_ptr<vm::Machine>>> threads_; // states entered from another object's call
 

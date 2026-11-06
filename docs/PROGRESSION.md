@@ -8,6 +8,12 @@ Tools (`tests/test_gates.cpp`, `ou_gates_tests`):
   Lara is placed at the gate, performs the original interaction (switch use, push, grapple pull, walking into a
   volume / through a plane, earlier steps first), and the gated effect is asserted (target door / uber object / block
   visibly moved, cinematic played, chapter changed).
+- `OU_PROGRESSION_ROUTE=1 … ProgressionReal.CriticalPathInOrder` (~11 min, opt-in): the same gates in route order in ONE
+  `World` from chapter 0, script state carried along, each chapter end starting the next chapter, a level load
+  (`World::enterUnit`) standing in for the walk between gates, then the Natla fight and the credits (`playEnding`,
+  shared with `EndgameCredits`). 2026-11-06: all chapter ends and the ending pass; two chapter-1 gates fail only with
+  the state carried: l1_kraken_entrance 748 (gate 743 stays shut) and l1_baldrs_tomb 221 (stops in `multibody` 89, the
+  locks 69 / 70) [U: cause not yet traced].
 - `OU_PROGRESSION_SURVEY=1 … --gtest_filter=ProgressionReal.Survey`: portals (with stream unit ids), units named by
   scripts, level ends and the gate objects of every unit with their static links.
 - `OU_PROGRESSION_SURVEY=1 … --gtest_filter=ProgressionReal.GateSweep`: every candidate gate of every critical-path
@@ -18,6 +24,41 @@ Tools (`tests/test_gates.cpp`, `ou_gates_tests`):
   prototypes, members, calls resolved). The analyses below were read from it.
 - `OU_UBER_DUMP=<object>` (`UberDump`: ObjectBase hex, `*` = pointer), `OU_OBJ_FIELDS=<unit>:<uid>` (`ObjectFields`),
   `OU_ANIM_NAMES=<object>` (`AnimNames`): data research for uber records, script fields and animation lists.
+
+Sweep classification (2026-11-06): a gate that does not pass is a **FAIL** unless it is excused as one of
+- `preload`: its handler only called vt 63 on its cinematics (a later plane / volume plays them);
+- `condition`: its handler ran but called none of its linked targets (links read as conditions, or an earlier step is
+  missing; self-targets — grapple pulls, blocks — are never excused this way);
+- `state`: it called its targets and changed only their script fields (flags later handlers read, e.g. the l1 kraken
+  body's vt 75 / 76 "Lara in zone" flag);
+- `encounter`: all its targets are enemies / generators (no AI runs in the harness).
+The harness spawns Lara away from every trigger (l3_main_bedroom's intro sits inside volume 4521, so its FirstIn
+ran before the gate), records script-to-script calls (`Runtime::onCall`), and also counts anim graph states and
+joints (plates, uber joints) for targets a script called. Counts: 133 / 289 pass with the old classification
+(156 "FAIL"); corrected harness, same code: 137 pass, FAIL 27, condition 61, encounter 36, preload 28; after the
+fixes below: **138 / 289 pass; FAIL 24, state 11, condition 52, encounter 36, preload 28**.
+
+Fixes (2026-11-06):
+- [O] Triggers test instances besides Lara (0x5CD520): every object with ObjectBase oflags 0x100 (listed at birth,
+  0x5BA810 -> 0x5CF680) and the instances a volume added with `triggervolumebase` 0 (before: any non-Lara Add stopped
+  the handler). Volumes run prototype 8 / 9 (vt 56 / 57) with the instance, added ones also 16 / 17 (reason, instance);
+  planes run prototype 7 (vt 55) on a crossing (`Runtime::tickTrackedInstances`; saved: `holds`, `lastAt`, setup
+  `added`). Unblocks l4_ballcourt 6519 (block 6504), l2_junglehub 3638 / 3639, l2_hubhall 3168, l5_valaskjalf 7111,
+  l4_temple plane 5247 (statue head 5236) — their handlers now run; what moves the statue head is [U].
+- [O] `multibody` 4 (0x4A7070: an atom still fixed, body +0x15C bit 0; ours: not on a hinge and not loose [I]) and 59
+  (0x4A93E0: INSTANCE_Post 0x35 breaks a joint; ours: the object falls loose [I]): l5_valaskjalf falling bridge 6974
+  (volume 7010) passes (`CriticalGates`, `CriticalPathInOrder`).
+
+True failures left (24): l1_kraken_room soundvolumes 358/360/361/362/364/365/380/381 (vt 75 clears a flag already
+clear: not a gate); the nine `sa_ei_grapple_wall*` / mounted pulls (l2_towerconnector 2005/2042/2043, l2_norsehub
+2383/2393/2394/2395, l2_norsehall 2457, l2_maproom 2595: their uber command changes no section [U: wall-run anchors,
+not gates?]); l5_valaskjalf 7025 / 7026 (chain 6944 / 6943 vt 55, no visible change); natives: `larabase` 6 (0x777A70:
+Lara's query 0xF8, the contact force with an instance — the traproom crushers 5905), `unit` 12 (0x776BA0 -> 0x7164D0:
+registers the instance's flag-4 markers with Lara — l4_pool ceiling grapple 5511 via 5625), `anchor` 1 (0x7966F0: a
+vector between two anchors; the VM has no vector values — l7_helheim01 8945), `instanceref` 0 on a local (l1_seafloor
+978, l7_arctic_sea 9280: reached now that tracked instances call their handlers). l5_valaskjalf_entryb 7189 (pole-hole
+lever, reward door only): needs the pole ar_pt_pole_a inserted (vt 19 "insert reaction"), then the lever's joint range
+-600..-474 (multibody 79) runs vt 34 [U: the insert interaction].
 
 Sweep 2026-10-29 (uber joints): 132 / 289. Every uber object now starts its sections at spawn, so its first script use no longer counts as a change: the seven `sa_ei_grapple_wall` pulls (l2_maproom 2595, l2_norsehall 2457, l2_norsehub 2383/2394/2395, l2_towerconnector 2005/2042/2043 and volume 2040 -> 2043) and l5_valaskjalf volumes 7025/7026 (targets 6944/6943) passed only by that lazy start [I: not re-examined]; l3_bedroom_hall plane 4375 now passes.
 
@@ -81,8 +122,9 @@ Portal order from the start unit; level changes not made by portals are named.
 | 5 | l5_valgrind | volumes 7471/7511 | door 7334, cinematic 7464 | pass |
 | 5 | l5_valaskjalf_entry | switch 7228 (use) | reward door 7227 | pass |
 | 5 | l5_valaskjalf_entryb | lever 7188 (use) | reward door 7187 | pass (`CriticalGates`; acts only while switch 7192 is not in its graph state 0 "on", read by `modifiable` 8) |
-| 5 | l5_valaskjalf_entryb | pole-hole lever 7189 (use) | reward door 7227 | **fail** (`ar_uo_phole_lever`: its graph leaves only by stimuli 0x20 / 0x40 [U: posted once a pole sits in the hole]; Lara's use changes nothing) |
-| 5 | l5_valaskjalf | volumes 7025-7030 | gears / chains | pass |
+| 5 | l5_valaskjalf_entryb | pole-hole lever 7189 (use) | reward door 7227 (optional) | **fail** (`ar_uo_phole_lever` [O bytecode]: vt 19 "insert reaction" once pole ar_pt_pole_a sits in its hole, then the lever's joint range −600..−474 (multibody 79) runs vt 34 → 7227 vt 57 [U: the insert interaction]) |
+| 5 | l5_valaskjalf | volumes 7025-7030 | gears / chains | 7027-7030 pass; 7025 / 7026 call chains 6944 / 6943 vt 55 with no visible change (**fail**) |
+| 5 | l5_valaskjalf | volume 7010 | falling bridge 6974 breaks (multibody 59) | pass (`CriticalGates`) |
 | 5 | l5_valaskjalf | volume 6866 | 6846 → chapter 6 | pass |
 | 6 | l6_ship_upper_hallway* | volumes 7622/7623/7644/7646 | ship doors 7621/7642/7643 have no script (the volumes' ISTYPE fails): they stand open | pass (`ChapterSixShipDoorsOpen`) |
 | 6 | l6_ship_engine_hall | plane 7565 (cross) | 270 → chapter 7 | pass |

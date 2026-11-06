@@ -84,7 +84,22 @@ struct GateResult {
     std::vector<int32_t> changed, unchanged;
     std::string failure; // first script handler stop on the trigger or a target
     int chapter = -1;
+    // Why a gate that did not pass is not a route failure (GateSweep): "preload" (it only preloads its cinematics, vt 63;
+    // a later trigger plays them), "condition" (its handler ran and called none of its linked targets: they are read as
+    // conditions or wait for an earlier step), "state" (it called its targets and only their script fields changed),
+    // "encounter" (its targets are all enemies; the sweep runs without AI).
+    // Empty: a failure (trigger missed, handler stopped, or its targets were called without a visible change).
+    std::string excused;
+    std::string calls; // not passed: the targets scripts called, "uid:vt,vt"
 };
+
+// An enemy or generator script (native base enemybase, enemythrallbase, generatorbase, ...): no AI runs in the gate harness.
+bool isEnemy(const script::Object& o) {
+    if (!o.script || !o.script->program) return false;
+    for (const auto* t = o.script->program->type(o.script->typeId); t; t = o.script->program->type(t->superId))
+        if (!t->nativeName.empty()) return t->nativeName.find("enemy") != std::string::npos || t->nativeName.find("generator") != std::string::npos;
+    return false;
+}
 
 // Gating targets in a link list: what a player sees open / move / play (not effects, cameras, checkpoints).
 bool significant(const script::Object& o) {
@@ -94,14 +109,15 @@ bool significant(const script::Object& o) {
     return true;
 }
 
-// Observable state of an object: animation state, visibility, rigid motion, block offset, uber sections, spline, its
-// collision. Two snapshots differ = the object visibly opened / moved / changed.
+// Observable state of an object: animation state, anim graph state, visibility, rigid motion, block offset, uber
+// sections and joints, a plate's joint, spline, its collision. Two snapshots differ = the object visibly changed.
 struct Snapshot {
-    int state = 0;
+    int state = 0, graph = -1, transition = -1;
     bool hidden = false;
     glm::mat4 body{1};
     vec3 offset{0};
     std::vector<uint32_t> uber;
+    std::vector<float> joints; // the object's prismatic joint, then its uber joints 0..31
     float spline = 0;
     std::vector<glm::mat4> dynamics;
 };
@@ -110,8 +126,12 @@ Snapshot snapshot(const game::World& w, int32_t uid) {
     if (const auto* o = w.script().find(uid)) {
         s.state = o->state, s.hidden = o->hidden, s.body = o->body, s.offset = o->offset;
         if (o->spline) s.spline = o->spline->t;
+        if (o->graph) s.graph = o->graph->state, s.transition = o->graph->transition;
+        if (o->joint) s.joints.push_back(o->joint->position);
     }
     if (const auto* u = w.uberState(uid)) s.uber = *u;
+    for (int32_t j = 0; j < 32; ++j)
+        if (const auto* joint = w.uberJoint(uid, j)) s.joints.push_back(joint->x);
     for (const auto& d : w.collision().dynamics)
         if (d.id == uid) s.dynamics.push_back(d.transform);
     return s;
@@ -121,9 +141,18 @@ bool moved(const glm::mat4& a, const glm::mat4& b) {
         if (glm::length(a[c] - b[c]) > 1e-2f) return true;
     return false;
 }
+// Anim graphs (timer stimuli) and joints (motors, settling bodies) also change on their own: runGate counts these only
+// for targets a script called.
+bool ownDiffers(const Snapshot& a, const Snapshot& b) {
+    if (a.graph != b.graph || a.transition != b.transition || a.joints.size() != b.joints.size()) return true;
+    for (size_t i = 0; i < a.joints.size(); ++i)
+        if (std::abs(a.joints[i] - b.joints[i]) > 1.0f) return true;
+    return false;
+}
 bool differs(const Snapshot& a, const Snapshot& b) {
-    if (a.state != b.state || a.hidden != b.hidden || moved(a.body, b.body) || glm::length(a.offset - b.offset) > 1.0f ||
-        a.uber != b.uber || std::abs(a.spline - b.spline) > 1e-3f || a.dynamics.size() != b.dynamics.size())
+    if (a.state != b.state || a.hidden != b.hidden || moved(a.body, b.body) ||
+        glm::length(a.offset - b.offset) > 1.0f || a.uber != b.uber || std::abs(a.spline - b.spline) > 1e-3f ||
+        a.dynamics.size() != b.dynamics.size())
         return true;
     for (size_t i = 0; i < a.dynamics.size(); ++i)
         if (moved(a.dynamics[i], b.dynamics[i])) return true;
@@ -157,19 +186,23 @@ void pushUber(game::World& w, int32_t uid, int32_t joint, int ticks) {
     w.tick({});
 }
 
-// Runs one gate in a fresh World of its unit (neighbours streamed, natives bound, no enemies).
-GateResult runGate(const cdc::BigfileSet& bf, const game::UnitLoader& load, const game::AnimLibrary& anims, const Gate& g,
-                   int chapter) {
+// Runs one gate in `w` (its unit loaded or streamed): the earlier steps, the interaction, then 600 ticks.
+GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
     GateResult r;
-    game::World w(load, g.unit, anims);
-    w.script().setBigfile(&bf);
-    w.chapter = chapter;
     std::set<int32_t> activated;
+    bool armed = false;          // from the gate's own interaction on
+    bool fired = false;          // the trigger's own event ran (enter / cross / use)
+    std::map<int32_t, std::set<int16_t>> called; // callee uid -> virtual slots called by any script, once armed
+    w.script().onCall = [&](int32_t, int32_t target, int16_t vt) {
+        if (armed) called[target].insert(vt);
+    };
+    struct Unhook { game::World& w; ~Unhook() { w.script().onCall = nullptr; } } unhook{w}; // `w` may outlive this run
     w.onCinematic = [](const std::string&, bool) {};
     const auto tick = [&](const game::Actions& a) {
         w.tick(a);
         for (const auto& e : w.script().events()) {
             if (e.kind == script::EventKind::Activate) activated.insert(e.target);
+            if (armed && e.source == g.trigger && e.kind != script::EventKind::Activate) fired = true;
             if (std::getenv("OU_PROGRESSION_TRACE"))
                 std::printf("  tick %llu %s %d -> %d\n", (unsigned long long)w.ticks(), script::eventName(e.kind), e.source, e.target);
         }
@@ -259,12 +292,19 @@ GateResult runGate(const cdc::BigfileSet& bf, const game::UnitLoader& load, cons
     if (targets.empty()) targets.push_back(g.trigger);
     std::map<int32_t, Snapshot> before;
     for (const int32_t id : targets) before[id] = snapshot(w, id);
+    std::map<int32_t, decltype(script::vm::Instance::fields)> fieldsBefore; // script state of the targets
+    for (const int32_t id : targets)
+        if (const auto* o = w.script().find(id); o && o->script) fieldsBefore[id] = o->script->fields;
+    armed = true;
     perform(g.trigger, g.action);
     // A change at any tick counts: a hazard's swing (l1_kraken_room tentacles 494-496) returns to its rest state.
     std::set<int32_t> seen;
     const auto look = [&] {
         for (const int32_t id : targets)
-            if (before.contains(id) && differs(before[id], snapshot(w, id))) seen.insert(id);
+            if (before.contains(id)) {
+                const auto now = snapshot(w, id);
+                if (differs(before[id], now) || ((id == g.trigger || called.contains(id)) && ownDiffers(before[id], now))) seen.insert(id);
+            }
     };
     look();
     for (int i = 0; i < 600 && w.chapter == chapter; ++i) tick({}), look();
@@ -279,7 +319,45 @@ GateResult runGate(const cdc::BigfileSet& bf, const game::UnitLoader& load, cons
         if (r.failure.empty() && (key.first == g.trigger || std::find(targets.begin(), targets.end(), key.first) != targets.end()))
             r.failure = std::to_string(key.first) + ": " + key.second;
     r.pass = g.nextChapter >= 0 ? r.chapter == g.nextChapter : !r.changed.empty();
+    if (r.pass || g.nextChapter >= 0) return r;
+    if (std::ranges::all_of(targets, [&](int32_t id) { const auto* o = w.script().find(id); return o && isEnemy(*o); })) {
+        r.excused = "encounter"; // their natives (enemybase, generatorbase) are World's AI, not bound here
+        return r;
+    }
+    if (!r.failure.empty()) return r;
+    const bool triggered = fired || g.action == Action::Pull || g.action == Action::Step || g.action == Action::Push;
+    std::vector<int32_t> acted; // targets some script called
+    for (const int32_t id : targets)
+        if (id != g.trigger && called.contains(id)) acted.push_back(id);
+    const auto cinematic = [&](int32_t id) { const auto* o = w.script().find(id); return o && o->name == "cinematic_object"; };
+    for (const int32_t id : acted) {
+        r.calls += (r.calls.empty() ? "" : " ") + std::to_string(id) + ":";
+        for (const int16_t vt : called[id]) r.calls += std::to_string(vt) + (vt == *called[id].rbegin() ? "" : ",");
+    }
+    const auto stateSet = [&](int32_t id) { // the call only changed the target's script state (a later handler's condition)
+        const auto* o = w.script().find(id);
+        return o && o->script && fieldsBefore.contains(id) && o->script->fields != fieldsBefore[id];
+    };
+    const bool self = targets == std::vector<int32_t>{g.trigger}; // grapple targets, blocks: they must move themselves
+    if (!triggered || self)
+        ; // the interaction did not reach the trigger, or the trigger did not move
+    else if (acted.empty())
+        r.excused = "condition";
+    else if (std::ranges::all_of(acted, [&](int32_t id) { return cinematic(id) && called[id] == std::set<int16_t>{63}; }))
+        r.excused = "preload";
+    else if (std::ranges::all_of(acted, [&](int32_t id) { return (cinematic(id) && called[id] == std::set<int16_t>{63}) || stateSet(id); }))
+        r.excused = "state";
     return r;
+}
+
+// Runs one gate in a fresh World of its unit (neighbours streamed, natives bound, no enemies).
+GateResult runGate(const cdc::BigfileSet& bf, const game::UnitLoader& load, const game::AnimLibrary& anims, const Gate& g,
+                   int chapter) {
+    // Lara starts away from every trigger (l3_main_bedroom's player intro sits in volume 4521); runGateIn places her.
+    game::World w(load, g.unit, anims, game::Spawn{{0, 0, -1e6f}, 0});
+    w.script().setBigfile(&bf);
+    w.chapter = chapter;
+    return runGateIn(w, g, chapter);
 }
 
 // Critical path per chapter (kChapters index): portal BFS order from the start unit, revisits listed where the route
@@ -307,6 +385,114 @@ const std::vector<std::vector<std::string>>& chapterPaths() {
     return p;
 }
 
+// The critical-path gates (docs/PROGRESSION.md, status "pass") in route order; chapter ends name the next chapter.
+struct Case { int chapter; Gate gate; };
+const std::vector<Case>& criticalGates() {
+    static const std::vector<Case> cases = {
+        {0, {"l3_main_bedroom", 4525, Action::Use, {4520}}},             // wall switch -> house door
+        {0, {"l3_bedroom_hall", 4363, Action::Push, {}}},                // training push block
+        {0, {"l3_main_hall", 4129, Action::Enter, {4106}, 1}},           // prologue end: cinematic 010 -> chapter 1
+        {1, {"l1_kraken_entrance", 748, Action::Use, {743}, -1, {{751, Action::Pull}, {753, Action::Weigh}}}}, // both locks
+        {1, {"l1_kraken_room", 498, Action::Use, {497}}},                // switch -> tomb door
+        {1, {"l1_baldrs_tomb", 219, Action::Step, {223}}},               // press plate -> door
+        {1, {"l1_baldrs_tomb", 221, Action::Step, {45}}},                // press plate -> gate
+        {1, {"l1_kraken_room", 30, Action::Use, {27}}},                  // switch -> sun-sphere platform
+        {1, {"l1_ship_upper_hallway_a", 1531, Action::Enter, {1529}}},   // volume -> ship hall door
+        {1, {"l1_ship_sinking_hall", 1074, Action::Enter, {}, 2}},       // teleport into l1_cine_ship_sinking -> 070
+        {2, {"l2_puzzleroom", 2961, Action::Use, {2973}}},               // elevator switch -> elevator
+        {2, {"l2_puzzleroom", 2982, Action::Pull, {}}},                  // shiva grapple pull
+        {2, {"l2_flushtunnel", 2543, Action::Use, {2541}}},              // flush gate switch
+        {2, {"l2_flushtunnel", 2564, Action::Enter, {}, 3, {{2542, Action::Enter}}}}, // BeatLevel plane, then the boat
+        {3, {"l3_chapel", 4832, Action::Step, {4830}}},                  // press plate -> gate
+        {3, {"l3_chapel", 4833, Action::Step, {4831, 4836}}},            // press plate -> gate, gold reward
+        // shadow pillars (uber 4837): switches 4819 (section 1, c -> d -> a) and 4822 (section 2, b -> c -> d -> a) line
+        // them up, then the plate lights fire 4818 and the pillars' check opens shadow door 4835
+        {3, {"l3_chapel", 4834, Action::Step, {4835}, -1, {{4819, Action::Use}, {4819, Action::Use}, {4822, Action::Use},
+                                                         {4822, Action::Use}, {4822, Action::Use}}}},
+        {3, {"l3_chamberrockhall", 4617, Action::Use, {4528}}},          // electric switch -> secret door
+        {3, {"l3_main_hall", 4128, Action::Enter, {}, 4}},               // 160_man_shot, 170_man_exit -> chapter 4
+        {4, {"l4_ballcourt", 6502, Action::Use, {6505}}},                // pole lever -> door joint
+        {4, {"l4_traprooms", 5884, Action::Push, {}}},                   // grapple push block
+        // the Xibalba exit switch, the plane of 190_mex (6410 -> 6389), then the chapter end 5483
+        {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5, {{5469, Action::Use}, {6410, Action::Enter}}}},
+        {5, {"l5_valaskjalf_entry", 7228, Action::Use, {7227}}},         // switch -> reward door
+        // silver lever (uber event 709 -> vt 55) -> reward door, only while switch 7192's graph state (modifiable 8) is not "on"
+        {5, {"l5_valaskjalf_entryb", 7188, Action::Use, {7187}}},
+        {5, {"l5_valaskjalf", 7010, Action::Enter, {6974}}},             // falling bridge breaks its joints (multibody 59)
+        {5, {"l5_valaskjalf", 6866, Action::Enter, {}, 6}},              // chapter end 6846
+        {6, {"l6_ship_engine_hall", 7565, Action::Enter, {}, 7}},        // chapter end 1387
+    };
+    return cases;
+}
+
+// The ending (chapter 7 -> the epilogue) in `w` (l7_yggdrasil_end loaded): l7_yggdrasil_end's dispatcher 8360 counts the
+// buttresses broken in the Natla fight (A from 320_hel_boss's end, B / C / D from the buttress mounts' vt 54), each
+// revealed by a camera; C's reveal plays 330_hel_thralls, the last one runs vt 66 -> vt 67
+// "AllButtressesBroken_BreakGun" -> 340_hel_endgame; its end warps Lara to l7_monastery (instance 26 on 8138) and plays
+// 342_hel_endgame, whose end makes the end game save (uisavemenu 6) and plays the credits movie (unlockablemovie 3):
+// ou-game's ending. Played as in the game: no handler is called directly.
+void playEnding(game::World& w) {
+    std::vector<std::string> played;
+    w.onCinematic = [&](const std::string& name, bool levelEnd) {
+        played.push_back(name);
+        EXPECT_FALSE(levelEnd) << name;
+    };
+    std::vector<std::string> movies;
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            w.tick({});
+            for (auto& m : w.script().takeMovies()) movies.push_back(std::move(m));
+        }
+    };
+    run(60);
+    const uint32_t saves = w.autosaveRequests();
+    // Buttress A: Lara enters the arena volume 8303, whose vt 72 plays 320_hel_boss (8261); its end breaks A (8360
+    // vt 62). The fight's start and the pushed Thor towers lock the buttress mounts B-D (anim graph state 2:
+    // modifiable 7 (1), then the towers' state 2 event's modifiable 4 (2)).
+    const auto* arena = w.script().find(8303);
+    ASSERT_TRUE(arena);
+    place(w, arena->pos, 0);
+    run(60 * 60);
+    // The fight's start retracts the Thor towers 8398-8400 on their joint motors (command 0; trigger 14 at the bottom,
+    // state 3). Lara pushes each back out along its prismatic joint until it enters [1074.6, 1137.8): trigger 14, state
+    // 2, whose event ("block_pushed") locks its mount (modifiable 4 (2)).
+    for (const int32_t tower : {8398, 8399, 8400}) {
+        ASSERT_TRUE(w.uberState(tower));
+        EXPECT_EQ((*w.uberState(tower))[0], 3u) << "tower " << tower << " retracted";
+        pushUber(w, tower, 0, 12 * 60);
+        EXPECT_EQ((*w.uberState(tower))[0], 2u) << "tower " << tower << " pushed out";
+    }
+    run(120);
+    const auto graphState = [&](int32_t uid) {
+        const auto* o = w.script().find(uid);
+        return o && o->graph && o->graph->set->graph ? int(o->graph->set->graph->states[size_t(o->graph->state)].index) : -1;
+    };
+    // B, C, D: Lara uses each locked mount at its outer end (bone 2, 8041 units out from the intro on the trunk;
+    // stimulus 1: transition 3 "break" -> state 3; vt 20 sends buttress_mount_broken and the mount's vt 54 tells
+    // dispatcher 8360). Each reveal camera runs ~7 s.
+    for (const int32_t mount : {8362, 8363, 8364}) {
+        const auto* m = w.script().find(mount);
+        ASSERT_TRUE(m && m->graph);
+        EXPECT_EQ(graphState(mount), 2) << "mount " << mount << " locked";
+        const auto points = script::Runtime::usePoints(*m);
+        ASSERT_EQ(points.size(), 3u);
+        EXPECT_GT(glm::length(glm::vec2(points[2] - m->pos)), 8000.0f) << "used at its end, not on the trunk";
+        place(w, points[2], 0);
+        game::Actions use;
+        use.interact = true;
+        w.tick(use);
+        run(1200);
+        EXPECT_EQ(graphState(mount), 3) << "mount " << mount << " broken";
+    }
+    EXPECT_EQ(played, (std::vector<std::string>{"320_hel_boss", "330_hel_thralls", "340_hel_endgame", "342_hel_endgame"}));
+    EXPECT_EQ(w.currentUnit().data.name, "l7_monastery");
+    EXPECT_GT(w.autosaveRequests(), saves) << "the end game save";
+    EXPECT_EQ(movies, std::vector<std::string>{"credits"});
+    for (const int32_t uid : {8263, 8138, 8360, 8401}) // their handlers run to the end (8401: uberobjectbase 3)
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+    w.onCinematic = nullptr; // `played` ends here
+}
+
 } // namespace
 
 // Every candidate gate of every critical-path unit, found from the data, run once: switches / levers, push blocks,
@@ -325,6 +511,7 @@ TEST(ProgressionReal, GateSweep) {
     const char* only = std::getenv("OU_PROGRESSION_UNIT");
     const char* gateOnly = std::getenv("OU_PROGRESSION_GATE"); // one trigger uid
     int pass = 0, total = 0;
+    std::map<std::string, int> excused;
     for (size_t c = 0; c < chapterPaths().size(); ++c)
         for (const auto& unit : chapterPaths()[c]) {
             if (only && unit.find(only) == std::string::npos) continue;
@@ -366,18 +553,21 @@ TEST(ProgressionReal, GateSweep) {
             for (const auto& g : gates) {
                 if (gateOnly && g.trigger != std::atoi(gateOnly)) continue;
                 const auto r = runGate(bf, load, anims, g, int(c));
-                ++total, pass += r.pass;
+                ++total, pass += r.pass, excused[r.excused] += !r.pass;
                 std::printf("ch%zu %-26s %-5s %5d %-36s %s ->", c, unit.c_str(), actionName(g.action), g.trigger,
-                            names[g.trigger].c_str(), r.pass ? "PASS" : "FAIL");
+                            names[g.trigger].c_str(), r.pass ? "PASS" : r.excused.empty() ? "FAIL" : r.excused.c_str());
                 for (auto id : r.changed) std::printf(" +%d", id);
                 for (auto id : r.unchanged) std::printf(" -%d", id);
                 if (r.chapter != int(c)) std::printf(" chapter->%d", r.chapter);
                 if (!r.failure.empty()) std::printf(" [%s]", r.failure.c_str());
+                if (!r.calls.empty()) std::printf(" calls %s", r.calls.c_str());
                 std::printf("\n");
                 std::fflush(stdout);
             }
         }
-    std::printf("== gates passed %d / %d\n", pass, total);
+    std::printf("== gates passed %d / %d; not passed:", pass, total);
+    for (const auto& [why, n] : excused) std::printf(" %s %d", why.empty() ? "FAIL" : why.c_str(), n);
+    std::printf("\n");
 }
 
 // Map survey: portal graph + script-named units per chapter prefix, and per unit the interactive / gating objects with
@@ -535,44 +725,39 @@ TEST(ProgressionReal, CriticalGates) {
         return d;
     };
     const auto anims = game::loadLaraAnims(bf);
-    struct Case { int chapter; Gate gate; };
-    const Case cases[] = {
-        {0, {"l3_main_bedroom", 4525, Action::Use, {4520}}},             // wall switch -> house door
-        {0, {"l3_bedroom_hall", 4363, Action::Push, {}}},                // training push block
-        {0, {"l3_main_hall", 4129, Action::Enter, {4106}, 1}},           // prologue end: cinematic 010 -> chapter 1
-        {1, {"l1_kraken_entrance", 748, Action::Use, {743}, -1, {{751, Action::Pull}, {753, Action::Weigh}}}}, // both locks
-        {1, {"l1_baldrs_tomb", 219, Action::Step, {223}}},               // press plate -> door
-        {1, {"l1_baldrs_tomb", 221, Action::Step, {45}}},                // press plate -> gate
-        {1, {"l1_kraken_room", 498, Action::Use, {497}}},                // switch -> tomb door
-        {1, {"l1_kraken_room", 30, Action::Use, {27}}},                  // switch -> sun-sphere platform
-        {1, {"l1_ship_upper_hallway_a", 1531, Action::Enter, {1529}}},   // volume -> ship hall door
-        {1, {"l1_ship_sinking_hall", 1074, Action::Enter, {}, 2}},       // teleport into l1_cine_ship_sinking -> 070
-        {2, {"l2_puzzleroom", 2961, Action::Use, {2973}}},               // elevator switch -> elevator
-        {2, {"l2_puzzleroom", 2982, Action::Pull, {}}},                  // shiva grapple pull
-        {2, {"l2_flushtunnel", 2543, Action::Use, {2541}}},              // flush gate switch
-        {2, {"l2_flushtunnel", 2564, Action::Enter, {}, 3, {{2542, Action::Enter}}}}, // BeatLevel plane, then the boat
-        {3, {"l3_chapel", 4832, Action::Step, {4830}}},                  // press plate -> gate
-        {3, {"l3_chapel", 4833, Action::Step, {4831, 4836}}},            // press plate -> gate, gold reward
-        // shadow pillars (uber 4837): switches 4819 (section 1, c -> d -> a) and 4822 (section 2, b -> c -> d -> a) line
-        // them up, then the plate lights fire 4818 and the pillars' check opens shadow door 4835
-        {3, {"l3_chapel", 4834, Action::Step, {4835}, -1, {{4819, Action::Use}, {4819, Action::Use}, {4822, Action::Use},
-                                                         {4822, Action::Use}, {4822, Action::Use}}}},
-        {3, {"l3_chamberrockhall", 4617, Action::Use, {4528}}},          // electric switch -> secret door
-        {3, {"l3_main_hall", 4128, Action::Enter, {}, 4}},               // 160_man_shot, 170_man_exit -> chapter 4
-        {4, {"l4_ballcourt", 6502, Action::Use, {6505}}},                // pole lever -> door joint
-        {4, {"l4_traprooms", 5884, Action::Push, {}}},                   // grapple push block
-        // the Xibalba exit switch, the plane of 190_mex (6410 -> 6389), then the chapter end 5483
-        {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5, {{5469, Action::Use}, {6410, Action::Enter}}}},
-        {5, {"l5_valaskjalf_entry", 7228, Action::Use, {7227}}},         // switch -> reward door
-        // silver lever (uber event 709 -> vt 55) -> reward door, only while switch 7192's graph state (modifiable 8) is not "on"
-        {5, {"l5_valaskjalf_entryb", 7188, Action::Use, {7187}}},
-        {5, {"l5_valaskjalf", 6866, Action::Enter, {}, 6}},              // chapter end 6846
-        {6, {"l6_ship_engine_hall", 7565, Action::Enter, {}, 7}},        // chapter end 1387
-    };
-    for (const auto& c : cases) {
+    for (const auto& c : criticalGates()) {
         const auto r = runGate(bf, load, anims, c.gate, c.chapter);
         EXPECT_TRUE(r.pass) << c.gate.unit << " gate " << c.gate.trigger << " chapter " << r.chapter << " " << r.failure;
     }
+}
+
+// The whole game in one World, as a player walks it: the critical gates in route order (criticalGates), the scripts'
+// state carried from gate to gate; each chapter end starts the next chapter (World::startChapter), a level load
+// (World::enterUnit) stands in for the walk between gates; chapter 7 ends with the Natla fight and the credits
+// (playEnding).
+TEST(ProgressionReal, CriticalPathInOrder) {
+    // ~11 min; opt-in. Open (2026-11-06): with the state carried, l1_kraken_entrance 748 does not open gate 743 and
+    // l1_baldrs_tomb 221 stops in `multibody` 89 (Baldr's locks 69 / 70); every other gate and the ending pass.
+    if (!gameDir() || !std::getenv("OU_PROGRESSION_ROUTE")) GTEST_SKIP() << "OU_GAME_DIR and OU_PROGRESSION_ROUTE not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    const game::UnitLoader load = [&](const std::string& n) {
+        auto& d = cache[n];
+        if (!d.drm) d = game::loadUnitData(bf, n);
+        return d;
+    };
+    game::World w(load, std::string(game::kChapters[0].unit), game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.chapter = 0;
+    for (const auto& c : criticalGates()) {
+        ASSERT_EQ(w.chapter, c.chapter) << "before " << c.gate.unit << " gate " << c.gate.trigger;
+        if (w.currentUnit().data.name != c.gate.unit) w.enterUnit(c.gate.unit, std::nullopt);
+        const auto r = runGateIn(w, c.gate, c.chapter);
+        EXPECT_TRUE(r.pass) << c.gate.unit << " gate " << c.gate.trigger << " chapter " << r.chapter << " " << r.failure;
+    }
+    ASSERT_EQ(w.chapter, 7);
+    w.enterUnit("l7_yggdrasil_end", std::nullopt);
+    playEnding(w);
 }
 
 // Chapter 6's ship hall doors (l6_ship_upper_hallway_a/b) have no script, so their volumes' door calls do nothing (the
@@ -791,11 +976,7 @@ TEST(ProgressionReal, TraproomsSeal) {
     EXPECT_NE(seal->script->fields, before) << "both held: vt 58 opens the seal";
 }
 
-// The ending (chapter 7 -> the epilogue): l7_yggdrasil_end's dispatcher 8360 counts the buttresses broken in the Natla
-// fight (A from 320_hel_boss's end, B / C / D from the buttress mounts' vt 54), each revealed by a camera; C's reveal plays
-// 330_hel_thralls, the last one runs vt 66 -> vt 67 "AllButtressesBroken_BreakGun" -> 340_hel_endgame; its end warps Lara
-// to l7_monastery (instance 26 on 8138) and plays 342_hel_endgame, whose end makes the end game save (uisavemenu 6) and
-// plays the credits movie (unlockablemovie 3): ou-game's ending. Played as in the game: no handler is called directly.
+// The ending (chapter 7 -> the epilogue) from l7_yggdrasil_end: playEnding.
 TEST(ProgressionReal, EndgameCredits) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -803,64 +984,7 @@ TEST(ProgressionReal, EndgameCredits) {
     game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l7_yggdrasil_end", anims);
     w.script().setBigfile(&bf);
     w.chapter = 7;
-    std::vector<std::string> played;
-    w.onCinematic = [&](const std::string& name, bool levelEnd) {
-        played.push_back(name);
-        EXPECT_FALSE(levelEnd) << name;
-    };
-    std::vector<std::string> movies;
-    const auto run = [&](int ticks) {
-        for (int i = 0; i < ticks; ++i) {
-            w.tick({});
-            for (auto& m : w.script().takeMovies()) movies.push_back(std::move(m));
-        }
-    };
-    run(60);
-    const uint32_t saves = w.autosaveRequests();
-    // Buttress A: Lara enters the arena volume 8303, whose vt 72 plays 320_hel_boss (8261); its end breaks A (8360
-    // vt 62). The fight's start and the pushed Thor towers lock the buttress mounts B-D (anim graph state 2:
-    // modifiable 7 (1), then the towers' state 2 event's modifiable 4 (2)).
-    const auto* arena = w.script().find(8303);
-    ASSERT_TRUE(arena);
-    place(w, arena->pos, 0);
-    run(60 * 60);
-    // The fight's start retracts the Thor towers 8398-8400 on their joint motors (command 0; trigger 14 at the bottom,
-    // state 3). Lara pushes each back out along its prismatic joint until it enters [1074.6, 1137.8): trigger 14, state
-    // 2, whose event ("block_pushed") locks its mount (modifiable 4 (2)).
-    for (const int32_t tower : {8398, 8399, 8400}) {
-        ASSERT_TRUE(w.uberState(tower));
-        EXPECT_EQ((*w.uberState(tower))[0], 3u) << "tower " << tower << " retracted";
-        pushUber(w, tower, 0, 12 * 60);
-        EXPECT_EQ((*w.uberState(tower))[0], 2u) << "tower " << tower << " pushed out";
-    }
-    run(120);
-    const auto graphState = [&](int32_t uid) {
-        const auto* o = w.script().find(uid);
-        return o && o->graph && o->graph->set->graph ? int(o->graph->set->graph->states[size_t(o->graph->state)].index) : -1;
-    };
-    // B, C, D: Lara uses each locked mount at its outer end (bone 2, 8041 units out from the intro on the trunk;
-    // stimulus 1: transition 3 "break" -> state 3; vt 20 sends buttress_mount_broken and the mount's vt 54 tells
-    // dispatcher 8360). Each reveal camera runs ~7 s.
-    for (const int32_t mount : {8362, 8363, 8364}) {
-        const auto* m = w.script().find(mount);
-        ASSERT_TRUE(m && m->graph);
-        EXPECT_EQ(graphState(mount), 2) << "mount " << mount << " locked";
-        const auto points = script::Runtime::usePoints(*m);
-        ASSERT_EQ(points.size(), 3u);
-        EXPECT_GT(glm::length(glm::vec2(points[2] - m->pos)), 8000.0f) << "used at its end, not on the trunk";
-        place(w, points[2], 0);
-        game::Actions use;
-        use.interact = true;
-        w.tick(use);
-        run(1200);
-        EXPECT_EQ(graphState(mount), 3) << "mount " << mount << " broken";
-    }
-    EXPECT_EQ(played, (std::vector<std::string>{"320_hel_boss", "330_hel_thralls", "340_hel_endgame", "342_hel_endgame"}));
-    EXPECT_EQ(w.currentUnit().data.name, "l7_monastery");
-    EXPECT_GT(w.autosaveRequests(), saves) << "the end game save";
-    EXPECT_EQ(movies, std::vector<std::string>{"credits"});
-    for (const int32_t uid : {8263, 8138, 8360, 8401}) // their handlers run to the end (8401: uberobjectbase 3)
-        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+    playEnding(w);
 }
 
 // l1_kraken_room: switch 57 only turns tentacle gear 32 once the column (its section 12) is shot down: the bullet's
