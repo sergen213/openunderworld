@@ -371,6 +371,7 @@ private:
     // speed (units/s; 0 = the hang jump's by its clip)
     void launchHangJump(float vz = 0);
     void assistJump();
+    bool aimGroundJump(vec2 query); // ground jump query (forward, up a 30 Hz frame) meeting a ledge: aim at its hang
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
     // root, yaw; poles: `para` = the parallel hang
     std::pair<vec3, float> attachPose(int markup, int seg, float t, float side, bool para = false) const;

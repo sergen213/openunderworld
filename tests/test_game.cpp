@@ -1930,6 +1930,52 @@ TEST(GameReal, TrapRoomsPoleFling) {
     EXPECT_NEAR(handsOf(w, w.anims().poleHandOffset).y, -19591, 1);
 }
 
+// l3_main_hall pole 948 (axis z 1861) -> ledge 946, the edge of a platform 1052 ahead and 152 under the axis (floor
+// 1708.6). tru.exe under Wine (openunderworld-work/polefid2/mhsw.txt): the fling lands her on that edge 23.0 frames
+// after she leaves, (35.9 forward, 74.1 up) a frame; q33 as it is (52.10 up) tops out ~230 short of the platform.
+TEST(GameReal, MainHallPoleFlingLandsOnPlatform) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l3_main_hall", {{1042.6f, -3911.3f, 1300}, 0});
+    game::PlayerState h;
+    h.state = State::PoleHang, h.ledge = markupIndex(w, 948), h.ledgeT = 233.7f, h.ledgeSide = 1, h.clip = "HPole_idleHangPerp";
+    ASSERT_GE(h.ledge, 0);
+    w.restore(h, 0, -0.25f); // facing +x, camera behind her
+    const auto& s = w.player().state();
+    for (int i = 0; i < 10; ++i) w.tick({});
+    Actions fling = forward();
+    fling.jump = true;
+    w.tick(fling);
+    for (int i = 0; i < 60 && s.state == State::PoleHang; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Jump);
+    int air = 0;
+    for (; air < 120 && s.state == State::Jump; ++air) w.tick({});
+    EXPECT_NEAR(air / 60.0, 23.5 / 30.0, 0.04);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_NE(s.state, State::Fall);
+    EXPECT_GT(s.pos.x, 2094.6f); // on the platform, past its edge
+    EXPECT_NEAR(s.pos.z, 1740, 40);
+}
+
+// l2_junglehub ledge 851 (z 7972): the top of a platform across a gap, 353 over the floor the run-up ends on (y ~9850).
+// A running jump from 1550 short of it falls into the gap at its plain 65.83 + 42.54 a frame; q26's arc (90.25 + 42.54
+// from 300 over the root) meets the ledge and the flight is re-aimed onto its hang.
+TEST(GameReal, JunglehubRunningJumpReachesHigherLedge) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l2_junglehub", {{-23937.1f, 9186.6f, 7629.2f}, glm::radians(90.0f)});
+    game::PlayerState st = w.player().state();
+    st.state = State::Run, st.clip = "ng_run";
+    w.restore(st, st.yaw, -0.25f);
+    const auto& s = w.player().state();
+    Actions go = forward();
+    go.jump = true;
+    w.tick(forward());
+    for (int i = 0; i < 150 && s.state != State::Hang && s.pos.z > 7000; ++i) w.tick(go);
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state) << " at y " << s.pos.y << " z " << s.pos.z;
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 851);
+}
+
 // ---- interactive water (src/game/Water) ----
 namespace {
 float maxRipple(const game::WaterSim& ws) {
