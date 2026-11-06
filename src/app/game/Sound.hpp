@@ -61,7 +61,6 @@ private:
     uint64_t unitsVersion_ = ~0ull;
     audio::SoundPlayer::Handle drown_ = 0;
     audio::SoundPlayer::Handle engine_ = 0; // the bike's engine graph while ridden
-    float bikeSpeed_ = 0;
     std::array<uint8_t, 256> lastVars_{};
     locale::SubtitleTicker ticker_;
     std::map<std::string, uint32_t> helpLines_; // generalbank stream path -> its DTP

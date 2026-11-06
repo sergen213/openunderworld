@@ -59,7 +59,7 @@ quat quatXyzw(const cdc::Section& s, size_t off) {
 mat3 diag(float a, float b, float c) { return mat3(a, 0, 0, 0, b, 0, 0, 0, c); }
 
 // HInfo (segment +0x3C): {u32 count, ptr list} pairs; slot 0 spheres, 1 boxes, 2 markers, 3 capsules.
-constexpr uint32_t kSphereStride = 0x20, kBoxStride = 0x50, kCapsuleStride = 0x40;
+constexpr uint32_t kSphereStride = 0x24, kBoxStride = 0x50, kCapsuleStride = 0x40;
 
 void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>& out, std::vector<HMarker>& markers) {
     auto list = [&](int slot, uint32_t stride, auto&& one) {
@@ -375,12 +375,10 @@ JPH::RefConst<JPH::Shape> meshShape(const collision::CollisionMesh& mesh, vec3 o
 
 // A loose body's collision: every primitive of its model, as tru.exe builds the rigid body from all of them (0x497270;
 // the flag bit we call solid gates Lara's collision only [I]), in its centre-of-mass frame; no primitives: a 20-unit
-// ball resting on the model origin. `wheels` false: without the wheel spheres (material 9), whose rays stand in for them
-// (tru.exe 0x6AB960 takes them out of the vehicle body's collision).
-JPH::RefConst<JPH::Shape> looseShape(const ObjectPhysics& o, vec3 com, bool wheels = true) {
+// ball resting on the model origin.
+JPH::RefConst<JPH::Shape> looseShape(const ObjectPhysics& o, vec3 com) {
     JPH::StaticCompoundShapeSettings c;
     for (const Prim& p : o.prims) {
-        if (!wheels && p.kind == PrimKind::Sphere && p.head[2] == 9) continue;
         const mat4 seg = p.segment < int(o.segments.size()) ? o.segments[size_t(p.segment)] : mat4(1);
         const mat4 f = seg * glm::translate(mat4(1), p.pos) * glm::mat4_cast(p.rot);
         quat r = glm::normalize(glm::quat_cast(mat3(f)));
@@ -678,6 +676,7 @@ struct Scene::Impl {
     VehicleE makeVehicle(int32_t id, const VehicleSpec& spec, const mat4& model);
     void dropVehicle(VehicleE& v) { sys.RemoveStepListener(v.c), sys.RemoveConstraint(v.c), remove(v.body); }
     void driveVehicles();
+    void drive(const VehicleE& v);
 };
 
 Scene::Scene() : impl_(std::make_unique<Impl>()) {}
@@ -866,15 +865,13 @@ Scene::Impl::VehicleE Scene::Impl::makeVehicle(int32_t id, const VehicleSpec& sp
     MassProps mp = massProps(*spec.physics);
     if (mp.mass <= 0) mp.mass = 666, mp.com = vec3(0, 0, 20), mp.inertia = mat3(0.4f * 666 * 20 * 20); // as setLoose
     const quat rot = glm::normalize(glm::quat_cast(mat3(model)));
-    const auto bodyId = body(looseShape(*spec.physics, mp.com, false), vec3(model * glm::vec4(mp.com, 1)), rot, kLayerVehicle,
+    const auto bodyId = body(looseShape(*spec.physics, mp.com), vec3(model * glm::vec4(mp.com, 1)), rot, kLayerVehicle,
                              mp.mass, mp.inertia, "v" + std::to_string(id));
     bi->SetMotionQuality(bodyId, JPH::EMotionQuality::LinearCast); // fast over thin terrain
     JPH::VehicleConstraintSettings s;
     s.mUp = JPH::Vec3(0, 0, 1), s.mForward = JPH::Vec3(0, -1, 0); // model -Y forward
     s.mMaxPitchRollAngle = spec.maxPitchRoll > 0 ? spec.maxPitchRoll : JPH::JPH_PI;
     auto* ctl = new JPH::WheeledVehicleControllerSettings;
-    float driveSum = 0;
-    for (const auto& w : spec.wheels) driveSum += w.drive;
     for (size_t i = 0; i < spec.wheels.size(); ++i) {
         const auto& w = spec.wheels[i];
         auto* ws = new JPH::WheelSettingsWV;
@@ -886,27 +883,23 @@ Scene::Impl::VehicleE Scene::Impl::makeVehicle(int32_t id, const VehicleSpec& sp
         ws->mRadius = std::max(w.radius * kM, 0.01f), ws->mWidth = std::max(w.width * kM, 0.01f);
         if (w.mass > 0) ws->mInertia = 0.5f * w.mass * ws->mRadius * ws->mRadius;
         ws->mAngularDamping = 0;
+        if (w.friction > 0) { // Jolt's default curves (peak 1.2 at slip 0.06 / 3 degrees) scaled to the data's peak
+            ws->mLongitudinalFriction.Clear(), ws->mLateralFriction.Clear();
+            for (const auto& [slip, f] : {std::pair(0.0f, 0.0f), {0.06f, 1.0f}, {0.2f, 0.833f}}) ws->mLongitudinalFriction.AddPoint(slip, f * w.friction);
+            for (const auto& [slip, f] : {std::pair(0.0f, 0.0f), {3.0f, 1.0f}, {20.0f, 0.833f}}) ws->mLateralFriction.AddPoint(slip, f * w.friction);
+        }
         ws->mMaxSteerAngle = w.steer, ws->mMaxBrakeTorque = w.brake, ws->mMaxHandBrakeTorque = 0;
         // tru.exe applies a wheel's forces `raise` x (attach -> contact) above the contact (0x792900); Jolt takes one
         // fixed point: the same fraction of the full travel [I].
         ws->mEnableSuspensionForcePoint = w.raise > 0;
         ws->mSuspensionForcePoint = ws->mPosition + ws->mSuspensionDirection * ((1 - w.raise) * ws->mSuspensionMaxLength);
         s.mWheels.push_back(ws);
-        if (w.drive > 0) { // one single-wheel differential each, the data's torque share
-            JPH::VehicleDifferentialSettings d;
-            d.mLeftWheel = -1, d.mRightWheel = int(i), d.mDifferentialRatio = spec.ratio, d.mEngineTorqueRatio = w.drive / driveSum;
-            ctl->mDifferentials.push_back(d);
-        }
     }
-    ctl->mDifferentialLimitedSlipRatio = FLT_MAX; // fixed shares
-    ctl->mEngine.mMaxTorque = spec.maxTorque, ctl->mEngine.mMinRPM = spec.minRpm, ctl->mEngine.mMaxRPM = spec.maxRpm;
-    ctl->mEngine.mNormalizedTorque.Clear();
-    for (size_t i = 0; i < spec.torque.size(); ++i)
-        ctl->mEngine.mNormalizedTorque.AddPoint(float(i) / float(std::max<size_t>(1, spec.torque.size() - 1)), spec.torque[i]);
-    ctl->mEngine.mInertia = 0.001f, ctl->mEngine.mAngularDamping = 0; // tru.exe's rpm is a function of the wheel speed [I]
+    // The wheels roll free and brake; the drive is tru.exe's force per wheel (drive). Jolt's engine stays out: one
+    // differential (Jolt needs a driven wheel) behind a manual gearbox left in neutral.
+    ctl->mDifferentials.resize(1);
+    ctl->mDifferentials[0].mRightWheel = int(spec.wheels.size()) - 1;
     ctl->mTransmission.mMode = JPH::ETransmissionMode::Manual;
-    ctl->mTransmission.mGearRatios = {1.0f};
-    ctl->mTransmission.mReverseGearRatios = {-(spec.ratio > 0 ? spec.reverseRatio / spec.ratio : 1.0f)};
     s.mController = ctl;
     JPH::Body* b = sys.GetBodyLockInterfaceNoLock().TryGetBody(bodyId);
     JPH::Ref<JPH::VehicleConstraint> c = new JPH::VehicleConstraint(*b, s);
@@ -915,14 +908,46 @@ Scene::Impl::VehicleE Scene::Impl::makeVehicle(int32_t id, const VehicleSpec& sp
     return {id, &spec, bodyId, mp.com, c, {}, vec3(0), vec3(0)};
 }
 
+// The engine (tru.exe 0x791D10, 0x792900): rpm from the speed of the driven wheels over the ground, sum(drive x
+// v / radius) x ratio; torque from the curve (none above the top rpm; reverse: its fixed torque) x throttle x ratio;
+// each driven wheel on the ground pushes its drive share / radius of it along the body's forward axis, at its force
+// point. (Uses only state Jolt saves: the wheels' contact bodies.)
+void Scene::Impl::drive(const VehicleE& v) {
+    const VehicleSpec& spec = *v.spec;
+    if (v.drive.forward <= 0 || spec.torque.empty()) return;
+    const JPH::RMat44 world = bi->GetWorldTransform(v.body);
+    const JPH::Vec3 forward = world.Multiply3x3(JPH::Vec3(0, -1, 0)); // the force's direction: the body's (0x792900)
+    const float speed = bi->GetLinearVelocity(v.body).Dot(forward); // m/s
+    const float ratio = v.drive.reverse ? spec.reverseRatio : spec.ratio;
+    float omega = 0;
+    for (const auto& w : spec.wheels) omega += w.drive * std::abs(speed) / std::max(w.radius * kM, 0.01f);
+    const float rpm = omega * ratio * 60 / (2 * JPH::JPH_PI);
+    if (rpm > spec.maxRpm) return;
+    float torque = spec.reverseTorque;
+    if (!v.drive.reverse) {
+        const float x = std::clamp(rpm, spec.minRpm, spec.maxRpm) / spec.maxRpm * float(spec.torque.size() - 1);
+        const size_t i = std::min(size_t(x), spec.torque.size() - 1), j = std::min(i + 1, spec.torque.size() - 1);
+        torque = spec.maxTorque * (spec.torque[i] + (spec.torque[j] - spec.torque[i]) * (x - float(i)));
+    }
+    torque *= v.drive.forward * ratio * (v.drive.reverse ? -1.0f : 1.0f);
+    const auto& wheels = v.c->GetWheels();
+    for (size_t i = 0; i < wheels.size(); ++i) {
+        const auto& w = spec.wheels[i];
+        if (w.drive <= 0 || !wheels[i]->HasContact()) continue;
+        const JPH::WheelSettings* ws = wheels[i]->GetSettings();
+        const JPH::Vec3 local = ws->mEnableSuspensionForcePoint ? ws->mSuspensionForcePoint : ws->mPosition;
+        bi->AddForce(v.body, forward * (w.drive * torque / std::max(w.radius * kM, 0.01f)), world * local);
+    }
+}
+
 // This step's driver input, frame shift and kicks (after a restored state, which records the previous inputs).
 void Scene::Impl::driveVehicles() {
     for (auto& v : vehicles) {
         if (v.shift != vec3(0)) bi->SetPosition(v.body, bi->GetPosition(v.body) + Jm(v.shift), JPH::EActivation::Activate);
         if (v.kick != vec3(0)) bi->AddLinearVelocity(v.body, Jm(v.kick));
         auto* c = static_cast<JPH::WheeledVehicleController*>(v.c->GetController());
-        c->SetDriverInput(v.drive.forward, v.drive.right, v.drive.brake, 0);
-        c->GetTransmission().Set(v.drive.reverse ? -1 : 1, v.drive.forward > 0 ? 1.0f : 0.0f); // clutch out off the throttle [I]
+        c->SetDriverInput(0, v.drive.right, v.drive.brake, 0);
+        drive(v);
         // Upright [I]: the roll about the forward axis is servoed to 0 (rate -roll / 0.1 s) on the ground and in the air;
         // pitch is free up to the data's tilt limit (mMaxPitchRollAngle). Jolt's MotorcycleController leans into turns
         // with a spring that pumped energy into this light, tall chassis (and a parked bike falls over); the original

@@ -27,7 +27,7 @@ using glm::vec3;
 
 // ---- object data --------------------------------------------------------------------------------------
 enum class PrimKind : uint8_t { Sphere, Box, Capsule };
-// One HInfo collision primitive of a model segment (sphere 0x20, box 0x50, capsule 0x40 bytes).
+// One HInfo collision primitive of a model segment (sphere 0x24, box 0x50, capsule 0x40 bytes).
 struct Prim {
     PrimKind kind = PrimKind::Box;
     uint8_t head[4] = {};   // the flag bytes (sphere +0, box +0x30, capsule +0x20); head[1] & 1 = solid [I]
@@ -134,9 +134,10 @@ inline constexpr float kJointGravity = 5.72443f;
 
 // A raycast-wheel vehicle (tru.exe Vehicle / Bike: one Havok body, a spring per wheel along a down ray from its
 // attachment, 0x792900; docs/GAMEPLAY.md "Motorcycle"), simulated by Scene as a Jolt VehicleConstraint with a
-// WheeledVehicleController, kept upright. Model space and game units; kg; torques in N m.
+// WheeledVehicleController for the wheels (springs, friction, brakes) and tru.exe's engine as wheel forces, kept
+// upright. Model space and game units; kg; torques in N m.
 struct VehicleSpec {
-    const ObjectPhysics* physics = nullptr; // chassis shape and mass: its primitives (wheel spheres, material 9, skipped)
+    const ObjectPhysics* physics = nullptr; // chassis shape and mass: its primitives
     struct Wheel {
         vec3 attach{0};          // top of the suspension, model space
         float travel = 0;        // ray length below `attach` to the wheel centre at full extension (spring rest)
@@ -146,12 +147,13 @@ struct VehicleSpec {
         float brake = 0;         // N m at full brake
         float steer = 0;         // max steering angle, rad (0 = fixed)
         float raise = 0;         // the wheel's forces act this fraction of the travel above the contact (roll centre)
+        float friction = 0;      // tyre friction peak (Jolt's curves scaled to it; 0 = Jolt's 1.2)
     };
     std::vector<Wheel> wheels;
     float maxTorque = 0, minRpm = 0, maxRpm = 0; // N m, rpm
     std::vector<float> torque; // engine torque / maxTorque at rpm i * maxRpm / (size - 1)
     float ratio = 0;           // engine / wheel angular velocity, forward gear
-    float reverseRatio = 0;    // the same in reverse (positive)
+    float reverseRatio = 0, reverseTorque = 0; // the same in reverse (positive); its torque, N m (no curve)
     float maxPitchRoll = 0;    // tilt limit from the world's up, rad
 };
 // Driver input for one step: forward 0..1 (reverse: in the reverse gear), right -1..1 (of each wheel's max steer),

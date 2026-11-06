@@ -1017,6 +1017,7 @@ void World::stepPhysics(float dt) {
         looseIds.insert(o.uid);
     }
     physics_.setLoose(loose);
+    physics_.setVehicles(bikeVehicles()); // the ridden motorcycle (Vehicle.cpp); readBikes takes the step's result
     std::vector<physics::Scene::Terrain> terrain;
     for (const auto& u : units_) terrain.push_back({u.data.name, &u.data.col, u.offset});
     physics_.setTerrain(terrain);
@@ -1035,6 +1036,7 @@ void World::stepPhysics(float dt) {
         }
     for (auto& [uid, rt] : uberRuntime_)
         if (const auto d = uberData_.find(uid); d != uberData_.end() && d->second) uberWatches(uid);
+    readBikes(dt);
 }
 
 // Dead enemies' ragdolls (physics::Scene::setRagdolls, ai::EnemyState::ragdollPhase): a starting one (1) gets bodies at

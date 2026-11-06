@@ -1,6 +1,6 @@
-// Lara's motorcycle: tuning from motorcycle.drm, mount / ride / dismount with the original clips, terrain following on
-// two wheel contacts, hops and ramps, fall damage, ramming enemies, bike state in saves. Numbers and what is inferred:
-// docs/GAMEPLAY.md "Motorcycle".
+// Lara's motorcycle: tuning and Havok vehicle data from motorcycle.drm, mount / ride / dismount with the original clips,
+// the ride simulated by physics::Scene (Jolt vehicle on the level collision), hops, fall damage, ramming enemies, bike
+// state in saves. Numbers and what is inferred: docs/GAMEPLAY.md "Motorcycle".
 #include "game/Game.hpp"
 
 #include "formats/Formats.hpp"
@@ -16,12 +16,6 @@ namespace {
 constexpr float kPi = 3.14159265f;
 constexpr float kDeg = kPi / 180.0f;
 constexpr float kMphToUnits = 280.0f / 2.237f; // tru.exe speed (0x105B30C): v * 30/280 m/s * 2.237 mph; 280 units = 1 m
-// Collision proxies [I]: three spheres / a capsule between the axles for walls (high enough to roll up steps the wheel
-// probes find), a sphere at axle height in the air.
-constexpr float kCapsuleRadius = 80.0f, kCapsuleHeight = 200.0f, kAirRadius = 100.0f;
-constexpr float kProbeUp = 160.0f, kProbeDown = 170.0f; // wheel ground probe window around the current height
-constexpr float kGroundNormalZ = 0.5f;                  // flatter = ground for the wheels (~60 degrees)
-constexpr float kMaxPitch = 0.75f;                      // steeper climbs stop the bike (~43 degrees) [I]
 
 constexpr std::string_view kMount = "motorcycle:motorcycle_mount_cycle", kDismount = "motorcycle:motorcycle_dismount_cycle";
 
@@ -91,11 +85,82 @@ BikeTuning loadBikeTuning(const cdc::Drm& drm) {
     const auto f = [&](uint32_t off) { return read<float>(rs, rec->offset + off); };
     BikeTuning t;
     t.maxSpeed = f(0x00) * kMphToUnits;
+    t.stopSpeed = f(0x04) * kMphToUnits;
     t.steerLow = f(0x10) * kDeg, t.steerHigh = f(0x14) * kDeg;
     t.steerRateLow = f(0x18) * kDeg, t.steerRateHigh = f(0x1B4) * kDeg;
     t.steerFraction = f(0x1C);
+    t.brakeRamp = f(0x30);
+    t.maxTilt = f(0x40) * kDeg;
+    // ponytail: first gear only; the record has one (+0x70 = 1), more would need Jolt gears and 0x791D10's shift rpm.
+    t.gearRatio = f(0x54);
+    t.reverseRatio = f(0x6C), t.reverseSpeed = f(0x74) * kMphToUnits, t.reverseTorque = f(0xBC);
+    for (int i = 0; i < 3; ++i) t.rpm[i] = f(0x78 + 4 * uint32_t(i)), t.torque[i] = f(0x90 + 4 * uint32_t(i));
+    t.springHz = f(0xA4), t.springDamping = f(0xA8);
+    t.forceRaise = f(0x28);
     t.damageA = f(0x184), t.damageB = f(0x188), t.damageLethal = f(0x18C);
     t.fallMin = f(0x190), t.fallMid = f(0x194), t.fallMax = f(0x198);
+    // Wheels (0x6AB960): up to four definitions; each names the model's wheel sphere (HInfo head[3]) and the marker
+    // at its suspension top; 0x7953F0 keeps the sphere's x, y at the marker's z and the sphere's radius.
+    auto body = std::make_shared<physics::ObjectPhysics>(physics::loadObjectPhysics(drm));
+    for (uint32_t i = 0; i < 4; ++i) {
+        const auto w = ptrAt(drm, data->section, data->offset + 0x90 + 4 * i);
+        if (!w) continue;
+        const cdc::Section& wsec = drm.sections[w->section];
+        const auto g = [&](uint32_t off) { return read<float>(wsec, w->offset + off); };
+        const uint8_t sphereId = read<uint8_t>(wsec, w->offset + 0x22), markerId = read<uint8_t>(wsec, w->offset + 0x23);
+        const auto sphere = std::ranges::find_if(body->prims, [&](const physics::Prim& p) {
+            return p.kind == physics::PrimKind::Sphere && p.head[2] != 2 && p.head[3] == sphereId;
+        });
+        const auto marker = std::ranges::find(body->hmarkers, markerId, &physics::HMarker::id);
+        if (sphere == body->prims.end() || marker == body->hmarkers.end()) throw cdc::FormatError("motorcycle: wheel sphere / marker missing");
+        BikeTuning::Wheel wh;
+        wh.rest = g(0x00), wh.friction = g(0x08), wh.brake = g(0x0C), wh.drive = g(0x14), wh.springScale = g(0x18);
+        wh.flags = read<uint32_t>(wsec, w->offset + 0x1C);
+        wh.sphere = sphereId;
+        const auto seg = [&](int s) { return s >= 0 && size_t(s) < body->segments.size() ? body->segments[size_t(s)] : glm::mat4(1); };
+        const vec3 sp = vec3(seg(sphere->segment) * glm::vec4(sphere->pos, 1)), mk = vec3(seg(marker->segment) * glm::vec4(marker->pos, 1));
+        wh.attach = vec3(sp.x, sp.y, mk.z);
+        wh.radius = sphere->radius, wh.mass = sphere->mass;
+        t.wheels.push_back(wh);
+    }
+    if (t.wheels.empty()) throw cdc::FormatError("motorcycle: no wheels");
+    // The chassis: the other primitives (the wheel rays stand in for the wheel spheres) [I].
+    std::erase_if(body->prims, [&](const physics::Prim& p) {
+        return p.kind == physics::PrimKind::Sphere && p.head[2] != 2 && std::ranges::any_of(t.wheels, [&](const BikeTuning::Wheel& w) { return w.sphere == p.head[3]; });
+    });
+    // physics::Scene's vehicle (docs/formats/PHYSICS.md "Vehicles"). Ratio (0x78F860): top rpm at top speed, the
+    // wheels' drive-weighted radius; rpm = 30 * 60 / (2 pi) * wheel rad/frame * ratio.
+    physics::VehicleSpec& v = t.vehicle;
+    t.body = body, v.physics = body.get();
+    float driveRadius = 0, mass = 0;
+    for (const auto& wh : t.wheels) driveRadius += wh.drive * wh.radius;
+    for (const auto& p : body->prims) mass += p.mass; // the chassis (wheel spheres already gone)
+    v.ratio = t.rpm[2] * (2 * kPi / 60) * driveRadius / t.maxSpeed;
+    v.reverseRatio = t.rpm[2] * (2 * kPi / 60) * driveRadius / t.reverseSpeed * t.gearRatio / t.reverseRatio;
+    v.minRpm = t.rpm[0], v.maxRpm = t.rpm[2], v.reverseTorque = t.reverseTorque;
+    const auto torqueAt = [&](float r) { // 0x791D10: Lagrange quadratic, rpm clamped to [min, max]
+        const float* x = t.rpm;
+        r = std::clamp(r, x[0], x[2]);
+        return t.torque[0] * (r - x[1]) * (r - x[2]) / ((x[0] - x[1]) * (x[0] - x[2])) +
+               t.torque[1] * (r - x[0]) * (r - x[2]) / ((x[1] - x[0]) * (x[1] - x[2])) +
+               t.torque[2] * (r - x[0]) * (r - x[1]) / ((x[2] - x[0]) * (x[2] - x[1]));
+    };
+    for (int i = 0; i <= 18; ++i) v.torque.push_back(torqueAt(t.rpm[2] * float(i) / 18));
+    v.maxTorque = *std::ranges::max_element(v.torque);
+    for (float& x : v.torque) x /= v.maxTorque;
+    v.maxPitchRoll = t.maxTilt;
+    for (const auto& wh : t.wheels) {
+        physics::VehicleSpec::Wheel w;
+        w.attach = wh.attach, w.travel = wh.rest, w.radius = wh.radius, w.mass = wh.mass; // ray: rest + radius to the contact
+        w.frequency = t.springHz * wh.springScale, w.damping = t.springDamping;
+        w.drive = wh.drive;
+        // [I] brake: +0x0C as a velocity change per 30 Hz frame of the wheel's mass share -> N m
+        w.brake = wh.brake * 900.0f * (mass / float(t.wheels.size())) * wh.radius / (physics::kUnitsPerMetre * physics::kUnitsPerMetre);
+        w.steer = wh.flags & 1 ? t.steerLow : 0.0f;
+        w.friction = wh.friction;
+        w.raise = t.forceRaise;
+        v.wheels.push_back(w);
+    }
     std::vector<std::string> warnings;
     for (const auto& sk : anim::decodeSkeletons(drm, warnings)) {
         if (sk.bones.size() <= 8) continue;
@@ -125,6 +190,21 @@ vec3 World::bikeOffset(const Bike& b) const {
     return vec3(0);
 }
 
+// Sit a standing bike on the ground: both wheel contacts (axle x, y; probes from 160 above) set its height and pitch.
+void World::settleBike(Bike& b) {
+    const BikeTuning& t = anims_.bike;
+    const vec3 p = b.pos + bikeOffset(b);
+    const auto ground = [&](float my) -> std::optional<float> {
+        const vec3 at = p + rotYaw(b.yaw, vec3(0, my, 0));
+        const auto h = col_.groundProbe(vec3(at.x, at.y, p.z + 160), 330);
+        return h && h->normal.z >= 0.5f ? std::optional(h->point.z) : std::nullopt;
+    };
+    const auto zf = ground(t.frontAxle.y), zr = ground(t.rearAxle.y);
+    if (!zf || !zr) return;
+    b.pitch = std::atan2(*zf - *zr, std::max(1.0f, t.wheelbase()));
+    b.pos.z = *zr + (*zf - *zr) * t.rearAxle.y / (t.rearAxle.y - t.frontAxle.y) - bikeOffset(b).z;
+}
+
 const Bike* World::ridden() const {
     const auto it = bikes_.find(riding_);
     return riding_ && it != bikes_.end() ? &it->second : nullptr;
@@ -148,6 +228,7 @@ void World::syncVehicles() {
                 Bike b;
                 b.uid = v.uid, b.unit = u.data.name, b.pos = v.pos, b.yaw = v.yaw;
                 b.prevPos = v.pos + u.offset, b.prevYaw = b.yaw;
+                settleBike(b); // the intro stands level; its slope pitches it
                 bikes_.emplace(v.uid, std::move(b));
             }
     // A level load moved the stream (units at new offsets): no interpolation from the old frame.
@@ -166,7 +247,7 @@ void World::mountBike(int32_t uid) {
     Bike& b = it->second;
     recentre(b.unit);
     riding_ = uid, ++bikeMounts;
-    b.phase = BikePhase::Ride, b.t = 0, b.speed = 0, b.steer = 0, b.air = false;
+    b.phase = BikePhase::Ride, b.t = 0, b.speed = 0, b.steer = 0, b.air = false, b.brakeT = anims_.bike.brakeRamp;
     combat_.drawn = combat_.redraw = false, combat_.drawT = 0;
     PlayerState s = player_.state();
     s.state = State::Vehicle;
@@ -182,7 +263,8 @@ void World::mountBike(int32_t uid) {
 }
 
 // Ramming [I]: a living enemy whose body capsule reaches into a sphere around the front wheel while the bike is faster
-// than ramSpeed takes ramDamage per unit/s; the bike loses 30 % of its speed; one hit per contact.
+// than ramSpeed takes ramDamage per unit/s; the bike loses 30 % of its velocity (a kick in the next physics step); one
+// hit per contact. Enemies are not Jolt bodies: the bike does not bounce off them.
 void World::ramEnemies(Bike& b) {
     const BikeTuning& t = anims_.bike;
     std::erase_if(rammed_, [&](const auto& kv) { return std::find(targets.begin(), targets.end(), kv.first) == targets.end(); });
@@ -196,143 +278,93 @@ void World::ramEnemies(Bike& b) {
             rammed_.erase(d);
             continue;
         }
-        const float speed = glm::length(b.air ? vec2(b.vel) : vec2(heading(b.yaw) * b.speed));
+        const float speed = glm::length(vec2(b.vel));
         if (rammed_.contains(d) || speed < t.ramSpeed) continue;
         rammed_[d] = ticks_;
         d->onHit({speed * t.ramDamage, q + vec3(0, 0, d->height() * 0.5f), heading(b.yaw), Team::Player, false});
-        b.speed *= 0.7f, b.vel *= 0.7f;
+        b.kick -= 0.3f * b.vel, b.speed *= 0.7f, b.vel *= 0.7f;
     }
 }
 
+// The rider's input for the bike's next physics step (World::stepPhysics simulates it, readBikes takes the result).
+// Throttle / brake / reverse follow 0x790E40's states: back while rolling forward faster than stopSpeed (and throttle
+// while rolling back) brakes, back below it reverses; with no input under stopSpeed the brakes hold it; above it the
+// bike coasts. The brakes bite over brakeRamp (0x792900).
 void World::driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt) {
     const BikeTuning& t = anims_.bike;
-    const vec3 off = bikeOffset(b);
-    vec3 p = b.pos + off;
-    const float wb = std::max(1.0f, t.wheelbase()), frontY = t.frontAxle.y, rearY = t.rearAxle.y;
-    const float originFrac = rearY / (rearY - frontY); // model origin between the contacts (0 rear .. 1 front)
-    const auto ground = [&](vec3 at) -> std::optional<float> {
-        const auto h = col_.groundProbe(vec3(at.x, at.y, p.z + kProbeUp), kProbeUp + kProbeDown);
-        if (!h || h->normal.z < kGroundNormalZ) return std::nullopt;
-        return h->point.z;
-    };
-    const auto contacts = [&](vec3 at, float yaw) {
-        return std::pair(ground(at + rotYaw(yaw, vec3(0, frontY, 0))), ground(at + rotYaw(yaw, vec3(0, rearY, 0))));
-    };
-    const auto takeOff = [&](float extraVz) {
-        b.air = true;
-        b.vel = heading(b.yaw) * (b.speed * std::cos(b.pitch)) + vec3(0, 0, b.speed * std::sin(b.pitch) + extraVz);
-        b.airStartZ = p.z;
-    };
     if (b.hopT >= 0) b.hopT += dt;
     if (b.landT >= 0) b.landT += dt;
+    const float throttle = std::max(0.0f, a.move.y), back = std::max(0.0f, -a.move.y), v = b.speed;
+    physics::VehicleDrive d;
+    bool braking = false;
+    if (throttle > 0 && v > -t.stopSpeed) d.forward = throttle;
+    else if (back > 0 && v < t.stopSpeed) d.forward = back, d.reverse = true;
+    else if (throttle > 0 || back > 0 || std::abs(v) < t.stopSpeed) braking = true;
+    b.brakeT = braking ? b.brakeT + dt : 0.0f;
+    if (braking) d.brake = std::min(1.0f, b.brakeT / std::max(t.brakeRamp, 1e-3f)) * (throttle + back > 0 ? throttle + back : 1.0f);
+    // Steering (tru.exe 0x793680): the wheel limit and its rate blend from the low- to the high-speed values over
+    // [steerFraction, 1] * maxSpeed; Jolt turns the front wheel to it (+ steer = left).
+    const float lo = t.steerFraction * t.maxSpeed;
+    const float f = std::clamp((std::abs(v) - lo) / std::max(1.0f, t.maxSpeed - lo), 0.0f, 1.0f);
+    const float limit = glm::mix(t.steerLow, t.steerHigh, f), rate = glm::mix(t.steerRateLow, t.steerRateHigh, f);
+    b.steer += std::clamp(-a.move.x * limit - b.steer, -rate * dt, rate * dt);
+    d.right = -b.steer / std::max(t.steerLow, 1e-3f);
+    b.drive = d, b.throttle = d.forward;
+    if (!b.air && jumpPressed) b.kick.z += t.hopSpeed, b.hopT = 0; // hop [I]
+}
 
-    if (!b.air) {
-        const float throttle = std::max(0.0f, a.move.y), back = std::max(0.0f, -a.move.y);
-        float& v = b.speed;
-        if (throttle > 0 && v >= 0) v += t.accel * throttle * std::max(0.0f, 1 - (v / t.maxSpeed) * (v / t.maxSpeed)) * dt;
-        else if (throttle > 0) v = std::min(0.0f, v + t.brake * throttle * dt);
-        else if (back > 0 && v > 0) v = std::max(0.0f, v - t.brake * back * dt);
-        else if (back > 0) v = std::max(-t.reverseSpeed, v - t.reverseAccel * back * dt);
-        else v = v > 0 ? std::max(0.0f, v - t.coast * dt) : std::min(0.0f, v + t.coast * dt);
-        // Steering (tru.exe 0x793680): the wheel limit and its rate blend from the low- to the high-speed values over
-        // [steerFraction, 1] * maxSpeed; the heading follows the bicycle model [I].
-        const float lo = t.steerFraction * t.maxSpeed;
-        const float f = std::clamp((std::abs(v) - lo) / std::max(1.0f, t.maxSpeed - lo), 0.0f, 1.0f);
-        const float limit = glm::mix(t.steerLow, t.steerHigh, f), rate = glm::mix(t.steerRateLow, t.steerRateHigh, f);
-        b.steer += std::clamp(-a.move.x * limit - b.steer, -rate * dt, rate * dt);
-        b.yaw = wrap(b.yaw + v / wb * std::tan(b.steer) * dt);
-        // Walls: sweep the axle capsule (contacts it moves away from or already touches are left to the push-out),
-        // slide along what it hits, then push the body spheres out of walls; the speed keeps its part along the wall.
-        const auto alongWall = [&](vec3 n) {
-            const vec3 vv = heading(b.yaw) * v;
-            if (const float into = glm::dot(vv, n); into < 0) v = glm::dot(vv - n * into, heading(b.yaw));
-        };
-        vec3 delta = heading(b.yaw) * (v * dt);
-        for (int i = 0; i < 3 && glm::length(delta) > 1e-3f; ++i) {
-            const vec3 A = p + rotYaw(b.yaw, vec3(0, rearY * 0.8f, kCapsuleHeight)), B = p + rotYaw(b.yaw, vec3(0, frontY * 0.8f, kCapsuleHeight));
-            const auto h = col_.sweepCapsule(A, B, kCapsuleRadius, delta);
-            if (!h || h->t <= 0 || h->normal.z >= kGroundNormalZ || glm::dot(delta, h->normal) >= 0) {
-                p += delta;
-                break;
-            }
-            const vec3 n = glm::normalize(vec3(h->normal.x, h->normal.y, 0) + vec3(1e-6f, 0, 0));
-            p += delta * std::max(0.0f, h->t - 0.01f);
-            vec3 rest = delta * (1 - h->t);
-            rest -= n * std::min(0.0f, glm::dot(rest, n));
-            delta = rest;
-            alongWall(n);
-        }
-        for (int it = 0; it < 3; ++it) {
-            bool pushed = false;
-            for (const float my : {rearY * 0.8f, 0.0f, frontY * 0.8f}) {
-                const vec3 c = p + rotYaw(b.yaw, vec3(0, my, kCapsuleHeight));
-                const auto h = col_.closestPoint(c, kCapsuleRadius);
-                if (!h || h->normal.z >= kGroundNormalZ) continue; // floors are the wheels' business
-                vec3 d = c - h->point;
-                const float depth = kCapsuleRadius - glm::length(d);
-                d.z = 0;
-                if (depth <= 0 || glm::length(d) < 1e-3f) continue;
-                const vec3 n = glm::normalize(d);
-                p += n * (depth + 0.5f);
-                alongWall(n);
-                pushed = true;
-            }
-            if (!pushed) break;
-        }
-        const auto [zf, zr] = contacts(p, b.yaw);
-        if (zf && zr) {
-            const float pitch = std::atan2(*zf - *zr, wb);
-            if (pitch > kMaxPitch && v > 0) { // too steep to climb: stop where it was
-                p = b.pos + off;
-                v = 0;
-            } else {
-                p.z = *zr + (*zf - *zr) * originFrac;
-                b.pitch = pitch;
-            }
-        } else {
-            takeOff(0); // ramp edge or drop: fly with the slope's velocity
-        }
-        if (!b.air && jumpPressed) {
-            takeOff(t.hopSpeed); // hop [I]
-            b.hopT = 0;
-        }
-    } else {
-        b.vel.z -= t.gravity * dt;
-        const vec3 d = b.vel * dt;
-        const auto h = col_.sweepSphere(p + vec3(0, 0, t.wheelRadius), kAirRadius, d);
-        if (!h) {
-            p += d;
-        } else {
-            p += d * std::max(0.0f, h->t - 0.01f);
-            if (h->normal.z < kGroundNormalZ || b.vel.z > 0) b.vel -= h->normal * std::min(0.0f, glm::dot(b.vel, h->normal));
-        }
-        const vec2 hv(b.vel);
-        const float pitchTarget = std::clamp(std::atan2(b.vel.z, std::max(1.0f, glm::length(hv))), -0.6f, 0.6f);
-        b.pitch += std::clamp(pitchTarget - b.pitch, -1.5f * dt, 1.5f * dt); // [I]
-        const float drop = b.airStartZ - p.z;
-        if (drop >= t.fallMax && !health_.dead()) damageLara(t.damageLethal, p, kDamageAbsolute); // in-air lethal check
-        const auto [zf, zr] = contacts(p, b.yaw);
-        const bool touch = h && h->normal.z >= kGroundNormalZ && b.vel.z <= 0;
-        if (b.vel.z <= 0 && zf && zr && (touch || p.z - std::max(*zf, *zr) < 5.0f)) {
-            p.z = *zr + (*zf - *zr) * originFrac;
-            b.pitch = std::atan2(*zf - *zr, wb);
-            b.air = false;
-            b.speed = glm::dot(vec3(hv, 0), heading(b.yaw));
-            b.landT = 0, b.hopT = -1;
-            // Landing damage (tru.exe 0x793680 state 2, fall = take-off z - landing z, damage type 8).
-            const float fall = b.airStartZ - p.z;
-            if (fall > t.fallMin && !health_.dead()) {
-                const float dmg = fall > t.fallMid
-                                      ? (t.damageB - t.damageA) + std::clamp((fall - t.fallMid) / (t.fallMax - t.fallMid), 0.0f, 1.0f) * (t.damageLethal - t.damageB)
-                                      : std::clamp((fall - t.fallMin) / (t.fallMid - t.fallMin), 0.0f, 1.0f) * (t.damageB - t.damageA);
-                damageLara(dmg, p, kDamageAbsolute);
-            }
+// The ridden bike for physics::Scene (its ride phase only; mounting, dismounting and parked bikes stand where they are).
+std::vector<physics::Scene::Vehicle> World::bikeVehicles() {
+    std::vector<physics::Scene::Vehicle> out;
+    const auto it = bikes_.find(riding_);
+    if (!riding_ || it == bikes_.end() || it->second.phase != BikePhase::Ride || !anims_.bike.vehicle.physics) {
+        for (auto& [uid, b] : bikes_) b.simWorld.reset();
+        return out;
+    }
+    Bike& b = it->second;
+    if (!b.simWorld) settleBike(b); // a new body starts on the ground, not in a slope
+    const vec3 p = b.pos + bikeOffset(b);
+    out.push_back({b.uid, &anims_.bike.vehicle, player_.modelMatrix(p, b.yaw, b.pitch), b.drive, b.simWorld ? p - *b.simWorld : vec3(0), b.kick});
+    b.kick = vec3(0);
+    return out;
+}
+
+// After the physics step: the ridden bike's pose, speed and wheel contacts; take-off, landing (fall damage), ramming;
+// Lara sits on it.
+void World::readBikes(float dt) {
+    const auto it = bikes_.find(riding_);
+    if (!riding_ || it == bikes_.end() || it->second.phase != BikePhase::Ride) return;
+    const auto st = physics_.vehicle(riding_);
+    if (!st) return;
+    Bike& b = it->second;
+    const BikeTuning& t = anims_.bike;
+    const vec3 p = vec3(st->model[3]), fwd = -vec3(st->model[1]);
+    b.yaw = std::atan2(fwd.y, fwd.x), b.pitch = std::asin(std::clamp(fwd.z, -1.0f, 1.0f));
+    b.vel = st->vel, b.speed = glm::dot(st->vel, fwd);
+    b.rpm = std::clamp(t.rpm[2] * std::abs(b.speed) / t.maxSpeed, t.rpm[0], t.rpm[2]); // 0x791D10: from the wheel speed
+    const bool air = st->contacts == 0;
+    if (air && !b.air) b.airStartZ = p.z;
+    if (air && b.airStartZ - p.z >= t.fallMax && !health_.dead()) damageLara(t.damageLethal, p, kDamageAbsolute); // in-air lethal check
+    if (!air && b.air) { // landing damage (tru.exe 0x793680 state 2, fall = take-off z - landing z, damage type 8)
+        b.landT = 0, b.hopT = -1;
+        const float fall = b.airStartZ - p.z;
+        if (fall > t.fallMin && !health_.dead()) {
+            const float dmg = fall > t.fallMid
+                                  ? (t.damageB - t.damageA) + std::clamp((fall - t.fallMid) / (t.fallMax - t.fallMid), 0.0f, 1.0f) * (t.damageLethal - t.damageB)
+                                  : std::clamp((fall - t.fallMin) / (t.fallMid - t.fallMin), 0.0f, 1.0f) * (t.damageB - t.damageA);
+            damageLara(dmg, p, kDamageAbsolute);
         }
     }
-    b.wheel = wrap(b.wheel + (b.air ? 0.0f : b.speed) / t.wheelRadius * dt);
-    b.pos = p - off;
+    b.air = air;
+    b.wheel = wrap(b.wheel + (air ? 0.0f : b.speed) / t.wheelRadius * dt);
+    b.pos = p - bikeOffset(b);
     const LoadedUnit& cur = currentUnit(); // re-home to the unit Lara is in (its neighbours may stream out)
     if (b.unit != cur.data.name) b.pos = p - cur.offset, b.unit = cur.data.name;
+    b.simWorld = p;
+    ramEnemies(b);
+    PlayerState s = player_.state();
+    s.pos = p, s.yaw = b.yaw, s.pitch = b.pitch, s.fallStartZ = p.z;
+    player_.restore(s);
 }
 
 bool World::tickVehicles(const Actions& a, float dt) {
@@ -390,13 +422,12 @@ bool World::tickVehicles(const Actions& a, float dt) {
         s.yaw = wrap(b.yaw + clipYaw(c, tt) - endYaw);
         playClip(kMount, false, tt);
         s.pitch = b.pitch * float(tt / end); // [I] from standing to the bike's slope
-        if (b.t >= end) b.phase = BikePhase::Ride, b.t = 0;
+        if (b.t >= end) b.phase = BikePhase::Ride, b.t = 0, b.brakeT = t.brakeRamp; // parked: brakes on [I]
         break;
     }
     case BikePhase::Ride: {
-        driveBike(b, a, jumpPressed, dt);
-        ramEnemies(b);
-        if (interactPressed && !b.air && std::abs(b.speed) < t.dismountSpeed) b.phase = BikePhase::Dismount, b.t = 0, b.speed = 0;
+        driveBike(b, a, jumpPressed, dt); // input; the step and Lara's seat follow in stepPhysics / readBikes
+        if (interactPressed && !b.air && std::abs(b.speed) < t.dismountSpeed) b.phase = BikePhase::Dismount, b.t = 0, b.speed = 0, b.vel = vec3(0);
         s.pos = b.pos + bikeOffset(b), s.yaw = b.yaw, s.pitch = b.pitch;
         const float v = b.speed, steer = a.move.x;
         const double next = s.clipTime + dt;
@@ -444,6 +475,7 @@ nlohmann::json World::serializeVehicles() const {
         bikes.push_back({{"uid", uid}, {"unit", b.unit}, {"pos", {b.pos.x, b.pos.y, b.pos.z}}, {"yaw", b.yaw}, {"pitch", b.pitch},
                          {"speed", b.speed}, {"steer", b.steer}, {"wheel", b.wheel}, {"air", b.air},
                          {"vel", {b.vel.x, b.vel.y, b.vel.z}}, {"airStartZ", b.airStartZ - bikeOffset(b).z},
+                         {"kick", {b.kick.x, b.kick.y, b.kick.z}}, {"brakeT", b.brakeT}, {"hopT", b.hopT}, {"landT", b.landT},
                          {"phase", std::string(bikePhaseName(b.phase))}, {"t", b.t}});
     return {{"riding", riding_}, {"mounts", bikeMounts}, {"bikes", bikes}};
 }
@@ -460,6 +492,8 @@ void World::restoreVehicles(const nlohmann::json& j) {
         b.speed = e.value("speed", 0.0f), b.steer = e.value("steer", 0.0f), b.wheel = e.value("wheel", 0.0f);
         b.air = e.value("air", false);
         if (e.contains("vel")) b.vel = v3(e["vel"]);
+        if (e.contains("kick")) b.kick = v3(e["kick"]);
+        b.brakeT = e.value("brakeT", 0.0f), b.hopT = e.value("hopT", -1.0f), b.landT = e.value("landT", -1.0f);
         const std::string phase = e.value("phase", std::string("parked"));
         b.phase = BikePhase::Parked;
         for (int p = 0; p < 4; ++p)

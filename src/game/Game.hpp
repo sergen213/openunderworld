@@ -865,7 +865,10 @@ private:
     bool ridingBike() const;                       // on a bike in its ride phase (not mounting / dismounting): guns allowed
     void syncVehicles();                           // register the loaded units' bike intros (after streaming)
     void mountBike(int32_t uid);                   // larabase 52: on the bike at once, riding (script_.takeMounts)
-    void driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt);
+    void driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt); // rider input for the next physics step
+    std::vector<physics::Scene::Vehicle> bikeVehicles(); // the ridden bike for physics_ (stepPhysics)
+    void readBikes(float dt);                      // after the step: bike pose, landing, ramming; Lara on it
+    void settleBike(Bike& b);                      // height and pitch from its wheels' ground contacts
     void ramEnemies(Bike& b);
     vec3 bikeOffset(const Bike& b) const;          // its unit's stream offset (0 when not loaded)
     std::map<int32_t, Bike> bikes_;

@@ -131,7 +131,6 @@ void GameSound::reset() {
     for (auto& [name, u] : units_) u.handles.clear(), u.triggers = audio::SfxMarkerTriggers(u.markers); // Init fires again
     scriptHandles_.clear(), slots_.clear();
     drown_ = engine_ = help_ = 0;
-    bikeSpeed_ = 0;
     lastVars_ = {};
     ticker_ = {};
     lastCondition_.clear();
@@ -335,10 +334,9 @@ void GameSound::tick(game::World& world) {
             if (const audio::Plex* p = bank_.find(kBikeEngine)) engine_ = player_.start(*p, lara);
             std::fprintf(stderr, "ou-game: tick %llu bike engine %s (DTP %u)\n", tick, engine_ ? "start" : "missing", kBikeEngine);
         }
-        // [I] rpm 1500 at rest to 10000 at the top speed; parameter 5 = throttle as acceleration (0..700), 0 = 0.
+        // [I] rpm 1500 at rest to 10000 at the top speed; parameter 5 = throttle (0..700), 0 = 0.
         const float speed = std::abs(b->speed), rpm = 1500 + 8500 * std::min(1.0f, speed / game::BikeTuning{}.maxSpeed);
-        const float throttle = std::clamp((speed - bikeSpeed_) / float(game::kTickSeconds) / game::BikeTuning{}.accel, 0.0f, 1.0f) * 700;
-        bikeSpeed_ = speed;
+        const float throttle = b->throttle * 700;
         player_.setPosition(engine_, lara);
         player_.setParam(engine_, 2, rpm), player_.setParam(engine_, 5, throttle), player_.setParam(engine_, 0, 0);
         if (tick % 60 == 0) std::fprintf(stderr, "ou-game: tick %llu bike engine rpm %.0f throttle %.0f\n", tick, rpm, throttle);

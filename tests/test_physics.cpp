@@ -345,7 +345,7 @@ TEST(Physics, VehicleDrivesBrakesAndSavesBitIdentically) {
         w.drive = 0.5f, w.brake = 400, w.steer = y < 0 ? 0.5f : 0.0f, w.raise = 0.7f;
         spec.wheels.push_back(w);
     }
-    spec.maxTorque = 30, spec.minRpm = 1000, spec.maxRpm = 18000, spec.torque = {1, 1}, spec.ratio = 40, spec.reverseRatio = 160;
+    spec.maxTorque = 30, spec.minRpm = 1000, spec.maxRpm = 18000, spec.torque = {1, 1}, spec.ratio = 40, spec.reverseRatio = 160, spec.reverseTorque = 20;
     spec.maxPitchRoll = 0.74f;
     const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
     physics::VehicleDrive drive;

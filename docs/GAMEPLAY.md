@@ -937,7 +937,23 @@ Evidence:
   record `+0x10`; 0x793680 is its per-frame update (throttle, steering, gear/torque 0x791D10, Havok wheel forces 0x792900,
   fall damage).
 - Vehicle data [V-data] motorcycle.drm ObjectBase +0xC8 (section 13582 +0x1160): `u16 +4 = 0xB00B`, class 0x40,
-  `+8 = 1` (Bike), four 0x20C-byte tuning records at +0xB0 (count +0x6C), default `+0x10` = record 2.
+  `+8 = 1` (Bike), four 0x20C-byte tuning records at +0xB0 (count +0x6C), default `+0x10` = record 2; `+0x90` four
+  wheel pointers (two set: front 0x1D18, rear 0x1CF0).
+- Havok vehicle [V-exe] (0x6AB960, 0x795080, 0x7953F0, 0x792900, 0x791D10, 0x78F860): one rigid body from the model's
+  HInfo primitives (0x497270; material-9 primitives, the two side capsules, get other flags [U meaning]), an upright
+  limit of record +0x40 (42.5°, 0x795080), and per wheel a ray from its suspension top down `+0x00 + radius`; the hit
+  makes a spring constraint (0x4E1A40): stiffness `m / wheels · ω²`, damping `2 m / wheels · +0xA8 · ω`, ω = record
+  +0xA4 Hz × the wheel's +0x18; the wheel's forces act `+0x28` (0.7) × (top → contact) above the contact. A wheel
+  definition (0x28 bytes): `+0x00` rest length, `+0x08` friction [I], `+0x0C` / `+0x10` brake / slide friction [I],
+  `+0x14` engine share, `+0x18` spring factor, `+0x1C` flags (1 steered, 2 its sign), `+0x22` the model's wheel sphere
+  (HInfo head[3]), `+0x23` the HInfo marker at the suspension top. The engine (0x791D10): rpm = Σ share · v / radius
+  (rad per 30 Hz frame) × 286.48 (= 30 · 60 / 2π) × ratio, clamped to [+0x78, +0x80]; torque = the quadratic through
+  (+0x78, +0x90), (+0x7C, +0x94), (+0x80, +0x98) N·m (× 0.3111 · 280 = 280² / 30² into game units), none above +0x80;
+  reverse: +0xBC; the force on each driven wheel = share · torque · throttle · ratio / radius along the body's forward
+  axis (0x792900). Ratio (0x78F860) = +0x80 / (286.48 · top speed / Σ share · radius) × gear / top gear: the top rpm at
+  the top speed; the record has one gear (+0x70 = 1: ratio +0x54 6); reverse: speed +0x74, ratio +0x6C, so top rpm at
+  10 mph. States (0x790E40): below +0x04 (2 mph) back reverses and no input brakes; back while rolling forward (throttle
+  while rolling back) brakes; the brakes ramp in over +0x30 seconds (0x792900 states 3 / 5).
 - Speed unit [V-exe]: 0x105B30C = 0.1071429 (3/28) * 2.237 is applied to the body velocity (0x795560): the record's
   speeds are mph with 280 game units per metre (Lara's 512-unit height ≈ 1.83 m).
 - Riding clips [V-data] motorcycle.drm's animation list (Lara's 113-segment skeleton): `motorcycle_mount_cycle`,
@@ -970,42 +986,55 @@ Evidence:
 - Music: `l4_laras_new_bike` is named by script 13918 (in every l4 unit and `revisit_motorcycle`); ou-game starts it on
   the first mount in an l4 unit [I trigger].
 
-Numbers (default tuning record):
+Numbers (default tuning record, the wheel definitions, the model):
 
 | Value | Ours | Source |
 |---|---|---|
-| top speed | 40 mph = 5008 units/s (asymptote of the throttle curve) | record +0x00 [V-data]; mph per 0x105B30C [V-exe] |
+| top speed | 40 mph = 5008 units/s: the engine's top rpm, no torque above it | record +0x00 [V-data]; mph per 0x105B30C, 0x791D10 [V-exe] |
+| engine | 30 / 20 / 20 N·m at 1000 / 10 000 / 18 000 rpm (quadratic), ratio 37.4 (engine / wheel), one gear; reverse 20 N·m, ratio 149.7 | +0x78..+0x98, +0x54, +0x6C, +0x70, +0x74, +0xBC [V-data]; formulas 0x791D10 / 0x78F860 [V-exe] |
+| drive | front 0.4 / rear 0.6 of the torque, pushed along the body's forward axis at each wheel's force point | wheel +0x14 [V-data], 0x792900 [V-exe] |
+| chassis | 265 kg (capsule 250 + side capsules 5 + 5 + seat sphere 5), centre of mass 196 units up; the wheel spheres (5 kg each, radius 103 / 97) are the wheels | HInfo [V-data]; massProps [V-exe] |
+| wheels | front: top (0, −206, 258.9), rest 170, radius 103, steered; rear: top (0, 260, 220.6), rest 150, radius 97 | wheel defs + spheres + markers 30 / 31 [V-data] |
+| suspension | 1.8 Hz × 1.5 = 2.7 Hz, damping ratio 0.35; forces 0.7 of the travel above the contact | +0xA4 / +0xA8 / wheel +0x18 / +0x28 [V-data], 0x792900 [V-exe]; one fixed point in Jolt [I] |
+| tyres | Jolt's slip curves scaled to peak 1.5 front / 1.7 rear | wheel +0x08 [V-data]; its meaning [I] |
+| brakes | front 5, rear 10 units/frame² per mass share → 783 / 1466 N·m, ramping in over 1.25 s; held at rest (below 2 mph) | wheel +0x0C, record +0x30 / +0x04 [V-data]; units [I] |
+| tilt | the body's up stays within 42.5° of the world's; roll servoed to 0 | +0x40 [V-data], 0x795080 [V-exe]; the roll servo [I] (ou-game draws no lean) |
 | front wheel limit | 30° at low speed → 10° at top speed, blended over [0.3, 1] × top speed | +0x10 / +0x14 / +0x1C, 0x793680 [V-exe] |
 | steering rate | 95°/s → 75°/s, same blend | +0x18 / +0x1B4, 0x793680 [V-exe] |
-| heading | bicycle model `v / wheelbase · tan(steer)`, wheelbase 463.4 | [I]; wheelbase from bones 5/8 [V-data] |
-| fall damage | drop ≥ 3792.67: (drop−3792.67)/(4819.85−3792.67)·95; > 4819.85: 95 + clamp(…/(4977.88−4819.85))·1550; in the air ≥ 4977.88: 1650 (lethal), type 8 | +0x184..+0x198, 0x793680 [V-exe] |
-| acceleration / brake / coast | 2400 · throttle · (1 − (v/top)²) / 5000 / 600 units/s² | [I] (original: gears +0x54.., rpm 1000/10000/18000 +0x78.., torque 30/20/20 +0x90.., Havok wheels) |
-| reverse | 700 units/s, 900 units/s² | [I] |
-| hop | 1100 units/s up | [I] |
+| fall damage | drop ≥ 3792.67: (drop−3792.67)/(4819.85−3792.67)·95; > 4819.85: 95 + clamp(…/(4977.88−4819.85))·1550; in the air ≥ 4977.88: 1650 (lethal), type 8; airborne = no wheel on the ground | +0x184..+0x198, 0x793680 [V-exe] |
+| hop | +1100 units/s up while a wheel touches | [I] (no hop in the record or the states) |
 | gravity | 5.72443 units per 30 Hz frame² (Lara's) | [V-exe] Lara, [I] for the bike |
-| terrain | two wheel probes (axles) set height and pitch; > 43° up stops it; no ground under a wheel = airborne with the slope velocity; walls: axle capsule sweep + body-sphere push-out at 200 units up (rolls up ~120-unit steps) | [I] |
+| terrain, ramps, jumps, walls | Jolt: wheel rays and the chassis on the resident units' collision and the object colliders | the original's Havok equivalents [O]; Jolt's contact model [I] |
 | mount / dismount | E within 250 units of the mount spot; off below 200 units/s | [I] |
-| ramming | enemies touched at > 800 units/s take 0.5 health per unit/s, the bike loses 30 % speed, one hit per contact | [I] |
+| ramming | enemies touched at > 800 units/s take 0.5 health per unit/s, the bike loses 30 % of its velocity, one hit per contact (enemies are not bodies) | [I] |
 | camera | 950 units back (700 on foot), yaw follows the heading at up to 3/s × min(1, v/1500) | [I] (`VehicleCamera` data not decoded) |
 
+Simulation (docs/formats/PHYSICS.md "Vehicles"): the ridden bike is a Jolt vehicle in `physics::Scene` while it is in
+its ride phase; `World::driveBike` turns the stick into throttle / brake / reverse / steer before `stepPhysics`,
+`readBikes` takes the pose, speed and wheel contacts after it and sits Lara on it. A parked, mounting or dismounting
+bike has no body and stands where it was left (sat on its two wheel contacts when it first loads and when a ride
+starts).
+
 Saves: `vehicles` (docs/SAVES.md) keeps every bike (unit, unit-frame position, heading, pitch, speed, steer, air state,
-phase) and the ridden one; Lara's state `vehicle` + clip are in `player`.
+brake time, pending kick, hop / landing timers, phase) and the ridden one; the bike's Jolt body, wheels and contacts
+are in `objects.physics` (key `v<uid>`); Lara's state `vehicle` + clip are in `player`.
 
-Tests: `VehicleReal.BikeIntrosTuningAndClips`, `VehicleReal.TrailstartRideReplay` (replay `tests/replays/bike_ride.txt`:
-mount, 4429 units/s top speed down the trail, left curve up the steps, hop, brake, dismount; bike parked 8 300 units
-away, no damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide`, `VehicleReal.ShootsFromTheBike`
-(the replay with the pistols drawn and fire held: three right-gun hits on a dummy ahead on the trail, the right curve
-still steered, holstered after the dismount). ou-game run [O]: the same script with `--target 40634,-53906,1161` logs
-`shot pistols right ... TARGET` at ticks 128 and 148 (Vulkan frame 160 viewed: Lara riding, HUD clip 10+12).
+Tests: `VehicleReal.BikeIntrosTuningAndClips` (record, wheel definitions, engine ratio), `VehicleReal.TrailstartRideReplay`
+(replay `tests/replays/bike_ride.txt`: mount, full throttle down the trail to about 4000 units/s, part throttle into
+the left curve up the steps, hop at the top, brake; the bike rolls back off the steep top and stops; dismount; no
+damage), `VehicleReal.RamsEnemyOnTheTrail`, `VehicleReal.SaveRestoreMidRide` (bit for bit), `VehicleReal.RideIndependentOfRenderRate`
+(30 / 60 / 144 Hz), `VehicleReal.ShootsFromTheBike` (the replay with the pistols drawn and fire held: right-gun hits on
+a dummy ahead on the trail, the curve still steered, holstered after the dismount); `Physics.VehicleDrivesBrakesAndSavesBitIdentically`.
 
-Verification [O] (ou-game, Vulkan, 1280×720, the replay with `--spawn 37981,-51758,1463,-126.7`; screenshots viewed,
-kept privately): frame 40 Lara swings her leg over the bike's left side (mount clip), 200 leaning into the left curve
-towards the steps, 262 in the hop clip over the stones at the top, 420 stepping off beside the bike parked nose-down on
-the slope; wheels and Lara stay on the bike through slope pitch. One OpenGL frame (200) matched.
+Verification [O] (ou-game, Vulkan, 1280×720, the replay with `--spawn 37981,-51758,1463,-126.7`, invisible KWin;
+screenshots viewed, kept privately): Jolt bike (2026-11-06) frame 200 Lara leaning into the left curve at the foot of
+the steps (2952 units/s at tick 180), 270 in the jump clip going up the left side of the steps, the bike pitched up
+on them; wheels and Lara stay on the bike. Older stand-in frames (2026-10): 40 mount, 420 dismount beside the bike.
 
-Not done [U/I]: gears, engine/skid/landing sounds, wheelies, power slides, donuts, crash braces and crashes, the jump
-dismounts, PDA on the bike, aiming to her left from the bike, hit reactions while riding (damage applies without a clip), dismount
-clearance checks (`PSCCF_Vehicle_DismountClearance`), the revisit spawner, water.
+Not done [U/I]: gears beyond the record's one, engine/skid/landing sounds, wheelies (record +0x52 bit 8 is off), power
+slides, donuts, the air control torques (+0x44 / +0x48), crash braces (a crash is only the simulation's), the jump
+dismounts, PDA on the bike, aiming to her left from the bike, hit reactions while riding (damage applies without a
+clip), dismount clearance checks (`PSCCF_Vehicle_DismountClearance`), the revisit spawner, water, the lean (not drawn).
 
 ## Interactions: switches, push blocks, pickups (src/game/Objects.cpp `useSwitchClip`, Player `use` / `grip`)
 

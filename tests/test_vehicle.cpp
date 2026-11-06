@@ -1,6 +1,7 @@
 // Lara's motorcycle (src/game/Vehicle.*): intros, decoded tuning, mount / ride / hop / dismount replay, saves.
 #include "game/Game.hpp"
 #include "save/Save.hpp"
+#include "engine/FrameClock.hpp"
 
 #include "cdc/Cdc.hpp"
 
@@ -9,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <tuple>
 
 using namespace ou;
 using game::State;
@@ -50,6 +52,32 @@ TEST(VehicleReal, BikeIntrosTuningAndClips) {
     EXPECT_NEAR(t.frontAxle.y, -206.6f, 0.5f); // bones 5 / 8: front / rear wheel
     EXPECT_NEAR(t.rearAxle.y, 256.8f, 0.5f);
     EXPECT_NEAR(t.wheelbase(), 463.4f, 1);
+    // Havok vehicle data [V-data]: the wheel definitions (vehicle data +0x90) on the model's wheel spheres / markers,
+    // the engine and suspension fields of the record.
+    ASSERT_EQ(t.wheels.size(), 2u);
+    const auto& front = t.wheels[0];
+    const auto& rear = t.wheels[1];
+    EXPECT_EQ(front.flags & 1, 1u); // steered
+    EXPECT_EQ(rear.flags & 1, 0u);
+    EXPECT_NEAR(front.attach.y, -206, 0.5f);
+    EXPECT_NEAR(front.attach.z, 258.9f, 0.5f); // marker 30
+    EXPECT_NEAR(rear.attach.y, 260, 0.5f);
+    EXPECT_NEAR(rear.attach.z, 220.6f, 0.5f);  // marker 31
+    EXPECT_FLOAT_EQ(front.rest, 170);
+    EXPECT_FLOAT_EQ(rear.rest, 150);
+    EXPECT_FLOAT_EQ(front.radius, 103);
+    EXPECT_FLOAT_EQ(rear.radius, 97);
+    EXPECT_NEAR(front.drive, 0.4f, 1e-6f);
+    EXPECT_NEAR(rear.drive, 0.6f, 1e-6f);
+    EXPECT_FLOAT_EQ(t.rpm[2], 18000);
+    EXPECT_FLOAT_EQ(t.torque[0], 30);
+    EXPECT_FLOAT_EQ(t.reverseTorque, 20);
+    EXPECT_NEAR(t.springHz, 1.8f, 1e-5f);
+    EXPECT_NEAR(t.springDamping, 0.35f, 1e-5f);
+    EXPECT_NEAR(t.maxTilt, 42.5f * 3.14159265f / 180, 1e-4f);
+    EXPECT_NEAR(t.stopSpeed, 2 * 280 / 2.237f, 0.1f);
+    EXPECT_NEAR(t.vehicle.ratio, 37.42f, 0.01f); // top rpm at 40 mph (0x78F860)
+    EXPECT_NEAR(physics::massProps(*t.body).mass, 265, 1e-3f); // the chassis: the wheel spheres are the wheel rays
 
     const auto anims = game::loadLaraAnims(bf);
     for (const auto n : game::kBikeClipNames) EXPECT_NE(anims.find("motorcycle:" + std::string(n)), nullptr) << n;
@@ -64,8 +92,8 @@ TEST(VehicleReal, TrailstartRideReplay) {
     const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/bike_ride.txt");
     const game::vec3 start = w.bikes().at(5482).pos;
     bool mounted = false, rode = false, flew = false;
-    float topSpeed = 0, minYaw = 10, maxYaw = -10;
-    for (uint64_t i = 0; i < 9 * 60; ++i) {
+    float topSpeed = 0, minYaw = 10, maxYaw = -10, farthest = 0;
+    for (uint64_t i = 0; i < 10 * 60; ++i) {
         w.tick(replay.at(i));
         const auto* b = w.ridden();
         if (b && std::getenv("OU_VEHICLE_TRACE") && i % 15 == 0)
@@ -77,6 +105,7 @@ TEST(VehicleReal, TrailstartRideReplay) {
         rode |= b->phase == game::BikePhase::Ride;
         flew |= b->air;
         topSpeed = std::max(topSpeed, b->speed);
+        farthest = std::max(farthest, glm::length(b->pos - start));
         minYaw = std::min(minYaw, b->yaw), maxYaw = std::max(maxYaw, b->yaw);
         EXPECT_EQ(w.player().state().state, State::Vehicle);
         if (b->phase == game::BikePhase::Ride) EXPECT_NEAR(glm::length(w.player().state().pos - game::vec3((*w.bikeMatrix(b->uid, 1))[3])), 0, 1);
@@ -88,7 +117,7 @@ TEST(VehicleReal, TrailstartRideReplay) {
     EXPECT_TRUE(mounted && rode && flew);
     EXPECT_GT(topSpeed, 3000);
     EXPECT_GT(maxYaw - minYaw, 0.5f);
-    EXPECT_GT(glm::length(bike.pos - start), 4000);
+    EXPECT_GT(farthest, 5500); // up to the steps' top
     EXPECT_EQ(bike.phase, game::BikePhase::Parked);
     EXPECT_EQ(w.ridden(), nullptr);
     EXPECT_EQ(w.player().state().state, State::Idle); // on her feet beside the bike
@@ -142,7 +171,7 @@ TEST(VehicleReal, ShootsFromTheBike) {
     float shotDamage = 0; // the ram's hit is not a shot
     float minYaw = 10, maxYaw = -10;
     bool drawnRiding = false;
-    for (uint64_t i = 0; i < 9 * 60; ++i) {
+    for (uint64_t i = 0; i < 10 * 60; ++i) {
         w.tick(script.at(i));
         for (const auto& s : w.combat().shots) onTarget += s.target == &dummy, leftGun += s.hand != 0, shotDamage += s.target == &dummy ? s.damage : 0;
         if (const auto* b = w.ridden(); b && b->phase == game::BikePhase::Ride) {
@@ -162,7 +191,8 @@ TEST(VehicleReal, ShootsFromTheBike) {
     w.targets.clear();
 }
 
-// A save taken mid-ride restores the ridden bike and Lara on it; both worlds then drive the same.
+// A save taken mid-ride restores the ridden bike (its Jolt body, wheels and contacts: objects.physics) and Lara on it;
+// both worlds then drive bit for bit the same.
 TEST(VehicleReal, SaveRestoreMidRide) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -180,6 +210,29 @@ TEST(VehicleReal, SaveRestoreMidRide) {
     for (; i < 210; ++i) a.tick(replay.at(i)), b.tick(replay.at(i));
     ASSERT_EQ(a.currentUnit().data.name, b.currentUnit().data.name);
     const auto pa = a.player().state().pos - a.currentUnit().offset, pb = b.player().state().pos - b.currentUnit().offset;
-    EXPECT_LT(glm::length(pa - pb), 1.0f);
-    EXPECT_NEAR(a.ridden()->speed, b.ridden()->speed, 1.0f);
+    EXPECT_EQ(pa, pb);
+    EXPECT_EQ(a.ridden()->speed, b.ridden()->speed);
+    EXPECT_EQ(a.ridden()->yaw, b.ridden()->yaw);
+    EXPECT_GT(a.ridden()->speed, 1000); // still riding hard
+}
+
+// The ride replay at 30, 60 and 144 Hz render rates: the fixed tick drives the Jolt bike, so the bike and Lara end up
+// bit for bit at the same place.
+TEST(VehicleReal, RideIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/bike_ride.txt");
+    const auto anims = game::loadLaraAnims(bf);
+    auto run = [&](double renderHz) {
+        game::World w(loader(bf), "l4_trailstart", anims, kMountSpot);
+        engine::FrameClock clock(game::kTickSeconds);
+        while (w.ticks() < 300) // through the curve and the hop
+            for (int n = clock.advance(1.0 / renderHz); n > 0 && w.ticks() < 300; --n) w.tick(replay.at(w.ticks()));
+        const auto& b = w.bikes().at(5482);
+        return std::tuple(b.pos, b.yaw, b.speed, w.player().state().pos);
+    };
+    const auto a = run(30), b = run(60), c = run(144);
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(a, c);
+    EXPECT_GT(glm::length(std::get<0>(a) - game::loadUnitData(bf, "l4_trailstart").vehicles[0].pos), 3000); // it rode
 }
