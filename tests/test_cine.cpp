@@ -465,7 +465,10 @@ TEST(CineReal, EveryStreamPlaysWithItsActors) {
             const auto obj = names.find(i->objectId);
             if (obj == names.end()) { ADD_FAILURE() << "intro " << inst.intro << " object " << i->objectId; continue; }
             const auto s = cine::actorScene(bf, obj->second, inst.bones);
-            const bool rig = s.meshes.empty() && !inst.lights.empty() && !s.skeletons.empty();
+            // Effect proxies (oflags 0x40000000, 0x5B5CA0) draw nothing: no meshes, the skeleton carries their effects.
+            const bool proxy = formats::objectFlags(cdc::parseDrm(*bf.read("pc-w\\" + obj->second + ".drm"))) & formats::kObjectNoInstanceDraw;
+            if (proxy) EXPECT_TRUE(s.meshes.empty()) << obj->second;
+            const bool rig = s.meshes.empty() && (proxy || !inst.lights.empty()) && !s.skeletons.empty();
             EXPECT_TRUE(!s.meshes.empty() || rig) << obj->second << " (intro " << inst.intro << ") has no model";
             const int skel = rig ? 0 : s.meshes.empty() ? -1 : s.meshes[0].skeleton;
             if (skel >= 0) EXPECT_LE(inst.bones, s.skeletons[size_t(skel)].bones.size()) << obj->second; // else 0x454BD0 skips it

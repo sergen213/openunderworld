@@ -315,6 +315,8 @@ void decodeModel(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& ou
         }
         scene::MeshData m;
         m.origin = where;
+        m.lodNear = r.at<float>(B), m.lodFar = r.at<float>(B + 4); // batch LOD range, 0x50F7C0 (MESHES.md)
+        for (int k = 0; k < 3; ++k) m.lodCentre[k] = r.at<float>(M + 0x10 + 4 * size_t(k));
         m.vertices = readVertices(r, M + vtxOff, numVerts, decl, c.warnings, where);
         if (m.vertices.empty()) { pg += batchPgs; continue; }
         // Mesh flags bit 0: batch +0x0C/+0x10 = bone palette {count, offset of u32 bone indices}.

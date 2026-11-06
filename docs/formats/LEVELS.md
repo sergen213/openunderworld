@@ -432,10 +432,15 @@ Known deviations [O]:
   `dispatcher`, `reveal_object`, `watervolume`, `particle`, `sound_source`, …) plus a few props/gear (`co_rock*`,
   `g_lighter`, `ma_dungeon_watersurfaces`, `wp_natla_fireball`) [O] that game code presumably shows later [I].
   In l4_ballcourt this removes 6 objects (camera anchors, dispatchers, reveal objects, sound volumes, trigger
-  planes/volumes) [O]. Still drawn [U]:
-  `co_monitor_frame` (marker texture 372, oflags 0x90000014) and the 24-vertex `fx_*` effect proxies (oflags bit
-  `0x40000000`, set on 279 objects incl. many visible ones, so not used as a filter). Intro flag `+0x72 & 0x10` also
-  hides an instance when a callback refuses it [O]; the callback is not reversed, so such intros are still drawn.
+  planes/volumes) [O]. Effect-only objects (oflags `0x40000000`: the 24-vertex `fx_*` / `co_fx_*` proxies, bullet hits,
+  squibs) are skipped too: `cdc::InstanceDrawable` returns no draw flags for them (0x5B5CA0) [O]. Intro flag `+0x72 & 0x10`
+  also hides an instance when a callback refuses it [O]; the callback is not reversed, so such intros are still drawn.
+- Dormant intros: the unit loader 0x5C2360 introduces only intros with `+0x72 & 0x82 == 0` (0x5BCC30 sets `0x80` once it
+  has introduced one) [O]. 136 of 1084 intros of seven surveyed units are dormant: cinematic props parked at the
+  cinematic origin (`co_*`, `co_monitor_frame`, amanda / zip / winston / alister), enemies and props scripts bring in
+  later. A cinematic introduces its own (0x4561C0) [O]. `loadLevelScene` leaves out the dormant intros that no script
+  section of the unit names by unique id [I] (we have no script introduce): l4_pool's 10 parked props, amanda 9070 on
+  l7_thin_ice (a T-posed figure on the ice through 275_hel_explosion). Enemies come from their intros regardless (AI).
 - Foliage renders correctly since materials carry blend/alpha-test/two-sided state (MATERIALS.md); the black ground
   plants came from the `COLOR0` attribute (0 on them) being used as a colour.
 - The unit's dependency objects (`ca_skydome_a`, the `g_*`/`wp_*` gear) are not placed.
@@ -449,8 +454,8 @@ Known deviations [O]:
 
 ## Open questions
 
-- [U] Which model an instance uses (LOD/`modelNum`); whether `co_monitor_frame` / `fx_*` proxies are hidden by script,
-  the effect system or the intro `+0x72 & 0x10` callback.
+- [U] Which model an instance uses (`modelNum`); batch LODs are decoded (MESHES.md). Script introduction of dormant
+  intros is not implemented.
 - [U] Intro `+0x52`, `+0x70..0x73` flags, the non-enemy intro data types (1, 0x11, 0x404, ...), the second intro
   list's role (l4_pool: 1 entry).
 - [U] IMF `+0x40`, `+0x4C`, `+0x60`; cell BSP and portals; cell group `+0x14`/`+0x1C`.

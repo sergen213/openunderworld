@@ -240,10 +240,25 @@ player intro).
 - Actors: `cine::actorScene` (render model 0's skinned meshes; [I] the model whose skeleton has exactly the stream's
   bones when model 0's has fewer: ms_ani_sunsphere_plat's 33-bone model 1 in 049_med_kraken_death). Meshes with Mesh
   flags bit 0x40 or primgroup `+0x1C` bit 0 are left out of the colour pass (0x50F7C0 [O]): `co_shadow_card` (38
-  instances, flags 0x41) no longer draws as a grey plane (186, 230, 235, 275, 290).
+  instances, flags 0x41) no longer draws as a grey plane (186, 230, 235, 275, 290). Effect proxies (`co_fx_*`,
+  `fx_cine_lightning`: ObjectBase oflags `0x40000000`) draw nothing (`cdc::InstanceDrawable` 0x5B5CA0 returns no draw
+  flags, 0x5B5BE0 no bounds) [O]: their 24-vertex white box (270 near the pod, 290) is gone, the skeleton still carries
+  their effects. Batch LODs apply to actors as in play (MESHES.md).
+- `co_lightning` (oflags 0x90000014, no proxy bit) is drawn in the original too: its one batch (231 vertices, a tube
+  ~3160 long) has material 7045, blend 0, no textures, pixel shader lib 685 = a rim gradient from c100 (1, 1, 1) to c101
+  (0.69, 0.78, 1) by `pow(1 − N·R, c102.x = 0.5)` [O shader + constants]: the white-to-pale-blue bolt in 290 is the data.
+- 010_pro_surprise ends white by design: at frame 247 the stream moves `co_white_flash` 4130 (1 bone) in front of the
+  camera and leaves it there to the last frame 338 (3 s); no channel changes after that, the material (11858) is blend 0
+  (opaque), its PS multiplies the texture by c100 = (1, 1, 1, 1) and only alpha by MaterialOpacity c98, and the stream has
+  no events or vars to fade it [O]. Kept as the data has it (a cut to white before chapter 1) [I that the original shows the same].
+- 275_hel_explosion: the T-posed figure on the ice is `amanda` 9070, a dormant intro of l7_thin_ice at the marker origin
+  (intro `+0x72` 0x80; not one of the stream's 9 actors, named by no script): tru.exe never introduces it (0x5C2360),
+  `loadLevelScene` now leaves it out (LEVELS.md "Dormant intros"). Lara's arms-out pose at the last frame is the
+  stream's (her bone rotations are animated through frame 870).
 - Effects: the game's running effects (`EffectsView`) tick on the frame clock and draw with the cinematic camera
   (torches, the burning manor in 170); actors that own effects (`co_fx_hell_gate`, `co_fx_shp_escape`,
-  `co_fx_hel_saved`, `fx_cine_lightning`, `co_lightning`) carry their emitters on bone 0 and are moved back afterwards.
+  `co_fx_hel_saved`, `fx_cine_lightning`, `co_lightning`) carry their emitters on bone 0 and are moved back afterwards
+  (a meshless proxy that owns none is skipped: 1385 in 270, 8954 in 290).
   The `cinstream\*.drm` files hold no GenericFXObject (`fx::parseObjectFx` finds none in all 53); their birth records
   that are disabled (info 0x2005, e.g. all 10 of co_fx_hel_saved) are started by nothing we run [U].
 - Not done: events / vars (no retail stream has events; vars only on the light rigs).

@@ -326,6 +326,8 @@ struct GpuMesh {
     glm::vec3 exteriorShift{0.0f};      // exterior terrain: translation added to `model` (followExterior)
     glm::vec3 center{0.0f};             // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
+    float lodNear = 0, lodFar = std::numeric_limits<float>::max(); // batch LOD (render::setLod)
+    glm::vec3 lodOffset{0.0f};
     uint32_t lightMask = ~0u;           // scene::MeshData::lightMask
     // Terrain light groups (scene::MeshData::lightBoxes) and the object slot of the first one (objectSlot).
     std::vector<std::vector<std::array<float, 6>>> lightBoxes;
@@ -730,6 +732,7 @@ public:
         for (size_t i = 0; i < sea_.size(); ++i)
             sea_[i] = reflectsWater(r.meshes[i].center, r.meshes[i].radius, r.meshes[i].reflectZ, options.waterVolumes);
         drawOrder(r.meshes, camera.position, r.order, opacity_);
+        lodEye_ = camera.position;
         unitClips_ = options.unitClips;
         meshClip_.resize(r.meshes.size());
         for (size_t i = 0; i < r.meshes.size(); ++i) meshClip_[i] = clipIndex(unitClips_, r.meshes[i].source);
@@ -1044,7 +1047,7 @@ private:
             glViewport(c * kShadowMapSize, 0, kShadowMapSize, kShadowMapSize);
             glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(sun.lightViewProj[c]));
             for (const auto& m : r.meshes) {
-                if (outsideOrtho(sun.lightViewProj[c], m.center, m.radius)) continue;
+                if (!lodShown(m, lodEye_) || outsideOrtho(sun.lightViewProj[c], m.center, m.radius)) continue;
                 glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
                 glBindVertexArray(m.vao.get());
                 for (const auto& s : m.submeshes) {
@@ -1081,7 +1084,7 @@ private:
             glViewport(p.tile[k].x, p.tile[k].y, original::kPssmTile, original::kPssmTile);
             glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(vp));
             for (const auto& m : r.meshes) {
-                if (outsideOrtho(vp, m.center, m.radius)) continue;
+                if (!lodShown(m, lodEye_) || outsideOrtho(vp, m.center, m.radius)) continue;
                 glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
                 glBindVertexArray(m.vao.get());
                 for (const auto& s : m.submeshes) {
@@ -1159,6 +1162,7 @@ private:
         g.model = glm::make_mat4(m.transform);
         const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
         g.center = glm::vec3(sphere), g.radius = sphere.w;
+        setLod(g, m);
         g.bounds = meshBounds(m);
         g.water = isWaterSurface(m.origin);
         g.vertexCount = m.vertices.size();
@@ -1191,6 +1195,7 @@ private:
         g.model = model, g.exteriorShift = glm::vec3(0.0f);
         const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
         g.center = glm::vec3(sphere), g.radius = sphere.w;
+        setLod(g, m);
         g.bounds = meshBounds(m);
     }
 
@@ -1724,6 +1729,7 @@ private:
     int scissorClip_ = -1;
     bool reflecting_ = false;             // drawReflection drew Targets::reflection this frame                // clip the GL scissor is set to, -1 = scissor test off
     std::vector<float> opacity_;    // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)
+    glm::vec3 lodEye_{0.0f};        // per frame: the camera batch LODs are measured from (every pass, 0x50F7C0)
     std::vector<uint8_t> sea_;      // per frame (Enhanced): render::reflectsWater per mesh
     // Enhanced water draws this submesh (water pass, not the scene pass).
     bool waterDraw(uint32_t mesh, uint32_t sub) const {

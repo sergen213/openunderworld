@@ -1,14 +1,17 @@
 #include "formats/AnimGraph.hpp"
 #include "formats/Formats.hpp"
 #include "formats/Uber.hpp"
+#include "render/RenderCommon.hpp"
 
 #include <gtest/gtest.h>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <set>
 
 using namespace ou;
@@ -253,6 +256,46 @@ TEST(RealData, ShadowOnlyTerrainGroups) {
             if (s.shadowOnly) ++shadowOnly, occluders += s.materialId == 10914 && s.castsShadow;
     EXPECT_EQ(shadowOnly, 4u);
     EXPECT_EQ(occluders, 2u);
+}
+
+// Batch LOD (batch +0x00 / +0x04, tru.exe 0x50F7C0): viking_thrall's model 14580 holds three LODs of 5 batches each,
+// [0, 3160.56], [3160.56, 4740.83], [4740.83, 3.16e9], measured from the Mesh header +0x10 centre; at any distance the
+// renderers' selection (render::lodShown) draws exactly one of them, also with the model moved (instance matrix).
+TEST(RealData, BatchLodRanges) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto sc = formats::loadDrmScene(bf, "pc-w\\viking_thrall.drm");
+    struct Gpu { glm::mat4 model{1.0f}; glm::vec3 center{0.0f}; float lodNear = 0, lodFar = 0; glm::vec3 lodOffset{0.0f}; };
+    std::vector<Gpu> lods;
+    const glm::mat4 at = glm::translate(glm::mat4(1.0f), glm::vec3(1000, -2000, 300));
+    glm::vec3 centre(0.0f); // the model's centre in the world
+    for (const auto& m : sc.meshes) {
+        if (m.origin.find("#section 14580 ") == std::string::npos) continue;
+        // .center: any per-batch point (a vertex); the LOD point is the model's, whatever it is
+        Gpu gm{at, glm::vec3(at * glm::vec4(m.vertices[0].position[0], m.vertices[0].position[1], m.vertices[0].position[2], 1))};
+        render::setLod(gm, m);
+        centre = glm::vec3(at * glm::vec4(m.lodCentre[0], m.lodCentre[1], m.lodCentre[2], 1));
+        lods.push_back(gm);
+    }
+    ASSERT_EQ(lods.size(), 15u);
+    std::map<float, int> byNear;
+    for (const auto& l : lods) ++byNear[l.lodNear];
+    ASSERT_EQ(byNear.size(), 3u);
+    EXPECT_EQ(byNear.begin()->first, 0.0f);
+    EXPECT_NEAR(std::next(byNear.begin())->first, 3160.556f, 0.01f);
+    EXPECT_NEAR(byNear.rbegin()->first, 4740.834f, 0.01f);
+    for (const auto& l : lods) EXPECT_LT(glm::distance(l.center + l.lodOffset, centre), 0.01f);
+    for (const float d : {100.0f, 3000.0f, 3500.0f, 4700.0f, 5000.0f, 50000.0f}) {
+        const glm::vec3 eye = centre + glm::vec3(0, d, 0);
+        std::set<float> shown;
+        int n = 0;
+        for (const auto& l : lods)
+            if (render::lodShown(l, eye)) shown.insert(l.lodNear), ++n;
+        EXPECT_EQ(shown.size(), 1u) << d;
+        EXPECT_EQ(n, 5) << d;
+        EXPECT_EQ(*shown.begin(), d < 3160.556f ? 0.0f : d < 4740.834f ? std::next(byNear.begin())->first : byNear.rbegin()->first) << d;
+    }
 }
 
 TEST(RealData, Bgra8ChannelOrder) {
@@ -528,7 +571,9 @@ TEST(RealData, LevelL4PoolInstancesOnTerrain) {
                 for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], v.position[k]), hi[k] = std::max(hi[k], v.position[k]);
         placed += m.origin.find("@intro") != std::string::npos;
     }
-    EXPECT_GT(placed, 40u); // fx_* proxies (oflags 0x40000000, never drawn by tru.exe 0x5B5CA0) are not placed
+    // fx_* proxies (oflags 0x40000000, never drawn by tru.exe 0x5B5CA0) are not placed, nor the 10 dormant cinematic props
+    // parked at (0, 0, -11542) (intro +0x72 0x80, no unit script names them: not introduced at load, 0x5C2360).
+    EXPECT_EQ(placed, 34u);
     // Observed: 161/173 object intros lie inside the terrain box; the rest are cinematic props
     // parked at (0, 0, -11542) and one trigger volume. Markers (object -6) are not counted.
     size_t inside = 0, objects = 0;

@@ -176,13 +176,15 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
             std::fprintf(stderr, "ou-game: cinematic %s: %s: %s\n", name.c_str(), obj->second.c_str(), e.what());
             continue;
         }
-        // Light rigs (co_light_rig*) have no geometry but bones for their lights.
-        if (s.meshes.empty() && (inst.lights.empty() || s.skeletons.empty())) {
+        // Light rigs (co_light_rig*) have no geometry but bones for their lights; effect proxies (co_fx_*) draw nothing
+        // but carry their effects.
+        const bool fx = v.fx && v.fx->hasOwner(inst.intro);
+        if (s.meshes.empty() && (s.skeletons.empty() || (inst.lights.empty() && !fx))) {
             std::fprintf(stderr, "ou-game: cinematic %s: intro %d (%s) has no model\n", name.c_str(), inst.intro, obj->second.c_str());
             continue;
         }
         Actor a{&inst};
-        if (v.fx && v.fx->hasOwner(inst.intro)) a.fxHome = a.fxAt = glm::vec3(introWorld(*in, off)[3]), a.fx = true;
+        if (fx) a.fxHome = a.fxAt = glm::vec3(introWorld(*in, off)[3]), a.fx = true;
         const size_t skelBase = sc.skeletons.size();
         sc.skeletons.insert(sc.skeletons.end(), s.skeletons.begin(), s.skeletons.end());
         if (s.meshes.empty()) a.skelIndex = int32_t(skelBase);

@@ -342,6 +342,8 @@ struct GpuMesh {
     glm::vec3 exteriorShift{0.0f}; // exterior terrain: translation added to `model` (followExterior)
     glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;    // world-space bounding-sphere radius (original::lightSet)
+    float lodNear = 0, lodFar = std::numeric_limits<float>::max(); // batch LOD (render::setLod)
+    glm::vec3 lodOffset{0.0f};
     uint32_t lightMask = ~0u; // scene::MeshData::lightMask
     std::vector<std::vector<std::array<float, 6>>> lightBoxes; // terrain light groups (scene::MeshData::lightBoxes)
     float reflectZ = std::numeric_limits<float>::quiet_NaN(); // original::reflectionPlaneZ (NaN: nothing reflects)
@@ -855,6 +857,7 @@ public:
         constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         meshOpacities(options.meshOpacity, meshes_.size(), opacity_);
         drawOrder(meshes_, camera.position, order_, opacity_);
+        lodEye_ = camera.position;
         unitClips_ = options.unitClips;
         meshClip_.assign(meshes_.size(), -1);
         for (size_t i = 0; i < meshSlot_.size(); ++i)
@@ -2222,7 +2225,7 @@ private:
             push.viewProj = zRemap * sun.lightViewProj[c];
             // Meshes whose bounds miss the cascade are skipped (identical map; the pass was ~3.4 ms in l4_ballcourt).
             for (const auto& m : meshes_) {
-                if (outsideOrtho(sun.lightViewProj[c], m.center, m.radius)) continue;
+                if (!lodShown(m, lodEye_) || outsideOrtho(sun.lightViewProj[c], m.center, m.radius)) continue;
                 const VkDeviceSize zero = 0;
                 vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
                 vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -2280,7 +2283,7 @@ private:
             vkCmdSetScissor(cmd, 0, 1, &tile);
             push.viewProj = p.tileClip[k];
             for (const auto& m : meshes_) {
-                if (outsideOrtho(push.viewProj, m.center, m.radius)) continue;
+                if (!lodShown(m, lodEye_) || outsideOrtho(push.viewProj, m.center, m.radius)) continue;
                 const VkDeviceSize zero = 0;
                 vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
                 vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -4522,6 +4525,7 @@ private:
         g.water = isWaterSurface(m.origin);
         const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
         g.center = glm::vec3(sphere), g.radius = sphere.w;
+        setLod(g, m);
         g.bounds = meshBounds(m);
         const VkDeviceSize vb = m.vertices.size() * sizeof(scene::Vertex), ib = m.indices.size() * sizeof(uint32_t);
         const VkBufferUsageFlags rtInput = rtStatus_.supported ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -4546,6 +4550,7 @@ private:
         g.model = model, g.exteriorShift = glm::vec3(0.0f);
         const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
         g.center = glm::vec3(sphere), g.radius = sphere.w;
+        setLod(g, m);
         g.bounds = meshBounds(m);
     }
 
@@ -5019,6 +5024,7 @@ private:
     Bounds bounds_;
     std::vector<DrawRef> order_;
     std::vector<float> opacity_; // per frame: FrameOptions::meshOpacity per mesh (empty: all 1)
+    glm::vec3 lodEye_{0.0f};     // per frame: the camera batch LODs are measured from (every pass, 0x50F7C0)
     std::span<const UnitClip> unitClips_; // per frame: FrameOptions::unitClips
     std::vector<int> meshClip_;           // per frame and GPU mesh: index into unitClips_, -1 = unclipped
 

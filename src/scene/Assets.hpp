@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -253,6 +254,11 @@ struct MeshData {
     // leaf it draws, not of the whole terrain. SubMesh::lightGroup indexes this: mesh-space leaf boxes {min xyz, max xyz}
     // of the submeshes in that group (leaves sharing their unit's light set; formats::decodeRenderResources).
     std::vector<std::vector<std::array<float, 6>>> lightBoxes;
+    // Batch LOD (render model batch +0x00 / +0x04; tru.exe model list builder 0x50F7C0): the batch draws, in every pass,
+    // while lodNear <= d <= lodFar, d = the camera's distance to its model's bounding-sphere centre (Mesh header +0x10,
+    // model space, transformed by the instance matrix; no scale factor). Most batches: 0 .. FLT_MAX.
+    float lodNear = 0, lodFar = std::numeric_limits<float>::max();
+    float lodCentre[3] = {0, 0, 0};
     // Content identity across uploads (assignKeys): meshes with one key hold the same vertices, indices and submeshes
     // (any transform), so backends keep one GPU copy while uploads list it (Renderer::upload). 0 = none.
     uint64_t key = 0;

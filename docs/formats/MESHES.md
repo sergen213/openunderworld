@@ -29,6 +29,9 @@ Both lists have the form `{u32 count, u32 ids[count]}`. The material ids are mat
 | 0x00 | u32 | magic `Mesh` (0x6873654D) [O] |
 | 0x04 | u32 | flags. When bit 0 is set, the batch +0x10 field and the header +0x74 field are used (tru.exe 0x50EB30) [O]. Meaning [U] |
 | 0x0C | u32 | total index count [O] |
+| 0x10 | vec4 | bounding-sphere centre (model space); the batch LOD distance is measured to it (0x50F7C0) [O] |
+| 0x20 / 0x30 | vec4 | bounding box min / max [O data: Lara max.z 510.97] |
+| 0x40 | f32 | bounding-sphere radius (0x50F7C0 near-plane test) [O] |
 | 0x44 | u32 | −1 sentinel in tru.exe [O]; meaning [U] |
 | 0x6C | u32 | offset of the primgroups, 0x40 bytes each [O] |
 | 0x70 | u32 | offset of the batches (vertex buffers), 0x34 bytes each [O] |
@@ -37,17 +40,26 @@ Both lists have the form `{u32 count, u32 ids[count]}`. The material ids are mat
 | 0x7E | u16 | batch count [O] |
 
 - [O] Models with an index count of 0 or a batch count of 0 also have −1 offsets. They are skipped silently as placeholders.
-- [I] Lara's header bounding box max.z is 510.97. It matches the decoded geometry (`RealData.LaraTexturesAndModel`). We have not mapped the exact offset of the box.
 
 Batch (0x34 bytes) [O]:
 
 | off | meaning |
 |-----|---------|
+| +0x00, +0x04 | **LOD range** f32 near, far: the batch is listed, in every pass, while near ≤ d ≤ far, d = the length of the header +0x10 centre in view space (camera · instance matrix; tru.exe model list builder 0x50F7C0, no scale factor) [O] |
 | +0x08 | number of consecutive primgroups belonging to this batch |
 | +0x14 | vertex data offset |
 | +0x24 | VertexDecl offset |
 | +0x28 | vertex count |
 | +0x10 | used only when flags bit 0 is set; [U] |
+
+- [O] LOD survey (render model sections of every bigfile entry, copies counted): 1238 have only `[0, FLT_MAX]` batches, 210 have ranges.
+  Enemies carry three LODs (viking_thrall, poacher, shark_blueshark, naga_green: `[0, 3160.56]`, `[3160.56, 4740.83]`,
+  `[4740.83, 3.16e9]`); units (l2_towerroom, l2_puzzleroom, l2_norsehub, l4_temple, l4_templepath) switch their models
+  at 3160 .. 63211. Before this was decoded every LOD drew at once.
+- Ours: `scene::MeshData::lodNear / lodFar / lodCentre`; both renderers drop a mesh outside its range from the colour,
+  sun-shadow and PSSM passes (`render::lodShown`, the distance from the camera to the transformed centre). Meshes posed
+  on the CPU keep the centre's offset from their bounds centre, so it follows their translation [I]. The RT scene still
+  holds every LOD. Test `RealData.BatchLodRanges`.
 
 Primgroup (0x40 bytes) [O]:
 

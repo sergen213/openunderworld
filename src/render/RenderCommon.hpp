@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <vector>
@@ -96,10 +97,24 @@ inline void meshOpacities(std::span<const MeshOpacity> list, size_t meshes, std:
     for (const auto& m : list)
         if (m.mesh < meshes) out[m.mesh] = std::clamp(m.opacity, 0.0f, 1.0f);
 }
-template <class GpuMesh> // needs .center (glm::vec3) and .submeshes (scene::SubMesh)
+// Batch LOD (scene::MeshData::lodNear / lodFar, tru.exe 0x50F7C0): GpuMesh .lodNear / .lodFar and .lodOffset = the model
+// centre minus .center at upload. Meshes posed on the CPU (updateVertices moves .center) keep the offset, so the point
+// follows the pose's translation [I: exact for static meshes; a turned pose drifts by the offset's turn].
+template <class GpuMesh>
+void setLod(GpuMesh& g, const scene::MeshData& m) {
+    g.lodNear = m.lodNear, g.lodFar = m.lodFar;
+    g.lodOffset = glm::vec3(g.model * glm::vec4(m.lodCentre[0], m.lodCentre[1], m.lodCentre[2], 1.0f)) - g.center;
+}
+template <class GpuMesh>
+bool lodShown(const GpuMesh& g, glm::vec3 eye) {
+    if (g.lodNear <= 0 && g.lodFar >= std::numeric_limits<float>::max()) return true;
+    const float d = glm::distance(g.center + g.lodOffset, eye);
+    return g.lodNear <= d && d <= g.lodFar;
+}
+template <class GpuMesh> // needs .center (glm::vec3), .submeshes (scene::SubMesh) and the setLod fields
 void drawOrder(const std::vector<GpuMesh>& meshes, glm::vec3 eye, std::vector<DrawRef>& out, std::span<const float> opacity = {}) {
     out.clear();
-    auto op = [&](uint32_t m) { return m < opacity.size() ? opacity[m] : 1.0f; };
+    auto op = [&](uint32_t m) { return !lodShown(meshes[m], eye) ? 0.0f : m < opacity.size() ? opacity[m] : 1.0f; };
     auto dist = [&](const DrawRef& d) { const glm::vec3 v = meshes[d.mesh].center - eye; return glm::dot(v, v); };
     for (const bool exterior : {true, false}) {
         for (uint32_t m = 0; m < meshes.size(); ++m)

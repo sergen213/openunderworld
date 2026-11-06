@@ -402,9 +402,17 @@ scene::SceneData actorScene(const cdc::BigfileSet& bigfile, const std::string& o
     const std::string path = "pc-w\\" + object + ".drm";
     auto s = formats::loadDrmScene(bigfile, path);
     uint32_t model = 0;
-    if (auto bytes = bigfile.read(path))
-        for (const uint32_t id : formats::objectRenderModels(cdc::parseDrm(std::move(*bytes))))
+    if (auto bytes = bigfile.read(path)) {
+        const auto drm = cdc::parseDrm(std::move(*bytes));
+        // Effect proxies (co_fx_*, fx_cine_lightning: oflags 0x40000000) draw nothing (0x5B5CA0); their skeleton carries
+        // their effects.
+        if (formats::objectFlags(drm) & formats::kObjectNoInstanceDraw) {
+            s.meshes.clear();
+            return s;
+        }
+        for (const uint32_t id : formats::objectRenderModels(drm))
             if ((model = id)) break;
+    }
     // The instance wears another of its models when model 0's skeleton is short of the stream's bones (0x454BD0 would
     // skip it) and another has exactly them: ms_ani_sunsphere_plat's model 1 (33 bones) in 049_med_kraken_death [I].
     auto skeletonOf = [&](uint32_t id) -> const scene::Skeleton* {
