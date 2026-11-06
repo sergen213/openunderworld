@@ -169,8 +169,9 @@ struct Environment {
     float sunDirection[3] = {}; // record matrix row 2: the direction light travels (PS SunLight c209)
     float sunColor[3] = {};     // intensity x colour (c212)
     // Sun cookie ("modulation map", s11 via WorldToModulationMapSun c176/c177): texture id (0 = none), projected
-    // along the sun's record rows 0/1 (sunAxes) from sunOrigin; DTP +0x82C scale, +0x830 rotation (deg/s),
-    // +0x834/+0x838 scroll (1/s).
+    // along the sun's record rows 0/1 (sunAxes) from sunOrigin = Level+0x80, the origin of tru.exe's frame (Wine,
+    // l5_startsnow: c176 / c177 w = 0.5 + scroll x TimeVector there, no record-position term); DTP +0x82C scale,
+    // +0x830 rotation (deg/s), +0x834/+0x838 scroll (1/s).
     uint32_t sunCookie = 0;
     float sunAxes[2][3] = {}, sunOrigin[3] = {};
     float cookieScale = 1, cookieRotation = 0, cookieScroll[2] = {};

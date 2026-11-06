@@ -235,6 +235,7 @@ struct UnitRef {
     std::string name; // base name ("l3_main_bedroom")
     std::shared_ptr<const cdc::Drm> drm;
     vec3 offset{0};   // world = unit frame + offset
+    bool resident = false; // registered for its cinematics only (game::World::registerCinematicUnits), not loaded
 };
 
 struct TickInput {
@@ -488,6 +489,10 @@ private:
     int32_t nextAuxiliaryUid_ = -1;
     std::map<std::string, std::pair<const vm::Program*, uint32_t>> unitScripts_; // unit -> its NsUnit script instance key
     std::set<std::string> units_; // units addUnit created (with or without objects): setUnits adds each once
+    // Resident units (UnitRef::resident) whose unit script waits for the unit itself to load before its startup runs
+    // (saved as "deferredUnits").
+    std::set<std::string> deferredUnits_;
+    void startUnitScript(const std::string& unit);
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;
     std::optional<std::pair<uint32_t, std::optional<uint32_t>>> playerUnit_; // setPlayerUnit

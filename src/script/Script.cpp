@@ -488,6 +488,8 @@ void Runtime::setUnits(const std::vector<UnitRef>& units) {
     std::erase_if(units_, [&](const std::string& n) { return std::none_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == n; }); });
     for (const auto& u : units)
         if (!units_.contains(u.name) && std::none_of(objects_.begin(), objects_.end(), [&](const Object& o) { return o.unit == u.name; })) addUnit(u);
+    for (const auto& u : units)
+        if (!u.resident && deferredUnits_.erase(u.name)) startUnitScript(u.name);
 }
 
 void Runtime::addUnit(const UnitRef& u) {
@@ -697,21 +699,31 @@ void Runtime::addUnit(const UnitRef& u) {
     // enters state 0 as its own thread (e.g. l3_main_bedroom: Run, then the hint_01 help condition via vt 28).
     // unitref.Get returns the same instance. [I: started after the unit's intros so its instancerefs resolve]
     // A unit script without a startup function still listens (l1_cine_ship_sinking 5997: only vt 11 / 13).
-    // A load resumes the saved one instead (its threads: attachSavedThreads).
+    // A load resumes the saved one instead (its threads: attachSavedThreads). A resident unit's (UnitRef::resident) startup
+    // waits until the stream loads the unit (setUnits): tru.exe runs it only then, and l3_mansion_exterior_afterburn's
+    // (11388: globaleffect 11 Rain 20) set every level's rain at the game start.
     if (program->type(unit.scriptId)) {
         const auto self = auxiliaryInstance(program, unit.scriptId);
         unitScripts_[u.name] = {program.get(), unit.scriptId};
         if (!unitResumed) {
-            if (const Function* f = program->startup(unit.scriptId)) {
-                const auto thread = makeMachine(self->uid);
-                if (!thread->start(*self, *f)) recordFailure(self->uid, u.name + " unit script", *thread);
-                if (thread->active()) threads_.push_back({self->uid, thread});
-                adopt(thread);
-            }
+            if (u.resident) deferredUnits_.insert(u.name);
+            else startUnitScript(u.name);
             notifyPlayerUnit(self->uid); // 0x4B0050: a new listener gets the player's current unit(s)
         }
     }
     attachSavedThreads();
+}
+
+void Runtime::startUnitScript(const std::string& unit) {
+    const auto it = unitScripts_.find(unit);
+    const auto a = it == unitScripts_.end() ? auxiliary_.end() : auxiliary_.find(it->second);
+    if (a == auxiliary_.end()) return;
+    if (const Function* f = it->second.first->startup(it->second.second)) {
+        const auto thread = makeMachine(a->second->uid);
+        if (!thread->start(*a->second, *f)) recordFailure(a->second->uid, unit + " unit script", *thread);
+        if (thread->active()) threads_.push_back({a->second->uid, thread});
+        adopt(thread);
+    }
 }
 
 bool Runtime::resume(Object& o) {
@@ -2381,7 +2393,8 @@ nlohmann::json Runtime::serialize() const {
                     {"clocks", std::move(clocks)}, {"messages", std::move(messages)}, {"tick", tick_}, {"playerUnit", playerUnit},
                     {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
                     {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
-                    {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}}};
+                    {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}},
+                    {"deferredUnits", deferredUnits_}};
     return j;
 }
 
@@ -2490,6 +2503,7 @@ void Runtime::restoreRuntime(const nlohmann::json& r) {
     weather_ = {};
     if (const auto it = r.find("weather"); it != r.end()) // saves from before 0.30 have none
         weather_ = {it->at(0).get<int32_t>(), it->at(1).get<int32_t>(), it->at(2).get<int32_t>(), it->at(3).get<int32_t>()};
+    deferredUnits_ = r.value("deferredUnits", std::set<std::string>{});
 }
 
 } // namespace ou::script

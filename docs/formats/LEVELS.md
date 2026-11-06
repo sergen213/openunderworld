@@ -306,6 +306,11 @@ Survey (82 units, `scratch/portalsurvey.py`) [O]:
   14/14 units checked (l3_main_bedroom 12059, l1_seafloor 5277, l2_cliffclimb 9502, ...). It has a state table;
   ours creates it with the unit and runs state 0 as its own thread (`unitref.Get` returns it), ending it when the
   unit streams out [I: created after the unit's intros].
+- [O] The three units ours keeps resident for their chapter-end cinematics (l1_cine_ship_sinking,
+  l3_mansion_exterior_afterburn, l6_ship_natla_room; `script::UnitRef::resident`) get their unit script at once (it
+  listens) but its startup waits until the stream loads the unit: l3_mansion_exterior_afterburn's (11388) runs
+  `globaleffect 11` Rain 20, which had put rain and lightning flashes on every level (tru.exe reads rain 0 at the
+  l5_startsnow start). Test `ScriptRealData.ResidentUnitScriptWaitsForItsUnit`.
 
 ### Verification
 

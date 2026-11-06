@@ -467,6 +467,27 @@ TEST(ScriptRealData, SetUnitsAddsEachUnitOnce) {
     EXPECT_EQ(r.objects().size(), objects);
 }
 
+// A resident unit (registered only for its cinematics) keeps its unit script's startup until the stream really loads
+// it: l3_mansion_exterior_afterburn's (11388) sets globaleffect 11 Rain 20, which tru.exe never runs elsewhere
+// (l5_startsnow reads rain 0 under Wine) and which put rain and lightning flashes over every level.
+TEST(ScriptRealData, ResidentUnitScriptWaitsForItsUnit) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    auto bytes = bf.read("pc-w\\l3_mansion_exterior_afterburn.drm");
+    ASSERT_TRUE(bytes);
+    const auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*bytes)));
+    Runtime r;
+    r.setBigfile(&bf);
+    UnitRef resident{"l3_mansion_exterior_afterburn", drm, {}, true}, loaded = resident;
+    loaded.resident = false;
+    r.setUnits({resident});
+    EXPECT_NE(r.unitScriptUid(resident.name), 0); // created and listening
+    EXPECT_EQ(r.weather().rain, 0);
+    r.setUnits({loaded, resident});
+    EXPECT_EQ(r.weather().rain, 20);
+}
+
 TEST(ScriptRealData, BedroomSwitchOpensHouseDoor) {
     const char* g = std::getenv("OU_GAME_DIR");
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";

@@ -281,7 +281,7 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
 void World::registerCinematicUnits() {
     for (const char* name : {"l1_cine_ship_sinking", "l3_mansion_exterior_afterburn", "l6_ship_natla_room"}) {
         auto u = loader_(name);
-        cinematicRefs_.push_back({u.name, u.drm, vec3(0)});
+        cinematicRefs_.push_back({u.name, u.drm, vec3(0), true}); // resident: their unit scripts wait for a real load
         for (const auto& [uid, stream] : u.cinematics) cinematicEnds_[uid] = {stream, u.chapterLinks[uid]};
     }
 }

@@ -291,6 +291,13 @@ differ). GL and Vulkan match. The junglehub sky: tru.exe draws the exterior terr
 "Exterior terrain follows the camera", read from its matrices under Wine); ours does the same (`FrameOptions::exteriorOrigin`,
 `render::followExterior`). Same-camera sky band (top 240 rows, region mean |Δ| of the 4 region means) at three Wine
 cameras (start, Lara moved 600 / 780 units): 5.2 / 5.7 / 4.7 → 3.8 / 3.4 / 3.4; whole frame 2.8 / 2.9 / 2.7 → 2.3 / 2.1 / 2.2.
+l5_startsnow start (2026-11-06; snowlight/ in the work dir): 53.0 VK / 48.6 GL (luma +53) → 4.2 / 4.2 (+1.7). Not the
+lighting: with every PS register read under Wine (a shadow of 0x526920's SetPixelShaderConstantF) equal to ours and
+the sun / ambient / light-map shares matching (each zeroed in both games), the extra light was a lightning flash
+filter (rainfx event 0x30: Finish amount 1.1 with curves, ColorDOF 0.41) and rain from l3_mansion_exterior_afterburn's
+unit script, which ran at every game start (LEVELS.md "Unit script"); and the sun cookie's projection origin
+(SHADERS.md c176). l4_ballcourt 8.2 / 8.3 → 8.0 / 8.0, l2_junglehub 3.2 / 2.5 → 2.7 / 2.7 (the flashes made the VK
+frame brighter), l3_main_bedroom 1.7 / 1.6 → 1.7 / 1.5.
 
 ### Instance opacity (`FrameOptions::meshOpacity`, GL + Vulkan)
 

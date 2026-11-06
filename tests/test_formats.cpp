@@ -353,6 +353,7 @@ TEST(Level, ParseUnitIntrosStreamGroupsImfs) {
 TEST(Level, ParseUnitLights) {
     std::vector<uint8_t> level(0x94), unitData(0x400), cells(0x40);
     const auto levelRel = relocs({}, {{0x74, 1, 0}, {0x90, 2, 0}});
+    setf(level, 0x80, 300.f); // Level+0x80: tru.exe's frame origin, the sun cookie's
     set32(unitData, 0x00, 3);                          // numLights
     std::vector<std::pair<uint32_t, uint32_t>> in{{0x04, 0x40}}, res;
     for (uint32_t k = 0; k < 3; ++k) {
@@ -414,7 +415,7 @@ TEST(Level, ParseUnitLights) {
     EXPECT_TRUE(e.sun);
     EXPECT_EQ(e.sunCookie, 0x77u);
     EXPECT_FLOAT_EQ(e.cookieScale, 12.f);
-    EXPECT_FLOAT_EQ(e.sunOrigin[0], 200.f);
+    EXPECT_FLOAT_EQ(e.sunOrigin[0], 300.f); // Level+0x80, not the record position
     EXPECT_FLOAT_EQ(e.sunAxes[1][1], 1.f);
 }
 

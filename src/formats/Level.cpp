@@ -410,7 +410,7 @@ Unit parseUnit(const cdc::Drm& d) {
                     e.sunColor[c] = color[c];
                     e.sunAxes[0][c] = rec.at<float>(r + 4 * c);
                     e.sunAxes[1][c] = rec.at<float>(r + 0x10 + 4 * c);
-                    e.sunOrigin[c] = rec.at<float>(r + 0x30 + 4 * c);
+                    e.sunOrigin[c] = level.at<float>(0x80 + 4 * c); // tru.exe's frame origin (Assets.hpp)
                 }
                 e.sun = true;
                 if (dtp.at<uint8_t>(0x824))
