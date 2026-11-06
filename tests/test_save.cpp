@@ -682,7 +682,7 @@ TEST(StreamReal, YachtDecksAboveSea) {
         for (const auto& m : w.collision().markup)
             if (m.type == 10 && m.id == volume) sea = &m;
         ASSERT_NE(sea, nullptr) << chapter;
-        ASSERT_EQ(sea->points.size(), 13u) << "waves";
+        ASSERT_GT(sea->points.at(9).x, 0.0f) << "waves"; // first wave height (findWater layout)
         float highest = -1e9f;
         for (double t = 0; t < 628.4; t += 0.05) highest = std::max(highest, game::waterSurface(*sea, glm::vec2(s.pos), t));
         EXPECT_LT(highest, s.pos.z - 10.0f) << "ch" << chapter << " deck above the sea at every phase";
