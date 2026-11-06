@@ -2787,36 +2787,92 @@ TEST(GameReal, KrakenRoomRappel) {
     EXPECT_EQ(w.player().state().state, State::GrappleSwing) << "kicked off the wall";
 }
 
-// ---- ladders / pillars / perches (src/game/Traverse) ----
-TEST(GameReal, LadderAttachClimbOffTop) {
+// ---- ladders / pillars / perches / wall hug (src/game/Traverse) ----
+namespace {
+// The stick that pushes toward world direction `dir` under the World's current camera (World::tick's mapping).
+Actions worldStick(const game::World& w, vec2 dir, Actions a = {}) {
+    const float y = w.camera().yaw;
+    a.move = {glm::dot(dir, vec2(std::sin(y), -std::cos(y))), glm::dot(dir, vec2(std::cos(y), std::sin(y)))};
+    return a;
+}
+const collision::Markup* markupById(const game::World& w, int type, int id) {
+    for (const auto& m : w.collision().markup)
+        if (m.type == type && m.id == id) return &m;
+    return nullptr;
+}
+} // namespace
+
+// Rung alignment (tru.exe LadderRungAlignAnimTarget 0x74DCD0, player data +0x770 / +0x784 / +0x778 / +0x774): every
+// climb clip ends with the root exactly on a rung, kRungTop + r * 110.619 below the top; off the top rung
+// ladder_detach_ground_top's root motion (216.4 forward, 575.4 up) sets her on the floor above.
+TEST(GameReal, LadderRungsClimbOffTop) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    CollisionMesh m;
+    addFloor(m, -2000, -2000, 400, 2000, 0);
+    addFloor(m, 400, -2000, 2000, 2000, 1200);
+    m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}}); // outward -X, toward Lara
+    auto w = climbWorld(std::move(m), {300, 0, 0});
+    const auto& s = w->player().state();
+    w->tick(forward());
+    ASSERT_EQ(s.state, State::Ladder);
+    EXPECT_EQ(s.clip, "ladder_attach_ground_bottom");
+    const auto rungZ = [](int r) { return 1200.0f - 575.221f - 110.619f * float(r); };
+    for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+    ASSERT_EQ(s.clip, "ladder_idle");
+    EXPECT_NEAR(s.pos.z, rungZ(5), 1e-3) << "lowest rung: trunc(1200 / 110.619) + 1 - 6";
+    EXPECT_NEAR(s.pos.x, 400 - 79 - 110.619f, 1e-3) << "half the hint + 110.619 out from the line";
+    std::set<int> rungs; // where each climb clip started: the rung the one before ended on
+    for (int i = 0; i < 900 && s.state == State::Ladder; ++i) {
+        w->tick(forward());
+        if (s.clip == "ladder_climb_up" || s.clip == "ladder_detach_ground_top") {
+            const float r = (1200.0f - 575.221f - s.climbFrom.z) / 110.619f;
+            EXPECT_NEAR(r, std::round(r), 1e-3) << "between rungs at z " << s.climbFrom.z;
+            rungs.insert(int(std::lround(r)));
+        }
+    }
+    EXPECT_EQ(rungs, (std::set<int>{0, 1, 2, 3, 4, 5}));
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.z, 1200.0f, 1.0f);
+    EXPECT_NEAR(s.pos.x, 400 - 79 - 110.619f + 216.4f, 1.0f);
+}
+
+// Pillar (markup 15, two points): from the floor pillar_attach_ground puts her 199 up the shaft (player data +0x7EE),
+// pillar_climb_right takes her round it (left: mirrored) facing the axis, pillar_climb_up climbs, the slide
+// (pillar_slide_down_start / _down) brings her down to pillar_detach_ground at its foot.
+TEST(GameReal, PillarAttachRoundUpSlideOff) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     CollisionMesh m;
     addFloor(m, -2000, -2000, 2000, 2000, 0);
-    m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}}); // outward -X, toward Lara
+    m.markup.push_back({15, 1, {{400, 0, 1600}, {400, 0, 0}}});
     auto w = climbWorld(std::move(m), {300, 0, 0});
+    const auto& s = w->player().state();
     w->tick(forward());
-    ASSERT_EQ(w->player().state().state, State::Ladder);
-    const float z0 = w->player().state().pos.z;
-    for (int i = 0; i < 60; ++i) w->tick(forward());
-    EXPECT_GT(w->player().state().pos.z, z0 + 100.0f);
-    for (int i = 0; i < 600 && w->player().state().state != State::Idle; ++i) w->tick(forward());
-    EXPECT_EQ(w->player().state().state, State::Idle);
-    EXPECT_NEAR(w->player().state().pos.z, 1200.0f, 1.0f);
-    EXPECT_NEAR(w->player().state().pos.x, 400.0f, 1.0f);
-}
-
-TEST(Game, PillarAttach) {
-    CollisionMesh m;
-    addFloor(m, -2000, -2000, 2000, 2000, 0);
-    m.markup.push_back({15, 1, {{400, 0, 1600}, {400, 0, 0}, {242, 0, 0}}});
-    auto w = makeWorld(std::move(m), {300, 0, 0});
-    w->tick(forward());
-    ASSERT_EQ(w->player().state().state, State::Pillar);
-    Actions side;
-    side.move.x = 1.0f; // rotate around the shaft
-    const float x0 = w->player().state().pos.x;
-    for (int i = 0; i < 30; ++i) w->tick(side);
-    EXPECT_NE(w->player().state().pos.x, x0);
+    ASSERT_EQ(s.state, State::Pillar);
+    for (int i = 0; i < 120 && s.clip != "pillar_idle"; ++i) w->tick({});
+    ASSERT_EQ(s.clip, "pillar_idle");
+    EXPECT_NEAR(s.pos.z, 199, 1e-3);
+    const auto fromAxis = [&] { return glm::length(vec2(s.pos) - vec2(400, 0)); };
+    EXPECT_NEAR(fromAxis(), 100, 1e-2);
+    const float yaw0 = s.yaw;
+    Actions right;
+    right.move.x = 1;
+    w->tick(fixedCamera(*w, right, 0)); // one pillar_climb_right: its root turns 1.31 from frame 0, it starts at frame 3
+    EXPECT_EQ(s.clip, "pillar_climb_right");
+    for (int i = 0; i < 60 && s.clip != "pillar_idle"; ++i) w->tick({});
+    EXPECT_NEAR(std::remainder(s.yaw - yaw0, 6.2831853f), 1.19f, 0.05f) << "the clip's root turn";
+    EXPECT_NEAR(fromAxis(), 100, 1e-2);
+    EXPECT_NEAR(std::cos(s.yaw), (400 - s.pos.x) / 100, 1e-3) << "facing the axis";
+    const float z0 = s.pos.z;
+    for (int i = 0; i < 120; ++i) w->tick(worldStick(*w, glm::normalize(vec2(400, 0) - vec2(s.pos))));
+    EXPECT_GT(s.pos.z, z0 + 300) << "climbed";
+    bool slid = false;
+    for (int i = 0; i < 600 && s.state == State::Pillar; ++i) {
+        w->tick(worldStick(*w, glm::normalize(vec2(s.pos) - vec2(400, 0))));
+        slid |= s.clip == "pillar_slide_down";
+    }
+    EXPECT_TRUE(slid);
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.z, 0, 0.1);
 }
 
 TEST(Game, PerchAttachAndJumpOff) {
@@ -4078,4 +4134,213 @@ TEST(GameReal, ScriptedWaterLevelMoves) {
     game::World l(loader, "l7_yggdrasil_end", game::loadLaraAnims(bf), game::Spawn{{0, 0, 0}, 0});
     l.restoreRuntime(saved);
     EXPECT_NEAR(top - surface(l).second, 32 * 10.0f, 0.5f) << "the level is saved";
+}
+
+
+// ---- poles: parallel hang, hand over hand, turns, swing stops (Player::pole) ----
+namespace {
+// l4_traprooms pole 1336 (x 14222..15219 at y -20855, z 7133): a standing jump from the floor south of it catches it
+// facing +y (GameReal.TrapRoomsPoleFling); the attach clip played out.
+game::World trapRooms(const cdc::BigfileSet& bf) { return unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)}); }
+void hangOnPole(game::World& w) {
+    const auto& s = w.player().state();
+    Actions go = forward();
+    go.jump = true;
+    for (int i = 0; i < 120 && s.state != State::PoleHang; ++i) w.tick(i < 20 ? go : Actions{});
+    for (int i = 0; i < 120 && s.clip != "HPole_idleHangPerp"; ++i) w.tick({});
+}
+} // namespace
+
+// Stick along the pole: Hpole_PerptoPara turns her parallel (root turn +90), HPole_ParaForward_trans / HPole_ParaForward
+// move her hand over hand along it (hands on the axis), letting go stops her (_to_idle_*_hand), the stick back turns her
+// round (Hpole_Paraturn180), across turns her back square to it (Hpole_ParatoPerp, mirrored for that side).
+TEST(GameReal, TrapRoomsPoleParallelHandOverHandAndTurns) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = trapRooms(bf);
+    hangOnPole(w);
+    const auto& s = w.player().state();
+    ASSERT_EQ(s.state, State::PoleHang);
+    ASSERT_EQ(s.clip, "HPole_idleHangPerp");
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1336);
+    const float x0 = handsOf(w, w.anims().poleHandOffset).x;
+    bool turned = false, moved = false;
+    for (int i = 0; i < 150 && !moved; ++i) {
+        w.tick(worldStick(w, {1, 0}));
+        turned |= s.clip == "Hpole_PerptoPara";
+        moved |= s.clip == "HPole_ParaForward";
+    }
+    EXPECT_TRUE(turned && moved);
+    EXPECT_TRUE(s.polePara);
+    EXPECT_NEAR(std::cos(s.yaw), 1, 1e-3) << "facing along +x";
+    const auto& pole = w.collision().markup[size_t(s.ledge)];
+    for (int i = 0; i < 120; ++i) {
+        w.tick(worldStick(w, {1, 0}));
+        const vec3 h = handsOf(w, w.anims().poleParaHandOffset);
+        ASSERT_NEAR(h.y, pole.points[0].y, 1e-2);
+        ASSERT_NEAR(h.z, pole.points[0].z, 1e-2);
+    }
+    const float x1 = handsOf(w, w.anims().poleParaHandOffset).x;
+    EXPECT_GT(x1, x0 + 250) << "HPole_ParaForward: 281.7 per 1.37 s";
+    bool stopped = false, round = false;
+    for (int i = 0; i < 240 && !(round && s.clip == "hpole_IdleHangPara"); ++i) {
+        w.tick(worldStick(w, {-1, 0}));
+        stopped |= s.clip.starts_with("HPole_ParaForward_to_idle");
+        round |= s.clip == "Hpole_Paraturn180";
+    }
+    EXPECT_TRUE(stopped && round);
+    EXPECT_NEAR(std::cos(s.yaw), -1, 1e-3) << "facing -x";
+    EXPECT_EQ(s.ledgeSide, -1);
+    bool square = false;
+    for (int i = 0; i < 150 && !(square && s.clip == "HPole_idleHangPerp"); ++i) {
+        w.tick(worldStick(w, {0, -1})); // across, to the side she jumped from
+        square |= s.clip == "Hpole_ParatoPerp";
+    }
+    EXPECT_TRUE(square);
+    EXPECT_FALSE(s.polePara);
+    EXPECT_NEAR(std::sin(s.yaw), -1, 1e-3) << "facing -y";
+    EXPECT_NEAR(handsOf(w, w.anims().poleHandOffset).z, pole.points[0].z, 1e-2);
+}
+
+// Swinging and letting go: the swing loop ends at its next phase boundary in the stop clip that starts there
+// (Hpole_swingstopA / B / C), then the perpendicular idle.
+TEST(GameReal, TrapRoomsPoleSwingStops) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (int hold : {150, 160, 175, 190}) {
+        auto w = trapRooms(bf);
+    hangOnPole(w);
+        const auto& s = w.player().state();
+        ASSERT_EQ(s.clip, "HPole_idleHangPerp");
+        for (int i = 0; i < hold; ++i) w.tick(worldStick(w, {0, 1}));
+        EXPECT_EQ(s.clip, "HPole_swing");
+        std::string stop;
+        for (int i = 0; i < 240 && s.clip != "HPole_idleHangPerp"; ++i) {
+            w.tick({});
+            if (s.clip.starts_with("Hpole_swingstop")) stop = s.clip;
+        }
+        EXPECT_FALSE(stop.empty()) << hold;
+        EXPECT_EQ(s.clip, "HPole_idleHangPerp") << hold;
+        EXPECT_EQ(s.state, State::PoleHang);
+    }
+}
+
+// l4_temple perch 1190 on pillar 1191's top: standing on the top, a jump gets on it (perch_attach_ground), turned on the spot left 90 (perch_turn_right_90
+// mirrored: the root turns +90) and right 45, down onto the pillar (pillar_attach_perch), back up onto the perch
+// (pillar_detach_perch), down again and off at its foot (slide, pillar_detach_ground).
+TEST(GameReal, TemplePerchTurnsAndPillarTop) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l4_temple", {{-6620, -12345, -1700}, 0});
+    const auto& s = w.player().state();
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 10 && s.state != State::Perch; ++i) w.tick(i % 2 ? Actions{} : jump);
+    ASSERT_EQ(s.state, State::Perch) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1190);
+    for (int i = 0; i < 120 && s.clip != "perch_idle"; ++i) w.tick({});
+    const float yaw0 = s.yaw;
+    const vec2 f(std::cos(yaw0), std::sin(yaw0)), l(-f.y, f.x);
+    w.tick(worldStick(w, l));
+    EXPECT_EQ(s.clip, "perch_turn_right_90");
+    EXPECT_TRUE(s.mirror);
+    for (int i = 0; i < 90 && s.clip != "perch_idle"; ++i) w.tick({});
+    EXPECT_NEAR(std::remainder(s.yaw - yaw0, 6.2831853f), 1.5708f, 0.02f);
+    const float yaw1 = s.yaw;
+    const vec2 f1(std::cos(yaw1), std::sin(yaw1)), r1(f1.y, -f1.x);
+    w.tick(worldStick(w, glm::normalize(f1 + r1)));
+    EXPECT_EQ(s.clip, "perch_turn_right_45");
+    EXPECT_FALSE(s.mirror);
+    for (int i = 0; i < 90 && s.clip != "perch_idle"; ++i) w.tick({});
+    EXPECT_NEAR(std::remainder(s.yaw - yaw1, 6.2831853f), -0.754f, 0.02f); // -45 less the 3 skipped start frames
+    Actions drop;
+    drop.drop = true;
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Pillar);
+    EXPECT_EQ(s.clip, "pillar_attach_perch");
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1191);
+    for (int i = 0; i < 120 && s.clip != "pillar_idle"; ++i) w.tick({});
+    EXPECT_NEAR(s.pos.z, -1878 - 315.9f, 1.0f);
+    const auto toAxis = [&] { return glm::normalize(vec2(-6637, -12326) - vec2(s.pos)); };
+    bool top = false;
+    for (int i = 0; i < 120 && s.state == State::Pillar; ++i) {
+        w.tick(worldStick(w, toAxis()));
+        top |= s.clip == "pillar_detach_perch";
+    }
+    EXPECT_TRUE(top);
+    ASSERT_EQ(s.state, State::Perch);
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1190);
+    w.tick(drop);
+    ASSERT_EQ(s.state, State::Pillar);
+    for (int i = 0; i < 120 && s.clip != "pillar_idle"; ++i) w.tick({});
+    for (int i = 0; i < 300 && s.state == State::Pillar; ++i) w.tick(worldStick(w, -toAxis()));
+    EXPECT_EQ(s.state, State::Idle);
+}
+
+// Wall hug on l2_puzzleroom ledge 476 (a 88.5-139 deep shelf against a wall: tru.exe 0x74B920's test passes along
+// most of it): walking along the floor onto its first end, bbeam_walk_turn180 turns her back to the wall
+// (Wall_Hug_Idle), Wall_Hug_Shimmy_Left (mirrored the other way) carries her along it, its end walks her off.
+TEST(GameReal, PuzzleRoomWallHug) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto probe = unitWorld(bf, "l2_puzzleroom", {{0, 0, 0}, 0});
+    const auto* m = markupById(probe, 1, 476);
+    ASSERT_TRUE(m);
+    const vec3 p0 = m->points[0], p1 = m->points[1];
+    const vec2 d = glm::normalize(vec2(p1 - p0)), shelf(-d.y, d.x);
+    const vec3 start = vec3(vec2(p0) - d * 150.0f + shelf * 88.496f, p0.z + 20);
+    auto w = unitWorld(bf, "l2_puzzleroom", {start, std::atan2(d.y, d.x)});
+    const auto& s = w.player().state();
+    for (int i = 0; i < 120 && s.state != State::WallHug; ++i) w.tick(worldStick(w, d));
+    const bool entered = s.clip == "bbeam_walk_turn180";
+    for (int i = 0; i < 120 && s.clip != "Wall_Hug_Idle"; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::WallHug) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    EXPECT_TRUE(entered);
+    EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 476);
+    EXPECT_NEAR(glm::dot(vec2(std::cos(s.yaw), std::sin(s.yaw)), -shelf), 1, 1e-3) << "back to the wall";
+    const float t0 = s.ledgeT;
+    bool shimmied = false;
+    for (int i = 0; i < 90; ++i) {
+        w.tick(worldStick(w, d));
+        shimmied |= s.clip == "Wall_Hug_Shimmy_Left";
+    }
+    EXPECT_TRUE(shimmied);
+    EXPECT_GT(s.ledgeT + float(s.ledgeSeg) * 1e4f, t0 + 100) << "along the shelf";
+    bool off = false;
+    for (int i = 0; i < 3000 && s.state == State::WallHug; ++i) {
+        w.tick(worldStick(w, -d));
+        off |= s.clip == "Wall_Hug_Walk_Off";
+    }
+    EXPECT_TRUE(off) << "walked off where the shelf ends";
+    EXPECT_NE(s.state, State::WallHug);
+}
+
+// The new traversal at 30 / 60 / 144 Hz render rates ends in the same state (pole: parallel turn, hand over hand,
+// swing and stop; then a fling).
+TEST(GameReal, PoleTraversalIndependentOfRenderRate) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto input = [](const game::World& w, uint64_t t) {
+        if (t < 20) { Actions a = forward(); a.jump = true; return a; }
+        if (t < 200) return Actions{};
+        if (t < 400) return worldStick(w, {1, 0});
+        if (t < 520) return worldStick(w, {0, 1});
+        if (t < 600) return worldStick(w, {0, -1});
+        if (t < 700) return worldStick(w, {0, 1});
+        return Actions{};
+    };
+    auto run = [&](double renderHz) {
+        auto w = unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)});
+        engine::FrameClock clock(game::kTickSeconds);
+        while (w.ticks() < 800)
+            for (int n = clock.advance(1.0 / renderHz); n > 0 && w.ticks() < 800; --n) w.tick(input(w, w.ticks()));
+        return std::pair{w.player().state(), w.stateHash()};
+    };
+    const auto a = run(30), b = run(60), c = run(144);
+    for (const auto& o : {b, c}) {
+        EXPECT_EQ(a.first.pos, o.first.pos);
+        EXPECT_EQ(a.first.clip, o.first.clip);
+        EXPECT_EQ(a.second, o.second);
+    }
+    EXPECT_EQ(a.first.state, State::PoleHang);
 }

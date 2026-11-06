@@ -191,7 +191,7 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
             {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends}},
-            {"sprintUsed", p.sprintUsed}};
+            {"sprintUsed", p.sprintUsed}, {"polePara", p.polePara}};
 }
 
 // Into `p` (the save's unit at offset 0, as apply loads it). Throws json / SaveError on a malformed block.
@@ -226,6 +226,7 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
             ++p.ropeBends;
         }
     p.sprintUsed = c.at("sprintUsed");
+    p.polePara = c.value("polePara", false); // older saves: the perpendicular hang
 }
 
 } // namespace

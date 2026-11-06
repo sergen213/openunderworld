@@ -78,6 +78,7 @@ struct AnimLibrary {
     vec3 hangHandOffset{6.3f, -141.7f, 495.6f};
     // Hands relative to the root hanging from a horizontal pole (HPole_idleHangPerp at t = 0).
     vec3 poleHandOffset{-3.4f, 17.0f, 619.4f};
+    vec3 poleParaHandOffset{-0.8f, -16.0f, 609.6f}; // hanging along the pole (hpole_IdleHangPara at t = 0)
     anim::HairRig hair; // Lara's hair particles + constraints (anim::decodeHair); empty = rigid hair
     // Weapons (index = Weapon): stats (loadWeapon) and Lara's clips from each weapon's DRM (weaponClipNames), kept in
     // `clips` as "<object>:<clip>" (the DRMs reuse names). Defaults keep synthetic libraries usable without them.
@@ -149,6 +150,7 @@ enum class State {
     // Lara clip, a pickup, letting go of a block), then Idle; Block = gripping a push block (obj_block_* clips; the
     // block's motion carries her).
     Use, Block,
+    WallHug, // back to the wall on a narrow ledge shelf (Wall_Hug_* clips; src/game/Traverse.cpp)
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -255,6 +257,7 @@ struct PlayerState {
     int ledge = -1, ledgeSeg = 0;
     float ledgeT = 0;     // distance from the segment start
     float ledgeSide = 1;
+    bool polePara = false; // PoleHang: hanging along the pole (facing polyline direction * ledgeSide), else across it
     bool runJump = false; // JumpPrep: take-off from a run
     float regrabCooldown = 0;
     float savingGrab = 0; // Hang: seconds left of a saving grab (one hand); 0 = a firm hang
@@ -350,7 +353,9 @@ private:
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge); 3 pole fling
     void assistJump();
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
-    std::pair<vec3, float> attachPose(int markup, int seg, float t, float side) const; // root, yaw
+    // root, yaw; poles: `para` = the parallel hang
+    std::pair<vec3, float> attachPose(int markup, int seg, float t, float side, bool para = false) const;
+    void pole(vec2 move, bool jumpPressed, bool dropPressed, float dt); // State::PoleHang
     void beam(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     // water: volume overlapping the water probe box at `feet` (index into col_.markup), its surface z
     int waterAt(vec3 feet) const;
@@ -367,8 +372,12 @@ private:
     // Ladders (markup 9), perches (13), pillars (15), src/game/Traverse.cpp. climbNormal = outward from the wall.
     bool tryLadder(bool fromAir);
     void ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    void pillar(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     bool tryPerch(bool fromAir);
-    void perch(bool jumpPressed, bool dropPressed, float dt);
+    void perch(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
+    bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
+    void wallHug(vec2 move, bool jumpPressed, float dt);
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);
     void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp

@@ -1135,6 +1135,75 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              a.move.y = t < 150 ? 1.0f : 0.0f;
              return a;
          }, nullptr, [](const game::World& w) { return w.player().state().state == State::Ladder; }},
+        // On l1_ship_sinking_hall's ladder 234 mid-climb: ladder_climb_up carrying her between two rungs.
+        {"l1_ship_sinking_hall", game::Spawn{{1550, 29, 1000}, 3.1415927f}, 50, 240, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t < 150 ? 1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().clip == "ladder_climb_up"; }},
+        // l4_traprooms pole 1336: hand over hand along it (the stick along +x with the camera behind her, yaw 90),
+        // and swinging across it.
+        {"l4_traprooms", game::Spawn{{14300, -21200, 6400}, 1.5707963f}, 160, 240, [](uint64_t t) {
+             game::Actions a;
+             a.move.x = t < 260 ? 1.0f : 0.0f;
+             return a;
+         }, [](game::World& w) { // hanging square to it facing +y (the streamed spawn stands on a slope: no jump there)
+             const auto& mk = w.collision().markup;
+             for (size_t i = 0; i < mk.size(); ++i)
+                 if (mk[i].type == 4 && mk[i].id == 1336) {
+                     game::PlayerState s = w.player().state();
+                     s.state = State::PoleHang, s.clip = "HPole_idleHangPerp", s.loop = true, s.clipTime = 0;
+                     s.ledge = int(i), s.ledgeSeg = 0, s.ledgeT = 80, s.ledgeSide = 1, s.vel = game::vec3(0);
+                     w.restore(s, 1.5707963f, 0);
+                 }
+         }, [](const game::World& w) {
+             const auto& s = w.player().state();
+             return s.state == State::PoleHang && s.polePara && s.clip == "HPole_ParaForward";
+         }},
+        {"l4_traprooms", game::Spawn{{14300, -21200, 6400}, 1.5707963f}, 150, 240, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t < 200 ? 1.0f : 0.0f;
+             return a;
+         }, [](game::World& w) { // hanging square to it facing +y (the streamed spawn stands on a slope: no jump there)
+             const auto& mk = w.collision().markup;
+             for (size_t i = 0; i < mk.size(); ++i)
+                 if (mk[i].type == 4 && mk[i].id == 1336) {
+                     game::PlayerState s = w.player().state();
+                     s.state = State::PoleHang, s.clip = "HPole_idleHangPerp", s.loop = true, s.clipTime = 0;
+                     s.ledge = int(i), s.ledgeSeg = 0, s.ledgeT = 80, s.ledgeSide = 1, s.vel = game::vec3(0);
+                     w.restore(s, 1.5707963f, 0);
+                 }
+         },
+         [](const game::World& w) { return w.player().state().clip == "HPole_swing"; }},
+        // l4_temple perch 1190 on pillar 1191: mid-turn on the perch, then mid-way down onto the pillar.
+        {"l4_temple", game::Spawn{{-6620, -12345, -1700}, 0}, 140, 240, [](uint64_t t) {
+             game::Actions a;
+             a.jump = t == 5;
+             a.move.x = t >= 130 && t < 132 ? -1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().clip.starts_with("perch_turn_right"); }},
+        {"l4_temple", game::Spawn{{-6620, -12345, -1700}, 0}, 215, 240, [](uint64_t t) {
+             game::Actions a;
+             a.jump = t == 5;
+             a.drop = t == 200;
+             return a;
+         }, nullptr, [](const game::World& w) { return w.player().state().clip == "pillar_attach_perch"; }},
+        // l2_puzzleroom shelf 476: walked onto from its first end, back to the wall, shuffling along it.
+        {"l2_puzzleroom", std::nullopt, 150, 240, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t < 330 ? 1.0f : 0.0f;
+             return a;
+         }, [](game::World& w) {
+             for (const auto& m : w.collision().markup) {
+                 if (m.type != 1 || m.id != 476) continue;
+                 const game::vec2 d = glm::normalize(game::vec2(m.points[1] - m.points[0])), shelf(-d.y, d.x);
+                 game::PlayerState s = w.player().state();
+                 s.state = State::Idle, s.clip = "ng_idle", s.loop = true, s.clipTime = 0, s.vel = game::vec3(0);
+                 s.pos = game::vec3(game::vec2(m.points[0]) - d * 150.0f + shelf * 88.496f, m.points[0].z);
+                 s.yaw = std::atan2(d.y, d.x);
+                 w.restore(s, s.yaw, 0);
+             }
+         }, [](const game::World& w) { return w.player().state().clip == "Wall_Hug_Shimmy_Left"; }},
         // Walking l4_temple's balance beam 1079.
         {"l4_temple", game::Spawn{{-5500, -8099, 3100}, 0}, 100, 300, [](uint64_t) {
              game::Actions a;

@@ -50,6 +50,27 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"hpole_perp_fling", 1, 1}, {"crouch_Idle", 6, 6}, {"crouch_idleToCrouch", 4, 6}, {"Crouch_Front", 6, 3},
         {"ng_roll_front", 3, 1}, {"slope_slidefront", 6, 1},
         {"bbeam_idle_wobble_fwd", 3, 3}, // request 158
+        // poles: requests 194, 1337, 1351 / 1350 / 1352 / 1349, 1338 / 1343 / 1340 / 1341, 1309, 1333 / 1332 / 1331, 1330,
+        // 1329, 1361 / 1362
+        {"hpole_IdleHangPara", 4, 4}, {"Hpole_para_attach_S", 1, 1}, {"Hpole_PerptoPara", 6, 6}, {"Hpole_ParatoPerp", 3, 3},
+        {"Hpole_Perpturn180", 6, 6}, {"Hpole_Paraturn180", 6, 6}, {"HPole_ParaForward_trans", 3, 3}, {"HPole_ParaForward", 3, 3},
+        {"HPole_ParaForward_to_idle_L_hand", 8, 6}, {"HPole_ParaForward_to_idle_R_hand", 8, 6}, {"hpole_para_fling", 1, 1},
+        {"Hpole_swingstopA", 2, 10}, {"Hpole_swingstopB", 2, 5}, {"Hpole_swingstopC", 8, 4}, {"Hpole_startswing_endA", 3, 3},
+        {"Hpole_swingreverseA", 1, 1}, {"Hpole_detach_dropPerp", 3, 1}, {"Hpole_detach_dropPara", 3, 1},
+        // ladders: requests 1161 (attach_M), 1163, 1165, 1175, 1169, 1168, 1173, 1172, 1171, 1176
+        {"ladder_attach_M", 3, 1}, {"ladder_attach_ground_bottom", 14, 14}, {"ladder_attach_ground_top", 4, 0},
+        {"ladder_idle", 3, 3}, {"ladder_climb_up", 3, 3}, {"ladder_climb_down", 3, 3}, {"ladder_detach_ground_top", 3, 1},
+        {"ladder_detach_ground_bottom", 3, 1}, {"ladder_detach_drop", 3, 7}, {"ladder_jump_back", 3, 1},
+        // pillars: requests 621 (attach_M), 617, 616, 632, 626, 624, 633, 634, 635, 630, 631, 629, 639
+        {"pillar_attach_M", 3, 3}, {"pillar_attach_ground", 3, 1}, {"pillar_attach_perch", 3, 3}, {"pillar_idle", 4, 4},
+        {"pillar_climb_up", 3, 1}, {"pillar_climb_right", 3, 3}, {"pillar_slide_down_start", 3, 3}, {"pillar_slide_down", 3, 3},
+        {"pillar_slide_down_stop", 3, 2}, {"pillar_detach_perch", 3, 1}, {"pillar_detach_ground", 1, 1},
+        {"pillar_detach_drop", 3, 1}, {"pillar_jump_back", 3, 3},
+        // perches: requests 661, 647, 649, 658, 663, 668 / 669 / 670
+        {"perch_idle", 6, 6}, {"perch_attach_air", 2, 8}, {"perch_attach_ground", 3, 1}, {"perch_detach_drop", 5, 1},
+        {"perch_jump_forward", 3, 3}, {"perch_turn_right_45", 3, 3}, {"perch_turn_right_90", 5, 5}, {"perch_turn_right_180", 3, 3},
+        // wall hug: requests 1421, 1402, 1378, 1416
+        {"Wall_Hug_Idle", 4, 4}, {"Wall_Hug_Shimmy_Left", 4, 4}, {"Wall_Hug_Walk_Off", 4, 4}, {"Wall_Hug_Jump_Forward", 4, 4},
         // DICE bad attach: requests 256 / 255 / 254 (B), 226 / 224 / 225 (LW), 231 / 229 / 230 (R), 280 / 281 / 282 (Rw),
         // 228 / 227 (L)
         {"DICE_B_air_attach_bad_start", 5, 5}, {"DICE_B_air_attach_bad_loop", 1, 1}, {"DICE_B_air_attach_bad_end", 5, 5},
@@ -130,6 +151,11 @@ const std::vector<std::string_view> kLaraClipNames = {
     "bbeam_unbalance_walk_left", "bbeam_unbalance_walk_right", "bbeam_idle_wobble_fwd", // off balance (Player::beam)
     "ledgeb_jump_up", "ledgeb_jump_back", "ledgeb_jump_right", "ledgeb_attach_U", "ledgeb_attach_S", "ledgeb_attach_F",
     "HPole_idleHangPerp", "Hpole_perp_attach_M", "HPole_StartSwing", "HPole_swing", "Hpole_swingstopA", "hpole_perp_fling",
+    // poles (Player::pole): parallel hang, hand over hand, turns, swing stops / reverse, drops
+    "hpole_IdleHangPara", "Hpole_para_attach_S", "Hpole_PerptoPara", "Hpole_ParatoPerp", "Hpole_Perpturn180",
+    "Hpole_Paraturn180", "HPole_ParaForward_trans", "HPole_ParaForward", "HPole_ParaForward_to_idle_L_hand",
+    "HPole_ParaForward_to_idle_R_hand", "hpole_para_fling", "Hpole_swingstopB", "Hpole_swingstopC", "Hpole_startswing_endA",
+    "Hpole_swingreverseA", "Hpole_detach_dropPerp", "Hpole_detach_dropPara",
     "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
     "sprint_loop", "ng_sprint_to_exhaust", "ng_run_exhaust", "ng_roll_front_sprinting", // sprint (Player::tick)
     "ledgeb_bad_attach_M", "ledgeb_bad_attach_recover", // saving grab (Player::tryGrab)
@@ -220,9 +246,13 @@ const std::vector<std::string_view> kLaraClipNames = {
     "grapple_rappel_right", "grapple_rappel_walk_left", "grapple_rappel_walk_right", "grapple_rappel_overhang_descend_begin",
     "grapple_rappel_overhang_descend", "grapple_rappel_free_overhang_ascend",
     // ladders / pillars / perches (Traverse.cpp)
-    "lad_attach_up", "lad_climbup", "lad_climbdown", "lad_Idle", "lad_detach", "lad_detach_drop",
-    "lad_ClimbOffTop", "lad_ClimbOffBot", "perch_attach_air", "perch_attach_ground", "perch_idle",
-    "perch_jump_forward", "perch_detach_drop",
+    "ladder_attach_M", "ladder_attach_ground_bottom", "ladder_attach_ground_top", "ladder_idle", "ladder_climb_up",
+    "ladder_climb_down", "ladder_detach_ground_top", "ladder_detach_ground_bottom", "ladder_detach_drop", "ladder_jump_back",
+    "pillar_attach_M", "pillar_attach_ground", "pillar_attach_perch", "pillar_idle", "pillar_climb_up", "pillar_climb_right",
+    "pillar_slide_down_start", "pillar_slide_down", "pillar_slide_down_stop", "pillar_detach_perch", "pillar_detach_ground",
+    "pillar_detach_drop", "pillar_jump_back", "perch_attach_air", "perch_attach_ground", "perch_idle", "perch_jump_forward",
+    "perch_detach_drop", "perch_turn_right_45", "perch_turn_right_90", "perch_turn_right_180",
+    "Wall_Hug_Idle", "Wall_Hug_Shimmy_Left", "Wall_Hug_Walk_Off", "Wall_Hug_Jump_Forward", // wall hug (Traverse.cpp)
     "grapple_pull_up_light_begin", "grapple_pull_mid_light_begin", "grapple_pull_down_light_begin",
     "grapple_pull_up_heavy_begin", "grapple_pull_mid_heavy_begin", "grapple_pull_down_heavy_begin",
     "grapple_pull_up_light", "grapple_pull_mid_light", "grapple_pull_down_light",
@@ -247,6 +277,8 @@ void rigOutfit(AnimLibrary& lib, const cdc::Drm& drm) {
         if (auto h = lib.handsAt(*c, 0)) lib.hangHandOffset = *h;
     if (const auto* c = lib.find("HPole_idleHangPerp"))
         if (auto h = lib.handsAt(*c, 0)) lib.poleHandOffset = *h;
+    if (const auto* c = lib.find("hpole_IdleHangPara"))
+        if (auto h = lib.handsAt(*c, 0)) lib.poleParaHandOffset = *h;
     lib.hair = anim::decodeHair(drm, lib.skeleton);
     lib.bind = anim::bindPositions(lib.skeleton);
     lib.ragdoll = physics::loadRagdoll(drm);
@@ -1046,7 +1078,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.loop), str(s.clipMix), add(s.mix), add(s.mirror), add(s.ledgeSeg), add(s.ledgeSide), add(s.runJump), add(s.regrabCooldown), add(s.savingGrab);
     add(s.flight), add(s.fallStartZ), add(s.fallHeight), add(s.climbStance), add(s.climbWarp), add(s.climbFrom), add(s.climbTo);
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
-    add(s.ropeBends);
+    add(s.ropeBends), add(s.polePara);
     for (size_t i = 0; i < s.ropeBends; ++i) add(s.ropeBend[i]), add(s.ropeBendClear[i]);
     const auto& hu = s.hurdle;
     add(hu.next), add(hu.mix), add(hu.alt), add(hu.draw), add(hu.drawOff), add(hu.edge), add(hu.out), add(hu.h), add(hu.endZ);

@@ -129,7 +129,7 @@ std::string_view stateName(State s) {
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
                                              "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
                                              "grappleswing", "hit", "railslide", "grapplepull", "vehicle", "grapplerappel",
-                                             "use", "block"};
+                                             "use", "block", "wallhug"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -236,8 +236,10 @@ vec3 Player::advanceRoot(float dt) {
     const double t0 = s_.clipTime;
     const vec3 d = advanceClip(dt);
     if (!c) return vec3(0);
-    const float base = s_.yaw - rootYaw(*c, t0, s_.loop);
-    s_.yaw = wrapAngle(base + rootYaw(*c, s_.clipTime, s_.loop));
+    // A mirrored request turns the other way: tru.exe negates the root quaternion's y / z (0x4428A0), i.e. the yaw.
+    const float k = s_.mirror ? -1.0f : 1.0f;
+    const float base = s_.yaw - k * rootYaw(*c, t0, s_.loop);
+    s_.yaw = wrapAngle(base + k * rootYaw(*c, s_.clipTime, s_.loop));
     return rotYaw(base, d);
 }
 
@@ -505,18 +507,22 @@ bool Player::tryGrabPole(vec3 prevPos) {
         for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
             const vec2 dir = segDir(m, si), n(-dir.y, dir.x);
             const float c = glm::dot(xy(forward()), n);
-            if (std::abs(c) < 0.5f) continue; // not facing across the pole
-            const float side = c > 0 ? 1.0f : -1.0f, yaw = yawOf(n * side);
-            const vec3 hand = s_.pos + rotYaw(yaw, anims_.poleHandOffset), prevHand = prevPos + rotYaw(yaw, anims_.poleHandOffset);
+            // Facing across the pole: the perpendicular hang; along it (within 60 degrees): the parallel one
+            // (Hpole_para_attach_* of request 1337 [O]; the 30 / 60 degree split is [I]).
+            const bool para = std::abs(c) < 0.5f;
+            const float side = para ? (glm::dot(xy(forward()), dir) > 0 ? 1.0f : -1.0f) : c > 0 ? 1.0f : -1.0f;
+            const float yaw = yawOf(para ? dir * side : n * side);
+            const vec3 off = para ? anims_.poleParaHandOffset : anims_.poleHandOffset;
+            const vec3 hand = s_.pos + rotYaw(yaw, off), prevHand = prevPos + rotYaw(yaw, off);
             const float window = std::max(t_.grabWindow, prevHand.z - hand.z);
             const float t = std::clamp(glm::dot(xy(hand - m.points[size_t(si)]), dir), 0.0f, segLen(m, si));
             const vec3 q = pointOn(m, si, t);
             if (glm::length(xy(hand - q)) > t_.poleReach) continue;
             if (hand.z > q.z + t_.poleGrabAbove || hand.z < q.z - window) continue;
-            s_.ledge = int(li), s_.ledgeSeg = si, s_.ledgeT = t, s_.ledgeSide = side;
+            s_.ledge = int(li), s_.ledgeSeg = si, s_.ledgeT = t, s_.ledgeSide = side, s_.polePara = para;
             s_.vel = vec3(0);
             s_.state = State::PoleHang;
-            play("Hpole_perp_attach_M", false);
+            play(para ? "Hpole_para_attach_S" : "Hpole_perp_attach_M", false);
             placeOnLedge();
             return true;
         }
@@ -525,17 +531,20 @@ bool Player::tryGrabPole(vec3 prevPos) {
 }
 
 // Root and heading for hanging at (markup, seg, t, side). Ledges: facing the wall, hands (hang pose) on the
-// ledge; poles: facing along the polyline normal * side, hands (pole pose) on the axis.
-std::pair<vec3, float> Player::attachPose(int markup, int seg, float t, float side) const {
+// ledge; poles: facing along the polyline normal * side (perpendicular hang) or along the polyline * side
+// (parallel hang, `para`), hands (that pole pose) on the axis.
+std::pair<vec3, float> Player::attachPose(int markup, int seg, float t, float side, bool para) const {
     const auto& m = col_.markup[size_t(markup)];
-    const vec2 out = vec2(-segDir(m, seg).y, segDir(m, seg).x) * side;
+    const vec2 dir = segDir(m, seg), out = vec2(-dir.y, dir.x) * side;
     const bool pole = isPole(m);
-    const float yaw = yawOf(pole ? out : -out);
-    return {pointOn(m, seg, t) - rotYaw(yaw, pole ? anims_.poleHandOffset : anims_.hangHandOffset), yaw};
+    para = pole && para;
+    const float yaw = yawOf(para ? dir * side : pole ? out : -out);
+    const vec3 off = para ? anims_.poleParaHandOffset : pole ? anims_.poleHandOffset : anims_.hangHandOffset;
+    return {pointOn(m, seg, t) - rotYaw(yaw, off), yaw};
 }
 
 void Player::placeOnLedge() {
-    std::tie(s_.pos, s_.yaw) = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide);
+    std::tie(s_.pos, s_.yaw) = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide, s_.polePara);
 }
 
 // Balance beam (markup 14): the root within beamAttach of the line (and of its height), on the beam's extent;
@@ -923,7 +932,8 @@ bool Player::hurdleTick(vec2 move, float dt) {
 // the target's hang pose (as the exe's jump-to-target solver 0x73EDC0 aims the remaining flight time).
 bool Player::startHangJump(int kind) {
     const bool fling = kind == 3;
-    const vec3 hands = s_.pos + toWorld(fling ? anims_.poleHandOffset : anims_.hangHandOffset);
+    const vec3 hands = s_.pos + toWorld(fling ? (s_.polePara ? anims_.poleParaHandOffset : anims_.poleHandOffset) : anims_.hangHandOffset);
+    const bool para = fling && s_.polePara;
     const vec2 f = xy(forward()), r(std::sin(s_.yaw), -std::cos(s_.yaw));
     const vec2 newF = kind == 2 ? -f : f;
     const vec3 ideal = hands + (kind == 0   ? vec3(0, 0, 400)
@@ -961,13 +971,154 @@ bool Player::startHangJump(int kind) {
     const float time = (vz + std::sqrt(vz * vz - 2 * g * delta.z)) / g;
     s_.vel = vec3(xy(delta) / time, vz);
     s_.flight = time;
-    s_.ledge = bestLi, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide;
+    s_.ledge = bestLi, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide, s_.polePara = false;
     s_.state = State::HangJump;
     s_.fallStartZ = s_.pos.z;
     // Left: ledgeb_jump_right mirrored (lara.drm request 979 has the mirror bit, 1009 is the same clip unmirrored) [O].
-    play(fling ? "hpole_perp_fling" : kind == 0 ? "ledgeb_jump_up" : kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false, 1,
+    play(fling ? (para ? "hpole_para_fling" : "hpole_perp_fling") : kind == 0 ? "ledgeb_jump_up" : kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false, 1,
          kind == -1);
     return true;
+}
+
+// Hanging from a horizontal pole (markup 4 / 6), perpendicular (facing across it) or parallel (facing along it,
+// polePara). lara.drm anim requests [O]: idles 1356 HPole_idleHangPerp / 194 hpole_IdleHangPara; turns 1351
+// Hpole_PerptoPara, 1350 Hpole_ParatoPerp, 1352 Hpole_Perpturn180, 1349 Hpole_Paraturn180; hand over hand 1338
+// HPole_ParaForward_trans, 1342 HPole_ParaForward, 1340 / 1341 HPole_ParaForward_to_idle_L_hand / _R_hand; swing 1354
+// HPole_StartSwing (= phase requests 1312 + 1311), 1355 HPole_swing (= phases 1320 / 1319 / 1318 / 1317: 7 / 5 / 19 /
+// 10 frames), 1330 Hpole_startswing_endA, 1333 / 1332 / 1331 Hpole_swingstopA / B / C, 1329 Hpole_swingreverseA; flings
+// 1308 / 1309; drops 1361 / 1362. The state chart picks them from the stick's orientation against the hang's (its
+// conditions 0x195 / 0x196, values 450-453: two perpendicular, two parallel); the swing is these clips alone (no
+// physics conditions on the swing states). Which stick angle selects which, and the stop clip by the phase the loop
+// is released in (the clip whose first pose matches that phase's end: B after phase 2, C after 3, A after 4), are [I].
+void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
+    if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size()) { startFall(s_.vel); return; }
+    const auto& m = col_.markup[size_t(s_.ledge)];
+    const std::string clip = s_.clip;
+    const bool attaching = clip == "Hpole_perp_attach_M" || clip == "Hpole_para_attach_S";
+    const bool turning = clip == "Hpole_PerptoPara" || clip == "Hpole_ParatoPerp" || clip == "Hpole_Perpturn180" ||
+                         clip == "Hpole_Paraturn180" || clip == "Hpole_swingreverseA";
+    if (dropPressed && !turning) {
+        const bool para = s_.polePara;
+        s_.regrabCooldown = 0.4f;
+        startFall(vec3(0));
+        play(para ? "Hpole_detach_dropPara" : "Hpole_detach_dropPerp", false);
+        return;
+    }
+    if (jumpPressed && !turning && !attaching) { // fling: to the next pole in reach, else a free leap forward [I] (run-jump speeds)
+        if (!startHangJump(3)) {
+            const bool para = s_.polePara;
+            s_.ledge = -1;
+            s_.regrabCooldown = 0.3f;
+            s_.vel = forward() * t_.runJumpSpeed + vec3(0, 0, t_.runJumpVz);
+            s_.state = State::Jump;
+            s_.fallStartZ = s_.pos.z;
+            play(para ? "hpole_para_fling" : "hpole_perp_fling", false);
+        }
+        return;
+    }
+    if (attaching && !clipDone()) { advanceClip(dt); placeOnLedge(); return; }
+    const vec3 perpOff = anims_.poleHandOffset, paraOff = anims_.poleParaHandOffset;
+    if (turning) { // the clip's root turn from climbYawFrom; the hands stay on the axis, their offset blending pose to pose
+        const anim::Clip* c = anims_.find(clip);
+        advanceClip(dt);
+        const double dur = c ? c->durationSeconds() : 0;
+        const float u = dur > 0 ? float(std::min(1.0, s_.clipTime / dur)) : 1.0f, k = s_.mirror ? -1.0f : 1.0f;
+        s_.yaw = wrapAngle(s_.climbYawFrom + (c ? k * (rootYaw(*c, s_.clipTime, false) - rootYaw(*c, 0, false)) : 0.0f));
+        const vec3 to = s_.polePara ? paraOff : perpOff;
+        const vec3 from = clip == "Hpole_PerptoPara" ? perpOff : clip == "Hpole_ParatoPerp" ? paraOff : to;
+        s_.pos = pointOn(m, s_.ledgeSeg, s_.ledgeT) - rotYaw(s_.yaw, glm::mix(from, to, u));
+        if (!clipDone()) return;
+        placeOnLedge();
+        if (clip == "Hpole_swingreverseA") play("HPole_swing", true);
+        else play(s_.polePara ? "hpole_IdleHangPara" : "HPole_idleHangPerp", true);
+        return;
+    }
+    // Turn into the hang (para, side): the clip turns the root; mirrored when it turns the other way (half turns: as is).
+    const auto turn = [&](std::string_view c, bool para, float side) {
+        const float from = s_.yaw, to = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, side, para).second;
+        const anim::Clip* cl = anims_.find(c);
+        const float by = cl ? rootYaw(*cl, cl->durationSeconds(), false) - rootYaw(*cl, 0, false) : 0.0f;
+        const float want = wrapAngle(to - from);
+        s_.polePara = para, s_.ledgeSide = side;
+        s_.climbYawFrom = from, s_.climbYawTo = to;
+        play(c, false, 1, std::abs(std::abs(by) - kPi) > 0.3f && (want > 0) != (by > 0));
+    };
+    const vec2 dir = segDir(m, s_.ledgeSeg), n(-dir.y, dir.x), f = xy(forward());
+    const float mag = glm::length(move);
+    const float fwd = mag > 0.5f ? glm::dot(move, f) / mag : 0.0f;
+    const float along = mag > 0.5f ? glm::dot(move, dir) / mag : 0.0f, across = mag > 0.5f ? glm::dot(move, n) / mag : 0.0f;
+    if (!s_.polePara) {
+        if (clip == "HPole_StartSwing" || clip == "HPole_swing") {
+            const anim::Clip* c = anims_.find(clip);
+            const double t0 = s_.clipTime;
+            advanceClip(dt);
+            const double t1 = s_.clipTime;
+            if (clip == "HPole_StartSwing") {
+                constexpr double kPhase1 = 0.7; // HPole_StartSwing_Phase1: 21 frames; its end pose starts Hpole_startswing_endA
+                if (fwd <= 0.7f && t0 < kPhase1 && t1 >= kPhase1) play("Hpole_startswing_endA", false);
+                else if (clipDone()) play(fwd > 0.7f ? "HPole_swing" : "Hpole_swingstopA", fwd > 0.7f);
+            } else if (c) {
+                const double D = c->durationSeconds(), p0 = std::fmod(t0, D), p1 = p0 + (t1 - t0);
+                if (fwd < -0.7f && p1 >= D) turn("Hpole_swingreverseA", false, -s_.ledgeSide);
+                else if (fwd <= 0.7f)
+                    for (const auto& [b, stop] : {std::pair{12 / 30.0, "Hpole_swingstopB"}, {31 / 30.0, "Hpole_swingstopC"}, {D, "Hpole_swingstopA"}})
+                        if (p0 < b && p1 >= b) { play(stop, false); break; }
+            } else if (fwd <= 0.7f) {
+                play("Hpole_swingstopA", false);
+            }
+            placeOnLedge();
+            return;
+        }
+        const bool settling = clip == "Hpole_swingstopA" || clip == "Hpole_swingstopB" || clip == "Hpole_swingstopC" ||
+                              clip == "Hpole_startswing_endA" || clip == "Hpole_perp_attach_M";
+        if (settling && !clipDone()) {
+        } else if (fwd > 0.7f) {
+            play("HPole_StartSwing", false);
+        } else if (std::abs(along) > 0.7f) {
+            turn("Hpole_PerptoPara", true, along > 0 ? 1.0f : -1.0f);
+            return;
+        } else if (fwd < -0.7f) {
+            turn("Hpole_Perpturn180", false, -s_.ledgeSide);
+            return;
+        } else {
+            play("HPole_idleHangPerp", true);
+        }
+        advanceClip(dt);
+        placeOnLedge();
+        return;
+    }
+    const bool moving = clip == "HPole_ParaForward_trans" || clip == "HPole_ParaForward";
+    const bool stopping = clip == "HPole_ParaForward_to_idle_L_hand" || clip == "HPole_ParaForward_to_idle_R_hand" ||
+                          clip == "Hpole_para_attach_S";
+    // The stop leads with the hand that is behind: the left one in the first half of the hand-over-hand cycle [I].
+    const auto stop = [&] {
+        const anim::Clip* c = anims_.find(s_.clip);
+        const bool firstHalf = !c || s_.clip != "HPole_ParaForward" || std::fmod(s_.clipTime, c->durationSeconds()) < c->durationSeconds() / 2;
+        play(firstHalf ? "HPole_ParaForward_to_idle_L_hand" : "HPole_ParaForward_to_idle_R_hand", false);
+    };
+    int endSeg = s_.ledgeSeg;
+    float endT = s_.ledgeT;
+    const bool atEnd = moveAlong(m, endSeg, endT, glm::dot(f, dir) > 0 ? 1.0f : -1.0f); // facing the pole's end
+    if (fwd > 0.7f && !atEnd) {
+        if (clip == "HPole_ParaForward_trans" && clipDone()) play("HPole_ParaForward", true);
+        else if (!moving) play("HPole_ParaForward_trans", false);
+    } else if (moving) {
+        stop();
+    } else if (stopping && !clipDone()) {
+    } else if (fwd < -0.7f) {
+        turn("Hpole_Paraturn180", true, -s_.ledgeSide);
+        return;
+    } else if (std::abs(across) > 0.7f) {
+        turn("Hpole_ParatoPerp", false, across > 0 ? 1.0f : -1.0f);
+        return;
+    } else {
+        play("hpole_IdleHangPara", true);
+    }
+    const vec3 d = toWorld(advanceClip(dt));
+    // Hand over hand along the pole by the root motion's component along it; an end of the pole stops her.
+    if (moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(d), dir)) && (s_.clip == "HPole_ParaForward_trans" || s_.clip == "HPole_ParaForward"))
+        stop();
+    placeOnLedge();
 }
 
 // Jump assist (tru.exe 0x73EDC0 retargets in-air velocity at markup with MUD flags 0x20830000: jump landing,
@@ -1113,6 +1264,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop)
             tryBeam("bbeam_walk_attach", false);
         const bool grounded = s_.state == State::Idle || s_.state == State::Walk || s_.state == State::Run || s_.state == State::Stop;
+        if (grounded && wantsMove && tryWallHug(move)) break;
         if (grounded && wantsMove && glm::dot(move, xy(forward())) > 0.5f * mag &&
             (tryHurdle(false) || ((s_.state == State::Walk || s_.state == State::Run) && tryHurdleDown())))
             break;
@@ -1181,11 +1333,16 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         climb(glm::dot(move, move) > 0 ? a.move : vec2(0), jumpPressed, dropPressed, dt); // the stick as on screen: up = up the rock
         break;
     case State::Ladder:
-    case State::Pillar:
         ladder(move, jumpPressed, dropPressed, dt);
         break;
+    case State::Pillar:
+        pillar(move, jumpPressed, dropPressed, dt);
+        break;
     case State::Perch:
-        perch(jumpPressed, dropPressed, dt);
+        perch(move, jumpPressed, dropPressed, dt);
+        break;
+    case State::WallHug:
+        wallHug(move, jumpPressed, dt);
         break;
     case State::GrappleThrow:
     case State::GrapplePull:
@@ -1218,11 +1375,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     }
     case State::Jump:
     case State::Fall:
-        if (s_.clip == "ledgeb_jump_back") advanceRoot(dt); // its half turn; air clips have no root motion
+        // the half turns of a jump back from a ledge / ladder / pillar; air clips have no root motion
+        if (s_.clip == "ledgeb_jump_back" || s_.clip == "ladder_jump_back" || s_.clip == "pillar_jump_back") advanceRoot(dt);
         else advanceClip(dt);
         if (s_.state == State::Jump && clipDone())
             play(s_.clip == "NG_InAir_Feet_Forward_stage2" ? "NG_InAir_Feet_Forward_stage3" : "NG_InAir_Feet_Forward_stage2",
                  s_.clip == "NG_InAir_Feet_Forward_stage2");
+        else if (s_.state == State::Fall && clipDone()) play("NG_InAir_Feet_Forward_stage3", true); // after a let-go clip
         airMove(dt, move);
         if ((s_.state == State::Jump || s_.state == State::Fall) && s_.vel.z <= 0) enterWater();
         break;
@@ -1316,37 +1475,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         placeOnLedge();
         break;
     }
-    case State::PoleHang: {
-        if (dropPressed) {
-            s_.regrabCooldown = 0.4f;
-            startFall(vec3(0));
-            break;
-        }
-        if (jumpPressed) { // fling: to the next pole in reach, else a free leap forward [I] (run-jump speeds)
-            if (!startHangJump(3)) {
-                s_.ledge = -1;
-                s_.regrabCooldown = 0.3f;
-                s_.vel = forward() * t_.runJumpSpeed + vec3(0, 0, t_.runJumpVz);
-                s_.state = State::Jump;
-                s_.fallStartZ = s_.pos.z;
-                play("hpole_perp_fling", false);
-            }
-            break;
-        }
-        if (s_.clip == "Hpole_perp_attach_M" && !clipDone()) { advanceClip(dt); placeOnLedge(); break; }
-        const bool swinging = s_.clip == "HPole_StartSwing" || s_.clip == "HPole_swing";
-        if (glm::dot(move, xy(forward())) > 0.5f) {
-            if (!swinging) play("HPole_StartSwing", false);
-            else if (s_.clip == "HPole_StartSwing" && clipDone()) play("HPole_swing", true);
-        } else if (swinging) {
-            play("Hpole_swingstopA", false);
-        } else if (s_.clip != "Hpole_swingstopA" || clipDone()) {
-            play("HPole_idleHangPerp", true);
-        }
-        advanceClip(dt);
-        placeOnLedge();
+    case State::PoleHang:
+        pole(move, jumpPressed, dropPressed, dt);
         break;
-    }
     case State::ClimbUp: {
         // Full root motion, no collision: the clip lifts her over the edge (ledgeb_climbup_fast placed by climb()).
         if (s_.clip.starts_with("hurdle_")) {

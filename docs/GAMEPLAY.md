@@ -617,9 +617,20 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   exactly on the target's hang pose; then `ledgeb_attach_U/S/F`. The jump left is `ledgeb_jump_right` mirrored: lara.drm
   request 979 (its +0x20 bit 0x80; 1009 is the clip unmirrored) [O], pose reflected through the bone twins
   (docs/formats/ANIMATION.md "+0x20").
-- Poles (markup 4 / 6): grabbed like ledges while falling, squared to the pole; forward held swings
-  (`HPole_StartSwing` → `HPole_swing`, root fixed), letting go stops; jump flings to the next pole ahead (same flight
-  solver as hang jumps) or leaps off at run-jump speeds; drop lets go.
+- Poles (markup 4 / 6): grabbed like ledges while falling, squared to the pole (`Hpole_perp_attach_M`) or, falling
+  along it, parallel (`Hpole_para_attach_S`). Perpendicular: forward held swings (`HPole_StartSwing` → `HPole_swing`,
+  root fixed); letting go stops at the loop's next phase boundary with the stop clip that starts there (phases
+  7 / 5 / 19 / 10 frames: `Hpole_swingstopB` after phase 2, `C` after 3, `A` after 4; in `HPole_StartSwing`'s first
+  phase `Hpole_startswing_endA`); back during the swing turns her round at the loop's end (`Hpole_swingreverseA`); back
+  while hanging `Hpole_Perpturn180`; along the pole `Hpole_PerptoPara`. Parallel (`hpole_IdleHangPara`): forward moves
+  hand over hand along it (`HPole_ParaForward_trans` → `HPole_ParaForward`, 281.7 per 1.37 s of root motion; the pole's
+  end stops her), letting go `HPole_ParaForward_to_idle_L_hand` / `_R_hand` (the hand behind: first / second half of
+  the cycle [I]), back `Hpole_Paraturn180`, across `Hpole_ParatoPerp`. A quarter turn the other way plays the clip
+  mirrored (root yaw negated, as tru.exe's mirrored requests). Jump flings (`hpole_perp_fling` / `hpole_para_fling`)
+  to the next pole ahead (same flight solver as hang jumps) or leaps off at run-jump speeds; drop lets go
+  (`Hpole_detach_dropPerp` / `_dropPara`). Clip choice by the stick against the hang [I] (the chart's conditions
+  0x195 / 0x196, orientation values 450–453 [O]); the swing is clip-driven: no physics condition sits on the swing
+  states [O], so there is no swing simulation to port.
 - Under water the model is pitched by the swim pitch about the root (`Player::modelMatrix(pos, yaw, pitch)`), and
   treading/surface swimming levels it back at turnRate.
 
@@ -820,9 +831,8 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   Before 2026-10-31 Lara slid at a fixed 240 units/s inside the band the holds cover with the transition clips'
   root motion ignored, re-pinned every tick to the rock face under her chest (her heading jumping with each face's
   normal, up to 0.067 rad a tick) and the settle clips looping as a "moving" pose: feet sliding, jitter, pops.
-  Ladders likewise: `lad_climbup`/`lad_climbdown` move the root 98 / −90 per 0.3 s rung cycle (their root motion now
-  drives her, not 240 units/s), and `lad_ClimbOffTop` (575 up, 216 forward) starts 575 below the top point and carries
-  her onto it (before, she was put on the top point at once and the clip played in place).
+  Ladders likewise moved with their clips' root motion; since 2026-11-06 they climb rung to rung (see "Ladders, pillars,
+  perches").
 - Markup-detection queries [O]: lara.drm object data +0xDE4 = 106 queries, +0xDE8 = (id, record) pairs (tru.exe
   0x6F1950; dump: openunderworld-work/dice/queries.py). 0x771830 builds a query from its record: launch velocity
   +0x08..+0x10 per 30 Hz frame turned to the direction +0xA0 (0x724F50: 1 facing, 2/3 ±90°, 4 back, 5 the stick,
@@ -991,20 +1001,53 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
 - Not yet: rope-vs-world collision, hook model, throwing while hanging from ledges, grapple combat
   (`grapple_rappel_combat_*`), overhangs, exe rope/pull numbers. Rope length/physics are [I].
 
-## Ladders, pillars, perches (src/game/Traverse.cpp)
+## Ladders, pillars, perches, wall hug (src/game/Traverse.cpp)
 
-- Markup [O]: ladders (9) and pillars (15) have points `{top, bottom, bottom + outward hint}`; perches (13) are a
-  short ledge segment. `climbNormal` holds the outward direction (reused field).
-- Ladders/pillars: attach from the ground (push into them) or the air; stick into = up, `lad_climbup/_down` (their
-  root motion: 98 / −90 per 0.3 s), `lad_Idle`; top = `lad_ClimbOffTop`, started 575 (its rise) below the top point
-  and carrying her onto it, bottom = `lad_ClimbOffBot` (its root motion, 95 back);
-  Space = `lad_detach` (out 500, up 900), Ctrl = `lad_detach_drop`. Pillars also rotate around the shaft with
-  the stick's sideways component. l1_ship_sinking_hall ladder 234 is climbed in a real-data test.
-- Perches: from the air or a standing jump next to the segment (`perch_attach_air/_ground`), balance on the
-  point with `perch_idle`, Space = `perch_jump_forward`, Ctrl = `perch_detach_drop`.
-- Tests `GameReal.LadderAttachClimbOffTop` (lara.drm's clips), `Game.PillarAttach`, `Game.PerchAttachAndJumpOff`,
-  `GameReal.ShipSinkingHallLadder`. Object-DRM markup does not exist in this data (COLLISION.md), so all
-  traversal markup comes from the units.
+- Markup [O]: ladders (9) have points `{top, bottom, bottom + outward hint}`, pillars (15) `{top, bottom}`; perches
+  (13) are a short segment; 13 of the 29 pillars carry a perch on their top (within 9 units; survey of all units,
+  2026-11-06). `climbNormal` holds the outward direction. Clips are those of lara.drm's anim requests for them
+  (ladder 1158–1198, pillar 616–646, perch 647–676), with their fades and start frames; the `lad_*` set (requests
+  1199–1212, the same animations) is not used.
+- Ladder rungs [O]: tru.exe 0x734B70 / 0x72B920 / 0x74DCD0 (`LadderRungAlignAnimTarget`) with lara.drm player data:
+  rung r's root lies **575.221** (+0x784) + r × **110.619** (+0x770) below the top point and half the outward hint +
+  **110.619** (−(+0x778)) out from the line; rungs run 0 .. trunc(trunc(length) / 110.619) + 1 − **6** (byte +0x774),
+  the lowest putting her feet at the bottom point (l1_ship_sinking_hall 234: 933.6 vs 940). Every climb clip
+  (`ladder_climb_up` 98.4 / `_down` −89.9 of root motion) carries her from one rung to the next (scaled to 110.619, as
+  the align target corrects it); attaches end on a rung (from the floor the lowest, `ladder_attach_ground_bottom`; from
+  the air the nearest, `ladder_attach_M`; from the floor above, facing out over the top, `ladder_attach_ground_top`
+  turns her round onto rung 0). Off rung 0 upward `ladder_detach_ground_top` (216.4 forward, 575.4 up), off the lowest
+  downward `ladder_detach_ground_bottom` (95 back, half turn), Space = `ladder_jump_back` (half turn; out 500, up 900
+  [I]), Ctrl = `ladder_detach_drop`.
+- Pillars: attach facing the shaft from the floor (`pillar_attach_ground`, **199** up the shaft: player data short
+  +0x7EE read by the `PillarAttachGroundAnimTarget` 0x753F80 [O]) or the air (`pillar_attach_M`); root 100 from the
+  axis [I] (the markup has no radius). Stick into = `pillar_climb_up` (205.2 per clip), away = `pillar_slide_down_start`
+  → `pillar_slide_down` (520 units/s) → `_stop`, sideways = `pillar_climb_right` (mirrored to the left), whose root turn
+  (1.31 rad) takes her round the shaft facing it. At the top a perch on it: `pillar_detach_perch` (341.8 up) onto it;
+  at the foot `pillar_detach_ground` (193 down, half turn). Space = `pillar_jump_back`, Ctrl = `pillar_detach_drop`.
+  The climb limits (top − 341.8, foot + 193) are [I].
+- Perches: from the air or a standing jump next to the segment (`perch_attach_air/_ground`), balance with
+  `perch_idle`; the stick turns her on the spot (`perch_turn_right_45` / `_90` / `_180`, requests 668–670; to the left
+  the same clips mirrored, 671–673 [O]; bands < 67.5° / < 135° / beyond [I]); Space = `perch_jump_forward`, Ctrl on a
+  pillar's top perch = `pillar_attach_perch` (315.9 down onto the pillar), elsewhere `perch_detach_drop`.
+- Wall hug [O: chart and exe; FINDINGS in openunderworld-work/poleshimmy/wallhug]: a ledgegrab (1) point whose top is a
+  narrow shelf — tru.exe 0x74B920 / 0x74BB50 (markup condition value 628) in the segment frame of 0x737D60 (X = the
+  horizontal of p[i] − p[i+1], Y = Z × X): rays 252 (+0x6F0) above the line from 100 (+0x6E8) on the hang side toward
+  −Y hit a wall within 139 (+0x6EA) but not within 88.496 (+0x71C), and floor lies 30 below to 40 above the line 88.496
+  behind it. 92 of the 1 227 ledgegrab markups in 26 units have such stretches. Walking along the stick onto one within
+  30 / 200 of it (query 96's rule): `bbeam_walk_turn180` (request 193) turns her back to the wall, `Wall_Hug_Idle`;
+  sideways `Wall_Hug_Shimmy_Left` (mirrored to the right [I]); where the shelf ends `Wall_Hug_Walk_Off` (mirrored);
+  Space = `Wall_Hug_Jump_Forward`. She stands 88.496 in from the line [I]. Not done: corners
+  (`Wall_Hug_Shimmy_to_Concave/Convex_*`), side / twist jumps, drop to water, the swim climb-out onto a shelf.
+- Tests `GameReal.LadderRungsClimbOffTop`, `GameReal.PillarAttachRoundUpSlideOff`, `Game.PerchAttachAndJumpOff`,
+  `GameReal.ShipSinkingHallLadder`, `GameReal.TemplePerchTurnsAndPillarTop` (l4_temple perch 1190 on pillar 1191),
+  `GameReal.PuzzleRoomWallHug` (l2_puzzleroom shelf 476), `GameReal.TrapRoomsPoleParallelHandOverHandAndTurns`,
+  `GameReal.TrapRoomsPoleSwingStops`, `GameReal.PoleTraversalIndependentOfRenderRate`; saves mid-climb, mid-hand-over-hand,
+  mid-swing, mid-turn on a perch, mid-way onto a pillar and mid-shuffle in `StreamReal.SaveContinuesBitIdentically`.
+  Object-DRM markup does not exist in this data (COLLISION.md), so all traversal markup comes from the units.
+- Not in TRU [O]: ropes (`rope_*` clips 1798–1813), vertical poles (`vpole_*` 1814–1817) and zip lines: no anim
+  request names a `rope_` or `vpole_` clip (all 1 502 of lara.drm's requests), no state requests them, no unit has
+  rope (11), vertpole (5), zipline (7) or cover (12) markup (all units, 2026-10-18 and 2026-11-06), and lara.drm has no
+  zip-line clip at all. The `rope_*` / `vpole_*` animations are leftovers; the only rope is the grapple's.
 
 ## Rail slides (src/game/Traverse.cpp)
 
@@ -1884,10 +1927,12 @@ No side-by-side comparison with the original game was made.
 - Free climbing is implemented on the levels' free-climb holds (markup 16-20, see "Free climbing"): hold to hold
   with the transition clips' root motion and DICE jumps up / left / right to far holds; hold-type semantics [U], hold
   choice/reach from lara.drm's queries and the player state chart, the sweep geometry [I] (2D), no
-  bad-attach/wrestle clips. Ladders (9), perches (13), pillars (15) and rail slides (8) work (see their sections); vertical poles
-  (type 5) have no markup in any unit. Still missing: cover, `Wall_Hug_*`,
-  balance wobble, beam sprint/catch, pole shimmy/parallel hang, `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
-  mirrored left-side clips. Root motion of the jump, attach and fling clips is not applied (the flight is
+  bad-attach/wrestle clips. Ladders (9, rung to rung), perches (13, turning), pillars (15, onto top perches), poles
+  (parallel hang, hand over hand, turns, phased swing stops), wall hug on shelves and rail slides (8) work (see their
+  sections); ropes, vertical poles and zip lines do not exist in TRU ("Ladders, pillars, perches, wall hug"). Still
+  missing: wall-hug corners and jumps, pole-to-perch / pole-to-ledge (`hpole_para_to_perch`, `hpole_perch_*`),
+  balance wobble, beam sprint/catch, `ledgeu_*` free hang, vaults over / down (hurdles onto low ledges are done),
+  the bad-attach / wrestle clips of poles, ladders and pillars. Root motion of the jump, attach and fling clips is not applied (the flight is
   ballistic), so their poses can sit off the computed path.
 - Grapple is implemented for ceiling/post/wall targets (throw, pendulum swing, rope ascend/descend, jump off;
   see "Grapple"). Not done: wall-running/rappel, pulling mounted objects, rope-vs-world collision, the hook
