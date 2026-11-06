@@ -927,9 +927,9 @@ bool Player::hurdleTick(vec2 move, float dt) {
 
 // Targeted jump from a hang (kind 0 up, +-1 right/left, 2 back) to another ledge, or from a pole (kind 3,
 // fling forward) to another pole. The target is the attach point in the jump's reach box nearest to a typical
-// jump end (400 up / 400 aside / 700 back and 100 down / 1264 ahead: l4_traprooms' pole spacing) [I]; the flight
-// is ballistic (exe gravity), rising hangJumpApex above the higher end, timed so the root arrives exactly on
-// the target's hang pose (as the exe's jump-to-target solver 0x73EDC0 aims the remaining flight time).
+// jump end (400 up / 400 aside / 700 back and 100 down / 1264 ahead: l4_traprooms' pole spacing) [I]. Sideways and
+// back, the take-off clip plays first with its root motion (tru.exe under Wine: ledgeb_jump_right / _back carry her
+// 122 aside + 107 up / 62 out + 32 up and turn her before she leaves); launchHangJump() then aims the flight.
 bool Player::startHangJump(int kind) {
     const bool fling = kind == 3;
     const vec3 hands = s_.pos + toWorld(fling ? (s_.polePara ? anims_.poleParaHandOffset : anims_.poleHandOffset) : anims_.hangHandOffset);
@@ -966,18 +966,36 @@ bool Player::startHangJump(int kind) {
         }
     }
     if (bestLi < 0) return false;
-    const vec3 delta = attachPose(bestLi, bestSeg, bestT, bestSide).first - s_.pos;
-    const float g = t_.gravity, vz = std::sqrt(2 * g * (std::max(delta.z, 0.0f) + t_.hangJumpApex));
-    const float time = (vz + std::sqrt(vz * vz - 2 * g * delta.z)) / g;
-    s_.vel = vec3(xy(delta) / time, vz);
-    s_.flight = time;
     s_.ledge = bestLi, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide, s_.polePara = false;
     s_.state = State::HangJump;
     s_.fallStartZ = s_.pos.z;
     // Left: ledgeb_jump_right mirrored (lara.drm request 979 has the mirror bit, 1009 is the same clip unmirrored) [O].
     play(fling ? (para ? "hpole_para_fling" : "hpole_perp_fling") : kind == 0 ? "ledgeb_jump_up" : kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false, 1,
          kind == -1);
+    s_.vel = vec3(0); // not launched yet (HangJump: the take-off clip first)
+    if (kind == 0 || fling) launchHangJump();
     return true;
+}
+
+// The flight onto the HangJump target, as tru.exe's jump-to-target solver 0x73EDC0 aims it: v = (target - pos -
+// g t^2 / 2) / t, the root arriving exactly on the target's hang pose after t. The take-off vertical speed is the jump
+// query's (q10 up 75.85, q7 / q8 sideways 34.77, q9 back 42.54 a frame) and t when that rise and fall reaches the
+// target's height (rising for a target above, else falling) [I: tru.exe times it by the query arc's first box hit];
+// a target above that arc, and pole flings, rise hangJumpApex above the higher end instead [I].
+void Player::launchHangJump() {
+    const vec3 delta = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide).first - s_.pos;
+    const float g = t_.gravity;
+    const float vq = s_.clip == "ledgeb_jump_up" ? t_.hangJumpUpVz : s_.clip == "ledgeb_jump_back" ? t_.hangJumpBackVz
+                     : s_.clip == "ledgeb_jump_right"                ? t_.hangJumpSideVz : 0.0f;
+    float vz = vq, time = -1;
+    if (const float disc = vq * vq - 2 * g * delta.z; vq > 0 && disc >= 0)
+        time = (delta.z > 0 ? vq - std::sqrt(disc) : vq + std::sqrt(disc)) / g;
+    if (time <= 1e-3f) {
+        vz = std::sqrt(2 * g * (std::max(delta.z, 0.0f) + t_.hangJumpApex));
+        time = (vz + std::sqrt(vz * vz - 2 * g * delta.z)) / g;
+    }
+    s_.vel = vec3(xy(delta) / time, vz);
+    s_.flight = time;
 }
 
 // Hanging from a horizontal pole (markup 4 / 6), perpendicular (facing across it) or parallel (facing along it,
@@ -1375,6 +1393,11 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     }
     case State::Jump:
     case State::Fall:
+        // A free leap off a hang: the take-off clip carries her (root motion, turn), then the stored velocity launches.
+        if (s_.state == State::Jump && (s_.clip == "ledgeb_jump_back" || s_.clip == "ledgeb_jump_right") && !clipDone()) {
+            s_.pos += advanceRoot(dt);
+            break;
+        }
         // the half turns of a jump back from a ledge / ladder / pillar; air clips have no root motion
         if (s_.clip == "ledgeb_jump_back" || s_.clip == "ladder_jump_back" || s_.clip == "pillar_jump_back") advanceRoot(dt);
         else advanceClip(dt);
@@ -1387,7 +1410,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         break;
     case State::HangJump: {
         if (s_.ledge < 0) { startFall(s_.vel); break; } // target lost (loaded mid-flight)
-        if (s_.clip == "ledgeb_jump_back") advanceRoot(dt);
+        const bool takeOff = s_.clip == "ledgeb_jump_back" || s_.clip == "ledgeb_jump_right";
+        if (takeOff && s_.vel == vec3(0)) { // the take-off clip's root motion (and turn), then the launch
+            s_.pos += advanceRoot(dt);
+            if (clipDone()) launchHangJump();
+            break;
+        }
+        if (takeOff) advanceRoot(dt);
         else advanceClip(dt);
         const float step = std::min(dt, s_.flight);
         s_.pos += s_.vel * step + vec3(0, 0, -0.5f * t_.gravity * step * step);
@@ -1445,14 +1474,15 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             };
             if (kind == 0 && canClimbUp()) climb();
             else if (startHangJump(kind)) {}
-            else if (kind == 2) { // nothing behind: leap off backwards (ledgeb_jump_back turns her half round)
-                s_.vel = -forward() * t_.standJumpSpeed + vec3(0, 0, t_.jumpVz);
+            else if (kind != 0) { // nothing there: a free leap, launched when the take-off clip ends (State::Jump)
+                const vec2 dir = kind == 2 ? -xy(forward()) : glm::vec2(right * float(kind));
+                s_.vel = vec3(dir * (kind == 2 ? t_.hangLeapBack : t_.hangLeapSide), t_.hangLeapVz);
                 s_.ledge = -1;
-                s_.regrabCooldown = 0.3f;
+                s_.regrabCooldown = 0.55f; // take-off clip (0.23 s) + 0.3
                 s_.state = State::Jump;
                 s_.fallStartZ = s_.pos.z;
-                play("ledgeb_jump_back", false);
-            } else if (kind == 0) climb();
+                play(kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false, 1, kind == -1);
+            } else climb();
             break;
         }
         if (s_.state == State::Hang && (s_.clip.starts_with("ledgeb_attach") || s_.clip.starts_with("ledgeb_bad_attach")) && !clipDone()) {

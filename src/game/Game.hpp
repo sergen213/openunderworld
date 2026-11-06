@@ -207,9 +207,15 @@ struct Tuning {
     // 138 below the pole pose (481 vs 619 above the root), so the root sinks 138 onto the hang.
     float poleGrabAbove = 138.0f;
     float assistRadius = 300.0f; // jump-landing / beam markup this close to the natural landing pulls the jump onto it
-    float hangJumpApex = 60.0f;  // targeted jumps rise this far above the higher of start and target
+    float hangJumpApex = 60.0f;  // pole flings (and hang jumps above their take-off arc) rise this far above the higher end
     // Reach of targeted jumps from a hang (hands to target hands): up, sideways, back (away from the wall).
     float hangJumpUp = 700.0f, hangJumpSide = 800.0f, hangJumpBack = 1200.0f, poleFlingReach = 1800.0f;
+    // Take-off vertical speed of targeted hang jumps: lara.drm queries q10 (up) / q7, q8 (sides) / q9 (back), units
+    // per 30 Hz frame x 30 (docs/GAMEPLAY.md "Hang jumps").
+    float hangJumpUpVz = 75.85f * 30, hangJumpSideVz = 34.77f * 30, hangJumpBackVz = 42.54f * 30;
+    // Free leaps off a hang (no target), launched when the take-off clip ends (tru.exe under Wine, l3_main_bedroom
+    // ledge 973): back 53.73 out + 34.77 up, sideways 70.80 + 34.77 (units per 30 Hz frame x 30).
+    float hangLeapBack = 53.73f * 30, hangLeapSide = 70.80f * 30, hangLeapVz = 34.77f * 30;
     // Sprint (Shift / LB held while running; tru.exe under Wine, l4_trailstart): sprint_loop for 9.5..9.9 s, then
     // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
     // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
@@ -354,6 +360,7 @@ private:
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge); 3 pole fling
+    void launchHangJump();        // HangJump velocity / flight time from here onto the target (after the take-off clip)
     void assistJump();
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
     // root, yaw; poles: `para` = the parallel hang

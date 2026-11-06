@@ -1753,6 +1753,109 @@ TEST(GameReal, PoolSideJump) {
     EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1251);
 }
 
+// l3_main_bedroom, the new game's start (tru.exe = ours + (9622, 333, -2977)): tru.exe under Wine (`wmemt trace`,
+// openunderworld-work/jumpfid) leaves the floor at 48.04 up (standing), 49.97 up + 40.00 along the stick, and 42.53
+// up + 65.83 forward (running), units per 30 Hz frame: rise 201.6 / 218.1 / 157.1 (exact for g 5.72443), air time
+// 0.56 / 0.58 / 0.50 s, running 981 from take-off to touch-down (samples every ~17 ms).
+TEST(GameReal, BedroomJumpsMatchTruTraces) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    struct Flight { vec3 v; float rise, dist, air; };
+    const auto jump = [&](int mode) { // 0 standing, 1 with the stick, 2 running
+        auto w = unitWorld(bf, "l3_main_bedroom", {{-4264.2f, 5958.0f, 86.6f}, glm::radians(-90.0f)});
+        const auto& s = w.player().state();
+        for (int i = 0; i < 30; ++i) w.tick({});
+        const float yaw0 = w.camera().yaw;
+        for (int i = 0; i < (mode == 2 ? 54 : 0); ++i) w.tick(fixedCamera(w, forward(), yaw0));
+        Actions a = mode ? fixedCamera(w, forward(), yaw0) : Actions{};
+        a.jump = true;
+        Flight f{};
+        int t0 = -1;
+        vec3 p0(0);
+        for (int i = 0; i < 200; ++i) {
+            const bool air = s.state == State::Jump;
+            w.tick(a);
+            if (s.state == State::Jump && !air) t0 = i, p0 = s.pos, f.v = s.vel / 30.0f;
+            if (t0 >= 0) f.rise = std::max(f.rise, s.pos.z - p0.z);
+            if (t0 >= 0 && s.state != State::Jump) {
+                f.dist = glm::length(glm::vec2(s.pos - p0)), f.air = float(i - t0) / 60;
+                break;
+            }
+        }
+        return f;
+    };
+    Flight f = jump(0);
+    EXPECT_NEAR(f.v.z, 48.04f, 0.01f);
+    EXPECT_NEAR(f.rise, 201.6f, 2);
+    EXPECT_NEAR(f.air, 0.56f, 0.02f);
+    f = jump(1);
+    EXPECT_NEAR(f.v.z, 49.97f, 0.01f);
+    EXPECT_NEAR(glm::length(glm::vec2(f.v)), 40.0f, 0.01f);
+    EXPECT_NEAR(f.rise, 218.1f, 2);
+    EXPECT_NEAR(f.air, 0.58f, 0.02f);
+    f = jump(2);
+    EXPECT_NEAR(f.v.z, 42.53f, 0.01f);
+    EXPECT_NEAR(glm::length(glm::vec2(f.v)), 65.83f, 0.01f);
+    EXPECT_NEAR(f.rise, 157.1f, 2);
+    EXPECT_NEAR(f.air, 0.50f, 0.02f);
+    EXPECT_NEAR(f.dist, 981, 35);
+}
+
+// Free leaps off a hang (nothing to jump to), l3_main_bedroom's ledge 973 (the prologue wall, caught from a standing
+// jump as in tru.exe). tru.exe under Wine: back, ledgeb_jump_back first turns her round carrying the root 61.6 out and
+// 32.2 up, then she leaves at 53.73 out + 34.77 up a frame: rise 105.6, touch-down on the corridor floor (258.4
+// below) 0.578 s and 932 later; right, ledgeb_jump_right carries her ~122 aside and ~100 up, turning her a quarter
+// round, then 70.80 aside + 34.77 up.
+TEST(GameReal, HangLeapsMatchTruTraces) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    struct Leap { vec3 takeoff, v; float rise, dist, air; };
+    const auto leap = [&](Actions stick, const char* clip) {
+        Leap l{};
+        auto w = unitWorld(bf, "l3_main_bedroom", {{-8484.3f, -4330, 244}, glm::radians(-90.0f)});
+        const auto& s = w.player().state();
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 120 && !(s.state == State::Hang && s.clip == "ledgeb_idle"); ++i) w.tick(i == 5 ? jump : Actions{});
+        EXPECT_EQ(s.state, State::Hang);
+        if (s.state != State::Hang) return l;
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 973);
+        w.restore(s, s.yaw, -0.25f); // camera behind her
+        w.tick({});
+        const vec3 hang = s.pos;
+        const glm::vec2 out = -glm::vec2(std::cos(s.yaw), std::sin(s.yaw)), right(std::sin(s.yaw), -std::cos(s.yaw));
+        stick.jump = true;
+        w.tick(stick);
+        EXPECT_EQ(s.state, State::Jump);
+        EXPECT_EQ(s.clip, clip);
+        vec3 p0 = s.pos, v0 = s.vel; // the launch: the last tick of the take-off clip (the next one flies)
+        for (int i = 0; i < 60 && s.clip == clip; ++i) p0 = s.pos, v0 = s.vel, w.tick({});
+        const vec3 d = p0 - hang;
+        l.takeoff = vec3(glm::dot(glm::vec2(d), out), glm::dot(glm::vec2(d), right), d.z);
+        l.v = vec3(glm::dot(glm::vec2(v0), out), glm::dot(glm::vec2(v0), right), v0.z) / 30.0f;
+        int t = 1;
+        l.rise = s.pos.z - p0.z;
+        for (; t < 120 && s.state == State::Jump; ++t) w.tick({}), l.rise = std::max(l.rise, s.pos.z - p0.z);
+        l.dist = glm::length(glm::vec2(s.pos - p0)), l.air = float(t) / 60;
+        return l;
+    };
+    Leap l = leap(forward(-1), "ledgeb_jump_back");
+    EXPECT_NEAR(l.takeoff.x, 61.6f, 3);
+    EXPECT_NEAR(l.takeoff.z, 32.2f, 3);
+    EXPECT_NEAR(l.v.x, 53.73f, 0.01f);
+    EXPECT_NEAR(l.v.z, 34.77f, 0.01f);
+    EXPECT_NEAR(l.rise, 105.6f, 2);
+    EXPECT_NEAR(l.air, 0.578f, 0.02f);
+    EXPECT_NEAR(l.dist, 932, 35);
+    Actions right;
+    right.move.x = 1;
+    l = leap(right, "ledgeb_jump_right");
+    EXPECT_NEAR(l.takeoff.y, 122, 20);
+    EXPECT_NEAR(l.takeoff.z, 100, 15);
+    EXPECT_NEAR(l.v.y, 70.80f, 0.01f);
+    EXPECT_NEAR(l.v.z, 34.77f, 0.01f);
+}
+
 // l4_traprooms poles 1336 and 1337 (markup 4, z 7133, 1264 apart in y, floor 6358 beside them): a standing
 // jump towards 1336 from 345 short grabs it; swing, fling to 1337.
 TEST(GameReal, TrapRoomsPoleFling) {
