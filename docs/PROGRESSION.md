@@ -8,14 +8,15 @@ Tools (`tests/test_gates.cpp`, `ou_gates_tests`):
   Lara is placed at the gate, performs the original interaction (switch use, push, grapple pull, walking into a
   volume / through a plane, earlier steps first), and the gated effect is asserted (target door / uber object / block
   visibly moved, cinematic played, chapter changed).
-- `OU_PROGRESSION_ROUTE=1 … ProgressionReal.CriticalPathInOrder` (~7 min, opt-in): the same gates in route order in ONE
-  `World` from chapter 0, script state carried along, each chapter end starting the next chapter, a level load
-  (`World::enterUnit`) standing in for the walk between gates, then the Natla fight and the credits (`playEnding`,
-  shared with `EndgameCredits`). `CriticalPathPerChapter` (same switch; `OU_PROGRESSION_CHAPTER=n` for one) runs each
-  chapter's gates in a World started at that chapter. 2026-11-06: every gate, chapter end and the ending pass except
-  l1_kraken_entrance 748: in a chapter-started World the switch's use event never fires after the head pull and the
-  weight (alone it does) [U]. l1_baldrs_tomb 221 passed alone only because gate 45 swung open at load (no lock held it);
-  it now opens from its locks (below).
+- `ProgressionReal.CriticalPathPerChapter` (suite, ~2.5 min; `OU_PROGRESSION_CHAPTER=n` for one): each chapter's gates
+  in route order in one `World` started at that chapter (`World::startChapter`), script state carried along.
+  `OU_PROGRESSION_ROUTE=1 … CriticalPathInOrder` (~5 min, opt-in): the whole game in ONE `World` from chapter 0, each
+  chapter end starting the next, a level load (`World::enterUnit`) standing in for the walk between gates, then the
+  Natla fight and the credits (`playEnding`, shared with `EndgameCredits`). 2026-11-06: both pass. Fixed on the way:
+  l1_kraken_entrance 748 — the harness put Lara under snake head 751 at its height (~2000 above the floor); she fell
+  to her death and, in a chapter-started World, respawned at l1_seatop, unloading the gate's unit (the harness now
+  stands her on the floor, and its teleports cross no trigger plane); l1_baldrs_tomb 221 passed alone only because gate
+  45 swung open at load (no lock held it); it now opens from its locks (below).
 - `OU_PROGRESSION_SURVEY=1 … --gtest_filter=ProgressionReal.Survey`: portals (with stream unit ids), units named by
   scripts, level ends and the gate objects of every unit with their static links.
 - `OU_PROGRESSION_SURVEY=1 … --gtest_filter=ProgressionReal.GateSweep`: every candidate gate of every critical-path

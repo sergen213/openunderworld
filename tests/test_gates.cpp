@@ -159,10 +159,13 @@ bool differs(const Snapshot& a, const Snapshot& b) {
     return false;
 }
 
-void place(game::World& w, vec3 pos, float yaw) {
+// Lara put at `pos`: a jump, crossing no trigger plane on the way (Runtime::playerJumped) unless `cross` (a plane
+// gate's own step across). l1_kraken_entrance 748: the move to the head pull crossed plane 1842 in a chapter-started World.
+void place(game::World& w, vec3 pos, float yaw, bool cross = false) {
     game::PlayerState s;
     s.pos = pos, s.yaw = yaw;
     w.restore(s, yaw, -0.25f);
+    if (!cross) w.script().playerJumped();
 }
 
 // Lara grips uber object `uid` (its model 0 riding a level prismatic joint, index `joint`) from behind and pushes it
@@ -204,7 +207,13 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
             if (e.kind == script::EventKind::Activate) activated.insert(e.target);
             if (armed && e.source == g.trigger && e.kind != script::EventKind::Activate) fired = true;
             if (std::getenv("OU_PROGRESSION_TRACE"))
-                std::printf("  tick %llu %s %d -> %d\n", (unsigned long long)w.ticks(), script::eventName(e.kind), e.source, e.target);
+                if (const auto* s = w.script().find(e.source))
+                    std::printf("  tick %llu %s %d (%s %s) -> %d lara %.0f %.0f %.0f unit %s\n", (unsigned long long)w.ticks(),
+                                script::eventName(e.kind), e.source, s->unit.c_str(), s->name.c_str(), e.target,
+                                w.player().state().pos.x, w.player().state().pos.y, w.player().state().pos.z,
+                                w.currentUnit().data.name.c_str());
+                else
+                    std::printf("  tick %llu %s %d -> %d\n", (unsigned long long)w.ticks(), script::eventName(e.kind), e.source, e.target);
         }
     };
     tick({});
@@ -242,11 +251,15 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
             }
             break;
         }
-        case Action::Pull:
-            place(w, at - vec3(600, 0, 0), 0);
+        case Action::Pull: { // standing on the floor below (l1 snake head 751 hangs ~2000 up: she fell to her death and,
+                             // in a chapter-started World, respawned at l1_seatop, unloading the gate's unit)
+            vec3 p = at - vec3(600, 0, 0);
+            if (const auto floor = w.collision().groundProbe(p + vec3(0, 0, 100), 4000, 0x0F)) p.z = floor->point.z;
+            place(w, p, 0);
             tick({});
             w.script().grapplePulled(uid);
             break;
+        }
         case Action::Step:
             place(w, at + vec3(0, 0, 30), 0);
             break;
@@ -276,7 +289,7 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
                 const vec3 base = at - vec3(0, 0, script::kTestPointHeight);
                 place(w, base + n * 300.0f, 0);
                 tick({});
-                place(w, base - n * 300.0f, 0);
+                place(w, base - n * 300.0f, 0, true);
             } else {
                 place(w, at - vec3(0, 0, script::kTestPointHeight), 0);
             }
@@ -751,10 +764,9 @@ void runRoute(game::World& w, int chapter) {
 
 // Each chapter's critical gates in one World started at the chapter (World::startChapter), as CriticalPathInOrder
 // but per chapter (OU_PROGRESSION_CHAPTER=n: that one): the carried state of one chapter without the whole game's run
-// time. Opt-in with the route until l1_kraken_entrance 748 passes (open, 2026-11-06: in a chapter-started World the
-// switch's use event never fires after the head pull and the weight; alone it does).
+// time (~2.5 min for all seven).
 TEST(ProgressionReal, CriticalPathPerChapter) {
-    if (!gameDir() || !std::getenv("OU_PROGRESSION_ROUTE")) GTEST_SKIP() << "OU_GAME_DIR and OU_PROGRESSION_ROUTE not set";
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     std::map<std::string, game::UnitData> cache;
     const game::UnitLoader load = [&](const std::string& n) {
@@ -777,7 +789,7 @@ TEST(ProgressionReal, CriticalPathPerChapter) {
 // The whole game in one World, as a player walks it: every chapter's route (runRoute), each chapter end starting the
 // next chapter (World::startChapter); chapter 7 ends with the Natla fight and the credits (playEnding).
 TEST(ProgressionReal, CriticalPathInOrder) {
-    // ~7 min; opt-in. Open: l1_kraken_entrance 748 (CriticalPathPerChapter); every other gate and the ending pass.
+    // ~5 min; opt-in (CriticalPathPerChapter, in the suite, covers each chapter).
     if (!gameDir() || !std::getenv("OU_PROGRESSION_ROUTE")) GTEST_SKIP() << "OU_GAME_DIR and OU_PROGRESSION_ROUTE not set";
     const cdc::BigfileSet bf(gameDir());
     std::map<std::string, game::UnitData> cache;
