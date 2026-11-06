@@ -4,6 +4,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.29.0] - 2026-11-06
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Original preset looks much closer to the original: each area's own haze and bloom (its screen filter) now run, so
+  outdoor levels are no longer too dark and saturated; sun shadows use the original's split shadow maps; lights switch
+  off with distance as in the original.
+- New: enemies move on the levels' own navigation meshes: they path around walls, flank you after firing, investigate
+  your gunshots, and cats and other creatures sidestep when you come close. Bats, sharks and spawned enemies follow
+  their patrol routes.
+- New: the grapple rope wraps around corners and edges, the hook is drawn at the anchor, Lara can shoot one-handed
+  while hanging on the rope, and she drops into a free swing or onto a wall at overhangs. Target choice uses the
+  game's own rules.
+- New: free climbing: a catch that comes in too fast slips (jump to recover), jumping left from a ledge plays the
+  mirrored clip, and Lara wobbles on balance beams when you steer across them.
+- `ou-game --camera` accepts an up vector, field of view and near plane.
+
 ## [0.28.0] - 2026-11-06
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
