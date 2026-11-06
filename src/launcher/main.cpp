@@ -308,6 +308,7 @@ private:
     QDoubleSpinBox* mouseSensitivity_;
     QCheckBox* invertY_;
     QCheckBox* invertX_;
+    QCheckBox* vibration_;
     QComboBox *moveStick_, *lookStick_; // config controls.move_stick / look_stick
     QLabel *updateStatus_, *versionLabel_;
 
@@ -594,6 +595,8 @@ private:
         invertY_->setChecked(cfg_.controls.invertY);
         invertX_ = new QCheckBox("Invert look X");
         invertX_->setChecked(cfg_.controls.invertX);
+        vibration_ = new QCheckBox("Gamepad vibration");
+        vibration_->setChecked(cfg_.controls.vibration);
         auto stickCombo = [](const std::string& v) {
             auto* c = new QComboBox;
             c->addItem("Left stick", "left"), c->addItem("Right stick", "right"), c->addItem("None", "none");
@@ -612,6 +615,7 @@ private:
         mouse->addWidget(mouseSensitivity_);
         mouse->addWidget(invertY_);
         mouse->addWidget(invertX_);
+        mouse->addWidget(vibration_);
         mouse->addStretch();
         auto* sticks = new QHBoxLayout;
         sticks->addWidget(new QLabel("Move with"));
@@ -972,6 +976,7 @@ private:
         cfg_.controls.mouseSensitivity = float(mouseSensitivity_->value());
         cfg_.controls.invertY = invertY_->isChecked();
         cfg_.controls.invertX = invertX_->isChecked();
+        cfg_.controls.vibration = vibration_->isChecked();
         cfg_.controls.moveStick = s(moveStick_->currentData().toString());
         cfg_.controls.lookStick = s(lookStick_->currentData().toString());
     }
@@ -987,6 +992,7 @@ private:
             const auto &dc = disk.controls, &oc = written_.controls; // ou-game's CONTROL / GAMEPAD CONFIGURATION
             if (dc.invertY != oc.invertY) invertY_->setChecked(dc.invertY);
             if (dc.invertX != oc.invertX) invertX_->setChecked(dc.invertX);
+            if (dc.vibration != oc.vibration) vibration_->setChecked(dc.vibration);
             if (dc.mouseSensitivity != oc.mouseSensitivity) mouseSensitivity_->setValue(dc.mouseSensitivity);
             if (dc.moveStick != oc.moveStick) moveStick_->setCurrentIndex(std::max(0, moveStick_->findData(q(dc.moveStick))));
             if (dc.lookStick != oc.lookStick) lookStick_->setCurrentIndex(std::max(0, lookStick_->findData(q(dc.lookStick))));

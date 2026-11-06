@@ -171,6 +171,8 @@ ScriptType parseScriptType(const cdc::Drm& drm, uint32_t index) {
                     if (vp->offset <= drm.sections[vp->section].data.size() &&
                         drm.sections[vp->section].data.size() - vp->offset >= 8) {
                         m.init2 = views[vp->section].at<uint32_t>(vp->offset + 4);
+                        for (size_t w = 0; w < m.initWords.size() && drm.sections[vp->section].data.size() - vp->offset >= 8 + 4 * w; ++w)
+                            m.initWords[w] = views[vp->section].at<uint32_t>(uint32_t(vp->offset + 4 + 4 * w));
                         // messagechannel {mode, name}: the channel is the name (0x4A3680 registers it by name, 0x5D0700)
                         if (const auto np = views[vp->section].ptr(vp->offset + 4); m.initText.empty() && np &&
                             np->section < drm.sections.size())
@@ -1422,10 +1424,23 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             if (!std::strcmp(name, "uigamedata") && nc.function == 14 && nc.args.size() == 1) return true;
-            // padshock (NtPadshock: gamepad rumble) and camerashake: not modelled; l5_valaskjalf_entryb lever 7188's vt 55
-            // runs on past them to its sound and WAIT.
+            // padshock (NtPadshock: gamepad rumble) and camerashake -> feedback_ (game/Feedback.hpp); 0 = same member
+            // (0x4AE670 compares the instances). Anything unmodelled returns 0 and runs on (l5_valaskjalf_entryb lever
+            // 7188's vt 55 continues past them to its sound and WAIT).
             if (!std::strcmp(name, "padshock") || !std::strcmp(name, "camerashake")) {
+                const bool shake = name[0] == 'c';
                 nc.result = vm::Value::scalar(0);
+                if (!shake && nc.function == 0 && nc.args.size() == 1) {
+                    nc.result = vm::Value::scalar(nc.args[0].kind == vm::Value::Kind::Member && nc.args[0].uid == self->uid &&
+                                                  nc.args[0].offset == off);
+                    return true;
+                }
+                uint32_t result = 0;
+                const Member* m = program->member(self->typeId, off);
+                const auto it = self->fields.find(off); // an assigned value, else the initial one (no field inserted)
+                const uint32_t value = it != self->fields.end() ? it->second : m && m->init ? *m->init : 0;
+                if (m && feedback_ && feedback_(shake, (uint64_t(uint32_t(self->uid)) << 32) | off, *m, value, nc.function, nc.args, result))
+                    nc.result = vm::Value::scalar(result);
                 return true;
             }
             if (!std::strcmp(name, "instance") && (nc.function == 0 || nc.function == 1)) return true; // debug print

@@ -239,6 +239,7 @@ Config load(const fs::path& path) {
             c.controls.mouseSensitivity = in->value("mouse_sensitivity", c.controls.mouseSensitivity);
             c.controls.invertY = in->value("invert_y", c.controls.invertY);
             c.controls.invertX = in->value("invert_x", c.controls.invertX);
+            c.controls.vibration = in->value("vibration", c.controls.vibration);
             c.controls.moveStick = in->value("move_stick", c.controls.moveStick);
             c.controls.lookStick = in->value("look_stick", c.controls.lookStick);
             if (!validStick(c.controls.moveStick) || !validStick(c.controls.lookStick))
@@ -300,7 +301,7 @@ void save(const fs::path& path, const Config& c) {
     if (c.graphics.rtLights) g["rt_lights"] = *c.graphics.rtLights;
     if (c.graphics.rtReflections) g["rt_reflections"] = *c.graphics.rtReflections;
     j["controls"] = {{"mouse_sensitivity", c.controls.mouseSensitivity}, {"invert_y", c.controls.invertY},
-                     {"invert_x", c.controls.invertX}, {"move_stick", c.controls.moveStick},
+                     {"invert_x", c.controls.invertX}, {"vibration", c.controls.vibration}, {"move_stick", c.controls.moveStick},
                      {"look_stick", c.controls.lookStick}, {"bindings", c.controls.bindings}};
     j["game"] = {{"sfx_volume", c.game.sfxVolume}, {"music_volume", c.game.musicVolume}, {"cinematic_volume", c.game.cinematicVolume},
                  {"subtitles", c.game.subtitles}, {"reticles", c.game.reticles}, {"helper_buttons", c.game.helperButtons},

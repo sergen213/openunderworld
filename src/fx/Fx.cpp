@@ -236,6 +236,13 @@ static std::vector<Event> parseEvents(const cdc::Drm& drm, size_t section, size_
             e.sound = {3, false, 0, {~0u, 0}, {rd<uint32_t>(d, c + 0xC), rd<uint32_t>(d, c + 0x10), rd<uint32_t>(d, c + 0x14)},
                        {d[c + 2], d[c + 3], d[c + 4]}};
         }
+        if ((info & 3) == 1 && e.cmd.type == 0xD && size >= 24 && o + size <= d.size()) { // padshock {name, rate, scale}
+            if (!havePtrs) ptrs = cdc::sectionPointers(drm, uint32_t(section)), havePtrs = true;
+            if (const auto it = ptrs.find(uint32_t(c + 4)); it != ptrs.end() && it->second.section < drm.sections.size())
+                for (size_t k = it->second.offset, n = drm.sections[it->second.section].data.size(); k < n && drm.sections[it->second.section].data[k]; ++k)
+                    e.cmd.padshock += char(drm.sections[it->second.section].data[k]);
+            e.cmd.rate = rd<float>(d, c + 8), e.cmd.scale = rd<float>(d, c + 12);
+        }
         out.push_back(e);
         o += size;
     }
@@ -634,6 +641,10 @@ bool System::runCommand(const std::shared_ptr<const ObjectFx>& fx, const Command
     // a2 = segment (0xFF: the record's own), a3 = second segment (0x547B40). At birth particles / glows / lights /
     // ribbons / lightning need their record's birth bit (0x543F70 +4 & 1, 0x536B70 +0 & 1, 0x546710 +0x11 & 1,
     // 0x545810 +1 & 1, 0x537230 +0x4C & 1).
+    if (c.type >= 0xD && c.type <= 0x10) { // pad rumble (also with --fx off); starts no effect
+        if (rumble) rumble(c, owner, glm::vec3(world[3]));
+        return false;
+    }
     if (!visuals && c.type != 0x21 && c.type != 0x22) return false; // --fx off: instance fades (pickups vanishing) stay
     const int16_t seg = int16_t(c.a2 == 0xFF ? 0 : c.a2);
     auto particle = [&](int i, int16_t s, int16_t s2) {

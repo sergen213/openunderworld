@@ -14,6 +14,7 @@
 #include "game/Combat.hpp"
 #include "game/Progress.hpp"
 #include "game/Water.hpp"
+#include "game/Feedback.hpp"
 #include "game/Vehicle.hpp"
 #include "script/Script.hpp"
 #include "game/ai/Enemy.hpp"
@@ -633,6 +634,10 @@ public:
     std::array<int, 3> found{};  // pickups collected per PickupKind (PDA counts); saved
     int chapter = 0;             // kChapters index being played; saved
     bool treasureHunt = false;   // Treasure Hunt (after the ending: revisiting chapters for what is left); saved
+    // Pad rumble and camera shake (game/Feedback.hpp): stepped each tick, read only by the app (motors, render camera).
+    // Not saved: every sequence lasts seconds [I: a looping padshock running at a save stops at load].
+    Rumble rumble;
+    CameraShake cameraShake;
     // Lara's outfit object (objectlist.txt name, pc-w\<outfit>.drm): `costume` when one is chosen, else `levelOutfit`.
     // Rendering follows it; setOutfitRig re-rigs the pose skeleton.
     std::string outfit = "lara";
@@ -893,6 +898,8 @@ private:
     std::map<int32_t, WaterState> waterStates_; // by watervolume intro uid
     std::vector<physics::Scene::Water> physicsWater_; // stepPhysics: the loaded volumes for buoyancy (reused)
     void bindWater();
+    void bindFeedback();
+    std::map<uint64_t, uint32_t> padshocks_; // padshock member key -> its last rumble handle (NtPadshockInst +0xC)
     void tickWaterStates(float dt);
     void applyWaterState(collision::Markup& m, vec3 offset) const; // a volume of rebuildCollision / a changed one
     // The volume `uid`'s markup in collision() and its unit; nulls when it is not loaded.

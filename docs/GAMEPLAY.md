@@ -488,7 +488,8 @@ outfit (the original only reads `+0x294` on a level load).
   waits for the next key / mouse button / pad button / trigger ("Press a button for the selected action", 1063) and
   makes it that device's only input for the action, Escape cancels [I]; BackSpace UNMAP clears the device's inputs,
   refused on the menu keys [I]; its VEHICLE rows are our forward / back / jump / fire and not listed), RESTORE DEFAULTS.
-  GAMEPAD CONFIGURATION shows the pad in use (else "Disabled", 7), VIBRATION dim (no rumble [U]), GAMEPAD AXES (the
+  GAMEPAD CONFIGURATION shows the pad in use (else "Disabled", 7), VIBRATION (pad rumble on / off, "Vibration and
+  camera shake"), GAMEPAD AXES (the
   stick layout: default, southpaw, move stick only, look stick only [I: the original's values were not captured]),
   INVERT X-AXIS / Y-AXIS. Every change applies at once and is written back to `--config`.
 - Gamepads: every connected pad is opened (hotplug); the first one added is used, the others are ignored; when it is
@@ -1836,6 +1837,41 @@ dummy from the hip hold, and a health pack picked up after an 1800-unit drop (51
 - [I] The renderer's portal walk starts from the spline's unit while one plays (`World::cameraUnit`), else Lara's:
   l2_hubhall's shiva-scales reveal (l2_puzzleroom spline 4) looks at the puzzleroom statue from inside that unit, and
   starting from hubhall clipped everything away (empty frame).
+
+## Vibration and camera shake (src/game/Feedback.*)
+
+Both are output only: the simulation steps them each 60 Hz tick but never reads them, so the VIBRATION option, the pad
+and the render rate change nothing the game decides.
+
+- [O] Rumble manager (0xA02BD0, ticked by 0x4817B0): 16 slots of `pc-w\padshock\padshocklib.tfb` sequences (32: hit,
+  landing, weapon fire, bike, loops; format in Feedback.hpp) plus two direct "shocks". A sequence's channel n drives
+  motor n (XInput's 2 motors both take either channel kind, 0x481030): linear keys `clamp(lerp * scale + offset, 0, 1)`,
+  step keys the last key's value, times the play scale; the slot frees after a channel's last key; looping sequences
+  (+0x4C == 1) wrap between their loop points until released (0x483130). Shocks: 0x481CC0 motor 0 fully on / off,
+  0x481CF0 motor 1 at level / 255, each for duration / 4096 frames of 30 Hz. Per motor the sum, clamped to 1, times the
+  Vibration flag (DAT_008904C4, registry "Vibration", default on) -> XInputSetState(v * 65535), motor 0 the left (low
+  frequency): ours SDL_RumbleGamepad low / high, renewed every 0.1 s for 0.25 s, 0 in every menu.
+- [O] Sources: effect records (0x547B40) 0xD padshock by name {u16 player-only, char*, f32 rate, f32 scale} (931
+  records: Lara's hits, ledge / pole attaches, landings, pole and weight puzzles), 0xE shock 0 {on, frames} (175),
+  0xF shock 1 {level, frames} (322: shotgun / Mjolnir hits, bridges, backdrafts), 0x10 shock 1 by distance
+  `min(a1, (8000 - d) * a1 / 8000 + 50)` (11) [I: d from Lara; tru.exe 0x453EE0's point]; records flagged player-only
+  run only for the player or an instance parented to her (ours: Lara's clips and her shots). Script `padshock`
+  (NtPadshock, bind 0x7ACD10) on {name, f32 library, rate, scale | on, duration 0, level 1, duration 1}: 1 Play
+  ("shock" both shocks, "shock0" / "shock1" one, else the sequence at rate / scale), 4 / 5 Stop (release / now),
+  6 IsPlaying, 7 IsLooping, 8 SetRate, 9 SetScale, 0 same member; 2 / 3 return a sequence object [U: not modelled,
+  3 still plays].
+- [O] Camera shake (8 slots 0xE80020): `camerashakes.drm`'s 20 DTP records (Feedback.hpp: 7 channels of a 128-byte
+  envelope, amplitude, period, randomness %; duration, falloff radius, positional flag). Channel value
+  `amplitude * envelope(t / duration) * sin(2 pi t / period) * (1 - r + 2 r u)` (0x5F2F80 / 0x5F3080: translation x 3.1605
+  units, rotation and FOV in degrees), stepped by timeMult / 30 s (0x5F3390), summed onto the camera in its local axes
+  (x right, y down, z forward; 0x5EEA10) and the FOV (0x5E2150, clamped 0.1 .. 3.0416 rad). Script `camerashake`
+  (bind 0x7ABFC0) on the shake's DTP id: 0 Start(seconds) (0x5EE8C0), 1 Stop (0x5E8750). Ours: on the rendered camera
+  only, interpolated between the last two ticks [I: euler order z, y, x; u from our own generator, tru.exe's global
+  one at 0x8A9C78].
+- [U] Not done: camera shakes by key from animation events (Lara 0x716F30 case 0xB, enemies 0x6258D0; camerashakes'
+  key table: 20 entries {DTP id, duration, key}) and the cinematic camera's (0x5E21A0 command 7) — no record carrying
+  them was found in the event lists; the positional falloff (0x5EB460) only applies to those. Rumble and shakes are not
+  saved (a loop running at a save stops at load).
 
 ## Tests
 

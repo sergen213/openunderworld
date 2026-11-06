@@ -559,13 +559,14 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.stringId = 493, .opens = Screen::ControlConfig},
                 {.stringId = 469}};
     // CONTROL / GAMEPAD CONFIGURATION [O keyboard1 / gamepad1 captures; the rows' layout is the other lists' I]. VIBRATION
-    // stays dim (no rumble [U]); GAMEPAD AXES picks the stick layout [I: the original's values were not captured].
+    // is the pad rumble (config controls.vibration); GAMEPAD AXES picks the stick layout [I: the original's values were
+    // not captured].
     case Screen::ControlConfig:
         return {{.stringId = 1009, .value = &mouseSensitivity}, {.stringId = 1010, .opens = Screen::ButtonConfig},
                 {.stringId = 1011, .action = Action::RestoreControls}, {.stringId = 469}};
     case Screen::GamepadConfig:
         return {{.stringId = 1014, .choice = &padChoice_, .choices = {padName}},
-                {.stringId = 137, .toggle = &vibration_, .onId = 45, .offId = 46, .pair = true, .greyed = true},
+                {.stringId = 137, .toggle = &vibration, .onId = 45, .offId = 46, .pair = true},
                 {.stringId = 1015, .choice = &stickLayout, .choices = stickLayouts},
                 {.stringId = 501, .toggle = &invertX, .onId = 384, .offId = 385, .pair = true},
                 {.stringId = 502, .toggle = &invertY, .onId = 384, .offId = 385, .pair = true},

@@ -96,6 +96,7 @@ struct InputConfig {
     bool invertY = false;          // mouse and look stick
     std::string moveStick = "left", lookStick = "right";
     bool invertX = false;          // mouse and look stick
+    bool vibration = true;         // pad rumble (GAMEPAD CONFIGURATION > VIBRATION; tru.exe registry "Vibration", on)
     InputConfig();                 // default bindings
     bool operator==(const InputConfig&) const = default;
 };

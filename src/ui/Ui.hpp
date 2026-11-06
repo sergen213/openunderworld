@@ -304,6 +304,7 @@ public:
     int stickLayout = 0;
     std::vector<std::string> stickLayouts;
     bool invertX = false;
+    bool vibration = true; // VIBRATION: pad rumble on / off
 
     // Footer prompts name the bound controls through Canvas::prompts (unset: the placeholders draw as pad icons).
     void draw(Canvas& c, const locale::Strings& s);
@@ -344,7 +345,6 @@ private:
     std::array<float, 8> grow_{}; // per radial / slot item: 0 = idle .. 1 = selected (eased)
     float label_ = 0;             // label fade-in of the selected radial item, 0..1
     int padChoice_ = 0;           // GAMEPAD SELECTION shows padName alone
-    bool vibration_ = false;      // VIBRATION (dim)
 };
 
 // ---- HUD: the original display groups, reticles, notifications, title cards, subtitles ---------------

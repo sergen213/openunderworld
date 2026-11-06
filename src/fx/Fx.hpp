@@ -240,8 +240,13 @@ struct FilterDef {
     std::shared_ptr<const FilterResource> resource; // +0x14 DTP id
 };
 
-// Effect command (8 bytes at +8 of an event record, tru.exe 0x547B40): u16 type, then 3 u16 arguments.
-struct Command { uint16_t type = 0, a1 = 0, a2 = 0, a3 = 0; };
+// Effect command (8 bytes at +8 of an event record, tru.exe 0x547B40): u16 type, then 3 u16 arguments. Type 0xD
+// (padshock by name, 0x481B50) is 16 bytes: u16 0xD, u16 player-only, char* name, f32 rate, f32 scale.
+struct Command {
+    uint16_t type = 0, a1 = 0, a2 = 0, a3 = 0;
+    std::string padshock;
+    float rate = 1, scale = 1;
+};
 // Object / animation event record {u16 info, u16 frame, u8 event, ...; command}, 8 + (info >> 12) * 4 bytes
 // (tru.exe 0x5BA000). info & 3 kind (1 effect callback), & 4 disabled, & 0x3F0 surface-material filter (0 any,
 // else the instance material, tru.exe 0x5BBFD0 / instance +0x186), & 0xC00 variant (matched against 0).
@@ -375,6 +380,8 @@ public:
     // Event::slotSound records (anim clips and birth lists): slot, action, owner, the slot segment's world position.
     std::function<void(const ObjectFx&, uint8_t slot, uint8_t action, int32_t owner, glm::vec3 position, uint8_t material)> slotSound;
     std::function<void(int32_t owner)> ownerStopped; // stopOwner: the instance is gone (its slot sounds end)
+    // Pad rumble commands 0xD..0x10 (0x547B40): owner and its position (0x10 scales by the distance to it).
+    std::function<void(const Command&, int32_t owner, glm::vec3 position)> rumble;
     bool visuals = true; // false (ou-game --fx off): commands start nothing but instance fades; sequences run for `sound`
     void stopOwner(int32_t owner);  // emitters stop, live particles finish, glows fade out, lights end
     void moveOwner(int32_t owner, const glm::vec3& delta); // its emitters' origins (effects carried by a moving instance)

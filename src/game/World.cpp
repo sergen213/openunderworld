@@ -377,6 +377,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     bindUber();
     bindTerrain();
     bindLightHealth();
+    bindFeedback();
     bindMarkup();
     bindEnemies();
     bindWater();
@@ -565,6 +566,7 @@ void World::tick(const Actions& input) {
     wetness_.tick(dt * 30.0f);
     water_.tick(*this, dt); // after combat: this tick's shots make rings
     updatePose(dt, false);
+    rumble.tick(dt), cameraShake.tick(dt); // output only (Feedback.hpp): 0x4817B0, 0x5F3390
     ++ticks_;
     if (!units_.empty()) checkLevelEnd(); // last: a chapter change re-spawns Lara (enterUnit)
 }

@@ -319,8 +319,8 @@ DRM, `scratch/cmdsurvey.py`). Classes by GenericFXObject list:
 | 9, 0x19 | class 3 lightning / beams (0x537230) | 100 | yes ("Lightning") |
 | 0xA, 0xC | class 4 (0x53D100, 0x64 bytes; prim with own segments) [U: blast ring] | 0 (only particle.drm has records) | no |
 | 0xB | class 5 screen filters | 369 | yes |
-| 0xD | sound 0x481B50 | 931 | audio (AUDIO.md) |
-| 0xE / 0xF / 0x10 | pad rumble 0x481CC0 / 0x481CF0, distance-scaled (0x10) | 175 / 322 / 11 | no (no rumble output) |
+| 0xD | padshock sequence by name 0x481B50 {u16 player-only, char*, f32 rate, f32 scale} | 931 | yes (GAMEPLAY.md "Vibration and camera shake") |
+| 0xE / 0xF / 0x10 | pad rumble 0x481CC0 / 0x481CF0, distance-scaled (0x10) | 175 / 322 / 11 | yes |
 | 0x11 | class 6 lights | 73 | yes |
 | 0x12, 0x1F | debug print | 35 | — |
 | 0x15 / 0x1A, 0x18 / 0x1B | fade / remove prims by id (self, +0x218, 0x5B36F0, parent) | 467 / 13 | yes (own instance) |

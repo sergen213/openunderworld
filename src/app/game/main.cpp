@@ -1246,6 +1246,7 @@ struct EffectsView {
     // Owners of animated instances whose ribbons / lightning follow their segments (fx::System::track): Lara, enemies
     // (transient: < 0) and script objects (their intro uid, as their birth effects).
     static constexpr int32_t kLaraOwner = -2;
+    bool laraShot = false; // events(): Lara's shots are playing (rumble commands flagged player-only run)
     static int32_t enemyOwner(int32_t uid) { return -(0x10000000 | (uid & 0x0FFFFFFF)); }
     static bool follows(const std::shared_ptr<const ou::fx::ObjectFx>& fx) { return fx && (!fx->ribbons.empty() || !fx->bolts.empty()); }
     struct ObjectClipAt { std::string object, clip; double t = 0; glm::mat4 model{1}; };
@@ -1264,10 +1265,12 @@ struct EffectsView {
         const auto& c = w.combat();
         const std::string gun(ou::game::weaponObject(c.weapon));
         int flashed = 0; // hands whose fire events ran this tick: one flash per trigger pull, not per pellet
+        laraShot = true; // her weapon's records count as hers (0x547B40: the instance's parent +0x214 is the player)
         for (const auto& s : c.shots) {
             shot(w, gun, s.gun, !s.impact && !(flashed & (1 << s.hand)), s.from, s.to, s.target != nullptr, s.hit, w.submerged());
             flashed |= 1 << s.hand;
         }
+        laraShot = false;
         for (const auto& s : w.enemies().shots) {
             const auto e = std::find_if(w.enemies().all().begin(), w.enemies().all().end(), [&](const auto& x) { return x->uid() == s.uid; });
             const auto n = e == w.enemies().all().end() ? names.end() : names.find((*e)->type().weapon);
@@ -1924,6 +1927,29 @@ int main(int argc, char** argv) {
         world->fovDeg = opt.fov;
         world->script().setBigfile(&bf);
         world->enemies().setBigfile(&bf);
+        // Pad rumble sequences and camera shakes (game/Feedback.hpp), and the effect records' rumble commands: 0xD by
+        // name, 0xE / 0xF the shocks, 0x10 motor 1 by distance ((8000 - d) * a1 / 8000, + 50 up to a1, from Lara [I]);
+        // records flagged player-only (0xD a1, else a3) only for Lara or her weapons (0x547B40).
+        try {
+            if (auto t = bf.read("pc-w\\padshock\\padshocklib.tfb")) world->rumble.setLibrary(ou::game::parsePadshockLib(*t));
+            if (auto d = bf.read("pc-w\\camerashakes.drm")) world->cameraShake.setLibrary(ou::game::parseCameraShakes(*d));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: rumble / camera shake data: %s\n", e.what());
+        }
+        effects.system.rumble = [&](const ou::fx::Command& c, int32_t owner, glm::vec3 at) {
+            const bool player = owner == EffectsView::kLaraOwner || effects.laraShot;
+            auto& r = world->rumble;
+            if (c.type == 0xD) {
+                if (!c.a1 || player) r.play(c.padshock, c.rate, c.scale);
+                return;
+            }
+            if (c.a3 && !player) return;
+            if (c.type == 0xE) r.shock0(c.a1, c.a2 << 12);
+            if (c.type == 0xF) r.shock1(c.a1, c.a2 << 12);
+            if (c.type == 0x10)
+                if (const int level = (8000 - int(glm::distance(at, world->player().state().pos))) * int(c.a1) / 8000; level >= 1)
+                    r.shock1(std::min<int>(c.a1, level + 0x32), c.a2 << 12);
+        };
         world->chapter = opt.level.empty() ? std::max(opt.chapter, 0) : std::max(0, ou::game::chapterOfUnit(unit));
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
         world->script().setPlayerObjects(ou::game::chapterGear(world->chapter)); // a direct chapter start
@@ -2105,7 +2131,7 @@ int main(int argc, char** argv) {
     int menuSensitivity = 0;
     auto fillControls = [&] {
         const auto& in = opt.input;
-        menus.invertY = in.invertY, menus.invertX = in.invertX;
+        menus.invertY = in.invertY, menus.invertX = in.invertX, menus.vibration = in.vibration;
         menus.mouseSensitivity = menuSensitivity = std::clamp(int(std::lround(5 + 2.5 * std::log2(in.mouseSensitivity))), 0, 10);
         menus.stickLayouts.clear(), menus.stickLayout = -1;
         for (const auto& l : kStickLayouts) {
@@ -2119,7 +2145,7 @@ int main(int argc, char** argv) {
     bool controlsChanged = false; // prompts and BUTTON CONFIGURATION rows to rebuild (nav)
     auto applyControls = [&] {
         auto& in = opt.input;
-        in.invertY = menus.invertY, in.invertX = menus.invertX;
+        in.invertY = menus.invertY, in.invertX = menus.invertX, in.vibration = menus.vibration;
         if (menus.mouseSensitivity != menuSensitivity)
             menuSensitivity = menus.mouseSensitivity, in.mouseSensitivity = std::exp2(float(menus.mouseSensitivity - 5) / 2.5f);
         if (menus.stickLayout < int(std::size(kStickLayouts)))
@@ -2127,9 +2153,9 @@ int main(int argc, char** argv) {
         if (in == appliedInput) return;
         opt.controls = ou::game::Controls(in); // names came from parseInput / the defaults: cannot throw
         appliedInput = in, controlsChanged = true;
-        std::fprintf(stderr, "ou-game: tick %llu controls: move %s look %s sensitivity %.2f invert x %d y %d\n",
+        std::fprintf(stderr, "ou-game: tick %llu controls: move %s look %s sensitivity %.2f invert x %d y %d vibration %d\n",
                      (unsigned long long)world->ticks(), in.moveStick.c_str(), in.lookStick.c_str(), in.mouseSensitivity,
-                     int(in.invertX), int(in.invertY));
+                     int(in.invertX), int(in.invertY), int(in.vibration));
     };
     menus.brightness = std::clamp(int(std::lround(5 * std::log2(2 * opt.gfx.brightness))), 0, 10);
     int menuBrightness = menus.brightness; // the launcher's finer value stays until the slider moves
@@ -2677,6 +2703,8 @@ int main(int argc, char** argv) {
     SDL_SetWindowRelativeMouseMode(window.get(), interactive && !menuStart);
     ou::platform::DeviceState devices;
     std::map<SDL_JoystickID, ou::platform::GamepadPtr> pads; // every connected gamepad stays open (SDL sends only their events)
+    std::array<uint16_t, 2> rumbleSent{}; // motor speeds last sent to the pads, and when
+    uint64_t rumbleAt = 0;
     ou::engine::FrameClock clock(ou::game::kTickSeconds);
     glm::vec2 mouse(0);
     bool overlay = !opt.noOverlay;
@@ -3010,6 +3038,19 @@ int main(int argc, char** argv) {
             for (auto& w : world->warnings) std::fprintf(stderr, "ou-game: warning: %s\n", w.c_str());
             world->warnings.clear();
         }
+        // Pad rumble (game/Feedback.hpp): the last tick's motors, 0 in menus or with VIBRATION off (0x4817B0 times
+        // DAT_008904C4), 0 -> 65535 on SDL's low (left) / high (right) frequency motors as XInput's (0x484940). A running
+        // rumble is renewed every 0.1 s for 0.25 s, so a stalled game stops shaking the pad.
+        {
+            const auto m = world->rumble.motors();
+            const bool on = opt.input.vibration && menus.screen() == ou::ui::Screen::None;
+            const std::array<uint16_t, 2> want{uint16_t(on ? std::lround(m[0] * 65535.0f) : 0), uint16_t(on ? std::lround(m[1] * 65535.0f) : 0)};
+            if (want != rumbleSent || (want != std::array<uint16_t, 2>{} && now - rumbleAt > 100'000'000ull)) {
+                for (auto& [id, pad] : pads)
+                    if (pad) SDL_RumbleGamepad(pad.get(), want[0], want[1], want == std::array<uint16_t, 2>{} ? 0 : 250);
+                rumbleSent = want, rumbleAt = now;
+            }
+        }
 
         // --draw-last: the frame pacing and ticks are those of the render rate, the drawing is skipped (simulation never
         // reads it; ctest game_render_rate_smoke under ASan).
@@ -3041,6 +3082,17 @@ int main(int argc, char** argv) {
         cam.position = c.position;
         cam.lookAt(c.target);
         cam.up = c.up;
+        // Camera shake (game/Feedback.hpp): rendered only, between the last two ticks; camera-local translation and
+        // rotation (0x5EEA10; x right, y down, z forward; [I] rotation order z, y, x) and FOV (0x5E2150, 0.1 .. 3.0416 rad).
+        if (const auto sh = world->cameraShake.offset(float(clock.alpha()));
+            !opt.camera && (sh.move != glm::vec3(0) || sh.turn != glm::vec3(0) || sh.fov != 0)) {
+            const glm::vec3 f = glm::normalize(c.target - c.position), r = glm::normalize(glm::cross(f, c.up)), down = glm::cross(f, r);
+            const glm::mat4 rot = glm::rotate(glm::rotate(glm::rotate(glm::mat4(1), sh.turn.z, f), sh.turn.y, down), sh.turn.x, r);
+            cam.position += r * sh.move.x + down * sh.move.y + f * sh.move.z;
+            cam.lookAt(cam.position + glm::vec3(rot * glm::vec4(f, 0)) * 1000.0f);
+            cam.up = glm::vec3(rot * glm::vec4(-down, 0));
+            cam.verticalFovDeg = glm::degrees(std::clamp(glm::radians(cam.verticalFovDeg) + sh.fov, 0.1f, 3.0415928f));
+        }
         if (const auto& k = opt.camera) {
             cam.position = {(*k)[0], (*k)[1], (*k)[2]}, cam.lookAt({(*k)[3], (*k)[4], (*k)[5]}), cam.up = {(*k)[6], (*k)[7], (*k)[8]};
             if ((*k)[9] > 0) cam.verticalFovDeg = (*k)[9];

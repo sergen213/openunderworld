@@ -59,6 +59,7 @@ struct Member {
     std::optional<cdc::Pointer> initAt; // NATIVE/SCRIPT: where the initial value lives (sound: inline SoundPlex)
     std::string initText;   // NATIVE/SCRIPT: a C string the value's first word points to (music: the track name), else
                             // its second word (messagechannel {mode, name}: the channel name)
+    std::array<uint32_t, 6> initWords{}; // NATIVE/SCRIPT: words 1..6 of the initial value (padshock: 6 floats)
 };
 
 // A messagechannel member's value: its channel, identified by name (0x4A3680 registers channels by name, 0x5D0700;
@@ -288,6 +289,12 @@ public:
     // (AUDIO.md §9.15). Soundvolumes call it when Lara enters them.
     using ReverbNative = std::function<void(const std::string& unit, cdc::Pointer at)>;
     void setReverbNative(ReverbNative native) { reverb_ = std::move(native); }
+    // `padshock` (NtPadshock, bind 0x7ACD10) and `camerashake` (bind 0x7ABFC0) natives -> game/Feedback.hpp. `key`
+    // identifies the member (owner uid << 32 | offset; a padshock remembers its last handle), `value` its current word
+    // (camerashake: the shake's DTP id). Returns false for calls it does not model.
+    using FeedbackNative = std::function<bool(bool shake, uint64_t key, const Member& m, uint32_t value, uint32_t function,
+                                              std::span<const vm::Value> args, uint32_t& result)>;
+    void setFeedbackNative(FeedbackNative native) { feedback_ = std::move(native); }
     // `music` natives (bind 0x7ACB40) on a value {char* track, i32 slot}: 1 Play(fade s) (0x5942F0), 2 Play(fade s,
     // fade-out s) (0x594320), 3 Stop(fade s): the slot fades out (0x593EB0 with a null name). Slot = music player
     // 0xCC5260 + slot * 0x528 (AUDIO.md §9.4). Queued in call order; the music player takes them each tick.
@@ -470,6 +477,7 @@ private:
     MarkupNative markup_;
     SoundNative sound_;
     ReverbNative reverb_;
+    FeedbackNative feedback_;
     std::vector<MusicRequest> musicRequests_;
     std::vector<std::string> movies_;
     CameraNative camera_;
