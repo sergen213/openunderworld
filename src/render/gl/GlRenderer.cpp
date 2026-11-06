@@ -376,7 +376,7 @@ struct Resources {
     Program fxProgram; // original effects
     VertexArray fxVao;
     Buffer fxVbo;
-    Texture white, font, shadowMap, attenuation, blackCube, cookies;
+    Texture white, font, shadowMap, attenuation, blackCube, cookies, pssmMap;
     struct Streamed { Texture tex; uint64_t version = 0; int width = 0, height = 0; };
     std::array<Streamed, 3> uiImages; // FrameOptions::uiImages
     // Original Fidelity (docs/formats/SHADERS.md): translated programs, register-file UBOs (bindings 0 frame,
@@ -385,7 +385,7 @@ struct Resources {
     Buffer frameUbo, materialUbo, objectUbo;
     Buffer shadowUbo; // render/sun.glsl OuShadow (UBO binding 3); the shadow map is texture unit 16
     GLint uboAlign = 256;
-    Framebuffer shadowFbo;
+    Framebuffer shadowFbo, pssmFbo;
     VertexArray textVao, lineVao, emptyVao;
     Buffer textVbo, lineVbo;
     const DebugLine* lineSource = nullptr; // cached upload of FrameOptions::debugLines
@@ -535,6 +535,22 @@ public:
         r.shadowFbo = newFramebuffer();
         glNamedFramebufferTexture(r.shadowFbo.get(), GL_DEPTH_ATTACHMENT, sm, 0);
         glNamedFramebufferDrawBuffer(r.shadowFbo.get(), GL_NONE);
+        // tru.exe's PSSM atlas (original::Pssm, s14 of the PSSM programs): always allocated for the same reason; the area
+        // outside the split tiles stays at depth 1 (the ShadowLights' lit texel).
+        r.pssmMap = newTexture();
+        GLuint pm = r.pssmMap.get();
+        glTextureStorage2D(pm, 1, GL_DEPTH_COMPONENT32F, original::kPssmWidth, original::kPssmHeight);
+        glTextureParameteri(pm, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(pm, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(pm, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(pm, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(pm, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTextureParameteri(pm, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        r.pssmFbo = newFramebuffer();
+        glNamedFramebufferTexture(r.pssmFbo.get(), GL_DEPTH_ATTACHMENT, pm, 0);
+        glNamedFramebufferDrawBuffer(r.pssmFbo.get(), GL_NONE);
+        const float one = 1.0f;
+        glClearNamedFramebufferfv(r.pssmFbo.get(), GL_DEPTH, 0, &one);
 
         const auto lut = original::attenuationLut();
         r.attenuation = newTexture();
@@ -715,6 +731,13 @@ public:
         glNamedBufferSubData(r.shadowUbo.get(), 0, sizeof sun.block, &sun.block);
         glBindBufferBase(GL_UNIFORM_BUFFER, 3, r.shadowUbo.get());
         glBindTextureUnit(16, r.shadowMap.get());
+        // Original preset: tru.exe's own sun shadows for the translated programs (they read lit otherwise).
+        pssm_ = {};
+        pssmCamera_ = camera;
+        if (options.pssm && options.originalShaders && !r.originals.empty()) {
+            pssm_ = original::pssm(camera, float(vp.width) / float(std::max(vp.height, 1)), environment_);
+            if (pssm_.active) drawPssm(pssm_);
+        }
         const auto reflection = drawReflection(camera, vp, options);
 
         glBindFramebuffer(GL_FRAMEBUFFER, r.targets.scene.get());
@@ -1015,6 +1038,43 @@ private:
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
 
+    // tru.exe's PSSM atlas (original::Pssm): one 1024² tile per split, the casters of the shadow map above, D3D9 depth
+    // bias (in the split's matrix) and slope bias. D3D clip -> GL: y flipped (rows top-down as tru.exe's lookups count
+    // them), z [0, 1] -> [-1, 1].
+    void drawPssm(const original::Pssm& p) {
+        Resources& r = *res_;
+        glBindFramebuffer(GL_FRAMEBUFFER, r.pssmFbo.get());
+        glDisable(GL_SCISSOR_TEST);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
+        const float one = 1.0f;
+        glClearNamedFramebufferfv(r.pssmFbo.get(), GL_DEPTH, 0, &one);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(p.slopeBias, 0.0f);
+        glUseProgram(r.shadowProgram.get());
+        glm::mat4 toGl(1.0f);
+        toGl[1][1] = -1.0f, toGl[2][2] = 2.0f, toGl[3][2] = -1.0f;
+        for (int k = 0; k < original::kPssmSplits; ++k) {
+            const glm::mat4 vp = toGl * p.tileClip[k];
+            glViewport(p.tile[k].x, p.tile[k].y, original::kPssmTile, original::kPssmTile);
+            glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(vp));
+            for (const auto& m : r.meshes) {
+                if (outsideOrtho(vp, m.center, m.radius)) continue;
+                glUniformMatrix4fv(1, 1, GL_FALSE, glm::value_ptr(m.model));
+                glBindVertexArray(m.vao.get());
+                for (const auto& s : m.submeshes) {
+                    if ((s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) || !s.castsShadow) continue;
+                    glUniform1f(3, (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f);
+                    drawSubmesh(s);
+                }
+            }
+        }
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
+
     Texture uploadTexture(const scene::TextureData& t, std::vector<std::string>& warnings) {
         auto warn = [&](const std::string& w) {
             warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): " + w);
@@ -1229,6 +1289,7 @@ private:
             if (const uint32_t id = original::samplerTexture(mat, s.instanceTextures, n))
                 if (auto it = r.textures.find(id); it != r.textures.end() && cubes_.contains(id) == cube) tex = it->second;
             if (prog.psGlsl.samplerType[n] == sm3::kSamplerCookies) tex = r.cookies.get();
+            if (prog.psGlsl.samplerType[n] == sm3::kSamplerShadow) tex = r.pssmMap.get();
             g.samplers.back()[size_t(n)] = tex;
         }
         g.screenSamplers.back() = original::screenSamplers(mat, s.instanceTextures, prog.psGlsl.readsDepth);
@@ -1395,6 +1456,7 @@ private:
         Resources& r = *res_;
         sm3::FrameBlock f;
         original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater, cookieIds_); // screen copies are bottom-up
+        original::fillPssm(f, pssm_, pssmCamera_);
         irradiance_.assign(environment_, r.meshes);
         irradiance_.fill(f);
         glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
@@ -1403,7 +1465,8 @@ private:
         objectScratch_.assign(std::max(objectSlots_, 2 * n) * stride, 0);
         for (size_t i = 0; i < n; ++i) {
             auto& block = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[i * stride]);
-            original::fillObject(block, vpD3D, r.meshes[i].model, original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius, r.meshes[i].lightMask),
+            original::fillObject(block, vpD3D, r.meshes[i].model,
+                                 original::lightSet(environment_, r.meshes[i].center, r.meshes[i].radius, r.meshes[i].lightMask, &camera.position),
                                  i < opacity_.size() ? opacity_[i] : 1.0f);
             original::fillWaves(block, o.waterVolumes, r.meshes[i].center, r.meshes[i].radius);
             block.irradiance = irradiance_.slot(i);
@@ -1411,7 +1474,8 @@ private:
             for (size_t k = 0; k < g.lightBoxes.size() && g.lightSlot + k < objectSlots_; ++k) {
                 auto& group = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(g.lightSlot + k) * stride]);
                 group = block;
-                std::memcpy(group.lightSet, original::lightSet(environment_, g.lightBoxes[k], g.model, g.lightMask).packed, sizeof group.lightSet);
+                std::memcpy(group.lightSet, original::lightSet(environment_, g.lightBoxes[k], g.model, g.lightMask, &camera.position).packed,
+                            sizeof group.lightSet);
             }
             if (!reflection || std::isnan(r.meshes[i].reflectZ)) continue;
             auto& lit = *reinterpret_cast<sm3::ObjectBlock*>(&objectScratch_[(n + i) * stride]);
@@ -1619,6 +1683,8 @@ private:
     scene::Environment environment_;
     std::vector<uint32_t> cookieIds_;     // layers of the spot cookie array (upload)
     original::IrradianceSlots irradiance_; // per frame, cached per mesh between uploads
+    original::Pssm pssm_;                  // this frame's splits (inactive: the PSSM programs read lit)
+    Camera pssmCamera_;                    // the frame's camera (WorldToPSSM0's view depth; reflections reuse it)
     std::unordered_set<uint32_t> cubes_; // texture ids uploaded as cube maps
     // Renderer::uploadPart: a part's scene until pumpParts sent it all (next texture / mesh to look at), by part id.
     struct Part {

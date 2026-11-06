@@ -72,6 +72,7 @@ struct GraphicsSettings {
     bool rtAo = false, rtGi = false; // RT ambient occlusion / sun bounce (rt on; rtAo / rtGi unset = rt full)
     bool antiLag = false; // AMD Anti-Lag (render::FrameOptions::antiLag); last, like the fields above
     bool cineDof = false; // cutscene depth of field (app::CineView::depthOfField); last, like the fields above
+    bool pssm = false;    // tru.exe's sun shadows (render::FrameOptions::pssm): the original preset's `shadows`; last, as above
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without

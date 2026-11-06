@@ -2397,7 +2397,7 @@ int main(int argc, char** argv) {
         v.unitMeshes = streamed.unitMeshes;
         v.language = int(language);
         v.renderHz = opt.renderHz;
-        v.frame.msaa = opt.gfx.msaa, v.frame.shadows = opt.gfx.shadows, v.frame.fxaa = opt.gfx.fxaa, v.frame.hdr = opt.gfx.hdr;
+        v.frame.msaa = opt.gfx.msaa, v.frame.shadows = opt.gfx.shadows, v.frame.pssm = opt.gfx.pssm, v.frame.fxaa = opt.gfx.fxaa, v.frame.hdr = opt.gfx.hdr;
         v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
         v.frame.rtLights = opt.gfx.rtLights;
         v.frame.rtReflections = opt.gfx.rtReflections;
@@ -2913,7 +2913,7 @@ int main(int argc, char** argv) {
         }
         fo.uiImages = {ou::render::RgbaImage{art->rgba, art->width, art->height, art->version}, movieImage,
                        ou::render::RgbaImage{extrasImage.rgba, extrasImage.width, extrasImage.height, extrasVersion}};
-        fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
+        fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.pssm = opt.gfx.pssm, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.rtLights = opt.gfx.rtLights;
         fo.rtReflections = opt.gfx.rtReflections;

@@ -154,6 +154,9 @@ struct FrameOptions {
     // Graphics settings (presets: ou::config::resolve). Changing them rebuilds render targets.
     int msaa = 1;          // 1, 2, 4, 8 samples
     bool shadows = false;  // sun shadow map (RenderCommon shadowViewProj), PCF 3x3
+    // tru.exe's own sun shadows (original::Pssm: 4 splits in a 4096x3072 atlas, its PCF) for the translated programs
+    // (originalShaders; the Original preset). Off: they read lit, leaving the sun to `shadows` / RT.
+    bool pssm = false;
     bool fxaa = false;     // FXAA on the resolved image
     bool hdr = false;      // RGBA16F scene target + ACES tonemap
     // Materials draw with TRU's own shaders translated from D3D9 SM3 (docs/formats/SHADERS.md) where they translate;

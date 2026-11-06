@@ -94,7 +94,9 @@ void loadMaterials(scene::SceneData& sc, const Drms& drms) {
         auto m = decodeMaterial(*sec, &libs);
         m.vertexShader = program(libs.vertex, {0x20, 0xA0});
         m.skinParams = m.vertexShader && skinParams(libs.vertex);
-        m.pixelShader = program(libs.pixel, {0});
+        // Composite PS slot 6 = the PSSM receiving variant tru.exe picks here (device +0x11484 under Wine/DXVK;
+        // render::original::kPssmVariant); without its atlas it reads lit, as slot 0 (libs without one: slot 0).
+        m.pixelShader = program(libs.pixel, {6, 0});
         sc.materials.push_back(std::move(m));
     }
 }

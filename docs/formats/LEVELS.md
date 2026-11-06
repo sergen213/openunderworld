@@ -122,7 +122,7 @@ channels). The light tru.exe has at the l3_main_bedroom start that the unit lack
 object's: it is portal neighbour l3_chamberrockhall's light 2 (Wine, SceneLight +0x04/+0x1F0 → that unit's cell 2;
 `StreamReal.BedroomNeighbourLights`), which ou-game has as it merges every loaded unit's lights.
 Runtime (Wine, l3_main_bedroom start) [O]: SceneLight +0x64 enabled (0x5CEC60 creates every light disabled, vfunc
-0x28; there lights 8, 13, 14, 15, 17 stayed off, [U] what enables the others — ours has them on), +0x154 / +0x158
+0x28; 0x5CC190 switches each light every frame: off unless record +0x8A, and with +0x80 off from camera distance d ≥ D + range − min(0.3 D, range / 2), fading over `range` before that, D = +0x7C, range = +0x84, d = |camera − light| − DTP radius for points (0x5CBFA0; spots [I]); bedroom start: 8, 13, 14, 15, 17 off, `OriginalShading.BedroomLightsSwitchByCameraDistance`, render::original::lightFade), +0x154 / +0x158
 light / shadow masks (record bytes above), +0x178 cells reached (1 several, 2 home only), +0x1F0 home cell, +0x2CA
 seen this frame.
 

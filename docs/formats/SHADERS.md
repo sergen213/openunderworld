@@ -126,7 +126,14 @@ reflections and depth fade in GL and Vulkan.
   depth range from 0x849684 (−120000, −90000, −60000, −60000), depth bias / slope bias from the sun record +0x60 / +0x64
   (1.53e-5 / 2.2, D3DRS 0xC3 / 0xAF). PS variants: slot | 2 = Fetch4 gathers (ATI), | 4 = 4 point taps with manual
   bilinear compare (plain float depth), | 6 = hardware PCF (`texldl` 4 taps averaged); selected by device +0x11484
-  when shadows are enabled (devmgr +0x184) [which one Wine uses: not read]. Not implemented in our renderers yet.
+  when shadows are enabled (devmgr +0x184; Wine/DXVK: +0x11484 = 6, +0x184 = 1). Light-space xy translation is rounded
+  up (0x815520 = ceil), ortho z from 0x849684[k] to the slice radius, split far depths = min(far plane, fog far) x the
+  render settings +0x28..+0x34 fractions (device vfunc 0x80 = 0x508350; tru.exe blends the loaded units' values in
+  0x5C7CA0, weights [U]); PSSMToMap = per-axis ratio of split n's and split 0's coefficient sums. Implemented
+  (`original::pssm` / `fillPssm`, GL + Vulkan, FrameOptions::pssm = the Original preset's shadows): PS slot 6 with s14 as
+  sampler2DShadow (LESS_OR_EQUAL, bilinear), the atlas rendered with the shadow-map casters, depth bias in the split
+  matrix, slope bias as polygon offset; the ShadowLights' WorldToShadowMap c158–c169 point at a lit texel (no light
+  shadow maps). `OriginalShading.PssmSplitsMatchOriginal` matches the Wine-read registers.
 - Missing vs the original: light and PSSM shadows (PS slots 2–7 sample one shadow atlas s14 with Fetch4-style 4-tap PCF, `WorldToShadowMap` c158–c169, `PSSMToMap*` c80–c85, `PSSMDistances` c96; we use PS slot 0 with our shadow map / rays as `ouSunVis` / `ouLightVis`), directional SH terms on characters.
 - No original-game screenshot of the same views was available for a pixel comparison (PCGamingWiki's TRU page only has
   settings-menu images); comparison is against our previous renders.

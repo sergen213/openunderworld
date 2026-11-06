@@ -492,6 +492,88 @@ TEST(OriginalShading, BedroomLightSetMatchesOriginal) {
     EXPECT_EQ(slot(5), 0xFF);
 }
 
+// Light switch by camera distance (tru.exe 0x5CC190 -> SceneLight::SetEnabled 0x5740C0; LEVELS.md "Lights"). Wine,
+// l3_main_bedroom start (openunderworld-work/tlp/hook5.py, 2026-11-06): with the camera at tru.exe (5358, 7553,
+// -2422) every frame switches lights 8, 13, 14, 15 and 17 off and the other 13 on.
+TEST(OriginalShading, BedroomLightsSwitchByCameraDistance) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto bed = formats::loadLevelScene(bf, "pc-w\\l3_main_bedroom.drm");
+    ASSERT_EQ(bed.environment.lights.size(), 18u);
+    const glm::vec3 eye = glm::vec3(5358, 7553, -2422) + glm::vec3(-9623, -331, 2978);
+    std::vector<int> off;
+    for (size_t i = 0; i < bed.environment.lights.size(); ++i)
+        if (render::original::lightFade(bed.environment.lights[i], eye) <= 0) off.push_back(int(i));
+    EXPECT_EQ(off, (std::vector<int>{8, 13, 14, 15, 17}));
+    // Walking into the far rooms switches them on: light 8 at full intensity from its own position.
+    EXPECT_EQ(render::original::lightFade(bed.environment.lights[8], glm::make_vec3(bed.environment.lights[8].position)), 1.0f);
+    // Lights left out of the light sets while off.
+    const auto& l8 = bed.environment.lights[8];
+    const auto s = render::original::lightSet(bed.environment, glm::make_vec3(l8.position), 10, ~0u, &eye);
+    for (int k = 0; k < 6; ++k) EXPECT_NE(int(s.packed[k >> 2] >> (8 * (k & 3)) & 0xFF), 8);
+}
+
+// tru.exe's PSSM (0x50CCB0) at the l2_junglehub start, read under Wine (openunderworld-work/tlp/hook4.py + dump4.py,
+// 2026-11-06): the camera context (tru.exe frame: position, forward, 45 deg, 1.7778, near 16, far 105585.445) and the
+// registers the device got: VS c81-c84 WorldToPSSM0, PS c80-c85 PSSMToMap, c96 PSSMDistances. The sun's rows were its
+// PCRenderLight matrix; the unit's render settings give the split fractions.
+TEST(OriginalShading, PssmSplitsMatchOriginal) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto hub = formats::loadLevelScene(bf, "pc-w\\l2_junglehub.drm");
+    scene::Environment env = hub.environment;
+    ASSERT_TRUE(env.sun);
+    const glm::vec3 X(-0.422193f, -0.867489f, -0.263089f), Y(0.671411f, -0.104266f, -0.733715f), Z(-0.609056f, 0.48641f, -0.626464f);
+    EXPECT_LT(glm::distance(glm::make_vec3(env.sunAxes[0]), X), 1e-4f);
+    EXPECT_LT(glm::distance(glm::make_vec3(env.sunAxes[1]), Y), 1e-4f);
+    EXPECT_LT(glm::distance(glm::make_vec3(env.sunDirection), Z), 1e-4f);
+    EXPECT_NEAR(env.shadowBias[0], 1.52587891e-5f, 1e-10f);
+    EXPECT_NEAR(env.shadowBias[1], 2.2f, 1e-6f);
+    // The unit's own split fractions (render settings +0x28..); tru.exe had them blended with its neighbours' by
+    // 0x5C7CA0 [I: weights not decoded], so the fitting below gets the fractions it used.
+    EXPECT_NEAR(env.pssmSplits[0], 0.02622f, 1e-6f);
+    EXPECT_NEAR(env.pssmSplits[2], 0.14847f, 1e-6f);
+    const float dist[4] = {105585.445f, 17098.0059f, 7683.95605f, 2986.06616f};
+    for (int k = 0; k < 4; ++k) env.pssmSplits[k] = dist[3 - k] / dist[0];
+    EXPECT_NEAR(env.farPlane, 110619, 1); // blended likewise: the camera context had 105585.445
+    env.farPlane = dist[0];
+    render::Camera cam;
+    cam.position = {-14841.0146f, -12219.7852f, -9989.26562f};
+    cam.lookAt(cam.position + 10000.0f * glm::vec3(-0.000770510756f, 0.999991059f, 0.00415489636f));
+    cam.verticalFovDeg = 45.0f, cam.nearZ = 16.0f, cam.farZ = 200000.0f;
+    const auto p = render::original::pssm(cam, 1.7778f, env);
+    ASSERT_TRUE(p.active);
+    for (int k = 0; k < 4; ++k) EXPECT_NEAR(p.distances[k], dist[k], dist[k] * 1e-5f) << k;
+    EXPECT_EQ(p.distances[4], 16.0f);
+    render::sm3::FrameBlock f{};
+    render::original::fillPssm(f, p, cam);
+    const float ps[6][4] = {{6.17538881f, 6.17538548f, 2.0030396f, 0}, {-3.89644623f, -2.81223202f, 0.120937169f, 1},
+                            {13.7412071f, 13.7411957f, 3.14637947f, 0}, {-9.84380817f, -6.10245466f, -0.192649007f, 1},
+                            {34.8941994f, 34.8941689f, 3.34432364f, 0}, {-25.7916279f, -16.5638409f, -0.165199697f, 1}};
+    for (int r = 0; r < 6; ++r)
+        for (int c = 0; c < 4; ++c) EXPECT_NEAR(f.ps[80 + r][c], ps[r][c], 2e-3f + std::abs(ps[r][c]) * 1e-4f) << "c" << 80 + r << "." << c;
+    for (int c = 0; c < 4; ++c) EXPECT_NEAR(f.ps[96][c], dist[c], dist[c] * 1e-5f);
+    const float vs[4][4] = {{-5.9157594e-07f, -1.25437225e-06f, -2.91122637e-06f, -0.000770510756f},
+                            {-1.21552341e-06f, 1.94796243e-07f, 2.32498951e-06f, 0.999991059f},
+                            {-3.68640144e-07f, 1.37077336e-06f, -2.99443559e-06f, 0.00415489636f},
+                            {0.725708008f, 0.47639975f, 0.285529315f, 12249.7441f}};
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            EXPECT_NEAR(f.vs[81 + r][c], vs[r][c], r < 3 ? std::abs(vs[r][c]) * 1e-3f + 1e-9f : (c < 3 ? 1e-5f : 0.05f))
+                << "vs c" << 81 + r << "." << c;
+    EXPECT_EQ(f.bools[2], 1u);
+    // A point on the split-3 view axis maps inside split 3's tile (1024..2048, 0..1024) at depth in (0, 1).
+    const glm::vec4 q = p.map[3] * glm::vec4(cam.position + 1000.0f * cam.forward(), 1);
+    EXPECT_GT(q.x * 4096, 1024);
+    EXPECT_LT(q.x * 4096, 2048);
+    EXPECT_GT(q.y * 3072, 0);
+    EXPECT_LT(q.y * 3072, 1024);
+    EXPECT_GT(q.z, 0);
+    EXPECT_LT(q.z, 1);
+}
+
 // Terrain lights per node-tree leaf (tru.exe 0x56ABF0 / 0x55DC20 masks, drawn by 0x511810). Wine, l3_main_bedroom
 // start (openunderworld-work/tlp/dump3.py, 2026-11-06): each leaf took the cell lights whose sphere reaches its box; on top of that tru.exe
 // left out lights not seen this frame (L1, L11: SceneLight +0x2CA = 0), which we keep (they only free slots).

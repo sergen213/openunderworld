@@ -505,7 +505,7 @@ int main(int argc, char** argv) {
         ou::render::FrameOptions fo{};
         fo.lighting = lighting, fo.cullBackFaces = cull;
         fo.overlay = lines, fo.debugLines = debugLines;
-        fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
+        fo.msaa = opt.gfx.msaa, fo.shadows = opt.gfx.shadows, fo.pssm = opt.gfx.pssm, fo.fxaa = opt.gfx.fxaa, fo.hdr = opt.gfx.hdr;
         fo.rt = ou::render::RayTracing(opt.gfx.rt), fo.rtRays = opt.gfx.rtRays;
         fo.rtLights = opt.gfx.rtLights;
         fo.rtReflections = opt.gfx.rtReflections;

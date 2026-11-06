@@ -35,7 +35,9 @@ namespace ou::render::sm3 {
 //                                                  vec4 waves[4] = VS c60..c63 (InstanceParams 3-6: the water
 //                                                  volume's sea waves, original::fillWaves; else 0);
 //   samplers s0..s15: VK set 1 binding 1 + n, GL texture unit n. s12/s13 of programs naming them ModulationMapSamplers
-//   are sampler2DArray (Glsl::samplerType kSamplerCookies): the scene's spot cookies, one layer each.
+//   are sampler2DArray (Glsl::samplerType kSamplerCookies): the scene's spot cookies, one layer each. s14
+//   ShadowMapSampler of the PSSM programs is sampler2DShadow (kSamplerShadow): the original::Pssm depth atlas, compare
+//   LESS_OR_EQUAL, bilinear; frame bools.z = 1 while it holds this frame's splits (else its fetches read 1).
 // Register -> block: VS c0-7 object, c60-63 object.waves, c25-64 material (MaterialParams + InstanceParams c57), else frame; PS c2/c98 material.fixed, c132-134 object.inst, c100-139 material (MaterialParams + InstanceParams c135),
 // PS c178-c207 (Shadow/NonShadowLights, 5 per slot) frame.lights[lightSet slot] rows 0-4, c170-c175 (WorldToModulationMapSpot,
 // slots 0/1) rows 5-7, b0-b5 = slot used, c70-c76
@@ -43,7 +45,7 @@ namespace ou::render::sm3 {
 // `def` constants shadow every block (D3D9 semantics).
 inline constexpr int kFrameVs = 256, kFramePs = 224, kMaterialVsBase = 25, kMaterialVs = 40, kMaterialPsBase = 100,
                      kMaterialPs = 40, kObjectVs = 8, kMaxLights = 64, kLightRegs = 9, kSlotRegs = 5, kLightSlots = 6,
-                     kLightSlotBase = 178, kCookieRowsBase = 170, kCookieSampler = 12, kSamplerCookies = 5,
+                     kLightSlotBase = 178, kCookieRowsBase = 170, kCookieSampler = 12, kSamplerCookies = 5, kSamplerShadow = 6,
                      kIrradianceSlots = 128, kIrradianceRegs = 7, kIrradianceBase = 70;
 struct FrameBlock {
     float vs[kFrameVs][4];
@@ -80,7 +82,7 @@ struct Glsl {
     std::string source;  // empty on failure
     std::string error;
     uint16_t samplers = 0;       // bit n: s<n> is sampled
-    uint8_t samplerType[16] = {}; // D3DSAMPLER_TEXTURE_TYPE >> 27 (2 = 2D, 3 = cube, 4 = volume), kSamplerCookies
+    uint8_t samplerType[16] = {}; // D3DSAMPLER_TEXTURE_TYPE >> 27 (2 = 2D, 3 = cube, 4 = volume), kSamplerCookies, kSamplerShadow
     uint8_t attributes = 0;      // bit n: location n read (VS)
     bool sunLit = false;         // PS reads the SunLight colour c212 (scaled by ouSunVis, render/sun.glsl)
     bool readsDepth = false;     // PS reads DepthToW c77 (decodes the depth buffer; original::screenSamplers)

@@ -131,6 +131,11 @@ struct Light {
     // (+0x82C), rotation deg/s (+0x830), uv scroll per second (+0x834 / +0x838).
     uint32_t cookie = 0;
     float cookieScale = 1, cookieRotation = 0, cookieScroll[2] = {};
+    // Visibility (tru.exe 0x5CC190, every frame per unit light; LEVELS.md "Lights"): record +0x8A clear = never lit;
+    // record +0x80 set = lit only while the camera is near: fadeDistance (+0x7C), fadeRange (+0x84), measured from
+    // `fadeRadius` (DTP +0x04) for points (render::original::lightFade). fadeRange 0 = no fade.
+    bool lit = true;
+    float fadeDistance = 0, fadeRange = 0, fadeRadius = 0;
 };
 
 // Light probes of a unit (docs/formats/LEVELS.md "Irradiance volume"): the DTP of cell group +0x1C. Dynamic objects
@@ -168,6 +173,12 @@ struct Environment {
     uint32_t sunCookie = 0;
     float sunAxes[2][3] = {}, sunOrigin[3] = {};
     float cookieScale = 1, cookieRotation = 0, cookieScroll[2] = {};
+    // Sun shadows (tru.exe PSSM, render::original::pssm): split far distances as fractions of the far plane, nearest
+    // first (render settings +0x28..+0x34 -> device vfunc 0x80 = 0x508350; engine default 1/64, 1/16, 1/4, 1), and the
+    // sun record's depth bias / slope bias (+0x60 / +0x64 when +0x5D, else 2^-16 / 2.2: PCRenderLight +0x10C / +0x110).
+    float pssmSplits[4] = {0.015625f, 0.0625f, 0.25f, 1.0f};
+    float farPlane = 0; // render settings +0x38: the camera context's far plane (0x513BE0 param_1[0xF]), 0 = unknown
+    float shadowBias[2] = {1.52587891e-5f, 2.2f};
     // Under water (docs/RENDERING.md "Under water"). Render settings +0x1C fog colour u8[3], +0x4C near, +0x48 far
     // (0 -> +0x38): the fog while the camera is below Lara's water surface (tru.exe 0x5C1F50).
     float waterFogColor[3] = {};

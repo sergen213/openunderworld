@@ -142,7 +142,9 @@ const uint32_t kFxFrag[] = {
 
 // Scene pipelines exist per scene::Blend (blend state is baked into Vulkan pipelines).
 // Prepass: RT depth pre-pass (depth only; the RT Opaque pipeline then tests LEQUAL without writes).
-enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Lines, Overlay, Post, Prepass, Water, SplashSplat,
+// Pssm: tru.exe's shadow atlas (original::Pssm): as Shadow with the slope bias as dynamic state (the depth bias is in
+// the split's matrix).
+enum class PipelineKind { Opaque, Alpha, Additive, Average, Shadow, Pssm, Lines, Overlay, Post, Prepass, Water, SplashSplat,
                           SplashBlur, SplashComposite, FxAlpha, FxAdditive, FxSubtract, FxMultiply }; // Fx*: FxBatch::blend order
 
 struct LineVertex {
@@ -871,6 +873,12 @@ public:
         }
         std::memcpy(shadowUbo_[frameIndex_].mapped + offsetof(SunShadowBlock, lights), &rtLights, sizeof rtLights);
         if (shadowMap) recordShadowPass(cmd, sun, zRemap);
+        // Original preset: tru.exe's own sun shadows for the translated programs (they read lit otherwise).
+        original::Pssm pssm;
+        if (options.pssm && options.originalShaders && !origPrograms_.empty()) {
+            pssm = original::pssm(camera, aspect, environment_);
+            if (pssm.active) recordPssmPass(cmd, pssm);
+        }
         gpuMark(cmd, 3);
 
         const VkImage target = swapImages_[imageIndex_];
@@ -961,6 +969,7 @@ public:
             sm3::FrameBlock fb;
             original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_, false,
                                 options.underwater, cookieIds_);
+            original::fillPssm(fb, pssm, camera);
             irradiance_.fill(fb);
             std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
         }
@@ -992,8 +1001,9 @@ public:
             if (cache.size() <= group) cache.resize(group + 1);
             auto& [stamp, lights] = cache[group];
             if (stamp != frameCounter_ + 1)
-                stamp = frameCounter_ + 1, lights = group ? original::lightSet(environment_, m.lightBoxes[group - 1], m.model, m.lightMask)
-                                                          : original::lightSet(environment_, m.center, m.radius, m.lightMask);
+                stamp = frameCounter_ + 1,
+                lights = group ? original::lightSet(environment_, m.lightBoxes[group - 1], m.model, m.lightMask, &camera.position)
+                               : original::lightSet(environment_, m.center, m.radius, m.lightMask, &camera.position);
             original::fillObject(ob, viewProjD3D, m.model, lights, opacityOf(d.mesh));
             original::fillWaves(ob, options.waterVolumes, m.center, m.radius);
             ob.irradiance = irradiance_.slot(d.mesh);
@@ -1024,6 +1034,7 @@ public:
             sm3::FrameBlock fb;
             original::fillFrame(fb, reflection->camera, {int(half.width), int(half.height)}, options.time, environment_, false,
                                 options.underwater, cookieIds_);
+            original::fillPssm(fb, pssm, camera);
             irradiance_.fill(fb);
             std::memcpy(reflFrameUbo_[frameIndex_].mapped, &fb, sizeof fb);
             std::vector<VkImageMemoryBarrier2> rb = {
@@ -1748,6 +1759,7 @@ public:
             destroyImage(white_);
             destroyImage(font_);
             destroyImage(shadow_);
+            destroyImage(pssm_);
             destroyImage(attenuation_);
             destroyImage(cookies_);
             destroyImage(blackCube_);
@@ -1779,7 +1791,7 @@ public:
             vkDestroyDescriptorPool(device_, staticPool_, nullptr);
             destroyScenePipelines();
             destroyFsr();
-            for (VkPipeline p : {textPipeline_, shadowPipeline_, postPipeline_}) vkDestroyPipeline(device_, p, nullptr);
+            for (VkPipeline p : {textPipeline_, shadowPipeline_, pssmPipeline_, postPipeline_}) vkDestroyPipeline(device_, p, nullptr);
             for (VkPipelineLayout l : {sceneLayout_, textLayout_, lineLayout_, postLayout_, fxLayout_}) vkDestroyPipelineLayout(device_, l, nullptr);
             for (auto& m : lineMemory_) m.reset();
             vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);
@@ -2030,6 +2042,7 @@ private:
                     if (const auto it = textures_.find(id); it != textures_.end() && it->second.cube == cube)
                         ii[size_t(n)].imageView = it->second.view;
                 if (ps.samplerType[n] == sm3::kSamplerCookies) ii[size_t(n)] = {postSampler_, cookies_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                if (ps.samplerType[n] == sm3::kSamplerShadow) ii[size_t(n)] = {shadowSampler_, pssm_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             }
             VkWriteDescriptorSet w[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
             w[0].dstSet = w[1].dstSet = sets[u];
@@ -2198,6 +2211,64 @@ private:
         vkCmdEndRendering(cmd);
         const VkImageMemoryBarrier2 toRead = imageBarrier(
             shadow_.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kDepthStages,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        barriers(cmd, {&toRead, 1});
+    }
+
+    // tru.exe's PSSM atlas (original::Pssm): cleared to 1 (the area outside the split tiles is the ShadowLights' lit
+    // texel), one 1024² tile per split with the shadow map's casters. The splits' matrices are D3D clip (y up, z 0..1):
+    // negative-height viewports put row 0 at the top, as tru.exe's lookups count rows.
+    void recordPssmPass(VkCommandBuffer cmd, const original::Pssm& p) {
+        constexpr VkPipelineStageFlags2 kDepthStages =
+            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        const VkImageMemoryBarrier2 toDepth = imageBarrier(
+            pssm_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+            kDepthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_IMAGE_ASPECT_DEPTH_BIT);
+        barriers(cmd, {&toDepth, 1});
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = pssm_.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil = {1.0f, 0};
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {uint32_t(original::kPssmWidth), uint32_t(original::kPssmHeight)}};
+        ri.layerCount = 1;
+        ri.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &ri);
+        vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pssmPipeline_);
+        vkCmdSetDepthBias(cmd, 0.0f, 0.0f, p.slopeBias);
+        ScenePush push{};
+        for (int k = 0; k < original::kPssmSplits; ++k) {
+            constexpr float t = float(original::kPssmTile);
+            const VkViewport viewport{float(p.tile[k].x), float(p.tile[k].y) + t, t, -t, 0, 1};
+            const VkRect2D tile{{p.tile[k].x, p.tile[k].y}, {uint32_t(original::kPssmTile), uint32_t(original::kPssmTile)}};
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &tile);
+            push.viewProj = p.tileClip[k];
+            for (const auto& m : meshes_) {
+                if (outsideOrtho(push.viewProj, m.center, m.radius)) continue;
+                const VkDeviceSize zero = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &zero);
+                vkCmdBindIndexBuffer(cmd, m.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                push.model = m.model;
+                for (const auto& s : m.submeshes) {
+                    if ((s.blend != scene::Blend::Opaque && s.blend != scene::Blend::Alpha) || !s.castsShadow) continue;
+                    push.alphaRef = (s.blend == scene::Blend::Alpha ? std::max<int>(s.alphaRef, 128) : s.alphaRef) / 255.0f;
+                    vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                       sizeof push, &push);
+                    const VkDescriptorSet set = textureSet(s.textureId);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &set, 0, nullptr);
+                    vkCmdDrawIndexed(cmd, s.indexCount, 1, s.firstIndex, 0, 0);
+                }
+            }
+        }
+        vkCmdEndRendering(cmd);
+        const VkImageMemoryBarrier2 toRead = imageBarrier(
+            pssm_.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kDepthStages,
             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
         barriers(cmd, {&toRead, 1});
@@ -2697,6 +2768,8 @@ private:
                                        VK_SAMPLE_COUNT_1_BIT, swap, VK_FORMAT_UNDEFINED);
         shadowPipeline_ = createPipeline(kShadowVert, kShadowFrag, sceneLayout_, &kSceneBinding, kShadowAttrs,
                                          PipelineKind::Shadow, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_UNDEFINED, shadowFormat_);
+        pssmPipeline_ = createPipeline(kShadowVert, kShadowFrag, sceneLayout_, &kSceneBinding, kShadowAttrs,
+                                       PipelineKind::Pssm, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_UNDEFINED, shadowFormat_);
 
         // Original Fidelity register files (ShaderTranslate.hpp): set 0 = frame UBO, set 1 = material UBO + s0-s15,
         // set 2 = sun shadow (as the scene's set 1), set 3 = ray tracing (RT devices); push constants = object block.
@@ -2797,12 +2870,13 @@ private:
             rs.depthBiasConstantFactor = 2.0f;
             rs.depthBiasSlopeFactor = 2.0f;
         }
+        if (kind == PipelineKind::Pssm) rs.depthBiasEnable = VK_TRUE; // vkCmdSetDepthBias
         VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         ms.rasterizationSamples = samples;
         VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
         // With the RT depth pre-pass, opaque colour draws only test (each visible pixel traces once).
         const bool prepassed = rtPipelines_ && kind == PipelineKind::Opaque;
-        const bool writesDepth = (kind == PipelineKind::Opaque && !prepassed) || kind == PipelineKind::Shadow ||
+        const bool writesDepth = (kind == PipelineKind::Opaque && !prepassed) || kind == PipelineKind::Shadow || kind == PipelineKind::Pssm ||
                                  kind == PipelineKind::Prepass;
         ds.depthTestEnable = depthFormat != VK_FORMAT_UNDEFINED && kind != PipelineKind::SplashComposite;
         ds.depthWriteEnable = writesDepth;
@@ -2836,10 +2910,11 @@ private:
         cb.pAttachments = &blend;
         for (float& c : cb.blendConstants) c = 0.5f; // Blend::Average = D3DBLEND_BLENDFACTOR 0x80808080
         // Alpha scene pipelines: depth write set per draw (SubMesh::depthWrite, blend modes 2-3; the scene draw loops).
-        const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE,
-                                      VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE};
+        VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE,
+                                VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE};
+        if (kind == PipelineKind::Pssm) dyn[3] = VK_DYNAMIC_STATE_DEPTH_BIAS;
         VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0,
-                                            kind == PipelineKind::Alpha ? 4u : 3u, dyn};
+                                            kind == PipelineKind::Alpha || kind == PipelineKind::Pssm ? 4u : 3u, dyn};
         VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         rendering.colorAttachmentCount = hasColor ? 1 : 0;
         rendering.pColorAttachmentFormats = &colorFormat;
@@ -3368,11 +3443,16 @@ private:
             w[1].pBufferInfo = &bi;
             vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
         }
+        // tru.exe's PSSM atlas: sampled only after a frame's pass cleared and filled it (frame bools.z), so not cleared here.
+        pssm_ = createImage(staticMemory_, shadowFormat_, original::kPssmWidth, original::kPssmHeight, 1,
+                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
         oneShot([&](VkCommandBuffer cmd) {
-            const auto b = imageBarrier(shadow_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                        VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-            barriers(cmd, {&b, 1});
+            for (VkImage image : {shadow_.image, pssm_.image}) {
+                const auto b = imageBarrier(image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                            VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                barriers(cmd, {&b, 1});
+            }
         });
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, staticPool_, 1, &setLayout_};
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &postSet_)); // written per swapchain (recreateSwapchain)
@@ -4845,6 +4925,7 @@ private:
     VkPipelineLayout sceneLayout_ = VK_NULL_HANDLE, textLayout_ = VK_NULL_HANDLE, lineLayout_ = VK_NULL_HANDLE,
                      postLayout_ = VK_NULL_HANDLE;
     std::array<VkPipeline, 4> scenePipelines_{}; // indexed by scene::Blend
+    VkPipeline pssmPipeline_ = VK_NULL_HANDLE;
     VkPipeline textPipeline_ = VK_NULL_HANDLE, linePipeline_ = VK_NULL_HANDLE, shadowPipeline_ = VK_NULL_HANDLE,
                postPipeline_ = VK_NULL_HANDLE, prepassPipeline_ = VK_NULL_HANDLE;
     VkPipeline waterPipeline_ = VK_NULL_HANDLE, waterRtPipeline_ = VK_NULL_HANDLE;
@@ -4877,6 +4958,7 @@ private:
     std::vector<std::pair<VkDescriptorSet, std::array<VkDescriptorImageInfo, 16>>> origMaterialImages_; // setMipBias
     VkDescriptorPool staticPool_ = VK_NULL_HANDLE;
     GpuImage white_, font_, shadow_;
+    GpuImage pssm_; // tru.exe's PSSM atlas (original::Pssm, s14 of the PSSM programs); SHADER_READ_ONLY outside its pass
     std::array<UiImage, 3> uiImages_; // FrameOptions::uiImages
     VkDescriptorSet postSet_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout shadowSetLayout_ = VK_NULL_HANDLE;           // sun.glsl: atlas + OuShadow UBO

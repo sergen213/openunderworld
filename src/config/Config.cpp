@@ -29,6 +29,8 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
         throw std::runtime_error("msaa must be 1, 2, 4 or 8");
     if (g.msaa) s.msaa = g.msaa;
     s.shadows = g.shadows.value_or(s.shadows);
+    // Original with TRU's shaders: `shadows` is tru.exe's own PSSM (on unless turned off), not our shadow map.
+    if (g.preset == "original" && g.originalShaders.value_or(true)) s.pssm = g.shadows.value_or(true), s.shadows = false;
     s.fxaa = g.fxaa.value_or(s.fxaa);
     s.hdr = g.hdr.value_or(s.hdr);
     s.originalShaders = g.originalShaders.value_or(s.originalShaders);

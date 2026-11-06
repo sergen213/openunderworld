@@ -2,6 +2,7 @@
 // D3D register becomes a vec4 local, every instruction one masked assignment; flow control maps 1:1.
 #include "render/ShaderTranslate.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -120,11 +121,24 @@ public:
                 if (n >= c->registerIndex && n < c->registerIndex + c->registerCount && (out_.samplers >> n & 1) &&
                     out_.samplerType[n] == 2)
                     out_.samplerType[n] = kSamplerCookies;
+        // The PSSM atlas (CTAB ShadowMapSampler, the kPssmVariant programs' s14): a depth texture sampled with compare
+        // (texldl only, original::Pssm) as D3D9's hardware PCF.
+        if (const Constant* c = p_.constant("ShadowMapSampler"); p_.pixel && c && c->registerSet == 3 && c->registerIndex < 16) {
+            const unsigned n = c->registerIndex;
+            const bool compared = std::ranges::any_of(p_.instructions, [&](const Instruction& in) {
+                return in.op == TexLdl && in.src.size() > 1 && in.src[1].type == Reg::Sampler && in.src[1].num == n;
+            });
+            const bool plain = std::ranges::any_of(p_.instructions, [&](const Instruction& in) {
+                return in.op == Tex && in.src.size() > 1 && in.src[1].type == Reg::Sampler && in.src[1].num == n;
+            });
+            if ((out_.samplers >> n & 1) && out_.samplerType[n] == 2 && compared && !plain) out_.samplerType[n] = kSamplerShadow;
+        }
         bool cookies = false;
         for (int n = 0; n < 16; ++n)
             if (out_.samplers >> n & 1) {
                 const uint8_t st = out_.samplerType[n];
-                const char* t = st == 3 ? "samplerCube" : st == 4 ? "sampler3D" : st == kSamplerCookies ? "sampler2DArray" : "sampler2D";
+                const char* t = st == 3 ? "samplerCube" : st == 4 ? "sampler3D" : st == kSamplerCookies ? "sampler2DArray"
+                                : st == kSamplerShadow ? "sampler2DShadow" : "sampler2D";
                 h += "OU_SAMPLER(" + std::to_string(n) + ") uniform " + t + " s" + std::to_string(n) + ";\n";
                 cookies |= st == kSamplerCookies;
             }
@@ -489,6 +503,7 @@ private:
         case Dsy: need(1); return assign(in, "(OU_DFDY_SIGN * dFdy(" + src(s[0]) + "))");
         case Tex: {
             need(2);
+            if (out_.samplerType[s[1].num & 15] == kSamplerShadow) throw Fail("non-compare fetch from the shadow map");
             const std::string smp = sampler(s[1]);
             if (out_.samplerType[s[1].num & 15] == kSamplerCookies) {
                 const std::string c = in.control == 1 ? src(s[0]) : "vec4((" + src(s[0]) + ").xy, 0.0, 1.0)";
@@ -501,7 +516,13 @@ private:
             if (in.control == 2) return texResult(in, "texture(" + smp + ", " + coords(s[0], s[1]) + ", (" + src(s[0]) + ").w)");
             return texResult(in, "texture(" + smp + ", " + coords(s[0], s[1]) + ")");
         }
-        case TexLdl: need(2); return texResult(in, "textureLod(" + sampler(s[1]) + ", " + coords(s[0], s[1]) + ", (" + src(s[0]) + ").w)");
+        case TexLdl:
+            need(2);
+            // Hardware PCF (ShadowMapSampler of the kPssmVariant programs): the depth compare of (u, v) against z, D3D9's
+            // LESSEQUAL; frame bools.z = 0 (no atlas this frame) reads lit without sampling.
+            if (out_.samplerType[s[1].num & 15] == kSamplerShadow)
+                return texResult(in, "vec4(ouFrame.bools.z != 0u ? textureLod(" + sampler(s[1]) + ", (" + src(s[0]) + ").xyz, 0.0) : 1.0)");
+            return texResult(in, "textureLod(" + sampler(s[1]) + ", " + coords(s[0], s[1]) + ", (" + src(s[0]) + ").w)");
         case TexLdd: {
             need(4);
             const uint8_t t = out_.samplerType[s[1].num & 15];

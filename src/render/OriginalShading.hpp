@@ -29,17 +29,43 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect);
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float timeSeconds, const scene::Environment& env,
                bool flipY = false, const Underwater* underwater = nullptr, std::span<const uint32_t> cookies = {});
 // The point/spot light table (FrameBlock::lights, first kMaxLights of env.lights) at time t (flicker); part of fillFrame.
-void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds, std::span<const uint32_t> cookies = {});
+// `eye`: the camera position, for the lights' distance switch (lightFade); nullptr = every light at full intensity.
+void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds, std::span<const uint32_t> cookies = {},
+                const glm::vec3* eye = nullptr);
+// Intensity scale 0..1 of a light seen from `eye` (tru.exe 0x5CC190; scene::Light::lit / fade*): 0 = switched off.
+float lightFade(const scene::Light& l, glm::vec3 eye);
+
+// tru.exe's sun shadows (PSSM, 0x50CCB0; SHADERS.md "PSSM"): kPssmSplits splits, far to near, each an orthographic view
+// of the bounding sphere of its camera-frustum slice, rendered into one kPssmTile² tile of a kPssmWidth x kPssmHeight
+// depth atlas. The composite programs are slot kPssmVariant (device +0x11484 | slot: 6 under Wine/DXVK, the hardware
+// PCF variant, 4 compared taps of s14 ShadowMapSampler).
+inline constexpr int kPssmSplits = 4, kPssmTile = 1024, kPssmWidth = 4096, kPssmHeight = 3072, kPssmVariant = 6;
+struct Pssm {
+    bool active = false;
+    float distances[kPssmSplits + 1] = {}; // camera context +0x444: split far view depths, far to near, then the near plane
+    glm::ivec2 tile[kPssmSplits] = {};     // atlas texel origin of each split's tile (rows top-down)
+    glm::mat4 tileClip[kPssmSplits];       // world -> D3D clip of the split within its tile (y up, z 0..1 + depth bias)
+    glm::mat4 map[kPssmSplits];            // world -> atlas (u, v, depth) as the receivers sample it
+    float slopeBias = 0;                   // D3DRS_SLOPESCALEDEPTHBIAS (depth bias: in tileClip)
+};
+// Splits of the frame (inactive without a sun). `aspect`: viewport width / height.
+Pssm pssm(const Camera& camera, float aspect, const scene::Environment& env);
+// PSSM registers (fillFrame leaves them unlit): VS c81-c84 WorldToPSSM0 (split 0's map, w = view depth), PS c80-c85
+// PSSMToMap{1,2,3}{Lin,Const}, c96 PSSMDistances, the ShadowLights' WorldToShadowMap c158-c169 (no light shadow maps:
+// a lit texel), and frame bools.z = 1 (the translated s14 fetches compare; 0 = they read lit).
+void fillPssm(sm3::FrameBlock& f, const Pssm& p, const Camera& camera);
 // Material registers: MaterialParams, InstanceParams (zero, as tru.exe's default 0x848F78), AlphaThreshold, opacity.
 void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene::SubMesh& sub);
 // Light set of one object: env.lights indices for PS light slots 0-5, one byte each (0xFF = empty).
 struct LightSet { uint32_t packed[2] = {~0u, ~0u}; };
-// The lights whose radius reaches the world-space sphere (center, radius), grouped into slots as tru.exe.
-LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius, uint32_t receiver = ~0u);
+// The lights whose radius reaches the world-space sphere (center, radius), grouped into slots as tru.exe; with `eye`,
+// lights switched off for that camera (lightFade) are left out.
+LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius, uint32_t receiver = ~0u,
+                  const glm::vec3* eye = nullptr);
 // Same for a terrain light group: the lights whose radius reaches one of its mesh-space leaf `boxes` under `model`
 // (scene::MeshData::lightBoxes). Lights whose mask misses `receiver` (scene::MeshData::lightMask) are left out.
 LightSet lightSet(const scene::Environment& env, std::span<const std::array<float, 6>> boxes, const glm::mat4& model,
-                  uint32_t receiver = ~0u);
+                  uint32_t receiver = ~0u, const glm::vec3* eye = nullptr);
 // World-space bounding sphere (xyz centre, w radius) of vertices under `model` (lightSet input; skinned meshes
 // recompute it in updateVertices).
 glm::vec4 boundingSphere(std::span<const scene::Vertex> vertices, const glm::mat4& model);

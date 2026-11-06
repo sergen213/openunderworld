@@ -84,7 +84,7 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     put(f.ps, 149, 1, 1, 1, 1);
     f.bools[0] = 0; // vs b0-15
     // Sun = light slot 6 (c208 + 5*6): c209 direction, c212 colour (w = luminance), b6 (0x50A5F0, 0x5042B0).
-    fillLights(f, env, t, cookies);
+    fillLights(f, env, t, cookies, &eye);
     f.bools[1] = 0;
     if (env.valid && env.sun) {
         const float* c = env.sunColor;
@@ -200,7 +200,7 @@ std::vector<int> falloffRows(const scene::Environment& env) {
     return rows;
 }
 
-void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float t, std::span<const uint32_t> cookies) {
+void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float t, std::span<const uint32_t> cookies, const glm::vec3* eye) {
     // Light table: ShadowLights/NonShadowLights registers per light (PCRenderLight 0x50B910, uploaded per slot by
     // 0x50A5F0): R0 position (spots: moved back to the cone apex), R1 direction, R2 (1/radius, 0, -apex/radius,
     // falloff row v) -> AttenuationSampler u = (d - apex) / radius, R3 (cone scale, cone bias, apex plane, 0),
@@ -222,11 +222,11 @@ void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float t, std:
             plane = apex;
         }
         // Flicker: intensity x curve[phase · 255] lerped, phase = frac(t / period) (0x50A500).
-        float k = 1;
+        float k = eye ? lightFade(l, *eye) : 1.0f; // camera distance switch (0x5CC190)
         if (l.flickerPeriod > 0 && l.flicker.size() == 256) {
             const float p = std::fmod(t / l.flickerPeriod, 1.0f) * 255.0f;
             const int i0 = int(p);
-            k = glm::mix(l.flicker[size_t(i0)], l.flicker[size_t(std::min(i0 + 1, 255))], p - float(i0));
+            k *= glm::mix(l.flicker[size_t(i0)], l.flicker[size_t(std::min(i0 + 1, 255))], p - float(i0));
         }
         const glm::vec3 pos = glm::make_vec3(l.position) - apex * dir, c = glm::make_vec3(l.color) * k;
         const int row = rows[i] < 0 ? kLightRow : rows[i];
@@ -284,10 +284,97 @@ EngineTexture cookieArray(std::span<const uint32_t> ids, std::span<const scene::
     return a;
 }
 
+float lightFade(const scene::Light& l, glm::vec3 eye) {
+    // tru.exe 0x5CC190 per unit light and frame: off unless record +0x8A; with the +0x80 fade, the distance d from the
+    // camera (0x5CBFA0: points |eye - position| - DTP radius, >= 0; spots [I] |eye - position|, the decompiled segment
+    // term adds under a unit) switches it off from D + range - m (m = min(0.3 D, range / 2)) and fades it linearly over
+    // the range before that; D = record +0x7C, range = +0x84.
+    if (!l.lit) return 0;
+    if (l.fadeRange <= 0) return 1;
+    const float dist = glm::distance(eye, glm::make_vec3(l.position));
+    const float d = l.type == 0 ? std::max(dist - l.fadeRadius, 0.0f) : dist;
+    const float near = l.fadeDistance - std::min(0.3f * l.fadeDistance, 0.5f * l.fadeRange);
+    if (d >= near + l.fadeRange) return 0;
+    return d <= near ? 1.0f : 1.0f - (d - near) / l.fadeRange;
+}
+
+Pssm pssm(const Camera& camera, float aspect, const scene::Environment& env) {
+    Pssm p;
+    if (!env.valid || !env.sun) return p;
+    p.active = true;
+    p.slopeBias = env.shadowBias[1];
+    // Split far depths (0x513BE0): min(far plane, fog far) x the fractions, farthest first; then the near plane. The
+    // far plane is the unit's (render settings +0x38), not our camera's (which keeps more of the view).
+    float far = env.farPlane > 0 ? env.farPlane : camera.farZ;
+    if (env.fogFar > 0) far = std::min(far, env.fogFar);
+    for (int k = 0; k < kPssmSplits; ++k) p.distances[k] = far * env.pssmSplits[kPssmSplits - 1 - k];
+    p.distances[kPssmSplits] = camera.nearZ;
+    constexpr glm::ivec2 kTiles[kPssmSplits] = {{2048, 1024}, {2048, 0}, {1024, 1024}, {1024, 0}}; // 0x50CCB0 param_3
+    constexpr float kDepthNear[kPssmSplits] = {-120000, -90000, -60000, -60000};                  // 0x849684
+    const glm::vec3 X = glm::make_vec3(env.sunAxes[0]), Y = glm::make_vec3(env.sunAxes[1]), Z = glm::make_vec3(env.sunDirection);
+    const float t = std::tan(glm::radians(camera.verticalFovDeg) * 0.5f);
+    for (int k = 0; k < kPssmSplits; ++k) {
+        // Bounding sphere of the frustum slice (0x50AC40 corners, 0x50CB40): centred on the view axis where the near
+        // and far corners are equally far (clamped to the slice), radius = the farthest corner.
+        const float n = p.distances[k + 1], f = p.distances[k];
+        const glm::vec3 cn(n * t * aspect, n * t, n), cf(f * t * aspect, f * t, f);
+        const float zc = n == f ? n : glm::clamp((glm::dot(cn, cn) - glm::dot(cf, cf)) / (2.0f * (n - f)), std::min(n, f), std::max(n, f));
+        const float r = std::max(glm::length(cn - glm::vec3(0, 0, zc)), glm::length(cf - glm::vec3(0, 0, zc)));
+        const glm::vec3 c = camera.position + zc * camera.forward();
+        // Light view about the centre: rows of the sun record, xy scaled by 512 / r, the xy translation rounded up (one
+        // unit = one texel: the map moves in whole texels; 0x815520 = ceil); ortho x, y +-512, z from kDepthNear to r
+        // (0x509F30).
+        const float s = 512.0f / r;
+        const glm::vec3 o(std::ceil(-s * glm::dot(c, X)), std::ceil(-s * glm::dot(c, Y)), -glm::dot(c, Z));
+        const float zn = kDepthNear[k], zs = 1.0f / (r - zn);
+        glm::mat4 clip(1.0f); // columns: x, y, z inputs, translation
+        for (int i = 0; i < 3; ++i) clip[i] = glm::vec4(s * X[i] / 512.0f, s * Y[i] / 512.0f, Z[i] * zs, 0);
+        clip[3] = glm::vec4(o.x / 512.0f, o.y / 512.0f, (o.z - zn) * zs, 1);
+        // Atlas (u, v) of the tile, with D3D9's half-texel offset (0x50CCB0: (origin + 256·2 + 0.5) / size).
+        const glm::ivec2 tl = p.tile[k] = kTiles[k];
+        glm::mat4 bias(1.0f);
+        bias[0][0] = 512.0f / kPssmWidth, bias[1][1] = -512.0f / kPssmHeight;
+        bias[3] = glm::vec4((float(tl.x) + 512.5f) / kPssmWidth, (float(tl.y) + 512.5f) / kPssmHeight, 0, 1);
+        p.map[k] = bias * clip;
+        // Rendering it: our rasteriser samples pixel centres at +0.5, D3D9's at the integer, so the half texel the
+        // lookup adds is moved into the rendering (x right, y up = rows up) instead; plus the constant depth bias.
+        glm::mat4 shift(1.0f);
+        shift[3] = glm::vec4(1.0f / kPssmTile, -1.0f / kPssmTile, env.shadowBias[0], 1);
+        p.tileClip[k] = shift * clip;
+    }
+    return p;
+}
+
+void fillPssm(sm3::FrameBlock& f, const Pssm& p, const Camera& camera) {
+    if (!p.active) return;
+    // WorldToPSSM0: split 0's map with the 4th output replaced by the view depth along the camera's forward axis.
+    glm::mat4 m = p.map[0];
+    const glm::vec3 fwd = camera.forward();
+    for (int i = 0; i < 3; ++i) m[i][3] = fwd[i];
+    m[3][3] = -glm::dot(fwd, camera.position);
+    putMatrix(f.vs, 81, m);
+    // PSSMToMap{n}: split n's coordinates from split 0's, per axis (the splits share the light rotation): scale = the
+    // ratio of their xyz coefficient sums, offset = split n's translation - split 0's x scale.
+    for (int n = 1; n < kPssmSplits; ++n) {
+        float lin[3], off[3];
+        for (int j = 0; j < 3; ++j) {
+            const float s0 = p.map[0][0][j] + p.map[0][1][j] + p.map[0][2][j], sn = p.map[n][0][j] + p.map[n][1][j] + p.map[n][2][j];
+            lin[j] = sn / s0, off[j] = p.map[n][3][j] - p.map[0][3][j] * lin[j];
+        }
+        put(f.ps, 78 + 2 * n, lin[0], lin[1], lin[2], 0);
+        put(f.ps, 79 + 2 * n, off[0], off[1], off[2], 1);
+    }
+    put(f.ps, 96, p.distances[0], p.distances[1], p.distances[2], p.distances[3]);
+    // WorldToShadowMap of shadow-light slots 0-2 (light shadow maps are not rendered): texel (0, 0) at depth 0, outside
+    // the split tiles, always passes the compare.
+    for (int l = 0; l < 3; ++l) put(f.ps, 161 + 4 * l, 0, 0, 0, 1);
+    f.bools[2] = 1;
+}
+
 namespace {
 // Slots of the lights `reaches` accepts, in env.lights order (see lightSet below).
 template <class Reaches>
-LightSet pickLights(const scene::Environment& env, Reaches reaches) {
+LightSet pickLights(const scene::Environment& env, const glm::vec3* eye, Reaches reaches) {
     // tru.exe per drawn entity (0x55FB60 -> device vfunc 0x70 = 0x5076A0 -> 0x505530) lists the scene lights touching
     // it in scene order; 0x504CC0 keeps, in that order, up to 3 "special" lights (cookie spots, at most 2, and shadow
     // casters, DTP +0x144C) and 3 plain ones (a 4th+ plain light takes a free special place, else is dropped); 0x5042B0
@@ -297,13 +384,13 @@ LightSet pickLights(const scene::Environment& env, Reaches reaches) {
     // per leaf the same way, 0x511810). [I] Not done: receiver masks (record +0x8C..+0xB7 vs the entity's +0xE4 /
     // cell terrain data +0x08; 0x8300000F and 1 in l3_main_bedroom), spot cones (tested as spheres), and tru.exe's
     // per-frame light visibility (+0x2CA: lights whose volume is not seen through the portals are left out, which
-    // only frees slots).
+    // only frees slots). Lights switched off for the camera (lightFade 0, tru.exe SceneLight +0x64) are left out.
     std::array<int, sm3::kLightSlots> taken;
     int nTaken = 0, special = 0, plain = 0, cookies = 0;
     const size_t n = std::min(env.lights.size(), size_t(sm3::kMaxLights));
     for (size_t i = 0; i < n && nTaken < sm3::kLightSlots; ++i) {
         const scene::Light& l = env.lights[i];
-        if (!reaches(l)) continue;
+        if (!reaches(l) || (eye && lightFade(l, *eye) <= 0)) continue;
         const bool cookie = l.type == 1 && l.cookie && cookies < 2;
         if (cookie || l.shadow) {
             if (special == 3) continue;
@@ -326,13 +413,14 @@ LightSet pickLights(const scene::Environment& env, Reaches reaches) {
 }
 } // namespace
 
-LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius, uint32_t receiver) {
-    return pickLights(env, [&](const scene::Light& l) {
+LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius, uint32_t receiver, const glm::vec3* eye) {
+    return pickLights(env, eye, [&](const scene::Light& l) {
         return (l.mask & receiver) && glm::distance(glm::make_vec3(l.position), center) - radius < l.radius;
     });
 }
 
-LightSet lightSet(const scene::Environment& env, std::span<const std::array<float, 6>> boxes, const glm::mat4& model, uint32_t receiver) {
+LightSet lightSet(const scene::Environment& env, std::span<const std::array<float, 6>> boxes, const glm::mat4& model, uint32_t receiver,
+                  const glm::vec3* eye) {
     // World boxes: centre moved by `model`, half extents by |rotation-scale| (terrain models are translations).
     thread_local std::vector<std::array<float, 6>> world;
     world.clear();
@@ -347,7 +435,7 @@ LightSet lightSet(const scene::Environment& env, std::span<const std::array<floa
             all[size_t(k)] = std::min(all[size_t(k)], w[size_t(k)]), all[size_t(k) + 3] = std::max(all[size_t(k) + 3], w[size_t(k) + 3]);
         }
     }
-    return pickLights(env, [&](const scene::Light& l) {
+    return pickLights(env, eye, [&](const scene::Light& l) {
         if (!(l.mask & receiver) || !scene::sphereTouchesBox(l.position, l.radius, all)) return false;
         return std::ranges::any_of(world, [&](const auto& w) { return scene::sphereTouchesBox(l.position, l.radius, w); });
     });

@@ -362,6 +362,7 @@ Unit parseUnit(const cdc::Drm& d) {
                 e.cookieScale = dtp.at<float>(0x82C);
                 e.cookieRotation = dtp.at<float>(0x830);
                 e.cookieScroll[0] = dtp.at<float>(0x834), e.cookieScroll[1] = dtp.at<float>(0x838);
+                if (rec.at<uint8_t>(r + 0x5D)) e.shadowBias[0] = rec.at<float>(r + 0x60), e.shadowBias[1] = rec.at<float>(r + 0x64);
                 continue;
             }
             auto l = lightFromDtp(d, dtpIndex);
@@ -373,6 +374,9 @@ Unit parseUnit(const cdc::Drm& d) {
                 l->color[c] = color[c];
             }
             if (rec.at<uint8_t>(r + 0x5C) && rec.at<float>(r + 0x58) > 0) l->radius = rec.at<float>(r + 0x58);
+            l->lit = rec.at<uint8_t>(r + 0x8A) != 0;
+            if (rec.at<uint8_t>(r + 0x80))
+                l->fadeDistance = rec.at<float>(r + 0x7C), l->fadeRange = rec.at<float>(r + 0x84), l->fadeRadius = dtp.at<float>(0x04);
             e.lights.push_back(std::move(*l));
         }
     }
@@ -389,7 +393,12 @@ Unit parseUnit(const cdc::Drm& d) {
         }
         e.fogNear = rs.at<float>(o + 0x40);
         e.fogFar = rs.at<float>(o + 0x3C);
+        e.farPlane = rs.at<float>(o + 0x38);
         if (e.fogFar == 0) e.fogFar = rs.at<float>(o + 0x38);
+        // PSSM split fractions +0x28..+0x34, kept ordered and the last <= 1 as device vfunc 0x80 (0x508350) stores them.
+        float split = 0;
+        for (int k = 0; k < 4; ++k)
+            e.pssmSplits[k] = split = std::max(split, k == 3 ? std::min(rs.at<float>(o + 0x34), 1.0f) : rs.at<float>(o + 0x28 + 4 * k));
         e.valid = true;
         u.playerObjectId = rs.at<uint16_t>(o + 0x294);
         u.scriptId = rs.at<uint32_t>(o + 0x1C0);

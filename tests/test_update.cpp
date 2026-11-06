@@ -500,8 +500,14 @@ TEST(Config, GraphicsPresets) {
     EXPECT_EQ(resolve({}), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
     EXPECT_EQ(resolve(g("enhanced")), (GraphicsSettings{4, true, false, false, 1, 2, true, 1, 1.0f, true, 2, true, 1}));
     EXPECT_EQ(resolve(g("enhanced", 1, false, true, true)), (GraphicsSettings{1, false, true, true, 1, 2, true, 1, 1.0f, true, 2, true, 1})); // overrides
-    EXPECT_EQ(resolve(g("original")), (GraphicsSettings{1, false, false, false, 0})); // purist: rt auto -> off
-    EXPECT_EQ(resolve(g("original", 8, true)), (GraphicsSettings{8, true, false, false, 0}));
+    // Purist: rt auto -> off; `shadows` = tru.exe's own PSSM (on by default), never our shadow map.
+    GraphicsSettings purist{1, false, false, false, 0};
+    purist.pssm = true;
+    EXPECT_EQ(resolve(g("original")), purist);
+    purist.msaa = 8;
+    EXPECT_EQ(resolve(g("original", 8, true)), purist);
+    purist.pssm = false;
+    EXPECT_EQ(resolve(g("original", 8, false)), purist);
     EXPECT_THROW(resolve(g("ultra")), std::runtime_error);
     EXPECT_THROW(resolve(g("original", 3)), std::runtime_error);
     // Ray tracing: enhanced only; quality = shadow rays per pixel.
