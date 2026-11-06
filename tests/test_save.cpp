@@ -1015,6 +1015,30 @@ TEST(StreamReal, RagdollSaveLoad) {
     EXPECT_EQ(fresh->stateHash(), w->stateHash());
 }
 
+namespace {
+// SaveContinuesBitIdentically setups.
+// The viking thrall nearest Lara killed by a bolt, ticked until it broke into chunks: `flying` ticks after its pieces
+// became bodies (-1: saved between the tick that made the pieces and the step that makes their bodies).
+const game::ai::Enemy* brokenThrall(const game::World& w) {
+    for (const auto& e : w.enemies().all())
+        if (e->type().name == "viking_thrall" && e->state().ragdollPhase == 4) return e.get();
+    return nullptr;
+}
+void breakThrall(game::World& w, int flying) {
+    w.tick({});
+    game::ai::Enemy* t = nullptr;
+    const auto d = [&](const game::ai::Enemy& e) { return glm::distance(e.position(), w.player().state().pos); };
+    for (const auto& e : w.enemies().all())
+        if (e->type().name == "viking_thrall" && (!t || d(*e) < d(*t))) t = e.get();
+    if (!t) return;
+    game::Hit bolt{1000, t->position() + game::vec3(0, 0, 200), {1, 0, 0}, game::Team::Player};
+    bolt.damageClass = 13, bolt.damageType = 3;
+    t->onHit(bolt);
+    for (int i = 0; i < 120 && !(brokenThrall(w) && !brokenThrall(w)->state().pieces.empty()); ++i) w.tick({});
+    for (int i = 0; i < flying + 1; ++i) w.tick({});
+}
+} // namespace
+
 // A save continues the game exactly (docs/SAVES.md): on real units with enemies, uber objects, scripts and physics,
 // ticking N, saving, loading into a fresh World and ticking M more comes out bit for bit like the uninterrupted run:
 // the same World::stateHash and the same capture (every subsystem's saved state). On a mismatch the JSON patch
@@ -1105,6 +1129,11 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
              a.move.y = 1;
              return a;
          }, [](game::World& w) { w.startChapter(4); }, [](const game::World& w) { return w.player().state().state == State::Vehicle; }},
+        // A thrall broken into chunks: saved before its pieces have bodies, and with them flying.
+        {"l7_yggdrasil_hall01", game::Spawn{{1000, 0, 0}, 1.5707963f}, 0, 240, idle, [](game::World& w) { breakThrall(w, -1); },
+         [](const game::World& w) { return brokenThrall(w) && !brokenThrall(w)->state().pieceVel.empty(); }},
+        {"l7_yggdrasil_hall01", game::Spawn{{1000, 0, 0}, 1.5707963f}, 0, 240, idle, [](game::World& w) { breakThrall(w, 20); },
+         [](const game::World& w) { return brokenThrall(w) && brokenThrall(w)->state().pieces.size() == 14; }},
         // A reveal camera playing: l1_kraken_room plane 37 starts camera spline 9 (GameReal.RevealCameraPlaysUnitSpline).
         {"l1_kraken_room", std::nullopt, 60, 300, idle, [](game::World& w) {
              w.tick({});
