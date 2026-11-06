@@ -4,6 +4,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.31.0] - 2026-11-06
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- New traversal moves from the original: hanging along poles hand over hand with turns, the proper stops when letting
+  go mid-swing, ladders climbed rung by rung, pillar tops and perch turning, and the wall hug along narrow ledges.
+- New: controller vibration and camera shake from the game's own rumble and shake data (GAME OPTIONS > GAMEPAD
+  CONFIGURATION > VIBRATION, or the launcher).
+- New: CONTROL CONFIGURATION and GAMEPAD CONFIGURATION screens in GAME OPTIONS; sticks, pause and menu keys can be
+  rebound; Steam Deck back paddles can be bound; gamepads can be plugged in and swapped while playing.
+- Progression: triggers now react to other objects, not only Lara, and the Valaskjalf falling bridge works; the blue
+  goo in the pool room is deadly as in the original.
+- Launcher: every page tested and several fixes (safer save restore, export location, no double updates); updates
+  download to disk and resume after a dropped connection.
+- The AppImage now runs on older distributions (glibc 2.38+: Ubuntu 24.04, Debian 13, Fedora 39 and newer).
+- Fixed: the Vulkan renderer crashed on software Vulkan (lavapipe) and could on some APUs / Resizable BAR setups.
+
 ## [0.30.0] - 2026-11-06
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
