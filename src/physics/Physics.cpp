@@ -130,8 +130,15 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
     if (!base) return o;
     const auto& ob = d.sections[*base];
     o.oflags = at<uint32_t>(ob, 0);
-    if (const auto p = cdc::internalPointer(ob, 0xC8); p && *p + 6 <= ob.data.size() && at<uint16_t>(ob, *p + 4) == 0xB00B)
+    if (const auto p = cdc::internalPointer(ob, 0xC8); p && *p + 6 <= ob.data.size() && at<uint16_t>(ob, *p + 4) == 0xB00B) {
         o.physClass = at<uint16_t>(ob, *p + 2);
+        // Rigid body (34): +0x2C -> {+4 lo, +8 hi} [O values: ms_rb_tomb_lock -1250..0 (its script's disengaged
+        // position), ca_rb_crusher_slim 0..900 (motor 15 per frame for its 2 s clock), ms_rb_press_plate -50..0; I: that
+        // they are the joint limit].
+        if (o.physClass == kClassRigidBody && *p + 0x30 <= ob.data.size())
+            if (const auto r = cdc::internalPointer(ob, *p + 0x2C); r && *r + 0xC <= ob.data.size())
+                o.jointLimit = ObjectPhysics::Limit{at<float>(ob, *r + 4), at<float>(ob, *r + 8)};
+    }
     // Models: ObjectBase +0xA0 u16 count, +0xA4 -> resource refs of the model DTPs (formats::objectRenderModels).
     const auto ptrs = cdc::sectionPointers(d, *base);
     const auto lp = ptrs.find(0xA4);

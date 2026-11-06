@@ -785,7 +785,7 @@ private:
     void crossPortals(vec3 from, vec3 to);
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
-    void tickPlates(); // pressure plates take their Jolt joint positions (Objects.cpp)
+    void tickJoints(float dt); // script multibody joints: positions and range watches (Objects.cpp)
     // One Jolt step (Objects.cpp): hinge drives, uber joints, loose rigid bodies (tumbling onto the terrain and object
     // collision), then the uber range watches.
     void stepPhysics(float dt);

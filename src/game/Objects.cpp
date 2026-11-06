@@ -795,6 +795,21 @@ void World::bindWater() {
 }
 
 bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, std::span<const int32_t> a, uint32_t& result) {
+    // 6 (0x777A70: INSTANCE_Query(Lara, 0xF8, instance) -> 0x709FD0 case 0xF8): the largest contact force between her
+    // and the instance's body (her contact list, -(entry +0x30) where the body matches), rounded; 0 without contact.
+    // l4_traprooms crushers 5885-5890 kill her above 30. [I] Lara is no rigid body here: how deep (units) its
+    // collision reaches into her capsule, which only grows while it pins her against something.
+    if (type == "larabase" && function == 6) {
+        const vec3 feet = player_.state().pos;
+        const float r = player_.tuning().radius, height = player_.tuning().height;
+        float depth = 0;
+        for (const float h : {r, height * 0.5f, height - r})
+            if (const auto hit = col_.closestPoint(feet + vec3(0, 0, h), r, physics::kObjectMask);
+                hit && hit->dynamic >= 0 && col_.dynamics[size_t(hit->dynamic)].id == uid)
+                depth = std::max(depth, r - hit->t);
+        result = uint32_t(int32_t(std::lround(depth)));
+        return true;
+    }
     if (type == "larabase") { // 3 (0x777780): Lara is in volume `uid` (her probe box's volume) with its surface over her feet [O Wine: the goo bed kills, the walkways in the same box do not]
         const auto [m, u] = waterVolume(uid);
         const int w = player_.waterAt(player_.state().pos);
@@ -943,6 +958,13 @@ void World::bindMultibody() {
             if (o && !o->loose) o->loose = true;
             return true;
         }
+        // 89 (0x4AA250): motor `args[1]` (1..3) of joint `args[0]` takes target speed args[2] (joint +0x108 + 8 * motor;
+        // 0x4DA160). l1_baldrs_tomb locks 69 / 70 engage at +10 and disengage at -10; tickJoints moves the joint.
+        if (function == 89 && args.size() == 3 && args[0].bits == 0 && args[1].bits >= 1 && args[1].bits <= 3) {
+            if (!o) return false;
+            (o->joint ? *o->joint : o->joint.emplace()).speed = std::bit_cast<float>(args[2].bits);
+            return true;
+        }
         if (function != 77 && function != 78 && function != 79) return false;
         if (args.empty() || args[0].bits != 0) return false; // one hinge per current rigid-body object
         if (function == 77) {
@@ -1032,7 +1054,7 @@ void World::tickObjects(float dt) {
     const auto ground = col_.groundProbe(feet + vec3(0, 0, 20), 60);
     const int under = ground && player_.state().state != State::Block ? ground->dynamic : -1;
     const glm::mat4 before = under >= 0 ? col_.dynamics[under].transform : glm::mat4(1);
-    tickPlates();
+    tickJoints(dt);
     for (size_t i = 0; i < colliders_.size(); ++i) {
         const auto& c = colliders_[i];
         const auto* o = script_.find(c.uid);
@@ -1069,13 +1091,18 @@ void World::carryPortables(bool pressed) {
     auto* held = held_ ? const_cast<script::Object*>(script_.find(held_)) : nullptr; // World owns object motion
     if (held_ && !held) held_ = 0;
     if (held && pressed) {
-        // Its collision's base 40 units above her feet (as carried, the base may sit lower than its origin): it falls
-        // from there onto what is below (a raised plate top included).
-        float base = 0;
+        // Its collision's base 40 units above her feet (as carried, the base may sit lower than its origin), clear of
+        // her proxy capsule (a set-down inside it was shoved away and rolled off a plate): it falls from there onto what
+        // is below (a raised plate top included).
+        float base = 0, reach = 0;
         for (const auto& d : col_.dynamics)
             if (d.id == held->uid)
                 for (const vec3& v : d.shape->vertices) base = std::min(base, vec3(d.transform * glm::vec4(v, 1)).z - (held->pos.z + held->offset.z));
-        held->offset = s.pos + fwd * 90.0f + vec3(0, 0, 40 - base) - held->pos;
+        if (const auto* p = objectPhysics(held->name))
+            for (int seg = 0; seg < int(p->segments.size()); ++seg)
+                if (const auto shape = physics::solidShape(*p, seg))
+                    for (const vec3& v : shape->vertices) reach = std::max(reach, glm::length(vec2(p->segments[seg] * glm::vec4(v, 1))));
+        held->offset = s.pos + fwd * std::max(90.0f, player_.tuning().radius + reach) + vec3(0, 0, 40 - base) - held->pos;
         held->loose = true;
         held_ = 0;
         return;
@@ -1344,17 +1371,47 @@ void World::startChunks(ai::Enemy& e) {
     e.setPieces(world, vel);
 }
 
-// Pressure plates (prismatic joints, Runtime::Object::Joint) take the position the Jolt step left their joint at
-// (stepPhysics), within its limits; entering a range runs the plate's vt 34 (pressed / released ids).
-void World::tickPlates() {
-    std::vector<std::pair<int32_t, float>> moved; // setJointPosition may run scripts
-    for (const auto& [uid, j] : plates_)
-        if (const auto* o = script_.find(uid); o && o->joint) {
-            const float x = std::clamp(j.x, j.lo, 0.0f);
-            if (x != o->joint->position) moved.push_back({uid, x});
+// Script multibody joints (Runtime::Object::Joint) take their position every update and run their range watches
+// (Runtime::setJointPosition, 0x4937A0): pressure plates the one the Jolt step left (stepPhysics) within their limits,
+// hinge doors their hinge angle in degrees, other joints (l1_baldrs_tomb locks 69 / 70) move at their `multibody` 89
+// motor speed.
+void World::tickJoints(float dt) {
+    std::map<int32_t, int> hinges;
+    for (const auto& c : colliders_)
+        if (c.hinge >= 0) hinges.emplace(c.uid, c.hinge);
+    std::vector<std::tuple<int32_t, float, std::optional<glm::mat4>>> update; // setJointPosition may run scripts
+    for (const auto& o : script_.objects()) {
+        if (!o.joint) continue;
+        const auto& j = *o.joint;
+        float x = j.position;
+        std::optional<glm::mat4> body;
+        if (const auto p = plates_.find(o.uid); p != plates_.end()) {
+            x = std::clamp(p->second.x, p->second.lo, 0.0f);
+            body = glm::translate(glm::mat4(1), vec3(0, 0, x));
+        } else if (const auto h = hinges.find(o.uid); h != hinges.end()) {
+            x = glm::degrees(physics_.angle(h->second));
+        } else if (j.speed != 0) {
+            // Within the body's joint limit (ObjectPhysics::jointLimit; a `multibody` 77 limit, kept in radians, wins).
+            // [I] a motor reaching its target speed at once (the Havok joint is not simulated).
+            const auto* p = objectPhysics(o.name);
+            float lo = p && p->jointLimit ? p->jointLimit->lo : -1e30f, hi = p && p->jointLimit ? p->jointLimit->hi : 1e30f;
+            if (const auto l = multibodyLo_.find(o.uid); l != multibodyLo_.end()) lo = glm::degrees(l->second);
+            if (const auto u = multibodyHi_.find(o.uid); u != multibodyHi_.end()) hi = glm::degrees(u->second);
+            x = std::clamp(x + j.speed * 30.0f * dt, lo, std::max(lo, hi));
+            // One prismatic joint marker (kind 2, as the uber joint records' type byte [I]): the body slides along its
+            // Z axis (ms_rb_tomb_lock sinks). [U] bodies with several (ca_rb_crusher_slim's two jaws and their link).
+            if (p && std::ranges::count(p->markers, 2u, &physics::Marker::kind) == 1) {
+                const auto& m = *std::ranges::find(p->markers, 2u, &physics::Marker::kind);
+                const glm::mat4 r = glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) *
+                                    glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
+                body = glm::translate(glm::mat4(1), vec3(r[2]) * x);
+            }
         }
-    for (const auto& [uid, x] : moved) {
-        script_.setBody(uid, glm::translate(glm::mat4(1), vec3(0, 0, x)));
+        if (body || x != j.position || std::ranges::any_of(j.ranges, [&](const auto& r) { return r.inside != (r.lo <= x && x <= r.hi); }))
+            update.push_back({o.uid, x, body}); // a body is set every update: a loaded joint shows where it stands
+    }
+    for (const auto& [uid, x, body] : update) {
+        if (body) script_.setBody(uid, *body);
         script_.setJointPosition(uid, x);
     }
 }

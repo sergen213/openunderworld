@@ -8,12 +8,14 @@ Tools (`tests/test_gates.cpp`, `ou_gates_tests`):
   Lara is placed at the gate, performs the original interaction (switch use, push, grapple pull, walking into a
   volume / through a plane, earlier steps first), and the gated effect is asserted (target door / uber object / block
   visibly moved, cinematic played, chapter changed).
-- `OU_PROGRESSION_ROUTE=1 … ProgressionReal.CriticalPathInOrder` (~11 min, opt-in): the same gates in route order in ONE
+- `OU_PROGRESSION_ROUTE=1 … ProgressionReal.CriticalPathInOrder` (~7 min, opt-in): the same gates in route order in ONE
   `World` from chapter 0, script state carried along, each chapter end starting the next chapter, a level load
   (`World::enterUnit`) standing in for the walk between gates, then the Natla fight and the credits (`playEnding`,
-  shared with `EndgameCredits`). 2026-11-06: all chapter ends and the ending pass; two chapter-1 gates fail only with
-  the state carried: l1_kraken_entrance 748 (gate 743 stays shut) and l1_baldrs_tomb 221 (stops in `multibody` 89, the
-  locks 69 / 70) [U: cause not yet traced].
+  shared with `EndgameCredits`). `CriticalPathPerChapter` (same switch; `OU_PROGRESSION_CHAPTER=n` for one) runs each
+  chapter's gates in a World started at that chapter. 2026-11-06: every gate, chapter end and the ending pass except
+  l1_kraken_entrance 748: in a chapter-started World the switch's use event never fires after the head pull and the
+  weight (alone it does) [U]. l1_baldrs_tomb 221 passed alone only because gate 45 swung open at load (no lock held it);
+  it now opens from its locks (below).
 - `OU_PROGRESSION_SURVEY=1 … --gtest_filter=ProgressionReal.Survey`: portals (with stream unit ids), units named by
   scripts, level ends and the gate objects of every unit with their static links.
 - `OU_PROGRESSION_SURVEY=1 … --gtest_filter=ProgressionReal.GateSweep`: every candidate gate of every critical-path
@@ -52,11 +54,18 @@ Fixes (2026-11-06):
 True failures left (24): l1_kraken_room soundvolumes 358/360/361/362/364/365/380/381 (vt 75 clears a flag already
 clear: not a gate); the nine `sa_ei_grapple_wall*` / mounted pulls (l2_towerconnector 2005/2042/2043, l2_norsehub
 2383/2393/2394/2395, l2_norsehall 2457, l2_maproom 2595: their uber command changes no section [U: wall-run anchors,
-not gates?]); l5_valaskjalf 7025 / 7026 (chain 6944 / 6943 vt 55, no visible change); natives: `larabase` 6 (0x777A70:
-Lara's query 0xF8, the contact force with an instance — the traproom crushers 5905), `unit` 12 (0x776BA0 -> 0x7164D0:
-registers the instance's flag-4 markers with Lara — l4_pool ceiling grapple 5511 via 5625), `anchor` 1 (0x7966F0: a
-vector between two anchors; the VM has no vector values — l7_helheim01 8945), `instanceref` 0 on a local (l1_seafloor
-978, l7_arctic_sea 9280: reached now that tracked instances call their handlers). l5_valaskjalf_entryb 7189 (pole-hole
+not gates?]); l5_valaskjalf 7025 / 7026 (chain 6944 / 6943 vt 55, no visible change). Natives bound since: `multibody`
+89 (0x4AA250: motor target speed of a joint, joint +0x108 -> `Object::Joint::speed`; a non-plate, non-hinge joint moves
+at it within the body's limit, physical data +0x2C -> {lo, hi} [O values]), and the joint range watches report leaving
+(vt 37) as well as entering (vt 34), starting "inside" as 0x49A5C0 does, so a watch outside its range reports leaving
+on the first check [O] (l1_baldrs_tomb: locks 69 / 70 count gate 45 shut (+28 = 2); weight on plate 222 and Lara on
+221 sink both, the counter reaches 0, 45's limit opens 0..90 and it falls); `larabase` 6 (0x777A70: Lara's query 0xF8,
+the largest contact force with an instance; ours [I]: how deep its collision reaches into her capsule — the traproom
+crushers 5905, whose jaws are [U]); `unit` 12 / 13 (0x776BA0 -> 0x7164D0 / 0x776C30 -> 0x71DB90: the instance's
+flag-4 markers joined to / dropped from Lara's list: ours, its grapple target offered or not, saved — l4_pool 5511 via
+5625); `instanceref` 0 (0x79A940 -> 0x4A52E0: same instance; l1_seafloor 978, l7_arctic_sea 9280). Open: `anchor` 1
+(0x7966F0: the vector between two anchors, 0x4AB870; the VM has no vector values — l7_helheim01 8945, a sound loudness
+loop, not a gate). l5_valaskjalf_entryb 7189 (pole-hole
 lever, reward door only): needs the pole ar_pt_pole_a inserted (vt 19 "insert reaction"), then the lever's joint range
 -600..-474 (multibody 79) runs vt 34 [U: the insert interaction].
 
@@ -97,7 +106,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 1 | l1_kraken_entrance | snake head 751 (grapple pull) | falls onto plate 752 (loose rigid body) | pass (in the 748 gate) |
 | 1 | l1_kraken_room | switches 55 / 30 / 498 (use) | tentacle gear 36, sun-sphere platform 27, tomb door 497 | pass |
 | 1 | l1_kraken_room | switch 57 (use) | tentacle gear 32 | pass after the column is shot (row below); alone the sweep's FAIL is the "attempt" reaction |
-| 1 | l1_baldrs_tomb | press plates 219/221/222 (stand on) | door 223, gate 45 (locks 69/70: native `multibody` 89 [U]) | pass |
+| 1 | l1_baldrs_tomb | press plates 219/221/222 (stand on; 221 + 222 together: a weight on one) | door 223, gate 45 (locks 69/70 on `multibody` 89 motors) | pass |
 | 1 | l1_ship_upper_hallway_a/b, upper_hallway, engine_hall | volumes 1531, 1492, 1465, 1436 | ship doors, cinematics 1453 / 1288 | pass (1531 in suite) |
 | 1 | l1_ship_sinking_hall | plane 1074 (cross) | 070_med_dive → chapter 2 | pass (fixed) |
 | 2 | l2_puzzleroom | elevator switch 2961, weight 2971 (push), shiva grapples 2982/2983 (pull) | elevator 2973, weight, shiva arms | pass |

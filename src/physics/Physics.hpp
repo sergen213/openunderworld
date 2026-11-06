@@ -56,6 +56,9 @@ struct HMarker {
 struct ObjectPhysics {
     uint32_t oflags = 0;   // ObjectBase +0; bit 0x80000000 = "physical" object family (tru.exe 0x5BF0E0)
     int physClass = -1;    // physical data class (ObjectBase+0xC8: u16 +2 when u16 +4 == 0xB00B), 34 = rigid body
+    // A rigid body's joint limit (physical data +0x2C -> {+4 lo, +8 hi}): prismatic units, hinge degrees.
+    struct Limit { float lo = 0, hi = 0; };
+    std::optional<Limit> jointLimit;
     std::vector<mat4> segments; // bind-pose model-space frame of each segment (pivots accumulated down the parents)
     std::vector<Prim> prims;
     std::vector<Marker> markers;

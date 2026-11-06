@@ -197,7 +197,7 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
         if (armed) called[target].insert(vt);
     };
     struct Unhook { game::World& w; ~Unhook() { w.script().onCall = nullptr; } } unhook{w}; // `w` may outlive this run
-    w.onCinematic = [](const std::string&, bool) {};
+    if (!w.onCinematic) w.onCinematic = [](const std::string&, bool) {};
     const auto tick = [&](const game::Actions& a) {
         w.tick(a);
         for (const auto& e : w.script().events()) {
@@ -263,7 +263,7 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
             press.interact = true;
             place(w, weight->pos + weight->offset, 0);
             tick(press), tick({});
-            place(w, at - vec3(90, 0, -30), 0);
+            place(w, at - vec3(226, 0, -30), 0); // set down her radius (79) + the weight's reach (~147) ahead: on the plate
             tick({});
             tick(press), tick({});
             break;
@@ -303,7 +303,9 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
         for (const int32_t id : targets)
             if (before.contains(id)) {
                 const auto now = snapshot(w, id);
-                if (differs(before[id], now) || ((id == g.trigger || called.contains(id)) && ownDiffers(before[id], now))) seen.insert(id);
+                if ((differs(before[id], now) || ((id == g.trigger || called.contains(id)) && ownDiffers(before[id], now))) &&
+                    seen.insert(id).second && std::getenv("OU_PROGRESSION_TRACE"))
+                    std::printf("  tick %llu target %d changed\n", (unsigned long long)w.ticks(), id);
             }
     };
     look();
@@ -395,7 +397,8 @@ const std::vector<Case>& criticalGates() {
         {1, {"l1_kraken_entrance", 748, Action::Use, {743}, -1, {{751, Action::Pull}, {753, Action::Weigh}}}}, // both locks
         {1, {"l1_kraken_room", 498, Action::Use, {497}}},                // switch -> tomb door
         {1, {"l1_baldrs_tomb", 219, Action::Step, {223}}},               // press plate -> door
-        {1, {"l1_baldrs_tomb", 221, Action::Step, {45}}},                // press plate -> gate
+        // locks 69 / 70 (multibody 89) hold gate 45 until both plates are down: a weight on 222, Lara on 221
+        {1, {"l1_baldrs_tomb", 221, Action::Step, {45}, -1, {{222, Action::Weigh}}}},
         {1, {"l1_kraken_room", 30, Action::Use, {27}}},                  // switch -> sun-sphere platform
         {1, {"l1_ship_upper_hallway_a", 1531, Action::Enter, {1529}}},   // volume -> ship hall door
         {1, {"l1_ship_sinking_hall", 1074, Action::Enter, {}, 2}},       // teleport into l1_cine_ship_sinking -> 070
@@ -725,19 +728,56 @@ TEST(ProgressionReal, CriticalGates) {
         return d;
     };
     const auto anims = game::loadLaraAnims(bf);
+    const char* only = std::getenv("OU_PROGRESSION_GATE"); // research: one gate
     for (const auto& c : criticalGates()) {
+        if (only && std::atoi(only) != c.gate.trigger) continue;
         const auto r = runGate(bf, load, anims, c.gate, c.chapter);
         EXPECT_TRUE(r.pass) << c.gate.unit << " gate " << c.gate.trigger << " chapter " << r.chapter << " " << r.failure;
     }
 }
 
-// The whole game in one World, as a player walks it: the critical gates in route order (criticalGates), the scripts'
-// state carried from gate to gate; each chapter end starts the next chapter (World::startChapter), a level load
-// (World::enterUnit) stands in for the walk between gates; chapter 7 ends with the Natla fight and the credits
-// (playEnding).
+// Runs chapter `chapter`'s critical gates in route order in `w`, the scripts' state carried from gate to gate; a level
+// load (World::enterUnit) stands in for the walk between gates.
+void runRoute(game::World& w, int chapter) {
+    for (const auto& c : criticalGates()) {
+        if (c.chapter != chapter) continue;
+        ASSERT_EQ(w.chapter, c.chapter) << "before " << c.gate.unit << " gate " << c.gate.trigger;
+        if (w.currentUnit().data.name != c.gate.unit) w.enterUnit(c.gate.unit, std::nullopt);
+        const auto r = runGateIn(w, c.gate, c.chapter);
+        EXPECT_TRUE(r.pass) << c.gate.unit << " gate " << c.gate.trigger << " chapter " << r.chapter << " " << r.failure;
+        if (const char* last = std::getenv("OU_PROGRESSION_GATE"); last && std::atoi(last) == c.gate.trigger) return;
+    }
+}
+
+// Each chapter's critical gates in one World started at the chapter (World::startChapter), as CriticalPathInOrder
+// but per chapter (OU_PROGRESSION_CHAPTER=n: that one): the carried state of one chapter without the whole game's run
+// time. Opt-in with the route until l1_kraken_entrance 748 passes (open, 2026-11-06: in a chapter-started World the
+// switch's use event never fires after the head pull and the weight; alone it does).
+TEST(ProgressionReal, CriticalPathPerChapter) {
+    if (!gameDir() || !std::getenv("OU_PROGRESSION_ROUTE")) GTEST_SKIP() << "OU_GAME_DIR and OU_PROGRESSION_ROUTE not set";
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    const game::UnitLoader load = [&](const std::string& n) {
+        auto& d = cache[n];
+        if (!d.drm) d = game::loadUnitData(bf, n);
+        return d;
+    };
+    const auto anims = game::loadLaraAnims(bf);
+    const char* only = std::getenv("OU_PROGRESSION_CHAPTER");
+    for (int chapter = 0; chapter <= 6; ++chapter) {
+        if (only && std::atoi(only) != chapter) continue;
+        SCOPED_TRACE("chapter " + std::to_string(chapter));
+        game::World w(load, std::string(game::kChapters[size_t(chapter)].unit), anims);
+        w.script().setBigfile(&bf);
+        w.startChapter(chapter);
+        runRoute(w, chapter);
+    }
+}
+
+// The whole game in one World, as a player walks it: every chapter's route (runRoute), each chapter end starting the
+// next chapter (World::startChapter); chapter 7 ends with the Natla fight and the credits (playEnding).
 TEST(ProgressionReal, CriticalPathInOrder) {
-    // ~11 min; opt-in. Open (2026-11-06): with the state carried, l1_kraken_entrance 748 does not open gate 743 and
-    // l1_baldrs_tomb 221 stops in `multibody` 89 (Baldr's locks 69 / 70); every other gate and the ending pass.
+    // ~7 min; opt-in. Open: l1_kraken_entrance 748 (CriticalPathPerChapter); every other gate and the ending pass.
     if (!gameDir() || !std::getenv("OU_PROGRESSION_ROUTE")) GTEST_SKIP() << "OU_GAME_DIR and OU_PROGRESSION_ROUTE not set";
     const cdc::BigfileSet bf(gameDir());
     std::map<std::string, game::UnitData> cache;
@@ -749,12 +789,7 @@ TEST(ProgressionReal, CriticalPathInOrder) {
     game::World w(load, std::string(game::kChapters[0].unit), game::loadLaraAnims(bf));
     w.script().setBigfile(&bf);
     w.chapter = 0;
-    for (const auto& c : criticalGates()) {
-        ASSERT_EQ(w.chapter, c.chapter) << "before " << c.gate.unit << " gate " << c.gate.trigger;
-        if (w.currentUnit().data.name != c.gate.unit) w.enterUnit(c.gate.unit, std::nullopt);
-        const auto r = runGateIn(w, c.gate, c.chapter);
-        EXPECT_TRUE(r.pass) << c.gate.unit << " gate " << c.gate.trigger << " chapter " << r.chapter << " " << r.failure;
-    }
+    for (int chapter = 0; chapter <= 6; ++chapter) runRoute(w, chapter);
     ASSERT_EQ(w.chapter, 7);
     w.enterUnit("l7_yggdrasil_end", std::nullopt);
     playEnding(w);
@@ -796,9 +831,13 @@ TEST(ProgressionReal, UberDump) {
         else std::printf(" %08X", v);
     }
     std::printf("\n");
+    const auto phys = physics::loadObjectPhysics(drm);
+    if (phys.jointLimit) std::printf("joint limit %g..%g\n", phys.jointLimit->lo, phys.jointLimit->hi);
+    for (const auto& m : phys.markers)
+        std::printf("marker %g %g %g rot %g %g %g kind %u link %d\n", m.pos.x, m.pos.y, m.pos.z, m.rot.x, m.rot.y, m.rot.z, m.kind, m.link);
 }
 
-// Research: a script object's fields after its first tick, OU_OBJ_FIELDS=<unit>:<uid>.
+// Research: a script object's fields after its first tick, OU_OBJ_FIELDS=<unit>:<uid> (uid 0: list every object).
 TEST(ProgressionReal, ObjectFields) {
     const char* spec = std::getenv("OU_OBJ_FIELDS");
     if (!gameDir() || !spec) GTEST_SKIP();
@@ -808,8 +847,13 @@ TEST(ProgressionReal, ObjectFields) {
     game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), s.substr(0, s.find(':')), anims);
     w.script().setBigfile(&bf);
     w.tick({});
+    if (std::stoi(s.substr(s.find(':') + 1)) == 0)
+        for (const auto& x : w.script().objects())
+            std::printf("%d %s kind %d at %.0f %.0f %.0f\n", x.uid, x.name.c_str(), int(x.kind), x.pos.x, x.pos.y, x.pos.z);
     const auto* o = w.script().find(std::stoi(s.substr(s.find(':') + 1)));
-    ASSERT_TRUE(o);
+    if (!o) return;
+    std::printf("%s kind %d joint %d uber %d\n", o->name.c_str(), int(o->kind), o->joint ? int(o->joint->ranges.size()) : -1,
+                w.uberState(o->uid) ? 1 : 0);
     for (const auto& [k, v] : o->script->fields) std::printf("+%u %08X\n", k, v);
 }
 
@@ -1110,4 +1154,82 @@ TEST(ProgressionReal, TempleRevealReopens) {
     ASSERT_TRUE(open);
     EXPECT_TRUE(std::ranges::any_of(std::views::iota(size_t(0), open->size()), [&](size_t i) { return moved((*open)[i], closed[i]); }))
         << "the temple stands open";
+}
+TEST(ProgressionReal, ProbeChapterStarts) {
+    if (!gameDir() || !std::getenv("OU_PROBE_STARTS")) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    const game::UnitLoader load = [&](const std::string& n) { auto& d = cache[n]; if (!d.drm) d = game::loadUnitData(bf, n); return d; };
+    const auto anims = game::loadLaraAnims(bf);
+    for (int chapter = 0; chapter <= 8; ++chapter) {
+        game::World w(load, std::string(game::kChapters[size_t(chapter)].unit), anims);
+        w.script().setBigfile(&bf);
+        std::vector<std::string> played;
+        w.onCinematic = [&](const std::string& n, bool) { played.push_back(n + "@" + std::to_string(w.ticks())); };
+        w.startChapter(chapter);
+        for (int i = 0; i < 1800; ++i) w.tick({});
+        std::printf("chapter %d %s:", chapter, std::string(game::kChapters[size_t(chapter)].unit).c_str());
+        for (auto& p : played) std::printf(" %s", p.c_str());
+        std::printf(" | unit now %s chapter %d\n", w.currentUnit().data.name.c_str(), w.chapter);
+    }
+}
+TEST(ProgressionReal, ProbeCineGates) {
+    if (!gameDir() || !std::getenv("OU_PROBE_GATES")) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    const game::UnitLoader load = [&](const std::string& n) { auto& d = cache[n]; if (!d.drm) d = game::loadUnitData(bf, n); return d; };
+    const auto anims = game::loadLaraAnims(bf);
+    const struct { const char* unit; int32_t trigger; int chapter; } gates[] = {
+        {"l1_baldrs_tomb", 185, 1}, {"l1_baldrs_tomb", 224, 1}, {"l1_seatop", 1840, 1}, {"l2_hubhall", 3130, 2}, {"l2_hubhall", 3095, 2},
+        {"l4_ballcourt", 6410, 4}, {"l4_ballcourt", 6385, 4}, {"l4_ballcourt", 6377, 4}, {"l2_cliffclimb", 2564, 2}, {"l4_ballcourt", 5468, 4},
+        {"l3_mansion_exterior_afterburn", 0, 3},
+    };
+    for (const auto& g : gates) {
+        if (!g.trigger) continue;
+        game::World w(load, g.unit, anims, game::Spawn{{0, 0, -1e6f}, 0});
+        w.script().setBigfile(&bf);
+        w.chapter = g.chapter;
+        std::vector<std::string> played;
+        w.onCinematic = [&](const std::string& n, bool) { played.push_back(n); };
+        const auto r = runGateIn(w, Gate{g.unit, g.trigger, Action::Enter, {}}, g.chapter);
+        std::printf("gate %s %d:", g.unit, g.trigger);
+        for (auto& p : played) std::printf(" %s", p.c_str());
+        std::printf(" | %s %s\n", r.failure.c_str(), r.calls.c_str());
+    }
+    // instancerefs naming the script-driven cinematic objects
+    for (const auto& [u, uid] : std::vector<std::pair<std::string, int32_t>>{{"l1_kraken_room", 40}, {"l2_puzzleroom", 2937}, {"l2_norsehub", 2334},
+                                                                          {"l5_valaskjalf_entry", 7295}, {"l5_valaskjalf", 6844}, {"l1_baldrs_tomb", 42}, {"l1_seatop", 1780}}) {
+        const auto& d = load(u);
+        std::map<uint32_t, std::vector<int32_t>> users;
+        for (const auto& in : formats::parseUnit(*d.drm).intros) users[in.scriptId].push_back(in.uniqueId);
+        for (uint32_t i = 0; i < d.drm->sections.size(); ++i) {
+            if (d.drm->sections[i].type != cdc::SectionType::Script) continue;
+            for (const auto& m : script::parseScriptType(*d.drm, i).members)
+                if (m.init && int32_t(*m.init) == uid && m.typeId == 51) {
+                    std::printf("%s %d named by script %u (intros", u.c_str(), uid, d.drm->sections[i].id);
+                    for (auto x : users[d.drm->sections[i].id]) std::printf(" %d", x);
+                    std::printf(")\n");
+                }
+        }
+    }
+}
+TEST(ProgressionReal, ProbeRouteCines) {
+    if (!gameDir() || !std::getenv("OU_PROBE_ROUTE")) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    std::map<std::string, game::UnitData> cache;
+    const game::UnitLoader load = [&](const std::string& n) { auto& d = cache[n]; if (!d.drm) d = game::loadUnitData(bf, n); return d; };
+    const auto anims = game::loadLaraAnims(bf);
+    for (int chapter = 0; chapter <= 7; ++chapter) {
+        game::World w(load, std::string(game::kChapters[size_t(chapter)].unit), anims);
+        w.script().setBigfile(&bf);
+        std::vector<std::string> played;
+        w.onCinematic = [&](const std::string& n, bool) { played.push_back(n); };
+        w.startChapter(chapter);
+        runRoute(w, chapter);
+        if (chapter == 7) { w.enterUnit("l7_yggdrasil_end", std::nullopt); playEnding(w); }
+        std::printf("route chapter %d:", chapter);
+        for (auto& p : played) std::printf(" %s", p.c_str());
+        std::printf("\n");
+        std::fflush(stdout);
+    }
 }

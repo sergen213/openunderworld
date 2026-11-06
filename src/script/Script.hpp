@@ -197,14 +197,17 @@ struct Object {
         std::vector<std::array<int32_t, 3>> ranges; // fn 19: {from, to, id}; entering/leaving one calls vt 40 / 41
     };
     std::optional<Spline> spline;
-    // Prismatic multibody joint of a scripted rigid body (pressure plates, script base 3938): its constructor calls
-    // `multibody` 1 and `joint` 17, then `limit` 3 per position range {lo, hi, id} (subclasses also `multibody` 79
-    // with the same layout). The engine calls the object's vt 34(multibody, joint, id) when the joint position enters
-    // a range [O bytecode; when the engine calls it: I]. World moves `position` (Runtime::setJointPosition).
+    // Multibody joint of a scripted rigid body (pressure plates, script base 3938; hinge doors; l1_baldrs_tomb locks):
+    // a plate's constructor calls `multibody` 1 and `joint` 17, then `limit` 3 per position range {lo, hi, id};
+    // `multibody` 79 (0x4A9CF0 -> 0x49A5C0) adds the same range watch. The watch check (0x4937A0, every update) calls
+    // the object's vt 34(multibody, joint, id) when the joint position enters a range and vt 37 when it leaves one; a
+    // watch starts "inside", so one added outside its range reports leaving on the first check [O]. World moves
+    // `position` (Runtime::setJointPosition): plate units, hinge degrees.
     struct Joint {
         struct Range { float lo, hi; int32_t id; bool inside; };
         bool prismatic = false;
         float position = 0; // saved
+        float speed = 0;    // `multibody` 89 motor target (0x4AA250 -> joint +0x108), units per 30 Hz frame [I]; saved
         std::vector<Range> ranges;
     };
     std::optional<Joint> joint;
@@ -393,6 +396,7 @@ public:
     const std::set<std::string>& playerObjects() const { return playerObjects_; } // carried gear (g_belt, ...)
     void setPlayerObjects(std::set<std::string> objects) { playerObjects_ = std::move(objects); } // chapter starts
     uint32_t unitEffect() const { return unitEffect_; }
+    bool grappleOff(int32_t uid) const { return grappleOff_.contains(uid); } // `unit` 13 dropped its markers (saved)
     // Script weather (globaleffect 8 / 11 / 12, docs/formats/EFFECTS.md "Weather"): snow / rain % and lightning
     // interval seconds (tru.exe's defaults 20 / 30 s, 0x53AB30's init).
     struct Weather { int32_t snow = 0, rain = 0, lightningMin = 20, lightningMax = 30; };
@@ -528,6 +532,7 @@ private:
     uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
     uint32_t unitEffect_ = 0;
+    std::set<int32_t> grappleOff_; // unit 13 / 12: grapple targets taken from / given back to Lara; saved
     Weather weather_;
     uint64_t tick_ = 0;
     std::map<std::pair<int32_t, std::string>, size_t> failures_;

@@ -3634,7 +3634,7 @@ TEST(GameReal, LaraPlaysInteractionClips) {
     }
 }
 
-// l1_baldrs_tomb press plate 219 (prismatic joint, Objects.cpp tickPlates): Lara stands on it, it sinks to its pressed
+// l1_baldrs_tomb press plate 219 (prismatic joint, Objects.cpp tickJoints): Lara stands on it, it sinks to its pressed
 // range (vt 34 -> vt 54; door 223: ProgressionReal.CriticalGates), she walks off and it rises back.
 TEST(GameReal, PressurePlateIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

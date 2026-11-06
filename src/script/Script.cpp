@@ -390,8 +390,8 @@ void applyState(Object& o, const nlohmann::json* s) {
     }
     if (const float p = s && s->is_object() ? s->value("joint", 0.0f) : 0.0f; o.joint || p != 0) {
         auto& j = o.joint ? *o.joint : o.joint.emplace();
-        j.position = p;
-        for (auto& r : j.ranges) r.inside = r.lo <= p && p <= r.hi;
+        j.position = p, j.speed = 0; // a saved object's watches and motor: its setup (resume)
+        for (auto& r : j.ranges) r.inside = true;
     }
     if (auto& g = o.graph) { // the intro's state (Runtime::addUnit), or the saved one
         g->state = g->initial, g->transition = -1, g->frames = 0, g->clip = -1, g->t = 0, g->loop = false;
@@ -754,6 +754,7 @@ bool Runtime::resume(Object& o) {
             auto& joint = o.joint ? *o.joint : o.joint.emplace(); // its position: the object state (applyState)
             joint.prismatic = j->at(0), joint.ranges.clear();
             for (const auto& r : j->at(1)) joint.ranges.push_back({r.at(0).get<float>(), r.at(1).get<float>(), r.at(2).get<int32_t>(), r.at(3).get<bool>()});
+            joint.speed = j->size() > 2 ? j->at(2).get<float>() : 0.0f;
         }
         o.tracksLara = setup.value("tracksLara", false);
         o.added = setup.value("added", std::vector<int32_t>{});
@@ -1184,6 +1185,23 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 }
                 if ((nc.function == 3 || nc.function == 6) && nc.args.empty()) { nc.wait = !target; return true; }
             }
+            // instanceref 0 (0x79A940 -> 0x4A52E0, as unitref 0): receiver and argument name the same instance; either may
+            // be a member, a local's value or an object (instance 14 GetInstanceRef results; l1_seafloor 978, l7_arctic_sea
+            // 9280 compare the entering instance with their refs).
+            if (!std::strcmp(name, "instanceref") && nc.function == 0 && nc.args.size() == 1) {
+                const auto ref = [&](const vm::Value& v) -> uint32_t {
+                    if (v.kind == vm::Value::Kind::Object) return uint32_t(v.uid);
+                    if (v.kind != vm::Value::Kind::Member) return v.bits;
+                    const auto holder = resolve(v.uid);
+                    if (!holder || !holder->program) return 0;
+                    if (const auto f = holder->fields.find(v.offset); f != holder->fields.end()) return f->second;
+                    const Member* m = holder->program->member(holder->typeId, v.offset);
+                    return m && m->init ? *m->init : 0;
+                };
+                const uint32_t a = refObject ? localValue : ref(nc.receiver), b = ref(nc.args[0]);
+                nc.result = vm::Value::scalar(a != 0 && a == b);
+                return true;
+            }
             // unitref 0 (0x4A52E0): receiver and argument name the same unit. Values are stream unit ids: a unitref member's
             // initial value, or the unit a gamebase callback passes (l1_cine_ship_sinking unit script vt 11: the player's
             // new unit == its own 41).
@@ -1497,10 +1515,10 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const Member* m = holder->program ? holder->program->member(holder->typeId, a.offset) : nullptr;
                 return m && m->init ? int32_t(*m->init) : 0;
             };
-            if (water_ && !std::strcmp(name, "larabase") && nc.function == 3 && nc.args.size() == 1) {
-                const int32_t volume = uidOf(nc.args[0]);
+            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6) && nc.args.size() == 1) {
+                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force)
                 uint32_t result = 0;
-                if (volume && !water_(volume, name, 3, {}, result)) return false;
+                if (target && !water_(target, name, nc.function, {}, result)) return false;
                 nc.result = vm::Value::scalar(result);
                 return true;
             }
@@ -1809,7 +1827,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 auto& j = *jo->joint;
                 const auto range = [&](const vm::Value& lo, const vm::Value& hi, const vm::Value& id) {
                     const float a = std::bit_cast<float>(lo.bits), b = std::bit_cast<float>(hi.bits);
-                    j.ranges.push_back({a, b, int32_t(id.bits), a <= j.position && j.position <= b});
+                    j.ranges.push_back({a, b, int32_t(id.bits), true}); // 0x49A5C0: a new watch starts inside
                 };
                 if (!std::strcmp(name, "joint")) j.prismatic = true;
                 if (!std::strcmp(name, "limit") && nc.args.size() == 4) range(nc.args[1], nc.args[2], nc.args[3]);
@@ -1848,6 +1866,16 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (!std::strcmp(name, passive)) { nc.result = vm::Value::scalar(0); return true; }
             if (!std::strcmp(name, "unit") && nc.function == 15 && nc.args.size() == 1) {
                 unitEffect_ = nc.args[0].bits; // tru.exe 0x6D6F20 writes the global post-effect scalar
+                return true;
+            }
+            // unit 12 (0x776BA0): the instance's model markers flagged 4 join Lara's marker list (0x7164D0, her grapple
+            // attach points); 13 (0x776C30 -> 0x71DB90) drops them. l4_pool volume 5625 turns invisible ceiling grapple
+            // 5511 off while its instance is in, on again 3 s after. Ours: World::grappleTarget skips grappleOff().
+            if (!std::strcmp(name, "unit") && (nc.function == 12 || nc.function == 13) && nc.args.size() == 1) {
+                const int32_t target = uidOf(nc.args[0]);
+                if (nc.function == 12) grappleOff_.erase(target);
+                else grappleOff_.insert(target);
+                nc.result = vm::Value::scalar(0);
                 return true;
             }
             if (enemy_ && (!std::strcmp(name, "enemybase") || !std::strcmp(name, "generatorbase") ||
@@ -2393,15 +2421,17 @@ void Runtime::setJointPosition(int32_t uid, float position) {
     Object* o = findMut(uid);
     if (!o || !o->joint) return;
     o->joint->position = position;
-    std::vector<int32_t> entered;
+    std::vector<std::pair<int32_t, bool>> changed; // {range id, entered}
     for (auto& r : o->joint->ranges) {
         const bool in = r.lo <= position && position <= r.hi;
-        if (in && !r.inside) entered.push_back(r.id);
+        if (in != r.inside) changed.push_back({r.id, in});
         r.inside = in;
     }
-    // instance prototype 47 = vt 34 (type 3's prototype table); args (multibody, joint, range id) [I: the first two].
-    for (const int32_t id : entered)
-        callback(uid, "instance", 47, std::array{vm::Value::scalar(0), vm::Value::scalar(0), vm::Value::scalar(uint32_t(id))});
+    // instance prototypes 47 / 50 = vt 34 / 37 (type 3's prototype table); args (multibody, joint, range id) [I: the
+    // first two].
+    for (const auto& [id, entered] : changed)
+        callback(uid, "instance", entered ? 47 : 50,
+                 std::array{vm::Value::scalar(0), vm::Value::scalar(0), vm::Value::scalar(uint32_t(id))});
 }
 
 std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> Runtime::debugLines() const {
@@ -2476,7 +2506,7 @@ nlohmann::json Runtime::serialize() const {
         if (o.joint) {
             nlohmann::json ranges = nlohmann::json::array();
             for (const auto& r : o.joint->ranges) ranges.push_back({r.lo, r.hi, r.id, r.inside});
-            setup["joint"] = {o.joint->prismatic, std::move(ranges)};
+            setup["joint"] = {o.joint->prismatic, std::move(ranges), o.joint->speed};
         }
         if (o.tracksLara) setup["tracksLara"] = true;
         if (!o.added.empty()) setup["added"] = o.added;
@@ -2499,7 +2529,7 @@ nlohmann::json Runtime::serialize() const {
                     {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
                     {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
                     {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}},
-                    {"deferredUnits", deferredUnits_}};
+                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}};
     return j;
 }
 
@@ -2609,6 +2639,7 @@ void Runtime::restoreRuntime(const nlohmann::json& r) {
     if (const auto it = r.find("weather"); it != r.end()) // saves from before 0.30 have none
         weather_ = {it->at(0).get<int32_t>(), it->at(1).get<int32_t>(), it->at(2).get<int32_t>(), it->at(3).get<int32_t>()};
     deferredUnits_ = r.value("deferredUnits", std::set<std::string>{});
+    grappleOff_ = r.value("grappleOff", std::set<int32_t>{}); // older saves have none
 }
 
 } // namespace ou::script

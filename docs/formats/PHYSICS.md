@@ -167,7 +167,7 @@ type 2, is [I].
     at 120 units/s with the force to hold its own weight (`massProps`, 50 kg without primitive mass [I]) plus 20 kg
     [I]. It collides with loose bodies, vehicles and ragdolls (not the terrain it sits in), so a landed weight presses
     it through its contacts; Lara (55 kg) and push blocks (their primitives' mass, 666 without) press it under gravity
-    where a ray below them (40 above to 30 below their base) meets it. `World::tickPlates` hands the joint position
+    where a ray below them (40 above to 30 below their base) meets it. `World::tickJoints` hands the joint position
     (clamped to the limits) to `Runtime::setJointPosition`, whose ranges run vt 34. Saves: the plate body is a joint
     (`j<uid << 32 | 0xFFFFFFFE>`); a new plate starts at its saved position. [I] the original's plate constraint and
     motor numbers (Havok data not decoded). `Physics.PlatesWeighedByContactsAndProxyPushesLooseBodies`,
