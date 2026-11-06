@@ -1291,8 +1291,10 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
             ADD_FAILURE() << label << " " << when << ": " << patch.size() << " differences (uninterrupted / loaded):\n" << lines;
         };
         // A just-loaded World holds the saved physics state until its first step: compared from the first tick on.
+        bool died = false; // in both runs: the per-tick hashes match
         for (int i = 0; i < c.m; ++i) {
             w->tick(c.input(w->ticks())), l->tick(c.input(l->ticks()));
+            died |= w->health().dead() && l->health().dead();
             if (l->stateHash() != w->stateHash()) { // the first tick that differs, and how
                 const auto pa = w->stateParts(), pb = l->stateParts();
                 std::string parts = pa.size() == pb.size() ? "" : "part counts differ\n";
@@ -1304,8 +1306,7 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
             }
         }
         compare("at the end");
-        if (c.spawn && c.spawn->pos.x == -4190) // the goo case: both runs died in the goo after the load
-            EXPECT_TRUE(w->health().dead() && l->health().dead()) << label;
+        if (c.spawn && c.spawn->pos.x == -4190) EXPECT_TRUE(died) << label << ": the goo case dies in both runs after the load";
         if (std::string_view(c.unit) == "l1_ship_exterior") // the run did fight: a merc is down
             EXPECT_TRUE(std::ranges::any_of(w->enemies().all(), [](const auto& e) { return e->state().mode == game::ai::Mode::Dead; }));
     }
@@ -1434,4 +1435,5 @@ TEST(StreamReal, PrologueCorridorToStaircase) {
     EXPECT_TRUE(walkHurdle);
     EXPECT_NEAR(s2.pos.z, 336, 8);
 }
+
 
