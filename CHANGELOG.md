@@ -4,6 +4,20 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.27.0] - 2026-11-06
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- New: Lara collapses as a ragdoll when she dies. Enemies go limp after the game's own death delay (not only after
+  their death animation), and thralls killed by Mjolnir break apart into pieces as in the original.
+- New: pressure plates are weighed physically: they sink under Lara, push blocks and dropped objects and rise when
+  free. Lara now shoves small loose objects she walks into.
+- New: the motorcycle leans into turns (Lara leans with it), can be steered in the air, and does burnouts (W + Ctrl
+  standing still), donuts (add A/D) and power slides, from the game's own bike data.
+- Fixed: saving while hanging, shimmying, climbing, swinging on the grapple, on ladders and beams, under water, on
+  the bike, after a cutscene or during a reveal camera now continues exactly where you were after loading.
+- Saving is refused while Lara is dead.
+
 ## [0.26.0] - 2026-11-06
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
