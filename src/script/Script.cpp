@@ -466,12 +466,14 @@ void Runtime::setUnits(const std::vector<UnitRef>& units) {
         }
         it = unitScripts_.erase(it);
     }
+    std::erase_if(units_, [&](const std::string& n) { return std::none_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == n; }); });
     for (const auto& u : units)
-        if (std::none_of(objects_.begin(), objects_.end(), [&](const Object& o) { return o.unit == u.name; })) addUnit(u);
+        if (!units_.contains(u.name) && std::none_of(objects_.begin(), objects_.end(), [&](const Object& o) { return o.unit == u.name; })) addUnit(u);
 }
 
 void Runtime::addUnit(const UnitRef& u) {
     if (!bigfile_ || !u.drm) return;
+    units_.insert(u.name); // before parsing: a unit that fails is not retried on every call
     if (objectNames_.empty()) {
         const auto list = bigfile_->read("\\tr8\\pc-w\\objectlist.txt");
         if (!list) throw FormatError("\\tr8\\pc-w\\objectlist.txt not in bigfile");
@@ -1878,6 +1880,12 @@ bool Runtime::splineNative(Object& o, uint32_t function, std::span<const vm::Val
         return true;
     default: return false; // 22/23 create NtSplineSequence objects [U]
     }
+}
+
+int32_t Runtime::unitScriptUid(const std::string& unit) const {
+    const auto it = unitScripts_.find(unit);
+    const auto a = it == unitScripts_.end() ? auxiliary_.end() : auxiliary_.find(it->second);
+    return a == auxiliary_.end() ? 0 : a->second->uid;
 }
 
 std::string Runtime::helpCondition() const {

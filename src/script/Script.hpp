@@ -308,6 +308,8 @@ public:
     // Help-on-demand condition ("hint_NN") a unit script last stored: unit vt 28 copies its string argument into a
     // string member (l3_main_bedroom type 12059 +168) [V-data bytecode]. Empty when none.
     std::string helpCondition() const;
+    // Script instance uid of `unit`'s NsUnit script (unitref.Get), 0 = none.
+    int32_t unitScriptUid(const std::string& unit) const;
     // Keeps objects of units still present, adds new units, drops missing ones. Throws cdc::FormatError.
     void setUnits(const std::vector<UnitRef>& units);
     void addObject(Object o, bool start = true); // setUnits and tests; applies pending restored state
@@ -447,6 +449,7 @@ private:
     std::map<std::pair<const vm::Program*, uint32_t>, std::shared_ptr<vm::Instance>> auxiliary_; // unit/global scripts
     int32_t nextAuxiliaryUid_ = -1;
     std::map<std::string, std::pair<const vm::Program*, uint32_t>> unitScripts_; // unit -> its NsUnit script instance key
+    std::set<std::string> units_; // units addUnit created (with or without objects): setUnits adds each once
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;
     std::optional<std::pair<uint32_t, std::optional<uint32_t>>> playerUnit_; // setPlayerUnit

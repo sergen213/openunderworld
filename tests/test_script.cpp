@@ -427,6 +427,38 @@ TEST(ScriptRealData, AllUnitsParse) {
     EXPECT_GT(planes, 100u);
 }
 
+// setUnits adds a unit once: it used to take "no objects of the unit" for "not loaded" and add an object-less unit again
+// on every call, restarting its unit script (a second instance and thread). container1 is the one unit whose intros make
+// no script objects (it has no unit script); l3_main_bedroom's unit script must stay the same instance while loaded.
+TEST(ScriptRealData, SetUnitsAddsEachUnitOnce) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    auto load = [&](const char* name) {
+        auto bytes = bf.read(std::string("pc-w\\") + name + ".drm");
+        return bytes ? std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*bytes))) : nullptr;
+    };
+    const auto bedroom = load("l3_main_bedroom"), container = load("container1");
+    ASSERT_TRUE(bedroom && container);
+    const std::vector<UnitRef> both{{"l3_main_bedroom", bedroom, {}}, {"container1", container, {}}};
+    Runtime r;
+    r.setBigfile(&bf);
+    r.setUnits(both);
+    const size_t objects = r.objects().size();
+    EXPECT_TRUE(std::none_of(r.objects().begin(), r.objects().end(), [](const Object& o) { return o.unit == "container1"; }));
+    const int32_t uid = r.unitScriptUid("l3_main_bedroom");
+    EXPECT_NE(uid, 0);
+    r.setUnits(both);
+    EXPECT_EQ(r.unitScriptUid("l3_main_bedroom"), uid);
+    EXPECT_EQ(r.objects().size(), objects);
+    r.setUnits({both[1]});
+    EXPECT_EQ(r.unitScriptUid("l3_main_bedroom"), 0);
+    r.setUnits(both); // streamed back in: a new instance
+    EXPECT_NE(r.unitScriptUid("l3_main_bedroom"), 0);
+    EXPECT_NE(r.unitScriptUid("l3_main_bedroom"), uid);
+    EXPECT_EQ(r.objects().size(), objects);
+}
+
 TEST(ScriptRealData, BedroomSwitchOpensHouseDoor) {
     const char* g = std::getenv("OU_GAME_DIR");
     if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
