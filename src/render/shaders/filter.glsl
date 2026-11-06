@@ -2,12 +2,15 @@
 // PCFinishEffect, PCFeedbackEffect, PCNoiseEffect and the plain tints on the scene. Included after underwater.glsl
 // (block `w`, uDepth, ouWorld). w.filters[0] = (alphaA, blurA, dof, colourMatrix), [1] = (tintA rgb, finishMatrix),
 // [2] = (amountC, blurC, dofScale, dofBias), [3] = additive tint rgb, [4] = alpha tint (rgb, k), [5] = feedback (keep,
-// amount, blur, zoom x), [6] = feedback (rgb, angle), [7] = (zoom y, noise alpha, noise cells, 0), [8] = noise (rgb,
-// seed); w.filterLut = 10 rows x 256 RGBA8 texels, 4 per uvec4. uFilterBlur: the half-resolution scene with its mips.
+// amount, blur, zoom x), [6] = feedback (rgb, angle), [7] = (zoom y, noise alpha, noise cells, previous frame copied),
+// [8] = noise (rgb, seed); w.filterLut = 10 rows x 256 RGBA8 texels, 4 per uvec4. uFilterBlur: the half-resolution scene
+// with its mips; uFeedback: the previous frame's final image, half resolution with mips (the renderer's feedback copy).
 #ifdef VULKAN
 layout(set = 1, binding = 2) uniform sampler2D uFilterBlur;
+layout(set = 1, binding = 4) uniform sampler2D uFeedback;
 #else
 layout(binding = 7) uniform sampler2D uFilterBlur;
+layout(binding = 11) uniform sampler2D uFeedback;
 #endif
 vec3 ouLutTexel(int row, int x) {
     int i = row * 256 + x;
@@ -22,11 +25,12 @@ vec3 ouLut(int row, float v) { // linear between the 256 entries
 // Matrix m of curves: input channel c's row adds its RGB contributions.
 vec3 ouFilterMatrix(int m, vec3 c) { return ouLut(3 * m, c.r) + ouLut(3 * m + 1, c.g) + ouLut(3 * m + 2, c.b); }
 // tru.exe 0x519F20: down to level ceil(r), back up with 4-tap bilinear steps, the fraction blended = mip level r here.
-vec3 ouFilterBlur(vec2 uv, float r) {
-    vec2 t = 0.5 * exp2(r) / vec2(textureSize(uFilterBlur, 0));
-    return 0.25 * (textureLod(uFilterBlur, uv + vec2(-t.x, -t.y), r).rgb + textureLod(uFilterBlur, uv + vec2(t.x, -t.y), r).rgb +
-                   textureLod(uFilterBlur, uv + vec2(-t.x, t.y), r).rgb + textureLod(uFilterBlur, uv + vec2(t.x, t.y), r).rgb);
+vec3 ouMipBlur(sampler2D s, vec2 uv, float r) {
+    vec2 t = 0.5 * exp2(r) / vec2(textureSize(s, 0));
+    return 0.25 * (textureLod(s, uv + vec2(-t.x, -t.y), r).rgb + textureLod(s, uv + vec2(t.x, -t.y), r).rgb +
+                   textureLod(s, uv + vec2(-t.x, t.y), r).rgb + textureLod(s, uv + vec2(t.x, t.y), r).rgb);
 }
+vec3 ouFilterBlur(vec2 uv, float r) { return ouMipBlur(uFilterBlur, uv, r); }
 // 0x51B1D0: a 10 x 8 grid of quads over the screen, each with a random offset into the noise texture (cells / 64 of it),
 // colour x alpha, re-randomised every frame. The noise texture is the device's [U]: a hash here.
 float ouNoiseHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -51,12 +55,13 @@ vec3 ouScreenFilter(vec3 c, vec2 uv) {
         vec3 b = ouFilterBlur(uv, f.y);
         c += (t.w > 0.5 ? ouFilterMatrix(2, b) : b) * f.x;
     }
-    if (fb.y > 0.0 || fb.x < 1.0) { // 0x51A530: scene x keep, + the blurred frame zoomed / turned about the centre x colour
-        // x amount (blend 5, additive). The exe feeds back the previous frame; this one's blur stands in [I].
+    if ((fb.y > 0.0 || fb.x < 1.0) && w.filters[7].w > 0.5) { // 0x51A530: scene x keep, + the previous frame (copied
+        // half size at the end of each frame the effect ran, 0x509630 -> 0x51A2E0) blurred, zoomed / turned about the
+        // centre x colour x amount (blend 5, additive). Nothing on the first frame: no copy yet (+0x3D).
         float s = sin(fc.w), co = cos(fc.w);
         vec2 d = (uv - 0.5) / vec2(max(fb.w, 0.01), max(w.filters[7].x, 0.01));
         vec2 q = 0.5 + vec2(co * d.x - s * d.y, s * d.x + co * d.y);
-        c = c * fb.x + ouFilterBlur(clamp(q, 0.0, 1.0), fb.z) * fc.rgb * fb.y;
+        c = c * fb.x + ouMipBlur(uFeedback, clamp(q, 0.0, 1.0), min(fb.z, 4.0)) * fc.rgb * fb.y; // blur <= 4 (0x519F20)
     }
     c += w.filters[3].rgb; // tints (0x52B860): additive (alpha 0x80) and alpha-blended
     c = mix(c, w.filters[4].rgb, w.filters[4].w);

@@ -359,6 +359,10 @@ struct Targets {
     // Original screen filters (FrameOptions::screenFilter): the half-size scene and its mip chain (blur levels).
     Texture filterBlur;
     Framebuffer filterFbo;
+    // PCFeedbackEffect: the previous frame's final image, half size + mips (tru.exe 0x51A2E0); valid while hasFeedback.
+    Texture feedback;
+    Framebuffer feedbackFbo;
+    bool hasFeedback = false;
     // Planar reflection (original::reflection): the scene seen from the mirrored camera, half size, single sample.
     Texture reflection;
     Renderbuffer reflectionDepth;
@@ -717,6 +721,8 @@ public:
         const bool enhancedWater = options.water == WaterQuality::Enhanced;
         WaterBlock wb = waterBlock(camera, vp, viewProj, environment_, options);
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
+        const bool feedback = options.screenFilter && options.screenFilter->feedback();
+        wb.filter[7].w = feedback && r.targets.hasFeedback ? 1.0f : 0.0f; // last frame's copy exists (+0x3D)
         glNamedBufferSubData(r.waterUbo.get(), 0, sizeof wb, &wb);
         glBindBufferBase(GL_UNIFORM_BUFFER, 4, r.waterUbo.get());
         meshOpacities(options.meshOpacity, r.meshes.size(), opacity_);
@@ -840,9 +846,16 @@ public:
         glBindTextureUnit(0, t.color.get());
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindTextureUnit(7, t.filterBlur.get());  // screen filters (unused unless one runs)
+        glBindTextureUnit(11, t.feedback.get());   // the feedback effect's previous frame
         glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get()); // underwater caustics' wave field
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        if (feedback) { // 0x509630 -> 0x51A2E0: this frame's image (before the HUD) for the next frame's feedback
+            glBlitNamedFramebuffer(0, t.feedbackFbo.get(), 0, 0, vp.width, vp.height, 0, 0, std::max(1, vp.width / 2),
+                                   std::max(1, vp.height / 2), GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glGenerateTextureMipmap(t.feedback.get());
+        }
+        t.hasFeedback = feedback;
         drawOverlay(vp, options.overlay, options.ui, options.uiImages);
     }
 
@@ -969,14 +982,16 @@ private:
             glNamedFramebufferTexture(t.splashFbo[i].get(), GL_COLOR_ATTACHMENT0, t.splash[i].get(), 0);
         }
         const int bw = std::max(1, vp.width / 2), bh = std::max(1, vp.height / 2);
-        t.filterBlur = newTexture();
-        glTextureStorage2D(t.filterBlur.get(), std::min(6, 1 + int(std::log2(float(std::max(bw, bh))))), format, bw, bh);
-        glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTextureParameteri(t.filterBlur.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        t.filterFbo = newFramebuffer();
-        glNamedFramebufferTexture(t.filterFbo.get(), GL_COLOR_ATTACHMENT0, t.filterBlur.get(), 0);
+        for (auto [tex, fbo] : {std::pair{&t.filterBlur, &t.filterFbo}, std::pair{&t.feedback, &t.feedbackFbo}}) {
+            *tex = newTexture();
+            glTextureStorage2D(tex->get(), std::min(6, 1 + int(std::log2(float(std::max(bw, bh))))), format, bw, bh);
+            glTextureParameteri(tex->get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTextureParameteri(tex->get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTextureParameteri(tex->get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTextureParameteri(tex->get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            *fbo = newFramebuffer();
+            glNamedFramebufferTexture(fbo->get(), GL_COLOR_ATTACHMENT0, tex->get(), 0);
+        }
         t.reflection = newTexture();
         glTextureStorage2D(t.reflection.get(), 1, format, bw, bh);
         glTextureParameteri(t.reflection.get(), GL_TEXTURE_MIN_FILTER, GL_LINEAR);

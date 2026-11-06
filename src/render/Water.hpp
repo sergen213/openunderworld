@@ -46,8 +46,9 @@ struct WaterBlock {
     glm::vec4 volumes[16]; // water volumes: [2i] min, [2i + 1] max (max.z = surface), nearest first
     // Original screen filters (FrameOptions::screenFilter; post pass, shaders/filter.glsl): [0] (alphaA, blurA, dof,
     // colourMatrix), [1] (tintA rgb, finishMatrix), [2] (amountC, blurC, dofScale, dofBias), [3] additive tint, [4] alpha
-    // tint, [5] (feedback keep, amount, blur, zoom x), [6] (feedback rgb, angle), [7] (zoom y, noise alpha, noise cells),
-    // [8] (noise rgb, seed); off = all 0 except feedback keep / zoom 1.
+    // tint, [5] (feedback keep, amount, blur, zoom x), [6] (feedback rgb, angle), [7] (zoom y, noise alpha, noise cells,
+    // previous frame copied: set by the renderer, 1 when last frame's feedback copy exists), [8] (noise rgb, seed); off =
+    // all 0 except feedback keep / zoom 1.
     glm::vec4 filter[9];
     glm::uvec4 filterLut[ScreenFilter::kLutRows * 64]; // ScreenFilter::lut, 4 RGBA8 texels per element
     glm::vec4 waterPass[3]; // FrameOptions::underwater: [0] surface rgb + alpha at the eye, [1] deep rgb + distance,

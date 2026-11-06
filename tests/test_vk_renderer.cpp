@@ -316,6 +316,29 @@ TEST(VulkanRenderer, ResidentPartsMatchFullUpload) {
     EXPECT_EQ(meanAbsDiff(v.frame(enhanced()), full), 0.0);
 }
 
+// PCFeedbackEffect feeds back the previous frame (tru.exe 0x509630 -> 0x51A2E0 copy, 0x51A530 draw): nothing on the
+// first frame it runs (no copy yet, not even the keep darkening), afterwards scene x keep + last frame x amount.
+TEST(VulkanRenderer, ScreenFeedbackUsesPreviousFrame) {
+    VkWindow v;
+    if (!v.skip.empty()) GTEST_SKIP() << v.skip;
+    EXPECT_TRUE(v.r->upload(ou::scene::makePlaceholderScene()).empty());
+    const ou::render::Image plain = v.frame({});
+    ou::render::ScreenFilter sf;
+    sf.feedbackKeep = 0; // scene x 0 + last frame x 0: black once a copy exists
+    ou::render::FrameOptions o;
+    o.screenFilter = &sf;
+    EXPECT_LT(meanAbsDiff(v.frame(o), plain), 0.5); // first frame: no copy, nothing drawn
+    EXPECT_LT(brightness(v.frame(o)), plain.rgb.size()); // < 1 per channel on average
+    v.frame({});         // effect off: the copy is dropped
+    sf.feedbackAmount = 1; // scene x 0 + last frame (half size) x 1
+    EXPECT_LT(meanAbsDiff(v.frame(o), plain), 0.5);
+    const ou::render::Image fed = v.frame(o);
+    // The previous (plain) frame through the half-size copy: blurred (the checkerboard greys out), same overall level.
+    const double ratio = double(brightness(fed)) / double(brightness(plain));
+    EXPECT_GT(ratio, 0.9);
+    EXPECT_LT(ratio, 1.1);
+}
+
 // Resident meshes keep their BLASes (and the merged static BLASes of their part): a second upload of the same keyed
 // scene builds no BLAS, only the TLAS, and traces the same image. A mesh moved by updateVertices is re-sent by the next
 // upload (new BLAS, merged BLAS rebuilt without it), after which uploads build nothing again.

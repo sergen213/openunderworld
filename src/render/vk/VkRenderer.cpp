@@ -835,7 +835,6 @@ public:
         // shaders' look. [O] l2_cliffclimb deck: raster / RT luminance of on-screen hits, median 2.2 (226k pixels).
         // ponytail: one global gain; per-material shading at the hit would need the translated programs in the ray path.
         wb.waterPass[2].w = options.originalShaders && !origPrograms_.empty() ? 2.0f : 1.0f;
-        std::memcpy(waterUbo_[frameIndex_].mapped, &wb, sizeof wb);
         if (enhancedWater) updateRipples(options);
         // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water; translated
         // materials reading the back/depth buffer (the sea, OrigDraw::screen) draw in the second pass from the copies.
@@ -843,6 +842,10 @@ public:
         // Material particles that refract / fade softly sample the same copies (FxBatch::screen).
         const bool fxScreen = std::any_of(options.fxBatches.begin(), options.fxBatches.end(), [](const FxBatch& b) { return b.screen(); });
         const bool filter = options.screenFilter && options.screenFilter->active(); // original screen filters (post)
+        // PCFeedbackEffect: copies the post output at the end of the frame; its draw needs last frame's copy (+0x3D).
+        const bool feedback = filter && options.screenFilter->feedback() && feedbackCopyable_;
+        wb.filter[7].w = feedback && hasFeedback_ ? 1.0f : 0.0f;
+        std::memcpy(waterUbo_[frameIndex_].mapped, &wb, sizeof wb);
         const bool needDepth = enhancedWater || wb.haze.w > 0.5f || wb.weather.x > 0.5f || wb.waterPass[2].x > 0 || screenReaders || fxScreen ||
                                (filter && options.screenFilter->dof);
         for (size_t i = 0; i < uiImages_.size(); ++i) updateUiImage(uiImages_[i], options.uiImages[i]);
@@ -1382,7 +1385,7 @@ public:
         // Post pass: resolved scene → swapchain (tonemap / FXAA), then the overlay on top. With FSR the post pass writes
         // fsrInput_ at the render resolution; FSR upscales it into the swapchain image(s), then the overlay.
         const VkImage postTarget = fsrOn ? fsrInput_.image : target;
-        if (filter) recordFilterBlur(cmd); // leaves sceneColor_ TRANSFER_SRC
+        if (filter) recordFilterBlur(cmd, sceneColor_.image, filterBlur_.image); // leaves sceneColor_ TRANSFER_SRC
         const VkImageMemoryBarrier2 toPost[] = {
             imageBarrier(sceneColor_.image, filter ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, filter ? VK_PIPELINE_STAGE_2_BLIT_BIT : kColorOut,
@@ -1413,6 +1416,18 @@ public:
                                 nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 2, 1, &shadowSets_[frameIndex_], 0, nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
+        if (feedback) { // 0x509630 -> 0x51A2E0: this frame's image (before the HUD) for the next frame's feedback
+            vkCmdEndRendering(cmd);
+            recordFilterBlur(cmd, postTarget, feedback_.image);
+            const VkImageMemoryBarrier2 back = imageBarrier(postTarget, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                                                            VK_ACCESS_2_NONE, kColorOut,
+                                                            VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            barriers(cmd, {&back, 1});
+            swap.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; // the overlay draws over the post output
+            vkCmdBeginRendering(cmd, &ri);
+        }
+        hasFeedback_ = feedback;
 
         // UI + diagnostic overlay at the display resolution, inside a rendering on the swapchain image.
         const bool hasOverlay = !options.overlay.empty() || !options.ui.empty();
@@ -2728,14 +2743,16 @@ private:
         VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, wb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &wl, nullptr, &waterSetLayout_));
         // Post: set 1 = WaterBlock UBO + opaque depth (underwater, atmosphere, weather) + the screen filters' blur levels
-        // (filterBlur_) + the ripple field (caustics); set 2 = the sun shadow set (shafts).
-        const VkDescriptorSetLayoutBinding pb[4] = {
+        // (filterBlur_) + the ripple field (caustics) + the feedback effect's previous frame (feedback_); set 2 = the sun
+        // shadow set (shafts).
+        const VkDescriptorSetLayoutBinding pb[5] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         };
-        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, pb};
+        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 5, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
         VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves
         // 1: sun shadow (caustics); 2 (RT devices): the scene TLAS for water_rt.frag's reflections.
@@ -3105,7 +3122,8 @@ private:
         constexpr VkImageUsageFlags kStore = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         motion_ = createImage(swapMemory_, VK_FORMAT_R16G16_SFLOAT, extent_.width, extent_.height, 1, kRead, VK_IMAGE_ASPECT_COLOR_BIT);
         reactive_ = createImage(swapMemory_, VK_FORMAT_R8_UNORM, extent_.width, extent_.height, 1, kRead, VK_IMAGE_ASPECT_COLOR_BIT);
-        fsrInput_ = createImage(swapMemory_, surfaceFormat_.format, extent_.width, extent_.height, 1, kRead, VK_IMAGE_ASPECT_COLOR_BIT);
+        fsrInput_ = createImage(swapMemory_, surfaceFormat_.format, extent_.width, extent_.height, 1,
+                                kRead | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT); // + feedback copy
         fsrOutput_ = createImage(swapMemory_, VK_FORMAT_R8G8B8A8_UNORM, display_.width, display_.height, 1, kStore, VK_IMAGE_ASPECT_COLOR_BIT);
         if (fsrFrameGen_)
             fsrGenerated_ = createImage(swapMemory_, VK_FORMAT_R8G8B8A8_UNORM, display_.width, display_.height, 1, kStore,
@@ -3470,7 +3488,7 @@ private:
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &postSet_)); // written per swapchain (recreateSwapchain)
 
         // Enhanced water: one WaterBlock UBO and one water + post-water set (+ 3 liquid splash sets) per frame in flight.
-        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9 * kFramesInFlight},
+        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10 * kFramesInFlight},
                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5 * kFramesInFlight}};
         VkDescriptorPoolCreateInfo wpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 5 * kFramesInFlight, 2, wps};
         VK_CHECK(vkCreateDescriptorPool(device_, &wpci, nullptr, &waterPool_));
@@ -3646,6 +3664,11 @@ private:
             w.dstBinding = 2;
             w.pImageInfo = &blur;
             vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+            const VkDescriptorImageInfo fb{blurSampler_, feedback_.view ? feedback_.view : white_.view,
+                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            w.dstBinding = 4; // the feedback effect's previous frame
+            w.pImageInfo = &fb;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
             w.dstBinding = 3; // the ripple field (underwater caustics)
             w.pImageInfo = &rip;
             vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
@@ -3799,16 +3822,16 @@ private:
         writeWaterSets();
     }
 
-    // Original screen filters: the resolved scene (sceneColor_, COLOR_ATTACHMENT) blitted to half size into filterBlur_
-    // mip 0, each further mip from the one above (linear); the blur levels the post pass samples (shaders/filter.glsl).
-    // Leaves sceneColor_ TRANSFER_SRC and filterBlur_ SHADER_READ_ONLY.
-    void recordFilterBlur(VkCommandBuffer cmd) {
+    // Original screen filters: `src` (render size, COLOR_ATTACHMENT) blitted to half size into `dst` mip 0, each further
+    // mip from the one above (linear): the resolved scene into filterBlur_ (the blur levels the post pass samples,
+    // shaders/filter.glsl) and the post output into feedback_. Leaves `src` TRANSFER_SRC and `dst` SHADER_READ_ONLY.
+    void recordFilterBlur(VkCommandBuffer cmd, VkImage src, VkImage dst) {
         constexpr VkPipelineStageFlags2 kBlit = VK_PIPELINE_STAGE_2_BLIT_BIT;
         const VkImageMemoryBarrier2 pre[] = {
-            imageBarrier(sceneColor_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            imageBarrier(src, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kBlit,
                          VK_ACCESS_2_TRANSFER_READ_BIT),
-            imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            imageBarrier(dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_NONE, kBlit, VK_ACCESS_2_TRANSFER_WRITE_BIT),
         };
         barriers(cmd, pre);
@@ -3821,18 +3844,18 @@ private:
                                     : VkOffset3D{int32_t(extent_.width), int32_t(extent_.height), 1};
             b.dstOffsets[1] = {std::max(1, w0 >> level), std::max(1, h0 >> level), 1};
             if (level) {
-                auto up = imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                auto up = imageBarrier(dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                        kBlit, VK_ACCESS_2_TRANSFER_WRITE_BIT, kBlit, VK_ACCESS_2_TRANSFER_READ_BIT);
                 up.subresourceRange.baseMipLevel = level - 1, up.subresourceRange.levelCount = 1;
                 barriers(cmd, {&up, 1});
             }
-            vkCmdBlitImage(cmd, level ? filterBlur_.image : sceneColor_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           filterBlur_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
+            vkCmdBlitImage(cmd, level ? dst : src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           1, &b, VK_FILTER_LINEAR);
         }
         VkImageMemoryBarrier2 post[2] = {
-            imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kBlit,
+            imageBarrier(dst, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kBlit,
                          VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
-            imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kBlit,
+            imageBarrier(dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kBlit,
                          VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
         };
         post[0].subresourceRange.levelCount = filterLevels_ - 1;
@@ -4767,6 +4790,10 @@ private:
         // FSR blits its upscaled (and generated) image into the swapchain image.
         ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                         (caps.supportedUsageFlags & (VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT));
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(gpu_, surfaceFormat_.format, &fp);
+        feedbackCopyable_ = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
+                            (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT);
         if (fsrActiveRequest() && !(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
             fsrError_ = "swapchain images cannot be blit targets";
         ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -4837,12 +4864,19 @@ private:
             reflMsColor_ = createImage(swapMemory_, sceneFormat_, bw, bh, 1,
                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                                        VK_IMAGE_ASPECT_COLOR_BIT, samples_);
+        feedback_ = createImage(swapMemory_, sceneFormat_, bw, bh, filterLevels_,
+                                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                VK_IMAGE_ASPECT_COLOR_BIT);
+        hasFeedback_ = false;
         oneShot([&](VkCommandBuffer cmd) { // valid sampled layouts from the start (post binds them always)
-            const VkImageMemoryBarrier2 b[4] = {
+            const VkImageMemoryBarrier2 b[5] = {
                 imageBarrier(reflColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                              VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
                 imageBarrier(filterBlur_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+                imageBarrier(feedback_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                              VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
                 imageBarrier(opaqueColor_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -4872,7 +4906,7 @@ private:
         swapViews_.clear();
         presentReady_.clear();
         swapImages_.clear();
-        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_, &opaqueColor_, &opaqueDepth_, &filterBlur_, &reflColor_, &reflMsColor_,
+        for (GpuImage* img : {&depth_, &sceneColor_, &msColor_, &opaqueColor_, &opaqueDepth_, &filterBlur_, &feedback_, &reflColor_, &reflMsColor_,
                               &reflDepth_, &motion_, &reactive_, &splashTargets_[0], &splashTargets_[1],
                               &fsrInput_, &fsrOutput_, &fsrGenerated_})
             if (img->image) destroyImage(*img);
@@ -4925,7 +4959,10 @@ private:
     // Planar reflection (original::reflection): half size, the scene's sample count, resolved into reflColor_.
     GpuImage reflColor_, reflMsColor_, reflDepth_;
     GpuImage filterBlur_;        // screen filters: the half-size scene + mips (recordFilterBlur)
+    GpuImage feedback_;          // PCFeedbackEffect: the previous frame's final image, half size + mips (0x51A2E0)
     uint32_t filterLevels_ = 0;
+    bool hasFeedback_ = false;   // feedback_ holds last frame's copy (+0x3D)
+    bool feedbackCopyable_ = false; // the post target can be a blit source (swapchain usage / format)
     uint64_t rippleVersion_ = 0;
     int rippleSize_ = 0;
     VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;

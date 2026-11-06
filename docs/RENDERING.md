@@ -51,7 +51,10 @@ so `--preset original --shadows on` is allowed, but our shadow map is not a repr
 
 The original's screen filters (class-5 effects: ColorDOF overlay / scene matrix, Finish bloom, Feedback, Noise and tints, docs/formats/EFFECTS.md
 "Screen filters") are applied in the post pass before the brightness gamma (`shaders/filter.glsl`, both renderers): blur
-levels are mips of a half-size copy of the resolved scene, taken only while a filter runs.
+levels are mips of a half-size copy of the resolved scene, taken only while a filter runs. Feedback samples the
+previous frame as tru.exe does (0x509630 -> 0x51A2E0): at the end of each frame it runs, the post output (before the
+HUD) is copied to a persistent half-size texture with mips; the next frame draws scene x keep + that copy blurred,
+zoomed / turned x colour x amount, and nothing on the first frame (no copy yet). Resizes and renderer swaps drop the copy.
 
 Brightness is a display gamma in the post pass (`out = in^(1 / brightness)`, after tonemap/FXAA), as the original's
 Brightness option: tru.exe's gamma ramp `in^(1 − 8(b − 0.05))`, b = registry `Brightness` / 1000 in [0, 0.1] (0x51E3xx,
