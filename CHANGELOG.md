@@ -4,6 +4,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.28.0] - 2026-11-06
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- New: music changes like the original: the game's music scripts now run on the original's beat clock, so timed
+  music cues land on time (they were 20% late) and loops, fades and mutes work.
+- New: language setting (Pause > AUDIO/VISUAL > LANGUAGE, the launcher, or `--lang`): text, subtitles, voices and
+  movie audio switch live for the languages your installation has.
+- New: tutorial hints appear at the places the levels show them (GAME OPTIONS > TRAINING TEXT).
+- New: recenter camera (Q / left stick click) and field camera binoculars (T / d-pad down).
+- New: all text, including movie subtitles, uses the game's own font; button prompts name your actual keys, or show
+  controller icons when you use a gamepad. Cutscene subtitles were not drawn at all; fixed.
+- New: cutscenes are lit by their own light rigs, stay in sync with their sound, and Lara's hair moves in them.
+  Optional cutscene depth of field (DISPLAY SETTINGS > Water & Sky), off by default as in the original.
+- Fixed (Original shaders): objects and characters pick their lights the way the original does, spot lights project
+  their light patterns, and level geometry no longer gets light leaking through walls from the next room.
+
 ## [0.27.0] - 2026-11-06
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
