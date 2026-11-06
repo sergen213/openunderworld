@@ -212,5 +212,10 @@ std::vector<std::string> unitCinematics(const cdc::Drm& unit);
 inline constexpr uint32_t kCinematicType = 3521;
 // Stream name played by the intro whose script section is `scriptId`, or empty.
 std::string introCinematic(const cdc::Drm& unit, uint32_t scriptId);
+// What an actor of object `object` (objectlist name) animating `bones` stream bones shows (0x454BD0 poses the
+// instance's render model): the skinned meshes of its render model 0, or of the render model whose skeleton has exactly
+// `bones` bones when model 0's has not, else every rigid mesh; an object without meshes keeps its skeletons (light
+// rigs). Throws when the object DRM is missing or broken.
+scene::SceneData actorScene(const cdc::BigfileSet& bigfile, const std::string& object, uint32_t bones);
 
 } // namespace ou::cine

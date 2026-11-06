@@ -80,6 +80,7 @@ struct Options {
     std::filesystem::path musicWav; // --music-wav FILE: no device; every tick's mixer output goes to a WAV
     std::string loadSlot; // --load SLOT: start from $XDG_DATA_HOME/openunderworld/saves/SLOT.ousave
     std::string cine;     // --cine NAME: play pc-w\cinstream\NAME.mul in its unit (--frames/--screenshot apply), then exit
+    int cineShots = 0;    // --cine-shots N: N frames spread over the stream, written as <--screenshot stem>-<frame>.ppm
     double die = -1;      // --die SECONDS: Lara dies then (death clip) and respawns at the last checkpoint
     std::vector<std::array<float, 3>> targets; // --target X,Y,Z (repeatable): shootable dummy, feet in the unit frame
     std::optional<ou::game::Weapon> weapon;    // --weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer: carried secondary with max reserve (thorhammer: Mjolnir)
@@ -97,7 +98,7 @@ void usage() {
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer auto|opengl|vulkan]\n"
                  "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
                  "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
-                 "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME]\n"
+                 "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
@@ -204,6 +205,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--load") o.loadSlot = v;
         else if (a == "--die") o.die = std::atof(v);
         else if (a == "--cine") o.cine = v;
+        else if (a == "--cine-shots") o.cineShots = std::atoi(v);
         else if (a == "--target") {
             std::array<float, 3> t{};
             if (std::sscanf(v, "%f,%f,%f", &t[0], &t[1], &t[2]) != 3) { std::fprintf(stderr, "--target wants X,Y,Z\n"); return false; }
@@ -237,7 +239,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
     } else {
         o.game.language = ou::locale::languageCode(*l);
     }
-    if (!o.screenshot.empty() && o.frames == 0) o.frames = 1;
+    if (!o.screenshot.empty() && o.frames == 0 && !o.cineShots) o.frames = 1;
     if ((!o.inputScript.empty() || !o.replayInput.empty()) && o.renderHz == 0) o.renderHz = 60;
     if (!o.inputScript.empty() && !o.replayInput.empty()) { std::fprintf(stderr, "--input-script and --replay-input exclude each other\n"); return false; }
     return true;
@@ -2656,6 +2658,13 @@ int main(int argc, char** argv) {
         v.overlay = !opt.noOverlay;
         v.depthOfField = opt.gfx.cineDof && opt.gfx.effects;
         v.art = art ? &*art : nullptr;
+        if (opt.gfx.effects) {
+            v.fx = &effects.system;
+            v.drawFx = [&](const ou::render::Camera& c, float aspect, ou::render::FrameOptions& fo) {
+                effects.system.build(c, aspect, effects.vertices, effects.batches);
+                fo.fxVertices = effects.vertices, fo.fxBatches = effects.batches;
+            };
+        }
         v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
         // The unit look and its fog (EffectsView::water, without the water look: the camera is not Lara's here).
         effects.updateLook(*world);
@@ -2672,6 +2681,14 @@ int main(int argc, char** argv) {
     if (!opt.cine.empty()) {
         auto v = cineView();
         v.maxFrames = opt.frames;
+        if (opt.cineShots > 0 && !opt.screenshot.empty()) {
+            v.shots = opt.cineShots;
+            v.shot = [&](int frame, const ou::render::Image& img) {
+                auto p = opt.screenshot;
+                p.replace_filename(p.stem().string() + "-" + std::to_string(frame) + ".ppm");
+                if (writePpm(p, img)) std::fprintf(stderr, "ou-game: wrote %s\n", p.string().c_str());
+            };
+        }
         try {
             const auto r = ou::app::playCinematic(opt.cine, v);
             if (r.lastImage && !opt.screenshot.empty()) {

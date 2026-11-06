@@ -333,6 +333,9 @@ void decodeModel(Ctx& c, const cdc::Section& s, std::vector<scene::MeshData>& ou
             if (first + 3ull * tris > numIndices) throw FormatError("primgroup outside index buffer");
             // Primgroup +0x2C..+0x38: default instance textures (PCRenderModel_Finalize 0x50EB30).
             scene::SubMesh sm = c.material(matIds, r.u32(P + 0x28));
+            // Mesh flags bit 0x40 / primgroup +0x1C bit 0: left out of the colour pass, still shadow casters (model
+            // list builder 0x50F7C0) [O]: co_shadow_card (flags 0x41) in 186, 230, 235, 275, 290.
+            sm.shadowOnly = (r.u32(M + 0x04) & 0x40) || (r.at<uint8_t>(P + 0x1C) & 1);
             Ctx::instanceTextures(sm, r, P + 0x2C, texIds);
             sm.drawGroup = uint8_t(r.u32(P + 0x20)); // hide/unhide group (DXHR PrimGroup dword20)
             appendIndices(m, r, indexBase, first, 3 * tris, numVerts, sm);

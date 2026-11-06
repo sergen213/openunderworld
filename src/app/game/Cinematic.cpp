@@ -53,6 +53,8 @@ struct Actor {
     std::vector<size_t> meshes;      // into the uploaded scene
     bool rows = false;               // meshes take the bones' skin-palette 4th rows in COLOR0 (Material::skinParams)
     size_t firstLight = 0;           // its lights' slots in the scene's environment lights
+    bool fx = false;                 // owns running effects (CineView::fx): its emitters follow bone 0
+    glm::vec3 fxHome{0}, fxAt{0};    // where its effects were started (the intro) / are now
 };
 
 // globalaniminfo's cinematic settings (ObjectBase +0xC8; tru.exe 0x4533A0 keeps the pointer at handler +0x10C):
@@ -163,27 +165,24 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         }
         actorIntros.insert(inst.intro);
         const auto obj = objectNames.find(in->objectId);
-        if (obj == objectNames.end()) continue;
+        if (obj == objectNames.end()) {
+            std::fprintf(stderr, "ou-game: cinematic %s: intro %d: object %u not in objectlist\n", name.c_str(), inst.intro, in->objectId);
+            continue;
+        }
         scene::SceneData s;
         try {
-            s = formats::loadDrmScene(v.bigfile, "pc-w\\" + obj->second + ".drm");
+            s = cine::actorScene(v.bigfile, obj->second, inst.bones);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "ou-game: cinematic %s: %s: %s\n", name.c_str(), obj->second.c_str(), e.what());
             continue;
         }
-        uint32_t model = 0; // skinned meshes of render model 0, else every rigid mesh
-        if (auto bytes = v.bigfile.read("pc-w\\" + obj->second + ".drm"))
-            for (const uint32_t id : formats::objectRenderModels(cdc::parseDrm(std::move(*bytes))))
-                if ((model = id)) break;
-        const bool skinned = std::any_of(s.meshes.begin(), s.meshes.end(), [&](const auto& m) {
-            return m.skeleton >= 0 && s.skeletons[size_t(m.skeleton)].renderModelId == model;
-        });
-        std::erase_if(s.meshes, [&](const auto& m) {
-            return skinned ? m.skeleton < 0 || s.skeletons[size_t(m.skeleton)].renderModelId != model : m.skeleton >= 0;
-        });
         // Light rigs (co_light_rig*) have no geometry but bones for their lights.
-        if (s.meshes.empty() && (inst.lights.empty() || s.skeletons.empty())) continue;
+        if (s.meshes.empty() && (inst.lights.empty() || s.skeletons.empty())) {
+            std::fprintf(stderr, "ou-game: cinematic %s: intro %d (%s) has no model\n", name.c_str(), inst.intro, obj->second.c_str());
+            continue;
+        }
         Actor a{&inst};
+        if (v.fx && v.fx->hasOwner(inst.intro)) a.fxHome = a.fxAt = glm::vec3(introWorld(*in, off)[3]), a.fx = true;
         const size_t skelBase = sc.skeletons.size();
         sc.skeletons.insert(sc.skeletons.end(), s.skeletons.begin(), s.skeletons.end());
         if (s.meshes.empty()) a.skelIndex = int32_t(skelBase);
@@ -261,13 +260,15 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
     CineResult r;
     locale::SubtitleTicker ticker;
     cine::Clock clock;
-    double t = 0, hairTime = 0;
+    double t = 0, hairTime = 0, fxTime = 0;
     bool hairFresh = true;
     glm::vec3 laraRoot(0);
     uint64_t last = SDL_GetTicksNS();
     std::vector<std::string> overlay;
     std::vector<scene::Light> posedLights = lights;
     render::ScreenFilter filter;
+    const int totalFrames = v.shots > 0 ? cine::scan(cine::demux(*mul)).frames : 0;
+    int shot = 0;
     for (bool running = true; running;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -290,7 +291,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
             if (s.language == v.language)
                 for (const auto& line : locale::cineSubtitleLines(s.text)) ticker.push(line);
 
-        for (const auto& a : actors) {
+        for (auto& a : actors) {
             const scene::Skeleton one{{scene::Bone{}}, 0, {}};
             auto bones = player.bones(*a.inst, a.skeleton ? *a.skeleton : one);
             if (a.inst->intro == -1 && !hair.empty()) { // world-space bones: the hair's model frame is the world
@@ -304,6 +305,11 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
             if (!lights.empty() && !a.inst->lights.empty()) {
                 const auto lp = player.lights(*a.inst, bones);
                 for (size_t k = 0; k < lp.size(); ++k) poseLight(posedLights[a.firstLight + k], lp[k]);
+            }
+            if (a.fx) { // its emitters (started at the intro) ride on bone 0; ribbons / bolts on its segments
+                const glm::vec3 at(bones[0][3]);
+                v.fx->moveOwner(a.inst->intro, at - a.fxAt), a.fxAt = at;
+                v.fx->track(a.inst->intro, glm::mat4(1.0f), bones);
             }
             const auto palette = a.skeleton ? anim::skinPalette(*a.skeleton, bones) : std::vector<glm::mat4>{};
             const auto rows = a.rows ? player.boneRows(*a.inst) : std::vector<glm::vec4>{};
@@ -336,6 +342,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         cam.nearZ = 2.0f;
         cam.farZ = v.farZ;
         if (v.mixer) v.mixer->setListener({pose.position, pose.forward, pose.up});
+        if (v.fx)
+            for (fxTime += step; fxTime >= 1.0 / 60; fxTime -= 1.0 / 60) v.fx->tick(pose.position);
         // Depth of field (camera flag bit 6, 0x4547D0): globalaniminfo's filter with the camera's depthOfField. That
         // filter has its ColorDOF block off (+0x130E 0), so the original draws nothing; Enhanced turns it on (without
         // its scene matrix) to show the cameras' focus.
@@ -367,6 +375,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         fo.unitClips = clips;
         fo.dynamicLights = posedLights;
         fo.screenFilter = screenFilter;
+        if (v.drawFx) v.drawFx(cam, hgt > 0 ? float(w) / float(hgt) : 1.0f, fo);
         render::Fog fog;
         if (v.fog) {
             fx::FogSum sum;
@@ -377,6 +386,10 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         }
         v.renderer.drawFrame(cam, {w, hgt}, fo);
         ++r.frames;
+        if (v.shots > 0 && v.shot && shot < v.shots && (!more || player.frame() >= shot * (totalFrames - 1) / std::max(1, v.shots - 1))) {
+            v.shot(player.frame(), v.renderer.readBackbuffer({w, hgt}));
+            ++shot;
+        }
         if (v.maxFrames && r.frames >= v.maxFrames) {
             r.lastImage = v.renderer.readBackbuffer({w, hgt});
             running = false;
@@ -384,6 +397,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         v.renderer.present();
         if (!more) running = false;
     }
+    for (const auto& a : actors) // back where the game left their effects
+        if (a.fx) v.fx->moveOwner(a.inst->intro, a.fxHome - a.fxAt);
     if (v.mixer) {
         if (voice) v.mixer->stop(voice, 0.3f);
         v.mixer->setBusVolume(audio::Bus::Music, v.musicVolume), v.mixer->setBusVolume(audio::Bus::Sfx, v.sfxVolume);

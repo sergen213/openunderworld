@@ -223,7 +223,7 @@ player intro).
 
 ## 6. Playback in ou-game
 
-- `ou-game --game-dir DIR --cine NAME [--render-hz 30 --frames N --screenshot out.ppm]`: loads the stream's unit (with
+- `ou-game --game-dir DIR --cine NAME [--render-hz 30 --frames N --screenshot out.ppm [--cine-shots N]]`: loads the stream's unit (with
   its portal neighbours), plays the cutscene, exits. Esc or gamepad Start skips.
 - [O run] When a script activates a `cinematic_object` that has a stream (`UnitData::cinematics`), `World::onCinematic`
   plays it first; a level end's chapter change follows. Replay check: spawning in l4_ballcourt's volume 6407 activates
@@ -237,7 +237,22 @@ player intro).
   costume (GAMEPLAY.md "Outfits"). Her hair is simulated on the stream's pose (`anim::HairSim` with `game::laraHair()`,
   60 Hz steps on the frame clock), reset at the first frame and [I] when her root jumps more than 200 units in a frame
   (the exe resets at frame 1 and at instance record `+0x3C`'s frame [U]).
-- Not done: events / vars (no retail stream has events), the cinematic DRM's own effects.
+- Actors: `cine::actorScene` (render model 0's skinned meshes; [I] the model whose skeleton has exactly the stream's
+  bones when model 0's has fewer: ms_ani_sunsphere_plat's 33-bone model 1 in 049_med_kraken_death). Meshes with Mesh
+  flags bit 0x40 or primgroup `+0x1C` bit 0 are left out of the colour pass (0x50F7C0 [O]): `co_shadow_card` (38
+  instances, flags 0x41) no longer draws as a grey plane (186, 230, 235, 275, 290).
+- Effects: the game's running effects (`EffectsView`) tick on the frame clock and draw with the cinematic camera
+  (torches, the burning manor in 170); actors that own effects (`co_fx_hell_gate`, `co_fx_shp_escape`,
+  `co_fx_hel_saved`, `fx_cine_lightning`, `co_lightning`) carry their emitters on bone 0 and are moved back afterwards.
+  The `cinstream\*.drm` files hold no GenericFXObject (`fx::parseObjectFx` finds none in all 53); their birth records
+  that are disabled (info 0x2005, e.g. all 10 of co_fx_hel_saved) are started by nothing we run [U].
+- Not done: events / vars (no retail stream has events; vars only on the light rigs).
+- Sweep 2026-11-06 (`../openunderworld-work/cinesweep`, `run.sh`: Vulkan, invisible KWin, `--render-hz 30
+  --cine-shots 6`, contact sheets `sheets/*.png`): all 53 play to their last frame. Triggers (test
+  `CineReal.EveryStreamPlaysWithItsActors` prints them): 52 streams have a `cinematic_object` intro; 310_hel_saved has
+  none (only listed by l7_yggdrasil_hall01/02, no cinematic member names it) and 091_tha_naga's intro 2937 is named by
+  no script or link — a static placeholder (Lara in the bind pose at the marker, fixed camera); 343_hel_engame plays
+  only when l7_himalaya_end is started directly.
 
 Viewed renders (`../openunderworld-work/screens/cine`): 001_pro_corridor frames 40 and 150 (Lara walking into the
 corridor, the rubble actor flying; "My god!"), 060_med_natla frames 130 ("Damn, it's too small..." close-up), 420

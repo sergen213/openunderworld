@@ -2,6 +2,7 @@
 // (unit intros + Lara), the .mul's audio and the subtitle ticker. Docs: docs/formats/CINEMATICS.md.
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -32,6 +33,8 @@ struct CineView {
     render::FrameOptions frame{};      // graphics settings
     double renderHz = 0;               // > 0: fixed frame time (replays, screenshots)
     int maxFrames = 0;                 // > 0: stop after this many frames and keep the last image
+    int shots = 0;                     // > 0: hand `shot` this many images, evenly spread over the stream's frames
+    std::function<void(int frame, const render::Image&)> shot;
     float musicVolume = 1, sfxVolume = 1; // Music / Sfx bus volumes restored afterwards (muted while playing)
     bool overlay = false;
     bool depthOfField = false;         // graphics cine_dof: draw the DOF cameras' focus (the original's filter has it off)
@@ -43,6 +46,11 @@ struct CineView {
     const fx::FilterResource* unitFilter = nullptr;
     render::Fog fogSet;
     float farZ = 200000.0f; // camera far plane (Original: the unit look's, as in play)
+    // The game's running effects (torches, fires, waterfalls and the actors' own emitters, e.g. co_fx_hell_gate in
+    // 290_hel_gate): ticked at 60 Hz on the frame clock, the actors' emitters riding on their posed bones (moved back
+    // afterwards), drawn by `drawFx` (sprites into the frame) for the cinematic camera. Null: none (--fx off).
+    fx::System* fx = nullptr;
+    std::function<void(const render::Camera&, float aspect, render::FrameOptions&)> drawFx;
 };
 
 struct CineResult {

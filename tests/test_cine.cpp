@@ -409,6 +409,87 @@ TEST(CineReal, ChapterEndCinematics) {
               (std::vector<std::string>{"185_mex_calendar", "190_mex_mayan", "220_mex_exit", "186_mex_calendar_mirror"}));
 }
 
+// Every stream as ou-game plays it, headless: each instance's intro is in the stream's unit and resolves to a model
+// (cine::actorScene, as app/game/Cinematic.cpp) whose skeleton holds the animated bones, every frame poses finite
+// bones, and the stream runs to its -1 frame. Prints which unit lists each stream and which intro plays it.
+TEST(CineReal, EveryStreamPlaysWithItsActors) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+    const auto ul = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list && ul);
+    const std::string text(ul->begin(), ul->end());
+    std::map<std::string, std::vector<formats::Intro>> intros;    // unit -> intros
+    std::map<std::string, std::vector<std::string>> listed, plays; // stream -> units listing it / intros playing it
+    for (size_t pos = text.find('\n') + 1; pos < text.size();) {
+        const size_t nl = std::min(text.find('\n', pos), text.size());
+        std::string u = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        while (!u.empty() && (u.back() == '\r' || u.back() == ' ')) u.pop_back();
+        if (u.empty()) continue;
+        u = u.substr(u.rfind('\\') + 1);
+        const auto bytes = bf.read("pc-w\\" + u + ".drm");
+        if (!bytes) continue;
+        const auto drm = cdc::parseDrm(*bytes);
+        for (const auto& c : cine::unitCinematics(drm)) listed[c].push_back(u);
+        auto& in = intros[u] = formats::parseUnit(drm).intros;
+        for (const auto& i : in)
+            if (i.scriptId)
+                if (auto c = cine::introCinematic(drm, i.scriptId); !c.empty()) {
+                    const auto n = names.find(i.objectId);
+                    plays[c].push_back(u + ":" + std::to_string(i.uniqueId) + (n == names.end() ? "" : " " + n->second));
+                }
+    }
+    std::vector<std::string> warnings;
+    const auto lara = anim::decodeSkeletons(cdc::parseDrm(*bf.read("pc-w\\lara.drm")), warnings);
+    ASSERT_FALSE(lara.empty());
+    const scene::Skeleton one{{scene::Bone{}}, 0, {}};
+    for (const char* name : kStreams) {
+        SCOPED_TRACE(name);
+        cine::Player p(stream(bf, name));
+        const auto& h = p.header();
+        std::string unit = h.unitName;
+        for (auto& c : unit) c = char(std::tolower(static_cast<unsigned char>(c)));
+        ASSERT_TRUE(intros.contains(unit)) << unit;
+        std::vector<std::pair<const cine::Instance*, scene::Skeleton>> actors;
+        for (const auto& inst : h.instances) {
+            if (inst.intro == -1) {
+                EXPECT_LE(inst.bones, lara[0].bones.size());
+                actors.emplace_back(&inst, lara[0]);
+                continue;
+            }
+            const auto& ui = intros[unit];
+            const auto i = std::find_if(ui.begin(), ui.end(), [&](const auto& x) { return x.uniqueId == inst.intro; });
+            if (i == ui.end()) { ADD_FAILURE() << "intro " << inst.intro << " not in " << unit; continue; }
+            const auto obj = names.find(i->objectId);
+            if (obj == names.end()) { ADD_FAILURE() << "intro " << inst.intro << " object " << i->objectId; continue; }
+            const auto s = cine::actorScene(bf, obj->second, inst.bones);
+            const bool rig = s.meshes.empty() && !inst.lights.empty() && !s.skeletons.empty();
+            EXPECT_TRUE(!s.meshes.empty() || rig) << obj->second << " (intro " << inst.intro << ") has no model";
+            const int skel = rig ? 0 : s.meshes.empty() ? -1 : s.meshes[0].skeleton;
+            if (skel >= 0) EXPECT_LE(inst.bones, s.skeletons[size_t(skel)].bones.size()) << obj->second; // else 0x454BD0 skips it
+            actors.emplace_back(&inst, skel >= 0 ? s.skeletons[size_t(skel)] : one);
+        }
+        int frames = 0;
+        for (bool more = true; more; ++frames) {
+            more = p.seek(frames);
+            const auto cam = p.camera();
+            ASSERT_TRUE(std::isfinite(cam.position.x) && std::isfinite(cam.forward.x)) << "frame " << frames;
+            for (const auto& [inst, sk] : actors)
+                for (const auto& m : p.bones(*inst, sk))
+                    ASSERT_TRUE(std::isfinite(m[3].x) && std::isfinite(m[3].y) && std::isfinite(m[3].z)) << "intro " << inst->intro << " frame " << frames;
+        }
+        EXPECT_TRUE(p.finished());
+        EXPECT_EQ(p.frame(), cine::scan(stream(bf, name)).frames - 1);
+        std::string by, in;
+        for (const auto& x : plays[name]) by += (by.empty() ? "" : ", ") + x;
+        for (const auto& x : listed[name]) in += (in.empty() ? "" : ", ") + x;
+        std::printf("%-26s %5d frames %2zu actors  unit %-30s listed in [%s]  played by [%s]\n", name, p.frame() + 1, actors.size(),
+                    unit.c_str(), in.c_str(), by.c_str());
+    }
+}
+
 // Lara's cinematic skeleton is lara.drm's: the animated bone offsets match the bind pivots.
 TEST(CineReal, LaraBonesMatchHerSkeleton) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";

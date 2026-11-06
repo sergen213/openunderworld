@@ -1,5 +1,6 @@
 // CINE stream parsing and playback. Evidence: docs/formats/CINEMATICS.md.
 #include "cine/Cine.hpp"
+#include "formats/Formats.hpp"
 
 #include "script/Script.hpp"
 
@@ -395,6 +396,33 @@ std::string introCinematic(const cdc::Drm& unit, uint32_t scriptId) {
         return {};
     }
     return {};
+}
+
+scene::SceneData actorScene(const cdc::BigfileSet& bigfile, const std::string& object, uint32_t bones) {
+    const std::string path = "pc-w\\" + object + ".drm";
+    auto s = formats::loadDrmScene(bigfile, path);
+    uint32_t model = 0;
+    if (auto bytes = bigfile.read(path))
+        for (const uint32_t id : formats::objectRenderModels(cdc::parseDrm(std::move(*bytes))))
+            if ((model = id)) break;
+    // The instance wears another of its models when model 0's skeleton is short of the stream's bones (0x454BD0 would
+    // skip it) and another has exactly them: ms_ani_sunsphere_plat's model 1 (33 bones) in 049_med_kraken_death [I].
+    auto skeletonOf = [&](uint32_t id) -> const scene::Skeleton* {
+        for (const auto& m : s.meshes)
+            if (m.skeleton >= 0 && s.skeletons[size_t(m.skeleton)].renderModelId == id) return &s.skeletons[size_t(m.skeleton)];
+        return nullptr;
+    };
+    if (const auto* k = skeletonOf(model); k && k->bones.size() < bones)
+        for (const auto& o : s.skeletons)
+            if (o.bones.size() == bones && skeletonOf(o.renderModelId)) {
+                model = o.renderModelId;
+                break;
+            }
+    const bool skinned = skeletonOf(model) != nullptr;
+    std::erase_if(s.meshes, [&](const auto& m) {
+        return skinned ? m.skeleton < 0 || s.skeletons[size_t(m.skeleton)].renderModelId != model : m.skeleton >= 0;
+    });
+    return s;
 }
 
 } // namespace ou::cine
