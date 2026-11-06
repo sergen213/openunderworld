@@ -493,15 +493,15 @@ public:
     std::vector<ObjectClip> objectClips() const;
     // Posed segment frames (object frame) of a switch / door at its clip time; empty = bind pose.
     std::vector<glm::mat4> objectBones(int32_t uid) const;
+    // Uber objects whose model-0 section was removed (action 28: broken urns, exploded barrels); drawn no more.
+    std::set<int32_t> removedObjects() const;
+    // Hit message 0x11C on an uber object's sections (0x6D4690): shots, Mjolnir's bolts, the ground pound.
+    void damageObject(int32_t uid, float damage, int damageClass);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
     // FNV-1a digest of the simulated state (Lara, camera, health/air, rigid bodies, object collision, script objects
     // and their fields, enemies): equal digests at a tick = the same simulation (render-rate tests, ou-game log).
-    // Uber objects whose model-0 section was removed (action 28: broken urns, exploded barrels); drawn no more.
-    std::set<int32_t> removedObjects() const;
-    // Hit message 0x11C on an uber object's sections (0x6D4690): shots, Mjolnir's bolts, the ground pound.
-    void damageObject(int32_t uid, float damage, int damageClass);
     uint64_t stateHash() const;
     // Save games (src/save): ai::Enemies::restore, then the loaded units' enemies come back from it at once.
     void restoreEnemies(const nlohmann::json& j);
@@ -772,6 +772,8 @@ private:
         std::map<int32_t, physics::Joint1> joints;
         std::set<int32_t> links; // created type-11 link joints
         std::vector<UberWatch> watches;
+        std::vector<std::string> animNames; // the object's animation list, as animLength
+        bool intangible = false;            // action 5: instance +0x18 bit 0x20000000, collision callbacks skip it
     };
     std::map<int32_t, UberRuntime> uberRuntime_;
     std::vector<std::pair<int32_t, uint32_t>> uberEvents_; // (uid, event index) for the script's vt 54
@@ -796,8 +798,6 @@ private:
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;
     uint64_t lightsVersion_ = 0;
     // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()).
-        std::vector<std::string> animNames; // the object's animation list, as animLength
-        bool intangible = false;            // action 5: instance +0x18 bit 0x20000000, collision callbacks skip it
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
     std::vector<ObjectCollider> colliders_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none

@@ -849,10 +849,10 @@ void World::syncObjects() {
             (!o.script || !o.script->program->mainFunction(o.script->typeId))) continue;
         const physics::ObjectPhysics* physics = objectPhysics(o.name);
         if (!physics) continue;
+        if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end() && rt->second.intangible) continue;
         const physics::ObjectPhysics& p = *physics;
         const glm::mat4 intro = introModel(o);
         int hinge = -1;
-        if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end() && rt->second.intangible) continue;
         // [I] Rigid doors (class 34) and joint levers (class 6) swing about the X axis of their first model marker.
         if ((o.kind == script::Kind::Door || o.kind == script::Kind::Switch) && !o.clips &&
             (o.kind == script::Kind::Switch || p.physClass == physics::kClassRigidBody) && !p.markers.empty()) {
