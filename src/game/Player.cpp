@@ -128,7 +128,8 @@ std::string_view stateName(State s) {
                                              "swimtread", "swimsurface", "swimdive", "swimunder", "surfacing",
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
                                              "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
-                                             "grappleswing", "hit", "railslide", "grapplepull", "vehicle", "grapplerappel"};
+                                             "grappleswing", "hit", "railslide", "grapplepull", "vehicle", "grapplerappel",
+                                             "use", "block"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -256,6 +257,43 @@ void Player::hitReact(std::string_view clip) {
     s_.vel = vec3(0);
     s_.clip.clear(); // restart even when the same reaction is playing
     play(clip, false);
+}
+
+bool Player::canInteract() const {
+    using enum State;
+    const State s = s_.state;
+    return s_.water < 0 && (s == Idle || s == Walk || s == Run || s == Stop || s == Turn || s == Land || s == Crouch);
+}
+
+bool Player::use(std::string_view clip, vec3 pos, float yaw) {
+    if (!canInteract() || !anims_.find(clip)) return false;
+    s_.state = State::Use;
+    s_.vel = vec3(0), s_.pos = pos, s_.yaw = yaw;
+    s_.clip.clear(), s_.clipMix.clear(), s_.mix = 0;
+    play(clip, false);
+    return true;
+}
+
+// [O] lara.drm requests 60 obj_block_grab, 61 obj_block_idle, 62 / 58 obj_block_front/left/right/back, 1452
+// obj_block_release; the clips have no root motion. [I] front = pushing, back = pulling; the sideways clips are unused.
+void Player::grip(vec3 axis, int moving) {
+    if (s_.state != State::Block) {
+        if (axis == vec3(0) || !canInteract() || !anims_.find("obj_block_grab")) return;
+        s_.state = State::Block;
+        s_.vel = vec3(0), s_.yaw = std::atan2(axis.y, axis.x);
+        s_.clip.clear(), s_.clipMix.clear(), s_.mix = 0;
+        play("obj_block_grab", false);
+        return;
+    }
+    if (axis == vec3(0)) { // let go
+        s_.state = State::Use;
+        s_.clip.clear();
+        play("obj_block_release", false);
+        return;
+    }
+    s_.yaw = std::atan2(axis.y, axis.x);
+    if (s_.clip == "obj_block_grab" && !clipDone()) return;
+    play(moving > 0 ? "obj_block_front" : moving < 0 ? "obj_block_back" : "obj_block_idle", true);
 }
 
 // Collide-and-slide of a capsule [pos + bottom + r, pos + height - r]. `horizontalNormals` flattens
@@ -1324,6 +1362,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         advanceClip(dt);
         break;
     case State::Vehicle: // World drives her from the bike (Vehicle.cpp) and does not tick the player
+        break;
+    case State::Use: // in place, input locked (the interaction clips have no root motion)
+        advanceClip(dt);
+        if (clipDone()) { s_.state = State::Idle; play("ng_idle", true); }
+        break;
+    case State::Block: // World moves her with the block (Script.cpp carried) and drives the clips through grip()
+        advanceClip(dt);
         break;
     }
 }

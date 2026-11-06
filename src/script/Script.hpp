@@ -218,6 +218,10 @@ struct Object {
         bool loop = false;
     };
     std::optional<Graph> graph; // saved: state, transition, frames, clip, t, loop
+    // Switches: animation id of the Lara clip in the switch's DRM (obj_pull_lever, else obj_pushbutton /
+    // hosted_push_button, else interact; game::AnimLibrary keeps them as "use:<id>"), 0 = none.
+    uint32_t laraClip = 0;
+    float useDistance = 0; // Switches: where Lara stands to use it, units in front of it (engagement record +0x44 [I]); 0 = unknown
 };
 
 struct UnitRef {
@@ -265,6 +269,10 @@ public:
     // initial value (an inline SoundPlex node in the owner's unit DRM); anchor = intro uid for 3D plays, 0 for 2D.
     using SoundNative = std::function<bool(int32_t owner, uint32_t member, cdc::Pointer plex, uint32_t function, int32_t anchor)>;
     void setSoundNative(SoundNative native) { sound_ = std::move(native); }
+    // `reverb` 1 (0x4AA750): `at` = the member's initial value in `unit`'s DRM: the 13 SFX-reverb floats its pointer names
+    // (AUDIO.md §9.15). Soundvolumes call it when Lara enters them.
+    using ReverbNative = std::function<void(const std::string& unit, cdc::Pointer at)>;
+    void setReverbNative(ReverbNative native) { reverb_ = std::move(native); }
     // `music` natives (bind 0x7ACB40) on a value {char* track, i32 slot}: 1 Play(fade s) (0x5942F0), 2 Play(fade s,
     // fade-out s) (0x594320), 3 Stop(fade s): the slot fades out (0x593EB0 with a null name). Slot = music player
     // 0xCC5260 + slot * 0x528 (AUDIO.md §9.4). Queued in call order; the music player takes them each tick.
@@ -349,6 +357,8 @@ public:
     float screenFade() const { return fade_; }
     bool holding() const { return holding_; }  // last tick: Lara grips a push block (interact held next to it)
     vec3 carried() const { return carried_; }  // last tick: displacement of the gripped block; move Lara by it
+    vec3 gripAxis() const { return gripAxis_; } // last tick: the gripped block's axis toward it (her facing); 0 = none
+    int32_t used() const { return used_; }      // last tick: the switch Lara used (uid), 0 = none
     uint64_t ticks() const { return tick_; }
     // Handler failures since construction: (intro uid, Machine::failure reason) -> count. The survey reads these.
     const std::map<std::pair<int32_t, std::string>, size_t>& failures() const { return failures_; }
@@ -402,6 +412,7 @@ private:
     HealthNative health_;
     MarkupNative markup_;
     SoundNative sound_;
+    ReverbNative reverb_;
     std::vector<MusicRequest> musicRequests_;
     std::vector<std::string> movies_;
     CameraNative camera_;
@@ -429,7 +440,8 @@ private:
     std::array<uint8_t, 256> gameValues_{};
     std::map<uint16_t, std::string> objectNames_;
     struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips;
-                    std::shared_ptr<const std::vector<std::string>> names; float resetAfter = -1; };
+                    std::shared_ptr<const std::vector<std::string>> names; float resetAfter = -1; uint32_t laraClip = 0;
+                    float useDistance = 0; };
     std::map<std::string, std::shared_ptr<AnimSet>> animSets_; // object name -> skeleton + clips
     std::vector<Object> objects_;
     std::map<std::pair<const vm::Program*, uint32_t>, std::shared_ptr<vm::Instance>> auxiliary_; // unit/global scripts
@@ -452,7 +464,8 @@ private:
     float fade_ = 0, fadeTarget_ = 0, fadeStep_ = 0;
     vec3 lastPos_{0};
     bool hasLast_ = false, interactHeld_ = false, holding_ = false;
-    vec3 carried_{0};
+    vec3 carried_{0}, gripAxis_{0};
+    int32_t used_ = 0;
 };
 
 } // namespace ou::script

@@ -386,20 +386,39 @@ std::optional<glm::mat4> World::uberJointPose(int32_t uid) const {
     return glm::translate(glm::mat4(1), j.pivot) * glm::mat4_cast(glm::angleAxis(j.x, j.axis)) * glm::translate(glm::mat4(1), -j.pivot);
 }
 
+// Lara's side of a switch (docs/GAMEPLAY.md "Interactions"). [O] The switch's DRM carries her clip (Object::laraClip,
+// AnimLibrary "use:<id>"), without root motion; the use handler still runs when the switch's own clip ends (src/script).
+// [I] She stands useDistance in front of it on her side of the switch's local horizontal axis she is most along, facing
+// it. Switches without a clip of their own (l4_ballcourt pole lever 6502) play the button press as she stands.
+void World::useSwitchClip(const script::Object& o) {
+    const auto& s = player_.state();
+    const std::string own = "use:" + std::to_string(o.laraClip);
+    if (!o.laraClip || !anims_.find(own)) {
+        player_.use("use:2441", s.pos, s.yaw);
+        return;
+    }
+    const vec3 lx(std::cos(o.rot.z), std::sin(o.rot.z), 0), ly(-lx.y, lx.x, 0), d = s.pos - o.pos;
+    vec3 out = std::abs(glm::dot(d, lx)) > std::abs(glm::dot(d, ly)) ? lx : ly;
+    if (glm::dot(d, out) < 0) out = -out;
+    const float distance = o.useDistance > 20 && o.useDistance < 500 ? o.useDistance : 135.0f; // [I] the wall switch's
+    player_.use(own, vec3(vec2(o.pos + out * distance), s.pos.z), std::atan2(-out.y, -out.x));
+}
+
 // Lara pushes / pulls an uber object whose model 0 rides a level prismatic joint (l7 Thor towers 8398-8400, "pu":
 // pushed out into their watched range they lock, "block_pushed"). As push blocks (src/script): interact held within
 // reach of its collision grips it, the stick moves it along the joint axis at the push-block speed and she follows
 // (World::tick). [I] Lara's push overrides the joint's motor and gravity (tru.exe: Lara's push animation drives the
-// body); ponytail: no push clips, the axis must be within 45 degrees of her facing.
+// body); she plays the push-block clips (Player::grip) facing the axis, which must be within 45 degrees of her facing.
 void World::pushUberJoints(const Actions& a) {
     constexpr float kReach = 120, kSpeed = 120; // units, units per second (Script.cpp kBlockSpeed)
-    uberGrip_ = false, uberPush_ = {};
+    uberGrip_ = vec3(0), uberPush_ = {};
     if (!a.interact) return;
     const auto& s = player_.state();
     const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
     for (auto& [uid, rt] : uberRuntime_) {
         const int32_t index = uberModelJoint(uid);
         if (index < 0) continue;
+        if (const auto* o = script_.find(uid); o && o->kind == script::Kind::Block) continue; // src/script moves those
         auto& j = rt.joints.at(index);
         if (j.hinge || std::abs(j.axis.z) > 0.3f) continue;
         vec3 lo(1e30f), hi(-1e30f); // world box of its collision
@@ -411,7 +430,8 @@ void World::pushUberJoints(const Actions& a) {
                 }
         const vec3 near = glm::clamp(s.pos, lo, hi);
         if (lo.x > hi.x || glm::length(vec2(near - s.pos)) > kReach || s.pos.z < lo.z - 50 || s.pos.z > hi.z) continue;
-        uberGrip_ = true;
+        uberGrip_ = glm::normalize(vec3(j.axis.x, j.axis.y, 0));
+        if (glm::dot(fwd, uberGrip_) < 0) uberGrip_ = -uberGrip_;
         const float along = glm::dot(fwd, j.axis) * (a.move.y > 0 ? 1.0f : -1.0f);
         if (std::abs(a.move.y) > 0.5f && std::abs(along) > 0.7071f)
             j.push = (along > 0 ? kSpeed : -kSpeed) / 30.0f, uberPush_ = {uid, index, j.x};
@@ -823,10 +843,10 @@ void World::tickObjects(float dt) {
                 hinge.target = o && o->state == 2 ? (o->kind == script::Kind::Switch ? kDoorOpen * 0.5f : kDoorOpen) : 0.0f;
         }
     physics_.step(dt);
-    // Lara rides the dynamic she stands on (platforms, a door swinging under her).
+    // Lara rides the dynamic she stands on (platforms, a door swinging under her); gripping a block, its push carries her.
     const vec3 feet = player_.state().pos;
     const auto ground = col_.groundProbe(feet + vec3(0, 0, 20), 60);
-    const int under = ground ? ground->dynamic : -1;
+    const int under = ground && player_.state().state != State::Block ? ground->dynamic : -1;
     const glm::mat4 before = under >= 0 ? col_.dynamics[under].transform : glm::mat4(1);
     tickLoose(dt);
     tickPlates(dt);

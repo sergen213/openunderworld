@@ -199,6 +199,10 @@ static std::vector<Event> parseEvents(const cdc::Drm& drm, size_t section, size_
                     e.sound = {0, bool(d[c + 1] & 1), rd<int16_t>(d, c + 2), it->second};
             } else if (kind == 1 && size >= 20) {
                 e.sound = {1, false, int16_t(int8_t(d[c + 1])), {~0u, 0}, {rd<uint32_t>(d, c + 8)}};
+                e.sound.volume = d[c + 6] / 127.0f, e.sound.volumeVar = d[c + 7] / 127.0f;
+                if (size >= 8 + 0x1C) // 0x5B99C0: semitones and delay, each ± variance
+                    e.sound.semitones = rd<float>(d, c + 0xC), e.sound.semitonesVar = rd<float>(d, c + 0x10),
+                    e.sound.delay = rd<float>(d, c + 0x14), e.sound.delayVar = rd<float>(d, c + 0x18);
             }
         } else if ((info & 3) == 3 && size >= 8 + 0x18 && o + size <= d.size()) {
             e.sound = {3, false, 0, {~0u, 0}, {rd<uint32_t>(d, c + 0xC), rd<uint32_t>(d, c + 0x10), rd<uint32_t>(d, c + 0x14)},

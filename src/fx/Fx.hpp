@@ -236,6 +236,9 @@ struct SoundCall {
     cdc::Pointer plex{~0u, 0}; // kind 0
     uint32_t dtp[3] = {};
     uint8_t weight[3] = {};    // kind 3 rand() % sum picks
+    // kind 1 (0x5B99C0 -> 0x5953E0): u8 volume +6 ± u8 +7 (0..127, /127: sound instance +0x14), f32 semitones +0xC
+    // ± +0x10 (clamped ±60: instance +0x18), f32 delay s +0x14 ± +0x18 (clamped >= 0). Each value ± variance per play.
+    float volume = 1, volumeVar = 0, semitones = 0, semitonesVar = 0, delay = 0, delayVar = 0;
 };
 struct Event {
     uint16_t info = 0, frame = 0; // frame: 30 Hz animation frame (anim lists)

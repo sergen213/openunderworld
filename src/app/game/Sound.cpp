@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <set>
 
 namespace ou::app {
@@ -42,6 +43,11 @@ GameSound::GameSound(const cdc::BigfileSet& bigfile, audio::Mixer& mixer)
         if (const audio::Plex* p = bank_.find(id); p && p->type == audio::PlexType::Assignment && p->children.size() == 1 &&
                                                    p->children[0].type == audio::PlexType::Stream)
             helpLines_.try_emplace(p->children[0].stream, id);
+    try { // sound categories and their DSPs (AUDIO.md §9.15)
+        if (auto gsi = load(bf_, "pc-w\\globalsoundinfo.drm")) player_.setCategories(audio::parseSoundCategories(*gsi));
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "ou-game: sound categories: %s\n", e.what());
+    }
 }
 
 void GameSound::attach(game::World& world) {
@@ -80,6 +86,24 @@ void GameSound::attach(game::World& world) {
                      scriptHandles_[key] ? "" : " (silent)");
         return true;
     });
+    // reverb 1 (0x4AA750 -> 0x582B70): the 13 SFX-reverb floats the member's value points to (AUDIO.md §9.15).
+    world.script().setReverbNative([this, &world](const std::string& name, cdc::Pointer at) {
+        const auto unit = units_.find(name);
+        if (unit == units_.end()) return;
+        const cdc::Drm& drm = *unit->second.drm;
+        if (at.section >= drm.sections.size() || at.offset + sizeof(audio::SfxReverbProps) > drm.sections[at.section].data.size()) {
+            std::fprintf(stderr, "ou-game: reverb in %s: no settings at section %u +%u\n", name.c_str(), at.section, at.offset);
+            return;
+        }
+        audio::SfxReverbProps p;
+        std::memcpy(p.data(), drm.sections[at.section].data.data() + at.offset, sizeof p);
+        if (p == mixer_.reverb()) return;
+        mixer_.setReverb(p);
+        std::string values;
+        for (float v : p) values += (values.empty() ? "" : ",") + std::to_string(v);
+        std::fprintf(stderr, "ou-game: tick %llu reverb %s: room %.0f mB, decay %.2f s, reverb %.0f mB%s [%s]\n",
+                     (unsigned long long)world.ticks(), name.c_str(), p[1], p[4], p[8], p[1] <= -10000 ? " (off)" : "", values.c_str());
+    });
 }
 
 bool GameSound::playHelp(const game::World& world, bool answer) {
@@ -103,6 +127,7 @@ bool GameSound::playHelp(const game::World& world, bool answer) {
 
 void GameSound::reset() {
     player_.stopAll();
+    mixer_.setReverb(audio::kReverbOff);
     for (auto& [name, u] : units_) u.handles.clear(), u.triggers = audio::SfxMarkerTriggers(u.markers); // Init fires again
     scriptHandles_.clear(), slots_.clear();
     drown_ = engine_ = help_ = 0;
@@ -185,12 +210,19 @@ void GameSound::animSound(const fx::ObjectFx& fx, const fx::Event& e, glm::vec3 
         p = bank_.find(dtp);
     }
     if (!p) return;
-    const auto h = player_.start(*p, position, 1, material);
+    // kind 1 (0x5B99C0): volume (u8 / 127), semitones and delay, each ± its variance (0x582C20 / 0x582CA0 / 0x582D50).
+    const auto vary = [&](float v, float var) { return var ? v + std::uniform_real_distribution<float>(-var, var)(rng_) : v; };
+    const float volume = s.kind == 1 ? std::clamp(vary(s.volume, s.volumeVar), 0.0f, 1.0f) : 1;
+    const float semitones = s.kind == 1 ? std::clamp(vary(s.semitones, s.semitonesVar), -60.0f, 60.0f) : 0;
+    const double delay = s.kind == 1 ? std::max(0.0f, vary(s.delay, s.delayVar)) : 0;
+    const auto h = player_.start(*p, position, volume, material, semitones, delay);
     // Root Assignments wrap a Reference: log the DTP it names.
     if (!dtp && p->type == audio::PlexType::Assignment && !p->children.empty() && p->children[0].type == audio::PlexType::Reference)
         dtp = p->children[0].id;
-    std::fprintf(stderr, "ou-game: tick %llu anim sound %s frame %u DTP %u material %u%s\n", (unsigned long long)tick, fx.name.c_str(),
+    std::fprintf(stderr, "ou-game: tick %llu anim sound %s frame %u DTP %u material %u%s", (unsigned long long)tick, fx.name.c_str(),
                  e.frame, dtp, material, h ? "" : " (silent)");
+    if (s.kind == 1) std::fprintf(stderr, " volume %.2f semitones %.2f delay %.2f", volume, semitones, delay);
+    std::fprintf(stderr, "\n");
 }
 
 void GameSound::syncUnits(const game::World& world) {

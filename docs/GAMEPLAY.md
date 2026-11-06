@@ -974,6 +974,53 @@ Not done [U/I]: gears, engine/skid/landing sounds, wheelies, power slides, donut
 dismounts, PDA on the bike, aiming to her left from the bike, hit reactions while riding (damage applies without a clip), dismount
 clearance checks (`PSCCF_Vehicle_DismountClearance`), the revisit spawner, water.
 
+## Interactions: switches, push blocks, pickups (src/game/Objects.cpp `useSwitchClip`, Player `use` / `grip`)
+
+Where Lara's clips are [O] (animation lists, 2026-11-05 survey of every objectlist.txt switch / lever / button / pickup /
+door / block object; Lara's clips = 113-track animations on her skeleton):
+
+- Switches carry Lara's clip in their own DRM next to the switch's: `obj_pull_lever` (anim 2605, 2.17 s; 2671, 2.43 s in
+  `ar_ei_switch_oneway` / `sa_ei_switch_oneway_flushtunnel`), `obj_pull_fail` (2606 / 3263), `obj_pushbutton` (2441,
+  1.30 s, 97 tracks; 2608 in the cheat buttons; `sh_ei_shiphall_door` names 2441 `hosted_push_button`), the rune wall
+  switches `interact` (4129, 2.03 s). Animation ids are shared between DRMs; `ms_ei_switch_oneway_wall`,
+  `ar_ei_switch_oneway`, `is_cheat_button` and `ar_uo_rune_wall_switch` hold all of them (`loadLaraAnims`: `use:<id>`).
+  The switch's own clips pair with them (`active_pulling` 1.87 s with `obj_pull_lever`, `active_fail` with the fail).
+- `ca_pt_phole_lever` (l4_ballcourt 6502), the push blocks (`ca_pu_block_a`, `ma_rb_pushblock_training`) and the doors have
+  no Lara clips. lara.drm has the push-block set — requests 60 `obj_block_grab` (0.83 s), 61 `obj_block_idle`, 62 / 58 /
+  1450 `obj_block_front/left/right/back` (1.5 s), 57 `obj_block_upper*`, 1452 `obj_block_release` (0.67 s), 99 `obj_no` —
+  and the pickups, 49 `gear_weapon_pickup` (0.63 s), 98 `gear_weapon_pickup_crouch`. None of these clips has root motion.
+- Engagement (tru.exe `[Engagement]` 0x6F3C60, called from 0x719620 for each instance's query 0x53): a list of 0x8C-byte
+  records; +4 segment (−1 = the instance frame), +0x10 shape (0 sphere, 1 cylinder, 2 cylinder + facing cone 0x6F3A50),
+  +0x14.. centre / radius / height in cm (× 3.1605 units), +0x28 cone heading and +0x2C half angle in degrees. The
+  switches' list is at physical record (+0xC8) +0x70: +4 → records, +8 count (wall switch: cylinder r 175 h 200 centred
+  100 up, heading 0, ±95°). Script message 0x1B1 (`UseEngagementProperties`) picks a set from object data +0xA8 / +0xAC.
+  [I] record +0x44 = how far in front of the switch Lara stands (wall switches 135 units; her hand arc in
+  `obj_pull_lever` centres 139 units ahead at the lever pivot height 427 = bone 1; cheat button 110.6); +0x48, +0x58,
+  +0x60 [U].
+
+Ours:
+
+- Using a switch (src/script picks it as before): Lara's clip = the switch DRM's `obj_pull_lever`, else `obj_pushbutton`
+  / `hosted_push_button`, else `interact` [I: by name; `obj_pull_fail` unused]. She is placed `useDistance` (record
+  +0x44) in front of it on her side of its local horizontal axis she is most along, facing it, and plays the clip in
+  `State::Use` with the input locked (move, jump, drop, interact, grapple, weapons); Idle at its end. The use handler
+  still fires when the switch's own clip ends (src/script), inside her clip. Clip-less switches (pole lever 6502) play
+  `obj_pushbutton` as she stands (position and heading kept) and fire at once [I].
+- Push blocks: interact held within reach grips (`State::Block`, `obj_block_grab`, turned to the block's own horizontal
+  axis closest to her facing [I: the block's faces; no grid data found]); the block moves only after the grab clip
+  (where she cannot grip — swimming, in the air — the stick moves it at once, as before); pushing plays
+  `obj_block_front`, pulling `obj_block_back`, standing `obj_block_idle` (looped) while the block's motion carries her
+  (no platform carry from it meanwhile); letting go plays `obj_block_release` (State::Use). Uber objects pushed along a
+  level prismatic joint (l7 Thor towers) use the same clips facing the joint axis; uber objects that are also script
+  push blocks (`ca_pu_block_a`) are moved by src/script only (both moved them before).
+- Pickups: taking an item or ammo plays `gear_weapon_pickup` (crouched: `_crouch`) where she stands, facing it [I].
+
+Test: `GameReal.LaraPlaysInteractionClips` (switch 4525: State::Use with `use:2605` at `useDistance` while the use
+event fires; block 6504: grab, push clip, Lara moves with the block, release).
+Not done [U/I]: the engagement cone / required items and the anim target's exact offsets, `obj_pull_fail` for locked
+switches, sideways / upper block clips, a block grid (blocks move freely along the axis), buttress mounts (anim-graph
+objects) keep their own handling.
+
 ## Enemies
 
 Code: `src/game/ai` (`Enemy`, `Enemies`, `loadEnemyType`), ticked by `World::tick` after the script runtime; each enemy

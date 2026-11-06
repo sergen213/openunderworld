@@ -10,7 +10,7 @@
 
 namespace ou::audio {
 
-Mixer::Mixer(uint32_t outputRate) : rate_(outputRate) {}
+Mixer::Mixer(uint32_t outputRate) : rate_(outputRate), reverb_(outputRate) {}
 
 Mixer::~Mixer() { closeDevice(); }
 
@@ -48,6 +48,9 @@ void Mixer::mix(float* out, size_t frames) {
     glm::vec3 right = glm::cross(listener_.forward, listener_.up);
     const float rl = glm::length(right);
     right = rl > 1e-6f ? right / rl : glm::vec3(1, 0, 0);
+    const bool reverb = reverb_.active();
+    if (voiceBuf_.size() < frames * 2) voiceBuf_.resize(frames * 2), send_.resize(frames * 2);
+    if (reverb) std::fill(send_.begin(), send_.begin() + std::ptrdiff_t(frames * 2), 0.f);
 
     for (Voice& v : voices_) {
         const Pcm& p = *v.pcm;
@@ -95,6 +98,8 @@ void Mixer::mix(float* out, size_t frames) {
         const size_t loopStart = p.loopStart >= 0 && size_t(p.loopStart) < end ? size_t(p.loopStart) : 0;
         const int16_t* s = p.samples.data();
 
+        float* o = voiceBuf_.data();
+        std::fill(o, o + frames * 2, 0.f);
         for (size_t i = 0; i < frames; ++i) {
             if (v.pos >= double(end)) {
                 if (!v.params.loop) {
@@ -113,8 +118,8 @@ void Mixer::mix(float* out, size_t frames) {
                 L += x * gl[c];
                 R += x * gr[c];
             }
-            out[2 * i] += L * pl * v.fade;
-            out[2 * i + 1] += R * pr * v.fade;
+            o[2 * i] += L * pl * v.fade;
+            o[2 * i + 1] += R * pr * v.fade;
             if (v.fadeStep != 0) {
                 v.fade += v.fadeStep;
                 if ((v.fadeStep > 0) == (v.fade >= v.fadeTarget)) {
@@ -128,7 +133,12 @@ void Mixer::mix(float* out, size_t frames) {
             }
             v.pos += v.step;
         }
+        for (auto& d : v.dsp) d->process(o, frames);
+        for (size_t i = 0; i < frames * 2; ++i) out[i] += o[i];
+        if (reverb && v.params.world && v.params.bus != Bus::Music)
+            for (size_t i = 0; i < frames * 2; ++i) send_[i] += o[i];
     }
+    if (reverb) reverb_.process(send_.data(), out, frames);
     std::erase_if(voices_, [](const Voice& v) { return v.done; });
 }
 
@@ -162,6 +172,8 @@ VoiceId Mixer::start(std::shared_ptr<const Pcm> pcm, const PlayParams& p, float 
     if (!pcm || !pcm->frames()) return 0;
     Voice v{.id = nextId_++, .pcm = std::move(pcm), .params = p};
     if (nextId_ == 0) nextId_ = 1;
+    for (const Effect& e : v.params.effects)
+        if (auto d = makeDsp(e, rate_)) v.dsp.push_back(std::move(d));
     if (fadeIn > 0) {
         v.fade = 0;
         fadeTo(v, 1, fadeIn, false);
@@ -278,6 +290,16 @@ void Mixer::setAttenuation(Attenuation a) {
 size_t Mixer::activeVoices() const {
     std::lock_guard lock(mutex_);
     return size_t(std::count_if(voices_.begin(), voices_.end(), [](const Voice& v) { return !v.done; }));
+}
+
+void Mixer::setReverb(const SfxReverbProps& p) {
+    std::lock_guard lock(mutex_);
+    if (p != reverb_.props()) reverb_.set(p);
+}
+
+SfxReverbProps Mixer::reverb() const {
+    std::lock_guard lock(mutex_);
+    return reverb_.props();
 }
 
 } // namespace ou::audio

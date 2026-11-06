@@ -551,7 +551,9 @@ TEST(GameReal, LaraClipsAndRootMotion) {
     const auto anims = game::loadLaraAnims(bf);
     size_t weaponClips = 0;
     for (int i = 0; i < game::kWeaponCount; ++i) weaponClips += game::weaponClipNames(game::Weapon(i)).size();
-    EXPECT_EQ(anims.clips.size(), game::kLaraClipNames.size() + weaponClips + game::kBikeClipNames.size() + 1); // + grenade throw
+    // + grenade throw + the five switch use clips (use:2441 / 2605 / 2671 / 2608 / 4129)
+    EXPECT_EQ(anims.clips.size(), game::kLaraClipNames.size() + weaponClips + game::kBikeClipNames.size() + 1 + 5);
+    EXPECT_TRUE(anims.find("use:2605")) << "obj_pull_lever";
     EXPECT_GE(anims.skeleton.bones.size(), 116u);
     // ng_run: root moves -Y 806.9 units over 19 key intervals, 20 keys per 0.667 s cycle -> ~1274 units/s.
     const auto* run = anims.find("ng_run");
@@ -2601,10 +2603,11 @@ TEST(GameReal, BallcourtLeverReplayPassesDoor) {
     game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
                   "l4_ballcourt", game::loadLaraAnims(bf), game::Spawn{{-20066, 14150, 3540}, 0});
     w.script().setBigfile(&bf);
-    // Physics-only replay: enabling the poacher interrupts this route with genuine hit reactions.
+    // Physics-only replay: enabling the poacher interrupts this route with genuine hit reactions. The use clip
+    // (obj_pushbutton, 1.3 s) locks the input until 1.6 s.
     const auto replay = game::InputScript::parse(
-        "0.3 interact 1\n0.4 interact 0\n0.6 forward 1\n1.75 forward 0\n1.8 right 1\n5.0 right 0\n");
-    for (int i = 0; i < 360; ++i) w.tick(fixedCamera(w, replay.at(i), 0));
+        "0.3 interact 1\n0.4 interact 0\n1.7 forward 1\n2.85 forward 0\n2.9 right 1\n6.1 right 0\n");
+    for (int i = 0; i < 430; ++i) w.tick(fixedCamera(w, replay.at(i), 0));
     const auto& p = w.player().state().pos;
     EXPECT_GT(p.x, -18520.0f);
     EXPECT_LT(p.y, 13700.0f);
@@ -2918,8 +2921,8 @@ MakeWorld worldMaker(const cdc::BigfileSet& bf, std::string unit, std::optional<
 TEST(GameReal, BallcourtLeverIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n0.6 forward 1\n1.75 forward 0\n1.8 right 1\n5.0 right 0\n");
-    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}), input, 360);
+    const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n1.7 forward 1\n2.85 forward 0\n2.9 right 1\n6.1 right 0\n");
+    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}), input, 430);
     ASSERT_EQ(w->physics().hinges.size(), 2u);
     EXPECT_GT(std::abs(w->physics().angle(1)), 0.1f);
     EXPECT_GT(w->player().state().pos.x, -18520.0f);
@@ -2930,9 +2933,74 @@ TEST(GameReal, BallcourtLeverIndependentOfRenderRate) {
 TEST(GameReal, BallcourtWithEnemiesIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n0.6 forward 1\n1.75 forward 0\n1.8 right 1\n5.0 right 0\n");
-    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true), input, 360);
+    const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n1.7 forward 1\n2.85 forward 0\n2.9 right 1\n6.1 right 0\n");
+    const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, true), input, 430);
     EXPECT_FALSE(w->enemies().all().empty());
+}
+
+// Interactions (docs/GAMEPLAY.md "Interactions"): l3_main_bedroom wall switch 4525 — Lara stands in front of it and plays
+// its own Lara clip (obj_pull_lever from the switch DRM) with the input locked while the switch's use handler still runs
+// at the switch clip's end; l4_ballcourt push block 6504 — grab, push clip, Lara carried with the block, release.
+TEST(GameReal, LaraPlaysInteractionClips) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::Actions use;
+    use.interact = true;
+    {
+        const auto w = worldMaker(bf, "l3_main_bedroom", game::Spawn{{-8680, -8279, 1767}, 0})();
+        w->tick({});
+        ASSERT_TRUE(w->script().find(4525));
+        w->tick(use);
+        const auto* sw = w->script().find(4525);
+        const auto& s = w->player().state();
+        EXPECT_EQ(s.state, game::State::Use);
+        EXPECT_EQ(s.clip, "use:" + std::to_string(sw->laraClip));
+        EXPECT_EQ(s.clip, "use:2605") << "obj_pull_lever";
+        EXPECT_NEAR(glm::length(glm::vec2(s.pos - sw->pos)), sw->useDistance, 1.0f);
+        bool fired = false;
+        for (int i = 0; i < 200 && !fired; ++i) {
+            w->tick(i % 2 ? use : game::Actions{}); // presses are ignored while the clip plays
+            for (const auto& e : w->script().events()) fired |= e.kind == script::EventKind::Use && e.source == 4525;
+            if (!fired) EXPECT_EQ(w->player().state().state, game::State::Use) << "tick " << i;
+        }
+        EXPECT_TRUE(fired) << "the switch's use handler";
+        for (int i = 0; i < 60; ++i) w->tick({});
+        EXPECT_EQ(w->player().state().state, game::State::Idle);
+    }
+    {
+        const auto w = worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0})();
+        w->tick({});
+        const auto block = [&] { return w->script().find(6504); };
+        ASSERT_TRUE(block());
+        bool pushed = false;
+        for (const float a : {0.0f, glm::half_pi<float>(), glm::pi<float>(), -glm::half_pi<float>()}) { // each face in turn
+            const float yaw = block()->rot.z + a;
+            const vec3 dir(std::cos(yaw), std::sin(yaw), 0);
+            vec3 at = block()->pos + block()->offset - dir * 160.0f;
+            if (const auto floor = w->collision().groundProbe(at + vec3(0, 0, 200), 600, 0x0F)) at.z = floor->point.z;
+            game::PlayerState p;
+            p.pos = at, p.yaw = yaw;
+            w->restore(p, yaw, -0.25f);
+            w->tick(use);
+            ASSERT_EQ(w->player().state().state, game::State::Block);
+            EXPECT_EQ(w->player().state().clip, "obj_block_grab");
+            const vec3 block0 = block()->offset, lara0 = w->player().state().pos;
+            game::Actions push = use;
+            push.move.y = 1;
+            for (int i = 0; i < 150; ++i) w->tick(push);
+            const vec3 moved = block()->offset - block0;
+            if (glm::length(moved) < 50) continue;
+            EXPECT_EQ(w->player().state().clip, "obj_block_front");
+            const vec3 lara = w->player().state().pos - lara0;
+            EXPECT_LT(glm::length(lara - moved), 1.0f) << "Lara moves with the block: " << lara.x << " " << lara.y << " " << lara.z
+                                                       << " block " << moved.x << " " << moved.y << " " << moved.z;
+            w->tick({});
+            EXPECT_EQ(w->player().state().clip, "obj_block_release");
+            pushed = true;
+            break;
+        }
+        EXPECT_TRUE(pushed);
+    }
 }
 
 // l1_baldrs_tomb press plate 219 (prismatic joint, Objects.cpp tickPlates): Lara stands on it, it sinks to its pressed

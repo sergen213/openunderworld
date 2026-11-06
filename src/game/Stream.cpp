@@ -360,13 +360,18 @@ void World::collectPickups(bool pressed) {
     for (const auto& e : enemies_.all())
         if (const auto w = e->state().mode == ai::Mode::Dead ? room(e->type().weaponObject) : std::nullopt; w && nearer(e->position(), e->uid()))
             best = nullptr, ammoId = e->uid(), ammo = *w;
+    if (!ammoId && !best) return;
+    // [O] lara.drm requests 49 gear_weapon_pickup, 98 gear_weapon_pickup_crouch. [I] She plays it where she stands,
+    // facing what she takes; crouched, the crouch variant. The item is taken at once.
+    const auto& s = player_.state();
+    player_.use(s.state == State::Crouch ? "gear_weapon_pickup_crouch" : "gear_weapon_pickup", s.pos,
+                std::atan2(bestPos.y - s.pos.y, bestPos.x - s.pos.x));
     if (ammoId) {
         collected.insert(ammoId);
         int& r = combat_.reserve[size_t(ammo)];
         r = std::min(maxReserve(ammo), r + anims_.weapons[size_t(ammo)].clip);
         return;
     }
-    if (!best) return;
     collected.insert(best->id);
     ++found[size_t(best->kind)];
     pickedUp_.push_back({best->id, best->kind, bestPos});

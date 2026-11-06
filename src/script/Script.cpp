@@ -573,6 +573,12 @@ void Runtime::addUnit(const UnitRef& u) {
                             }
                     }
                     if (set->skeleton && clips->size() == 2) set->clips = std::move(clips), set->names = std::move(names);
+                    // [O] Lara's clip for the switch is in its DRM (113-track lara skeleton animations; ids shared between
+                    // DRMs). [I] choice by name: the lever pull, else the button press, else the rune switches' interact.
+                    if (o.kind == Kind::Switch)
+                        for (const std::string_view want : {"obj_pull_lever", "obj_pushbutton", "hosted_push_button", "interact"})
+                            if (const auto* e = pick([&](const anim::AnimEntry& x) { return x.name == want; }); e && !set->laraClip)
+                                set->laraClip = e->animId;
                     // [O] Switch reset: physical-class record (object base +0xC8) +0x34 -> its first state record: +4 flags
                     // (bit 0 one-way: ms_ei_switch_oneway_wall, ma_ei_wall_switch_electric), +0xC reset delay in frames
                     // (ma_ei_switch_wall_chapel 1, ca_ei_switch_wall_autoreset 60, ms_ei_resetting_switch 150) [I: units].
@@ -588,6 +594,13 @@ void Runtime::addUnit(const UnitRef& u) {
                             std::memcpy(&delay, ob.data.data() + *first + 0xC, 4);
                             if (!(flags & 1) && delay > 0) set->resetAfter = delay / 30.0f;
                         }
+                        // [O] Engagement list (tru.exe 0x719620: instance query 0x53, 0x8C-byte records, shape test
+                        // 0x6F3C60): record +4 -> records, +8 count, at physical record +0x70 on the switches. [I] record
+                        // +0x44 = where Lara stands, units in front of the switch (wall switch 135; 139 from her hand arc).
+                        const auto recs = rec ? cdc::internalPointer(ob, *rec + 0x74) : std::nullopt;
+                        uint32_t count = 0;
+                        if (recs && *rec + 0x7C <= ob.data.size()) std::memcpy(&count, ob.data.data() + *rec + 0x78, 4);
+                        if (recs && count && *recs + 0x48 <= ob.data.size()) std::memcpy(&set->useDistance, ob.data.data() + *recs + 0x44, 4);
                     }
                 }
             }
@@ -595,6 +608,8 @@ void Runtime::addUnit(const UnitRef& u) {
             o.clips = set->clips;
             o.clipNames = set->names;
             o.resetAfter = set->resetAfter;
+            o.laraClip = set->laraClip;
+            o.useDistance = set->useDistance;
         }
         // Objects whose scripts reach their anim component (a `modifiable` / `animated` member) run its state graph
         // (docs/formats/ANIMGRAPH.md). [O] The intro's physob data word 15 picks the initial state (record index; <= 0:
@@ -955,8 +970,18 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // stays on the camera [U: the blend].
             if (!std::strcmp(name, "microphone") && nc.function >= 1 && nc.function <= 7) return true;
             // Receiver-independent bindings whose side effects other engine systems own (sound: below, once bound).
-            // reverb 1 (0x4AA750 -> 0x582B70) copies its 13 settings words into the audio environment: our mixer has no
-            // reverb, so it is passive too.
+            // reverb 1 (0x4AA750 -> 0x582B70) copies the 13 SFX-reverb settings its value points to into the audio
+            // environment (globalsoundinfo +0x2C; AUDIO.md §9.15). The value is a member of a unit's globals script
+            // (soundvolumes pass e.g. globals +16 [O]); its initial value lives in that unit's DRM. A null receiver is skipped.
+            if (!std::strcmp(name, "reverb") && nc.function == 1 && reverb_ && nc.receiver.kind == vm::Value::Kind::Member)
+                if (const auto owner = resolve(nc.receiver.uid); owner && owner->program)
+                    if (const Member* m = owner->program->member(owner->typeId, nc.receiver.offset); m && m->initAt) {
+                        const auto o = std::find_if(objects_.begin(), objects_.end(),
+                                                    [&](const Object& x) { return x.script && x.script->program == owner->program; });
+                        if (o != objects_.end()) reverb_(o->unit, *m->initAt);
+                        nc.result = vm::Value::scalar(0);
+                        return true;
+                    }
             // cinematic (bind 0x7AC050): 0 Create (0x4ABD30 -> 0x4A4D10) and 2 IsCreated (0x4ABD40) the member's stream,
             // which the cinematic base's preload state (3523 fn 13) polls; 1 Play(create) (0x796F90 -> 0x4ADB50: plays the
             // stream, creating it first when asked; 1) from the play state 3523 fn 12 after its fade. Ours loads a cutscene
@@ -1925,7 +1950,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         }
         if (o.mainPending && (!o.machine || !o.machine->active())) fire(EventKind::Main, o);
     }
-    holding_ = false, carried_ = vec3(0);
+    holding_ = false, carried_ = gripAxis_ = vec3(0), used_ = 0;
     const vec3 up(0, 0, kTestPointHeight), p = in.pos + up, prev = (hasLast_ ? lastPos_ : in.pos) + up;
     const bool pressed = in.interact && !interactHeld_;
     const vec3 fwd(std::cos(in.yaw), std::sin(in.yaw), 0);
@@ -1976,10 +2001,15 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
             const vec3 c = o.pos + o.offset;
             if (glm::length(vec2(c - in.pos)) > kReach + o.half.x || std::abs(c.z - in.pos.z) > kReachHeight) break;
             holding_ = true; // [I] gripped: World keeps Lara's stick out of the controller
+            // [I] The block's own horizontal axis closest to Lara's facing (its faces; she turns to it, Player::grip): the
+            // stick moves it away (push) or toward her (pull); Lara moves with it. Blocked when the block (push) or Lara
+            // (pull) would run into level collision.
+            const glm::mat3 r = rotation(o.rot);
+            const vec3 ax = glm::normalize(vec3(r[0].x, r[0].y, 0)), ay = glm::normalize(vec3(r[1].x, r[1].y, 0));
+            vec3 axis = std::abs(glm::dot(fwd, ax)) >= std::abs(glm::dot(fwd, ay)) ? ax : ay;
+            if (glm::dot(fwd, axis) < 0) axis = -axis;
+            gripAxis_ = axis;
             if (std::abs(in.move.y) <= 0.5f) break;
-            // [I] Move along the world axis closest to Lara's facing: away (push) or toward her (pull); Lara
-            // moves with it. Blocked when the block (push) or Lara (pull) would run into level collision.
-            vec3 axis = std::abs(fwd.x) > std::abs(fwd.y) ? vec3(fwd.x > 0 ? 1 : -1, 0, 0) : vec3(0, fwd.y > 0 ? 1 : -1, 0);
             if (in.move.y < 0) axis = -axis;
             const float step = float(kBlockSpeed * kDt);
             // Terrain only (mask 0x0F): the block's own collision box is a dynamic of the same mesh (src/physics).
@@ -2007,6 +2037,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
         graphStimulus(useSwitch->uid, formats::kStimulusUse, 0);
     } else if (useSwitch) {
         useSwitch->state = useSwitch->clips ? 1 : 2, useSwitch->t = 0;
+        used_ = useSwitch->uid;
         if (useSwitch->state == 2) fire(EventKind::Use, *useSwitch);
     }
     hasLast_ = true, lastPos_ = in.pos, interactHeld_ = in.interact;

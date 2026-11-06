@@ -371,7 +371,8 @@ Used in retail (8462 events): 0xF1 4936, 0x62 1353, 0x31 571, 0x3C 495, 0x3B 494
     current track; `setMusicStemGains`, `stopMusic(fade)`.
   - Control: `stop(id, fade)`, `setVolume`, `setPosition`, `setPitch`, `setBusVolume`.
 - **Deviations from the original** [I]
-  - No FMOD effects or reverb (`reverbVol` and the Wave byte 0x0C are unused).
+  - FMOD DSPs: only the types retail data uses (lowpass / highpass / parametric EQ as RBJ biquads) and a Freeverb-style
+    stand-in for FMOD's SFX reverb (§9.15) [I: not FMOD's algorithms]. `reverbVol` and the Wave byte 0x0C are unused.
   - Linear resampling.
   - Mus! scripts run on `MusSequencer`. It uses the tempo clock instead of the stream-synced one
     (§5.3) and ignores pan and mute ramps. The variables are the script runtime's `gamebase` values (§9.4).
@@ -443,14 +444,14 @@ variation record:
 | 1 | Reference | u32 DTP id (looked up by `0x54DF80`) | resolves via `PlexBank` |
 | 2 | Wave | u32 Wave section id, u32 (30 seen), 8 bytes | `Mixer::play`; Waves with loop points loop until stopped [I] |
 | 3 | Stream | `char*` path (no `.mul`), u8, u8, u16 volume % [I] | `pc-w\audio\streams\<path>.mul`, Voice bus, subtitles |
-| 4 | Assignment (0x590970) | [0] child, [1..2] delay, [3..4] volume, each value ± variance (`0x582D50`, clamped ≥ 0), [14] f32 distance [I], byte 0x44 max instances | volume, delay, max distance (§9.12) |
+| 4 | Assignment (0x590970) | [0] child, [1..2] delay, [3..4] volume, each value ± variance (`0x582D50`, clamped ≥ 0), [14] f32 distance [I], [16] sound category (§9.15), byte 0x44 max instances | volume, delay, max distance (§9.12), category DSPs |
 | 5 | Envelope (0x590CE0 / 0x587A90 / 0x587B80) | {Plex*, u32 n, Curve**}; Curve {u16 param, u16 release (0 = releases on stop), Keys*}; Keys {i32 loop start, i32 loop end, u32 count, {f32 time, f32 value, u32 flags (bit 0 = loop start here, bit 1 = loop end here)}[count]} | param 0 = volume from key 0 at age 0, linear to each next key over the key time difference; at loop end (not stopped) back to loop start, loop start = loop end holds (sustain); stopping jumps a release curve from loop end (else the last key) on through the following keys; past the last key a value of 0 ends the voice [I: param meaning from shapes]; other params ignored (§9.13) |
 | 9 | Reaction (0x590F30 / 0x592640) | {Plex*, u8 flags, u8 n, Map*}; Map 0x1C {u16 map (low nibble input game parameter, 0xFF random; bits 8-11 output: 0 volume ×, 1 pitch semitones +; bits 12-13 sign mode; 0x4000 / 0x8000 zero below / above), u16 flags (bit 0 off), f32 in min/max, f32 out min/max, u32 n, {f32 x, f32 y}* curve} (0x587FF0 / 0x587F10) | per voice: Σ/Π of the maps on `SoundPlayer::setParam` inputs (sound instance +0x28) |
-| 12 | Effect | child at data +0 | child only (effect ignored) |
+| 12 | Effect (0x58DEF0) | {Plex* child, u16 type, u16, params*} → one FMOD DSP on a channel group over the child (§9.15) | child through the DSP |
 | 6 | ChoiceList (0x587920) | {n, Plex**, Plex*, i8 mode, i8, u32 counter} | mode 0 random, 1 no repeat, 2 shuffle (n ≤ 32), 3 in order |
 | 7 | MaterialList (0x58DFC0 / 0x583960) | {f32, u32 n, {u32 DTP, u16 material, u16}[n]} | the entry for the instance material (+0x44), else material 0 (DTP 0 = silent) |
 | 8 | Selector (0x583490) | {u32 n, {u32 DTP, u32 key}[n]} | key 0 [I: the exe's key is a list index from 0x583440], else key -1 |
-| 13 | Oscillator (0x587C60) | FMOD tone DSP {f32 rate, …, i8 type} [I] | not played: no reached graph uses it |
+| 13 | Oscillator (0x587C60 / 0x5839E0 / 0x587CC0) | {f32 rate Hz, f32 seconds, i8 FMOD waveform}: System::playDSP(FMOD_DSP_TYPE_OSCILLATOR) for `seconds` at the instance volume (≤ 1) | a generated tone; the 2 retail Oscillators have duration 0 = silent |
 | 10 | Sequence (0x58E070) | {n, Plex**, …} | children one after the other |
 | 11 | Overlap (0x58B570) | {n, Plex**, …, +0x14 has delays, +0x18 {value, variance}[n]} | all children |
 
@@ -527,8 +528,10 @@ after a 2 s walk [O, logs; not listened to].
 
 Event records (EFFECTS.md) dispatch on `info & 3`: 0 sound (0x5B99C0), 1 effect, 2 camera / pad (0x5B69C0), 3 weighted
 sound pick (0x5B2820). Sound command (record +8): kind 0 `{u8 0, u8 flags (bit 0 follow segment), i16 segment, Plex*}` — a
-SoundPlex inside the list's own DTP (lara.drm: 10 666, almost all Assignment -> Reference); kind 1 `{u8 1, u8 segment,
-i16, u8 volume, u8 variance, u32 DTP, f32 pitch?, f32 var, f32 delay, f32 var}` [U: the volume byte / pitch floats]; type 3
+SoundPlex inside the list's own DTP (lara.drm: 10 666, almost all Assignment -> Reference); kind 1 `{u8 1, u8 segment, u16,
+i16 +4 (sound instance +0x50 when ≥ 0) [U], u8 volume +6 ± u8 +7 (0..127, 0x582C20; /127 = instance +0x14), u32 DTP +8,
+f32 semitones +0xC ± +0x10 (0x582CA0, clamped ±60: instance +0x18), f32 delay +0x14 ± +0x18 (0x582D50)}` [V-exe 0x5B99C0 /
+0x5953E0; ours: volume, pitch and start delay of the whole sound, `SoundPlayer::start`]; type 3
 `{i16, u8 weight[3], volumes, u32 DTP[3] at +0xC, …}` (rand() % Σweights). Position: segment > 0 bone, < 0 HInfo marker,
 0 the instance (0x5875A0); material = the instance's surface material (sound instance +0x44, MaterialList input).
 Lists run in ou-game (`fx::System::sound` -> `GameSound::animSound`, logged `anim sound <object> frame f DTP d material m`):
@@ -651,3 +654,34 @@ script; RMS of the Sfx + Voice mix) [O]:
 | `--chapter 0` (l3_main_bedroom) | −99.4 dB | −29.7 dB | 503 anim (75: material 1 has DTP 0 in lara.drm DTP 2305 = silent by data), 20 sfxmarker, 1 script fire loop (was 2439 restarts), 3 slot |
 | `--load chapter-1` (l1_seatop) | −76.8 dB | −20.2 dB | 142 anim (0) |
 | `--load chapter-2` (l2_cliffclimb) | −71.0 dB | −15.2 dB | 871 anim (3), 13 sfxmarker, 7 slot (waterfalls) |
+
+### 9.15 FMOD DSPs, sound categories, SFX reverb [V-exe 0x587620 / 0x582EC0 / 0x58DAD0 / 0x58DD80 / 0x586DB0 / 0x582200 / 0x582270 / 0x582B70; V-data]
+
+- **Effect types** (0x587620 → System::createDSPByType): 1 chorus, 2 compressor, 3 distortion, 4 echo, 5 parametric EQ,
+  6 flange, 7 highpass, 8 lowpass, 9 normalize, 10 pitch shift, 11 (Free)reverb; 0 or other = no DSP. 0x582EC0 sets the
+  parameters from `params*` (seconds × 1000 → ms for chorus/echo/normalize delays, compressor makeup × 100, bytes →
+  float); `audio::Effect` keeps them in FMOD parameter order. Highpass / lowpass: {cutoff Hz, resonance}; EQ {centre Hz,
+  bandwidth octaves, linear gain}.
+- **Effect nodes** (0x58DEF0 → 0x58DAD0): an own channel group with the DSP added (ChannelGroup::addDSP), the child plays
+  into it. Survey (`ou-audio scan`, 25 138 SoundPlex DTPs in the install; test `AudioReal.EffectAndOscillatorNodesAllUnits`:
+  6147 in the 82 units + lara / generalbank / motorcycle): 8 Effect nodes in the units, 4 without a DSP, 2 highpass
+  (2500 Hz, l2_cliffhall(_b) DTP 11053), 2 lowpass (7000 Hz, DTP 11054); the install adds lowpasses at 1825 / 2182 Hz.
+  No other type occurs. The 2–3 Oscillator nodes have duration ≤ 0 (silent).
+- **Sound categories**: globalsoundinfo object data (ObjectBase +0xC8) +4 count 77, +8 records of 0x84: +0x68 parent
+  (-1 root, walked by 0x5832C0), +0x7C effect {u16 type, u16, params*} attached by 0x58DD80 each update. Only 58
+  (parametric EQ 175 Hz, 3.5 oct, ×1.75) and its child 59 (8200 Hz, 4.4 oct, ×0.2) carry one; 18 Assignments name
+  category 59. Ours: a voice runs its Effect nodes (inner first), then its innermost Assignment's category chain up to the
+  root [I: the group order].
+- **SFX reverb**: at init (0x586DB0) a FMOD_DSP_TYPE_SFXREVERB unit is created and hung on the master group's DSP head
+  with dry level −10000 mB (0x582200), i.e. a wet send. Each update 0x582270 sets its 13 I3DL2 parameters from the
+  environment block globalsoundinfo +0x2C (default room −10000 mB = off). The script `reverb` native 1 (0x4AA750 →
+  0x582B70) copies 13 words over that block: soundvolumes' vt 58 calls it on a member of the unit's globals script (e.g.
+  +16, its value points to inline floats in the unit DRM). Replay pool_to_ragnarok [O, log]: tick 100 `reverb
+  l4_ragnarok_room: room -2538 mB, decay 2.01 s, reverb 2000 mB` (room HF −1918, HF ratio 0.20, diffusion 60, density 92,
+  HF ref 12000). The preset path 0x582B90 ("FX Reverb changed", index 0..9 from saves / unit data) only stores an index
+  that nothing applies to the DSP [I]; registry `UseReverb` [U].
+- **Ours** (`audio::Dsp`, `audio::SfxReverb`, `Mixer::setReverb`): biquads per voice; the reverb is a Freeverb-style tank
+  whose comb feedback gives the decay time, HF damping the HF ratio, an input one-pole the room HF, pre-delays the
+  reflections / reverb delays [I: FMOD's I3DL2 algorithm and loudness are not reproduced; density and rolloff ignored].
+  World voices of the Sfx and Voice buses feed it, music does not [I]. It is reset to off on leaving play. Render a DTP
+  offline: `ou-audio render <game> 'pc-w\l2_cliffhall.drm' --id 11054 -o out.wav [--reverb <13 values from the log>]`.

@@ -2,6 +2,7 @@
 // Layouts and evidence: docs/formats/AUDIO.md §9.
 #pragma once
 
+#include "audio/Dsp.hpp"
 #include "audio/Mixer.hpp"
 
 #include <glm/vec3.hpp>
@@ -28,9 +29,13 @@ struct Plex {
     uint32_t id = 0;        // Reference: DTP id; Wave: Wave section id
     std::string stream;     // Stream: .mul path without extension ("vo\\lara\\sc_01_05_hint")
     float volume = 1, volumeVar = 0; // Assignment: volume ± variance; Stream: u16 +6 percent / 100
-    float delay = 0, delayVar = 0;   // Assignment start delay (s); Silence: duration in `delay`
+    float delay = 0, delayVar = 0;   // Assignment start delay (s); Silence / Oscillator: duration in `delay`
     float maxDistance = 0;  // Assignment float [14] when > 0 [I]
-    uint8_t mode = 0;       // ChoiceList pick: 0 random, 1 random without repeat, 2 shuffle, 3 in order (0x587920)
+    uint32_t category = 0;  // Assignment [16]: globalsoundinfo sound category (0x590970; its DSP: SoundCategories)
+    uint8_t mode = 0;       // ChoiceList pick: 0 random, 1 random without repeat, 2 shuffle, 3 in order (0x587920);
+                            // Oscillator: FMOD waveform 0 sine, 1 square, 2 saw up, 3 saw down, 4 triangle, 5 noise
+    float rate = 0;         // Oscillator: tone frequency (Hz)
+    Effect effect;          // Effect (0x58DEF0): {Plex* child, u16 type, u16, params*} -> one FMOD DSP over the child
     std::vector<Plex> children;
     std::vector<std::pair<float, float>> delays; // Overlap per-child start delay {value, variance}
     // MaterialList (0x583960) / Selector (0x583490): children are References to DTP ids, picked by key (surface
@@ -63,8 +68,7 @@ struct Plex {
     std::vector<Map> maps;
     mutable uint32_t counter = 0; // ChoiceList state (last pick / shuffle mask), as data +0x10 in the exe
 };
-// Node {i32 type, ptr data} at `offset` of drm.sections[section]. Oscillator (an FMOD tone DSP, 0x587C60) parses
-// without data: no retail graph reached from markers or animation events uses it. Throws FormatError.
+// Node {i32 type, ptr data} at `offset` of drm.sections[section]. Throws FormatError.
 Plex parsePlex(const cdc::Drm& drm, uint32_t section, uint32_t offset);
 
 // DTP id -> SoundPlex graph at offset 0 of that DTP section, parsed on first use.
@@ -112,6 +116,15 @@ private:
 // the camera and Lara (0x57FD50 with globalsoundinfo +0x20 = 0.5; pan weight +0x24 = 0).
 inline constexpr float kSoundMinDistance = 158.028f, kSoundMaxDistance = 3160.56f, kSoundListenerToPlayer = 0.5f;
 float rolloff(float distance, float minDistance, float maxDistance); // Mixer::setAttenuation for the game's sounds
+// FMOD_DSP_TYPE_OSCILLATOR's tone as mono PCM at `rate`: `seconds` of waveform `wave` (0 sine, 1 square, 2 saw up, 3 saw
+// down, 4 triangle, 5 noise from `seed`) at `hz`, full scale [I: FMOD's amplitude]. SoundPlex Oscillator nodes play it.
+Pcm oscillator(uint8_t wave, float hz, float seconds, uint32_t rate, uint32_t seed = 0);
+
+// globalsoundinfo.drm object data (ObjectBase +0xC8) +4 count, +8 {0x84 bytes}[count]: the sound categories, +0x68 i32
+// parent (-1 root), +0x7C an effect {u16 type, u16, params*} on the category's channel group (0x58DD80). Assignments name
+// one ([16]); a voice runs its category's DSP, then each parent's [V-exe 0x58DD80 / 0x5832C0; I: the group order].
+struct SoundCategory { int32_t parent = -1; Effect effect; };
+std::vector<SoundCategory> parseSoundCategories(const cdc::Drm& globalsoundinfo); // Throws FormatError
 
 // ---- player ----
 class SoundPlayer {
@@ -121,20 +134,24 @@ public:
     SoundPlayer(Mixer& mixer, Resolve resolve, LoadStream stream) : mixer_(mixer), resolve_(std::move(resolve)),
                                                                  stream_(std::move(stream)) {}
     using Handle = uint32_t; // 0 = nothing started
-    // `material`: the surface material MaterialList nodes pick by (sound instance +0x44, AUDIO.md §9.7).
-    Handle start(const Plex& p, std::optional<glm::vec3> position = {}, float volume = 1, uint16_t material = 0);
+    // `material`: the surface material MaterialList nodes pick by (sound instance +0x44, AUDIO.md §9.7); `semitones`: a
+    // pitch offset of the whole sound (instance +0x18); `delay`: seconds before it starts (0x5935D0's time-in).
+    Handle start(const Plex& p, std::optional<glm::vec3> position = {}, float volume = 1, uint16_t material = 0,
+                 float semitones = 0, double delay = 0);
     void stop(Handle h, float fadeSeconds = 0.2f);
     void stopAll(float fadeSeconds = 0); // every sound, pending parts too (leaving play: tru.exe 0x593D10)
     bool active(Handle h) const; // a voice still plays or a delayed/sequenced part is pending
     void setParam(Handle h, size_t index, float value); // Reaction input (game parameter) of a running sound
     void setPosition(Handle h, glm::vec3 position);     // a 3D sound's emitter moved
     void update(double seconds);
+    void setCategories(std::vector<SoundCategory> c) { categories_ = std::move(c); } // globalsoundinfo's (DSPs per category)
     // Started streams (voice lines): path plus its English subtitle text, oldest first; cleared by the caller.
     struct Line { std::string path, subtitle; };
     std::vector<Line> lines;
     std::vector<std::string> waves; // "0x<id>" of every wave started, for logs; cleared by the caller
 private:
-    // An Envelope / Reaction above a voice and when it started; also an Assignment with a max distance (innermost wins).
+    // An Envelope / Reaction / Effect above a voice and when it started; also an Assignment with a max distance or a
+    // category (innermost wins).
     struct Mod { const Plex* plex; double start; };
     using Mods = std::vector<Mod>;
     struct Pending { double at; const Plex* plex; float volume; size_t index; Mods mods; };
@@ -146,6 +163,7 @@ private:
         std::vector<Voice> voices;
         std::vector<Pending> pending;
         double released = -1; // stop() time while release envelopes play out
+        float semitones = 0;  // start(): instance +0x18
     };
     bool apply(Instance& in, Voice& v); // the voice's Envelope / Reaction volume and pitch; false when an envelope ended
     float mapValue(const Plex::Map& m, float x);
@@ -157,6 +175,7 @@ private:
     std::map<Handle, Instance> instances_;
     Handle next_ = 1;
     double now_ = 0;
+    std::vector<SoundCategory> categories_;
     std::mt19937 rng_{0x50D}; // fixed seed: replays pick the same variations
 };
 

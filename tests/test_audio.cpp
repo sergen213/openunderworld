@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -506,6 +507,62 @@ TEST(Mixer, PlaysThroughSdlDummyDevice) {
     m.closeDevice();
 }
 
+// SFX reverb (AUDIO.md §9.15): the tail of an impulse loses ~60 dB per decay time; the globalsoundinfo default is silent.
+TEST(Dsp, SfxReverbTailDecaysAtDecayTime) {
+    const uint32_t rate = 48000;
+    SfxReverb r(rate);
+    std::vector<float> in(2 * rate * 2, 0.f), out(in.size(), 0.f);
+    in[0] = in[1] = 1;
+    r.process(in.data(), out.data(), rate * 2);
+    EXPECT_TRUE(std::all_of(out.begin(), out.end(), [](float x) { return x == 0; })); // kReverbOff
+    SfxReverbProps p = kReverbOff;
+    p[1] = 0, p[2] = 0, p[4] = 1.0f, p[5] = 1, p[8] = 0, p[7] = 0.01f, p[9] = 0.01f; // room 0 mB, 1 s decay
+    r.set(p);
+    std::fill(out.begin(), out.end(), 0.f);
+    r.process(in.data(), out.data(), rate * 2);
+    const auto energy = [&](double a, double b) {
+        double e = 0;
+        for (size_t i = size_t(a * rate) * 2; i < size_t(b * rate) * 2; ++i) e += double(out[i]) * out[i];
+        return e;
+    };
+    const double early = energy(0.1, 0.2), late = energy(0.6, 0.7);
+    ASSERT_GT(early, 0);
+    const double db = 10 * std::log10(late / early); // 0.5 s later: about -30 dB
+    EXPECT_LT(db, -22);
+    EXPECT_GT(db, -38);
+}
+
+// Oscillator (0x587C60): a tone of `rate` Hz for `delay` s; an Effect node (0x58DEF0) puts its DSP on the child's voice:
+// a 500 Hz lowpass takes a 6 kHz sine down by > 20 dB.
+TEST(SoundPlex, OscillatorToneThroughEffectLowpass) {
+    const Pcm tone = oscillator(0, 1000, 0.5f, 48000);
+    ASSERT_EQ(tone.frames(), 24000u);
+    size_t rising = 0; // one rising zero crossing per 48-sample period
+    for (size_t i = 1; i < tone.frames(); ++i) rising += tone.samples[i - 1] < 0 && tone.samples[i] >= 0;
+    EXPECT_NEAR(double(rising), 500, 1);
+    EXPECT_EQ(*std::max_element(tone.samples.begin(), tone.samples.end()), 32767);
+
+    Plex osc;
+    osc.type = PlexType::Oscillator, osc.rate = 6000, osc.delay = 0.2f, osc.mode = 0;
+    Plex fx;
+    fx.type = PlexType::Effect, fx.children = {osc}, fx.effect = {DspType::LowPass, {500, 1}};
+    const auto rms = [](const std::vector<float>& o) {
+        double e = 0;
+        for (size_t i = 4800; i < o.size(); ++i) e += double(o[i]) * o[i];
+        return std::sqrt(e / double(o.size() - 4800));
+    };
+    Mixer m;
+    SoundPlayer sp(m, nullptr, nullptr);
+    ASSERT_NE(sp.start(osc), 0u);
+    const double dry = rms(run(m, 4800));
+    run(m, 9600);
+    EXPECT_EQ(m.activeVoices(), 0u); // 0.2 s tone ended
+    ASSERT_NE(sp.start(fx), 0u);
+    const double wet = rms(run(m, 4800));
+    EXPECT_GT(dry, 0.1);
+    EXPECT_LT(20 * std::log10(wet / dry), -20);
+}
+
 // ---- Real data (skipped without OU_GAME_DIR) ---------------------------------------------------
 namespace {
 const char* gameDir() { return std::getenv("OU_GAME_DIR"); }
@@ -857,6 +914,74 @@ TEST(SoundPlex, RolloffFollowsGlobalSoundInfo) {
     SoundPlayer sp(m, nullptr, nullptr);
     sp.start(far, glm::vec3(0, 4000, 0));
     EXPECT_GT(std::abs(run(m, 2)[0]), 0.01f); // beyond the default max, inside the Assignment's
+}
+
+// Every DTP of the 82 units and the shared sound DRMs parses as a SoundPlex or is rejected as another DTP; the Effect
+// nodes carry only no DSP, highpass or lowpass, and the Oscillators have no duration (AUDIO.md §9.15).
+TEST(AudioReal, EffectAndOscillatorNodesAllUnits) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const ou::cdc::BigfileSet bf(gameDir());
+    const auto list = bf.read("\\tr8\\pc-w\\unitlist.txt");
+    ASSERT_TRUE(list);
+    std::vector<std::string> names{"lara", "generalbank", "motorcycle"};
+    const std::string text(list->begin(), list->end());
+    for (size_t p = text.find('\n') + 1; p < text.size();) {
+        size_t e = text.find('\n', p);
+        if (e == text.npos) e = text.size();
+        std::string line = text.substr(p, e - p);
+        p = e + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (!line.empty()) names.push_back(line.substr(line.rfind('\\') + 1));
+    }
+    size_t plexes = 0, effects = 0, oscillators = 0;
+    std::map<int, size_t> types;
+    const auto walk = [&](const auto& self, const Plex& x) -> void {
+        if (x.type == PlexType::Effect) {
+            ++effects, ++types[int(x.effect.type)];
+            if (x.effect.type == DspType::LowPass || x.effect.type == DspType::HighPass) {
+                EXPECT_GE(x.effect.param[0], 1000); // cutoff Hz
+                EXPECT_GE(x.effect.param[1], 1);    // resonance
+            }
+        }
+        if (x.type == PlexType::Oscillator) {
+            ++oscillators;
+            EXPECT_LE(x.delay, 0);
+        }
+        for (const auto& c : x.children) self(self, c);
+    };
+    for (const auto& name : names) {
+        auto d = bf.read("pc-w\\" + name + ".drm");
+        if (!d) continue;
+        const auto drm = ou::cdc::parseDrm(std::move(*d));
+        for (uint32_t i = 0; i < drm.sections.size(); ++i) {
+            if (drm.sections[i].type != ou::cdc::SectionType::DtpData) continue;
+            try {
+                walk(walk, parsePlex(drm, i, 0));
+                ++plexes;
+            } catch (const FormatError&) { /* another DTP kind */ }
+        }
+    }
+    EXPECT_EQ(plexes, 6147u);
+    EXPECT_EQ(effects, 8u);
+    EXPECT_EQ(oscillators, 2u);
+    EXPECT_EQ(types, (std::map<int, size_t>{{int(DspType::None), 4}, {int(DspType::HighPass), 2}, {int(DspType::LowPass), 2}}));
+
+    // globalsoundinfo: 77 categories; 59 (18 Assignments) under 58 carry the only category DSPs, two ParamEqs.
+    const auto gsi = ou::cdc::parseDrm(*bf.read("pc-w\\globalsoundinfo.drm"));
+    const auto cats = parseSoundCategories(gsi);
+    ASSERT_EQ(cats.size(), 77u);
+    EXPECT_EQ(cats[59].parent, 58);
+    EXPECT_EQ(cats[58].effect.type, DspType::ParamEq);
+    EXPECT_FLOAT_EQ(cats[58].effect.param[0], 175);
+    EXPECT_FLOAT_EQ(cats[59].effect.param[0], 8200);
+    EXPECT_FLOAT_EQ(cats[59].effect.param[2], 0.2f);
+    EXPECT_EQ(std::count_if(cats.begin(), cats.end(), [](const SoundCategory& c) { return c.effect.type != DspType::None; }), 2);
+    // The environment block (+0x2C) is the silent default the Mixer starts with.
+    const auto data = ou::cdc::sectionPointers(gsi, 2).at(0xC8);
+    const auto block = ou::cdc::sectionPointers(gsi, data.section).at(data.offset + 0x2C);
+    SfxReverbProps env;
+    std::memcpy(env.data(), gsi.sections[block.section].data.data() + block.offset, sizeof env);
+    EXPECT_EQ(env, kReverbOff);
 }
 
 // Lara's footsteps: Selector -> MaterialList picks a different graph per surface material; the bike engine is an

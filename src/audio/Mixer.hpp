@@ -5,6 +5,7 @@
 #pragma once
 
 #include "audio/Audio.hpp"
+#include "audio/Dsp.hpp"
 
 #include <glm/vec3.hpp>
 
@@ -35,6 +36,8 @@ struct PlayParams {
     // In-world voice (default): setWorldPaused / stopWorld act on it. Menu sounds and the main menu's movie sound
     // pass false.
     bool world = true;
+    // DSPs over this voice's stereo output, in order (SoundPlex Effect nodes, its sound category's DSP).
+    std::vector<Effect> effects{};
 };
 
 struct Listener {
@@ -93,6 +96,10 @@ public:
     void setBusVolume(Bus b, float volume);
     void setAttenuation(Attenuation a);
     size_t activeVoices() const;
+    // The SFX reverb environment (script `reverb` native; AUDIO.md §9.15). World voices of the Sfx and Voice buses feed it
+    // [I: the exe hangs the unit on the master group's DSP head]; kReverbOff (the default) is silent.
+    void setReverb(const SfxReverbProps& p);
+    SfxReverbProps reverb() const;
 
 private:
     struct Voice {
@@ -103,6 +110,7 @@ private:
         float fade = 1, fadeTarget = 1, fadeStep = 0; // per output frame
         bool stopAtSilence = false, done = false;
         std::vector<float> stemGains{};
+        std::vector<std::unique_ptr<Dsp>> dsp{};
     };
     VoiceId start(std::shared_ptr<const Pcm> pcm, const PlayParams& p, float fadeIn); // locked
     Voice* find(VoiceId v);
@@ -121,6 +129,8 @@ private:
     Attenuation atten_;
     SDL_AudioStream* stream_ = nullptr;
     std::vector<float> scratch_;
+    std::vector<float> voiceBuf_, send_; // per-voice render and reverb send (mix thread)
+    SfxReverb reverb_;
 };
 
 } // namespace ou::audio

@@ -1,5 +1,6 @@
 // ou-audio: list, decode and play TRU audio (.mul streams, FSB4 banks, DRM Wave sections).
 #include "audio/Mixer.hpp"
+#include "audio/SoundPlex.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -30,6 +31,9 @@ int usage() {
                  "  ou-audio decode <gameDir> <path> -o out.wav [--id N] [--lang L]\n"
                  "  ou-audio play   <gameDir> <path> [--id N] [--lang L] [--seconds S]\n"
                  "  ou-audio scan   <gameDir>   (decode every audio record and Wave section)\n"
+                 "  ou-audio render <gameDir> <x.drm> [--id DTP -o out.wav] [--seconds S] [--reverb v0,..,v12]\n"
+                 "                  (a SoundPlex DTP rendered offline; without --id: DTPs with Effect nodes;\n"
+                 "                   --reverb: the 13 SFX-reverb values ou-game logs)\n"
                  "<path> is a bigfile path: a .mul stream, an FSB4 bank (.sam) or a .drm (Wave sections;\n"
                  "--id = section id). For FSB4 banks --id is the sample index.\n";
     return 2;
@@ -152,6 +156,30 @@ int scan(const fs::path& game) {
                 } else if (cdc::isCdrm(d) || (d.size() >= 4 && d[0] == 19 && !d[1] && !d[2] && !d[3])) {
                     kind = "DRM";
                     const auto drm = cdc::parseDrm(std::move(d));
+                    // SoundPlex DTPs (AUDIO.md §9): node types, Effect DSP types and Oscillators, per DRM record.
+                    const auto walk = [&](const auto& self, const audio::Plex& p) -> void {
+                        ++facts["Plex node type " + std::to_string(int(p.type))];
+                        if (p.type == audio::PlexType::Assignment) ++facts["Plex Assignment category " + std::to_string(p.category)];
+                        if (p.type == audio::PlexType::Effect) {
+                            std::snprintf(tag, sizeof tag, "Plex Effect DSP type %d", int(p.effect.type));
+                            ++facts[tag];
+                            std::string ps = "Plex Effect " + std::to_string(int(p.effect.type)) + ":";
+                            for (float v : p.effect.param) ps += " " + std::to_string(v);
+                            ++facts[ps];
+                        }
+                        if (p.type == audio::PlexType::Oscillator) {
+                            std::snprintf(tag, sizeof tag, "Plex Oscillator wave %u %.1f Hz %.2f s", p.mode, p.rate, p.delay);
+                            ++facts[tag];
+                        }
+                        for (const auto& c : p.children) self(self, c);
+                    };
+                    for (uint32_t i = 0; i < drm.sections.size(); ++i) {
+                        if (drm.sections[i].type != cdc::SectionType::DtpData) continue;
+                        try {
+                            walk(walk, audio::parsePlex(drm, i, 0));
+                            ++kinds["SoundPlex DTP"].ok;
+                        } catch (const std::exception&) { /* not a SoundPlex DTP */ }
+                    }
                     for (const auto& s : drm.sections) {
                         if (s.type != cdc::SectionType::Wave) continue;
                         try {
@@ -211,6 +239,7 @@ int main(int argc, char** argv) {
     std::optional<uint32_t> id;
     std::string out, lang = "en";
     double seconds = 0;
+    std::optional<audio::SfxReverbProps> reverb;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string {
@@ -221,6 +250,18 @@ int main(int argc, char** argv) {
         else if (a == "--id") id = uint32_t(std::stoul(next(), nullptr, 0));
         else if (a == "--lang") lang = next();
         else if (a == "--seconds") seconds = std::stod(next());
+        else if (a == "--reverb") { // 13 comma-separated SFX-reverb values (as ou-game logs them)
+            std::string v = next();
+            audio::SfxReverbProps r{};
+            size_t k = 0;
+            for (size_t p = 0; k < r.size() && p <= v.size(); ++k) {
+                const size_t e = std::min(v.find(',', p), v.size());
+                r[k] = std::stof(v.substr(p, e - p));
+                p = e + 1;
+            }
+            if (k != r.size()) throw std::runtime_error("--reverb needs 13 values");
+            reverb = r;
+        }
         else pos.push_back(a);
     }
     try {
@@ -239,6 +280,52 @@ int main(int argc, char** argv) {
             writeWav(out, p);
             describe(p);
             std::printf("wrote %s\n", out.c_str());
+            return 0;
+        }
+        if (cmd == "render") { // a SoundPlex DTP through SoundPlayer + Mixer, offline at 48 kHz
+            auto bytes = bf.read(pos[0]);
+            if (!bytes) throw std::runtime_error("not in bigfile: " + pos[0]);
+            auto drm = std::make_shared<const cdc::Drm>(cdc::parseDrm(std::move(*bytes)));
+            audio::PlexBank bank;
+            bank.add(drm);
+            if (!id) { // list the DTPs whose graph holds an Effect node
+                for (const auto& s : drm->sections) {
+                    const audio::Plex* p = s.type == cdc::SectionType::DtpData ? bank.find(s.id) : nullptr;
+                    const auto fx = [&](const auto& self, const audio::Plex& x) -> const audio::Effect* {
+                        if (x.type == audio::PlexType::Effect) return &x.effect;
+                        for (const auto& c : x.children)
+                            if (const auto* e = self(self, c)) return e;
+                        return nullptr;
+                    };
+                    if (const auto* e = p ? fx(fx, *p) : nullptr)
+                        std::printf("DTP %u: Effect DSP type %d params %g %g %g\n", s.id, int(e->type), e->param[0], e->param[1], e->param[2]);
+                }
+                return 0;
+            }
+            if (out.empty()) return usage();
+            const audio::Plex* p = bank.find(*id);
+            if (!p) throw std::runtime_error("no SoundPlex DTP with that id");
+            audio::Mixer mixer;
+            mixer.addWaves(*drm);
+            if (reverb) mixer.setReverb(*reverb);
+            audio::SoundPlayer sp(mixer, [&](uint32_t d) { return bank.find(d); },
+                                  [&](const std::string& path) -> std::shared_ptr<const audio::Mul> {
+                                      const auto d = bf.read("pc-w\\audio\\streams\\" + path + ".mul");
+                                      return d ? std::make_shared<audio::Mul>(audio::decodeMul(*d)) : nullptr;
+                                  });
+            if (auto g = bf.read("pc-w\\globalsoundinfo.drm")) sp.setCategories(audio::parseSoundCategories(cdc::parseDrm(std::move(*g))));
+            const auto h = sp.start(*p);
+            const size_t total = size_t((seconds > 0 ? seconds : 5) * mixer.outputRate()), block = 480;
+            audio::Pcm pcm{.sampleRate = mixer.outputRate(), .channels = 2};
+            std::vector<float> buf(block * 2);
+            for (size_t done = 0; done < total; done += block) {
+                sp.update(double(block) / mixer.outputRate());
+                mixer.mix(buf.data(), block);
+                for (float x : buf) pcm.samples.push_back(int16_t(std::lround(std::clamp(x, -1.0f, 1.0f) * 32767)));
+            }
+            writeWav(out, pcm);
+            describe(pcm);
+            std::printf("DTP %u %s, reverb %s; wrote %s\n", *id, h ? "started" : "silent", reverb ? "on" : "off", out.c_str());
             return 0;
         }
         if (cmd == "play") {

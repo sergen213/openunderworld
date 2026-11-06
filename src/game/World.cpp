@@ -124,6 +124,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     "crouch_idleToCrouch", "crouch_Idle", "Crouch_Front", "ng_roll_front", "slope_slidefront",
     "sprint_loop", "ng_sprint_to_exhaust", "ng_run_exhaust", "ng_roll_front_sprinting", // sprint (Player::tick)
     "ledgeb_bad_attach_M", "ledgeb_bad_attach_recover", // saving grab (Player::tryGrab)
+    "obj_block_grab", "obj_block_idle", "obj_block_release", "obj_block_front", "obj_block_back", // push blocks (Player::grip)
+    "gear_weapon_pickup", "gear_weapon_pickup_crouch", // pickups (World::collectPickups)
     "death_fall_normal", "death_toknee", // combat (Combat.cpp)
     "hit_light_front", "hit_light_back", "hit_light_side", "hit_mediumfront", "hit_mediumback", "hit_mediumright",
     "hit_light_front_swim", "hit_light_back_swim", "hit_light_side_swim", "hit_mediumfront_swim", "hit_mediumback_swim",
@@ -280,6 +282,20 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
         if (auto t = loadGrenadeTuning(bigfile)) lib.grenade = *t;
     }
     if (auto d = loadDifficulty(bigfile)) lib.difficulty = *d;
+    // Lara's switch clips live in the switch DRMs (they animate her skeleton); their animation ids are shared, so these
+    // four hold every switch's (survey: docs/GAMEPLAY.md "Interactions"). Kept as "use:<anim id>" (World::useSwitchClip).
+    // ponytail: a fixed source list; load per switch DRM if a new id shows up.
+    for (const char* object : {"ms_ei_switch_oneway_wall", "ar_ei_switch_oneway", "is_cheat_button", "ar_uo_rune_wall_switch"})
+        if (auto b = bigfile.read(std::string("pc-w\\") + object + ".drm")) {
+            const cdc::Drm d = cdc::parseDrm(std::move(*b));
+            for (const auto& e : anim::animList(d))
+                if (e.name == "obj_pull_lever" || e.name == "obj_pushbutton" || e.name == "interact")
+                    for (const auto& s : d.sections)
+                        if (s.type == cdc::SectionType::Animation && s.id == e.animId) {
+                            lib.clips.emplace("use:" + std::to_string(e.animId), anim::decodeClip(s.data));
+                            break;
+                        }
+        }
     return lib;
 }
 
@@ -340,11 +356,13 @@ void World::tick(const Actions& input) {
     const bool onBike = tickVehicles(input, dt);
     Actions a = input;
     if (onBike) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = false;
+    // An interaction clip plays out with the input locked (State::Use: a switch, a pickup, letting go of a block).
+    if (player_.state().state == State::Use) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = a.draw = a.fire = a.aim = false;
     // Stick is camera-relative.
     const vec2 fwd(std::cos(cam_.yaw), std::sin(cam_.yaw)), right(std::sin(cam_.yaw), -std::cos(cam_.yaw));
     vec2 move = right * a.move.x + fwd * a.move.y;
     if (glm::length(move) > 1) move = glm::normalize(move);
-    if (script_.holding() || uberGrip_) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
+    if (script_.holding() || uberGrip_ != vec3(0)) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
     if (combat_.slowMo > 0) move = vec2(0); // [I] adrenaline window: the stick steers the pip (Combat.cpp)
     if (splineCam_ && !script_.playerControl()) move = vec2(0); // reveal camera with control disabled (larabase 56)
     if (a.grapple && !grappleHeld_) {
@@ -396,7 +414,13 @@ void World::tick(const Actions& input) {
         }
         bends_.tick(player_.state().pos, prev_.pos);
     }
-    script_.tick({player_.state().pos, player_.state().yaw, a.move, a.interact}, &col_);
+    // A gripped block moves once her grab clip is done (Player::grip). Where she cannot grip (swimming, in the air) or
+    // without the clip (synthetic libraries) the stick moves it at once.
+    Actions push = a;
+    const bool grabbing = player_.state().state == State::Block ? !player_.gripping() : player_.canInteract();
+    if (grabbing && anims_.find("obj_block_grab")) push.move = vec2(0);
+    script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact}, &col_);
+    if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.
     if (!units_.empty() && units_[current_].data.name != playerUnit_) {
         const auto streamId = [&](const std::string& name) -> uint32_t {
@@ -428,19 +452,19 @@ void World::tick(const Actions& input) {
     for (const int32_t bike : script_.takeMounts()) mountBike(bike); // larabase 52 from a sleeping handler (l5: 0.6 s)
     collectPickups(a.interact && !interactHeld_);
     carryPortables(a.interact && !interactHeld_ && pickedUp_.empty());
-    pushUberJoints(a);
+    pushUberJoints(push);
     tickObjects(dt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
-    if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) { // she follows the pushed body
+    vec3 carry = script_.carried();
+    if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) // she follows the pushed body
+        carry += j->axis * (j->x - uberPush_.before);
+    if (carry != vec3(0)) { // Lara follows the block she pushes/pulls
         auto s = player_.state();
-        s.pos += j->axis * (j->x - uberPush_.before);
+        s.pos += carry;
         player_.restore(s);
     }
-    if (const vec3 d = script_.carried(); d != vec3(0)) { // Lara follows the block she pushes/pulls
-        auto s = player_.state();
-        s.pos += d;
-        player_.restore(s);
-    }
+    const vec3 grip = script_.gripAxis() != vec3(0) ? script_.gripAxis() : uberGrip_;
+    if (!onBike) player_.grip(grip, carry == vec3(0) ? 0 : glm::dot(carry, grip) > 0 ? 1 : -1);
     enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height, player_.tuning().radius, player_.state().water >= 0},
                   [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, dt * combat_.timeScale);
     updateCamera(a, dt); // Camera.cpp: a playing spline camera, else the orbit camera

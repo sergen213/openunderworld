@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <numbers>
 #include <glm/geometric.hpp>
 
 namespace ou::audio {
@@ -73,11 +74,18 @@ struct Reader {
             x.delay = f32(at(*d, 4)), x.delayVar = f32(at(*d, 8));
             x.volume = f32(at(*d, 12)), x.volumeVar = f32(at(*d, 16));
             x.maxDistance = std::max(0.0f, f32(at(*d, 56)));
+            x.category = u32(at(*d, 64)); // [16]: globalsoundinfo category index unless the instance names one (0x590970)
             [[fallthrough]];
         case PlexType::Envelope:
         case PlexType::Reaction:
-        case PlexType::Effect: // single child at data +0 (0x590CE0, 0x590F30, 0x58DEF0)
             if (const auto c = ptr(*d)) x.children.push_back(node(*c, depth + 1));
+            break;
+        case PlexType::Effect: // 0x58DEF0: {Plex* child, u16 type, u16, params*}
+            if (const auto c = ptr(*d)) x.children.push_back(node(*c, depth + 1));
+            x.effect = effect(at(*d, 4));
+            break;
+        case PlexType::Oscillator: // 0x587C60 / 0x5839E0 / 0x587CC0: {f32 rate Hz, f32 seconds, i8 waveform}
+            x.rate = f32(*d), x.delay = f32(at(*d, 4)), x.mode = u8(at(*d, 8));
             break;
         case PlexType::ChoiceList: // {n, Plex** sounds, Plex* data, i8 mode, i8, u32 counter} (0x587920)
             x.children = list(*d, depth);
@@ -106,7 +114,7 @@ struct Reader {
             }
             break;
         }
-        default: break; // Oscillator
+        default: break;
         }
         if (x.type == PlexType::Envelope) { // {Plex*, u32 n, Curve** } Curve {u16 param, u16, Keys*}; Keys {i32 loop start,
             const uint32_t n = u32(at(*d, 4));  // i32 loop end, u32 count, {f32 time, f32 value, u32 flags}[count]}
@@ -156,6 +164,37 @@ struct Reader {
         }
         return x;
     }
+
+    // {u16 type, u16, params*}: 0x587620 maps the type to an FMOD DSP, 0x582EC0 sets its parameters from params.
+    Effect effect(cdc::Pointer e) {
+        Effect out;
+        const uint32_t type = u32(e) & 0xFFFF;
+        const auto p = ptr(at(e, 4));
+        if (!type || type > uint32_t(DspType::Reverb) || !p) return out; // 0x587620 default: no DSP
+        out.type = DspType(type);
+        const auto f = [&](uint32_t k) { return f32(at(*p, 4 * k)); };
+        auto& q = out.param;
+        switch (out.type) {
+        case DspType::Chorus: // FMOD chorus: 0-3 dry, wet 1-3; 4 delay ms, 5 rate Hz, 6 depth, 7 feedback
+            q = {f(4), f(5), f(6), f(7), f(0) * 1000, f(1), f(2), f(3)};
+            break;
+        case DspType::Compressor: q = {f(0), f(1), f(2), f(3) * 100}; break; // threshold dB, attack ms, release ms, makeup
+        case DspType::Distortion: q = {f(0)}; break;                          // level
+        case DspType::Echo: // delay ms, decay ratio, max channels, dry, wet
+            q = {f(0) * 1000, f(1), float(u8(at(*p, 16))), f(2), f(3)};
+            break;
+        case DspType::ParamEq: q = {f(0), f(1), f(2)}; break;             // center Hz, bandwidth octaves, gain
+        case DspType::Flange: q = {f(2), f(3), f(0), f(1)}; break;        // dry, wet, depth, rate
+        case DspType::HighPass: case DspType::LowPass: q = {f(0), f(1)}; break; // cutoff Hz, resonance
+        case DspType::Normalize: q = {f(0) * 1000, f(1), f(2)}; break;    // fade time ms, threshold, max amp
+        case DspType::PitchShift: // pitch, FFT size, overlap, max channels
+            q = {f(0), float(u32(at(*p, 4)) & 0xFFFF), float(u8(at(*p, 6))), float(u8(at(*p, 7)))};
+            break;
+        case DspType::Reverb: q = {f(0), f(1), f(2), f(3), f(4), float(u8(at(*p, 20)))}; break; // room, damp, wet, dry, width, mode
+        default: break;
+        }
+        return out;
+    }
 };
 
 } // namespace
@@ -163,6 +202,25 @@ struct Reader {
 Plex parsePlex(const cdc::Drm& drm, uint32_t section, uint32_t offset) {
     Reader r{drm, {}};
     return r.node({section, offset});
+}
+
+std::vector<SoundCategory> parseSoundCategories(const cdc::Drm& drm) {
+    Reader r{drm, {}};
+    std::vector<SoundCategory> out;
+    for (uint32_t s = 0; s < drm.sections.size(); ++s) { // the ObjectBase: the section with the +0xC8 data pointer
+        if (drm.sections[s].type != cdc::SectionType::DtpData) continue;
+        const auto data = r.ptr({s, 0xC8});
+        if (!data) continue;
+        const uint32_t n = r.u32(Reader::at(*data, 4));
+        if (n > 1024) throw FormatError("globalsoundinfo: category count");
+        const auto cats = r.need(Reader::at(*data, 8));
+        for (uint32_t i = 0; i < n; ++i) {
+            const auto c = Reader::at(cats, 0x84 * i);
+            out.push_back({int32_t(r.u32(Reader::at(c, 0x68))), r.effect(Reader::at(c, 0x7C))});
+        }
+        return out;
+    }
+    throw FormatError("globalsoundinfo: no object data");
 }
 
 void PlexBank::add(std::shared_ptr<const cdc::Drm> drm) {
@@ -272,6 +330,26 @@ float rolloff(float d, float mn, float mx) { // 0x585070 (curve 1)
     return f * f;
 }
 
+Pcm oscillator(uint8_t wave, float hz, float seconds, uint32_t rate, uint32_t seed) {
+    Pcm p{.sampleRate = rate, .channels = 1};
+    p.samples.resize(size_t(std::max(0.0f, seconds) * float(rate)));
+    std::minstd_rand noise(seed | 1);
+    for (size_t i = 0; i < p.samples.size(); ++i) {
+        const double ph = std::fmod(double(i) * hz / rate, 1.0); // phase in [0, 1)
+        double v;
+        switch (wave) {
+        case 0: v = std::sin(2 * std::numbers::pi * ph); break;
+        case 1: v = ph < 0.5 ? 1 : -1; break;
+        case 2: v = 2 * ph - 1; break;
+        case 3: v = 1 - 2 * ph; break;
+        case 4: v = ph < 0.5 ? 4 * ph - 1 : 3 - 4 * ph; break;
+        default: v = double(noise()) / double(noise.max()) * 2 - 1; break;
+        }
+        p.samples[i] = int16_t(std::lround(v * 32767));
+    }
+    return p;
+}
+
 float SoundPlayer::vary(float v, float var) { // 0x582D50: v ± var, clamped at 0
     if (var == 0) return v;
     return std::max(0.0f, v + std::uniform_real_distribution<float>(-var, var)(rng_));
@@ -279,9 +357,18 @@ float SoundPlayer::vary(float v, float var) { // 0x582D50: v ± var, clamped at 
 
 double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, const Mods& mods, int depth) {
     if (depth > 32) return 0;
-    PlayParams pp{.volume = volume, .position = in.position, .minDistance = kSoundMinDistance, .maxDistance = kSoundMaxDistance};
+    PlayParams pp{.volume = volume, .pitch = std::exp2(in.semitones / 12.0f), .position = in.position,
+                  .minDistance = kSoundMinDistance, .maxDistance = kSoundMaxDistance};
+    uint32_t category = 0;
     for (const Mod& m : mods)
-        if (m.plex->type == PlexType::Assignment) pp.maxDistance = m.plex->maxDistance; // innermost wins
+        if (m.plex->type == PlexType::Assignment) { // innermost wins
+            if (m.plex->maxDistance > 0) pp.maxDistance = m.plex->maxDistance;
+            if (m.plex->category) category = m.plex->category;
+        }
+    for (auto m = mods.rbegin(); m != mods.rend(); ++m) // an inner Effect's channel group feeds the outer one's
+        if (m->plex->type == PlexType::Effect) pp.effects.push_back(m->plex->effect);
+    for (int32_t c = int32_t(category), n = 0; c >= 0 && size_t(c) < categories_.size() && n < 64; c = categories_[size_t(c)].parent, ++n)
+        if (categories_[size_t(c)].effect.type != DspType::None) pp.effects.push_back(categories_[size_t(c)].effect);
     auto play = [&](VoiceId v) {
         if (!v) return;
         in.voices.push_back({v, volume * (p.type == PlexType::Stream ? p.volume : 1), mods});
@@ -314,7 +401,7 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, c
         if (p.children.empty()) return 0;
         const float v = volume * vary(p.volume, p.volumeVar), d = vary(p.delay, p.delayVar);
         Mods m = mods;
-        if (p.maxDistance > 0) m.push_back({&p, at});
+        if (p.maxDistance > 0 || p.category) m.push_back({&p, at});
         if (d > 0) { // SoundPlexTimeIn before the child
             in.pending.push_back({at + d, &p.children[0], v, SIZE_MAX, m});
             return d;
@@ -327,8 +414,17 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, c
         if (!p.curves.empty() || !p.maps.empty()) m.push_back({&p, at});
         return fire(in, p.children[0], volume, at, m, depth + 1);
     }
-    case PlexType::Effect:
-        return p.children.empty() ? 0 : fire(in, p.children[0], volume, at, mods, depth + 1);
+    case PlexType::Effect: {
+        if (p.children.empty()) return 0;
+        Mods m = mods;
+        if (p.effect.type != DspType::None) m.push_back({&p, at});
+        return fire(in, p.children[0], volume, at, m, depth + 1);
+    }
+    case PlexType::Oscillator: { // 0x5839E0: System::playDSP(oscillator); 0x587CC0 runs it for `delay` s at the volume
+        if (!(p.delay > 0) || !(p.rate > 0)) return 0; // the retail Oscillators have no duration: silent
+        play(mixer_.play(std::make_shared<const Pcm>(oscillator(p.mode, p.rate, p.delay, mixer_.outputRate(), rng_())), pp));
+        return p.delay;
+    }
     case PlexType::MaterialList: case PlexType::Selector: { // the entry for the key, else the default (material 0 / key -1)
         const uint32_t want = p.type == PlexType::MaterialList ? in.material : 0, def = p.type == PlexType::MaterialList ? 0 : ~0u;
         size_t pick = SIZE_MAX;
@@ -436,8 +532,8 @@ float Plex::Curve::value(float t, float releasedAt, bool* ended) const {
 // Envelope volume curves (param 0, Plex::Curve::value) at the node's age; one ending ends the voice (0x587A90). Reaction
 // maps: output 0 multiplies the volume, output 1 adds semitones.
 bool SoundPlayer::apply(Instance& in, Voice& v) {
-    float gain = 1, semitones = 0;
-    bool pitch = false;
+    float gain = 1, semitones = in.semitones;
+    bool pitch = semitones != 0;
     for (const Mod& mod : v.mods) {
         for (const Plex::Curve& c : mod.plex->curves) {
             if (c.param != 0) continue;
@@ -457,11 +553,13 @@ bool SoundPlayer::apply(Instance& in, Voice& v) {
     return true;
 }
 
-SoundPlayer::Handle SoundPlayer::start(const Plex& p, std::optional<glm::vec3> position, float volume, uint16_t material) {
+SoundPlayer::Handle SoundPlayer::start(const Plex& p, std::optional<glm::vec3> position, float volume, uint16_t material,
+                                       float semitones, double delay) {
     const Handle h = next_++;
     Instance& in = instances_[h];
-    in.position = position, in.material = material;
-    fire(in, p, volume, now_, {});
+    in.position = position, in.material = material, in.semitones = semitones;
+    if (delay > 0) in.pending.push_back({now_ + delay, &p, volume, SIZE_MAX, {}});
+    else fire(in, p, volume, now_, {});
     if (in.voices.empty() && in.pending.empty()) { instances_.erase(h); return 0; }
     return h;
 }

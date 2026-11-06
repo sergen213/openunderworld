@@ -133,6 +133,10 @@ enum class State {
     GrapplePull, // mounted target: pull the object instead of swinging (Grapple.cpp)
     Vehicle,     // on the motorcycle: mounting, riding, dismounting; World drives her from the bike (Vehicle.cpp)
     GrappleRappel, // feet on a wall on the rope: rappel up/down, run along it (Grapple.cpp); climbNormal = the wall's
+    // Interactions (World, docs/GAMEPLAY.md "Interactions"): Use = one in-place clip with the input locked (a switch's
+    // Lara clip, a pickup, letting go of a block), then Idle; Block = gripping a push block (obj_block_* clips; the
+    // block's motion carries her).
+    Use, Block,
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
@@ -277,6 +281,15 @@ public:
     void releaseGrapple(bool jump);               // let go, keeping the swing's momentum
     void die(std::string_view clip);       // State::Dead playing `clip` once
     void hitReact(std::string_view clip);  // State::Hit playing `clip` once (restarts it)
+    // Interactions (World): where they can start: on her feet (standing, walking, running, landing) or crouched, out of
+    // the water. use() plays `clip` once in State::Use at `pos` facing `yaw` with the input locked, then Idle; false
+    // (nothing changes) when she cannot interact or without the clip.
+    bool canInteract() const;
+    bool use(std::string_view clip, vec3 pos, float yaw);
+    // Push block grip, every tick: `axis` = the gripped block's push axis (0 = none), `moving` +1 push / -1 pull / 0.
+    // Grips (State::Block, obj_block_grab, facing the axis) from the states use() starts in; lets go (obj_block_release).
+    void grip(vec3 axis, int moving);
+    bool gripping() const { return s_.state == State::Block && s_.clip != "obj_block_grab"; } // grab clip done
 
 private:
     void play(std::string_view clip, bool loop, float rate = 1);
@@ -768,7 +781,8 @@ private:
     std::optional<glm::mat4> uberJointPose(int32_t uid) const;
     int32_t uberModelJoint(int32_t uid) const;
     void pushUberJoints(const Actions& a); // Lara grips / pushes an uber object riding a level prismatic joint
-    bool uberGrip_ = false;                // last tick: Lara grips one (her stick moves it)
+    void useSwitchClip(const script::Object& o); // Lara plays the switch's use clip, aligned to it (Objects.cpp)
+    vec3 uberGrip_{0};                     // last tick: Lara grips one (her stick moves it): its axis toward her facing, 0 = none
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
     std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)
     struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; std::string clip; };
@@ -810,6 +824,7 @@ private:
     std::vector<Pickup> pickedUp_;
     // motorcycle (Vehicle.cpp)
     bool tickVehicles(const Actions& a, float dt); // true while Lara is on a bike: Player::tick is skipped
+    bool ridingBike() const;                       // on a bike in its ride phase (not mounting / dismounting): guns allowed
     void syncVehicles();                           // register the loaded units' bike intros (after streaming)
     void mountBike(int32_t uid);                   // larabase 52: on the bike at once, riding (script_.takeMounts)
     void driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt);
@@ -828,7 +843,6 @@ std::optional<Spawn> findSpawn(const cdc::BigfileSet& bigfile, const cdc::Drm& u
 // points = {AABB min, AABB max (max.z = surface), centre, half extents, (cos yaw, sin yaw, 0)}, then for volumes with
 // waves (data +0x4E bit 1) 4 x (kx, ky, speed) and 4 x (height, 0, 0)
 // (docs/GAMEPLAY.md "Water").
-    bool ridingBike() const;                       // on a bike in its ride phase (not mounting / dismounting): guns allowed
 std::vector<collision::Markup> findWater(const cdc::BigfileSet& bigfile, const cdc::Drm& unit);
 // `p` inside water box `m` (a findWater markup) grown by `grow` per axis in the box frame.
 bool insideWater(const collision::Markup& m, vec3 p, vec3 grow = vec3(0));
