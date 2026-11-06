@@ -1156,3 +1156,31 @@ TEST(ScriptRealData, RagnarokVolumeRequestsStaircaseMusic) {
     EXPECT_EQ(req[1].slot, 0);
     EXPECT_EQ(r.gameValues()[0x7D], 8);
 }
+
+// Tutorial popups (training text): l2_cliffclimb's trigger volumes call unit script 9502 vt 25 with "hint_NN", which
+// hides the popup (uipopupmgr 8), reads a uilocalstrproperty member (its locals.bin id) and shows it for 10 s
+// (uipopupmgr 0). Volume 4040 sends hint_15 -> member +92 = 1326 "Press ᠁ to knock away clinging enemies", once
+// (its stickybool +248).
+TEST(ScriptRealData, CliffclimbVolumeShowsTutorialPopup) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    Runtime r;
+    r.setBigfile(&bf);
+    r.setUnits({{"l2_cliffclimb", std::make_shared<const cdc::Drm>(cdc::parseDrm(*bf.read("pc-w\\l2_cliffclimb.drm"))), {}}});
+    const vec3 away(1e7f, 1e7f, 1e7f);
+    r.tick(at(away));
+    r.takePopups();
+    const Object* v = r.find(4040);
+    ASSERT_TRUE(v);
+    const vec3 pos = v->pos;
+    r.tick(at(pos));
+    const auto p = r.takePopups();
+    ASSERT_EQ(p.size(), 2u);
+    EXPECT_EQ(p[0].text, 0); // hide the previous one
+    EXPECT_EQ(p[1].text, 1326);
+    EXPECT_FLOAT_EQ(p[1].seconds, 10.0f);
+    r.tick(at(away));
+    r.tick(at(pos)); // shown once
+    EXPECT_TRUE(r.takePopups().empty());
+}

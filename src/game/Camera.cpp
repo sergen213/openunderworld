@@ -255,6 +255,17 @@ bool World::tickSplineCamera(float dt) {
 
 void World::updateCamera(const Actions& a, float dt) {
     if (tickSplineCamera(dt)) return;
+    if (fieldCamera_) { // from her eyes along the look angles; zoom narrows the view and slows the look (World::tick)
+        const float fov = glm::mix(fovDeg * 0.75f, 6.0f, fieldZoom_), slow = fov / (fovDeg * 0.75f);
+        cam_.yaw += a.look.x * dt * slow;
+        cam_.pitch = std::clamp(cam_.pitch + a.look.y * dt * slow, -1.2f, 1.2f);
+        const vec3 dir(std::cos(cam_.pitch) * std::cos(cam_.yaw), std::cos(cam_.pitch) * std::sin(cam_.yaw), std::sin(cam_.pitch));
+        cam_.position = player_.state().pos + vec3(0, 0, targeting.eyeHeight) + dir * 30.0f; // [I] in front of her face
+        cam_.target = cam_.position + dir * 1000.0f;
+        cam_.up = vec3(0, 0, 1), cam_.fovDeg = fov;
+        orbit_.valid = false; // the orbit reseeds behind her when it ends
+        return;
+    }
     updateOrbitCamera(a, dt);
     cam_.up = vec3(0, 0, 1), cam_.fovDeg = 0;
     if (blendOut_ <= 0) return;

@@ -88,6 +88,8 @@ std::optional<Art> loadArt(const cdc::BigfileSet& bigfile, std::string* why) {
     // PDA picture windows, frame icons and the first-aid picture (pc-w\g_pda.drm 680..706, ids clear of
     // generalbank's 1..117); optional.
     if (auto pda = bigfile.read("pc-w\\g_pda.drm")) add(cdc::parseDrm(std::move(*pda)), kPdaFirst, kPdaLast);
+    // The field camera's viewfinder (pc-w\g_binoculars.drm texture 649, 1024 x 512); optional.
+    if (auto b = bigfile.read("pc-w\\g_binoculars.drm")) add(cdc::parseDrm(std::move(*b)), kViewfinder, kViewfinder);
     std::stable_sort(list.begin(), list.end(), [](const Pending& a, const Pending& b) { return a.h > b.h; });
     // Shelf packing, tallest first.
     struct Place { int x, y; };

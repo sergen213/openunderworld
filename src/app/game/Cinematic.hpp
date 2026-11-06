@@ -33,8 +33,9 @@ struct CineView {
     int maxFrames = 0;                 // > 0: stop after this many frames and keep the last image
     float musicVolume = 1, sfxVolume = 1; // Music / Sfx bus volumes restored afterwards (muted while playing)
     bool overlay = false;
-    bool depthOfField = false;         // Enhanced: draw the DOF cameras' focus (the original's filter has it off)
+    bool depthOfField = false;         // graphics cine_dof: draw the DOF cameras' focus (the original's filter has it off)
     const ui::Art* art = nullptr;      // the game font for the subtitles (null: none drawn)
+    int language = 0;                  // subtitle language (locale::Language index)
 };
 
 struct CineResult {

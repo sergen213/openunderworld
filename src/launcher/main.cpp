@@ -4,6 +4,7 @@
 // No Q_OBJECT classes (lambdas only), so no moc. Notes: docs/LAUNCHER.md.
 #include "config/Config.hpp"
 #include "importer/Importer.hpp"
+#include "locale/Locale.hpp"
 #include "platform/Input.hpp"
 #include "update/Update.hpp"
 
@@ -289,7 +290,8 @@ private:
     QPushButton* restartBtn_ = nullptr;
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
-    QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *weather_, *upscaler_, *fsrQuality_;
+    QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_;
+    QComboBox* language_; // config game.language (also ou-game's AUDIO/VISUAL > LANGUAGE)
     QCheckBox *frameGeneration_, *antiLag_;
     QCheckBox* rtLights_;
     QCheckBox* rtReflections_; // tri-state: partially checked = unset (on with RT "full")
@@ -322,9 +324,21 @@ private:
         auto* row = new QHBoxLayout;
         row->addWidget(gameDir_, 1);
         row->addWidget(browse);
+        // locale::kInstallLanguages order. The install has text for EN FR DE IT ES NL; the others get their subtitles.
+        static const char* const kLanguageNames[] = {"English", "French", "Italian", "German", "Spanish", "Russian (subtitles, English text)",
+                                                     "Polish (subtitles, English text)", "Czech (subtitles, English text)",
+                                                     "Hungarian (subtitles, English text)", "Dutch"};
+        language_ = new QComboBox;
+        for (size_t i = 0; i < ou::locale::kInstallLanguages.size(); ++i)
+            language_->addItem(kLanguageNames[i], q(std::string(ou::locale::languageCode(ou::locale::kInstallLanguages[i]))));
+        language_->setCurrentIndex(std::max(0, language_->findData(q(cfg_.game.language))));
+        auto* langRow = new QHBoxLayout;
+        langRow->addWidget(new QLabel("Language (text, voice, subtitles):"));
+        langRow->addWidget(language_, 1);
         auto* lay = new QVBoxLayout(w);
         lay->addWidget(new QLabel("<b>Install / import</b> — OpenUnderworld reads your own legally obtained copy of the game."));
         lay->addLayout(row);
+        lay->addLayout(langRow);
         lay->addWidget(hashFiles_);
         lay->addWidget(scanBtn_);
         lay->addWidget(scanOut_, 1);
@@ -432,6 +446,7 @@ private:
         atmosphere_ = choice({{"Preset default (medium)", "auto"}, {"Off", "off"}, {"Low: height fog", "low"},
                               {"Medium: + sun shafts", "medium"}, {"High: finer shafts", "high"}}, g.atmosphere);
         shafts_ = overrideCombo(g.lightShafts);
+        cineDof_ = overrideCombo(g.cineDof);
         weather_ = choice({{"Preset default (level's rain / snow)", "auto"}, {"Off", "off"}, {"Always rain", "rain"},
                            {"Always snow", "snow"}}, g.weather);
         brightness_ = new QDoubleSpinBox;
@@ -509,6 +524,7 @@ private:
         f->addRow("Water detail", waterDetail_);
         f->addRow("Atmosphere", atmosphere_);
         f->addRow("Sun shafts", shafts_);
+        f->addRow("Cutscene depth of field", cineDof_);
         f->addRow("Weather", weather_);
         f->addRow("Brightness", brightness_);
         f->addRow("Upscaler", upscaler_);
@@ -537,7 +553,8 @@ private:
             {"interact", "Interact"}, {"draw", "Draw / holster"}, {"fire", "Fire weapon"},
             {"aim", "Target lock (draws)"}, {"switch", "Change target"}, {"weapon", "Change weapon"},
             {"heal", "Use health pack"}, {"grapple", "Grapple"}, {"save", "Quick save"}, {"load", "Quick load"},
-            {"hint", "Hint"}, {"answer", "Answer"}, {"pda", "PDA"}, {"light", "Utility light"}, {"grenade", "Grenade / throw"}};
+            {"hint", "Hint"}, {"answer", "Answer"}, {"pda", "PDA"}, {"light", "Utility light"}, {"grenade", "Grenade / throw"},
+            {"recenter", "Recenter camera"}, {"camera", "Field camera"}};
         for (int i = 0; i < int(actions.size()); ++i) {
             const auto l = kLabels.find(actions[i]);
             bindings_->setVerticalHeaderItem(i, new QTableWidgetItem(l == kLabels.end() ? q(actions[i]) : l->second));
@@ -886,6 +903,7 @@ private:
         g.waterDetail = s(waterDetail_->currentData().toString());
         g.atmosphere = s(atmosphere_->currentData().toString());
         g.lightShafts = overrideValue(shafts_);
+        g.cineDof = overrideValue(cineDof_);
         g.weather = s(weather_->currentData().toString());
         g.upscaler = s(upscaler_->currentData().toString());
         g.fsrQuality = s(fsrQuality_->currentData().toString());
@@ -898,6 +916,7 @@ private:
             names.clear();
             for (const QString& n : splitInputs(bindings_->item(i, 0)->text())) names.push_back(s(n));
         }
+        cfg_.game.language = s(language_->currentData().toString());
         cfg_.controls.mouseSensitivity = float(mouseSensitivity_->value());
         cfg_.controls.invertY = invertY_->isChecked();
     }
@@ -909,6 +928,7 @@ private:
         try {
             const auto disk = ou::config::load(paths_.config);
             cfg_.game = disk.game;
+            if (disk.game.language != written_.game.language) language_->setCurrentIndex(std::max(0, language_->findData(q(disk.game.language))));
             if (disk.controls.invertY != written_.controls.invertY) invertY_->setChecked(disk.controls.invertY);
             const auto &d = disk.graphics, &o = written_.graphics;
             const auto pick = [](QComboBox* c, const QVariant& v) { c->setCurrentIndex(std::max(0, c->findData(v))); };
@@ -935,6 +955,7 @@ private:
             if (d.waterDetail != o.waterDetail) pick(waterDetail_, q(d.waterDetail));
             if (d.atmosphere != o.atmosphere) pick(atmosphere_, q(d.atmosphere));
             if (d.lightShafts != o.lightShafts) tri(shafts_, d.lightShafts);
+            if (d.cineDof != o.cineDof) tri(cineDof_, d.cineDof);
             if (d.weather != o.weather) pick(weather_, q(d.weather));
             if (d.upscaler != o.upscaler) pick(upscaler_, q(d.upscaler));
             if (d.fsrQuality != o.fsrQuality) pick(fsrQuality_, q(d.fsrQuality));

@@ -263,3 +263,40 @@ TEST(VideoRealData, SelectsAudioTrackByLanguage) {
     ou::video::Movie silent(dir / "intro.bik", -1);
     EXPECT_EQ(silent.audioTrack(), nullptr);
 }
+
+// Every language a TRU install can be set to (kInstallLanguages, LANGUAGE names 110..119): its spec mask picks its own
+// locals.bin (EN FR DE IT ES NL) and voice records (EN FR DE IT ES; the rest English's), it has movie subtitles, and its
+// text table is textLanguage's.
+TEST(LocaleRealData, InstallLanguagesMapToTheirRecords) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    struct Want { Language lang; uint32_t text, voice, header; const char* name; };
+    const Want want[] = {{Language::English, 0xFFFFF7E1, 0xFFFFFFE1, 0, "ENGLISH"},   {Language::French, 0xFFFFF7E2, 0xFFFFE002, 1, "French"},
+                         {Language::Italian, 0xFFFFF7E8, 0xFFFFE008, 2, "Italian"},   {Language::German, 0xFFFFF7E4, 0xFFFFE004, 3, "German"},
+                         {Language::Spanish, 0xFFFFF7F0, 0xFFFFE010, 4, "Spanish"},   {Language::Russian, 0xFFFFF7E1, 0xFFFFFFE1, 0, "Russian"},
+                         {Language::Polish, 0xFFFFF7E1, 0xFFFFFFE1, 0, "Polish"},     {Language::Czech, 0xFFFFF7E1, 0xFFFFFFE1, 0, "Czech"},
+                         {Language::Hungarian, 0xFFFFF7E1, 0xFFFFFFE1, 0, "Hungarian"}, {Language::Dutch, 0xFFFFFFE0, 0xFFFFFFE1, 5, "Dutch"}};
+    ASSERT_EQ(std::size(want), kInstallLanguages.size());
+    const std::filesystem::path dir(gameDir());
+    const ou::cdc::Bigfile patch(dir / "patch.000"), base(dir / "bigfile.000");
+    const auto sch = ou::cdc::BigfileSet(gameDir()).read(movieSchemaPath("prevontr"));
+    ASSERT_TRUE(sch);
+    for (size_t i = 0; i < kInstallLanguages.size(); ++i) {
+        const Want& w = want[i];
+        SCOPED_TRACE(std::string(languageName(w.lang)));
+        EXPECT_EQ(kInstallLanguages[i], w.lang);
+        EXPECT_EQ(languageStringId(w.lang), int16_t(110 + i));
+        EXPECT_EQ(parseLanguage(languageCode(w.lang)), w.lang);
+        const auto text = patch.find("pc-w\\local\\locals.bin", specMask(textLanguage(w.lang)));
+        ASSERT_TRUE(text);
+        EXPECT_EQ(text->specMask, w.text);
+        const auto strings = loadStrings(gameDir(), textLanguage(w.lang));
+        ASSERT_TRUE(strings);
+        EXPECT_EQ(strings->headerLanguage(), w.header);
+        if (textLanguage(w.lang) == Language::English) EXPECT_EQ(strings->get(languageStringId(w.lang)), w.name); // the English names
+        const auto voice = base.find("pc-w\\audio\\streams\\vo\\lara\\sc_04_01_answer.mul", specMask(w.lang));
+        ASSERT_TRUE(voice);
+        EXPECT_EQ(voice->specMask, w.voice);
+        EXPECT_TRUE(ou::cdc::BigfileSet(gameDir(), specMask(w.lang)).read("pc-w\\cinstream\\060_med_natla.mul"));
+        EXPECT_FALSE(parseMovieSchema({reinterpret_cast<const char*>(sch->data()), sch->size()}, w.lang).empty());
+    }
+}

@@ -19,6 +19,20 @@ The same index is the archive spec-mask bit (`1 << index`, CONTAINERS §1.4), th
 text is the record without bit 11, Czech/Russian/Polish/Hungarian subtitle lines carry 10/9/7/12.
 Subtitle language is a separate option (`*(short*)(DAT_00c59264+0x208)`, registry `SubtitleLanguage`).
 
+**Setting** [V-exe]: `Registry_LoadSettings` (0x4791D0) maps the installer's `LanguageString` (English French German
+Italian Spanish Dutch Polish Russian Czech Hungarian) to the index (0 1 2 3 4 11 7 9 10 12); `Registry_LoadOptions`
+(0x477EA0) reads `Language` (option 0x95) and `SubtitleLanguage` (option 0xB, -1 = the game language; 0x477CA0 keeps
+-1 0 1 2 3 4 7 9 10 11 12). `0x49A900(lang)`, called once at start, sets spec mask `1 << lang` on every archive,
+reloads locals.bin and the font. The in-game LANGUAGE row names the same ten languages (locals.bin 110..119 ENGLISH,
+French, Italian, German, Spanish, Russian, Polish, Czech, Hungarian, Dutch).
+**Ours** (`locale::kInstallLanguages`, config `game.language` / `ou-game --lang` / launcher Game tab / AUDIO/VISUAL >
+LANGUAGE, applied live): one setting for text, voice and subtitles [I: the exe's two options folded]. A language sets
+the archives' spec mask (`BigfileSet::setSpecMask`): voice streams and cinematics read its records (FR DE IT ES their
+own `0xFFFFE0xx`, the others English's `0xFFFFFFE1`) from their next stream on; subtitles (cinematic, voice line,
+movie `.sch`) and the movie's Bink track are its own; locals.bin is its own for EN FR DE IT ES NL, English for PL RU
+CS HU (`locale::textLanguage`) [I: the exe's mask rule would give those the French table]. Test
+`LocaleRealData.InstallLanguagesMapToTheirRecords` [V-run].
+
 ## 1. `pc-w\local\locals.bin`
 
 Layout and records: [CONTAINERS §5](CONTAINERS.md#5-pc-wlocallocalsbin-ui-text).

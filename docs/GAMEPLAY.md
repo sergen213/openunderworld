@@ -475,7 +475,16 @@ outfit (the original only reads `+0x294` on a level load).
   file omits keep their defaults, an unknown action or input name is an error. Edit them on the launcher's
   Controllers tab (Add input… captures a key, mouse button, pad button or trigger; Esc cancels).
 - Actions: forward, back, left, right, walk, sprint, jump, drop, interact, draw, fire, aim, switch, weapon, heal,
-  grapple, save, load, hint, answer, pda, light, grenade. Inputs: SDL scancode names (`W`, `Space`, `Left Shift`, `F5`), `Mouse Left/Right/Middle`,
+  grapple, save, load, hint, answer, pda, light, grenade, recenter, camera.
+- Recenter camera [I: the press snaps the orbit camera's yaw behind Lara at the rest pitch; the orbit reseeds from those
+  angles at its distance]. Q is also the grapple's key, as in the original.
+- Field camera (tru.exe `LookAroundState`, vtable 0x8842C0; viewfinder `pc-w\g_binoculars.drm` texture 649, a
+  translucent black frame with zoom - / + marks [O data]): the press, while she is on foot (idle, walk, run, stop,
+  turn), switches to a view from her eyes along her facing; she holds still, look input aims it, forward / back zoom
+  (full in 1 s, 0.75 x FOV down to 6 degrees, look slowed with the zoom), the next press or leaving those states ends
+  it and the orbit camera swings back behind her. [I] the eye view, the zoom range and keys: the state's tuning (player
+  variables 0x200..0x25F read by 0x75B7F0 / 0x75BD30) is not decoded, and its clips (g_binoculars.drm animations
+  2329..2331) are not played. Inputs: SDL scancode names (`W`, `Space`, `Left Shift`, `F5`), `Mouse Left/Right/Middle`,
   `Pad <SDL button>` (`Pad a`, `Pad dpright`, `Pad leftshoulder`, `Pad leftstick`), `Pad lefttrigger/righttrigger`
   (pressed past half). Case-insensitive.
 - Defaults are tru.exe's [O]: `FUN_00487710` (0x487710) binds the 25 virtual buttons below (key code = 0x80 + DirectInput
@@ -501,10 +510,10 @@ outfit (the original only reads `+0x294` on a level load).
   | 15 | Change Weapon | R | d-pad right | weapon |
   | 20 | Walk | Left Alt | — (light stick) | walk |
   | 14 | Light | F | d-pad left | light |
-  | 13 | Camera (field camera) | T | d-pad down | — (not implemented) |
+  | 13 | Camera (field camera) | T | d-pad down | camera |
   | 4 | Target Lock (draws) | G, mouse right | LT | aim |
   | 6 | Sprint (swim faster) | Left Shift | LB | sprint |
-  | 8 | Recenter Camera (patch 1.1) | Q | left stick click | — (not implemented) |
+  | 8 | Recenter Camera (patch 1.1) | Q | left stick click | recenter |
   | 23 / 24 / 22 / 21 | Vehicle Gas / Reverse / Brake / Shoot | W / S / Space / H, mouse left | RT / LT / A / RB | stick forward / back; jump hops [I]; no bike shooting yet |
 
   So Lara runs by default; walking is Alt held (or the stick pushed lightly) and Shift sprints. Ours without an
@@ -1937,14 +1946,24 @@ between two 0x1B: on the keyboard its key name, drawn in the highlight 0x7D6932 
   bottom line 25.7 under the last row, at least at 246.7; selection bar (23, 69, 97) 15.5 tall, solid ±107.5 fading to
   ±217.5; sliders: frame (5, 50, 80), fill (185, 230, 255), x 322.7–461.3, 7 tall, arrows 113/114 at 307.6 / 475.6 on
   the selected row; footer 120 / 375 at 271.6 / 379. Rows and what they drive: COMBAT RETICLES (HUD reticle), HELPER
-  BUTTONS and TRAINING TEXT (stored only: ours has no helper buttons/training text toggles), GAMEPAD / CONTROL
+  BUTTONS (stored only), TRAINING TEXT (the tutorial popups, below), GAMEPAD / CONTROL
   CONFIGURATION (message 456: the launcher configures them), VIEW AXIS INVERSION (ON/OFF
-  inline, mouse/stick Y [I: the original opens a 501–504 sub-screen, not captured]), PLAYER TAILORING; LANGUAGE (ENGLISH,
-  fixed), SUBTITLES ON / OFF, VOLUME SETTINGS, BRIGHTNESS (inline slider, graphics brightness 0.5·2^(v/5) [I: the
+  inline, mouse/stick Y [I: the original opens a 501–504 sub-screen, not captured]), PLAYER TAILORING; LANGUAGE (the
+  install languages by their names 110..119, right-aligned like ON / OFF; Left / Right / Return step; applies at once:
+  TEXT.md §0), SUBTITLES ON / OFF, VOLUME SETTINGS, BRIGHTNESS (inline slider, graphics brightness 0.5·2^(v/5) [I: the
   original opens a screen, not captured]), DISPLAY MODE SELECTION, DISPLAY SETTINGS; SFX / IN-GAME MUSIC / CINEMATIC
   VOLUME (mixer buses; cutscene audio).
   Changed settings are written back to the `--config` file (launcher config: `game` volumes/subtitles/reticles/helper
-  buttons/training text, `controls.invert_y`, `graphics.*`) and read at start.
+  buttons/training text/language, `controls.invert_y`, `graphics.*`) and read at start.
+- Tutorial popups (training text, locals.bin 1276..1369): unit scripts show them, not the exe. Trigger volumes'
+  OnFirstIn call the unit script's hint handler with `"hint_NN"` (the same slot as help on demand, AUDIO.md §9.5); for a
+  tutorial condition it runs `uipopupmgr` 8 (Hide), `uilocalstrproperty` 1 on one of its members (the member's initial
+  value is the string id) and `uipopupmgr` 0 Show(text, condition, 10.0) (thunks 0x7A3F30 / 0x7A4040 -> 0x4CDEE0 /
+  0x4D03E0), each once behind a stickybool [V-data bytecode, V-exe thunks]. 31 script types in generalbank and 16 units
+  hold such members (l2_cliffclimb 9502 vt 25: hint_15 -> 1326, volume 4040). ou-game: `script::Runtime::takePopups` ->
+  `ui::Hud::hint`, shown 10 s while GAME OPTIONS > TRAINING TEXT is on [I: the exe's popup screen script reads it through
+  the TrainingText native 0x77BAF0, not traced]. Layout [I, not captured]: centred at the top (virtual y 56), the
+  toast's font at 0.55 on a shaded box, wrapped at 56 characters, button placeholders named as in menus.
 - Graphics (`ui::GraphicsOptions`, `Menus::graphics`) [I: the original's PC display screens were not captured; same
   list art under the AUDIO/VISUAL icon, original strings where one fits (1016.. DISPLAY / SETTINGS / MODE SELECTION,
   VSYNC, ANTI ALIASING, SHADOWS, REFLECTIONS, WATER EFFECTS, ON / OFF), the rest uppercase text]: the launcher's

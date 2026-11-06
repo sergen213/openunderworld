@@ -145,9 +145,11 @@ public:
     void setPosition(Handle h, glm::vec3 position);     // a 3D sound's emitter moved
     void update(double seconds);
     void setCategories(std::vector<SoundCategory> c) { categories_ = std::move(c); } // globalsoundinfo's (DSPs per category)
-    // Started streams (voice lines): path plus its English subtitle text, oldest first; cleared by the caller.
+    // Started streams (voice lines): path plus its subtitle text in `language` (locale::Language index), oldest first;
+    // cleared by the caller.
     struct Line { std::string path, subtitle; };
     std::vector<Line> lines;
+    uint32_t language = 0;
     std::vector<std::string> waves; // "0x<id>" of every wave started, for logs; cleared by the caller
 private:
     // An Envelope / Reaction / Effect above a voice and when it started; also an Assignment with a max distance or a

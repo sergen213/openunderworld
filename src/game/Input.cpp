@@ -31,7 +31,7 @@ Controls::Controls(const config::InputConfig& c) : mouseScale(c.mouseSensitivity
 }
 
 Actions readDevices(const Controls& c, const bool* keys, SDL_Gamepad* pad, uint32_t mouseButtons) {
-    enum { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple, Save, Load, Hint, Answer, Pda, Light, Grenade };
+    enum { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple, Save, Load, Hint, Answer, Pda, Light, Grenade, Recenter, Camera };
     const auto on = [&](int action) {
         return std::any_of(c.actions[action].begin(), c.actions[action].end(),
                            [&](const platform::InputRef& r) { return platform::pressed(r, keys, pad, mouseButtons); });
@@ -46,6 +46,7 @@ Actions readDevices(const Controls& c, const bool* keys, SDL_Gamepad* pad, uint3
     a.draw = on(Draw), a.fire = on(Fire), a.aim = on(Aim), a.switchTarget = on(Switch), a.weapon = on(Weapon);
     a.heal = on(Heal), a.grapple = on(Grapple), a.save = on(Save), a.load = on(Load);
     a.hint = on(Hint), a.answer = on(Answer), a.pda = on(Pda), a.light = on(Light), a.grenade = on(Grenade);
+    a.recenter = on(Recenter), a.fieldCamera = on(Camera);
     return a;
 }
 
@@ -75,9 +76,9 @@ std::array<std::string, 28> promptNames(const Controls& c, bool gamepad, const l
         default: return platform::inputName(r);
         }
     };
-    // Virtual button -> config::bindableActions() index (-1: none of ours: 8 recenter camera, 13 field camera; 10 pause is
-    // fixed); and the placeholder naming it by default (tru.exe 0x8A9EF8 inverted), shown on the pad when it is unbound.
-    static constexpr int8_t kAction[25] = {8, 15, 7, 6, 11, 10, 5, 22, -1, 12, -1, 20, 14, -1, 21, 13, 3, 2, 1, 0, 4, 10, 7, 0, 1};
+    // Virtual button -> config::bindableActions() index (-1: none of ours; 10 pause is fixed); and the placeholder naming it
+    // by default (tru.exe 0x8A9EF8 inverted), shown on the pad when it is unbound.
+    static constexpr int8_t kAction[25] = {8, 15, 7, 6, 11, 10, 5, 22, 23, 12, -1, 20, 14, 24, 21, 13, 3, 2, 1, 0, 4, 10, 7, 0, 1};
     static constexpr char32_t kIcon[25] = {0x1801, 0x1800, 0x1802, 0x1803, 0x1805, 0x1807, 0x1804, 0x1806, 0x180E, 0x180F, 0x1810, 0x1811, 0x1808,
                                            0x1809, 0x180B, 0x180A, 0x1817, 0x1816, 0x1815, 0x1814, 0, 0x1826, 0x1827, 0x1828, 0x1829};
     std::array<std::string, 28> names;
@@ -105,7 +106,7 @@ std::array<std::string, 28> promptNames(const Controls& c, bool gamepad, const l
 InputScript InputScript::parse(std::string_view text) {
     static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact", "save",
                                                     "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda",
-                                                    "light", "grenade"};
+                                                    "light", "grenade", "recenter", "camera"};
     InputScript s;
     std::istringstream in{std::string(text)};
     std::string line;
@@ -162,6 +163,8 @@ Actions InputScript::at(uint64_t tick) const {
         else if (e.action == "pda") a.pda = e.value != 0;
         else if (e.action == "light") a.light = e.value != 0;
         else if (e.action == "grenade") a.grenade = e.value != 0;
+        else if (e.action == "recenter") a.recenter = e.value != 0;
+        else if (e.action == "camera") a.fieldCamera = e.value != 0;
         else if (e.action == "lookx") a.look.x = e.value;
         else a.look.y = e.value;
     }

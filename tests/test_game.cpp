@@ -3448,3 +3448,48 @@ TEST(GameReal, SeafloorKelpSwaysInTheUnitWind) {
     EXPECT_GT(hi - lo, 0.01f);
     EXPECT_LT(std::max(std::abs(lo), std::abs(hi)), 0.3f);
 }
+
+// Recenter camera (virtual button 8): the press turns the orbit camera behind Lara at the rest pitch.
+TEST(Game, RecenterTurnsCameraBehindLara) {
+    auto w = makeWorld(poolMesh(), {-1500, 0, 0}, 0.7f);
+    w->tick({});
+    Actions look;
+    look.look = {2.0f, 0.5f};
+    for (int i = 0; i < 40; ++i) w->tick(look);
+    const float yaw = w->player().state().yaw;
+    ASSERT_GT(std::abs(std::remainder(w->camera().yaw - yaw, 6.2831853f)), 0.5f);
+    Actions r;
+    r.recenter = true;
+    w->tick(r);
+    EXPECT_NEAR(std::remainder(w->camera().yaw - yaw, 6.2831853f), 0.0f, 0.02f);
+    EXPECT_NEAR(w->camera().pitch, game::CameraState{}.pitch, 0.02f);
+    for (int i = 0; i < 60; ++i) w->tick(r); // held: no new press; the camera swings round behind her and stays
+    EXPECT_NEAR(std::remainder(w->camera().yaw - yaw, 6.2831853f), 0.0f, 0.05f);
+    const vec3 toLara = w->player().state().pos - w->camera().position; // the camera behind her
+    EXPECT_GT(glm::dot(glm::normalize(vec2(toLara)), vec2(std::cos(yaw), std::sin(yaw))), 0.95f);
+}
+
+// Field camera (virtual button 13): the press switches to her eye view, she holds still, forward zooms in; the next
+// press ends it.
+TEST(Game, FieldCameraTogglesEyeView) {
+    auto w = makeWorld(poolMesh(), {-1500, 0, 0}, 0.0f);
+    for (int i = 0; i < 30; ++i) w->tick({}); // landed from the spawn
+    Actions c;
+    c.fieldCamera = true;
+    w->tick(c);
+    ASSERT_TRUE(w->fieldCamera()) << game::stateName(w->player().state().state);
+    const vec3 pos = w->player().state().pos;
+    EXPECT_NEAR(w->camera().position.z - pos.z, w->targeting.eyeHeight, 1.0f);
+    EXPECT_LT(glm::distance(vec2(w->camera().position), vec2(pos)), 40.0f);
+    Actions zoom = forward();
+    zoom.fieldCamera = true; // still held
+    for (int i = 0; i < 60; ++i) w->tick(zoom); // zooms, does not walk
+    EXPECT_NEAR(w->fieldZoom(), 1.0f, 1e-3f);
+    EXPECT_LT(glm::distance(w->player().state().pos, pos), 1.0f);
+    EXPECT_LT(w->camera().fovDeg, 10.0f);
+    w->tick(c); // held: no new press
+    EXPECT_TRUE(w->fieldCamera());
+    w->tick({});
+    w->tick(c);
+    EXPECT_FALSE(w->fieldCamera());
+}

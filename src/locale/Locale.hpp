@@ -2,6 +2,7 @@
 // subtitles carried in cinstream .mul files. Formats and evidence: docs/formats/TEXT.md.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -21,8 +22,32 @@ enum class Language : int {
 inline constexpr int kLanguageCount = 13;
 
 std::string_view languageName(Language l);        // "lang_english" ... (the .sch keys)
+std::string_view languageCode(Language l);        // "en" ... "hu" (config "game.language", --lang)
 std::optional<Language> parseLanguage(std::string_view s); // "en", "english", "lang_english", "11"
 inline uint32_t specMask(Language l) { return 1u << static_cast<int>(l); }
+
+// The languages a TRU PC install can be set to: the installer's LanguageString values (tru.exe 0x4791D0 maps English
+// French German Italian Spanish Dutch Polish Russian Czech Hungarian to the index; Japanese, Portuguese and UkEnglish
+// never), in the order of the in-game LANGUAGE names, locals.bin 110..119 (ENGLISH, French, Italian, German, Spanish,
+// Russian, Polish, Czech, Hungarian, Dutch) [V-data]. A language reads the archive records of spec mask 1 << index
+// (voice streams: FR DE IT ES their own, the others English's 0xFFFFFFE1), shows its own cinematic / movie subtitles
+// and the locals.bin table of textLanguage().
+inline constexpr std::array<Language, 10> kInstallLanguages{Language::English, Language::French,  Language::Italian, Language::German,
+                                                           Language::Spanish, Language::Russian, Language::Polish,  Language::Czech,
+                                                           Language::Hungarian, Language::Dutch};
+inline int16_t languageStringId(Language l) { // its locals.bin name; 0 = not an install language
+    for (size_t i = 0; i < kInstallLanguages.size(); ++i)
+        if (kInstallLanguages[i] == l) return int16_t(110 + i);
+    return 0;
+}
+// The locals.bin table `l` shows: its own for EN FR DE IT ES NL (the data has no other text tables, TEXT.md §1), else
+// English [I: under tru.exe's mask rule the others would get the French table].
+inline Language textLanguage(Language l) {
+    switch (l) {
+    case Language::French: case Language::German: case Language::Italian: case Language::Spanish: case Language::Dutch: return l;
+    default: return Language::English;
+    }
+}
 
 // ---- locals.bin -------------------------------------------------------------------------
 // u32 headerLanguage; u32 count; u32 offset[count] (absolute, 0 = empty); NUL-terminated UTF-8.

@@ -1016,6 +1016,21 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
         };
         auto native = [this, source, resolve, auxiliary](vm::NativeContext& nc) -> bool {
             const char* name = nc.name;
+            // Tutorial popups (takePopups): uilocalstrproperty 1 Get (0x7A1D70) yields the property's locals.bin id (the
+            // exe's string object; ours keeps the id), uipopupmgr 0 Show(text, condition, seconds) and 8 Hide.
+            if (!std::strcmp(name, "uilocalstrproperty") && nc.function == 1) {
+                uint32_t id = 0;
+                if (nc.receiver.kind == vm::Value::Kind::Member)
+                    if (const auto holder = resolve(nc.receiver.uid))
+                        if (const Member* m = holder->program->member(holder->typeId, nc.receiver.offset); m && m->init) id = *m->init;
+                nc.result = vm::Value::scalar(id);
+                return true;
+            }
+            if (!std::strcmp(name, "uipopupmgr") && (nc.function == 0 || nc.function == 8)) {
+                if (nc.function == 8) popups_.push_back({});
+                else if (nc.args.size() == 3) popups_.push_back({int(nc.args[0].bits), std::bit_cast<float>(nc.args[2].bits)});
+                return true;
+            }
             // Natives with no per-object state (tru.exe thunks that ignore the receiver value).
             if (!std::strcmp(name, "globaleffect") && (nc.function == 5 || nc.function == 6) && nc.args.size() == 1) {
                 // FadeOut / FadeIn over N frames (0x4A4EB0 / 0x4A4EF0: GAMELOOP_SetScreenWipe(10, 100 | 0, max(N, 1))).

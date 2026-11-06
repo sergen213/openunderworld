@@ -38,6 +38,7 @@ bool iequalsPrefix(std::string_view s, std::string_view prefix) {
 } // namespace
 
 std::string_view languageName(Language l) { return kNames.at(static_cast<size_t>(l)); }
+std::string_view languageCode(Language l) { return kCodes.at(static_cast<size_t>(l)); }
 
 std::optional<Language> parseLanguage(std::string_view s) {
     for (int i = 0; i < kLanguageCount; ++i) {

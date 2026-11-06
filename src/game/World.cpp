@@ -365,6 +365,31 @@ void World::tick(const Actions& input) {
     if (onBike) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = false;
     // An interaction clip plays out with the input locked (State::Use: a switch, a pickup, letting go of a block).
     if (player_.state().state == State::Use) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = a.draw = a.fire = a.aim = false;
+    // Recenter camera (virtual button 8, patch 1.1) [I: snaps the orbit behind her at the rest pitch; the orbit
+    // reseeds from the new angles at its distance].
+    if (input.recenter && !recenterHeld_ && !fieldCamera_ && !splineCam_) cam_.yaw = player_.state().yaw, cam_.pitch = CameraState{}.pitch;
+    recenterHeld_ = input.recenter;
+    // Field camera (virtual button 13 "Camera"; tru.exe LookAroundState, vtable 0x8842C0; viewfinder g_binoculars.drm
+    // texture 649 with its zoom - / + marks): toggled on the press edge while she is on foot; she holds still and
+    // the look input aims it (updateFieldCamera). [I] forward / back zoom; leaving the standing states ends it.
+    {
+        const State st = player_.state().state;
+        const bool standing = !onBike && !health_.dead() && !splineCam_ &&
+                              (st == State::Idle || st == State::Walk || st == State::Run || st == State::Stop || st == State::Turn);
+        if (input.fieldCamera && !fieldCameraHeld_) {
+            fieldCamera_ = !fieldCamera_ && standing;
+            if (fieldCamera_) cam_.yaw = player_.state().yaw, cam_.pitch = 0, fieldZoom_ = 0;
+            else cam_.pitch = CameraState{}.pitch;
+        } else if (fieldCamera_ && !standing) {
+            fieldCamera_ = false, cam_.pitch = CameraState{}.pitch;
+        }
+        fieldCameraHeld_ = input.fieldCamera;
+        if (fieldCamera_) {
+            fieldZoom_ = std::clamp(fieldZoom_ + a.move.y * dt, 0.0f, 1.0f); // full zoom in 1 s
+            const vec2 look = a.look;
+            a = Actions{}, a.look = look;
+        }
+    }
     // Stick is camera-relative.
     const vec2 fwd(std::cos(cam_.yaw), std::sin(cam_.yaw)), right(std::sin(cam_.yaw), -std::cos(cam_.yaw));
     vec2 move = right * a.move.x + fwd * a.move.y;

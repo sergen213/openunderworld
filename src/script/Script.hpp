@@ -314,6 +314,15 @@ public:
     // Help-on-demand condition ("hint_NN") a unit script last stored: unit vt 28 copies its string argument into a
     // string member (l3_main_bedroom type 12059 +168) [V-data bytecode]. Empty when none.
     std::string helpCondition() const;
+    // Tutorial popups (training text) the scripts showed since the last call, in order: unit hint handlers run
+    // uipopupmgr 8 (Hide) and then uilocalstrproperty 1 (Get: the member's locals.bin id) and uipopupmgr 0 Show(text,
+    // condition, seconds) (0x7A3F30 -> 0x4CDEE0 -> 0x4CCDB0, 10 s from the scripts) [V-data bytecode, V-exe thunks].
+    // text 0 = Hide.
+    struct Popup {
+        int text = 0;
+        float seconds = 0;
+    };
+    std::vector<Popup> takePopups() { return std::exchange(popups_, {}); }
     // Script instance uid of `unit`'s NsUnit script (unitref.Get), 0 = none.
     int32_t unitScriptUid(const std::string& unit) const;
     // Keeps objects of units still present, adds new units, drops missing ones. Throws cdc::FormatError.
@@ -463,6 +472,7 @@ private:
     int32_t lastBike_ = 0; // larabase 52's bike (Lara +0xF00) for larabase 53; saved
     EnemyNative enemy_;
     std::array<uint8_t, 256> gameValues_{};
+    std::vector<Popup> popups_; // takePopups
     std::map<uint16_t, std::string> objectNames_;
     struct AnimSet { std::shared_ptr<const scene::Skeleton> skeleton; std::shared_ptr<const std::vector<anim::Clip>> clips;
                     std::shared_ptr<const std::vector<std::string>> names; float resetAfter = -1; uint32_t laraClip = 0;

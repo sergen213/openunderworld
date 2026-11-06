@@ -35,6 +35,7 @@ struct GraphicsConfig {
     std::string atmosphere = "auto";        // "auto" (enhanced -> medium) | "off" | "low" (height fog) | "medium"
                                             // (+ sun shafts, 24 taps) | "high" (48 taps)
     std::optional<bool> lightShafts;        // sun shafts of medium / high; unset = on
+    std::optional<bool> cineDof;            // cutscene depth of field (cameras' focus; retail draws none); unset = off
     std::string weather = "auto";           // "auto" (enhanced -> the unit's own rain / snow) | "off" | "rain" | "snow"
     float brightness = 1.0f;                // 0.5..2.0, post-pass gamma (out = in^(1/brightness)); 1 = neutral
     // AMD FSR (Vulkan only, docs/RENDERING.md "FSR"): temporal upscaling from a lower render resolution (MSAA / FXAA off),
@@ -70,6 +71,7 @@ struct GraphicsSettings {
     // Last, so positional initialisers of the fields above keep working.
     bool rtAo = false, rtGi = false; // RT ambient occlusion / sun bounce (rt on; rtAo / rtGi unset = rt full)
     bool antiLag = false; // AMD Anti-Lag (render::FrameOptions::antiLag); last, like the fields above
+    bool cineDof = false; // cutscene depth of field (app::CineView::depthOfField); last, like the fields above
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without
@@ -101,6 +103,8 @@ const std::vector<std::string>& bindableActions();
 struct GameConfig {
     int sfxVolume = 8, musicVolume = 8, cinematicVolume = 8; // 0..10
     bool subtitles = true, reticles = true, helperButtons = true, trainingText = true;
+    // Text, voice and subtitle language: a locale::languageCode of locale::kInstallLanguages (ou-game rejects others).
+    std::string language = "en";
     bool operator==(const GameConfig&) const = default;
 };
 

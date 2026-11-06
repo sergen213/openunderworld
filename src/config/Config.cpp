@@ -59,6 +59,7 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     else if (g.atmosphere == "high") s.atmosphere = 3;
     else throw std::runtime_error("atmosphere must be auto, off, low, medium or high, got " + g.atmosphere);
     s.lightShafts = g.lightShafts.value_or(true);
+    s.cineDof = g.cineDof.value_or(false);
     if (g.weather == "auto") s.weather = enhanced ? 1 : 0;
     else if (g.weather == "off") s.weather = 0;
     else if (g.weather == "rain") s.weather = 2;
@@ -124,7 +125,7 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
 const std::vector<std::string>& bindableActions() {
     static const std::vector<std::string> a = {"forward", "back", "left", "right", "walk", "sprint", "jump", "drop", "interact",
                                                "draw", "fire", "aim", "switch", "weapon", "heal", "grapple", "save", "load", "hint", "answer", "pda",
-                                               "light", "grenade"};
+                                               "light", "grenade", "recenter", "camera"};
     return a;
 }
 
@@ -153,7 +154,9 @@ InputConfig::InputConfig()
                {"answer", {"F3"}},
                {"pda", {"Tab", "Pad back"}},                   // 11
                {"light", {"F", "Pad dpleft"}},                 // 14
-               {"grenade", {"CapsLock", "Pad rightshoulder"}}} {} // 7 (RB)
+               {"grenade", {"CapsLock", "Pad rightshoulder"}},  // 7 (RB)
+               {"recenter", {"Q", "Pad leftstick"}},           // 8 (LS click; patch 1.1, Q as the grapple)
+               {"camera", {"T", "Pad dpdown"}}} {}             // 13: the field camera
 
 namespace {
 // Defaults before 0.12 (Shift walked, Alt sprinted): a config that still holds one of these gets today's default.
@@ -203,6 +206,7 @@ Config load(const fs::path& path) {
             c.graphics.atmosphere = g->value("atmosphere", c.graphics.atmosphere);
             c.graphics.weather = g->value("weather", c.graphics.weather);
             if (g->contains("light_shafts")) c.graphics.lightShafts = g->at("light_shafts").get<bool>();
+            if (g->contains("cine_dof")) c.graphics.cineDof = g->at("cine_dof").get<bool>();
             c.graphics.rtQuality = g->value("rt_quality", c.graphics.rtQuality);
             if (g->contains("rt_lights")) c.graphics.rtLights = g->at("rt_lights").get<bool>();
             if (g->contains("rt_reflections")) c.graphics.rtReflections = g->at("rt_reflections").get<bool>();
@@ -236,6 +240,7 @@ Config load(const fs::path& path) {
             for (auto [key, field] : {std::pair{"subtitles", &c.game.subtitles}, std::pair{"reticles", &c.game.reticles},
                                       std::pair{"helper_buttons", &c.game.helperButtons}, std::pair{"training_text", &c.game.trainingText}})
                 *field = g->value(key, *field);
+            c.game.language = g->value("language", c.game.language);
         }
     } catch (const std::exception& e) {
         throw std::runtime_error(path.string() + ": " + e.what());
@@ -272,13 +277,14 @@ void save(const fs::path& path, const Config& c) {
     if (c.graphics.rtAo) g["rt_ao"] = *c.graphics.rtAo;
     if (c.graphics.rtGi) g["rt_gi"] = *c.graphics.rtGi;
     if (c.graphics.lightShafts) g["light_shafts"] = *c.graphics.lightShafts;
+    if (c.graphics.cineDof) g["cine_dof"] = *c.graphics.cineDof;
     if (c.graphics.rtLights) g["rt_lights"] = *c.graphics.rtLights;
     if (c.graphics.rtReflections) g["rt_reflections"] = *c.graphics.rtReflections;
     j["controls"] = {{"mouse_sensitivity", c.controls.mouseSensitivity}, {"invert_y", c.controls.invertY},
                      {"bindings", c.controls.bindings}};
     j["game"] = {{"sfx_volume", c.game.sfxVolume}, {"music_volume", c.game.musicVolume}, {"cinematic_volume", c.game.cinematicVolume},
                  {"subtitles", c.game.subtitles}, {"reticles", c.game.reticles}, {"helper_buttons", c.game.helperButtons},
-                 {"training_text", c.game.trainingText}};
+                 {"training_text", c.game.trainingText}, {"language", c.game.language}};
     if (path.has_parent_path()) fs::create_directories(path.parent_path());
     fs::path tmp = path;
     tmp += ".tmp";

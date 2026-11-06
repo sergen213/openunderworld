@@ -2,6 +2,7 @@
 // Format notes and evidence: docs/formats/CONTAINERS.md.
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -69,11 +70,14 @@ public:
     explicit BigfileSet(const std::filesystem::path& gameDir, uint32_t specMask = kSpecEnglish);
     std::optional<std::vector<uint8_t>> read(std::string_view path) const;
     bool hasPatch() const { return archives_.size() > 1; }
-    uint32_t specMask() const { return specMask_; }
+    uint32_t specMask() const { return specMask_.load(std::memory_order_relaxed); }
+    // Live language switch (tru.exe 0x49A900 sets 1 << language on every mounted archive): later reads use `mask`.
+    // Atomic: the unit streamer thread reads meanwhile.
+    void setSpecMask(uint32_t mask) { specMask_.store(mask, std::memory_order_relaxed); }
 
 private:
     std::vector<Bigfile> archives_; // lookup order
-    uint32_t specMask_;
+    std::atomic<uint32_t> specMask_;
 };
 
 // ---- CDRM: zlib block container wrapping DRM files ------------------------------------

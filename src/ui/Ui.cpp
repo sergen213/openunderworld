@@ -543,7 +543,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.stringId = 493, .opens = Screen::Message, .message = unavailable},
                 {.stringId = 469}};
     case Screen::AudioVisual:
-        return {{.stringId = 145, .onId = 110},
+        return {{.stringId = 145, .greyed = languages.empty(), .choice = &language, .choices = languages},
                 {.stringId = 144, .toggle = &subtitles, .onId = 45, .offId = 46, .pair = true},
                 {.stringId = 142, .opens = Screen::Volume},
                 {.stringId = 143, .value = &brightness},
@@ -601,6 +601,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.label = "WATER DETAIL", .choice = &g.waterDetail, .choices = {"AUTO", "STANDARD", "HIGH"}},
                 {.label = "ATMOSPHERE", .choice = &g.atmosphere, .choices = {"AUTO", "OFF", "LOW", "MEDIUM", "HIGH"}},
                 {.label = "SUN SHAFTS", .choice = &g.lightShafts, .choices = {"DEFAULT", "ON", "OFF"}},
+                {.label = "CUTSCENE DEPTH OF FIELD", .choice = &g.cineDof, .choices = {"DEFAULT", "ON", "OFF"}},
                 {.label = "WEATHER", .choice = &g.weather, .choices = {"AUTO", "OFF", "RAIN", "SNOW"}},
                 {.stringId = 469}};
     }
@@ -1064,6 +1065,9 @@ void Menus::drawList(Canvas& c, const locale::Strings& s) {
             x += capText(c, x, y, kRowScale, on, *it.toggle ? kWhite : kRowGrey);
             x += capText(c, x, y, kRowScale, slash, kRowGrey);
             capText(c, x, y, kRowScale, off, *it.toggle ? kRowGrey : kWhite);
+        } else if (it.choice && !g) { // LANGUAGE: the name right-aligned as the ON / OFF values
+            const std::string v = it.choices.empty() ? std::string() : it.choices[size_t(choiceIndex(it))];
+            capText(c, valueRight - c.fontWidth(v, kRowScale), y, kRowScale, v, sel ? kWhite : grey);
         } else if (it.choice || (g && it.toggle)) { // graphics values: centred over the slider track, its arrows when selected
             const std::string v = it.toggle             ? std::string(s.get(*it.toggle ? it.onId : it.offId))
                                   : it.choices.empty()   ? std::string()

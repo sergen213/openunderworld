@@ -108,6 +108,7 @@ void usage() {
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
                  "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"
                  "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only) [--fx on|off] [--anti-lag on|off]\n"
+                 "               [--lang en|fr|de|it|es|nl|pl|ru|cs|hu] (text, voice, subtitles)\n"
                  "               [--config config.json]\n"
                  "without --level/--chapter/--load: main menu (New Game plays Movies\\explode.bik, then chapter 0)\n"
                  "controls: WASD/arrows move (camera-relative), Shift walk, Space jump/climb, Ctrl or C drop, E use/push/pick up,\n"
@@ -122,7 +123,7 @@ void usage() {
                  "menus: arrows/WASD or d-pad navigate, Enter/Space or A accept, E or X alt (PDA task), Esc or B back,\n"
                  "          Backspace or Y deletes a save slot; 1 opens the PDA\n"
                  "input script lines: <seconds> <forward|right|walk|jump|drop|interact|save|load|draw|fire|aim|switch|weapon|heal|pause|\n"
-                 "                    grapple|sprint|hint|answer|pda|light|grenade|lookx|looky>\n"
+                 "                    grapple|sprint|hint|answer|pda|light|grenade|recenter|camera|lookx|looky>\n"
                  "                    [value]  (in menus forward/right +-1 navigate, jump accepts, interact is alt, drop goes back;\n"
                  "                    script time runs on while paused)\n");
 }
@@ -167,6 +168,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--game-dir") o.gameDir = v;
         else if (a == "--level") o.level = v;
         else if (a == "--chapter") o.chapter = std::atoi(v);
+        else if (a == "--lang") o.game.language = v;
         else if (a == "--music-wav") o.musicWav = v;
         else if (a == "--renderer") o.renderer = v;
         else if (a == "--width") o.width = std::atoi(v);
@@ -217,6 +219,12 @@ bool parseArgs(int argc, char** argv, Options& o) {
     } catch (const std::exception& e) {
         std::fprintf(stderr, "%s\n", e.what());
         return false;
+    }
+    if (const auto l = ou::locale::parseLanguage(o.game.language); !l || !ou::locale::languageStringId(*l)) {
+        std::fprintf(stderr, "--lang / game.language wants en fr de it es nl pl ru cs hu, not '%s'\n", o.game.language.c_str());
+        return false;
+    } else {
+        o.game.language = ou::locale::languageCode(*l);
     }
     if (!o.screenshot.empty() && o.frames == 0) o.frames = 1;
     if (!o.inputScript.empty() && o.renderHz == 0) o.renderHz = 60;
@@ -1679,7 +1687,10 @@ int main(int argc, char** argv) {
 
     // ---- load: simulation data first (no window needed to fail early) ----
     std::optional<ou::game::InputScript> script;
-    std::unique_ptr<const ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
+    std::unique_ptr<ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
+    // Text, voice and subtitle language (config game.language / --lang; AUDIO/VISUAL > LANGUAGE switches it live):
+    // the archives' spec mask (voice streams, cinematics), locals.bin (locale::textLanguage) and the subtitle lines.
+    ou::locale::Language language = *ou::locale::parseLanguage(opt.game.language);
     // The streamer warms the Vulkan programs of the scenes it decodes (original::warmSpirv): 0 = OpenGL, 1 = Vulkan,
     // 2 = Vulkan with ray queries. Set when the renderer starts or is swapped.
     std::atomic<int> spirvWarm{0};
@@ -1701,9 +1712,9 @@ int main(int argc, char** argv) {
     bool spawnFromIntro = false;
     try {
         if (!opt.inputScript.empty()) script = ou::game::InputScript::load(opt.inputScript);
-        bigfile = std::make_unique<const ou::cdc::BigfileSet>(opt.gameDir);
+        bigfile = std::make_unique<ou::cdc::BigfileSet>(opt.gameDir, ou::locale::specMask(language));
         const auto& bf = *bigfile;
-        strings = ou::locale::loadStrings(opt.gameDir, ou::locale::Language::English);
+        strings = ou::locale::loadStrings(opt.gameDir, ou::locale::textLanguage(language));
         if (!strings) throw std::runtime_error("pc-w\\local\\locals.bin not in bigfile");
         std::string why;
         art = ou::ui::loadArt(bf, &why);
@@ -1793,7 +1804,8 @@ int main(int argc, char** argv) {
             po.art = art ? &*art : nullptr;
             const std::string stem = std::filesystem::path(file).stem().string();
             if (const auto sch = bigfile->read(ou::locale::movieSchemaPath(stem))) // subtitled movies (prevontr)
-                po.subtitles = ou::locale::parseMovieSchema({reinterpret_cast<const char*>(sch->data()), sch->size()}, ou::locale::Language::English);
+                po.subtitles = ou::locale::parseMovieSchema({reinterpret_cast<const char*>(sch->data()), sch->size()}, language);
+            po.audioTrackId = int(language); // tru.exe: the language's Bink track, else track 0 (VIDEO.md §2)
             const auto st = ou::video::playMovie(movieWindow.get(), opt.gameDir / "Movies" / file, po);
             std::fprintf(stderr, "ou-game: movie %s %d frames%s\n", file, st.frames, st.skipped ? " (skipped)" : "");
         } catch (const std::exception& e) {
@@ -1820,6 +1832,7 @@ int main(int argc, char** argv) {
         }
         try {
             sound.emplace(*bigfile, mixer);
+            sound->setLanguage(language);
             sound->attach(*world);
             if (effects.library) // Lara's and the weapons' sounds decoded up front (not on the first step / shot)
                 for (int i = -1; i < ou::game::kWeaponCount; ++i)
@@ -1959,14 +1972,39 @@ int main(int argc, char** argv) {
                      int(opt.vsync), opt.fov, g.preset.c_str(), g.rt.c_str(), opt.gfx.msaa, g.water.c_str(),
                      opt.gfx.fsr ? g.fsrQuality.c_str() : "off", int(opt.gfx.effects));
     };
+    // AUDIO/VISUAL > LANGUAGE (locale::kInstallLanguages order, its names in the current text). A switch applies at once as
+    // tru.exe 0x49A900 (spec mask, locals.bin reload): menus and prompts redraw in the new text, voice lines and
+    // cinematics read the language's records from their next stream on.
+    bool languageChanged = false; // prompts to rebuild (nav)
+    auto fillLanguages = [&] {
+        menus.languages.clear();
+        for (const auto l : ou::locale::kInstallLanguages) menus.languages.emplace_back(strings->get(ou::locale::languageStringId(l)));
+        menus.language = int(std::ranges::find(ou::locale::kInstallLanguages, language) - ou::locale::kInstallLanguages.begin());
+    };
+    fillLanguages();
+    auto applyLanguage = [&](ou::locale::Language l) {
+        auto text = ou::locale::loadStrings(opt.gameDir, ou::locale::textLanguage(l));
+        if (!text) {
+            std::fprintf(stderr, "ou-game: language %s: no locals.bin\n", std::string(ou::locale::languageCode(l)).c_str());
+        } else {
+            language = l, strings = std::move(text), languageChanged = true;
+            bigfile->setSpecMask(ou::locale::specMask(l));
+            if (sound) sound->setLanguage(l);
+            std::fprintf(stderr, "ou-game: tick %llu language %s (text %s)\n", (unsigned long long)world->ticks(),
+                         std::string(ou::locale::languageCode(l)).c_str(), std::string(ou::locale::languageCode(ou::locale::textLanguage(l))).c_str());
+        }
+        fillLanguages();
+    };
     auto applyVolumes = [&] {
+        if (const auto l = ou::locale::kInstallLanguages[size_t(menus.language)]; l != language) applyLanguage(l);
         mixer.setBusVolume(ou::audio::Bus::Music, float(menus.musicVolume) / 10);
         mixer.setBusVolume(ou::audio::Bus::Sfx, float(menus.sfxVolume) / 10);
         opt.controls.invertY = menus.invertY;
         if (menus.brightness != menuBrightness) menuBrightness = menus.brightness, opt.gfx.brightness = 0.5f * std::exp2(float(menus.brightness) / 5);
         if (menus.graphics != appliedGraphics) applyGraphics();
         const ou::config::GameConfig g{menus.sfxVolume, menus.musicVolume, menus.cinematicVolume, menus.subtitles,
-                                       menus.reticles, menus.helperButtons, menus.trainingText};
+                                       menus.reticles, menus.helperButtons, menus.trainingText,
+                                       std::string(ou::locale::languageCode(language))};
         if (opt.configPath.empty() ||
             (g == opt.game && opt.controls.invertY == opt.configInvertY && opt.gfx.brightness == opt.graphics.brightness && !graphicsDirty))
             return;
@@ -2316,7 +2354,7 @@ int main(int argc, char** argv) {
     auto menuValues = [&] {
         return std::tuple(menus.musicVolume, menus.sfxVolume, menus.cinematicVolume, menus.brightness, menus.reticles,
                           menus.helperButtons, menus.trainingText, menus.invertY, menus.subtitles, menus.tailoring, menus.tailor,
-                          menus.graphics);
+                          menus.graphics, menus.language);
     };
     auto nav = [&](ou::ui::Nav n) {
         const int tailoring = menus.tailoring;
@@ -2333,6 +2371,7 @@ int main(int argc, char** argv) {
             if (dtp) sound->menuSound(dtp);
         }
         applyVolumes();
+        if (std::exchange(languageChanged, false)) prompts = ou::game::promptNames(opt.controls, padActive, *strings);
         // PLAYER TAILORING: a preset picked (START NEW GAME) sets every level (game::Tailoring); GAME OPTIONS sets one.
         if (menus.tailoring != tailoring || a == ou::ui::Action::NewGame)
             world->setTailoring(ou::game::Tailoring::preset(menus.tailoring));
@@ -2356,6 +2395,7 @@ int main(int argc, char** argv) {
     auto cineView = [&] {
         ou::app::CineView v{*bigfile, *world, *renderer, window.get(), audioOn ? &mixer : nullptr, scene, lara.meshIndices, streamed.gunIndices};
         v.unitMeshes = streamed.unitMeshes;
+        v.language = int(language);
         v.renderHz = opt.renderHz;
         v.frame.msaa = opt.gfx.msaa, v.frame.shadows = opt.gfx.shadows, v.frame.fxaa = opt.gfx.fxaa, v.frame.hdr = opt.gfx.hdr;
         v.frame.rt = ou::render::RayTracing(opt.gfx.rt), v.frame.rtRays = opt.gfx.rtRays;
@@ -2364,7 +2404,7 @@ int main(int argc, char** argv) {
         v.frame.rtAo = opt.gfx.rtAo, v.frame.rtGi = opt.gfx.rtGi;
         v.frame.originalShaders = opt.gfx.originalShaders, v.frame.brightness = opt.gfx.brightness;
         v.overlay = !opt.noOverlay;
-        v.depthOfField = opt.graphics.preset == "enhanced" && opt.gfx.effects;
+        v.depthOfField = opt.gfx.cineDof && opt.gfx.effects;
         v.art = art ? &*art : nullptr;
         v.musicVolume = float(menus.musicVolume) / 10, v.sfxVolume = float(menus.sfxVolume) / 10;
         return v;
@@ -2560,6 +2600,13 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "ou-game: tick %llu script %s %d (%s) -> %d (%s)\n", (unsigned long long)e.tick,
                              ou::script::eventName(e.kind), e.source, src ? src->name.c_str() : "?", e.target,
                              dst ? dst->name.c_str() : "untracked");
+            }
+            // Tutorial popups the unit scripts show (training text; GAME OPTIONS > TRAINING TEXT off hides them [I]).
+            for (const auto& p : world->script().takePopups()) {
+                std::fprintf(stderr, "ou-game: tick %llu popup %d %.1f s \"%s\"\n", tick, p.text, p.seconds,
+                             p.text ? std::string(strings->get(p.text)).c_str() : "(hide)");
+                if (!p.text) hud.hint({}, 0);
+                else if (menus.trainingText) hud.hint(std::string(strings->get(p.text)), p.seconds);
             }
             for (const auto& e : world->enemies().all()) { // enemy mode changes and blows, for replays
                 const auto &p = e->previous(), &s = e->state();
@@ -2796,6 +2843,8 @@ int main(int argc, char** argv) {
             hud.grapple.reset();
             if (const auto target = world->grappleTarget(); target && !world->player().state().grappleUid)
                 if (const auto p = toScreen(c, world->fovDeg, w, h, target->pos)) hud.grapple = std::array{p->x, p->y};
+            if (world->fieldCamera() && menus.screen() == ou::ui::Screen::None) // the field camera's viewfinder, window-filling [I]
+                if (const auto* r = art->find(ou::ui::kViewfinder)) canvas.image(0, 0, 0, float(w), float(h), r->u0, r->v0, r->u1, r->v1, 0xFFFFFFFFu);
             if (menus.screen() == ou::ui::Screen::None) hud.draw(canvas); // menus hide the HUD [O pause captures]
             if (sound && menus.subtitles) ou::app::drawSubtitles(canvas, sound->subtitles());
         }

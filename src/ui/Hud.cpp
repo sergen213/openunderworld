@@ -175,6 +175,14 @@ void Hud::draw(Canvas& c) const {
         c.rect(cx - w / 2, 398 * u, w, 22 * u, fade(kShade, a));
         fontCentred(c, cx, 401 * u, 0.55f, toast_, fade(kWhite, a));
     }
+    if (hintLeft_ > 0) { // [I] tutorial popup: not captured
+        const float a = fadeOut(hintLeft_);
+        const auto lines = wrap(hint_, 56);
+        float w = 0;
+        for (const auto& l : lines) w = std::max(w, c.fontWidth(l, 0.55f) * u);
+        c.rect(cx - w / 2 - 12 * u, 56 * u, w + 24 * u, (float(lines.size()) * 18 + 8) * u, fade(kShade, a));
+        for (size_t i = 0; i < lines.size(); ++i) fontCentred(c, cx, (60 + 18 * float(i)) * u, 0.55f, lines[i], fade(kWhite, a));
+    }
 }
 
 } // namespace ou::ui

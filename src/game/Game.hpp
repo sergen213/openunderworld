@@ -63,6 +63,8 @@ struct Actions {
     bool hint = false, answer = false; // held; ou-game plays the help-on-demand hint / answer line on the press edge (F2 / F3)
     bool light = false;   // held; the flashlight toggles on the press edge (F / pad d-pad left; scripts: "light")
     bool grenade = false; // held; a sticky grenade is thrown on the press edge (Caps Lock / pad RB; scripts: "grenade")
+    bool recenter = false;    // held; the orbit camera turns behind Lara on the press edge (Q / pad LS click; "recenter")
+    bool fieldCamera = false; // held; the field camera view toggles on the press edge (T / pad d-pad down; "camera")
 };
 
 // ---- animations -------------------------------------------------------------------------------
@@ -469,6 +471,9 @@ public:
     const PlayerState& previous() const { return prev_; }
     const CameraState& camera() const { return cam_; }
     const CameraState& previousCamera() const { return prevCam_; }
+    // Field camera view (World::tick): on, and its zoom 0..1 (the app draws the g_binoculars viewfinder).
+    bool fieldCamera() const { return fieldCamera_; }
+    float fieldZoom() const { return fieldZoom_; }
     uint64_t ticks() const { return ticks_; }
     void setTicks(uint64_t t) { ticks_ = t; } // a load (save::apply): the clock the waves and stream timers run on
     // Switches, doors, trigger volumes/planes, push blocks (src/script). Set its bigfile before ticking;
@@ -880,6 +885,9 @@ private:
     double aimTime_ = 0; // pose clips' clock
     bool interactHeld_ = true;     // no press edge on the first tick
     bool grappleHeld_ = true;      // no press edge on the first tick
+    bool recenterHeld_ = true, fieldCameraHeld_ = true; // press edges (none on the first tick)
+    bool fieldCamera_ = false;
+    float fieldZoom_ = 0;
     float pullT_ = 0;              // seconds of heaving on a mounted grapple target
     int32_t lastPulled_ = 0;
     std::vector<Pickup> pickedUp_;

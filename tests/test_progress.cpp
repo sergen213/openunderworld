@@ -786,7 +786,9 @@ TEST(ChaptersReal, PromptNames) {
     EXPECT_EQ(kb[3], "Space");
     EXPECT_EQ(kb[4], "G"); // a key before the mouse button
     EXPECT_EQ(kb[25], "Return");
-    EXPECT_EQ(kb[13], "");  // field camera: not ours
+    EXPECT_EQ(kb[13], "T"); // field camera (1278 "Press ᠉ to use the field camera")
+    EXPECT_EQ(kb[8], "Q");  // recenter camera
+    EXPECT_EQ(pad[13], "\xE1\xA0\x89"); // d-pad down
     EXPECT_EQ(pad[1], "\xE1\xA0\x80"); // X
     EXPECT_EQ(pad[5], "\xE1\xA0\x87"); // right trigger
     EXPECT_EQ(pad[11], "Back Button");

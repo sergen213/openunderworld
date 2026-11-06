@@ -106,6 +106,7 @@ void poseLight(scene::Light& l, const cine::LightPose& p) {
     const glm::vec3 dir = glm::normalize(glm::vec3(p.matrix[2]));
     for (int i = 0; i < 3; ++i) l.direction[i] = dir[i];
     l.coneInner = p.coneInner, l.coneOuter = p.coneOuter;
+    l.mask = p.mask; // reaches the receivers (MeshData::lightMask) it shares a bit with
 }
 
 } // namespace
@@ -207,6 +208,8 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         if (a.skelIndex >= 0) a.skeleton = &sc.skeletons[size_t(a.skelIndex)];
         for (const size_t i : a.meshes)
             for (const auto& sm : sc.meshes[i].submeshes) a.rows |= a.inst->intro == -1 || rowMaterials.contains(sm.materialId);
+        // Instance channel 2 -> render component +0x20: the receiver mask the rig lights test (16 for most actors) [I].
+        for (const size_t i : a.meshes) sc.meshes[i].lightMask = uint32_t(std::lround(player.raw(a.inst->channel + 2)));
     }
 
     // Lights (0x454BD0): one environment slot each, first in the list (OriginalShading takes the first lights that
@@ -284,7 +287,7 @@ CineResult playCinematic(const std::string& name, const CineView& v) {
         if (marker) player.origin = player.originFromMarker(*marker, markerIntro);
         ticker.advance(step * cine::kFps);
         for (const auto& s : player.newSubtitles())
-            if (s.language == int(locale::Language::English))
+            if (s.language == v.language)
                 for (const auto& line : locale::cineSubtitleLines(s.text)) ticker.push(line);
 
         for (const auto& a : actors) {

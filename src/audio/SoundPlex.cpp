@@ -393,7 +393,7 @@ double SoundPlayer::fire(Instance& in, const Plex& p, float volume, double at, c
         pp.volume *= p.volume, pp.bus = Bus::Voice;
         play(mixer_.play(std::make_shared<Pcm>(mul->pcm), pp));
         std::string text;
-        for (const auto& s : mul->subtitles) text += std::string(s.text(0));
+        for (const auto& s : mul->subtitles) text += std::string(s.text(language));
         lines.push_back({p.stream, std::move(text)});
         return double(mul->pcm.frames()) / mul->pcm.sampleRate;
     }

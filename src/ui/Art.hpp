@@ -48,6 +48,9 @@ struct Art {
     const AtlasRect* find(uint32_t id) const;
 };
 
+// Field camera viewfinder in the atlas (g_binoculars.drm texture 649): translucent black frame, zoom - / + marks.
+inline constexpr uint32_t kViewfinder = 649;
+
 // Parses the font DTP section (exposed for tests).
 std::optional<Font> parseFont(const cdc::Drm& drm, uint32_t dtpId, std::string* why = nullptr);
 // Loads generalbank.drm: nullopt (with `why`) when it is missing or its font does not parse.

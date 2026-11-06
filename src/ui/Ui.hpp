@@ -219,6 +219,7 @@ struct GraphicsOptions {
     int waterDetail = 0;                           // 0 auto, 1 standard, 2 high
     int atmosphere = 0;                            // 0 auto, 1 off, 2 low, 3 medium, 4 high
     int lightShafts = 0;                           // tri-state
+    int cineDof = 0;                               // tri-state (default off)
     int weather = 0;                               // 0 auto, 1 off, 2 rain, 3 snow
     bool fsr = false;                              // upscaler fsr
     int fsrQuality = 1;                            // 0 native, 1 quality, 2 balanced, 3 performance, 4 ultra performance
@@ -265,6 +266,10 @@ public:
     int brightness = 5;             // 0..10 (5 = neutral; the app maps it to graphics brightness)
     GraphicsOptions graphics;       // AUDIO/VISUAL > GRAPHICS; the app fills it and applies changes live
     bool reticles = true, helperButtons = true, trainingText = true, invertY = false, subtitles = true;
+    // AUDIO/VISUAL > LANGUAGE: index into `languages` (the app fills it: locals.bin 110..119, locale::kInstallLanguages
+    // order) and applies a change live; empty = the row is dim.
+    int language = 0;
+    std::vector<std::string> languages;
     int tailoring = 1;              // PLAYER TAILORING preset: 0 casual explorer, 1 tomb raider, 2 master survivalist
     // GAME OPTIONS > PLAYER TAILORING levels 0..2 (game::Tailoring): enemy health, ammunition capacity, damage to Lara,
     // time for saving grabs.
@@ -363,7 +368,11 @@ public:
     }
     // Display groups appear on their triggers (damage, weapon drawn, d-pad...) and fade out after a hold.
     void update(const HudState& s, double dt);
-    void tick(double dt) { toastLeft_ -= dt, titleLeft_ -= dt; }
+    // Tutorial popup (training text: script::Runtime::takePopups), `text` the locals.bin string (button placeholders are
+    // expanded through Canvas::prompts) [I layout: not captured; a shaded box at the top, the toast's font]. Empty hides.
+    void hint(std::string text, double seconds) { hint_ = std::move(text), hintLeft_ = hint_.empty() ? 0 : seconds; }
+    const std::string& hint() const { return hintLeft_ > 0 ? hint_ : kNone; }
+    void tick(double dt) { toastLeft_ -= dt, titleLeft_ -= dt, hintLeft_ -= dt; }
     float alpha(Group g) const { return alpha_[g]; }
     void draw(Canvas& c) const;
 
@@ -375,8 +384,9 @@ private:
     bool first_ = true;
     int lit_ = -1; // d-pad item drawn bright while the GEAR group shows
     std::array<float, kGroups> alpha_{}, hold_{};
-    std::string toast_, title_, subtitle_;
-    double toastLeft_ = 0, titleLeft_ = 0;
+    std::string toast_, title_, subtitle_, hint_;
+    double toastLeft_ = 0, titleLeft_ = 0, hintLeft_ = 0;
+    inline static const std::string kNone;
 };
 
 } // namespace ou::ui
