@@ -287,7 +287,7 @@ void ouLightsBegin(uint slots, out float vis[6]) {
             continue;
         // Light registers (original::fillLights): R0 the spot apex, R1 direction, R2 (1 / radius, 0, -apex / radius),
         // R3 (cone scale, cone bias, apex plane); the light itself sits apex units ahead of R0.
-        vec4 r0 = ouFrame.lights[i * 5u], r1 = ouFrame.lights[i * 5u + 1u], r2 = ouFrame.lights[i * 5u + 2u], r3 = ouFrame.lights[i * 5u + 3u];
+        vec4 r0 = ouFrame.lights[i * 9u], r1 = ouFrame.lights[i * 9u + 1u], r2 = ouFrame.lights[i * 9u + 2u], r3 = ouFrame.lights[i * 9u + 3u];
         vec3 lp = r0.xyz - r1.xyz * (r2.z / r2.x), fromApex = ouP - r0.xyz;
         float d = length(fromApex);
         bool traces = !gl_HelperInvocation && ouRayInputsFinite(ouP, ouN) && ouRayInputsFinite(lp, vec3(0.0)) && d > 1.0 &&

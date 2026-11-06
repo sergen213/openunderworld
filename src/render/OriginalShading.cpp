@@ -37,7 +37,7 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect) {
 }
 
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, const scene::Environment& env, bool flipY,
-               const Underwater* underwater) {
+               const Underwater* underwater, std::span<const uint32_t> cookies) {
     std::memset(&f, 0, sizeof f);
     const float aspect = vp.height > 0 ? float(vp.width) / float(vp.height) : 1.0f;
     const glm::vec3 eye = camera.position;
@@ -84,7 +84,7 @@ void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float t, c
     put(f.ps, 149, 1, 1, 1, 1);
     f.bools[0] = 0; // vs b0-15
     // Sun = light slot 6 (c208 + 5*6): c209 direction, c212 colour (w = luminance), b6 (0x50A5F0, 0x5042B0).
-    fillLights(f, env, t);
+    fillLights(f, env, t, cookies);
     f.bools[1] = 0;
     if (env.valid && env.sun) {
         const float* c = env.sunColor;
@@ -200,7 +200,7 @@ std::vector<int> falloffRows(const scene::Environment& env) {
     return rows;
 }
 
-void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float t) {
+void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float t, std::span<const uint32_t> cookies) {
     // Light table: ShadowLights/NonShadowLights registers per light (PCRenderLight 0x50B910, uploaded per slot by
     // 0x50A5F0): R0 position (spots: moved back to the cone apex), R1 direction, R2 (1/radius, 0, -apex/radius,
     // falloff row v) -> AttenuationSampler u = (d - apex) / radius, R3 (cone scale, cone bias, apex plane, 0),
@@ -235,36 +235,86 @@ void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float t) {
         put(r, 2, 1.0f / radius, 0, -apex / radius, (float(row) + 0.5f) / kLutRows);
         put(r, 3, scale, bias, plane, 0);
         put(r, 4, c.x, c.y, c.z, 0.3f * c.x + 0.6f * c.y + 0.1f * c.z);
+        // Rows 5-7: WorldToModulationMapSpot (c170 + 3·slot for slots 0/1, s12/s13), 0x50B910 spot branch: light space
+        // q about the apex (rows X, Y, direction Z), rotated by rotation deg/s (sign as the sun cookie [I]); projection
+        // x = s·qx + (su + 0.5)/radius·qz, y alike, w = qz/radius with s = 0.5 / (tan(outer/2) · (radius + apex) · scale),
+        // su = frac(scroll · t) -> uv = s·radius·qx/qz + su + 0.5. No cookie: w row (0, 0, 0, 1), layer -1 (white).
+        const auto layer = std::find(cookies.begin(), cookies.end(), l.cookie);
+        put(r, 7, 0, 0, 0, 1);
+        put(r, 8, l.cookie && layer != cookies.end() ? float(layer - cookies.begin()) : -1.0f);
+        if (!l.cookie || layer == cookies.end()) continue;
+        glm::vec3 x0 = glm::make_vec3(l.axes[0]), y0 = glm::make_vec3(l.axes[1]);
+        if (glm::dot(x0, x0) < 1e-6f) { // dynamic lights without a record: any basis about the direction
+            x0 = glm::normalize(glm::cross(std::abs(dir.z) < 0.9f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0), dir));
+            y0 = glm::cross(dir, x0);
+        }
+        const float a = glm::radians(l.cookieRotation * t), ca = std::cos(a), sa = std::sin(a);
+        const glm::vec3 x = ca * x0 + sa * y0, y = ca * y0 - sa * x0;
+        const float s = 0.5f / std::max(std::tan(l.coneOuter * 0.5f) * (radius + apex) * l.cookieScale, 1e-4f);
+        const float su = std::fmod(l.cookieScroll[0] * t, 1.0f) + 0.5f, sv = std::fmod(l.cookieScroll[1] * t, 1.0f) + 0.5f;
+        const glm::vec4 qx(x, -glm::dot(x, pos)), qy(y, -glm::dot(y, pos)), qz = glm::vec4(dir, -glm::dot(dir, pos)) / radius;
+        const glm::vec4 rx = s * qx + su * qz, ry = s * qy + sv * qz;
+        put(r, 5, rx.x, rx.y, rx.z, rx.w);
+        put(r, 6, ry.x, ry.y, ry.z, ry.w);
+        put(r, 7, qz.x, qz.y, qz.z, qz.w);
     }
-    // WorldToModulationMapSpot c170-c175 (slots 0/1 cookies s12/s13, white: not bound per object): third row
-    // (0, 0, 0, 1) so the projective lookup divides by 1.
-    put(f.ps, 172, 0, 0, 0, 1);
-    put(f.ps, 175, 0, 0, 0, 1);
+}
+
+std::vector<uint32_t> cookieIds(const scene::Environment& env) {
+    std::vector<uint32_t> ids;
+    for (const auto& l : env.lights) // ponytail: > 16 distinct cookies light uncut
+        if (l.cookie && ids.size() < size_t(kCookieLayers) && std::find(ids.begin(), ids.end(), l.cookie) == ids.end()) ids.push_back(l.cookie);
+    return ids;
+}
+
+EngineTexture cookieArray(std::span<const uint32_t> ids, std::span<const scene::TextureData> textures) {
+    EngineTexture a{kCookieSize, kCookieSize, std::vector<uint8_t>(size_t(kCookieSize) * kCookieSize * 4 * kCookieLayers, 255), kCookieLayers};
+    for (size_t layer = 0; layer < ids.size() && layer < size_t(kCookieLayers); ++layer) {
+        const auto t = std::find_if(textures.begin(), textures.end(), [&](const auto& x) { return x.id == ids[layer]; });
+        if (t == textures.end() || t->cube || t->mips.empty()) continue;
+        const auto& m = t->mips[0];
+        const std::vector<uint8_t> rgba = formats::toRgba8(t->format, m.width, m.height, m.data);
+        if (m.width == 0 || m.height == 0 || rgba.size() < size_t(m.width) * m.height * 4) continue;
+        uint8_t* dst = &a.rgba[layer * kCookieSize * kCookieSize * 4];
+        for (int y = 0; y < kCookieSize; ++y) // nearest resample to the array's size (cookies are soft gobos)
+            for (int x = 0; x < kCookieSize; ++x)
+                std::memcpy(dst + (size_t(y) * kCookieSize + x) * 4,
+                            &rgba[(size_t(y) * m.height / kCookieSize * m.width + size_t(x) * m.width / kCookieSize) * 4], 4);
+    }
+    return a;
 }
 
 LightSet lightSet(const scene::Environment& env, glm::vec3 center, float radius) {
-    // tru.exe binds per drawable up to 3 shadow lights (slots 0-2, cookie + shadow map) and 3 others (3-5) (0x5042B0).
-    // Without spot cookies / light shadow maps both slot groups compute the same, so the strongest lights whose
-    // sphere reaches the object fill slots 0..5 in order (the PS nests slot n + 1 inside slot n) [I: the engine's
-    // selection rule and receiver masks (record +0x8C..+0xB7) are not decoded].
-    std::array<std::pair<float, int>, sm3::kLightSlots> best;
-    best.fill({0.0f, 255});
+    // tru.exe per drawn entity (0x55FB60 -> device vfunc 0x70 = 0x5076A0 -> 0x505530) lists the scene lights touching
+    // it in scene order; 0x504CC0 keeps, in that order, up to 3 "special" lights (cookie spots, at most 2, and shadow
+    // casters, DTP +0x144C) and 3 plain ones (a 4th+ plain light takes a free special place, else is dropped); 0x5042B0
+    // then gives cookie spots slots 0, 1.., the other special lights the next slots, plain lights 3-5 (overflow after
+    // the special ones). Read under Wine (OriginalShading.BedroomLightSetMatchesOriginal). Ours: "touching" = the
+    // light's sphere reaches the object's bounding sphere [I: tru.exe queries each light's volume in its cells, and
+    // matches receiver masks, record +0x8C..+0xA3 vs the entity's +0xE4, which we do not decode].
+    std::array<int, sm3::kLightSlots> taken;
+    int nTaken = 0, special = 0, plain = 0, cookies = 0;
     const size_t n = std::min(env.lights.size(), size_t(sm3::kMaxLights));
-    for (size_t i = 0; i < n; ++i) {
+    for (size_t i = 0; i < n && nTaken < sm3::kLightSlots; ++i) {
         const scene::Light& l = env.lights[i];
-        const float d = glm::distance(glm::make_vec3(l.position), center) - radius;
-        if (d >= l.radius) continue;
-        const float w = (0.3f * l.color[0] + 0.6f * l.color[1] + 0.1f * l.color[2]) * (1.0f - std::max(d, 0.0f) / l.radius) + 1e-6f;
-        if (w <= best.back().first) continue;
-        // Insert keeping heavier first, ties in arrival order (what std::sort's insertion sort did for 6 entries).
-        size_t j = best.size() - 1;
-        for (; j > 0 && best[j - 1].first < w; --j) best[j] = best[j - 1];
-        best[j] = {w, int(i)};
+        if (glm::distance(glm::make_vec3(l.position), center) - radius >= l.radius) continue;
+        const bool cookie = l.type == 1 && l.cookie && cookies < 2;
+        if (cookie || l.shadow) {
+            if (special == 3) continue;
+            ++special, cookies += cookie;
+        } else if (plain < 3) ++plain;
+        else if (special < 3) ++special;
+        else continue;
+        taken[size_t(nTaken++)] = int(i);
     }
     LightSet s{{~0u, ~0u}};
-    for (int k = 0; k < sm3::kLightSlots; ++k) {
-        s.packed[k >> 2] &= ~(0xFFu << (8 * (k & 3)));
-        s.packed[k >> 2] |= uint32_t(best[size_t(k)].second) << (8 * (k & 3));
+    int cookieSlot = 0, specialSlot = cookies, plainSlot = 3;
+    for (int k = 0; k < nTaken; ++k) {
+        const scene::Light& l = env.lights[size_t(taken[size_t(k)])];
+        const int slot = l.type == 1 && l.cookie ? cookieSlot++ : l.shadow || plainSlot == 6 ? specialSlot++ : plainSlot++;
+        if (slot >= sm3::kLightSlots) continue;
+        s.packed[slot >> 2] &= ~(0xFFu << (8 * (slot & 3)));
+        s.packed[slot >> 2] |= uint32_t(taken[size_t(k)]) << (8 * (slot & 3));
     }
     return s;
 }

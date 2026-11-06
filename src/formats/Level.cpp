@@ -368,6 +368,7 @@ Unit parseUnit(const cdc::Drm& d) {
             if (!l) continue;
             for (int c = 0; c < 3; ++c) {
                 l->position[c] = rec.at<float>(r + 0x30 + 4 * c);
+                l->axes[0][c] = rec.at<float>(r + 4 * c), l->axes[1][c] = rec.at<float>(r + 0x10 + 4 * c);
                 l->direction[c] = rec.at<float>(r + 0x20 + 4 * c);
                 l->color[c] = color[c];
             }
@@ -723,6 +724,12 @@ std::optional<scene::Light> lightFromDtp(const cdc::Drm& d, uint32_t dtpIndex) {
         l.flickerPeriod = dtp.at<float>(0x420);
         l.flicker.resize(256);
         for (int t = 0; t < 256; ++t) l.flicker[t] = dtp.at<float>(0x424 + 4 * t);
+    }
+    // Spot cookie (0x50AFB0: texture when +0x824 and +0x828; 0x50B910 projects it): spots only (points take no slot 0/1).
+    if (type == 1 && dtp.at<uint8_t>(0x824)) {
+        l.cookie = resourceId(d.sections[dtpIndex], 0x828, cdc::SectionType::Texture);
+        l.cookieScale = dtp.at<float>(0x82C), l.cookieRotation = dtp.at<float>(0x830);
+        l.cookieScroll[0] = dtp.at<float>(0x834), l.cookieScroll[1] = dtp.at<float>(0x838);
     }
     return l;
 }

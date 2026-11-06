@@ -28,7 +28,7 @@ const char* kPrelude = R"(#version 450
 #define OU_SAMPLER(n) layout(binding = n)
 #define OU_DFDY_SIGN -1.0
 #endif
-OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[320]; vec4 irradiance[896]; } ouFrame;
+OU_UBO(0, 0, 0) uniform OuFrame { vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16]; uvec4 bools; vec4 screen; vec4 lights[576]; vec4 irradiance[896]; } ouFrame;
 OU_UBO(1, 0, 1) uniform OuMaterial { vec4 vs[40]; vec4 ps[40]; vec4 fixedParams; } ouMat;
 #ifdef OU_VULKAN
 layout(push_constant) uniform OuObject { vec4 v[8]; uvec2 lightSet; float opacity; uint irradiance; vec4 inst[3]; vec4 waves[4]; } ouObj;
@@ -37,6 +37,8 @@ layout(std140, binding = 2) uniform OuObject { vec4 v[8]; uvec2 lightSet; float 
 #endif
 // Light table index of PS light slot s (0-5), 255 = slot empty.
 #define OU_LIGHT(s) ((ouObj.lightSet[(s) >> 2] >> (8u * uint((s) & 3))) & 255u)
+// Row r of light slot s's table entry (9 rows per light: ShaderTranslate.hpp).
+#define OU_LIGHT_ROW(s, r) ouFrame.lights[min(OU_LIGHT(s), 63u) * 9u + (r)]
 )";
 
 std::string flt(uint32_t bits) {
@@ -111,12 +113,25 @@ public:
             if (in.op == Loop) usesAL_ = true;
         }
         std::string h = kPrelude;
-        // Samplers.
+        // Samplers. Spot cookies (CTAB ModulationMapSamplers s11[3]: s12/s13 = light slots 0/1) read one texture array of
+        // every cookie in the scene at the slot's light table layer (row 8 x; < 0 = no cookie, white).
+        if (const Constant* c = p_.constant("ModulationMapSamplers"); p_.pixel && c && c->registerSet == 3)
+            for (int n = kCookieSampler; n < kCookieSampler + 2; ++n)
+                if (n >= c->registerIndex && n < c->registerIndex + c->registerCount && (out_.samplers >> n & 1) &&
+                    out_.samplerType[n] == 2)
+                    out_.samplerType[n] = kSamplerCookies;
+        bool cookies = false;
         for (int n = 0; n < 16; ++n)
             if (out_.samplers >> n & 1) {
-                const char* t = out_.samplerType[n] == 3 ? "samplerCube" : out_.samplerType[n] == 4 ? "sampler3D" : "sampler2D";
+                const uint8_t st = out_.samplerType[n];
+                const char* t = st == 3 ? "samplerCube" : st == 4 ? "sampler3D" : st == kSamplerCookies ? "sampler2DArray" : "sampler2D";
                 h += "OU_SAMPLER(" + std::to_string(n) + ") uniform " + t + " s" + std::to_string(n) + ";\n";
+                cookies |= st == kSamplerCookies;
             }
+        if (cookies)
+            h += "vec4 ouCookie(sampler2DArray s, vec4 c, uint slot) {\n"
+                 "    float layer = OU_LIGHT_ROW(slot, 8u).x;\n"
+                 "    return layer < 0.0 ? vec4(1.0) : texture(s, vec3(c.xy / c.w, layer));\n}\n";
         // Stage interface.
         std::string pre, post;
         if (!p_.pixel) {
@@ -244,14 +259,16 @@ private:
             return "ouMat.ps[" + std::to_string(n - kMaterialPsBase) + "]";
         if (n >= unsigned(kFramePs)) throw Fail("PS constant out of range");
         // Shadow/NonShadowLights: 5 registers per slot from the object's light set (ShaderTranslate.hpp).
-        if (n >= unsigned(kLightSlotBase) && n < unsigned(kLightSlotBase + kLightSlots * kLightRegs)) {
-            const unsigned k = n - kLightSlotBase, slot = k / kLightRegs;
-            const std::string reg = "ouFrame.lights[min(OU_LIGHT(" + std::to_string(slot) + "), " + std::to_string(kMaxLights - 1) +
-                                    "u) * 5u + " + std::to_string(k % kLightRegs) + "u]";
-            if (k % kLightRegs != 4) return reg;
+        if (n >= unsigned(kLightSlotBase) && n < unsigned(kLightSlotBase + kLightSlots * kSlotRegs)) {
+            const unsigned k = n - kLightSlotBase, slot = k / kSlotRegs;
+            const std::string reg = "OU_LIGHT_ROW(" + std::to_string(slot) + ", " + std::to_string(k % kSlotRegs) + "u)";
+            if (k % kSlotRegs != 4) return reg;
             lightsLit_ |= 1u << slot;
             return "(" + reg + " * ouLightVis[" + std::to_string(slot) + "])";
         }
+        // WorldToModulationMapSpot: slots 0/1's cookie rows (x, y, w), light table rows 5-7 (tru.exe 0x50A5F0).
+        if (n >= unsigned(kCookieRowsBase) && n < unsigned(kCookieRowsBase + 6))
+            return "OU_LIGHT_ROW(" + std::to_string((n - kCookieRowsBase) / 3) + ", " + std::to_string(5 + (n - kCookieRowsBase) % 3) + "u)";
         // FogColor: 0 for the additive blend modes 5/6 (tru.exe 0x5066A0).
         if (n == 0) return "((int(ouMat.fixedParams.w) & 2) != 0 ? vec4(0.0) : ouFrame.ps[0])";
         // SunLight colour (slot 6, c208 + 4): times the sun visibility (shadow map / rays) of OU_SUN builds.
@@ -473,6 +490,10 @@ private:
         case Tex: {
             need(2);
             const std::string smp = sampler(s[1]);
+            if (out_.samplerType[s[1].num & 15] == kSamplerCookies) {
+                const std::string c = in.control == 1 ? src(s[0]) : "vec4((" + src(s[0]) + ").xy, 0.0, 1.0)";
+                return texResult(in, "ouCookie(" + smp + ", " + c + ", " + std::to_string(s[1].num - kCookieSampler) + "u)");
+            }
             if (in.control == 1) {
                 if (out_.samplerType[s[1].num & 15] != 2) throw Fail("projected fetch from non-2D sampler");
                 return texResult(in, "textureProj(" + smp + ", " + src(s[0]) + ")");

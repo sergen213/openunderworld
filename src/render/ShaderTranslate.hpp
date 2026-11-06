@@ -14,7 +14,10 @@ namespace ou::render::sm3 {
 // Register files the backends provide (std140 blocks; see kGlslInterface in the .cpp, mirrored here):
 //   frame   (VK set 0 binding 0, GL UBO binding 0): vec4 vs[256]; vec4 ps[224]; ivec4 vsI[16]; ivec4 psI[16];
 //                                                  uvec4 bools (x = vs b0-15, y = ps b0-15); vec4 screen (w, h, 1/w, 1/h);
-//                                                  vec4 lights[64 * 5]: the scene's point/spot light registers;
+//                                                  vec4 lights[64 * 9]: the scene's point/spot light table, per light
+//                                                  rows 0-4 = its Shadow/NonShadowLights registers, 5-7 = its cookie
+//                                                  projection (WorldToModulationMapSpot x, y, w rows), 8 = (cookie
+//                                                  layer in the s12/s13 texture array, < 0 none; 0, 0, 0);
 //                                                  vec4 irradiance[128 * 7]: IrradianceState slots (PS c70-c76)
 //   material (VK set 1 binding 0, GL UBO binding 1): vec4 vs[40] = c25..c64; vec4 ps[40] = c100..c139;
 //                                                  vec4 fixed = (c2 AlphaThreshold, c98 MaterialOpacity, alphaRef,
@@ -31,14 +34,17 @@ namespace ou::render::sm3 {
 //                                                  reflection's matrix on reflecting draws, else 0);
 //                                                  vec4 waves[4] = VS c60..c63 (InstanceParams 3-6: the water
 //                                                  volume's sea waves, original::fillWaves; else 0);
-//   samplers s0..s15: VK set 1 binding 1 + n, GL texture unit n.
+//   samplers s0..s15: VK set 1 binding 1 + n, GL texture unit n. s12/s13 of programs naming them ModulationMapSamplers
+//   are sampler2DArray (Glsl::samplerType kSamplerCookies): the scene's spot cookies, one layer each.
 // Register -> block: VS c0-7 object, c60-63 object.waves, c25-64 material (MaterialParams + InstanceParams c57), else frame; PS c2/c98 material.fixed, c132-134 object.inst, c100-139 material (MaterialParams + InstanceParams c135),
-// PS c178-c207 (Shadow/NonShadowLights, 5 per slot) frame.lights[lightSet slot], b0-b5 = slot used, c70-c76
+// PS c178-c207 (Shadow/NonShadowLights, 5 per slot) frame.lights[lightSet slot] rows 0-4, c170-c175 (WorldToModulationMapSpot,
+// slots 0/1) rows 5-7, b0-b5 = slot used, c70-c76
 // frame.irradiance[object slot], else frame.
 // `def` constants shadow every block (D3D9 semantics).
 inline constexpr int kFrameVs = 256, kFramePs = 224, kMaterialVsBase = 25, kMaterialVs = 40, kMaterialPsBase = 100,
-                     kMaterialPs = 40, kObjectVs = 8, kMaxLights = 64, kLightRegs = 5, kLightSlots = 6,
-                     kLightSlotBase = 178, kIrradianceSlots = 128, kIrradianceRegs = 7, kIrradianceBase = 70;
+                     kMaterialPs = 40, kObjectVs = 8, kMaxLights = 64, kLightRegs = 9, kSlotRegs = 5, kLightSlots = 6,
+                     kLightSlotBase = 178, kCookieRowsBase = 170, kCookieSampler = 12, kSamplerCookies = 5,
+                     kIrradianceSlots = 128, kIrradianceRegs = 7, kIrradianceBase = 70;
 struct FrameBlock {
     float vs[kFrameVs][4];
     float ps[kFramePs][4];
@@ -74,7 +80,7 @@ struct Glsl {
     std::string source;  // empty on failure
     std::string error;
     uint16_t samplers = 0;       // bit n: s<n> is sampled
-    uint8_t samplerType[16] = {}; // D3DSAMPLER_TEXTURE_TYPE >> 27 (2 = 2D, 3 = cube, 4 = volume)
+    uint8_t samplerType[16] = {}; // D3DSAMPLER_TEXTURE_TYPE >> 27 (2 = 2D, 3 = cube, 4 = volume), kSamplerCookies
     uint8_t attributes = 0;      // bit n: location n read (VS)
     bool sunLit = false;         // PS reads the SunLight colour c212 (scaled by ouSunVis, render/sun.glsl)
     bool readsDepth = false;     // PS reads DepthToW c77 (decodes the depth buffer; original::screenSamplers)

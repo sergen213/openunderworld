@@ -114,6 +114,7 @@ struct Light {
     bool shadow = false;         // DTP +0x144C: the engine binds it to a shadow-light slot (0-2)
     float position[3] = {};      // record row 3
     float direction[3] = {};     // record row 2: the way a spot points
+    float axes[2][3] = {};       // record rows 0 / 1 (light-space X, Y: spot cookie orientation); 0 = unknown
     float color[3] = {};         // colour x intensity (record overrides +0x51 / +0x4C, else DTP +0x18 / +0x08)
     float radius = 0;            // record +0x58 when +0x5C, else DTP +0x04
     float coneInner = 0, coneOuter = 0; // spot: full cone angles, radians (DTP +0x0C / +0x10)
@@ -121,6 +122,10 @@ struct Light {
     std::vector<uint8_t> falloff; // 256 AttenuationSampler texels (R) over d / radius: DTP +0x1C floats x 255, last 0
     float flickerPeriod = 0;     // DTP +0x420 seconds when DTP +0x41C is set, else 0 (steady)
     std::vector<float> flicker;  // DTP +0x424: 256 intensity multipliers over one period
+    // Spot cookie (DTP +0x824 flag, +0x828 texture; LEVELS.md "Lights"): projected texture id (0 = none), scale
+    // (+0x82C), rotation deg/s (+0x830), uv scroll per second (+0x834 / +0x838).
+    uint32_t cookie = 0;
+    float cookieScale = 1, cookieRotation = 0, cookieScroll[2] = {};
 };
 
 // Light probes of a unit (docs/formats/LEVELS.md "Irradiance volume"): the DTP of cell group +0x1C. Dynamic objects

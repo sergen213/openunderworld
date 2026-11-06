@@ -587,6 +587,10 @@ public:
         // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
         const auto lut = original::attenuationLut(scene.environment);
         batch.images.push_back({attenuation_.image, {{lut.rgba.data(), lut.rgba.size(), uint32_t(lut.width), uint32_t(lut.height)}}});
+        cookieIds_ = original::cookieIds(scene.environment);
+        const auto cookies = original::cookieArray(cookieIds_, scene.textures);
+        batch.images.push_back({cookies_.image, {{cookies.rgba.data(), cookies.rgba.size(), uint32_t(cookies.width), uint32_t(cookies.height)}},
+                                uint32_t(cookies.layers)});
         stage(batch);
         uploadOriginals(scene, warnings);
         return warnings; // acceleration structures: built by the first frame that asks for RT
@@ -953,7 +957,7 @@ public:
             irradiance_.assign(environment_, meshes_);
             sm3::FrameBlock fb;
             original::fillFrame(fb, camera, {int(extent_.width), int(extent_.height)}, options.time, environment_, false,
-                                options.underwater);
+                                options.underwater, cookieIds_);
             irradiance_.fill(fb);
             std::memcpy(origFrameUbo_[frameIndex_].mapped, &fb, sizeof fb); // host-coherent, per frame in flight
         }
@@ -1011,7 +1015,7 @@ public:
             const VkExtent2D half{std::max(1u, extent_.width / 2), std::max(1u, extent_.height / 2)};
             sm3::FrameBlock fb;
             original::fillFrame(fb, reflection->camera, {int(half.width), int(half.height)}, options.time, environment_, false,
-                                options.underwater);
+                                options.underwater, cookieIds_);
             irradiance_.fill(fb);
             std::memcpy(reflFrameUbo_[frameIndex_].mapped, &fb, sizeof fb);
             std::vector<VkImageMemoryBarrier2> rb = {
@@ -1737,6 +1741,7 @@ public:
             destroyImage(font_);
             destroyImage(shadow_);
             destroyImage(attenuation_);
+            destroyImage(cookies_);
             destroyImage(blackCube_);
             if (ripples_.image) destroyImage(ripples_);
             for (auto& u : uiImages_)
@@ -2016,6 +2021,7 @@ private:
                 if (const uint32_t id = original::samplerTexture(mat, sub->instanceTextures, n))
                     if (const auto it = textures_.find(id); it != textures_.end() && it->second.cube == cube)
                         ii[size_t(n)].imageView = it->second.view;
+                if (ps.samplerType[n] == sm3::kSamplerCookies) ii[size_t(n)] = {postSampler_, cookies_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             }
             VkWriteDescriptorSet w[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
             w[0].dstSet = w[1].dstSet = sets[u];
@@ -3400,6 +3406,12 @@ private:
         attenuation_ = createImage(staticMemory_, VK_FORMAT_R8G8B8A8_UNORM, uint32_t(lut.width), uint32_t(lut.height), 1, usage,
                                    VK_IMAGE_ASPECT_COLOR_BIT);
         batch.images.push_back({attenuation_.image, {{lut.rgba.data(), lut.rgba.size(), uint32_t(lut.width), uint32_t(lut.height)}}});
+        // s12/s13 spot cookies (original::cookieArray): white until upload() stages the scene's.
+        const auto cookies = original::cookieArray({}, {});
+        cookies_ = createImage(staticMemory_, VK_FORMAT_R8G8B8A8_UNORM, uint32_t(cookies.width), uint32_t(cookies.height), 1, usage,
+                               VK_IMAGE_ASPECT_COLOR_BIT, VK_SAMPLE_COUNT_1_BIT, false, uint32_t(cookies.layers));
+        batch.images.push_back({cookies_.image, {{cookies.rgba.data(), cookies.rgba.size(), uint32_t(cookies.width), uint32_t(cookies.height)}},
+                                uint32_t(cookies.layers)});
         flush(batch);
         // Per frame in flight: the camera's frame block and the planar reflection camera's (reflFrame*).
         VkDescriptorPoolSize ups{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * kFramesInFlight};
@@ -3436,14 +3448,15 @@ private:
 
     GpuImage createImage(LinearAllocator& mem, VkFormat format, uint32_t w, uint32_t h, uint32_t levels,
                       VkImageUsageFlags usage, VkImageAspectFlags aspect, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
-                      bool cube = false) {
+                      bool cube = false, uint32_t layers = 1) {
+        if (cube) layers = 6;
         VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ci.flags = cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
         ci.imageType = VK_IMAGE_TYPE_2D;
         ci.format = format;
         ci.extent = {w, h, 1};
         ci.mipLevels = levels;
-        ci.arrayLayers = cube ? 6 : 1;
+        ci.arrayLayers = layers;
         ci.samples = samples;
         ci.tiling = VK_IMAGE_TILING_OPTIMAL;
         ci.usage = usage;
@@ -3456,9 +3469,9 @@ private:
         VK_CHECK(vkBindImageMemory(device_, img.image, a.memory, a.offset));
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = img.image;
-        vi.viewType = cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
+        vi.viewType = cube ? VK_IMAGE_VIEW_TYPE_CUBE : layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
         vi.format = format;
-        vi.subresourceRange = {aspect, 0, levels, 0, cube ? 6u : 1u};
+        vi.subresourceRange = {aspect, 0, levels, 0, layers};
         VK_CHECK(vkCreateImageView(device_, &vi, nullptr, &img.view));
         return img;
     }
@@ -4893,7 +4906,8 @@ private:
     std::array<VkDescriptorSet, kFramesInFlight> origFrameSet_{};
     std::array<Buffer, kFramesInFlight> reflFrameUbo_{}; // the planar reflection camera's frame block
     std::array<VkDescriptorSet, kFramesInFlight> reflFrameSet_{};
-    GpuImage attenuation_, blackCube_;
+    GpuImage attenuation_, blackCube_, cookies_; // cookies_: s12/s13 spot cookie array (original::cookieArray)
+    std::vector<uint32_t> cookieIds_;            // its layers (upload)
     std::vector<OrigProgram> origPrograms_;
     std::vector<OrigProgram> origStash_; // the previous upload's programs, during the next upload (destroyOriginalScene)
     int origWarmKey_ = -1; // warmOriginalPipelines' settings since the pipelines were last destroyed

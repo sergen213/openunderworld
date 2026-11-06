@@ -185,7 +185,7 @@ TEST(Sm3Translate, SyntheticProgramsCompile) {
                 EXPECT_NE(g.source.find("discard"), std::string::npos);
                 // Light slot 3 reads the object's light set: b3 and c197 = slot 3 register 4 (colour).
                 EXPECT_NE(g.source.find("if (OU_LIGHT(3) != 255u)"), std::string::npos);
-                EXPECT_NE(g.source.find("ouFrame.lights[min(OU_LIGHT(3), 63u) * 5u + 4u]"), std::string::npos);
+                EXPECT_NE(g.source.find("OU_LIGHT_ROW(3, 4u)"), std::string::npos);
                 EXPECT_NE(g.source.find("gl_FrontFacing"), std::string::npos);
                 // Sun shadow / RT hooks: the program compiles with render/sun.glsl as the backends build it.
                 EXPECT_FALSE(g.sunLit); // no SunLight colour (c212) read
@@ -386,39 +386,109 @@ TEST(OriginalShading, LightTableAndSets) {
     EXPECT_FLOAT_EQ(f.lights[3][2], -501.f);
     EXPECT_FLOAT_EQ(f.lights[4][3], 2.f);
     // Spot: apex moved back along the direction by nearWidth / tan(outer / 2); u offset -apex / r.
+    constexpr int S = render::sm3::kLightRegs; // the spot's rows
     const float apex = 100 / std::tan(1.0f);
-    EXPECT_NEAR(f.lights[5 + 0][2], apex, 1e-3);
-    EXPECT_NEAR(f.lights[5 + 2][2], -apex / 500, 1e-6);
-    EXPECT_NEAR(f.lights[5 + 3][0] * std::cos(0.5f) + f.lights[5 + 3][1], 1.f, 1e-4); // inner edge = 1
-    EXPECT_NEAR(f.lights[5 + 3][0] * std::cos(1.0f) + f.lights[5 + 3][1], 0.f, 1e-4); // outer edge = 0
-    EXPECT_NE(f.lights[2][3], f.lights[5 + 2][3]); // distinct falloff rows
+    EXPECT_NEAR(f.lights[S + 0][2], apex, 1e-3);
+    EXPECT_NEAR(f.lights[S + 2][2], -apex / 500, 1e-6);
+    EXPECT_NEAR(f.lights[S + 3][0] * std::cos(0.5f) + f.lights[S + 3][1], 1.f, 1e-4); // inner edge = 1
+    EXPECT_NEAR(f.lights[S + 3][0] * std::cos(1.0f) + f.lights[S + 3][1], 0.f, 1e-4); // outer edge = 0
+    EXPECT_NE(f.lights[2][3], f.lights[S + 2][3]); // distinct falloff rows
     const auto lut = render::original::attenuationLut(env);
-    const int row1 = int(f.lights[5 + 2][3] * 128);
+    const int row1 = int(f.lights[S + 2][3] * 128);
     EXPECT_EQ(lut.rgba[(size_t(row1) * 256 + 10) * 4], 7);
-    // Light sets: only lights whose radius reaches the sphere, strongest first, unused slots 0xFF.
+    // No cookies: w row (0, 0, 0, 1), layer -1.
+    EXPECT_FLOAT_EQ(f.lights[7][3], 1.f);
+    EXPECT_FLOAT_EQ(f.lights[8][0], -1.f);
+    // Light sets: only lights whose radius reaches the sphere; plain lights take slots 3-5, unused slots 0xFF.
+    auto slot = [](render::original::LightSet s, int k) { return int(s.packed[k >> 2] >> (8 * (k & 3)) & 0xFF); };
     const auto near = render::original::lightSet(env, {900, 0, 0}, 10);
-    EXPECT_EQ(near.packed[0] & 0xFF, 0u);                 // the point light (spot is 900 away, radius 500)
-    EXPECT_EQ(near.packed[0] >> 8 & 0xFF, 0xFFu);
+    EXPECT_EQ(near.packed[0], 0x00FFFFFFu); // the point light in slot 3 (spot is 900 away, radius 500)
     EXPECT_EQ(near.packed[1], ~0u);
     const auto both = render::original::lightSet(env, {500, 0, 0}, 100);
-    EXPECT_NE(both.packed[0] >> 8 & 0xFF, 0xFFu);
+    EXPECT_EQ(slot(both, 3), 0);
+    EXPECT_EQ(slot(both, 4), 1);
     EXPECT_EQ(render::original::lightSet(env, {5000, 0, 0}, 10).packed[0], ~0u);
 }
 
-// Light sets keep the six heaviest lights, heaviest first, equal weights in light order.
-TEST(OriginalShading, LightSetOrder) {
+// Spot cookie rows (0x50B910): a point on the cone axis maps to the cookie centre, the cone edge at the light to
+// 0.5 ± 0.5 · radius / (radius + apex); the layer is the cookie's index in the backend's table.
+TEST(OriginalShading, SpotCookieProjection) {
     scene::Environment env;
-    env.valid = true;
-    for (int i = 0; i < 9; ++i) {
+    scene::Light spot;
+    spot.type = 1, spot.radius = 1000, spot.coneOuter = 1.0f, spot.coneInner = 0.5f, spot.nearWidth = 50, spot.cookie = 0x42;
+    spot.direction[2] = -1, spot.axes[0][0] = 1, spot.axes[1][1] = -1;
+    spot.falloff.assign(256, 255);
+    env.lights = {spot};
+    render::sm3::FrameBlock f{};
+    const uint32_t ids[] = {7, 0x42};
+    render::original::fillLights(f, env, 0, ids);
+    EXPECT_FLOAT_EQ(f.lights[8][0], 1.f);
+    auto uv = [&](glm::vec3 p) {
+        const glm::vec4 q(p, 1);
+        const float w = glm::dot(glm::make_vec4(f.lights[7]), q);
+        return glm::vec2(glm::dot(glm::make_vec4(f.lights[5]), q), glm::dot(glm::make_vec4(f.lights[6]), q)) / w;
+    };
+    EXPECT_NEAR(uv({0, 0, -400}).x, 0.5f, 1e-5);
+    EXPECT_NEAR(uv({0, 0, -400}).y, 0.5f, 1e-5);
+    const float apex = 50 / std::tan(0.5f), r = 1000;
+    EXPECT_NEAR(uv({50, 0, 0}).x, 0.5f + 0.5f * r / (r + apex), 1e-4); // the cone's edge at the light, +X
+    EXPECT_NEAR(uv({0, 50, 0}).y, 0.5f - 0.5f * r / (r + apex), 1e-4); // +Y = -axis Y
+    render::original::fillLights(f, env, 0, {}); // not in the table: no cookie
+    EXPECT_FLOAT_EQ(f.lights[8][0], -1.f);
+}
+
+// tru.exe light slots (0x504CC0 / 0x5042B0): cookie spots 0-1, shadow casters next (3 special at most), plain lights
+// 3-5, a 4th plain light in a free special slot, later lights dropped; scene order decides.
+TEST(OriginalShading, LightSetGroups) {
+    scene::Environment env;
+    auto add = [&](uint8_t type, bool shadow, uint32_t cookie) {
         scene::Light l;
-        l.radius = 1000;
-        l.color[0] = l.color[1] = l.color[2] = i == 7 ? 5.0f : i % 2 ? 1.0f : 2.0f; // 7 heaviest, evens next, odds last
+        l.type = type, l.shadow = shadow, l.cookie = cookie, l.radius = 1000, l.color[0] = 1;
         env.lights.push_back(l);
-    }
+    };
+    add(0, false, 0); // 0 plain -> 3
+    add(1, true, 0);  // 1 shadow spot -> after the cookies: 1
+    add(0, false, 0); // 2 plain -> 4
+    add(1, false, 9); // 3 cookie spot -> 0
+    add(0, false, 0); // 4 plain -> 5
+    add(0, false, 0); // 5 4th plain -> free special slot 2
+    add(0, false, 0); // 6 dropped (3 special + 3 plain)
+    add(1, true, 0);  // 7 dropped
     const auto s = render::original::lightSet(env, {0, 0, 0}, 1);
     auto slot = [&](int k) { return int(s.packed[k >> 2] >> (8 * (k & 3)) & 0xFF); };
-    constexpr int kExpected[6] = {7, 0, 2, 4, 6, 8};
+    constexpr int kExpected[6] = {3, 1, 5, 0, 2, 4};
     for (int k = 0; k < 6; ++k) EXPECT_EQ(slot(k), kExpected[k]) << k;
+}
+
+// Lara at the l3_main_bedroom start, read in tru.exe under Wine (2026-11-06): the entity's light list at the SetLights
+// call (0x55FDF0) holds the corridor's two cold point lights and the shadow-casting torch spot (tru.exe world = ours +
+// (9623, 331, -2978)); 0x5042B0 puts the spot in slot 0 and the points in slots 3 and 4.
+TEST(OriginalShading, BedroomLightSetMatchesOriginal) {
+    const char* g = std::getenv("OU_GAME_DIR");
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto bed = formats::loadLevelScene(bf, "pc-w\\l3_main_bedroom.drm");
+    const auto& L = bed.environment.lights;
+    const glm::vec3 offset(-9623, -331, 2978);
+    auto find = [&](glm::vec3 tru) {
+        for (size_t i = 0; i < L.size(); ++i)
+            if (glm::distance(glm::make_vec3(L[i].position), tru + offset) < 2) return int(i);
+        return -1;
+    };
+    const int spot = find({5410, 186, -1567}), a = find({5308, 4586, -1905}), b = find({5308, 8099, -1905});
+    ASSERT_GE(spot, 0);
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    EXPECT_TRUE(L[size_t(spot)].shadow);
+    // Lara standing at tru.exe (5358, 6291, -2890): bounding sphere about her hips.
+    const auto s = render::original::lightSet(bed.environment, glm::vec3(5358, 6291, -2890 + 90) + offset, 110);
+    auto slot = [&](int k) { return int(s.packed[k >> 2] >> (8 * (k & 3)) & 0xFF); };
+    EXPECT_EQ(slot(0), spot);
+    EXPECT_EQ(slot(1), 0xFF);
+    EXPECT_EQ(slot(2), 0xFF);
+    EXPECT_EQ(std::min(slot(3), slot(4)), std::min(a, b)); // the order of these two follows tru.exe heap addresses
+    EXPECT_EQ(std::max(slot(3), slot(4)), std::max(a, b));
+    EXPECT_EQ(slot(5), 0xFF);
 }
 
 // Shadow cascade culling: only spheres wholly outside the orthographic x / y clip range are skipped.
@@ -495,3 +565,4 @@ TEST(UnderwaterRays, DrawsColumnsInView) {
     cam.position.z = 2000;
     EXPECT_FALSE(rays.draw(cam, 16.0f / 9.0f, waves, img));
 }
+

@@ -372,7 +372,7 @@ struct Resources {
     Program fxProgram; // original effects
     VertexArray fxVao;
     Buffer fxVbo;
-    Texture white, font, shadowMap, attenuation, blackCube;
+    Texture white, font, shadowMap, attenuation, blackCube, cookies;
     struct Streamed { Texture tex; uint64_t version = 0; int width = 0, height = 0; };
     std::array<Streamed, 3> uiImages; // FrameOptions::uiImages
     // Original Fidelity (docs/formats/SHADERS.md): translated programs, register-file UBOs (bindings 0 frame,
@@ -540,6 +540,14 @@ public:
         glTextureParameteri(r.attenuation.get(), GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTextureParameteri(r.attenuation.get(), GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTextureParameteri(r.attenuation.get(), GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        GLuint cookies = 0; // s12/s13 spot cookies (original::cookieArray), filled per scene in upload()
+        glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &cookies);
+        r.cookies = Texture(cookies);
+        glTextureStorage3D(cookies, 1, GL_RGBA8, original::kCookieSize, original::kCookieSize, original::kCookieLayers);
+        glTextureParameteri(cookies, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(cookies, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(cookies, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(cookies, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &r.uboAlign);
         GLuint cube = 0;
         glCreateTextures(GL_TEXTURE_CUBE_MAP, 1, &cube);
@@ -596,6 +604,10 @@ public:
         // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
         const auto lut = original::attenuationLut(environment_);
         glTextureSubImage2D(r.attenuation.get(), 0, 0, 0, lut.width, lut.height, GL_RGBA, GL_UNSIGNED_BYTE, lut.rgba.data());
+        cookieIds_ = original::cookieIds(environment_);
+        const auto cookies = original::cookieArray(cookieIds_, scene.textures);
+        glTextureSubImage3D(r.cookies.get(), 0, 0, 0, 0, cookies.width, cookies.height, cookies.layers, GL_RGBA, GL_UNSIGNED_BYTE,
+                            cookies.rgba.data());
         prepareOriginals(scene, warnings);
         std::unordered_map<uint64_t, GpuMesh> pool = std::move(r.parked);
         r.parked.clear();
@@ -1210,6 +1222,7 @@ private:
                     tex = it->second;
             if (const uint32_t id = original::samplerTexture(mat, s.instanceTextures, n))
                 if (auto it = r.textures.find(id); it != r.textures.end() && cubes_.contains(id) == cube) tex = it->second;
+            if (prog.psGlsl.samplerType[n] == sm3::kSamplerCookies) tex = r.cookies.get();
             g.samplers.back()[size_t(n)] = tex;
         }
         g.screenSamplers.back() = original::screenSamplers(mat, s.instanceTextures, prog.psGlsl.readsDepth);
@@ -1366,7 +1379,7 @@ private:
     void beginOriginals(const Camera& camera, Viewport vp, const FrameOptions& o, const original::Reflection* reflection = nullptr) {
         Resources& r = *res_;
         sm3::FrameBlock f;
-        original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater); // screen copies are bottom-up
+        original::fillFrame(f, camera, vp, o.time, environment_, true, o.underwater, cookieIds_); // screen copies are bottom-up
         irradiance_.assign(environment_, r.meshes);
         irradiance_.fill(f);
         glNamedBufferSubData(r.frameUbo.get(), 0, sizeof f, &f);
@@ -1583,6 +1596,7 @@ private:
     std::optional<Resources> res_;
     original::Prepared prepared_;         // during upload()
     scene::Environment environment_;
+    std::vector<uint32_t> cookieIds_;     // layers of the spot cookie array (upload)
     original::IrradianceSlots irradiance_; // per frame, cached per mesh between uploads
     std::unordered_set<uint32_t> cubes_; // texture ids uploaded as cube maps
     // Renderer::uploadPart: a part's scene until pumpParts sent it all (next texture / mesh to look at), by part id.

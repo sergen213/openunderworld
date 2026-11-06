@@ -25,10 +25,11 @@ glm::mat4 viewProjD3D(const Camera& camera, float aspect);
 // Frame registers: transforms, time, fog, ambient, sun, sun cookie, light table (FrameBlock layout: ShaderTranslate.hpp).
 // `flipY`: the backend's screen copies are stored bottom-up (GL), so ScreenExtents maps vPos.y to 1 - v.
 // `underwater` with fog: its fog replaces the unit's (FrameOptions::underwater).
+// `cookies`: the backend's spot cookie array layers (cookieIds of the uploaded scene).
 void fillFrame(sm3::FrameBlock& f, const Camera& camera, Viewport vp, float timeSeconds, const scene::Environment& env,
-               bool flipY = false, const Underwater* underwater = nullptr);
+               bool flipY = false, const Underwater* underwater = nullptr, std::span<const uint32_t> cookies = {});
 // The point/spot light table (FrameBlock::lights, first kMaxLights of env.lights) at time t (flicker); part of fillFrame.
-void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds);
+void fillLights(sm3::FrameBlock& f, const scene::Environment& env, float timeSeconds, std::span<const uint32_t> cookies = {});
 // Material registers: MaterialParams, InstanceParams (zero, as tru.exe's default 0x848F78), AlphaThreshold, opacity.
 void fillMaterial(sm3::MaterialBlock& m, const scene::Material& mat, const scene::SubMesh& sub);
 // Light set of one object: env.lights indices for PS light slots 0-5, one byte each (0xFF = empty).
@@ -79,13 +80,19 @@ private:
 };
 
 // Engine-owned textures bound to the high samplers when no material entry claims them.
-// s11 = sun cookie (Environment::sunCookie, else white); s12/s13 spot cookies stay white (not bound per object).
+// s11 = sun cookie (Environment::sunCookie, else white); s12/s13 = spot cookies of light slots 0/1 (cookieArray).
 inline constexpr int kAttenuationSampler = 15, kShadowMapSampler = 14, kSunCookieSampler = 11;
-struct EngineTexture { int width = 0, height = 0; std::vector<uint8_t> rgba; };
+struct EngineTexture { int width = 0, height = 0; std::vector<uint8_t> rgba; int layers = 1; }; // layers back to back
 // AttenuationSampler (s15): 256x128 curve atlas (tru.exe PCLightManager, filled by 0x504A60): rows 0-95 light
 // falloff curves (R, one per distinct env.lights curve), rows 96+ fog (R fog curve, G height-fog curve);
 // v = (row + 0.5) / 128. Per scene: backends rebuild it in upload().
 EngineTexture attenuationLut(const scene::Environment& env = {});
+// Spot cookies (tru.exe binds a slot 0/1 light's cookie texture to s12 + slot, 0x50A5F0): one RGBA8 2D array of
+// kCookieLayers x kCookieSize² holding each distinct env.lights cookie (mip 0, resampled), unused layers white. The
+// translated programs read it at the layer in the light table (row 8). Per scene: backends rebuild it in upload().
+inline constexpr int kCookieSize = 256, kCookieLayers = 16;
+std::vector<uint32_t> cookieIds(const scene::Environment& env); // layer -> texture id: distinct cookies, first 16
+EngineTexture cookieArray(std::span<const uint32_t> ids, std::span<const scene::TextureData> textures);
 
 // Translated programs of a scene. `materialProgram`: material id -> programs index (-1 / absent = generic path).
 struct Program {
