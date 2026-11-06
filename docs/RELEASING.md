@@ -4,7 +4,33 @@ Status labels: [O] observed (run and seen), [I] inferred from the code, [U] unkn
 
 Official releases are **local and signed**: `tools/release.sh` on the maintainer workstation, which holds the Ed25519 key in `~/.config/openunderworld-signing/release.key`. CI builds unsigned test AppImages only; it never sees the key.
 
+## AppImage in an old-glibc container: `packaging/appimage/build-in-container.sh [OUT_DIR]`
+
+Release and CI AppImages are built inside `packaging/appimage/Containerfile`: Ubuntu 24.04 (glibc 2.39, GCC 13). The AppImage then runs on any x86_64 distribution at least as new as the measured floor below. You need only Docker usable without sudo (`docker` group); everything else is in the image:
+
+- from Ubuntu 24.04: GCC 13, CMake 3.28, Ninja, Python 3, libepoxy, zlib, OpenSSL 3, nlohmann-json, libsodium, libcurl, libshaderc + `glslc`, the Vulkan loader, ffmpeg 6.1 (`libav*`), the X11/Wayland/PipeWire/PulseAudio/ALSA headers SDL needs;
+- pinned downloads checked by SHA-256 (too old or missing in 24.04): SDL `3.4.18` (release tarball), Vulkan-Headers `v1.4.363` (24.04 has 1.3.275, without `VK_AMD_anti_lag`), glm `1.0.3`, and Qt `6.8.3` (24.04 has 6.4; `find_package(Qt6 6.5)`): `qtbase`, `qtwayland`, `qtsvg` and ICU from the official online-installer repository (`qt6_683/…linux_gcc_64`, built on RHEL 8.10). The pinned SHA-256s are of archives whose SHA-1s match the `.sha1` files Qt publishes next to them.
+
+`docker build` of the image takes about a minute and is cached. The wrapper then runs `build-appimage.sh` (below) with `--user $(id -u):$(id -g)`, the source mounted read-only at `/src`, the build directory (`build-appimage-noble/`, or `$OU_APPIMAGE_BUILD_DIR`) at `/build`, so rebuilds are incremental, and `OUT_DIR` at `/out`; the files belong to you. `git describe` runs on the host (`OU_GIT_DESCRIBE`), because a release worktree's `.git` points outside the mount. Memory is capped at 12 GiB, jobs at `OU_JOBS` (8).
+
+Changes the container needed in `build-appimage.sh`: Qt 6.8 names its Wayland platform plugins `libqwayland-generic`/`libqwayland-egl` (+ `wayland-graphics-integration-client/libqt-plugin-wayland-egl`); the official Qt binaries carry RUNPATH `$ORIGIN/../../lib`, so the copied plugins get `$ORIGIN/../../..` (`usr/lib`); and the OpenCL / VA-API / VDPAU loaders are now bundled, because Ubuntu's ffmpeg links them and desktops do not always have them (their drivers would still come from the host; we never use hardware decoding).
+
+**Floor** (printed by `build-appimage.sh` as `== floor:`; the newest symbol versions any `ou-*` or bundled library in the AppDir needs, `objdump -T`): **`GLIBC_2.38`, `GLIBCXX_3.4.32` (GCC 13.2), `CXXABI_1.3.13`** [O] (2026-11-06, 0.30.0). glibc 2.38 comes from the bundled Ubuntu libraries themselves (librsvg, libxml2, libx264, …). In practice: Ubuntu 24.04, Debian 13, Fedora 39 or newer, current Arch/openSUSE Tumbleweed. `tools/release.sh` writes the measured numbers into the release notes' *Requirements* line.
+
+What the host must provide (never bundled): glibc and libstdc++ at the floor; the GPU stack (`libGL`/`libEGL`/`libvulkan`/`libdrm`/`libgbm` and a Mesa or vendor driver for OpenGL 4.6 / Vulkan 1.3); X11/xcb or Wayland client libraries; fontconfig, freetype, harfbuzz, fribidi, D-Bus; ALSA/PulseAudio/PipeWire for sound; FUSE 2 (`libfuse2`) or `--appimage-extract-and-run`. On Ubuntu 24.04 that is `libgl1 libegl1 libgl1-mesa-dri libvulkan1 mesa-vulkan-drivers libwayland-client0 libx11-6 libx11-xcb1 libxcb1 libfontconfig1 libdbus-1-3 libasound2t64 libharfbuzz0b libfribidi0` (all on a desktop install).
+
+**Clean-container smoke:** `packaging/appimage/smoke-in-container.sh APPIMAGE [GAME_DIR [SHOT_DIR]]` installs exactly that list (+ Xvfb) in a fresh `ubuntu:24.04` and runs `--self-test` and `--version` (Qt offscreen, extract-and-run), then with a game directory (mounted read-only) `import scan --no-hash`, an `ou-game` OpenGL frame of `l4_pool` on llvmpipe under Xvfb (`MESA_GL_VERSION_OVERRIDE=4.6`: 24.04's llvmpipe reports 4.5), and, when the host has `/dev/dri`, an `ou-viewer` Vulkan frame on the host GPU through Ubuntu's Mesa (`SDL_VIDEO_DRIVER=offscreen`, lavapipe disabled).
+
+### Old-glibc verification (2026-11-06, 0.30.0 + this change)
+
+- [O] Built with `OU_APPIMAGE_BUILD_DIR=… packaging/appimage/build-in-container.sh OUT`: 94 MB, 155 bundled libraries; floor as above. An incremental rebuild (packaging change only) took 24 s.
+- [O] `smoke-in-container.sh` in a clean `ubuntu:24.04` (glibc 2.39, Mesa 25.2.8): `--self-test` exit 0; `--version` → `ou-launcher 0.30.0`; `import scan` of the GOG install → `exe: GOG 1900745791`, 3218 hashes; `ou-game` GL frame on llvmpipe (Lara on the l4_pool stairs, screenshot viewed); `ou-viewer` Vulkan frame on RADV (RX 7900 XTX, Mesa 25.2.8), same framing as the Arch host's frame of the same AppImage.
+- [O] The same AppImage on the Arch host (glibc 2.44, Mesa 26.2): `--self-test` exit 0, `viewer --renderer vulkan` on RADV writes its screenshot.
+- [O] Vulkan on lavapipe crashes in `VkRenderer::drawFrame` (a `memcpy`), also with the Arch-built v0.30.0 AppImage in an `archlinux` container, so it is a renderer bug, not packaging; the smoke uses the host GPU instead. RADV cannot present to Xvfb (no DRI3), hence SDL's offscreen driver.
+
 ## AppImage: `packaging/appimage/build-appimage.sh [OUT_DIR]`
+
+Run directly, it builds against the host's libraries (on Arch: glibc 2.44, so the AppImage only runs on equally new hosts). Releases and CI run it through `build-in-container.sh` above.
 
 1. **Version.** `project(VERSION)` from `CMakeLists.txt` plus `git describe --tags --match 'v*' --dirty`:
    - exactly on tag `vX.Y.Z` → `X.Y.Z`;
@@ -23,16 +49,16 @@ Official releases are **local and signed**: `tools/release.sh` on the maintainer
    The tools run with `APPIMAGE_EXTRACT_AND_RUN=1`, so no FUSE is needed (containers).
 3. **Release build** into `build-appimage/` (or `$OU_APPIMAGE_BUILD_DIR`): `-DCMAKE_BUILD_TYPE=Release -DOU_SANITIZE=OFF -DOU_BUILD_TESTS=OFF`, then `cmake --install` into the AppDir. All nine tools land in `usr/bin`: `ou-launcher` (entry point), `ou-game`, `ou-viewer`, `ou-movie`, `ou-audio`, `ou-import`, `ou-asset`, `ou-text`, `ou-sign`. The desktop file and the icon come from `packaging/`.
 4. **Qt, bundled by hand.** `linuxdeploy-plugin-qt` is not used, and no unverified tool is downloaded. Only `ou-launcher` uses Qt (Widgets), so the script:
-   - copies the plugins it needs from `qmake6 -query QT_INSTALL_PLUGINS` to `usr/lib/qt6/plugins/`: `platforms/{libqxcb,libqwayland,libqoffscreen}`, `wayland-shell-integration/libxdg-shell`, `wayland-decoration-client/{libbradient,libadwaita}`, `platformthemes/libqxdgdesktopportal`, `imageformats/{libqsvg,libqico,libqjpeg}`, `iconengines/libqsvgicon`;
+   - copies the plugins it needs from `qmake6 -query QT_INSTALL_PLUGINS` to `usr/lib/qt6/plugins/` (missing names are skipped; Qt 6.8 vs 6.10+ naming): `platforms/{libqxcb,libqwayland,libqwayland-generic,libqwayland-egl,libqoffscreen}`, `wayland-graphics-integration-client/libqt-plugin-wayland-egl`, `wayland-shell-integration/libxdg-shell`, `wayland-decoration-client/{libbradient,libadwaita}`, `platformthemes/libqxdgdesktopportal`, `imageformats/{libqsvg,libqico,libqjpeg}`, `iconengines/libqsvgicon`, and sets their RUNPATH to `$ORIGIN/../../..`;
    - lets linuxdeploy deploy their dependencies (`--deploy-deps-only`);
    - writes `usr/bin/qt.conf` (`Prefix = ..`, `Plugins = lib/qt6/plugins`).
 
    The plugins sit under `usr/lib/qt6/plugins` because linuxdeploy writes a fixed `$ORIGIN/../../../` RUNPATH for them; under `usr/plugins` that resolved to the AppDir root [O].
    No KDE/GTK platform theme is bundled (they would pull in KF6/GTK); the launcher uses Qt's Fusion style.
 5. **Host-only libraries.** linuxdeploy's built-in excludelist plus an explicit list keep these out:
-   - the GPU stack: `libGL*`, `libGLX*`, `libEGL*`, `libGLES*`, `libOpenGL*`, `libGLdispatch*`, `libvulkan*`, `libdrm*`, `libgbm*`, `libOpenCL*`, `libva*`, `libvdpau*`, `libnvidia*`, `libwayland-{client,egl,cursor}*`;
+   - the GPU stack: `libGL*`, `libGLX*`, `libEGL*`, `libGLES*`, `libOpenGL*`, `libGLdispatch*`, `libvulkan*`, `libdrm*`, `libgbm*`, `libnvidia*`, `libwayland-{client,egl,cursor}*` (the OpenCL/VA-API/VDPAU *loaders* are bundled, see above);
    - glibc;
-   - `libstdc++` and `libgcc_s`. Mesa's drivers load the host `libstdc++`, so an older bundled copy would break them. The cost: the host needs a glibc/libstdc++ at least as new as the build host's (Arch rolling) [I].
+   - `libstdc++` and `libgcc_s`. Mesa's drivers load the host `libstdc++`, so an older bundled copy would break them. The cost: the host needs a glibc/libstdc++ at least as new as the build environment's, hence the Ubuntu 24.04 container (floor above).
    - the sound servers, D-Bus, fontconfig, freetype and udev.
 
    SDL3 and libepoxy dlopen the host's GL/EGL/Vulkan/Wayland/X11 at run time.
@@ -60,7 +86,7 @@ All run from a copy in a temporary directory under `env -i HOME=<tmp> XDG_RUNTIM
   - on the live Wayland session: exit 0. `LD_DEBUG=files` shows `libqwayland.so`, `libQt6WaylandClient.so.6` and `libxdg-shell.so` loaded from `/tmp/.mount_*/usr/lib/…`;
   - with `QT_QPA_PLATFORM=xcb` (XWayland): exit 0.
 - [O] `OU.AppImage tools`, `sign` and `--version` (`ou-launcher 0.1.0`).
-- [U] Other distributions: not tried. Expect failures on hosts with an older glibc/libstdc++ than Arch's.
+- [O] Other distributions: see "Old-glibc verification" above (Ubuntu 24.04 container). A host build (Arch) still needs a glibc/libstdc++ as new as Arch's.
 
 ## Signed release: `tools/release.sh [--dry-run] [--test]`
 
@@ -75,9 +101,9 @@ The script:
    - `HEAD == origin/main`;
    - tag and release do not exist yet;
    - `CHANGELOG.md` has the version's section.
-2. Releases a clean detached `git worktree` of `HEAD` in `build-release/src` (a fixed path, so the Release build in `build-release/appimage` stays configured and only rebuilds what changed since the last release). Uncommitted changes in your tree are listed and **excluded**; other people's work in progress never ships. Logs and the dist files go to `build-release/vX.Y.Z/`.
+2. Releases a clean detached `git worktree` of `HEAD` in `build-release/src` (a fixed path, so the container's Release build in `build-release/appimage-noble` stays configured and only rebuilds what changed since the last release). Uncommitted changes in your tree are listed and **excluded**; other people's work in progress never ships. Logs and the dist files go to `build-release/vX.Y.Z/`.
 3. Tests are **off by default**: the maintainer hand-tests each AppImage. `--test` (or `OU_RELEASE_TESTS=1`) runs the full ctest in a Debug + ASan/UBSan build in `build-release/test` (real-data tests when `OU_GAME_DIR` is set; ~35 min).
-4. Tags `vX.Y.Z` (annotated, local), then builds the AppImage from the worktree. The version is exactly `X.Y.Z` because `git describe` sits on the tag. It smoke-runs `--self-test` and `game --help`.
+4. Tags `vX.Y.Z` (annotated, local), then builds the AppImage from the worktree with `build-in-container.sh` (Docker is a precondition; without it the script stops with an error naming the Containerfile). The version is exactly `X.Y.Z` because `git describe` sits on the tag. The `== floor:` line of the build log fills the notes' *Requirements* line. It smoke-runs `--self-test` and `game --help` on the host; `ou-sign` is the AppDir's copy.
 5. Makes the manifest: `ou-sign manifest --version X.Y.Z --channel stable --changelog <section> --base-url https://github.com/sergen213/openunderworld/releases/download/vX.Y.Z/ payload/`. The payload is the AppImage only, a project-owned file.
 6. Signs and verifies:
    - `ou-sign sign --dir ~/.config/openunderworld-signing manifest.json`. A warning that the key differs from the compiled-in key aborts the release.
@@ -112,6 +138,6 @@ Heavy steps run under `systemd-run --user --scope -p MemoryMax=6G` when availabl
 ## CI
 
 - `.github/workflows/ci.yml`: Arch container, Debug + ASan/UBSan, ctest, makepkg.
-- `.github/workflows/appimage.yml`: on pushes to main, `v*` tags and manual dispatch. It runs `build-appimage.sh` in an Arch container, smoke-tests `--self-test`/`--version` offscreen with extract-and-run, and uploads `build-appimage/out/*` as the artifact `OpenUnderworld-AppImage-<sha>`. These AppImages are **unsigned test builds**: there is no manifest and no GitHub release. Download one from the run page (Actions → appimage → Artifacts) or with `gh run download`.
+- `.github/workflows/appimage.yml`: on pushes to main, `v*` tags and manual dispatch. It runs `build-in-container.sh` (the same Ubuntu 24.04 Containerfile as releases) on the runner, smoke-tests with `smoke-in-container.sh` (self-test and `--version` in a clean `ubuntu:24.04`; no game data or GPU on CI), and uploads `build-appimage/out/*` as the artifact `OpenUnderworld-AppImage-<sha>`. These AppImages are **unsigned test builds**: there is no manifest and no GitHub release. Download one from the run page (Actions → appimage → Artifacts) or with `gh run download`.
 
 [O] The first push of these workflows (`8b36983`) was green: `ci` in 3m42s and `appimage` in 1m55s. The CI AppImage `OpenUnderworld-0.1.0-git.8b36983-x86_64.AppImage` is 79 MB; it is smaller than the local build because the Arch container lacks some optional ffmpeg dependencies [I]. Its smoke step printed `ou-launcher 0.1.0`, and the artifact was uploaded (81.6 MB).

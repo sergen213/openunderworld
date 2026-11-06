@@ -1,0 +1,46 @@
+# Build environment for the release AppImage: Ubuntu 24.04 (glibc 2.39, GCC 13), so the AppImage runs on
+# every distro with glibc >= 2.39 (docs/RELEASING.md). Used by packaging/appimage/build-in-container.sh.
+# Distro packages where 24.04's are new enough; SDL3, Vulkan-Headers (VK_AMD_anti_lag), glm 1.x and
+# Qt >= 6.5 are pinned downloads checked by SHA-256 (Qt: the official online-installer archives, whose
+# published .sha1 files match these digests; built on RHEL 8, so they need nothing newer than 24.04).
+FROM ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake ninja-build git pkg-config python3 curl ca-certificates p7zip-full file zsync \
+      zlib1g-dev libepoxy-dev libssl-dev nlohmann-json3-dev libsodium-dev libcurl4-openssl-dev \
+      libshaderc-dev glslc libvulkan-dev \
+      libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
+      libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+      libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libgles-dev \
+      libdrm-dev libgbm-dev libpulse-dev libpipewire-0.3-dev libasound2-dev libudev-dev libdbus-1-dev \
+      libfontconfig1 libfreetype6 libglib2.0-0t64 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+      libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
+      libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 libxcb-util1 libwayland-cursor0 libwayland-egl1 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/deps
+RUN set -e; get() { curl -fsSL --proto '=https' -o "$3" "$1" && echo "$2  $3" | sha256sum -c --quiet -; }; \
+    get https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz \
+        9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3 sdl.tgz; \
+    get https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.363.tar.gz \
+        cbaf687d3c59b9666fe080e7f8396b6b4f4d344a768ee6b337c59852f4526b68 vkh.tgz; \
+    get https://github.com/g-truc/glm/archive/refs/tags/1.0.3.tar.gz \
+        6775e47231a446fd086d660ecc18bcd076531cfedd912fbd66e576b118607001 glm.tgz; \
+    for t in sdl vkh glm; do mkdir $t && tar -xzf $t.tgz -C $t --strip-components=1; done; \
+    cmake -S vkh -B vkh/b -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local && cmake --install vkh/b; \
+    cmake -S glm -B glm/b -G Ninja -DGLM_BUILD_TESTS=OFF -DGLM_BUILD_LIBRARY=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+      && cmake --install glm/b; \
+    cmake -S sdl -B sdl/b -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_STATIC=OFF && cmake --build sdl/b && cmake --install sdl/b; \
+    cd / && rm -rf /tmp/deps && ldconfig
+
+ARG QT=https://download.qt.io/online/qtsdkrepository/linux_x64/desktop/qt6_683/qt6_683/qt.qt6.683.linux_gcc_64/6.8.3-0-202503201345
+RUN set -e; mkdir -p /opt/qt/lib && cd /opt/qt; \
+    get() { curl -fsSL --proto '=https' -o "$2" "$QT$1" && echo "$3  $2" | sha256sum -c --quiet - && 7z x -y -bd "$2" >/dev/null && rm "$2"; }; \
+    get qtbase-Linux-RHEL_8_10-GCC-Linux-RHEL_8_10-X86_64.7z base.7z d8fe882cae71284a7ca906b70b42840376882fe96f22fce1ba5a7a70ceeec799; \
+    get qtwayland-Linux-RHEL_8_10-GCC-Linux-RHEL_8_10-X86_64.7z wl.7z da40cc32c95aa9bf96fcf3e2bfe19055c93cc1ae297bd7cd3cf532aaef634cff; \
+    get qtsvg-Linux-RHEL_8_10-GCC-Linux-RHEL_8_10-X86_64.7z svg.7z e330eb3abed3e0b9c9a278da971ec67306969f35020a3d54350a6ee86d57983d; \
+    cd lib && get icu-linux-Rhel8.6-x86_64.7z icu.7z a2543496e1280c6fa348e0791def5026d5bde9e5749d9fc2244866ab0bee8aed; \
+    echo /opt/qt/lib > /etc/ld.so.conf.d/qt6.conf && ldconfig && ln -s /opt/qt/bin/qmake6 /usr/local/bin/qmake6
+ENV CMAKE_PREFIX_PATH=/opt/qt HOME=/tmp

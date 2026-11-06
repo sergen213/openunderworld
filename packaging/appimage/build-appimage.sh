@@ -2,7 +2,9 @@
 # Builds OpenUnderworld-<version>-x86_64.AppImage (+ .sha256, + .zsync when zsyncmake exists).
 # Usage: packaging/appimage/build-appimage.sh [OUT_DIR]     (default: build-appimage/out)
 # Env:   OU_APPIMAGE_BUILD_DIR (default build-appimage), OU_TOOLS_CACHE (default ~/.cache/openunderworld-appimage-tools),
-#        OU_JOBS (default 12). No game data goes in: only OpenUnderworld's own binaries. Notes: docs/RELEASING.md.
+#        OU_JOBS (default 12), OU_GIT_DESCRIBE (overrides `git describe`, for build-in-container.sh).
+#        No game data goes in: only OpenUnderworld's own binaries. Notes: docs/RELEASING.md.
+# Release AppImages are built by build-in-container.sh (Ubuntu 24.04, low glibc floor); run directly it uses the host.
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -14,7 +16,7 @@ APPDIR="$BUILD/AppDir"
 # ---- version: CMake project(VERSION) + git describe ------------------------------------------------
 VERSION="$(sed -nE 's/^project\(OpenUnderworld VERSION ([0-9.]+).*/\1/p' "$SRC/CMakeLists.txt")"
 [ -n "$VERSION" ] || { echo "no project(VERSION) in CMakeLists.txt" >&2; exit 1; }
-DESC="$(git -C "$SRC" describe --tags --match 'v[0-9]*' --dirty --always 2>/dev/null || echo unknown)"
+DESC="${OU_GIT_DESCRIBE:-$(git -C "$SRC" describe --tags --match 'v[0-9]*' --dirty --always 2>/dev/null || echo unknown)}"
 case "$DESC" in
   "v$VERSION") FULL="$VERSION" ;;                    # exactly on the release tag
   "v$VERSION"-*) FULL="${DESC#v}" ;;                 # 0.1.0-3-gabc1234[-dirty]
@@ -64,12 +66,15 @@ done
 # Only ou-launcher uses Qt (Widgets). Copy the platform plugins it needs, then let linuxdeploy pull
 # their library dependencies; qt.conf next to the binaries points Qt at usr/plugins.
 QT_PLUGINS="$(qmake6 -query QT_INSTALL_PLUGINS)"
-for p in platforms/libqxcb.so platforms/libqwayland.so platforms/libqoffscreen.so \
+for p in platforms/libqxcb.so platforms/libqwayland.so platforms/libqwayland-generic.so platforms/libqwayland-egl.so \
+         platforms/libqoffscreen.so wayland-graphics-integration-client/libqt-plugin-wayland-egl.so \
          wayland-shell-integration/libxdg-shell.so wayland-decoration-client/libbradient.so \
          wayland-decoration-client/libadwaita.so platformthemes/libqxdgdesktopportal.so \
          imageformats/libqsvg.so imageformats/libqico.so imageformats/libqjpeg.so iconengines/libqsvgicon.so; do
   [ -f "$QT_PLUGINS/$p" ] || { echo "note: Qt plugin $p not found, skipped"; continue; }
   install -Dm755 "$QT_PLUGINS/$p" "$APPDIR/usr/lib/qt6/plugins/$p"
+  # Official Qt binaries carry RUNPATH $ORIGIN/../../lib (their prefix layout); point it at usr/lib.
+  "$PATCHELF" --set-rpath '$ORIGIN/../../..' "$APPDIR/usr/lib/qt6/plugins/$p"
 done
 printf '[Paths]\nPrefix = ..\nPlugins = lib/qt6/plugins\n' > "$APPDIR/usr/bin/qt.conf"
 
@@ -77,10 +82,13 @@ printf '[Paths]\nPrefix = ..\nPlugins = lib/qt6/plugins\n' > "$APPDIR/usr/bin/qt
 # linuxdeploy's built-in excludelist already drops glibc, libGL/libEGL/libGLX, libvulkan, libdrm, X11/xcb
 # and friends; the explicit list below makes the policy visible and covers newer names.
 # libstdc++/libgcc_s stay on the host too: Mesa's drivers link the host libstdc++, an older bundled copy
-# would break them. Consequence: the host needs a libstdc++/glibc at least as new as the build host's.
+# would break them. Consequence: the host needs a libstdc++/glibc at least as new as the build host's
+# (Ubuntu 24.04 in build-in-container.sh; floor printed below).
+# The OpenCL / VA-API / VDPAU loaders ARE bundled: ffmpeg links them, we never use hardware decoding, and
+# desktops do not always have them (ocl-icd); their drivers would still come from the host.
 EXCLUDES=()
 for x in 'libGL.so*' 'libGLX*' 'libEGL*' 'libGLES*' 'libOpenGL*' 'libGLdispatch*' 'libvulkan*' 'libdrm*' \
-         'libgbm*' 'libOpenCL*' 'libva*' 'libvdpau*' 'libnvidia*' 'libwayland-client*' 'libwayland-egl*' 'libwayland-cursor*' \
+         'libgbm*' 'libnvidia*' 'libwayland-client*' 'libwayland-egl*' 'libwayland-cursor*' \
          'libstdc++*' 'libgcc_s*' 'libasound*' 'libpulse*' 'libpipewire*' 'libdbus-1*' \
          'libfontconfig*' 'libfreetype*' 'libudev*' 'libsystemd*'; do
   EXCLUDES+=(--exclude-library "$x")
@@ -95,7 +103,7 @@ NO_STRIP=1 "$LINUXDEPLOY" --appdir "$APPDIR" "${EXCLUDES[@]}" \
   --custom-apprun "$SRC/packaging/appimage/AppRun" --verbosity 2
 
 bad="$(find "$APPDIR/usr/lib" -maxdepth 1 \( -name 'libGL*' -o -name 'libEGL*' -o -name 'libvulkan*' -o -name 'libdrm*' \
-        -o -name 'libgbm*' -o -name 'libOpenCL*' -o -name 'libstdc++*' -o -name 'libc.so*' \) -printf '%f ' 2>/dev/null || true)"
+        -o -name 'libgbm*' -o -name 'libstdc++*' -o -name 'libc.so*' \) -printf '%f ' 2>/dev/null || true)"
 [ -z "$bad" ] || { echo "host-only libraries leaked into the AppDir: $bad" >&2; exit 1; }
 # Every tool must get past the dynamic loader with the bundled libraries (catches broken patchelf output).
 for t in "$APPDIR"/usr/bin/ou-*; do
@@ -112,6 +120,11 @@ while IFS= read -r f; do
   done
   [ "$ok" = 1 ] || { echo "RUNPATH of $f does not reach usr/lib: '$rp'" >&2; exit 1; }
 done < <(find "$APPDIR/usr/bin" "$APPDIR/usr/lib/qt6/plugins" -type f \( -name 'ou-*' -o -name '*.so' \))
+# glibc / libstdc++ floor: the newest symbol versions any bundled ELF needs from the host.
+FLOOR="$(find "$APPDIR/usr" -type f \( -name 'ou-*' -o -name '*.so*' \) -exec objdump -T {} + 2>/dev/null \
+  | grep -oE '\((GLIBC|GLIBCXX|CXXABI)_[0-9.]+\)' | tr -d '()' | sort -Vu \
+  | awk -F_ '{m[$1] = $0} END {print m["GLIBC"], m["GLIBCXX"], m["CXXABI"]}')"
+echo "== floor: $FLOOR"
 
 # ---- pack -------------------------------------------------------------------------------------------
 rm -f "$OUT/$NAME" "$OUT/$NAME.sha256" "$OUT/$NAME.zsync"

@@ -4,7 +4,8 @@
 #   2. clean detached worktree of HEAD at build-release/src (uncommitted work in your tree is never released)
 #   3. only with --test (or OU_RELEASE_TESTS=1): full ctest (Debug + ASan/UBSan; real-data tests with OU_GAME_DIR).
 #      Default skips it: the user hand-tests releases, the script only ships them.
-#   4. tag vX.Y.Z, build the AppImage (incremental Release build in build-release/appimage), smoke it,
+#   4. tag vX.Y.Z, build the AppImage in the Ubuntu 24.04 container (packaging/appimage/build-in-container.sh,
+#      incremental build in build-release/appimage-noble), smoke it,
 #      ou-sign manifest + sign + verify
 #   5. push the tag, gh release create, download the assets back and verify them
 # --dry-run stops after step 4 and deletes the local tag. The secret key never leaves
@@ -38,6 +39,7 @@ cd "$SRC"
 [ "$(stat -c %a "$KEY_DIR/release.key")" = 600 ] || die "$KEY_DIR/release.key must be mode 0600"
 case "$(realpath "$KEY_DIR")/" in "$(realpath "$SRC")"/*) die "signing key directory is inside the repository" ;; esac
 for t in gh cmake ninja ctest curl sha256sum; do command -v "$t" >/dev/null || die "missing $t"; done
+command -v docker >/dev/null || die "missing docker: the release AppImage is built in packaging/appimage/Containerfile (docs/RELEASING.md)"
 git fetch -q origin main
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "HEAD is not origin/main: commit, pull --rebase and push first"
 VERSION="$(sed -nE 's/^project\(OpenUnderworld VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)"
@@ -85,15 +87,17 @@ git tag -a "$TAG" -m "OpenUnderworld $VERSION" HEAD
 TAGGED=1
 say "AppImage $VERSION"
 DIST="$WORK/dist"
-OU_APPIMAGE_BUILD_DIR="$SRC/build-release/appimage" heavy "$SRC/build-release/src/packaging/appimage/build-appimage.sh" "$DIST" > "$WORK/appimage.log" 2>&1 \
-  || { tail -40 "$WORK/appimage.log"; die "AppImage build failed (log: $WORK/appimage.log)"; }
+OU_APPIMAGE_BUILD_DIR="$SRC/build-release/appimage-noble" "$SRC/build-release/src/packaging/appimage/build-in-container.sh" "$DIST" \
+  > "$WORK/appimage.log" 2>&1 || { tail -40 "$WORK/appimage.log"; die "AppImage build failed (log: $WORK/appimage.log)"; }
+read -r F_GLIBC F_GLIBCXX _ <<< "$(sed -n 's/^== floor: //p' "$WORK/appimage.log")"
+[ -n "$F_GLIBCXX" ] || die "no '== floor:' line in $WORK/appimage.log"
 APPNAME="OpenUnderworld-$VERSION-x86_64.AppImage"
 APP="$DIST/$APPNAME"
 [ -f "$APP" ] || die "expected $APP (git describe did not match $TAG?)"
 QT_QPA_PLATFORM=offscreen OU_DISABLE_UPDATES=1 APPIMAGE_EXTRACT_AND_RUN=1 "$APP" --self-test || die "AppImage launcher self-test failed"
 APPIMAGE_EXTRACT_AND_RUN=1 "$APP" game --help >/dev/null 2>&1 || [ $? -lt 128 ] || die "AppImage 'game' crashed"
 
-OU_SIGN="$SRC/build-release/appimage/ou-sign"
+OU_SIGN="$SRC/build-release/appimage-noble/AppDir/usr/bin/ou-sign" # bundled libs via RUNPATH; glibc floor runs here
 mkdir -p "$WORK/payload"
 ln "$APP" "$WORK/payload/$APPNAME"
 NOTES="$WORK/notes.md"
@@ -109,7 +113,7 @@ chmod +x $APPNAME
 \`\`\`
 AppImages from 0.1.0 on update in place: launcher tab **Version & Updates** → *Check for updates* → *Download & install*, or \`./$APPNAME --update\`. The update manifest is signed with the project's Ed25519 key (\`manifest.json.sig\`); \`sha256sum -c $APPNAME.sha256\` checks the download.
 
-Requirements: x86_64 Linux with a current glibc/libstdc++ (built on Arch Linux), Mesa or another OpenGL 4.6 / Vulkan 1.3 driver, FUSE (or run with \`--appimage-extract-and-run\`).
+Requirements: x86_64 Linux with glibc ${F_GLIBC#GLIBC_} or newer and a libstdc++ with $F_GLIBCXX (built on Ubuntu 24.04: Ubuntu 24.04, Debian 13, Fedora 40 or newer), Mesa or another OpenGL 4.6 / Vulkan 1.3 driver, FUSE (or run with \`--appimage-extract-and-run\`).
 
 $CHANGES
 EOF
