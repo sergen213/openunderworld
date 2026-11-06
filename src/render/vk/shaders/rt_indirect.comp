@@ -43,8 +43,8 @@ layout(set = 0, binding = 3, rgba8) uniform image2D uAlbedo;     // receiver tex
 layout(set = 0, binding = 4, rgba16f) uniform image2D uGeomPrev;
 layout(set = 0, binding = 5, rgba16f) uniform image2D uHistPrev;
 layout(set = 0, binding = 6, rgba16f) uniform image2D uHist;     // temporal output = next frame's history
-layout(set = 0, binding = 7, r16f) uniform image2D uLenPrev;     // history length (frames)
-layout(set = 0, binding = 8, r16f) uniform image2D uLen;
+layout(set = 0, binding = 7, rg32f) uniform image2D uLenPrev;   // history length (frames), filtered direct sun
+layout(set = 0, binding = 8, rg32f) uniform image2D uLen;
 layout(set = 0, binding = 9, rgba16f) uniform image2D uTmpA;
 layout(set = 0, binding = 10, rgba16f) uniform image2D uTmpB;
 layout(set = 0, binding = 11, rgba16f) uniform image2D uFinal;   // sun.glsl ouIndirectMap
@@ -138,7 +138,10 @@ void main() {
     int rays = max(pc.cfg.w, 1);
     // Cosine-weighted hemisphere: interleaved gradient noise per pixel, shifted per frame along the R2 sequence (the
     // temporal pass integrates the frames). Lambertian receiver with cosine sampling: bounce = mean incoming radiance.
-    vec2 noise = vec2(ign(vec2(q)), ign(vec2(q) + vec2(47.0, 17.0)));
+    // The two dimensions come from independent linear forms of q (x / y swapped): ign(q) and ign(q + offset) are both
+    // functions of one scalar, so their points lay on two diagonal lines of the unit square and each frame's R2 shift
+    // moved those lines over the hemisphere: the whole screen's AO / bounce swung by ~3 % with a 5.5-frame period.
+    vec2 noise = vec2(ign(vec2(q)), ign(vec2(q.yx) + vec2(47.0, 17.0)));
     for (int i = 0; i < rays; ++i) {
         vec2 xi = fract(noise + float(pc.cfg.y * rays + i) * vec2(0.7548776662, 0.5698402910));
         float r = sqrt(xi.x), a = 6.2831853 * xi.y;
@@ -168,12 +171,15 @@ void main() {
 #else // OU_DENOISE
 vec3 relOf(ivec2 q, float w) { return rayDir(fragOf(q)) * w; }
 
-// History outside the current 3x3 raw signal mean +- 2 sigma is pulled onto that box (Kabus 22 rt_filter.comp): a bounce
-// or contact shadow that moved with its caster (Lara) does not linger on the receiver.
-vec4 clipHistory(vec4 h, vec4 m1, vec4 m2) {
-    vec4 mean = m1 / 9.0, dev = h - mean;
-    vec4 e = abs(dev) / (2.0 * sqrt(max(m2 / 9.0 - mean * mean, 0.0)) + 1.0e-4);
-    float m = max(max(e.x, e.y), max(e.z, e.w));
+// AO history far outside the current 3x3 raw AO (mean +- (2 sigma + 0.5)) is pulled onto that box: an occluder that
+// moved away (Lara's contact shadow) does not linger on the receiver. The raw signal is one ray per texel and skewed
+// (mostly unoccluded), so a tight box (Kabus 22 rt_filter.comp's 2 sigma, no floor, on every channel) collapsed wherever
+// the nine rays happened to agree and snapped the history to them: the accumulated AO was biased bright, and while
+// moving every surface that lost its history popped back to the true, darker AO (whole facets of the l2_cliffclimb cliff
+// coming and going). The bounce is not clipped (its 1-ray values are 0 or a hit's full radiance).
+float clipHistory(float h, float m1, float m2) {
+    float mean = m1 / 9.0, dev = h - mean;
+    float m = abs(dev) / (2.0 * sqrt(max(m2 / 9.0 - mean * mean, 0.0)) + 0.5);
     return m > 1.0 ? mean + dev / m : h;
 }
 
@@ -190,7 +196,9 @@ void main() {
         // Temporal: reproject through the previous frame's jittered view-projection into its geometry; bilinear over
         // the taps whose view depth (5 %) and normal (cos 0.8) agree, so disocclusions restart.
         vec4 s = imageLoad(uSignal, q);
-        float len = 0.0;
+        // The direct-sun term (one hard ray at the half-resolution sample) toggled along every shadow edge as the FSR
+        // jitter moved the sample across it, and the AO lift with it: accumulated like the AO, clamped to its 3x3 range.
+        float len = 0.0, sun = imageLoad(uAlbedo, q).a;
         if (g.w > 0.0 && (pc.cfg.x & 4) != 0) {
             vec4 c = pc.reproject * vec4(relOf(q, g.w), 1.0);
             if (c.w > 0.0) {
@@ -199,7 +207,7 @@ void main() {
                 ivec2 b = ivec2(floor(h));
                 vec2 f = h - vec2(b);
                 vec4 hist = vec4(0.0);
-                float hl = 0.0, ws = 0.0;
+                float hl = 0.0, hs = 0.0, ws = 0.0;
                 for (int i = 0; i < 4; ++i) {
                     ivec2 o = ivec2(i & 1, i >> 1), pp = b + o;
                     if (any(lessThan(pp, ivec2(0))) || any(greaterThanEqual(pp, size))) continue;
@@ -207,26 +215,32 @@ void main() {
                     if (pg.w <= 0.0 || abs(pg.w - c.w) > 0.05 * c.w || dot(pg.xyz, g.xyz) < 0.8) continue;
                     float w = mix(1.0 - f.x, f.x, float(o.x)) * mix(1.0 - f.y, f.y, float(o.y));
                     hist += w * imageLoad(uHistPrev, pp);
-                    hl += w * imageLoad(uLenPrev, pp).r;
+                    vec2 lp = imageLoad(uLenPrev, pp).rg;
+                    hl += w * lp.r;
+                    hs += w * lp.g;
                     ws += w;
                 }
                 if (ws > 1.0e-3) {
-                    vec4 m1 = vec4(0.0), m2 = vec4(0.0);
+                    float m1 = 0.0, m2 = 0.0, sMin = 1.0, sMax = 0.0;
                     for (int y = -1; y <= 1; ++y)
                         for (int x = -1; x <= 1; ++x) {
-                            vec4 v = imageLoad(uSignal, clamp(q + ivec2(x, y), ivec2(0), size - 1));
+                            ivec2 pp = clamp(q + ivec2(x, y), ivec2(0), size - 1);
+                            float v = imageLoad(uSignal, pp).a, a = imageLoad(uAlbedo, pp).a;
                             m1 += v;
                             m2 += v * v;
+                            sMin = min(sMin, a), sMax = max(sMax, a);
                         }
-                    hist = clipHistory(hist / ws, m1, m2);
+                    hist /= ws;
+                    hist.a = clipHistory(hist.a, m1, m2);
                     len = min(hl / ws + 1.0, 32.0);
                     // ~1 / frames up to 12 (AO) / 16 (GI) frames: stable, and a moved shadow fades within ~0.2 s.
                     s = vec4(mix(hist.rgb, s.rgb, max(1.0 / (len + 1.0), 0.06)), mix(hist.a, s.a, max(1.0 / (len + 1.0), 0.08)));
+                    sun = mix(clamp(hs / ws, sMin, sMax), sun, max(1.0 / (len + 1.0), 0.08));
                 }
             }
         }
         imageStore(uHist, q, s);
-        imageStore(uLen, q, vec4(len));
+        imageStore(uLen, q, vec4(len, sun, 0.0, 0.0));
         return;
     }
     // A-trous (B3 5x5, strides 1, 2, 4) with plane-distance and normal edge stopping.
@@ -256,7 +270,7 @@ void main() {
         // fade out with distance (6000-12000 units), where fog takes over and the rays' scale is below a pixel.
         vec4 alb = imageLoad(uAlbedo, q);
         float fade = 1.0 - smoothstep(6000.0, 12000.0, g.w);
-        float ao = (pc.cfg.x & 1) != 0 ? mix(1.0, mix(c.a * c.a, 1.0, 0.4 * alb.a), pc.sunColor.w * fade) : 1.0;
+        float ao = (pc.cfg.x & 1) != 0 ? mix(1.0, mix(c.a * c.a, 1.0, 0.4 * imageLoad(uLen, q).g), pc.sunColor.w * fade) : 1.0;
         vec3 gi = (pc.cfg.x & 2) != 0 ? c.rgb * alb.rgb * fade : vec3(0.0);
         imageStore(uFinal, q, g.w > 0.0 ? vec4(gi, ao) : vec4(0.0, 0.0, 0.0, 1.0));
     }
