@@ -233,8 +233,19 @@ public:
     // Returns false + error when the backend is unavailable on this system (apps treat it as skip).
     virtual bool preWindowSetup(std::string& error) = 0;
     virtual bool init(SDL_Window* window, std::string& error) = 0;
-    // Replaces all GPU resources. Returns warnings (unsupported formats etc.).
+    // Replaces the drawn scene. Returns warnings (unsupported formats etc.). Keyed content (MeshData::key /
+    // TextureData::key) stays resident: a key the previous upload (or a live part) already sent is reused, not sent
+    // again, and a key no upload lists any more is freed once the frames drawing it have retired (no device-wide wait).
+    // A mesh updateVertices changed is sent again from `scene` (its GPU copy no longer holds those vertices); a key
+    // listed twice in one scene is resident once, the other copies are sent each upload.
     virtual std::vector<std::string> upload(const scene::SceneData& scene) = 0;
+    // Streamed units (docs/RENDERING.md "Resident units"): `part`'s keyed meshes and textures upload ahead of the
+    // upload() that lists them (Vulkan: staged on a worker thread; OpenGL: spread over the next frames) and stay
+    // resident until releasePart(id), listed or not. A later upload() finishes a part still in flight first.
+    virtual void uploadPart(uint64_t id, std::shared_ptr<const scene::SceneData> part) { (void)id, (void)part; }
+    virtual void releasePart(uint64_t id) { (void)id; }
+    // Resident keyed meshes + textures (diagnostics, tests): listed by the last upload or held by a part.
+    virtual size_t residentCount() const { return 0; }
     // Replaces the vertices of uploaded mesh `meshIndex` (index into the last upload's SceneData::meshes;
     // same vertex count). Used for CPU skinning. false = no such mesh or vertex count mismatch.
     virtual bool updateVertices(size_t meshIndex, std::span<const scene::Vertex> vertices) = 0;

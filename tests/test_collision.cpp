@@ -111,6 +111,55 @@ TEST(Collision, MatchesBruteForce) {
     EXPECT_GT(hits, 10);
 }
 
+// World streaming merges each unit's prebuilt BVH (appendPart + finishParts): the same hits as one BVH over the merged
+// faces (same face indices, as the faces are concatenated in the same order; random faces, so no equal-distance ties,
+// which go by traversal order).
+TEST(Collision, PartsMatchOneBuild) {
+    std::mt19937 rng(99);
+    std::uniform_real_distribution<float> u(-1000, 1000), s(-60, 60);
+    const vec3 offsets[] = {{0, 0, 0}, {-20475.4f, -2872.2f, 12591.4f}, {3000.5f, 0, -7.25f}};
+    CollisionMesh merged, whole;
+    merged.clearParts();
+    for (const vec3 off : offsets) {
+        CollisionMesh part;
+        for (int i = 0; i < 700; ++i) {
+            const vec3 c(u(rng), u(rng), u(rng));
+            addTri(part, c + vec3(s(rng), s(rng), s(rng)), c + vec3(s(rng), s(rng), s(rng)), c + vec3(s(rng), s(rng), s(rng)));
+        }
+        part.build();
+        merged.appendPart(part, off);
+        const auto base = uint32_t(whole.vertices.size());
+        for (const vec3& v : part.vertices) whole.vertices.push_back(v + off);
+        for (auto f : part.faces) {
+            for (auto& i : f.v) i += base;
+            whole.faces.push_back(f);
+        }
+    }
+    merged.finishParts();
+    whole.build();
+    ASSERT_EQ(merged.vertices, whole.vertices);
+    auto same = [](const std::optional<collision::Hit>& a, const std::optional<collision::Hit>& b) {
+        ASSERT_EQ(bool(a), bool(b));
+        if (!a) return;
+        EXPECT_EQ(a->t, b->t);
+        if (a->t == 0) return; // a capsule starting in contact touches several faces at t 0: traversal order picks
+        EXPECT_EQ(a->point, b->point);
+        EXPECT_EQ(a->normal, b->normal);
+        EXPECT_EQ(a->face, b->face);
+    };
+    int hits = 0;
+    for (int r = 0; r < 600; ++r) {
+        const vec3 off = offsets[r % 3];
+        const vec3 o = off + vec3(u(rng), u(rng), u(rng)), d(u(rng), u(rng), u(rng)), p = off + vec3(u(rng), u(rng), u(rng));
+        const auto h = merged.raycast(o, d, 30000);
+        hits += bool(h);
+        same(h, whole.raycast(o, d, 30000));
+        same(merged.closestPoint(p, 400), whole.closestPoint(p, 400));
+        same(merged.sweepCapsule(p, p + vec3(0, 0, 200), 40, d * 0.2f), whole.sweepCapsule(p, p + vec3(0, 0, 200), 40, d * 0.2f));
+    }
+    EXPECT_GT(hits, 50);
+}
+
 TEST(Collision, SphereAndCapsuleSweeps) {
     const auto m = room();
     // Sphere r=10 at z=50 dropping 100: touches the floor after 40 -> t = 0.4.

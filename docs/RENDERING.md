@@ -837,3 +837,17 @@ RT off 1.9 ms scene vs 7.9 with RT); FSR upscale ~0.75 ms at 4K; post 1.4 ms und
 uploads + refits 1–2 ms with many animated meshes (no frustum culling of draws: GPU-cheap here, RT off scene ≤ 1.9 ms);
 ch5 / l1_seafloor streaming hitches (mean above p95). A depth-EQUAL main pass (no rays from transparent texels of
 pre-passed foliage) was measured and gave nothing.
+
+## Resident units
+
+`Renderer::upload` keeps keyed content (`MeshData::key`, `TextureData::key`, `scene::assignKeys`) resident: an upload
+creates only what is not resident yet and sends again unkeyed meshes and meshes moved by `updateVertices` since they
+were sent; a resident mesh listed under a new transform is moved. Renderer parts (`uploadPart`) create a scene's keyed
+content ahead, over frames, and own it until `releasePart`; content neither listed by the last upload nor owned by a
+live part is freed. `residentCount()` counts it.
+
+- OpenGL: textures, mesh buffers and linked original programs (by source) are kept; GL orders deletes itself.
+- Vulkan: each upload and each part allocates from its own `Generation` (memory blocks + texture descriptor pool),
+  freed with its last resource. Nothing waits for the device: dropped objects go to a graveyard destroyed
+  `kFramesInFlight` frames later, new data is staged in host memory and copied at the start of the next frame's
+  command buffer, and the RT structures (rebuilt per upload) are built in that command buffer too.

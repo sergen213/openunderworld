@@ -370,20 +370,16 @@ void World::unitsChanged(const std::optional<std::pair<std::string, int>>& ledge
     ++unitsVersion_;
 }
 
+// Each unit's collision keeps the BVH it was loaded with (built on the streamer's worker thread): the merge only copies
+// and moves, then puts a top level over the units (CollisionMesh::appendPart). l4_staircase_mictlan joining
+// pool_to_ragnarok: 8.3 ms for a BVH over every loaded face before.
 void World::rebuildCollision() {
-    col_.vertices.clear(), col_.faces.clear(), col_.markup.clear();
-    col_.clearTerrainGroups();
+    col_.clearParts();
+    col_.markup.clear();
     for (auto& u : units_) {
         const auto& c = u.data.col;
-        const auto vb = uint32_t(col_.vertices.size());
-        const auto groupBase = col_.appendTerrainGroups(c);
+        col_.appendPart(c, u.offset);
         u.markupBase = col_.markup.size();
-        for (const vec3& v : c.vertices) col_.vertices.push_back(v + u.offset);
-        for (collision::Face f : c.faces) {
-            for (auto& i : f.v) i += vb;
-            f.group = uint16_t(f.group + groupBase);
-            col_.faces.push_back(f);
-        }
         for (collision::Markup m : c.markup) {
             // Water boxes (findWater) carry {min, max, centre, half extents, rotation, waves}: only the first three are positions.
             const size_t positions = m.type == 10 && m.points.size() >= 5 ? 3 : m.points.size();
@@ -394,7 +390,7 @@ void World::rebuildCollision() {
             col_.markup.push_back(std::move(m));
         }
     }
-    col_.build();
+    col_.finishParts();
 }
 
 void World::crossPortals(vec3 from, vec3 to) {

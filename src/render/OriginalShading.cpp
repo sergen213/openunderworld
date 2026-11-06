@@ -266,21 +266,27 @@ Prepared prepare(const scene::SceneData& scene, bool vulkan) {
     Prepared out;
     std::unordered_map<uint64_t, const scene::ShaderCode*> code;
     for (const auto& c : scene.shaders) code.emplace(c.hash, &c);
-    std::map<std::pair<uint64_t, bool>, sm3::Glsl> cache; // (hash, Material::skinParams)
+    // Translations are memoised process-wide by (ShaderLib hash, backend, Material::skinParams): every streamed unit
+    // re-uploads the whole scene's materials, and translating them all again cost the join frame ~4 ms. ShaderLib
+    // hashes identify the bytecode (the scene keeps one program per hash).
+    static std::mutex memoMutex;
+    static std::map<std::tuple<uint64_t, bool, bool>, sm3::Glsl> memo;
+    std::map<std::pair<uint64_t, bool>, const sm3::Glsl*> cache; // (hash, Material::skinParams)
     auto glsl = [&](uint64_t hash, bool pixel, std::string& why, bool skinParams = false) -> const sm3::Glsl* {
-        if (auto it = cache.find({hash, skinParams}); it != cache.end()) return it->second.error.empty() ? &it->second : (why = it->second.error, nullptr);
+        if (auto it = cache.find({hash, skinParams}); it != cache.end()) return it->second->error.empty() ? it->second : (why = it->second->error, nullptr);
         const auto c = code.find(hash);
         if (c == code.end() || c->second->pixel != pixel) { why = "program not loaded"; return nullptr; }
-        sm3::Glsl g;
-        try {
-            const auto prog = formats::d3d9::parse(std::span<const uint8_t>(c->second->bytecode));
-            g = sm3::translate(prog, vulkan, skinParams);
-        } catch (const std::exception& e) {
-            g.error = e.what();
-        }
-        auto& slot = cache[{hash, skinParams}] = std::move(g);
-        if (!slot.error.empty()) { why = slot.error; return nullptr; }
-        return &slot;
+        const std::lock_guard lock(memoMutex);
+        auto [slot, fresh] = memo.try_emplace({hash, vulkan, skinParams});
+        if (fresh) try {
+                const auto prog = formats::d3d9::parse(std::span<const uint8_t>(c->second->bytecode));
+                slot->second = sm3::translate(prog, vulkan, skinParams);
+            } catch (const std::exception& e) {
+                slot->second.error = e.what();
+            }
+        const sm3::Glsl* g = cache[{hash, skinParams}] = &slot->second; // std::map nodes stay put
+        if (!g->error.empty()) { why = g->error; return nullptr; }
+        return g;
     };
     std::map<std::tuple<uint64_t, uint64_t, bool>, int> pairs;
     for (const auto& m : scene.materials) {

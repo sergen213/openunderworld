@@ -235,8 +235,11 @@ Survey (82 units, `scratch/portalsurvey.py`) [O]:
 
 - `World(UnitLoader, unit, …)` loads `unit` at offset 0 plus every portal target. Each target goes at the offset
   computed exactly as `0x5D13E0` does (`game::relocation`, both steps).
-- Collision: the loaded units' meshes and markup are merged into one `CollisionMesh` in the world frame, and its BVH
-  is rebuilt on every change. Ledge and water markup indices in Lara's state are remapped across the rebuild.
+- Collision: the loaded units' meshes and markup are merged into one `CollisionMesh` in the world frame: each unit's
+  BVH (built on the loader thread) is appended with its offset (`CollisionMesh::appendPart`) under a top level over
+  the units (`finishParts`). Hits equal those of one BVH over the
+  merged mesh (`Collision.PartsMatchOneBuild`; equal-distance ties still go by traversal order, so at a seam between
+  units they may pick another face than before). Ledge and water markup indices in Lara's state are remapped.
 - Crossing: each tick, Lara's path at mid-body height (feet + 250) is tested against the planes of the current
   unit's portals, inside their bounds ± 50. Crossing one makes its target the current unit. Then the target's
   neighbours are loaded and every unit that is neither current nor adjacent is dropped. This replaces the signal
@@ -251,13 +254,15 @@ Survey (82 units, `scratch/portalsurvey.py`) [O]:
   chapters) wait for their neighbours.
 - A neighbour that failed to load is retried on crossing.
 - Rendering (`ou-game`): each loaded unit's level scene, moved by its offset, is re-uploaded when the unit set
-  changes; Vulkan keeps the previous upload's compiled programs and pipelines. Script objects follow the unit set
-  (src/script). Music: the unit scripts request their tracks (AUDIO.md §9.9).
-- Main-thread cost of a stream, `pool_to_ragnarok.txt` on Vulkan with vsync (real-time ticks), logged as `stream
-  world / scene / upload`: before, the crossing frame 45 + 56 + 656 ms (773 ms frame; the upload recompiled every
-  program); now the crossing does nothing and l4_staircase_mictlan joins at tick 164 with 12 + 12 + 53 ms (86 ms
-  frame). The rest is the whole-scene re-upload (both backends) and collision rebuild: keeping each unit's GPU
-  data resident would remove it.
+  changes. Every source is keyed (`scene::assignKeys`) and the renderers keep keyed meshes and textures resident
+  (docs/RENDERING.md "Resident units"); a unit decoded by the worker is sent ahead as a renderer part
+  (`Renderer::uploadPart`, created over frames, 8 MB per frame) and freed when it unloads (`releasePart`). Script
+  objects follow the unit set (src/script; `Runtime::setUnits` adds each unit once). Music: the unit scripts request
+  their tracks (AUDIO.md §9.9).
+- Main-thread cost of a stream, `pool_to_ragnarok.txt` with vsync (real-time ticks), logged as `stream world / scene
+  / upload`: l4_staircase_mictlan joins at tick 164 with 4 + 2 + 2.5 ms on Vulkan and 4 + 2 + 3.3 ms on OpenGL
+  (before: 12 + 12 + 55 and 12 + 12.5 + 87 ms; the first fix of the crossing: 773 ms). Vulkan builds the RT
+  structures in the next frame's command buffer, without waiting for the device.
 
 ### Unit script
 

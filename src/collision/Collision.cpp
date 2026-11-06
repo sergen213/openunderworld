@@ -119,6 +119,8 @@ vec3 CollisionMesh::faceNormal(uint32_t face) const {
 
 void CollisionMesh::build() {
     nodes_.clear();
+    partRoots_.clear();
+    root_ = 0;
     order_.resize(faces.size());
     std::vector<vec3> centroid(faces.size());
     for (uint32_t i = 0; i < faces.size(); ++i) {
@@ -168,7 +170,7 @@ template <class Visit> void CollisionMesh::overlap(vec3 lo, vec3 hi, Visit&& vis
     if (nodes_.empty()) return;
     uint32_t stack[64];
     int sp = 0;
-    stack[sp++] = 0;
+    stack[sp++] = root_;
     while (sp) {
         const Node& n = nodes_[stack[--sp]];
         if (glm::any(glm::greaterThan(n.lo, hi)) || glm::any(glm::lessThan(n.hi, lo))) continue;
@@ -195,15 +197,74 @@ bool CollisionMesh::setTerrainGroupEnabled(uint32_t modelIndex, bool enabled) {
     groupEnabled_[*group] = enabled;
     return true;
 }
-void CollisionMesh::clearTerrainGroups() {
-    groupModels_.clear();
-    groupEnabled_.clear();
+void CollisionMesh::clearParts() {
+    vertices.clear(), faces.clear();
+    nodes_.clear(), order_.clear(), partRoots_.clear();
+    groupModels_.clear(), groupEnabled_.clear();
+    root_ = 0;
 }
-uint32_t CollisionMesh::appendTerrainGroups(const CollisionMesh& other) {
-    const uint32_t base = uint32_t(groupModels_.size());
-    groupModels_.insert(groupModels_.end(), other.groupModels_.begin(), other.groupModels_.end());
-    groupEnabled_.insert(groupEnabled_.end(), other.groupEnabled_.begin(), other.groupEnabled_.end());
-    return base;
+
+void CollisionMesh::appendPart(const CollisionMesh& part, vec3 offset) {
+    if (part.order_.size() != part.faces.size()) { // never built (synthetic meshes)
+        CollisionMesh built = part;
+        built.build();
+        return appendPart(built, offset);
+    }
+    const auto vb = uint32_t(vertices.size()), fb = uint32_t(faces.size()), nb = uint32_t(nodes_.size());
+    const auto gb = uint16_t(groupModels_.size());
+    groupModels_.insert(groupModels_.end(), part.groupModels_.begin(), part.groupModels_.end());
+    groupEnabled_.insert(groupEnabled_.end(), part.groupEnabled_.begin(), part.groupEnabled_.end());
+    vertices.reserve(vertices.size() + part.vertices.size());
+    for (const vec3& v : part.vertices) vertices.push_back(v + offset);
+    faces.reserve(faces.size() + part.faces.size());
+    for (Face f : part.faces) {
+        for (auto& i : f.v) i += vb;
+        f.group = uint16_t(f.group + gb);
+        faces.push_back(f);
+    }
+    order_.reserve(order_.size() + part.order_.size());
+    for (const uint32_t i : part.order_) order_.push_back(i + fb);
+    // Rounding is monotonic, so min/max of the moved vertices are the moved bounds: the part's tree stays exact.
+    nodes_.reserve(nodes_.size() + part.nodes_.size());
+    for (Node n : part.nodes_) {
+        n.lo += offset, n.hi += offset;
+        n.first += n.count ? fb : nb;
+        nodes_.push_back(n);
+    }
+    if (!part.nodes_.empty()) partRoots_.push_back(nb + part.root_);
+}
+
+void CollisionMesh::finishParts() {
+    // Top level over the part roots: median split on the longest centre axis, as build(); its leaves are copies of the
+    // part roots (a child pair must be adjacent, the roots are not). ponytail: rebuilt whole, a handful of parts.
+    if (partRoots_.size() <= 1) {
+        root_ = partRoots_.empty() ? 0 : partRoots_[0];
+        return;
+    }
+    std::vector<uint32_t> roots = partRoots_;
+    auto make = [&](auto& self, size_t first, size_t count) -> Node {
+        if (count == 1) return nodes_[roots[first]];
+        vec3 clo(kInf), chi(-kInf);
+        for (size_t i = first; i < first + count; ++i) {
+            const Node& n = nodes_[roots[i]];
+            clo = glm::min(clo, (n.lo + n.hi) * 0.5f), chi = glm::max(chi, (n.lo + n.hi) * 0.5f);
+        }
+        const vec3 ext = chi - clo;
+        const int axis = ext.x >= ext.y && ext.x >= ext.z ? 0 : ext.y >= ext.z ? 1 : 2;
+        const size_t half = count / 2;
+        std::nth_element(roots.begin() + std::ptrdiff_t(first), roots.begin() + std::ptrdiff_t(first + half),
+                         roots.begin() + std::ptrdiff_t(first + count), [&](uint32_t a, uint32_t b) {
+                             return nodes_[a].lo[axis] + nodes_[a].hi[axis] < nodes_[b].lo[axis] + nodes_[b].hi[axis];
+                         });
+        const Node a = self(self, first, half), b = self(self, first + half, count - half);
+        const auto pair = uint32_t(nodes_.size());
+        nodes_.push_back(a);
+        nodes_.push_back(b);
+        return {glm::min(a.lo, b.lo), glm::max(a.hi, b.hi), pair, 0};
+    };
+    const Node top = make(make, 0, roots.size());
+    root_ = uint32_t(nodes_.size());
+    nodes_.push_back(top);
 }
 bool CollisionMesh::queryable(const Face& f, uint8_t mask) const {
     return collision::queryable(f, mask) && (f.group >= groupEnabled_.size() || groupEnabled_[f.group]);
@@ -226,7 +287,7 @@ std::optional<Hit> CollisionMesh::rayFaces(vec3 origin, vec3 dir, float maxDist,
     };
     uint32_t stack[64];
     int sp = 0;
-    stack[sp++] = 0;
+    stack[sp++] = root_;
     while (sp) {
         const Node& n = nodes_[stack[--sp]];
         if (slab(n) == kInf) continue;
@@ -331,7 +392,7 @@ std::optional<Hit> CollisionMesh::closestFaces(vec3 p, float maxDist, uint8_t ma
     float best2 = maxDist * maxDist;
     uint32_t stack[64];
     int sp = 0;
-    stack[sp++] = 0;
+    stack[sp++] = root_;
     while (sp) {
         const Node& n = nodes_[stack[--sp]];
         if (boxDist2(p, n.lo, n.hi) > best2) continue;

@@ -471,6 +471,7 @@ struct EnemyMeshes {
         } catch (const std::exception& e) {
             warnings.push_back(name + ": " + e.what());
         }
+        ou::scene::assignKeys(s);
         return types.emplace(name, std::move(s)).first->second;
     }
     const ou::scene::SceneData& gun(const ou::cdc::BigfileSet& bf, const std::string& object, std::vector<std::string>& warnings) {
@@ -651,7 +652,10 @@ void appendEnemyLines(const ou::game::World& w, std::vector<ou::render::DebugLin
 }
 // Render scene of the streamed units: each loaded unit's level scene (UnitData::scene, decoded by the background
 // streamer, else here; cached while it stays loaded) moved by its stream offset, then Lara's skinned meshes. Rebuilt
-// and re-uploaded when World::unitsVersion changes.
+// and re-uploaded when World::unitsVersion changes. Every source is keyed (scene::assignKeys) and each rebuild moves
+// what the previous scene already holds by key instead of copying it, so a unit joining costs its own meshes and
+// textures only, here and in the renderer (Renderer::upload keeps keyed content resident). Each unit's scene is also a
+// renderer part (syncParts), sent ahead as soon as the streamer decoded it.
 struct StreamedScene {
     std::map<std::string, std::shared_ptr<const ou::scene::SceneData>> units; // unit frame
     std::vector<std::pair<uint32_t, uint32_t>> unitMeshes; // per World::units() entry: first scene mesh, count (portal clips)
@@ -668,6 +672,33 @@ struct StreamedScene {
     uint32_t hiddenGroups = 0; // World::laraHiddenGroups() the scene was built with
     std::string laraOutfit; // pc-w\<laraOutfit>.drm is in `lara` and rigs the world's pose skeleton
 
+    // Renderer parts (Renderer::uploadPart): unit scenes the background streamer finished (`decoded`, filled on its
+    // worker thread), else the ones loaded here, from the moment they exist until no unit or pending load holds them.
+    struct Decoded {
+        std::mutex mutex;
+        std::vector<std::shared_ptr<const ou::scene::SceneData>> scenes;
+    };
+    std::shared_ptr<Decoded> decoded = std::make_shared<Decoded>();
+    std::map<const ou::scene::SceneData*, std::pair<std::weak_ptr<const ou::scene::SceneData>, uint64_t>> parts;
+    uint64_t nextPart = 1;
+    void syncParts(ou::render::Renderer& r) {
+        std::vector<std::shared_ptr<const ou::scene::SceneData>> fresh;
+        {
+            const std::lock_guard lock(decoded->mutex);
+            fresh.swap(decoded->scenes);
+        }
+        for (const auto& [_, s] : units) fresh.push_back(s);
+        std::erase_if(parts, [&](const auto& kv) { // first: a freed scene's address may come back
+            if (!kv.second.first.expired()) return false;
+            r.releasePart(kv.second.second);
+            return true;
+        });
+        for (const auto& s : fresh)
+            if (!parts.contains(s.get())) {
+                parts[s.get()] = {s, nextPart};
+                r.uploadPart(nextPart++, s);
+            }
+    }
     // Lara's skinned meshes and pose rig from World::outfit's DRM (GAMEPLAY.md "Outfits") when it changed: level loads
     // and saves pick the outfit. Returns the parsed DRM (for its waves) on a change; the scene then needs a rebuild.
     // A missing DRM falls back to lara.drm, as tru.exe 0x5DE2B0 falls back to the unit's object.
@@ -693,15 +724,48 @@ struct StreamedScene {
             if (m.skeleton >= 0 && !m.indices.empty()) lara.meshes.push_back(std::move(m)); // skinned body only
         if (lara.meshes.empty()) warnings.push_back("pc-w\\" + w.outfit + ".drm: no skinned mesh decoded");
         for (auto& x : sc.warnings) warnings.push_back(std::move(x));
+        ou::scene::assignKeys(lara);
+        for (auto& m : lara.meshes) m.key = 0; // build's hideDrawGroups edits the copies: never moved by key
         laraOutfit = w.outfit;
         return drm;
     }
 
+    // `old` = the previous build's result: its keyed meshes / textures, materials and programs are moved into the new
+    // scene instead of copied. `fxTextures` = the effect library's (EffectsView::textures).
     ou::scene::SceneData build(const ou::cdc::BigfileSet& bf, const ou::game::World& w, LaraMeshes& laraMeshes,
-                               EnemyMeshes& enemyMeshes, std::vector<std::string>& warnings) {
+                               EnemyMeshes& enemyMeshes, std::vector<std::string>& warnings, ou::scene::SceneData&& old,
+                               std::span<const ou::scene::TextureData> fxTextures) {
         std::erase_if(units, [&](const auto& kv) {
             return std::none_of(w.units().begin(), w.units().end(), [&](const auto& u) { return u.data.name == kv.first; });
         });
+        for (const auto& u : w.units()) // first: a load that throws leaves `old` whole
+            if (!units.contains(u.data.name)) {
+                std::shared_ptr<const ou::scene::SceneData> s = u.data.scene;
+                if (!s) {
+                    auto sc = ou::formats::loadLevelScene(bf, "pc-w\\" + u.data.name + ".drm");
+                    ou::scene::assignKeys(sc);
+                    s = std::make_shared<const ou::scene::SceneData>(std::move(sc));
+                }
+                for (const auto& x : s->warnings) warnings.push_back(x);
+                units.emplace(u.data.name, std::move(s));
+            }
+        ou::scene::assignKeys(guns), ou::scene::assignKeys(grenades);
+        std::unordered_map<uint64_t, size_t> oldMeshes, oldTextures, oldShaders;
+        std::unordered_map<uint32_t, size_t> oldMaterials;
+        for (size_t i = 0; i < old.meshes.size(); ++i)
+            if (old.meshes[i].key) oldMeshes.emplace(old.meshes[i].key, i);
+        for (size_t i = 0; i < old.textures.size(); ++i)
+            if (old.textures[i].key) oldTextures.emplace(old.textures[i].key, i);
+        for (size_t i = 0; i < old.materials.size(); ++i) oldMaterials.emplace(old.materials[i].id, i);
+        for (size_t i = 0; i < old.shaders.size(); ++i) oldShaders.emplace(old.shaders[i].hash, i);
+        // Moves old[map[k]] out once (a key / id taken is erased), else copies `src`.
+        auto take = [](auto& from, auto& map, auto k, const auto& src) {
+            const auto it = map.find(k);
+            if (it == map.end()) return src;
+            auto v = std::move(from[it->second]);
+            map.erase(it);
+            return v;
+        };
         ou::scene::SceneData out;
         std::set<uint32_t> textureIds, materialIds; // cdc section ids, unique across DRMs
         std::set<uint64_t> shaderIds;
@@ -712,27 +776,37 @@ struct StreamedScene {
         for (const auto& o : w.script().objects())
             if (o.hidden) hiddenIntros.insert(o.uid);
         for (const auto& [uid, b] : w.bikes()) hiddenIntros.insert(uid); // drawn posed (poseBikes)
+        auto addTexture = [&](const ou::scene::TextureData& t) {
+            if (!textureIds.insert(t.id).second) return;
+            if (t.key && oldTextures.contains(t.key)) out.textures.push_back(take(old.textures, oldTextures, t.key, t));
+            else out.textures.push_back(t);
+        };
         auto append = [&](const ou::scene::SceneData& s, glm::vec3 offset, std::vector<size_t>* indices,
                           const std::string* unitName = nullptr) {
             const auto skelBase = int32_t(out.skeletons.size());
             out.skeletons.insert(out.skeletons.end(), s.skeletons.begin(), s.skeletons.end());
-            for (auto m : s.meshes) {
-                if (const auto at = m.origin.rfind(" @intro "); at != std::string::npos) {
-                    const int32_t uid = std::atoi(m.origin.c_str() + at + 8);
+            for (const auto& src : s.meshes) {
+                if (const auto at = src.origin.rfind(" @intro "); at != std::string::npos) {
+                    const int32_t uid = std::atoi(src.origin.c_str() + at + 8);
                     if (enemyIntros.contains(uid) || hiddenIntros.contains(uid)) continue;
                 }
-                m.transform[12] += offset.x, m.transform[13] += offset.y, m.transform[14] += offset.z;
-                if (m.skeleton >= 0) m.skeleton += skelBase;
+                float transform[16];
+                std::copy_n(src.transform, 16, transform);
+                transform[12] += offset.x, transform[13] += offset.y, transform[14] += offset.z;
+                const auto it = src.key ? oldMeshes.find(src.key) : oldMeshes.end();
+                const bool same = it != oldMeshes.end() && std::equal(transform, transform + 16, old.meshes[it->second].transform);
+                ou::scene::MeshData m = same ? take(old.meshes, oldMeshes, src.key, src) : src;
+                std::copy_n(transform, 16, m.transform);
+                m.skeleton = src.skeleton >= 0 ? src.skeleton + skelBase : -1;
                 if (indices) indices->push_back(out.meshes.size());
                 out.meshes.push_back(std::move(m));
             }
-            for (const auto& t : s.textures)
-                if (textureIds.insert(t.id).second) out.textures.push_back(t);
+            for (const auto& t : s.textures) addTexture(t);
             // Original-shader inputs (docs/formats/SHADERS.md): section / program ids are global, first one wins.
             for (const auto& m : s.materials)
-                if (materialIds.insert(m.id).second) out.materials.push_back(m);
+                if (materialIds.insert(m.id).second) out.materials.push_back(take(old.materials, oldMaterials, m.id, m));
             for (const auto& c : s.shaders)
-                if (shaderIds.insert(c.hash).second) out.shaders.push_back(c);
+                if (shaderIds.insert(c.hash).second) out.shaders.push_back(take(old.shaders, oldShaders, c.hash, c));
             // First unit's render settings; every unit's point/spot lights, moved by its stream offset.
             if (!out.environment.valid && s.environment.valid) {
                 out.environment = s.environment;
@@ -748,15 +822,8 @@ struct StreamedScene {
         };
         unitMeshes.clear();
         for (const auto& u : w.units()) {
-            auto it = units.find(u.data.name);
-            if (it == units.end()) {
-                auto s = u.data.scene ? u.data.scene
-                                      : std::make_shared<const ou::scene::SceneData>(ou::formats::loadLevelScene(bf, "pc-w\\" + u.data.name + ".drm"));
-                it = units.emplace(u.data.name, std::move(s)).first;
-                for (const auto& s : it->second->warnings) warnings.push_back(s);
-            }
             const auto first = uint32_t(out.meshes.size());
-            append(*it->second, u.offset, nullptr, &u.data.name);
+            append(*units.at(u.data.name), u.offset, nullptr, &u.data.name);
             unitMeshes.emplace_back(first, uint32_t(out.meshes.size()) - first);
         }
         // Draw groups hidden on Lara (Thor's gear, wetsuit dive gear; GAMEPLAY.md). Lara's meshes are the last block of
@@ -792,6 +859,14 @@ struct StreamedScene {
         append(guns, glm::vec3(0), &gunIndices);
         grenadeIndices.clear();
         append(grenades, glm::vec3(0), &grenadeIndices);
+        // Effect sprites' textures (fx::Library, loaded as effects need them): cdc section ids, so keyed by id.
+        constexpr uint64_t kFxKey = 1ull << 63; // beside assignKeys' counter
+        for (const auto& t : fxTextures) {
+            if (!textureIds.insert(t.id).second) continue;
+            ou::scene::TextureData copy = take(old.textures, oldTextures, kFxKey | t.id, t);
+            copy.key = kFxKey | t.id;
+            out.textures.push_back(std::move(copy));
+        }
         // GadgetView's and EffectsView's moving lights take the first environment slots (OriginalShading uses the first
         // 64 lights); effect fixtures follow the units' lights.
         if (out.environment.valid) {
@@ -1081,13 +1156,10 @@ struct EffectsView {
         }
         objectClipAt = std::move(seen);
     }
-    // Particle textures the level scene does not already hold (renderers look textures up by id).
-    void addTextures(ou::scene::SceneData& scene) const {
-        if (!library) return;
-        std::set<uint32_t> have;
-        for (const auto& t : scene.textures) have.insert(t.id);
-        for (const auto& t : library->textures())
-            if (have.insert(t.id).second) scene.textures.push_back(t);
+    // Particle textures for the render scene (StreamedScene::build adds those the level scene does not already hold;
+    // renderers look textures up by id).
+    std::span<const ou::scene::TextureData> textures() const {
+        return library ? std::span<const ou::scene::TextureData>(library->textures()) : std::span<const ou::scene::TextureData>{};
     }
     ou::render::ScreenFilter filter; // class-5 screen filters (docs/formats/EFFECTS.md "Screen filters")
     void frame(const ou::render::Camera& cam, float aspect, const ou::game::World& w, ou::render::FrameOptions& fo) {
@@ -1576,10 +1648,14 @@ int main(int argc, char** argv) {
                                                   ou::game::loadLaraAnims(bf), spawn);
         // Neighbour units (and their render scenes) load on a worker thread (World::setAsyncStreaming); --sync-loads: inline.
         if (!opt.syncLoads)
-            world->setAsyncStreaming([b = bigfile.get(), &spirvWarm](const std::string& n) {
+            world->setAsyncStreaming([b = bigfile.get(), &spirvWarm, decoded = streamed.decoded](const std::string& n) {
                 auto u = ou::game::loadUnitData(*b, n);
-                u.scene = std::make_shared<const ou::scene::SceneData>(ou::formats::loadLevelScene(*b, "pc-w\\" + n + ".drm"));
+                auto sc = ou::formats::loadLevelScene(*b, "pc-w\\" + n + ".drm");
+                ou::scene::assignKeys(sc);
+                u.scene = std::make_shared<const ou::scene::SceneData>(std::move(sc));
                 if (const int warm = spirvWarm) ou::render::original::warmSpirv(*u.scene, warm == 2);
+                const std::lock_guard lock(decoded->mutex); // the renderer gets it ahead of its join (syncParts)
+                decoded->scenes.push_back(u.scene);
                 return u;
             });
         world->fovDeg = opt.fov;
@@ -1617,8 +1693,7 @@ int main(int argc, char** argv) {
         effects.reserve(streamed);
         effects.sync(bf, *world, warnings);
         streamed.fixtureLights = effects.fixtures();
-        scene = streamed.build(bf, *world, lara, enemyMeshes, warnings);
-        effects.addTextures(scene);
+        scene = streamed.build(bf, *world, lara, enemyMeshes, warnings, std::move(scene), effects.textures());
     } catch (const std::exception& e) {
         std::fprintf(stderr, "ou-game: %s\n", e.what());
         return 1;
@@ -2453,6 +2528,7 @@ int main(int argc, char** argv) {
             if (next) {
                 renderer->shutdown(); // before its window goes
                 renderer = std::move(next);
+                streamed.parts.clear(); // the old renderer's (syncParts sends them to this one)
                 window = std::move(nw);
                 chosen = ch;
                 renderer->setVsync(opt.vsync);
@@ -2481,6 +2557,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "ou-game: outfit %s: %s\n", world->outfit.c_str(), e.what());
             streamed.laraOutfit = world->outfit; // keep the current meshes, do not retry every frame
         }
+        streamed.syncParts(*renderer); // decoded units go to the GPU ahead of their join
         if (world->unitsVersion() != streamed.version || world->enemies().version() != streamed.enemyVersion ||
             world->lightsVersion() != streamed.lightsVersion || world->script().visibilityVersion() != streamed.visibilityVersion ||
             world->laraHiddenGroups() != streamed.hiddenGroups) {
@@ -2489,8 +2566,7 @@ int main(int argc, char** argv) {
                 const uint64_t t0 = SDL_GetTicksNS();
                 effects.sync(*bigfile, *world, warnings);
                 streamed.fixtureLights = effects.fixtures();
-                scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings);
-                effects.addTextures(scene);
+                scene = streamed.build(*bigfile, *world, lara, enemyMeshes, warnings, std::move(scene), effects.textures());
                 const uint64_t t1 = SDL_GetTicksNS();
                 for (auto& w : renderer->upload(scene)) warnings.push_back(std::move(w));
                 objects.index(scene);

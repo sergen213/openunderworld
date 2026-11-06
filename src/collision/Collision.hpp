@@ -107,8 +107,14 @@ public:
     std::optional<uint32_t> terrainGroupForModel(uint32_t modelIndex) const;
     std::optional<bool> terrainGroupEnabled(uint32_t modelIndex) const;
     bool setTerrainGroupEnabled(uint32_t modelIndex, bool enabled);
-    void clearTerrainGroups();
-    uint32_t appendTerrainGroups(const CollisionMesh& other);
+
+    // Merged mesh of several built meshes (World streaming: one per loaded unit) without rebuilding a BVH over all of
+    // them: appendPart adds `part`'s vertices moved by `offset`, its faces and terrain groups, and its own BVH (bounds
+    // moved; a part without a current BVH is built first); finishParts puts a small top level over the parts' BVHs.
+    // Queries need finishParts after the last appendPart. clearParts empties the geometry (not markup or dynamics).
+    void clearParts();
+    void appendPart(const CollisionMesh& part, vec3 offset);
+    void finishParts();
 
 private:
     struct Node {
@@ -126,6 +132,8 @@ private:
     friend CollisionMesh loadLevelCollision(const cdc::Drm& drm, std::vector<std::string>* warnings);
     std::vector<Node> nodes_;
     std::vector<uint32_t> order_;
+    uint32_t root_ = 0;              // nodes_ index of the root (build: 0; finishParts: the top level's)
+    std::vector<uint32_t> partRoots_; // appendPart: each part's root in nodes_
     std::vector<uint32_t> groupModels_; // terrain group -> unit model-list index; UINT32_MAX = no identity
     std::vector<bool> groupEnabled_;
 };

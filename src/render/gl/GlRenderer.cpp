@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <map>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -325,7 +327,12 @@ struct GpuMesh {
     float radius = 0.0f;                // world-space bounding-sphere radius (original::lightSet)
     bool water = false;                 // *watersurface* mesh (render/Water.hpp): Enhanced water draws it separately
     std::vector<uint8_t> reflective;    // per submesh: a planar-reflection material (render::reflectsWater candidates)
-    size_t source = 0, vertexCount = 0; // SceneData::meshes index, vertex count
+    size_t source = 0, vertexCount = 0, indexCount = 0; // SceneData::meshes index, vertex / index counts
+    // Residency (Renderer::upload): MeshData::key (0: sent each upload), the part holding it (0: none), changed by
+    // updateVertices since it was sent (then sent again), world bounds of its vertices under `model`.
+    uint64_t key = 0, part = 0;
+    bool dirty = false;
+    Bounds bounds;
 };
 
 // Offscreen scene target (MSAA renderbuffers + single-sample resolve texture), rebuilt on size or
@@ -369,7 +376,7 @@ struct Resources {
     std::array<Streamed, 3> uiImages; // FrameOptions::uiImages
     // Original Fidelity (docs/formats/SHADERS.md): translated programs, register-file UBOs (bindings 0 frame,
     // 1 material, 2 object; ShaderTranslate.hpp), objects rewritten per frame.
-    std::vector<Program> originals;
+    std::vector<GLuint> originals; // per Prepared program (owned by `linked`)
     Buffer frameUbo, materialUbo, objectUbo;
     Buffer shadowUbo; // render/sun.glsl OuShadow (UBO binding 3); the shadow map is texture unit 16
     GLint uboAlign = 256;
@@ -378,8 +385,20 @@ struct Resources {
     Buffer textVbo, lineVbo;
     const DebugLine* lineSource = nullptr; // cached upload of FrameOptions::debugLines
     size_t lineCount = 0;
-    std::unordered_map<uint32_t, Texture> textures;
+    // Scene textures by id for the current upload (owned by `resident` / `transientTextures`).
+    std::unordered_map<uint32_t, GLuint> textures;
+    struct ResidentTexture {
+        Texture tex;
+        bool cube = false;
+        uint64_t part = 0, upload = 0; // the part holding it (0: none); the last upload listing it
+    };
+    std::unordered_map<uint64_t, ResidentTexture> resident; // TextureData::key -> texture
+    std::vector<Texture> transientTextures;                 // unkeyed: the current upload's only
     std::vector<GpuMesh> meshes;
+    std::unordered_map<uint64_t, GpuMesh> parked; // keyed meshes held by a part, not in the current upload
+    // Linked original programs by (VS, PS) source, kept while an upload uses them; `error` when linking failed.
+    struct Linked { Program program; std::string error; uint64_t upload = 0; };
+    std::map<std::pair<std::string, std::string>, Linked> linked;
     Bounds bounds;
     Targets targets;
     std::vector<DrawRef> order;
@@ -534,30 +553,100 @@ public:
         return true;
     }
 
+    // Keyed content stays resident (Renderer::upload): textures by TextureData::key, meshes by MeshData::key (their
+    // buffers; the per-upload state, programs, material blocks and samplers, is rebuilt for every mesh). Linked original
+    // programs are kept by source. GL deletes in order with the frames using them, so dropped objects go at once.
     std::vector<std::string> upload(const scene::SceneData& scene) override {
         std::vector<std::string> warnings;
         Resources& r = *res_;
+        pumpParts(SIZE_MAX, warnings); // parts still in flight: the scene may list them
+        ++uploads_;
         r.textures.clear();
-        r.meshes.clear();
         cubes_.clear();
+        std::vector<Texture> transient;
         for (const auto& t : scene.textures) {
             if (r.textures.contains(t.id)) { // first id wins, as formats::loadTextures and the Vulkan backend
                 warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): duplicate texture id, first one wins");
                 continue;
             }
-            Texture tex = uploadTexture(t, warnings);
-            if (tex.get()) r.textures[t.id] = std::move(tex);
+            GLuint id = 0;
+            if (t.key) {
+                auto it = r.resident.find(t.key);
+                if (it == r.resident.end()) {
+                    Texture tex = uploadTexture(t, warnings);
+                    if (!tex.get()) continue;
+                    it = r.resident.emplace(t.key, Resources::ResidentTexture{std::move(tex), t.cube}).first;
+                }
+                it->second.upload = uploads_;
+                id = it->second.tex.get();
+            } else {
+                Texture tex = uploadTexture(t, warnings);
+                if (!tex.get()) continue;
+                id = tex.get();
+                transient.push_back(std::move(tex));
+            }
+            r.textures[t.id] = id;
+            if (t.cube) cubes_.insert(t.id);
         }
+        std::erase_if(r.resident, [&](const auto& kv) { return kv.second.upload != uploads_ && !parts_.contains(kv.second.part); });
+        r.transientTextures = std::move(transient);
         environment_ = scene.environment;
         // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
         const auto lut = original::attenuationLut(environment_);
         glTextureSubImage2D(r.attenuation.get(), 0, 0, 0, lut.width, lut.height, GL_RGBA, GL_UNSIGNED_BYTE, lut.rgba.data());
         prepareOriginals(scene, warnings);
-        for (size_t i = 0; i < scene.meshes.size(); ++i) uploadMesh(scene.meshes[i], i, warnings);
+        std::unordered_map<uint64_t, GpuMesh> pool = std::move(r.parked);
+        r.parked.clear();
+        for (auto& g : r.meshes)
+            if (g.key && !g.dirty) pool.emplace(g.key, std::move(g));
+        r.meshes.clear();
+        std::unordered_set<uint64_t> listed; // a key twice: the copies are sent each upload
+        r.bounds = {};
+        for (size_t i = 0; i < scene.meshes.size(); ++i) {
+            const scene::MeshData& m = scene.meshes[i];
+            const bool keyed = m.key && listed.insert(m.key).second;
+            const auto it = keyed ? pool.find(m.key) : pool.end();
+            GpuMesh g;
+            if (it != pool.end() && it->second.vertexCount == m.vertices.size() && it->second.indexCount == m.indices.size()) {
+                g = std::move(it->second);
+                pool.erase(it);
+                place(g, m);
+            } else if (!createMesh(m, g, warnings)) {
+                continue;
+            }
+            g.key = keyed ? m.key : 0;
+            g.source = i;
+            bindOriginals(g, m);
+            r.bounds.lo = glm::min(r.bounds.lo, g.bounds.lo), r.bounds.hi = glm::max(r.bounds.hi, g.bounds.hi);
+            r.meshes.push_back(std::move(g));
+        }
+        for (auto& [key, g] : pool)
+            if (parts_.contains(g.part)) r.parked.emplace(key, std::move(g)); // the rest is freed here
         finishOriginals();
+        std::erase_if(r.linked, [&](const auto& kv) { return kv.second.upload != uploads_; });
         prepared_ = {};
-        r.bounds = sceneBounds(scene);
         return warnings;
+    }
+
+    void uploadPart(uint64_t id, std::shared_ptr<const scene::SceneData> part) override { parts_[id] = {std::move(part)}; }
+
+    void releasePart(uint64_t id) override {
+        Resources& r = *res_;
+        if (!parts_.erase(id)) return;
+        std::erase_if(r.resident, [&](auto& kv) {
+            if (kv.second.part != id) return false;
+            kv.second.part = 0;
+            return kv.second.upload != uploads_; // listed by the current upload: until the next one
+        });
+        std::erase_if(r.parked, [&](const auto& kv) { return kv.second.part == id; });
+        for (auto& g : r.meshes)
+            if (g.part == id) g.part = 0;
+    }
+
+    size_t residentCount() const override {
+        size_t n = res_->resident.size() + res_->parked.size();
+        for (const auto& g : res_->meshes) n += g.key != 0;
+        return n;
     }
 
     bool updateVertices(size_t meshIndex, std::span<const scene::Vertex> vertices) override {
@@ -567,6 +656,7 @@ public:
                 glNamedBufferSubData(g.vbo.get(), 0, GLsizeiptr(vertices.size_bytes()), vertices.data());
                 const glm::vec4 sphere = original::boundingSphere(vertices, g.model); // skinned: follows the pose
                 g.center = glm::vec3(sphere), g.radius = sphere.w;
+                g.dirty = true; // the next upload sends the scene's vertices again
                 return true;
             }
         return false;
@@ -578,6 +668,10 @@ public:
         Resources& r = *res_;
         if (vp.width <= 0 || vp.height <= 0) return;
         for (size_t i = 0; i < options.dynamicLights.size() && i < environment_.lights.size(); ++i) environment_.lights[i] = options.dynamicLights[i];
+        {
+            std::vector<std::string> ignored; // the upload listing them reports them
+            pumpParts(kPartBytesPerFrame, ignored);
+        }
         ensureTargets(vp, options);
         const float aspect = float(vp.width) / float(vp.height);
         const glm::mat4 viewProj = camera.projection(aspect) * camera.view();
@@ -635,7 +729,7 @@ public:
             scissorFor(d.mesh, vp);
             const int p = originals ? m.program[d.sub] : -1;
             if (p != program) {
-                glUseProgram(p < 0 ? r.sceneProgram.get() : r.originals[size_t(p)].get());
+                glUseProgram(p < 0 ? r.sceneProgram.get() : r.originals[size_t(p)]);
                 if (p < 0) boundMesh = UINT32_MAX; // re-send uModel to the generic program
                 program = p;
             }
@@ -759,6 +853,7 @@ public:
                          double(presentTimes_.size() - 2) / s);
         }
         SDL_GL_MakeCurrent(window_, context_);
+        parts_.clear();
         res_.reset(); // GL objects must die while the context is current
         SDL_GL_DestroyContext(context_);
         context_ = nullptr;
@@ -865,7 +960,7 @@ private:
     void drawSubmesh(const scene::SubMesh& s) {
         auto it = res_->textures.find(s.textureId);
         const bool usable = it != res_->textures.end() && !cubes_.contains(s.textureId);
-        glBindTextureUnit(0, usable ? it->second.get() : res_->white.get());
+        glBindTextureUnit(0, usable ? it->second : res_->white.get());
         glDrawElements(GL_TRIANGLES, GLsizei(s.indexCount), GL_UNSIGNED_INT,
                        reinterpret_cast<const void*>(uintptr_t(s.firstIndex) * sizeof(uint32_t)));
     }
@@ -941,7 +1036,6 @@ private:
                 glTextureSubImage2D(id, i, 0, 0, GLsizei(m.width), GLsizei(m.height), pixelFormat, GL_UNSIGNED_BYTE,
                                     m.data.data());
         }
-        if (t.cube) cubes_.insert(t.id);
         glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, levels > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTextureParameteri(id, GL_TEXTURE_WRAP_S, t.cube ? GL_CLAMP_TO_EDGE : GL_REPEAT);
@@ -950,14 +1044,14 @@ private:
         return tex;
     }
 
-    void uploadMesh(const scene::MeshData& m, size_t source, std::vector<std::string>& warnings) {
+    // GPU buffers of `m` into `g` (submeshes, bounds, water flag): false = not drawable (warned).
+    bool createMesh(const scene::MeshData& m, GpuMesh& g, std::vector<std::string>& warnings) {
         auto warn = [&](const std::string& w) { warnings.push_back("mesh (" + m.origin + "): " + w); };
-        if (m.vertices.empty() || m.indices.empty()) { warn("empty"); return; }
+        if (m.vertices.empty() || m.indices.empty()) { warn("empty"); return false; }
         if (std::any_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i >= m.vertices.size(); })) {
             warn("index out of range, skipped");
-            return;
+            return false;
         }
-        GpuMesh g;
         for (const auto& s : m.submeshes) {
             if (uint64_t(s.firstIndex) + s.indexCount > m.indices.size()) warn("submesh range out of bounds, skipped");
             else g.submeshes.push_back(s);
@@ -966,9 +1060,10 @@ private:
         g.model = glm::make_mat4(m.transform);
         const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
         g.center = glm::vec3(sphere), g.radius = sphere.w;
+        g.bounds = meshBounds(m);
         g.water = isWaterSurface(m.origin);
-        g.source = source;
         g.vertexCount = m.vertices.size();
+        g.indexCount = m.indices.size();
         g.vao = newVertexArray();
         g.vbo = newBuffer();
         g.ebo = newBuffer();
@@ -987,13 +1082,71 @@ private:
         attrib(vao, sm3::kAttrTexcoord1, 2, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, uv1));
         attrib(vao, sm3::kAttrTangent, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, tangent));
         attrib(vao, sm3::kAttrBinormal, 3, GL_FLOAT, GL_FALSE, offsetof(scene::Vertex, binormal));
+        return true;
+    }
+
+    // A resident mesh listed under a new transform (a part sent in its unit frame, then moved by its stream offset).
+    static void place(GpuMesh& g, const scene::MeshData& m) {
+        const glm::mat4 model = glm::make_mat4(m.transform);
+        if (model == g.model) return;
+        g.model = model;
+        const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
+        g.center = glm::vec3(sphere), g.radius = sphere.w;
+        g.bounds = meshBounds(m);
+    }
+
+    // The per-upload state of a mesh: its submeshes' programs, material blocks and samplers, reflection plane.
+    void bindOriginals(GpuMesh& g, const scene::MeshData& m) {
+        g.program.clear(), g.materialOffset.clear(), g.samplers.clear(), g.screenSamplers.clear(), g.reflection.clear();
+        g.reflective.clear();
         for (const auto& s : g.submeshes) addOriginal(g, s);
         g.reflectZ = original::reflectionPlaneZ(m, g.model, prepared_.materials);
         for (const auto& s : g.submeshes) {
             const auto it = prepared_.materials.find(s.materialId);
             g.reflective.push_back(it != prepared_.materials.end() && original::reflectionSamplers(*it->second) != 0);
         }
-        res_->meshes.push_back(std::move(g));
+    }
+
+    // Sends the parts' keyed content not resident yet, about `budget` bytes per call (drawFrame: spread over frames), and
+    // claims what is already resident for the part. A finished part drops its SceneData.
+    static constexpr size_t kPartBytesPerFrame = size_t(8) << 20;
+    void pumpParts(size_t budget, std::vector<std::string>& warnings) {
+        Resources& r = *res_;
+        size_t sent = 0;
+        for (auto& [id, p] : parts_) {
+            if (!p.data) continue;
+            const scene::SceneData& s = *p.data;
+            for (; p.texture < s.textures.size() && sent < budget; ++p.texture) {
+                const scene::TextureData& t = s.textures[p.texture];
+                if (!t.key) continue;
+                if (const auto it = r.resident.find(t.key); it != r.resident.end()) {
+                    it->second.part = id;
+                    continue;
+                }
+                Texture tex = uploadTexture(t, warnings);
+                for (const auto& mip : t.mips) sent += mip.data.size();
+                if (tex.get()) r.resident.emplace(t.key, Resources::ResidentTexture{std::move(tex), t.cube, id});
+            }
+            for (; p.texture == s.textures.size() && p.mesh < s.meshes.size() && sent < budget; ++p.mesh) {
+                const scene::MeshData& m = s.meshes[p.mesh];
+                if (!m.key) continue;
+                if (const auto it = r.parked.find(m.key); it != r.parked.end()) {
+                    it->second.part = id;
+                    continue;
+                }
+                const auto cur = std::find_if(r.meshes.begin(), r.meshes.end(), [&](const GpuMesh& g) { return g.key == m.key; });
+                if (cur != r.meshes.end()) {
+                    cur->part = id;
+                    continue;
+                }
+                GpuMesh g;
+                if (!createMesh(m, g, warnings)) continue;
+                sent += m.vertices.size() * sizeof(scene::Vertex) + m.indices.size() * sizeof(uint32_t);
+                g.key = m.key, g.part = id;
+                r.parked.emplace(m.key, std::move(g));
+            }
+            if (p.texture == s.textures.size() && p.mesh == s.meshes.size()) p.data.reset();
+        }
     }
 
     // ---- Original Fidelity (translated TRU shaders, docs/formats/SHADERS.md) ----
@@ -1009,11 +1162,13 @@ private:
         prepared_ = original::prepare(scene, false);
         for (auto& w : prepared_.warnings) warnings.push_back(std::move(w));
         for (const auto& p : prepared_.programs) {
-            std::string error;
-            const std::string ps = originalPixelSource(p.psGlsl.source, false, false); // + cascaded sun shadow
-            r.originals.push_back(linkProgram(p.vsGlsl.source.c_str(), ps.c_str(), error));
-            if (!r.originals.back().get())
-                warnings.push_back("original program vs " + hex(p.vs) + " ps " + hex(p.ps) + ": " + error);
+            // + cascaded sun shadow. Linked once per source pair while uploads use it (a unit joining relinked them all).
+            std::string ps = originalPixelSource(p.psGlsl.source, false, false);
+            auto& l = r.linked[{p.vsGlsl.source, ps}];
+            if (!l.upload) l.program = linkProgram(p.vsGlsl.source.c_str(), ps.c_str(), l.error);
+            l.upload = uploads_;
+            r.originals.push_back(l.program.get());
+            if (!l.program.get()) warnings.push_back("original program vs " + hex(p.vs) + " ps " + hex(p.ps) + ": " + l.error);
         }
     }
 
@@ -1027,7 +1182,7 @@ private:
     void addOriginal(GpuMesh& g, const scene::SubMesh& s) {
         Resources& r = *res_;
         int p = prepared_.program(s.materialId);
-        if (p >= 0 && !r.originals[size_t(p)].get()) p = -1;
+        if (p >= 0 && !r.originals[size_t(p)]) p = -1;
         g.program.push_back(p);
         g.materialOffset.push_back(0);
         g.samplers.emplace_back();
@@ -1048,9 +1203,9 @@ private:
             if (n == original::kAttenuationSampler && !cube) tex = r.attenuation.get();
             if (n == original::kSunCookieSampler && !cube && environment_.sunCookie)
                 if (auto it = r.textures.find(environment_.sunCookie); it != r.textures.end() && !cubes_.contains(it->first))
-                    tex = it->second.get();
+                    tex = it->second;
             if (const uint32_t id = original::samplerTexture(mat, s.instanceTextures, n))
-                if (auto it = r.textures.find(id); it != r.textures.end() && cubes_.contains(id) == cube) tex = it->second.get();
+                if (auto it = r.textures.find(id); it != r.textures.end() && cubes_.contains(id) == cube) tex = it->second;
             g.samplers.back()[size_t(n)] = tex;
         }
         g.screenSamplers.back() = original::screenSamplers(mat, s.instanceTextures, prog.psGlsl.readsDepth);
@@ -1070,7 +1225,7 @@ private:
         for (const DrawRef& d : deferred_) {
             const GpuMesh& m = r.meshes[d.mesh];
             const scene::SubMesh& s = m.submeshes[d.sub];
-            glUseProgram(r.originals[size_t(m.program[d.sub])].get());
+            glUseProgram(r.originals[size_t(m.program[d.sub])]);
             glBindVertexArray(m.vao.get());
             scissorFor(d.mesh, vp);
             const scene::Blend blend = drawBlend(s, d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f);
@@ -1145,7 +1300,7 @@ private:
             if (m.water || (p >= 0 && (m.screenSamplers[d.sub] || m.reflection[d.sub]))) continue;
             const float op = d.mesh < opacity_.size() ? opacity_[d.mesh] : 1.0f;
             if (p != program) {
-                glUseProgram(p < 0 ? r.sceneProgram.get() : r.originals[size_t(p)].get());
+                glUseProgram(p < 0 ? r.sceneProgram.get() : r.originals[size_t(p)]);
                 if (p < 0) glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(viewProj)), glUniform1i(2, options.lighting ? 1 : 0);
                 program = p;
             }
@@ -1349,7 +1504,7 @@ private:
         glEnable(GL_BLEND);
         auto tex = [&](uint32_t id) {
             const auto it = r.textures.find(id);
-            return it != r.textures.end() ? it->second.get() : r.white.get();
+            return it != r.textures.end() ? it->second : r.white.get();
         };
         for (const auto& b : options.fxBatches) {
             glBindTextureUnit(0, tex(b.textureId));
@@ -1422,6 +1577,13 @@ private:
     original::Prepared prepared_;         // during upload()
     scene::Environment environment_;
     std::unordered_set<uint32_t> cubes_; // texture ids uploaded as cube maps
+    // Renderer::uploadPart: a part's scene until pumpParts sent it all (next texture / mesh to look at), by part id.
+    struct Part {
+        std::shared_ptr<const scene::SceneData> data;
+        size_t texture = 0, mesh = 0;
+    };
+    std::map<uint64_t, Part> parts_;
+    uint64_t uploads_ = 0; // upload() calls
     std::vector<uint8_t> materialBlocks_; // during upload()
     std::vector<uint8_t> objectScratch_;
     std::vector<DrawRef> deferred_; // per frame: back/depth-buffer readers (drawScreenReaders)

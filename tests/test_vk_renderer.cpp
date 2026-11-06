@@ -288,3 +288,30 @@ TEST(VulkanRenderer, ResizeRecreatesSwapchain) {
     SDL_DestroyWindow(w);
     SDL_Quit();
 }
+
+// Keyed content stays resident (Renderer::upload / uploadPart): a part prefetched then listed renders exactly as a
+// full upload, re-uploads don't grow the resident set, and releasing the part frees what no upload lists.
+TEST(VulkanRenderer, ResidentPartsMatchFullUpload) {
+    VkWindow v;
+    if (!v.skip.empty()) GTEST_SKIP() << v.skip;
+    const ou::scene::SceneData plain = ou::scene::makePlaceholderScene();
+    EXPECT_TRUE(v.r->upload(plain).empty());
+    const ou::render::Image full = v.frame(enhanced());
+    EXPECT_EQ(v.r->residentCount(), 0u);
+    auto keyed = std::make_shared<ou::scene::SceneData>(plain);
+    ou::scene::assignKeys(*keyed);
+    const size_t keys = keyed->meshes.size() + keyed->textures.size();
+    v.r->uploadPart(1, keyed);
+    v.frame(enhanced()); // created over frames
+    EXPECT_EQ(v.r->residentCount(), keys);
+    for (int i = 0; i < 2; ++i) {
+        EXPECT_TRUE(v.r->upload(*keyed).empty());
+        EXPECT_EQ(meanAbsDiff(v.frame(enhanced()), full), 0.0);
+        EXPECT_EQ(v.r->residentCount(), keys);
+    }
+    EXPECT_TRUE(v.r->upload(plain).empty()); // the part keeps its content parked
+    EXPECT_EQ(v.r->residentCount(), keys);
+    v.r->releasePart(1);
+    EXPECT_EQ(v.r->residentCount(), 0u);
+    EXPECT_EQ(meanAbsDiff(v.frame(enhanced()), full), 0.0);
+}

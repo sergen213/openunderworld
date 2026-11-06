@@ -3,6 +3,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -23,6 +24,7 @@ struct TextureData {
     std::string origin;        // e.g. "pc-w\\lara.drm#section 10", or "placeholder:checker"
     // Cube map: each mip's data holds the 6 faces back to back in D3D order +X -X +Y -Y +Z -Z (TEXTURES.md).
     bool cube = false;
+    uint64_t key = 0; // content identity across uploads (assignKeys; Renderer::upload), 0 = none
 };
 
 struct Vertex {
@@ -197,6 +199,9 @@ struct MeshData {
     // bend_* plants: per-vertex bend basis (cdc TEXCOORD3-5, FLOAT4 each), empty otherwise. The bend VS moves a vertex by
     // t3 s.x + t4 s.x² + t5 s.y + (t3.w, t4.w, t5.w) s.y² with s = bendA * v.xy + bendB of its bone (game/Bend.hpp).
     std::vector<std::array<float, 12>> bend;
+    // Content identity across uploads (assignKeys): meshes with one key hold the same vertices, indices and submeshes
+    // (any transform), so backends keep one GPU copy while uploads list it (Renderer::upload). 0 = none.
+    uint64_t key = 0;
 };
 
 // Drops m's primgroups of the draw groups whose bit (group - 1) is set in `hidden` (SubMesh::drawGroup). Returns false
@@ -219,5 +224,15 @@ struct SceneData {
     bool placeholder = false;
     std::vector<std::string> warnings; // unsupported / failed resources, shown in diagnostics
 };
+
+// Gives every mesh and texture of `s` without a key a process-unique one (thread-safe: the unit streamer's worker keys
+// the scenes it decodes). Copies keep their key, so a scene composed from keyed parts reuses their GPU copies.
+inline void assignKeys(SceneData& s) {
+    static std::atomic<uint64_t> next{1};
+    for (auto& m : s.meshes)
+        if (!m.key) m.key = next++;
+    for (auto& t : s.textures)
+        if (!t.key) t.key = next++;
+}
 
 } // namespace ou::scene

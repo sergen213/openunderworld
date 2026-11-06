@@ -24,10 +24,12 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <SDL3/SDL.h>
@@ -303,10 +305,29 @@ struct RtBlas {
     VkAccelerationStructureInstanceKHR instance{}; // its TLAS instance
 };
 
+// Device memory + descriptor pool of the scene resources created together (one upload, or one renderer part), freed
+// with the last of them (VkRenderer::bury: after the frames using them retired).
+struct Generation {
+    VkDevice device = VK_NULL_HANDLE;
+    LinearAllocator memory;
+    VkDescriptorPool pool = VK_NULL_HANDLE; // texture sets
+    Generation() = default;
+    Generation(const Generation&) = delete;
+    Generation& operator=(const Generation&) = delete;
+    ~Generation() {
+        memory.reset();
+        if (pool) vkDestroyDescriptorPool(device, pool, nullptr);
+    }
+};
+
 struct GpuMesh {
+    std::shared_ptr<Generation> gen; // its buffers' memory (prevVertices too)
+    uint64_t key = 0, part = 0;      // MeshData::key (0: sent each upload), owning renderer part (0: none)
+    bool dirty = false;              // updateVertices since it was sent: sent again by the next upload
+    Bounds bounds;                   // world bounds of its vertices under `model`
     Buffer vertices, indices;
     std::vector<scene::SubMesh> submeshes;
-    size_t vertexCount = 0;
+    size_t vertexCount = 0, indexCount = 0;
     glm::mat4 model;
     glm::vec3 center{0.0f}; // world-space bounds centre (blended draw sorting; light sets with `radius`)
     float radius = 0.0f;    // world-space bounding-sphere radius (original::lightSet)
@@ -454,97 +475,123 @@ public:
         }
     }
 
+    // Keyed content stays resident (Renderer::upload): textures by TextureData::key, meshes by MeshData::key, each in
+    // the Generation it was created in; the rest, the RT structures and the material sets are per upload. Nothing waits
+    // for the device: dropped objects go to the graveyard (bury) and new content is staged, its copies recorded at the
+    // start of the next frame (recordPending).
     std::vector<std::string> upload(const scene::SceneData& scene) override {
         std::vector<std::string> warnings;
-        waitIdle();
-        destroySceneResources(true);
-        sceneMemory_.init(device_, gpu_, kBlockSize, rtStatus_.supported);
-
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, uint32_t(std::max<size_t>(1, scene.textures.size()))};
-        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, ps.descriptorCount, 1, &ps};
-        VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &scenePool_));
+        pumpParts(SIZE_MAX, warnings); // parts still in flight: the scene may list them
+        ++uploads_;
+        std::unordered_map<uint64_t, GpuMesh> pool = std::move(parked_);
+        parked_.clear();
+        for (auto& g : meshes_) {
+            buryRt(g);
+            if (!g.key || g.dirty || !pool.try_emplace(g.key, std::move(g)).second) buryMesh(g);
+        }
+        meshes_.clear();
+        meshSlot_.clear();
+        for (auto& st : staging_) st.meshes.clear(), st.used = 0; // pending updateVertices copies of the old slots
+        retireScene();
+        gen_ = newGeneration(kBlockSize, scene.textures.size());
 
         UploadBatch batch;
+        std::vector<SceneImage> transient;
         for (const auto& t : scene.textures) {
-            auto warn = [&](const std::string& w) {
-                warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): " + w);
-            };
-            // First id wins (as formats::loadTextures); replacing would free an image still queued in `batch`.
-            if (textures_.contains(t.id)) { warn("duplicate texture id, first one wins"); continue; }
-            VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
-            switch (t.format) {
-            case scene::PixelFormat::RGBA8: break;
-            case scene::PixelFormat::BGRA8: fmt = VK_FORMAT_B8G8R8A8_UNORM; break;
-            case scene::PixelFormat::BC1: fmt = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; break; // DXT1 with 1-bit alpha, as D3D9
-            case scene::PixelFormat::BC2: fmt = VK_FORMAT_BC2_UNORM_BLOCK; break;
-            case scene::PixelFormat::BC3: fmt = VK_FORMAT_BC3_UNORM_BLOCK; break;
-            }
-            if (blockBytes(t.format) && !bc_) { warn("BCn unsupported (no textureCompressionBC)"); continue; }
-            std::string problem;
-            const uint32_t levels = usableMips(t, problem);
-            if (!problem.empty()) warn(problem);
-            if (levels == 0) continue;
-            GpuImage img = createImage(sceneMemory_, fmt, t.mips[0].width, t.mips[0].height, levels,
-                                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
-                                    VK_SAMPLE_COUNT_1_BIT, t.cube);
-            // Cube maps (environment reflections of the original shaders) never feed the 2D generic / RT paths.
-            img.cube = t.cube;
-            img.set = t.cube ? white_.set : allocateSet(scenePool_, img.view, textureSampler());
-            img.slot = t.cube ? 0 : uint32_t(textures_.size() + 1);
-            if (rtStatus_.supported && img.slot >= kMaxRtTextures) {
-                warn("beyond the " + std::to_string(kMaxRtTextures) + " ray-traced textures: rays see it white");
-                img.slot = 0;
-            }
-            UploadBatch::ImageJob job{img.image, {}, t.cube ? 6u : 1u};
-            for (uint32_t i = 0; i < levels; ++i)
-                job.mips.push_back({t.mips[i].data.data(), t.mips[i].data.size(), t.mips[i].width, t.mips[i].height});
-            batch.images.push_back(std::move(job));
-            textures_.emplace(t.id, img);
-        }
-        meshSlot_.assign(scene.meshes.size(), SIZE_MAX);
-        for (size_t mi = 0; mi < scene.meshes.size(); ++mi) {
-            const scene::MeshData& m = scene.meshes[mi];
-            auto warn = [&](const std::string& w) { warnings.push_back("mesh (" + m.origin + "): " + w); };
-            if (m.vertices.empty() || m.indices.empty()) { warn("empty"); continue; }
-            if (std::any_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i >= m.vertices.size(); })) {
-                warn("index out of range, skipped");
+            // First id wins (as formats::loadTextures).
+            if (textures_.contains(t.id)) {
+                warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): duplicate texture id, first one wins");
                 continue;
             }
-            GpuMesh g;
-            for (const auto& s : m.submeshes) {
-                if (uint64_t(s.firstIndex) + s.indexCount > m.indices.size()) warn("submesh range out of bounds, skipped");
-                else g.submeshes.push_back(s);
+            GpuImage img;
+            if (t.key) {
+                auto it = resident_.find(t.key);
+                if (it == resident_.end()) {
+                    auto created = createTexture(t, gen_, batch, warnings);
+                    if (!created) continue;
+                    it = resident_.emplace(t.key, std::move(*created)).first;
+                }
+                it->second.upload = uploads_;
+                img = it->second.img;
+            } else {
+                auto created = createTexture(t, gen_, batch, warnings);
+                if (!created) continue;
+                img = created->img;
+                transient.push_back(std::move(*created));
             }
-            if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
-            g.model = glm::make_mat4(m.transform);
-            g.skinned = !m.skin.empty();
-            // [I] Water surfaces are objects named *watersurface* (l4_pool: ca_goo_pool_watersurface, the
-            // surface intro of its watervolume, docs/GAMEPLAY.md "Water"); their meshes get RT reflections.
-            g.water = isWaterSurface(m.origin);
-            const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
-            g.center = glm::vec3(sphere), g.radius = sphere.w;
-            const VkDeviceSize vb = m.vertices.size() * sizeof(scene::Vertex), ib = m.indices.size() * sizeof(uint32_t);
-            const VkBufferUsageFlags rtInput = rtStatus_.supported ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-                                                                         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                                                                   : 0;
-            g.vertices = createBuffer(sceneMemory_, vb, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | rtInput,
-                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            g.indices = createBuffer(sceneMemory_, ib, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rtInput,
-                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            batch.buffers.push_back({g.vertices.buffer, {m.vertices.data(), vb, 0, 0}});
-            batch.buffers.push_back({g.indices.buffer, {m.indices.data(), ib, 0, 0}});
-            g.vertexCount = m.vertices.size();
+            img.slot = t.cube ? 0 : uint32_t(textures_.size() + 1);
+            if (rtStatus_.supported && img.slot >= kMaxRtTextures) {
+                warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): beyond the " +
+                                   std::to_string(kMaxRtTextures) + " ray-traced textures: rays see it white");
+                img.slot = 0;
+            }
+            textures_.emplace(t.id, img);
+        }
+        std::erase_if(resident_, [&](auto& kv) {
+            if (kv.second.upload == uploads_ || parts_.contains(kv.second.part)) return false;
+            buryTexture(kv.second);
+            return true;
+        });
+        transient_ = std::move(transient);
+
+        meshSlot_.assign(scene.meshes.size(), SIZE_MAX);
+        bounds_ = {};
+        std::unordered_set<uint64_t> listed; // a key twice: the copies are sent each upload
+        for (size_t mi = 0; mi < scene.meshes.size(); ++mi) {
+            const scene::MeshData& m = scene.meshes[mi];
+            const bool keyed = m.key && listed.insert(m.key).second;
+            const auto it = keyed ? pool.find(m.key) : pool.end();
+            GpuMesh g;
+            if (it != pool.end() && it->second.vertexCount == m.vertices.size() && it->second.indexCount == m.indices.size()) {
+                g = std::move(it->second);
+                pool.erase(it);
+                place(g, m);
+            } else if (!createMesh(m, gen_, g, batch, warnings)) {
+                continue;
+            }
+            g.key = keyed ? m.key : 0;
+            bounds_.lo = glm::min(bounds_.lo, g.bounds.lo), bounds_.hi = glm::max(bounds_.hi, g.bounds.hi);
             meshSlot_[mi] = meshes_.size();
             meshes_.push_back(std::move(g));
+        }
+        for (auto& [key, g] : pool) {
+            if (parts_.contains(g.part)) parked_.emplace(key, std::move(g));
+            else buryMesh(g);
         }
         // AttenuationSampler light rows follow the scene's light falloff curves (SHADERS.md "Engine inputs").
         const auto lut = original::attenuationLut(scene.environment);
         batch.images.push_back({attenuation_.image, {{lut.rgba.data(), lut.rgba.size(), uint32_t(lut.width), uint32_t(lut.height)}}});
-        flush(batch);
+        stage(batch);
         uploadOriginals(scene, warnings);
-        bounds_ = sceneBounds(scene);
         return warnings; // acceleration structures: built by the first frame that asks for RT
+    }
+
+    // Created now (memory, images, buffers, staged copies) in budget-sized steps per frame (pumpParts), drawn once an
+    // upload lists their keys.
+    void uploadPart(uint64_t id, std::shared_ptr<const scene::SceneData> part) override { parts_[id] = {std::move(part)}; }
+
+    void releasePart(uint64_t id) override {
+        if (!parts_.erase(id)) return;
+        std::erase_if(resident_, [&](auto& kv) {
+            if (kv.second.part != id) return false;
+            kv.second.part = 0;
+            if (kv.second.upload == uploads_) return false; // listed by the current upload: until the next one
+            buryTexture(kv.second);
+            return true;
+        });
+        std::erase_if(parked_, [&](auto& kv) {
+            if (kv.second.part != id) return false;
+            buryMesh(kv.second);
+            return true;
+        });
+        for (auto& g : meshes_)
+            if (g.part == id) g.part = 0;
+    }
+
+    size_t residentCount() const override {
+        size_t n = resident_.size() + parked_.size();
+        for (const auto& g : meshes_) n += g.key != 0;
+        return n;
     }
 
     void resize(Viewport) override { swapchainDirty_ = true; } // SDL pixel-size event → recreate next frame
@@ -556,6 +603,7 @@ public:
         const size_t slot = meshSlot_[meshIndex];
         GpuMesh& g = meshes_[slot];
         if (vertices.size() != g.vertexCount) return false;
+        g.dirty = true;
         const glm::vec4 sphere = original::boundingSphere(vertices, g.model); // skinned: follows the pose
         g.center = glm::vec3(sphere), g.radius = sphere.w;
         Staging& st = staging_[frameIndex_];
@@ -587,7 +635,7 @@ public:
         // FSR motion vectors: the pose the last frame drew is copied GPU-side into prevVertices before the new one
         // lands (recordVertexUploads); meshes not moved since that frame draw no motion of their own (movedFrame).
         if (fsr_.valid() && !g.prevVertices.buffer)
-            g.prevVertices = createBuffer(sceneMemory_, vertices.size_bytes(),
+            g.prevVertices = createBuffer(g.gen->memory, vertices.size_bytes(),
                                           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         g.movedFrame = frameCounter_ + 1;
@@ -663,12 +711,16 @@ public:
         if (presentOutOfDate_.exchange(false)) swapchainDirty_ = true; // reported by the present thread
         applySettings(options);
         antiLagWanted_ = options.antiLag;
-        if (rtPipelines_ && !tlas_ && scenePool_) buildRayTracing(); // first RT frame after upload()
         Frame& f = frames_[frameIndex_];
         {
             const auto start = std::chrono::steady_clock::now();
             VK_CHECK(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX));
             fenceNs_ += (std::chrono::steady_clock::now() - start).count();
+        }
+        retire(false);
+        {
+            std::vector<std::string> ignored; // the upload listing them reports them
+            pumpParts(kPartBytesPerFrame, ignored);
         }
         for (int attempt = 0;; ++attempt) {
             if (swapchainDirty_) recreateSwapchain(vp);
@@ -695,6 +747,8 @@ public:
                                     VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr};
         VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
         gpuBegin(f, cmd);
+        recordPending(cmd);
+        if (rtPipelines_ && !tlas_ && gen_) buildRayTracing(cmd); // first RT frame after upload()
         recordVertexUploads(cmd);
         gpuMark(cmd, 1);
         // FSR: sub-pixel jitter on every scene projection (camera.jitter); `eye` keeps the unjittered one for motion.
@@ -1793,23 +1847,6 @@ private:
         origWarmKey_ = -1;
     }
 
-    // `keepPrograms` (a re-upload): the programs, with their SPIR-V and pipelines, wait in origStash_ for
-    // uploadOriginals to take the ones the new scene still uses.
-    void destroyOriginalScene(bool keepPrograms) {
-        destroyPipelines(device_, origStash_);
-        origStash_.clear();
-        if (keepPrograms) origStash_ = std::move(origPrograms_);
-        else destroyPipelines(device_, origPrograms_);
-        origWarmKey_ = -1;
-        origPrograms_.clear();
-        origDraws_.clear();
-        screenSets_.clear();
-        reflectSets_.clear();
-        origMaterialImages_.clear();
-        vkDestroyBuffer(device_, std::exchange(origMaterialUbo_, {}).buffer, nullptr); // memory: sceneMemory_
-        vkDestroyDescriptorPool(device_, std::exchange(origScenePool_, VK_NULL_HANDLE), nullptr);
-    }
-
     // Translates and compiles each material's programs (the previous upload's ones carry over: a streamed unit
     // re-uploads the scene, and compiling every program again stalled the crossing ~650 ms), then one material UBO
     // block + descriptor set per distinct (program, material, instance textures, alpha ref) of the uploaded submeshes.
@@ -1830,7 +1867,7 @@ private:
             stashed.erase(it);
             reused[i] = true;
         }
-        destroyPipelines(device_, origStash_); // not used by this scene
+        bury([this, unused = std::move(origStash_)]() mutable { destroyPipelines(device_, unused); }); // in-flight frames
         origStash_.clear();
         // Every new program's VS and PS variants compile in parallel here (shaderc is reentrant): compiling the sun /
         // rays variants on first draw cost ~30 % of l4_ballcourt's frames as new materials came into view.
@@ -1910,7 +1947,7 @@ private:
                 slot[mi].push_back(k);
             }
         if (unique.empty()) return;
-        origMaterialUbo_ = createBuffer(sceneMemory_, stride * unique.size(), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        origMaterialUbo_ = createBuffer(gen_->memory, stride * unique.size(), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, uint32_t(unique.size())},
                                                {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, uint32_t(16 * unique.size())}};
@@ -2449,7 +2486,6 @@ private:
         std::fprintf(stderr, "ou: AMD Anti-Lag %s\n", antiLagUpdate_ ? "available (VK_AMD_anti_lag)" : "unavailable (no VK_AMD_anti_lag)");
         if (rtStatus_.supported) loadRayTracingFunctions();
         staticMemory_.init(device_, gpu_);
-        sceneMemory_.init(device_, gpu_, kBlockSize, rtStatus_.supported);
         for (auto& m : lineMemory_) m.init(device_, gpu_, 0);
         for (auto& m : splashMemory_) m.init(device_, gpu_, 0);
         for (auto& m : fxMemory_) m.init(device_, gpu_, 0);
@@ -3218,8 +3254,10 @@ private:
         }
         mipBias_ = bias;
         biasedSampler_ = biased;
-        for (const auto& [_, img] : textures_)
-            if (!img.cube) writeSet(img.set, img.view, textureSampler());
+        for (const auto& [_, t] : resident_) // parked ones too: an upload adopts them without rewriting
+            if (!t.img.cube) writeSet(t.img.set, t.img.view, textureSampler());
+        for (const SceneImage& t : transient_)
+            if (!t.img.cube) writeSet(t.img.set, t.img.view, textureSampler());
         for (auto& [set, ii] : origMaterialImages_) {
             for (auto& i : ii)
                 if (i.sampler == old) i.sampler = textureSampler();
@@ -3597,7 +3635,7 @@ private:
                 waitIdle();
                 destroyImage(ripples_);
             }
-            ripples_ = createImage(sceneMemory_, VK_FORMAT_R32_SFLOAT, uint32_t(rip.size), uint32_t(rip.size), 1,
+            ripples_ = createImage(staticMemory_, VK_FORMAT_R32_SFLOAT, uint32_t(rip.size), uint32_t(rip.size), 1,
                                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
             rippleSize_ = rip.size;
             rippleVersion_ = 0;
@@ -3844,7 +3882,7 @@ private:
 
     // Acceleration structure + its backing buffer (scene arena) of `size` bytes.
     VkAccelerationStructureKHR createAs(VkAccelerationStructureTypeKHR type, VkDeviceSize size, Buffer& backing) {
-        backing = createBuffer(sceneMemory_, size,
+        backing = createBuffer(gen_->memory, size,
                                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
@@ -3874,7 +3912,7 @@ private:
     // mesh model as the geometry transform): thousands of overlapping per-mesh instances made every ray descend into
     // dozens of BLASes (l2_junglehub scene pass 12.6 -> 7.9 ms). Their own BLASes are built too and take over when
     // updateVertices first moves them (evictStatic). Static meshes don't move (GpuMesh::model is fixed).
-    void buildRayTracing() {
+    void buildRayTracing(VkCommandBuffer cmd) {
         std::vector<RtGeometry> records;
         struct Pending { RtBlas* blas; bool skinned; };
         std::vector<Pending> pending;
@@ -3959,7 +3997,7 @@ private:
         const VkBufferUsageFlags asInput = copyDst | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
         UploadBatch batch;
         if (!transforms.empty()) {
-            transformBuffer_ = createBuffer(sceneMemory_, transforms.size() * sizeof(VkTransformMatrixKHR), asInput | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            transformBuffer_ = createBuffer(gen_->memory, transforms.size() * sizeof(VkTransformMatrixKHR), asInput | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             batch.buffers.push_back({transformBuffer_.buffer, {transforms.data(), transforms.size() * sizeof(transforms[0]), 0, 0}});
         }
@@ -3989,13 +4027,14 @@ private:
         // Instance + record buffers (a 0-instance TLAS is valid and keeps set 2 complete). Sized and the TLAS built for
         // every instance there can be (all meshes evicted): evictStatic rewrites the list and rebuilds the TLAS in place.
         tlasInstanceCapacity_ = uint32_t(meshInstances + staticBlases_.size());
-        instanceBuffer_ = createBuffer(sceneMemory_, std::max<size_t>(1, tlasInstanceCapacity_) * sizeof(VkAccelerationStructureInstanceKHR),
+        instanceBuffer_ = createBuffer(gen_->memory, std::max<size_t>(1, tlasInstanceCapacity_) * sizeof(VkAccelerationStructureInstanceKHR),
                                        asInput, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        geometryBuffer_ = createBuffer(sceneMemory_, std::max<size_t>(1, records.size()) * sizeof(RtGeometry),
+        geometryBuffer_ = createBuffer(gen_->memory, std::max<size_t>(1, records.size()) * sizeof(RtGeometry),
                                        copyDst | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         if (!instances.empty()) batch.buffers.push_back({instanceBuffer_.buffer, {instances.data(), instances.size() * sizeof(instances[0]), 0, 0}});
         if (!records.empty()) batch.buffers.push_back({geometryBuffer_.buffer, {records.data(), records.size() * sizeof(RtGeometry), 0, 0}});
-        flush(batch);
+        stage(batch);
+        recordPending(cmd);
 
         tlasGeometry_ = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
         tlasGeometry_.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
@@ -4010,14 +4049,14 @@ private:
         // Scratch: a shared BLAS region (upload batches, later refits/rebuilds one at a time) + the TLAS's own.
         const VkDeviceSize blasScratch = std::max(std::min(sumScratch, kRtScratchBudget), maxScratch);
         const VkDeviceSize tlasScratch = alignUp(std::max(tsz.buildScratchSize, tsz.updateScratchSize));
-        scratch_ = createBuffer(sceneMemory_, blasScratch + tlasScratch + scratchAlign_,
+        scratch_ = createBuffer(gen_->memory, blasScratch + tlasScratch + scratchAlign_,
                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         scratchBlas_ = alignUp(address(scratch_.buffer));
         scratchTlas_ = scratchBlas_ + blasScratch;
 
-        oneShot([&](VkCommandBuffer cmd) {
-            // Vertex/index/instance uploads (earlier submissions) → build inputs and fragment-shader reads.
+        {
+            // Vertex/index/instance copies (recordPending) → build inputs and fragment-shader reads.
             asBarrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                       kAsBuild | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT | kAsRead);
             std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
@@ -4043,7 +4082,7 @@ private:
             const VkAccelerationStructureBuildRangeInfoKHR* trp = &tr;
             vkCmdBuildAccelerationStructuresKHR_(cmd, 1, &ti, &trp);
             asBarrier(cmd, kAsBuild, kAsWrite, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, kAsRead);
-        });
+        }
         ++rtStatus_.tlasBuilds;
 
         // Set 2: TLAS, geometry records, every scene texture at its slot (unused slots stay unbound).
@@ -4165,39 +4204,315 @@ private:
         tlasDirty_ = tlasRebuild_ = false;
     }
 
-    void destroySceneResources(bool keepPrograms = false) {
-        destroyOriginalScene(keepPrograms);
-        for (auto& [_, img] : textures_) destroyImage(img);
-        textures_.clear();
-        if (ripples_.image) destroyImage(ripples_); // sceneMemory_ below; updateRipples recreates it and the water sets
-        for (auto& m : meshes_) {
-            vkDestroyBuffer(device_, m.vertices.buffer, nullptr);
-            vkDestroyBuffer(device_, m.prevVertices.buffer, nullptr);
-            vkDestroyBuffer(device_, m.indices.buffer, nullptr);
-            for (RtBlas& b : m.blases) {
-                vkDestroyAccelerationStructureKHR_(device_, b.as, nullptr);
-                vkDestroyBuffer(device_, b.buffer.buffer, nullptr);
-            }
+    // ---- Scene residency (Renderer::upload / uploadPart; docs/RENDERING.md "Resident units") ----
+    // A texture kept by key: its image, the Generation holding its memory and set, owning part, last upload listing it.
+    struct SceneImage {
+        GpuImage img;
+        std::shared_ptr<Generation> gen;
+        uint64_t part = 0, upload = 0;
+    };
+    // A renderer part being created (pumpParts): its scene until all of it was looked at, the Generation it fills.
+    struct Part {
+        std::shared_ptr<const scene::SceneData> data;
+        std::shared_ptr<Generation> gen;
+        size_t texture = 0, mesh = 0;
+    };
+    // Copies staged in host memory, recorded at the start of the next command buffer (recordPending).
+    struct Pending {
+        Buffer src;
+        std::shared_ptr<Generation> mem;
+        std::vector<std::pair<VkBuffer, VkBufferCopy>> buffers;
+        std::vector<std::pair<VkImage, std::vector<VkBufferImageCopy>>> images;
+    };
+    static constexpr size_t kPartBytesPerFrame = size_t(8) << 20; // ~1 ms of memcpy + create per frame
+    static constexpr VkDeviceSize kPartBlock = VkDeviceSize(16) << 20;
+
+    std::shared_ptr<Generation> newGeneration(VkDeviceSize blockSize, size_t textures) {
+        auto g = std::make_shared<Generation>();
+        g->device = device_;
+        g->memory.init(device_, gpu_, blockSize, rtStatus_.supported);
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, uint32_t(std::max<size_t>(1, textures))};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, ps.descriptorCount, 1, &ps};
+        VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &g->pool));
+        return g;
+    }
+
+    std::optional<SceneImage> createTexture(const scene::TextureData& t, const std::shared_ptr<Generation>& gen, UploadBatch& batch,
+                                            std::vector<std::string>& warnings) {
+        auto warn = [&](const std::string& w) { warnings.push_back("texture " + std::to_string(t.id) + " (" + t.origin + "): " + w); };
+        VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
+        switch (t.format) {
+        case scene::PixelFormat::RGBA8: break;
+        case scene::PixelFormat::BGRA8: fmt = VK_FORMAT_B8G8R8A8_UNORM; break;
+        case scene::PixelFormat::BC1: fmt = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; break; // DXT1 with 1-bit alpha, as D3D9
+        case scene::PixelFormat::BC2: fmt = VK_FORMAT_BC2_UNORM_BLOCK; break;
+        case scene::PixelFormat::BC3: fmt = VK_FORMAT_BC3_UNORM_BLOCK; break;
         }
-        for (RtBlas& b : staticBlases_) {
-            vkDestroyAccelerationStructureKHR_(device_, b.as, nullptr);
+        if (blockBytes(t.format) && !bc_) { warn("BCn unsupported (no textureCompressionBC)"); return std::nullopt; }
+        std::string problem;
+        const uint32_t levels = usableMips(t, problem);
+        if (!problem.empty()) warn(problem);
+        if (levels == 0) return std::nullopt;
+        SceneImage s{createImage(gen->memory, fmt, t.mips[0].width, t.mips[0].height, levels,
+                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                                 VK_SAMPLE_COUNT_1_BIT, t.cube),
+                     gen};
+        // Cube maps (environment reflections of the original shaders) never feed the 2D generic / RT paths.
+        s.img.cube = t.cube;
+        s.img.set = t.cube ? white_.set : allocateSet(gen->pool, s.img.view, textureSampler());
+        UploadBatch::ImageJob job{s.img.image, {}, t.cube ? 6u : 1u};
+        for (uint32_t i = 0; i < levels; ++i)
+            job.mips.push_back({t.mips[i].data.data(), t.mips[i].data.size(), t.mips[i].width, t.mips[i].height});
+        batch.images.push_back(std::move(job));
+        return s;
+    }
+
+    bool createMesh(const scene::MeshData& m, const std::shared_ptr<Generation>& gen, GpuMesh& g, UploadBatch& batch,
+                    std::vector<std::string>& warnings) {
+        auto warn = [&](const std::string& w) { warnings.push_back("mesh (" + m.origin + "): " + w); };
+        if (m.vertices.empty() || m.indices.empty()) { warn("empty"); return false; }
+        if (std::any_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i >= m.vertices.size(); })) {
+            warn("index out of range, skipped");
+            return false;
+        }
+        for (const auto& s : m.submeshes) {
+            if (uint64_t(s.firstIndex) + s.indexCount > m.indices.size()) warn("submesh range out of bounds, skipped");
+            else g.submeshes.push_back(s);
+        }
+        if (m.submeshes.empty()) g.submeshes.push_back({0, uint32_t(m.indices.size()), 0});
+        g.gen = gen;
+        g.model = glm::make_mat4(m.transform);
+        g.skinned = !m.skin.empty();
+        // [I] Water surfaces are objects named *watersurface* (l4_pool: ca_goo_pool_watersurface, the
+        // surface intro of its watervolume, docs/GAMEPLAY.md "Water"); their meshes get RT reflections.
+        g.water = isWaterSurface(m.origin);
+        const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
+        g.center = glm::vec3(sphere), g.radius = sphere.w;
+        g.bounds = meshBounds(m);
+        const VkDeviceSize vb = m.vertices.size() * sizeof(scene::Vertex), ib = m.indices.size() * sizeof(uint32_t);
+        const VkBufferUsageFlags rtInput = rtStatus_.supported ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                                                                     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                                                               : 0;
+        g.vertices = createBuffer(gen->memory, vb, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | rtInput,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        g.indices = createBuffer(gen->memory, ib, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rtInput,
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        batch.buffers.push_back({g.vertices.buffer, {m.vertices.data(), vb, 0, 0}});
+        batch.buffers.push_back({g.indices.buffer, {m.indices.data(), ib, 0, 0}});
+        g.vertexCount = m.vertices.size();
+        g.indexCount = m.indices.size();
+        return true;
+    }
+
+    // A resident mesh listed under a new transform (a part sent in its unit frame, then moved by its stream offset).
+    static void place(GpuMesh& g, const scene::MeshData& m) {
+        const glm::mat4 model = glm::make_mat4(m.transform);
+        if (model == g.model) return;
+        g.model = model;
+        const glm::vec4 sphere = original::boundingSphere(m.vertices, g.model);
+        g.center = glm::vec3(sphere), g.radius = sphere.w;
+        g.bounds = meshBounds(m);
+    }
+
+    // Sends the parts' keyed content not resident yet, about `budget` bytes per call (drawFrame: spread over frames), and
+    // claims what is already resident for the part. A finished part drops its SceneData.
+    void pumpParts(size_t budget, std::vector<std::string>& warnings) {
+        UploadBatch batch;
+        size_t sent = 0;
+        std::vector<Part*> done;
+        for (auto& [id, p] : parts_) {
+            if (!p.data) continue;
+            const scene::SceneData& s = *p.data;
+            if (!p.gen) p.gen = newGeneration(kPartBlock, s.textures.size());
+            for (; p.texture < s.textures.size() && sent < budget; ++p.texture) {
+                const scene::TextureData& t = s.textures[p.texture];
+                if (!t.key) continue;
+                if (const auto it = resident_.find(t.key); it != resident_.end()) {
+                    it->second.part = id;
+                    continue;
+                }
+                auto created = createTexture(t, p.gen, batch, warnings);
+                if (!created) continue;
+                for (const auto& mip : t.mips) sent += mip.data.size();
+                created->part = id;
+                resident_.emplace(t.key, std::move(*created));
+            }
+            for (; p.texture == s.textures.size() && p.mesh < s.meshes.size() && sent < budget; ++p.mesh) {
+                const scene::MeshData& m = s.meshes[p.mesh];
+                if (!m.key) continue;
+                if (const auto it = parked_.find(m.key); it != parked_.end()) {
+                    it->second.part = id;
+                    continue;
+                }
+                const auto cur = std::find_if(meshes_.begin(), meshes_.end(), [&](const GpuMesh& g) { return g.key == m.key; });
+                if (cur != meshes_.end()) {
+                    cur->part = id;
+                    continue;
+                }
+                GpuMesh g;
+                if (!createMesh(m, p.gen, g, batch, warnings)) continue;
+                sent += m.vertices.size() * sizeof(scene::Vertex) + m.indices.size() * sizeof(uint32_t);
+                g.key = m.key, g.part = id;
+                parked_.emplace(m.key, std::move(g));
+            }
+            if (p.texture == s.textures.size() && p.mesh == s.meshes.size()) done.push_back(&p);
+            if (sent >= budget) break;
+        }
+        stage(batch); // reads the parts' data: before dropping it
+        for (Part* p : done) p->data.reset(), p->gen.reset();
+    }
+
+    // Destroyed once the frames recorded until now retired (retire, after drawFrame's fence wait).
+    void bury(std::function<void()> destroy) { graves_.emplace_back(frameCounter_, std::move(destroy)); }
+    void retire(bool all) {
+        size_t n = 0;
+        while (n < graves_.size() && (all || graves_[n].first + kFramesInFlight <= frameCounter_)) graves_[n++].second();
+        graves_.erase(graves_.begin(), graves_.begin() + ptrdiff_t(n));
+    }
+    void destroyBlases(const std::vector<RtBlas>& blases) {
+        for (const RtBlas& b : blases) {
+            if (b.as) vkDestroyAccelerationStructureKHR_(device_, b.as, nullptr);
             vkDestroyBuffer(device_, b.buffer.buffer, nullptr);
         }
+    }
+    void buryRt(GpuMesh& g) {
+        if (!g.blases.empty()) bury([this, b = std::move(g.blases)] { destroyBlases(b); });
+        g.blases.clear();
+        g.rtMerged.clear();
+        g.rtStatic = false;
+    }
+    void buryMesh(GpuMesh& g) {
+        bury([this, v = g.vertices, i = g.indices, prev = g.prevVertices, b = std::move(g.blases), gen = std::move(g.gen)] {
+            for (const Buffer& x : {v, i, prev}) vkDestroyBuffer(device_, x.buffer, nullptr);
+            destroyBlases(b);
+        });
+    }
+    void buryTexture(SceneImage& t) {
+        bury([this, img = t.img, gen = std::move(t.gen)]() mutable { destroyImage(img); });
+    }
+
+    // The previous upload's per-upload state to the graveyard: material sets + UBO, RT structures, unkeyed textures and
+    // its Generation. Its programs wait in origStash_ for uploadOriginals to take the ones the new scene still uses.
+    void retireScene() {
+        if (!origStash_.empty()) bury([this, s = std::move(origStash_)]() mutable { destroyPipelines(device_, s); });
+        origStash_ = std::move(origPrograms_);
+        origPrograms_.clear();
+        origWarmKey_ = -1;
+        origDraws_.clear();
+        screenSets_.clear();
+        reflectSets_.clear();
+        origMaterialImages_.clear();
+        bury([this, ubo = std::exchange(origMaterialUbo_, {}), pool = std::exchange(origScenePool_, VK_NULL_HANDLE),
+              statics = std::move(staticBlases_), tlas = std::exchange(tlas_, VK_NULL_HANDLE),
+              buffers = std::array{std::exchange(tlasBuffer_, {}), std::exchange(instanceBuffer_, {}), std::exchange(geometryBuffer_, {}),
+                                   std::exchange(scratch_, {}), std::exchange(transformBuffer_, {})},
+              rtPool = std::exchange(rtPool_, VK_NULL_HANDLE), images = std::move(transient_), gen = std::move(gen_)] {
+            vkDestroyBuffer(device_, ubo.buffer, nullptr);
+            vkDestroyDescriptorPool(device_, pool, nullptr);
+            destroyBlases(statics);
+            if (tlas) vkDestroyAccelerationStructureKHR_(device_, tlas, nullptr);
+            for (const Buffer& b : buffers) vkDestroyBuffer(device_, b.buffer, nullptr);
+            vkDestroyDescriptorPool(device_, rtPool, nullptr);
+            for (const SceneImage& s : images) {
+                GpuImage img = s.img;
+                destroyImage(img);
+            }
+        });
         staticBlases_.clear();
-        rtEvicted_.clear();
-        if (tlas_) vkDestroyAccelerationStructureKHR_(device_, std::exchange(tlas_, VK_NULL_HANDLE), nullptr);
-        for (Buffer* b : {&tlasBuffer_, &instanceBuffer_, &geometryBuffer_, &scratch_, &transformBuffer_})
-            vkDestroyBuffer(device_, std::exchange(*b, {}).buffer, nullptr);
-        vkDestroyDescriptorPool(device_, std::exchange(rtPool_, VK_NULL_HANDLE), nullptr);
+        transient_.clear();
+        textures_.clear();
         rtSet_ = VK_NULL_HANDLE;
+        rtEvicted_.clear();
         tlasDirty_ = tlasRebuild_ = false;
         rtStatus_.blas = rtStatus_.instances = rtStatus_.geometries = rtStatus_.waterInstances = 0;
-        meshes_.clear();
-        meshSlot_.clear();
-        for (auto& s : staging_) s.meshes.clear(), s.used = 0; // pending copies of the old meshes
-        vkDestroyDescriptorPool(device_, scenePool_, nullptr);
-        scenePool_ = VK_NULL_HANDLE;
-        sceneMemory_.reset();
+    }
+
+    // Copies every region through one host-visible staging buffer, recorded by the next recordPending.
+    void stage(const UploadBatch& batch) {
+        auto aligned = [](VkDeviceSize s) { return (s + 15) & ~VkDeviceSize(15); }; // BCn block + 4-byte rules
+        VkDeviceSize total = 0;
+        for (const auto& [_, r] : batch.buffers) total += aligned(r.size);
+        for (const auto& job : batch.images)
+            for (const auto& r : job.mips) total += aligned(r.size);
+        if (total == 0) return;
+        Pending p;
+        p.mem = std::make_shared<Generation>();
+        p.mem->device = device_;
+        p.mem->memory.init(device_, gpu_, 0);
+        p.src = createBuffer(p.mem->memory, total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkDeviceSize off = 0;
+        for (const auto& [dst, r] : batch.buffers) {
+            std::memcpy(p.src.mapped + off, r.src, r.size);
+            p.buffers.push_back({dst, {off, 0, r.size}});
+            off += aligned(r.size);
+        }
+        for (const auto& job : batch.images) {
+            auto& [image, regions] = p.images.emplace_back(job.image, std::vector<VkBufferImageCopy>{});
+            for (uint32_t level = 0; level < job.mips.size(); ++level) {
+                const auto& r = job.mips[level];
+                std::memcpy(p.src.mapped + off, r.src, r.size);
+                VkBufferImageCopy copy{};
+                copy.bufferOffset = off;
+                copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, job.layers};
+                copy.imageExtent = {r.width, r.height, 1};
+                regions.push_back(copy);
+                off += aligned(r.size);
+            }
+        }
+        pending_.push_back(std::move(p));
+    }
+
+    // The staged copies, then images shader-readable and buffers visible to vertex input, shaders and AS builds.
+    void recordPending(VkCommandBuffer cmd) {
+        if (pending_.empty()) return;
+        constexpr VkPipelineStageFlags2 kAll = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, kCopy = VK_PIPELINE_STAGE_2_COPY_BIT;
+        // Write-after-read: earlier frames on this queue may still read a re-staged resource (the attenuation table).
+        std::vector<VkImage> images; // once each: two uploads before a frame both stage the attenuation table
+        for (const Pending& p : pending_)
+            for (const auto& [image, _] : p.images)
+                if (std::find(images.begin(), images.end(), image) == images.end()) images.push_back(image);
+        std::vector<VkImageMemoryBarrier2> b;
+        for (const VkImage image : images)
+            b.push_back(imageBarrier(image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kAll, 0, kCopy,
+                                     VK_ACCESS_2_TRANSFER_WRITE_BIT));
+        const VkMemoryBarrier2 war{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kAll, 0, kCopy, VK_ACCESS_2_TRANSFER_WRITE_BIT};
+        barriers(cmd, b, &war);
+        for (const Pending& p : pending_) {
+            for (const auto& [dst, copy] : p.buffers) vkCmdCopyBuffer(cmd, p.src.buffer, dst, 1, &copy);
+            for (const auto& [image, regions] : p.images)
+                vkCmdCopyBufferToImage(cmd, p.src.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t(regions.size()),
+                                       regions.data());
+        }
+        b.clear();
+        const VkPipelineStageFlags2 readers = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        for (const VkImage image : images)
+            b.push_back(imageBarrier(image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kCopy,
+                                     VK_ACCESS_2_TRANSFER_WRITE_BIT, readers, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT));
+        const VkMemoryBarrier2 data{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCopy, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                    VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | readers | VK_PIPELINE_STAGE_2_COPY_BIT |
+                                        (rtStatus_.supported ? kAsBuild : 0),
+                                    VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT |
+                                        VK_ACCESS_2_TRANSFER_READ_BIT};
+        barriers(cmd, b, &data);
+        for (Pending& p : pending_) bury([this, src = p.src, mem = std::move(p.mem)] { vkDestroyBuffer(device_, src.buffer, nullptr); });
+        pending_.clear();
+    }
+
+    // Shutdown (device idle): everything at once.
+    void destroySceneResources() {
+        for (auto& g : meshes_) buryRt(g), buryMesh(g);
+        for (auto& [_, g] : parked_) buryMesh(g);
+        for (auto& [_, t] : resident_) buryTexture(t);
+        meshes_.clear(), parked_.clear(), resident_.clear(), meshSlot_.clear(), parts_.clear();
+        retireScene();
+        destroyPipelines(device_, origStash_);
+        origStash_.clear();
+        for (Pending& p : pending_) bury([this, src = p.src, mem = std::move(p.mem)] { vkDestroyBuffer(device_, src.buffer, nullptr); });
+        pending_.clear();
+        for (auto& st : staging_) st.meshes.clear(), st.used = 0;
+        retire(true);
     }
 
     VkPresentModeKHR noVsyncMode() const {
@@ -4436,7 +4751,7 @@ private:
               blurSampler_ = VK_NULL_HANDLE; // screen-filter blur levels (trilinear)
     float mipBias_ = 0.0f;
     std::vector<std::pair<VkDescriptorSet, std::array<VkDescriptorImageInfo, 16>>> origMaterialImages_; // setMipBias
-    VkDescriptorPool staticPool_ = VK_NULL_HANDLE, scenePool_ = VK_NULL_HANDLE;
+    VkDescriptorPool staticPool_ = VK_NULL_HANDLE;
     GpuImage white_, font_, shadow_;
     std::array<UiImage, 3> uiImages_; // FrameOptions::uiImages
     VkDescriptorSet postSet_ = VK_NULL_HANDLE;
@@ -4449,8 +4764,16 @@ private:
     std::span<const UnitClip> unitClips_; // per frame: FrameOptions::unitClips
     std::vector<int> meshClip_;           // per frame and GPU mesh: index into unitClips_, -1 = unclipped
 
-    LinearAllocator staticMemory_, sceneMemory_, swapMemory_;
-    std::unordered_map<uint32_t, GpuImage> textures_;
+    LinearAllocator staticMemory_, swapMemory_;
+    std::unordered_map<uint32_t, GpuImage> textures_; // the current upload's, by TextureData::id (owned below)
+    std::unordered_map<uint64_t, SceneImage> resident_; // keyed textures: listed by the current upload or owned by a part
+    std::vector<SceneImage> transient_;                 // the current upload's unkeyed textures
+    std::unordered_map<uint64_t, GpuMesh> parked_;      // keyed meshes of live parts not listed by the current upload
+    std::map<uint64_t, Part> parts_;
+    std::shared_ptr<Generation> gen_;                   // the current upload's memory (unkeyed content, RT, materials)
+    std::vector<std::pair<uint64_t, std::function<void()>>> graves_; // (frameCounter_ when buried, destroy)
+    std::vector<Pending> pending_;
+    uint64_t uploads_ = 0;
     std::vector<GpuMesh> meshes_;
     std::vector<size_t> meshSlot_; // last upload()'s SceneData::meshes index -> meshes_ index (SIZE_MAX = skipped)
     std::vector<uint8_t> sea_;     // per frame (Enhanced): render::reflectsWater per mesh
