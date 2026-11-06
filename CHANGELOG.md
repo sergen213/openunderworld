@@ -4,6 +4,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.25.0] - 2026-11-05
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: muzzle flashes. Every gun's flash now sits on its own barrel tip and points along the barrel (Lara's guns,
+  enemy rifles, the speargun and the tranquilizer were off or pointing the wrong way); the shotgun no longer makes a
+  giant flash per pellet; Lara holds her guns on the game's own grip points; enemies now visibly hold their rifles.
+- New: enemies patrol their original routes, pause at points, search for Lara after losing sight of her, and go back
+  to their posts.
+- New: urns and other breakable objects shatter from shots, Mjolnir and its ground pound, and stay broken after
+  loading a save. The ground pound now does the game's own damage.
+- New: the combat crates break from Mjolnir hits; lever 7188 in Valaskjalf now opens its reward door.
+- Faster: neighbouring areas load in the background. The long stutter when walking into a new area is gone (a
+  shorter one remains when it joins); `--sync-loads` restores the old behaviour. l2_cliffhall_b and l2_hubhall now
+  load together.
+- Fixed: some area scripts restarted repeatedly.
+
 ## [0.24.0] - 2026-11-05
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
