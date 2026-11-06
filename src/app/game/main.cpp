@@ -1419,6 +1419,12 @@ void logState(const char* what, const ou::game::World& w) {
                  s.pos.z - u.offset.z, s.yaw, s.clip.c_str(), s.clipTime, w.checkpoint() ? w.checkpoint()->id : 0);
 }
 bool quickSave(const ou::game::World& w, const std::string& slot) {
+    // ponytail: no saving while Lara is dead (her death state does not round-trip; the respawn reloads the checkpoint
+    // anyway). [I] whether the original allows it.
+    if (w.health().dead()) {
+        std::fprintf(stderr, "ou-game: save refused: Lara is dead\n");
+        return false;
+    }
     try {
         const auto path = ou::save::slotPath(slot);
         ou::save::writeFile(path, ou::save::serialize(ou::save::capture(w)));
