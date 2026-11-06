@@ -77,6 +77,29 @@ A feature is only "Tested" with automated tests in `tests/`, and only "Verified"
 
 | Progression gates (`docs/PROGRESSION.md`): critical-path routes per chapter, chapter ends 0-6 running their original scripts, switches / blocks / grapple pulls / triggers asserted per gate | Tested | Gate sweep of 289 data-derived gates (141 pass; preload volumes and condition links counted as failures); interactive blockers listed with causes; the ending (Natla fight buttresses → 340 → l7_monastery 342 → end game save → credits → main menu) is played from its scripts; object anim state graphs (physical class 6, docs/formats/ANIMGRAPH.md) | `ProgressionReal.CriticalGates`, `ChaptersReal.*Ending*`, `ProgressionReal.EndgameCredits`, `ProgressionReal.KrakenColumnShot`, `ProgressionReal.TempleRevealReopens` | Pressure plates, uber section state machines, shot uber physics, anim graphs (buttress mounts, l4 5469 temple reveal) done; open: event-gated (0x800) graph transitions, state entry messages, several eligible transitions picked by the exe's LCG |
 | Other gameplay (puzzles) | Research Required | — | — | — |
+| Jolt Physics backend (planned, below) | Designed | — | — | Not started |
+
+## Planned: Jolt Physics (replaces our Havok stand-ins)
+
+The original game uses Havok. Our `src/physics` (~475 lines: hand-written hinge/prismatic solver, fitted bike numbers) is a
+stand-in. [Jolt Physics](https://github.com/jrouwe/JoltPhysics) (MIT) is vendored at a pinned release tag through CMake
+`FetchContent` with `CROSS_PLATFORM_DETERMINISTIC` on, so replays and tick-by-tick tests stay bit-exact. Lara's
+controller and the level collision queries stay ours (Lara moves kinematically from root motion); level collision is fed to
+Jolt as static mesh shapes per streamed unit.
+
+1. **Joints and rigid bodies.** `physics::Scene` keeps its interface; inside it, Jolt bodies come from the HInfo
+   spheres / boxes / capsules with the exe's mass and inertia (PHYSICS.md). Hinge, prismatic and fixed joints become
+   Jolt constraints with the data's limits and motors; the uber-object range watches (triggers 14 / 15) read the Jolt
+   constraint positions. Loose `*_rb_*` bodies, grapple-pulled weights and push blocks tumble and stack; pressure plates
+   are weighed by real contacts. Acceptance: every `ProgressionReal` gate and `game_render_rate_smoke` still pass;
+   tests that pinned our own [I] solver numbers are rewritten to the data's behaviour.
+2. **Motorcycle.** `Vehicle.cpp` drives a Jolt `WheeledVehicleController` (suspension, engine, gears) from the bike
+   object's Havok vehicle data where decoded; jumps, ramps and crashes come out of the simulation. Acceptance: the
+   `VehicleReal` ride replays complete; handling numbers documented [O]/[I].
+3. **Ragdolls.** Enemy deaths (and Lara's where the data has a ragdoll) use Jolt ragdolls built from the skeleton and
+   the model's HInfo; the animation blends into the ragdoll at death. Acceptance: killed enemies fall onto the level
+   geometry, deterministic across render rates.
+
 
 ## Principles
 
