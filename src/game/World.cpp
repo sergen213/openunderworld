@@ -61,11 +61,12 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ladder_attach_M", 3, 1}, {"ladder_attach_ground_bottom", 14, 14}, {"ladder_attach_ground_top", 4, 0},
         {"ladder_idle", 3, 3}, {"ladder_climb_up", 3, 3}, {"ladder_climb_down", 3, 3}, {"ladder_detach_ground_top", 3, 1},
         {"ladder_detach_ground_bottom", 3, 1}, {"ladder_detach_drop", 3, 7}, {"ladder_jump_back", 3, 1},
-        // pillars: requests 621 (attach_M), 617, 616, 632, 626, 624, 633, 634, 635, 630, 631, 629, 639
+        // pillars: requests 621 (attach_M), 617, 616, 632, 626, 624, 633, 634, 635, 630, 631, 629, 639, 640, 636, 638
         {"pillar_attach_M", 3, 3}, {"pillar_attach_ground", 3, 1}, {"pillar_attach_perch", 3, 3}, {"pillar_idle", 4, 4},
         {"pillar_climb_up", 3, 1}, {"pillar_climb_right", 3, 3}, {"pillar_slide_down_start", 3, 3}, {"pillar_slide_down", 3, 3},
         {"pillar_slide_down_stop", 3, 2}, {"pillar_detach_perch", 3, 1}, {"pillar_detach_ground", 1, 1},
-        {"pillar_detach_drop", 3, 1}, {"pillar_jump_back", 3, 3},
+        {"pillar_detach_drop", 3, 1}, {"pillar_jump_back", 3, 3}, {"pillar_jump_forward", 3, 3},
+        {"pillar_jump_right", 3, 1}, {"pillar_jump_back_45R", 3, 3},
         // perches: requests 661, 647, 649, 658, 663, 668 / 669 / 670
         {"perch_idle", 6, 6}, {"perch_attach_air", 2, 8}, {"perch_attach_ground", 3, 1}, {"perch_detach_drop", 5, 1},
         {"perch_jump_forward", 3, 3}, {"perch_turn_right_45", 3, 3}, {"perch_turn_right_90", 5, 5}, {"perch_turn_right_180", 3, 3},
@@ -250,7 +251,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ladder_climb_down", "ladder_detach_ground_top", "ladder_detach_ground_bottom", "ladder_detach_drop", "ladder_jump_back",
     "pillar_attach_M", "pillar_attach_ground", "pillar_attach_perch", "pillar_idle", "pillar_climb_up", "pillar_climb_right",
     "pillar_slide_down_start", "pillar_slide_down", "pillar_slide_down_stop", "pillar_detach_perch", "pillar_detach_ground",
-    "pillar_detach_drop", "pillar_jump_back", "perch_attach_air", "perch_attach_ground", "perch_idle", "perch_jump_forward",
+    "pillar_detach_drop", "pillar_jump_back", "pillar_jump_forward", "pillar_jump_right", "pillar_jump_back_45R", "perch_attach_air", "perch_attach_ground", "perch_idle", "perch_jump_forward",
     "perch_detach_drop", "perch_turn_right_45", "perch_turn_right_90", "perch_turn_right_180",
     "Wall_Hug_Idle", "Wall_Hug_Shimmy_Left", "Wall_Hug_Walk_Off", "Wall_Hug_Jump_Forward", // wall hug (Traverse.cpp)
     "grapple_pull_up_light_begin", "grapple_pull_mid_light_begin", "grapple_pull_down_light_begin",

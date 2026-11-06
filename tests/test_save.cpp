@@ -1217,6 +1217,23 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
                  }
          },
          [](const game::World& w) { return w.player().state().clip == "HPole_swing"; }},
+        // ... and mid-fling: in the air between 1336 and 1337 (Player::poleFling)
+        {"l4_traprooms", game::Spawn{{14300, -21200, 6400}, 1.5707963f}, 115, 240, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t < 60 ? 1.0f : 0.0f;
+             a.jump = t == 60;
+             return a;
+         }, [](game::World& w) {
+             const auto& mk = w.collision().markup;
+             for (size_t i = 0; i < mk.size(); ++i)
+                 if (mk[i].type == 4 && mk[i].id == 1336) {
+                     game::PlayerState s = w.player().state();
+                     s.state = State::PoleHang, s.clip = "HPole_idleHangPerp", s.loop = true, s.clipTime = 0;
+                     s.ledge = int(i), s.ledgeSeg = 0, s.ledgeT = 80, s.ledgeSide = 1, s.vel = game::vec3(0);
+                     w.restore(s, 1.5707963f, 0);
+                 }
+         },
+         [](const game::World& w) { return w.player().state().state == State::HangJump; }},
         // l4_temple perch 1190 on pillar 1191: mid-turn on the perch, then mid-way down onto the pillar.
         {"l4_temple", game::Spawn{{-6620, -12345, -1700}, 0}, 140, 240, [](uint64_t t) {
              game::Actions a;

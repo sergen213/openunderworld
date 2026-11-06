@@ -13,6 +13,13 @@ namespace ou::game {
 namespace {
 
 constexpr float kPi = 3.14159265f;
+// Poles, tru.exe under Wine (2026-11-06, docs/GAMEPLAY.md "Poles"): the catch hands over to the idle
+// hang after kPoleAttachIdle; a fling leaves the pole kPoleFlingDelay after the press (0.64 s twice, 0.31 / 0.81 s
+// without a target: [I] the phase rule); q33's take-off (73.72 forward, 52.10 up a 30 Hz frame, lara.drm query
+// table); the catch point kFlingCatchBelow under the next pole; across -> along turns in 0.30 s.
+constexpr float kPoleAttachIdle = 0.83f, kPoleFlingDelay = 0.64f; // attach: clip time (Hpole_perp_attach_M starts at frame 4)
+constexpr float kFlingForward = 73.72f * 30.0f, kFlingUp = 52.10f * 30.0f, kFlingCatchBelow = 357.0f;
+constexpr float kPerpToParaRate = 1.5f / 0.30f;
 constexpr float kSkin = 1.0f;       // gap kept to surfaces after a sweep, units
 constexpr float kEdgePush = 200.0f; // units/s: a capsule resting on an edge corner slides off at least this fast [I]
 
@@ -925,30 +932,27 @@ bool Player::hurdleTick(vec2 move, float dt) {
     return clipDone();
 }
 
-// Targeted jump from a hang (kind 0 up, +-1 right/left, 2 back) to another ledge, or from a pole (kind 3,
-// fling forward) to another pole. The target is the attach point in the jump's reach box nearest to a typical
-// jump end (400 up / 400 aside / 700 back and 100 down / 1264 ahead: l4_traprooms' pole spacing) [I]. Sideways and
+// Targeted jump from a hang (kind 0 up, +-1 right/left, 2 back) to another ledge. The target is the attach point in
+// the jump's reach box nearest to a typical jump end (400 up / 400 aside / 700 back and 100 down) [I]. Sideways and
 // back, the take-off clip plays first with its root motion (tru.exe under Wine: ledgeb_jump_right / _back carry her
 // 122 aside + 107 up / 62 out + 32 up and turn her before she leaves); launchHangJump() then aims the flight.
+// (Pole flings: Player::poleFling.)
 bool Player::startHangJump(int kind) {
-    const bool fling = kind == 3;
-    const vec3 hands = s_.pos + toWorld(fling ? (s_.polePara ? anims_.poleParaHandOffset : anims_.poleHandOffset) : anims_.hangHandOffset);
-    const bool para = fling && s_.polePara;
+    const vec3 hands = s_.pos + toWorld(anims_.hangHandOffset);
     const vec2 f = xy(forward()), r(std::sin(s_.yaw), -std::cos(s_.yaw));
     const vec2 newF = kind == 2 ? -f : f;
     const vec3 ideal = hands + (kind == 0   ? vec3(0, 0, 400)
                                 : kind == 2 ? vec3(-f * 700.0f, -100)
-                                : fling     ? vec3(f * 1264.0f, 0)
                                             : vec3(r * (400.0f * float(kind)), 0));
     int bestLi = -1, bestSeg = 0;
     float bestT = 0, bestSide = 1, bestDist = 1e30f;
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
-        if ((fling ? !isPole(m) : m.type != 1) || int(li) == s_.ledge) continue; // along the same one: shimmy
+        if (m.type != 1 || int(li) == s_.ledge) continue; // along the same one: shimmy
         for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
             const vec2 dir = segDir(m, si), n(-dir.y, dir.x);
-            if (std::abs(glm::dot(n, newF)) < 0.7f) continue; // the wall / pole must face the new heading
-            const float side = glm::dot(n, fling ? newF : -newF) > 0 ? 1.0f : -1.0f;
+            if (std::abs(glm::dot(n, newF)) < 0.7f) continue; // the wall must face the new heading
+            const float side = glm::dot(n, -newF) > 0 ? 1.0f : -1.0f;
             const float t = std::clamp(glm::dot(xy(ideal - m.points[size_t(si)]), dir), 0.0f, segLen(m, si));
             const vec3 rel = pointOn(m, si, t) - hands;
             const float lat = glm::dot(xy(rel), r), fw = glm::dot(xy(rel), f), up = rel.z;
@@ -957,11 +961,10 @@ bool Player::startHangJump(int kind) {
             case 0: ok = std::abs(lat) <= 100 && std::abs(fw) <= 100 && up >= 150 && up <= t_.hangJumpUp; break;
             case 1:
             case -1: ok = lat * float(kind) >= 150 && lat * float(kind) <= t_.hangJumpSide && std::abs(fw) <= 150 && std::abs(up) <= 400; break;
-            case 2: ok = fw <= -200 && fw >= -t_.hangJumpBack && std::abs(lat) <= 200 && up >= -700 && up <= 200; break;
-            default: ok = fw >= 300 && fw <= t_.poleFlingReach && std::abs(lat) <= 300 && std::abs(up) <= 500; break;
+            default: ok = fw <= -200 && fw >= -t_.hangJumpBack && std::abs(lat) <= 200 && up >= -700 && up <= 200; break;
             }
             const float score = glm::distance(pointOn(m, si, t), ideal);
-            if (ok && score < bestDist && (fling || openBelow(col_, m, si, t, side)))
+            if (ok && score < bestDist && openBelow(col_, m, si, t, side))
                 bestDist = score, bestLi = int(li), bestSeg = si, bestT = t, bestSide = side;
         }
     }
@@ -970,10 +973,9 @@ bool Player::startHangJump(int kind) {
     s_.state = State::HangJump;
     s_.fallStartZ = s_.pos.z;
     // Left: ledgeb_jump_right mirrored (lara.drm request 979 has the mirror bit, 1009 is the same clip unmirrored) [O].
-    play(fling ? (para ? "hpole_para_fling" : "hpole_perp_fling") : kind == 0 ? "ledgeb_jump_up" : kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false, 1,
-         kind == -1);
+    play(kind == 0 ? "ledgeb_jump_up" : kind == 2 ? "ledgeb_jump_back" : "ledgeb_jump_right", false, 1, kind == -1);
     s_.vel = vec3(0); // not launched yet (HangJump: the take-off clip first)
-    if (kind == 0 || fling) launchHangJump();
+    if (kind == 0) launchHangJump();
     return true;
 }
 
@@ -981,7 +983,7 @@ bool Player::startHangJump(int kind) {
 // g t^2 / 2) / t, the root arriving exactly on the target's hang pose after t. The take-off vertical speed is the jump
 // query's (q10 up 75.85, q7 / q8 sideways 34.77, q9 back 42.54 a frame) and t when that rise and fall reaches the
 // target's height (rising for a target above, else falling) [I: tru.exe times it by the query arc's first box hit];
-// a target above that arc, and pole flings, rise hangJumpApex above the higher end instead [I].
+// a target above that arc rises hangJumpApex above the higher end instead [I].
 void Player::launchHangJump() {
     const vec3 delta = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide).first - s_.pos;
     const float g = t_.gravity;
@@ -1013,8 +1015,8 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const auto& m = col_.markup[size_t(s_.ledge)];
     const std::string clip = s_.clip;
     const bool attaching = clip == "Hpole_perp_attach_M" || clip == "Hpole_para_attach_S";
-    const bool turning = clip == "Hpole_PerptoPara" || clip == "Hpole_ParatoPerp" || clip == "Hpole_Perpturn180" ||
-                         clip == "Hpole_Paraturn180" || clip == "Hpole_swingreverseA";
+    const bool turning = clip == "Hpole_PerptoPara" || clip == "Hpole_ParatoPerp" || clip == "Hpole_Paraturn180" ||
+                         clip == "Hpole_swingreverseA";
     if (dropPressed && !turning) {
         const bool para = s_.polePara;
         s_.regrabCooldown = 0.4f;
@@ -1022,19 +1024,22 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         play(para ? "Hpole_detach_dropPara" : "Hpole_detach_dropPerp", false);
         return;
     }
-    if (jumpPressed && !turning && !attaching) { // fling: to the next pole in reach, else a free leap forward [I] (run-jump speeds)
-        if (!startHangJump(3)) {
-            const bool para = s_.polePara;
-            s_.ledge = -1;
-            s_.regrabCooldown = 0.3f;
-            s_.vel = forward() * t_.runJumpSpeed + vec3(0, 0, t_.runJumpVz);
-            s_.state = State::Jump;
-            s_.fallStartZ = s_.pos.z;
-            play(para ? "hpole_para_fling" : "hpole_perp_fling", false);
-        }
+    const bool flinging = clip == "hpole_perp_fling" || clip == "hpole_para_fling";
+    if (jumpPressed && !turning && !attaching && !flinging) { // the fling clip on the pole, then the leap (poleFling)
+        play(s_.polePara ? "hpole_para_fling" : "hpole_perp_fling", false);
+        s_.flight = 0; // time on the pole since the press
         return;
     }
-    if (attaching && !clipDone()) { advanceClip(dt); placeOnLedge(); return; }
+    if (flinging) { // tru.exe under Wine: she leaves the pole kPoleFlingDelay after the press, the clip carrying her
+        s_.pos += toWorld(advanceClip(dt));
+        s_.flight += dt;
+        if (s_.flight >= kPoleFlingDelay) poleFling();
+        return;
+    }
+    // tru.exe under Wine: the catch hands over to the idle hang (input taken again) 0.62-0.85 s after it (three jump
+    // grabs on l4_traprooms 1336); the 1.5 s attach clip is cut there.
+    if (attaching && s_.clipTime < kPoleAttachIdle && !clipDone()) { advanceClip(dt); placeOnLedge(); return; }
+    if (attaching) play(s_.polePara ? "hpole_IdleHangPara" : "HPole_idleHangPerp", true);
     const vec3 perpOff = anims_.poleHandOffset, paraOff = anims_.poleParaHandOffset;
     if (turning) { // the clip's root turn from climbYawFrom; the hands stay on the axis, their offset blending pose to pose
         const anim::Clip* c = anims_.find(clip);
@@ -1059,7 +1064,8 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         const float want = wrapAngle(to - from);
         s_.polePara = para, s_.ledgeSide = side;
         s_.climbYawFrom = from, s_.climbYawTo = to;
-        play(c, false, 1, std::abs(std::abs(by) - kPi) > 0.3f && (want > 0) != (by > 0));
+        // tru.exe under Wine (l3_main_hall 948): across -> along turns her in 0.30 s, not Hpole_PerptoPara's 1.5 s
+        play(c, false, c == "Hpole_PerptoPara" ? kPerpToParaRate : 1.0f, std::abs(std::abs(by) - kPi) > 0.3f && (want > 0) != (by > 0));
     };
     const vec2 dir = segDir(m, s_.ledgeSeg), n(-dir.y, dir.x), f = xy(forward());
     const float mag = glm::length(move);
@@ -1088,15 +1094,12 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
             return;
         }
         const bool settling = clip == "Hpole_swingstopA" || clip == "Hpole_swingstopB" || clip == "Hpole_swingstopC" ||
-                              clip == "Hpole_startswing_endA" || clip == "Hpole_perp_attach_M";
+                              clip == "Hpole_startswing_endA";
         if (settling && !clipDone()) {
         } else if (fwd > 0.7f) {
             play("HPole_StartSwing", false);
         } else if (std::abs(along) > 0.7f) {
             turn("Hpole_PerptoPara", true, along > 0 ? 1.0f : -1.0f);
-            return;
-        } else if (fwd < -0.7f) {
-            turn("Hpole_Perpturn180", false, -s_.ledgeSide);
             return;
         } else {
             play("HPole_idleHangPerp", true);
@@ -1137,6 +1140,50 @@ void Player::pole(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (moveAlong(m, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(d), dir)) && (s_.clip == "HPole_ParaForward_trans" || s_.clip == "HPole_ParaForward"))
         stop();
     placeOnLedge();
+}
+
+// The leap off a pole after the fling clip. tru.exe under Wine (l4_traprooms 1336 -> 1337, 1264 ahead at the same
+// height, presses 1.6 s and 2.8 s into the swing, identical flights): from the pole she flies with the pole-top jump's
+// query q33 vertical speed (52.10 up a 30 Hz frame, gravity 5.72443) and the horizontal speed that brings her, on the
+// way down, to the catch point 242 short of the next pole and 357 below it: 23.5 frames, 237 over the pole at the top
+// (0x73EDC0 retargets q33 at the query's hit). Ours times the flight by that rule and aims the root at the hang pose
+// itself, so the catch has no jump [I]. No pole in reach: q33 as it is (73.72 forward, 52.10 up a frame) [O].
+void Player::poleFling() {
+    const vec3 from = pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT);
+    const vec2 f = xy(forward());
+    constexpr float kUp = kFlingUp / 30.0f, kG = 5.72443f / 2; // per frame, half gravity a frame^2
+    int bestLi = -1, bestSeg = 0;
+    float bestT = 0, bestSide = 1, bestDist = 1e30f, bestTime = 0;
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (!isPole(m) || int(li) == s_.ledge) continue;
+        for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
+            const vec2 dir = segDir(m, si), n(-dir.y, dir.x);
+            if (std::abs(glm::dot(n, f)) < 0.7f) continue; // the pole must cross the heading
+            const float t = std::clamp(glm::dot(xy(from - m.points[size_t(si)]), dir), 0.0f, segLen(m, si));
+            const vec3 p = pointOn(m, si, t), rel = p - from;
+            const float fw = glm::dot(xy(rel), f), lat = glm::dot(xy(rel), vec2(f.y, -f.x));
+            if (fw < 300 || fw > t_.poleFlingReach || std::abs(lat) > 300 || std::abs(rel.z) > 500) continue;
+            const float dz = rel.z - kFlingCatchBelow, disc = kUp * kUp - 4 * kG * dz; // kUp t - kG t^2 = dz, way down
+            if (disc < 0 || std::abs(lat) >= bestDist) continue;
+            bestDist = std::abs(lat), bestLi = int(li), bestSeg = si, bestT = t, bestSide = glm::dot(n, f) > 0 ? 1.0f : -1.0f;
+            bestTime = (kUp + std::sqrt(disc)) / (2 * kG) / 30.0f;
+        }
+    }
+    s_.regrabCooldown = 0.3f;
+    s_.fallStartZ = s_.pos.z;
+    if (bestLi < 0) {
+        s_.ledge = -1;
+        s_.vel = vec3(f * kFlingForward, kFlingUp);
+        s_.state = State::Jump;
+        return;
+    }
+    const float g = t_.gravity, time = bestTime;
+    const vec3 delta = attachPose(bestLi, bestSeg, bestT, bestSide).first - s_.pos;
+    s_.vel = vec3(xy(delta) / time, (delta.z + 0.5f * g * time * time) / time);
+    s_.flight = time;
+    s_.ledge = bestLi, s_.ledgeSeg = bestSeg, s_.ledgeT = bestT, s_.ledgeSide = bestSide, s_.polePara = false;
+    s_.state = State::HangJump;
 }
 
 // Jump assist (tru.exe 0x73EDC0 retargets in-air velocity at markup with MUD flags 0x20830000: jump landing,
@@ -1354,7 +1401,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         ladder(move, jumpPressed, dropPressed, dt);
         break;
     case State::Pillar:
-        pillar(move, jumpPressed, dropPressed, dt);
+        pillar(move, a.move, jumpPressed, dropPressed, dt);
         break;
     case State::Perch:
         perch(move, jumpPressed, dropPressed, dt);

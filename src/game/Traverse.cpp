@@ -49,11 +49,16 @@ int rungAt(const collision::Markup& m, float z) {
     return std::clamp(int(std::floor((m.points[0].z - z - kRungTop) / kRungSpacing + 0.5f)), 0, lowestRung(m));
 }
 
-// Pillars: root kPillarRoot out from the axis [I] (the markup has no radius); from the floor she lands kPillarGroundRise
-// up the shaft (player data short +0x7EE, the PillarAttachGroundAnimTarget 0x753F80) [O]; climbing stops where
-// pillar_detach_perch (rise 341.8) lifts her onto the top and where pillar_detach_ground (drop 193) sets her on the
-// floor [I].
-constexpr float kPillarRoot = 100.0f, kPillarGroundRise = 199.0f;
+// Pillars: the root on the axis, the clips holding her body round the shaft (tru.exe under Wine, l4_temple 1189 / 1194:
+// Lara's instance stays on the axis while on a pillar) [O]; she attaches within kPillarReach of it [I]; from the floor
+// she lands kPillarGroundRise up the shaft (player data short +0x7EE, the PillarAttachGroundAnimTarget 0x753F80; Wine:
+// 198.6) [O]; climbing stops where pillar_detach_perch (rise 341.8) lifts her onto the top and where
+// pillar_detach_ground (drop 193) sets her on the floor [I]. Wine (1194): she climbs a steady kPillarClimbSpeed and goes
+// round the shaft a steady kPillarRoundRate while the stick is held.
+constexpr float kPillarReach = 200.0f, kPillarGroundRise = 199.0f;
+constexpr float kPillarClimbSpeed = 10.40f * 30.0f, kPillarRoundRate = 1.5708f; // units/s, rad/s
+// Jumps off (state S1213): query q48, 55.63 out and 28.45 up a 30 Hz frame (lara.drm query table) [O].
+constexpr float kPillarJumpSpeed = 55.63f * 30.0f, kPillarJumpVz = 28.45f * 30.0f;
 constexpr float kPillarTopDrop = 341.8f, kPillarFootRise = 193.0f;
 float pillarMaxZ(const collision::Markup& m) { return std::max(m.points[0].z - kPillarTopDrop, m.points[1].z + kPillarFootRise); }
 float pillarMinZ(const collision::Markup& m) { return m.points[1].z + kPillarFootRise; }
@@ -111,11 +116,11 @@ bool Player::tryLadder(bool fromAir) {
         }
         if (glm::dot(fwd, -out) < 0.5f) continue;
         if (s_.pos.z < bottom.z - 100.0f || s_.pos.z > top.z + 200.0f) continue;
-        if (glm::length(xy(s_.pos - top)) > kPillarRoot + 100.0f) continue;
+        if (glm::length(xy(s_.pos - top)) > kPillarReach) continue;
         s_.ledge = int(i);
         s_.climbNormal = out;
         s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw, s_.climbYawTo = yawOf(-xy(out));
-        s_.climbTo = vec3(xy(top) + xy(out) * kPillarRoot, std::clamp(s_.pos.z + (fromAir ? 0.0f : kPillarGroundRise), pillarMinZ(m), pillarMaxZ(m)));
+        s_.climbTo = vec3(xy(top), std::clamp(s_.pos.z + (fromAir ? 0.0f : kPillarGroundRise), pillarMinZ(m), pillarMaxZ(m)));
         s_.vel = vec3(0);
         s_.state = State::Pillar;
         play(fromAir ? "pillar_attach_M" : "pillar_attach_ground", false);
@@ -183,7 +188,7 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
 // On a pillar: climb up (pillar_climb_up), slide down (pillar_slide_down_start / _down / _stop), round the shaft
 // (pillar_climb_right, mirrored to the left: requests 623 / 624 [O]), onto a perch on its top (pillar_detach_perch),
 // off at its foot (pillar_detach_ground), jump back (pillar_jump_back), let go (pillar_detach_drop).
-void Player::pillar(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
+void Player::pillar(vec2 move, vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
     if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size()) { startFall(s_.vel); return; }
     const auto& m = col_.markup[size_t(s_.ledge)];
     const vec3 axis(xy(m.points[0]), 0);
@@ -211,13 +216,27 @@ void Player::pillar(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         play("pillar_idle", true);
     }
     vec3 out = s_.climbNormal;
-    if (jumpPressed) { // pillar_jump_back turns her away; a stick jump's take-off speeds (Tuning) [I]
+    if (jumpPressed) {
+        // The stick's angle from straight out picks the jump (state S1213, conds 0x1A9 / 0x1AA in degrees): within 22
+        // pillar_jump_forward, to 78 the same mirrored on the left, to 112 pillar_jump_right, to 155
+        // pillar_jump_back_45R (left: mirrored), beyond or no stick pillar_jump_back (S1215) [O]; which side mirrors
+        // is [I]. She leaves along the stick (no stick: straight out) at q48's speeds.
+        const float mag = glm::length(move);
+        const vec2 dir = mag > 0.5f ? move / mag : xy(out);
+        const float a = glm::degrees(std::atan2(xy(out).x * dir.y - xy(out).y * dir.x, glm::dot(xy(out), dir)));
+        const float deg = std::abs(a);
+        const bool back = mag <= 0.5f || deg > 155.0f;
         s_.ledge = -1;
         s_.state = State::Jump;
-        s_.vel = out * t_.standJumpSpeed + vec3(0, 0, t_.standMoveJumpVz);
+        s_.vel = vec3(dir * kPillarJumpSpeed, kPillarJumpVz);
         s_.fallStartZ = s_.pos.z;
         s_.regrabCooldown = 0.3f;
-        play("pillar_jump_back", false);
+        if (back) {
+            play("pillar_jump_back", false); // its root turns her half round in the air
+        } else {
+            s_.yaw = yawOf(dir);
+            play(deg <= 78.0f ? "pillar_jump_forward" : deg <= 112.0f ? "pillar_jump_right" : "pillar_jump_back_45R", false, 1, a > 22.0f);
+        }
         return;
     }
     if (dropPressed) {
@@ -226,18 +245,23 @@ void Player::pillar(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         play("pillar_detach_drop", false);
         return;
     }
-    const vec3 wish(move, 0);
-    const float climb = glm::dot(wish, -out), side = glm::dot(wish, glm::cross(-out, vec3(0, 0, 1)));
+    // Screen-relative like tru.exe's stick quadrant (cond 0x195): up climbs, down slides, right / left go round
+    // (Wine, l4_temple's fixed camera: W climbed whichever way she faced) [O].
+    const float climb = stick.y, side = stick.x;
     const float maxZ = pillarMaxZ(m), minZ = pillarMinZ(m);
+    // the clips at the measured rates: pillar_climb_up rises clipMove per clip, pillar_climb_right turns 1.19 in 0.7 s
+    const anim::Clip* up = anims_.find("pillar_climb_up");
+    const float kClimbRate = up ? float(up->durationSeconds()) * kPillarClimbSpeed / clipMove(anims_, "pillar_climb_up").z : 1.0f;
+    constexpr float kRoundRate = kPillarRoundRate * 0.7f / 1.19f;
     const auto warp = [&](std::string_view c, vec3 to, float yawTo) {
         s_.climbFrom = s_.pos, s_.climbTo = to, s_.climbYawFrom = s_.yaw, s_.climbYawTo = yawTo;
-        play(c, false);
+        play(c, false, c == "pillar_climb_up" ? kClimbRate : 1.0f);
     };
     if (clip == "pillar_climb_right") { // round the shaft: the clip's root turn, Lara kept facing the axis
         s_.pos.z += advanceRoot(dt).z;
         out = -vec3(std::cos(s_.yaw), std::sin(s_.yaw), 0);
         s_.climbNormal = out;
-        s_.pos = vec3(xy(axis) + xy(out) * kPillarRoot, s_.pos.z);
+        s_.pos = vec3(xy(axis), s_.pos.z);
         if (!clipDone()) return;
     }
     const bool sliding = clip == "pillar_slide_down_start" || clip == "pillar_slide_down" || clip == "pillar_slide_down_stop";
@@ -278,12 +302,12 @@ void Player::pillar(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         warp("pillar_detach_ground", s_.pos + rotYaw(s_.yaw, clipMove(anims_, "pillar_detach_ground")), s_.yaw + kPi);
         return;
     } else if (std::abs(side) > 0.5f) {
-        play("pillar_climb_right", false, 1, side < 0);
+        play("pillar_climb_right", false, kRoundRate, side < 0);
         return;
     }
     play("pillar_idle", true);
     advanceClip(dt);
-    s_.pos = vec3(xy(axis) + xy(out) * kPillarRoot, s_.pos.z);
+    s_.pos = vec3(xy(axis), s_.pos.z);
 }
 
 // Perch (13): a short segment to balance on, from the air or a standing jump next to it.
@@ -348,7 +372,7 @@ void Player::perch(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
             s_.ledge = int(i);
             s_.climbNormal = out;
             s_.climbFrom = s_.pos, s_.climbYawFrom = s_.climbYawTo = s_.yaw;
-            s_.climbTo = vec3(xy(p.points[0]) + xy(out) * kPillarRoot, std::max(pillarMinZ(p), s_.pos.z + clipMove(anims_, "pillar_attach_perch").z));
+            s_.climbTo = vec3(xy(p.points[0]), std::max(pillarMinZ(p), s_.pos.z + clipMove(anims_, "pillar_attach_perch").z));
             s_.state = State::Pillar;
             play("pillar_attach_perch", false);
             return;

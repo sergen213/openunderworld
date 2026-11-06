@@ -625,12 +625,19 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   root fixed); letting go stops at the loop's next phase boundary with the stop clip that starts there (phases
   7 / 5 / 19 / 10 frames: `Hpole_swingstopB` after phase 2, `C` after 3, `A` after 4; in `HPole_StartSwing`'s first
   phase `Hpole_startswing_endA`); back during the swing turns her round at the loop's end (`Hpole_swingreverseA`); back
-  while hanging `Hpole_Perpturn180`; along the pole `Hpole_PerptoPara`. Parallel (`hpole_IdleHangPara`): forward moves
+  while hanging does nothing (tru.exe under Wine [O]); along the pole `Hpole_PerptoPara`, played in **0.30 s** as the
+  original turns her [O]. The catch hands over to the idle hang (input again) **0.62–0.85 s** after it (three Wine jump
+  grabs; ours 0.7 s: `Hpole_perp_attach_M` cut at clip time 0.83, it starts at frame 4). Parallel (`hpole_IdleHangPara`): forward moves
   hand over hand along it (`HPole_ParaForward_trans` → `HPole_ParaForward`, 281.7 per 1.37 s of root motion; the pole's
   end stops her), letting go `HPole_ParaForward_to_idle_L_hand` / `_R_hand` (the hand behind: first / second half of
   the cycle [I]), back `Hpole_Paraturn180`, across `Hpole_ParatoPerp`. A quarter turn the other way plays the clip
-  mirrored (root yaw negated, as tru.exe's mirrored requests). Jump flings (`hpole_perp_fling` / `hpole_para_fling`)
-  to the next pole ahead (same flight solver as hang jumps) or leaps off at run-jump speeds; drop lets go
+  mirrored (root yaw negated, as tru.exe's mirrored requests). Jump plays the fling clip (`hpole_perp_fling` /
+  `hpole_para_fling`) on the pole and she leaves **0.64 s** after the press (Wine, l4_traprooms 1336 → 1337, presses
+  1.6 s and 2.8 s into the swing: identical flights; 0.31 / 0.81 s seen without a target [U] the rule): to the next
+  pole ahead with query q33's vertical take-off (**52.10** up a 30 Hz frame, gravity 5.72443) and the horizontal speed
+  that brings her down to the catch point **242** short of it and **357** below it — 23.5 frames, the root 237 over the
+  pole at the top, 1303 units/s across 1264 [O]; ours times the flight by that rule and aims the root at the hang pose
+  (no jump at the catch) [I]. No pole in reach: q33 as it is (**73.72** forward, 52.10 up a frame) [O]. Drop lets go
   (`Hpole_detach_dropPerp` / `_dropPara`). Clip choice by the stick against the hang [I] (the chart's conditions
   0x195 / 0x196, orientation values 450–453 [O]); the swing is clip-driven: no physics condition sits on the swing
   states [O], so there is no swing simulation to port.
@@ -1022,11 +1029,17 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   downward `ladder_detach_ground_bottom` (95 back, half turn), Space = `ladder_jump_back` (half turn; out 500, up 900
   [I]), Ctrl = `ladder_detach_drop`.
 - Pillars: attach facing the shaft from the floor (`pillar_attach_ground`, **199** up the shaft: player data short
-  +0x7EE read by the `PillarAttachGroundAnimTarget` 0x753F80 [O]) or the air (`pillar_attach_M`); root 100 from the
-  axis [I] (the markup has no radius). Stick into = `pillar_climb_up` (205.2 per clip), away = `pillar_slide_down_start`
-  → `pillar_slide_down` (520 units/s) → `_stop`, sideways = `pillar_climb_right` (mirrored to the left), whose root turn
-  (1.31 rad) takes her round the shaft facing it. At the top a perch on it: `pillar_detach_perch` (341.8 up) onto it;
-  at the foot `pillar_detach_ground` (193 down, half turn). Space = `pillar_jump_back`, Ctrl = `pillar_detach_drop`.
+  +0x7EE read by the `PillarAttachGroundAnimTarget` 0x753F80 [O]) or the air (`pillar_attach_M`); the root on the axis
+  (tru.exe under Wine, l4_temple 1189 / 1194: Lara's instance stays on it; the clips hold her body round the shaft) [O].
+  The stick is screen-relative like the original's quadrant (cond 0x195; Wine: W climbed whichever way she faced):
+  up = `pillar_climb_up` at a steady **312 units/s** (10.40 a frame [O]), down = `pillar_slide_down_start` →
+  `pillar_slide_down` → `_stop` (Wine: speeding up to 900 units/s; ours the clips' root motion), right / left =
+  `pillar_climb_right` (mirrored to the left) taking her round the shaft at **π/2 rad/s** [O]. At the top a perch on it: `pillar_detach_perch` (341.8 up) onto it;
+  at the foot `pillar_detach_ground` (193 down, half turn). Space jumps by the stick's angle from straight out
+  (state S1213, conds 0x1A9 / 0x1AA [O]): within 22° `pillar_jump_forward`, to 78° the same mirrored on the left, to
+  112° `pillar_jump_right`, to 155° `pillar_jump_back_45R` (left mirrored; which side mirrors is [I]), else or no stick
+  `pillar_jump_back`; she leaves along the stick (no stick: straight out) at query q48's **55.63** out + **28.45** up a
+  30 Hz frame [O] (Wine: 55.8 out). Ctrl = `pillar_detach_drop`.
   The climb limits (top − 341.8, foot + 193) are [I].
 - Perches: from the air or a standing jump next to the segment (`perch_attach_air/_ground`), balance with
   `perch_idle`; the stick turns her on the spot (`perch_turn_right_45` / `_90` / `_180`, requests 668–670; to the left

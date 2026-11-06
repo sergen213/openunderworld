@@ -207,7 +207,7 @@ struct Tuning {
     // 138 below the pole pose (481 vs 619 above the root), so the root sinks 138 onto the hang.
     float poleGrabAbove = 138.0f;
     float assistRadius = 300.0f; // jump-landing / beam markup this close to the natural landing pulls the jump onto it
-    float hangJumpApex = 60.0f;  // pole flings (and hang jumps above their take-off arc) rise this far above the higher end
+    float hangJumpApex = 60.0f;  // hang jumps above their take-off arc rise this far above the higher end
     // Reach of targeted jumps from a hang (hands to target hands): up, sideways, back (away from the wall).
     float hangJumpUp = 700.0f, hangJumpSide = 800.0f, hangJumpBack = 1200.0f, poleFlingReach = 1800.0f;
     // Take-off vertical speed of targeted hang jumps: lara.drm queries q10 (up) / q7, q8 (sides) / q9 (back), units
@@ -359,13 +359,14 @@ private:
     void startHurdleFollowUp(bool low); // the onto / over / far-side hang clip after the attach (or S958)
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
-    bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge); 3 pole fling
+    bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge)
     void launchHangJump();        // HangJump velocity / flight time from here onto the target (after the take-off clip)
     void assistJump();
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
     // root, yaw; poles: `para` = the parallel hang
     std::pair<vec3, float> attachPose(int markup, int seg, float t, float side, bool para = false) const;
     void pole(vec2 move, bool jumpPressed, bool dropPressed, float dt); // State::PoleHang
+    void poleFling(); // the leap off a pole once the fling clip has played
     void beam(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     float surfaceZ() const;
     bool enterWater(); // from the ground or the air; false if not in deep enough water
@@ -380,7 +381,7 @@ private:
     // Ladders (markup 9), perches (13), pillars (15), src/game/Traverse.cpp. climbNormal = outward from the wall.
     bool tryLadder(bool fromAir);
     void ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt);
-    void pillar(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    void pillar(vec2 move, vec2 stick, bool jumpPressed, bool dropPressed, float dt); // stick: camera-relative
     bool tryPerch(bool fromAir);
     void perch(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
