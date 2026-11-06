@@ -132,6 +132,39 @@ struct Joint1 {
 // Gravity, units per 30 Hz frame^2 (Lara's, tru.exe 5.72443).
 inline constexpr float kJointGravity = 5.72443f;
 
+// A raycast-wheel vehicle (tru.exe Vehicle / Bike: one Havok body, a spring per wheel along a down ray from its
+// attachment, 0x792900; docs/GAMEPLAY.md "Motorcycle"), simulated by Scene as a Jolt VehicleConstraint with a
+// WheeledVehicleController, kept upright. Model space and game units; kg; torques in N m.
+struct VehicleSpec {
+    const ObjectPhysics* physics = nullptr; // chassis shape and mass: its primitives (wheel spheres, material 9, skipped)
+    struct Wheel {
+        vec3 attach{0};          // top of the suspension, model space
+        float travel = 0;        // ray length below `attach` to the wheel centre at full extension (spring rest)
+        float radius = 0, width = 0, mass = 0; // mass: its inertia (solid disc) about the axle
+        float frequency = 0, damping = 0; // spring, Hz / damping ratio
+        float drive = 0;         // share of the engine torque
+        float brake = 0;         // N m at full brake
+        float steer = 0;         // max steering angle, rad (0 = fixed)
+        float raise = 0;         // the wheel's forces act this fraction of the travel above the contact (roll centre)
+    };
+    std::vector<Wheel> wheels;
+    float maxTorque = 0, minRpm = 0, maxRpm = 0; // N m, rpm
+    std::vector<float> torque; // engine torque / maxTorque at rpm i * maxRpm / (size - 1)
+    float ratio = 0;           // engine / wheel angular velocity, forward gear
+    float reverseRatio = 0;    // the same in reverse (positive)
+    float maxPitchRoll = 0;    // tilt limit from the world's up, rad
+};
+// Driver input for one step: forward 0..1 (reverse: in the reverse gear), right -1..1 (of each wheel's max steer),
+// brake 0..1.
+struct VehicleDrive { float forward = 0, right = 0, brake = 0; bool reverse = false; };
+struct VehicleState {
+    mat4 model{1};       // model -> world
+    vec3 vel{0};         // units/s
+    uint32_t contacts = 0; // bit per wheel touching the ground
+    float wheelAngle = 0;  // last wheel's spin, rad
+    float rpm = 0;
+};
+
 class Scene {
 public:
     Scene();
@@ -170,6 +203,12 @@ public:
     // Explosion: velocity change `near` .. `edge` (units/s, linear falloff to `radius`) away from `at` on hinge and
     // loose bodies.
     void blast(vec3 at, float radius, float near, float edge);
+    // Vehicles, keyed by the caller. A new key starts at `model` (model -> world) at rest; existing ones keep simulating
+    // with this step's `drive`, moved by `shift` (the caller's frame moved) and given `kick` (units/s, a hop or a hit);
+    // missing keys are dropped. Their terrain is setTerrain's and setColliders'.
+    struct Vehicle { int32_t id = 0; const VehicleSpec* spec = nullptr; mat4 model{1}; VehicleDrive drive; vec3 shift{0}, kick{0}; };
+    void setVehicles(std::span<const Vehicle> vehicles);
+    std::optional<VehicleState> vehicle(int32_t id) const; // as of the last step
     void step(float dt); // one fixed tick
     // The scene's state for a save: body IDs by entity, constraint zeros and Jolt's recorded state (bodies, contact
     // cache, constraints). restore() drops the scene; as the caller re-creates the same entities they get the saved IDs

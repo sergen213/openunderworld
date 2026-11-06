@@ -325,3 +325,58 @@ TEST(Physics, SavedSceneContinuesBitIdentically) {
     EXPECT_EQ(a.save(), b.save());
     EXPECT_FALSE(b.restore("not a state"));
 }
+
+// A two-wheel vehicle (Scene::setVehicles, Jolt VehicleConstraint + MotorcycleController) on a flat floor: it settles on
+// its springs, drives forward under throttle, brakes to a stop, steers, and a scene saved mid-run continues bit for bit.
+TEST(Physics, VehicleDrivesBrakesAndSavesBitIdentically) {
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {0, 0, -50}), {200000, 200000, 100});
+    floor.build();
+    physics::ObjectPhysics o;
+    o.segments = {glm::mat4(1)};
+    physics::Prim chassis;
+    chassis.kind = physics::PrimKind::Box, chassis.size = {80, 500, 150}, chassis.pos = {0, 0, 250}, chassis.mass = 150;
+    o.prims = {chassis};
+    physics::VehicleSpec spec;
+    spec.physics = &o;
+    for (const float y : {-230.0f, 230.0f}) {
+        physics::VehicleSpec::Wheel w;
+        w.attach = {0, y, 250}, w.travel = 250, w.radius = 100, w.mass = 10, w.frequency = 2.7f, w.damping = 0.35f;
+        w.drive = 0.5f, w.brake = 400, w.steer = y < 0 ? 0.5f : 0.0f, w.raise = 0.7f;
+        spec.wheels.push_back(w);
+    }
+    spec.maxTorque = 30, spec.minRpm = 1000, spec.maxRpm = 18000, spec.torque = {1, 1}, spec.ratio = 40, spec.reverseRatio = 160;
+    spec.maxPitchRoll = 0.74f;
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    physics::VehicleDrive drive;
+    const auto tick = [&](physics::Scene& s) {
+        const physics::Scene::Vehicle v{5, &spec, glm::mat4(1), drive};
+        s.setTerrain(terrain), s.setVehicles({&v, 1}), s.step(kDt);
+    };
+    physics::Scene a;
+    for (int i = 0; i < 60; ++i) tick(a);
+    auto st = *a.vehicle(5);
+    EXPECT_EQ(st.contacts, 3u) << "both wheels down";
+    EXPECT_NEAR(st.model[3].z, 100 - 25, 15) << "on its springs: wheels 100 below at full extension, the weight sags them";
+    EXPECT_LT(glm::length(st.vel), 20);
+    drive.forward = 1;
+    for (int i = 0; i < 120; ++i) tick(a);
+    st = *a.vehicle(5);
+    const float fast = -st.vel.y; // model -Y forward
+    EXPECT_GT(fast, 1000) << "accelerated";
+    EXPECT_LT(std::abs(st.vel.x), 50) << "straight";
+    const std::string saved = a.save();
+    physics::Scene b;
+    ASSERT_TRUE(b.restore(saved));
+    drive.forward = 0, drive.right = 1;
+    for (int i = 0; i < 30; ++i) tick(a), tick(b);
+    drive.right = 0, drive.brake = 1;
+    for (int i = 0; i < 180; ++i) tick(a), tick(b);
+    const auto sa = *a.vehicle(5), sb = *b.vehicle(5);
+    EXPECT_LT(glm::length(sa.vel), 30) << "braked to a stop";
+    EXPECT_GT(std::abs(sa.model[3].x), 50) << "steered off the line";
+    EXPECT_EQ(std::memcmp(&sa.model, &sb.model, sizeof sa.model), 0);
+    EXPECT_EQ(a.save(), b.save());
+    a.setVehicles({}), a.step(kDt);
+    EXPECT_FALSE(a.vehicle(5));
+}
