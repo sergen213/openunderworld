@@ -4,6 +4,21 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.24.0] - 2026-11-05
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- New: Lara animates when she interacts. She steps up to switches and plays each switch's own pull/press clip, grips
+  push blocks and pushes or pulls them (she moves with the block, release lets go), and bends to pick items up.
+  Fixed on the way: one block type moved twice as far as it should.
+- New: shooting from the motorcycle. Draw (F) or fire while riding: Lara aims one pistol or the uzi with her right
+  hand using the game's own bike aiming poses, while steering with the left.
+- New: EXTRAS > OUTFITS. Choose Lara's outfit; outfits unlock as you finish chapters (two more when you finish the
+  game). The choice applies at once and stays over level and save loads; DEFAULT goes back to each level's outfit.
+- New: sound effects and reverb. Rooms whose scripts set reverb (caves, tombs) now echo, using the original's reverb
+  values; the game's lowpass/highpass and equaliser effects and per-animation sound volume/pitch are applied.
+  Reverb is an approximation of the original's, not identical.
+
 ## [0.23.0] - 2026-11-02
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
