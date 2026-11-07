@@ -4,6 +4,24 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.34.0] - 2026-11-07
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: Lara can jump left or right off a ladder, or jump back from it, onto nearby ledges, ladders and balance
+  beams. Holding the stick sideways on a ladder makes her lean ready to jump, or reach across to a ladder right
+  beside her. At the bottom of a ladder over a drop she leans back instead of stepping off into thin air.
+- Added: hanging from a ledge, Lara shimmies round inside and outside corners, and can lean up or back at a corner.
+- Fixed: the grapple handles on walls (Coastal Thailand and the Norse areas) are now visible, hang down as in the
+  original and swing toward Lara on the rope. They are swing and wall-run points again, not things to pull. Some
+  grapple points switch on and off as Lara moves around, as in the original (the shiva arms wait for their puzzle step).
+- Fixed: at the end of a level, the previous level's sounds, echo and music no longer carry over into the next chapter.
+- Fixed: loading a save (Continue, Load, quick load) brings back the level's music and room echo, instead of silence
+  in places like the Southern Mexico jungle start. Saves made before this version still load.
+- Fixed: in Valaskjalf, freeing the jammed gear now starts the last two chains, so the detach spots near them work.
+- Added: Lara can carry a pole to a pole-hole lever and push it into the hole; hanging on the inserted pole pulls the
+  lever down. In Valaskjalf's entrance this opens the hidden reward door.
+
 ## [0.33.0] - 2026-11-06
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
