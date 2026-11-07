@@ -32,7 +32,7 @@ Both lists have the form `{u32 count, u32 ids[count]}`. The material ids are mat
 | 0x10 | vec4 | bounding-sphere centre (model space); the batch LOD distance is measured to it (0x50F7C0) [O] |
 | 0x20 / 0x30 | vec4 | bounding box min / max [O data: Lara max.z 510.97] |
 | 0x40 | f32 | bounding-sphere radius (0x50F7C0 near-plane test) [O] |
-| 0x44 | u32 | −1 sentinel in tru.exe [O]; meaning [U] |
+| 0x44 | u32 | 0 or 2 in models with geometry (2 with flags bit 0: skinned), −1 makes 0x4F36D0 leave the model instance's flag word 0 (below) [O]; meaning [U] |
 | 0x6C | u32 | offset of the primgroups, 0x40 bytes each [O] |
 | 0x70 | u32 | offset of the batches (vertex buffers), 0x34 bytes each [O] |
 | 0x78 | u32 | offset of the u16 index buffer [O] |
@@ -40,6 +40,13 @@ Both lists have the form `{u32 count, u32 ids[count]}`. The material ids are mat
 | 0x7E | u16 | batch count [O] |
 
 - [O] Models with an index count of 0 or a batch count of 0 also have −1 offsets. They are skipped silently as placeholders.
+- [O] Flag word of a model instance (`cdc::CommonRenderModelInstance` +0x0C, built by 0x4F36D0, read through vtable
+  +0x68 by `cdc::InstanceDrawable` 0x5B5CA0): the OR over the primgroups of their material's `+0x44` flags (MATERIALS.md),
+  where primgroup `+0x1C` bit 0x80 clears `0x40000000` and bit 0x40 clears `0x80000001`; the Mesh `+0x04` flags mask the
+  result the same way. 0x5B5CA0 turns bit 31 / 30 / 0 into drawable flags `0x40` / `0x01` / `0x80` (+ `0x200` / `0x400`
+  from ObjectBase `+0x5C` / Object `+0x3A`). It is not a visibility gate [O data]: translucent-only models (skydomes,
+  goo water surfaces, `ar_uo_rune_glow_strip`, material flags `0x10000000`) get none of those bits and are drawn.
+  `co_monitor_frame`'s model has material flags `0x90000000`, like ordinary props.
 
 Batch (0x34 bytes) [O]:
 

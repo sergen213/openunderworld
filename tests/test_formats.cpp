@@ -575,10 +575,20 @@ TEST(RealData, LevelL4PoolInstancesOnTerrain) {
     }
     // fx_* proxies (oflags 0x40000000, never drawn by tru.exe 0x5B5CA0) are not placed; dormant intros (+0x72 0x80: not
     // introduced at load, 0x5C2360) are tagged " @dormant": the 10 cinematic props parked at (0, 0, -11542), the revisit
-    // snake heads 5632 / 5633, panther thrall 5645, ...; 8 meshes of live uber sections riding a hinge / prismatic joint
-    // with a model of their own (" @section <k>", PHYSICS.md "Uber joints").
-    EXPECT_EQ(sections, 8u);
+    // snake heads 5632 / 5633, panther thrall 5645, ...; 10 meshes of live uber sections drawn with a model other than
+    // the object's own (" @section <k>", every section is an instance of its model: LEVELS.md "Uber sections"); the
+    // snake heads' unjointed section 2 brought it from 8.
+    EXPECT_EQ(sections, 10u);
     EXPECT_EQ(placed, 28u);
+    // Intro +0x72 & 0x10 always hides the instance (both game notifiers, 0x5BCC30): l4_pool's 13 thrall generators.
+    size_t flagged = 0;
+    for (const auto& in : u.intros) {
+        if (in.objectId == formats::kMarkerObjectId || !formats::introHidden(in)) continue;
+        ++flagged;
+        const std::string tag = " @intro " + std::to_string(in.uniqueId);
+        for (const auto& m : sc.meshes) EXPECT_FALSE(m.origin.ends_with(tag)) << m.origin;
+    }
+    EXPECT_EQ(flagged, 13u);
     // Observed: 161/173 object intros lie inside the terrain box; the rest are cinematic props
     // parked at (0, 0, -11542) and one trigger volume. Markers (object -6) are not counted.
     size_t inside = 0, objects = 0;
@@ -823,4 +833,45 @@ TEST(AnimGraph, LcgAndTransitionPicks) {
     g.states[2].out = {8};
     EXPECT_EQ(g.pickUse(2, 0x1, 0, seed), -1);
     EXPECT_EQ(g.pickUse(2, 0x1, 5.05f, seed), 8);
+}
+
+// Uber objects draw every section's model (UberObjectComposite 0x4D7D50 hides the intro's own instance; 0x4D3DA0 makes
+// one instance per section with its record +0x18 model, LEVELS.md "Uber sections"): the horizontal poles' bars
+// (sa_ei_hpole_b model 1, no joint) are drawn; sa_uo_naga_statue, without a section on model 0, draws no model 0.
+TEST(RealData, LevelUberSectionModels) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    auto count = [](const scene::SceneData& sc, int32_t uid) {
+        const std::string intro = " @intro " + std::to_string(uid);
+        std::set<int> sections;
+        size_t own = 0;
+        for (const auto& m : sc.meshes) {
+            const auto at = m.origin.find(intro);
+            if (at == std::string::npos) continue;
+            const auto rest = m.origin.substr(at + intro.size());
+            if (!rest.empty() && rest[0] != ' ') continue; // another uid with this prefix
+            if (const auto sec = rest.find(" @section "); sec != std::string::npos) sections.insert(std::atoi(rest.c_str() + sec + 10));
+            else ++own;
+        }
+        return std::pair{own, sections};
+    };
+    auto sectionMeshes = [](const scene::SceneData& sc) {
+        size_t n = 0;
+        for (const auto& m : sc.meshes) n += m.origin.find(" @section ") != std::string::npos;
+        return n;
+    };
+    const auto puzzle = formats::loadLevelScene(bf, "pc-w\\l2_puzzleroom.drm");
+    const auto [poleOwn, poleSections] = count(puzzle, 2829); // sa_ei_hpole_b: s0 model 0, s1 model 1 (the bar)
+    EXPECT_GT(poleOwn, 0u);
+    EXPECT_EQ(poleSections, (std::set<int>{1}));
+    // sa_uo_shiva_left_scale: s0 model 0 and s2 model 2 ride joints, s1 / s3 (models 1 / 3) do not
+    const auto [scaleOwn, scaleSections] = count(puzzle, 2066);
+    EXPECT_GT(scaleOwn, 0u);
+    EXPECT_EQ(scaleSections, (std::set<int>{1, 2, 3}));
+    EXPECT_EQ(sectionMeshes(puzzle), 16u);
+    const auto shrine = formats::loadLevelScene(bf, "pc-w\\l2_shrineroom.drm");
+    const auto [nagaOwn, nagaSections] = count(shrine, 2794); // sections on models 1..5, none on model 0
+    EXPECT_EQ(nagaOwn, 0u);
+    EXPECT_EQ(nagaSections, (std::set<int>{0, 1, 2, 3, 4}));
 }

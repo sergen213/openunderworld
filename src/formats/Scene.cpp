@@ -241,7 +241,9 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
         sc.warnings.push_back(unitName + ": " + std::to_string(n) + " IMF placement(s) of DTP " + std::to_string(dtp) +
                               " without a decoded render model");
 
-    // Intros: object id -> objectlist.txt name -> pc-w\<name>.drm -> Object model 0.
+    // Intros: object id -> objectlist.txt name -> pc-w\<name>.drm -> Object model 0 (an instance starts on model 0:
+    // 0x5BCC30 -> 0x5BA810 model argument 0; the distance LOD switch 0x5B5D20 needs oflags 0x400000, which no placed
+    // object has).
     const auto listBytes = bigfile.read("\\tr8\\pc-w\\objectlist.txt");
     if (!listBytes) sc.warnings.push_back("\\tr8\\pc-w\\objectlist.txt not in bigfile: intros not placed");
     const auto objectNames = listBytes ? parseObjectList({reinterpret_cast<const char*>(listBytes->data()), listBytes->size()})
@@ -273,26 +275,29 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
                     } else if (objectFlags(*d) & (kObjectHiddenAtBirth | kObjectNoInstanceDraw)) {
                         o.hidden = true; // trigger/sound volumes, camera anchors, dispatchers, fx_* effect proxies, ...
                     } else {
-                        uint32_t model = 0;
                         const auto ids = objectRenderModels(*d);
-                        for (const uint32_t id : ids)
-                            if ((model = id)) break;
+                        const uint32_t model = ids.empty() ? 0 : ids[0];
                         auto decoded = decodeRenderResources(*d, sc.warnings, path);
-                        if (model && !decoded[model].empty()) o.meshes = decoded[model];
-                        else o.problem = model ? "model has no drawable batches" : "object has no render model";
-                        // Each uber section is an instance of its own model (0x4D3DA0; tru.exe under Wine: three
-                        // instances per l2 grapple handle). Sections riding a hinge / prismatic joint of the data draw
-                        // their model too, tagged " @section <index>" (ou-game poses them by World::uberSectionBody):
-                        // the grapple handles' model 1. [U] other sections with a model of their own (not drawn).
                         std::optional<UberObjectData> uber;
                         try { uber = loadUberObject(*d); } catch (const cdc::FormatError&) {}
-                        for (uint32_t k = 0; uber && k < uber->sections.size(); ++k) {
-                            const uint32_t m = uber->sections[k].model;
-                            const bool jointed = std::ranges::any_of(uber->joints, [&](const UberJoint& j) {
-                                return (j.type == 0 || j.type == 2) && j.bodyB == int32_t(k);
-                            });
-                            if (jointed && m < ids.size() && ids[m] && ids[m] != model && !decoded[ids[m]].empty())
-                                o.sections.push_back({k, decoded[ids[m]]});
+                        if (!uber || uber->sections.empty()) {
+                            if (model && !decoded[model].empty()) o.meshes = decoded[model];
+                            else o.problem = model ? "model has no drawable batches" : "object has no render model";
+                        } else {
+                            // Uber objects (class 79): UberObjectComposite (0x4D7D50) hides the intro's own instance
+                            // (flags 0x800) and every section is an instance of its record's model (+0x18) at the
+                            // object's transform (0x4D3DA0 -> 0x4D1110 -> 0x4D0E50). The first section on model 0
+                            // stays the object's own mesh (posed by its script, its model-0 joint); the others are
+                            // tagged " @section <index>" (ou-game poses them by World::uberSectionBody). Without a
+                            // section on model 0 (sa_uo_naga_statue) model 0 is not drawn.
+                            bool main = false;
+                            for (uint32_t k = 0; k < uber->sections.size(); ++k) {
+                                const uint32_t m = uber->sections[k].model;
+                                if (m >= ids.size() || !ids[m] || decoded[ids[m]].empty()) continue;
+                                if (m == 0 && !main) main = true, o.meshes = decoded[ids[m]];
+                                else o.sections.push_back({k, decoded[ids[m]]});
+                            }
+                            if (!main && o.sections.empty()) o.problem = "no uber section has a drawable model";
                         }
                     }
                 } catch (const cdc::FormatError& e) {
@@ -300,7 +305,7 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
                 }
             }
         }
-        if (o.hidden) continue;
+        if (o.hidden || introHidden(in)) continue;
         float m[16];
         introMatrix(in, m);
         const std::string tag = std::string(dormant(in) ? " @dormant" : "") + " @intro " + std::to_string(in.uniqueId);

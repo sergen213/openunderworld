@@ -133,6 +133,11 @@ struct Intro {
 // Dormant intro (+0x72 & 0x82; only 0x80 occurs): not introduced when its unit loads (tru.exe 0x5C2360); a script's
 // instanceref Birth (fn 3, 0x4AC0D0 -> 0x5BD080) or a cinematic (0x4561C0) introduces it later.
 inline bool dormant(const Intro& in) { return in.flags[2] & 0x82; }
+// Intro +0x72 & 0x10: the game notifier's intro check (vtable +0x3C) runs and both notifiers hide the instance (instance
+// flags 0x800 / 0x20000000): DefaultGameNotifier 0x54DC20 refuses it, TRGameNotifier 0x5D4B90 hides it (0x615F70)
+// even when it accepts it (ObjectBase +4 & 0x400000) [O 0x5BCC30]. Survey: generators, natla_end_mover, a trigger
+// volume, all already effect-only / hidden at birth (oflags).
+inline bool introHidden(const Intro& in) { return in.flags[2] & 0x10; }
 inline constexpr uint16_t kMarkerObjectId = 0xFFFA;
 
 // Instanced static mesh ("IMF") placement from the unit's cell group data: 0x70-byte record.

@@ -76,8 +76,39 @@ Frame [O]: intros are in the **render-terrain frame**. They need no `Level+0x80`
   render model (section type 12, res 26), observed on every object we inspected.
   - Lara: 3 models; model 2 has no render model.
   - co_wp_handgun: 4 models.
-- `loadLevelScene` draws the first non-zero render model. [I] The exe picks the model per instance (LOD,
-  `modelNum` arguments). That choice is not reversed.
+- Which model an instance draws: the drawable (`cdc::InstanceDrawable`, instance +0x244) holds one render-model
+  instance per object model and draws the one at instance `+0x234` [O 0x5B5BE0 / 0x5B5CA0].
+  - [O] An introduced instance starts on model 0: `INSTANCE_IntroduceInstance` 0x5BCC30 → instance init 0x5BA810 with
+    model argument 0 → 0x5B9170 (sets `+0x234` / `+0x235`). Model 0 has a render model on every object of
+    `objectlist.txt` that has one at all (2026-11-07 survey).
+  - [O] The only distance switch, 0x5B5D20, runs for oflags `0x400000` with `+0x235 == 0`: beyond ObjectBase `+0x20` /
+    `+0x24` (ints after 0x54E200) it selects model `+0x28` / `+0x29` (u8, −1 none). No placed object has the flag, and
+    every object has `+0x28` / `+0x29` = −1 (survey of the 697 objects intros name), so placed objects stay on model 0.
+  - [O] Other model changes are runtime: breakables (class 30) switch to their broken models when damaged (0x6AE240,
+    object data `+0x39` / `+0x3A`), uber sections use their own model (below), save games restore `+0x234`.
+  - `loadLevelScene` draws model 0 of every placed object.
+
+### Uber sections
+
+[O] An uber object (class 79) does not draw its own intro instance: `UberObjectComposite` (0x4D7D50) sets instance flags
+`0x800` / `0x20000000` on it, then 0x4D3DA0 creates one instance per section record (0x54 bytes; uber data `+0x08`
+count) with 0x4D1110 → 0x4D0E50: model = section record `+0x18` (u8), position / rotation / scale copied from the
+intro instance, the section's animation (record `+0x30`) started. Each section draws its model whether or not a joint
+carries it. Wine instance list (2026-11-07, instance `+0x14` flags, `+0x234` model, `+0x4C` owner, tool
+`openunderworld-work/proxies/ix.c`; the new-game start, l1_kraken_room, l1_baldrs_tomb, l2_puzzleroom, l2_shrineroom):
+every uber intro has `0x800`, none of its sections (uids `0x4000xxxx`, `+0x4C` = the intro) has; new-game start
+`ca_ei_hpole_a` = hidden intro + sections on models 0 and 1 (the bar); l2_shrineroom `sa_uo_naga_statue` 2794 = hidden
+intro + sections on models 1..5, no instance on model 0; l1_kraken_room `ms_ani_tentacle_gearr` 32 = 13 sections on
+models 0..12; `ms_ani_sunsphere_plat` 27 = sections on models 0..3.
+
+`loadLevelScene` places, for an uber object, the first section on model 0 as the object's own mesh (" @intro <uid>",
+posed by its script and its model-0 joint in ou-game) and every other section with a drawable model as
+" @intro <uid> @section <index>" (ou-game: `World::uberSectionBody` for the ones riding a joint, the intro transform
+otherwise). A section whose model has no render model draws nothing; an object with no section on model 0
+(`sa_uo_naga_statue`) draws no model 0. Survey of the 82 units (live intros): 108 more section instances in 28 units
+than when only jointed sections were drawn (82 → 190), among them the horizontal poles' bars (`*_ei_hpole_*` model 1),
+the Kraken room's gears and sun-sphere platform, the l2 puzzle-room scales, the calendars and the l3 chapel pillars.
+Test `RealData.LevelUberSectionModels`.
 
 ### Lights (unit data +0x00 / +0x04)
 
@@ -434,7 +465,18 @@ Known deviations [O]:
   In l4_ballcourt this removes 6 objects (camera anchors, dispatchers, reveal objects, sound volumes, trigger
   planes/volumes) [O]. Effect-only objects (oflags `0x40000000`: the 24-vertex `fx_*` / `co_fx_*` proxies, bullet hits,
   squibs) are skipped too: `cdc::InstanceDrawable` returns no draw flags for them (0x5B5CA0) [O]. Intro flag `+0x72 & 0x10`
-  also hides an instance when a callback refuses it [O]; the callback is not reversed, so such intros are still drawn.
+  always hides the instance [O]: 0x5BCC30 asks the game notifier (vtable `+0x3C`); `DefaultGameNotifier` (0x54DC20)
+  refuses and 0x5BCC30 sets flags `0x800` / `0x20000000`, the game's `TRGameNotifier` (installed by MainG2_InitEngine,
+  0x5D4B90) accepts only for ObjectBase `+4 & 0x400000` and then hides the instance and its children itself (0x615F70).
+  `loadLevelScene` skips such intros (`formats::introHidden`); all 118 live ones (generators, `natla_end_mover`, a
+  trigger volume) are hidden by their oflags anyway.
+- `co_monitor_frame` (oflags `0x90000014`, class 6, a 24-vertex 213-unit box with marker texture 372, live intro 143 at
+  the l1_baldrs_tomb origin, dormant in l4_ballcourt) is not hidden by any data rule: tru.exe introduces 143 without
+  `0x800` (Wine instance flags `0x00110000`, model 0 flag word `0x90000000`, 2026-11-07) [O]; no other ObjectBase,
+  intro, model or material bit tells it apart from props (survey of every `objectlist.txt` object). We keep drawing it.
+  tru.exe's `MonitorDrawable` (render-to-texture camera / mirror screen) belongs to object class 18 (0x6D1AC0,
+  registered in 0x5DA9DC), which no object in the install uses [O]. Whether portal / cell visibility keeps the origin
+  box out of view is [U].
 - Dormant intros (`formats::dormant`): the unit loader 0x5C2360 introduces only intros with `+0x72 & 0x82 == 0`
   (0x5BCC30 sets `0x80` once it has introduced one) [O]; 839 intros of all units are dormant (all `0x80`, none `0x02`;
   one, l7_helheim01 `co_empty_tank` 8972, also has `+0x73 & 0x10`: kept after its cinematic, 0x4561C0): cinematic
@@ -462,7 +504,7 @@ Known deviations [O]:
 
 ## Open questions
 
-- [U] Which model an instance uses (`modelNum`); batch LODs are decoded (MESHES.md).
+- [U] Runtime model switches outside breakables and uber sections (scripts' model natives, if any).
 - [U] Intro `+0x52`, `+0x70..0x73` flags, the non-enemy intro data types (1, 0x11, 0x404, ...), the second intro
   list's role (l4_pool: 1 entry).
 - [U] IMF `+0x40`, `+0x4C`, `+0x60`; cell BSP and portals; cell group `+0x14`/`+0x1C`.
