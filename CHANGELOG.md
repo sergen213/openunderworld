@@ -4,6 +4,21 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.37.0] - 2026-11-07
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: puzzle machinery animates like the original: the chapel shadow pillars rise and turn, the Kraken room's gears
+  and sun-sphere platform play their idle motions, and other multi-part objects (calendar clamps, light beams, naga
+  statue pieces) play their own animations instead of standing frozen. The empty throne visibly sinks under the
+  scepter weight. Saves remember which animation each part was playing.
+- Added: the Mexican calendar push handles work: grab one and push or pull to turn the calendar ring, let go to lock it.
+- Fixed: where Lara can pick up, insert and take out objects now matches the original (measured from the original
+  game), and when several are in reach she uses the one she faces and is closest to.
+- Fixed: jumps from a hanging ledge, a ladder and a free-climb hold pick their target with the original's own catch
+  rules: a side jump from a ledge only reaches ledges at least 2 m away, back and side jumps no longer catch the edge
+  of a waist-to-chest-high block, and no jump grabs a ledge more than 5.7 m below her.
+
 ## [0.36.0] - 2026-11-07
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
