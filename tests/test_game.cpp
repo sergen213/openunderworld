@@ -1976,6 +1976,51 @@ TEST(GameReal, JunglehubRunningJumpReachesHigherLedge) {
     EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 851);
 }
 
+// tru.exe under Wine (openunderworld-work/ledgecatch, Lara at rest facing the ledge, then jump): l4_temple ledge 1155's
+// middle segment, 830 over the floor (line x -165.9 ours, hanging toward -x), is caught by a standing jump from 100 and
+// 400 out, straight onto its hang in 11 ticks; from 450 out she only jumps (a plain 201.6 rise).
+TEST(GameReal, StandingJumpCatchesHighLedgeWithinReach) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    Actions jump;
+    jump.jump = true;
+    for (const float d : {100.0f, 400.0f, 450.0f}) {
+        auto w = unitWorld(bf, "l4_temple", {{-165.9f - d, -11850.2f, 1750}, 0});
+        const auto& s = w.player().state();
+        int leap = 0;
+        for (int i = 0; i < 150; ++i) {
+            w.tick(i == 20 ? jump : Actions{});
+            leap += s.state == State::HangJump;
+        }
+        if (d > 412) {
+            EXPECT_NE(s.state, State::Hang) << d;
+            continue;
+        }
+        ASSERT_EQ(s.state, State::Hang) << d;
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1155) << d;
+        EXPECT_NEAR(leap, 11, 1) << d; // 60 Hz ticks of the straight leap
+    }
+}
+
+// tru.exe under Wine (openunderworld-work/jumpaim): a standing jump on the far side of l3_main_hall ledge 944 (it hangs
+// toward -x; Lara 113 behind its line on +x, facing it) rises its plain 201.6 and catches nothing.
+TEST(GameReal, StandingJumpBehindLedgeCatchesNothing) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l3_main_hall", {{1771.0f, -1182.2f, 0}, glm::radians(180.0f)});
+    const auto& s = w.player().state();
+    Actions jump;
+    jump.jump = true;
+    float top = -1e9f;
+    for (int i = 0; i < 120; ++i) {
+        w.tick(i == 20 ? jump : Actions{});
+        top = std::max(top, s.pos.z);
+    }
+    EXPECT_NE(s.state, State::Hang);
+    EXPECT_NE(s.state, State::HangJump);
+    EXPECT_NEAR(top, -37.6f + 201.6f, 25);
+}
+
 // ---- interactive water (src/game/Water) ----
 namespace {
 float maxRipple(const game::WaterSim& ws) {
@@ -2201,7 +2246,7 @@ CollisionMesh climbMesh(bool holds, std::vector<uint8_t> types = {16, 16, 16, 16
     addFloor(m, -2000, -2000, 2000, 2000, 0);
     addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 1200}, {400, -2000, 1200});
     addQuad(m, {400, -2000, 1200}, {2000, -2000, 1200}, {2000, 2000, 1200}, {400, 2000, 1200});
-    m.markup.push_back({1, 1, {{400, -2000, 1200}, {400, 2000, 1200}}});
+    m.markup.push_back({1, 1, {{400, 2000, 1200}, {400, -2000, 1200}}}); // hanging to its right (-X), as retail ledges
     if (holds)
         for (size_t i = 0; i < types.size(); ++i) {
             const float z = 350 + 158.0f * float(i);
@@ -3072,7 +3117,7 @@ TEST(GameReal, LadderJumpUpToLedge) {
     addFloor(m, -2000, -2000, 400, 2000, 0);
     addQuad(m, {400, -2000, 0}, {400, 2000, 0}, {400, 2000, 3000}, {400, -2000, 3000}); // the wall, facing -X
     m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}});
-    m.markup.push_back({1, 2, {{400, -1000, 1700}, {400, 1000, 1700}}});
+    m.markup.push_back({1, 2, {{400, 1000, 1700}, {400, -1000, 1700}}}); // hanging to its right (-X), as retail ledges
     auto w = climbWorld(std::move(m), {300, 0, 0});
     const auto& s = w->player().state();
     w->tick(forward());

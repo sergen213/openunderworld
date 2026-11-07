@@ -1127,38 +1127,155 @@ bool Player::startHangJump(int kind) {
     return true;
 }
 
-// Jump queries meeting ledges (ladder q23, DICE q31 / q28 / q29): tru.exe 0x710100 keeps the first markup box the arc
-// enters (frames 1..40), each target type offset by the query's +0x8C [O]; for type 1 those offsets equal the start
-// offsets, so the root itself meets the ledge's box [I: taken as within kArcRadius (+0x6C, 25) of the ledge's hang root
-// height, along the ledge within its ends + 25, and within kArcOut of it out from the wall — the box extents are not
-// decoded].
-Player::JumpTarget Player::ledgeOnArc(vec3 from, vec3 v, float frames, vec2 facing) const {
-    constexpr float kG = 5.72443f, kArcRadius = 25.0f, kArcOut = 200.0f;
+namespace {
+// Times in [0, frames] where |r0 + r1 t + r2 t^2| has a local minimum, at most two (tru.exe 0x6F9940's cubic
+// (r . r' = 0), its roots clamped to the frame range) [O].
+int arcMinima(vec3 r0, vec3 r1, vec3 r2, float frames, float out[2]) {
+    const float c0 = glm::dot(r0, r1), c1 = glm::dot(r1, r1) + 2 * glm::dot(r0, r2), c2 = 3 * glm::dot(r1, r2),
+                c3 = 2 * glm::dot(r2, r2);
+    const auto f = [&](float t) { return ((c3 * t + c2) * t + c1) * t + c0; };
+    float cuts[4] = {0, 0, 0, 0}; // 0, f's turning points inside the range, frames
+    int n = 1;
+    if (const float a = 3 * c3, b = 2 * c2; std::abs(a) > 1e-9f) { // f' = a t^2 + b t + c1
+        if (const float disc = b * b - 4 * a * c1; disc > 0) {
+            const float s = std::sqrt(disc), t0 = (-b - s) / (2 * a), t1 = (-b + s) / (2 * a);
+            for (float t : {std::min(t0, t1), std::max(t0, t1)})
+                if (t > 0 && t < frames) cuts[n++] = t;
+        }
+    } else if (std::abs(b) > 1e-9f && -c1 / b > 0 && -c1 / b < frames) {
+        cuts[n++] = -c1 / b;
+    }
+    cuts[n++] = frames;
+    int found = 0;
+    for (int i = 0; i + 1 < n && found < 2; ++i) {
+        float lo = cuts[i], hi = cuts[i + 1];
+        if (!(f(lo) < 0 && f(hi) >= 0)) continue;
+        for (int k = 0; k < 40; ++k) {
+            const float mid = 0.5f * (lo + hi);
+            (f(mid) < 0 ? lo : hi) = mid;
+        }
+        out[found++] = hi;
+    }
+    if (found < 2 && f(frames) < 0) out[found++] = frames; // still closing at the last frame: clamped there
+    return found;
+}
+
+// lara.drm's default markup record (player data +0x584; ledges, MUD 0x40000000): target types 3 / 1, the capsule
+// offset from the query's arc point (12.64 behind her heading, 219.03 down), height, radius and end insets [O].
+constexpr float kCapsuleBack = 12.64f, kCapsuleDown = 219.03f, kCapsuleHeight = 252.84f, kCapsuleRadius = 316.06f;
+constexpr float kLedgeInset = 79.0f;
+constexpr float kQueryG = 5.72443f;
+constexpr float kLedgeSide = -1; // a ledge's hang side: right of its direction (attachPose side -1) [O-data]
+} // namespace
+
+// Jump queries meeting ledges [O: tru.exe 0x70F300 sweep, 0x70EC60 checks, 0x6FCB10 capsule; lara.drm player data
+// +0x584]. For each of the ledge record's target types (3, 1) the arc from that type's start (the query's +0x8C entry
+// for it) gives the times of closest approach to each segment's line (0x6F9940: at most two minima, clamped to the
+// frame range); the nearest segment point there (the polyline's first / last ends inset 79), or, past an end, the
+// arc's closest approach to that end, is the hit. It counts when (0x70EC60): later than the query's minimum time
+// (+0x20); for queries with +0x2C bit 0x80 the arc is coming down (vz < 0.05 a frame, 0x6EC3D0); the point lies in the
+// record's capsule (0x6FCB10: upright, centred 219.03 under and 12.64 behind the QUERY'S OWN arc point at that time —
+// the arc from its start, not the target type's — half-height 126.42, radius 316.06 round its axis and end points);
+// it is within the query's cone (+0x24) of its heading (0x6FC530); and the arc's horizontal motion (or, standing
+// still, the way to the point) is not away from the ledge's wall (0x6FC6B0 MUD 0x40000000: dot with the ledge's
+// outward normal, 0x737D60, <= 0.2618) [O]. A ledge hangs to the right of its polyline's direction (kLedgeSide: every
+// ledge with a wall under one side and its top behind it in l2 / l3 / l4 / l7 units is wound so) [O-data], so from
+// behind (its top) the way to it points out of its face and is refused: l3_main_hall ledge 944 hangs toward -x and the
+// standing jump under Wine that catches nothing was made on its +x side, 113 behind its line. Ours adds that the hang
+// has room under it (openBelow) and keeps the earliest hit [I: 0x710100 keeps the first of its list].
+Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
+    const vec3 a2(0, 0, -0.5f * kQueryG), dir3(q.dir, 0);
+    const auto arcAt = [&](vec3 from, float t) { return from + q.v * t + a2 * (t * t); };
     JumpTarget best;
     best.frames = 1e9f;
+    const auto check = [&](int li, int si, float t, vec3 h) {
+        if (t <= q.minT || t >= best.frames || h.z < q.minZ) return;
+        if (q.falling && q.v.z - kQueryG * t >= 0.05f) return;
+        const vec3 c = arcAt(q.start, t) - dir3 * kCapsuleBack - vec3(0, 0, kCapsuleDown);
+        constexpr float hh = 0.5f * kCapsuleHeight;
+        const float d = h.z > c.z + hh ? glm::distance(h, c + vec3(0, 0, hh))
+                        : h.z < c.z - hh ? glm::distance(h, c - vec3(0, 0, hh))
+                                         : glm::length(xy(h - c));
+        if (d > kCapsuleRadius) return;
+        const auto& m = col_.markup[size_t(li)];
+        const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
+        constexpr float side = kLedgeSide;
+        if (glm::length(toHit) > 1e-3f && glm::dot(glm::normalize(toHit), q.dir) < std::cos(q.cone)) return;
+        vec2 motion = xy(q.v);
+        if (glm::length(motion) < 1e-3f) motion = glm::length(toHit) > 1e-3f ? toHit : q.dir;
+        if (glm::dot(glm::normalize(motion), n * side) > 0.2617994f) return;
+        const float along = glm::length(xy(h - m.points[size_t(si)]));
+        if (openBelow(col_, m, si, along, side)) best = {li, si, along, side, t};
+    };
     for (size_t li = 0; li < col_.markup.size(); ++li) {
         const auto& m = col_.markup[li];
         if (m.type != 1 || int(li) == s_.ledge) continue;
-        for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
-            const float len = segLen(m, si);
-            if (len < 1e-2f) continue;
-            const vec2 dir = segDir(m, si), n(-dir.y, dir.x);
-            if (std::abs(glm::dot(n, facing)) < 0.7f) continue; // her heading into its wall
-            const float side = glm::dot(n, -facing) > 0 ? 1.0f : -1.0f;
-            const vec3 hang0 = attachPose(int(li), si, 0, side).first; // the hang root at the segment start
-            for (float f = 1; f <= frames && f < best.frames; f += 0.25f) {
-                const vec3 p = from + v * f - vec3(0, 0, 0.5f * kG * f * f), d = p - hang0;
-                const float along = glm::dot(xy(d), dir);
-                const float t = std::clamp(along, 0.0f, len);
-                const vec3 e = d - vec3(dir * t, (m.points[size_t(si) + 1].z - m.points[size_t(si)].z) * t / len);
-                if (std::abs(along - t) > kArcRadius || std::abs(e.z) > kArcRadius || glm::length(xy(e)) > kArcOut) continue;
-                if (openBelow(col_, m, si, t, side)) best = {int(li), si, t, side, f};
-                break;
+        const int last = int(m.points.size()) - 2;
+        for (int si = 0; si <= last; ++si) {
+            const vec3 a = m.points[size_t(si)], b = m.points[size_t(si) + 1];
+            const float len = glm::distance(a, b);
+            if (len < 1e-2f || segLen(m, si) < 1e-2f) continue;
+            const vec3 u = (b - a) / len;
+            const float lo = si == 0 ? kLedgeInset : 0, hi = len - (si == last ? kLedgeInset : 0);
+            const auto perp = [&](vec3 w) { return w - u * glm::dot(w, u); };
+            for (const vec3& from : {q.hang, q.root}) {
+                float ts[2];
+                const int nt = arcMinima(perp(from - a), perp(q.v), perp(a2), q.frames, ts);
+                for (int k = 0; k < nt; ++k) {
+                    const float s = glm::dot(arcAt(from, ts[k]) - a, u);
+                    if (lo <= hi && s >= lo && s <= hi) { check(int(li), si, ts[k], a + u * s); continue; }
+                    const vec3 e = a + u * (lo > hi ? 0.5f * len : std::clamp(s, lo, hi)); // past an end: that end
+                    float te[2];
+                    const int ne = arcMinima(from - e, q.v, a2, q.frames, te);
+                    for (int j = 0; j < ne; ++j) check(int(li), si, te[j], e);
+                }
             }
         }
     }
     if (best.markup < 0) best.frames = 0;
     return best;
+}
+
+// A standing jump at a high ledge in front of her [O: tru.exe under Wine, l4_temple, Lara teleported to rest facing
+// the ledge, then the jump key; openunderworld-work/ledgecatch]: ledges 698, 748, 782, 802, 830, 883 and 907 over her
+// feet were caught from 100 out of their line, the 830 one from 200, 250, 300 and 400 too but not from 425, 450, 500 or
+// 550 (a plain 201.6 rise). The catch is no ballistic arc: her root rushes straight, at a constant speed whatever the
+// distance, for 11 ticks of 60 Hz to 113.8 out of the line and 604.2 under it, then blends into the hang (root 161 out,
+// 506 under) over 0.15 s. Ledges up to the obstacle bands' top (635.27, kBand3) are taken by the ground hurdle
+// instead (the 610 one from 100..200 out: hurdle_ground_attach_high). The query behind it is [U]: q2's capsule (ours
+// ledgeOnArc) reaches no higher than 648 over her feet. Ours: the nearest ledge hanging toward her (kLedgeSide) with
+// its line within kStandReach and its point within 60 degrees of her heading, kBand3 < rise <= kStandRise, the hang
+// clear (openBelow): a straight 11/60 s leap onto the hang pose (HangJump with the standing air clip), then the
+// attach [I: one leg instead of the rush and blend; the bounds between the measured cases].
+bool Player::standJumpToLedge() {
+    constexpr float kStandReach = 412.0f, kStandRise = 910.0f, kStandLeap = 11.0f / 60.0f;
+    if (s_.regrabCooldown > 0) return false;
+    const vec2 f = xy(forward());
+    JumpTarget best;
+    float bestDist = kStandReach;
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 1) continue;
+        for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
+            const float len = segLen(m, si);
+            if (len < 1e-2f) continue;
+            const vec2 dir = segDir(m, si), out = vec2(-dir.y, dir.x) * kLedgeSide;
+            const float t = std::clamp(glm::dot(xy(s_.pos - m.points[size_t(si)]), dir), 0.0f, len);
+            const vec3 q = pointOn(m, si, t);
+            const vec2 to = xy(q - s_.pos);
+            const float dist = glm::length(to), rise = q.z - s_.pos.z;
+            if (dist > bestDist || glm::dot(-to, out) <= 0 || rise <= kBand3 || rise > kStandRise) continue;
+            if (dist > 1e-3f && glm::dot(to / dist, f) < 0.5f) continue;
+            if (!openBelow(col_, m, si, t, kLedgeSide)) continue;
+            best = {int(li), si, t, kLedgeSide, 0}, bestDist = dist;
+        }
+    }
+    if (best.markup < 0) return false;
+    s_.ledge = best.markup, s_.ledgeSeg = best.seg, s_.ledgeT = best.t, s_.ledgeSide = best.side, s_.polePara = false;
+    s_.vel = (attachPose(best.markup, best.seg, best.t, best.side).first - s_.pos) / kStandLeap;
+    s_.flight = kStandLeap;
+    s_.state = State::HangJump;
+    return true;
 }
 
 // The flight onto the HangJump target, as tru.exe's jump-to-target solver 0x73EDC0 aims it: v = (target - pos -
@@ -1454,20 +1571,20 @@ void Player::poleTop(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
 }
 
 // Ground jumps at a ledge: the take-off state's jump query (lara.drm state chart: S248 standing q2 48.04 up, S245 /
-// S247 with the stick q43 40 along + 50 up, S249 running q26 90.25 forward + 42.54 up a 30 Hz frame, all from 300 over
-// the root, frames 1..40) [O]; 0x771DB0 stores its first markup hit and 0x73EDC0 re-aims the flight at it, a ledge
-// (target type offset +0x8C 505.69, the hands over the root) at its hang [O]. The query point (root + 300) meeting the
-// ledge itself is ledgeOnArc's root arc from 300 - the hang's hand height against the hang root [I: the box extents];
-// the flight is then aimed onto the hang pose, timed by the hit frame, and the air grab (tryGrab) catches it. Only
-// ledges kQueryStep or more over the root count: the arc is cut where the query point falls below that [I: tru.exe's
-// sweep runs 40 frames down past the floor's own edges ahead; lower ledges are landed on, vaulted or caught as they
-// are]. Under Wine, a standing jump under l3_main_hall's 817-high ledge 944 rose its plain 201.6 (no query hit: q2's
-// point tops out 502 over the root) [O]. Returns false (no ledge on the arc).
-bool Player::aimGroundJump(vec2 query) {
-    constexpr float kQueryUp = 300.0f, kQueryFrames = 40.0f, kQueryStep = 158.0f, kG = 5.72443f;
-    const float frames = std::min(kQueryFrames, (query.y + std::sqrt(query.y * query.y + 2 * kG * (kQueryUp - kQueryStep))) / kG);
+// S247 with the stick q43 40 along + 50 up, S249 running q26 90.25 forward + 42.54 up a 30 Hz frame, frames 1..40; q2
+// / q26 start 300 over the root, q43 at it; q2 only while coming down (+0x2C bit 0x80); cones 120 / 90 / 90 degrees;
+// the ledge's target types start 505.69 over the root (3, the hands) and at it (1)) [O]; ledgeOnArc tests its hits and
+// 0x73EDC0 re-aims the flight at the first, a ledge (target type offset 505.69) at its hang [O], timed by the hit
+// frame. Only ledges kQueryStep or more over the root count [I: lower ones are landed on, vaulted or caught as they
+// are]. Under Wine, a standing jump under l3_main_hall's 817-high ledge 944 rose its plain 201.6 (no hit: q2's capsule
+// tops out 346 + 316 over her feet) [O]. Returns false (no ledge met).
+bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone) {
+    constexpr float kQueryStep = 158.0f, kHangTarget = 505.69f;
     const vec2 f = xy(forward());
-    const JumpTarget j = ledgeOnArc(s_.pos + vec3(0, 0, kQueryUp - anims_.hangHandOffset.z), vec3(f * query.x, query.y), frames, f);
+    JumpQuery q;
+    q.start = s_.pos + vec3(0, 0, up), q.hang = s_.pos + vec3(0, 0, kHangTarget), q.root = s_.pos;
+    q.v = vec3(f * query.x, query.y), q.dir = f, q.cone = cone, q.falling = falling, q.minZ = s_.pos.z + kQueryStep;
+    const JumpTarget j = ledgeOnArc(q);
     if (j.markup < 0) return false;
     s_.vel = jumpVelocity(attachPose(j.markup, j.seg, j.t, j.side).first - s_.pos, j.frames / 30.0f, t_.gravity);
     return true;
@@ -1722,8 +1839,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         s_.vel = forward() * h + vec3(0, 0, running ? t_.runJumpVz : wantsMove ? t_.standMoveJumpVz : t_.jumpVz);
         s_.state = State::Jump;
         s_.fallStartZ = s_.pos.z;
-        if (!aimGroundJump(running ? vec2(90.25f, 42.54f) : wantsMove ? vec2(40.0f, 50.0f) : vec2(0.0f, 48.04f))) assistJump();
+        // q26 running, q43 with the stick, q2 standing (lara.drm query table) [O]
+        const bool aimed = running    ? aimGroundJump({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f))
+                           : wantsMove ? aimGroundJump({40.0f, 50.0f}, 0.0f, false, glm::radians(90.0f))
+                                       : aimGroundJump({0.0f, 48.04f}, 300.0f, true, glm::radians(120.0f));
+        if (!aimed) assistJump();
         play(running ? "NG_InAir_Feet_Forward_stage1" : "NG_InAir_Feet_Forward_stage1_standing", false);
+        if (!running && !wantsMove && standJumpToLedge()) break;
         tryPoleLeap();
         break;
     }
