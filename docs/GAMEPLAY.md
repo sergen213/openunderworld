@@ -1557,7 +1557,19 @@ Ours:
   inserted there (message 0x23 -> 0x6A6DC0 -> 0x165): l2_puzzleroom pole 2967 -> hole 2969, l2_maproom 2665 -> track
   2664, l3_chapel 4823 -> 4824, l4_temple 5240 -> 5233, the gems and keys in their holders. The attach point is the
   receptacle model's marker named by physical record +0x3C (query 0x173 -> 0x6B55D0); the level data's placed pairs lie
-  on it (pole 2967 within 7 units of hole 2969's marker 713.8 up).
+  on it (pole 2967 within 7 units of hole 2969's marker 713.8 up). [O decomp + Wine] The portable's 0x165 handler
+  (0x6B5890 -> 0x6B55D0, this = receptacle, args portable, marker, marker + 0x10) sets the portable's instance to the
+  receptacle's instance frame (+0x20 position, +0x30 Euler) x the marker (position, XYZ Euler at +0x10): the
+  portable's own model origin lands on the marker, no offset, the lever is not lowered first. Wine, l5_valaskjalf_entryb
+  (insert forced with INSTANCE_Post 0x165): lever 7189 at (16965.07, -16856.20, -4083.15) rot (0, 0, 90°) -> pole 7190
+  at (16965.07, -16825.34, -2913.89), settling to -2913.13 within 0.5 s and staying there: lever + (0, 30.86, 1169.3
+  .. 1170.0), rotation the lever's (its +X, the pole's length, out of the wall). So the pole really hangs 4.2 m over
+  the floor (1167 units). Standing jumps under it (four facings, and under its free end) rise 201.5 and never catch
+  it [O Wine]. The route up to it is [U]: no ledge / hold markup lies within 6 m; wall lever 7188's handle marker is
+  at the same 1169 height; `ar_pu_valaskjalf_entry` 7191 (448 x 448 x 413) is an uber puzzle object, not a push
+  block [I: name class "pu" = puzzle, as `ar_pu_cog_wheel_*`]. In tru.exe an insert from 250 in front of 7189 (dx 0)
+  fails: the insert record's cone (heading 90°, half-angle 90° in the lever frame) admits only her standing on the
+  lever's world -X side.
   Engagement [O tru.exe 0x719520, every frame]: Lara's query points are her position + z0, + step, + 2 x step, from
   the last active category-3 shape of her sensor list (player +0x854: +0x6C entries of 0x60, +0x51 active; 0x715DD0:
   z0 = shape +0x10 x 3.1605, step = shape +0x20 x 3.1605 / 2 for a type-1 shape, else one point). Wine (prologue and
