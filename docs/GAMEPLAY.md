@@ -568,6 +568,33 @@ a hotplug, synthesised SDL events, recorded and replayed tick for tick), `game_i
 `tests/replays/ballcourt_door_lever_keyboard.events` and `_gamepad.events`, each through the pause menu, and must end
 where `ballcourt_door_lever.txt`'s scripted actions do).
 
+### Receptacle replays and the autopilot
+
+`ou-game --autopilot PLAN --record-script OUT` (developer tool, `src/app/game/Autopilot.*`) steers Lara through a
+plan and writes the actions it gave as an input script; the script replays the same ticks (each value round-trips
+through its text, the stick is re-aimed every 4 ticks in 0.05 steps from the camera's yaw, as `World::tick` maps it).
+Plan lines: `go X Y [R] [walk]`, `engage UID [X Y] [walk]` (to the nearest of its engagement records,
+`World::engagementCentres`, until `World::engaged` names it), `face YAWDEG`, `press [ACTION]` (6 ticks held, 6
+released), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS`, `wait SECONDS`, `near R` (logs the markup polylines
+within R: poles, ledges). It logs where each engagement and press happened. `--no-cinematics` leaves script cinematics
+unshown (their events, Lara's placement at the stream's tails and the chapter change still run): a spawn inside a
+level-start cinematic's trigger volume (l4_traprooms 195_mex_lords, l5_valgrind 240_val_gate) is placed at the
+cinematic's end on tick 1 either way, so the replays start from there. The replays (`tests/replays/*_insert.txt`,
+`*_remove.txt`, ctest `game_replay_<name>`: the real ou-game under `--no-cinematics --sync-loads`, checking the
+`portables held N inserted P>R` exit line and Lara's state):
+
+| replay | spawn | what happens |
+|---|---|---|
+| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematic: 6556.5,-33459.7) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) |
+| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | power gem 7498 carried 33 m to cog wheel 7312, set into section 1 while the wheel turns |
+| `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 |
+| `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 |
+
+Not replayed [U]: hanging on the inserted l5 pole (door 7227, `PoleHoleLeverOpensRewardDoor` drops her onto it). The
+pole's markup is 1164 over the floor she inserts it from (2742,-46810..-46296, z -1339), above the standing jump's
+reach (ledges 635-910 over her feet); no markup lies within 12.5 m of it and the stone blocks at the room's far end
+(x ~4300) are 1500 away, so the route up the original intends is not found yet.
+
 ## Controller
 
 - Ground: each tick the current clip's root delta (rotated by heading) is the desired move. A capsule from

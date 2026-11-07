@@ -24,6 +24,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "app/game/Graphics.hpp"
+#include "app/game/Autopilot.hpp"
 #include "app/game/Cinematic.hpp"
 #include "app/game/Sound.hpp"
 #include "anim/Anim.hpp"
@@ -67,6 +68,7 @@ struct Options {
     int frames = 0; // 0 = until closed
     int waterDebug = 0; // Enhanced water debug view (render::kWaterDebugViews; F7 cycles)
     std::filesystem::path screenshot, inputScript;
+    std::filesystem::path autopilot, recordScript; // --autopilot PLAN --record-script OUT (app/game/Autopilot.hpp)
     std::filesystem::path recordInput, replayInput; // --record-input / --replay-input FILE: device events (platform::EventLog)
     double renderHz = 0; // > 0: fixed virtual frame time (deterministic replays); default 60 with --input-script / --replay-input
     std::optional<std::array<float, 4>> spawn; // --spawn X,Y,Z,YAWDEG overrides the unit's player intro
@@ -74,6 +76,7 @@ struct Options {
     bool intro = false;  // --intro: play Movies/intro.bik first (skippable)
     int introFrames = -1; // --intro-frames N: stop the intro / the New Game movie after N frames
     bool noMovies = false; // --no-movies: New Game skips Movies/explode.bik
+    bool noCinematics = false; // --no-cinematics: script cinematics are not shown (their events and placement still run)
     bool drawLast = false; // --draw-last: with --frames, every frame runs its ticks but only the last is drawn (render-rate tests)
     bool noAudio = false;
     bool syncLoads = false; // --sync-loads: neighbour units load on the main thread (World::setAsyncStreaming off)
@@ -96,10 +99,10 @@ struct Options {
 void usage() {
     std::fprintf(stderr,
                  "usage: ou-game --game-dir DIR [--level pc-w\\\\l4_pool.drm | --chapter 0-8] [--renderer auto|opengl|vulkan]\n"
-                 "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--render-hz HZ]\n"
+                 "               [--frames N] [--screenshot out.ppm] [--input-script FILE] [--autopilot PLAN --record-script OUT] [--render-hz HZ]\n"
                  "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
-                 "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
+                 "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-cinematics] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
@@ -159,6 +162,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         if (a == "--no-audio") { o.noAudio = true; continue; }
         if (a == "--sync-loads") { o.syncLoads = true; continue; }
         if (a == "--no-movies") { o.noMovies = true; continue; }
+        if (a == "--no-cinematics") { o.noCinematics = true; continue; }
         if (a == "--draw-last") { o.drawLast = true; continue; }
         if (a == "--help" || a == "-h") return false;
         if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
@@ -183,6 +187,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--water-debug") o.waterDebug = std::atoi(v);
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--input-script") o.inputScript = v;
+        else if (a == "--autopilot") o.autopilot = v;
+        else if (a == "--record-script") o.recordScript = v;
         else if (a == "--record-input") o.recordInput = v;
         else if (a == "--replay-input") o.replayInput = v;
         else if (a == "--render-hz") o.renderHz = std::atof(v);
@@ -240,7 +246,9 @@ bool parseArgs(int argc, char** argv, Options& o) {
         o.game.language = ou::locale::languageCode(*l);
     }
     if (!o.screenshot.empty() && o.frames == 0 && !o.cineShots) o.frames = 1;
-    if ((!o.inputScript.empty() || !o.replayInput.empty()) && o.renderHz == 0) o.renderHz = 60;
+    if (o.autopilot.empty() != o.recordScript.empty()) { std::fprintf(stderr, "--autopilot and --record-script go together\n"); return false; }
+    if (!o.autopilot.empty() && (!o.inputScript.empty() || !o.replayInput.empty())) { std::fprintf(stderr, "--autopilot excludes --input-script / --replay-input\n"); return false; }
+    if ((!o.inputScript.empty() || !o.replayInput.empty() || !o.autopilot.empty()) && o.renderHz == 0) o.renderHz = 60;
     if (!o.inputScript.empty() && !o.replayInput.empty()) { std::fprintf(stderr, "--input-script and --replay-input exclude each other\n"); return false; }
     return true;
 }
@@ -1912,6 +1920,7 @@ int main(int argc, char** argv) {
 
     // ---- load: simulation data first (no window needed to fail early) ----
     std::optional<ou::game::InputScript> script;
+    std::optional<ou::app::Autopilot> autopilot; // --autopilot: steers Lara by a plan and records the input script
     std::optional<ou::platform::EventLog> replay; // --replay-input: recorded device events instead of the devices
     std::ofstream record;                         // --record-input
     std::unique_ptr<ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
@@ -1939,6 +1948,7 @@ int main(int argc, char** argv) {
     bool spawnFromIntro = false;
     try {
         if (!opt.inputScript.empty()) script = ou::game::InputScript::load(opt.inputScript);
+        if (!opt.autopilot.empty()) autopilot = ou::app::Autopilot::load(opt.autopilot, opt.recordScript);
         if (!opt.replayInput.empty()) replay = ou::platform::EventLog::load(opt.replayInput);
         if (!opt.recordInput.empty()) {
             record.open(opt.recordInput, std::ios::trunc);
@@ -2764,7 +2774,8 @@ int main(int argc, char** argv) {
     std::set<std::string> playedCines; // [I] each plays once per session
     world->onCinematic = [&](const std::string& name, bool levelEnd) {
         if (!playedCines.insert(name).second) return;
-        try {
+        if (opt.noCinematics) std::fprintf(stderr, "ou-game: cinematic %s not shown (--no-cinematics)\n", name.c_str());
+        else try {
             const auto r = ou::app::playCinematic(name, cineView());
             if (r.quit) running = false; // World places Lara and the bikes at the stream's tails afterwards
         } catch (const std::exception& e) {
@@ -2775,7 +2786,7 @@ int main(int argc, char** argv) {
         streamed.version = ~0ull; // re-upload the game scene
     };
 
-    const bool interactive = !script && !replay;
+    const bool interactive = !script && !replay && !autopilot;
     SDL_SetWindowRelativeMouseMode(window.get(), interactive && !menuStart);
     ou::platform::DeviceState devices;
     std::map<SDL_JoystickID, ou::platform::GamepadPtr> pads; // every connected gamepad stays open (SDL sends only their events)
@@ -2877,7 +2888,9 @@ int main(int argc, char** argv) {
         for (int n = clock.advance(dt); n > 0 && running; --n) {
             if (replay)
                 while (const auto ev = replay->next(appTicks)) handleInput(*ev);
-            ou::game::Actions a = script ? script->at(appTicks) : ou::game::readDevices(opt.controls, devices);
+            ou::game::Actions a = script      ? script->at(appTicks)
+                                  : autopilot ? autopilot->step(appTicks, *world)
+                                              : ou::game::readDevices(opt.controls, devices);
             ++appTicks;
             if (const bool hold = audioOn && menus.screen() != ou::ui::Screen::None && !menus.mainMenu(); hold != soundHeld) {
                 mixer.setWorldPaused(soundHeld = hold); // pause menu / PDA (tru.exe 0x5D4780 -> 0x5874B0)
@@ -3425,6 +3438,7 @@ int main(int argc, char** argv) {
                          world->checkpoint() ? world->checkpoint()->id : 0, world->found[0], world->found[1], world->found[2],
                          std::string(ou::game::stateName(fs.state)).c_str(), fs.pos.x, fs.pos.y, fs.pos.z, glm::degrees(fs.yaw), fs.clip.c_str(),
                          (unsigned long long)world->stateHash(), effects.system.particleCount());
+            if (autopilot) autopilot->finish(appTicks);
             { // receptacle replays (tests/replays/*_insert.txt) check these
                 std::string list;
                 for (const auto& o : world->script().objects())

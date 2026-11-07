@@ -1569,6 +1569,30 @@ World::Engaged World::engaged() {
     return best;
 }
 
+std::vector<vec3> World::engagementCentres(int32_t uid, int kind) {
+    std::vector<vec3> out;
+    const auto* o = script_.find(uid);
+    if (!o) return out;
+    const auto add = [&](const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e) {
+        if (e.kind && (!kind || e.kind == kind)) out.push_back(vec3(recordFrame(p, frame, e) * glm::vec4(e.centre, 1)));
+    };
+    if (const auto* data = prepareUber(*o)) {
+        for (size_t i = 0; i < data->sections.size(); ++i) {
+            const auto* set = uberEngagement(uid, i);
+            const auto* p = set ? uberSectionPhysics(*o, i) : nullptr;
+            const auto frame = p ? uberSectionFrame(*o, i) : std::nullopt;
+            if (frame)
+                for (const auto& e : set->records) add(*p, *frame, e);
+        }
+    } else if (const auto* p = objectPhysics(o->name)) {
+        const glm::mat4 frame = glm::translate(glm::mat4(1), o->offset) * introModel(*o) * o->body;
+        for (const auto& set : p->engagements)
+            if (o->engagement <= 0 || set.id == o->engagement)
+                for (const auto& e : set.records) add(*p, frame, e);
+    }
+    return out;
+}
+
 // Uber section `section` of `o` in the world: the object's frame, moved with the joint carrying the section.
 std::optional<glm::mat4> World::uberSectionFrame(const script::Object& o, size_t section) {
     if (!prepareUber(o)) return std::nullopt;

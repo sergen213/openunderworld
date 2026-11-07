@@ -649,6 +649,9 @@ public:
         const physics::Engagement* record = nullptr;
     };
     Engaged engaged();
+    // Where object `uid`'s engagement records are now (world centres of its current sets; uber objects: every section's),
+    // kind 0 = any live record. ou-game --autopilot steers Lara to them (app/game/Autopilot.hpp).
+    std::vector<vec3> engagementCentres(int32_t uid, int kind = 0);
     // Model-space motion of uber object `uid`'s section `section` riding its simulated hinge / prismatic joint (each
     // section is an instance of its own model, 0x4D3DA0: the grapple handles' model 1), nullopt without one; `removed`
     // reports action 28 on that section.
