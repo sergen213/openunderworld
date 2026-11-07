@@ -2944,6 +2944,12 @@ TEST(GameReal, GrapplePullsUberTargets) {
         w.script().setBigfile(&bf);
         bool braced = false;
         for (uint64_t i = 0; i < 5 * 60; ++i) {
+            // The shiva arm's section 1 spawns in state 0 with action 0x1A (no grapple target); its command 0 (state 2,
+            // action 0x19) offers it. [U] which puzzle script sends that command; the test sends it.
+            if (i == 1 && c.uid == 2982) {
+                EXPECT_TRUE(w.uberGrappleOff(2982));
+                w.sendUberCommand(2982, 0);
+            }
             if (i == 72) { // just before the throw (1.2 s)
                 const auto t = w.grappleTarget();
                 ASSERT_TRUE(t);
