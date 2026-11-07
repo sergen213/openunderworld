@@ -82,12 +82,16 @@ type 2, is [I].
   offset). Doors therefore block while closed and stop blocking once their animation (or swing) moves them away.
   Lara rides the dynamic under her feet.
 - Hinge doors and levers [I]: a class-34 door or class-6 lever without clips becomes a rigid body on a hinge about
-  its first marker's X axis. Script `multibody` 2/77/78/79 enables physics, changes limits, reads the angle and
-  issues drive commands. Function-0 construction and the lever's WAIT-based function-2 polling loop run, so using
-  the pole lever drives the door to twice the lever angle through the original bytecode rather than a full-open
-  fallback. Other animated doors still use their script state and clips. The lever's motor lands exactly on its 40°
-  target: the door follows the lever's angle in whole degrees, and a lever settling at 39.99° left the door at 78°,
-  too low for Lara to pass (`GameReal.BallcourtLeverReplayPassesDoor`).
+  its first marker's X axis. Script `multibody` 2/77/78/79 enables physics, changes limits, reads the joint value and
+  issues drive commands. Function-0 construction and the lever's WAIT-based function-2 polling loop run through the
+  original bytecode. Other animated doors still use their script state and clips.
+- Joint types and `multibody` 77 / 78 limit indices [O decomp 0x4A5C40 / 0x4A5D90, joint +0x178]: 1 hinge (limit 1 =
+  angle, degrees), 2 cylindrical (1 = linear position, units; 2 = angle, degrees), 3 prismatic (1 linear), 4 (1, 2
+  linear, 3 angle), 8 (1, 2 angles), 9 (1 linear, 2, 3 angles), 10 (1, 2, 3 linear); 77 converts degree limits to
+  radians (0x4A5C40), 78 returns degrees for angles (0x4DA930 x 57.2958) and units for positions (0x4DA460 / 0x4DA710 /
+  0x4DA820). A class-34 door whose first marker is kind 2 (l4_ballcourt `ca_rb_wall_hpole_door` 6505; [I] marker kind =
+  joint type) slides along that marker's Z within its limit 1 (record limit 0..0, on) instead of swinging: pole lever
+  6502's slide (78, cylindrical, units) x 2 lifts it (`GameReal.BallcourtLeverDrivesDoorJoint`).
 - Simulation: [Jolt Physics](https://github.com/jrouwe/JoltPhysics) 5.6.0 (CMake `FetchContent`, pinned SHA-256, MIT
   licence in `third_party/jolt/LICENSE`, `CROSS_PLATFORM_DETERMINISTIC`, single-threaded job system), one
   `Scene::step(kTickSeconds)` per 60 Hz tick from `World::stepPhysics` (inside `World::tickUber`, after the section
