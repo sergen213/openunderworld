@@ -4195,11 +4195,17 @@ TEST(GameReal, JointSoundsFollowMovingJoints) {
     EXPECT_FALSE(heard) << "asleep: at rest under her for more than 0.5 s";
 
     auto lever = worldMaker(bf, "l4_trailstart", game::Spawn{{61161, -42611, 4948}, glm::radians(-11.0f)})();
-    bool slides = false;
-    run(*lever, game::InputScript::load(OU_SOURCE_DIR "/tests/replays/grapple_pull.txt"), 420, [&](const game::JointSound& s) {
-        if (s.uid == 6695 && s.joint == 0 && std::abs(s.linear) > 10.0f) slides = true;
+    bool slides = false, early = false;
+    run(*lever, game::InputScript::load(OU_SOURCE_DIR "/tests/replays/grapple_pull.txt"), 900, [&](const game::JointSound& s) {
+        if (s.uid != 6695) return;
+        early |= lever->ticks() < 120; // the grapple is thrown at 1.2 s, pulled from 2.5 s
+        if (s.joint == 0 && std::abs(s.linear) > 10.0f) slides = true;
     });
+    EXPECT_FALSE(early) << "at rest since spawn: asleep, no voice";
     EXPECT_TRUE(slides) << "the post's prismatic joint, pulled out at its motor speed";
+    heard = false;
+    run(*lever, game::InputScript::parse("10 forward 0\n"), 60, [&](const game::JointSound& s) { heard |= s.uid == 6695; });
+    EXPECT_FALSE(heard) << "settled at its limit: asleep again";
 }
 
 // l2_puzzleroom: switch 2961 starts elevator 2973's uber command chain; the platform's collision moves.

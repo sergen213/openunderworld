@@ -44,9 +44,9 @@ struct LimitHit {
     }
 };
 
-// Whether a body the game moves without the physics engine (class-34 joints driven by `multibody` motors, press
-// plates) is awake: moving, or still for less than `sleepAfter` seconds [I: Jolt's 0.5 s sleep time stands for Havok's
-// deactivation timer, body +0x108].
+// Whether a joint's body is awake (Havok: body +0x15C bit 0 clear, 0x4D9000; it deactivates once it rests): moving, or
+// still for less than `sleepAfter` seconds; a body never seen moving is asleep [I: Havok's thresholds and its timer,
+// body +0x108].
 struct WakeTimer {
     float still = 1e9f;
     bool update(bool moving, float dt, float sleepAfter = 0.5f) {
