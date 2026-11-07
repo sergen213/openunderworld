@@ -1198,7 +1198,6 @@ void Scene::step(float dt) {
             j.v = glm::dot(G(m.bi->GetLinearVelocity(e.body)), j.axis) * kUnitsPerMetre / kFrame;
         }
         j.push = 0;
-        j.awake = m.bi->IsActive(e.body); // Jolt's sleep stands for Havok's deactivation [I: its timer]
         e.x = j.x, e.v = j.v, e.live = nullptr;
     }
 }

@@ -793,10 +793,11 @@ Moving uber sections and rigid bodies are heard through their Havok joints, not 
   for the linear one (0x5BA1C0). Only 8 joints have them (ar_ei_thor_valgrind_door, ms_ani_tentacle_gearl, the shiva
   scales, ca_uo_thor_statue_arms), all effect records (particles), no sounds [V-data]; not run by ours.
 - **Ours** (`formats::UberJoint::sound`, `physics::ObjectPhysics::jointSound`, `game::World::jointSounds`,
-  `game::LimitHit`, `GameSound::jointSounds`): every tick after the physics step, each simulated uber joint (hinge /
-  prismatic) with a sound whose Jolt body is awake (`Joint1::awake`, Jolt's sleep for Havok's deactivation [I: its timer,
-  body +0x108]), and each class-34 joint the game moves (press plates, `multibody` motor joints, hinge doors) while it
-  moves and 0.5 s after [I], is listed with its speed (hinge degrees/s, prismatic units/s, signed) and an impact when it
+  `game::LimitHit`, `game::WakeTimer`, `GameSound::jointSounds`): every tick after the physics step, each simulated uber
+  joint (hinge / prismatic) and each class-34 joint the game moves (press plates, `multibody` motor joints, hinge doors)
+  that has a sound and is awake — moving (uber joints: above 1 unit/s or 1 degree/s), or within 0.5 s of moving; a joint
+  never seen moving (spawned at rest) is asleep, as a settled Havok body is deactivated [I: Havok's thresholds and timer,
+  body +0x108; our Jolt joint bodies never sleep] — is listed with its speed (hinge degrees/s, prismatic units/s, signed) and an impact when it
   reached a limit this tick (the speed before the step [I]; a joint found at a limit is no impact; limits within 0.5 units
   / 0.25 degrees [I]); GameSound keeps the two voices per joint as 0x4F2840 does and releases them when the joint leaves
   the list (logged `joint sound <object> uid u joint j start / impact / stop`). Multi-axis uber joints (types 5 / 7:

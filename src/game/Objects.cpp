@@ -1602,12 +1602,12 @@ std::pair<float, float> World::scriptJointLimit(const script::Object& o) {
 // tru.exe's joint-sound manager (docs/formats/AUDIO.md §9.16): every frame 0x4F3120 makes a contact for each registered
 // joint (a record with a sound: uber joints 0x4D8000, rigid bodies 0x6B6440) whose bodies are both awake (0x4D9000),
 // filled by 0x4F22C0 with the joint's speed (hinge: degrees/s, prismatic: units/s); reaching a limit adds an impact
-// (0x4E76A0 -> 0x4F2E40). Ours: the simulated uber joints (Jolt's sleep for Havok's) and the class-34 joints the game
-// moves (awake while moving and 0.5 s after [I]).
+// (0x4E76A0 -> 0x4F2E40). Havok deactivates a body that rests (no contact, no voice); ours: a joint is awake while it
+// moves and 0.5 s after (WakeTimer; our joint bodies never sleep in Jolt) [I: Havok's thresholds and timer].
 void World::collectJointSounds(float dt) {
     jointSounds_.clear();
     std::set<std::pair<int32_t, int32_t>> live;
-    const auto track = [&](int32_t uid, int32_t joint, float x, float v, bool awake, bool limited, float lo, float hi,
+    const auto track = [&](int32_t uid, int32_t joint, float x, float v, bool moving, bool limited, float lo, float hi,
                            float tolerance, const std::string& object, cdc::Pointer sound, vec3 at, bool hinge) {
         auto& m = jointMotion_[{uid, joint}];
         live.insert({uid, joint});
@@ -1616,6 +1616,7 @@ void World::collectJointSounds(float dt) {
             if (!m.seen) m.limit.update(x, lo, hi, tolerance, 0.0f); // a joint found resting at a limit is no impact
             else impact = m.limit.update(x, lo, hi, tolerance, m.v);
         }
+        const bool awake = m.wake.update(moving, dt);
         m.x = x, m.v = v, m.seen = true;
         if (!awake) return;
         JointSound s{uid, joint, object, sound, at};
@@ -1635,7 +1636,8 @@ void World::collectJointSounds(float dt) {
             const float along = j.hinge ? 0.0f : j.x * (rec.soundAt == 1 ? 1.0f : rec.soundAt == 2 ? 0.5f : 0.0f);
             const float v = j.hinge ? jointAngularSpeed(j.v) : jointLinearSpeed(j.v);
             // Limits in the coordinate: hinge radians (0.25 degrees), prismatic units (0.5) [I: tolerances].
-            track(uid, index, j.x, v, j.awake, j.limited, j.lo, j.hi, j.hinge ? 0.0044f : 0.5f, o->name, *rec.sound,
+            // Moving: above 1 unit/s or 1 degree/s [I] (a resting joint's solver jitter is far below).
+            track(uid, index, j.x, v, std::abs(v) > 1.0f, j.limited, j.lo, j.hi, j.hinge ? 0.0044f : 0.5f, o->name, *rec.sound,
                   j.pivot + j.axis * along, j.hinge);
         }
     }
@@ -1647,16 +1649,16 @@ void World::collectJointSounds(float dt) {
         const auto* p = objectPhysics(o.name);
         if (!p || !p->jointSound) continue;
         const float x = o.joint->position; // degrees for hinges, units otherwise (tickJoints)
-        auto& m = jointMotion_[{o.uid, -1}];
+        const auto& m = jointMotion_[{o.uid, -1}];
         const float v = m.seen ? (x - m.x) / dt : 0.0f;
-        const bool awake = m.wake.update(m.seen && x != m.x, dt);
+        const bool moving = m.seen && x != m.x;
         const bool hinge = hinges.contains(o.uid) ||
                            (!plates_.contains(o.uid) && std::ranges::count(p->markers, 2u, &physics::Marker::kind) != 1);
         const auto [lo, hi] = plates_.contains(o.uid) ? std::pair(plates_.at(o.uid).lo, 0.0f) : scriptJointLimit(o);
         const glm::mat4 intro = glm::translate(glm::mat4(1), o.offset) * introModel(o);
         const vec3 pivot = vec3(intro[3]), body = vec3(intro * o.body[3]);
         const vec3 at = p->jointSoundAt == 1 ? body : p->jointSoundAt == 2 ? (pivot + body) * 0.5f : pivot;
-        track(o.uid, -1, x, v, awake, p->jointLimitOn || plates_.contains(o.uid), lo, hi, hinge ? 0.25f : 0.5f, o.name,
+        track(o.uid, -1, x, v, moving, p->jointLimitOn || plates_.contains(o.uid), lo, hi, hinge ? 0.25f : 0.5f, o.name,
               *p->jointSound, at, hinge);
     }
     std::erase_if(jointMotion_, [&](const auto& e) { return !live.contains(e.first); });
