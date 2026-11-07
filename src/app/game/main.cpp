@@ -3265,9 +3265,17 @@ int main(int argc, char** argv) {
             lines.push_back(fmt("effects: %zu emitters | %zu particles | %zu glows | %zu fixture lights | %zu sprite batches",
                                 effects.system.emitterCount(), effects.system.particleCount(), effects.system.glowCount(),
                                 streamed.fixtureLights.size(), effects.batches.size()));
-            lines.push_back("WASD move | Shift walk | Space jump/climb | Ctrl/C drop | E use/push/pick up | G grapple (E/Shift rope) | "
-                            "F draw | LMB fire | RMB lock | "
-                            "Q switch | X weapon | H health pack | mouse look | F5 save | F9 load | F1 overlay | Esc menu");
+            { // the keys as bound (controls.bindings / GAME OPTIONS > CONTROL CONFIGURATION)
+                static constexpr std::pair<const char*, const char*> kHelp[] = {
+                    {"forward", "forward"}, {"walk", "walk"}, {"sprint", "sprint"}, {"jump", "jump/climb"}, {"drop", "drop"},
+                    {"interact", "use/push/pick up"}, {"grapple", "grapple"}, {"draw", "draw"}, {"fire", "fire"}, {"aim", "lock"},
+                    {"switch", "switch"}, {"weapon", "weapon"}, {"heal", "health pack"}, {"recenter", "recenter"},
+                    {"save", "save"}, {"load", "load"}, {"pause", "menu"}};
+                std::string keys;
+                for (const auto& [action, label] : kHelp)
+                    keys += (keys.empty() ? "" : " | ") + ou::game::boundNames(opt.input, action, false, *strings) + " " + label;
+                lines.push_back(keys + " | F1 overlay");
+            }
         }
         if (overlay && !mainMenu) { // combat values (F1 overlay; the HUD shows them as art)
             const auto& cs = world->combat();
