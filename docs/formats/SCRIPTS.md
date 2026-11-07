@@ -120,8 +120,8 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
 
 | record | fields |
 |---|---|
-| section (0x54) | +4/+8 states, +0xC/+0x10 transitions, +0x14 default state, +0x18 model, +0x28 float angle (0x4D3050) |
-| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, 3 words; 0x4D86A0: 2/3 play an animation, 9/10 create/remove a physics joint, 12/13 its limit/motor, 0x14/0x15 add/remove a range watch, 0x19/0x1A clear/set "no grapple target" (instance +0x1C bit 2); PHYSICS.md "Uber joints") |
+| section (0x54) | +4/+8 states, +0xC/+0x10 transitions, +0x14 default state, +0x18 model, +0x28 float angle (0x4D3050), +0x3C health, +0x40 → engagement set at birth (UberObjectSection_TR8 +0xD4, query 0x53), +0x48 s16 HInfo marker (query 0x174), +0x4C → constraint record for an inserted portable (first byte: model 0 marker, query 0x173; 0x6B6440), +0x52 bit 0 takes damage |
+| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, 3 words; 0x4D86A0: 2/3 play an animation, 9/10 create/remove a physics joint, 12/13 its limit/motor, 0x14/0x15 add/remove a range watch, 0x19/0x1A clear/set "no grapple target" (instance +0x1C bit 2); UberObjectSection_TR8 0x6D5EC0: 0x1C the removal record, 0x1D word +4 → the section's engagement set (+0xD4), 0x1E +0xD8; PHYSICS.md "Uber joints") |
 | transition (0x38) | +0 from, +4 to, +8 float, +0x18 trigger, +0x1C parameter, +0x20/+0x24 joint and range records (triggers 14/15), +0x2A animation-list index (0xFFFF none), +0x2C probability, +0x30 effect, +0x34 flags (1 play the animation, 2 wait for its end, 0x10 random) |
 | command (0xC) | +0 id (0 in every object seen), +4/+8 targets {section, type, payload} |
 | event (0x1C) | +4/+8 condition lists, +0xC section, +0x10 kind, +0x14 value, +0x18 once, +0x1A script event id |
@@ -135,6 +135,10 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
   its condition list holds, 0xB/0xC on the section's facing flags (not modelled). 14 / 15 are a physics joint's
   value entering / leaving a watched range (0x4D7380 → 0x4937A0 → 0x4D5A50), from the simulated joints
   (docs/formats/PHYSICS.md "Uber joints").
+- Engagement triggers (UberObjectSection_TR8 0x6D5AC0): message 0x158 (Lara uses a record of the section's set,
+  0x701310) starts the transition with trigger 20 and the record's kind (0x6D4790), 0x14F trigger 21 (0x6D4810); a
+  portable inserted (0x165) starts trigger 20 with parameter 5 or 22, removed (0x186) 21 / 5 or 23 (0x6D4890; idle
+  sections only). GAMEPLAY.md "Inserting a portable".
 - A transition with flags 1 + 2 and an animation lasts the clip; then the target state is entered (0x4D7440).
   Events: kind 2 leaving a state, 3 starting a transition (0x4D4A00), 4 finishing one, 1 entering a state; a match
   (all condition lists holding) runs the object script's vt 54 with the event index, which `uberobjectevent` 0

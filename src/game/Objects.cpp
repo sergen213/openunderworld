@@ -144,7 +144,8 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                 uberMotion_[o.uid] = {motion->delta, motion->rotation, motion->duration, 0, false, motion->clip};
             auto& rt = uberRuntime_[o.uid];
             rt.sections.assign(data->sections.size(), {});
-            for (size_t i = 0; i < rt.sections.size(); ++i) rt.sections[i].health = data->sections[i].health;
+            for (size_t i = 0; i < rt.sections.size(); ++i)
+                rt.sections[i].health = data->sections[i].health, rt.sections[i].engagement = data->sections[i].engagement;
             // Transition animations: the object's animation list by index (transition +0x2A).
             for (const auto& e : anim::animList(*drm->second)) {
                 float length = 0;
@@ -167,6 +168,7 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                 auto& sec = rt.sections[i];
                 sec.state = s[i].at(0), sec.transition = s[i].at(1), sec.time = s[i].at(2), sec.length = s[i].at(3);
                 if (s[i].size() >= 6) sec.health = s[i].at(4), sec.removed = s[i].at(5);
+                if (s[i].size() >= 7) sec.engagement = s[i].at(6); // older saves: the section's starting set
                 if (sec.state >= 0) uberStates_[o.uid][i] = uint32_t(sec.state);
             }
             rt.fired = j.at("fired"), rt.commanded = j.at("commanded"), rt.intangible = j.value("intangible", false);
@@ -199,7 +201,7 @@ nlohmann::json World::serializeObjects() const {
     for (const auto& [uid, rt] : uberRuntime_) {
         if (const auto d = uberData_.find(uid); d == uberData_.end() || !d->second) continue;
         nlohmann::json sections = nlohmann::json::array();
-        for (const auto& s : rt.sections) sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed});
+        for (const auto& s : rt.sections) sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement});
         nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded},
                                                          {"intangible", rt.intangible}, {"grappleOff", rt.grappleOff}};
         if (const auto m = uberMotion_.find(uid); m != uberMotion_.end()) e["motion"] = {m->second.t, m->second.active};
@@ -213,10 +215,14 @@ nlohmann::json World::serializeObjects() const {
     std::string physics;
     for (const unsigned char c : physics_.save()) physics += "0123456789abcdef"[c >> 4], physics += "0123456789abcdef"[c & 15];
     nlohmann::json inserted = nlohmann::json::array(), slides = nlohmann::json::array();
-    for (const auto& [uid, in] : inserted_) inserted.push_back({uid, in.receptacle});
+    nlohmann::json insertedSections = nlohmann::json::array(); // uber receptacles' sections (0.36)
+    for (const auto& [uid, in] : inserted_) {
+        inserted.push_back({uid, in.receptacle});
+        if (in.section >= 0) insertedSections.push_back({uid, in.section});
+    }
     for (const auto& [uid, x] : slides_) slides.push_back({uid, x});
     return {{"uber", std::move(uber)}, {"held", held_}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
-            {"placed", placed_},
+            {"insertedSections", std::move(insertedSections)}, {"placed", placed_},
             {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
 }
 
@@ -234,7 +240,8 @@ void World::restoreObjects(const nlohmann::json& j) {
                 const auto& s = e.at("sections");
                 for (const auto& sec : s) // validate the shape now: prepareUber reads it later (older saves: 4 / 5 entries)
                     if (!sec.is_array() || sec.size() < 4 || !sec[0].is_number_integer() || !sec[1].is_number_integer() ||
-                        !sec[2].is_number() || !sec[3].is_number() || (sec.size() >= 6 && (!sec[4].is_number() || !sec[5].is_boolean())))
+                        !sec[2].is_number() || !sec[3].is_number() || (sec.size() >= 6 && (!sec[4].is_number() || !sec[5].is_boolean())) ||
+                        (sec.size() >= 7 && !sec[6].is_number_integer()))
                         throw std::runtime_error("bad uber section of " + key);
                 (void)e.at("fired").get<uint64_t>(), (void)e.at("commanded").get<bool>(), (void)e.value("intangible", false);
                 (void)e.value("grappleOff", false);
@@ -256,6 +263,8 @@ void World::restoreObjects(const nlohmann::json& j) {
                 inserted[e.at(0).get<int32_t>()] = {e.at(1).get<int32_t>()};
                 if (e.size() >= 5) slides[e.at(1).get<int32_t>()] = e.at(4).get<float>(); // 0.34.0: the slide rode along
             }
+            for (const auto& e : j.value("insertedSections", nlohmann::json::array()))
+                if (const auto it = inserted.find(e.at(0).get<int32_t>()); it != inserted.end()) it->second.section = e.at(1).get<int>();
             for (const auto& e : j.value("slides", nlohmann::json::array())) slides[e.at(0).get<int32_t>()] = e.at(1).get<float>();
             placed = j.value("placed", std::set<int32_t>{});
             if (const auto p = j.find("physics"); p != j.end() && p->value("version", 0) == 1) {
@@ -379,6 +388,9 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
              // instance goes (0x6D5E20 -> 0x4D6480). ponytail: removed at once; record entries of type 1 (a clip first) and
              // fade times > 0 do not occur.
         rt.sections[section].removed = true, syncedObjects_ = ~size_t(0);
+        break;
+    case 0x1D: // 0x6D5EC0: section +0xD4 = the action's set, where Lara engages the section (query 0x53, 0x6D59C0)
+        rt.sections[section].engagement = a.engagement;
         break;
     default: break;
     }
@@ -1188,8 +1200,14 @@ void World::tickObjects(float dt) {
 // Portable objects (heavy weights, poles, keys, gems): interact next to one picks it up, she carries it in front of her
 // chest, interact again inserts it into a receptacle she engages (insertHeld) or sets it down in front of her feet, where
 // it falls as a loose body (it weighs on pressure plates). Empty-handed, interact takes an inserted portable she engages
-// back out (removeInserted). [I] No carry clips or walk-speed change; the script's vt 20 pick-up callback (sets its
-// "touched" sticky) is not sent.
+// back out (removeInserted). Standing, or swimming: l7_arctic_sea's statue arms, gem holes and thor gears lie under
+// water (engagement spheres of radius 632-948 there [O data]; tru.exe's swim states' carry clips are not traced [I]).
+// [I] No carry clips or walk-speed change; the script's vt 20 pick-up callback (sets its "touched" sticky) is not sent.
+bool World::carryReady() const {
+    const State s = player_.state().state;
+    return s == State::Idle || s == State::SwimTread || s == State::SwimSurface || s == State::SwimUnder;
+}
+
 void World::carryPortables(bool pressed) {
     const auto& s = player_.state();
     const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
@@ -1219,7 +1237,7 @@ void World::carryPortables(bool pressed) {
         held->body = glm::mat4(1);
         return;
     }
-    if (!pressed || s.state != State::Idle) return;
+    if (!pressed || !carryReady()) return;
     if (removeInserted()) return;
     // Its pick-up record (kind 4: the poles' sphere r 869 around marker 20, the keys' and gems' around their origin), else
     // [I] within 150 / 100 of her root.
@@ -1240,14 +1258,37 @@ void World::carryPortables(bool pressed) {
     }
 }
 
+namespace {
+glm::mat4 markerMatrix(vec3 pos, vec3 rot) {
+    return glm::translate(glm::mat4(1), pos) * glm::rotate(glm::mat4(1), rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), rot.y, {0, 1, 0}) *
+           glm::rotate(glm::mat4(1), rot.z, {0, 0, 1});
+}
+// An engagement record's frame: its HInfo marker's (0x46DF20) in `p`'s model, posed by `frame`; else `frame`.
+glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e) {
+    if (e.segment >= 0)
+        for (const auto& m : p.hmarkers)
+            if (m.id == e.segment)
+                return frame * (size_t(m.segment) < p.segments.size() ? p.segments[size_t(m.segment)] : glm::mat4(1)) * markerMatrix(m.pos, m.rot);
+    return frame;
+}
+} // namespace
+
 // The receptacle's attach marker (physical record +0x3C: the model marker the portable takes, tru.exe query 0x173 ->
-// 0x6B55D0) as the object stands now (intro x body).
-std::optional<glm::mat4> World::attachFrame(const script::Object& o) {
+// 0x6B55D0) as the object stands now (intro x body). An uber section's: its record's +0x4C byte, a marker of the
+// object's model 0 (0x6D59C0), posed with the section.
+std::optional<glm::mat4> World::attachFrame(const script::Object& o, int section) {
     const auto* p = objectPhysics(o.name);
+    if (section >= 0) {
+        const auto data = uberData_.find(o.uid);
+        if (!p || data == uberData_.end() || !data->second || size_t(section) >= data->second->sections.size()) return std::nullopt;
+        const int marker = data->second->sections[size_t(section)].attachMarker;
+        const auto frame = uberSectionFrame(o, size_t(section));
+        if (!frame || marker < 0 || size_t(marker) >= p->markers.size()) return frame;
+        return *frame * markerMatrix(p->markers[size_t(marker)].pos, p->markers[size_t(marker)].rot);
+    }
     if (!p || p->attachMarker < 0 || size_t(p->attachMarker) >= p->markers.size()) return std::nullopt;
     const auto& m = p->markers[size_t(p->attachMarker)];
-    return glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body * glm::translate(glm::mat4(1), m.pos) *
-           glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
+    return glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body * markerMatrix(m.pos, m.rot);
 }
 
 // Lara's engagement test (tru.exe 0x719520 -> 0x6F3C60): points up her body, each in the record's frame (its HInfo
@@ -1256,17 +1297,11 @@ std::optional<glm::mat4> World::attachFrame(const script::Object& o) {
 // cylinder (centre 315.4 above her feet, 189.63 long): 220.6, 315.4, 410.2.
 bool World::engages(const script::Object& o, const physics::Engagement& e) {
     const auto* p = objectPhysics(o.name);
-    if (!p) return false;
-    glm::mat4 frame = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
-    if (e.segment >= 0)
-        for (const auto& m : p->hmarkers)
-            if (m.id == e.segment) {
-                frame = frame * (size_t(m.segment) < p->segments.size() ? p->segments[size_t(m.segment)] : glm::mat4(1)) *
-                        glm::translate(glm::mat4(1), m.pos) * glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) *
-                        glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
-                break;
-            }
-    const glm::mat4 inv = glm::inverse(frame);
+    return p && engagesAt(*p, glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body, e);
+}
+
+bool World::engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e) {
+    const glm::mat4 inv = glm::inverse(recordFrame(p, frame, e));
     for (const float z : {220.6f, 315.4f, 410.2f}) {
         const vec3 q = vec3(inv * glm::vec4(player_.state().pos + vec3(0, 0, z), 1)) - e.centre;
         if (e.shape == 0) {
@@ -1281,40 +1316,103 @@ bool World::engages(const script::Object& o, const physics::Engagement& e) {
     return false;
 }
 
+// Uber section `section` of `o` in the world: the object's frame, moved with the joint carrying the section.
+std::optional<glm::mat4> World::uberSectionFrame(const script::Object& o, size_t section) {
+    if (!prepareUber(o)) return std::nullopt;
+    const glm::mat4 base = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+    const auto body = uberSectionBody(o.uid, int32_t(section));
+    return body ? base * *body : base;
+}
+
+const physics::EngagementSet* World::uberEngagement(int32_t uid, size_t section) {
+    const auto* o = script_.find(uid);
+    const auto rt = uberRuntime_.find(uid);
+    if (!o || rt == uberRuntime_.end() || section >= rt->second.sections.size()) return nullptr;
+    const auto& s = rt->second.sections[section];
+    const auto drm = objectDrms_.find(o->name);
+    if (s.removed || s.engagement < 0 || drm == objectDrms_.end() || !drm->second) return nullptr;
+    auto it = uberEngagements_.find({o->name, s.engagement});
+    if (it == uberEngagements_.end())
+        it = uberEngagements_.emplace(std::pair{o->name, s.engagement}, physics::loadEngagementSet(*drm->second, uint32_t(s.engagement))).first;
+    return it->second ? &*it->second : nullptr;
+}
+
+// 0x6D4890 (UberObjectSection_TR8 messages 0x165 / 0x186, 0x6D5AC0): an idle section in a state starts its first
+// transition out of it with trigger 20 (insert) / 21 (removal) and parameter 5, or 22 / 23 (any portable). [I] The
+// transition's condition check (0x4D0E10) is not run.
+bool World::uberInsert(int32_t uid, size_t section, bool inserted) {
+    const auto rt = uberRuntime_.find(uid);
+    const auto data = uberData_.find(uid);
+    if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second || section >= rt->second.sections.size()) return false;
+    const auto& s = rt->second.sections[section];
+    const auto& sec = data->second->sections[section];
+    if (s.removed || s.transition >= 0 || s.state < 0 || size_t(s.state) >= sec.stateOut.size()) return false;
+    for (const uint32_t ti : sec.stateOut[size_t(s.state)]) {
+        const auto& t = sec.transitions[ti];
+        if ((t.trigger == (inserted ? 20u : 21u) && t.param == 5) || t.trigger == (inserted ? 22u : 23u)) {
+            uberBegin(uid, section, ti);
+            return true;
+        }
+    }
+    return false;
+}
+
 // Carrying a portable, interact inserts it (tru.exe: her chart's action 0x4D, 0x716F30, posts INSTANCE message 0x165
 // with her engaged object to the portable she holds) into a receptacle: one whose anim graph takes the insert stimulus
 // from its state and one of whose engagement records she is in, of kind 5 and naming the portable's object among its
 // `needs` (0x6F3C60 / 0x6F3BB0; l5 lever 7189 needs ar_pt_pole_a, l4 keyhole 6501 ca_pt_key_xibalba_exit, the l4 seal
 // one key per segment 11-14). Sets: the one a script picked (instance fn 59, Object::engagement), else all [I].
-// Standing still [I: no insert clip in lara.drm].
+// Uber receptacles (no anim graph: the shiva arms, calendars, empty throne, valgrind cog wheels, statue arms, gem
+// holes) are engaged per section: its current set (query 0x53 -> section +0xD4: the record's +0x40, then the states'
+// actions 0x1D), its records in the section model's frame. Standing still [I: no insert clip in lara.drm].
 bool World::insertHeld(script::Object& held) {
-    if (player_.state().state != State::Idle) return false;
+    if (!carryReady()) return false;
+    const auto needed = [&](const physics::Engagement& e) {
+        return e.needs.empty() || std::ranges::any_of(e.needs, [&](uint16_t id) { const auto* n = script_.objectName(id); return n && *n == held.name; });
+    };
+    // [I] Inside the record (as decoded), or its centre within its radius of her and 0..1200 above her feet: the
+    // records' heights do not reach where she stands at l5 7189 / l4 6502 with our sample points (tru.exe's Lara query
+    // capsule, 0x715DD0, is not decoded).
+    const auto reaches = [&](const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e) {
+        if (engagesAt(p, frame, e)) return true;
+        const vec3 d = vec3(recordFrame(p, frame, e)[3]) - player_.state().pos;
+        return glm::length(vec2(d)) < std::max(e.radius, 450.0f) && d.z >= 0 && d.z <= 1200.0f;
+    };
     for (const auto& o : script_.objects()) {
-        if (o.uid == held.uid || !script_.graphAccepts(o.uid, formats::kStimulusInsert)) continue;
-        const auto* p = objectPhysics(o.name);
-        if (!p) continue;
-        for (const auto& set : p->engagements) {
-            if (o.engagement > 0 && set.id != o.engagement) continue;
-            for (const auto& e : set.records) {
-                // [I] Inside the record (as decoded), or its centre within its radius of her and 0..1200 above her
-                // feet: the records' heights do not reach where she stands at l5 7189 / l4 6502 with our sample
-                // points (tru.exe's Lara query capsule, 0x715DD0, is not decoded).
-                const auto near = [&] {
-                    const auto* q = objectPhysics(o.name);
-                    glm::mat4 f = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
-                    for (const auto& m : q->hmarkers)
-                        if (e.segment >= 0 && m.id == e.segment) {
-                            f = f * (size_t(m.segment) < q->segments.size() ? q->segments[size_t(m.segment)] : glm::mat4(1)) * glm::translate(glm::mat4(1), m.pos);
-                            break;
-                        }
-                    const vec3 d = vec3(f * glm::vec4(0, 0, 0, 1)) - player_.state().pos;
-                    return glm::length(vec2(d)) < std::max(e.radius, 450.0f) && d.z >= 0 && d.z <= 1200.0f;
-                };
-                if (e.kind != 5 || !(engages(o, e) || near())) continue;
-                if (!e.needs.empty() && std::ranges::none_of(e.needs, [&](uint16_t id) { const auto* n = script_.objectName(id); return n && *n == held.name; }))
-                    continue;
+        if (o.uid == held.uid) continue;
+        if (script_.graphAccepts(o.uid, formats::kStimulusInsert)) {
+            const auto* p = objectPhysics(o.name);
+            if (!p) continue;
+            const glm::mat4 frame = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+            for (const auto& set : p->engagements) {
+                if (o.engagement > 0 && set.id != o.engagement) continue;
+                for (const auto& e : set.records) {
+                    if (e.kind != 5 || !reaches(*p, frame, e) || !needed(e)) continue;
+                    held_ = 0;
+                    attachPortable(held, o, e.segment);
+                    return true;
+                }
+            }
+            continue;
+        }
+        const auto* data = prepareUber(o);
+        const auto drm = objectDrms_.find(o.name);
+        if (!data || drm == objectDrms_.end() || !drm->second) continue;
+        for (size_t i = 0; i < data->sections.size(); ++i) {
+            const auto* set = uberEngagement(o.uid, i);
+            const auto frame = set ? uberSectionFrame(o, i) : std::nullopt;
+            if (!frame) continue;
+            auto mp = modelPhysics_.find({o.name, data->sections[i].model});
+            if (mp == modelPhysics_.end()) {
+                std::shared_ptr<const physics::ObjectPhysics> p;
+                try { p = std::make_shared<physics::ObjectPhysics>(physics::loadObjectPhysics(*drm->second, data->sections[i].model)); } catch (const cdc::FormatError&) {}
+                mp = modelPhysics_.emplace(std::pair{o.name, data->sections[i].model}, std::move(p)).first;
+            }
+            if (!mp->second) continue;
+            for (const auto& e : set->records) {
+                if (e.kind != 5 || !reaches(*mp->second, *frame, e) || !needed(e)) continue;
                 held_ = 0;
-                attachPortable(held, o, e.segment);
+                attachPortable(held, o, e.segment, int(i));
                 return true;
             }
         }
@@ -1322,15 +1420,17 @@ bool World::insertHeld(script::Object& held) {
     return false;
 }
 
-// 0x6B5890 message 0x165: the portable attaches at the receptacle's attach marker (0x6B55D0) and posts 0x165 to it
-// (Runtime::insertPortable: its vt 49 and graph stimulus 0x20).
-void World::attachPortable(script::Object& portable, const script::Object& receptacle, int segment) {
+// 0x6B5890 message 0x165: the portable attaches at the receptacle's attach marker (0x6B55D0) and posts 0x165 to it:
+// an anim-graph receptacle runs its vt 49 and graph stimulus 0x20 (Runtime::insertPortable), an uber section its insert
+// transition (uberInsert; 0x6D5AC0 calls no script slot: the uber events reach the script's vt 54).
+void World::attachPortable(script::Object& portable, const script::Object& receptacle, int segment, int section) {
     const int32_t uid = portable.uid, rec = receptacle.uid;
     portable.loose = false, portable.offset = vec3(0);
-    inserted_[uid] = Inserted{rec};
+    inserted_[uid] = Inserted{rec, -1, section};
     placed_.insert(uid);
     syncedObjects_ = ~size_t(0); // the receptacle leaves its hinge (syncObjects)
-    script_.insertPortable(uid, rec, segment);
+    if (section >= 0) uberInsert(rec, size_t(section), true);
+    else script_.insertPortable(uid, rec, segment);
 }
 
 // Portables placed in a receptacle (Object::placedIn, from the intro: tru.exe 0x6B5890 message 0x23 -> 0x6A6DC0 ->
@@ -1348,7 +1448,8 @@ void World::placePortables() {
 
 // Empty-handed (Idle), interact on an inserted portable whose pick-up record (kind 4) she is in takes it out (tru.exe:
 // her chart action 0x50 posts INSTANCE message 0x186 to her engaged portable; 0x6B5890 posts 0x186 to its receptacle
-// and is carried, as a pick-up): Runtime::removePortable runs the receptacle's vt 49 and graph stimulus 0x40.
+// and is carried, as a pick-up): Runtime::removePortable runs the receptacle's vt 49 and graph stimulus 0x40; an uber
+// section its removal transition (uberInsert; none of the six uber receptacles has one [O data]).
 // l2_puzzleroom hole 2969's removal (state 0) starts the elevator: vt 20(0) -> 2960 vt 54, 2961 vt 62.
 bool World::removeInserted() {
     for (auto it = inserted_.begin(); it != inserted_.end(); ++it) {
@@ -1360,12 +1461,13 @@ bool World::removeInserted() {
             for (const auto& e : set.records)
                 if (!hit && e.kind == 4 && engages(*o, e)) hit = &e;
         if (!hit) continue;
-        const int32_t uid = o->uid, rec = it->second.receptacle;
+        const int32_t uid = o->uid, rec = it->second.receptacle, section = it->second.section;
         if (it->second.markup >= 0 && size_t(it->second.markup) < col_.markup.size()) col_.markup[size_t(it->second.markup)].type = 0; // "none"
         inserted_.erase(it);
         o->body = glm::mat4(1);
         held_ = uid;
-        script_.removePortable(uid, rec, hit->segment);
+        if (section >= 0) uberInsert(rec, size_t(section), false);
+        else script_.removePortable(uid, rec, hit->segment);
         return true;
     }
     return false;
@@ -1389,7 +1491,8 @@ void World::tickInserted(float dt) {
         if (!pole || !rec || !pp || !rp) continue; // streamed out: kept
         const auto& s = player_.state();
         const bool hanging = s.state == State::PoleHang && in.markup >= 0 && s.ledge == in.markup;
-        if (const auto marker = std::ranges::find(rp->markers, 2u, &physics::Marker::kind); marker != rp->markers.end() && rec->joint) {
+        if (const auto marker = std::ranges::find(rp->markers, 2u, &physics::Marker::kind);
+            in.section < 0 && marker != rp->markers.end() && rec->joint) {
             float& slide = slides_[rec->uid];
             if (hanging) slide = std::max(kSlideBottom, slide - kSlideSpeed * dt);
             const glm::mat4 r = glm::rotate(glm::mat4(1), marker->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), marker->rot.y, {0, 1, 0}) *
@@ -1400,7 +1503,7 @@ void World::tickInserted(float dt) {
             pole = const_cast<script::Object*>(script_.find(uid));
             if (!rec || !pole) continue;
         }
-        const auto frame = attachFrame(*rec);
+        const auto frame = attachFrame(*rec, in.section);
         if (!frame) continue;
         pole->offset = vec3(0), pole->loose = false;
         script_.setBody(pole->uid, glm::inverse(introModel(*pole)) * *frame);
@@ -1453,8 +1556,10 @@ void World::stepPhysics(float dt) {
     // Pressure plates (Runtime::Object::Joint, docs/formats/PHYSICS.md "Pressure plates"): a Jolt body with the plate's
     // collision on a prismatic joint along its model Z, limited to [lowest range, 0], its motor lifting it at 120 units/s
     // with the force to hold its own weight plus kHold [I]. Weight on it presses it down: loose bodies by their contacts,
-    // Lara (her ragdoll record's 55 kg [O], lara ObjectBase +0x7C +4) and push blocks (their primitives' mass) where a
-    // ray under them meets it. A new plate starts at its saved position; afterwards x and v are Jolt's (plates_).
+    // Lara (her ragdoll record's 55 kg [O], lara ObjectBase +0x7C +4), push blocks and inserted portables (their
+    // primitives' mass; tru.exe ties an inserted portable to its receptacle, 0x6B6440, so its weight bears on it: the
+    // l4_traprooms empty thrones, plates under their scepter weight) where a ray under them meets it. A new plate starts
+    // at its saved position; afterwards x and v are Jolt's (plates_).
     constexpr float kHold = 20.0f, kPlateMass = 50.0f, kLaraMass = 55.0f; // kg; a plate without primitive mass [I]
     std::map<int32_t, physics::Joint1> plates;
     std::map<int32_t, std::vector<collision::Dynamic>> plateMeshes;
@@ -1495,6 +1600,20 @@ void World::stepPhysics(float dt) {
         const auto* p = objectPhysics(b.name);
         const float mass = p ? physics::massProps(*p).mass : 0.0f;
         weights.push_back({vec3(0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y), lo.z), mass > 0 ? mass : 666.0f}); // tru.exe's fallback mass
+    }
+    // ... and at the receptacle's attach marker, riding its plate (an inserted portable has no collider; an uber plate's
+    // body is not posed by its plate joint, so the plate's travel replaces whatever the body holds).
+    for (const auto& [uid, in] : inserted_) {
+        const auto* b = script_.find(uid);
+        const auto* rec = script_.find(in.receptacle);
+        const auto* p = b ? objectPhysics(b->name) : nullptr;
+        const auto frame = rec ? attachFrame(*rec, in.section) : std::nullopt;
+        const float mass = p ? physics::massProps(*p).mass : 0.0f;
+        if (!frame || mass <= 0) continue;
+        vec3 at((*frame)[3]);
+        if (const auto plate = plates_.find(in.receptacle); plate != plates_.end())
+            at += plate->second.axis * std::clamp(plate->second.x, plate->second.lo, 0.0f) - glm::mat3(introModel(*rec)) * vec3(rec->body[3]);
+        weights.push_back({at, mass});
     }
     physics_.setPlates(plateBodies, weights);
     for (auto& [uid, j] : plates_) joints.push_back({key(uid, -2), &j}); // by uid: a fixed constraint order
