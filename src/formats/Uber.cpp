@@ -59,6 +59,7 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
     bounded(ne, events, 0x1C, ob.data.size());
     // Joint and limit / motor / range records, shared by pointer between actions and transitions.
     std::map<uint32_t, int32_t> jointAt, paramAt;
+    const auto obPointers = cdc::sectionPointers(drm, uint32_t(*base)); // joint sounds may live in another section
     const auto param = [&](uint32_t o) {
         if (const auto it = paramAt.find(o); it != paramAt.end()) return it->second;
         out.params.push_back({at<uint8_t>(ob, o), at<float>(ob, o + 4), at<float>(ob, o + 8), at<uint8_t>(ob, o + 12) != 0});
@@ -80,6 +81,8 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
             j.lo = at<float>(ob, o + 0x2C), j.hi = at<float>(ob, o + 0x30);
             j.speed = at<float>(ob, o + 0x34), j.force = at<float>(ob, o + 0x38);
             j.flags = at<uint8_t>(ob, o + 0x3C);
+            if (const auto s = obPointers.find(o + 0x10); s != obPointers.end()) j.sound = s->second;
+            j.soundAt = uint8_t(at<uint32_t>(ob, o + 0x24));
             if (j.bodyA < -1 || j.bodyA >= int32_t(ns) || j.bodyB < -1 || j.bodyB >= int32_t(ns))
                 throw FormatError("uber: joint body outside the sections");
         }

@@ -558,16 +558,34 @@ SoundPlayer::Handle SoundPlayer::start(const Plex& p, std::optional<glm::vec3> p
     const Handle h = next_++;
     Instance& in = instances_[h];
     in.position = position, in.material = material, in.semitones = semitones;
-    if (delay > 0) in.pending.push_back({now_ + delay, &p, volume, SIZE_MAX, {}});
-    else fire(in, p, volume, now_, {});
-    if (in.voices.empty() && in.pending.empty()) { instances_.erase(h); return 0; }
+    double end = now_;
+    if (delay > 0) in.pending.push_back({now_ + delay, &p, volume, SIZE_MAX, {}}), end += delay;
+    else end += fire(in, p, volume, now_, {});
+    // A sound whose data lasts but that started no voice (none free) still counts for busy() [I]: waits do not depend on
+    // the output device.
+    if (in.voices.empty() && in.pending.empty()) {
+        instances_.erase(h);
+        if (end <= now_) return 0;
+    }
+    extend(h, end);
     return h;
+}
+
+void SoundPlayer::extend(Handle h, double end) {
+    auto& e = ends_[h];
+    e = std::max(e, end);
+}
+
+bool SoundPlayer::busy(Handle h) const {
+    const auto it = ends_.find(h);
+    return it != ends_.end() && it->second > now_ + 1e-9;
 }
 
 // 0x587B80: stopping an Envelope with a sustain or a release curve plays its release instead of cutting the voice;
 // pending parts never start. A second stop (or one without such an envelope) cuts.
 void SoundPlayer::stop(Handle h, float fade) {
     const auto it = instances_.find(h);
+    if (const auto e = ends_.find(h); e != ends_.end()) e->second = std::min(e->second, now_); // a stop ends the wait [I]
     if (it == instances_.end()) return;
     Instance& in = it->second;
     const auto releases = [](const Voice& v) {
@@ -587,7 +605,7 @@ void SoundPlayer::stop(Handle h, float fade) {
 void SoundPlayer::stopAll(float fade) {
     for (const auto& [h, in] : instances_)
         for (const Voice& v : in.voices) mixer_.stop(v.id, fade);
-    instances_.clear(), lines.clear(), waves.clear();
+    instances_.clear(), ends_.clear(), lines.clear(), waves.clear();
 }
 
 bool SoundPlayer::active(Handle h) const { return instances_.contains(h); }
@@ -613,9 +631,10 @@ void SoundPlayer::update(double seconds) {
                 if (in.pending[i].at <= now_) {
                     const Pending p = in.pending[i];
                     in.pending.erase(in.pending.begin() + std::ptrdiff_t(i));
-                    if (p.index == SIZE_MAX) fire(in, *p.plex, p.volume, p.at, p.mods);
+                    if (p.index == SIZE_MAX) extend(it->first, p.at + fire(in, *p.plex, p.volume, p.at, p.mods));
                     else { // Sequence step
                         const double d = fire(in, p.plex->children[p.index], p.volume, p.at, p.mods);
+                        extend(it->first, p.at + d);
                         if (p.index + 1 < p.plex->children.size()) in.pending.push_back({p.at + d, p.plex, p.volume, p.index + 1, p.mods});
                     }
                     again = true;
@@ -630,6 +649,7 @@ void SoundPlayer::update(double seconds) {
         });
         it = in.voices.empty() && in.pending.empty() ? instances_.erase(it) : std::next(it);
     }
+    std::erase_if(ends_, [&](const auto& e) { return e.second < now_ - 1.0 && !instances_.contains(e.first); });
 }
 
 } // namespace ou::audio

@@ -87,6 +87,7 @@ void GameSound::attach(game::World& world) {
         return true;
     });
     // reverb 1 (0x4AA750 -> 0x582B70): the 13 SFX-reverb floats the member's value points to (AUDIO.md §9.15).
+    world.script().setSoundBusy([this](int32_t owner, uint32_t member) { return scriptSoundBusy(owner, member); });
     world.script().setReverbNative([this, &world](const std::string& name, cdc::Pointer at) { reverb(world, name, at); });
     resume(world); // a game loaded before the sound existed (--load)
 }
@@ -139,7 +140,7 @@ void GameSound::reset() {
     player_.stopAll();
     mixer_.setReverb(audio::kReverbOff);
     for (auto& [name, u] : units_) u.handles.clear(), u.triggers = audio::SfxMarkerTriggers(u.markers); // Init fires again
-    scriptHandles_.clear(), slots_.clear();
+    scriptHandles_.clear(), slots_.clear(), jointVoices_.clear();
     drown_ = engine_ = help_ = 0;
     lastVars_ = {};
     ticker_ = {};
@@ -196,6 +197,75 @@ void GameSound::slotSound(const fx::ObjectFx& fx, uint8_t slot, uint8_t action, 
 void GameSound::ownerGone(int32_t owner) {
     for (auto it = slots_.lower_bound({owner, nullptr, 0}); it != slots_.end() && std::get<0>(it->first) == owner;)
         player_.stop(it->second), it = slots_.erase(it);
+}
+
+bool GameSound::scriptSoundBusy(int32_t owner, uint32_t member) const {
+    const auto it = scriptHandles_.find({owner, member});
+    return it != scriptHandles_.end() && player_.busy(it->second);
+}
+
+const audio::Plex* GameSound::jointPlex(const std::string& object, cdc::Pointer at) {
+    auto& drm = jointDrms_[object];
+    if (!drm) {
+        try {
+            drm = load(bf_, "pc-w\\" + object + ".drm");
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "ou-game: joint sound object %s: %s\n", object.c_str(), e.what());
+        }
+        if (!drm) drm = std::make_shared<const cdc::Drm>(); // missing: silent, not retried
+        else if (eventDrms_.insert(drm.get()).second) bank_.add(drm), mixer_.addWaves(*drm);
+    }
+    if (drm->sections.empty()) return nullptr;
+    auto& slot = eventPlex_[{drm.get(), at.section, at.offset}];
+    if (!slot) {
+        try {
+            slot = std::make_unique<audio::Plex>(audio::parsePlex(*drm, at.section, at.offset));
+        } catch (const std::exception& ex) {
+            std::fprintf(stderr, "ou-game: %s joint sound: %s\n", object.c_str(), ex.what());
+            slot = std::make_unique<audio::Plex>(); // silence: do not retry
+        }
+    }
+    return slot->type == audio::PlexType::Silence ? nullptr : slot.get(); // most joint records hold a TimeIn
+}
+
+// tru.exe 0x4F2840 per contact: channel 1 (the rolling voice) starts when it has none or its sound ended and gets
+// parameters 1 / 2 every frame; channel 0 (impact) starts on a frame with an impact when it has none or it ended, else
+// takes the stronger impact (a weaker one sets 0). A contact gone (bodies asleep, 0x4F32E0) releases channel 1
+// (0x5527F0(4)); ours releases the impact voice too [I: the exe drops its reference and lets it play out].
+void GameSound::jointSounds(const game::World& world) {
+    const auto tick = (unsigned long long)world.ticks();
+    std::set<std::pair<int32_t, int32_t>> live;
+    for (const auto& s : world.jointSounds()) {
+        const audio::Plex* p = jointPlex(s.object, s.sound);
+        if (!p) continue;
+        const auto key = std::make_pair(s.uid, s.joint);
+        live.insert(key);
+        JointVoice& v = jointVoices_[key];
+        if (!player_.active(v.roll)) {
+            v.roll = player_.start(*p, s.at);
+            std::fprintf(stderr, "ou-game: tick %llu joint sound %s uid %d joint %d start (%.1f units/s, %.1f deg/s)%s\n", tick,
+                         s.object.c_str(), s.uid, s.joint, s.linear, s.angular, v.roll ? "" : " (silent)");
+        }
+        player_.setPosition(v.roll, s.at);
+        player_.setParam(v.roll, 1, s.linear), player_.setParam(v.roll, 2, s.angular);
+        if (!s.impact) continue;
+        if (!player_.active(v.impact)) {
+            v.impact = player_.start(*p, s.at), v.impactSpeed = *s.impact;
+            player_.setParam(v.impact, 0, *s.impact);
+        } else if (std::abs(*s.impact) > std::abs(v.impactSpeed)) {
+            player_.setPosition(v.impact, s.at), player_.setParam(v.impact, 0, v.impactSpeed = *s.impact);
+        } else {
+            player_.setParam(v.impact, 0, v.impactSpeed = 0);
+        }
+        std::fprintf(stderr, "ou-game: tick %llu joint sound %s uid %d joint %d impact %.1f\n", tick, s.object.c_str(), s.uid, s.joint,
+                     *s.impact);
+    }
+    for (auto it = jointVoices_.begin(); it != jointVoices_.end();) {
+        if (live.contains(it->first)) { ++it; continue; }
+        player_.stop(it->second.roll), player_.stop(it->second.impact);
+        std::fprintf(stderr, "ou-game: tick %llu joint sound uid %d joint %d stop\n", tick, it->first.first, it->first.second);
+        it = jointVoices_.erase(it);
+    }
 }
 
 void GameSound::animSound(const fx::ObjectFx& fx, const fx::Event& e, glm::vec3 position, uint8_t material, uint64_t tick) {
@@ -355,6 +425,7 @@ void GameSound::tick(game::World& world) {
         std::fprintf(stderr, "ou-game: tick %llu bike engine stop\n", tick);
     }
 
+    jointSounds(world);
     player_.update(game::kTickSeconds);
     for (const auto& l : player_.lines) {
         std::fprintf(stderr, "ou-game: tick %llu voice %s \"%s\"\n", tick, l.path.c_str(), l.subtitle.c_str());

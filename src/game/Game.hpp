@@ -18,6 +18,7 @@
 #include "game/Vehicle.hpp"
 #include "script/Script.hpp"
 #include "game/ai/Enemy.hpp"
+#include "game/JointSound.hpp"
 
 #include <glm/glm.hpp>
 
@@ -578,6 +579,9 @@ public:
     // has a range watch (tru.exe: the bullet's Havok impulse; l1 column 32 section 12 slides out of its range and takes
     // trigger 15). Zero `dir`: along each joint's axis.
     void uberShot(int32_t uid, vec3 dir = vec3(0));
+    // Joints with a sound whose bodies are awake, as of this tick (tickObjects -> collectJointSounds; tru.exe's joint-sound
+    // manager 0x4F3540, docs/formats/AUDIO.md §9.16): simulated uber joints and the class-34 rigid bodies' own joints.
+    const std::vector<JointSound>& jointSounds() const { return jointSounds_; }
     // Simulated uber joint `joint` (UberObjectData::joints index) of object `uid`, null when it does not exist (yet).
     const physics::Joint1* uberJoint(int32_t uid, int32_t joint) const {
         const auto rt = uberRuntime_.find(uid);
@@ -834,6 +838,12 @@ private:
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
     void tickJoints(float dt); // script multibody joints: positions and range watches (Objects.cpp)
+    // A class-34 joint's limit as tickJoints applies it: the body's joint limit, `multibody` 77 / 75 overrides (degrees).
+    std::pair<float, float> scriptJointLimit(const script::Object& o);
+    void collectJointSounds(float dt); // jointSounds_ for this tick (after tickJoints)
+    struct JointMotion { float x = 0, v = 0; bool seen = false; LimitHit limit; WakeTimer wake; };
+    std::map<std::pair<int32_t, int32_t>, JointMotion> jointMotion_; // (uid, uber joint or -1): last tick, sound only
+    std::vector<JointSound> jointSounds_;
     // One Jolt step (Objects.cpp): hinge drives, uber joints, loose rigid bodies (tumbling onto the terrain and object
     // collision), then the uber range watches.
     void stepPhysics(float dt);

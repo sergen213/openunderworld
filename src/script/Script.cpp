@@ -1906,8 +1906,16 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                         if (const auto holder = resolve(a.uid)) anchor = int32_t(holder->fields[a.offset]);
                 }
                 const Member* m = program->member(self->typeId, off);
-                if (m && m->initAt && sound_(self->uid, off, *m->initAt, nc.function, anchor)) {
+                // 1 / 2 as a sequence (setSoundBusy): the first call plays, the retries (one a tick, stack untouched) only
+                // ask whether the sound still plays.
+                const bool waits = nc.function == 1 || nc.function == 2;
+                const auto key = std::make_pair(self->uid, uint32_t(off));
+                const auto w = soundWaits_.find(key);
+                const bool retry = waits && w != soundWaits_.end() && w->second + 1 >= tick_;
+                if (m && m->initAt && (retry || sound_(self->uid, off, *m->initAt, nc.function, anchor))) {
                     nc.result = vm::Value::scalar(0);
+                    if (waits && soundBusy_ && soundBusy_(self->uid, off)) soundWaits_[key] = tick_, nc.wait = true;
+                    else if (waits) soundWaits_.erase(key);
                     return true;
                 }
             }

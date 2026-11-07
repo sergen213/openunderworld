@@ -47,8 +47,10 @@ Audio (`ou_audio`, docs/formats/AUDIO.md; `--no-audio` turns it off): lara.drm W
 unit's music stream `pc-w\music\<unit>_mus_01\<unit>_mus_01.mul` loops (all stems at gain 1; [I] the naming is seen
 in the bigfile, how the game's Mus! sequencer picks and mixes tracks is [U]). Footsteps and every other character sound
 come from the animation event lists, picked by the floor's surface material (AUDIO.md §9.7). Sound events (sfxmarker
-ambience, script sounds, object SoundComponent loops such as waterfalls / fires / gates / gears, drowning line, T / Y
-help-on-demand Hint / Answer lines with subtitles; input-script actions `hint`, `answer`): docs/formats/AUDIO.md §9.
+ambience, script sounds, object SoundComponent loops such as waterfalls / fires / gates / gears, physics joint sounds of
+moving doors, gates, levers, cogs and press plates (their joint records' graphs fed the joint's speed, an impact at a
+limit, AUDIO.md §9.16), drowning line, T / Y help-on-demand Hint / Answer lines with subtitles; input-script actions
+`hint`, `answer`): docs/formats/AUDIO.md §9. Script sounds played as sequences hold their thread until they end (§9.3).
 3D sounds fade with tru.exe's rolloff (full within 158 units, silent past 3160 or the sound's own distance) heard from
 halfway between the camera and Lara (AUDIO.md §9.12); looping ambiences hold until stopped and then fade out with
 their release envelope (§9.13).

@@ -1117,6 +1117,7 @@ void World::tickObjects(float dt) {
     const glm::mat4 before = under >= 0 ? col_.dynamics[under].transform : glm::mat4(1);
     tickInserted(dt);
     tickJoints(dt);
+    collectJointSounds(dt);
     for (size_t i = 0; i < colliders_.size(); ++i) {
         const auto& c = colliders_[i];
         const auto* o = script_.find(c.uid);
@@ -1569,10 +1570,7 @@ void World::tickJoints(float dt) {
             // Within the body's joint limit (ObjectPhysics::jointLimit; a `multibody` 77 limit, kept in radians, wins).
             // [I] a motor reaching its target speed at once (the Havok joint is not simulated).
             const auto* p = objectPhysics(o.name);
-            float lo = p && p->jointLimit ? p->jointLimit->lo : -1e30f, hi = p && p->jointLimit ? p->jointLimit->hi : 1e30f;
-            if (const auto l = multibodyLo_.find(o.uid); l != multibodyLo_.end()) lo = glm::degrees(l->second);
-            if (const auto u = multibodyHi_.find(o.uid); u != multibodyHi_.end()) hi = glm::degrees(u->second);
-            if (multibodyLimitOff_.contains(o.uid)) lo = -1e30f, hi = 1e30f; // `multibody` 75: limit off
+            const auto [lo, hi] = scriptJointLimit(o);
             x = std::clamp(x + j.speed * 30.0f * dt, lo, std::max(lo, hi));
             // One prismatic joint marker (kind 2, as the uber joint records' type byte [I]): the body slides along its
             // Z axis (ms_rb_tomb_lock sinks). [U] bodies with several (ca_rb_crusher_slim's two jaws and their link).
@@ -1590,6 +1588,78 @@ void World::tickJoints(float dt) {
         if (body) script_.setBody(uid, *body);
         script_.setJointPosition(uid, x);
     }
+}
+
+std::pair<float, float> World::scriptJointLimit(const script::Object& o) {
+    const auto* p = objectPhysics(o.name);
+    float lo = p && p->jointLimit ? p->jointLimit->lo : -1e30f, hi = p && p->jointLimit ? p->jointLimit->hi : 1e30f;
+    if (const auto l = multibodyLo_.find(o.uid); l != multibodyLo_.end()) lo = glm::degrees(l->second);
+    if (const auto u = multibodyHi_.find(o.uid); u != multibodyHi_.end()) hi = glm::degrees(u->second);
+    if (multibodyLimitOff_.contains(o.uid)) lo = -1e30f, hi = 1e30f; // `multibody` 75: limit off
+    return {lo, hi};
+}
+
+// tru.exe's joint-sound manager (docs/formats/AUDIO.md §9.16): every frame 0x4F3120 makes a contact for each registered
+// joint (a record with a sound: uber joints 0x4D8000, rigid bodies 0x6B6440) whose bodies are both awake (0x4D9000),
+// filled by 0x4F22C0 with the joint's speed (hinge: degrees/s, prismatic: units/s); reaching a limit adds an impact
+// (0x4E76A0 -> 0x4F2E40). Ours: the simulated uber joints (Jolt's sleep for Havok's) and the class-34 joints the game
+// moves (awake while moving and 0.5 s after [I]).
+void World::collectJointSounds(float dt) {
+    jointSounds_.clear();
+    std::set<std::pair<int32_t, int32_t>> live;
+    const auto track = [&](int32_t uid, int32_t joint, float x, float v, bool awake, bool limited, float lo, float hi,
+                           float tolerance, const std::string& object, cdc::Pointer sound, vec3 at, bool hinge) {
+        auto& m = jointMotion_[{uid, joint}];
+        live.insert({uid, joint});
+        std::optional<float> impact;
+        if (limited) {
+            if (!m.seen) m.limit.update(x, lo, hi, tolerance, 0.0f); // a joint found resting at a limit is no impact
+            else impact = m.limit.update(x, lo, hi, tolerance, m.v);
+        }
+        m.x = x, m.v = v, m.seen = true;
+        if (!awake) return;
+        JointSound s{uid, joint, object, sound, at};
+        (hinge ? s.angular : s.linear) = v;
+        s.impact = impact;
+        jointSounds_.push_back(std::move(s));
+    };
+    for (const auto& [uid, rt] : uberRuntime_) {
+        const auto d = uberData_.find(uid);
+        const auto* o = script_.find(uid);
+        if (d == uberData_.end() || !d->second || !o) continue;
+        for (const auto& [index, j] : rt.joints) {
+            if (index < 0 || size_t(index) >= d->second->joints.size()) continue;
+            const auto& rec = d->second->joints[size_t(index)];
+            if (!rec.sound) continue;
+            // 0x4F1E10: 0 the pivot on body A (the world: fixed), 1 on body B (riding a prismatic joint), 2 between.
+            const float along = j.hinge ? 0.0f : j.x * (rec.soundAt == 1 ? 1.0f : rec.soundAt == 2 ? 0.5f : 0.0f);
+            const float v = j.hinge ? jointAngularSpeed(j.v) : jointLinearSpeed(j.v);
+            // Limits in the coordinate: hinge radians (0.25 degrees), prismatic units (0.5) [I: tolerances].
+            track(uid, index, j.x, v, j.awake, j.limited, j.lo, j.hi, j.hinge ? 0.0044f : 0.5f, o->name, *rec.sound,
+                  j.pivot + j.axis * along, j.hinge);
+        }
+    }
+    std::map<int32_t, int> hinges;
+    for (const auto& c : colliders_)
+        if (c.hinge >= 0) hinges.emplace(c.uid, c.hinge);
+    for (const auto& o : script_.objects()) {
+        if (!o.joint) continue;
+        const auto* p = objectPhysics(o.name);
+        if (!p || !p->jointSound) continue;
+        const float x = o.joint->position; // degrees for hinges, units otherwise (tickJoints)
+        auto& m = jointMotion_[{o.uid, -1}];
+        const float v = m.seen ? (x - m.x) / dt : 0.0f;
+        const bool awake = m.wake.update(m.seen && x != m.x, dt);
+        const bool hinge = hinges.contains(o.uid) ||
+                           (!plates_.contains(o.uid) && std::ranges::count(p->markers, 2u, &physics::Marker::kind) != 1);
+        const auto [lo, hi] = plates_.contains(o.uid) ? std::pair(plates_.at(o.uid).lo, 0.0f) : scriptJointLimit(o);
+        const glm::mat4 intro = glm::translate(glm::mat4(1), o.offset) * introModel(o);
+        const vec3 pivot = vec3(intro[3]), body = vec3(intro * o.body[3]);
+        const vec3 at = p->jointSoundAt == 1 ? body : p->jointSoundAt == 2 ? (pivot + body) * 0.5f : pivot;
+        track(o.uid, -1, x, v, awake, p->jointLimitOn || plates_.contains(o.uid), lo, hi, hinge ? 0.25f : 0.5f, o.name,
+              *p->jointSound, at, hinge);
+    }
+    std::erase_if(jointMotion_, [&](const auto& e) { return !live.contains(e.first); });
 }
 
 } // namespace ou::game

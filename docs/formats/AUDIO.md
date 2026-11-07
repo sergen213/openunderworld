@@ -499,8 +499,25 @@ handle is live); scripts call them every tick to keep a loop going (l3_main_bedr
 30 s). The member's initial value is an inline ScriptSound
 `{Plex, u16 endType, u16 refCount}` in the unit DRM (`Member::initAt`); 640 such members in the units reach
 streams: music stingers (`music\…`), `event_triggered\…`, `vo\kraken\…` — no Lara voice lines. ou-game plays
-fn 1–4 (3D at the anchor intro; a live sound only follows the anchor) and stops on 5; the wait threads are not
-modelled (the call returns at once).
+fn 1–4 (3D at the anchor intro; a live sound only follows the anchor) and stops on 5.
+
+**Wait sequences [V-exe, V-data].** fn 1 / 2 play (as 3 / 4), then return a new `cdc::SoundSequence` holding the member's
+handle (0x4AF230 / 0x4AF290, vtable `cdc__SoundSequence`; fn 6 the same without playing, 0x4ACDE0); its IsActive
+(0x4ACC30) is true while the handle's sound instance lives. fn 7 returns an `NtCueingSoundSequence` (0x4AF2E0, IsActive
+0x4AF1D0 → 0x4ACD80). Survey of every script in the 82 units, generalbank and the object DRMs (call sites of `sound`
+natives): fn 0 ×55, 1 ×105, 2 ×33, 3 ×346, 4 ×1646, 5 ×1337, 8 ×11, 9 ×6, no 6 / 7 — and every fn 1 / 2 call is an
+SSEQU (0x6B), so the calling thread waits until the sound ends. They gate script flow: l5_valaskjalf types 16266–16269
+(their function 3: STATE 4 after the sound), l4_traprooms 15087 (20 sounds one after the other), firetriggervolume 6516 f8,
+deathfiretriggervolume 11671 vt 1, ms_ani_tentacle_hazard_* 4753 (sound, then WAIT), generalbank 121 / 14793,
+l4_templepath 13262. Ours (`script::Runtime::setSoundBusy`, `GameSound::scriptSoundBusy`, `SoundPlayer::busy`): the first
+call plays, the native returns `wait` (the VM retries it each tick with the stack untouched) while the sound lasts —
+in game time from its data (Wave / stream lengths, Sequence parts as they start; a looping Wave until stopped; a stop
+ends it [I]), not the mixer's playback, so a run stays the same at every render rate. A thread a STATE ended leaves no
+wait behind (keyed by owner and member, dropped when not retried the next tick). Without ou-game's sound (tests) the
+call returns at once, as before. After a load a waiting thread starts its sound again [I]. The `0x0D` writer
+(firetriggervolume 6516 vt 11 / 13 / 14: `playersensor` 0 / 3 tests, then `gamebase` 6 / 7 add / subtract) has its
+handlers stop at a native call in ours (`handler stopped: op 0x65` in every l3 fire-volume log) [U: which one], so no replay
+reaches it.
 
 ### 9.4 Music variables [V-exe]
 
@@ -735,3 +752,53 @@ script; RMS of the Sfx + Voice mix) [O]:
   reflections / reverb delays [I: FMOD's I3DL2 algorithm and loudness are not reproduced; density and rolloff ignored].
   World voices of the Sfx and Voice buses feed it, music does not [I]. It is reset to off on leaving play. Render a DTP
   offline: `ou-audio render <game> 'pc-w\l2_cliffhall.drm' --id 11054 -o out.wav [--reverb <13 values from the log>]`.
+
+### 9.16 Physics joint sounds (doors, gates, levers, gears, plates) [V-exe 0x4F2B00 / 0x4F3540 / 0x4F2840 / 0x4E76A0; V-data]
+
+Moving uber sections and rigid bodies are heard through their Havok joints, not their animations.
+
+- **Registration.** Uber joint records (0x74 bytes, created by state action 9 / `multibody` 0x4D8340 → 0x4D8000) hold
+  +0x10 a SoundPlex and +0x24 where it plays; 0x4D8000 hands them to the joint-sound manager (global 0xA14028, built by
+  0x4F3410 at physics init) with 0x4F2B00(joint, sound, where) and sets joint flag 0x800 (0x4D9AB0). Class-34 rigid
+  bodies do the same from their joint record (physical data +0x2C → +0x64 sound, +0x61 where; 0x6B6440); the rope
+  joint 0x493B50 registers too [U: not decoded]. 0x4F2B50 drops a joint when it goes (0x4D6220, 0x4D5120, the world's
+  joint-removed callback 0x48E1E0). Where (0x4F1E10): 0 the pivot in body A's frame (the world: fixed), 1 in body B's,
+  2 halfway. Survey (all 794 object DRMs, joints reachable from state actions and transitions): 230 uber joint records,
+  every one with a sound; 85 not a TimeIn (silent) — doors (ma_uo_bedroom_door, ma_rb_shadow_door_b, ar_ei_thor_slide /
+  valgrind doors, ms_rb_tomb_door), gates (ms_ani_entrance_gate, chapel gates), levers (ar_uo_wall_lever,
+  ca_ei_lever_grapple_post), cog wheels, calendars, valgrind column rings, the shiva scales and statue arms, mirrors, grapple
+  wall handles, thor towers and blocks; class 34: ms_rb_tomb_gate / tomb_lock (l1_baldrs_tomb gate 45, locks 69 / 70),
+  the press plates, ca_rb_traproom_door, ca_rb_crusher_slim, ca_rb_wall_hpole_door, ar_rb_jammed_gear,
+  ca_rb_calendar_center_a, ca_rb_active_throne_b. Push blocks' joints (type 7) are TimeIns except ma_pu_thor_pillar's.
+- **The graphs** are Overlaps of layers under Reactions on the sound instance's game parameters (§9.1 type 9): parameter
+  0 = instance +0x28 (impact), 1 = +0x2C (linear speed, units/s), 2 = +0x30 (angular speed, degrees/s). E.g.
+  ms_ani_entrance_gate: three Envelope loops on parameter 1 (1..3 units/s → volume 0..0.5 / 0.4 / 0.8, pitch on 0..5) and
+  a clunk on parameter 0; ms_rb_tomb_door: creaks on parameter 2 in bands (0.01..1 zero below / zero above) and hits on 0;
+  sa_uo_shiva_left_scale: three layers on parameter 2 (0.01..2 degrees/s).
+- **Every frame** (0x4F3540 from the game loop): 0x4F3120 makes a contact for each registered joint whose bodies are both
+  awake (body +0x15C bit 0 clear, 0x4D9000; 0x4D8FD0 wakes, 0x4D8FF0 puts to sleep) and 0x4F22C0 fills it by engine
+  joint type: 1 (hinge) parameter 2 = relative angular velocity · axis (0x4DA560) × 57.2958; 3 (prismatic) parameter 1
+  = relative linear velocity · axis (0x4DA5F0); 2 both; 0xB (fixed), 5, 8, 9, 0x10, 0x11 other measures. Contacts are
+  sorted by body pair (0x4F20E0 key), merged (0x4F3450), matched with last frame's (0x4F31A0 hands the voices over);
+  0x4F32E0 releases channel 1 of the contacts that went (0x5527F0(4)) and runs 0x4F2CD0 → 0x4F2840 on the rest:
+  channel 1 (rolling) starts when the contact has no live voice and gets parameters 1 / 2 and the position every frame;
+  channel 0 (impact) starts on a frame with an impact (else, when it lives: the stronger impact replaces parameter 0, a
+  weaker one sets 0). Both play the same graph, so a voice hears only its own layers.
+- **Impacts.** The Havok constraint setup (0x4E76A0) checks each limited axis (flag 2): inside lo < x < hi → state 0;
+  found at a limit after being inside → state 1 / 2, and with flag 0x800 the world's joint-impact callback (+0x201C =
+  0x48E1C0 → 0x4F2E40) gets {joint, speed along the axis (rad/s or units/s), 0, upper?}; 0x4F2200 makes a channel-0
+  contact with that speed (× 57.2958 for angular joints).
+- **Joint FX** (record +0x60 on, +0x64 body, +0x68 / +0x6C linear / angular thresholds, +0x70 event list; 0x4D5E60):
+  event records with selector 0 run at creation, 9 / 0xB when the angular speed rises above / falls below +0x6C, 10 / 0xC
+  for the linear one (0x5BA1C0). Only 8 joints have them (ar_ei_thor_valgrind_door, ms_ani_tentacle_gearl, the shiva
+  scales, ca_uo_thor_statue_arms), all effect records (particles), no sounds [V-data]; not run by ours.
+- **Ours** (`formats::UberJoint::sound`, `physics::ObjectPhysics::jointSound`, `game::World::jointSounds`,
+  `game::LimitHit`, `GameSound::jointSounds`): every tick after the physics step, each simulated uber joint (hinge /
+  prismatic) with a sound whose Jolt body is awake (`Joint1::awake`, Jolt's sleep for Havok's deactivation [I: its timer,
+  body +0x108]), and each class-34 joint the game moves (press plates, `multibody` motor joints, hinge doors) while it
+  moves and 0.5 s after [I], is listed with its speed (hinge degrees/s, prismatic units/s, signed) and an impact when it
+  reached a limit this tick (the speed before the step [I]; a joint found at a limit is no impact; limits within 0.5 units
+  / 0.25 degrees [I]); GameSound keeps the two voices per joint as 0x4F2840 does and releases them when the joint leaves
+  the list (logged `joint sound <object> uid u joint j start / impact / stop`). Multi-axis uber joints (types 5 / 7:
+  shiva scales, push blocks) and fixed joints are not simulated, so they stay silent [U]; rigid-body collision sounds
+  (0x48DF90: contacts with material-pair sounds 0x5893D0, dust 0x4F1EB0) are not done.

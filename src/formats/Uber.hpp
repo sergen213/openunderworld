@@ -53,6 +53,11 @@ struct UberJoint {
     uint8_t flags = 0;              // +0x3C
     int32_t link1 = -1, link2 = -1; // type 11: +4 / +8 joints; joint2 = ratio * joint1 (0x4D7ED0, 0x4E17B0)
     float ratio = 0;                // +0xC (degrees per unit when joint1 is prismatic and joint2 a hinge)
+    // +0x10 SoundPlex* and +0x24 where it plays (0 the pivot on body A, 1 on body B, 2 between them; 0x4F1E10): 0x4D8000
+    // registers it with the joint-sound manager (0x4F2B00, docs/formats/AUDIO.md §9.16). Every record has one; most are
+    // a TimeIn (silent).
+    std::optional<cdc::Pointer> sound;
+    uint8_t soundAt = 0;
 };
 // Limit / motor / range record {u8 kind, a, b, u8 flag} (kinds 0 / 2 = hinge / prismatic, 0x4D11E0 / 0x4D4510 /
 // 0x4D2B00): limit lo, hi, enabled; motor speed per second, impulse bound, enabled; range lo, hi (lo <= v < hi).

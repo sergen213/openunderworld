@@ -43,8 +43,17 @@ public:
     // it plays, others restart it. ownerGone: the instance left (streamed out, removed); its slots stop.
     void slotSound(const fx::ObjectFx& fx, uint8_t slot, uint8_t action, int32_t owner, glm::vec3 position, uint8_t material, uint64_t tick);
     void ownerGone(int32_t owner);
+    // Whether the script sound of (owner, member) still plays, in game time (the `sound` wait sequences, AUDIO.md §9.3).
+    bool scriptSoundBusy(int32_t owner, uint32_t member) const;
 
 private:
+    // Physics joint sounds (game::World::jointSounds, AUDIO.md §9.16): per (uid, joint) the rolling voice (tru.exe channel
+    // 1: Reaction parameters 1 / 2 = linear / angular speed) and the impact voice (channel 0: parameter 0).
+    struct JointVoice { audio::SoundPlayer::Handle roll = 0, impact = 0; float impactSpeed = 0; };
+    void jointSounds(const game::World& world);
+    const audio::Plex* jointPlex(const std::string& object, cdc::Pointer at); // null: silent or not loadable
+    std::map<std::pair<int32_t, int32_t>, JointVoice> jointVoices_;
+    std::map<std::string, std::shared_ptr<const cdc::Drm>> jointDrms_; // object DRMs holding joint sounds (bank + waves)
     struct UnitSfx {
         std::shared_ptr<const cdc::Drm> drm;
         std::vector<audio::SfxMarker> markers;
