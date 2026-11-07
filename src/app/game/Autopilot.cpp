@@ -29,7 +29,7 @@ Autopilot Autopilot::load(const std::filesystem::path& plan, std::filesystem::pa
         if (!(ls >> s.op)) continue;
         for (std::string w; ls >> w;) s.args.push_back(w);
         static const std::vector<std::pair<std::string, size_t>> kOps = {{"go", 2}, {"engage", 1}, {"face", 1}, {"press", 0},
-                                                                         {"hold", 2}, {"stick", 3}, {"wait", 1}, {"near", 1}};
+                                                                         {"hold", 2}, {"stick", 3}, {"push", 3}, {"wait", 1}, {"near", 1}};
         const auto it = std::ranges::find(kOps, s.op, &std::pair<std::string, size_t>::first);
         if (it == kOps.end() || s.args.size() < it->second)
             throw std::runtime_error("autopilot plan line " + std::to_string(no) + ": unknown step or missing arguments");
@@ -141,6 +141,17 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
     } else if (s.op == "stick") {
         if (t == 0) set(tick, "forward", std::stof(s.args[0]), a), set(tick, "right", std::stof(s.args[1]), a);
         else if (t >= ticks(s.args[2])) centre(), next(tick, nullptr);
+    } else if (s.op == "push") { // push FORWARD RIGHT SECONDS [ACTION]: grip with ACTION (interact), then the raw stick
+        const std::string action = s.args.size() > 3 ? s.args[3] : "interact";
+        const uint64_t length = ticks(s.args[2]);
+        if (t == 0) set(tick, action, 1, a);
+        if (t == kPressTicks) set(tick, "forward", std::stof(s.args[0]), a), set(tick, "right", std::stof(s.args[1]), a);
+        if (t >= length) {
+            centre(), set(tick, action, 0, a);
+            std::fprintf(stderr, "ou-game: autopilot tick %llu push: state %s at %.1f %.1f %.1f\n", (unsigned long long)tick,
+                         std::string(game::stateName(lara.state)).c_str(), lara.pos.x, lara.pos.y, lara.pos.z);
+            next(tick, nullptr);
+        }
     } else if (s.op == "near") { // log the markup polylines within R of Lara (finding poles / ledges for a plan)
         const float r = std::stof(s.args[0]);
         for (const auto& m : w.collision().markup)

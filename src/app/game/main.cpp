@@ -77,6 +77,7 @@ struct Options {
     int introFrames = -1; // --intro-frames N: stop the intro / the New Game movie after N frames
     bool noMovies = false; // --no-movies: New Game skips Movies/explode.bik
     bool noCinematics = false; // --no-cinematics: script cinematics are not shown (their events and placement still run)
+    std::vector<int32_t> reportObjects; // --report-objects UID,...: their script calls and state at exit (replay tests)
     bool drawLast = false; // --draw-last: with --frames, every frame runs its ticks but only the last is drawn (render-rate tests)
     bool noAudio = false;
     bool syncLoads = false; // --sync-loads: neighbour units load on the main thread (World::setAsyncStreaming off)
@@ -103,6 +104,7 @@ void usage() {
                  "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-cinematics] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
+                 "               [--report-objects UID,...] (with --frames: the script calls to / from them and their state at exit)\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
@@ -188,6 +190,15 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--input-script") o.inputScript = v;
         else if (a == "--autopilot") o.autopilot = v;
+        else if (a == "--report-objects") {
+            for (const char* p = v; *p;) {
+                char* end = nullptr;
+                const long uid = std::strtol(p, &end, 10);
+                if (end == p) { std::fprintf(stderr, "--report-objects wants UID,UID,...\n"); return false; }
+                o.reportObjects.push_back(int32_t(uid));
+                p = *end == ',' ? end + 1 : end;
+            }
+        }
         else if (a == "--record-script") o.recordScript = v;
         else if (a == "--record-input") o.recordInput = v;
         else if (a == "--replay-input") o.replayInput = v;
@@ -1952,6 +1963,7 @@ int main(int argc, char** argv) {
     // ---- load: simulation data first (no window needed to fail early) ----
     std::optional<ou::game::InputScript> script;
     std::optional<ou::app::Autopilot> autopilot; // --autopilot: steers Lara by a plan and records the input script
+    std::vector<std::pair<int32_t, int16_t>> reportedCalls; // --report-objects
     std::optional<ou::platform::EventLog> replay; // --replay-input: recorded device events instead of the devices
     std::ofstream record;                         // --record-input
     std::unique_ptr<ou::cdc::BigfileSet> bigfile; // outlives `world`: its unit loader reads from it
@@ -2022,6 +2034,12 @@ int main(int argc, char** argv) {
             });
         world->fovDeg = opt.fov;
         world->script().setBigfile(&bf);
+        if (!opt.reportObjects.empty()) // --report-objects: the (callee, vt) pairs reaching or leaving them, first-call order
+            world->script().onCall = [&](int32_t from, int32_t to, int16_t vt) {
+                const auto watched = [&](int32_t uid) { return std::ranges::find(opt.reportObjects, uid) != opt.reportObjects.end(); };
+                if ((watched(from) || watched(to)) && std::ranges::find(reportedCalls, std::pair{to, vt}) == reportedCalls.end())
+                    reportedCalls.emplace_back(to, vt);
+            };
         world->enemies().setBigfile(&bf);
         // Pad rumble sequences and camera shakes (game/Feedback.hpp), and the effect records' rumble commands: 0xD by
         // name, 0xE / 0xF the shocks, 0x10 motor 1 by distance ((8000 - d) * a1 / 8000, + 50 up to a1, from Lara [I]);
@@ -3476,6 +3494,29 @@ int main(int argc, char** argv) {
                 for (const auto& o : world->script().objects())
                     if (const int32_t r = world->insertedIn(o.uid)) list += " " + std::to_string(o.uid) + ">" + std::to_string(r);
                 std::fprintf(stderr, "ou-game: portables held %d inserted%s\n", world->heldPortable(), list.empty() ? " none" : list.c_str());
+            }
+            if (!opt.reportObjects.empty()) { // puzzle replays (tests/replays/*.txt) check the downstream reaction
+                std::string list;
+                for (const auto& [to, vt] : reportedCalls) list += " " + std::to_string(to) + ":" + std::to_string(vt);
+                std::fprintf(stderr, "ou-game: calls%s\n", list.empty() ? " none" : list.c_str());
+                for (const int32_t uid : opt.reportObjects) {
+                    const auto* o = world->script().find(uid);
+                    if (!o) { std::fprintf(stderr, "ou-game: object %d absent\n", uid); continue; }
+                    std::string s = "ou-game: object " + std::to_string(uid) + " " + o->name;
+                    char buf[96];
+                    std::snprintf(buf, sizeof buf, " pos %.1f %.1f %.1f", o->pos.x + o->offset.x, o->pos.y + o->offset.y, o->pos.z + o->offset.z);
+                    s += buf;
+                    if (o->graph && o->graph->set->graph) s += " graph " + std::to_string(o->graph->set->graph->states[size_t(o->graph->state)].index);
+                    if (o->joint) std::snprintf(buf, sizeof buf, " joint %.1f", o->joint->position), s += buf;
+                    if (const auto* st = world->uberState(uid)) {
+                        s += " uber";
+                        for (size_t i = 0; i < st->size(); ++i) s += (i ? "," : " ") + ((*st)[i] == 0xFFFFFFFFu ? std::string("-") : std::to_string((*st)[i]));
+                        for (int32_t j = 0; j < 32; ++j)
+                            if (const auto* jt = world->uberJoint(uid, j)) std::snprintf(buf, sizeof buf, " j%d %.3f", j, jt->x), s += buf;
+                    }
+                    if (const int32_t r = world->insertedIn(uid)) s += " in " + std::to_string(r);
+                    std::fprintf(stderr, "%s\n", s.c_str());
+                }
             }
             std::fprintf(stderr, "ou-game: %s\n",
                          ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays).c_str());

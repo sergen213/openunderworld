@@ -22,6 +22,7 @@ public:
     //   hold ACTION SECONDS         hold ACTION, then release it
     //   stick FORWARD RIGHT SECONDS raw camera-relative stick, then centre it
     //   wait SECONDS
+    //   push FORWARD RIGHT SECONDS [ACTION] hold ACTION (interact), after 6 ticks the raw stick too (push blocks, handles)
     //   near R                      log the markup polylines within R units of Lara (poles, ledges)
     // A step that does not finish in 20 s fails the plan (logged; the script so far is still written).
     static Autopilot load(const std::filesystem::path& plan, std::filesystem::path out);
