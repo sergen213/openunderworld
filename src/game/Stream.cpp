@@ -447,6 +447,7 @@ void World::unitsChanged(const std::optional<std::pair<std::string, int>>& ledge
 void World::rebuildCollision() {
     col_.clearParts();
     col_.markup.clear();
+    for (auto& [uid, in] : inserted_) in.markup = -1; // tickInserted adds the inserted poles' markups again
     for (auto& u : units_) {
         const auto& c = u.data.col;
         col_.appendPart(c, u.offset);

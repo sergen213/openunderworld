@@ -52,10 +52,10 @@ Fixes (2026-11-06):
   (0x4A93E0: INSTANCE_Post 0x35 breaks a joint; ours: the object falls loose [I]): l5_valaskjalf falling bridge 6974
   (volume 7010) passes (`CriticalGates`, `CriticalPathInOrder`).
 
-True failures left (24): l1_kraken_room soundvolumes 358/360/361/362/364/365/380/381 (vt 75 clears a flag already
+True failures left (22): l1_kraken_room soundvolumes 358/360/361/362/364/365/380/381 (vt 75 clears a flag already
 clear: not a gate); the nine `sa_ei_grapple_wall*` / mounted pulls (l2_towerconnector 2005/2042/2043, l2_norsehub
 2383/2393/2394/2395, l2_norsehall 2457, l2_maproom 2595: their uber command changes no section [U: wall-run anchors,
-not gates?]); l5_valaskjalf 7025 / 7026 (chain 6944 / 6943 vt 55, no visible change). Natives bound since: `multibody`
+not gates?]). Natives bound since: `multibody`
 89 (0x4AA250: motor target speed of a joint, joint +0x108 -> `Object::Joint::speed`; a non-plate, non-hinge joint moves
 at it within the body's limit, physical data +0x2C -> {lo, hi} [O values]), and the joint range watches report leaving
 (vt 37) as well as entering (vt 34), starting "inside" as 0x49A5C0 does, so a watch outside its range reports leaving
@@ -66,9 +66,32 @@ crushers 5905, whose jaws are [U]); `unit` 12 / 13 (0x776BA0 -> 0x7164D0 / 0x776
 flag-4 markers joined to / dropped from Lara's list: ours, its grapple target offered or not, saved — l4_pool 5511 via
 5625); `instanceref` 0 (0x79A940 -> 0x4A52E0: same instance; l1_seafloor 978, l7_arctic_sea 9280). Open: `anchor` 1
 (0x7966F0: the vector between two anchors, 0x4AB870; the VM has no vector values — l7_helheim01 8945, a sound loudness
-loop, not a gate). l5_valaskjalf_entryb 7189 (pole-hole
-lever, reward door only): needs the pole ar_pt_pole_a inserted (vt 19 "insert reaction"), then the lever's joint range
--600..-474 (multibody 79) runs vt 34 [U: the insert interaction].
+loop, not a gate). l5_valaskjalf_entryb 7189 (pole-hole lever, reward door only): solved 2026-11-07 by inserting the
+pole (below).
+
+Fixes (2026-11-07):
+- [O bytecode] l5_valaskjalf volumes 7025 / 7026 ("lara entered detach volume") are not failures: they need an earlier
+  step. Chains 6943 / 6944 (`ar_ani_infinite_chain`, one uber section: state 0 rest, command 0 = trigger 16 param 0 ->
+  state 1 running, command 1 = trigger 16 param 1 -> 2 detach -> after 1 s 3 -> 1) have no constructor, unlike
+  6939-6942, which send their command member (+4, command 0) after 3 s. Only the jammed gear 6985's vt 34 (its joint
+  entering 45..180, multibody 79) sends 6943 / 6944 their command members (`CALL4 uberobjectbase 1`); the volumes' vt 55
+  sends the chain's own local command (`PUSHLA 0; CALL1 uberobjectbase 1`, a local `uberobjectcommand` initialised to
+  command 1), which finds no transition from state 0 (0x4D4BE0) — as alone in the sweep. The call is the chain's own
+  (CALL1's receiver is the frame's instance, the chain); no VM change was needed. 6985's vt 34 used to stop at two
+  unbound natives: `multibody` 75 (thunk 0x79B6A0 -> 0x4A9AB0 -> 0x4D9F50: limit `args[1]` 1..3 of joint `args[0]`
+  on / off, joint +0x174 bit 2 << (limit - 1), read by the joint solver 0x4E7550 only while set; hpoles 6984's vt 54
+  turns it off. Ours: limit 1 off frees the hinge / a motor's clamp [I: the hpoles' own motion is not modelled]) and
+  `multibody` 80 (0x79B760 -> 0x4A9D90 -> 0x493A80: drop the range watches of joint / limit with id `args[2]`, -1 =
+  all; 6985 stops its own watch 3). Now 6985 vt 34 runs to the end, 6943 / 6944 run, and 7025 / 7026 detach them
+  (`ProgressionReal.ValaskjalfChainsDetach`). The sweep, which fires each gate alone, still lists both as FAIL.
+- [O tru.exe] Inserting a portable: Lara's chart action 0x4D posts INSTANCE message 0x165 to the held portable, which
+  posts anim stimulus 0x20 to itself and 0x165 to the receptacle (0x6B5890), whose graph takes 0x20 (0x6C2530); 0x186 /
+  0x40 is the removal (docs/GAMEPLAY.md). Ours: receptacles (scripts with vt 19 whose graph has an 0x20 transition) get
+  their graph even without a `modifiable` member; a dataless one starts where its insert transition leaves [I].
+  l5_valaskjalf_entryb lever 7189 now opens reward door 7227 (`ProgressionReal.PoleHoleLeverOpensRewardDoor`): its
+  joint marker is a cylindrical joint (0x48F1D0: degree of freedom 0 = prismatic position), so its −600..−474 watch is
+  a slide down; Lara's weight on the inserted pole slides it [I: Havok weight, 300 units/s, stop at −600]. Open [U]:
+  the insert clip and engagement record, removal, l4_ballcourt 6502 (also a receptacle, still driven by a use).
 
 Sweep 2026-10-29 (uber joints): 132 / 289. Every uber object now starts its sections at spawn, so its first script use no longer counts as a change: the seven `sa_ei_grapple_wall` pulls (l2_maproom 2595, l2_norsehall 2457, l2_norsehub 2383/2394/2395, l2_towerconnector 2005/2042/2043 and volume 2040 -> 2043) and l5_valaskjalf volumes 7025/7026 (targets 6944/6943) passed only by that lazy start [I: not re-examined]; l3_bedroom_hall plane 4375 now passes.
 
@@ -132,8 +155,8 @@ Portal order from the start unit; level changes not made by portals are named.
 | 5 | l5_valgrind | volumes 7471/7511 | door 7334, cinematic 7464 | pass |
 | 5 | l5_valaskjalf_entry | switch 7228 (use) | reward door 7227 | pass |
 | 5 | l5_valaskjalf_entryb | lever 7188 (use) | reward door 7187 | pass (`CriticalGates`; acts only while switch 7192 is not in its graph state 0 "on", read by `modifiable` 8) |
-| 5 | l5_valaskjalf_entryb | pole-hole lever 7189 (use) | reward door 7227 (optional) | **fail** (`ar_uo_phole_lever` [O bytecode]: vt 19 "insert reaction" once pole ar_pt_pole_a sits in its hole, then the lever's joint range −600..−474 (multibody 79) runs vt 34 → 7227 vt 57 [U: the insert interaction]) |
-| 5 | l5_valaskjalf | volumes 7025-7030 | gears / chains | 7027-7030 pass; 7025 / 7026 call chains 6944 / 6943 vt 55 with no visible change (**fail**) |
+| 5 | l5_valaskjalf_entryb | pole-hole lever 7189 (insert pole 7190, hang on it) | reward door 7227 (optional) | pass (`PoleHoleLeverOpensRewardDoor`): the carried pole inserted from the lever's ledge (insert stimulus 0x20, GAMEPLAY.md "Inserting a portable") runs vt 19 "insert reaction" and vt 20(0) (watch −600..−474 on the slider); Lara hanging on the pole slides it down [I: speed / limit] → vt 34 → 7227 vt 57. A plain use still does nothing (the sweep's "use" shows condition) |
+| 5 | l5_valaskjalf | volumes 7025-7030 | gears / chains | 7027-7030 pass; 7025 / 7026 detach chains 6944 / 6943 once the jammed gear 6985 started them (its vt 34; `ValaskjalfChainsDetach`); alone in the sweep they still show FAIL |
 | 5 | l5_valaskjalf | volume 7010 | falling bridge 6974 breaks (multibody 59) | pass (`CriticalGates`) |
 | 5 | l5_valaskjalf | volume 6866 | 6846 → chapter 6 | pass |
 | 6 | l6_ship_upper_hallway* | volumes 7622/7623/7644/7646 | ship doors 7621/7642/7643 have no script (the volumes' ISTYPE fails): they stand open | pass (`ChapterSixShipDoorsOpen`) |

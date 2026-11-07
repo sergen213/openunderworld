@@ -702,7 +702,15 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
                 const char* native = program->nativeName(m.typeId);
                 uses |= !std::strcmp(native, "modifiable") || !std::strcmp(native, "animated");
             }
-        const auto set = uses ? graphSet(o.name) : nullptr;
+        // [O] 0x6B4B10 gives every instance with graph data an anim component; ours only those whose scripts reach it,
+        // and receptacles: scripts hearing graph transitions (vt 19, instance prototype 32) whose graph takes the insert
+        // stimulus (l5_valaskjalf_entryb pole-hole lever 7189 "It's the insert reaction"; World::carryPortables).
+        auto set = uses ? graphSet(o.name) : nullptr;
+        bool receptacle = false;
+        if (!uses && program->method(o.script->typeId, 19))
+            if (auto g = graphSet(o.name, true); g && g->graph &&
+                std::ranges::any_of(g->graph->transitions, [](const auto& t) { return t.mask & formats::kStimulusInsert; }))
+                set = std::move(g), receptacle = true;
         int initial = 0;
         if (set && set->graph && in.data) {
             const auto& d = u.drm->sections.at(in.data->section).data;
@@ -710,7 +718,13 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
             if (in.data->offset + 0x40 <= d.size()) std::memcpy(&first, d.data() + in.data->offset + 0x3C, 4);
             if (first > 0 && size_t(first) < set->graph->states.size()) initial = first;
         }
-        if (set && o.kind == Kind::Switch) {
+        // [I] A receptacle placed without physob data (l5_valaskjalf_entryb 7189) starts empty: in the state its insert
+        // transition leaves (its script's insert reaction is that transition; tru.exe's start record then is not traced).
+        if (receptacle && !in.data)
+            for (size_t si = 0; si < set->graph->states.size(); ++si)
+                if (std::ranges::any_of(set->graph->states[si].out, [&](uint32_t ti) { return set->graph->transitions[ti].mask & formats::kStimulusInsert; }))
+                    { initial = int(si); break; }
+        if (set && o.kind == Kind::Switch && !receptacle) {
             if (set->graph && modifiable)
                 o.script->fields[*modifiable] = o.script->initial[*modifiable] = uint32_t(int32_t(set->graph->states[size_t(initial)].index));
         } else if (set) {
@@ -1948,9 +1962,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
 }
 
 // Anim state graph and clips of an object (Object::GraphSet), parsed once per object name. Null without a skeleton.
-std::shared_ptr<const Object::GraphSet> Runtime::graphSet(const std::string& name) {
-    if (const auto it = graphSets_.find(name); it != graphSets_.end()) return it->second;
-    auto& slot = graphSets_[name];
+std::shared_ptr<const Object::GraphSet> Runtime::graphSet(const std::string& name, bool graphOnly) {
+    if (const auto it = graphSets_.find(name); it != graphSets_.end() && (it->second || !graphOnly)) return it->second;
+    if (graphOnly)
+        if (const auto it = graphSets_.find(name + "#graph"); it != graphSets_.end()) return it->second;
+    auto& slot = graphSets_[graphOnly ? name + "#graph" : name];
     auto bytes = bigfile_ ? bigfile_->read("pc-w\\" + name + ".drm") : std::nullopt;
     if (!bytes) return slot;
     const auto drm = cdc::parseDrm(std::move(*bytes));
@@ -1964,7 +1980,10 @@ std::shared_ptr<const Object::GraphSet> Runtime::graphSet(const std::string& nam
     std::vector<std::string> warnings;
     for (auto& sk : anim::decodeSkeletons(drm, warnings))
         if (model && sk.renderModelId == model) set->skeleton = std::make_shared<scene::Skeleton>(std::move(sk));
-    if (!set->skeleton) return slot;
+    if (!set->skeleton) {
+        if (graphOnly && set->graph) slot = std::move(set); // a graph without clips (states and transitions only)
+        return slot;
+    }
     for (const auto& e : anim::animList(drm)) {
         auto& clip = set->clips.emplace_back();
         set->names.push_back(e.name);
@@ -2086,6 +2105,18 @@ bool Runtime::graphPost(int32_t uid, uint32_t mask, float amount, float value) {
     auto& g = *o->graph;
     g.total = g.sums[size_t(std::countr_zero(mask))] += amount;
     return graphStimulus(uid, mask, value);
+}
+
+bool Runtime::insertPortable(int32_t portable, int32_t receptacle) {
+    graphStimulus(portable, formats::kStimulusInsert, -1.0f);
+    return graphStimulus(receptacle, formats::kStimulusInsert, -1.0f);
+}
+
+bool Runtime::graphAccepts(int32_t uid, uint32_t mask) const {
+    const Object* o = find(uid);
+    if (!o || !o->graph || !o->graph->set->graph || o->graph->transition >= 0) return false;
+    const auto& G = *o->graph->set->graph;
+    return std::ranges::any_of(G.states[size_t(o->graph->state)].out, [&](uint32_t ti) { return G.transitions[ti].mask & mask; });
 }
 
 // 0x6B4090 (messages 0x166 / 0x168): mask 1 [U: 2 while Lara's +0x68 flag 0x40000 is set], AnimGraph::pickUse.
