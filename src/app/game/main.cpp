@@ -3412,6 +3412,12 @@ int main(int argc, char** argv) {
                          world->checkpoint() ? world->checkpoint()->id : 0, world->found[0], world->found[1], world->found[2],
                          std::string(ou::game::stateName(fs.state)).c_str(), fs.pos.x, fs.pos.y, fs.pos.z, glm::degrees(fs.yaw), fs.clip.c_str(),
                          (unsigned long long)world->stateHash(), effects.system.particleCount());
+            { // receptacle replays (tests/replays/*_insert.txt) check these
+                std::string list;
+                for (const auto& o : world->script().objects())
+                    if (const int32_t r = world->insertedIn(o.uid)) list += " " + std::to_string(o.uid) + ">" + std::to_string(r);
+                std::fprintf(stderr, "ou-game: portables held %d inserted%s\n", world->heldPortable(), list.empty() ? " none" : list.c_str());
+            }
             std::fprintf(stderr, "ou-game: %s\n",
                          ou::render::rtSummary(renderer->rtStatus(), ou::render::RayTracing(opt.gfx.rt), opt.gfx.rtRays).c_str());
             if (!frameMs.empty()) { // wall time per frame (ticks + draw), use with --no-vsync --render-hz 60

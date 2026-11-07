@@ -1312,10 +1312,10 @@ glm::mat4 engagementFrame(const physics::ObjectPhysics& p, const script::Object&
                    glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
     return f;
 }
-// Floors where Lara standing has a sample point (220.6 / 315.4 / 410.2 above her feet, as World::engages) inside one of
+// Floors where Lara standing has a query point (World::kEngageZ0 + 0 / 1 / 2 x kEngageStep above her feet) inside one of
 // `records` of `kind` (in `p`'s model posed by `base`), nearest the record's centre first, facing it.
 std::vector<std::pair<vec3, float>> engageSpotsIn(const game::World& w, const physics::ObjectPhysics& p, const glm::mat4& base,
-                                                  const std::vector<physics::Engagement>& records, int kind, bool near = false) {
+                                                  const std::vector<physics::Engagement>& records, int kind) {
     std::vector<std::tuple<float, vec3, float>> found;
     for (const auto& e : records) {
         if (e.kind != kind) continue;
@@ -1329,7 +1329,8 @@ std::vector<std::pair<vec3, float>> engageSpotsIn(const game::World& w, const ph
         const glm::mat4 inv = glm::inverse(f);
         const vec3 c(f * glm::vec4(e.centre, 1));
         const auto inside = [&](vec3 feet) {
-            for (const float z : {220.6f, 315.4f, 410.2f}) {
+            for (int k = 0; k < 3; ++k) {
+                const float z = game::World::kEngageZ0 + float(k) * game::World::kEngageStep;
                 const vec3 q = vec3(inv * glm::vec4(feet + vec3(0, 0, z), 1)) - e.centre;
                 if (e.shape == 0) { if (glm::dot(q, q) < e.radius * e.radius) return true; continue; }
                 const float b = q.z + e.height * 0.5f;
@@ -1345,10 +1346,7 @@ std::vector<std::pair<vec3, float>> engageSpotsIn(const game::World& w, const ph
                 for (float top = c.z + r + 400; top > c.z - r - 900;) {
                     const auto g = w.collision().groundProbe(vec3(c.x + dx, c.y + dy, top), top - (c.z - r - 900));
                     if (!g) break;
-                    // near: also World::insertHeld's fallback, the record's marker within its radius (at least 450) of her
-                    // and 0..1200 above her feet
-                    const vec3 d = vec3(f[3]) - g->point;
-                    if (inside(g->point) || (near && glm::length(glm::vec2(d)) < std::max(e.radius, 450.0f) && d.z >= 0 && d.z <= 1200.0f))
+                    if (inside(g->point))
                         found.emplace_back(glm::length(glm::vec2(g->point - c)), g->point + vec3(0, 0, 5), std::atan2(c.y - g->point.y, c.x - g->point.x));
                     top = g->point.z - 60;
                 }
@@ -1363,7 +1361,7 @@ std::vector<std::pair<vec3, float>> engageSpotsIn(const game::World& w, const ph
                 if (e.segment >= 0 && m.id == e.segment)
                     f = base * (size_t(m.segment) < p.segments.size() ? p.segments[size_t(m.segment)] : glm::mat4(1)) * glm::translate(glm::mat4(1), m.pos) *
                         glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
-            out.push_back({vec3(f * glm::vec4(e.centre, 1)) - vec3(0, 0, 315.4f), 0.0f});
+            out.push_back({vec3(f * glm::vec4(e.centre, 1)) - vec3(0, 0, game::World::kEngageZ0 + game::World::kEngageStep), 0.0f});
         }
     return out;
 }
@@ -1587,7 +1585,7 @@ TEST(ProgressionReal, TraproomSealTakesTheRoomKeys) {
 
 // Uber receptacles (no anim graph; docs/GAMEPLAY.md "Inserting a portable"): the spots inside section `section`'s kind-5
 // records (its starting set +0x40 and its states' 0x1D sets; World decides which one is current), in the section
-// model's frame.
+// model's frame as its joint has it now.
 std::vector<std::pair<vec3, float>> uberEngageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, size_t section) {
     const auto drm = cdc::parseDrm(*bf.read("pc-w\\" + o.name + ".drm"));
     const auto u = formats::loadUberObject(drm);
@@ -1602,7 +1600,8 @@ std::vector<std::pair<vec3, float>> uberEngageSpots(const cdc::BigfileSet& bf, c
         if (const auto r = set >= 0 ? physics::loadEngagementSet(drm, uint32_t(set)) : std::nullopt)
             records.insert(records.end(), r->records.begin(), r->records.end());
     const auto p = physics::loadObjectPhysics(drm, sec.model);
-    return engageSpotsIn(w, p, engagementFrame(p, o, -1), records, 5, true);
+    const auto body = w.uberSectionBody(o.uid, int32_t(section)); // as the section's joint has it now (the cog wheels turn)
+    return engageSpotsIn(w, p, engagementFrame(p, o, -1) * (body ? *body : glm::mat4(1)), records, 5);
 }
 
 // tru.exe: the portable posts 0x165 to the section Lara engages (query 0x53 -> its engagement set: the section record's
@@ -1654,10 +1653,15 @@ TEST(ProgressionReal, UberReceptaclesTakeTheirPortables) {
         if (c.receptacle == 9099) w.sendUberCommand(9099, 3);
         for (int i = 0; i < 5; ++i) w.tick({});
         ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return w.heldPortable() == c.portable; })) << "picked up";
-        const auto spots = uberEngageSpots(bf, w, *rec, c.section);
-        ASSERT_FALSE(spots.empty()) << "a kind-5 record";
+        ASSERT_FALSE(uberEngageSpots(bf, w, *rec, c.section).empty()) << "a kind-5 record";
         calls.clear();
-        const bool inserted = interactFrom(w, spots, [&] { return w.insertedIn(c.portable) == c.receptacle; });
+        // The spots where the record is now (the valgrind cog wheels turn under their motor: about 10 degrees a second)
+        bool inserted = false;
+        for (int k = 0; k < 8 && !inserted; ++k) {
+            auto spots = uberEngageSpots(bf, w, *rec, c.section);
+            spots.resize(std::min<size_t>(spots.size(), 5));
+            inserted = interactFrom(w, spots, [&] { return w.insertedIn(c.portable) == c.receptacle; });
+        }
         for (int i = 0; i < 300; ++i) w.tick({});
         if (c.refused) {
             EXPECT_FALSE(inserted) << "its record names another portable"; // (each press there set it down instead)
@@ -1669,4 +1673,54 @@ TEST(ProgressionReal, UberReceptaclesTakeTheirPortables) {
         for (const auto& call : c.calls) EXPECT_NE(std::ranges::find(calls, call), calls.end()) << call.first << " vt " << call.second;
         for (const auto& [key, n] : w.script().failures()) EXPECT_TRUE(key.first != c.receptacle) << key.second;
     }
+}
+// Calendar push handles (docs/GAMEPLAY.md "Inserting a portable", kind-1 records): ca_uo_calendar 6506's handles
+// (section 1, set 528) wait in state 3; interact inside one grips it (message 0x158 -> trigger 20 with the record's
+// kind 1: 3 -> 1), the stick turns the ring on its hinge (joint 2) with Lara, letting go (0x14F -> trigger 21: 1 -> 5)
+// locks it and the section comes back to 3.
+TEST(ProgressionReal, CalendarPushHandlesTurnTheRing) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_ballcourt");
+    auto& w = *wp;
+    const auto* cal = w.script().find(6506);
+    ASSERT_TRUE(cal && w.uberState(6506));
+    for (int i = 0; i < 10; ++i) w.tick({});
+    ASSERT_EQ((*w.uberState(6506))[1], 3u) << "the handles wait";
+    const auto drm = cdc::parseDrm(*bf.read("pc-w\\" + cal->name + ".drm"));
+    const auto u = formats::loadUberObject(drm);
+    ASSERT_TRUE(u);
+    const auto set = physics::loadEngagementSet(drm, uint32_t(u->sections[1].engagement));
+    ASSERT_TRUE(set);
+    const auto p = physics::loadObjectPhysics(drm, u->sections[1].model);
+    const auto body = w.uberSectionBody(6506, 1);
+    const auto spots = engageSpotsIn(w, p, engagementFrame(p, *cal, -1) * (body ? *body : glm::mat4(1)), set->records, 1);
+    ASSERT_FALSE(spots.empty());
+    game::Actions grip;
+    grip.interact = true;
+    bool gripped = false;
+    for (const auto& [at, yaw] : spots) {
+        place(w, at, yaw);
+        for (int i = 0; i < 20; ++i) w.tick({});
+        if (w.player().state().state != game::State::Idle) continue;
+        w.tick(grip), w.tick(grip);
+        if ((*w.uberState(6506))[1] == 1) { gripped = true; break; }
+        w.tick({}), w.tick({});
+    }
+    ASSERT_TRUE(gripped) << "0x158: trigger 20 / kind 1";
+    const auto* ring = w.uberJoint(6506, 2);
+    ASSERT_TRUE(ring && ring->hinge);
+    const float before = ring->x;
+    const vec3 from = w.player().state().pos;
+    game::Actions push = grip;
+    push.move = {0, 1};
+    for (int i = 0; i < 120; ++i) w.tick(push);
+    EXPECT_GT(std::abs(w.uberJoint(6506, 2)->x - before), glm::radians(10.0f)) << "the ring turns";
+    EXPECT_GT(glm::length(glm::vec2(w.player().state().pos - from)), 50.0f) << "she moves with it";
+    w.tick({});
+    const uint32_t after = (*w.uberState(6506))[1];
+    EXPECT_TRUE(after == 5 || after == 4 || after == 0xFFFFFFFFu) << "0x14F: trigger 21 / kind 1 -> " << after;
+    for (int i = 0; i < 180; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(6506))[1], 3u) << "back to waiting";
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 6506) << key.second;
 }

@@ -576,8 +576,15 @@ void World::tick(const Actions& input) {
     tickObjects(dt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
     vec3 carry = script_.carried();
-    if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) // she follows the pushed body
-        carry += j->axis * (j->x - uberPush_.before);
+    if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) { // she follows the pushed body
+        const vec3 p = player_.state().pos;
+        if (j->hinge) { // around its axis (calendar rings: World::pushUberHandle), on her floor
+            const vec3 moved = vec3(glm::rotate(glm::mat4(1), j->x - uberPush_.before, j->axis) * glm::vec4(p - j->pivot, 1)) + j->pivot - p;
+            carry += vec3(moved.x, moved.y, 0);
+        } else {
+            carry += j->axis * (j->x - uberPush_.before);
+        }
+    }
     if (carry != vec3(0)) { // Lara follows the block she pushes/pulls
         auto s = player_.state();
         s.pos += carry;
