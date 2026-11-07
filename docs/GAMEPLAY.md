@@ -247,7 +247,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Edge slide-off | a capsule resting on an edge corner (floor-like contact, no floor under the root) gets ≥ 200 units/s outwards | [I] ours (fixes the Fall/Land alternation walking slowly off a ledge) |
 | Crouch capsule height | **260** | [O] player data +0x14 |
 | Turn rate (walk/run steering, swimming) | 6 rad/s | [I] from `ng_turn_center`; turning in place uses the clip's root rotation instead (above) |
-| Ledge grab | hands from 60 units short of the line to anywhere over it (the root on her side; within 60 along it past its ends), ledge between hand height −40 and +10, falling, facing the ledge (cos ≥ 0.5), **−2232.5 ≤ zVel ≤ 1545.6 units/s** [I: the window is the one below, from the wall-jump test]; a standing jump at a ledge 635..910 over her feet with its line within 412 instead leaps straight onto its hang (`Player::standJumpToLedge`; window measured under Wine, see "Air-grab window") [O / I bounds] | Correction (2026-10-31): 0x759260 / 0x7594C0 are the state-chart conditions `PSCCF_WallJumpAnticipate` / `WallJumpAttach` / `WallJumpCollide` (registry 0x8B2840; wrappers 0x763330 / 0x7633E0 / 0x763490 name them), not the ledge grab. What they do [O]: zVel window `−byte[data+0x834]·5.72443 ≤ zVel ≤ byte[data+0x833]·5.72443` (bytes 13 and 9, units per 30 Hz frame); 0x758DD0 gives the pelvis (segment 1) position and its prediction N frames ahead (N = byte +0x820 = 0, resp. +0x821 = 3), both raised by int +0x824 (**+63**), swept with collision query 0x4935F0 (mask 0x2C19E7); a kind 3 / 5 hit accepted by 0x5D3BA0 / 0x758F70 is repeated at int +0x828 (**−158**); 0x7591E0: no floor within int +0x82C (**31**) below the root; 0x758B00: within float +0x838 (**951.3**) of player-state +0x9C0. The ledge grab's own test is in the state chart (not decoded) [U] |
+| Ledge grab | hands from 60 units short of the line to anywhere over it (the root on her side; within 60 along it past its ends), ledge between hand height −40 and +10, falling, facing the ledge (cos ≥ 0.5), **−2232.5 ≤ zVel ≤ 1545.6 units/s** [I: the window is the one below, from the wall-jump test]; a standing jump whose query (q2) class tests meet a ledge more than 635.27 over her feet instead leaps straight onto its hang (`Player::standJumpToLedge`: line within 424.5, 782 / 830 ones out to 424, 892 / 907 ones only within ~108; see "Air-grab window") [O] | Correction (2026-10-31): 0x759260 / 0x7594C0 are the state-chart conditions `PSCCF_WallJumpAnticipate` / `WallJumpAttach` / `WallJumpCollide` (registry 0x8B2840; wrappers 0x763330 / 0x7633E0 / 0x763490 name them), not the ledge grab. What they do [O]: zVel window `−byte[data+0x834]·5.72443 ≤ zVel ≤ byte[data+0x833]·5.72443` (bytes 13 and 9, units per 30 Hz frame); 0x758DD0 gives the pelvis (segment 1) position and its prediction N frames ahead (N = byte +0x820 = 0, resp. +0x821 = 3), both raised by int +0x824 (**+63**), swept with collision query 0x4935F0 (mask 0x2C19E7); a kind 3 / 5 hit accepted by 0x5D3BA0 / 0x758F70 is repeated at int +0x828 (**−158**); 0x7591E0: no floor within int +0x82C (**31**) below the root; 0x758B00: within float +0x838 (**951.3**) of player-state +0x9C0. The ledge grab's own test is in the state chart (not decoded) [U] |
 | Ledge targets (drop to hang, hang jumps) | the hang side must drop > 200 within 240 units of the ledge line | [I] ours; l4_pool's ledge 1253 sits up to ~180 inside the collision top, so a fixed 60-unit probe misses the drop |
 | Balance beam | root within 30 (x/y and z) of a type-14 line, heading within 45° of it from the ground (any heading from the air); walk 140 units/s (clip) | [I] attach distances ours; [O] markup type 14 = MUD 0x10000 BALANCEBEAM |
 | Jump assist | at take-off, of the jump-landing (2) and beam (14) lines the point nearest the natural landing (at its height) within **300** becomes the landing: horizontal velocity = Δxy / flight time, vertical unchanged | [O] solver 0x73EDC0: `v = (target − pos − ½·g·t²) / t` with g = −5.72443/frame², re-aimed every frame with the remaining time (0x751D10, player-state +0x77C) at the markup in +0xA64 whose MUD flags match 0x20830000 (jump landing, rail slide, perch, balance beam); speed cap player data +0xC10 = 18963 (never reached). [I] the 300 radius and solving once at take-off. Ground jumps: the take-off state's query (S248 standing q2, S245 / S247 q43, S249 running q26) meets ledges as the "Jump query hit test" (`Player::ledgeOnArc`, `aimGroundJump`) — its own arc's capsule — and the flight is re-aimed onto the hang pose by the hit frame; only ledges 158 or more over the root count [I: lower ones are landed on, vaulted or hurdled]. Standing jumps at higher ledges (635..907 over her feet, up to ~410 out) are a straight 11-tick leap onto the hang ("Air-grab window", `Player::standJumpToLedge`). Wine: under the prologue slab (ledge 974, 1100 ahead) a running jump left at the plain 65.83 (no re-aim); the reach q26 gives a running jump (l2_junglehub ledge 851, `GameReal.JunglehubRunningJumpReachesHigherLedge`) is [I] |
@@ -1139,23 +1139,41 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   221.24. Ledges hang to the right of their polyline's direction: all 106 ledges with a wall under one side and their
   top behind it in twelve surveyed units are wound so [O-data]. Ours (`Player::ledgeOnArc`): exactly this for ledges
   (types 3 and 1, the hang side by winding), plus a clear hang (`openBelow`) and the earliest hit [I: 0x710100 keeps
-  its list's first]. Ground jumps: q2 standing (from 300 over the root, 48.04 up, coming down only, cone 120°), q43
-  with the stick (from the root, 40 + 50, 90°), q26 running (from 300 over, 90.25 + 42.54, 90°), their type 3 from 505.69
-  over the root, type 1 at it; DICE q31 / q28 / q29 and ladder q22 / q23 as described above. Read with the target type's
-  arc, a standing q2 would catch l3_main_hall ledge 944, which tru.exe does not — but that Wine jump stood on 944's
-  back (it hangs toward −x; Lara 113 behind its line on +x), which the motion test refuses either way. With its own arc
-  q2 reaches no higher than 648 over her feet (pressed against the wall); higher standing catches are below.
+  its list's first]. This default path (query +0x94 = 0: 0x70FFB0 → 0x70EC60) is not what Lara's jump queries take:
+  every one checked (q2, q26, q43, q31, q28 / q29, q22 / q23, q7 / q9 / q10, q32 / q33) names a class record at +0x94,
+  so 0x7296C0 runs it (0x729670 → 0x729540) on each swept candidate instead, then classes the winner by +0x9C
+  (0x728C30 picks it, 0x729540 sets the class bits) [O: decomp; Wine hooks below]. A record lists class entries, each an
+  AND of test records `{kind, point source a1, point source a2, value, …, flags: bit 0 the record's value, bit 1 negate}`
+  (0x728F00); point sources (0x723AB0): 0 her root, 4 the hit, 9 / 10 her heading / right, 13 the target type's arc
+  at the hit time, 24 the hit less the query start and linear motion, 31 the ledge point. The ground jumps share record
+  0x2AB8C: entry 4 (the "box") = rise of the ledge over her root in (300, 885] (kind 4), source 24 along her heading in
+  (−150, 632] and to her right in (−316, 316] (kind 34), the cone (22), wall side (21) and ledge class (14 / 19 / 20:
+  not 3, 5, 8..13); entries 0..3 = the ledge record's capsule (kind 10) round source 13 — the TARGET TYPE's own arc
+  point, not the query's: a hook on 0x6FCB10 under Wine logged its centre at root + 707.27 (the hands' apex, 505.69 +
+  201.6) for type 3 and root + 201.6 for type 1 — with the hit within 1700 of her (kind 36; 1581 in entries 1..3) and
+  more tests not modelled. Ours (`ledgeOnArc` with `JumpQuery::classes`, the ground jumps only): the box or the capsule
+  round the target type's arc, the cone, wall side and clear hang, and the sweep's candidate pad below; the DICE,
+  ladder and hang jumps still read the default path [I: their records 0x2AE2C / 0x2AA4C / 0x2A9EC are not decoded].
+  Ground jumps: q2 standing (from 300 over the root, 48.04 up, coming down only, cone 120°), q43 with the stick (from
+  the root, 40 + 50, 90°), q26 running (from 300 over, 90.25 + 42.54, 90°), their type 3 from 505.69 over the root,
+  type 1 at it; DICE q31 / q28 / q29 and ladder q22 / q23 as described above. l3_main_hall ledge 944: the Wine jump stood
+  on its back (it hangs toward −x; Lara 113 behind its line on +x), which the wall-side test refuses.
 - Air-grab window [O: tru.exe under Wine, l4_temple, Lara teleported to rest facing the ledge, then the jump key;
-  openunderworld-work/ledgecatch]: a **standing jump** catches ledges 698 / 748 / 782 / 802 / 830 / 883 / 907 over her
-  feet from 100 out of their line, the 830 one also from 200 / 250 / 300 / 400 but not from 425 / 450 / 500 / 550 (a
-  plain 201.6 rise); ledges up to the obstacle bands' top (635.27) are hurdled instead (a 610 one from 100..200 out:
-  `hurdle_ground_attach_high`). The catch is no arc: the root rushes straight at a constant speed, whatever the
-  distance, for 11 ticks of 60 Hz to 113.8 out of the line and 604.2 under it, then blends into the hang (root 161 out,
-  506 under) over 0.15 s. Which query finds it is [U] (q2's capsule above cannot). Ours (`Player::standJumpToLedge`):
-  the nearest ledge hanging toward her with its line within **412** and its point within 60° of her heading, 635.27 <
-  height ≤ **910** [I: the bounds between the measured cases], the hang clear: a straight 11/60 s leap onto the hang
-  pose, then `ledgeb_attach_S`. Earlier teleported falls (l7_arctic_sea beam 2042 / ledge 2065) gave no window: the
-  result depended on the fall state the teleport left her in. Falling and running catches remain `tryGrab` [I].
+  openunderworld-work/ledgecatch, runjump]: a **standing jump** (S248, q2) catches ledges 782 and 830 over her feet from
+  100..**424** out of their line but none from 425 (a plain 201.6 rise; hooks on 0x723AB0 / 0x6FCB10: at 425 no class
+  test runs at all — the sweep-and-prune pass over x / y, 0x70F300 → 0x463DE0 axes mask 3, yields no candidate), the
+  892 and 907 ones from 100 but not from 125 / 150 / 175 / 200 (over the box's 885 only the capsule round the hands'
+  apex reaches them: 907 from 107.6 at most), a 1233 one not even from 100, and 698 / 748 / 802 / 883 ones from 100.
+  A hit sends S278 (T256) to S289, which picks by the ledge class (0x728650, the floor 94.8 out below the ledge): 0 /
+  2 / 12 → S535, 5 / 6 / 7 → the hurdle attaches S958 / S959 / S957 — so ledges up to the obstacle bands' top (635.27)
+  are hurdled (a 610 one from 100..200 out: `hurdle_ground_attach_high`) [O-data]. S535 is no arc: the root rushes
+  straight at a constant speed, whatever the distance, for 11 ticks of 60 Hz to 113.8 out of the line and 604.2 under
+  it, then blends into the hang (root 161 out, 506 under) over 0.15 s. Ours (`Player::standJumpToLedge`): q2's class
+  hit above 635.27, the hang clear: a straight 11/60 s leap onto the hang pose, then `ledgeb_attach_S` [I: one leg
+  for the rush and blend]; the candidate pad is **424.5** [O: between 424 caught and 425 not; its source, the markup
+  boxes in the sweep-and-prune set, is not decoded]. Earlier teleported falls (l7_arctic_sea beam 2042 / ledge 2065)
+  gave no window: the result depended on the fall state the teleport left her in. Falling and running catches remain
+  `tryGrab` [I].
 - Hang leans [O: tru.exe under Wine, l3_main_bedroom ledge 973, chart states read at *(player+0xF10)+0x510]: the stick
   held up keeps her in S434 (no climb, the top climbable), back S456, right at the ledge's end S457 → S449, until
   released (S444, the idle). These states run the hang jump queries (q10 up, q7 / q8 sides, q9 back). Ours plays
@@ -1424,8 +1442,12 @@ Ours:
   inserted portable's kind-4 record takes it out; loose portables are picked up inside that record too (else within
   150 / 100). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
   poles; a receptacle whose script watches its joint slides down it under Lara hanging there (300 units/s to -600 [I]);
-  `multibody` 78 on it answers the slide mapped 0..-600 -> 0..40 degrees [I: tru.exe's second degree of freedom not
-  traced], so l4_ballcourt 6502 drives door 6505 to 80 degrees as its old hinge did.
+  `multibody` 78 on it answers that slide in units: GetJointValue (0x4A9BB0 -> 0x4A5D90) reads a cylindrical joint's
+  (type 2) limit 1 as its linear position (0x4DA460, no conversion; limit 2 is its angle in degrees, a hinge's limit 1
+  degrees) [O decomp]. l4_ballcourt 6502's loop passes twice it to door 6505's `multibody` 77 limit 1, both ends — on
+  the door's own cylindrical joint (marker kind 2, its Z pointing down) a linear limit (0x4A5C40 takes limit 1 of type
+  2 as is) — so the door rises twice the lever's drop (ours: kinematically, pinned at its limit, which starts 0..0)
+  [O decomp; I: marker kind = joint type, the slide numbers].
   Receptacles get their graph also without a `modifiable` member or a script (l4_temple holes 5230-5232) and start empty
   when their start record is their insert target [I]; they have no use (l4_ballcourt lever 6502 now needs its pole).
   Saved (objects `inserted`, `slides`, `placed`). Not done: an insert clip (none in lara.drm), the non-graph receptacles,

@@ -1976,29 +1976,35 @@ TEST(GameReal, JunglehubRunningJumpReachesHigherLedge) {
     EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 851);
 }
 
-// tru.exe under Wine (openunderworld-work/ledgecatch, Lara at rest facing the ledge, then jump): l4_temple ledge 1155's
-// middle segment, 830 over the floor (line x -165.9 ours, hanging toward -x), is caught by a standing jump from 100 and
-// 400 out, straight onto its hang in 11 ticks; from 450 out she only jumps (a plain 201.6 rise).
+// tru.exe under Wine (openunderworld-work/ledgecatch, runjump; Lara at rest facing the ledge, then jump): l4_temple
+// ledge 1155's middle segment, 830 over the floor (line x -165.9 ours, hanging toward -x), is caught by a standing jump
+// from 100 and 424 out, straight onto its hang in 11 ticks; from 425 out she only jumps (a plain 201.6 rise). Ledge
+// 1166, 907 over the floor (line y -10429.3, hanging toward -y): caught from 100, not from 125 (over q2's box only the
+// capsule round the hands' apex reaches it).
 TEST(GameReal, StandingJumpCatchesHighLedgeWithinReach) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     Actions jump;
     jump.jump = true;
-    for (const float d : {100.0f, 400.0f, 450.0f}) {
-        auto w = unitWorld(bf, "l4_temple", {{-165.9f - d, -11850.2f, 1750}, 0});
+    struct Case { uint16_t id; vec3 at; float yaw; bool caught; };
+    const auto at1155 = [](float d) { return vec3(-165.9f - d, -11850.2f, 1750); };
+    const auto at1166 = [](float d) { return vec3(-4178.7f, -10429.3f - d, -2780); };
+    for (const Case& c : {Case{1155, at1155(100), 0, true}, Case{1155, at1155(424), 0, true}, Case{1155, at1155(425), 0, false},
+                          Case{1166, at1166(100), glm::half_pi<float>(), true}, Case{1166, at1166(125), glm::half_pi<float>(), false}}) {
+        auto w = unitWorld(bf, "l4_temple", {c.at, c.yaw});
         const auto& s = w.player().state();
         int leap = 0;
         for (int i = 0; i < 150; ++i) {
             w.tick(i == 20 ? jump : Actions{});
             leap += s.state == State::HangJump;
         }
-        if (d > 412) {
-            EXPECT_NE(s.state, State::Hang) << d;
+        if (!c.caught) {
+            EXPECT_NE(s.state, State::Hang) << c.id << " " << c.at.x << " " << c.at.y;
             continue;
         }
-        ASSERT_EQ(s.state, State::Hang) << d;
-        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1155) << d;
-        EXPECT_NEAR(leap, 11, 1) << d; // 60 Hz ticks of the straight leap
+        ASSERT_EQ(s.state, State::Hang) << c.id << " " << c.at.x << " " << c.at.y;
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, c.id);
+        EXPECT_NEAR(leap, 11, 1) << c.id; // 60 Hz ticks of the straight leap
     }
 }
 
@@ -3622,12 +3628,15 @@ TEST(GameReal, BallcourtLeverIgnoresAUse) {
     use.interact = true;
     for (int i = 0; i < 30; ++i) w.tick(use);
     for (int i = 0; i < 240; ++i) w.tick({});
-    ASSERT_EQ(w.physics().hinges.size(), 1u) << "door 6505 only: the lever slides on its joint";
-    EXPECT_LT(std::abs(w.physics().angle(0)), 0.1f) << "shut (its rest angle)";
+    EXPECT_TRUE(w.physics().hinges.empty()) << "the lever and door 6505 both slide on cylindrical joints";
+    const auto* door = w.script().find(6505);
+    ASSERT_TRUE(door);
+    EXPECT_LT(std::abs(door->body[3].z), 5.0f) << "shut (its joint limit at rest)";
 }
 
 // l4_ballcourt: pole 6503 inserted into pole lever 6502 and hung on slides the lever down; its loop passes the lever's
-// coordinate x 2 to door 6505's joint limit (vt 54, multibody 77): the door swings open.
+// joint value (multibody 78 limit 1: the cylindrical joint's linear position, units) x 2 to door 6505's limit 1 (vt 54,
+// multibody 77: linear on the door's cylindrical joint, whose marker Z points down): the door rises twice the drop.
 TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -3660,8 +3669,14 @@ TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
     w.restore(s, s.yaw, -0.25f);
     for (int i = 0; i < 300; ++i) w.tick({});
     EXPECT_EQ(w.player().state().state, game::State::PoleHang);
-    ASSERT_EQ(w.physics().hinges.size(), 1u);
-    EXPECT_NEAR(std::abs(w.physics().angle(0)), glm::radians(80.0f), 0.05f) << "door 6505 open";
+    lever = w.script().find(6502);
+    ASSERT_TRUE(lever && lever->joint);
+    const float drop = lever->joint->position;
+    EXPECT_LE(drop, -350.0f) << "into its watch";
+    const auto* door = w.script().find(6505);
+    ASSERT_TRUE(door);
+    EXPECT_NEAR(door->body[3].z, -2 * drop, 2) << "door 6505 risen twice the lever's drop";
+    EXPECT_NEAR(glm::length(glm::vec2(door->body[3])), 0, 1) << "straight up its joint";
 }
 
 // Script coverage survey (docs/formats/SCRIPTS.md "Survey"). Static: native call sites per (native type, function)
@@ -3952,13 +3967,14 @@ MakeWorld worldMaker(const cdc::BigfileSet& bf, std::string unit, std::optional<
 } // namespace
 
 // l4_ballcourt: Lara by pole lever 6502 (a receptacle now: the door needs its pole, ProgressionReal.BallcourtPoleLeverOpensDoor)
-// and door 6505's hinge, interacting and running about.
+// and door 6505 (on its cylindrical joint), interacting and running about.
 TEST(GameReal, BallcourtLeverIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n1.7 forward 1\n2.85 forward 0\n2.9 right 1\n6.1 right 0\n");
     const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}), input, 430);
-    EXPECT_FALSE(w->physics().hinges.empty()) << "door 6505";
+    ASSERT_TRUE(w->script().find(6505)) << "door 6505";
+    EXPECT_LT(std::abs(w->script().find(6505)->body[3].z), 5.0f) << "shut: no pole in the lever";
 }
 
 // The same with l4_ballcourt's enemies live, as in ou-game (poacher fire and hit reactions interrupt the run): plane

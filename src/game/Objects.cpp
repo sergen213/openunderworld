@@ -11,6 +11,12 @@
 
 namespace ou::game {
 namespace {
+// A rigid body (class 34) whose first model marker is a cylindrical joint (kind 2: l4_ballcourt's ca_rb_wall_hpole_door):
+// it slides along the marker's Z within its `multibody` 77 limit 1 (units) instead of swinging [O decomp 0x4A5C40 /
+// 0x4A5D90: limit 1 of joint type 2 is linear; I: marker kind = joint type].
+bool cylinderDoor(const physics::ObjectPhysics& p) {
+    return p.physClass == physics::kClassRigidBody && !p.markers.empty() && p.markers[0].kind == 2;
+}
 
 // [I] Opening angle of a rigid-body hinge door. tru.exe couples it to the lever's joint every tick (l4_ballcourt lever
 // 6502 fn 2/3: door limit = lever angle + 2 degrees); we do not run that loop and swing the door fully open instead.
@@ -1054,11 +1060,13 @@ void World::bindMultibody() {
             return true;
         }
         if (function == 78) {
-            // A pole-hole lever reads its cylindrical joint's limit-1 coordinate (args 0, 1; l4_ballcourt 6502 passes
-            // twice it to door 6505's limit, vt 54). [I] Ours slides only (slides_): its 0..-600 maps onto 0..40 degrees,
-            // the swing the old hinge lever drove door 6505 to 80 with; tru.exe's second degree of freedom is not traced.
+            // GetJointValue (0x79B710 -> 0x4A9BB0 -> 0x4A5D90) by the joint's type (+0x178): a hinge (1) answers limit 1
+            // in degrees; a cylindrical joint (2) limit 1 as its linear position in units (0x4DA460, no conversion) and
+            // limit 2 its angle in degrees [O decomp]. The pole-hole levers' joints are cylindrical (marker kind 2): l4_ballcourt
+            // 6502 reads its slide (args 0, 1) and passes twice it to door 6505's limit 1 (vt 54), a linear limit on the
+            // door's own cylindrical joint (0x4A5C40: limit 1 of type 2 taken as is) — the door rises twice the lever's drop.
             float value = index >= 0 ? glm::degrees(physics_.angle(index)) : 0.0f;
-            if (const auto sl = slides_.find(uid); index < 0 && sl != slides_.end()) value = -sl->second * (40.0f / 600.0f);
+            if (const auto sl = slides_.find(uid); index < 0 && sl != slides_.end()) value = sl->second;
             result = std::bit_cast<uint32_t>(value);
             return true;
         }
@@ -1095,7 +1103,7 @@ void World::syncObjects() {
         // A receptacle holding an inserted portable slides on its joint instead (tickInserted).
         const bool holding = slides_.contains(o.uid) || script_.receptacleGraph(o.name) ||
                              std::ranges::any_of(inserted_, [&](const auto& e) { return e.second.receptacle == o.uid; });
-        if ((o.kind == script::Kind::Door || o.kind == script::Kind::Switch) && !o.clips && !holding &&
+        if ((o.kind == script::Kind::Door || o.kind == script::Kind::Switch) && !o.clips && !holding && !cylinderDoor(p) &&
             (o.kind == script::Kind::Switch || p.physClass == physics::kClassRigidBody) && !p.markers.empty()) {
             if (const auto mp = physics::massProps(p); mp.mass > 0) {
                 const auto& m = p.markers[0];
@@ -1144,6 +1152,19 @@ void World::tickObjects(float dt) {
         glm::mat4 model(1); // model-space rigid motion of the segment
         if (c.hinge >= 0) {
             model = glm::inverse(c.intro) * physics_.bodies[physics_.hinges[c.hinge].body].model();
+            script_.setBody(c.uid, model);
+        } else if (const auto* op = objectPhysics(o->name);
+                   op && o->kind == script::Kind::Door && !o->clips && !plates_.contains(c.uid) && cylinderDoor(*op)) {
+            // Pinned within its limit: Havok holds the body there (record limit 0..0 on until the script moves it) [I: at once]
+            float& at = doorSlides_[c.uid];
+            const auto lo = multibodyLo_.find(c.uid), hi = multibodyHi_.find(c.uid);
+            if (!multibodyLimitOff_.contains(c.uid))
+                at = std::clamp(at, lo != multibodyLo_.end() ? glm::degrees(lo->second) : 0.0f,
+                                hi != multibodyHi_.end() ? glm::degrees(hi->second) : 0.0f);
+            const auto& m = op->markers[0];
+            const glm::mat4 r = glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) *
+                                glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
+            model = glm::translate(glm::mat4(1), vec3(r[2]) * at);
             script_.setBody(c.uid, model);
         } else if (const auto joint = uberJointPose(c.uid)) {
             model = glm::inverse(c.intro) * *joint * c.intro;

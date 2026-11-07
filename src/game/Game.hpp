@@ -377,9 +377,11 @@ private:
         vec2 dir{0, 1};
         float frames = 40, minT = 1, cone = 3.1415927f;
         bool falling = false;
+        bool classes = false; // ground jumps: the query's class record tests (Player.cpp) instead of the plain capsule
         float minZ = -1e9f; // ours: ledge points under this do not count
     };
-    // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc.
+    // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
+    // (`classes`) passing the ground jumps' class record tests.
     JumpTarget ledgeOnArc(const JumpQuery& q) const;
     // A standing jump at a ledge above the obstacle range in front of her: the straight leap onto its hang (Player.cpp)
     bool standJumpToLedge();
@@ -967,6 +969,9 @@ private:
     struct Inserted { int32_t receptacle = 0; int markup = -1; };
     std::map<int32_t, Inserted> inserted_;
     std::map<int32_t, float> slides_;
+    // Rigid doors on a cylindrical joint (marker kind 2, l4_ballcourt 6505): position along the joint (units, World::
+    // tickObjects), held within the `multibody` 77 limit 1 (kept in multibodyLo_ / Hi_ like the hinges' radians).
+    std::map<int32_t, float> doorSlides_;
     std::set<int32_t> placed_;
     std::map<int32_t, physics::Joint1> plates_; // pressure-plate joints by uid (stepPhysics): Jolt's x and v between steps
     void bindMultibody();
