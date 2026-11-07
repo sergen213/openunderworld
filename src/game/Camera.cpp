@@ -315,7 +315,7 @@ nlohmann::json World::serializeRuntime() const {
                                    o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint}},
                         {"spline", std::move(spline)}, {"blendOut", blendOut_}, {"blendFrom", pose(blendFrom_)}}},
             {"hair", std::move(hair)}, {"playerUnit", playerUnit_}, {"air", air_}, {"submerged", submerged_},
-            {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)},
+            {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"limitsOff", multibodyLimitOff_}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)},
             {"water", [&] {
                  nlohmann::json w = nlohmann::json::array();
                  for (const auto& [uid, s] : waterStates_)
@@ -368,6 +368,7 @@ void World::restoreRuntime(const nlohmann::json& j) {
         for (const auto& [uid, s] : waterStates_)
             if (const auto [m, u] = waterVolume(uid); m) applyWaterState(*m, u->offset);
         multibodyLo_ = std::move(lo), multibodyHi_ = std::move(hi); // the hinges take them when the next sync builds them
+        multibodyLimitOff_ = j.value("limitsOff", std::set<int32_t>{}); // older saves: every limit on
         syncedObjects_ = ~size_t(0);
         focus_ = focus, orbit_ = o, cam_ = prevCam_ = c;
         playerUnit_ = playerUnit; // the scripts heard of this unit already: no level-load vt 13 again (World::tick)

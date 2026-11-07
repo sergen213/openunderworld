@@ -1167,3 +1167,42 @@ TEST(ProgressionReal, TempleRevealReopens) {
     EXPECT_TRUE(std::ranges::any_of(std::views::iota(size_t(0), open->size()), [&](size_t i) { return moved((*open)[i], closed[i]); }))
         << "the temple stands open";
 }
+
+// l5_valaskjalf chains 6943 / 6944 (ar_ani_infinite_chain, uber: state 0 rest, command 0 (trigger 16 param 0) -> 1
+// running, command 1 -> 2 detach -> 3 after 1 s -> 1): unlike 6939-6942, whose constructors send command 0 after 3 s,
+// they start running only when the jammed gear 6985 (vt 34, its joint range 45..180) sends their command members
+// (CALL4 uberobjectbase 1). Detach volumes 7025 / 7026 (vt 55: their command 1 local) change them only after that
+// [O bytecode]; before it the command finds no transition, as in tru.exe (0x4D4BE0).
+TEST(ProgressionReal, ValaskjalfChainsDetach) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l5_valaskjalf", anims,
+                  game::Spawn{{0, 0, -1e6f}, 0});
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 300; ++i) w.tick({});
+    const auto state = [&](int32_t id) { const auto* s = w.uberState(id); return s && !s->empty() ? (*s)[0] : 99u; };
+    const auto enter = [&](int32_t volume) {
+        place(w, w.script().find(volume)->pos - vec3(0, 0, script::kTestPointHeight), 0);
+        for (int i = 0; i < 20; ++i) w.tick({});
+    };
+    EXPECT_EQ(state(6939), 1u) << "6939 runs from its constructor";
+    for (const int32_t chain : {6943, 6944}) EXPECT_EQ(state(chain), 0u) << chain << " at rest";
+    enter(7025);
+    EXPECT_EQ(state(6944), 0u) << "no detach before the chain runs";
+    place(w, vec3(0, 0, -1e6f), 0);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    w.script().call(6985, 34); // the freed jammed gear
+    for (int i = 0; i < 60; ++i) w.tick({});
+    for (const int32_t chain : {6943, 6944}) EXPECT_EQ(state(chain), 1u) << chain << " runs";
+    for (const auto& [volume, chain] : {std::pair{7025, 6944}, std::pair{7026, 6943}}) {
+        enter(volume);
+        EXPECT_EQ(state(chain), 2u) << volume << " detaches " << chain << " (1 -> 2)";
+        place(w, vec3(0, 0, -1e6f), 0);
+        for (int i = 0; i < 180; ++i) w.tick({});
+        EXPECT_EQ(state(chain), 1u) << chain << " runs again (2 -> 3 -> 1)";
+    }
+    for (const int32_t uid : {6985, 6943, 6944, 7025, 7026})
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}

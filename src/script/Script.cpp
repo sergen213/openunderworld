@@ -1864,6 +1864,16 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(0);
                 if (!plateLimit || !multibody_) return true;
             }
+            // multibody 80 (0x4A9D90 -> 0x493A80): drops the range watches of joint args[0], limit args[1] (1..3) with id
+            // args[2] (-1: all) — l5_valaskjalf jammed gear 6985 stops its 45..180 watch (id 3) once it ran vt 34. Ours
+            // keep one degree of freedom's watches: limit 1.
+            if (!std::strcmp(name, "multibody") && nc.function == 80 && nc.args.size() == 3) {
+                nc.result = vm::Value::scalar(0);
+                if (nc.args[1].bits - 1u >= 3u || nc.args[0].bits != 0 || nc.args[1].bits != 1) return true; // out of range: no-op
+                if (Object* jo = findMut(self->uid); jo && jo->joint)
+                    std::erase_if(jo->joint->ranges, [&](const auto& r) { return int32_t(nc.args[2].bits) == -1 || r.id == int32_t(nc.args[2].bits); });
+                return true;
+            }
             if (!std::strcmp(name, "multibody") && multibody_) {
                 if (nc.function == 2) self->fields[1] = 1; // Enable sets the script object's state byte
                 uint32_t result = 0;

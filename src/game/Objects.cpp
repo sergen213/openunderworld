@@ -971,6 +971,23 @@ void World::bindMultibody() {
             (o->joint ? *o->joint : o->joint.emplace(script::Object::Joint{})).speed = std::bit_cast<float>(args[2].bits);
             return true;
         }
+        // 75 (0x4A9AB0 -> 0x4D9F50): limit `args[1]` (1..3) of joint `args[0]` on / off (joint +0x174 bit 2 << (limit - 1);
+        // 0x4E7550 tests only within the joint's [lo, hi] while it is set). Ours have one degree of freedom: limit 1 off
+        // frees the hinge (+-pi) and lets a motor run past the joint limit. l5_valaskjalf hpoles 6984 take it off when the
+        // jammed gear 6985 turns (vt 54). Limits 2 / 3 index degrees of freedom ours lack [I: no effect].
+        if (function == 75 && args.size() == 3) {
+            if (args[1].bits - 1u >= 3u) return true; // "Limit index out of range"
+            if (args[0].bits != 0 || args[1].bits != 1) return true;
+            const bool on = (args[2].bits & 0xFF) != 0;
+            if (on) multibodyLimitOff_.erase(uid);
+            else multibodyLimitOff_.insert(uid);
+            if (index >= 0) {
+                const auto lo = multibodyLo_.find(uid), hi = multibodyHi_.find(uid);
+                physics_.hinges[index].lo = on ? (lo != multibodyLo_.end() ? lo->second : 0.0f) : -glm::pi<float>();
+                physics_.hinges[index].hi = on ? (hi != multibodyHi_.end() ? hi->second : kDoorOpen + 0.02f) : glm::pi<float>();
+            }
+            return true;
+        }
         if (function != 77 && function != 78 && function != 79) return false;
         if (args.empty() || args[0].bits != 0) return false; // one hinge per current rigid-body object
         if (function == 77) {
@@ -1031,6 +1048,7 @@ void World::syncObjects() {
                 hinge = physics_.addHinge(physics_.addBody(mp, intro), m.pos, r * glm::vec3(1, 0, 0), 0, kDoorOpen + 0.02f);
                 if (const auto lo = multibodyLo_.find(o.uid); lo != multibodyLo_.end()) physics_.hinges[hinge].lo = lo->second;
                 if (const auto hi = multibodyHi_.find(o.uid); hi != multibodyHi_.end()) physics_.hinges[hinge].hi = hi->second;
+                if (multibodyLimitOff_.contains(o.uid)) physics_.hinges[hinge].lo = -glm::pi<float>(), physics_.hinges[hinge].hi = glm::pi<float>();
                 physics_.hinges[hinge].maxTorque = 1e11f; // [I] a motor that always wins against gravity
                 if (const auto a = angles.find(o.uid); a != angles.end()) physics_.setAngle(hinge, a->second);
             }
@@ -1403,6 +1421,7 @@ void World::tickJoints(float dt) {
             float lo = p && p->jointLimit ? p->jointLimit->lo : -1e30f, hi = p && p->jointLimit ? p->jointLimit->hi : 1e30f;
             if (const auto l = multibodyLo_.find(o.uid); l != multibodyLo_.end()) lo = glm::degrees(l->second);
             if (const auto u = multibodyHi_.find(o.uid); u != multibodyHi_.end()) hi = glm::degrees(u->second);
+            if (multibodyLimitOff_.contains(o.uid)) lo = -1e30f, hi = 1e30f; // `multibody` 75: limit off
             x = std::clamp(x + j.speed * 30.0f * dt, lo, std::max(lo, hi));
             // One prismatic joint marker (kind 2, as the uber joint records' type byte [I]): the body slides along its
             // Z axis (ms_rb_tomb_lock sinks). [U] bodies with several (ca_rb_crusher_slim's two jaws and their link).
