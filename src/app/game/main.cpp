@@ -317,39 +317,50 @@ struct LaraMeshes {
 
 // Scripted objects (src/script): animated switches/doors and moved blocks, re-posed on the CPU in model space.
 // Their level-scene meshes are tagged " @intro <unique id>" (formats::loadLevelScene); an uber section drawn with a
-// model of its own adds " @section <index>" and rides its joint (World::uberSectionBody).
+// model of its own adds " @section <index>" and rides its joint (World::uberSectionBody); a model only state action 1
+// switches the section to adds " @model <model>".
 struct ScriptedMeshes {
     std::map<int32_t, std::vector<size_t>> meshes; // intro unique id -> scene mesh indices
     std::map<int32_t, std::vector<glm::mat4>> posed; // uploaded with a non-bind pose: that palette
     std::set<int32_t> hidden;                      // collected pickups, uploaded collapsed to a point
-    std::map<std::pair<int32_t, int32_t>, std::vector<size_t>> sections; // (uid, section) -> scene mesh indices
-    std::map<std::pair<int32_t, int32_t>, std::vector<glm::mat4>> sectionPosed; // uploaded off the bind pose: that palette
+    std::set<int32_t> switched;                    // own mesh collapsed: its section shows another model (action 1)
+    // (uid, section, model; -1 the section record's model) -> scene mesh indices
+    std::map<std::tuple<int32_t, int32_t, int32_t>, std::vector<size_t>> sections;
+    std::map<std::tuple<int32_t, int32_t, int32_t>, std::vector<glm::mat4>> sectionPosed; // uploaded off the bind pose: that palette
     std::vector<std::pair<int32_t, float>> faded;  // scratch: fx::System::fadedOwners
     std::vector<ou::scene::Vertex> scratch;
 
     void index(const ou::scene::SceneData& s) {
-        meshes.clear(), posed.clear(), hidden.clear(), sections.clear(), sectionPosed.clear();
+        meshes.clear(), posed.clear(), hidden.clear(), switched.clear(), sections.clear(), sectionPosed.clear();
         for (size_t i = 0; i < s.meshes.size(); ++i)
             if (const auto at = s.meshes[i].origin.rfind(" @intro "); at != std::string::npos) {
-                const int32_t uid = std::atoi(s.meshes[i].origin.c_str() + at + 8);
-                if (const auto sec = s.meshes[i].origin.find(" @section ", at); sec != std::string::npos)
-                    sections[{uid, std::atoi(s.meshes[i].origin.c_str() + sec + 10)}].push_back(i);
-                else
+                const std::string& o = s.meshes[i].origin;
+                const int32_t uid = std::atoi(o.c_str() + at + 8);
+                if (const auto sec = o.find(" @section ", at); sec != std::string::npos) {
+                    const auto model = o.find(" @model ", sec);
+                    sections[{uid, std::atoi(o.c_str() + sec + 10), model != std::string::npos ? std::atoi(o.c_str() + model + 8) : -1}].push_back(i);
+                } else {
                     meshes[uid].push_back(i);
+                }
             }
     }
     // Sections follow their joint and play their anim component's clip (World::uberSectionPose, under the joint's motion);
-    // a removed section (action 28) or a hidden object collapses to a point.
+    // a removed section (action 28), a hidden object or a model the section does not show now (action 1) collapses
+    // to a point.
     void poseSections(const ou::game::World& w, const ou::scene::SceneData& s, ou::render::Renderer& r) {
         std::vector<glm::mat4> palette;
         for (const auto& [key, indices] : sections) {
+            const auto [uid, section, model] = key;
             bool removed = false;
-            const auto body = w.uberSectionBody(key.first, key.second, &removed);
-            const bool gone = removed || hidden.contains(key.first);
+            const auto body = w.uberSectionBody(uid, section, &removed);
+            int32_t record = -1;
+            const int32_t now = w.uberSectionModel(uid, section, &record);
+            const bool shown = model >= 0 ? now == model : now < 0 || now == record;
+            const bool gone = removed || hidden.contains(uid) || !shown;
             const glm::mat4 m = body.value_or(glm::mat4(1.0f));
             palette.clear();
             if (gone) palette.push_back(glm::mat4(0.0f));
-            else if (auto p = w.uberSectionPose(key.first, key.second)) {
+            else if (auto p = w.uberSectionPose(uid, section)) {
                 palette = std::move(*p);
                 for (auto& b : palette) b = m * b;
             } else {
@@ -367,6 +378,23 @@ struct ScriptedMeshes {
                 r.updateVertices(i, scratch);
             }
             sectionPosed[key] = palette;
+        }
+    }
+    // An object whose own mesh's section shows another model now (World::switchedObjects): that mesh collapses to a
+    // point (the section's " @model" mesh draws instead, poseSections); switched back, pose() uploads it again.
+    void swap(const std::set<int32_t>& ids, const ou::scene::SceneData& s, ou::render::Renderer& r) {
+        for (auto it = switched.begin(); it != switched.end();)
+            if (!ids.contains(*it)) posed[*it] = {glm::mat4(0.0f)}, it = switched.erase(it); // stale: pose() re-uploads
+            else ++it;
+        for (const int32_t id : ids) {
+            const auto it = meshes.find(id);
+            if (it == meshes.end() || hidden.contains(id) || !switched.insert(id).second) continue;
+            for (const size_t i : it->second) {
+                scratch = s.meshes[i].vertices;
+                if (scratch.empty()) continue;
+                for (auto& v : scratch) std::copy_n(scratch[0].position, 3, v.position);
+                r.updateVertices(i, scratch);
+            }
         }
     }
     // Picked-up rewards vanish once their instance fade (class 7, their "pickup" list) is done: their meshes degenerate
@@ -397,7 +425,7 @@ struct ScriptedMeshes {
     void pose(const ou::script::Runtime& rt, const ou::scene::SceneData& s, ou::render::Renderer& r) {
         for (const auto& o : rt.objects()) {
             const auto it = meshes.find(o.uid);
-            if (it == meshes.end()) continue;
+            if (it == meshes.end() || switched.contains(o.uid)) continue;
             auto palette = rt.pose(o);
             if (const auto p = posed.find(o.uid); p != posed.end() ? palette && p->second == *palette : !palette) continue;
             for (const size_t i : it->second) {
@@ -1312,7 +1340,7 @@ struct EffectsView {
     static int32_t enemyOwner(int32_t uid) { return -(0x10000000 | (uid & 0x0FFFFFFF)); }
     static bool follows(const std::shared_ptr<const ou::fx::ObjectFx>& fx) { return fx && (!fx->ribbons.empty() || !fx->bolts.empty()); }
     struct ObjectClipAt { std::string object, clip; double t = 0; glm::mat4 model{1}; };
-    std::map<int32_t, ObjectClipAt> objectClipAt; // script object uid -> last tick's clip
+    std::map<std::pair<int32_t, int>, ObjectClipAt> objectClipAt; // (script object uid, uber section) -> last tick's clip
     // Placed objects with class-7 fades (rewards, keys): intro uid -> effects, world matrix.
     std::map<int32_t, std::pair<std::shared_ptr<const ou::fx::ObjectFx>, glm::mat4>> intros;
     // A reward picked up: its "pickup" list's variant-1 records (tru.exe 0x5B26C0 with variant 0x400 [I: the pickup
@@ -1388,22 +1416,25 @@ struct EffectsView {
         }
         // Script objects (switches, doors, uber objects, anim-graph objects such as light fixtures): their clips' events
         // as the characters' (tru.exe runs every instance's animation events, 0x5BA0D0), owner = intro uid.
-        std::map<int32_t, ObjectClipAt> seen;
+        // Uber objects: one entry per section instance running a clip (each has its own anim component).
+        std::map<std::pair<int32_t, int>, ObjectClipAt> seen;
         for (const auto& oc : w.objectClips()) {
             const auto fx = library->get(oc.object);
-            const auto last = objectClipAt.find(oc.uid);
-            seen[oc.uid] = {oc.object, oc.clip, oc.t, oc.model};
+            const std::pair key{oc.uid, oc.section};
+            const auto last = objectClipAt.find(key);
+            seen[key] = {oc.object, oc.clip, oc.t, oc.model};
             if (!fx) continue;
             std::vector<glm::mat4> pose;
-            if (follows(fx)) pose = w.objectBones(oc.uid), system.track(oc.uid, oc.model, pose);
+            if (follows(fx)) pose = w.objectBones(oc.uid, oc.section), system.track(oc.uid, oc.model, pose);
             const bool had = last != objectClipAt.end();
             clipEvents(fx, oc.clip, had ? last->second.clip : std::string(), had ? last->second.t : 0.0, oc.t,
-                       oc.loop ? std::max(oc.duration, 1e-3) : 1e9, 0, oc.model, [&] { return pose.empty() ? w.objectBones(oc.uid) : pose; }, oc.uid);
+                       oc.loop ? std::max(oc.duration, 1e-3) : 1e9, 0, oc.model,
+                       [&] { return pose.empty() ? w.objectBones(oc.uid, oc.section) : pose; }, oc.uid);
         }
-        for (const auto& [uid, l] : objectClipAt) // clips that ended: their variant-2 records (0x43C9C0 on the next clip)
-            if (!seen.contains(uid)) {
+        for (const auto& [key, l] : objectClipAt) // clips that ended: their variant-2 records (0x43C9C0 on the next clip)
+            if (!seen.contains(key)) {
                 std::vector<glm::mat4> b;
-                variant(library->get(l.object), l.clip, 2, 0, l.model, b, [&] { return w.objectBones(uid); }, uid);
+                variant(library->get(l.object), l.clip, 2, 0, l.model, b, [&] { return w.objectBones(key.first, key.second); }, key.first);
             }
         objectClipAt = std::move(seen);
     }
@@ -3166,6 +3197,7 @@ int main(int argc, char** argv) {
         gadgets.pose(*world, streamed, scene, *renderer);
         objects.hide(world->collected, scene, *renderer, effects.system);
         objects.hide(world->removedObjects(), scene, *renderer, effects.system); // broken urns, exploded barrels
+        objects.swap(world->switchedObjects(), scene, *renderer); // own meshes showing another model (action 1)
         objects.poseSections(*world, scene, *renderer); // uber sections on their joints (grapple handles)
         ou::render::Camera cam;
         cam.verticalFovDeg = c.fovDeg > 0 ? c.fovDeg : world->fovDeg; // spline cameras have their own

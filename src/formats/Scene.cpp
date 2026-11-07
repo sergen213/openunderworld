@@ -248,10 +248,12 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
     if (!listBytes) sc.warnings.push_back("\\tr8\\pc-w\\objectlist.txt not in bigfile: intros not placed");
     const auto objectNames = listBytes ? parseObjectList({reinterpret_cast<const char*>(listBytes->data()), listBytes->size()})
                                        : std::map<uint16_t, std::string>{};
-    // sections: uber sections drawn with a model of their own (below), by section index
+    // sections: uber sections drawn with a model of their own (below), by section index; models: the other models a
+    // section's state action 1 switches it to, by (section, model)
     struct ObjectMeshes {
         std::string name; std::vector<scene::MeshData> meshes; size_t intros = 0; std::string problem; bool hidden = false;
         std::vector<std::pair<uint32_t, std::vector<scene::MeshData>>> sections;
+        std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::vector<scene::MeshData>>> models;
     };
     std::map<uint16_t, ObjectMeshes> objects;
     for (const auto& in : u.intros) {
@@ -289,15 +291,25 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
                             // object's transform (0x4D3DA0 -> 0x4D1110 -> 0x4D0E50). The first section on model 0
                             // stays the object's own mesh (posed by its script, its model-0 joint); the others are
                             // tagged " @section <index>" (ou-game poses them by World::uberSectionBody). Without a
-                            // section on model 0 (sa_uo_naga_statue) model 0 is not drawn.
+                            // section on model 0 (sa_uo_naga_statue) model 0 is not drawn. State action 1 (0x4D86A0)
+                            // sets a section instance's model (+0x234) at runtime (ms_uo_break_pipe: the broken pipe,
+                            // model 1): every model a section can switch to is placed as well, tagged
+                            // " @section <index> @model <model>"; ou-game draws the one the section shows
+                            // (World::uberSectionModel) and collapses the others.
                             bool main = false;
                             for (uint32_t k = 0; k < uber->sections.size(); ++k) {
                                 const uint32_t m = uber->sections[k].model;
+                                std::set<uint32_t> switched;
+                                for (const auto& actions : uber->sections[k].stateActions)
+                                    for (const auto& a : actions)
+                                        if (a.type == 1 && (a.value & 0xFF) != m) switched.insert(a.value & 0xFF);
+                                for (const uint32_t to : switched)
+                                    if (to < ids.size() && ids[to] && !decoded[ids[to]].empty()) o.models.push_back({{k, to}, decoded[ids[to]]});
                                 if (m >= ids.size() || !ids[m] || decoded[ids[m]].empty()) continue;
                                 if (m == 0 && !main) main = true, o.meshes = decoded[ids[m]];
                                 else o.sections.push_back({k, decoded[ids[m]]});
                             }
-                            if (!main && o.sections.empty()) o.problem = "no uber section has a drawable model";
+                            if (!main && o.sections.empty() && o.models.empty()) o.problem = "no uber section has a drawable model";
                         }
                     }
                 } catch (const cdc::FormatError& e) {
@@ -311,6 +323,8 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
         const std::string tag = std::string(dormant(in) ? " @dormant" : "") + " @intro " + std::to_string(in.uniqueId);
         place(sc, o.meshes, m, tag);
         for (const auto& [k, meshes] : o.sections) place(sc, meshes, m, tag + " @section " + std::to_string(k));
+        for (const auto& [km, meshes] : o.models)
+            place(sc, meshes, m, tag + " @section " + std::to_string(km.first) + " @model " + std::to_string(km.second));
     }
     for (const auto& [id, o] : objects)
         if (!o.problem.empty())

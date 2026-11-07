@@ -621,18 +621,20 @@ public:
         return it == uberStates_.end() ? nullptr : &it->second;
     }
     // Script objects playing an animation-list clip this tick (switches / doors: their pull / open and held idle
-    // clips; uber objects: their travel clip while it runs forward; anim-graph objects: their state / transition clip,
-    // e.g. light fixtures' on / off): for their clip effect events (EFFECTS.md).
+    // clips; uber objects: every section whose anim component runs a clip, one entry each; anim-graph objects: their
+    // state / transition clip, e.g. light fixtures' on / off): for their clip effect events (EFFECTS.md).
     struct ObjectClip {
         int32_t uid = 0;
         std::string object, clip; // objectlist name, animation-list name
         double t = 0, duration = 0; // seconds into the clip, its length
         bool loop = false;
         glm::mat4 model{1};       // intro frame
+        int section = -1;         // the uber section playing it, -1 not an uber section
     };
     std::vector<ObjectClip> objectClips() const;
-    // Posed segment frames (object frame) of a switch / door at its clip time; empty = bind pose.
-    std::vector<glm::mat4> objectBones(int32_t uid) const;
+    // Posed segment frames (object frame) of a switch / door at its clip time, or of uber section `section`'s
+    // skeleton at its clip; empty = bind pose.
+    std::vector<glm::mat4> objectBones(int32_t uid, int section = -1) const;
     // Uber objects whose model-0 section was removed (action 28: broken urns, exploded barrels); drawn no more.
     std::set<int32_t> removedObjects() const;
     int32_t heldPortable() const { return held_; } // the portable Lara carries, 0 none
@@ -659,6 +661,12 @@ public:
     // Skin palette (model space) of uber object `uid`'s section `section` at the animation its section instance's anim
     // component plays (transitions 0x4D4A00, state actions 2 / 3 0x4D86A0), nullopt while it stands in the bind pose.
     std::optional<std::vector<glm::mat4>> uberSectionPose(int32_t uid, int32_t section) const;
+    // The object model uber section `section` draws now (instance +0x234: its record's +0x18 until state action 1 sets
+    // another), -1 unknown; `record` (optional) receives the record's model.
+    int32_t uberSectionModel(int32_t uid, int32_t section, int32_t* record = nullptr) const;
+    // Uber objects whose model-0 section (the object's own mesh, formats::loadLevelScene) draws another model now
+    // (state action 1: ms_uo_break_pipe's broken pipe).
+    std::set<int32_t> switchedObjects() const;
     // Uber state action 0x1A set instance +0x1C bit 2 on it (0x19 clears it): no grapple target (0x6ECCA0).
     bool uberGrappleOff(int32_t uid) const {
         const auto it = uberRuntime_.find(uid);
@@ -1048,7 +1056,7 @@ private:
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
     std::map<int32_t, std::vector<uint32_t>> uberStates_; // per section: current state, 0xFFFFFFFF in a transition
     // Section components (tru.exe 0x4D7550 update): current state (+0x84) or running transition (+0x80), seconds in the
-    // state (+0x88) / transition; events fired once (+0x60); commanded: a command changed a section (travel latch).
+    // state (+0x88) / transition; events fired once (+0x60); commanded: a command changed a section.
     // Joints: the simulated physics joints (action 9 creates, 10 removes; types 0 / 2, links 11); watches: range watches
     // (action 0x14, 0x49A5C0 record: inside starts true, 0x4937A0).
     // health: section +0xDC (damage lowers it, 0x6D4690); removed: action 28 took the section's instance away.
@@ -1056,10 +1064,12 @@ private:
     // the object section, -1 none.
     // clip / clipTime / rate / loop: the section instance's anim component (instance +0x280 -> +0x14): the
     // animation-list clip it plays (-1 bind pose), seconds into it, its rate (channel +0x50), looping (channel +0x58
-    // bit 2); a clip played once holds its last frame.
+    // bit 2); a clip played once holds its last frame. model: state action 1 set the instance's model (+0x234) to it,
+    // -1 the record's (+0x18).
     struct UberSectionState {
         int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; int32_t engagement = -1;
         int32_t clip = -1; float clipTime = 0, rate = 1; bool loop = false;
+        int32_t model = -1;
     };
     std::map<std::pair<std::string, int32_t>, std::optional<physics::EngagementSet>> uberEngagements_; // (object, offset)
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };
@@ -1076,6 +1086,7 @@ private:
     // pattern (its first animation at its rate); 2 (switch the anim set) is not in the data. Returns the clip's length
     // in seconds at that rate, 0 when nothing plays.
     float uberPlay(int32_t uid, size_t section, uint32_t kind, uint32_t index, bool loop);
+    std::pair<const scene::Skeleton*, std::vector<glm::mat4>> uberSectionMatrices(int32_t uid, int32_t section) const;
     struct UberRuntime {
         std::vector<UberSectionState> sections;
         std::shared_ptr<const UberAnims> anims;
@@ -1105,13 +1116,13 @@ private:
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
     struct UberHandle { int32_t uid = 0, section = -1, kind = 0; } uberHandle_; // the push / pull record Lara grips
     std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)
-    struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; std::string clip; };
-    std::map<int32_t, UberMotion> uberMotion_;
     std::map<int32_t, nlohmann::json> uberSaved_; // restored uber state of objects not prepared since (prepareUber applies it)
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;
     uint64_t lightsVersion_ = 0;
-    // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()).
-    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
+    // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()),
+    // uber section (-1 = the object's own model: posed by its joint / script; else that section's model, posed by the
+    // section's joint and clip).
+    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; };
     std::vector<ObjectCollider> colliders_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     const physics::ObjectPhysics* objectPhysics(const std::string& name); // objectPhysics_, loaded on first use
