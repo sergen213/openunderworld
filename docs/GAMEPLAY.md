@@ -1567,7 +1567,8 @@ Ours:
   the floor (1167 units). Standing jumps under it (four facings, and under its free end) rise 201.5 and never catch
   it [O Wine]. The route up to it is [U]: no ledge / hold markup lies within 6 m; wall lever 7188's handle marker is
   at the same 1169 height; `ar_pu_valaskjalf_entry` 7191 (448 x 448 x 413) is an uber puzzle object, not a push
-  block [I: name class "pu" = puzzle, as `ar_pu_cog_wheel_*`]. In tru.exe an insert from 250 in front of 7189 (dx 0)
+  block [O Wine: interact + forward at its west face neither grabs nor moves it; Lara walks on through its instance
+  position]. In tru.exe an insert from 250 in front of 7189 (dx 0)
   fails: the insert record's cone (heading 90°, half-angle 90° in the lever frame) admits only her standing on the
   lever's world -X side.
   Engagement [O tru.exe 0x719520, every frame]: Lara's query points are her position + z0, + step, + 2 x step, from
