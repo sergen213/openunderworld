@@ -2925,8 +2925,9 @@ TEST(GameReal, ValaskjalfWallRun) {
     EXPECT_LT(s.pos.x, 4200.0f);
 }
 
-// Uber grapple targets (script type 3565's subclasses), tests/replays/grapple_pull.txt from a spot facing each: look
-// up, throw, hold E for a second, and the target's pull handler runs (World::lastPulled); Lara lets go standing.
+// Uber grapple pull targets (their uber state machines watch the pulled joint), tests/replays/grapple_pull.txt from a
+// spot facing each: look up, throw, hold E for a second, and the target's pull handler runs (World::lastPulled); Lara
+// lets go standing. (The naga statue 2457 is a swivelling grapple handle, an anchor: ProgressionReal.GrappleHandlesSwivel.)
 TEST(GameReal, GrapplePullsUberTargets) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -2934,7 +2935,6 @@ TEST(GameReal, GrapplePullsUberTargets) {
     const auto replay = game::InputScript::load(OU_SOURCE_DIR "/tests/replays/grapple_pull.txt");
     struct Case { const char* unit; int32_t uid; vec3 spawn; float yawDeg; } cases[] = {
         {"l4_trailstart", 6695, {61161, -42611, 4948}, -11}, // ca_ei_lever_grapple_post
-        {"l2_norsehall", 2457, {381, -1901, -1279}, 180},     // sa_ei_grapple_wall_naga_statue
         {"l2_puzzleroom", 2982, {-23353, 42001, 1149}, -67},  // sa_ei_grapple_shiva
     };
     for (const auto& c : cases) {

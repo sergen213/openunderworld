@@ -103,7 +103,14 @@ type 2, is [I].
   - [O] State entry actions (0x10 bytes {type, 3 words}, run on entering the state, 0x4D7440 -> 0x4D5C60 -> 0x4D86A0):
     9 creates the joint of the record its first word points at (0x4D8000; nothing if it exists), 10 removes it
     (0x4D6220), 12 sets its limit (0x4D6310 -> 0x4D4510), 13 its motor (0x4D6350 -> 0x4D2B00 prismatic / 0x4D29F0
-    hinge), 0x14 / 0x15 add / remove a range watch (0x4D7380 -> 0x49A5C0 / 0x493A80; word 1 = mode, 2 = joint, 3 = range).
+    hinge), 0x14 / 0x15 add / remove a range watch (0x4D7380 -> 0x49A5C0 / 0x493A80; word 1 = mode, 2 = joint, 3 = range),
+    0x19 / 0x1A clear / set the section instance's +0x1C bit 2, which the grapple target filter 0x6ECCA0 (called by
+    0x7131A0 before the target sets) refuses: no grapple target while set (`World::uberGrappleOff`, saved as
+    `grappleOff`). The grapple handles' volumes use it (GAMEPLAY.md "Grapple").
+  - [O] Each section with a model of its own is an instance (tru.exe under Wine, l2_towerconnector: 2043 is three
+    instances, uid 2043 and two 0x40000000+n section instances, the handle's tilted by its hinge). Ours draws a
+    section's model when it is body B of a hinge / prismatic joint record (the level scene tags it " @section <k>";
+    ou-game poses it by `World::uberSectionBody`); [U] other extra-model sections are not drawn.
   - [O] Joint record: +0 type byte (0x4D1040: 0 hinge -> engine 1, 2 prismatic -> 3, 5 -> 8, 7 -> 10, 8 fixed -> 0xB,
     11 link -> 0xD), +4 / +8 bodies A / B = section indices (each section spawns its instance into the component's
     +0x6C list, 0x4D3DA0; -1 = world), +0xC model byte, +0xD marker byte: the frame is that object model's marker

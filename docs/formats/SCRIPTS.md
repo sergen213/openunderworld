@@ -121,7 +121,7 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
 | record | fields |
 |---|---|
 | section (0x54) | +4/+8 states, +0xC/+0x10 transitions, +0x14 default state, +0x18 model, +0x28 float angle (0x4D3050) |
-| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, 3 words; 0x4D86A0: 2/3 play an animation, 9/10 create/remove a physics joint, 12/13 its limit/motor, 0x14/0x15 add/remove a range watch; PHYSICS.md "Uber joints") |
+| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, 3 words; 0x4D86A0: 2/3 play an animation, 9/10 create/remove a physics joint, 12/13 its limit/motor, 0x14/0x15 add/remove a range watch, 0x19/0x1A clear/set "no grapple target" (instance +0x1C bit 2); PHYSICS.md "Uber joints") |
 | transition (0x38) | +0 from, +4 to, +8 float, +0x18 trigger, +0x1C parameter, +0x20/+0x24 joint and range records (triggers 14/15), +0x2A animation-list index (0xFFFF none), +0x2C probability, +0x30 effect, +0x34 flags (1 play the animation, 2 wait for its end, 0x10 random) |
 | command (0xC) | +0 id (0 in every object seen), +4/+8 targets {section, type, payload} |
 | event (0x1C) | +4/+8 condition lists, +0xC section, +0x10 kind, +0x14 value, +0x18 once, +0x1A script event id |

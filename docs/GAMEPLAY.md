@@ -957,12 +957,26 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
 
 - Targets [O]: intros named `*_ei_grapple_*` (`ca_ei_grapple_post`, `sa_ei_grapple_ceiling(_invisible)`,
   `ma_ei_grapple_ceiling`, `ca_ei_grapple_wall_a`, `tp_ei_grapple_wall`, `ar_ei_grapple_wall`, …; not
-  `fx_grapple_bling_*`), collected per unit into `UnitData::grapples`. Kind: Mounted when the intro's script type
-  derives from native `uberobjectbase` [O: the movable targets are script type 3565's subclasses — levers, the naga
-  statue, shiva arms, the grapple block, the snake head and the `sa_ei_grapple_wall` slabs (e.g. l2_towerconnector
-  2005/2042/2043, l2_norsehub 2383/2394/2395); fixed anchors derive from type 3941]; else wall/post/ceiling by name.
-  l4_pool's ceiling anchor is uid 5511 at (4362, -70, 2607). `sa_ei_grapple_wall_rigid_body` (l2_maproom 2676) is a
-  plain anchor (script type 4734); its attached-instance field is filled at run time [U].
+  `fx_grapple_bling_*`), collected per unit into `UnitData::grapples`. Kind: Mounted (a pull target) when the intro's
+  script type derives from native `uberobjectbase` and its uber state machine watches the pulled joint (a trigger 14 /
+  15 transition: levers, shiva arms, the grapple block, the snake heads) [O data]; else wall/post/ceiling by name
+  (ceiling for an unnamed uber anchor). [O: script type 3565's subclasses are the uber ones; fixed anchors derive from
+  type 3941.] l4_pool's ceiling anchor is uid 5511 at (4362, -70, 2607). `sa_ei_grapple_wall_rigid_body` (l2_maproom
+  2676) is a plain anchor (script type 4734); its attached-instance field is filled at run time [U].
+- Grapple handles [O]: `tp_ei_grapple_wall`, `ca_ei_grapple_wall_a`, `ar_ei_grapple_wall`, `sa_ei_grapple_wall`,
+  `sa_ei_grapple_mounted` and `sa_ei_grapple_wall_naga_statue` are class-79 uber objects of two sections: the plate
+  (section 1, model 0, fixed to the world) and the handle (section 0, model 1) on a free hinge, limit +-50 degrees
+  (the naga statue's 0..120). tru.exe simulates the handle in Havok: under Wine every l2 handle whose hinge is
+  horizontal hangs at its limit (l2_towerconnector 2043 / 2042 / 2005: its instance 49-52 degrees round the hinge,
+  origin moved (-79.6, 0, 27.5) / (34.3, 0, 81.6) / (0, -43.2, 77.4); vertical hinges — l2_norsehub 2383, 2393, 2382
+  — stay put). Ours: the joint simulates under gravity from spawn and ou-game draws the handle on it
+  (`ProgressionReal.GrappleHandlesSwivel` checks the three offsets); while Lara is on the rope, its pull (her 55 kg
+  along the rope's first segment [I]) turns the handle toward her within its limits. The `sa_ei_grapple_wall` scripts
+  (type 8732) only send uber commands 0 / 1 when their trigger volumes call vt 56 / 57: command 1 -> state 1 (action
+  0x1A: no grapple target), command 0 -> state 2 (0x19: a target again); l2_towerconnector volume 2038 switches 2042
+  off while Lara is inside it [O data]. Their main loop (onAttach / onDettach to a type-3588 helper) never runs: its
+  instanceref +36 is unset in every placement. None is a pull gate. [U] where the hook attaches (the handle's instance
+  carries the bit 0x6ECCA0 reads; ours anchors at the intro origin, on the plate).
 - Tuning [O g_grapple data, `GrappleTuning`]: hook object 77 = `pr_grapplinghook` (+0xF8), hook launch speed 1580.28
   (+0xFC, the projectile's speed in 0x6C85C0 -> 0x6A1980), throw range 4424.78 = 14 m (+0x100, 0x698AC0), rope
   553.1..4424.78 (+0x108 / +0x104, clamped along anchor -> bends -> hand by 0x6A4A40), 8 bends (+0x10C, 0x6A3430).
@@ -1000,7 +1014,7 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
 - Pull (Mounted targets): `grapple_pull_<up/mid/down>_light_begin` then the loop by anchor height (±400) [I];
   holding E: push blocks follow her (240 u/s [I]); other uber targets run their pull handler after a 1 s heave
   (`script::Runtime::grapplePulled`: the first overridden void slot 55..60 that does more than return — levers 59/60,
-  shiva arms 55/56, walls and the naga statue 56/57, snake head 57 [O]; which slot tru.exe calls on a pull is [I]),
+  shiva arms 55/56, snake head 57 [O]; which slot tru.exe calls on a pull is [I]),
   then she lets go standing; `World::lastPulled()` reports the target.
 - Rappel (`State::GrappleRappel`) [I]: a swing into a wall (|normal.z| ≤ 0.35) puts her feet on it,
   `grapple_rappel_wall_land(_left/_right)` by sideways speed, facing the wall. Stick into the wall shortens the
@@ -1014,8 +1028,9 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   a floor with the anchor's wall (the surface closest to the anchor) within 400 of her capsule, a stick along that
   wall toward the point below the anchor plays `ng_ground_to_wallrun_left/right` and starts the run (700 u/s, 350
   up); while that clip plays or she runs downhill along a floor the rope reels in its slack. Use sites [O]: the Wall
-  anchors (name `*wall*`, not uber) — l1_kraken_room 326, l2_maproom 2676, l2_norsehub 2382, l2_puzzleroom 2974,
-  l4_traprooms 5752, l5_valaskjalf 6750/6751, l7_helheim01 8897, l7_yggdrasil_end 8165; no markup marks wall-run
+  anchors (name `*wall*`) — l1_kraken_room 326, l2_maproom 2676, l2_norsehub 2382, l2_puzzleroom 2974,
+  l4_traprooms 5752, l5_valaskjalf 6750/6751, l7_helheim01 8897, l7_yggdrasil_end 8165, and the uber handles of
+  l2_towerconnector 2005/2042/2043, l2_norsehub 2383/2394/2395, l2_norsehall 2457, l2_maproom 2595; no markup marks wall-run
   walls (COLLISION.md types). l5_valaskjalf 6750 has ledges 1600 to either side of the anchor over a pit — the
   wall run carries her from one to the other.
 - ou-game draws `pr_grapplinghook`'s model at the anchor along the rope's last segment (prongs = model +Y [I]) and the
@@ -1024,7 +1039,7 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   `GameReal.GrappleShootsOnTheRope`,
   `Game.GrappleWallRunFromGround`, `GameReal.PoolGrappleTargetAndSwing`, `GameReal.MountedGrapplePullsBlockWithoutSwinging`,
   `GameReal.GrapplePullsUberTargets` (replay `tests/replays/grapple_pull.txt` at l4_trailstart lever 6695,
-  l2_norsehall naga statue 2457, l2_puzzleroom shiva 2982), `GameReal.KrakenRoomRappel` (replay
+  l2_puzzleroom shiva 2982), `ProgressionReal.GrappleHandlesSwivel`, `GameReal.KrakenRoomRappel` (replay
   `tests/replays/kraken_rappel.txt`: swing onto 326's wall, rappel down 460 and up 590, kick off),
   `GameReal.ValaskjalfWallRun` (ledge → wall run 370 down through the arc → far ledge, standing). Replay
   `tests/replays/valaskjalf_wallrun.txt` plays the wall run in ou-game.
