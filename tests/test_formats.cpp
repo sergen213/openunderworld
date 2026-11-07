@@ -564,16 +564,20 @@ TEST(RealData, LevelL4PoolInstancesOnTerrain) {
     const auto sc = formats::loadLevelScene(bf, "pc-w\\l4_pool.drm");
     checkMeshes(sc);
     float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
-    size_t placed = 0;
+    size_t placed = 0, sections = 0;
     for (const auto& m : sc.meshes) {
         if (m.origin.find("terrain") != std::string::npos)
             for (const auto& v : m.vertices)
                 for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], v.position[k]), hi[k] = std::max(hi[k], v.position[k]);
-        placed += m.origin.find("@intro") != std::string::npos && m.origin.find("@dormant") == std::string::npos;
+        const bool live = m.origin.find("@intro") != std::string::npos && m.origin.find("@dormant") == std::string::npos;
+        const bool section = m.origin.find(" @section ") != std::string::npos; // jointed uber sections' own models
+        placed += live && !section, sections += live && section;
     }
     // fx_* proxies (oflags 0x40000000, never drawn by tru.exe 0x5B5CA0) are not placed; dormant intros (+0x72 0x80: not
     // introduced at load, 0x5C2360) are tagged " @dormant": the 10 cinematic props parked at (0, 0, -11542), the revisit
-    // snake heads 5632 / 5633, panther thrall 5645, ...
+    // snake heads 5632 / 5633, panther thrall 5645, ...; 8 meshes of live uber sections riding a hinge / prismatic joint
+    // with a model of their own (" @section <k>", PHYSICS.md "Uber joints").
+    EXPECT_EQ(sections, 8u);
     EXPECT_EQ(placed, 28u);
     // Observed: 161/173 object intros lie inside the terrain box; the rest are cinematic props
     // parked at (0, 0, -11542) and one trigger volume. Markers (object -6) are not counted.

@@ -591,6 +591,15 @@ public:
     std::vector<glm::mat4> objectBones(int32_t uid) const;
     // Uber objects whose model-0 section was removed (action 28: broken urns, exploded barrels); drawn no more.
     std::set<int32_t> removedObjects() const;
+    // Model-space motion of uber object `uid`'s section `section` riding its simulated hinge / prismatic joint (each
+    // section is an instance of its own model, 0x4D3DA0: the grapple handles' model 1), nullopt without one; `removed`
+    // reports action 28 on that section.
+    std::optional<glm::mat4> uberSectionBody(int32_t uid, int32_t section, bool* removed = nullptr) const;
+    // Uber state action 0x1A set instance +0x1C bit 2 on it (0x19 clears it): no grapple target (0x6ECCA0).
+    bool uberGrappleOff(int32_t uid) const {
+        const auto it = uberRuntime_.find(uid);
+        return it != uberRuntime_.end() && it->second.grappleOff;
+    }
     // Hit message 0x11C on an uber object's sections (0x6D4690): shots, Mjolnir's bolts, the ground pound.
     void damageObject(int32_t uid, float damage, int damageClass);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
@@ -952,6 +961,7 @@ private:
         std::vector<UberWatch> watches;
         std::vector<std::string> animNames; // the object's animation list, as animLength
         bool intangible = false;            // action 5: instance +0x18 bit 0x20000000, collision callbacks skip it
+        bool grappleOff = false;            // action 0x1A / 0x19: instance +0x1C bit 2 set / cleared, not a grapple target
     };
     std::map<int32_t, UberRuntime> uberRuntime_;
     std::vector<std::pair<int32_t, uint32_t>> uberEvents_; // (uid, event index) for the script's vt 54

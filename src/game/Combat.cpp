@@ -956,7 +956,7 @@ std::optional<GrappleTarget> World::grappleTarget() const {
     std::vector<C> cs;
     for (const auto& u : units_)
         for (const auto& g : u.data.grapples) {
-            if (script_.grappleOff(g.uid)) continue; // `unit` 13 took its markers from Lara
+            if (script_.grappleOff(g.uid) || uberGrappleOff(g.uid)) continue; // `unit` 13 took its markers / uber action 0x1A
             GrappleTarget t = g;
             t.pos += u.offset;
             const vec3 v = t.pos - eye;

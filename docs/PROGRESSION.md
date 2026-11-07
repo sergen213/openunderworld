@@ -52,10 +52,18 @@ Fixes (2026-11-06):
   (0x4A93E0: INSTANCE_Post 0x35 breaks a joint; ours: the object falls loose [I]): l5_valaskjalf falling bridge 6974
   (volume 7010) passes (`CriticalGates`, `CriticalPathInOrder`).
 
-True failures left (24): l1_kraken_room soundvolumes 358/360/361/362/364/365/380/381 (vt 75 clears a flag already
-clear: not a gate); the nine `sa_ei_grapple_wall*` / mounted pulls (l2_towerconnector 2005/2042/2043, l2_norsehub
-2383/2393/2394/2395, l2_norsehall 2457, l2_maproom 2595: their uber command changes no section [U: wall-run anchors,
-not gates?]); l5_valaskjalf 7025 / 7026 (chain 6944 / 6943 vt 55, no visible change). Natives bound since: `multibody`
+Sweep 2026-11-07 (grapple handles): **136 / 251 pass; FAIL 11, state 11, condition 53, encounter 9, preload 31**. The
+`sa_ei_grapple_wall*` / `sa_ei_grapple_mounted` objects are no longer pull candidates: they are swivelling grapple
+handles, anchors (GAMEPLAY.md "Grapple"); only uber targets whose state machine watches the pulled joint are Mounted.
+Their volumes pass as before (2038 / 2045 -> 2042, plane 2039 -> 2043). Attribution (same sweep on base ee7a57c:
+136 / 260, FAIL 20, state 11, condition 53, encounter 9, preload 31; per-gate lines diffed): the only difference is
+the nine handle "pull" lines gone (2005 / 2042 / 2043, 2383 / 2393 / 2394 / 2395, 2457, 2595, all FAIL in the base);
+every other gate's line is identical. The 289 candidates / 36 encounters above predate ee7a57c (already 260 / 9 on
+the base, not from this change). Shiva arms 2982 / 2983 spawn with uber action 0x1A (no grapple target); trigger
+volume 3023's script commands them into the state with 0x19 (`GameReal.GrapplePullsUberTargets` walks Lara through
+it before the pull). True failures left (11): l1_kraken_room soundvolumes
+358/360/361/362/364/365/380/381 (vt 75 clears a flag already clear: not a gate); l5_valaskjalf 7025 / 7026 (chain
+6944 / 6943 vt 55, no visible change); l7_helheim01 8945 (`anchor` 1, below). Natives bound since: `multibody`
 89 (0x4AA250: motor target speed of a joint, joint +0x108 -> `Object::Joint::speed`; a non-plate, non-hinge joint moves
 at it within the body's limit, physical data +0x2C -> {lo, hi} [O values]), and the joint range watches report leaving
 (vt 37) as well as entering (vt 34), starting "inside" as 0x49A5C0 does, so a watch outside its range reports leaving
@@ -111,8 +119,8 @@ Portal order from the start unit; level changes not made by portals are named.
 | 1 | l1_ship_upper_hallway_a/b, upper_hallway, engine_hall | volumes 1531, 1492, 1465, 1436 | ship doors, cinematics 1453 / 1288 | pass (1531 in suite) |
 | 1 | l1_ship_sinking_hall | plane 1074 (cross) | 070_med_dive → chapter 2 | pass (fixed) |
 | 2 | l2_puzzleroom | elevator switch 2961, weight 2971 (push), shiva grapples 2982/2983 (pull) | elevator 2973, weight, shiva arms | pass |
-| 2 | l2_towerconnector, l2_norsehub, l2_norsehall | wall grapples, chest volumes 2137/2138 | grapple handlers, chests | pass |
-| 2 | l2_norsehub | mounted grapple 2393 (pull) | its handler | **fail**: VM opcode 0x34 (DBOUNDS) |
+| 2 | l2_towerconnector, l2_norsehub, l2_norsehall | chest volumes 2137/2138; wall-handle volumes 2038 / 2039 / 2045 (2040: state only) | chests; handles 2042 / 2043 switched off / on as grapple targets (uber action 0x1A / 0x19) | pass |
+| 2 | l2_towerconnector 2005/2042/2043, l2_norsehub 2383/2393/2394/2395, l2_norsehall 2457, l2_maproom 2595 | `sa_ei_grapple_wall*` / `sa_ei_grapple_mounted` | — | not gates: swivelling grapple handles, anchors to swing / wall-run on (GAMEPLAY.md "Grapple"; `GrappleHandlesSwivel`). 2393's op 0x34 is MOVEU (gates 3 below) |
 | 2 | l2_maproom | volumes 2637/2638 | thor bridge 2667 + cinematics | pass |
 | 2 | l2_flushtunnel | switch 2543 (use) | flush gate 2541 | pass |
 | 2 | l2_flushtunnel → l2_cliffclimb | plane 2542, then volume 2564 | 2565 → chapter 3 | pass (new gate test) |

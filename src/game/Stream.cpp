@@ -28,15 +28,15 @@ constexpr float kCheckpointRadius = 250.0f, kCheckpointHeight = 400.0f;
 
 vec3 v3(const float* f) { return {f[0], f[1], f[2]}; }
 
-// Does intro script type `id` derive from native "uberobjectbase"? Types live in the unit or the object's DRM.
-// [O] the movable grapple targets (levers, the naga statue, shiva arms, the grapple block, the snake head, the uber
-// wall slabs) are script type 3565's subclasses under uberobjectbase; the fixed anchors derive from type 3941.
-bool uberScript(const cdc::BigfileSet& bigfile, const cdc::Drm& unit, const std::string& object, uint32_t id) {
-    std::optional<cdc::Drm> objectDrm;
-    if (auto b = bigfile.read("pc-w\\" + object + ".drm")) objectDrm = cdc::parseDrm(std::move(*b));
+// Does intro script type `id` derive from native "uberobjectbase"? Types live in the unit or the object's DRM
+// (`objectDrm`, null when missing).
+// [O] the movable grapple targets (levers, shiva arms, the grapple block, the snake head) and the swivelling grapple
+// handles (`sa_ei_grapple_wall*`, below) are script type 3565's subclasses under uberobjectbase; the fixed anchors
+// derive from type 3941.
+bool uberScript(const cdc::Drm& unit, const cdc::Drm* objectDrm, uint32_t id) {
     for (int depth = 0; id && depth < 16; ++depth) {
         bool found = false;
-        for (const cdc::Drm* d : std::initializer_list<const cdc::Drm*>{&unit, objectDrm ? &*objectDrm : nullptr}) {
+        for (const cdc::Drm* d : std::initializer_list<const cdc::Drm*>{&unit, objectDrm}) {
             if (!d) continue;
             for (uint32_t i = 0; i < d->sections.size() && !found; ++i)
                 if (d->sections[i].type == cdc::SectionType::Script && d->sections[i].id == id) {
@@ -257,11 +257,23 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
             if (auto t = bendType(bigfile, n->second))
                 u.bends.push_back({in.uniqueId, v3(in.position), v3(in.rotation), std::move(t)});
         if (n->second.find("_grapple") != std::string::npos && !n->second.starts_with("fx_")) {
-            const GrappleKind k = in.scriptId && uberScript(bigfile, *drm, n->second, in.scriptId) ? GrappleKind::Mounted
+            // Pull targets [O data]: their uber state machines react to the pulled joint (a trigger 14 / 15 range watch
+            // transition: levers, shiva arms, the snake heads, the grapple block). The class-79 grapple handles
+            // (`*_ei_grapple_wall*`, `sa_ei_grapple_mounted`) only swivel on a free hinge (section 0 = model 1 on
+            // section 1, +-50 degrees; the naga statue's 0..120): anchors to swing / wall-run on, whatever their script.
+            std::optional<cdc::Drm> objectDrm;
+            if (auto b = bigfile.read("pc-w\\" + n->second + ".drm")) objectDrm = cdc::parseDrm(std::move(*b));
+            std::optional<formats::UberObjectData> uber;
+            if (objectDrm) try { uber = formats::loadUberObject(*objectDrm); } catch (const cdc::FormatError&) {}
+            const bool anchor = uber && std::ranges::none_of(uber->sections, [](const auto& s) {
+                return std::ranges::any_of(s.transitions, [](const auto& t) { return t.trigger == 14 || t.trigger == 15; });
+            });
+            const GrappleKind k = !anchor && in.scriptId && uberScript(*drm, objectDrm ? &*objectDrm : nullptr, in.scriptId)
+                                      ? GrappleKind::Mounted
                                   : n->second.find("wall") != std::string::npos ? GrappleKind::Wall
                                   : n->second.find("post") != std::string::npos ? GrappleKind::Post
-                                  : n->second.find("ceiling") != std::string::npos ? GrappleKind::Ceiling
-                                                                                : GrappleKind::Mounted;
+                                  : n->second.find("ceiling") != std::string::npos || anchor ? GrappleKind::Ceiling
+                                                                                             : GrappleKind::Mounted;
             u.grapples.push_back({in.uniqueId, v3(in.position), k});
         }
         if (!in.scriptId) continue;

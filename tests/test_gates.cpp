@@ -869,6 +869,64 @@ TEST(ProgressionReal, ObjectFields) {
     for (const auto& [k, v] : o->script->fields) std::printf("+%u %08X\n", k, v);
 }
 
+// The `sa_ei_grapple_wall*` / `sa_ei_grapple_mounted` uber objects (docs/PROGRESSION.md, docs/GAMEPLAY.md "Grapple")
+// are swing / wall-run anchors, not pull gates: model 1 (section 0) swivels on a free +-50 degree hinge. At rest it
+// hangs at its limit under gravity: the section instance's origin moved as tru.exe's (under Wine, l2_towerconnector
+// 2043 / 2042 / 2005: (-79.6, 0, 27.5), (34.3, 0, 81.6), (0, -43.2, 77.4)). Volume 2038 switches 2042 off as a grapple
+// target while Lara is inside (command 1 -> state 1, action 0x1A); the rope turns a handle toward Lara.
+TEST(ProgressionReal, GrappleHandlesSwivel) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    const struct { const char* unit; int32_t uid; game::GrappleKind kind; } kinds[] = {
+        {"l2_towerconnector", 2043, game::GrappleKind::Wall}, {"l2_norsehub", 2393, game::GrappleKind::Ceiling},
+        {"l2_norsehub", 2382, game::GrappleKind::Wall},        {"l2_norsehall", 2457, game::GrappleKind::Wall},
+        {"l2_maproom", 2595, game::GrappleKind::Wall},         {"l2_puzzleroom", 2982, game::GrappleKind::Mounted},
+        {"l4_trailstart", 6695, game::GrappleKind::Mounted},
+    };
+    for (const auto& k : kinds) {
+        const auto u = load(k.unit);
+        const auto g = std::ranges::find(u.grapples, k.uid, &game::GrappleTarget::uid);
+        ASSERT_NE(g, u.grapples.end()) << k.uid;
+        EXPECT_EQ(int(g->kind), int(k.kind)) << k.unit << " " << k.uid;
+    }
+    game::World w(load, "l2_towerconnector", game::loadLaraAnims(bf), game::Spawn{{0, 0, -1e6f}, 0});
+    w.script().setBigfile(&bf);
+    for (int i = 0; i < 180; ++i) w.tick({});
+    const auto sag = [&](int32_t uid) { // world displacement of section 0's origin
+        const auto* o = w.script().find(uid);
+        const auto body = o ? w.uberSectionBody(uid, 0) : std::nullopt;
+        if (!body) return vec3(1e9f);
+        const glm::mat3 r(glm::rotate(glm::mat4(1), o->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), o->rot.y, {0, 1, 0}) *
+                          glm::rotate(glm::mat4(1), o->rot.z, {0, 0, 1}));
+        return r * vec3((*body)[3]);
+    };
+    for (const auto& [uid, tru] : {std::pair{2043, vec3(-79.6f, 0, 27.5f)}, {2042, vec3(34.3f, 0, 81.6f)}, {2005, vec3(0, -43.2f, 77.4f)}}) {
+        const vec3 d = sag(uid);
+        EXPECT_LT(glm::distance(d, tru), 8.0f) << uid << " sagged by " << d.x << " " << d.y << " " << d.z;
+    }
+    const auto* volume = w.script().find(2038);
+    ASSERT_TRUE(volume);
+    EXPECT_FALSE(w.uberGrappleOff(2042));
+    place(w, volume->pos - vec3(0, 0, script::kTestPointHeight), 0);
+    for (int i = 0; i < 10; ++i) w.tick({});
+    EXPECT_TRUE(w.uberGrappleOff(2042)) << "in volume 2038";
+    place(w, volume->pos + vec3(0, 0, 5000), 0);
+    for (int i = 0; i < 10; ++i) w.tick({});
+    EXPECT_FALSE(w.uberGrappleOff(2042)) << "out of volume 2038";
+    // Roped level with handle 2043, 800 out from its wall (model +Z): the rope pulls it up off its limit.
+    const auto* h = w.script().find(2043);
+    const auto* joint = w.uberJoint(2043, 0);
+    ASSERT_TRUE(h && joint);
+    const float rest = joint->x;
+    const glm::mat3 r(glm::rotate(glm::mat4(1), h->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), h->rot.y, {0, 1, 0}) *
+                      glm::rotate(glm::mat4(1), h->rot.z, {0, 0, 1}));
+    place(w, h->pos + r * vec3(0, 0, 800) - vec3(0, 0, 400), 0);
+    w.attachGrapple(h->pos, 2043, game::GrappleKind::Wall);
+    for (int i = 0; i < 15; ++i) w.tick({});
+    EXPECT_GT(std::abs(w.uberJoint(2043, 0)->x - rest), glm::radians(10.0f)) << "rest " << glm::degrees(rest);
+}
+
 // l3_chapel shadow pillars (uber 4837, docs/PROGRESSION.md): wall switches turn pillar sections 0-3 through positions
 // a -> b -> c -> d; the solver section 4 follows them by condition lists; lined up (all at a) it reaches "solved", whose
 // event makes the pillars' script open the shadow door 4835.
