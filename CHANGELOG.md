@@ -4,6 +4,22 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.36.0] - 2026-11-07
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: Shiva's arms, the Mexican calendars, the empty throne, the Valgrind cog wheel, the Thor statue arms and the
+  Arctic Sea gem holes take their gems, masks, weight and gears and react as in the original. The scepter weight
+  presses the empty throne down, and the Valgrind cog wheel's mechanism now works at all (it was ignored before).
+- Added: Lara can pick up, carry and insert items while swimming (Arctic Sea gears and gems).
+- Fixed: standing jumps reach high ledges exactly as far as in the original (about 1.5 m out for ledges up to about
+  3.2 m above her, only close in for higher ones), using the original's own ledge tests.
+- Fixed: the Mexico ballcourt pole lever lifts its door straight up, twice as far as Lara pulls the lever down, as in
+  the original.
+- Fixed: horizontal poles show their bar again, and other multi-part objects (Kraken-room gears and sun-sphere
+  platform, puzzle-room scales, calendars, chapel pillars) draw all their parts as in the original; the shrine-room
+  naga statue no longer shows an extra model the original never draws.
+
 ## [0.35.0] - 2026-11-07
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
