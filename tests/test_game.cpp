@@ -3072,6 +3072,171 @@ TEST(GameReal, LadderJumpUpToLedge) {
     EXPECT_EQ(w->collision().markup[size_t(s.ledge)].id, 2);
 }
 
+// Ladder jumps (player chart ladder group: jump + stick left / right T1869 / T1870, neutral T1868, all query q22: 47.41
+// that way + 60.05 up a 30 Hz frame). Two ladders 900 apart on one wall: jump right takes off with ladder_jump_right
+// (root motion, quarter turn), flies onto the other ladder's rung and attaches (ladder_attach_M, idle exactly on a rung);
+// the stick held toward a ladder 300 aside reaches across (ladder_reach_right, ladder_settle_right); jump with the stick
+// neutral leaps back at q22's speeds; on the lowest rung with no floor under it the stick down leans back
+// (ladder_idle_to_jump_back_antic) instead of stepping off.
+TEST(GameReal, LadderSideJumpsReachAndBack) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto rungZ = [](int r) { return 1200.0f - 575.221f - 110.619f * float(r); };
+    const auto twoLadders = [](float apart, bool floor) {
+        CollisionMesh m;
+        if (floor) addFloor(m, -2000, -2000, 400, 2000, 0);
+        else addFloor(m, -3000, -2000, -2000, 2000, -2000); // nothing under the ladders: a pit
+        m.markup.push_back({9, 1, {{400, 0, 1200}, {400, 0, 0}, {242, 0, 0}}});
+        m.markup.push_back({9, 2, {{400, -apart, 1200}, {400, -apart, 0}, {242, -apart, 0}}});
+        return m;
+    };
+    {
+        auto w = climbWorld(twoLadders(900, true), {300, 0, 0});
+        const auto& s = w->player().state();
+        w->tick(forward());
+        ASSERT_EQ(s.state, State::Ladder);
+        for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+        Actions jump = worldStick(*w, {0, -1});
+        jump.jump = true;
+        w->tick(jump);
+        EXPECT_EQ(s.clip, "ladder_jump_right");
+        EXPECT_EQ(s.state, State::HangJump);
+        EXPECT_EQ(w->collision().markup[size_t(s.ledge)].id, 2);
+        for (int i = 0; i < 20 && s.clip == "ladder_jump_right"; ++i) w->tick({});
+        EXPECT_NEAR(std::remainder(s.yaw + 1.5708f, 6.2831853f), 0, 0.05f) << "the take-off's quarter turn to the right";
+        for (int i = 0; i < 120 && s.state == State::HangJump; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Ladder);
+        EXPECT_EQ(s.clip, "ladder_attach_M");
+        for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+        ASSERT_EQ(s.clip, "ladder_idle");
+        EXPECT_NEAR(s.pos.y, -900, 1e-2);
+        EXPECT_NEAR(s.pos.x, 400 - 79 - 110.619f, 1e-2);
+        const float r = (1200.0f - 575.221f - s.pos.z) / 110.619f;
+        EXPECT_NEAR(r, std::round(r), 1e-3) << "on a rung";
+        EXPECT_NEAR(std::remainder(s.yaw, 6.2831853f), 0, 1e-3) << "facing the ladder again";
+    }
+    {
+        auto w = climbWorld(twoLadders(300, true), {300, 0, 0});
+        const auto& s = w->player().state();
+        w->tick(forward());
+        for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+        const float z0 = s.pos.z;
+        w->tick(worldStick(*w, {0, -1}));
+        EXPECT_EQ(s.clip, "ladder_reach_right");
+        bool settled = false;
+        for (int i = 0; i < 180 && s.clip != "ladder_idle"; ++i) {
+            w->tick({});
+            settled |= s.clip == "ladder_settle_right";
+        }
+        EXPECT_TRUE(settled);
+        EXPECT_EQ(s.state, State::Ladder);
+        EXPECT_EQ(w->collision().markup[size_t(s.ledge)].id, 2);
+        EXPECT_NEAR(s.pos.y, -300, 1e-2);
+        EXPECT_NEAR(s.pos.z, z0, 1e-2);
+        w->tick(worldStick(*w, {0, 1})); // back left onto the first ladder, 300 the other way
+        EXPECT_EQ(s.clip, "ladder_reach_left");
+    }
+    {
+        auto w = climbWorld(twoLadders(5000, false), {400 - 79 - 110.619f, 0, rungZ(5)});
+        const auto& s = w->player().state();
+        w->tick(forward()); // in the air at the lowest rung: air attach
+        for (int i = 0; i < 120 && s.clip != "ladder_idle"; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Ladder);
+        ASSERT_NEAR(s.pos.z, rungZ(5), 1e-2);
+        w->tick(forward(-1));
+        EXPECT_EQ(s.clip, "ladder_idle_to_jump_back_antic") << "no floor under the bottom: lean back, not step off";
+        for (int i = 0; i < 60; ++i) w->tick(forward(-1));
+        EXPECT_EQ(s.clip, "ladder_jump_back_prepare");
+        w->tick({});
+        EXPECT_EQ(s.clip, "ladder_jump_back_antic_to_idle");
+        for (int i = 0; i < 60 && s.clip != "ladder_idle"; ++i) w->tick({});
+        Actions jump;
+        jump.jump = true;
+        w->tick(jump);
+        EXPECT_EQ(s.clip, "ladder_jump_back");
+        EXPECT_EQ(s.state, State::Jump);
+        EXPECT_NEAR(s.vel.x, -47.41f * 30, 1) << "q22 out from the ladder";
+        EXPECT_NEAR(s.vel.z, 60.05f * 30, 90);
+    }
+}
+
+// l7_arctic_sea ladder 2044 hangs over a pit with balance beam 2042 crossing 853 to its left at z -18899: from its
+// middle rungs jump with the stick left leaps (ladder_jump_left, q22) onto the beam; holding the stick left first leans
+// into the jump (ladder_jump_left_prepare: a target that way).
+TEST(GameReal, ArcticSeaLadderSideJumpOntoBeam) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto rungZ = [](int r) { return -17318.5f - 575.221f - 110.619f * float(r); };
+    for (const int rung : {11}) {
+        auto w = unitWorld(bf, "l7_arctic_sea", {{16513.6f - 79 - 110.619f, -47420.7f, rungZ(rung)}, 0});
+        const auto& s = w.player().state();
+        for (int i = 0; i < 5 && s.state != State::Ladder; ++i) w.tick(forward());
+        ASSERT_EQ(s.state, State::Ladder);
+        ASSERT_EQ(w.collision().markup[size_t(s.ledge)].id, 2044);
+        const auto rungOf = [&] { return int(std::lround((-17318.5f - 575.221f - s.pos.z) / 110.619f)); };
+        for (int i = 0; i < 3000 && !(s.clip == "ladder_idle" && rungOf() == rung); ++i)
+            w.tick(s.clip != "ladder_idle" ? Actions{} : rungOf() > rung ? forward() : forward(-1));
+        ASSERT_NEAR(s.pos.z, rungZ(rung), 0.1) << "float precision at z -19000";
+        w.tick(worldStick(w, {0, 1}));
+        EXPECT_EQ(s.clip, "ladder_jump_left_prepare") << rung;
+        Actions jump = worldStick(w, {0, 1});
+        jump.jump = true;
+        w.tick(jump);
+        EXPECT_EQ(s.clip, "ladder_jump_left") << rung;
+        EXPECT_EQ(s.state, State::Jump) << rung;
+        for (int i = 0; i < 120 && s.state == State::Jump; ++i) w.tick({});
+        EXPECT_EQ(s.state, State::Beam);
+        const auto* beam = markupById(w, 14, 2042);
+        ASSERT_TRUE(beam);
+        EXPECT_NEAR(s.pos.y, beam->points[0].y, 30);
+        EXPECT_NEAR(s.pos.z, beam->points[0].z, 1);
+    }
+}
+
+// Ledge corners (a polyline joint turning 90 degrees): shimmying right onto the joint plays ledgeb_<convex|concave>_
+// right_phase1 into the corner pose (hands on the joint, facing between the walls), the corner idle while the stick
+// lets go, the up / back leans (ledgeb_<kind>_jump_up_antic / _jump_back_antic) while it points that way, and on to the
+// right phase2 round onto the next wall, the hang idle there facing it.
+TEST(GameReal, HangShimmyRoundCorners) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    for (const bool concave : {false, true}) {
+        const std::string kind = concave ? "concave" : "convex";
+        CollisionMesh m;
+        addFloor(m, -3000, -3000, 3000, 3000, -2000);
+        // her side: x < 400 along the first segment (side -1); the next turns away from her (convex) or round to her
+        m.markup.push_back({1, 1, {{400, 1000, 1200}, {400, 0, 1200}, {concave ? -600.0f : 1400.0f, 0, 1200}}});
+        auto w = climbWorld(std::move(m), {0, 500, 0});
+        game::PlayerState st = w->player().state();
+        st.state = State::Hang, st.ledge = 0, st.ledgeSeg = 0, st.ledgeT = 700, st.ledgeSide = -1, st.vel = vec3(0);
+        st.clip = "ledgeb_idle", st.loop = true, st.yaw = 0;
+        w->restore(st, 0, -0.25f);
+        const auto& s = w->player().state();
+        w->tick({});
+        ASSERT_EQ(s.state, State::Hang);
+        ASSERT_NEAR(s.yaw, 0, 1e-3) << "facing the first wall (+x)";
+        for (int i = 0; i < 400 && !s.clip.ends_with("phase1"); ++i) w->tick(worldStick(*w, {0, -1}));
+        EXPECT_EQ(s.clip, "ledgeb_" + kind + "_right_phase1") << kind;
+        for (int i = 0; i < 60 && s.clip.ends_with("phase1"); ++i) w->tick({});
+        EXPECT_EQ(s.clip, "ledgeb_" + kind + "_idle") << kind;
+        EXPECT_NEAR(std::remainder(s.yaw - (concave ? -0.785398f : 0.785398f), 6.2831853f), 0, 1e-3) << kind << " between the walls";
+        const vec2 fwd(std::cos(s.yaw), std::sin(s.yaw));
+        w->tick(worldStick(*w, fwd));
+        EXPECT_EQ(s.clip, "ledgeb_" + kind + "_jump_up_antic") << kind;
+        w->tick(worldStick(*w, -fwd));
+        EXPECT_EQ(s.clip, "ledgeb_" + kind + "_jump_back_antic") << kind;
+        w->tick({});
+        EXPECT_EQ(s.clip, "ledgeb_" + kind + "_idle") << kind;
+        const vec2 right(std::sin(s.yaw), -std::cos(s.yaw));
+        w->tick(worldStick(*w, right));
+        EXPECT_EQ(s.clip, "ledgeb_" + kind + "_right_phase2") << kind;
+        for (int i = 0; i < 60 && s.clip.ends_with("phase2"); ++i) w->tick({});
+        EXPECT_EQ(s.clip, "ledgeb_idle") << kind;
+        EXPECT_EQ(s.ledgeSeg, 1) << kind;
+        EXPECT_GT(s.ledgeT, 0) << kind;
+        EXPECT_NEAR(std::remainder(s.yaw - (concave ? -1.5707963f : 1.5707963f), 6.2831853f), 0, 1e-3) << kind << " facing the next wall";
+        EXPECT_EQ(s.state, State::Hang);
+    }
+}
+
 // Pillar (markup 15, two points): from the floor pillar_attach_ground puts her 199 up the shaft (player data +0x7EE),
 // pillar_climb_right takes her round it (left: mirrored) facing the axis, pillar_climb_up climbs, the slide
 // (pillar_slide_down_start / _down) brings her down to pillar_detach_ground at its foot.

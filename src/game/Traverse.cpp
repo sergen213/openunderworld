@@ -48,6 +48,8 @@ vec3 rungPos(const collision::Markup& m, int r, vec3 out) {
 int rungAt(const collision::Markup& m, float z) {
     return std::clamp(int(std::floor((m.points[0].z - z - kRungTop) / kRungSpacing + 0.5f)), 0, lowestRung(m));
 }
+// A ladder's outward direction (from its third point, the outward hint); zero without one.
+vec3 ladderOut(const collision::Markup& m) { return m.points.size() >= 3 ? unitXY(m.points[2] - m.points[1], vec3(0)) : vec3(0); }
 
 // Pillars: the root on the axis, the clips holding her body round the shaft (tru.exe under Wine, l4_temple 1189 / 1194:
 // Lara's instance stays on the axis while on a pillar) [O]; she attaches within kPillarReach of it [I]; from the floor
@@ -148,10 +150,141 @@ bool topClear(const collision::CollisionMesh& col, const collision::Markup& m, v
     const float z = m.points[0].z + kRungSpacing;
     return !col.raycast(root, {0, 0, 1}, std::max(z - root.z, 1.0f)) && !col.raycast(vec3(xy(root), z), -out, kTopOver);
 }
+// Jumping off a ladder to the side or back (tru.exe player chart, ladder group S1049 [O-data]): the jump button with the
+// stick's quadrant left / right (cond 0x195 = 452 / 453) takes T1869 / T1870 to S1113 / S1115, with it neutral or down
+// T1868 to S1111 — all under S1109, whose query is q22 (prop 541; prop 543 = 412 / 413 / 411 the way) and whose take-off
+// clips are ladder_jump_left / ladder_jump_right (0.17 s: 60 / 70 aside and 47 / 85 up of root motion, a quarter turn
+// toward the jump) and ladder_jump_back (a half turn). q22 (lara.drm query table): 47.41 that way + 60.05 up a 30 Hz
+// frame, gravity 5.72443, frames 1..40 (object +0xBDE). At the end of the take-off, S289 flies her onto what the query met
+// by its markup class (ledge, ladder 611, balance beam 625, ...), else the free leap at q22's launch [O-data]. Ours: the
+// first ledge (ledgeOnArc), ladder or beam the root's arc meets [I: the ladder / beam reaches below].
+constexpr float kLeapFrames = 40.0f;
+constexpr float kLadderCatch = 220.0f; // the root within this of a rung's (tryLadder's air reach) [I]
+constexpr float kBeamCatch = 252.84f;  // lara.drm's balance-beam markup record +0x58 (its use as a reach is [I])
+// Leaning to the side (S1083 left / S1082 right, entered on the stick's quadrant from the ladder idle S1084): their move
+// queries q91 / q90 (lara.drm: from the hand, bones 53 / 78, 15.80 a 30 Hz frame sideways for frames 1..10, beyond 158
+// (+0x28) horizontally [O-data]) finding a ladder (class 611, T1858 / T1859: not a beam, 625) take her to the reach states
+// S1093 / S1094 (ladder_reach_left / _right), whose end goes through S614 onto it (S1068 -> S1070..S1073: the settle
+// clips, ladder_settle_left / _right) [O-data]. Without one she leans (ladder_jump_<side>_prepare, the take-off's first
+// pose, when the jump query has a target; _prepare_untargeted, the idle pose, otherwise [I: by the clip poses]) until the
+// stick lets go. Our reach: a ladder parallel to hers, on her wall, kReachMin..kReachMax aside with a rung at her height
+// [I: ladder_reach_<side> carries the hand 138 that way and ladder_settle_<side> starts with it 173 off the new root, a
+// 311 hand-over; + the query's 30 box].
+constexpr float kReachMin = 158.0f, kReachMax = 138.3f + 172.6f + 30.0f;
+constexpr float kG = 5.72443f;
 } // namespace
 
+Player::JumpTarget Player::ladderJumpTarget(vec3 from, vec3 v, vec2 dir) const {
+    JumpTarget best = ledgeOnArc(from, v, kLeapFrames, dir);
+    if (best.markup < 0) best.frames = 1e9f;
+    const auto arc = [&](float f) { return from + v * f - vec3(0, 0, 0.5f * kG * f * f); };
+    for (size_t i = 0; i < col_.markup.size(); ++i) {
+        const auto& m = col_.markup[i];
+        if (int(i) == s_.ledge || m.points.size() < 2) continue;
+        if (m.type == 9) {
+            const vec3 out = ladderOut(m);
+            if (glm::length(out) < 0.5f) continue;
+            for (float f = 1; f <= kLeapFrames && f < best.frames; f += 0.25f) {
+                const vec3 p = arc(f);
+                const int r = rungAt(m, p.z);
+                const vec3 rp = rungPos(m, r, out);
+                if (glm::length(xy(p - rp)) > kLadderCatch || std::abs(p.z - rp.z) > kRungSpacing) continue;
+                best = {int(i), r, 0, 1, f};
+                break;
+            }
+        } else if (m.type == 14) { // landed on: the arc coming down through the beam's height within kBeamCatch of it
+            for (int si = 0; size_t(si) + 1 < m.points.size(); ++si) {
+                const vec3 a = m.points[size_t(si)], b = m.points[size_t(si) + 1];
+                const float len = glm::length(xy(b - a));
+                if (len < 1e-2f) continue;
+                const vec2 d = xy(b - a) / len;
+                for (float f = 1; f <= kLeapFrames && f < best.frames; f += 0.25f) {
+                    if (v.z - kG * f > 0) continue; // still rising
+                    const vec3 p = arc(f);
+                    const float t = std::clamp(glm::dot(xy(p - a), d), 0.0f, len);
+                    const vec3 q = glm::mix(a, b, t / len);
+                    if (p.z > q.z) continue;
+                    if (glm::length(xy(p - q)) <= kBeamCatch) best = {int(i), si, t, 1, f};
+                    break; // the arc is below the beam from here on
+                }
+            }
+        }
+    }
+    if (best.frames >= 1e9f) best = {};
+    return best;
+}
+
+vec3 Player::ladderCatch(int markup, int rung) const {
+    const auto& m = col_.markup[size_t(markup)];
+    const vec3 out = ladderOut(m);
+    return rungPos(m, rung, out) - rotYaw(yawOf(-xy(out)), clipMove(anims_, "ladder_attach_M"));
+}
+
+void Player::catchLadder() {
+    const auto& m = col_.markup[size_t(s_.ledge)];
+    const vec3 out = ladderOut(m);
+    s_.climbNormal = out;
+    s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw;
+    s_.climbTo = rungPos(m, std::clamp(s_.ledgeSeg, 0, lowestRung(m)), out);
+    s_.climbYawTo = s_.yaw + wrapAngle(yawOf(-xy(out)) - s_.yaw);
+    s_.vel = vec3(0);
+    s_.state = State::Ladder;
+    play("ladder_attach_M", false);
+}
+
+void Player::ladderLeap(int way) {
+    const vec2 f = xy(forward()), right(std::sin(s_.yaw), -std::cos(s_.yaw));
+    const vec2 dir = way == 2 ? -f : right * float(way);
+    const std::string_view clip = way == 2 ? "ladder_jump_back" : way > 0 ? "ladder_jump_right" : "ladder_jump_left";
+    // the sideways take-off carries her with its root motion before the launch (State::Jump / HangJump take-off)
+    const vec3 from = way == 2 ? s_.pos : s_.pos + rotYaw(s_.yaw, clipMove(anims_, clip));
+    const vec3 v(dir * (t_.ladderJumpOut / 30.0f), t_.ladderJumpVz / 30.0f);
+    const JumpTarget j = ladderJumpTarget(from, v, dir);
+    s_.fallStartZ = s_.pos.z;
+    s_.regrabCooldown = 0.3f;
+    play(clip, false);
+    const int type = j.markup >= 0 ? col_.markup[size_t(j.markup)].type : -1;
+    if (type == 1 || type == 9) { // onto a ledge's hang / a ladder's rung: the take-off, then the flight aimed at it
+        s_.ledge = j.markup, s_.ledgeSeg = j.seg, s_.ledgeT = j.t, s_.ledgeSide = j.side, s_.polePara = false;
+        s_.state = State::HangJump;
+        s_.vel = vec3(0);
+        if (way == 2) launchHangJump(t_.ladderJumpVz);
+        return;
+    }
+    s_.ledge = -1;
+    s_.state = State::Jump;
+    s_.vel = vec3(dir * t_.ladderJumpOut, t_.ladderJumpVz);
+    if (type == 14) { // onto the beam point it met, timed by the hit frame (the beam landing stands her on it)
+        const auto& m = col_.markup[size_t(j.markup)];
+        const vec3 a = m.points[size_t(j.seg)], b = m.points[size_t(j.seg) + 1];
+        const vec3 to = glm::mix(a, b, j.t / std::max(glm::length(xy(b - a)), 1e-3f));
+        const float time = j.frames / 30.0f;
+        s_.vel = (to - from) / time + vec3(0, 0, 0.5f * t_.gravity * time);
+    }
+}
+
+int Player::adjacentLadder(int side) const {
+    if (s_.ledge < 0) return -1;
+    const auto& cur = col_.markup[size_t(s_.ledge)];
+    const vec3 out = s_.climbNormal;
+    const vec2 way = vec2(std::sin(s_.yaw), -std::cos(s_.yaw)) * float(side);
+    for (size_t i = 0; i < col_.markup.size(); ++i) {
+        const auto& m = col_.markup[i];
+        if (int(i) == s_.ledge || m.type != 9 || m.points.size() < 3) continue;
+        const vec3 o = ladderOut(m);
+        const vec2 d = xy(m.points[0] - cur.points[0]);
+        if (glm::dot(o, out) < 0.9f || std::abs(glm::dot(d, xy(out))) > 60.0f) continue; // parallel, on her wall
+        const float aside = glm::dot(d, way);
+        if (aside <= kReachMin || aside > kReachMax) continue;
+        const float z = rungPos(m, rungAt(m, s_.pos.z), o).z;
+        if (std::abs(z - s_.pos.z) <= kRungSpacing * 0.5f) return int(i);
+    }
+    return -1;
+}
+
 // On a ladder: rung to rung (ladder_climb_up / _down, one rung per clip, carried onto the rung as the exe's rung-align
-// anim target does), off the top / bottom rung onto the floor, jump up / back, let go.
+// anim target does), off the top / bottom rung onto the floor, jump up / to the side / back, reach across to the next
+// ladder, let go. The stick's quadrant (cond 0x195: its dominant axis) picks the way.
 void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size()) { startFall(s_.vel); return; }
     const auto& m = col_.markup[size_t(s_.ledge)];
@@ -159,7 +292,8 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const std::string clip = s_.clip;
     if (clip == "ladder_attach_M" || clip == "ladder_attach_ground_bottom" || clip == "ladder_attach_ground_top" ||
         clip == "ladder_climb_up" || clip == "ladder_climb_down" || clip == "ladder_detach_ground_top" ||
-        clip == "ladder_detach_ground_bottom" || clip == "ladder_jump_up_at_top") {
+        clip == "ladder_detach_ground_bottom" || clip == "ladder_jump_up_at_top" || clip == "ladder_settle_left" ||
+        clip == "ladder_settle_right") {
         if (!warpStep(dt)) return;
         if (clip.starts_with("ladder_detach") || clip == "ladder_jump_up_at_top") {
             s_.ledge = -1;
@@ -171,13 +305,30 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         }
         play("ladder_idle", true);
     }
-    const float climb = glm::dot(vec3(move, 0), -out);
     const int r = rungAt(m, s_.pos.z);
     const auto start = [&](std::string_view c, vec3 to, float yawTo) {
         s_.climbFrom = s_.pos, s_.climbTo = to, s_.climbYawFrom = s_.yaw, s_.climbYawTo = yawTo;
         play(c, false);
     };
-    if (jumpPressed && climb > 0.5f) { // the stick up: jump up, else nothing (no jump back, T1868)
+    if (clip == "ladder_reach_left" || clip == "ladder_reach_right") { // committed: then across onto that ladder (ledgeSeg)
+        advanceClip(dt);
+        if (!clipDone()) return;
+        const int to = s_.ledgeSeg;
+        if (to < 0 || size_t(to) >= col_.markup.size()) { play("ladder_idle", true); return; }
+        const auto& n = col_.markup[size_t(to)];
+        const vec3 o = ladderOut(n);
+        s_.ledge = to;
+        s_.climbNormal = o;
+        start(clip == "ladder_reach_left" ? "ladder_settle_left" : "ladder_settle_right", rungPos(n, rungAt(n, s_.pos.z), o),
+              s_.yaw + wrapAngle(yawOf(-xy(o)) - s_.yaw));
+        return;
+    }
+    const vec2 right(std::sin(s_.yaw), -std::cos(s_.yaw));
+    const float climb = glm::dot(vec3(move, 0), -out), lateral = glm::dot(move, right);
+    const bool sideways = std::abs(lateral) > 0.5f && std::abs(lateral) > std::abs(climb);
+    const bool up = !sideways && climb > 0.5f, down = !sideways && climb < -0.5f;
+    const int side = lateral > 0 ? 1 : -1;
+    if (jumpPressed && up) { // jump up, else nothing (no jump back, T1868)
         if (r > kJumpUpRung || col_.raycast(s_.pos, {0, 0, 1}, kJumpUpHeadroom)) return;
         s_.regrabCooldown = 0.3f;
         if (topClear(col_, m, s_.pos, out)) { // onto the floor at the top: the clip's root motion, its end on the floor
@@ -200,13 +351,8 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         s_.vel = vec3(0, 0, kLadderJumpVz * 30.0f);
         return;
     }
-    if (jumpPressed) { // ladder_jump_back turns her away from the ladder; the leap's speeds are [I]
-        s_.ledge = -1;
-        s_.state = State::Jump;
-        s_.vel = out * 500.0f + vec3(0, 0, 900.0f);
-        s_.fallStartZ = s_.pos.z;
-        s_.regrabCooldown = 0.3f;
-        play("ladder_jump_back", false);
+    if (jumpPressed) { // to the side (T1869 / T1870) or back (T1868), q22
+        ladderLeap(sideways ? side : 2);
         return;
     }
     if (dropPressed) {
@@ -215,26 +361,55 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         play("ladder_detach_drop", false);
         return;
     }
-    const bool leaning = clip == "ladder_idle_to_jump_up_prepare" || clip == "ladder_jump_up_prepare";
-    if (climb > 0.5f && r == 0 && !topClear(col_, m, s_.pos, out)) { // blocked top: lean into the jump
-        if (!leaning) play("ladder_idle_to_jump_up_prepare", false);
-        else if (clip == "ladder_idle_to_jump_up_prepare" && clipDone()) play("ladder_jump_up_prepare", true);
+    // Leans: up on a blocked top rung (ladder_idle_to_jump_up_prepare / _prepare loop / _prepare_to_idle), to the side
+    // (above), down on the lowest rung with no floor to step off onto (S1086 -> S1088 on LookaheadResult 642 rather than
+    // 640: ladder_idle_to_jump_back_antic, the ladder_jump_back_prepare loop, released ladder_jump_back_antic_to_idle
+    // [O-data; the clip of each state by name, I]).
+    const vec3 offBottom = s_.pos + rotYaw(s_.yaw, clipMove(anims_, "ladder_detach_ground_bottom"));
+    const bool bottomOpen = r >= lowestRung(m) && !col_.groundProbe(offBottom + vec3(0, 0, 150.0f), 300.0f);
+    struct Lean { std::string_view in, loop, release; };
+    const bool targeted = sideways && ladderJumpTarget(s_.pos + rotYaw(s_.yaw, clipMove(anims_, side > 0 ? "ladder_jump_right" : "ladder_jump_left")),
+                                                       vec3(right * float(side) * (t_.ladderJumpOut / 30.0f), t_.ladderJumpVz / 30.0f),
+                                                       right * float(side)).markup >= 0;
+    const std::string sideLoop = std::string(side > 0 ? "ladder_jump_right_prepare" : "ladder_jump_left_prepare") + (targeted ? "" : "_untargeted");
+    const Lean lean = up && r == 0 && !topClear(col_, m, s_.pos, out)
+                          ? Lean{"ladder_idle_to_jump_up_prepare", "ladder_jump_up_prepare", "ladder_jump_up_prepare_to_idle"}
+                      : down && bottomOpen ? Lean{"ladder_idle_to_jump_back_antic", "ladder_jump_back_prepare", "ladder_jump_back_antic_to_idle"}
+                      : sideways           ? Lean{sideLoop, sideLoop, ""}
+                                           : Lean{};
+    if (sideways && !clip.starts_with("ladder_jump_")) { // a ladder within the move query's reach: across onto it
+        if (const int to = adjacentLadder(side); to >= 0) {
+            s_.ledgeSeg = to;
+            play(side > 0 ? "ladder_reach_right" : "ladder_reach_left", false);
+            return;
+        }
+    }
+    const bool leaning = clip == "ladder_idle_to_jump_up_prepare" || clip == "ladder_jump_up_prepare" ||
+                         clip == "ladder_idle_to_jump_back_antic" || clip == "ladder_jump_back_prepare" ||
+                         (clip.starts_with("ladder_jump_") && clip.find("_prepare") != std::string::npos && clip.find("up") == std::string::npos);
+    if (!lean.loop.empty()) {
+        if (clip != lean.in && clip != lean.loop) play(lean.in, lean.in == lean.loop);
+        else if (clip == lean.in && clip != lean.loop && clipDone()) play(lean.loop, true);
         advanceClip(dt);
         return;
     }
-    if (leaning || (clip == "ladder_jump_up_prepare_to_idle" && !clipDone())) {
-        if (leaning) play("ladder_jump_up_prepare_to_idle", false);
+    if (leaning || ((clip == "ladder_jump_up_prepare_to_idle" || clip == "ladder_jump_back_antic_to_idle") && !clipDone())) {
+        if (leaning) {
+            const bool sideLean = clip.find("_left_") != std::string::npos || clip.find("_right_") != std::string::npos;
+            if (sideLean) { play("ladder_idle", true); s_.pos = rungPos(m, r, out); return; } // no clip back from a side lean
+            play(clip.find("back") != std::string::npos ? "ladder_jump_back_antic_to_idle" : "ladder_jump_up_prepare_to_idle", false);
+        }
         advanceClip(dt);
         return;
     }
-    if (climb > 0.5f) {
+    if (up) {
         if (r > 0) start("ladder_climb_up", rungPos(m, r - 1, out), s_.yaw);
         else start("ladder_detach_ground_top", s_.pos + rotYaw(s_.yaw, clipMove(anims_, "ladder_detach_ground_top")), s_.yaw);
         return;
     }
-    if (climb < -0.5f) {
+    if (down) {
         if (r < lowestRung(m)) start("ladder_climb_down", rungPos(m, r + 1, out), s_.yaw);
-        else start("ladder_detach_ground_bottom", s_.pos + rotYaw(s_.yaw, clipMove(anims_, "ladder_detach_ground_bottom")), s_.yaw - kPi);
+        else start("ladder_detach_ground_bottom", offBottom, s_.yaw - kPi);
         return;
     }
     play("ladder_idle", true);

@@ -1051,8 +1051,8 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   the align target corrects it); attaches end on a rung (from the floor the lowest, `ladder_attach_ground_bottom`; from
   the air the nearest, `ladder_attach_M`; from the floor above, facing out over the top, `ladder_attach_ground_top`
   turns her round onto rung 0). Off rung 0 upward `ladder_detach_ground_top` (216.4 forward, 575.4 up), off the lowest
-  downward `ladder_detach_ground_bottom` (95 back, half turn), Space = `ladder_jump_back` (half turn; out 500, up 900
-  [I]), Ctrl = `ladder_detach_drop`.
+  downward `ladder_detach_ground_bottom` (95 back, half turn), Space = `ladder_jump_back` (half turn; q22 below),
+  Ctrl = `ladder_detach_drop`.
 - Ladder jump up [O-data, player chart ladder group T1871 / T1872 / T1817]: jump with the stick up, only on the top
   three rungs (0x72B920's rung ≤ chart variable 195 = 2; [U] the LookaheadResult 642 the chart also excludes) and
   with nothing within 1027 over her (cond 0x20, variable 396 = 325 × 3.1605). Top clear (cond 0x28A, player +0xEDC
@@ -1063,6 +1063,52 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   (`ladder_idle_to_jump_up_prepare`, the `ladder_jump_up_prepare` loop, released `_prepare_to_idle`) [I: which request
   of the ladder group plays them is not decoded]. Real ladders are few (7 in 97 units); none in the main game has a
   ledge above a blocked top [O-data survey].
+- Ladder jumps to the side and back [O-data, player chart ladder group S1049]: jump with the stick's quadrant left /
+  right (cond 0x195 = 452 / 453) takes T1869 / T1870 to S1113 / S1115, neutral or down T1868 to S1111, all under S1109
+  whose query is **q22** (prop 541; prop 543 = 412 / 413 / 411 the way): **47.41** that way + **60.05** up a 30 Hz frame,
+  gravity 5.72443, frames 1..40. Take-off clips `ladder_jump_left` / `ladder_jump_right` (0.17 s, 60 / 70 aside and 47 /
+  85 up of root motion, a quarter turn toward the jump) and `ladder_jump_back` (half turn); then S289 flies her onto what
+  q22 met by its class (ledge, ladder 611, beam 625, …), else the free leap at q22's speeds (the jump back used to be
+  500 out / 900 up [I]). Ours: the take-off's root motion, then the first ledge (`ledgeOnArc`), ladder rung (root within
+  220 [I]) or balance beam (coming down through its height within 252.84 of it: the beam record's radius, its use [I])
+  the root's arc meets; a ledge or ladder is flown onto (HangJump, `ledgeb_attach_S` / `_F`, `ladder_attach_M` [I: the
+  attach request 1161 has U/M/D/S/F/FS variants, not decoded]), a beam landed on. Leans [O-data]: the stick to the side
+  enters S1083 / S1082, whose move queries q91 / q90 (from the hand, bones 53 / 78, 15.80 a frame sideways for 10
+  frames, beyond 158) finding a ladder (not a beam) go to the reach states S1093 / S1094 (`ladder_reach_left` /
+  `_right`) and through S614 / S1068 onto it (`ladder_settle_left` / `_right`); else she leans
+  (`ladder_jump_<side>_prepare` when q22 has a target, `_prepare_untargeted` otherwise [I: by the clips' first poses])
+  until the stick lets go. Our reach: a parallel ladder on her wall 158..341 aside with a rung at her height [I: the
+  reach / settle clips hand over 311 + the 30 box]. On the lowest rung the chart steps off only on LookaheadResult 640
+  and leans back on 642 (S1086 → S1088): ours leans (`ladder_idle_to_jump_back_antic`, `ladder_jump_back_prepare`,
+  released `ladder_jump_back_antic_to_idle`) when no floor is where `ladder_detach_ground_bottom` ends [I: 640 = floor].
+  Real spot: l7_arctic_sea ladder 2044 hangs over a pit, balance beam 2042 (between ledges 2065 / 2066) crossing 853 to
+  its left at z −18899: rungs ~9..12 jump onto the beam. Not measured under Wine [U]: teleporting into that chamber
+  works (tru = ours − Level+0x80 = (5610.33, −22439.56, −19571.3)), but she did not attach to the ladder from a
+  teleported fall; side-by-side ladders (reach) exist in no unit (stacked ones: l1_ship_sinking_hall 28 / 30, reached up
+  by q88 S1095, not done).
+- Ledge corners [O: clips; I: chart]: lara.drm's hang corner set (requests 1030..1046): `ledgeb_concave_right_phase1`
+  (45° right, ending with the hands 38 in front: `ledgeb_concave_idle`'s pose) / `_phase2`, `ledgeb_convex_right_phase1`
+  (206 right, 45° left, hands 212 out: `ledgeb_convex_idle`) / `_phase2`, and the corner leans `ledgeb_<kind>_jump_up_antic`
+  / `_jump_back_antic` (loops). 740 ledge joints turn more than 45° in all units, 573 of them 85..95°
+  (openunderworld-work/ladderleans/survey.txt). Ours: shimmying onto such a joint plays phase1 into the corner pose
+  (hands on the joint, facing between the walls; concave where the next segment turns toward her side), the corner idle,
+  the stick up / back leans, the stick on along the ledge phase2 onto the next segment (back: phase2 mirrored onto the
+  first); left = mirrored. The hang group's states use local request numbers, so which state plays which is [I];
+  jumps at a corner are the hang's; corner attaches (`ledgeb_<kind>_attach_*`) are not used [U].
+- Jump query hit test [O: decomp 0x70F300 / 0x6F9940 / 0x70EC60 / 0x6FCB10]: the sweep takes the times of closest
+  approach of the query's arc to each markup segment's line (a cubic, at most two, clamped to the frame limit) and the
+  nearest segment point (first / last segment ends inset by the markup record's +0x98 / +0x9A), then a capsule test from
+  the markup type's record (lara.drm player data +0x584..+0x5C0, chosen by MUD flags in 0x5D57A0): centre = arc point +
+  the record's +0x30 offset turned by the launch yaw, half-height +0x54 / 2, accepted within radius +0x58 (+ the query's
+  +0x78 when its +0x65 flag is set). Ledges (default record): offset (0, 12.64, −219.03), height 252.84, radius 316.06,
+  insets 79; ladders: (0, 0, 100) + 189.63, 150, 379.27; balance beams: 252.84, 252.84; holds: 284.45, 221.24. Each
+  record tests subtypes (ledges 3 and 1), each with its own arc start: the query's +0x8C entry for that subtype (up, out)
+  replaces the start offset (0x6F9560), the base being the instance or, for queries with +0xCC = 1, the attach point
+  (player +0xCA0). How our root frame maps onto these arcs is [U] (read literally, a standing q2 would hit l3_main_hall
+  ledge 944, which tru.exe under Wine does not), so `ledgeOnArc` keeps its ±25 / 200 box [I].
+- Air-grab window [U]: under Wine (l7_arctic_sea beam 2042 / ledge 2065, Lara dropped from rest by teleport at 0..300
+  out, −500..+300 over the ledge) the result depended on which fall state the teleport left her in (0x0B156030: caught
+  the beam and stood on it from 200 out and 300 above; 0x0B156058: nothing caught anywhere), so no window was measured.
 - Hang leans [O: tru.exe under Wine, l3_main_bedroom ledge 973, chart states read at *(player+0xF10)+0x510]: the stick
   held up keeps her in S434 (no climb, the top climbable), back S456, right at the ledge's end S457 → S449, until
   released (S444, the idle). These states run the hang jump queries (q10 up, q7 / q8 sides, q9 back). Ours plays
@@ -1097,7 +1143,8 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   sideways `Wall_Hug_Shimmy_Left` (mirrored to the right [I]); where the shelf ends `Wall_Hug_Walk_Off` (mirrored);
   Space = `Wall_Hug_Jump_Forward`. She stands 88.496 in from the line [I]. Not done: corners
   (`Wall_Hug_Shimmy_to_Concave/Convex_*`), side / twist jumps, drop to water, the swim climb-out onto a shelf.
-- Tests `GameReal.LadderRungsClimbOffTop`, `GameReal.PillarAttachRoundUpSlideOff`, `Game.PerchAttachAndJumpOff`,
+- Tests `GameReal.LadderRungsClimbOffTop`, `GameReal.LadderSideJumpsReachAndBack`, `GameReal.ArcticSeaLadderSideJumpOntoBeam`,
+  `GameReal.HangShimmyRoundCorners`, `GameReal.PillarAttachRoundUpSlideOff`, `Game.PerchAttachAndJumpOff`,
   `GameReal.ShipSinkingHallLadder`, `GameReal.TemplePerchTurnsAndPillarTop` (l4_temple perch 1190 on pillar 1191),
   `GameReal.PuzzleRoomWallHug` (l2_puzzleroom shelf 476), `GameReal.TrapRoomsPoleParallelHandOverHandAndTurns`,
   `GameReal.TrapRoomsPoleSwingStops`, `GameReal.PoleTraversalIndependentOfRenderRate`; saves mid-climb, mid-hand-over-hand,

@@ -216,6 +216,9 @@ struct Tuning {
     // Free leaps off a hang (no target), launched when the take-off clip ends (tru.exe under Wine, l3_main_bedroom
     // ledge 973): back 53.73 out + 34.77 up, sideways 70.80 + 34.77 (units per 30 Hz frame x 30).
     float hangLeapBack = 53.73f * 30, hangLeapSide = 70.80f * 30, hangLeapVz = 34.77f * 30;
+    // Jumps off a ladder to the side or back (lara.drm query q22, the ladder jump group's): 47.41 that way + 60.05 up
+    // (units per 30 Hz frame x 30).
+    float ladderJumpOut = 47.41f * 30, ladderJumpVz = 60.05f * 30;
     // Sprint (Shift / LB held while running; tru.exe under Wine, l4_trailstart): sprint_loop for 9.5..9.9 s, then
     // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
     // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
@@ -373,6 +376,11 @@ private:
     void assistJump();
     bool aimGroundJump(vec2 query); // ground jump query (forward, up a 30 Hz frame) meeting a ledge: aim at its hang
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
+    // Ledge corners (a polyline joint turning more than 45 degrees): shimmying onto one plays ledgeb_<concave|convex>_
+    // right_phase1 into the corner pose (left: mirrored), its idle and leans there, _phase2 round onto the next segment.
+    // startHangCorner: moving along the polyline (along > 0: toward its end) out of `seg` across a corner joint.
+    bool startHangCorner(int seg, float along, float lateral);
+    bool hangCorner(float lateral, float fw, bool jumpPressed, float dt); // the corner states; false: not at a corner / jump
     // root, yaw; poles: `para` = the parallel hang
     std::pair<vec3, float> attachPose(int markup, int seg, float t, float side, bool para = false) const;
     void pole(vec2 move, bool jumpPressed, bool dropPressed, float dt); // State::PoleHang
@@ -392,6 +400,13 @@ private:
     // Ladders (markup 9), perches (13), pillars (15), src/game/Traverse.cpp. climbNormal = outward from the wall.
     bool tryLadder(bool fromAir);
     void ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    // Ladder jumps left / right / back (q22): the first ledge, ladder or balance beam its arc meets (a ladder: seg = the
+    // rung); markup -1 = none. ladderLeap: way -1 left, 1 right, 2 back.
+    JumpTarget ladderJumpTarget(vec3 from, vec3 v, vec2 dir) const;
+    void ladderLeap(int way);
+    int adjacentLadder(int side) const; // the ladder a reach to that side (1 right, -1 left) moves her onto, or -1
+    vec3 ladderCatch(int markup, int rung) const; // where a jump onto a ladder's rung hands over to ladder_attach_M
+    void catchLadder();                           // HangJump onto a ladder (ledge = it, ledgeSeg = the rung) ends
     void pillar(vec2 move, vec2 stick, bool jumpPressed, bool dropPressed, float dt); // stick: camera-relative
     bool tryPerch(bool fromAir);
     void perch(vec2 move, bool jumpPressed, bool dropPressed, float dt);
