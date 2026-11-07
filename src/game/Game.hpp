@@ -1114,8 +1114,10 @@ private:
     std::map<int32_t, nlohmann::json> uberSaved_; // restored uber state of objects not prepared since (prepareUber applies it)
     std::map<std::pair<std::string, uint32_t>, bool> lightStates_;
     uint64_t lightsVersion_ = 0;
-    // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()).
-    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; };
+    // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()),
+    // uber section (-1 = the object's own model: posed by its joint / script; else that section's model, posed by the
+    // section's joint and clip).
+    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; };
     std::vector<ObjectCollider> colliders_;
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     const physics::ObjectPhysics* objectPhysics(const std::string& name); // objectPhysics_, loaded on first use

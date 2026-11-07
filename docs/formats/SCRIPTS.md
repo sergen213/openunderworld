@@ -173,6 +173,13 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
   their event cursors by (uid, section)). [I] A pattern of several animations would blend them by weight (all
   patterns in the data have one); effects that follow bones track the owner (intro uid), so two sections of one
   object with bone-following effects share the last tracked pose.
+- Section collision [O]: 0x4D0E50 births each section instance through 0x5BA810 with the section's model index and
+  0x496CB0 builds that model's collision, so every section collides with its own model's solid segments.
+  `World::syncObjects` adds them (`ObjectCollider::section`; the section drawn as the object's own mesh keeps model 0's
+  collision as before) and `tickObjects` poses each segment by the section's joint (`uberSectionBody`) and its clip's
+  bone (`uberSectionPose`); a removed section (action 28) drops out. Lara stands on and rides them like any dynamic:
+  the l4 hallway ramps' lowered section 0 (model 1), the chapel shadow door's sinking halves, the pole bars, gears and
+  calendar rings. Tests `ProgressionReal.LoweredRampSectionCarriesLara`, `ProgressionReal.LoweredDrawbridgeIsSolid`.
 - Section models [O]: state action 1 (0x4D86A0; not when its byte argument is set, [I] a restore) writes the action word's low byte to the section
   instance's model (+0x234); the instance draws and animates that model of the object from then on. Survey (every
   objectlist object, 2026-11-07): two objects, both in l1_ship_sinking_hall: `ms_uo_break_pipe` (1190 / 1191; state

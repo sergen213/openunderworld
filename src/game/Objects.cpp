@@ -1253,11 +1253,30 @@ void World::syncObjects() {
         if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable) continue; // spline movers' collision follows Object::body (pose below)
         if (o.kind == script::Kind::Switch && !uber &&
             (!o.script || !o.script->program->mainFunction(o.script->typeId))) continue;
+        if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end() && rt->second.intangible) continue;
+        const glm::mat4 intro = introModel(o);
+        // Uber sections (0x4D0E50): every section instance is born with its record's model (0x5BA810 with the model
+        // index, then 0x496CB0 builds that model's collision), so the sections other than the one drawn as the
+        // object's own mesh (its first on model 0, below) collide with their model's solid segments, posed by their
+        // joint and clip each tick (tickObjects): lowering ramps, the shadow door's halves, the pole bars.
+        if (uber) {
+            size_t main = uber->sections.size();
+            for (size_t k = 0; k < uber->sections.size(); ++k)
+                if (uber->sections[k].model == 0) { main = k; break; }
+            for (size_t k = 0; k < uber->sections.size(); ++k) {
+                if (k == main) continue;
+                const physics::ObjectPhysics* sp = uberSectionPhysics(o, k);
+                if (!sp) continue;
+                for (int seg = 0; seg < int(sp->segments.size()); ++seg)
+                    if (auto shape = physics::solidShape(*sp, seg)) {
+                        col_.dynamics.push_back({o.uid, std::move(shape), intro * sp->segments[seg]});
+                        colliders_.push_back({o.uid, seg, -1, intro, sp->segments[seg], int(k)});
+                    }
+            }
+        }
         const physics::ObjectPhysics* physics = objectPhysics(o.name);
         if (!physics) continue;
-        if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end() && rt->second.intangible) continue;
         const physics::ObjectPhysics& p = *physics;
-        const glm::mat4 intro = introModel(o);
         int hinge = -1;
         // [I] Rigid doors (class 34) and joint levers (class 6) swing about the X axis of their first model marker.
         // A receptacle holding an inserted portable slides on its joint instead (tickInserted).
@@ -1319,6 +1338,15 @@ void World::tickObjects(float dt) {
         const auto& c = colliders_[i];
         const auto* o = script_.find(c.uid);
         if (!o) continue;
+        if (c.section >= 0) { // an uber section's model: its joint's motion, its clip's bone for the segment
+            bool removed = false;
+            glm::mat4 model = uberSectionBody(c.uid, c.section, &removed).value_or(glm::mat4(1));
+            if (const auto palette = uberSectionPose(c.uid, c.section); palette && !palette->empty())
+                model = model * (*palette)[std::min<size_t>(size_t(c.segment), palette->size() - 1)];
+            col_.dynamics[i].transform = removed ? glm::translate(glm::mat4(1), vec3(0, 0, -1e7f)) // action 28: gone
+                                                 : c.intro * model * c.frame;
+            continue;
+        }
         glm::mat4 model(1); // model-space rigid motion of the segment
         if (c.hinge >= 0) {
             model = glm::inverse(c.intro) * physics_.bodies[physics_.hinges[c.hinge].body].model();

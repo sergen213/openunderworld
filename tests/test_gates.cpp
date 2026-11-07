@@ -1133,6 +1133,77 @@ TEST(ProgressionReal, TombDoorOpensByItsSectionClip) {
     EXPECT_GT(most, 100.0f) << "the door's collision moved with its bones";
 }
 
+// Lara stands on uber object `uid`'s collision entry that moved most since `before` (its dynamics, in order): a ground
+// probe from above its centre hits it, she is put there and after 90 ticks still stands on it (`stand`; under water
+// she swims instead, so only the probe is checked).
+void standsOnMovedPart(game::World& w, int32_t uid, const std::vector<glm::mat4>& before, bool stand = true) {
+    std::vector<size_t> mine;
+    for (size_t i = 0; i < w.collision().dynamics.size(); ++i)
+        if (w.collision().dynamics[i].id == uid) mine.push_back(i);
+    ASSERT_EQ(mine.size(), before.size());
+    size_t best = 0;
+    float most = -1;
+    for (size_t k = 0; k < mine.size(); ++k)
+        if (const float d = glm::length(vec3(w.collision().dynamics[mine[k]].transform[3]) - vec3(before[k][3])); d > most) most = d, best = k;
+    const auto& d = w.collision().dynamics[mine[best]];
+    vec3 lo(1e30f), hi(-1e30f);
+    for (const vec3& v : d.shape->vertices) lo = glm::min(lo, vec3(d.transform * glm::vec4(v, 1))), hi = glm::max(hi, vec3(d.transform * glm::vec4(v, 1)));
+    const vec3 c = (lo + hi) * 0.5f;
+    const auto hit = w.collision().groundProbe(vec3(c.x, c.y, hi.z + 100), hi.z - lo.z + 200);
+    ASSERT_TRUE(hit);
+    ASSERT_EQ(hit->dynamic, int32_t(mine[best])) << "the moved part is solid from above";
+    if (!stand) return;
+    place(w, hit->point + vec3(0, 0, 5), 0);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    EXPECT_NEAR(w.player().state().pos.z, hit->point.z, 40.0f) << "Lara stands on it";
+    const auto ground = w.collision().groundProbe(w.player().state().pos + vec3(0, 0, 20), 60);
+    ASSERT_TRUE(ground);
+    EXPECT_EQ(ground->dynamic, int32_t(mine[best]));
+}
+
+// Every uber section collides with its own model's solid segments (0x4D0E50 -> 0x5BA810 with the section's model,
+// 0x496CB0), posed by its joint and clip: l4_staircase_upper hallway ramps 6045 lower section 0 (model 1) on prismatic
+// joint 0 (command 1); Lara stands on the lowered ramp.
+TEST(ProgressionReal, LoweredRampSectionCarriesLara) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l4_staircase_upper", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 30; ++i) w.tick({});
+    std::vector<glm::mat4> before;
+    for (const auto& d : w.collision().dynamics)
+        if (d.id == 6045) before.push_back(d.transform);
+    ASSERT_GE(before.size(), 2u) << "the frame and the ramp section collide";
+    ASSERT_TRUE(w.sendUberCommand(6045, 1));
+    for (int i = 0; i < 120; ++i) w.tick({});
+    ASSERT_LT(w.uberJoint(6045, 0)->x, -900.0f);
+    standsOnMovedPart(w, 6045, before);
+}
+
+// l7_arctic_sea seafloor drawbridge 9116 (one section, model 0): its command plays "opening" (transition 0) and the
+// clip's bones carry its collision; the lowered bridge is solid from above (it lies on the sea floor, under water:
+// Lara swims there rather than stands).
+TEST(ProgressionReal, LoweredDrawbridgeIsSolid) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l7_arctic_sea", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_TRUE(w.uberState(9116));
+    std::vector<glm::mat4> before;
+    for (const auto& d : w.collision().dynamics)
+        if (d.id == 9116) before.push_back(d.transform);
+    ASSERT_FALSE(before.empty());
+    const auto start = *w.uberState(9116);
+    for (uint32_t c = 0; c < 8 && *w.uberState(9116) == start; ++c) w.sendUberCommand(9116, c);
+    ASSERT_NE(*w.uberState(9116), start);
+    for (int i = 0; i < 900 && (*w.uberState(9116))[0] == 0xFFFFFFFFu; ++i) w.tick({});
+    for (int i = 0; i < 30; ++i) w.tick({});
+    standsOnMovedPart(w, 9116, before, false);
+}
+
 // Research: an object's animation list, OU_ANIM_NAMES=<object>.
 TEST(ProgressionReal, AnimNames) {
     const char* name = std::getenv("OU_ANIM_NAMES");
