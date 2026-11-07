@@ -4,6 +4,22 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.38.0] - 2026-11-07
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: running jumps reach ledges exactly as far as in the original (measured: caught from up to 4.4 m away). Close
+  ledges are reached with a quick straight leap, farther ones with an arc onto the ledge, as the original does.
+- Fixed: jumping up from the top hold of a climbing wall onto the ledge above uses the original's quick straight leap.
+- Fixed: doors, gates, elevators and drawbridges move by their own animations, as in the original. The chapel shadow
+  door opens by its two halves sinking into the floor instead of the whole frame sliding. Every moving part has its
+  own collision, so lowered ramps and bridges can be walked on.
+- Added: objects can switch to another model when their state changes (the ship's break pipes become broken,
+  steaming pipes), and every animated part of an object fires its own sound and particle events.
+- Added: `ou-game --no-cinematics` skips showing cutscenes while keeping their effects (Lara's placement, events, level
+  changes). New automated tests run the real game through four pick-up/insert puzzles (trap-room throne, Valaskjalf
+  pole lever, puzzle-room pole, Valgrind cog wheel).
+
 ## [0.37.0] - 2026-11-07
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
