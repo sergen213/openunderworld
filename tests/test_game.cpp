@@ -2942,14 +2942,27 @@ TEST(GameReal, GrapplePullsUberTargets) {
         game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), c.unit,
                       anims, game::Spawn{c.spawn, glm::radians(c.yawDeg)});
         w.script().setBigfile(&bf);
+        // The shiva arms spawn in state 0 with uber action 0x1A (no grapple target). Walking into trigger volume 3023 runs
+        // its script, which commands both arms into the state with action 0x19: offered. Lara walks in, then back.
+        if (c.uid == 2982) {
+            w.tick({}); // uber objects start their sections at spawn
+            EXPECT_TRUE(w.uberGrappleOff(2982));
+            const auto* volume = w.script().find(3023);
+            ASSERT_TRUE(volume);
+            game::PlayerState in;
+            in.pos = volume->pos - vec3(0, 0, script::kTestPointHeight), in.yaw = glm::radians(c.yawDeg);
+            w.restore(in, in.yaw, -0.25f);
+            w.script().playerJumped();
+            for (int i = 0; i < 30; ++i) w.tick({});
+            EXPECT_FALSE(w.uberGrappleOff(2982)) << "volume 3023 offers arm 2982";
+            EXPECT_FALSE(w.uberGrappleOff(2983)) << "and arm 2983";
+            game::PlayerState back;
+            back.pos = c.spawn, back.yaw = glm::radians(c.yawDeg);
+            w.restore(back, back.yaw, -0.25f);
+            w.script().playerJumped();
+        }
         bool braced = false;
         for (uint64_t i = 0; i < 5 * 60; ++i) {
-            // The shiva arm's section 1 spawns in state 0 with action 0x1A (no grapple target); its command 0 (state 2,
-            // action 0x19) offers it. [U] which puzzle script sends that command; the test sends it.
-            if (i == 1 && c.uid == 2982) {
-                EXPECT_TRUE(w.uberGrappleOff(2982));
-                w.sendUberCommand(2982, 0);
-            }
             if (i == 72) { // just before the throw (1.2 s)
                 const auto t = w.grappleTarget();
                 ASSERT_TRUE(t);

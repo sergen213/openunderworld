@@ -55,9 +55,13 @@ Fixes (2026-11-06):
 Sweep 2026-11-07 (grapple handles): **136 / 251 pass; FAIL 11, state 11, condition 53, encounter 9, preload 31**. The
 `sa_ei_grapple_wall*` / `sa_ei_grapple_mounted` objects are no longer pull candidates: they are swivelling grapple
 handles, anchors (GAMEPLAY.md "Grapple"); only uber targets whose state machine watches the pulled joint are Mounted.
-Their volumes now pass (2038 / 2045 -> 2042, plane 2039 -> 2043: uber action 0x1A / 0x19). [U] the candidate total
-fell from 289 to 251 and encounters from 36 to 9: the nine handles account for 9; the rest was not attributed (no
-sweep of the pre-change build was run). True failures left (11): l1_kraken_room soundvolumes
+Their volumes pass as before (2038 / 2045 -> 2042, plane 2039 -> 2043). Attribution (same sweep on base ee7a57c:
+136 / 260, FAIL 20, state 11, condition 53, encounter 9, preload 31; per-gate lines diffed): the only difference is
+the nine handle "pull" lines gone (2005 / 2042 / 2043, 2383 / 2393 / 2394 / 2395, 2457, 2595, all FAIL in the base);
+every other gate's line is identical. The 289 candidates / 36 encounters above predate ee7a57c (already 260 / 9 on
+the base, not from this change). Shiva arms 2982 / 2983 spawn with uber action 0x1A (no grapple target); trigger
+volume 3023's script commands them into the state with 0x19 (`GameReal.GrapplePullsUberTargets` walks Lara through
+it before the pull). True failures left (11): l1_kraken_room soundvolumes
 358/360/361/362/364/365/380/381 (vt 75 clears a flag already clear: not a gate); l5_valaskjalf 7025 / 7026 (chain
 6944 / 6943 vt 55, no visible change); l7_helheim01 8945 (`anchor` 1, below). Natives bound since: `multibody`
 89 (0x4AA250: motor target speed of a joint, joint +0x108 -> `Object::Joint::speed`; a non-plate, non-hinge joint moves
