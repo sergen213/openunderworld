@@ -458,6 +458,8 @@ if(OU_BUILD_TESTS)
     set_tests_properties(game_replay_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
   endfunction()
   ou_receptacle_replay(traprooms_throne_insert l4_traprooms 7400,-34900,4440,-135 900 "portables held 0 inserted .*5883>5891")
+  ou_receptacle_replay(valaskjalf_pole_lever_insert l5_valaskjalf_entryb 1700,-45719,-2499,180 600 "portables held 0 inserted .*7190>7189")
+  ou_receptacle_replay(puzzleroom_pole_remove l2_puzzleroom -17500,40565,5540,180 400 "portables held 2967 inserted" "state idle")
   ou_receptacle_replay(valgrind_cog_gem_insert l5_valgrind 0,3072,180,180 1500 "portables held 0 inserted .*7498>7312")
   # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,
   # docs/RENDERING.md "Ray tracing"); 77 = skipped (no OU_GAME_DIR, display or ray-query device).

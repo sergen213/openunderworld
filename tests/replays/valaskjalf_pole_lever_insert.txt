@@ -1,0 +1,28 @@
+# l5_valaskjalf_entryb: --spawn 1700,-45719,-2499,180 --no-cinematics, next to pole 7190 (ar_pt_pole_a).
+# Pick the pole up, walk to pole-hole lever 7189 (ar_uo_phole_lever) and insert it (graph stimulus 0x20: the pole now
+# sticks out of the wall as horizontal pole markup 1164 over the floor). Recorded by ou-game --autopilot
+# (docs/GAMEPLAY.md "Receptacle replays"), plan: engage 7190 walk / press / wait 3 / engage 7189 walk / press / wait 3
+0.0333 interact 1.00
+0.1333 interact 0.00
+3.2667 forward -0.70
+3.2667 right -0.70
+3.2667 walk 1.00
+3.6667 right -0.75
+3.8000 forward -0.65
+4.0667 forward -0.60
+4.0667 right -0.80
+4.3333 forward -0.55
+4.4000 right -0.85
+4.6000 forward -0.50
+4.8000 right -0.90
+4.8667 forward -0.45
+5.0667 forward -0.40
+5.2667 forward -0.35
+5.2667 right -0.95
+5.4667 forward -0.30
+5.6667 forward -0.25
+5.8000 forward 0.00
+5.8000 right 0.00
+5.8000 walk 0.00
+5.8167 interact 1.00
+5.9167 interact 0.00

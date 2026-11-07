@@ -1,0 +1,10 @@
+# l2_puzzleroom: --spawn -17500,40565,5540,180 --no-cinematics, on the floor east of floor hole 2969.
+# Walk west until pole 2967 (sa_pt_pole_a, in hole 2969 from the start) engages and pull it out (0x186: graph
+# stimulus 0x40, its vt 20(0) runs elevator 2960 vt 54 / switch 2961 vt 62); she carries it.
+# Recorded by ou-game --autopilot (docs/GAMEPLAY.md "Receptacle replays"), plan: engage 2967 walk / wait 0.5 / press / wait 5
+0.0667 forward 1.00
+0.0667 walk 1.00
+0.8500 forward 0.00
+0.8500 walk 0.00
+1.3833 interact 1.00
+1.4833 interact 0.00

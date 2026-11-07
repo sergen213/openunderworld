@@ -587,6 +587,13 @@ cinematic's end on tick 1 either way, so the replays start from there. The repla
 |---|---|---|
 | `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematic: 6556.5,-33459.7) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) |
 | `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | power gem 7498 carried 33 m to cog wheel 7312, set into section 1 while the wheel turns |
+| `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 |
+| `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 |
+
+Not replayed [U]: hanging on the inserted l5 pole (door 7227, `PoleHoleLeverOpensRewardDoor` drops her onto it). The
+pole's markup is 1164 over the floor she inserts it from (2742,-46810..-46296, z -1339), above the standing jump's
+reach (ledges 635-910 over her feet); no markup lies within 12.5 m of it and the stone blocks at the room's far end
+(x ~4300) are 1500 away, so the route up the original intends is not found yet.
 
 ## Controller
 
