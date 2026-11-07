@@ -3565,23 +3565,9 @@ TEST(GameReal, ElevatorCarriesPlayer) {
     EXPECT_LT(w.player().state().pos.z, startZ - 100.0f);
 }
 
-TEST(GameReal, BallcourtLeverReplayPassesDoor) {
-    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    const cdc::BigfileSet bf(gameDir());
-    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
-                  "l4_ballcourt", game::loadLaraAnims(bf), game::Spawn{{-20066, 14150, 3540}, 0});
-    w.script().setBigfile(&bf);
-    // Physics-only replay: enabling the poacher interrupts this route with genuine hit reactions. The use clip
-    // (obj_pushbutton, 1.3 s) locks the input until 1.6 s.
-    const auto replay = game::InputScript::parse(
-        "0.3 interact 1\n0.4 interact 0\n1.7 forward 1\n2.85 forward 0\n2.9 right 1\n6.1 right 0\n");
-    for (int i = 0; i < 430; ++i) w.tick(fixedCamera(w, replay.at(i), 0));
-    const auto& p = w.player().state().pos;
-    EXPECT_GT(p.x, -18520.0f);
-    EXPECT_LT(p.y, 13700.0f);
-}
-
-TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
+// l4_ballcourt pole lever 6502 is a receptacle (tru.exe: only a kind-5 engagement record, needing ca_pt_pole_a): a use
+// next to it leaves door 6505 shut (ProgressionReal.BallcourtPoleLeverOpensDoor inserts the pole).
+TEST(GameReal, BallcourtLeverIgnoresAUse) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
@@ -3591,11 +3577,8 @@ TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
     use.interact = true;
     for (int i = 0; i < 30; ++i) w.tick(use);
     for (int i = 0; i < 240; ++i) w.tick({});
-    ASSERT_EQ(w.physics().hinges.size(), 2u);
-    const float a = w.physics().angle(0), b = w.physics().angle(1);
-    EXPECT_NEAR(std::abs(b), 2.0f * std::abs(a), 0.05f);
-    EXPECT_NEAR(std::abs(a), glm::radians(40.0f), 0.05f);
-    EXPECT_GT(std::max(std::abs(a), std::abs(b)), 0.1f);
+    ASSERT_EQ(w.physics().hinges.size(), 1u) << "door 6505 only: the lever slides on its joint";
+    EXPECT_LT(std::abs(w.physics().angle(0)), 0.1f) << "shut (its rest angle)";
 }
 
 // Script coverage survey (docs/formats/SCRIPTS.md "Survey"). Static: native call sites per (native type, function)
@@ -3885,15 +3868,14 @@ MakeWorld worldMaker(const cdc::BigfileSet& bf, std::string unit, std::optional<
 }
 } // namespace
 
-// l4_ballcourt: pole lever 6502 drives door 6505's hinge (multibody natives), Lara runs through the passage.
+// l4_ballcourt: Lara by pole lever 6502 (a receptacle now: the door needs its pole, ProgressionReal.BallcourtPoleLeverOpensDoor)
+// and door 6505's hinge, interacting and running about.
 TEST(GameReal, BallcourtLeverIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     const auto input = game::InputScript::parse("0.3 interact 1\n0.4 interact 0\n1.7 forward 1\n2.85 forward 0\n2.9 right 1\n6.1 right 0\n");
     const auto w = expectRateIndependent(worldMaker(bf, "l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}), input, 430);
-    ASSERT_EQ(w->physics().hinges.size(), 2u);
-    EXPECT_GT(std::abs(w->physics().angle(1)), 0.1f);
-    EXPECT_GT(w->player().state().pos.x, -18520.0f);
+    EXPECT_FALSE(w->physics().hinges.empty()) << "door 6505";
 }
 
 // The same with l4_ballcourt's enemies live, as in ou-game (poacher fire and hit reactions interrupt the run): plane

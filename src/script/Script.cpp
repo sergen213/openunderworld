@@ -572,7 +572,9 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
                 kind = t->nativeName == "triggerplanebase" ? Kind::Plane : Kind::Volume;
                 break;
             }
-    if (!kind && !in.scriptId && !in.spline) return;
+    // Scriptless receptacles stay (l4_temple pole holes 5230-5232: a pole inserted there is a swing pole) [I: "_pt_"
+    // objects only, to spare loading every prop's DRM].
+    if (!kind && !in.scriptId && !in.spline && !(contains(n->second, "_pt_") && receptacleGraph(n->second))) return;
     Object o;
     o.uid = in.uniqueId, o.unit = u.name, o.name = n->second, o.kind = kind.value_or(Kind::Scripted);
     o.pos = vec3(in.position[0], in.position[1], in.position[2]) + u.offset;
@@ -594,6 +596,12 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
         const auto shape = parseShape(*u.drm, *in.data, o.kind == Kind::Plane);
         if (!shape) return;
         o.shape = *shape;
+    }
+    if (in.data) { // [O] l2_puzzleroom pole 2967 -> hole 2969, l2_norsehub gems -> their portable_key_preinsert holders
+        const auto& d = u.drm->sections.at(in.data->section).data;
+        uint32_t w[2] = {};
+        if (in.data->offset + 8 <= d.size()) std::memcpy(w, d.data() + in.data->offset, 8);
+        if (w[0] == 0x405 && (w[1] & 0xFFFF) == 1) o.placedIn = int32_t(w[1] >> 16);
     }
     if (const ScriptType* t = in.scriptId ? program->type(in.scriptId) : nullptr) {
         o.script = program->instantiate(o.uid, in.scriptId);
@@ -694,23 +702,20 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
     // member answers fn 8 (state id, query 0xE8) from its field: it holds the intro's state id, and each use moves
     // it along the use transition (Runtime::switchUsed). l5_valaskjalf_entryb lever 7188 acts only while switch
     // 7192 is not in its "on" state 0; 7192 starts in state 1.
-    if ((o.kind == Kind::Scripted || o.kind == Kind::Switch) && o.script) {
+    if ((o.kind == Kind::Scripted || o.kind == Kind::Switch) && (o.script || receptacleGraph(o.name))) {
         bool uses = false;
-        const auto modifiable = modifiableMember(*o.script);
-        for (const ScriptType* t = program->type(o.script->typeId); t && !uses; t = program->type(t->superId))
+        const auto modifiable = o.script ? modifiableMember(*o.script) : std::nullopt;
+        for (const ScriptType* t = o.script ? program->type(o.script->typeId) : nullptr; t && !uses; t = program->type(t->superId))
             for (const Member& m : t->members) {
                 const char* native = program->nativeName(m.typeId);
                 uses |= !std::strcmp(native, "modifiable") || !std::strcmp(native, "animated");
             }
-        // [O] 0x6B4B10 gives every instance with graph data an anim component; ours only those whose scripts reach it,
-        // and receptacles: scripts hearing graph transitions (vt 19, instance prototype 32) whose graph takes the insert
-        // stimulus (l5_valaskjalf_entryb pole-hole lever 7189 "It's the insert reaction"; World::carryPortables).
+        // [O] 0x6B4B10 gives every instance with graph data an anim component; ours those whose scripts reach it and
+        // every receptacle: a graph taking the insert stimulus (0x6C2530 posts it; World::insertHeld), switches too
+        // (l4_ballcourt pole lever 6502 polls its modifiable state id), scriptless ones too (l4_temple holes 5230-5232).
         auto set = uses ? graphSet(o.name) : nullptr;
-        bool receptacle = false;
-        if (!uses && program->method(o.script->typeId, 19))
-            if (auto g = graphSet(o.name, true); g && g->graph &&
-                std::ranges::any_of(g->graph->transitions, [](const auto& t) { return t.mask & formats::kStimulusInsert; }))
-                set = std::move(g), receptacle = true;
+        const auto receptacle = receptacleGraph(o.name);
+        if (receptacle && !(set && set->graph)) set = receptacle;
         int initial = 0;
         if (set && set->graph && in.data) {
             const auto& d = u.drm->sections.at(in.data->section).data;
@@ -718,12 +723,15 @@ void Runtime::introduce(const UnitRef& u, const std::shared_ptr<vm::Program>& pr
             if (in.data->offset + 0x40 <= d.size()) std::memcpy(&first, d.data() + in.data->offset + 0x3C, 4);
             if (first > 0 && size_t(first) < set->graph->states.size()) initial = first;
         }
-        // [I] A receptacle placed without physob data (l5_valaskjalf_entryb 7189) starts empty: in the state its insert
-        // transition leaves (its script's insert reaction is that transition; tru.exe's start record then is not traced).
-        if (receptacle && !in.data)
-            for (size_t si = 0; si < set->graph->states.size(); ++si)
-                if (std::ranges::any_of(set->graph->states[si].out, [&](uint32_t ti) { return set->graph->transitions[ti].mask & formats::kStimulusInsert; }))
-                    { initial = int(si); break; }
+        // [I] A receptacle whose start record is the one its insert transition enters (the pole holes and levers, keyholes,
+        // l1 eye pieces, portable_key_preinsert) starts empty, in the state that transition leaves; a portable placed in it
+        // (World: the portable's intro reference, 0x6B5890 message 0x23 -> 0x6A6DC0) then inserts itself.
+        if (receptacle) {
+            const auto& G = *set->graph;
+            const auto inserts = [&](uint32_t ti) { return (G.transitions[ti].mask & formats::kStimulusInsert) && G.transitions[ti].target == initial; };
+            for (size_t si = 0; si < G.states.size(); ++si)
+                if (std::ranges::any_of(G.states[si].out, inserts)) { initial = int(si); break; }
+        }
         if (set && o.kind == Kind::Switch && !receptacle) {
             if (set->graph && modifiable)
                 o.script->fields[*modifiable] = o.script->initial[*modifiable] = uint32_t(int32_t(set->graph->states[size_t(initial)].index));
@@ -991,7 +999,7 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
     case EventKind::Cross: vt = kVtPlaneCross; break;
     case EventKind::Use:
         if (o.kind == Kind::Switch) switchUsed(o);
-        vt = contains(o.name, "phole_lever") ? kVtLeverMoved : kVtSwitchUsed;
+        vt = kVtSwitchUsed;
         // Switch bases (e.g. 3637) receive the state change in vt 20 and dispatch the used state to vt 55; a script that
         // overrides vt 20 below the vt 55 definer handles the use there with state 0 (l2 elevator switch 10112: vt20(0)
         // -> STATE 1 -> the elevator) [I: the state value; our machines start with zeroed arguments].
@@ -1996,6 +2004,15 @@ std::shared_ptr<const Object::GraphSet> Runtime::graphSet(const std::string& nam
     return slot = std::move(set);
 }
 
+// Receptacles: objects whose anim graph takes the insert stimulus 0x20 (pole holes and levers, keyholes, the l1 eye
+// pieces, Kali's crown, the l4 traproom seal, portable_key_preinsert holders; docs/GAMEPLAY.md "Inserting a portable").
+std::shared_ptr<const Object::GraphSet> Runtime::receptacleGraph(const std::string& name) {
+    auto g = graphSet(name, true);
+    if (!g || !g->graph || std::ranges::none_of(g->graph->transitions, [](const auto& t) { return t.mask & formats::kStimulusInsert; }))
+        return nullptr;
+    return g;
+}
+
 uint32_t Runtime::objectFlags(const std::string& name) {
     if (const auto it = objectFlags_.find(name); it != objectFlags_.end()) return it->second;
     uint32_t flags = 0;
@@ -2107,9 +2124,19 @@ bool Runtime::graphPost(int32_t uid, uint32_t mask, float amount, float value) {
     return graphStimulus(uid, mask, value);
 }
 
-bool Runtime::insertPortable(int32_t portable, int32_t receptacle) {
+bool Runtime::insertPortable(int32_t portable, int32_t receptacle, int32_t segment) {
     graphStimulus(portable, formats::kStimulusInsert, -1.0f);
+    const vm::Value args[] = {vm::Value::scalar(uint32_t(segment)), vm::Value::scalar(5)};
+    callback(receptacle, "instance", 67, args);
     return graphStimulus(receptacle, formats::kStimulusInsert, -1.0f);
+}
+
+bool Runtime::removePortable(int32_t portable, int32_t receptacle, int32_t segment) {
+    const vm::Value args[] = {vm::Value::scalar(uint32_t(segment)), vm::Value::scalar(5)};
+    callback(receptacle, "instance", 67, args);
+    const bool started = graphStimulus(receptacle, formats::kStimulusRemove, -1.0f);
+    graphStimulus(portable, formats::kStimulusRemove, -1.0f);
+    return started;
 }
 
 bool Runtime::graphAccepts(int32_t uid, uint32_t mask) const {
@@ -2397,7 +2424,8 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
                 if (o.kind == Kind::Switch && o.resetAfter >= 0 && o.t >= o.resetAfter)
                     o.state = 0, o.t = 0;
             }
-            if (o.kind == Kind::Switch && o.state == 0 && pressed) {
+            // Receptacles have no use engagement (only kind-5 insert records): l4_ballcourt pole lever 6502 waits for its pole.
+            if (o.kind == Kind::Switch && o.state == 0 && pressed && !receptacleGraph(o.name)) {
                 const float d = glm::length(vec2(o.pos - in.pos));
                 if (d < best && std::abs(o.pos.z - in.pos.z) < kReachHeight) best = d, useSwitch = &o;
             }

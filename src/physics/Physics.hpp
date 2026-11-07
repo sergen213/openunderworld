@@ -53,6 +53,21 @@ struct HMarker {
     uint16_t id = 0;
     vec3 pos{0}, rot{0}; // segment frame; Euler radians, R = Rx * Ry * Rz [I] (cdc_Matrix_Build_XYZOrder)
 };
+// Engagement record (0x8C bytes; tru.exe [Engagement] 0x6F3C60 tested by Lara's scan 0x719520): where Lara can interact
+// with an object. The instance answers query 0x53 with its active set {+0 id, +4 -> records, +8 count}.
+struct Engagement {
+    int kind = 0;       // +0: 0 off, 4 pick up (portables), 5 insert into (receptacles), 8 use (switches)
+    int segment = -1;   // +4: frame = that segment's, -1 the instance's; also the insert's script argument (vt 49)
+    int shape = 0;      // +0x10: 0 sphere, 1 cylinder (centre = middle), 2 cylinder + facing cone (0x6F3A50)
+    vec3 centre{0};     // +0x14, units (the data's centimetres x 3.1605)
+    float radius = 0, height = 0; // +0x20 / +0x24, units
+    float heading = 0, half = 0;  // +0x28 / +0x2C, radians: the cone about the frame's Z, measured from +X
+    std::vector<uint16_t> needs;  // +0x6C -> u16 object ids, +0x70 count: Lara must hold one of them (0x6F3BB0)
+};
+struct EngagementSet {
+    int32_t id = -1; // selectable by instance message 0x1B1 (scripts' UseEngagementProperties) when 0 < id < 10000
+    std::vector<Engagement> records;
+};
 struct ObjectPhysics {
     uint32_t oflags = 0;   // ObjectBase +0; bit 0x80000000 = "physical" object family (tru.exe 0x5BF0E0)
     int physClass = -1;    // physical data class (ObjectBase+0xC8: u16 +2 when u16 +4 == 0xB00B), 34 = rigid body
@@ -64,6 +79,10 @@ struct ObjectPhysics {
     std::vector<Marker> markers;
     std::vector<HMarker> hmarkers;
     vec3 boxMin{0}, boxMax{0}; // segment 0's box (dtp segment +0 / +0x10): the model's bounds (tru.exe 0x696B00)
+    // Engagement sets: physical record +0x68 (+0x6C count) of anim-graph objects, +0xA8 (+0xAC) of portables (class 50).
+    std::vector<EngagementSet> engagements;
+    // Receptacles: the model marker a portable attaches at (record +0x3C -> byte; query 0x173 -> 0x6B55D0), -1 none.
+    int attachMarker = -1;
     // Bind-pose model-space frame of a segment field (tru.exe 0x615930): >= 0 a segment, < 0 the HInfo marker -id
     // (0x46DA20) in its segment's frame; nullopt when there is no such segment / marker.
     std::optional<mat4> frame(int field) const;

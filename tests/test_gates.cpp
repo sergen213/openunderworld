@@ -3,6 +3,7 @@
 // the gate tests teleport Lara next to each gate, perform the original interaction and assert its effect.
 #include "game/Game.hpp"
 #include "game/Progress.hpp"
+#include "physics/Physics.hpp"
 
 #include "cdc/Cdc.hpp"
 #include "formats/Formats.hpp"
@@ -17,6 +18,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <map>
 #include <ranges>
 #include <set>
@@ -427,7 +429,7 @@ const std::vector<Case>& criticalGates() {
                                                          {4822, Action::Use}, {4822, Action::Use}}}},
         {3, {"l3_chamberrockhall", 4617, Action::Use, {4528}}},          // electric switch -> secret door
         {3, {"l3_main_hall", 4128, Action::Enter, {}, 4}},               // 160_man_shot, 170_man_exit -> chapter 4
-        {4, {"l4_ballcourt", 6502, Action::Use, {6505}}},                // pole lever -> door joint
+        // pole lever 6502 -> door 6505: the pole inserted and hung on (BallcourtPoleLeverOpensDoor)
         {4, {"l4_traprooms", 5884, Action::Push, {}}},                   // grapple push block
         // the Xibalba exit switch, the plane of 190_mex (6410 -> 6389), then the chapter end 5483
         {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5, {{5469, Action::Use}, {6410, Action::Enter}}}},
@@ -1264,24 +1266,96 @@ TEST(ProgressionReal, ValaskjalfChainsDetach) {
     for (const int32_t uid : {6985, 6943, 6944, 7025, 7026})
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
 }
+// ---- receptacles (docs/GAMEPLAY.md "Inserting a portable") ---------------------------------------------------------
+namespace {
+// The frame of an engagement record of object `o` (its HInfo marker `segment`, else the instance), as World::engages.
+glm::mat4 engagementFrame(const physics::ObjectPhysics& p, const script::Object& o, int segment) {
+    glm::mat4 f = glm::translate(glm::mat4(1), o.pos + o.offset) * glm::rotate(glm::mat4(1), o.rot.x, {1, 0, 0}) *
+                  glm::rotate(glm::mat4(1), o.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), o.rot.z, {0, 0, 1}) * o.body;
+    for (const auto& m : p.hmarkers)
+        if (segment >= 0 && m.id == segment)
+            return f * (size_t(m.segment) < p.segments.size() ? p.segments[size_t(m.segment)] : glm::mat4(1)) * glm::translate(glm::mat4(1), m.pos) *
+                   glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
+    return f;
+}
+// Floors where Lara standing has a sample point (220.6 / 315.4 / 410.2 above her feet, as World::engages) inside one of
+// `o`'s records of `kind`, nearest the record's centre first, facing it.
+std::vector<std::pair<vec3, float>> engageSpots(const cdc::BigfileSet& bf, const game::World& w, const script::Object& o, int kind) {
+    const auto p = physics::loadObjectPhysics(cdc::parseDrm(*bf.read("pc-w\\" + o.name + ".drm")));
+    std::vector<std::tuple<float, vec3, float>> found;
+    for (const auto& set : p.engagements)
+        for (const auto& e : set.records) {
+            if (e.kind != kind) continue;
+            const glm::mat4 f = engagementFrame(p, o, e.segment), inv = glm::inverse(f);
+            const vec3 c(f * glm::vec4(e.centre, 1));
+            const auto inside = [&](vec3 feet) {
+                for (const float z : {220.6f, 315.4f, 410.2f}) {
+                    const vec3 q = vec3(inv * glm::vec4(feet + vec3(0, 0, z), 1)) - e.centre;
+                    if (e.shape == 0) { if (glm::dot(q, q) < e.radius * e.radius) return true; continue; }
+                    const float b = q.z + e.height * 0.5f;
+                    if (glm::dot(glm::vec2(q), glm::vec2(q)) >= e.radius * e.radius || b < 0 || b >= e.height) continue;
+                    if (e.shape == 2 && std::abs(std::remainder(std::atan2(q.y, q.x) - e.heading, glm::two_pi<float>())) >= e.half) continue;
+                    return true;
+                }
+                return false;
+            };
+            const float r = e.radius + 50;
+            for (float dx = -r; dx <= r; dx += 25)
+                for (float dy = -r; dy <= r; dy += 25)
+                    for (float top = c.z + r + 400; top > c.z - r - 900;) {
+                        const auto g = w.collision().groundProbe(vec3(c.x + dx, c.y + dy, top), top - (c.z - r - 900));
+                        if (!g) break;
+                        if (inside(g->point)) found.emplace_back(glm::length(glm::vec2(g->point - c)), g->point + vec3(0, 0, 5), std::atan2(c.y - g->point.y, c.x - g->point.x));
+                        top = g->point.z - 60;
+                    }
+        }
+    std::ranges::sort(found, {}, [](const auto& t) { return std::get<0>(t); });
+    std::vector<std::pair<vec3, float>> out;
+    for (const auto& [d, at, yaw] : found) if (out.size() < 40) out.push_back({at, yaw});
+    return out;
+}
+// Lara at each spot in turn (settling there), one interact press, until `done`; true when it held.
+bool interactFrom(game::World& w, const std::vector<std::pair<vec3, float>>& spots, const std::function<bool()>& done) {
+    game::Actions use;
+    use.interact = true;
+    for (const auto& [at, yaw] : spots) {
+        place(w, at, yaw);
+        for (int i = 0; i < 20; ++i) w.tick({});
+        if (w.player().state().state != game::State::Idle) continue;
+        w.tick(use), w.tick({});
+        if (done()) return true;
+    }
+    return false;
+}
+int16_t graphStateId(const game::World& w, int32_t uid) {
+    const auto* o = w.script().find(uid);
+    return o && o->graph && o->graph->set->graph ? o->graph->set->graph->states[size_t(o->graph->state)].index : -1;
+}
+std::unique_ptr<game::World> receptacleWorld(const cdc::BigfileSet& bf, const std::string& unit) {
+    static const auto anims = game::loadLaraAnims(bf);
+    auto w = std::make_unique<game::World>(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), unit, anims,
+                                           game::Spawn{{0, 0, -1e6f}, 0});
+    w->script().setBigfile(&bf);
+    w->onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 30; ++i) w->tick({});
+    return w;
+}
+} // namespace
+
 // l5_valaskjalf_entryb pole-hole lever 7189 (ar_uo_phole_lever) and pole 7190 (ar_pt_pole_a): carried to the lever and
-// inserted (World::insertHeld), the lever's graph takes the insert stimulus (transition 1 -> state 0:
-// vt 19 "It's the insert reaction", vt 20(0) watches its slider -600..-474); Lara hanging on the pole weighs the slider
-// into the watch: vt 34 -> reward door 7227 vt 57 (l5_valaskjalf_entry).
+// inserted from inside its engagement record (kind 5, cylinder + cone, needs ar_pt_pole_a), the lever's graph takes the
+// insert stimulus (transition 1 -> state 0: vt 19 "It's the insert reaction", vt 20(0) watches its slider -600..-474);
+// Lara hanging on the pole weighs the slider into the watch: vt 34 -> reward door 7227 vt 57 (l5_valaskjalf_entry).
+// Back on the floor, interact takes the pole out again (0x186: graph stimulus 0x40 -> state 1, empty).
 TEST(ProgressionReal, PoleHoleLeverOpensRewardDoor) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    const auto anims = game::loadLaraAnims(bf);
-    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l5_valaskjalf_entryb", anims,
-                  game::Spawn{{0, 0, -1e6f}, 0});
-    w.script().setBigfile(&bf);
-    w.onCinematic = [](const std::string&, bool) {};
+    auto wp = receptacleWorld(bf, "l5_valaskjalf_entryb");
+    auto& w = *wp;
     std::set<int16_t> doorCalls;
     w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) { if (from == 7189 && to == 7227) doorCalls.insert(vt); };
-    for (int i = 0; i < 30; ++i) w.tick({});
     const auto lever = [&] { return w.script().find(7189); };
-    const auto* pole = w.script().find(7190);
-    ASSERT_TRUE(lever() && pole && w.script().find(7227));
+    ASSERT_TRUE(lever() && w.script().find(7190) && w.script().find(7227));
     ASSERT_TRUE(lever()->graph);
     EXPECT_TRUE(w.script().graphAccepts(7189, formats::kStimulusInsert)) << "empty: the insert transition leaves its state";
     const auto& s = w.player().state();
@@ -1292,31 +1366,160 @@ TEST(ProgressionReal, PoleHoleLeverOpensRewardDoor) {
     for (int i = 0; i < 5; ++i) w.tick({});
     w.tick(use), w.tick({});
     EXPECT_TRUE(w.script().graphAccepts(7189, formats::kStimulusInsert));
-    // Pick the pole up, carry it in front of the lever and insert it into the hole (1169 up).
+    // Pick the pole up, carry it to the lever and insert it.
     place(w, w.script().find(7190)->pos + vec3(80, 0, 0), glm::pi<float>());
     w.tick({}), w.tick(use), w.tick({});
-    place(w, lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>());
-    for (int i = 0; i < 5; ++i) w.tick({});
-    ASSERT_EQ(s.state, game::State::Idle);
-    w.tick(use), w.tick({});
-    ASSERT_TRUE(lever()->graph);
-    EXPECT_EQ(lever()->graph->set->graph->states[size_t(lever()->graph->state)].index, 0) << "inserted (transition 1 -> 0)";
+    ASSERT_EQ(w.heldPortable(), 7190);
+    ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}}, [&] { return w.insertedIn(7190) == 7189; }));
+    EXPECT_EQ(graphStateId(w, 7189), 0) << "inserted (transition 1 -> 0)";
     ASSERT_TRUE(lever()->joint);
     EXPECT_EQ(lever()->joint->ranges.size(), 1u) << "vt 20(0): multibody 79 watch -600..-474";
     EXPECT_TRUE(doorCalls.empty());
     const collision::Markup* poleMarkup = nullptr;
     for (const auto& m : w.collision().markup)
-        if (m.type == 6 && m.points.size() == 2 && glm::distance(m.points[0], lever()->pos + vec3(0, 30.9f, 1169)) < 5) poleMarkup = &m;
+        if (m.type == 6 && m.points.size() == 2 && glm::distance(m.points[0], lever()->pos + vec3(0, 30.9f, 1169)) < 60) poleMarkup = &m;
     ASSERT_TRUE(poleMarkup) << "the pole sticks out of the hole: a horizontal pole";
+    EXPECT_LT(std::abs(poleMarkup->points[0].z - poleMarkup->points[1].z), 5.0f) << "horizontal";
     const vec3 mid = (poleMarkup->points[0] + poleMarkup->points[1]) * 0.5f;
     // Lara drops onto it from above, hanging across it; her weight slides the lever down into its watch.
-    place(w, mid + vec3(3.4f, -17.0f, -594.0f), 0);
+    const vec3 along = glm::normalize(poleMarkup->points[1] - poleMarkup->points[0]);
+    place(w, mid + vec3(-along.y, along.x, 0) * 17.0f + vec3(0, 0, -594.0f), std::atan2(along.x, -along.y));
     for (int i = 0; i < 60 && s.state != game::State::PoleHang; ++i) w.tick({});
     ASSERT_EQ(s.state, game::State::PoleHang);
     for (int i = 0; i < 180 && doorCalls.empty(); ++i) w.tick({});
     EXPECT_LE(lever()->joint->position, -474.0f);
     EXPECT_EQ(doorCalls, std::set<int16_t>{57}) << "vt 34: \"Lever is trying to open the door\"";
     EXPECT_EQ(s.state, game::State::PoleHang) << "she rides the pole down";
+    // Removal: from the floor below, interact takes the pole out (its pick-up record, kind 4 r 869 around marker 20).
+    ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *w.script().find(7190), 4), [&] { return w.heldPortable() == 7190; }));
+    EXPECT_EQ(w.insertedIn(7190), 0);
+    EXPECT_EQ(graphStateId(w, 7189), 1) << "removal: stimulus 0x40, transition 0 -> state 1 (empty)";
+    EXPECT_TRUE(w.script().graphAccepts(7189, formats::kStimulusInsert)) << "it takes the pole again";
+    for (const auto& m : w.collision().markup) EXPECT_FALSE(&m == poleMarkup && m.type == 6) << "no pole to hang on";
     for (const int32_t uid : {7189, 7190, 7227})
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+
+// l4_ballcourt pole lever 6502 (ca_pt_phole_lever, a receptacle: its script polls its modifiable state id 1 =
+// inserted): a use does nothing; pole 6503 inserted (needs ca_pt_pole_a) enters state 1, its loop watches the slider
+// (-600..-350) and passes the slider's position to door 6505 (vt 54: multibody 77 limit = position x 2); Lara hanging on
+// the pole opens the door.
+TEST(ProgressionReal, BallcourtPoleLeverOpensDoor) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_ballcourt");
+    auto& w = *wp;
+    std::vector<std::pair<int32_t, int16_t>> calls;
+    w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) { if (from == 6502) calls.emplace_back(to, vt); };
+    const auto lever = [&] { return w.script().find(6502); };
+    ASSERT_TRUE(lever() && w.script().find(6503));
+    ASSERT_TRUE(lever()->graph);
+    EXPECT_EQ(graphStateId(w, 6502), 0) << "empty";
+    game::Actions use;
+    use.interact = true;
+    place(w, lever()->pos + vec3(150, 0, 0), glm::pi<float>());
+    for (int i = 0; i < 10; ++i) w.tick({});
+    w.tick(use);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    EXPECT_EQ(graphStateId(w, 6502), 0) << "a use does nothing";
+    EXPECT_TRUE(calls.empty());
+    place(w, w.script().find(6503)->pos + vec3(80, 0, 0), glm::pi<float>());
+    for (int i = 0; i < 5; ++i) w.tick({});
+    w.tick(use), w.tick({});
+    ASSERT_EQ(w.heldPortable(), 6503);
+    ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}, {lever()->pos + vec3(0, -250, 0), glm::half_pi<float>()},
+                                 {lever()->pos + vec3(250, 0, 0), glm::pi<float>()}, {lever()->pos + vec3(-250, 0, 0), 0.0f}},
+                             [&] { return w.insertedIn(6503) == 6502; }));
+    EXPECT_EQ(graphStateId(w, 6502), 1) << "inserted";
+    for (int i = 0; i < 10; ++i) w.tick({});
+    ASSERT_TRUE(lever()->joint) << "STATE 1: multibody 79 watch on the slider";
+    const collision::Markup* poleMarkup = nullptr;
+    for (const auto& m : w.collision().markup)
+        if (m.type == 6 && m.points.size() == 2 && glm::distance(m.points[0], lever()->pos) < 1500) poleMarkup = &m;
+    ASSERT_TRUE(poleMarkup);
+    const vec3 mid = (poleMarkup->points[0] + poleMarkup->points[1]) * 0.5f, along = glm::normalize(poleMarkup->points[1] - poleMarkup->points[0]);
+    place(w, mid + vec3(-along.y, along.x, 0) * 17.0f + vec3(0, 0, -594.0f), std::atan2(along.x, -along.y));
+    const auto& s = w.player().state();
+    for (int i = 0; i < 60 && s.state != game::State::PoleHang; ++i) w.tick({});
+    ASSERT_EQ(s.state, game::State::PoleHang);
+    for (int i = 0; i < 180; ++i) w.tick({});
+    EXPECT_LE(lever()->joint->position, -350.0f);
+
+    for (const int32_t uid : {6502, 6503, 6505})
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+
+// Every graph receptacle with its portable: a placed one (intro reference, Object::placedIn) starts inserted; Lara takes
+// it out where it has to come out, carries the portable and inserts it where its record names it. The receptacle's graph
+// state ids before / after and the script slots the insert / removal must reach.
+TEST(ProgressionReal, ReceptaclesTakeTheirPortables) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    struct Case {
+        const char* unit;
+        int32_t portable, from, into; // from: placed in (removed first), 0 = lying loose; into: 0 = removal only
+        int16_t fromAfter, intoAfter; // graph state ids after the removal / insertion
+        std::vector<std::pair<int32_t, int16_t>> calls{}; // (callee, vt) the scripts must reach
+    };
+    const std::vector<Case> cases = {
+        // Elevator puzzle: pulling pole 2967 out of floor hole 2969 (state 0) runs its vt 20(0): elevator 2960 vt 54,
+        // switch 2961 vt 62; the pole goes into hole 2970.
+        {"l2_puzzleroom", 2967, 2969, 2970, 0, 1, {{2960, 54}, {2961, 62}}},
+        {"l3_chapel", 4823, 4824, 4825, 1, 0},
+        {"l4_temple", 5240, 5233, 5229, 1, 0},
+        {"l4_temple", 5241, 0, 5230, -1, 0}, // scriptless hole
+        // The jaguar head key: out of its holder in the ragnarok room, into the xibalba exit keyhole (vt 20(1): switch
+        // 5469 vt 62).
+        {"l4_ragnarok_room", 5695, 5696, 0, 1, -1},
+        {"l2_norsehub", 2398, 2396, 0, 1, -1},
+        {"l7_arctic_sea", 9270, 9276, 0, 1, -1},
+        {"l4_temple", 5228, 5249, 0, 1, -1},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(std::string(c.unit) + " " + std::to_string(c.portable));
+        auto wp = receptacleWorld(bf, c.unit);
+        auto& w = *wp;
+        std::vector<std::pair<int32_t, int16_t>> calls;
+        w.script().onCall = [&](int32_t, int32_t to, int16_t vt) { calls.emplace_back(to, vt); };
+        const auto* portable = w.script().find(c.portable);
+        ASSERT_TRUE(portable);
+        if (c.from) {
+            ASSERT_EQ(w.insertedIn(c.portable), c.from) << "placed";
+            EXPECT_FALSE(w.script().graphAccepts(c.from, formats::kStimulusInsert)) << "full";
+            ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return w.heldPortable() == c.portable; }));
+            EXPECT_EQ(w.insertedIn(c.portable), 0);
+            EXPECT_EQ(graphStateId(w, c.from), c.fromAfter) << "removal: stimulus 0x40";
+        } else {
+            ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *portable, 4), [&] { return w.heldPortable() == c.portable; })) << "picked up";
+        }
+        if (c.into) {
+            const auto* rec = w.script().find(c.into);
+            ASSERT_TRUE(rec);
+            EXPECT_TRUE(w.script().graphAccepts(c.into, formats::kStimulusInsert));
+            ASSERT_TRUE(interactFrom(w, engageSpots(bf, w, *rec, 5), [&] { return w.insertedIn(c.portable) == c.into; }));
+            EXPECT_EQ(graphStateId(w, c.into), c.intoAfter) << "insert: stimulus 0x20";
+            EXPECT_EQ(w.heldPortable(), 0);
+        }
+        for (int i = 0; i < 90; ++i) w.tick({});
+        for (const auto& call : c.calls) EXPECT_NE(std::ranges::find(calls, call), calls.end()) << call.first << " vt " << call.second;
+        for (const int32_t uid : {c.portable, c.from, c.into})
+            for (const auto& [key, n] : w.script().failures()) EXPECT_TRUE(!uid || key.first != uid) << key.second;
+    }
+}
+
+// l4_traprooms seal 5701 (ca_ani_traproom_seal_b): four kind-5 records, one per key (segments 11-14 need the dark,
+// blade, fire and crusher room keys); the insert calls its vt 49 (instance prototype 67) with the record's segment,
+// which sets that room's sticky (11 dark +156 ... 14 crusher +212) [O bytecode].
+TEST(ProgressionReal, TraproomSealTakesTheRoomKeys) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_traprooms");
+    auto& w = *wp;
+    const auto* seal = w.script().find(5701);
+    ASSERT_TRUE(seal && w.script().find(5880) && seal->script); // 5880: ca_pt_dark_room_key
+    // The room keys lie in the trap rooms (not reachable by teleport here): the insert as the engine posts it.
+    w.script().insertPortable(5880, 5701, 11); // its graph takes 0x20 only once the seal has risen (state 1)
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto& f = w.script().find(5701)->script->fields;
+    EXPECT_TRUE(f.contains(156) && f.at(156) != 0) << "vt 49(11, 5): the dark room sticky";
 }
