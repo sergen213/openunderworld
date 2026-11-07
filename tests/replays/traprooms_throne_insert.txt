@@ -1,0 +1,38 @@
+# l4_traprooms: --spawn 7400,-34900,4440,-135 --no-cinematics (195_mex_lords places her at 6556.5,-33459.7 on tick 1).
+# Walk to scepter weight 5883, pick it up, carry it to the empty throne 5891 and set it in (uber section 0: 1 -> 2).
+# Recorded by ou-game --autopilot (docs/GAMEPLAY.md "Receptacle replays"), plan:
+#   engage 5883 walk / press / wait 3 / engage 5891 walk / press / wait 5
+0.0667 forward 1.00
+0.0667 right 0.15
+0.0667 walk 1.00
+0.1333 forward -1.00
+0.1333 right -0.10
+2.2000 right -0.15
+2.4167 forward 0.00
+2.4167 right 0.00
+2.4167 walk 0.00
+2.4333 interact 1.00
+2.5333 interact 0.00
+5.6667 forward -0.85
+5.6667 right -0.55
+5.6667 walk 1.00
+5.7333 forward -0.80
+5.8000 right -0.60
+6.2000 forward -0.75
+6.2000 right -0.65
+6.5333 right -0.70
+6.6000 forward -0.70
+6.8667 right -0.75
+6.9333 forward -0.65
+7.2000 right -0.80
+7.2667 forward -0.60
+7.5333 forward -0.55
+7.6000 right -0.85
+7.8000 forward -0.50
+8.0000 forward -0.45
+8.0000 right -0.90
+8.1500 forward 0.00
+8.1500 right 0.00
+8.1500 walk 0.00
+8.1667 interact 1.00
+8.2667 interact 0.00

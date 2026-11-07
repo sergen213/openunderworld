@@ -399,7 +399,7 @@ target_link_libraries(ou_game PUBLIC ou_physics)
 # ---- ou_ui: menus, PDA page, HUD as renderer-agnostic quads (docs/GAMEPLAY.md "Menus") ----
 add_library(ou_ui STATIC src/ui/Ui.cpp src/ui/Hud.cpp src/ui/Art.cpp src/ui/Pda.cpp)
 target_link_libraries(ou_ui PUBLIC ou_render_common ou_locale ou_formats)
-add_executable(ou-game src/app/game/main.cpp src/app/game/Cinematic.cpp src/app/game/Sound.cpp)
+add_executable(ou-game src/app/game/main.cpp src/app/game/Autopilot.cpp src/app/game/Cinematic.cpp src/app/game/Sound.cpp)
 target_link_libraries(ou-game PRIVATE ou_game ou_save ou_ui ou_render_gl ou_render_vk ou_config ou_video ou_audio ou_fx)
 if(OU_BUILD_TESTS)
   add_executable(ou_game_tests tests/test_game.cpp tests/test_combat.cpp tests/test_feedback.cpp)
@@ -441,6 +441,24 @@ if(OU_BUILD_TESTS)
     grep -q 'tick 8 gamepad none' "$out/gamepad" && grep -q 'tick 9 gamepad ' "$out/gamepad" || { echo "no hotplug"; ok=0; }
     rm -rf "$out"; [ $ok = 1 ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays)
   set_tests_properties(game_input_replay_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+  # Receptacle replays (docs/GAMEPLAY.md "Receptacle replays"): from a spawn near the puzzle, input scripts recorded by
+  # ou-game --autopilot pick a portable up, carry it to its receptacle and set it in (or pull it out); each run must
+  # end on the patterns given (the "portables held N inserted P>R" exit line, Lara's state). --no-cinematics: the
+  # level-start cinematics still run their events and placement, unshown. 77 = skipped (no OU_GAME_DIR or display).
+  function(ou_receptacle_replay name unit spawn frames)
+    add_test(NAME game_replay_${name} COMMAND sh -c [=[
+      [ -n "$OU_GAME_DIR" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || exit 77
+      game=$0 script=$1 unit=$2 spawn=$3 frames=$4; shift 4
+      out=$("$game" --game-dir "$OU_GAME_DIR" --renderer opengl --level "pc-w\\$unit.drm" --spawn "$spawn" --input-script "$script" \
+              --no-audio --no-movies --no-cinematics --no-overlay --draw-last --sync-loads --width 160 --height 120 --frames "$frames" 2>&1)
+      echo "$out" | grep -E 'final tick|portables held'
+      ok=1
+      for p; do echo "$out" | grep -Eq -- "$p" || { echo "missing: $p"; ok=0; }; done
+      [ $ok = 1 ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays/${name}.txt ${unit} ${spawn} ${frames} ${ARGN})
+    set_tests_properties(game_replay_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+  endfunction()
+  ou_receptacle_replay(traprooms_throne_insert l4_traprooms 7400,-34900,4440,-135 900 "portables held 0 inserted .*5883>5891")
+  ou_receptacle_replay(valgrind_cog_gem_insert l5_valgrind 0,3072,180,180 1500 "portables held 0 inserted .*7498>7312")
   # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,
   # docs/RENDERING.md "Ray tracing"); 77 = skipped (no OU_GAME_DIR, display or ray-query device).
   add_test(NAME game_vulkan_rt_smoke COMMAND sh -c [=[
