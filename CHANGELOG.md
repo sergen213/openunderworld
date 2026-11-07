@@ -12,6 +12,15 @@ Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (G
   hit their stop, from each object's own sound as in the original. They are silent at rest.
 - Fixed: scripted sounds the original waits on now hold their script until they finish, so sequences such as the
   Valaskjalf and trap-room sounds play in order and at the right moment.
+- Added: poles, keys and gems can be taken back out of their holes and holders, and every pole hole, keyhole and gem
+  holder that uses an animation graph now accepts what the original accepts, and only that. Ones that start filled
+  (Thailand puzzle room, Croft Manor chapel, Mexico temple, Norse gems) start with their piece in place; pulling the
+  puzzle-room pole out runs its elevator.
+- Changed: the Mexico ballcourt pole lever needs its pole: insert it and hang on it to open the door, as in the
+  original (a plain use no longer opens it).
+- Fixed: jumps find ledges with the original game's own hit test and no longer grab a ledge from behind its wall.
+- Added: Lara jumps straight up onto high ledges just in front of her (up to about 3.2 m above her feet) with a quick
+  direct leap, as in the original. A ladder side jump onto a balance beam lands on the beam.
 
 ## [0.34.0] - 2026-11-07
 
