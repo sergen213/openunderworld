@@ -20,7 +20,8 @@ public:
     //   face YAWDEG                 walk-turn towards the heading until within 8 degrees
     //   press [ACTION]              hold ACTION (interact) 6 ticks, release it 6 ticks
     //   hold ACTION SECONDS         hold ACTION, then release it
-    //   stick FORWARD RIGHT SECONDS raw camera-relative stick, then centre it
+    //   stick FORWARD RIGHT SECONDS [ACTION AT] raw camera-relative stick, ACTION pressed AT seconds in, then centre it
+    //   run YAWDEG SECONDS [ACTION AT] run along a world heading, ACTION pressed AT seconds in (running jumps)
     //   wait SECONDS
     //   push FORWARD RIGHT SECONDS [ACTION] hold ACTION (interact), after 6 ticks the raw stick too (push blocks, handles)
     //   near R                      log the markup polylines within R units of Lara (poles, ledges)

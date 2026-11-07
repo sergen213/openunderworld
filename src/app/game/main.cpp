@@ -104,7 +104,7 @@ void usage() {
                  "               [--record-input FILE] [--replay-input FILE] (keyboard / mouse / gamepad events per tick)\n"
                  "               [--width W --height H] [--fov DEG] [--no-vsync] [--fullscreen] [--no-overlay] [--cine NAME [--cine-shots N]]\n"
                  "               [--spawn X,Y,Z,YAWDEG] [--camera X,Y,Z,TX,TY,TZ[,UX,UY,UZ[,FOVDEG[,NEAR]]]] [--intro] [--intro-frames N] [--no-movies] [--no-cinematics] [--no-audio] [--sync-loads] [--music-wav out.wav]\n"
-                 "               [--report-objects UID,...] (with --frames: the script calls to / from them and their state at exit)\n"
+                 "               [--report-objects UID,...] (with --frames: the script calls to / from them and their state at exit; 0 = every object)\n"
                  "               [--load SLOT] [--die SECONDS] [--target X,Y,Z]... [--weapon uzi|shotgun|speargun|rifle|tranquilizer|thorhammer]\n"
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
@@ -3499,7 +3499,12 @@ int main(int argc, char** argv) {
                 std::string list;
                 for (const auto& [to, vt] : reportedCalls) list += " " + std::to_string(to) + ":" + std::to_string(vt);
                 std::fprintf(stderr, "ou-game: calls%s\n", list.empty() ? " none" : list.c_str());
-                for (const int32_t uid : opt.reportObjects) {
+                std::vector<int32_t> uids = opt.reportObjects;
+                if (std::ranges::find(uids, 0) != uids.end()) { // 0: every script object (finding uids for a plan)
+                    uids.clear();
+                    for (const auto& o : world->script().objects()) uids.push_back(o.uid);
+                }
+                for (const int32_t uid : uids) {
                     const auto* o = world->script().find(uid);
                     if (!o) { std::fprintf(stderr, "ou-game: object %d absent\n", uid); continue; }
                     std::string s = "ou-game: object " + std::to_string(uid) + " " + o->name;

@@ -29,7 +29,7 @@ Autopilot Autopilot::load(const std::filesystem::path& plan, std::filesystem::pa
         if (!(ls >> s.op)) continue;
         for (std::string w; ls >> w;) s.args.push_back(w);
         static const std::vector<std::pair<std::string, size_t>> kOps = {{"go", 2}, {"engage", 1}, {"face", 1}, {"press", 0},
-                                                                         {"hold", 2}, {"stick", 3}, {"push", 3}, {"wait", 1}, {"near", 1}};
+                                                                         {"hold", 2}, {"stick", 3}, {"run", 2}, {"push", 3}, {"wait", 1}, {"near", 1}};
         const auto it = std::ranges::find(kOps, s.op, &std::pair<std::string, size_t>::first);
         if (it == kOps.end() || s.args.size() < it->second)
             throw std::runtime_error("autopilot plan line " + std::to_string(no) + ": unknown step or missing arguments");
@@ -103,8 +103,8 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
         }
         if (uid && !reported_)
             if (const auto* o = w.script().find(uid))
-                reported_ = true, std::fprintf(stderr, "ou-game: autopilot tick %llu engage %d (%s) at %.1f %.1f %.1f, Lara at %.1f %.1f %.1f\n",
-                             (unsigned long long)tick, uid, o->name.c_str(), o->pos.x, o->pos.y, o->pos.z, lara.pos.x, lara.pos.y, lara.pos.z);
+                reported_ = true, std::fprintf(stderr, "ou-game: autopilot tick %llu engage %d (%s) at %.1f %.1f %.1f (target %.1f %.1f), Lara at %.1f %.1f %.1f\n",
+                             (unsigned long long)tick, uid, o->name.c_str(), o->pos.x, o->pos.y, o->pos.z, to.x, to.y, lara.pos.x, lara.pos.y, lara.pos.z);
         const float radius = s.op == "go" && s.args.size() > walkArg && s.args[walkArg] != "walk" ? std::stof(s.args[walkArg]) : s.op == "go" ? 40.0f : 30.0f;
         const glm::vec2 d = to - glm::vec2(lara.pos);
         const float dist = glm::length(d);
@@ -138,9 +138,28 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
                          action.c_str(), std::string(game::stateName(lara.state)).c_str(), w.heldPortable());
             next(tick, nullptr);
         }
-    } else if (s.op == "stick") {
+    } else if (s.op == "stick") { // stick FORWARD RIGHT SECONDS [ACTION AT]: ACTION pressed AT seconds in (running jumps)
         if (t == 0) set(tick, "forward", std::stof(s.args[0]), a), set(tick, "right", std::stof(s.args[1]), a);
-        else if (t >= ticks(s.args[2])) centre(), next(tick, nullptr);
+        if (s.args.size() >= 5 && t == ticks(s.args[4])) set(tick, s.args[3], 1, a);
+        if (s.args.size() >= 5 && t == ticks(s.args[4]) + kPressTicks) set(tick, s.args[3], 0, a);
+        if (t >= ticks(s.args[2])) {
+            centre();
+            if (s.args.size() >= 5) set(tick, s.args[3], 0, a);
+            std::fprintf(stderr, "ou-game: autopilot tick %llu stick: state %s at %.1f %.1f %.1f\n", (unsigned long long)tick,
+                         std::string(game::stateName(lara.state)).c_str(), lara.pos.x, lara.pos.y, lara.pos.z);
+            next(tick, nullptr);
+        }
+    } else if (s.op == "run") { // run YAWDEG SECONDS [ACTION AT]: run along a world heading, ACTION pressed AT seconds in
+        steer({std::cos(glm::radians(std::stof(s.args[0]))), std::sin(glm::radians(std::stof(s.args[0])))}, false);
+        if (s.args.size() >= 4 && t == ticks(s.args[3])) set(tick, s.args[2], 1, a);
+        if (s.args.size() >= 4 && t == ticks(s.args[3]) + kPressTicks) set(tick, s.args[2], 0, a);
+        if (t >= ticks(s.args[1])) {
+            centre();
+            if (s.args.size() >= 4) set(tick, s.args[2], 0, a);
+            std::fprintf(stderr, "ou-game: autopilot tick %llu run: state %s at %.1f %.1f %.1f\n", (unsigned long long)tick,
+                         std::string(game::stateName(lara.state)).c_str(), lara.pos.x, lara.pos.y, lara.pos.z);
+            next(tick, nullptr);
+        }
     } else if (s.op == "push") { // push FORWARD RIGHT SECONDS [ACTION]: grip with ACTION (interact), then the raw stick
         const std::string action = s.args.size() > 3 ? s.args[3] : "interact";
         const uint64_t length = ticks(s.args[2]);

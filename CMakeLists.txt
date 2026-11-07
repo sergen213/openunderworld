@@ -473,6 +473,17 @@ if(OU_BUILD_TESTS)
   # cog wheel 7312 section 1 takes the gem (0 -> 1)
   ou_receptacle_replay(valgrind_cog_gem_insert l5_valgrind 0,3072,180,180 1500 7498,7312
                        "portables held 0 inserted .*7498>7312" "object 7312 .* uber [0-9]+,1,")
+  # pole 6503 into lever 6502 (graph 0 -> 1, the slider watch), push block 6504 under the pole
+  ou_receptacle_replay(ballcourt_pole_lever_block l4_ballcourt -20300,14700,3484,-90 2300 6503,6502,6504
+                       "portables held 0 inserted .*6503>6502" "object 6502 .* graph 1 joint "
+                       "object 6504 .* pos -20[01][0-9]{2}\\.[0-9] 14[34][0-9]{2}\\.")
+  # calendar 6506: a push handle gripped and pushed turns the ring (hinge joint 2), section 1 back to waiting (3)
+  ou_receptacle_replay(ballcourt_calendar_handle_turn l4_ballcourt -14240,10200,3700,90 700 6506
+                       "object 6506 .* uber [0-9]+,3,.* j2 (0\\.[2-9]|[1-9])")
+  # weight on plate 219 holds door 223 open (vt 57), weight on 222 + Lara on 221: locks 69 / 70 count gate 45 open, it falls
+  ou_receptacle_replay(baldrs_plates_gate l1_baldrs_tomb -5000,-10000,2560,180 3200 219,221,222,45,223,69,70
+                       "portables held 0" "calls .* 223:57" "calls .* 45:54" "object 219 .* joint -60" "object 221 .* joint -60"
+                       "object 222 .* joint -60" "object 223 .* uber 1 " "object 45 .* joint (8[5-9]|9[0-9])\\.")
   # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,
   # docs/RENDERING.md "Ray tracing"); 77 = skipped (no OU_GAME_DIR, display or ray-query device).
   add_test(NAME game_vulkan_rt_smoke COMMAND sh -c [=[
