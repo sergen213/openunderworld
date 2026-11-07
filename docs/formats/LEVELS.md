@@ -93,8 +93,11 @@ Frame [O]: intros are in the **render-terrain frame**. They need no `Level+0x80`
 [O] An uber object (class 79) does not draw its own intro instance: `UberObjectComposite` (0x4D7D50) sets instance flags
 `0x800` / `0x20000000` on it, then 0x4D3DA0 creates one instance per section record (0x54 bytes; uber data `+0x08`
 count) with 0x4D1110 → 0x4D0E50: model = section record `+0x18` (u8), position / rotation / scale copied from the
-intro instance, the section's animation (record `+0x30`) started. Each section draws its model whether or not a joint
-carries it. Wine instance list (2026-11-07, instance `+0x14` flags, `+0x234` model, `+0x4C` owner, tool
+intro instance, an anim component of its own (instance `+0x280` → `+0x14`, all segments, at the bind pose). Record
+`+0x30` is not an animation: 0x5BA000 / 0x52B1E0 walk it as the list an object's `+0x04` is (attached effects and their
+handlers [I]). The section's animations come from its state machine (SCRIPTS.md "Uber objects", "Section
+animations"). Each section draws its model whether or not a joint carries it. Wine instance list (2026-11-07, instance
+`+0x14` flags, `+0x234` model, `+0x4C` owner, tool
 `openunderworld-work/proxies/ix.c`; the new-game start, l1_kraken_room, l1_baldrs_tomb, l2_puzzleroom, l2_shrineroom):
 every uber intro has `0x800`, none of its sections (uids `0x4000xxxx`, `+0x4C` = the intro) has; new-game start
 `ca_ei_hpole_a` = hidden intro + sections on models 0 and 1 (the bar); l2_shrineroom `sa_uo_naga_statue` 2794 = hidden
@@ -102,9 +105,11 @@ intro + sections on models 1..5, no instance on model 0; l1_kraken_room `ms_ani_
 models 0..12; `ms_ani_sunsphere_plat` 27 = sections on models 0..3.
 
 `loadLevelScene` places, for an uber object, the first section on model 0 as the object's own mesh (" @intro <uid>",
-posed by its script and its model-0 joint in ou-game) and every other section with a drawable model as
-" @intro <uid> @section <index>" (ou-game: `World::uberSectionBody` for the ones riding a joint, the intro transform
-otherwise). A section whose model has no render model draws nothing; an object with no section on model 0
+posed by its script, its model-0 joint and that section's clip in ou-game: `script::Object::animPose`) and every other
+section with a drawable model as " @intro <uid> @section <index>" (ou-game: `World::uberSectionBody` for the ones riding
+a joint, the intro transform otherwise, skinned by `World::uberSectionPose`, the clip its anim component plays, in the
+shared scene upload: GL, Vulkan and the RT BLAS/TLAS). A section whose model has no render model draws nothing; an
+object with no section on model 0
 (`sa_uo_naga_statue`) draws no model 0. Survey of the 82 units (live intros): 108 more section instances in 28 units
 than when only jointed sections were drawn (82 → 190), among them the horizontal poles' bars (`*_ei_hpole_*` model 1),
 the Kraken room's gears and sun-sphere platform, the l2 puzzle-room scales, the calendars and the l3 chapel pillars.

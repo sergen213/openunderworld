@@ -2514,9 +2514,15 @@ std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
         // Meshes are placed with T*R(intro): a world displacement d is R^-1 d in model space.
         return std::vector<glm::mat4>{glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset)};
     }
+    glm::mat4 rigid = o.body;
     if (o.offset != vec3(0)) // a fallen or carried body: world displacement in model space, as a block
-        return std::vector<glm::mat4>{glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset) * o.body};
-    if (o.body != glm::mat4(1)) return std::vector<glm::mat4>{o.body};
+        rigid = glm::translate(glm::mat4(1), glm::transpose(rotation(o.rot)) * o.offset) * o.body;
+    if (!o.animPose.empty()) { // an uber section's clip under its rigid motion
+        auto out = o.animPose;
+        for (auto& m : out) m = rigid * m;
+        return out;
+    }
+    if (rigid != glm::mat4(1)) return std::vector<glm::mat4>{rigid};
     if (o.graph) {
         const auto& g = *o.graph;
         if (g.clip < 0 || size_t(g.clip) >= g.set->clips.size() || !g.set->clips[size_t(g.clip)].keyCount) return std::nullopt;
@@ -2531,6 +2537,10 @@ std::optional<std::vector<glm::mat4>> Runtime::pose(const Object& o) const {
 
 void Runtime::setBody(int32_t uid, const glm::mat4& model) {
     if (Object* o = findMut(uid)) o->body = model;
+}
+
+void Runtime::setAnimPose(int32_t uid, std::vector<glm::mat4> palette) {
+    if (Object* o = findMut(uid)) o->animPose = std::move(palette);
 }
 
 void Runtime::setJointPosition(int32_t uid, float position) {

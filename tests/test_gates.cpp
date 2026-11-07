@@ -1000,6 +1000,62 @@ TEST(ProgressionReal, ChapelShadowPillars) {
     EXPECT_TRUE(door->state != 0 || moved(door->body, closed));
 }
 
+// Uber sections play their own animations on their instance (0x4D4A00 transitions, 0x4D86A0 actions 2 / 3): the
+// l3_chapel shadow pillars 4837, section 1 on model 1 without a joint. It starts lowered (state 4: action 3 loops
+// idle_lowered, its bone 1 945 units down), the rise command plays plat_raising into state 2 (idle_c), switch 4819 turns
+// it c -> d (rotate_c_to_d, then idle_d). Wine (tru.exe, l3_chapel after 45 s, jointless/ixa.c): section 1's anim
+// component loops idle_c (animID 3474, channel +0x58 bit 2); its bone 1 stands at the intro + (-146.7, -304.2, -3.0)
+// with its X axis turned to (-1, 0, 0); sections 0 / 2 / 3 loop idle_a / idle_b / idle_a.
+TEST(ProgressionReal, ChapelPillarSectionsPlayTheirClips) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l3_chapel", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    w.tick({});
+    const auto bone = [&] { const auto p = w.uberSectionPose(4837, 1); return p && p->size() == 2 ? (*p)[1] : glm::mat4(0); };
+    EXPECT_NEAR(bone()[3].z, -945.2f, 1.0f); // lowered
+    for (int i = 0; i < 300; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(4837))[1], 2u);
+    const vec3 pivot(-146.7f, -304.2f, -3.0f); // bone 1's origin in the model frame (Wine: b1 - b0; intro unrotated)
+    EXPECT_LT(glm::length(vec3(bone() * glm::vec4(pivot, 1)) - pivot), 2.0f);
+    EXPECT_LT(glm::length(vec3(bone()[0]) - vec3(-1, 0, 0)), 0.01f);
+    const auto* o = w.script().find(4819);
+    place(w, o->pos, 0);
+    game::Actions a;
+    a.interact = true;
+    for (int i = 0; i < 10; ++i) w.tick(a);
+    bool between = false; // the turn plays: an X axis between c's (-1, 0, 0) and d's (0, -1, 0)
+    for (int i = 0; i < 300; ++i) {
+        w.tick({});
+        const vec3 x(bone()[0]);
+        between |= x.x < -0.2f && x.x > -0.95f && x.y < -0.2f && x.y > -0.95f;
+    }
+    EXPECT_TRUE(between);
+    EXPECT_EQ((*w.uberState(4837))[1], 3u);
+    EXPECT_LT(glm::length(vec3(bone()[0]) - vec3(0, -1, 0)), 0.01f);
+    EXPECT_LT(glm::length(vec3(bone() * glm::vec4(pivot, 1)) - pivot), 2.0f);
+}
+
+// Wine (tru.exe, l1_kraken_room 45 s after arriving, jointless/ixa.c): the gears' model-0 sections loop their pattern
+// references (kind 1: ms_ani_tentacle_gearr 32 pattern 2 -> idle_tentacle_visible animID 2549, ms_ani_tentacle_gearl 36
+// pattern 2 -> idle_tentacle_visible 2543), the sun-sphere platform 27 loops chain_raised_idle (2526, state 1 action 3);
+// all at rate 1 with the loop bit (channel +0x58 0x0202).
+TEST(ProgressionReal, KrakenRoomSectionsLoopTheirIdles) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_kraken_room", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 600; ++i) w.tick({});
+    std::map<int32_t, std::pair<std::string, bool>> clips;
+    for (const auto& c : w.objectClips()) clips[c.uid] = {c.clip, c.loop};
+    EXPECT_EQ(clips[32], std::pair(std::string("idle_tentacle_visible"), true));
+    EXPECT_EQ(clips[36], std::pair(std::string("idle_tentacle_visible"), true));
+    EXPECT_EQ(clips[27], std::pair(std::string("chain_raised_idle"), true));
+    EXPECT_TRUE(w.uberSectionPose(32, 0));
+}
+
 // Research: an object's animation list, OU_ANIM_NAMES=<object>.
 TEST(ProgressionReal, AnimNames) {
     const char* name = std::getenv("OU_ANIM_NAMES");
@@ -1666,6 +1722,13 @@ TEST(ProgressionReal, UberReceptaclesTakeTheirPortables) {
             EXPECT_EQ(w.heldPortable(), 0);
         }
         EXPECT_EQ((*w.uberState(c.receptacle))[c.section], c.state);
+        if (c.receptacle == 5891) { // the throne's model rides its plate (uber joint 0 = the multibody joint), not the
+            const auto* throne = w.script().find(5891); // unweighted uber joint
+            const auto pose = w.script().pose(*throne);
+            ASSERT_TRUE(pose && throne->joint);
+            EXPECT_LT(throne->joint->position, -90.0f);
+            EXPECT_NEAR((*pose)[0][3].z, throne->joint->position, 1.0f);
+        }
         for (const auto& call : c.calls) EXPECT_NE(std::ranges::find(calls, call), calls.end()) << call.first << " vt " << call.second;
         for (const auto& [key, n] : w.script().failures()) EXPECT_TRUE(key.first != c.receptacle) << key.second;
     }

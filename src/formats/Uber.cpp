@@ -114,6 +114,7 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
             }
             const uint16_t anim = at<uint16_t>(ob, tr + 0x2A);
             x.anim = anim == 0xFFFF ? -1 : anim;
+            x.animKind = at<uint16_t>(ob, tr + 0x28);
             x.probability = at<uint32_t>(ob, tr + 0x2C), x.flags = at<uint32_t>(ob, tr + 0x34);
             // Unused slots (ar_pu_cog_wheel_level_1a section 0 transitions 8 / 9: -1 -> -1, trigger 0) are kept; a
             // state leaving by one is malformed (checked below).

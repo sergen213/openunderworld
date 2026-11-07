@@ -177,6 +177,9 @@ struct Object {
     // below (World::tickObjects; it weighs on pressure plates). [I] tru.exe's Havok body; saved.
     bool loose = false;
     glm::mat4 body{1};      // Door: model-space rigid transform set by src/physics (physics doors), identity = at rest
+    // Uber objects: the skin palette of the section drawn as model 0 at its anim component's clip (World::uberSectionPose),
+    // under `body`; empty = bind pose. Set by src/game each update, not saved (the section state is).
+    std::vector<glm::mat4> animPose;
     bool hidden = false;    // instance.fn60 visibility; saved
     bool dead = false;      // instance.fn10 Kill: hidden, and its trigger no longer fires; saved
     int32_t engagement = -1; // instance.fn59 engagement-property selector; saved
@@ -468,6 +471,7 @@ public:
     // (0x6A52E0); the damage is also posted as stimulus 0x800 on the object's next update (0x6B4390). False = no graph.
     bool graphHit(int32_t uid, uint32_t damageClass, float damage);
     void setBody(int32_t uid, const glm::mat4& model); // physics door transform (Object::body); unknown uids ignored
+    void setAnimPose(int32_t uid, std::vector<glm::mat4> palette); // Object::animPose; unknown uids ignored
     // Moves a joint object's prismatic position; each range newly entered runs vt 34 with its id, in range order.
     void setJointPosition(int32_t uid, float position);
     // Volume and plane outlines, world frame, ABGR colour (render::DebugLine).

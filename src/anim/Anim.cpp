@@ -225,16 +225,22 @@ Clip decodeClip(std::span<const uint8_t> data) {
     return c;
 }
 
-std::vector<AnimEntry> animList(const cdc::Drm& drm) {
-    // The Object section (type 11) names its object DTP through the resource relocation at +0.
-    const cdc::Section* object = nullptr;
+namespace {
+// The Object section (type 11) names its object DTP through the resource relocation at +0.
+const cdc::Section* objectDtp(const cdc::Drm& drm) {
     for (const auto& s : drm.sections)
         if (s.type == cdc::SectionType::Object && cdc::resourceRefType(s, 0) == int(cdc::SectionType::DtpData) && s.data.size() >= 4) {
             const uint32_t id = Reader{s.data}.u32(0);
             for (const auto& d : drm.sections)
-                if (d.type == cdc::SectionType::DtpData && d.id == id) { object = &d; break; }
-            break;
+                if (d.type == cdc::SectionType::DtpData && d.id == id) return &d;
+            return nullptr;
         }
+    return nullptr;
+}
+} // namespace
+
+std::vector<AnimEntry> animList(const cdc::Drm& drm) {
+    const cdc::Section* object = objectDtp(drm);
     std::vector<AnimEntry> out;
     if (!object) return out;
     const Reader r{object->data};
@@ -248,6 +254,27 @@ std::vector<AnimEntry> animList(const cdc::Drm& drm) {
             for (size_t k = *name; k < object->data.size() && object->data[k]; ++k) a.name += char(object->data[k]);
         }
         out.push_back(std::move(a));
+    }
+    return out;
+}
+
+std::vector<AnimPattern> animPatterns(const cdc::Drm& drm) {
+    const cdc::Section* object = objectDtp(drm);
+    std::vector<AnimPattern> out;
+    if (!object) return out;
+    const Reader r{object->data};
+    const uint32_t n = r.u32(0x5C);
+    const auto list = cdc::internalPointer(*object, 0x60);
+    if (!list || n > 65535) return out;
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t e = *list + 0x24 * i;
+        AnimPattern p;
+        p.rate = float(r.u16(e + 0x14)) / 4096.0f;
+        p.mode = r.u8(e + 0x16);
+        const uint32_t count = r.u32(e + 0x10);
+        if (const auto anims = cdc::internalPointer(*object, e + 0xC); anims && count < 256)
+            for (uint32_t k = 0; k < count; ++k) p.anims.push_back(r.u16(*anims + 4 * k));
+        out.push_back(std::move(p));
     }
     return out;
 }

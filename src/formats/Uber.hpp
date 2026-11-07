@@ -34,7 +34,9 @@ struct UberTransition {
                                      // with param 5, else 22 / 23 any)
     std::vector<UberCondition> conditions; // trigger 9
     int32_t joint = -1, range = -1;        // trigger 14 / 15: +0x20 joint, +0x24 range record (indices below)
-    int32_t anim = -1;                     // +0x2A animation-list index, -1 none
+    int32_t anim = -1;                     // +0x2A animation reference index, -1 none (0x4D4A00)
+    uint16_t animKind = 0;                 // +0x28 its kind (0x444BA0 on the section instance's anim component):
+                                           // 0 animation-list index, 1 anim-graph state, 2 anim graph
     uint32_t probability = 100, flags = 0; // +0x2C, +0x34 (1 play anim, 2 wait for its end, 0x10 random)
 };
 // State entry action (0x10 bytes {type, 3 words}; 0x4D86A0): 2 / 3 play an animation (value), 9 create / 10 remove

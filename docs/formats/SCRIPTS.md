@@ -121,8 +121,8 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
 | record | fields |
 |---|---|
 | section (0x54) | +4/+8 states, +0xC/+0x10 transitions, +0x14 default state, +0x18 model, +0x28 float angle (0x4D3050), +0x3C health, +0x40 → engagement set at birth (UberObjectSection_TR8 +0xD4, query 0x53), +0x48 s16 HInfo marker (query 0x174), +0x4C → constraint record for an inserted portable (first byte: model 0 marker, query 0x173; 0x6B6440), +0x52 bit 0 takes damage |
-| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, 3 words; 0x4D86A0: 2/3 play an animation, 9/10 create/remove a physics joint, 12/13 its limit/motor, 0x14/0x15 add/remove a range watch, 0x19/0x1A clear/set "no grapple target" (instance +0x1C bit 2); UberObjectSection_TR8 0x6D5EC0: 0x1C the removal record, 0x1D word +4 → the section's engagement set (+0xD4), 0x1E +0xD8; PHYSICS.md "Uber joints") |
-| transition (0x38) | +0 from, +4 to, +8 float, +0x18 trigger, +0x1C parameter, +0x20/+0x24 joint and range records (triggers 14/15), +0x2A animation-list index (0xFFFF none), +0x2C probability, +0x30 effect, +0x34 flags (1 play the animation, 2 wait for its end, 0x10 random) |
+| state (0x1C) | +0/+4 floats, +8 name, +0xC/+0x10 transitions it leaves by (pointers), +0x14/+0x18 entry actions (0x10 each: type, 3 words; 0x4D86A0: 1 set the instance's model (+0x234), 2/3 play an anim reference once / looping (word +4: u16 kind, u16 index; "Section animations" below), 9/10 create/remove a physics joint, 12/13 its limit/motor, 0x14/0x15 add/remove a range watch, 0x19/0x1A clear/set "no grapple target" (instance +0x1C bit 2); UberObjectSection_TR8 0x6D5EC0: 0x1C the removal record, 0x1D word +4 → the section's engagement set (+0xD4), 0x1E +0xD8; PHYSICS.md "Uber joints") |
+| transition (0x38) | +0 from, +4 to, +8 float, +0x18 trigger, +0x1C parameter, +0x20/+0x24 joint and range records (triggers 14/15), +0x28/+0x2A anim reference kind / index (index 0xFFFF none), +0x2C probability, +0x30 effect, +0x34 flags (1 play the animation, 2 wait for its end, 0x10 random) |
 | command (0xC) | +0 id (0 in every object seen), +4/+8 targets {section, type, payload} |
 | event (0x1C) | +4/+8 condition lists, +0xC section, +0x10 kind, +0x14 value, +0x18 once, +0x1A script event id |
 | condition list | +4/+8 entries {section, kind, value}: kind 1 = section in state `value`, 2 = section missing (0x4D1360) |
@@ -143,6 +143,29 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
   Events: kind 2 leaving a state, 3 starting a transition (0x4D4A00), 4 finishing one, 1 entering a state; a match
   (all condition lists holding) runs the object script's vt 54 with the event index, which `uberobjectevent` 0
   compares with its member's index (CALLU: the event is the receiver, the member the argument).
+- Section animations [O]: every section instance has its own anim component (instance +0x280 → +0x14; 0x4D0E50), so a
+  section animates its own model's skeleton whether or not a joint carries it. An anim reference {u16 kind, u16 index}
+  (0x444BA0): kind 0 = an animation-list index played at rate 1 (0x4321D0 builds a one-animation pattern); kind 1 = an
+  animation pattern of the object (Object DTP +0x5C count, +0x60 records of 0x24 bytes: +0xC → {u16 animation-list
+  index, u8 weight} × +0x10, +0x14 u16 rate in 1/4096 set on the channels by 0x438C40, +0x16 mode 1 once / 2 loop,
+  +0x19 blend frames; `anim::animPatterns`); kind 2 switches the anim set (0x443720), in no object. A transition with
+  flags 1 plays its reference on starting (0x4D4A00) and clears the loop bit (0x438BC0: once, the last frame holds);
+  flags 2 then waits for the clip's end. Entry action 2 plays once, 3 sets the loop bit and restarts at time 0
+  (0x438B50). The clip stays until another reference replaces it; a section that never plays one stays at the bind
+  pose. Survey (2026-11-07, every objectlist object): 110 uber objects play section animations, 142 sections (102 on
+  model 0, 40 on other models in 20 objects: the l3 chapel pillars, calendars, Kraken room gears and sun-sphere
+  platform, light beams, naga statue, snake heads, thor slide doors, ...); 357 kind-0 and 91 kind-1 references (124
+  action-2 and 127 action-3 records, a few with index 0xFFFF), all resolving. Wine (tru.exe, `openunderworld-work/
+  jointless/ixa.c`: each instance's anim component, channel 0 animID / time / end / rate / flags): l3_chapel pillar
+  sections 0-3 loop idle_a / idle_c / idle_b / idle_a (flags 0x0202), section 5 holds idle_plat_raised (0x0200),
+  section 4 never played (animation-list entry 0 with end 0); l1_kraken_room gears 32 / 36 loop their pattern 2
+  (idle_tentacle_visible), the sun-sphere platform 27 chain_raised_idle, all at rate 1. Code: `World::uberPlay` /
+  `uberSectionPose`; ou-game skins `@section` meshes by it and the model-0 mesh through `script::Object::animPose` (its
+  collision segments too). [I] Objects with a travel clip (`uberMotion`, the doors and elevators found by clip name)
+  keep that rigid motion instead of their model-0 clip; one clip per object reaches the clip effects (the first
+  running section's); a pattern of several animations would blend them by weight (all patterns in the data have one).
+  Tests `ProgressionReal.ChapelPillarSectionsPlayTheirClips`, `ProgressionReal.KrakenRoomSectionsLoopTheirIdles`,
+  `RealData.UberSectionAnimReferences`.
 - l3_chapel shadow pillars `ma_uo_shadow_pillars` (4837): sections 0-3 are pillars turning a → b → c → d (trigger 2),
   rising from "lowered" into a, c, b, a; section 4 is the solver (conditions "sections 1 and 3 at a" → left solved,
   "0 and 2" → right solved, all four → solved); its events 2 / 3 / 0 are the script's members +44 / +56 / +68. The fire

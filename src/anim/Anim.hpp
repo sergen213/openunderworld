@@ -46,6 +46,15 @@ struct AnimEntry {
     std::string name;
 };
 std::vector<AnimEntry> animList(const cdc::Drm& drm);
+// The object's animation patterns (Object DTP +0x5C count, +0x60 records of 0x24 bytes; an anim reference of kind 1,
+// tru.exe 0x444BA0 -> 0x4428A0): +0xC -> {u16 animation-list index, u8 weight} x +0x10, +0x14 u16 playback rate in
+// 1/4096 (0x438C40: channel +0x50), +0x16 mode (1 once, 2 loop), +0x19 blend frames. `anims` holds the indices.
+struct AnimPattern {
+    std::vector<uint16_t> anims;
+    float rate = 1;
+    uint8_t mode = 1;
+};
+std::vector<AnimPattern> animPatterns(const cdc::Drm& drm);
 
 struct LocalTransform {
     glm::vec3 rot{0.0f};        // axis-angle vector

@@ -146,13 +146,30 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
             rt.sections.assign(data->sections.size(), {});
             for (size_t i = 0; i < rt.sections.size(); ++i)
                 rt.sections[i].health = data->sections[i].health, rt.sections[i].engagement = data->sections[i].engagement;
-            // Transition animations: the object's animation list by index (transition +0x2A).
-            for (const auto& e : anim::animList(*drm->second)) {
-                float length = 0;
-                for (const auto& sec : drm->second->sections)
-                    if (sec.type == cdc::SectionType::Animation && sec.id == e.animId) length = float(anim::decodeClip(sec.data).durationSeconds());
-                rt.animLength.push_back(length), rt.animNames.push_back(e.name);
+            // The anim references' data (transition +0x28/+0x2A, actions 2 / 3): clips, patterns, model skeletons.
+            auto& anims = uberAnims_[o.name];
+            if (!anims) {
+                auto set = std::make_shared<UberAnims>();
+                for (const auto& e : anim::animList(*drm->second)) {
+                    auto& clip = set->clips.emplace_back();
+                    set->names.push_back(e.name);
+                    for (const auto& sec : drm->second->sections)
+                        if (sec.type == cdc::SectionType::Animation && sec.id == e.animId) {
+                            try { clip = anim::decodeClip(sec.data); } catch (const cdc::FormatError&) {}
+                            break;
+                        }
+                }
+                set->patterns = anim::animPatterns(*drm->second);
+                const auto models = formats::objectRenderModels(*drm->second);
+                std::vector<std::string> warnings;
+                for (auto& sk : anim::decodeSkeletons(*drm->second, warnings)) {
+                    const auto shared = std::make_shared<const scene::Skeleton>(std::move(sk));
+                    for (uint32_t m = 0; m < models.size(); ++m)
+                        if (models[m] && models[m] == shared->renderModelId) set->skeletons[m] = shared;
+                }
+                anims = std::move(set);
             }
+            rt.anims = anims;
         }
     }
     const auto [it, inserted] = uberData_.emplace(o.uid, std::move(data));
@@ -169,6 +186,13 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                 sec.state = s[i].at(0), sec.transition = s[i].at(1), sec.time = s[i].at(2), sec.length = s[i].at(3);
                 if (s[i].size() >= 6) sec.health = s[i].at(4), sec.removed = s[i].at(5);
                 if (s[i].size() >= 7) sec.engagement = s[i].at(6); // older saves: the section's starting set
+                if (s[i].size() >= 11) {
+                    sec.clip = s[i].at(7), sec.clipTime = s[i].at(8), sec.rate = s[i].at(9), sec.loop = s[i].at(10);
+                    if (!rt.anims || sec.clip >= int32_t(rt.anims->clips.size())) sec.clip = -1;
+                } else if (sec.state >= 0 && size_t(sec.state) < it->second->sections[i].stateActions.size()) {
+                    for (const auto& a : it->second->sections[i].stateActions[size_t(sec.state)]) // older saves: the state's
+                        if (a.type == 2 || a.type == 3) uberPlay(o.uid, i, a.value & 0xFFFF, a.value >> 16, a.type == 3); // own clip
+                }
                 if (sec.state >= 0) uberStates_[o.uid][i] = uint32_t(sec.state);
             }
             rt.fired = j.at("fired"), rt.commanded = j.at("commanded"), rt.intangible = j.value("intangible", false);
@@ -201,7 +225,8 @@ nlohmann::json World::serializeObjects() const {
     for (const auto& [uid, rt] : uberRuntime_) {
         if (const auto d = uberData_.find(uid); d == uberData_.end() || !d->second) continue;
         nlohmann::json sections = nlohmann::json::array();
-        for (const auto& s : rt.sections) sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement});
+        for (const auto& s : rt.sections)
+            sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement, s.clip, s.clipTime, s.rate, s.loop});
         nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded},
                                                          {"intangible", rt.intangible}, {"grappleOff", rt.grappleOff}};
         if (const auto m = uberMotion_.find(uid); m != uberMotion_.end()) e["motion"] = {m->second.t, m->second.active};
@@ -241,7 +266,8 @@ void World::restoreObjects(const nlohmann::json& j) {
                 for (const auto& sec : s) // validate the shape now: prepareUber reads it later (older saves: 4 / 5 entries)
                     if (!sec.is_array() || sec.size() < 4 || !sec[0].is_number_integer() || !sec[1].is_number_integer() ||
                         !sec[2].is_number() || !sec[3].is_number() || (sec.size() >= 6 && (!sec[4].is_number() || !sec[5].is_boolean())) ||
-                        (sec.size() >= 7 && !sec[6].is_number_integer()))
+                        (sec.size() >= 7 && !sec[6].is_number_integer()) ||
+                        (sec.size() >= 11 && (!sec[7].is_number_integer() || !sec[8].is_number() || !sec[9].is_number() || !sec[10].is_boolean())))
                         throw std::runtime_error("bad uber section of " + key);
                 (void)e.at("fired").get<uint64_t>(), (void)e.at("commanded").get<bool>(), (void)e.value("intangible", false);
                 (void)e.value("grappleOff", false);
@@ -341,7 +367,27 @@ void World::uberEnter(int32_t uid, size_t section, uint32_t state) {
     uberFire(uid, section, 1, state);
 }
 
-// A state's physics entry actions (0x4D86A0); the others (animations, flags) are not modelled here.
+// An anim reference on the section instance's anim component (instance +0x280 -> +0x14; 0x444BA0): kind 0 builds a
+// one-animation pattern (0x4321D0: the animation-list index, rate 1), kind 1 indexes the object's patterns and plays
+// its first animation at its rate (0x438C40, pattern +0x14 / 4096). Then the caller sets the loop bit: transitions and
+// action 2 clear it (0x438BC0: once, the last frame holds), action 3 sets it and restarts at 0 (0x438B50). Index 0xFFFF
+// plays nothing. [I] Patterns of several animations blend them by weight; every pattern in the data has one.
+float World::uberPlay(int32_t uid, size_t section, uint32_t kind, uint32_t index, bool loop) {
+    auto& rt = uberRuntime_[uid];
+    if (!rt.anims || section >= rt.sections.size() || index == 0xFFFF) return 0;
+    int32_t clip = -1;
+    float rate = 1;
+    if (kind == 0 && index < rt.anims->clips.size()) clip = int32_t(index);
+    else if (kind == 1 && index < rt.anims->patterns.size() && !rt.anims->patterns[index].anims.empty() &&
+             rt.anims->patterns[index].anims[0] < rt.anims->clips.size())
+        clip = rt.anims->patterns[index].anims[0], rate = rt.anims->patterns[index].rate;
+    if (clip < 0 || rate <= 0 || !rt.anims->clips[size_t(clip)].keyCount) return 0;
+    auto& s = rt.sections[section];
+    s.clip = clip, s.clipTime = 0, s.rate = rate, s.loop = loop;
+    return float(rt.anims->clips[size_t(clip)].durationSeconds()) / rate;
+}
+
+// A state's entry actions (0x4D86A0).
 void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a) {
     auto& rt = uberRuntime_[uid];
     const auto& data = *uberData_.at(uid);
@@ -349,6 +395,10 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
     const formats::UberParam* p = a.param >= 0 ? &data.params[size_t(a.param)] : nullptr;
     const float unit = joint != rt.joints.end() && joint->second.hinge ? glm::radians(1.0f) : 1.0f; // records: degrees
     switch (a.type) {
+    case 2: // play once (value: u16 kind, u16 index; uberPlay)
+    case 3: // play looping
+        uberPlay(uid, section, a.value & 0xFFFF, a.value >> 16, a.type == 3);
+        break;
     case 9: // create (0x4D8000; an existing joint stays as it is); links need both joints (0x4D7ED0)
         if (a.joint < 0 || rt.joints.contains(a.joint) || rt.links.contains(a.joint)) break;
         if (const auto& j = data.joints[size_t(a.joint)]; j.type == 11) {
@@ -440,13 +490,15 @@ std::optional<physics::Joint1> World::makeUberJoint(int32_t uid, int32_t index) 
 }
 
 // The simulated joint whose body is the section using model 0 (the object's collision), -1 none. Not while the object
-// has a travel clip, or moves as a carried / free loose body (its script offset then poses it).
+// has a travel clip, or moves as a carried / free loose body (its script offset then poses it), or is a pressure plate:
+// the l4_traprooms empty thrones' prismatic uber joint 0 is the `multibody` joint their scripts watch (one Havok
+// constraint [I]); the plate's Jolt body (plates_, tickJoints) carries the weight on it and poses it.
 int32_t World::uberModelJoint(int32_t uid) const {
     const auto rt = uberRuntime_.find(uid);
     const auto data = uberData_.find(uid);
     const auto* o = script_.find(uid);
     if (!o || o->offset != vec3(0) || rt == uberRuntime_.end() || data == uberData_.end() || !data->second ||
-        uberMotion_.contains(uid))
+        uberMotion_.contains(uid) || plates_.contains(uid))
         return -1;
     for (const auto& [index, j] : rt->second.joints)
         if (const int32_t body = data->second->joints[size_t(index)].bodyB; body >= 0 && data->second->sections[size_t(body)].model == 0)
@@ -483,6 +535,19 @@ std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bo
             return glm::inverse(intro) * jointMotion(j) * intro;
         }
     return std::nullopt;
+}
+
+std::optional<std::vector<glm::mat4>> World::uberSectionPose(int32_t uid, int32_t section) const {
+    const auto rt = uberRuntime_.find(uid);
+    const auto data = uberData_.find(uid);
+    if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second || !rt->second.anims || section < 0 ||
+        size_t(section) >= rt->second.sections.size())
+        return std::nullopt;
+    const auto& s = rt->second.sections[size_t(section)];
+    const auto sk = rt->second.anims->skeletons.find(data->second->sections[size_t(section)].model);
+    if (s.clip < 0 || sk == rt->second.anims->skeletons.end()) return std::nullopt;
+    const auto& skeleton = *sk->second;
+    return anim::skinPalette(skeleton, anim::worldMatrices(skeleton, anim::sample(rt->second.anims->clips[size_t(s.clip)], skeleton, s.clipTime, s.loop)));
 }
 
 // Lara's side of a switch (docs/GAMEPLAY.md "Interactions"). [O] The switch's DRM carries her clip (Object::laraClip,
@@ -566,16 +631,20 @@ void World::uberWatches(int32_t uid) {
     }
 }
 
-// Start transition `transition` (0x4D4A00): leaves the state (event 2), starts the transition (3). With flags 1 + 2
-// and an animation it lasts the clip, else it ends on the next update.
+// Start transition `transition` (0x4D4A00): leaves the state (event 2), starts the transition (3). With flags 1 its
+// animation plays once on the section instance; with flags 2 too it lasts the clip, else it ends on the next update.
+// [U] instance +0x18 bit 0 suppresses the animation; never seen set on a section.
 void World::uberBegin(int32_t uid, size_t section, uint32_t transition) {
     const auto& data = *uberData_.at(uid);
     const auto& t = data.sections[section].transitions[transition];
     auto& rt = uberRuntime_[uid];
     auto& s = rt.sections[section];
     const int32_t left = s.state;
-    s.state = -1, s.transition = int32_t(transition), s.time = 0;
-    s.length = (t.flags & 3) == 3 && t.anim >= 0 && size_t(t.anim) < rt.animLength.size() ? rt.animLength[size_t(t.anim)] : 0.0f;
+    s.state = -1, s.transition = int32_t(transition), s.time = 0, s.length = 0;
+    if ((t.flags & 1) && t.anim >= 0) {
+        const float length = uberPlay(uid, section, t.animKind, uint32_t(t.anim), false);
+        if (t.flags & 2) s.length = length;
+    }
     uberStates_[uid][section] = 0xFFFFFFFFu;
     if (left >= 0) uberFire(uid, section, 2, uint32_t(left));
     uberFire(uid, section, 3, transition);
@@ -591,6 +660,11 @@ void World::tickUber(float dt) {
         for (size_t i = 0; i < rt.sections.size(); ++i) {
             auto& s = rt.sections[i];
             const auto& sec = data->second->sections[i];
+            if (s.clip >= 0 && rt.anims) { // its anim component: a looping clip wraps, one played once holds its last frame
+                const float d = float(rt.anims->clips[size_t(s.clip)].durationSeconds());
+                s.clipTime += dt * s.rate;
+                s.clipTime = s.loop && d > 0 ? std::fmod(s.clipTime, d) : std::min(s.clipTime, d);
+            }
             if (s.transition >= 0) {
                 if ((s.time += dt) >= s.length) uberEnter(uid, i, sec.transitions[size_t(s.transition)].to);
                 continue;
@@ -709,14 +783,14 @@ std::vector<World::ObjectClip> World::objectClips() const {
         else if (const auto m = uberMotion_.find(o.uid); m != uberMotion_.end() && m->second.active && m->second.t < m->second.duration)
             out.push_back({o.uid, o.name, m->second.clip, m->second.t, m->second.duration, false, introModel(o)});
         else if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end()) {
-            // a transition playing its animation (flags 1): its events (fx_smash: the urn's shards and sound)
-            const auto& data = uberData_.at(o.uid);
-            for (size_t i = 0; data && i < rt->second.sections.size(); ++i) {
-                const auto& s = rt->second.sections[i];
-                if (s.transition < 0) continue;
-                const auto& t = data->sections[i].transitions[size_t(s.transition)];
-                if ((t.flags & 1) && t.anim >= 0 && size_t(t.anim) < rt->second.animNames.size())
-                    out.push_back({o.uid, o.name, rt->second.animNames[size_t(t.anim)], s.time, s.length, false, introModel(o)});
+            // a section's anim component running a clip (transitions, state actions 2 / 3): its events (fx_smash: the
+            // urn's shards and sound). [I] one clip per object reaches the effects: the first section's that runs.
+            for (const auto& s : rt->second.sections) {
+                if (s.clip < 0 || !rt->second.anims) continue;
+                const double d = rt->second.anims->clips[size_t(s.clip)].durationSeconds();
+                if (!s.loop && s.clipTime >= d) continue;
+                out.push_back({o.uid, o.name, rt->second.anims->names[size_t(s.clip)], s.clipTime, d, s.loop, introModel(o)});
+                break;
             }
         } else if (const auto& g = o.graph; g && g->clip >= 0 && size_t(g->clip) < g->set->names.size()) // anim-graph state /
             out.push_back({o.uid, o.name, g->set->names[size_t(g->clip)], g->t,           // transition clips (fixtures' on / off)
@@ -1148,6 +1222,20 @@ void World::tickObjects(float dt) {
     for (auto& [uid, motion] : uberMotion_) {
         const float target = motion.active ? motion.duration : 0.0f;
         motion.t = std::clamp(motion.t + (target > motion.t ? dt : -dt), 0.0f, motion.duration);
+    }
+    // The section drawn as model 0 (the object's own mesh, its collision segments) under its clip. [I] Objects with a
+    // travel clip (uberMotion_) keep moving rigidly by it: their clips are that travel.
+    for (const auto& [uid, rt] : uberRuntime_) {
+        const auto data = uberData_.find(uid);
+        if (data == uberData_.end() || !data->second) continue;
+        std::vector<glm::mat4> palette;
+        if (!uberMotion_.contains(uid))
+            for (size_t i = 0; i < data->second->sections.size(); ++i)
+                if (data->second->sections[i].model == 0) {
+                    if (auto p = uberSectionPose(uid, int32_t(i))) palette = std::move(*p);
+                    break;
+                }
+        if (const auto* o = script_.find(uid); o && o->animPose != palette) script_.setAnimPose(uid, std::move(palette));
     }
     // Lara rides the dynamic she stands on (platforms, a door swinging under her); gripping a block, its push carries her.
     const vec3 feet = player_.state().pos;

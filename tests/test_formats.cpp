@@ -1,3 +1,4 @@
+#include "anim/Anim.hpp"
 #include "formats/AnimGraph.hpp"
 #include "formats/Formats.hpp"
 #include "formats/Uber.hpp"
@@ -874,4 +875,55 @@ TEST(RealData, LevelUberSectionModels) {
     const auto [nagaOwn, nagaSections] = count(shrine, 2794); // sections on models 1..5, none on model 0
     EXPECT_EQ(nagaOwn, 0u);
     EXPECT_EQ(nagaSections, (std::set<int>{0, 1, 2, 3, 4}));
+}
+
+// Uber section anim references (docs/formats/SCRIPTS.md "Section animations"), every objectlist object: transitions'
+// +0x28/+0x2A and actions 2 / 3 {u16 kind, u16 index}. Kind 0 indexes the animation list, kind 1 the object's patterns
+// (anim::animPatterns); every reference resolves. Survey 2026-11-07: 110 objects, 357 kind-0 and 91 kind-1 references.
+TEST(RealData, UberSectionAnimReferences) {
+    const char* g = gameDir();
+    if (!g) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(g);
+    const auto lb = bf.read("\\tr8\\pc-w\\objectlist.txt");
+    ASSERT_TRUE(lb);
+    size_t objects = 0, kinds[2] = {0, 0};
+    for (const auto& [id, name] : formats::parseObjectList({reinterpret_cast<const char*>(lb->data()), lb->size()})) {
+        auto bytes = bf.read("pc-w\\" + name + ".drm");
+        if (!bytes) continue;
+        cdc::Drm drm;
+        std::optional<formats::UberObjectData> u;
+        try { drm = cdc::parseDrm(std::move(*bytes)); u = formats::loadUberObject(drm); } catch (const cdc::FormatError&) { continue; }
+        if (!u) continue;
+        const auto list = anim::animList(drm);
+        const auto patterns = anim::animPatterns(drm);
+        bool any = false;
+        const auto check = [&](uint32_t kind, uint32_t index) {
+            any = true;
+            ASSERT_LT(kind, 2u) << name;
+            ++kinds[kind];
+            if (kind == 0) {
+                EXPECT_LT(index, list.size()) << name;
+                return;
+            }
+            ASSERT_LT(index, patterns.size()) << name;
+            ASSERT_EQ(patterns[index].anims.size(), 1u) << name;
+            EXPECT_LT(patterns[index].anims[0], list.size()) << name;
+        };
+        for (const auto& s : u->sections) {
+            for (const auto& t : s.transitions)
+                if (t.anim >= 0) check(t.animKind, uint32_t(t.anim));
+            for (const auto& actions : s.stateActions)
+                for (const auto& a : actions)
+                    if ((a.type == 2 || a.type == 3) && a.value >> 16 != 0xFFFF) check(a.value & 0xFFFF, a.value >> 16);
+        }
+        objects += any;
+        if (name == "ms_ani_tentacle_gearr") { // pattern 5: tentacle_retreated_gears_succeed at rate 0x514 / 4096
+            ASSERT_GE(patterns.size(), 6u);
+            EXPECT_EQ(patterns[5].anims[0], 5u);
+            EXPECT_NEAR(patterns[5].rate, 1300.0f / 4096.0f, 1e-6f);
+        }
+    }
+    EXPECT_EQ(objects, 110u);
+    EXPECT_EQ(kinds[0], 357u);
+    EXPECT_EQ(kinds[1], 91u);
 }

@@ -1444,7 +1444,10 @@ Ours:
   script's vt 54: arm 2059 vt 58, 2060 vt 59 (-> 2063 vt 56), calendar 6506 / 5477 vt 54. The shiva arms take a gem
   only lowered (state 1: 2 -> 4 by their command 0, which their vt 55 sends when grapple handle 2066 / 2065's events
   run, then 15 s), the throne is also a press plate (`multibody` joint, ranges -150..-90 "in position" / -30..10) that
-  the tied weight bears down on. `ar_pu_cog_wheel_level_1a` failed to load before (two unused transition slots -1 -> -1);
+  the tied weight bears down on: its prismatic uber joint 0 (world → section 0, created in state 0) is that joint, so
+  the plate's body poses the throne's model and collision (`World::uberModelJoint` skips plates; the unweighted uber
+  joint used to hold the drawn throne up while only the plate sank [I: one Havok constraint in tru.exe]).
+  `ar_pu_cog_wheel_level_1a` failed to load before (two unused transition slots -1 -> -1);
   `ca_uo_thor_statue_arms` (l4_pool) has no engagement set: not a receptacle. l7_arctic_sea's statue arms, gem holes and
   thor gears lie under water: Lara carries, inserts and takes out portables swimming too (records there are spheres
   of radius 632-948 [O data]; tru.exe's swim carry clips are not traced [I]).

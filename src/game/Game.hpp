@@ -633,6 +633,9 @@ public:
     // section is an instance of its own model, 0x4D3DA0: the grapple handles' model 1), nullopt without one; `removed`
     // reports action 28 on that section.
     std::optional<glm::mat4> uberSectionBody(int32_t uid, int32_t section, bool* removed = nullptr) const;
+    // Skin palette (model space) of uber object `uid`'s section `section` at the animation its section instance's anim
+    // component plays (transitions 0x4D4A00, state actions 2 / 3 0x4D86A0), nullopt while it stands in the bind pose.
+    std::optional<std::vector<glm::mat4>> uberSectionPose(int32_t uid, int32_t section) const;
     // Uber state action 0x1A set instance +0x1C bit 2 on it (0x19 clears it): no grapple target (0x6ECCA0).
     bool uberGrappleOff(int32_t uid) const {
         const auto it = uberRuntime_.find(uid);
@@ -1024,18 +1027,36 @@ private:
     // health: section +0xDC (damage lowers it, 0x6D4690); removed: action 28 took the section's instance away.
     // engagement: the section's engagement set (+0xD4: UberSection::engagement, then state actions 0x1D), its offset in
     // the object section, -1 none.
-    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; int32_t engagement = -1; };
+    // clip / clipTime / rate / loop: the section instance's anim component (instance +0x280 -> +0x14): the
+    // animation-list clip it plays (-1 bind pose), seconds into it, its rate (channel +0x50), looping (channel +0x58
+    // bit 2); a clip played once holds its last frame.
+    struct UberSectionState {
+        int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; int32_t engagement = -1;
+        int32_t clip = -1; float clipTime = 0, rate = 1; bool loop = false;
+    };
     std::map<std::pair<std::string, int32_t>, std::optional<physics::EngagementSet>> uberEngagements_; // (object, offset)
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };
+    // An uber object's animations (per object name): animation-list clips and names, patterns (anim references of
+    // kind 1), and the skeleton of each object model its sections use (by model index).
+    struct UberAnims {
+        std::vector<anim::Clip> clips;
+        std::vector<std::string> names;
+        std::vector<anim::AnimPattern> patterns;
+        std::map<uint32_t, std::shared_ptr<const scene::Skeleton>> skeletons;
+    };
+    std::map<std::string, std::shared_ptr<const UberAnims>> uberAnims_;
+    // Plays an anim reference (0x444BA0) on section `section`'s anim component: kind 0 an animation-list index, 1 a
+    // pattern (its first animation at its rate); 2 (switch the anim set) is not in the data. Returns the clip's length
+    // in seconds at that rate, 0 when nothing plays.
+    float uberPlay(int32_t uid, size_t section, uint32_t kind, uint32_t index, bool loop);
     struct UberRuntime {
         std::vector<UberSectionState> sections;
-        std::vector<float> animLength;
+        std::shared_ptr<const UberAnims> anims;
         uint64_t fired = 0;
         bool commanded = false;
         std::map<int32_t, physics::Joint1> joints;
         std::set<int32_t> links; // created type-11 link joints
         std::vector<UberWatch> watches;
-        std::vector<std::string> animNames; // the object's animation list, as animLength
         bool intangible = false;            // action 5: instance +0x18 bit 0x20000000, collision callbacks skip it
         bool grappleOff = false;            // action 0x1A / 0x19: instance +0x1C bit 2 set / cleared, not a grapple target
     };

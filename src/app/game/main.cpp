@@ -315,7 +315,7 @@ struct ScriptedMeshes {
     std::map<int32_t, std::vector<glm::mat4>> posed; // uploaded with a non-bind pose: that palette
     std::set<int32_t> hidden;                      // collected pickups, uploaded collapsed to a point
     std::map<std::pair<int32_t, int32_t>, std::vector<size_t>> sections; // (uid, section) -> scene mesh indices
-    std::map<std::pair<int32_t, int32_t>, glm::mat4> sectionPosed;       // uploaded off the bind pose: that motion
+    std::map<std::pair<int32_t, int32_t>, std::vector<glm::mat4>> sectionPosed; // uploaded off the bind pose: that palette
     std::vector<std::pair<int32_t, float>> faded;  // scratch: fx::System::fadedOwners
     std::vector<ou::scene::Vertex> scratch;
 
@@ -330,22 +330,35 @@ struct ScriptedMeshes {
                     meshes[uid].push_back(i);
             }
     }
-    // Sections follow their joint; a removed section (action 28) or a hidden object collapses to a point.
+    // Sections follow their joint and play their anim component's clip (World::uberSectionPose, under the joint's motion);
+    // a removed section (action 28) or a hidden object collapses to a point.
     void poseSections(const ou::game::World& w, const ou::scene::SceneData& s, ou::render::Renderer& r) {
+        std::vector<glm::mat4> palette;
         for (const auto& [key, indices] : sections) {
             bool removed = false;
             const auto body = w.uberSectionBody(key.first, key.second, &removed);
             const bool gone = removed || hidden.contains(key.first);
-            const glm::mat4 m = gone ? glm::mat4(0.0f) : body.value_or(glm::mat4(1.0f));
+            const glm::mat4 m = body.value_or(glm::mat4(1.0f));
+            palette.clear();
+            if (gone) palette.push_back(glm::mat4(0.0f));
+            else if (auto p = w.uberSectionPose(key.first, key.second)) {
+                palette = std::move(*p);
+                for (auto& b : palette) b = m * b;
+            } else {
+                palette.push_back(m);
+            }
             const auto it = sectionPosed.find(key);
-            if (it != sectionPosed.end() ? it->second == m : m == glm::mat4(1.0f)) continue;
+            if (it != sectionPosed.end() ? it->second == palette : palette.size() == 1 && palette[0] == glm::mat4(1.0f)) continue;
             for (const size_t i : indices) {
-                ou::anim::skinVertices(s.meshes[i], {}, scratch, gone ? glm::mat4(1.0f) : m);
+                const auto& mesh = s.meshes[i];
+                if (gone) ou::anim::skinVertices(mesh, {}, scratch);
+                else if (palette.size() > 1 && !mesh.skin.empty()) ou::anim::skinVertices(mesh, palette, scratch);
+                else ou::anim::skinVertices(mesh, {}, scratch, palette[0]); // rigid: bone 0
                 if (gone && !scratch.empty())
                     for (auto& v : scratch) std::copy_n(scratch[0].position, 3, v.position);
                 r.updateVertices(i, scratch);
             }
-            sectionPosed[key] = m;
+            sectionPosed[key] = palette;
         }
     }
     // Picked-up rewards vanish once their instance fade (class 7, their "pickup" list) is done: their meshes degenerate
