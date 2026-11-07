@@ -1253,7 +1253,9 @@ TEST(Game, DropToHangFromEdge) {
 }
 
 // Targeted jumps from a hang: up to the ledge above, right to the next one, back across to the far wall, then left
-// along it (ledgeb_jump_right mirrored: lara.drm request 979).
+// along it (ledgeb_jump_right mirrored: lara.drm request 979). Each catches where its jump query (q10, q7 / q8, q9)
+// first meets the ledge: the right leap's arc (70.80 aside + 34.77 up a frame from the hands) comes back to the
+// ledge's height 860 along, the back leap keeps that line, the left one meets the far ledge's inset end (79 in).
 TEST(Game, HangJumpsUpRightAndBack) {
     CollisionMesh m;
     addBox(m, {0, -3000, -100}, {1000, 3000, 3000});     // wall, face x = 0
@@ -1294,11 +1296,46 @@ TEST(Game, HangJumpsUpRightAndBack) {
         w->tick({});
     };
     jump(0, 1, 1, {0, 0, 900});
-    jump(1, 0, 2, {0, -600, 900});
-    jump(0, -1, 3, {-700, -600, 700});
+    jump(1, 0, 2, {0, -860.074f, 900});
+    jump(0, -1, 3, {-700, -860.074f, 700});
     EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4); // turned round to face the far wall
-    jump(1, 0, 4, {-700, -1300, 700}); // stick right on screen (-Y): her left, facing -X
+    jump(1, 0, 4, {-700, -1621, 700}); // stick right on screen (-Y): her left, facing -X
     EXPECT_EQ(lefts, 1) << "the last jump goes to her left";
+}
+
+// The hang jump queries by their class records (lara.drm 0x2AA4C, 0x2A9EC): sideways (q7 / q8) the hit must lie 553
+// (+0x28) or more from the attach point, so a ledge whose near half ends 521 aside is no target while one running on to
+// 1000 is caught where the arc comes back to its height; back (q9), a ledge whose floor 94.8 out of its face is
+// 312..474 down is class 6, which entry 2 refuses, while the same ledge over an 800 drop is caught.
+TEST(Game, HangJumpRecordsReachAndClass) {
+    const auto leap = [](float sideEnd, float backFloor, Actions a) {
+        CollisionMesh m;
+        addBox(m, {0, -3000, -100}, {1000, 3000, 900});      // wall, face x = 0
+        addBox(m, {-1700, -3000, -100}, {-700, 3000, 700});  // far wall, face x = -700, top 700
+        addFloor(m, -700, -3000, 0, 3000, backFloor);
+        m.markup.push_back({1, 1, {{0, 300, 900}, {0, -300, 900}}});
+        m.markup.push_back({1, 2, {{0, -300, 900}, {0, sideEnd, 900}}});
+        m.markup.push_back({1, 3, {{-700, -300, 700}, {-700, 300, 700}}});
+        auto w = makeWorld(std::move(m), {-300, 0, backFloor});
+        game::PlayerState h;
+        h.state = State::Hang, h.ledge = 0, h.ledgeT = 300, h.ledgeSide = -1, h.clip = "ledgeb_idle";
+        w->restore(h, 0, -0.25f);
+        w->tick({});
+        a.jump = true;
+        w->tick(fixedCamera(*w, a, 0));
+        const auto& s = w->player().state();
+        if (s.state != State::HangJump) return -1;
+        for (int i = 0; i < 150 && s.state == State::HangJump; ++i) w->tick({});
+        return s.state == State::Hang ? s.ledge : -2;
+    };
+    Actions right;
+    right.move = {1, 0};
+    EXPECT_EQ(leap(-600, -100, right), -1) << "the near ledge ends 521 aside: under q8's 553";
+    EXPECT_EQ(leap(-1000, -100, right), 1);
+    Actions back;
+    back.move = {0, -1};
+    EXPECT_EQ(leap(-600, 300, back), -1) << "class 6: its floor 400 down";
+    EXPECT_EQ(leap(-600, -100, back), 2);
 }
 
 // Horizontal poles (markup 4): grab from a standing jump, swing, fling to the next pole, drop.
@@ -1577,17 +1614,28 @@ TEST(GameReal, TempleBalanceBeamWalkAndJump) {
     EXPECT_NEAR(s.pos.x, -3986, 1); // stopped at the far end
 }
 
-// Ledge to ledge, from the floor (l4_temple): grab 1187 from a standing jump, jump up 528 to 1162; grab 1158,
-// jump back across to 1159 (585 behind, 324 lower), turning round.
+// Ledge to ledge (l4_temple): grab 1187 from a standing jump, jump up 528 to 1162; hanging on 1207, jump back across
+// the 948 gap to 1208 at the same height, turning round. (1158 -> 1159, 585 behind and 324 lower, is no target: the
+// floor 94.8 out from 1159 is 312..474 down, ledge class 6, which q9's record 0x2A9EC refuses.)
 TEST(GameReal, TempleLedgeJumpsUpAndBack) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     Actions jump;
     jump.jump = true;
-    auto run = [&](game::Spawn spawn, uint16_t first, Actions a, uint16_t second) {
+    auto run = [&](game::Spawn spawn, uint16_t first, Actions a, uint16_t second, int hangSeg = -1) {
         auto w = unitWorld(bf, "l4_temple", spawn);
         const auto& s = w.player().state();
-        for (int i = 0; i < 90; ++i) w.tick(i == 5 ? jump : Actions{});
+        if (hangSeg >= 0) { // hang there (from its middle), camera behind her
+            game::PlayerState h;
+            h.state = State::Hang, h.ledge = markupIndex(w, first), h.ledgeSeg = hangSeg, h.ledgeSide = -1, h.clip = "ledgeb_idle";
+            ASSERT_GE(h.ledge, 0);
+            const auto& m = w.collision().markup[size_t(h.ledge)];
+            h.ledgeT = 0.5f * glm::length(glm::vec2(m.points[size_t(hangSeg) + 1] - m.points[size_t(hangSeg)]));
+            w.restore(h, 0, -0.25f);
+            w.tick({});
+            w.restore(s, s.yaw, -0.25f);
+        }
+        for (int i = 0; i < 90; ++i) w.tick(i == 5 && hangSeg < 0 ? jump : Actions{});
         ASSERT_EQ(s.state, State::Hang);
         EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, first);
         const float yaw = s.yaw;
@@ -1602,7 +1650,7 @@ TEST(GameReal, TempleLedgeJumpsUpAndBack) {
         if (a.move.y < 0) EXPECT_NEAR(std::cos(s.yaw - yaw), -1, 1e-3); // turned round
     };
     run({{-8771.2f, -9922.7f, 2600}, 0}, 1187, forward(), 1162);
-    run({{-8411.9f, -7173.9f, 1400}, glm::radians(90.0f)}, 1158, forward(-1), 1159);
+    run({{-3300, -10900, -2800}, glm::radians(90.0f)}, 1207, forward(-1), 1208, 3);
 }
 
 // l4_pool rock ledge 1253 (hands z 3562; PoolRockGrabNotHurdle's spawn): grabbed and climbed onto the rock top, drop

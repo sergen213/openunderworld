@@ -209,8 +209,7 @@ struct Tuning {
     float poleGrabAbove = 138.0f;
     float assistRadius = 300.0f; // jump-landing / beam markup this close to the natural landing pulls the jump onto it
     float hangJumpApex = 60.0f;  // hang jumps above their take-off arc rise this far above the higher end
-    // Reach of targeted jumps from a hang (hands to target hands): up, sideways, back (away from the wall).
-    float hangJumpUp = 700.0f, hangJumpSide = 800.0f, hangJumpBack = 1200.0f, poleFlingReach = 1800.0f;
+    float poleFlingReach = 1800.0f; // pole flings: the farthest pole or ledge ahead they fly onto (Player::poleFling)
     // Take-off vertical speed of targeted hang jumps: lara.drm queries q10 (up) / q7, q8 (sides) / q9 (back), units
     // per 30 Hz frame x 30 (docs/GAMEPLAY.md "Hang jumps").
     float hangJumpUpVz = 75.85f * 30, hangJumpSideVz = 34.77f * 30, hangJumpBackVz = 42.54f * 30;
@@ -372,17 +371,25 @@ private:
     // `start` = the query's base point + its up (+0x58) / out (+0x5C) offsets, `hang` / `root` = the arc starts for
     // ledge target types 3 / 1 (its +0x8C entries; the start where it has none), `v` a 30 Hz frame under gravity 5.72443,
     // frames minT..frames, `dir` its heading (capsule offset, cone axis), `cone` +0x24, `falling` +0x2C bit 0x80.
+    // `record`: the class record its +0x94 names (lara.drm 0x2AB8C ground jumps q2 / q26 / q43, 0x2AA4C hang sides q7 /
+    // q8 and DICE sides q28 / q29, 0x2A9EC hang up / back q10 / q9 and ladder q22 / q23); None = the default path.
+    // `base` the query's base point (point source 28: the attach point, hold point or root), `minDist` its +0x28,
+    // `attach` the type of the markup she is attached to (0: none), `classify` +0x2C bit 0x40 (the ledge class table).
+    enum class JumpRecord : uint8_t { None, Ground, Side, HangLadder };
     struct JumpQuery {
-        vec3 start{0}, hang{0}, root{0}, v{0};
+        vec3 start{0}, hang{0}, root{0}, v{0}, base{0};
         vec2 dir{0, 1};
-        float frames = 40, minT = 1, cone = 3.1415927f;
-        bool falling = false;
-        bool classes = false; // ground jumps: the query's class record tests (Player.cpp) instead of the plain capsule
+        float frames = 40, minT = 1, cone = 3.1415927f, minDist = 20;
+        bool falling = false, classify = false;
+        JumpRecord record = JumpRecord::None;
+        int attach = 0;
         float minZ = -1e9f; // ours: ledge points under this do not count
     };
     // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
-    // (`classes`) passing the ground jumps' class record tests.
+    // (`record`) passing one of its class record's entries.
     JumpTarget ledgeOnArc(const JumpQuery& q) const;
+    // The hang jump queries from the ledge she hangs on (kind 0 up q10, +-1 right / left q7 / q8, 2 back q9)
+    JumpQuery hangJumpQuery(int kind) const;
     // A standing jump at a ledge above the obstacle range in front of her: the straight leap onto its hang (Player.cpp)
     bool standJumpToLedge();
     // HangJump velocity / flight time from here onto the target (after the take-off clip); vz: the take-off vertical

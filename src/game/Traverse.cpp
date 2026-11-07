@@ -180,6 +180,7 @@ constexpr float kG = 5.72443f;
 Player::JumpTarget Player::ladderJumpTarget(vec3 from, vec3 v, vec2 dir) const {
     JumpQuery q;
     q.start = from, q.root = from, q.hang = from + vec3(0, 0, kLadderHands), q.v = v, q.dir = dir, q.cone = glm::radians(90.0f);
+    q.base = q.hang, q.attach = 9, q.record = JumpRecord::HangLadder, q.classify = true; // record 0x2A9EC, +0x2C 0x1860
     const JumpTarget ledge = ledgeOnArc(q);
     JumpTarget best;
     best.frames = 1e9f;
@@ -352,6 +353,7 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         // 0x80), from frame 0 (+0x20) [O-data]
         JumpQuery q;
         q.start = s_.pos + vec3(0, 0, kLadderHands + 63.21f), q.root = q.start, q.hang = s_.pos + vec3(0, 0, kLadderHands);
+        q.base = q.hang, q.attach = 9, q.record = JumpRecord::HangLadder, q.classify = true; // 0x2A9EC, +0x2C 0x18D0
         q.v = vec3(0, 0, kLadderJumpVz), q.dir = xy(-out), q.cone = glm::radians(90.0f), q.falling = true, q.minT = 0;
         const JumpTarget j = ledgeOnArc(q);
         s_.fallStartZ = s_.pos.z;

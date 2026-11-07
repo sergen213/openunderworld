@@ -251,7 +251,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Ledge targets (drop to hang, hang jumps) | the hang side must drop > 200 within 240 units of the ledge line | [I] ours; l4_pool's ledge 1253 sits up to ~180 inside the collision top, so a fixed 60-unit probe misses the drop |
 | Balance beam | root within 30 (x/y and z) of a type-14 line, heading within 45° of it from the ground (any heading from the air); walk 140 units/s (clip) | [I] attach distances ours; [O] markup type 14 = MUD 0x10000 BALANCEBEAM |
 | Jump assist | at take-off, of the jump-landing (2) and beam (14) lines the point nearest the natural landing (at its height) within **300** becomes the landing: horizontal velocity = Δxy / flight time, vertical unchanged | [O] solver 0x73EDC0: `v = (target − pos − ½·g·t²) / t` with g = −5.72443/frame², re-aimed every frame with the remaining time (0x751D10, player-state +0x77C) at the markup in +0xA64 whose MUD flags match 0x20830000 (jump landing, rail slide, perch, balance beam); speed cap player data +0xC10 = 18963 (never reached). [I] the 300 radius and solving once at take-off. Ground jumps: the take-off state's query (S248 standing q2, S245 / S247 q43, S249 running q26) meets ledges as the "Jump query hit test" (`Player::ledgeOnArc`, `aimGroundJump`) — its own arc's capsule — and the flight is re-aimed onto the hang pose by the hit frame; only ledges 158 or more over the root count [I: lower ones are landed on, vaulted or hurdled]. Standing jumps at higher ledges (635..907 over her feet, up to ~410 out) are a straight 11-tick leap onto the hang ("Air-grab window", `Player::standJumpToLedge`). Wine: under the prologue slab (ledge 974, 1100 ahead) a running jump left at the plain 65.83 (no re-aim); the reach q26 gives a running jump (l2_junglehub ledge 851, `GameReal.JunglehubRunningJumpReachesHigherLedge`) is [I] |
-| Hang jumps | from a hang: up (stick forward/neutral, no top to climb): hands 150..700 above, ±100 aside; side: 150..800 aside, ±150 in/out, ±400 height; back: 200..1200 behind, ±200 aside, −700..+200 height, turning round. Target nearest to 400 up / 400 aside / 700 back + 100 down. Back / side play their take-off clip first (root motion), then launch: vertical speed **75.85 / 34.77 / 42.54** a frame (up / side / back), flight time when that rise and fall reaches the target's height (rising for a target above), horizontal speed set to arrive exactly on its hang pose; a target above that arc rises 60 above the higher end. With nothing to jump to: back / side leap off at **53.73 out / 70.80 aside + 34.77 up** a frame after the clip | [O-runtime] free leaps: tru.exe under Wine, l3_main_bedroom ledge 973 (`GameReal.HangLeapsMatchTruTraces`): back leaves 0.23 s after the clip starts, 61.6 out and 32.2 up of the hang, rise 105.6, 932 to the corridor floor in 0.578 s; right leaves after ~0.15 s, ~122 aside, turned a quarter round, 70.80 + 34.77 (= queries q7 / q8). [O-data] launch speeds of the jump queries q10 / q7 / q8 / q9 (lara.drm, states S254 / S257 / S259; dice/queries.py), solver 0x73EDC0. [I] ranges (the exe's are the queries': q7 / q8 only beyond 553 aside), flight time (the exe times it by the query arc's first markup box hit) |
+| Hang jumps | from a hang (up: stick forward/neutral, no top to climb; back turns her round): the first ledge met by the hang jump query from the attach point — q10 up (from 79 out, 75.85 up a frame, coming down, cone 65°, record 0x2A9EC), q7 / q8 sides (from 474.1 under and 63.21 out, the hands' arc from the attach point, 70.80 aside + 34.77 up, cone 45°, the hit **553** or more aside, record 0x2AA4C), q9 back (the same starts, 57.33 out + 42.54 up, cone 90°, record 0x2A9EC); classes 6 and 8..13 refused ("Jump query hit test"). Back / side play their take-off clip first (root motion), then launch: vertical speed **75.85 / 34.77 / 42.54** a frame (up / side / back), flight time when that rise and fall reaches the target's height (rising for a target above), horizontal speed set to arrive exactly on its hang pose; a target above that arc rises 60 above the higher end. With nothing to jump to: back / side leap off at **53.73 out / 70.80 aside + 34.77 up** a frame after the clip | [O-runtime] free leaps: tru.exe under Wine, l3_main_bedroom ledge 973 (`GameReal.HangLeapsMatchTruTraces`): back leaves 0.23 s after the clip starts, 61.6 out and 32.2 up of the hang, rise 105.6, 932 to the corridor floor in 0.578 s; right leaves after ~0.15 s, ~122 aside, turned a quarter round, 70.80 + 34.77 (= queries q7 / q8). [O-data] launch speeds of the jump queries q10 / q7 / q8 / q9 (lara.drm, states S254 / S257 / S259; dice/queries.py), solver 0x73EDC0. [O-data] the queries, their records and test lists (decoded, tru.exe 0x7296C0 / 0x728F00); [I] the attach point = the ledge point she hangs from, flight time (the exe times it by the query arc's first markup box hit) |
 | Poles | types 4 (`pole`) and 6 (`horizpole`); hands (pole pose) within 60 of the axis, rising or falling within the ledges' zVel window, from 40 below to **138** above the axis, facing across it (cos ≥ 0.5). Fling (and pole-top jumps forward / back): to the nearest pole or ledge 300..1800 ahead (±300 aside, ±500 height) in **23.5** frames — a pole's / a bare ledge's hang, a ledge with a floor on top: landing one capsule radius past its edge — else q33's free leap | [I] ours; the 138 [O-data, I meaning]: `Hpole_perp_attach_M` starts with the hands 481 above the root against the pole pose's 619, so the catch pulls her down 138 onto the hang (a standing stick jump at the measured speed passes l4_traprooms pole 1336 with the pole-pose hands 62 above it); l4_traprooms' poles are 1264 apart; [O] the markup's matrix carries real translations there (COLLISION.md) |
 | Water probe | box ±221 × ±221 × ±572 centred 320 above the feet | [O] shorts data+0xC3E/+0xC40/+0xC42 (221, 572, 320), box overlap against each water volume box in 0x710A20; the highest surface wins |
 | Swim speed | **1348.6 units/s** (surface and under water), reached at **2475 units/s²**, slowing at **3760 units/s²** when the stick is released (she coasts) | [O-runtime] tru.exe under Wine (l2_cliffclimb sea, traces swim_l2b / swim_l2c): 44.95 units per 30 Hz frame at full stick both at the surface and after a dive; from rest 0.54 → 8.3 → 33.1 → 44.3 per frame at 0.05 / 0.2 / 0.5 / 0.87 s (S-shaped; the linear slope is fitted to its middle), after the release 44.6 → 21.6 in 0.18 s. [I] linear ramps. The old 562 (root speed of `swim_surfaceidle_to_swim` / `swim_surfacedive`) was the clips', not the controller's |
@@ -618,8 +618,9 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
 - Hang jumps: jump while hanging — stick neutral/forward climbs up when a walkable top lies within 150 above the ledge,
   else jumps up to a ledge above; stick sideways jumps to a ledge to that side; stick back jumps to a ledge behind
   (turning round with `ledgeb_jump_back`'s root rotation); with nothing in reach back or sideways she leaps off that way
-  (tru.exe's free leaps, Numbers). Targets (Numbers) exclude the ledge she hangs on (that is shimmying) and ledges whose
-  hang side has floor (platform edges hung from the platform). Back and sideways the take-off clip plays first with its
+  (tru.exe's free leaps, Numbers). Targets: the first ledge the hang jump query (q10 / q7, q8 / q9) meets by its
+  class record (`Player::hangJumpQuery`, Numbers, "Jump query hit test"), never the ledge she hangs on (that is
+  shimmying [I]) nor one whose hang side has floor (platform edges hung from the platform) [I]. Back and sideways the take-off clip plays first with its
   root motion (as tru.exe: she leaves the hang only when it ends); flight: ballistic with the exe gravity at the jump
   query's take-off vertical speed, timed to arrive exactly on the target's hang pose (`Player::launchHangJump`); then
   `ledgeb_attach_U/S/F`. The jump left is `ledgeb_jump_right` mirrored: lara.drm
@@ -1142,18 +1143,51 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   its list's first]. This default path (query +0x94 = 0: 0x70FFB0 → 0x70EC60) is not what Lara's jump queries take:
   every one checked (q2, q26, q43, q31, q28 / q29, q22 / q23, q7 / q9 / q10, q32 / q33) names a class record at +0x94,
   so 0x7296C0 runs it (0x729670 → 0x729540) on each swept candidate instead, then classes the winner by +0x9C
-  (0x728C30 picks it, 0x729540 sets the class bits) [O: decomp; Wine hooks below]. A record lists class entries, each an
-  AND of test records `{kind, point source a1, point source a2, value, …, flags: bit 0 the record's value, bit 1 negate}`
-  (0x728F00); point sources (0x723AB0): 0 her root, 4 the hit, 9 / 10 her heading / right, 13 the target type's arc
-  at the hit time, 24 the hit less the query start and linear motion, 31 the ledge point. The ground jumps share record
-  0x2AB8C: entry 4 (the "box") = rise of the ledge over her root in (300, 885] (kind 4), source 24 along her heading in
-  (−150, 632] and to her right in (−316, 316] (kind 34), the cone (22), wall side (21) and ledge class (14 / 19 / 20:
-  not 3, 5, 8..13); entries 0..3 = the ledge record's capsule (kind 10) round source 13 — the TARGET TYPE's own arc
-  point, not the query's: a hook on 0x6FCB10 under Wine logged its centre at root + 707.27 (the hands' apex, 505.69 +
-  201.6) for type 3 and root + 201.6 for type 1 — with the hit within 1700 of her (kind 36; 1581 in entries 1..3) and
-  more tests not modelled. Ours (`ledgeOnArc` with `JumpQuery::classes`, the ground jumps only): the box or the capsule
-  round the target type's arc, the cone, wall side and clear hang, and the sweep's candidate pad below; the DICE,
-  ladder and hang jumps still read the default path [I: their records 0x2AE2C / 0x2AA4C / 0x2A9EC are not decoded].
+  (0x728C30 picks it, 0x729540 sets the class bits) [O: decomp; Wine hooks below]. A candidate counts when one entry
+  passes (0x729540 stops at the first). An entry is gated by the candidate markup's type (0x723330: entry flags 0x10,
+  bit 0 = not in its list) and, while she is attached (query state +0x280 = the candidate built from player data
+  +0xC94), the attached markup's type (0x723380: flags 0x04, bit 3 = not in the list), then is an AND of test records
+  `{kind, point source a1, point source a2, value, …, flags: bit 0 the record's value (else the query's own: kind 1
+  +0x28, 13 +0x20, 22 +0x24), bit 1 negate, bit 2 active}` (0x728F00); point sources (0x723AB0): 0 her root, 4 / 31 the
+  hit (ledge point), 9 / 10 the heading / right, 13 the target type's arc at the hit time, 24 the hit less the query
+  start and linear motion, 27 / 32 her z / the hit less the record's +0x68, 28 the query's base point, 33 a hold's
+  point. Kinds [O: decomp]: 1 horizontal distance < v; 4 z(a2) − z(a1) ≤ v; 10 the ledge record's capsule round source
+  13 holds the hit; 11 a moving markup's angle (static: passes); 12 the arc's vertical speed at the hit < v; 13 hit
+  time < v; 14 / 18 / 19 / 20 the ledge class (0x728A80: not 3 / 11 / 12 / 13, = 6, = 5, 8..10); 21 wall side; 22
+  cone; 31 the hit at most player data +0xC18 = **1583.44** under her; 33 for classes 5 / 6 the class table's +0xA4
+  value (0x726420) > v; 34 source a1 along direction a2 < v; 36 horizontal distance < v + the drop when the hit is
+  below her, only while her base and the markup are still (≤ 3.1605 a frame, 0x725F40: always in the static world).
+  The ledge class (only for queries with +0x2C bit 0x40; table objdata +0x121C0 by 0x728650): the floor 94.815 out of
+  the face below the ledge point 0..154.87 down = 11, 154.87..312.90 / ..474.08 / ..635.27 down = 5 / 6 / 7, or 8 / 9
+  / 10 when she stands on the ledge (< 6.33 over her feet, facing out of it), each needing the clearance test 0; later
+  entries need a moving markup (0), the chart's test 1 (0x74BB50, class 4) or 0x726420's value, a floor over 632.1
+  down with clearance = 12, the rest 3 [O-data, decomp]. Ours: 4 for everything past the bands [I: test 1 not decoded;
+  the Wine standing jumps catching 782..907 ledges need a class kind 14 admits]. The records (ledges = markup type 1;
+  holds 16..20) [O-data, `openunderworld-work/runjump/cls.py`]:
+  - **0x2AB8C** (q2 / q26 / q43, and q1, q6, q20, q94, q102..q104): entry 4 (types 4 / 1, the "box") = rise of the
+    ledge over her root in (300, 885] (kind 4), source 24 along her heading in [−150, 632) and to her right in
+    [−316, 316) (kind 34), wall side, cone, class 14, not 19, not 20; entry 2 (not types 14 / 15 / 2 / 13: ledges) =
+    the capsule (kind 10) round source 13 — the TARGET TYPE's own arc point, not the query's: a hook on 0x6FCB10 under
+    Wine logged its centre at root + 707.27 (the hands' apex, 505.69 + 201.6) for type 3 and root + 201.6 for type 1
+    — with the hit within **1581** of her (kind 36), cone, wall side, after +0x20, depth (31), class 14, not 20, not
+    19, kind 33; entries 0 / 1 / 3 for beams (14, the arc's vertical speed < 1, 1700), type 15 and types 2 / 13.
+  - **0x2AA4C** (q7 / q8 hang sides, q28 / q29 DICE sides, q30, q38): from a hold (entry 3, any target) the hit 410
+    or more (+0x28; kind 1 a2 = hit, its record value 360 unused) from the base point, capsule, cone, wall side, after
+    +0x20, depth — no class; not from a hold (entries 1 / 2, any target) the hit **553** or more from the base point
+    (q7 / q8 +0x28), capsule, cone, wall side, after +0x20, depth, class 14, not 18 (6), kind 33, and either a rise
+    over her root ≤ 700 (entry 1) or not 20 (entry 2); entry 0: beams.
+  - **0x2A9EC** (q9 / q10 hang back / up, q22 / q23 ladder, q32 / q33 poles and 17 more): entry 2 (not types 14 /
+    15: ledges) = capsule, cone, wall side, after +0x20, depth, class 14, kind 33, not 18 (6), not 20 (8..10); entry
+    1 (type 15): rise ≤ 700, …; entry 0: beams.
+  - **0x2AE2C** (q31, the DICE jump up): {flags 0x16: holds, attached to a hold; hdist(base, the hold's point) < 120,
+    capsule, cone, wall side, after +0x20, depth} and {0x1B: no hold, not attached to one; …}: from a hold it takes
+    holds only — no ledge.
+  Ours (`ledgeOnArc` with `JumpQuery::record`): these entries and tests as listed for ledges (an interpreter over the
+  decoded tables, Player.cpp), the sweep's candidate pad below for every record query, and two of ours: a clear hang
+  (`openBelow`) and, for queries with +0x2C bit 0x80, only hits while the arc comes down (a default check, 0x70EC60,
+  not in the record path; ours keeps it to time the re-aimed flight [I]). The DICE jump up keeps the default checks
+  for a ledge above the top hold [U: what catches it in tru.exe; likely the air-grab queries q44 / q45 once she is in
+  the air].
   Ground jumps: q2 standing (from 300 over the root, 48.04 up, coming down only, cone 120°), q43 with the stick (from
   the root, 40 + 50, 90°), q26 running (from 300 over, 90.25 + 42.54, 90°), their type 3 from 505.69 over the root,
   type 1 at it; DICE q31 / q28 / q29 and ladder q22 / q23 as described above. l3_main_hall ledge 944: the Wine jump stood
