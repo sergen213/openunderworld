@@ -132,7 +132,10 @@ vec3 jumpVelocity(vec3 delta, float time, float g) { return vec3(xy(delta), delt
 bool swimSprintClip(std::string_view c) { return c == "swim_surface_sprint_forward" || c == "swim_submerged_sprint"; }
 bool swimExhaustedClip(std::string_view c) { return c == "swim_surface_exhausted" || c == "swim_submerged_exhausted"; }
 // Take-off clips of hang leaps whose root motion (and turn) plays before the launch.
-bool hangTakeOff(std::string_view c) { return c == "ledgeb_jump_back" || c == "ledgeb_jump_right" || c == "ledgeb_jump_right_from_antic"; }
+bool hangTakeOff(std::string_view c) {
+    return c == "ledgeb_jump_back" || c == "ledgeb_jump_right" || c == "ledgeb_jump_right_from_antic" || c == "ladder_jump_left" ||
+           c == "ladder_jump_right";
+}
 
 } // namespace
 
@@ -608,6 +611,93 @@ void Player::placeOnLedge() {
     std::tie(s_.pos, s_.yaw) = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide, s_.polePara);
 }
 
+// Ledge corners. lara.drm has a corner set for the hang (requests 1030..1046 [O]): ledgeb_concave_right_phase1 (0.27 s,
+// a 45 degree turn to the right, ending with the hands 38 in front of the root: ledgeb_concave_idle's pose) and _phase2
+// (another 43 degrees, ending in ledgeb_idle's pose), ledgeb_convex_right_phase1 (0.6 s, 206 to the right and 45 degrees
+// to the left, hands 212 out: ledgeb_convex_idle) and _phase2 (37 degrees more), the corner idles and their leans
+// ledgeb_<concave|convex>_jump_up_antic / _jump_back_antic (loops, requests 1036..1039) [O: clip poses]. Ledge polylines
+// turn by ~90 degrees at their corners (openunderworld-work/ladderleans/survey.txt: 740 joints over 45 degrees in the
+// units, 573 of them 85..95) [O-data]. Ours [I: the hang group's requests are not decoded, so which state plays which]:
+// shimmying onto a joint turning more than 45 degrees plays phase1 into the corner pose (her hands on the joint, facing
+// between the two walls), concave where the next segment turns toward her side, convex where it turns away; there the
+// corner idle plays, the stick up / back leans, the stick on along the ledge plays phase2 onto the next segment (back the
+// way she came: phase2 mirrored onto the first); left = the right clips mirrored. Jumping at a corner is the hang's.
+namespace {
+constexpr float kCornerTurn = 0.7853982f; // 45 degrees
+float jointTurn(const collision::Markup& m, int seg) { // the polyline's turn from seg to seg + 1
+    const vec2 a = segDir(m, seg), b = segDir(m, seg + 1);
+    return std::atan2(a.x * b.y - a.y * b.x, glm::dot(a, b));
+}
+} // namespace
+
+bool Player::startHangCorner(int seg, float along, float lateral) {
+    const auto& m = col_.markup[size_t(s_.ledge)];
+    const int joint = along > 0 ? seg : seg - 1, to = along > 0 ? seg + 1 : seg - 1;
+    if (joint < 0 || size_t(joint) + 2 >= m.points.size() || std::abs(jointTurn(m, joint)) <= kCornerTurn) return false;
+    const vec2 dir = segDir(m, seg), out = vec2(-dir.y, dir.x) * s_.ledgeSide;
+    const bool concave = glm::dot(segDir(m, to) * (along > 0 ? 1.0f : -1.0f), out) > 0; // the next wall comes round to her
+    const bool mirror = lateral < 0;
+    s_.ledgeSeg = seg;
+    s_.ledgeT = along > 0 ? segLen(m, seg) : 0.0f;
+    const float yawA = attachPose(s_.ledge, seg, s_.ledgeT, s_.ledgeSide).second;
+    const float yawB = attachPose(s_.ledge, to, along > 0 ? 0.0f : segLen(m, to), s_.ledgeSide).second;
+    const float mid = yawA + wrapAngle(yawB - yawA) * 0.5f;
+    const anim::Clip* idle = anims_.find(concave ? "ledgeb_concave_idle" : "ledgeb_convex_idle");
+    vec3 hands = idle ? anims_.handsAt(*idle, 0).value_or(anims_.hangHandOffset) : anims_.hangHandOffset;
+    if (mirror) hands.x = -hands.x;
+    s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw;
+    s_.climbTo = pointOn(m, seg, s_.ledgeT) - rotYaw(mid, hands);
+    s_.climbYawTo = s_.yaw + wrapAngle(mid - s_.yaw);
+    s_.state = State::Hang;
+    play(concave ? "ledgeb_concave_right_phase1" : "ledgeb_convex_right_phase1", false, 1, mirror);
+    return true;
+}
+
+bool Player::hangCorner(float lateral, float fw, bool jumpPressed, float dt) {
+    const std::string c = s_.clip;
+    if (!c.starts_with("ledgeb_concave") && !c.starts_with("ledgeb_convex")) return false;
+    const std::string kind = c.starts_with("ledgeb_concave") ? "concave" : "convex";
+    if (c.ends_with("_phase1")) {
+        if (warpStep(dt)) play("ledgeb_" + kind + "_idle", true, 1, s_.mirror);
+        return true;
+    }
+    if (c.ends_with("_phase2")) {
+        if (warpStep(dt)) {
+            play("ledgeb_idle", true);
+            placeOnLedge();
+        }
+        return true;
+    }
+    if (jumpPressed) return false;
+    const auto& m = col_.markup[size_t(s_.ledge)];
+    const int seg = s_.ledgeSeg;
+    const bool atEnd = s_.ledgeT > 0.5f * segLen(m, seg);
+    if (std::abs(lateral) > 0.3f) { // round onto the next segment, or back onto this one
+        const bool onward = lateral * (s_.mirror ? -1.0f : 1.0f) > 0;
+        const int dst = onward ? (atEnd ? seg + 1 : seg - 1) : seg;
+        const float len = segLen(m, dst);
+        const bool fromStart = onward ? atEnd : !atEnd; // the joint is dst's start
+        const bool mirror = lateral < 0;
+        const std::string phase2 = "ledgeb_" + kind + "_right_phase2";
+        const anim::Clip* p2 = anims_.find(phase2);
+        vec3 mv = p2 ? rootTranslation(*p2, p2->durationSeconds(), false) - rootTranslation(*p2, 0, false) : vec3(0);
+        if (mirror) mv.x = -mv.x;
+        const float yawDst = attachPose(s_.ledge, dst, fromStart ? 0.0f : len, s_.ledgeSide).second;
+        const vec3 hands = s_.pos + rotYaw(s_.yaw, mv) + rotYaw(yawDst, anims_.hangHandOffset); // where the clip ends her
+        const float d = std::abs(glm::dot(xy(hands - pointOn(m, dst, fromStart ? 0.0f : len)), segDir(m, dst)));
+        const float t = std::clamp(fromStart ? d : len - d, std::min(1.0f, len), std::max(len - 1.0f, 0.0f));
+        s_.climbFrom = s_.pos, s_.climbYawFrom = s_.yaw;
+        std::tie(s_.climbTo, s_.climbYawTo) = attachPose(s_.ledge, dst, t, s_.ledgeSide);
+        s_.climbYawTo = s_.yaw + wrapAngle(s_.climbYawTo - s_.yaw);
+        s_.ledgeSeg = dst, s_.ledgeT = t;
+        play(phase2, false, 1, mirror);
+        return true;
+    }
+    play("ledgeb_" + kind + (fw > 0.5f ? "_jump_up_antic" : fw < -0.5f ? "_jump_back_antic" : "_idle"), true, 1, s_.mirror);
+    advanceClip(dt);
+    return true;
+}
+
 // Balance beam (markup 14): the root within beamAttach of the line (and of its height), on the beam's extent;
 // from the ground only when heading along it.
 bool Player::tryBeam(std::string_view clip, bool anyHeading) {
@@ -1077,12 +1167,15 @@ Player::JumpTarget Player::ledgeOnArc(vec3 from, vec3 v, float frames, vec2 faci
 // target's height (rising for a target above, else falling) [I: tru.exe times it by the query arc's first box hit];
 // a target above that arc rises hangJumpApex above the higher end instead [I].
 void Player::launchHangJump(float vz) {
-    const vec3 delta = attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide).first - s_.pos;
+    const vec3 goal = col_.markup[size_t(s_.ledge)].type == 9 ? ladderCatch(s_.ledge, s_.ledgeSeg)
+                                                              : attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide).first;
+    const vec3 delta = goal - s_.pos;
     const float g = t_.gravity;
     const float vq = vz > 0                         ? vz
                      : s_.clip == "ledgeb_jump_up"   ? t_.hangJumpUpVz
                      : s_.clip == "ledgeb_jump_back" ? t_.hangJumpBackVz
-                     : s_.clip.starts_with("ledgeb_jump_right") ? t_.hangJumpSideVz : 0.0f;
+                     : s_.clip.starts_with("ledgeb_jump_right") ? t_.hangJumpSideVz
+                     : s_.clip.starts_with("ladder_jump_")      ? t_.ladderJumpVz : 0.0f;
     float time = -1;
     vz = vq;
     if (const float disc = vq * vq - 2 * g * delta.z; vq > 0 && disc >= 0)
@@ -1662,7 +1755,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             if (clipDone()) launchHangJump();
             break;
         }
-        if (takeOff || s_.clip == "hpole_perch_Jump_back") advanceRoot(dt);
+        if (takeOff || s_.clip == "hpole_perch_Jump_back" || s_.clip == "ladder_jump_back") advanceRoot(dt);
         else advanceClip(dt);
         const float step = std::min(dt, s_.flight);
         const bool straight = s_.clip.starts_with("NG_InAir"); // tryPoleLeap: no gravity
@@ -1670,10 +1763,11 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (!straight) s_.vel.z -= t_.gravity * step;
         s_.flight -= step;
         if (s_.flight > 0) break;
+        if (col_.markup[size_t(s_.ledge)].type == 9) { catchLadder(); break; } // a ladder jump onto a ladder
         const bool pole = isPole(col_.markup[size_t(s_.ledge)]);
         const std::string_view attach = pole ? (s_.polePara ? "Hpole_para_attach_S" : "Hpole_perp_attach_M")
                                         : s_.clip.ends_with("jump_up")   ? "ledgeb_attach_U" // also DICE_<s>_jump_up (Climb.cpp)
-                                        : s_.clip == "ledgeb_jump_back" ? "ledgeb_attach_F"
+                                        : s_.clip == "ledgeb_jump_back" || s_.clip == "ladder_jump_back" ? "ledgeb_attach_F"
                                                                          : "ledgeb_attach_S";
         s_.vel = vec3(0);
         s_.state = pole ? State::PoleHang : State::Hang;
@@ -1704,6 +1798,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             startFall(vec3(0));
             break;
         }
+        if (hangCorner(lateral, glm::dot(move, xy(forward())), jumpPressed, dt)) break;
         // Leaning into a jump while the stick points that way (lara.drm hang group: S435 up with the up-jump query q10,
         // S449 / S450 sideways at the ledge's end (LookaheadResult 642) with q7 / q8, S436 / S457 back with q9 / q110 [O-data]):
         // ledgeb_idle_to_jump_<way>_antic, the ledgeb_jump_<way>_antic loop, released ledgeb_jump_<way>_antic_to_idle
@@ -1781,8 +1876,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         }
         const vec3 d = toWorld(advanceClip(dt));
         if (s_.state == State::Shimmy) {
-            // Move along the polyline by the root motion's component along the ledge; its ends stop the shimmy.
-            moveAlong(lm, s_.ledgeSeg, s_.ledgeT, glm::dot(xy(d), segDir(lm, s_.ledgeSeg)));
+            // Move along the polyline by the root motion's component along the ledge; its ends stop the shimmy, a corner
+            // joint takes her round it (startHangCorner).
+            const float ds = glm::dot(xy(d), segDir(lm, s_.ledgeSeg));
+            if (((ds > 0 && s_.ledgeT + ds > segLen(lm, s_.ledgeSeg)) || (ds < 0 && s_.ledgeT + ds < 0)) &&
+                startHangCorner(s_.ledgeSeg, ds, lateral))
+                break;
+            moveAlong(lm, s_.ledgeSeg, s_.ledgeT, ds);
         }
         placeOnLedge();
         break;

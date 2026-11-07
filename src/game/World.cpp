@@ -67,6 +67,17 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"ladder_attach_M", 3, 1}, {"ladder_attach_ground_bottom", 14, 14}, {"ladder_attach_ground_top", 4, 0},
         {"ladder_idle", 3, 3}, {"ladder_climb_up", 3, 3}, {"ladder_climb_down", 3, 3}, {"ladder_detach_ground_top", 3, 1},
         {"ladder_detach_ground_bottom", 3, 1}, {"ladder_detach_drop", 3, 7}, {"ladder_jump_back", 3, 1},
+        // ladder jumps / leans / reaches: requests 1185, 1177, 1182, 1181, 1184, 1183, 1187, 1188, 1186, 1192, 1197, 1198, 1195
+        {"ladder_jump_left", 3, 1}, {"ladder_jump_right", 3, 1}, {"ladder_jump_left_prepare", 3, 1},
+        {"ladder_jump_left_prepare_untargeted", 6, 6}, {"ladder_jump_right_prepare", 3, 1},
+        {"ladder_jump_right_prepare_untargeted", 6, 6}, {"ladder_idle_to_jump_back_antic", 3, 3}, {"ladder_jump_back_prepare", 1, 1},
+        {"ladder_jump_back_antic_to_idle", 1, 1}, {"ladder_reach_left", 5, 5}, {"ladder_reach_right", 5, 5},
+        {"ladder_settle_left", 4, 3}, {"ladder_settle_right", 4, 3},
+        // ledge corners: requests 1040, 1041, 1030, 1031, 1045, 1046, 1038, 1039, 1037, 1036
+        {"ledgeb_concave_right_phase1", 3, 2}, {"ledgeb_concave_right_phase2", 3, 1}, {"ledgeb_convex_right_phase1", 6, 4},
+        {"ledgeb_convex_right_phase2", 6, 4}, {"ledgeb_concave_idle", 4, 2}, {"ledgeb_convex_idle", 8, 4},
+        {"ledgeb_concave_jump_up_antic", 1, 1}, {"ledgeb_concave_jump_back_antic", 10, 1}, {"ledgeb_convex_jump_up_antic", 1, 1},
+        {"ledgeb_convex_jump_back_antic", 10, 1},
         // pillars: requests 621 (attach_M), 617, 616, 632, 626, 624, 633, 634, 635, 630, 631, 629, 639, 640, 636, 638
         {"pillar_attach_M", 3, 3}, {"pillar_attach_ground", 3, 1}, {"pillar_attach_perch", 3, 3}, {"pillar_idle", 4, 4},
         {"pillar_climb_up", 3, 1}, {"pillar_climb_right", 3, 3}, {"pillar_slide_down_start", 3, 3}, {"pillar_slide_down", 3, 3},
@@ -161,6 +172,10 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ledgeb_idle_to_jump_up_antic", "ledgeb_jump_up_antic", "ledgeb_jump_up_antic_to_idle", "ledgeb_idle_to_jump_right_antic",
     "ledgeb_jump_right_antic", "ledgeb_jump_right_antic_to_idle", "ledgeb_jump_right_from_antic",
     "ledgeb_idle_to_jump_back_antic", "ledgeb_jump_back_antic", "ledgeb_jump_back_antic_to_idle",
+    // ledge corners (Player::startHangCorner / hangCorner)
+    "ledgeb_concave_right_phase1", "ledgeb_concave_right_phase2", "ledgeb_convex_right_phase1", "ledgeb_convex_right_phase2",
+    "ledgeb_concave_idle", "ledgeb_convex_idle", "ledgeb_concave_jump_up_antic", "ledgeb_concave_jump_back_antic",
+    "ledgeb_convex_jump_up_antic", "ledgeb_convex_jump_back_antic",
     "HPole_idleHangPerp", "Hpole_perp_attach_M", "HPole_StartSwing", "HPole_swing", "Hpole_swingstopA", "hpole_perp_fling",
     // poles (Player::pole): parallel hang, hand over hand, turns, swing stops / reverse, drops
     "hpole_IdleHangPara", "Hpole_para_attach_S", "Hpole_PerptoPara", "Hpole_ParatoPerp", "Hpole_Perpturn180",
@@ -263,7 +278,10 @@ const std::vector<std::string_view> kLaraClipNames = {
     "ladder_attach_M", "ladder_attach_ground_bottom", "ladder_attach_ground_top", "ladder_idle", "ladder_climb_up",
     "ladder_climb_down", "ladder_detach_ground_top", "ladder_detach_ground_bottom", "ladder_detach_drop", "ladder_jump_back",
     "ladder_jump_up", "ladder_jump_up_at_top", "ladder_idle_to_jump_up_prepare", "ladder_jump_up_prepare",
-    "ladder_jump_up_prepare_to_idle",
+    "ladder_jump_up_prepare_to_idle", "ladder_jump_left", "ladder_jump_right", "ladder_jump_left_prepare",
+    "ladder_jump_left_prepare_untargeted", "ladder_jump_right_prepare", "ladder_jump_right_prepare_untargeted",
+    "ladder_idle_to_jump_back_antic", "ladder_jump_back_prepare", "ladder_jump_back_antic_to_idle", "ladder_reach_left",
+    "ladder_reach_right", "ladder_settle_left", "ladder_settle_right",
     "pillar_attach_M", "pillar_attach_ground", "pillar_attach_perch", "pillar_idle", "pillar_climb_up", "pillar_climb_right",
     "pillar_slide_down_start", "pillar_slide_down", "pillar_slide_down_stop", "pillar_detach_perch", "pillar_detach_ground",
     "pillar_detach_drop", "pillar_jump_back", "pillar_jump_forward", "pillar_jump_right", "pillar_jump_back_45R", "perch_attach_air", "perch_attach_ground", "perch_idle", "perch_jump_forward",
