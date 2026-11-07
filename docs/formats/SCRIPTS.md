@@ -161,11 +161,43 @@ commands (0xC each), +0x18/+0x1C events (0x1C each). Every section is a state ma
   section 4 never played (animation-list entry 0 with end 0); l1_kraken_room gears 32 / 36 loop their pattern 2
   (idle_tentacle_visible), the sun-sphere platform 27 chain_raised_idle, all at rate 1. Code: `World::uberPlay` /
   `uberSectionPose`; ou-game skins `@section` meshes by it and the model-0 mesh through `script::Object::animPose` (its
-  collision segments too). [I] Objects with a travel clip (`uberMotion`, the doors and elevators found by clip name)
-  keep that rigid motion instead of their model-0 clip; one clip per object reaches the clip effects (the first
-  running section's); a pattern of several animations would blend them by weight (all patterns in the data have one).
+  collision segments too). Doors, gates, elevators and drawbridges move only this way: survey (2026-11-07) of the 14
+  objects whose animation list has an "opening" / "raising" / elevator "falling" clip (the old name-based rigid
+  "travel clip"): 13 play it as a section's transition reference (`ms_ani_tombdoor` 497 doors_opening on transition 0,
+  trigger 2; `sa_uo_elevator_adrenaline` 2973 falling on transitions 2 / 4; `sa_uo_flush_gate` 2541 / 2666,
+  `ar_uo_seafloor_drawbridge` 9116, `ar_uo_seafloor_chains`, `ar_ani_statue_arms`; on other models' sections: the
+  chapel pillars, calendars' clamps, sun-sphere platform, hallway ramps), and `ma_rb_shadow_door_b` (l3_chapel 4835)
+  references none: its halves (sections 3 / 4, models 4 / 3) sink on prismatic joints 6 / 7 whose motor / limit its
+  commands switch, while the old travel clip had moved its frame (model 0). The clip effects get every section
+  instance's running clip (`World::objectClips`, one entry per section, in the section's joint frame; ou-game keys
+  their event cursors by (uid, section)). [I] A pattern of several animations would blend them by weight (all
+  patterns in the data have one); effects that follow bones track the owner (intro uid), so two sections of one
+  object with bone-following effects share the last tracked pose.
+- Section models [O]: state action 1 (0x4D86A0; not when its byte argument is set, [I] a restore) writes the action word's low byte to the section
+  instance's model (+0x234); the instance draws and animates that model of the object from then on. Survey (every
+  objectlist object, 2026-11-07): two objects, both in l1_ship_sinking_hall: `ms_uo_break_pipe` (1190 / 1191; state
+  1 after its command: model 1 and loops steam_on) and `ms_uo_break_water_pipe` (1189; state 1: model 1, plays break).
+  `formats::loadLevelScene` places every model a section switches to as " @intro <uid> @section <k> @model <m>";
+  ou-game draws the one `World::uberSectionModel` names and collapses the others (the object's own model-0 mesh too,
+  `World::switchedObjects`), in the shared scene upload (GL, Vulkan, RT BLAS/TLAS); the viewer drops them. Saves keep
+  the model (section entry 12). [I] The collision of a switched model-0 section keeps model 0's segments, unposed.
+- Instance +0x18 bit 0 [O]: a transition starting while it is set plays no animation and spawns no effect (0x4D4A00
+  tests it before both), so flag 2 does not wait and the transition ends on the next update. Setters: 0x5D0E60 each
+  frame, set beyond the instance's distance from the camera (+0xAC, or +0xA8 with +0x14 bit 0x200; from its object,
+  0x5BA810 / 0x5B9760), cleared within; 0x5B5350 (deactivates an instance: also sets +0x18 0x20000000). Wine
+  (2026-11-07, `openunderworld-work/sectionmodels/ixb.c`: instance +0x14 / +0x18 / +0xA4 distance² / +0xA8 / +0xAC;
+  new game, then l1_kraken_room, l1_ship_sinking_hall, l2_puzzleroom after 45 s each): every section instance has
+  +0xA8 12000 / +0xAC 6000; bit 0 is set on 10 sections (`ms_ani_sunsphere_plat` sections on models 1-3,
+  `ms_ani_tentacle_gearl` models 1 / 2, the far `sa_ei_hpole_b` 1869-1871, 2829), each also with 0x20000000 and
+  beyond its distance (13300-22000 units); clear on every section without 0x20000000 even when as far
+  (`ms_ani_tentacle_gearr` 32's 13 sections 22100 units away, the sun-sphere platform's model-0 section 19400 away next to its flagged sections) and on
+  the near pole 3102 (3850). [U] What gives a section 0x20000000 at birth (no state action 4 / 5 runs on the sun-sphere
+  platform's sections 1-3); not modelled: ours plays every transition's clip. None of these sections' transitions
+  is on the critical path. The same dump: tomb door 497's section (model 0) loops idle_door_closed (animID 2597,
+  flags 0x0202), the break pipes' sections stand on model 0 at load (state 0) with no clip.
   Tests `ProgressionReal.ChapelPillarSectionsPlayTheirClips`, `ProgressionReal.KrakenRoomSectionsLoopTheirIdles`,
-  `RealData.UberSectionAnimReferences`.
+  `ProgressionReal.TombDoorOpensByItsSectionClip`, `ProgressionReal.BreakPipeSwitchesItsModel`,
+  `ProgressionReal.ChapelShadowPillars`, `RealData.UberSectionAnimReferences`.
 - l3_chapel shadow pillars `ma_uo_shadow_pillars` (4837): sections 0-3 are pillars turning a → b → c → d (trigger 2),
   rising from "lowered" into a, c, b, a; section 4 is the solver (conditions "sections 1 and 3 at a" → left solved,
   "0 and 2" → right solved, all four → solved); its events 2 / 3 / 0 are the script's members +44 / +56 / +68. The fire
@@ -208,7 +240,7 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   `modifiable(+4).Set(0)`. The ballcourt lever's polling loop drives its door at twice the lever angle.
   Unsupported bindings stop execution and use the old static-link fallback unless the VM already activated something.
 - [O] Uber objects run their section state machines (see "Uber objects" above); command targets drive the
-  associated hinge and moving collision from actual travel clips, including translation and axis-angle rotation. Unit
+  associated joints and the sections' clips (their bones carry the collision segments; "Section animations"). Unit
   constructors start after all intros are registered, so forward `instanceref` links (including the l2 elevator chain)
   resolve. The l1 kraken tomb door, l2 `sa_uo_elevator_adrenaline`, l4 `ca_rb_hallway_ramps_b` and the l3 chapel
   pillars are covered by real-data tests.

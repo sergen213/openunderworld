@@ -986,18 +986,22 @@ TEST(ProgressionReal, ChapelShadowPillars) {
         for (int i = 0; i < 10; ++i) w.tick(a);
         for (int i = 0; i < 300; ++i) w.tick({});
     };
-    const auto* door = w.script().find(4835);
-    ASSERT_TRUE(door);
-    const glm::mat4 closed = door->body;
+    // The door (ma_rb_shadow_door_b) has no animation in its uber data: its halves (sections 3 / 4, models 4 / 3) slide
+    // down on prismatic joints 6 / 7 (axis Z), whose motors and limits its commands (trigger 16) switch (states 1:
+    // limit -1896..3, motor -10.5 per frame); model 0 (section 1) is the frame and stays.
+    const auto half = [&](int32_t j) { const auto* p = w.uberJoint(4835, j); return p ? p->x : 0.0f; };
+    ASSERT_TRUE(w.script().find(4835));
+    const float left = half(6), right = half(7);
     for (const int32_t sw : {4819, 4819}) use(sw); // section 1: c -> d -> a
     EXPECT_EQ((*u)[1], 0u);
     EXPECT_EQ((*u)[4], 2u); // sections 1 and 3 lined up: "left solved"
     for (const int32_t sw : {4822, 4822, 4822}) use(sw); // section 2: b -> c -> d -> a
     EXPECT_EQ(*u, (std::vector<uint32_t>{0, 0, 0, 0, 1, 1}));
-    EXPECT_FALSE(moved(door->body, closed)); // the shadows only count in the fire's light
+    EXPECT_LT(std::abs(half(6) - left) + std::abs(half(7) - right), 5.0f); // the shadows only count in the fire's light
     place(w, w.script().find(4834)->pos + vec3(0, 0, 30), 0); // the plate lights fire 4818: its vt 55 checks the pillars
     for (int i = 0; i < 600; ++i) w.tick({});
-    EXPECT_TRUE(door->state != 0 || moved(door->body, closed));
+    EXPECT_LT(half(6), left - 1000.0f) << "the left half sinks";
+    EXPECT_LT(half(7), right - 1000.0f) << "the right half sinks";
 }
 
 // Uber sections play their own animations on their instance (0x4D4A00 transitions, 0x4D86A0 actions 2 / 3): the
@@ -1049,11 +1053,84 @@ TEST(ProgressionReal, KrakenRoomSectionsLoopTheirIdles) {
     w.onCinematic = [](const std::string&, bool) {};
     for (int i = 0; i < 600; ++i) w.tick({});
     std::map<int32_t, std::pair<std::string, bool>> clips;
-    for (const auto& c : w.objectClips()) clips[c.uid] = {c.clip, c.loop};
+    for (const auto& c : w.objectClips()) clips.try_emplace(c.uid, c.clip, c.loop); // the first section's
     EXPECT_EQ(clips[32], std::pair(std::string("idle_tentacle_visible"), true));
     EXPECT_EQ(clips[36], std::pair(std::string("idle_tentacle_visible"), true));
     EXPECT_EQ(clips[27], std::pair(std::string("chain_raised_idle"), true));
     EXPECT_TRUE(w.uberSectionPose(32, 0));
+}
+
+// State action 1 (0x4D86A0: section instance +0x234 = the action's low byte): l1_ship_sinking_hall pipe 1190
+// (ms_uo_break_pipe) breaks on its command (transition 0 -> 1, trigger 2): state 1 switches section 0 from model 0 to
+// the broken pipe, model 1, and loops steam_on. The level scene carries model 1 as " @section 0 @model 1"; ou-game
+// collapses the own (model 0) mesh once World::switchedObjects lists the object.
+TEST(ProgressionReal, BreakPipeSwitchesItsModel) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto scene = formats::loadLevelScene(bf, "pc-w\\l1_ship_sinking_hall.drm");
+    size_t own = 0, broken = 0;
+    for (const auto& m : scene.meshes) {
+        own += m.origin.ends_with(" @intro 1190");
+        broken += m.origin.ends_with(" @intro 1190 @section 0 @model 1");
+    }
+    EXPECT_GT(own, 0u);
+    EXPECT_GT(broken, 0u);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_ship_sinking_hall", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    w.tick({});
+    ASSERT_TRUE(w.uberState(1190));
+    EXPECT_EQ((*w.uberState(1190))[0], 0u);
+    EXPECT_EQ(w.uberSectionModel(1190, 0), 0);
+    EXPECT_FALSE(w.switchedObjects().contains(1190));
+    for (uint32_t c = 0; c < 8 && (*w.uberState(1190))[0] == 0; ++c) w.sendUberCommand(1190, c);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(1190))[0], 1u);
+    int32_t record = -1;
+    EXPECT_EQ(w.uberSectionModel(1190, 0, &record), 1);
+    EXPECT_EQ(record, 0);
+    EXPECT_TRUE(w.switchedObjects().contains(1190));
+    bool steam = false;
+    for (const auto& c : w.objectClips()) steam |= c.uid == 1190 && c.section == 0 && c.clip == "steam_on" && c.loop;
+    EXPECT_TRUE(steam);
+}
+
+// Doors move by their section's clip (0x4D4A00): l1_kraken_room tomb door 497 (ms_ani_tombdoor) idles closed (state 0
+// action 3 idle_door_closed); switch 498's command starts transition 0 -> 1, which plays doors_opening and waits for
+// its end, then state 1 loops idle_door_open. The clip's bones carry the door's collision segments.
+TEST(ProgressionReal, TombDoorOpensByItsSectionClip) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_kraken_room", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto clipOf = [&] {
+        for (const auto& c : w.objectClips())
+            if (c.uid == 497 && c.section == 0) return c.clip;
+        return std::string();
+    };
+    const auto collision = [&] {
+        std::vector<glm::mat4> out;
+        for (const auto& d : w.collision().dynamics)
+            if (d.id == 497) out.push_back(d.transform);
+        return out;
+    };
+    EXPECT_EQ(clipOf(), "idle_door_closed");
+    const auto closed = collision();
+    ASSERT_FALSE(closed.empty());
+    ASSERT_TRUE(w.sendUberCommand(497, 0));
+    w.tick({});
+    EXPECT_EQ(clipOf(), "doors_opening");
+    for (int i = 0; i < 1200 && (*w.uberState(497))[0] != 1; ++i) w.tick({});
+    EXPECT_EQ((*w.uberState(497))[0], 1u);
+    w.tick({});
+    EXPECT_EQ(clipOf(), "idle_door_open");
+    const auto open = collision();
+    ASSERT_EQ(open.size(), closed.size());
+    float most = 0;
+    for (size_t i = 0; i < open.size(); ++i) most = std::max(most, glm::length(vec3(open[i][3]) - vec3(closed[i][3])));
+    EXPECT_GT(most, 100.0f) << "the door's collision moved with its bones";
 }
 
 // Research: an object's animation list, OU_ANIM_NAMES=<object>.

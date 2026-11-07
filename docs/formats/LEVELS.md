@@ -113,7 +113,11 @@ object with no section on model 0
 (`sa_uo_naga_statue`) draws no model 0. Survey of the 82 units (live intros): 108 more section instances in 28 units
 than when only jointed sections were drawn (82 → 190), among them the horizontal poles' bars (`*_ei_hpole_*` model 1),
 the Kraken room's gears and sun-sphere platform, the l2 puzzle-room scales, the calendars and the l3 chapel pillars.
-Test `RealData.LevelUberSectionModels`.
+State action 1 (0x4D86A0) switches a section instance's model (+0x234) at runtime: every model a section's states
+switch it to is placed too, as " @intro <uid> @section <index> @model <model>" (only l1_ship_sinking_hall's break
+pipes 1189-1191: model 1, the broken pipe); ou-game shows the one `World::uberSectionModel` names and collapses the
+others, the own mesh included (`World::switchedObjects`); the viewer drops them (SCRIPTS.md "Section models").
+Tests `RealData.LevelUberSectionModels`, `ProgressionReal.BreakPipeSwitchesItsModel`.
 
 ### Lights (unit data +0x00 / +0x04)
 

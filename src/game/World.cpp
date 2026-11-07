@@ -1182,12 +1182,11 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     for (const auto& [uid, rt] : uberRuntime_) {
         part("uber " + std::to_string(uid));
         add(uid), add(rt.fired), add(rt.commanded);
-        for (const auto& s : rt.sections) add(s.state), add(s.transition), add(s.time), add(s.length), add(s.clip), add(s.clipTime), add(s.rate), add(s.loop);
+        for (const auto& s : rt.sections) add(s.state), add(s.transition), add(s.time), add(s.length), add(s.clip), add(s.clipTime), add(s.rate), add(s.loop), add(s.model);
         for (const auto& [index, j] : rt.joints) add(index), add(j.x), add(j.v), add(j.lo), add(j.hi), add(j.speed), add(j.force), add(j.motor), add(j.limited);
         for (const int32_t l : rt.links) add(l);
         for (const auto& w : rt.watches) add(w.section), add(w.joint), add(w.range), add(w.mode), add(w.inside);
     }
-    for (const auto& [uid, m] : uberMotion_) part("motion " + std::to_string(uid)), add(uid), add(m.t), add(m.active);
     part("held"), add(held_);
     for (const auto& [uid, in] : inserted_) part("inserted " + std::to_string(uid)), add(uid), add(in.receptacle);
     for (const auto& [uid, x] : slides_) part("slide " + std::to_string(uid)), add(uid), add(x);

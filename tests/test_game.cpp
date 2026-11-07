@@ -3524,15 +3524,29 @@ TEST(GameReal, RampUberCommandMovesCollision) {
                   "l4_staircase_upper", game::loadLaraAnims(bf));
     w.script().setBigfile(&bf);
     w.tick({});
-    const auto it = std::find_if(w.collision().dynamics.begin(), w.collision().dynamics.end(), [](const auto& d) {
-        return d.id == 6045;
-    });
-    ASSERT_NE(it, w.collision().dynamics.end());
-    const glm::mat4 initial = it->transform;
+    // Command 1 moves the ramps by their sections, not their frame: section 0 (model 1) drops on prismatic joint 0 to
+    // its lower limit (states 6 -> 3 -> 2), section 1 (model 2) plays its raising clip (transition 1, condition list);
+    // model 0 (section 2, the object's collision) is the frame and stays.
+    const auto collision = [&] {
+        std::vector<glm::mat4> out;
+        for (const auto& d : w.collision().dynamics)
+            if (d.id == 6045) out.push_back(d.transform);
+        return out;
+    };
+    const auto initial = collision();
+    ASSERT_FALSE(initial.empty());
     for (int i = 0; i < 30; ++i) w.tick({}); // section 0 settles in its rest state 1 (0 -> 1 is automatic)
-    ASSERT_TRUE(w.sendUberCommand(6045, 1)); // command 1 (trigger 16, 1): 1 -> 6, raise
-    for (int i = 0; i < 120; ++i) w.tick({});
-    EXPECT_NE(it->transform, initial);
+    ASSERT_TRUE(w.uberJoint(6045, 0));
+    const float rest = w.uberJoint(6045, 0)->x;
+    ASSERT_TRUE(w.sendUberCommand(6045, 1)); // command 1 (trigger 16, 1): 1 -> 6
+    bool raising = false;
+    for (int i = 0; i < 120; ++i) {
+        w.tick({});
+        for (const auto& c : w.objectClips()) raising |= c.uid == 6045 && c.section == 1 && c.clip == "raising";
+    }
+    EXPECT_LT(w.uberJoint(6045, 0)->x, rest - 900.0f) << "section 0 dropped on its joint";
+    EXPECT_TRUE(raising) << "section 1 plays its clip";
+    EXPECT_EQ(collision(), initial) << "the frame stays";
 }
 
 TEST(GameReal, ElevatorUberCommandCreatesMovingCollision) {
@@ -4345,7 +4359,9 @@ TEST(GameReal, ElevatorUberIndependentOfRenderRate) {
     for (const auto& in : formats::parseUnit(*game::loadUnitData(bf, "l2_puzzleroom").drm).intros)
         if (in.uniqueId == 2961) at = {in.position[0], in.position[1], in.position[2]};
     const auto input = game::InputScript::parse("1.0 interact 1\n1.5 interact 0\n");
-    const auto w = expectRateIndependent(worldMaker(bf, "l2_puzzleroom", game::Spawn{at, 0}), input, 300);
+    // 200 ticks: mid-way through the elevator's rumble transition (its section clip; the pole in hole 2969 still holds
+    // it, so the switch alone does not drop it).
+    const auto w = expectRateIndependent(worldMaker(bf, "l2_puzzleroom", game::Spawn{at, 0}), input, 200);
     const auto& d = w->collision().dynamics;
     const auto it = std::find_if(d.begin(), d.end(), [](const auto& x) { return x.id == 2973; });
     ASSERT_NE(it, d.end());
@@ -5155,3 +5171,4 @@ TEST(JointSound, LimitImpactAndWake) {
     EXPECT_FLOAT_EQ(game::jointAngularSpeed(glm::radians(1.0f) / 30.0f), 1.0f);
     EXPECT_FLOAT_EQ(game::jointLinearSpeed(2.0f), 60.0f);
 }
+

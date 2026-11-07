@@ -144,8 +144,8 @@ type 2, is [I].
     types 5 / 7 (push blocks, scales) are not simulated; watches on them never fire.
   - Every uber object's sections start in their default state at spawn (each section component exists from the
     instance's creation, 0x4D3DA0), not when a script first touches it: the l7 Thor towers extend on their motors at
-    load. Model 0 of an uber object follows the joint of the section that uses it when it has no travel clip and no
-    loose / carried offset (`World::uberJointPose`). Bullets push watched joints (`World::uberShot`: impulse 3000 [I]
+    load. Model 0 of an uber object follows the joint of the section that uses it when it has no loose / carried
+    offset (`World::uberJointPose`). Bullets push watched joints (`World::uberShot`: impulse 3000 [I]
     along the shot at the body's centre of mass, as a velocity change of the joint's degree of freedom that the Jolt
     body takes on the next step). Lara grips a model-0 body on a level prismatic joint within 120 units of its collision and the stick
     moves it along the axis at 120 units/s, over its motor and gravity, and she follows (`World::pushUberJoints` [I], as

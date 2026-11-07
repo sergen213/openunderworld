@@ -64,52 +64,6 @@ std::optional<glm::mat4> World::markerFrame(const script::Object& o, int id) {
 
 namespace {
 
-struct UberMotionSample {
-    vec3 delta{0}, rotation{0};
-    float duration = 1;
-    std::string clip; // animation-list name
-};
-
-std::optional<UberMotionSample> uberMotion(const cdc::Drm& drm, std::string_view name) {
-    const auto list = anim::animList(drm);
-    const anim::AnimEntry* entry = nullptr;
-    for (const auto& e : list) {
-        const bool travel = name.find("elevator") != std::string_view::npos ? e.name == "falling"
-            : e.name.find("opening") != std::string::npos || e.name.find("raising") != std::string::npos;
-        if (travel) {
-            entry = &e;
-            break;
-        }
-    }
-    if (!entry) return std::nullopt;
-    for (const auto& s : drm.sections)
-        if (s.type == cdc::SectionType::Animation && s.id == entry->animId) {
-            const auto clip = anim::decodeClip(s.data);
-            UberMotionSample motion;
-            motion.clip = entry->name;
-            motion.duration = float(clip.durationSeconds());
-            motion.delta = rootTranslation(clip, clip.durationSeconds(), false) - rootTranslation(clip, 0, false);
-            for (const auto& track : clip.tracks) {
-                const vec3 first(track[anim::TransX].empty() ? 0 : track[anim::TransX].front(),
-                                 track[anim::TransY].empty() ? 0 : track[anim::TransY].front(),
-                                 track[anim::TransZ].empty() ? 0 : track[anim::TransZ].front());
-                const vec3 last(track[anim::TransX].empty() ? 0 : track[anim::TransX].back(),
-                                track[anim::TransY].empty() ? 0 : track[anim::TransY].back(),
-                                track[anim::TransZ].empty() ? 0 : track[anim::TransZ].back());
-                if (glm::length(last - first) > glm::length(motion.delta)) motion.delta = last - first;
-                const vec3 firstRot(track[anim::RotX].empty() ? 0 : track[anim::RotX].front(),
-                                    track[anim::RotY].empty() ? 0 : track[anim::RotY].front(),
-                                    track[anim::RotZ].empty() ? 0 : track[anim::RotZ].front());
-                const vec3 lastRot(track[anim::RotX].empty() ? 0 : track[anim::RotX].back(),
-                                   track[anim::RotY].empty() ? 0 : track[anim::RotY].back(),
-                                   track[anim::RotZ].empty() ? 0 : track[anim::RotZ].back());
-                if (glm::length(lastRot - firstRot) > glm::length(motion.rotation)) motion.rotation = lastRot - firstRot;
-            }
-            if ((glm::length(motion.delta) > 1e-3f || glm::length(motion.rotation) > 1e-4f) && motion.duration > 0) return motion;
-        }
-    return std::nullopt;
-}
-
 // Carryable objects: native base `portablebase` (l1_kraken_entrance weights ms_pt_weight_c, base 3937 vt 20).
 bool portable(const script::Object& o) {
     if (!o.script) return false;
@@ -140,8 +94,6 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
     if (drm->second) {
         try { data = formats::loadUberObject(*drm->second); } catch (const cdc::FormatError&) { return nullptr; }
         if (data) {
-            if (const auto motion = uberMotion(*drm->second, o.name))
-                uberMotion_[o.uid] = {motion->delta, motion->rotation, motion->duration, 0, false, motion->clip};
             auto& rt = uberRuntime_[o.uid];
             rt.sections.assign(data->sections.size(), {});
             for (size_t i = 0; i < rt.sections.size(); ++i)
@@ -189,16 +141,18 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                 if (s[i].size() >= 11) {
                     sec.clip = s[i].at(7), sec.clipTime = s[i].at(8), sec.rate = s[i].at(9), sec.loop = s[i].at(10);
                     if (!rt.anims || sec.clip >= int32_t(rt.anims->clips.size())) sec.clip = -1;
+                    if (s[i].size() >= 12) sec.model = s[i].at(11);
+                    else if (sec.state >= 0 && size_t(sec.state) < it->second->sections[i].stateActions.size())
+                        for (const auto& a : it->second->sections[i].stateActions[size_t(sec.state)]) // 0.37 saves: the
+                            if (a.type == 1) uberAction(o.uid, i, a);                                     // state's model
                 } else if (sec.state >= 0 && size_t(sec.state) < it->second->sections[i].stateActions.size()) {
                     for (const auto& a : it->second->sections[i].stateActions[size_t(sec.state)]) // older saves: the state's
-                        if (a.type == 2 || a.type == 3) uberPlay(o.uid, i, a.value & 0xFFFF, a.value >> 16, a.type == 3); // own clip
+                        if (a.type == 1 || a.type == 2 || a.type == 3) uberAction(o.uid, i, a);  // own clip and model
                 }
                 if (sec.state >= 0) uberStates_[o.uid][i] = uint32_t(sec.state);
             }
             rt.fired = j.at("fired"), rt.commanded = j.at("commanded"), rt.intangible = j.value("intangible", false);
             rt.grappleOff = j.value("grappleOff", false);
-            if (const auto m = uberMotion_.find(o.uid); m != uberMotion_.end() && j.contains("motion"))
-                m->second.t = j["motion"].at(0), m->second.active = j["motion"].at(1);
             for (const auto& e : j.value("joints", nlohmann::json::array())) // state: x, v, limit, motor
                 if (auto joint = makeUberJoint(o.uid, e.at(0).get<int32_t>())) {
                     joint->x = e.at(1), joint->v = e.at(2), joint->lo = e.at(3), joint->hi = e.at(4), joint->limited = e.at(5);
@@ -226,10 +180,9 @@ nlohmann::json World::serializeObjects() const {
         if (const auto d = uberData_.find(uid); d == uberData_.end() || !d->second) continue;
         nlohmann::json sections = nlohmann::json::array();
         for (const auto& s : rt.sections)
-            sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement, s.clip, s.clipTime, s.rate, s.loop});
+            sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed, s.engagement, s.clip, s.clipTime, s.rate, s.loop, s.model});
         nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded},
                                                          {"intangible", rt.intangible}, {"grappleOff", rt.grappleOff}};
-        if (const auto m = uberMotion_.find(uid); m != uberMotion_.end()) e["motion"] = {m->second.t, m->second.active};
         nlohmann::json joints = nlohmann::json::array(), watches = nlohmann::json::array();
         for (const auto& [index, jt] : rt.joints)
             joints.push_back({index, jt.x, jt.v, jt.lo, jt.hi, jt.limited, jt.speed, jt.force, jt.motor});
@@ -267,7 +220,8 @@ void World::restoreObjects(const nlohmann::json& j) {
                     if (!sec.is_array() || sec.size() < 4 || !sec[0].is_number_integer() || !sec[1].is_number_integer() ||
                         !sec[2].is_number() || !sec[3].is_number() || (sec.size() >= 6 && (!sec[4].is_number() || !sec[5].is_boolean())) ||
                         (sec.size() >= 7 && !sec[6].is_number_integer()) ||
-                        (sec.size() >= 11 && (!sec[7].is_number_integer() || !sec[8].is_number() || !sec[9].is_number() || !sec[10].is_boolean())))
+                        (sec.size() >= 11 && (!sec[7].is_number_integer() || !sec[8].is_number() || !sec[9].is_number() || !sec[10].is_boolean())) ||
+                        (sec.size() >= 12 && !sec[11].is_number_integer()))
                         throw std::runtime_error("bad uber section of " + key);
                 (void)e.at("fired").get<uint64_t>(), (void)e.at("commanded").get<bool>(), (void)e.value("intangible", false);
                 (void)e.value("grappleOff", false);
@@ -309,7 +263,7 @@ void World::restoreObjects(const nlohmann::json& j) {
             throw std::runtime_error(std::string("objects: ") + e.what());
         }
     }
-    uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberMotion_.clear(), uberEvents_.clear(), plates_.clear();
+    uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberEvents_.clear(), plates_.clear();
     uberSaved_ = std::move(saved);
     held_ = held;
     inserted_ = std::move(inserted);
@@ -395,6 +349,9 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
     const formats::UberParam* p = a.param >= 0 ? &data.params[size_t(a.param)] : nullptr;
     const float unit = joint != rt.joints.end() && joint->second.hinge ? glm::radians(1.0f) : 1.0f; // records: degrees
     switch (a.type) {
+    case 1: // set the instance's model (+0x234 = the value's low byte)
+        rt.sections[section].model = int32_t(a.value & 0xFF);
+        break;
     case 2: // play once (value: u16 kind, u16 index; uberPlay)
     case 3: // play looping
         uberPlay(uid, section, a.value & 0xFFFF, a.value >> 16, a.type == 3);
@@ -490,7 +447,7 @@ std::optional<physics::Joint1> World::makeUberJoint(int32_t uid, int32_t index) 
 }
 
 // The simulated joint whose body is the section using model 0 (the object's collision), -1 none. Not while the object
-// has a travel clip, or moves as a carried / free loose body (its script offset then poses it), or is a pressure plate:
+// moves as a carried / free loose body (its script offset then poses it), or is a pressure plate:
 // the l4_traprooms empty thrones' prismatic uber joint 0 is the `multibody` joint their scripts watch (one Havok
 // constraint [I]); the plate's Jolt body (plates_, tickJoints) carries the weight on it and poses it.
 int32_t World::uberModelJoint(int32_t uid) const {
@@ -498,7 +455,7 @@ int32_t World::uberModelJoint(int32_t uid) const {
     const auto data = uberData_.find(uid);
     const auto* o = script_.find(uid);
     if (!o || o->offset != vec3(0) || rt == uberRuntime_.end() || data == uberData_.end() || !data->second ||
-        uberMotion_.contains(uid) || plates_.contains(uid))
+        plates_.contains(uid))
         return -1;
     for (const auto& [index, j] : rt->second.joints)
         if (const int32_t body = data->second->joints[size_t(index)].bodyB; body >= 0 && data->second->sections[size_t(body)].model == 0)
@@ -537,17 +494,48 @@ std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bo
     return std::nullopt;
 }
 
+// The section instance's skeleton (its current model's, state action 1) at its anim component's clip, world matrices in
+// model space; null skeleton while it stands in the bind pose.
+std::pair<const scene::Skeleton*, std::vector<glm::mat4>> World::uberSectionMatrices(int32_t uid, int32_t section) const {
+    const auto rt = uberRuntime_.find(uid);
+    if (rt == uberRuntime_.end() || !rt->second.anims || section < 0 || size_t(section) >= rt->second.sections.size()) return {};
+    const auto& s = rt->second.sections[size_t(section)];
+    const auto sk = rt->second.anims->skeletons.find(uint32_t(uberSectionModel(uid, section)));
+    if (s.clip < 0 || sk == rt->second.anims->skeletons.end()) return {};
+    const auto& skeleton = *sk->second;
+    return {&skeleton, anim::worldMatrices(skeleton, anim::sample(rt->second.anims->clips[size_t(s.clip)], skeleton, s.clipTime, s.loop))};
+}
+
 std::optional<std::vector<glm::mat4>> World::uberSectionPose(int32_t uid, int32_t section) const {
+    const auto [skeleton, world] = uberSectionMatrices(uid, section);
+    if (!skeleton) return std::nullopt;
+    return anim::skinPalette(*skeleton, world);
+}
+
+int32_t World::uberSectionModel(int32_t uid, int32_t section, int32_t* record) const {
     const auto rt = uberRuntime_.find(uid);
     const auto data = uberData_.find(uid);
-    if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second || !rt->second.anims || section < 0 ||
-        size_t(section) >= rt->second.sections.size())
-        return std::nullopt;
-    const auto& s = rt->second.sections[size_t(section)];
-    const auto sk = rt->second.anims->skeletons.find(data->second->sections[size_t(section)].model);
-    if (s.clip < 0 || sk == rt->second.anims->skeletons.end()) return std::nullopt;
-    const auto& skeleton = *sk->second;
-    return anim::skinPalette(skeleton, anim::worldMatrices(skeleton, anim::sample(rt->second.anims->clips[size_t(s.clip)], skeleton, s.clipTime, s.loop)));
+    if (record) *record = -1;
+    if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second || section < 0 ||
+        size_t(section) >= rt->second.sections.size() || size_t(section) >= data->second->sections.size())
+        return -1;
+    const int32_t own = int32_t(data->second->sections[size_t(section)].model);
+    if (record) *record = own;
+    const int32_t now = rt->second.sections[size_t(section)].model;
+    return now >= 0 ? now : own;
+}
+
+// The object's own mesh is its first section on model 0 (formats::loadLevelScene).
+std::set<int32_t> World::switchedObjects() const {
+    std::set<int32_t> out;
+    for (const auto& [uid, rt] : uberRuntime_)
+        if (const auto d = uberData_.find(uid); d != uberData_.end() && d->second)
+            for (size_t i = 0; i < rt.sections.size() && i < d->second->sections.size(); ++i)
+                if (d->second->sections[i].model == 0) {
+                    if (rt.sections[i].model > 0) out.insert(uid);
+                    break;
+                }
+    return out;
 }
 
 // Lara's side of a switch (docs/GAMEPLAY.md "Interactions"). [O] The switch's DRM carries her clip (Object::laraClip,
@@ -806,7 +794,6 @@ bool World::sendUberCommand(int32_t uid, uint32_t commandIndex) {
             }
         }
     }
-    if (const auto motion = uberMotion_.find(uid); motion != uberMotion_.end() && rt.commanded) motion->second.active = true;
     return true;
 }
 
@@ -866,17 +853,17 @@ std::vector<World::ObjectClip> World::objectClips() const {
         if (o.clips && o.clipNames && o.clipNames->size() == 2 && o.state != 0)
             out.push_back({o.uid, o.name, (*o.clipNames)[o.state == 1 ? 0 : 1], o.t, (*o.clips)[o.state == 1 ? 0 : 1].durationSeconds(),
                            o.state == 2, introModel(o)});
-        else if (const auto m = uberMotion_.find(o.uid); m != uberMotion_.end() && m->second.active && m->second.t < m->second.duration)
-            out.push_back({o.uid, o.name, m->second.clip, m->second.t, m->second.duration, false, introModel(o)});
         else if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end()) {
-            // a section's anim component running a clip (transitions, state actions 2 / 3): its events (fx_smash: the
-            // urn's shards and sound). [I] one clip per object reaches the effects: the first section's that runs.
-            for (const auto& s : rt->second.sections) {
+            // every section instance's anim component running a clip (transitions, state actions 2 / 3; tru.exe runs
+            // each instance's animation events, 0x5BA0D0): its events (fx_smash: the urn's shards and sound), in the
+            // section's frame (its joint's motion).
+            for (size_t i = 0; i < rt->second.sections.size(); ++i) {
+                const auto& s = rt->second.sections[i];
                 if (s.clip < 0 || !rt->second.anims) continue;
                 const double d = rt->second.anims->clips[size_t(s.clip)].durationSeconds();
                 if (!s.loop && s.clipTime >= d) continue;
-                out.push_back({o.uid, o.name, rt->second.anims->names[size_t(s.clip)], s.clipTime, d, s.loop, introModel(o)});
-                break;
+                out.push_back({o.uid, o.name, rt->second.anims->names[size_t(s.clip)], s.clipTime, d, s.loop,
+                               introModel(o) * uberSectionBody(o.uid, int32_t(i)).value_or(glm::mat4(1)), int(i)});
             }
         } else if (const auto& g = o.graph; g && g->clip >= 0 && size_t(g->clip) < g->set->names.size()) // anim-graph state /
             out.push_back({o.uid, o.name, g->set->names[size_t(g->clip)], g->t,           // transition clips (fixtures' on / off)
@@ -885,7 +872,8 @@ std::vector<World::ObjectClip> World::objectClips() const {
     return out;
 }
 
-std::vector<glm::mat4> World::objectBones(int32_t uid) const {
+std::vector<glm::mat4> World::objectBones(int32_t uid, int section) const {
+    if (section >= 0) return uberSectionMatrices(uid, section).second;
     const auto* o = script_.find(uid);
     if (!o || !o->clips || !o->skeleton || o->state == 0) return {};
     return anim::worldMatrices(*o->skeleton, anim::sample((*o->clips)[o->state == 1 ? 0 : 1], *o->skeleton, o->t, o->state == 2));
@@ -1305,22 +1293,18 @@ void World::tickObjects(float dt) {
         lateColliders(script_) != syncedPlates_)
         syncObjects();
     tickUber(dt);
-    for (auto& [uid, motion] : uberMotion_) {
-        const float target = motion.active ? motion.duration : 0.0f;
-        motion.t = std::clamp(motion.t + (target > motion.t ? dt : -dt), 0.0f, motion.duration);
-    }
-    // The section drawn as model 0 (the object's own mesh, its collision segments) under its clip. [I] Objects with a
-    // travel clip (uberMotion_) keep moving rigidly by it: their clips are that travel.
+    // The section drawn as model 0 (the object's own mesh, its collision segments) under its clip: doors, gates,
+    // elevators and drawbridges open / travel by their transition's anim reference (ms_ani_tombdoor doors_opening,
+    // sa_uo_elevator_adrenaline falling), the bones carrying their collision segments.
     for (const auto& [uid, rt] : uberRuntime_) {
         const auto data = uberData_.find(uid);
         if (data == uberData_.end() || !data->second) continue;
         std::vector<glm::mat4> palette;
-        if (!uberMotion_.contains(uid))
-            for (size_t i = 0; i < data->second->sections.size(); ++i)
-                if (data->second->sections[i].model == 0) {
-                    if (auto p = uberSectionPose(uid, int32_t(i))) palette = std::move(*p);
-                    break;
-                }
+        for (size_t i = 0; i < data->second->sections.size(); ++i)
+            if (data->second->sections[i].model == 0) {
+                if (auto p = uberSectionModel(uid, int32_t(i)) == 0 ? uberSectionPose(uid, int32_t(i)) : std::nullopt) palette = std::move(*p);
+                break;
+            }
         if (const auto* o = script_.find(uid); o && o->animPose != palette) script_.setAnimPose(uid, std::move(palette));
     }
     // Lara rides the dynamic she stands on (platforms, a door swinging under her); gripping a block, its push carries her.
@@ -1354,11 +1338,6 @@ void World::tickObjects(float dt) {
             script_.setBody(c.uid, model);
         } else if (const auto joint = uberJointPose(c.uid)) {
             model = glm::inverse(c.intro) * *joint * c.intro;
-            script_.setBody(c.uid, model);
-        } else if (const auto motion = uberMotion_.find(c.uid); motion != uberMotion_.end()) {
-            const float alpha = motion->second.t / motion->second.duration;
-            model = glm::translate(glm::mat4(1), motion->second.delta * alpha) *
-                    glm::mat4(anim::rotationFromVector(motion->second.rotation * alpha));
             script_.setBody(c.uid, model);
         } else if (const auto palette = script_.pose(*o); palette && !palette->empty()) {
             model = (*palette)[std::min<size_t>(c.segment, palette->size() - 1)];

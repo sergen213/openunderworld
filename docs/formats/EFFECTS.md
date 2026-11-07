@@ -404,8 +404,9 @@ change per step), GL and Vulkan alike.
 ## Script-object clip events
 
 ou-game runs the clip events of switches / doors (their pull / open and held idle clips, `World::objectClips`), of
-uber objects while their travel clip runs and of anim-graph objects' state / transition clips (light fixtures, fire
-4818, plates), as the characters' (owner = intro uid).
+every running uber section clip (one per section instance, in its joint frame; SCRIPTS.md "Section animations") and of
+anim-graph objects' state / transition clips (light fixtures, fire 4818, plates), as the characters' (owner = intro
+uid).
 
 Clip variants [O 0x43C9C0 -> 0x5B26C0]: when an animated instance starts a clip, the clip it leaves runs its
 variant-2 records (info 0x800) and the new clip its variant-1 records (0x400), whatever their frame (a request for the
