@@ -68,9 +68,10 @@ enum class Action : uint8_t {
     Step,   // pressure plate: Lara stands on it
     Weigh,  // pressure plate: Lara carries the nearest portable weight (*_pt_*weight*) onto it and sets it down
     Enter,  // trigger volume: Lara walks into it; trigger plane: Lara crosses it
+    Hang,   // pole lever: Lara inserts the nearest loose pole (`*_pt_pole*`) and hangs on it (World::insertHeld)
 };
 const char* actionName(Action a) {
-    constexpr const char* n[] = {"use", "push", "pull", "step", "weigh", "enter"};
+    constexpr const char* n[] = {"use", "push", "pull", "step", "weigh", "enter", "hang"};
     return n[size_t(a)];
 }
 struct Gate {
@@ -265,6 +266,38 @@ GateResult runGateIn(game::World& w, const Gate& g, int chapter) {
         case Action::Step:
             place(w, at + vec3(0, 0, 30), 0);
             break;
+        case Action::Hang: {
+            const script::Object* pole = nullptr;
+            for (const auto& o : w.script().objects())
+                if (o.name.find("_pt_pole") != std::string::npos && !w.insertedIn(o.uid) &&
+                    (!pole || glm::length(o.pos + o.offset - at) < glm::length(pole->pos + pole->offset - at)))
+                    pole = &o;
+            if (!pole) return;
+            game::Actions press;
+            press.interact = true;
+            const int32_t id = pole->uid;
+            const vec3 sides[] = {{250, 0, 0}, {-250, 0, 0}, {0, 250, 0}, {0, -250, 0}};
+            for (int k = 0; k < 4 && w.heldPortable() != id; ++k) {
+                place(w, pole->pos + pole->offset + sides[k] * 0.4f, 0);
+                for (int i = 0; i < 10; ++i) tick({});
+                tick(press), tick({});
+            }
+            for (int k = 0; k < 4 && w.insertedIn(id) != uid; ++k) {
+                place(w, at + sides[k], std::atan2(-sides[k].y, -sides[k].x));
+                for (int i = 0; i < 10; ++i) tick({});
+                tick(press), tick({});
+            }
+            const collision::Markup* m = nullptr;
+            for (const auto& x : w.collision().markup)
+                if (x.type == 6 && x.points.size() == 2 && glm::distance(x.points[0], at) < 1500 &&
+                    (!m || glm::distance(x.points[0], at) < glm::distance(m->points[0], at)))
+                    m = &x;
+            if (!m) return;
+            const vec3 mid = (m->points[0] + m->points[1]) * 0.5f, along = glm::normalize(m->points[1] - m->points[0]);
+            place(w, mid + vec3(-along.y, along.x, 0) * 17.0f + vec3(0, 0, -594.0f), std::atan2(along.x, -along.y));
+            for (int i = 0; i < 240; ++i) tick({}); // she hangs; her weight slides the lever down
+            break;
+        }
         case Action::Weigh: {
             const script::Object* weight = nullptr;
             for (const auto& o : w.script().objects())
@@ -429,7 +462,7 @@ const std::vector<Case>& criticalGates() {
                                                          {4822, Action::Use}, {4822, Action::Use}}}},
         {3, {"l3_chamberrockhall", 4617, Action::Use, {4528}}},          // electric switch -> secret door
         {3, {"l3_main_hall", 4128, Action::Enter, {}, 4}},               // 160_man_shot, 170_man_exit -> chapter 4
-        // pole lever 6502 -> door 6505: the pole inserted and hung on (BallcourtPoleLeverOpensDoor)
+        {4, {"l4_ballcourt", 6502, Action::Hang, {6505}}},               // pole 6503 in pole lever 6502, hung on -> door joint
         {4, {"l4_traprooms", 5884, Action::Push, {}}},                   // grapple push block
         // the Xibalba exit switch, the plane of 190_mex (6410 -> 6389), then the chapter end 5483
         {4, {"l4_ballcourt", 5468, Action::Enter, {}, 5, {{5469, Action::Use}, {6410, Action::Enter}}}},

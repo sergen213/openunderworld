@@ -1054,7 +1054,12 @@ void World::bindMultibody() {
             return true;
         }
         if (function == 78) {
-            result = std::bit_cast<uint32_t>(index >= 0 ? glm::degrees(physics_.angle(index)) : 0.0f);
+            // A pole-hole lever reads its cylindrical joint's limit-1 coordinate (args 0, 1; l4_ballcourt 6502 passes
+            // twice it to door 6505's limit, vt 54). [I] Ours slides only (slides_): its 0..-600 maps onto 0..40 degrees,
+            // the swing the old hinge lever drove door 6505 to 80 with; tru.exe's second degree of freedom is not traced.
+            float value = index >= 0 ? glm::degrees(physics_.angle(index)) : 0.0f;
+            if (const auto sl = slides_.find(uid); index < 0 && sl != slides_.end()) value = -sl->second * (40.0f / 600.0f);
+            result = std::bit_cast<uint32_t>(value);
             return true;
         }
         if (args.size() != 5) return false; // joint, limit, drive parameters

@@ -3581,6 +3581,44 @@ TEST(GameReal, BallcourtLeverIgnoresAUse) {
     EXPECT_LT(std::abs(w.physics().angle(0)), 0.1f) << "shut (its rest angle)";
 }
 
+// l4_ballcourt: pole 6503 inserted into pole lever 6502 and hung on slides the lever down; its loop passes the lever's
+// coordinate x 2 to door 6505's joint limit (vt 54, multibody 77): the door swings open.
+TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }),
+                  "l4_ballcourt", game::loadLaraAnims(bf), game::Spawn{{-20584, 15040, 3484}, -glm::half_pi<float>()});
+    w.script().setBigfile(&bf);
+    Actions use;
+    use.interact = true;
+    for (int i = 0; i < 20; ++i) w.tick({});
+    w.tick(use), w.tick({});
+    ASSERT_EQ(w.heldPortable(), 6503);
+    const auto* lever = w.script().find(6502);
+    ASSERT_TRUE(lever);
+    for (const vec3 side : {vec3(0, 250, 0), vec3(0, -250, 0), vec3(250, 0, 0), vec3(-250, 0, 0)}) {
+        if (w.insertedIn(6503) == 6502) break;
+        game::PlayerState s;
+        s.pos = lever->pos + side, s.yaw = std::atan2(-side.y, -side.x);
+        w.restore(s, s.yaw, -0.25f);
+        for (int i = 0; i < 10; ++i) w.tick({});
+        w.tick(use), w.tick({});
+    }
+    ASSERT_EQ(w.insertedIn(6503), 6502);
+    const collision::Markup* m = nullptr;
+    for (const auto& x : w.collision().markup)
+        if (x.type == 6 && x.points.size() == 2 && glm::distance(x.points[0], lever->pos) < 1500) m = &x;
+    ASSERT_TRUE(m);
+    const vec3 mid = (m->points[0] + m->points[1]) * 0.5f, along = glm::normalize(m->points[1] - m->points[0]);
+    game::PlayerState s;
+    s.pos = mid + vec3(-along.y, along.x, 0) * 17.0f + vec3(0, 0, -594.0f), s.yaw = std::atan2(along.x, -along.y);
+    w.restore(s, s.yaw, -0.25f);
+    for (int i = 0; i < 300; ++i) w.tick({});
+    EXPECT_EQ(w.player().state().state, game::State::PoleHang);
+    ASSERT_EQ(w.physics().hinges.size(), 1u);
+    EXPECT_NEAR(std::abs(w.physics().angle(0)), glm::radians(80.0f), 0.05f) << "door 6505 open";
+}
+
 // Script coverage survey (docs/formats/SCRIPTS.md "Survey"). Static: native call sites per (native type, function)
 // and opcodes the VM lacks, over every distinct script type of the 82 units. Dynamic: each unit in a streaming World
 // (its natives bound) runs constructors/main scripts, every trigger volume entered, plane crossed and switch used,

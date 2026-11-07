@@ -1391,7 +1391,9 @@ Ours:
   where she stands at l5 7189 / l4 6502; tru.exe's Lara query capsule is not decoded). Empty-handed, interact inside an
   inserted portable's kind-4 record takes it out; loose portables are picked up inside that record too (else within
   150 / 100). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
-  poles; a receptacle whose script watches its joint slides down it under Lara hanging there (300 units/s to -600 [I]).
+  poles; a receptacle whose script watches its joint slides down it under Lara hanging there (300 units/s to -600 [I]);
+  `multibody` 78 on it answers the slide mapped 0..-600 -> 0..40 degrees [I: tru.exe's second degree of freedom not
+  traced], so l4_ballcourt 6502 drives door 6505 to 80 degrees as its old hinge did.
   Receptacles get their graph also without a `modifiable` member or a script (l4_temple holes 5230-5232) and start empty
   when their start record is their insert target [I]; they have no use (l4_ballcourt lever 6502 now needs its pole).
   Saved (objects `inserted`, `slides`, `placed`). Not done: an insert clip (none in lara.drm), the non-graph receptacles,
