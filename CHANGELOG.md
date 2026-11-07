@@ -4,6 +4,15 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.35.0] - 2026-11-07
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: doors, gates, levers, cog wheels and press plates make their sounds while they move, with a clunk when they
+  hit their stop, from each object's own sound as in the original. They are silent at rest.
+- Fixed: scripted sounds the original waits on now hold their script until they finish, so sequences such as the
+  Valaskjalf and trap-room sounds play in order and at the right moment.
+
 ## [0.34.0] - 2026-11-07
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
