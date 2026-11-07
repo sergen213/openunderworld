@@ -245,6 +245,27 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
                 break;
             }
 
+    // NavPower links: node +0x14C u8[16] -> PathSpec linkUsageFlags (0x6148B0, read by 0x662EC0). The cats' jump
+    // records (start, -1, in-air, landing clip refs, then -9, a distance, ...; 0x44 bytes) sit in their enemy data
+    // block (down / up / over), whose reader is not traced [U]: the clips go by name, across [I] for level links;
+    // small spiders have one jump set (jump_start / _loop / _end) for every kind [I].
+    if (const auto p = field(0x14C))
+        for (uint32_t i = 0; i < 16; ++i)
+            if (read<uint8_t>(drm->sections[p->section], p->offset + i)) t->linkUsage |= uint16_t(1u << i);
+    const auto jumpSet = [&](const char* start, const char* air, const char* land) {
+        EnemyType::LinkClips c;
+        if (!loadClip(air)) return c;
+        c.air = air;
+        if (loadClip(start)) c.start = start;
+        if (loadClip(land)) c.land = land;
+        return c;
+    };
+    t->jumpUp = jumpSet("jump_up_start", "jump_up_inair_static", "jump_up_end");
+    t->jumpDown = jumpSet("jump_down_start", "jump_down_inair_static", "jump_down_end");
+    t->jumpAcross = jumpSet("jump_across_start", "jump_across_inair_static", "jump_across_end");
+    if (!t->jumpUp.valid() && !t->jumpDown.valid() && !t->jumpAcross.valid())
+        t->jumpUp = t->jumpDown = t->jumpAcross = jumpSet("jump_start", "jump_loop", "jump_end");
+
     // Patrol (list node +0x48) and search (+0xD8) parameters (Enemy.hpp PatrolStyle / SearchStyle). MoveNav sets
     // (0x61B0C0): the walk clip at +0x18 (+0x14 start, +0x1C stop, +0x20 end idle in every set read), the arrival
     // distance s16 max(+0x1C0, +0x1C2) (0x628990). Weighted lists (0x60F450): count +0x0C, entries at +0x10.
@@ -422,7 +443,7 @@ void Enemy::restore(const EnemyState& s) {
 
 // World <-> unit frame of every position a saved / stashed state holds.
 static void shift(EnemyState& s, vec3 d) {
-    s.pos += d, s.lastSeen += d, s.cover += d, s.goal += d;
+    s.pos += d, s.lastSeen += d, s.cover += d, s.goal += d, s.leapFrom += d, s.leapTo += d;
     for (vec3& r : s.recent) r += d;
 }
 
@@ -447,6 +468,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
     std::erase_if(units_, [&](const std::string& n) { return !loaded(n); });
     std::erase_if(nodes_, [&](const auto& kv) { return !loaded(kv.first); });
     std::erase_if(graphs_, [&](const auto& kv) { return !loaded(kv.first); });
+    std::erase_if(links_, [&](const auto& kv) { return !loaded(kv.first); });
     std::erase_if(dormant_, [&](const auto& kv) { return !loaded(kv.second.first); });
     const auto rebuildNodes = [&] { // in unit-name order (std::map), so streaming order never changes them
         worldNodes_.clear();
@@ -459,6 +481,9 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
         navs_.clear();
         for (const auto& [name, graphs] : graphs_)
             for (const auto& g : graphs) navs_[g.layer].add(g, offsets_[name]);
+        for (auto& [layer, m] : navs_) // every layer: 0x48B770 keeps bfx's default layer mask (all)
+            for (const auto& [name, links] : links_)
+                for (const auto& l : links) m.addLink(l, offsets_[name]);
     };
     rebuildNodes();
     if (!bigfile_) return;
@@ -474,6 +499,7 @@ void Enemies::setUnits(const std::vector<script::UnitRef>& units) {
         const formats::Unit parsed = formats::parseUnit(*u.drm);
         nodes_[u.name] = parsed.plannerNodes;
         graphs_[u.name] = parsed.navGraphs;
+        links_[u.name] = parsed.navLinks;
         rebuildNodes();
         for (const auto& in : parsed.intros) {
             if (formats::dormant(in) && born && !born(in.uniqueId)) {
@@ -582,7 +608,8 @@ nlohmann::json toJson(const EnemyState& s) {
             {"goal", vec(s.goal)}, {"searchTime", s.searchTime}, {"ragdollPhase", s.ragdollPhase}, {"ragdoll", std::move(ragdoll)},
             {"killAt", vec(s.killAt)}, {"killDir", vec(s.killDir)}, {"knock", vec(s.knock)}, {"ragdollAt", s.ragdollAt}, {"pieces", std::move(pieces)},
             {"pieceVel", std::move(pieceVel)}, {"flankWait", s.flankWait}, {"dodgeWait", s.dodgeWait}, {"recent", std::move(recent)},
-            {"recentNext", s.recentNext}, {"recentCount", s.recentCount}};
+            {"recentNext", s.recentNext}, {"recentCount", s.recentCount}, {"leap", s.leap}, {"leapFrom", vec(s.leapFrom)},
+            {"leapTo", vec(s.leapTo)}, {"leapTime", s.leapTime}, {"leapLength", s.leapLength}};
 }
 
 EnemyState stateFromJson(const nlohmann::json& j) {
@@ -608,6 +635,9 @@ EnemyState stateFromJson(const nlohmann::json& j) {
     if (const auto r = j.find("recent"); r != j.end())
         for (size_t k = 0; k < s.recent.size() && k < r->size(); ++k) s.recent[k] = vec(r->at(k));
     s.recentNext = j.value("recentNext", 0), s.recentCount = j.value("recentCount", 0);
+    s.leap = j.value("leap", 0), s.leapTime = j.value("leapTime", 0.0f), s.leapLength = j.value("leapLength", 0.0f); // older saves: none
+    if (const auto l = j.find("leapFrom"); l != j.end()) s.leapFrom = vec(*l);
+    if (const auto l = j.find("leapTo"); l != j.end()) s.leapTo = vec(*l);
     s.ragdollPhase = j.value("ragdollPhase", 0); // older saves: none (dead bodies hold their clip's last frame)
     for (const auto& m : j.value("ragdoll", nlohmann::json::array())) {
         const auto f = m.get<std::vector<float>>();

@@ -1912,7 +1912,7 @@ and generator spawns (the generator intro's own type-13 data) now patrol too; fl
 
 Nav graph [O] (LEVELS.md "Nav graphs"): tru.exe links NavPower (`<bfx_replay NavPower_version>`, bfx::NavGraph); each
 unit's Level +0x60 holds a version-8 resource of graphs per layer (l1_ship_exterior: layer 3, agent radius 100,
-height 700, 398 convex areas, 710 links; l4_ballcourt layers 4 (radius 250) and 3 (100); l2_norsehub 6 (250) and
+height 700, 398 convex areas, 710 shared edges; l4_ballcourt layers 4 (radius 250) and 3 (100); l2_norsehub 6 (250) and
 1 (70)). Ours (`ai::NavMesh`, Nav.cpp; `Enemies::navFor`): the loaded units' graphs merged per layer (unit-name
 order), each ground enemy on the smallest layer built for at least its radius [I: tru.exe reads AI +0x1C50]; A*
 over the areas through their shared edges, funnel for the corners; chase, return, patrol, search, cover, flank and
@@ -1946,11 +1946,32 @@ step checked on the mesh. Ours: in a chase, the set's +0x34 / +0x38 clips (cats 
 soldiers' are anim requests, so mercs / poachers do not sidestep [U]. [I] timers in 30 Hz counts. Test
 `Ai.SidestepsWhenLaraIsClose`.
 
+Nav links (NavPower links; LEVELS.md "Nav links"; 176 in 22 units, none on the ship) [O]: bfx keeps them beside
+the graphs, both ends snapped to areas of every layer. A path query (0x662EC0) builds its PathSpec {obstacle
+blockage 0xFF, user-data match from node +0x134 flags, linkUsageFlags = node +0x14C u8[16] as bits when the
+request's +0x50 has bits 2 and 4, else 0} and asks CreatePolylinePath (0x41FAD0). Usage: cat_panther / tiger /
+panther_thrall bit 2, poacher / poacher_long_range / merc bit 1, small_albino_spider bit 0; thralls, nagas, yeti,
+tarantula, bats, sharks none. Every link's flags are 0xFFFF, so any of those may use any link. The AI path
+(0x647CA0, 32 points) marks a link segment kind 1 when its far end is higher, else 2 (kinds 5+ carry area user
+flags); the follower gives link segments no walking length (0x649F50) [O]. How the game then runs the link is not
+traced [U]: cats have jump_up_* / jump_down_* / jump_across_* / jump_over_* clips (start, inair_static, end) and
+0x44-byte records with those refs in their enemy data block (down, up, over: start, −1, in-air, landing, −9, 94.8 /
+363.5 / 379.3, ...), soldiers no jump clips at all. Ours (`NavMesh::addLink` / `route`, `Enemy::startLeap` /
+`leapTick`): A* also crosses a link the type's usage allows (strips at the take-off point nearest to where it
+walks from [I], cost = walk + flight × penalty [I]); corners are funnelled per stretch between links; reaching the
+take-off ([I] within its radius + 60: ledge avoidance halts it a radius short) it faces the landing and plays the kind's start clip in place, flies a ballistic arc
+([I] its gravity, top 158 above the higher end) with the in-air loop, lands with the end clip, and its mode carries
+on (hits during a jump hurt but get no reaction [I]). Kind: up / down as 0x647CA0, across [I] within 158 of level.
+Types without jump clips (soldiers) route without links [I: their link clips are anim requests or absent]. Saves
+keep the jump (EnemyState leap*). Tests `Ai.NavMeshRoutesOverALink`, `Ai.CatJumpsDownALink`,
+`AiReal.BallcourtPantherJumpsDownALink`.
+
 Taunt [O]: only `panther_thrall` has a taunt record (node +0xC8, flag AI +0x3718 set when its Adrenaline behaviour
 ends, 0x6116E0); its clip ref is {0, −1} and +0x10 is null, so Taunt_Anim (0x61F2D0 needs s16 +2 ≠ −1) and
 Taunt_Turn never start: no enemy taunts.
 
-Not done: JumpOver (NavPower links after the areas, not decoded), long-range specifics beyond their records, rifle
+Not done: JumpOver (EnemyBehavior JumpOver 0x62BC20 / 0x62B620 vaults over a cover node's low wall with the cover
+record's +0x174 clip, not a nav link; not modelled), long-range specifics beyond their records, rifle
 mesh, bat latch, the original's wall-walking transitions, thralls' chunks.
 
 Verification [O] (ou-game, Vulkan, 1280×720, invisible KWin; screenshots viewed, kept privately; 2026-10-29):

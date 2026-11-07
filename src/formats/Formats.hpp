@@ -221,6 +221,21 @@ struct NavGraph {
     std::vector<Area> areas;
 };
 
+// NavPower link (unit data +0x44 count, +0x48 -> record pointers; tru.exe 0x48BAB0 -> 0x48B770 creates them with
+// bfx CreateLink 0x417D50 / CreateLinkStrip 0x417F30; LEVELS.md "Nav links"). Record: +0x00 matrix, +0x40 u8 link
+// type, +0x41..+0x50 u8[16] usage flags (bool per bit), +0x58 maxSnapDist, +0x5C mayUseDist, +0x60 mustUseDist,
+// +0x64 penalty multiplier, +0x6C point count (2 link, 4 strip), +0x70 0x24-byte points {position, +0x20 u8 may start
+// here}. A strip spans the edge a[0]-a[1] to b[0]-b[1] (b[k] faces a[k]); a link has a[0] == a[1], b[0] == b[1].
+// Unit frame (record matrix applied).
+struct NavLink {
+    std::array<glm::vec3, 2> a{}, b{};
+    bool fromA = false, fromB = false; // traversable a -> b / b -> a
+    bool strip = false;
+    uint8_t type = 0;
+    uint16_t usage = 0; // agents whose PathSpec linkUsageFlags share a bit may use it
+    float maxSnap = 0, mayUse = 0, mustUse = 0, penalty = 1;
+};
+
 struct Unit {
     std::vector<Intro> intros;
     std::vector<std::string> streamGroups; // stream DRM base names ("pc-w\\streamgroups\\<name>.drm")
@@ -230,6 +245,7 @@ struct Unit {
     std::vector<CameraSpline> cameraSplines; // index = the cameraspline script value's first word
     std::vector<std::vector<PlannerNode>> plannerNodes; // [record][node] (noderef {record, node})
     std::vector<NavGraph> navGraphs;
+    std::vector<NavLink> navLinks;
     scene::Environment environment; // Level+0x70 render settings (fog, ambient)
     // Level+0x70 DTP +0x294 u16: objectlist.txt id of the Lara outfit object the unit loads (tru.exe 0x5DE2B0,
     // 0x5D4340); 0 without a settings DTP. docs/GAMEPLAY.md "Outfits".

@@ -584,7 +584,91 @@ TEST(Ai, NavMeshRoutesAroundAWall) {
     EXPECT_EQ(p[1], vec3(1800, 1100, 0));
     EXPECT_EQ(nav.path({500, 500, 0}, {500, 1500, 0}).size(), 1u); // straight through the shared edge
     EXPECT_TRUE(nav.path({500, 500, 0}, {1500, 500, 0}).empty());
-    EXPECT_LT(glm::distance(nav.steer({500, 500, 0}, {1800, 1100, 0}), vec3(1000, 1000, 0)), 1.0f);
+    EXPECT_LT(glm::distance(nav.steer({500, 500, 0}, {1800, 1100, 0}).at, vec3(1000, 1000, 0)), 1.0f);
+}
+
+namespace {
+// Two 1000-unit floors 1000 apart in y, the far one 800 lower, and a one-way strip from the near one's edge
+// (y 1000) down to the far one's (y 2000).
+std::pair<formats::NavGraph, formats::NavLink> gapGraph() {
+    formats::NavGraph g;
+    g.radius = 100;
+    g.areas = {navArea({{0, 0, 0}, {1000, 0, 0}, {1000, 1000, 0}, {0, 1000, 0}}),
+               navArea({{0, 2000, -800}, {1000, 2000, -800}, {1000, 3000, -800}, {0, 3000, -800}})};
+    formats::NavLink l;
+    l.strip = true, l.fromA = true, l.usage = 0xFFFF, l.maxSnap = 632.1f, l.mayUse = 474.1f;
+    l.a = {vec3(200, 1000, 0), vec3(800, 1000, 0)}, l.b = {vec3(200, 2000, -800), vec3(800, 2000, -800)};
+    return {g, l};
+}
+} // namespace
+
+// NavPower links join areas no edge joins: a route takes the strip only with a usage bit in common, one way, at
+// the take-off point closest to where it walks from, landing straight across.
+TEST(Ai, NavMeshRoutesOverALink) {
+    const auto [g, l] = gapGraph();
+    game::ai::NavMesh nav;
+    nav.add(g, vec3(0));
+    nav.addLink(l, vec3(0));
+    ASSERT_EQ(nav.links(), 1u);
+    EXPECT_TRUE(nav.route({500, 500, 0}, {500, 2500, -800}, 0).empty()); // no link usage: no route
+    const auto r = nav.route({300, 500, 0}, {300, 2500, -800}, 4);
+    ASSERT_EQ(r.size(), 2u);
+    EXPECT_EQ(r[0].link, 0);
+    EXPECT_FALSE(r[0].reverse);
+    EXPECT_LT(glm::distance(r[0].at, vec3(300, 1000, 0)), 1.0f);
+    EXPECT_LT(glm::distance(r[0].land, vec3(300, 2000, -800)), 1.0f);
+    EXPECT_EQ(r[1].at, vec3(300, 2500, -800));
+    EXPECT_TRUE(nav.route({300, 2500, -800}, {300, 500, 0}, 4).empty()); // one way
+    EXPECT_EQ(nav.steer({300, 990, 0}, {300, 2500, -800}, 4).link, 0); // a take-off is never skipped as too near
+}
+
+// A cat chasing Lara across the gap runs to the take-off, faces the landing, plays jump_down_start, flies with
+// jump_down_inair_static, lands with jump_down_end on the far floor and chases on; without link usage it waits at the
+// edge (ledge avoidance).
+TEST(Ai, CatJumpsDownALink) {
+    const auto [g, l] = gapGraph();
+    game::ai::NavMesh nav;
+    nav.add(g, vec3(0));
+    nav.addLink(l, vec3(0));
+    CollisionMesh m;
+    addFloor(m, -500, -500, 1500, 1000, 0);
+    addFloor(m, -500, 2000, 1500, 3500, -800);
+    const auto col = built(m);
+    const auto run = [&](uint16_t usage, std::vector<std::string>* clips) {
+        auto t = std::make_shared<game::ai::EnemyType>(*syntheticType());
+        t->linkUsage = usage;
+        for (const char* c : {"jump_down_start", "jump_down_inair_static", "jump_down_end"}) t->clips.emplace(c, t->clips.at(t->clipName(Role::Idle)));
+        t->jumpDown = {"jump_down_start", "jump_down_inair_static", "jump_down_end"};
+        game::ai::Enemy e(t, 1, {300, 300, 0}, 1.5708f);
+        e.nav = &nav;
+        const game::ai::Target lara{{300, 2600, -800}};
+        e.alert(lara.pos);
+        std::vector<game::ai::EnemyState> states;
+        for (int i = 0; i < int(10 / kDt); ++i) {
+            e.tick(col, lara, {}, kDt);
+            if (clips && (clips->empty() || clips->back() != e.state().clip)) clips->push_back(e.state().clip);
+            states.push_back(e.state());
+        }
+        return states;
+    };
+    std::vector<std::string> clips;
+    const auto a = run(4, &clips);
+    for (const auto& c : clips) std::fprintf(stderr, "%s ", c.c_str());
+    std::fprintf(stderr, "\n");
+    const auto at = [&](const char* c) { return std::find(clips.begin(), clips.end(), c) - clips.begin(); };
+    ASSERT_LT(at("jump_down_start"), at("jump_down_inair_static"));
+    ASSERT_LT(at("jump_down_inair_static"), at("jump_down_end"));
+    ASSERT_LT(at("jump_down_end"), std::ssize(clips));
+    const auto air = std::find_if(a.begin(), a.end(), [](const auto& s) { return s.leap == 2; });
+    ASSERT_NE(air, a.end());
+    EXPECT_LT(std::abs(air->leapFrom.y - 1000), 200.0f); // took off at the edge (within its radius + 60)
+    EXPECT_EQ(air->leapTo, vec3(300, 2000, -800));
+    EXPECT_NEAR(a.back().pos.z, -800, 1.0f); // on the far floor, near Lara
+    EXPECT_GT(a.back().pos.y, 2000);
+    EXPECT_EQ(a.back().leap, 0);
+    const auto b = run(0, nullptr); // a type without link usage stays on its floor
+    EXPECT_NEAR(b.back().pos.z, 0, 1.0f);
+    EXPECT_TRUE(std::ranges::none_of(b, [](const auto& s) { return s.leap != 0; }));
 }
 
 namespace {
@@ -1860,4 +1944,80 @@ TEST(AiReal, Survey) {
         for (const auto& a : anim::animList(cdc::parseDrm(*d))) std::fprintf(stderr, " %s", a.name.c_str());
         std::fprintf(stderr, "\n");
     }
+}
+
+// NavPower links (unit data +0x44 / +0x48): l4_ballcourt has 4 strips (drops of ~1058 from the court terrace), each
+// type 0, usage 0xFFFF; the panther's usage (node +0x14C) is bit 2, the poacher's bit 1. On the panther's layer the
+// first strip joins the terrace to the ground below: chasing Lara down there, a panther runs to the edge and jumps
+// down with jump_down_start / jump_down_inair_static / jump_down_end.
+float flatDistance(vec3 a, vec3 b) { return glm::length(glm::vec2(b - a)); }
+
+TEST(AiReal, BallcourtPantherJumpsDownALink) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto u = game::loadUnitData(bf, "l4_ballcourt");
+    const auto parsed = formats::parseUnit(*u.drm);
+    ASSERT_EQ(parsed.navLinks.size(), 4u);
+    for (const auto& l : parsed.navLinks) {
+        EXPECT_TRUE(l.strip);
+        EXPECT_EQ(l.type, 0);
+        EXPECT_EQ(l.usage, 0xFFFF);
+        EXPECT_NEAR(l.maxSnap, 632.11f, 0.01f);
+        EXPECT_NEAR(l.mayUse, 474.08f, 0.01f);
+        EXPECT_EQ(l.penalty, 1.0f);
+    }
+    const auto& l0 = parsed.navLinks[0];
+    EXPECT_NEAR(l0.a[0].x, -19054.7f, 0.1f);
+    EXPECT_NEAR(l0.a[0].z - l0.b[0].z, 1058.5f, 1.0f);
+    EXPECT_TRUE(l0.fromA);
+    EXPECT_FALSE(l0.fromB);
+    const auto panther = game::ai::loadEnemyType(bf, "cat_panther");
+    const auto poacher = game::ai::loadEnemyType(bf, "poacher");
+    EXPECT_EQ(panther->linkUsage, 4);
+    EXPECT_EQ(poacher->linkUsage, 2);
+    EXPECT_EQ(panther->jumpDown.start, "jump_down_start");
+    EXPECT_EQ(panther->jumpUp.air, "jump_up_inair_static");
+    EXPECT_EQ(panther->jumpAcross.land, "jump_across_end");
+    EXPECT_FALSE(poacher->jumpDown.valid()); // soldiers have no jump clips
+
+    u.col.build();
+    game::ai::Enemies es;
+    es.setBigfile(&bf);
+    es.setUnits({{u.name, u.drm, vec3(0)}});
+    const game::ai::NavMesh* nav = es.navFor(*panther);
+    ASSERT_NE(nav, nullptr);
+    std::fprintf(stderr, "l4_ballcourt: panther layer radius %.0f, %zu areas, %zu links snapped\n", nav->radius, nav->size(), nav->links());
+    ASSERT_GE(nav->links(), 1u);
+    const vec3 a = (l0.a[0] + l0.a[1]) * 0.5f, b = (l0.b[0] + l0.b[1]) * 0.5f;
+    const vec3 across = vec3(glm::normalize(glm::vec2(b - a)), 0);
+    const vec3 from = a - across * 500.0f, to = b + across * 500.0f;
+    ASSERT_GE(nav->locate(from), 0) << from.x << " " << from.y << " " << from.z;
+    ASSERT_GE(nav->locate(to), 0) << to.x << " " << to.y << " " << to.z;
+    EXPECT_TRUE(nav->route(from, to, 0).empty() || nav->route(from, to, 0).size() > 3); // no direct way down
+    const auto r = nav->route(from, to, panther->linkUsage);
+    ASSERT_FALSE(r.empty());
+    const auto jump = std::find_if(r.begin(), r.end(), [](const auto& s) { return s.link >= 0; });
+    ASSERT_NE(jump, r.end());
+    EXPECT_LT(flatDistance(jump->at, a), 400.0f);
+    EXPECT_LT(flatDistance(jump->land, b), 400.0f);
+
+    game::ai::Enemy e(panther, 1, from, std::atan2(across.y, across.x));
+    e.nav = nav;
+    const game::ai::Target lara{to};
+    e.alert(to);
+    std::vector<std::string> clips;
+    std::vector<game::ai::EnemyState> states;
+    for (int i = 0; i < int(15 / kDt); ++i) {
+        e.tick(u.col, lara, {}, kDt);
+        if (clips.empty() || clips.back() != e.state().clip) clips.push_back(e.state().clip);
+        states.push_back(e.state());
+    }
+    for (const auto& c : clips) std::fprintf(stderr, "%s ", c.c_str());
+    std::fprintf(stderr, "\nend (%.0f %.0f %.0f)\n", e.position().x, e.position().y, e.position().z);
+    const auto at = [&](const char* c) { return std::find(clips.begin(), clips.end(), c) - clips.begin(); };
+    ASSERT_LT(at("jump_down_start"), at("jump_down_inair_static"));
+    ASSERT_LT(at("jump_down_inair_static"), at("jump_down_end"));
+    ASSERT_LT(at("jump_down_end"), std::ssize(clips));
+    EXPECT_LT(e.position().z, b.z + 150.0f); // down on the ground
+    EXPECT_LT(flatDistance(e.position(), to), 600.0f);
 }

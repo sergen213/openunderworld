@@ -39,6 +39,9 @@ constexpr int kSearchTries = 4;          // [I] random possible positions tried 
 constexpr float kFlankRest = 600 * kCount; // [I] s between flank tries (0x62D930 re-evaluates its side 600 counts on)
 constexpr float kFlankRunSeconds = 8.0f;   // [I] gives up a flank node it has not reached by then
 constexpr float kInvestigateSeconds = 40.0f; // [I] gives up walking to a disturbance by then
+constexpr float kLinkTakeoff = 60.0f;  // [I] a link starts within its radius + this (flat) of the take-off (ledge avoidance stops it a radius short)
+constexpr float kLinkLevel = 158.0f;   // [I] a link whose ends differ less in height is a jump across
+constexpr float kLinkHop = 158.0f;     // [I] the flight's top above the higher end
 
 glm::mat3 tiltMatrix(glm::vec2 tilt) { // Rx(x) * Ry(y), as formats::introMatrix before the heading
     return glm::mat3(glm::rotate(glm::rotate(glm::mat4(1), tilt.x, vec3(1, 0, 0)), tilt.y, vec3(0, 1, 0)));
@@ -140,6 +143,7 @@ vec3 Enemy::advanceClip(float dt) {
 }
 
 void Enemy::setMode(Mode m) {
+    if (m == Mode::Dead || m == Mode::Down || m == Mode::Sleep) s_.leap = 0; // falls from wherever it is
     s_.mode = m;
     s_.modeTime = 0;
     switch (m) {
@@ -304,7 +308,62 @@ void Enemy::playIdle(const std::vector<IdleAnim>& idles) {
     }
 }
 
-vec3 Enemy::steer(vec3 goal) const { return nav ? nav->steer(s_.pos, goal) : goal; }
+const EnemyType::LinkClips* EnemyType::linkClips(vec3 from, vec3 to) const {
+    const float dz = to.z - from.z; // 0x647CA0: a link segment rising is kind 1, else kind 2
+    const LinkClips* c = std::abs(dz) <= kLinkLevel && jumpAcross.valid() ? &jumpAcross : dz > 0 ? &jumpUp : &jumpDown;
+    return c->valid() ? c : nullptr;
+}
+
+vec3 Enemy::steer(vec3 goal) {
+    if (!nav) return goal;
+    const bool jumps = type_->jumpUp.valid() || type_->jumpDown.valid() || type_->jumpAcross.valid();
+    const NavStep step = nav->steer(s_.pos, goal, jumps ? type_->linkUsage : uint16_t(0));
+    if (step.link < 0 || flatDist(s_.pos, step.at) > type_->tuning.radius + kLinkTakeoff || !type_->linkClips(step.at, step.land)) return step.at;
+    takeoff_ = step, takeoffMode_ = s_.mode;
+    return step.land;
+}
+
+// [I] NavPower hands the link to the game, which runs it as a jump (the path's link segments keep no length for
+// walking, 0x649F50): faces the landing, the kind's take-off clip in place, a ballistic flight (the agent's gravity,
+// the top kLinkHop above the higher end) with the in-air loop, the landing clip; then the mode carries on.
+void Enemy::startLeap(const NavStep& step) {
+    const auto* c = type_->linkClips(step.at, step.land);
+    s_.leap = 1, s_.leapFrom = s_.pos, s_.leapTo = step.land, s_.leapTime = 0, s_.vz = 0;
+    s_.yaw = std::atan2(step.land.y - s_.pos.y, step.land.x - s_.pos.x);
+    if (!c->start.empty()) playClip(c->start, false);
+    else s_.leap = 2, playClip(c->air, true);
+}
+
+bool Enemy::leapTick(float dt) {
+    if (!s_.leap) return false;
+    const auto* c = type_->linkClips(s_.leapFrom, s_.leapTo);
+    advanceClip(dt);
+    const float g = type_->tuning.gravity;
+    const auto flight = [&] { // from where it stands now
+        s_.leapFrom = s_.pos, s_.leapTime = 0;
+        const float top = std::max(s_.pos.z, s_.leapTo.z) + kLinkHop;
+        s_.leapLength = std::sqrt(2 * (top - s_.pos.z) / g) + std::sqrt(2 * (top - s_.leapTo.z) / g);
+        s_.leap = 2, playClip(c->air, true);
+    };
+    if (!c) { // the type changed under a save: land at once
+        s_.pos = s_.leapTo, s_.leap = 0;
+    } else if (s_.leap == 1) {
+        if (clipDone()) flight();
+    } else if (s_.leap == 2) {
+        s_.leapTime += dt;
+        const float u = std::min(1.0f, s_.leapTime / s_.leapLength), t = u * s_.leapLength;
+        const float top = std::max(s_.leapFrom.z, s_.leapTo.z) + kLinkHop, v0 = std::sqrt(2 * g * (top - s_.leapFrom.z));
+        s_.pos = vec3(glm::mix(glm::vec2(s_.leapFrom), glm::vec2(s_.leapTo), u), s_.leapFrom.z + v0 * t - 0.5f * g * t * t);
+        if (u >= 1) {
+            s_.pos = s_.leapTo;
+            if (!c->land.empty()) s_.leap = 3, playClip(c->land, false);
+            else s_.leap = 0;
+        }
+    } else if (clipDone()) {
+        s_.leap = 0;
+    }
+    return true;
+}
 
 bool Enemy::walkTo(vec3 goal, float arrive, const std::string& clip, float dt, vec3* flight) {
     if (type_->flyer()) { // [I] straight through the air / water at half the chase speed
@@ -547,6 +606,8 @@ void Enemy::onHit(const Hit& hit) {
         // 0x620380: a lethal hit the regenerate record lists (guns, blows, explosions) only knocks a thrall down
         if (type_->regenerates() && getsUp(hit)) setMode(Mode::Down);
         else die(hit);
+    } else if (s_.leap) {
+        // [I] mid-jump: no reaction, it lands first
     } else if (s_.mode == Mode::Cling || s_.mode == Mode::Crawl) {
         setMode(Mode::Drop); // [I] shot on the wall: lets go
     } else if (hit.knock || (type_->tuning.staggerDamage > 0 && s_.damageSinceReaction >= type_->tuning.staggerDamage &&
@@ -734,6 +795,11 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
     // Ground enemies measure Lara flat, centre to centre; flyers from their centre to her head.
     const vec3 head = lara.pos + vec3(0, 0, lara.height * 0.85f), centre = s_.pos + vec3(0, 0, t.height * 0.5f);
     const float dist = flyer ? glm::distance(centre, head) : flatDist(s_.pos, lara.pos);
+    takeoff_.reset();
+    if (leapTick(dt)) {
+        updatePose(dt, false);
+        return;
+    }
     vec3 delta = advanceClip(dt);
     vec3 flight = aquatic ? delta : vec3(0); // aquatic clips keep their 3D root motion; bats hover except when chasing
 
@@ -1045,6 +1111,11 @@ void Enemy::tick(const collision::CollisionMesh& col, const Target& lara, const 
         const glm::vec2 to(lara.pos - s_.pos), d2(delta);
         const float along = glm::length(to) > 1e-3f ? glm::dot(d2, glm::normalize(to)) : 0;
         if (along > 0 && dist - along < minGap) delta -= vec3(glm::normalize(to) * std::min(along, along - (dist - minGap)), 0);
+    }
+    if (takeoff_ && s_.mode == takeoffMode_ && s_.vz == 0 && s_.knock == vec3(0)) { // at a link's take-off: jumps
+        startLeap(*takeoff_);
+        updatePose(dt, false);
+        return;
     }
     if (s_.knock != vec3(0)) delta += vec3(vec2(s_.knock) * dt, 0); // thrown: flies on until it lands
     move(col, delta, dt);
