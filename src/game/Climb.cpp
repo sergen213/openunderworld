@@ -302,10 +302,11 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
         }
         return std::pair{best, bestT};
     };
-    // DICE jump target that way (verb 0 up, 1 right, 3 left): q31 / q28 / q29, from the hold [I: 0x72AD10's point on it]
-    // 63.21 out (+0x5C) and 158.03 / 316.06 down (+0x58), their ledge target type 3 arcs from 110.62 / 0 over it, type 1
-    // from the start (+0x8C); q31 only coming down (+0x2C bit 0x80) [O]. Ledges as Player::ledgeOnArc tests them;
-    // 0x710100 keeps the first one met.
+    // DICE jump target that way (verb 0 up, 1 right, 3 left): q31 / q28 / q29, from the hold point (its first point,
+    // 158.03 over her root `here` [I: 0x72AD10's point on it]) 63.21 out (+0x5C) and 158.03 / 316.06 down (+0x58): q31
+    // starts at her root's height, q28 / q29 158.03 under it; their ledge target type 3 arcs from 110.62 / 0 over the
+    // hold point, type 1 from the start (+0x8C); q31 only coming down (+0x2C bit 0x80) [O]. Ledges as Player::ledgeOnArc
+    // tests them; 0x710100 keeps the first one met.
     struct Target { int32_t hold = -1; JumpTarget ledge; float frames = 0; bool any() const { return hold >= 0 || ledge.markup >= 0; } };
     const auto jumpTarget = [&](size_t way) {
         Target r;
@@ -323,8 +324,9 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
             return way == 0 ? d.z > 0 : sideways(here + d);
         });
         JumpQuery lq;
-        lq.start = start + vec3(0, 0, way == 0 ? -158.03f : -316.06f), lq.root = lq.start;
-        lq.hang = start + vec3(0, 0, way == 0 ? 110.62f : 0.0f);
+        const vec3 holdPoint = start + vec3(0, 0, 158.025f);
+        lq.start = holdPoint - vec3(0, 0, way == 0 ? 158.03f : 316.06f), lq.root = lq.start;
+        lq.hang = holdPoint + vec3(0, 0, way == 0 ? 110.62f : 0.0f);
         lq.v = right * v.x + vec3(0, 0, v.y), lq.dir = way == 0 ? xy(-n) : xy(right) * side, lq.falling = way == 0;
         JumpTarget l = ledgeOnArc(lq);
         if (l.markup >= 0) { // up: not below one hold step under her (the arc's fall would meet any) [I]

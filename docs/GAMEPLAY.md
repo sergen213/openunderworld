@@ -914,9 +914,10 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
 - Top out / jumps to ledges: lara.drm has no DICE top-out clip (anim-list survey: no `DICE_*climb*` / `*top*`) [O].
   The jump queries' target type 1 offsets (+0x8C) equal their start offsets, so q31 (up) and q28 / q29 (sideways) meet
   ledges (markup 1) as they meet holds [O-data]; ours (`Player::ledgeOnArc`, the jump query hit test below: q31 from
-  the hold 63.21 out and 158.03 down, its ledge target type 3 arc from 110.62 over it, only coming down; q28 / q29
-  316.06 down, type 3 at the hold's height) takes the first ledge met, up ones not more than one hold step below her
-  [I]. With no hold that way for the move query but such a
+  the hold point (its first point, 158 over her root [I]) 63.21 out and 158.03 down, i.e. at root height, its ledge
+  target type 3 arc from 110.62 over the hold point, only coming down; q28 / q29 316.06 down, type 3 at the hold
+  point) takes the first ledge met, up ones not more than one hold step below her [I]. With no hold that way for the
+  move query but such a
   ledge (or a far hold) for the jump query, the stick leans (`DICE_<s>_antic_<dir>`) and jump leaps
   (`DICE_<s>_jump_up` / `_right` / `_left`, take-off 74.12 / 34.77 up a frame) onto it, `ledgeb_attach_U` / `_S`, the
   hang. The jump goes on the button only (chart S601..S605); with no target at all up + jump leaps straight up with
