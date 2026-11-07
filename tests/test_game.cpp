@@ -3526,7 +3526,7 @@ TEST(GameReal, RampUberCommandMovesCollision) {
     w.tick({});
     // Command 1 moves the ramps by their sections, not their frame: section 0 (model 1) drops on prismatic joint 0 to
     // its lower limit (states 6 -> 3 -> 2), section 1 (model 2) plays its raising clip (transition 1, condition list);
-    // model 0 (section 2, the object's collision) is the frame and stays.
+    // model 0 (section 2) is the frame and stays.
     const auto collision = [&] {
         std::vector<glm::mat4> out;
         for (const auto& d : w.collision().dynamics)
@@ -3546,7 +3546,12 @@ TEST(GameReal, RampUberCommandMovesCollision) {
     }
     EXPECT_LT(w.uberJoint(6045, 0)->x, rest - 900.0f) << "section 0 dropped on its joint";
     EXPECT_TRUE(raising) << "section 1 plays its clip";
-    EXPECT_EQ(collision(), initial) << "the frame stays";
+    const auto after = collision(); // each section's collision follows it (World::syncObjects); the frame stays
+    ASSERT_EQ(after.size(), initial.size());
+    size_t moved = 0;
+    for (size_t i = 0; i < after.size(); ++i) moved += after[i] != initial[i];
+    EXPECT_GT(moved, 0u) << "the lowered section's collision moved";
+    EXPECT_LT(moved, after.size()) << "the frame's collision stayed";
 }
 
 TEST(GameReal, ElevatorUberCommandCreatesMovingCollision) {
