@@ -636,6 +636,17 @@ public:
     int32_t heldPortable() const { return held_; } // the portable Lara carries, 0 none
     // The receptacle portable `uid` is inserted in, 0 none (docs/GAMEPLAY.md "Inserting a portable").
     int32_t insertedIn(int32_t uid) const { const auto it = inserted_.find(uid); return it == inserted_.end() ? 0 : it->second.receptacle; }
+    // Lara's query points (tru.exe 0x719520 / 0x715DD0, [O] Wine): her feet + z0, + step, + 2 x step, z0 = sensor shape
+    // +0x10 (-25 cm) and step = half its +0x20 (225 cm), x 3.1605: -79.01, 276.54, 632.10 above her feet.
+    static constexpr float kEngageZ0 = -25 * 3.1605f, kEngageStep = 225 * 3.1605f * 0.5f;
+    // The record Lara engages now (0x719520, docs/GAMEPLAY.md "Inserting a portable"): `uid` the instance (an uber
+    // section's object with `section` >= 0), `record` in its current set; uid 0 none.
+    struct Engaged {
+        int32_t uid = 0;
+        int section = -1;
+        const physics::Engagement* record = nullptr;
+    };
+    Engaged engaged();
     // Model-space motion of uber object `uid`'s section `section` riding its simulated hinge / prismatic joint (each
     // section is an instance of its own model, 0x4D3DA0: the grapple handles' model 1), nullopt without one; `removed`
     // reports action 28 on that section.
@@ -885,8 +896,8 @@ private:
     void startChunks(ai::Enemy& e); // a thrall that just broke: its pieces' poses and velocities (Objects.cpp)
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
     bool carryReady() const;           // standing or swimming: she can pick up / insert / take out a portable
-    bool insertHeld(script::Object& held); // into a receptacle Lara engages (Runtime::insertPortable); false: none
-    bool removeInserted();                 // empty-handed: an inserted portable she engages comes out, held (0x186)
+    bool insertHeld(script::Object& held, const Engaged& at); // into the receptacle she engages (Runtime::insertPortable)
+    bool removeInserted(const Engaged& at); // empty-handed: the inserted portable she engages comes out, held (0x186)
     // + its script reactions; `section` >= 0: an uber receptacle's section (uberInsert)
     void attachPortable(script::Object& portable, const script::Object& receptacle, int segment, int section = -1);
     void placePortables();                 // portables placed in receptacles (Object::placedIn) insert themselves
@@ -899,8 +910,12 @@ private:
     // Uber receptacles: section `section`'s engagement set now (UberSectionState::engagement; null none), its world frame
     // and its model's physics; a portable in / out of it starts its insert / removal transition (0x6D4890).
     const physics::EngagementSet* uberEngagement(int32_t uid, size_t section);
+    const physics::ObjectPhysics* uberSectionPhysics(const script::Object& o, size_t section);
     std::optional<glm::mat4> uberSectionFrame(const script::Object& o, size_t section);
     bool uberInsert(int32_t uid, size_t section, bool inserted);
+    bool uberTrigger(int32_t uid, size_t section, uint32_t trigger, uint32_t param); // 0x6D4790 / 0x6D4810
+    int32_t uberSectionJoint(int32_t uid, int32_t section) const; // the simulated joint moving the section, -1 none
+    bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles): grip, push, let go
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
@@ -1083,6 +1098,7 @@ private:
     void useSwitchClip(const script::Object& o); // Lara plays the switch's use clip, aligned to it (Objects.cpp)
     vec3 uberGrip_{0};                     // last tick: Lara grips one (her stick moves it): its axis toward her facing, 0 = none
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
+    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; } uberHandle_; // the push / pull record Lara grips
     std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)
     struct UberMotion { vec3 delta{0}, rotation{0}; float duration = 1, t = 0; bool active = false; std::string clip; };
     std::map<int32_t, UberMotion> uberMotion_;

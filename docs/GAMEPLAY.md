@@ -1485,18 +1485,36 @@ Ours:
   `ca_uo_thor_statue_arms` (l4_pool) has no engagement set: not a receptacle. l7_arctic_sea's statue arms, gem holes and
   thor gears lie under water: Lara carries, inserts and takes out portables swimming too (records there are spheres
   of radius 632-948 [O data]; tru.exe's swim carry clips are not traced [I]).
+  Push handles [O tru.exe]: kind-1 records (ca_uo_calendar(_b) section 1's set 528 at segments 10 / 20, section 0's
+  set 540 once the headdress is in, the valgrind cog wheels' section 0): interact inside one puts Lara into her
+  PushPull state, whose entry posts 0x158 to the engaged section (0x701310); 0x6D5AC0 case 0x158 (record in the
+  section's current set, section idle) runs 0x6D4790: the transition with trigger 20 and parameter = the record's kind
+  (calendar section 1: 3 -> 1); letting go posts 0x14F (0x701350 -> 0x6D4810, trigger 21: 1 -> 5, the ring's hinge
+  locked, back to 3 after 1.5 s). Ours (`World::pushUberHandle`): the stick pushes / pulls the joint moving the section
+  (following fixed joints: the handles are fixed to the ring, which turns on hinge joint 2) so that her grip point
+  moves at the push-block speed [I], and she moves with it, facing along the push. [I] No PushPull proxy body
+  (0x7358E0); kind 3 (also game-tracker message 0x1D) not used. larabase 35 (0x79A270 -> 0x6EE920, the calendars'
+  vt 54) stores a float in player +0x1240 [U: its reader].
   Placed portables [O]: a portable's intro data starting with the instance reference 0x405 {u16 1, u16 uid} starts
   inserted there (message 0x23 -> 0x6A6DC0 -> 0x165): l2_puzzleroom pole 2967 -> hole 2969, l2_maproom 2665 -> track
   2664, l3_chapel 4823 -> 4824, l4_temple 5240 -> 5233, the gems and keys in their holders. The attach point is the
   receptacle model's marker named by physical record +0x3C (query 0x173 -> 0x6B55D0); the level data's placed pairs lie
   on it (pole 2967 within 7 units of hole 2969's marker 713.8 up).
-  Ours (`World::insertHeld`, `removeInserted`, `placePortables`, `tickInserted`): carrying, interact inserts into a
-  receptacle whose graph takes 0x20 now and whose kind-5 record (the script-chosen set, else all) needs what she holds,
-  when she is inside the record [I: sample points 220.6 / 315.4 / 410.2 above her feet, the standing proxy's cylinder]
-  or [I] the record's marker is within its radius (at least 450) and 0..1200 above her feet (the decoded heights miss
-  where she stands at l5 7189 / l4 6502; tru.exe's Lara query capsule is not decoded). Empty-handed, interact inside an
-  inserted portable's kind-4 record takes it out; loose portables are picked up inside that record too (else within
-  150 / 100). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
+  Engagement [O tru.exe 0x719520, every frame]: Lara's query points are her position + z0, + step, + 2 x step, from
+  the last active category-3 shape of her sensor list (player +0x854: +0x6C entries of 0x60, +0x51 active; 0x715DD0:
+  z0 = shape +0x10 x 3.1605, step = shape +0x20 x 3.1605 / 2 for a type-1 shape, else one point). Wine (prologue and
+  l4_traprooms, standing): {+0x10 -25, +0x14 100, +0x20 225} -> -79.01, 276.54 and 632.10 above her feet; two more
+  category-3 shapes ({-125, 160, 250}, {150, 60, 90}) were inactive there [U: their states]. Per instance (query 0x53:
+  an anim-graph object's set, a portable's +0xA8 sets, an uber section's current set) the first record of a nonzero
+  kind that admits her (0x6F3C60: carrying, only kinds 3 / 5 / 7; a record naming objects only while she carries one
+  of them [I: tru.exe also accepts one in her inventory, 0x6F3BB0]) with a point inside counts; between instances
+  (0x704480) the lower |angle of the record frame's position off her facing| / pi + its horizontal distance^2 / the
+  larger of the two wins. [I] Not modelled: the overlap list the instances come from (sensor +0x7C) and the line of
+  sight check 0x6E7300 (kinds other than 5 and 8).
+  Ours (`World::engaged`, `insertHeld`, `removeInserted`, `placePortables`, `tickInserted`): carrying, interact inserts
+  into the receptacle she engages when its record is kind 5 and its graph takes 0x20 now (or it is an uber section).
+  Empty-handed, interact on an inserted portable's kind-4 record takes it out; on a loose one's picks it up (portables
+  without kind-4 records: within 150 / 100 [I]). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
   poles; a receptacle whose script watches its joint slides down it under Lara hanging there (300 units/s to -600 [I]);
   `multibody` 78 on it answers that slide in units: GetJointValue (0x4A9BB0 -> 0x4A5D90) reads a cylindrical joint's
   (type 2) limit 1 as its linear position (0x4DA460, no conversion; limit 2 is its angle in degrees, a hinge's limit 1

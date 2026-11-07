@@ -1663,7 +1663,9 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             }
             // 31 (0x7975F0 -> 0x776EF0) posts INSTANCE message 0xC (!arg) to Lara; 61 (0x79A590 -> 0x778060) copies a global
             // clock into Lara +0x6DC and zeroes +0x6E0. The endgame warps (340 / 342 end handlers) run them [U: no effect on ours].
-            if (!std::strcmp(name, "larabase") && ((nc.function == 31 && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
+            // 35 (0x79A270 -> 0x777DA0 -> 0x6EE920) stores its float in player +0x1240; the calendars' vt 54 runs it [U: what
+            // reads it].
+            if (!std::strcmp(name, "larabase") && (((nc.function == 31 || nc.function == 35) && nc.args.size() == 1) || (nc.function == 61 && nc.args.empty())))
                 return true;
             // uitext 57 (0x7A6D10 -> 0x4C32E0): returns member +0x210 of the text's lazily created widget (a localized
             // string handle) [U]; we have no widget, so null. uigamedata 106 (0x7A14F0 -> 0x77C8B0) stores that string as
