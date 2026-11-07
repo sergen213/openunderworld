@@ -306,11 +306,10 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
     // 158.03 over her root `here` [I: 0x72AD10's point on it]) 63.21 out (+0x5C) and 158.03 / 316.06 down (+0x58): q31
     // starts at her root's height, q28 / q29 158.03 under it; their ledge target type 3 arcs from 110.62 / 0 over the
     // hold point, type 1 from the start (+0x8C); q31 only coming down (+0x2C bit 0x80) [O]. Ledges as Player::ledgeOnArc
-    // tests them: q28 / q29 by their class record 0x2AA4C (from a hold its entry 3: the hit 410 (+0x28) or more from the
-    // hold point, the capsule round the target type's arc, cone 120 degrees, wall side, no class table) [O-data]; q31's
-    // record 0x2AE2C takes holds only from a hold [O-data], so what catches the ledge above the top hold in tru.exe is
-    // [U] (likely the air grab queries q44 / q45 once she is in the air); ours keeps that ledge on q31's arc by the
-    // default checks. 0x710100 keeps the first one met.
+    // tests them by the class records: q28 / q29 0x2AA4C (from a hold its entry 3: the hit 410 (+0x28) or more from the
+    // hold point, the capsule round the target type's arc, cone 120 degrees, wall side, no class table), q31 0x2AE2C
+    // (entry 1: capsule, cone 180 degrees, wall side, depth; its attach list is not gated, so a hold does not keep it from
+    // ledges) [O-data]. 0x710100 keeps the first one met.
     struct Target { int32_t hold = -1; JumpTarget ledge; float frames = 0; bool any() const { return hold >= 0 || ledge.markup >= 0; } };
     const auto jumpTarget = [&](size_t way) {
         Target r;
@@ -332,10 +331,10 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
         lq.start = holdPoint - vec3(0, 0, way == 0 ? 158.03f : 316.06f), lq.root = lq.start;
         lq.hang = holdPoint + vec3(0, 0, way == 0 ? 110.62f : 0.0f);
         lq.v = right * v.x + vec3(0, 0, v.y), lq.dir = way == 0 ? xy(-n) : xy(right) * side, lq.falling = way == 0;
-        if (way != 0) { // q28 / q29
+        lq.base = here + vec3(0, 0, 158.025f), lq.attach = col_.markup[size_t(s_.climbHold)].type;
+        if (way != 0) // q28 / q29
             lq.record = JumpRecord::Side, lq.classify = true, lq.minDist = kJumpSideMin, lq.cone = glm::radians(120.0f);
-            lq.base = here + vec3(0, 0, 158.025f), lq.attach = col_.markup[size_t(s_.climbHold)].type;
-        }
+        else lq.record = JumpRecord::DiceUp; // q31: cone 180 degrees, no class table (+0x2C 0x3890)
         JumpTarget l = ledgeOnArc(lq);
         if (l.markup >= 0) { // up: not below one hold step under her (the arc's fall would meet any) [I]
             const vec3 to = attachPose(l.markup, l.seg, l.t, l.side).first;
@@ -398,7 +397,12 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
             s_.state = State::HangJump;
             s_.fallStartZ = s_.pos.z;
             play(launch, false);
-            launchHangJump((verb == 0 ? kJumpUp : kJumpSideUp) * 30.0f);
+            if (verb == 0) { // up (tru.exe under Wine, hold 5 -> ledge 45): a straight rush, 11 ticks at a constant speed
+                // onto the hang (S605 -> S289 -> S535), no ballistic arc
+                constexpr float kRush = 11.0f / 60.0f;
+                s_.vel = (attachPose(s_.ledge, s_.ledgeSeg, s_.ledgeT, s_.ledgeSide).first - s_.pos) / kRush;
+                s_.flight = kRush;
+            } else launchHangJump(kJumpSideUp * 30.0f);
             return;
         }
         // nothing that way: the leap still goes (S601..S605), q31 / q28 / q29's launch (74.12 up; 63.21 sideways,
@@ -502,5 +506,6 @@ void Player::climb(vec2 stick, bool jumpPressed, bool dropPressed, float dt) {
     }
     play(stanceClip(stance, "idle"), true);
 }
+
 
 } // namespace ou::game

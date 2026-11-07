@@ -610,8 +610,9 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   `_left` (same root motion, 501 per 3.57 s cycle), standing with it more than 0.5 across `bbeam_idle_wobble_fwd`
   (request 158). She never falls off from it (`bbeam_aboutfall_*`, `bbeam_fall_*` unused).
 - Jump assist: at take-off a ledge (1) met by the take-off state's jump query arc (q2 / q43 / q26, 158+ over her root)
-  re-aims the flight onto its hang pose by the hit frame, and the air grab catches it; otherwise the landing is pulled
-  onto the nearest jump-landing (2) or beam (14) line point within 300 of the natural landing (Numbers).
+  re-aims the flight onto its hang pose by the hit frame, and the air grab catches it (running: a close catch is a
+  straight 11-tick rush onto the hang, a far one an arc arriving at its top, the reach 1233; "Running jump reach");
+  otherwise the landing is pulled onto the nearest jump-landing (2) or beam (14) line point within 300 of the natural landing (Numbers).
 - Drop to hang: drop pressed standing within 200 of a ledge line at floor height (±40) whose far side drops away plays
   `drop_to_ledgeb`; her yaw and root are set so the clip (start frame 3, half turn) ends exactly on the hang pose of the
   nearest ledge point, root motion and turn played without collision, then Hang.
@@ -915,14 +916,19 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   268 forward, 185 up; `DICE_L_ground_attach` 134, 317), air: where she is (`DICE_<L/LW/R/Rw>_air_attach_mid` have
   none) — and that clip carries her onto it as a hold-to-hold step does, then its idle.
 - Top out / jumps to ledges: lara.drm has no DICE top-out clip (anim-list survey: no `DICE_*climb*` / `*top*`) [O].
-  The jump queries' target type 1 offsets (+0x8C) equal their start offsets, so q31 (up) and q28 / q29 (sideways) meet
-  ledges (markup 1) as they meet holds [O-data]; ours (`Player::ledgeOnArc`, the jump query hit test below: q31 from
-  the hold point (its first point, 158 over her root [I]) 63.21 out and 158.03 down, i.e. at root height, its ledge
-  target type 3 arc from 110.62 over the hold point, only coming down; q28 / q29 316.06 down, type 3 at the hold
-  point) takes the first ledge met, up ones not more than one hold step below her [I]. With no hold that way for the
-  move query but such a
-  ledge (or a far hold) for the jump query, the stick leans (`DICE_<s>_antic_<dir>`) and jump leaps
-  (`DICE_<s>_jump_up` / `_right` / `_left`, take-off 74.12 / 34.77 up a frame) onto it, `ledgeb_attach_U` / `_S`, the
+  q28 / q29 (sideways) meet ledges (markup 1) by their class record 0x2AA4C and q31 (up) by 0x2AE2C's entry 1 (flags
+  0x1B: not holds; no 0x04, so the hold she is on does not gate it) [O-data]. Ours (`Player::ledgeOnArc`, the jump
+  query hit test below: q31 from the hold point (its first point, 158 over her root [I]) 63.21 out and 158.03 down,
+  i.e. at root height, its ledge target type 3 arc from 110.62 over the hold point, only coming down; q28 / q29 316.06
+  down, type 3 at the hold point) takes the first ledge met, up ones not more than one hold step below her [I]. With
+  no hold that way for the move query but such a ledge (or a far hold) for the jump query, the stick leans
+  (`DICE_<s>_antic_<dir>`) and jump leaps onto it. Up [O: tru.exe under Wine, l2_cliffclimb, Lara air-attached at
+  hold 9, up to hold 5, then up + jump; openunderworld-work/runjump2 dice.sh]: no ballistic arc — 0.39 s after the
+  press (states 0x…753A8 / 0x…75600 alternating while up is held, then 0x…75A60) her root rushes straight at a
+  constant 15.1 a tick for **11 ticks** (184 units: 153 out from the rock, 75 up) onto the hang of ledge 45 (161 out of
+  its line, 494 under it), then the hang (S605 → S289 → S535, the standing jump's rush). Ours: `DICE_<s>_jump_up`
+  and the 11/60 s straight leap onto the hang pose, `ledgeb_attach_U` [I: the 0.39 s wait]. Sideways (unmeasured):
+  `DICE_<s>_jump_right` / `_left` (take-off 34.77 up a frame) and the re-aimed flight, `ledgeb_attach_S`, the
   hang. The jump goes on the button only (chart S601..S605); with no target at all up + jump leaps straight up with
   q31's launch. l2_cliffclimb's wall ends that way: hold 5 (z 2480) → ledge 45 (z 2891). Foot: no hold below but a
   floor where `DICE_<L/LW/R>_step_off_ground` ends (226 back, 317 down; B and RW have none) = that clip onto it, Idle.
@@ -1179,15 +1185,23 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   - **0x2A9EC** (q9 / q10 hang back / up, q22 / q23 ladder, q32 / q33 poles and 17 more): entry 2 (not types 14 /
     15: ledges) = capsule, cone, wall side, after +0x20, depth, class 14, kind 33, not 18 (6), not 20 (8..10); entry
     1 (type 15): rise ≤ 700, …; entry 0: beams.
-  - **0x2AE2C** (q31, the DICE jump up): {flags 0x16: holds, attached to a hold; hdist(base, the hold's point) < 120,
-    capsule, cone, wall side, after +0x20, depth} and {0x1B: no hold, not attached to one; …}: from a hold it takes
-    holds only — no ledge.
+  - **0x2AE2C** (q31, the DICE jump up): entry 0 {flags 0x16: holds, attached to a hold; hdist(base, the hold's
+    point) < 120, capsule, cone, wall side, after +0x20, depth} and entry 1 {0x1B: not holds (the attach list unchecked:
+    no 0x04); capsule, cone, wall side, after +0x20, depth, class 14} — ledges from a hold by entry 1.
+  - **0x2A9CC** (q44, the air grab of the in-air states S1006..S1012, S1013..S1015, S1030, S267, S1296; q45 = record
+    0x2AB0C, the same entries 1..4 with an entry 0 for ledges beside her, S1028 / S1029): entry 0 type 8; entry 1 any
+    type but needs her base moving (kind 27: query state +0x30 squared > 1); entry 2 (not holds: ledges) = capsule,
+    cone, wall side, after +0x20, her motion within **24°** of the way from the query's linear point to the hit (kind 25,
+    0x725980: both flattened; a nil one passes), the hit within **316** of the target type's arc point (kind 1), at most
+    **1106** under her (kind 31's own value), the ledge class not 5..11 (kind 16, 0x728A80); entries 3 / 4 holds (45° /
+    hold point within 120 / |Δz| ≤ 900, kind 3 = 0x725870's absolute variant). q44 starts 505.7 over her root (target
+    types 3 there, 1 at the root), velocity (0, 0, −0.01) with +0x04 = 1 [I: plus hers], frames 0..24 (+0xA4), cone
+    120°, +0x2C 0x99E0 (coming down, the ledge classes) [O-data].
   Ours (`ledgeOnArc` with `JumpQuery::record`): these entries and tests as listed for ledges (an interpreter over the
   decoded tables, Player.cpp), the sweep's candidate pad below for every record query, and two of ours: a clear hang
   (`openBelow`) and, for queries with +0x2C bit 0x80, only hits while the arc comes down (a default check, 0x70EC60,
-  not in the record path; ours keeps it to time the re-aimed flight [I]). The DICE jump up keeps the default checks
-  for a ledge above the top hold [U: what catches it in tru.exe; likely the air-grab queries q44 / q45 once she is in
-  the air].
+  not in the record path; ours keeps it to time the re-aimed flight [I]). The winning entry is kept (`entry`). q44 /
+  q45 are decoded only: ours keeps `tryGrab` for catches in the air [I].
   Ground jumps: q2 standing (from 300 over the root, 48.04 up, coming down only, cone 120°), q43 with the stick (from
   the root, 40 + 50, 90°), q26 running (from 300 over, 90.25 + 42.54, 90°), their type 3 from 505.69 over the root,
   type 1 at it; DICE q31 / q28 / q29 and ladder q22 / q23 as described above. l3_main_hall ledge 944: the Wine jump stood
@@ -1206,8 +1220,25 @@ where `ballcourt_door_lever.txt`'s scripted actions do).
   hit above 635.27, the hang clear: a straight 11/60 s leap onto the hang pose, then `ledgeb_attach_S` [I: one leg
   for the rush and blend]; the candidate pad is **424.5** [O: between 424 caught and 425 not; its source, the markup
   boxes in the sweep-and-prune set, is not decoded]. Earlier teleported falls (l7_arctic_sea beam 2042 / ledge 2065)
-  gave no window: the result depended on the fall state the teleport left her in. Falling and running catches remain
-  `tryGrab` [I].
+  gave no window: the result depended on the fall state the teleport left her in. Falling catches remain `tryGrab`
+  [I].
+- Running jump reach [O: tru.exe under Wine, l4_temple ledge 1204 (782 over the floor, hanging toward −y), Lara run
+  along +y from 2400 short with the camera pinned behind her (the stick is camera-relative: the camera's position +0x90
+  and its target +0x150 written each millisecond 1264 behind her, so her heading follows the axis; locking her yaw
+  +0x38 alone fought the steering), jump at varied times; openunderworld-work/runjump2 rj2.sh / tk.sh]: from a take-off
+  **1222.9** short of the line she is caught, from **1243.4** not (a plain 65.83 + 42.54 jump, landing 285..300 short);
+  from 1218..649 the flight is re-aimed (state 0x…550): launch 59 up and Δ / 10.5 forward a 30 Hz frame (92.9 from
+  1222.9, 50.3 from 806), **10.5 frames** in the air for take-offs 781..1218 (8.0 from 649..678, 11.5 from 741..763), to
+  a catch 239..259 out of the line and 477..501 under it, then the blend into the hang (161 out, 494 under); from 614
+  and closer (204, 614) S535's straight rush: 11 ticks at constant speed to 153.6 out / 579 under, then the hang. In
+  the chart S289 picks S535 when cond 0x2BA = 2 (a class bit of the winner, set by the query's +0x9C record in
+  0x729540) and the ledge class is 0 / 2 / 12, else S296 (the re-aimed jump) [O-data]. Ours
+  (`Player::aimGroundJump`, running): q26's class hit by entry 2 (and a ledge class outside the hurdle bands) = the
+  straight rush (11/60 s onto the hang pose; ours switches near 634..719 out against tru.exe's 614..649); by entry 4
+  (the box) = the re-aimed arc, rising to the hang pose and arriving at the top of the arc (vz = √(2 g Δz): 10.5 frames
+  for 1204's hang) [I: tru.exe's flight time is not the query's hit time — constant over 781..1218 — and the rise fits
+  59 = √(2 g · 306) to the catch point]; box hits farther than **1233** from her root are refused for ledges outside the hurdle bands [O: the limit; I:
+  its mechanism — kind 34's along-heading window does not cut there with the query's own motion].
 - Hang leans [O: tru.exe under Wine, l3_main_bedroom ledge 973, chart states read at *(player+0xF10)+0x510]: the stick
   held up keeps her in S434 (no climb, the top climbable), back S456, right at the ledge's end S457 → S449, until
   released (S444, the idle). These states run the hang jump queries (q10 up, q7 / q8 sides, q9 back). Ours plays

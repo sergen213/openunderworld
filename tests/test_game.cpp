@@ -2006,12 +2006,13 @@ TEST(GameReal, MainHallPoleFlingLandsOnPlatform) {
 }
 
 // l2_junglehub ledge 851 (z 7972): the top of a platform across a gap, 353 over the floor the run-up ends on (y ~9850).
-// A running jump from 1550 short of it falls into the gap at its plain 65.83 + 42.54 a frame; q26's arc (90.25 + 42.54
-// from 300 over the root) meets the ledge and the flight is re-aimed onto its hang.
+// A running jump taking off ~1180 short of it falls into the gap at its plain 65.83 + 42.54 a frame; q26's arc (90.25 +
+// 42.54 from 300 over the root) meets the ledge and the flight is re-aimed onto its hang (within the 1233 reach tru.exe
+// showed under Wine on l4_temple ledge 1204; from the old start, 1554 short, the box catch is out of reach).
 TEST(GameReal, JunglehubRunningJumpReachesHigherLedge) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    auto w = unitWorld(bf, "l2_junglehub", {{-23937.1f, 9186.6f, 7629.2f}, glm::radians(90.0f)});
+    auto w = unitWorld(bf, "l2_junglehub", {{-23937.1f, 9560.0f, 7629.2f}, glm::radians(90.0f)});
     game::PlayerState st = w.player().state();
     st.state = State::Run, st.clip = "ng_run";
     w.restore(st, st.yaw, -0.25f);
@@ -2053,6 +2054,44 @@ TEST(GameReal, StandingJumpCatchesHighLedgeWithinReach) {
         ASSERT_EQ(s.state, State::Hang) << c.id << " " << c.at.x << " " << c.at.y;
         EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, c.id);
         EXPECT_NEAR(leap, 11, 1) << c.id; // 60 Hz ticks of the straight leap
+    }
+}
+
+// tru.exe under Wine (openunderworld-work/runjump2: l4_temple ledge 1204, 782 over the floor, run along +y with the
+// camera pinned behind her, jump at varied times): from a take-off 1222.9 short of the line she is caught by a re-aimed
+// arc, 10.5 frames (21 ticks) in the air for take-offs 781..1218; from 1243.4 she only jumps (lands 285..300 short);
+// from 614 and closer the straight rush (11 ticks at a constant speed onto the hang; ours counts the attach tick too).
+TEST(GameReal, RunningJumpReachAndRush) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    constexpr float line = -10808.9f;
+    struct Case { float takeoff; bool caught; int air; };
+    for (const Case c : {Case{1200, true, 21}, Case{900, true, 21}, Case{500, true, 12}, Case{1280, false, 0}}) {
+        auto w = unitWorld(bf, "l4_temple", {{-4901.6f, line - 2400, -2804.9f}, glm::half_pi<float>()});
+        game::PlayerState st = w.player().state();
+        st.state = State::Run, st.clip = "ng_run";
+        w.restore(st, st.yaw, -0.25f);
+        const auto& s = w.player().state();
+        float take = 0;
+        int air = 0;
+        bool pressed = false;
+        for (int i = 0; i < 400 && s.state != State::Hang; ++i) {
+            Actions a = forward();
+            // the take-off comes ~45 units after the press (the take-off clip), so press that much sooner
+            if (!pressed && line - s.pos.y <= c.takeoff + 45) pressed = true, a.jump = true;
+            const State before = s.state;
+            w.tick(pressed && s.state != State::Run && s.state != State::JumpPrep ? Actions{} : a);
+            if (before == State::JumpPrep && s.state != State::JumpPrep) take = line - s.pos.y;
+            air += s.state == State::Jump || s.state == State::HangJump;
+        }
+        EXPECT_NEAR(take, c.takeoff, 45) << c.takeoff;
+        if (!c.caught) {
+            EXPECT_NE(s.state, State::Hang) << c.takeoff;
+            continue;
+        }
+        ASSERT_EQ(s.state, State::Hang) << c.takeoff;
+        EXPECT_EQ(w.collision().markup[size_t(s.ledge)].id, 1204);
+        EXPECT_NEAR(air, c.air, 1) << c.takeoff;
     }
 }
 
@@ -2503,7 +2542,9 @@ TEST(GameReal, CliffclimbStances) {
         if (s.clip.find("_to_") != std::string::npos && (transitions.empty() || transitions.back() != s.clip)) transitions.push_back(s.clip);
     }
     const float rise = w.player().state().pos.z - z0;
-    for (int t = 0; t < 120 && w.player().state().state == State::HangJump; ++t) w.tick({});
+    int leap = 0; // tru.exe under Wine: up + jump at hold 5 rushes straight onto ledge 45's hang in 11 ticks
+    for (int t = 0; t < 120 && w.player().state().state == State::HangJump; ++t) w.tick({}), ++leap;
+    EXPECT_NEAR(leap, 12, 1) << "the straight rush: 11 ticks of flight, then the attach tick";
     std::printf("cliffclimb: %zu holds, %zu stances, rise %.0f, chest max step %.2f/tick, max step change %.2f, "
                 "root max step change %.2f, max turn %.4f rad/tick, camera min %.0f; transitions:",
                 holds.size(), stances.size(), rise, maxStep, maxChange, maxRootChange, maxTurn, minCamera);
@@ -5155,3 +5196,4 @@ TEST(JointSound, LimitImpactAndWake) {
     EXPECT_FLOAT_EQ(game::jointAngularSpeed(glm::radians(1.0f) / 30.0f), 1.0f);
     EXPECT_FLOAT_EQ(game::jointLinearSpeed(2.0f), 60.0f);
 }
+

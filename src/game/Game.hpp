@@ -364,7 +364,8 @@ private:
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
     bool hurdleTick(vec2 move, float dt);      // State::ClimbUp hurdle_* clip; true when it ended on the ground
     // A ledge (markup 1) to jump onto: segment point, hang side, and the jump query frame it is met at.
-    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; };
+    struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; int entry = -1; }; // entry: the class
+    // record entry that passed (-1: the default checks)
     JumpTarget hangJumpTarget(int kind) const; // startHangJump's target; markup -1 = none
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge)
     // A jump query's arc (lara.drm query table; tru.exe 0x771830 builds it, 0x70F300 / 0x70EC60 test it, Player.cpp):
@@ -372,10 +373,11 @@ private:
     // ledge target types 3 / 1 (its +0x8C entries; the start where it has none), `v` a 30 Hz frame under gravity 5.72443,
     // frames minT..frames, `dir` its heading (capsule offset, cone axis), `cone` +0x24, `falling` +0x2C bit 0x80.
     // `record`: the class record its +0x94 names (lara.drm 0x2AB8C ground jumps q2 / q26 / q43, 0x2AA4C hang sides q7 /
-    // q8 and DICE sides q28 / q29, 0x2A9EC hang up / back q10 / q9 and ladder q22 / q23); None = the default path.
+    // q8 and DICE sides q28 / q29, 0x2A9EC hang up / back q10 / q9 and ladder q22 / q23, 0x2AE2C the DICE jump up q31);
+    // None = the default path.
     // `base` the query's base point (point source 28: the attach point, hold point or root), `minDist` its +0x28,
     // `attach` the type of the markup she is attached to (0: none), `classify` +0x2C bit 0x40 (the ledge class table).
-    enum class JumpRecord : uint8_t { None, Ground, Side, HangLadder };
+    enum class JumpRecord : uint8_t { None, Ground, Side, HangLadder, DiceUp };
     struct JumpQuery {
         vec3 start{0}, hang{0}, root{0}, v{0}, base{0};
         vec2 dir{0, 1};
@@ -398,7 +400,7 @@ private:
     void assistJump();
     // ground jump query (forward, up a 30 Hz frame; start `up` over the root, +0x2C bit 0x80, cone in radians) meeting a
     // ledge: aim at its hang
-    bool aimGroundJump(vec2 query, float up, bool falling, float cone);
+    bool aimGroundJump(vec2 query, float up, bool falling, float cone, bool running = false);
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
     // Ledge corners (a polyline joint turning more than 45 degrees): shimmying onto one plays ledgeb_<concave|convex>_
     // right_phase1 into the corner pose (left: mirrored), its idle and leans there, _phase2 round onto the next segment.

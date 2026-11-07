@@ -1213,13 +1213,17 @@ constexpr ClassTest kH1[] = {kRise700, kAngle, kCapsule, kCone, kWall, kAfterMin
 constexpr ClassTest kH2[] = {kAngle, kCapsule, kCone, kWall, kAfterMin, kVzOff, kDepth, kClass, kHurdleA4, kNot6,
                              kNotDown};
 constexpr ClassEntry kHangLadder[] = {{0x12, kT14, {}, kH0}, {0x12, kT15, {}, kH1}, {0x13, kT14_15, {}, kH2}};
-// (0x2AE2C, q31 the DICE jump up: {0x16, holds, attach holds} and {0x1B, not holds, attach not holds}: from a hold it
-// takes holds only [O-data].)
-std::span<const ClassEntry> classRecord(int r) { // Player::JumpRecord: 1 Ground, 2 Side, 3 HangLadder
+// lara.drm 0x2AE2C (q31, the DICE jump up): entry 0 {0x16: holds, attached to a hold; the hit within 120 of the hold
+// point, ...} (holds: Climb.cpp's sweep) and entry 1 {0x1B: not holds; its attach list not gated (no 0x04)}, so from
+// a hold it meets ledges too [O-data; tru.exe under Wine, l2_cliffclimb hold 5 -> ledge 45]
+constexpr ClassTest kD1[] = {kAngle, kCapsule, kCone, kWall, kAfterMin, kVzOff, kDepth, kClass};
+constexpr ClassEntry kDiceUp[] = {{0x1B, kHoldTypes, kHoldTypes, kD1}};
+std::span<const ClassEntry> classRecord(int r) { // Player::JumpRecord: 1 Ground, 2 Side, 3 HangLadder, 4 DiceUp
     switch (r) {
     case 1: return kGround;
     case 2: return kSide;
     case 3: return kHangLadder;
+    case 4: return kDiceUp;
     default: return {};
     }
 }
@@ -1246,6 +1250,10 @@ int ledgeClassOf(const collision::CollisionMesh& col, vec3 h, vec2 out, vec3 sel
     return band == 0 ? 11 : (onIt ? 7 : 4) + band;
 }
 constexpr float kSweepPad = 424.5f;
+// A running jump's box catch (record 0x2AB8C entry 4) reaches a ledge up to this far (horizontally, root at take-off ->
+// the ledge point) [O: tru.exe under Wine, l4_temple ledge 1204 (782 over the floor): caught from 1222.9, not from
+// 1243.4; I: what in tru.exe sets it]
+constexpr float kRunJumpReach = 1233.0f;
 } // namespace
 
 // Jump queries meeting ledges [O: tru.exe 0x70F300 sweep, 0x70EC60 checks, 0x6FCB10 capsule; lara.drm player data
@@ -1285,6 +1293,7 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
         // (0x7296C0) [O: decomp]; ours keeps it for both to time the re-aimed flight (the record path's box test holds
         // at every time, its first hit is the take-off) [I]
         if (h.z < q.minZ || t >= best.frames || (q.falling && q.v.z - kQueryG * t >= 0.05f)) return;
+        int entry = -1;
         const auto& m = col_.markup[size_t(li)];
         const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
         constexpr float side = kLedgeSide;
@@ -1333,7 +1342,17 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
                 case 20: r = ledgeClass() >= 8 && ledgeClass() <= 10; break;
                 case 21: r = wallSide(); break;
                 case 22: r = cone(given ? c.value : q.cone); break;
-                case 31: r = h.z - s_.pos.z > -kPlayerDepth; break;
+                case 3: r = std::abs(point(c.a2).z - point(c.a1).z) <= c.value; break;
+                case 16: r = ledgeClass() >= 5 && ledgeClass() <= 11; break;
+                case 25: { // 0x725980: the angle between her motion (15) and the way from the arc's linear point to the
+                    // hit (23), both flattened (the instance's up axis), under v degrees; either one nil passes
+                    const vec2 a = xy(q.v), b = xy(h - (q.start + q.v * t));
+                    r = glm::length(a) < 1e-4f || glm::length(b) < 1e-4f ||
+                        glm::dot(glm::normalize(a), glm::normalize(b)) > std::cos(glm::radians(c.value));
+                    break;
+                }
+                case 27: r = false; break; // her base moving (squared speed > 1): the static world
+                case 31: r = h.z - s_.pos.z > -(given ? c.value : kPlayerDepth); break;
                 case 34: r = glm::dot(xy(point(c.a1)), c.a2 == 9 ? q.dir : right) < c.value; break;
                 case 36: { // the markups and her base are static here
                     const vec3 a = point(c.a1), b = point(c.a2);
@@ -1344,15 +1363,16 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
                 }
                 return r != neg;
             };
-            const bool any = std::any_of(record.begin(), record.end(), [&](const ClassEntry& e) {
+            const auto hit = std::find_if(record.begin(), record.end(), [&](const ClassEntry& e) {
                 if ((e.flags & 0x10) && !listed(e.types, m.type, e.flags & 1)) return false;
                 if ((e.flags & 4) && q.attach != 0 && !listed(e.attach, q.attach, e.flags & 8)) return false;
                 return std::all_of(e.tests.begin(), e.tests.end(), pass);
             });
-            if (!any) return;
+            if (hit == record.end()) return;
+            entry = int(hit - record.begin());
         }
         const float along = glm::length(xy(h - m.points[size_t(si)]));
-        if (openBelow(col_, m, si, along, side)) best = {li, si, along, side, t};
+        if (openBelow(col_, m, si, along, side)) best = {li, si, along, side, t, entry};
     };
     // The class path's candidates: the markup sweep-and-prune pass over x / y (0x70F300 -> 0x463DE0, axes mask 3) of
     // the query's start -> start + its whole-range displacement against each ledge segment's box grown by kSweepPad.
@@ -1715,13 +1735,17 @@ void Player::poleTop(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
 // / q26 start 300 over the root, q43 at it; q2 only while coming down (+0x2C bit 0x80); cones 120 / 90 / 90 degrees;
 // the ledge's target types start 505.69 over the root (3, the hands) and at it (1)) [O]; ledgeOnArc tests its hits with
 // the queries' shared class record (`record` 0x2AB8C) and 0x73EDC0 re-aims the flight at the first, a ledge (target type
-// offset 505.69) at its hang [O], timed by the hit frame [I: tru.exe's S289 then picks S535's straight rush for ledge
-// classes 0 / 2 / 12; a running jump onto a ledge was not caught under Wine, the camera-relative run kept missing the
-// short ledge]. Only ledges kQueryStep or more over the root count [I: lower ones are landed on, vaulted or caught as
-// they are]. Under Wine, a standing jump on the far side of l3_main_hall's 817-high ledge 944 rose its plain 201.6 (the
-// wall-side test refuses it) [O]. Returns false (no ledge met).
-bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone) {
-    constexpr float kQueryStep = 158.0f, kHangTarget = 505.69f;
+// offset 505.69) at its hang [O], timed by the hit frame [I]. Running (tru.exe under Wine, l4_temple ledge 1204, 782
+// over the floor): close in (take-offs 204..614) S535's straight rush, 11 ticks onto the hang; farther (649..1222.9)
+// a re-aimed arc, launch ~59 up a frame, 10.5 frames in the air for 781..1218; from 1243.4 nothing [O]. Ours: a hit by
+// the record's capsule entry (2) rushes, by its box (4) arcs, rising to the hang and arriving at the arc's top (10.5
+// frames for 1204), the box no farther than kRunJumpReach [I: tru.exe's chart keys S535 / S296 on cond 0x2BA and the
+// ledge class; ledges in the hurdle bands (5..7) go to hurdle states there, which ours does not model]. Only ledges
+// kQueryStep or more over the root count [I: lower ones are landed on, vaulted or caught as they are]. Under Wine, a
+// standing jump on the far side of l3_main_hall's 817-high ledge 944 rose its plain 201.6 (the wall-side test refuses
+// it) [O]. Returns false (no ledge met).
+bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone, bool running) {
+    constexpr float kQueryStep = 158.0f, kHangTarget = 505.69f, kRush = 11.0f / 60.0f;
     const vec2 f = xy(forward());
     JumpQuery q;
     q.start = s_.pos + vec3(0, 0, up), q.hang = s_.pos + vec3(0, 0, kHangTarget), q.root = s_.pos;
@@ -1729,7 +1753,25 @@ bool Player::aimGroundJump(vec2 query, float up, bool falling, float cone) {
     q.record = JumpRecord::Ground, q.classify = true, q.base = s_.pos; // q2 / q26 / q43: record 0x2AB8C, +0x2C bit 0x40
     const JumpTarget j = ledgeOnArc(q);
     if (j.markup < 0) return false;
-    s_.vel = jumpVelocity(attachPose(j.markup, j.seg, j.t, j.side).first - s_.pos, j.frames / 30.0f, t_.gravity);
+    const auto& m = col_.markup[size_t(j.markup)];
+    const vec3 hit = pointOn(m, j.seg, j.t), goal = attachPose(j.markup, j.seg, j.t, j.side).first;
+    if (running) {
+        const vec2 sd = segDir(m, j.seg), out = vec2(-sd.y, sd.x) * j.side;
+        const int cls = ledgeClassOf(col_, hit, out, s_.pos, f);
+        if (j.entry == 2 && (cls < 5 || cls > 7)) { // the capsule entry: S535's straight rush onto the hang
+            s_.ledge = j.markup, s_.ledgeSeg = j.seg, s_.ledgeT = j.t, s_.ledgeSide = j.side, s_.polePara = false;
+            s_.vel = (goal - s_.pos) / kRush;
+            s_.flight = kRush;
+            s_.state = State::HangJump;
+            return true;
+        }
+        // the box entry's reach (measured on a ledge over the hurdle bands; S289 sends classes 5..7 to the hurdle states)
+        if (j.entry == 4 && (cls < 5 || cls > 7) && glm::length(xy(hit - s_.pos)) > kRunJumpReach) return false;
+    }
+    // 0x73EDC0 re-aims the flight at the hang; a running jump's box catch rises to it, arriving at the top [I]
+    const vec3 d = goal - s_.pos;
+    const float time = running && j.entry == 4 && d.z > 0 ? std::sqrt(2 * d.z / t_.gravity) : j.frames / 30.0f;
+    s_.vel = jumpVelocity(d, time, t_.gravity);
     return true;
 }
 
@@ -1983,11 +2025,12 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         s_.state = State::Jump;
         s_.fallStartZ = s_.pos.z;
         // q26 running, q43 with the stick, q2 standing (lara.drm query table) [O]
-        const bool aimed = running    ? aimGroundJump({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f))
+        const bool aimed = running    ? aimGroundJump({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f), true)
                            : wantsMove ? aimGroundJump({40.0f, 50.0f}, 0.0f, false, glm::radians(90.0f))
                                        : aimGroundJump({0.0f, 48.04f}, 300.0f, true, glm::radians(120.0f));
         if (!aimed) assistJump();
         play(running ? "NG_InAir_Feet_Forward_stage1" : "NG_InAir_Feet_Forward_stage1_standing", false);
+        if (s_.state == State::HangJump) break; // the running jump's straight rush (aimGroundJump)
         if (!running && !wantsMove && standJumpToLedge()) break;
         tryPoleLeap();
         break;
@@ -2023,7 +2066,8 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (takeOff || s_.clip == "hpole_perch_Jump_back" || s_.clip == "ladder_jump_back") advanceRoot(dt);
         else advanceClip(dt);
         const float step = std::min(dt, s_.flight);
-        const bool straight = s_.clip.starts_with("NG_InAir"); // tryPoleLeap: no gravity
+        // tryPoleLeap, the running jump's rush, the DICE jump up onto a ledge: no gravity
+        const bool straight = s_.clip.starts_with("NG_InAir") || (s_.clip.starts_with("DICE_") && s_.clip.ends_with("jump_up"));
         s_.pos += s_.vel * step + vec3(0, 0, straight ? 0.0f : -0.5f * t_.gravity * step * step);
         if (!straight) s_.vel.z -= t_.gravity * step;
         s_.flight -= step;
