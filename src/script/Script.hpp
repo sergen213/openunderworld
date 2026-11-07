@@ -310,6 +310,23 @@ public:
         float fade = 0;     // args[0], seconds
     };
     std::vector<MusicRequest> takeMusicRequests() { return std::exchange(musicRequests_, {}); }
+    // What the scripts set up for the sound that a load does not ask for again: ours resumes objects without running
+    // their constructors and keeps Lara's trigger-volume membership, so the music request and the `reverb` of the volume
+    // she stands in do not come again, where tru.exe rebuilds the level on a load and its scripts ask anew [I] (its
+    // save's music name, +0x278, is only ever the empty name 0x5DF760 sets: 0x5B21D0 is its one writer [O]). Saved
+    // ("audio"); ou-game applies it after a load. The music follows ou-game's one-voice Music: a play request in any slot
+    // takes over, a stop clears it in the slot of the track or with an unknown slot (-1).
+    struct AudioState {
+        std::string track; // empty: no music requested
+        int32_t slot = 0;
+        std::string reverbUnit; // the last `reverb` 1 (empty: none): its settings in this unit's DRM at reverbAt
+        cdc::Pointer reverbAt{};
+        void apply(const MusicRequest& r);
+    };
+    const AudioState& audioState() const { return audio_; }
+    // Leaving play (tru.exe 0x593D10 on a level change, a load, quitting): queued music requests are dropped and the
+    // audio state forgotten.
+    void stopAudio() { musicRequests_.clear(), audio_ = {}; }
     // Movies the scripts played (unlockablemovie 3: Movies\<name>.bik, then the frontend), oldest first. The endgame
     // (l7_monastery 8138's end) plays "credits": the game's ending.
     std::vector<std::string> takeMovies() { return std::exchange(movies_, {}); }
@@ -500,6 +517,7 @@ private:
     ReverbNative reverb_;
     FeedbackNative feedback_;
     std::vector<MusicRequest> musicRequests_;
+    AudioState audio_;
     std::vector<std::string> movies_;
     CameraNative camera_;
     std::vector<std::string> cameraUnits_; // unit names by cameraspline value high word

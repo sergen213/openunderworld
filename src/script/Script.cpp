@@ -1141,7 +1141,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                     if (const Member* m = owner->program->member(owner->typeId, nc.receiver.offset); m && m->initAt) {
                         const auto o = std::find_if(objects_.begin(), objects_.end(),
                                                     [&](const Object& x) { return x.script && x.script->program == owner->program; });
-                        if (o != objects_.end()) reverb_(o->unit, *m->initAt);
+                        if (o != objects_.end()) audio_.reverbUnit = o->unit, audio_.reverbAt = *m->initAt, reverb_(o->unit, *m->initAt);
                         nc.result = vm::Value::scalar(0);
                         return true;
                     }
@@ -1258,7 +1258,7 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                     if (nc.function != 3) r.track = *nc.receiver.text;
                     r.slot = int32_t(nc.receiver.bits);
                 }
-                if (nc.function == 3 || !r.track.empty()) musicRequests_.push_back(std::move(r));
+                if (nc.function == 3 || !r.track.empty()) audio_.apply(r), musicRequests_.push_back(std::move(r));
                 nc.result = vm::Value::scalar(0);
                 return true;
             }
@@ -2506,10 +2506,20 @@ std::vector<std::pair<std::pair<vec3, vec3>, uint32_t>> Runtime::debugLines() co
     return out;
 }
 
+void Runtime::AudioState::apply(const MusicRequest& r) {
+    if (r.function == 3) {
+        if (r.slot < 0 || r.slot == slot) track.clear();
+    } else if (!r.track.empty() && r.track != track) {
+        track = r.track, slot = std::max(0, r.slot);
+    }
+}
+
 nlohmann::json Runtime::serialize() const {
     nlohmann::json j = stash_;
     j["gameValues"] = gameValues_;
     j["graphSeed"] = graphSeed_;
+    j["audio"] = {{"track", audio_.track}, {"slot", audio_.slot}, {"reverbUnit", audio_.reverbUnit},
+                  {"reverbAt", {audio_.reverbAt.section, audio_.reverbAt.offset}}};
     for (const auto& o : objects_) {
         if (auto s = stateOf(o); !s.is_null()) j[std::to_string(o.uid)] = std::move(s);
         else j.erase(std::to_string(o.uid));
@@ -2583,6 +2593,14 @@ void Runtime::restore(const nlohmann::json& j) {
     stash_.erase("gameValues");
     graphSeed_ = stash_.value("graphSeed", 0u);
     stash_.erase("graphSeed");
+    audio_ = {};
+    if (const auto a = stash_.find("audio"); a != stash_.end() && a->is_object()) {
+        audio_.track = a->value("track", std::string()), audio_.slot = a->value("slot", 0);
+        audio_.reverbUnit = a->value("reverbUnit", std::string());
+        if (const auto at = a->value("reverbAt", std::array<uint32_t, 2>{}); !audio_.reverbUnit.empty())
+            audio_.reverbAt = {at[0], at[1]};
+    }
+    stash_.erase("audio");
     const nlohmann::json player = stash_.value("player", nlohmann::json::object());
     stash_.erase("player");
     const nlohmann::json runtime = stash_.value("runtime", nlohmann::json::object());

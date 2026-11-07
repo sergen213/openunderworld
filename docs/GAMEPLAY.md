@@ -2331,8 +2331,9 @@ footer always names the keyboard key.
 (Sfx bus [I]); both stop when a game starts or a movie plays and start again on the main menu. Every menu screen plays the
 uiscreen scripts' sounds: selection moves DTP 214, accept / opening a screen 243, back 217, a value change 247 / 248
 [I: one mapping for all screens]. The pause menu and the PDA hold the in-world sound and the music (tru.exe 0x5874B0);
-voice lines and menu sounds play on. New Game, Continue, Load, quick load, Treasure Hunt and Quit to Menu stop every
-in-world sound and the music first (0x593D10); a load within the same chapter restarts the track that was playing [I].
+voice lines and menu sounds play on. New Game, Continue, Load, quick load, Treasure Hunt, Quit to Menu and a level end's
+chapter change stop every in-world sound, the reverb and the music first (0x593D10); a load then plays the scripts' last
+music request and the reverb of the volume Lara stands in again, saved with the game (AUDIO.md §9.11) [I].
 
 **Original UI reference (2026-10-28)** [O captures; implemented: HUD below, menus/PDA/loading above]: tru.exe captures at 1920×1080 (and
 HUD at 1024×768) in openunderworld-work/screens/ui (`hud_weapon_*`, `hud_dpad_*`, `pause_*`, `game_options_1080`,

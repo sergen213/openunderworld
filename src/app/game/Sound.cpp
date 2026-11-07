@@ -87,23 +87,33 @@ void GameSound::attach(game::World& world) {
         return true;
     });
     // reverb 1 (0x4AA750 -> 0x582B70): the 13 SFX-reverb floats the member's value points to (AUDIO.md §9.15).
-    world.script().setReverbNative([this, &world](const std::string& name, cdc::Pointer at) {
-        const auto unit = units_.find(name);
-        if (unit == units_.end()) return;
-        const cdc::Drm& drm = *unit->second.drm;
-        if (at.section >= drm.sections.size() || at.offset + sizeof(audio::SfxReverbProps) > drm.sections[at.section].data.size()) {
-            std::fprintf(stderr, "ou-game: reverb in %s: no settings at section %u +%u\n", name.c_str(), at.section, at.offset);
-            return;
-        }
-        audio::SfxReverbProps p;
-        std::memcpy(p.data(), drm.sections[at.section].data.data() + at.offset, sizeof p);
-        if (p == mixer_.reverb()) return;
-        mixer_.setReverb(p);
-        std::string values;
-        for (float v : p) values += (values.empty() ? "" : ",") + std::to_string(v);
-        std::fprintf(stderr, "ou-game: tick %llu reverb %s: room %.0f mB, decay %.2f s, reverb %.0f mB%s [%s]\n",
-                     (unsigned long long)world.ticks(), name.c_str(), p[1], p[4], p[8], p[1] <= -10000 ? " (off)" : "", values.c_str());
-    });
+    world.script().setReverbNative([this, &world](const std::string& name, cdc::Pointer at) { reverb(world, name, at); });
+    resume(world); // a game loaded before the sound existed (--load)
+}
+
+void GameSound::reverb(const game::World& world, const std::string& name, cdc::Pointer at) {
+    const auto unit = units_.find(name);
+    if (unit == units_.end()) return;
+    const cdc::Drm& drm = *unit->second.drm;
+    if (at.section >= drm.sections.size() || at.offset + sizeof(audio::SfxReverbProps) > drm.sections[at.section].data.size()) {
+        std::fprintf(stderr, "ou-game: reverb in %s: no settings at section %u +%u\n", name.c_str(), at.section, at.offset);
+        return;
+    }
+    audio::SfxReverbProps p;
+    std::memcpy(p.data(), drm.sections[at.section].data.data() + at.offset, sizeof p);
+    if (p == mixer_.reverb()) return;
+    mixer_.setReverb(p);
+    std::string values;
+    for (float v : p) values += (values.empty() ? "" : ",") + std::to_string(v);
+    std::fprintf(stderr, "ou-game: tick %llu reverb %s: room %.0f mB, decay %.2f s, reverb %.0f mB%s [%s]\n",
+                 (unsigned long long)world.ticks(), name.c_str(), p[1], p[4], p[8], p[1] <= -10000 ? " (off)" : "", values.c_str());
+}
+
+void GameSound::resume(const game::World& world) {
+    const auto& a = world.script().audioState();
+    if (a.reverbUnit.empty()) return;
+    syncUnits(world), unitsVersion_ = world.unitsVersion();
+    reverb(world, a.reverbUnit, a.reverbAt);
 }
 
 bool GameSound::playHelp(const game::World& world, bool answer) {

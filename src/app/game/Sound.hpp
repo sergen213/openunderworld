@@ -26,6 +26,9 @@ public:
     void attach(game::World& world); // script "sound" native hook; call once after the world exists
     void tick(game::World& world);   // after World::tick: units, sfxmarkers, drowning, scheduled parts, subtitles
     void reset(); // stop and forget everything playing (quit to menu, new game, load)
+    // After a load (script::Runtime::AudioState): the SFX reverb of the soundvolume Lara stands in, which ours does not
+    // enter again (the music is ou-game's Music's).
+    void resume(const game::World& world);
     // A menu sound: generalbank DTP (Assignment -> Wave) on the Sfx bus, not held by the pause menu (AUDIO.md §9.11).
     void menuSound(uint32_t dtp);
     const locale::SubtitleTicker& subtitles() const { return ticker_; }
@@ -50,6 +53,7 @@ private:
         std::map<std::string, std::vector<uint32_t>> barks; // enemy chatter DTPs by category ("vo\\enemy\\merc\\b_M11_ADV_g_01": ADV)
     };
     const audio::Plex* objectPlex(const fx::ObjectFx& fx, cdc::Pointer at); // an inline graph of an object DRM (cached)
+    void reverb(const game::World& world, const std::string& unit, cdc::Pointer at); // `reverb` 1 (AUDIO.md §9.15)
     void syncUnits(const game::World& world);
     const cdc::BigfileSet& bf_;
     audio::Mixer& mixer_;

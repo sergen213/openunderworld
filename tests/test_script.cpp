@@ -225,6 +225,40 @@ TEST(ScriptRuntime, StringFieldsRoundTrip) {
     EXPECT_EQ(object->script->properties.at((8ull << 32) | 7), 1u);
 }
 
+// The music request and reverb a load does not ask for again (Runtime::AudioState): one voice as ou-game's Music, saved.
+TEST(ScriptRuntime, AudioStateFollowsMusicRequestsAndRoundTrips) {
+    using Request = Runtime::MusicRequest;
+    Runtime::AudioState a;
+    a.apply(Request{0, 2, "l4_ballcourt_mus_01", 0, 2});
+    EXPECT_EQ(a.track, "l4_ballcourt_mus_01");
+    a.apply(Request{0, 1, "l1_intro", 7, 0}); // another slot takes over
+    EXPECT_EQ(a.track, "l1_intro");
+    EXPECT_EQ(a.slot, 7);
+    a.apply(Request{0, 3, {}, 0, 3}); // a stop in another slot leaves it
+    EXPECT_EQ(a.track, "l1_intro");
+    a.apply(Request{0, 3, {}, 7, 3});
+    EXPECT_TRUE(a.track.empty());
+    a.apply(Request{0, 1, "l1_seatop_mus_01", -1, 0}); // unknown slot: 0; a stop with an unknown slot clears it
+    EXPECT_EQ(a.slot, 0);
+    a.apply(Request{0, 3, {}, -1, 3});
+    EXPECT_TRUE(a.track.empty());
+
+    Runtime r;
+    r.restore({{"audio", {{"track", "l3_bedroom_mus_01"}, {"slot", 1}, {"reverbUnit", "l4_trailstart"}, {"reverbAt", {3, 128}}}}});
+    Runtime restored;
+    restored.restore(r.serialize());
+    const auto& s = restored.audioState();
+    EXPECT_EQ(s.track, "l3_bedroom_mus_01");
+    EXPECT_EQ(s.slot, 1);
+    EXPECT_EQ(s.reverbUnit, "l4_trailstart");
+    EXPECT_EQ(s.reverbAt.section, 3u);
+    EXPECT_EQ(s.reverbAt.offset, 128u);
+    restored.stopAudio(); // leaving play
+    EXPECT_TRUE(restored.audioState().track.empty() && restored.audioState().reverbUnit.empty());
+    restored.restore(nlohmann::json::object()); // older saves / a chapter start: nothing
+    EXPECT_TRUE(restored.audioState().track.empty());
+}
+
 // ---- Bytecode VM --------------------------------------------------------------------------------------
 TEST(ScriptVm, ArithmeticRawWordBranchAndNativeCall) {
     auto ins = [](uint8_t op, int32_t arg, uint32_t word) {

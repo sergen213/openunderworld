@@ -2294,9 +2294,11 @@ int main(int argc, char** argv) {
                          double(menuMovie->sound()->frames()) / menuMovie->sound()->sampleRate);
         }
     };
-    // Leaving play, starting a game or loading one: everything stops (tru.exe 0x593D10 on level change 0x5DF760 / 0x5DF8C0
-    // and on quitting 0x5DAB40) and the unit music starts afresh.
+    // Leaving play, starting a game, loading one, a level end's chapter change: everything stops (tru.exe 0x593D10 on
+    // level change 0x5DF760 / 0x5DF8C0 and on quitting 0x5DAB40), the music requests still queued go with it, and the
+    // unit music starts afresh.
     auto resetAudio = [&](const char* why) {
+        world->script().stopAudio();
         if (!audioOn) return;
         music.stop(mixer, 0, why, world->ticks());
         if (sound) sound->reset();
@@ -2305,18 +2307,22 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "ou-game: tick %llu audio reset (%s): %zu voices left\n", (unsigned long long)world->ticks(), why,
                      mixer.activeVoices());
     };
-    // Loading a save: a clean start too. The save holds no music and the unit scripts that requested the track do not run
-    // again, so a load within the same chapter restarts the track that was playing [I]; another chapter starts with its
-    // unit's own track or the next script request.
+    // After a load: what the scripts had set up and do not ask for again in ours (script::Runtime::AudioState): their
+    // last music request and the reverb of the volume Lara stands in. Without a request the unit's own track plays [I].
+    auto resumeAudio = [&](const char* why) {
+        if (!audioOn) return;
+        const auto& a = world->script().audioState();
+        music.play(*bigfile, mixer, a.track, std::string(why) + ", saved request", world->ticks(), 2, a.slot);
+        if (sound) sound->resume(*world);
+    };
     auto loadGame = [&](const std::string& slot, const char* why) {
-        const std::string track = music.current == Music::kTitle ? std::string() : music.current;
-        const int chapter = world->chapter;
         menuAudio(false, "game starts"), resetAudio(why);
         const bool ok = quickLoad(*world, slot);
-        if (ok && audioOn && !track.empty() && world->chapter == chapter)
-            music.play(*bigfile, mixer, track, std::string(why) + ", same chapter", world->ticks());
+        if (ok) resumeAudio(why);
         return ok;
     };
+    world->onLevelChange = [&](int next) { resetAudio(("level change to chapter " + std::to_string(next)).c_str()); };
+    if (!opt.loadSlot.empty()) resumeAudio("--load");
     // Movies mute the game and the menu (generalbank script 110 "Unmuting audio during a movie" / stopTitleMusic).
     auto playMovieQuiet = [&](const std::string& file) {
         menuAudio(false, "movie");

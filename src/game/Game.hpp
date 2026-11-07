@@ -685,6 +685,9 @@ public:
     // (src/app/game/Cinematic.*); unset = skipped. Afterwards World places Lara and the bikes where the stream leaves
     // them (its header tails, 0x455D90).
     std::function<void(const std::string& cinematic, bool levelEnd)> onCinematic;
+    // A level end leaves the chapter: called after its cinematic and its scripts' last events, right before
+    // startChapter(next) builds the next one (tru.exe 0x5DF760 -> 0x593D10 stops every sound and the music there).
+    std::function<void(int next)> onLevelChange;
     const std::vector<Pickup>& pickedUp() const { return pickedUp_; } // last tick (world-frame positions)
 
     // Save/load helpers. Markup index <-> (unit, index in that unit); -1 / nullopt when not loaded.

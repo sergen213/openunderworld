@@ -600,6 +600,7 @@ void World::checkLevelEnd() {
         for (const int32_t bike : script_.takeMounts()) mountBike(bike);
         script_.endCinematic(e.target);
         if (next) {
+            if (onLevelChange) onLevelChange(*next);
             try {
                 startChapter(*next);
             } catch (const std::exception& ex) {
