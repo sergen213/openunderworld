@@ -206,9 +206,11 @@ nlohmann::json World::serializeObjects() const {
     // The physics scene (src/physics Scene::save, hex): a load continues the simulation bit for bit. Older saves lack it.
     std::string physics;
     for (const unsigned char c : physics_.save()) physics += "0123456789abcdef"[c >> 4], physics += "0123456789abcdef"[c & 15];
-    nlohmann::json inserted = nlohmann::json::array();
-    for (const auto& [uid, in] : inserted_) inserted.push_back({uid, in.receptacle, in.out.x, in.out.y, in.slide});
-    return {{"uber", std::move(uber)}, {"held", held_}, {"inserted", std::move(inserted)},
+    nlohmann::json inserted = nlohmann::json::array(), slides = nlohmann::json::array();
+    for (const auto& [uid, in] : inserted_) inserted.push_back({uid, in.receptacle});
+    for (const auto& [uid, x] : slides_) slides.push_back({uid, x});
+    return {{"uber", std::move(uber)}, {"held", held_}, {"inserted", std::move(inserted)}, {"slides", std::move(slides)},
+            {"placed", placed_},
             {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
 }
 
@@ -216,6 +218,8 @@ void World::restoreObjects(const nlohmann::json& j) {
     std::map<int32_t, nlohmann::json> saved;
     int32_t held = 0;
     std::map<int32_t, Inserted> inserted;
+    std::map<int32_t, float> slides;
+    std::set<int32_t> placed;
     std::string physicsState;
     if (j.is_object()) {
         try {
@@ -242,8 +246,12 @@ void World::restoreObjects(const nlohmann::json& j) {
                 saved[std::stoi(key)] = e;
             }
             held = j.value("held", 0);
-            for (const auto& e : j.value("inserted", nlohmann::json::array())) // older saves: none
-                inserted[e.at(0).get<int32_t>()] = {e.at(1).get<int32_t>(), {e.at(2).get<float>(), e.at(3).get<float>()}, e.at(4).get<float>()};
+            for (const auto& e : j.value("inserted", nlohmann::json::array())) { // older saves: none
+                inserted[e.at(0).get<int32_t>()] = {e.at(1).get<int32_t>()};
+                if (e.size() >= 5) slides[e.at(1).get<int32_t>()] = e.at(4).get<float>(); // 0.34.0: the slide rode along
+            }
+            for (const auto& e : j.value("slides", nlohmann::json::array())) slides[e.at(0).get<int32_t>()] = e.at(1).get<float>();
+            placed = j.value("placed", std::set<int32_t>{});
             if (const auto p = j.find("physics"); p != j.end() && p->value("version", 0) == 1) {
                 const std::string hex = p->at("state").get<std::string>();
                 if (hex.size() % 2) throw std::runtime_error("odd physics state");
@@ -264,6 +272,11 @@ void World::restoreObjects(const nlohmann::json& j) {
     uberSaved_ = std::move(saved);
     held_ = held;
     inserted_ = std::move(inserted);
+    slides_ = std::move(slides);
+    // Saves from before placements: what is inserted now was placed (or Lara put it there).
+    placed_ = j.is_object() && j.contains("placed") ? std::move(placed) : std::set<int32_t>{};
+    if (!(j.is_object() && j.contains("placed")))
+        for (const auto& [uid, in] : inserted_) placed_.insert(uid);
     // The saved scene's IDs and recorded state (applied once its bodies exist again); older saves: loose bodies start
     // again from their saved offset and rotation.
     if (physicsState.empty() || !physics_.restore(physicsState)) physics_.setLoose({});
@@ -1041,7 +1054,12 @@ void World::bindMultibody() {
             return true;
         }
         if (function == 78) {
-            result = std::bit_cast<uint32_t>(index >= 0 ? glm::degrees(physics_.angle(index)) : 0.0f);
+            // A pole-hole lever reads its cylindrical joint's limit-1 coordinate (args 0, 1; l4_ballcourt 6502 passes
+            // twice it to door 6505's limit, vt 54). [I] Ours slides only (slides_): its 0..-600 maps onto 0..40 degrees,
+            // the swing the old hinge lever drove door 6505 to 80 with; tru.exe's second degree of freedom is not traced.
+            float value = index >= 0 ? glm::degrees(physics_.angle(index)) : 0.0f;
+            if (const auto sl = slides_.find(uid); index < 0 && sl != slides_.end()) value = -sl->second * (40.0f / 600.0f);
+            result = std::bit_cast<uint32_t>(value);
             return true;
         }
         if (args.size() != 5) return false; // joint, limit, drive parameters
@@ -1075,7 +1093,8 @@ void World::syncObjects() {
         int hinge = -1;
         // [I] Rigid doors (class 34) and joint levers (class 6) swing about the X axis of their first model marker.
         // A receptacle holding an inserted portable slides on its joint instead (tickInserted).
-        const bool holding = std::ranges::any_of(inserted_, [&](const auto& e) { return e.second.receptacle == o.uid; });
+        const bool holding = slides_.contains(o.uid) || script_.receptacleGraph(o.name) ||
+                             std::ranges::any_of(inserted_, [&](const auto& e) { return e.second.receptacle == o.uid; });
         if ((o.kind == script::Kind::Door || o.kind == script::Kind::Switch) && !o.clips && !holding &&
             (o.kind == script::Kind::Switch || p.physClass == physics::kClassRigidBody) && !p.markers.empty()) {
             if (const auto mp = physics::massProps(p); mp.mass > 0) {
@@ -1145,12 +1164,15 @@ void World::tickObjects(float dt) {
     }
 }
 
-// Portable objects (heavy weights): interact next to one picks it up, she carries it in front of her chest, interact
-// again sets it down in front of her feet, where it falls as a loose body (it weighs on pressure plates). [I] No carry
-// clips or walk-speed change; the script's vt 20 pick-up callback (sets its "touched" sticky) is not sent.
+// Portable objects (heavy weights, poles, keys, gems): interact next to one picks it up, she carries it in front of her
+// chest, interact again inserts it into a receptacle she engages (insertHeld) or sets it down in front of her feet, where
+// it falls as a loose body (it weighs on pressure plates). Empty-handed, interact takes an inserted portable she engages
+// back out (removeInserted). [I] No carry clips or walk-speed change; the script's vt 20 pick-up callback (sets its
+// "touched" sticky) is not sent.
 void World::carryPortables(bool pressed) {
     const auto& s = player_.state();
     const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
+    placePortables();
     auto* held = held_ ? const_cast<script::Object*>(script_.find(held_)) : nullptr; // World owns object motion
     if (held_ && !held) held_ = 0;
     if (held && pressed && insertHeld(*held)) return;
@@ -1173,12 +1195,23 @@ void World::carryPortables(bool pressed) {
     }
     if (held) {
         held->offset = s.pos + fwd * 60.0f + vec3(0, 0, 80) - held->pos;
+        held->body = glm::mat4(1);
         return;
     }
     if (!pressed || s.state != State::Idle) return;
+    if (removeInserted()) return;
+    // Its pick-up record (kind 4: the poles' sphere r 869 around marker 20, the keys' and gems' around their origin), else
+    // [I] within 150 / 100 of her root.
     for (const auto& o : script_.objects()) {
+        if (!portable(o) || inserted_.contains(o.uid)) continue;
         const vec3 at = o.pos + o.offset;
-        if (portable(o) && glm::length(vec2(at - s.pos)) < 150.0f && std::abs(at.z - s.pos.z) < 100.0f) {
+        bool reach = false, records = false;
+        if (const auto* p = objectPhysics(o.name))
+            for (const auto& set : p->engagements)
+                for (const auto& e : set.records)
+                    if (e.kind == 4) records = true, reach = reach || engages(o, e);
+        if (!records) reach = glm::length(vec2(at - s.pos)) < 150.0f && std::abs(at.z - s.pos.z) < 100.0f;
+        if (reach) {
             held_ = o.uid;
             const_cast<script::Object&>(o).loose = false;
             return;
@@ -1186,94 +1219,180 @@ void World::carryPortables(bool pressed) {
     }
 }
 
-// Receptacle holes: the object's joint marker (ObjectPhysics marker kind 2; the pole-hole levers' cylindrical joint, its
-// slider axis the marker's Z) as the object stands now (intro x body).
-std::optional<vec3> World::receptacleHole(const script::Object& o) {
+// The receptacle's attach marker (physical record +0x3C: the model marker the portable takes, tru.exe query 0x173 ->
+// 0x6B55D0) as the object stands now (intro x body).
+std::optional<glm::mat4> World::attachFrame(const script::Object& o) {
     const auto* p = objectPhysics(o.name);
-    if (!p) return std::nullopt;
-    const auto m = std::ranges::find(p->markers, 2u, &physics::Marker::kind);
-    if (m == p->markers.end()) return std::nullopt;
-    return vec3(glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body * glm::vec4(m->pos, 1));
+    if (!p || p->attachMarker < 0 || size_t(p->attachMarker) >= p->markers.size()) return std::nullopt;
+    const auto& m = p->markers[size_t(p->attachMarker)];
+    return glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body * glm::translate(glm::mat4(1), m.pos) *
+           glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
 }
 
-// Lara carrying a portable inserts it with interact (tru.exe: her chart's action 0x4D, 0x716F30, posts INSTANCE message
-// 0x165 with her engaged object to the portable she holds) into a receptacle: an object whose anim graph takes the insert
-// stimulus from its state (Runtime::graphAccepts / insertPortable). [I] The engagement: standing still, the hole within
-// kInsertReach horizontally and kInsertLow..kInsertHigh above her feet (l5_valaskjalf_entryb lever 7189: its hole 1169
-// over the floor; its engagement record, a cylinder in its segment 10 frame, is not decoded [U]), no insert clip. The
-// pole then sticks out of the receptacle's face (0x6B55D0 places it by the receptacle's 0x173 data [U]).
-bool World::insertHeld(script::Object& held) {
-    constexpr float kInsertReach = 450.0f, kInsertLow = 0.0f, kInsertHigh = 1200.0f;
-    const auto& s = player_.state();
-    if (s.state != State::Idle) return false;
-    for (const auto& o : script_.objects()) {
-        if (o.uid == held.uid || !script_.graphAccepts(o.uid, formats::kStimulusInsert)) continue;
-        const auto hole = receptacleHole(o);
-        if (!hole) continue;
-        const vec3 d = *hole - s.pos;
-        if (glm::length(vec2(d)) > kInsertReach || d.z < kInsertLow || d.z > kInsertHigh) continue;
-        // Out of the receptacle's face: its local X axis, on the side its hole marker sits (7189: +30.9), else Lara's.
-        const vec2 face = vec2(introModel(o) * glm::vec4(1, 0, 0, 0));
-        const auto* p = objectPhysics(o.name);
-        const float side = std::ranges::find(p->markers, 2u, &physics::Marker::kind)->pos.x;
-        Inserted in;
-        in.receptacle = o.uid;
-        in.out = glm::normalize(std::abs(side) > 1.0f ? (side > 0 ? face : -face) : glm::dot(face, vec2(s.pos - *hole)) >= 0 ? face : -face);
-        const int32_t portable = held.uid;
-        held.loose = false, held.offset = vec3(0);
-        held_ = 0;
-        inserted_[portable] = in;
-        syncedObjects_ = ~size_t(0); // the receptacle leaves its hinge (syncObjects)
-        script_.insertPortable(portable, in.receptacle);
+// Lara's engagement test (tru.exe 0x719520 -> 0x6F3C60): points up her body, each in the record's frame (its HInfo
+// marker's, 0x46DF20, else the instance's), inside its sphere / cylinder (+ the facing cone, 0x6F3A50). [I] tru.exe
+// samples its own collision capsule (0x715DD0: up to 3 points, half its cylinder apart); ours the standing Havok proxy's
+// cylinder (centre 315.4 above her feet, 189.63 long): 220.6, 315.4, 410.2.
+bool World::engages(const script::Object& o, const physics::Engagement& e) {
+    const auto* p = objectPhysics(o.name);
+    if (!p) return false;
+    glm::mat4 frame = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+    if (e.segment >= 0)
+        for (const auto& m : p->hmarkers)
+            if (m.id == e.segment) {
+                frame = frame * (size_t(m.segment) < p->segments.size() ? p->segments[size_t(m.segment)] : glm::mat4(1)) *
+                        glm::translate(glm::mat4(1), m.pos) * glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) *
+                        glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
+                break;
+            }
+    const glm::mat4 inv = glm::inverse(frame);
+    for (const float z : {220.6f, 315.4f, 410.2f}) {
+        const vec3 q = vec3(inv * glm::vec4(player_.state().pos + vec3(0, 0, z), 1)) - e.centre;
+        if (e.shape == 0) {
+            if (glm::dot(q, q) < e.radius * e.radius) return true;
+            continue;
+        }
+        const float b = q.z + e.height * 0.5f;
+        if (glm::dot(vec2(q), vec2(q)) >= e.radius * e.radius || b < 0 || b >= e.height) continue;
+        if (e.shape == 2 && std::abs(std::remainder(std::atan2(q.y, q.x) - e.heading, glm::two_pi<float>())) >= e.half) continue;
         return true;
     }
     return false;
 }
 
-// An inserted portable rides its receptacle: [I] Lara hanging on the pole (State::PoleHang on its horizpole markup) weighs
-// the receptacle's slider down its joint (the Havok cylindrical joint's prismatic degree of freedom, marker Z) at
-// kSlideSpeed to kSlideBottom; the slider's joint value runs the range watches (Runtime::setJointPosition): lever 7189's
-// -600..-474 -> vt 34 -> reward door 7227 vt 57. The pole lies along its longest box axis, one end in the hole.
+// Carrying a portable, interact inserts it (tru.exe: her chart's action 0x4D, 0x716F30, posts INSTANCE message 0x165
+// with her engaged object to the portable she holds) into a receptacle: one whose anim graph takes the insert stimulus
+// from its state and one of whose engagement records she is in, of kind 5 and naming the portable's object among its
+// `needs` (0x6F3C60 / 0x6F3BB0; l5 lever 7189 needs ar_pt_pole_a, l4 keyhole 6501 ca_pt_key_xibalba_exit, the l4 seal
+// one key per segment 11-14). Sets: the one a script picked (instance fn 59, Object::engagement), else all [I].
+// Standing still [I: no insert clip in lara.drm].
+bool World::insertHeld(script::Object& held) {
+    if (player_.state().state != State::Idle) return false;
+    for (const auto& o : script_.objects()) {
+        if (o.uid == held.uid || !script_.graphAccepts(o.uid, formats::kStimulusInsert)) continue;
+        const auto* p = objectPhysics(o.name);
+        if (!p) continue;
+        for (const auto& set : p->engagements) {
+            if (o.engagement > 0 && set.id != o.engagement) continue;
+            for (const auto& e : set.records) {
+                // [I] Inside the record (as decoded), or its centre within its radius of her and 0..1200 above her
+                // feet: the records' heights do not reach where she stands at l5 7189 / l4 6502 with our sample
+                // points (tru.exe's Lara query capsule, 0x715DD0, is not decoded).
+                const auto near = [&] {
+                    const auto* q = objectPhysics(o.name);
+                    glm::mat4 f = glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+                    for (const auto& m : q->hmarkers)
+                        if (e.segment >= 0 && m.id == e.segment) {
+                            f = f * (size_t(m.segment) < q->segments.size() ? q->segments[size_t(m.segment)] : glm::mat4(1)) * glm::translate(glm::mat4(1), m.pos);
+                            break;
+                        }
+                    const vec3 d = vec3(f * glm::vec4(0, 0, 0, 1)) - player_.state().pos;
+                    return glm::length(vec2(d)) < std::max(e.radius, 450.0f) && d.z >= 0 && d.z <= 1200.0f;
+                };
+                if (e.kind != 5 || !(engages(o, e) || near())) continue;
+                if (!e.needs.empty() && std::ranges::none_of(e.needs, [&](uint16_t id) { const auto* n = script_.objectName(id); return n && *n == held.name; }))
+                    continue;
+                held_ = 0;
+                attachPortable(held, o, e.segment);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// 0x6B5890 message 0x165: the portable attaches at the receptacle's attach marker (0x6B55D0) and posts 0x165 to it
+// (Runtime::insertPortable: its vt 49 and graph stimulus 0x20).
+void World::attachPortable(script::Object& portable, const script::Object& receptacle, int segment) {
+    const int32_t uid = portable.uid, rec = receptacle.uid;
+    portable.loose = false, portable.offset = vec3(0);
+    inserted_[uid] = Inserted{rec};
+    placed_.insert(uid);
+    syncedObjects_ = ~size_t(0); // the receptacle leaves its hinge (syncObjects)
+    script_.insertPortable(uid, rec, segment);
+}
+
+// Portables placed in a receptacle (Object::placedIn, from the intro: tru.exe 0x6B5890 message 0x23 -> 0x6A6DC0 ->
+// message 0x165) insert themselves once both exist: l2_puzzleroom pole 2967 in hole 2969, l2_maproom pole 2665 in
+// track 2664, l3_chapel pole 4823 in hole 4824, l4_temple pole 5240 in hole 5233, the gems and keys in their
+// portable_key_preinsert holders (l2_norsehub, l2_puzzleroom, l4_ragnarok_room, l4_temple, l7_arctic_sea).
+void World::placePortables() {
+    for (const auto& o : script_.objects()) {
+        if (!o.placedIn || placed_.contains(o.uid) || inserted_.contains(o.uid) || o.uid == held_) continue;
+        const auto* rec = script_.find(o.placedIn);
+        if (!rec || !script_.graphAccepts(rec->uid, formats::kStimulusInsert)) continue;
+        attachPortable(const_cast<script::Object&>(o), *rec, -1);
+    }
+}
+
+// Empty-handed (Idle), interact on an inserted portable whose pick-up record (kind 4) she is in takes it out (tru.exe:
+// her chart action 0x50 posts INSTANCE message 0x186 to her engaged portable; 0x6B5890 posts 0x186 to its receptacle
+// and is carried, as a pick-up): Runtime::removePortable runs the receptacle's vt 49 and graph stimulus 0x40.
+// l2_puzzleroom hole 2969's removal (state 0) starts the elevator: vt 20(0) -> 2960 vt 54, 2961 vt 62.
+bool World::removeInserted() {
+    for (auto it = inserted_.begin(); it != inserted_.end(); ++it) {
+        auto* o = const_cast<script::Object*>(script_.find(it->first));
+        const auto* p = o ? objectPhysics(o->name) : nullptr;
+        if (!o || !p) continue;
+        const physics::Engagement* hit = nullptr;
+        for (const auto& set : p->engagements)
+            for (const auto& e : set.records)
+                if (!hit && e.kind == 4 && engages(*o, e)) hit = &e;
+        if (!hit) continue;
+        const int32_t uid = o->uid, rec = it->second.receptacle;
+        if (it->second.markup >= 0 && size_t(it->second.markup) < col_.markup.size()) col_.markup[size_t(it->second.markup)].type = 0; // "none"
+        inserted_.erase(it);
+        o->body = glm::mat4(1);
+        held_ = uid;
+        script_.removePortable(uid, rec, hit->segment);
+        return true;
+    }
+    return false;
+}
+
+// An inserted portable takes its receptacle's attach marker frame (0x6B55D0; [O] the level data's placed pairs: l2
+// pole 2967 lies at hole 2969's marker, 713.8 up, within 7 units, the gems and keys at their holders' markers within
+// 80). The poles' models run along their own X (sa_*) or Z (ma_*, ca_*, the markers turned 90 degrees about Y): they
+// stick out of the hole, horizontal poles (markup type 6) Lara hangs and swings on. A receptacle whose script watches
+// its joint (a pole-hole lever's cylindrical joint, marker Z: l5 7189, l4 6502) slides down it under Lara hanging on
+// its pole at kSlideSpeed to kSlideBottom [I: Havok weight not measured]; the slider's joint value runs the range
+// watches (Runtime::setJointPosition): 7189's -600..-474 -> vt 34 -> reward door 7227 vt 57; 6502's -600..-350 -> its
+// loop -> door 6505's limit (vt 54).
 void World::tickInserted(float dt) {
     constexpr float kSlideSpeed = 300.0f, kSlideBottom = -600.0f; // [I] units / s; the lowest watched value
-    for (auto it = inserted_.begin(); it != inserted_.end();) {
-        auto* pole = const_cast<script::Object*>(script_.find(it->first)); // World owns object motion
-        auto* rec = const_cast<script::Object*>(script_.find(it->second.receptacle));
+    for (auto& [uid, in] : inserted_) {
+        auto* pole = const_cast<script::Object*>(script_.find(uid)); // World owns object motion
+        auto* rec = const_cast<script::Object*>(script_.find(in.receptacle));
         const auto* pp = pole ? objectPhysics(pole->name) : nullptr;
         const auto* rp = rec ? objectPhysics(rec->name) : nullptr;
-        const auto marker = rp ? std::ranges::find(rp->markers, 2u, &physics::Marker::kind) : decltype(rp->markers.end()){};
-        if (!pole || !rec || !pp || !rp || marker == rp->markers.end()) { ++it; continue; } // streamed out: kept
-        auto& in = it->second;
+        if (!pole || !rec || !pp || !rp) continue; // streamed out: kept
         const auto& s = player_.state();
         const bool hanging = s.state == State::PoleHang && in.markup >= 0 && s.ledge == in.markup;
-        if (hanging) in.slide = std::max(kSlideBottom, in.slide - kSlideSpeed * dt);
-        const glm::mat4 r = glm::rotate(glm::mat4(1), marker->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), marker->rot.y, {0, 1, 0}) *
-                            glm::rotate(glm::mat4(1), marker->rot.z, {0, 0, 1});
-        script_.setBody(rec->uid, glm::translate(glm::mat4(1), vec3(r[2]) * in.slide));
-        if (rec->joint && rec->joint->position != in.slide) script_.setJointPosition(rec->uid, in.slide);
-        rec = const_cast<script::Object*>(script_.find(in.receptacle)); // scripts may have run
-        pole = const_cast<script::Object*>(script_.find(it->first));
-        if (!rec || !pole) { ++it; continue; }
-        const auto hole = receptacleHole(*rec);
-        // The pole's longest box axis, from one end to the other.
-        const vec3 ext = pp->boxMax - pp->boxMin, c = (pp->boxMax + pp->boxMin) * 0.5f;
-        const int axis = ext.x >= ext.y && ext.x >= ext.z ? 0 : ext.y >= ext.z ? 1 : 2;
-        const float half = ext[axis] * 0.5f;
-        vec3 a(0);
-        a[axis] = 1;
-        const vec3 out(in.out, 0);
-        const vec3 axisOf = glm::cross(a, out);
-        const glm::mat4 turn = glm::length(axisOf) > 1e-5f ? glm::rotate(glm::mat4(1), std::acos(std::clamp(glm::dot(a, out), -1.0f, 1.0f)), glm::normalize(axisOf))
-                               : glm::dot(a, out) > 0 ? glm::mat4(1) : glm::rotate(glm::mat4(1), glm::pi<float>(), vec3(0, 0, 1));
-        const glm::mat4 world = glm::translate(glm::mat4(1), *hole + out * half) * turn * glm::translate(glm::mat4(1), -c);
+        if (const auto marker = std::ranges::find(rp->markers, 2u, &physics::Marker::kind); marker != rp->markers.end() && rec->joint) {
+            float& slide = slides_[rec->uid];
+            if (hanging) slide = std::max(kSlideBottom, slide - kSlideSpeed * dt);
+            const glm::mat4 r = glm::rotate(glm::mat4(1), marker->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), marker->rot.y, {0, 1, 0}) *
+                                glm::rotate(glm::mat4(1), marker->rot.z, {0, 0, 1});
+            script_.setBody(rec->uid, glm::translate(glm::mat4(1), vec3(r[2]) * slide));
+            if (rec->joint->position != slide) script_.setJointPosition(rec->uid, slide);
+            rec = const_cast<script::Object*>(script_.find(in.receptacle)); // scripts may have run
+            pole = const_cast<script::Object*>(script_.find(uid));
+            if (!rec || !pole) continue;
+        }
+        const auto frame = attachFrame(*rec);
+        if (!frame) continue;
         pole->offset = vec3(0), pole->loose = false;
-        script_.setBody(pole->uid, glm::inverse(introModel(*pole)) * world);
+        script_.setBody(pole->uid, glm::inverse(introModel(*pole)) * *frame);
+        const vec3 ext = pp->boxMax - pp->boxMin;
+        const int axis = ext.x >= ext.y && ext.x >= ext.z ? 0 : ext.y >= ext.z ? 1 : 2;
+        if (ext[axis] < 3 * ext[(axis + 1) % 3] || ext[axis] < 3 * ext[(axis + 2) % 3]) continue; // not a pole
+        vec3 a = (pp->boxMin + pp->boxMax) * 0.5f, b = a;
+        a[axis] = pp->boxMin[axis], b[axis] = pp->boxMax[axis];
         collision::Markup m;
         m.type = 6; // horizpole (MUD 0x2000000): Lara hangs and swings on it (Player::pole)
-        m.points = {*hole, *hole + out * (2 * half)};
+        m.points = {vec3(*frame * glm::vec4(a, 1)), vec3(*frame * glm::vec4(b, 1))};
         if (in.markup < 0 || size_t(in.markup) >= col_.markup.size()) in.markup = int(col_.markup.size()), col_.markup.push_back(m);
-        else col_.markup[size_t(in.markup)].points = m.points;
-        ++it;
+        else col_.markup[size_t(in.markup)].type = m.type, col_.markup[size_t(in.markup)].points = m.points;
     }
 }
 

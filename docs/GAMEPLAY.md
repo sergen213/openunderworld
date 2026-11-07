@@ -1392,14 +1392,44 @@ Ours:
   have one transition each way: 0x20 into the "inserted" state, 0x40 back; `ar_pt_pole_a` has no graph. The levers'
   joint marker (type 2: a cylindrical joint, 0x48F1D0 reads its degree of freedom 0 as a prismatic position) carries
   the hole; their range watches (`multibody` 79) are on that slider.
-  Ours (`World::insertHeld`, `tickInserted`): interact while carrying, standing within 450 of a receptacle's hole
-  (0..1200 above her feet) [I: the engagement record is not decoded] inserts it: the pole sticks out of the receptacle's
-  face on her side, and its graph (also for receptacles whose scripts only hear transitions, vt 19) takes the stimulus
-  (l5_valaskjalf_entryb 7189: vt 19 "It's the insert reaction", vt 20(0) watches −600..−474). The pole becomes a
-  horizontal pole (markup type 6); hanging on it, her weight slides the lever down its joint at 300 units/s to −600
-  [I: Havok weight, speed and limit not measured], entering the watch: vt 34 → reward door 7227 vt 57. Saved
-  (objects `inserted`). Not done: the insert clip and engagement cone, removing the pole (0x186), the receptacle's
-  script prototype call, the pole's own vt 57 (draw group 2), l4_ballcourt's lever 6502 still answers a use (vt 54).
+  Removal [O]: Lara's chart action 0x50 posts 0x186 to her engaged object; the portable (0x6B5890) posts 0x186 to its
+  receptacle, takes stimulus 0x40 itself and is carried (as the pick-up: 0x6A6A20, 0x69AA50(1)). The receptacle
+  (0x6C2530, 0x165 and 0x186 alike) calls its script's instance prototype 67 = vt 49 (0x799900) with (the segment of
+  Lara's engagement record, 5) — l4_traprooms seal 5701's vt 49 tells its four keys apart by it (11 dark, 12 blades,
+  13 fire, 14 crusher) — then posts 0x20 / 0x40 to its graph. Portables have no anim graph (their vt 19 / 20 do not
+  run); the l2 / l4 poles' vt 57 therefore never runs from an insert.
+  Engagement records [O data, 0x6F3C60 / 0x719520]: 0x8C bytes, sets {id, -> records, count} at physical record +0x68
+  (anim-graph objects) / +0xA8 (portables, class 50); +0 kind (4 pick up, 5 insert into, 8 use), +4 the HInfo marker
+  whose frame they are in (0x46DF20; -1 the instance), +0x10 shape (sphere / cylinder / cylinder + cone), +0x14 centre,
+  +0x20 radius, +0x24 height (cm x 3.1605), +0x28 / +0x2C cone heading / half angle (degrees, from +X), +0x6C -> u16
+  object ids / +0x70 count: holding a portable, a kind-5 record engages only if she holds one of those objects
+  (0x6F3BB0). Every receptacle in the game (survey of all objects): `ar_uo_phole_lever` (ar_pt_pole_a), `ca_pt_phole_lever`
+  (ca_pt_pole_a), `sa_pt_pole_hole_a` (sa_pt_pole_a), `ma_pt_pole_hole` (ma_pt_pole_a), `ca_pt_phole` (ca_pt_pole_b),
+  `sa_pt_phole_track` (sa_pt_pole_maproom), `ca_pt_keyhole_xibalba_exit` (ca_pt_key_xibalba_exit),
+  `ms_ani_eye_puzzle_piece` (ms_pt_seafloor_key_a), `ca_ani_traproom_seal_b` (the four room keys), `sa_pt_kalis_crown`
+  (sa_pt_gem_kali) — anim-graph receptacles — and, without a graph (their 0x165 handling is [U], not done):
+  `sa_uo_shivas_left/right_arms` (gems right / left), `ca_uo_calendar(_b)` (headdress, mask), `ca_rb_empty_throne`
+  (scepter weight), `ar_pu_cog_wheel_level_1a` (valgrind power gems), `ar_ani_statue_arms` (thor gear), `ar_ei_gemhole`
+  (arctic sea gems). `portable_key_preinsert` holders have a graph (0x40 out, 0x20 back) but no record: they only give.
+  Placed portables [O]: a portable's intro data starting with the instance reference 0x405 {u16 1, u16 uid} starts
+  inserted there (message 0x23 -> 0x6A6DC0 -> 0x165): l2_puzzleroom pole 2967 -> hole 2969, l2_maproom 2665 -> track
+  2664, l3_chapel 4823 -> 4824, l4_temple 5240 -> 5233, the gems and keys in their holders. The attach point is the
+  receptacle model's marker named by physical record +0x3C (query 0x173 -> 0x6B55D0); the level data's placed pairs lie
+  on it (pole 2967 within 7 units of hole 2969's marker 713.8 up).
+  Ours (`World::insertHeld`, `removeInserted`, `placePortables`, `tickInserted`): carrying, interact inserts into a
+  receptacle whose graph takes 0x20 now and whose kind-5 record (the script-chosen set, else all) needs what she holds,
+  when she is inside the record [I: sample points 220.6 / 315.4 / 410.2 above her feet, the standing proxy's cylinder]
+  or [I] the record's marker is within its radius (at least 450) and 0..1200 above her feet (the decoded heights miss
+  where she stands at l5 7189 / l4 6502; tru.exe's Lara query capsule is not decoded). Empty-handed, interact inside an
+  inserted portable's kind-4 record takes it out; loose portables are picked up inside that record too (else within
+  150 / 100). Inserted portables sit at the attach marker; poles (longest axis >= 3 x the others) become horizontal
+  poles; a receptacle whose script watches its joint slides down it under Lara hanging there (300 units/s to -600 [I]);
+  `multibody` 78 on it answers the slide mapped 0..-600 -> 0..40 degrees [I: tru.exe's second degree of freedom not
+  traced], so l4_ballcourt 6502 drives door 6505 to 80 degrees as its old hinge did.
+  Receptacles get their graph also without a `modifiable` member or a script (l4_temple holes 5230-5232) and start empty
+  when their start record is their insert target [I]; they have no use (l4_ballcourt lever 6502 now needs its pole).
+  Saved (objects `inserted`, `slides`, `placed`). Not done: an insert clip (none in lara.drm), the non-graph receptacles,
+  the lever's Havok slide numbers (no Wine measurement), l2_maproom's track slide.
 
 Test: `GameReal.LaraPlaysInteractionClips` (switch 4525: State::Use with `use:2605` at `useDistance` while the use
 event fires; block 6504: grab, push clip, Lara moves with the block, release).

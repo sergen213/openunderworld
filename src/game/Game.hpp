@@ -624,6 +624,9 @@ public:
     std::vector<glm::mat4> objectBones(int32_t uid) const;
     // Uber objects whose model-0 section was removed (action 28: broken urns, exploded barrels); drawn no more.
     std::set<int32_t> removedObjects() const;
+    int32_t heldPortable() const { return held_; } // the portable Lara carries, 0 none
+    // The receptacle portable `uid` is inserted in, 0 none (docs/GAMEPLAY.md "Inserting a portable").
+    int32_t insertedIn(int32_t uid) const { const auto it = inserted_.find(uid); return it == inserted_.end() ? 0 : it->second.receptacle; }
     // Model-space motion of uber object `uid`'s section `section` riding its simulated hinge / prismatic joint (each
     // section is an instance of its own model, 0x4D3DA0: the grapple handles' model 1), nullopt without one; `removed`
     // reports action 28 on that section.
@@ -869,9 +872,13 @@ private:
     void chunkPieces(std::vector<physics::Scene::Loose>& out);
     void startChunks(ai::Enemy& e); // a thrall that just broke: its pieces' poses and velocities (Objects.cpp)
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
-    bool insertHeld(script::Object& held); // into a receptacle in reach (Runtime::insertPortable); false: none
-    void tickInserted(float dt);           // inserted portables: the receptacle's slider, the pole's pose and hang markup
-    std::optional<vec3> receptacleHole(const script::Object& o); // its joint marker (kind 2) in the world, if any
+    bool insertHeld(script::Object& held); // into a receptacle Lara engages (Runtime::insertPortable); false: none
+    bool removeInserted();                 // empty-handed: an inserted portable she engages comes out, held (0x186)
+    void attachPortable(script::Object& portable, const script::Object& receptacle, int segment); // + its script reactions
+    void placePortables();                 // portables placed in receptacles (Object::placedIn) insert themselves
+    void tickInserted(float dt);           // inserted portables: the receptacle's slider, the portable's pose, pole markup
+    std::optional<glm::mat4> attachFrame(const script::Object& receptacle); // its attach marker in the world
+    bool engages(const script::Object& o, const physics::Engagement& e); // Lara inside the record's shape
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
@@ -954,11 +961,13 @@ private:
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
-    // Portables Lara inserted into receptacles (insertHeld), by portable uid: the receptacle, the horizontal direction
-    // the pole sticks out of its hole, the receptacle's slider position (joint value, <= 0), the pole's horizpole
-    // markup in col_ (-1: not added yet; rebuildCollision drops it).
-    struct Inserted { int32_t receptacle = 0; vec2 out{1, 0}; float slide = 0; int markup = -1; };
+    // Portables in receptacles (insertHeld / placePortables), by portable uid: the receptacle and a pole's horizpole
+    // markup in col_ (-1: none yet; rebuildCollision drops it). Receptacle sliders (joint value <= 0) by receptacle uid.
+    // Portables whose placement ran (a removed one stays out after a load).
+    struct Inserted { int32_t receptacle = 0; int markup = -1; };
     std::map<int32_t, Inserted> inserted_;
+    std::map<int32_t, float> slides_;
+    std::set<int32_t> placed_;
     std::map<int32_t, physics::Joint1> plates_; // pressure-plate joints by uid (stepPhysics): Jolt's x and v between steps
     void bindMultibody();
     void bindUber();

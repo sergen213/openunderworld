@@ -105,9 +105,6 @@ inline constexpr uint32_t kInstanceRefType = 51; // script id of native "instanc
 // (Enter 54 / Exit 55 are called natively, they call OnFirstIn/OnIn and OnOut). Plane cross and switch
 // use: [I] the slots almost every triggerplane / switch intro script overrides.
 inline constexpr int16_t kVtOnIn = 70, kVtOnOut = 71, kVtOnFirstIn = 72, kVtPlaneCross = 54, kVtSwitchUsed = 55;
-// Pole levers (`*phole_lever*`): their script polls the lever's own multibody joint and calls vt 54 whenever it
-// moved (l4_ballcourt 6502 fn 2 -> fn 3, which sets door 6505's joint limit) [O]; using one fires that slot [I].
-inline constexpr int16_t kVtLeverMoved = 54;
 
 // Intro unique ids a function dereferences: PUSHSA of an instanceref member, in bytecode order, including
 // the targets of non-virtual functions of the same type it calls (CALLn to one of their prototypes).
@@ -183,6 +180,9 @@ struct Object {
     bool hidden = false;    // instance.fn60 visibility; saved
     bool dead = false;      // instance.fn10 Kill: hidden, and its trigger no longer fires; saved
     int32_t engagement = -1; // instance.fn59 engagement-property selector; saved
+    // Portables placed in a receptacle (intro data: the first 0x405 instance reference, {u16 1, u16 uid}): tru.exe's
+    // message 0x23 hands it to 0x6A6DC0, which posts 0x165 (insert) to the portable with that instance; 0 = none.
+    int32_t placedIn = 0;
     // Spline mover (intro +0x68; tru.exe 0x5BA280 setup, 0x5CF260 per-frame update, `spline` natives 0x4AA8B0..):
     // the path moves the object (`body`), so its collision carries Lara like any moved dynamic.
     struct Spline {
@@ -394,10 +394,19 @@ public:
     bool grapplePulled(int32_t uid);
     // Lara inserts the portable she carries into a receptacle (her chart action 0x4D posts INSTANCE message 0x165 to the
     // portable, 0x716F30): the portable's anim graph takes the insert stimulus (0x6B5890: message 0x33, mask 0x20,
-    // any), then it posts 0x165 to the receptacle, whose graph takes it too (0x6C2530). l5_valaskjalf_entryb pole-hole
-    // lever 7189: transition 1 -> state 0, vt 19(1) "It's the insert reaction", vt 20(0) watches its slider joint.
-    // True when the receptacle's graph started a transition.
-    bool insertPortable(int32_t portable, int32_t receptacle);
+    // any), then it posts 0x165 to the receptacle (0x6C2530), which calls its script's instance prototype 67 (vt 49,
+    // 0x799900) with (the segment of Lara's engagement record, 5) and posts 0x20 to its own graph. l5_valaskjalf_entryb
+    // pole-hole lever 7189: transition 1 -> state 0, vt 19(1) "It's the insert reaction", vt 20(0) watches its slider;
+    // l4_traprooms seal 5701's vt 49 tells the four keys apart by segment (11 dark .. 14 crusher). `segment` -1: no
+    // engagement (a portable placed in its receptacle at load). True when the receptacle's graph started a transition.
+    bool insertPortable(int32_t portable, int32_t receptacle, int32_t segment = -1);
+    // Removal (Lara's chart action 0x50 posts INSTANCE message 0x186 to her engaged portable, 0x6B5890): the portable
+    // posts 0x186 to its receptacle (0x6C2530: vt 49(segment, 5), graph stimulus 0x40), takes the removal stimulus 0x40
+    // itself and is carried (as the pick-up 0x17B: 0x6A6A20, 0x69AA50(1)).
+    bool removePortable(int32_t portable, int32_t receptacle, int32_t segment = -1);
+    // Receptacles: objects whose anim graph takes the insert stimulus 0x20; null otherwise.
+    std::shared_ptr<const Object::GraphSet> receptacleGraph(const std::string& name);
+    const std::string* objectName(uint16_t id) const { const auto n = objectNames_.find(id); return n == objectNames_.end() ? nullptr : &n->second; }
     // `uid`'s anim graph has a transition on `mask` out of its current state and none is running.
     bool graphAccepts(int32_t uid, uint32_t mask) const;
     void tick(const TickInput& in, const collision::CollisionMesh* col = nullptr);
