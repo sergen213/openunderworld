@@ -308,19 +308,45 @@ struct LaraMeshes {
 };
 
 // Scripted objects (src/script): animated switches/doors and moved blocks, re-posed on the CPU in model space.
-// Their level-scene meshes are tagged " @intro <unique id>" (formats::loadLevelScene).
+// Their level-scene meshes are tagged " @intro <unique id>" (formats::loadLevelScene); an uber section drawn with a
+// model of its own adds " @section <index>" and rides its joint (World::uberSectionBody).
 struct ScriptedMeshes {
     std::map<int32_t, std::vector<size_t>> meshes; // intro unique id -> scene mesh indices
     std::map<int32_t, std::vector<glm::mat4>> posed; // uploaded with a non-bind pose: that palette
     std::set<int32_t> hidden;                      // collected pickups, uploaded collapsed to a point
+    std::map<std::pair<int32_t, int32_t>, std::vector<size_t>> sections; // (uid, section) -> scene mesh indices
+    std::map<std::pair<int32_t, int32_t>, glm::mat4> sectionPosed;       // uploaded off the bind pose: that motion
     std::vector<std::pair<int32_t, float>> faded;  // scratch: fx::System::fadedOwners
     std::vector<ou::scene::Vertex> scratch;
 
     void index(const ou::scene::SceneData& s) {
-        meshes.clear(), posed.clear(), hidden.clear();
+        meshes.clear(), posed.clear(), hidden.clear(), sections.clear(), sectionPosed.clear();
         for (size_t i = 0; i < s.meshes.size(); ++i)
-            if (const auto at = s.meshes[i].origin.rfind(" @intro "); at != std::string::npos)
-                meshes[std::atoi(s.meshes[i].origin.c_str() + at + 8)].push_back(i);
+            if (const auto at = s.meshes[i].origin.rfind(" @intro "); at != std::string::npos) {
+                const int32_t uid = std::atoi(s.meshes[i].origin.c_str() + at + 8);
+                if (const auto sec = s.meshes[i].origin.find(" @section ", at); sec != std::string::npos)
+                    sections[{uid, std::atoi(s.meshes[i].origin.c_str() + sec + 10)}].push_back(i);
+                else
+                    meshes[uid].push_back(i);
+            }
+    }
+    // Sections follow their joint; a removed section (action 28) or a hidden object collapses to a point.
+    void poseSections(const ou::game::World& w, const ou::scene::SceneData& s, ou::render::Renderer& r) {
+        for (const auto& [key, indices] : sections) {
+            bool removed = false;
+            const auto body = w.uberSectionBody(key.first, key.second, &removed);
+            const bool gone = removed || hidden.contains(key.first);
+            const glm::mat4 m = gone ? glm::mat4(0.0f) : body.value_or(glm::mat4(1.0f));
+            const auto it = sectionPosed.find(key);
+            if (it != sectionPosed.end() ? it->second == m : m == glm::mat4(1.0f)) continue;
+            for (const size_t i : indices) {
+                ou::anim::skinVertices(s.meshes[i], {}, scratch, gone ? glm::mat4(1.0f) : m);
+                if (gone && !scratch.empty())
+                    for (auto& v : scratch) std::copy_n(scratch[0].position, 3, v.position);
+                r.updateVertices(i, scratch);
+            }
+            sectionPosed[key] = m;
+        }
     }
     // Picked-up rewards vanish once their instance fade (class 7, their "pickup" list) is done: their meshes degenerate
     // to one point (no scene rebuild) and their effects end with the instance.
@@ -3108,6 +3134,7 @@ int main(int argc, char** argv) {
         gadgets.pose(*world, streamed, scene, *renderer);
         objects.hide(world->collected, scene, *renderer, effects.system);
         objects.hide(world->removedObjects(), scene, *renderer, effects.system); // broken urns, exploded barrels
+        objects.poseSections(*world, scene, *renderer); // uber sections on their joints (grapple handles)
         ou::render::Camera cam;
         cam.verticalFovDeg = c.fovDeg > 0 ? c.fovDeg : world->fovDeg; // spline cameras have their own
         cam.nearZ = 5.0f;

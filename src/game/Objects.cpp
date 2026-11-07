@@ -164,6 +164,7 @@ const formats::UberObjectData* World::prepareUber(const script::Object& o) {
                 if (sec.state >= 0) uberStates_[o.uid][i] = uint32_t(sec.state);
             }
             rt.fired = j.at("fired"), rt.commanded = j.at("commanded"), rt.intangible = j.value("intangible", false);
+            rt.grappleOff = j.value("grappleOff", false);
             if (const auto m = uberMotion_.find(o.uid); m != uberMotion_.end() && j.contains("motion"))
                 m->second.t = j["motion"].at(0), m->second.active = j["motion"].at(1);
             for (const auto& e : j.value("joints", nlohmann::json::array())) // state: x, v, limit, motor
@@ -194,7 +195,7 @@ nlohmann::json World::serializeObjects() const {
         nlohmann::json sections = nlohmann::json::array();
         for (const auto& s : rt.sections) sections.push_back({s.state, s.transition, s.time, s.length, s.health, s.removed});
         nlohmann::json& e = uber[std::to_string(uid)] = {{"sections", std::move(sections)}, {"fired", rt.fired}, {"commanded", rt.commanded},
-                                                         {"intangible", rt.intangible}};
+                                                         {"intangible", rt.intangible}, {"grappleOff", rt.grappleOff}};
         if (const auto m = uberMotion_.find(uid); m != uberMotion_.end()) e["motion"] = {m->second.t, m->second.active};
         nlohmann::json joints = nlohmann::json::array(), watches = nlohmann::json::array();
         for (const auto& [index, jt] : rt.joints)
@@ -222,6 +223,7 @@ void World::restoreObjects(const nlohmann::json& j) {
                         !sec[2].is_number() || !sec[3].is_number() || (sec.size() >= 6 && (!sec[4].is_number() || !sec[5].is_boolean())))
                         throw std::runtime_error("bad uber section of " + key);
                 (void)e.at("fired").get<uint64_t>(), (void)e.at("commanded").get<bool>(), (void)e.value("intangible", false);
+                (void)e.value("grappleOff", false);
                 if (e.contains("motion")) (void)e["motion"].at(0).get<float>(), (void)e["motion"].at(1).get<bool>();
                 for (const auto& jt : e.value("joints", nlohmann::json::array())) {
                     (void)jt.at(0).get<int32_t>();
@@ -342,6 +344,11 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
     case 5: // instance +0x18 |= 0x20000000: collision callbacks skip it (0x48D590, 0x697970) [O]; ours drops its collider
         rt.intangible = true, syncedObjects_ = ~size_t(0);
         break;
+    case 0x19: // instance +0x1C &= ~2 (0x4D86A0): a grapple target again
+    case 0x1A: // instance +0x1C |= 2: 0x6ECCA0 (the grapple target filter of 0x7131A0) refuses it [O]. The grapple handles'
+               // volumes switch them: l2_towerconnector 2038 entered -> 2042 command 1 -> state 1 (0x1A), left -> state 2
+        rt.grappleOff = a.type == 0x1A;
+        break;
     case 28: // 0x6D5D90 -> 0x6D54F0: the section's removal record (all in the data: one fade-out over 0 s) runs, then the
              // instance goes (0x6D5E20 -> 0x4D6480). ponytail: removed at once; record entries of type 1 (a clip first) and
              // fade times > 0 do not occur.
@@ -409,14 +416,35 @@ int32_t World::uberModelJoint(int32_t uid) const {
     return -1;
 }
 
-// World motion of model 0 riding its joint (tomb doors, levers, pushed towers): the translation along / rotation
-// about the joint axis.
+namespace {
+// World motion of a body riding simulated joint `j`: the translation along / rotation about its axis.
+glm::mat4 jointMotion(const physics::Joint1& j) {
+    if (!j.hinge) return glm::translate(glm::mat4(1), j.axis * j.x);
+    return glm::translate(glm::mat4(1), j.pivot) * glm::mat4_cast(glm::angleAxis(j.x, j.axis)) * glm::translate(glm::mat4(1), -j.pivot);
+}
+} // namespace
+
+// World motion of model 0 riding its joint (tomb doors, levers, pushed towers).
 std::optional<glm::mat4> World::uberJointPose(int32_t uid) const {
     const int32_t index = uberModelJoint(uid);
     if (index < 0) return std::nullopt;
-    const auto& j = uberRuntime_.at(uid).joints.at(index);
-    if (!j.hinge) return glm::translate(glm::mat4(1), j.axis * j.x);
-    return glm::translate(glm::mat4(1), j.pivot) * glm::mat4_cast(glm::angleAxis(j.x, j.axis)) * glm::translate(glm::mat4(1), -j.pivot);
+    return jointMotion(uberRuntime_.at(uid).joints.at(index));
+}
+
+// [I] A joint whose other body is a moving section (ms_rb_grapple_snake_head joint 2) is posed as if that body stood.
+std::optional<glm::mat4> World::uberSectionBody(int32_t uid, int32_t section, bool* removed) const {
+    const auto rt = uberRuntime_.find(uid);
+    const auto data = uberData_.find(uid);
+    const auto* o = script_.find(uid);
+    if (removed) *removed = rt != uberRuntime_.end() && section >= 0 && size_t(section) < rt->second.sections.size() &&
+                            rt->second.sections[size_t(section)].removed;
+    if (!o || rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return std::nullopt;
+    for (const auto& [index, j] : rt->second.joints)
+        if (data->second->joints[size_t(index)].bodyB == section) {
+            const glm::mat4 intro = introModel(*o);
+            return glm::inverse(intro) * jointMotion(j) * intro;
+        }
+    return std::nullopt;
 }
 
 // Lara's side of a switch (docs/GAMEPLAY.md "Interactions"). [O] The switch's DRM carries her clip (Object::laraClip,
@@ -1209,6 +1237,27 @@ void World::stepPhysics(float dt) {
     }
     physics_.setPlates(plateBodies, weights);
     for (auto& [uid, j] : plates_) joints.push_back({key(uid, -2), &j}); // by uid: a fixed constraint order
+    // Lara on the rope of a grapple handle (an anchor, not a pull target): the rope pulls its swivelling section toward
+    // her by her weight, so the handle hanging at its limit under gravity (tru.exe under Wine: l2 handles 49-52 degrees
+    // down at rest) turns to the rope within its limits. [I] the force (her 55 kg along the rope's first segment, at
+    // the section's centre of mass) and the damping; tru.exe's Havok rope constraint is not decoded.
+    if (const auto& s = player_.state(); s.grappleUid && s.grappleKind != GrappleKind::Mounted)
+        if (const auto rt = uberRuntime_.find(s.grappleUid); rt != uberRuntime_.end()) {
+            const vec3 toward = s.ropeBends ? s.ropeBend[0] : s.pos + vec3(0, 0, 400.0f); // the hand, as Grapple.cpp kHandZ
+            const vec3 rope = toward - s.grappleAnchor;
+            const float frames = dt * 30.0f;
+            if (glm::length(rope) > 1.0f)
+                for (auto& [index, j] : rt->second.joints) {
+                    const vec3 f = glm::normalize(rope) * (kLaraMass * physics::kJointGravity); // mass * units / frame^2
+                    if (j.hinge && j.inertia > 0) {
+                        const vec3 arm = glm::angleAxis(j.x, j.axis) * j.arm;
+                        j.v += glm::dot(glm::cross(arm, f), j.axis) / j.inertia * frames;
+                    } else if (!j.hinge && j.mass > 0) {
+                        j.v += glm::dot(f, j.axis) / j.mass * frames;
+                    }
+                    j.v *= std::exp(-6.0f * dt);
+                }
+        }
     physics_.setJoints(std::move(joints), std::move(links));
     // A body the grapple pulled loose that still rides its uber joint (l1 snake head 751 on its rail, held by a
     // counterweight link): the pull drags its watched prismatic joints downhill at the braced pull speed while they are

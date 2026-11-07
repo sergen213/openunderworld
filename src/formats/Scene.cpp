@@ -2,6 +2,7 @@
 
 #include "anim/Anim.hpp"
 #include "formats/Shader.hpp"
+#include "formats/Uber.hpp"
 
 #include <algorithm>
 #include <array>
@@ -245,7 +246,11 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
     if (!listBytes) sc.warnings.push_back("\\tr8\\pc-w\\objectlist.txt not in bigfile: intros not placed");
     const auto objectNames = listBytes ? parseObjectList({reinterpret_cast<const char*>(listBytes->data()), listBytes->size()})
                                        : std::map<uint16_t, std::string>{};
-    struct ObjectMeshes { std::string name; std::vector<scene::MeshData> meshes; size_t intros = 0; std::string problem; bool hidden = false; };
+    // sections: uber sections drawn with a model of their own (below), by section index
+    struct ObjectMeshes {
+        std::string name; std::vector<scene::MeshData> meshes; size_t intros = 0; std::string problem; bool hidden = false;
+        std::vector<std::pair<uint32_t, std::vector<scene::MeshData>>> sections;
+    };
     std::map<uint16_t, ObjectMeshes> objects;
     for (const auto& in : u.intros) {
         if (!listBytes || in.objectId == kMarkerObjectId) continue;
@@ -269,11 +274,26 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
                         o.hidden = true; // trigger/sound volumes, camera anchors, dispatchers, fx_* effect proxies, ...
                     } else {
                         uint32_t model = 0;
-                        for (const uint32_t id : objectRenderModels(*d))
+                        const auto ids = objectRenderModels(*d);
+                        for (const uint32_t id : ids)
                             if ((model = id)) break;
                         auto decoded = decodeRenderResources(*d, sc.warnings, path);
-                        if (model && !decoded[model].empty()) o.meshes = std::move(decoded[model]);
+                        if (model && !decoded[model].empty()) o.meshes = decoded[model];
                         else o.problem = model ? "model has no drawable batches" : "object has no render model";
+                        // Each uber section is an instance of its own model (0x4D3DA0; tru.exe under Wine: three
+                        // instances per l2 grapple handle). Sections riding a hinge / prismatic joint of the data draw
+                        // their model too, tagged " @section <index>" (ou-game poses them by World::uberSectionBody):
+                        // the grapple handles' model 1. [U] other sections with a model of their own (not drawn).
+                        std::optional<UberObjectData> uber;
+                        try { uber = loadUberObject(*d); } catch (const cdc::FormatError&) {}
+                        for (uint32_t k = 0; uber && k < uber->sections.size(); ++k) {
+                            const uint32_t m = uber->sections[k].model;
+                            const bool jointed = std::ranges::any_of(uber->joints, [&](const UberJoint& j) {
+                                return (j.type == 0 || j.type == 2) && j.bodyB == int32_t(k);
+                            });
+                            if (jointed && m < ids.size() && ids[m] && ids[m] != model && !decoded[ids[m]].empty())
+                                o.sections.push_back({k, decoded[ids[m]]});
+                        }
                     }
                 } catch (const cdc::FormatError& e) {
                     o.problem = path + ": " + e.what();
@@ -283,7 +303,9 @@ scene::SceneData loadLevelScene(const cdc::BigfileSet& bigfile, std::string_view
         if (o.hidden) continue;
         float m[16];
         introMatrix(in, m);
-        place(sc, o.meshes, m, std::string(dormant(in) ? " @dormant" : "") + " @intro " + std::to_string(in.uniqueId));
+        const std::string tag = std::string(dormant(in) ? " @dormant" : "") + " @intro " + std::to_string(in.uniqueId);
+        place(sc, o.meshes, m, tag);
+        for (const auto& [k, meshes] : o.sections) place(sc, meshes, m, tag + " @section " + std::to_string(k));
     }
     for (const auto& [id, o] : objects)
         if (!o.problem.empty())
