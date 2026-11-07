@@ -157,9 +157,12 @@ bool topClear(const collision::CollisionMesh& col, const collision::Markup& m, v
 // toward the jump) and ladder_jump_back (a half turn). q22 (lara.drm query table): 47.41 that way + 60.05 up a 30 Hz
 // frame, gravity 5.72443, frames 1..40 (object +0xBDE). At the end of the take-off, S289 flies her onto what the query met
 // by its markup class (ledge, ladder 611, balance beam 625, ...), else the free leap at q22's launch [O-data]. Ours: the
-// first ledge (ledgeOnArc), ladder or beam the root's arc meets [I: the ladder / beam reaches below].
+// first ledge (ledgeOnArc: q22 starts at the attach point 568.9 down and 63.21 out, its ledge target type 3 at the
+// attach point's height (+0x8C); taken as her root and 568.9 over it [I]), ladder or beam the root's arc meets [I: the
+// ladder / beam reaches below].
 constexpr float kLeapFrames = 40.0f;
 constexpr float kLadderCatch = 220.0f; // the root within this of a rung's (tryLadder's air reach) [I]
+constexpr float kLadderHands = 568.9f; // q22 / q23: the attach point over the query's start for q22 [O-data, I: root]
 constexpr float kBeamCatch = 252.84f;  // lara.drm's balance-beam markup record +0x58 (its use as a reach is [I])
 // Leaning to the side (S1083 left / S1082 right, entered on the stick's quadrant from the ladder idle S1084): their move
 // queries q91 / q90 (lara.drm: from the hand, bones 53 / 78, 15.80 a 30 Hz frame sideways for frames 1..10, beyond 158
@@ -175,8 +178,11 @@ constexpr float kG = 5.72443f;
 } // namespace
 
 Player::JumpTarget Player::ladderJumpTarget(vec3 from, vec3 v, vec2 dir) const {
-    JumpTarget best = ledgeOnArc(from, v, kLeapFrames, dir);
-    if (best.markup < 0) best.frames = 1e9f;
+    JumpQuery q;
+    q.start = from, q.root = from, q.hang = from + vec3(0, 0, kLadderHands), q.v = v, q.dir = dir, q.cone = glm::radians(90.0f);
+    const JumpTarget ledge = ledgeOnArc(q);
+    JumpTarget best;
+    best.frames = 1e9f;
     const auto arc = [&](float f) { return from + v * f - vec3(0, 0, 0.5f * kG * f * f); };
     for (size_t i = 0; i < col_.markup.size(); ++i) {
         const auto& m = col_.markup[i];
@@ -210,6 +216,11 @@ Player::JumpTarget Player::ladderJumpTarget(vec3 from, vec3 v, vec2 dir) const {
             }
         }
     }
+    // A beam the leap lands on wins over a ledge met on the way (beams are flanked by ledges: l7_arctic_sea beam 2042
+    // lies between ledges 2065 / 2066, 47 to each side, which the ledge capsule meets first) [I: tru.exe keeps its hit
+    // list's first, the list order is not traced]; ladders and ledges by the frame met.
+    const bool beam = best.frames < 1e9f && col_.markup[size_t(best.markup)].type == 14;
+    if (!beam && ledge.markup >= 0 && ledge.frames < best.frames) best = ledge;
     if (best.frames >= 1e9f) best = {};
     return best;
 }
@@ -337,7 +348,12 @@ void Player::ladder(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
             start("ladder_jump_up_at_top", to, s_.yaw);
             return;
         }
-        const JumpTarget j = ledgeOnArc(s_.pos, vec3(0, 0, kLadderJumpVz), 40.0f, xy(-out));
+        // q23: from 63.21 over the attach point (+0x58), its ledge target type 3 at it, coming down only (+0x2C bit
+        // 0x80), from frame 0 (+0x20) [O-data]
+        JumpQuery q;
+        q.start = s_.pos + vec3(0, 0, kLadderHands + 63.21f), q.root = q.start, q.hang = s_.pos + vec3(0, 0, kLadderHands);
+        q.v = vec3(0, 0, kLadderJumpVz), q.dir = xy(-out), q.cone = glm::radians(90.0f), q.falling = true, q.minT = 0;
+        const JumpTarget j = ledgeOnArc(q);
         s_.fallStartZ = s_.pos.z;
         play("ladder_jump_up", false);
         if (j.markup >= 0) {

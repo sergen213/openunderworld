@@ -368,14 +368,28 @@ private:
     struct JumpTarget { int markup = -1, seg = 0; float t = 0, side = 1, frames = 0; };
     JumpTarget hangJumpTarget(int kind) const; // startHangJump's target; markup -1 = none
     bool startHangJump(int kind); // 0 up, 1 right, -1 left, 2 back (ledge)
-    // The first ledge whose hang root a jump query's arc meets: root launched from `from` at `v` a 30 Hz frame under
-    // gravity 5.72443 a frame^2, frames 1..`frames`, Lara facing `facing` into the ledge's wall (Player.cpp).
-    JumpTarget ledgeOnArc(vec3 from, vec3 v, float frames, vec2 facing) const;
+    // A jump query's arc (lara.drm query table; tru.exe 0x771830 builds it, 0x70F300 / 0x70EC60 test it, Player.cpp):
+    // `start` = the query's base point + its up (+0x58) / out (+0x5C) offsets, `hang` / `root` = the arc starts for
+    // ledge target types 3 / 1 (its +0x8C entries; the start where it has none), `v` a 30 Hz frame under gravity 5.72443,
+    // frames minT..frames, `dir` its heading (capsule offset, cone axis), `cone` +0x24, `falling` +0x2C bit 0x80.
+    struct JumpQuery {
+        vec3 start{0}, hang{0}, root{0}, v{0};
+        vec2 dir{0, 1};
+        float frames = 40, minT = 1, cone = 3.1415927f;
+        bool falling = false;
+        float minZ = -1e9f; // ours: ledge points under this do not count
+    };
+    // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc.
+    JumpTarget ledgeOnArc(const JumpQuery& q) const;
+    // A standing jump at a ledge above the obstacle range in front of her: the straight leap onto its hang (Player.cpp)
+    bool standJumpToLedge();
     // HangJump velocity / flight time from here onto the target (after the take-off clip); vz: the take-off vertical
     // speed (units/s; 0 = the hang jump's by its clip)
     void launchHangJump(float vz = 0);
     void assistJump();
-    bool aimGroundJump(vec2 query); // ground jump query (forward, up a 30 Hz frame) meeting a ledge: aim at its hang
+    // ground jump query (forward, up a 30 Hz frame; start `up` over the root, +0x2C bit 0x80, cone in radians) meeting a
+    // ledge: aim at its hang
+    bool aimGroundJump(vec2 query, float up, bool falling, float cone);
     void placeOnLedge(); // ledge (type 1) or pole (4, 6) attachment from ledge/ledgeSeg/ledgeT/ledgeSide
     // Ledge corners (a polyline joint turning more than 45 degrees): shimmying onto one plays ledgeb_<concave|convex>_
     // right_phase1 into the corner pose (left: mirrored), its idle and leans there, _phase2 round onto the next segment.
