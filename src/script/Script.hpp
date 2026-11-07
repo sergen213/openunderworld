@@ -386,6 +386,14 @@ public:
     // the naga statue 56/57, the snake head 57) [O]; which slot the exe calls on a pull is [I]: the first overridden
     // void one that does more than return runs, as its own thread. False if none ran to completion.
     bool grapplePulled(int32_t uid);
+    // Lara inserts the portable she carries into a receptacle (her chart action 0x4D posts INSTANCE message 0x165 to the
+    // portable, 0x716F30): the portable's anim graph takes the insert stimulus (0x6B5890: message 0x33, mask 0x20,
+    // any), then it posts 0x165 to the receptacle, whose graph takes it too (0x6C2530). l5_valaskjalf_entryb pole-hole
+    // lever 7189: transition 1 -> state 0, vt 19(1) "It's the insert reaction", vt 20(0) watches its slider joint.
+    // True when the receptacle's graph started a transition.
+    bool insertPortable(int32_t portable, int32_t receptacle);
+    // `uid`'s anim graph has a transition on `mask` out of its current state and none is running.
+    bool graphAccepts(int32_t uid, uint32_t mask) const;
     void tick(const TickInput& in, const collision::CollisionMesh* col = nullptr);
     // Runs `uid`'s override of vtable slot `vt` (no arguments) at the start of the next tick, as an engine callback
     // would: the gate tests call handlers no data path of ours reaches yet.
@@ -496,7 +504,8 @@ private:
     void switchUsed(Object& o);
     uint32_t graphSeed_ = 0; // tru.exe DAT_00A038E0 (0x48CA30), drawn among several eligible transitions; saved
     void tickGraph(int32_t uid);
-    std::shared_ptr<const Object::GraphSet> graphSet(const std::string& name);
+    // `graphOnly`: also an object without a skeleton (its graph, no clips; cached apart).
+    std::shared_ptr<const Object::GraphSet> graphSet(const std::string& name, bool graphOnly = false);
     std::map<std::string, std::shared_ptr<const Object::GraphSet>> graphSets_; // object name -> graph + clips
     uint32_t objectFlags(const std::string& name); // ObjectBase oflags of an object DRM, read once per name
     std::map<std::string, uint32_t> objectFlags_;

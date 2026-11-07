@@ -206,12 +206,16 @@ nlohmann::json World::serializeObjects() const {
     // The physics scene (src/physics Scene::save, hex): a load continues the simulation bit for bit. Older saves lack it.
     std::string physics;
     for (const unsigned char c : physics_.save()) physics += "0123456789abcdef"[c >> 4], physics += "0123456789abcdef"[c & 15];
-    return {{"uber", std::move(uber)}, {"held", held_}, {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
+    nlohmann::json inserted = nlohmann::json::array();
+    for (const auto& [uid, in] : inserted_) inserted.push_back({uid, in.receptacle, in.out.x, in.out.y, in.slide});
+    return {{"uber", std::move(uber)}, {"held", held_}, {"inserted", std::move(inserted)},
+            {"physics", {{"version", 1}, {"state", std::move(physics)}}}};
 }
 
 void World::restoreObjects(const nlohmann::json& j) {
     std::map<int32_t, nlohmann::json> saved;
     int32_t held = 0;
+    std::map<int32_t, Inserted> inserted;
     std::string physicsState;
     if (j.is_object()) {
         try {
@@ -238,6 +242,8 @@ void World::restoreObjects(const nlohmann::json& j) {
                 saved[std::stoi(key)] = e;
             }
             held = j.value("held", 0);
+            for (const auto& e : j.value("inserted", nlohmann::json::array())) // older saves: none
+                inserted[e.at(0).get<int32_t>()] = {e.at(1).get<int32_t>(), {e.at(2).get<float>(), e.at(3).get<float>()}, e.at(4).get<float>()};
             if (const auto p = j.find("physics"); p != j.end() && p->value("version", 0) == 1) {
                 const std::string hex = p->at("state").get<std::string>();
                 if (hex.size() % 2) throw std::runtime_error("odd physics state");
@@ -257,6 +263,7 @@ void World::restoreObjects(const nlohmann::json& j) {
     uberData_.clear(), uberRuntime_.clear(), uberStates_.clear(), uberMotion_.clear(), uberEvents_.clear(), plates_.clear();
     uberSaved_ = std::move(saved);
     held_ = held;
+    inserted_ = std::move(inserted);
     // The saved scene's IDs and recorded state (applied once its bodies exist again); older saves: loose bodies start
     // again from their saved offset and rotation.
     if (physicsState.empty() || !physics_.restore(physicsState)) physics_.setLoose({});
@@ -999,6 +1006,23 @@ void World::bindMultibody() {
             (o->joint ? *o->joint : o->joint.emplace(script::Object::Joint{})).speed = std::bit_cast<float>(args[2].bits);
             return true;
         }
+        // 75 (0x4A9AB0 -> 0x4D9F50): limit `args[1]` (1..3) of joint `args[0]` on / off (joint +0x174 bit 2 << (limit - 1);
+        // 0x4E7550 tests only within the joint's [lo, hi] while it is set). Ours have one degree of freedom: limit 1 off
+        // frees the hinge (+-pi) and lets a motor run past the joint limit. l5_valaskjalf hpoles 6984 take it off when the
+        // jammed gear 6985 turns (vt 54). Limits 2 / 3 index degrees of freedom ours lack [I: no effect].
+        if (function == 75 && args.size() == 3) {
+            if (args[1].bits - 1u >= 3u) return true; // "Limit index out of range"
+            if (args[0].bits != 0 || args[1].bits != 1) return true;
+            const bool on = (args[2].bits & 0xFF) != 0;
+            if (on) multibodyLimitOff_.erase(uid);
+            else multibodyLimitOff_.insert(uid);
+            if (index >= 0) {
+                const auto lo = multibodyLo_.find(uid), hi = multibodyHi_.find(uid);
+                physics_.hinges[index].lo = on ? (lo != multibodyLo_.end() ? lo->second : 0.0f) : -glm::pi<float>();
+                physics_.hinges[index].hi = on ? (hi != multibodyHi_.end() ? hi->second : kDoorOpen + 0.02f) : glm::pi<float>();
+            }
+            return true;
+        }
         if (function != 77 && function != 78 && function != 79) return false;
         if (args.empty() || args[0].bits != 0) return false; // one hinge per current rigid-body object
         if (function == 77) {
@@ -1050,7 +1074,9 @@ void World::syncObjects() {
         const glm::mat4 intro = introModel(o);
         int hinge = -1;
         // [I] Rigid doors (class 34) and joint levers (class 6) swing about the X axis of their first model marker.
-        if ((o.kind == script::Kind::Door || o.kind == script::Kind::Switch) && !o.clips &&
+        // A receptacle holding an inserted portable slides on its joint instead (tickInserted).
+        const bool holding = std::ranges::any_of(inserted_, [&](const auto& e) { return e.second.receptacle == o.uid; });
+        if ((o.kind == script::Kind::Door || o.kind == script::Kind::Switch) && !o.clips && !holding &&
             (o.kind == script::Kind::Switch || p.physClass == physics::kClassRigidBody) && !p.markers.empty()) {
             if (const auto mp = physics::massProps(p); mp.mass > 0) {
                 const auto& m = p.markers[0];
@@ -1059,6 +1085,7 @@ void World::syncObjects() {
                 hinge = physics_.addHinge(physics_.addBody(mp, intro), m.pos, r * glm::vec3(1, 0, 0), 0, kDoorOpen + 0.02f);
                 if (const auto lo = multibodyLo_.find(o.uid); lo != multibodyLo_.end()) physics_.hinges[hinge].lo = lo->second;
                 if (const auto hi = multibodyHi_.find(o.uid); hi != multibodyHi_.end()) physics_.hinges[hinge].hi = hi->second;
+                if (multibodyLimitOff_.contains(o.uid)) physics_.hinges[hinge].lo = -glm::pi<float>(), physics_.hinges[hinge].hi = glm::pi<float>();
                 physics_.hinges[hinge].maxTorque = 1e11f; // [I] a motor that always wins against gravity
                 if (const auto a = angles.find(o.uid); a != angles.end()) physics_.setAngle(hinge, a->second);
             }
@@ -1088,6 +1115,7 @@ void World::tickObjects(float dt) {
     const auto ground = col_.groundProbe(feet + vec3(0, 0, 20), 60);
     const int under = ground && player_.state().state != State::Block ? ground->dynamic : -1;
     const glm::mat4 before = under >= 0 ? col_.dynamics[under].transform : glm::mat4(1);
+    tickInserted(dt);
     tickJoints(dt);
     for (size_t i = 0; i < colliders_.size(); ++i) {
         const auto& c = colliders_[i];
@@ -1124,6 +1152,7 @@ void World::carryPortables(bool pressed) {
     const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
     auto* held = held_ ? const_cast<script::Object*>(script_.find(held_)) : nullptr; // World owns object motion
     if (held_ && !held) held_ = 0;
+    if (held && pressed && insertHeld(*held)) return;
     if (held && pressed) {
         // Its collision's base 40 units above her feet (as carried, the base may sit lower than its origin), clear of
         // her proxy capsule (a set-down inside it was shoved away and rolled off a plate): it falls from there onto what
@@ -1153,6 +1182,97 @@ void World::carryPortables(bool pressed) {
             const_cast<script::Object&>(o).loose = false;
             return;
         }
+    }
+}
+
+// Receptacle holes: the object's joint marker (ObjectPhysics marker kind 2; the pole-hole levers' cylindrical joint, its
+// slider axis the marker's Z) as the object stands now (intro x body).
+std::optional<vec3> World::receptacleHole(const script::Object& o) {
+    const auto* p = objectPhysics(o.name);
+    if (!p) return std::nullopt;
+    const auto m = std::ranges::find(p->markers, 2u, &physics::Marker::kind);
+    if (m == p->markers.end()) return std::nullopt;
+    return vec3(glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body * glm::vec4(m->pos, 1));
+}
+
+// Lara carrying a portable inserts it with interact (tru.exe: her chart's action 0x4D, 0x716F30, posts INSTANCE message
+// 0x165 with her engaged object to the portable she holds) into a receptacle: an object whose anim graph takes the insert
+// stimulus from its state (Runtime::graphAccepts / insertPortable). [I] The engagement: standing still, the hole within
+// kInsertReach horizontally and kInsertLow..kInsertHigh above her feet (l5_valaskjalf_entryb lever 7189: its hole 1169
+// over the floor; its engagement record, a cylinder in its segment 10 frame, is not decoded [U]), no insert clip. The
+// pole then sticks out of the receptacle's face (0x6B55D0 places it by the receptacle's 0x173 data [U]).
+bool World::insertHeld(script::Object& held) {
+    constexpr float kInsertReach = 450.0f, kInsertLow = 0.0f, kInsertHigh = 1200.0f;
+    const auto& s = player_.state();
+    if (s.state != State::Idle) return false;
+    for (const auto& o : script_.objects()) {
+        if (o.uid == held.uid || !script_.graphAccepts(o.uid, formats::kStimulusInsert)) continue;
+        const auto hole = receptacleHole(o);
+        if (!hole) continue;
+        const vec3 d = *hole - s.pos;
+        if (glm::length(vec2(d)) > kInsertReach || d.z < kInsertLow || d.z > kInsertHigh) continue;
+        // Out of the receptacle's face: its local X axis, on the side its hole marker sits (7189: +30.9), else Lara's.
+        const vec2 face = vec2(introModel(o) * glm::vec4(1, 0, 0, 0));
+        const auto* p = objectPhysics(o.name);
+        const float side = std::ranges::find(p->markers, 2u, &physics::Marker::kind)->pos.x;
+        Inserted in;
+        in.receptacle = o.uid;
+        in.out = glm::normalize(std::abs(side) > 1.0f ? (side > 0 ? face : -face) : glm::dot(face, vec2(s.pos - *hole)) >= 0 ? face : -face);
+        const int32_t portable = held.uid;
+        held.loose = false, held.offset = vec3(0);
+        held_ = 0;
+        inserted_[portable] = in;
+        syncedObjects_ = ~size_t(0); // the receptacle leaves its hinge (syncObjects)
+        script_.insertPortable(portable, in.receptacle);
+        return true;
+    }
+    return false;
+}
+
+// An inserted portable rides its receptacle: [I] Lara hanging on the pole (State::PoleHang on its horizpole markup) weighs
+// the receptacle's slider down its joint (the Havok cylindrical joint's prismatic degree of freedom, marker Z) at
+// kSlideSpeed to kSlideBottom; the slider's joint value runs the range watches (Runtime::setJointPosition): lever 7189's
+// -600..-474 -> vt 34 -> reward door 7227 vt 57. The pole lies along its longest box axis, one end in the hole.
+void World::tickInserted(float dt) {
+    constexpr float kSlideSpeed = 300.0f, kSlideBottom = -600.0f; // [I] units / s; the lowest watched value
+    for (auto it = inserted_.begin(); it != inserted_.end();) {
+        auto* pole = const_cast<script::Object*>(script_.find(it->first)); // World owns object motion
+        auto* rec = const_cast<script::Object*>(script_.find(it->second.receptacle));
+        const auto* pp = pole ? objectPhysics(pole->name) : nullptr;
+        const auto* rp = rec ? objectPhysics(rec->name) : nullptr;
+        const auto marker = rp ? std::ranges::find(rp->markers, 2u, &physics::Marker::kind) : decltype(rp->markers.end()){};
+        if (!pole || !rec || !pp || !rp || marker == rp->markers.end()) { ++it; continue; } // streamed out: kept
+        auto& in = it->second;
+        const auto& s = player_.state();
+        const bool hanging = s.state == State::PoleHang && in.markup >= 0 && s.ledge == in.markup;
+        if (hanging) in.slide = std::max(kSlideBottom, in.slide - kSlideSpeed * dt);
+        const glm::mat4 r = glm::rotate(glm::mat4(1), marker->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), marker->rot.y, {0, 1, 0}) *
+                            glm::rotate(glm::mat4(1), marker->rot.z, {0, 0, 1});
+        script_.setBody(rec->uid, glm::translate(glm::mat4(1), vec3(r[2]) * in.slide));
+        if (rec->joint && rec->joint->position != in.slide) script_.setJointPosition(rec->uid, in.slide);
+        rec = const_cast<script::Object*>(script_.find(in.receptacle)); // scripts may have run
+        pole = const_cast<script::Object*>(script_.find(it->first));
+        if (!rec || !pole) { ++it; continue; }
+        const auto hole = receptacleHole(*rec);
+        // The pole's longest box axis, from one end to the other.
+        const vec3 ext = pp->boxMax - pp->boxMin, c = (pp->boxMax + pp->boxMin) * 0.5f;
+        const int axis = ext.x >= ext.y && ext.x >= ext.z ? 0 : ext.y >= ext.z ? 1 : 2;
+        const float half = ext[axis] * 0.5f;
+        vec3 a(0);
+        a[axis] = 1;
+        const vec3 out(in.out, 0);
+        const vec3 axisOf = glm::cross(a, out);
+        const glm::mat4 turn = glm::length(axisOf) > 1e-5f ? glm::rotate(glm::mat4(1), std::acos(std::clamp(glm::dot(a, out), -1.0f, 1.0f)), glm::normalize(axisOf))
+                               : glm::dot(a, out) > 0 ? glm::mat4(1) : glm::rotate(glm::mat4(1), glm::pi<float>(), vec3(0, 0, 1));
+        const glm::mat4 world = glm::translate(glm::mat4(1), *hole + out * half) * turn * glm::translate(glm::mat4(1), -c);
+        pole->offset = vec3(0), pole->loose = false;
+        script_.setBody(pole->uid, glm::inverse(introModel(*pole)) * world);
+        collision::Markup m;
+        m.type = 6; // horizpole (MUD 0x2000000): Lara hangs and swings on it (Player::pole)
+        m.points = {*hole, *hole + out * (2 * half)};
+        if (in.markup < 0 || size_t(in.markup) >= col_.markup.size()) in.markup = int(col_.markup.size()), col_.markup.push_back(m);
+        else col_.markup[size_t(in.markup)].points = m.points;
+        ++it;
     }
 }
 
@@ -1452,6 +1572,7 @@ void World::tickJoints(float dt) {
             float lo = p && p->jointLimit ? p->jointLimit->lo : -1e30f, hi = p && p->jointLimit ? p->jointLimit->hi : 1e30f;
             if (const auto l = multibodyLo_.find(o.uid); l != multibodyLo_.end()) lo = glm::degrees(l->second);
             if (const auto u = multibodyHi_.find(o.uid); u != multibodyHi_.end()) hi = glm::degrees(u->second);
+            if (multibodyLimitOff_.contains(o.uid)) lo = -1e30f, hi = 1e30f; // `multibody` 75: limit off
             x = std::clamp(x + j.speed * 30.0f * dt, lo, std::max(lo, hi));
             // One prismatic joint marker (kind 2, as the uber joint records' type byte [I]): the body slides along its
             // Z axis (ms_rb_tomb_lock sinks). [U] bodies with several (ca_rb_crusher_slim's two jaws and their link).

@@ -845,6 +845,9 @@ private:
     void chunkPieces(std::vector<physics::Scene::Loose>& out);
     void startChunks(ai::Enemy& e); // a thrall that just broke: its pieces' poses and velocities (Objects.cpp)
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
+    bool insertHeld(script::Object& held); // into a receptacle in reach (Runtime::insertPortable); false: none
+    void tickInserted(float dt);           // inserted portables: the receptacle's slider, the pole's pose and hang markup
+    std::optional<vec3> receptacleHole(const script::Object& o); // its joint marker (kind 2) in the world, if any
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
@@ -927,6 +930,11 @@ private:
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
+    // Portables Lara inserted into receptacles (insertHeld), by portable uid: the receptacle, the horizontal direction
+    // the pole sticks out of its hole, the receptacle's slider position (joint value, <= 0), the pole's horizpole
+    // markup in col_ (-1: not added yet; rebuildCollision drops it).
+    struct Inserted { int32_t receptacle = 0; vec2 out{1, 0}; float slide = 0; int markup = -1; };
+    std::map<int32_t, Inserted> inserted_;
     std::map<int32_t, physics::Joint1> plates_; // pressure-plate joints by uid (stepPhysics): Jolt's x and v between steps
     void bindMultibody();
     void bindUber();
@@ -956,6 +964,7 @@ private:
     std::set<std::pair<std::string, uint16_t>> disabledMarkup_; // (unit, markup id)
     const formats::UberObjectData* prepareUber(const script::Object& o);
     std::map<int32_t, float> multibodyLo_, multibodyHi_; // native limits issued before hinges exist
+    std::set<int32_t> multibodyLimitOff_; // `multibody` 75: objects whose joint limit is switched off (joint +0x174 bit 2)
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;
     std::map<int32_t, std::vector<uint32_t>> uberStates_; // per section: current state, 0xFFFFFFFF in a transition

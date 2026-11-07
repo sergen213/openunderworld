@@ -1351,6 +1351,23 @@ Ours:
   level prismatic joint (l7 Thor towers) use the same clips facing the joint axis; uber objects that are also script
   push blocks (`ca_pu_block_a`) are moved by src/script only (both moved them before).
 - Pickups: taking an item or ammo plays `gear_weapon_pickup` (crouched: `_crouch`) where she stands, facing it [I].
+- Inserting a portable (pole into a pole hole) [O tru.exe]: carrying a portable, Lara's chart action 0x4D (0x716F30)
+  posts INSTANCE message 0x165 with her engaged object (Lara +0x854 +0xA0) to the portable she holds (+0x858). The
+  portable (0x6B5890) posts itself the anim-graph stimulus 0x20 (message 0x33, value "any"), attaches to the
+  receptacle by its 0x173 data (0x6B55D0) and posts 0x165 to it; the receptacle (0x6C2530) posts 0x20 to its own graph
+  and calls a script prototype with (Lara's engagement record, 5) [U: which]. 0x186 is the removal (stimulus 0x40),
+  0x17B the pick-up (stimulus 4, 0x6A6A20). The pole-hole levers' graphs (`ar_uo_phole_lever`, `ca_pt_phole_lever`)
+  have one transition each way: 0x20 into the "inserted" state, 0x40 back; `ar_pt_pole_a` has no graph. The levers'
+  joint marker (type 2: a cylindrical joint, 0x48F1D0 reads its degree of freedom 0 as a prismatic position) carries
+  the hole; their range watches (`multibody` 79) are on that slider.
+  Ours (`World::insertHeld`, `tickInserted`): interact while carrying, standing within 450 of a receptacle's hole
+  (0..1200 above her feet) [I: the engagement record is not decoded] inserts it: the pole sticks out of the receptacle's
+  face on her side, and its graph (also for receptacles whose scripts only hear transitions, vt 19) takes the stimulus
+  (l5_valaskjalf_entryb 7189: vt 19 "It's the insert reaction", vt 20(0) watches −600..−474). The pole becomes a
+  horizontal pole (markup type 6); hanging on it, her weight slides the lever down its joint at 300 units/s to −600
+  [I: Havok weight, speed and limit not measured], entering the watch: vt 34 → reward door 7227 vt 57. Saved
+  (objects `inserted`). Not done: the insert clip and engagement cone, removing the pole (0x186), the receptacle's
+  script prototype call, the pole's own vt 57 (draw group 2), l4_ballcourt's lever 6502 still answers a use (vt 54).
 
 Test: `GameReal.LaraPlaysInteractionClips` (switch 4525: State::Use with `use:2605` at `useDistance` while the use
 event fires; block 6504: grab, push clip, Lara moves with the block, release).

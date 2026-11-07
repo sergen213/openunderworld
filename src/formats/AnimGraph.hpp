@@ -12,6 +12,8 @@ namespace ou::formats {
 
 // Stimulus bits the engine posts (tru.exe 0x6B4440 / 0x6B5890 / 0x6B4390); scripts post their stimulus members' masks.
 inline constexpr uint32_t kStimulusUse = 0x1;      // Lara uses the object (switches, buttress mounts)
+// A portable inserted into / removed from a receptacle: INSTANCE messages 0x165 / 0x186 (0x6C2530, 0x6B5890) post them.
+inline constexpr uint32_t kStimulusInsert = 0x20, kStimulusRemove = 0x40;
 inline constexpr uint32_t kStimulusEvent = 0x800;  // an animation event (transition +0x1C/+0x20 event ids)
 inline constexpr uint32_t kStimulusTimer = 0x8000; // every update, with the 30 Hz frames spent in the state
 

@@ -1182,6 +1182,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     }
     for (const auto& [uid, m] : uberMotion_) part("motion " + std::to_string(uid)), add(uid), add(m.t), add(m.active);
     part("held"), add(held_);
+    for (const auto& [uid, in] : inserted_) part("inserted " + std::to_string(uid)), add(uid), add(in.receptacle), add(in.out.x), add(in.out.y), add(in.slide);
     for (const auto& [uid, w] : waterStates_) {
         part("water " + std::to_string(uid));
         add(uid), add(w.surface), add(w.target), add(w.rate), add(w.source), add(w.sink), add(w.strength), add(w.sourceAt), add(w.sinkAt);

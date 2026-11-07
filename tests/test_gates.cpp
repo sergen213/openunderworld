@@ -1225,3 +1225,98 @@ TEST(ProgressionReal, TempleRevealReopens) {
     EXPECT_TRUE(std::ranges::any_of(std::views::iota(size_t(0), open->size()), [&](size_t i) { return moved((*open)[i], closed[i]); }))
         << "the temple stands open";
 }
+
+// l5_valaskjalf chains 6943 / 6944 (ar_ani_infinite_chain, uber: state 0 rest, command 0 (trigger 16 param 0) -> 1
+// running, command 1 -> 2 detach -> 3 after 1 s -> 1): unlike 6939-6942, whose constructors send command 0 after 3 s,
+// they start running only when the jammed gear 6985 (vt 34, its joint range 45..180) sends their command members
+// (CALL4 uberobjectbase 1). Detach volumes 7025 / 7026 (vt 55: their command 1 local) change them only after that
+// [O bytecode]; before it the command finds no transition, as in tru.exe (0x4D4BE0).
+TEST(ProgressionReal, ValaskjalfChainsDetach) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l5_valaskjalf", anims,
+                  game::Spawn{{0, 0, -1e6f}, 0});
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    for (int i = 0; i < 300; ++i) w.tick({});
+    const auto state = [&](int32_t id) { const auto* s = w.uberState(id); return s && !s->empty() ? (*s)[0] : 99u; };
+    const auto enter = [&](int32_t volume) {
+        place(w, w.script().find(volume)->pos - vec3(0, 0, script::kTestPointHeight), 0);
+        for (int i = 0; i < 20; ++i) w.tick({});
+    };
+    EXPECT_EQ(state(6939), 1u) << "6939 runs from its constructor";
+    for (const int32_t chain : {6943, 6944}) EXPECT_EQ(state(chain), 0u) << chain << " at rest";
+    enter(7025);
+    EXPECT_EQ(state(6944), 0u) << "no detach before the chain runs";
+    place(w, vec3(0, 0, -1e6f), 0);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    w.script().call(6985, 34); // the freed jammed gear
+    for (int i = 0; i < 60; ++i) w.tick({});
+    for (const int32_t chain : {6943, 6944}) EXPECT_EQ(state(chain), 1u) << chain << " runs";
+    for (const auto& [volume, chain] : {std::pair{7025, 6944}, std::pair{7026, 6943}}) {
+        enter(volume);
+        EXPECT_EQ(state(chain), 2u) << volume << " detaches " << chain << " (1 -> 2)";
+        place(w, vec3(0, 0, -1e6f), 0);
+        for (int i = 0; i < 180; ++i) w.tick({});
+        EXPECT_EQ(state(chain), 1u) << chain << " runs again (2 -> 3 -> 1)";
+    }
+    for (const int32_t uid : {6985, 6943, 6944, 7025, 7026})
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+// l5_valaskjalf_entryb pole-hole lever 7189 (ar_uo_phole_lever) and pole 7190 (ar_pt_pole_a): carried to the lever and
+// inserted (World::insertHeld), the lever's graph takes the insert stimulus (transition 1 -> state 0:
+// vt 19 "It's the insert reaction", vt 20(0) watches its slider -600..-474); Lara hanging on the pole weighs the slider
+// into the watch: vt 34 -> reward door 7227 vt 57 (l5_valaskjalf_entry).
+TEST(ProgressionReal, PoleHoleLeverOpensRewardDoor) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l5_valaskjalf_entryb", anims,
+                  game::Spawn{{0, 0, -1e6f}, 0});
+    w.script().setBigfile(&bf);
+    w.onCinematic = [](const std::string&, bool) {};
+    std::set<int16_t> doorCalls;
+    w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) { if (from == 7189 && to == 7227) doorCalls.insert(vt); };
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto lever = [&] { return w.script().find(7189); };
+    const auto* pole = w.script().find(7190);
+    ASSERT_TRUE(lever() && pole && w.script().find(7227));
+    ASSERT_TRUE(lever()->graph);
+    EXPECT_TRUE(w.script().graphAccepts(7189, formats::kStimulusInsert)) << "empty: the insert transition leaves its state";
+    const auto& s = w.player().state();
+    game::Actions use;
+    use.interact = true;
+    // Use on the lever without the pole: nothing.
+    place(w, lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>());
+    for (int i = 0; i < 5; ++i) w.tick({});
+    w.tick(use), w.tick({});
+    EXPECT_TRUE(w.script().graphAccepts(7189, formats::kStimulusInsert));
+    // Pick the pole up, carry it in front of the lever and insert it into the hole (1169 up).
+    place(w, w.script().find(7190)->pos + vec3(80, 0, 0), glm::pi<float>());
+    w.tick({}), w.tick(use), w.tick({});
+    place(w, lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>());
+    for (int i = 0; i < 5; ++i) w.tick({});
+    ASSERT_EQ(s.state, game::State::Idle);
+    w.tick(use), w.tick({});
+    ASSERT_TRUE(lever()->graph);
+    EXPECT_EQ(lever()->graph->set->graph->states[size_t(lever()->graph->state)].index, 0) << "inserted (transition 1 -> 0)";
+    ASSERT_TRUE(lever()->joint);
+    EXPECT_EQ(lever()->joint->ranges.size(), 1u) << "vt 20(0): multibody 79 watch -600..-474";
+    EXPECT_TRUE(doorCalls.empty());
+    const collision::Markup* poleMarkup = nullptr;
+    for (const auto& m : w.collision().markup)
+        if (m.type == 6 && m.points.size() == 2 && glm::distance(m.points[0], lever()->pos + vec3(0, 30.9f, 1169)) < 5) poleMarkup = &m;
+    ASSERT_TRUE(poleMarkup) << "the pole sticks out of the hole: a horizontal pole";
+    const vec3 mid = (poleMarkup->points[0] + poleMarkup->points[1]) * 0.5f;
+    // Lara drops onto it from above, hanging across it; her weight slides the lever down into its watch.
+    place(w, mid + vec3(3.4f, -17.0f, -594.0f), 0);
+    for (int i = 0; i < 60 && s.state != game::State::PoleHang; ++i) w.tick({});
+    ASSERT_EQ(s.state, game::State::PoleHang);
+    for (int i = 0; i < 180 && doorCalls.empty(); ++i) w.tick({});
+    EXPECT_LE(lever()->joint->position, -474.0f);
+    EXPECT_EQ(doorCalls, std::set<int16_t>{57}) << "vt 34: \"Lever is trying to open the door\"";
+    EXPECT_EQ(s.state, game::State::PoleHang) << "she rides the pole down";
+    for (const int32_t uid : {7189, 7190, 7227})
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
