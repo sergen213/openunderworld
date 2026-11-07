@@ -289,6 +289,12 @@ public:
     // initial value (an inline SoundPlex node in the owner's unit DRM); anchor = intro uid for 3D plays, 0 for 2D.
     using SoundNative = std::function<bool(int32_t owner, uint32_t member, cdc::Pointer plex, uint32_t function, int32_t anchor)>;
     void setSoundNative(SoundNative native) { sound_ = std::move(native); }
+    // Whether (owner, member)'s sound still plays. 1 / 2 return a SoundSequence (0x4AF230 / 0x4AF290, cdc::SoundSequence
+    // IsActive 0x4ACC30: the handle's sound instance lives) and every retail call runs them as one (SSEQU), so the thread
+    // waits for the sound: l5_valaskjalf types 16266-16269 change state after theirs, l4_traprooms 15087 plays 20 in a row.
+    // Unset (no sound): the call returns at once.
+    using SoundBusy = std::function<bool(int32_t owner, uint32_t member)>;
+    void setSoundBusy(SoundBusy busy) { soundBusy_ = std::move(busy); }
     // `reverb` 1 (0x4AA750): `at` = the member's initial value in `unit`'s DRM: the 13 SFX-reverb floats its pointer names
     // (AUDIO.md §9.15). Soundvolumes call it when Lara enters them.
     using ReverbNative = std::function<void(const std::string& unit, cdc::Pointer at)>;
@@ -523,6 +529,10 @@ private:
     HealthNative health_;
     MarkupNative markup_;
     SoundNative sound_;
+    SoundBusy soundBusy_;
+    // `sound` 1 / 2 sequences waiting: (owner, member) -> the tick of their last retry (a thread a STATE ended does not
+    // retry, so a later call starts afresh).
+    std::map<std::pair<int32_t, uint32_t>, uint64_t> soundWaits_;
     ReverbNative reverb_;
     FeedbackNative feedback_;
     std::vector<MusicRequest> musicRequests_;

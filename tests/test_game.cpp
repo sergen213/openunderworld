@@ -4162,6 +4162,46 @@ TEST(GameReal, GrappleLeverJointIndependentOfRenderRate) {
     EXPECT_EQ((*w->uberState(6695))[1], 1u);
 }
 
+// Joint sounds (World::jointSounds, AUDIO.md §9.16): l1_baldrs_tomb press plate 219 (class 34, ms_rb_press_plate: its
+// joint record's sound) sinks under Lara, reaching its pressed limit (an impact) and goes quiet 0.5 s after it rests;
+// l4_trailstart grapple lever post 6695 (uber joints, ca_ei_lever_grapple_post) slides out while pulled.
+TEST(GameReal, JointSoundsFollowMovingJoints) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto run = [](game::World& w, const game::InputScript& input, int ticks, const std::function<void(const game::JointSound&)>& f) {
+        const uint64_t start = w.ticks();
+        const float yaw0 = w.camera().yaw;
+        for (int t = 0; t < ticks; ++t) {
+            w.tick(fixedCamera(w, input.at(w.ticks() - start), yaw0));
+            for (const auto& s : w.jointSounds()) f(s);
+        }
+    };
+    vec3 at(0);
+    for (const auto& in : formats::parseUnit(*game::loadUnitData(bf, "l1_baldrs_tomb").drm).intros)
+        if (in.uniqueId == 219) at = {in.position[0], in.position[1], in.position[2] + 30};
+    auto plate = worldMaker(bf, "l1_baldrs_tomb", game::Spawn{at, 0})();
+    bool sinking = false, impact = false;
+    run(*plate, game::InputScript::parse("10 forward 0\n"), 120, [&](const game::JointSound& s) {
+        if (s.uid != 219) return;
+        EXPECT_EQ(s.joint, -1);
+        EXPECT_EQ(s.object, "ms_rb_press_plate");
+        sinking |= s.linear < -1.0f;
+        impact |= s.impact.has_value();
+    });
+    EXPECT_TRUE(sinking) << "Lara's weight presses it down";
+    EXPECT_TRUE(impact) << "its pressed limit";
+    bool heard = false;
+    run(*plate, game::InputScript::parse("10 forward 0\n"), 60, [&](const game::JointSound& s) { heard |= s.uid == 219; });
+    EXPECT_FALSE(heard) << "asleep: at rest under her for more than 0.5 s";
+
+    auto lever = worldMaker(bf, "l4_trailstart", game::Spawn{{61161, -42611, 4948}, glm::radians(-11.0f)})();
+    bool slides = false;
+    run(*lever, game::InputScript::load(OU_SOURCE_DIR "/tests/replays/grapple_pull.txt"), 420, [&](const game::JointSound& s) {
+        if (s.uid == 6695 && s.joint == 0 && std::abs(s.linear) > 10.0f) slides = true;
+    });
+    EXPECT_TRUE(slides) << "the post's prismatic joint, pulled out at its motor speed";
+}
+
 // l2_puzzleroom: switch 2961 starts elevator 2973's uber command chain; the platform's collision moves.
 TEST(GameReal, ElevatorUberIndependentOfRenderRate) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
@@ -4955,4 +4995,28 @@ TEST(GameReal, PoleTraversalIndependentOfRenderRate) {
         EXPECT_EQ(a.second, o.second);
     }
     EXPECT_EQ(a.first.state, State::PoleHang);
+}
+
+// tru.exe 0x4E76A0: a joint limit's impact fires once, on the step that finds the joint at it after being inside, with
+// the speed it came at; a joint created at a limit or resting there fires nothing more. Bodies the game moves sleep
+// 0.5 s after they stop [I].
+TEST(JointSound, LimitImpactAndWake) {
+    game::LimitHit l;
+    EXPECT_FALSE(l.update(10, 0, 100, 0.5f, 5));
+    EXPECT_EQ(l.update(99.6f, 0, 100, 0.5f, 5), std::optional<float>(5.0f)) << "within the tolerance counts as at the limit";
+    l = {};
+    EXPECT_FALSE(l.update(50, 0, 100, 0.5f, 30));
+    EXPECT_EQ(l.update(100, 0, 100, 0.5f, 30), std::optional<float>(30.0f)) << "the upper limit";
+    EXPECT_FALSE(l.update(100, 0, 100, 0.5f, 30)) << "once";
+    EXPECT_FALSE(l.update(50, 0, 100, 0.5f, -12)) << "back inside: re-armed";
+    EXPECT_EQ(l.update(0, 0, 100, 0.5f, -12), std::optional<float>(-12.0f)) << "the lower limit, its signed speed";
+    EXPECT_FALSE(l.update(0, 0, 100, 0.5f, 0)) << "resting there";
+    game::WakeTimer w;
+    EXPECT_FALSE(w.update(false, 1.0f / 60)) << "never moved";
+    EXPECT_TRUE(w.update(true, 1.0f / 60));
+    int awake = 0;
+    while (w.update(false, 1.0f / 60)) ++awake;
+    EXPECT_NEAR(awake, 29, 1) << "0.5 s at 60 Hz";
+    EXPECT_FLOAT_EQ(game::jointAngularSpeed(glm::radians(1.0f) / 30.0f), 1.0f);
+    EXPECT_FLOAT_EQ(game::jointLinearSpeed(2.0f), 60.0f);
 }

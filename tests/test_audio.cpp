@@ -1165,3 +1165,35 @@ TEST(AudioReal, BankFindsDtpAddedAfterMiss) {
     bank.add(std::make_shared<const ou::cdc::Drm>(ou::cdc::parseDrm(*bf.read("pc-w\\motorcycle.drm"))));
     EXPECT_TRUE(bank.find(13589));
 }
+
+// Script `sound` 1 / 2 wait sequences ask SoundPlayer::busy: game time (update()), the data's length, not the mixer.
+// A sequence lasts its parts, a looping Wave until stopped, a stop ends it at once.
+TEST(SoundPlayer, BusyFollowsGameTimeNotTheMixer) {
+    Mixer mix;
+    auto tone = [](size_t frames, bool loop = false) {
+        auto p = std::make_shared<Pcm>();
+        p->sampleRate = 1000, p->channels = 1, p->samples.assign(frames, 1000);
+        if (loop) p->loopEnd = uint32_t(frames);
+        return p;
+    };
+    mix.addSound(1, tone(500)), mix.addSound(2, tone(250)), mix.addSound(3, tone(100, true));
+    Plex seq{PlexType::Sequence};
+    seq.children = {Plex{PlexType::Wave, 1}, Plex{PlexType::Wave, 2}};
+    SoundPlayer sp(mix, nullptr, {});
+    const auto h = sp.start(seq); // 0.5 s, then 0.25 s
+    EXPECT_TRUE(sp.busy(h));
+    sp.update(0.49);
+    EXPECT_TRUE(sp.busy(h));
+    sp.update(0.02); // the second part starts at 0.5 s (the mixer was never run: its voices count as playing)
+    EXPECT_TRUE(sp.busy(h));
+    sp.update(0.2);
+    EXPECT_TRUE(sp.busy(h));
+    sp.update(0.05);
+    EXPECT_FALSE(sp.busy(h));
+    const auto loop = sp.start(Plex{PlexType::Wave, 3});
+    sp.update(100);
+    EXPECT_TRUE(sp.busy(loop));
+    sp.stop(loop);
+    EXPECT_FALSE(sp.busy(loop));
+    EXPECT_FALSE(sp.busy(0));
+}

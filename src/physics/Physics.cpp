@@ -136,8 +136,16 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
         // position), ca_rb_crusher_slim 0..900 (motor 15 per frame for its 2 s clock), ms_rb_press_plate -50..0; I: that
         // they are the joint limit].
         if (o.physClass == kClassRigidBody && *p + 0x30 <= ob.data.size())
-            if (const auto r = cdc::internalPointer(ob, *p + 0x2C); r && *r + 0xC <= ob.data.size())
+            if (const auto r = cdc::internalPointer(ob, *p + 0x2C); r && *r + 0xC <= ob.data.size()) {
                 o.jointLimit = ObjectPhysics::Limit{at<float>(ob, *r + 4), at<float>(ob, *r + 8)};
+                // +0x34 flags (bits 0-2 the axes' limits on), +0x61 sound position, +0x64 sound (0x6B6440).
+                if (*r + 0x68 <= ob.data.size()) {
+                    o.jointLimitOn = at<uint32_t>(ob, *r + 0x34) & 1;
+                    o.jointSoundAt = at<uint8_t>(ob, *r + 0x61);
+                    const auto ps = cdc::sectionPointers(d, uint32_t(*base));
+                    if (const auto s = ps.find(*r + 0x64); s != ps.end()) o.jointSound = s->second;
+                }
+            }
     }
     // Models: ObjectBase +0xA0 u16 count, +0xA4 -> resource refs of the model DTPs (formats::objectRenderModels).
     const auto ptrs = cdc::sectionPointers(d, *base);
@@ -1190,6 +1198,7 @@ void Scene::step(float dt) {
             j.v = glm::dot(G(m.bi->GetLinearVelocity(e.body)), j.axis) * kUnitsPerMetre / kFrame;
         }
         j.push = 0;
+        j.awake = m.bi->IsActive(e.body); // Jolt's sleep stands for Havok's deactivation [I: its timer]
         e.x = j.x, e.v = j.v, e.live = nullptr;
     }
 }

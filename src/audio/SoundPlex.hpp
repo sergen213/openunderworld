@@ -141,6 +141,9 @@ public:
     void stop(Handle h, float fadeSeconds = 0.2f);
     void stopAll(float fadeSeconds = 0); // every sound, pending parts too (leaving play: tru.exe 0x593D10)
     bool active(Handle h) const; // a voice still plays or a delayed/sequenced part is pending
+    // Game-time view (update()'s clock, not the mixer's): the sound's started parts have not reached the end of their
+    // data yet (looping Waves never do; a stop ends it). What scripts wait on (`sound` 1 / 2 sequences, AUDIO.md §9.3).
+    bool busy(Handle h) const;
     void setParam(Handle h, size_t index, float value); // Reaction input (game parameter) of a running sound
     void setPosition(Handle h, glm::vec3 position);     // a 3D sound's emitter moved
     void update(double seconds);
@@ -175,6 +178,8 @@ private:
     Resolve resolve_;
     LoadStream stream_;
     std::map<Handle, Instance> instances_;
+    std::map<Handle, double> ends_; // busy(): when each sound's parts end (update()'s clock), kept past the instance
+    void extend(Handle h, double end);
     Handle next_ = 1;
     double now_ = 0;
     std::vector<SoundCategory> categories_;

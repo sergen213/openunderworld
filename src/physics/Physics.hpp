@@ -59,6 +59,11 @@ struct ObjectPhysics {
     // A rigid body's joint limit (physical data +0x2C -> {+4 lo, +8 hi}): prismatic units, hinge degrees.
     struct Limit { float lo = 0, hi = 0; };
     std::optional<Limit> jointLimit;
+    // The rigid body joint's sound (record +0x64 SoundPlex*; +0x61 where it plays: 0 the pivot, 1 on the body, 2 between;
+    // tru.exe 0x6B6440 -> 0x4F2B00, docs/formats/AUDIO.md §9.16) and whether its limit is on (+0x34 bit 0).
+    std::optional<cdc::Pointer> jointSound;
+    uint8_t jointSoundAt = 0;
+    bool jointLimitOn = false;
     std::vector<mat4> segments; // bind-pose model-space frame of each segment (pivots accumulated down the parents)
     std::vector<Prim> prims;
     std::vector<Marker> markers;
@@ -132,6 +137,7 @@ struct Joint1 {
     float speed = 0, force = 0; // motor: target velocity per frame, impulse bound per 1/60 s step (<= 0: unbounded)
     bool motor = false;
     float push = 0;             // next step only: velocity per frame imposed from outside (Lara pushing), over gravity and motors
+    bool awake = true;          // step() output: the body is not asleep (Havok: body +0x15C bit 0 clear, tru.exe 0x4D9000)
 };
 // Gravity, units per 30 Hz frame^2 (Lara's, tru.exe 5.72443).
 inline constexpr float kJointGravity = 5.72443f;
