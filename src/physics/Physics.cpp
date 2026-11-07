@@ -108,6 +108,30 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
         }
 }
 
+// Engagement set {id, -> 0x8C-byte records, count} at `set` in the object section; nullopt past its end.
+std::optional<EngagementSet> engagementSetAt(const cdc::Section& ob, uint32_t set) {
+    if (size_t(set) + 12 > ob.data.size()) return std::nullopt;
+    const auto u32 = [&](uint32_t off) { return off + 4 <= ob.data.size() ? at<uint32_t>(ob, off) : 0u; };
+    const auto f32 = [&](uint32_t off) { return off + 4 <= ob.data.size() ? at<float>(ob, off) : 0.0f; };
+    constexpr float kCm = 3.1605f; // tru.exe's engagement units per centimetre
+    EngagementSet out{int32_t(u32(set)), {}};
+    const auto recs = cdc::internalPointer(ob, set + 4);
+    for (uint32_t r = 0; recs && r < u32(set + 8) && r < 32; ++r) {
+        const uint32_t q = *recs + 0x8C * r;
+        if (q + 0x8C > ob.data.size()) break;
+        Engagement g;
+        g.kind = int32_t(u32(q)), g.segment = int32_t(u32(q + 4)), g.shape = int32_t(u32(q + 0x10));
+        g.centre = vec3(f32(q + 0x14), f32(q + 0x18), f32(q + 0x1C)) * kCm;
+        g.radius = f32(q + 0x20) * kCm, g.height = f32(q + 0x24) * kCm;
+        g.heading = glm::radians(f32(q + 0x28)), g.half = glm::radians(f32(q + 0x2C));
+        if (const auto ids = cdc::internalPointer(ob, q + 0x6C))
+            for (uint32_t k = 0; k < u32(q + 0x70) && k < 16 && *ids + 2 * k + 2 <= ob.data.size(); ++k)
+                g.needs.push_back(at<uint16_t>(ob, *ids + 2 * k));
+        out.records.push_back(std::move(g));
+    }
+    return out;
+}
+
 } // namespace
 
 std::optional<mat4> ObjectPhysics::frame(int field) const {
@@ -122,6 +146,12 @@ std::optional<mat4> ObjectPhysics::frame(int field) const {
                 return *s * r;
             }
     return std::nullopt;
+}
+
+std::optional<EngagementSet> loadEngagementSet(const cdc::Drm& d, uint32_t offset) {
+    const auto base = formats::objectBaseSection(d);
+    if (!base) return std::nullopt;
+    return engagementSetAt(d.sections[*base], offset);
 }
 
 ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
@@ -149,30 +179,9 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
         // Engagement sets (tru.exe 0x6C2530 / 0x6B5890 messages 0x23 / 0x1B1 pick one): {id, -> 0x8C-byte records,
         // count}, 12 bytes each, at +0x68 / +0x6C on anim-graph objects (class 6) and +0xA8 / +0xAC on portables (50).
         const uint32_t lo = o.physClass == 50 ? 0xA8 : 0x68;
-        const auto u32 = [&](uint32_t off) { return off + 4 <= ob.data.size() ? at<uint32_t>(ob, off) : 0u; };
-        const auto f32 = [&](uint32_t off) { return off + 4 <= ob.data.size() ? at<float>(ob, off) : 0.0f; };
-        if (const auto list = cdc::internalPointer(ob, *p + lo); list && u32(*p + lo + 4) <= 32) {
-            constexpr float kCm = 3.1605f; // tru.exe's engagement units per centimetre
-            for (uint32_t i = 0; i < u32(*p + lo + 4); ++i) {
-                const uint32_t e = *list + 12 * i;
-                EngagementSet set{int32_t(u32(e)), {}};
-                const auto recs = cdc::internalPointer(ob, e + 4);
-                for (uint32_t r = 0; recs && r < u32(e + 8) && r < 32; ++r) {
-                    const uint32_t q = *recs + 0x8C * r;
-                    if (q + 0x8C > ob.data.size()) break;
-                    Engagement g;
-                    g.kind = int32_t(u32(q)), g.segment = int32_t(u32(q + 4)), g.shape = int32_t(u32(q + 0x10));
-                    g.centre = vec3(f32(q + 0x14), f32(q + 0x18), f32(q + 0x1C)) * kCm;
-                    g.radius = f32(q + 0x20) * kCm, g.height = f32(q + 0x24) * kCm;
-                    g.heading = glm::radians(f32(q + 0x28)), g.half = glm::radians(f32(q + 0x2C));
-                    if (const auto ids = cdc::internalPointer(ob, q + 0x6C))
-                        for (uint32_t k = 0; k < u32(q + 0x70) && k < 16 && *ids + 2 * k + 2 <= ob.data.size(); ++k)
-                            g.needs.push_back(at<uint16_t>(ob, *ids + 2 * k));
-                    set.records.push_back(std::move(g));
-                }
-                o.engagements.push_back(std::move(set));
-            }
-        }
+        if (const auto list = cdc::internalPointer(ob, *p + lo); list && *p + lo + 8 <= ob.data.size() && at<uint32_t>(ob, *p + lo + 4) <= 32)
+            for (uint32_t i = 0; i < at<uint32_t>(ob, *p + lo + 4); ++i)
+                if (auto set = engagementSetAt(ob, *list + 12 * i)) o.engagements.push_back(std::move(*set));
         if (o.physClass == 6)
             if (const auto a = cdc::internalPointer(ob, *p + 0x3C); a && *a < ob.data.size()) o.attachMarker = ob.data[*a];
     }

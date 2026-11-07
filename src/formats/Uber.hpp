@@ -28,7 +28,10 @@ struct UberTransition {
                                      // 14 / 15 joint value entered / left a range (param = watch mode, 0x4D5A50),
                                      // 17 a hit of more than `param` (float) damage, 19 a hit of damage class `param`
                                      // (0x6D4690), 18 health <= `param` (float) + 0.001 (0x6D49D0); 6 / 7 / 8 contact
-                                     // impulses (0x4D5560, not simulated)
+                                     // impulses (0x4D5560, not simulated); 20 / 21 Lara engages / lets go of a record
+                                     // of kind `param` (messages 0x158 / 0x14F: 0x6D4790 / 0x6D4810) and a portable
+                                     // inserted into / removed from the section (0x165 / 0x186 -> 0x6D4890: 20 or 21
+                                     // with param 5, else 22 / 23 any)
     std::vector<UberCondition> conditions; // trigger 9
     int32_t joint = -1, range = -1;        // trigger 14 / 15: +0x20 joint, +0x24 range record (indices below)
     int32_t anim = -1;                     // +0x2A animation-list index, -1 none
@@ -37,9 +40,12 @@ struct UberTransition {
 // State entry action (0x10 bytes {type, 3 words}; 0x4D86A0): 2 / 3 play an animation (value), 9 create / 10 remove
 // a physics joint, 12 set its limit, 13 its motor (param), 0x14 / 0x15 add / remove a range watch on it (value = mode:
 // 0 position, 1 velocity; param = range, 0x4D7380). Pointer operands are indices into UberObjectData::joints / params.
+// 0x1D (UberObjectSection_TR8 0x6D5EC0) sets the section's engagement set (+0xD4, answered to query 0x53) to word +4:
+// `engagement` = that set's offset in the object section, -1 none (an empty pointer clears it).
 struct UberAction {
     uint32_t type = 0, value = 0;
     int32_t joint = -1, param = -1;
+    int32_t engagement = -1;
 };
 // Physics joint record (action 9, 0x4D8000). Type 0 hinge (angle, degrees), 2 prismatic (units), 8 fixed, 11 link of
 // two joints, 5 / 7 multi-axis (0x4D1040 -> engine 1 / 3 / 0xB / 0xD / 8 / 10). Bodies are section indices (each
@@ -75,6 +81,11 @@ struct UberSection {
     // ignores hits without the bit). Urns (*_pt_weightbreak*, ma_ei_breakable_*) 30, sh_ei_exploading_barrel 50.
     float health = 0;
     bool takesDamage = false;
+    // +0x40 the engagement set the section starts with (offset in the object section, -1 none; 0x6D60B0 -> +0xD4, query
+    // 0x53 0x6D59C0: where Lara engages it, physics::loadEngagementSet) and +0x4C -> byte: the model 0 marker a portable
+    // inserted into the section attaches at (query 0x173), -1 none.
+    int32_t engagement = -1;
+    int32_t attachMarker = -1;
 };
 // Event (0x4D3EC0): fires when section `section` does `kind` (1 enters state, 2 leaves state, 3 starts transition,
 // 4 finishes transition) with `value` (state / transition index) and every condition list holds.

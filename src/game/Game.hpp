@@ -872,13 +872,23 @@ private:
     void chunkPieces(std::vector<physics::Scene::Loose>& out);
     void startChunks(ai::Enemy& e); // a thrall that just broke: its pieces' poses and velocities (Objects.cpp)
     void carryPortables(bool pressed); // pick up / carry / set down `portablebase` objects (Objects.cpp)
+    bool carryReady() const;           // standing or swimming: she can pick up / insert / take out a portable
     bool insertHeld(script::Object& held); // into a receptacle Lara engages (Runtime::insertPortable); false: none
     bool removeInserted();                 // empty-handed: an inserted portable she engages comes out, held (0x186)
-    void attachPortable(script::Object& portable, const script::Object& receptacle, int segment); // + its script reactions
+    // + its script reactions; `section` >= 0: an uber receptacle's section (uberInsert)
+    void attachPortable(script::Object& portable, const script::Object& receptacle, int segment, int section = -1);
     void placePortables();                 // portables placed in receptacles (Object::placedIn) insert themselves
     void tickInserted(float dt);           // inserted portables: the receptacle's slider, the portable's pose, pole markup
-    std::optional<glm::mat4> attachFrame(const script::Object& receptacle); // its attach marker in the world
+    // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
+    std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
     bool engages(const script::Object& o, const physics::Engagement& e); // Lara inside the record's shape
+    // ... of the record, `p`'s HInfo marker (its segment) in `frame` (the instance's world frame).
+    bool engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e);
+    // Uber receptacles: section `section`'s engagement set now (UberSectionState::engagement; null none), its world frame
+    // and its model's physics; a portable in / out of it starts its insert / removal transition (0x6D4890).
+    const physics::EngagementSet* uberEngagement(int32_t uid, size_t section);
+    std::optional<glm::mat4> uberSectionFrame(const script::Object& o, size_t section);
+    bool uberInsert(int32_t uid, size_t section, bool inserted);
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
@@ -961,10 +971,11 @@ private:
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
-    // Portables in receptacles (insertHeld / placePortables), by portable uid: the receptacle and a pole's horizpole
-    // markup in col_ (-1: none yet; rebuildCollision drops it). Receptacle sliders (joint value <= 0) by receptacle uid.
-    // Portables whose placement ran (a removed one stays out after a load).
-    struct Inserted { int32_t receptacle = 0; int markup = -1; };
+    // Portables in receptacles (insertHeld / placePortables), by portable uid: the receptacle, a pole's horizpole markup
+    // in col_ (-1: none yet; rebuildCollision drops it) and the uber receptacle's section (-1: an anim-graph one).
+    // Receptacle sliders (joint value <= 0) by receptacle uid. Portables whose placement ran (a removed one stays out
+    // after a load).
+    struct Inserted { int32_t receptacle = 0; int markup = -1; int section = -1; };
     std::map<int32_t, Inserted> inserted_;
     std::map<int32_t, float> slides_;
     std::set<int32_t> placed_;
@@ -1006,7 +1017,10 @@ private:
     // Joints: the simulated physics joints (action 9 creates, 10 removes; types 0 / 2, links 11); watches: range watches
     // (action 0x14, 0x49A5C0 record: inside starts true, 0x4937A0).
     // health: section +0xDC (damage lowers it, 0x6D4690); removed: action 28 took the section's instance away.
-    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; };
+    // engagement: the section's engagement set (+0xD4: UberSection::engagement, then state actions 0x1D), its offset in
+    // the object section, -1 none.
+    struct UberSectionState { int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; int32_t engagement = -1; };
+    std::map<std::pair<std::string, int32_t>, std::optional<physics::EngagementSet>> uberEngagements_; // (object, offset)
     struct UberWatch { int32_t section = 0, joint = -1, range = -1; uint32_t mode = 0; bool inside = true; };
     struct UberRuntime {
         std::vector<UberSectionState> sections;

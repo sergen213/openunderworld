@@ -99,6 +99,8 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
         section.defaultState = at<uint32_t>(ob, sec + 0x14);
         section.model = at<uint32_t>(ob, sec + 0x18);
         section.health = at<float>(ob, sec + 0x3C), section.takesDamage = at<uint8_t>(ob, sec + 0x52) & 1;
+        if (const auto e = cdc::internalPointer(ob, sec + 0x40)) section.engagement = int32_t(*e);
+        if (const auto m = cdc::internalPointer(ob, sec + 0x4C)) section.attachMarker = at<uint8_t>(ob, *m);
         for (uint32_t t = 0; t < ntr; ++t) {
             const uint32_t tr = transitions + 0x38 * t;
             UberTransition x;
@@ -113,7 +115,9 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
             const uint16_t anim = at<uint16_t>(ob, tr + 0x2A);
             x.anim = anim == 0xFFFF ? -1 : anim;
             x.probability = at<uint32_t>(ob, tr + 0x2C), x.flags = at<uint32_t>(ob, tr + 0x34);
-            if (x.to >= nst) throw FormatError("uber: transition target state");
+            // Unused slots (ar_pu_cog_wheel_level_1a section 0 transitions 8 / 9: -1 -> -1, trigger 0) are kept; a
+            // state leaving by one is malformed (checked below).
+            if (x.to >= nst && !(x.from == ~0u && x.to == ~0u && x.trigger == 0)) throw FormatError("uber: transition target state");
             section.transitions.push_back(std::move(x));
         }
         for (uint32_t s = 0; s < nst; ++s) {
@@ -125,7 +129,8 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
                 bounded(nout, list, 4, ob.data.size());
                 for (uint32_t k = 0; k < nout; ++k) {
                     const uint32_t tr = ptr(ob, list + 4 * k);
-                    if (tr < transitions || (tr - transitions) % 0x38 || (tr - transitions) / 0x38 >= ntr)
+                    if (tr < transitions || (tr - transitions) % 0x38 || (tr - transitions) / 0x38 >= ntr ||
+                        section.transitions[(tr - transitions) / 0x38].to >= nst)
                         throw FormatError("uber: state transition outside its section");
                     out.push_back((tr - transitions) / 0x38);
                 }
@@ -145,6 +150,8 @@ std::optional<UberObjectData> loadUberObject(const cdc::Drm& drm) {
                         if (a.type >= 12 && p2) a.param = param(*p2);
                     } else if ((a.type == 0x14 || a.type == 0x15) && p2 && p3) {
                         a.joint = joint(*p2), a.param = param(*p3);
+                    } else if (a.type == 0x1D && p1) {
+                        a.engagement = int32_t(*p1);
                     }
                     actions.push_back(a);
                 }

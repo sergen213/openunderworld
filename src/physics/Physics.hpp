@@ -96,6 +96,9 @@ inline constexpr int kClassRigidBody = 34; // tru.exe 0x6BA570 (0x6D00E0 dispatc
 // Model `model` (ObjectBase +0xA4 list) of an object DRM. Empty without an object section or that model; throws
 // cdc::FormatError on bad layouts.
 ObjectPhysics loadObjectPhysics(const cdc::Drm& object, uint32_t model = 0);
+// The engagement set at `offset` in the object DRM's object section (an uber section's: formats::UberSection /
+// UberAction::engagement); nullopt when it lies outside.
+std::optional<EngagementSet> loadEngagementSet(const cdc::Drm& object, uint32_t offset);
 // Face mask of object collision shapes: our own convention, outside the terrain bits (l4_pool terrain faces are 3) [I];
 // mask-0x0F queries see terrain only. Objects the gameplay camera collides with (ObjectBase oflags bit 0x02, tru.exe
 // 0x5E94C0; 101 of the 335 solid objects placed in units) also carry kCameraObjectMask (collision::kCameraMask).

@@ -1407,10 +1407,29 @@ Ours:
   (ca_pt_pole_a), `sa_pt_pole_hole_a` (sa_pt_pole_a), `ma_pt_pole_hole` (ma_pt_pole_a), `ca_pt_phole` (ca_pt_pole_b),
   `sa_pt_phole_track` (sa_pt_pole_maproom), `ca_pt_keyhole_xibalba_exit` (ca_pt_key_xibalba_exit),
   `ms_ani_eye_puzzle_piece` (ms_pt_seafloor_key_a), `ca_ani_traproom_seal_b` (the four room keys), `sa_pt_kalis_crown`
-  (sa_pt_gem_kali) — anim-graph receptacles — and, without a graph (their 0x165 handling is [U], not done):
-  `sa_uo_shivas_left/right_arms` (gems right / left), `ca_uo_calendar(_b)` (headdress, mask), `ca_rb_empty_throne`
-  (scepter weight), `ar_pu_cog_wheel_level_1a` (valgrind power gems), `ar_ani_statue_arms` (thor gear), `ar_ei_gemhole`
-  (arctic sea gems). `portable_key_preinsert` holders have a graph (0x40 out, 0x20 back) but no record: they only give.
+  (sa_pt_gem_kali) — anim-graph receptacles — and uber objects (below): `sa_uo_shivas_left/right_arms` (either gem,
+  sa_pt_gem_left / right), `ca_uo_calendar(_b)` (section 0 ca_pt_key_headdress, section 5 ca_pt_key_mask),
+  `ca_rb_empty_throne` (ca_pt_scepter_weight), `ar_pu_cog_wheel_level_1a` (sections 1-3, ar_pt_valgrind_power_gem),
+  `ar_ani_statue_arms` (sections 1 / 2, ar_pt_thor_gear), `ar_ei_gemhole` (ar_pt_arcticsea_gem).
+  `portable_key_preinsert` holders have a graph (0x40 out, 0x20 back) but no record: they only give.
+  Uber receptacles [O tru.exe]: every one of them is an uber object (class 79), each section its own instance. A
+  section answers query 0x53 (0x6D59C0) with its engagement set +0xD4: the section record's +0x40 at birth (0x6D60B0),
+  then whatever its states' entry actions 0x1D set (UberObjectSection_TR8 0x6D5EC0; 0x1E sets +0xD8) — the arms, gem
+  holes, statue arms and throne offer their kind-5 record only in their waiting state and swap in a kind-0 (dead) set
+  once filled; calendar_b's mask section offers it only in state 3. The portable posts 0x165 to the section Lara
+  engages; the section's handler (0x6D5AC0, its jump table 0x11C-0x186) ties the portable to it from the constraint
+  record at section +0x4C (0x6B6440; its first byte is the model 0 marker, also query 0x173's attach point) and runs
+  0x6D4890(1): an idle section (no transition, not removed) starts its state's first transition with trigger 20 and
+  parameter 5, or trigger 22; 0x186 runs 0x6D4890(0): trigger 21 / 5 or 23 (no receptacle has one [O data]). No script
+  slot is called (the receptacles' vt 49 runs only for class-6 objects, 0x6C2530, and Lara's uses, 0x701310: message
+  0x158 = trigger 20 with the record's kind, e.g. calendar push handles kind 1); the transitions' uber events reach the
+  script's vt 54: arm 2059 vt 58, 2060 vt 59 (-> 2063 vt 56), calendar 6506 / 5477 vt 54. The shiva arms take a gem
+  only lowered (state 1: 2 -> 4 by their command 0, which their vt 55 sends when grapple handle 2066 / 2065's events
+  run, then 15 s), the throne is also a press plate (`multibody` joint, ranges -150..-90 "in position" / -30..10) that
+  the tied weight bears down on. `ar_pu_cog_wheel_level_1a` failed to load before (two unused transition slots -1 -> -1);
+  `ca_uo_thor_statue_arms` (l4_pool) has no engagement set: not a receptacle. l7_arctic_sea's statue arms, gem holes and
+  thor gears lie under water: Lara carries, inserts and takes out portables swimming too (records there are spheres
+  of radius 632-948 [O data]; tru.exe's swim carry clips are not traced [I]).
   Placed portables [O]: a portable's intro data starting with the instance reference 0x405 {u16 1, u16 uid} starts
   inserted there (message 0x23 -> 0x6A6DC0 -> 0x165): l2_puzzleroom pole 2967 -> hole 2969, l2_maproom 2665 -> track
   2664, l3_chapel 4823 -> 4824, l4_temple 5240 -> 5233, the gems and keys in their holders. The attach point is the
@@ -1428,8 +1447,15 @@ Ours:
   traced], so l4_ballcourt 6502 drives door 6505 to 80 degrees as its old hinge did.
   Receptacles get their graph also without a `modifiable` member or a script (l4_temple holes 5230-5232) and start empty
   when their start record is their insert target [I]; they have no use (l4_ballcourt lever 6502 now needs its pole).
-  Saved (objects `inserted`, `slides`, `placed`). Not done: an insert clip (none in lara.drm), the non-graph receptacles,
-  the lever's Havok slide numbers (no Wine measurement), l2_maproom's track slide.
+  Uber receptacles: per section its current set (`UberSectionState::engagement`, from +0x40 and actions 0x1D; records in
+  the section model's frame, moved with the section's joint), the same reach rules; the portable sits at the section's
+  attach marker and the section starts its insert / removal transition (`World::uberInsert`). An inserted portable
+  weighs on a press plate under it as a push block does (its primitives' mass). The uber events of the arms and
+  calendars run their scripts; [U] what the cog wheels' and statue arms' filled sections open further (the cog wheels'
+  and arms' later states wait for the other sections / their own joint watches; not traced to a gate).
+  Saved (objects `inserted`, `insertedSections`, `slides`, `placed`; uber sections carry their set). Not done: an
+  insert clip (none in lara.drm), the lever's Havok slide numbers (no Wine measurement), l2_maproom's track slide, the
+  uber transitions' condition check (0x4D0E10) on insert.
 
 Test: `GameReal.LaraPlaysInteractionClips` (switch 4525: State::Use with `use:2605` at `useDistance` while the use
 event fires; block 6504: grab, push clip, Lara moves with the block, release).
