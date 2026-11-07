@@ -574,7 +574,8 @@ fade-out s) (0x594320), 3 Stop(fade s) — 0x593EB0 with a null name fades that 
 Music (one voice: a request crossfades, a stop fades only the slot holding the playing track). Unit music follows the
 scripts: tru.exe has no unit-change switch [V-exe]. Besides the natives, only 0x5B21D0 starts music (slot 0, 2 s fade):
 at a level load (0x5DE040, 0x5DE3E0) with the name the save game keeps at +0x278 (copied from 0xD98F64, which only
-0x5B21D0 itself writes; 0x5DF760 sets it empty [U: when]), and in 0x5B22A0 when the sound it waits for ends. Every unit
+0x5B21D0 itself writes; 0x5DF760 hands it the empty name at every level change, so it stays empty: §9.11 "Loads and the
+music"), and in 0x5B22A0 when the sound it waits for ends. Every unit
 with its own `<unit>_mus_01` names it in its own DRM (31 units, survey of the `*_mus_NN` strings) [V-data]: its scripts
 request it. Ours: `<unit>_mus_01` also plays when Lara enters a unit while nothing plays [I]. Replay pool_to_ragnarok [O]: tick 1
 l4_pool_mus_01; tick 101 soundvolume 5674 vt 58 -> unit script 14147 vt 25 -> `l4_staircase_upper_mus_01` (slot 1), stop
@@ -613,11 +614,40 @@ FDY squad mate down, SWP lost her; GAMEPLAY.md "Mercs") start a random DTP of th
   menu or the PDA is open (`world sound held` / `resumed` in the log); Bus::Voice (help lines) plays on, and menu sounds
   pass `PlayParams::world = false` [I: menu sounds are category 54].
 - **Leaving play.** Level change (0x5DF760, 0x5DF8C0) and quitting to the frontend (0x5DAB40) call 0x593D10, which stops
-  every sound and the music and resets the category volumes (0x5895F0). Ours (`audio reset` in the log): New Game,
-  Continue, Load, Treasure Hunt, Revisit, quick load and Quit to Menu stop the music (`Music` state cleared; the unit's
-  music starts afresh), `GameSound::reset` (every SoundPlayer instance incl. pending parts, sfxmarker triggers re-armed,
-  script / drowning / bike engine / help handles, subtitles) and `Mixer::stopWorld`. Movies hold the world sound while they
-  play and stop the main menu sound.
+  every sound and the music and resets the category volumes (0x5895F0); 0x5DF760 then clears the paused bits (0x5874D0)
+  and calls 0x5B21D0 with the empty name, so the next level starts without music until its scripts ask [O, decomp].
+  Ours (`audio reset` in the log): New Game, Continue, Load, Treasure Hunt, Revisit, quick load, Quit to Menu and a
+  level end's chapter change (`World::onLevelChange`, after the end cinematic and its scripts' last events, before
+  `World::startChapter`) stop the music (`Music` state cleared; the unit's music starts afresh), `GameSound::reset`
+  (every SoundPlayer instance incl. pending parts, sfxmarker triggers re-armed, script / drowning / bike engine / help
+  handles, subtitles, reverb off), `Mixer::stopWorld`, and drop the music requests still queued
+  (`script::Runtime::stopAudio`). Movies hold the world sound while they play and stop the main menu sound.
+- **Loads and the music.** A save's music name (+0x278, copied from 0xD98F64 by 0x555CBE) restarts at a level load
+  (0x5DE040 / 0x5DE3E0 → 0x5B21D0, slot 0); 0x5B21D0 is the only writer of 0xD98F64 and 0x5DF760 hands it the empty
+  name, so the field is always empty and a load's music comes from the rebuilt level's scripts [O, asm: writers of
+  0xD98F64, callers of 0x5B21D0 / 0x5B2230]. Ours resumes objects without their constructors and keeps Lara's
+  trigger-volume membership, so those requests (and the soundvolume's `reverb`) would not come again: the runtime keeps
+  the last music request (one voice, as `Music`) and the last `reverb` 1 as `script::Runtime::AudioState`, saved under
+  `"audio"`, and ou-game replays both after a load (`... , saved request`; `GameSound::resume`) [I: the same result as
+  the original's scripts asking again]. Older saves: the unit's own track. Test
+  `ScriptRuntime.AudioStateFollowsMusicRequestsAndRoundTrips`.
+- **Transitions captured** (ours: ou-game under an invisible KWin, `--music-wav`, input scripts; logs and WAVs in
+  `openunderworld-work/audiocarry`; the original's side from the decomp above):
+  - main menu → Continue → pause → Quit to Menu (`contquit`): title music and the medsea ambience stop, `audio reset
+    (continue)`, the save's request `l4_ballcourt_mus_01` and the l4_trailstart reverb (room −3253 mB) come back; the
+    pause menu holds 11 world voices, its cursor moves play DTP 214, accept 243; Quit to Menu: `audio reset (quit to
+    menu)`, title music and ambience start [O, log]. Before: no music and no reverb after loading in l4_trailstart (no
+    `_mus_01` of its own, its request came with the chapter start).
+  - pause menu open / close (`pause`): `world sound held` / `resumed`, music and sfx hold their place [O, log].
+  - quick save (`mksave`): no change to the sound; quick load (`chend3` at 24 s): `audio reset (quick load)`, then the
+    saved request `l1_seatop_mus_01` [O, log].
+  - chapter end (`chend3`: prologue_end save, 010_pro_surprise → chapter 1): `audio reset (level change to chapter 1)`
+    after the cinematic, 0 voices left; then the new chapter's requests (`l1_intro`, `l1_seatop_mus_01`) [O, log].
+    Before: l3_main_hall's music (fading 3 s by its own stop request), its script sounds and its reverb ran on into
+    l1_seatop. Ours starts l1_seatop's own track at the unit change before the scripts ask (the [I] unit fallback of
+    §9.9; the original stays silent until then — here under the muted 030_med_yacht cutscene).
+  - `--load` of a chapter-4 save made at the chapter start (`ch4save` → `ch4load`): saved request and reverb back [O, log].
+  Not covered: death and respawn at a checkpoint (whether tru.exe reloads the level there) [U].
 - **Menu sounds.** The uiscreen scripts play their `sound` members (Play, type 71 +0xD4) on input. Script 130: vt 36/37
   member 1582 = DTP 214 (0.04 s, volume 0.2) when the selection moves, vt 33/34/38/39 member 2748 = DTP 243 (0.22 s)
   before opening a screen, vt 40 member 2749 = DTP 217 (0.39 s) going back, vt 35 members 2750 / 2751 = DTPs 247 / 248
