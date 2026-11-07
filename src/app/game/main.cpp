@@ -3309,6 +3309,7 @@ int main(int argc, char** argv) {
             hud.grapple.reset();
             if (const auto target = world->grappleTarget(); target && !world->player().state().grappleUid)
                 if (const auto p = toScreen(c, world->fovDeg, w, h, target->pos)) hud.grapple = std::array{p->x, p->y};
+            hud.grappleButton = menus.helperButtons ? std::string(strings->get(363)) : std::string(); // GAME OPTIONS > HELPER BUTTONS
             if (world->fieldCamera() && menus.screen() == ou::ui::Screen::None) // the field camera's viewfinder, window-filling [I]
                 if (const auto* r = art->find(ou::ui::kViewfinder)) canvas.image(0, 0, 0, float(w), float(h), r->u0, r->v0, r->u1, r->v1, 0xFFFFFFFFu);
             if (menus.screen() == ou::ui::Screen::None) hud.draw(canvas); // menus hide the HUD [O pause captures]

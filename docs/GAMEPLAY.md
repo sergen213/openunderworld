@@ -1025,14 +1025,19 @@ reach (ledges 635-910 over her feet); no markup lies within 12.5 m of it and the
   camera angle <= 90; (1) in range, <= 15, <= 5120, camera <= 90; (2) <= 2880, camera <= 90; (3) <= 2880, horizontal <=
   90, no more than 60 below level; (4) in range, camera <= 90, at least 5 above level; (5) in range, horizontal <= 90,
   at least 5 above level (`World::grappleTarget`; the target object's own collision does not block it). Within a set
-  nearest the camera's view, distances from her eye [I]. A crosshair marks it in ou-game.
+  nearest the camera's view, distances from her eye [I]. A crosshair marks it in ou-game and, with GAME OPTIONS >
+  HELPER BUTTONS shown, the grapple's helper button above it: locals.bin 363, the grapple placeholder U+1800 alone
+  (364 / 365 hold the jump / interact ones), expanded as the popups' (the bound key, "Q" by default, or the pad's X
+  icon) [O string; I placement: not captured].
 - Enemies [O]: not grapple targets. No enemy or other object names a grapple clip or reaction (only lara, the weapons
   and the kraken scripts do), so the original has no grapple pull / disarm; its grapple combat is shooting on the rope:
   pistols / uzi one-handed in the right hand, `combat_pistol_grapple_rappel(_free)_1haim{U,,D}{F,FR,R,RB,B}` plus
   `_equip / _unequip / _reload` (wp_handgun / wp_uzi; `_free` hanging free). Column yaws 0 / -45 / -90 / -135 / -180
   and rows +-45 by the names [I]; aims to her left clamp (`_switchhands` unused) [U].
-- G / pad right shoulder (`Actions::grapple`) throws (`grapple_rappel_free_jumpon`) and attaches; G again or
-  Ctrl/C releases. Space jumps off with the swing's momentum (`grapple_rappel_free_jumpoff`).
+- Q / pad X (`Actions::grapple`, virtual button 1) throws (`grapple_rappel_free_jumpon`) and attaches; Q again or
+  Ctrl/C releases. Space jumps off with the swing's momentum (`grapple_rappel_free_jumpoff`). tru.exe's keyboard
+  defaults put Recenter Camera (button 8) on Q too (0x487710: both key 0x90) [O]; a press that throws or releases the
+  grapple does not also recenter (`World::tick`) [I].
 - Rope vs world [O rules, tru.exe 0x6C8840 -> 0x6C5490]: the rope wraps. Its bends ("Bend Body", 0x699A50) are a chain
   from the anchor; she swings on the last one (`ropePivot`), the free part = total - anchor -> bends length. Each tick,
   from the hand side, a bend whose neighbours see each other slides toward their line by 15 x its clear ticks
@@ -1289,8 +1294,14 @@ reach (ledges 635-910 over her feet); no markup lies within 12.5 m of it and the
   The climb limits (top − 341.8, foot + 193) are [I].
 - Perches: from the air or a standing jump next to the segment (`perch_attach_air/_ground`), balance with
   `perch_idle`; the stick turns her on the spot (`perch_turn_right_45` / `_90` / `_180`, requests 668–670; to the left
-  the same clips mirrored, 671–673 [O]; bands < 67.5° / < 135° / beyond [I]); Space = `perch_jump_forward`, Ctrl on a
-  pillar's top perch = `pillar_attach_perch` (315.9 down onto the pillar), elsewhere `perch_detach_drop`.
+  the same clips mirrored, 671–673 [O]; bands < 67.5° / < 135° / beyond [I]); Ctrl on a pillar's top perch =
+  `pillar_attach_perch` (315.9 down onto the pillar), elsewhere `perch_detach_drop`. Jumps by lara.drm's chart [O]:
+  Space with the stick (S849 → S850) = `perch_jump_forward` on query **q37**, **74.32** out + **42.54** up a 30 Hz frame
+  from the root (cone 90°; its class record 0x2A98C is the ground jumps' 0x2AB8C but for its third entry), re-aimed at
+  a ledge its arc meets as the ground jumps (`aimGroundJump` with the ground record [I]), else the jump assist; ~1100
+  across on the level (it was a placeholder 600 out + 1200 up: ~280). Space alone (S848 → S846 / S847) =
+  `perch_jump_up` on **q36** (63.21 straight up), back down onto the perch; the launch at the press is [I] (the chart
+  plays `perch_jump_up` on the perch, then `perch_jump_up_inair`). `GameReal.CavernsPerchJumpReaches`.
 - Wall hug [O: chart and exe; FINDINGS in openunderworld-work/poleshimmy/wallhug]: a ledgegrab (1) point whose top is a
   narrow shelf — tru.exe 0x74B920 / 0x74BB50 (markup condition value 628) in the segment frame of 0x737D60 (X = the
   horizontal of p[i] − p[i+1], Y = Z × X): rays 252 (+0x6F0) above the line from 100 (+0x6E8) on the hang side toward

@@ -597,8 +597,12 @@ bool Player::tryPerch(bool fromAir) {
 }
 
 // On a perch: turn on the spot toward the stick (perch_turn_right_45 / _90 / _180, requests 668-670; to the left the
-// same clips mirrored, requests 671-673 [O]; the angle bands are [I]), jump forward, step down onto a pillar under it
-// (pillar_attach_perch), or drop.
+// same clips mirrored, requests 671-673 [O]; the angle bands are [I]), jump, step down onto a pillar under it
+// (pillar_attach_perch), or drop. Jumps as lara.drm's chart [O]: with the stick (S849 T1484 -> S850, !cond 0x191 = 401)
+// perch_jump_forward on query q37 (74.32 out + 42.54 up a 30 Hz frame from the root, cone 90, the ground jumps' class
+// record but for one entry: 0x2A98C vs 0x2AB8C), re-aimed at a ledge its arc meets as the ground jumps (aimGroundJump),
+// else the jump assist; without it (S848 -> S846 / S847) perch_jump_up on q36 (63.21 straight up), which comes back
+// down onto the perch (tryPerch from the air).
 void Player::perch(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const std::string clip = s_.clip;
     if (clip.starts_with("perch_turn_right")) {
@@ -611,11 +615,18 @@ void Player::perch(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
         return;
     }
     if (jumpPressed) {
+        const bool stick = glm::length(move) > 0.5f;
         s_.ledge = -1;
         s_.state = State::Jump;
-        s_.vel = forward() * 600.0f + vec3(0, 0, 1200.0f);
         s_.fallStartZ = s_.pos.z;
-        play("perch_jump_forward", false);
+        if (stick) {
+            s_.vel = forward() * (74.32f * 30.0f) + vec3(0, 0, 42.54f * 30.0f);
+            if (!aimGroundJump({74.32f, 42.54f}, 0.0f, false, glm::radians(90.0f))) assistJump();
+            play("perch_jump_forward", false);
+        } else {
+            s_.vel = vec3(0, 0, 63.21f * 30.0f);
+            play("perch_jump_up", false);
+        }
         return;
     }
     if (dropPressed) {

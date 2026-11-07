@@ -3484,6 +3484,51 @@ TEST(Game, PerchAttachAndJumpOff) {
     EXPECT_EQ(w->player().state().state, State::Jump);
 }
 
+// lara.drm's chart: the jump on a perch with the stick is perch_jump_forward on query q37 (74.32 out + 42.54 up a
+// 30 Hz frame); without it perch_jump_up on q36 (63.21 straight up), back onto the perch. From a perch 500 over the
+// floor q37 carries her ~1680 out before she lands (the old placeholder 600 + 1200 up: ~440).
+TEST(Game, PerchJumpsByTheirQueries) {
+    const auto perched = [] {
+        CollisionMesh m;
+        addFloor(m, -3000, -3000, 3000, 3000, 0);
+        m.markup.push_back({13, 1, {{400, -50, 500}, {400, 50, 500}}});
+        auto w = makeWorld(std::move(m), {350, 0, 400});
+        Actions jump;
+        jump.jump = true;
+        w->tick(jump);
+        for (int i = 0; i < 60; ++i) w->tick({});
+        return w;
+    };
+    {
+        auto w = perched();
+        const auto& s = w->player().state();
+        ASSERT_EQ(s.state, State::Perch);
+        const vec2 f(std::cos(s.yaw), std::sin(s.yaw));
+        const vec3 from = s.pos;
+        Actions go = worldStick(*w, f);
+        go.jump = true;
+        w->tick(go);
+        ASSERT_EQ(s.state, State::Jump);
+        EXPECT_EQ(s.clip, "perch_jump_forward");
+        EXPECT_NEAR(glm::dot(vec2(s.vel), f), 74.32f * 30, 1);
+        EXPECT_NEAR(s.vel.z, 42.54f * 30, 1);
+        for (int i = 0; i < 120 && s.state == State::Jump; ++i) w->tick(worldStick(*w, f));
+        EXPECT_NEAR(glm::dot(vec2(s.pos - from), f), 1680, 60) << game::stateName(s.state);
+        EXPECT_NEAR(s.pos.z, 0, 1);
+    }
+    auto w = perched();
+    const auto& s = w->player().state();
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    ASSERT_EQ(s.state, State::Jump);
+    EXPECT_EQ(s.clip, "perch_jump_up");
+    EXPECT_NEAR(glm::length(vec2(s.vel)), 0, 1e-3);
+    EXPECT_NEAR(s.vel.z, 63.21f * 30, 1);
+    for (int i = 0; i < 120 && s.state == State::Jump; ++i) w->tick({});
+    EXPECT_EQ(s.state, State::Perch) << "back on the perch";
+}
+
 TEST(Game, RailSlideJumpAndDropDetach) {
     auto attached = [] {
         CollisionMesh m;
@@ -3764,6 +3809,18 @@ TEST(GameReal, BallcourtLeverDrivesDoorJoint) {
         s.pos = lever->pos + side, s.yaw = std::atan2(-side.y, -side.x);
         w.restore(s, s.yaw, -0.25f);
         for (int i = 0; i < 10; ++i) w.tick({});
+        const auto list = bf.read("\\tr8\\pc-w\\objectlist.txt");
+        const auto names = formats::parseObjectList({reinterpret_cast<const char*>(list->data()), list->size()});
+        for (const auto& u : w.units()) {
+            const auto unitf = formats::parseUnit(*u.data.drm);
+            for (const auto& in : unitf.intros) {
+                const auto n = names.find(in.objectId);
+                const std::string nm = n == names.end() ? "?" : n->second;
+                if (nm.find("grap") != std::string::npos || nm.find("ring") != std::string::npos || nm.find("pole") != std::string::npos || nm.find("bling") != std::string::npos)
+                    std::printf("  intro %s uid %d %s at %.0f %.0f %.0f script %d\n", u.data.name.c_str(), in.uniqueId, nm.c_str(),
+                                in.position[0] + u.offset.x, in.position[1] + u.offset.y, in.position[2] + u.offset.z, int(in.scriptId));
+            }
+        }
         w.tick(use), w.tick({});
     }
     ASSERT_EQ(w.insertedIn(6503), 6502);
@@ -4716,6 +4773,43 @@ TEST(Game, RecenterTurnsCameraBehindLara) {
     EXPECT_GT(glm::dot(glm::normalize(vec2(toLara)), vec2(std::cos(yaw), std::sin(yaw))), 0.95f);
 }
 
+// Q is both the grapple (button 1) and Recenter Camera (button 8) in tru.exe's keyboard defaults (0x487710: key 0x90).
+// With a grapple target in reach the press throws the grapple and leaves the camera where it is; with none it recenters.
+TEST(GameReal, SharedGrappleKeyThrowsWithoutRecentering) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l4_pool",
+                  game::loadLaraAnims(bf), game::Spawn{{4362, -400, 2000}, 0});
+    w.restore(w.player().state(), 1.5707963f, 0.7f); // looking up at the ceiling anchor 5511, Lara facing +x
+    w.tick({}); // no press edge on the first tick
+    ASSERT_TRUE(w.grappleTarget());
+    const float camYaw = w.camera().yaw;
+    Actions q;
+    q.grapple = q.recenter = true;
+    w.tick(q);
+    EXPECT_EQ(w.player().state().state, State::GrappleThrow);
+    EXPECT_EQ(w.player().state().grappleUid, 5511);
+    EXPECT_GT(std::abs(std::remainder(w.camera().yaw - w.player().state().yaw, 6.2831853f)), 1.0f) << "not recentered";
+    EXPECT_NEAR(std::remainder(w.camera().yaw - camYaw, 6.2831853f), 0.0f, 0.2f);
+    for (int i = 0; i < 90; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().state, State::GrappleSwing);
+    w.tick(q); // the same key lets go of the rope, still without recentering
+    EXPECT_EQ(w.player().state().grappleUid, 0);
+}
+
+TEST(Game, SharedGrappleKeyRecentersWithoutTarget) {
+    auto w = makeWorld(poolMesh(), {-1500, 0, 0}, 0.7f);
+    w->tick({});
+    Actions look;
+    look.look = {2.0f, 0.5f};
+    for (int i = 0; i < 40; ++i) w->tick(look);
+    ASSERT_FALSE(w->grappleTarget());
+    Actions q;
+    q.grapple = q.recenter = true;
+    w->tick(q);
+    EXPECT_NEAR(std::remainder(w->camera().yaw - w->player().state().yaw, 6.2831853f), 0.0f, 0.02f);
+}
+
 // Field camera (virtual button 13): the press switches to her eye view, she holds still, forward zooms in; the next
 // press ends it.
 TEST(Game, FieldCameraTogglesEyeView) {
@@ -5218,3 +5312,36 @@ TEST(JointSound, LimitImpactAndWake) {
     EXPECT_FLOAT_EQ(game::jointLinearSpeed(2.0f), 60.0f);
 }
 
+
+// l3_caverns_start: the pillar 963 the training text sends her down to ("drop down and grab the pillar"), its top perch
+// 962 (z -4899), and across the cave the upper floor (z ~-4870) with ledge 959 along its edge, ~1200-1400 away. Off the
+// perch q37 (74.32 out + 42.54 up a frame) carries her there; the old placeholder (600 out + 1200 up, ~280 across)
+// dropped her onto the cave floor 1340 below.
+TEST(GameReal, CavernsPerchJumpReaches) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const vec3 perch(8561, -1264, -4899);
+    const auto jump = [&](float deg) {
+        auto w = unitWorld(bf, "l3_caverns_start", {{7881, -5980, -7244}, 0});
+        const float a = glm::radians(deg);
+        game::PlayerState st = w.player().state();
+        st.state = State::Perch, st.ledge = markupIndex(w, 962), st.ledgeSeg = 0, st.ledgeT = 28, st.pos = perch, st.yaw = a;
+        st.clip = "perch_idle", st.vel = vec3(0);
+        w.restore(st, a, -0.25f);
+        w.tick({});
+        const Actions stick = worldStick(w, {std::cos(a), std::sin(a)});
+        Actions go = stick;
+        go.jump = true;
+        w.tick(go);
+        EXPECT_EQ(w.player().state().clip, "perch_jump_forward");
+        for (int t = 0; t < 240 && (w.player().state().state == State::Jump || w.player().state().state == State::Fall); ++t) w.tick(stick);
+        for (int i = 0; i < 30; ++i) w.tick({});
+        return std::pair{w.player().state(), w.player().state().ledge >= 0 ? int(w.collision().markup[size_t(w.player().state().ledge)].id) : -1};
+    };
+    const auto [onFloor, none] = jump(45);
+    EXPECT_GT(onFloor.pos.z, -4950) << "on the upper floor, not the cave floor at -6237";
+    EXPECT_GT(glm::length(vec2(onFloor.pos - perch)), 1000);
+    const auto [hang, ledge] = jump(90);
+    EXPECT_EQ(hang.state, State::Hang);
+    EXPECT_EQ(ledge, 959);
+}
