@@ -4,6 +4,18 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.38.1] - 2026-11-07
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: jumping from the top of a pillar (a perch, such as the one in the Croft Manor caverns) was far too short and
+  dropped Lara to the floor. It now uses the original's speeds and carries her about 4 m across, onto the next floor
+  or ledge; jumping with no direction held goes straight up and lands back on the perch.
+- Fixed: with GAME OPTIONS > HELPER BUTTONS on, the grapple button (Q, or pad X) is shown above a grapple target in range.
+- Fixed: Q is both Grapple and Recenter Camera, as in the original, but a press that throws or releases the grapple no
+  longer also swings the camera round.
+- Fixed: the F1 overlay's help line shows your actual key bindings.
+
 ## [0.38.0] - 2026-11-07
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
