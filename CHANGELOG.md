@@ -20,6 +20,10 @@ New Enhanced-water and image features adapted from NeuralSpecOcean by Sheng Choi
 - Added: optional AgX tone mapping with Oklab gamut compression (softer highlights, deeper shadows). Settings:
   QUALITY > TONE MAPPING, `--tonemap original|agx`, launcher, config `tonemap`. Off by default; the default image is
   unchanged.
+- Added: FFT ocean on the open seas (Enhanced water; Mediterranean, Andaman and Arctic seas): three wave bands
+  (240 m swell, 28 m waves, 11 m chop) computed on the GPU every frame, with whitecaps where crests fold over. The
+  caustics follow the same surface. Gameplay still uses the original's waves (swimming, the yacht). Settings: WATER
+  & SKY > OCEAN WAVES, `--ocean fft|procedural`, config `ocean`. Costs about 0.02 ms per frame.
 
 ## [0.39.1] - 2026-11-07
 
