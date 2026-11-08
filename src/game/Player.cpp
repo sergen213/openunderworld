@@ -757,12 +757,71 @@ bool Player::tryDropToHang() {
     return true;
 }
 
-// Walkable top behind the hanging ledge (within 150 above it).
-bool Player::canClimbUp() const {
+// The hang's clearance class, tru.exe 0x74E290 (run on the attached ledgegrab by 0x76D010 in the segment frame of
+// 0x737D60; result in player data +0xEDC, read by the chart's PSCCF_Markup_ClearanceResult) with lara.drm player data
+// [O: decomp]: a ray 252 (+0x6F0) above the ledge from 100 (+0x6E8) on her side to 139 (+0x6EA) over the top hitting
+// something = the shelf test 0x74E160 (0x74BB50 == 1: 8, the wall-hug shelf; == 2: 11, wall too close), else 1; no
+// hit: the first surface down from 252 over the point 139 over the top 30 below to 40 above the ledge (0x72BAE0), then
+// the room above 69.5 over the top from 252 up to +0x10 = 512.01: all of it = 2 (ledgeb_climbup_fast), from +0x14 =
+// 260 = 5 (onto the top crouching), less = 1; no top = 1 (a beam narrower than 139, a top that drops away).
+// The chart (S530 T558 / T573 / T563, S439): 2 climbs up, 11 jumps up, anything else goes on to S439 (5 crouching,
+// 8 the wall hug, a balance beam as the jump target bbeam_ledgeu_climbup). Classes 0 / 12 (0x7375C0's check of what
+// is under her) are not modelled [I].
+int Player::hangClearance() const {
+    constexpr float kRayZ = 252.0f, kBack = 100.0f, kOver = 139.0f, kStand = 512.0101f, kCrouch = 260.0f;
     const auto& m = col_.markup[size_t(s_.ledge)];
     const vec3 q = pointOn(m, s_.ledgeSeg, s_.ledgeT);
-    const auto g = col_.groundProbe(vec3(xy(q) + xy(forward()) * 100.0f, q.z + 300), 400);
-    return g && g->normal.z >= t_.minFloorNormalZ && g->point.z > q.z - 30 && g->point.z < q.z + 150;
+    const vec3 top = forward();
+    if (col_.raycast(q - top * kBack + vec3(0, 0, kRayZ), top, kBack + kOver)) {
+        const vec2 d = segDir(m, s_.ledgeSeg);
+        if (glm::dot(vec2(-d.y, d.x), xy(top)) > 0.7f && shelfAt(s_.ledge, s_.ledgeSeg, s_.ledgeT)) return 8;
+        return 1; // [I] 0x74BB50's 2 (wall within 88.5) as 1: no up jump without a target
+    }
+    const auto floor = col_.raycast(q + top * kOver + vec3(0, 0, kRayZ), vec3(0, 0, -1), kRayZ + 30.0f);
+    const float dz = floor ? floor->point.z - q.z : -30.0f;
+    if (!(dz > -30.0f && dz < 40.0f)) return 1;
+    const vec3 above = q + top * (kOver * 0.5f) + vec3(0, 0, kRayZ);
+    const auto roof = col_.raycast(above, vec3(0, 0, 1), kStand - kRayZ);
+    const float room = roof ? kRayZ + roof->t : kStand;
+    return room >= kStand ? 2 : room < kCrouch ? 1 : 5;
+}
+
+// Hanging from a ledge with a balance beam (markup 14) as the jump target: the chart's S439 T698 (jump target type
+// 625 = beam) -> S882 -> S885 bbeam_ledgeu_climbup (request 184) -> the beam idle [O-data]. Lara's root does not move
+// in the clip: it stands on the beam line from the start, the hands 105 behind it and 28.6 to her side, where the
+// ledge is (the clip's last pose is bbeam_idle's) [O: clip]. Which beam the hang-up query picks: the one along the
+// ledge, its line within 100 over the top and 60 of its height [I] (l3_chapel: ledges 63 apart round 63-wide beams).
+bool Player::tryHangToBeam() {
+    const auto& lm = col_.markup[size_t(s_.ledge)];
+    const vec3 q = pointOn(lm, s_.ledgeSeg, s_.ledgeT);
+    const anim::Clip* c = anims_.find("bbeam_ledgeu_climbup");
+    if (!c) return false;
+    const auto hands = anims_.handsAt(*c, clipBlend("", "bbeam_ledgeu_climbup").startSeconds);
+    if (!hands) return false;
+    for (size_t li = 0; li < col_.markup.size(); ++li) {
+        const auto& m = col_.markup[li];
+        if (m.type != 14) continue;
+        const OnLine o = closestOn(m, q);
+        if (o.seg < 0 || o.dist > 100.0f || std::abs(o.q.z - q.z) > 60.0f || glm::dot(xy(o.q - q), xy(forward())) < 0) continue;
+        const vec2 dir = segDir(m, o.seg);
+        for (const float side : {1.0f, -1.0f}) {
+            const float yaw = yawOf(dir * side);
+            const vec3 h = rotYaw(yaw, *hands);
+            if (glm::dot(xy(h), xy(q - o.q)) <= 0) continue; // her hands on the ledge's side of the beam
+            // root on the line where the hands reach the ledge point
+            int seg = o.seg;
+            float t = o.t;
+            moveAlong(m, seg, t, -glm::dot(xy(h), dir));
+            s_.ledge = int(li), s_.ledgeSeg = seg, s_.ledgeT = t, s_.ledgeSide = side;
+            s_.pos = pointOn(m, seg, t);
+            s_.yaw = yaw;
+            s_.vel = vec3(0);
+            s_.state = State::Beam;
+            play("bbeam_ledgeu_climbup", false);
+            return true;
+        }
+    }
+    return false;
 }
 
 // ---- obstacles: ledges (markup 1) met from the ground (docs/GAMEPLAY.md "Obstacles") ----
@@ -2128,9 +2187,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         if (jumpPressed) {
             const int kind = std::abs(lateral) > 0.5f ? (lateral > 0 ? 1 : -1) : fw < -0.5f ? 2 : 0;
             const bool fromLean = leaning && kind != 0 && kind != 2; // the side lean's own take-off
-            const auto climb = [&] {
+            const auto climb = [&](std::string_view clip) {
                 s_.state = State::ClimbUp;
-                play("ledgeb_climbup_fast", false);
+                play(clip, false);
                 // Start where the clip expects the ledge: its hands (at the start time) on the ledge in x/y, and
                 // its root at the clip end on the ledge top (end - start rise); nothing to snap at the end.
                 const anim::Clip* c = anims_.find(s_.clip);
@@ -2140,8 +2199,12 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                     s_.pos += toWorld({hang.x - h->x, hang.y - h->y, hang.z - rise});
                 }
             };
-            if (kind == 0 && canClimbUp()) climb();
-            else if (startHangJump(kind)) {
+            const int cls = kind == 0 ? hangClearance() : 0;
+            if (cls == 2) climb("ledgeb_climbup_fast");
+            else if (cls == 5) climb("ledgeb_jumpuptocrouch"); // S439 T615 -> S455 -> crouch_Idle [O-data; clip by name I]
+            else if (cls == 8) startHangToWallHug();          // S439 T697 -> S1251 bbeam_flip_foward -> Wall_Hug_Idle
+            else if (kind == 0 && tryHangToBeam()) {
+            } else if (startHangJump(kind)) {
                 if (fromLean) play("ledgeb_jump_right_from_antic", false, 1, kind == -1);
             } else if (kind != 0) { // nothing there: a free leap, launched when the take-off clip ends (State::Jump)
                 const vec2 dir = kind == 2 ? -xy(forward()) : glm::vec2(right * float(kind));
@@ -2151,7 +2214,8 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 s_.state = State::Jump;
                 s_.fallStartZ = s_.pos.z;
                 play(kind == 2 ? "ledgeb_jump_back" : fromLean ? "ledgeb_jump_right_from_antic" : "ledgeb_jump_right", false, 1, kind == -1);
-            } else climb();
+            } // else: no top to climb onto, no beam and nothing to jump to: she stays hanging (the chart's S439 has no
+              // way on for class 1) [I: what tru.exe shows]
             break;
         }
         if (s_.state == State::Hang && (s_.clip.starts_with("ledgeb_attach") || s_.clip.starts_with("ledgeb_bad_attach") ||
@@ -2213,6 +2277,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             s_.pos.z = g->point.z;
             // tru.exe (Wine): running on, she runs off the hurdle without stopping.
             if (hurdle && wantsMove && !wantsWalk) { s_.state = State::Run; play("ng_run", true); }
+            else if (s_.clip == "ledgeb_jumpuptocrouch") { s_.state = State::Crouch; play("crouch_Idle", true); }
             else { s_.state = State::Idle; play("ng_idle", true); }
         } else {
             startFall(vec3(0));
@@ -2261,6 +2326,10 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
 // back onto the beam), drop = falls off to her right [I].
 void Player::beam(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     const auto& m = col_.markup[size_t(s_.ledge)];
+    if (s_.clip == "bbeam_ledgeu_climbup" && !clipDone()) { // up from the hang (tryHangToBeam): no root motion, no input
+        advanceClip(dt);
+        return;
+    }
     if (jumpPressed) {
         s_.ledge = -1;
         s_.runJump = false;
