@@ -100,8 +100,10 @@ Fixes (2026-11-07):
   their graph even without a `modifiable` member; a dataless one starts where its insert transition leaves [I].
   l5_valaskjalf_entryb lever 7189 now opens reward door 7227 (`ProgressionReal.PoleHoleLeverOpensRewardDoor`): its
   joint marker is a cylindrical joint (0x48F1D0: degree of freedom 0 = prismatic position), so its −600..−474 watch is
-  a slide down; Lara's weight on the inserted pole slides it [I: Havok weight, 300 units/s, stop at −600]. Open [U]:
-  the insert clip and engagement record, removal, l4_ballcourt 6502 (also a receptacle, still driven by a use).
+  a slide down; Lara's weight on the inserted pole slides it [I: Havok weight, 300 units/s, stop at −600]. The pole's
+  place is Wine-confirmed (marker frame, 1167 over the floor; docs/GAMEPLAY.md "Placed portables"), but no route up
+  to it is known: tru.exe's standing jump does not reach it [O Wine], so the reward stays unreachable in play [U].
+  Open [U]: the insert clip, the route to the pole.
 
 Sweep 2026-10-29 (uber joints): 132 / 289. Every uber object now starts its sections at spawn, so its first script use no longer counts as a change: the seven `sa_ei_grapple_wall` pulls (l2_maproom 2595, l2_norsehall 2457, l2_norsehub 2383/2394/2395, l2_towerconnector 2005/2042/2043 and volume 2040 -> 2043) and l5_valaskjalf volumes 7025/7026 (targets 6944/6943) passed only by that lazy start [I: not re-examined]; l3_bedroom_hall plane 4375 now passes.
 
