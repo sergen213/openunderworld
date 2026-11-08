@@ -361,7 +361,8 @@ private:
     bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
-    bool canClimbUp() const;
+    int hangClearance() const; // tru.exe 0x74E290's class: 2 climb up, 5 crouching, 8 wall-hug shelf, 1 none
+    bool tryHangToBeam();      // hanging beside a balance beam: bbeam_ledgeu_climbup onto it
     bool tryHurdle(bool jumped); // onto / over a ledge from the ground (State::ClimbUp, hurdle_* clips)
     void startHurdleFollowUp(bool low); // the onto / over / far-side hang clip after the attach (or S958)
     bool tryHurdleDown();                      // down off an obstacle's ledge (hurdle_down_*)
@@ -441,6 +442,7 @@ private:
     void perch(vec2 move, bool jumpPressed, bool dropPressed, float dt);
     bool shelfAt(int markup, int seg, float t) const; // a ledge point whose top is a wall-hug shelf (tru.exe 0x74BB50 == 1)
     bool tryWallHug(vec2 move);                       // walking onto such a shelf along it
+    void startHangToWallHug();                        // up onto it from the hang (clearance class 8)
     void wallHug(vec2 move, bool jumpPressed, float dt);
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);

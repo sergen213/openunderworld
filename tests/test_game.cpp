@@ -1614,6 +1614,51 @@ TEST(GameReal, TempleBalanceBeamWalkAndJump) {
     EXPECT_NEAR(s.pos.x, -3986, 1); // stopped at the far end
 }
 
+// l3_chapel's scaffold: balance beam 1031 (63 wide, x 4708.6) has ledgegrab loop 1009 round its top (x 4740.6 /
+// 4677.4). Hanging from the ledge, jump: the top 139 over the ledge is air (tru.exe 0x74E290 clearance class 1, no
+// ledgeb_climbup_fast, which used to carry her 102 past the line and off the far side), the beam is the jump target:
+// bbeam_ledgeu_climbup puts her on the beam, then the beam idle (chart S439 T698 -> S882 -> S885).
+TEST(GameReal, ChapelHangClimbsOntoBalanceBeam) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l3_chapel", {{4800, 4500, -6700}, 0});
+    const auto& s = w.player().state();
+    const int ledge = markupIndex(w, 1009), beam = markupIndex(w, 1031);
+    ASSERT_GE(ledge, 0);
+    ASSERT_GE(beam, 0);
+    for (const int seg : {0, 2}) { // the +x and -x sides of the beam
+        bool hung = false;
+        for (const float side : {1.0f, -1.0f}) {
+            game::PlayerState h;
+            h.state = State::Hang, h.ledge = ledge, h.ledgeSeg = seg, h.ledgeSide = side, h.ledgeT = 400, h.clip = "ledgeb_idle";
+            w.restore(h, 0, -0.25f);
+            w.tick({});
+            if (s.state != State::Hang || std::cos(s.yaw) * (seg == 0 ? -1.0f : 1.0f) < 0.7f) continue; // outside, facing the beam
+            hung = true;
+            break;
+        }
+        ASSERT_TRUE(hung) << seg;
+        w.restore(s, s.yaw, -0.25f);
+        w.tick({}); // restore holds the buttons: no press edge on its first tick
+        ASSERT_EQ(s.state, State::Hang);
+        const float hangY = s.pos.y;
+        Actions jump;
+        jump.jump = true;
+        w.tick(jump);
+        ASSERT_EQ(s.state, State::Beam) << seg << " " << game::stateName(s.state);
+        EXPECT_EQ(s.ledge, beam);
+        EXPECT_EQ(s.clip, "bbeam_ledgeu_climbup");
+        for (int i = 0; i < 120; ++i) {
+            w.tick({});
+            ASSERT_EQ(s.state, State::Beam) << seg << " tick " << i;
+            ASSERT_NEAR(s.pos.x, 4708.6f, 1) << i;
+            ASSERT_NEAR(s.pos.z, -6163.0f, 1) << i;
+        }
+        EXPECT_EQ(s.clip, "bbeam_idle");
+        EXPECT_NEAR(s.pos.y, hangY, 150); // up where she hung (her hands 105 behind her root along the beam)
+    }
+}
+
 // Ledge to ledge (l4_temple): grab 1187 from a standing jump, jump up 528 to 1162; hanging on 1207, jump back across
 // the 948 gap to 1208 at the same height, turning round. (1158 -> 1159, 585 behind and 324 lower, is no target: the
 // floor 94.8 out from 1159 is 312..474 down, ledge class 6, which q9's record 0x2A9EC refuses.)

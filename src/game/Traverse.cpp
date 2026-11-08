@@ -733,6 +733,20 @@ bool Player::tryWallHug(vec2 move) {
     return false;
 }
 
+// From the hang onto a wall-hug shelf (clearance class 8, Player::hangClearance): the chart's S439 T697 -> S1251
+// bbeam_flip_foward (request 175) -> S1250 -> Wall_Hug_Idle [O-data]; carried kShelfDepth in from the line at its
+// height and turned round to the wall over the clip [I: the clip's own root motion is not used].
+void Player::startHangToWallHug() {
+    const auto& m = col_.markup[size_t(s_.ledge)];
+    const vec2 d = ledgeDir(m, s_.ledgeSeg);
+    const vec3 shelf(-d.y, d.x, 0), q = ledgePoint(m, s_.ledgeSeg, s_.ledgeT);
+    s_.climbFrom = s_.pos, s_.climbTo = q + shelf * kShelfDepth;
+    s_.climbYawFrom = s_.yaw, s_.climbYawTo = s_.yaw + wrapAngle(yawOf(-xy(shelf)) - s_.yaw);
+    s_.vel = vec3(0);
+    s_.state = State::WallHug;
+    play("bbeam_flip_foward", false);
+}
+
 // Back to the wall on a shelf: shuffle along it (Wall_Hug_Shimmy_Left, request 1402; to the right mirrored [I: the
 // chart's two shimmy states differ only in property 201]), walk off where the shelf ends (Wall_Hug_Walk_Off, 1378,
 // mirrored) [O], jump forward off it (Wall_Hug_Jump_Forward, 1416; a stick jump's take-off speeds [I]). Corners
@@ -741,7 +755,7 @@ void Player::wallHug(vec2 move, bool jumpPressed, float dt) {
     if (s_.ledge < 0 || size_t(s_.ledge) >= col_.markup.size()) { startFall(s_.vel); return; }
     const auto& m = col_.markup[size_t(s_.ledge)];
     const std::string clip = s_.clip;
-    if (clip == "bbeam_walk_turn180") {
+    if (clip == "bbeam_walk_turn180" || clip == "bbeam_flip_foward") {
         if (!warpStep(dt)) return;
         play("Wall_Hug_Idle", true);
     } else if (clip == "Wall_Hug_Walk_Off") {

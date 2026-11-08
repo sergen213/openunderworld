@@ -658,6 +658,23 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   at that time lie on the ledge (x/y) and its root at the clip end lands on the ledge height (z = hand height − rise
   from the start time to the end); then the full 3-D root motion plays (no collision) and the end snaps to the floor.
   On ledge 1253 the remaining snap is 8.7 units, the rock top sitting 9 above the ledge markup (it was ~150 before).
+- Which way up from the hang (jump, stick neutral or up) is the hang's clearance class, tru.exe 0x74E290 (run on the
+  attached ledgegrab in its segment frame by 0x76D010, kept in player data +0xEDC, read by the chart's
+  `PSCCF_Markup_ClearanceResult`) with lara.drm's player data [O: decomp]: a ray 252 above the ledge from 100 on her
+  side to 139 over the top hitting something sends it to the shelf test 0x74E160 (0x74BB50 == 1: class 8, the
+  wall-hug shelf; == 2: 11), else 1; otherwise the first surface down from 252 over the point 139 over the top must lie
+  30 below to 40 above the ledge (0x72BAE0, else 1), and the room from 252 up to 512.01 over the point 69.5 over the
+  top gives 2 (all of it), 5 (from 260) or 1. The hang states (S530 / S531 / S542 / S548): class 2 → S551
+  `ledgeb_climbup_fast` (T558), 11 → `ledgeb_jump_up` (T573; ours: the hang jump up, which needs a target), anything else → S439: 5 → S455 (onto the top
+  crouching, `crouch_Idle` after; ours `ledgeb_jumpuptocrouch` [I: clip by name]), 8 with the attached markup 628 →
+  S1251 `bbeam_flip_foward` → `Wall_Hug_Idle` (ours carried onto the shelf as the walk-on [I]), a balance beam as the
+  jump target (T698, 625) → S882 → S885 `bbeam_ledgeu_climbup` (request 184) → the beam idle [O-data]. That clip has
+  no root motion: her root stands on the beam line from its first frame, the hands 105 behind it and 28.6 to her
+  side, on the ledge [O: clip]; ours takes the beam whose line lies within 100 over the top and 60 of the ledge's
+  height [I: the hang-up query's pick]. Nothing else (class 1 without a beam or a hang-jump target): she stays hanging
+  [I]. Before, every jump without the stick climbed up, so on l3_chapel's 63-wide scaffold beams (ledge loop 1009
+  round beam 1031) `ledgeb_climbup_fast` carried her 102 past the ledge and she fell off the far side.
+  `GameReal.ChapelHangClimbsOntoBalanceBeam`.
 - Turn in place: the yaw advances by the change of `ng_turn_center`'s root Z rotation each tick (7.85 rad/s looped),
   towards the stick direction, clamped to the remaining angle.
 - Interpolation: position, heading, swim pitch and clip time are blended between the last two ticks.
