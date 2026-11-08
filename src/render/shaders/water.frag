@@ -296,10 +296,16 @@ void main() {
         vec3 refl = sky;
 #ifdef OU_RT
         // Ray traced (render/sun.glsl ouRtHit: water excluded): sees what SSR cannot (off screen, behind Lara, under
-        // foreground objects). A hit that lies on screen and is the visible surface there takes the rasterised colour
-        // (the translated shaders' exact look, its fog included); the others are shaded by ouRtLit (texture x vertex
-        // colour x lambert x one shadow ray), scaled by waterPass[2].w (the translated shaders read ~2x brighter than the
-        // generic shading of the same hit) and fogged by their eye distance like the scene; misses keep the sky.
+        // foreground objects). A rough sea is no mirror: one sharp ray per pixel mirrored crisp, high-contrast shards of
+        // the cliff texture into the waves (l2_cliffclimb). So, as the SSR path reads: a hit that lies on screen and is the
+        // visible surface there takes the rasterised colour averaged over the reflection lobe's footprint at the hit
+        // (roughness x hit distance, projected to the screen: 12 taps), faded at the screen border; other hits are
+        // shaded by ouRtLit from the texture mip of that footprint (ouRtRough) with dark albedo lifted (below),
+        // x waterPass[2].w, fogged by their eye distance like the scene. Both fade to the sky with distance (80 m, twice SSR's 40: rays see further); misses keep the sky.
+        // Lobe half-angle [I]: wind sea 0.08 rad (choppier where the FFT slope is steep), calm water 0.02, widening
+        // with the normals' distance fade (far waves are averaged, not flat).
+        float rough = (sea ? 0.08 * (1.0 + 2.0 * min(length(s), 1.0)) : 0.02) + 0.04 * (1.0 - nfade);
+        ouRtRough = rough;
         vec3 ro = p + vec3(0.0, 0.0, 2.0);
         vec3 hc, hn;
         float hd = ouRayInputsFinite(ro, rs) ? ouRtHit(ro, rs, hc, hn) : -1.0;
@@ -309,12 +315,33 @@ void main() {
             bool inside;
             vec2 su = ouScreenUv(hp, inside);
             float sd = inside ? textureLod(uDepth, su, 0.0).r : 1.0;
-            if (sd < 0.999999 && abs(distance(ouWorld(su, sd), w.eye.xyz) - he) < 20.0 + 0.01 * he)
+            float range = 1.0 - smoothstep(0.6, 1.0, hd / (80.0 * kM));
+            if (sd < 0.999999 && abs(distance(ouWorld(su, sd), w.eye.xyz) - he) < 20.0 + 0.01 * he) {
+                vec3 side = normalize(cross(hp - w.eye.xyz, vec3(0.0, 0.0, 1.0)) + vec3(1e-4, 0.0, 0.0));
+                bool in2;
+                vec2 du = ouScreenUv(hp + side * (hd * rough), in2) - su;
+                float rpx = min(length(du * w.screen.xy), 48.0); // lobe radius in pixels
                 hc = textureLod(uScene, su, 0.0).rgb;
-            else
+                if (rpx > 1.0) {
+                    float rot = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+                    for (int i = 0; i < 12; ++i) {
+                        float a = rot + float(i) * 2.3999632, rr = rpx * sqrt((float(i) + 0.5) / 12.0);
+                        hc += textureLod(uScene, clamp(su + rr * vec2(cos(a), sin(a)) * w.screen.zw, vec2(0.0), vec2(1.0)), 0.0).rgb;
+                    }
+                    hc /= 13.0;
+                }
+                conf = ouEdgeFade(su, 0.08) * range;
+            } else {
+                // Off-screen: the generic shading picks one layer of the translated multi-layer materials ([O] l2 cliff
+                // rock: its texture averages 0.16, texels down to 0.06, where the raster rock reads 0.5; light maps are
+                // not in the ray path), which mirrored near black. Texels darker than 0.35 are lifted to it by adding
+                // grey (hue kept) [I: 0.35 x lambert 0.45-1 x 2 spans the raster rock's 0.3-0.7].
+                hc += vec3(max(0.35 - dot(hc, vec3(1.0 / 3.0)), 0.0));
                 hc = mix(min(ouRtLit(hp, hn, hc) * max(w.waterPass[2].w, 1.0), vec3(1.0)), w.fogColor.rgb,
                          clamp((he - w.fogRange.x) / max(1.0, w.fogRange.y - w.fogRange.x), 0.0, 1.0));
-            refl = toLinear(hc), conf = 1.0;
+                conf = range;
+            }
+            refl = mix(sky, toLinear(hc), conf);
         }
 #else
         if (ouTrace(p + vec3(0.0, 0.0, 2.0), rs, 40.0 * kM, 2.0 * kM, huv, ht)) {

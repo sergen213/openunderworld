@@ -146,6 +146,9 @@ float ouQuadSum(float v) {
 // Closest solid hit (water surfaces excluded) along unit r from p, for mirror reflections. Returns the hit distance, < 0
 // on a miss (the caller's own sky / surface colour); `col` = texture * vertex colour, `n` = unit world normal facing back
 // along r (two-sided, as gl_FrontFacing in the raster pass), 0 where the mesh has none. Shade with ouRtLit.
+// ouRtRough: half-angle (rad) of the caller's reflection lobe; the hit's texture is read at the mip of the lobe's
+// footprint there (rough water: its averaged colour, not crisp texels). 0 = a mirror.
+float ouRtRough = 0.0;
 float ouRtHit(vec3 p, vec3 r, out vec3 col, out vec3 n) {
     col = vec3(0.0), n = vec3(0.0);
     rayQueryEXT rq;
@@ -157,8 +160,8 @@ float ouRtHit(vec3 p, vec3 r, out vec3 col, out vec3 n) {
     OuTri t = ouCorners(g, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)));
     vec3 b = ouBary(rayQueryGetIntersectionBarycentricsEXT(rq, true));
     float dist = rayQueryGetIntersectionTEXT(rq, true);
-    // ponytail: mip from hit distance only (no ray cones); fine for the flat mirror of water.
-    vec4 c = textureLod(ouRtTextures[nonuniformEXT(g.texture)], ouAttr2(vb, t, 6u, b), clamp(log2(dist / 400.0), 0.0, 8.0)) *
+    // ponytail: mip from hit distance (+ the lobe, ouRtRough) only, no ray cones.
+    vec4 c = textureLod(ouRtTextures[nonuniformEXT(g.texture)], ouAttr2(vb, t, 6u, b), clamp(log2(dist / 400.0) + log2(1.0 + ouRtRough * 400.0), 0.0, 10.0)) *
              ouColorAt(vb, t, b);
     n = ouAttr3(vb, t, 3u, b);
     if (g.transform != uint64_t(0)) {
