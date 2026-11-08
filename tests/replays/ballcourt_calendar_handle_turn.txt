@@ -1,0 +1,47 @@
+# l4_ballcourt: --spawn -14240,10200,3700,90 --no-cinematics, in front of calendar 6506.
+# Round the calendar's east side to a push handle (section 1's kind-1 records, set 528), grip it (0x158: trigger 20 /
+# kind 1, section 1: 3 -> 1) and push: the ring turns on its hinge (uber joint 2) with Lara; letting go (0x14F,
+# trigger 21: 1 -> 5) locks it and the section is back in 3 after 1.5 s.
+# Recorded by ou-game --autopilot (docs/GAMEPLAY.md "Receptacle replays"), plan:
+#   go -13500 10700 60 / go -13500 11400 60 / engage 6506 walk / push 1 0 4 / wait 3
+0.0000 forward 0.55
+0.0000 right 0.85
+0.2667 forward 0.60
+0.2667 right 0.80
+0.3333 forward 0.65
+0.3333 right 0.75
+0.4000 forward 0.70
+0.4667 right 0.70
+0.5333 forward 0.75
+0.5333 right 0.65
+0.6000 walk 1.00
+0.6667 forward 0.80
+0.6667 right 0.60
+1.0000 right 0.55
+1.1333 forward 0.00
+1.1333 right 0.00
+1.1333 walk 0.00
+1.1500 forward 0.95
+1.1500 right -0.35
+1.2167 forward 0.90
+1.2167 right -0.40
+1.2833 right -0.45
+1.4167 right -0.40
+1.5500 forward 0.95
+1.5500 right -0.35
+1.6167 walk 1.00
+1.8833 right -0.30
+2.1667 forward 0.00
+2.1667 right 0.00
+2.1667 walk 0.00
+2.1833 forward -0.40
+2.1833 right -0.90
+2.1833 walk 1.00
+2.3167 forward -0.45
+2.5167 forward 0.00
+2.5167 right 0.00
+2.5167 walk 0.00
+2.5333 interact 1.00
+2.6333 forward 1.00
+6.5333 forward 0.00
+6.5333 interact 0.00
