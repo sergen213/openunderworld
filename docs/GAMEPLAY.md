@@ -586,9 +586,10 @@ cinematic's end on tick 1 either way, so the replays start from there.
 
 `--report-objects UID,...` (with `--frames`) prints at exit `ou-game: calls TO:VT ...` — every distinct script call
 (callee, vt; -1 = constructor) to or from the listed objects, in first-call order — and one line per object:
-`ou-game: object UID NAME pos X Y Z [graph S] [joint P] [uber S0,S1,.. jN X ..] [in R]` (anim-graph state id, the
-multibody joint's position, the uber section states with `-` in a transition and the simulated uber joints, the
-receptacle it is inserted in). UID 0 lists every script object (finding uids for a plan).
+`ou-game: object UID NAME pos X Y Z [graph S] [joint P] [uber S0,S1,.. jN X ..] [in R] [body X Y Z]` (anim-graph state
+id, the multibody joint's position, the uber section states with `-` in a transition and the simulated uber joints, the
+receptacle it is inserted in, the translation of its own rigid motion: doors on their joints, sliders). UID 0 lists
+every script object (finding uids for a plan).
 
 The replays (`tests/replays/*.txt`, ctest `game_replay_<name>`, CMake `ou_receptacle_replay`: the real ou-game under
 `--no-cinematics --sync-loads`) check the `portables held N inserted P>R` exit line, Lara's state and the puzzle's
@@ -600,17 +601,34 @@ downstream reaction as tru.exe's scripts define it (`--report-objects`; PROGRESS
 | `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | power gem 7498 carried 33 m to cog wheel 7312, set into section 1 while the wheel turns | cog wheel section 1 state 0 -> 1 |
 | `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 | lever graph 1 -> 0 and its slider watch (a joint) |
 | `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 | elevator 2960 vt 54 (graph 0 -> 1), switch 2961 vt 62 |
-| `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole | lever graph 0 -> 1 with its slider watch, block under the pole |
+| `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole; a jump onto the block (its ledge loop), a standing jump from its top to the pole | lever graph 0 -> 1, its slider at -600 under her hang (state polehang), block under the pole, door 6505 raised 1200 |
 | `baldrs_plates_gate` | l1_baldrs_tomb -5000,-10000,2560,180 (west room) | weight 220 set on press plate 219, weight 218 carried through door 223 onto plate 222, Lara stands on plate 221 | plates at -60, door 223 vt 57 (section 1, open), locks 69 / 70 out of range, gate 45 vt 54 and its joint fallen open (~90°) |
 | `ballcourt_calendar_handle_turn` | l4_ballcourt -14240,10200,3700,90 | round calendar 6506's east side, grip a push handle and push 4 s | the ring turned on hinge joint 2 (> 0.2 rad, ~0.56), section 1 back in 3 |
 
+Objects' ledges and poles [O data, tru.exe 0x5D0610 -> 0x5CE4F0]: an instance whose model carries markup items (model
+DTP +0x54 / +0x58, docs/formats/COLLISION.md) owns them as markup boxes that move with it. Push block `ca_pu_block_a`
+(l4_ballcourt 6504) has a ledgegrab loop round its top, 410.8 up; `ar_pu_valaskjalf_entry` (l5 7191) the same at
+410.9 (Wine, session 5: a jump next to where it stands put Lara on it, 414 over the floor). Ours (`World::tickObjectMarkup`):
+each object's model-0 items after the units' markup in the merged collision, re-placed every tick by its first collision
+segment, so the block's edges are ordinary ledges that ride its pushes: up against a face, a jump hurdles onto it (class 6,
+`hurdle_ground_attach_mid`), and from the edge she drops to hang or shimmies like on any ledge. Standing on block 6504
+pushed under the inserted pole 6503, a standing jump's pole leap catches the pole (695 over the block's top), and the
+hang slides lever 6502 and raises door 6505 (`ProgressionReal.BallcourtBlockUnderPoleReachesIt`, the replay below).
+[I]: model 0's items only (the current model; uber sections' own models, e.g. hpole bars, add none), objects without a
+collision segment and portables add none (an inserted pole keeps tickInserted's horizpole).
+Wine [O, openunderworld-work/poleattach/session6.sh -> s6.txt]: block 6504 at (-16042.5, 3478.8, -11969.6) yaw
+-2.7737 (tru.exe frame); a standing jump with Lara placed 260 from its centre, facing it, squares her to the face
+(heading -1.2029 = the block's yaw + 90°), attaches and ends standing on the top at +409.8 (the ledge 410.8). Walking
+into the face and jumping with the stick still held vaults over it instead (root up to +425.6, down 350 past the far
+face) [U: why 0x73DFF0 classes that one 0 (over): its down ray 353 past the ledge point should meet the 379-deep top;
+ours climbs onto it both ways].
+
 Not replayed [U]: hanging on the inserted l5 pole (door 7227, `PoleHoleLeverOpensRewardDoor` drops her onto it). The
 pole's markup is 1164 over the floor she inserts it from (2742,-46810..-46296, z -1339), above the standing jump's
-reach (ledges 635-910 over her feet); no markup lies within 12.5 m of it and the stone blocks at the room's far end
-(x ~4300) are 1500 away, so the route up the original intends is not found yet. Likewise the l4_ballcourt pole (z 4572,
-1106 over the floor, no markup within 20 m): the replay stands block 6504 under it, but our Lara cannot climb onto a
-push block (no vault, no ledges on objects), so the hang that opens door 6505 (`BallcourtPoleLeverOpensDoor`) is not
-replayed. l1_baldrs_tomb's west room (plate 219, both weights) is entered by the spawn: door 223 is shut from the east
+reach (ledges 635-910 over her feet); no unit markup lies within 12.5 m of it. Block 7191 (climbable, above) stood
+~5670 (20 m) from lever 7189 in Wine (Lara on it at 11637,-14901 vs the lever at 16965,-16856; whether it slides
+there is [U]), so the route up the original intends is not found yet.
+l1_baldrs_tomb's west room (plate 219, both weights) is entered by the spawn: door 223 is shut from the east
 and Lara alone on 219 lets it shut again when she steps off (219 vt 55 -> 223 vt 58), so a weight holds it.
 Also not replayed [U: route]: the calendar headdress 6498 lies at -4143,6282,-917, 16 m below and 36 m from calendar
 6506 (route unknown to the autopilot), and the shiva arms' gems 2964 / 2965 lie on the upper floor (z 5447) while the

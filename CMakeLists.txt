@@ -473,10 +473,12 @@ if(OU_BUILD_TESTS)
   # cog wheel 7312 section 1 takes the gem (0 -> 1)
   ou_receptacle_replay(valgrind_cog_gem_insert l5_valgrind 0,3072,180,180 1500 7498,7312
                        "portables held 0 inserted .*7498>7312" "object 7312 .* uber [0-9]+,1,")
-  # pole 6503 into lever 6502 (graph 0 -> 1, the slider watch), push block 6504 under the pole
-  ou_receptacle_replay(ballcourt_pole_lever_block l4_ballcourt -20300,14700,3484,-90 2300 6503,6502,6504
-                       "portables held 0 inserted .*6503>6502" "object 6502 .* graph 1 joint "
-                       "object 6504 .* pos -20[01][0-9]{2}\\.[0-9] 14[34][0-9]{2}\\.")
+  # pole 6503 into lever 6502 (graph 0 -> 1, the slider watch), push block 6504 under the pole, onto the block (its
+  # ledge loop), a jump to the pole: the hang slides the lever to -600 and door 6505 rises (twice the drop)
+  ou_receptacle_replay(ballcourt_pole_lever_block l4_ballcourt -20300,14700,3484,-90 2700 6503,6502,6504,6505
+                       "portables held 0 inserted .*6503>6502" "object 6502 .* graph 1 joint -(3[5-9][0-9]|[45][0-9]{2}|600)\\."
+                       "object 6504 .* pos -20[01][0-9]{2}\\.[0-9] 14[34][0-9]{2}\\." "state polehang"
+                       "object 6505 .* body -?0\\.0 -?0\\.0 (7[0-9]{2}|[89][0-9]{2}|1[0-2][0-9]{2})\\.")
   # calendar 6506: a push handle gripped and pushed turns the ring (hinge joint 2), section 1 back to waiting (3)
   ou_receptacle_replay(ballcourt_calendar_handle_turn l4_ballcourt -14240,10200,3700,90 700 6506
                        "object 6506 .* uber [0-9]+,3,.* j2 (0\\.[2-9]|[1-9])")

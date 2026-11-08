@@ -460,6 +460,7 @@ void World::rebuildCollision() {
     col_.clearParts();
     col_.markup.clear();
     for (auto& [uid, in] : inserted_) in.markup = -1; // tickInserted adds the inserted poles' markups again
+    objectMarkup_.clear();                            // tickObjectMarkup below: after every unit's
     for (auto& u : units_) {
         const auto& c = u.data.col;
         col_.appendPart(c, u.offset);
@@ -480,6 +481,7 @@ void World::rebuildCollision() {
         }
     }
     col_.finishParts();
+    tickObjectMarkup(); // the colliders (col_.dynamics) survive the rebuild
 }
 
 void World::crossPortals(vec3 from, vec3 to) {
@@ -690,10 +692,16 @@ std::optional<std::pair<std::string, int>> World::markupOwner(int index) const {
     for (const auto& u : units_)
         if (index >= int(u.markupBase) && index < int(u.markupBase + u.data.col.markup.size()))
             return std::pair{u.data.name, index - int(u.markupBase)};
+    for (const auto& [key, i] : objectMarkup_)
+        if (i == index) return std::pair{"@" + std::to_string(key.first), key.second};
     return std::nullopt;
 }
 
 int World::markupIndex(const std::string& unit, int local) const {
+    if (unit.starts_with('@')) {
+        const auto it = objectMarkup_.find({std::atoi(unit.c_str() + 1), local});
+        return it == objectMarkup_.end() ? -1 : it->second;
+    }
     for (const auto& u : units_)
         if (u.data.name == unit && local >= 0 && size_t(local) < u.data.col.markup.size()) return int(u.markupBase) + local;
     return -1;

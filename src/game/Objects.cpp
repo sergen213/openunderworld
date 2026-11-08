@@ -1372,6 +1372,7 @@ void World::tickObjects(float dt) {
         }
         col_.dynamics[i].transform = c.intro * model * c.frame;
     }
+    tickObjectMarkup();
     if (under >= 0) {
         const vec3 moved = vec3(col_.dynamics[under].transform * glm::inverse(before) * glm::vec4(feet, 1)) - feet;
         if (glm::dot(moved, moved) > 1e-6f) player_.carry(moved);
@@ -1750,6 +1751,35 @@ void World::tickInserted(float dt) {
         if (in.markup < 0 || size_t(in.markup) >= col_.markup.size()) in.markup = int(col_.markup.size()), col_.markup.push_back(m);
         else col_.markup[size_t(in.markup)].type = m.type, col_.markup[size_t(in.markup)].points = m.points;
     }
+}
+
+// tru.exe adds the markup items of an instance's current model as markup boxes it owns (0x5D0610 -> 0x5CE4F0: box +0x0C =
+// the instance, +0x20 = the item, flags from the type; instance +0x2D8 lists them) for every instance whose model has
+// any, and the boxes follow the instance. ca_pu_block_a (l4_ballcourt 6504): one ledgegrab loop round its top
+// (+-189.6, 410.8 up, counter-clockwise from above, so the hang side is outside) [O data]: Lara hurdles onto the block
+// and hangs from its edges like any ledge. Ours: model 0's items [I: the current model], placed by the object's first
+// collision segment (its model frame: intro x motion) so they ride pushes, joints and clips; objects without collision
+// segments and portables (their inserted poles: tickInserted) add none [I].
+void World::tickObjectMarkup() {
+    std::set<int32_t> seen;
+    for (size_t i = 0; i < colliders_.size() && i < col_.dynamics.size(); ++i) {
+        const auto& c = colliders_[i];
+        if (c.section >= 0 || !seen.insert(c.uid).second) continue;
+        const auto* o = script_.find(c.uid);
+        const auto* p = o ? objectPhysics(o->name) : nullptr;
+        if (!p || p->markup.empty() || p->physClass == 50) continue;
+        const glm::mat4 frame = col_.dynamics[i].transform * glm::inverse(c.frame);
+        for (int k = 0; k < int(p->markup.size()); ++k) {
+            collision::Markup m = p->markup[size_t(k)];
+            for (vec3& q : m.points) q = vec3(frame * glm::vec4(q, 1));
+            if (o->hidden || o->dead) m.type = 0; // "none"
+            auto [it, added] = objectMarkup_.try_emplace({c.uid, k}, int(col_.markup.size()));
+            if (added) col_.markup.push_back(std::move(m));
+            else col_.markup[size_t(it->second)].points = std::move(m.points), col_.markup[size_t(it->second)].type = m.type;
+        }
+    }
+    for (const auto& [key, index] : objectMarkup_) // gone (streamed out, intangible)
+        if (!seen.contains(key.first) && size_t(index) < col_.markup.size()) col_.markup[size_t(index)].type = 0;
 }
 
 // One physics step on the fixed tick (Jolt, src/physics): rigid-body doors and levers on their hinges, the uber

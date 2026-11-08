@@ -915,6 +915,9 @@ private:
     void attachPortable(script::Object& portable, const script::Object& receptacle, int segment, int section = -1);
     void placePortables();                 // portables placed in receptacles (Object::placedIn) insert themselves
     void tickInserted(float dt);           // inserted portables: the receptacle's slider, the portable's pose, pole markup
+    // Objects' model markup (physics::ObjectPhysics::markup) in col_, placed by the object's collider each tick: ledges
+    // on push blocks, cog rings, breakable ledges move with their instance (tru.exe markup boxes owned by the instance).
+    void tickObjectMarkup();
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
     std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
     bool engages(const script::Object& o, const physics::Engagement& e); // Lara inside the record's shape
@@ -1017,6 +1020,9 @@ private:
     // after a load).
     struct Inserted { int32_t receptacle = 0; int markup = -1; int section = -1; };
     std::map<int32_t, Inserted> inserted_;
+    // (uid, item) -> its markup in col_ (tickObjectMarkup; rebuildCollision re-adds them after the units' markup).
+    // markupOwner names them "@uid" so Lara's ledge survives a rebuild and a save.
+    std::map<std::pair<int32_t, int>, int> objectMarkup_;
     std::map<int32_t, float> slides_;
     // Rigid doors on a cylindrical joint (marker kind 2, l4_ballcourt 6505): position along the joint (units, World::
     // tickObjects), held within the `multibody` 77 limit 1 (kept in multibodyLo_ / Hi_ like the hinges' radians).

@@ -3529,6 +3529,8 @@ int main(int argc, char** argv) {
                             if (const auto* jt = world->uberJoint(uid, j)) std::snprintf(buf, sizeof buf, " j%d %.3f", j, jt->x), s += buf;
                     }
                     if (const int32_t r = world->insertedIn(uid)) s += " in " + std::to_string(r);
+                    if (const glm::vec3 b(o->body[3]); glm::length(b) > 0.05f) // a rigid body's / slider's own motion (doors)
+                        std::snprintf(buf, sizeof buf, " body %.1f %.1f %.1f", b.x, b.y, b.z), s += buf;
                     std::fprintf(stderr, "%s\n", s.c_str());
                 }
             }

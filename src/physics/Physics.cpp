@@ -214,6 +214,21 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
             const uint32_t q = *mk + 0x30 * i;
             o.markers.push_back({vec(*m, q), vec(*m, q + 0x10), at<uint32_t>(*m, q + 0x20), at<int32_t>(*m, q + 0x24)});
         }
+    const uint32_t nmu = m->data.size() >= 0x5C ? at<uint32_t>(*m, 0x54) : 0;
+    if (const auto mu = nmu ? cdc::internalPointer(*m, 0x58) : std::nullopt; mu && nmu < 256)
+        for (uint32_t i = 0; i < nmu; ++i) {
+            const uint32_t q = *mu + 0x5C * i;
+            const uint8_t type = at<uint8_t>(*m, q + 0x33);
+            const uint32_t flags = at<uint32_t>(*m, q + 0x28);
+            const auto pl = cdc::internalPointer(*m, q + 0x58);
+            if (!type || !pl || (flags ? flags : collision::markupFlags(type)) & 0x80000000u) continue; // disabled [O 0x5CE4F0]
+            const uint32_t n = at<uint32_t>(*m, *pl);
+            if (n < 2 || n > 1024) continue;
+            collision::Markup k;
+            k.type = type, k.id = at<uint16_t>(*m, q + 0x2E);
+            for (uint32_t j = 0; j < n; ++j) k.points.push_back(vec(*m, *pl + 0x10 + 0x10 * j));
+            o.markup.push_back(std::move(k));
+        }
     return o;
 }
 
