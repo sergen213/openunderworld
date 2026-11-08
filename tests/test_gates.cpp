@@ -4,6 +4,7 @@
 #include "game/Game.hpp"
 #include "game/Progress.hpp"
 #include "physics/Physics.hpp"
+#include "save/Save.hpp"
 
 #include "cdc/Cdc.hpp"
 #include "formats/Formats.hpp"
@@ -26,6 +27,7 @@
 
 using namespace ou;
 using game::vec3;
+using vec2 = glm::vec2;
 
 namespace {
 
@@ -1724,6 +1726,96 @@ TEST(ProgressionReal, BallcourtPoleLeverOpensDoor) {
 
     for (const int32_t uid : {6502, 6503, 6505})
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+}
+
+// The route up to that pole (1106 over the floor): push block 6504 (ca_pu_block_a) under it, climb onto the block, jump
+// to the pole. tru.exe gives the block its model's markup item (model DTP +0x54 / +0x58, 0x5D0610 -> 0x5CE4F0: a
+// markup box owned by the instance): one ledgegrab loop round its top, 410.8 up, which moves with the block. A running
+// jump at the block catches that ledge (ledge class 6, 313..474 over the floor: hurdle_ground_attach_mid) and she climbs
+// onto it; standing on it, the inserted pole is in a standing jump's pole leap.
+TEST(ProgressionReal, BallcourtBlockUnderPoleReachesIt) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l4_ballcourt");
+    auto& w = *wp;
+    std::vector<std::pair<int32_t, int16_t>> calls;
+    w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) { if (from == 6502) calls.emplace_back(to, vt); };
+    const auto lever = [&] { return w.script().find(6502); };
+    const auto block = [&] { return w.script().find(6504); };
+    ASSERT_TRUE(lever() && block() && w.script().find(6503));
+    for (int i = 0; i < 5; ++i) w.tick({});
+    const auto blockLedge = [&]() -> const collision::Markup* {
+        const vec3 c = block()->pos + block()->offset;
+        for (const auto& m : w.collision().markup)
+            if (m.type == 1 && m.points.size() == 5 && glm::distance(m.points[0], m.points[4]) < 0.01f &&
+                glm::length(vec2((m.points[0] + m.points[2]) * 0.5f - c)) < 2.0f)
+                return &m;
+        return nullptr;
+    };
+    ASSERT_TRUE(blockLedge()) << "the block's top-edge ledge loop";
+    EXPECT_NEAR(blockLedge()->points[0].z, block()->pos.z + 410.77f, 1.0f);
+    EXPECT_NEAR(glm::distance(blockLedge()->points[0], blockLedge()->points[2]), 379.2f * std::sqrt(2.0f), 1.0f);
+    const float floorZ = block()->pos.z;
+    // Insert the pole (BallcourtPoleLeverOpensDoor).
+    game::Actions use;
+    use.interact = true;
+    place(w, w.script().find(6503)->pos + vec3(80, 0, 0), glm::pi<float>());
+    for (int i = 0; i < 5; ++i) w.tick({});
+    w.tick(use), w.tick({});
+    ASSERT_EQ(w.heldPortable(), 6503);
+    ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}, {lever()->pos + vec3(0, -250, 0), glm::half_pi<float>()},
+                                 {lever()->pos + vec3(250, 0, 0), glm::pi<float>()}, {lever()->pos + vec3(-250, 0, 0), 0.0f}},
+                             [&] { return w.insertedIn(6503) == 6502; }));
+    for (int i = 0; i < 10; ++i) w.tick({});
+    vec3 mid(0);
+    for (const auto& m : w.collision().markup)
+        if (m.type == 6 && m.points.size() == 2 && glm::distance(m.points[0], lever()->pos) < 1500) mid = (m.points[0] + m.points[1]) * 0.5f;
+    ASSERT_GT(mid.z, floorZ + 1000) << "the inserted pole, out of reach from the floor";
+    // The block under the pole (the replay game_replay_ballcourt_pole_lever_block pushes it there): its ledge follows.
+    const_cast<script::Object*>(block())->offset = vec3(vec2(mid) - vec2(block()->pos), 0);
+    w.tick({});
+    ASSERT_TRUE(blockLedge()) << "moved with the block";
+    const vec3 c = block()->pos + block()->offset;
+    // Standing at the face she pushed it by (heading -69 degrees, one of its axes), a jump: hurdle_ground_attach_mid
+    // onto its top (Wine, block 6504: a standing jump 260 from its centre ends on the top, +409.8).
+    const auto& s = w.player().state();
+    const float yaw = glm::radians(-69.0f);
+    const vec3 dir(std::cos(yaw), std::sin(yaw), 0);
+    place(w, vec3(vec2(c) - vec2(dir) * 260.0f, floorZ), yaw);
+    for (int i = 0; i < 10; ++i) w.tick({});
+    EXPECT_NEAR(glm::dot(s.pos - c, dir), -260.0f, 5.0f);
+    game::Actions jump;
+    jump.jump = true;
+    w.tick(jump);
+    EXPECT_EQ(s.state, game::State::ClimbUp) << "the block's ledge, class 6 from a jump";
+    // A save mid-climb names the ledge by its block ("@6504", World::markupOwner); loaded below, the climb goes on.
+    const auto climbing = save::capture(w);
+    EXPECT_EQ(climbing.ledgeUnit, "@6504");
+    const auto climbingBytes = save::serialize(climbing);
+    const auto climb = [&] {
+        for (int i = 0; i < 240; ++i) {
+            w.tick({});
+            if (s.state == game::State::Idle && std::abs(s.pos.z - (floorZ + 410.8f)) < 15 && glm::length(vec2(s.pos - c)) < 190) return true;
+        }
+        return false;
+    };
+    ASSERT_TRUE(climb()) << "on the block: state " << int(s.state) << " at " << s.pos.x - c.x << " " << s.pos.y - c.y << " " << s.pos.z - floorZ;
+    // A standing jump up from the block's top: the pole leap catches the pole, her weight slides the lever.
+    game::Actions up;
+    up.jump = true;
+    w.tick(up);
+    for (int i = 0; i < 90 && s.state != game::State::PoleHang; ++i) w.tick({});
+    ASSERT_EQ(s.state, game::State::PoleHang);
+    for (int i = 0; i < 180; ++i) w.tick({});
+    EXPECT_LE(lever()->joint->position, -350.0f);
+    ASSERT_TRUE(w.script().find(6505));
+    const vec3 doorMove(w.script().find(6505)->body[3]);
+    EXPECT_GT(doorMove.z, 600.0f) << "door 6505 rises on its cylindrical joint: twice the lever's drop";
+    for (const int32_t uid : {6502, 6503, 6504, 6505})
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+    ASSERT_NO_THROW(save::apply(save::parse(climbingBytes), w));
+    EXPECT_EQ(s.state, game::State::ClimbUp);
+    EXPECT_TRUE(climb()) << "the loaded climb ends on the block's top: state " << int(s.state) << " z " << s.pos.z - floorZ;
 }
 
 // Every graph receptacle with its portable: a placed one (intro reference, Object::placedIn) starts inserted; Lara takes

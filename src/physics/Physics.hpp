@@ -88,6 +88,11 @@ struct ObjectPhysics {
     std::vector<EngagementSet> engagements;
     // Receptacles: the model marker a portable attaches at (record +0x3C -> byte; query 0x173 -> 0x6B55D0), -1 none.
     int attachMarker = -1;
+    // Traversal markup of the model (model DTP +0x54 count, +0x58 -> 0x5C-byte items: +0x28 flags (0 = from the type),
+    // +0x2E id, +0x33 type, +0x58 -> polyline {u32 n, pad, float4 points[n]}), points in model space. tru.exe adds them
+    // per instance (0x5D0610 -> 0x5CE4F0 with the instance as the markup box's owner, box +0x0C) when the instance's
+    // current model has any (0x4D78D0, 0x5BA480, 0x5BA650, 0x5D07E0): push blocks' top-edge ledges, poles, cog rings.
+    std::vector<collision::Markup> markup;
     // Bind-pose model-space frame of a segment field (tru.exe 0x615930): >= 0 a segment, < 0 the HInfo marker -id
     // (0x46DA20) in its segment's frame; nullopt when there is no such segment / marker.
     std::optional<mat4> frame(int field) const;

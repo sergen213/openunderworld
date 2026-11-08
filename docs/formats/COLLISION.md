@@ -142,9 +142,18 @@ convention. Balance beam lines lie on the beam's collision top (±0) [O]. l4_poo
 inside the collision top of its rock [O].
 
 The 0x5C-byte "markup items" at Level+0x08/+0x0C (FUN_005CE4F0; MarkUp+0x58 → PolyLine `{int n; pad; float4 points[n]}`)
-are not decoded: the count is 0 in all 82 units [O]. FUN_005D0610 runs per object instance but parses that same
-global list from MarkupManager (its count/pointer are read from the manager, not from the object's DTP), so objects
-do not add their own traversal markup in this data [O: ca_pt_weightbreak_b's DTP+0x54/+0x58 is unrelated].
+have a count of 0 in all 82 units [O]. Objects bring their own, per model [O]: FUN_005D0610 passes
+`model = object +0x40 [instance model index]` (FUN_005B41E0, ECX = the instance) — the model DTP's +0x54 count and
++0x58 items — to FUN_005CE4F0 with the instance as each markup box's owner (box +0x0C; the instance's list +0x2D8,
+mask 0xFFFFFFFF). Every instance whose current model has items gets them (callers 0x4D78D0 uber objects, 0x5BA480 /
+0x5BA650 model changes, 0x5D07E0 instance creation). Item layout: +0x28 u32 flags (0 = from the type byte), +0x2E u16
+id, +0x33 u8 type (the types above), +0x34 position, +0x40 box, +0x58 → polyline (points in model space, moving with
+the instance). Survey (2026-11-07, every object DRM): 83 models of 77 objects, all flags 0 — ledgegrab loops round the
+tops of push blocks (`ca_pu_block_a` ±189.6 at 410.8, `ma_rb_pushblock_training`, `sa_rb_pushable_weight`,
+`ar_pu_valaskjalf_entry` ±205.4 at 410.9, `ca_pu_block_grapple`), breakable ledges, cog wheels and the valgrind column
+rings, Thor's hammers, `sh_ei_combat_crate_a`; poles (type 4 / 6) on the portable poles, hpoles, chains, snake heads.
+Loops run counter-clockwise seen from above, so their hang side (right of the direction) is outside. Ours:
+`physics::ObjectPhysics::markup` (model 0), placed each tick by `World::tickObjectMarkup`.
 
 ### Camera records [O]
 
