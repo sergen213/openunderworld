@@ -1059,14 +1059,25 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 - Tuning [O g_grapple data, `GrappleTuning`]: hook object 77 = `pr_grapplinghook` (+0xF8), hook launch speed 1580.28
   (+0xFC, the projectile's speed in 0x6C85C0 -> 0x6A1980), throw range 4424.78 = 14 m (+0x100, 0x698AC0), rope
   553.1..4424.78 (+0x108 / +0x104, clamped along anchor -> bends -> hand by 0x6A4A40), 8 bends (+0x10C, 0x6A3430).
-  A unit (stream data +0x2B4) or a target (its 0x404 block) can override range / rope; not read [U]. The hook does
+  A target's intro data 0x404 block (tag 0x404, byte +4 flag, +8 throw range, +12 longest rope; tru.exe 0x698A70 reads
+  instance +0x104, else its parent's) overrides both when flagged [O]: `GrappleTarget::range / rope`, the rope kept in
+  `PlayerState::ropeMax` (saved). 24 of the 37 grapple intros set it, e.g. l3_chapel 4744 4424.78, l3_main_hall 4089
+  3792.67, l4_temple 4951 5689, l2_norsehall 2457 rope 6005. A unit's settings record (+0x2B4: +0x18 flag, +0x1C / +0x20,
+  0x5D3FF0 -> 0x698BC0) could override them too; no unit sets it [O data]. The hook does
   not fly in ours (it attaches at once; at 1580 units per 30 Hz frame [I unit] it would take 1-3 frames) [I].
 - Selection [O lara.drm player data +0x464, criteria 0x712090]: flags 0xEC000000 (line of sight from her eye), six
   target sets in order, the first with a candidate wins: (0) horizontal angle from her facing <= 25, distance <= 2880,
   camera angle <= 90; (1) in range, <= 15, <= 5120, camera <= 90; (2) <= 2880, camera <= 90; (3) <= 2880, horizontal <=
   90, no more than 60 below level; (4) in range, camera <= 90, at least 5 above level; (5) in range, horizontal <= 90,
-  at least 5 above level (`World::grappleTarget`; the target object's own collision does not block it). Within a set
-  nearest the camera's view, distances from her eye [I]. A crosshair marks it in ou-game and, with GAME OPTIONS >
+  at least 5 above level (`World::grappleTarget`). Distances from her eye (0x6ECE40: position + data +0x48C) to the
+  target point (0x6FF040: origin + its message-0xDB offset; ours the intro origin) [O]; "in range" (criterion 15) is
+  measured by tru.exe from the instance message 0x175 returns (grapple controller +0x34), ours from her eye [I]. Line of
+  sight (0x713200 -> 0x713090, ray flags 0xC5AC1983): terrain blocks except groups whose flags have 0x8 / 0x20000 /
+  0x40000 / 0x80000 (filter 0x48EF50), instances only with object flag 8, never the target or its parent [O]; ours: all
+  terrain and every collider but the target's [I: no such group at l3_chapel 4744]. Within a set nearest the camera's
+  view [I]. l3_chapel 4744 hangs 116 under the barrel vault, so it is offered only from high up: the column top by the
+  stone angel (ledge 1008, checkpoint 4738), within ~330 of its west edge — the timed run to the chapel doors
+  (`GameReal.ChapelRingFromTheColumnTop`). A crosshair marks it in ou-game and, with GAME OPTIONS >
   HELPER BUTTONS shown, the grapple's helper button above it: locals.bin 363, the grapple placeholder U+1800 alone
   (364 / 365 hold the jump / interact ones), expanded as the popups' (the bound key, "Q" by default, or the pad's X
   icon) [O string; I placement: not captured].

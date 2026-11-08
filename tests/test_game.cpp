@@ -5345,3 +5345,75 @@ TEST(GameReal, CavernsPerchJumpReaches) {
     EXPECT_EQ(hang.state, State::Hang);
     EXPECT_EQ(ledge, 959);
 }
+
+// l3_chapel ring 4744 (ma_ei_grapple_ceiling, its own range 4424.78 in its intro data's 0x404 block) hangs 116 under the
+// barrel vault, 6440 over the floor, so the vault and the walls hide it from the floor. The timed run to the chapel doors
+// throws at it from the top of the column by the stone angel (ledge 1008 at x -5226; checkpoint 4738 is on it): within
+// ~330 of that edge her eye is in range and sees it. A throw from there swings her out under the ring.
+TEST(GameReal, ChapelRingFromTheColumnTop) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const float west = 3.1415927f;
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l3_chapel",
+                  game::loadLaraAnims(bf), game::Spawn{{-5126, 1900, -3141}, west});
+    w.script().setBigfile(&bf);
+    const auto place = [&](vec3 pos) {
+        game::PlayerState s;
+        s.pos = pos, s.yaw = west;
+        w.restore(s, west, -0.25f);
+        for (int i = 0; i < 5; ++i) w.tick({});
+    };
+    const auto floor = w.collision().groundProbe({-6700, 1900, -6500}, 1000);
+    ASSERT_TRUE(floor);
+    place(floor->point);
+    EXPECT_FALSE(w.grappleTarget()) << "under the vault, from the chapel floor";
+    place({-5126, 1900, -3141});
+    const auto t = w.grappleTarget();
+    ASSERT_TRUE(t) << "from the column top";
+    EXPECT_EQ(t->uid, 4744);
+    EXPECT_NEAR(t->range, 4424.78f, 0.01f);
+    Actions throwIt;
+    throwIt.grapple = true;
+    w.tick(throwIt);
+    EXPECT_EQ(w.player().state().grappleUid, 4744);
+    float minX = 1e9f;
+    Actions swing;
+    swing.move = {0, 1};
+    for (int i = 0; i < 4 * 60; ++i) {
+        w.tick(fixedCamera(w, swing, west));
+        minX = std::min(minX, w.player().state().pos.x);
+    }
+    EXPECT_EQ(w.player().state().grappleUid, 4744) << "still on the rope";
+    EXPECT_LT(minX, -7000.0f) << "swung out under the ring (x -8697)";
+}
+
+// l3_main_hall ring 4089 over the burning staircase, its own range 3792.67 (0x404 block): thrown at from the end of a
+// balcony (z 1709, ~2900 from her eye), as the prologue does; not from the stairs' foot ~4030 away (in g_grapple's
+// 4424.78, out of its own).
+TEST(GameReal, MainHallRingByItsOwnRange) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l3_main_hall",
+                  game::loadLaraAnims(bf), game::Spawn{{2441, 3912, 1709}, 3.1415927f});
+    w.script().setBigfile(&bf);
+    const auto place = [&](vec3 pos, float yaw) {
+        game::PlayerState s;
+        s.pos = pos, s.yaw = yaw;
+        w.restore(s, yaw, -0.25f);
+        for (int i = 0; i < 5; ++i) w.tick({});
+    };
+    place({2441, 3912, 1709}, 3.1415927f);
+    const auto t = w.grappleTarget();
+    ASSERT_TRUE(t) << "from the balcony";
+    EXPECT_EQ(t->uid, 4089);
+    EXPECT_NEAR(t->range, 3792.67f, 0.01f);
+    EXPECT_NEAR(t->rope, 3792.67f, 0.01f);
+    Actions throwIt;
+    throwIt.grapple = true;
+    w.tick(throwIt);
+    EXPECT_EQ(w.player().state().grappleUid, 4089);
+    EXPECT_NEAR(w.player().maxRope(), 3792.67f, 0.01f) << "the rope pays out to the target's own longest";
+    w.releaseGrapple(false);
+    place({-159, 1712, -38}, 1.5707963f);
+    EXPECT_FALSE(w.grappleTarget()) << "~4030 away: out of the ring's own range";
+}

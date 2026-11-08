@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <condition_variable>
+#include <cstring>
 #include <deque>
 #include <future>
 #include <mutex>
@@ -274,7 +275,15 @@ UnitData loadUnitData(const cdc::BigfileSet& bigfile, const std::string& name) {
                                   : n->second.find("post") != std::string::npos ? GrappleKind::Post
                                   : n->second.find("ceiling") != std::string::npos || anchor ? GrappleKind::Ceiling
                                                                                              : GrappleKind::Mounted;
-            u.grapples.push_back({in.uniqueId, v3(in.position), k});
+            GrappleTarget t{in.uniqueId, v3(in.position), k};
+            // its intro data's 0x404 block: flag +4, own throw range +8 and longest rope +12 (0x698A70) [O]
+            if (in.data && in.data->section < drm->sections.size()) {
+                const auto& d = drm->sections[in.data->section].data;
+                uint32_t tag = 0;
+                if (const size_t o = in.data->offset; o + 16 <= d.size() && (std::memcpy(&tag, &d[o], 4), tag == 0x404) && d[o + 4])
+                    std::memcpy(&t.range, &d[o + 8], 4), std::memcpy(&t.rope, &d[o + 12], 4);
+            }
+            u.grapples.push_back(t);
         }
         if (!in.scriptId) continue;
         const auto strings = scriptStrings(*drm, in.scriptId);

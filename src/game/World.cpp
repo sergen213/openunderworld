@@ -494,7 +494,7 @@ void World::tick(const Actions& input) {
     if (splineCam_ && !script_.playerControl()) move = vec2(0); // reveal camera with control disabled (larabase 56)
     if (grappleActs) {
         if (player_.state().grappleUid) releaseGrapple(false);
-        else attachGrapple(grappleAt->pos, grappleAt->uid, grappleAt->kind);
+        else attachGrapple(grappleAt->pos, grappleAt->uid, grappleAt->kind, grappleAt->rope);
     }
     // Freshly loaded units (a chapter start) get their scripted objects and colliders before Lara moves, so she
     // starts on l2_cliffclimb's yacht deck rather than in the sea under it.
@@ -1151,7 +1151,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.loop), str(s.clipMix), add(s.mix), add(s.mirror), add(s.ledgeSeg), add(s.ledgeSide), add(s.runJump), add(s.regrabCooldown), add(s.savingGrab);
     add(s.flight), add(s.fallStartZ), add(s.fallHeight), add(s.climbStance), add(s.climbWarp), add(s.climbFrom), add(s.climbTo);
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
-    add(s.ropeBends), add(s.polePara);
+    add(s.ropeBends), add(s.polePara), add(s.ropeMax);
     for (size_t i = 0; i < s.ropeBends; ++i) add(s.ropeBend[i]), add(s.ropeBendClear[i]);
     const auto& hu = s.hurdle;
     add(hu.next), add(hu.mix), add(hu.alt), add(hu.draw), add(hu.drawOff), add(hu.edge), add(hu.out), add(hu.h), add(hu.endZ);
