@@ -211,7 +211,7 @@ void main() {
         s = ouOceanNormalSlope(oc);
         seaH = clamp(0.5 + 0.25 * oc.h / max(w.ocean[0].w, 0.05), 0.0, 1.0); // afl's 0..1 crest height [I: +-2 RMS]
         // Whitecaps: the folds' persisted foam (ocean.comp) and the instant fold where the summed surface compresses.
-        whitecap = clamp(max(oc.foam, smoothstep(0.75, 0.35, oc.J)) * w.ocean[1].w, 0.0, 1.0);
+        whitecap = clamp(max(oc.foam, smoothstep(0.92, 0.55, oc.J)) * w.ocean[1].w, 0.0, 1.0);
     } else {
         vec3 la = ouLayerA(p.xy, t, footprint), lb = ouLayerB(p.xy, t, footprint);
         s = 0.5 * (la.yz + lb.yz) * nfade * (sea ? 0.5 : 1.0);

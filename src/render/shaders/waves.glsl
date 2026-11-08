@@ -104,19 +104,20 @@ struct OuOcean {
     float h, foam, J;    // height (m), persisted whitecap foam 0..1, Jacobian of the summed displacement
 };
 const mat2 kOceanChopRot = mat2(0.857, 0.515, -0.515, 0.857); // 31 deg: the chop tile's second, rotated lookup
-// The surface at p for shading: every cascade, each faded out as its texels shrink under ~2 pixels (footprint: world
-// units per pixel), plus the chop tile again rotated and 1.618x larger against visible tiling (NeuralSpecOcean
-// samples its chop texture at several rotated scales) [I weights].
+// The surface at p for shading: every cascade, each faded out from 1 to 4 texels per pixel (footprint: world units per
+// pixel; no mips, so finer waves would shimmer) [I], plus the chop tile again rotated and 1.618x larger against visible
+// tiling (NeuralSpecOcean samples its chop texture at several rotated scales) [I weights].
 OuOcean ouOceanSurface(vec2 p, float footprint) {
     OuOcean o = OuOcean(vec2(0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
     for (int c = 0; c < 3; ++c) {
-        float k = 1.0 - smoothstep(0.5, 2.0, footprint / ouOceanTexel(c));
+        float k = 1.0 - smoothstep(1.0, 4.0, footprint / ouOceanTexel(c));
         if (k <= 0.0) continue;
         vec4 a = ouOceanFetch(c, 0, p), b = ouOceanFetch(c, 1, p);
         o.slope += k * b.xy, o.jxx += k * b.z, o.jyy += k * b.w, o.jxy += k * a.w;
-        if (c < 2) o.h += a.z, o.foam = max(o.foam, k * ouOceanFetch(c, 2, p).x);
+        if (c < 2) o.h += a.z;
+        o.foam = max(o.foam, k * ouOceanFetch(c, 2, p).x);
     }
-    float k2 = 1.0 - smoothstep(0.5, 2.0, footprint / (1.618 * ouOceanTexel(2)));
+    float k2 = 1.0 - smoothstep(1.0, 4.0, footprint / (1.618 * ouOceanTexel(2)));
     if (k2 > 0.0) {
         vec2 q = kOceanChopRot * p / 1.618;
         o.slope += (0.6 * k2) * (transpose(kOceanChopRot) * ouOceanSlope(2, q));

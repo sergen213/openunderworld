@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 
 namespace ou::render::ocean {
 
@@ -31,7 +32,8 @@ constexpr BandSpec kBands[kCascades] = {{Band::Long, 240.0, 16.0, 84, 350.0 / 32
                                         {Band::Chop, 11.3, 12.5, 1907, 0.0}};
 constexpr double kAmplitude = 0.64;   // demo.js goalAmplitude (long + short)
 constexpr double kRequestedChop = 2.24; // demo.js requestedChop
-constexpr double kChopAmplitude = 0.6;  // [I] the chop band's slopes (RMS 0.205 calibrated) toned down by look
+constexpr double kChopAmplitude = 1.0;  // the chop band's slopes as calibrated (RMS 0.205)
+constexpr double kChopChoppiness = 0.5; // [I] NeuralSpecOcean's chop band only shades; here it also sharpens and folds (whitecaps)
 constexpr double kPi = 3.14159265358979323846;
 
 struct BandResult {
@@ -135,7 +137,7 @@ const Built& built() {
                 const bool chop = kBands[c].band == Band::Chop;
                 const double amp = chop ? kChopAmplitude : kAmplitude;
                 grid.length[c] = float(kBands[c].length);
-                grid.choppiness[c] = chop ? 0.0f : float(lambda);
+                grid.choppiness[c] = float(chop ? kChopChoppiness : lambda);
                 grid.amplitude[c] = float(amp);
                 grid.sigma[c] = float(amp * std::sqrt(bands[c].heightVar));
                 const auto& re = bands[c].re;
@@ -173,6 +175,9 @@ Push Clock::frame(const FrameOptions& o) {
     float foamDt = 0.0f;
     if (last < 0 || dt < 0 || dt > 1.0 || n != lastN) foamDt = -1.0f; // restart
     else foamDt = float(std::min(dt, 0.2));                            // FoamField's dt clamp
+    if (n != lastN) // the runtime path in the log (first sea frame, a water detail change)
+        std::fprintf(stderr, "ou: FFT ocean: %d^2 grid, %d cascades (%.0f / %.0f / %.1f m), choppiness %.2f, height RMS %.2f / %.3f m\n", n,
+                     kCascades, g.length[0], g.length[1], g.length[2], g.choppiness[0], g.sigma[0], g.sigma[1]);
     last = t, lastN = n;
     double loop = std::fmod(t, double(kLoopSeconds));
     if (loop < 0) loop += kLoopSeconds;

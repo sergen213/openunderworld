@@ -511,7 +511,16 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   & Jerlov (1976) Case-1/Case-2 spectral IOPs"; its keys emerald, maldives, pacific, jade, nordic = our emerald,
   coral_lagoon, pelagic_cobalt, mineral_jade, subpolar_slate), its surface transmittance exp(-1.16 a path)
   (`source/src/Offshore.js`) and downwelling Kd = a x (0.22, 0.34, 0.48) (`demo.js` `syncKdAttenuation`, feeding
-  `UnderwaterLighting.js` `depthIrradiance`) in `render/Water.cpp` `waterOptics`. Copies of the sources read:
+  `UnderwaterLighting.js` `depthIrradiance`) in `render/Water.cpp` `waterOptics`. The FFT ocean (RENDERING "FFT
+  ocean", `render/Ocean.cpp`, `shaders/ocean.comp`) ports `source/src/SpectralWaves.js`: its seeded LCG + Box–Muller
+  draws, the 'long' / 'short' Mitsuyasu-spread wind spectra with the geometry-spacing filter, the 'chop'
+  Mitsuyasu–Donelan–Banner spectrum calibrated to RMS slope 0.205, the three cascades of `demo.js`
+  (`createSpectralWaves`: 240 m / 28 m / 11.3 m tiles, winds 16 / 11 / 12.5 m/s, seeds 84 / 601 / 1907), its amplitude
+  0.64 and choppiness cap min(2.24, 0.80 / (A · 3.15 √Parseval gradient variance)) (`syncBound`); the
+  gravity–capillary dispersion ω = √((gk + σ/ρ k³) tanh kh) of `TECHNICAL_WHITEPAPER.md` §3.1 and its Jacobian
+  whitecap criterion; whitecap foam source max(0, 0.92 − J) × 4.8 and the 3 s decay of `FoamField.js` /
+  `evalOffshoreFoamCell` (its semi-Lagrangian drift is not used); the rotated multi-scale chop lookups of
+  `Offshore.js`. Its CPU FFT is replaced by our GPU Stockham transform. Copies of the sources read:
   openunderworld-work/nso/.
 
 ### 8.9 Caustics references (2026-10-30)

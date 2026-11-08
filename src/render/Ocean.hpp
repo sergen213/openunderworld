@@ -29,7 +29,7 @@ inline constexpr size_t kWorkVec4s = size_t(kCascades) * kMaxN * kMaxN * 2; // t
 // Per-grid constants derived from the spectra (Parseval sums, as SpectralWaves.js / demo.js syncBound).
 struct Grid {
     float length[kCascades];    // tile, metres
-    float choppiness[kCascades]; // horizontal displacement scale (lambda); 0 for chop (slopes only)
+    float choppiness[kCascades]; // horizontal displacement scale (lambda); chop: shading and folds only
     float amplitude[kCascades];  // height / slope scale
     float sigma[kCascades];      // height RMS after amplitude, metres
 };
