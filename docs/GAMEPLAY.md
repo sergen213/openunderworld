@@ -1072,9 +1072,11 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   at least 5 above level (`World::grappleTarget`). Distances from her eye (0x6ECE40: position + data +0x48C) to the
   target point (0x6FF040: origin + its message-0xDB offset; ours the intro origin) [O]; "in range" (criterion 15) is
   measured by tru.exe from the instance message 0x175 returns (grapple controller +0x34), ours from her eye [I]. Line of
-  sight (0x713200 -> 0x713090, ray flags 0xC5AC1983): terrain blocks except groups whose flags have 0x8 / 0x20000 /
-  0x40000 / 0x80000 (filter 0x48EF50), instances only with object flag 8, never the target or its parent [O]; ours: all
-  terrain and every collider but the target's [I: no such group at l3_chapel 4744]. Within a set nearest the camera's
+  sight (0x713200 -> 0x713090, ray flags 0xC5AC1983 -> 0x4935F0 -> 0x493330): terrain faces with mask bit 1 block
+  except in groups whose flags have 0x8 / 0x20000 / 0x40000 / 0x80000 (filter 0x48EF50), instances only with object
+  flag 8, never the target or its parent [O]; ours the same (`collision::kSightMask`: the loader gives the other mask-1
+  terrain faces bit 0x04, `physics::solidShape` objects with oflags 8 bit 0x40), the target's own colliders excepted.
+  Within a set nearest the camera's
   view [I]. l3_chapel 4744 hangs 116 under the barrel vault, so it is offered only from high up: the column top by the
   stone angel (ledge 1008, checkpoint 4738), within ~330 of its west edge — the timed run to the chapel doors
   (`GameReal.ChapelRingFromTheColumnTop`). A crosshair marks it in ou-game and, with GAME OPTIONS >
@@ -1088,8 +1090,11 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   and rows +-45 by the names [I]; aims to her left clamp (`_switchhands` unused) [U].
 - Q / pad X (`Actions::grapple`, virtual button 1) throws (`grapple_rappel_free_jumpon`) and attaches; Q again or
   Ctrl/C releases. Space jumps off with the swing's momentum (`grapple_rappel_free_jumpoff`). tru.exe's keyboard
-  defaults put Recenter Camera (button 8) on Q too (0x487710: both key 0x90) [O]; a press that throws or releases the
-  grapple does not also recenter (`World::tick`) [I].
+  defaults put Recenter Camera (button 8) on Q too [O: 0x487710 binds button i to key 0x80 + DirectInput scan code,
+  buttons 1 and 8 both 0x90 = 0x80 + DIK_Q 0x10; the registry Input list holds "1"="144" and "8"="144"]; a press that
+  throws or releases the grapple does not also recenter, a press with no target offered recenters (`World::tick`)
+  [I]. ou-game logs every press: `grapple thrown at UID: attached`, `grapple released`, or `grapple pressed: no
+  target offered, recentered the camera (shared key)` with her position.
 - Rope vs world [O rules, tru.exe 0x6C8840 -> 0x6C5490]: the rope wraps. Its bends ("Bend Body", 0x699A50) are a chain
   from the anchor; she swings on the last one (`ropePivot`), the free part = total - anchor -> bends length. Each tick,
   from the hand side, a bend whose neighbours see each other slides toward their line by 15 x its clear ticks

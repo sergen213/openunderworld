@@ -707,6 +707,15 @@ struct CombatView {
         if ((c.slowMo > 0) != slowMo) std::fprintf(stderr, "ou-game: tick %llu adrenaline window %s\n", tick, c.slowMo > 0 ? "open" : "closed");
         if (s.state == ou::game::State::Hit && w.previous().clip != s.clip)
             std::fprintf(stderr, "ou-game: tick %llu hit reaction %s (health %.0f)\n", tick, s.clip.c_str(), w.health().value());
+        if (const auto& g = w.grapplePress(); g.kind == ou::game::World::GrapplePress::Throw) {
+            std::fprintf(stderr, "ou-game: tick %llu grapple thrown at %d: %s (lara %.0f %.0f %.0f)\n", tick, g.uid,
+                         g.attached ? "attached" : "refused in her state", s.pos.x, s.pos.y, s.pos.z);
+        } else if (g.kind == ou::game::World::GrapplePress::Release) {
+            std::fprintf(stderr, "ou-game: tick %llu grapple released from %d\n", tick, g.uid);
+        } else if (g.kind == ou::game::World::GrapplePress::NoTarget) {
+            std::fprintf(stderr, "ou-game: tick %llu grapple pressed: no target offered%s (lara %.0f %.0f %.0f)\n", tick,
+                         g.recentered ? ", recentered the camera (shared key)" : "", s.pos.x, s.pos.y, s.pos.z);
+        }
         dead = s.state == ou::game::State::Dead, slowMo = c.slowMo > 0;
         healthPacksUsed = c.healthPacksUsed, weapon = c.weapon;
     }

@@ -798,6 +798,15 @@ public:
         player_.attachGrapple(anchor, uid, kind, ropeMax);
     }
     int32_t lastPulled() const { return lastPulled_; } // grapple target whose pull handler ran last (World::tick), 0 = none
+    // What the grapple button's press edge did this tick (World::tick; ou-game logs it): thrown at `uid` (`attached`
+    // false when her state refused the throw), the rope let go, or no target offered (`recentered`: the shared
+    // Recenter Camera key swung the camera instead).
+    struct GrapplePress {
+        enum Kind : uint8_t { None, Throw, Release, NoTarget } kind = None;
+        int32_t uid = 0;
+        bool attached = false, recentered = false;
+    };
+    const GrapplePress& grapplePress() const { return grapplePress_; }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
     float air() const { return std::max(0.0f, air_); }
@@ -1164,6 +1173,7 @@ private:
     double aimTime_ = 0; // pose clips' clock
     bool interactHeld_ = true;     // no press edge on the first tick
     bool grappleHeld_ = true;      // no press edge on the first tick
+    GrapplePress grapplePress_;    // this tick's grapple press edge (grapplePress())
     bool recenterHeld_ = true, fieldCameraHeld_ = true; // press edges (none on the first tick)
     bool fieldCamera_ = false;
     float fieldZoom_ = 0;

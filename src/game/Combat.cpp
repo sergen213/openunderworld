@@ -590,9 +590,11 @@ std::optional<GrappleTuning> loadGrappleTuning(const cdc::BigfileSet& bf) {
     if (!g) return std::nullopt;
     const auto range = g->at<float>(0x100), maxRope = g->at<float>(0x104), minRope = g->at<float>(0x108);
     const auto bends = g->at<int32_t>(0x10C);
-    if (!range || !maxRope || !minRope || !bends || !(*range > 0) || !(*minRope > 0) || *maxRope < *minRope || *bends <= 0)
+    const auto markers = g->at<std::array<uint8_t, 4>>(0xB4);
+    if (!range || !maxRope || !minRope || !bends || !markers || !(*range > 0) || !(*minRope > 0) || *maxRope < *minRope ||
+        *bends <= 0)
         return std::nullopt;
-    return GrappleTuning{*range, *maxRope, *minRope, std::min(int(*bends), kRopeBends)};
+    return GrappleTuning{*range, *maxRope, *minRope, std::min(int(*bends), kRopeBends), (*markers)[1]};
 }
 
 std::optional<DifficultyTable> loadDifficulty(const cdc::BigfileSet& bf) {
@@ -945,11 +947,16 @@ std::vector<Damageable*> World::candidates(bool hard) const {
 // Candidates are the *_ei_grapple_* anchors only: no enemy or other object has a grapple clip or reaction in the data
 // [O: lara / weapon / kraken DRMs alone name grapple clips], so grappling an enemy is not a thing in TRU. Within a set
 // the one nearest the camera's view wins [I]; distances are from her eye (0x6ECE40) [O], "range" is the target's own
-// (its 0x404 block) else g_grapple's, measured from the eye [I: tru.exe measures it from the message-0x175 instance].
+// (its 0x404 block) else g_grapple's, measured from the g_grapple instance (case 0xE: player message 0x175 -> grapple
+// controller +0x34, the instance's +0x20) [O], stowed at her HInfo marker GrappleTuning::stowMarker (the eye without
+// markers: synthetic skeletons).
 std::optional<GrappleTarget> World::grappleTarget() const {
     const PlayerState& s = player_.state();
     if (s.grappleUid) return std::nullopt;
     const vec3 eye = s.pos + vec3(0, 0, targeting.eyeHeight);
+    vec3 gadget = eye;
+    if (const auto m = anims_.markers.find(anims_.grapple.stowMarker); m != anims_.markers.end() && size_t(m->second.first) < bones_.size())
+        gadget = vec3(player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll) * bones_[size_t(m->second.first)] * m->second.second[3]);
     const vec3 camFwd = cam_.target - cam_.position;
     const vec3 laraFwd(std::cos(s.yaw), std::sin(s.yaw), 0);
     const float rad = kPi / 180;
@@ -963,12 +970,14 @@ std::optional<GrappleTarget> World::grappleTarget() const {
             const vec3 v = t.pos - eye;
             const float d = glm::length(v);
             if (d < 1) continue;
-            if (const auto hit = col_.raycast(eye, v / d, d - 60.0f); // something blocks the hook (not its own object)
+            // Line of sight from her eye (0x713200 -> 0x713090): what tru.exe's targeting ray sees blocks (kSightMask:
+            // terrain except the groups its filter skips, objects with oflags bit 8), not the target's own object.
+            if (const auto hit = col_.raycast(eye, v / d, d - 60.0f, collision::kSightMask);
                 hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != t.uid))
                 continue;
             const float range = t.range > 0 ? t.range : anims_.grapple.range; // 0x698AC0: the target's own, else g_grapple's
             cs.push_back({t, d, angleBetween(laraFwd, vec3(vec2(v), 0)), angleBetween(camFwd, t.pos - cam_.position),
-                          std::asin(std::clamp(v.z / d, -1.0f, 1.0f)), d < range});
+                          std::asin(std::clamp(v.z / d, -1.0f, 1.0f)), glm::length(t.pos - gadget) < range});
         }
     const auto pass = [&](const C& c, int set) {
         switch (set) {

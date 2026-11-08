@@ -37,6 +37,13 @@ inline bool queryable(const Face& f, uint8_t mask) { return !(f.flags & 0x40) &&
 // oflags bit 0x02 (0x5E94C0 / 0x5E91D0 / 0x5E8940), which physics::solidShape marks with bit 0x20.
 // ponytail: the rays' extra 0x100-only skip (5 groups with faces, e.g. l2_norsehub 2) is not modelled.
 inline constexpr uint8_t kCameraMask = 0x22;
+// Query mask of tru.exe's line-of-sight ray for targeting (0x713200 -> 0x713090: ray flags 0xC5AC1983 -> 0x4935F0 ->
+// 0x493330): terrain faces with mask bit 1 (flags & 0x20000002 -> query mask 1), skipping terrain groups whose
+// TerrainGroupExtra flags have 0x8, 0x20000, 0x40000 or 0x80000 (filter 0x48EF50 for those ray flags), so
+// loadLevelCollision gives the other mask-1 faces bit 0x04 (raw face masks are only 0, 1 and 3 over the 82 units);
+// objects only with ObjectBase oflags bit 0x08 (0x713090 ignores a hit instance without it), which
+// physics::solidShape marks with bit 0x40.
+inline constexpr uint8_t kSightMask = 0x44;
 
 // Level camera record (unit data +0x208 count, +0x20C 0x70-byte records; tru.exe 0x606xxx): where the gameplay camera
 // is drawn while Lara is on a markup whose camera commands select it (command 0x12, COLLISION.md "Camera records").

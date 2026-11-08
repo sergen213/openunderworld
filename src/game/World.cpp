@@ -453,16 +453,22 @@ void World::tick(const Actions& input) {
     // An interaction clip plays out with the input locked (State::Use: a switch, a pickup, letting go of a block).
     if (player_.state().state == State::Use) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = a.draw = a.fire = a.aim = false;
     // The grapple (virtual button 1) on its press edge: throw at the target, or let go of the rope. tru.exe's keyboard
-    // defaults bind Q to both it and Recenter Camera (0x487710: buttons 1 and 8 -> key 0x90) [O]; a press that throws
-    // or releases the grapple does not also recenter [I: the shared key must not swing the camera off the throw].
+    // defaults bind Q to both it and Recenter Camera (virtual button 8): 0x487710 binds button i to key 0x80 + DirectInput
+    // scan code, buttons 1 and 8 both 0x90 = 0x80 + DIK_Q, as the registry's Input list writes them ("1"="144",
+    // "8"="144") [O]. A press that throws or releases the grapple does not also recenter [I: the shared key must not
+    // swing the camera off the throw].
     const bool grapplePress = a.grapple && !grappleHeld_ && !fieldCamera_; // the field camera view takes no grapple
     const std::optional<GrappleTarget> grappleAt = grapplePress && !player_.state().grappleUid ? grappleTarget() : std::nullopt;
     const bool grappleActs = grapplePress && (player_.state().grappleUid || grappleAt);
     grappleHeld_ = a.grapple;
+    grapplePress_ = {};
+    if (grapplePress)
+        grapplePress_.kind = player_.state().grappleUid ? GrapplePress::Release : grappleAt ? GrapplePress::Throw : GrapplePress::NoTarget,
+        grapplePress_.uid = grappleAt ? grappleAt->uid : player_.state().grappleUid;
     // Recenter camera (virtual button 8, patch 1.1) [I: snaps the orbit behind her at the rest pitch; the orbit
     // reseeds from the new angles at its distance].
     if (input.recenter && !recenterHeld_ && !grappleActs && !fieldCamera_ && !splineCam_)
-        cam_.yaw = player_.state().yaw, cam_.pitch = CameraState{}.pitch;
+        cam_.yaw = player_.state().yaw, cam_.pitch = CameraState{}.pitch, grapplePress_.recentered = grapplePress;
     recenterHeld_ = input.recenter;
     // Field camera (virtual button 13 "Camera"; tru.exe LookAroundState, vtable 0x8842C0; viewfinder g_binoculars.drm
     // texture 649 with its zoom - / + marks): toggled on the press edge while she is on foot; she holds still and
@@ -494,7 +500,8 @@ void World::tick(const Actions& input) {
     if (splineCam_ && !script_.playerControl()) move = vec2(0); // reveal camera with control disabled (larabase 56)
     if (grappleActs) {
         if (player_.state().grappleUid) releaseGrapple(false);
-        else attachGrapple(grappleAt->pos, grappleAt->uid, grappleAt->kind, grappleAt->rope);
+        else attachGrapple(grappleAt->pos, grappleAt->uid, grappleAt->kind, grappleAt->rope),
+             grapplePress_.attached = player_.state().grappleUid == grappleAt->uid;
     }
     // Freshly loaded units (a chapter start) get their scripted objects and colliders before Lara moves, so she
     // starts on l2_cliffclimb's yacht deck rather than in the sea under it.

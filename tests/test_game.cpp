@@ -1,5 +1,6 @@
 #include "game/Game.hpp"
 #include "game/Weather.hpp"
+#include "config/Config.hpp"
 
 #include "cdc/Cdc.hpp"
 #include "engine/FrameClock.hpp"
@@ -14,8 +15,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <set>
+#include <unistd.h>
 
 using namespace ou;
 using collision::CollisionMesh;
@@ -2912,7 +2916,8 @@ TEST(Game, GrappleIgnoresEnemies) {
     w->targets.clear();
 }
 
-// g_grapple's data as GrappleTuning's defaults [O]: range 4424.78 (14 m), rope 553.1..4424.78, 8 bends.
+// g_grapple's data as GrappleTuning's defaults [O]: range 4424.78 (14 m), rope 553.1..4424.78, 8 bends, stowed at
+// Lara's marker 9 (+0xB5).
 TEST(GameReal, GrappleTuningFromData) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const auto t = game::loadGrappleTuning(cdc::BigfileSet(gameDir()));
@@ -2922,6 +2927,7 @@ TEST(GameReal, GrappleTuningFromData) {
     EXPECT_FLOAT_EQ(t->maxRope, d.maxRope);
     EXPECT_FLOAT_EQ(t->minRope, d.minRope);
     EXPECT_EQ(t->bends, d.bends);
+    EXPECT_EQ(t->stowMarker, d.stowMarker);
 }
 
 TEST(GameReal, PoolGrappleTargetAndSwing) {
@@ -5385,6 +5391,70 @@ TEST(GameReal, ChapelRingFromTheColumnTop) {
     }
     EXPECT_EQ(w.player().state().grappleUid, 4744) << "still on the rope";
     EXPECT_LT(minX, -7000.0f) << "swung out under the ring (x -8697)";
+}
+
+// The shared Q (tru.exe's defaults bind Grapple and Recenter Camera both to key 0x90 = 0x80 + DIK_Q; a user config
+// writes it as grapple [Q, Pad x], recenter [Q, Pad leftstick]) through the device path: readDevices sets both actions,
+// and the World throws at the chapel ring from the column top without swinging the camera; from the chapel floor,
+// where nothing is offered (as in the original), the same press recenters.
+TEST(GameReal, SharedQThrowsTheGrappleNotTheCamera) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const auto dir = std::filesystem::temp_directory_path() / ("ou_sharedq_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream(dir / "config.json") << R"({"controls": {"bindings": {"grapple": ["Q", "Pad x"],
+                                                "recenter": ["Q", "Pad leftstick"]}}})";
+    }
+    const config::Config cfg = config::load(dir / "config.json");
+    std::filesystem::remove_all(dir);
+    EXPECT_EQ(cfg.controls.bindings.at("recenter"), (std::vector<std::string>{"Q", "Pad leftstick"})) << "loaded as written";
+    const game::Controls controls(cfg.controls);
+    platform::DeviceState d;
+    const auto key = [&](bool down) {
+        SDL_Event e{};
+        e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP, e.key.down = down;
+        e.key.scancode = SDL_Scancode(platform::parseInput("Q")->code);
+        d.apply(e);
+        return game::readDevices(controls, d);
+    };
+    const Actions q = key(true), none = key(false);
+    ASSERT_TRUE(q.grapple && q.recenter);
+
+    const cdc::BigfileSet bf(gameDir());
+    const float west = 3.1415927f;
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l3_chapel",
+                  game::loadLaraAnims(bf), game::Spawn{{-5126, 1900, -3141}, west});
+    w.script().setBigfile(&bf);
+    const auto place = [&](vec3 pos, float yaw) {
+        game::PlayerState s;
+        s.pos = pos, s.yaw = yaw;
+        w.restore(s, west, -0.25f);
+        for (int i = 0; i < 5; ++i) w.tick(none);
+    };
+    // The floor: no target in range (6440 under the ring), so Q is Recenter Camera.
+    const auto floor = w.collision().groundProbe({-6700, 1900, -6500}, 1000);
+    ASSERT_TRUE(floor);
+    place(floor->point, 0);
+    w.tick(q);
+    EXPECT_EQ(w.grapplePress().kind, game::World::GrapplePress::NoTarget);
+    EXPECT_TRUE(w.grapplePress().recentered);
+    EXPECT_NEAR(w.camera().yaw, 0, 1e-4f) << "swung behind her";
+    w.tick(none);
+    // The column top: the ring is offered, the press throws and the camera stays where the player had it.
+    place({-5126, 1900, -3141}, west);
+    const float yaw = w.camera().yaw;
+    w.tick(q);
+    EXPECT_EQ(w.grapplePress().kind, game::World::GrapplePress::Throw);
+    EXPECT_EQ(w.grapplePress().uid, 4744);
+    EXPECT_TRUE(w.grapplePress().attached);
+    EXPECT_FALSE(w.grapplePress().recentered);
+    EXPECT_EQ(w.player().state().grappleUid, 4744);
+    EXPECT_NEAR(w.camera().yaw, yaw, 0.05f) << "not recentered";
+    w.tick(none);
+    w.tick(q); // Q again lets go, still no recenter
+    EXPECT_EQ(w.grapplePress().kind, game::World::GrapplePress::Release);
+    EXPECT_FALSE(w.grapplePress().recentered);
+    EXPECT_EQ(w.player().state().grappleUid, 0);
 }
 
 // l3_main_hall ring 4089 over the burning staircase, its own range 3792.67 (0x404 block): thrown at from the end of a

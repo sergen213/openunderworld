@@ -355,6 +355,11 @@ struct GrappleTuning {
     float maxRope = 4424.78f;   // +0x104
     float minRope = 553.09735f; // +0x108
     int bends = kRopeBends;     // +0x10C
+    // +0xB4..+0xB7 Lara's HInfo markers {in hand, stowed, ...} as a weapon's +0xB8 (g_grapple: 30, 9). Stowed, the
+    // g_grapple instance (player message 0x175: grapple controller +0x34) hangs at marker 9 on her pelvis (segment
+    // 3), where the target sets' "in range" is measured from [O Wine: idle, the instance 30 ahead, 37 right, 295 up of
+    // her root; marker 9 in ours 22 / 37 / 303].
+    int stowMarker = 9;
 };
 std::optional<GrappleTuning> loadGrappleTuning(const cdc::BigfileSet& bigfile);
 // A thrown grenade: flying, then stuck to the world or to a target (moving with it) until the fuse runs out.

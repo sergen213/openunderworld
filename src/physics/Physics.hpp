@@ -106,10 +106,13 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& object, uint32_t model = 0);
 std::optional<EngagementSet> loadEngagementSet(const cdc::Drm& object, uint32_t offset);
 // Face mask of object collision shapes: our own convention, outside the terrain bits (l4_pool terrain faces are 3) [I];
 // mask-0x0F queries see terrain only. Objects the gameplay camera collides with (ObjectBase oflags bit 0x02, tru.exe
-// 0x5E94C0; 101 of the 335 solid objects placed in units) also carry kCameraObjectMask (collision::kCameraMask).
-inline constexpr uint8_t kObjectMask = 0x10, kCameraObjectMask = 0x20;
+// 0x5E94C0; 101 of the 335 solid objects placed in units) also carry kCameraObjectMask (collision::kCameraMask); those
+// that block the targeting line of sight (oflags bit 0x08, tru.exe 0x713090) carry kSightObjectMask
+// (collision::kSightMask).
+inline constexpr uint8_t kObjectMask = 0x10, kCameraObjectMask = 0x20, kSightObjectMask = 0x40;
 // Solid primitives of `segment` as one collision shape (faces masked kObjectMask, plus kCameraObjectMask for camera
-// colliders) in that segment's frame; nullptr if it has none. Spheres and capsules become their bounding boxes.
+// colliders and kSightObjectMask for sight blockers) in that segment's frame; nullptr if it has none. Spheres and
+// capsules become their bounding boxes.
 std::shared_ptr<const collision::CollisionMesh> solidShape(const ObjectPhysics& o, int segment);
 
 // ---- rigid bodies -----------------------------------------------------------------------------------------

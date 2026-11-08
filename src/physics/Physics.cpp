@@ -269,7 +269,7 @@ std::optional<RagdollDef> loadRagdoll(const cdc::Drm& d) {
 
 std::shared_ptr<const collision::CollisionMesh> solidShape(const ObjectPhysics& o, int segment) {
     auto shape = std::make_shared<collision::CollisionMesh>();
-    const uint8_t mask = kObjectMask | (o.oflags & 2 ? kCameraObjectMask : 0);
+    const uint8_t mask = kObjectMask | (o.oflags & 2 ? kCameraObjectMask : 0) | (o.oflags & 8 ? kSightObjectMask : 0);
     for (const auto& p : o.prims) {
         if (p.segment != segment || !p.solid()) continue;
         // ponytail: spheres/capsules as their bounding boxes; exact shapes when a curved prim must block precisely.

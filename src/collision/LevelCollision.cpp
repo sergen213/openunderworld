@@ -209,12 +209,13 @@ CollisionMesh loadLevelCollision(const cdc::Drm& drm, std::vector<std::string>* 
         u.need(groups, 0x50 * size_t(numGroups), "terrain groups");
         for (uint32_t g = 0; g < numGroups; ++g) {
             const Pointer group{groups.section, groups.offset + 0x50 * g};
-            bool cameraIgnores = false;
+            bool cameraIgnores = false, sightIgnores = false;
             if (const auto extra = u.ptr({group.section, group.offset + 0x30})) {
                 // tru.exe 0x5C2440 sets both disabled bits; 0x5C2480 confusingly returns them as IsEnabled.
                 const uint32_t flags = u.at<uint32_t>(*extra);
                 out.groupEnabled_[g] = (flags & 4) == 0 || (flags & 8) == 0;
                 cameraIgnores = flags & 0x200;
+                sightIgnores = flags & 0xE0008; // the targeting ray's filter (kSightMask)
                 if (models && extra->section == models->section)
                     for (uint32_t m = 0; m < numModels; ++m)
                         if (extra->offset == models->offset + 0x30 * m) {
@@ -225,8 +226,10 @@ CollisionMesh loadLevelCollision(const cdc::Drm& drm, std::vector<std::string>* 
             if (const auto mesh = u.ptr({group.section, group.offset + 0x38})) {
                 const size_t first = out.faces.size();
                 decodeMesh(u, *mesh, uint16_t(g), levelOffset, out, warn);
-                if (cameraIgnores) // the camera's terrain bit (kCameraMask)
-                    for (size_t f = first; f < out.faces.size(); ++f) out.faces[f].mask &= uint8_t(~0x02);
+                for (size_t f = first; f < out.faces.size(); ++f) {
+                    if (cameraIgnores) out.faces[f].mask &= uint8_t(~0x02); // the camera's terrain bit (kCameraMask)
+                    if (!sightIgnores && (out.faces[f].mask & 1)) out.faces[f].mask |= 0x04; // the sight bit (kSightMask)
+                }
             }
         }
     }

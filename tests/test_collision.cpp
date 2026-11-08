@@ -327,16 +327,48 @@ TEST(CollisionRealData, CameraSkipsTheTerrainGroupsTruSkips) {
     int skipped = 0, walls = 0;
     for (uint32_t i = 0; i < u.col.faces.size(); ++i) {
         const auto& f = u.col.faces[i];
-        if (f.mask == 1 && probe(i, 0xFF)) {
+        if ((f.mask & 3) == 1 && probe(i, 0xFF)) { // the low two bits: terrain + camera (0x04 is the sight bit)
             EXPECT_FALSE(probe(i, collision::kCameraMask)) << i;
             ++skipped;
-        } else if (f.mask == 3 && walls < 100 && std::abs(u.col.faceNormal(i).z) < 0.3f && probe(i, 0xFF)) {
+        } else if ((f.mask & 3) == 3 && walls < 100 && std::abs(u.col.faceNormal(i).z) < 0.3f && probe(i, 0xFF)) {
             EXPECT_TRUE(probe(i, collision::kCameraMask)) << i;
             ++walls;
         }
     }
     EXPECT_GT(skipped, 10);
     EXPECT_EQ(walls, 100);
+}
+
+// tru.exe's targeting line of sight (0x713090, ray flags 0xC5AC1983) sees terrain faces with mask bit 1 except in the
+// groups its filter 0x48EF50 skips (TerrainGroupExtra flags 0x8 / 0x20000 / 0x40000 / 0x80000): 24 354 faces in 124
+// groups over the 82 units, e.g. l1_kraken_entrance group 3 (5667 faces). Those lack the sight bit, so a kSightMask
+// ray passes through them while Lara's queries still hit; the unit's other mask-1 faces block the sight ray.
+TEST(CollisionRealData, SightSkipsTheTerrainGroupsTruSkips) {
+    if (!std::getenv("OU_GAME_DIR")) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const Unit u = loadUnit("pc-w\\l1_kraken_entrance.drm");
+    const auto probe = [&](uint32_t i, uint8_t mask) {
+        const auto& f = u.col.faces[i];
+        const vec3 c = (u.col.vertices[f.v[0]] + u.col.vertices[f.v[1]] + u.col.vertices[f.v[2]]) / 3.0f, n = u.col.faceNormal(i);
+        const auto h = u.col.raycast(c + n * 20.0f, -n, 40, mask);
+        return h && h->face == i;
+    };
+    int skipped = 0, seen = 0, group3 = 0;
+    for (uint32_t i = 0; i < u.col.faces.size(); ++i) {
+        const auto& f = u.col.faces[i];
+        if (!(f.mask & 1)) continue;
+        if (f.group == 3) ++group3;
+        EXPECT_EQ(bool(f.mask & 0x04), f.group != 3 && f.group != 4 && f.group != 6) << i; // 3, 4 (16), 6 (64) skipped
+        if (skipped < 200 && f.group == 3 && probe(i, 0xFF)) {
+            EXPECT_FALSE(probe(i, collision::kSightMask)) << i;
+            ++skipped;
+        } else if (seen < 200 && (f.mask & 0x04) && probe(i, 0xFF)) {
+            EXPECT_TRUE(probe(i, collision::kSightMask)) << i;
+            ++seen;
+        }
+    }
+    EXPECT_EQ(group3, 5667);
+    EXPECT_EQ(skipped, 200);
+    EXPECT_EQ(seen, 200);
 }
 
 TEST(CollisionRealData, PoolCollisionMarkupAndRenderAgreement) {
