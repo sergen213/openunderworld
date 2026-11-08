@@ -4,6 +4,12 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [Unreleased]
+
+- Fixed: black, sharp cliff-texture patches on the sea with ray-traced reflections (Enhanced water). Reflections on rough
+  water are now soft and wave-smeared, fade at the screen edge and with distance like the non-RT water, and surfaces
+  reflected from off screen no longer mirror near black.
+
 ## [0.40.0] - 2026-11-08
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
