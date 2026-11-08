@@ -295,6 +295,7 @@ struct PlayerState {
     vec3 grappleAnchor{0};
     float ropeLength = 0;
     GrappleKind grappleKind = GrappleKind::Ceiling;
+    float ropeMax = 0; // the target's longest rope (GrappleTarget::rope), 0 = g_grapple's
     uint8_t ropeBends = 0;
     std::array<vec3, kRopeBends> ropeBend{};
     std::array<uint8_t, kRopeBends> ropeBendClear{};
@@ -321,8 +322,10 @@ public:
     // the model's left (+X) side about its forward axis).
     glm::mat4 modelMatrix(vec3 pos, float yaw, float pitch = 0, float roll = 0) const;
     void face(float yaw) { s_.yaw = yaw; } // combat: turn toward a locked target
-    void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling); // Grapple.cpp: target attachment
+    // Grapple.cpp: target attachment; ropeMax = the target's longest rope (GrappleTarget::rope), 0 = g_grapple's
+    void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling, float ropeMax = 0);
     void releaseGrapple(bool jump);               // let go, keeping the swing's momentum
+    float maxRope() const { return s_.ropeMax > 0 ? s_.ropeMax : anims_.grapple.maxRope; } // 0x698B40
     void die(std::string_view clip);       // State::Dead playing `clip` once
     void hitReact(std::string_view clip, bool mirror = false); // State::Hit playing `clip` once (restarts it)
     // Interactions (World): where they can start: on her feet (standing, walking, running, landing) or crouched, out of
@@ -473,11 +476,14 @@ struct Spawn {
 };
 
 // ---- units, streaming, checkpoints (docs/formats/LEVELS.md "Streaming", docs/SAVES.md) -------
-// Grapple-target intro (`*_ei_grapple_ceiling/_wall/_post` etc.): position in its unit's frame.
+// Grapple-target intro (`*_ei_grapple_ceiling/_wall/_post` etc.): position in its unit's frame. Its intro data's 0x404
+// block (tag 0x404, byte +4 flag, +8 throw range, +12 longest rope) overrides g_grapple's range and rope when the flag is
+// set (tru.exe 0x698A70: instance +0x104, else its parent's; 0x698AC0 / 0x698B40) [O]; 0 = g_grapple's.
 struct GrappleTarget {
     int32_t uid = 0;
     vec3 pos{0};
     GrappleKind kind = GrappleKind::Ceiling;
+    float range = 0, rope = 0;
 };
 // A `checkpoint` / `invis_checkpoint` intro: respawn transform in its unit's frame (tru.exe 0x5D40C0).
 struct Checkpoint {
@@ -788,7 +794,9 @@ public:
     void splashWater(vec3 pos, float strength = 1.0f) { water_.splash(pos, strength); }
     // Grapple: best target within range, aim cone and line of sight (World.cpp), for attach + the HUD marker.
     std::optional<GrappleTarget> grappleTarget() const;
-    void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling) { player_.attachGrapple(anchor, uid, kind); }
+    void attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind = GrappleKind::Ceiling, float ropeMax = 0) {
+        player_.attachGrapple(anchor, uid, kind, ropeMax);
+    }
     int32_t lastPulled() const { return lastPulled_; } // grapple target whose pull handler ran last (World::tick), 0 = none
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).

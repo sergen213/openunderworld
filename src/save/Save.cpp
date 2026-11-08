@@ -190,7 +190,7 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
             {"savingGrab", p.savingGrab}, {"flight", p.flight}, {"fallHeight", p.fallHeight},
             {"climb", {markupRef(w, p.climbHold), p.climbStance, p.climbWarp, vec(p.climbNormal), vec(p.climbFrom - offset),
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
-            {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends}},
+            {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends, p.ropeMax}},
             {"sprintUsed", p.sprintUsed}, {"polePara", p.polePara}};
 }
 
@@ -225,6 +225,7 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
             p.ropeBend[p.ropeBends] = vec(b.at(0)), p.ropeBendClear[p.ropeBends] = b.at(1).get<uint8_t>();
             ++p.ropeBends;
         }
+    p.ropeMax = g.size() > 5 ? g.at(5).get<float>() : 0.0f; // older saves: g_grapple's rope
     p.sprintUsed = c.at("sprintUsed");
     p.polePara = c.value("polePara", false); // older saves: the perpendicular hang
 }

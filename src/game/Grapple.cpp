@@ -115,10 +115,11 @@ static void ropeConstrain(const PlayerState& s, vec3& p, vec3& vel) {
     }
 }
 
-void Player::attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind) {
+void Player::attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind, float ropeMax) {
     s_.grappleUid = uid;
     s_.grappleAnchor = anchor;
     s_.grappleKind = kind;
+    s_.ropeMax = ropeMax;
     s_.ropeLength = glm::distance(anchor, s_.pos + vec3(0, 0, kHandZ));
     s_.vel = vec3(0);
     s_.ledge = -1, s_.ropeBends = 0;
@@ -137,7 +138,7 @@ void Player::attachGrapple(vec3 anchor, int32_t uid, GrappleKind kind) {
 void Player::standUp() {
     s_.grappleUid = 0;
     s_.grappleKind = GrappleKind::Ceiling;
-    s_.ropeLength = 0, s_.ropeBends = 0;
+    s_.ropeLength = 0, s_.ropeBends = 0, s_.ropeMax = 0;
     s_.state = State::Idle;
     s_.vel = vec3(0);
     play("ng_idle", true);
@@ -147,7 +148,7 @@ void Player::releaseGrapple(bool jump) {
     if (s_.grappleKind == GrappleKind::Mounted) { standUp(); return; } // braced on the ground
     s_.grappleUid = 0;
     s_.grappleKind = GrappleKind::Ceiling;
-    s_.ropeLength = 0, s_.ropeBends = 0;
+    s_.ropeLength = 0, s_.ropeBends = 0, s_.ropeMax = 0;
     s_.state = State::Jump;
     s_.fallStartZ = s_.pos.z;
     if (jump) s_.vel.z += 400.0f;
@@ -180,7 +181,7 @@ void Player::rappel(vec2 move, bool jumpPressed, bool dropPressed, float dt) {
     }
     if (dropPressed) { releaseGrapple(false); return; }
     const float up = glm::dot(move, xy(-n)), side = glm::dot(move, xy(right));
-    s_.ropeLength = std::clamp(s_.ropeLength - up * 300.0f * dt, anims_.grapple.minRope, anims_.grapple.maxRope);
+    s_.ropeLength = std::clamp(s_.ropeLength - up * 300.0f * dt, anims_.grapple.minRope, maxRope());
     vec3 vel = s_.vel;
     if (std::abs(side) > std::abs(up)) { // wall run: the feet push her along the wall up to run speed, never brake [I]
         const float along = glm::dot(vel, right) * (side > 0 ? 1.0f : -1.0f), wish = std::abs(side) * kWallRunSpeed;
@@ -381,7 +382,7 @@ void Player::grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPre
         s_.ropeLength = std::max(anims_.grapple.minRope, s_.ropeLength - 300.0f * dt);
         play("grapple_rappel_free_ascend", true);
     } else if (a.walk) {
-        s_.ropeLength = std::min(anims_.grapple.maxRope, s_.ropeLength + 300.0f * dt);
+        s_.ropeLength = std::min(maxRope(), s_.ropeLength + 300.0f * dt);
         play("grapple_rappel_free_descend", true);
     } else if (grounded) { // standing or walking with the rope in hand [I]
         if (glm::length(move) > 0.1f) s_.yaw = yawOf(move);

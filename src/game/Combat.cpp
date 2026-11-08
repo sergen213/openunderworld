@@ -944,15 +944,16 @@ std::vector<Damageable*> World::candidates(bool hard) const {
 //   4: range, cam <= 90, elevation >= 5         5: range, horiz <= 90, elevation >= 5
 // Candidates are the *_ei_grapple_* anchors only: no enemy or other object has a grapple clip or reaction in the data
 // [O: lara / weapon / kraken DRMs alone name grapple clips], so grappling an enemy is not a thing in TRU. Within a set
-// the one nearest the camera's view wins [I]; the measuring origin (set byte +8) is taken as her eye [I].
+// the one nearest the camera's view wins [I]; distances are from her eye (0x6ECE40) [O], "range" is the target's own
+// (its 0x404 block) else g_grapple's, measured from the eye [I: tru.exe measures it from the message-0x175 instance].
 std::optional<GrappleTarget> World::grappleTarget() const {
     const PlayerState& s = player_.state();
     if (s.grappleUid) return std::nullopt;
     const vec3 eye = s.pos + vec3(0, 0, targeting.eyeHeight);
     const vec3 camFwd = cam_.target - cam_.position;
     const vec3 laraFwd(std::cos(s.yaw), std::sin(s.yaw), 0);
-    const float rad = kPi / 180, range = anims_.grapple.range;
-    struct C { GrappleTarget t; float d, horiz, cam, elev; };
+    const float rad = kPi / 180;
+    struct C { GrappleTarget t; float d, horiz, cam, elev; bool range; };
     std::vector<C> cs;
     for (const auto& u : units_)
         for (const auto& g : u.data.grapples) {
@@ -965,17 +966,18 @@ std::optional<GrappleTarget> World::grappleTarget() const {
             if (const auto hit = col_.raycast(eye, v / d, d - 60.0f); // something blocks the hook (not its own object)
                 hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != t.uid))
                 continue;
+            const float range = t.range > 0 ? t.range : anims_.grapple.range; // 0x698AC0: the target's own, else g_grapple's
             cs.push_back({t, d, angleBetween(laraFwd, vec3(vec2(v), 0)), angleBetween(camFwd, t.pos - cam_.position),
-                          std::asin(std::clamp(v.z / d, -1.0f, 1.0f))});
+                          std::asin(std::clamp(v.z / d, -1.0f, 1.0f)), d < range});
         }
     const auto pass = [&](const C& c, int set) {
         switch (set) {
         case 0: return c.horiz <= 25 * rad && c.d <= 2880 && c.cam <= 90 * rad;
-        case 1: return c.d < range && c.horiz <= 15 * rad && c.d <= 5120 && c.cam <= 90 * rad;
+        case 1: return c.range && c.horiz <= 15 * rad && c.d <= 5120 && c.cam <= 90 * rad;
         case 2: return c.d <= 2880 && c.cam <= 90 * rad;
         case 3: return c.d <= 2880 && c.horiz <= 90 * rad && c.elev >= -60 * rad;
-        case 4: return c.d < range && c.cam <= 90 * rad && c.elev >= 5 * rad;
-        default: return c.d < range && c.horiz <= 90 * rad && c.elev >= 5 * rad;
+        case 4: return c.range && c.cam <= 90 * rad && c.elev >= 5 * rad;
+        default: return c.range && c.horiz <= 90 * rad && c.elev >= 5 * rad;
         }
     };
     for (int set = 0; set < 6; ++set) {
