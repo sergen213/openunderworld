@@ -8,9 +8,9 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 - Fixed: the Enhanced FFT ocean looked low resolution. Near the camera the finest ripples were magnified blobs and
   beyond ~25 m the sea turned smooth. The waves are now filtered properly with distance (mipmaps, anisotropic), the
-  finer ripple layers of NeuralSpecOcean are added near the camera, and whitecap patches no longer show the swell's
-  coarse grid as straight edges. Vulkan and OpenGL, both water detail settings; applies live. Costs about 0.2 ms more
-  GPU time at 1080p.
+  finer ripple layers of NeuralSpecOcean are added near the camera. Whitecaps are no longer big flat white plates:
+  they are sparse, broken-up flecks along the small wave folds with crisp edges, thinner as they age, and lit by the
+  sun. Vulkan and OpenGL, both water detail settings; applies live. Costs about 0.25 ms more GPU time at 1080p.
 
 ## [0.40.0] - 2026-11-08
 

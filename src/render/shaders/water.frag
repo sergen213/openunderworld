@@ -206,13 +206,17 @@ void main() {
     // smoothed toward flat with distance as afl does).
     float nfade = 1.0 / (1.0 + dist / (60.0 * kM));
     vec2 s;
-    float seaH = 0.5, whitecap = 0.0;
+    float seaH = 0.5, whitecap = 0.0, fresh = 0.0, fine = 0.5;
     if (sea && ouOceanOn()) {
         OuOcean oc = ouOceanSurface(p.xy, pdx, pdy);
         s = ouOceanNormalSlope(oc);
         seaH = clamp(0.5 + 0.25 * oc.h / max(w.ocean[0].w, 0.05), 0.0, 1.0); // afl's 0..1 crest height [I: +-2 RMS]
-        // Whitecaps: the folds' persisted foam (ocean.comp) and the instant fold where the summed surface compresses.
-        whitecap = clamp(max(oc.foam, smoothstep(0.92, 0.55, oc.J)) * w.ocean[1].w, 0.0, 1.0);
+        // Whitecaps: a density from where the summed surface folds now (fresh) and the folds' persisted foam (aged,
+        // counted thinner), broken up by the fine folds of the chop tile and its finer copies (fine: their compression,
+        // 0 where J > 0.9 (most of the surface) to 1 at J 0.6, the sharp fold lines) [I scales].
+        fresh = smoothstep(0.9, 0.5, oc.J);
+        whitecap = clamp(max(fresh, 0.7 * oc.foam) * w.ocean[1].w, 0.0, 1.0);
+        fine = clamp((0.9 - oc.fineJ) / 0.3, 0.0, 1.0);
     } else {
         vec3 la = ouLayerA(p.xy, t, footprint), lb = ouLayerB(p.xy, t, footprint);
         s = 0.5 * (la.yz + lb.yz) * nfade * (sea ? 0.5 : 1.0);
@@ -346,8 +350,16 @@ void main() {
         float foam = smoothstep(-0.05, 0.05, e * e - cdepth / kEdge); // squared: lace, not a solid band
         float churn = max(smoothstep(25.0, 45.0, abs(wave.z)), smoothstep(0.02, 0.04, -wave.w));
         foam = max(foam, churn * smoothstep(0.3, 0.7, e));
-        foam = max(foam, smoothstep(0.2, 0.7, whitecap * (0.4 + 1.2 * e))); // FFT whitecaps, laced by the edge noise
         c = mix(c, light * 0.9, foam * 0.65);
+        // FFT whitecaps: foam where the fine fold pattern beats 1 - density, cut at a pixel-wide edge: thin broken fold
+        // lines where the surface only starts to fold or the foam has aged, filled in only at the freshest cores; lit
+        // by the sun on the wave's own normal and the ambient, the aged foam thinner (more of the water through).
+        // The edge noise frays the outline; the outer edge is pixel-sharp, the foam thickens inward (thin rims show the
+        // water through) and its brightness varies with the edge noise.
+        float wcArg = fine + 0.3 * smoothstep(0.85, 1.0, whitecap) * e + 0.2 * (e - 0.5) - (1.0 - whitecap) + 0.03, wcAa = max(fwidth(wcArg), 1e-3);
+        float wcMask = smoothstep(-wcAa, wcAa, wcArg) * mix(0.35, 1.0, smoothstep(0.0, 0.25, wcArg)) * (0.55 + 0.4 * fresh);
+        vec3 wcLit = toLinear(min(w.ambient.rgb + w.sunColor.rgb * (max(dot(n, w.sunDir.xyz), 0.0) * sunVis * w.sunDir.w), vec3(1.0)));
+        c = mix(c, wcLit * (0.7 + 0.25 * e), wcMask);
         // Soft waterline (Godot foam_or_fade = fade): the bed shows through the last few units.
         c = mix(toLinear(textureLod(uScene, uv, 0.0).rgb), c, smoothstep(0.0, 6.0, cdepth));
     } else {

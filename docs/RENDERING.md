@@ -440,9 +440,16 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   smooth from ~25 m (chop) and ~40 m (gravity). Whitecaps: the Jacobian J = (1 + Jxx)(1 + Jyy) − Jxy² of each cascade
   feeds a persisted foam (source max(0, 0.92 − J) × 4.8 gated to crests, decay e^(−dt/3 s): NeuralSpecOcean's
   FoamField / `evalOffshoreFoamCell`; a time step back, a jump over 1 s or a grid change restarts it, a repeated time
-  holds it), the swell and gravity foam read through a cubic B-spline where magnified (their 1.9 / 0.22 m texels gave
-  straight-edged patches), and the instant fold of the summed surface adds to it; laced by the edge noise into the
-  existing foam. Caustics follow the same surface:
+  holds it); the foam layers (foam, J) read through a cubic B-spline where magnified. Drawn: a density = max(instant
+  fold of the summed surface smoothstep(0.9, 0.5, J), 0.7 × persisted foam), broken up by the fine folds of the chop
+  tile and its 3.42 / 1.04 m copies (compression (0.9 − min J) / 0.3), foam where that pattern beats 1 − density
+  (plus a fill at the freshest cores and the edge noise fraying the outline), cut at a pixel-wide edge (fwidth),
+  thickening inward from a 35 % rim, lit by ambient + sun on the wave normal (× sun visibility) at albedo 0.7–0.95,
+  aged foam at 55 % opacity [I thresholds]. In 0.40.0 the whitecaps were smoothstep(0.2, 0.7, density × (0.4 + 1.2 ×
+  edge noise)) mixed toward flat `light` × 0.9: the instant fold term fired over metre-wide areas of the summed J and
+  drew them as solid soft plates (debug capture, l1_seatop swimming view, 2 s: whitecap mask > 0.2 on 9.6 % of the
+  sea; now 1.8 %, 0.4 % after 15 s; the persisted foam alone stays below 0.5 almost everywhere). Caustics follow the
+  same surface:
   `ouCausticSlope` adds the cascades' slopes (weights 0.3 swell / 1 gravity / 0.75 chop [I]), `ouCausticHessian`
   differentiates each cascade over at least one of its texels (linear filtering would give flat cells otherwise).
   Visual only: gameplay (buoyancy, the yacht, swimming) keeps tru.exe's c60–c63 waves (`game::waveRegisters`); no CPU
@@ -454,7 +461,7 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   frames): the four ocean dispatches 0.02 ms (grid 128²), the water pass 0.09 ms with the FFT vs 0.14 ms with afl's
   waves (36-iteration loops replaced by 9-12 texture fetches). With the mips, the fine copies and the anisotropic
   filtering (1920x1080, `--rt off`, l1_seatop swimming at -15000,-3775 looking out to sea, 398 frames): the water
-  pass with the ocean dispatches 0.36 → 0.56 ms (no anisotropy 0.46, 16× 0.64).
+  pass with the ocean dispatches 0.36 → 0.61 ms (8× anisotropy; without the whitecap pattern 0.56, no anisotropy 0.46, 16× 0.64).
 - Vertex displacement (`water.vert`): the original sea waves (`render::waterWaves`, which the gameplay surface
   follows), then the Godot height layers (± 0.06 m; not on FFT seas) and on seas the FFT ocean's swell + gravity
   height (above) or afl's waves (12 iterations, 0.45 m) centred on that

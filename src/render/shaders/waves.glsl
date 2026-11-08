@@ -104,6 +104,7 @@ struct OuOcean {
     vec2 slope;          // dh/dx, dh/dy
     float jxx, jyy, jxy; // horizontal displacement gradients (choppiness applied)
     float h, foam, J;    // height (m), persisted whitecap foam 0..1, Jacobian of the summed displacement
+    float fineJ;         // the chop tile's own Jacobian, the least of it and its finer copies' (whitecap breakup)
 };
 const mat2 kOceanChopRot = mat2(0.857, 0.515, -0.515, 0.857); // 31 deg: the chop tile's second, rotated lookup
 // The chop tile again at another scale, rotation and offset (NeuralSpecOcean Offshore.js's bands 3 and 4: its chop
@@ -115,13 +116,18 @@ vec2 ouOceanChopCopy(vec2 p, vec2 dx, vec2 dy, mat2 r, float tileM, vec2 offset)
     vec2 g = textureGrad(uOcean, vec3(r * p * s + offset, 7.0), r * dx * s, r * dy * s).xy; // layer 3 * 2 + 1
     return transpose(r) * g;
 }
+// The chop tile's Jacobian (layer 3 * 2 + 2, .y) at such a copy: displacement gradients are scale-free too.
+float ouOceanChopJ(vec2 p, vec2 dx, vec2 dy, mat2 r, float tileM, vec2 offset) {
+    float s = 1.0 / (tileM * kM);
+    return textureGrad(uOcean, vec3(r * p * s + offset, 8.0), r * dx * s, r * dy * s).y;
+}
 // The surface at p for shading: every cascade and the chop copies, filtered through uOcean's mips with the pixel's
 // world-space derivatives (anisotropic, so grazing views keep the waves across the line of sight) instead of faded
 // out, so far water neither shimmers nor turns smooth; plus the chop tile again rotated and 1.618x larger against
 // visible tiling and, near the camera, NeuralSpecOcean's finer copies of it (above), so the near water has detail
-// below the 11.3 m tile's texels (8.8 / 17.7 cm) instead of their bilinear blobs [I weights]. The swell and gravity
-// foam (texels 1.9 / 0.22 m at grid 128) is read through a cubic B-spline (4 bilinear taps) where its texels are wider
-// than the pixel, so the whitecap patches round off instead of showing the texel grid's straight bilinear edges.
+// below the 11.3 m tile's texels (8.8 / 17.7 cm) instead of their bilinear blobs [I weights]. The foam layers (foam,
+// J) are read through a cubic B-spline (4 bilinear taps) where their texels are wider than the pixel, so whitecap
+// edges cut from them curve instead of showing the texel grid's straight bilinear contours.
 vec4 ouOceanCubic(float layer, vec2 uv, vec2 gx, vec2 gy) {
     float n = w.ocean[0].z;
     vec2 t = uv * n - 0.5, i = floor(t), f = t - i;
@@ -134,7 +140,7 @@ vec4 ouOceanCubic(float layer, vec2 uv, vec2 gx, vec2 gy) {
            g1.y * (g0.x * textureGrad(uOcean, vec3(h0.x, h1.y, layer), gx, gy) + g1.x * textureGrad(uOcean, vec3(h1.x, h1.y, layer), gx, gy));
 }
 OuOcean ouOceanSurface(vec2 p, vec2 dx, vec2 dy) {
-    OuOcean o = OuOcean(vec2(0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+    OuOcean o = OuOcean(vec2(0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0);
     for (int c = 0; c < 3; ++c) {
         float s = 1.0 / w.ocean[1][c];
         vec2 uv = p * s, gx = dx * s, gy = dy * s;
@@ -142,8 +148,10 @@ OuOcean ouOceanSurface(vec2 p, vec2 dx, vec2 dy) {
         o.slope += b.xy, o.jxx += b.z, o.jyy += b.w, o.jxy += a.w;
         if (c < 2) o.h += a.z;
         float layer = float(3 * c + 2);
-        bool magnified = c < 2 && min(length(gx), length(gy)) * w.ocean[0].z < 1.0; // texels wider than the pixel
-        o.foam = max(o.foam, (magnified ? ouOceanCubic(layer, uv, gx, gy) : textureGrad(uOcean, vec3(uv, layer), gx, gy)).x);
+        bool magnified = min(length(gx), length(gy)) * w.ocean[0].z < 1.0; // texels wider than the pixel
+        vec4 f = magnified ? ouOceanCubic(layer, uv, gx, gy) : textureGrad(uOcean, vec3(uv, layer), gx, gy);
+        o.foam = max(o.foam, f.x);
+        if (c == 2) o.fineJ = f.y;
     }
     o.slope += 0.6 * ouOceanChopCopy(p, dx, dy, kOceanChopRot, 1.618 * w.ocean[1][2] / kM, vec2(0.0));
     // NeuralSpecOcean's fine bands, weights relative to the 11.3 m tile here (1 = its 0.58), faded out from 4 to 16 of
@@ -156,10 +164,12 @@ OuOcean ouOceanSurface(vec2 p, vec2 dx, vec2 dy) {
     if (k3 > 0.0) {
         o.slope += (0.534 * k3) * ouOceanChopCopy(p, dx, dy, mat2(0.9205, 0.3907, -0.3907, 0.9205), 3.42, vec2(0.73, 0.67));
         o.slope += (0.483 * k3) * ouOceanChopCopy(p, dx, dy, mat2(0.6561, -0.7547, 0.7547, 0.6561), 5.53, vec2(0.29, 0.81));
+        o.fineJ = min(o.fineJ, mix(1.0, ouOceanChopJ(p, dx, dy, mat2(0.9205, 0.3907, -0.3907, 0.9205), 3.42, vec2(0.73, 0.67)), k3));
     }
     if (k4 > 0.0) {
         o.slope += (0.42 * k4) * ouOceanChopCopy(p, dx, dy, mat2(0.8572, -0.5150, 0.5150, 0.8572), 1.04, vec2(0.31, 0.89));
         o.slope += (0.42 * k4) * ouOceanChopCopy(p, dx, dy, mat2(0.4848, 0.8746, -0.8746, 0.4848), 1.68, vec2(0.64, 0.22));
+        o.fineJ = min(o.fineJ, mix(1.0, ouOceanChopJ(p, dx, dy, mat2(0.8572, -0.5150, 0.5150, 0.8572), 1.04, vec2(0.31, 0.89)), k4));
     }
     o.J = (1.0 + o.jxx) * (1.0 + o.jyy) - o.jxy * o.jxy;
     return o;
