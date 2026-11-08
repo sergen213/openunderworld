@@ -2,6 +2,8 @@
 #include "game/Game.hpp"
 #include "game/Progress.hpp"
 #include "config/Config.hpp"
+#include "app/game/Graphics.hpp"
+#include "render/Water.hpp"
 #include "save/Save.hpp"
 #include "locale/Locale.hpp"
 #include "ui/Art.hpp"
@@ -25,6 +27,7 @@
 #include <unistd.h>
 
 #include <filesystem>
+#include <fstream>
 
 using namespace ou;
 using game::vec3;
@@ -1031,4 +1034,76 @@ TEST(PdaReal, SonarMapFrameRevealAndModels) {
         };
         dump(img, "sonar.ppm"), dump(panel, "panel.ppm");
     }
+}
+
+// Enhanced water colour (render/Water.hpp, docs/RENDERING.md "Water colour"): config value -> setting, unit -> chapter ->
+// optical type, and the optics the shaders get.
+TEST(WaterColor, ConfigUnitChapterPreset) {
+    using render::WaterColor;
+    // config: "auto" by default, every spelling accepted (CLI flag, JSON round trip), a bad one throws
+    EXPECT_EQ(config::resolve({}).waterColor, 0);
+    EXPECT_EQ(render::waterColorSetting(config::resolve({}).waterColor), WaterColor::Auto);
+    config::GraphicsConfig g;
+    EXPECT_TRUE(config::applyGraphicsFlag(g, "--water-color", "mineral_jade"));
+    EXPECT_EQ(render::waterColorSetting(config::resolve(g).waterColor), WaterColor::MineralJade);
+    g.waterColor = "original";
+    EXPECT_EQ(render::waterColorSetting(config::resolve(g).waterColor), WaterColor::Original);
+    for (size_t i = 0; i < config::kWaterColors.size(); ++i) {
+        g.waterColor = std::string(config::kWaterColors[i]);
+        const WaterColor c = render::waterColorSetting(config::resolve(g).waterColor);
+        EXPECT_EQ(render::waterColorName(c), config::kWaterColors[i]); // render and config agree on the order
+    }
+    g.waterColor = "turquoise";
+    EXPECT_THROW(config::resolve(g), std::runtime_error);
+    namespace fs = std::filesystem;
+    const fs::path p = fs::temp_directory_path() / ("ou_water_color_" + std::to_string(::getpid()) + "/config.json");
+    config::Config cfg;
+    cfg.graphics.waterColor = "subpolar_slate";
+    config::save(p, cfg);
+    EXPECT_EQ(config::load(p).graphics.waterColor, "subpolar_slate");
+    std::ofstream(p) << R"({"graphics":{"water_color":"lagoon"}})";
+    EXPECT_THROW(config::load(p), std::runtime_error);
+    fs::remove_all(p.parent_path());
+    // the settings menu row maps to and from the same strings
+    g.waterColor = "clear";
+    auto m = app::graphicsMenu(g, {}, {0, 0});
+    EXPECT_EQ(m.waterColor, 7);
+    m.waterColor = 3;
+    app::Display d;
+    app::applyGraphicsMenu(m, g, d);
+    EXPECT_EQ(g.waterColor, "coral_lagoon");
+
+    // unit -> chapter (game::chapterOfUnit, as ou-game sets World::chapter for --level) -> type, under "auto"
+    const auto autoColor = [](std::string_view unit) {
+        return render::waterColorFor(WaterColor::Auto, game::chapterOfUnit(unit));
+    };
+    EXPECT_EQ(autoColor("l1_seatop"), WaterColor::PelagicCobalt);
+    EXPECT_EQ(autoColor("l2_cliffclimb"), WaterColor::CoralLagoon);
+    EXPECT_EQ(autoColor("l3_caverns_start"), WaterColor::Clear);
+    EXPECT_EQ(autoColor("l4_pool"), WaterColor::MineralJade);
+    EXPECT_EQ(autoColor("l5_startsnow"), WaterColor::SubpolarSlate);
+    EXPECT_EQ(autoColor("l6_ship_exterior"), WaterColor::PelagicCobalt);
+    EXPECT_EQ(autoColor("l7_thin_ice"), WaterColor::SubpolarSlate);
+    EXPECT_EQ(autoColor("l7_himalaya_end"), WaterColor::SubpolarSlate); // epilogue (chapter 8)
+    EXPECT_EQ(autoColor("frontend"), WaterColor::Original);             // no chapter: the unit's own colours
+    EXPECT_EQ(render::waterColorFor(WaterColor::Auto, 0), WaterColor::Clear); // prologue (burning manor)
+    for (size_t c = 0; c < game::kChapters.size(); ++c) // every chapter start unit gets a preset
+        EXPECT_NE(render::chapterWaterColor(int(c)), WaterColor::Original) << c;
+    EXPECT_EQ(render::waterColorFor(WaterColor::Emerald, 5), WaterColor::Emerald); // explicit beats the chapter
+    // a level end's chapter change: Thailand -> Croft Manor switches lagoon -> clear
+    EXPECT_NE(render::waterColorFor(WaterColor::Auto, 2), render::waterColorFor(WaterColor::Auto, 3));
+
+    // optics: Original = all zero (the shaders keep the unit's colours); presets on, red absorbed first, the Arctic
+    // slate murkier than the lagoon, in-scatter hue at luminance 1, Kd below the view extinction
+    for (const auto& v : render::waterOptics(WaterColor::Original)) EXPECT_EQ(v, glm::vec4(0.0f));
+    const auto lagoon = render::waterOptics(WaterColor::CoralLagoon), slate = render::waterOptics(WaterColor::SubpolarSlate);
+    EXPECT_EQ(lagoon[0].w, 1.0f);
+    EXPECT_GT(lagoon[0].r, lagoon[0].g);
+    EXPECT_GT(lagoon[0].g, lagoon[0].b);
+    EXPECT_GT(slate[0].g, lagoon[0].g);
+    // NeuralSpecOcean's maldives palette: 0.092 / m green, x 1.16, at kWaterClarity, per unit (290 / m)
+    EXPECT_NEAR(lagoon[0].g, 0.092f * 1.16f / (290.0f * render::kWaterClarity), 1e-7f);
+    EXPECT_NEAR(glm::dot(glm::vec3(lagoon[1]), glm::vec3(0.2126f, 0.7152f, 0.0722f)), 1.0f, 1e-5f);
+    EXPECT_GT(lagoon[1].b, lagoon[1].r); // blue-green, not grey
+    for (int i = 0; i < 3; ++i) EXPECT_LT(lagoon[2][i], lagoon[0][i]);
 }

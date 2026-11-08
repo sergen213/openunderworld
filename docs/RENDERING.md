@@ -422,7 +422,9 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   (the flat-water refracted sun ray); it left from s = E − c·slope(E), c = 0.25 × path (1 − 1/1.333; capped at 4000
   units of path, where one fold branch would darken on average), and the light is 1 / |det(I + c·H(s))| with H from
   slope differences `blur` apart (the wave field's part: half its own Laplacian, isotropic, taps 1.5 cells apart),
-  per colour with red / blue focusing 2.5 % apart (water dispersion), then soft-clamped I·(4/3) / (1 + I/3) (1 stays
+  per colour with its own focal distance c_λ = path · (1 − 1/n_λ), n_RGB = (1.331, 1.334, 1.339) (water's dispersion,
+  NeuralSpecOcean's whitepaper §4.3, RESEARCH §8.8: red focuses 0.7 % shorter and blue 1.1 % longer than green, a thin
+  fringe on each fold; it replaced a by-eye 2.5 % split), then soft-clamped I·(4/3) / (1 + I/3) (1 stays
   1, crossing folds saturate toward 4 instead of blowing out). So the lines are the surface's own fold curves and
   move with its waves, Lara's ripples and splashes. Blur: the sun disk (0.005 × path), ≥ 1.5 px of bed footprint;
   the Godot layers' octaves finer than it fade (and are skipped). Fold softening 0.025 + 0.5·depth (depth =
@@ -430,8 +432,10 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   Strength `sunColor.w` 0.8 (0: a unit without sun; the post pass is off and water.frag is not drawn in Original) ×
   (1 → 0.6 with depth) × the depth buffer's normal facing the refracted sun × the sun shadow map, off past 25–60
   units of footprint per pixel. Multiplies the lit colour (lines up to about +200 %; the gaps keep half the single
-  fold branch's deficit, ~−20 %). Post-pass bindings: `seaWaves` ends the Water block; `uRipples` is VK post set 1
-  binding 3 / GL unit 9. `ouCausticFocus` is a cheap single-colour variant for the sun shafts. [I] values; physically
+  fold branch's deficit, ~−20 %); with a water colour preset (below) the line contrast also fades per channel by the
+  downwelling e^(−Kd · path) (red first: deep caustics turn blue-green). Post-pass bindings: `seaWaves` and `optics`
+  end the Water block; `uRipples` is VK post set 1 binding 3 / GL unit 9. `ouCausticFocus` is the cheap variant for
+  the sun shafts (one Hessian, the three focal distances). [I] values; physically
   caustics vanish within ~10–20 m, TRU's sea floors lie 100+ m down.
 - Debug views (`--water-debug`): 1 normals, 2 refraction (green traced / magenta simple, bluer with path length),
   3 SSR hit vs sky, 4 sun glint (blue = occluded), 5 Fresnel.
@@ -461,6 +465,42 @@ Limits [I]: SSR misses off-screen geometry (fog fallback; Vulkan RT reflections 
 around Lara (fading out at its edge), shore walls are sampled once per cell from the collision at the
 volume's rest surface (a sea's waves move the real shoreline), no water flow/buoyancy, no waves in
 ou-viewer (it has no simulation).
+
+### Water colour (Enhanced, GL + Vulkan; `graphics.water_color`, `--water-color`, WATER & SKY > WATER COLOUR)
+
+Optical water types after NeuralSpecOcean (MIT, RESEARCH §8.8), applied live (`FrameOptions::waterColor` each frame):
+
+| `water_color` | Source palette | absorption a (1/m, R G B) | scatter colour b (1/m) |
+|---|---|---|---|
+| `emerald` | Classic Emerald Coast | 0.68 0.148 0.068 | 0.012 0.192 0.228 |
+| `coral_lagoon` | Coral Lagoon (maldives) | 0.54 0.092 0.040 | 0.018 0.268 0.305 |
+| `pelagic_cobalt` | Deep Pacific Cobalt | 0.86 0.215 0.046 | 0.005 0.096 0.225 |
+| `mineral_jade` | Mineral Jade Coast | 0.66 0.118 0.112 | 0.019 0.228 0.162 |
+| `subpolar_slate` | Nordic Slate Sea | 0.82 0.245 0.158 | 0.010 0.108 0.142 |
+| `clear` | ours: pure water, Pope & Fry 1997 at 650/550/450 nm | 0.34 0.0565 0.0092 | 0.020 0.220 0.300 [I] |
+
+`render::waterOptics` turns a palette into `WaterBlock::optics`: view extinction σ = 1.16 · a (NeuralSpecOcean's
+surface transmittance), downwelling Kd = a · (0.22, 0.34, 0.48) (its `syncKdAttenuation`), both per unit (290 / m)
+and divided by `kWaterClarity` = 4 [I: the real-ocean values put red's 1/e at ~1.5 m and green's at ~6 m, which would
+hide the ch2 reef ~10 m down; ×4 keeps every chapter at least as clear as TRU's own water in green — Coastal Thailand
+green 1/e ~37 m vs TRU's ~23 m, the open issue of its water reading less transparent than the original — while red
+still goes first]; in-scatter hue b / (a + b) at luminance 1.
+
+How it combines with TRU's per-unit water (`waterPass`, tru.exe's under-water pass material) [I decision]: the preset
+replaces the extinction (σ) and the in-scatter / under-water fog hue; the unit's colour keeps the brightness (its
+luminance), so a dim cave pool stays dim and a sunlit sea bright, and the pass still runs only where the unit has one
+(its strength and the eye's base haze kept). Surface (`water.frag` `ouWaterLook`: absorption, in-scatter, the deep
+colour of total internal reflection), under water (`underwater.glsl` `ouWaterPass`: fog 1 − (1 − haze) e^(−σ ·
+view depth) per channel at the preset hue; `ouShafts`: σ and the cap colour) and caustics (Kd) all switch together.
+`original` = the unit's colours exactly as before (optics all zero); Original water never reads `optics` (it is only
+filled with Enhanced water), so it stays byte-identical.
+
+`auto` (default) picks per chapter (`render::chapterWaterColor`, ou-game passes `World::chapter`, which a level end
+changes and `--level` sets from the unit's `l<N>_` prefix): prologue and Croft Manor `clear`, Mediterranean Sea
+`pelagic_cobalt`, Coastal Thailand `coral_lagoon` (clear shallow reef), Southern Mexico `mineral_jade` (limestone
+cenotes), Jan Mayen Island `subpolar_slate`, Andaman Sea `pelagic_cobalt` (the ship in open water), Arctic Sea and the
+epilogue `subpolar_slate` [I choices by setting]. ou-viewer has no chapter: `auto` there keeps the unit's colours.
+ou-game logs each change: `ou-game: water colour coral_lagoon (setting auto, chapter 2): extinction/m ...`.
 
 ### Under water (GL + Vulkan, both water qualities; `FrameOptions::underwater`)
 
@@ -518,14 +558,14 @@ without the pass but stays blue with it, alpha 0.56 at Lara):
 - Sun shafts (ours, Enhanced only): `ouShafts` (underwater.glsl, after the full-screen pass, before `ouRays`): the
   volumetric continuation of the caustics. The view ray (to the scene, the surface or 4000 units) is marched in 4
   steps packed toward the eye (t = len · u²); each step traces back along the refracted sun to its surface entry point
-  and takes `ouCausticFocus` there (caustics.glsl: the focusing of the same waves that light the bed, blurred by
+  and takes `ouCausticFocus` there (caustics.glsl: the focusing of the same waves that light the bed, per colour, blurred by
   0.005 · depth as the bed plus 2.5 % of the step, one afl iteration), so the streaks meet the bright lines on the floor and move with the
   waves. Streak = smoothstep(1.15, 2.2, focus) × slow wave groups (`ouShaftGroups`, ~3000-unit patches, 0..1; steps between groups skip the focus): many
   thin parallel streaks converging toward the sun. In-scatter × `ouSunShadowVisibility` (3×3 PCF: soft occluder
   volumes; a 1-tap test showed shadow-map texel blocks; a shadowed step skips the focus, the costly part) ×
-  e^(−σ (depth / l.z + distance)) per channel, σ = water.frag's `ouWaterLook` extinction (red first: blue-green, fading
+  e^(−σ (depth / l.z + distance)) per channel, σ = water.frag's `ouWaterLook` extinction (or a water colour preset's; red first: blue-green, fading
   with depth; l1_seafloor's 95 m leave none) × HG(0.7) · 4π × 4e-3 × the sun colour × `sunColor.w`, then soft-clamped,
-  cap · (1 − e^(−s / cap)) with cap = 0.3 × the unit's surface water colour, so looking into the sun never saturates.
+  cap · (1 − e^(−s / cap)) with cap = 0.3 × the unit's surface water colour (a preset's hue at its luminance), so looking into the sun never saturates.
   No per-pixel jitter: the four pixels of each 2×2 quad march at interleaved quarter-step offsets and share the mean
   (`ouQuadMean`, fine derivatives): 16 depth slices without bands and no screen-space pattern (the old static IGN
   jitter + hard shadow tap left a 1-pixel checker under plants that FSR kept). [I] values. Cost (post pass, which runs at the render resolution before FSR; 3840 × 2160 FSR quality = 2560 ×

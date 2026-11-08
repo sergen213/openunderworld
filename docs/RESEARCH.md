@@ -502,6 +502,17 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   thickness splat, bilateral depth blur, normal reconstruction from depth) is adapted into the splash shaders
   `splash_splat.frag`, `splash_blur.frag`, `splash_composite.frag`. Its SPH simulation is not used (TRU's water is
   the deterministic wave field; particle fluid only suits small boxes).
+- **NeuralSpecOcean** by Sheng Choi (bgbg108555), https://github.com/bgbg108555/NeuralSpecOcean — MIT ("Copyright (c)
+  2026 bgbg108555 and NeuralSpecOcean Contributors"; WebGL2 / three.js demo, no code used: ideas and constants
+  re-expressed in our GLSL / C++). Water optics taken from it (RENDERING "Water colour"): the dispersion indices
+  n_RGB = (1.331, 1.334, 1.339) and per-colour caustic focal distance d(1 - 1/n) (`TECHNICAL_WHITEPAPER.md` §4.3,
+  chromatic Hessian caustics) in `caustics.glsl`; the five bio-optical water palettes (`source/demo.js`
+  `WATER_PALETTES`: absorption + scatter colour per metre, which it describes as "calibrated to Morel & Prieur (1977)
+  & Jerlov (1976) Case-1/Case-2 spectral IOPs"; its keys emerald, maldives, pacific, jade, nordic = our emerald,
+  coral_lagoon, pelagic_cobalt, mineral_jade, subpolar_slate), its surface transmittance exp(-1.16 a path)
+  (`source/src/Offshore.js`) and downwelling Kd = a x (0.22, 0.34, 0.48) (`demo.js` `syncKdAttenuation`, feeding
+  `UnderwaterLighting.js` `depthIrradiance`) in `render/Water.cpp` `waterOptics`. Copies of the sources read:
+  openunderworld-work/nso/.
 
 ### 8.9 Caustics references (2026-10-30)
 
@@ -517,8 +528,8 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   sharpest near the surface, attenuated with depth).
 - **Real-Time Underwater Caustics Projector (URP)** by Ivan Larinin, https://veltrynox.github.io/caustics.html — no
   licence stated, technique only: two scrolling caustic textures combined with `min()`, R/G/B sampled with small
-  offsets (chromatic aberration), mip blur with depth. Ours gets the colour split physically (red / blue focus 2.5 %
-  apart) and the blur from the sun-disk term instead of a texture.
+  offsets (chromatic aberration), mip blur with depth. Ours gets the colour split physically (each colour's focal
+  distance from water's dispersion, NeuralSpecOcean's n_RGB, §8.8) and the blur from the sun-disk term instead of a texture.
 - **"Tileable Water Caustic"** by Dave_Hoskins after joltz0r, https://www.shadertoy.com/view/MdlXz8 (iterated-sine
   pattern; Godot Shaders port "Water Caustic" by haruyou27) — Shadertoy default CC BY-NC-SA 3.0, incompatible with
   GPLv3: look reference only, no code used.

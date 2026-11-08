@@ -38,6 +38,7 @@ layout(binding = 4) uniform Water {
     vec4 filters[9]; uvec4 filterLut[640]; // (unused here; the post pass's screen filters)
     vec4 waterPass[3]; // the unit's water look: [0] surface rgb, [1] deep rgb + full-fog distance (ouWaterLook)
     uvec4 rays[157]; mat4 seaWaves; // (rays unused here); tru.exe's sea waves at the camera (caustics)
+    vec4 optics[3]; // Enhanced water colour (render::waterOptics): [0] extinction/unit + on, [1] in-scatter hue, [2] Kd/unit
     vec4 ocean[2];     // the FFT ocean (render/Water.hpp WaterBlock::ocean)
 } w;
 #ifdef VULKAN
@@ -171,12 +172,17 @@ float ggxSpec(vec3 n, vec3 v, vec3 l, float a) {
 // in-scatter of its deep colour, extinction per unit from its surface colour and full-fog distance with
 // red going first (1 - 0.85 x surface colour: Thailand's teal ~13 m to 1/e for red, ~23 m for green, so its reef ~10 m
 // down shows as in the original; the North Sea ~5 m).
+// Water colour presets (w.optics[0].w = 1; render::waterOptics, NeuralSpecOcean's palettes) replace the extinction and
+// the in-scatter hue; the unit's deep colour keeps the in-scatter brightness (its luminance), so a dim cave pool stays
+// dim and a sunlit sea bright [I: the decision, RENDERING.md "Water colour"].
 vec3 gSurf, gDeep, gSigma;
+float ouLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 void ouWaterLook() {
     bool unit = w.waterPass[1].w > 0.0;
     vec4 sf = unit ? w.waterPass[0] : kSurfaceDefault, dp = unit ? w.waterPass[1] : kDeepDefault;
     gSurf = toLinear(sf.rgb), gDeep = toLinear(dp.rgb);
     gSigma = (1.0 - 0.85 * gSurf) * (30.0 / dp.w);
+    if (w.optics[0].w > 0.5) gSigma = w.optics[0].rgb, gDeep = w.optics[1].rgb * ouLum(gDeep);
 }
 // Water transmittance and in-scatter over `path` units; `down`: how far the seen point lies under the surface, dimming
 // the light that reached it (downwelling: submerged hulls darken with depth). The in-scatter colour is one colour, not

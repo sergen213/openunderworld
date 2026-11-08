@@ -1,6 +1,6 @@
 // Enhanced caustics, shared by the underwater post pass (underwater.glsl: camera under water) and the water surface
 // (water.frag: the refracted bed seen from above). Embedded for GL by render/Water.cpp (expands the #include lines),
-// #included by glslc for Vulkan. Needs the block `w` (sunDir, sunColor, eye, ripple*, fogRange.z, seaWaves, ocean), the
+// #included by glslc for Vulkan. Needs the block `w` (sunDir, sunColor, eye, ripple*, fogRange.z, seaWaves, optics, ocean), the
 // includer's `uRipples`, `uOcean` and `float ouSunShadowVisibility(vec3 p)` (may be defined after this file).
 // docs/RENDERING.md "Water". [I: tru.exe draws none; its under-water drawable is the sun glow and the full-screen
 // pass]. Written for this project, after the physics Evan Wallace's WebGL Water uses (MIT; light intensity = old area
@@ -77,22 +77,32 @@ float ouFocus(mat2 H, float c, float e) {
 // surface bends the refracted ray toward its crest: crests focus); capped at ~13 m of path where the folds would
 // cross many times (one fold branch would then darken on average) and the sun-disk blur takes over.
 float ouFocusLength(float h) { return 0.25 * min(h, 4000.0); }
+// Water's dispersion, per colour: n_RGB = (1.331, 1.334, 1.339) (NeuralSpecOcean's whitepaper 4.3, "Analytical
+// Chromatic Hessian Caustics": focal distance d_lambda = d (1 - 1 / n_lambda); MIT, docs/RESEARCH.md): red focuses
+// 0.7% shorter and blue 1.1% longer than green, so each fold line splits into a thin red-to-blue fringe.
+const vec3 kIorRgb = vec3(1.331, 1.334, 1.339);
+vec3 ouFocusLengths(float h) { return (1.0 - 1.0 / kIorRgb) * min(h, 4000.0); }
+vec3 ouFocusRgb(mat2 H, vec3 c, float e) { return vec3(ouFocus(H, c.r, e), ouFocus(H, c.g, e), ouFocus(H, c.b, e)); }
 // Cheap focus for the sun shafts (underwater.glsl): entry = world xy where the refracted sun ray entered the surface,
-// h = depth under the surface there, blur = smoothing (world units), seaIters = afl iterations. Single colour, no
-// inverse-map step. 1 = flat water, at most 4.
-float ouCausticFocus(vec2 entry, float h, float blur, int seaIters) {
+// h = depth under the surface there, blur = smoothing (world units), seaIters = afl iterations. Per colour (one
+// Hessian, the three focal distances), no inverse-map step. 1 = flat water, at most 4.
+vec3 ouCausticFocus(vec2 entry, float h, float blur, int seaIters) {
     float t = w.eye.w;
     blur = max(blur, 4.0);
     vec3 r = ouCausticRipples(entry);
     mat2 H = ouCausticHessian(entry, ouCausticSlope(entry, t, blur, seaIters), t, blur, seaIters) + mat2(r.z);
-    return ouFocus(H, ouFocusLength(h), 0.15);
+    return ouFocusRgb(H, ouFocusLengths(h), 0.15);
 }
 float ouSunShadowVisibility(vec3 p);
+// Downwelling colour of caustic light that travelled `path` units under water: with a water colour preset
+// (w.optics[0].w; render::waterOptics Kd, red first) the lines fade per channel with depth and turn blue-green as the
+// sunlight making them does; the unit's own colours keep white lines (the previous look).
+vec3 ouCausticDownwelling(float path) { return w.optics[0].w > 0.5 ? exp(-w.optics[2].rgb * min(path, 1e5)) : vec3(1.0); }
 // Caustic light factor for the opaque point p lying h units under its water surface, n its (unnormalised) surface
 // normal, footprint world units per pixel there. The light reaching p entered the surface near E (the flat-water
 // refracted sun ray); it left from s = E - c slope(E) (one fixed-point step of the inverse refraction map, c =
-// ouFocusLength), J = I + c Hessian(s), per colour with red focusing 2.5% deeper than blue (water dispersion: soft
-// fringes). Blur: the sun disk (0.5 deg: ~0.005 x the path) and >= 1.5 pixels; it fades the fine wave octaves and
+// ouFocusLength), J = I + c Hessian(s), per colour with its own focal distance (kIorRgb: chromatic fringes). Blur: the
+// sun disk (0.5 deg: ~0.005 x the path) and >= 1.5 pixels; it fades the fine wave octaves and
 // widens the lines (no shimmer); depth also softens the folds (e) and lowers the contrast to 60%
 // (l1_seafloor lies 95 m down: a soft shimmer kept for the look; physically caustics fade within ~10-20 m). Fades with
 // the normal facing the refracted sun, in the sun shadow map, and with the footprint past ~60 units per pixel.
@@ -101,7 +111,7 @@ float ouSunShadowVisibility(vec3 p);
 // sunColor.w = strength (0: no sun).
 vec3 ouCausticLight(vec3 p, vec3 n, float h, float footprint) {
     if (w.sunColor.w <= 0.0 || h <= 0.0 || w.sunDir.z < 0.05 || dot(n, n) < 1e-12) return vec3(1.0);
-    vec3 l = -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / 1.333); // toward the sun, under water
+    vec3 l = -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / kIorRgb.g); // toward the sun, under water
     n = normalize(n);
     if (dot(n, w.eye.xyz - p) < 0.0) n = -n;
     float path = h / l.z, deep = 1.0 - exp(-h / 8000.0);
@@ -114,8 +124,8 @@ vec3 ouCausticLight(vec3 p, vec3 n, float h, float footprint) {
     vec2 E = p.xy + l.xy * path; // where the flat-water refracted sun ray through p entered the surface
     vec2 s = E - c * (ouCausticSlope(E, t, blur, kSeaIters) + ouCausticRipples(E).xy);
     mat2 H = ouCausticHessian(s, ouCausticSlope(s, t, blur, kSeaIters), t, blur, kSeaIters) + mat2(ouCausticRipples(s).z);
-    vec3 k = vec3(ouFocus(H, 0.975 * c, e), ouFocus(H, c, e), ouFocus(H, 1.025 * c, e));
+    vec3 k = ouFocusRgb(H, ouFocusLengths(path), e);
     k = max(k, 0.5 + 0.5 * k);
     vec3 tint = w.sunColor.rgb / max(max(w.sunColor.r, w.sunColor.g), max(w.sunColor.b, 1e-3)); // the sun's hue
-    return 1.0 + (0.35 * amount) * tint * (k - 1.0); // 0.35: strength (was 0.7, toned down by request)
+    return 1.0 + (0.35 * amount) * tint * ouCausticDownwelling(path) * (k - 1.0); // 0.35: strength (was 0.7, toned down by request)
 }
