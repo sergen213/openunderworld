@@ -4,6 +4,7 @@
 #include "game/Game.hpp"
 #include "game/Progress.hpp"
 #include "physics/Physics.hpp"
+#include "save/Save.hpp"
 
 #include "cdc/Cdc.hpp"
 #include "formats/Formats.hpp"
@@ -1787,12 +1788,18 @@ TEST(ProgressionReal, BallcourtBlockUnderPoleReachesIt) {
     jump.jump = true;
     w.tick(jump);
     EXPECT_EQ(s.state, game::State::ClimbUp) << "the block's ledge, class 6 from a jump";
-    bool climbed = false;
-    for (int i = 0; i < 240 && !climbed; ++i) {
-        w.tick({});
-        climbed = s.state == game::State::Idle && std::abs(s.pos.z - (floorZ + 410.8f)) < 15 && glm::length(vec2(s.pos - c)) < 190;
-    }
-    ASSERT_TRUE(climbed) << "on the block: state " << int(s.state) << " at " << s.pos.x - c.x << " " << s.pos.y - c.y << " " << s.pos.z - floorZ;
+    // A save mid-climb names the ledge by its block ("@6504", World::markupOwner); loaded below, the climb goes on.
+    const auto climbing = save::capture(w);
+    EXPECT_EQ(climbing.ledgeUnit, "@6504");
+    const auto climbingBytes = save::serialize(climbing);
+    const auto climb = [&] {
+        for (int i = 0; i < 240; ++i) {
+            w.tick({});
+            if (s.state == game::State::Idle && std::abs(s.pos.z - (floorZ + 410.8f)) < 15 && glm::length(vec2(s.pos - c)) < 190) return true;
+        }
+        return false;
+    };
+    ASSERT_TRUE(climb()) << "on the block: state " << int(s.state) << " at " << s.pos.x - c.x << " " << s.pos.y - c.y << " " << s.pos.z - floorZ;
     // A standing jump up from the block's top: the pole leap catches the pole, her weight slides the lever.
     game::Actions up;
     up.jump = true;
@@ -1806,6 +1813,9 @@ TEST(ProgressionReal, BallcourtBlockUnderPoleReachesIt) {
     EXPECT_GT(doorMove.z, 600.0f) << "door 6505 rises on its cylindrical joint: twice the lever's drop";
     for (const int32_t uid : {6502, 6503, 6504, 6505})
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, uid) << key.second;
+    ASSERT_NO_THROW(save::apply(save::parse(climbingBytes), w));
+    EXPECT_EQ(s.state, game::State::ClimbUp);
+    EXPECT_TRUE(climb()) << "the loaded climb ends on the block's top: state " << int(s.state) << " z " << s.pos.z - floorZ;
 }
 
 // Every graph receptacle with its portable: a placed one (intro reference, Object::placedIn) starts inserted; Lara takes

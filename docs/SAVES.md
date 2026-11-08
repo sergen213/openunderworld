@@ -67,7 +67,7 @@ loaded at offset 0, not the streamed world frame, so a load puts it back at offs
 | `player.pos`, `vel` | [x, y, z] | feet position (unit frame), air velocity |
 | `player.yaw`, `pitch` | number | heading; swim pitch |
 | `player.clip`, `clipTime`, `clipRate`, `loop` | | Lara's current clip and its unbounded time |
-| `player.ledge` | null or `{unit, index, seg, t, side}` | hung-on ledge: markup `index` within `unit`'s markup |
+| `player.ledge` | null or `{unit, index, seg, t, side}` | hung-on ledge: markup `index` within `unit`'s markup; an object's markup (push-block edges, World::tickObjectMarkup) is `unit` `"@UID"`, `index` its model item — dropped on load when the object's markup is not placed yet (a hang there falls) |
 | `player.water` | null or `{unit, index}` | water volume Lara swims in, same addressing |
 | `player.runJump`, `regrabCooldown` | | controller details |
 | `player.controller` | object or null | the rest of `game::PlayerState`: `clipMix`, `mix` (blend space), `hurdle` (obstacle move: next, mix, alt, draw, draw offset, edge, out, height, end z, far ledge as `[unit, index]` or null, its segment, t, side), `savingGrab`, `flight` (HangJump), `fallHeight`, `climb` (hold as `[unit, index]`, stance, warp, rock normal, warp from / to, their yaws), `grapple` (anchor uid, anchor, rope length, kind), `sprintUsed`; positions in the unit's frame; missing/null (older saves) = their defaults |

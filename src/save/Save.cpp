@@ -199,7 +199,7 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     const auto ref = [&](const json& r) {
         if (r.is_null()) return -1;
         const int i = w.markupIndex(r.at(0).get<std::string>(), r.at(1).get<int>());
-        if (i < 0) throw SaveError("markup " + r.dump() + " is not loaded");
+        if (i < 0 && !r.at(0).get<std::string>().starts_with('@')) throw SaveError("markup " + r.dump() + " is not loaded");
         return i;
     };
     p.clipMix = c.at("clipMix").get<std::string>(), p.mix = c.at("mix").get<float>(), p.mirror = c.value("mirror", false);
@@ -279,10 +279,16 @@ void apply(const SaveGame& save, game::World& world) {
         auto markup = [&](const std::string& unit, int index, const char* what) {
             if (unit.empty()) return -1;
             const int i = world.markupIndex(unit, index);
+            // An object's markup ("@uid", World::tickObjectMarkup) exists once its collision is placed: a ledge on it that
+            // is not there yet is dropped (her state handles a missing ledge as at a stream) rather than failing the load.
+            if (i < 0 && unit.starts_with('@')) return -1;
             if (i < 0) throw SaveError(std::string(what) + " " + std::to_string(index) + " of " + unit + " is not loaded");
             return i;
         };
         p.ledge = markup(save.ledgeUnit, save.ledgeIndex, "ledge");
+        if (p.ledge < 0 && !save.ledgeUnit.empty() &&
+            (p.state == game::State::Hang || p.state == game::State::Shimmy || p.state == game::State::ClimbUp || p.state == game::State::PoleHang))
+            p.state = game::State::Fall;
         p.water = markup(save.waterUnit, save.waterIndex, "water volume");
         if (!save.controller.is_null()) {
             try {
