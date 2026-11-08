@@ -84,9 +84,10 @@ ClipBlend clipBlend(std::string_view from, std::string_view to) {
         {"pillar_slide_down_stop", 3, 2}, {"pillar_detach_perch", 3, 1}, {"pillar_detach_ground", 1, 1},
         {"pillar_detach_drop", 3, 1}, {"pillar_jump_back", 3, 3}, {"pillar_jump_forward", 3, 3},
         {"pillar_jump_right", 3, 1}, {"pillar_jump_back_45R", 3, 3},
-        // perches: requests 661, 647, 649, 658, 663, 668 / 669 / 670
+        // perches: requests 661, 647, 649, 658, 663, 664, 668 / 669 / 670
         {"perch_idle", 6, 6}, {"perch_attach_air", 2, 8}, {"perch_attach_ground", 3, 1}, {"perch_detach_drop", 5, 1},
-        {"perch_jump_forward", 3, 3}, {"perch_turn_right_45", 3, 3}, {"perch_turn_right_90", 5, 5}, {"perch_turn_right_180", 3, 3},
+        {"perch_jump_forward", 3, 3}, {"perch_jump_up", 3, 3}, {"perch_turn_right_45", 3, 3}, {"perch_turn_right_90", 5, 5},
+        {"perch_turn_right_180", 3, 3},
         // wall hug: requests 1421, 1402, 1378, 1416
         {"Wall_Hug_Idle", 4, 4}, {"Wall_Hug_Shimmy_Left", 4, 4}, {"Wall_Hug_Walk_Off", 4, 4}, {"Wall_Hug_Jump_Forward", 4, 4},
         // DICE bad attach: requests 256 / 255 / 254 (B), 226 / 224 / 225 (LW), 231 / 229 / 230 (R), 280 / 281 / 282 (Rw),
@@ -285,7 +286,7 @@ const std::vector<std::string_view> kLaraClipNames = {
     "pillar_attach_M", "pillar_attach_ground", "pillar_attach_perch", "pillar_idle", "pillar_climb_up", "pillar_climb_right",
     "pillar_slide_down_start", "pillar_slide_down", "pillar_slide_down_stop", "pillar_detach_perch", "pillar_detach_ground",
     "pillar_detach_drop", "pillar_jump_back", "pillar_jump_forward", "pillar_jump_right", "pillar_jump_back_45R", "perch_attach_air", "perch_attach_ground", "perch_idle", "perch_jump_forward",
-    "perch_detach_drop", "perch_turn_right_45", "perch_turn_right_90", "perch_turn_right_180",
+    "perch_jump_up", "perch_detach_drop", "perch_turn_right_45", "perch_turn_right_90", "perch_turn_right_180",
     "Wall_Hug_Idle", "Wall_Hug_Shimmy_Left", "Wall_Hug_Walk_Off", "Wall_Hug_Jump_Forward", // wall hug (Traverse.cpp)
     "grapple_pull_up_light_begin", "grapple_pull_mid_light_begin", "grapple_pull_down_light_begin",
     "grapple_pull_up_heavy_begin", "grapple_pull_mid_heavy_begin", "grapple_pull_down_heavy_begin",
@@ -451,9 +452,17 @@ void World::tick(const Actions& input) {
     if (onBike) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = false;
     // An interaction clip plays out with the input locked (State::Use: a switch, a pickup, letting go of a block).
     if (player_.state().state == State::Use) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = a.draw = a.fire = a.aim = false;
+    // The grapple (virtual button 1) on its press edge: throw at the target, or let go of the rope. tru.exe's keyboard
+    // defaults bind Q to both it and Recenter Camera (0x487710: buttons 1 and 8 -> key 0x90) [O]; a press that throws
+    // or releases the grapple does not also recenter [I: the shared key must not swing the camera off the throw].
+    const bool grapplePress = a.grapple && !grappleHeld_ && !fieldCamera_; // the field camera view takes no grapple
+    const std::optional<GrappleTarget> grappleAt = grapplePress && !player_.state().grappleUid ? grappleTarget() : std::nullopt;
+    const bool grappleActs = grapplePress && (player_.state().grappleUid || grappleAt);
+    grappleHeld_ = a.grapple;
     // Recenter camera (virtual button 8, patch 1.1) [I: snaps the orbit behind her at the rest pitch; the orbit
     // reseeds from the new angles at its distance].
-    if (input.recenter && !recenterHeld_ && !fieldCamera_ && !splineCam_) cam_.yaw = player_.state().yaw, cam_.pitch = CameraState{}.pitch;
+    if (input.recenter && !recenterHeld_ && !grappleActs && !fieldCamera_ && !splineCam_)
+        cam_.yaw = player_.state().yaw, cam_.pitch = CameraState{}.pitch;
     recenterHeld_ = input.recenter;
     // Field camera (virtual button 13 "Camera"; tru.exe LookAroundState, vtable 0x8842C0; viewfinder g_binoculars.drm
     // texture 649 with its zoom - / + marks): toggled on the press edge while she is on foot; she holds still and
@@ -483,11 +492,10 @@ void World::tick(const Actions& input) {
     if (script_.holding() || uberGrip_ != vec3(0)) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
     if (combat_.slowMo > 0) move = vec2(0); // [I] adrenaline window: the stick steers the pip (Combat.cpp)
     if (splineCam_ && !script_.playerControl()) move = vec2(0); // reveal camera with control disabled (larabase 56)
-    if (a.grapple && !grappleHeld_) {
+    if (grappleActs) {
         if (player_.state().grappleUid) releaseGrapple(false);
-        else if (const auto t = grappleTarget()) attachGrapple(t->pos, t->uid, t->kind);
+        else attachGrapple(grappleAt->pos, grappleAt->uid, grappleAt->kind);
     }
-    grappleHeld_ = a.grapple;
     // Freshly loaded units (a chapter start) get their scripted objects and colliders before Lara moves, so she
     // starts on l2_cliffclimb's yacht deck rather than in the sea under it.
     if (!units_.empty() && scriptUnits_ != unitsVersion_) {

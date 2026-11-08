@@ -401,6 +401,9 @@ public:
 
     Reticle reticle;                       // set each frame
     std::optional<std::array<float, 2>> grapple; // grapple target marker, screen pixels; set each frame
+    // GAME OPTIONS > HELPER BUTTONS shown: the grapple's helper button over that marker, locals.bin 363 (the grapple
+    // placeholder U+1800 alone, expanded through Canvas::prompts to the bound key / pad icon); empty: none.
+    std::string grappleButton;
 
 private:
     HudState s_, prev_;

@@ -160,7 +160,15 @@ void Hud::draw(Canvas& c) const {
             put(c, reticle.x + reticle.pipX * r, reticle.y - reticle.pipY * r, 74, 0, 0, kWhite, kReticle * 0.3f, true);
         }
     }
-    if (grapple) put(c, (*grapple)[0], (*grapple)[1], 70, 0, 0, 0xE0FFFFFFu, kReticle * 0.6f, true); // [I] grapple target
+    if (grapple) {
+        put(c, (*grapple)[0], (*grapple)[1], 70, 0, 0, 0xE0FFFFFFu, kReticle * 0.6f, true); // [I] grapple target
+        // the helper button just above the marker [I layout: not captured], drop-shadowed as the subtitles
+        if (!grappleButton.empty()) {
+            const float y = (*grapple)[1] - (64 * kReticle * 0.6f / 2 + 18) * u;
+            fontCentred(c, (*grapple)[0] + u, y + u, 0.6f, grappleButton, 0xC0000000u);
+            fontCentred(c, (*grapple)[0], y, 0.6f, grappleButton, kWhite);
+        }
+    }
 
     auto fadeOut = [](double left) { return float(std::clamp(left / 0.5, 0.0, 1.0)); }; // last half second
     if (titleLeft_ > 0) { // [O loading screen] chapter title at font scale ~1.2 around y 220, description ~0.45 below
