@@ -1071,7 +1071,9 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   90, no more than 60 below level; (4) in range, camera <= 90, at least 5 above level; (5) in range, horizontal <= 90,
   at least 5 above level (`World::grappleTarget`). Distances from her eye (0x6ECE40: position + data +0x48C) to the
   target point (0x6FF040: origin + its message-0xDB offset; ours the intro origin) [O]; "in range" (criterion 15) is
-  measured by tru.exe from the instance message 0x175 returns (grapple controller +0x34), ours from her eye [I]. Line of
+  measured by tru.exe from the instance message 0x175 returns (grapple controller +0x34: the g_grapple instance, stowed
+  at Lara's HInfo marker 9 on her pelvis, g_grapple data +0xB4 {in hand 30, stowed 9}) [O; Wine idle: 30 ahead, 37
+  right, 295 up of her root; ours marker 9 at 22 / 37 / 303], ours from that marker (`GrappleTuning::stowMarker`). Line of
   sight (0x713200 -> 0x713090, ray flags 0xC5AC1983 -> 0x4935F0 -> 0x493330): terrain faces with mask bit 1 block
   except in groups whose flags have 0x8 / 0x20000 / 0x40000 / 0x80000 (filter 0x48EF50), instances only with object
   flag 8, never the target or its parent [O]; ours the same (`collision::kSightMask`: the loader gives the other mask-1
