@@ -233,6 +233,7 @@ struct GraphicsOptions {
     bool frameGeneration = false;                  // needs fsr
     bool effects = true;
     bool antiLag = false;                          // AMD Anti-Lag (Vulkan, VK_AMD_anti_lag)
+    int tonemap = 0;                               // 0 original, 1 agx (config tonemap)
     // Set by the app from the live renderer: rows that cannot apply are greyed (shown, not selectable).
     bool rtSupported = true, fsrSupported = true, antiLagSupported = true;
     bool operator==(const GraphicsOptions&) const = default;

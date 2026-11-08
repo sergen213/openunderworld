@@ -749,6 +749,29 @@ TEST(Config, GraphicsPresets) {
     fs::remove_all(al.parent_path());
 }
 
+TEST(Config, Tonemap) {
+    using ou::config::resolve;
+    ou::config::GraphicsConfig g;
+    EXPECT_EQ(g.tonemap, "original"); // off by default: the scene as drawn
+    EXPECT_EQ(resolve(g).tonemap, 0);
+    EXPECT_TRUE(ou::config::applyGraphicsFlag(g, "--tonemap", "agx"));
+    EXPECT_EQ(g.tonemap, "agx");
+    EXPECT_EQ(resolve(g).tonemap, 1);
+    g.tonemap = "aces";
+    EXPECT_THROW(resolve(g), std::runtime_error);
+
+    fs::path p = fs::temp_directory_path() / ("ou_config_tonemap_" + std::to_string(::getpid()) + "/config.json");
+    ou::config::Config c;
+    c.graphics.tonemap = "agx";
+    ou::config::save(p, c);
+    EXPECT_EQ(ou::config::load(p).graphics.tonemap, "agx");
+    std::ofstream(p) << R"({"graphics":{}})";
+    EXPECT_EQ(ou::config::load(p).graphics.tonemap, "original"); // missing key: default
+    std::ofstream(p) << R"({"graphics":{"tonemap":"filmic"}})";
+    EXPECT_THROW(ou::config::load(p), std::runtime_error);
+    fs::remove_all(p.parent_path());
+}
+
 TEST(Config, WaterQuality) {
     using ou::config::resolve;
     EXPECT_EQ(resolve({}).water, 1); // best-look default: enhanced water

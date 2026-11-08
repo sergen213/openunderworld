@@ -47,6 +47,9 @@ struct GraphicsConfig {
     std::optional<bool> cineDof;            // cutscene depth of field (cameras' focus; retail draws none); unset = off
     std::string weather = "auto";           // "auto" (enhanced -> the unit's own rain / snow) | "off" | "rain" | "snow"
     float brightness = 1.0f;                // 0.5..2.0, post-pass gamma (out = in^(1/brightness)); 1 = neutral
+    // Global tone mapping in the post pass (docs/RENDERING.md "Tone mapping"): "original" = the scene as drawn (with hdr:
+    // the ACES fit) | "agx" = Oklab gamut compression + hue-constant highlight desaturation + AgX-style display curve.
+    std::string tonemap = "original";
     // AMD FSR (Vulkan only, docs/RENDERING.md "FSR"): temporal upscaling from a lower render resolution (MSAA / FXAA off),
     // optionally with frame generation (one generated frame between real ones).
     std::string upscaler = "off";           // "off" | "fsr"
@@ -83,15 +86,17 @@ struct GraphicsSettings {
     bool cineDof = false; // cutscene depth of field (app::CineView::depthOfField); last, like the fields above
     bool pssm = false;    // tru.exe's sun shadows (render::FrameOptions::pssm): the original preset's `shadows`; last, as above
     int waterColor = 0;   // kWaterColors index (0 auto, 1 original, 2.. presets = render::WaterColor(index - 1)); last, as above
+    int tonemap = 0;      // render::Tonemap: 0 original, 1 agx (render::FrameOptions::tonemap); last, as above
     bool operator==(const GraphicsSettings&) const = default;
 };
-// Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without
-// the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
+// Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler, fsrQuality or tonemap value, explicit rt
+// without the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
 // --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail, --water-color,
 // --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off,
-// --anti-lag on|off. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
+// --anti-lag on|off, --tonemap original|agx. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags
+// only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);
 // Control bindings: action -> inputs, any of which triggers it. Input names (case-insensitive): SDL scancode
 // names ("W", "Space", "Left Shift", "F5"), "Mouse Left" / "Mouse Right" / "Mouse Middle", or "Pad <button>"
