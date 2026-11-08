@@ -441,26 +441,49 @@ if(OU_BUILD_TESTS)
     grep -q 'tick 8 gamepad none' "$out/gamepad" && grep -q 'tick 9 gamepad ' "$out/gamepad" || { echo "no hotplug"; ok=0; }
     rm -rf "$out"; [ $ok = 1 ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays)
   set_tests_properties(game_input_replay_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
-  # Receptacle replays (docs/GAMEPLAY.md "Receptacle replays"): from a spawn near the puzzle, input scripts recorded by
-  # ou-game --autopilot pick a portable up, carry it to its receptacle and set it in (or pull it out); each run must
-  # end on the patterns given (the "portables held N inserted P>R" exit line, Lara's state). --no-cinematics: the
-  # level-start cinematics still run their events and placement, unshown. 77 = skipped (no OU_GAME_DIR or display).
-  function(ou_receptacle_replay name unit spawn frames)
+  # Puzzle replays (docs/GAMEPLAY.md "Receptacle replays"): from a spawn near the puzzle, input scripts recorded by
+  # ou-game --autopilot pick a portable up, carry it to its receptacle and set it in (or pull it out, press a plate);
+  # each run must end on the patterns given: the "portables held N inserted P>R" exit line, Lara's state, and the
+  # downstream reaction tru.exe's scripts define, from --report-objects REPORT (comma-separated uids): "calls TO:VT ..."
+  # (script calls to / from them) and "object UID NAME pos .. [graph S] [joint P] [uber S,.. jN X] [in R]" per uid.
+  # --no-cinematics: the level-start cinematics still run their events and placement, unshown. 77 = skipped (no
+  # OU_GAME_DIR or display).
+  function(ou_receptacle_replay name unit spawn frames report)
     add_test(NAME game_replay_${name} COMMAND sh -c [=[
       [ -n "$OU_GAME_DIR" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || exit 77
-      game=$0 script=$1 unit=$2 spawn=$3 frames=$4; shift 4
+      game=$0 script=$1 unit=$2 spawn=$3 frames=$4 report=$5; shift 5
       out=$("$game" --game-dir "$OU_GAME_DIR" --renderer opengl --level "pc-w\\$unit.drm" --spawn "$spawn" --input-script "$script" \
-              --no-audio --no-movies --no-cinematics --no-overlay --draw-last --sync-loads --width 160 --height 120 --frames "$frames" 2>&1)
-      echo "$out" | grep -E 'final tick|portables held'
+              --no-audio --no-movies --no-cinematics --no-overlay --draw-last --sync-loads --width 160 --height 120 --frames "$frames" \
+              --report-objects "$report" 2>&1)
+      echo "$out" | grep -E '^ou-game: (final tick|portables held|calls|object)'
       ok=1
       for p; do echo "$out" | grep -Eq -- "$p" || { echo "missing: $p"; ok=0; }; done
-      [ $ok = 1 ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays/${name}.txt ${unit} ${spawn} ${frames} ${ARGN})
+      [ $ok = 1 ]]=] $<TARGET_FILE:ou-game> ${CMAKE_SOURCE_DIR}/tests/replays/${name}.txt ${unit} ${spawn} ${frames} ${report} ${ARGN})
     set_tests_properties(game_replay_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
   endfunction()
-  ou_receptacle_replay(traprooms_throne_insert l4_traprooms 7400,-34900,4440,-135 900 "portables held 0 inserted .*5883>5891")
-  ou_receptacle_replay(valaskjalf_pole_lever_insert l5_valaskjalf_entryb 1700,-45719,-2499,180 600 "portables held 0 inserted .*7190>7189")
-  ou_receptacle_replay(puzzleroom_pole_remove l2_puzzleroom -17500,40565,5540,180 400 "portables held 2967 inserted" "state idle")
-  ou_receptacle_replay(valgrind_cog_gem_insert l5_valgrind 0,3072,180,180 1500 "portables held 0 inserted .*7498>7312")
+  # throne 5891: the weight bears its press plate into "in position" (-150..-90) -> seal 5701 vt 54
+  ou_receptacle_replay(traprooms_throne_insert l4_traprooms 7400,-34900,4440,-135 900 5883,5891,5701
+                       "portables held 0 inserted .*5883>5891" "calls .* 5701:54( |$)" "object 5891 .* joint -(1[0-4][0-9]|150|9[0-9])\\.[0-9] uber 2 ")
+  # lever 7189 inserted (graph 1 -> 0), its multibody 79 watch on the slider (a joint); door 7227 waits for the hang
+  ou_receptacle_replay(valaskjalf_pole_lever_insert l5_valaskjalf_entryb 1700,-45719,-2499,180 600 7190,7189,7227
+                       "portables held 0 inserted .*7190>7189" "object 7189 .* graph 0 joint ")
+  # pole 2967 out of hole 2969: its vt 20(0) runs elevator 2960 vt 54 (graph 0 -> 1) and switch 2961 vt 62
+  ou_receptacle_replay(puzzleroom_pole_remove l2_puzzleroom -17500,40565,5540,180 400 2967,2969,2960,2961
+                       "portables held 2967 inserted" "state idle" "calls .*2960:54 2961:62" "object 2960 .* graph 1")
+  # cog wheel 7312 section 1 takes the gem (0 -> 1)
+  ou_receptacle_replay(valgrind_cog_gem_insert l5_valgrind 0,3072,180,180 1500 7498,7312
+                       "portables held 0 inserted .*7498>7312" "object 7312 .* uber [0-9]+,1,")
+  # pole 6503 into lever 6502 (graph 0 -> 1, the slider watch), push block 6504 under the pole
+  ou_receptacle_replay(ballcourt_pole_lever_block l4_ballcourt -20300,14700,3484,-90 2300 6503,6502,6504
+                       "portables held 0 inserted .*6503>6502" "object 6502 .* graph 1 joint "
+                       "object 6504 .* pos -20[01][0-9]{2}\\.[0-9] 14[34][0-9]{2}\\.")
+  # calendar 6506: a push handle gripped and pushed turns the ring (hinge joint 2), section 1 back to waiting (3)
+  ou_receptacle_replay(ballcourt_calendar_handle_turn l4_ballcourt -14240,10200,3700,90 700 6506
+                       "object 6506 .* uber [0-9]+,3,.* j2 (0\\.[2-9]|[1-9])")
+  # weight on plate 219 holds door 223 open (vt 57), weight on 222 + Lara on 221: locks 69 / 70 count gate 45 open, it falls
+  ou_receptacle_replay(baldrs_plates_gate l1_baldrs_tomb -5000,-10000,2560,180 3200 219,221,222,45,223,69,70
+                       "portables held 0" "calls .* 223:57" "calls .* 45:54" "object 219 .* joint -60" "object 221 .* joint -60"
+                       "object 222 .* joint -60" "object 223 .* uber 1 " "object 45 .* joint (8[5-9]|9[0-9])\\.")
   # Vulkan + RT sun shadows with the translated shaders on the spawns that lost the device (non-finite ray origins,
   # docs/RENDERING.md "Ray tracing"); 77 = skipped (no OU_GAME_DIR, display or ray-query device).
   add_test(NAME game_vulkan_rt_smoke COMMAND sh -c [=[

@@ -301,6 +301,46 @@ Unit parseUnit(const cdc::Drm& d) {
         }
     }
 
+    // Nav links (NavLink; tru.exe 0x48BAB0 -> 0x48B770): unit data +0x44 count, +0x48 -> record pointers. Two
+    // points: a link from point 0 when its +0x20 flag is set (bidirectional when point 1's is), else from point 1
+    // one way. Four points: a strip from points 0-1 (either flag) to 2-3, bidirectional when 2 or 3 is flagged.
+    if (const auto n = ud.at<uint32_t>(up.offset + 0x44); n && ud.ptrs.count(up.offset + 0x48)) {
+        const auto lp = ud.ptr(up.offset + 0x48, "unit nav links");
+        const View lv(d, lp.section);
+        for (uint32_t k = 0; k < n; ++k) {
+            const auto rp = lv.ptr(lp.offset + 4 * k, "unit nav link");
+            const View rv(d, rp.section);
+            const size_t b = rp.offset;
+            glm::mat4 m;
+            for (int i = 0; i < 16; ++i) m[i / 4][i % 4] = rv.at<float>(b + 4 * i);
+            const uint32_t count = rv.at<uint32_t>(b + 0x6C);
+            if (count != 2 && count != 4) throw FormatError("nav link: " + std::to_string(count) + " points");
+            NavLink l;
+            std::array<glm::vec3, 4> p{};
+            std::array<bool, 4> start{};
+            for (uint32_t i = 0; i < count; ++i) {
+                const size_t q = b + 0x70 + 0x24 * i;
+                p[i] = glm::vec3(m * glm::vec4(rv.at<float>(q), rv.at<float>(q + 4), rv.at<float>(q + 8), 1));
+                start[i] = rv.at<uint8_t>(q + 0x20) != 0;
+            }
+            l.type = rv.at<uint8_t>(b + 0x40);
+            for (int i = 0; i < 16; ++i)
+                if (rv.at<uint8_t>(b + 0x41 + size_t(i))) l.usage |= uint16_t(1u << i);
+            l.maxSnap = rv.at<float>(b + 0x58), l.mayUse = rv.at<float>(b + 0x5C), l.mustUse = rv.at<float>(b + 0x60);
+            l.penalty = rv.at<float>(b + 0x64);
+            if (count == 2) {
+                l.a = {p[0], p[0]}, l.b = {p[1], p[1]};
+                l.fromA = start[0], l.fromB = start[1];
+            } else {
+                l.strip = true;
+                l.a = {p[0], p[1]}, l.b = {p[3], p[2]}; // 0x48B770 hands bfx {0, 1} -> {2, 3}; 3 faces 0
+                l.fromA = start[0] || start[1] || start[2] || start[3];
+                l.fromB = (start[0] || start[1]) && (start[2] || start[3]);
+            }
+            u.navLinks.push_back(l);
+        }
+    }
+
     // Camera splines (LEVELS.md "Camera splines"): record +0x30 offset, +0x44 time mode, +0x48 duration, +0x4C FOV,
     // +0x50 count / +0x54 -> 0xC0-byte camera keys, +0x58 -> target track, +0x5C has target, +0x5D target fits.
     // Camera key: +0x00 position, +0x10 quaternion, +0x20 tangent, +0x30 time, +0x34 u16[64] ease, +0xB4 event

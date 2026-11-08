@@ -202,6 +202,13 @@ struct EnemyType {
     bool sleeps = false;     // has sleepClips: tranquilizer darts put it to sleep (cats, nagas)
     std::array<std::string, 3> sleepClips; // start, loop, wake: sleep_start/_loop/_end or tranq_sleep_start/_loop, rest_to_idle [I]
     std::string fallClip, landClip; // dropping off a wall (Mode::Drop): fall_loop / falling_loop, jump_end / fall_land_front
+    // NavPower links (docs/GAMEPLAY.md "Nav links"): behaviour-list node +0x14C u8[16] -> the PathSpec
+    // linkUsageFlags (0x662EC0; cats bit 2, soldiers bit 1, small spiders bit 0, others none), and the take-off /
+    // in-air / landing clips per jump kind: up (the landing higher), down, across [I] (within kLinkLevel).
+    uint16_t linkUsage = 0;
+    struct LinkClips { std::string start, air, land; bool valid() const { return !air.empty(); } };
+    LinkClips jumpUp, jumpDown, jumpAcross;
+    const LinkClips* linkClips(vec3 from, vec3 to) const; // null: this type cannot run such a link
     int spit = -1;           // attacks[] index of a ranged spit (green naga +0x88 spit_attack), -1 none
     PatrolStyle patrol;      // behaviour-list node +0x48
     SearchStyle search;      // behaviour-list node +0xD8; time 0: no search (spiders), loses Lara straight to idle
@@ -314,6 +321,10 @@ struct EnemyState {
     std::vector<vec3> pieceVel;    // pieces made this tick: each one's velocity (units/s) and spin (rad/s), world
     std::vector<glm::mat4> ragdoll; // each ragdoll bone's start-segment frame, model space (modelMatrix(pos, yaw, 0, tilt))
     vec3 killAt{0}, killDir{0};     // the killing hit: point relative to pos, direction
+    // Running a nav link (Enemy::leapTick), on top of its mode: 0 none, 1 take-off clip, 2 in the air, 3 landing.
+    int leap = 0;
+    vec3 leapFrom{0}, leapTo{0}; // take-off and landing points
+    float leapTime = 0, leapLength = 0; // s in the air, flight time
 };
 
 // A guard zone (enemybase 27 GuardNode, tru.exe 0x61F7A0: up to six {point, inner, outer = max(r1, r2)}).
@@ -324,17 +335,32 @@ struct GuardZone {
     bool contains(vec3 p, bool outerRadius) const;
 };
 
-// The loaded units' nav graphs of one layer, world frame (Nav.cpp): the areas, A* through their shared edges, funnel.
+// One step of a nav route: walk to `at`; with link >= 0, `at` is the take-off of that link (NavMesh::link) and the
+// jump lands at `land` (reverse: it runs the link b -> a).
+struct NavStep {
+    vec3 at{0};
+    int link = -1;
+    bool reverse = false;
+    vec3 land{0};
+};
+
+// The loaded units' nav graphs of one layer, world frame (Nav.cpp): the areas, A* through their shared edges and the
+// NavPower links the agent's usage flags allow, funnel between links.
 class NavMesh {
 public:
     void add(const formats::NavGraph& g, vec3 offset); // appends the graph's areas (adjacency stays within it)
+    void addLink(const formats::NavLink& l, vec3 offset); // after the graphs: both ends snapped to areas, else dropped
     bool empty() const { return areas_.empty(); }
     size_t size() const { return areas_.size(); }
+    size_t links() const { return links_.size(); }
     float radius = 0;                    // the agent radius it was built for
     int locate(vec3 feet) const;         // area under / around these feet, -1 off the mesh
-    // Corners from `from` to `to` (the last one `to`); empty when either end is off the mesh or no route joins them.
-    std::vector<vec3> path(vec3 from, vec3 to) const;
-    vec3 steer(vec3 from, vec3 to) const; // the first corner more than 10 away; `to` without a route
+    // Steps from `from` to `to` (the last one `to`) using the links that share a bit with `usage` (0: none); empty
+    // when either end is off the mesh or no route joins them.
+    std::vector<NavStep> route(vec3 from, vec3 to, uint16_t usage) const;
+    std::vector<vec3> path(vec3 from, vec3 to) const; // route without links, corners only
+    // The first step more than 10 away, or a link take-off however near; `to` without a route.
+    NavStep steer(vec3 from, vec3 to, uint16_t usage = 0) const;
 
 private:
     struct Area {
@@ -344,8 +370,18 @@ private:
         glm::vec2 lo{0}, hi{0};
         bool ccw = true;
     };
+    struct Link {
+        std::array<vec3, 2> a{}, b{};
+        int areaA = -1, areaB = -1;
+        bool fromA = false, fromB = false;
+        uint16_t usage = 0;
+        float penalty = 1;
+    };
     float floorZ(const Area& a, vec3 p) const;
+    int snap(vec3 p, float maxDist) const; // locate, else the nearest area within maxDist
+    std::vector<vec3> funnel(vec3 from, const std::vector<int>& route, vec3 to) const;
     std::vector<Area> areas_;
+    std::vector<Link> links_;
 };
 
 // A patrol point: its planner node's position, facing (cdc -Y of the node frame), PatrolLookTurn flag (node +0x50
@@ -444,7 +480,11 @@ private:
     const std::vector<PatrolPoint>* patrolPoints() const; // the current path, null without one
     bool nextPatrolPoint(uint32_t mode);            // 0x637870 in that order mode; false: the path is done
     void playIdle(const std::vector<IdleAnim>& idles); // a weighted pick; sets phaseLength
-    vec3 steer(vec3 goal) const;     // the next nav corner towards goal (goal itself without a nav mesh)
+    // The next nav corner towards goal (goal itself without a nav mesh); at a link's take-off, its landing (and the
+    // link starts after this tick's mode logic: leap).
+    vec3 steer(vec3 goal);
+    void startLeap(const NavStep& step);
+    bool leapTick(float dt); // true: running a link (the mode waits)
     // Turns along the nav path (flyers: straight, and `flight` set to the step there); true: arrived.
     bool walkTo(vec3 goal, float arrive, const std::string& clip, float dt, vec3* flight = nullptr);
     void startSearch();
@@ -456,6 +496,8 @@ private:
     EnemyState s_, prev_, start_;
     anim::AnimController anim_;
     std::vector<glm::mat4> bones_, prevBones_;
+    std::optional<NavStep> takeoff_; // steer() reached a link's take-off this tick in mode takeoffMode_
+    Mode takeoffMode_ = Mode::Idle;
     uint32_t clipSerial_ = 0, poseSerial_ = 0; // playClip count; the one anim_ plays
     // Each skeleton segment follows a ragdoll bone (its nearest ancestor-or-self that starts one) with its death-pose
     // offset from that bone's segment [I].
@@ -551,6 +593,7 @@ private:
     std::map<std::string, std::vector<std::vector<formats::PlannerNode>>> nodes_; // their planner nodes (unit frame)
     std::vector<formats::PlannerNode> worldNodes_;                                // all of them, world frame
     std::map<std::string, std::vector<formats::NavGraph>> graphs_;                // their nav graphs (unit frame)
+    std::map<std::string, std::vector<formats::NavLink>> links_;                  // their nav links (unit frame)
     std::map<uint32_t, NavMesh> navs_;                                            // all of them by layer, world frame
     std::vector<vec3> claims_; // patrol points / flank nodes enemies walk to / idle at this tick
     struct Guard { uint32_t record = 0, node = 0; float inner = 0, outer = 0; auto operator<=>(const Guard&) const = default; };

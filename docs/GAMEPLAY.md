@@ -575,25 +575,48 @@ plan and writes the actions it gave as an input script; the script replays the s
 through its text, the stick is re-aimed every 4 ticks in 0.05 steps from the camera's yaw, as `World::tick` maps it).
 Plan lines: `go X Y [R] [walk]`, `engage UID [X Y] [walk]` (to the nearest of its engagement records,
 `World::engagementCentres`, until `World::engaged` names it), `face YAWDEG`, `press [ACTION]` (6 ticks held, 6
-released), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS`, `wait SECONDS`, `near R` (logs the markup polylines
-within R: poles, ledges). It logs where each engagement and press happened. `--no-cinematics` leaves script cinematics
+released), `hold ACTION SECONDS`, `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world
+heading; ACTION pressed AT seconds in: running jumps), `push FORWARD RIGHT SECONDS [ACTION]` (ACTION, default interact,
+held throughout, the raw stick from the 6th tick: push blocks grip, then move along the block axis nearest her facing
+while the stick's forward is over 0.5), `wait SECONDS`, `near R` (logs the markup polylines within R: poles, ledges).
+It logs where each engagement, press, push and run ended. `--no-cinematics` leaves script cinematics
 unshown (their events, Lara's placement at the stream's tails and the chapter change still run): a spawn inside a
 level-start cinematic's trigger volume (l4_traprooms 195_mex_lords, l5_valgrind 240_val_gate) is placed at the
-cinematic's end on tick 1 either way, so the replays start from there. The replays (`tests/replays/*_insert.txt`,
-`*_remove.txt`, ctest `game_replay_<name>`: the real ou-game under `--no-cinematics --sync-loads`, checking the
-`portables held N inserted P>R` exit line and Lara's state):
+cinematic's end on tick 1 either way, so the replays start from there.
 
-| replay | spawn | what happens |
-|---|---|---|
-| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematic: 6556.5,-33459.7) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) |
-| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | power gem 7498 carried 33 m to cog wheel 7312, set into section 1 while the wheel turns |
-| `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 |
-| `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 |
+`--report-objects UID,...` (with `--frames`) prints at exit `ou-game: calls TO:VT ...` — every distinct script call
+(callee, vt; -1 = constructor) to or from the listed objects, in first-call order — and one line per object:
+`ou-game: object UID NAME pos X Y Z [graph S] [joint P] [uber S0,S1,.. jN X ..] [in R]` (anim-graph state id, the
+multibody joint's position, the uber section states with `-` in a transition and the simulated uber joints, the
+receptacle it is inserted in). UID 0 lists every script object (finding uids for a plan).
+
+The replays (`tests/replays/*.txt`, ctest `game_replay_<name>`, CMake `ou_receptacle_replay`: the real ou-game under
+`--no-cinematics --sync-loads`) check the `portables held N inserted P>R` exit line, Lara's state and the puzzle's
+downstream reaction as tru.exe's scripts define it (`--report-objects`; PROGRESSION.md has the chains):
+
+| replay | spawn | what happens | asserted reaction |
+|---|---|---|---|
+| `traprooms_throne_insert` | l4_traprooms 7400,-34900,4440,-135 (cinematic: 6556.5,-33459.7) | scepter weight 5883 picked up, set into the empty throne 5891 (uber section 0) | throne section 0 state 2, its press plate in "in position" (-150..-90), seal 5701 vt 54 |
+| `valgrind_cog_gem_insert` | l5_valgrind 0,3072,180,180 (cinematic: 1517.3,-6209.9) | power gem 7498 carried 33 m to cog wheel 7312, set into section 1 while the wheel turns | cog wheel section 1 state 0 -> 1 |
+| `valaskjalf_pole_lever_insert` | l5_valaskjalf_entryb 1700,-45719,-2499,180 | pole 7190 picked up, inserted into pole-hole lever 7189 | lever graph 1 -> 0 and its slider watch (a joint) |
+| `puzzleroom_pole_remove` | l2_puzzleroom -17500,40565,5540,180 | walks west until pole 2967 engages (its kind-4 record reaches 3.9 m), pulls it out of floor hole 2969 | elevator 2960 vt 54 (graph 0 -> 1), switch 2961 vt 62 |
+| `ballcourt_pole_lever_block` | l4_ballcourt -20300,14700,3484,-90 | pole 6503 inserted into lever 6502, push block 6504 pushed along its axes (21° for 6.2 m, -69° for 1.9 m) under the inserted pole | lever graph 0 -> 1 with its slider watch, block under the pole |
+| `baldrs_plates_gate` | l1_baldrs_tomb -5000,-10000,2560,180 (west room) | weight 220 set on press plate 219, weight 218 carried through door 223 onto plate 222, Lara stands on plate 221 | plates at -60, door 223 vt 57 (section 1, open), locks 69 / 70 out of range, gate 45 vt 54 and its joint fallen open (~90°) |
+| `ballcourt_calendar_handle_turn` | l4_ballcourt -14240,10200,3700,90 | round calendar 6506's east side, grip a push handle and push 4 s | the ring turned on hinge joint 2 (> 0.2 rad, ~0.56), section 1 back in 3 |
 
 Not replayed [U]: hanging on the inserted l5 pole (door 7227, `PoleHoleLeverOpensRewardDoor` drops her onto it). The
 pole's markup is 1164 over the floor she inserts it from (2742,-46810..-46296, z -1339), above the standing jump's
 reach (ledges 635-910 over her feet); no markup lies within 12.5 m of it and the stone blocks at the room's far end
-(x ~4300) are 1500 away, so the route up the original intends is not found yet.
+(x ~4300) are 1500 away, so the route up the original intends is not found yet. Likewise the l4_ballcourt pole (z 4572,
+1106 over the floor, no markup within 20 m): the replay stands block 6504 under it, but our Lara cannot climb onto a
+push block (no vault, no ledges on objects), so the hang that opens door 6505 (`BallcourtPoleLeverOpensDoor`) is not
+replayed. l1_baldrs_tomb's west room (plate 219, both weights) is entered by the spawn: door 223 is shut from the east
+and Lara alone on 219 lets it shut again when she steps off (219 vt 55 -> 223 vt 58), so a weight holds it.
+Also not replayed [U: route]: the calendar headdress 6498 lies at -4143,6282,-917, 16 m below and 36 m from calendar
+6506 (route unknown to the autopilot), and the shiva arms' gems 2964 / 2965 lie on the upper floor (z 5447) while the
+arms are lowered from the lower floor (z 1149: volume 3023 offers grapples 2982 / 2983, 2982 vt 55 / 2983 vt 55 —
+ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts stay with
+`UberReceptaclesTakeTheirPortables` (teleports).
 
 ## Controller
 
@@ -1568,7 +1591,20 @@ Ours:
   inserted there (message 0x23 -> 0x6A6DC0 -> 0x165): l2_puzzleroom pole 2967 -> hole 2969, l2_maproom 2665 -> track
   2664, l3_chapel 4823 -> 4824, l4_temple 5240 -> 5233, the gems and keys in their holders. The attach point is the
   receptacle model's marker named by physical record +0x3C (query 0x173 -> 0x6B55D0); the level data's placed pairs lie
-  on it (pole 2967 within 7 units of hole 2969's marker 713.8 up).
+  on it (pole 2967 within 7 units of hole 2969's marker 713.8 up). [O decomp + Wine] The portable's 0x165 handler
+  (0x6B5890 -> 0x6B55D0, this = receptacle, args portable, marker, marker + 0x10) sets the portable's instance to the
+  receptacle's instance frame (+0x20 position, +0x30 Euler) x the marker (position, XYZ Euler at +0x10): the
+  portable's own model origin lands on the marker, no offset, the lever is not lowered first. Wine, l5_valaskjalf_entryb
+  (insert forced with INSTANCE_Post 0x165): lever 7189 at (16965.07, -16856.20, -4083.15) rot (0, 0, 90°) -> pole 7190
+  at (16965.07, -16825.34, -2913.89), settling to -2913.13 within 0.5 s and staying there: lever + (0, 30.86, 1169.3
+  .. 1170.0), rotation the lever's (its +X, the pole's length, out of the wall). So the pole really hangs 4.2 m over
+  the floor (1167 units). Standing jumps under it (four facings, and under its free end) rise 201.5 and never catch
+  it [O Wine]. The route up to it is [U]: no ledge / hold markup lies within 6 m; wall lever 7188's handle marker is
+  at the same 1169 height; `ar_pu_valaskjalf_entry` 7191 (448 x 448 x 413) is an uber puzzle object, not a push
+  block [O Wine: interact + forward at its west face neither grabs nor moves it; Lara walks on through its instance
+  position]. In tru.exe an insert from 250 in front of 7189 (dx 0)
+  fails: the insert record's cone (heading 90°, half-angle 90° in the lever frame) admits only her standing on the
+  lever's world -X side.
   Engagement [O tru.exe 0x719520, every frame]: Lara's query points are her position + z0, + step, + 2 x step, from
   the last active category-3 shape of her sensor list (player +0x854: +0x6C entries of 0x60, +0x51 active; 0x715DD0:
   z0 = shape +0x10 x 3.1605, step = shape +0x20 x 3.1605 / 2 for a type-1 shape, else one point). Wine (prologue and
@@ -1923,7 +1959,7 @@ and generator spawns (the generator intro's own type-13 data) now patrol too; fl
 
 Nav graph [O] (LEVELS.md "Nav graphs"): tru.exe links NavPower (`<bfx_replay NavPower_version>`, bfx::NavGraph); each
 unit's Level +0x60 holds a version-8 resource of graphs per layer (l1_ship_exterior: layer 3, agent radius 100,
-height 700, 398 convex areas, 710 links; l4_ballcourt layers 4 (radius 250) and 3 (100); l2_norsehub 6 (250) and
+height 700, 398 convex areas, 710 shared edges; l4_ballcourt layers 4 (radius 250) and 3 (100); l2_norsehub 6 (250) and
 1 (70)). Ours (`ai::NavMesh`, Nav.cpp; `Enemies::navFor`): the loaded units' graphs merged per layer (unit-name
 order), each ground enemy on the smallest layer built for at least its radius [I: tru.exe reads AI +0x1C50]; A*
 over the areas through their shared edges, funnel for the corners; chase, return, patrol, search, cover, flank and
@@ -1957,11 +1993,32 @@ step checked on the mesh. Ours: in a chase, the set's +0x34 / +0x38 clips (cats 
 soldiers' are anim requests, so mercs / poachers do not sidestep [U]. [I] timers in 30 Hz counts. Test
 `Ai.SidestepsWhenLaraIsClose`.
 
+Nav links (NavPower links; LEVELS.md "Nav links"; 176 in 22 units, none on the ship) [O]: bfx keeps them beside
+the graphs, both ends snapped to areas of every layer. A path query (0x662EC0) builds its PathSpec {obstacle
+blockage 0xFF, user-data match from node +0x134 flags, linkUsageFlags = node +0x14C u8[16] as bits when the
+request's +0x50 has bits 2 and 4, else 0} and asks CreatePolylinePath (0x41FAD0). Usage: cat_panther / tiger /
+panther_thrall bit 2, poacher / poacher_long_range / merc bit 1, small_albino_spider bit 0; thralls, nagas, yeti,
+tarantula, bats, sharks none. Every link's flags are 0xFFFF, so any of those may use any link. The AI path
+(0x647CA0, 32 points) marks a link segment kind 1 when its far end is higher, else 2 (kinds 5+ carry area user
+flags); the follower gives link segments no walking length (0x649F50) [O]. How the game then runs the link is not
+traced [U]: cats have jump_up_* / jump_down_* / jump_across_* / jump_over_* clips (start, inair_static, end) and
+0x44-byte records with those refs in their enemy data block (down, up, over: start, −1, in-air, landing, −9, 94.8 /
+363.5 / 379.3, ...), soldiers no jump clips at all. Ours (`NavMesh::addLink` / `route`, `Enemy::startLeap` /
+`leapTick`): A* also crosses a link the type's usage allows (strips at the take-off point nearest to where it
+walks from [I], cost = walk + flight × penalty [I]); corners are funnelled per stretch between links; reaching the
+take-off ([I] within its radius + 60: ledge avoidance halts it a radius short) it faces the landing and plays the kind's start clip in place, flies a ballistic arc
+([I] its gravity, top 158 above the higher end) with the in-air loop, lands with the end clip, and its mode carries
+on (hits during a jump hurt but get no reaction [I]). Kind: up / down as 0x647CA0, across [I] within 158 of level.
+Types without jump clips (soldiers) route without links [I: their link clips are anim requests or absent]. Saves
+keep the jump (EnemyState leap*). Tests `Ai.NavMeshRoutesOverALink`, `Ai.CatJumpsDownALink`,
+`AiReal.BallcourtPantherJumpsDownALink`.
+
 Taunt [O]: only `panther_thrall` has a taunt record (node +0xC8, flag AI +0x3718 set when its Adrenaline behaviour
 ends, 0x6116E0); its clip ref is {0, −1} and +0x10 is null, so Taunt_Anim (0x61F2D0 needs s16 +2 ≠ −1) and
 Taunt_Turn never start: no enemy taunts.
 
-Not done: JumpOver (NavPower links after the areas, not decoded), long-range specifics beyond their records, rifle
+Not done: JumpOver (EnemyBehavior JumpOver 0x62BC20 / 0x62B620 vaults over a cover node's low wall with the cover
+record's +0x174 clip, not a nav link; not modelled), long-range specifics beyond their records, rifle
 mesh, bat latch, the original's wall-walking transitions, thralls' chunks.
 
 Verification [O] (ou-game, Vulkan, 1280×720, invisible KWin; screenshots viewed, kept privately; 2026-10-29):

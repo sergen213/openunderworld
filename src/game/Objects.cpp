@@ -1703,7 +1703,9 @@ bool World::removeInserted(const Engaged& at) {
     return true;
 }
 
-// An inserted portable takes its receptacle's attach marker frame (0x6B55D0; [O] the level data's placed pairs: l2
+// An inserted portable takes its receptacle's attach marker frame (0x6B55D0: receptacle instance frame x marker, the
+// portable's origin on the marker; Wine l5_valaskjalf_entryb: pole 7190 at lever 7189 + (0, 30.86, 1169.3..1170.0), the
+// lever's rotation; [O] the level data's placed pairs: l2
 // pole 2967 lies at hole 2969's marker, 713.8 up, within 7 units, the gems and keys at their holders' markers within
 // 80). The poles' models run along their own X (sa_*) or Z (ma_*, ca_*, the markers turned 90 degrees about Y): they
 // stick out of the hole, horizontal poles (markup type 6) Lara hangs and swings on. A receptacle whose script watches

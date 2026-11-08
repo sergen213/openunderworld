@@ -1635,6 +1635,20 @@ TEST(ProgressionReal, PoleHoleLeverOpensRewardDoor) {
     ASSERT_EQ(w.heldPortable(), 7190);
     ASSERT_TRUE(interactFrom(w, {{lever()->pos + vec3(0, 250, 0), -glm::half_pi<float>()}}, [&] { return w.insertedIn(7190) == 7189; }));
     EXPECT_EQ(graphStateId(w, 7189), 0) << "inserted (transition 1 -> 0)";
+    { // Wine (tru.exe, l5_valaskjalf_entryb, 0x6B5890 message 0x165 -> 0x6B55D0): the pole's instance takes the lever's
+      // frame x its attach marker: origin lever + (0.00, 30.86, 1169.26 .. 1170.02 settled), rotation the lever's
+      // (0, 0, 90 degrees); the pole's model runs along its own +X, out of the wall.
+        const auto* pole = w.script().find(7190);
+        const glm::mat4 world = glm::translate(glm::mat4(1), pole->offset) * glm::translate(glm::mat4(1), pole->pos) *
+                                glm::rotate(glm::mat4(1), pole->rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), pole->rot.y, {0, 1, 0}) *
+                                glm::rotate(glm::mat4(1), pole->rot.z, {0, 0, 1}) * pole->body;
+        const vec3 rel = vec3(world[3]) - lever()->pos;
+        EXPECT_NEAR(rel.x, 0.0f, 1.0f);
+        EXPECT_NEAR(rel.y, 30.86f, 1.0f);
+        EXPECT_NEAR(rel.z, 1169.6f, 1.0f);
+        EXPECT_NEAR(glm::dot(vec3(world[0]), vec3(0, 1, 0)), 1.0f, 1e-3f) << "pole +X = lever +X = world +Y";
+        EXPECT_NEAR(glm::dot(vec3(world[2]), vec3(0, 0, 1)), 1.0f, 1e-3f) << "upright";
+    }
     ASSERT_TRUE(lever()->joint);
     EXPECT_EQ(lever()->joint->ranges.size(), 1u) << "vt 20(0): multibody 79 watch -600..-474";
     EXPECT_TRUE(doorCalls.empty());

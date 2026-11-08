@@ -417,10 +417,31 @@ re-bases coordinates when the player moves far from the first unit.
   plus the unit's layer base), u32 area bytes, u32 size (next graph), f[4] params ([1] agent radius, [3] height), f[6]
   bbox, ...}; convex areas from graph +0x138 for `area bytes`: 0x38-byte header {+0x00 centre, +0x0C normal, +0x18
   radius, +0x28 FLT_MAX, +0x30 low 7 bits edge count} then 0x14-byte edges {vertex, u32 adjacent area as a graph
-  offset (0 none), u32 flags 0xFFFF0000}; kd-tree and link records follow [U]. Areas float ~50 above the floor, in the
+  offset (0 none), u32 flags 0xFFFF0000}; a bfx::KDTree follows (0x42B370: +0x18 byte size, 4-byte inner / 12-byte
+  leaf nodes) [O]. NavPower links are not in the graph: they come from the unit data ("Nav links" below). Areas float ~50 above the floor, in the
   planner nodes' frame. Surveyed: l1_ship_exterior 1 graph (layer 3, radius 100, 398 areas), l4_ballcourt 2 (layers
   4 / 3, radius 250 / 100), l2_norsehub 2 (6 / 1, 250 / 70), l2_cliffclimb 1 (1, 70), l7_yggdrasil_hall01 2 (12 / 11).
   Other units point +0x60 elsewhere (no graph). `formats::Unit::navGraphs`; use: GAMEPLAY.md "Navigation".
+
+## Nav links (unit data +0x44 / +0x48)
+
+- [O] Unit data (Level +0x74) +0x44 count, +0x48 → record pointers; tru.exe 0x48C3F0 → 0x48BAB0 → 0x48B770 hands each
+  to NavPower (bfx CreateLink 0x417D50 for 2 points, CreateLinkStrip 0x417F30 for 4; the {record, link, unit} triple
+  goes on a list, 0x4D54B0). Record: +0x00 matrix (points are matrix × point), +0x40 u8 → LinkData "type",
+  +0x41..+0x50 u8[16] → "linkUsageFlags" (bit i = byte i ≠ 0), +0x58 "maxSnapDist", +0x5C "mayUseDist", +0x60
+  "mustUseDist", +0x64 "penaltyMult" (names: the bfx replay logger 0x408320; layerMask stays −1, stopToUseLink 0,
+  userData bit 0 marks a strip), +0x6C point count, +0x70 0x24-byte points {position, +0x20 u8}. Two points: a link
+  from point 0 when its +0x20 is set ("bidirectional" = point 1's), else from point 1 one way. Four points: a strip
+  from edge 0-1 (when 0 or 1 is set) to edge 2-3, bidirectional when 2 or 3 is set (point 3 faces point 0).
+- [O] Survey (all 97 units, 2026-11-07): 176 records in 22 units — l2_hubhall 12, l2_junglehub 17, l2_maproom 6,
+  l2_norsehub 15, l2_puzzleroom 12, l2_towerroom 5, l3_chapel 8, l3_secretchamber 4, l3_stairhall 2, l4_ballcourt 4,
+  l4_pool 6, l4_staircase_xibalba 3, l4_temple 10, l4_templepath 7, l4_trailstart 4, l4_traprooms 28,
+  l5_valaskjalf 11, l5_valaskjalf_entry 1, l5_valaskjalf_entryb 5, l5_valgrind 5, l7_helheim01 2,
+  l7_yggdrasil_end 9 (l1_ship_exterior none). 55 links, 121 strips; every one type 0, usage 0xFFFF, maxSnapDist
+  632.1, mayUseDist 474.1, mustUseDist 0, penalty 1; 135 bidirectional. By the far end's height (from the start
+  end): 141 lower by more than 158 (drops of up to ~1500), 27 level (gaps of 1.1–1.8 k), 8 higher. Links carry no
+  jump kind: the agent's PathSpec usage flags decide who may use them (GAMEPLAY.md "Nav links").
+  `formats::Unit::navLinks`.
 
 ## Enemy intro data (intro +0x78, type 13)
 
