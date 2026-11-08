@@ -4,6 +4,20 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.39.1] - 2026-11-07
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: climbing up from a hang onto a narrow beam (such as the Croft Manor chapel scaffold) dropped Lara off the far
+  side. She now climbs onto the beam and balances on it, as in the original. Climbing up from a hang follows the
+  original's room check: where there is only crouching room she climbs up crouching, onto a narrow shelf she goes to
+  the wall hug, and where there is nothing to stand on she stays hanging.
+- Fixed: grapple targets are hidden only by the walls and objects that hide them in the original, and their range is
+  measured from the grapple on Lara's hip, as in the original.
+- Note: Q is both Grapple and Recenter Camera in the original too; a press recenters only when no grapple target is
+  in reach. The Croft Manor chapel ring is reached from the top of the column by the stone angel, during the timed run
+  to the doors (not from the chapel floor). The game log now records every grapple press and why nothing was thrown.
+
 ## [0.39.0] - 2026-11-07
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
