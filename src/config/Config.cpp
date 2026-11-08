@@ -54,6 +54,11 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     if (g.waterDetail == "high") s.waterDetail = true;
     else if (g.waterDetail == "auto") s.waterDetail = enhanced && s.water == 1;
     else if (g.waterDetail != "standard") throw std::runtime_error("water detail must be auto, standard or high, got " + g.waterDetail);
+    const auto wc = std::find(kWaterColors.begin(), kWaterColors.end(), g.waterColor);
+    if (wc == kWaterColors.end())
+        throw std::runtime_error("water color must be auto, original, emerald, coral_lagoon, pelagic_cobalt, mineral_jade, "
+                                 "subpolar_slate or clear, got " + g.waterColor);
+    s.waterColor = int(wc - kWaterColors.begin());
     if (g.atmosphere == "auto") s.atmosphere = enhanced ? 2 : 0;
     else if (g.atmosphere == "off") s.atmosphere = 0;
     else if (g.atmosphere == "low") s.atmosphere = 1;
@@ -97,6 +102,7 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
     else if (flag == "--rt") g.rt = value;
     else if (flag == "--water") g.water = value;
     else if (flag == "--water-detail") g.waterDetail = value;
+    else if (flag == "--water-color") g.waterColor = value;
     else if (flag == "--atmosphere") g.atmosphere = value;
     else if (flag == "--weather") g.weather = value;
     else if (flag == "--rt-quality") g.rtQuality = value;
@@ -217,6 +223,7 @@ Config load(const fs::path& path) {
             c.graphics.rt = g->value("rt", c.graphics.rt);
             c.graphics.water = g->value("water", c.graphics.water);
             c.graphics.waterDetail = g->value("water_detail", c.graphics.waterDetail);
+            c.graphics.waterColor = g->value("water_color", c.graphics.waterColor);
             c.graphics.atmosphere = g->value("atmosphere", c.graphics.atmosphere);
             c.graphics.weather = g->value("weather", c.graphics.weather);
             if (g->contains("light_shafts")) c.graphics.lightShafts = g->at("light_shafts").get<bool>();
@@ -286,6 +293,7 @@ void save(const fs::path& path, const Config& c) {
     };
     auto& g = j["graphics"] = {{"preset", c.graphics.preset}, {"msaa", c.graphics.msaa}, {"rt", c.graphics.rt},
                                {"water", c.graphics.water}, {"water_detail", c.graphics.waterDetail},
+                               {"water_color", c.graphics.waterColor},
                                {"atmosphere", c.graphics.atmosphere}, {"weather", c.graphics.weather},
                                {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness},
                                {"upscaler", c.graphics.upscaler}, {"fsr_quality", c.graphics.fsrQuality},

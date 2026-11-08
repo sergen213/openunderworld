@@ -222,6 +222,7 @@ struct GraphicsOptions {
     bool originalShaders = true;
     int water = 0;                                 // 0 auto, 1 original, 2 enhanced
     int waterDetail = 0;                           // 0 auto, 1 standard, 2 high
+    int waterColor = 0;                            // config::kWaterColors: 0 auto (per chapter), 1 original, 2.. presets
     int atmosphere = 0;                            // 0 auto, 1 off, 2 low, 3 medium, 4 high
     int lightShafts = 0;                           // tri-state
     int cineDof = 0;                               // tri-state (default off)

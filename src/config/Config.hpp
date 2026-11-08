@@ -2,6 +2,7 @@
 // and read by ou-game/ou-viewer --config. Unknown keys are ignored; missing keys keep their defaults.
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -12,6 +13,10 @@
 namespace ou::config {
 
 namespace fs = std::filesystem;
+
+// GraphicsConfig::waterColor spellings; the index is GraphicsSettings::waterColor.
+inline constexpr std::array<std::string_view, 8> kWaterColors{"auto",         "original",       "emerald", "coral_lagoon",
+                                                               "pelagic_cobalt", "mineral_jade", "subpolar_slate", "clear"};
 
 // Graphics preset plus per-feature overrides. "enhanced" (default) = 4x MSAA + directional sun shadows + TRU's
 // translated shaders, plus ray-traced sun shadows where the Vulkan device supports ray queries (rt "auto");
@@ -32,6 +37,10 @@ struct GraphicsConfig {
     // Enhanced water / atmosphere / weather (docs/RENDERING.md); "auto" = on for the enhanced preset, off for original.
     std::string waterDetail = "auto";       // "auto" | "standard" | "high" (swell, flow, glitter, sun-occluded glint,
                                             // thickness-tested reflections, lamp reflections, geometry swell)
+    // Enhanced water's colour (docs/RENDERING.md "Water colour"): "auto" (each chapter its own type) | "original" (the
+    // unit's own water colours) | one of NeuralSpecOcean's palettes "emerald" | "coral_lagoon" | "pelagic_cobalt" |
+    // "mineral_jade" | "subpolar_slate" | "clear" (a pool). kWaterColors order = GraphicsSettings::waterColor.
+    std::string waterColor = "auto";
     std::string atmosphere = "auto";        // "auto" (enhanced -> medium) | "off" | "low" (height fog) | "medium"
                                             // (+ sun shafts, 24 taps) | "high" (48 taps)
     std::optional<bool> lightShafts;        // sun shafts of medium / high; unset = on
@@ -73,13 +82,14 @@ struct GraphicsSettings {
     bool antiLag = false; // AMD Anti-Lag (render::FrameOptions::antiLag); last, like the fields above
     bool cineDof = false; // cutscene depth of field (app::CineView::depthOfField); last, like the fields above
     bool pssm = false;    // tru.exe's sun shadows (render::FrameOptions::pssm): the original preset's `shadows`; last, as above
+    int waterColor = 0;   // kWaterColors index (0 auto, 1 original, 2.. presets = render::WaterColor(index - 1)); last, as above
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without
 // the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
-// --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail,
+// --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail, --water-color,
 // --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off,
 // --anti-lag on|off. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);

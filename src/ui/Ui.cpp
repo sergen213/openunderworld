@@ -634,6 +634,8 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         GraphicsOptions& g = graphics;
         return {{.stringId = 1023, .choice = &g.water, .choices = {"AUTO", "ORIGINAL", "ENHANCED"}}, // WATER EFFECTS
                 {.label = "WATER DETAIL", .choice = &g.waterDetail, .choices = {"AUTO", "STANDARD", "HIGH"}},
+                {.label = "WATER COLOUR", .choice = &g.waterColor, // config::kWaterColors order
+                 .choices = {"AUTO", "ORIGINAL", "EMERALD COAST", "CORAL LAGOON", "PELAGIC COBALT", "MINERAL JADE", "SUBPOLAR SLATE", "CLEAR POOL"}},
                 {.label = "ATMOSPHERE", .choice = &g.atmosphere, .choices = {"AUTO", "OFF", "LOW", "MEDIUM", "HIGH"}},
                 {.label = "SUN SHAFTS", .choice = &g.lightShafts, .choices = {"DEFAULT", "ON", "OFF"}},
                 {.label = "CUTSCENE DEPTH OF FIELD", .choice = &g.cineDof, .choices = {"DEFAULT", "ON", "OFF"}},

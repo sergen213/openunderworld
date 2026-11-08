@@ -9,7 +9,9 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <string>
+#include <string_view>
 
 namespace ou::render {
 
@@ -55,9 +57,38 @@ struct WaterBlock {
                             // [2] x strength (0 = off), y light-ray weight (Underwater::rayWeight); both water qualities
     glm::uvec4 rays[157];   // Underwater::rays, 4 texels per uint (ouRays)
     glm::mat4 seaWaves;     // render::waterWaves at the camera: tru.exe's sea waves c60-c63 (zero = no sea; caustics)
+    // Enhanced water colour (FrameOptions::waterColor, render::waterOptics; all 0 = the unit's own colours): [0] rgb
+    // extinction per unit of the view path, w 1 = on; [1] rgb in-scatter hue (linear, luminance 1: the unit's deep
+    // colour keeps its brightness); [2] rgb downwelling attenuation per unit (caustics fade with depth, red first).
+    glm::vec4 optics[3];
 };
-static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16 + 64);
+static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16 + 64 + 3 * 16);
 inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
+
+// Enhanced water colour (docs/RENDERING.md "Water colour"). NeuralSpecOcean's bio-optical palettes (MIT, Sheng Choi;
+// demo.js WATER_PALETTES, "calibrated to Morel & Prieur (1977) & Jerlov (1976) Case-1/Case-2 IOPs"): per-metre RGB
+// absorption a and scatter colour b (their scatterColor, the backscatter-driven body colour), plus our clear pool
+// (Pope & Fry 1997 pure-water absorption at 650 / 550 / 450 nm [I band picks]).
+struct WaterOpticsPreset {
+    std::string_view name; // config::kWaterColors spelling
+    glm::vec3 absorption;  // 1/m
+    glm::vec3 scatter;     // 1/m
+};
+const WaterOpticsPreset* waterPreset(WaterColor c); // nullptr for Original / Auto
+// Chapter (game::kChapters index) -> optical type chosen for its setting [I]: prologue / Croft Manor clear, the
+// Mediterranean and the Andaman Sea's open water pelagic cobalt, Coastal Thailand a coral lagoon, the Southern Mexico
+// cenotes mineral jade, Jan Mayen / the Arctic Sea / the epilogue subpolar slate; anything else Original.
+WaterColor chapterWaterColor(int chapter);
+// The setting resolved for a chapter: Auto -> chapterWaterColor(chapter), the rest unchanged.
+WaterColor waterColorFor(WaterColor setting, int chapter);
+// config::GraphicsSettings::waterColor (config::kWaterColors index: 0 auto, 1 original, 2.. presets) -> the setting.
+WaterColor waterColorSetting(int configIndex);
+std::string_view waterColorName(WaterColor c); // "original", "emerald", ..., "auto"
+// WaterBlock::optics for a resolved colour (all zero for Original): extinction a x 1.16 (NeuralSpecOcean's surface
+// transmittance exp(-a path 1.16)) and downwelling Kd = a x (0.22, 0.34, 0.48) (their syncKdAttenuation), both per
+// TRU unit (290 per metre) and divided by kWaterClarity; in-scatter hue b / (a + b) normalised to luminance 1.
+inline constexpr float kWaterClarity = 4.0f; // [I] game visibility: real ocean IOPs would hide a reef 10 m down
+std::array<glm::vec4, 3> waterOptics(WaterColor c);
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes);
 WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewProj, const scene::Environment& env,

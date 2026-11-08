@@ -45,6 +45,10 @@ enum class Upscaler : uint8_t { Off, Fsr };
 // Water surface meshes draw with TRU's own shaders (Original) or with our water shading (Enhanced: waves, refraction,
 // depth absorption, shore foam, reflections, interactive ripples, caustics). Written from scratch for this project.
 enum class WaterQuality : uint8_t { Original, Enhanced };
+// Enhanced water's optical type (render/Water.hpp waterOptics; docs/RENDERING.md "Water colour"): Original keeps the
+// unit's own colours (tru.exe's water pass material), the rest are NeuralSpecOcean's five water palettes plus a clear
+// pool. Same order as config::kWaterColors after its "auto" (index = config value - 1); Auto resolves per chapter.
+enum class WaterColor : uint8_t { Original, Emerald, CoralLagoon, PelagicCobalt, MineralJade, SubpolarSlate, Clear, Auto };
 // Interactive ripple height field on one water surface around Lara (game::WaterSim), sampled by Enhanced water.
 struct WaterRipples {
     float originX = 0, originY = 0; // world x, y of the corner of texel (0, 0)
@@ -185,6 +189,7 @@ struct FrameOptions {
     float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
     float screenFade = 0.0f; // scripted screen wipe (globaleffect FadeOut/FadeIn, script::Runtime::screenFade): 1 = black
     WaterQuality water = WaterQuality::Original;  // ou::config presets choose (Enhanced by default)
+    WaterColor waterColor = WaterColor::Original;  // Enhanced only: resolved optical type (never Auto; render::waterColorFor)
     WaterRipples ripples;                          // empty = calm (procedural waves only)
     std::span<const WaterVolume> waterVolumes;     // loaded units' water volumes
     std::span<const WaterParticle> splashes;       // drawn blended after the water surfaces

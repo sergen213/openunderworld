@@ -294,7 +294,7 @@ private:
     std::vector<QPushButton*> updateButtons_; // check / install / rollback: disabled while one runs
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
-    QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_;
+    QComboBox *water_, *waterDetail_, *waterColor_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_;
     QComboBox* language_; // config game.language (also ou-game's AUDIO/VISUAL > LANGUAGE)
     QCheckBox *frameGeneration_, *antiLag_;
     QCheckBox* rtLights_;
@@ -451,6 +451,10 @@ private:
         };
         water_ = choice({{"Preset default", "auto"}, {"Enhanced", "enhanced"}, {"Original", "original"}}, g.water);
         waterDetail_ = choice({{"Preset default (high)", "auto"}, {"High", "high"}, {"Standard", "standard"}}, g.waterDetail);
+        waterColor_ = choice({{"Per chapter (auto)", "auto"}, {"Original (the level's own)", "original"},
+                              {"Emerald coast", "emerald"}, {"Coral lagoon", "coral_lagoon"}, {"Pelagic cobalt", "pelagic_cobalt"},
+                              {"Mineral jade", "mineral_jade"}, {"Subpolar slate", "subpolar_slate"}, {"Clear pool", "clear"}},
+                             g.waterColor);
         atmosphere_ = choice({{"Preset default (medium)", "auto"}, {"Off", "off"}, {"Low: height fog", "low"},
                               {"Medium: + sun shafts", "medium"}, {"High: finer shafts", "high"}}, g.atmosphere);
         shafts_ = overrideCombo(g.lightShafts);
@@ -530,6 +534,7 @@ private:
         f->addRow("Shaders", shaders_);
         f->addRow("Water", water_);
         f->addRow("Water detail", waterDetail_);
+        f->addRow("Water colour", waterColor_);
         f->addRow("Atmosphere", atmosphere_);
         f->addRow("Sun shafts", shafts_);
         f->addRow("Cutscene depth of field", cineDof_);
@@ -957,6 +962,7 @@ private:
         g.brightness = float(brightness_->value());
         g.water = s(water_->currentData().toString());
         g.waterDetail = s(waterDetail_->currentData().toString());
+        g.waterColor = s(waterColor_->currentData().toString());
         g.atmosphere = s(atmosphere_->currentData().toString());
         g.lightShafts = overrideValue(shafts_);
         g.cineDof = overrideValue(cineDof_);
@@ -1020,6 +1026,7 @@ private:
             if (d.brightness != o.brightness) brightness_->setValue(d.brightness);
             if (d.water != o.water) pick(water_, q(d.water));
             if (d.waterDetail != o.waterDetail) pick(waterDetail_, q(d.waterDetail));
+            if (d.waterColor != o.waterColor) pick(waterColor_, q(d.waterColor));
             if (d.atmosphere != o.atmosphere) pick(atmosphere_, q(d.atmosphere));
             if (d.lightShafts != o.lightShafts) tri(shafts_, d.lightShafts);
             if (d.cineDof != o.cineDof) tri(cineDof_, d.cineDof);

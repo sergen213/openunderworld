@@ -82,6 +82,65 @@ bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes
     return false;
 }
 
+namespace {
+// NeuralSpecOcean demo.js WATER_PALETTES (absorption, scatter; their keys emerald, maldives, pacific, jade, nordic),
+// verbatim; clear: pure water (Pope & Fry 1997: 0.34 / 0.0565 / 0.0092 per m at 650 / 550 / 450 nm), scatter [I] a
+// pale tiled-pool cyan.
+constexpr std::array<WaterOpticsPreset, 6> kPresets{{
+    {"emerald", {0.68f, 0.148f, 0.068f}, {0.012f, 0.192f, 0.228f}},
+    {"coral_lagoon", {0.54f, 0.092f, 0.040f}, {0.018f, 0.268f, 0.305f}},
+    {"pelagic_cobalt", {0.86f, 0.215f, 0.046f}, {0.005f, 0.096f, 0.225f}},
+    {"mineral_jade", {0.66f, 0.118f, 0.112f}, {0.019f, 0.228f, 0.162f}},
+    {"subpolar_slate", {0.82f, 0.245f, 0.158f}, {0.010f, 0.108f, 0.142f}},
+    {"clear", {0.34f, 0.0565f, 0.0092f}, {0.020f, 0.220f, 0.300f}},
+}};
+} // namespace
+
+const WaterOpticsPreset* waterPreset(WaterColor c) {
+    const size_t i = size_t(c);
+    return c == WaterColor::Original || c == WaterColor::Auto || i > kPresets.size() ? nullptr : &kPresets[i - 1];
+}
+
+WaterColor chapterWaterColor(int chapter) {
+    using C = WaterColor;
+    static constexpr std::array<C, 9> kByChapter{
+        C::Clear,         // 0 prologue (burning Croft Manor)
+        C::PelagicCobalt, // 1 Mediterranean Sea (open deep sea)
+        C::CoralLagoon,   // 2 Coastal Thailand (clear shallow reef: clearer than TRU's teal)
+        C::Clear,         // 3 Croft Manor
+        C::MineralJade,   // 4 Southern Mexico (limestone cenotes)
+        C::SubpolarSlate, // 5 Jan Mayen Island
+        C::PelagicCobalt, // 6 Andaman Sea (the ship in open water)
+        C::SubpolarSlate, // 7 Arctic Sea
+        C::SubpolarSlate, // 8 epilogue (l7_himalaya_end)
+    };
+    return chapter >= 0 && chapter < int(kByChapter.size()) ? kByChapter[size_t(chapter)] : C::Original;
+}
+
+WaterColor waterColorFor(WaterColor setting, int chapter) {
+    return setting == WaterColor::Auto ? chapterWaterColor(chapter) : setting;
+}
+
+WaterColor waterColorSetting(int configIndex) {
+    return configIndex <= 0 || configIndex > int(kPresets.size()) + 1 ? WaterColor::Auto : WaterColor(configIndex - 1);
+}
+
+std::string_view waterColorName(WaterColor c) {
+    if (const WaterOpticsPreset* p = waterPreset(c)) return p->name;
+    return c == WaterColor::Auto ? "auto" : "original";
+}
+
+std::array<glm::vec4, 3> waterOptics(WaterColor c) {
+    const WaterOpticsPreset* p = waterPreset(c);
+    if (!p) return {};
+    constexpr float kUnitsPerMetre = 290.0f; // shaders/waves.glsl kM
+    const float perUnit = 1.0f / (kUnitsPerMetre * kWaterClarity);
+    const glm::vec3 hue = p->scatter / (p->absorption + p->scatter);
+    const float lum = glm::dot(hue, glm::vec3(0.2126f, 0.7152f, 0.0722f));
+    return {glm::vec4(p->absorption * (1.16f * perUnit), 1.0f), glm::vec4(hue / lum, 0.0f),
+            glm::vec4(p->absorption * glm::vec3(0.22f, 0.34f, 0.48f) * perUnit, 0.0f)};
+}
+
 WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewProj, const scene::Environment& env,
                       const FrameOptions& options) {
     WaterBlock w{};
@@ -129,6 +188,10 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     w.ripple = {r.originX, r.originY, r.cellSize, r.surfaceZ};
     w.rippleInfo = {float(r.size), r.cellSize > 0 && r.size > 0 && !r.heights.empty() ? 1.0f : 0.0f, 0, 0};
     w.seaWaves = waterWaves(camera.position, 1.0f, options.waterVolumes); // the sea the caustics look through
+    if (options.water == WaterQuality::Enhanced) { // Original water never reads it (its post pass keeps TRU's colours)
+        const auto o = waterOptics(options.waterColor);
+        std::copy(o.begin(), o.end(), w.optics);
+    }
     w.ambient = env.valid ? glm::vec4(env.ambient[0], env.ambient[1], env.ambient[2], 0) : glm::vec4(0.35f, 0.35f, 0.38f, 0);
 
     const glm::vec3 eye = camera.position;

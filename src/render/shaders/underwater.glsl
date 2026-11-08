@@ -14,6 +14,7 @@ layout(binding = 4) uniform Water {
     vec4 waterPass[3]; // tru.exe's full-screen under-water pass (ouWaterPass); [2].y light-ray weight (ouRays)
     uvec4 rays[157];   // tru.exe's under-water light rays, 50 x 50 bytes (ouRays)
     mat4 seaWaves;     // tru.exe's sea waves at the camera (caustics: shaders/waves.glsl)
+    vec4 optics[3];    // Enhanced water colour (render::waterOptics; water.frag ouWaterLook): all 0 = the unit's own
 } w;
 #ifdef VULKAN
 layout(set = 1, binding = 1) uniform sampler2D uDepth;
@@ -53,6 +54,13 @@ vec3 ouCaustics(vec3 c, vec2 uv) {
 // water"), both water qualities: the colour runs from the deep colour (looking down) to the surface colour (looking
 // up), its alpha from the eye's value to 1 at the material's distance (view depth). The PS's noise texture wobble
 // (+-0.05 of the gradient, 0.004 of the colour) and the scripted murk (c134.y) are left out.
+// Enhanced water colour preset (w.optics[0].w, only set with Enhanced water): the colour takes the preset's in-scatter
+// hue at the unit colour's luminance (as water.frag ouWaterLook), the alpha its per-channel extinction from the eye's
+// value (red fogs first), so the view under water matches the surface seen from above.
+vec3 ouPresetHue(vec3 gammaCol) { // gamma colour -> the preset hue at its luminance, gamma
+    float lum = dot(pow(max(gammaCol, vec3(0.0)), vec3(2.2)), vec3(0.2126, 0.7152, 0.0722));
+    return pow(max(w.optics[1].rgb * lum, vec3(0.0)), vec3(1.0 / 2.2));
+}
 vec3 ouWaterPass(vec3 c, vec2 uv) {
     if (w.waterPass[2].x <= 0.0) return c;
     vec3 far = ouWorld(uv, 1.0, w.invViewProj);
@@ -65,6 +73,10 @@ vec3 ouWaterPass(vec3 c, vec2 uv) {
     if (w.fogColor.w > 0.5 && w.detail.w > 0.5 && w.eye.z < surf && q.z > surf)
         q = w.eye.xyz + (q - w.eye.xyz) * ((surf - w.eye.z) / (q.z - w.eye.z));
     float viewZ = (w.viewProj * vec4(q, 1.0)).w;
+    if (w.optics[0].w > 0.5) {
+        vec3 a = 1.0 - (1.0 - w.waterPass[0].w) * exp(-w.optics[0].rgb * min(viewZ, 1e5));
+        return mix(c, ouPresetHue(col), clamp(a * w.waterPass[2].x, 0.0, 1.0));
+    }
     float a = mix(w.waterPass[0].w, 1.0, clamp(viewZ / w.waterPass[1].w, 0.0, 1.0)) * w.waterPass[2].x;
     return mix(c, col, clamp(a, 0.0, 1.0));
 }
@@ -86,10 +98,11 @@ vec3 ouRays(vec3 c, vec2 uv) {
 // Enhanced (ours, RENDERING.md "Under water"): sun shafts as the volumetric continuation of the caustics. Each step
 // along the view ray traces back along the refracted sun to where it entered the surface and takes the focusing of
 // the same waves there (caustics.glsl ouCausticFocus, as the bed's caustics: the streaks meet the bright lines on the
-// floor and move with the waves), blurred by the sun disk (0.005 x depth, as the bed) and 2.5% of the step (one afl iteration): many thin parallel streaks under the
+// floor and move with the waves; per colour, so they carry its chromatic fringes), blurred by the sun disk (0.005 x
+// depth, as the bed) and 2.5% of the step (one afl iteration): many thin parallel streaks under the
 // focusing crests (smoothstep(1.15, 2.2, focus)), coming and going in slow wave groups (ouShaftGroups). In-scatter:
 // HG 0.7 (strongest toward the sun), 3x3-PCF sun shadow (soft occluder volumes, not texel blocks), attenuated per
-// channel by the unit's extinction (water.frag ouWaterLook: red goes first) over the sun's path below the surface and
+// channel by the unit's extinction (water.frag ouWaterLook: red goes first; a water colour preset's own) over the sun's path below the surface and
 // the view path (blue-green, fading with depth), then soft-clamped under 0.3 x the water colour so looking into the
 // sun never saturates. 4 steps over up to 4000 units packed toward the eye (t ~ u^2), steps between groups or in
 // shadow skipping the focus (~1.5 ms at 2560 x 1440); the four pixels of each 2x2 quad march at interleaved quarter offsets and share their mean (ouQuadMean): 16 depth slices
@@ -118,10 +131,11 @@ vec3 ouShafts(vec3 c, vec2 uv) {
     if (w.eye.z >= surf) return c;
     if (dir.z > 1e-4) len = min(len, (surf - w.eye.z) / dir.z);
     len = min(len, 4000.0);
-    vec3 l = -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / 1.333); // toward the sun, under water
+    vec3 l = -refract(-w.sunDir.xyz, vec3(0.0, 0.0, 1.0), 1.0 / kIorRgb.g); // toward the sun, under water
     bool unit = w.waterPass[1].w > 0.0; // ouWaterLook's extinction per unit length, linear colour
     vec3 sf = unit ? w.waterPass[0].rgb : vec3(0.447, 0.780, 0.792);
     vec3 sigma = (1.0 - 0.85 * pow(sf, vec3(2.2))) * (30.0 / (unit ? w.waterPass[1].w : 100000.0));
+    if (w.optics[0].w > 0.5) sigma = w.optics[0].rgb, sf = max(ouPresetHue(sf), vec3(1e-3)); // water colour preset
     const int steps = 4;
     ivec2 px = ivec2(gl_FragCoord.xy) & 1;
     float o = (float(px.x + 2 * px.y) + 0.5) * 0.25; // this pixel's quarter of each step (2x2 interleave)
@@ -133,7 +147,7 @@ vec3 ouShafts(vec3 c, vec2 uv) {
         vec2 e = p.xy + l.xy * sunPath; // surface entry point
         float g = ouShaftGroups(e, w.eye.w), v = g > 0.0 ? ouSunShadowVisibility(p) : 0.0;
         if (v <= 0.01) continue; // between wave groups or in shadow: skip the focus (the costly part)
-        float b = smoothstep(1.15, 2.2, ouCausticFocus(e, h, 0.005 * h + 0.025 * dt, 1)) * g;
+        vec3 b = smoothstep(vec3(1.15), vec3(2.2), ouCausticFocus(e, h, 0.005 * h + 0.025 * dt, 1)) * g;
         lit += exp(-sigma * (sunPath + t)) * (b * v * dt);
     }
     lit = ouQuadMean(lit, px); // the quad's four interleaved marches: 64 steps' worth, no dither left

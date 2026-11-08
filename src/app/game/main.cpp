@@ -114,6 +114,7 @@ void usage() {
                  "               [--rt-reflections on|off] (unset: on with --rt full)\n"
                  "               [--rt-ao on|off] [--rt-gi on|off]\n"
                  "               [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
+                 "               [--water-color auto|original|emerald|coral_lagoon|pelagic_cobalt|mineral_jade|subpolar_slate|clear]\n"
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
                  "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"
                  "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only) [--fx on|off] [--anti-lag on|off]\n"
@@ -2295,6 +2296,7 @@ int main(int argc, char** argv) {
     fillGraphicsMenu();
     ou::ui::GraphicsOptions appliedGraphics = menus.graphics;
     bool graphicsDirty = false; // not yet written to --config
+    std::optional<ou::render::WaterColor> loggedWaterColor; // last water colour logged (render loop)
     std::optional<std::string> swapFrom; // renderer setting before a pending backend swap
     auto applyGraphics = [&] {
         ou::app::Display d = display();
@@ -3429,6 +3431,16 @@ int main(int argc, char** argv) {
         fo.fsrQuality = opt.gfx.fsrQuality, fo.sharpness = opt.gfx.sharpness, fo.frameGeneration = opt.gfx.frameGeneration;
         fo.antiLag = opt.gfx.antiLag;
         fo.water = ou::render::WaterQuality(opt.gfx.water);
+        // Enhanced water colour: "auto" follows the chapter being played (a level end's chapter change applies at once).
+        fo.waterColor = ou::render::waterColorFor(ou::render::waterColorSetting(opt.gfx.waterColor), world->chapter);
+        if (opt.gfx.water && fo.waterColor != loggedWaterColor) {
+            loggedWaterColor = fo.waterColor;
+            const auto o = ou::render::waterOptics(fo.waterColor);
+            std::fprintf(stderr, "ou-game: water colour %s (setting %s, chapter %d): extinction/m %.3f %.3f %.3f\n",
+                         std::string(ou::render::waterColorName(fo.waterColor)).c_str(),
+                         std::string(ou::config::kWaterColors[size_t(opt.gfx.waterColor)]).c_str(), world->chapter,
+                         o[0].r * 290.0f, o[0].g * 290.0f, o[0].b * 290.0f);
+        }
         const auto& ws = world->water();
         if (opt.gfx.water && ws.active())
             fo.ripples = {ws.originX(), ws.originY(), ou::game::WaveField::kCell, ws.surfaceZ(), ou::game::WaveField::kN,
