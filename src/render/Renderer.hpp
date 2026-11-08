@@ -40,6 +40,9 @@ struct TextVertex {
 enum class RayTracing : uint8_t { Off, Shadows, Full };
 // Temporal upscaler of the Vulkan backend.
 enum class Upscaler : uint8_t { Off, Fsr };
+// Global tone mapping of the post pass (docs/RENDERING.md "Tone mapping"). Original = the scene as drawn (FrameOptions::hdr
+// adds the ACES fit); Agx = Oklab gamut compression + hue-constant highlight desaturation + AgX-style display curve.
+enum class Tonemap : uint8_t { Original, Agx };
 
 // ---- water (docs/RENDERING.md "Water") ----
 // Water surface meshes draw with TRU's own shaders (Original) or with our water shading (Enhanced: waves, refraction,
@@ -184,6 +187,7 @@ struct FrameOptions {
     bool rtAo = false, rtGi = false; // ray-traced ambient occlusion / one-bounce sun GI (Vulkan RT; RENDERING.md "RT AO / GI")
     float brightness = 1.0f; // display gamma of the post pass: out = in^(1 / brightness); 1 = neutral
     float screenFade = 0.0f; // scripted screen wipe (globaleffect FadeOut/FadeIn, script::Runtime::screenFade): 1 = black
+    Tonemap tonemap = Tonemap::Original; // post pass, before FXAA / screen filters / brightness; the UI is never tone-mapped
     WaterQuality water = WaterQuality::Original;  // ou::config presets choose (Enhanced by default)
     WaterRipples ripples;                          // empty = calm (procedural waves only)
     std::span<const WaterVolume> waterVolumes;     // loaded units' water volumes

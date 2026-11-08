@@ -109,7 +109,7 @@ void usage() {
                  "               [--show-collision] [--show-triggers] [--show-enemies] [--draw-last]\n"
                  "               [--preset original|enhanced] [--msaa 1|2|4|8] [--shadows on|off] [--fxaa on|off] [--hdr on|off]\n"
                  "               [--shaders original|generic]\n"
-                 "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0]\n"
+                 "               [--rt auto|off|shadows|full] [--rt-quality low|medium|high] [--brightness 0.5..2.0] [--tonemap original|agx]\n"
                  "               [--rt-lights on|off]\n"
                  "               [--rt-reflections on|off] (unset: on with --rt full)\n"
                  "               [--rt-ao on|off] [--rt-gi on|off]\n"
@@ -2323,10 +2323,10 @@ int main(int argc, char** argv) {
         if (d.renderer != opt.renderer && !swapFrom) swapFrom = opt.renderer;
         opt.renderer = d.renderer;
         appliedGraphics = menus.graphics, graphicsDirty = true;
-        std::fprintf(stderr, "ou-game: tick %llu graphics: %s %dx%d%s vsync %d fov %.0f | %s rt %s msaa %d water %s fsr %s fx %d\n",
+        std::fprintf(stderr, "ou-game: tick %llu graphics: %s %dx%d%s vsync %d fov %.0f | %s rt %s msaa %d water %s fsr %s fx %d tonemap %s\n",
                      (unsigned long long)world->ticks(), opt.renderer.c_str(), opt.width, opt.height, opt.fullscreen ? " fullscreen" : "",
                      int(opt.vsync), opt.fov, g.preset.c_str(), g.rt.c_str(), opt.gfx.msaa, g.water.c_str(),
-                     opt.gfx.fsr ? g.fsrQuality.c_str() : "off", int(opt.gfx.effects));
+                     opt.gfx.fsr ? g.fsrQuality.c_str() : "off", int(opt.gfx.effects), g.tonemap.c_str());
     };
     // AUDIO/VISUAL > LANGUAGE (locale::kInstallLanguages order, its names in the current text). A switch applies at once as
     // tru.exe 0x49A900 (spec mask, locals.bin reload): menus and prompts redraw in the new text, voice lines and
@@ -2782,6 +2782,7 @@ int main(int argc, char** argv) {
         v.frame.rtReflections = opt.gfx.rtReflections;
         v.frame.rtAo = opt.gfx.rtAo, v.frame.rtGi = opt.gfx.rtGi;
         v.frame.originalShaders = opt.gfx.originalShaders, v.frame.brightness = opt.gfx.brightness;
+        v.frame.tonemap = ou::render::Tonemap(opt.gfx.tonemap);
         v.overlay = !opt.noOverlay;
         v.depthOfField = opt.gfx.cineDof && opt.gfx.effects;
         v.art = art ? &*art : nullptr;
@@ -3425,6 +3426,7 @@ int main(int argc, char** argv) {
         fo.rtAo = opt.gfx.rtAo, fo.rtGi = opt.gfx.rtGi;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float((double(clock.ticks()) + clock.alpha()) * clock.step());
         fo.brightness = opt.gfx.brightness, fo.screenFade = world->screenFade();
+        fo.tonemap = ou::render::Tonemap(opt.gfx.tonemap);
         fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;
         fo.fsrQuality = opt.gfx.fsrQuality, fo.sharpness = opt.gfx.sharpness, fo.frameGeneration = opt.gfx.frameGeneration;
         fo.antiLag = opt.gfx.antiLag;

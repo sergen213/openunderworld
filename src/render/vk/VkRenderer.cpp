@@ -1421,8 +1421,10 @@ public:
         const VkViewport upright{0, 0, float(extent_.width), float(extent_.height), 0, 1};
         vkCmdSetViewport(cmd, 0, 1, &upright);
         vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
-        struct { int32_t fxaa, hdr; float brightness, fade; } post{options.fxaa && !fsrOn ? 1 : 0, options.hdr ? 1 : 0, options.brightness,
-                                                                  std::clamp(options.screenFade, 0.0f, 1.0f)};
+        // tonemap: before FSR (fsrInput_ stays display-referred 0..1 like the untouched scene) and before the overlay.
+        struct { int32_t fxaa, hdr; float brightness, fade; int32_t tonemap; } post{
+            options.fxaa && !fsrOn ? 1 : 0, options.hdr ? 1 : 0, options.brightness, std::clamp(options.screenFade, 0.0f, 1.0f),
+            options.tonemap == Tonemap::Agx ? 1 : 0};
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeline_);
         vkCmdPushConstants(cmd, postLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof post, &post);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postLayout_, 0, 1, &postSet_, 0, nullptr);
@@ -2736,7 +2738,7 @@ private:
         const VkDescriptorSetLayout sceneSets[3] = {setLayout_, shadowSetLayout_, rtSetLayout_};
         VkPushConstantRange scenePush{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ScenePush)};
         VkPushConstantRange textPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(float)};
-        VkPushConstantRange postPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 2 * sizeof(int32_t) + 2 * sizeof(float)};
+        VkPushConstantRange postPush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 3 * sizeof(int32_t) + 2 * sizeof(float)};
         VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, rtSetLayout_ ? 3u : 2u,
                                       sceneSets, 1, &scenePush};
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &sceneLayout_));

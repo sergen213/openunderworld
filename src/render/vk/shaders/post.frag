@@ -1,12 +1,15 @@
 #version 460
-// Same as GL kPostFs: optional ACES tonemap (HDR) and classic FXAA, then the atmosphere / weather and the underwater effect.
+// Same as GL kPostFs: optional tone mapping (AgX, or the ACES fit with HDR) and classic FXAA, then the atmosphere / weather and the underwater effect.
 layout(location = 0) in vec2 vUv;
-layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; float fade; } pc; // fade: FrameOptions::screenFade
+// fade: FrameOptions::screenFade; tonemap: FrameOptions::tonemap (0 original, 1 agx)
+layout(push_constant) uniform Push { int fxaa; int hdr; float brightness; float fade; int tonemap; } pc;
 layout(set = 0, binding = 0) uniform sampler2D uScene;
 layout(location = 0) out vec4 oColor;
+#include "shaders/tonemap.glsl"
 vec3 fetch(vec2 uv) {
     vec3 c = textureLod(uScene, uv, 0.0).rgb;
-    if (pc.hdr != 0) c = clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+    if (pc.tonemap != 0) c = ouTonemapAgx(c);
+    else if (pc.hdr != 0) c = clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
     return c;
 }
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }

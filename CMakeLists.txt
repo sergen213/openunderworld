@@ -70,7 +70,7 @@ target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/
 
 # Enhanced water / splash / underwater-post GLSL shared by GL (runtime compile) and Vulkan (glslc).
 foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
-        underwater.glsl atmosphere.glsl filter.glsl caustics.glsl waves.glsl)
+        underwater.glsl atmosphere.glsl filter.glsl caustics.glsl waves.glsl tonemap.glsl)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${src})
   file(READ ${src} OU_WATER_SRC)
@@ -79,6 +79,7 @@ endforeach()
 
 add_library(ou_render_gl STATIC src/render/gl/GlRenderer.cpp)
 target_link_libraries(ou_render_gl PUBLIC ou_render_common PRIVATE PkgConfig::EPOXY)
+target_include_directories(ou_render_gl PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen) # tonemap.glsl.inc (post pass)
 
 # ---- ou_render_vk: Vulkan 1.3 backend; SPIR-V compiled at build time by glslc and embedded ----
 find_package(Vulkan REQUIRED COMPONENTS glslc)
@@ -93,6 +94,7 @@ foreach(s scene.vert scene.frag text.vert text.frag line.vert line.frag shadow.v
                      DEPENDS ${src} ${OU_SUN_GLSL_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/tonemap.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
@@ -115,10 +117,12 @@ foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl VERBATIM)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
-# post.frag includes shaders/underwater.glsl (+ caustics.glsl, waves.glsl), shaders/atmosphere.glsl and shaders/filter.glsl.
+# post.frag includes shaders/underwater.glsl (+ caustics.glsl, waves.glsl), shaders/atmosphere.glsl, shaders/filter.glsl and
+# shaders/tonemap.glsl.
 set_property(SOURCE ${OU_VK_SPV_DIR}/post.frag.inc APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/underwater.glsl
              ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/atmosphere.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/filter.glsl
-             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl)
+             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/caustics.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/waves.glsl
+             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/tonemap.glsl)
 # Ray-traced scene variant (-DOU_RT: ray queries against the scene TLAS); only loaded on RT-capable devices.
 foreach(stage vert frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/vk/shaders/scene.${stage})
@@ -179,12 +183,15 @@ if(OU_BUILD_TESTS)
   # Same with the Enhanced preset (4x MSAA + sun shadow map) plus FXAA and HDR tonemap; RT off (GL can't trace).
   add_test(NAME viewer_vulkan_matches_gl_enhanced
            COMMAND sh -ec "\"${_v}\" --renderer opengl --no-overlay --frames 3 --preset enhanced --rt off --fxaa on --hdr on --screenshot ${_d}/cmp_gl_enh.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --preset enhanced --rt off --fxaa on --hdr on --screenshot ${_d}/cmp_vk_enh.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl_enh.ppm ${_d}/cmp_vk_enh.ppm 2")
+  # The optional AgX tone mapping (shaders/tonemap.glsl) matches between the backends too.
+  add_test(NAME viewer_vulkan_matches_gl_agx
+           COMMAND sh -ec "\"${_v}\" --renderer opengl --no-overlay --frames 3 --tonemap agx --screenshot ${_d}/cmp_gl_agx.ppm; \"${_v}\" --renderer vulkan --no-overlay --frames 3 --tonemap agx --screenshot ${_d}/cmp_vk_agx.ppm; \"$<TARGET_FILE:ou-imgdiff>\" ${_d}/cmp_gl_agx.ppm ${_d}/cmp_vk_agx.ppm 2")
   add_executable(ou_vk_tests tests/test_vk_renderer.cpp)
   target_link_libraries(ou_vk_tests PRIVATE ou_render_vk ou_placeholder GTest::gtest_main)
   # Mesa RADV leaks 256 bytes per process (see tests/lsan_vulkan.supp).
   set(OU_VK_TEST_ENV "LSAN_OPTIONS=fast_unwind_on_malloc=0:suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan_vulkan.supp")
   gtest_discover_tests(ou_vk_tests PROPERTIES ENVIRONMENT "${OU_VK_TEST_ENV}")
-  set_tests_properties(viewer_vulkan_placeholder_screenshot viewer_vulkan_matches_gl viewer_vulkan_matches_gl_enhanced PROPERTIES
+  set_tests_properties(viewer_vulkan_placeholder_screenshot viewer_vulkan_matches_gl viewer_vulkan_matches_gl_enhanced viewer_vulkan_matches_gl_agx PROPERTIES
                        SKIP_RETURN_CODE 77 ENVIRONMENT "${OU_VK_TEST_ENV}")
   add_executable(ou_shader_tests tests/test_shaders.cpp)
   target_link_libraries(ou_shader_tests PRIVATE ou_render_common GTest::gtest_main)

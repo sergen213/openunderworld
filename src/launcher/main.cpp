@@ -294,7 +294,7 @@ private:
     std::vector<QPushButton*> updateButtons_; // check / install / rollback: disabled while one runs
     QPlainTextEdit *scanOut_, *diag_, *changelog_;
     QComboBox *renderer_, *channel_, *gfxPreset_, *rt_, *rtQuality_, *msaa_, *shadows_, *shaders_;
-    QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_;
+    QComboBox *water_, *waterDetail_, *atmosphere_, *shafts_, *cineDof_, *weather_, *upscaler_, *fsrQuality_, *tonemap_;
     QComboBox* language_; // config game.language (also ou-game's AUDIO/VISUAL > LANGUAGE)
     QCheckBox *frameGeneration_, *antiLag_;
     QCheckBox* rtLights_;
@@ -462,6 +462,7 @@ private:
         brightness_->setSingleStep(0.05);
         brightness_->setDecimals(2);
         brightness_->setValue(g.brightness);
+        tonemap_ = choice({{"Original", "original"}, {"AgX (Oklab, filmic)", "agx"}}, g.tonemap);
         // AMD FSR (Vulkan only, docs/RENDERING.md "FSR").
         upscaler_ = choice({{"Off (native)", "off"}, {"AMD FSR 3.1 (Vulkan)", "fsr"}}, g.upscaler);
         fsrQuality_ = choice({{"Native AA", "native"}, {"Quality (1.5x)", "quality"}, {"Balanced (1.7x)", "balanced"},
@@ -534,6 +535,7 @@ private:
         f->addRow("Sun shafts", shafts_);
         f->addRow("Cutscene depth of field", cineDof_);
         f->addRow("Weather", weather_);
+        f->addRow("Tone mapping", tonemap_);
         f->addRow("Brightness", brightness_);
         f->addRow("Upscaler", upscaler_);
         f->addRow("FSR quality", fsrQuality_);
@@ -955,6 +957,7 @@ private:
         g.shadows = overrideValue(shadows_);
         g.originalShaders = shaders_->currentIndex() == 1 ? std::optional(false) : std::nullopt; // unset = original
         g.brightness = float(brightness_->value());
+        g.tonemap = s(tonemap_->currentData().toString());
         g.water = s(water_->currentData().toString());
         g.waterDetail = s(waterDetail_->currentData().toString());
         g.atmosphere = s(atmosphere_->currentData().toString());
@@ -1018,6 +1021,7 @@ private:
             if (d.shadows != o.shadows) tri(shadows_, d.shadows);
             if (d.originalShaders != o.originalShaders) shaders_->setCurrentIndex(d.originalShaders == std::optional(false) ? 1 : 0);
             if (d.brightness != o.brightness) brightness_->setValue(d.brightness);
+            if (d.tonemap != o.tonemap) pick(tonemap_, q(d.tonemap));
             if (d.water != o.water) pick(water_, q(d.water));
             if (d.waterDetail != o.waterDetail) pick(waterDetail_, q(d.waterDetail));
             if (d.atmosphere != o.atmosphere) pick(atmosphere_, q(d.atmosphere));

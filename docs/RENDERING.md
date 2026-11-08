@@ -40,6 +40,7 @@ shadows by ray query on capable Vulkan devices (the shadow map elsewhere); the o
 | FXAA | off | off (optional) | `--fxaa on/off`, `graphics.fxaa` |
 | HDR | off | off: the original shaders write LDR gamma-space colour; the ACES tonemap (RGBA16F target) only compresses it | `--hdr on/off`, `graphics.hdr` |
 | Ray tracing (Vulkan) | off (not allowed) | `auto` = shadows when supported | `--rt auto/off/shadows/full`, `--rt-quality low/medium/high`, `--rt-ao/--rt-gi on/off` (unset = on with `full`), `graphics.rt`, `graphics.rt_quality`, `graphics.rt_ao`, `graphics.rt_gi` |
+| Tone mapping | original | original (optional `agx`, "Tone mapping" below) | `--tonemap original/agx`, `graphics.tonemap` |
 | Water | TRU's own water shaders | enhanced water ("Water" below): waves, refraction, SSR, ripples, splashes, caustics under water (the under-water look itself is in both) | `--water original/enhanced`, `graphics.water` |
 | Brightness | 1.0 | 1.0 | `--brightness 0.5-2.0`, `graphics.brightness` |
 | Original effects (`src/fx`) | on | on (ou-game only; off = no particles / ribbons / lightning / glows / effect lights / screen filters; frame times in docs/formats/EFFECTS.md "Performance") | `--fx on/off`, `graphics.effects` |
@@ -63,7 +64,27 @@ Brightness option: tru.exe's gamma ramp `in^(1 − 8(b − 0.05))`, b = registry
 Colour space [O]: tru.exe's sampler-state manager only sets address/filter/anisotropy states (5-8, 10, 1-3; decomp
 around 0x5274xx) and never `D3DSAMP_SRGBTEXTURE` (11) or `D3DRS_SRGBWRITEENABLE` (194): the original samples, shades and
 writes in gamma space. Both backends match that: UNORM textures, UNORM scene targets and swapchain (SRGB_NONLINEAR
-colour space, no sRGB view), no conversion anywhere. Washed-out/dark differences are lighting, not gamma.
+colour space, no sRGB view), no conversion anywhere. Washed-out/dark differences are lighting, not gamma. (The optional
+`agx` tone mapping below converts to linear and back inside the post pass only.)
+
+## Tone mapping (GL + Vulkan; `graphics.tonemap original|agx`, `--tonemap`, AUDIO/VISUAL > GRAPHICS > QUALITY > TONE MAPPING)
+
+`original` (default) leaves the post pass as it was: the scene as drawn, or the ACES fit with `hdr` (output byte-identical
+to before the option existed). `agx` replaces that step (`src/render/shaders/tonemap.glsl`, `ouTonemapAgx`, included by
+both post shaders) with NeuralSpecOcean's Oklab-AgX display mapping (RESEARCH 8.10), its constants unchanged:
+- per channel: sRGB decode, x 1.372 [I] (pre-exposure that keeps linear mid-grey 0.18 at 0.18, solved numerically, since
+  TRU's shaders write display-referred colour, not scene light), x 1.04 (the demo's exposure);
+- AgX-style inset matrix (pulls saturated channels toward the others before the curve so they do not clip one by one),
+  the rational filmic sigmoid (toe + shoulder; white 1.0 ends at ~0.89 after encoding, shadows deepen), the outset matrix;
+- Oklab (Ottosson 2020) inset gamut compression at constant hue: the curve's chroma, 78 % along the hue of the input, so a
+  saturated highlight goes toward white without the hue skew of per-channel curves (ACES' cyan -> purple); highlight
+  desaturation 1 / (1 + 0.24 (peak − 1.25)) above input peak 1.25 (the hdr target and bright effects), mid-tone vibrance
+  +14 % for low-chroma colours, a ±2.2 % Oklab lightness S-curve; sRGB encode.
+Order: scene resolve → tone map (per FXAA tap) → FXAA → screen filters → brightness gamma → atmosphere → underwater → fade.
+With FSR the post pass (and so the tone map) writes `fsrInput_` at the render resolution before the upscale: FSR still
+gets 0..1 display-referred colour, as without the option (no FFX HDR flag), and frame generation interpolates the
+presented, already tone-mapped images. The HUD, menus and overlay are drawn after the post pass and are never tone-mapped.
+A push constant (Vulkan) / uniform 4 (GL): switching is live, no target or pipeline rebuild.
 
 ## Sun shadows (`render/sun.glsl`, `RenderCommon sunShadow`)
 

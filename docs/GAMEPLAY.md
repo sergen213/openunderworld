@@ -2678,7 +2678,7 @@ between two 0x1B: on the keyboard its key name, drawn in the highlight 0x7D6932 
   VSYNC, ANTI ALIASING, SHADOWS, REFLECTIONS, WATER EFFECTS, ON / OFF), the rest uppercase text]: the launcher's
   Graphics settings, applied live by the app (no restart). DISPLAY MODE SELECTION: RENDERER, RESOLUTION, FULLSCREEN,
   VSYNC, FIELD OF VIEW (30–120, step 5). DISPLAY SETTINGS opens QUALITY (PRESET, ANTI ALIASING, SHADOWS, ORIGINAL
-  SHADERS, PARTICLE EFFECTS), RAY TRACING (mode, RT QUALITY, LOCAL LIGHT SHADOWS, REFLECTIONS, AMBIENT OCCLUSION, SUN
+  SHADERS, PARTICLE EFFECTS, TONE MAPPING ORIGINAL / AGX), RAY TRACING (mode, RT QUALITY, LOCAL LIGHT SHADOWS, REFLECTIONS, AMBIENT OCCLUSION, SUN
   BOUNCE; tri-state rows DEFAULT / ON / OFF), WATER & SKY (WATER EFFECTS, WATER DETAIL, ATMOSPHERE, SUN SHAFTS,
   WEATHER) and UPSCALING (AMD FSR, FSR QUALITY, SHARPNESS slider, FRAME GENERATION, AMD ANTI-LAG). Values sit centred over the slider
   track with its arrows on the selected row; Left/Right step and stop at the ends, Return steps forward and wraps.

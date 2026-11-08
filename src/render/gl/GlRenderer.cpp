@@ -132,7 +132,8 @@ layout(location = 3) uniform float uAlphaRef;
 layout(binding = 0) uniform sampler2D uTex;
 void main() { if (texture(uTex, vUv).a < uAlphaRef) discard; })";
 
-// Final pass: resolved scene -> default framebuffer; optional ACES tonemap (HDR) and FXAA.
+// Final pass: resolved scene -> default framebuffer; optional tone mapping (AgX: shaders/tonemap.glsl, or the ACES fit with
+// HDR) and FXAA.
 const char* kPostVs = R"(#version 460 core
 out vec2 vUv;
 void main() {
@@ -141,17 +142,25 @@ void main() {
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 })";
 
-const char* kPostFs = R"(#version 460 core
+const char* kPostFsHead = R"(#version 460 core
 in vec2 vUv;
 layout(location = 0) uniform int uFxaa;
 layout(location = 1) uniform int uHdr;
 layout(location = 2) uniform float uBrightness; // display gamma (1 = neutral), as the original's brightness option
 layout(location = 3) uniform float uFade;       // FrameOptions::screenFade (1 = black)
+layout(location = 4) uniform int uTonemap;     // FrameOptions::tonemap: 0 original, 1 agx
 layout(binding = 0) uniform sampler2D uScene;
 out vec4 oColor;
+)";
+const char* kTonemapGlsl =
+#include "tonemap.glsl.inc"
+    ;
+// After kPostFsHead + kTonemapGlsl.
+const char* kPostFs = R"(
 vec3 fetch(vec2 uv) {
     vec3 c = textureLod(uScene, uv, 0.0).rgb;
-    if (uHdr != 0) c = clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0); // ACES (Narkowicz)
+    if (uTonemap != 0) c = ouTonemapAgx(c);
+    else if (uHdr != 0) c = clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0); // ACES (Narkowicz)
     return c;
 }
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -470,7 +479,8 @@ public:
         if (!r.lineProgram.get()) return false;
         r.shadowProgram = linkProgram(kShadowVs, kShadowFs, error);
         if (!r.shadowProgram.get()) return false;
-        const std::string postFs = std::string(kPostFs) + sunGlsl() + underwaterPostSource(false) + kPostFsMain; // sun: shafts
+        const std::string postFs = std::string(kPostFsHead) + kTonemapGlsl + kPostFs + sunGlsl() + underwaterPostSource(false) +
+                                   kPostFsMain; // sun: shafts
         r.postProgram = linkProgram(kPostVs, postFs.c_str(), error);
         if (!r.postProgram.get()) return false;
         const std::string waterVs = waterVertexSource(false), waterFs = waterFragmentSource(false);
@@ -846,6 +856,7 @@ public:
         glUniform1i(1, options.hdr ? 1 : 0);
         glUniform1f(2, options.brightness);
         glUniform1f(3, std::clamp(options.screenFade, 0.0f, 1.0f));
+        glUniform1i(4, options.tonemap == Tonemap::Agx ? 1 : 0);
         glBindTextureUnit(0, t.color.get());
         glBindTextureUnit(6, t.opaqueDepth.get()); // underwater post (unused unless submerged)
         glBindTextureUnit(7, t.filterBlur.get());  // screen filters (unused unless one runs)

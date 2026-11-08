@@ -616,6 +616,7 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
                 {.stringId = 1025, .choice = &g.shadows, .choices = {"DEFAULT", "ON", "OFF"}},         // SHADOWS
                 {.label = "ORIGINAL SHADERS", .toggle = &g.originalShaders, .onId = 45, .offId = 46},
                 {.label = "PARTICLE EFFECTS", .toggle = &g.effects, .onId = 45, .offId = 46},
+                {.label = "TONE MAPPING", .choice = &g.tonemap, .choices = {"ORIGINAL", "AGX"}},
                 {.stringId = 469}};
     }
     case Screen::GfxRayTracing: {

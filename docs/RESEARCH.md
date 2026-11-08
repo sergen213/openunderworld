@@ -529,6 +529,21 @@ All repositories were read, never built or run. Licences as in [§4](#4-sources)
   Reference photo used: "Caustics Shallow Water Pic1.png" by Peacelovedeathmetal2, Wikimedia Commons, CC BY-SA 4.0
   (https://commons.wikimedia.org/wiki/File:Caustics_Shallow_Water_Pic1.png), compared by eye only (not shipped).
 
+### 8.10 NeuralSpecOcean tone mapping (MIT) @`e9a87c6`
+
+- **NeuralSpecOcean** by Sheng Choi (bgbg108555), https://github.com/bgbg108555/NeuralSpecOcean — MIT, "Copyright (c)
+  2026 bgbg108555 and NeuralSpecOcean Contributors" (full text: `third_party/neuralspecocean/LICENSE`; the notice is
+  also in `src/render/shaders/tonemap.glsl`'s header). Its `source/src/CinemaPostPass.js` `toneMapOklabCinema` (with
+  `linearSrgbToOklab` / `oklabToLinearSrgb` / `filmicCurve`) is ported into `src/render/shaders/tonemap.glsl` with its
+  constants unchanged (exposure 1.04, AgX-style inset / outset matrices, the rational sigmoid, 78 % hue restore, highlight
+  desaturation above peak 1.25, mid-tone vibrance, Oklab lightness S-curve): the optional `graphics.tonemap agx`
+  (RENDERING "Tone mapping"). Not ported: its bloom pyramid, god rays, CAS and vignette. The work cites, and we credit
+  through it: **Björn Ottosson (2020), "A perceptual color space for image processing"**
+  (https://bottosson.github.io/posts/oklab/, the Oklab matrices) and **Troy Sobotka's AgX**
+  (https://github.com/sobotka/AgX, the inset / outset working space idea). Ours adds only the sRGB decode, a mid-grey
+  pre-exposure (1.372 [I]) and the sRGB encode around it, because our scene is display-referred. Copy of the source used:
+  openunderworld-work/neuralspecocean-CinemaPostPass.js.
+
 ---
 
 ## Open questions

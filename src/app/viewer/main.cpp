@@ -63,7 +63,7 @@ void usage() {
                  "                 [--rt-ao on|off] [--rt-gi on|off]\n"
                  "                 [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
                  "                 [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather off|rain|snow]\n"
-                 "                 [--brightness 0.5..2.0] [--config config.json]  (launcher settings; later flags override)\n"
+                 "                 [--brightness 0.5..2.0] [--tonemap original|agx] [--config config.json]  (launcher settings; later flags override)\n"
                  "controls: hold RMB to mouse look, WASD move, Q/E down/up, Shift fast, wheel speed,\n"
                  "          gamepad sticks + triggers, V vsync, L lighting, C backface cull, F1 overlay, Esc quit\n");
 }
@@ -515,6 +515,7 @@ int main(int argc, char** argv) {
         fo.rtAo = opt.gfx.rtAo, fo.rtGi = opt.gfx.rtGi;
         fo.originalShaders = opt.gfx.originalShaders, fo.time = float(frame) / 60.0f; // deterministic wind phase per frame
         fo.brightness = opt.gfx.brightness;
+        fo.tonemap = ou::render::Tonemap(opt.gfx.tonemap);
         fo.upscaler = opt.gfx.fsr ? ou::render::Upscaler::Fsr : ou::render::Upscaler::Off;
         fo.fsrQuality = opt.gfx.fsrQuality, fo.sharpness = opt.gfx.sharpness, fo.frameGeneration = opt.gfx.frameGeneration;
         fo.water = ou::render::WaterQuality(opt.gfx.water); // no ripple sim / volumes in the viewer

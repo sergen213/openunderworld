@@ -69,6 +69,8 @@ GraphicsSettings resolve(const GraphicsConfig& g) {
     else throw std::runtime_error("weather must be auto, off, rain or snow, got " + g.weather);
     if (!(g.brightness >= 0.5f && g.brightness <= 2.0f)) throw std::runtime_error("brightness must be within 0.5..2.0");
     s.brightness = g.brightness;
+    if (g.tonemap == "agx") s.tonemap = 1;
+    else if (g.tonemap != "original") throw std::runtime_error("tonemap must be original or agx, got " + g.tonemap);
     if (g.upscaler == "fsr") s.fsr = true;
     else if (g.upscaler != "off") throw std::runtime_error("upscaler must be off or fsr, got " + g.upscaler);
     static const std::string kFsrQuality[] = {"native", "quality", "balanced", "performance", "ultra_performance"};
@@ -105,6 +107,7 @@ bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_vie
         g.rtReflections = value == "on";
     }
     else if (flag == "--brightness") g.brightness = std::strtof(std::string(value).c_str(), nullptr);
+    else if (flag == "--tonemap") g.tonemap = value;
     else if (flag == "--upscaler") g.upscaler = value;
     else if (flag == "--fsr-quality") g.fsrQuality = value;
     else if (flag == "--sharpness") g.sharpness = std::strtof(std::string(value).c_str(), nullptr);
@@ -228,6 +231,7 @@ Config load(const fs::path& path) {
             if (g->contains("rt_gi")) c.graphics.rtGi = g->at("rt_gi").get<bool>();
             if (g->contains("original_shaders")) c.graphics.originalShaders = g->at("original_shaders").get<bool>();
             c.graphics.brightness = g->value("brightness", c.graphics.brightness);
+            c.graphics.tonemap = g->value("tonemap", c.graphics.tonemap);
             c.graphics.upscaler = g->value("upscaler", c.graphics.upscaler);
             c.graphics.fsrQuality = g->value("fsr_quality", c.graphics.fsrQuality);
             c.graphics.sharpness = g->value("sharpness", c.graphics.sharpness);
@@ -287,7 +291,7 @@ void save(const fs::path& path, const Config& c) {
     auto& g = j["graphics"] = {{"preset", c.graphics.preset}, {"msaa", c.graphics.msaa}, {"rt", c.graphics.rt},
                                {"water", c.graphics.water}, {"water_detail", c.graphics.waterDetail},
                                {"atmosphere", c.graphics.atmosphere}, {"weather", c.graphics.weather},
-                               {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness},
+                               {"rt_quality", c.graphics.rtQuality}, {"brightness", c.graphics.brightness}, {"tonemap", c.graphics.tonemap},
                                {"upscaler", c.graphics.upscaler}, {"fsr_quality", c.graphics.fsrQuality},
                                {"sharpness", c.graphics.sharpness}, {"frame_generation", c.graphics.frameGeneration},
                                {"effects", c.graphics.effects}, {"anti_lag", c.graphics.antiLag}};
