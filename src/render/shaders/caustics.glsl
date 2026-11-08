@@ -1,11 +1,11 @@
 // Enhanced caustics, shared by the underwater post pass (underwater.glsl: camera under water) and the water surface
 // (water.frag: the refracted bed seen from above). Embedded for GL by render/Water.cpp (expands the #include lines),
-// #included by glslc for Vulkan. Needs the block `w` (sunDir, sunColor, eye, ripple*, fogRange.z, seaWaves), the
-// includer's `uRipples` and `float ouSunShadowVisibility(vec3 p)` (may be defined after this file).
+// #included by glslc for Vulkan. Needs the block `w` (sunDir, sunColor, eye, ripple*, fogRange.z, seaWaves, ocean), the
+// includer's `uRipples`, `uOcean` and `float ouSunShadowVisibility(vec3 p)` (may be defined after this file).
 // docs/RENDERING.md "Water". [I: tru.exe draws none; its under-water drawable is the sun glow and the full-screen
 // pass]. Written for this project, after the physics Evan Wallace's WebGL Water uses (MIT; light intensity = old area
 // / new area of the refracted beam, docs/RESEARCH.md "Caustics"): the drawn surface itself (shaders/waves.glsl: the
-// Godot layers, afl_ext's sea and tru.exe's sea waves, the interactive wave field) refracts the sun, and the
+// Godot layers, afl_ext's sea or the FFT ocean, tru.exe's sea waves, the interactive wave field) refracts the sun, and the
 // brightness is 1 / |det J| of that refraction map, so the lines are the surface's own fold curves and move with its
 // waves, Lara's ripples and splashes. ouCausticFocus is the cheap variant for the sun shafts.
 #include "shaders/waves.glsl"
@@ -13,25 +13,52 @@
 // shallow reef, the long swell (afl's sea, tru.exe's waves) focuses far too strongly at full weight (a few long folds
 // metres apart): its effective focal length is shortened. Tuned by look.
 const float kCausticChop = 3.0, kCausticSwell = 0.3;
-// Caustic slope at p: water.frag's normal terms without its distance fades (the Godot layers, halved on seas; afl_ext's
-// sea, seaIters iterations, difference step >= blur; tru.exe's sea waves), reweighted. blur: world units the slope is
-// smoothed over (the layers' octaves finer than it fade). The wave field is ouCausticRipples.
-vec2 ouCausticSlope(vec2 p, float t, float blur, int seaIters) {
+// The FFT ocean's cascades (swell, gravity, chop) [I]: the swell as afl's sea, the shorter bands toward the chop.
+const vec3 kOceanCaustic = vec3(kCausticSwell, 1.0, 0.75);
+bool ouCausticOcean() { return any(notEqual(w.seaWaves[3], vec4(0.0))) && ouOceanOn(); }
+// Caustic slope at p without the FFT ocean: water.frag's normal terms without its distance fades (the Godot layers,
+// halved on seas; afl_ext's sea, seaIters iterations, difference step >= blur; tru.exe's sea waves), reweighted; with
+// the FFT ocean (fft) only tru.exe's waves (the ocean replaces the layers and afl's sea, as in water.frag). blur: world
+// units the slope is smoothed over (the layers' octaves finer than it fade). The wave field is ouCausticRipples.
+vec2 ouCausticSlopeBase(vec2 p, float t, float blur, int seaIters, bool fft) {
     bool sea = any(notEqual(w.seaWaves[3], vec4(0.0)));
-    vec2 s = (kCausticChop * (sea ? 0.25 : 0.5)) * (ouLayerA(p, t, blur).yz + ouLayerB(p, t, blur).yz);
+    vec2 s = fft ? vec2(0.0) : (kCausticChop * (sea ? 0.25 : 0.5)) * (ouLayerA(p, t, blur).yz + ouLayerB(p, t, blur).yz);
     if (sea) {
-        float e = max(0.01 * kSeaUnit, blur), h = ouSea(p, t, seaIters);
-        vec2 g = vec2(ouSea(p + vec2(e, 0.0), t, seaIters) - h, ouSea(p + vec2(0.0, e), t, seaIters) - h) * (kSeaNormalAmp / e);
-        s += kCausticSwell * (g + ouTruWaveSlope(p, w.seaWaves));
+        if (!fft) {
+            float e = max(0.01 * kSeaUnit, blur), h = ouSea(p, t, seaIters);
+            s += kCausticSwell * vec2(ouSea(p + vec2(e, 0.0), t, seaIters) - h, ouSea(p + vec2(0.0, e), t, seaIters) - h) * (kSeaNormalAmp / e);
+        }
+        s += kCausticSwell * ouTruWaveSlope(p, w.seaWaves);
     }
     return s;
 }
-// Its Hessian (columns d slope / dx, d slope / dy, symmetrised) at p by differences `blur` apart; g0 the slope at p.
+// The full caustic slope at p: the base plus the FFT cascades' slopes (the drawn surface's, before water.frag's fades).
+vec2 ouCausticSlope(vec2 p, float t, float blur, int seaIters) {
+    bool fft = ouCausticOcean();
+    vec2 s = ouCausticSlopeBase(p, t, blur, seaIters, fft);
+    if (fft)
+        for (int c = 0; c < 3; ++c) s += kOceanCaustic[c] * ouOceanSlope(c, p);
+    return s;
+}
+// Its Hessian (columns d slope / dx, d slope / dy, symmetrised) at p: the base by differences `blur` apart (g0 the
+// slope at p); each FFT cascade by differences of at least one of its texels (its slope is interpolated linearly, so a
+// finer step would see a constant Hessian per texel: a grid of flat cells).
 mat2 ouCausticHessian(vec2 p, vec2 g0, float t, float blur, int seaIters) {
-    vec2 gx = (ouCausticSlope(p + vec2(blur, 0.0), t, blur, seaIters) - g0) / blur;
-    vec2 gy = (ouCausticSlope(p + vec2(0.0, blur), t, blur, seaIters) - g0) / blur;
+    bool fft = ouCausticOcean();
+    vec2 b0 = fft ? ouCausticSlopeBase(p, t, blur, seaIters, true) : g0;
+    vec2 gx = (ouCausticSlopeBase(p + vec2(blur, 0.0), t, blur, seaIters, fft) - b0) / blur;
+    vec2 gy = (ouCausticSlopeBase(p + vec2(0.0, blur), t, blur, seaIters, fft) - b0) / blur;
     float xy = 0.5 * (gx.y + gy.x);
-    return mat2(gx.x, xy, xy, gy.y);
+    mat2 H = mat2(gx.x, xy, xy, gy.y);
+    if (fft)
+        for (int c = 0; c < 3; ++c) {
+            float e = max(blur, ouOceanTexel(c));
+            vec2 s0 = ouOceanSlope(c, p);
+            vec2 hx = (ouOceanSlope(c, p + vec2(e, 0.0)) - s0) / e, hy = (ouOceanSlope(c, p + vec2(0.0, e)) - s0) / e;
+            float hxy = 0.5 * (hx.y + hy.x);
+            H += kOceanCaustic[c] * mat2(hx.x, hxy, hxy, hy.y);
+        }
+    return H;
 }
 // The wave field's part (water.frag's ripple normal gain x kCausticChop): xy slope, z curvature taken isotropic (half
 // its Laplacian; its own taps 1.5 cells apart, so the rest keeps fine differences).

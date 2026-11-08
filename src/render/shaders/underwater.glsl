@@ -14,15 +14,18 @@ layout(binding = 4) uniform Water {
     vec4 waterPass[3]; // tru.exe's full-screen under-water pass (ouWaterPass); [2].y light-ray weight (ouRays)
     uvec4 rays[157];   // tru.exe's under-water light rays, 50 x 50 bytes (ouRays)
     mat4 seaWaves;     // tru.exe's sea waves at the camera (caustics: shaders/waves.glsl)
+    vec4 ocean[2];     // the FFT ocean (caustics: shaders/waves.glsl ouOcean*)
 } w;
 #ifdef VULKAN
 layout(set = 1, binding = 1) uniform sampler2D uDepth;
 layout(set = 1, binding = 3) uniform sampler2D uRipples; // the interactive wave field (caustics)
+layout(set = 1, binding = 5) uniform sampler2DArray uOcean; // the FFT ocean (caustics; shaders/ocean.comp)
 #define OU_NDC_Y(uv) (1.0 - 2.0 * (uv).y)
 #define OU_NDC_Z(d) (d)
 #else
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 9) uniform sampler2D uRipples;
+layout(binding = 12) uniform sampler2DArray uOcean;
 #define OU_NDC_Y(uv) (2.0 * (uv).y - 1.0)
 #define OU_NDC_Z(d) (2.0 * (d) - 1.0)
 #endif

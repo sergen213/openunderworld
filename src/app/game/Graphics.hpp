@@ -33,6 +33,7 @@ inline constexpr std::array<std::string_view, 3> kRtQuality{"low", "medium", "hi
 inline constexpr std::array<int, 5> kMsaa{0, 1, 2, 4, 8};
 inline constexpr std::array<std::string_view, 3> kWater{"auto", "original", "enhanced"};
 inline constexpr std::array<std::string_view, 3> kWaterDetail{"auto", "standard", "high"};
+inline constexpr std::array<std::string_view, 2> kOcean{"fft", "procedural"};
 inline constexpr std::array<std::string_view, 5> kAtmosphere{"auto", "off", "low", "medium", "high"};
 inline constexpr std::array<std::string_view, 4> kWeather{"auto", "off", "rain", "snow"};
 inline constexpr std::array<std::string_view, 5> kFsrQuality{"native", "quality", "balanced", "performance", "ultra_performance"};
@@ -68,7 +69,7 @@ inline ui::GraphicsOptions graphicsMenu(const config::GraphicsConfig& g, const D
     m.preset = indexOf(kPresets, g.preset), m.rt = indexOf(kRt, g.rt), m.rtQuality = indexOf(kRtQuality, g.rtQuality);
     m.rtLights = toTri(g.rtLights), m.rtReflections = toTri(g.rtReflections), m.rtAo = toTri(g.rtAo), m.rtGi = toTri(g.rtGi);
     m.msaa = indexOf(kMsaa, g.msaa), m.shadows = toTri(g.shadows), m.originalShaders = g.originalShaders.value_or(true);
-    m.water = indexOf(kWater, g.water), m.waterDetail = indexOf(kWaterDetail, g.waterDetail);
+    m.water = indexOf(kWater, g.water), m.waterDetail = indexOf(kWaterDetail, g.waterDetail), m.ocean = indexOf(kOcean, g.ocean);
     m.atmosphere = indexOf(kAtmosphere, g.atmosphere), m.lightShafts = toTri(g.lightShafts), m.cineDof = toTri(g.cineDof), m.weather = indexOf(kWeather, g.weather);
     m.fsr = g.upscaler == "fsr", m.fsrQuality = indexOf(kFsrQuality, g.fsrQuality), m.sharpness = sharpnessStep(g.sharpness);
     m.frameGeneration = g.frameGeneration, m.effects = g.effects, m.antiLag = g.antiLag;
@@ -91,7 +92,7 @@ inline void applyGraphicsMenu(const ui::GraphicsOptions& m, config::GraphicsConf
     g.rtLights = fromTri(m.rtLights), g.rtReflections = fromTri(m.rtReflections), g.rtAo = fromTri(m.rtAo), g.rtGi = fromTri(m.rtGi);
     g.msaa = at(kMsaa, m.msaa), g.shadows = fromTri(m.shadows);
     g.originalShaders = m.originalShaders ? std::nullopt : std::optional(false); // unset = original (as the launcher writes it)
-    g.water = at(kWater, m.water), g.waterDetail = at(kWaterDetail, m.waterDetail);
+    g.water = at(kWater, m.water), g.waterDetail = at(kWaterDetail, m.waterDetail), g.ocean = at(kOcean, m.ocean);
     g.atmosphere = at(kAtmosphere, m.atmosphere), g.lightShafts = fromTri(m.lightShafts), g.cineDof = fromTri(m.cineDof), g.weather = at(kWeather, m.weather);
     g.upscaler = m.fsr ? "fsr" : "off", g.fsrQuality = at(kFsrQuality, m.fsrQuality);
     if (m.sharpness != sharpnessStep(g.sharpness)) g.sharpness = float(std::clamp(m.sharpness, 0, 10)) / 10;

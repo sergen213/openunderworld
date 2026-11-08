@@ -32,6 +32,8 @@ struct GraphicsConfig {
     // Enhanced water / atmosphere / weather (docs/RENDERING.md); "auto" = on for the enhanced preset, off for original.
     std::string waterDetail = "auto";       // "auto" | "standard" | "high" (swell, flow, glitter, sun-occluded glint,
                                             // thickness-tested reflections, lamp reflections, geometry swell)
+    std::string ocean = "fft";              // Enhanced water open seas: "fft" (FFT ocean, render/Ocean.hpp) | "procedural"
+                                            // (afl_ext's waves)
     std::string atmosphere = "auto";        // "auto" (enhanced -> medium) | "off" | "low" (height fog) | "medium"
                                             // (+ sun shafts, 24 taps) | "high" (48 taps)
     std::optional<bool> lightShafts;        // sun shafts of medium / high; unset = on
@@ -73,13 +75,14 @@ struct GraphicsSettings {
     bool antiLag = false; // AMD Anti-Lag (render::FrameOptions::antiLag); last, like the fields above
     bool cineDof = false; // cutscene depth of field (app::CineView::depthOfField); last, like the fields above
     bool pssm = false;    // tru.exe's sun shadows (render::FrameOptions::pssm): the original preset's `shadows`; last, as above
+    bool oceanFft = true; // the FFT ocean on Enhanced open seas (render::FrameOptions::oceanFft); last, as above
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler or fsrQuality value, explicit rt without
 // the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
-// --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail,
+// --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail, --ocean fft|procedural,
 // --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off,
 // --anti-lag on|off. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags only; the rest via resolve()).
 bool applyGraphicsFlag(GraphicsConfig& g, std::string_view flag, std::string_view value);

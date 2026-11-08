@@ -222,6 +222,7 @@ struct GraphicsOptions {
     bool originalShaders = true;
     int water = 0;                                 // 0 auto, 1 original, 2 enhanced
     int waterDetail = 0;                           // 0 auto, 1 standard, 2 high
+    int ocean = 0;                                 // open seas: 0 FFT ocean, 1 procedural (afl_ext's waves)
     int atmosphere = 0;                            // 0 auto, 1 off, 2 low, 3 medium, 4 high
     int lightShafts = 0;                           // tri-state
     int cineDof = 0;                               // tri-state (default off)

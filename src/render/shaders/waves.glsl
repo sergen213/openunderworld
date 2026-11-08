@@ -1,7 +1,8 @@
 // The Enhanced water surface's waves, one source for water.vert (displacement), water.frag (normals) and caustics.glsl
 // (the bed lit through those same waves), so their shapes are identical. Embedded for GL by render/Water.cpp (expands
-// the #include line), #included by glslc for Vulkan. ouWaves needs the includer's block `w` (ripple, rippleInfo) and
-// `uRipples` (game::WaveField heights). docs/RENDERING.md "Water".
+// the #include line), #included by glslc for Vulkan. ouWaves needs the includer's block `w` (ripple, rippleInfo,
+// ocean) and `uRipples` (game::WaveField heights), the ouOcean* functions `uOcean` (the FFT ocean, shaders/ocean.comp).
+// docs/RENDERING.md "Water".
 #ifndef OU_WAVES_GLSL
 #define OU_WAVES_GLSL
 const float kM = 290.0; // TRU units per metre (Lara ~1.75 m = ~512 units)
@@ -84,6 +85,50 @@ float ouSea(vec2 p, float t, int iterations) {
 vec2 ouTruWaveSlope(vec2 p, mat4 c) {
     vec4 a = c[3] * sin(p.x * c[0] + p.y * c[1] + c[2]);
     return -vec2(dot(a, c[0]), dot(a, c[1]));
+}
+// ---- FFT ocean (render/Ocean.hpp, shaders/ocean.comp; open seas when w.ocean[0].x = 1, replacing afl_ext's sea and
+// the Godot layers there). uOcean layers per cascade c: 3c (Dx, Dy, h, Jxy), 3c + 1 (dh/dx, dh/dy, Jxx, Jyy),
+// 3c + 2 (foam, J); metres, on tiles w.ocean[1][c] world units wide (swell 240 m, gravity 28 m, chop 11.3 m).
+bool ouOceanOn() { return w.ocean[0].x > 0.5; }
+float ouOceanTexel(int c) { return w.ocean[1][c] / w.ocean[0].z; } // world units per texel
+vec4 ouOceanFetch(int c, int layer, vec2 p) {
+    return textureLod(uOcean, vec3(p / w.ocean[1][c], float(3 * c + layer)), w.ocean[0].y);
+}
+vec2 ouOceanSlope(int c, vec2 p) { return ouOceanFetch(c, 1, p).xy; } // dh/dx, dh/dy of cascade c (no fade)
+// Swell + gravity height at p in world units (water.vert; the chop cascade only shades: NeuralSpecOcean's chop band
+// has no height either).
+float ouOceanHeight(vec2 p) { return (ouOceanFetch(0, 0, p).z + ouOceanFetch(1, 0, p).z) * kM; }
+struct OuOcean {
+    vec2 slope;          // dh/dx, dh/dy
+    float jxx, jyy, jxy; // horizontal displacement gradients (choppiness applied)
+    float h, foam, J;    // height (m), persisted whitecap foam 0..1, Jacobian of the summed displacement
+};
+const mat2 kOceanChopRot = mat2(0.857, 0.515, -0.515, 0.857); // 31 deg: the chop tile's second, rotated lookup
+// The surface at p for shading: every cascade, each faded out as its texels shrink under ~2 pixels (footprint: world
+// units per pixel), plus the chop tile again rotated and 1.618x larger against visible tiling (NeuralSpecOcean
+// samples its chop texture at several rotated scales) [I weights].
+OuOcean ouOceanSurface(vec2 p, float footprint) {
+    OuOcean o = OuOcean(vec2(0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+    for (int c = 0; c < 3; ++c) {
+        float k = 1.0 - smoothstep(0.5, 2.0, footprint / ouOceanTexel(c));
+        if (k <= 0.0) continue;
+        vec4 a = ouOceanFetch(c, 0, p), b = ouOceanFetch(c, 1, p);
+        o.slope += k * b.xy, o.jxx += k * b.z, o.jyy += k * b.w, o.jxy += k * a.w;
+        if (c < 2) o.h += a.z, o.foam = max(o.foam, k * ouOceanFetch(c, 2, p).x);
+    }
+    float k2 = 1.0 - smoothstep(0.5, 2.0, footprint / (1.618 * ouOceanTexel(2)));
+    if (k2 > 0.0) {
+        vec2 q = kOceanChopRot * p / 1.618;
+        o.slope += (0.6 * k2) * (transpose(kOceanChopRot) * ouOceanSlope(2, q));
+    }
+    o.J = (1.0 + o.jxx) * (1.0 + o.jyy) - o.jxy * o.jxy;
+    return o;
+}
+// The slope water.frag builds its normal (-s, 1) from: the choppy surface x + D(x)'s normal (tangents (1 + Jxx, Jxy,
+// dh/dx), (Jxy, 1 + Jyy, dh/dy)), the folded area (J -> 0) clamped.
+vec2 ouOceanNormalSlope(OuOcean o) {
+    vec3 n = vec3(o.jxy * o.slope.y - o.slope.x * (1.0 + o.jyy), o.slope.x * o.jxy - (1.0 + o.jxx) * o.slope.y, max(o.J, 0.15));
+    return -n.xy / n.z;
 }
 // Interactive waves (game::WaveField): xy the height gradient (taps 1.5 cells apart so the cell-sized checkerboard
 // bodies stamp cancels), z the height, w its Laplacian (negative on crests); faded over the field's outer 4 %.

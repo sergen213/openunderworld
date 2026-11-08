@@ -1,0 +1,134 @@
+#version 460
+// Enhanced water's FFT ocean (render/Ocean.hpp, docs/RENDERING.md "FFT ocean"): Tessendorf's spectral ocean, three
+// cascades (swell 240 m, gravity 28 m, chop 11.3 m: NeuralSpecOcean's set, MIT, docs/RESEARCH.md "FFT ocean"), evolved
+// from the CPU-built h0 spectra and inverse-transformed every frame. Four passes (cfg.x), one dispatch each, layer z =
+// cascade:
+//  0 spectrum: h(k, t) = h0(k) e^{i w t} + conj(h0(-k)) e^{-i w t}, w^2 = (g k + sigma / rho k^3) tanh(k depth)
+//    (quantized to multiples of 2 pi / kLoop so the loop time wraps exactly), and the spectra of the 8 real fields
+//    packed two per complex value: (Dx + i Dy), (h + i dh/dx), (dh/dy + i dDx/dx), (dDy/dy + i dDx/dy).
+//  1 / 2: inverse DFT along rows, then columns: radix-2 Stockham in shared memory, one workgroup per line.
+//  3 assemble: scale (amplitude, choppiness), Jacobian J = (1 + Dx_x)(1 + Dy_y) - Dx_y^2 and the whitecap foam
+//    (source max(0, 0.92 - J) gated by height, exponential decay: NeuralSpecOcean FoamField / demo.js), into the
+//    rgba16f array uOcean: layer 3c (Dx, Dy, h, Jxy), 3c + 1 (dh/dx, dh/dy, Jxx, Jyy), 3c + 2 (foam, J, 0, 0); metres.
+// Frequencies are stored wrapped (index x = k for k <= N/2, N + k below), so the plain sum needs no sign fix.
+layout(local_size_x = 64) in;
+#ifdef VULKAN
+layout(set = 0, binding = 0, std430) readonly buffer Spectrum { vec4 h0[]; };
+layout(set = 0, binding = 1, std430) buffer Work { vec4 work[]; };
+layout(set = 0, binding = 2, rgba16f) uniform image2DArray uOut;
+layout(push_constant) uniform Push { ivec4 cfg; vec4 par; vec4 cas[3]; } pc;
+#define CFG pc.cfg
+#define PAR pc.par
+#define CAS(c) pc.cas[c]
+#else
+layout(std430, binding = 0) readonly buffer Spectrum { vec4 h0[]; };
+layout(std430, binding = 1) buffer Work { vec4 work[]; };
+layout(binding = 0, rgba16f) uniform image2DArray uOut;
+layout(location = 0) uniform ivec4 uCfg;
+layout(location = 1) uniform vec4 uPar;
+layout(location = 2) uniform vec4 uCas[3];
+#define CFG uCfg
+#define PAR uPar
+#define CAS(c) uCas[c]
+#endif
+// cfg: pass, N, log2 N, cascades. par: loop time (s), foam dt (s; < 0 restart, 0 hold), foam decay, foam source gain.
+// cas[c]: tile (m), choppiness, amplitude, height sigma (m). The h0 buffer is offset to the grid by the host.
+
+const float kPi = 3.14159265358979;
+const float kG = 9.81, kTension = 0.073 / 1025.0; // sigma / rho (sea water)
+const float kDepth = 100.0;                       // [I] open sea, m: tanh(k h) ~ 1 for the tiles' waves
+const float kLoop = 512.0;                        // render::ocean::kLoopSeconds
+
+vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+vec2 ci(vec2 a) { return vec2(-a.y, a.x); } // i a
+
+shared vec4 sA[2][128];
+shared vec4 sB[2][128];
+
+void spectrum(int N) {
+    uint c = gl_WorkGroupID.z, idx = gl_GlobalInvocationID.x;
+    if (idx >= uint(N * N)) return;
+    int x = int(idx) % N, y = int(idx) / N;
+    vec4 s = h0[c * uint(N * N) + idx];
+    vec2 k = vec2(x <= N / 2 ? x : x - N, y <= N / 2 ? y : y - N) * (2.0 * kPi / CAS(c).x);
+    float kl = length(k);
+    float w = sqrt((kG * kl + kTension * kl * kl * kl) * tanh(kl * kDepth));
+    float w0 = 2.0 * kPi / kLoop, j = floor(w / w0);
+    float ph = w0 * mod(j * PAR.x, kLoop);
+    vec2 e = vec2(cos(ph), sin(ph));
+    vec2 h = cmul(s.xy, e) + cmul(s.zw, vec2(e.x, -e.y));
+    vec2 kh = kl > 0.0 ? k / kl : vec2(0.0);
+    float inv = kl > 0.0 ? 1.0 / kl : 0.0;
+    // D = i k^ h (crests compress: dD/dx < 0 there); slopes i k h; J terms i k D = -k k^T / |k| h.
+    vec2 dx = ci(h) * kh.x, dy = ci(h) * kh.y, sx = ci(h) * k.x, sy = ci(h) * k.y;
+    vec2 jxx = -h * (k.x * k.x * inv), jyy = -h * (k.y * k.y * inv), jxy = -h * (k.x * k.y * inv);
+    uint o = 2u * (c * uint(N * N) + idx);
+    work[o] = vec4(dx + ci(dy), h + ci(sx));
+    work[o + 1u] = vec4(sy + ci(jxx), jyy + ci(jxy));
+}
+
+// One line of N complex quadruples (A: 2 complex, B: 2 complex) from work, inverse DFT, back.
+void fftLine(int N, int logN, bool columns) {
+    uint c = gl_WorkGroupID.z, line = gl_WorkGroupID.x, t = gl_LocalInvocationID.x;
+    uint base = c * uint(N * N);
+    for (uint e = t; e < uint(N); e += 64u) {
+        uint texel = columns ? e * uint(N) + line : line * uint(N) + e;
+        sA[0][e] = work[2u * (base + texel)];
+        sB[0][e] = work[2u * (base + texel) + 1u];
+    }
+    barrier();
+    int hn = N / 2;
+    for (int s = 0; s < logN; ++s) {
+        int ns = 1 << s, pi = s & 1, po = pi ^ 1;
+        if (int(t) < hn) {
+            int i = int(t), kk = i & (ns - 1);
+            float a = kPi * float(kk) / float(ns); // +2 pi k / (2 ns): inverse transform
+            vec2 tw = vec2(cos(a), sin(a));
+            vec4 a0 = sA[pi][i], a1 = sA[pi][i + hn];
+            vec4 b0 = sB[pi][i], b1 = sB[pi][i + hn];
+            a1 = vec4(cmul(a1.xy, tw), cmul(a1.zw, tw));
+            b1 = vec4(cmul(b1.xy, tw), cmul(b1.zw, tw));
+            int d = ((i - kk) << 1) + kk;
+            sA[po][d] = a0 + a1, sA[po][d + ns] = a0 - a1;
+            sB[po][d] = b0 + b1, sB[po][d + ns] = b0 - b1;
+        }
+        barrier();
+    }
+    int f = logN & 1;
+    for (uint e = t; e < uint(N); e += 64u) {
+        uint texel = columns ? e * uint(N) + line : line * uint(N) + e;
+        work[2u * (base + texel)] = sA[f][e];
+        work[2u * (base + texel) + 1u] = sB[f][e];
+    }
+}
+
+void assemble(int N) {
+    uint c = gl_WorkGroupID.z, idx = gl_GlobalInvocationID.x;
+    if (idx >= uint(N * N)) return;
+    ivec2 xy = ivec2(int(idx) % N, int(idx) / N);
+    uint o = 2u * (c * uint(N * N) + idx);
+    vec4 a = work[o], b = work[o + 1u];
+    float amp = CAS(c).z, lam = CAS(c).y * amp;
+    vec2 d = a.xy * lam;
+    float h = a.z * amp;
+    vec2 s = vec2(a.w, b.x) * amp;
+    float jxx = b.y * lam, jyy = b.z * lam, jxy = b.w * lam;
+    float J = (1.0 + jxx) * (1.0 + jyy) - jxy * jxy;
+    int layer = 3 * int(c);
+    float g = smoothstep(0.3, 1.5, h / max(CAS(c).w, 1e-4)); // crests only [I: demo.js gates by 0.16..0.6 m]
+    float src = max(0.0, 0.92 - J) * PAR.w * g;
+    float foam;
+    if (PAR.y < 0.0) foam = clamp(src / 30.0, 0.0, 1.0); // restart: one frame's worth
+    else foam = clamp(imageLoad(uOut, ivec3(xy, layer + 2)).x * PAR.z + src * PAR.y, 0.0, 1.0);
+    imageStore(uOut, ivec3(xy, layer), vec4(d, h, jxy));
+    imageStore(uOut, ivec3(xy, layer + 1), vec4(s, jxx, jyy));
+    imageStore(uOut, ivec3(xy, layer + 2), vec4(foam, J, 0.0, 0.0));
+}
+
+void main() {
+    int pass = CFG.x, N = CFG.y;
+    if (pass == 0) spectrum(N);
+    else if (pass == 1) fftLine(N, CFG.z, false);
+    else if (pass == 2) fftLine(N, CFG.z, true);
+    else assemble(N);
+}

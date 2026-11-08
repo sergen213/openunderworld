@@ -55,8 +55,12 @@ struct WaterBlock {
                             // [2] x strength (0 = off), y light-ray weight (Underwater::rayWeight); both water qualities
     glm::uvec4 rays[157];   // Underwater::rays, 4 texels per uint (ouRays)
     glm::mat4 seaWaves;     // render::waterWaves at the camera: tru.exe's sea waves c60-c63 (zero = no sea; caustics)
+    // FFT ocean (render/Ocean.hpp; shaders/waves.glsl ouOcean*): [0] x 1 = the uOcean array holds this frame's sea
+    // (else open seas fall back to afl_ext's waves), y its mip level (grid 128: 0, 64: 1), z grid N, w the swell +
+    // gravity height RMS (m); [1] xyz the cascades' tiles (world units), w whitecap strength.
+    glm::vec4 ocean[2];
 };
-static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16 + 64);
+static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16 + 64 + 2 * 16);
 inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
 
 bool cameraUnderwater(const Camera& camera, std::span<const WaterVolume> volumes);

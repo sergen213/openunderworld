@@ -18,9 +18,11 @@
 //   or passes behind a foreground object falls back to the simple depth-scaled normal offset.
 // - Edge foam from the water depth broken by an edge noise, a soft waterline, sun / lamp GGX glints.
 // - From below: Snell's window (Fresnel from the air side) and total internal reflection outside it.
-// Open seas (meshes with TRU's sea waves, vSea): afl_ext's "Very fast procedural ocean" waves (MIT, notice below)
-// displace (water.vert) and bend the normals, with fewer iterations, a wider difference step and afl's normal
-// smoothing with distance; its subsurface term (crests brighter by height) and sharp sun disc in the reflection.
+// Open seas (meshes with TRU's sea waves, vSea): the FFT ocean (render/Ocean.hpp: Tessendorf cascades after
+// NeuralSpecOcean, MIT) displaces (water.vert) and bends the normals with the choppy surface's own normal, its folds
+// (Jacobian) foaming as whitecaps; without it (FrameOptions::oceanFft off) afl_ext's "Very fast procedural ocean" waves
+// (MIT, notice in waves.glsl) do, with fewer iterations, a wider difference step and afl's normal smoothing with
+// distance. Either way afl's subsurface term (crests brighter by height) and sharp sun disc in the reflection.
 // The look also takes cues from Shadertoy "Seascape" by TDM (CC BY-NC-SA: no code used).
 // Plus ours: the interactive wave field (game::WaveField) bends the normals, foams and displaces (water.vert).
 // The scene copy is gamma (D3D9-style): colours go to linear and back. docs/RENDERING.md "Water".
@@ -36,15 +38,18 @@ layout(binding = 4) uniform Water {
     vec4 filters[9]; uvec4 filterLut[640]; // (unused here; the post pass's screen filters)
     vec4 waterPass[3]; // the unit's water look: [0] surface rgb, [1] deep rgb + full-fog distance (ouWaterLook)
     uvec4 rays[157]; mat4 seaWaves; // (rays unused here); tru.exe's sea waves at the camera (caustics)
+    vec4 ocean[2];     // the FFT ocean (render/Water.hpp WaterBlock::ocean)
 } w;
 #ifdef VULKAN
 layout(set = 0, binding = 1) uniform sampler2D uScene;
 layout(set = 0, binding = 2) uniform sampler2D uDepth;
 layout(set = 0, binding = 3) uniform sampler2D uRipples;
+layout(set = 0, binding = 4) uniform sampler2DArray uOcean; // the FFT ocean (shaders/ocean.comp)
 #else
 layout(binding = 5) uniform sampler2D uScene;
 layout(binding = 6) uniform sampler2D uDepth;
 layout(binding = 7) uniform sampler2D uRipples;
+layout(binding = 12) uniform sampler2DArray uOcean;
 #endif
 // Sun shadow map (render/sun.glsl; Vulkan: water layout set 1) for the caustics on the refracted bed.
 #ifdef VULKAN
@@ -189,18 +194,28 @@ void main() {
     float footprint = length(fwidth(p.xy)); // world units per pixel
     bool detail = w.detail.x > 0.5, sea = vSea > 0.5;
 
-    // Normals: the Godot layers mixed 50/50 (samplermix), faded with distance; open seas add afl_ext's waves (36
-    // iterations near, 12 far; difference step >= a pixel; smoothed toward flat with distance as afl does).
-    vec3 la = ouLayerA(p.xy, t, footprint), lb = ouLayerB(p.xy, t, footprint);
+    // Normals: the Godot layers mixed 50/50 (samplermix), faded with distance; open seas: the FFT ocean's choppy
+    // surface instead, or (FFT off) afl_ext's waves on top (36 iterations near, 12 far; difference step >= a pixel;
+    // smoothed toward flat with distance as afl does).
     float nfade = 1.0 / (1.0 + dist / (60.0 * kM));
-    vec2 s = 0.5 * (la.yz + lb.yz) * nfade * (sea ? 0.5 : 1.0);
-    float seaH = 0.5;
-    if (sea) {
-        int iters = dist < 25.0 * kM ? 36 : dist < 80.0 * kM ? 24 : 12;
-        float eps = max(0.01 * kSeaUnit, footprint);
-        seaH = ouSea(p.xy, t, iters);
-        vec2 g = vec2(ouSea(p.xy + vec2(eps, 0.0), t, iters) - seaH, ouSea(p.xy + vec2(0.0, eps), t, iters) - seaH) / eps;
-        s += g * kSeaNormalAmp * (1.0 - 0.8 * min(1.0, sqrt(dist / kSeaUnit * 0.01) * 1.1));
+    vec2 s;
+    float seaH = 0.5, whitecap = 0.0;
+    if (sea && ouOceanOn()) {
+        OuOcean oc = ouOceanSurface(p.xy, footprint);
+        s = ouOceanNormalSlope(oc);
+        seaH = clamp(0.5 + 0.25 * oc.h / max(w.ocean[0].w, 0.05), 0.0, 1.0); // afl's 0..1 crest height [I: +-2 RMS]
+        // Whitecaps: the folds' persisted foam (ocean.comp) and the instant fold where the summed surface compresses.
+        whitecap = clamp(max(oc.foam, smoothstep(0.75, 0.35, oc.J)) * w.ocean[1].w, 0.0, 1.0);
+    } else {
+        vec3 la = ouLayerA(p.xy, t, footprint), lb = ouLayerB(p.xy, t, footprint);
+        s = 0.5 * (la.yz + lb.yz) * nfade * (sea ? 0.5 : 1.0);
+        if (sea) {
+            int iters = dist < 25.0 * kM ? 36 : dist < 80.0 * kM ? 24 : 12;
+            float eps = max(0.01 * kSeaUnit, footprint);
+            seaH = ouSea(p.xy, t, iters);
+            vec2 g = vec2(ouSea(p.xy + vec2(eps, 0.0), t, iters) - seaH, ouSea(p.xy + vec2(0.0, eps), t, iters) - seaH) / eps;
+            s += g * kSeaNormalAmp * (1.0 - 0.8 * min(1.0, sqrt(dist / kSeaUnit * 0.01) * 1.1));
+        }
     }
     vec4 wave = ouWaves(p.xy);
     s += wave.xy * (w.fogRange.z * 1.2 / (1.0 + 4.0 * length(wave.xy)));
@@ -324,6 +339,7 @@ void main() {
         float foam = smoothstep(-0.05, 0.05, e * e - cdepth / kEdge); // squared: lace, not a solid band
         float churn = max(smoothstep(25.0, 45.0, abs(wave.z)), smoothstep(0.02, 0.04, -wave.w));
         foam = max(foam, churn * smoothstep(0.3, 0.7, e));
+        foam = max(foam, smoothstep(0.2, 0.7, whitecap * (0.4 + 1.2 * e))); // FFT whitecaps, laced by the edge noise
         c = mix(c, light * 0.9, foam * 0.65);
         // Soft waterline (Godot foam_or_fade = fade): the bed shows through the last few units.
         c = mix(toLinear(textureLod(uScene, uv, 0.0).rgb), c, smoothstep(0.0, 6.0, cdepth));

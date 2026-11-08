@@ -113,7 +113,7 @@ void usage() {
                  "               [--rt-lights on|off]\n"
                  "               [--rt-reflections on|off] (unset: on with --rt full)\n"
                  "               [--rt-ao on|off] [--rt-gi on|off]\n"
-                 "               [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
+                 "               [--water original|enhanced] [--water-detail auto|standard|high] [--ocean fft|procedural] [--water-debug 0-5]\n"
                  "               [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather auto|off|rain|snow]\n"
                  "               [--upscaler off|fsr] [--fsr-quality native|quality|balanced|performance|ultra_performance]\n"
                  "               [--sharpness 0..1] [--frame-generation on|off] (FSR: Vulkan only) [--fx on|off] [--anti-lag on|off]\n"
@@ -3452,7 +3452,7 @@ int main(int argc, char** argv) {
         fo.splashes = splashParticles;
         objects.opacities(effects.system, meshOpacity);
         fo.meshOpacity = meshOpacity;
-        fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
+        fo.waterDetail = opt.gfx.waterDetail, fo.oceanFft = opt.gfx.oceanFft, fo.waterDebug = opt.waterDebug;
         fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;
         effects.drawWeather = true; // the original rain, unless the Enhanced layer shows this unit's weather
         if (opt.gfx.weather && !mainMenu) {
