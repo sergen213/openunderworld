@@ -16,6 +16,8 @@ namespace ou::render::ocean {
 
 inline constexpr int kCascades = 3;     // swell 240 m, gravity 28 m, chop 11.3 m
 inline constexpr int kMaxN = 128;       // grid of water detail high (mip 0); standard runs 64 (mip 1)
+inline constexpr int kLevels = 8;       // uOcean's mips, 128^2 .. 1^2: each frame's grid filtered down (Pass Mip)
+inline constexpr float kMaxAniso = 8.0f;  // uOcean's anisotropic filtering cap (16x cost 0.07 ms more at 1080p for little gain)
 inline constexpr int kLayers = 3 * kCascades; // per cascade: (Dx, Dy, h, Jxy), (sx, sy, Jxx, Jyy), (foam, J, 0, 0)
 inline constexpr float kLoopSeconds = 512.0f; // angular frequencies are multiples of 2 pi / this: time wraps exactly
 inline constexpr int kThreads = 64;     // ocean.comp local size (= kMaxN / 2 butterflies)
@@ -37,11 +39,13 @@ const Grid& grid(int n);
 
 // ocean.comp's push constants (Vulkan) / uniforms 0..2 (GL).
 struct Push {
-    glm::ivec4 cfg; // pass (0 spectrum, 1 rows, 2 columns, 3 assemble), N, log2 N, cascades
+    glm::ivec4 cfg; // pass (0 spectrum, 1 rows, 2 columns, 3 assemble, 4 mip, 5 up), N, log2 N, cascades
     glm::vec4 par;  // loop time (s), foam dt (s, 0 = restart the foam), foam decay factor, foam source gain
     glm::vec4 cas[kCascades]; // tile metres, choppiness, amplitude, height sigma
 };
-enum Pass { Spectrum = 0, Rows = 1, Columns = 2, Assemble = 3 };
+// After Assemble: grid 64 doubles into level 0 (Up: binding 2 = level 1, 3 = level 0), then each level from the grid's
+// own (gridLod) down is the 2x2 mean of the one above (Mip: binding 2 = level l, 3 = level l + 1, N = kMaxN >> (l + 1)).
+enum Pass { Spectrum = 0, Rows = 1, Columns = 2, Assemble = 3, Mip = 4, Up = 5 };
 
 // Whether the frame draws the FFT ocean: Enhanced water, FrameOptions::oceanFft and a waved (tru.exe sea) volume.
 bool wanted(const FrameOptions& o);

@@ -534,13 +534,16 @@ public:
             GLuint id = 0;
             glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &id);
             r.ocean = Texture(id);
-            glTextureStorage3D(id, 2, GL_RGBA16F, ocean::kMaxN, ocean::kMaxN, ocean::kLayers);
-            for (GLint level = 0; level < 2; ++level) glClearTexImage(id, level, GL_RGBA, GL_FLOAT, nullptr);
-            glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+            glTextureStorage3D(id, ocean::kLevels, GL_RGBA16F, ocean::kMaxN, ocean::kMaxN, ocean::kLayers);
+            for (GLint level = 0; level < ocean::kLevels; ++level) glClearTexImage(id, level, GL_RGBA, GL_FLOAT, nullptr);
+            // water.frag filters through the mips (anisotropic: grazing views keep the waves across the line of sight);
+            // water.vert and the caustics pick the grid's level
+            glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTextureParameteri(id, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTextureParameteri(id, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            glTextureParameteri(id, GL_TEXTURE_MAX_LEVEL, 1);
+            glTextureParameteri(id, GL_TEXTURE_MAX_LEVEL, ocean::kLevels - 1);
+            if (maxAniso_ > 1.0f) glTextureParameterf(id, GL_TEXTURE_MAX_ANISOTROPY, std::min(maxAniso_, ocean::kMaxAniso));
         }
         r.splashVao = newVertexArray();
         r.splashVbo = newBuffer();
@@ -1574,26 +1577,30 @@ private:
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());
     }
 
-    // FFT ocean (render/Ocean.hpp): spectrum, row and column inverse DFTs, assemble into uOcean (texture unit 12).
+    // FFT ocean (render/Ocean.hpp): spectrum, row and column inverse DFTs, assemble into uOcean (texture unit 12), then
+    // grid 64's doubling into level 0 and the mip chain below the grid (Ocean.hpp Pass; image unit 0 source, 1 target).
     void runOcean(const FrameOptions& o) {
         Resources& r = *res_;
         ocean::Push p = r.oceanClock.frame(o);
-        const int n = p.cfg.y;
+        const int n = p.cfg.y, lod = ocean::gridLod(n);
         glUseProgram(r.oceanProgram.get());
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, r.oceanSpectrum.get(), GLintptr(ocean::spectrumOffset(n) * sizeof(glm::vec4)),
                           GLsizeiptr(size_t(ocean::kCascades) * size_t(n * n) * sizeof(glm::vec4)));
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, r.oceanWork.get());
-        glBindImageTexture(0, r.ocean.get(), ocean::gridLod(n), GL_TRUE, 0, GL_READ_WRITE, GL_RGBA16F);
         glUniform4fv(1, 1, glm::value_ptr(p.par));
         glUniform4fv(2, ocean::kCascades, glm::value_ptr(p.cas[0]));
-        for (int pass : {ocean::Spectrum, ocean::Rows, ocean::Columns, ocean::Assemble}) {
-            p.cfg.x = pass;
+        auto run = [&](int src, int dst, int pass, int size, bool lines) {
+            glBindImageTexture(0, r.ocean.get(), src, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA16F);
+            glBindImageTexture(1, r.ocean.get(), dst, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+            p.cfg.x = pass, p.cfg.y = size;
             glUniform4iv(0, 1, glm::value_ptr(p.cfg));
-            const bool lines = pass == ocean::Rows || pass == ocean::Columns;
-            glDispatchCompute(lines ? GLuint(n) : GLuint((n * n + ocean::kThreads - 1) / ocean::kThreads), 1, ocean::kCascades);
-            glMemoryBarrier(pass == ocean::Assemble ? GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT
-                                                    : GL_SHADER_STORAGE_BARRIER_BIT);
-        }
+            glDispatchCompute(lines ? GLuint(size) : GLuint((size * size + ocean::kThreads - 1) / ocean::kThreads), 1, ocean::kCascades);
+            glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
+        };
+        for (int pass : {ocean::Spectrum, ocean::Rows, ocean::Columns, ocean::Assemble})
+            run(lod, lod + 1, pass, n, pass == ocean::Rows || pass == ocean::Columns);
+        if (lod > 0) run(1, 0, ocean::Up, ocean::kMaxN, false);
+        for (int l = lod; l < ocean::kLevels - 1; ++l) run(l, l + 1, ocean::Mip, ocean::kMaxN >> (l + 1), false);
     }
 
     // Enhanced water: resolve the opaque scene into the copy textures, then draw the water surfaces

@@ -197,6 +197,7 @@ void main() {
     vec3 p = vWorld;
     float t = w.eye.w, dist = distance(w.eye.xyz, p);
     ouWaterLook();
+    vec2 pdx = dFdx(p.xy), pdy = dFdy(p.xy);
     float footprint = length(fwidth(p.xy)); // world units per pixel
     bool detail = w.detail.x > 0.5, sea = vSea > 0.5;
 
@@ -207,7 +208,7 @@ void main() {
     vec2 s;
     float seaH = 0.5, whitecap = 0.0;
     if (sea && ouOceanOn()) {
-        OuOcean oc = ouOceanSurface(p.xy, footprint);
+        OuOcean oc = ouOceanSurface(p.xy, pdx, pdy);
         s = ouOceanNormalSlope(oc);
         seaH = clamp(0.5 + 0.25 * oc.h / max(w.ocean[0].w, 0.05), 0.0, 1.0); // afl's 0..1 crest height [I: +-2 RMS]
         // Whitecaps: the folds' persisted foam (ocean.comp) and the instant fold where the summed surface compresses.

@@ -10,12 +10,17 @@
 //  3 assemble: scale (amplitude, choppiness), Jacobian J = (1 + Dx_x)(1 + Dy_y) - Dx_y^2 and the whitecap foam
 //    (source max(0, 0.92 - J) gated by height, exponential decay: NeuralSpecOcean FoamField / demo.js), into the
 //    rgba16f array uOcean: layer 3c (Dx, Dy, h, Jxy), 3c + 1 (dh/dx, dh/dy, Jxx, Jyy), 3c + 2 (foam, J, 0, 0); metres.
+//  4 mip: uDst (level l + 1, cfg.y wide) = the 2x2 mean of uOut (level l), every layer: the chain water.frag filters
+//    the waves through (textureGrad, anisotropic) instead of fading them out.
+//  5 up: grid 64 (level 1) bilinearly doubled into level 0 (uDst), so level 0 always holds the frame's grid and the
+//    sampler's own level choice is right for either grid.
 // Frequencies are stored wrapped (index x = k for k <= N/2, N + k below), so the plain sum needs no sign fix.
 layout(local_size_x = 64) in;
 #ifdef VULKAN
 layout(set = 0, binding = 0, std430) readonly buffer Spectrum { vec4 h0[]; };
 layout(set = 0, binding = 1, std430) buffer Work { vec4 work[]; };
 layout(set = 0, binding = 2, rgba16f) uniform image2DArray uOut;
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2DArray uDst;
 layout(push_constant) uniform Push { ivec4 cfg; vec4 par; vec4 cas[3]; } pc;
 #define CFG pc.cfg
 #define PAR pc.par
@@ -24,6 +29,7 @@ layout(push_constant) uniform Push { ivec4 cfg; vec4 par; vec4 cas[3]; } pc;
 layout(std430, binding = 0) readonly buffer Spectrum { vec4 h0[]; };
 layout(std430, binding = 1) buffer Work { vec4 work[]; };
 layout(binding = 0, rgba16f) uniform image2DArray uOut;
+layout(binding = 1, rgba16f) uniform writeonly image2DArray uDst;
 layout(location = 0) uniform ivec4 uCfg;
 layout(location = 1) uniform vec4 uPar;
 layout(location = 2) uniform vec4 uCas[3];
@@ -31,8 +37,9 @@ layout(location = 2) uniform vec4 uCas[3];
 #define PAR uPar
 #define CAS(c) uCas[c]
 #endif
-// cfg: pass, N, log2 N, cascades. par: loop time (s), foam dt (s; < 0 restart, 0 hold), foam decay, foam source gain.
-// cas[c]: tile (m), choppiness, amplitude, height sigma (m). The h0 buffer is offset to the grid by the host.
+// cfg: pass, N (mip / up: the destination's width), log2 N, cascades. par: loop time (s), foam dt (s; < 0 restart,
+// 0 hold), foam decay, foam source gain. cas[c]: tile (m), choppiness, amplitude, height sigma (m). The h0 buffer is
+// offset to the grid by the host.
 
 const float kPi = 3.14159265358979;
 const float kG = 9.81, kTension = 0.073 / 1025.0; // sigma / rho (sea water)
@@ -125,10 +132,37 @@ void assemble(int N) {
     imageStore(uOut, ivec3(xy, layer + 2), vec4(foam, J, 0.0, 0.0));
 }
 
+void downsample(int N) {
+    uint c = gl_WorkGroupID.z, idx = gl_GlobalInvocationID.x;
+    if (idx >= uint(N * N)) return;
+    ivec2 xy = ivec2(int(idx) % N, int(idx) / N), s = 2 * xy;
+    for (int l = 3 * int(c); l < 3 * int(c) + 3; ++l)
+        imageStore(uDst, ivec3(xy, l), 0.25 * (imageLoad(uOut, ivec3(s, l)) + imageLoad(uOut, ivec3(s + ivec2(1, 0), l)) +
+                                               imageLoad(uOut, ivec3(s + ivec2(0, 1), l)) + imageLoad(uOut, ivec3(s + 1, l))));
+}
+
+void upsample(int N) {
+    uint c = gl_WorkGroupID.z, idx = gl_GlobalInvocationID.x;
+    if (idx >= uint(N * N)) return;
+    ivec2 xy = ivec2(int(idx) % N, int(idx) / N);
+    int M = N / 2;
+    vec2 f = vec2(xy) * 0.5 - 0.25; // the destination texel centre in source texels (linear filtering's sample point)
+    ivec2 i0 = ivec2(floor(f));
+    vec2 t = f - vec2(i0);
+    ivec2 a = (i0 + M) % M, b = (i0 + 1 + M) % M; // repeat
+    for (int l = 3 * int(c); l < 3 * int(c) + 3; ++l) {
+        vec4 v = mix(mix(imageLoad(uOut, ivec3(a.x, a.y, l)), imageLoad(uOut, ivec3(b.x, a.y, l)), t.x),
+                     mix(imageLoad(uOut, ivec3(a.x, b.y, l)), imageLoad(uOut, ivec3(b.x, b.y, l)), t.x), t.y);
+        imageStore(uDst, ivec3(xy, l), v);
+    }
+}
+
 void main() {
     int pass = CFG.x, N = CFG.y;
     if (pass == 0) spectrum(N);
     else if (pass == 1) fftLine(N, CFG.z, false);
     else if (pass == 2) fftLine(N, CFG.z, true);
-    else assemble(N);
+    else if (pass == 3) assemble(N);
+    else if (pass == 4) downsample(N);
+    else upsample(N);
 }

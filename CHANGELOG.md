@@ -4,6 +4,14 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [Unreleased]
+
+- Fixed: the Enhanced FFT ocean looked low resolution. Near the camera the finest ripples were magnified blobs and
+  beyond ~25 m the sea turned smooth. The waves are now filtered properly with distance (mipmaps, anisotropic), the
+  finer ripple layers of NeuralSpecOcean are added near the camera, and whitecap patches no longer show the swell's
+  coarse grid as straight edges. Vulkan and OpenGL, both water detail settings; applies live. Costs about 0.2 ms more
+  GPU time at 1080p.
+
 ## [0.40.0] - 2026-11-08
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

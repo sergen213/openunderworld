@@ -424,15 +424,25 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   exactly: the same time is the same sea), packs the 8 real fields two per complex value, runs radix-2 Stockham inverse
   DFTs over rows then columns (shared memory, one workgroup per line) and assembles into one RGBA16F array texture
   `uOcean` (per cascade: (Dx, Dy, h, ∂Dx/∂y), (∂h/∂x, ∂h/∂y, ∂Dx/∂x, ∂Dy/∂y), (foam, J); metres). Grid 128² with
-  water detail high (mip 0), 64² on standard (mip 1); 4 dispatches. `waves.glsl` samples it for all three users:
-  `water.vert` adds the swell + gravity height (vertical only, lowered by half its RMS, still clamped to the rest
-  plane), `water.frag` builds the normal of the choppy surface x + D(x) from the summed slopes and displacement
-  gradients (tangents (1 + Jxx, Jxy, ∂h/∂x), (Jxy, 1 + Jyy, ∂h/∂y)), each cascade fading out from 1 to 4 texels per
-  pixel, plus the chop tile again 31° rotated and 1.618× larger against tiling; the Godot layers and afl's waves are
-  off on such seas. Whitecaps: the Jacobian J = (1 + Jxx)(1 + Jyy) − Jxy² of each cascade feeds a persisted foam
-  (source max(0, 0.92 − J) × 4.8 gated to crests, decay e^(−dt/3 s): NeuralSpecOcean's FoamField / `evalOffshoreFoamCell`;
-  a time step back, a jump over 1 s or a grid change restarts it, a repeated time holds it), and the instant fold of
-  the summed surface adds to it; laced by the edge noise into the existing foam. Caustics follow the same surface:
+  water detail high (mip 0), 64² on standard (mip 1, also doubled bilinearly into mip 0); then every mip below the
+  grid's is the 2×2 mean of the one above (8 levels, 128² … 1²; passes Up / Mip of the same shader). `waves.glsl`
+  samples it for all three users: `water.vert` adds the swell + gravity height (vertical only, lowered by half its RMS,
+  still clamped to the rest plane) and the caustics read the grid's own level; `water.frag` builds the normal of the
+  choppy surface x + D(x) from the summed slopes and displacement gradients (tangents (1 + Jxx, Jxy, ∂h/∂x),
+  (Jxy, 1 + Jyy, ∂h/∂y)), every lookup filtered through the mips by the pixel's world-space derivatives
+  (`textureGrad`, anisotropic sampler capped at 8×, `ocean::kMaxAniso`), plus the chop tile again 31° rotated and 1.618× larger
+  against tiling and NeuralSpecOcean's finer copies of it (Offshore.js bands 3 and 4: 3.42 / 5.53 m and 1.04 / 1.68 m,
+  rotated −23° / 49° / 31° / −61°, weights 0.53 / 0.48 / 0.42 / 0.42 of the 11.3 m tile, faded out from 4 to 16 of
+  their texels per anisotropically filtered pixel as its bands are); the Godot layers and afl's waves are off on such
+  seas. In 0.40.0 each cascade faded out from 1 to 4 texels per pixel along the pixel's longest axis and nothing
+  was finer than the 11.3 m tile's texels (8.8 cm at 128², 17.7 cm at 64²), magnified 5–35× near the camera at
+  1080p: the near sea showed bilinear blobs and the mid distance (grazing, where that axis is ~20× the other) went
+  smooth from ~25 m (chop) and ~40 m (gravity). Whitecaps: the Jacobian J = (1 + Jxx)(1 + Jyy) − Jxy² of each cascade
+  feeds a persisted foam (source max(0, 0.92 − J) × 4.8 gated to crests, decay e^(−dt/3 s): NeuralSpecOcean's
+  FoamField / `evalOffshoreFoamCell`; a time step back, a jump over 1 s or a grid change restarts it, a repeated time
+  holds it), the swell and gravity foam read through a cubic B-spline where magnified (their 1.9 / 0.22 m texels gave
+  straight-edged patches), and the instant fold of the summed surface adds to it; laced by the edge noise into the
+  existing foam. Caustics follow the same surface:
   `ouCausticSlope` adds the cascades' slopes (weights 0.3 swell / 1 gravity / 0.75 chop [I]), `ouCausticHessian`
   differentiates each cascade over at least one of its texels (linear filtering would give flat cells otherwise).
   Visual only: gameplay (buoyancy, the yacht, swimming) keeps tru.exe's c60–c63 waves (`game::waveRegisters`); no CPU
@@ -442,12 +452,16 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   foam gate, depth 100 m and loop length.
   Measured (2026-11-08, Release, Vulkan, 1280x720, `--rt off`, `OU_VK_PRESENT_STATS=1`, l1_seatop yacht view, 238
   frames): the four ocean dispatches 0.02 ms (grid 128²), the water pass 0.09 ms with the FFT vs 0.14 ms with afl's
-  waves (36-iteration loops replaced by 9-12 texture fetches).
+  waves (36-iteration loops replaced by 9-12 texture fetches). With the mips, the fine copies and the anisotropic
+  filtering (1920x1080, `--rt off`, l1_seatop swimming at -15000,-3775 looking out to sea, 398 frames): the water
+  pass with the ocean dispatches 0.36 → 0.56 ms (no anisotropy 0.46, 16× 0.64).
 - Vertex displacement (`water.vert`): the original sea waves (`render::waterWaves`, which the gameplay surface
   follows), then the Godot height layers (± 0.06 m; not on FFT seas) and on seas the FFT ocean's swell + gravity
   height (above) or afl's waves (12 iterations, 0.45 m) centred on that
   surface but clamped to the rest plane — the original's own crest bound — so the yacht deck stays above the drawn
-  sea; then the wave field's height. Coarse TRU meshes show it only at their few interior vertices.
+  sea; then the wave field's height. Coarse TRU meshes show it only at their few interior vertices (l1_seatop's sea:
+  a regular grid of ~3.5 m quads [measured: triangle-ID debug view over a 1 m grid]), so the drawn relief is the
+  per-pixel normals'; the geometry only tilts between those vertices.
 - Interactive waves (ours, `game::WaveField`): bend the normals, displace, light crests / darken troughs in
   proportion to the curvature (a splash crater is a bright line, a swim-stroke ring a tint) and foam splash craters
   and sharp crests (the Joan port, docs/RESEARCH.md §8.7).
