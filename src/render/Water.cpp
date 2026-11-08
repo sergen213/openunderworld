@@ -3,6 +3,7 @@
 // files with glslc -DVULKAN=1 at build time).
 #include "render/Water.hpp"
 
+#include "render/Ocean.hpp"
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 
@@ -188,6 +189,12 @@ WaterBlock waterBlock(const Camera& camera, Viewport vp, const glm::mat4& viewPr
     w.ripple = {r.originX, r.originY, r.cellSize, r.surfaceZ};
     w.rippleInfo = {float(r.size), r.cellSize > 0 && r.size > 0 && !r.heights.empty() ? 1.0f : 0.0f, 0, 0};
     w.seaWaves = waterWaves(camera.position, 1.0f, options.waterVolumes); // the sea the caustics look through
+    if (ocean::wanted(options)) { // the renderer clears ocean[0].x when its FFT pass cannot run
+        const int n = ocean::gridSize(options);
+        const ocean::Grid& g = ocean::grid(n);
+        w.ocean[0] = {1.0f, float(ocean::gridLod(n)), float(n), std::sqrt(g.sigma[0] * g.sigma[0] + g.sigma[1] * g.sigma[1])};
+        w.ocean[1] = {g.length[0] * ocean::kMetre, g.length[1] * ocean::kMetre, g.length[2] * ocean::kMetre, 1.0f};
+    }
     if (options.water == WaterQuality::Enhanced) { // Original water never reads it (its post pass keeps TRU's colours)
         const auto o = waterOptics(options.waterColor);
         std::copy(o.begin(), o.end(), w.optics);

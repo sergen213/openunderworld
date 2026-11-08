@@ -56,7 +56,7 @@ target_include_directories(ou_placeholder PUBLIC src)
 
 # RenderCommon + the D3D9 SM3 -> GLSL translator of the Original Fidelity path (docs/formats/SHADERS.md).
 add_library(ou_render_common STATIC src/render/RenderCommon.cpp src/render/ShaderTranslate.cpp src/render/OriginalShading.cpp
-  src/render/Water.cpp)
+  src/render/Water.cpp src/render/Ocean.cpp)
 target_include_directories(ou_render_common PUBLIC src)
 # libshaderc compiles translated TRU shaders to SPIR-V at load time (Vulkan backend, shader tests).
 pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
@@ -70,7 +70,7 @@ target_include_directories(ou_render_common PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/
 
 # Enhanced water / splash / underwater-post GLSL shared by GL (runtime compile) and Vulkan (glslc).
 foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
-        underwater.glsl atmosphere.glsl filter.glsl caustics.glsl waves.glsl tonemap.glsl)
+        underwater.glsl atmosphere.glsl filter.glsl caustics.glsl waves.glsl tonemap.glsl ocean.comp)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${src})
   file(READ ${src} OU_WATER_SRC)
@@ -108,8 +108,9 @@ foreach(s fx.vert fx.frag)
   list(APPEND OU_VK_SPV ${OU_VK_SPV_DIR}/${s}.inc)
 endforeach()
 # Enhanced water + splash (shared GLSL with GL, -DVULKAN=1 selects the descriptor syntax; water.frag includes sun.glsl
-# and shaders/caustics.glsl; water.vert, water.frag and caustics.glsl include shaders/waves.glsl).
-foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag)
+# and shaders/caustics.glsl; water.vert, water.frag and caustics.glsl include shaders/waves.glsl; ocean.comp: the FFT ocean).
+foreach(s water.vert water.frag splash.vert splash_splat.frag splash_screen.vert splash_blur.frag splash_composite.frag
+        ocean.comp)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/${s})
   add_custom_command(OUTPUT ${OU_VK_SPV_DIR}/${s}.inc
                      COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -mfmt=num -I ${CMAKE_CURRENT_SOURCE_DIR}/src/render -o ${OU_VK_SPV_DIR}/${s}.inc ${src}

@@ -41,6 +41,8 @@ struct GraphicsConfig {
     // unit's own water colours) | one of NeuralSpecOcean's palettes "emerald" | "coral_lagoon" | "pelagic_cobalt" |
     // "mineral_jade" | "subpolar_slate" | "clear" (a pool). kWaterColors order = GraphicsSettings::waterColor.
     std::string waterColor = "auto";
+    std::string ocean = "fft";              // Enhanced water open seas: "fft" (FFT ocean, render/Ocean.hpp) | "procedural"
+                                            // (afl_ext's waves)
     std::string atmosphere = "auto";        // "auto" (enhanced -> medium) | "off" | "low" (height fog) | "medium"
                                             // (+ sun shafts, 24 taps) | "high" (48 taps)
     std::optional<bool> lightShafts;        // sun shafts of medium / high; unset = on
@@ -87,13 +89,14 @@ struct GraphicsSettings {
     bool pssm = false;    // tru.exe's sun shadows (render::FrameOptions::pssm): the original preset's `shadows`; last, as above
     int waterColor = 0;   // kWaterColors index (0 auto, 1 original, 2.. presets = render::WaterColor(index - 1)); last, as above
     int tonemap = 0;      // render::Tonemap: 0 original, 1 agx (render::FrameOptions::tonemap); last, as above
+    bool oceanFft = true; // the FFT ocean on Enhanced open seas (render::FrameOptions::oceanFft); last, as above
     bool operator==(const GraphicsSettings&) const = default;
 };
 // Throws std::runtime_error on an unknown preset, msaa, rt, rtQuality, upscaler, fsrQuality or tonemap value, explicit rt
 // without the enhanced preset, frame generation without FSR, brightness outside [0.5, 2.0] or sharpness outside [0, 1].
 GraphicsSettings resolve(const GraphicsConfig& g);
 // Command-line graphics flags shared by the apps: --preset, --msaa, --shadows/--fxaa/--hdr on|off, --shaders original|generic,
-// --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail, --water-color,
+// --rt, --rt-quality, --rt-lights / --rt-reflections / --rt-ao / --rt-gi on|off, --water original|enhanced, --water-detail, --water-color, --ocean fft|procedural,
 // --atmosphere, --shafts on|off, --weather, --brightness, --upscaler off|fsr, --fsr-quality, --sharpness, --frame-generation on|off, --fx on|off,
 // --anti-lag on|off, --tonemap original|agx. false = not a graphics flag. Throws std::runtime_error on a bad value (on/off flags
 // only; the rest via resolve()).

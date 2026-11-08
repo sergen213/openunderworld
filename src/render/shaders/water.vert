@@ -10,12 +10,14 @@ layout(binding = 4) uniform Water {
     vec4 eye; vec4 screen; vec4 sunDir; vec4 sunColor; vec4 fogColor; vec4 fogRange;
     vec4 ripple; vec4 rippleInfo; vec4 ambient;
     vec4 detail; vec4 lamps[4]; vec4 lampColor[4]; vec4 haze; vec4 mist; vec4 weather; vec4 volumes[16];
-    vec4 filters[9]; uvec4 filterLut[640]; vec4 waterPass[3]; uvec4 rays[157]; mat4 seaWaves; vec4 optics[3]; // as water.frag (GL links blocks across stages)
+    vec4 filters[9]; uvec4 filterLut[640]; vec4 waterPass[3]; uvec4 rays[157]; mat4 seaWaves; vec4 optics[3]; vec4 ocean[2]; // as water.frag (GL links blocks across stages)
 } w;
 #ifdef VULKAN
 layout(set = 0, binding = 3) uniform sampler2D uRipples;
+layout(set = 0, binding = 4) uniform sampler2DArray uOcean; // the FFT ocean (shaders/ocean.comp)
 #else
 layout(binding = 7) uniform sampler2D uRipples;
+layout(binding = 12) uniform sampler2DArray uOcean;
 #endif
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
@@ -50,13 +52,18 @@ void main() {
     world.z -= dot(uWaves[3], 1.0 - cos(world.x * uWaves[0] + world.y * uWaves[1] + uWaves[2]));
     float t = w.eye.w;
     vSea = any(notEqual(uWaves[3], vec4(0.0))) ? 1.0 : 0.0;
-    // Godot's height layers (amplitude detail.z) and on open seas afl_ext's waves (12 iterations, its geometry count),
-    // centred on that surface (afl's height averages ~0.47) but never above the rest plane, the original's own crest
-    // bound, so the yacht deck and every shore stay above the drawn sea. Visible where the surface mesh has interior
-    // vertices (TRU's are mostly coarse).
-    float h = 0.5 * (ouFbm(world.xy / kLambdaA + t * vec2(0.10, 0.02), 0.0).x + ouFbm(kWaterRot * world.xy / kLambdaB + t * vec2(-0.04, 0.12), 0.0).x);
-    world.z += w.detail.z * (h - 0.5);
-    if (vSea > 0.5) world.z += kSeaAmp * (ouSea(world.xy, t, 12) - 0.47);
+    // Godot's height layers (amplitude detail.z) and on open seas afl_ext's waves (12 iterations, its geometry count) or
+    // the FFT ocean's swell + gravity cascades (render/Ocean.hpp, which then replace the Godot layers too), centred on
+    // that surface (afl's height averages ~0.47; the FFT lowered by half its height RMS [I]) but never above the rest
+    // plane, the original's own crest bound, so the yacht deck and every shore stay above the drawn sea. Visible where
+    // the surface mesh has interior vertices (TRU's are mostly coarse).
+    bool fft = vSea > 0.5 && w.ocean[0].x > 0.5;
+    if (!fft) {
+        float h = 0.5 * (ouFbm(world.xy / kLambdaA + t * vec2(0.10, 0.02), 0.0).x + ouFbm(kWaterRot * world.xy / kLambdaB + t * vec2(-0.04, 0.12), 0.0).x);
+        world.z += w.detail.z * (h - 0.5);
+    }
+    if (fft) world.z += ouOceanHeight(world.xy) - 0.5 * kM * w.ocean[0].w;
+    else if (vSea > 0.5) world.z += kSeaAmp * (ouSea(world.xy, t, 12) - 0.47);
     world.z = min(world.z, rest);
     // The interactive wave field's height (game::WaveField), faded over its outer 4 % as in water.frag.
     if (w.rippleInfo.y > 0.5) {

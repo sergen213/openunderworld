@@ -1,4 +1,5 @@
 // OpenGL 4.6 core backend (DSA), loaded through libepoxy.
+#include "render/Ocean.hpp"
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
@@ -311,6 +312,24 @@ Program linkProgram(const char* vs, const char* fs, std::string& error) {
     return p;
 }
 
+Program linkCompute(const char* cs, std::string& error) {
+    GLuint c = compileShader(GL_COMPUTE_SHADER, cs, error);
+    if (!c) return {};
+    Program p(glCreateProgram());
+    glAttachShader(p.get(), c);
+    glLinkProgram(p.get());
+    glDeleteShader(c);
+    GLint ok = 0;
+    glGetProgramiv(p.get(), GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[2048] = {};
+        glGetProgramInfoLog(p.get(), sizeof log, nullptr, log);
+        error = std::string("program link failed: ") + log;
+        return {};
+    }
+    return p;
+}
+
 void GLAPIENTRY onGlDebug(GLenum, GLenum, GLuint id, GLenum severity, GLsizei, const GLchar* msg, const void*) {
     if (severity == GL_DEBUG_SEVERITY_NOTIFICATION) return;
     std::fprintf(stderr, "[gl debug %u] %s\n", id, msg);
@@ -387,6 +406,12 @@ struct Resources {
     Texture ripples;                     // R32F height field, game::WaterSim
     uint64_t rippleVersion = 0;
     int rippleSize = 0;
+    // FFT ocean (render/Ocean.hpp, shaders/ocean.comp): h0 spectra (SSBO 0), FFT scratch (SSBO 1), the RGBA16F array
+    // uOcean (128^2 at level 0, 64^2 at level 1; image unit 0 / texture unit 12). No program = afl's waves.
+    Program oceanProgram;
+    Buffer oceanSpectrum, oceanWork;
+    Texture ocean;
+    ocean::Clock oceanClock;
     VertexArray splashVao;
     Buffer splashVbo;
     Program fxProgram; // original effects
@@ -497,6 +522,26 @@ public:
         if (!r.splashCompositeProgram.get()) return false;
         r.waterUbo = newBuffer();
         glNamedBufferStorage(r.waterUbo.get(), sizeof(WaterBlock), nullptr, GL_DYNAMIC_STORAGE_BIT);
+        { // FFT ocean; a driver that cannot build ocean.comp keeps afl's waves (WaterBlock::ocean[0].x cleared per frame)
+            std::string oceanError;
+            r.oceanProgram = linkCompute(ocean::computeSource().c_str(), oceanError);
+            if (!r.oceanProgram.get()) std::fprintf(stderr, "ou: FFT ocean unavailable (%s)\n", oceanError.c_str());
+            const auto spectrum = ocean::spectrumBuffer();
+            r.oceanSpectrum = newBuffer();
+            glNamedBufferStorage(r.oceanSpectrum.get(), GLsizeiptr(spectrum.size() * sizeof(glm::vec4)), spectrum.data(), 0);
+            r.oceanWork = newBuffer();
+            glNamedBufferStorage(r.oceanWork.get(), GLsizeiptr(ocean::kWorkVec4s * sizeof(glm::vec4)), nullptr, 0);
+            GLuint id = 0;
+            glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &id);
+            r.ocean = Texture(id);
+            glTextureStorage3D(id, 2, GL_RGBA16F, ocean::kMaxN, ocean::kMaxN, ocean::kLayers);
+            for (GLint level = 0; level < 2; ++level) glClearTexImage(id, level, GL_RGBA, GL_FLOAT, nullptr);
+            glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+            glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTextureParameteri(id, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTextureParameteri(id, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTextureParameteri(id, GL_TEXTURE_MAX_LEVEL, 1);
+        }
         r.splashVao = newVertexArray();
         r.splashVbo = newBuffer();
         glVertexArrayVertexBuffer(r.splashVao.get(), 0, r.splashVbo.get(), 0, sizeof(SplashVertex));
@@ -733,6 +778,10 @@ public:
         const bool enhancedWater = options.water == WaterQuality::Enhanced;
         WaterBlock wb = waterBlock(camera, vp, viewProj, environment_, options);
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
+        if (wb.ocean[0].x > 0.5f) { // FFT ocean this frame (render/Ocean.hpp)
+            if (r.oceanProgram.get()) runOcean(options);
+            else wb.ocean[0].x = 0.0f; // afl's waves
+        }
         const bool feedback = options.screenFilter && options.screenFilter->feedback();
         wb.filter[7].w = feedback && r.targets.hasFeedback ? 1.0f : 0.0f; // last frame's copy exists (+0x3D)
         glNamedBufferSubData(r.waterUbo.get(), 0, sizeof wb, &wb);
@@ -862,6 +911,7 @@ public:
         glBindTextureUnit(7, t.filterBlur.get());  // screen filters (unused unless one runs)
         glBindTextureUnit(11, t.feedback.get());   // the feedback effect's previous frame
         glBindTextureUnit(9, r.ripples.get() ? r.ripples.get() : r.white.get()); // underwater caustics' wave field
+        glBindTextureUnit(12, r.ocean.get());                                     // ... and the FFT ocean
         glBindVertexArray(r.emptyVao.get());
         glDrawArrays(GL_TRIANGLES, 0, 3);
         if (feedback) { // 0x509630 -> 0x51A2E0: this frame's image (before the HUD) for the next frame's feedback
@@ -1524,6 +1574,28 @@ private:
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, r.frameUbo.get());
     }
 
+    // FFT ocean (render/Ocean.hpp): spectrum, row and column inverse DFTs, assemble into uOcean (texture unit 12).
+    void runOcean(const FrameOptions& o) {
+        Resources& r = *res_;
+        ocean::Push p = r.oceanClock.frame(o);
+        const int n = p.cfg.y;
+        glUseProgram(r.oceanProgram.get());
+        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, r.oceanSpectrum.get(), GLintptr(ocean::spectrumOffset(n) * sizeof(glm::vec4)),
+                          GLsizeiptr(size_t(ocean::kCascades) * size_t(n * n) * sizeof(glm::vec4)));
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, r.oceanWork.get());
+        glBindImageTexture(0, r.ocean.get(), ocean::gridLod(n), GL_TRUE, 0, GL_READ_WRITE, GL_RGBA16F);
+        glUniform4fv(1, 1, glm::value_ptr(p.par));
+        glUniform4fv(2, ocean::kCascades, glm::value_ptr(p.cas[0]));
+        for (int pass : {ocean::Spectrum, ocean::Rows, ocean::Columns, ocean::Assemble}) {
+            p.cfg.x = pass;
+            glUniform4iv(0, 1, glm::value_ptr(p.cfg));
+            const bool lines = pass == ocean::Rows || pass == ocean::Columns;
+            glDispatchCompute(lines ? GLuint(n) : GLuint((n * n + ocean::kThreads - 1) / ocean::kThreads), 1, ocean::kCascades);
+            glMemoryBarrier(pass == ocean::Assemble ? GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT
+                                                    : GL_SHADER_STORAGE_BARRIER_BIT);
+        }
+    }
+
     // Enhanced water: resolve the opaque scene into the copy textures, then draw the water surfaces
     // with refraction/reflection/ripples and the splash droplets on top.
     void drawWater(const Camera& camera, Viewport vp, const FrameOptions& options) {
@@ -1555,6 +1627,7 @@ private:
         glBindTextureUnit(5, t.opaqueColor.get());
         glBindTextureUnit(6, t.opaqueDepth.get());
         glBindTextureUnit(7, r.ripples.get() ? r.ripples.get() : r.white.get());
+        glBindTextureUnit(12, r.ocean.get()); // the FFT ocean (shaders/ocean.comp)
         glUseProgram(r.waterProgram.get());
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);

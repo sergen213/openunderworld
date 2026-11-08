@@ -2,6 +2,7 @@
 // device-memory allocator (no VMA), staging uploads, SPIR-V embedded at build time (glslc).
 // Entry points come straight from the linked loader (libvulkan); extension functions via
 // vkGetInstanceProcAddr. Output is meant to match the GL backend pixel-for-pixel modulo rasterisation.
+#include "render/Ocean.hpp"
 #include "render/OriginalShading.hpp"
 #include "render/RenderCommon.hpp"
 #include "render/Water.hpp"
@@ -61,6 +62,9 @@ const uint32_t kRtIndirectMs[] = {
 };
 const uint32_t kRtDenoise[] = {
 #include "rt_denoise.comp.inc"
+};
+const uint32_t kOceanComp[] = { // the FFT ocean (render/Ocean.hpp)
+#include "ocean.comp.inc"
 };
 const uint32_t kPrepassVert[] = {
 #include "prepass.vert.inc"
@@ -848,6 +852,10 @@ public:
         // ponytail: one global gain; per-material shading at the hit would need the translated programs in the ray path.
         wb.waterPass[2].w = options.originalShaders && !origPrograms_.empty() ? 2.0f : 1.0f;
         if (enhancedWater) updateRipples(options);
+        if (wb.ocean[0].x > 0.5f) { // FFT ocean this frame (render/Ocean.hpp)
+            if (oceanPipeline_) recordOcean(cmd, options);
+            else wb.ocean[0].x = 0.0f; // afl's waves
+        }
         // The post pass samples opaqueDepth_ for the atmosphere / weather too, not only for Enhanced water; translated
         // materials reading the back/depth buffer (the sea, OrigDraw::screen) draw in the second pass from the copies.
         const bool screenReaders = options.originalShaders && !origPrograms_.empty() && !screenSets_.empty();
@@ -1807,6 +1815,7 @@ public:
             destroyImage(cookies_);
             destroyImage(blackCube_);
             if (ripples_.image) destroyImage(ripples_);
+            destroyOcean();
             for (auto& u : uiImages_)
                 if (u.gpu.image) destroyImage(u.gpu);
             for (auto& b : waterUbo_) vkDestroyBuffer(device_, std::exchange(b, {}).buffer, nullptr);
@@ -2416,6 +2425,117 @@ private:
             VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &s));
         }
     }
+    // FFT ocean (render/Ocean.hpp, shaders/ocean.comp): the h0 spectra (device-local SSBO), the FFT scratch, the rgba16f
+    // uOcean array (always GENERAL: ocean.comp's storage image, sampled by water.vert / water.frag / the post caustics;
+    // cleared so frames before the first dispatch see a flat sea) with one storage view per mip (grid 128: 0, 64: 1) and
+    // one compute set per grid.
+    void createOcean() {
+        const auto spectrum = ocean::spectrumBuffer();
+        const VkDeviceSize specBytes = spectrum.size() * sizeof(glm::vec4);
+        oceanSpectrum_ = createBuffer(staticMemory_, specBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        oceanWork_ = createBuffer(staticMemory_, ocean::kWorkVec4s * sizeof(glm::vec4), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        constexpr VkFormat kFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+        ocean_ = createImage(staticMemory_, kFormat, ocean::kMaxN, ocean::kMaxN, 2,
+                             VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                             VK_IMAGE_ASPECT_COLOR_BIT, VK_SAMPLE_COUNT_1_BIT, false, ocean::kLayers);
+        for (uint32_t level = 0; level < 2; ++level) {
+            VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            vi.image = ocean_.image;
+            vi.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+            vi.format = kFormat;
+            vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, uint32_t(ocean::kLayers)};
+            VK_CHECK(vkCreateImageView(device_, &vi, nullptr, &oceanStorage_[level]));
+        }
+        UploadBatch batch;
+        batch.buffers.push_back({oceanSpectrum_.buffer, {spectrum.data(), specBytes, 0, 0}});
+        flush(batch, [&](VkCommandBuffer cmd) {
+            const auto clear = imageBarrier(ocean_.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                                            VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            barriers(cmd, {&clear, 1});
+            const VkClearColorValue zero{};
+            const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 2, 0, uint32_t(ocean::kLayers)};
+            vkCmdClearColorImage(cmd, ocean_.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all);
+            const auto done = imageBarrier(ocean_.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                           VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT);
+            barriers(cmd, {&done, 1});
+        });
+        VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+        sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST; // the shaders pick the grid's level by textureLod
+        sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sci.maxLod = 1.0f;
+        VK_CHECK(vkCreateSampler(device_, &sci, nullptr, &oceanSampler_));
+
+        constexpr VkShaderStageFlags cs = VK_SHADER_STAGE_COMPUTE_BIT;
+        const VkDescriptorSetLayoutBinding b[3] = {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, cs, nullptr},
+                                                   {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, cs, nullptr},
+                                                   {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, cs, nullptr}};
+        VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, b};
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &dl, nullptr, &oceanSetLayout_));
+        const VkPushConstantRange push{cs, 0, sizeof(ocean::Push)};
+        VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &oceanSetLayout_, 1, &push};
+        VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &oceanLayout_));
+        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shaderModule(kOceanComp), "main", nullptr};
+        ci.layout = oceanLayout_;
+        VK_CHECK(vkCreateComputePipelines(device_, pipelineCache_, 1, &ci, nullptr, &oceanPipeline_));
+        vkDestroyShaderModule(device_, ci.stage.module, nullptr);
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 2, 2, ps};
+        VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &oceanPool_));
+        for (uint32_t level = 0; level < 2; ++level) {
+            const int n = level == 0 ? 128 : 64;
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, oceanPool_, 1, &oceanSetLayout_};
+            VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &oceanSets_[level]));
+            const VkDescriptorBufferInfo spec{oceanSpectrum_.buffer, ocean::spectrumOffset(n) * sizeof(glm::vec4),
+                                              VkDeviceSize(ocean::kCascades) * VkDeviceSize(n * n) * sizeof(glm::vec4)};
+            const VkDescriptorBufferInfo work{oceanWork_.buffer, 0, VK_WHOLE_SIZE};
+            const VkDescriptorImageInfo img{VK_NULL_HANDLE, oceanStorage_[level], VK_IMAGE_LAYOUT_GENERAL};
+            VkWriteDescriptorSet w[3] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},
+                                         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+            for (uint32_t i = 0; i < 3; ++i) w[i].dstSet = oceanSets_[level], w[i].dstBinding = i, w[i].descriptorCount = 1;
+            w[0].descriptorType = w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            w[0].pBufferInfo = &spec, w[1].pBufferInfo = &work;
+            w[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, w[2].pImageInfo = &img;
+            vkUpdateDescriptorSets(device_, 3, w, 0, nullptr);
+        }
+    }
+    void destroyOcean() {
+        vkDestroyPipeline(device_, std::exchange(oceanPipeline_, VK_NULL_HANDLE), nullptr);
+        vkDestroyPipelineLayout(device_, std::exchange(oceanLayout_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorPool(device_, std::exchange(oceanPool_, VK_NULL_HANDLE), nullptr);
+        vkDestroyDescriptorSetLayout(device_, std::exchange(oceanSetLayout_, VK_NULL_HANDLE), nullptr);
+        vkDestroySampler(device_, std::exchange(oceanSampler_, VK_NULL_HANDLE), nullptr);
+        for (VkImageView& v : oceanStorage_) vkDestroyImageView(device_, std::exchange(v, VK_NULL_HANDLE), nullptr);
+        if (ocean_.image) destroyImage(ocean_);
+        vkDestroyBuffer(device_, std::exchange(oceanSpectrum_, {}).buffer, nullptr);
+        vkDestroyBuffer(device_, std::exchange(oceanWork_, {}).buffer, nullptr);
+    }
+    // This frame's ocean: spectrum, row and column inverse DFTs, assemble (one dispatch each, z = cascade), after the
+    // previous frames' reads of uOcean and before this frame's water / post reads.
+    void recordOcean(VkCommandBuffer cmd, const FrameOptions& o) {
+        ocean::Push p = oceanClock_.frame(o);
+        const int n = p.cfg.y;
+        constexpr VkPipelineStageFlags2 kCompute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        constexpr VkPipelineStageFlags2 kReaders = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        constexpr VkAccessFlags2 kRw = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+        const VkMemoryBarrier2 war{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kReaders | kCompute, kRw, kCompute, kRw};
+        barriers(cmd, {}, &war);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, oceanPipeline_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, oceanLayout_, 0, 1, &oceanSets_[size_t(ocean::gridLod(n))], 0, nullptr);
+        for (int pass : {ocean::Spectrum, ocean::Rows, ocean::Columns, ocean::Assemble}) {
+            p.cfg.x = pass;
+            vkCmdPushConstants(cmd, oceanLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof p, &p);
+            const bool lines = pass == ocean::Rows || pass == ocean::Columns;
+            vkCmdDispatch(cmd, lines ? uint32_t(n) : uint32_t((n * n + ocean::kThreads - 1) / ocean::kThreads), 1, ocean::kCascades);
+            const VkMemoryBarrier2 step{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, kCompute, kRw,
+                                        pass == ocean::Assemble ? kReaders | kCompute : kCompute, kRw};
+            barriers(cmd, {}, &step);
+        }
+    }
     void destroyIndirect() {
         for (VkPipeline* p : {&indTrace_, &indTraceMs_, &indDenoise_}) vkDestroyPipeline(device_, std::exchange(*p, VK_NULL_HANDLE), nullptr);
         vkDestroyPipelineLayout(device_, std::exchange(indLayout_, VK_NULL_HANDLE), nullptr);
@@ -2749,26 +2869,28 @@ private:
         VK_CHECK(vkCreatePipelineLayout(device_, &pl, nullptr, &textLayout_));
         pl.setLayoutCount = 1;
         pl.pSetLayouts = &setLayout_;
-        // Enhanced water: set 0 = WaterBlock UBO + opaque colour/depth + ripple field.
-        const VkDescriptorSetLayoutBinding wb[4] = {
+        // Enhanced water: set 0 = WaterBlock UBO + opaque colour/depth + ripple field + the FFT ocean (uOcean).
+        const VkDescriptorSetLayoutBinding wb[5] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // water.vert displaces by it
+            {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, // ... and by this
         };
-        VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, wb};
+        VkDescriptorSetLayoutCreateInfo wl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 5, wb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &wl, nullptr, &waterSetLayout_));
         // Post: set 1 = WaterBlock UBO + opaque depth (underwater, atmosphere, weather) + the screen filters' blur levels
-        // (filterBlur_) + the ripple field (caustics) + the feedback effect's previous frame (feedback_); set 2 = the sun
-        // shadow set (shafts).
-        const VkDescriptorSetLayoutBinding pb[5] = {
+        // (filterBlur_) + the ripple field (caustics) + the feedback effect's previous frame (feedback_) + the FFT ocean
+        // (caustics); set 2 = the sun shadow set (shafts).
+        const VkDescriptorSetLayoutBinding pb[6] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         };
-        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 5, pb};
+        VkDescriptorSetLayoutCreateInfo pwl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 6, pb};
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &pwl, nullptr, &postWaterSetLayout_));
         VkPushConstantRange modelPush{VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof(glm::mat4)}; // model, render::waterWaves
         // 1: sun shadow (caustics); 2 (RT devices): the scene TLAS for water_rt.frag's reflections.
@@ -3504,7 +3626,7 @@ private:
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &postSet_)); // written per swapchain (recreateSwapchain)
 
         // Enhanced water: one WaterBlock UBO and one water + post-water set (+ 3 liquid splash sets) per frame in flight.
-        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10 * kFramesInFlight},
+        const VkDescriptorPoolSize wps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 12 * kFramesInFlight},
                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5 * kFramesInFlight}};
         VkDescriptorPoolCreateInfo wpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 5 * kFramesInFlight, 2, wps};
         VK_CHECK(vkCreateDescriptorPool(device_, &wpci, nullptr, &waterPool_));
@@ -3519,6 +3641,7 @@ private:
             wai.pSetLayouts = &splashSetLayout_;
             for (VkDescriptorSet& s : splashSets_[i]) VK_CHECK(vkAllocateDescriptorSets(device_, &wai, &s));
         }
+        createOcean();
         writeWaterSets();
 
         const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -3650,6 +3773,19 @@ private:
             for (VkDescriptorSet s : splashSets_[i]) {
                 u.dstSet = s;
                 vkUpdateDescriptorSets(device_, 1, &u, 0, nullptr);
+            }
+            if (ocean_.view) { // the FFT ocean: water set binding 4, post set binding 5 (GENERAL: ocean.comp writes it)
+                const VkDescriptorImageInfo oc{oceanSampler_, ocean_.view, VK_IMAGE_LAYOUT_GENERAL};
+                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w.dstSet = waterSets_[i];
+                w.dstBinding = 4;
+                w.descriptorCount = 1;
+                w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                w.pImageInfo = &oc;
+                vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+                w.dstSet = postWaterSets_[i];
+                w.dstBinding = 5;
+                vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
             }
             if (!white_.view) continue;
             const VkDescriptorImageInfo color{postSampler_, opaqueColor_.view ? opaqueColor_.view : white_.view,
@@ -5028,6 +5164,17 @@ private:
     GpuImage depth_, sceneColor_, msColor_; // msColor_ only with MSAA
     // Enhanced water: single-sample opaque copies (refraction etc.) and the game's ripple height field.
     GpuImage opaqueColor_, opaqueDepth_, ripples_;
+    // FFT ocean (createOcean): uOcean (mip 0 grid 128, mip 1 grid 64) + its storage views, spectra, scratch, pipeline.
+    GpuImage ocean_;
+    std::array<VkImageView, 2> oceanStorage_{};
+    Buffer oceanSpectrum_, oceanWork_;
+    VkSampler oceanSampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout oceanSetLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout oceanLayout_ = VK_NULL_HANDLE;
+    VkPipeline oceanPipeline_ = VK_NULL_HANDLE;
+    VkDescriptorPool oceanPool_ = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, 2> oceanSets_{};
+    ocean::Clock oceanClock_;
     // Planar reflection (original::reflection): half size, the scene's sample count, resolved into reflColor_.
     GpuImage reflColor_, reflMsColor_, reflDepth_;
     GpuImage filterBlur_;        // screen filters: the half-size scene + mips (recordFilterBlur)

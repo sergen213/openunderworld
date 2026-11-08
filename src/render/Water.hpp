@@ -61,8 +61,12 @@ struct WaterBlock {
     // extinction per unit of the view path, w 1 = on; [1] rgb in-scatter hue (linear, luminance 1: the unit's deep
     // colour keeps its brightness); [2] rgb downwelling attenuation per unit (caustics fade with depth, red first).
     glm::vec4 optics[3];
+    // FFT ocean (render/Ocean.hpp; shaders/waves.glsl ouOcean*): [0] x 1 = the uOcean array holds this frame's sea
+    // (else open seas fall back to afl_ext's waves), y its mip level (grid 128: 0, 64: 1), z grid N, w the swell +
+    // gravity height RMS (m); [1] xyz the cascades' tiles (world units), w whitecap strength.
+    glm::vec4 ocean[2];
 };
-static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16 + 64 + 3 * 16);
+static_assert(sizeof(WaterBlock) == 2 * 64 + 9 * 16 + 28 * 16 + 9 * 16 + ScreenFilter::kLutRows * 1024 + 3 * 16 + 157 * 16 + 64 + 3 * 16 + 2 * 16);
 inline constexpr int kWaterDebugViews = 6; // 0 off, 1 normals, 2 water depth, 3 reflection hits, 4 sun glint, 5 fresnel
 
 // Enhanced water colour (docs/RENDERING.md "Water colour"). NeuralSpecOcean's bio-optical palettes (MIT, Sheng Choi;

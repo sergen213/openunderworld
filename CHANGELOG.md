@@ -4,6 +4,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.40.0] - 2026-11-08
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+New Enhanced-water and image features adapted from NeuralSpecOcean by Sheng Choi (MIT); Original water is unchanged.
+
+- Added: water colour per chapter (Enhanced water). Each chapter gets its own water type: clear at Croft Manor,
+  deep cobalt in the Mediterranean and Andaman seas, a clear coral lagoon in Coastal Thailand (now clearer than
+  before, as in the original), jade in the Mexican cenotes and cold slate at Jan Mayen and in the Arctic. The colour
+  follows the chapter live. Settings: WATER & SKY > WATER COLOUR, `--water-color auto|original|clear|emerald|
+  coral_lagoon|pelagic_cobalt|mineral_jade|subpolar_slate`, launcher, config `water_color`.
+- Added: chromatic caustics. Each colour focuses at its own depth, using water's real refractive index per colour,
+  and deep caustics fade to blue-green. The sun shafts under water match them.
+- Added: optional AgX tone mapping with Oklab gamut compression (softer highlights, deeper shadows). Settings:
+  QUALITY > TONE MAPPING, `--tonemap original|agx`, launcher, config `tonemap`. Off by default; the default image is
+  unchanged.
+
 ## [0.39.1] - 2026-11-07
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

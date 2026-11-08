@@ -402,15 +402,50 @@ TRU units (Lara ≈ 1.75 m ≈ 512 units). Shaded in linear light (the gamma sce
   From below: Fresnel on the air side inside the window (refracted ray traced into the scene above, else the sky),
   total internal reflection outside it (SSR of the water below, else the deep colour); the post pass's under-water
   fog stops at the surface for what is seen through it (`ouWaterPass`, Enhanced only).
-- Open seas (meshes with TRU's sea waves bound, `vSea`; l2_cliffclimb, l1 seas, Thailand): afl_ext's "Very fast
-  procedural ocean" (MIT) wave function: sums of `exp(sin − 1)` directional waves, each warping the next by its
-  derivative (drag 0.38), 1 afl unit = 1 m. Fragment normals by differences of 36 / 24 / 12 iterations (< 25 m,
-  < 80 m, beyond), the step at least a pixel, smoothed toward flat with distance as afl does; afl's
-  height-proportional subsurface term brightens crests; its sharp sun disc (pow 720 × 210) in the reflection; the
-  miss sky brightens toward the horizon as afl's (fog colour × (0.6 + 0.6 (1 − up)³)). Look cues from Shadertoy
-  "Seascape" (TDM, CC BY-NC-SA; no code used). Pools and still water keep only the calmer Godot layers.
+- Open seas (meshes with TRU's sea waves bound, `vSea`; l2_cliffclimb, l1 seas, Thailand): the FFT ocean below
+  (default); with `--ocean procedural` afl_ext's "Very fast procedural ocean" (MIT) wave function instead: sums of
+  `exp(sin − 1)` directional waves, each warping the next by its derivative (drag 0.38), 1 afl unit = 1 m. Fragment
+  normals by differences of 36 / 24 / 12 iterations (< 25 m, < 80 m, beyond), the step at least a pixel, smoothed
+  toward flat with distance as afl does. Either way: afl's height-proportional subsurface term brightens crests; its
+  sharp sun disc (pow 720 × 210) in the reflection; the miss sky brightens toward the horizon as afl's (fog colour ×
+  (0.6 + 0.6 (1 − up)³)). Look cues from Shadertoy "Seascape" (TDM, CC BY-NC-SA; no code used). Pools and still water
+  keep only the calmer Godot layers.
+- FFT ocean (`graphics.ocean` `fft` | `procedural`, `--ocean`, WATER & SKY > OCEAN WAVES; live; `render/Ocean.{hpp,cpp}`,
+  `shaders/ocean.comp`; after NeuralSpecOcean, MIT, RESEARCH §8.8): Tessendorf's spectral ocean in three cascades,
+  NeuralSpecOcean's set — swell 240 m tile (its 'long' Mitsuyasu-spread wind spectrum, wind 16 m/s, seed 84),
+  gravity 28 m (its 'short', wind 11, seed 601), chop 11.3 m (its Mitsuyasu–Donelan–Banner 'chop' spectrum, wind
+  12.5, seed 1907, calibrated to RMS slope 0.205); same seeded LCG + Box–Muller draws, geometry-spacing filter,
+  amplitude 0.64 and choppiness min(2.24, 0.80 / (A · Parseval 3.15 σ bound)) (its `syncBound`; l1_seatop: 2.24,
+  height RMS 0.47 m swell / 0.026 m gravity); the chop band (slopes only there) here also gets choppiness 0.5 [I] so
+  its crests sharpen and fold into whitecap flecks. The spectra h0 are
+  built once on the CPU (both grids); every frame with a waved volume the GPU (Vulkan compute, GL 4.3 compute: one
+  shared `ocean.comp`) evolves h(k, t) = h0 e^{iωt} + conj(h0(−k)) e^{−iωt} with the gravity–capillary dispersion
+  ω² = (g k + σ/ρ k³) tanh(k · 100 m) quantised to multiples of 2π / 512 s (game time `FrameOptions::time` wraps
+  exactly: the same time is the same sea), packs the 8 real fields two per complex value, runs radix-2 Stockham inverse
+  DFTs over rows then columns (shared memory, one workgroup per line) and assembles into one RGBA16F array texture
+  `uOcean` (per cascade: (Dx, Dy, h, ∂Dx/∂y), (∂h/∂x, ∂h/∂y, ∂Dx/∂x, ∂Dy/∂y), (foam, J); metres). Grid 128² with
+  water detail high (mip 0), 64² on standard (mip 1); 4 dispatches. `waves.glsl` samples it for all three users:
+  `water.vert` adds the swell + gravity height (vertical only, lowered by half its RMS, still clamped to the rest
+  plane), `water.frag` builds the normal of the choppy surface x + D(x) from the summed slopes and displacement
+  gradients (tangents (1 + Jxx, Jxy, ∂h/∂x), (Jxy, 1 + Jyy, ∂h/∂y)), each cascade fading out from 1 to 4 texels per
+  pixel, plus the chop tile again 31° rotated and 1.618× larger against tiling; the Godot layers and afl's waves are
+  off on such seas. Whitecaps: the Jacobian J = (1 + Jxx)(1 + Jyy) − Jxy² of each cascade feeds a persisted foam
+  (source max(0, 0.92 − J) × 4.8 gated to crests, decay e^(−dt/3 s): NeuralSpecOcean's FoamField / `evalOffshoreFoamCell`;
+  a time step back, a jump over 1 s or a grid change restarts it, a repeated time holds it), and the instant fold of
+  the summed surface adds to it; laced by the edge noise into the existing foam. Caustics follow the same surface:
+  `ouCausticSlope` adds the cascades' slopes (weights 0.3 swell / 1 gravity / 0.75 chop [I]), `ouCausticHessian`
+  differentiates each cascade over at least one of its texels (linear filtering would give flat cells otherwise).
+  Visual only: gameplay (buoyancy, the yacht, swimming) keeps tru.exe's c60–c63 waves (`game::waveRegisters`); no CPU
+  code samples the drawn sea. A driver that cannot build `ocean.comp` keeps afl's waves (`WaterBlock::ocean[0].x` 0).
+  Bindings: `uOcean` water set 0 binding 4 / post set 1 binding 5 (Vulkan, GENERAL layout), texture unit 12 (GL).
+  Log line `ou: FFT ocean: N^2 grid, ...` on the first sea frame and every grid change. [I]: the tuned weights, fades,
+  foam gate, depth 100 m and loop length.
+  Measured (2026-11-08, Release, Vulkan, 1280x720, `--rt off`, `OU_VK_PRESENT_STATS=1`, l1_seatop yacht view, 238
+  frames): the four ocean dispatches 0.02 ms (grid 128²), the water pass 0.09 ms with the FFT vs 0.14 ms with afl's
+  waves (36-iteration loops replaced by 9-12 texture fetches).
 - Vertex displacement (`water.vert`): the original sea waves (`render::waterWaves`, which the gameplay surface
-  follows), then the Godot height layers (± 0.06 m) and on seas afl's waves (12 iterations, 0.45 m) centred on that
+  follows), then the Godot height layers (± 0.06 m; not on FFT seas) and on seas the FFT ocean's swell + gravity
+  height (above) or afl's waves (12 iterations, 0.45 m) centred on that
   surface but clamped to the rest plane — the original's own crest bound — so the yacht deck stays above the drawn
   sea; then the wave field's height. Coarse TRU meshes show it only at their few interior vertices.
 - Interactive waves (ours, `game::WaveField`): bend the normals, displace, light crests / darken troughs in

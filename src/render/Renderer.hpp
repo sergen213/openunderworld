@@ -202,6 +202,7 @@ struct FrameOptions {
     // already has their rows); colour 0 = off.
     std::span<const scene::Light> dynamicLights;
     bool waterDetail = false; // Enhanced water extras: swell, flow, glitter, shadowed sun path, thickness SSR, lamps
+    bool oceanFft = true;     // Enhanced water open seas: the FFT ocean (render/Ocean.hpp); false = afl_ext's waves
     int waterDebug = 0;       // Enhanced water debug view (render/Water.hpp kWaterDebugViews); 0 = off
     Atmosphere atmosphere = Atmosphere::Off;
     bool lightShafts = true;  // sun shafts of Atmosphere Medium / High

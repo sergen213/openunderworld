@@ -62,7 +62,7 @@ void usage() {
                  "                 [--rt-lights on|off]\n"
                  "                 [--rt-reflections on|off] (unset: on with --rt full)\n"
                  "                 [--rt-ao on|off] [--rt-gi on|off]\n"
-                 "                 [--water original|enhanced] [--water-detail auto|standard|high] [--water-debug 0-5]\n"
+                 "                 [--water original|enhanced] [--water-detail auto|standard|high] [--ocean fft|procedural] [--water-debug 0-5]\n"
                  "                 [--water-color auto|original|emerald|coral_lagoon|pelagic_cobalt|mineral_jade|subpolar_slate|clear]\n"
                  "                 [--atmosphere auto|off|low|medium|high] [--shafts on|off] [--weather off|rain|snow]\n"
                  "                 [--brightness 0.5..2.0] [--tonemap original|agx] [--config config.json]  (launcher settings; later flags override)\n"
@@ -523,7 +523,7 @@ int main(int argc, char** argv) {
         fo.water = ou::render::WaterQuality(opt.gfx.water); // no ripple sim / volumes in the viewer
         // no chapter in the viewer: "auto" keeps the unit's own colours, an explicit preset applies
         fo.waterColor = ou::render::waterColorFor(ou::render::waterColorSetting(opt.gfx.waterColor), -1);
-        fo.waterDetail = opt.gfx.waterDetail, fo.waterDebug = opt.waterDebug;
+        fo.waterDetail = opt.gfx.waterDetail, fo.oceanFft = opt.gfx.oceanFft, fo.waterDebug = opt.waterDebug;
         fo.atmosphere = ou::render::Atmosphere(opt.gfx.atmosphere), fo.lightShafts = opt.gfx.lightShafts;
         if (opt.gfx.weather >= 2) // the viewer has no unit weather: only an explicit --weather rain|snow
             fo.weather = {opt.gfx.weather == 2 ? ou::render::Weather::Kind::Rain : ou::render::Weather::Kind::Snow,
