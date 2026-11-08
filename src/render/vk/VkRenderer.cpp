@@ -162,8 +162,6 @@ constexpr uint32_t kMaxTextVertices = 6 * 8192; // whole quads; longer overlays 
 constexpr VkDeviceSize kBlockSize = 64ull << 20;
 constexpr uint32_t kMaxRtTextures = 4096;           // bindless texture array of the ray-traced variant (set 2)
 constexpr VkDeviceSize kRtScratchBudget = 64ull << 20; // BLAS builds at upload are batched to share this much scratch
-// water_rt.frag OuRtCalib: uints per (material, texture) entry and window (scene rgb, light, 2 unused, samples, unused), frames per window.
-constexpr uint32_t kCalibWords = 8, kCalibWindowFrames = 120;
 
 void check(VkResult r, const char* what) {
     if (r != VK_SUCCESS) throw std::runtime_error(std::string(what) + " failed (VkResult " + std::to_string(r) + ")");
@@ -185,7 +183,7 @@ struct RtGeometry {
     VkDeviceAddress vertices, indices;
     uint32_t firstIndex, texture; // texture = slot in the bindless array
     float alphaRef;
-    uint32_t calib; // water_rt.frag OuRtCalib entry: one per (material, texture) of this upload
+    uint32_t pad;
     VkDeviceAddress transform; // merged static BLAS: the mesh model (VkTransformMatrixKHR), else 0 (sun.glsl OuGeom)
 };
 
@@ -313,9 +311,8 @@ struct RtBlas {
     Buffer buffer;
     std::vector<VkAccelerationStructureGeometryKHR> geometries;
     std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
-    std::vector<RtGeometry> records; // per geometry, texture = calib = 0 (each upload resolves them from these two)
+    std::vector<RtGeometry> records; // per geometry, texture = 0 (each upload resolves the slot from `textures`)
     std::vector<uint32_t> textures;  // per geometry: SubMesh::textureId
-    std::vector<uint32_t> materials; // per geometry: SubMesh::materialId
     VkDeviceSize scratch = 0; // aligned max(build, update) scratch size
     VkAccelerationStructureInstanceKHR instance{}; // its TLAS instance (custom index set per upload)
     uint32_t mask = 0;
@@ -810,11 +807,6 @@ public:
         gpuBegin(f, cmd);
         recordPending(cmd);
         if (rtPipelines_ && !tlas_ && gen_) buildRayTracing(cmd); // first RT frame after upload()
-        else if (tlas_ && calibBuffer_.buffer && ++calibFrames_ >= kCalibWindowFrames) { // next reflection calibration window
-            calibFrames_ = 0, calibHalf_ ^= 1u;
-            const VkDeviceSize half = calibRecords_ * kCalibWords * sizeof(uint32_t);
-            clearCalibration(cmd, calibHalf_ * half, half);
-        }
         recordVertexUploads(cmd);
         gpuMark(cmd, 1);
         // FSR: sub-pixel jitter on every scene projection (camera.jitter); `eye` keeps the unjittered one for motion.
@@ -856,10 +848,9 @@ public:
         WaterBlock wb = waterBlock(camera, {int(extent_.width), int(extent_.height)}, push.viewProj, environment_, options);
         if (!enhancedWater) wb.fogColor.w = 0.0f; // Original: no underwater post either
         // water_rt.frag: gain of off-screen reflection hits (generic texture x vertex colour x lambert) toward the translated
-        // shaders' look for geometry not yet seen on screen; seen geometry uses its own measured gain (OuRtCalib).
-        // [O] l2_cliffclimb deck: raster / RT luminance of on-screen hits, median 2.2 (226k pixels), per pixel 0.35-3.5.
+        // shaders' look. [O] l2_cliffclimb deck: raster / RT luminance of on-screen hits, median 2.2 (226k pixels).
+        // ponytail: one global gain; per-material shading at the hit would need the translated programs in the ray path.
         wb.waterPass[2].w = options.originalShaders && !origPrograms_.empty() ? 2.0f : 1.0f;
-        wb.waterPass[2].z = float(calibHalf_); // water_rt.frag: the OuRtCalib window this frame accumulates into
         if (enhancedWater) updateRipples(options);
         if (wb.ocean[0].x > 0.5f) { // FFT ocean this frame (render/Ocean.hpp)
             if (oceanPipeline_) recordOcean(cmd, options);
@@ -2739,7 +2730,6 @@ private:
         f2.features.textureCompressionBC = supported.textureCompressionBC;
         f2.features.samplerAnisotropy = supported.samplerAnisotropy;
         f2.features.shaderInt64 = rtStatus_.supported; // 64-bit buffer addresses in scene_rt.frag
-        f2.features.fragmentStoresAndAtomics = rtStatus_.supported; // water_rt.frag: reflection calibration (OuRtCalib)
         // FSR (docs/RENDERING.md "FSR"): its compute passes read and write storage images without a declared format.
         fsrReason_ = std::getenv("OU_VK_NO_FSR") ? "disabled by OU_VK_NO_FSR" : vkfsr::probe(gpu_);
         // Its DXC-compiled passes sample with implicit LOD in compute (compute shader derivatives); our mask pass blends its
@@ -2854,16 +2844,15 @@ private:
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &sl, nullptr, &shadowSetLayout_));
         if (rtStatus_.supported) {
             constexpr VkShaderStageFlags fs = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT; // + rt_indirect.comp
-            const VkDescriptorSetLayoutBinding rb[4] = {
+            const VkDescriptorSetLayoutBinding rb[3] = {
                 {0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, fs, nullptr},
                 {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, fs, nullptr},
                 {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxRtTextures, fs, nullptr},
-                {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, fs, nullptr}, // water_rt.frag OuRtCalib (calibBuffer_)
             };
-            const VkDescriptorBindingFlags rf[4] = {0, 0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, 0};
+            const VkDescriptorBindingFlags rf[3] = {0, 0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
             VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-                                                              nullptr, 4, rf};
-            VkDescriptorSetLayoutCreateInfo rl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags, 0, 4, rb};
+                                                              nullptr, 3, rf};
+            VkDescriptorSetLayoutCreateInfo rl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags, 0, 3, rb};
             VK_CHECK(vkCreateDescriptorSetLayout(device_, &rl, nullptr, &rtSetLayout_));
         }
         const VkDescriptorSetLayout sceneSets[3] = {setLayout_, shadowSetLayout_, rtSetLayout_};
@@ -4160,8 +4149,8 @@ private:
         vkGetPhysicalDeviceFeatures2(gpu_, &f);
         if (!as.accelerationStructure || !rq.rayQuery) return "accelerationStructure/rayQuery feature off";
         if (!f12.bufferDeviceAddress || !f12.runtimeDescriptorArray || !f12.descriptorBindingPartiallyBound ||
-            !f12.shaderSampledImageArrayNonUniformIndexing || !f.features.shaderInt64 || !f.features.fragmentStoresAndAtomics)
-            return "missing bufferDeviceAddress/descriptor indexing/shaderInt64/fragmentStoresAndAtomics";
+            !f12.shaderSampledImageArrayNonUniformIndexing || !f.features.shaderInt64)
+            return "missing bufferDeviceAddress/descriptor indexing/shaderInt64";
         // Translated programs: 16 material samplers + the shadow atlas next to the bindless array; 4 sets.
         if (limits.maxPerStageDescriptorSampledImages < kMaxRtTextures + 18 || limits.maxPerStageDescriptorSamplers < kMaxRtTextures + 18 ||
             limits.maxDescriptorSetSampledImages < kMaxRtTextures + 18 || limits.maxBoundDescriptorSets < 4)
@@ -4288,7 +4277,6 @@ private:
                 b.ranges.push_back({s.indexCount / 3, s.firstIndex * uint32_t(sizeof(uint32_t)), 0, 0});
                 b.records.push_back({va, ia, s.firstIndex, 0, ref / 255.0f, 0, transform});
                 b.textures.push_back(s.textureId);
-                b.materials.push_back(s.materialId);
             }
         };
         auto create = [&](RtBlas& b, bool skinned, uint32_t mask, LinearAllocator& memory) {
@@ -4305,10 +4293,7 @@ private:
             b.instance.mask = mask;
             b.instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR; // both faces, as the shadow pass
         };
-        // This upload's instance of `b` (custom index = its first geometry record) and records (texture slots and
-        // calibration entries resolved). Calibration is per (material, texture): the material's translated program is what
-        // the generic shading misses (water_rt.frag OuRtCalib), and a wall seen on screen calibrates its unseen parts.
-        std::unordered_map<uint64_t, uint32_t> calibKeys;
+        // This upload's instance of `b` (custom index = its first geometry record) and records (texture slots resolved).
         auto emit = [&](RtBlas& b, const glm::mat4& model) {
             if (records.size() >= (1u << 24)) throw std::runtime_error("RT: more than 2^24 geometries");
             for (int r = 0; r < 3; ++r)
@@ -4318,7 +4303,6 @@ private:
                 RtGeometry& r = records.emplace_back(b.records[i]);
                 const auto tex = textures_.find(b.textures[i]);
                 r.texture = tex != textures_.end() ? tex->second.slot : 0;
-                r.calib = calibKeys.try_emplace(uint64_t(b.materials[i]) << 32 | b.textures[i], uint32_t(calibKeys.size())).first->second;
             }
             maxScratch = std::max(maxScratch, b.scratch); // rebuildBlases / evictStatic rebuild any of them later
         };
@@ -4445,12 +4429,6 @@ private:
                                        copyDst | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         if (!instances.empty()) batch.buffers.push_back({instanceBuffer_.buffer, {instances.data(), instances.size() * sizeof(instances[0]), 0, 0}});
         if (!records.empty()) batch.buffers.push_back({geometryBuffer_.buffer, {records.data(), records.size() * sizeof(RtGeometry), 0, 0}});
-        // water_rt.frag reflection calibration (OuRtCalib): two windows of kCalibWords uints per entry, zeroed here.
-        calibRecords_ = std::max<size_t>(1, calibKeys.size());
-        calibBuffer_ = createBuffer(gen_->memory, calibRecords_ * 2 * kCalibWords * sizeof(uint32_t),
-                                    copyDst | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        clearCalibration(cmd, 0, VK_WHOLE_SIZE);
-        calibHalf_ = 0, calibFrames_ = 0;
         stage(batch);
         recordPending(cmd);
 
@@ -4505,9 +4483,9 @@ private:
         }
         ++rtStatus_.tlasBuilds;
 
-        // Set 2: TLAS, geometry records, every scene texture at its slot (unused slots stay unbound), calibration.
+        // Set 2: TLAS, geometry records, every scene texture at its slot (unused slots stay unbound).
         const VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
-                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2},
+                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
                                             {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxRtTextures}};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 3, ps};
         VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &rtPool_));
@@ -4515,35 +4493,22 @@ private:
         VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &rtSet_));
         VkWriteDescriptorSetAccelerationStructureKHR asw{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR, nullptr, 1, &tlas_};
         const VkDescriptorBufferInfo bufInfo{geometryBuffer_.buffer, 0, VK_WHOLE_SIZE};
-        const VkDescriptorBufferInfo calibInfo{calibBuffer_.buffer, 0, VK_WHOLE_SIZE};
         std::vector<VkDescriptorImageInfo> images{{sceneSampler_, white_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
         std::vector<uint32_t> slots{0};
         for (const auto& [_, img] : textures_)
             if (img.slot) images.push_back({sceneSampler_, img.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}), slots.push_back(img.slot);
-        std::vector<VkWriteDescriptorSet> w(3 + images.size(), {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET});
+        std::vector<VkWriteDescriptorSet> w(2 + images.size(), {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET});
         w[0].pNext = &asw;
         w[0].dstSet = rtSet_, w[0].dstBinding = 0, w[0].descriptorCount = 1;
         w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
         w[1].dstSet = rtSet_, w[1].dstBinding = 1, w[1].descriptorCount = 1;
         w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, w[1].pBufferInfo = &bufInfo;
-        w[2].dstSet = rtSet_, w[2].dstBinding = 3, w[2].descriptorCount = 1;
-        w[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, w[2].pBufferInfo = &calibInfo;
         for (size_t i = 0; i < images.size(); ++i) {
-            auto& x = w[3 + i];
+            auto& x = w[2 + i];
             x.dstSet = rtSet_, x.dstBinding = 2, x.dstArrayElement = slots[i], x.descriptorCount = 1;
             x.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, x.pImageInfo = &images[i];
         }
         vkUpdateDescriptorSets(device_, uint32_t(w.size()), w.data(), 0, nullptr);
-    }
-
-    // Zero `size` bytes of calibBuffer_ at `offset`: after earlier frames' water passes accumulated there (any frame still
-    // in flight: the barrier's first scope is everything submitted before), before this frame's.
-    void clearCalibration(VkCommandBuffer cmd, VkDeviceSize offset, VkDeviceSize size) {
-        constexpr VkPipelineStageFlags2 frag = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, copy = VK_PIPELINE_STAGE_2_CLEAR_BIT;
-        constexpr VkAccessFlags2 rw = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
-        asBarrier(cmd, frag, rw, copy, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-        vkCmdFillBuffer(cmd, calibBuffer_.buffer, offset, size, 0);
-        asBarrier(cmd, copy, VK_ACCESS_2_TRANSFER_WRITE_BIT, frag, rw);
     }
 
     VkDeviceAddress alignUp(VkDeviceAddress v) const { return (v + scratchAlign_ - 1) / scratchAlign_ * scratchAlign_; }
@@ -4888,7 +4853,7 @@ private:
         bury([this, ubo = std::exchange(origMaterialUbo_, {}), pool = std::exchange(origScenePool_, VK_NULL_HANDLE),
               tlas = std::exchange(tlas_, VK_NULL_HANDLE),
               buffers = std::array{std::exchange(tlasBuffer_, {}), std::exchange(instanceBuffer_, {}), std::exchange(geometryBuffer_, {}),
-                                   std::exchange(scratch_, {}), std::exchange(calibBuffer_, {})},
+                                   std::exchange(scratch_, {})},
               rtPool = std::exchange(rtPool_, VK_NULL_HANDLE), images = std::move(transient_), gen = std::move(gen_)] {
             vkDestroyBuffer(device_, ubo.buffer, nullptr);
             vkDestroyDescriptorPool(device_, pool, nullptr);
@@ -5344,12 +5309,6 @@ private:
     uint64_t indLast_ = 0;
     VkAccelerationStructureKHR tlas_ = VK_NULL_HANDLE;
     Buffer tlasBuffer_, instanceBuffer_, geometryBuffer_, scratch_;
-    // water_rt.frag reflection calibration (OuRtCalib): 2 windows x calibRecords_ x kCalibWords; the shader accumulates
-    // into window calibHalf_ (WaterBlock::waterPass[2].z) and reads both; the older one is cleared every
-    // kCalibWindowFrames frames, so the measurement follows lighting changes within 1-2 windows.
-    Buffer calibBuffer_;
-    size_t calibRecords_ = 0;
-    uint32_t calibHalf_ = 0, calibFrames_ = 0;
     std::vector<RtGroup> rtGroups_; // merged BLASes over the GpuMesh::rtStatic meshes (this upload's after buildRayTracing)
     static constexpr uint64_t kUnkeyedGroup = ~0ull; // RtGroup::id of unkeyed meshes (others: GpuMesh::part)
     std::unordered_set<uint64_t> movers_; // keys of meshes updateVertices moved out of a merged BLAS: kept out

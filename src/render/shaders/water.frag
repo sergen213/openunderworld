@@ -60,49 +60,6 @@ layout(binding = 12) uniform sampler2DArray uOcean;
 #include "shaders/waves.glsl" // the waves (shared with water.vert and the caustics)
 #include "shaders/caustics.glsl"
 float ouSunShadowVisibility(vec3 p) { return ouSunVisibility(p, vec3(0.0), true, false); }
-#ifdef OU_RT
-// Reflection colour of off-screen hits (VkRenderer calibBuffer_). The generic shading (ouRtLit: the hit's one diffuse
-// texture x vertex colour x lambert x a shadow ray) does not match the translated shaders, which blend several layers
-// under light maps: [O] l2_cliffclimb deck, on-screen hits, raster / generic 0.35-3.5 per pixel; the cliff rock's diffuse
-// texture averages 0.16 (dark texels 0.06, covered by other layers in the raster) where the raster rock reads 0.5, so
-// steep wave faces mirroring the cliff above the frame showed near-black, cliff-textured patches. So each on-screen hit
-// adds its raster colour (scene fog removed) and its lighting (ouRtLit's lambert x shadow factor) to its geometry's
-// (material, texture) record (OuGeom::calib), and off-screen hits of a record are its mean raster colour per unit of
-// light x their own lighting: a cliff seen on screen colours its parts above the frame, shadowed parts stay darker.
-// Records never seen on screen keep the generic shading x waterPass[2].w. Two windows of 8 uints per record (scene rgb,
-// light, -, -, samples, -) x 1024 fixed point: this frame accumulates into window waterPass[2].z (up to kCalibCap
-// samples) and reads both; the host clears the older every 120 frames.
-layout(set = OU_RT_SET, binding = 3, std430) buffer OuRtCalib { uint ouCalib[]; };
-const uint kCalibWords = 8u, kCalibCap = 4096u, kCalibMin = 16u;
-const float kCalibScale = 1024.0;
-uint ouCalibRecords() { return uint(ouCalib.length()) / (2u * kCalibWords); }
-// ouRtLit's lighting factor alone (1 where the hit has no normal).
-float ouRtLighting(vec3 hp, vec3 hn) { return ouRtLit(hp, hn, vec3(1.0)).r; }
-// An on-screen hit of record `rec` at hp (normal hn): `seen` the raster colour there, `fogT` the scene fog at its eye
-// distance.
-void ouCalibrate(uint rec, vec3 seen, vec3 hp, vec3 hn, float fogT) {
-    uint n = ouCalibRecords();
-    if (rec >= n || fogT > 0.95) return; // fog hides the surface
-    uint b = (uint(w.waterPass[2].z) * n + rec) * kCalibWords;
-    if (ouCalib[b + 6u] >= kCalibCap || atomicAdd(ouCalib[b + 6u], 1u) >= kCalibCap) return;
-    uvec3 s = uvec3(max(seen - w.fogColor.rgb * fogT, 0.0) * kCalibScale + 0.5);
-    for (uint i = 0u; i < 3u; ++i)
-        if (s[i] != 0u) atomicAdd(ouCalib[b + i], s[i]);
-    atomicAdd(ouCalib[b + 3u], uint(ouRtLighting(hp, hn) * (1.0 - fogT) * kCalibScale + 0.5));
-}
-// Unfogged colour of an off-screen hit of record `rec` at hp (normal hn, ouRtHit colour col).
-vec3 ouRtOffscreen(uint rec, vec3 hp, vec3 hn, vec3 col) {
-    uint n = ouCalibRecords();
-    if (rec < n) {
-        uint a = rec * kCalibWords, b = (n + rec) * kCalibWords;
-        float light = float(ouCalib[a + 3u] + ouCalib[b + 3u]);
-        if (ouCalib[a + 6u] + ouCalib[b + 6u] >= kCalibMin && light > 0.0)
-            return vec3(ouCalib[a] + ouCalib[b], ouCalib[a + 1u] + ouCalib[b + 1u], ouCalib[a + 2u] + ouCalib[b + 2u]) / light *
-                   ouRtLighting(hp, hn);
-    }
-    return ouRtLit(hp, hn, col) * max(w.waterPass[2].w, 1.0);
-}
-#endif
 #ifdef VULKAN
 #define OU_NDC_Y(uv) (1.0 - 2.0 * (uv).y)
 #define OU_NDC_Z(d) (d)
@@ -335,25 +292,23 @@ void main() {
 #ifdef OU_RT
         // Ray traced (render/sun.glsl ouRtHit: water excluded): sees what SSR cannot (off screen, behind Lara, under
         // foreground objects). A hit that lies on screen and is the visible surface there takes the rasterised colour
-        // (the translated shaders' exact look, its fog included) and records it for its geometry (ouCalibrate); the
-        // others take that geometry's on-screen colour under their own lighting (ouRtOffscreen) and are fogged by their
-        // eye distance like the scene; misses keep the sky.
+        // (the translated shaders' exact look, its fog included); the others are shaded by ouRtLit (texture x vertex
+        // colour x lambert x one shadow ray), scaled by waterPass[2].w (the translated shaders read ~2x brighter than the
+        // generic shading of the same hit) and fogged by their eye distance like the scene; misses keep the sky.
         vec3 ro = p + vec3(0.0, 0.0, 2.0);
         vec3 hc, hn;
         float hd = ouRayInputsFinite(ro, rs) ? ouRtHit(ro, rs, hc, hn) : -1.0;
         if (hd >= 0.0) {
             vec3 hp = ro + rs * hd;
             float he = distance(hp, w.eye.xyz);
-            float hf = clamp((he - w.fogRange.x) / max(1.0, w.fogRange.y - w.fogRange.x), 0.0, 1.0);
             bool inside;
             vec2 su = ouScreenUv(hp, inside);
             float sd = inside ? textureLod(uDepth, su, 0.0).r : 1.0;
-            if (sd < 0.999999 && abs(distance(ouWorld(su, sd), w.eye.xyz) - he) < 20.0 + 0.01 * he) {
-                vec3 seen = textureLod(uScene, su, 0.0).rgb;
-                ouCalibrate(ouRtCalib, seen, hp, hn, hf);
-                hc = seen;
-            } else
-                hc = mix(min(ouRtOffscreen(ouRtCalib, hp, hn, hc), vec3(1.0)), w.fogColor.rgb, hf);
+            if (sd < 0.999999 && abs(distance(ouWorld(su, sd), w.eye.xyz) - he) < 20.0 + 0.01 * he)
+                hc = textureLod(uScene, su, 0.0).rgb;
+            else
+                hc = mix(min(ouRtLit(hp, hn, hc) * max(w.waterPass[2].w, 1.0), vec3(1.0)), w.fogColor.rgb,
+                         clamp((he - w.fogRange.x) / max(1.0, w.fogRange.y - w.fogRange.x), 0.0, 1.0));
             refl = toLinear(hc), conf = 1.0;
         }
 #else

@@ -39,11 +39,9 @@ float ouShadowMapVisibility(vec3 p) {
 layout(set = OU_RT_SET, binding = 0) uniform accelerationStructureEXT ouTlas;
 // One record per BLAS geometry (= traced submesh), indexed by instance custom index + geometry index. `transform`: the
 // geometry's own model (VkTransformMatrixKHR rows) in the merged static BLASes (VkRenderer::buildRayTracing), else 0.
-// `calib`: the geometry's (material, texture) entry in water_rt.frag's reflection calibration (OuRtCalib).
-struct OuGeom { uint64_t vertices; uint64_t indices; uint firstIndex; uint texture; float alphaRef; uint calib; uint64_t transform; };
+struct OuGeom { uint64_t vertices; uint64_t indices; uint firstIndex; uint texture; float alphaRef; uint pad; uint64_t transform; };
 layout(set = OU_RT_SET, binding = 1, std430) readonly buffer OuGeoms { OuGeom ouGeoms[]; };
 layout(set = OU_RT_SET, binding = 2) uniform sampler2D ouRtTextures[];
-// Binding 3: the reflection calibration water_rt.frag accumulates and reads (OuRtCalib, declared there only).
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer OuWords { uint w[]; };
 const uint kOuVertexWords = 18u; // scene::Vertex: position 0-2, normal 3-5, uv 6-7, RGBA8 colour 8, original-shader inputs 9-17
 // Instance masks (VkRenderer::buildRayTracing): 1 solid (reflection rays: not water, not shadow-only), 2 water (water never
@@ -147,9 +145,7 @@ float ouQuadSum(float v) {
 }
 // Closest solid hit (water surfaces excluded) along unit r from p, for mirror reflections. Returns the hit distance, < 0
 // on a miss (the caller's own sky / surface colour); `col` = texture * vertex colour, `n` = unit world normal facing back
-// along r (two-sided, as gl_FrontFacing in the raster pass), 0 where the mesh has none; ouRtCalib = the hit geometry's
-// OuGeom::calib. Shade with ouRtLit.
-uint ouRtCalib;
+// along r (two-sided, as gl_FrontFacing in the raster pass), 0 where the mesh has none. Shade with ouRtLit.
 float ouRtHit(vec3 p, vec3 r, out vec3 col, out vec3 n) {
     col = vec3(0.0), n = vec3(0.0);
     rayQueryEXT rq;
@@ -157,7 +153,6 @@ float ouRtHit(vec3 p, vec3 r, out vec3 col, out vec3 n) {
     ouResolveCandidates(rq);
     if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) return -1.0;
     OuGeom g = ouGeoms[uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true) + rayQueryGetIntersectionGeometryIndexEXT(rq, true))];
-    ouRtCalib = g.calib;
     OuWords vb = OuWords(g.vertices);
     OuTri t = ouCorners(g, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)));
     vec3 b = ouBary(rayQueryGetIntersectionBarycentricsEXT(rq, true));
