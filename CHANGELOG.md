@@ -4,6 +4,23 @@ All notable changes to OpenUnderworld are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 `tools/release.sh` publishes the section of the version being released as the GitHub release notes.
 
+## [0.39.0] - 2026-11-07
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Fixed: Lara can climb onto push blocks and other objects that carry ledges in the original (block tops, breakable
+  ledges, cog rings, poles on objects), and those ledges move with the object. In the Mexico ballcourt this opens the
+  way: push the block under the inserted pole, climb onto it, jump to the pole and hang, and the door rises.
+- Added: panthers and tigers follow you across gaps and drops, jumping down, up or across the level's jump links with
+  their own animations. Soldiers still go round.
+- Added: more automated tests run the real game through puzzles and check what the puzzle does next (trap-room seal,
+  puzzle-room elevator, Valgrind cog wheel, Baldr's tomb plates and gate, the ballcourt pole lever and door, a calendar
+  push handle). New `ou-game --report-objects` option prints chosen objects' state at exit.
+- Fixed: grapple targets use their own throw range and rope length from the level data, as in the original (for
+  example the Croft Manor hall ring is shorter, the Mexico temple post longer). The Croft Manor chapel ring is thrown
+  at from the top of the column by the stone angel, as in the original.
+- Checked against the original: an inserted pole sits exactly on its socket's attach point.
+
 ## [0.38.1] - 2026-11-07
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
