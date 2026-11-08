@@ -188,8 +188,11 @@ TEST(PhysicsRealData, CameraCollidesOnlyWithFlaggedObjects) {
             if (const auto shape = physics::solidShape(o, s)) return int(shape->faces[0].mask);
         return -1;
     };
-    EXPECT_EQ(mask("ar_ei_thor_slide_door"), physics::kObjectMask | physics::kCameraObjectMask);
-    EXPECT_EQ(mask("ar_pt_pole_a"), physics::kObjectMask);
+    // Both also have oflags bit 0x08, so they block the targeting line of sight (kSightObjectMask, tru.exe 0x713090).
+    EXPECT_EQ(mask("ar_ei_thor_slide_door"), physics::kObjectMask | physics::kCameraObjectMask | physics::kSightObjectMask);
+    EXPECT_EQ(mask("ar_pt_pole_a"), physics::kObjectMask | physics::kSightObjectMask);
+    EXPECT_EQ(physics::kSightObjectMask & collision::kSightMask, physics::kSightObjectMask);
+    EXPECT_EQ(physics::kObjectMask & collision::kSightMask, 0);
     EXPECT_EQ(physics::kCameraObjectMask & collision::kCameraMask, physics::kCameraObjectMask);
     EXPECT_EQ(physics::kObjectMask & collision::kCameraMask, 0);
 }
