@@ -3377,7 +3377,9 @@ to white, 0x5DAB40), then after 0.2 s puts her onto `uberobjectbase` 2's anchor 
 ModelMarkerAnchor, 0x4D3110, of ms_uo_yacht 998 at HInfo marker 13, 0x4D4820 -> 0x46DF20) with `instance` 26:
 standing on the stern deck, facing the frame's -Y as intros (ours: `World::markerFrame`, `Player::spawn`, the camera
 behind her [I]). Teleports and tails reset plane-crossing tracking
-(`Runtime::playerJumped`; else the 7652 warp crosses kill plane 7650). Water boxes keep their half extents and
+(`Runtime::playerJumped`; else the 7652 warp crosses kill plane 7650); so does the tick in which a climb-up clip is
+seated on its ledge (`Player::takeReseat` [I]: the whole pull-up clip sets her position 148 lower, which read as a
+fall through l3_bedroom_hall's kill plane 4379 under ledge 969). Water boxes keep their half extents and
 rotation when a unit is offset (only min / max / centre move): l7_arctic_sea's boxes failed at its offset before.
 Stowed weapons are placed from the data as the original (speargun across her back in ch1, the rifle in ch6; weapon
 data +0xB9 names Lara's stow marker, "Combat").
