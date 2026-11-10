@@ -245,3 +245,13 @@ Portal order from the start unit; level changes not made by portals are named.
   transition's target (needed by l3_chapel fire 4818 / the shadow pillars).
 - GateSweep counts a target changed at any tick of its 600-tick window (a hazard's swing back to rest, l1_kraken_room
   tentacles 494-496, counted as unchanged before).
+
+## Kraken kill (l1_kraken_room) by manual aim
+
+Switch 30 raises platform 27 (`ms_ani_sunsphere_plat`, section 0: 1 → 2), which arms chain sections 2 / 3 (1 → 0) and
+brings the weak links 61 / 62 (`ms_ani_sunsphere_chain_shootable`, anchored to 27's markers 21 / 20) down from the
+ceiling to the pedestals at the ledge's ends (x ≈ ±1800). They are never lock targets (uber action 0x1A sets instance
++0x1C bit 2; filter 0x6ECCA0), so they need manual aim. A hit runs the link's graph, its script sends 27 command 5 / 6
+(section 2 / 3: 0 → 2); the first shifts the platform (section 0 → 4), the second drops it (→ 3) and the platform's
+script requests `049_med_kraken_death` [O]. Test: `ProgressionReal.KrakenChainLinksByManualAim` (switch, walk along the
+ledge, Manual Aim, look, fire). A link shot before the platform is raised (links at the ceiling) is consumed [U].
