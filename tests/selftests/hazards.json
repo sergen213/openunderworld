@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "hazards",
+  "chapter": "Core mechanics: trap damage (damaging collision primitives)",
+  "note": "l4_traprooms (Xibalba's trap houses). Amounts are the primitives' own [O object data, tru.exe 0x48E040 / 0x4923C0]: a flame jet (ca_ei_flame_trap) 800, a crusher jaw's plate (ca_rb_crusher_slim) 12345. A hit starts the 30-frame invulnerability window (lara.drm +0x60). The teleport fixture only moves her between the houses; the walking, the jets' and jaws' clocks and the damage are the game's.",
+  "level": "l4_traprooms",
+  "spawn": [14030, -19900, 6360, 90],
+  "steps": [
+    {"step": "into_the_flame_jet", "input": ["0 forward 1"], "duration": 6,
+     "until": {"probe": "step.health_lost", "min": 1},
+     "expect": [{"probe": "step.health_lost", "near": 800, "tol": 0.5, "note": "the jet's box: 800"},
+                {"probe": "step.hazards", "has": ["ca_ei_flame_trap:800"]},
+                {"probe": "player.health", "near": 200, "tol": 0.5},
+                {"probe": "player.dead", "eq": false}]},
+    {"step": "stagger_inside_the_window", "input": ["0 forward 1"], "duration": 0.9,
+     "expect": [{"probe": "step.health_lost", "max": 0.5, "note": "touches within 30 frames of the hit are ignored"},
+                {"clips": ["hit_mediumfront"]},
+                {"probe": "player.dead", "eq": false}]},
+    {"step": "between_the_crusher_jaws", "fixtures": [{"health": 1000}, {"teleport": [55, -18100, 6400, -90]}],
+     "plan": ["wait 1.85", "run -90 1.25", "wait 3"], "duration": 8,
+     "until": {"probe": "player.dead", "eq": true},
+     "expect": [{"probe": "step.hazards", "has": ["ca_rb_crusher_slim:12345"], "note": "the plate on the closing jaw's face"},
+                {"probe": "step.health_lost", "min": 1000},
+                {"probe": "player.health", "max": 0},
+                {"probe": "step.seconds", "min": 2.9, "max": 3.6, "note": "the pair she stopped in opens for 2 s and slams shut at 65 units a frame"}]}
+  ]
+}

@@ -297,6 +297,7 @@ Recorded for every step and written to the report whether or not anything expect
 | `step.calls` | script virtual calls made during the step as `"<callee uid>:<vt>"`, first-call order (`-1` = constructor; negative callees are unit / global scripts) |
 | `step.events` | script events as `"<kind>:<source>><target>"` (`enter`, `in`, `out`, `activate`, ...), first-seen order |
 | `step.pickups` | pickups collected as `"<kind>:<id>"` (`treasure`, `relic`, `healthpack`) |
+| `step.hazards` | contact-hazard hits that hurt her as `"<object name>:<damage>"`, one entry per hit in order (`ca_ei_flame_trap:800`; docs/GAMEPLAY.md "Hazards") |
 
 Speeds are measured from her root's displacement per tick, so clip-end root snaps show up in `peak_*_speed` (a
 climb-up's last tick moves the root ~340 units): prefer `player.speed` at the end of a step, `step.horizontal` and

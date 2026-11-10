@@ -1394,6 +1394,13 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
     const Case cases[] = {
         {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle, // born by plane 6546, its scripts kill poachers, ragdolls fall
          [](game::World& w) { w.script().call(6546, 54); }},
+        // Between l4_traprooms' second crusher pair as it slams shut: saved while the jaws move, 4 ticks before the plate
+        // on jaw 5886 kills her (a solid hazard hurts only while it moves: where it stood a tick ago is saved).
+        {"l4_traprooms", game::Spawn{{55, -18100, 6400}, -1.5707963f}, 192, 120, [](uint64_t t) {
+             game::Actions a;
+             a.move.y = t >= 111 && t < 186 ? 1.0f : 0.0f;
+             return a;
+         }, nullptr, [](const game::World& w) { return !w.health().dead() && !w.hazards().empty(); }},
         // (dual targeting, 0x71E490: with two mercs in range each pistol takes its own, so the first falls later than under one lock)
         {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 1400, [](uint64_t t) { // runs at the mercs, locked on, firing
              game::Actions a;

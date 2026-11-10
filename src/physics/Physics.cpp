@@ -84,20 +84,20 @@ void readHInfo(const cdc::Section& m, uint32_t h, int segment, std::vector<Prim>
         head(o, p);
         p.id = at<uint16_t>(m, o + 4), p.radius = at<uint16_t>(m, o + 6);
         p.pos = {at<int16_t>(m, o + 8), at<int16_t>(m, o + 10), at<int16_t>(m, o + 12)};
-        p.mass = at<uint16_t>(m, o + 0x14);
+        p.mass = at<uint16_t>(m, o + 0x14), p.damage = at<int16_t>(m, o + 0x1C);
     });
     list(1, kBoxStride, [&](uint32_t o, Prim& p) { // type 5
         p.kind = PrimKind::Box;
         p.size = vec(m, o), p.pos = vec(m, o + 0x10), p.rot = quatXyzw(m, o + 0x20);
         head(o + 0x30, p);
-        p.id = at<uint16_t>(m, o + 0x34), p.mass = at<uint16_t>(m, o + 0x36);
+        p.id = at<uint16_t>(m, o + 0x34), p.mass = at<uint16_t>(m, o + 0x36), p.damage = at<int16_t>(m, o + 0x3E);
     });
     list(3, kCapsuleStride, [&](uint32_t o, Prim& p) { // type 10
         p.kind = PrimKind::Capsule;
         p.pos = vec(m, o), p.rot = quatXyzw(m, o + 0x10);
         head(o + 0x20, p);
         p.id = at<uint16_t>(m, o + 0x24), p.radius = at<uint16_t>(m, o + 0x26), p.length = at<uint16_t>(m, o + 0x28);
-        p.mass = at<uint16_t>(m, o + 0x2A);
+        p.mass = at<uint16_t>(m, o + 0x2A), p.damage = at<int16_t>(m, o + 0x32);
     });
     // Slot 2 markers (tru.exe 0x46DA20, HInfo primitive type 8): +4 u16 id, +8 float3 position, +0x14 float3 Euler.
     const uint32_t nm = at<uint32_t>(m, h + 16);

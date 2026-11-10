@@ -776,6 +776,27 @@ struct Wetness {
     void reset() { *this = {}; }          // larabase 68 (0x778150 -> 0x6ED460)
 };
 
+// A damaging collision primitive of a loaded object (Hazards.cpp; tru.exe 0x48E040 / 0x4923C0), posed this tick.
+struct HazardShape {
+    int32_t uid = 0;
+    int section = -1;  // uber section whose model holds it; -1 the object's own model
+    int segment = 0;
+    physics::PrimKind kind = physics::PrimKind::Box;
+    vec3 size{0};      // box: full side lengths
+    float radius = 0, length = 0;
+    float damage = 0;  // what a touch costs (12345: dead)
+    bool sensor = false;         // flag bytes 2-3 not 0: an overlap volume (flames, rollers); else solid collision
+    vec3 last{0};                // its centre a tick ago (solid ones hurt only while they move)
+    bool placed = false;         // `last` is set
+    glm::mat4 local{1}, bind{1}; // in its segment; the segment's bind frame in the model
+    int collider = -1;           // index of the collider carrying its segment, -1 none
+    glm::mat4 world{1};
+    bool active = false;         // its object is alive and present this tick
+};
+struct HazardHit { int32_t uid = 0; float damage = 0; uint64_t tick = 0; };
+// Distance from the segment a-b to the shape's surface (negative inside a sphere / capsule, 0 inside a box).
+float hazardDistance(const HazardShape& h, vec3 a, vec3 b);
+
 class World {
 public:
     World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tuning tuning = defaultTuning());
@@ -910,6 +931,10 @@ public:
     std::optional<BreakPhase> breakablePhase(int32_t uid) const; // nullopt: not a breakable of the loaded units
     bool breakBreakable(int32_t uid, int actionId);
     const std::vector<int32_t>& brokenNow() const { return broken_; }
+    // Contact hazards (Hazards.cpp): the damaging collision primitives of the loaded objects as posed this tick, and
+    // the touches that hit Lara this tick.
+    const std::vector<HazardShape>& hazards() const { return hazards_; }
+    const std::vector<HazardHit>& hazardHits() const { return hazardHits_; }
     // An explosion record's area hit at `at` (0x69F1E0): targets, Lara, damageable objects, loose bodies.
     void blast(vec3 at, const ExplosionRecord& x);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
@@ -1098,7 +1123,7 @@ public:
 
     // ---- combat (Combat.cpp; docs/GAMEPLAY.md "Combat") ----
     std::vector<Damageable*> targets; // lock-on / hitscan targets, non-owning (src/game/ai registers its enemies)
-    void damageLara(float amount, vec3 from, int type = kDamageLight); // enemy blows, hazards (tru.exe 0x6F5030)
+    bool damageLara(float amount, vec3 from, int type = kDamageLight); // enemy blows, hazards (tru.exe 0x6F5030); false: ignored
     void kill();                                                      // message 4: damage = current health
     const Health& health() const { return health_; }
     // saves (after restore(), which heals fully, and restoreCombat, which set the window / regeneration clocks)
@@ -1278,6 +1303,16 @@ private:
     void breakableColliders();   // syncObjects: the whole ones' piece collision
     void tickBreakableMarkup();  // tickObjectMarkup: their pieces' markup
     void tickBreakables(float dt);
+    // Where each damaging primitive stood a tick ago (what "it moves" is measured from): saved, so a loaded game hits
+    // on the same tick as the one that ran on.
+    nlohmann::json serializeHazards() const;
+    void restoreHazards(const nlohmann::json& j);
+    std::map<std::pair<int32_t, int>, vec3> hazardRestored_; // (uid, its n-th primitive) -> centre, until the next sync
+    void syncHazards();  // Hazards.cpp: the loaded objects' damaging collision primitives
+    void tickHazards();  // pose them; one touching Lara's capsule hits her (tru.exe 0x4923C0)
+    std::vector<HazardShape> hazards_;
+    std::vector<HazardHit> hazardHits_; // this tick's
+    size_t hazardObjects_ = ~size_t(0); // script object count hazards_ was built for
     void breakableLoose(std::vector<physics::Scene::Loose>& out) const; // stepPhysics: the broken ones' pieces
     void startBreak(int32_t uid, int action);
     void breakNow(int32_t uid);
@@ -1560,7 +1595,11 @@ private:
     // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()),
     // uber section (-1 = the object's own model: posed by its joint / script; else that section's model, posed by the
     // section's joint and clip).
-    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; };
+    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; int jaw = 0; };
+    // Linked sliding bodies (Objects.cpp linkedJaws; ca_rb_crusher_slim): uid -> each model's slide axis in model space;
+    // the joint position (script::Object::Joint) moves model k along axis k.
+    std::map<int32_t, std::array<vec3, 2>> jaws_;
+    const physics::ObjectPhysics* modelPhysics(const std::string& name, uint32_t model); // modelPhysics_, loaded on first use
     std::vector<ObjectCollider> colliders_;
     size_t syncedAnchors_ = 0; // script anchors at the last syncObjects (riders of spline movers collide)
     // Hit shapes of objects that only shots meet (anim graphs leaving a state on damage whose object does not collide

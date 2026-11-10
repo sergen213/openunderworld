@@ -110,6 +110,7 @@ inline constexpr int kDamageLight = 1;    // enemy hit messages: 1 light, 2 heav
 inline constexpr int kDamageHeavy = 2;
 inline constexpr int kDamagePeriodic = 3; // 0x755230: every data+0xFE frames, data+0xFC % of max
 inline constexpr int kDamageBypass = 5;   // ignores the invulnerability window (0x6F5030)
+inline constexpr int kDamageContact = 6; // class of blows and damaging collision (0x624FB0, 0x5D4C60); as a message-4 kill: current health
 inline constexpr int kDamageKill = 6;     // message 4: damage = current health (0x741300)
 inline constexpr int kDamageAbsolute = 8; // not scaled by difficulty; fall damage records this type (0x702FC0)
 
