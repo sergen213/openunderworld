@@ -1485,8 +1485,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::scalar(mine == nc.args[0].bits);
                 return true;
             }
-            // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance; its receivers are [U].
-            if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) return true;
+            // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance: an anim-graph object (handler
+            // 0x6B4440) enters the state with that id at once (state list query 0xE6, 0x6A5660); other receivers [U].
+            if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) {
+                if (const Object* o = find(self->uid); o && o->graph && o->graph->set->graph)
+                    if (const int state = o->graph->set->graph->stateById(int32_t(nc.args[0].bits)); state >= 0) graphEnter(self->uid, state);
+                return true;
+            }
             // uigamedata 1 (0x60D630) always returns 0; 14 (0x77BBF0) sets a global UI byte no gameplay reads [U].
             if (!std::strcmp(name, "uigamedata") && nc.function == 1 && nc.args.empty()) {
                 nc.result = vm::Value::scalar(0);
