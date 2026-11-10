@@ -477,6 +477,7 @@ extern const std::vector<std::string_view> kMeleeClipNames;
 // 0x4F let go, 0x53 throw, 0xE / 0xD the swing's hit window).
 struct PortableDef {
     bool encumbers = false;
+    float thick = 20.0f; // the smallest half extent of its collision box: its sphere against the level while carried
     float nearDist = 632.111f, aimDist = 2528.45f, nearSpeed = 53.7295f, speed = 53.7295f;
     float lockNearDist = 632.111f, lockAimDist = 2528.45f, lockNearSpeed = 53.7295f, lockSpeed = 53.7295f;
     std::map<std::string, std::string, std::less<>> hosted; // "hosted_throw" -> "hosted:2468"

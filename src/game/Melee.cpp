@@ -219,6 +219,19 @@ const PortableDef* World::portableDef(const std::string& object) {
                     def->nearSpeed = rd<float>(d, o->offset + 0x3C), def->speed = rd<float>(d, o->offset + 0x40);
                     def->lockNearDist = rd<float>(d, o->offset + 0x44), def->lockAimDist = rd<float>(d, o->offset + 0x48);
                     def->lockNearSpeed = rd<float>(d, o->offset + 0x4C), def->lockSpeed = rd<float>(d, o->offset + 0x50);
+                    if (const auto* p = objectPhysics(object)) { // its collision's box in its own frame
+                        vec3 lo(1e30f), hi(-1e30f);
+                        for (int seg = 0; seg < int(p->segments.size()); ++seg)
+                            if (const auto shape = physics::solidShape(*p, seg))
+                                for (const vec3& v : shape->vertices) {
+                                    const vec3 m(p->segments[size_t(seg)] * glm::vec4(v, 1));
+                                    lo = glm::min(lo, m), hi = glm::max(hi, m);
+                                }
+                        if (lo.x <= hi.x) {
+                            const vec3 half = (hi - lo) * 0.5f;
+                            def->thick = std::max(10.0f, std::min({half.x, half.y, half.z}));
+                        }
+                    }
                     for (const auto& [name, ce] : clipEvents(*o)) {
                         if (!name.starts_with("hosted_")) continue;
                         const std::string key = "hosted:" + std::to_string(ce.animId);
@@ -448,22 +461,54 @@ void World::impulseObject(int32_t uid, float applied, float contact) {
 // ---- World: carried portables -------------------------------------------------------------------
 // Where the carried portable's origin is: between her hands (bones 55 / 80, the pose of the last tick) while a clip
 // that holds it there plays (the weights' walk, the hosted clips); else 60 ahead and 80 up of her root [I: poles,
-// keys; their carry pose hosted_idle is not layered]. Geometry between her chest and that point stops it short of the
-// wall, so it is not carried through one.
-vec3 World::heldPoint() const {
+// keys; their carry pose hosted_idle is not layered].
+vec3 World::handsPoint() const {
     const PlayerState& s = player_.state();
     const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
-    vec3 at = s.pos + fwd * 60.0f + vec3(0, 0, 80);
     const bool inHands = s.clip.starts_with("portable_encumbered") || s.clip.starts_with("hosted:");
     if (inHands && bones_.size() > 80 && anims_.skeleton.bones.size() > 80) {
         const glm::mat4 m = player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
-        at = 0.5f * (vec3(m * bones_[55][3]) + vec3(m * bones_[80][3]));
+        return 0.5f * (vec3(m * bones_[55][3]) + vec3(m * bones_[80][3]));
     }
+    return s.pos + fwd * 60.0f + vec3(0, 0, 80);
+}
+
+// The carried portable collides with the level [I: tru.exe keeps it on her hand markers; what keeps it out of walls
+// there is not traced]: a sphere of its thickness (the smallest half extent of its collision box, at most her own
+// radius so it starts inside her capsule) swept from her chest to her hands stops at the first wall, door or other
+// object, so it is never posed through one.
+vec3 World::heldPoint() const {
+    const PlayerState& s = player_.state();
+    const vec3 at = handsPoint();
+    const auto* held = held_ ? script_.find(held_) : nullptr;
+    const PortableDef* def = held ? const_cast<World*>(this)->portableDef(held->name) : nullptr;
+    const float r = std::min(def ? def->thick : PortableDef{}.thick, player_.tuning().radius - 5.0f);
     const vec3 chest = s.pos + vec3(0, 0, std::max(at.z - s.pos.z, 0.5f * player_.tuning().height));
-    if (const float len = glm::length(at - chest); len > 1.0f)
-        if (const auto hit = col_.raycast(chest, (at - chest) / len, len + 20.0f, collision::kSightMask); hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != held_))
-            at = chest + (at - chest) / len * std::max(0.0f, hit->t - 20.0f);
+    if (glm::length(at - chest) > 1.0f)
+        if (const auto hit = col_.sweepSphere(chest, r, at - chest, collision::kSightMask); hit && (hit->dynamic < 0 || col_.dynamics[size_t(hit->dynamic)].id != held_))
+            return chest + (at - chest) * std::clamp(hit->t, 0.0f, 1.0f);
     return at;
+}
+
+// Carrying on her feet what she holds out in both hands (an encumbering portable: the carved weights): a wall of the
+// level its thickness reaches at her hands holds her off it (she cannot walk a weight into a wall) [I]. Gems, keys and
+// poles are held 60 ahead of her root, inside her own radius: the sweep is enough for them. Not where she engages a
+// receptacle's record (l5_valgrind's cog wheels take the power gem from right by their housing). Objects do not (receptacles are approached with the portable in her hands: the sweep
+// above keeps it out of them). Not during the pick-up, put-down, throw and swing clips, whose hands go to the floor.
+void World::carryCollide(float dt) {
+    const PlayerState& s = player_.state();
+    const auto* held = held_ ? script_.find(held_) : nullptr;
+    if (!held || s.water >= 0 || !(s.state == State::Idle || s.state == State::Walk || s.state == State::Run)) return;
+    const PortableDef* def = portableDef(held->name);
+    if (!def || !def->encumbers) return; // at her side, within her capsule's reach: heldPoint's sweep is enough
+    const float r = def->thick;
+    const vec3 at = handsPoint();
+    const auto hit = col_.closestPoint(at, r, collision::kSightMask);
+    if (!hit) return;
+    if (const Engaged e = engaged(); e.record && e.record->kind == 5) return; // at a receptacle: she sets it in from there
+    if ( std::abs(hit->normal.z) > 0.7f || hit->dynamic >= 0) return; // the level's walls; objects only stop the sweep
+    const vec2 n(hit->normal);
+    if (const float len = glm::length(n); len > 1e-3f && hit->t < r) player_.step(vec3(n / len * (r - hit->t), 0), dt);
 }
 
 // Picking `o` up: with its hosted_pickup clip she bends for it and it comes into her hands on the clip's event 0x4E

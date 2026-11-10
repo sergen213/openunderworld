@@ -2045,6 +2045,70 @@ TEST(CombatReal, KickBreaksAnUrn) {
     EXPECT_NE((*w2.uberState(94))[0], 0u);
 }
 
+// l1_baldrs_tomb: the carried weight collides with the level. Walked at each wall of the west room in turn, the weight
+// (a sphere of its thickness round its origin) never enters a wall and nothing lies between her chest and it; the wall
+// holds her off farther than her own radius would. Put down against the wall it is a loose rigid body from her hands,
+// resting on the floor, outside the wall.
+TEST(CombatReal, CarriedWeightCollidesWithTheLevel) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    w.script().setBigfile(&bf);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto* def = w.portableDef("ms_pt_weight_c");
+    ASSERT_TRUE(def);
+    EXPECT_NEAR(def->thick, 104.0f, 1.0f) << "the smallest half extent of its collision box";
+    EXPECT_LT(def->thick, 200.0f);
+    ASSERT_TRUE(runPlan(w, "engage 220 walk\npress\nwait 2\n"));
+    ASSERT_EQ(w.heldPortable(), 220);
+    const auto& s = w.player().state();
+    const float floorZ = s.pos.z;
+    const auto wallNear = [&](vec3 p, float r) { // distance to the nearest wall face within r, else r
+        const auto hit = w.collision().closestPoint(p, r, collision::kSightMask);
+        return hit && std::abs(hit->normal.z) < 0.7f ? hit->t : r;
+    };
+    int walls = 0;
+    for (const int deg : {180, 90, 270}) {
+        const float yaw = glm::radians(float(deg));
+        const vec3 dir(std::cos(yaw), std::sin(yaw), 0);
+        const auto wall = w.collision().raycast(s.pos + vec3(0, 0, 250), dir, 4000, collision::kSightMask);
+        if (!wall || std::abs(wall->normal.z) > 0.3f) continue;
+        ++walls;
+        float least = 1e9f;
+        bool blocked = false;
+        ASSERT_TRUE(runPlan(w, "run " + std::to_string(deg) + " " + std::to_string(wall->t / 250.0f + 3.0f) + "\n", [&] {
+            if (w.heldPortable() != 220) return;
+            const vec3 at = objectPos(w, 220);
+            least = std::min(least, wallNear(at, def->thick));
+            const vec3 chest = s.pos + vec3(0, 0, std::max(at.z - s.pos.z, 250.0f));
+            if (const float len = glm::length(at - chest); len > 1.0f)
+                blocked |= w.collision().raycast(chest, (at - chest) / len, len, collision::kSightMask).has_value();
+        }));
+        ASSERT_EQ(w.heldPortable(), 220);
+        EXPECT_GT(least, def->thick - 12.0f) << "heading " << deg << ": the weight stayed out of the wall";
+        EXPECT_FALSE(blocked) << "heading " << deg << ": nothing between her and the weight";
+        const auto ahead = w.collision().raycast(s.pos + vec3(0, 0, 250), dir, 1000, collision::kSightMask);
+        ASSERT_TRUE(ahead) << "she walked up to the wall";
+        EXPECT_GT(ahead->t, w.player().tuning().radius + 20.0f) << "heading " << deg << ": held off by the weight";
+        EXPECT_LT(ahead->t, 500.0f);
+    }
+    EXPECT_GE(walls, 2);
+    // put down against the last wall: a loose body from her hands
+    hold(w, press(&Actions::drop), 2);
+    for (int i = 0; i < 240; ++i) w.tick({});
+    EXPECT_EQ(w.heldPortable(), 0);
+    const auto* o = w.script().find(220);
+    ASSERT_TRUE(o && o->loose);
+    ASSERT_TRUE(w.physics().loose(220)) << "a rigid body in the scene";
+    const vec3 rest = objectPos(w, 220);
+    EXPECT_LT(rest.z, floorZ + 200.0f) << "on the floor";
+    EXPECT_GT(rest.z, floorZ - 20.0f);
+    EXPECT_GT(wallNear(rest + vec3(0, 0, def->thick), def->thick * 0.5f), def->thick * 0.5f - 1.0f) << "not in the wall";
+    EXPECT_LT(glm::length(glm::vec2(rest - s.pos)), 500.0f) << "by her";
+}
+
 // l1_baldrs_tomb (walkthrough requirement C04-03): the carved weight 220. Interact picks it up (its hosted_pickup clip:
 // in her hands from the clip's event), she walks with the portable_encumbered clips, Interact elsewhere swings it and
 // keeps it, Crouch puts it down (hosted_putdown) on press plate 219, where it lies as a loose body.

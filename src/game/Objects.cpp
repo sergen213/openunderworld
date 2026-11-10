@@ -1462,6 +1462,7 @@ void World::carryPortables(bool pressed) {
     // Putting it down (Crouch), throwing it (Grenade) and swinging it (Interact with nothing to insert it into) are
     // World::meleeInput / tickMelee (Melee.cpp, releaseHeld): it leaves her hands as a loose body.
     if (held) {
+        carryCollide(float(kTickSeconds));
         held->offset = heldPoint() - held->pos;
         held->body = glm::mat4(1);
         return;

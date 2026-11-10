@@ -1085,7 +1085,9 @@ private:
     Damageable* meleeFind(int32_t id) const;
     void pickUp(script::Object& o);          // carryPortables' pick-up, with the portable's hosted clip
     void releaseHeld(vec3 vel, bool thrown); // the carried portable becomes a loose body moving at `vel`
-    vec3 heldPoint() const;                  // where her hands hold the carried portable (world)
+    vec3 handsPoint() const;                 // between her hands (world): where she holds a carried portable
+    vec3 heldPoint() const;                  // the carried portable's place: her hands, stopped by the level
+    void carryCollide(float dt);             // a wall the carried portable reaches holds her off it
     void tickThrown(float dt);               // thrown / dropped portables: what they hit (enemies, breakables)
     nlohmann::json serializeMelee() const;
     void restoreMelee(const nlohmann::json& j);
