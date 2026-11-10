@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "gauntlet_pillar",
+  "chapter": "Protected by the Dead (l3_secretchamber): the freestanding serpent pillar 4674 cannot be gripped bare-handed; with the right gauntlet Interact grips it and the stick drags it over the crypt floor",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/manor8.html",
+  "note": "docs/GAMEPLAY.md Thor's gauntlets (matrix requirements C11-28 / C11-29). ma_pu_thor_pillar 4674: its push / pull record (uber section 0, a sphere r 948) names g_gauntletright [O data]; the pillar rides a three-axis joint (uber joint type 7 = engine joint 10, tru.exe 0x4E0F40: free along X / Y / Z, rotation kept), so it goes where she pushes it: gripping runs its script's vt 49 (pull strength 3), the stick's forward pushes it along her facing at min(23.704 x 3, 2054.36 x 3 / M) = 71 units/s, letting go leaves it where it is.",
+  "level": "l3_secretchamber",
+  "spawn": [-26322, -420, -1800, 90],
+  "steps": [
+    {"step": "refused_bare_handed",
+     "plan": ["wait 1.5", "push 1 0 2", "wait 0.5"],
+     "duration": 20,
+     "expect": [
+       {"probe": "object.4674.uberslide.1.y", "over": "max", "max": 2, "note": "the pillar did not move"},
+       {"probe": "object.4674.uberslide.1.x", "over": "max", "max": 2},
+       {"probe": "player.state", "eq": "idle"}
+     ]},
+    {"step": "grip_and_push",
+     "fixtures": [{"give": "g_gauntletright"}],
+     "plan": ["engage 4674 walk", "push 1 0 4", "wait 0.2"],
+     "duration": 40,
+     "expect": [
+       {"visits": ["block"]},
+       {"clips": ["thor_engage", "thor_forward"]},
+       {"probe": "step.distance", "min": 150, "note": "she goes with it"}
+     ]},
+    {"step": "it_stays",
+     "plan": ["wait 2"],
+     "duration": 10,
+     "expect": [
+       {"probe": "player.state", "eq": "idle"},
+       {"probe": "object.4674.uberslide.1.z", "min": -20, "max": 25, "note": "on the crypt floor"}
+     ]}
+  ]
+}

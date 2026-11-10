@@ -336,7 +336,7 @@ namespace {
 constexpr float kM = 1.0f / kUnitsPerMetre;
 constexpr float kFrame = 30.0f;  // tru.exe joint units are per 30 Hz frame
 constexpr float kSolver = 60.0f; // [I] motor impulse bounds are per 1/60 s solver step (PHYSICS.md "Uber joints")
-enum : JPH::ObjectLayer { kLayerJoint, kLayerSolid, kLayerLoose, kLayerVehicle, kLayerPlate, kLayerLara, kLayers };
+enum : JPH::ObjectLayer { kLayerJoint, kLayerSolid, kLayerLoose, kLayerVehicle, kLayerPlate, kLayerLara, kLayerHeavy, kLayers };
 
 JPH::Vec3 J(vec3 v) { return {v.x, v.y, v.z}; }
 JPH::Vec3 Jm(vec3 p) { return J(p * kM); } // game units -> metres
@@ -516,6 +516,26 @@ struct Scene::Impl {
     };
     std::vector<JointE> joints;
     struct LinkE { JointLink l; JPH::Ref<LinkConstraint> c; };
+    // Three-axis joints (Scene::setJoints3): a translation-only body with the object's collision, key "f<key>".
+    struct Joint3E {
+        uint64_t key;
+        const ObjectPhysics* physics;
+        mat4 model;
+        float mass;
+        JPH::BodyID body;
+        JPH::Ref<JPH::SixDOFConstraint> c;
+        vec3 com0{0};       // world centre of mass at x = 0
+        vec3 x{0}, v{0};    // as last written back
+        Joint3* live = nullptr;
+    };
+    std::vector<Joint3E> joints3;
+    Joint3E makeJoint3(uint64_t key, const Joint3& j);
+    void placeJoint3(const Joint3E& e, vec3 x, vec3 v) {
+        bi->SetPositionAndRotation(e.body, Jm(e.com0 + x), bi->GetRotation(e.body), JPH::EActivation::Activate);
+        bi->SetLinearVelocity(e.body, Jm(v * kFrame));
+    }
+    void dropJoint3(Joint3E& e) { sys.RemoveConstraint(e.c), remove(e.body); }
+    void driveJoint3(Joint3E& e, const Joint3& j);
     std::vector<LinkE> links;
 
     struct LooseE { int32_t id; JPH::BodyID body; vec3 com; };
@@ -575,6 +595,11 @@ struct Scene::Impl {
         layers.MapObjectToBroadPhaseLayer(kLayerVehicle, JPH::BroadPhaseLayer(1));
         layers.MapObjectToBroadPhaseLayer(kLayerPlate, JPH::BroadPhaseLayer(1));
         layers.MapObjectToBroadPhaseLayer(kLayerLara, JPH::BroadPhaseLayer(1));
+        layers.MapObjectToBroadPhaseLayer(kLayerHeavy, JPH::BroadPhaseLayer(1));
+        // three-axis joint bodies (the Thor pillars): on the terrain and the colliders, against loose bodies and each
+        // other; not Lara's proxy (55 kg would shove a pillar she may not move without the gear)
+        pairs.EnableCollision(kLayerSolid, kLayerHeavy), pairs.EnableCollision(kLayerLoose, kLayerHeavy);
+        pairs.EnableCollision(kLayerHeavy, kLayerHeavy), pairs.EnableCollision(kLayerHeavy, kLayerVehicle);
         pairs.EnableCollision(kLayerSolid, kLayerLoose), pairs.EnableCollision(kLayerLoose, kLayerLoose);
         pairs.EnableCollision(kLayerSolid, kLayerVehicle), pairs.EnableCollision(kLayerLoose, kLayerVehicle);
         pairs.EnableCollision(kLayerPlate, kLayerLoose), pairs.EnableCollision(kLayerPlate, kLayerVehicle);
@@ -591,6 +616,7 @@ struct Scene::Impl {
         for (auto& v : vehicles) dropVehicle(v);
         for (auto& l : links) sys.RemoveConstraint(l.c);
         for (auto& e : joints) sys.RemoveConstraint(e.ax->c);
+        for (auto& e : joints3) sys.RemoveConstraint(e.c);
         for (auto& a : hingeJoints) sys.RemoveConstraint(a->c);
     }
     // The constraint of `a` with its zero at coordinate a.ref: built with the body posed there (derived from its pose at
@@ -740,7 +766,7 @@ struct Scene::Impl {
         return nullptr;
     }
     // Terrain and object solids exist only while something can land on them.
-    bool landing() const { return !loose.empty() || !vehicles.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid); }
+    bool landing() const { return !loose.empty() || !vehicles.empty() || !ragdolls.empty() || std::ranges::any_of(joints, &JointE::solid) || !joints3.empty(); }
     void createSolids() {
         const bool active = landing();
         for (auto& t : terrain) {
@@ -817,6 +843,7 @@ struct Scene::Impl {
         std::vector<JPH::Constraint*> all;
         for (const auto& a : hingeJoints) all.push_back(a->c.GetPtr());
         for (const auto& e : joints) all.push_back(e.ax->c.GetPtr());
+        for (const auto& e : joints3) all.push_back(e.c.GetPtr());
         for (const auto& l : links) all.push_back(l.c.GetPtr());
         for (const auto& v : vehicles) all.push_back(v.c.GetPtr());
         for (const auto& r : ragdolls)
@@ -942,6 +969,70 @@ void Scene::setJoints(std::vector<std::pair<uint64_t, Joint1*>> joints, std::vec
         keep.push_back({l, c});
     }
     m.links = std::move(keep);
+}
+
+// The body: the object's solid primitives about their centre of mass, translation only (0x4E0F40 locks the rotation:
+// three constrained rows), not sleeping. The constraint is built here, at x = 0: its coordinates are the joint's.
+Scene::Impl::Joint3E Scene::Impl::makeJoint3(uint64_t key, const Joint3& j) {
+    Joint3E e{key, j.physics, j.model, j.mass, {}, {}, vec3(0), j.x, j.v, nullptr};
+    const MassProps mp = j.physics ? massProps(*j.physics) : MassProps{};
+    const float mass = j.mass > 0 ? j.mass : mp.mass > 0 ? mp.mass : 666.0f; // tru.exe's fallback mass
+    e.com0 = vec3(j.model * glm::vec4(mp.com, 1));
+    JPH::RefConst<JPH::Shape> shape = j.physics ? looseShape(*j.physics, mp.com) : nullptr;
+    if (!shape) shape = new JPH::SphereShape(0.05f);
+    JPH::BodyCreationSettings s(shape, Jm(e.com0), J(glm::normalize(glm::quat_cast(mat3(j.model)))), JPH::EMotionType::Dynamic, kLayerHeavy);
+    s.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationY | JPH::EAllowedDOFs::TranslationZ;
+    s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+    s.mMassPropertiesOverride.mMass = mass, s.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
+    s.mAllowSleeping = true, s.mLinearDamping = 0, s.mAngularDamping = 0; // asleep once it rests; driveJoint3 wakes it
+    s.mMotionQuality = JPH::EMotionQuality::LinearCast;
+    s.mEnhancedInternalEdgeRemoval = true; // a box sliding over the terrain's triangle seams must not catch on them
+    e.body = add(s, "f" + std::to_string(key), JPH::EActivation::Activate);
+    JPH::SixDOFConstraintSettings c;
+    c.mSpace = JPH::EConstraintSpace::WorldSpace;
+    c.mPosition1 = c.mPosition2 = Jm(e.com0);
+    c.mAxisX1 = c.mAxisX2 = JPH::Vec3::sAxisX(), c.mAxisY1 = c.mAxisY2 = JPH::Vec3::sAxisY();
+    e.c = static_cast<JPH::SixDOFConstraint*>(bi->CreateConstraint(&c, JPH::BodyID(), e.body));
+    sys.AddConstraint(e.c);
+    placeJoint3(e, j.x, j.v);
+    return e;
+}
+
+// Limits, motors, friction and Lara's push of a live three-axis joint for this step (Jolt units; bounds as driveJoint).
+void Scene::Impl::driveJoint3(Joint3E& e, const Joint3& j) {
+    using Axis6 = JPH::SixDOFConstraintSettings::EAxis;
+    const auto force = [](float impulse) { return impulse <= 0 ? FLT_MAX : impulse * kFrame * kSolver * kM; };
+    JPH::Vec3 lo = JPH::Vec3::sReplicate(-FLT_MAX), hi = JPH::Vec3::sReplicate(FLT_MAX), target = JPH::Vec3::sZero();
+    for (int k = 0; k < 3; ++k) {
+        const Axis6 axis = Axis6(Axis6::TranslationX + k);
+        if (j.limited[k]) lo.SetComponent(uint32_t(k), std::min(j.lo[k], j.hi[k]) * kM), hi.SetComponent(uint32_t(k), std::max(j.lo[k], j.hi[k]) * kM);
+        const bool pushed = k < 2 && j.push[k] != 0;
+        e.c->GetMotorSettings(axis).SetForceLimit(force(pushed ? j.pushBound : j.force[k]));
+        e.c->SetMotorState(axis, pushed || j.motor[k] ? JPH::EMotorState::Velocity : JPH::EMotorState::Off);
+        target.SetComponent(uint32_t(k), (pushed ? j.push[k] : j.motor[k] ? j.speed[k] : 0.0f) * kFrame * kM);
+        e.c->SetMaxFriction(axis, j.friction > 0 ? force(j.friction) : 0.0f);
+    }
+    e.c->SetTranslationLimits(lo, hi);
+    e.c->SetTargetVelocityCS(target);
+    if (!target.IsNearZero(0.0f) && !bi->IsActive(e.body)) bi->ActivateBody(e.body); // a push or a running motor wakes it
+}
+
+void Scene::setJoints3(std::vector<std::pair<uint64_t, Joint3*>> joints) {
+    Impl& m = *impl_;
+    std::vector<Impl::Joint3E> next;
+    for (auto& [key, j] : joints) {
+        const auto old = std::ranges::find_if(m.joints3, [&](const Impl::Joint3E& e) { return e.key == key; });
+        const bool same = old != m.joints3.end() && old->physics == j->physics && old->model == j->model && old->mass == j->mass;
+        if (old != m.joints3.end() && !same) m.dropJoint3(*old);
+        Impl::Joint3E n = same ? std::move(*old) : m.makeJoint3(key, *j);
+        if (old != m.joints3.end()) old->key = ~uint64_t(0);
+        if (n.x != j->x || n.v != j->v) m.placeJoint3(n, j->x, j->v), n.x = j->x, n.v = j->v; // set from outside
+        n.live = j;
+        next.push_back(std::move(n));
+    }
+    for (auto& e : m.joints3)
+        if (e.key != ~uint64_t(0)) m.dropJoint3(e);
+    m.joints3 = std::move(next);
 }
 
 void Scene::setLoose(std::span<const Loose> loose) {
@@ -1275,6 +1366,8 @@ void Scene::step(float dt) {
                 if (const auto* d = m.findJoint(l.l.driver); d && d->live && d->live->push != 0) followerOfPush = true;
         m.driveJoint(e, *e.live, followerOfPush);
     }
+    for (auto& e : m.joints3)
+        if (e.live) m.driveJoint3(e, *e.live);
     m.driveVehicles();
     m.moveProxies(dt);
     m.driveCharacter(dt);
@@ -1301,6 +1394,14 @@ void Scene::step(float dt) {
         j.push = 0, j.pushBound = 0;
         e.x = j.x, e.v = j.v, e.live = nullptr;
     }
+    for (auto& e : m.joints3) {
+        if (!e.live) continue;
+        Joint3& j = *e.live;
+        j.x = G(m.bi->GetCenterOfMassPosition(e.body)) * kUnitsPerMetre - e.com0;
+        j.v = G(m.bi->GetLinearVelocity(e.body)) * kUnitsPerMetre / kFrame;
+        j.push = vec3(0), j.pushBound = 0;
+        e.x = j.x, e.v = j.v, e.live = nullptr;
+    }
 }
 
 // Layout (version 1): body count, {key, Jolt BodyID}; constraint zero count, {key, ref}; constraint count; then
@@ -1314,6 +1415,7 @@ std::string Scene::save() const {
     for (size_t i = 0; i < m.hingeBodies.size(); ++i) ids.push_back({"h" + std::to_string(i), m.hingeBodies[i]});
     for (size_t i = 0; i < m.hingeJoints.size(); ++i) refs.push_back({"h" + std::to_string(i), m.hingeJoints[i]->ref});
     for (const auto& e : m.joints) ids.push_back({Impl::jointKey(e.key), e.body}), refs.push_back({Impl::jointKey(e.key), e.ax->ref});
+    for (const auto& e : m.joints3) ids.push_back({"f" + std::to_string(e.key), e.body});
     for (const auto& l : m.loose) ids.push_back({"l" + std::to_string(l.id), l.body});
     for (const auto& v : m.vehicles) ids.push_back({"v" + std::to_string(v.id), v.body});
     for (const auto& r : m.ragdolls)
@@ -1337,6 +1439,8 @@ bool Scene::restore(std::string_view state) {
     Impl& m = *impl_;
     for (auto& l : m.links) m.sys.RemoveConstraint(l.c);
     for (auto& e : m.joints) m.dropJoint(e);
+    for (auto& e : m.joints3) m.dropJoint3(e);
+    m.joints3.clear();
     clearHinges();
     for (auto& l : m.loose) m.remove(l.body);
     for (auto& v : m.vehicles) m.dropVehicle(v);

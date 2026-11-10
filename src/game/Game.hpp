@@ -862,6 +862,13 @@ public:
     // Joints with a sound whose bodies are awake, as of this tick (tickObjects -> collectJointSounds; tru.exe's joint-sound
     // manager 0x4F3540, docs/formats/AUDIO.md §9.16): simulated uber joints and the class-34 rigid bodies' own joints.
     const std::vector<JointSound>& jointSounds() const { return jointSounds_; }
+    // Simulated three-axis joint (type 7: the Thor pillars) `joint` of object `uid`, null when it does not exist.
+    const physics::Joint3* uberJoint3(int32_t uid, int32_t joint) const {
+        const auto rt = uberRuntime_.find(uid);
+        if (rt == uberRuntime_.end()) return nullptr;
+        const auto it = rt->second.joints3.find(joint);
+        return it == rt->second.joints3.end() ? nullptr : &it->second;
+    }
     // Simulated uber joint `joint` (UberObjectData::joints index) of object `uid`, null when it does not exist (yet).
     const physics::Joint1* uberJoint(int32_t uid, int32_t joint) const {
         const auto rt = uberRuntime_.find(uid);
@@ -1271,6 +1278,7 @@ private:
     void crossPortals(vec3 from, vec3 to);
     void syncObjects();          // script objects -> collision dynamics + physics bodies (after units change)
     void tickObjects(float dt);  // physics step, dynamics follow their objects, Lara rides what she stands on
+    void poseColliders();        // every collider's transform from its object's state now (syncObjects, tickObjects)
     void tickJoints(float dt); // script multibody joints: positions and range watches (Objects.cpp)
     // A class-34 joint's limit as tickJoints applies it: the body's joint limit, `multibody` 77 / 75 overrides (degrees).
     std::pair<float, float> scriptJointLimit(const script::Object& o);
@@ -1489,6 +1497,7 @@ private:
     uint64_t scriptUnits_ = ~0ull; // unitsVersion_ the script runtime was synced to
     std::vector<script::UnitRef> unitRefs() const; // loaded units + cinematic objects, for script_/enemies_ setUnits
     size_t syncedObjects_ = ~size_t(0); // script object count syncObjects ran for
+    bool restoredColliders_ = false;    // since restoreObjects, until tickObjects ran: syncObjects poses the colliders it makes
     size_t syncedPlates_ = 0;           // plates + loose bodies then (constructors / pulls make them after syncObjects)
     int32_t held_ = 0;                   // portable object Lara carries (0 none)
     MeleeState melee_;                   // Lara's close-combat / carry move in progress (Melee.cpp)
@@ -1593,6 +1602,7 @@ private:
         uint64_t fired = 0;
         bool commanded = false;
         std::map<int32_t, physics::Joint1> joints;
+        std::map<int32_t, physics::Joint3> joints3; // created type-7 (three-axis) joints: the Thor pillars
         std::set<int32_t> links; // created type-11 link joints
         std::vector<UberWatch> watches;
         bool intangible = false;            // action 5: instance +0x18 bit 0x20000000, collision callbacks skip it
@@ -1607,6 +1617,9 @@ private:
     void tickUber(float dt);
     void uberAction(int32_t uid, size_t section, const formats::UberAction& a); // a state's entry action (0x4D86A0)
     std::optional<physics::Joint1> makeUberJoint(int32_t uid, int32_t joint); // frame, mass, gravity; at rest at 0
+    std::optional<physics::Joint3> makeUberJoint3(int32_t uid, int32_t joint); // a type-7 joint's body; at rest at 0
+    int32_t uberSectionJoint3(int32_t uid, int32_t section) const; // the type-7 joint the section rides (through hinges / fixed joints), -1 none
+    struct UberPush3 { int32_t uid = 0, joint = -1; vec3 before{0}; } uberPush3_; // this tick's pushed three-axis joint
     void uberWatches(int32_t uid); // range watches on the last step's joint positions (triggers 14 / 15)
     std::optional<glm::mat4> uberJointPose(int32_t uid) const;
     int32_t uberModelJoint(int32_t uid) const;
@@ -1616,6 +1629,7 @@ private:
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
     // The push / pull record Lara grips; `face`: the way she faces while gripping it (0: her own facing, World::pushUberHandle)
     struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; } uberHandle_;
+    uint32_t pushCameraData_ = 0xFFFFFFFFu; // gamebase 50: DTP id given to CameraManager's type-4 camera (0x779C60)
     int uberMoving_ = 0; // this tick, gripping it: the way her stick moves it (1 forward, -1 back, 2 left, -2 right; 0 not)
     std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)
     std::map<int32_t, nlohmann::json> uberSaved_; // restored uber state of objects not prepared since (prepareUber applies it)

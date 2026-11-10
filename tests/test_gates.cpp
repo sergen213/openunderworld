@@ -2191,6 +2191,7 @@ struct ThorCase {
     float strength;   // her pull strength while she grips it (its script's vt 49)
     float travel;     // it slides at least this far
     int32_t volume;   // entered first (0 none)
+    int32_t solved = 0; // a script object whose vt 62 runs before that: the puzzle that frees the mechanism (0 none)
 };
 struct ThorPush {
     bool gripped = false;
@@ -2230,6 +2231,10 @@ ThorPush thorPush(const cdc::BigfileSet& bf, game::World& w, const ThorCase& c) 
                 still = std::abs(x - last) < 0.01f ? still + 1 : 0, last = x;
                 if (std::abs(x - x0) > 5 && out.clip.empty()) out.clip = w.player().state().clip;
             }
+            if (std::getenv("OU_THOR_DEBUG"))
+                std::printf("grip at %.2f %.2f %.2f yaw %.4f (object %.2f %.2f %.2f): stick %g %g moved %.1f in %d ticks, Lara now %.2f %.2f %.2f\n", at.x, at.y,
+                            at.z, yaw, o->pos.x, o->pos.y, o->pos.z, way.x, way.y, last - x0, ticks - still, w.player().state().pos.x,
+                            w.player().state().pos.y, w.player().state().pos.z);
             if (std::abs(last - x0) > out.travel) out.travel = std::abs(last - x0), out.seconds = float(ticks - still) / 60.0f;
             if (out.travel > 5) break;
         }
@@ -2253,8 +2258,11 @@ TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
         {"l2_maproom", 2661, 1, 1, "g_gauntletleft", 15, 600, 0},         // C09-05: the carved door into the Thor room
         {"l5_valgrind_tunnel", 7400, 1, 1, "g_gauntletleft", 15, 600, 0}, // C16-04: the tunnel's slide door
         {"l4_ragnarok_room", 5660, 0, 0, "g_belt", 10, 500, 0},           // C15-12: the rubble block
-        // l5_valgrind's gate 7334 (C17-04, strength 8, no gear named) is not here: its records are set by its state 1,
-        // which its vt 55 (the end of 240_val_gate, from volume 7511) commands; in ours the section stays in state 0.
+        // C17-04: the Valgrind gate (no gear named). Its records are set by its state 1, which its vt 55 commands, called
+        // by dispatcher 7318's vt 62 ("Valgrind column in solved position": the four cog wheels 7312-7315 report to it;
+        // their puzzle, C17-01..03, is not played here). Volume 7511 in front of it starts 240_val_gate (7464) once and
+        // keeps the gauntlets uncharged (larabase 19) inside its area while the gate is shut.
+        {"l5_valgrind", 7334, 0, 0, "", 8, 600, 7511, 7318},
     };
     const char* only = std::getenv("OU_THOR_CASE");
     for (const auto& c : cases) {
@@ -2264,11 +2272,36 @@ TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
         auto& w = *wp;
         const auto* o = w.script().find(c.uid);
         ASSERT_TRUE(o && w.uberState(c.uid));
+        if (c.solved) {
+            if (std::getenv("OU_THOR_DEBUG")) {
+                const auto st = *w.uberState(c.uid);
+                std::printf("before: states");
+                for (const uint32_t x : st) std::printf(" %d", int(x));
+                std::printf(", joint 0 %s\n", w.uberJoint(c.uid, 0) ? "exists" : "missing");
+            }
+            EXPECT_EQ((*w.uberState(c.uid))[c.section], 0u) << "no records before the puzzle is solved";
+            EXPECT_FALSE(thorPush(bf, w, c).gripped);
+            w.script().call(c.solved, 62);
+            int waited = 0; // its reveal cameras play first
+            for (; waited < 7200 && (*w.uberState(c.uid))[c.section] != 1; ++waited) w.tick({});
+            if (std::getenv("OU_THOR_DEBUG")) {
+                std::printf("solved: %d ticks, section state %u\n", waited, (*w.uberState(c.uid))[c.section]);
+                for (const auto& [key, n] : w.script().failures()) std::printf("  failure %d: %s x%d\n", key.first, key.second.c_str(), int(n));
+            }
+            EXPECT_EQ((*w.uberState(c.uid))[c.section], 1u) << "vt 55: command 1";
+        }
         if (c.volume) {
             const auto* v = w.script().find(c.volume);
             ASSERT_TRUE(v);
             place(w, v->pos, 0, true);
             for (int i = 0; i < 600; ++i) w.tick({});
+            if (std::getenv("OU_THOR_DEBUG")) {
+                std::printf("after volume %d: section state %u, charged %d, Lara %.0f %.0f %.0f (volume %.0f %.0f %.0f) state %d\n", c.volume,
+                            (*w.uberState(c.uid))[c.section], w.script().gauntletCharged(), w.player().state().pos.x, w.player().state().pos.y,
+                            w.player().state().pos.z, v->pos.x, v->pos.y, v->pos.z, int(w.player().state().state));
+                for (const auto& [key, n] : w.script().failures()) std::printf("  failure %d: %s x%d\n", key.first, key.second.c_str(), int(n));
+            }
+            for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, c.volume) << key.second; // its handlers ran through
         }
         for (int i = 0; i < 90; ++i) w.tick({});
         ASSERT_TRUE(w.uberJoint(c.uid, c.joint));
@@ -2293,6 +2326,151 @@ TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
         for (int i = 0; i < 180; ++i) w.tick({});
         EXPECT_NEAR(w.uberJoint(c.uid, c.joint)->x, open, 2.0f) << "it stays where she left it";
         for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, c.uid) << key.second;
+    }
+}
+
+namespace {
+// Lara grips the kind-1 record of `uid`'s section `section` from the spot whose way to the object is nearest to `dir`
+// (any spot for a zero `dir`), facing `face`, and holds the stick `stick` until `done` or `ticks` pass. False: no grip.
+bool gripAndPush(const cdc::BigfileSet& bf, game::World& w, int32_t uid, size_t section, vec3 dir, float face, glm::vec2 stick, int ticks,
+                 const std::function<bool()>& done) {
+    const auto* o = w.script().find(uid);
+    auto spots = uberEngageSpots(bf, w, *o, section, 1, 6000);
+    vec3 centre = o->pos + o->offset;
+    if (const auto body = w.uberSectionBody(uid, int32_t(section))) centre += vec3((*body)[3]);
+    // not the spots under the object itself (the records reach from its middle; she cannot stand inside its collision)
+    std::erase_if(spots, [&](const auto& s) { return glm::length(glm::vec2(s.first - centre)) < 440.0f; });
+    if (std::getenv("OU_THOR_DEBUG")) std::printf("%zu spots\n", spots.size());
+    const auto along = [&](vec3 at) { return glm::dot(glm::normalize(vec3(glm::vec2(centre - at), 0)), dir); };
+    // nearest first (uberEngageSpots' order), those straight behind the object first; spots inside its collision fail below
+    if (dir != vec3(0)) std::ranges::stable_sort(spots, [&](const auto& a, const auto& b) { return (along(a.first) > 0.97f) > (along(b.first) > 0.97f); });
+    spots.resize(std::min<size_t>(spots.size(), 120));
+    game::Actions grip;
+    grip.interact = true;
+    for (const auto& [at, yaw] : spots) {
+        place(w, at, face);
+        for (int i = 0; i < 20; ++i) w.tick({});
+        if (std::getenv("OU_THOR_DEBUG"))
+            std::printf("spot %.0f %.0f %.0f (object %.0f %.0f %.0f): state %d, section state %u\n", at.x, at.y, at.z, centre.x, centre.y, centre.z,
+                        int(w.player().state().state), (*w.uberState(uid))[section]);
+        if (w.player().state().state != game::State::Idle) continue;
+        w.tick(grip), w.tick(grip);
+        if (w.player().state().state != game::State::Block) {
+            w.tick({}), w.tick({});
+            continue;
+        }
+        for (int i = 0; i < 40; ++i) w.tick(grip); // thor_engage
+        game::Actions push = grip;
+        push.move = stick;
+        for (int i = 0; i < ticks && !done(); ++i) {
+            w.tick(push);
+            if (std::getenv("OU_THOR_DEBUG") && i % 60 == 0)
+                if (const auto body = w.uberSectionBody(uid, int32_t(section)))
+                    std::printf("t %d: body %.1f %.1f %.1f, Lara %.1f %.1f %.1f state %d\n", i, (*body)[3].x, (*body)[3].y, (*body)[3].z,
+                                w.player().state().pos.x, w.player().state().pos.y, w.player().state().pos.z, int(w.player().state().state));
+        }
+        w.tick({}), w.tick({});
+        return true;
+    }
+    return false;
+}
+} // namespace
+
+// The Thor pillars ride a three-axis joint (uber joint type 7 = engine joint 10, 0x4E0F40: free along the world's X / Y /
+// Z, rotation kept; docs/GAMEPLAY.md "Thor's gauntlets"): a body with the pillar's collision resting on the floor.
+// l4_pool's rune pillar 5610 (C15-03, needs the belt, strength 4): pushed along its groove (+Y: the way its "already
+// solved" state 6 motors it, to its limit 1434.89) it drops into the hollow at the end; its range watch on Z
+// (-31.6 .. 31605.6, left) takes section 0 through state 4 / 5, whose events run the script's vt 54 (the pool's sticky
+// flag), and back.
+// l3_secretchamber's serpent pillar 4674 (C11-28 / -29, needs the right gauntlet, strength 3): dragged anywhere over the
+// crypt floor, forward / back along her facing and left / right across it. Neither is gripped without its gear.
+TEST(ProgressionReal, ThorPillarsSlideOnTheirPlane) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const char* only = std::getenv("OU_THOR_CASE");
+    if (!only || std::atoi(only) == 5610) {
+        SCOPED_TRACE("l4_pool 5610");
+        auto wp = receptacleWorld(bf, "l4_pool");
+        auto& w = *wp;
+        // the pool as chapter 14 leaves it: drained to its bottom by the serpent heads' scripts (watervolumebase SetLevel;
+        // a fresh unit is full, and the goo kills her on the pool floor where the pillar stands)
+        const int32_t drain[] = {0, 0};
+        uint32_t depth = 0;
+        w.waterNative(5608, "watervolumebase", 1, drain, depth);
+        for (int i = 0; i < 120; ++i) w.tick({});
+        const auto* j = w.uberJoint3(5610, 0);
+        ASSERT_TRUE(j && w.uberState(5610));
+        EXPECT_LT(glm::length(j->x), 12.0f) << "it stands where it was placed, on its floor: " << j->x.x << " " << j->x.y << " " << j->x.z;
+        const vec3 start = j->x;
+        const auto never = [] { return false; };
+        w.script().setPlayerObjects({});
+        EXPECT_FALSE(gripAndPush(bf, w, 5610, 0, {0, 1, 0}, glm::half_pi<float>(), {0, 1}, 120, never)) << "no grip without the belt";
+        EXPECT_NEAR(glm::length(j->x - start), 0, 1.0f);
+        w.script().setPlayerObjects({"g_belt"});
+        float strength = 0;
+        int ticks = 0;
+        uint32_t seen = 0; // the transient state its watch sends it to (4 from state 2, 5 from 1; both return at once)
+        const auto dropped = [&] {
+            strength = w.script().pullStrength(), ++ticks;
+            const uint32_t s = (*w.uberState(5610))[0];
+            if (s == 4 || s == 5) seen = s;
+            return seen != 0;
+        };
+        ASSERT_TRUE(gripAndPush(bf, w, 5610, 0, {0, 1, 0}, glm::half_pi<float>(), {0, 1}, 3600, dropped));
+        EXPECT_EQ(strength, 4.0f) << "vt 49";
+        for (int i = 0; i < 120; ++i) w.tick({});
+        std::printf("l4_pool 5610: at %.1f %.1f %.1f after %.2f s, state %u seen\n", j->x.x, j->x.y, j->x.z, float(ticks) / 60.0f, seen);
+        EXPECT_TRUE(seen == 4 || seen == 5) << "its Z watch: dropped into the hollow";
+        EXPECT_NEAR(float(ticks) / 60.0f, 1434.89f / (4 * game::kPushSpeed), 2.5f) << "at 4 x 23.704 units a second";
+        EXPECT_NEAR(j->x.y, 1434.89f, 250.0f) << "the hollow at the groove's end";
+        EXPECT_LT(j->x.z, -31.6f);
+        EXPECT_NEAR(j->x.x, start.x, 60.0f) << "along the groove";
+        EXPECT_EQ(w.script().pullStrength(), 1.0f) << "vt 50";
+        const vec3 rest = j->x;
+        for (int i = 0; i < 120; ++i) w.tick({});
+        EXPECT_NEAR(glm::length(j->x - rest), 0, 2.0f) << "it stays in the hollow";
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 5610) << key.second;
+    }
+    if (!only || std::atoi(only) == 4674) {
+        SCOPED_TRACE("l3_secretchamber 4674");
+        auto wp = receptacleWorld(bf, "l3_secretchamber");
+        auto& w = *wp;
+        for (int i = 0; i < 120; ++i) w.tick({});
+        const auto* j = w.uberJoint3(4674, 1);
+        ASSERT_TRUE(j && w.uberState(4674));
+        EXPECT_LT(glm::length(vec2(j->x)), 2.0f) << j->x.x << " " << j->x.y;
+        EXPECT_LT(std::abs(j->x.z), 25.0f) << "settled on the crypt floor (its collision reaches 17 under it): " << j->x.z;
+        const auto never = [] { return false; };
+        w.script().setPlayerObjects({});
+        EXPECT_FALSE(gripAndPush(bf, w, 4674, 0, vec3(0), 0, {0, 1}, 120, never)) << "no grip without the right gauntlet";
+        w.script().setPlayerObjects({"g_gauntletright"});
+        // each way of the stick, from wherever she finds a grip: the best travel of forward and of a sidestep
+        float forward = 0, side = 0, carried = 0;
+        for (const float face : {0.0f, glm::half_pi<float>(), glm::pi<float>(), -glm::half_pi<float>()}) {
+            const vec3 dir(std::cos(face), std::sin(face), 0);
+            for (const glm::vec2 stick : {glm::vec2(0, 1), glm::vec2(-1, 0)}) {
+                const vec3 x0 = j->x;
+                vec3 lara(0);
+                bool first = true;
+                const auto track = [&] {
+                    if (std::exchange(first, false)) lara = w.player().state().pos;
+                    return false;
+                };
+                if (!gripAndPush(bf, w, 4674, 0, dir, face, stick, 300, track)) continue;
+                const vec3 moved = j->x - x0;
+                const vec3 want = stick.y > 0 ? dir : vec3(-dir.y, dir.x, 0);
+                (stick.y > 0 ? forward : side) = std::max(stick.y > 0 ? forward : side, glm::dot(moved, want));
+                carried = std::max(carried, glm::length(glm::vec2(w.player().state().pos - lara)));
+                for (int i = 0; i < 60; ++i) w.tick({});
+            }
+        }
+        std::printf("l3_secretchamber 4674: forward %.1f, sidestep %.1f, Lara %.1f; at %.1f %.1f %.1f\n", forward, side, carried, j->x.x, j->x.y, j->x.z);
+        EXPECT_GT(forward, 250.0f) << "pushed along her facing (71 units a second with strength 3)";
+        EXPECT_GT(side, 250.0f) << "sidestepped across it";
+        EXPECT_GT(carried, 200.0f) << "she moves with it";
+        EXPECT_LT(std::abs(j->x.z), 25.0f) << "on the crypt floor";
+        EXPECT_EQ(w.script().pullStrength(), 1.0f);
+        for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 4674) << key.second;
     }
 }
 
@@ -2369,9 +2547,16 @@ TEST(ProgressionReal, UberSections) {
         const auto& jt = u->joints[j];
         std::printf("joint %zu type %u A %d B %d model %u marker %u limit %g..%g motor %g bound %g flags %x link %d %d ratio %g\n", j, jt.type, jt.bodyA,
                     jt.bodyB, jt.model, jt.marker, jt.lo, jt.hi, jt.speed, jt.force, jt.flags, jt.link1, jt.link2, jt.ratio);
+        if (jt.type == 7)
+            std::printf("  type 7: limits %g..%g %g..%g %g..%g motors %g/%g %g/%g %g/%g bits %x friction %g +1C %g +28 %x\n", jt.lo3[0], jt.hi3[0],
+                        jt.lo3[1], jt.hi3[1], jt.lo3[2], jt.hi3[2], jt.speed3[0], jt.force3[0], jt.speed3[1], jt.force3[1], jt.speed3[2],
+                        jt.force3[2], jt.flags3, jt.friction, jt.unknown1C, jt.unknown28);
     }
-    for (size_t p = 0; p < u->params.size(); ++p)
+    for (size_t p = 0; p < u->params.size(); ++p) {
         std::printf("param %zu kind %u a %g b %g flag %d\n", p, u->params[p].kind, u->params[p].a, u->params[p].b, u->params[p].flag);
+        if (const auto& q = u->params[p]; q.kind == 7)
+            std::printf("  kind 7: axis %d v %g %g %g %g %g %g bits %x\n", q.axis, q.v[0], q.v[1], q.v[2], q.v[3], q.v[4], q.v[5], q.bits);
+    }
     for (const auto& c : u->commands) {
         std::printf("command %u:", c.id);
         for (const auto& t : c.targets) std::printf(" (s%d type %u payload %u)", t.section, t.type, t.payload);

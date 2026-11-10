@@ -329,6 +329,63 @@ TEST(Physics, SavedSceneContinuesBitIdentically) {
     EXPECT_FALSE(b.restore("not a state"));
 }
 
+// Three-axis joints (Scene::setJoints3; tru.exe engine joint 10, the Thor pillars): a 500 kg pillar rests on the floor
+// under gravity, a motor slides it, a push bounded below the floor's friction does not move it and a stronger one does,
+// a limit stops it, a locked axis stays, and past the floor's edge it drops into the hollow. A scene saved mid-push
+// continues bit for bit.
+TEST(Physics, ThreeAxisJointRestsSlidesStopsAndDrops) {
+    collision::CollisionMesh floor;
+    collision::addBox(floor, glm::translate(glm::mat4(1), {0, 0, -50}), {2000, 2000, 100});      // top 0, x -1000..1000
+    collision::addBox(floor, glm::translate(glm::mat4(1), {2000, 0, -350}), {2000, 2000, 100});  // the hollow: top -300
+    floor.build();
+    const std::vector<physics::Scene::Terrain> terrain{{"floor", &floor, vec3(0)}};
+    physics::ObjectPhysics o;
+    o.segments = {glm::mat4(1)};
+    physics::Prim p;
+    p.kind = physics::PrimKind::Box, p.size = {200, 200, 400}, p.pos = {0, 0, 200}, p.mass = 500;
+    o.prims = {p};
+    physics::Joint3 j;
+    j.physics = &o, j.model = glm::translate(glm::mat4(1), {0, 0, 3});
+    j.limited[1] = true; // Y locked at 0
+    const auto tick = [&](physics::Scene& s, physics::Joint3& q) { s.setJoints3({{5, &q}}), s.setTerrain(terrain), s.setLoose({}), s.step(kDt); };
+    physics::Scene a;
+    for (int i = 0; i < 60; ++i) tick(a, j);
+    EXPECT_NEAR(j.x.z, -3, 1.5f) << "rests on the floor";
+    EXPECT_NEAR(j.x.x, 0, 0.5f);
+    j.motor[0] = true, j.speed[0] = 2; // 60 units a second, unbounded
+    for (int i = 0; i < 60; ++i) tick(a, j);
+    EXPECT_NEAR(j.x.x, 60, 3);
+    EXPECT_NEAR(j.v.x, 2, 0.05f);
+    j.motor[0] = false;
+    for (int i = 0; i < 60; ++i) tick(a, j);
+    const float rest = j.x.x;
+    EXPECT_NEAR(j.v.x, 0, 0.01f) << "the floor's friction stops it";
+    for (int i = 0; i < 60; ++i) j.push = {4, 3, 0}, j.pushBound = 100, tick(a, j); // under the friction's 286 a step
+    EXPECT_NEAR(j.x.x, rest, 1) << "too weak a push";
+    EXPECT_EQ(j.push, vec3(0)) << "a push lasts one step";
+    j.limited[0] = true, j.lo[0] = -10, j.hi[0] = 150;
+    for (int i = 0; i < 20; ++i) j.push = {4, 3, 0}, j.pushBound = 569, tick(a, j);
+    EXPECT_GT(j.x.x, rest + 20);
+    const std::string saved = a.save(); // mid-push
+    physics::Joint3 copy = j;
+    physics::Scene b;
+    ASSERT_TRUE(b.restore(saved));
+    for (int i = 0; i < 90; ++i) {
+        j.push = copy.push = {4, 3, 0}, j.pushBound = copy.pushBound = 569;
+        tick(a, j), tick(b, copy);
+    }
+    EXPECT_EQ(std::memcmp(&j.x, &copy.x, sizeof j.x), 0);
+    EXPECT_EQ(std::memcmp(&j.v, &copy.v, sizeof j.v), 0);
+    EXPECT_EQ(a.save(), b.save());
+    EXPECT_NEAR(j.x.x, 150, 1) << "held at its limit";
+    EXPECT_NEAR(j.x.y, 0, 0.5f) << "the locked axis";
+    j.limited[0] = false;
+    for (int i = 0; i < 400 && j.x.x < 1300; ++i) j.push = {6, 0, 0}, j.pushBound = 569, tick(a, j);
+    for (int i = 0; i < 90; ++i) tick(a, j);
+    EXPECT_GT(j.x.x, 1100);
+    EXPECT_NEAR(j.x.z, -303, 2) << "dropped into the hollow";
+}
+
 // Pressure plates (World::stepPhysics): a plate body on a prismatic joint whose motor lifts it stays up unloaded; a
 // kinematic weight (Lara, 55 kg) over it presses it to its limit and it rises once she leaves; a loose box landing on
 // it presses it by contact. Lara's proxy shoves a loose box she walks into. A scene saved mid-press continues bit for bit.

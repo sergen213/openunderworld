@@ -67,13 +67,28 @@ struct UberJoint {
     // a TimeIn (silent).
     std::optional<cdc::Pointer> sound;
     uint8_t soundAt = 0;
+    // Type 7 (engine 10, 0x4E0F40: body B keeps its rotation and translates along the three axes of body A's frame, the
+    // world's X / Y / Z without one; 0x4D24C0 / 0x4D2550 / 0x4D1860): +0x2C three limits {lo, hi}, +0x44 three motors
+    // {speed per second, impulse bound (<= 0 none)}, +0x5C bits 0-2 limit on, 3-5 motor on; +0x18 friction per axis
+    // (joint +0x120..), +0x1C [U] (at most 1, 0x4E1E60), +0x28 bits 0 / 1 [U] (joint +0x174 bits 0 / 0x1000).
+    float lo3[3] = {}, hi3[3] = {}, speed3[3] = {}, force3[3] = {};
+    uint8_t flags3 = 0;
+    float friction = 0, unknown1C = 0;
+    uint8_t unknown28 = 0;
 };
 // Limit / motor / range record {u8 kind, a, b, u8 flag} (kinds 0 / 2 = hinge / prismatic, 0x4D11E0 / 0x4D4510 /
 // 0x4D2B00): limit lo, hi, enabled; motor speed per second, impulse bound, enabled; range lo, hi (lo <= v < hi).
+// Kind 7 (the three-axis joint): a range is {axis 0..2 at +4, lo +8, hi +0xC} (0x4D11E0; the watch reads that axis,
+// 0x48F1D0 / 0x48F3B0); a limit is three {lo, hi} at +4 and bits 0-2 at +0x1C (0x4D2960); a motor three {speed per
+// second, bound} at +4 and bits 0-2 at +0x1C (0x4D2E60). `v` / `bits` hold +4..+0x1B / +0x1C for the reader that knows
+// which of the three it is (the action or transition using it).
 struct UberParam {
     uint8_t kind = 0;
     float a = 0, b = 0;
     bool flag = false;
+    int32_t axis = 0;  // kind 7 range: +4
+    float v[6] = {};   // kind 7: +4..+0x1B
+    uint8_t bits = 0;  // kind 7: +0x1C
 };
 struct UberSection {
     uint32_t defaultState = 0, model = 0;
