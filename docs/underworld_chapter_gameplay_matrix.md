@@ -178,7 +178,7 @@ Open in this chapter:
 
 Walkthrough: https://tombraiders.net/stella/walks/TR8walk/03norse.html
 Sub-pages read: details/norse2.html (column room), norse3.html (grapple swing), norse4.html (two treasures and the relic), bugnotes.html (major bug 1: boat cinematic not triggering, PS3 / Xbox 360 only)
-Our units: l1_baldrs_tomb → l1_baldrs_sideroom → l1_baldrs_hall → l1_kraken_room (upper level) → back through l1_krakenstairs_b / _a, l1_kraken_entrance, l1_norse_hallway_a, l1_seafloor → l1_seatop → l1_cineseatop (unit-to-room mapping of sideroom / hall is [I] from the route order in docs/PROGRESSION.md)
+Our units: l1_baldrs_tomb → l1_baldrs_sideroom → l1_baldrs_hall → l1_kraken_room (upper level) → back through l1_krakenstairs_b / _a, l1_kraken_entrance, l1_norse_hallway_a, l1_seafloor → l1_seatop → l1_cineseatop (the hall of broken columns is the north half of l1_baldrs_sideroom: pillars 15..33, upper floor z 4029.6 [O markup, self-test ch04_column_hall]; l1_baldrs_hall is the passage on to the kraken hall's upper level)
 
 Reading notes: statuses use the session vocabulary. "Passing" means the test is in the v0.41.0 suite (675 pass per
 RULES.md); this agent ran no tests. A status is chapter-specific: a mechanic tested only in another unit is
@@ -203,13 +203,12 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | Gauntlet cinematic (item taken by mercenaries), cutaway on re-entering the kraken hall, boat cinematic that changes to the ship level | PARTIALLY IMPLEMENTED | route "… l1_seatop → l1_cineseatop → l1_ship_exterior" (PROGRESSION.md); the trigger at the boat has no gate row / test |
 | Automated tests | Existing: ctest `game_replay_baldrs_plates_gate`, `ProgressionReal.CriticalGates` (219 → 223; 221 + 222 → 45), `GameReal.PressurePlateIndependentOfRenderRate`, `GameReal.JointSoundsFollowMovingJoints`, `GameReal.LaraPlaysInteractionClips`, `GameReal.StairsWalkAndRunUpAndDown`, `ChaptersReal.RewardTableMatchesUnits` | Required: block throw, two-block threshold, gate pull, column hall pillar / perch chain, kraken-hall swing, relic effect, boat trigger | — |
 
-Requirement rows: 25 in [docs/matrix/04_norse_connection.md](matrix/04_norse_connection.md) — IMPLEMENTED BUT UNVERIFIED 16, PARTIALLY IMPLEMENTED 5, IMPLEMENTED 2, NOT IMPLEMENTED 1, unknown / n/a 1.
+Requirement rows: 25 in [docs/matrix/04_norse_connection.md](matrix/04_norse_connection.md) — IMPLEMENTED 10, IMPLEMENTED BUT UNVERIFIED 10, PARTIALLY IMPLEMENTED 4, unknown / n/a 1.
 
 Open in this chapter:
 
-- C04-03 throwing a carried object: NOT IMPLEMENTED; the walkthrough's solution of the side room depends on it.
-- C04-06 pad threshold: the original needs both blocks on a pad; ours accepts one (plate numbers [I]) and the replay solves the room with a different block distribution.
-- C04-08 gate pull: the original needs a grapple pull from the pad; ours lets the gate fall once the locks are out. Needs a Wine check.
+- C04-03 / C04-06 / C04-08 (throw, two-block pad, gate pull) are played by `ch04_gate_room` since 2026-11-10; the pull's rate is not Wine-checked.
+- C04-15: the jump from ledge 35 to perch 30 is 1620 long by our measurement and fails (known gap scenario).
 - C04-20 relic effect (full heal + permanent max health): not in code.
 - C04-24 boat trigger → l1_cineseatop → ship: no gate row or test.
 - Seven jar treasures (20-26) not collectible.
@@ -245,7 +244,7 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | Engine-room cinematic (fuel pipe explosion, sprinklers), Natla cinematic, then the escape section | IMPLEMENTED | cinematics 1453 / 1288 via volumes 1465 / 1436 (PROGRESSION.md), `CineReal.NatlaSubtitlesCameraAndVoiceLines` |
 | Automated tests | Existing: `AiReal.MercsGuardZonesCoverAndAlert`, `AiReal.MercPatrolsSearchesAndReturns`, `AiReal.ShipNavGraphFlankAndInvestigate`, `AiReal.DeathTimerAndThrallChunks` (ship data), `ProgressionReal.CombatCrateBreaksOnHit`, `ProgressionReal.CriticalGates` (1531 → 1529), `CineReal.NatlaSubtitlesCameraAndVoiceLines`, `StreamReal.SaveContinuesBitIdentically` (l1_ship_exterior), ctest `game_replay_merc_squad` | Required: anchor boarding climb, deck fight with counts, tank explosion damage, kick / jump-kick, container climb, door chain down to the Natla room | — |
 
-Requirement rows: 20 in [docs/matrix/05_god_of_thunder.md](matrix/05_god_of_thunder.md) — IMPLEMENTED BUT UNVERIFIED 10, IMPLEMENTED 6, NOT IMPLEMENTED 2, PARTIALLY IMPLEMENTED 2.
+Requirement rows: 20 in [docs/matrix/05_god_of_thunder.md](matrix/05_god_of_thunder.md) — IMPLEMENTED 7, IMPLEMENTED BUT UNVERIFIED 7, PARTIALLY IMPLEMENTED 4, NOT IMPLEMENTED 2.
 
 Open in this chapter:
 
@@ -255,7 +254,8 @@ Open in this chapter:
 - C05-09 chimney jump alternative missing (box route should still work, untested).
 - C05-10 swan dive missing.
 - Encounter composition per deck (4 / 3 / 7 / 3 / 2 on the page) is not asserted against our spawns and generators.
-- No test moves Lara through the ship: all AI tests place her.
+- The way from the T junction to the Natla room's volume 1436 is shut for a walking Lara (C05-19 / C05-20, known gap scenario).
+- Deck fights beyond the first two mercenaries are not played by input.
 
 ## 06. Realm of the Dead (Level 1 - Mediterranean Sea, part 5)
 
@@ -286,12 +286,13 @@ Screenshot base: https://tombraiders.net/stella/walks/TR8walk/screenshots/
 | Progression | New journal entries (Amanda, Natla); final cinematic (Amanda escapes, gauntlet recovered) → Thailand | IMPLEMENTED | volume 1082 preloads 1005, plane 1074 moves Lara into l1_cine_ship_sinking, whose end requests l2_cliffclimb (PROGRESSION.md); `ProgressionReal.CriticalGates` (1074), `ChaptersReal.MediterraneanEndingRunsThroughTriggerScript`, `GameReal.ScriptedChapterEndChainsStartNextChapter`, `Menus.PdaJournal` |
 | Automated tests | Existing: `GameReal.ShipSinkingHallLadder`, `ProgressionReal.BreakPipeSwitchesItsModel`, `ProgressionReal.CriticalGates` (1074), `ChaptersReal.MediterraneanEndingRunsThroughTriggerScript`, `GameReal.ScriptedChapterEndChainsStartNextChapter`, `StreamReal.SaveContinuesBitIdentically` (l1_ship_sinking_hall), `CineReal.ChapterEndCinematics` | Required: situational-adrenaline run, both shaft climbs end to end, hold ↔ ladder transfers, bar → beam drop, ship-roll state | — |
 
-Requirement rows: 14 in [docs/matrix/06_realm_of_the_dead.md](matrix/06_realm_of_the_dead.md) — IMPLEMENTED BUT UNVERIFIED 5, PARTIALLY IMPLEMENTED 4, IMPLEMENTED 3, unknown / n/a 1, NOT IMPLEMENTED 1.
+Requirement rows: 14 in [docs/matrix/06_realm_of_the_dead.md](matrix/06_realm_of_the_dead.md) — PARTIALLY IMPLEMENTED 5, IMPLEMENTED 4, IMPLEMENTED BUT UNVERIFIED 4, NOT IMPLEMENTED 1.
 
 Open in this chapter:
 
 - C06-05 situational adrenaline (scripted slow motion with Lara at real time) and the burning barrels: NOT IMPLEMENTED; it is on the critical path.
-- C06-04 ship roll and sliding containers: unknown, nothing documented.
+- C06-04 ship roll: hallway 1056's first two stages run by input; she is stopped before plane 1203 (known gap scenario); the cause is not found.
+- C06-09: no jump from a ledge hang onto free-climb holds (known gap scenario): both shafts depend on it.
 - C06-06..C06-10 valve-wheel / ladder shafts: hold ↔ ladder and ledge ↔ hold transfers are undocumented; stacked ladders (q88) are "not done"; only a floor attach to ladder 234 is tested. Whether the valve wheels are free-climb holds (markup 16-20) or ledges in this unit has not been surveyed.
 - C06-11 hang → beam drop untested in this unit.
 - No test walks from the Natla room to plane 1074.

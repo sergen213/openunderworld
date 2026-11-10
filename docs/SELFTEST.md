@@ -440,11 +440,22 @@ tested behaviour happen.
 | `moving_markup` | l5_valgrind | by cog wheel 7312's rim (teleport fixture: the gate cinematic's placement is 20 s away on foot) a standing jump catches a passing rim ledge (markup 1614-1617), 2 s carried at 267 units/s with no input, Drop: she falls on at the rim's speed and lands (docs/GAMEPLAY.md "Moving markup") |
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
-| `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
+| `ch04_pillar_entry` | l1_baldrs_tomb | the Norse Connection's way into the west room: pillar 14 climbed to z 4100, `pillar_jump_forward` along the stick 740 into the wall opening (floor z 3872), the safety drop at its far edge, Drop into the room behind door 223 |
+| `ch04_gate_room` | l1_baldrs_tomb | both weights thrown from pad 219 through door 223, a roll through before it shuts, one weight on pad 222 (the pad rises again, lock 69 back), both (it stays down), gate 45's ring roped, pulled down from pad 221 (joint 91), the rope let go, plane 224 at the gauntlet |
+| `ch04_column_hall` | l1_baldrs_sideroom | the hall of broken columns' first half: pillar 24 -> pillar 23 (948, caught in the air) -> back onto ledge 36, running jump onto perch 26, `perch_jump_forward` to pillar 31, pillar jump onto the floor behind ledge 35 |
+| `ch04_kraken_swing` | l1_kraken_room | upper level: ceiling ring 309 thrown at from the north-east ledge, roped walk to the edge, Jump, 4500 across the pool with Forward held, stepping off onto the west ledge; first-aid kit 319 |
+| `ch05_boarding` | l1_ship_exterior | running jump off the yacht's bow onto the anchor, Forward + Jump from hang to hang up the chain (3400 up, never down), over the rail (boarding plane 1633), first-aid kit 1564 |
+| `ch05_container_deck` | l1_ship_exterior | the boarding, then down the bow stair to the container deck; Target Lock + Fire held while walking aft: mercenary 1652 leaves his patrol, chases and is shot, then 1650 (5 -> 3 alive) |
+| `ch05_below_decks` | l1_ship_exterior | aft doorway: door 1529 by volume 1531, down to door 1530, generator 1537's mercenaries on the second stair (pistols on the lock), door 1491, plane 1465 -> cinematic 1453's events, the hall beyond to the T junction |
+| `ch06_sinking_hall_door` | l1_ship_lower_hallway | volume 1176 opens door 1167 (a rider of the rolling hallway 1056), through it into l1_ship_sinking_hall, plane 1201: the hall's first tilt (1056 command 1), carried down on its floor |
+| `ch06_second_shaft_ladder` | l1_ship_sinking_hall | checkpoint 1055: ladder 235 rung to rung, `ladder_jump_up` from its top rungs onto ledge 250 (the grating's edge) |
 
-`tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
-registered with ctest. Run them by hand; move one up a directory when it passes. Now: none (`pole_drop_after_fling`
-moved up 2026-11-10).
+`tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today (their last step)
+and are not registered with ctest. Run them by hand; move one up a directory when it passes. Now (2026-11-10; each
+file's `note` says what happens and where): `ch04_column_hall_perches` (ledge 35 -> perch 30: 1620 away, the running
+jump comes down on pillar 29), `ch05_natla_room` (from the T junction the west recess is shut; volume 1436 is not
+reached on foot), `ch06_hallway_roll` (after the hall's second tilt she is stopped 3850 short of plane 1203),
+`ch06_second_shaft_valves` (no jump from the hang on ledge 250 onto the valve wheels' free-climb holds).
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);
