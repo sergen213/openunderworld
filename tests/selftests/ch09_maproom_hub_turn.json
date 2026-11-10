@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "ch09_maproom_hub_turn",
+  "chapter": "09 The Ancient World: the hub turned by its carved panel (docs/matrix/09_ancient_world.md C09-09)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/ancient3.html",
+  "note": "l2_maproom from checkpoint 2591, the left gauntlet as a fixture (ch09_maproom_gauntlet_door gets it by play); the way down the panel as ch09_maproom_hub_panel. On the ring ledge she grips the panel (Thor bridge 2667, record on handle marker 11): 2667 vt 49 takes hinge joint 1's brake motor off (section 0 state 3) and section 1's state 1 limits the joint to 1 .. 41 degrees. The stick forward does not turn it (the panel moves across her facing); a sidestep to her right walks the panel round about the hub's axis until it stops at 41 degrees (the probe uberjoint is in radians: 0.716), she is carried round with it (a 1074 chord at her 1570 from the axis); at 20 degrees section 1's range watch swaps the record set 408 -> 396 and she keeps her grip. Let go: braked there. Speed: 120 units/s at her grip point [I: hinges have no measured push speed]. The cache this uncovers and the later alignments (C09-11 .. C09-17) are not played.",
+  "level": "l2_maproom",
+  "spawn": [-20251, 39301, -8800, -90],
+  "fixtures": [{"give": "g_gauntletleft"}],
+  "steps": [
+    {"step": "off_the_south_edge", "plan": ["go -20235 37800 60"], "duration": 8, "until": {"probe": "player.clip", "eq": "ledgeb_idle"}, "expect": [{"visits": ["run", "droptohang", "hang"]}, {"probe": "player.ledge", "eq": 673}, {"probe": "step.height_gain", "near": -500.7, "tol": 6}, {"probe": "step.health_lost", "eq": 0}]},
+    {"step": "drop_1", "input": ["0.3 drop 1", "0.4 drop 0"], "duration": 3, "expect": [{"visits": ["hang", "fall", "hang"]}, {"probe": "player.ledge", "eq": 674}, {"probe": "step.drop", "near": 632.1, "tol": 6}, {"probe": "player.saving_grab", "eq": 0}]},
+    {"step": "drop_2", "input": ["0.3 drop 1", "0.4 drop 0"], "duration": 3, "expect": [{"visits": ["hang", "fall", "hang"]}, {"probe": "player.ledge", "eq": 676}, {"probe": "step.drop", "near": 869.1, "tol": 6}, {"probe": "player.saving_grab", "eq": 0}]},
+    {"step": "drop_3", "input": ["0.3 drop 1", "0.4 drop 0"], "duration": 3, "expect": [{"visits": ["hang", "fall", "hang"]}, {"probe": "player.ledge", "eq": 678}, {"probe": "step.drop", "near": 869.1, "tol": 6}, {"probe": "player.saving_grab", "eq": 0}]},
+    {"step": "onto_the_ring_ledge", "input": ["0.3 drop 1", "0.4 drop 0"], "duration": 3, "expect": [{"visits": ["hang", "fall", "land", "idle"]}, {"probe": "player.pos.z", "near": -12006.6, "tol": 5}, {"probe": "step.health_lost", "eq": 0}, {"probe": "object.2667.uber.0", "eq": 1, "note": "the hub's brake section before any grip"}]},
+    {"step": "grip_and_try_forward", "plan": ["engage 2667 walk", "push 1 0 2"], "duration": 20, "expect": [{"visits": ["block"]}, {"clips": ["thor_engage"]}, {"calls": ["2667:49"]}, {"probe": "object.2667.uberjoint.1", "over": "max", "max": 0.03, "note": "forward does not turn the hub (radians)"}]},
+    {"step": "walk_the_panel_round", "plan": ["engage 2667 walk", "push 0 1 12", "wait 0.5"], "duration": 30, "until": {"probe": "object.2667.uberjoint.1", "min": 0.7}, "expect": [{"probe": "object.2667.uberjoint.1", "near": 0.716, "tol": 0.03, "note": "41 degrees: the limit of section 1's state 1 (radians)"}, {"probe": "step.horizontal", "min": 900, "note": "she walked round with the panel"}, {"clips": ["thor_right"]}, {"probe": "player.pos.z", "near": -12006.6, "tol": 12, "note": "still on the ring ledge"}, {"probe": "player.state", "eq": "block", "note": "the record-set swap at 20 degrees did not break her grip"}]},
+    {"step": "let_go", "duration": 2.5, "expect": [{"calls": ["2667:50"]}, {"probe": "object.2667.uberjoint.1", "near": 0.716, "tol": 0.04, "note": "braked where she left it"}, {"probe": "object.2667.uber.0", "eq": 2}, {"probe": "player.state", "eq": "idle"}, {"probe": "player.dead", "eq": false}]}
+  ]
+}

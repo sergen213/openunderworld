@@ -290,7 +290,7 @@ The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation l
 | `object.<uid>.graph` | its anim-graph state id |
 | `object.<uid>.joint` | its multibody joint's position (plate units, hinge degrees) |
 | `object.<uid>.uber.<n>` | uber section n's state, -1 while it is in a transition |
-| `object.<uid>.uberjoint.<n>` | simulated uber joint n's position |
+| `object.<uid>.uberjoint.<n>` | simulated uber joint n's position (units; a hinge: radians) |
 | `object.<uid>.uberslide.<n>.x/.y/.z` | three-axis uber joint n's travel from where it was made (the Thor pillars) |
 
 These object probes are what `--report-objects` prints (docs/GAMEPLAY.md); `--report-objects 0 --frames 1` lists every
@@ -446,7 +446,16 @@ tested behaviour happen.
 | `moving_markup` | l5_valgrind | by cog wheel 7312's rim (teleport fixture: the gate cinematic's placement is 20 s away on foot) a standing jump catches a passing rim ledge (markup 1614-1617), 2 s carried at 267 units/s with no input, Drop: she falls on at the rim's speed and lands (docs/GAMEPLAY.md "Moving markup") |
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
-| `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |
+| `ch07_cliffclimb_boat_to_cliff` | chapter 2 start | section 07's start: yacht cinematic, over the boat's side (safety drop), into the sea, 13.8 km surface swim across the bay, climb out at the low ledge (checkpoint 3831), the run into the rock attaches her to the holds |
+| `ch07_cliffhall_grapple_gap` | l2_cliffhall | from checkpoint 3754 to the pit under ring 3820: thrown at from the ground (rope 2730), a running jump keeps the rope, the swing carries her over the pit; the release onto the far side is not played yet |
+| `ch07_hubhall_statue_hall` | l2_hubhall | section 07's end from checkpoint 3100: up the staircase, stream change to l2_puzzleroom, arrival cinematic 2936, on the lift |
+| `ch08_puzzleroom_lift_switch` | l2_puzzleroom | section 08's start on the lift: switch 2961 used with the mechanism held: the jammed reaction, the platform stays |
+| `ch08_puzzleroom_lift_ring` | l2_puzzleroom | from checkpoint 2819: the mechanism's ring 2972 grappled and pulled out (2959 vt 54, 2961 vt 63) |
+| `ch08_puzzleroom_lift_pole` | l2_puzzleroom | from checkpoint 2818: pole 2967 pulled out of hole 2969 and carried (2960 vt 54, 2961 vt 62) |
+| `ch08_shrine_statue_pull` | l2_shrineroom | the naga statue 2794 grappled by its ring and pulled over (uber section 0: 5 -> 2), its script wakes the shaft's spiders |
+| `ch09_maproom_gauntlet_door` | l2_maproom | from under the shaft: volume 2636 -> cinematic 2624, the scripts hand the left gauntlet over (no fixture), door 2661 gripped and slid open by a left sidestep, through it (spider trigger, checkpoint 2590), the pedestal cinematic 2625, checkpoint 2591 |
+| `ch09_maproom_hub_panel` | l2_maproom | from checkpoint 2591: off the platform edge into a hang, drop-catches down the hub's panel (ledges 673 / 674 / 676 / 678), the ring ledge, the panel gripped with the gauntlet (2667 vt 49 / 50) |
+| `ch09_maproom_hub_turn` | l2_maproom | as `ch09_maproom_hub_panel`, then the hub turned by its panel: forward does nothing, a right sidestep walks the panel round hinge joint 1 to its stop at 41 degrees (0.716 rad; the record sets swap at 20 degrees and she keeps her grip), braked when she lets go |
 | `ch01_bedroom_new_game` | New Game | Prologue leg 1: the corridor onto the debris slab without a jump, wall 973, the stairs, switch 4525 opens house door 4520, down to the bedroom floor (checkpoint 4454) |
 | `ch01_bedroom_ring_door` | l3_main_bedroom (chapter 0) | Prologue leg 2: a roll under the leaning beam (a walk does not pass), onto the flat strip, ring door 4526 grappled and pulled off its slide |
 | `ch01_hall_first_aid` | l3_bedroom_hall (chapter 0) | the first-aid kit 4364 picked up from checkpoint 4342, stored, used by the heal key |
@@ -516,6 +525,7 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | `ch20_yggdrasil_hall_slide` | l7_yggdrasil → l7_yggdrasil_hall01 | `slide_and_jump` | the slide down the north arm's slope plays (921 units/s along the ground), but Jump on its last tick flies 906 and comes down in the pit's water at y 9013; the far bank lies beyond y 9221. The launch of a jump out of a slide is [I] (it keeps the slide's horizontal speed) |
 | `ch20_yggdrasil_hall_eitr_pit` | l7_yggdrasil → l7_yggdrasil_hall02 | `in_the_pit` | the pit at that slide's foot is a plain water volume in ours: she treads water unharmed (8 s watched) where the original's eitr kills |
 | `ch21_platform_ride` | l7_yggdrasil_end | `jump_to_a_platform` | the steps of `natla_fight`, then a jump from the entry walkway's end: no floating platform comes within reach (the 24 stones' objects stay at their intro positions; only their drawn bodies ride the orbit rings), she falls 3850 to the lower ring (docs/GAMEPLAY.md "Natla" Open) |
+| `ch09_shrine_shaft_descent` | l2_shrineroom | after the statue pull | its floor slabs stay solid over the shaft and its ring is still a target; the drop-catches and the mid-fall grapple at ring 2673 follow |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);

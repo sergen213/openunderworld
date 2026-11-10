@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "ch08_puzzleroom_lift_switch",
+  "chapter": "08 Bhogavati: the section's start on the wooden lift; its switch tried before the mechanism is freed (docs/matrix/08_bhogavati.md C08-01)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/07bhogavati.html",
+  "note": "l2_puzzleroom from its player intro (checkpoint 2817) on the lift platform 2973 above the courtyard. The switch 2961 (sa_ei_elevator_switch) is used with both sides of the mechanism still held (ring 2972 in, pole 2967 in hole 2969): Lara plays the use, the switch's script answers with the jammed reaction (elevator parts 2959 / 2960 vt 56, platform 2973 vt 55) and the platform stays where it is. The two sides are freed in ch08_puzzleroom_lift_ring and ch08_puzzleroom_lift_pole (each from its own checkpoint: the climbs between the three ledges, C08-02 .. C08-13, are not played by input yet, so the drop of C08-14 is not either).",
+  "level": "l2_puzzleroom",
+  "steps": [
+    {"step": "to_the_switch", "plan": ["go -20729 35300 60", "go -20729 35450 30 walk", "face 90"], "duration": 30,
+     "expect": [{"probe": "world.checkpoint", "eq": 2817},
+                {"probe": "object.2973.name", "eq": "sa_uo_elevator_adrenaline", "note": "the lift platform she stands on"},
+                {"probe": "player.grounded", "eq": true}]},
+    {"step": "jammed", "plan": ["press", "wait 4"], "duration": 10,
+     "expect": [{"visits": ["use"]},
+                {"probe": "step.events", "has": ["use:2961>2961"]},
+                {"calls": ["2959:56", "2960:56", "2973:55"], "note": "the jammed reaction: both sides are still held"},
+                {"probe": "object.2973.body.z", "over": "min", "min": -1, "note": "the platform does not drop"},
+                {"probe": "player.pos.z", "near": 6176.7, "tol": 2, "note": "still on the platform at its height"},
+                {"probe": "player.state", "eq": "idle"}]}
+  ]
+}

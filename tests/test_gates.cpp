@@ -2393,6 +2393,72 @@ TEST(ProgressionReal, ThorMechanismsNeedTheGearAndSlide) {
     }
 }
 
+// l2_maproom (C09-04): Lara crossing volume 2636 activates cinematic 2624 (095_tha_powerup); the volume's handler
+// then waits for the cutscene's end (cinematic 10, a latent NtCineSequence: tru.exe 0x4A4CC0 / 0x4ADAA0) and only
+// then has Lara's equip helper give her g_gauntletleft (larabase 37); the cinematic's own handlers switch the
+// gauntlet's glow (larabase 19, the flag 0x698850 sets). Both natives were unbound: the handlers stopped there and
+// the gauntlet never came by play.
+TEST(ProgressionReal, MaproomCinematicGivesTheLeftGauntlet) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_maproom");
+    auto& w = *wp;
+    EXPECT_FALSE(w.script().playerObjects().contains("g_gauntletleft")) << "not hers before the cutscene";
+    const auto* v = w.script().find(2636);
+    ASSERT_TRUE(v);
+    place(w, v->pos, 0, true);
+    bool activated = false;
+    int given = -1;
+    for (int i = 0; i < 120; ++i) {
+        w.tick({});
+        for (const auto& e : w.script().events()) activated |= e.kind == script::EventKind::Activate && e.target == 2624;
+        if (given < 0 && w.script().playerObjects().contains("g_gauntletleft")) given = i;
+        if (!activated) EXPECT_LT(given, 0) << "the gauntlet came before the cutscene, tick " << i;
+    }
+    EXPECT_TRUE(activated) << "volume 2636 plays cinematic 2624";
+    EXPECT_GE(given, 0) << "the left gauntlet after the cutscene";
+    for (const auto& [key, n] : w.script().failures()) {
+        EXPECT_NE(key.first, 2636) << key.second;
+        EXPECT_NE(key.first, 2624) << key.second;
+    }
+}
+
+// l2_maproom's hub (C09-09): the Thor bridge 2667 (walkway, hub and wall: uber section 1) turns on hinge joint 1 about
+// the hub's axis. On the broken ring ledge under the round platform Lara faces the carved panel (handle marker 11,
+// record set 408, needs g_gauntletleft): Interact grips it (vt 49: section 0 state 3 takes joint 1's brake motor off,
+// section 1 state 1 limits the joint to 1..41 degrees), a sidestep to her right walks the panel round to the limit
+// and carries her with it; forward / back do not turn it (the panel moves across her facing).
+TEST(ProgressionReal, MaproomHubTurnsByItsPanel) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l2_maproom");
+    auto& w = *wp;
+    w.script().setPlayerObjects({"g_gauntletleft"});
+    place(w, {-20239.4f, 37936.7f, -12006.6f}, glm::radians(90.0f));
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(w.player().state().state, game::State::Idle);
+    ASSERT_TRUE(w.uberJoint(2667, 1));
+    const float rest = w.uberJoint(2667, 1)->x;
+    game::Actions grip;
+    grip.interact = true;
+    for (int i = 0; i < 45; ++i) w.tick(grip);
+    ASSERT_EQ(w.player().state().state, game::State::Block) << "gripped with the gauntlet";
+    game::Actions forward = grip;
+    forward.move = {0, 1};
+    for (int i = 0; i < 120; ++i) w.tick(forward);
+    EXPECT_NEAR(w.uberJoint(2667, 1)->x, rest, glm::radians(1.5f)) << "forward does not turn the hub";
+    const vec3 from = w.player().state().pos;
+    game::Actions right = grip;
+    right.move = {1, 0};
+    for (int i = 0; i < 600; ++i) w.tick(right);
+    EXPECT_NEAR(glm::degrees(w.uberJoint(2667, 1)->x), 41.0f, 1.5f) << "round to the limit of section 1's state 1";
+    EXPECT_GT(glm::length(vec2(w.player().state().pos - from)), 900.0f) << "she walks round with the panel";
+    EXPECT_NEAR(glm::length(vec2(w.player().state().pos) - vec2(w.uberJoint(2667, 1)->pivot)),
+                glm::length(vec2(from) - vec2(w.uberJoint(2667, 1)->pivot)), 30.0f) << "on a circle about the hub's axis";
+    for (int i = 0; i < 90; ++i) w.tick({});
+    EXPECT_NEAR(glm::degrees(w.uberJoint(2667, 1)->x), 41.0f, 2.5f) << "let go: braked where she left it";
+}
+
 namespace {
 // Lara grips the kind-1 record of `uid`'s section `section` from the spot whose way to the object is nearest to `dir`
 // (any spot for a zero `dir`), facing `face`, and holds the stick `stick` until `done` or `ticks` pass. False: no grip.

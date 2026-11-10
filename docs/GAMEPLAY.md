@@ -847,7 +847,11 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   registered in the table at `0xDA2024`) and scripts; what switches them on entering the water is not found [U].
   Ours (`World::laraHiddenGroups`): wetsuits hide 2 always and 1 unless Lara swims [I: the switch point]; 3 follows the
   scripts' mask.
-- [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic, volume 9628 takes it
+- [O] Grants in story order: l2_maproom volume 9626 gives the left gauntlet after its cinematic (intro 2636: it
+  activates cinematic 2624, waits for its end with `cinematic` 10 - a latent NtCineSequence, tru.exe 0x4A4CC0 /
+  0x4ADAA0 - and then calls the equip helper; the cinematic's handlers set the gauntlet's glow flag with `larabase`
+  19, 0x777A30 -> 0x698850; both natives are bound since 2026-11-10, before that the gauntlet never came by play:
+  `ProgressionReal.MaproomCinematicGivesTheLeftGauntlet`, self-test `ch09_maproom_gauntlet_door`), volume 9628 takes it
   back; l3_secretchamber cinematic 4654 gives the right one at its end (vt 60), 4655 takes it at its start (vt 58);
   l5_startsnow's chapter-start cinematic 7530 takes both at its start and gives both at its end (also sets story
   progress 5 via globals type 5 fn 4); l7_helheim01 8950 does the same. `g_belt`: the chapter setup scripts' `globals
@@ -990,9 +994,19 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   Jolt scene. Not changed: after a stream (no restore) the remade colliders stand at their intro frames until
   `tickObjects` poses them later in that tick, as before (posing them at once moved the
   `baldrs_plates_gate` replay's route). [I] a hinged door's collider is posed from its body, which holds the saved swing only after the first step.
-- **Open**: `ca_pu_thor_debris` 5609 (above); the pillars' hinge turn and rune glow; l2_maproom's hub and wall drag
-  (C09-09 / -11) are not surveyed; the speed's M (the proxy's mass, 0.125 x the object's [I]) and the hold / toggle
-  need a Wine trace. That measurement was not obtained: two sessions were run for it
+- **l2_maproom's hub** (C09-09): `sa_uo_thor_bridge_combo` 2667's section 1 (walkway, hub and wall) turns on hinge joint
+  1; its records (kind 1, g_gauntletleft) sit on handle markers 11 (the hub panel, set 408) and 12 / 13 (the wall, set
+  396 from state 18); section 0's states 2 / 3 switch joint 1's brake motor (9.99e6) on / off and the script's vt 49 /
+  50 command them (vt 49 also puts section 1 through state 1: joint limit 1 .. 41 degrees). Ours: she grips the panel
+  facing the hub's axis, so the panel moves across her facing: the sidestep drives the hinge (`pushUberHandle`: a
+  hinge whose tangent at her grip point lies across her facing is driven by left / right, as the slide doors; before
+  2026-11-10 only forward / back did, with an arbitrary sign), 120 units/s at her grip point [I], to the stop at 41
+  degrees; she is carried round the axis; the record-set swap 408 -> 396 at 20 degrees keeps her grip because the new
+  set holds her record (same kind, same segment [I]). `ProgressionReal.MaproomHubTurnsByItsPanel`, self-tests
+  `ch09_maproom_hub_panel` / `ch09_maproom_hub_turn`.
+- **Open**: `ca_pu_thor_debris` 5609 (above); the pillars' hinge turn and rune glow; l2_maproom's wall drag
+  (C09-11) and the hub's later alignments are not played; the speed's M (the proxy's mass, 0.125 x the object's [I])
+  and the hold / toggle need a Wine trace. That measurement was not obtained: two sessions were run for it
   (`openunderworld-work/gameplaygoal/gauntlets/wine_door.sh`: new game, level change to l5_startsnow for the gear,
   door 7400's spot from ours, Interact + each direction key) and neither gave a reading (in the first the level
   change did not happen within 200 s: Lara stayed at the prologue's start).

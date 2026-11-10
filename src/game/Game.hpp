@@ -1638,7 +1638,7 @@ private:
     vec3 uberGrip_{0};                     // last tick: Lara grips one (her stick moves it): its axis toward her facing, 0 = none
     struct UberPush { int32_t uid = 0, joint = -1; float before = 0; } uberPush_; // this tick's pushed joint
     // The push / pull record Lara grips; `face`: the way she faces while gripping it (0: her own facing, World::pushUberHandle)
-    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; } uberHandle_;
+    struct UberHandle { int32_t uid = 0, section = -1, kind = 0; vec3 face{0}; int32_t segment = -1; int8_t across = -1; } uberHandle_; // across: decided at the grip
     uint32_t pushCameraData_ = 0xFFFFFFFFu; // gamebase 50: DTP id given to CameraManager's type-4 camera (0x779C60)
     int uberMoving_ = 0; // this tick, gripping it: the way her stick moves it (1 forward, -1 back, 2 left, -2 right; 0 not)
     std::map<std::pair<std::string, uint32_t>, std::shared_ptr<const physics::ObjectPhysics>> modelPhysics_; // (object, model)

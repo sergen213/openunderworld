@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "ch07_cliffhall_grapple_gap",
+  "chapter": "07 Remnants: the jungle path's pit under the metal ring: grapple from the ground, running jump with the rope, the swing over the pit (docs/matrix/07_remnants.md C07-21, first part)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/06remnants.html",
+  "note": "l2_cliffhall from checkpoint 3754. The path east climbs one step and ends at the pit's edge (x -20100, floor z 7016); the ceiling ring is grapple target 3820 at (-18758, 9480, 9422). Standing back from the edge the ring is offered and the throw attaches (rope 2730); a run and Jump keep the rope (grapple_rappel_free_jumpon) and she swings out over the pit, Forward held, to within 500 of the far rock face (x -17337). NOT played: the release onto the far side. Jump presses at 0.35 / 0.45 / 0.55 s of the first forward swing on this heading all came down on the pit's floor (z 6350) under the far face, whose top is above the swing's reach there (she meets the face up to z 7444): the landing spot of the original route is not found yet (matrix row C07-21).",
+  "level": "l2_cliffhall",
+  "spawn": [-22653, 8519, 7650, 0],
+  "steps": [
+    {"step": "to_the_pit", "plan": ["go -21500 8800 120", "go -20551 8992 80", "face 15"], "duration": 30,
+     "expect": [{"visits": ["run", "climbup"]},
+                {"probe": "grapple.offered", "eq": 3820},
+                {"probe": "player.pos.z", "near": 7016, "tol": 5},
+                {"probe": "world.checkpoint", "eq": 3754}]},
+    {"step": "throw_from_the_ground", "input": ["0.2 grapple 1", "0.3 grapple 0"], "duration": 2,
+     "expect": [{"visits": ["idle", "grapplethrow", "grappleswing"]},
+                {"probe": "grapple.target", "eq": 3820},
+                {"probe": "grapple.kind", "eq": "ceiling"},
+                {"probe": "grapple.rope", "near": 2730, "tol": 15},
+                {"probe": "step.horizontal", "max": 2, "note": "roped, standing where she threw"}]},
+    {"step": "running_jump_with_the_rope", "fixtures": [{"camera": [15, -15]}], "plan": ["run 15 1.0 jump 0.3"], "duration": 3,
+     "expect": [{"probe": "grapple.attached", "over": "all", "eq": true},
+                {"clips": ["ng_walk", "grapple_rappel_free_jumpon", "grapple_rappel_free_swing_forward"]},
+                {"probe": "step.horizontal", "min": 1200, "note": "out over the pit"},
+                {"probe": "step.drop", "min": 150}]},
+    {"step": "swing_across", "fixtures": [{"camera": [15, -15]}], "input": ["0 forward 1"], "duration": 0.6,
+     "expect": [{"probe": "grapple.swinging", "over": "all", "eq": true},
+                {"probe": "player.pos.x", "min": -17900, "note": "the pit is behind her: its far face is at x -17337"},
+                {"probe": "player.pos.z", "min": 6900},
+                {"probe": "step.health_lost", "eq": 0}]}
+  ]
+}

@@ -308,6 +308,13 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   (Post 0xD / hit 0x11C, scripts pass 12345 or 1000: death volumes/planes) damage her [I: absolute / given type];
   `instance` Kill (10, 0x5B5740 dead flag) hides the object; `watervolumebase` reset (3) takes no argument;
   `messagechannel` Send always succeeds (unconsumed posts are no-ops in the exe too).
+- [O] `cinematic` 9 / 10 (thunks 0x797020 / 0x797040 -> 0x4A4C70 / 0x4A4CC0) return a latent NtCineSequence (update
+  0x4ADAA0): wait until the receiver's stream is the one playing, then until its time passes the float argument (9) or
+  FLT_MAX (10: its end). Ours: the call blocks through the tick in which that cinematic object was activated (its
+  cutscene is played or skipped at that tick's end) and not otherwise. `larabase` 19 / 20 (0x79A0E0 / 0x79A100) set / get one bool in
+  0xECFC88, read only by the material constant setter 0x6A6530 and saved by 0x6F5910 (+0xD4): the gauntlet's glow;
+  accepted, not drawn. Open: `multibody` 3 (Disable, 0x79ACD0 -> 0x4A6FF0 -> 0x4D8FF0: every atom's fixed bit set,
+  inverse mass 0; 2 = Enable clears it, 4 reads it) is unbound: l2_maproom volume 2637 calls it on bridge 2667.
 - [O] More bindings: `enemybase` (bind 0x7B4060) 16/17 Set/Get the AI behaviour index (0x776F10 → 0x62DE00),
   22 selects patrol path n of the intro data (0x777010 → 0x63AC40: n < 1 its own, 1..count an alternative, else
   none; LEVELS.md "Enemy intro data") → `ai::Enemies::selectPatrol`, 26 the MoveNav animation variant (0x7771E0,

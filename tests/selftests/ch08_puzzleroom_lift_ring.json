@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "ch08_puzzleroom_lift_ring",
+  "chapter": "08 Bhogavati: the lift mechanism's west side freed by pulling its ring with the grapple (docs/matrix/08_bhogavati.md C08-06)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/07bhogavati.html",
+  "note": "l2_puzzleroom from checkpoint 2819, the upper west ledge the climb of C08-02 .. C08-05 ends on. The mechanism's metal ring is grapple target 2972 (sa_uo_chain_debris, at -21725 40559 6226): a few steps east it is offered, the grapple hooks it (she braces: a mounted target) and Interact pulls it out: 2972 vt 55 -> elevator part 2959 vt 54 and switch 2961 vt 63 (this side of the lift is free), its uber section 0 goes to state 1, she lets go.",
+  "level": "l2_puzzleroom",
+  "spawn": [-24007, 40260, 5600, 0],
+  "steps": [
+    {"step": "to_the_ring", "plan": ["go -23000 40500 150", "face 0"], "duration": 20,
+     "expect": [{"probe": "grapple.offered", "eq": 2972},
+                {"probe": "object.2972.uber.0", "eq": 0},
+                {"probe": "object.2972.name", "eq": "sa_uo_chain_debris"},
+                {"probe": "world.checkpoint", "eq": 2819}]},
+    {"step": "throw", "input": ["0.2 grapple 1", "0.3 grapple 0"], "duration": 3,
+     "until": {"probe": "grapple.pulling", "eq": true},
+     "expect": [{"probe": "grapple.target", "eq": 2972},
+                {"probe": "grapple.kind", "eq": "mounted"},
+                {"visits": ["grapplethrow", "grapplepull"]},
+                {"probe": "object.2972.uber.0", "eq": 0, "note": "roped only"}]},
+    {"step": "pull", "input": ["0 interact 1"], "duration": 8,
+     "until": {"probe": "player.state", "eq": "idle"},
+     "expect": [{"calls": ["2972:55", "2959:54", "2961:63"], "note": "the ring is out: this side of the lift mechanism is free"},
+                {"probe": "object.2972.uber.0", "eq": 1},
+                {"probe": "grapple.attached", "eq": false},
+                {"probe": "step.horizontal", "max": 5}]}
+  ]
+}

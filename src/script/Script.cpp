@@ -1173,16 +1173,20 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (lastBike_) mounts_.push_back(lastBike_);
                 return true;
             }
-            // larabase 54 (0x79A4E0 -> 0x777E40): true when the instance in the instanceref argument is the bike 52 last
-            // named (Lara +0xF00, non-null). l5_valgrind's 240_val_gate (7464 vt 58) remembers with it that she rode in
-            // on bike 7229, to put her back on it afterwards.
+            // larabase 54 (0x79A4E0 -> 0x777E40): true when the instance in the instanceref argument is her vehicle
+            // (Lara +0xF00, non-null): the bike 52 last named here, else the one the world says she rides (the world
+            // binding below; one binding answered alone before, so l4_trailstart's reveal 6677 never set her down beside
+            // bike 5482). l5_valgrind's 240_val_gate (7464 vt 58) remembers with it that she rode in on bike 7229, to put
+            // her back on it afterwards.
             if (!std::strcmp(name, "larabase") && nc.function == 54 && nc.args.size() == 1) {
                 const vm::Value& a = nc.args[0];
                 int32_t bike = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
                 if (a.kind == vm::Value::Kind::Member)
                     if (const auto holder = resolve(a.uid)) bike = int32_t(holder->fields[a.offset]);
-                nc.result = vm::Value::scalar(bike != 0 && bike == lastBike_);
-                return true;
+                if (!water_ || (bike != 0 && bike == lastBike_)) {
+                    nc.result = vm::Value::scalar(bike != 0 && bike == lastBike_);
+                    return true;
+                }
             }
             // larabase 19 / 20 (0x79A0E0 / 0x79A100 -> 0x777A30 / 0x777A40 -> 0x698850 / 0x698860): set / get the global
             // byte 0xECFC88, "gauntlet charged" (l5_valgrind volume 7511: charged outside the gate's area, not charged
@@ -1221,6 +1225,23 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (nc.function == 37 && text != nc.args.end()) playerObjects_.insert(*text->text);
                 if (nc.function == 42) std::erase_if(playerObjects_, [](const std::string& o) { return o.starts_with("g_"); });
                 nc.result = vm::Value::scalar(nc.function == 38 && text != nc.args.end() && playerObjects_.contains(*text->text));
+                return true;
+            }
+            // cinematic 9 / 10 (thunks 0x797020 / 0x797040 -> 0x4A4C70 / 0x4A4CC0): a latent NtCineSequence on the
+            // receiver's stream; its update 0x4ADAA0 first waits until that stream is the one playing, then until the
+            // player's time passes the float given (9) or FLT_MAX (10, constant 0x845884): until it has finished [O].
+            // Ours plays (or skips) a cutscene at the end of the tick that activated it (World::checkLevelEnd), so
+            // the call blocks through the tick of an activation and returns from the next on [I: a time inside the
+            // stream (9) is not told apart from its end]; a receiver not activated this tick does not block (ours
+            // has nothing later to wait for: l4_trailstart's reveal 6677 calls it on a stream that is never ended
+            // here, and waiting stopped it before it set her down). l2_maproom volume 2636 waits so for cinematic
+            // 2624 before it hands the left gauntlet over.
+            if (!std::strcmp(name, "cinematic") && ((nc.function == 9 && nc.args.size() == 1) || (nc.function == 10 && nc.args.empty())) &&
+                (nc.receiver.kind == vm::Value::Kind::Member || nc.receiver.kind == vm::Value::Kind::Object)) {
+                const int32_t uid = nc.receiver.uid;
+                nc.wait = std::any_of(events_.begin(), events_.end(), [&](const Event& e) {
+                    return e.kind == EventKind::Activate && e.target == uid && e.tick == tick_;
+                });
                 return true;
             }
             // microphone (bind 0x7AC8A0): the audio listener's placement between camera and Lara (1/2 two floats ->
