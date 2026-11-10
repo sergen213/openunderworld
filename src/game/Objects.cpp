@@ -2327,6 +2327,9 @@ bool World::pullGrappled(const Actions& a) {
     rope = glm::normalize(rope);
     const auto* o = script_.find(uid);
     if (!o) return false;
+    // The `*_grapple*` pull targets (lever posts, shiva arms, snake heads, the grapple block) keep the one-second heave
+    // that runs their script's pull handler (World::tick) [I]: their joints are moved by that path's own rules.
+    if (o->name.find("_grapple") != std::string::npos) return false;
     // A rigid-body hinge.
     if (pulledHinge(*o)) {
         for (const auto& c : colliders_)
