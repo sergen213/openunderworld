@@ -1732,18 +1732,20 @@ TEST(Combat, KnockedDownAndGetsUp) {
         }
         return std::tuple{seen, up, w->player().state().pos};
     };
-    const auto [front, upFront, posFront] = run({-600, 0, 0}, false); // a blast in front of her (she faces +x)
-    EXPECT_EQ(front[0], "Hit_ThrownFront");
-    EXPECT_EQ(front[1], "Hit_LandFront");
+    // a blast in front of her (she faces +x): thrown onto her back (the clips' root motion in lara.drm: the back landing
+    // moves her backwards, the front landing forwards; CombatReal.GrenadeBlastKnocksLaraDownAndSheGetsUp)
+    const auto [front, upFront, posFront] = run({-600, 0, 0}, false);
+    EXPECT_EQ(front[0], "hitReact_thrownBack");
+    EXPECT_EQ(front[1], "hitReact_landBack");
     EXPECT_EQ(front[2], "Hit_getupback");
     EXPECT_LT(posFront.x, -50.0f) << "skidded away from the blast";
     EXPECT_GT(posFront.x, -400.0f);
-    EXPECT_NEAR(upFront, 22 + 24 + 60 + 28, 6) << "thrown 11 keys, landing 12, lying 1 s, get-up 14";
-    const auto [back, upBack, posBack] = run({600, 0, 0}, true);
-    EXPECT_EQ(back[0], "hitReact_thrownBack");
-    EXPECT_EQ(back[1], "hitReact_landBack");
+    EXPECT_NEAR(upFront, 22 + 16 + 60 + 28, 6) << "thrown 11 keys, landing 8, lying 1 s, get-up 14";
+    const auto [back, upBack, posBack] = run({600, 0, 0}, true); // from behind: onto her front
+    EXPECT_EQ(back[0], "Hit_ThrownFront");
+    EXPECT_EQ(back[1], "Hit_LandFront");
     EXPECT_EQ(back[2], "Hit_GetupFront");
-    EXPECT_NEAR(upBack, 22 + 16 + 26, 12) << "jump gets her up without the wait";
+    EXPECT_NEAR(upBack, 22 + 24 + 26, 12) << "jump gets her up without the wait";
     EXPECT_GT(posBack.x, 50.0f);
 }
 
@@ -1948,6 +1950,62 @@ TEST(CombatReal, FatalityEndsADownedThrall) {
     EXPECT_TRUE(b.alive());
     EXPECT_NE(b.state().mode, game::ai::Mode::Down) << "the other one got up again";
     EXPECT_FLOAT_EQ(b.health(), viking->tuning.health);
+}
+
+// l1_baldrs_tomb: her own grenade stuck to a target half its radius ahead goes off within its radius of her: the blast's knock
+// throws her off her feet in the real unit (the thrown clip, the landing), she lies and gets up again, alive, on the
+// room's floor; the stick does nothing meanwhile.
+TEST(CombatReal, GrenadeBlastKnocksLaraDownAndSheGetsUp) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto loader = [&](const std::string& n) { return game::loadUnitData(bf, n); };
+    game::World w(loader, "l1_baldrs_tomb", game::loadLaraAnims(bf), game::Spawn{{-5000, -10000, 2560}, 3.14159f});
+    for (int i = 0; i < 10; ++i) w.tick({});
+    const auto& s = w.player().state();
+    const float floorZ = s.pos.z;
+    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0), start = s.pos;
+    const auto& g = w.anims().grenade;
+    game::DummyTarget e; // a still target for the grenade to stick to
+    e.pos = s.pos + fwd * (0.5f * g.radius);
+    w.targets.push_back(&e);
+    struct Drop { game::World& w; ~Drop() { w.targets.clear(); } } drop{w};
+    int n = 0;
+    while (!(w.combat().locked && w.combat().target == &e) && ++n < 120) w.tick(guns(false));
+    ASSERT_EQ(w.combat().target, &e);
+    Actions throwIt = guns(false);
+    throwIt.grenade = true;
+    w.tick(throwIt);
+    int knocked = -1, exploded = -1;
+    float blast = -1;
+    for (int i = 0; i < 600 && knocked < 0; ++i) {
+        w.tick(guns(false));
+        if (exploded < 0 && !w.explosions().empty()) exploded = i, blast = glm::distance(w.explosions()[0], s.pos);
+        if (s.state == State::Knocked) knocked = i;
+    }
+    ASSERT_GE(exploded, 0) << "her grenade went off";
+    ASSERT_GE(knocked, 0) << "the blast threw her: " << blast << " from her, radius " << g.radius << ", state "
+                          << game::stateName(s.state) << " health " << w.health().value();
+    EXPECT_EQ(s.clip, "hitReact_thrownBack") << "the blast in front of her throws her back";
+    EXPECT_GT(w.health().value(), 0.0f);
+    std::vector<std::string> seen{s.clip};
+    Actions run;
+    run.move = {0, 1};
+    int up = -1;
+    for (int i = 0; i < 600 && up < 0; ++i) {
+        w.tick(run);
+        if (s.clip != seen.back()) seen.push_back(s.clip);
+        if (s.state != State::Knocked) up = i;
+    }
+    ASSERT_GE(up, 0) << "she got up";
+    ASSERT_GE(seen.size(), 3u);
+    EXPECT_EQ(seen[1], "hitReact_landBack");
+    EXPECT_EQ(seen[2], "Hit_getupback");
+    EXPECT_GT(up, 90) << "thrown, landed, lay a second, got up";
+    EXPECT_GT(glm::dot(start - s.pos, fwd), 30.0f) << "skidded away from the blast";
+    EXPECT_NEAR(s.pos.z, floorZ, 5.0f);
+    for (int i = 0; i < 30; ++i) w.tick(run);
+    EXPECT_TRUE(s.state == State::Run || s.state == State::Walk) << "on her feet again: the stick moves her";
 }
 
 // l1_baldrs_sideroom: interact by treasure urn 94 kicks it; the kick's hit breaks it (its uber section 0 -> 2 on any

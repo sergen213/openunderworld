@@ -571,8 +571,11 @@ void World::throwLara(vec3 vel) {
     const PlayerState& s = player_.state();
     if (health_.dead() || s.water >= 0 || !(onFeet(s.state) || s.state == State::Hit || s.state == State::Melee || s.state == State::Crouch)) return;
     const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0);
-    const bool front = glm::dot(vec2(vel), vec2(fwd)) <= 0; // the blast is in front of her: thrown onto her back
-    const std::string_view clip = front ? "Hit_ThrownFront" : "hitReact_thrownBack";
+    // The blast is in front of her: thrown back, onto her back (hitReact_thrownBack / _landBack, whose root moves 60
+    // backwards [O], then Hit_getupback); behind her: thrown forward onto her front (Hit_ThrownFront / Hit_LandFront, root
+    // 215 forwards [O], then Hit_GetupFront).
+    const bool front = glm::dot(vec2(vel), vec2(fwd)) <= 0;
+    const std::string_view clip = front ? "hitReact_thrownBack" : "Hit_ThrownFront";
     if (!anims_.find(clip)) return;
     if (held_) releaseHeld(vec3(0), false);
     melee_.move = MeleeState::Move::Knocked, melee_.phase = 0, melee_.target = front ? 1 : 0, melee_.landed = false;
@@ -816,7 +819,7 @@ void World::tickMelee(Actions& a, bool pressed, float dt) {
         if (!ended(anims_, s)) break;
         if (m.phase == 0) {
             m.phase = 1, m.landed = false, m.vel = vec3(0), m.timer = 0;
-            player_.act(front ? "Hit_LandFront" : "hitReact_landBack", State::Knocked);
+            player_.act(front ? "hitReact_landBack" : "Hit_LandFront", State::Knocked);
         } else if (m.phase == 1) {
             if (m.landed || (m.timer += dt) >= kLieSeconds) {
                 m.phase = 2;
