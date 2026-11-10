@@ -466,7 +466,6 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
     playerScript_.reset();
     playerHiddenGroups_ = playerGearGroups_ = 0;
     playerObjects_.clear();
-    cinematicsPlayed_.clear();
     pullStrength_ = 1;
     if (!bigfile_) return;
     const auto bytes = bigfile_->read("pc-w\\lara.drm");
@@ -915,7 +914,6 @@ bool Runtime::grapplePulled(int32_t uid) {
 }
 
 void Runtime::endCinematic(int32_t uid) {
-    cinematicsPlayed_.insert(uid);
     if (Object* object = findMut(uid)) fire(EventKind::CinematicEnd, *object);
 }
 
@@ -1160,16 +1158,20 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 if (lastBike_) mounts_.push_back(lastBike_);
                 return true;
             }
-            // larabase 54 (0x79A4E0 -> 0x777E40): true when the instance in the instanceref argument is the bike 52 last
-            // named (Lara +0xF00, non-null). l5_valgrind's 240_val_gate (7464 vt 58) remembers with it that she rode in
-            // on bike 7229, to put her back on it afterwards.
+            // larabase 54 (0x79A4E0 -> 0x777E40): true when the instance in the instanceref argument is her vehicle
+            // (Lara +0xF00, non-null): the bike 52 last named here, else the one the world says she rides (the world
+            // binding below; one binding answered alone before, so l4_trailstart's reveal 6677 never set her down beside
+            // bike 5482). l5_valgrind's 240_val_gate (7464 vt 58) remembers with it that she rode in on bike 7229, to put
+            // her back on it afterwards.
             if (!std::strcmp(name, "larabase") && nc.function == 54 && nc.args.size() == 1) {
                 const vm::Value& a = nc.args[0];
                 int32_t bike = a.kind == vm::Value::Kind::Object ? a.uid : int32_t(a.bits);
                 if (a.kind == vm::Value::Kind::Member)
                     if (const auto holder = resolve(a.uid)) bike = int32_t(holder->fields[a.offset]);
-                nc.result = vm::Value::scalar(bike != 0 && bike == lastBike_);
-                return true;
+                if (!water_ || (bike != 0 && bike == lastBike_)) {
+                    nc.result = vm::Value::scalar(bike != 0 && bike == lastBike_);
+                    return true;
+                }
             }
             // larabase 19 / 20 (0x79A0E0 / 0x79A100 -> 0x777A30 / 0x777A40 -> 0x698850 / 0x698860): set / get the global
             // byte 0xECFC88, "gauntlet charged" (l5_valgrind volume 7511: charged outside the gate's area, not charged
@@ -1214,17 +1216,17 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // receiver's stream; its update 0x4ADAA0 first waits until that stream is the one playing, then until the
             // player's time passes the float given (9) or FLT_MAX (10, constant 0x845884): until it has finished [O].
             // Ours plays (or skips) a cutscene at the end of the tick that activated it (World::checkLevelEnd), so
-            // the call blocks until that has happened; a new activation this tick waits for its own end [I: a time
-            // inside the stream (9) is not told apart from its end]. l2_maproom volume 2636 waits so for cinematic
+            // the call blocks through the tick of an activation and returns from the next on [I: a time inside the
+            // stream (9) is not told apart from its end]; a receiver not activated this tick does not block (ours
+            // has nothing later to wait for: l4_trailstart's reveal 6677 calls it on a stream that is never ended
+            // here, and waiting stopped it before it set her down). l2_maproom volume 2636 waits so for cinematic
             // 2624 before it hands the left gauntlet over.
             if (!std::strcmp(name, "cinematic") && ((nc.function == 9 && nc.args.size() == 1) || (nc.function == 10 && nc.args.empty())) &&
                 (nc.receiver.kind == vm::Value::Kind::Member || nc.receiver.kind == vm::Value::Kind::Object)) {
                 const int32_t uid = nc.receiver.uid;
-                const bool starting = std::any_of(events_.begin(), events_.end(), [&](const Event& e) {
+                nc.wait = std::any_of(events_.begin(), events_.end(), [&](const Event& e) {
                     return e.kind == EventKind::Activate && e.target == uid && e.tick == tick_;
                 });
-                if (starting) cinematicsPlayed_.erase(uid);
-                nc.wait = !cinematicsPlayed_.contains(uid);
                 return true;
             }
             // microphone (bind 0x7AC8A0): the audio listener's placement between camera and Lara (1/2 two floats ->
@@ -2853,7 +2855,6 @@ nlohmann::json Runtime::serialize() const {
             if (const auto it = playerScript_->initial.find(offset); it == playerScript_->initial.end() || it->second != value)
                 fields[std::to_string(offset)] = value;
     j["player"] = {{"hiddenGroups", playerHiddenGroups_}, {"objects", playerObjects_}, {"scriptFields", std::move(fields)}, {"lastBike", lastBike_}};
-    j["cinematicsPlayed"] = cinematicsPlayed_;
     if (gauntletCharged_) j["player"]["gauntletCharged"] = true; // larabase 19 (absent: not charged, as in saves before it)
     // The running script itself (version 1): sleeping threads, unit / global script instances (by unit and type: their
     // uids depend on load order, so a load gives them the saved ones), the objects then alive (a load resumes them rather
@@ -2942,7 +2943,6 @@ void Runtime::restore(const nlohmann::json& j) {
     if (const uint32_t mask = player.value("hiddenGroups", playerGearGroups_); mask != playerHiddenGroups_)
         playerHiddenGroups_ = mask, ++visibilityVersion_;
     playerObjects_ = player.value("objects", std::set<std::string>{});
-    cinematicsPlayed_ = j.value("cinematicsPlayed", std::set<int32_t>{});
     lastBike_ = player.value("lastBike", 0);
     gauntletCharged_ = player.value("gauntletCharged", false);
     if (playerScript_) {

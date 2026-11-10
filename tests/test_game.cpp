@@ -3782,11 +3782,23 @@ TEST(GameReal, GrappleTuningFromData) {
     EXPECT_EQ(t->stowMarker, d.stowMarker);
 }
 
+namespace {
+// l4_pool as the ring over it is used: the pool drained by the serpent heads' scripts (watervolumebase SetLevel on
+// volume 5608, as ProgressionReal.ThorPillarsSlideOnTheirPlane). A fresh unit's pool is full to just under ceiling
+// anchor 5511, and on the rope with her feet under a surface she lets go and swims.
+void drainPool(game::World& w) {
+    const int32_t drain[] = {0, 0};
+    uint32_t depth = 0;
+    ASSERT_TRUE(w.waterNative(5608, "watervolumebase", 1, drain, depth));
+}
+} // namespace
+
 TEST(GameReal, PoolGrappleTargetAndSwing) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
     game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l4_pool",
                   game::loadLaraAnims(bf), game::Spawn{{4362, -400, 2000}, 0});
+    drainPool(w);
     w.restore(w.player().state(), 1.5707963f, 0.7f); // look up at the ceiling anchor
     const auto t = w.grappleTarget();
     ASSERT_TRUE(t) << "the pool's ceiling anchor is selectable";
@@ -3804,6 +3816,7 @@ TEST(GameReal, GrappleShootsOnTheRope) {
     const cdc::BigfileSet bf(gameDir());
     game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l4_pool",
                   game::loadLaraAnims(bf), game::Spawn{{4362, -400, 2000}, 0});
+    drainPool(w);
     w.attachGrapple({4362, -70, 2607}, 5511);
     for (int i = 0; i < 90; ++i) w.tick({});
     ASSERT_EQ(w.player().state().state, State::GrappleSwing);
@@ -5722,6 +5735,7 @@ TEST(GameReal, SharedGrappleKeyThrowsWithoutRecentering) {
     const cdc::BigfileSet bf(gameDir());
     game::World w(game::UnitLoader([&](const std::string& name) { return game::loadUnitData(bf, name); }), "l4_pool",
                   game::loadLaraAnims(bf), game::Spawn{{4362, -400, 2000}, 0});
+    drainPool(w);
     w.restore(w.player().state(), 1.5707963f, 0.7f); // looking up at the ceiling anchor 5511, Lara facing +x
     w.tick({}); // no press edge on the first tick
     ASSERT_TRUE(w.grappleTarget());
