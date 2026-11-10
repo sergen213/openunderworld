@@ -410,6 +410,7 @@ tested behaviour happen.
 | `puzzle_pole_block_door` | l4_ballcourt | pole 6503 into lever 6502 (graph 0 -> 1), push block 6504 under it (two pushes), up onto the block, jump to the pole: lever joint slides, door 6505 rises |
 | `combat` | l2_cliffclimb | draw, hard lock, pistols kill three spiders and hit a 700 hp target dummy 8+ times, adrenaline fills |
 | `motorcycle` | l4_trailstart | mount bike 5482, accelerate (wheels on the ground), steer left, hop (both wheels off, then down), brake to a stop, dismount |
+| `chimney_floor_jumps` | l2_junglehub | at column A's unflagged face: a standing jump is a plain jump (no wall jump, apex 201.6); a stick jump plants her feet on the wall ~43 over the floor, and with no press she comes down again (both as tru.exe under Wine, docs/REFERENCE_COMPARISON.md M06) |
 | `pole_drop_after_fling` | l4_traprooms | the fling 1336 -> 1337, then Drop: `Hpole_detach_dropPerp`, down 27 beside the rubble mound under the pole, standing within 1.2 s (not caught again by pole 1337) |
 | `saving_grab` | l5_valaskjalf | drop-down ledges 1488 -> 1485 -> 1484: each Drop is caught one handed 1422 / 1387 lower (`ledgeb_bad_attach_M`, 50 frames), Interact pulls her up, Jump does not, left alone she falls after 1.67 s |
 | `safety_drop` | l4_temple | running off the high platform's east edge: `drop_to_ledgeb` without a key, hanging on ledge 1168 (root 499 down), then Drop to the floor 251 under her feet |

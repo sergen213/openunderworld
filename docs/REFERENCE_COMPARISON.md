@@ -32,8 +32,9 @@ status is not "matches", and "matches" means only what its row measured.
 | Jump height | standing 201.6, stick 218.2, running 158.0: equal within 0.2 |
 | Jump distance | running 987.4 against 990.3; stick 680 against 698 (to the floor) |
 | Jump timing | **differs**: ours leaves the ground 0.2 s early from standing, ~0.05 s early running |
+| Chimney jump | measured at l2_junglehub (wall attach, hold 12 frames, rebound 46.81 + 77.27 a frame, the four-jump climb): two defects fixed in this pass; **differs**: ours rises 435 a rebound against 338..361 |
 | Falling speed | gravity 5.72443 a frame² on both sides, no terminal speed |
-| Grapple swing duration, trajectory | see "Grapple" (session of 2026-11-10) |
+| Grapple swing duration, trajectory | **unmeasured**: five Wine attempts did not get her onto the rope ("Grapple"); ours measured: half period 2.5..2.6 s on a 3632 rope, 54..58° with Forward held |
 | Climbing speed | clip root motion on both sides; no live trace of shimmy / ladder / free-climb rates: unmeasured |
 | Animation transitions | take-off clips' start frames wrong (jump timing, run start); otherwise not measured |
 | Character rotation | surface swim turn 117.5°/s measured and equal; ground turn rates unmeasured |
@@ -72,6 +73,9 @@ agrees with the offset from grapple ring 4089's instance within 0.1). In the pro
 (cos yaw, sin yaw): tru yaw = ours + 90°. A death reloads the last checkpoint in the frame of the *chapter*, not of
 the `goto` unit: every later teleport with `goto` coordinates then drops her through the world (this cost the first
 two grapple sessions and the first chimney session; check the player instance and position after every placement).
+Only the first `goto` of a session is reliable (a second one left the old unit loaded twice out of three times): one
+unit per session. A hang is reached by pinning her (`tp`, not `tpv`: the fall state must run) 600 over the hang's root
+and 6 farther out for 1.5 s, facing the wall: the fall's own air grab takes the ledge.
 
 **Ours.** `ou-game --self-test FILE.json --self-test-trace` (docs/SELFTEST.md) plays the same inputs at the same spot
 in the real unit and prints state, clip, position and speed every tick. Scenarios and logs of this pass:
@@ -147,6 +151,11 @@ not re-opened and the number is the doc's.
 | M06 | On the wall: height, standoff | Root **43.2 / 43.6** over the floor she jumped from, drawn in 0.19..0.20 s to **98.5** out of the column's ledge line | [O-runtime] `chimney3-wine.txt` j3 / j4 | `tryWallJump`: **47.1** over the floor (one 30 Hz frame of the 49.97 take-off; self-test `chimney_floor_jumps`); standoff 110 from the ray's hit = 105.5 out of the same line; drawn over 2 frames (0.067 s, `kAttachSeconds`) | +3.7 height; +7 standoff; the draw onto the wall 0.13 s (4 frames) shorter | matches (height, standoff); **differs: attach phase 4 frames short** (Differences to fix 8) |
 | M06 | Hold without a press | Idle on the wall **0.416 s** (12.5 frames) after the attach phase, then `wall_jump_detach_fall`: 0.267 s, root 32.9 back and down to the floor; on the wall 0.617 s in all | [O-runtime] `chimney3-wine.txt` j3; [O-data] chart variable 208 = 12 frames | `Tuning::wallJumpHold` 12 / 30 = 0.400 s, then the clip (33.7 back); on the wall 0.467 s in all (`out/chimney_floor_jumps.log`) | idle −0.016 s; total −0.15 s (the attach phase above) | matches (idle time, detach) |
 | M06 | Rebound | Press 58 ms into the idle: `wall_jump_jump_back` for **0.200 s** (half turn), then **46.81** out + **77.27** up a frame (first sample 74.48 after a frame of gravity), from 22.8 out and 37.0 up of the wall position | [O-runtime] `chimney3-wine.txt` j4; [O-data] query q12 | `Tuning::wallJumpOut` 46.81, `wallJumpVz` 77.27; the turn clip 0.133 s; first flight sample 23.4 out, 38.0 up | velocity 0; the turn 0.067 s (2 frames) shorter | matches (velocity); **differs: turn 2 frames short** (Differences to fix 8) |
+| M06 | The climb at l2_junglehub: ledge 796 → 797 between the columns | From the hang (root z 5855.5): Back + Jump leaps back 407 ms after the press at **53.73** out + **34.77** up a frame (the free leap's speeds); feet on column B 0.149 s later, **130.6** over the hang's root; then three presses: B → A → B → ledge 797, hanging **1247.5** higher 3.17 s after the first press. Four jumps | [O-runtime] `gameplaygoal/reference/chimney4-wine.txt` h1 | `GameReal.JunglehubChimneyJumpClimbsColumns`: the same four jumps; on B **138** over the hang's root; rise 1248 | +7 on the first wall; same count, same end | matches |
+| M06 | Rise per rebound, where the next wall takes her | The flight after a rebound ends in the wall state **0.183..0.200 s** (the 5th frame: zVel back inside the window) with her root still 105..115 short of where she will hold; she is drawn there level in 0.2 s. Wall to wall she gains **360.6** and **338.4** (37.9 in the turn + the flight) | [O-runtime] `chimney4-wine.txt` h1: holds at +130.6, +491.2, +829.6 over the hang's root | ours reaches the next wall's test range only on the 8th frame and arrives at the wall: **435** a rebound (`GameReal.JunglehubChimneyJumpClimbsColumns` asserts 435 ± 20): holds at +138, +573, +1008 | +75..+97 a rebound; the wall is taken from ~110 farther out in tru.exe than ours' rays reach (3 frames x speed) | **differs: +75..+97 a rebound** (Differences to fix 10) |
+| M06 | Hold after a leap from a hang, no press | On column B 0.200 s of draw, idle **0.404 s** (12 frames), `wall_jump_detach_fall` 0.259 s (32.6 back, 149.4 down), then the fall | [O-runtime] `chimney4-wine.txt` h3 | as the floor case above: 0.400 s idle; clip 33.7 back, 154.4 down | −0.004 s | matches |
+| M06 | Last jump onto the ledge | From B at +829.6: a re-aimed flight (first sample 36.32 out + 67.06 up a frame), 0.283 s, then 0.53 s into the hang on 797 | [O-runtime] `chimney4-wine.txt` h1 | `wallJump`: `ledgeOnArc(q12)` → `launchHangJump` from +1008 | ours takes the ledge from 178 higher up (the rebounds above) | matches (outcome); flight not compared |
+| M06 | Five in a row | From the hang on ledge 797 with a press every 150 ms: the leap back, then **five** jumps back (the walls give no height there); on the wall after the fifth the presses do nothing: she holds 0.416 s (12.5 frames), drops with `wall_jump_detach_fall` and catches 797 again | [O-runtime] `gameplaygoal/reference/chimney4-wine.txt` h2; [O-data] `PSCCF_WallJumpAllowed` (chart cond 0x21C, 0x7660D0: count < byte +0x843 = 5) | `Tuning::wallJumpMax` 5; `Game.ChimneyJumpFallsAfterFiveInARow`, `GameReal.ValaskjalfChimneyJumpTakesAllFive` | none | matches |
 | M11 | Perch | Attach, turns and jumps by the perch group's clips and queries | [O-data]; † not traced | `Traverse.cpp` perches | — | unmeasured (same data) |
 | M12 | Thin column (pillar) | Climb by clips; slide down measured | [O-runtime] `polefid2/pil1.txt`, `pil2.txt`, `pil3.txt` (as cited in docs/GAMEPLAY.md "Ladders, pillars, perches") | `Traverse.cpp` `pillar` | — | matches (slide, per GAMEPLAY.md); not re-fitted here |
 | M18 | Faster climbing by timed Interact | † not traced; no chart condition found | [U] | none | — | unmeasured (not implemented) |
@@ -199,12 +208,21 @@ spot as self-test `grapple_swing`) and on l3_main_hall ring 4089 (`ours_swing.js
 | M23 | Wall run | Drive 1.90..6.32 a frame² by rope length, not past **55°**, brake 2.5 there, cap 97.98 a frame | [O] † 0x745FA0, player data +0x940..+0x970; reversal rule not decoded | `Grapple.cpp` wall run (`kWallRun`, `kWallMaxAngle`, `kWallMaxSpeed`); self-test `wall_run` | — | unmeasured |
 | M24 | Jump off the wall | Sideways 45.83 along the wall + 44.25 up; back 53.73 out + 44.25 up a frame | [O] † 0x73C640, player data +0x994..+0x9A8 | `kWallJumpSide` / `kWallJumpBack` / `kWallJumpUp` | — | unmeasured (same data) |
 
-**Sessions.** Three attempts at l3_main_hall (two by an earlier pass, `gameplaygoal/grapin/wine1.txt`, `wine2.txt`;
-one here, `gameplaygoal/reference/failed/`) failed the same way: Lara set on the balcony (ours 2441, 3912, 1709) is
-not standing there a second later (she comes to rest 277 lower and is then gone: the player instance is freed and
-the game restarts the prologue in the bedroom), so every later placement used the wrong frame. Whether the balcony's
-floor is missing after `wmem goto l3_main_hall` (a neighbour unit not streamed in) or a script kills her there is not
-known.
+**Sessions.** No live trace of the rope was obtained; five attempts failed before she was on the rope:
+
+- l3_main_hall ring 4089, three sessions (two by an earlier pass, `gameplaygoal/grapin/wine1.txt`, `wine2.txt`; one
+  here, `gameplaygoal/reference/failed/grapple2-session4-hall.txt`): Lara set on the balcony (ours 2441, 3912, 1709)
+  is not standing there a second later: she comes to rest 277 lower and is then gone (the player instance is freed and
+  the game restarts the prologue in the bedroom), so every later placement used the wrong frame. Whether the balcony's
+  floor is missing after `wmem goto l3_main_hall` (a neighbour unit not streamed in) or a script kills her there is
+  not known.
+- l3_chapel ring 4744 (`failed/grapple3-session7a-chapel.txt`): 100 s after `wmem goto l3_chapel` she is not at rest:
+  she has moved 820 from the start by herself and a 6 s position hold leaves her where she was: the unit starts with
+  a scripted sequence that owns her.
+- l4_pool ring 5511: not tried; the only known stand point (our test's) is in the eitr.
+- A second `goto` in one session did not load its unit twice out of three times (`failed/`), which cost two more runs.
+
+What to try next is in "Unmeasured".
 
 ## Water (goal §7)
 
@@ -338,6 +356,7 @@ pass except where it says so.
 | 7 | Surface swim: velocity lags the heading ~9° in a turn against ~16° | `camfollow-wine/turn1.txt` | `Player.cpp` SwimSurface (`kSwimTurnAccel`) | water |
 | 8 | Wall jump: the draw onto the wall takes 2 frames (tru.exe 6: 0.19..0.20 s) and the turn before the rebound 4 (tru.exe 6: 0.200 s), so a chimney climb runs ~0.2 s a rebound faster | `gameplaygoal/reference/chimney3-wine.txt` j3 / j4 against `out/chimney_floor_jumps.log`, `out/ours_chimney.log` | `WallJump.cpp` `kAttachSeconds`; `wall_jump_jump_back` played from its request's start frame | Lara controller (`WallJump.cpp`) |
 | 9 | A jump pressed 17..70 ms after the stick is a running jump in ours, a stick jump in tru.exe (switch between 15 and 71 ms after her run state begins) | `chimney3-wine.txt` j3 / j4 / h3 | `Player.cpp` Idle → Run on the first tick, `runJump = state == Run` | Lara controller |
+| 10 | **Chimney rebound rises 435 in ours, 338..361 in tru.exe**: the original takes the next wall on the 5th frame of the flight (zVel inside the window) from ~110 short of the hold and draws her in over 6 frames; ours' rays (3 frames x speed from the pelvis) reach it only on the 8th frame | `gameplaygoal/reference/chimney4-wine.txt` h1 against `GameReal.JunglehubChimneyJumpClimbsColumns` (asserts 435 ± 20: to be re-pinned) | `WallJump.cpp` `tryWallJump` (ray length; what 0x758DD0's +0xA20 vector and 0x4935F0's cast really are is not decoded: the first may be the launch velocity, the second may have a radius), `kAttachSeconds` | Lara controller (`WallJump.cpp`) |
 
 ## Unmeasured: what still lacks a live measurement, and the session that would give it
 
@@ -361,6 +380,8 @@ template: unit offset from the start position, `tpv` placement checked by a posi
 | Enemy speeds and attack periods | M40..M46, M82..M84 | one unit per type with the enemy's instance position traced (`pole watch <uid>`) |
 | Push block speed, lever / door times, pressure pad thresholds, timed doors | M52..M62 | l4_ballcourt block and lever 6502 / door 6505 (`pole watch` of both while Lara pushes / hangs); l1_baldrs_tomb plates |
 | Grapple pull heave, rope weight on a lever | M25, M26 | l4_trailstart lever 6695: Q, E held; the lever's joint traced |
+| **Grapple swing**: rope length at the hang, period, decay with no input, growth and limit with Forward held, jump-off speed, rope climb rates | M20, M99 | One unit per session (`session7a.sh` is the template; ours: `ours_chapel.json`). Either l3_chapel after its opening sequence has ended (trace her state until it is the idle state, then place her on the column top at ours −5126, 1900, −3141) or l4_temple ring 4951 from the upper ledge (placement works in l4_temple: `gameplaygoal/inputrules/session2.sh`). Pin the camera for the Q press (`CAMFOLLOW`), check the placement by a position dump, keep `god` and the fall-damage heights (player data +0x4C..+0x54) out of reach: a death restarts the chapter in another frame |
+| Chimney: the look-ahead that takes the next wall; a climb that needs all five | M06 | l5_valaskjalf ledge 1512 alone in a session (`session7b.sh` `hang`, hang root ours 5057, −79806, −13922.8, yaw π, `CAMFOLLOW=0,1`): Back + Jump, then a press every 150 ms |
 | Wall run, rappel rates, wall kick | M22..M24 | l5_valaskjalf anchor 6750 from ledge 1600 (hang placement as session4.sh `hang`) |
 | Motorcycle: 0 to top speed, braking distance, steering radius, a ramp jump | M47..M49 | l4_trailstart: mount by E beside bike 5482 (38051, −51966, 1463), throttle 8 s on the trail's straight; the bike instance's position (+0x20) and velocity traced; hand brake at speed; the stick held over at 2000 units/s |
 | Camera transitions | — | hooks on 0x5E8210 as `camfollow-wine/` while she grabs a ledge and drops |
@@ -368,5 +389,5 @@ template: unit offset from the start position, `tpv` placement checked by a posi
 
 ## Counts
 
-156 rows: **45** match (8 of them with a part that differs), **4** differ, **107** are unmeasured. 53 rows rest on a live measurement of the
+161 rows: **49** match (8 of them with a part that differs), **5** differ, **107** are unmeasured. 58 rows rest on a live measurement of the
 original ([O-runtime]); the rest are decoded only (†).

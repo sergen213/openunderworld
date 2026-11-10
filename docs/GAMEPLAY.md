@@ -1629,6 +1629,11 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   roped walk's speed) was attempted twice and not obtained: teleported to the balcony (unit offset from the ring's
   instance position: tru = ours + (1583.83, 1911.31, -1939.58)) she falls through the world after the first camera
   calibration run. Scripts and notes: `openunderworld-work/gameplaygoal/grapin/` (`wine2.sh`, `an.py`, `NOTES.md`).
+  Three more sessions (2026-11-10, `openunderworld-work/gameplaygoal/reference/failed/`) did not get her onto a rope
+  either: on this balcony she is 277 lower a second after being set down and then gone (the game restarts the
+  prologue, which is why the earlier sessions' later teleports fell through the world), and in l3_chapel the unit
+  opens with a scripted sequence that owns her. docs/REFERENCE_COMPARISON.md "Grapple" has ours' measured swing on
+  both rings and, under "Unmeasured", the session to run next.
   Open until then [U]: the time base of the brakes and of the body damping (ours: per frame), gravity on the rope
   body, the "no ground" distance, the roped walk speed, whether the jump-offs let the rope go.
 - Landing from the rope [I]: swinging down onto a floor (> 300 u/s down) off a taut rope, or coming down just over a
@@ -2053,7 +2058,8 @@ as a wall).
 
 **Tests**: `Game.ChimneyJumpGainsHeightEachRebound` (walls 700 apart: ~487 a rebound, 110 out, no teleport),
 `Game.ChimneyJumpNeedsThePress` (14 frames, then the fall), `Game.ChimneyJumpFallsAfterFiveInARow`,
-`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`,
+`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`, `Game.ChimneyJumpNotFromAStandingJump`,
+self-test `chimney_floor_jumps`,
 `Game.ChimneyJumpSaveLoadContinuesIdentically`, `GameReal.JunglehubChimneyJumpClimbsColumns`,
 `GameReal.ValaskjalfChimneyJumpTakesAllFive` (and l2_towerroom's kick), `StreamReal.SaveContinuesBitIdentically`
 (its l2_junglehub case: saved on column B mid-climb, bit for bit).
@@ -2075,13 +2081,33 @@ A's unflagged east face; `openunderworld-work/gameplaygoal/reference/chimney-win
   frame: 0.133 s), then the flight starts 22.8 out and 37.0 up of the wall position at **46.81** out + **77.27** up a
   frame (first sample 74.48): q12's velocity, as ours.
 
-Open [U]: a second wall after a rebound (the attach on the fifth frame, the rise per rebound) and the count of five
-were not reached: column B's base is flagged up to 800 over that floor, and the hang on ledge 796 the real climb
-starts from was not obtained by placing her in the air beside it (`chimney3-wine.txt` h1 / h3 ended on the floor);
-the camera on the wall (the jump camera is kept). Of the nine further shaft candidates above none was tried.
-Coordinates for such sessions: after `wmem goto <unit>` tru.exe's world is our unit frame + (its start - our `player`
-intro): l4_ballcourt + (5881.21, -10787.21, -15435.93), l2_junglehub + (8558.2, -19414.5, -18073.1); only the first
-`goto` of a session can be relied on (docs/REFERENCE_COMPARISON.md "Method").
+The climb itself, ledge 796 to 797 (`chimney4-wine.txt` h1; the hang reached by pinning her 600 over its root, where
+the fall's air grab takes the ledge) [O-runtime]:
+
+- Hang root z 5855.5 (ours 5855.2). Back + Jump: she leaves 407 ms after the press at **53.73** out + **34.77** up a
+  frame, the free leap's speeds, and is in the wall state on column B 0.149 s later, **130.6** over the hang's root
+  (ours 138), drawn to her hold in 0.2 s.
+- Each jump press: the 0.2 s turn, the flight at 46.81 + 77.27, and the wall state again **0.183..0.200 s** into the
+  flight: on the 5th frame, the first with zVel inside the window (the timing inferred above holds), while she is
+  still 105..115 short of her hold, to which she is drawn level in 0.2 s. Holds at +130.6 (B), +491.2 (A), +829.6
+  (B): **360.6** and **338.4** a rebound. From the third hold the jump is re-aimed (first sample 36.32 out + 67.06 up
+  a frame) onto ledge 797: hanging 1247.5 higher 3.17 s after the first press. Four jumps, as ours.
+- **Ours differs**: its rays (3 frames x speed from the pelvis) reach the facing column only on the 8th frame, so she
+  arrives at the wall itself and has risen **435** a rebound (holds at +138, +573, +1008;
+  `GameReal.JunglehubChimneyJumpClimbsColumns` asserts that 435). What lets tru.exe take the wall from ~110 farther out
+  is not decoded [U]: the vector at player state +0xA20 that 0x758DD0 scales may be the jump's launch velocity
+  (90.3 a frame for q12, not the current 69.6), and 0x4935F0 may cast with a radius.
+- No press after the leap back (h3): 0.200 s of draw, **0.404 s** idle, `wall_jump_detach_fall` 0.259 s (32.6 back,
+  149.4 down), then the fall.
+- Five in a row (h2: from the hang on 797, where the walls give no more height, a press every 150 ms): the leap back
+  and **five** jumps back; on the wall after the fifth the presses do nothing, she holds 0.416 s, drops and catches
+  797 again. The count is tru.exe's, as ours (`wallJumpMax`).
+
+Open [U]: the look-ahead above; the camera on the wall (the jump camera is kept); l5_valaskjalf's climb that needs
+all five; of the nine further shaft candidates above none was tried. Coordinates for such sessions: after
+`wmem goto <unit>` tru.exe's world is our unit frame + (its start - our `player` intro): l4_ballcourt + (5881.21,
+-10787.21, -15435.93), l2_junglehub + (8558.2, -19414.5, -18073.1); only the first `goto` of a session can be relied
+on (docs/REFERENCE_COMPARISON.md "Method").
 
 ## Rail slides (src/game/Traverse.cpp)
 
