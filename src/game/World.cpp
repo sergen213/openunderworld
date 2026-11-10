@@ -522,6 +522,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     bindTerrain();
     bindLightHealth();
     bindFeedback();
+    bindWeapons();
     bindMarkup();
     bindEnemies();
     bindWater();

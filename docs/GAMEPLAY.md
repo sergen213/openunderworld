@@ -855,6 +855,107 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   `ca_pu_thor_debris` has no joint (a free body): neither is simulated, so C11-28 and C15-03 stay open; l2_maproom's hub
   and wall drag (C09-09 / -11) are not surveyed; the speed's M and the hold / toggle need a Wine trace.
 
+## Natla (l7_yggdrasil_end, the final fight)
+
+Survey of the unit's data and scripts (dumped from the type-8 sections and the object DRMs; nothing here is a per-level
+rule in code: the level scripts run in the VM and call general natives).
+
+- **Who does what** [O scripts]. Natla is `natla_end` 8403 (base script 19035: anim-graph states Idle 0 / Attack 3 /
+  Warping 4 / PoofIn 5 / 7 / 8, clock +52 = 0.7 s). Five more `natla_end` intros stay hidden until their set piece: 8246
+  (top of the tower, eight slow balls), 8233 / 8234 / 8236 / 8237 (one slow ball each). The three ring managers are
+  dispatchers 8448 (lower ring: zone volumes 8649, 8652-8655, 8665), 8450 (middle / upper: 8647, 8648, 8651, 8664) and
+  the zone selector 8460 with one dispatcher per zone (8452-8459). The yeti manager is 8451.
+- **Flight** [O scripts]. She does not fly a path of her own: on every "warp" the manager poofs her out (graph state 4,
+  message `natla_poofedOut_warpHer` on channel `natla_warp_channel`), then a warp point (`natla_end_mover` 8598-8637, a
+  spline mover circling its zone) calls `instance` 25 on her and hangs her on its marker anchor: `instance` 8 (13) →
+  `instance` 23 (thunk 0x798CA0 → 0x4AB320 → 0x5BE1A0: a marker anchor on an instance's HInfo marker; 23 = 0x4A41D0).
+  She rides that mover until the next warp (`natla_warp_done`). Ours: `script::Runtime::anchors`, `World::objectFrame`
+  (anchor chains) and `World::poseAnchored` (the anchored object's body follows, so it is drawn and found there).
+  The marker sits on its bone as the host's anim-graph clip poses it (bind frame without a clip); [I] a host without
+  the marker gives its own frame. The same natives hang the 24 `ar_ani_floating_runestone` platforms on the markers of
+  the eight `ar_ani_runestone_orbit_a` rings, three to a ring, so they now go round with the rings' clips.
+- **Fireballs** [O exe + data]. Each `natla_end` hangs its weapon intro (`wp_natla_fireball` 8433, `_adren` 8238-8258)
+  on its own marker 13 and fires it with `weaponbase` 0 (bind 0x7B69F0, thunk 0x79E2E0 → 0x7784F0): the weapon's stats
+  block (query 0x36, data +0xE0) gives the launch speed (+0x10) and the fire message 0x19B carries the **position of the
+  target instance at that moment**: no homing. Decoded (`game::loadObjectWeapon`, `CombatReal.NatlaFireballWeaponsDecoded`):
+
+  | | wp_natla_fireball → pr_natla_fireball | wp_natla_fireball_adren → pr_natla_fireball_adren |
+  |---|---|---|
+  | speed (stats +0x10, per 30 Hz frame) | 300 = 9000 units/s | 50 = 1500 units/s |
+  | direct hit (fire record +0x1C) | 0 | 3000 (three times her health) |
+  | blast (record +0x44, kind 2): damage centre → edge, radius | 250 → 50, 650 | 250 → 50, 200 |
+  | knock centre → edge, degrees up (+0x58 / +0x5C / +0x54) | 50 → 20, 10 | same |
+  | gravity (fire record +0x4C) | 0: a straight line | 0 |
+  | +0x80 | 150 frames [I: ours drops a ball after that flight time, 5 s] | 150 |
+
+  Ours: `World::fireObjectWeapon` / `tickHostile` (Combat.cpp): the ball flies from the weapon's point (its anchor chain)
+  straight to the target point; the first world face, enemy or Lara's capsule it meets sets it off; a direct hit takes
+  the projectile's own damage, then the explosion record goes through `World::blast` (the squibs' area hit 0x69F1E0),
+  which now also throws Lara off her feet (message 0x91 → `throwLara`) as it throws every other instance. Balls in
+  flight are saved (`hostile` in the combat block, written only while one flies). [U] the knock's unit (50 is used as
+  units/s like the grenade's 300: a small shove, but she is thrown down); whether +0x70..+0x80 describe a burn.
+- **What she throws at** [O scripts]. On the rings 8403 does **not** aim at Lara: the manager picks floor targets of
+  Lara's zone (dispatchers 8461-8522, e.g. 8463 / 8464 on the lower ring by tower 8399), calls the target's vt 62 (1.5)
+  and Natla's vt 60 (target); 0.7 s after her attack state starts her clock fires the ball at the target (`instance` 28).
+  Two balls per stop, about 2 s apart, then she warps: a pair every ~5 s (measured: throws at 2.72 / 4.73 / 7.77 /
+  9.78 s after Lara enters a lower zone). Without a target override the ball goes at Lara (`playerref` → `instance` 14):
+  the hidden set-piece Natlas do that.
+- **Burning patches** [O scripts]. Every floor target owns a trigger volume (8523-8584, a 600-unit box) and the shared
+  effect 8585 `fx_natla_fireball_explosion`: 1.5 s after the throw was ordered the target's clock moves the effect there,
+  plays it and switches the volume's damage on for 3 s (second clock). While on, Lara inside it takes `health` 2 (100)
+  at once and every second (the volume's state 1 loop). So a ball costs her up to 250 from the blast and 100 a second
+  while she stays in the fire; standing between two targets (640 and 1100 from them) costs nothing.
+- **Timed dodges** [O scripts]. Volumes 8323 (tower top), 8324, 8325, 8327, 8329 (climbing walls) start adrenaline
+  trackers 8318-8322 (time scale down), reveal the matching hidden Natla with a camera (reveals 8313-8317) and have her
+  throw the slow ball(s) at Lara: 1500 units/s and 3000 on a direct hit, so only leaving the line saves her.
+- **Hitting her** [O scripts]. Damage to 8403 (vt 22, any `damagetype`) posts `hit_by_player`; the lower-ring manager
+  counts them and at the second one ends its fight (vt 66: fireballs off, yetis off, manager 8450 takes over). She has
+  no health of her own.
+- **Yetis** [O scripts]. Lower ring: the four `yeti_thrall_pool_generator`s 8675-8678 are enabled when Lara enters a
+  lower zone (`generatorbase` 3) and each `yeti_dead` message asks for the next (manager vt 65 → 8451 vt 69) until ten
+  have died. Upper rings: 8451 gives birth to dormant yetis: vt 63 three (8667, 8668, 8669: volume 8650, the page's "1 +
+  2"), vt 64 one (8667), vt 65 one (8672), vt 67 one (8674), each once, with a reveal camera (8339 / 8341).
+- **The pool** [O scripts]. Ten flow volumes (8209-8218, 8438-8446; surface −316.2) lie under the lower ring; 8209's
+  thread polls `larabase` 3 for each every 0.1 s and kills (`health` 2 (12345), "Goo death") when Lara is in one. The
+  eleventh volume 8309 is the finale's flood: its constructor sets it to marker 8680 (z −11116.5) at once, `goo rise`
+  (vt 56) to 8681 then 8682 at speed 3, `goo rise higher` (vt 57) to 8683 at speed 2. Two fixes made this work:
+  `marker` **locals** start as their declared intro (Vm.cpp; before, 8309 kept its box top, z 2869.5, and flooded the
+  lower ring from the start), and the VM's 100 000-instruction budget now bounds one resume, not a thread's life (the
+  kill thread died after ~90 s).
+- **Towers, mounts, checkpoints**: "Thor's gauntlets" above; docs/PROGRESSION.md chapter 7. Checkpoints 8178 / 8179 /
+  8157 are activated by towers 8398 / 8399 / 8400 (vt 54 links), 8180 and 8242-8245, 8248 by the rings' volumes.
+
+- **A patch burns who walks into it** [O scripts]: the volume's OnIn (vt 70) starts the burn thread only while its
+  damage is on, so standing on a target when the ball lands costs the blast alone; walking into the flames costs 100 at
+  once and 100 a second until the patch goes out (the thread does not ask whether she is still inside).
+- **Route geometry met by input** (`ProgressionReal.NatlaFightByInput`): the unit's start walkway (z 7383) ends in a
+  ledge at x −26750 (hang, drop to z 6160), a ramp runs down into arena volume 8303 (x −14800, z 4724); 320_hel_boss
+  leaves her on the middle ring's entry walkway at (−8143, 793, 4321), which ends at x −6620 over the rings (lower ring
+  z 474, 3850 below: a fatal fall, so the original's way down is the rope). There no zone volume holds her and Natla
+  throws nothing.
+
+Tests: `CombatReal.NatlaFireballWeaponsDecoded`, `CombatReal.NatlaFireballsBlastThrowAndBurn` (throw from her warp
+point at 9000 units/s, blast on the floor target, 50-250 damage and thrown down, the patch's 100 a second on entering
+it lit, nothing between the targets, save round trip, pool level, no script stop; Lara placed on the ring),
+`ProgressionReal.NatlaFightByInput` and self-test `natla_fight` (input only: the entry to 320_hel_boss, the towers
+retract, nothing thrown at the entry walkway, the walkway's end), `ProgressionReal.EndgameCredits` (the whole script
+chain to the credits, Lara placed at the six interactions).
+
+Open (the fight is not yet playable from the entry to the credits by input alone):
+- [U] the way from the entry walkway to the rings by input: the platform ride and the rope down (matrix C21-01 / -02).
+  The 24 floating stones hang on the orbit rings' markers and the rings' sections are born by dispatcher 8360 as the
+  buttresses break; whether Lara can stand on / grab them as they move is untested (moving ledge markup: none).
+- a level start on the lower ring (a `--spawn` there, not a checkpoint load) dies at once: the World's first tick finds
+  her inside pool 8309's box before its constructor has lowered it (box top z 2869.5), she treads its surface down to
+  the marker, and 8209's goo flag, once set, kills at every poll. A tread that loses its surface by more than a step
+  should fall instead [U: tru.exe's rule]; the rings' input tests and a ring self-test wait for that.
+- the two chimney climbs, the tower's moving handholds, the buttress slide (C21-07, -12, -21, -23): no input route.
+- Natla as a shot target: nothing in ours delivers a hit to 8403's vt 22, so the lower ring's fight does not end after
+  two hits as the scripts provide; the manager keeps throwing while Lara stays on the ring.
+- [U] yeti counts actually spawned by the pool generators (enabled by the scripts; `ai::Enemies` spawns by its own
+  generator data) were not measured here; the upper rings' births are script calls (above).
+- [I] the knock's unit, the 5 s flight limit, lingering-flame fields of the explosion record (+0x70..+0x80).
+
 ## Controls
 
 - Bindings live in `config.json` under `controls` (`bindings`: action → list of inputs; `mouse_sensitivity` 0.1..10,

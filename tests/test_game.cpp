@@ -7233,7 +7233,7 @@ TEST(GameReal, CliffSwanDiveIntoTheSea) {
 TEST(GameReal, ScriptedWaterLevelCarriesLara) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    UnitGame g(bf, "l7_yggdrasil_end", {{-9473, -9100, 2869}, 0});
+    UnitGame g(bf, "l7_yggdrasil_end", {{-29036, 0, 7382.5f}, 0}); // the unit's entry walkway, while the volume fills
     auto& w = g.w;
     const auto& s = w.player().state();
     const auto surface = [&] {
@@ -7241,11 +7241,23 @@ TEST(GameReal, ScriptedWaterLevelCarriesLara) {
             if (m.type == 10 && m.id == 8309) return std::pair{m.points[0].z, m.points[1].z};
         return std::pair{0.0f, 0.0f};
     };
-    for (int i = 0; i < 120; ++i) w.tick({});
-    ASSERT_EQ(s.state, State::SwimTread);
-    const auto [bottom, top] = surface();
-    EXPECT_NEAR(s.pos.z, top - w.player().tuning().swimSurfaceDepth, 0.5f);
+    // The fight keeps this volume at its marker 8680 (z -11116.5, the constructor's SetLevelToMarker); the test first
+    // fills it to its box top (z 2869.5) at once (speed 0), where Lara is spawned.
     uint32_t r = 0;
+    for (int i = 0; i < 400; ++i) w.tick({}); // the constructor sets the marker's level five times, a second apart
+    const int32_t fill[] = {int32_t((2869.5f - surface().first) / 3.1605f) + 1, 0};
+    ASSERT_TRUE(w.waterNative(8309, "watervolumebase", 1, fill, r));
+    for (int i = 0; i < 600 && surface().second < 2865.0f; ++i) w.tick({});
+    {
+        game::PlayerState at;
+        at.pos = {-9473, -9100, 2869};
+        w.restore(at, 0, -0.25f);
+    }
+    for (int i = 0; i < 600 && (i < 120 || s.state != State::SwimTread); ++i) w.tick({});
+    ASSERT_EQ(s.state, State::SwimTread) << game::stateName(s.state);
+    const auto [bottom, top] = surface();
+    EXPECT_NEAR(top, 2869.5f, 4.0f);
+    EXPECT_NEAR(s.pos.z, top - w.player().tuning().swimSurfaceDepth, 0.5f);
     const float target = top - 1000;
     const int32_t set[] = {int32_t((target - bottom) / 3.1605f), 5}; // script lengths: depth over the bottom, speed
     ASSERT_TRUE(w.waterNative(8309, "watervolumebase", 1, set, r));

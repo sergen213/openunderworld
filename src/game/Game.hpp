@@ -1125,6 +1125,8 @@ public:
     int grenades = 0;                // carried; World starts with maxGrenades() [I]; saved
     const std::vector<Grenade>& liveGrenades() const { return grenades_; }
     const std::vector<vec3>& explosions() const { return explosions_; } // grenades that went off this tick
+    const std::vector<HostileShot>& hostileShots() const { return hostile_; }       // fired weapon objects' projectiles in flight
+    const std::vector<vec3>& hostileBlasts() const { return hostileBlasts_; }       // ... and where they went off this tick
 
     // ---- motorcycle (Vehicle.cpp; docs/GAMEPLAY.md "Motorcycle") ----
     // Every bike of the units loaded so far (by intro uid), kept across streaming; positions in their unit's frame.
@@ -1225,6 +1227,9 @@ private:
     void restoreBreakables(const nlohmann::json& j);
     std::map<std::string, std::optional<ExplosionRecord>> explosionData_; // by object name
     struct PendingBlast { vec3 at{0}; ExplosionRecord record; int ticks = 0; };
+    std::map<std::string, std::optional<ObjectWeaponDef>> objectWeapons_; // by weapon object name
+    std::vector<HostileShot> hostile_;     // saved ("hostile" of the combat block, only while any flies)
+    std::vector<vec3> hostileBlasts_;      // where they went off this tick
     std::vector<PendingBlast> pendingBlasts_;                             // born squibs going off (tickBlasts)
     void birthBlast(uint16_t object, vec3 at);
     void tickBlasts();
@@ -1264,6 +1269,15 @@ private:
     // face or living target; a struck target / script object takes the hit. Fills shot.to / hit / target / damage.
     bool strike(Weapon w, vec3 from, vec3 dir, float len, float dist0, bool wet, Shot& shot);
     void tickProjectiles(float dt);
+    // Weapon objects fired by script (Combat.cpp; docs/GAMEPLAY.md "Natla"): the `weaponbase` native, the decoded
+    // weapon by object name, a script object's point (its anchor's marker), the shots in flight.
+    void bindWeapons();
+    const ObjectWeaponDef* objectWeapon(const std::string& name);
+    vec3 objectPoint(const script::Object& o);
+    glm::mat4 objectFrame(const script::Object& o, int depth = 0);
+    void poseAnchored();
+    bool fireObjectWeapon(int32_t weapon, int32_t target);
+    void tickHostile(float dt);
     void gainAdrenaline(float dealt); // the meter += the health her hit took (message 0xD9)
     void groundPound(); // Mjolnir's shock (event 0x4B): knocks every enemy within kPoundRadius off balance
     void reloadWeapon(); // refill the current weapon's clips from its reserve

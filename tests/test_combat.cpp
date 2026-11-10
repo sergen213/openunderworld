@@ -2284,3 +2284,139 @@ TEST(CombatReal, ThrownWeightPressesThePlate) {
     EXPECT_LT(nearest, 300.0f) << "it came down on the plate";
     EXPECT_LT(pressed, -1.0f) << "and pressed it down";
 }
+
+// Natla's fireballs (docs/GAMEPLAY.md "Natla"): the weapon objects the level scripts fire with `weaponbase` 0.
+TEST(CombatReal, NatlaFireballWeaponsDecoded) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    const auto ball = game::loadObjectWeapon(bf, "wp_natla_fireball"), slow = game::loadObjectWeapon(bf, "wp_natla_fireball_adren");
+    ASSERT_TRUE(ball && slow);
+    EXPECT_EQ(ball->ammo, "pr_natla_fireball");
+    EXPECT_EQ(slow->ammo, "pr_natla_fireball_adren");
+    EXPECT_FLOAT_EQ(ball->speed, 300 * 30.0f); // weapon stats +0x10, per 30 Hz frame
+    EXPECT_FLOAT_EQ(slow->speed, 50 * 30.0f);
+    EXPECT_FLOAT_EQ(ball->directDamage, 0);    // projectile fire record +0x1C
+    EXPECT_FLOAT_EQ(slow->directDamage, 3000); // three times her full health: the timed dodges kill
+    EXPECT_FLOAT_EQ(ball->damage, 250);
+    EXPECT_FLOAT_EQ(ball->edgeDamage, 50);
+    EXPECT_FLOAT_EQ(ball->radius, 650);
+    EXPECT_FLOAT_EQ(slow->radius, 200);
+    EXPECT_FLOAT_EQ(ball->knock, 50);
+    EXPECT_FLOAT_EQ(ball->knockEdge, 20);
+    EXPECT_FLOAT_EQ(ball->angle, 10);
+    EXPECT_FLOAT_EQ(ball->life, 5);
+    EXPECT_FALSE(game::loadObjectWeapon(bf, "wp_handgun")); // a hitscan weapon has no projectile explosion record
+}
+
+// l7_yggdrasil_end after 320_hel_boss: on the lower ring the level scripts (manager 8448) send Natla 8403 from warp point
+// to warp point (movers 8598.., she hangs on their marker anchor) and have her throw wp_natla_fireball 8433 (hung on her
+// marker 13) at the floor targets of Lara's zone (8463, 8464, ...), two per stop. A ball flies straight at 9000 units/s
+// from where Natla is, bursts on the floor (250 -> 50 within 650, thrown off her feet), and the target's fire patch
+// (volume 8525 at 8463: 100 a second while its damage is on) burns who stands in it.
+TEST(CombatReal, NatlaFireballsBlastThrowAndBurn) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    std::map<std::string, game::UnitData> cache;
+    const game::UnitLoader loader = [&](const std::string& n) {
+        auto& d = cache[n];
+        if (!d.drm) d = game::loadUnitData(bf, n);
+        return d;
+    };
+    game::World w(loader, "l7_yggdrasil_end", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    const auto put = [&](vec3 at) {
+        if (const auto floor = w.collision().groundProbe(at + vec3(0, 0, 300), 3000, 0x0F)) at.z = floor->point.z;
+        game::PlayerState s;
+        s.pos = at;
+        w.restore(s, 0, -0.25f);
+        w.script().playerJumped();
+    };
+    for (int i = 0; i < 60; ++i) w.tick({});
+    put(w.script().find(8303)->pos); // the arena volume: 320_hel_boss
+    for (int i = 0; i < 60 * 105; ++i) w.tick({});
+    ASSERT_TRUE(w.hostileShots().empty());
+    const auto* target = w.script().find(8463);
+    const auto* natla = w.script().find(8403);
+    ASSERT_TRUE(target && natla);
+    put(target->pos);
+    const vec3 stood = w.player().state().pos;
+    const float full = w.health().value();
+    // the first ball: from her warp point, not her intro; straight at the target
+    int fired = -1, burst = -1;
+    vec3 from{0}, vel{0}, at{0};
+    for (int i = 0; i < 60 * 20 && burst < 0; ++i) {
+        w.tick({});
+        if (fired < 0 && !w.hostileShots().empty()) {
+            fired = i, from = w.hostileShots()[0].pos, vel = w.hostileShots()[0].vel;
+            EXPECT_EQ(w.hostileShots()[0].owner, 8433);
+            EXPECT_EQ(w.hostileShots()[0].weapon, "wp_natla_fireball");
+        }
+        if (!w.hostileBlasts().empty()) burst = i, at = w.hostileBlasts()[0];
+    }
+    ASSERT_GE(fired, 0);
+    ASSERT_GT(burst, fired);
+    EXPECT_NEAR(glm::length(vel), 9000.0f, 1.0f);
+    EXPECT_GT(glm::distance(from, natla->pos), 3000.0f) << "thrown from her warp point";
+    EXPECT_LT(glm::length(glm::cross(glm::normalize(vel), target->pos - from)), 60.0f) << "aimed at the floor target";
+    EXPECT_LT(glm::distance(at, target->pos), 80.0f) << "bursts on the floor at the target";
+    EXPECT_NEAR(float(burst - fired) / 60.0f, glm::distance(from, at) / 9000.0f, 0.05f) << "9000 units a second";
+    const float after = w.health().value();
+    EXPECT_LT(after, full - 50.0f);   // inside the 650 radius: between the edge's 50 ...
+    EXPECT_GE(after, full - 250.0f);  // ... and the centre's 250 (her chest is 375 over the burst)
+    EXPECT_EQ(w.player().state().state, State::Knocked) << "thrown off her feet";
+    // The patch: lit 1.5 s after the throw was ordered, for 3 s (the target's two clocks). Its volume starts the burn
+    // when she enters it lit (OnIn): 100 at once and 100 each second while she stays. She steps aside (to the zone volume's centre), the
+    // next ball for this target bursts, and she is back in the fire half a second later.
+    put(w.script().find(8652)->pos);
+    int again = -1;
+    for (int i = 0; i < 60 * 20 && again < 0; ++i) {
+        w.tick({});
+        for (const vec3& b : w.hostileBlasts())
+            if (glm::distance(b, target->pos) < 80.0f) again = i;
+    }
+    ASSERT_GE(again, 0);
+    EXPECT_EQ(w.health().value(), w.health().max()) << "640 from this target and 1100 from the other: nothing reaches her";
+    for (int i = 0; i < 30; ++i) w.tick({});
+    put(target->pos);
+    int burns = 0;
+    float last = w.health().value();
+    for (int i = 0; i < 150; ++i) {
+        w.tick({});
+        if (w.health().value() < last - 1.0f) {
+            EXPECT_NEAR(last - w.health().value(), 100.0f, 0.5f);
+            ++burns, last = w.health().value();
+        }
+    }
+    EXPECT_GE(burns, 2);
+    EXPECT_LE(burns, 3);
+    put(w.script().find(8652)->pos);
+    for (int i = 0; i < 60; ++i) w.tick({});
+    // a shot in flight is saved and flies on after a load
+    bool round = false;
+    for (int i = 0; i < 60 * 30 && !round; ++i) {
+        w.tick({});
+        if (w.hostileShots().empty()) continue;
+        const auto shot = w.hostileShots()[0];
+        const auto saved = w.serializeCombat();
+        ASSERT_TRUE(saved.contains("hostile"));
+        w.restoreCombat(saved);
+        ASSERT_EQ(w.hostileShots().size(), 1u);
+        EXPECT_EQ(w.hostileShots()[0].pos, shot.pos);
+        EXPECT_EQ(w.hostileShots()[0].vel, shot.vel);
+        EXPECT_EQ(w.hostileShots()[0].owner, shot.owner);
+        round = true;
+    }
+    EXPECT_TRUE(round);
+    for (int i = 0; i < 60 * 2; ++i) w.tick({});
+    if (w.hostileShots().empty()) EXPECT_FALSE(w.serializeCombat().contains("hostile")) << "no key without a shot: older saves unchanged";
+    for (const auto& [key, n] : w.script().failures()) {
+        EXPECT_EQ(key.second.find("weaponbase"), std::string::npos) << key.first;
+        EXPECT_NE(key.second, "budget") << key.first << ": a polling thread outlives the instruction budget of one resume";
+    }
+    // the pool 8309 lies at its marker 8680 during the fight (its constructor's `marker` locals), far under the rings
+    for (const auto& m : w.collision().markup)
+        if (m.type == 10 && m.id == 8309) EXPECT_LT(m.points[1].z, -10000.0f);
+}

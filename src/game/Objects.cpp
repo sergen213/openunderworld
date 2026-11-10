@@ -64,6 +64,52 @@ std::optional<glm::mat4> World::markerFrame(const script::Object& o, int id) {
     return std::nullopt;
 }
 
+// A script object's world frame. Anchored by instance 23 (script::Runtime::anchor): its host's frame at the host's HInfo
+// marker (on the marker's bone as the host's anim-graph clip poses it, else its bind frame; a host without that marker,
+// e.g. a model-less dispatcher, gives its own frame), hosts followed up their chain. Else the intro under its unit offset with its body.
+glm::mat4 World::objectFrame(const script::Object& o, int depth) {
+    if (const auto a = depth < 8 ? script_.anchor(o.uid) : std::nullopt)
+        if (const script::Object* host = script_.find(a->first); host && host != &o) {
+            glm::mat4 f = objectFrame(*host, depth + 1);
+            if (const physics::ObjectPhysics* p = objectPhysics(host->name))
+                for (const auto& m : p->hmarkers)
+                    if (m.id == a->second) {
+                        glm::mat4 segment = size_t(m.segment) < p->segments.size() ? p->segments[size_t(m.segment)] : glm::mat4(1);
+                        // an uber host's bone as its section's clip poses it now (poseShotOnly's rule: the section drawn as
+                        // model 0), an anim-graph host's as its graph clip does
+                        if (const auto data = uberData_.find(host->uid); data != uberData_.end() && data->second)
+                            for (size_t k = 0; k < data->second->sections.size(); ++k)
+                                if (data->second->sections[k].model == 0) {
+                                    if (const auto posed = uberSectionMatrices(host->uid, int32_t(k)).second; size_t(m.segment) < posed.size())
+                                        segment = posed[size_t(m.segment)];
+                                    break;
+                                }
+                        if (const auto& g = host->graph; g && g->clip >= 0 && g->set && g->set->skeleton &&
+                                                         size_t(g->clip) < g->set->clips.size() &&
+                                                         size_t(m.segment) < g->set->skeleton->bones.size()) {
+                            const auto bones = anim::worldMatrices(*g->set->skeleton,
+                                                                   anim::sample(g->set->clips[size_t(g->clip)], *g->set->skeleton, g->t, g->loop));
+                            segment = bones[size_t(m.segment)];
+                        }
+                        f = f * segment * glm::translate(glm::mat4(1), m.pos) * glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) *
+                            glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) * glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
+                        break;
+                    }
+            return f;
+        }
+    return glm::translate(glm::mat4(1), o.offset) * introModel(o) * o.body;
+}
+
+// Objects hung on another script object's marker ride it (their body follows: drawn, collided with and found there).
+void World::poseAnchored() {
+    for (const auto& [uid, a] : script_.anchors()) {
+        const script::Object* o = script_.find(uid);
+        // shot-only shapes (the kraken room's chain links) are posed by poseShotOnly
+        if (!o || !script_.find(a.first) || std::ranges::any_of(shotOnly_, [&](const auto& d) { return d.id == uid; })) continue;
+        script_.setBody(uid, glm::inverse(glm::translate(glm::mat4(1), o->offset) * introModel(*o)) * objectFrame(*o));
+    }
+}
+
 namespace {
 
 // Carryable objects: native base `portablebase` (l1_kraken_entrance weights ms_pt_weight_c, base 3937 vt 20).
@@ -1504,6 +1550,7 @@ void World::poseShotOnly() {
 }
 
 void World::tickObjects(float dt) {
+    poseAnchored();
     tickBreakables(dt); // contacts, waits and breaks first: a break drops its colliders before anything queries them
     // Objects came or went, or the merged collision was rebuilt (streaming drops its dynamics).
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
