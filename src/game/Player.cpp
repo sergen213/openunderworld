@@ -533,10 +533,24 @@ void Player::airMove(float dt, vec2 move) {
 // with Lara facing the ledge, from grabReach in front of its line to anywhere over it while her root is still on her
 // side: pressed square against the wall under a ledge at its face, the capsule (radius 79) holds the root 79 short of
 // the line and the hands, 141.7 ahead, reach 63 over it (a running jump into l2_cliffclimb's ledge 911 missed it).
+// A catch is a bad attach - the saving grab - when her root comes to rest more than a limit under where the fall or
+// jump began (tru.exe 0x74FDF0, run on every markup attach: player +0x6DC fall start z + 0x6E0 - attach point +0x9F8 +
+// the markup's +0x68 > limit -> player +0xEE8 = 1 [O]; +0x68 read as the root's offset under the attach point [I],
+// which makes it root to root: the game's stacked drop-down ledges are 1304 (l1_ship_sinking_hall 242 -> 241) to 1427
+// (l5_valaskjalf 1488 -> 1485 -> 1484 -> 1483) apart, just over the fall limit). The limit is the +0xC of the fall record (+0xC4) of the jump query in effect (player +0xA84,
+// lara.drm): 711.13 for the ground, hang, pole and ladder jump queries, 1280.03 for the fall states' air grab q44 (and
+// q35 / q46 / q47 / q51 / q64 / q71 / q98 / q106); with no query Lara data +0xC14 = 951.33 [O-data]. A markup whose
+// record has bit 0 of +0x50 set is always a bad attach, and state property 0x1A7 forces either [O; neither is in our
+// markup data: U]. Which query each of our states stands for: State::Jump / HangJump = a jump query, else q44 [I].
+bool Player::badAttach(float attachZ) const { // attachZ: her root at the catch
+    const bool jump = s_.state == State::Jump || s_.state == State::HangJump || s_.state == State::WallJump;
+    return s_.fallStartZ - attachZ > (jump ? t_.badAttachJump : t_.badAttachFall);
+}
+
 bool Player::tryGrab(vec3 prevPos) {
-    // Faster than grabMinVz (up to twice) only a saving grab holds [I]; the vertical window grows to one tick's fall.
+    // Up to twice grabMinVz she still catches [I: tru.exe's limit on a falling catch is not decoded]; the vertical
+    // window grows to one tick's fall.
     if (s_.regrabCooldown > 0 || s_.vel.z < 2 * t_.grabMinVz || s_.vel.z > t_.grabMaxVz) return false;
-    const bool saving = s_.vel.z < t_.grabMinVz;
     const vec3 hand = s_.pos + toWorld(anims_.hangHandOffset), prevHand = prevPos + toWorld(anims_.hangHandOffset);
     const float window = std::max(t_.grabWindow, prevHand.z - hand.z);
     for (size_t li = 0; li < col_.markup.size(); ++li) {
@@ -562,6 +576,7 @@ bool Player::tryGrab(vec3 prevPos) {
             s_.ledgeSeg = int(si);
             s_.ledgeT = u * std::sqrt(len2);
             s_.ledgeSide = side;
+            const bool saving = badAttach(q.z - anims_.hangHandOffset.z);
             s_.vel = vec3(0);
             s_.state = State::Hang;
             s_.savingGrab = saving ? t_.savingGrabSeconds : 0.0f;
@@ -2229,9 +2244,12 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                                         : s_.clip.ends_with("jump_up") || s_.clip == "Wall_hug_Jump_Up_Twist" ? "ledgeb_attach_U" // also DICE_<s>_jump_up (Climb.cpp)
                                         : s_.clip == "ledgeb_jump_back" || s_.clip == "ladder_jump_back" ? "ledgeb_attach_F"
                                                                          : "ledgeb_attach_S";
+        // a ledge far under where the leap began: the saving grab (Player::badAttach)
+        const bool saving = !pole && badAttach(pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT).z - anims_.hangHandOffset.z);
         s_.vel = vec3(0);
         s_.state = pole ? State::PoleHang : State::Hang;
-        play(attach, false);
+        s_.savingGrab = saving ? t_.savingGrabSeconds : 0.0f;
+        play(saving ? "ledgeb_bad_attach_M" : attach, false);
         placeOnLedge();
         break;
     }
@@ -2239,10 +2257,16 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::Shimmy: {
         const vec2 right(std::sin(s_.yaw), -std::cos(s_.yaw));
         const float lateral = glm::dot(move, right);
-        if (s_.savingGrab > 0) { // one hand on the ledge: jump pulls up, else she slips off when the time runs out
+        // The saving grab (chart S528 with action 2101: enter 0x75E5C0, exit 0x75E6E0; S565 -> S566 / S567
+        // ledgeb_bad_attach_*): the Interact press pulls her up (input action 75 = virtual button 0, message 0x200004B
+        // -> 0x768C90: result 2 -> T734 / T736, ledgeb_bad_attach_recover); when player timer 2 (the difficulty's frames,
+        // 0x75E5EC; counted down at 0x6EE24E) runs out, message 0x9E -> 0x768CC0: result 3 -> T735, she falls; Crouch
+        // lets go (T553); Jump does nothing [O]. The press may come one chart frame early (ButtonTime::buffer [I]).
+        if (s_.savingGrab > 0) {
             s_.savingGrab = std::max(0.0f, s_.savingGrab - dt);
-            if (jumpPressed) s_.savingGrab = 0, play("ledgeb_bad_attach_recover", false);
-            else if (s_.savingGrab <= 0) {
+            if (b.interact.buffered()) b.interact.take(), s_.savingGrab = 0, play("ledgeb_bad_attach_recover", false);
+            else if (s_.savingGrab <= 0 || dropPressed) {
+                s_.savingGrab = 0;
                 s_.pos -= forward() * 20.0f;
                 s_.regrabCooldown = 0.4f;
                 startFall(vec3(0));

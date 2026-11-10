@@ -184,10 +184,12 @@ struct Tuning {
     float grabReach = 60.0f, grabWindow = 40.0f; // hand-to-ledge horizontal / vertical tolerance
     // Grab only while -13 <= zVel <= 9 units/frame * 5.72443 (30 Hz): player data bytes +0x834 / +0x833 (0x759260)
     float grabMinVz = -13 * 5.72443f * 30.0f, grabMaxVz = 9 * 5.72443f * 30.0f; // units/s
-    // Saving grab ("TIME FOR SAVING GRABS"): a ledge caught while falling up to twice as fast as grabMinVz [I] is held one
-    // handed (ledgeb_bad_attach_M) for this long; jump pulls her up (ledgeb_bad_attach_recover), else she falls.
+    // Saving grab ("TIME FOR SAVING GRABS"): a ledge or hold caught after coming down more than badAttachJump (a jump)
+    // / badAttachFall (a fall) from where the flight began (Player::badAttach) is held one handed (ledgeb_bad_attach_M)
+    // for this long; Interact pulls her up (ledgeb_bad_attach_recover), else she falls.
     // DifficultyTable::savingGrabSeconds by Tailoring::savingGrab (World::setTailoring).
     float savingGrabSeconds = 50 / 30.0f;
+    float badAttachJump = 711.13f, badAttachFall = 1280.03f; // lara.drm jump query records +0xC4 -> +0xC [O-data]
     // Input timing (ButtonTime): a press stays usable this long [I: one 30 Hz chart frame; used by the saving grab's
     // Interact]; a hold counts as long past Lara data +0x6E2 = 15 frames [O].
     float pressBuffer = 1.0f / 30.0f, holdLongFrames = 15.0f;
@@ -455,6 +457,7 @@ private:
     bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
+    bool badAttach(float attachZ) const; // a catch that rests her root at this height is a saving grab
     int hangClearance() const; // tru.exe 0x74E290's class: 2 climb up, 5 crouching, 8 wall-hug shelf, 1 none
     bool tryHangToBeam();      // hanging beside a balance beam: bbeam_ledgeu_climbup onto it
     bool tryHurdle(bool jumped); // onto / over a ledge from the ground (State::ClimbUp, hurdle_* clips)
