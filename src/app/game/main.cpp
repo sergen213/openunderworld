@@ -3054,6 +3054,12 @@ int main(int argc, char** argv) {
             if (opt.frames && frame > 30 && tickMs.empty()) world->tickTimes = {}; // after the warm-up frames, as frameMs
             const uint64_t tickStart = SDL_GetTicksNS(), unitsBefore = world->unitsVersion();
             world->tick(a);
+            static std::FILE* const moverLog = std::getenv("OU_MOVER_LOG") ? std::fopen(std::getenv("OU_MOVER_LOG"), "w") : nullptr;
+            if (moverLog) {
+                const auto& ps = world->player().state(); // the mover evaluation's per-tick trace (PHYSICS.md "Character controller")
+                std::fprintf(moverLog, "%llu %s %.3f %.3f %.3f\n", (unsigned long long)world->ticks(), ou::game::stateName(ps.state).data(), ps.pos.x, ps.pos.y, ps.pos.z);
+                std::fflush(moverLog);
+            }
             if (selfTest) selfTest->observe(*world);
             if (opt.frames && frame > 30) tickMs.push_back(double(SDL_GetTicksNS() - tickStart) * 1e-6);
             if (world->unitsVersion() != unitsBefore) // streaming cost on the main thread (ROADMAP "Unit streaming")
@@ -3654,9 +3660,9 @@ int main(int argc, char** argv) {
                 double sum = 0;
                 for (const double t : sorted) sum += t;
                 const double n = double(sorted.size());
-                std::fprintf(stderr, "ou-game: tick time mean %.3f ms median %.3f ms p95 %.3f ms, script %.3f ms, physics %.3f ms (%zu ticks)\n",
+                std::fprintf(stderr, "ou-game: tick time mean %.3f ms median %.3f ms p95 %.3f ms, script %.3f ms, physics %.3f ms, player %.3f ms (%zu ticks)\n",
                              sum / n, sorted[sorted.size() / 2], sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)],
-                             world->tickTimes.scriptMs / n, world->tickTimes.physicsMs / n, sorted.size());
+                             world->tickTimes.scriptMs / n, world->tickTimes.physicsMs / n, world->tickTimes.playerMs / n, sorted.size());
             }
             if (!opt.screenshot.empty()) {
                 if (!writePpm(opt.screenshot, renderer->readBackbuffer({w, h}))) {

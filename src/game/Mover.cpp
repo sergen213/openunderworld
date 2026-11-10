@@ -4,8 +4,6 @@
 #include "game/Game.hpp"
 
 #include <glm/glm.hpp>
-#include <cstdio>
-#include <cstdlib>
 
 namespace ou::game {
 namespace {
@@ -37,7 +35,6 @@ physics::Scene& Player::moverScene(float dt) {
 // to stepUp, follow the floor down to stepDown. Off the ground she slides (a steep floor) or falls.
 void Player::groundMoveJolt(vec3 delta, float dt) {
     const auto r = moverScene(dt).moveCharacter(s_.pos, delta / dt, capHeight(), dt, true);
-    if (std::getenv("OU_MOVER_TRACE")) std::fprintf(stderr, "gm %.2f %.2f %.2f -> %.2f %.2f %.2f d %.2f g %d n %.3f %.3f %.3f\n", s_.pos.x, s_.pos.y, s_.pos.z, r.pos.x, r.pos.y, r.pos.z, glm::length(delta), int(r.ground), r.groundNormal.x, r.groundNormal.y, r.groundNormal.z);
     s_.pos = r.pos;
     if (r.ground == physics::Scene::Ground::OnGround) return;
     const vec3 vel(xy(delta) / dt, 0);

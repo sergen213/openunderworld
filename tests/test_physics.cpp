@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -714,4 +715,27 @@ TEST(Physics, CharacterSaveRestoreBitExact) {
     }
     EXPECT_EQ(a.save(), b.save());
     EXPECT_GT(wa.pos.x, 1000);
+}
+
+// Impulses on dynamic bodies: walking into a loose 50 kg box (200 high: no stair) shoves it ahead (her 55 kg, Jolt's default strength); she
+// is slowed by it, not stopped.
+TEST(Physics, CharacterPushesLooseBody) {
+    const auto col = ground({});
+    physics::ObjectPhysics o;
+    o.segments = {glm::mat4(1)};
+    physics::Prim p;
+    p.kind = physics::PrimKind::Box, p.size = {120, 120, 200}, p.pos = {0, 0, 100}, p.mass = 50, p.head[1] = 0x11;
+    o.prims = {p};
+    const std::vector<physics::Scene::Terrain> terrain{{"t", &col, vec3(0)}};
+    const std::vector<physics::Scene::Loose> loose{{3, &o, glm::translate(glm::mat4(1), {400, 0, 0})}};
+    physics::Scene s;
+    s.setController(&kLara);
+    for (int i = 0; i < 30; ++i) s.setTerrain(terrain), s.setLoose(loose), s.step(kDt);
+    const float boxX = (*s.loose(3))[3].x;
+    Walker w{s, {0, 0, 0}};
+    for (int i = 0; i < 120; ++i) w.walk({348, 0, 0}, 1), s.setTerrain(terrain), s.setLoose(loose), s.step(kDt);
+    std::printf("character push: box moved %.1f, she %.1f of 696\n", (*s.loose(3))[3].x - boxX, w.pos.x);
+    EXPECT_GT((*s.loose(3))[3].x, boxX + 50) << "shoved";
+    EXPECT_GT(w.pos.x, 350);
+    EXPECT_LT(w.pos.x, (*s.loose(3))[3].x) << "behind it";
 }

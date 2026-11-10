@@ -696,8 +696,8 @@ public:
     World& operator=(const World&) = delete;
 
     void tick(const Actions& a); // one kTickSeconds step; keeps the previous state for interpolation
-    // CPU time accumulated by tick() in the script runtime and the physics step (ou-game --frames reports the means).
-    struct TickTimes { double scriptMs = 0, physicsMs = 0; } tickTimes;
+    // CPU time accumulated by tick() in Player::tick, the script runtime and the physics step (ou-game --frames reports the means).
+    struct TickTimes { double scriptMs = 0, physicsMs = 0, playerMs = 0; } tickTimes; // playerMs: Player::tick (her mover)
 
     const collision::CollisionMesh& collision() const { return col_; }
     const AnimLibrary& anims() const { return anims_; }

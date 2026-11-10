@@ -5078,6 +5078,34 @@ std::vector<Riser> findRisers(const collision::CollisionMesh& col) {
 }
 } // namespace
 
+// Mover evaluation (docs/formats/PHYSICS.md "Character controller"): every riser findRisers gives in the staircase
+// units, walked and run at with the mover OU_MOVER selects; counts what GameReal.StairsWalkAndRunUpAndDown asserts.
+TEST(GameReal, MoverRiserSurvey) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    int total = 0, up = 0, fell = 0, stuck = 0;
+    for (const char* name : {"l3_main_hall", "l3_chapel", "l4_staircase_mictlan", "l1_baldrs_tomb", "l1_krakenstairs_a",
+                             "l1_krakenstairs_b", "l4_pool"}) {
+        const auto col = collision::loadLevelCollision(cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm")));
+        for (const auto& r : findRisers(col))
+            for (const float stick : {0.3f, 1.0f}) {
+                game::World w(collision::CollisionMesh(col), game::AnimLibrary(anims), {r.front, r.yaw});
+                int outcome = 0; // 1 up, 2 fell
+                for (int t = 0; t < 60 && !outcome; ++t) {
+                    w.tick(forward(stick));
+                    if (w.player().state().state == State::Fall || w.player().state().state == State::Slide) outcome = 2;
+                    else if (w.player().state().pos.z > r.top - 3) outcome = 1;
+                }
+                ++total, up += outcome == 1, fell += outcome == 2, stuck += outcome == 0;
+                if (outcome != 1 && fell + stuck <= 12)
+                    std::printf("  %s riser %.0f,%.0f,%.0f top %.0f stick %.1f: %s at %.0f,%.0f,%.0f\n", name, r.front.x, r.front.y, r.front.z, r.top, stick,
+                                outcome ? "fell / slid" : "not climbed", w.player().state().pos.x, w.player().state().pos.y, w.player().state().pos.z);
+            }
+    }
+    std::printf("riser survey: %d attempts, %d climbed, %d fell or slid, %d not climbed\n", total, up, fell, stuck);
+}
+
 TEST(GameReal, StairsWalkAndRunUpAndDown) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
