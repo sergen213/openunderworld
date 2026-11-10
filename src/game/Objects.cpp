@@ -1550,7 +1550,6 @@ void World::poseShotOnly() {
 }
 
 void World::tickObjects(float dt) {
-    poseAnchored();
     tickBreakables(dt); // contacts, waits and breaks first: a break drops its colliders before anything queries them
     // Objects came or went, or the merged collision was rebuilt (streaming drops its dynamics).
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size() ||
@@ -1617,6 +1616,20 @@ void World::tickObjects(float dt) {
             model = (*palette)[std::min<size_t>(c.segment, palette->size() - 1)];
         }
         col_.dynamics[i].transform = c.intro * model * c.frame;
+    }
+    // Riders (objects hung on a marker) after their hosts' bodies were set above, then the riders' own collision.
+    // Object::body is not saved: every tick derives it from this tick's state alone, so a load continues bit-identically
+    // (StreamReal.SaveContinuesBitIdentically: l2_puzzleroom volumes 2875-2878 ride a marker of an uber object whose
+    // body its joint sets in the loop above; l1_ship_sinking_hall 1167 is a rider with collision).
+    if (!script_.anchors().empty()) {
+        poseAnchored();
+        for (size_t i = 0; i < colliders_.size(); ++i) {
+            const auto& c = colliders_[i];
+            if (c.section >= 0 || c.hinge >= 0 || !script_.anchor(c.uid)) continue;
+            const auto* o = script_.find(c.uid);
+            if (const auto palette = o ? script_.pose(*o) : std::nullopt; palette && !palette->empty())
+                col_.dynamics[i].transform = c.intro * (*palette)[std::min<size_t>(c.segment, palette->size() - 1)] * c.frame;
+        }
     }
     tickObjectMarkup();
     if (under >= 0) {
