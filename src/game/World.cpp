@@ -691,6 +691,10 @@ void World::tick(const Actions& input) {
     if (grabbing && anims_.find("obj_block_grab")) push.move = vec2(0);
     const auto scriptStart = std::chrono::steady_clock::now();
     script_.setTimeScale(combat_.timeScale * combat_.worldScale);
+    // A climb-up clip seated on its ledge this tick sets her position (up to 148 down for the whole pull-up clip): that
+    // is no motion, so it crosses no trigger plane [I] (else the pull-up out of l3_bedroom_hall's pit, ledge 969,
+    // "falls" through kill plane 4379 that lies 231 under the ledge top).
+    if (player_.takeReseat()) script_.playerJumped();
     script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact, engagedUse(a.interact && !interactHeld_)}, &col_);
     tickTimes.scriptMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - scriptStart).count();
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
