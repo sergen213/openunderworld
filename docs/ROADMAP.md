@@ -115,8 +115,8 @@ Jolt as static mesh shapes per streamed unit.
    decoded (wheel definitions on the model's spheres / markers, springs, the record's engine and its one gear, brakes,
    tilt limit); the ridden bike is a Jolt `VehicleConstraint` with ray wheels and tru.exe's engine as wheel forces on
    the level collision; jumps, ramps, landings and crashes come out of the simulation; saves continue bit for bit.
-   Not done: the air control torques, wheelies / power slides / donuts, the lean (servoed upright, not drawn); hop and
-   ram stay [I].
+   Not done: the air control torques, wheelies / power slides / donuts, the lean (servoed upright, not drawn); the
+   ram stays [I] (the hop is gone: Space is the original's Vehicle Brake; launch boost and reverse delay are in).
 3. **Ragdolls (done, docs/formats/PHYSICS.md "Ragdolls").** Dead enemies become Jolt ragdolls from their object's
    ragdoll record (ObjectBase +0x7C: capsule per bone, hinge / two-axis / cone-twist joints with the data's limits) when
    the death timer runs out (the death entry's min..max counts, 0x66C500), mid-clip, with the killing hit's impulse;

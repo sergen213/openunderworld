@@ -1160,15 +1160,17 @@ void Scene::Impl::drive(const VehicleE& v) {
     const float ratio = v.drive.reverse ? spec.reverseRatio : spec.ratio;
     float omega = 0;
     for (const auto& w : spec.wheels) omega += w.drive * std::abs(speed) / std::max(w.radius * kM, 0.01f);
-    const float rpm = omega * ratio * 60 / (2 * JPH::JPH_PI);
-    if (rpm > spec.maxRpm) return;
+    const float wheelRpm = omega * ratio * 60 / (2 * JPH::JPH_PI);
+    if (wheelRpm > spec.maxRpm) return;
+    // Launch (0x791D10 flag bit 22): the torque is read at the rpm the rider revved up to, not at the wheels'.
+    const float rpm = v.drive.rpm > 0 ? v.drive.rpm : wheelRpm;
     float torque = spec.reverseTorque;
     if (!v.drive.reverse) {
         const float x = std::clamp(rpm, spec.minRpm, spec.maxRpm) / spec.maxRpm * float(spec.torque.size() - 1);
         const size_t i = std::min(size_t(x), spec.torque.size() - 1), j = std::min(i + 1, spec.torque.size() - 1);
         torque = spec.maxTorque * (spec.torque[i] + (spec.torque[j] - spec.torque[i]) * (x - float(i)));
     }
-    torque *= v.drive.forward * ratio * (v.drive.reverse ? -1.0f : 1.0f);
+    torque *= v.drive.forward * v.drive.torqueScale * ratio * (v.drive.reverse ? -1.0f : 1.0f);
     const auto& wheels = v.c->GetWheels();
     for (size_t i = 0; i < wheels.size(); ++i) {
         const auto& w = spec.wheels[i];
