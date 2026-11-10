@@ -1594,7 +1594,8 @@ TEST(Game, AssistedJumpLandsOnJumpLandingMarkup) {
         Actions go = forward();
         go.jump = true;
         w.tick(go);
-        w.tick(forward()); // take-off (no synthetic take-off clip) with the stick held: forward jump
+        // the stick jump leaves the ground 8 frames after the press (Tuning::stickJumpFrames)
+        for (int i = 0; i < 30 && w.player().state().state == State::JumpPrep; ++i) w.tick(forward());
         for (int i = 0; i < 120 && w.player().state().state == State::Jump; ++i) w.tick({});
         EXPECT_EQ(w.player().state().state, State::Land);
         return w.player().state().pos.x;
@@ -2422,7 +2423,7 @@ TEST(GameReal, HangJumpLeans) {
 TEST(GameReal, TrapRoomsPoleFling) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    auto w = unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)});
+    auto w = unitWorld(bf, "l4_traprooms", {{14300, -21328, 6400}, glm::radians(90.0f)});
     const auto& s = w.player().state();
     Actions jump;
     jump.jump = true;
@@ -5755,7 +5756,7 @@ TEST(GameReal, ScriptedWaterLevelMoves) {
 namespace {
 // l4_traprooms pole 1336 (x 14222..15219 at y -20855, z 7133): a standing jump from the floor south of it catches it
 // facing +y (GameReal.TrapRoomsPoleFling); the attach clip played out.
-game::World trapRooms(const cdc::BigfileSet& bf) { return unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)}); }
+game::World trapRooms(const cdc::BigfileSet& bf) { return unitWorld(bf, "l4_traprooms", {{14300, -21328, 6400}, glm::radians(90.0f)}); }
 void hangOnPole(game::World& w) {
     const auto& s = w.player().state();
     Actions go = forward();
@@ -6298,7 +6299,7 @@ TEST(GameReal, PoleTraversalIndependentOfRenderRate) {
         return Actions{};
     };
     auto run = [&](double renderHz) {
-        auto w = unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)});
+        auto w = unitWorld(bf, "l4_traprooms", {{14300, -21328, 6400}, glm::radians(90.0f)});
         engine::FrameClock clock(game::kTickSeconds);
         while (w.ticks() < 800)
             for (int n = clock.advance(1.0 / renderHz); n > 0 && w.ticks() < 800; --n) w.tick(input(w, w.ticks()));
@@ -6525,7 +6526,8 @@ bool jumpAtWall(game::World& w) {
     for (int i = 0; i < 180 && w.player().state().state != State::WallJump; ++i) w.tick(forward());
     return w.player().state().state == State::WallJump;
 }
-// One jump press on the wall, then ticks until she is on a wall again (true), or anywhere else.
+// One jump press on the wall once she holds on to it (wall_jump_idle: a press during the draw onto the wall does
+// nothing), then ticks until she is on a wall again (true), or anywhere else.
 bool rebound(game::World& w, float* maxStep = nullptr) {
     const auto& s = w.player().state();
     Actions jump;
@@ -6536,22 +6538,24 @@ bool rebound(game::World& w, float* maxStep = nullptr) {
         if (maxStep) *maxStep = std::max(*maxStep, glm::distance(last, s.pos));
         last = s.pos;
     };
+    for (int i = 0; i < 20 && s.state == State::WallJump && s.clip != "wall_jump_idle"; ++i) step({});
     step(jump);
-    for (int i = 0; i < 4 && s.state == State::WallJump; ++i) step({}); // the turn on the wall
+    for (int i = 0; i < 14 && s.state == State::WallJump; ++i) step({}); // the turn on the wall
     for (int i = 0; i < 180 && s.state == State::Jump; ++i) step({});
     return s.state == State::WallJump;
 }
 } // namespace
 
 // A jump at a wall plants her feet on it 110 out, facing it, at the height she reached; each jump press there leaps
-// back off it to the wall behind, higher: from wall to wall 700 apart the jump back (46.81 out + 77.27 up a 30 Hz
-// frame) is caught 3 frames short of the far wall, about 490 higher. No step of it is a teleport.
+// back off it to the wall behind, higher: from wall to wall 700 apart (the holds 480) the jump back (46.81 out + 77.27
+// up a 30 Hz frame) is caught when the far wall comes inside 3 frames of its launch speed (271: tru.exe 0x758DD0),
+// 7.0 frames and 400.6 up. No step of it is a teleport.
 TEST(Game, ChimneyJumpGainsHeightEachRebound) {
     auto w = makeWorld(shaftMesh(), {0, 0, 0});
     const auto& s = w->player().state();
     const auto& t = w->player().tuning();
     ASSERT_TRUE(jumpAtWall(*w)) << game::stateName(s.state);
-    for (int i = 0; i < 6; ++i) w->tick({});
+    for (int i = 0; i < 12; ++i) w->tick({});
     EXPECT_NEAR(s.pos.x, 400 - t.wallJumpStandoff, 0.01f);
     EXPECT_NEAR(std::cos(s.yaw), 1, 1e-4f) << "facing wall A";
     EXPECT_GT(s.pos.z, 100);
@@ -6560,20 +6564,21 @@ TEST(Game, ChimneyJumpGainsHeightEachRebound) {
     float z = s.pos.z, maxStep = 0;
     for (int k = 1; k <= 4; ++k) {
         ASSERT_TRUE(rebound(*w, &maxStep)) << "rebound " << k << ": " << game::stateName(s.state);
-        for (int i = 0; i < 6; ++i) w->tick({});
+        for (int i = 0; i < 12; ++i) w->tick({});
         const bool onB = k % 2 == 1;
         EXPECT_NEAR(s.pos.x, onB ? -300 + t.wallJumpStandoff : 400 - t.wallJumpStandoff, 0.01f) << "rebound " << k;
         EXPECT_NEAR(std::cos(s.yaw), onB ? -1 : 1, 1e-4f) << "facing the wall she is on";
-        EXPECT_NEAR(s.pos.z - z, 486.5f, 45.0f) << "rebound " << k << " rose " << s.pos.z - z;
+        EXPECT_NEAR(s.pos.z - z, 400.6f, 3.0f) << "rebound " << k << " rose " << s.pos.z - z;
         EXPECT_EQ(s.wallJumps, k);
         z = s.pos.z;
     }
-    EXPECT_GT(z, 1900);
-    EXPECT_LT(maxStep, 60) << "flight and the two-frame draw onto the wall: no jump in position";
+    EXPECT_GT(z, 1700);
+    EXPECT_LT(maxStep, 60) << "flight and the six-frame draw onto the wall: no jump in position";
 }
 
-// Without the press she holds on for wall_jump_attach_air's two frames and wall_jump_idle's twelve, then lets go and
-// falls to the floor; a press after that does nothing. The press counts from the moment she touches the wall.
+// Without the press she holds on for wall_jump_attach_air's six frames and wall_jump_idle's twelve, then lets go and
+// falls to the floor; a press after that does nothing. Nor does one while she is still drawn onto the wall (tru.exe
+// under Wine, chimney4-wine.txt h1): the jump comes from the idle.
 TEST(Game, ChimneyJumpNeedsThePress) {
     auto w = makeWorld(shaftMesh(), {0, 0, 0});
     const auto& s = w->player().state();
@@ -6584,7 +6589,7 @@ TEST(Game, ChimneyJumpNeedsThePress) {
         w->tick({});
         EXPECT_LE(s.pos.z, z + 0.01f) << "nothing lifts her on the wall";
     }
-    EXPECT_NEAR(held, 28, 2) << "14 frames at 60 ticks a second";
+    EXPECT_NEAR(held, 36, 2) << "18 frames at 60 ticks a second";
     EXPECT_EQ(s.state, State::Fall);
     Actions jump;
     jump.jump = true;
@@ -6595,12 +6600,19 @@ TEST(Game, ChimneyJumpNeedsThePress) {
     EXPECT_EQ(s.state, State::Idle);
     EXPECT_NEAR(s.pos.z, 0, 0.01f);
     EXPECT_EQ(s.wallJumps, 0);
-    // pressed on the very first tick on the wall: the leap
+    // pressed on the very first tick on the wall: nothing; pressed again in the idle: the leap
     auto w2 = makeWorld(shaftMesh(), {0, 0, 0});
     ASSERT_TRUE(jumpAtWall(*w2));
-    const float z2 = w2->player().state().pos.z;
+    const auto& s2 = w2->player().state();
+    const float z2 = s2.pos.z;
+    w2->tick(jump);
+    for (int i = 0; i < 8; ++i) w2->tick({});
+    EXPECT_EQ(s2.state, State::WallJump);
+    EXPECT_EQ(s2.clip, "wall_jump_attach_air");
+    EXPECT_EQ(s2.wallJumps, 0);
     ASSERT_TRUE(rebound(*w2));
-    EXPECT_GT(w2->player().state().pos.z, z2 + 400);
+    EXPECT_EQ(s2.wallJumps, 1);
+    EXPECT_GT(s2.pos.z, z2 + 300);
 }
 
 // tru.exe allows five jumps back in a row (player data byte +0x843): on the sixth wall the press does nothing and she
@@ -6612,7 +6624,7 @@ TEST(Game, ChimneyJumpFallsAfterFiveInARow) {
     for (int k = 1; k <= 5; ++k) ASSERT_TRUE(rebound(*w)) << "rebound " << k;
     EXPECT_EQ(s.wallJumps, 5);
     const float top = s.pos.z;
-    EXPECT_GT(top, 2400);
+    EXPECT_GT(top, 2100);
     Actions jump;
     jump.jump = true;
     w->tick({});
@@ -6791,9 +6803,13 @@ TEST(GameReal, JunglehubChimneyJumpClimbsColumns) {
     ASSERT_EQ(r.walls.size(), 3u);
     for (size_t i = 0; i < 3; ++i) // 110 out of column B's face (x ~ -12021) and of column A's (-12659)
         EXPECT_NEAR(r.walls[i].x, i % 2 ? -12659 + 110 : -12021 - 110, 6.0f) << "wall " << i;
-    EXPECT_NEAR(r.walls[0].z, 138, 15) << "on B, a little above the hang";
-    EXPECT_NEAR(r.walls[1].z - r.walls[0].z, 435, 20) << "a rebound across the 418 between the holds";
-    EXPECT_NEAR(r.walls[2].z - r.walls[1].z, 435, 20);
+    // tru.exe under Wine (gameplaygoal/reference/chimney4-wine.txt h1): the holds are 130.6, 491.2 and 829.6 over the
+    // hang's root, the rebounds 360.6 and 338.4 (the walls taken 6.0 and 5.5 frames into the flights); tolerance 25
+    // (docs/REFERENCE_COMPARISON.md "Method").
+    EXPECT_NEAR(r.walls[0].z, 130.6f, 25) << "on B, a little above the hang";
+    EXPECT_NEAR(r.walls[1].z - r.walls[0].z, 360.6f, 25) << "a rebound across the 418 between the holds";
+    EXPECT_NEAR(r.walls[2].z - r.walls[1].z, 338.4f, 25);
+    EXPECT_NEAR(r.walls[1].z, 491.2f, 25);
     EXPECT_NEAR(r.rise, 7597 - 6349, 2.0f);
     EXPECT_LT(r.maxStep, 80) << "no teleport on the way up";
 }
@@ -7791,7 +7807,7 @@ TEST(Game, PoleDropOverSteepGroundIsNotCaughtAgain) {
 TEST(GameReal, TrapRoomsPoleDropAfterFling) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
-    auto w = unitWorld(bf, "l4_traprooms", {{14300, -21200, 6400}, glm::radians(90.0f)});
+    auto w = unitWorld(bf, "l4_traprooms", {{14300, -21328, 6400}, glm::radians(90.0f)});
     const auto& s = w.player().state();
     Actions go = forward();
     go.jump = true;
@@ -9222,7 +9238,9 @@ TEST(Game, HazardShapeDistances) {
 // frames are ignored (invulnerability window), the next one after it kills.
 TEST(GameReal, FlameJetBurnsLaraOncePerWindow) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
-    HazardWorld h("l4_traprooms", game::Spawn{{14030, -19900, 6360}, glm::radians(90.0f)});
+    // 30 short of the scenario's old start: the run's start (ng_run_start from its frame 2) needs the run-up to take the
+    // bank in front of the jets (ours slides off it by its angle at a slower pace)
+    HazardWorld h("l4_traprooms", game::Spawn{{14030, -19930, 6360}, glm::radians(90.0f)});
     game::World& w = h.w;
     w.tick({});
     const auto flames = std::count_if(w.hazards().begin(), w.hazards().end(), [&](const auto& s) { return h.name(s.uid) == "ca_ei_flame_trap" && s.damage == 800; });
