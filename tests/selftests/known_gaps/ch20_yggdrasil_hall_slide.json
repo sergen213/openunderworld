@@ -1,0 +1,95 @@
+{
+ "version": 1,
+ "name": "ch20_yggdrasil_hall_slide",
+ "chapter": "20 Yggdrasil: the slide and the jump over the pit (docs/matrix/20_yggdrasil.md C20-19)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html",
+ "note": "Known gap. l7_yggdrasil from checkpoint 8792 (cinematic object 8773 skipped: she stands at checkpoint 8775 in l7_yggdrasil_hall01), past the crossing and up its north arm to the head of the slope. Running on, the 0x0004 face takes her into the slide (slope_slidefront, 921 units/s along the ground, from y 5966 to its foot at y 8138, z -2520). Jump on the slide's last tick (y 8107) leaves it with the slide's speed and flies 906: she comes down in the pit's water at y 9013 (surface z -3594), and the far bank lies beyond y 9221 (measured 2026-11-10; earlier presses fall shorter, a later one is a fall off the foot). The original's leap clears the pit. Fails at slide_and_jump. Suspected cause: the launch of a jump out of a slide is [I] (it keeps the slide's horizontal speed; tru.exe's launch from `slope_slidefront` is not measured).",
+ "level": "l7_yggdrasil",
+ "spawn": [
+  -0.1,
+  2932.2,
+  39.2,
+  -90
+ ],
+ "steps": [
+  {
+   "step": "the_reveal",
+   "duration": 8,
+   "until": {
+    "probe": "world.checkpoint",
+    "eq": 8775
+   },
+   "expect": [
+    {
+     "calls": [
+      "8773:57"
+     ]
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l7_yggdrasil_hall01"
+    }
+   ]
+  },
+  {
+   "step": "up_the_north_arm",
+   "plan": [
+    "go 13213 -42 200",
+    "go 14000 2600 200",
+    "go 13976 5600 80",
+    "face 90"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "player.grounded",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.z",
+     "near": -1250,
+     "tol": 20
+    },
+    {
+     "probe": "step.health_lost",
+     "max": 300,
+     "note": "the thralls of the crossing are run past"
+    }
+   ]
+  },
+  {
+   "step": "slide_and_jump",
+   "plan": [
+    "run 90 6 jump 3.2"
+   ],
+   "duration": 9,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "slide",
+      "jump"
+     ]
+    },
+    {
+     "probe": "water.in",
+     "over": "all",
+     "eq": false,
+     "note": "over the pit"
+    },
+    {
+     "probe": "player.grounded",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.y",
+     "min": 9000
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  }
+ ]
+}

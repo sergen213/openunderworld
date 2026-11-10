@@ -587,7 +587,12 @@ private:
     bool graphStimulus(int32_t uid, uint32_t mask, float value);
     bool graphPost(int32_t uid, uint32_t mask, float amount, float value);
     bool graphUse(int32_t uid, float value);
-    void switchUsed(Object& o);
+    struct SwitchUse {
+        int32_t state = -1;      // the graph state id the switch holds after the use (-1: it keeps none)
+        int32_t transition = -1; // the use transition's id (vt 19's argument)
+        bool stayed = false;     // that transition led back into the state it left: a failed try
+    };
+    SwitchUse switchUsed(Object& o);
     uint32_t graphSeed_ = 0; // tru.exe DAT_00A038E0 (0x48CA30), drawn among several eligible transitions; saved
     void tickGraph(int32_t uid);
     // `graphOnly`: also an object without a skeleton (its graph, no clips; cached apart).

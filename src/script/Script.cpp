@@ -106,7 +106,8 @@ std::optional<Kind> classify(const std::string& n) {
     if (endsWith(n, "triggervolume") || n == "soundvolume") return Kind::Volume;
     if (n == "triggerplane") return Kind::Plane;
     if (contains(n, "cheat")) return std::nullopt;
-    if (contains(n, "switch") || contains(n, "lever")) return Kind::Switch;
+    // "swich": l7_helheim01's fourth rune symbol is spelled ar_uo_rune_wall_swich_a in the object list [O data].
+    if (contains(n, "switch") || contains(n, "swich") || contains(n, "lever")) return Kind::Switch;
     if (contains(n, "pu_block") || contains(n, "rb_pushblock") || contains(n, "pushable")) return Kind::Block;
     if (contains(n, "door") || contains(n, "gate")) return Kind::Door;
     return std::nullopt;
@@ -1017,8 +1018,21 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
     case EventKind::In: vt = kVtOnIn; break;
     case EventKind::Out: vt = kVtOnOut; break;
     case EventKind::Cross: vt = kVtPlaneCross; break;
-    case EventKind::Use:
-        if (o.kind == Kind::Switch) switchUsed(o);
+    case EventKind::Use: {
+        const SwitchUse use = o.kind == Kind::Switch ? switchUsed(o) : SwitchUse{};
+        if (use.stayed) {
+            // A use that leaves the switch in its state (the locked state 2 of the one-way switches, transition 2 back
+            // into it) is a failed try: the exe starts the transition (vt 19 with its id; the l7_arctic_sea drawbridge
+            // wheel 9103's vt 19 (2) posts "reaction=interactFail") and the state is not entered anew. The switch
+            // stays free for another try.
+            o.state = 0, o.t = 0;
+            const vm::Value arg = vm::Value::scalar(uint32_t(use.transition));
+            run(o.uid, 19, std::span(&arg, 1));
+            return;
+        }
+        // [I] vt 20 keeps running with a zero argument (the "on" id) whatever state id the use arrived at: ours has no
+        // return transitions (the shadow pillars' switches are pulled again and again and each pull must read "on"),
+        // so the id the exe would pass (type 3637 vt 20: 0 -> vt 55, 1 -> vt 54) is not passed on yet.
         vt = kVtSwitchUsed;
         // Switch bases (e.g. 3637) receive the state change in vt 20 and dispatch the used state to vt 55; a script that
         // overrides vt 20 below the vt 55 definer handles the use there with state 0 (l2 elevator switch 10112: vt20(0)
@@ -1030,6 +1044,7 @@ void Runtime::fire(EventKind k, Object& o, bool announce) {
                 if (has(20)) { vt = 20; break; }
             }
         break;
+    }
     case EventKind::Start: vt = -2; break; // StartObject enters state 0 (Program::startup)
     case EventKind::Main: vt = -3; break;  // function 2 is the object's main/polling script
     case EventKind::CinematicEnd: vt = -1; break; // non-virtual post-stream helper
@@ -1563,6 +1578,21 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             // modifiable 7 (0x4A5A90) posts message 0x2E with the value to the instance: an anim-graph object (handler
             // 0x6B4440) enters the state with that id at once (state list query 0xE6, 0x6A5660); other receivers [U].
             if (!std::strcmp(name, "modifiable") && nc.function == 7 && nc.args.size() == 1) {
+                // A switch keeps its graph state as the id in this member (switchUsed): the unit scripts lock and free
+                // their wheels with it (l7_arctic_sea's constructor: 9103 vt 63 -> 7 (2), free again by vt 62 -> 7 (1)
+                // once four stones and four swords are counted). A pulled switch whose new state can be used is free.
+                // [I] Honoured for the Arctic Sea's wheels only (`ar_ei_switch_oneway`), whose lock and release are decoded and
+                // played. Elsewhere scripts put switches into state 2 too (l1_kraken_room switch 30) and nothing in ours frees
+                // them again yet: honouring it there stops self-test kraken_kill and the critical gates at the first pull.
+                if (Object* o = findMut(self->uid); o && o->kind == Kind::Switch && !o->graph && o->name == "ar_ei_switch_oneway") {
+                    if (const auto set = graphSet(o->name); set && set->graph)
+                        if (const int state = set->graph->stateById(int32_t(nc.args[0].bits)); state >= 0) {
+                            // (its own member, whichever of the chain's `modifiable` members the caller reached it by)
+                            self->fields[modifiableMember(*self).value_or(off)] = nc.args[0].bits;
+                            if (o->state == 2 && set->graph->pickUse(state, formats::kStimulusUse, 0, graphSeed_) >= 0) o->state = 0, o->t = 0;
+                        }
+                    return true;
+                }
                 if (const Object* o = find(self->uid); o && o->graph && o->graph->set->graph)
                     if (const int state = o->graph->set->graph->stateById(int32_t(nc.args[0].bits)); state >= 0) graphEnter(self->uid, state);
                 return true;
@@ -1595,6 +1625,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
             if (!std::strcmp(name, "instance") && (nc.function == 0 || nc.function == 1)) return true; // debug print
             if (!std::strcmp(name, "instanceref") && nc.function == 9 && nc.args.size() == 2) { // SetProperty
                 self->properties[(uint64_t(off) << 32) | nc.args[0].bits] = nc.args[1].bits & 0xFF;
+                return true;
+            }
+            // instanceref 10 (thunk 0x799B30, between SetProperty 9 and GetProperty 12): one float to the referenced
+            // instance, result unread. Seen only with the god-ray strength beside `unit` 15 of the same value
+            // (l7_arctic_sea's constructor and vt 13: 0.8 to dispatcher 9089, whose own thread feeds `unit` 15) [U: what the
+            // receiver does with it]; ours keeps nothing and runs on, so the constructor reaches its puzzle set-up.
+            if (!std::strcmp(name, "instanceref") && nc.function == 10 && nc.args.size() == 1) {
+                nc.result = vm::Value::scalar(0);
                 return true;
             }
             if (!std::strcmp(name, "instanceref") && (nc.function == 12 || nc.function == 15) && nc.args.size() == 1) {
@@ -1910,6 +1948,12 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 // GetUnit (thunk 0x7B2C20 -> 0x4B06F0): a 12-byte unitref of the instance's unit (+0xE0). Ours: the
                 // unit's ordinal + 1 as an identity (mercs pass it to enemybase 23 [U: what the AI does with it]).
                 const Object* object = findMut(self->uid);
+                // Lara's (l7_arctic_sea's constructor asks whether she came from the unit before): her stream unit
+                // id, what unitref 0 compares; 0 before the World has told us.
+                if (!object && self == playerScript_) {
+                    nc.result = vm::Value::scalar(playerUnit_ ? playerUnit_->first : 0);
+                    return true;
+                }
                 if (!object) return false;
                 auto unit = std::find(cameraUnits_.begin(), cameraUnits_.end(), object->unit);
                 if (unit == cameraUnits_.end()) unit = cameraUnits_.insert(unit, object->unit);
@@ -2328,16 +2372,20 @@ bool Runtime::graphUse(int32_t uid, float value) {
 }
 
 // A switch's use moves the state id its modifiable member holds (Runtime::addUnit) along that state's use transition
-// (0x6B4090, AnimGraph::pickUse); a null target stays. No callbacks: the Use event dispatches the switch's handlers.
-void Runtime::switchUsed(Object& o) {
+// (0x6B4090, AnimGraph::pickUse); a null target stays. No callbacks: the Use event dispatches the switch's handlers
+// with what this returns: the state id now held, and whether the transition taken led back into the same state.
+Runtime::SwitchUse Runtime::switchUsed(Object& o) {
     const auto off = o.script ? modifiableMember(*o.script) : std::nullopt;
     const auto set = off ? graphSet(o.name) : nullptr;
-    if (!set || !set->graph) return;
+    if (!set || !set->graph) return {};
     const auto& G = *set->graph;
     uint32_t& id = o.script->fields[*off];
     const int state = G.stateById(int32_t(id));
     const int ti = state >= 0 ? G.pickUse(state, formats::kStimulusUse, 0, graphSeed_) : -1;
-    if (ti >= 0 && G.transitions[size_t(ti)].target >= 0) id = uint32_t(int32_t(G.states[size_t(G.transitions[size_t(ti)].target)].index));
+    if (ti < 0) return {};
+    const int target = G.transitions[size_t(ti)].target;
+    if (target >= 0) id = uint32_t(int32_t(G.states[size_t(target)].index));
+    return {int32_t(id), G.transitions[size_t(ti)].index, target < 0 || target == state};
 }
 
 // 0x6B4440 message 0x11C: the event mask (+0xA8, the state's transitions' damage classes; cleared while one runs)

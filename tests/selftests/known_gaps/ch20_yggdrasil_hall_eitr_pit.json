@@ -1,0 +1,93 @@
+{
+ "version": 1,
+ "name": "ch20_yggdrasil_hall_eitr_pit",
+ "chapter": "20 Yggdrasil: the pit at the slide's foot is eitr (docs/matrix/20_yggdrasil.md C20-19)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html",
+ "note": "Known gap. As ch20_yggdrasil_hall_slide without the jump: the slide runs off its foot (y 8140) and she drops into the pit. The walkthrough's pit is eitr (instant death, as l4_pool's and l7_yggdrasil_end's pools). Ours: the pit is a plain water volume (surface z -3594 in l7_yggdrasil's frame): she surfaces and treads water unharmed (8 s watched, health 1000; triggervolumes 8752 / 8753 entered, no kill). Fails at in_the_pit. Suspected cause: the unit's kill is a script poll or a property of the volume that ours does not apply here (docs/GAMEPLAY.md \"Hazards\" lists eitr kills only for l4_pool, l7_helheim01 and l7_yggdrasil_end).",
+ "level": "l7_yggdrasil",
+ "spawn": [
+  -0.1,
+  2932.2,
+  39.2,
+  -90
+ ],
+ "steps": [
+  {
+   "step": "the_reveal",
+   "duration": 8,
+   "until": {
+    "probe": "world.checkpoint",
+    "eq": 8775
+   },
+   "expect": [
+    {
+     "calls": [
+      "8773:57"
+     ]
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l7_yggdrasil_hall01"
+    }
+   ]
+  },
+  {
+   "step": "up_the_north_arm",
+   "plan": [
+    "go 13213 -42 200",
+    "go 14000 2600 200",
+    "go 13976 5600 80",
+    "face 90"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "probe": "player.grounded",
+     "eq": true
+    },
+    {
+     "probe": "player.pos.z",
+     "near": -1250,
+     "tol": 20
+    },
+    {
+     "probe": "step.health_lost",
+     "max": 300,
+     "note": "the thralls of the crossing are run past"
+    }
+   ]
+  },
+  {
+   "step": "slide_off_the_foot",
+   "plan": [
+    "run 90 5.5"
+   ],
+   "duration": 8,
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "slide",
+      "fall"
+     ]
+    },
+    {
+     "probe": "water.in",
+     "over": "any",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "in_the_pit",
+   "duration": 8,
+   "expect": [
+    {
+     "probe": "player.dead",
+     "eq": true,
+     "note": "eitr kills"
+    }
+   ]
+  }
+ ]
+}
