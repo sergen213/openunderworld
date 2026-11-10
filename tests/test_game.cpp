@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1859,6 +1860,119 @@ TEST(Game, SlideAcceleratesAtGravityAlongSlope) {
     const float a1 = glm::length(glm::vec2(s.vel)) / nz;
     EXPECT_NEAR((a1 - a0) / 0.5f, w->player().tuning().gravity * std::sqrt(1 - nz * nz), 50);
     EXPECT_GT(a1, 2738) << "no cap below tru.exe's fastest observed slide (91.3 units/frame)";
+}
+
+// ---- slopes and slides (docs/GAMEPLAY.md "Slopes and slides") ---------------------------------------
+
+// A ramp of normal z `nz` falling toward +x from a flat top at x < 0 to a flat bottom, its faces carrying `flags`
+// (collision client flags, raw +0x0E).
+CollisionMesh rampMesh(float nz, uint16_t flags, float run = 3000) {
+    const float drop = run * std::sqrt(1 - nz * nz) / nz;
+    CollisionMesh m;
+    addFloor(m, -1000, -1000, 0, 1000, drop);
+    const size_t first = m.faces.size();
+    addQuad(m, {0, -1000, drop}, {run, -1000, 0}, {run, 1000, 0}, {0, 1000, drop});
+    for (size_t f = first; f < m.faces.size(); ++f) m.faces[f].clientFlags = flags;
+    addFloor(m, run, -1000, run + 4000, 1000, 0);
+    return m;
+}
+vec3 onRamp(float nz, float x, float run = 3000) { return {x, 0, (run - x) * std::sqrt(1 - nz * nz) / nz}; }
+
+// tru.exe's ground check 0x5DCE20: too steep under cos 52 deg = 0.6157 (unless flagged 0x20 / 0x100), slide-flagged
+// faces (0x04 / 0x40) slid from cos 52 to cos 28 deg = 0.8829. Wine, l2_junglehub: stands on 0x0080 faces of normal z
+// 0.626..0.716 and on 0x0000 0.763, slides on 0x0004 faces of 0.753.
+TEST(Game, SlopeStandsOrSlidesByFlagAndAngle) {
+    struct Row { float nz; uint16_t flags; bool slides; };
+    for (const Row r : {Row{0.626f, 0x0080, false}, {0.63f, 0x0000, false}, {0.716f, 0x0080, false}, {0.60f, 0x0000, true}, {0.60f, 0x0080, true},
+                        {0.45f, 0x0080, true}, {0.63f, 0x0004, true}, {0.753f, 0x0004, true}, {0.87f, 0x0004, true}, {0.753f, 0x0040, true},
+                        {0.90f, 0x0004, false}, {0.974f, 0x0004, false}, {0.50f, 0x00A0, false}, {0.50f, 0x01A0, false}, {0.50f, 0x0100, false},
+                        {0.50f, 0x0024, true}, {0.50f, 0x0104, false}, {0.753f, 0x0124, true}}) {
+        auto w = makeWorld(rampMesh(r.nz, r.flags), onRamp(r.nz, 600));
+        const auto& s = w->player().state();
+        bool slid = false;
+        for (int i = 0; i < 90; ++i) {
+            w->tick({});
+            slid |= s.state == State::Slide;
+        }
+        EXPECT_EQ(slid, r.slides) << r.nz << " flags " << r.flags;
+        if (r.slides) EXPECT_GT(s.pos.x, 700) << r.nz << " flags " << r.flags;
+        else {
+            EXPECT_EQ(s.state, State::Idle) << r.nz << " flags " << r.flags;
+            EXPECT_NEAR(s.pos.x, 600, 1e-3) << r.nz << " flags " << r.flags;
+        }
+    }
+}
+
+// The slide controller (tru.exe 0x73FF50, state group S814): the speed along the fall line approaches 35 units per
+// 30 Hz frame at 29 degrees .. 45 at 51, at 2.5 per frame^2 on 60 Hz ticks (Wine, l2_junglehub 0x0004 faces: +1.25
+// per tick; steady 35.0 at 28.4 degrees, 36.3 at 31.8, 38.3 at 36.2, 40.5 at 41.1, 42.3 at 45.1, 43.8 at 48.3).
+TEST(Game, SlopeSlideSpeedFollowsAngle) {
+    struct Row { float deg, speed; };
+    for (const Row r : {Row{28.36f, 35.0f}, {31.8f, 36.27f}, {36.2f, 38.27f}, {41.14f, 40.52f}, {45.09f, 42.31f}, {48.3f, 43.77f}}) {
+        const float nz = std::cos(glm::radians(r.deg));
+        auto w = makeWorld(rampMesh(nz, 0x0004, 6000), onRamp(nz, 300, 6000));
+        const auto& s = w->player().state();
+        w->tick({});
+        ASSERT_EQ(s.state, State::Slide) << r.deg;
+        for (int i = 0; i < 11; ++i) w->tick({});
+        EXPECT_NEAR(glm::length(s.vel), 11 * 2.5f * 900 / 60, 1.0f) << r.deg; // 11 sliding ticks of 1.25 per frame
+        for (int i = 0; i < 60; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Slide) << r.deg;
+        EXPECT_NEAR(glm::length(s.vel), r.speed * 30, 1.0f) << r.deg;
+        EXPECT_NEAR(-s.vel.z / glm::length(glm::vec2(s.vel)), std::tan(glm::radians(r.deg)), 1e-3) << r.deg;
+        EXPECT_NEAR(s.vel.y, 0, 1e-3);
+        EXPECT_NEAR(s.pos.z, onRamp(nz, s.pos.x, 6000).z, 0.01f) << r.deg;
+    }
+}
+
+// The chart leaves every ground state for the slide on PSCCF_OnSlopeSlide (T84 / T83): a slide face cannot be walked
+// or run up; the same slope without the flag can (normal z 0.75).
+TEST(Game, SlopeSlideFaceCannotBeRunUp) {
+    for (const bool flagged : {true, false}) {
+        const float nz = 0.75f;
+        auto w = makeWorld(rampMesh(nz, flagged ? 0x0004 : 0x0000), {3600, 0, 0}, glm::pi<float>());
+        const auto& s = w->player().state();
+        float top = 0;
+        bool slid = false;
+        for (int i = 0; i < 240; ++i) {
+            w->tick(forward());
+            top = std::max(top, s.pos.z);
+            slid |= s.state == State::Slide;
+        }
+        EXPECT_EQ(slid, flagged);
+        if (flagged) EXPECT_LT(top, 60);
+        else EXPECT_GT(top, 1000);
+    }
+}
+
+// A slide runs out on the flat (standable) ground below and ends there; Jump leaves it with the slide's horizontal
+// velocity.
+TEST(Game, SlopeSlideEndsOnFlatAndJumpLeavesIt) {
+    const float nz = 0.75f;
+    {
+        auto w = makeWorld(rampMesh(nz, 0x0004), onRamp(nz, 2000));
+        const auto& s = w->player().state();
+        bool slid = false;
+        for (int i = 0; i < 300; ++i) {
+            w->tick({});
+            slid |= s.state == State::Slide;
+        }
+        EXPECT_TRUE(slid);
+        EXPECT_EQ(s.state, State::Idle);
+        EXPECT_GT(s.pos.x, 3000);
+        EXPECT_NEAR(s.pos.z, 0, 1e-3);
+    }
+    auto w = makeWorld(rampMesh(nz, 0x0004), onRamp(nz, 300));
+    const auto& s = w->player().state();
+    for (int i = 0; i < 60; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Slide);
+    const float vx = s.vel.x;
+    Actions j;
+    j.jump = true;
+    w->tick(j);
+    EXPECT_EQ(s.state, State::Jump);
+    EXPECT_NEAR(s.vel.x, vx, 40);
+    EXPECT_GT(s.vel.z, 1000);
 }
 
 // ---- swimming (real data) ---------------------------------------------------------------------
@@ -9185,6 +9299,159 @@ TEST(GameReal, MovingMarkupCogWheelByInput) {
     EXPECT_GT(std::abs(std::remainder(angleOf(s.pos) - a0, 2 * 3.14159265f)), std::abs(turned)) << "put down further round the wheel";
 }
 
+// ---- slopes and slides (real data; docs/GAMEPLAY.md "Slopes and slides") ----------------------------
+
+// l2_junglehub, the ramp series measured in tru.exe under Wine (gameplaygoal/slope/session.sh: Lara put on the
+// centroid of one large open face per client-flag value and normal-z bin, left alone): by tru.exe's ground check
+// 0x5DCE20 she stands on unflagged faces down to cos 52 deg = 0.6157 and on 0x20-flagged ones at any slope, and
+// slides on 0x0004 faces from there to cos 28 deg = 0.8829.
+TEST(GameReal, SlopeJunglehubRampSeries) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto bytes = bf.read("pc-w\\l2_junglehub.drm");
+    ASSERT_TRUE(bytes);
+    const auto col = collision::loadLevelCollision(cdc::parseDrm(std::move(*bytes)));
+    const auto anims = game::loadLaraAnims(bf);
+    struct Row { uint16_t flags; float nz; vec3 at; bool slides; };
+    const Row rows[] = {
+        {0x0000, 0.576f, {-30831.9f, 17762.9f, 9762.7f}, true},  {0x0000, 0.596f, {-33481.7f, 15343.5f, 14398.1f}, true},
+        {0x0000, 0.613f, {-31233.1f, 15398.8f, 11778.9f}, true}, {0x0000, 0.633f, {-20472.0f, 8456.2f, 7846.3f}, false},
+        {0x0000, 0.647f, {-32153.5f, 22399.8f, 12583.3f}, false}, {0x0000, 0.665f, {-6963.9f, 21334.2f, 8699.1f}, false},
+        {0x0080, 0.574f, {-16910.9f, 31411.3f, 11895.3f}, true}, {0x0080, 0.597f, {-5076.5f, 30357.9f, 9683.7f}, true},
+        {0x0080, 0.608f, {-4579.4f, 32375.9f, 12175.0f}, true},  {0x0080, 0.626f, {-4265.9f, 29897.2f, 9581.3f}, false},
+        {0x0080, 0.659f, {-6344.5f, 32898.8f, 13266.2f}, false}, {0x0080, 0.679f, {-15884.5f, 32284.4f, 11642.4f}, false},
+        {0x0004, 0.612f, {-10950.9f, 30200.3f, 9622.4f}, true},  {0x0004, 0.648f, {-25467.6f, 10452.8f, 6640.0f}, true},
+        {0x0004, 0.706f, {-29691.2f, 17582.3f, 8247.6f}, true},  {0x0004, 0.753f, {-9499.8f, 31289.9f, 10806.0f}, true},
+        {0x0004, 0.807f, {-13334.5f, 27854.3f, 7999.4f}, true},  {0x0004, 0.850f, {-9680.7f, 28512.7f, 7895.6f}, true},
+        {0x0004, 0.880f, {-12201.2f, 28203.6f, 7895.6f}, true},  {0x0004, 0.933f, {-14589.9f, 30848.6f, 10134.0f}, false},
+        {0x0004, 0.965f, {-7035.4f, 19594.8f, 6520.7f}, false},  {0x00A0, 0.417f, {-11766.5f, 8508.0f, 5617.6f}, false},
+        {0x00A0, 0.518f, {-16930.1f, 9631.3f, 5927.7f}, false},  {0x00A0, 0.595f, {-10313.4f, 9150.1f, 5623.9f}, false},
+    };
+    for (const Row& r : rows) {
+        const auto g = col.groundProbe(r.at + vec3(0, 0, 50), 100);
+        ASSERT_TRUE(g) << r.nz;
+        ASSERT_EQ(col.faces[g->face].clientFlags, r.flags) << r.nz;
+        ASSERT_NEAR(g->normal.z, r.nz, 0.001f);
+        game::World w(col, anims, game::Spawn{g->point, 0});
+        const auto& s = w.player().state();
+        bool slid = false;
+        for (int i = 0; i < 60; ++i) {
+            w.tick({});
+            slid |= s.state == State::Slide;
+        }
+        EXPECT_EQ(slid, r.slides) << "flags " << r.flags << " nz " << r.nz;
+        if (!r.slides) {
+            EXPECT_EQ(s.state, State::Idle) << "flags " << r.flags << " nz " << r.nz;
+            EXPECT_LT(glm::distance(s.pos, g->point), 1.0f) << "flags " << r.flags << " nz " << r.nz;
+        } else {
+            EXPECT_GT(glm::distance(s.pos, g->point), 150.0f) << "flags " << r.flags << " nz " << r.nz;
+        }
+    }
+}
+
+// l1_kraken_room, the ramp into the lower hall (Niflheim: "slide down the slope"): every face of it carries client
+// flag 0x0004. The flat top is stood on, the 44.6-degree face (normal z 0.712, 1700 long) is slid at 42.1 units per
+// 30 Hz frame (35..45 over 29..51 degrees), the run-out (normal z 0.919 / 0.953: flatter than 28 degrees) ends the
+// slide; she cannot run back up it.
+TEST(GameReal, SlopeKrakenRoomSlide) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l1_kraken_room", {{-9026.4f, -208, 2054.7f}, -glm::half_pi<float>()});
+    const auto& s = w.player().state();
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.z, 2054.7f, 0.5f);
+    for (int i = 0; i < 120 && s.state != State::Slide; ++i) w.tick(fixedCamera(w, forward(), -glm::half_pi<float>()));
+    ASSERT_EQ(s.state, State::Slide);
+    EXPECT_LT(s.pos.y, -560);
+    EXPECT_GT(s.pos.y, -760);
+    EXPECT_EQ(s.clip, "slope_transitionto");
+    float fastest = 0;
+    bool loop = false;
+    for (int i = 0; i < 400 && s.state == State::Slide; ++i) {
+        w.tick({});
+        if (s.state != State::Slide) break;
+        fastest = std::max(fastest, glm::length(s.vel));
+        loop |= s.clip == "slope_slidefront";
+        ASSERT_NEAR(s.pos.x, -9026.4f, 5.0f);
+    }
+    EXPECT_TRUE(loop);
+    const float deg = glm::degrees(std::acos(0.712f));
+    EXPECT_NEAR(fastest, (35.0f + 10.0f * (deg - 29.0f) / 22.0f) * 30.0f, 3.0f);
+    EXPECT_EQ(s.state, State::Land);
+    EXPECT_EQ(s.clip, "slope_slide_stumble_off");
+    EXPECT_LT(s.pos.y, -2360);
+    EXPECT_GT(s.pos.y, -2520);
+    for (int i = 0; i < 240 && s.state != State::Idle; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Idle);
+    EXPECT_EQ(w.health().value(), w.health().max());
+    // back up: the run takes her onto the slide face, which throws her back down
+    float top = s.pos.z;
+    bool slid = false;
+    for (int i = 0; i < 300; ++i) {
+        w.tick(fixedCamera(w, forward(), glm::half_pi<float>()));
+        top = std::max(top, s.pos.z);
+        slid |= s.state == State::Slide;
+    }
+    EXPECT_TRUE(slid);
+    EXPECT_LT(top, 420);
+}
+
+// l7_yggdrasil_hall01, the slope before the eitr pit (Yggdrasil: slide down and jump at its foot): one 0x0004
+// surface of normal z 0.865 (30.1 degrees). Under the angle rule of 0.7 it was stood on; by the flag she slides it
+// at 35.5 units per frame, and Jump leaves the slide with its horizontal speed.
+TEST(GameReal, SlopeYggdrasilHallSlideAndJump) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    auto w = unitWorld(bf, "l7_yggdrasil_hall01", {{-7953, 305.2f, 1103.4f}, 0});
+    const auto& s = w.player().state();
+    w.tick({});
+    ASSERT_EQ(s.state, State::Slide);
+    for (int i = 0; i < 600 && s.pos.x < -6400; ++i) {
+        w.tick({});
+        ASSERT_EQ(s.state, State::Slide) << i;
+    }
+    const float deg = glm::degrees(std::acos(0.865f));
+    EXPECT_NEAR(glm::length(s.vel), (35.0f + 10.0f * (deg - 29.0f) / 22.0f) * 30.0f, 6.0f);
+    const float vx = s.vel.x;
+    Actions j;
+    j.jump = true;
+    w.tick(j);
+    ASSERT_EQ(s.state, State::Jump);
+    EXPECT_NEAR(s.vel.x, vx, 30.0f);
+    for (int i = 0; i < 240 && (s.state == State::Jump || s.state == State::Fall); ++i) w.tick({});
+    EXPECT_GT(s.pos.x, -6003 + 200); // past the foot of the slope (x -6003), 630 from the take-off
+    EXPECT_NEAR(s.pos.z, 0, 1.0f);
+}
+
+// A slide that runs off an edge carrying a ledge ends hanging from it (chart T1713 -> S534, the safety drop's attach
+// states; Wine, l2_junglehub: off the end of a 45-degree 0x0004 face she turned and hung): no fall in between.
+TEST(Game, SlopeSlideOffEndCatchesLedge) {
+    const float nz = 0.75f, run = 1500, drop = run * std::sqrt(1 - nz * nz) / nz;
+    CollisionMesh m;
+    addBox(m, {-2000, -1000, -3000}, {0, 1000, 0});
+    addFloor(m, -2000, -1000, 3000, 1000, -3000);
+    const size_t first = m.faces.size();
+    addQuad(m, {-run, -1000, drop}, {0, -1000, 0}, {0, 1000, 0}, {-run, 1000, drop});
+    for (size_t f = first; f < m.faces.size(); ++f) m.faces[f].clientFlags = 0x0004;
+    m.markup.push_back({1, 3, {{0, -800, 0}, {0, 800, 0}}});
+    auto w = makeWorld(std::move(m), {-800, 50, 800 * std::sqrt(1 - nz * nz) / nz});
+    const auto& s = w->player().state();
+    std::set<State> seen;
+    for (int i = 0; i < 600 && s.state != State::Hang; ++i) {
+        w->tick({});
+        seen.insert(s.state);
+    }
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state) << " at " << s.pos.x << " " << s.pos.z;
+    EXPECT_TRUE(seen.count(State::Slide));
+    EXPECT_TRUE(seen.count(State::DropToHang));
+    EXPECT_FALSE(seen.count(State::Fall));
+    const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+    EXPECT_NEAR(hands.x, 0, 1e-2);
+    EXPECT_NEAR(hands.z, 0, 1e-2);
+    EXPECT_NEAR(std::cos(s.yaw), -1, 1e-4) << "facing the wall";
+}
+
 // ---- contact hazards (src/game/Hazards.cpp) ---------------------------------------------------------------
 namespace {
 game::HazardShape hazardBox(vec3 at, vec3 size) {
@@ -9242,10 +9509,14 @@ TEST(GameReal, FlameJetBurnsLaraOncePerWindow) {
     std::vector<std::pair<uint64_t, float>> hits; // tick, health after
     uint64_t died = 0;
     std::string clip;
-    for (int i = 0; i < 600 && !died; ++i) {
+    // The jet's travel is watched for the whole 10 s: she is burned within the first second (the rubble before the
+    // first gargoyle is flagged 0x0100, stood on however steep: she runs straight up it into the jet; docs/GAMEPLAY.md
+    // "Slopes and slides") and dies of the second burn before the jet has gone back in.
+    for (int i = 0; i < 600; ++i) {
         w.tick(run);
         for (const auto& s : w.hazards())
             if (s.uid == 5870) lo = std::min(lo, s.world[3].z), hi = std::max(hi, s.world[3].z);
+        if (died) continue;
         for (const auto& hit : w.hazardHits()) {
             EXPECT_EQ(h.name(hit.uid), "ca_ei_flame_trap");
             EXPECT_EQ(hit.damage, 800);
@@ -9385,4 +9656,278 @@ TEST(GameReal, FireVolumeBurns300) {
     float lowest = 1000;
     for (int i = 0; i < 30; ++i) w.tick({}), lowest = std::min(lowest, w.health().value());
     EXPECT_NEAR(lowest, 700, 0.5);
+}
+
+// ---- limb locks and the head look-at (src/game/Ik.cpp; docs/GAMEPLAY.md "Animation layers and IK") ----
+namespace {
+struct IkPose {
+    game::AnimLibrary anims;
+    std::vector<anim::LocalTransform> local;
+    std::vector<glm::mat4> world;
+    IkPose(const cdc::BigfileSet& bf, std::string_view clip, double t = 0) : anims(game::loadLaraAnims(bf)) {
+        const anim::Clip* c = anims.find(clip);
+        if (!c) throw std::runtime_error("no clip " + std::string(clip));
+        local = anim::sample(*c, anims.skeleton, t, true);
+        local[0] = {{0, 0, 0}, {1, 1, 1}, glm::vec3(anims.skeleton.bones[0].pivot[0], anims.skeleton.bones[0].pivot[1], anims.skeleton.bones[0].pivot[2])}; // root motion is in the model matrix
+        world = anim::worldMatrices(anims.skeleton, local);
+    }
+    glm::vec3 bone(int b) const { return glm::vec3(world[size_t(b)][3]); }
+};
+void expectNear(glm::vec3 a, glm::vec3 b, float eps) {
+    EXPECT_NEAR(a.x, b.x, eps);
+    EXPECT_NEAR(a.y, b.y, eps);
+    EXPECT_NEAR(a.z, b.z, eps);
+}
+} // namespace
+
+// lara.drm object data +0x5C8 / +0x5CC: the 30 limb-lock records tru.exe builds its GenericLimbLockControllers from
+// (0x6EFDA0 -> 0x445160), and the head look-at numbers 0x6FD080 reads.
+TEST(GameReal, IkTuningDecodesTheLimbLocks) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto t = game::loadIkTuning(bf);
+    ASSERT_TRUE(t);
+    ASSERT_EQ(t->locks.size(), 30u);
+    const game::LimbLock& l = t->locks[13]; // the floor under the left foot
+    EXPECT_EQ(l.chain, 12u); EXPECT_EQ(l.type, 1u); EXPECT_EQ(l.limb, 0x30); EXPECT_EQ(l.segment, 6); EXPECT_EQ(l.flags, 0x1Fu);
+    EXPECT_NEAR(l.up, 158.025f, 0.01f); EXPECT_NEAR(l.down, 158.025f, 0.01f); EXPECT_NEAR(l.offset.z, 26.864f, 0.01f);
+    EXPECT_EQ(l.framesIn, 2u); EXPECT_EQ(l.framesOut, 3u);
+    EXPECT_EQ(t->locks[15].limb, 0x31); EXPECT_EQ(t->locks[15].segment, 11); EXPECT_EQ(t->locks[15].type, 1u);
+    EXPECT_EQ(t->locks[4].type, 7u); EXPECT_EQ(t->locks[4].limb, 0x40); EXPECT_EQ(t->locks[7].type, 7u); EXPECT_EQ(t->locks[7].limb, 0x41);
+    EXPECT_EQ(t->lock(1, 0x30), &t->locks[13]); EXPECT_EQ(t->lock(7, 0x41), &t->locks[7]);
+    // the bike's four (type 9) and the wading four (type 0xB) exist too
+    EXPECT_EQ(std::ranges::count(t->locks, 9u, &game::LimbLock::type), 4); EXPECT_EQ(std::ranges::count(t->locks, 11u, &game::LimbLock::type), 4);
+    EXPECT_EQ(t->head, 17); EXPECT_EQ(t->neck, 16); EXPECT_EQ(t->pelvis, 1);
+    EXPECT_NEAR(glm::degrees(t->lookYaw), 60, 1e-3); EXPECT_NEAR(glm::degrees(t->lookPitch), 15, 1e-3);
+    EXPECT_NEAR(glm::degrees(t->lookRestart), 30, 1e-3); EXPECT_EQ(t->lookFrames, 3); EXPECT_NEAR(t->lookSightGap, 60, 1e-3);
+    // the built-in records are the file's
+    const game::IkTuning d;
+    for (const auto& k : d.locks) {
+        const game::LimbLock* f = t->lock(k.type, k.limb);
+        ASSERT_TRUE(f);
+        EXPECT_EQ(f->chain, k.chain); EXPECT_EQ(f->segment, k.segment); EXPECT_EQ(f->flags, k.flags); EXPECT_EQ(f->limb2, k.limb2);
+        EXPECT_NEAR(f->up, k.up, 0.01f); EXPECT_NEAR(f->offset.z, k.offset.z, 0.01f);
+    }
+    // the effectors end three-segment limbs: foot <- shin <- thigh under the pelvis, hand <- forearm <- upper arm
+    const auto anims = game::loadLaraAnims(bf);
+    const auto& b = anims.skeleton.bones;
+    EXPECT_EQ(b[6].parent, 5); EXPECT_EQ(b[5].parent, 4); EXPECT_EQ(b[11].parent, 10); EXPECT_EQ(b[10].parent, 9);
+    int up = 4;
+    while (up > 1) up = b[size_t(up)].parent;
+    EXPECT_EQ(up, 1); // the legs hang from the pelvis
+    EXPECT_GT(anims.bind[6].x, 0); EXPECT_LT(anims.bind[11].x, 0);   // 0x30 = her left (+X)
+    EXPECT_GT(anims.bind[55].x, 0); EXPECT_LT(anims.bind[80].x, 0);
+    EXPECT_NEAR(anims.bind[6].z, l.offset.z, 5.0f); // the ankle stands about the record's offset over the floor (bind 30.6)
+}
+
+// Feet on a 20-degree slope and on stair treads: each ankle keeps the clip's height, now over the floor under it;
+// the pelvis comes down for the lower foot; the root bone (the controller's) does not move.
+TEST(GameReal, IkFeetFollowASlopeAndStairs) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    for (const char* clip : {"ng_idle", "ng_run"}) {
+        for (const double time : {0.0, 0.2, 0.45}) {
+            // a slope falling to her left (+X) at 20 degrees, through her root
+            const float k = std::tan(glm::radians(20.0f));
+            CollisionMesh slope;
+            const uint32_t v0 = uint32_t(slope.vertices.size());
+            slope.vertices.insert(slope.vertices.end(), {{-2000, -2000, 2000 * k}, {2000, -2000, -2000 * k}, {2000, 2000, -2000 * k}, {-2000, 2000, 2000 * k}});
+            slope.faces.push_back({{v0, v0 + 1, v0 + 2}}), slope.faces.push_back({{v0, v0 + 2, v0 + 3}});
+            slope.build();
+            IkPose p(bf, clip, time);
+            const game::IkTuning& t = p.anims.ik;
+            const glm::mat4 root = p.world[0];
+            const IkPose clipPose = p;
+            const glm::vec3 ankle[2] = {p.bone(6), p.bone(11)};
+            const auto r = game::plantFeet(p.anims.skeleton, p.local, p.world, glm::mat4(1), slope, t, 0.7f);
+            const bool idle = std::string_view(clip) == "ng_idle";
+            ASSERT_TRUE(idle ? r.planted[0] && r.planted[1] : r.planted[0] || r.planted[1]) << clip << ' ' << time;
+            EXPECT_EQ(p.world[0], root);
+            for (int f = 0; f < 2; ++f) {
+                if (!r.planted[size_t(f)]) continue; // a foot the run has lifted out of the probe: the clip's
+                const int b = f ? 11 : 6;
+                const glm::vec3 a = p.bone(b);
+                EXPECT_LT(std::abs(r.error[size_t(f)]), 1.0f) << clip << ' ' << time << " foot " << f;
+                EXPECT_NEAR(a.x, ankle[f].x, 0.5f);
+                EXPECT_NEAR(a.y, ankle[f].y, 0.5f);
+                if (ankle[f].z - (-ankle[f].x * k) > 79) continue; // lifted: held part of the way only
+                // over the slope by the clip's height (plus the tilted sole's room), straight under where the clip had it
+                const float room = 26.864f * (1 / std::cos(glm::radians(20.0f)) - 1);
+                EXPECT_NEAR(a.z - (-a.x * k), ankle[f].z + room, 1.0f) << clip << ' ' << time << " foot " << f;
+                // the sole turned with the slope
+                const glm::vec3 was = glm::normalize(glm::vec3(clipPose.world[size_t(b)][2]));
+                const glm::vec3 want = glm::angleAxis(glm::radians(20.0f), glm::vec3(0, 1, 0)) * was;
+                EXPECT_GT(glm::dot(glm::normalize(glm::vec3(p.world[size_t(b)][2])), want), std::cos(glm::radians(1.0f))) << clip << ' ' << f;
+            }
+            if (idle) EXPECT_GT(r.pelvis, 1.0f); // her left foot is downhill
+            const auto again = anim::worldMatrices(p.anims.skeleton, p.local);
+            for (size_t i = 0; i < again.size(); ++i) ASSERT_LT(glm::distance(glm::vec3(again[i][3]), glm::vec3(p.world[i][3])), 0.05f) << i;
+        }
+    }
+    // stairs across her: the tread under her left foot 40 lower than the one under her right (and her root)
+    CollisionMesh stairs;
+    addFloor(stairs, 0, -2000, 2000, 2000, -40);
+    addFloor(stairs, -2000, -2000, 0, 2000, 0);
+    stairs.build();
+    IkPose p(bf, "ng_idle");
+    const glm::vec3 l = p.bone(6), r = p.bone(11);
+    ASSERT_GT(l.x, 5); ASSERT_LT(r.x, -5);
+    const auto res = game::plantFeet(p.anims.skeleton, p.local, p.world, glm::mat4(1), stairs, p.anims.ik, 0.7f);
+    EXPECT_NEAR(p.bone(6).z, l.z - 40, 0.5f); EXPECT_NEAR(p.bone(11).z, r.z, 0.5f);
+    EXPECT_NEAR(res.pelvis, 40, 1e-3f);
+    EXPECT_NEAR(p.bone(1).z, IkPose(bf, "ng_idle").bone(1).z - 40, 1e-2f);
+    // level ground under both: nothing changes; a wall-steep floor or none: the foot is left to the clip
+    CollisionMesh flat;
+    addFloor(flat, -2000, -2000, 2000, 2000, 0);
+    flat.build();
+    IkPose q(bf, "ng_idle");
+    const auto before = q.local;
+    const auto level = game::plantFeet(q.anims.skeleton, q.local, q.world, glm::mat4(1), flat, q.anims.ik, 0.7f);
+    EXPECT_TRUE(level.planted[0] && level.planted[1]); EXPECT_EQ(level.pelvis, 0);
+    for (size_t i = 0; i < before.size(); ++i) ASSERT_EQ(before[i].rot, q.local[i].rot) << i;
+    CollisionMesh none;
+    addFloor(none, -2000, -2000, 2000, 2000, -400);
+    none.build();
+    const auto air = game::plantFeet(q.anims.skeleton, q.local, q.world, glm::mat4(1), none, q.anims.ik, 0.7f);
+    EXPECT_FALSE(air.planted[0] || air.planted[1]);
+}
+
+// Hands on the ledge line: the hang pose over a ledge that is not where the clip's hands are (off by a few units,
+// turned a few degrees): both hands end on the line, where they were along it.
+TEST(GameReal, IkHandsLockToTheLedgeLine) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    IkPose p(bf, "ledgeb_idle");
+    const glm::vec3 mid = (p.bone(55) + p.bone(80)) * 0.5f + glm::vec3(0, 6, -5);
+    const glm::vec3 along = glm::normalize(glm::vec3(std::cos(glm::radians(8.0f)), std::sin(glm::radians(8.0f)), 0.05f));
+    const std::vector<glm::vec3> line{mid - along * 300.0f, mid + along * 100.0f, mid + along * 300.0f};
+    const glm::vec3 l = p.bone(55), r = p.bone(80);
+    const auto before = game::lockHands(p.anims.skeleton, p.local, p.world, glm::mat4(1), line, p.anims.ik);
+    EXPECT_GT(before[0], 3.0f); EXPECT_GT(before[1], 3.0f);
+    const auto after = game::lockHands(p.anims.skeleton, p.local, p.world, glm::mat4(1), line, p.anims.ik, 0);
+    EXPECT_LT(after[0], 0.1f); EXPECT_LT(after[1], 0.1f);
+    EXPECT_NEAR(glm::dot(p.bone(55) - l, along), 0, 0.1f); EXPECT_NEAR(glm::dot(p.bone(80) - r, along), 0, 0.1f);
+    // a ledge ending by her hand: the hand stays the end gap inside it
+    IkPose q(bf, "ledgeb_idle");
+    const glm::vec3 x(1, 0, 0), m2 = (q.bone(55) + q.bone(80)) * 0.5f;
+    const std::vector<glm::vec3> shortLine{m2 - x * 300.0f, glm::vec3(q.bone(55).x + 5, m2.y, m2.z)};
+    game::lockHands(q.anims.skeleton, q.local, q.world, glm::mat4(1), shortLine, q.anims.ik);
+    EXPECT_NEAR(q.bone(55).x, shortLine[1].x - 20, 0.1f);
+}
+
+// Head to a target: full turn inside the limits (60 degrees aside, 15 up / down of the neck), clamped outside.
+TEST(GameReal, IkHeadLooksAtATargetWithinItsLimits) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto facing = [](const IkPose& p) { return glm::normalize(glm::mat3(p.world[17]) * glm::vec3(0, -1, 0)); };
+    const auto dir = [](float yawDeg, float pitchDeg) {
+        const float y = glm::radians(yawDeg), q = glm::radians(pitchDeg);
+        return glm::vec3(std::sin(y) * std::cos(q), -std::cos(y) * std::cos(q), std::sin(q));
+    };
+    const IkPose rest(bf, "ng_idle");
+    const glm::vec3 nf = glm::normalize(glm::mat3(rest.world[16]) * glm::vec3(0, -1, 0));
+    const float neckYaw = glm::degrees(std::atan2(nf.x, -nf.y)), neckPitch = glm::degrees(std::asin(nf.z));
+    struct Case { float yaw, pitch, wantYaw, wantPitch; };
+    for (const Case c : {Case{40, 5, 40, 5}, {-50, -10, -50, -10}, {150, 0, 60, 0}, {-100, 0, -60, 0}, {0, 70, 0, 15}, {20, -60, 20, -15}}) {
+        IkPose p(bf, "ng_idle");
+        const glm::vec3 head = p.bone(17), neck = p.bone(16);
+        const glm::vec3 target = head + dir(neckYaw + c.yaw, neckPitch + c.pitch) * 5000.0f;
+        const glm::vec2 a = game::lookAt(p.anims.skeleton, p.local, p.world, glm::mat4(1), target, p.anims.ik);
+        EXPECT_NEAR(glm::degrees(a.x), c.wantYaw, 0.5f) << c.yaw << ' ' << c.pitch;
+        EXPECT_NEAR(glm::degrees(a.y), c.wantPitch, 0.5f) << c.yaw << ' ' << c.pitch;
+        const glm::vec3 f = facing(p), want = dir(neckYaw + c.wantYaw, neckPitch + c.wantPitch);
+        EXPECT_GT(glm::dot(f, want), std::cos(glm::radians(1.0f))) << c.yaw << ' ' << c.pitch;
+        expectNear(p.bone(17), head, 1e-3f), expectNear(p.bone(16), neck, 1e-3f); // only the head turns
+    }
+    // half weight: half the turn
+    IkPose p(bf, "ng_idle");
+    const glm::vec3 f0 = facing(p);
+    game::lookAt(p.anims.skeleton, p.local, p.world, glm::mat4(1), p.bone(17) + dir(neckYaw + 40, neckPitch) * 5000.0f, p.anims.ik, 0.5f);
+    EXPECT_NEAR(glm::degrees(std::acos(glm::dot(facing(p), f0))), glm::degrees(std::acos(glm::dot(dir(neckYaw + 40, neckPitch), f0))) / 2, 1.0f);
+}
+
+// Dual targeting: her left arm swings from the primary target to the second one at the shoulder (at most the limit);
+// the right arm and the body stay.
+TEST(GameReal, IkLeftArmGoesToTheSecondTarget) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    IkPose p(bf, "ng_idle");
+    const auto& b = p.anims.skeleton.bones;
+    const int hand = p.anims.ik.hand[0], upper = b[size_t(b[size_t(hand)].parent)].parent;
+    const auto turn = [](const glm::mat4& m) { return glm::quat_cast(glm::mat3(glm::normalize(glm::vec3(m[0])), glm::normalize(glm::vec3(m[1])), glm::normalize(glm::vec3(m[2])))); };
+    const glm::vec3 shoulder = p.bone(upper), right = p.bone(80);
+    const glm::quat was = turn(p.world[size_t(upper)]);
+    const glm::vec3 first = shoulder + glm::vec3(0, -3000, 0), second = shoulder + glm::vec3(1500, -2598, 300); // 30 degrees to her left, a little up
+    const float want = std::acos(glm::dot(glm::normalize(first - shoulder), glm::normalize(second - shoulder)));
+    EXPECT_NEAR(game::aimArm(p.anims.skeleton, p.local, p.world, glm::mat4(1), hand, first, second, 1.6f), want, 1e-4f);
+    // what pointed at the first target from the shoulder now points at the second
+    const glm::quat delta = turn(p.world[size_t(upper)]) * glm::inverse(was);
+    expectNear(delta * glm::normalize(first - shoulder), glm::normalize(second - shoulder), 1e-3f);
+    expectNear(p.bone(upper), shoulder, 1e-3f);
+    expectNear(p.bone(80), right, 1e-3f);
+    EXPECT_GT(glm::distance(p.bone(hand), IkPose(bf, "ng_idle").bone(hand)), 1.0f);
+    // the limit, and half weight
+    IkPose q(bf, "ng_idle");
+    EXPECT_NEAR(game::aimArm(q.anims.skeleton, q.local, q.world, glm::mat4(1), hand, first, shoulder + glm::vec3(0, 3000, 0), 1.2f, 0.5f), 1.2f, 1e-5f);
+    EXPECT_NEAR(glm::angle(glm::normalize(turn(q.world[size_t(upper)]) * glm::inverse(was))), 0.6f, 1e-3f);
+}
+
+// The cost of all the passes on Lara's skeleton (reported in docs/GAMEPLAY.md): well under a tenth of a 60 Hz tick.
+TEST(GameReal, IkPassesAreCheap) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const float k = std::tan(glm::radians(20.0f));
+    CollisionMesh slope;
+    slope.vertices = {{-2000, -2000, 2000 * k}, {2000, -2000, -2000 * k}, {2000, 2000, -2000 * k}, {-2000, 2000, 2000 * k}};
+    slope.faces.push_back({{0, 1, 2}});
+    slope.faces.push_back({{0, 2, 3}});
+    slope.build();
+    const IkPose base(bf, "ng_idle");
+    const IkPose hang(bf, "ledgeb_idle");
+    const glm::vec3 mid = (hang.bone(55) + hang.bone(80)) * 0.5f + glm::vec3(0, 6, -5);
+    const std::vector<glm::vec3> line{mid - glm::vec3(300, 0, 0), mid + glm::vec3(300, 0, 0)};
+    const int n = 2000;
+    std::vector<anim::LocalTransform> local;
+    std::vector<glm::mat4> world;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < n; ++i) {
+        local = base.local, world = base.world;
+        game::plantFeet(base.anims.skeleton, local, world, glm::mat4(1), slope, base.anims.ik, 0.7f);
+        game::lookAt(base.anims.skeleton, local, world, glm::mat4(1), {800, -3000, 700}, base.anims.ik);
+        game::aimArm(base.anims.skeleton, local, world, glm::mat4(1), 55, {0, -3000, 400}, {1500, -2600, 400}, 1.57f);
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    for (int i = 0; i < n; ++i) {
+        local = hang.local, world = hang.world;
+        game::lockHands(hang.anims.skeleton, local, world, glm::mat4(1), line, hang.anims.ik);
+    }
+    const auto t2 = std::chrono::steady_clock::now();
+    const double feet = std::chrono::duration<double, std::milli>(t1 - t0).count() / n, hands = std::chrono::duration<double, std::milli>(t2 - t1).count() / n;
+    std::printf("IK cost per tick: feet + pelvis + head + second arm %.4f ms, hands %.4f ms (%zu bones)\n", feet, hands, base.local.size());
+    EXPECT_LT(feet, 1.0);
+    EXPECT_LT(hands, 1.0);
+}
+
+// The foot locks' gate (tru.exe 0x6EFD60: an instance under her feet): on the unit's terrain World runs no foot pass,
+// level or sloped; without a ledge or a target the other passes stay off too. (The object-floor side needs a placed
+// object: self-test ik_feet, l1_baldrs_tomb's press plate.)
+TEST(Game, IkPassesStayOffOnTerrain) {
+    CollisionMesh col;
+    addFloor(col, -5000, -5000, 5000, 5000, 0);
+    const uint32_t v0 = uint32_t(col.vertices.size()); // a 15-degree ramp from x = 1000
+    const float rise = 2000 * std::tan(glm::radians(15.0f));
+    col.vertices.insert(col.vertices.end(), {{1000, -500, 0}, {3000, -500, rise}, {3000, 500, rise}, {1000, 500, 0}});
+    col.faces.push_back({{v0, v0 + 1, v0 + 2}});
+    col.faces.push_back({{v0, v0 + 2, v0 + 3}});
+    col.build();
+    game::World w(std::move(col), syntheticAnims(), {{2000, 0, 400}, 0});
+    for (int i = 0; i < 30; ++i) {
+        w.tick({});
+        EXPECT_FALSE(w.ik().feet);
+        EXPECT_FALSE(w.ik().hands);
+        EXPECT_FALSE(w.ik().look);
+        EXPECT_EQ(w.ik().secondArm, 0);
+    }
+    EXPECT_EQ(w.player().state().state, game::State::Idle);
+    EXPECT_NEAR(w.player().state().pos.z, 1000 * std::tan(glm::radians(15.0f)), 2.0f); // standing on the ramp
 }

@@ -532,3 +532,69 @@ TEST(AnimReal, OutfitsShareClipsAndSkeletonTopology) {
         EXPECT_GE(skinned, 5u) << n;
     }
 }
+
+// ---- inverse kinematics (src/anim/Ik.cpp) ----------------------------------------------------------
+namespace {
+// A leg hanging down from a hip: root, hip 20 aside, knee 40 under it and 1 forward (a slight bend), ankle 40 under
+// that, toe 10 ahead of the ankle.
+scene::Skeleton leg() {
+    scene::Skeleton s;
+    s.bones = {{-1, {0, 0, 100}}, {0, {20, 0, 0}}, {1, {0, -1, -40}}, {2, {0, 1, -40}}, {3, {0, -10, 0}}};
+    return s;
+}
+glm::vec3 origin(const glm::mat4& m) { return glm::vec3(m[3]); }
+} // namespace
+
+TEST(Anim, RotateBoneModelTurnsTheSubtreeAboutTheBone) {
+    const auto sk = leg();
+    auto local = anim::bindPose(sk);
+    auto world = anim::worldMatrices(sk, local);
+    anim::rotateBoneModel(sk, local, world, 2, glm::angleAxis(glm::radians(90.0f), glm::vec3(1, 0, 0)));
+    expectNear(origin(world[2]), {20, -1, 60}, 1e-4f);  // the bone itself stays
+    expectNear(origin(world[3]), {20, 39, 61}, 1e-3f);  // (0, 1, -40) turned a quarter about X = (0, 40, 1)
+    const auto again = anim::worldMatrices(sk, local);   // the local pose and the matrices agree
+    for (size_t i = 0; i < world.size(); ++i) expectNear(origin(world[i]), origin(again[i]), 1e-3f);
+    anim::translateBoneModel(sk, local, world, 1, {0, 0, -5});
+    expectNear(origin(world[1]), {20, 0, 95}, 1e-4f);
+    expectNear(origin(world[2]), {20, -1, 55}, 1e-4f);
+}
+
+TEST(Anim, TwoBoneIkReachesTheTargetAndKeepsTheEndFacing) {
+    const auto sk = leg();
+    for (const glm::vec3 target : {glm::vec3(20, 0, 35), glm::vec3(25, -12, 40), glm::vec3(10, 20, 30), glm::vec3(20, 0, 20.5f)}) {
+        auto local = anim::bindPose(sk);
+        auto world = anim::worldMatrices(sk, local);
+        const glm::vec3 hip = origin(world[1]);
+        ASSERT_TRUE(anim::solveTwoBone(sk, local, world, 3, target));
+        expectNear(origin(world[3]), target, 0.02f);
+        expectNear(origin(world[1]), hip, 1e-4f);                                   // the hip does not move
+        EXPECT_NEAR(glm::distance(origin(world[2]), origin(world[1])), glm::length(glm::vec3(0, -1, -40)), 1e-2f); // bones keep
+        EXPECT_NEAR(glm::distance(origin(world[3]), origin(world[2])), glm::length(glm::vec3(0, 1, -40)), 1e-2f);  // their length
+        expectNear(origin(world[4]) - origin(world[3]), {0, -10, 0}, 0.02f);        // the foot still points forward
+        const auto again = anim::worldMatrices(sk, local);
+        for (size_t i = 0; i < world.size(); ++i) expectNear(origin(world[i]), origin(again[i]), 1e-2f);
+    }
+    // the knee keeps bending the way it was bent (forward, -Y), not backwards
+    auto local = anim::bindPose(sk);
+    auto world = anim::worldMatrices(sk, local);
+    anim::solveTwoBone(sk, local, world, 3, {20, 0, 50});
+    EXPECT_LT(origin(world[2]).y, -5.0f);
+}
+
+TEST(Anim, TwoBoneIkOutOfReachStretchesTowardsTheTargetAndWeightsPartWay) {
+    const auto sk = leg();
+    auto local = anim::bindPose(sk);
+    auto world = anim::worldMatrices(sk, local);
+    const glm::vec3 hip = origin(world[1]), far(20, -300, 100);
+    ASSERT_TRUE(anim::solveTwoBone(sk, local, world, 3, far));
+    const glm::vec3 reach = origin(world[3]) - hip;
+    EXPECT_NEAR(glm::length(reach), 0.999f * 2 * glm::length(glm::vec3(0, 1, 40)), 0.05f);
+    expectNear(glm::normalize(reach), {0, -1, 0}, 1e-3f);
+    // half weight goes half the way; no weight and a bone without a grandparent leave the pose alone
+    local = anim::bindPose(sk), world = anim::worldMatrices(sk, local);
+    const glm::vec3 from = origin(world[3]);
+    ASSERT_TRUE(anim::solveTwoBone(sk, local, world, 3, from + glm::vec3(0, -10, 10), 0.5f));
+    expectNear(origin(world[3]), from + glm::vec3(0, -5, 5), 0.02f);
+    EXPECT_FALSE(anim::solveTwoBone(sk, local, world, 3, from, 0));
+    EXPECT_FALSE(anim::solveTwoBone(sk, local, world, 1, from));
+}

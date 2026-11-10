@@ -13,6 +13,7 @@
 #include "game/Bend.hpp"
 #include "game/Breakables.hpp"
 #include "game/Combat.hpp"
+#include "game/Ik.hpp"
 #include "game/Progress.hpp"
 #include "game/Water.hpp"
 #include "game/Feedback.hpp"
@@ -96,6 +97,7 @@ struct AnimLibrary {
     GrenadeTuning grenade; // g_grenade_thrower + pr_grenade (loadGrenadeTuning); throw clip "g_grenade_thrower:combat_grenade_Throw1"
     GrappleTuning grapple; // g_grapple data (loadGrappleTuning): throw range, rope limits, bend pool
     AdrenalineTuning adrenaline; // Lara data +0x2C8..+0x31C (loadAdrenalineTuning): meter, drains, time scales
+    IkTuning ik; // Lara data +0x5C8 limb locks, head look-at limits (loadIkTuning; Ik.hpp)
     DifficultyTable difficulty; // generalbank's (loadDifficulty): PLAYER TAILORING health / saving grab levels
     // Lara's HInfo markers (lara.drm model): id -> (segment, frame in it, R = Rx * Ry * Rz); weapons mount there.
     std::map<int, std::pair<int, glm::mat4>> markers;
@@ -110,6 +112,14 @@ struct AnimLibrary {
     // Mean of the hand bones (55, 80) relative to the root segment in `clip` at `t` (model space, root
     // translation removed); nullopt without a full skeleton.
     std::optional<vec3> handsAt(const anim::Clip& clip, double t) const;
+};
+// World::ik(): the limb-lock passes of one tick (docs/GAMEPLAY.md "Animation layers and IK").
+struct IkReport {
+    bool feet = false, hands = false, look = false; // the pass ran (its gate held)
+    FootPlant plant;                    // feet: floors found, what is left of the error, the pelvis drop
+    std::array<float, 2> handBefore{}, handAfter{}; // left / right hand's distance from the ledge line, units
+    glm::vec2 lookAngles{0};            // head yaw (+ = left) / pitch (+ = up) off the neck, radians
+    float secondArm = 0;                // dual targeting: the angle her left arm was swung to the second target, radians
 };
 // Names the controller requests; loadLaraAnims loads exactly these.
 extern const std::vector<std::string_view> kLaraClipNames;
@@ -204,7 +214,20 @@ struct Tuning {
     // Ground snap window. tru.exe (Wine, l3_main_bedroom): Lara runs up the 97..100-unit stair risers with the
     // root snapping to each step top; the 121-unit hearth edge blocks her. 110 lies between (GAMEPLAY.md Numbers).
     float stepUp = 110.0f, stepDown = 110.0f;
-    float minFloorNormalZ = 0.7f;              // steeper = wall (~45.6 deg)
+    // The floor rule of tru.exe's ground check 0x5DCE20 [O] (docs/GAMEPLAY.md "Slopes and slides"): a floor face
+    // steeper than lara.drm player data short +0x100E = 52 degrees (normal z < cos 52) is too steep to stand on; a face
+    // with a slide flag (collision::kClientSlide) is slid down from player data short +0x100C = 28 degrees to 52.
+    float minFloorNormalZ = 0.61566148f;       // cos 52 deg
+    float slideMaxNormalZ = 0.88294759f;       // cos 28 deg
+    // Slide speed on flagged faces [O: state group S814 props 0x204 / 0x205 / 0x1FE / 0x1FF, controller 0x73FF50]:
+    // along the fall line, 35 units per 30 Hz frame up to 45 by the slope angle, approached at 5 (up) / 10 (down) per
+    // frame^2 x the frame's time multiplier: at 60 Hz 2.5 / 5 (Wine, l2_junglehub: +1.25 per 60 Hz tick). The angle
+    // range is 29..51 degrees [O-runtime: twelve 0x0004 faces of 28.4..48.3 degrees fit it within 0.03 units per
+    // frame; the controller's defaults read 28 / 52 from the player data, U why they differ].
+    float slideSpeedMin = 35.0f * 30.0f, slideSpeedMax = 45.0f * 30.0f;
+    float slideAngleMin = 29.0f, slideAngleMax = 51.0f; // degrees
+    float slideAccel = 2.5f * 900.0f, slideDecel = 5.0f * 900.0f;
+    float slideEnterSpeed = 1.0f * 30.0f;      // while slope_transitionto plays (S818 props 0x204 = 0x205 = 1)
     float gravity = 5.72443f * 900.0f;         // units/s^2 (tru.exe: 5.72443 units per 30 Hz frame^2)
     // Jump take-offs measured in tru.exe under Wine (Instance +0x2A0 velocity, units per 30 Hz frame x 30):
     // standing 48.04 up; standing with the stick 49.97 up + 40.00 along it; running (or the stick behind her:
@@ -250,7 +273,7 @@ struct Tuning {
     // player+0x8E0 top + the 0x69DA80 waves - 44.1 at rms < 1 in both states).
     float swimSurfaceDepth = 44.1f;
     float crouchHeight = 260.0f; // capsule while crouched/rolling: player data +0x14
-    float slideMinNormalZ = 0.3f; // floors between this and minFloorNormalZ are slid down
+    float slideMinNormalZ = 0.3f; // [I] too-steep floors down to this are slid down (g sin theta), steeper ones fallen past
     float beamAttach = 30.0f;   // root within this of a balance beam (x/y, and z) gets on it
     float poleReach = 60.0f;    // hands to pole axis, horizontal
     // Pole hands (pole pose) may be this far above the axis when caught: Hpole_perp_attach_M starts with the hands
@@ -530,19 +553,21 @@ private:
     vec3 forward() const;
     vec3 toWorld(vec3 model) const; // model-space vector -> world, by yaw
     float capHeight() const;        // capsule height (crouched or standing)
+    enum class Floor { Stand, Slide, Steep };
+    Floor floorKind(const collision::Hit& g) const;        // tru.exe 0x5DCE20's verdict on the face under her
     bool standable(vec3 p, const collision::Hit& g) const; // floor hit under p supports standing
     void groundMove(vec3 delta, float dt);
     void airMove(float dt, vec2 move);
     vec3 slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) const;
     void startFall(vec3 vel);
-    void startSlide(vec3 vel);
+    void startSlide(vec3 vel, bool fromGround = false);
     bool tryGrab(vec3 prevPos);
     bool tryGrabPole(vec3 prevPos);
     bool tryPoleLeap(); // a jump with a pole in reach: the straight, gravity-free leap onto its hang (HangJump)
     bool tryBeam(std::string_view clip, bool anyHeading);
     bool tryDropToHang();
-    bool trySafetyDrop(vec3 vel); // off an edge that carries a ledge: hang from it
-    void dropToHang(int ledge, int seg, float t, float side);
+    bool trySafetyDrop(vec3 vel, std::string_view clip = "drop_to_ledgeb"); // off an edge that carries a ledge: hang from it
+    void dropToHang(int ledge, int seg, float t, float side, std::string_view clip = "drop_to_ledgeb");
     bool badAttach(float attachZ) const; // a catch that rests her root at this height is a saving grab
     int hangClearance() const; // tru.exe 0x74E290's class: 2 climb up, 5 crouching, 8 wall-hug shelf, 1 none
     bool tryHangToBeam();      // hanging beside a balance beam: bbeam_ledgeu_climbup onto it
@@ -988,6 +1013,10 @@ public:
     // Lara's model-space bone matrices (crossfaded clips + simulated hair), blended between the last two
     // ticks; skin with anim::skinPalette and place with Player::modelMatrix(interpolated(alpha)).
     std::vector<glm::mat4> pose(double alpha) const;
+    // What the limb locks and the head look-at did on the last tick, and a bone's origin in the world then (tests,
+    // self-test probes `ik.*` / `pose.bone.*`); nullopt for a bone the skeleton has not.
+    const IkReport& ik() const { return ik_; }
+    std::optional<vec3> boneWorld(int bone) const;
 
     // Streaming (empty units() for the single-mesh constructor).
     const std::vector<LoadedUnit>& units() const { return units_; }
@@ -1653,6 +1682,9 @@ private:
     void tickGadgets(const Actions& a, float dt);
     void explode(vec3 at);
     void throwLayer(std::vector<anim::LocalTransform>& local) const; // throw clip over the upper body
+    // Feet on the object she stands on, hands on the ledge she hangs from, head to her target (Ik.cpp passes; World.cpp)
+    void limbLocks(std::vector<anim::LocalTransform>& local, std::vector<glm::mat4>& bones);
+    IkReport ik_; // what the passes did this tick (derived from the state: not saved, not hashed)
     std::vector<Grenade> grenades_;
     std::vector<vec3> explosions_;
     bool lightHeld_ = true, grenadeHeld_ = true; // no press edge on the first tick

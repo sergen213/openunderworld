@@ -203,6 +203,21 @@ speeds units/s; 3.1605 units = 1 cm. "Unavailable" probes report `null` and fail
 | `player.ledge` | markup id of the ledge / pole / beam / ladder she is attached to (a hang jump: its target), -1 none |
 | `player.fall_height` | the fall's height on the tick she lands, else 0 |
 
+### Pose: limb locks, head look-at, bones
+
+The passes of `World::limbLocks` on the last tick (docs/GAMEPLAY.md "Animation layers and IK").
+
+| probe | value |
+|---|---|
+| `ik.feet`, `ik.hands`, `ik.look` | the pass ran: on her feet on an object floor; hanging in `ledgeb_idle`; a combat target with the weapon out |
+| `ik.foot_planted.l` `.r` | the probe found a floor for that foot (and the clip has not lifted it out of reach) |
+| `ik.foot_error.l` `.r` | the ankle's height after the pass minus the height the pass wanted, units; unavailable when not planted |
+| `ik.pelvis` | how far the pelvis was lowered for the lower foot, units |
+| `ik.hand_before.l` `.r`, `ik.hand_error.l` `.r` | the hand's distance from the ledge's polyline before / after the pass; unavailable when not hanging |
+| `ik.look_yaw`, `ik.look_pitch` | the head's turn off the neck (+ = her left / up), within 60 / 15; unavailable without a target |
+| `ik.second_arm` | degrees her left arm was swung to a second target (0 without one) |
+| `pose.bone.<segment>.x` `.y` `.z` | the origin of that bone of Lara's skeleton in the world (6 / 11 ankles, 55 / 80 hands, 17 head, 1 pelvis) |
+
 ### Weapons and combat
 
 | probe | value |
@@ -410,6 +425,7 @@ tested behaviour happen.
 | `prologue_hall_swing` | l3_main_hall | ring 4089 from the balcony: roped walk to the edge, Jump with the rope, swing over the burning staircase, leap off onto the far balcony (x < -2150, z 1716) |
 | `prologue_ring_door` | l3_main_bedroom | ring door 4526: throw onto its ring (mounted target), the stick alone walks her back roped and moves nothing, Interact held draws the leaf along its slide until it leaves the watched range (uber section 1: 0 -> 1 -> 2), the ring is no target and she lets go |
 | `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, the stick alone leaves the rope, Interact + back / forward rappels down / up (1327 / 1043 units/s), Jump leaps back off the wall and lets go |
+| `slide` | l1_kraken_room | the 0x0004 ramp into the lower hall: stands on its flagged flat top, the run onto the 44.6-degree face starts the slide (`slope_transitionto`, `slope_slidefront`), 1262.7 units/s along the slope (899 horizontal, 887 down), the run-out flatter than 28 degrees ends it (`slope_slide_stumble_off`), running back up is thrown back by the slide face [O tru.exe 0x5DCE20 / 0x73FF50] |
 | `wall_run` | l5_valaskjalf | wall anchor 6750: camera behind her, right runs onto the wall and through the rope's arc over the pit, stepping onto the far ledge, rope let go |
 | `swim` | l1_seatop | drop into the sea, surface swim 1348.6 units/s, dive, under water (on the wetsuit's tanks the breath stays full), surfacing |
 | `swim_breath` | l2_cliffclimb | no tanks: the breath drains under the river, 1.5 times as fast sprinting, the meter refills in 2 s at the surface |
