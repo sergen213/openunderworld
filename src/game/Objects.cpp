@@ -656,7 +656,7 @@ bool carriesNeeded(std::span<const std::string> needs, const std::string* held, 
 // to the joint. [I] The PushPull proxy body (0x7358E0 "PushPull Proxy") is not simulated, nor the record kind 3
 // (0x6D5AC0 also posts game-tracker message 0x1D for it). True: Lara grips one.
 namespace {
-glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e);
+glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin = nullptr);
 }
 bool World::pushUberHandle(const Actions& a, float speed) {
     const auto& s = player_.state();
@@ -1555,7 +1555,7 @@ glm::mat4 markerMatrix(vec3 pos, vec3 rot) {
 // An engagement record's frame: its HInfo marker's (0x46DF20 -> 0x46DA20) in `p`'s model, posed by `frame`; else
 // `frame`. [O] 0x46DA20 takes the marker's segment from the instance's current matrices (instance +0x90), so on an
 // anim-graph object the marker rides its clip: `skin` = the clip's skin palette (bind -> now, per segment), null = bind.
-glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin = nullptr) {
+glm::mat4 recordFrame(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin) {
     if (e.segment >= 0)
         for (const auto& m : p.hmarkers)
             if (m.id == e.segment) {
