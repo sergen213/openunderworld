@@ -7556,6 +7556,31 @@ TEST(GameReal, FallingFloorBreaksUnderLara) {
     EXPECT_FALSE(j.w.health().dead());
 }
 
+// The cinematic units every World keeps resident (World::registerCinematicUnits: l1_cine_ship_sinking,
+// l3_mansion_exterior_afterburn, l6_ship_natla_room) are not loaded: their trigger volumes lie at their own unit
+// coordinates and must not see Lara in whatever level is there. l3_mansion_exterior_afterburn's fire volume 4081
+// (1016, -782, 230) overlaps l1_kraken_entrance's switch platform; before, walking there cost 300 health a visit.
+TEST(GameReal, ResidentCinematicUnitVolumesDoNotMeetLara) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame g(bf, "l1_kraken_entrance", {{316, -300, 400}, glm::radians(-90.0f)});
+    auto& w = g.w;
+    for (int i = 0; i < 30; ++i) w.tick({});
+    const auto* fire = w.script().find(4081);
+    ASSERT_TRUE(fire) << "the resident unit's objects are still known by uid";
+    EXPECT_EQ(fire->unit, "l3_mansion_exterior_afterburn");
+    ASSERT_NEAR(w.player().state().pos.z, 314.6f, 3.0f) << "on the switch platform";
+    const float before = w.health().value();
+    bool entered = false;
+    for (int i = 0; i < 150; ++i) { // along the platform to its switch, through the volume's place
+        w.tick(forward());
+        for (const auto& e : w.script().events()) entered |= e.source == 4080 || e.source == 4081;
+    }
+    EXPECT_LT(w.player().state().pos.y, -800);
+    EXPECT_FALSE(entered);
+    EXPECT_EQ(w.health().value(), before);
+}
+
 // Prologue, l3_bedroom_hall -> l3_main_hall (walkthrough: "the floor collapses ... take a running jump across"):
 // one-sided plane 4375 fires as she runs toward the door (local +Y), holds her for a second (larabase 56) while floor
 // 4359 plays `collapse` (from `idle`, its graph's start state, into `idle_collapsed`) and sends door 4376 its command:

@@ -657,6 +657,9 @@ private:
     // Resident units (UnitRef::resident) whose unit script waits for the unit itself to load before its startup runs
     // (saved as "deferredUnits").
     std::set<std::string> deferredUnits_;
+    // Units present only as residents (setUnits): tru.exe has not loaded them, so their volumes, planes, switches and
+    // blocks do not see the player (their cinematic objects are still found by uid).
+    std::set<std::string> residentOnly_;
     void startUnitScript(const std::string& unit);
     nlohmann::json stash_ = nlohmann::json::object(); // state of objects not currently loaded
     std::vector<Event> events_;

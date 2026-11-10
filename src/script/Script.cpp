@@ -488,6 +488,10 @@ void Runtime::setBigfile(const cdc::BigfileSet* bigfile) {
 }
 
 void Runtime::setUnits(const std::vector<UnitRef>& units) {
+    residentOnly_.clear();
+    for (const auto& u : units)
+        if (u.resident && std::none_of(units.begin(), units.end(), [&](const UnitRef& v) { return !v.resident && v.name == u.name; }))
+            residentOnly_.insert(u.name);
     std::erase_if(objects_, [&](const Object& o) {
         if (std::any_of(units.begin(), units.end(), [&](const UnitRef& u) { return u.name == o.unit; })) return false;
         if (auto s = stateOf(o); !s.is_null()) stash_[std::to_string(o.uid)] = std::move(s); // kept for streaming back
@@ -2555,7 +2559,7 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
     Object* useSwitch = nullptr;
     float best = kReach;
     for (auto& o : objects_) {
-        if (o.dead) continue;
+        if (o.dead || residentOnly_.contains(o.unit)) continue; // a resident unit is not loaded: nothing in it meets her
         switch (o.kind) {
         case Kind::Volume: {
             const bool now = inside(o.shape, o.pos, o.rot, p);
