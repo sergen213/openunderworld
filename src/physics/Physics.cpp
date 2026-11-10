@@ -171,6 +171,7 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
                 // +0x34 flags (bits 0-2 the axes' limits on), +0x61 sound position, +0x64 sound (0x6B6440).
                 if (*r + 0x68 <= ob.data.size()) {
                     o.jointLimitOn = at<uint32_t>(ob, *r + 0x34) & 1;
+                    o.jointMotor = {at<float>(ob, *r + 0x1C), at<float>(ob, *r + 0x20), (at<uint32_t>(ob, *r + 0x34) & 8) != 0};
                     o.jointSoundAt = at<uint8_t>(ob, *r + 0x61);
                     const auto ps = cdc::sectionPointers(d, uint32_t(*base));
                     if (const auto s = ps.find(*r + 0x64); s != ps.end()) o.jointSound = s->second;

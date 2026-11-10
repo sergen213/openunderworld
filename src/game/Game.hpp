@@ -724,6 +724,8 @@ public:
         const physics::Engagement* record = nullptr;
     };
     Engaged engaged();
+    // The anim-graph object whose "use" record (kind 8) she engages on this interact press, 0 none (Objects.cpp).
+    int32_t engagedUse(bool pressed);
     // Where object `uid`'s engagement records are now (world centres of its current sets; uber objects: every section's),
     // kind 0 = any live record. ou-game --autopilot steers Lara to them (app/game/Autopilot.hpp).
     std::vector<vec3> engagementCentres(int32_t uid, int kind = 0);

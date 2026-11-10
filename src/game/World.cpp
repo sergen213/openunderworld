@@ -645,7 +645,7 @@ void World::tick(const Actions& input) {
     const bool grabbing = player_.state().state == State::Block ? !player_.gripping() : player_.canInteract();
     if (grabbing && anims_.find("obj_block_grab")) push.move = vec2(0);
     const auto scriptStart = std::chrono::steady_clock::now();
-    script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact}, &col_);
+    script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact, engagedUse(a.interact && !interactHeld_)}, &col_);
     tickTimes.scriptMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - scriptStart).count();
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
     // The unit scripts' player-unit callbacks, after the script tick so that their events count for this tick.

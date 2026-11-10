@@ -88,6 +88,11 @@ struct ObjectPhysics {
     std::vector<EngagementSet> engagements;
     // Receptacles: the model marker a portable attaches at (record +0x3C -> byte; query 0x173 -> 0x6B55D0), -1 none.
     int attachMarker = -1;
+    // The rigid body joint's motor (record +0x1C speed per second, +0x20 bound, <= 0 unbounded, +0x34 bit 3 on; tru.exe
+    // 0x6B6440 -> 0x4DA160 / 0x4DA190 / 0x4DA0C0), as the uber joints' (formats::UberJoint): ms_rb_press_plate 40 / 400,
+    // ms_rb_tomb_lock 0 / 1000 (its script sets the speed, multibody 89).
+    struct Motor { float speed = 0, bound = 0; bool on = false; };
+    Motor jointMotor;
     // Traversal markup of the model (model DTP +0x54 count, +0x58 -> 0x5C-byte items: +0x28 flags (0 = from the type),
     // +0x2E id, +0x33 type, +0x58 -> polyline {u32 n, pad, float4 points[n]}), points in model space. tru.exe adds them
     // per instance (0x5D0610 -> 0x5CE4F0 with the instance as the markup box's owner, box +0x0C) when the instance's

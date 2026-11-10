@@ -1845,6 +1845,15 @@ void World::stepPhysics(float dt) {
         j.limited = true, j.hi = 0;
         for (const auto& r : o.joint->ranges) j.lo = std::min(j.lo, r.lo);
         j.motor = true, j.speed = 120.0f / 30.0f, j.force = (mp.mass + kHold) * physics::kJointGravity * 0.5f; // per 1/60 s step
+        // [O] The rigid body's own joint record (physical data +0x2C: limit +4 / +8, motor speed +0x1C per second and
+        // bound +0x20, on = +0x34 bit 3; tru.exe 0x6B6440), in the uber joints' units (PHYSICS.md "Havok -> Jolt").
+        // ms_rb_press_plate / ms_rb_grooved_press_plate: limit -50..0, motor +40 / s bound 400, body 100 kg: the motor
+        // carries 400 / (5.72443 / 2) = 139.7 kg, the plate and 39.7 kg more. One ms_pt_weight_c (30 kg) does not press
+        // it, two (60) do, Lara (55) does, the snake head (400) does.
+        if (p && p->jointMotor.on && p->jointLimit && p->jointLimitOn && p->jointLimit->lo < p->jointLimit->hi) {
+            j.lo = p->jointLimit->lo, j.hi = p->jointLimit->hi;
+            j.speed = p->jointMotor.speed / 30.0f, j.force = p->jointMotor.bound;
+        }
         if (const auto old = plates_.find(o.uid); old != plates_.end()) j.x = old->second.x, j.v = old->second.v;
         else j.x = o.joint->position;
         plates[o.uid] = j;
@@ -2187,6 +2196,23 @@ void World::collectJointSounds(float dt) {
               *p->jointSound, at, hinge);
     }
     std::erase_if(jointMotion_, [&](const auto& e) { return !live.contains(e.first); });
+}
+
+// Lara's use of anim-graph objects goes through their "use" engagement records (kind 8: tru.exe 0x719520 picks the
+// record she engages; her use posts 0x166 / 0x168 to that instance, 0x6B4090): objects carrying such records are marked
+// (script::Object::useRecords) and the one she engages on this press is returned (0 none). Empty-handed only: a held
+// portable admits kinds 3 / 5 / 7 (World::engaged). l1_seafloor eye pieces 231-233 [O data: one kind-8 record each].
+int32_t World::engagedUse(bool pressed) {
+    if (!pressed) return 0;
+    for (const auto& o : script_.objects()) {
+        if (o.kind != script::Kind::Scripted || !o.graph || o.useRecords) continue;
+        const auto* p = objectPhysics(o.name);
+        if (p && std::ranges::any_of(p->engagements, [](const auto& set) { return std::ranges::any_of(set.records, [](const auto& e) { return e.kind == 8; }); }))
+            const_cast<script::Object&>(o).useRecords = true;
+    }
+    if (held_ || !carryReady()) return 0;
+    const Engaged e = engaged();
+    return e.record && e.record->kind == 8 && e.section < 0 ? e.uid : 0;
 }
 
 } // namespace ou::game

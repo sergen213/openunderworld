@@ -2472,6 +2472,10 @@ void Runtime::tick(const TickInput& in, const collision::CollisionMesh* col) {
                 const auto& G = *o.graph->set->graph;
                 const bool usable = std::ranges::any_of(G.states[size_t(o.graph->state)].out,
                                                         [&](uint32_t ti) { return G.transitions[ti].mask & formats::kStimulusUse; });
+                if (o.useRecords && in.engagedUse >= 0) { // by the record she engages [O 0x719520], whatever is nearer
+                    if (usable && in.engagedUse == o.uid) best = -1.0f, useSwitch = &o;
+                    break;
+                }
                 for (const vec3 q : usable ? usePoints(o) : std::vector<vec3>{})
                     if (const float d = glm::length(vec2(q - in.pos)); d < best && std::abs(q.z - in.pos.z) < kReachHeight)
                         best = d, useSwitch = &o;

@@ -2041,3 +2041,112 @@ TEST(ProgressionReal, CalendarPushHandlesTurnTheRing) {
     EXPECT_EQ((*w.uberState(6506))[1], 3u) << "back to waiting";
     for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 6506) << key.second;
 }
+
+// Research: an uber object's decoded sections (states, transitions, entry actions), joints, range / limit / motor
+// records, commands and events: OU_UBER_SECTIONS=<object>.
+TEST(ProgressionReal, UberSections) {
+    const char* name = std::getenv("OU_UBER_SECTIONS");
+    if (!gameDir() || !name) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    const auto drm = cdc::parseDrm(*bf.read(std::string("pc-w\\") + name + ".drm"));
+    const auto phys = physics::loadObjectPhysics(drm);
+    std::printf("class %d mass %g prims %zu\n", phys.physClass, physics::massProps(phys).mass, phys.prims.size());
+    for (const auto& set : phys.engagements)
+        for (const auto& r : set.records)
+            std::printf("engagement set %d: kind %d shape %d segment %d centre %g %g %g r %g h %g\n", set.id, r.kind, r.shape, r.segment, r.centre.x,
+                        r.centre.y, r.centre.z, r.radius, r.height);
+    const auto u = formats::loadUberObject(drm);
+    if (!u) return;
+    for (size_t s = 0; s < u->sections.size(); ++s) {
+        const auto& sec = u->sections[s];
+        std::printf("section %zu model %u default %u health %g dmg %d engagement %d attach %d\n", s, sec.model, sec.defaultState, sec.health,
+                    sec.takesDamage, sec.engagement, sec.attachMarker);
+        for (size_t st = 0; st < sec.stateActions.size(); ++st) {
+            std::printf("  state %zu:", st);
+            for (const auto& a : sec.stateActions[st]) std::printf(" [%u v%u j%d p%d e%d]", a.type, a.value, a.joint, a.param, a.engagement);
+            std::printf("\n");
+        }
+        for (size_t t = 0; t < sec.transitions.size(); ++t) {
+            const auto& tr = sec.transitions[t];
+            std::printf("  tr %zu: %u -> %u trigger %u param %u (%g) joint %d range %d anim %d kind %u flags %x", t, tr.from, tr.to, tr.trigger, tr.param,
+                        std::bit_cast<float>(tr.param), tr.joint, tr.range, tr.anim, tr.animKind, tr.flags);
+            for (const auto& c : tr.conditions) std::printf(" cond(s%d k%u v%u)", c.section, c.kind, c.value);
+            std::printf("\n");
+        }
+    }
+    for (size_t j = 0; j < u->joints.size(); ++j) {
+        const auto& jt = u->joints[j];
+        std::printf("joint %zu type %u A %d B %d model %u marker %u limit %g..%g motor %g bound %g flags %x link %d %d ratio %g\n", j, jt.type, jt.bodyA,
+                    jt.bodyB, jt.model, jt.marker, jt.lo, jt.hi, jt.speed, jt.force, jt.flags, jt.link1, jt.link2, jt.ratio);
+    }
+    for (size_t p = 0; p < u->params.size(); ++p)
+        std::printf("param %zu kind %u a %g b %g flag %d\n", p, u->params[p].kind, u->params[p].a, u->params[p].b, u->params[p].flag);
+    for (const auto& c : u->commands) {
+        std::printf("command %u:", c.id);
+        for (const auto& t : c.targets) std::printf(" (s%d type %u payload %u)", t.section, t.type, t.payload);
+        std::printf("\n");
+    }
+    for (size_t e = 0; e < u->events.size(); ++e) {
+        const auto& ev = u->events[e];
+        std::printf("event %zu: section %d kind %u value %u once %d", e, ev.section, ev.kind, ev.value, ev.once);
+        for (const auto& l : ev.conditions) {
+            std::printf(" {");
+            for (const auto& c : l) std::printf(" s%d k%u v%u", c.section, c.kind, c.value);
+            std::printf(" }");
+        }
+        std::printf("\n");
+    }
+}
+
+// l1_seafloor eye door (exploration scaffold, replaced below).
+TEST(ProgressionReal, EyeDoorExplore) {
+    if (!gameDir() || !std::getenv("OU_EYE_EXPLORE")) GTEST_SKIP();
+    const cdc::BigfileSet bf(gameDir());
+    auto wp = receptacleWorld(bf, "l1_seafloor");
+    auto& w = *wp;
+    w.script().onCall = [&](int32_t from, int32_t to, int16_t vt) {
+        if ((from >= 230 && from <= 238) || (to >= 230 && to <= 238) || from == 970 || from == 971) std::printf("  call %d -> %d vt %d\n", from, to, vt);
+    };
+    for (const int32_t uid : {231, 232, 233, 970, 971}) {
+        const auto* o = w.script().find(uid);
+        ASSERT_TRUE(o);
+        std::printf("%d %s pos %.0f %.0f %.0f graph %d state id %d hidden %d\n", uid, o->name.c_str(), o->pos.x, o->pos.y, o->pos.z, o->graph ? 1 : 0,
+                    graphStateId(w, uid), o->hidden);
+        for (int kind : {1, 2, 3, 4, 5, 6, 7, 8}) std::printf("   kind %d spots %zu\n", kind, engageSpots(bf, w, *o, kind).size());
+    }
+    const auto spots = engageSpots(bf, w, *w.script().find(970), 4);
+    for (const auto& [at, yaw] : spots) std::printf("spot %.0f %.0f %.0f\n", at.x, at.y, at.z);
+    const bool got = interactFrom(w, spots, [&] { return w.heldPortable() == 970; });
+    std::printf("picked %d state %d\n", got, int(w.player().state().state));
+    if (got) {
+        const bool in = interactFrom(w, engageSpots(bf, w, *w.script().find(232), 5), [&] { return w.insertedIn(970) == 232; });
+        std::printf("inserted in 232: %d\n", in);
+        if (!in) {
+            const bool in3 = interactFrom(w, engageSpots(bf, w, *w.script().find(233), 5), [&] { return w.insertedIn(970) == 233; });
+            std::printf("inserted in 233: %d\n", in3);
+        }
+    }
+    for (int i = 0; i < 120; ++i) w.tick({});
+    for (const int32_t uid : {231, 232, 233}) std::printf("%d state id %d\n", uid, graphStateId(w, uid));
+    const bool got2 = interactFrom(w, engageSpots(bf, w, *w.script().find(971), 4), [&] { return w.heldPortable() == 971; });
+    const bool in2 = got2 && interactFrom(w, engageSpots(bf, w, *w.script().find(233), 5), [&] { return w.insertedIn(971) == 233; });
+    std::printf("971 picked %d inserted in 233 %d\n", got2, in2);
+    for (int i = 0; i < 120; ++i) w.tick({});
+    const auto use = [&](int32_t uid) {
+        std::printf("-- use %d\n", uid);
+        const int16_t before = graphStateId(w, uid);
+        const bool ok = interactFrom(w, engageSpots(bf, w, *w.script().find(uid), 8), [&] { return graphStateId(w, uid) != before || w.script().find(uid)->graph->transition >= 0; });
+        int t = 0;
+        for (; t < 900; ++t) {
+            w.tick({});
+            if (t > 30 && w.script().find(uid)->graph->transition < 0 && graphStateId(w, uid) == before) break;
+        }
+        std::printf("   used %d, back after %d ticks; states %d %d %d\n", ok, t, graphStateId(w, 231), graphStateId(w, 232), graphStateId(w, 233));
+    };
+    use(231), use(233), use(232), use(232);
+    for (int i = 0; i < 900; ++i) w.tick({});
+    for (const int32_t uid : {231, 232, 233}) std::printf("%d state id %d\n", uid, graphStateId(w, uid));
+    for (const int32_t uid : {231, 232, 233})
+        for (const auto& [k, v] : w.script().find(uid)->script->fields) if (k < 260) std::printf("  %d +%u = %u\n", uid, k, v);
+    for (const auto& [key, n] : w.script().failures()) std::printf("failure %d: %s\n", key.first, key.second.c_str());
+}
