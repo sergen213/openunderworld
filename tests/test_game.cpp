@@ -214,6 +214,50 @@ TEST(Game, GravityJumpAndLanding) {
 // tru.exe take-offs under Wine (openunderworld-work/screens/stairs j_*.txt, Instance +0x2A0 per 30 Hz frame):
 // standing 48.04 up (apex 201.6, 0.56 s air); stick 49.97 up + 40.00 along it; running, or the stick behind
 // her (she turns round), 42.53 up + 65.83 forward; the stick to a side jumps that way standing.
+// A free jump and the buttons / stick (tru.exe chart action 511, 0x750040; Player::airBrake): holding Jump changes
+// nothing; the stick pulled back in flight sets the horizontal speed to the take-off's x (1 - 0.6 x how far back past
+// 0.2), straight back 40 %; easing off gives nothing back; the stick kept forward or let go does nothing.
+TEST(Game, JumpHoldNoEffectAndStickBackBrakes) {
+    struct Out { float apex, landX, takeX, h; int air; };
+    const auto fly = [](bool holdJump, float backAt, float back, float releaseAt) {
+        CollisionMesh m;
+        addFloor(m, -20000, -20000, 20000, 20000, 0);
+        auto w = makeWorld(std::move(m), {0, 0, 0});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 40; ++i) w->tick(forward());
+        Actions j = forward();
+        j.jump = true;
+        w->tick(j);
+        for (int i = 0; i < 60 && s.state != State::Jump; ++i) w->tick(holdJump ? j : forward());
+        Out o{0, 0, s.pos.x, 0, 0};
+        for (int i = 0; i < 200 && s.state == State::Jump; ++i, ++o.air) {
+            Actions a = fixedCamera(*w, forward(float(i) >= releaseAt ? 0.0f : float(i) >= backAt ? back : 1.0f), 0);
+            a.jump = holdJump;
+            w->tick(a);
+            o.apex = std::max(o.apex, s.pos.z);
+            if (s.state == State::Jump) o.h = glm::length(glm::vec2(s.vel));
+        }
+        o.landX = s.pos.x;
+        return o;
+    };
+    const float v = 65.83f * 30;
+    const Out tap = fly(false, 1e9f, 0, 1e9f), hold = fly(true, 1e9f, 0, 1e9f);
+    EXPECT_NEAR(tap.h, v, 1);
+    EXPECT_EQ(tap.air, hold.air);
+    EXPECT_FLOAT_EQ(tap.apex, hold.apex);
+    EXPECT_FLOAT_EQ(tap.landX, hold.landX);
+    const Out let = fly(false, 1e9f, 0, 6); // the stick let go in flight: the same arc
+    EXPECT_FLOAT_EQ(let.landX, tap.landX);
+    const Out back = fly(false, 10, -1, 1e9f); // straight back from tick 10
+    EXPECT_NEAR(back.h, 0.4f * v, 1);
+    EXPECT_EQ(back.air, tap.air);
+    EXPECT_FLOAT_EQ(back.apex, tap.apex);
+    EXPECT_NEAR(back.landX - back.takeX, (tap.landX - tap.takeX) * (10 + 0.4f * float(tap.air - 10)) / float(tap.air), 8);
+    const Out eased = fly(false, 10, -1, 14); // back for four ticks, then let go: the speed stays down
+    EXPECT_NEAR(eased.h, 0.4f * v, 1);
+    EXPECT_NEAR(eased.landX, back.landX, 1);
+}
+
 TEST(Game, JumpTakeOffsMatchTruTraces) {
     const auto flight = [](Actions hold, int runTicks, float& vz, float& hspeed, float& yaw, float& apex) {
         CollisionMesh m;
@@ -7726,4 +7770,57 @@ TEST(GameReal, TempleLandingsByHeightStickAndCrouch) {
     EXPECT_EQ(clip, "ng_land_rolling");
     EXPECT_EQ(st, State::Roll);
     EXPECT_NEAR(run, 646, 120); // ng_land_rolling's 808 from its start frame 4
+}
+
+// l4_temple, the runway west of block 1155 (ours x -4200..-1300 at z 1722.9), where tru.exe was traced under Wine
+// (openunderworld-work/gameplaygoal/ctrl2/w1.txt): a running jump with Jump tapped or held, and with the stick let go
+// or pulled back 0.1 s after the take-off. tru.exe: tap and hold the same flight (apex 155.8, 954.7 from its first
+// airborne sample to the landing); the stick let go the same; pulled back, the horizontal speed drops from 65.83 to
+// 26.33 a frame on the next frame and she lands 500.3 from that sample. A jump from the sprint flies the run's arc.
+TEST(GameReal, TempleJumpHoldStickBackAndSprintJump) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    struct Out { float apex = 0, dist = 0, h = 0, launch = 0; std::string from; };
+    const auto fly = [&](bool hold, int stickAfter, float stick, bool sprint) {
+        auto w = unitWorld(bf, "l4_temple", {{-4200, -11850, 1722.9f}, 0});
+        const auto& s = w.player().state();
+        Actions run = forward();
+        run.sprint = sprint;
+        for (int i = 0; i < 55; ++i) w.tick(run);
+        Out o;
+        o.from = s.clip;
+        Actions j = run;
+        j.jump = true;
+        w.tick(j);
+        for (int i = 0; i < 30 && s.state != State::Jump; ++i) w.tick(hold ? j : run);
+        EXPECT_EQ(s.state, State::Jump);
+        const float x0 = s.pos.x, z0 = s.pos.z;
+        o.launch = glm::length(glm::vec2(s.vel));
+        for (int i = 0; i < 120 && s.state == State::Jump; ++i) {
+            Actions a = fixedCamera(w, forward(i >= stickAfter ? stick : 1.0f), 0);
+            a.jump = hold, a.sprint = sprint;
+            w.tick(a);
+            o.apex = std::max(o.apex, s.pos.z - z0);
+            if (s.state == State::Jump) o.h = glm::length(glm::vec2(s.vel));
+        }
+        o.dist = s.pos.x - x0;
+        return o;
+    };
+    const Out tap = fly(false, 1000, 1, false), hold = fly(true, 1000, 1, false);
+    EXPECT_NEAR(tap.launch, 65.83f * 30, 1);
+    EXPECT_NEAR(tap.apex, 155.8f, 6);
+    EXPECT_NEAR(tap.dist, 954.7f + 33, 45); // Wine's first airborne sample is half a frame in
+    EXPECT_FLOAT_EQ(hold.dist, tap.dist);
+    EXPECT_FLOAT_EQ(hold.apex, tap.apex);
+    const Out let = fly(false, 6, 0, false);
+    EXPECT_FLOAT_EQ(let.dist, tap.dist);
+    const Out back = fly(false, 6, -1, false);
+    EXPECT_NEAR(back.h, 26.33f * 30, 2);
+    EXPECT_NEAR(back.dist, 500.3f + 33, 45);
+    EXPECT_FLOAT_EQ(back.apex, tap.apex);
+    const Out sprint = fly(false, 1000, 1, true);
+    EXPECT_EQ(sprint.from, "sprint_loop");
+    EXPECT_NEAR(sprint.launch, 65.83f * 30, 1);
+    EXPECT_NEAR(sprint.apex, tap.apex, 1);
+    EXPECT_NEAR(sprint.dist, tap.dist, 5);
 }

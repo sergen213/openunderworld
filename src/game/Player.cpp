@@ -1996,6 +1996,32 @@ void Player::assistJump() {
     if (bestTime > 0) s_.vel = vec3((xy(target) - xy(s_.pos)) / bestTime, vz);
 }
 
+// The one thing the stick does to a free jump: pulled back, it brakes her. The free-flight state S287 (and the wall
+// jump's S1292) runs chart action 511 beside the flight's 510: enter 0x73ECE0 stores the horizontal take-off velocity
+// (context +0x430) and the stick's forward part s0 against her heading (+0x420); every frame 0x750040, when the jump has
+// no markup target (player +0xA64 = 0) and its query's +0x64 >= 0.05 (0.9 for the ground and hang jumps, 0 for the
+// straight DICE leap q27), the stick is off centre, its forward part s has moved from s0 by more than 0.05 and
+// s < query +0x74 (-0.2): horizontal velocity = the TAKE-OFF velocity x (1 - clamp((-0.2 - s) / 0.8, 0, 1) x query
+// +0x68 (0.6)); the vertical speed stays. So the stick straight back flies on at 40 % of the take-off speed, half back
+// at 78 %; easing off afterwards does not give speed back (nothing writes it while s >= -0.2), and the stick held back
+// since the take-off does nothing. Nothing in the flight reads the Jump button: no chart transition out of S287 /
+// S294 tests it (conds 0x65, 0x96..0x99 with action 52) and the flight tick 0x752410 reads no input, so a held press
+// flies the same arc as a tap [O: decomp, chart]. [U]: the two time limits of 0x750040 (frames since the first brake
+// > query +0x70 = 15 with context +0x444 set; frames in the air > 2 x *(*0xFAD764 + 0x4C) / g) are not applied.
+void Player::airBrake(vec2 move) {
+    if (s_.jumpTime == 0) {
+        const float m0 = glm::length(move);
+        s_.jumpVel0 = xy(s_.vel);
+        s_.jumpStick0 = m0 > 0.01f ? glm::dot(move, xy(forward())) / m0 : 0.0f;
+    }
+    const float mag = glm::length(move);
+    if (s_.jumpAimed || mag < 0.01f) return;
+    const float s = glm::dot(move, xy(forward())) / mag;
+    if (s >= t_.airBrakeStick || std::abs(s - s_.jumpStick0) <= 0.05f) return;
+    const float k = 1.0f - std::clamp((t_.airBrakeStick - s) / (t_.airBrakeStick + 1.0f), 0.0f, 1.0f) * t_.airBrake;
+    s_.vel = vec3(s_.jumpVel0 * k, s_.vel.z);
+}
+
 void Player::tick(vec2 move, const Actions& a, float dt) {
     Buttons& b = s_.buttons;
     walk_ = a.walk;
@@ -2302,6 +2328,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             // tru.exe's chart tests the wall jump on its 30 Hz frames: a jump back off a wall (77.27 up a frame)
             // comes inside the attach's zVel window (<= 9 x 5.72443) on its fifth, 314.8 higher.
             const float frame = std::floor(s_.jumpTime * 30.0f + 1e-3f);
+            if (s_.state == State::Jump) airBrake(move);
             if (s_.state == State::Jump) s_.jumpTime += dt;
             const bool test = s_.state == State::Jump && !s_.jumpAimed && std::floor(s_.jumpTime * 30.0f + 1e-3f) > frame;
             airMove(dt, move);

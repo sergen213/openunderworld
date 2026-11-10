@@ -1380,6 +1380,7 @@ std::vector<std::pair<std::string, uint64_t>> World::stateParts() const {
     add(s.climbYawFrom), add(s.climbYawTo), add(s.grappleAnchor), add(s.grappleKind), add(s.sprintUsed);
     add(s.ropeBends), add(s.polePara), add(s.ropeMax);
     add(s.jumpStart), add(s.jumpTime), add(s.jumpAimed), add(s.wallJumps), add(s.wallTime), add(s.jumpLedge), add(s.jumpFromLedge);
+    add(s.jumpVel0), add(s.jumpStick0);
     for (const ButtonTime* b : {&s.buttons.jump, &s.buttons.interact, &s.buttons.drop, &s.buttons.grapple})
         add(b->down), add(b->edge), add(b->time), add(b->buffer);
     add(s.droppedPole), add(s.fallStall), add(s.landTime);

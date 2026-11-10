@@ -3600,6 +3600,40 @@ Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full),
 (410 forward, 411 back, 412 / 413 the sides), 0x14 the state's time in frames, 0x1E the fall so far, 0xC9 the clip done,
 0xCA the clip's critical section; a parameter group of 1000 compares with a chart variable.
 
+### Jumps: the Jump button's hold, the gait, the stick in flight
+
+- **Holding Jump does nothing** [O chart, decomp, Wine]: no transition out of the take-off states (S248 standing, S245 /
+  S247 with the stick, S280 / S281 running, S249 from the sprint) or of the free flight (S287 -> S288 -> S294) tests
+  the Jump button (conds 0x65, 0x96..0x99 with action 52), and the flight's action 510 (table at tru.exe file 0x4B11D4:
+  enter 0x7522A0, tick 0x752410) reads no input. tru.exe under Wine, Jump tapped (60 ms) against held to the landing:
+  standing jump apex 201.5 both, in the air 550 ms both; running jump apex 155.8 both, take-off (65.83, 42.54) a frame
+  both, 954.7 from the first airborne sample to the landing both. The controls page's "a little longer in the air" is
+  not in the PC game.
+- **Gait** [O chart, Wine]: the walk and the light stick take the stick jump (S245, query q43: 40 along + 50 up), the
+  run the running jump (S280 / S281 by the planted foot, query q1: launch 65.83 + 42.54 [Wine]; its record's velocity
+  reads 90.25 + 42.54), the **sprint** S249 (T182 from S59 and its fall-off state S13), whose query q26 has q1's
+  velocity: under Wine a jump from the sprint (state S59 at 1879 units/s) takes off at the same (65.83, 42.54), apex
+  155.8, 954.6 to the landing - it is longer only by the faster run-up and the sprint that resumes 0.15 s after the
+  landing (the landing group's T2108). The roll's jump (T53 -> S251 `ng_rolling_jump_forward`, query q20: 53.83 +
+  53.83) is not ported.
+- **The stick in flight: a brake, nothing else** [O decomp, Wine]: the flight state S287 (and the wall jump's S1292)
+  runs action 511 (enter 0x73ECE0, tick 0x750040) beside 510. Enter stores the horizontal take-off velocity (chart
+  context +0x430) and the stick's forward part against her heading s0 (+0x420). Each frame, when the jump has no
+  markup target (player +0xA64 = 0), the jump query's +0x64 >= 0.05 (0.9 for the ground / hang / pole / ladder jump
+  queries, 0 for the straight DICE leap q27), the stick is off centre, |s - s0| > 0.05 and s < query +0x74 (-0.2; -1
+  for q3 and q19: never):
+  `horizontal velocity = take-off velocity x (1 - clamp((-0.2 - s) / 0.8, 0, 1) x query +0x68 (0.6))`, the vertical
+  speed untouched. Straight back = 40 % of the take-off speed; nothing gives speed back and nothing steers sideways
+  or adds speed. Wine: Back pressed 0.1 s into a running jump: 65.83 -> **26.33** a frame on the next frame, landing
+  500.3 from the first airborne sample instead of 954.7; the stick let go in flight: no change.
+  [U]: 0x750040's two time limits (frames since context +0x444 > query +0x70 = 15 once +0x444 is set - its setter
+  was not found; frames in the air > 2 x Lara data +0x4C (1280.03) / g = 447) are not applied.
+- Ours: `Player::airBrake` (State::Jump with no aimed target; `Tuning::airBrakeStick` / `airBrake`;
+  `PlayerState::jumpVel0` / `jumpStick0`, saved as `controller.airBrake`). Nothing else changed: ours already flew one
+  arc per query whatever the button did, and treated the sprint as a run for the jump.
+- Tests: `Game.JumpHoldNoEffectAndStickBackBrakes`, `GameReal.TempleJumpHoldStickBackAndSprintJump` (the Wine
+  numbers); self-test `jump_brake` (l4_temple).
+
 ### Landings
 
 - **Dispatch** [O-data]: every landing passes the chart state S1275, whose transitions are tried in this order:

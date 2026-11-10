@@ -184,6 +184,9 @@ struct Tuning {
     // she turns round) 42.53 up + 65.83 forward. Delays from the press: 359 / 290 / 109 ms (GAMEPLAY.md Numbers).
     float jumpVz = 1441.2f, standMoveJumpVz = 1499.1f, standJumpSpeed = 1200.0f; // units/s
     float runJumpVz = 1275.9f, runJumpSpeed = 1974.9f;                          // units/s
+    // A free jump's brake (Player::airBrake; jump query +0x74 / +0x68 of the ground and hang jump queries [O-data]): the
+    // stick more than 0.2 back of her heading scales the take-off's horizontal velocity, by up to 0.6 straight back.
+    float airBrakeStick = -0.2f, airBrake = 0.6f;
     float standMoveTakeoff = 0.26f; // s into ng_standing_jump a stick jump leaves the ground (0.33 s clip: 359 vs 290 ms)
     float turnRate = 6.0f;                     // rad/s
     float grabReach = 60.0f, grabWindow = 40.0f; // hand-to-ledge horizontal / vertical tolerance
@@ -388,6 +391,10 @@ struct PlayerState {
     float wallTime = 0;
     vec3 jumpLedge{0};
     bool jumpFromLedge = false;
+    // Player::airBrake: the free jump's horizontal take-off velocity and the stick's forward part against her heading
+    // then (tru.exe chart context +0x430 / +0x420, stored on entering the flight by 0x73ECE0).
+    vec2 jumpVel0{0};
+    float jumpStick0 = 0;
     // Off balance on a balance beam (Player::beam). `build`: 30 Hz frames the stick has been held across the beam
     // (ours [I]: the escalation into the about-to-fall state). `aboutFall`: the about-to-fall state (chart S895 / S896,
     // bbeam_aboutfall_*) runs tru.exe's balance controller (chart context +0x358: enter 0x742330, update 0x742770, exit
@@ -523,6 +530,7 @@ private:
     // HangJump velocity / flight time from here onto the target (after the take-off clip); vz: the take-off vertical
     // speed (units/s; 0 = the hang jump's by its clip)
     void launchHangJump(float vz = 0);
+    void airBrake(vec2 move); // State::Jump: the stick pulled back brakes a free jump (tru.exe 0x750040)
     void assistJump();
     // ground jump query (forward, up a 30 Hz frame; start `up` over the root, +0x2C bit 0x80, cone in radians) meeting a
     // ledge: aim at its hang
