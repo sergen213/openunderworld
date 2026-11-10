@@ -6,6 +6,19 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-09
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: music tracks crossfade as in the original. The game's music has separate slots, each fading on its own, so
+  a new area's track fades in while the old one fades out (for example the Mexico pool into the Ragnarok staircase:
+  3 s out, 2 s in) instead of cutting over. Asking for the track that is already playing no longer restarts it, the
+  music keeps its place in the piece across loops, and saves bring back every playing track.
+- Added: Lara can lose her balance on balance beams. Holding the direction off the beam for a few seconds makes her
+  wobble (about-to-fall); push towards the beam, or briefly the other way, to recover. If she goes, she falls to the
+  side she leans and grabs a ledge beside the beam if there is one (the Croft Manor chapel scaffold, the Mexico
+  temple beam), otherwise she drops.
+
 ## [0.40.1] - 2026-11-08
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
