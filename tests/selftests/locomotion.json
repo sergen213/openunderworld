@@ -274,9 +274,9 @@
             "jumpprep",
             "jump",
             "run",
-            "stop",
             "idle"
-          ]
+          ],
+          "note": "the stick let go 0.4 s after the landing: inside the run loop's first 15 frames she stops on the spot"
         },
         {
           "clips": [
