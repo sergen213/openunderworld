@@ -2387,6 +2387,13 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::GrappleSwing:
     case State::GrappleRappel:
         grapple(move, a, jumpPressed, dropPressed, dt);
+        // On the rope with her feet swimDepth under a water surface she lets go and swims (the l2_maproom wall ring over
+        // the flooded room: a plain step off the bridge ends in the water without the rope). The depth is ours [I].
+        if (s_.state == State::GrappleSwing || s_.state == State::GrappleRappel)
+            if (const int w = waterAt(s_.pos); w >= 0 && s_.pos.z <= waterSurface(col_.markup[size_t(w)], vec2(s_.pos), waveSeconds_) - t_.swimDepth) {
+                releaseGrapple(false);
+                enterWater();
+            }
         break;
     case State::DropToHang:
         s_.pos += advanceRoot(dt); // full root motion and turn, no collision (as ClimbUp)

@@ -444,7 +444,7 @@ Abbreviations as in `08_bhogavati.md`. Screenshot base: https://tombraiders.net/
 | Progression | Bridge → wall run → pole lever → underwater door → tunnel → wheel doors → surface → boat → cinematic → Croft Manor | IMPLEMENTED | PR gates ch 2: "l2_flushtunnel switch 2543 → flush gate 2541 pass", "plane 2542, then volume 2564 → 2565 → chapter 3 pass (new gate test)" |
 | Automated tests | Existing: `CriticalGates` (two l2_flushtunnel cases), `CineReal.ChapterEndCinematics`, `ChaptersReal.StartUnitsAndLevelEnds`, `StreamReal.OpenSeaWater`, swim tests on l2_cliffclimb (`Game.SwimTurnLagsLikeTru`). Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 12 in [docs/matrix/10_puppet_no_longer.md](matrix/10_puppet_no_longer.md) — IMPLEMENTED BUT UNVERIFIED 9, IMPLEMENTED 2, NOT IMPLEMENTED 1.
+Requirement rows: 12 in [docs/matrix/10_puppet_no_longer.md](matrix/10_puppet_no_longer.md) — IMPLEMENTED BUT UNVERIFIED 6, PARTIALLY IMPLEMENTED 3, IMPLEMENTED 2, NOT IMPLEMENTED 1.
 
 Open in this chapter:
 
@@ -521,7 +521,7 @@ Abbreviations as in `08_bhogavati.md`. Screenshot base: https://tombraiders.net/
 | Progression | Tunnel → pit jump → temple approach cutscene → climb in → gate → jaguar head → panthers → road → stair tunnel → right fork → calendar building → cinematic | PARTIALLY IMPLEMENTED | PR gates ch 4 row "l4_trailstart grapple lever post 6695 (pull): pull handler runs; the post slides out on its uber joint … trigger 14"; nothing asserts the gate, the key pickup or the cinematic |
 | Automated tests | Existing: `VehicleReal.*` (9 tests, l4_trailstart), `GameReal.GrapplePullsUberTargets`, `GameReal.GrappleLeverJointIndependentOfRenderRate`, `GameReal.PressurePlateIndependentOfRenderRate` (unit load), `PdaReal.SonarMapFrameRevealAndModels`, replays `bike_ride`, `grapple_pull`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 19 in [docs/matrix/12_unnamed_days.md](matrix/12_unnamed_days.md) — IMPLEMENTED BUT UNVERIFIED 8, PARTIALLY IMPLEMENTED 5, NOT IMPLEMENTED 5, IMPLEMENTED 1.
+Requirement rows: 19 in [docs/matrix/12_unnamed_days.md](matrix/12_unnamed_days.md) — IMPLEMENTED BUT UNVERIFIED 6, PARTIALLY IMPLEMENTED 5, NOT IMPLEMENTED 5, IMPLEMENTED 3.
 
 Open in this chapter:
 

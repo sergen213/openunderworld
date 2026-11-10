@@ -1391,6 +1391,13 @@ bool World::waterNative(int32_t uid, std::string_view type, uint32_t function, s
         result = uint32_t(int32_t(std::lround(depth)));
         return true;
     }
+    // 54 (0x777E40): the instance is the vehicle Lara is on (her +0xF00, set by the mount 0x741570, cleared by the
+    // dismount 0x731530). l4_trailstart's temple reveal 6677 asks it of bike 5482 before it sets her down beside it.
+    if (type == "larabase" && function == 54) {
+        const Bike* b = ridden();
+        result = b && b->uid == uid;
+        return true;
+    }
     if (type == "larabase") { // 3 (0x777780): Lara is in volume `uid` (her probe box's volume) with its surface over her feet [O Wine: the goo bed kills, the walkways in the same box do not]
         const auto [m, u] = waterVolume(uid);
         const int w = player_.waterAt(player_.state().pos);

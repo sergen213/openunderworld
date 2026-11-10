@@ -1664,8 +1664,8 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 const Member* m = holder->program ? holder->program->member(holder->typeId, a.offset) : nullptr;
                 return m && m->init ? int32_t(*m->init) : 0;
             };
-            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6) && nc.args.size() == 1) {
-                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force)
+            if (water_ && !std::strcmp(name, "larabase") && (nc.function == 3 || nc.function == 6 || nc.function == 54) && nc.args.size() == 1) {
+                const int32_t target = uidOf(nc.args[0]); // 3: a water volume, 6: an instance (contact force), 54: a bike
                 uint32_t result = 0;
                 if (target && !water_(target, name, nc.function, {}, result)) return false;
                 nc.result = vm::Value::scalar(result);
