@@ -23,6 +23,9 @@ Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (G
   heads straight away), and on ledges and climbing walls it slowly leads the way she shimmies. On ladders it tilts up
   while she climbs up and down while she climbs down. Speeds and delays are the original's (checked side by side under
   Wine). Recenter Camera still snaps it behind her at once.
+- Fixed: swimming in circles at the surface tipped the camera until it looked straight down into the water. Lara now
+  turns and carries her speed through turns like the original (measured under Wine), and the camera levels out to
+  the horizon as the original's does.
 
 ## [0.40.1] - 2026-11-08
 
