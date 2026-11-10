@@ -171,6 +171,7 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
                 // +0x34 flags (bits 0-2 the axes' limits on), +0x61 sound position, +0x64 sound (0x6B6440).
                 if (*r + 0x68 <= ob.data.size()) {
                     o.jointLimitOn = at<uint32_t>(ob, *r + 0x34) & 1;
+                    o.jointMotor = {at<float>(ob, *r + 0x1C), at<float>(ob, *r + 0x20), (at<uint32_t>(ob, *r + 0x34) & 8) != 0};
                     o.jointSoundAt = at<uint8_t>(ob, *r + 0x61);
                     const auto ps = cdc::sectionPointers(d, uint32_t(*base));
                     if (const auto s = ps.find(*r + 0x64); s != ps.end()) o.jointSound = s->second;
@@ -228,6 +229,12 @@ ObjectPhysics loadObjectPhysics(const cdc::Drm& d, uint32_t model) {
             k.type = type, k.id = at<uint16_t>(*m, q + 0x2E);
             for (uint32_t j = 0; j < n; ++j) k.points.push_back(vec(*m, *pl + 0x10 + 0x10 * j));
             o.markup.push_back(std::move(k));
+        }
+    const uint32_t nft = m->data.size() >= 0x64 ? at<uint32_t>(*m, 0x5C) : 0;
+    if (const auto ft = nft ? cdc::internalPointer(*m, 0x60) : std::nullopt; ft && nft < 256 && *ft + 0x20 * size_t(nft) <= m->data.size())
+        for (uint32_t i = 0; i < nft; ++i) {
+            const uint32_t q = *ft + 0x20 * i;
+            o.features.push_back({int(at<uint16_t>(*m, q)), at<uint16_t>(*m, q + 2), vec(*m, q + 4)});
         }
     return o;
 }

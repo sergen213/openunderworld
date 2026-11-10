@@ -561,6 +561,7 @@ struct GrappleTarget {
     vec3 pos{0};
     GrappleKind kind = GrappleKind::Ceiling;
     float range = 0, rope = 0;
+    int model = 0; // the object model carrying the grapple feature: offered while a section shows it (uber objects)
 };
 // A `checkpoint` / `invis_checkpoint` intro: respawn transform in its unit's frame (tru.exe 0x5D40C0).
 struct Checkpoint {
@@ -735,6 +736,10 @@ public:
         const physics::Engagement* record = nullptr;
     };
     Engaged engaged();
+    // The rope's pull on the Mounted grapple target she is braced against (Objects.cpp); true while it drives a joint.
+    bool pullGrappled(const Actions& a);
+    // The anim-graph object whose "use" record (kind 8) she engages on this interact press, 0 none (Objects.cpp).
+    int32_t engagedUse(bool pressed);
     // Where object `uid`'s engagement records are now (world centres of its current sets; uber objects: every section's),
     // kind 0 = any live record. ou-game --autopilot steers Lara to them (app/game/Autopilot.hpp).
     std::vector<vec3> engagementCentres(int32_t uid, int kind = 0);
@@ -755,6 +760,17 @@ public:
     bool uberGrappleOff(int32_t uid) const {
         const auto it = uberRuntime_.find(uid);
         return it != uberRuntime_.end() && it->second.grappleOff;
+    }
+    // Does a live section of uber object `uid` draw object model `model` now? True for objects without uber data (yet):
+    // their models are not sections. A grapple feature on model > 0 is a target only then (tru.exe walks the features of
+    // the section instances' current models, query 0x14C).
+    bool uberShowsModel(int32_t uid, int32_t model) const {
+        const auto rt = uberRuntime_.find(uid);
+        const auto data = uberData_.find(uid);
+        if (rt == uberRuntime_.end() || data == uberData_.end() || !data->second) return true;
+        for (size_t i = 0; i < rt->second.sections.size(); ++i)
+            if (!rt->second.sections[i].removed && uberSectionModel(uid, int32_t(i)) == model) return true;
+        return false;
     }
     // Hit message 0x11C on an uber object's sections (0x6D4690): shots, Mjolnir's bolts, the ground pound.
     void damageObject(int32_t uid, float damage, int damageClass);
@@ -1212,6 +1228,10 @@ private:
     std::set<std::pair<std::string, uint16_t>> disabledMarkup_; // (unit, markup id)
     const formats::UberObjectData* prepareUber(const script::Object& o);
     std::map<int32_t, float> multibodyLo_, multibodyHi_; // native limits issued before hinges exist
+    // Rigid-body hinges the grapple pulls this tick (pullGrappled): uid -> the limit it is drawn to, rad/s.
+    std::map<int32_t, std::pair<float, float>> hingePull_;
+    // Class-34 rigid bodies with a grapple feature (the tomb gate): their hinge has no motor, the pull moves it.
+    bool pulledHinge(const script::Object& o);
     std::set<int32_t> multibodyLimitOff_; // `multibody` 75: objects whose joint limit is switched off (joint +0x174 bit 2)
     std::map<std::string, std::shared_ptr<const cdc::Drm>> objectDrms_;
     std::map<int32_t, std::optional<formats::UberObjectData>> uberData_;

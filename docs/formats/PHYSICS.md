@@ -180,8 +180,15 @@ type 2, is [I].
     it through its contacts; Lara (55 kg) and push blocks (their primitives' mass, 666 without) press it under gravity
     where a ray below them (40 above to 30 below their base) meets it. `World::tickJoints` hands the joint position
     (clamped to the limits) to `Runtime::setJointPosition`, whose ranges run vt 34. Saves: the plate body is a joint
-    (`j<uid << 32 | 0xFFFFFFFE>`); a new plate starts at its saved position. [I] the original's plate constraint and
-    motor numbers (Havok data not decoded). `Physics.PlatesWeighedByContactsAndProxyPushesLooseBodies`,
+    (`j<uid << 32 | 0xFFFFFFFE>`); a new plate starts at its saved position. [O] A class-34 rigid body's joint record
+    (physical data +0x2C; tru.exe 0x6B6440: the joint type is the first model marker's kind, 0 hinge / 2 prismatic, its
+    axis the marker frame's Z): +4 / +8 limit (on = +0x34 bit 0), +0x1C motor speed per second, +0x20 its bound (<= 0
+    unbounded), on = +0x34 bit 3 (`ObjectPhysics::jointMotor`). Plates with one use it instead of the numbers above:
+    ms_rb_press_plate, ms_rb_grooved_press_plate, ma_rb_press_plate -50..0, +40 / s, bound 400; ca_ei_rb_plate_normal
+    bound 460 (survey: `OU_RB_MOTORS=1 ... ProgressionReal.RigidBodyMotors`). By the uber joints' unit rule (bound =
+    impulse per 1/60 s step [I]) a 400 bound carries 139.7 kg: the 100 kg plate and 39.7 kg more. Lara bears on a plate
+    with her object's primitive mass (500 kg [O data, I use]). Wine (l1_baldrs_tomb): Lara on 221 -> -51, back up when
+    she leaves. `Physics.PlatesWeighedByContactsAndProxyPushesLooseBodies`,
     `ProgressionReal.CriticalGates` (l1_kraken_entrance 748: head 751 on plate 752, weight 750 on plate 753).
 - Saves: `World::serializeObjects` writes `physics` {version 1, hex of `Scene::save`}: each body's Jolt ID by entity
   key (hinge index, joint key, loose id, unit name, collider index), each constraint's zero (`Axis::ref`), the constraint

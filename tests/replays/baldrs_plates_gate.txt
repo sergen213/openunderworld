@@ -1,3 +1,5 @@
+# NOTE (plate motor decoded): under the original's plate numbers this input no longer opens the gate; one block presses
+# no plate. The test now asserts that outcome (CMakeLists.txt); re-record with the throw for the full solution.
 # l1_baldrs_tomb: --spawn -5000,-10000,2560,180 --no-cinematics, in the west room behind door 223.
 # Weight 220 set down on press plate 219 (its vt 54 -> door 223 vt 57: open; Lara alone would let it shut again, vt 58),
 # weight 218 carried through the door onto plate 222, Lara stands on plate 221: both sink, locks 69 / 70 leave their

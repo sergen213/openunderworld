@@ -3283,3 +3283,41 @@ Sources: generalbank DTP 0x2F (input action → virtual button map, GlobalInfo +
 - **Dual targets and damage**: with two enemies in the soft set each pistol takes its own, so one enemy falls later than
   under a single lock (`StreamReal.SaveContinuesBitIdentically`'s l1_ship_exterior fight runs 1400 ticks for it). The
   gate on weapon-controller flags 0x9000 / bit 27 in 0x71E490 is not decoded [U].
+
+## Mediterranean puzzles (l1_seafloor, l1_kraken_entrance, l1_kraken_room, l1_baldrs_tomb)
+
+Walkthrough rows: gameplay matrix C02-09 / 11 / 13, C02-30, C03-11 / 16, C04-06 / 07 / 08.
+
+- Eye door [O bytecode, graph data]: `ms_ani_eye_puzzle_piece` 232 (right) / 233 (left) and `_center` 231 are
+  anim-graph objects. A side piece starts empty (state 0, a kind-5 record needing `ms_pt_seafloor_key_a`); the key,
+  picked up and carried while swimming, is inserted (stimulus 0x20 -> state 2; vt 20(2): "has key" sticky +244, draw
+  group 7, checkpoint). Each piece has one kind-8 ("use") record: Lara's use reaches the piece she engages
+  (`World::engagedUse` -> `TickInput::engagedUse`; before, the nearest object in reach took it), turning it 120
+  degrees (side 2 -> 3 -> 2, centre 0 -> 3 -> 0). The scripts hand the eye draw groups round and switch the other
+  pieces' records off during a turn (instance 59). Centre vt 61: its position stickies +64 / +120 / +176 all set -> vt
+  62 "Eye Puzzle Solved" (modifiable 4 (2) = the opening clip; plugs 236-238 `ms_uo_ping_map_eye_puzzle` command 0 ->
+  state 1, action 28: their collision leaves the doorway; reveal 235). From the start state: centre once, left once,
+  right twice. `ProgressionReal.EyeDoorSolvedByItsHandles` (to l1_norse_hallway_a). [I] no handle-turn clip on Lara.
+- Press plates: docs/formats/PHYSICS.md "Pressure plates" (joint record; one weight does not press, two do).
+- Grapple pulls on joints (`World::pullGrappled`; only targets collected by their model feature: the gears, the tomb
+  gate — the `*_grapple*`-named pull targets keep the one-second script heave [I]): with Interact held, the simulated joints
+  that move the section carrying the grapple feature are driven toward her at 240 units/s at the rope's end [I], each
+  only when the rope has a component along its freedom (prismatic: more than cos 60 degrees along the axis; hinge: by
+  the rope's moment). The states' range watches do the rest; action 0x1A (no target) lets go. [O data] gear 36: feature
+  on model 1 = section 1, prismatic, limit 0..515, watch 512..537 -> trigger 14 -> locked at 512..518; gear 32: feature
+  on model 12 = the ring (section 1) hinged on the column (section 12), whose braked prismatic joint leaves -15.8..237:
+  trigger 15, it falls. Before its pull each room's one-way switch only tries; the gear's event calls the switch's off
+  reaction (type 3637 vt 58: modifiable 4 (1)), which frees it for another pull (`Runtime`: the switch's state id moves
+  along that transition). The bullet on the column (`World::uberShot`, [I] impulse) still works; whether tru.exe's
+  bullets move it is [U]. `ProgressionReal.KrakenGearsPulledByTheGrapple`.
+- Roped walk [I]: attached to a pull target and without Interact, the stick walks Lara (350 units/s, rope paid out to
+  its longest); Interact braces her and pulls (Grapple.cpp). The page's gate solution needs it: the ring is grappled
+  near the gate, she steps back onto the pad, then pulls.
+- Tomb gate 45 [O data]: `ms_rb_tomb_gate` is a class-34 hinge with a limit and no motor (record flags 1) and a
+  grapple feature 1036 up; its hinge marker lies at its foot (46.4 in front of its plane), axis = the marker's Z (level,
+  along the foot): unlocked (script: multibody 77 0..90 once both locks left their range) it stands against its lower
+  limit until the rope tips it over (`World::pulledHinge`; before, a door motor swung it open about the marker's X as
+  soon as the locks were out). [O Wine, l1_baldrs_tomb] Lara on plate 221: plate -51, lock 70 down 1254 at 300
+  units/s, back when she leaves; with one lock out the gate does not move. [U] The both-locks-out case (does it stand
+  without a pull) was not reached under Wine: the harness's pick-up key press did not take the weights.
+  `ProgressionReal.TombGateNeedsBothBlocksAndThePull`.

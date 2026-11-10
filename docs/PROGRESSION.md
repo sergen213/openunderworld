@@ -136,13 +136,14 @@ Portal order from the start unit; level changes not made by portals are named.
 | 0 | l3_main_bedroom | switch 4525 (use) | house door 4520 opens | pass |
 | 0 | l3_bedroom_hall | push block 4363 (push) | block moves | pass |
 | 0 | l3_main_hall | plane 4129 (cross) | 010 → chapter 1 | pass (fixed) |
-| 1 | l1_seafloor | eye puzzle pieces 231-233 | puzzle reveal | not covered: pieces are physics objects [U interaction] |
-| 1 | l1_kraken_entrance | grooved plates 752/753 (snake head 751 pulled down onto 752, weight 749/750 carried onto 753) | locks of gate 743, oil doors 754/755 | pass |
+| 1 | l1_seafloor | eye door: keys 970 / 971 carried under water into side pieces 232 / 233 (insert), then the pieces turned by use (centre 231 once, left 233 once, right 232 twice) | centre vt 61 -> vt 62 "Eye Puzzle Solved": opening clip, plugs 236-238 removed (uber action 28), reveal 235; the way into l1_norse_hallway_a | pass (`ProgressionReal.EyeDoorSolvedByItsHandles`: anim-graph objects, not physics; Lara's use goes to the piece whose kind-8 engagement record she engages, the scripts switch the other pieces' records off while one turns) |
+| 1 | l1_kraken_entrance | grooved plates 752/753 (snake head 751 pulled down onto 752, weights 749 and 750 both carried onto 753: one 30 kg weight does not press a plate, below) | locks of gate 743, oil doors 754/755 | pass |
 | 1 | l1_kraken_entrance | resetting switch 748 (use, both plates down) | flints, torches, reveal 702 → cinematic 696, gate 743 | pass |
 | 1 | l1_kraken_entrance | snake head 751 (grapple pull) | falls onto plate 752 (loose rigid body) | pass (in the 748 gate) |
-| 1 | l1_kraken_room | switches 55 / 30 / 498 (use) | tentacle gear 36, sun-sphere platform 27, tomb door 497 | pass |
-| 1 | l1_kraken_room | switch 57 (use) | tentacle gear 32 | pass after the column is shot (row below); alone the sweep's FAIL is the "attempt" reaction |
-| 1 | l1_baldrs_tomb | press plates 219/221/222 (stand on; 221 + 222 together: a weight on one) | door 223, gate 45 (locks 69/70 on `multibody` 89 motors) | pass (ou-game replay `game_replay_baldrs_plates_gate`, GAMEPLAY.md "Receptacle replays": weight 220 on plate 219 holds door 223 open — 219 vt 54 → 223 vt 57, stepping off alone runs 219 vt 55 → 223 vt 58 and it shuts — weight 218 on 222 and Lara on 221: all three plates at -60, locks 69 / 70 at -1250, 45 vt 54, the gate falls to ~90°) |
+| 1 | l1_kraken_room | switches 30 / 498 (use) | sun-sphere platform 27, tomb door 497 | pass |
+| 1 | l1_kraken_room | gear 36's recessed gear (grapple pull along its joint, interact held) then switch 55 (use) | gear 36 section 1 slides 0 -> 515 into its watch 512..537 (trigger 14, "isAtLimit"), then the switch's command runs the mechanism; before the pull the switch only tries and is freed again (off reaction) | pass (`ProgressionReal.KrakenGearsPulledByTheGrapple`) |
+| 1 | l1_kraken_room | switch 57 (use) | tentacle gear 32 | pass after the column is pulled down with the grapple (its ring, gear 32 model 12: `KrakenGearsPulledByTheGrapple`) or shot (row below, [I]); alone the sweep's FAIL is the "attempt" reaction |
+| 1 | l1_baldrs_tomb | press plates 219 / 221 / 222 (Lara, or both weights 218 + 220: 60 kg; one weight does not press), then gate 45 pulled with the grapple from pad 221 | 219 -> door 223 (open only while pressed); 221 / 222 -> locks 70 / 69 (`multibody` 89, 1254 down at 300 units/s [O Wine]); both out: gate 45 free 0..90, it stands until the rope tips it over | pass (`ProgressionReal.TombGateNeedsBothBlocksAndThePull`, `CriticalGates` 219 -> 223 and 221 -> lock 70). The blocks leave the west room only by being thrown through door 223 (carried-object throw, GpMelee); ou-game replay `game_replay_baldrs_plates_gate` now records what its old input does under these rules (see GAMEPLAY.md "Mediterranean puzzles") and has to be re-recorded with the throw |
 | 1 | l1_ship_upper_hallway_a/b, upper_hallway, engine_hall | volumes 1531, 1492, 1465, 1436 | ship doors, cinematics 1453 / 1288 | pass (1531 in suite) |
 | 1 | l1_ship_sinking_hall | plane 1074 (cross) | 070_med_dive → chapter 2 | pass (fixed) |
 | 2 | l2_puzzleroom | elevator switch 2961, weight 2971 (push), shiva grapples 2982/2983 (pull) | elevator 2973, weight, shiva arms | pass |
@@ -205,7 +206,11 @@ Portal order from the start unit; level changes not made by portals are named.
   on its prismatic joint (docs/formats/PHYSICS.md "Pressure plates"), lifted by its motor and pressed down by real
   weight: loose bodies through their contacts, Lara (55 kg) and push blocks under gravity where they stand on it;
   entering a range runs vt 34(…, id) → sticky +92 and vt 54/55. Weights: pulled `*_rb_grapple*` targets fall
-  (Object::loose), `portablebase` objects are carried (interact) and set down. [I] the plate's Havok motor numbers.
+  (Object::loose), `portablebase` objects are carried (interact) and set down. [O data] the plate's joint record
+  (physical data +0x2C: limit -50..0, motor +40 / s, bound 400, tru.exe 0x6B6440) on its 100 kg body: by the uber
+  joints' unit rule it carries 39.7 kg besides itself (ca_ei_rb_plate_normal: bound 460, 60.7 kg), so one 30 kg
+  ms_pt_weight_c does not press it and two do [I: the unit rule; the one / two block case was not reached under Wine,
+  where the pick-up key did not take]; [O Wine] Lara alone presses plate 221 to -51 and it rises again when she leaves.
 - VM fixes found here: START with a function word calls it; CALL3 is virtual; inline member defaults applied (ship doors:
   modifiable 1 opens, 2/3 close [I]; house door 0 opens / 1 closes).
 - (2026-10-29, gates 3) l2_norsehub 2393's op 0x34 is MOVEU of a getter's return value; it runs since script returns
