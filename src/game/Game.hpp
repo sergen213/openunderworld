@@ -830,6 +830,8 @@ public:
         bool attached = false, recentered = false;
     };
     const GrapplePress& grapplePress() const { return grapplePress_; }
+    // The yaw (rad) the orbit camera's forces turned it by this tick (World.cpp updateOrbitCamera; ou-game logs it).
+    float cameraSwing() const { return cameraSwing_; }
     void releaseGrapple(bool jump) { player_.releaseGrapple(jump); }
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
     float air() const { return std::max(0.0f, air_); }
@@ -1021,11 +1023,21 @@ private:
         } from, now;
         int mode = -1;
         float modeTime = 0, idle = 0; // seconds in this mode / since the last look input (+0x1E4)
-        float moves[10] = {}; // her last per-frame moves (30 Hz units) for the yaw force
+        float moves[10] = {}; // her last per-tick moves (units per frame) for force type 7 (0x5E9E30 / 0x5E9D70)
+        // A force controller (yaw, pitch; LaraCameraRewrite 0x608B60, built 0x607AD0): set B is the camera mode's (yaw
+        // sets global data DTP 0x1C, pitch 0x1D; -1 none), set A the one it blends from over 0.25 s (0x609C40).
+        struct Forces {
+            int set = -1, fromSet = -1;
+            float fromBase = 0, fromSpeed = 0;  // A's blended target angle / speed (rad, rad/s)
+            float fromSign = 0, sign = 0;      // A's / B's side sign for dir-type sets (0x608A50)
+            float blend = 0.25f;               // seconds since the switch, 0.25 = done (+0x474)
+        } yawForce, pitchForce;
+        float along = -1; // her position along the markup she is on (0x6EC660; +0x4A0), -1 none
         vec3 lastPos{0};
         vec3 hint{0};         // level camera record point (+0x12B0), eased toward the record's
         int hintMarkup = -1;  // the markup whose record it follows, -1 = none
     } orbit_;
+    float cameraSwing_ = 0; // cameraSwing()
     std::shared_ptr<SplineCamera> splineCam_; // shared_ptr: SplineCamera is complete only in Camera.cpp
     CameraState blendFrom_; // last spline camera pose, blended out of over kCameraBlendSeconds
     float blendOut_ = 0;    // seconds of blend-out left

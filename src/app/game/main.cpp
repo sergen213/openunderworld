@@ -688,7 +688,7 @@ std::optional<glm::vec2> toScreen(const ou::game::CameraState& cam, float fovDeg
 struct CombatView {
     std::vector<ou::scene::Vertex> scratch;
     std::vector<std::unique_ptr<ou::game::DummyTarget>> dummies;
-    bool dead = false, slowMo = false;
+    bool dead = false, slowMo = false, swinging = false;
     int healthPacksUsed = 0;
     ou::game::Weapon weapon = ou::game::Weapon::Pistols;
 
@@ -718,7 +718,14 @@ struct CombatView {
             std::fprintf(stderr, "ou-game: tick %llu grapple pressed: no target offered%s (lara %.0f %.0f %.0f)\n", tick,
                          g.recentered ? ", recentered the camera (shared key)" : "", s.pos.x, s.pos.y, s.pos.z);
         }
-        dead = s.state == ou::game::State::Dead, slowMo = c.slowMo > 0;
+        // The follow camera's swing round behind her (the orbit camera forces, World::cameraSwing): logged as it
+        // starts and stops, with the camera's yaw off her heading.
+        if (const bool swing = std::abs(w.cameraSwing()) > 1e-5f; swing != swinging) {
+            const float off = glm::degrees(std::remainder(w.camera().yaw - s.yaw, 6.2831853f));
+            std::fprintf(stderr, "ou-game: tick %llu camera swing %s (%.1f deg off her heading, %.1f deg/s)\n", tick,
+                         swing ? "starts" : "stops", off, glm::degrees(w.cameraSwing()) * 60);
+        }
+        dead = s.state == ou::game::State::Dead, slowMo = c.slowMo > 0, swinging = std::abs(w.cameraSwing()) > 1e-5f;
         healthPacksUsed = c.healthPacksUsed, weapon = c.weapon;
     }
 

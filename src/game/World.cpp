@@ -24,6 +24,81 @@ float lerpAngle(float a, float b, float t) {
     if (d < 0) d += 2 * kPi;
     return a + (d - kPi) * t;
 }
+// A 64-byte curve at x in [0, 1] (tru.exe 0x5E4530: bytes interpolated, rounded, / 255).
+float curve64(const uint8_t* c, float x) {
+    const float v = std::clamp(x, 0.0f, 1.0f) * 63.0f;
+    const int k = int(v), k1 = std::min(63, k + 1);
+    return std::round(float(c[k1] - c[k]) * (v - float(k)) + float(c[k])) / 255.0f;
+}
+
+// Camera force sets (generalbank GlobalInfo +0x164 -> DTP 0x1C yaw, +0x168 -> DTP 0x1D pitch: {count, 0x14-byte
+// entries {angle deg, speed deg/s, dir type, force count, forces*}}, forces 0x44 bytes {type, k | 64-byte curve};
+// loaded by 0x6088B0) [O]. Target angle = angle + 90 deg in the pivot frame (yaw: 90 = behind her; pitch: from
+// straight up, so the look pitch = angle). Strength = product of the forces (0x607B90 -> 0x5F2180): 1 = |her move
+// . the camera's x axis| x k, 2 = |her move| x k, 3 = curve(angle off behind her / 180 deg), 4 = curve(|move stick|),
+// 5 = k x dt, 7 = her mean move over 10 ticks x k; each capped at 1 (3 / 4 through the curve).
+struct CamForce {
+    uint8_t type;
+    float k;
+    const uint8_t* curve;
+};
+struct CamForceSet {
+    int id;
+    float angle, speed;
+    uint8_t dir, count; // dir: 0 fixed, 1 by her sideways move, 2 by her vertical move, 3 by her move along her markup
+    CamForce force[2];
+};
+constexpr uint8_t kSideCurve[64] = {0,   0,   0,   0,   0,   0,   0,   3,   9,   14,  20,  27,  34,  41,  48,  55,
+                                    62,  69,  76,  83,  89,  95,  101, 108, 115, 122, 128, 134, 140, 145, 148, 151,
+                                    152, 151, 149, 144, 139, 132, 125, 117, 109, 101, 94,  88,  82,  75,  68,  61,
+                                    54,  47,  40,  33,  26,  20,  14,  8,   3,   0,   0,   0,   0,   0,   0,   0}; // yaw set 11
+constexpr uint8_t kStickCurve[64] = {0,   1,   2,   3,   3,   4,   5,   5,   6,   7,   8,   9,   10,  11,  13,  14,
+                                     16,  19,  21,  23,  26,  28,  31,  34,  37,  40,  43,  47,  50,  54,  58,  62,
+                                     66,  70,  74,  79,  83,  88,  93,  98,  103, 108, 113, 119, 124, 130, 136, 142,
+                                     148, 154, 161, 168, 175, 182, 189, 196, 204, 211, 218, 226, 233, 241, 248, 255}; // yaw 4, pitch 16
+constexpr CamForceSet kYawSets[] = {
+    {1, 0, 20, 0, 1, {{2, 0.1f, nullptr}}},                                   // pillars
+    {4, 0, 15, 0, 1, {{4, 0, kStickCurve}}},                                  // poles
+    {5, 0, 70, 0, 1, {{5, 200, nullptr}}},                                    // perches
+    {6, 0, 0, 0, 0, {}},                                                      // balance beams (speed 0)
+    {11, 0, 180, 0, 2, {{3, 0, kSideCurve}, {1, 0.02f, nullptr}}},            // default (settings +0xE4)
+    {15, -60, 10, 3, 1, {{7, 20, nullptr}}},                                  // free climbing, hanging
+};
+constexpr CamForceSet kPitchSets[] = {
+    {4, -7.5f, 5, 0, 1, {{2, 1, nullptr}}},     // on foot
+    {16, 45, 5, 2, 1, {{4, 0, kStickCurve}}},   // ladders, pillars
+    {17, -10, 70, 0, 1, {{5, 1, nullptr}}},     // perches
+};
+const CamForceSet* camForceSet(const CamForceSet* sets, size_t n, int id) {
+    for (size_t i = 0; i < n; ++i)
+        if (sets[i].id == id) return &sets[i];
+    return nullptr; // none: no forces, speed 0 (0x608D20)
+}
+// What the forces read this tick (0x5F2180's inputs).
+struct ForceInputs {
+    vec3 move;      // her move this tick, units per frame (0x5E7EF0)
+    float meanMove; // the mean of her last 10 (0x5E9D70)
+    float stick;    // |move stick| (0x5E9830)
+    vec3 camX;      // the camera's x axis (BaseCamera +0x10 row 0, 0x5E7850): its right (Wine: row 2 = the look)
+    float dt;
+};
+float camForceStrength(const CamForceSet* s, float offBehind, const ForceInputs& in) {
+    float p = 1;
+    for (int i = 0; s && i < s->count; ++i) {
+        const CamForce& f = s->force[i];
+        switch (f.type) {
+        case 1: p *= std::min(1.0f, std::abs(glm::dot(in.move, in.camX)) * f.k); break;
+        case 2: p *= std::min(1.0f, glm::length(in.move) * f.k); break;
+        case 3: p *= curve64(f.curve, std::abs(offBehind) / kPi); break;
+        case 4: p *= curve64(f.curve, std::min(1.0f, in.stick)); break;
+        case 5: p *= std::min(1.0f, f.k * in.dt); break;
+        case 6: p *= std::min(1.0f, std::abs(in.move.z) * f.k); break;
+        case 7: p *= std::min(1.0f, in.meanMove * f.k); break;
+        default: p = 0; break;
+        }
+    }
+    return p;
+}
 } // namespace
 
 // Crossfade length (+0x19) and start frame (+0x1A), in 30 Hz frames, of the lara.drm anim request (object
@@ -682,9 +757,36 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     case State::PoleHang: mode = {9, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
     default: break; // mode 1: record 1, command 0x13
     }
+    // Its force sets (the mode list's command 0x10 yaw set, 1 pitch set; without 0x10 the default yaw set settings
+    // +0xE4 = 11, without 1 none: 0x601D30 -> 0x609C40 / 0x608D20) [O: camera DTP 0x14 +0x144 / +0x148].
+    const auto [yawSet, pitchSet] = [&]() -> std::pair<int, int> {
+        switch (mode.id) {
+        case 1: return {11, 4};
+        case 3: return {6, -1};
+        case 4: case 11: return {15, -1};
+        case 9: return {4, -1};
+        case 10: return {11, 16};
+        case 16: return {5, 17};
+        case 17: return {1, 16};
+        default: return {11, -1}; // 19, 20
+        }
+    }();
     // A new mode's focus record blends in over 0.5 s (settings +0x78 via 0x608200; 0x609830 lerps the records) and its
     // limits over 0.25 s (0x609C00 / 0x608F10: x 4 per second).
-    if (mode.id != orbit_.mode) orbit_.from = orbit_.now, orbit_.mode = mode.id, orbit_.modeTime = 0;
+    // Its force sets switch with it (0x609C40 / 0x608D20): the old set B becomes set A, blended to where the last
+    // switch had got (target angle and speed lerped by min(1, 4 x its clock)), the new set B starts with side sign 0.
+    const auto switchForces = [](OrbitState::Forces& c, const CamForceSet* sets, size_t n, int id) {
+        const float f = std::min(1.0f, c.blend * 4.0f);
+        const CamForceSet* b = camForceSet(sets, n, c.set);
+        c.fromBase += f * ((b ? glm::radians(b->angle + 90.0f) : 0.0f) - c.fromBase);
+        c.fromSpeed += f * ((b ? glm::radians(b->speed) : 0.0f) - c.fromSpeed);
+        c.fromSign = c.sign, c.fromSet = c.set, c.set = id, c.sign = 0, c.blend = 0;
+    };
+    if (mode.id != orbit_.mode) {
+        orbit_.from = orbit_.now, orbit_.mode = mode.id, orbit_.modeTime = 0;
+        switchForces(orbit_.yawForce, kYawSets, std::size(kYawSets), yawSet);
+        switchForces(orbit_.pitchForce, kPitchSets, std::size(kPitchSets), pitchSet);
+    }
     orbit_.modeTime += dt;
     {
         const float f = std::min(1.0f, orbit_.modeTime / 0.5f), g = std::min(1.0f, orbit_.modeTime * 4.0f);
@@ -706,19 +808,17 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     const bool snap = !focus_ || bike || glm::distance(*focus_, goal) > 2000.0f; // spawns, teleports
     if (snap) focus_ = goal;
     {
-        static constexpr uint8_t kEase[64] = {0,   1,   2,   2,   2,   3,   3,   3,   4,   5,   6,   8,   10,  13,  16,  20,
-                                              24,  29,  34,  40,  46,  52,  58,  65,  72,  79,  86,  93,  101, 109, 118, 127,
-                                              137, 146, 155, 164, 173, 181, 188, 195, 201, 207, 213, 218, 223, 228, 232, 236,
-                                              239, 241, 244, 245, 247, 248, 249, 250, 251, 251, 252, 252, 253, 253, 254, 255};
+        constexpr uint8_t kEase[64] = {0,   1,   2,   2,   2,   3,   3,   3,   4,   5,   6,   8,   10,  13,  16,  20,
+                                       24,  29,  34,  40,  46,  52,  58,  65,  72,  79,  86,  93,  101, 109, 118, 127,
+                                       137, 146, 155, 164, 173, 181, 188, 195, 201, 207, 213, 218, 223, 228, 232, 236,
+                                       239, 241, 244, 245, 247, 248, 249, 250, 251, 251, 252, 252, 253, 253, 254, 255};
         constexpr float kSpeed = 1896.3f;
         const vec3 axis[3] = {{std::sin(cam_.yaw), -std::cos(cam_.yaw), 0}, {std::cos(cam_.yaw), std::sin(cam_.yaw), 0}, {0, 0, 1}};
         const vec3 d = goal - *focus_;
         for (int i = 0; i < 3; ++i) {
             const float off = glm::dot(d, axis[i]), dist = std::abs(off), zone = lim.zones[i];
             if (zone <= 1e-3f) { *focus_ += axis[i] * off; continue; }
-            const float excess = std::max(0.0f, dist - zone), x = std::min(1.0f, dist / zone) * 63.0f;
-            const int k = int(x), k1 = std::min(63, k + 1);
-            const float ease = std::round(float(kEase[k1] - kEase[k]) * (x - float(k)) + float(kEase[k])) / 255.0f;
+            const float excess = std::max(0.0f, dist - zone), ease = curve64(kEase, dist / zone);
             const float step = std::min(dist, excess + ease * std::max(0.0f, kSpeed * dt - excess));
             *focus_ += axis[i] * std::copysign(step, off);
         }
@@ -746,20 +846,57 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
         const vec3 look = glm::normalize(target - orbit_.desired);
         cam_.yaw = std::atan2(look.y, look.x), cam_.pitch = std::asin(std::clamp(look.z, -1.0f, 1.0f));
     }
-    // Forces (0x608B60, x weight 0x5FFA90: 0 until 5 s after the last look input, 1 from 7 s: settings +0xC4 / +0xC8;
-    // the clock +0x1E4 caps at 1000), only while the camera is not being turned. Strength = product of the set's
-    // forces (0x5F2180); the angle moves toward the set's target by at most speed x strength x weight x dt.
-    // - yaw, free climbing and hanging (command 0x10 -> global data +0x164 set 15): 10 deg/s, flag 3 = toward
-    //   (0 + 90) deg in her frame, behind her; force type 7 x 20 = the mean of her last 10 per-frame moves
-    //   (0x5E9D70 / 0x608E20), capped at 1 (our 10 samples are 60 Hz ticks [I]).
-    // - pitch, on foot (command 1 -> +0x168 set 4): toward -7.5 deg at 5 deg/s; force type 2 x 1 (a speed, capped at
-    //   1; [I] her speed in units per 30 Hz frame).
-    // Without command 0x10 the default yaw set +0xE4 = 11 applies (180 deg/s behind her, forces of the pitch and her
-    // sideways motion; not modelled [U]).
+    // Forces (0x5FFB00 -> 0x608B60 per controller, x the look-idle weight 0x5FFA90: 0 until 5 s after the last look
+    // input, 1 from 7 s, settings +0xC4 / +0xC8; the clock +0x1E4 runs at +0xCC = 1 x dt also while she moves and caps
+    // at 1000), only while the camera is not being turned and no level camera record applies. Each controller turns
+    // its angle toward its set's target by at most speed x strength x dt (sets and forces: kYawSets / kPitchSets):
+    // - on foot, swimming and on ladders the default yaw set 11: toward behind her at 180 deg/s x curve(angle off
+    //   behind her / 180 deg: 0 within 20 deg of behind or of in front, 0.6 at her side) x min(1, 0.02 x her move
+    //   across the view): it swings round behind her only while she runs sideways to it, never while she stands;
+    // - free climbing / hanging set 15: 10 deg/s x min(1, 20 x her mean move), 60 deg to the side she moves along her
+    //   markup (dir 3; sign 0 = behind her until she moves);
+    // - on foot pitch set 4: toward -7.5 deg at 5 deg/s x min(1, her move); ladders / pillars pitch set 16: 45 deg up
+    //   while she climbs up, down while she climbs down (dir 2) at 5 deg/s x curve(|stick|); poles, perches, pillars,
+    //   beams yaw sets 4 / 5 / 1 / 6, perches pitch set 17.
+    // Per tick (0x608E20): the switch clock runs to 0.25 s (reaching it refills the move history with this move,
+    // 0x607C00), the dir-type signs follow her move (0x608A50: the sign of her move across the view / up / along her
+    // markup, kept within 0.001 of 0), her move this tick goes into the 10-entry history. Her move is the instance's
+    // displacement since the last frame (0x5E7EF0: +0x20 - +0xC0, less the platform's); ours per 60 Hz tick: tru.exe runs
+    // at 60 fps (Wine, l1_seatop surface swim: history 21.97 a frame at 1318 units/s; the original's own value scales
+    // with its frame rate). Wine, the same swim with the stick held right (camera +0x8F8 = yaw set 11, +0xDA0 pitch
+    // none): after a mouse nudge the camera circles her at 60 deg/s for 5 s, then 101 deg/s from 7 s (the swing adds
+    // 41 deg/s; set 11 from tru.exe's own heading / velocity there predicts 41-43).
     orbit_.idle = a.look.x != 0 || a.look.y != 0 ? 0.0f : std::min(1000.0f, orbit_.idle + dt);
-    std::rotate(orbit_.moves, orbit_.moves + 1, orbit_.moves + 10);
-    orbit_.moves[9] = dt > 0 && orbit_.valid ? glm::distance(s.pos, orbit_.lastPos) / (dt * 30.0f) : 0.0f;
+    const vec3 move = dt > 0 && orbit_.valid ? (s.pos - orbit_.lastPos) / (dt * 60.0f) : vec3(0);
     orbit_.lastPos = s.pos;
+    const vec3 camX(std::sin(cam_.yaw), -std::cos(cam_.yaw), 0);
+    float along = -1; // 0x6EC660: her position along the markup she hangs on, -1 without one [I: our distance / length]
+    if (s.ledge >= 0 && size_t(s.ledge) < col_.markup.size() && (mode.id == 4 || mode.id == 11)) {
+        const auto& pts = col_.markup[size_t(s.ledge)].points;
+        float len = 0, at = 0;
+        for (size_t i = 0; i + 1 < pts.size(); ++i) {
+            const float seg = glm::distance(pts[i], pts[i + 1]);
+            if (int(i) < s.ledgeSeg) at += seg;
+            len += seg;
+        }
+        if (len > 0) along = (at + s.ledgeT) / len;
+    }
+    for (auto* c : {&orbit_.yawForce, &orbit_.pitchForce}) {
+        const bool done = c->blend >= 0.25f;
+        c->blend = std::min(0.25f, c->blend + dt);
+        if (!done && c->blend >= 0.25f) std::fill(orbit_.moves, orbit_.moves + 10, glm::length(move));
+        const CamForceSet* sets = c == &orbit_.yawForce ? kYawSets : kPitchSets;
+        const size_t n = c == &orbit_.yawForce ? std::size(kYawSets) : std::size(kPitchSets);
+        for (auto [id, sign] : {std::pair{c->fromSet, &c->fromSign}, std::pair{c->set, &c->sign}}) {
+            const CamForceSet* set = camForceSet(sets, n, id);
+            const int dir = set ? set->dir : 0;
+            const float v = dir == 1 ? glm::dot(move, camX) : dir == 2 ? move.z : dir == 3 ? along - orbit_.along : 0.0f;
+            if (std::abs(v) >= 0.001f) *sign = v >= 0 ? 1.0f : -1.0f;
+        }
+    }
+    orbit_.along = along;
+    std::rotate(orbit_.moves, orbit_.moves + 1, orbit_.moves + 10);
+    orbit_.moves[9] = glm::length(move);
     float meanMove = 0;
     for (const float m : orbit_.moves) meanMove += m / 10;
     const float weight = std::clamp((orbit_.idle - 5.0f) / 2.0f, 0.0f, 1.0f);
@@ -836,14 +973,24 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
                 recordDistance = true;
             }
         }
-    } else if (weight > 0 && !bike && a.look.x == 0) {
-        if (mode.id == 4 || mode.id == 11) {
-            const float rate = glm::radians(10.0f) * std::min(1.0f, meanMove * 20.0f) * weight * dt;
-            cam_.yaw += std::clamp(std::remainder(s.yaw - cam_.yaw, 6.2831853f), -rate, rate);
-        } else if (mode.id == 1) {
-            const float rate = glm::radians(5.0f) * std::min(1.0f, orbit_.moves[9]) * weight * dt;
-            cam_.pitch += std::clamp(glm::radians(-7.5f) - cam_.pitch, -rate, rate);
-        }
+    } else if (weight > 0 && !bike && a.look.x == 0 && a.look.y == 0) {
+        const ForceInputs in{move, meanMove, glm::length(a.move), camX, dt};
+        const float off = std::remainder(cam_.yaw - s.yaw, 6.2831853f); // 0 = behind her
+        // 0x608B60: during a switch (f = min(1, 4 x clock) < 1) the rate is speed x strength(B) x f x (1 - f) x
+        // strength(A) toward the lerped target; the yaw frame angle = 90 deg + off [I: the side of +].
+        const auto force = [&](const OrbitState::Forces& c, const CamForceSet* sets, size_t n, float angle) {
+            const CamForceSet *A = camForceSet(sets, n, c.fromSet), *B = camForceSet(sets, n, c.set);
+            const float f = std::min(1.0f, c.blend * 4.0f), kHalf = kPi / 2;
+            const float baseB = B ? glm::radians(B->angle + 90.0f) : 0.0f, speedB = B ? glm::radians(B->speed) : 0.0f;
+            const float targetA = A && A->dir ? c.fromSign * (c.fromBase - kHalf) + kHalf : c.fromBase;
+            const float targetB = B && B->dir ? c.sign * (baseB - kHalf) + kHalf : baseB;
+            const float other = std::abs(f - 1.0f) < 0.001f ? 1.0f : (1 - f) * camForceStrength(A, off, in);
+            const float rate = glm::mix(c.fromSpeed, speedB, f) * camForceStrength(B, off, in) * f * other * dt;
+            return std::clamp(std::remainder(glm::mix(targetA, targetB, f) - angle, 6.2831853f), -rate, rate);
+        };
+        cameraSwing_ = force(orbit_.yawForce, kYawSets, std::size(kYawSets), kPi / 2 + off) * weight;
+        cam_.yaw += cameraSwing_;
+        cam_.pitch += force(orbit_.pitchForce, kPitchSets, std::size(kPitchSets), kPi / 2 + cam_.pitch) * weight;
     }
     // [I] riding without looking: swing behind the bike, faster the faster it goes
     if (bike && bike->phase == BikePhase::Ride && a.look.x == 0 && bike->speed > 0)

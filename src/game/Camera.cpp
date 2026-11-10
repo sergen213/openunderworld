@@ -254,6 +254,7 @@ bool World::tickSplineCamera(float dt) {
 }
 
 void World::updateCamera(const Actions& a, float dt) {
+    cameraSwing_ = 0;
     if (tickSplineCamera(dt)) return;
     if (fieldCamera_) { // from her eyes along the look angles; zoom narrows the view and slows the look (World::tick)
         const float fov = glm::mix(fovDeg * 0.75f, 6.0f, fieldZoom_), slow = fov / (fovDeg * 0.75f);
@@ -282,6 +283,9 @@ void World::updateCamera(const Actions& a, float dt) {
 nlohmann::json World::serializeRuntime() const {
     const auto v = [](vec3 p) { return nlohmann::json{p.x, p.y, p.z}; };
     const auto limits = [&](const OrbitState::Limits& l) { return nlohmann::json{v(l.offset), v(l.zones), l.yawRange, l.pitchLo, l.pitchHi}; };
+    const auto forces = [](const OrbitState::Forces& f) {
+        return nlohmann::json{f.set, f.fromSet, f.fromBase, f.fromSpeed, f.fromSign, f.sign, f.blend};
+    };
     const auto& o = orbit_;
     nlohmann::json hint = nullptr; // the markup as (unit, local index): global indices depend on the streamed set
     if (const auto owner = o.hintMarkup >= 0 ? markupOwner(o.hintMarkup) : std::nullopt) hint = {owner->first, owner->second};
@@ -312,7 +316,8 @@ nlohmann::json World::serializeRuntime() const {
                         {"up", v(cam_.up)}, {"fov", cam_.fovDeg},
                         {"focus", focus_ ? v(*focus_) : nlohmann::json(nullptr)},
                         {"orbit", {v(o.desired), o.dist, o.speed, o.valid, o.yaw, o.pitch, limits(o.from), limits(o.now), o.mode,
-                                   o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint}},
+                                   o.modeTime, o.idle, std::vector<float>(o.moves, o.moves + 10), v(o.lastPos), v(o.hint), hint,
+                                   forces(o.yawForce), forces(o.pitchForce), o.along}},
                         {"spline", std::move(spline)}, {"blendOut", blendOut_}, {"blendFrom", pose(blendFrom_)}}},
             {"hair", std::move(hair)}, {"playerUnit", playerUnit_}, {"air", air_}, {"submerged", submerged_},
             {"hingeLimits", {multibodyLo_, multibodyHi_}}, {"limitsOff", multibodyLimitOff_}, {"anim", std::move(layers)}, {"aimTime", aimTime_}, {"bones", std::move(bones)},
@@ -341,6 +346,12 @@ void World::restoreRuntime(const nlohmann::json& j) {
         std::copy(moves.begin(), moves.end(), o.moves);
         o.lastPos = v(a.at(12)), o.hint = v(a.at(13));
         if (const auto& h = a.at(14); h.is_array()) o.hintMarkup = markupIndex(h.at(0).get<std::string>(), h.at(1).get<int>());
+        const auto forces = [](const nlohmann::json& f) {
+            return OrbitState::Forces{f.at(0).get<int>(),   f.at(1).get<int>(),   f.at(2).get<float>(), f.at(3).get<float>(),
+                                      f.at(4).get<float>(), f.at(5).get<float>(), f.at(6).get<float>()};
+        };
+        if (a.size() > 17) o.yawForce = forces(a.at(15)), o.pitchForce = forces(a.at(16)), o.along = a.at(17);
+        else o.mode = -1; // older saves: the next tick picks the mode's force sets afresh
         const auto& f = cam.at("focus");
         const std::optional<vec3> focus = f.is_null() ? std::nullopt : std::optional<vec3>(v(f));
         CameraState c = cam_;
