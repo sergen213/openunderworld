@@ -1,0 +1,158 @@
+{
+ "version": 1,
+ "name": "ch16_tower_base_panel",
+ "chapter": "16 Gate of the Dead (known gap): the tower's base panel walked round until the first beam (docs/matrix/16_gate_of_the_dead.md C16-15)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/gateofdead2.html",
+ "note": "After the three power blocks (as ch16_tower_power) cog wheel 7312's section 0 (push handle, kind-1 record) is gripped: thor_engage, Forward turns the base on its hinge with her carried round (112 units/s at her radius). It turns from 89.0 to about 40 degrees off its solved position in 12 s and then all but stops: 38 s more of pushing leave it 26 degrees off (two runs: -0.707 and -0.453 rad). Dispatcher 7318's vt 62 ('Valgrind column in solved position') is never called, so no beam, no cutscene, and the gate's lock (7334 section 2) stays shut. Cause not found [U]: her path round the wheel is blocked by something she is pressed against, or the hinge's motor / limit is not what ours makes of the record. The three tier wheels 7313-7315 stand 134 / 134 / 89 degrees off and are reached only by the rotating-ring climbs (C16-16, -18, -20), which are not played either.",
+ "level": "l5_valgrind",
+ "spawn": [
+  0,
+  3072,
+  180,
+  180
+ ],
+ "steps": [
+  {
+   "step": "power_block_1",
+   "plan": [
+    "go -200 -2000 150",
+    "engage 7498",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "object.7312.uber.1",
+     "eq": 1,
+     "note": "its niche is filled"
+    },
+    {
+     "probe": "object.7312.uber.2",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "power_block_2",
+   "plan": [
+    "engage 7499",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "object.7312.uber.2",
+     "eq": 1,
+     "note": "its niche is filled"
+    },
+    {
+     "probe": "object.7312.uber.3",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "power_block_3",
+   "plan": [
+    "engage 7500",
+    "wait 0.5",
+    "press",
+    "wait 3",
+    "engage 7312 walk",
+    "wait 0.5",
+    "press",
+    "wait 4"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "object.7312.uber.3",
+     "eq": 1,
+     "note": "its niche is filled"
+    }
+   ]
+  },
+  {
+   "step": "grip_the_base_panel",
+   "plan": [
+    "engage 7312 walk",
+    "push 1 0 14",
+    "wait 1"
+   ],
+   "duration": 60,
+   "expect": [
+    {
+     "clips": [
+      "thor_engage",
+      "thor_forward"
+     ]
+    },
+    {
+     "probe": "object.7312.uberjoint.0",
+     "over": "min",
+     "max": -1.4,
+     "note": "radians: the base starts 89 degrees off"
+    },
+    {
+     "probe": "object.7312.uberjoint.0",
+     "min": -0.75,
+     "note": "turned to 40.5 degrees off in 12 s (112 units/s at her radius)"
+    },
+    {
+     "probe": "player.pos.x",
+     "min": -99999
+    },
+    {
+     "probe": "player.pos.y",
+     "min": -99999
+    }
+   ]
+  },
+  {
+   "step": "turn_it_home",
+   "plan": [
+    "engage 7312 walk",
+    "push 1 0 19",
+    "wait 1",
+    "engage 7312 walk",
+    "push 1 0 19",
+    "wait 1"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "object.7312.uberjoint.0",
+     "near": 0,
+     "tol": 0.05,
+     "note": "DEFECT: it stays 26 to 40 degrees off"
+    },
+    {
+     "calls": [
+      "7318:62"
+     ],
+     "note": "DEFECT: 'Valgrind column in solved position' is never reported, the first beam (7331) never lights"
+    },
+    {
+     "probe": "player.pos.x",
+     "min": -99999
+    },
+    {
+     "probe": "player.pos.y",
+     "min": -99999
+    }
+   ]
+  }
+ ]
+}

@@ -427,6 +427,9 @@ public:
     void cinematicEvent(int32_t uid, uint32_t id);
     // Bikes larabase 52 mounted Lara on (0x777DD0 posts INSTANCE message 0x85 to the bike and to her), oldest first.
     std::vector<int32_t> takeMounts() { return std::exchange(mounts_, {}); }
+    // `instance` 26 on an instance other than Lara: {receiver uid, target object uid, its marker id or -1}, oldest first.
+    // The World places what it simulates itself (a parked motorcycle, World::placeBike).
+    std::vector<std::array<int32_t, 3>> takePlacements() { return std::exchange(placements_, {}); }
     // Lara pulled grapple target `uid` (an uber grapple target, script type 3565's subclasses). They override slots
     // 55..60 with handlers that send their uberobjectcommand members (levers 59/60, shiva arms 55/56, uber walls and
     // the naga statue 56/57, the snake head 57) [O]; which slot the exe calls on a pull is [I]: the first overridden
@@ -668,6 +671,7 @@ private:
     std::optional<std::pair<uint32_t, std::optional<uint32_t>>> playerUnit_; // setPlayerUnit
     void notifyPlayerUnit(int32_t uid);
     std::optional<std::pair<int32_t, int32_t>> teleport_;
+    std::vector<std::array<int32_t, 3>> placements_; // takePlacements
     uint64_t visibilityVersion_ = 0;
     uint32_t playerHiddenGroups_ = 0, playerGearGroups_ = 0; // current / default (setBigfile) hidden draw groups
     Experience experience_;

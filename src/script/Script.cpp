@@ -1971,6 +1971,14 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 teleport_ = {nc.args[0].uid, b & kAnchorBit ? int32_t(b & 0xFFFF) : -1};
                 return true;
             }
+            // The same call on another instance is queued for the World (takePlacements), which places what it simulates
+            // itself: l5_valgrind's 235_val_shaft end handler (7403 vt 60) stands bike 7229 on marker object 7404 when she
+            // rode through the plane [O bytecode]. The receiver's script result stays the generic one below.
+            if (!std::strcmp(name, "instance") && nc.function == 26 && nc.args.size() == 1 && self != playerScript_ &&
+                nc.args[0].kind == vm::Value::Kind::Object && find(nc.args[0].uid)) {
+                const uint32_t b = nc.args[0].bits;
+                placements_.push_back({self->uid, nc.args[0].uid, b & kAnchorBit ? int32_t(b & 0xFFFF) : -1});
+            }
             // uberobjectbase 2 (0x79D090 -> 0x4AB800): a ModelMarkerAnchor (0x4D3110) on section `args[0]` at HInfo
             // marker id `args[1]` (0x4D4820 -> 0x46DF20); instance 26 / 23 take it. Ours: the object, tagged with the
             // marker id [I: section 0 = the object itself; every caller passes an unset section id].

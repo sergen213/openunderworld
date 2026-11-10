@@ -2823,6 +2823,20 @@ Evidence:
   (657) in `l4_trailstart` 6699 and `l5_valgrind_tunnel` 6715; `co_motorcycle` (641, a cinematic copy) in
   `l4_ballcourt` 6403 and `l7_thin_ice` 9078. No Thailand (l2) unit places a bike. `UnitData::vehicles` keeps the
   `motorcycle` intros; spawners and cinematic copies are not instantiated [U: the spawner's script for revisits].
+- Placed by script [O bytecode]: `instance` 26 (0x4A4140: the receiver takes its argument's transform) with a bike as
+  the receiver. l5_valgrind's 235_val_shaft (cinematic object 7403, plane 7472 behind the tunnel's Thor door): its
+  start handler (vt 58) asks `larabase` 54 whether she rode in on 7229 and keeps the answer in a member, hides the
+  bike for the cutscene (`instance` 60) and kills volume 7380; its end handler (vt 60) shows it again and, when she
+  rode in, takes marker object 7404's transform (`instance` 4) and places the bike there, beside where the cutscene's
+  header tail stands her on foot. Ours: `script::Runtime::takePlacements` -> `World::placeBike`: the parked bike at
+  the object (or its marker), heading as an intro there, on the ground found under the point ([I] up to 1000 down:
+  7404 hangs 230 over the ramp and the original's vehicle body falls onto its wheels). World sends both cinematic
+  events when the stream starts, so the end handler runs while she still sits on the bike: the placement then waits
+  until the stream's end takes her off it (`World::tickVehicles`; her own dismount drops it; [I] at most 120 s).
+  `VehicleReal.ShaftCinematicStandsTheBikeOnItsMarker`; by input in the self-test `ch16_tunnel_door`. Other
+  receivers of `instance` 26 (not Lara, not a bike) are still not moved [U]. `larabase` 53 in the start handler posts
+  message 0x85 to the bike alone (0x777E10); ours treats 53 as "mount" (l4_ballcourt's use), which changes nothing
+  here because she sits on it [U: what the bike does with 0x85 while ridden].
 - Classes [V-exe] RTTI `Bike : Vehicle` (vtables 0x861974 / 0x861A18; 0x886064 / 0x8860E4 are their RTTI locators), `VehicleCamera`, `NtMotor_ScriptType`; state-chart
   conditions `PSCCF_Vehicle_SteerDirection/StuntDirection/IdlePose/DismountClearance/State`. 0x6AB960 creates the Bike
   (0x790 bytes, ctor 0x78EDA0) when the instance's vehicle data (+0x50 = ObjectBase +0xC8) has `+8 == 1`, with the tuning

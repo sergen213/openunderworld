@@ -473,6 +473,71 @@ TEST(VehicleReal, FirstRideOverThePitByAutopilot) {
     EXPECT_LT(glm::length(game::vec2(w.player().state().pos) - game::vec2(69586, -55062)), 700); // checkpoint 6620
 }
 
+// l5_valgrind's 235_val_shaft (cinematic object 7403, started by plane 7472 behind the tunnel's Thor door) [O bytecode]:
+// its start handler (vt 58) asks larabase 54 whether she rode in on bike 7229 and remembers it; its end handler (vt 60)
+// then takes marker object 7404's transform (instance 4) and places the bike there (instance 26 on the bike), beside
+// where the cutscene leaves her on foot. The marker hangs 230 over the ramp: the bike stands on the ground under it,
+// parked, and can be mounted. Without the ride in (the member stays 0) the bike is left where it is.
+TEST(VehicleReal, ShaftCinematicStandsTheBikeOnItsMarker) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    // 0: the end handler after the cutscene's end stood her on foot; 1: both handlers at once while she still sits on
+    // the bike, as World sends them (the placement waits until the stream's end takes her off); 2: she did not ride in
+    for (const int order : {0, 1, 2}) {
+        const bool rodeIn = order != 2;
+        SCOPED_TRACE(order);
+        game::World w(loader(bf), "l3_main_bedroom", game::loadLaraAnims(bf));
+        w.script().setBigfile(&bf);
+        w.startChapter(5);
+        for (int i = 0; i < 90; ++i) w.tick({});
+        ASSERT_TRUE(w.ridden());
+        ASSERT_EQ(w.ridden()->uid, 7229);
+        const auto* marker = w.script().find(7404);
+        ASSERT_TRUE(marker) << "l5_valgrind is streamed in beside the tunnel";
+        const game::vec3 to = marker->pos;
+        const auto bikeAt = [&] { return game::vec3((*w.bikeMatrix(7229, 1))[3]); };
+        const game::vec3 start = bikeAt();
+        ASSERT_GT(glm::length(start - to), 10000.0f);
+        if (rodeIn) w.script().call(7403, 58);
+        if (order == 1) {
+            w.script().call(7403, 60);
+            for (int i = 0; i < 20; ++i) w.tick({});
+            ASSERT_TRUE(w.ridden());
+            EXPECT_LT(glm::length(bikeAt() - start), 50.0f) << "not under her";
+        }
+        // the cutscene's end leaves her standing (ours: World places her; she is off the bike from then on)
+        game::PlayerState s;
+        s.pos = to + game::vec3(-1500, 0, -200), s.yaw = 0;
+        w.restore(s, 0, -0.25f);
+        for (int i = 0; i < 3; ++i) w.tick({});
+        ASSERT_FALSE(w.ridden());
+        if (order != 1) w.script().call(7403, 60);
+        for (int i = 0; i < 3; ++i) w.tick({});
+        const game::vec3 at = bikeAt();
+        if (!rodeIn) {
+            EXPECT_LT(glm::length(at - start), 50.0f) << "left where it stood";
+            continue;
+        }
+        EXPECT_LT(glm::length(game::vec2(at - to)), 5.0f) << at.x << " " << at.y;
+        EXPECT_LT(at.z, to.z - 100) << "not hanging at the marker";
+        EXPECT_GT(at.z, to.z - 400) << "on the ramp under it";
+        EXPECT_EQ(w.bikes().at(7229).phase, game::BikePhase::Parked);
+        std::printf("bike 7229 at %.1f %.1f %.1f (marker 7404 %.1f %.1f %.1f), yaw %.1f deg\n", at.x, at.y, at.z, to.x, to.y, to.z,
+                    glm::degrees(w.bikes().at(7229).yaw));
+        // and she can get on it there: Interact at its mount spot (its left side)
+        const float yaw = w.bikes().at(7229).yaw;
+        s.pos = at + game::vec3(std::cos(yaw) * -52 - std::sin(yaw) * 158, std::sin(yaw) * -52 + std::cos(yaw) * 158, 0);
+        w.restore(s, 0, -0.25f);
+        for (int i = 0; i < 30; ++i) w.tick({});
+        game::Actions press;
+        press.interact = true;
+        w.tick(press), w.tick(press);
+        for (int i = 0; i < 240 && !(w.ridden() && w.ridden()->phase == game::BikePhase::Ride); ++i) w.tick({});
+        ASSERT_TRUE(w.ridden());
+        EXPECT_EQ(w.ridden()->phase, game::BikePhase::Ride);
+    }
+}
+
 // The manoeuvres traced in tru.exe under Wine (openunderworld-work/gameplaygoal/bike/ref_hand.txt, ref_launch.txt: on the
 // level top of the trail's stair hump) with the same inputs on the level floor of the stone tunnel: throttle 1 s from a
 // standstill, then the Vehicle Brake alone; the launch. The original's numbers carry up to 0.06 s of key latency.

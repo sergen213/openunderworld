@@ -215,7 +215,7 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             std::fprintf(stderr, "ou-game: autopilot map %7.0f %s\n", lara.pos.y + j * cell, row.c_str());
         }
         next(tick, nullptr);
-    } else if (s.op == "ride") { // ride X Y [R] [THROTTLE] [SPEED]: steer the ridden bike to (X, Y) with the raw stick
+    } else if (s.op == "ride") { // ride X Y [R] [THROTTLE] [SPEED] [BRAKESTEER]: steer the ridden bike to (X, Y) with the raw stick
         const game::Bike* b = w.ridden();
         const glm::vec2 to(std::stof(s.args[0]), std::stof(s.args[1]));
         const float radius = s.args.size() > 2 ? std::stof(s.args[2]) : 300.0f, throttle = s.args.size() > 3 ? std::stof(s.args[3]) : 1.0f;
@@ -235,7 +235,10 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
         } else if (t % 2 == 0) { // the bike's stick is raw: forward = throttle, right = steering (- = left)
             const float err = std::remainder(std::atan2(d.y, d.x) - lara.yaw, glm::two_pi<float>());
             const auto q = [](float v) { return std::round(v * 20) / 20; };
-            set(tick, "forward", b->speed > 1.25f * limit ? -1.0f : b->speed > limit ? 0.0f : throttle, a), set(tick, "right", q(std::clamp(-2.5f * err, -1.0f, 1.0f)), a);
+            // braking with the stick past half is the power slide (World::driveBike): BRAKESTEER 0.5 keeps the stick inside it
+            const bool brake = b->speed > 1.25f * limit;
+            const float lock = brake && s.args.size() > 5 ? std::stof(s.args[5]) : 1.0f;
+            set(tick, "forward", brake ? -1.0f : b->speed > limit ? 0.0f : throttle, a), set(tick, "right", q(std::clamp(-2.5f * err, -lock, lock)), a);
         }
     } else if (s.op == "wait") {
         if (t >= ticks(s.args[0])) next(tick, nullptr);

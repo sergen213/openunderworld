@@ -27,9 +27,10 @@ public:
     //   near R                      log the markup polylines within R units of Lara (poles, ledges)
     //   map R [CELL] [UP]           log the floor within R of Lara as a character grid, one cell per CELL (100) units: its
     //                               height against her feet in hundreds ('.', '1'..'9' up, 'a'..'i' down), '#' a wall
-    //   ride X Y [R] [THROTTLE] [SPEED] on the motorcycle: steer to (X, Y) with the raw stick until within R (default 300),
-    //                               (or once past it), throttle THROTTLE (default 1) while slower than SPEED units/s,
-    //                               coasting above it, braking above 1.25 SPEED
+    //   ride X Y [R] [THROTTLE] [SPEED] [BRAKESTEER] on the motorcycle: steer to (X, Y) with the raw stick until within R
+    //                               (default 300), (or once past it), throttle THROTTLE (default 1) while slower than SPEED
+    //                               units/s, coasting above it, braking above 1.25 SPEED; while braking the stick stays
+    //                               within BRAKESTEER (default 1; 0.5 = no power slide, which is brake + stick past half)
     // A step that does not finish in 20 s fails the plan (logged; the script so far is still written).
     static Autopilot load(const std::filesystem::path& plan, std::filesystem::path out);
     // The same plan syntax from text, nothing written (ou-game --self-test steps, app/game/SelfTest.hpp). Throws
