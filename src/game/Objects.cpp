@@ -396,6 +396,10 @@ void World::uberAction(int32_t uid, size_t section, const formats::UberAction& a
              // fade times > 0 do not occur.
         rt.sections[section].removed = true, syncedObjects_ = ~size_t(0);
         break;
+    case 0x13: // 0x4D3B50: gives birth to the record's object at the section's marker (formats::UberBirth). Ours: the
+               // treasure of a reward urn (UnitData::births; a pickup from now on), whatever broke the urn.
+        if (a.birth >= 0) born.insert(formats::bornUid(uid, size_t(a.birth)));
+        break;
     case 0x1D: // 0x6D5EC0: section +0xD4 = the action's set, where Lara engages the section (query 0x53, 0x6D59C0)
         rt.sections[section].engagement = a.engagement;
         break;

@@ -48,6 +48,7 @@ struct UberAction {
     uint32_t type = 0, value = 0;
     int32_t joint = -1, param = -1;
     int32_t engagement = -1;
+    int32_t birth = -1; // 0x13: index into UberObjectData::births
 };
 // Physics joint record (action 9, 0x4D8000). Type 0 hinge (angle, degrees), 2 prismatic (units), 8 fixed, 11 link of
 // two joints, 5 / 7 multi-axis (0x4D1040 -> engine 1 / 3 / 0xB / 0xD / 8 / 10). Bodies are section indices (each
@@ -97,6 +98,18 @@ struct UberEvent {
     bool once = false;
     std::vector<std::vector<UberCondition>> conditions;
 };
+// Birth record of state action 0x13 (0x4D3B50): the object born (INSTANCE_BirthObjectNoParent) at the section
+// instance's HInfo marker `marker` (0x4705B0; model byte or marker -1, or no such marker: at the instance's own
+// transform), then sent message 0x1E8 with its parent. Users (survey of all object DRMs,
+// `ObjectsReal.OnlyRewardUrnsGiveBirthToPickups`): the treasure urns `*_pt_weightbreak_reward` (state 2 "Broken": object
+// 103 tp_rw_artifact_spawned at marker 0, 79.01 over the base); props leaving debris or effects (the ship's ms_uo_* ->
+// *_spawned, sh_ei_exploading_barrel's two explosion objects, the tentacle gears' squibs) and
+// revisit_motorcycle_spawner: none of these is born in ours.
+struct UberBirth {
+    uint16_t object = 0; // +0 objectlist id
+    int8_t model = -1;   // +2
+    int32_t marker = -1; // +4
+};
 struct UberObjectData {
     uint16_t objectClass = 0;
     std::vector<UberSection> sections;
@@ -105,6 +118,7 @@ struct UberObjectData {
     std::vector<std::vector<UberCondition>> queries; // +0x28 / +0x2C: `uberobjectquery` index -> condition list (0x4AB6A0)
     std::vector<UberJoint> joints;
     std::vector<UberParam> params;
+    std::vector<UberBirth> births; // action 0x13 records (UberAction::param indexes them)
 };
 
 // nullopt for non-uber objects. Throws cdc::FormatError on malformed uber data.

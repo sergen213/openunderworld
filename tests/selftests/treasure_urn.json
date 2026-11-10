@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "treasure_urn",
+  "chapter": "Collectibles: a treasure urn broken by pistol fire gives its treasure, which is then picked up",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/rewards.html",
+  "note": "l1_baldrs_sideroom: urn 94 (ar_pt_weightbreak_reward, reward 12) stands 700 units ahead of Lara. Free fire goes where the camera looks, so the camera is tilted down onto the urn first. Its uber section goes 0 -> 2 on the hit (state 2's action 0x13 gives birth to the treasure, id 94 | 0x20000000 = 536871006), then 1 after fx_smash.",
+  "level": "l1_baldrs_sideroom",
+  "spawn": [4686, 4078, 2075, 90],
+  "steps": [
+    {"step": "shoot_the_urn",
+     "input": ["0.2 draw 1", "0.3 draw 0", "0.5 looky -0.5", "1.5 looky 0", "2.2 fire 1"],
+     "duration": 8,
+     "until": {"probe": "object.94.uber.0", "eq": 1},
+     "expect": [
+       {"probe": "weapon.shots_fired", "min": 1},
+       {"probe": "object.94.uber.0", "eq": 1, "note": "broken and removed"},
+       {"probe": "world.treasures", "eq": 0, "note": "the treasure lies there, not yet taken"}
+     ]},
+    {"step": "holster",
+     "input": ["0.1 draw 1", "0.2 draw 0"],
+     "duration": 1.5,
+     "expect": [{"probe": "weapon.drawn", "eq": false}]},
+    {"step": "take_the_treasure",
+     "plan": ["go 4686 4720 90", "press interact", "wait 1.5"],
+     "duration": 30,
+     "expect": [
+       {"probe": "step.pickups", "has": ["treasure:536871006"]},
+       {"probe": "world.treasures", "eq": 1},
+       {"probe": "world.relics", "eq": 0}
+     ]}
+  ]
+}
