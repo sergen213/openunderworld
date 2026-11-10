@@ -1686,6 +1686,69 @@ TEST(Game, HangJumpsUpRightAndBack) {
     EXPECT_EQ(lefts, 1) << "the last jump goes to her left";
 }
 
+// Jump in the hang under a top she can climb onto (clearance class 2, tru.exe 0x74E290), with a ledge 400 above as an
+// up-jump target: the top wins. The stick up + Jump pulls up at once (the lean S435's T613), held or not, with no
+// handstand; the stick neutral waits on the button (S439) and pulls up on the release. The same hang with something
+// standing on the lip (a slab 50 in, as the blown door leaf of l3_bedroom_hall came to rest over ledge 969: the ray
+// 252 over the ledge meets it) is class 1: no pull-up, the up jump goes to the ledge above.
+TEST(Game, HangPullUpWinsOverTheJumpUpTarget) {
+    const auto world = [](bool slab) {
+        CollisionMesh m;
+        addBox(m, {0, -3000, -100}, {1000, 3000, 500}); // the top at 500, 600 over the floor
+        addFloor(m, -3000, -3000, 0, 3000, -100);
+        if (slab) addBox(m, {50, -3000, 500}, {66, 3000, 1100});
+        m.markup.push_back({1, 1, {{0, 300, 500}, {0, -300, 500}}});
+        m.markup.push_back({1, 2, {{0, 300, 900}, {0, -300, 900}}}); // 400 above: in the up jump's reach
+        m.build();
+        game::AnimLibrary anims = syntheticAnims();
+        anims.clips["ledgeb_climbup_fast"] = rootClip(25, 0);
+        anims.clips["ledgeb_climbupflair"] = rootClip(74, 0);
+        auto w = std::make_unique<game::World>(std::move(m), anims, game::Spawn{{-300, 0, -100}, 0});
+        game::PlayerState h;
+        h.state = State::Hang, h.ledge = 0, h.ledgeT = 300, h.ledgeSide = -1, h.clip = "ledgeb_idle";
+        w->restore(h, 0, -0.25f);
+        w->tick({});
+        return w;
+    };
+    Actions up;
+    up.jump = true, up.move = {0, 1};
+    for (const int held : {1, 60}) { // the stick up: at once, however long Jump stays down
+        auto w = world(false);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 8; ++i) w->tick(fixedCamera(*w, forward(), 0)); // leaning first, as a player does
+        ASSERT_EQ(s.state, State::Hang);
+        w->tick(fixedCamera(*w, up, 0));
+        EXPECT_EQ(s.state, State::ClimbUp) << "held " << held;
+        EXPECT_EQ(s.clip, "ledgeb_climbup_fast");
+        for (int i = 1; i < 60; ++i) {
+            w->tick(fixedCamera(*w, i < held ? up : forward(), 0));
+            EXPECT_NE(s.state, State::HangJump);
+            EXPECT_NE(s.clip, "ledgeb_climbupflair");
+            EXPECT_FALSE(s.clip.starts_with("ledgeb_idle_to_jump") || s.clip.starts_with("ledgeb_jump_up")) << s.clip;
+        }
+    }
+    { // the stick neutral: waits on the button, pulls up when it is let go
+        auto w = world(false);
+        const auto& s = w->player().state();
+        Actions jump;
+        jump.jump = true;
+        for (int i = 0; i < 6; ++i) {
+            w->tick(jump);
+            EXPECT_EQ(s.state, State::Hang);
+        }
+        w->tick({});
+        EXPECT_EQ(s.state, State::ClimbUp);
+        EXPECT_EQ(s.clip, "ledgeb_climbup_fast");
+    }
+    { // something on the lip: no top to climb onto, the up jump takes the ledge above
+        auto w = world(true);
+        const auto& s = w->player().state();
+        w->tick(fixedCamera(*w, up, 0));
+        ASSERT_EQ(s.state, State::HangJump);
+        EXPECT_EQ(s.ledge, 1);
+    }
+}
+
 // The hang jump queries by their class records (lara.drm 0x2AA4C, 0x2A9EC): sideways (q7 / q8) the hit must lie 553
 // (+0x28) or more from the attach point, so a ledge whose near half ends 521 aside is no target while one running on to
 // 1000 is caught where the arc comes back to its height; back (q9), a ledge whose floor 94.8 out of its face is

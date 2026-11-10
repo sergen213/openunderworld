@@ -4702,6 +4702,11 @@ Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full),
   stick ends S456 early into the run (T244: Wine 0.58 s instead of 0.82 s) [not ported].
   Ours (`PlayerState::pullWait`, `Player::tick` Hang): the wait in the hang's idle pose [I: S439's own pose], the
   release / the 15-frame hold as above, the pull-up clip whole (it used to start at frame 6 on the press: 0.57 s).
+  Both pull-ups need clearance class 2 (T608 / T613: `PSCCF_Markup_ClearanceResult` 650), also with a ledge above in
+  the up jump's reach (`Game.HangPullUpWinsOverTheJumpUpTarget`). Class 1 leaves only the up jump (the lean's
+  `ledgeb_jump_up_antic`, T614 to a target): something on the lip in the ray 252 over the ledge (l3_bedroom_hall
+  ledge 969 when the blown door leaf comes to rest there), or a top more than 40 over the ledge 139 in (0x72BAE0:
+  l5_valaskjalf band 1542, whose top is the steps' 1-in-2 ramp, 69.5 up there) [O rule; both measured in ours].
 - **Hand over hand faster with Interact** [O chart, clips, Wine]: a press while the stick shimmies (T581 / T582 from
   S427 / S432 / S431, not at the ledge's end) plays one `ledgeb_right_hustle` (S441 / S442, request 968, mirrored to
   the left: 371 aside in 0.57 s against `ledgeb_right`'s 196 in 0.70 s; Wine: 368 in 0.47 s from the press to the
