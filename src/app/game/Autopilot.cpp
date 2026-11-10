@@ -38,7 +38,7 @@ Autopilot Autopilot::parse(std::string_view plan) {
         for (std::string w; ls >> w;) s.args.push_back(w);
         static const std::vector<std::pair<std::string, size_t>> kOps = {{"go", 2}, {"engage", 1}, {"face", 1}, {"press", 0},
                                                                          {"hold", 2}, {"stick", 3}, {"run", 2}, {"push", 3}, {"wait", 1}, {"near", 1},
-                                                                         {"ride", 2}, {"map", 1}};
+                                                                         {"ride", 2}, {"map", 1}, {"swim", 3}};
         const auto it = std::ranges::find(kOps, s.op, &std::pair<std::string, size_t>::first);
         if (it == kOps.end() || s.args.size() < it->second)
             throw std::runtime_error("autopilot plan line " + std::to_string(no) + ": unknown step or missing arguments");
@@ -131,6 +131,20 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
             next(tick, "timed out");
         } else {
             steer(d / dist, has("walk") || dist < 250);
+        }
+    } else if (s.op == "swim") { // swim X Y Z [R]: in water, the stick towards (X, Y), Jump / Drop held to rise / sink
+        const glm::vec3 d = glm::vec3(std::stof(s.args[0]), std::stof(s.args[1]), std::stof(s.args[2])) - lara.pos;
+        const float radius = s.args.size() > 3 ? std::stof(s.args[3]) : 150.0f, flat = glm::length(glm::vec2(d));
+        if (glm::length(d) <= radius || t > 3 * kTimeout) {
+            centre(), set(tick, "jump", 0, a), set(tick, "drop", 0, a);
+            std::fprintf(stderr, "ou-game: autopilot tick %llu swim: state %s at %.1f %.1f %.1f\n", (unsigned long long)tick,
+                         std::string(game::stateName(lara.state)).c_str(), lara.pos.x, lara.pos.y, lara.pos.z);
+            next(tick, glm::length(d) <= radius ? nullptr : "timed out");
+        } else {
+            // The stick's share shrinks as the point comes to lie above / below her, so she does not circle it.
+            if (flat > 30) steer(glm::vec2(d) / flat * std::clamp(flat / std::max(std::abs(d.z), 1.0f), 0.0f, 1.0f), false);
+            else centre();
+            set(tick, "jump", d.z > radius * 0.5f ? 1.0f : 0.0f, a), set(tick, "drop", d.z < -radius * 0.5f ? 1.0f : 0.0f, a);
         }
     } else if (s.op == "face") {
         const float yaw = glm::radians(std::stof(s.args[0]));

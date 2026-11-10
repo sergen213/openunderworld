@@ -30,6 +30,8 @@ public:
     //   ride X Y [R] [THROTTLE] [SPEED] on the motorcycle: steer to (X, Y) with the raw stick until within R (default 300),
     //                               (or once past it), throttle THROTTLE (default 1) while slower than SPEED units/s,
     //                               coasting above it, braking above 1.25 SPEED
+    //   swim X Y Z [R]              in water: the stick towards (X, Y), Jump / Drop held while the point lies above /
+    //                               below her, until within R (default 150) units in space; fails after 60 s
     // A step that does not finish in 20 s fails the plan (logged; the script so far is still written).
     static Autopilot load(const std::filesystem::path& plan, std::filesystem::path out);
     // The same plan syntax from text, nothing written (ou-game --self-test steps, app/game/SelfTest.hpp). Throws

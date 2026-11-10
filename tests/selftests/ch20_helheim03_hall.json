@@ -1,0 +1,136 @@
+{
+ "version": 1,
+ "name": "ch20_helheim03_hall",
+ "chapter": "20 Yggdrasil: the thrall hall with Mjolnir, down to the waterfall room (docs/matrix/20_yggdrasil.md C20-14 ... C20-17)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/19yggdrasil.html",
+ "note": "l7_helheim03 from checkpoint 8844 at the head of the broken stairs, Mjolnir carried (fixture: chapter 7's loadout; Weapon cycles pistols -> speargun -> hammer). She slides the stairs into the corridor; from its end the first Viking thrall of the hall (8777) is locked and dies to the hammer's bolts for good. Then the run through the hall the walkthrough gives as the alternative: east along it, round the corner and down the stairs south into volume 8804, where cinematic object 8773 plays (skipped; its events run) and leaves her in l7_yggdrasil_hall01 at checkpoint 8775. The thralls left behind do not reach her on the run.",
+ "level": "l7_helheim03",
+ "spawn": [
+  -6318.6,
+  3877.5,
+  -4109.7,
+  -90
+ ],
+ "fixtures": [
+  {
+   "weapon": "thorhammer"
+  }
+ ],
+ "steps": [
+  {
+   "step": "slide_down",
+   "duration": 6,
+   "until": {
+    "probe": "player.state",
+    "eq": "idle"
+   },
+   "expect": [
+    {
+     "visits": [
+      "slide",
+      "land"
+     ]
+    },
+    {
+     "probe": "player.pos.z",
+     "near": -5057,
+     "tol": 10
+    }
+   ]
+  },
+  {
+   "step": "to_the_hall",
+   "plan": [
+    "go -6300 -3600 150"
+   ],
+   "input": [
+    "0.2 weapon 1",
+    "0.3 weapon 0",
+    "0.6 weapon 1",
+    "0.7 weapon 0",
+    "1.0 draw 1",
+    "1.1 draw 0"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "probe": "weapon.current",
+     "eq": "thorhammer"
+    },
+    {
+     "probe": "weapon.drawn",
+     "eq": true
+    }
+   ]
+  },
+  {
+   "step": "bolts",
+   "input": [
+    "0 aim 1",
+    "0.2 fire 1"
+   ],
+   "duration": 15,
+   "expect": [
+    {
+     "probe": "weapon.shots_fired",
+     "min": 1
+    },
+    {
+     "probe": "enemy.8777.alive",
+     "eq": false,
+     "note": "a bolt kills a Viking thrall for good"
+    },
+    {
+     "probe": "enemies.alive",
+     "max": 8
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "run_the_hall",
+   "plan": [
+    "go -6300 -5500 250",
+    "go 4900 -5500 300",
+    "go 5045 -8000 300",
+    "go 5045 -19000 300",
+    "run -90 3"
+   ],
+   "duration": 120,
+   "expect": [
+    {
+     "probe": "step.events",
+     "has": [
+      "activate:8804>8773",
+      "cinematicend:8773>8773"
+     ]
+    },
+    {
+     "calls": [
+      "8773:57"
+     ]
+    },
+    {
+     "probe": "world.unit",
+     "eq": "l7_yggdrasil_hall01"
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    },
+    {
+     "probe": "step.health_lost",
+     "max": 500,
+     "note": "the thralls she runs past"
+    }
+   ],
+   "until": {
+    "probe": "world.checkpoint",
+    "eq": 8775
+   }
+  }
+ ]
+}

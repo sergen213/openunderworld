@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "ch19_arctic_sea_tower_stone",
+  "chapter": "19 Helheim: the power stone on the tower's top ledge (docs/matrix/19_helheim.md C19-13)",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/18helheim.html",
+  "note": "l7_arctic_sea from checkpoint 9223 on the tower's top ledge (dry). Power stone 9270 sits on its round carving (holder 9276, portable_key_preinsert): Interact in front of it lifts it out; she carries it at a walk and Crouch puts it down again.",
+  "level": "l7_arctic_sea",
+  "spawn": [16454.3, -44532.2, -17634.6, 90],
+  "steps": [
+    {"step": "on_the_carving", "duration": 1,
+     "expect": [{"probe": "portable.9270.in", "eq": 9276},
+                {"probe": "player.grounded", "eq": true},
+                {"probe": "world.checkpoint", "eq": 9223}]},
+    {"step": "lift_it", "plan": ["go 16451 -44250 60", "face 90", "press", "wait 3"], "duration": 30,
+     "expect": [{"probe": "portable.held", "eq": 9270},
+                {"probe": "portable.9270.in", "eq": 0}]},
+    {"step": "carry_and_put_down", "plan": ["go 16451 -44600 80 walk", "press drop", "wait 2"], "duration": 30,
+     "expect": [{"probe": "portable.held", "eq": 0},
+                {"probe": "portable.9270.in", "eq": 0},
+                {"probe": "player.grounded", "eq": true}]}
+  ]
+}

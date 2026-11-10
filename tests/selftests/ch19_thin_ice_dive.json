@@ -1,0 +1,107 @@
+{
+ "version": 1,
+ "name": "ch19_thin_ice_dive",
+ "chapter": "19 Helheim: under the ice, down to the ruins on the tanks (docs/matrix/19_helheim.md C19-01, C19-02)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/18helheim.html",
+ "note": "Chapter 7 as chapter select starts it: l7_thin_ice's cinematic 9071 (275_hel_explosion, skipped: its events and placement run) changes the level and leaves her swimming under the ice in l7_arctic_sea (checkpoint 9094). The unit script's constructor sets the puzzle up [O bytecode]: statue wheels 9095 / 9096 free (vt 62), 9098 not (vt 63: its statue wants two gears), the drawbridge wheel 9103 locked (vt 63). Then the long dive to the building's front on the wetsuit's tanks: no breath is lost. Positions are in the start unit's frame (l7_arctic_sea's minus (7408.8, 28375.3, 4298.1)).",
+ "start_chapter": 7,
+ "steps": [
+  {
+   "step": "under_the_ice",
+   "duration": 20,
+   "expect": [
+    {
+     "probe": "world.unit",
+     "eq": "l7_arctic_sea"
+    },
+    {
+     "probe": "player.state",
+     "eq": "swimunder"
+    },
+    {
+     "probe": "world.checkpoint",
+     "eq": 9094
+    },
+    {
+     "calls": [
+      "9071:57",
+      "9095:62",
+      "9096:62",
+      "9098:63",
+      "9103:63"
+     ]
+    },
+    {
+     "probe": "player.air",
+     "eq": 1
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "down_past_the_statues",
+   "plan": [
+    "swim -900 -30000 -15000 600"
+   ],
+   "duration": 70,
+   "expect": [
+    {
+     "probe": "player.swimming",
+     "over": "all",
+     "eq": true
+    },
+    {
+     "probe": "player.air",
+     "over": "all",
+     "eq": 1,
+     "note": "scuba: the breath does not drain"
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  },
+  {
+   "step": "to_the_drawbridge_wheel",
+   "plan": [
+    "swim -1741 -63600 -27750 400"
+   ],
+   "duration": 70,
+   "expect": [
+    {
+     "probe": "player.air",
+     "over": "all",
+     "eq": 1
+    },
+    {
+     "probe": "object.9116.uber.0",
+     "eq": 0,
+     "note": "the drawbridge is up"
+    },
+    {
+     "probe": "step.teleports",
+     "eq": 0
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    },
+    {
+     "probe": "player.pos.y",
+     "near": -63600,
+     "tol": 450,
+     "note": "in front of the building, by the wheel"
+    },
+    {
+     "probe": "player.pos.z",
+     "near": -27750,
+     "tol": 450
+    }
+   ]
+  }
+ ]
+}

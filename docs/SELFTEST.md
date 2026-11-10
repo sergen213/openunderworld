@@ -128,7 +128,9 @@ autopilot"); it reads the World to steer, so it reaches places and objects by co
 `go X Y [R] [walk]`, `engage UID [X Y] [walk]`, `face YAWDEG`, `press [ACTION]`, `hold ACTION SECONDS`,
 `stick FORWARD RIGHT SECONDS [ACTION AT]`, `run YAWDEG SECONDS [ACTION AT]` (a world heading, whatever the camera
 does), `push FORWARD RIGHT SECONDS [ACTION]`, `wait SECONDS`, `near R`, `map R [CELL] [UP]` (logs the floor round her as a grid), `ride X Y [R] [THROTTLE] [SPEED]` (on the
-motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED). Coordinates are world frame. With both `plan`
+motorcycle: raw stick towards the point, throttle while slower than SPEED units/s, braking above 1.25 SPEED),
+`swim X Y Z [R]` (in water: the stick towards the point, Jump / Drop held while it lies above / below her, until within
+R, default 150, in space; 60 s). Coordinates are world frame. With both `plan`
 and `input`, the plan steers and presses and the input lines add to it (a button is down if either holds it; a
 non-zero stick or look rate from `input` wins).
 
@@ -458,6 +460,14 @@ tested behaviour happen.
 | `ch11_study_gauntlet` | l3_stairhall -> l3_secretchamber | section 11 (C11-24, C11-25): from checkpoint 4699 down the passage into the study: checkpoint 4621, volume 4669, cinematic 4654 (gauntlet), two thralls alive in the room |
 | `ch11_rockhall_switch` | l3_chamberrockhall | section 11 (C11-32): the stone door 4528 stops her; switch 4617 used with Interact opens it; through to checkpoint 4453 |
 | `ch12_trailstart_ride_in` | l4_trailstart | section 12 (C12-03, C12-04): the ride of `bike_ride`, then the upper road: plane 6712 starts reveal 6677, which sets her down beside the bike (larabase 54); mount again, ride into the temple courtyard (volumes 6713, 6703) |
+| `ch19_thin_ice_dive` | chapter 7 start | section 19 (C19-01, C19-02): cinematic 9071 leaves her swimming under the ice in l7_arctic_sea (checkpoint 9094); the unit's constructor sets the puzzle up (wheels 9095 / 9096 vt 62, 9098 / 9103 vt 63); 63 s of diving on the tanks to the front of the building, breath 1.0 throughout (autopilot `swim` lines) |
+| `ch19_arctic_sea_stone_niche` | l7_arctic_sea | section 19 (C19-17, C19-18), swimming: the locked drawbridge wheel 9103 refuses (chains 9114 / 9115 rattle, bridge 9116 stays up); power stone 9273 lifted, carried to niche 9120 and seated (9120 vt 56, rune strip 9137 lit, the unit counts a key); with one stone the wheel still refuses |
+| `ch19_arctic_sea_tower_stone` | l7_arctic_sea | section 19 (C19-13): power stone 9270 lifted off its carving (holder 9276) on the tower's top ledge, carried at a walk, put down |
+| `ch19_helheim01_entry` | l7_helheim01 | section 19 (C19-26): up the stairs into volume 8968, cinematic object 8950, checkpoint 8950; over the entry ledge to its edge over the eitr (a hang) |
+| `ch20_helheim01_portal` | l7_helheim01 → l7_helheim02 | sections 19 / 20 (C19-33, C20-13): the portal ledge: volume 8969, cinematic object 8951 opens door 8956; through it into l7_helheim02 (checkpoint 8884) |
+| `ch20_helheim02_passage` | l7_helheim02 → l7_helheim03 | section 20 (C20-13, C20-14): the passage to its crossing, the east arm's stairs, the slide down the broken stairs into the thrall hall |
+| `ch20_helheim03_hall` | l7_helheim03 → l7_yggdrasil_hall01 | section 20 (C20-14 … C20-17): slide into the corridor, Mjolnir (Weapon twice, Draw), a bolt kills Viking thrall 8777 for good; the run through the hall and down the stairs into volume 8804: cinematic object 8773, checkpoint 8775 |
+| `ch20_yggdrasil_reveal` | l7_yggdrasil → l7_yggdrasil_hall01 | section 20 (C20-17, C20-18): volume 8804 from checkpoint 8792, cinematic object 8773 leaves her at checkpoint 8775; the thralls after it met with the hammer |
 
 `tests/selftests/known_gaps/` holds scenarios for behaviour that does not work yet; they fail today and are not
 registered with ctest. Run them by hand; move one up a directory when it passes. Now (`pole_drop_after_fling` moved up 2026-11-10):
@@ -468,6 +478,8 @@ registered with ctest. Run them by hand; move one up a directory when it passes.
 | `ch12_trailstart_lever_gate` | l4_trailstart | `let_go` | lever 6695 is pulled out by Interact and stays out (joint 1264); the original holds it by her weight on the rope and it returns when unloaded |
 | `ch01_ring_door_walk_through` | l3_main_bedroom | the walk through | the pulled ring door's leaf stays standing in its frame: no way into l3_bedroom_hall (docs/PROGRESSION.md chapter 0) |
 | `ch01_hall_floor_collapse` | l3_bedroom_hall | `pull_up_and_on` | parked 2026-11-10: the blown hall door 4376's outcome depends on the tick she crosses plane 4375; since the take-off timing change the leaf can stay in its frame over ledge 969 |
+| `ch20_helheim01_rune_symbols` | l7_helheim01 | `use_it` | rune symbol 8995 on the entrance frame is not used by Interact from in front of it: the switch use rule ([I], `Runtime::tick`) wants the switch's origin within 250 of her feet in height, and the symbol's is 480 over the ledge. The dispatcher's logic behind the four symbols is decoded (docs/matrix/20_yggdrasil.md C20-02) |
+| `ch21_platform_ride` | l7_yggdrasil_end | `jump_to_a_platform` | the steps of `natla_fight`, then a jump from the entry walkway's end: no floating platform comes within reach (the 24 stones' objects stay at their intro positions; only their drawn bodies ride the orbit rings), she falls 3850 to the lower ring (docs/GAMEPLAY.md "Natla" Open) |
 
 Each shipped scenario fails when its mechanic does not happen (checked by running altered copies, 2026-11-10):
 `puzzle_pole_block_door` without the two pole steps fails at `jump_to_the_pole` (state `idle`, not `polehang`);
