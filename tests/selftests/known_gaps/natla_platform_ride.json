@@ -1,0 +1,65 @@
+{
+ "version": 1,
+ "name": "natla_platform_ride",
+ "chapter": "Out of Time: from the entry walkway onto a passing platform (matrix C21-01)",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/outoftime2.html",
+ "note": "KNOWN GAP. After 320_hel_boss the three floating stones 8368-8370 circle the tower on orbit rig 8389 at 13.5 degrees a second (docs/GAMEPLAY.md \"Natla\", the orbit rigs), one passing the entry walkway's end every 8-10 s from her left. The walkway ends at x -6621 (floor z 4323); the stone's ledge loop passes at radius ~5400-5570, top z 4862: 1240 out and 540 up. A running jump (1975 units/s) taken at the edge is back at the height its hands need (root 492 under the ledge) about 900 out, so she meets the stone's side 830 under its ledge and falls into the pool. The ledge is where the stone's top is (a ray down onto its collision meets z 4859), so the geometry is right and the reach is missing: [U] how the original's jump gets there: its jump queries solve a leap to a ledge in reach (0x7296C0, with the carrier's velocity 0x7694B0), and ours does not aim a running jump at a passing object ledge 1240 out. Needs a Wine measurement of the jump from this edge (take-off point, arc, where the hands close). The step below fails at the grab.",
+ "level": "l7_yggdrasil_end",
+ "steps": [
+  {
+   "step": "into_the_arena",
+   "plan": [
+    "run 0 3",
+    "press drop",
+    "wait 1.5",
+    "run 0 15"
+   ],
+   "duration": 26,
+   "until": {
+    "probe": "player.pos.x",
+    "min": -9000
+   },
+   "expect": [
+    {
+     "calls": [
+      "8261:57"
+     ],
+     "note": "320_hel_boss"
+    }
+   ]
+  },
+  {
+   "step": "the_fight_starts",
+   "duration": 22,
+   "expect": [
+    {
+     "probe": "object.8389.uber.0",
+     "eq": 1,
+     "note": "rig 8389 loops A_rotate1"
+    }
+   ]
+  },
+  {
+   "step": "jump_to_the_passing_stone",
+   "plan": [
+    "go -7300 793 40",
+    "face 0",
+    "wait 7.3",
+    "run 0 1.6 jump 0.62",
+    "wait 2"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "probe": "player.hanging",
+     "eq": true,
+     "note": "on the stone's ledge"
+    },
+    {
+     "probe": "player.dead",
+     "eq": false
+    }
+   ]
+  }
+ ]
+}

@@ -1,5 +1,6 @@
 // Combat: health/fall damage/death, hitscan, lock-on, ammo, render-rate independence (src/game/Combat.*).
 #include "game/Game.hpp"
+#include "script/Vm.hpp"
 
 #include "cdc/Cdc.hpp"
 #include "config/Config.hpp"
@@ -2518,6 +2519,106 @@ TEST(CombatReal, NatlaFireballsBlastThrowAndBurn) {
     // the pool 8309 lies at its marker 8680 during the fight (its constructor's `marker` locals), far under the rings
     for (const auto& m : w.collision().markup)
         if (m.type == 10 && m.id == 8309) EXPECT_LT(m.points[1].z, -10000.0f);
+}
+
+// Hitting her [O tru.exe 0x6C64D0, scripts]: a weapon's hit on an instance that has a script calls the script's
+// instance prototype 35 (vt 22, 0x799100) with (attacker, victim, damage, damagetype = the hit's damage class). Natla's
+// base script 19035 compares the class with its constant 13, Mjolnir's (damagetype 0 = equality, 0x4AA4D0), and posts
+// `hit_by_player`; her own override passes hits on only while the upper manager 8450 has not taken over. The lower
+// ring's manager 8448 counts them (+124) and at more than two (`2 < count`: the third) ends its phase: vt 66, no more
+// fireballs, 8450's flag +44 set. Lara stands between two floor targets, aims by hand (no lock: she is no enemy) and
+// fires Mjolnir at her as she is carried from warp point to warp point.
+TEST(CombatReal, NatlaCountsMjolnirHits) {
+    const char* dir = std::getenv("OU_GAME_DIR");
+    if (!dir) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(dir);
+    std::map<std::string, game::UnitData> cache;
+    const game::UnitLoader loader = [&](const std::string& n) {
+        auto& d = cache[n];
+        if (!d.drm) d = game::loadUnitData(bf, n);
+        return d;
+    };
+    game::World w(loader, "l7_yggdrasil_end", game::loadLaraAnims(bf));
+    w.script().setBigfile(&bf);
+    w.enemies().setBigfile(&bf);
+    const auto put = [&](vec3 at) {
+        if (const auto floor = w.collision().groundProbe(at + vec3(0, 0, 300), 3000, 0x0F)) at.z = floor->point.z;
+        game::PlayerState s;
+        s.pos = at;
+        w.restore(s, 0, -0.25f);
+        w.script().playerJumped();
+    };
+    for (int i = 0; i < 60; ++i) w.tick({});
+    put(w.script().find(8303)->pos); // the arena volume: 320_hel_boss
+    for (int i = 0; i < 60 * 105; ++i) w.tick({});
+    ASSERT_TRUE(w.script().takesHits(8403));
+    for (const int32_t hidden : {8246, 8233}) EXPECT_TRUE(w.script().takesHits(hidden)) << "every natla_end has the callback";
+    const auto* a = w.script().find(8463);
+    const auto* b = w.script().find(8464);
+    ASSERT_TRUE(a && b);
+    put((a->pos + b->pos) * 0.5f); // 883 from either floor target: outside both blasts (radius 650)
+    w.giveWeapon(game::Weapon::ThorHammer, 0);
+    const auto field = [&](int32_t uid, uint32_t off) -> int {
+        const auto* o = w.script().find(uid);
+        if (!o || !o->script) return -1;
+        const auto f = o->script->fields.find(off);
+        return f == o->script->fields.end() ? 0 : int(f->second);
+    };
+    const auto natla = [&]() -> std::optional<vec3> {
+        for (const auto& d : w.shotOnlyShapes())
+            if (d.id == 8403) return vec3(d.transform[3]);
+        return std::nullopt;
+    };
+    for (int i = 0; i < 60 * 4; ++i) w.tick({}); // the zone's manager starts on her
+    ASSERT_EQ(field(8448, 108), 1) << "the lower ring's fight runs";
+    ASSERT_TRUE(natla());
+    EXPECT_GT(glm::distance(*natla(), w.script().find(8403)->pos), 3000.0f) << "her shapes ride her warp point, not her intro";
+    // a hit of another damage class (the pistols' 0) is not counted
+    w.script().weaponHit(8403, 50.0f, 0);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_EQ(field(8448, 124), 0);
+    for (int k = 0; k < 4 && w.combat().want != game::Weapon::ThorHammer; ++k) { // Weapon key: to Mjolnir
+        game::Actions sw;
+        sw.weapon = true;
+        w.tick(sw);
+        w.tick({});
+    }
+    ASSERT_EQ(w.combat().want, game::Weapon::ThorHammer);
+    game::Actions press;
+    press.manualAim = true;
+    w.tick(press);
+    ASSERT_TRUE(w.combat().manualAim);
+    int struck = 0, fired = 0;
+    size_t flying = 0;
+    for (int i = 0; i < 60 * 150 && field(8448, 110) == 0; ++i) {
+        game::Actions in;
+        if (const auto at = natla()) {
+            in.look = lookAt(w, *at);
+            in.fire = glm::distance(*at, w.player().state().pos) < 7500.0f; // Mjolnir reaches 8000
+        }
+        const int before = field(8448, 124);
+        w.tick(in);
+        if (field(8448, 124) > before) ++struck;
+        ASSERT_FALSE(w.health().dead()) << "tick " << i;
+    }
+    EXPECT_EQ(struck, 3) << "the third counted hit ends the phase";
+    EXPECT_EQ(field(8448, 124), 3);
+    EXPECT_EQ(field(8448, 110), 1) << "manager 8448: its fight is over (vt 66)";
+    EXPECT_EQ(field(8448, 108), 0);
+    EXPECT_EQ(field(8450, 44), 1) << "manager 8450 took over";
+    for (int i = 0; i < 60 * 4; ++i) w.tick({}); // a pair already ordered still comes (its second ball 2 s after the first)
+    flying = w.hostileShots().size();
+    for (int i = 0; i < 60 * 15; ++i) {
+        w.tick({});
+        if (w.hostileShots().size() > flying) ++fired;
+        flying = w.hostileShots().size();
+    }
+    EXPECT_EQ(fired, 0) << "no more fireballs on the lower ring";
+    // a later hit is not passed on (her override asks 8450)
+    w.script().weaponHit(8403, 50.0f, 13);
+    for (int i = 0; i < 30; ++i) w.tick({});
+    EXPECT_EQ(field(8448, 124), 3);
+    for (const auto& [key, n] : w.script().failures()) EXPECT_NE(key.first, 8403) << key.second;
 }
 
 // Damaging collision posts its amount as a hit of class 6 (tru.exe 0x5D4C60 -> message 0x11C -> 0x6F5030): priority 4,

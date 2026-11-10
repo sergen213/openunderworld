@@ -436,23 +436,31 @@ outfit (the original only reads `+0x294` on a level load).
   (so tanks set each other off). The knock [O decomp]: the area hit 0x69F1E0 (called from 0x6A5C50's record hand-over
   with +4 damage, +6, +0xC radius, +0xE knock, +0x10 knock at the edge, +0x12 elevation) sends instances message 0x91 at knock .. edge
   by distance, heading away from the centre at the elevation, and ends in 0x493170 → 0x492CC0 for the Havok shapes in
-  the radius: an impulse of 0.0004 × the shape's surface area × knock × (1 − distance / radius), capped per shape
-  (body +0x14C × 200 [U]), at the shape's point nearest the centre (0x4DF090), along (shape − centre) raised by half
-  their distance. Ours [I] (`physics::Scene::blast`): grenades change each body's velocity by near .. edge along that
-  raised line; a squib gives the same momentum along the body's heading from the centre at the record's elevation, at
-  the point of the body's bounds nearest the centre. A centre inside the body (the door squib is born at the foot of its
-  own leaf) has no heading: the body goes the way it already moves, else the way its centre of mass lies from the centre.
-  l3_bedroom_hall's leaf 4376 (blown off untouched) is kicked out at the foot and falls into the pit; pushed through its
-  centre of mass it only hopped and stood in its frame (494 wide in a doorway barely wider).
+  the radius: per shape an impulse of the primitive's blast share (HInfo byte, docs/formats/PHYSICS.md) × 0.0004 × its
+  surface area × knock × (1 − distance / radius), capped at the body's mass × 200, at the shape's point nearest the
+  centre (0x4DF090), along (shape − centre) raised by half their distance, unless level collision lies between the two
+  centres. Ours: `physics::Scene::blast` gives loose bodies exactly that per primitive (hinge bodies and ragdolls [I]:
+  one velocity change of knock .. edge along the raised line).
+  **The instance that gave birth to the explosion** [O decomp + runtime]: 0x69F1E0 measures the born object's parent
+  (instance +0x214) from the explosion's own position, so the parent's knock is the full one and its heading that of a
+  zero vector: 0x49EFC0's atan2(−0, −0) = −π, which is world −X whatever the object's rotation. tru.exe under Wine
+  (2026-11-10, `gameplaygoal/prologue/wine/s4.txt`): ring door 4526's leaf, drawn out at 586 units/s² from 0.05 s
+  after Interact (0.2, 6.4, 18.7, 35.9 out at 0.1 s steps) and free at 31.6, has a centre of mass velocity of
+  (−870, 0, +364) units/s two frames after `squib_explode_door` (knock 1000, elevation 0), yaws at −8 rad/s, tips its
+  top toward the room, clears the platform and lands flat 650 from its frame; Lara, on the strip, takes 3 and is thrown
+  down to the bedroom floor. Ours (`World::blast` → `physics::Scene::knock`) [I: the mechanism; the numbers fit the
+  measurement]: the parent's loose body loses its motion and takes mass × knock along world −X at the record's
+  elevation, at the explosion's centre (the birth marker, HInfo marker word +6: for the door 79 behind the leaf,
+  173 off its middle, 530 up), which gives the leaf 1000 units/s, a yaw of 173 × 1000 / (494² / 12) = 8.5 rad/s and
+  the forward tip. l3_bedroom_hall's leaf 4376 (blown off untouched, state 5) goes the same way, toward the pit
+  [U in the original: not measured].
 - **Freed uber sections** [O action 10 removes a joint; I the body's motion]: a non-main section left without a joint
   (13 objects: `ma_uo_bedroom_door`, tentacle gears, the snake head, ship floor panels / grates / console, thor slide
   doors, chain debris, the naga statue) becomes a loose body with its collider, as do sections riding on it; the main
   section uses the object's own loose flag. It starts with the velocity its prismatic joint had when removed (the ring
   door 4526 comes off its slide moving toward the rope's pull). Saved with the section state (not the velocity). Its
-  shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. Open
-  [U]: leaf 4526, pulled 44 out into its frame when freed, is pushed back by the level collision and stays standing in
-  the doorway (`ProgressionReal.PrologueRingDoorPulledOffByTheGrapple` notes it; what clears it in tru.exe is not
-  decoded: nothing in the object's states moves it but the removed joint and the squib).
+  shape is the model's solid primitives (`looseShape`): the leaf's non-solid lower plank (633 wide) is no shape. What
+  throws the freed ring door out of its frame is its squib's knock ("Explosion records" above).
 
 ## Hazards
 
@@ -1064,7 +1072,21 @@ rule in code: the level scripts run in the VM and call general natives).
   (anchor chains) and `World::poseAnchored` (the anchored object's body follows, so it is drawn and found there).
   The marker sits on its bone as the host's anim-graph clip poses it (bind frame without a clip); [I] a host without
   the marker gives its own frame. The same natives hang the 24 `ar_ani_floating_runestone` platforms on the markers of
-  the eight `ar_ani_runestone_orbit_a` rings, three to a ring, so they now go round with the rings' clips.
+  the eight `ar_ani_runestone_orbit_a` rings, three to a ring, so they go round with the rings' clips.
+- **The orbit rigs** [O data, I root motion]. `ar_ani_runestone_orbit_a` is an uber object (one section, 15 states, 19
+  commands): 320_hel_boss's end sends every rig command 18 and dispatcher 8360 sends the rigs of a broken buttress their
+  "catch" command (vt 62: 8389 and 8392 for buttress A), a 13.4 / 16 s catch clip, then a looping rotate clip. The
+  rotate clips turn the rig's **root bone** by a part of a circle: A_rotate1 / A_shift / A_rotate2 44.55 degrees in 99
+  frames (13.5 degrees/s), B_rotate 75 in 100 (22.5/s), D_rotate1 35.5 (10.6/s), E_rotate 52.9 (15.7/s), F_rotate 86.9
+  (25.8/s); C_rotate alone is a whole turn (20 s, 18/s). Looped as absolute poses they would snap back every 3.3 s
+  (ours did: the stones jumped 45 degrees), so the loop must go on from where it ended. Ours (`World::tickUber`,
+  `UberAnims::rootStep`, `UberSectionState::carry`): a looping clip whose root's last key differs from its first is a
+  step that repeats: it wraps at its last key (the next round's first) and the step stays with the section; a clip
+  played after it starts from the pose reached. Saved (a 16th section entry, only when not identity) and hashed.
+  Uber objects' markers, collision, markup and anchored riders follow as before. The stones also collide now: a rider
+  with markup collides when its host is an uber object (`World::syncObjects`; before only spline / graph / clip hosts).
+  `GameReal.OrbitRigsCarryTheRunestonesRound` (8368-8370: a circle about the tower, 135 degrees in 10 s, no step
+  back, the ledge loops with them). [I] tru.exe's root motion for object instances was not decoded.
 - **Fireballs** [O exe + data]. Each `natla_end` hangs its weapon intro (`wp_natla_fireball` 8433, `_adren` 8238-8258)
   on its own marker 13 and fires it with `weaponbase` 0 (bind 0x7B69F0, thunk 0x79E2E0 → 0x7784F0): the weapon's stats
   block (query 0x36, data +0xE0) gives the launch speed (+0x10) and the fire message 0x19B carries the **position of the
@@ -1099,9 +1121,21 @@ rule in code: the level scripts run in the VM and call general natives).
 - **Timed dodges** [O scripts]. Volumes 8323 (tower top), 8324, 8325, 8327, 8329 (climbing walls) start adrenaline
   trackers 8318-8322 (time scale down), reveal the matching hidden Natla with a camera (reveals 8313-8317) and have her
   throw the slow ball(s) at Lara: 1500 units/s and 3000 on a direct hit, so only leaving the line saves her.
-- **Hitting her** [O scripts]. Damage to 8403 (vt 22, any `damagetype`) posts `hit_by_player`; the lower-ring manager
-  counts them and at the second one ends its fight (vt 66: fireballs off, yetis off, manager 8450 takes over). She has
-  no health of her own.
+- **Hitting her** [O exe + scripts]. tru.exe's weapon hit (0x6C64D0) posts the hit message 0x11C to the struck
+  instance and then, when shooter and struck instance both have a script, calls the scripts' instance prototype 34
+  (vt 21, 0x7990A0) and prototype 35 (**vt 22**, 0x799100) with (attacker, victim, damage, `damagetype` = the hit's
+  damage class, 0x4A4D90). `damagetype` 0 (bind 0x7AC4F0 → 0x796FD0 → 0x4AA4D0) is equality of the two 4-byte values.
+  The `natla_end` base script 19035 compares the class with its constant **13** (a `damagetype` local's initial value),
+  the class of Mjolnir's bolts and ground pound: the guns (class 0 / 2 / 4) never count. On a match it posts
+  `hit_by_player` on `natla_greatest_hits`; 8403's own vt 22 passes hits on only while manager 8450's flag +44 is clear.
+  The lower-ring manager 8448 counts them (+124) while its fight runs (+108) and at `2 < count`, the **third** hit, ends
+  it (vt 66: +110 set, fireballs off, yetis off, 8450 takes over). She has no health of her own. Ours:
+  `script::Runtime::weaponHit` from `World::strike` (prototype 35 only [I: vt 21 is left to the contact path, whose
+  scripts expect a touch]); an instance whose script overrides that slot is met by shots where it is now
+  (`World::syncObjects` / `poseShotOnly`: its collision segments under `objectFrame`, so Natla's ride her warp points)
+  [I: which flag admits an instance to the original's shot test]; a fired weapon object's ball passes the shapes of the
+  instance that carries it. No lock-on: she is not an enemy [I]; Manual Aim reaches her.
+  `CombatReal.NatlaCountsMjolnirHits`.
 - **Yetis** [O scripts]. Lower ring: the four `yeti_thrall_pool_generator`s 8675-8678 are enabled when Lara enters a
   lower zone (`generatorbase` 3) and each `yeti_dead` message asks for the next (manager vt 65 → 8451 vt 69) until ten
   have died. Upper rings: 8451 gives birth to dormant yetis: vt 63 three (8667, 8668, 8669: volume 8650, the page's "1 +
@@ -1121,28 +1155,36 @@ rule in code: the level scripts run in the VM and call general natives).
   once and 100 a second until the patch goes out (the thread does not ask whether she is still inside).
 - **Route geometry met by input** (`ProgressionReal.NatlaFightByInput`): the unit's start walkway (z 7383) ends in a
   ledge at x −26750 (hang, drop to z 6160), a ramp runs down into arena volume 8303 (x −14800, z 4724); 320_hel_boss
-  leaves her on the middle ring's entry walkway at (−8143, 793, 4321), which ends at x −6620 over the rings (lower ring
-  z 474, 3850 below: a fatal fall, so the original's way down is the rope). There no zone volume holds her and Natla
-  throws nothing.
+  leaves her on the middle ring's entry walkway at (−8143, 793, 4321), which ends at x −6621 over the rings (lower ring
+  z 474, 3850 below: a fatal fall). There no zone volume holds her and Natla throws nothing.
+- **The way down from the entry walkway** [O data, U reach]. The first platforms are the stones 8368-8370 on rig 8389
+  (buttress A's, started by 320_hel_boss's end): they circle the tower counter-clockwise, coming from her left, one
+  past the walkway's end every 7.6-10.1 s (they sit 103 / 136 / 121 degrees apart). A stone is a block whose top
+  (collision and ledge loop, z 4859-4862) is 536 over the walkway's floor (4323), its outer edge at radius 5400-5570
+  against the walkway's end at 6667: 1240 out and 540 up. Ours cannot make that jump: a running jump (1975 units/s,
+  measured here: take-off z 4325, back at the hang height, root 492 under the ledge, 900 out) meets the stone's side
+  830 under its ledge. [U] the original's reach here (a jump query solved to the passing ledge, 0x7296C0 with the
+  carrier's velocity 0x7694B0?): needs a Wine measurement. Parked as `tests/selftests/known_gaps/natla_platform_ride`
+  (it plays the entry, waits for the stone and jumps; fails at the grab). The rope down from the ring ledge (C21-02)
+  comes after it and is untested.
 
 Tests: `CombatReal.NatlaFireballWeaponsDecoded`, `CombatReal.NatlaFireballsBlastThrowAndBurn` (throw from her warp
 point at 9000 units/s, blast on the floor target, 50-250 damage and thrown down, the patch's 100 a second on entering
 it lit, nothing between the targets, save round trip, pool level, no script stop; Lara placed on the ring),
-`ProgressionReal.NatlaFightByInput` and self-test `natla_fight` (input only: the entry to 320_hel_boss, the towers
-retract, nothing thrown at the entry walkway, the walkway's end), `ProgressionReal.EndgameCredits` (the whole script
-chain to the credits, Lara placed at the six interactions).
+`ProgressionReal.NatlaFightByInput` (input only, two legs: the entry to 320_hel_boss, the towers retract, nothing
+thrown at the entry walkway, the walkway's end; then, put on the lower ring, Mjolnir by the Weapon key, Manual Aim and
+Fire until her third counted hit ends the ring's fireballs), self-tests `natla_fight` (the entry leg) and
+`natla_lower_ring` (a level start on the ring: no ride down the pool's surface, no goo death, nothing lost between two
+floor targets), `CombatReal.NatlaCountsMjolnirHits`, `GameReal.OrbitRigsCarryTheRunestonesRound`,
+`GameReal.SwimLosesItsSurfaceAndFalls`, `ProgressionReal.EndgameCredits` (the whole script chain to the credits, Lara
+placed at the six interactions).
 
 Open (the fight is not yet playable from the entry to the credits by input alone):
-- [U] the way from the entry walkway to the rings by input: the platform ride and the rope down (matrix C21-01 / -02).
-  The 24 floating stones hang on the orbit rings' markers and the rings' sections are born by dispatcher 8360 as the
-  buttresses break; whether Lara can stand on / grab them as they move is untested (moving ledge markup: none).
-- a level start on the lower ring (a `--spawn` there, not a checkpoint load) dies at once: the World's first tick finds
-  her inside pool 8309's box before its constructor has lowered it (box top z 2869.5), she treads its surface down to
-  the marker, and 8209's goo flag, once set, kills at every poll. A tread that loses its surface by more than a step
-  should fall instead [U: tru.exe's rule]; the rings' input tests and a ring self-test wait for that.
+- the way from the entry walkway to the rings by input: the jump onto a passing stone falls 340 short (above; known gap
+  `natla_platform_ride`), the rope down after it is untested (matrix C21-01 / -02).
+- the lower ring on foot: the running jumps between its wedge ledges to the towers' alcoves (C21-04 to -06) have no
+  input route; the towers and mounts are worked by input only where Lara is placed (`EndgameCredits`).
 - the two chimney climbs, the tower's moving handholds, the buttress slide (C21-07, -12, -21, -23): no input route.
-- Natla as a shot target: nothing in ours delivers a hit to 8403's vt 22, so the lower ring's fight does not end after
-  two hits as the scripts provide; the manager keeps throwing while Lara stays on the ring.
 - [U] yeti counts actually spawned by the pool generators (enabled by the scripts; `ai::Enemies` spawns by its own
   generator data) were not measured here; the upper rings' births are script calls (above).
 - [I] the knock's unit, the 5 s flight limit, lingering-flame fields of the explosion record (+0x70..+0x80).
@@ -2573,9 +2615,7 @@ staggered heights round the tower; each stone has one ledge loop on its segment 
 5. The 82 `natla_end_mover` spline movers carry `natla_end` (Natla: 8404's child is 8403), not platforms. Posing
 anchored riders is implemented on agent/GpNatla (`instance` 8 anchors, `World::poseAnchored`); this branch only makes
 a rider that carries markup collide once it is anchored to a spline mover or an animated rig (`World::syncObjects`),
-and its items follow its pose like any other object's. Open after both are merged: the rigs do not turn in ours (a trial here with
-the stones anchored: they sat at their markers, e.g. 8365 at 1948,-3375,11346, for 10 s; the rig is posed by a
-5-bone clip palette whose time does not advance and it has no anim graph in ours [U: what plays its clip]), and the
+and its items follow its pose like any other object's. The rigs turn (docs "Natla": the orbit rigs' stepping loops); open: the
 rides themselves (C21-01, -10, -19, -20 of docs/matrix/21_out_of_time.md).
 
 ## Chimney jumps (src/game/WallJump.cpp)
@@ -4763,6 +4803,11 @@ Jump, 42 Sprint), 0x191 the stick's level (401 none, 402 / 403 light, 404 full),
   stick ends S456 early into the run (T244: Wine 0.58 s instead of 0.82 s) [not ported].
   Ours (`PlayerState::pullWait`, `Player::tick` Hang): the wait in the hang's idle pose [I: S439's own pose], the
   release / the 15-frame hold as above, the pull-up clip whole (it used to start at frame 6 on the press: 0.57 s).
+  Both pull-ups need clearance class 2 (T608 / T613: `PSCCF_Markup_ClearanceResult` 650), also with a ledge above in
+  the up jump's reach (`Game.HangPullUpWinsOverTheJumpUpTarget`). Class 1 leaves only the up jump (the lean's
+  `ledgeb_jump_up_antic`, T614 to a target): something on the lip in the ray 252 over the ledge (l3_bedroom_hall
+  ledge 969 when the blown door leaf comes to rest there), or a top more than 40 over the ledge 139 in (0x72BAE0:
+  l5_valaskjalf band 1542, whose top is the steps' 1-in-2 ramp, 69.5 up there) [O rule; both measured in ours].
 - **Hand over hand faster with Interact** [O chart, clips, Wine]: a press while the stick shimmies (T581 / T582 from
   S427 / S432 / S431, not at the ledge's end) plays one `ledgeb_right_hustle` (S441 / S442, request 968, mirrored to
   the left: 371 aside in 0.57 s against `ledgeb_right`'s 196 in 0.70 s; Wine: 368 in 0.47 s from the press to the

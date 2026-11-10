@@ -1084,6 +1084,25 @@ void Runtime::contactDamage(int32_t attacker) {
     callback(attacker, "instance", 34, args);
 }
 
+void Runtime::weaponHit(int32_t victim, float damage, int damageClass) {
+    if (!playerScript_) return;
+    const std::array args{vm::Value::object(playerScript_->uid), vm::Value::object(victim),
+                          vm::Value::scalar(std::bit_cast<uint32_t>(damage)), vm::Value::scalar(uint32_t(damageClass))};
+    callback(victim, "instance", 35, args);
+}
+
+bool Runtime::takesHits(int32_t uid) const {
+    const auto self = instance(uid);
+    if (!self || !self->program) return false;
+    for (const ScriptType* t = self->program->type(self->typeId); t; t = self->program->type(t->superId))
+        if (t->nativeName == "instance") {
+            if (t->prototypes.size() <= 35 || t->prototypes[35] < 0) return false;
+            const Function* f = self->program->method(self->typeId, t->prototypes[35]);
+            return f && !f->native && f->wordCount > 1;
+        }
+    return false;
+}
+
 void Runtime::run(int32_t uid, int16_t vt, std::span<const vm::Value> args) {
     const auto self = instance(uid);
     if (!self || !self->program) return;
@@ -1504,6 +1523,20 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 }
                 if (nc.function == 3 || !r.track.empty()) audio_.apply(r), musicRequests_.push_back(std::move(r));
                 nc.result = vm::Value::scalar(0);
+                return true;
+            }
+            // damagetype 0 (bind 0x7AC4F0: 0x796FD0 -> 0x4AA4D0): equality of the two 4-byte values, the damage class of
+            // a hit (instance prototype 35's last argument) against a script's constant.
+            if (!std::strcmp(name, "damagetype") && nc.function == 0 && nc.args.size() == 1) {
+                const auto value = [&](const vm::Value& v) -> uint32_t {
+                    if (v.kind != vm::Value::Kind::Member) return v.bits;
+                    const auto holder = resolve(v.uid);
+                    if (!holder) return 0;
+                    if (const auto f = holder->fields.find(v.offset); f != holder->fields.end()) return f->second;
+                    const Member* m = holder->program ? holder->program->member(holder->typeId, v.offset) : nullptr;
+                    return m && m->init ? *m->init : 0;
+                };
+                nc.result = vm::Value::scalar(value(nc.receiver) == value(nc.args[0]));
                 return true;
             }
             if ((!self || !self->program) && !std::strcmp(name, "animated")) { nc.result = vm::Value::scalar(0); return true; }

@@ -6,6 +6,33 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+- Added: the Arctic sea's drawbridge wheel is locked until the puzzle frees it; a try rattles the chains and the
+  bridge stays up, as in the original.
+- Added: the four keys of the Xibalba trap houses can be picked up and carried.
+- Added: the map room's cutscene hands the left gauntlet over when it plays, and the map room's hub turns when
+  its panel is pushed sideways with the gauntlet.
+- Added: from a hang, a jump up now takes free-climb holds above the ledge (the ship's second shaft).
+- Added: Natla can be hit. Mjolnir's bolts reach her script, which counts them (three end the lower ring's
+  phase); the floating stones of the final arena ride round on their orbits instead of snapping back.
+- Changed: Lara lets go of the grapple rope when she ends up in deep water.
+- Changed: enemies' ground blows only land when Lara is within their reach in height (they hit her on ledges
+  above them before).
+- Changed: some level surfaces that are collision only for enemies or the camera no longer stop Lara, as in the
+  original (for example the crusher house doorway in Xibalba could not be entered).
+- Fixed: the prologue's doors. The bedroom door pulled off by the grapple is thrown clear of its frame, and the
+  hall door blown off by the explosion no longer sometimes lands on the ledge Lara has to climb; the way from the
+  bedroom into the burning hall and on to the main hall can be walked.
+- Fixed: a level start on the lower ring of the final arena killed Lara (she rode the pool's surface down as it
+  dropped away); a swimmer whose water drops away now falls.
+- Fixed: jumping onto or off a pillar inside a narrow shaft could start inside the wall; Lara could attach to a
+  pillar through a floor.
+- Fixed: Lara riding a door or platform could play the wrong animation (the sinking ship's hall door).
+- Fixed: a motorcycle placed by a level's script stood in the air next to its marker; the temple reveal in the
+  jungle now sets Lara down from the bike she rides.
+- For testers: chapter walkthrough scenarios now exist for sections 1 to 20 (59 legs played by input, see
+  docs/SELFTEST.md). No section plays from start to end yet; docs/GAMEPLAY_DEVELOPMENT_REPORT.md lists what stops
+  each one. The autopilot can swim to a point and ride with a capped brake steer.
+
 ## [0.46.0] - 2026-11-10
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

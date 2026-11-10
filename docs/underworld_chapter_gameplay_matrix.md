@@ -898,17 +898,17 @@ Abbreviations and evidence conventions as in `15_land_of_the_dead.md`. Screensho
 | Progression | Health → platform ride → ring ledge → rappel to the lower level → panel 1 → panel 2 → chimney climb to the middle → node 1 (cinematic) → platform ride → alcove chimney → free climb + dodge 1 → upper level → yetis → ring swing → panel 3 → rope climb + wall run → checkpoint → platform → node 2 (cinematic: Amanda) → two platform rings → tower handholds + dodge 2 → moving handhold ride → buttress slide → node 3 → final cinematics → Tibet → credits → Treasure Hunt | PARTIALLY IMPLEMENTED | PR gates ch 7 last row "pass (`ProgressionReal.EndgameCredits`, played…)"; opt-in `CriticalPathInOrder` ends with the same `playEnding` |
 | Automated tests | Existing: `ProgressionReal.EndgameCredits`, `ProgressionReal.CriticalPathInOrder` (opt-in), `GameReal.SplineMoverCarriesLara`, `SplineMoverFollowsItsPath`, `SplineMoverIndependentOfRenderRate`, `GameReal.ElevatorUberCommandCreatesMovingCollision`, `GameReal.ScriptedWaterLevelsRun`, `GameReal.ScriptedWaterLevelMoves`, `Game.WaterFlowPullsTowardTheSink`, `GameReal.SwimWaterDataDecoded`, `CineReal.NatlaSubtitlesCameraAndVoiceLines`, `Menus.MainCentreTreasureHuntAndRevisit`, `Progress.ProfileAndTreasureHuntSave`. Required: scenarios below | PARTIALLY IMPLEMENTED | see left |
 
-Requirement rows: 25 in [docs/matrix/21_out_of_time.md](matrix/21_out_of_time.md) — IMPLEMENTED 9, NOT IMPLEMENTED 8, IMPLEMENTED BUT UNVERIFIED 5, PARTIALLY IMPLEMENTED 3.
+Requirement rows: 25 in [docs/matrix/21_out_of_time.md](matrix/21_out_of_time.md) — IMPLEMENTED 9, NOT IMPLEMENTED 7, IMPLEMENTED BUT UNVERIFIED 5, PARTIALLY IMPLEMENTED 4.
 
 Open in this chapter:
 
 - **Natla's fireballs (M88)**: thrown, with blast, knock-down and burning patches (GP "Natla"); the two timed dodge events (slow balls at 1500 units/s, 3000 on a direct hit) are scripted but not played by input.
 - **Situational adrenaline (M36)** ×2: no time-scale support.
 - **Chimney jump (M06)** ×2 on the critical path (lower → middle, middle → upper).
-- **Moving markup (M76)**: grabbing platform edges, platform-to-platform grabs, the handhold rings on the central tower — no evidence; only standing on a mover is tested.
+- **Moving markup (M76)**: the floating stones orbit and carry ledges; the jump from the entry walkway onto a passing stone falls short in ours (known gap `natla_platform_ride`); platform-to-platform grabs and the handhold rings on the central tower are not played by input (hanging on the tower's rings by placement: `GameReal.MovingMarkup*`).
 - **The fight is tested only as a state machine**: Lara is placed at the three towers and three mounts. Order constraints from reachability (broken ledge, alcove appearing with a panel), yeti generators, checkpoints and both grapple rings are unexercised.
 - **Damage-free landings (M90)** and **wall-run jump to a ledge (M24)**: missing / untested.
-- Fate of Lara in the pool (kill, current, respawn) is unknown; the finale's water rise runs only as a level script.
+- The pool kills by its poll (`larabase` 3 on ten goo volumes; GP "Natla"); a level start on the lower ring no longer rides the finale pool's surface down into it (`GameReal.SwimLosesItsSurfaceAndFalls`). The finale's water rise runs only as a level script.
 - Hammer-strike animation on a node and the Thor glow on panels: unknown / sensors never fire.
 - Treasure Hunt rules after the credits are inferred ([I] in GP).
 
@@ -936,8 +936,8 @@ Open in this chapter:
 | 18. Rituals Old (Level 6 - Andaman Sea) | 18 | 1 | 3 | 9 | 3 | 2 | 0 |
 | 19. Helheim (Level 7 - Arctic Sea, part 1) | 33 | 1 | 10 | 18 | 2 | 2 | 0 |
 | 20. Yggdrasil (Level 7 - Arctic Sea, part 2) | 21 | 0 | 3 | 8 | 6 | 4 | 0 |
-| 21. Out of Time (Level 7 - Arctic Sea, part 3) | 25 | 0 | 9 | 5 | 3 | 8 | 0 |
-| **All 21** | **661** | **9** | **135** | **281** | **145** | **89** | **2** |
+| 21. Out of Time (Level 7 - Arctic Sea, part 3) | 25 | 0 | 9 | 5 | 4 | 7 | 0 |
+| **All 21** | **661** | **9** | **135** | **281** | **146** | **88** | **2** |
 
 (The first status named in a row counts; rows that split a status between two parts count under the first.)
 

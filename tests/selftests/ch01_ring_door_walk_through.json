@@ -3,7 +3,7 @@
   "name": "ch01_ring_door_walk_through",
   "chapter": "01 Prologue, leg 2 of 4: the bedroom's fallen beams, the pile and the ring door (docs/matrix/01_prologue.md C01-05, C01-06, C01-07)",
   "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/00prologue.html",
-  "note": "KNOWN GAP (fails today): after ring door 4526 is pulled off its slide (uber section 1 state 2, squib_explode_door born) its freed leaf stays standing in the door frame (collision at x -7935 .. -7835, y -10656 .. -11056), so Lara cannot walk through into l3_bedroom_hall. docs/PROGRESSION.md chapter 0 row 4526 'Open [U]': the 494-wide leaf, its panel 37 under the sill, is pushed back by the level collision and the squib's kick does not carry it out; the same leaf in l3_bedroom_hall (4376) falls into the pit.",
+  "note": "After ring door 4526 is pulled off its slide (uber section 1 state 2) its squib's knock throws the freed leaf out of the corridor into the bedroom (tru.exe under Wine: 1000 units/s toward world -X, the leaf lands flat 650 from its frame; docs/GAMEPLAY.md 'Explosion records'), the blast throws Lara off the strip; she walks up onto the platform, through the open doorway and into l3_bedroom_hall.",
   "level": "l3_main_bedroom",
   "level_chapter": 0,
   "spawn": [-8780, -10250, 1640, -90],

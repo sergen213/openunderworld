@@ -979,7 +979,7 @@ public:
     const std::vector<HazardShape>& hazards() const { return hazards_; }
     const std::vector<HazardHit>& hazardHits() const { return hazardHits_; }
     // An explosion record's area hit at `at` (0x69F1E0): targets, Lara, damageable objects, loose bodies.
-    void blast(vec3 at, const ExplosionRecord& x);
+    void blast(vec3 at, const ExplosionRecord& x, int32_t parent = 0);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
     // before ticking (as script()).
     ai::Enemies& enemies() { return enemies_; }
@@ -1373,12 +1373,12 @@ private:
     nlohmann::json serializeBreakables() const;
     void restoreBreakables(const nlohmann::json& j);
     std::map<std::string, std::optional<ExplosionRecord>> explosionData_; // by object name
-    struct PendingBlast { vec3 at{0}; ExplosionRecord record; int ticks = 0; };
+    struct PendingBlast { vec3 at{0}; ExplosionRecord record; int ticks = 0; int32_t parent = 0; };
     std::map<std::string, std::optional<ObjectWeaponDef>> objectWeapons_; // by weapon object name
     std::vector<HostileShot> hostile_;     // saved ("hostile" of the combat block, only while any flies)
     std::vector<vec3> hostileBlasts_;      // where they went off this tick
     std::vector<PendingBlast> pendingBlasts_;                             // born squibs going off (tickBlasts)
-    void birthBlast(uint16_t object, vec3 at);
+    void birthBlast(uint16_t object, vec3 at, int32_t parent);
     void tickBlasts();
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
     std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
@@ -1410,7 +1410,8 @@ private:
     void endHeadShot();                              // 0x718FD0: the aim closes, time returns, the move is over
     // Nearest hit of a ray on what a shot strikes: world faces and solid objects, living targets, shot-only shapes.
     struct RayHit { float t = 0; Damageable* target = nullptr; int32_t object = 0; bool hit = false; };
-    RayHit shotRay(vec3 from, vec3 dir, float len) const;
+    // `skip`, `skip2`: instances whose shot-only shapes the ray passes (a fired weapon object and what carries it).
+    RayHit shotRay(vec3 from, vec3 dir, float len, int32_t skip = 0, int32_t skip2 = 0) const;
     void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // weapon upper body over `local`
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order
     void fire(int hand);
@@ -1590,6 +1591,9 @@ private:
         int32_t state = -1, transition = -1; float time = 0, length = 0, health = 0; bool removed = false; int32_t engagement = -1;
         int32_t clip = -1; float clipTime = 0, rate = 1; bool loop = false;
         int32_t model = -1;
+        // Root motion of looping clips that end away from where they start (UberAnims::rootStep): the model-space
+        // transform the passed loops (and the clips before this one) left the section with. Saved when not identity.
+        glm::mat4 carry{1};
         // A section instance is a rigid body its joints hold (0x4D3DA0 / 0x4D8000). `held`: a joint was created on it;
         // `freed`: its last joint was removed (action 10) while it had one: it falls as a loose body from `freedAt`
         // (model -> world), as ma_uo_bedroom_door's leaf once pulled or blown off its hinge. Saved.
@@ -1608,7 +1612,13 @@ private:
         std::vector<std::string> names;
         std::vector<anim::AnimPattern> patterns;
         std::map<uint32_t, std::shared_ptr<const scene::Skeleton>> skeletons;
+        // Per clip: the root segment's frame at its last key over its frame at its first (model space), when they
+        // differ: such a clip, looped, is a step that repeats, not a cycle (World::tickUber). Empty: a cycle.
+        std::vector<std::optional<glm::mat4>> rootStep;
     };
+    // The root segment's model-space frame of section `section`'s skeleton in `clip` at `t` (clamped); identity
+    // without a skeleton.
+    glm::mat4 uberRootAt(int32_t uid, int32_t section, int32_t clip, float t) const;
     std::map<std::string, std::shared_ptr<const UberAnims>> uberAnims_;
     // Plays an anim reference (0x444BA0) on section `section`'s anim component: kind 0 an animation-list index, 1 a
     // pattern (its first animation at its rate); 2 (switch the anim set) is not in the data. Returns the clip's length
