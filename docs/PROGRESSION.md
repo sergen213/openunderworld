@@ -179,7 +179,7 @@ Portal order from the start unit; level changes not made by portals are named.
 | 7 | l7_arctic_sea | switch 9103 (use) | seafloor drawbridge 9116 | pass (uber transition 0 starts; was lowered at load by puzzle_cheat_button 9279) |
 | 7 | l7_helheim01 | rune switches 8993-8995 | dispatcher 8997 | not asserted (dispatcher only) |
 | 7 | l7_yggdrasil(_end) | volumes 8804, 8303/8312, 8323-8329 | cinematics 8773/8261, spline mover 8404 | pass |
-| 7 | l7_yggdrasil_end | buttresses A (8360 vt 62) / B-D (mounts 8362-8364 vt 54), each revealed by 8296-8298 | 330_hel_thralls (C), 340_hel_endgame (last) → l7_monastery 342_hel_endgame → end game save, credits movie | pass (`ProgressionReal.EndgameCredits`, played: arena volume 8303 → 320_hel_boss breaks A and locks the mounts (anim graph state 2); Lara's use breaks each mount (stimulus 1 → state 3, vt 20); no handler called directly) |
+| 7 | l7_yggdrasil_end | buttresses A (8360 vt 62) / B-D (mounts 8362-8364 vt 54), each revealed by 8296-8298 | 330_hel_thralls (C), 340_hel_endgame (last) → l7_monastery 342_hel_endgame → end game save, credits movie | pass (`ProgressionReal.EndgameCredits`, played: arena volume 8303 → 320_hel_boss breaks A and locks the mounts (anim graph state 2); Lara's use at each mount's node (its kind-8 engagement record, 686 units beyond the end bone) breaks it (stimulus 1 → state 3, vt 20); no handler called directly) |
 | 1 | l1_kraken_room | column (gear 32 section 12, shot) then switch 57 (use) | column falls (trigger 15), gear 32 turns | pass (`ProgressionReal.KrakenColumnShot`; World::uberShot pushes the column's braked prismatic joint out of its watched range: trigger 15) |
 
 ## Fixes in this pass (each covered by `CriticalGates` / `ChaptersReal`)

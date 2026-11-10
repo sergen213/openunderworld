@@ -53,10 +53,15 @@ Transition, 0x34 bytes, tag `0x2776`:
 
 ## Stimuli
 
-- [O] `0x1` use: Lara's use of the object (INSTANCE messages 0x166 / 0x168 → `0x6B4090`); buttress mounts. [I] Ours:
-  switch reach (200 horizontal) from any bone's bind position (`Runtime::usePoints`) while the state has a use
-  transition. The mounts' intros sit on Yggdrasil's trunk axis (x = y = 0, rotated 120° apart); bone 2, 8041 units
-  out, is the end at the outer ring where Lara stands.
+- [O] `0x1` use: Lara's use of the object (INSTANCE messages 0x166 / 0x168 → `0x6B4090`); buttress mounts. Ours: an
+  object whose physical record has "use" engagement records (kind 8) is used only through the record Lara engages
+  (`World::engagedUse`, tru.exe 0x719520), the others [I] by switch reach (200 horizontal) from any bone's bind
+  position (`Runtime::usePoints`) while the state has a use transition. A record's frame is its HInfo marker's in the
+  segment's current matrix [O 0x46DA20, instance +0x90]: on an anim-graph object the marker rides the running clip
+  (`recordFrame` with the clip's skin palette). The mounts' intros sit on Yggdrasil's trunk axis (x = y = 0, rotated
+  120° apart); `ar_ani_buttress_mount` has one record [O]: kind 8, a sphere of r 474.1 at marker 13, which lies 686
+  units beyond the end bone (bone 2, 8041 units out), ~8727 from the trunk: the node at the outer ring where Lara
+  stands. At the end bone itself her press does nothing (`ProgressionReal.EndgameCredits`).
 - [O] `0x800` hits. Message 0x11C (`0x6B4440`; `+0x4C` damage, `+0x50` damage class): if the class is in the state's
   event mask (`+0xA8`, bits of its transitions' class lists, cleared while one runs) `0x6A52E0` draws among its mask
   0x800 transitions listing the class (value = damage). The damage also adds to `+0x98`, posted on the next update as a

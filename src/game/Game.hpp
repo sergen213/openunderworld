@@ -1162,8 +1162,9 @@ private:
     // Its attach marker in the world (section >= 0: that uber section's, query 0x173 -> 0x6D59C0).
     std::optional<glm::mat4> attachFrame(const script::Object& receptacle, int section = -1);
     bool engages(const script::Object& o, const physics::Engagement& e); // Lara inside the record's shape
-    // ... of the record, `p`'s HInfo marker (its segment) in `frame` (the instance's world frame).
-    bool engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e);
+    // ... of the record, `p`'s HInfo marker (its segment) in `frame` (the instance's world frame), the segment posed by
+    // `skin` (an anim-graph object's running clip, null = bind).
+    bool engagesAt(const physics::ObjectPhysics& p, const glm::mat4& frame, const physics::Engagement& e, const std::vector<glm::mat4>* skin = nullptr);
     // Uber receptacles: section `section`'s engagement set now (UberSectionState::engagement; null none), its world frame
     // and its model's physics; a portable in / out of it starts its insert / removal transition (0x6D4890).
     const physics::EngagementSet* uberEngagement(int32_t uid, size_t section);
