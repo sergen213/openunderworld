@@ -1015,7 +1015,21 @@ rule in code: the level scripts run in the VM and call general natives).
   (anchor chains) and `World::poseAnchored` (the anchored object's body follows, so it is drawn and found there).
   The marker sits on its bone as the host's anim-graph clip poses it (bind frame without a clip); [I] a host without
   the marker gives its own frame. The same natives hang the 24 `ar_ani_floating_runestone` platforms on the markers of
-  the eight `ar_ani_runestone_orbit_a` rings, three to a ring, so they now go round with the rings' clips.
+  the eight `ar_ani_runestone_orbit_a` rings, three to a ring, so they go round with the rings' clips.
+- **The orbit rigs** [O data, I root motion]. `ar_ani_runestone_orbit_a` is an uber object (one section, 15 states, 19
+  commands): 320_hel_boss's end sends every rig command 18 and dispatcher 8360 sends the rigs of a broken buttress their
+  "catch" command (vt 62: 8389 and 8392 for buttress A), a 13.4 / 16 s catch clip, then a looping rotate clip. The
+  rotate clips turn the rig's **root bone** by a part of a circle: A_rotate1 / A_shift / A_rotate2 44.55 degrees in 99
+  frames (13.5 degrees/s), B_rotate 75 in 100 (22.5/s), D_rotate1 35.5 (10.6/s), E_rotate 52.9 (15.7/s), F_rotate 86.9
+  (25.8/s); C_rotate alone is a whole turn (20 s, 18/s). Looped as absolute poses they would snap back every 3.3 s
+  (ours did: the stones jumped 45 degrees), so the loop must go on from where it ended. Ours (`World::tickUber`,
+  `UberAnims::rootStep`, `UberSectionState::carry`): a looping clip whose root's last key differs from its first is a
+  step that repeats: it wraps at its last key (the next round's first) and the step stays with the section; a clip
+  played after it starts from the pose reached. Saved (a 16th section entry, only when not identity) and hashed.
+  Uber objects' markers, collision, markup and anchored riders follow as before. The stones also collide now: a rider
+  with markup collides when its host is an uber object (`World::syncObjects`; before only spline / graph / clip hosts).
+  `GameReal.OrbitRigsCarryTheRunestonesRound` (8368-8370: a circle about the tower, 135 degrees in 10 s, no step
+  back, the ledge loops with them). [I] tru.exe's root motion for object instances was not decoded.
 - **Fireballs** [O exe + data]. Each `natla_end` hangs its weapon intro (`wp_natla_fireball` 8433, `_adren` 8238-8258)
   on its own marker 13 and fires it with `weaponbase` 0 (bind 0x7B69F0, thunk 0x79E2E0 → 0x7784F0): the weapon's stats
   block (query 0x36, data +0xE0) gives the launch speed (+0x10) and the fire message 0x19B carries the **position of the
@@ -1050,9 +1064,21 @@ rule in code: the level scripts run in the VM and call general natives).
 - **Timed dodges** [O scripts]. Volumes 8323 (tower top), 8324, 8325, 8327, 8329 (climbing walls) start adrenaline
   trackers 8318-8322 (time scale down), reveal the matching hidden Natla with a camera (reveals 8313-8317) and have her
   throw the slow ball(s) at Lara: 1500 units/s and 3000 on a direct hit, so only leaving the line saves her.
-- **Hitting her** [O scripts]. Damage to 8403 (vt 22, any `damagetype`) posts `hit_by_player`; the lower-ring manager
-  counts them and at the second one ends its fight (vt 66: fireballs off, yetis off, manager 8450 takes over). She has
-  no health of her own.
+- **Hitting her** [O exe + scripts]. tru.exe's weapon hit (0x6C64D0) posts the hit message 0x11C to the struck
+  instance and then, when shooter and struck instance both have a script, calls the scripts' instance prototype 34
+  (vt 21, 0x7990A0) and prototype 35 (**vt 22**, 0x799100) with (attacker, victim, damage, `damagetype` = the hit's
+  damage class, 0x4A4D90). `damagetype` 0 (bind 0x7AC4F0 → 0x796FD0 → 0x4AA4D0) is equality of the two 4-byte values.
+  The `natla_end` base script 19035 compares the class with its constant **13** (a `damagetype` local's initial value),
+  the class of Mjolnir's bolts and ground pound: the guns (class 0 / 2 / 4) never count. On a match it posts
+  `hit_by_player` on `natla_greatest_hits`; 8403's own vt 22 passes hits on only while manager 8450's flag +44 is clear.
+  The lower-ring manager 8448 counts them (+124) while its fight runs (+108) and at `2 < count`, the **third** hit, ends
+  it (vt 66: +110 set, fireballs off, yetis off, 8450 takes over). She has no health of her own. Ours:
+  `script::Runtime::weaponHit` from `World::strike` (prototype 35 only [I: vt 21 is left to the contact path, whose
+  scripts expect a touch]); an instance whose script overrides that slot is met by shots where it is now
+  (`World::syncObjects` / `poseShotOnly`: its collision segments under `objectFrame`, so Natla's ride her warp points)
+  [I: which flag admits an instance to the original's shot test]; a fired weapon object's ball passes the shapes of the
+  instance that carries it. No lock-on: she is not an enemy [I]; Manual Aim reaches her.
+  `CombatReal.NatlaCountsMjolnirHits`.
 - **Yetis** [O scripts]. Lower ring: the four `yeti_thrall_pool_generator`s 8675-8678 are enabled when Lara enters a
   lower zone (`generatorbase` 3) and each `yeti_dead` message asks for the next (manager vt 65 → 8451 vt 69) until ten
   have died. Upper rings: 8451 gives birth to dormant yetis: vt 63 three (8667, 8668, 8669: volume 8650, the page's "1 +
@@ -1072,28 +1098,36 @@ rule in code: the level scripts run in the VM and call general natives).
   once and 100 a second until the patch goes out (the thread does not ask whether she is still inside).
 - **Route geometry met by input** (`ProgressionReal.NatlaFightByInput`): the unit's start walkway (z 7383) ends in a
   ledge at x −26750 (hang, drop to z 6160), a ramp runs down into arena volume 8303 (x −14800, z 4724); 320_hel_boss
-  leaves her on the middle ring's entry walkway at (−8143, 793, 4321), which ends at x −6620 over the rings (lower ring
-  z 474, 3850 below: a fatal fall, so the original's way down is the rope). There no zone volume holds her and Natla
-  throws nothing.
+  leaves her on the middle ring's entry walkway at (−8143, 793, 4321), which ends at x −6621 over the rings (lower ring
+  z 474, 3850 below: a fatal fall). There no zone volume holds her and Natla throws nothing.
+- **The way down from the entry walkway** [O data, U reach]. The first platforms are the stones 8368-8370 on rig 8389
+  (buttress A's, started by 320_hel_boss's end): they circle the tower counter-clockwise, coming from her left, one
+  past the walkway's end every 7.6-10.1 s (they sit 103 / 136 / 121 degrees apart). A stone is a block whose top
+  (collision and ledge loop, z 4859-4862) is 536 over the walkway's floor (4323), its outer edge at radius 5400-5570
+  against the walkway's end at 6667: 1240 out and 540 up. Ours cannot make that jump: a running jump (1975 units/s,
+  measured here: take-off z 4325, back at the hang height, root 492 under the ledge, 900 out) meets the stone's side
+  830 under its ledge. [U] the original's reach here (a jump query solved to the passing ledge, 0x7296C0 with the
+  carrier's velocity 0x7694B0?): needs a Wine measurement. Parked as `tests/selftests/known_gaps/natla_platform_ride`
+  (it plays the entry, waits for the stone and jumps; fails at the grab). The rope down from the ring ledge (C21-02)
+  comes after it and is untested.
 
 Tests: `CombatReal.NatlaFireballWeaponsDecoded`, `CombatReal.NatlaFireballsBlastThrowAndBurn` (throw from her warp
 point at 9000 units/s, blast on the floor target, 50-250 damage and thrown down, the patch's 100 a second on entering
 it lit, nothing between the targets, save round trip, pool level, no script stop; Lara placed on the ring),
-`ProgressionReal.NatlaFightByInput` and self-test `natla_fight` (input only: the entry to 320_hel_boss, the towers
-retract, nothing thrown at the entry walkway, the walkway's end), `ProgressionReal.EndgameCredits` (the whole script
-chain to the credits, Lara placed at the six interactions).
+`ProgressionReal.NatlaFightByInput` (input only, two legs: the entry to 320_hel_boss, the towers retract, nothing
+thrown at the entry walkway, the walkway's end; then, put on the lower ring, Mjolnir by the Weapon key, Manual Aim and
+Fire until her third counted hit ends the ring's fireballs), self-tests `natla_fight` (the entry leg) and
+`natla_lower_ring` (a level start on the ring: no ride down the pool's surface, no goo death, nothing lost between two
+floor targets), `CombatReal.NatlaCountsMjolnirHits`, `GameReal.OrbitRigsCarryTheRunestonesRound`,
+`GameReal.SwimLosesItsSurfaceAndFalls`, `ProgressionReal.EndgameCredits` (the whole script chain to the credits, Lara
+placed at the six interactions).
 
 Open (the fight is not yet playable from the entry to the credits by input alone):
-- [U] the way from the entry walkway to the rings by input: the platform ride and the rope down (matrix C21-01 / -02).
-  The 24 floating stones hang on the orbit rings' markers and the rings' sections are born by dispatcher 8360 as the
-  buttresses break; whether Lara can stand on / grab them as they move is untested (moving ledge markup: none).
-- a level start on the lower ring (a `--spawn` there, not a checkpoint load) dies at once: the World's first tick finds
-  her inside pool 8309's box before its constructor has lowered it (box top z 2869.5), she treads its surface down to
-  the marker, and 8209's goo flag, once set, kills at every poll. A tread that loses its surface by more than a step
-  should fall instead [U: tru.exe's rule]; the rings' input tests and a ring self-test wait for that.
+- the way from the entry walkway to the rings by input: the jump onto a passing stone falls 340 short (above; known gap
+  `natla_platform_ride`), the rope down after it is untested (matrix C21-01 / -02).
+- the lower ring on foot: the running jumps between its wedge ledges to the towers' alcoves (C21-04 to -06) have no
+  input route; the towers and mounts are worked by input only where Lara is placed (`EndgameCredits`).
 - the two chimney climbs, the tower's moving handholds, the buttress slide (C21-07, -12, -21, -23): no input route.
-- Natla as a shot target: nothing in ours delivers a hit to 8403's vt 22, so the lower ring's fight does not end after
-  two hits as the scripts provide; the manager keeps throwing while Lara stays on the ring.
 - [U] yeti counts actually spawned by the pool generators (enabled by the scripts; `ai::Enemies` spawns by its own
   generator data) were not measured here; the upper rings' births are script calls (above).
 - [I] the knock's unit, the 5 s flight limit, lingering-flame fields of the explosion record (+0x70..+0x80).
@@ -2522,9 +2556,7 @@ staggered heights round the tower; each stone has one ledge loop on its segment 
 5. The 82 `natla_end_mover` spline movers carry `natla_end` (Natla: 8404's child is 8403), not platforms. Posing
 anchored riders is implemented on agent/GpNatla (`instance` 8 anchors, `World::poseAnchored`); this branch only makes
 a rider that carries markup collide once it is anchored to a spline mover or an animated rig (`World::syncObjects`),
-and its items follow its pose like any other object's. Open after both are merged: the rigs do not turn in ours (a trial here with
-the stones anchored: they sat at their markers, e.g. 8365 at 1948,-3375,11346, for 10 s; the rig is posed by a
-5-bone clip palette whose time does not advance and it has no anim graph in ours [U: what plays its clip]), and the
+and its items follow its pose like any other object's. The rigs turn (docs "Natla": the orbit rigs' stepping loops); open: the
 rides themselves (C21-01, -10, -19, -20 of docs/matrix/21_out_of_time.md).
 
 ## Chimney jumps (src/game/WallJump.cpp)

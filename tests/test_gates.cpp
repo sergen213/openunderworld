@@ -1389,14 +1389,16 @@ TEST(ProgressionReal, TraproomsSeal) {
     EXPECT_NE(seal->script->fields, before) << "both held: vt 58 opens the seal";
 }
 
-// The Natla fight by ordinary input (app::Autopilot plans: stick and buttons only, never a relocation), as far as the
-// route can be played today: the entry. From the unit's start she runs east, comes off the first walkway by its ledge
-// (hang, drop), runs down the ramp into arena volume 8303: 320_hel_boss plays, buttress A breaks, the Thor towers
-// retract. On the entry walkway she is outside every zone: Natla throws nothing. Running on, the walkway ends over
-// the rings (she comes to hang on its edge, 3350 over the lower ring).
-// Not played (no input route yet; docs/GAMEPLAY.md "Natla", "Open"): the platform ride and the rope down, the rings
-// under fire (CombatReal.NatlaFireballsBlastThrowAndBurn plays the balls with Lara placed), the towers and mounts
-// (input at each, reached by placement, in EndgameCredits), the timed dodges, the climb to the last mount, the ending.
+// The Natla fight by ordinary input (app::Autopilot plans and the stick / look / buttons), as far as the route can be
+// played today. Leg 1, the entry: from the unit's start she runs east, comes off the first walkway by its ledge (hang,
+// drop), runs down the ramp into arena volume 8303: 320_hel_boss plays, buttress A breaks, the Thor towers retract. On
+// the entry walkway she is outside every zone: Natla throws nothing. Running on, the walkway ends over the rings (she
+// comes to hang on its edge, 3350 over the lower ring). One relocation, the unplayed way down (platform ride + rope).
+// Leg 2, the lower ring: Mjolnir by the Weapon key, Manual Aim, the view held on Natla, Fire: her third counted hit
+// ends the lower ring's phase and its fireballs.
+// Not played (no input route yet; docs/GAMEPLAY.md "Natla", "Open"): the platform ride and the rope down, the towers
+// and mounts (input at each, reached by placement, in EndgameCredits), the chimney climbs, the timed dodges, the climb
+// to the last mount, the ending.
 TEST(ProgressionReal, NatlaFightByInput) {
     if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
     const cdc::BigfileSet bf(gameDir());
@@ -1451,6 +1453,70 @@ TEST(ProgressionReal, NatlaFightByInput) {
         EXPECT_EQ(s.state, game::State::Hang) << "the walkway's end over the rings";
         EXPECT_GT(s.pos.x, start.x + 1000.0f);
         EXPECT_EQ(w.health().value(), w.health().max());
+        // The way down (the platform ride and the rope, matrix C21-01 / -02) is not playable yet: she is put on the
+        // lower ring between the floor targets 8463 and 8464 (883 from either: outside both blasts), with Mjolnir as
+        // the chapter gives it. From here input only: the Weapon key to Mjolnir, Manual Aim (no lock: Natla is no
+        // enemy), the view held on her as her warp points carry her round, Fire. Her script counts hits of damage
+        // class 13 only; the lower ring's manager 8448 ends its phase at the third (docs/GAMEPLAY.md "Natla").
+        const auto* ta = w.script().find(8463);
+        const auto* tb = w.script().find(8464);
+        ASSERT_TRUE(ta && tb);
+        vec3 ring = (ta->pos + tb->pos) * 0.5f;
+        if (const auto floor = w.collision().groundProbe(ring + vec3(0, 0, 300), 3000, 0x0F)) ring.z = floor->point.z;
+        place(w, ring, 0);
+        w.giveWeapon(game::Weapon::ThorHammer, 0);
+        const auto field = [&](int32_t uid, uint32_t off) -> int {
+            const auto* o = w.script().find(uid);
+            if (!o || !o->script) return -1;
+            const auto f = o->script->fields.find(off);
+            return f == o->script->fields.end() ? 0 : int(f->second);
+        };
+        const auto natla = [&]() -> std::optional<vec3> {
+            for (const auto& d : w.shotOnlyShapes())
+                if (d.id == 8403) return vec3(d.transform[3]);
+            return std::nullopt;
+        };
+        const auto lookAt = [&](vec3 at) { // the look stick that turns the view's centre onto `at`
+            const auto& c = w.camera();
+            const vec3 now = glm::normalize(c.target - c.position), want = glm::normalize(at - c.position);
+            float dyaw = std::atan2(want.y, want.x) - std::atan2(now.y, now.x);
+            dyaw -= 2 * glm::pi<float>() * std::round(dyaw / (2 * glm::pi<float>()));
+            return glm::vec2(std::clamp(dyaw * 20.0f, -2.5f, 2.5f), std::clamp((std::asin(want.z) - std::asin(now.z)) * 20.0f, -2.5f, 2.5f));
+        };
+        for (int i = 0; i < 60 * 4; ++i) w.tick({});
+        ASSERT_EQ(field(8448, 108), 1) << "the lower ring's fight runs";
+        for (int k = 0; k < 4 && w.combat().want != game::Weapon::ThorHammer; ++k) {
+            game::Actions sw;
+            sw.weapon = true;
+            w.tick(sw);
+            w.tick({});
+        }
+        ASSERT_EQ(w.combat().want, game::Weapon::ThorHammer);
+        game::Actions aim;
+        aim.manualAim = true;
+        w.tick(aim);
+        ASSERT_TRUE(w.combat().manualAim);
+        Seen ringSeen;
+        size_t flying = w.hostileShots().size();
+        const auto count = [&] {
+            if (w.hostileShots().size() > flying) ++ringSeen.fired;
+            flying = w.hostileShots().size();
+        };
+        for (int i = 0; i < 60 * 150 && field(8448, 110) == 0; ++i) {
+            game::Actions in;
+            if (const auto at = natla()) in.look = lookAt(*at), in.fire = glm::distance(*at, s.pos) < 7500.0f; // Mjolnir reaches 8000
+            w.tick(in);
+            count();
+            ASSERT_FALSE(w.health().dead()) << "tick " << i;
+        }
+        EXPECT_GT(ringSeen.fired, 0) << "she threw at the ring's floor targets meanwhile";
+        EXPECT_EQ(field(8448, 124), 3) << "three counted hits";
+        EXPECT_EQ(field(8448, 110), 1) << "the lower ring's phase is over";
+        EXPECT_EQ(field(8450, 44), 1) << "manager 8450 took over";
+        for (int i = 0; i < 60 * 4; ++i) w.tick({}); // a pair already ordered still comes
+        flying = w.hostileShots().size(), ringSeen.fired = 0;
+        for (int i = 0; i < 60 * 15; ++i) w.tick({}), count();
+        EXPECT_EQ(ringSeen.fired, 0) << "nothing more is thrown at the lower ring";
         w.onCinematic = nullptr;
     }
 }
