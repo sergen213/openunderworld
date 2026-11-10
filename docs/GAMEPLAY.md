@@ -242,8 +242,8 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Jump take-offs | standing, no stick: **1441.2** up (apex 201.6, 0.56 s air), leaving the ground when `ng_standing_jump` ends (its whole 10 frames, 0.33 s: the request starts it at start − blend = 0); stick held at the press (or pushed during the standing take-off: chart S248's T280): **1499.1** up + **1200** along the stick, 8 frames after the press, running on 128 under `ng_run_start`'s root motion meanwhile; running: **1275.9** up + **1974.9** forward (apex 158, 0.50 s air) after `ng_running_jump_forwards` (2 frames); the stick behind her (> 1.75 rad from her heading): she turns round and takes the running jump; to a side: the standing stick jump that way (units/s) | [O-runtime] tru.exe under Wine, `wmem trace` of Instance +0x20 position / +0x2A0 velocity (Lara-local, units per 30 Hz frame: 48.04 / 49.97 + 40.00 / 42.53 + 65.83; take-off 359 / 290 / 109 ms after the press, back + jump 121 ms; horizontal speed constant in the air), l3_main_bedroom start, traces openunderworld-work/screens/stairs `j_*.txt`; docs/REFERENCE_COMPARISON.md M13. [I] the stick jump's run-up taken as the run start's root motion (`Tuning::stickJumpFrames`) and the 1.75 rad back threshold (our turn-in-place threshold); free leaps (back off a ledge, pole fling without a target, slide jump) reuse these speeds [I]. Off a balance beam the stick jump has no run-up [I] |
 | Capsule | radius **79.01**, top **489.2** (height 512) | [O-runtime] tru.exe under Wine, Lara's Havok proxy (instance +0x288) while standing: radius +0x65C = 79.0139, cylinder +0x660 = 189.633 (targets +0x6B0 / +0x6B4 equal: steady), centre 315.4 above the feet (proxy +0x648 vs Instance +0x28), so the capsule spans 141.6..489.2; swimming it is 80 / 228. 0x490E60 steps radius / cylinder towards those targets by ≤ 20 / 40 per frame; 0x7018E0 creates it (`FUN_0049a410(inst, 100.0, …, 28.82, …)`); [U] which data sets the per-state targets. Height [O] player data +0x10 = 512.01 (used as Lara's height: ×0.5 centre, ×0.75 head, capsule test `FUN_007144b0(pos, height, …)`), TRLAU-menu-hook `GeneralAttributes.height` [I name]. Ours: on the ground the capsule's bottom is the step height (110), not 141.6, so the 121-unit hearth stops her one radius short (tru.exe: 38..72 short, pushed to and fro, trace t2); what stops tru.exe there [U] (the proxy's bottom clears it). Walls climbed / hung on keep the root 100 out (`wallOffset`) [I] |
 | Step up / down | **110 / 110** units: the root takes the floor height under it within ±110 (capsule slide starts 110 above the feet), so 97..100-unit stair risers are climbed and descended walking or running without a fall | [O-runtime] tru.exe under Wine (`wmem trace`/`tp`, l3_main_bedroom, unit offset ours + (9622, 333, −2977)): running up the manor staircase (risers 97..100, treads 186) her z jumps by each riser exactly as the root crosses the riser line, at unchanged run speed; the 121-unit hearth edge beside the start stops her ~56 units short. [I] 110 is between the two. [O-runtime] Lara's Havok proxy (instance+0x288) capsule: radius 79.01 (+0x65C), cylinder 189.63 (+0x660), centre 315.4 above the feet (+0x640): its bottom is 141.6 up, so the 121 block is not the capsule; which probe stops her is [U]. Our capsule stays radius 100 [I]. Regression: `GameReal.StairsWalkAndRunUpAndDown` (every riser of seven units' staircases, the bedroom flight up and down, the hearth) |
-| Walkable slope | normal z ≥ 0.7 (≈ 45.6°); a steeper face is still stood on when one of four probes 60 units around the root finds a walkable face within 20 units of its height (bumps, seams: l4_ragnarok_room's 0.6-normal floor strips) | [I] ours. [O-runtime] tru.exe under Wine (l2_junglehub ramp series, docs/formats/PHYSICS.md "Walkable slope limit under Wine"): she stands at rest on faces of normal z 0.626..0.716 (client flag 0x0080) and slides on faces of 0.523..0.753 that carry client flag 0x0004, so the original's rule is per face flag, with a limit below 0.626 for unflagged faces; ours is not yet changed |
-| Slide | floors with 0.3 ≤ normal z < 0.7 under an unsupported root: down the fall line, accelerated by gravity along the slope (g·sinθ), no friction, no cap; the descent rate is carried into a fall | [O-runtime] tru.exe under Wine (l3_main_bedroom roof, normal z 0.45, trace slide1.txt): velocity along the slope (vz/vxy = 1.97 = tan 63.3°), speed 51.0 → 69.0 → 91.3 units per 30 Hz frame over 0.25 s = ~4.7k units/s² against g·sin 63.3° = 4601; no cap up to 2738 units/s. [I] the 0.3 lower bound; [O] the exe has `SlopeSlideState` / `SkiSlopeSlideState` / `SlideState` (RTTI) whose virtuals are all the empty 0x7987B0: the state chart drives them |
+| Walkable slope | by face: unflagged faces of normal z ≥ cos 52° = 0.6157 are stood on; faces with client flag 0x0004 / 0x0040 are slid down between 52° and 28° (normal z 0.6157..0.8829) and stood on when flatter; 0x0020 faces are never too steep, 0x0100 faces are stood on however steep. A too-steep face is still stood on when one of four probes 60 units around the root finds a standable face within 20 units of its height (bumps, seams) | [O] tru.exe ground check 0x5DCE20 with lara.drm player data shorts +0x100C = 28, +0x100E = 52 and the face's client flags; [O-runtime] Wine ramp series in l2_junglehub (section "Slopes and slides"). [I] the four-probe exception (ours) |
+| Slide | on a slide-flagged face: along the fall line at 35..45 units per 30 Hz frame (1050..1350 units/s) by the slope angle 29°..51°, approached at 2250 (up) / 4500 (down) units/s²; on a too-steep floor (normal z 0.3..0.6157): accelerated by gravity along the slope (g·sinθ), no friction, no cap; the descent rate is carried into a fall | [O] slide controller 0x73FF50 with the props of chart group S814 (0x204 / 0x205 / 0x1FE / 0x1FF); [O-runtime] Wine: +1.25 units per frame each 60 Hz tick, steady 35.0 .. 43.8 per frame on twelve 0x0004 faces of 28.4° .. 48.3° in l2_junglehub (the 29°..51° range is their fit); l3_main_bedroom roof, normal z 0.45, trace slide1.txt: speed 51.0 → 69.0 → 91.3 units per 30 Hz frame over 0.25 s = ~4.7k units/s² against g·sin 63.3° = 4601, no cap up to 2738 units/s. [I] the 0.3 lower bound |
 | Edge slide-off | a capsule resting on an edge corner (floor-like contact, no floor under the root) gets ≥ 200 units/s outwards | [I] ours (fixes the Fall/Land alternation walking slowly off a ledge) |
 | Crouch capsule height | **260** | [O] player data +0x14 |
 | Turn rate (walk/run steering, swimming) | 6 rad/s; surface swimming at most **2765 / speed** rad/s (**117.5°/s** at full swim speed) | [I] from `ng_turn_center`; turning in place uses the clip's root rotation instead (above). [O-runtime] surface swim: tru.exe under Wine (l1_seatop sea, camfollow-wine/turn1.txt, rotz of Instance +0x30): with the stick swung round faster than she can follow she turns at a steady 117.5°/s at full speed, much faster from a slow swim (~300–480°/s at ~450 units/s) [I: the 1 / speed form; under water still 6 rad/s] |
@@ -1210,11 +1210,12 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 
 - Ground: each tick the current clip's root delta (rotated by heading) is the desired move. A capsule from
   `feet + stepUp` to the head is swept and slid along walls (up to 4 iterations, contact normals flattened), then a ray
-  from `feet + stepUp` down `stepUp + stepDown` snaps to the floor. A floor steeper than the slope limit still counts
-  when a walkable face lies within 20 units of its height 60 units to a side (`Player::standable`: floor bumps, seams;
+  from `feet + stepUp` down `stepUp + stepDown` snaps to the floor. Whether the face under her is stood on is `Player::floorKind`
+  (section "Slopes and slides": by client flag and angle); a too-steep floor still counts
+  when a standable face lies within 20 units of its height 60 units to a side (`Player::standable`: floor bumps, seams;
   the l4_ragnarok_room Fall/Run flicker at tick 127 of `tests/replays/pool_to_ragnarok.txt` came from 0.6-normal
-  strips 0.5 units high). Nothing under her starts a fall with the last horizontal velocity; an unsupported floor with
-  normal z 0.3..0.7 starts a slide.
+  strips 0.5 units high). Nothing under her starts a fall with the last horizontal velocity; a slide-flagged face between 28 and
+  52 degrees, or a too-steep floor of normal z 0.3..0.6157, starts a slide.
 - Air: exact constant-acceleration step, full capsule sweep; contacts clip the velocity. Landing = a floor-like
   contact with a standable floor under the root, or such a floor within a few units below the capsule while falling.
   A capsule resting on an edge's corner with nothing under the root (walking slowly off a ledge) does not land: it
@@ -1251,8 +1252,9 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 - Crouch (drop held on the ground): `crouch_idleToCrouch` → `crouch_Idle` / `Crouch_Front` (328 units/s root
   motion), capsule height 260 (player data +0x14); releasing drop stands up only with headroom (a capsule sweep up to
   512). Drop pressed while running: `ng_roll_front` (1364 units/s root motion), then run or idle.
-- Slide: down the fall line of the floor under the root (heading = downhill), accelerated by g·sinθ along the slope;
-  a standable floor ends it through `land()`, no floor below falls, jump leaps off with the slide velocity + the standing jump’s 1441 up.
+- Slide: down the fall line of the floor under the root (heading = downhill): on a slide-flagged face at the slide
+  controller's speed, on a too-steep floor accelerated by g·sinθ (section "Slopes and slides"); a standable floor ends
+  it through `slope_slide_stumble_off`, no floor below falls, jump leaps off with the slide velocity + the standing jump’s 1441 up.
 - Balance beams (markup 14, MUD BALANCEBEAM): from the ground, the root within 30 of the line (x/y and height, within
   the line's extent) heading along it (cos ≥ 0.7) gets on with `bbeam_walk_attach`; falling through the line from above
   lands on it with `bbeam_jumpland` (any heading). On the beam the root is pinned to the polyline: the stick along the
@@ -2599,6 +2601,111 @@ all five; of the nine further shaft candidates above none was tried. Coordinates
 `wmem goto <unit>` tru.exe's world is our unit frame + (its start - our `player` intro): l4_ballcourt + (5881.21,
 -10787.21, -15435.93), l2_junglehub + (8558.2, -19414.5, -18073.1); only the first `goto` of a session can be relied
 on (docs/REFERENCE_COMPARISON.md "Method").
+
+## Slopes and slides (src/game/Player.cpp `floorKind` / `standable` / State::Slide)
+
+Whether Lara stands on a floor or slides down it is decided per face by its **collision client flags and its angle**,
+not by one normal-z threshold (decoded 2026-11-10; before that ours stood from normal z 0.7 and slid below it).
+
+### The original's rule [O]
+
+- **Where**: tru.exe's ground check `0x5DCE20` (called for Lara from `0x71B910` every frame): a line down through her
+  root, then for the face hit (terrain: `clientFlags` = face +0x0E; objects: flags of the object's collision, masks in
+  brackets; both read through `0x5D3AF0`):
+  - slide kind = 2 when the face has 0x0004 (object 0x200), 1 when it has 0x0040 (object 0x800), else 0; stored in
+    the player globals +0x11D0;
+  - L = cos(player data short +0x100E) = cos 52° = **0.6157**; U = cos(player data short +0x100C) = cos 28° =
+    **0.8829** (U is computed once at spawn, `0x71B54A`, into the globals +0x644 and passed as the check's slope limit);
+  - **slope slide**: kind != 0 and L <= normal z <= U (and < 1): message 0x1CA to the player, not grounded;
+    +0x11CF = 1 (L < normal z), which with +0x11D0 >= 1 is the chart condition `PSCCF_OnSlopeSlide` (0x1FD,
+    `0x763670`);
+  - **too steep**: 0 < normal z < L on any face that is slide-flagged or lacks 0x0020 (object 0x400): message
+    0x1C9, not grounded (she falls along it), unless the face has 0x0100 (object 0x20): then she stands;
+  - everything else is stood on: unflagged faces from 0.6157 up, slide-flagged faces flatter than 28° (normal z >
+    0.8829; a flagged flat floor is ordinary ground), 0x0020 faces at any angle.
+- **Client flag census** (up-facing faces, `gameplaygoal/charvirtual/client_hist.cpp`): the values in use are 0x0000,
+  0x0004, 0x0080, 0x00A0 and 0x01A0. 0x0004 is painted on purpose-built slides (l1_kraken_room's ramp into the lower
+  hall: flat top, 44.6° face, 23° / 17.6° run-out, all flagged; l7_yggdrasil_hall01's slope before the eitr pit: one
+  30.1° surface, normal z 0.865) and on rock faces (l2_junglehub: 120 x 10^6 units² up-facing). 0x0040, 0x0020
+  alone and 0x0100 alone were not seen on terrain.
+- **Chart** (lara.drm player state chart, `PSCCF_OnSlopeSlide` = cond 0x1FD):
+  - every ground state leaves for the slide: T84 (and T83 with the stick downhill) -> S804 `slope_transitionto`
+    (request 1491, 0.67 s), then T1701 -> S801 `slope_slidefront` (request 1490, loop); a landing on a slide face:
+    T12 -> S802 `slope_landfront` (1488); a roll: T73 -> S801. So a slide face **cannot be walked or run up**: the
+    first frame on it starts the slide.
+  - during S804 (states S819 / S820): Jump -> `slope_jumpF` / `L` / `R` / `U` by the stick (T1704 / T1710 / T1711 /
+    T1709, requests 1486 / 1484 / 1483 / 1485); the stick uphill (`PSCCF_MoveDirDownhill` 411) -> S807 `ng_stepback`
+    (T1708), with a side steer also S817 (T1716).
+  - sliding (S801 / S811 / S812, group S814): Jump -> S805 `slope_jumpF` (T1703); off the slide face onto ground
+    (not OnSlopeSlide, not falling) -> S821 `slope_slide_stumble_off` (T1699, request 1492, 1.67 s); off it into the
+    air -> S812 (the same loop, falling) or the ledge states (T1713 / T1715 when a jump target is attached).
+  - `slope_slide_off_to_ledgeb` (request 1480) is played by no chart state: the slide-to-ledge-grab at a slide's end
+    goes through the air states and the ordinary ledge catch [O: no state requests 1480; U: where 1480 is used].
+- **Slide speed** (controller `0x73FF50`, props of group S814; lara.drm tuning data): target speed along the fall
+  line (direction (n x z) x n of the floor normal, `0x7308B0`) = prop 0x204 .. 0x205 = **35 .. 45 units per 30 Hz
+  frame** (1050 .. 1350 units/s) interpolated over the slope angle (mode prop 0x209 = 0x194); approached at prop
+  0x1FE = 5 (speeding up) / 0x1FF = 10 (slowing) units per frame², both multiplied by the frame's time multiplier and
+  applied as an acceleration: at 60 Hz 2.5 / 5 per frame² (2250 / 4500 units/s²) [O-runtime: +1.25 per 60 Hz tick];
+  the rate depends on the frame rate in the original. The angle range: the controller's defaults are the player
+  data's 28 / 52 (overridable by props 0x192 / 0x193, which no state of the group carries), but the measured steady
+  speeds fit **29° .. 51°** (table below, within 0.03 units per frame over twelve faces) and not 28 .. 52 (up to 0.35
+  off) [O-runtime; U: where the 29 / 51 come from]. Slide kind 1 scales speed and rate by player data floats +0x1010
+  / +0x1014 (both 1.0). During `slope_transitionto` (group S818) the props are 1.0 / 1.0. Steering props of S814
+  (0x1F5..0x1F8 = ±45 / ±135, 0x23B = 45, 0x259 = 140) do not enter the velocity: the controller always drives along
+  the fall line [O]; what they turn (her facing) is [U].
+- **Too-steep floors** are not this controller: she is in the falling physics on the surface, gravity along the
+  slope without cap (Wine, l3_main_bedroom roof, normal z 0.45: 51 -> 69 -> 91 units per frame, g sin 63°).
+
+### Ours
+
+- `Player::floorKind(hit)` returns Stand / Slide / Steep by the rule above from `collision::Face::clientFlags`
+  (terrain faces keep the raw +0x0E through unit merging and streaming; object faces count as unflagged [U: the
+  object flag words are not loaded]); `Tuning::minFloorNormalZ` = cos 52°, `slideMaxNormalZ` = cos 28°.
+- `standable`: Stand; a Steep hit still counts when a standable face lies within 20 units of its height 60 units to a
+  side ([I] ours: floor bumps and narrow steep strips; the original has no such test but passes a 20-unit strip in
+  one frame). A Slide face is never standable.
+- State::Slide: on a Slide face the speed along the slope follows the controller (35..45 per frame over 29..51°, 2250 up
+  / 4500 down units/s² at our 60 Hz tick). Entered from the ground `slope_transitionto` plays first and the target
+  is 1 unit per frame while it does ([O] props of S818; [I] that the controller runs during it); a landing on a slide
+  face stops her and `slope_landfront` plays at rest ([O-runtime] 0.40 s still, below); then the `slope_slidefront`
+  loop. On a Steep floor g sin(theta) without cap as before (down to normal z 0.3 [I]; steeper is fallen past).
+- A standable floor ends the slide through `slope_slide_stumble_off` (State::Land, root motion). Off the end into the
+  air: an edge that carries a ledge is caught as by the safety drop (`trySafetyDrop`, chart T1713 -> S534 -> the hang
+  attach states; [I] played with `slope_slide_off_to_ledgeb`), else a fall with the slide velocity.
+- Jump during a slide: the slide's horizontal velocity + the standing jump's 1441 up [I]. The chart's
+  `slope_jumpF` / `U` / `L` / `R` run jump queries q3 / q39 / q40 / q41 (prop 541; the slide itself q42), whose
+  launch numbers are not decoded.
+- Not done: `ng_stepback` at the entry with the stick uphill, the S817 side run, facing changes during the slide,
+  the `slope_jump*` clips and queries, slide flags on object collision.
+
+### Measured under Wine [O-runtime]
+
+l2_junglehub, tru.exe = ours + (8558.23, -19414.44, -18073.17); Lara put 15 over a face and left alone, traced at
+60 Hz (`pt trace`: position, velocity in units per 30 Hz frame, chart state); each sample looked up in our collision
+mesh for the face under her. Traces and tools: `openunderworld-work/gameplaygoal/charvirtual/` (`slope-wine2.txt`, the
+first series) and `openunderworld-work/gameplaygoal/slope/` (`session.sh` / `session2.sh`, `wine.txt` / `wine2.txt`,
+`find_ramps2.cpp`, `analyse.py`).
+
+| Face: client flags, normal z (angle) | tru.exe | Rule |
+|---|---|---|
+| 0x0000: 0.633, 0.647, 0.665, 0.763; 0x0080: 0.626, 0.659, 0.679, 0.703, 0.716; 0x00A0: 0.974, 1.000 | stands at rest (2.5 .. 3 s) | not slide-flagged, normal z >= 0.6157 |
+| 0x0004: 0.933, 0.965 | stands at rest | slide-flagged but flatter than 28° (normal z > 0.8829) |
+| 0x0004: 0.880 (28.4°), two faces | slides, steady **35.0** units per frame | slide (under 28° it would stand); speed clamped at the 29° end |
+| 0x0004: 0.860 (30.7°) / 0.850 (31.8°) / 0.828 (34.1°) / 0.807 (36.2°) / 0.799 (37.0°) | slides, steady **35.8 / 36.3 / 37.3 / 38.3 / 38.6** | 35 + 10 (angle - 29) / 22 = 35.76 / 36.27 / 37.32 / 38.27 / 38.64 |
+| 0x0004: 0.765 (40.1°) / 0.753 (41.1°) / 0.741 (42.2°) / 0.714 (44.4°) / 0.706 (45.1°) / 0.665 (48.3°) | slides, steady **40.0 / 40.5 / 41.0 / 42.0 / 42.3 / 43.8** | 40.05 / 40.52 / 41.00 / 42.00 / 42.31 / 43.77 |
+| 0x0004 0.706: a landing on it | at rest 0.40 s in the landing state, then +1.25 per 60 Hz tick from 0 to 42.3, held | `slope_landfront`, then the controller |
+| 0x0004: 0.388, 0.470, 0.595, 0.599 (reached from a slide above) | the slide state ends; she accelerates along it without cap (56 -> 140 units per frame) in the falling states | too steep (< 0.6157); the slide flag does not cap it |
+| 0x0080: 0.45 (l3_main_bedroom roof), 0.245 .. 0.366 | falls along it, g sin(theta), no cap | too steep |
+| the lower edge of the 0.706 face (a ledge) | off the edge she turns (7.5° a tick) while dropping and ends attached (a teleport does not move her until Crouch lets go) | slide end -> ledge catch |
+| the lower edge of a 0.880 face (no ledge) | 0.1 s in a slide-off state, then the fall | slide end -> fall |
+
+Not obtained: an unflagged face between normal z 0.60 and 0.6157 that she stayed on (the two tried dropped her onto
+neighbours), 0x0020 / 0x0100 faces steeper than 52° (the 0x00A0 trials fell through terrain not yet solid in that
+part of the unit; ours follows the decompiled test), and everything with keys during a slide: the jump off it
+(`slope_jump*`, queries q3 / q39..q41), the stick across and against the slide, the entry from a walk
+(`slope_transitionto`) and its `ng_stepback`. The keyed session is prepared
+(`openunderworld-work/gameplaygoal/slope/session3.sh`: the 2.5 s steady slide over the 0.765 / 0.769 / 0.668 / 0.746
+faces, Jump at 0.7 s, A / D / S / W held); tru.exe did not come up / did not load the unit in its two runs.
 
 ## Rail slides (src/game/Traverse.cpp)
 
@@ -4527,3 +4634,133 @@ pulled back in flight; run and sprint stops, rolls, turns; falls of 200..2100 wi
 Forward, the crouch 0.35..0.61 s into the plain landing with Crouch held, the stumble then the crouch with Crouch held
 from the start: no roll); the pull-up tapped / held / with Forward; the shimmy with Interact tapped / held / Sprint.
 
+
+## Animation layers and IK (decoded 2026-11; src/anim/Ik.cpp, src/game/Ik.*, `World::limbLocks`)
+
+Sources: tru.exe (Ghidra export and disassembly at the addresses given), lara.drm object data (ObjectBase +0xC8; every
+outfit carries the same numbers), the player state chart. Nothing here was measured under Wine: every [O] below is
+read from code and data, and what the code was not followed far enough to say is [U].
+
+### The original
+
+- **Limb locks** [O]. Lara's IK is `cdc::GenericLimbLockController` (RTTI 0x843130, base `cdc::LimbLockController`;
+  constructor 0x445160, per-tick update 0x445350). The player set-up (0x6EFDA0) builds one per record of the object
+  data list **+0x5C8 (u16 count = 30) / +0x5CC (records of 0x4C bytes)** and keeps them at player +0xF34; +0xF20 /
+  +0xF24 / +0xF28 / +0xF2C cache the active one for the left foot / right foot / left hand / right hand (limb ids
+  0x30 / 0x31 / 0x40 / 0x41, 0x767280 → 0x6F1A60). Record layout (`game::LimbLock`): +0 IK chain of the instance's IK
+  system (instance +0x2E0, chains of 0x120 bytes solved joint by joint at 0x443D00), +4 type, +8 group, +0xC / +0xE
+  limb ids, +0x14 / +0x18 probe reach up / down, +0x1C offset, +0x28 / +0x2C blend in / out frames, +0x34 / +0x36
+  segments, +0x30 / +0x3C a list of further chains switched with it, +0x40 flags. The type picks the target callback
+  (controller +0x14C): 1 → 0x73E6F0 (the floor under a foot), 5 → 0x732EC0 (a markup box's segment), 6 → 0x7445A0,
+  7 → 0x737790 (the ledge under a hand), 8 → 0x735770, 9 → 0x741490 (the bike: hands to its grip segments, feet to its
+  pegs), 10 → 0x758CD0, 0xB → 0x7406E0 (wading).
+
+  | records | type | limbs | probe up / down | offset | in / out | flags | used by |
+  |---|---|---|---|---|---|---|---|
+  | 13, 15 | 1 | feet (segments 6 / 11) | 158.03 / 158.03 | z 26.86 | 2 / 3 | 0x1F | on from the start |
+  | 16, 17 | 1 | feet | 158.03 / 158.03 | z 32.60 | 2 / 6 | 0x0D | not found switched on [U] |
+  | 4, 7 | 7 | hands | — | — | 2 / 3 | 1 | ledge hang S460 / S530 / S531 |
+  | 5, 8, 12, 14 | 9 | hands, feet | 316 (feet) | z 8.74 (feet) | 2 / 3 | 1, 5 | S1329 / S1353 / S1354 (the bike) |
+  | 26..29 | 0xB | hands, feet | 158 / 31.6, 237 / 31.6 | z 9.48, 31.6 | 6 / 6 | 1 | S107 / S202 (wading) |
+  | 22..25 | 0 | left hand, left foot | 158 / 63.21 | — | 1 / 3 | 1 | S1291 `wall_jump_attach_air` |
+  | 0..3 | 5, 2 | hands, feet | 158 / 63.21, 316 | (−15.8, −9.48, 0) | 2 / 3 | 0 | S595 `death_shotunderwater` |
+  | 6, 9, 10, 11, 18..21 | 0, 6, 8 | hands, feet | | | | | not found switched on [U] |
+
+- **Which are on** [O]. A record with flags 1 and 2 is on from its construction (0x443C60): only the foot records
+  13 / 15. State property **0x141** (0x767390) switches a list of records on for a state, property **0x142** switches
+  a list, or with a bool all of them, off; leaving the state rebuilds the defaults. All-off states (46 of 1445):
+  the rappel tree (S309), ladders (S1051), pillar, perch, wall jump / wall slide, the swim climb-outs, the in-air
+  "feet up" stages, S1 (the cheat-mode start state). The four the cache names are re-read after every change.
+- **The foot lock's gate** [O]. Every controller but the wading ones carries the per-tick gate 0x6EFD60: a type-1
+  controller may lock only when Lara has a mount (player +0xF00: the bike), when the floor moved her this tick
+  (+0x11CC, set by the floor query 0x5DCE20 when it adds an instance's motion to her), or when an instance is under her
+  feet (the handle at +0x610, set by the same query when the floor hit is an object). **On unit terrain the foot locks
+  never engage: on slopes and stairs her feet are the clip's.** The lock itself (0x73E6F0 → 0x438F60): one ray along the
+  instance's up axis from `up` over the foot segment to `down` under it (collision mask 0x2C19E7; flag 8 lets object
+  hits count), the target = the hit + the hit's normal × offset z; flag 0x10 turns the foot to the normal (0x443B50 →
+  0x443A80). A foot is locked for its support phase: anim events 0x34 / 0x36 (and 0x35 = none; handler 0x716F30) set the support foot
+  (player +0xF3C, state property 0x12F with values 301..306 overrides it per state) and events send the controllers
+  messages 0x37 / 0x38 (0x767520 / 0x767570). There is **no pelvis bone offset**: +0xF1C, which looks like one, is the
+  root's own vertical correction of the tick (0x71BFA0), added to the probe reach.
+- **The support-foot root** [O existence, U rule]: player +0xF18 is a 0xD0-byte object (0x434F90, segments from data
+  +0x168 = 1 and +0x164 = 0) fed by the same events (0x435030); it belongs to the root motion, not to the pose.
+- **Hands on a ledge** [O]. Grabbing and moving on a ledge is root alignment by anim targets
+  (`HandMatchingFullAnimInterpTarget`, RTTI 0x85EC34, with the other attach targets): the clip's hands meet the ledge
+  because the root is put there. On top of that the hang idle states switch the type-7 locks on: 0x737790 takes the
+  ledge markup she is on (player +0xC94, flag 0x40000000) and her place on its polyline (+0xC98, segment + fraction)
+  and gives each hand (limb 0x40 / 0x41) a point on that polyline, 20 units inside a segment end when she is near
+  one. The exact point along the ledge is [U] (the callback's control flow did not decompile cleanly).
+- **Head look-at** [O] (0x6FD080, called by 0x6FD7D0 each tick): the head segment (data +0x1B0 = 17) is turned to the
+  combat target's marker 0xB (the targeting system's current target, player +0x854 → +0x128), or to a scripted
+  point (player message 0x72 stores it at +0x380 with a radius / timeout; message 0x69 clears it) when that point is
+  within 12000 units, in front of her and in sight from 60 units (+0xCC8) short of it. The one sender found is a
+  state-chart action of the player (0x76E190): the point at player +0xCA0 (what she is about to engage) plus a
+  per-case offset of 350 / 500 units, pulled back to the first collision hit. Which states run it is [U]. Angles are taken relative to
+  the neck segment (+0x1A8 = 16) and clamped to **±60° aside (+0xCD4) and ±15° up / down (+0xCD8)**; script variables
+  0xFE / 0xFF / 0x100 narrow them. The turn is a segment rotation override (mode 10) interpolated over **3 frames**
+  (+0xB6C), restarted when the wanted angle jumps by more than 30° (+0xB68), and released over 9 frames (900 anim
+  time units, 0x448710) when there is nothing to look at.
+- **Aim layers, draw / holster, blend times**: unchanged from the sections "Combat" (the aim grids over the spine-14
+  subtree, equip / unequip clips), "Manual aim, adrenaline inputs, dual targets" (0x7035F0 hands the second target to
+  one arm's aimer) and "Animation mapping" / docs/formats/ANIMATION.md "Transitions" (each anim request's interp
+  frames and start frame, [O]).
+
+### Ours
+
+- `anim::rotateBoneModel` / `translateBoneModel` / `solveTwoBone` (src/anim/Ik.cpp): bone turns in model space and an
+  analytic two-bone solver (the middle joint bends in the plane it is bent in, the upper bone swings, the end keeps
+  its facing; out of reach = 0.999 of full stretch) [I: the original's chain records are not decoded].
+- `game::loadIkTuning` reads the 30 records and the look-at numbers; `IkTuning`'s defaults are the same four records
+  and numbers for synthetic libraries.
+- `World::limbLocks` runs after the clips, the weapon layer and the throw layer, before the ragdoll and the hair:
+  - **feet** (`game::plantFeet`, records 13 / 15) in the on-foot states (idle, walk, run, stop, turn, land, jump
+    prep, crouch, use, block, hit) **when the floor under her root is an object** (the original's gate; the mount
+    case belongs to the bike records, below). Probe as the record. Where the original holds the ankle 26.86 off the
+    floor for the support phase, ours keeps the clip's ankle height, now over the floor found under that foot (plus
+    26.86 × (1/n.z − 1) for a tilted sole), fading out for a lifted foot between half and all of the probe's reach
+    under the ankle [I: no support events]; the pelvis (segment 1) comes down by what the lower foot needs [I: the
+    original has no such offset; without it a leg cannot reach a lower floor]; the foot turns to the normal.
+  - **hands** (`game::lockHands`, records 4 / 7) in the `ledgeb_idle` hang (not during a one-handed saving grab):
+    each hand (bones 55 / 80) to the nearest point of the ledge's polyline, at least 20 from its ends [O the line and
+    the 20; I the point along it = where the clip has the hand].
+  - **head** (`game::lookAt`): to the combat target's aim point within ±60° / ±15° of the neck, weighted by the
+    weapon layer's draw ramp [I: the original looks at the targeting system's target, its 3-frame interpolation is
+    replaced by that ramp]. Only the head bone turns; the clip's head roll is kept.
+  - **second arm** (`game::aimArm`): with a second target her left arm (the gun that fires at it) swings at the
+    shoulder from the primary target to the second, at most 90° [I].
+- The passes keep **no state**: a pose is a function of the game state (replays, saves and `stateHash` need nothing
+  new; no save version change). The price: no 2 / 3-frame fades in or out. They are visual only: the controller, the
+  collision capsule and the root motion never read the pose. What does read posed bones: a gun's muzzle (with a
+  second target the left gun's shots start from the swung arm) and the follow camera's sight ray from the pelvis
+  (lowered with it on an uneven object floor).
+- Cost (`GameReal.IkPassesAreCheap`, Release, one core, 153 bones): feet + pelvis + head + second arm together
+  **0.015 ms** a tick, the hands **0.005 ms** (a 60 Hz tick is 16.7 ms).
+- Probes: `ik.*` and `pose.bone.<segment>.x|y|z` (docs/SELFTEST.md); scenarios `ik_pose` (hands on ledge 973's line
+  in l3_main_bedroom: the clip alone leaves them 1.5 / 13.4 units off the sloping line, the lock under 0.01; the
+  shimmy without locks; head limits on a target) and `ik_feet` (l1_baldrs_tomb: no foot pass
+  on terrain, both feet planted on press plate 219).
+- Tests: `Anim.RotateBoneModelTurnsTheSubtreeAboutTheBone`, `Anim.TwoBoneIk*` (synthetic leg);
+  `GameReal.IkTuningDecodesTheLimbLocks`, `GameReal.IkFeetFollowASlopeAndStairs` (ng_idle and ng_run on a 20° slope:
+  planted ankles within 1 unit of the wanted height, straight under the clip's, the sole turned 20°, the root bone
+  untouched; a 40-unit stair: left foot 40 down, pelvis 40 down, right foot in place; level floor: pose bit-identical),
+  `GameReal.IkHandsLockToTheLedgeLine` (a ledge 8 units off and 8° turned: both hands within 0.1 of the line, not
+  moved along it; the 20-unit end gap), `GameReal.IkHeadLooksAtATargetWithinItsLimits`,
+  `GameReal.IkLeftArmGoesToTheSecondTarget`, `Game.IkPassesStayOffOnTerrain` (the gate in `World`: no foot pass on
+  a terrain ramp).
+
+### Differences and open points
+
+| | original | ours |
+|---|---|---|
+| foot lock on terrain slopes / stairs | none (gate 0x6EFD60) | none |
+| foot lock on objects | support foot held at 26.86 off the hit, 2 / 3-frame blends | clip height over the hit, lifted feet fade, pelvis drop, no blends [I] |
+| hands on a ledge | type-7 lock in the hang idle states; point along the ledge [U] | same states' clip (`ledgeb_idle`); nearest point of the line |
+| hands in shimmy / corners / pole / ladder | clips + anim-target root alignment (`LadderRungAlignAnimTarget`, `HPoleAirAttachAnimTarget`, ...) | clips + root fit |
+| head | target marker 0xB or scripted point; 3-frame interp | combat target's aim point; draw ramp; scripted look-at point (message 0x72) not wired |
+| bike (type 9), wading (type 0xB), wall-jump (type 0) and death (types 5 / 2) records | on in their states | not applied: their callbacks (0x741490, 0x7406E0, the bike's grip / peg data +0x4C / +0x4D / +0x710) are the next thing to decode |
+| per-arm aim | one aimer per arm (0x7035F0) | grid for both arms + shoulder swing of the left to the second target |
+| anim support events 0x34..0x38, the +0xF18 support-foot root | drive the lock phase and part of the root motion | not decoded |
+
+Render sanity (viewed, kept privately in the work dir `gameplaygoal/ik/`): `hang.png` (ledge 973, tick 200: both hands
+on the ledge) and `look.png` (pistols drawn on a dummy up to her left: head turned to it). No comparison against the
+original's frames was made for these passes.
