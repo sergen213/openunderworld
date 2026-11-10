@@ -2467,6 +2467,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
                 const float rise = rootTranslation(*c, c->durationSeconds(), false).z - rootTranslation(*c, s_.clipTime, false).z;
                 const vec3 hang = anims_.hangHandOffset;
                 s_.pos += toWorld({hang.x - h->x, hang.y - h->y, hang.z - rise});
+                reseated_ = true;
             }
         };
         // Pulling up (chart S439, entered by the Jump press with a top to climb onto; tru.exe under Wine, l4_temple ledge

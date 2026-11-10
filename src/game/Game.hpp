@@ -457,6 +457,9 @@ public:
     // `move`: world-space wish direction (z ignored), length <= 1.
     void tick(vec2 move, const Actions& a, float dt);
     const PlayerState& state() const { return s_; }
+    // True once after a tick in which a climb-up clip was seated on its ledge (her position set to where the clip
+    // expects the ledge, not moved there): the world's triggers take no plane crossing from that step.
+    bool takeReseat() { const bool r = reseated_; reseated_ = false; return r; }
     const Tuning& tuning() const { return t_; }
     void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
     void letGo() { startFall(vec3(0)); } // what she held or stood on is gone (a breakable broke): she falls from here
@@ -641,6 +644,7 @@ private:
     Tuning t_;
     PlayerState s_;
     bool walk_ = false; // Actions::walk of the current tick (land() reads the chart's stick level 0x191)
+    bool reseated_ = false; // this tick only (takeReseat)
     // (the press edges of jump / drop live in PlayerState::buttons)
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;

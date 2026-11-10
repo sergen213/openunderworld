@@ -8565,7 +8565,7 @@ TEST(GameReal, ArcticSeaLadderClimbsFasterWithInteract) {
     const auto rungZ = [](int r) { return -17318.5f - 575.221f - 110.619f * float(r); };
     float rise[2];
     for (const bool fast : {false, true}) {
-        auto w = unitWorld(bf, "l7_arctic_sea", {{16513.6f - 79 - 110.619f, -47420.7f, rungZ(11)}, 0});
+        auto w = unitWorld(bf, "l7_arctic_sea", {{16513.6f - 79, -47420.7f + 110.619f, rungZ(11)}, glm::radians(-90.0f)}); // in front of it (+Y)
         const auto& s = w.player().state();
         for (int i = 0; i < 5 && s.state != State::Ladder; ++i) w.tick(forward());
         ASSERT_EQ(s.state, State::Ladder);
