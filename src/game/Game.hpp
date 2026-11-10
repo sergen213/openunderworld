@@ -316,6 +316,10 @@ struct PlayerState {
     // along the rope: anchor -> bends -> hand. The rope wraps round geometry as the original's (Grapple.cpp
     // wrapRope): ropeBend[0..ropeBends) are its bends from the anchor side (the last one is the pivot she swings on),
     // ropeBendClear[i] the ticks bend i's straight-through path has been clear (it slides off 15 more per tick).
+    // Hanging free (State::GrappleSwing) the swing drive keeps its timers in fields the rope states do not use
+    // otherwise: `flight` = seconds the drive stays on after the stick left her facing's axis (tru.exe 0xFAE3E4 /
+    // 0xFAE3E8 against player data +0x9D8), `savingGrab` = seconds the stick has been held back (0xFAE3E0, +0x9DC),
+    // `wallTime` = seconds she has been turning on the rope (0xFAE3D8, +0x9FC).
     int32_t grappleUid = 0;
     vec3 grappleAnchor{0};
     float ropeLength = 0;
@@ -521,9 +525,10 @@ private:
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);
     void grapple(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt); // Grapple.cpp
-    void rappel(vec2 move, bool jumpPressed, bool dropPressed, float dt);
+    void rappel(vec2 move, bool climb, bool jumpPressed, bool dropPressed, float dt);
     void rappelOnto(const collision::Hit& wall, vec3 vel, std::string_view clip);
     void standUp(); // let go of the rope, standing
+    void jumpOffRope(vec2 move); // Jump on the rope: the leap off it (hanging free: along her facing; on a wall: by the stick)
     void wrapRope(vec3 oldHand, vec3 hand); // bends the rope round geometry / straightens it (Grapple.cpp)
     void land(vec2 move);
 

@@ -363,7 +363,8 @@ const std::vector<std::string_view> kLaraClipNames = {
     // grapple (Grapple.cpp)
     "grapple_rappel_free_jumpon", "grapple_rappel_idle", "grapple_rappel_free_swing_forward",
     "grapple_rappel_free_swing_backward", "grapple_rappel_free_ascend", "grapple_rappel_free_descend",
-    "grapple_rappel_free_jumpoff",
+    "grapple_rappel_free_jumpoff", "grapple_rappel_jumpoff_left", "grapple_rappel_jumpoff_right", "grapple_rappel_jumpoff_back",
+    "grapple_rappel_free_rotate_left", "grapple_rappel_free_rotate_right",
     "grapple_rappel_wall_land", "grapple_rappel_wall_land_left", "grapple_rappel_wall_land_right", "grapple_rappel_up",
     "grapple_rappel_up_left_45", "grapple_rappel_up_right_45", "grapple_rappel_down", "grapple_rappel_down_left_45",
     "grapple_rappel_down_right_45", "ng_ground_to_wallrun_left", "ng_ground_to_wallrun_right", "grapple_rappel_left",

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "prologue_hall_swing",
+  "chapter": "Prologue (docs/matrix/01_prologue.md C01-12): grapple the main hall's ceiling ring from the balcony, jump off with the rope, swing over the burning staircase, leap onto the far balcony",
+  "note": "l3_main_hall ring 4089 (GameReal.MainHallSwingToFarBalcony). The far balcony's floor is z 1716, its edge x -2150. Rope inputs and swing law [O]: docs/GAMEPLAY.md Grapple.",
+  "level": "l3_main_hall",
+  "spawn": [2441, 3912, 1709, 180],
+  "steps": [
+    {"step": "throw", "input": ["0.2 grapple 1", "0.3 grapple 0"], "duration": 2, "until": {"probe": "grapple.swinging", "eq": true},
+     "expect": [{"probe": "grapple.target", "eq": 4089},
+                {"probe": "grapple.kind", "eq": "ceiling"},
+                {"probe": "grapple.rope_max", "near": 3792.67, "tol": 0.01}]},
+    {"step": "walk_to_edge", "plan": ["run 180 0.95"], "duration": 2,
+     "expect": [{"probe": "grapple.attached", "over": "all", "eq": true, "note": "roped she walks over the balcony's step; the rope follows her"},
+                {"probe": "player.pos.x", "min": 2130, "max": 2200},
+                {"probe": "player.pos.z", "near": 1744.7, "tol": 2}]},
+    {"step": "jump_and_swing", "input": ["0 forward 1", "0.05 jump 1", "0.15 jump 0"], "duration": 4, "until": {"probe": "player.pos.x", "max": -1650},
+     "expect": [{"probe": "grapple.attached", "over": "all", "eq": true, "note": "the jump keeps the rope"},
+                {"clips": ["grapple_rappel_free_jumpon", "grapple_rappel_free_swing_forward"]},
+                {"probe": "grapple.rope", "min": 2100, "max": 2250, "note": "her distance when the jump came down clear of the stairs"},
+                {"probe": "player.pos.z", "over": "min", "min": 1000, "note": "clear of the staircase"},
+                {"probe": "player.pos.z", "min": 1716, "note": "over the far balcony's level at the far end"},
+                {"probe": "step.health_lost", "eq": 0}]},
+    {"step": "leap_off", "input": ["0 jump 1", "0.1 jump 0"], "duration": 4, "until": {"probe": "player.grounded", "eq": true},
+     "expect": [{"clips": ["grapple_rappel_free_jumpoff"]},
+                {"probe": "grapple.attached", "eq": false},
+                {"probe": "player.pos.x", "max": -2150, "note": "on the far balcony"},
+                {"probe": "player.pos.z", "near": 1716, "tol": 15},
+                {"probe": "step.health_lost", "eq": 0}]}
+  ]
+}
