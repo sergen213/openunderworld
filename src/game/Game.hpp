@@ -167,8 +167,14 @@ enum class State {
 };
 std::string_view stateName(State s); // "unknown" past the last state
 
+// What moves Lara's body through the level on the ground and in the air (docs/formats/PHYSICS.md "Character
+// controller"): the capsule sweep on the collision BVH, or Jolt's CharacterVirtual (physics::Scene::moveCharacter)
+// as a cylinder / with the capsule of the evaluation plan.
+enum class Mover : uint8_t { Sweep, Jolt, JoltCapsule };
+
 // Controller constants. Provenance ([O] observed / [I] inferred) is listed in docs/GAMEPLAY.md.
 struct Tuning {
+    Mover mover = Mover::Sweep;
     // Lara's height: lara.drm player data +0x10. Collision capsule as tru.exe's standing Havok proxy (Wine, instance
     // +0x288: radius +0x65C 79.01, cylinder +0x660 189.63, centre 315.4 above the feet), so its top is 489.2; on the
     // ground our capsule's bottom is stepUp (the proxy's own bottom, 141.6, is above the 121-unit hearth it stops at).
@@ -373,6 +379,7 @@ class Player {
 public:
     Player(const collision::CollisionMesh& col, const AnimLibrary& anims, Tuning tuning = defaultTuning());
     void spawn(vec3 feet, float yaw);
+    void attach(physics::Scene* scene) { scene_ = scene, ownScene_.reset(); } // the Jolt mover moves in this scene
     // `move`: world-space wish direction (z ignored), length <= 1.
     void tick(vec2 move, const Actions& a, float dt);
     const PlayerState& state() const { return s_; }
@@ -428,6 +435,12 @@ private:
     bool standable(vec3 p, const collision::Hit& g) const; // floor hit under p supports standing
     void groundMove(vec3 delta, float dt);
     void airMove(float dt, vec2 move);
+    bool airSweep(float dt, vec2 move);     // the sweep mover's air step; true: it landed / began to slide
+    // The Jolt mover (Mover.cpp): the same three moves through physics::Scene::moveCharacter.
+    physics::Scene& moverScene(float dt);
+    void groundMoveJolt(vec3 delta, float dt);
+    bool airMoveJolt(float dt, vec2 move);
+    void slideJolt(vec2 move, float dt);
     vec3 slide(vec3 pos, vec3 delta, float bottom, bool horizontalNormals) const;
     void startFall(vec3 vel);
     void startSlide(vec3 vel);
@@ -548,6 +561,9 @@ private:
     const AnimLibrary& anims_;
     Tuning t_;
     PlayerState s_;
+    physics::Scene* scene_ = nullptr;          // the Jolt mover's scene (World's)
+    std::unique_ptr<physics::Scene> ownScene_; // ... or her own over col_, when no world attached one
+    bool moverSynced_ = false;                 // ownScene_ follows col_ once per tick
     bool jumpHeld_ = false, dropHeld_ = false;
     double waveSeconds_ = 0;
     float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;
@@ -1083,6 +1099,7 @@ private:
     // One Jolt step (Objects.cpp): hinge drives, uber joints, loose rigid bodies (tumbling onto the terrain and object
     // collision), then the uber range watches.
     void stepPhysics(float dt);
+    void physicsSolids(const std::set<int32_t>& looseIds); // terrain and colliders of the physics scene
     // Dead enemies' and Lara's ragdolls (Objects.cpp): starting ones get their bodies (with the killing hit's impulse),
     // settled or streamed-out ones lose theirs; after a step (`step`) each body's pose goes back to its owner, and each
     // chunk piece's to its enemy.

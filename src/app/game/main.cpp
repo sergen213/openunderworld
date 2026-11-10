@@ -187,6 +187,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         }
         if (a == "--game-dir") o.gameDir = v;
         else if (a == "--level") o.level = v;
+        else if (a == "--mover") setenv("OU_MOVER", v, 1); // sweep | jolt | jolt-capsule (PHYSICS.md "Character controller")
         else if (a == "--chapter") o.chapter = std::atoi(v);
         else if (a == "--lang") o.game.language = v;
         else if (a == "--music-wav") o.musicWav = v;

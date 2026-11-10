@@ -400,7 +400,14 @@ const std::vector<std::string_view> kLaraClipNames = {
     "swim_surface_idle_turn_90", "swim_surface_idle_turn_180", // turning on the spot at the surface
 };
 
-Tuning defaultTuning() { return {}; } // values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers"
+// Values and provenance: Tuning in Game.hpp, docs/GAMEPLAY.md "Numbers". OU_MOVER=jolt|jolt-capsule selects the Jolt
+// mover for the evaluation of docs/formats/PHYSICS.md "Character controller" (ou-game --mover).
+Tuning defaultTuning() {
+    Tuning t;
+    if (const char* m = std::getenv("OU_MOVER"))
+        t.mover = std::string_view(m) == "jolt" ? Mover::Jolt : std::string_view(m) == "jolt-capsule" ? Mover::JoltCapsule : Mover::Sweep;
+    return t;
+}
 
 void rigOutfit(AnimLibrary& lib, const cdc::Drm& drm) {
     std::vector<std::string> warnings;
@@ -636,6 +643,13 @@ void World::tick(const Actions& input) {
     if (script_.objects().size() != syncedObjects_ || col_.dynamics.size() != colliders_.size()) syncObjects();
     player_.setWaveSeconds(double(ticks_) * kTickSeconds);
     player_.setCamera(cam_.yaw, cam_.pitch);
+    if (player_.tuning().mover != Mover::Sweep) { // the Jolt mover walks on the physics scene's terrain and colliders
+        player_.attach(&physics_);
+        std::set<int32_t> looseIds;
+        for (const auto& o : script_.objects())
+            if (o.loose) looseIds.insert(o.uid);
+        physicsSolids(looseIds);
+    }
     if (!onBike) player_.tick(move, a, dt);
     hingePull_.clear();
     if (player_.state().state != State::GrapplePull) pullT_ = 0;

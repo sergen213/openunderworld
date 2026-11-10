@@ -583,7 +583,8 @@ struct Scene::Impl {
     JPH::BodyID lara;                     // its proxy body (key "a")
     // The character controller (Scene::setController): `last` is where its last move ended in game units (a move from
     // anywhere else is a teleport), `top` its capsule's.
-    struct ControllerE { CharacterSpec spec; JPH::Ref<JPH::CharacterVirtual> cv; float top = 0; vec3 last{0}; bool placed = false; };
+    struct ControllerE { CharacterSpec spec; JPH::Ref<JPH::CharacterVirtual> cv; float top = 0; vec3 last{0}; bool placed = false; uint64_t bodies = 0; };
+    uint64_t bodiesVersion = 1; // bumped whenever a body is added or removed
     std::optional<ControllerE> controller;
     std::string pendingCharacter; // a restored controller state, until the controller exists
     JPH::RefConst<JPH::Shape> capsule(float radius, float top) const {
@@ -644,6 +645,7 @@ struct Scene::Impl {
         if (used.size() <= id.GetIndex()) used.resize(id.GetIndex() + 1);
         used[id.GetIndex()] = true;
         bi->CreateBodyWithID(id, s);
+        ++bodiesVersion;
         bi->AddBody(id, act);
         return id;
     }
@@ -733,6 +735,7 @@ struct Scene::Impl {
     void remove(JPH::BodyID& id) {
         if (id.IsInvalid()) return;
         bi->RemoveBody(id), bi->DestroyBody(id);
+        ++bodiesVersion;
         used[id.GetIndex()] = false;
         id = JPH::BodyID();
     }
@@ -1147,6 +1150,17 @@ Scene::CharacterMove Scene::moveCharacter(vec3 feet, vec3 velocity, float top, f
     if (top != c.top) cv.SetShape(m.capsule(c.spec.radius, top), FLT_MAX, broad, layers, bodies, faces, m.temp), c.top = top, moved = true;
     if (moved) cv.RefreshContacts(broad, layers, bodies, faces, m.temp);
     const JPH::RVec3 from = cv.GetPosition();
+    // Walking on ground she can stand on: the velocity runs along the ground plane with its horizontal part kept (root
+    // motion is horizontal; Jolt's contact solver would otherwise take the slope's share off the speed uphill).
+    // The plane is the face's under her (not the contact normal: at a step's edge that one leans), when the bodies are
+    // still those of her last move.
+    if (walk && velocity.z == 0 && cv.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround && c.bodies == m.bodiesVersion)
+        if (const auto ts = m.bi->GetTransformedShape(cv.GetGroundBodyID()); ts.mShape != nullptr) {
+            vec3 n = G(ts.GetWorldSpaceSurfaceNormal(cv.GetGroundSubShapeID(), cv.GetGroundPosition()));
+            if (n.z < 0) n = -n;
+            if (n.z >= c.spec.maxSlopeCos) velocity.z = -(n.x * velocity.x + n.y * velocity.y) / n.z;
+        }
+    c.bodies = m.bodiesVersion;
     cv.SetLinearVelocity(Jm(velocity));
     if (walk) {
         JPH::CharacterVirtual::ExtendedUpdateSettings e;
