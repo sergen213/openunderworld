@@ -523,6 +523,7 @@ World::World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tunin
     script_.setCameraNative([this](int op, const std::string& unit, uint32_t index, uint32_t value) {
         return cameraNative(op, unit, index, value);
     });
+    script_.setTimeNative([this](bool world, float target, float seconds) { setTimeScale(world, target, seconds); });
     player_.spawn(spawn.pos, spawn.yaw);
     prev_ = player_.state();
     cam_.yaw = player_.state().yaw;
@@ -547,20 +548,34 @@ void World::tick(const Actions& input) {
     joinStreams(false); // background neighbour loads due this tick (Stream.cpp)
     prev_ = player_.state();
     prevCam_ = cam_;
-    const float dt = float(kTickSeconds);
+    // tru.exe's game loop (0x5DA1C0): both time scales follow their ramps, then every update's step is the frame's x
+    // timeScale x worldScale and Lara's own x timeScale only (0x622418 divides worldScale back out). `dt` = Lara's step,
+    // `wdt` = the world's (enemies, objects, water); the camera and the input clocks keep real time [I]. Scripts run on
+    // their own tick count: their waits are not scaled [U].
+    const float real = float(kTickSeconds);
+    tickTimeScales(real);
+    const float dt = real * combat_.timeScale, wdt = dt * combat_.worldScale;
     // On the motorcycle the bike drives Lara (Vehicle.cpp); use and the grapple wait until she is off it. Weapons stay
     // live: she rides with a pistol / uzi out (Combat.cpp).
     const bool onBike = tickVehicles(input, dt);
     Actions a = input;
     if (onBike) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = false;
     // An interaction clip plays out with the input locked (State::Use: a switch, a pickup, letting go of a block).
-    if (player_.state().state == State::Use) a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = a.draw = a.fire = a.aim = false;
+    // During the head shot's hosted clip the fire and lock inputs stay live (its aim window, Aim.cpp).
+    if (player_.state().state == State::Use) {
+        a.move = vec2(0), a.jump = a.drop = a.interact = a.grapple = a.draw = false;
+        if (combat_.headShot < 0) a.fire = a.aim = false;
+    }
     // The grapple (virtual button 1) on its press edge: throw at the target, or let go of the rope. tru.exe's keyboard
     // defaults bind Q to both it and Recenter Camera (virtual button 8): 0x487710 binds button i to key 0x80 + DirectInput
     // scan code, buttons 1 and 8 both 0x90 = 0x80 + DIK_Q, as the registry's Input list writes them ("1"="144",
     // "8"="144") [O]. A press that throws or releases the grapple does not also recenter [I: the shared key must not
     // swing the camera off the throw].
-    const bool grapplePress = a.grapple && !grappleHeld_ && !fieldCamera_; // the field camera view takes no grapple
+    // With the adrenaline meter latched and a locked enemy close by, the press starts the head shot instead (state chart
+    // T1404 on input action 46 = the Grapple button, in the close-combat input group; Combat.cpp).
+    const bool headShotPress = a.grapple && !grappleHeld_ && !fieldCamera_ && headShotAvailable();
+    combat_.headShotRequest = headShotPress;
+    const bool grapplePress = a.grapple && !grappleHeld_ && !fieldCamera_ && !headShotPress; // the field camera view takes no grapple
     const std::optional<GrappleTarget> grappleAt = grapplePress && !player_.state().grappleUid ? grappleTarget() : std::nullopt;
     const bool grappleActs = grapplePress && (player_.state().grappleUid || grappleAt);
     grappleHeld_ = a.grapple;
@@ -599,7 +614,8 @@ void World::tick(const Actions& input) {
     vec2 move = right * a.move.x + fwd * a.move.y;
     if (glm::length(move) > 1) move = glm::normalize(move);
     if (script_.holding() || uberGrip_ != vec3(0)) move = vec2(0); // [I] gripping a push block: the stick moves the block (src/script)
-    if (combat_.slowMo > 0) move = vec2(0); // [I] adrenaline window: the stick steers the pip (Combat.cpp)
+    if (combat_.headShot >= 0) move = vec2(0); // the head shot move plays out (Combat.cpp)
+    if (combat_.manualAim) a.walk = true, a.sprint = false; // [I] manual aim: she steps, she does not run
     if (splineCam_ && !script_.playerControl()) move = vec2(0); // reveal camera with control disabled (larabase 56)
     if (grappleActs) {
         if (player_.state().grappleUid) releaseGrapple(false);
@@ -657,6 +673,7 @@ void World::tick(const Actions& input) {
     const bool grabbing = player_.state().state == State::Block ? !player_.gripping() : player_.canInteract();
     if (grabbing && anims_.find("obj_block_grab")) push.move = vec2(0);
     const auto scriptStart = std::chrono::steady_clock::now();
+    script_.setTimeScale(combat_.timeScale * combat_.worldScale);
     script_.tick({player_.state().pos, player_.state().yaw, push.move, a.interact}, &col_);
     tickTimes.scriptMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - scriptStart).count();
     if (const auto* o = script_.used() ? script_.find(script_.used()) : nullptr) useSwitchClip(*o);
@@ -692,7 +709,7 @@ void World::tick(const Actions& input) {
     collectPickups(a.interact && !interactHeld_);
     carryPortables(a.interact && !interactHeld_ && pickedUp_.empty());
     pushUberJoints(push);
-    tickObjects(dt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
+    tickObjects(wdt); // object collision + physics doors (Objects.cpp), before enemies and the camera query them
     interactHeld_ = a.interact;
     vec3 carry = script_.carried();
     if (const auto* j = uberPush_.uid ? uberJoint(uberPush_.uid, uberPush_.joint) : nullptr) { // she follows the pushed body
@@ -712,23 +729,23 @@ void World::tick(const Actions& input) {
     const vec3 grip = script_.gripAxis() != vec3(0) ? script_.gripAxis() : uberGrip_;
     if (!onBike) player_.grip(grip, carry == vec3(0) ? 0 : glm::dot(carry, grip) > 0 ? 1 : -1);
     enemies_.tick(col_, {player_.state().pos, !health().dead(), player_.tuning().height, player_.tuning().radius, player_.state().water >= 0},
-                  [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, dt * combat_.timeScale);
+                  [this](float damage, vec3 from, int type) { damageLara(damage, from, type); }, wdt);
     syncRagdolls(false); // bodies for this tick's starting ragdolls, so a save between ticks holds them
-    updateCamera(a, dt); // Camera.cpp: a playing spline camera, else the orbit camera
+    updateCamera(a, real); // Camera.cpp: a playing spline camera, else the orbit camera
     if (std::exchange(cameraCut_, false)) prevCam_ = cam_; // a spline camera cuts in
     tickCombat(a, dt); // after the camera: free aim follows it
     if (!combat_.shots.empty()) enemies_.disturb(player_.state().pos); // her shots: disturbance message 0xBF (0x6FFFC0)
     tickGadgets(a, dt); // flashlight, grenades (Gadgets.cpp)
-    tickWaterStates(dt); // scripted water levels (0x6C10D0), before Lara's breath reads the surface
+    tickWaterStates(wdt); // scripted water levels (0x6C10D0), before Lara's breath reads the surface
     tickAir(dt);
     // Swimming soaks every region (tru.exe under Wine: mask 0x7F while she swims); out of the water the mask is clear
     // and she dries (Wetness::tick). Not behind a black screen fade: l1_seatop's chapter start drops her into the sea
     // for 12 ticks at 030_med_yacht's end before 997 puts her on the stern (tru.exe: dry on deck after its larabase 68).
     wetness_.water = player_.state().water >= 0 && script_.screenFade() < 1.0f ? 0x7F : 0;
     wetness_.tick(dt * 30.0f);
-    water_.tick(*this, dt); // after combat: this tick's shots make rings
+    water_.tick(*this, wdt); // after combat: this tick's shots make rings
     updatePose(dt, false);
-    rumble.tick(dt), cameraShake.tick(dt); // output only (Feedback.hpp): 0x4817B0, 0x5F3390
+    rumble.tick(real), cameraShake.tick(real); // output only (Feedback.hpp): 0x4817B0, 0x5F3390
     ++ticks_;
     if (!units_.empty()) checkLevelEnd(); // last: a chapter change re-spawns Lara (enterUnit)
 }
@@ -779,11 +796,17 @@ void World::updateOrbitCamera(const Actions& a, float dt) {
     case State::PoleHang: mode = {9, rec1, zones, 1264.22f, false, kFree, -1.2f, 0.7f, true}; break;
     default: break; // mode 1: record 1, command 0x13
     }
+    // Manual aim (player state S718 and its siblings request camera mode 23, state property 1102; mode list entry 20:
+    // command 2 distance 632.11, command 10 focus record 22 = bone 108 + (0, 0, 158.03), dead zones 126.42 / 3.16 /
+    // 252.84, follow speed 632.11; no limits, force sets or floor probe of its own) [O camera DTP 0x14 / 0x1E]. Its
+    // second record (command 11: 35, z 221.24, no dead zones) is the look target ours does not model [U].
+    if (combat_.manualAim) mode = {23, {0, 0, 158.03f}, {126.42f, 3.16f, 252.84f}, 632.11f, false, kFree, -1.2f, 0.7f};
     // Its force sets (the mode list's command 0x10 yaw set, 1 pitch set; without 0x10 the default yaw set settings
     // +0xE4 = 11, without 1 none: 0x601D30 -> 0x609C40 / 0x608D20) [O: camera DTP 0x14 +0x144 / +0x148].
     const auto [yawSet, pitchSet] = [&]() -> std::pair<int, int> {
         switch (mode.id) {
         case 1: return {11, 4};
+        case 23: return {11, -1};
         case 3: return {6, -1};
         case 4: case 11: return {15, -1};
         case 9: return {4, -1};

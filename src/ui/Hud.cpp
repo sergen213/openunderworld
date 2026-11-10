@@ -151,10 +151,14 @@ void Hud::draw(Canvas& c) const {
 
     // Reticles [I]: not captured. Free aim 69 (thin arcs), soft target 65 (white brackets), hard lock 72 (red
     // cross), adrenaline window 71 (red glow) with the pip 74.
+    // Manual aim [I]: the free-aim arcs at half size, opaque ("a small reticle" in the view's centre). The second
+    // (dual) target wears the soft brackets.
+    if (reticle2.kind != Reticle::Kind::None) put(c, reticle2.x, reticle2.y, 65, 0, 0, kWhite, kReticle, true);
     if (reticle.kind != Reticle::Kind::None) {
-        static constexpr uint32_t kId[] = {0, 69, 65, 72};
+        static constexpr uint32_t kId[] = {0, 69, 65, 72, 69};
         const uint32_t id = reticle.slowMo ? 71 : kId[size_t(reticle.kind)];
-        put(c, reticle.x, reticle.y, id, 0, 0, reticle.kind == Reticle::Kind::Free ? 0xC0FFFFFFu : kWhite, kReticle, true);
+        const bool manual = reticle.kind == Reticle::Kind::Manual && !reticle.slowMo;
+        put(c, reticle.x, reticle.y, id, 0, 0, reticle.kind == Reticle::Kind::Free ? 0xC0FFFFFFu : kWhite, manual ? kReticle * 0.5f : kReticle, true);
         if (reticle.slowMo) {
             const float r = 64 * kReticle * u * 0.5f; // reticle radius in pixels
             put(c, reticle.x + reticle.pipX * r, reticle.y - reticle.pipY * r, 74, 0, 0, kWhite, kReticle * 0.3f, true);

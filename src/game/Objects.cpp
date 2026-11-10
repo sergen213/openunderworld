@@ -1254,6 +1254,7 @@ void World::syncObjects() {
         if (c.hinge >= 0) angles[c.uid] = physics_.angle(c.hinge);
     colliders_.clear();
     col_.dynamics.clear();
+    shotOnly_.clear(), shotOnlyLocal_.clear();
     physics_.clearHinges(); // uber joints and loose bodies keep simulating
     for (const auto& o : script_.objects()) {
         const bool ordinary = o.kind == script::Kind::Door || o.kind == script::Kind::Block || o.kind == script::Kind::Switch;
@@ -1262,7 +1263,21 @@ void World::syncObjects() {
         // Anim graphs with hit-gated transitions (sh_ei_combat_crate_*) collide so Lara's shots reach them (World::fire).
         const bool shootable = o.graph && o.graph->set->graph &&
                                std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return !t.events.empty(); });
-        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable) continue; // spline movers' collision follows Object::body (pose below)
+        if (!ordinary && !uber && !o.spline && !lateCollider(o) && !shootable) { // spline movers' collision follows Object::body (pose below)
+            // Anim graphs that leave a state on the damage they took (stimulus 0x800 without event ids, posted by
+            // Runtime::tickGraph) and do not collide otherwise: their shapes are met by shots only (World::shotRay), at
+            // their intro frame [I: l1_kraken_room's chain links hang on platform 27's markers 21 / 20 (uberobjectbase 2
+            // + instance 23), which do not move while the links exist].
+            if (o.graph && o.graph->set->graph &&
+                std::ranges::any_of(o.graph->set->graph->transitions, [](const auto& t) { return (t.mask & formats::kStimulusEvent) != 0; }))
+                // ObjectBase oflags bit 0x40 [I: set on the links and on the hit-reacting combat crates, clear on the
+                // squib_explosion_detector spheres (38 in l1_kraken_room, 927 units wide), which shots must pass]
+                if (const physics::ObjectPhysics* sp = objectPhysics(o.name); sp && (sp->oflags & 0x40))
+                    for (int seg = 0; seg < int(sp->segments.size()); ++seg)
+                        if (auto shape = physics::solidShape(*sp, seg))
+                            shotOnly_.push_back({o.uid, std::move(shape), introModel(o) * sp->segments[seg]}), shotOnlyLocal_.push_back(sp->segments[seg]);
+            continue;
+        }
         if (o.kind == script::Kind::Switch && !uber &&
             (!o.script || !o.script->program->mainFunction(o.script->typeId))) continue;
         if (const auto rt = uberRuntime_.find(o.uid); rt != uberRuntime_.end() && rt->second.intangible) continue;
@@ -1316,6 +1331,37 @@ void World::syncObjects() {
     }
     syncedObjects_ = script_.objects().size();
     syncedPlates_ = lateColliders(script_);
+    poseShotOnly();
+}
+
+// An anchored object (script::Runtime::anchor) sits in the frame of its host's HInfo marker: the marker's segment as
+// the host's section on that model is posed now (its clip; the bind pose without one), under the host's intro. [I] the
+// marker is looked up on the host's model 0 (uberobjectbase 2's section argument is an unset section id in the data).
+void World::poseShotOnly() {
+    for (size_t i = 0; i < shotOnly_.size(); ++i) {
+        const script::Object* o = script_.find(shotOnly_[i].id);
+        if (!o) continue;
+        glm::mat4 base = introModel(*o);
+        if (const auto a = script_.anchor(o->uid))
+            if (const script::Object* host = script_.find(a->first))
+                if (const physics::ObjectPhysics* hp = objectPhysics(host->name))
+                    for (const auto& m : hp->hmarkers) {
+                        if (m.id != a->second) continue;
+                        glm::mat4 segment = size_t(m.segment) < hp->segments.size() ? hp->segments[size_t(m.segment)] : glm::mat4(1);
+                        if (const auto data = uberData_.find(host->uid); data != uberData_.end() && data->second)
+                            for (size_t k = 0; k < data->second->sections.size(); ++k)
+                                if (data->second->sections[k].model == 0) {
+                                    if (const auto posed = uberSectionMatrices(host->uid, int32_t(k)).second; size_t(m.segment) < posed.size())
+                                        segment = posed[size_t(m.segment)];
+                                    break;
+                                }
+                        base = glm::translate(glm::mat4(1), host->offset) * introModel(*host) * segment * glm::translate(glm::mat4(1), m.pos) *
+                               glm::rotate(glm::mat4(1), m.rot.x, {1, 0, 0}) * glm::rotate(glm::mat4(1), m.rot.y, {0, 1, 0}) *
+                               glm::rotate(glm::mat4(1), m.rot.z, {0, 0, 1});
+                        break;
+                    }
+        shotOnly_[i].transform = base * shotOnlyLocal_[i];
+    }
 }
 
 void World::tickObjects(float dt) {
@@ -1324,6 +1370,7 @@ void World::tickObjects(float dt) {
         lateColliders(script_) != syncedPlates_)
         syncObjects();
     tickUber(dt);
+    if (!shotOnly_.empty()) poseShotOnly();
     // The section drawn as model 0 (the object's own mesh, its collision segments) under its clip: doors, gates,
     // elevators and drawbridges open / travel by their transition's anim reference (ms_ani_tombdoor doors_opening,
     // sa_uo_elevator_adrenaline falling), the bones carrying their collision segments.

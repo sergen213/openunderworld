@@ -3234,3 +3234,52 @@ opened by replay, no gameplay HUD, and no Vulkan validation errors. `menu_new_ga
 CROFT MANOR and Lara walking. Earlier [O] (2026-10-18, GL): `menu_new_game.txt` → explode.bik
 (45 frames) → "CROFT MANOR" card, Lara walking in l3_main_bedroom; `pool_pickup.txt` in l4_pool with `--spawn
 -6045,-6100,2844,-90` → treasure 5489, "TREASURES 1".
+
+## Manual aim, adrenaline inputs, dual targets, time scales (decoded 2026-11)
+
+Sources: generalbank DTP 0x2F (input action → virtual button map, GlobalInfo +0x1C), the player state chart, tru.exe.
+
+- **Manual aim** [O]: virtual button 9 (Z / right-stick click; config action `manual_aim`). Action 25 → chart T55 enters
+  S718 when Target Lock is not held; T1887 / T1886 leave on Manual Aim / Target Lock. Camera mode 23 = mode-list entry 20
+  (distance 632.11, focus offset z 158.03, zones 126.42 / 3.16 / 252.84, speed 632.11; its command 11 record 35 is not
+  modelled [U]). Shots follow the reticle ray (`World::shotRay`, `manualAimPoint`; src/game/Aim.cpp). [I]: she may only
+  walk, turns to the view when standing; a reveal / spline camera or a hit reaction ends the aim view. The lock-on framing camera was not
+  found in the mode list [U].
+- **Focused fire** [O]: in combat the same button (action 37, group 17) toggles adrenaline mode (0x718BD0 → 0x7189C0).
+  The adrenaline ramps use the global scale 0xE7F1D4, so Lara slows with the world; no extra fire-rate change exists.
+- **Head shot** [O]: Grapple button (action 46 → chart T1404, condition 0x21A = flag 0x400000). The meter latches at
+  full (0x6F28C0 / 0x6E6630) and does not drain while latched (0x6F2930); the move (0x71D4F0) needs a target answering
+  query 0x165 and spends the meter. It is a paired clip hosted in the enemy DRM (`hosted_enemy_aa_<weapon>`; enemy list
+  node +0x54: distance 316.06, blend 6 frames); clip events 5 / 4 open and close the window (0x715020 / 0x718EA0, time
+  0.2 and back). No grapple rope is involved. [I]: close range = `targeting.closeRange`; Lara is snapped, not blended,
+  to the distance; the clip plays in place; pip start 2.5 radii, look 10 radii/rad, stick 2 radii/s.
+- **Dual targets** [O]: 0x71E490 / 0x7035F0 (weapon controller +0xC / +0x10, soft set Lara data +0x470, hold +0x286 =
+  1000 frames). Ours: the left gun fires at the second target; the arm pose is not split [I]. The PC original has no
+  change-target key.
+- **Time scales** [O]: `gamebase` 24 / 2 ramp / set the global scale (record 0x8ABE94), 23 / 1 the world scale
+  (0xE7F1A0, record 0x8ABEB4, divided out of Lara's update at 0x622418); ease 0x78C120. `World::tick` splits real / Lara
+  / world dt. Real script: docs/formats/SCRIPTS.md "Time scale"
+  (`ProgressionReal.KrakenTentacleSlowMotionByItsScript`).
+- **Firing cadence** [O]: every fire clip carries event 0x75 on frame 0, so "shot at clip start, cooldown = clip
+  length" equals the original's event-driven shot.
+- **One-handed shooting** [I mapping]: hang / shimmy (`ledgeb_`), free climb (`DICE_`), ladder, pole hang, pillar use the
+  `combat_pistol_<set>_1haim*` sets of wp_handgun / wp_uzi only (other weapons have none).
+- **Shot-only shapes**: anim-graph objects with a damage (stimulus 0x800) transition, a solid prim, no collider and
+  ObjectBase oflags bit 0x40 [I] take bullets only (`World::shotOnlyShapes`); `instance` 23 anchors them to a marker of
+  another object (`script::Runtime::anchor`, saved).
+- Tests: `Combat.ManualAimHitsWhatTheReticleCovers`, `Combat.DualTargetsTakeOneGunEach`, `Combat.AdrenalineHeadShot`,
+  `Combat.HeadShotConditionsMissAndInterrupt`, `Combat.AdrenalineModeDrainsAndSlowsTime`,
+  `Combat.TimeScaleSlowsLaraWithTheWorld`, `Combat.ScriptTimeRampEasesInAndOut`,
+  `ProgressionReal.KrakenChainLinksByManualAim`, `ProgressionReal.KrakenLinkEarlyShot`,
+  `ProgressionReal.KrakenTentacleSlowMotionByItsScript`; on a real panther in l4_pool:
+  `CombatReal.PoolLedgeHangShootsPantherOneHanded` (ledge 1253, right-hand gun only, she keeps hanging),
+  `CombatReal.PoolHeadShotOnPanther` (clip `cat_panther:hosted_enemy_aa_handguns`, window 0.67..1.67 s, `death_adren`),
+  `CombatReal.PoolManualAimHitsPanther`. Self-tests: `tests/selftests/manual_aim.json`, `adrenaline.json`,
+  `kraken_kill.json`. Research aid:
+  `OU_UBER_DUMP="unit:uid" … ProgressionReal.DumpUber`.
+- **Switch reach** [I]: a switch is used within 200 units of its origin or of the point she stands at to use it
+  (`useDistance` along its local axes), whichever is nearer — l1_kraken_room's wall switch 30 keeps her 217 from its
+  origin by its own collision (`tests/selftests/kraken_kill.json` walks up and presses Interact).
+- **Dual targets and damage**: with two enemies in the soft set each pistol takes its own, so one enemy falls later than
+  under a single lock (`StreamReal.SaveContinuesBitIdentically`'s l1_ship_exterior fight runs 1400 ticks for it). The
+  gate on weapon-controller flags 0x9000 / bit 27 in 0x71E490 is not decoded [U].

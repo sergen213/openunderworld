@@ -1125,7 +1125,8 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
     const Case cases[] = {
         {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle, // born by plane 6546, its scripts kill poachers, ragdolls fall
          [](game::World& w) { w.script().call(6546, 54); }},
-        {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 600, [](uint64_t t) { // runs at the mercs, locked on, firing
+        // (dual targeting, 0x71E490: with two mercs in range each pistol takes its own, so the first falls later than under one lock)
+        {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 1400, [](uint64_t t) { // runs at the mercs, locked on, firing
              game::Actions a;
              a.move = t % 200 < 120 ? game::vec2(0, 1) : game::vec2(0);
              a.fire = a.aim = t >= 40;

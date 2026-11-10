@@ -1,0 +1,126 @@
+{
+ "version": 1,
+ "name": "manual_aim",
+ "chapter": "Combat: manual (precision) aim - the over-the-shoulder view, shots go where the reticle points, no lock",
+ "note": "l4_pool start. Manual Aim = virtual button 9 [O chart T55 -> S718, camera mode 23]. A target dummy stands 14 degrees to the right, 2200 away: the look stick turns the view (and her) onto it, the shots follow the view's centre.",
+ "level": "l4_pool",
+ "fixtures": [
+  {
+   "target": {
+    "pos": [
+     -13385,
+     -413,
+     4500
+    ],
+    "health": 700
+   }
+  }
+ ],
+ "steps": [
+  {
+   "step": "enter",
+   "input": [
+    "0.5 manual 1",
+    "0.6 manual 0"
+   ],
+   "duration": 1.5,
+   "expect": [
+    {
+     "probe": "combat.manual_aim",
+     "eq": true
+    },
+    {
+     "probe": "camera.mode",
+     "eq": 23
+    },
+    {
+     "probe": "combat.locked",
+     "eq": false
+    },
+    {
+     "probe": "weapon.drawn",
+     "eq": true,
+     "note": "the view draws the guns"
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "turn_the_view",
+   "input": [
+    "0 lookx -0.5",
+    "0 looky -0.37",
+    "0.49 lookx 0",
+    "0.49 looky 0"
+   ],
+   "duration": 1.0,
+   "expect": [
+    {
+     "probe": "combat.manual_aim",
+     "eq": true
+    },
+    {
+     "probe": "camera.yaw",
+     "near": -13.87,
+     "tol": 0.3,
+     "note": "0.5 rad/s for 0.49 s"
+    },
+    {
+     "probe": "camera.pitch",
+     "near": -10.7,
+     "tol": 0.3
+    },
+    {
+     "probe": "player.yaw",
+     "near": -13.87,
+     "tol": 0.5,
+     "note": "standing, she turns with the view"
+    },
+    {
+     "probe": "player.state",
+     "in": [
+      "idle",
+      "turn"
+     ]
+    },
+    {
+     "probe": "target.0.hits",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "fire",
+   "input": [
+    "0 fire 1"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "probe": "combat.manual_aim",
+     "eq": true
+    },
+    {
+     "probe": "combat.locked",
+     "over": "all",
+     "eq": false
+    },
+    {
+     "probe": "weapon.shots_fired",
+     "min": 6
+    },
+    {
+     "probe": "target.0.hits",
+     "min": 6
+    },
+    {
+     "probe": "target.0.health",
+     "max": 520
+    }
+   ]
+  }
+ ]
+}

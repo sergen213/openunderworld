@@ -368,6 +368,15 @@ public:
     // (0x776700) is camera type `index` the current one.
     using CameraNative = std::function<bool(int op, const std::string& unit, uint32_t index, uint32_t value)>;
     void setCameraNative(CameraNative native) { camera_ = std::move(native); }
+    // Time scale requests (gamebase 1 / 2 / 23 / 24; docs/formats/SCRIPTS.md "Time scale"): `world` = the scale Lara's
+    // update divides back out (0xE7F1A0: 1 sets it, 0x4A3DC0; 23 ramps it, 0x776030), else every update's (0xE7F1D4: 2
+    // sets, 0x4A3DD0; 24 ramps, 0x776090). seconds < 0: set at once, the ramp in progress untouched.
+    using TimeNative = std::function<void(bool world, float target, float seconds)>;
+    void setTimeNative(TimeNative native) { time_ = std::move(native); }
+    // The world's time scale for this tick (global x world scale, World::tickTimeScales): clocks, fiber waits and
+    // object clips advance by the scaled tick [I: tru.exe's clock update 0x4A3960 takes the caller's dt; the
+    // adrenaline trackers' 0.15 s fail clocks last ~10 s at their 0.0148 scale only on scaled time].
+    void setTimeScale(float scale) { dt_ = scale / 60.0; }
     // The spline camera finished (0x5E2CA0 -> 0x77A3D0): every dispatcher (NsDispatcherBase, bind 0x7B3E60) runs
     // its prototype-7 slot with the cameraspline value.
     void cameraSplineDone(uint32_t value);
@@ -461,6 +470,12 @@ public:
     void setPlayerObjects(std::set<std::string> objects) { playerObjects_ = std::move(objects); } // chapter starts
     uint32_t unitEffect() const { return unitEffect_; }
     bool grappleOff(int32_t uid) const { return grappleOff_.contains(uid); } // `unit` 13 dropped its markers (saved)
+    // instance 23 with a `uberobjectbase` 2 anchor: object `uid` rides HInfo marker `second` of object `first` (saved);
+    // nullopt when it is not anchored. l1_kraken_room's chain links 61 / 62 hang on platform 27's markers 21 / 20.
+    std::optional<std::pair<int32_t, int32_t>> anchor(int32_t uid) const {
+        const auto it = anchors_.find(uid);
+        return it == anchors_.end() ? std::nullopt : std::optional(it->second);
+    }
     // Script weather (globaleffect 8 / 11 / 12, docs/formats/EFFECTS.md "Weather"): snow / rain % and lightning
     // interval seconds (tru.exe's defaults 20 / 30 s, 0x53AB30's init).
     struct Weather { int32_t snow = 0, rain = 0, lightningMin = 20, lightningMax = 30; };
@@ -565,6 +580,8 @@ private:
     AudioState audio_;
     std::vector<std::string> movies_;
     CameraNative camera_;
+    TimeNative time_;
+    double dt_ = 1.0 / 60.0;
     std::vector<std::string> cameraUnits_; // unit names by cameraspline value high word
     bool playerControl_ = true;
     bool uiFlag_ = false; // uigamedata 17 / 18 (0x77BB70 / 0x77BB90: byte 0xFAE8DB, level changes fade to white when set)
@@ -613,6 +630,7 @@ private:
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
     uint32_t unitEffect_ = 0;
     std::set<int32_t> grappleOff_; // unit 13 / 12: grapple targets taken from / given back to Lara; saved
+    std::map<int32_t, std::pair<int32_t, int32_t>> anchors_; // anchor(): object -> {object, marker id}; saved
     Weather weather_;
     uint64_t tick_ = 0;
     std::map<std::pair<int32_t, std::string>, size_t> failures_;
