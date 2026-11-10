@@ -775,7 +775,8 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   strength**, 1 at birth; debug text "Overriding Lara pull strength to =") = its member +12 (table above) and vt 50
   with 1; the slide doors add uber command 0 / 1: braked state 2 (motor 0 speed, 3.16e6) <-> free state 1 (no motor);
   the rubble block does the same by triggers 20 / 21; the towers' vt 49 / 50 also switch a push camera (gamebase 50 +
-  53 (4), back 53 (1); [U] not modelled). Ours: `script::Runtime::engage`, `pullStrength()`.
+  53 (4), back 53 (1); gamebase 50 is unbound in ours, so the towers' vt 49 stops there after setting the strength).
+  Ours: `script::Runtime::engage`, `pullStrength()`.
 - **The move** [O 0x74AC00 / 0x73F390 / 0x6F1450, lara.drm player data]: every frame the stick picks one of four ways
   by its angle off her facing: forward within 30 deg (+0xC8C = 60), back within 15 deg of straight back (+0xC90 =
   30), else left / right; the target speed is `min(23.704 (+0xC7C) x strength, 2054.36 (+0xC80) x strength / M)` and
@@ -800,7 +801,8 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   (`ProgressionReal.EndgameCredits`, from floors inside it; before, the test pushed them while she swam). Synthetic:
   `Game.ThorGauntletsMoveHeavyObjects`; self-test `tests/selftests/gauntlet_move.json`.
 - **Open**: l5_valgrind gate 7334 (its section never reaches state 1 in ours: vt 55 after `240_val_gate`; `larabase`
-  54 = "is that her bike" 0x777E40 and 19 = "gauntlet charged" [U effect] are bound now, the volume's handler runs on);
+  54 = "is that her bike" 0x777E40 and 19 = "gauntlet charged" [U effect] stop volume 7511's and cinematic 7464's
+  handlers: decoded, not bound, because binding them lets handlers elsewhere run on into cinematics untested here);
   `ma_pu_thor_pillar`, `ca_pu_thor_pillar` ride joint type 7 (planar, limit / motor records of kind 7) and
   `ca_pu_thor_debris` has no joint (a free body): neither is simulated, so C11-28 and C15-03 stay open; l2_maproom's hub
   and wall drag (C09-09 / -11) are not surveyed; the speed's M and the hold / toggle need a Wine trace.
