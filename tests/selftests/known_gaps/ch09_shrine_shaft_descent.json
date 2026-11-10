@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "ch09_shrine_shaft_descent",
+  "chapter": "09 The Ancient World: down the shaft the statue opened (docs/matrix/09_ancient_world.md C09-02, C09-03) - KNOWN GAP",
+  "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/08ancient.html",
+  "note": "Fails today at 'pull_the_statue' (the fallen statue's ring is still a grapple target) and 'over_the_edge'. After the statue pull (ch08_shrine_statue_pull) the three floor slabs of sa_uo_naga_statue 2794 (uber sections 1, 3, 4: boxes 41 thick, 76 under the yard floor) are still solid over the shaft: section 0 is in state 2 (its entry actions removed the fixed joints 1, 3, 4) and section 1 in state 1, but she runs across the shaft's mouth at z -3068 (the slabs' top) instead of dropping to a hang on the shaft's edge loop (markup 679, z -3012). Suspected cause: the freed slab sections do not fall in the physics world, or their colliders for Lara are not rebuilt after uberFreeSection. The rest is the original's way down: drop to the stone band (ledge 681, 1502 lower: a saving grab, Interact), to the bottom lip (ledge 680), let go and throw the grapple at ceiling ring 2673 (l2_maproom) in the fall, pay the rope out, swing forward and let go over the floor under the shaft (l2_maproom's player intro, z -9388 in this frame).",
+  "level": "l2_shrineroom",
+  "stop_on_fail": false,
+  "steps": [
+    {"step": "pull_the_statue", "plan": ["go -20199 59500 150", "face 90", "press grapple", "wait 1", "hold interact 6", "wait 6"], "duration": 60,
+     "expect": [{"probe": "object.2794.uber.0", "eq": 2},
+                {"probe": "object.2794.uber.1", "eq": 1},
+                {"probe": "grapple.offered", "ne": 2794, "note": "fails too: the fallen statue's ring is still offered as a target"}]},
+    {"step": "over_the_edge", "plan": ["go -20199 59700 40 walk", "run 90 1.2", "wait 2"], "duration": 30,
+     "expect": [{"probe": "player.hanging", "eq": true, "note": "caught on the shaft's edge (no key: the safety drop)"},
+                {"probe": "player.ledge", "eq": 679}]},
+    {"step": "to_the_stone_band", "input": ["0.2 drop 1", "0.3 drop 0", "1.4 interact 1", "1.5 interact 0"], "duration": 4,
+     "expect": [{"probe": "player.ledge", "eq": 681},
+                {"clips": ["ledgeb_bad_attach_M"], "note": "1502 down: one-handed, Interact recovers"},
+                {"probe": "player.saving_grab", "eq": 0}]},
+    {"step": "to_the_bottom_lip", "input": ["0.2 drop 1", "0.3 drop 0"], "duration": 4,
+     "expect": [{"probe": "player.ledge", "eq": 680}]},
+    {"step": "grapple_in_the_fall", "input": ["0.2 drop 1", "0.3 drop 0", "0.6 grapple 1", "0.7 grapple 0"], "duration": 4,
+     "until": {"probe": "grapple.swinging", "eq": true},
+     "expect": [{"probe": "grapple.target", "eq": 2673},
+                {"probe": "grapple.kind", "eq": "ceiling"}]},
+    {"step": "swing_down_to_the_floor", "input": ["0 interact 1", "0 forward -1", "3 forward 1", "3 interact 0", "5 jump 1", "5.1 jump 0", "5.2 forward 0"], "duration": 9,
+     "expect": [{"probe": "player.grounded", "eq": true},
+                {"probe": "world.unit", "eq": "l2_maproom"},
+                {"probe": "player.dead", "eq": false}]}
+  ]
+}

@@ -1,0 +1,214 @@
+{
+ "version": 1,
+ "name": "ch09_maproom_hub_turn",
+ "chapter": "09 The Ancient World: the hub turned by its panel (docs/matrix/09_ancient_world.md C09-09, C09-14) - KNOWN GAP",
+ "walkthrough": "https://tombraiders.net/stella/walks/TR8walk/details/ancient3.html",
+ "note": "Fails today at 'walk_the_panel_round'. As ch09_maproom_hub_panel down to the grip; then the stick should walk the panel round: the Thor bridge 2667's section 1 (walkway, hub and wall, mass 50, nine boxes) turns on hinge joint 1 about the hub's axis and its range watches (81..176, 0..20, 20..40 degrees and more) move section 1 through its states (the alignment the exit needs: C09-14). Ours: gripped (vt 49, section 0 state 3 = joint 1's motor off), stick left / right: the joint turns 0.017 degrees in 5 s; forward / back (the ways World::pushUberHandle gives a hinge) 0.1 .. 0.3 degrees while she walks 325 away from the panel. Suspected cause: the hinge body (the whole walkway with its collision plates) is held by the static level solids it touches in the physics world, or the stick-to-hinge mapping (a hinge is driven by forward / back along her grip point's tangent, the original sidesteps) with her not carried round the axis. Also open here: volume 2637's handler stops at multibody 3 (Disable, tru.exe 0x4A6FF0 -> 0x4D8FF0: every atom's body fixed) on 2667 before the pedestal cutscene.",
+ "level": "l2_maproom",
+ "spawn": [
+  -20251,
+  39301,
+  -8800,
+  -90
+ ],
+ "fixtures": [
+  {
+   "give": "g_gauntletleft"
+  }
+ ],
+ "steps": [
+  {
+   "step": "off_the_south_edge",
+   "plan": [
+    "go -20235 37800 60"
+   ],
+   "duration": 8,
+   "until": {
+    "probe": "player.clip",
+    "eq": "ledgeb_idle"
+   },
+   "expect": [
+    {
+     "visits": [
+      "run",
+      "droptohang",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 673
+    },
+    {
+     "probe": "step.height_gain",
+     "near": -500.7,
+     "tol": 6
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "drop_1",
+   "input": [
+    "0.3 drop 1",
+    "0.4 drop 0"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "visits": [
+      "hang",
+      "fall",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 674
+    },
+    {
+     "probe": "step.drop",
+     "near": 632.1,
+     "tol": 6
+    },
+    {
+     "probe": "player.saving_grab",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "drop_2",
+   "input": [
+    "0.3 drop 1",
+    "0.4 drop 0"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "visits": [
+      "hang",
+      "fall",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 676
+    },
+    {
+     "probe": "step.drop",
+     "near": 869.1,
+     "tol": 6
+    },
+    {
+     "probe": "player.saving_grab",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "drop_3",
+   "input": [
+    "0.3 drop 1",
+    "0.4 drop 0"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "visits": [
+      "hang",
+      "fall",
+      "hang"
+     ]
+    },
+    {
+     "probe": "player.ledge",
+     "eq": 678
+    },
+    {
+     "probe": "step.drop",
+     "near": 869.1,
+     "tol": 6
+    },
+    {
+     "probe": "player.saving_grab",
+     "eq": 0
+    }
+   ]
+  },
+  {
+   "step": "onto_the_ring_ledge",
+   "input": [
+    "0.3 drop 1",
+    "0.4 drop 0"
+   ],
+   "duration": 3,
+   "expect": [
+    {
+     "visits": [
+      "hang",
+      "fall",
+      "land",
+      "idle"
+     ]
+    },
+    {
+     "probe": "player.pos.z",
+     "near": -12006.6,
+     "tol": 5
+    },
+    {
+     "probe": "step.health_lost",
+     "eq": 0
+    },
+    {
+     "probe": "object.2667.uber.0",
+     "eq": 1,
+     "note": "the hub's brake section before any grip"
+    }
+   ]
+  },
+  {
+   "step": "walk_the_panel_round",
+   "plan": [
+    "engage 2667 walk",
+    "push 0 1 8",
+    "wait 0.5"
+   ],
+   "duration": 30,
+   "expect": [
+    {
+     "visits": [
+      "block"
+     ]
+    },
+    {
+     "calls": [
+      "2667:49"
+     ]
+    },
+    {
+     "probe": "object.2667.uberjoint.1",
+     "over": "max",
+     "min": 20,
+     "note": "the hub turned with her (degrees)"
+    },
+    {
+     "probe": "step.horizontal",
+     "min": 300,
+     "note": "she walked round with the panel"
+    },
+    {
+     "probe": "object.2667.uber.1",
+     "over": "any",
+     "ne": 2,
+     "note": "a range watch moved the walkway section on"
+    }
+   ]
+  }
+ ]
+}
