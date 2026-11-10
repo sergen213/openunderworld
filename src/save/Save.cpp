@@ -194,6 +194,8 @@ json controllerJson(const game::World& w, const game::PlayerState& p, game::vec3
                        vec(p.climbTo - offset), p.climbYawFrom, p.climbYawTo}},
             {"grapple", {p.grappleUid, vec(p.grappleAnchor - offset), p.ropeLength, int(p.grappleKind), bends, p.ropeMax}},
             {"sprintUsed", p.sprintUsed}, {"polePara", p.polePara},
+            {"wallJump", {vec(p.jumpStart - offset), p.jumpTime, p.jumpAimed, p.wallJumps, p.wallTime,
+                          vec(p.jumpFromLedge ? p.jumpLedge - offset : game::vec3(0)), p.jumpFromLedge}},
             {"balance", {p.balance.build, p.balance.aboutFall, p.balance.grace, p.balance.unbal, p.balance.bal, p.balance.notImprove,
                          p.balance.full, p.balance.clock, p.balance.lastFlip, p.balance.period, p.balance.ref, p.balance.stickYaw,
                          p.balance.blend, p.balance.lean, p.balance.side, p.balance.osc, p.balance.fall}}};
@@ -233,6 +235,13 @@ void applyController(const json& c, const game::World& w, game::PlayerState& p) 
     p.ropeMax = g.size() > 5 ? g.at(5).get<float>() : 0.0f; // older saves: g_grapple's rope
     p.sprintUsed = c.at("sprintUsed");
     p.polePara = c.value("polePara", false); // older saves: the perpendicular hang
+    p.jumpStart = p.pos, p.jumpTime = 0, p.jumpAimed = false, p.wallJumps = 0, p.wallTime = 0; // older saves: no chimney jump
+    p.jumpLedge = game::vec3(0), p.jumpFromLedge = false;
+    if (const auto wj = c.find("wallJump"); wj != c.end()) {
+        if (!wj->is_array() || wj->size() != 7) throw SaveError("bad wallJump " + wj->dump());
+        p.jumpStart = vec(wj->at(0)), p.jumpTime = wj->at(1), p.jumpAimed = wj->at(2), p.wallJumps = wj->at(3).get<uint8_t>();
+        p.wallTime = wj->at(4), p.jumpLedge = vec(wj->at(5)), p.jumpFromLedge = wj->at(6);
+    }
     p.balance = {}; // older saves: steady on a beam
     if (const auto b = c.find("balance"); b != c.end()) {
         if (!b->is_array() || b->size() != 17) throw SaveError("bad balance " + b->dump());

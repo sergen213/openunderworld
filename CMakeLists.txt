@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(OpenUnderworld VERSION 0.41.0 LANGUAGES CXX)
+project(OpenUnderworld VERSION 0.42.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -393,8 +393,8 @@ if(OU_BUILD_TESTS)
 endif()
 
 # ---- ou_game: world, Lara controller, follow camera, input (docs/GAMEPLAY.md); ou-game ----------
-add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp
-  src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/ai/Nav.cpp src/game/Progress.cpp
+add_library(ou_game STATIC src/game/Player.cpp src/game/World.cpp src/game/Input.cpp src/game/Stream.cpp src/game/Combat.cpp src/game/Aim.cpp
+  src/game/Water.cpp src/game/Climb.cpp src/game/Grapple.cpp src/game/Traverse.cpp src/game/WallJump.cpp src/game/ai/Enemy.cpp src/game/ai/EnemyData.cpp src/game/ai/Nav.cpp src/game/Progress.cpp
   src/game/Vehicle.cpp src/game/Weather.cpp src/game/Gadgets.cpp src/game/Camera.cpp src/game/Bend.cpp src/game/Feedback.cpp
   src/game/Melee.cpp)
 target_link_libraries(ou_game PUBLIC ou_collision ou_anim ou_formats ou_script ou_cine ou_input glm::glm PRIVATE SDL3::SDL3)

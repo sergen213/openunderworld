@@ -117,7 +117,7 @@ Exactly one of `level`, `start_chapter`, `load` enters the game.
 `input` is the `--input-script` syntax (`game::InputScript::parse`, `tests/replays/*.txt`): `<seconds> <action>
 [value]`; a value persists until changed; actions `forward`, `right` (stick, -1..1, camera-relative), `walk`, `jump`,
 `drop`, `interact`, `draw`, `fire`, `aim`, `switch`, `weapon`, `heal`, `grapple`, `sprint`, `light`, `grenade`,
-`recenter`, `camera` (0 / 1), `lookx`, `looky` (camera rate, rad/s). Every step starts with all inputs released: a
+`recenter`, `camera` (0 / 1), `manual` (Manual Aim), `lookx`, `looky` (camera rate, rad/s). Every step starts with all inputs released: a
 stick or button held across steps must be given again at `0` (it is not released in between, so no new press edge
 happens). `save`, `load`, `pause` and `pda` are ignored. A press at the scenario's very first tick is not an edge
 (the game treats buttons as held on its first tick): press at `0.1` or later in the first step.
@@ -183,7 +183,7 @@ speeds units/s; 3.1605 units = 1 cm. "Unavailable" probes report `null` and fail
 
 | probe | value |
 |---|---|
-| `player.state` | `game::stateName`: `idle walk run stop turn jumpprep jump fall land hang shimmy climbup swimsplash swimtread swimsurface swimdive swimunder surfacing swimclimbout dead crouch roll slide beam droptohang hangjump polehang climb ladder perch pillar grapplethrow grappleswing hit railslide grapplepull vehicle grapplerappel use block wallhug` |
+| `player.state` | `game::stateName`: `idle walk run stop turn jumpprep jump fall land hang shimmy climbup swimsplash swimtread swimsurface swimdive swimunder surfacing swimclimbout dead crouch roll slide beam droptohang hangjump polehang climb ladder perch pillar grapplethrow grappleswing hit railslide grapplepull vehicle grapplerappel use block wallhug swimdodge` |
 | `player.clip` | the animation clip she plays (`ng_run`, `ledgeb_idle`, `motorcycle:motorcycle_ride_fast`, ...) |
 | `player.clip_time` | seconds into it (unbounded for loops) |
 | `player.pos.x` `.y` `.z` | her root (feet; the swim clips' root in water) |
@@ -215,6 +215,7 @@ speeds units/s; 3.1605 units = 1 cm. "Unavailable" probes report `null` and fail
 | `combat.target` | the target: an enemy's intro uid; `-(n + 1)` for the n-th `target` fixture; 0 none |
 | `combat.target_health` | its health; unavailable without a target |
 | `combat.adrenaline_mode`, `combat.headshot_window`, `combat.time_scale` | adrenaline mode on; the head-shot window open; the world time scale (1 normal) |
+| `combat.manual_aim`, `combat.headshot`, `combat.headshot_ready`, `combat.second_target`, `combat.world_scale` | manual aim view on; the head-shot move running; the meter latched full (head shot offered on Grapple); the left gun has its own target; the scripts' world-only scale |
 | `enemies.count`, `enemies.alive` | enemies of the loaded units; those alive |
 | `enemies.nearest`, `enemies.nearest_uid` | distance to / uid of the nearest living enemy (unavailable / 0 without one) |
 | `enemy.<uid>.exists` `.alive` `.health` `.mode` `.clip` `.type` `.distance` `.pos.x/.y/.z` | one enemy by intro uid; mode is `ai::modeName` (`idle alert chase attack hit dead ...`). All but `exists` are unavailable while it is not spawned |
@@ -401,7 +402,10 @@ tested behaviour happen.
 | `grapple_swing` | l3_chapel | ring 4744 offered, throw, attach (rope <= 4424.78), swing past the ring, climb / slide the rope 450, jump off, landing |
 | `rappel` | l1_kraken_room | wall anchor 326: swing onto the wall, rappel down (rope pays out) and up, kick off |
 | `wall_run` | l5_valaskjalf | wall anchor 6750: wall run through the rope's arc over the pit, landing on the far ledge, rope let go |
-| `swim` | l1_seatop | drop into the sea, surface swim 1348.6 units/s, dive, under water (breath drains), surfacing, breath refilled |
+| `swim` | l1_seatop | drop into the sea, surface swim 1348.6 units/s, dive, under water (on the wetsuit's tanks the breath stays full), surfacing |
+| `swim_breath` | l2_cliffclimb | no tanks: the breath drains under the river, 1.5 times as fast sprinting, the meter refills in 2 s at the surface |
+| `swim_moves` | l1_seatop | surface turn on the spot, dive, under-water dodges up / down by their clips, pistols drawn and fired under water |
+| `swan_dive` | l2_cliffclimb | running jump + crouch off the cliff top: swan clips, 5900 down into the sea on `swim_swan_land`, no damage |
 | `puzzle_pole_block_door` | l4_ballcourt | pole 6503 into lever 6502 (graph 0 -> 1), push block 6504 under it (two pushes), up onto the block, jump to the pole: lever joint slides, door 6505 rises |
 | `combat` | l2_cliffclimb | draw, hard lock, pistols kill three spiders and hit a 700 hp target dummy 8+ times, adrenaline fills |
 | `motorcycle` | l4_trailstart | mount bike 5482, accelerate (wheels on the ground), steer left, hop (both wheels off, then down), brake to a stop, dismount |

@@ -126,6 +126,16 @@ CollisionMesh poolMesh() {
     return m;
 }
 
+// The same pool with sides too high to climb out of (their tops 550 over the water; the climb-out reaches 400).
+CollisionMesh tallPoolMesh() {
+    CollisionMesh m;
+    addBox(m, {-3000, -3000, -3000}, {0, 3000, 400});
+    addBox(m, {2000, -3000, -3000}, {5000, 3000, 400});
+    addFloor(m, 0, -3000, 2000, 3000, -3000);
+    m.markup.push_back({10, 1, {{-10000, -10000, -100150}, {10000, 10000, -150}}});
+    return m;
+}
+
 std::unique_ptr<game::World> makeWorld(CollisionMesh m, vec3 spawn, float yaw = 0) {
     m.build();
     return std::make_unique<game::World>(std::move(m), syntheticAnims(), game::Spawn{spawn, yaw});
@@ -353,7 +363,7 @@ TEST(Game, CameraSwingsBehindRunningLara) {
 // tru.exe (Wine, l1_seatop sea, stick held right after a mouse nudge): circling her at 60 deg/s for 5 s, 101 deg/s
 // from 7 s on; the yaw controller (camera +0x8F8) holds set 11 (2 forces, 180 deg/s) and her move 21.97 a frame.
 TEST(Game, CameraSwingsBehindSwimmingLara) {
-    auto w = makeWorld(poolMesh(), {1000, -2000, 0}, glm::pi<float>() / 2);
+    auto w = makeWorld(tallPoolMesh(), {1000, -2000, 0}, glm::pi<float>() / 2); // sides she cannot climb out over
     for (int i = 0; i < 120; ++i) w->tick({});
     ASSERT_EQ(w->player().state().state, State::SwimTread);
     Actions right;
@@ -511,7 +521,8 @@ TEST(Game, SwimTurnLagsLikeTru) {
 // Shift still held: 2.13 s at normal speed, 0.95 s sprinting.
 TEST(Game, SwimSprintMatchesTru) {
     CollisionMesh m;
-    addQuad(m, {-60000, -60000, -3000}, {60000, -60000, -3000}, {60000, 60000, -3000}, {-60000, 60000, -3000});
+    // deep: after the dive the stick swims along the camera's pitch (down), and the speed is measured along her path
+    addQuad(m, {-60000, -60000, -60000}, {60000, -60000, -60000}, {60000, 60000, -60000}, {-60000, 60000, -60000});
     m.markup.push_back({10, 1, {{-60000, -60000, -100150}, {60000, 60000, -150}}});
     auto w = makeWorld(std::move(m), {-55000, 0, 0});
     const auto& s = w->player().state();
@@ -1148,9 +1159,7 @@ TEST(Game, SwimEnterCrossClimbOut) {
     const auto& s = w->player().state();
     bool splashed = false, swam = false;
     for (int i = 0; i < 60 * 12 && s.state != State::SwimClimbOut; ++i) {
-        Actions a = forward();
-        a.jump = s.state == State::SwimSurface && s.pos.x > 1500 && i % 20 == 0; // presses at the far wall
-        w->tick(a);
+        w->tick(forward()); // the stick alone: at the far side she climbs out by herself (no button)
         splashed |= s.state == State::SwimSplash;
         if (s.state == State::SwimTread || s.state == State::SwimSurface) {
             swam |= s.state == State::SwimSurface;
@@ -1849,8 +1858,8 @@ TEST(GameReal, PoolSwimReplay) {
     Actions up;
     up.jump = true;
     ASSERT_TRUE(runUntil([&](int) { return up; }, inState(State::SwimTread), 600));
-    // Back west; jump presses climb out at the first wall with a top 50..350 above the goo.
-    ASSERT_TRUE(runUntil([&](int i) { Actions a = forward(-1); a.jump = i % 20 == 19; return a; }, inState(State::SwimClimbOut), 900))
+    // Back west; with the stick held she climbs out at the first wall with a top 50..400 above the goo (no button).
+    ASSERT_TRUE(runUntil([&](int) { return forward(-1); }, inState(State::SwimClimbOut), 900))
         << game::stateName(s.state) << " at " << s.pos.x;
     ASSERT_TRUE(runUntil([](int) { return Actions{}; }, inState(State::Idle), 240));
     const auto floor = w.collision().groundProbe(s.pos + vec3(0, 0, 10), 20);
@@ -2571,7 +2580,7 @@ TEST(Game, WaterExternalSplash) {
 }
 
 TEST(Game, WaterWakeFollowsLara) {
-    auto w = makeWorld(poolMesh(), {1000, 0, 400});
+    auto w = makeWorld(tallPoolMesh(), {1000, 0, 400}); // she swims against the far side without climbing out
     for (int i = 0; i < 90; ++i) w->tick({});
     const float ox = w->water().originX(), oy = w->water().originY();
     float peak = 0;
@@ -6213,4 +6222,860 @@ TEST(GameReal, MainHallRingByItsOwnRange) {
     w.releaseGrapple(false);
     place({-159, 1712, -38}, 1.5707963f);
     EXPECT_FALSE(w.grappleTarget()) << "~4030 away: out of the ring's own range";
+}
+
+// Chimney jumps (src/game/WallJump.cpp, docs/GAMEPLAY.md "Chimney jumps"). The shaft: two walls facing each other, A at
+// x = 400 and B at x = -300, over a floor.
+namespace {
+CollisionMesh shaftMesh() {
+    CollisionMesh m;
+    addFloor(m, -300, -1000, 400, 1000, 0);
+    addBox(m, {400, -1000, -100}, {1000, 1000, 6000});
+    addBox(m, {-900, -1000, -100}, {-300, 1000, 6000});
+    return m;
+}
+// A jump with the stick forward (+X, toward A) from the floor; ticks until she is on a wall. False if she never is.
+bool jumpAtWall(game::World& w) {
+    Actions a = forward();
+    a.jump = true;
+    w.tick(a);
+    for (int i = 0; i < 180 && w.player().state().state != State::WallJump; ++i) w.tick(forward());
+    return w.player().state().state == State::WallJump;
+}
+// One jump press on the wall, then ticks until she is on a wall again (true), or anywhere else.
+bool rebound(game::World& w, float* maxStep = nullptr) {
+    const auto& s = w.player().state();
+    Actions jump;
+    jump.jump = true;
+    vec3 last = s.pos;
+    const auto step = [&](const Actions& a) {
+        w.tick(a);
+        if (maxStep) *maxStep = std::max(*maxStep, glm::distance(last, s.pos));
+        last = s.pos;
+    };
+    step(jump);
+    for (int i = 0; i < 4 && s.state == State::WallJump; ++i) step({}); // the turn on the wall
+    for (int i = 0; i < 180 && s.state == State::Jump; ++i) step({});
+    return s.state == State::WallJump;
+}
+} // namespace
+
+// A jump at a wall plants her feet on it 110 out, facing it, at the height she reached; each jump press there leaps
+// back off it to the wall behind, higher: from wall to wall 700 apart the jump back (46.81 out + 77.27 up a 30 Hz
+// frame) is caught 3 frames short of the far wall, about 490 higher. No step of it is a teleport.
+TEST(Game, ChimneyJumpGainsHeightEachRebound) {
+    auto w = makeWorld(shaftMesh(), {0, 0, 0});
+    const auto& s = w->player().state();
+    const auto& t = w->player().tuning();
+    ASSERT_TRUE(jumpAtWall(*w)) << game::stateName(s.state);
+    for (int i = 0; i < 6; ++i) w->tick({});
+    EXPECT_NEAR(s.pos.x, 400 - t.wallJumpStandoff, 0.01f);
+    EXPECT_NEAR(std::cos(s.yaw), 1, 1e-4f) << "facing wall A";
+    EXPECT_GT(s.pos.z, 100);
+    EXPECT_LT(s.pos.z, 320) << "a standing jump's height";
+    EXPECT_EQ(s.vel, vec3(0));
+    float z = s.pos.z, maxStep = 0;
+    for (int k = 1; k <= 4; ++k) {
+        ASSERT_TRUE(rebound(*w, &maxStep)) << "rebound " << k << ": " << game::stateName(s.state);
+        for (int i = 0; i < 6; ++i) w->tick({});
+        const bool onB = k % 2 == 1;
+        EXPECT_NEAR(s.pos.x, onB ? -300 + t.wallJumpStandoff : 400 - t.wallJumpStandoff, 0.01f) << "rebound " << k;
+        EXPECT_NEAR(std::cos(s.yaw), onB ? -1 : 1, 1e-4f) << "facing the wall she is on";
+        EXPECT_NEAR(s.pos.z - z, 486.5f, 45.0f) << "rebound " << k << " rose " << s.pos.z - z;
+        EXPECT_EQ(s.wallJumps, k);
+        z = s.pos.z;
+    }
+    EXPECT_GT(z, 1900);
+    EXPECT_LT(maxStep, 60) << "flight and the two-frame draw onto the wall: no jump in position";
+}
+
+// Without the press she holds on for wall_jump_attach_air's two frames and wall_jump_idle's twelve, then lets go and
+// falls to the floor; a press after that does nothing. The press counts from the moment she touches the wall.
+TEST(Game, ChimneyJumpNeedsThePress) {
+    auto w = makeWorld(shaftMesh(), {0, 0, 0});
+    const auto& s = w->player().state();
+    ASSERT_TRUE(jumpAtWall(*w));
+    const float z = s.pos.z;
+    int held = 1;
+    for (; held < 200 && s.state == State::WallJump; ++held) {
+        w->tick({});
+        EXPECT_LE(s.pos.z, z + 0.01f) << "nothing lifts her on the wall";
+    }
+    EXPECT_NEAR(held, 28, 2) << "14 frames at 60 ticks a second";
+    EXPECT_EQ(s.state, State::Fall);
+    Actions jump;
+    jump.jump = true;
+    w->tick(jump);
+    EXPECT_EQ(s.state, State::Fall) << "too late";
+    for (int i = 0; i < 240 && s.state == State::Fall; ++i) w->tick({});
+    for (int i = 0; i < 60; ++i) w->tick({});
+    EXPECT_EQ(s.state, State::Idle);
+    EXPECT_NEAR(s.pos.z, 0, 0.01f);
+    EXPECT_EQ(s.wallJumps, 0);
+    // pressed on the very first tick on the wall: the leap
+    auto w2 = makeWorld(shaftMesh(), {0, 0, 0});
+    ASSERT_TRUE(jumpAtWall(*w2));
+    const float z2 = w2->player().state().pos.z;
+    ASSERT_TRUE(rebound(*w2));
+    EXPECT_GT(w2->player().state().pos.z, z2 + 400);
+}
+
+// tru.exe allows five jumps back in a row (player data byte +0x843): on the sixth wall the press does nothing and she
+// drops; standing again, the count starts over.
+TEST(Game, ChimneyJumpFallsAfterFiveInARow) {
+    auto w = makeWorld(shaftMesh(), {0, 0, 0});
+    const auto& s = w->player().state();
+    ASSERT_TRUE(jumpAtWall(*w));
+    for (int k = 1; k <= 5; ++k) ASSERT_TRUE(rebound(*w)) << "rebound " << k;
+    EXPECT_EQ(s.wallJumps, 5);
+    const float top = s.pos.z;
+    EXPECT_GT(top, 2400);
+    Actions jump;
+    jump.jump = true;
+    w->tick({});
+    for (int i = 0; i < 60 && s.state == State::WallJump; ++i) {
+        w->tick(i % 2 ? jump : Actions{}); // pressing all the while
+        EXPECT_LE(s.pos.z, top + 0.01f);
+    }
+    EXPECT_EQ(s.state, State::Fall);
+    EXPECT_EQ(s.wallJumps, 5);
+    for (int i = 0; i < 600 && s.state == State::Fall; ++i) w->tick({});
+    EXPECT_LT(s.pos.z, 1);
+    for (int i = 0; i < 90; ++i) w->tick({});
+    EXPECT_EQ(s.wallJumps, 0);
+}
+
+// The last jump back flies onto the ledge its jump query (q12) meets: she ends hanging from it, hands on its line.
+TEST(Game, ChimneyJumpTopsOutOntoLedge) {
+    CollisionMesh m = shaftMesh();
+    m.markup.push_back({1, 7, {{400, 600, 1500}, {400, -600, 1500}}}); // on wall A, hanging to its right (-X)
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    const auto& s = w->player().state();
+    ASSERT_TRUE(jumpAtWall(*w));
+    int presses = 0;
+    while (presses < 5 && rebound(*w)) ++presses;
+    ++presses;
+    EXPECT_EQ(presses, 2) << "onto B, then from B onto the ledge";
+    for (int i = 0; i < 180 && s.state == State::HangJump; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::Hang) << game::stateName(s.state);
+    EXPECT_EQ(w->collision().markup[size_t(s.ledge)].id, 7);
+    const vec3 hands = handsOf(*w, w->anims().hangHandOffset);
+    EXPECT_NEAR(hands.x, 400, 0.01f);
+    EXPECT_NEAR(hands.z, 1500, 0.01f);
+}
+
+// A wall face tru.exe's test refuses (terrain client flag 0x80, 0x5D3BA0) is no wall to jump off: she never holds on.
+TEST(Game, ChimneyJumpRefusesFlaggedWall) {
+    CollisionMesh m = shaftMesh();
+    for (auto& f : m.faces) f.clientFlags |= 0x80;
+    auto w = makeWorld(std::move(m), {0, 0, 0});
+    EXPECT_FALSE(jumpAtWall(*w));
+    EXPECT_NE(w->player().state().state, State::WallJump);
+}
+
+// Saved on the wall mid-chimney and restored into a fresh world, the climb goes on tick for tick as it does unsaved.
+TEST(Game, ChimneyJumpSaveLoadContinuesIdentically) {
+    auto w = makeWorld(shaftMesh(), {0, 0, 0});
+    const auto& s = w->player().state();
+    ASSERT_TRUE(jumpAtWall(*w));
+    ASSERT_TRUE(rebound(*w));
+    w->tick({});
+    ASSERT_EQ(s.state, State::WallJump);
+    EXPECT_EQ(s.wallJumps, 1);
+    auto l = makeWorld(shaftMesh(), {0, 0, 0});
+    l->restore(s, w->camera().yaw, w->camera().pitch);
+    const auto& r = l->player().state();
+    Actions jump;
+    jump.jump = true;
+    int walls = 0;
+    for (int i = 0; i < 400; ++i) {
+        // released, then a press on every wall for the first 240 ticks; none after: the fall
+        const bool press = i < 240 && s.state == State::WallJump && i % 4 == 1;
+        w->tick(press ? jump : Actions{}), l->tick(press ? jump : Actions{});
+        ASSERT_EQ(s.state, r.state) << "tick " << i;
+        ASSERT_EQ(s.pos, r.pos) << "tick " << i;
+        ASSERT_EQ(s.yaw, r.yaw) << "tick " << i;
+        ASSERT_EQ(s.vel, r.vel) << "tick " << i;
+        ASSERT_EQ(s.clip, r.clip) << "tick " << i;
+        ASSERT_EQ(s.clipTime, r.clipTime) << "tick " << i;
+        ASSERT_EQ(s.wallJumps, r.wallJumps) << "tick " << i;
+        ASSERT_EQ(s.wallTime, r.wallTime) << "tick " << i;
+        ASSERT_EQ(s.jumpTime, r.jumpTime) << "tick " << i;
+        ASSERT_EQ(s.jumpStart, r.jumpStart) << "tick " << i;
+        walls = std::max<int>(walls, s.wallJumps);
+    }
+    EXPECT_GE(walls, 3) << "the restored climb went on up the shaft";
+    EXPECT_EQ(s.state, State::Idle);
+}
+
+namespace {
+// A chimney climb in a real unit: hanging on ledge `id`'s segment `seg` (its right side, as retail ledges hang), the
+// stick away from the wall + jump leaps back; then a jump press on every wall she holds on to, until she hangs again.
+struct ChimneyRun {
+    int ledge = -1, jumps = 0; // the ledge she ends on (markup id), the jump presses it took
+    State end = State::Idle;
+    float rise = 0, maxStep = 0;  // her root's gain, the longest step of a tick
+    std::vector<vec3> walls;      // where she held on, wall by wall (z relative to the first hang)
+    bool airborneOnly = true;     // between the hangs she was only ever jumping or on a wall
+};
+ChimneyRun climbChimney(const cdc::BigfileSet& bf, const game::AnimLibrary& anims, const char* unit, int id, int seg) {
+    ChimneyRun r;
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), unit, anims);
+    w.script().setBigfile(&bf);
+    const auto& mk = w.collision().markup;
+    int li = -1;
+    for (size_t i = 0; i < mk.size(); ++i)
+        if (mk[i].type == 1 && mk[i].id == id) li = int(i);
+    if (li < 0 || mk[size_t(li)].points.size() < size_t(seg) + 2) return r;
+    const vec3 a = mk[size_t(li)].points[size_t(seg)], b = mk[size_t(li)].points[size_t(seg) + 1];
+    const vec2 d = glm::normalize(vec2(b - a)), out(d.y, -d.x); // her side: the right of the ledge's direction
+    game::PlayerState st = w.player().state();
+    st.state = State::Hang, st.ledge = li, st.ledgeSeg = seg, st.ledgeT = 0.5f * glm::length(vec2(b - a)), st.ledgeSide = -1;
+    st.clip = "ledgeb_idle", st.loop = true, st.clipTime = 0, st.vel = vec3(0);
+    w.restore(st, std::atan2(-out.y, -out.x), -0.25f);
+    const auto& s = w.player().state();
+    for (int i = 0; i < 30; ++i) w.tick({});
+    if (s.state != State::Hang) return r;
+    const vec3 start = s.pos;
+    vec3 last = s.pos;
+    const auto tick = [&](const Actions& in) {
+        w.tick(in);
+        r.maxStep = std::max(r.maxStep, glm::distance(last, s.pos));
+        last = s.pos;
+    };
+    Actions jump;
+    jump.jump = true;
+    tick(worldStick(w, out, jump));
+    r.jumps = 1;
+    for (int i = 0; i < 1500 && s.state != State::Hang; ++i) {
+        if (s.state == State::WallJump && s.clip == "wall_jump_idle" && s.clipTime > 0.1) {
+            r.walls.push_back(vec3(vec2(s.pos), s.pos.z - start.z));
+            tick(jump);
+            ++r.jumps;
+        } else {
+            tick({});
+        }
+        if (s.state != State::Jump && s.state != State::WallJump && s.state != State::HangJump && s.state != State::Hang) {
+            r.airborneOnly = false;
+            break;
+        }
+    }
+    for (int i = 0; i < 90 && s.state == State::Hang; ++i) w.tick({});
+    r.end = s.state;
+    r.ledge = s.state == State::Hang && s.ledge >= 0 ? int(mk[size_t(s.ledge)].id) : -1;
+    r.rise = s.pos.z - start.z;
+    return r;
+}
+} // namespace
+
+// l2_junglehub (Coastal Thailand, the streambed's square columns): from the hang on ledge 796's east side (column A,
+// x = -12659) the higher ledge 797 on the same column, 1248 up, is out of a jump's reach; column B's face is 638 behind
+// her. The jump back off the hang plants her on B; jump presses there carry her to A, to B and then from B onto 797:
+// four jumps in all, as the original's players count them (Stella's walkthrough, "Climbing Out of the Streambed").
+TEST(GameReal, JunglehubChimneyJumpClimbsColumns) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const ChimneyRun r = climbChimney(bf, game::loadLaraAnims(bf), "l2_junglehub", 796, 1);
+    ASSERT_EQ(r.end, State::Hang) << game::stateName(r.end);
+    EXPECT_TRUE(r.airborneOnly);
+    EXPECT_EQ(r.ledge, 797);
+    EXPECT_EQ(r.jumps, 4) << "the leap off the hang and three off the walls";
+    ASSERT_EQ(r.walls.size(), 3u);
+    for (size_t i = 0; i < 3; ++i) // 110 out of column B's face (x ~ -12021) and of column A's (-12659)
+        EXPECT_NEAR(r.walls[i].x, i % 2 ? -12659 + 110 : -12021 - 110, 6.0f) << "wall " << i;
+    EXPECT_NEAR(r.walls[0].z, 138, 15) << "on B, a little above the hang";
+    EXPECT_NEAR(r.walls[1].z - r.walls[0].z, 435, 20) << "a rebound across the 418 between the holds";
+    EXPECT_NEAR(r.walls[2].z - r.walls[1].z, 435, 20);
+    EXPECT_NEAR(r.rise, 7597 - 6349, 2.0f);
+    EXPECT_LT(r.maxStep, 80) << "no teleport on the way up";
+}
+
+// l5_valaskjalf (Jan Mayen): ledge 1512 to ledge 1510 on the same wall, 1893 up, the facing wall 822 away: the leap
+// back and five wall jumps, all that tru.exe allows in a row (player data byte +0x843), each ~520 higher. And
+// l2_towerroom: from ledge 418 a single kick off the wall 603 behind her reaches ledge 417, 553 up.
+TEST(GameReal, ValaskjalfChimneyJumpTakesAllFive) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const ChimneyRun r = climbChimney(bf, anims, "l5_valaskjalf", 1512, 1);
+    ASSERT_EQ(r.end, State::Hang) << game::stateName(r.end);
+    EXPECT_TRUE(r.airborneOnly);
+    EXPECT_EQ(r.ledge, 1510);
+    EXPECT_EQ(r.jumps, 6);
+    ASSERT_EQ(r.walls.size(), 5u);
+    for (size_t i = 1; i < 5; ++i) EXPECT_GT(r.walls[i].z, r.walls[i - 1].z + 380) << "wall " << i;
+    EXPECT_NEAR(r.rise, 1893, 3.0f);
+    EXPECT_LT(r.maxStep, 80);
+    const ChimneyRun t = climbChimney(bf, anims, "l2_towerroom", 418, 0);
+    ASSERT_EQ(t.end, State::Hang) << game::stateName(t.end);
+    EXPECT_EQ(t.ledge, 417);
+    EXPECT_EQ(t.jumps, 2);
+    EXPECT_NEAR(t.rise, 553, 3.0f);
+}
+
+// ---- water gameplay (GpWater) ----
+namespace {
+// A streamed World of `unit` (scripts, enemies, water volumes) with Lara at `spawn`.
+struct UnitGame {
+    std::map<std::string, game::UnitData> cache;
+    game::UnitLoader loader;
+    game::World w;
+    UnitGame(const cdc::BigfileSet& bf, const char* unit, game::Spawn spawn, bool enemies = false)
+        : loader([this, &bf](const std::string& name) {
+              auto& d = cache[name];
+              if (!d.drm) d = game::loadUnitData(bf, name);
+              return d;
+          }),
+          w(loader, unit, game::loadLaraAnims(bf), spawn) {
+        w.script().setBigfile(&bf);
+        if (enemies) w.enemies().setBigfile(&bf);
+    }
+};
+} // namespace
+
+namespace {
+// A sea 60 000 deep with real clips: Lara starts treading at the origin.
+std::unique_ptr<game::World> deepSeaWorld(const cdc::BigfileSet& bf) {
+    CollisionMesh m;
+    addQuad(m, {-60000, -60000, -60000}, {60000, -60000, -60000}, {60000, 60000, -60000}, {-60000, 60000, -60000});
+    m.markup.push_back({10, 1, {{-60000, -60000, -100150}, {60000, 60000, -150}}});
+    m.build();
+    auto w = std::make_unique<game::World>(std::move(m), game::loadLaraAnims(bf), game::Spawn{{0, 0, -150}, 0});
+    for (int i = 0; i < 90; ++i) w->tick({});
+    return w;
+}
+Actions held(bool drop, bool jump = false, bool aim = false) {
+    Actions a;
+    a.drop = drop, a.jump = jump, a.aim = aim;
+    return a;
+}
+} // namespace
+
+// Scuba (tru.exe 0x6EEF50 / 0x755230 / 0x7572F0): with the tanks in use the breath does not drain under water and the
+// breath meter stays away; without them it drains and the meter takes the adrenaline meter's place while she is under.
+TEST(Game, SwimScubaKeepsTheBreath) {
+    auto w = makeWorld(poolMesh(), {1000, 0, 400});
+    w->outfit = "lara_wetsuit_warm";
+    for (int i = 0; i < 90; ++i) w->tick({});
+    ASSERT_EQ(w->player().state().state, State::SwimTread);
+    EXPECT_TRUE(w->scuba());
+    for (int i = 0; i < 60 * 60; ++i) w->tick(held(true));
+    ASSERT_TRUE(w->submerged());
+    EXPECT_EQ(w->air(), 1.0f) << "a minute under water on the tanks";
+    EXPECT_FALSE(w->breathShown());
+    EXPECT_EQ(w->health().value(), w->health().max());
+    w->outfit = "lara_jungle_a"; // no tanks: the same dive drains it
+    EXPECT_FALSE(w->scuba());
+    for (int i = 0; i < 60; ++i) w->tick(held(true));
+    EXPECT_NEAR(w->air(), 1.0f - 30.0f / 4000.0f, 1e-4f) << "one 30 Hz frame of the 4000 per frame";
+    EXPECT_TRUE(w->breathShown());
+    for (int i = 0; i < 600 && w->player().state().state != State::SwimTread; ++i) w->tick(held(false, true));
+    for (int i = 0; i < 150; ++i) w->tick({});
+    EXPECT_EQ(w->air(), 1.0f);
+    EXPECT_FALSE(w->breathShown()) << "at the surface with a full meter the adrenaline meter is back";
+}
+
+// The surface dive needs water of depth class 0x325 (player data +0xB2 = 948 deep, chart T887): over a floor 800 under
+// the surface the crouch button does nothing; over one 1000 under it she dives.
+TEST(Game, SwimNoSurfaceDiveInShallowWater) {
+    for (const float depth : {800.0f, 1000.0f}) {
+        CollisionMesh m;
+        addFloor(m, -3000, -3000, 3000, 3000, -150 - depth);
+        m.markup.push_back({10, 1, {{-10000, -10000, -100150}, {10000, 10000, -150}}});
+        auto w = makeWorld(std::move(m), {0, 0, 200}); // drops in (a spawn within 1000 of a floor is put on it)
+        for (int i = 0; i < 180; ++i) w->tick({});
+        ASSERT_EQ(w->player().state().state, State::SwimTread) << depth;
+        w->tick(held(true));
+        EXPECT_EQ(w->player().state().state, depth >= 948 ? State::SwimDive : State::SwimTread) << depth;
+    }
+}
+
+// Under water the stick's forward share swims along the camera's view line: looking down while swimming forward takes
+// her down, looking up takes her up; the stick sideways swims level.
+// tru.exe under Wine (scratch/swimsprint/under1.txt: a dive, then forward held): with the camera looking down at her
+// (pitch p) her velocity's pitch is p + 9.2 deg below p = -14 (-28.8 at -36.8, -13.4 at -22.5), the lead falling to
+// nothing at +8.5: she goes on down (1034 units), levels out within ~3.5 s as the camera trails behind her and ends
+// rising gently (velocity pitch 8.2 at camera pitch 7.5).
+TEST(Game, SwimFollowsTheCameraPitchUnderWater) {
+    CollisionMesh m;
+    addQuad(m, {-60000, -60000, -60000}, {60000, -60000, -60000}, {60000, 60000, -60000}, {-60000, 60000, -60000});
+    m.markup.push_back({10, 1, {{-60000, -60000, -100150}, {60000, 60000, -150}}});
+    auto w = makeWorld(std::move(m), {0, 0, -150});
+    const auto& s = w->player().state();
+    for (int i = 0; i < 90; ++i) w->tick({});
+    // down until the camera looks at her from 37 deg above, as after tru.exe's dive (the synthetic dive clip does not move)
+    for (int i = 0; i < 120 && w->camera().pitch > glm::radians(-29.0f); ++i) w->tick(held(true));
+    for (int i = 0; i < 90; ++i) w->tick({});
+    ASSERT_EQ(s.state, State::SwimUnder);
+    ASSERT_NEAR(glm::degrees(w->camera().pitch), -36.8f, 6.0f);
+    const auto lead = [](float p) { // degrees
+        return 9.2f * std::sqrt(std::clamp((8.5f - p) / 22.5f, 0.0f, 1.0f));
+    };
+    const float z0 = s.pos.z;
+    float lowest = z0;
+    int level = -1;
+    for (int i = 0; i < 10 * 60; ++i) {
+        const float p = glm::degrees(w->camera().pitch);
+        w->tick(forward());
+        lowest = std::min(lowest, s.pos.z);
+        if (i >= 30) ASSERT_NEAR(glm::degrees(s.pitch), p + lead(p), 3.0f) << i; // her pitch follows the view line
+        if (i == 30) EXPECT_NEAR(glm::degrees(s.pitch), -36.8f + 9.2f, 8.0f) << "tru.exe: -28.8 at -36.8";
+        if (level < 0 && i > 30 && s.pitch > 0) level = i;
+    }
+    EXPECT_NEAR(z0 - lowest, 1034.0f, 350.0f) << "she goes on down first (tru.exe: 1034 at the sprint's speed)";
+    ASSERT_GT(level, 0) << "then levels out";
+    EXPECT_NEAR(level / 60.0f, 3.5f, 1.5f);
+    EXPECT_NEAR(glm::degrees(w->camera().pitch), 8.5f, 2.5f) << "and ends rising gently, the camera right behind her";
+    EXPECT_NEAR(glm::degrees(s.pitch), 8.5f, 2.5f);
+    // looking down takes her down again, looking up up
+    Actions down = forward();
+    down.look.y = -1.0f;
+    for (int i = 0; i < 40; ++i) w->tick(down);
+    float z = s.pos.z;
+    for (int i = 0; i < 30; ++i) w->tick(forward());
+    EXPECT_LT(s.pos.z, z - 150);
+    EXPECT_LT(s.pitch, -0.15f);
+    for (int i = 0; i < 180; ++i) w->tick(down); // well under again
+    Actions up = forward();
+    up.look.y = 1.0f;
+    for (int i = 0; i < 150 && w->camera().pitch < 0.5f; ++i) w->tick(up);
+    ASSERT_GT(w->camera().pitch, 0.45f);
+    z = s.pos.z;
+    for (int i = 0; i < 30; ++i) w->tick(forward());
+    EXPECT_GT(s.pos.z, z + 250);
+    EXPECT_GT(s.pitch, 0.4f);
+    Actions side;
+    side.move.x = 1;
+    for (int i = 0; i < 120; ++i) w->tick(side);
+    EXPECT_NEAR(s.pitch, 0.0f, 0.05f) << "the stick sideways swims level whatever the camera's pitch";
+}
+
+// Sprinting under water spends the breath 1.5 times as fast (lara.drm chart property 914 of the sprint state S159).
+TEST(GameReal, SwimSprintSpendsBreathFaster) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto world = deepSeaWorld(bf);
+    auto& w = *world;
+    const auto& s = w.player().state();
+    for (int i = 0; i < 300; ++i) w.tick(held(true));
+    ASSERT_EQ(s.state, State::SwimUnder);
+    for (int i = 0; i < 60; ++i) w.tick(forward());
+    float a0 = w.air();
+    for (int i = 0; i < 120; ++i) w.tick(forward());
+    const float swim = a0 - w.air();
+    EXPECT_NEAR(swim, 60.0f / 4000.0f, 1e-5f) << "2 s = 60 frames of 4000";
+    Actions sprint = forward();
+    sprint.sprint = true;
+    for (int i = 0; i < 30; ++i) w.tick(sprint);
+    ASSERT_EQ(s.clip, "swim_submerged_sprint");
+    a0 = w.air();
+    for (int i = 0; i < 120; ++i) w.tick(sprint);
+    EXPECT_NEAR((a0 - w.air()) / swim, 1.5f, 1e-3f);
+}
+
+// Under-water dodges (target lock + crouch or jump): each plays its clip and moves her by its root motion [O clips]:
+// no stick or stick up 883.4 up in 30 frames, down 881.2 down in 20, a side 791.6 sideways in 30; side-on to the
+// camera the sides are 468.5 ahead (26 frames) / 449.9 back.
+TEST(GameReal, SwimDodgesMoveAsTheirClips) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto world = deepSeaWorld(bf);
+    auto& w = *world;
+    const auto& s = w.player().state();
+    for (int i = 0; i < 360; ++i) w.tick(held(true));
+    for (int i = 0; i < 60; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::SwimUnder);
+    const auto dodge = [&](vec2 stick, bool jump, std::string_view clip) {
+        const vec3 p0 = s.pos;
+        Actions a = held(!jump, jump, true);
+        a.move = stick;
+        w.tick(held(false, false, true)); // lock held, buttons up: the press edge is the next tick
+        w.tick(a);
+        EXPECT_EQ(s.state, State::SwimDodge) << clip;
+        EXPECT_EQ(s.clip, clip);
+        int n = 1;
+        for (; n < 200 && s.state == State::SwimDodge; ++n) w.tick(held(false, false, true));
+        EXPECT_EQ(s.state, State::SwimUnder) << clip;
+        EXPECT_EQ(s.clip, "swim_submerged_idle");
+        return std::pair{s.pos - p0, n};
+    };
+    const vec3 fwd(std::cos(s.yaw), std::sin(s.yaw), 0), right(std::sin(s.yaw), -std::cos(s.yaw), 0);
+    auto [up, upTicks] = dodge({0, 0}, false, "swim_submerged_dodge_up");
+    EXPECT_NEAR(up.z, 883.4f, 1.0f);
+    EXPECT_NEAR(glm::length(vec2(up)), 0, 1.0f);
+    EXPECT_NEAR(upTicks, 60, 2) << "30 frames";
+    auto [down, downTicks] = dodge({0, -1}, false, "swim_submerged_dodge_down");
+    EXPECT_NEAR(down.z, -881.2f, 1.0f);
+    EXPECT_NEAR(downTicks, 40, 2);
+    auto [jumpUp, jt] = dodge({0, 1}, true, "swim_submerged_dodge_up"); // the jump button dodges too
+    EXPECT_NEAR(jumpUp.z, 883.4f, 1.0f);
+    dodge({0, -1}, false, "swim_submerged_dodge_down");
+    auto [r, rt] = dodge({1, 0}, false, "swim_submerged_dodge_side");
+    EXPECT_NEAR(glm::dot(r, right), 791.6f, 8.0f) << "to her right";
+    EXPECT_NEAR(r.z, 7.3f, 1.0f);
+    const auto behind = [&] { // the camera back behind her (the dodges read the stick as on screen)
+        Actions c = held(false);
+        c.recenter = true;
+        w.tick(c);
+        for (int i = 0; i < 240 && std::abs(std::remainder(w.camera().yaw - s.yaw, 6.2831853f)) > 0.05f; ++i) w.tick({});
+    };
+    behind();
+    ASSERT_LT(std::abs(std::remainder(w.camera().yaw - s.yaw, 6.2831853f)), 0.3f);
+    auto [l, lt] = dodge({-1, 0}, false, "swim_submerged_dodge_side");
+    EXPECT_NEAR(glm::dot(l, right), -791.6f, 8.0f) << "mirrored to her left";
+    // side-on: the camera turned a quarter round her
+    Actions turn = held(false, false, false);
+    turn.look.x = 2;
+    for (int i = 0; i < 200 && std::abs(std::sin(w.camera().yaw - s.yaw)) < 0.95f; ++i) w.tick(turn);
+    ASSERT_GT(std::abs(std::sin(w.camera().yaw - s.yaw)), 0.9f);
+    const float rel = std::remainder(s.yaw - w.camera().yaw, 6.2831853f); // her heading left (+) or right (-) of the view line
+    const vec2 ahead(rel < 0 ? 1.0f : -1.0f, 0);                           // the stick side that runs along her heading
+    auto [f, ft] = dodge(ahead, false, "swim_submerged_dodge_forward");
+    EXPECT_NEAR(glm::dot(f, fwd), 468.5f, 1.0f);
+    EXPECT_NEAR(ft, 52, 2);
+    auto [b, bt] = dodge(-ahead, false, "swim_submerged_dodge_backward");
+    EXPECT_NEAR(glm::dot(b, fwd), -449.9f, 1.0f);
+    // no dodge without the lock: crouch just swims down
+    w.tick({});
+    w.tick(held(true));
+    EXPECT_EQ(s.state, State::SwimUnder);
+}
+
+// Swan dive: a running jump, crouch while it still rises. Into deep water from any height: swim_swan_land carries her
+// 235 on and 346 down (its root motion from the request's start frame), unhurt. Onto the ground she rolls out of it (ng_swan_land, 591 ahead) and the fall counts as
+// any other: a short drop is free, a long one kills (death_fall_swan).
+TEST(GameReal, SwanDiveIntoWaterAndOntoLand) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto run = [&](float ground, bool water) { // a platform at z 0 ending at x 0; ground / water beyond
+        CollisionMesh m;
+        addFloor(m, -4000, -1000, 0, 1000, 0);
+        addFloor(m, 0, -1000, 9000, 1000, ground);
+        if (water) m.markup.push_back({10, 1, {{0, -1000, ground}, {9000, 1000, -6000}}});
+        m.build();
+        auto w = std::make_unique<game::World>(std::move(m), game::loadLaraAnims(bf), game::Spawn{{-1500, 0, 0}, 0});
+        const auto& s = w->player().state();
+        for (int i = 0; i < 300 && s.pos.x < -260; ++i) w->tick(forward());
+        Actions jump = forward();
+        jump.jump = true;
+        w->tick(jump);
+        for (int i = 0; i < 60 && s.state != State::Jump; ++i) w->tick(forward());
+        EXPECT_EQ(s.state, State::Jump);
+        Actions crouch = forward();
+        crouch.drop = true;
+        w->tick(crouch);
+        EXPECT_EQ(s.clip, "ng_inair_swan_stage1");
+        return w;
+    };
+    { // 6000 down into deep water
+        auto w = run(-20000, true);
+        const auto& s = w->player().state();
+        bool stage3 = false;
+        for (int i = 0; i < 600 && s.state == State::Jump; ++i) w->tick({}), stage3 |= s.clip == "ng_inair_swan_stage3";
+        EXPECT_TRUE(stage3) << "stage 1 (25 frames), stage 2 (6), then the stage 3 hold";
+        ASSERT_EQ(s.state, State::SwimSplash);
+        EXPECT_EQ(s.clip, "swim_swan_land");
+        const vec3 in = s.pos;
+        int n = 0;
+        for (; n < 200 && s.state == State::SwimSplash; ++n) w->tick({});
+        EXPECT_EQ(s.state, State::SwimUnder);
+        // the clip's root motion (268.5 on, 437.7 down over 31 frames) from its request's start frame 4
+        EXPECT_NEAR(s.pos.x - in.x, 235.0f, 2.0f);
+        EXPECT_NEAR(s.pos.z - in.z, -346.1f, 2.0f);
+        EXPECT_NEAR(n, 54, 2) << "27 frames";
+        EXPECT_EQ(w->health().value(), w->health().max()) << "no fall damage into deep water";
+    }
+    { // 250 down onto the ground: the roll
+        auto w = run(-250, false);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 600 && s.state == State::Jump; ++i) w->tick({});
+        ASSERT_EQ(s.state, State::Roll);
+        EXPECT_EQ(s.clip, "ng_swan_land");
+        const float x = s.pos.x;
+        for (int i = 0; i < 60 && s.state == State::Roll; ++i) w->tick({});
+        EXPECT_EQ(s.state, State::Idle);
+        EXPECT_NEAR(s.pos.x - x, 591.0f * (9.0f / 11.0f), 60.0f) << "the roll's root motion from its start frame 2";
+        EXPECT_EQ(w->health().value(), w->health().max());
+    }
+    { // 6000 down onto the ground: dead
+        auto w = run(-6000, false);
+        const auto& s = w->player().state();
+        for (int i = 0; i < 600 && s.state == State::Jump; ++i) w->tick({});
+        for (int i = 0; i < 5; ++i) w->tick({});
+        EXPECT_TRUE(w->health().dead());
+        EXPECT_EQ(s.state, State::Dead);
+        EXPECT_EQ(s.clip, "death_fall_swan");
+    }
+}
+
+// At the surface, treading: the stick to her side plays swim_surface_idle_turn_90 (a quarter turn in 15 frames, mirrored
+// to the left), behind her swim_surface_idle_turn_180; then she swims off that way.
+TEST(GameReal, SwimSurfaceIdleTurns) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto turn = [&](vec2 stick, std::string_view clip, float by) {
+        const auto world = deepSeaWorld(bf);
+        auto& w = *world;
+        const auto& s = w.player().state();
+        EXPECT_EQ(s.state, State::SwimTread);
+        const float yaw0 = s.yaw;
+        const vec3 p0 = s.pos;
+        Actions a;
+        a.move = stick;
+        w.tick(fixedCamera(w, a, yaw0));
+        EXPECT_EQ(s.clip, clip);
+        int n = 1;
+        for (; n < 120 && s.clip == clip; ++n) w.tick(fixedCamera(w, a, yaw0));
+        EXPECT_NEAR(n, 30, 3) << clip << ": 15 frames";
+        EXPECT_NEAR(std::remainder(s.yaw - yaw0 - by, 6.2831853f), 0, 0.12f) << clip;
+        EXPECT_LT(glm::distance(vec2(s.pos), vec2(p0)), 60.0f) << "turned on the spot";
+    };
+    turn({1, 0}, "swim_surface_idle_turn_90", -1.5708f);
+    turn({-1, 0}, "swim_surface_idle_turn_90", 1.5708f);
+    turn({0, -1}, "swim_surface_idle_turn_180", 3.14159f);
+}
+
+// ---- real units ----
+
+// l1_seafloor (Mediterranean dive, lara_wetsuit_warm): a 150 s swim under water on the tanks leaves the breath full and
+// the meter hidden; a dodge in the open sea moves her as its clip.
+TEST(GameReal, SeafloorScubaSwimKeepsTheBreath) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame g(bf, "l1_seafloor", {{24142, -6344, -1500}, 0});
+    auto& w = g.w;
+    const auto& s = w.player().state();
+    EXPECT_EQ(w.outfit, "lara_wetsuit_warm");
+    ASSERT_TRUE(w.scuba());
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::SwimUnder);
+    const float z = s.pos.z;
+    w.tick(held(false, false, true));
+    w.tick(held(true, false, true));
+    ASSERT_EQ(s.state, State::SwimDodge);
+    for (int i = 0; i < 100 && s.state == State::SwimDodge; ++i) w.tick(held(false, false, true));
+    EXPECT_NEAR(s.pos.z - z, 883.4f, 1.0f) << "swim_submerged_dodge_up in the real sea";
+    for (int i = 0; i < 60; ++i) w.tick(held(true)); // back down
+    int under = 0;
+    for (int i = 0; i < 150 * 60; ++i) {
+        Actions a;
+        a.move.x = (i / 600) % 2 ? 1.0f : 0.0f; // idling and circling, to stay in open water
+        w.tick(a);
+        under += w.submerged();
+        ASSERT_FALSE(w.breathShown()) << i;
+    }
+    EXPECT_GT(under, 149 * 60);
+    EXPECT_EQ(w.air(), 1.0f) << "4000 frames (133.3 s) would have emptied it";
+    EXPECT_NE(w.health().lastType(), game::kDamagePeriodic);
+}
+
+// l2_cliffclimb (Coastal Thailand, lara_jungle_a: no tanks): under the river she holds her breath 4000 frames; from then
+// the meter asks for 10 % of her health every 20 frames, every other one of which falls in the health's 30-frame
+// invulnerability window (0x6F5030), so she loses 10 % every 40 frames and drowns (death_drown) 146 s after going under.
+TEST(GameReal, ThailandDiveDrownsAtTheBreathTime) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame g(bf, "l2_cliffclimb", {{-21800, 10762, -2000}, 0});
+    auto& w = g.w;
+    const auto& s = w.player().state();
+    EXPECT_EQ(w.outfit, "lara_jungle_a");
+    ASSERT_FALSE(w.scuba());
+    for (int i = 0; i < 30; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::SwimUnder);
+    ASSERT_TRUE(w.submerged());
+    EXPECT_TRUE(w.breathShown());
+    int firstHurt = -1, dead = -1;
+    for (int i = 0; i < 150 * 60 && dead < 0; ++i) {
+        w.tick({});
+        if (firstHurt < 0 && w.health().value() < w.health().max()) firstHurt = i;
+        if (w.health().dead()) dead = i;
+    }
+    ASSERT_GE(firstHurt, 0);
+    EXPECT_NEAR((firstHurt + 30) / 60.0f, 4020 / 30.0f, 0.1f) << "4000 frames of breath + the first 20-frame period";
+    ASSERT_GE(dead, 0);
+    EXPECT_NEAR((dead - firstHurt) / 60.0f, 9 * 40 / 30.0f, 0.1f) << "ten 10 % losses 40 frames apart";
+    for (int i = 0; i < 3; ++i) w.tick({});
+    EXPECT_EQ(s.state, State::Dead);
+    EXPECT_EQ(s.clip, "death_drown");
+}
+
+// l1_seafloor: a blue shark comes for the swimming Lara; the speargun's spears fly to it (pr_spear, 550 a hit under
+// water) and kill it.
+TEST(GameReal, SeafloorSpearKillsShark) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame probe(bf, "l1_seafloor", {{24142, -6344, -1500}, 0}, true);
+    probe.w.tick({});
+    vec3 at(0);
+    int32_t uid = 0;
+    for (const auto& e : probe.w.enemies().all())
+        if (e->type().name.starts_with("shark_") && !uid) uid = e->uid(), at = e->state().pos;
+    ASSERT_NE(uid, 0) << "no shark placed";
+    UnitGame g(bf, "l1_seafloor", {at + vec3(1500, 0, 0), glm::pi<float>()}, true);
+    auto& w = g.w;
+    w.giveWeapon(game::Weapon::Speargun, 15);
+    const auto shark = [&]() -> const game::ai::Enemy* {
+        for (const auto& e : w.enemies().all())
+            if (e->uid() == uid) return e.get();
+        return nullptr;
+    };
+    for (int i = 0; i < 10; ++i) w.tick({});
+    ASSERT_TRUE(shark());
+    const float hp = shark()->state().health;
+    ASSERT_GT(hp, 0);
+    Actions sw;
+    sw.weapon = true;
+    w.tick(sw);
+    Actions fire;
+    fire.fire = fire.aim = true;
+    int flights = 0, t = 0;
+    bool hurtAtLaunch = false;
+    std::vector<float> losses;
+    for (; t < 60 * 60 && shark() && shark()->state().mode != game::ai::Mode::Dead; ++t) {
+        const size_t before = w.combat().projectiles.size();
+        const float h0 = shark()->state().health;
+        w.tick(fire);
+        const float h1 = shark()->state().health;
+        if (w.combat().projectiles.size() > before) ++flights, hurtAtLaunch |= h1 < h0;
+        if (h1 < h0) losses.push_back(h0 - h1);
+        if (w.health().dead()) break;
+    }
+    ASSERT_TRUE(shark());
+    EXPECT_EQ(w.combat().weapon, game::Weapon::Speargun);
+    EXPECT_EQ(shark()->state().mode, game::ai::Mode::Dead) << "after " << t << " ticks, " << flights << " spears";
+    EXPECT_GE(flights, 1);
+    EXPECT_FALSE(hurtAtLaunch) << "a spear hurts when it arrives, not the tick it is fired";
+    ASSERT_FALSE(losses.empty());
+    for (size_t i = 0; i + 1 < losses.size(); ++i) EXPECT_EQ(losses[i], 550.0f) << "pr_spear's under-water record";
+    EXPECT_LE(losses.back(), 550.0f) << "the last one takes what was left";
+    EXPECT_LE(flights, int(hp / 550.0f) + 2) << "it took the spears its health asks for";
+}
+
+// l2_cliffclimb: from the cliff top 5950 over the sea a running jump and crouch is a swan dive; she enters the sea on
+// swim_swan_land, unhurt.
+TEST(GameReal, CliffSwanDiveIntoTheSea) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame g(bf, "l2_cliffclimb", {{-29956 + 900, 2361, 6100}, glm::pi<float>()});
+    auto& w = g.w;
+    const auto& s = w.player().state();
+    for (int i = 0; i < 60; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::Idle) << "standing on the cliff top";
+    const float top = s.pos.z;
+    EXPECT_GT(top, 5900.0f);
+    const auto& col = w.collision();
+    int i = 0;
+    for (; i < 600; ++i) { // run west until the ground ahead ends
+        w.tick(forward());
+        if (s.state == State::Run && !col.groundProbe(s.pos + vec3(-420, 0, 100), 400)) break;
+    }
+    ASSERT_LT(i, 600);
+    Actions jump = forward();
+    jump.jump = true;
+    w.tick(jump);
+    int prep = 0;
+    for (; prep < 60 && s.state != State::Jump; ++prep) w.tick(forward());
+    ASSERT_EQ(s.state, State::Jump);
+    Actions crouch = forward();
+    crouch.drop = true;
+    w.tick(crouch);
+    ASSERT_EQ(s.clip, "ng_inair_swan_stage1");
+    for (int k = 0; k < 900 && s.state == State::Jump; ++k) w.tick({});
+    ASSERT_EQ(s.state, State::SwimSplash) << "at " << s.pos.x << " " << s.pos.y << " " << s.pos.z;
+    EXPECT_EQ(s.clip, "swim_swan_land");
+    EXPECT_GT(top - s.pos.z, 5500.0f);
+    for (int k = 0; k < 200 && s.state == State::SwimSplash; ++k) w.tick({});
+    EXPECT_TRUE(s.state == State::SwimUnder || s.state == State::SwimTread);
+    EXPECT_EQ(w.health().value(), w.health().max()) << "a 5900-unit fall into the sea costs nothing";
+}
+
+// l7_yggdrasil_end volume 8309: SetLevel (watervolumebase 1) lowers the surface by script; Lara treading on it goes
+// down with it, 16 units per 30 Hz frame, and stays afloat.
+TEST(GameReal, ScriptedWaterLevelCarriesLara) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    UnitGame g(bf, "l7_yggdrasil_end", {{-9473, -9100, 2869}, 0});
+    auto& w = g.w;
+    const auto& s = w.player().state();
+    const auto surface = [&] {
+        for (const auto& m : w.collision().markup)
+            if (m.type == 10 && m.id == 8309) return std::pair{m.points[0].z, m.points[1].z};
+        return std::pair{0.0f, 0.0f};
+    };
+    for (int i = 0; i < 120; ++i) w.tick({});
+    ASSERT_EQ(s.state, State::SwimTread);
+    const auto [bottom, top] = surface();
+    EXPECT_NEAR(s.pos.z, top - w.player().tuning().swimSurfaceDepth, 0.5f);
+    uint32_t r = 0;
+    const float target = top - 1000;
+    const int32_t set[] = {int32_t((target - bottom) / 3.1605f), 5}; // script lengths: depth over the bottom, speed
+    ASSERT_TRUE(w.waterNative(8309, "watervolumebase", 1, set, r));
+    for (int i = 0; i < 60; ++i) {
+        w.tick({});
+        ASSERT_EQ(s.state, State::SwimTread) << i;
+        // within one 60 Hz tick of the level's motion (the player ticks before the volume moves)
+        ASSERT_NEAR(s.pos.z, surface().second - w.player().tuning().swimSurfaceDepth, 8.5f) << i;
+    }
+    EXPECT_NEAR(top - surface().second, 16 * 30.0f, 1.0f) << "16 units per 30 Hz frame for a second";
+    for (int i = 0; i < 240; ++i) w.tick({});
+    EXPECT_NEAR(surface().second, bottom + float(set[0]) * 3.1605f, 2.0f);
+    EXPECT_EQ(s.state, State::SwimTread);
+    EXPECT_NEAR(s.pos.z, surface().second - w.player().tuning().swimSurfaceDepth, 0.5f) << "she floats on the new level";
+}
+
+// l1_seafloor jellyfish 817 (jellyfish_a, a class-79 uber object; script type 5594): three player sensors on its HInfo
+// markers 10 / 20 / 30 (radii 278.1 / 208.6 / 192.8 around the bell and down the tentacles). While Lara is inside one
+// its script runs the shock command and takes 100 health, again and again; away from it nothing happens; shots do
+// nothing to it (its section takes no damage). A save carries the sensors on.
+TEST(GameReal, JellyfishStingOnTouch) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    {
+        UnitGame far(bf, "l1_seafloor", {{-4680, 8992, 1243 - 900}, 0});
+        for (int i = 0; i < 600; ++i) far.w.tick({});
+        EXPECT_EQ(far.w.health().value(), far.w.health().max()) << "900 under it: out of every sensor";
+    }
+    UnitGame g(bf, "l1_seafloor", {{-4680, 8850, 1532}, 0}); // 160 from the middle marker
+    auto& w = g.w;
+    std::vector<int> hurtAt;
+    float h = w.health().value();
+    nlohmann::json saved;
+    for (int i = 0; i < 600; ++i) {
+        w.tick({});
+        if (w.health().value() < h - 50) {
+            hurtAt.push_back(i);
+            EXPECT_NEAR(h - w.health().value(), 100.0f, 30.0f) << i;
+        }
+        h = w.health().value();
+        if (i == 30) saved = w.serializeRuntime();
+    }
+    ASSERT_GE(hurtAt.size(), 3u) << "stung again and again";
+    EXPECT_LT(hurtAt[0], 5) << "at once";
+    EXPECT_FALSE(w.health().dead());
+    for (const auto& [key, count] : w.script().failures()) EXPECT_NE(key.first, 817) << key.second;
+    // swimming away ends it
+    const float left = w.health().value();
+    Actions away;
+    away.move.y = -1;
+    for (int i = 0; i < 240; ++i) w.tick(away);
+    const float after = w.health().value();
+    for (int i = 0; i < 300; ++i) w.tick({});
+    EXPECT_GE(w.health().value(), after) << "out of reach: no more stings";
+    EXPECT_GT(glm::distance(w.player().state().pos, vec3(-4675, 9008, 1532)), 400.0f);
+    (void)left;
+    // a loaded game goes on being stung at the same ticks
+    UnitGame l(bf, "l1_seafloor", {{-4680, 8850, 1532}, 0});
+    for (int i = 0; i <= 30; ++i) l.w.tick({});
+    l.w.restoreRuntime(saved);
+    std::vector<int> again;
+    float lh = l.w.health().value();
+    for (int i = 31; i < 600; ++i) {
+        l.w.tick({});
+        if (l.w.health().value() < lh - 50) again.push_back(i);
+        lh = l.w.health().value();
+    }
+    std::vector<int> expect;
+    for (const int t : hurtAt)
+        if (t > 30) expect.push_back(t);
+    EXPECT_EQ(again, expect);
 }

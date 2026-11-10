@@ -6,6 +6,43 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-11-10
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Added: chimney jumps. Jump at a wall in a narrow shaft and Lara plants her feet on it; press Jump again within
+  about half a second and she turns and kicks off to the opposite wall, gaining height each time, up to five times in
+  a row, and grabs the ledge at the top. Without the second press she lets go and falls. Try the stone columns in the
+  Thailand jungle hub or the Jan Mayen halls. Walls the original marks as unusable refuse the move.
+- Added: every treasure of the original is in the game: 179 treasures and 6 relics (before, only the 78 lying in the
+  open). The 101 others are inside treasure urns: shoot an urn open and the treasure is left standing where it was.
+  The PDA's AREA INFO totals are now the original's (26 / 30 / 13 / 50 / 30 / 0 / 30 by area).
+- Added: relics make Lara stronger, as in the original. Each one raises her maximum health by a sixth of the starting
+  bar (all six double it) and heals her.
+- Added: manual aim (Z, or click the right stick). The camera moves over her shoulder and shots go where the reticle
+  points, also at things the target lock never picks. The kraken can now be killed the original way: raise the spiked
+  platform, then shoot the two chain links with manual aim.
+- Changed: adrenaline works as in the original. With a full meter, the Grapple button next to a locked enemy starts
+  the head shot move; Manual Aim during a fight spends the meter on slow motion (Lara slows down with the world).
+  With two enemies in front of her, each pistol takes its own target. Lara can fire her pistols or the Uzis with one
+  hand while hanging from a ledge, climbing, on a ladder, a pole or a pillar.
+- Added: scripted slow motion ("situational adrenaline") runs where the levels ask for it, for example when the
+  kraken's tentacle strikes.
+- Added: swimming moves. Hold target lock and press Crouch or Jump under water for an evasive dodge (the stick picks
+  the direction). Press Crouch during a forward jump for a swan dive: into deep water she enters unhurt, on land she
+  rolls out of it. At a pool's edge she now climbs out by herself when you keep swimming into it. Under water she
+  swims where the camera looks.
+- Changed: with the diving gear (the wetsuit levels) Lara never runs out of air and the breath meter stays hidden.
+  Without it the meter takes the place of the adrenaline meter under water, and sprint-swimming uses air half again
+  as fast. Every weapon can be drawn and fired while swimming.
+- Added: jellyfish sting (the Mediterranean sea floor): each touch costs health and they cannot be killed.
+- Changed: health packs follow the original's rules: a pack is left lying when the pack bag is full, and each new
+  area starts without the packs of the last one.
+- Changed: the Change Target key is gone from the default bindings; the PC original has none (its key is Manual Aim).
+- For testers: `ou-game --self-test FILE.json` plays a scripted scenario in the real game and reports what actually
+  happened (positions, speeds, jump heights, states, animations) as JSON; 25 scenarios ship in `tests/selftests`.
+  New documents: the chapter-by-chapter gameplay matrix for all 21 sections of the campaign and the gameplay audit.
+
 ## [0.41.0] - 2026-11-09
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

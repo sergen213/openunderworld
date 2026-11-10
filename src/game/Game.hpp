@@ -59,6 +59,9 @@ struct Actions {
     // lock-on (target lock); switchTarget press edge cycles the lock; weapon press edge swaps pistols <-> the
     // secondary; heal press edge uses a health pack. Adrenaline: interact while the meter is full and close to a hard lock.
     bool draw = false, fire = false, aim = false, switchTarget = false, weapon = false, heal = false;
+    // Manual Aim (tru.exe virtual button 9: Z / right stick click; scripts: "manual"): on the press edge, without the
+    // target lock the precision-aim view toggles; with a lock and adrenaline it toggles focused fire (Combat.cpp).
+    bool manualAim = false;
     bool pause = false; // held; ou-game opens the pause menu on the press edge (Esc / pad Start; scripts: "pause")
     bool grapple = false; // held; the grapple reacts to the press edge (Q / pad X; scripts: "grapple")
     bool sprint = false;  // held (Left Shift / pad left shoulder; scripts: "sprint")
@@ -131,6 +134,7 @@ anim::HairParams laraHair();
 vec3 rootTranslation(const anim::Clip& clip, double t, bool loop);
 
 // ---- player -----------------------------------------------------------------------------------
+inline constexpr float kCameraRestPitch = -0.0225f; // tru.exe's rest pitch of the orbit camera (CameraState::pitch)
 enum class State {
     Idle, Walk, Run, Stop, Turn, JumpPrep, Jump, Fall, Land, Hang, Shimmy, ClimbUp,
     // water (tru.exe player states SwimSplashDownState, SwimTreadState, SwimState, SwimDiveInState,
@@ -154,6 +158,8 @@ enum class State {
     // block's motion carries her).
     Use, Block,
     WallHug, // back to the wall on a narrow ledge shelf (Wall_Hug_* clips; src/game/Traverse.cpp)
+    WallJump, // chimney jump: feet on a wall after a jump at it, then the jump back off it (wall_jump_* clips; WallJump.cpp)
+    SwimDodge, // under-water evasive dodge: one swim_submerged_dodge_* clip with its root motion (Player::swim)
     // Close combat and carried objects (src/game/Melee.cpp): Melee = one clip with its root motion and the input locked
     // (a kick, the thrall fatality, an enemy vault, an evasive roll, a hosted pick-up / put-down / throw / swing), then
     // Idle; Knocked = thrown off her feet (Hit_Thrown* / hitReact_thrown*, the landing, the get-up).
@@ -201,6 +207,7 @@ struct Tuning {
     // classes of tru.exe 0x5D3860 (< +0xAC 154: 0x200, < 391: 0x100 wading, then 0x40 surface / 0x20 / 0x10 swimming).
     float swimDepth = 391.0f;
     float wadeDepth = 154.0f;   // +0xAC: water this deep up to swimDepth is waded (class 0x100), shallower walked (0x200)
+    float diveDepth = 948.0f;   // +0xB2: the surface dive needs water this deep (depth class 0x325, tru.exe 0x764340)
     float swimRadius = 100.0f;  // sphere around the swimming root
     // Root under the wave surface treading / swimming at the surface (tru.exe, Wine, l2_cliffclimb sea: z fits
     // player+0x8E0 top + the 0x69DA80 waves - 44.1 at rms < 1 in both states).
@@ -227,6 +234,21 @@ struct Tuning {
     // Jumps off the wall hug (lara.drm query q68, the in-air group S275's: 74.32 that way + 42.54 up a 30 Hz frame) and
     // its twist jump up (q55: 50.82 straight up), x 30 (Traverse.cpp Player::wallHugJump).
     float wallHugJumpOut = 74.32f * 30, wallHugJumpVz = 42.54f * 30, wallHugTwistVz = 50.82f * 30;
+    // Chimney / wall jumps (WallJump.cpp; lara.drm player data +0x820..+0x843 read by tru.exe 0x7594C0 / 0x758F70 /
+    // 0x758BB0 / 0x7660D0 [O]): she plants her feet on a wall her jump meets within `wallJumpLook` 30 Hz frames while
+    // -byte +0x834 x g <= zVel <= byte +0x833 x g (g = 5.72443 a frame); the wall at most +0x831 degrees off vertical,
+    // her velocity within +0x830 and her heading within +0x832 degrees of square to it; two rays from the pelvis, +0x824
+    // over and +0x828 under it, must both meet it; no floor within +0x82C under her; the wall within +0x838 of where the
+    // jump began; she holds on +0x83C out of it. At most byte +0x843 jumps back in a row (chart cond 0x21C). She lets go
+    // after chart variable 208 = 12 frames in wall_jump_idle [O-data; the 30 Hz unit I]. The jump back is query q12:
+    // 46.81 along the wall's normal + 77.27 up a 30 Hz frame.
+    float wallJumpMinVz = -13 * 5.72443f * 30.0f, wallJumpMaxVz = 9 * 5.72443f * 30.0f; // units/s
+    float wallJumpLook = 3.0f, wallJumpHigh = 63.0f, wallJumpLow = -158.0f, wallJumpFloor = 31.0f;
+    float wallJumpSlope = 7.0f, wallJumpVelCone = 45.0f, wallJumpFaceCone = 65.0f; // degrees
+    float wallJumpReach = 951.3275f, wallJumpStandoff = 110.0f;
+    int wallJumpMax = 5;
+    float wallJumpHold = 12.0f / 30.0f;
+    float wallJumpOut = 46.80764f * 30, wallJumpVz = 77.269615f * 30;
     // Sprint (Shift / LB held while running; tru.exe under Wine, l4_trailstart): sprint_loop for 9.5..9.9 s, then
     // ng_sprint_to_exhaust + ng_run_exhaust (no refill while they play); a sprint resumes once 0.9 s is refilled
     // (Shift held throughout: ~2.2 s running, 0.9 s sprinting). Refill = 1 s per second: 4 s off -> 4.1 s sprint.
@@ -311,6 +333,20 @@ struct PlayerState {
     // Carrying a portable that encumbers her (PortableDef::encumbers; World sets it every tick): the
     // portable_encumbered_* walk instead of the ground locomotion (Player::encumberedMove, Melee.cpp).
     bool encumbered = false;
+    // Chimney jumps (WallJump.cpp). jumpStart: where the current jump took off (tru.exe's jump query +0x40, player state
+    // +0x9C0); jumpTime: seconds of free flight in State::Jump (the wall test runs on its 30 Hz frames); jumpAimed: the
+    // ground jump was aimed at markup (a ledge, a landing: no wall jump, chart cond 0x262 = 0). wallJumps: jumps back
+    // off a wall since she last stood, hung or fell (tru.exe chart context +0x4EC). wallTime: seconds in State::WallJump.
+    // On the wall climbNormal is its outward normal and climbFrom / climbTo / climbYawFrom / climbYawTo the attach blend.
+    // jumpLedge (jumpFromLedge): the ledge point she hung at when the jumps began; the wall jumps' query does not go
+    // back to that ledge (tru.exe keeps the markup she was attached to through the jump, player state +0xA84) [I].
+    vec3 jumpStart{0};
+    float jumpTime = 0;
+    bool jumpAimed = false;
+    uint8_t wallJumps = 0;
+    float wallTime = 0;
+    vec3 jumpLedge{0};
+    bool jumpFromLedge = false;
     // Off balance on a balance beam (Player::beam). `build`: 30 Hz frames the stick has been held across the beam
     // (ours [I]: the escalation into the about-to-fall state). `aboutFall`: the about-to-fall state (chart S895 / S896,
     // bbeam_aboutfall_*) runs tru.exe's balance controller (chart context +0x358: enter 0x742330, update 0x742770, exit
@@ -344,6 +380,9 @@ public:
     void carry(vec3 d) { s_.pos += d; } // moved by what she stands on (platforms, physics doors)
     void setSavingGrabSeconds(float s) { t_.savingGrabSeconds = s; }
     void setWaveSeconds(double s) { waveSeconds_ = s; } // the sea waves' clock (waterSurface), set by World each tick
+    // The orbit camera's view yaw and look pitch (rad, + = up), set by World each tick: under water the stick's forward
+    // share swims along the pitch and the dodges read the stick as on screen (Player::swim).
+    void setCamera(float yaw, float pitch) { cameraYaw_ = yaw, cameraPitch_ = pitch; }
     void restore(const PlayerState& s) { s_ = s; jumpHeld_ = dropHeld_ = true; } // load/stream; held: no edge on the next tick
     // World-space model matrix (root at pos; model -Y = forward; pitch tilts the head up about the root; roll lowers
     // the model's left (+X) side about its forward axis).
@@ -426,6 +465,7 @@ private:
         JumpRecord record = JumpRecord::None;
         int attach = 0;
         float minZ = -1e9f; // ours: ledge points under this do not count
+        bool sight = false; // ours: ledge points hidden from the arc's start by solid geometry do not count (WallJump.cpp)
     };
     // The first ledge the query meets: a ledge point within the ledge record's capsule round the query's own arc, or
     // (`record`) passing one of its class record's entries.
@@ -463,7 +503,8 @@ private:
     bool wading() const; // on her feet in water of class 0x100 (wadeDepth..swimDepth deep, tru.exe 0x5D3860)
     void swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPressed, float dt);
     vec3 swimSlide(vec3 pos, vec3 delta) const;
-    bool tryClimbOut();
+    bool tryClimbOut(float reach);
+    bool startDodge(vec2 stick); // under water, target lock held: swim_submerged_dodge_* by the stick (State::SwimDodge)
     // Free climbing (src/game/Climb.cpp): attach from the ground (jump) or the air, then climb().
     bool tryClimb(bool fromAir);
     bool warpStep(float dt); // the clip carries her climbFrom -> climbTo (climbing, ladder climb-off); true when done
@@ -488,6 +529,11 @@ private:
     bool wallHugCorner(float ds);           // shimmying ds along the shelf onto a corner: the corner clip round it
     JumpQuery wallHugQuery(int way) const;  // q68 forward (0) / left (1) / right (-1), q55 the twist up (2)
     void wallHugJump(vec2 move);            // Wall_Hug_Jump_Forward / _jump_left / Wall_hug_Jump_Up_Twist (or the somersault)
+    // Chimney jumps (src/game/WallJump.cpp): tryWallJump plants her on the wall a free jump is about to meet
+    // (State::WallJump); wallJump holds her there, jumps back on a jump press, lets go otherwise.
+    bool tryWallJump();
+    void wallJump(bool jumpPressed, float dt);
+    JumpQuery wallJumpQuery() const; // q12 from where she holds on
     bool wallHugWaterBelow() const;         // tru.exe 0x7420D0: water under the point in front of her (drop to water)
     bool tryRail(bool fromAir);
     void rail(bool jumpPressed, bool dropPressed, float dt);
@@ -504,6 +550,7 @@ private:
     PlayerState s_;
     bool jumpHeld_ = false, dropHeld_ = false;
     double waveSeconds_ = 0;
+    float cameraYaw_ = 0, cameraPitch_ = kCameraRestPitch;
 };
 
 // ---- camera -----------------------------------------------------------------------------------
@@ -881,6 +928,14 @@ public:
     // Breath 0..1 (tru.exe 0x755230: drains while the head is under water; World::tickAir).
     float air() const { return std::max(0.0f, air_); }
     bool submerged() const { return submerged_; } // head under water this tick
+    // Scuba gear: tru.exe 0x6EEF50 tests flag 0x4000 (in use) of the gadget in Lara's inventory slot 10; while it is set
+    // 0x755230 takes the not-submerged branch (no drain, no drowning) and 0x7572F0 keeps the breath meter (HUD element
+    // 2) hidden under water. [I] slot 10 is g_tanks and the wetsuit outfits are what switch it on (Wine: the wetsuits'
+    // mask / regulator draw group shows while she swims, laraHiddenGroups; the slot's object was not read live).
+    bool scuba() const { return outfit.starts_with("lara_wetsuit"); }
+    // The breath meter takes the adrenaline meter's place (0x7572F0: element 2 shown, 1 flagged) while she is under
+    // water without scuba gear; ours also until the 2 s refill at the surface is done [I].
+    bool breathShown() const { return (submerged_ && !scuba()) || air_ < 1.0f; }
     // watervolumebase natives on volume `uid` (script::Runtime::WaterNative; World::bindWater): false =
     // the volume is not loaded or the call is not a binding.
     bool waterNative(int32_t uid, std::string_view type, uint32_t function, std::span<const int32_t> args, uint32_t& result);
@@ -896,6 +951,14 @@ public:
     void syncMaxHealth() { health_.raiseMax(maxHealth()); } // after `collected` changed outside a pickup (loads)
     void setHealth(float v) { const auto c = health_.clocks(); health_.set(v); health_.setClocks(c); }
     const CombatState& combat() const { return combat_; }
+    // Script / adrenaline time scale requests (script::Runtime::TimeNative; CombatState::timeScale / worldScale).
+    void setTimeScale(bool world, float target, float seconds);
+    // The Grapple button would start the adrenaline head shot now (meter latched, hard lock, close, on her feet).
+    bool headShotAvailable() const;
+    // Where manual aim points: the first thing the view's centre ray meets within the weapon's range (else its end).
+    vec3 manualAimPoint() const;
+    // The hit shapes only shots meet (script object uid, shape, world frame): chain links and the like.
+    const std::vector<collision::Dynamic>& shotOnlyShapes() const { return shotOnly_; }
     // The screen wipe (1 = black): the scripts' FadeOut / FadeIn, and her death's 3 s fade (DeathState, Combat.cpp).
     float screenFade() const;
     // The upper-body combat clip aimLayer plays now (reload, equip / unequip) and its time; empty name when none.
@@ -1054,6 +1117,16 @@ private:
     void touchCheckpoints();
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
+    // Aim.cpp: manual aim, the head shot move, dual targeting, shot-only hit shapes, the two time scales.
+    void tickTimeScales(float real);                 // the ramps in progress (0x78C4E0), by real time
+    void tickManualAim(const Actions& a, bool manualPressed, bool aimPressed);
+    void tickSecondTarget(bool dual, float dt);      // 0x71E490
+    bool startHeadShot();                            // 0x71D4F0; false: the target has no move for her
+    void tickHeadShot(const Actions& a, bool firePressed, int hand, float dt);
+    void endHeadShot();                              // 0x718FD0: the aim closes, time returns, the move is over
+    // Nearest hit of a ray on what a shot strikes: world faces and solid objects, living targets, shot-only shapes.
+    struct RayHit { float t = 0; Damageable* target = nullptr; int32_t object = 0; bool hit = false; };
+    RayHit shotRay(vec3 from, vec3 dir, float len) const;
     void aimLayer(std::vector<anim::LocalTransform>& local, float dt); // weapon upper body over `local`
     std::vector<Damageable*> candidates(bool hard) const; // valid targets in selection order
     void fire(int hand);
@@ -1070,6 +1143,7 @@ private:
     // +0xFC = 10 % of max health (damage type 3) every +0xFE = 20 frames (tru.exe 0x755230 / 0x756C40).
     static constexpr float kAirSeconds = 4000 / 30.0f, kAirRefillSeconds = 60 / 30.0f;
     static constexpr float kDrownDamage = 0.10f, kDrownPeriodSeconds = 20 / 30.0f;
+    static constexpr float kAirSprintDrain = 1.5f; // chart property 914 of the under-water sprint state S159
     // Script Activate of a cinematic_object: cinematic event 0, onCinematic, placeAfterCinematic, event 1, the post-stream
     // helper; a level end's -> startChapter(next).
     void checkLevelEnd();
@@ -1261,6 +1335,11 @@ private:
     // section's joint and clip).
     struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; };
     std::vector<ObjectCollider> colliders_;
+    // Hit shapes of objects that only shots meet (anim graphs leaving a state on damage whose object does not collide
+    // otherwise: l1_kraken_room's chain links 61 / 62): World::shotRay tests them, nothing else does.
+    std::vector<collision::Dynamic> shotOnly_;
+    std::vector<glm::mat4> shotOnlyLocal_; // each shape's segment frame in its object's model space
+    void poseShotOnly();                   // their world frames: the object's intro, or the marker it is anchored to
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     const physics::ObjectPhysics* objectPhysics(const std::string& name); // objectPhysics_, loaded on first use
     std::optional<glm::mat4> markerFrame(const script::Object& o, int id); // HInfo marker `id` of `o` in the world
@@ -1350,7 +1429,8 @@ std::optional<EyeWater> eyeWater(const World& w, vec3 eye, double seconds);
 // (see ou-game), scaled by mouseScale and flipped by invertX / invertY.
 struct Controls {
     enum Action { Forward, Back, Left, Right, Walk, Sprint, Jump, Drop, Interact, Draw, Fire, Aim, Switch, Weapon, Heal, Grapple,
-                  Save, Load, Hint, Answer, Pda, Light, Grenade, Recenter, Camera, Pause, MenuUp }; // config::bindableActions() order
+                  Save, Load, Hint, Answer, Pda, Light, Grenade, Recenter, Camera, Pause, MenuUp, // config::bindableActions() order
+                  ManualAim = MenuUp + 8 };                                                     // (after the 8 menu keys)
     std::vector<std::vector<platform::InputRef>> actions; // per config::bindableActions() entry
     float mouseScale = 1.0f;
     bool invertY = false, invertX = false;
@@ -1376,12 +1456,12 @@ struct ControlRow {
     const char* label;
     const char* action; // config::bindableActions() entry
 };
-inline constexpr std::array<ControlRow, 34> kControlRows{{
+inline constexpr std::array<ControlRow, 35> kControlRows{{
     {1038, "", "forward"}, {1039, "", "back"}, {1040, "", "left"}, {1041, "", "right"}, {1042, "", "drop"}, {1043, "", "jump"},
-    {1044, "", "grapple"}, {1045, "", "interact"}, {1046, "", "fire"}, {1047, "", "grenade"}, {1048, "", "switch"},
+    {1044, "", "grapple"}, {1045, "", "interact"}, {1046, "", "fire"}, {1047, "", "grenade"}, {1048, "", "manual_aim"},
     {1049, "", "pause"}, {1050, "", "pda"}, {1051, "", "heal"}, {1052, "", "weapon"}, {1053, "", "walk"}, {1055, "", "light"},
     {1054, "", "camera"}, {1056, "", "aim"}, {1057, "", "sprint"}, {0, "RECENTER CAMERA", "recenter"},
-    {0, "DRAW / HOLSTER", "draw"}, {0, "QUICK SAVE", "save"}, {0, "QUICK LOAD", "load"}, {0, "HINT", "hint"}, {0, "ANSWER", "answer"},
+    {0, "CHANGE TARGET", "switch"}, {0, "DRAW / HOLSTER", "draw"}, {0, "QUICK SAVE", "save"}, {0, "QUICK LOAD", "load"}, {0, "HINT", "hint"}, {0, "ANSWER", "answer"},
     {0, "MENU UP", "menu_up"}, {0, "MENU DOWN", "menu_down"}, {0, "MENU LEFT", "menu_left"}, {0, "MENU RIGHT", "menu_right"},
     {0, "MENU SELECT", "menu_accept"}, {0, "MENU BACK", "menu_back"}, {0, "MENU DELETE", "menu_delete"}, {0, "MENU TASK", "menu_alt"}}};
 // The inputs bound to `action` on one device class (keyboard + mouse, or the pad), as tru.exe's list shows them: names

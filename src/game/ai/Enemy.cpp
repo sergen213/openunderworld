@@ -638,6 +638,14 @@ void Enemy::onHit(const Hit& hit) {
     }
 }
 
+void Enemy::headShotReact(vec3 lara) {
+    if (!alive() || s_.mode == Mode::Down || s_.mode == Mode::Rise) return;
+    s_.leap = 0;
+    s_.yaw = std::atan2(lara.y - s_.pos.y, lara.x - s_.pos.x);
+    setMode(Mode::Hit);
+    if (const auto& clip = type_->tuning.headShot.reaction; !clip.empty() && type_->clips.count(clip)) playClip(clip, false);
+}
+
 // Death clip as FUN_00642210: the attacker's quadrant relative to the heading (1 front ±45°, 3 left, 5 back, 7
 // right) picks a record entry (category, flag) at random among the matching ones (FUN_00642170); none -> front/back by
 // ±90° -> front. The heading then turns so the clip falls away from the attacker. Flag [I]: 3 on a head shot

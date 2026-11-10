@@ -258,7 +258,7 @@ Measured with `rootTranslation` (segment 0 translation; 3000 anim units/s). Mode
 | Swim depth | water at least **391** deep (surface − floor) is swum, shallower walked | [O] tru.exe 0x700530 → 0x5D77E0 → 0x5D3860 classes the water with lara.drm player data shorts +0xAC/+0xAE/+0xB0/+0xB2 = 154 / 391 / 391 / 948 (every outfit): floor depth < 154 → 0x200, < 391 → 0x100 (wading), else 0x40 (at the surface) / 0x20 (root ≤ 391 under) / 0x10 (≤ 948 under); dry 0x400; stored at player +0x8EC (query 9, SCCondFunction_InWater 0x7824F0 tests 0x400 / 0x4800 / 0x3000). Ours: class 0x100 plays `wading_idle` / `wading_walk` (walk pace at any stick), landing in it `swim_land_wading`, standing up into it from swimming `swim_to_wade`; class 0x200 keeps the on-foot clips [I: the wading graph; `wading_walk_low`, the wading turns, jumps and combat clips unused] (`Game.WadingClipsAtTheDecodedDepth`) |
 | Swim sprint | **1.2 × swim speed = 1618.3 units/s** while Shift is held (surface and under water), same ramps; stamina shared with the run sprint (`sprintSeconds` 9.7, `sprintResume` 0.9); at exhaustion the exhausted clip plays once at normal speed without refill | [O-runtime] tru.exe under Wine (l2_cliffclimb sea, 2026-10-30; player velocity +0x2A0, traces in openunderworld-work/scratch/swimsprint): 53.94 units per 30 Hz frame sprinting vs 44.95, at the surface and ~2000 under it; 44.8 → 53.4 in 0.36 s after the press; with Shift held 9.95 s of sprint, then 2.13 s at 44.95 and 0.95 s bursts (the run sprint's 9.5..9.9 / 2.2 / 0.9 s). Clips [O-runtime, rms 18.7 vs 21+ for any other clip, z of the body bones over 14 snapshots]: the surface sprint pose fits `swim_surface_sprint_forward` (= `swim_sprint_butterfly`), lara.drm request 896; under water request 934's `swim_submerged_sprint` [I: pose not compared]. Ours: `Tuning::swimSprintFactor`, `Player::swim` |
 | Water drag (splash) | velocity × e^(−3 t) | [I] ours |
-| Breath | **4000 frames = 133.3 s** under water, refilled from empty in **60 frames = 2 s**; once spent, **10 %** of max health (damage type 3) every **20 frames** | [O] tru.exe 0x755230 (under water, while state-chart variable 0x322 is set) / 0x756C40 (surfacing: a spent meter restarts at 0; sounds +0x94 / +0x98 = 962 / 963 [U: not played]): player data +0xF8 / +0xFA / +0xFC / +0xFE; the HUD gets the percent (0x5D5100(0x2E)), death type 8 (ours: `death_drown` when the periodic damage kills her in the water [I]). Buoyancy of bodies: water density 4.556e-5 kg/unit³ = 1000 kg/m³, linear drag 0.5, angular 0.01 (0x69D350 defaults, scaled per object by physics property bytes [I: 1], 0x6AD070). Ours: `physics::Scene::setWater` gives every loose body in a volume Jolt's `ApplyBuoyancyImpulse` with factor 1000 × volume / mass, drag 0.5 / 0.01 and the current as the fluid velocity (`Physics.LooseBodiesFloatOrSinkInWater`); ragdolls not [U] |
+| Breath | **4000 frames = 133.3 s** under water (**× 1.5** drain in the under-water sprint; **no drain with scuba gear**, "Water moves"), refilled from empty in **60 frames = 2 s**; once spent, **10 %** of max health (damage type 3) every **20 frames** (every other one lands: 40) | [O] tru.exe 0x755230 (under water, while state-chart variable 0x322 is set) / 0x756C40 (surfacing: a spent meter restarts at 0; sounds +0x94 / +0x98 = 962 / 963 [U: not played]): player data +0xF8 / +0xFA / +0xFC / +0xFE; the HUD gets the percent (0x5D5100(0x2E)), death type 8 (ours: `death_drown` when the periodic damage kills her in the water [I]). Buoyancy of bodies: water density 4.556e-5 kg/unit³ = 1000 kg/m³, linear drag 0.5, angular 0.01 (0x69D350 defaults, scaled per object by physics property bytes [I: 1], 0x6AD070). Ours: `physics::Scene::setWater` gives every loose body in a volume Jolt's `ApplyBuoyancyImpulse` with factor 1000 × volume / mass, drag 0.5 / 0.01 and the current as the fluid velocity (`Physics.LooseBodiesFloatOrSinkInWater`); ragdolls not [U] |
 | Fall damage | 0 up to **1280.03**, linear to 500 at **1817.32**, linear to 1000 (= death) at **2215.55**, death above | [O] floats data+0x4C/+0x50/+0x54 and the curve 0x6F1790; height = z on becoming airborne (player +0x6DC, set on FallState entry 0x75C550) − landing z; applied on landing (0x75D080 → 0x702FC0), never scaled by difficulty (Combat below) |
 | Camera | Orbit at the mode's distance (**1264.22**; hanging and ladders **1896.3**) round a pivot; its yaw/pitch are read back each tick from where it ended up relative to the moved pivot, so it **drags after her** (a held sideways stick circles her round the camera; running away flattens a looked-down pitch; climbing up a wall leaves it below her, pulled in by the rock) and keeps whatever the collider swung it to; rest pitch **−0.0225 rad**. Pivot = focus after the clearance; focus goal = bone **108** (a helper the clips carry: 320 over her feet standing, by the pelvis ~95 off the rock climbing) through the mode's focus record: **(0, 0, 142.23)** on foot, **(0, 0, 79.01)** free climbing, **(0, 63.21, 316.06)** (63 out behind her) hanging, **0** under water; it lags its goal per axis of the camera's horizontal frame by dead zones **3.16 / 126.42 / 252.84** (none under water): past a zone caught up at once, the rest at up to **1896.3** units/s along the record's 64-step ease curve; a new record blends in over 0.5 s, new limits over 0.25 s. Clearance: when the **474.075** above her root is blocked the pivot is pulled toward bone 1 to keep **27.82** clear. Distance returns at up to **4741.4** units/s, accelerating **1106.36** /s². Collider (r **13.91**): the proposed point stands if a sphere swept from the pivot reaches it; else the straight pull-in competes with the smallest swing round the pivot that clears (45° about the vertical, the way it was moving 10 bisection steps, the other way 5; 25° up/down 5 steps; those three cost 5×): the swing wins when cheaper than the pull-in. Climbing, hanging, ladders, perches, pillars, beams and poles use only the pull-in (contacts nearer than 10 ignored, never nearer than **97.98**). On foot (and on beams) a ray probe pulls it in to what it sees, never under **300**. What it collides with [O]: terrain faces through mask 2 (0x5EB9B0 → 0x5EAF60 → 0x462E10), skipping terrain groups whose TerrainGroupExtra flags have **0x200** (0x5EB9B0 / 0x5EC360; its rays 0x493330 → filter 0x48EF50 skip 0x300): 21 903 faces in 76 groups over the 82 units, e.g. l1_kraken_entrance group 3 (5667 faces), l3_chapel group 5; and only objects with ObjectBase oflags bit **0x02** (0x5E94C0 / 0x5E91D0 / 0x5E8940: 101 of the 335 solid placed objects, e.g. big doors and towers, not poles, gears, breakables or pickups). Ours: `collision::kCameraMask` [not modelled: the rays' extra 0x100-only skip, 5 groups]. Look limits: climbing, hanging and ladders yaw within **90°** of her heading (camera on her back side), pitch **±55°** (pillars pitch ±55°); surface swimming pitch **−70..−10°**, under water **−85..75°**; on foot our −1.2..0.7 rad [I]. Forces (after **5 s** without look input, full at 7 s; never while the camera is turned): each camera mode has a yaw and a pitch force set (generalbank DTP 0x1C / 0x1D; the mode list's command 0x10 / 1, else yaw set **11** and no pitch set) turning the angle toward the set's target at speed × the product of its forces. On foot, swimming and on ladders (yaw set 11) the camera **swings round behind her at up to 180°/s × curve(angle off behind / 180°) × min(1, 0.02 × her move per frame across the view)**: the curve is 0 within ~20° of behind or of in front and peaks at 0.6 at her side, so it swings only while she runs or swims sideways to the view (≈ 0.6 × 0.42 × 180 = **45°/s** running at her side), never while she stands or runs straight away; free climbing / hanging (set 15) **10°/s** × min(1, 20 × her mean move), toward **60°** off behind her on the side she moves along the ledge (sign 0 = behind her until she moves); on foot pitch toward **−7.5°** at **5°/s** × min(1, her move); ladders and pillars pitch toward **+45°** while she climbs up / **−45°** while she climbs down at 5°/s × curve(|stick|); poles 15°/s × curve(|stick|), perches 70°/s (pitch −10° at 70°/s × min(1, dt)), pillars 20°/s × min(1, 0.1 × her move), beams speed 0. A mode change blends the sets over 0.25 s (rate × f × (1 − f) × the old set's strength meanwhile). Ours logs `camera swing starts / stops`. [O-runtime] tru.exe under Wine (l1_seatop sea, camfollow-wine traces swim_right*.txt): yaw controller camera +0x8F8 = set 11 (2 forces, speed π), pitch controller +0xDA0 = set 4 blended out (B none) at the surface, side flag +0x4A4 = 1, look clock +0x1E4 not reset by the move stick; her move history 21.97 a frame at 1318 units/s (60 fps); the camera's x row = its right (row 2 = the look); holding the stick right after a mouse nudge the camera circles her at **60°/s** for 5 s, ramps, and holds **101°/s** from 7 s (the swing adds 41°/s against 41–43 predicted by set 11 from her heading and velocity there). **Level camera records**: on a markup carrying one (COLLISION.md "Camera records"), in a mode the settings list for the markup's type, the camera turns toward the record's point (a Hermite spline point chosen by her markup) at speed × strength (l2_cliffclimb's hold wall: 300°/s × min(1, 0.2 × dt) = **1°/s** at 60 Hz) and its distance toward the point's (948.17 × the same = 3.16 units/s), after the same 5 s look delay, instead of the forces and the distance return. It follows its point at **3793.1** units/s plus how far the proposed point moved. Bike: 1711 [I] | [O] LaraCameraRewrite (runtime vtable 0x85600C; update 0x602690; angles 0x5FF320; distance/forces 0x5FFB00; proposal and probe 0x600200; follow 0x600710; focus 0x609830 / 0x609440 / 0x607D40; clearance 0x5EA050; collider 0x5ED010 → 0x5EC5B0 / 0x5ECCE0 / 0x5EC8F0 / 0x5EC660, pull-in 0x5F0810; limits 0x609C00 / 0x607A30 / 0x608700; forces 0x608B60 / 0x5F2180 weighted by 0x5FFA90; records 0x601D30 / 0x5FE800 → 0x606690, point 0x606160 / 0x605ED0 / 0x605A20 / 0x5F7340, pull 0x606B00 / 0x606310). Settings DTP = global data (*0xE7EE50) +0x144 = 0x14: +0x60 distance, +0x68 radius, +0x6C / +0x70 return cap / acceleration, +0x74 follow speed, +0x78 record blend 0.5, +0xC4 / +0xC8 force delay 5 / ramp 2, +0x50 focus records (0x6C bytes: bone, offset, zones, speed, curve), +0x148 mode list (0x5F99F0 / 0x5FF080 commands: 2 distance, 7 / 8 yaw / pitch limit, 10 pivot record, 15 pull-in only, 0x10 / 1 yaw / pitch force set in global data +0x164 / +0x168, 0x13 floor probe; defaults 0x601D30 / 0x5FEE10), +0x14C markup type → modes (ledge 1 → 11 / 14 / 15 / 42, 37–39, 21 / 22; beam 14 → 3 / 43; ladder 9 → 10; perch 13 → 16; pillar 15 → 17; pole 4 → 9 / 3; holds 16–20 → 4). Mode = CameraManager 0xE804F0 +0x54, requested by the player's state machine with message 0x44E (0x7683B0 → 0x5E8210). [O-runtime] tru.exe under Wine (0x5E8210 hooked, l2_cliffclimb): standing, jumping, falling 1; free climb 4; ledge hang and shimmy 11; surface swim 20; under water 19. l1_seatop / l2_cliffclimb rest distance 1264.2, pivot 462.6 over her feet = bone 108 + 142.2; hold wall (hold 11): pivot = root + (−3.5, −93.8, 203.9) = bone 108 + 79.01; climbing up to hold 908 the camera ended 229 from the pivot, 32° below it; idle there (after a mouse turn) it held 5 s, then turned 1.0°/s toward the record's point (spline u = 0.1 / 0.3 / 0.5 at holds 900 / 901 / 908 = list index / 10); ledge hang: pivot 628 over her root, camera pulled in to 864. l3_main_bedroom: 1260.8 behind / 491.1 above / pitch −0.0225 at rest; running forward after a look down to −1.05: pitch −0.47 / −0.25 / −0.10 at 1.0 / 1.6 / 2.3 s (the drag; ours within 0.08: Game.CameraRestAndPitchReturn). [I] ladder / perch / pillar / beam / pole modes from the markup-type table (not observed); record types 1 / 2 use our ledge distance over its length. [O] force sets: generalbank GlobalInfo +0x164 / +0x168 = DTP 0x1C (18 yaw sets) / 0x1D (36 pitch sets), entries {angle, speed, dir, count, forces} loaded by 0x6088B0, forces 0x5F2180 (1 |move · camera x row| × k, 2 |move| × k, 3 curve(|off behind| / π), 4 curve(|stick|), 5 k × dt, 6 |move z| × k, 7 mean move × k), dir signs 0x608A50 (1 move across the view, 2 move z, 3 her position along her markup 0x6EC660), blend 0x609C40 / 0x608B60, controller ctor 0x607AD0 (side flag +0x4A4 = 1); mode list (DTP 0x14 +0x144 / +0x148, 25 entries) yaw sets: 1/2 → 11 (default +0xE4), 3 → 6, 4 / 11 / 14 / 15 → 15, 9 → 4, 10 → 11, 16 → 5, 17 → 1, 19 / 20 → 11; pitch sets 1/2 → 4, 10 / 17 → 16, 16 → 17, others none; look clock rate while moving +0xCC = 1. [I] which side of behind is + for the dir-type sets (ours: the camera looks the way she moves along the ledge). Surface swimming in a circle (Wine swim_right.txt): the camera that dropped in 37° above her levels out to the mode-20 limit −10° within ~6 s (29.5 / 23.1 / 18.5 / 12.5° at 2 / 3 / 4 / 6 s): her velocity lags her heading through the turn (vector-steered at the swim acceleration, Turn rate / Swim speed rows), so she drifts away from the camera; the pivot (bone 108, 43 ahead and 26 aside of her root in the stroke, the same in tru.exe) swinging round with her heading would otherwise pull it toward the camera and steepen it (ours did, toward −70°, while her velocity turned with her heading at once). [U] grapple states (on-foot mode); command 3–6 rotation targets (0x609D40; modes 18 / 42 / 43 / 46); record force types other than 5 / 7; moving platforms (0x7027B0 / 0x5FF650); the look-target blend 0x6009C0 |
 | FOV | config / `--fov` (default 60° vertical, Hor+) | [O] BaseCamera ctor 0x5E1B60 defaults fov to π/2; the gameplay camera takes the camera settings DTP 0x14 +0x64 = **45°** (0x602690: +0xB0 = degrees × π/180); with `--fov 45` l2_cliffclimb climb captures match the original's framing |
@@ -704,7 +704,7 @@ Treasures, relics and health packs. Code: `src/game/Progress.*` (tables), `forma
   COMPLETE save, Treasure Hunt).
   l6_ship_exterior did not finish loading by a level change (once a crash at 0x4A1720) and was not checked.
   Captures: openunderworld-work/screens/gear (`orig_*`, `ours_*`, `side_*.png`).
-- Not done: player sensors (vt 14) never fire, and the per-chapter equip scripts do not run in our runtime yet
+- Player sensors (vt 14) fire since 2026-11-10 ("Water moves"). Not done: the per-chapter equip scripts do not run in our runtime yet
   (probe of 12 chapter units: no equip call), so the gear stays hidden outside a volume with carried objects. The
   cinematic base type 3523's gear events 10-21 are never sent (no retail stream has events).
 
@@ -1068,9 +1068,10 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   `swim_surfaceidle` (its bones fit tru.exe's at rms 1.2, same root); swimming plays `swim_surface_fast_forward`
   [O-runtime: of the candidate clips it fits tru.exe's whole body best and its spine as well as `swim_sub` does (clip
   table, SwimSurface)], so only her head and shoulders break the surface. The stick swims up to 1348.6 units/s (ramping, Numbers) along the heading, which turns
-  at turnRate; drop = SwimDive (`swim_surfacedive` root motion, 667 down); jump facing a wall whose top is 50..400
-  above the water = SwimClimbOut; floor within 400 below = stand up (Idle).
-- Under water (SwimUnder): stick swims horizontally, jump / drop held swim up / down; the swim direction's pitch turns
+  at turnRate; drop = SwimDive (`swim_surfacedive` root motion, 667 down); the stick held toward a wall whose top is
+  50..400 above the water = SwimClimbOut (no button; "Water moves" below); floor within 400 below = stand up (Idle).
+- Under water (SwimUnder): the stick swims (its forward share along the camera's look pitch, "Water moves" below), jump /
+  drop held swim up / down; the swim direction's pitch turns
   towards the wish at turnRate and pitches the model; the clip is `swim_sub` (level stroke) at every pitch. No input:
   `swim_submerged_idle`, no drift. Reaching the surface = SwimTread. Movement is a sphere (r 100) swept around the
   root, slid along contacts and clamped to the surface.
@@ -1081,10 +1082,12 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
 - Climb out: a sphere sweep 300 forward must hit a wall (|n.z| ≤ 0.5, facing it); a ray 50 past the contact finds the
   top. The root is placed so the clip's hands (at its start time) reach the contact and its root ends on the top
   (`top − rise`); the clip's root motion then plays without collision and the end snaps to the floor.
-- Oxygen (Numbers, "Breath"): `World::tickAir` drains the breath while the head is under water (SwimUnder / SwimDive /
-  Surfacing / SwimSplash with root + 150 below the surface [I]: tru.exe's state-chart variable 0x322) and refills it at
+- Oxygen (Numbers, "Breath"): `World::tickAir` drains the breath while the head is under water (SwimUnder / SwimDodge /
+  SwimDive / Surfacing / SwimSplash with root + 150 below the surface [I]: tru.exe's state-chart property 0x322 = 802,
+  set on the submerged swim group S155, the surface dive S106 and the swan-dive entry S105 [O chart]) and refills it at
   the surface. Spent, `damageLara(10 % max, kDamagePeriodic)` every 20 frames (the health invulnerability window drops
-  every other one, as 0x6F5030's priorities do). The HUD shows it below full. Saved with the runtime state.
+  every other one, as 0x6F5030's priorities do: 10 % every 40 frames, dead 12 s after the meter ran out). Not with
+  scuba gear, 1.5 times as fast sprinting, and the HUD rule: "Water moves" below. Saved with the runtime state.
 - Currents (`waterFlow`, tru.exe 0x6ACB60): watervolume intro data +0x38 / +0x3A source / sink marker ids (the last
   intro whose +0x52 is the id; 0x69D690), +0x3C strength in units per 30 Hz frame, +0x40 radius, +0x4E bit 0 level only.
   Data: l7_yggdrasil_end's ten volumes pull toward marker 1 at 47.41 (1422 units/s), l7_arctic_sea's six at 15.8 / 47.41
@@ -1119,6 +1122,127 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   Godot / afl_ext surface, which layers the field's height and slopes on its own waves); Original water does not use
   them. The drawn waves are centred on the gameplay surface (the original sea waves) and never rise above the rest plane. Tests `WaveField.*` (Joan's `water_waves_test` in TRU units: superposition,
   shore reflection, bodies as obstacles, damping, scrolling, wake height) and `Game.Water*`.
+
+### Water moves: scuba, breath meter, dodges, swan dive, surface turns, climb out, weapons, jellyfish (2026-11-10)
+
+- **Scuba** [O rule, I mapping]. tru.exe 0x6EEF50 looks at the gadget in Lara's inventory slot 10 (player +0x500, 15
+  slots of 0x10) and returns its in-use flag (weapon component +0x54 bit 0x4000, the flag 0x6A2990 / 0x6B17C0 set for
+  the binoculars and the light). While it is set the breath function 0x755230 takes its not-submerged branch (the
+  meter refills, no drowning) and the swim update 0x7572F0 hides HUD element 2 (the breath meter) under water. Ours:
+  `World::scuba()` = the outfit is `lara_wetsuit_*` [I: slot 10 = `g_tanks`, in use in the wetsuits; Wine had shown
+  the wetsuits' mask / regulator draw group on while she swims, `laraHiddenGroups`; the slot object was not read
+  live]. So the Mediterranean (l1_*, wetsuit_warm) and Arctic (l7_arctic_sea .., wetsuit_cold) dives never drain;
+  Thailand, Mexico and every other outfit do. Tests `Game.SwimScubaKeepsTheBreath`,
+  `GameReal.SeafloorScubaSwimKeepsTheBreath` (150 s under water in l1_seafloor: full), `GameReal.
+  ThailandDiveDrownsAtTheBreathTime` (l2_cliffclimb river: first loss 4020 frames after going under, dead 12 s later,
+  `death_drown`).
+- **Breath numbers** [O]: lara.drm player data (identical in every outfit DRM) +0xF8 4000 frames, +0xFA 60 frames to
+  refill, +0xFC 10 %, +0xFE 20 frames (Numbers, "Breath"). The drain is multiplied by chart property 0x392 = 914 of the
+  current state (0x6EEED0): the chart root S0 has 1.0 and only the under-water sprint state S159 overrides it with
+  {3, 1.5}, so a sprint under water spends the breath 1.5 times as fast (`World::kAirSprintDrain`; `GameReal.
+  SwimSprintSpendsBreathFaster`). Surfacing (0x756C40) plays sound +0x94 = 962 when the meter was spent and +0x98 =
+  963 when it was just not full [U: not played, no sound path from the game layer].
+- **Breath meter** [O 0x7572F0]: under water without scuba the swim update shows HUD element 2 and flags element 1
+  (the adrenaline meter): the breath meter takes the adrenaline meter's place, full or not; out of the water (or with
+  scuba) element 2 is hidden. Ours: `World::breathShown()` -> `ui::HudState::breathBar`; also while the 2 s refill
+  runs at the surface [I]. Test `Hud.BreathBarReplacesAdrenalineUnderWater`.
+- **Depth classes** [O]: player data +0xAC 154, +0xAE 391, +0xB0 391, +0xB2 948, +0xA8 / +0xAA −44 (the surface
+  swim's root offset, measured 44.1). 0x764340 (conditions 0x321..0x323) classes the water depth at her spot (surface −
+  floor): > 0 0x321, ≥ 154 0x322 (wading), ≥ 391 0x324 (swimming), ≥ 948 0x325; 0x764550 (0x324..0x326) the same with
+  her own depth for 0x325. The surface dive (S115 -> S106 on the crouch button, cond 0x98 = 118) needs water of class
+  0x325: at least 948 deep [O chart T887]; ours: `Tuning::diveDepth`, no floor within 948 under the surface, else the
+  crouch button does nothing at the surface (`Game.SwimNoSurfaceDiveInShallowWater`). Request 903
+  `swim_wading` is requested by no state of the chart [O], so it is not played; wading uses `wading_idle` /
+  `wading_walk` (above).
+- **Under-water steering** [O-runtime fit]: the stick's forward share swims along the camera's view line, back against
+  it, sideways level; jump / drop add straight up / down (`Player::setCamera`, `Player::swim`). tru.exe under Wine
+  (l2_cliffclimb sea, a dive then forward / sprint held; openunderworld-work/scratch/swimsprint/under1.txt: velocity
+  player +0x2A0 and the camera position): with the camera looking down at her after the dive (root-to-camera pitch p)
+  her velocity's pitch is p + 9.2° for p below −14° (−28.8 at −36.8, −21.3 at −30.5, −13.4 at −22.5, −5.5 at −13.9)
+  and the lead shrinks to nothing near p = +8.5° (0.9 at −6.4, 5.7 at −0.3, 7.8 at 3.7, 8.2 at 7.5); the speed along
+  the path is the swim speed (54.0 a frame sprinting). So she goes on down after a dive (1034 units there), levels
+  out within ~3.5 s as the camera trails behind her, and ends rising gently. Ours: lead = 9.2° × sqrt((8.5° − p) /
+  22.5°) clamped [I: the form of the fit]. The under-water camera (mode 19) is free in pitch (command 8, no pitch
+  force set [O]). tru.exe's own function (0x755A00: chart properties 0x200..0x20F, speed table 512..519 = 10.5 / 20 /
+  28.5 / 34 / 42.5 / 45 / 46 / 54 a frame) is not ported [U]. Test `Game.SwimFollowsTheCameraPitchUnderWater`.
+- **Evasive dodge under water** [O chart, clips]: in combat mode (the lock held) the submerged idle S185 goes to S167
+  on the roll button (cond 0x98 = 51) and to S196 on the jump button (52); there the stick's quadrant as on screen
+  (cond 0x195, 0x764270: 450 up / 451 down / 452 / 453 the sides) picks the state:
+
+  | stick | clip (request) | root motion, frames |
+  |---|---|---|
+  | none (T996 / T1060) or up | `swim_submerged_dodge_up` (878) | 883.4 up, 30 |
+  | down | `swim_submerged_dodge_down` (864) | 881.2 down, 20 |
+  | a side | `swim_submerged_dodge_side` (876 / 877) | 791.6 to her right (mirrored: left), 30 |
+  | a side, cond 0x218 set | `swim_submerged_dodge_forward` (863) / `_backward` (875) | 468.5 ahead / 449.9 back, 26 |
+
+  Cond 0x218 (0x762F70) is a byte of the aim controller (0xFADFB0 + 0x50 + 0x195) [U: its setter]; ours [I]: she is
+  side-on to the camera (heading more than 45° off its view line), so the stick side along her heading is "ahead".
+  Ours: `Player::startDodge`, `State::SwimDodge` (the clip's root motion slid along walls, then the submerged idle or
+  the tread when it ended at the surface); `Actions::aim` held and a crouch or jump press. Chaining out of a dodge
+  (the dodge states' own transitions, cond 0xD6) is not done. Tests `GameReal.SwimDodgesMoveAsTheirClips`,
+  `GameReal.SeafloorScubaSwimKeepsTheBreath` (in l1_seafloor).
+- **Swan dive** [O clips / requests, I window]: `ng_inair_swan_stage1` (request 67, 25 frames) -> `_stage2` (69, 6) ->
+  the `_stage3` hold (68); landings `swim_swan_land` (897; chart state S105, a submerged state: root 268.5 on and 437.7
+  down over 31 frames, played from its start frame 4: 235 / 346), `ng_swan_land` (66: 591 ahead in 11 frames, a
+  roll), `swim_land_swan_wading` (843) in wading water, `death_fall_swan` (104). Ours: crouch pressed while a forward
+  ground jump still rises [I: the controls page's "Jump followed immediately by Crouch"; the chart's window is not
+  decoded] switches the jump to the swan clips; the flight is the jump's. Into swimmable water at any height she
+  enters on `swim_swan_land` and ends under water, unhurt (no landing: no fall damage, as every water entry); onto
+  the ground she rolls (`State::Roll`) and the fall counts as any other (`Health::fall`; a fatal one plays
+  `death_fall_swan` [I]). Tests `GameReal.SwanDiveIntoWaterAndOntoLand`, `GameReal.CliffSwanDiveIntoTheSea`
+  (l2_cliffclimb: off the cliff top 5950 over the sea, unhurt).
+- **Surface turns on the spot** [O chart]: from the surface group S115, the stick to a side quadrant (MoveDir 412 /
+  413) -> S145 `swim_surface_idle_turn_90` (request 832), behind her (411) -> S144 `swim_surface_idle_turn_180` (833);
+  transition flags 2 / 5 mirror one of each pair. Clips: a quarter turn right / a half turn left of the root in 15
+  frames. Ours: treading with no speed, the stick ≥ 45° off her heading plays the quarter turn (mirrored to the left),
+  ≥ 135° the half turn (`Player::advanceRoot`), then the stroke. Moving turns keep the measured turn rate; the moving
+  turn clips (`swim_surface_fast_turn_L / _R`, `swim_surface_moving_180`, requests 830 / 831 / 834) are not played.
+  Test `GameReal.SwimSurfaceIdleTurns`.
+- **Climb out** [O chart, I geometry]: no button. Chart: the swim root S101 goes to S237 (T882) when a markup query
+  found a ledge (cond 0x262 = 610) and the stick is pushed, not neutral (0x191 = 401) and not behind her (0x192 = 411);
+  S237 then plays `swim_climbout` (request 891, S242) when cond 0x32F holds (0x764890: the ledge point's height over
+  her root, 0x756FF0, under player data +0x138 = 90), else `swim_climbout_A` (890) -> the `_B` hang (889) -> `_C` (888)
+  on cond 0xDA, or `swim_climbout_to_wallhug` (887) onto a shelf (clearance result 657). Ours: swimming at the surface
+  with the stick within 45° of her heading, a wall within 230 ahead (the clip's hands start 205.4 before the root)
+  whose top is 50..400 over the water starts `swim_climbout` (`Player::tryClimbOut`: geometry, not the ledge markup
+  [I]); Jump no longer does it. The `_A / _B / _C` variant for the higher edge and the wall-hug exit are not played
+  [U: 0x756FF0's reference points]. Test `Game.SwimEnterCrossClimbOut` (rewritten: the stick alone).
+- **Weapons in the water** [O data, I rule]: the weapon stats have no under-water flag (S+0x88: 0x80 infinite, 0x40,
+  0x20 dual, 0x08 two-handed); every wp_* DRM has Lara's `combat_water_submerged_equip / _unequip` and
+  `combat_water_surface_equip / _unequip` clips (wp_handgun and wp_uzi reloads of both too), a `fire_submerged` gun
+  clip, and the bullets an under-water record (ammo +0x84: handgun 40 / 40 / 20, rifle 23 / 23 / 18); the chart has
+  under-water aim sets for one-handed guns, two-handed guns and Mjolnir (requests 924 / 926 / 925). Ours: every weapon
+  draws and fires while she swims (surface or under water; not during the surface dive, the entry or the climb out),
+  with those handling clips at their own lengths (`handling()`), bullets with the +0x84 record, spears as before
+  (projectile, 550). The weapon in hand stays selected through water entry and exit; it is holstered only while the
+  state does not allow it. Before: only the speargun and Mjolnir under water. Sticky grenades under water: unchanged.
+  Tests `CombatReal.PoolSpeargunUnderWater` (rewritten: pistols 40 a hit under water, then the speargun),
+  `GameReal.SeafloorSpearKillsShark`.
+- **Jellyfish** [O]: `jellyfish_a` (31 in l1_seafloor, 12 in l1_norse_hallway_a) is a class-79 uber object: one
+  section, health 0, takes no damage (it cannot be killed); states 0 / 6 loop its idle, command 0 plays the shock
+  animation (transitions 0 -> 1 / 6 -> 1 on trigger 2), random start delays desynchronise the swarm. Its script (type
+  5594) holds three `playersensor` members attached (fn 2) to `uberobjectbase` 2 anchors on HInfo markers 10 / 20 /
+  30 (the bell, mid tentacles, tentacle tips), radii 278.1 / 208.6 / 192.8. Its vt 14 keeps a flag while Lara is
+  inside any of them and a loop then runs the shock command, takes 100 health (its float member +36) and waits, again
+  and again until she leaves. Ours: the script runs as it is once sensors fire (below); 100 a sting, every 1.8-3 s.
+  Test `GameReal.JellyfishStingOnTouch` (also: far from it nothing, swimming away ends it, a save goes on the same).
+- **Player sensors** [O] (`script::Runtime::tickSensors`): NtPlayerSensorInst (ctor 0x77A120, update 0x77A020, test
+  0x7799F0, callback 0x779950 -> 0x798430). Member init {u32 0, u8 onEnter, u8 onExit, u8 oneShot, u8 enabled, float
+  radius}; natives (bind 0x7ACDD0..): 0 SetEnabled, 1 IsEnabled, 2 attach to an anchor (an instance or a marker
+  anchor), 3 same sensor. An enabled, attached sensor tests |Lara root − anchor| ≤ radius and calls the owner's vt 14
+  (sensor, inside) on entering (onEnter) and leaving (onExit); a oneShot sensor disables itself as it fires. tru.exe
+  tests each sensor every other frame, ours every tick [I]. Saved with the runtime (`sensors`). Before, sensors never
+  fired.
+- **Treading "drift"** (self-test agent: ~450 units/s with no input in l1_seatop): it is vertical, the root riding the
+  four sea waves (surface = top + Σ heightᵢ (cos(..) − 1)); x / y do not move and the volume has no current. tru.exe
+  does the same [O Wine: Lara's z fits the wave surface − 44.1 at rms < 1 while treading, "Surface" above].
+- Self-tests: `tests/selftests/swim.json` (l1_seatop: on the tanks the breath stays full), `swim_breath.json`
+  (l2_cliffclimb river: drain, sprint drain, refill), `swim_moves.json` (surface turn, dive, dodges, guns under
+  water), `swan_dive.json` (the l2_cliffclimb cliff).
+- Open [U]: the exe's dodge side-on flag and chaining, the swan-dive window, the climb-out conditions and its other
+  clips (`_A / _B / _C`, to wall hug), the moving surface turn clips, the
+  under-water steering function, breath sounds 962 / 963, grenades under water, what the flag on HUD element 1 does.
 
 ### Wetness (`game::Wetness`, `World::wetness()`)
 
@@ -1718,6 +1842,110 @@ ou-game reaches that much from `--spawn -27614,38823,2700,0`), so those inserts 
   request names a `rope_` or `vpole_` clip (all 1 502 of lara.drm's requests), no state requests them, no unit has
   rope (11), vertpole (5), zipline (7) or cover (12) markup (all units, 2026-10-18 and 2026-11-06), and lara.drm has no
   zip-line clip at all. The `rope_*` / `vpole_*` animations are leftovers; the only rope is the grapple's.
+
+## Chimney jumps (src/game/WallJump.cpp)
+
+A free jump that meets a wall plants Lara's feet on it; a jump press there turns her round and leaps back off it, higher,
+toward whatever is behind her. Between two facing walls that climbs a shaft, and the last leap ends on a ledge. The
+controls page of Stella's walkthrough describes the move
+(https://tombraiders.net/stella/walks/controls/TR8controls.html, "Chimney Jump / Wall Jump"), its Coastal Thailand
+pages the first place that needs it (https://tombraiders.net/stella/walks/TR8walk/details/remnants8.html).
+
+**The original** (lara.drm player state chart and player data; tru.exe 1.1.0.0; dump script
+openunderworld-work/gameplaygoal/wj.py, disassembly openunderworld-work/gameplaygoal/chimney/*.asm):
+
+- States [O-data]: S1291 `wall_jump_attach_air` (request 1153, 3 frames, entered at frame 1), S1294 `wall_jump_idle`
+  (1155, loop), S1295 `wall_jump_jump_back` (1156, 5 frames, a half turn of the root and no translation), S1296
+  `wall_jump_detach_fall` (1157, 8 frames, root 33.7 back and 154.4 down), all under S1290; S1292
+  `wall_jump_anticipate` (1154) and S1293 (the plain wall collision) beside them.
+- Into it [O-data]: T2348 from S288 (the parent of every free jump's flight: S289 sends all jump take-offs, from the
+  ground, a hang, a ladder, a pole or a wall, on to S294 / S306 under it), S293 and S1292, when the jump has no markup
+  target (cond 0x262 kind 600 = 0) and `PSCCF_WallJumpAttach` holds (cond 0x203, 0x7633E0: 0x7594C0 returns 2). T2349
+  goes to S1292 on `PSCCF_WallJumpAnticipate` (0x20B, 0x763330 -> 0x759260), T2350 to S1293 on `PSCCF_WallJumpCollide`
+  (0x217, 0x763490: 0x7594C0 returns 1) once 5 frames into the state (cond 0x14).
+- The wall test 0x7594C0 [O] (player data = lara.drm object data, offsets from its start):
+  - She is not attached to markup with flag 0x80.
+  - 0x758DD0: the pelvis (segment 1) now and N frames on, N = byte +0x821 = **3** (the anticipate test uses byte
+    +0x820 = 0, a ray of no length): along her heading by N x |velocity| (a frame's), and 2.862215 x N^2 down.
+  - Ray 1 (0x4935F0, mask 0x2C19E7) between the two points raised by int +0x824 = **63**; ray 2 lowered by int +0x828 =
+    **-158**. Both must hit terrain or an object (hit kinds 3 / 5); no hit on ray 1 = 0 (no wall).
+  - 0x5D3BA0 refuses a terrain face whose client flags (face +0x0E) have **0x80**, and an object whose data byte +0x30
+    has 0x10. 372 023 of the 814 628 collision faces of the 70 units carry the flag (all of l1_ship_lower_hallway,
+    17 % of l2_cliffclimb), so the level builders chose the walls she may kick off.
+  - 0x758F70: the wall's normal at most byte +0x831 = **7** degrees off horizontal (|n.z| <= sin 7); her horizontal
+    velocity (her heading when she has none) within byte +0x830 = **45** degrees of square into the wall; her heading
+    within byte +0x832 = **65** degrees of it.
+  - zVel between -byte +0x834 (**13**) x 5.72443 and byte +0x833 (**9**) x 5.72443 a frame (-2232.5 .. 1545.6 units/s).
+  - 0x7591E0: no floor within int +0x82C = **31** under her root.
+  - 0x758B00: ray 2's hit within float +0x838 = **951.33** (horizontally) of player state +0x9C0, the jump query's
+    +0x40 [I: taken as where the jump began].
+  - All true = 2: the wall's normal goes to player state +0x5D0 and ray 2's hit to +0x5E0. A wall met that fails a later
+    test = 1 (collide).
+- On the wall [O]: S1291's anim target 0xEB (property 410, action 230 -> 0x758BB0) is ray 2's hit + int +0x83C = **110**
+  along the normal at her own height, facing the wall. Its clip done (cond 0xC9) -> S1294; there state time >= chart
+  variable 208 = **12** -> S1296 -> the fall S1006 (jump query q44). From S1291 and S1294 T2352: the jump button (cond
+  0x98 value 136, the pressed bit) and `PSCCF_WallJumpAllowed` (0x21C, 0x7660D0: chart context +0x4EC < byte +0x843 =
+  **5**) -> S1295.
+- The jump back [O-data]: S1295 has property 917, so action 917 (0x75E350) adds 1 to +0x4EC; its exit function
+  (0x75E390) zeroes it. The action is listed by S287 (the jump flights), S289, S1290 and S1292, so the count runs
+  through a chain of wall jumps and ends with it [I: that an action common to both states is not exited between them].
+  S1295's jump query is **q12** (property 541; run on entry, property 479 = 597): velocity **46.81** along direction
+  source 0x13 (the wall normal at +0x5D0, 0x724F.. switch) + **77.27** up a 30 Hz frame under gravity 5.72443, start
+  79.01 out, cone 90 degrees, +0x28 20, flags 0x1850, class record 0x2A9EC (the hang / ladder one), ledge target types
+  1 at the start and 3 **372.95** over it (the hands of the wall pose are 370..377 over the root). Its clip done ->
+  S289, which flies her onto what the query met or lets her fly free.
+- Timing that follows [I]: off the wall she rises 77.27 a frame, more than the attach allows (51.52), for 4.5 frames,
+  and the collide transition waits for frame 5: a rebound in a shaft too narrow to fly in still gains 77.27 x 5 -
+  2.862 x 25 = **314.8** before her feet are on the other wall. The time unit of cond 0x14 is taken as 30 Hz frames
+  for that reason [I].
+
+**Ours** (State::WallJump; `Player::tryWallJump`, `wallJump`, `wallJumpQuery`): the test above, literally, on the 30 Hz
+frames of a State::Jump flight that was not aimed at markup (`jumpAimed`: `aimGroundJump` / `assistJump` found a
+target), with collision rays for 0x4935F0 and the bind pose's segment 1 height for the pelvis [I] (300 without a
+skeleton). On the wall she is drawn to the 110 standoff over two frames, turned to face it, and holds her height:
+nothing moves her up but the jumps. A jump press (edge) while `wallJumps` < 5 plays wall_jump_jump_back; when it ends
+she faces away from the wall and either flies onto the ledge `ledgeOnArc(q12)` met (State::HangJump, the existing ledge
+catch) or leaps free at q12's velocity (State::Jump: the existing air movement, ledge grabs and landings, and the next
+wall). 14 frames without a press: wall_jump_detach_fall and State::Fall. `wallJumps` clears whenever she is not
+jumping. Two limits on q12's ledge targets are ours [I], both needed for l2_junglehub's columns to play as the
+walkthrough describes them: not the ledge the jumps began on (`jumpLedge`; tru.exe keeps the markup she was attached
+to through the jump, player state +0xA84, and its chart has a `JumpTargetSameAsAttached` condition), and not a ledge
+hidden from the arc's start by solid geometry (`JumpQuery::sight`: the query's 316 capsule reaches through the 320
+thick column to ledge 804 on its far side). Saves carry the state (`controller.wallJump`; a save in the air still
+resumes at its checkpoint, as before). Not ported [U]: wall_jump_anticipate (its test's ray has no length with the
+data as shipped), the wall-collision state S1293, objects' refusal bit (data byte +0x30 & 0x10: every dynamic counts
+as a wall).
+
+**Where the game uses it** [O-data geometry; the first also by the walkthrough]:
+
+- l2_junglehub, the streambed's square columns (320 x 320): ledge 796 on column A's east face (x = -12659, z 6349),
+  ledge 797 round the same column 1248 higher, column B's face 638 behind her (x ~ -12021). Ours: the leap back off
+  the hang holds on B 138 over the hang's root height, the jump back on A 435 higher, the next on B 435 higher again,
+  and from there q12 meets 797: four jumps, the count the walkthrough gives.
+- l5_valaskjalf (Jan Mayen): ledge 1512 (5057, -79645, -13429) to ledge 1510 on the same wall 1893 higher, the facing
+  wall 822 away: the leap back and five wall jumps (~520 each), all the count allows.
+- l2_towerroom: ledge 418 (308, 14792, 3645) to ledge 417, 553 higher: one kick off the wall 603 behind her.
+- Found by openunderworld-work/gameplaygoal/chimney/scan.cpp (a ledge hang with an unflagged facing wall 300..950 behind
+  it and the next ledge out of an up-jump's reach) but not climbed this way by ours (reached otherwise, or not at
+  all; not looked into [U]): l2_cliffclimb 940, l2_towerroom 420, l4_temple 1157, l4_traprooms 1367, l5_valaskjalf
+  1558 and 1515, l7_arctic_sea 2073, l7_yggdrasil_end 1860, l1_ship_exterior 365.
+
+**Tests**: `Game.ChimneyJumpGainsHeightEachRebound` (walls 700 apart: ~487 a rebound, 110 out, no teleport),
+`Game.ChimneyJumpNeedsThePress` (14 frames, then the fall), `Game.ChimneyJumpFallsAfterFiveInARow`,
+`Game.ChimneyJumpTopsOutOntoLedge`, `Game.ChimneyJumpRefusesFlaggedWall`,
+`Game.ChimneyJumpSaveLoadContinuesIdentically`, `GameReal.JunglehubChimneyJumpClimbsColumns`,
+`GameReal.ValaskjalfChimneyJumpTakesAllFive` (and l2_towerroom's kick), `StreamReal.SaveContinuesBitIdentically`
+(its l2_junglehub case: saved on column B mid-climb, bit for bit).
+
+Open [U]: not measured in tru.exe under Wine: whether a standing jump beside an unflagged wall really plants her on it
+45 over the floor (ours does, by the chart), the hold time in seconds, the attach heights, whether the count ends a climb
+at five; the camera on the wall (the jump camera is kept). Three Wine sessions (2026-11-10,
+openunderworld-work/gameplaygoal/chimney/session.sh, wine1-*.txt) teleported her to our unit-frame coordinates and
+fell through: after `wmem goto <unit>` tru.exe's world is our unit frame + (its start - our spawn): l4_ballcourt
++ (5881.23, -10787.23, -15435.90), l2_junglehub + (8558.23, -19414.44, -18073.17). session2.sh there has the corrected
+coordinates (the l4_ballcourt corridor at ours -17544, 6342, 2841.5 for the count; l2_junglehub's streambed between
+the columns, where column B's base carries flag 0x80 up to 800 over the floor and its upper part does not) and
+ours1..3.txt our controller's traces of the same inputs to compare with; it was not run.
 
 ## Rail slides (src/game/Traverse.cpp)
 
@@ -2513,9 +2741,9 @@ pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary re
   grows per shot to the max, recovers per frame, resets on draw (0x6E6C60).
 - Switching (`Actions::weapon`: X, pad d-pad right [I U+180A per locals 1298]; script `weapon`): pistols ↔ the secondary
   (exe current / previous weapon at inventory +0x134 / +0x138 [O] = `CombatState::weapon` / `previous`); the weapon in
-  hand plays its unequip clip, then the other its equip clip; each keeps its own clip and reserve. Under water only the
-  speargun can be drawn and fired (the others holster): which weapons the exe allows submerged is [U] (every wp_* has
-  `fire_submerged` / `combat_water_submerged_equip`, the speargun alone has submerged reload clips).
+  hand plays its unequip clip, then the other its equip clip; each keeps its own clip and reserve. In the water every
+  weapon can be drawn and fired ("Water moves": no under-water flag in the weapon data, every wp_* has the submerged
+  and surface handling clips) [I].
 - Pickups [O]: no ammo objects exist (all `pu_*` are puzzle items); ammo comes from picking up a weapon (0x70E530 →
   0x6F5E70: the intro's property 0x55 added to the slot, capped by the max reserve). A survey of every unit's intros
   finds no uzi / shotgun / speargun / grenade pickups (only `wp_akrifle` in l1, `wp_handgun` in l3_main_hall,
@@ -2764,10 +2992,9 @@ No side-by-side comparison with the original game was made.
   Wine (Numbers); traversal reach boxes and the jump-assist radius are inferred; none are in Lara's player data block
   (Numbers) [U]. The grab zVel window, height, crouch height and
   water probe are taken from it.
-- Swimming: oxygen/drowning are implemented with inferred rates (45 s / refill 2 s / max-per-6 s; no exe numbers).
-  Still missing: wading clip (`swim_wading`), surface turn clips, swim damage from other
-  sources; the water surface is static (scripted level changes not run); the water box is sized from the surface model,
-  not the exe's component. Ripple/caustic parameters are ours [I].
+- Swimming: breath, scuba, dodges, swan dive, surface turns, the automatic climb out and jellyfish are in ("Water
+  moves"); its "Open" line lists what is left. Scripted water levels run ("Scripted levels"). Ripple/caustic
+  parameters are ours [I].
 - Free climbing is implemented on the levels' free-climb holds (markup 16-20, see "Free climbing"): hold to hold
   with the transition clips' root motion and DICE jumps up / left / right to far holds; hold-type semantics [U], hold
   choice/reach from lara.drm's queries and the player state chart, the sweep geometry [I] (2D), no
@@ -3150,3 +3377,52 @@ opened by replay, no gameplay HUD, and no Vulkan validation errors. `menu_new_ga
 CROFT MANOR and Lara walking. Earlier [O] (2026-10-18, GL): `menu_new_game.txt` → explode.bik
 (45 frames) → "CROFT MANOR" card, Lara walking in l3_main_bedroom; `pool_pickup.txt` in l4_pool with `--spawn
 -6045,-6100,2844,-90` → treasure 5489, "TREASURES 1".
+
+## Manual aim, adrenaline inputs, dual targets, time scales (decoded 2026-11)
+
+Sources: generalbank DTP 0x2F (input action → virtual button map, GlobalInfo +0x1C), the player state chart, tru.exe.
+
+- **Manual aim** [O]: virtual button 9 (Z / right-stick click; config action `manual_aim`). Action 25 → chart T55 enters
+  S718 when Target Lock is not held; T1887 / T1886 leave on Manual Aim / Target Lock. Camera mode 23 = mode-list entry 20
+  (distance 632.11, focus offset z 158.03, zones 126.42 / 3.16 / 252.84, speed 632.11; its command 11 record 35 is not
+  modelled [U]). Shots follow the reticle ray (`World::shotRay`, `manualAimPoint`; src/game/Aim.cpp). [I]: she may only
+  walk, turns to the view when standing; a reveal / spline camera or a hit reaction ends the aim view. The lock-on framing camera was not
+  found in the mode list [U].
+- **Focused fire** [O]: in combat the same button (action 37, group 17) toggles adrenaline mode (0x718BD0 → 0x7189C0).
+  The adrenaline ramps use the global scale 0xE7F1D4, so Lara slows with the world; no extra fire-rate change exists.
+- **Head shot** [O]: Grapple button (action 46 → chart T1404, condition 0x21A = flag 0x400000). The meter latches at
+  full (0x6F28C0 / 0x6E6630) and does not drain while latched (0x6F2930); the move (0x71D4F0) needs a target answering
+  query 0x165 and spends the meter. It is a paired clip hosted in the enemy DRM (`hosted_enemy_aa_<weapon>`; enemy list
+  node +0x54: distance 316.06, blend 6 frames); clip events 5 / 4 open and close the window (0x715020 / 0x718EA0, time
+  0.2 and back). No grapple rope is involved. [I]: close range = `targeting.closeRange`; Lara is snapped, not blended,
+  to the distance; the clip plays in place; pip start 2.5 radii, look 10 radii/rad, stick 2 radii/s.
+- **Dual targets** [O]: 0x71E490 / 0x7035F0 (weapon controller +0xC / +0x10, soft set Lara data +0x470, hold +0x286 =
+  1000 frames). Ours: the left gun fires at the second target; the arm pose is not split [I]. The PC original has no
+  change-target key.
+- **Time scales** [O]: `gamebase` 24 / 2 ramp / set the global scale (record 0x8ABE94), 23 / 1 the world scale
+  (0xE7F1A0, record 0x8ABEB4, divided out of Lara's update at 0x622418); ease 0x78C120. `World::tick` splits real / Lara
+  / world dt. Real script: docs/formats/SCRIPTS.md "Time scale"
+  (`ProgressionReal.KrakenTentacleSlowMotionByItsScript`).
+- **Firing cadence** [O]: every fire clip carries event 0x75 on frame 0, so "shot at clip start, cooldown = clip
+  length" equals the original's event-driven shot.
+- **One-handed shooting** [I mapping]: hang / shimmy (`ledgeb_`), free climb (`DICE_`), ladder, pole hang, pillar use the
+  `combat_pistol_<set>_1haim*` sets of wp_handgun / wp_uzi only (other weapons have none).
+- **Shot-only shapes**: anim-graph objects with a damage (stimulus 0x800) transition, a solid prim, no collider and
+  ObjectBase oflags bit 0x40 [I] take bullets only (`World::shotOnlyShapes`); `instance` 23 anchors them to a marker of
+  another object (`script::Runtime::anchor`, saved).
+- Tests: `Combat.ManualAimHitsWhatTheReticleCovers`, `Combat.DualTargetsTakeOneGunEach`, `Combat.AdrenalineHeadShot`,
+  `Combat.HeadShotConditionsMissAndInterrupt`, `Combat.AdrenalineModeDrainsAndSlowsTime`,
+  `Combat.TimeScaleSlowsLaraWithTheWorld`, `Combat.ScriptTimeRampEasesInAndOut`,
+  `ProgressionReal.KrakenChainLinksByManualAim`, `ProgressionReal.KrakenLinkEarlyShot`,
+  `ProgressionReal.KrakenTentacleSlowMotionByItsScript`; on a real panther in l4_pool:
+  `CombatReal.PoolLedgeHangShootsPantherOneHanded` (ledge 1253, right-hand gun only, she keeps hanging),
+  `CombatReal.PoolHeadShotOnPanther` (clip `cat_panther:hosted_enemy_aa_handguns`, window 0.67..1.67 s, `death_adren`),
+  `CombatReal.PoolManualAimHitsPanther`. Self-tests: `tests/selftests/manual_aim.json`, `adrenaline.json`,
+  `kraken_kill.json`. Research aid:
+  `OU_UBER_DUMP="unit:uid" … ProgressionReal.DumpUber`.
+- **Switch reach** [I]: a switch is used within 200 units of its origin or of the point she stands at to use it
+  (`useDistance` along its local axes), whichever is nearer — l1_kraken_room's wall switch 30 keeps her 217 from its
+  origin by its own collision (`tests/selftests/kraken_kill.json` walks up and presses Interact).
+- **Dual targets and damage**: with two enemies in the soft set each pistol takes its own, so one enemy falls later than
+  under a single lock (`StreamReal.SaveContinuesBitIdentically`'s l1_ship_exterior fight runs 1400 ticks for it). The
+  gate on weapon-controller flags 0x9000 / bit 27 in 0x71E490 is not decoded [U].

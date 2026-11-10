@@ -780,7 +780,7 @@ struct CombatView {
         const auto& wd = w.anims().weapons[size_t(c.weapon)];
         ou::ui::HudState h;
         h.health = w.health().value(), h.healthMax = w.health().max();
-        h.adrenaline = c.adrenaline, h.breath = w.air();
+        h.adrenaline = c.adrenaline, h.breath = w.air(), h.breathBar = w.breathShown();
         h.weapon = int(c.weapon), h.drawn = c.drawn, h.dual = wd.dual, h.dead = w.player().state().state == ou::game::State::Dead;
         h.clip[0] = c.clip[size_t(c.weapon)][0], h.clip[1] = c.clip[size_t(c.weapon)][1], h.clipSize = wd.clip, h.nextHand = c.hand;
         h.healthPacks = w.found[2];
@@ -797,7 +797,7 @@ struct CombatView {
         const auto s = c.target ? toScreen(cam, fovDeg, width, height, c.target->aimPoint()) : std::optional(glm::vec2(width, height) * 0.5f);
         if (!s) return r;
         using K = ou::ui::Reticle::Kind;
-        r.kind = c.target ? (c.locked ? K::Locked : K::Target) : K::Free;
+        r.kind = c.target ? (c.locked ? K::Locked : K::Target) : c.manualAim ? K::Manual : K::Free;
         r.x = s->x, r.y = s->y, r.slowMo = c.slowMo > 0, r.pipX = c.pip.x, r.pipY = c.pip.y;
         return r;
     }
@@ -3375,7 +3375,7 @@ int main(int argc, char** argv) {
                 static constexpr std::pair<const char*, const char*> kHelp[] = {
                     {"forward", "forward"}, {"walk", "walk"}, {"sprint", "sprint"}, {"jump", "jump/climb"}, {"drop", "drop"},
                     {"interact", "use/push/pick up"}, {"grapple", "grapple"}, {"draw", "draw"}, {"fire", "fire"}, {"aim", "lock"},
-                    {"switch", "switch"}, {"weapon", "weapon"}, {"heal", "health pack"}, {"recenter", "recenter"},
+                    {"manual_aim", "manual aim"}, {"weapon", "weapon"}, {"heal", "health pack"}, {"recenter", "recenter"},
                     {"save", "save"}, {"load", "load"}, {"pause", "menu"}};
                 std::string keys;
                 for (const auto& [action, label] : kHelp)
@@ -3419,7 +3419,11 @@ int main(int argc, char** argv) {
         }
         if (!mainMenu) {
             hud.reticle = CombatView::reticle(*world, c, world->fovDeg, w, h);
-            if (!menus.reticles) hud.reticle = {}; // GAME OPTIONS > COMBAT RETICLES HIDDEN
+            hud.reticle2 = {};
+            if (const auto* second = world->combat().second; second && world->combat().drawn)
+                if (const auto at = toScreen(c, world->fovDeg, w, h, second->aimPoint()))
+                    hud.reticle2 = {ou::ui::Reticle::Kind::Target, at->x, at->y};
+            if (!menus.reticles) hud.reticle = {}, hud.reticle2 = {}; // GAME OPTIONS > COMBAT RETICLES HIDDEN
             hud.grapple.reset();
             if (const auto target = world->grappleTarget(); target && !world->player().state().grappleUid)
                 if (const auto p = toScreen(c, world->fovDeg, w, h, target->pos)) hud.grapple = std::array{p->x, p->y};

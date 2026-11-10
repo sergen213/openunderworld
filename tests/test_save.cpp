@@ -1125,7 +1125,8 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
     const Case cases[] = {
         {"l4_ballcourt", game::Spawn{{-20066, 14150, 3540}, 0}, 60, 300, idle, // born by plane 6546, its scripts kill poachers, ragdolls fall
          [](game::World& w) { w.script().call(6546, 54); }},
-        {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 600, [](uint64_t t) { // runs at the mercs, locked on, firing
+        // (dual targeting, 0x71E490: with two mercs in range each pistol takes its own, so the first falls later than under one lock)
+        {"l1_ship_exterior", game::Spawn{{-71, 9794, 5706}, 0}, 240, 1400, [](uint64_t t) { // runs at the mercs, locked on, firing
              game::Actions a;
              a.move = t % 200 < 120 ? game::vec2(0, 1) : game::vec2(0);
              a.fire = a.aim = t >= 40;
@@ -1305,6 +1306,23 @@ TEST(StreamReal, SaveContinuesBitIdentically) {
          [](const game::World& w) { return brokenThrall(w) && !brokenThrall(w)->state().pieceVel.empty(); }},
         {"l7_yggdrasil_hall01", game::Spawn{{1000, 0, 0}, 1.5707963f}, 0, 240, idle, [](game::World& w) { breakThrall(w, 20); },
          [](const game::World& w) { return brokenThrall(w) && brokenThrall(w)->state().pieces.size() == 14; }},
+        // l2_junglehub's chimney (WallJump.cpp): on column B's face after the leap back off ledge 796; a jump press
+        // five ticks after the load leaps on to column A, where she lets go.
+        {"l2_junglehub", game::Spawn{{-12400, 23250, 5900}, 3.1415927f}, 70, 240, [](uint64_t t) {
+             game::Actions a;
+             if (t == 30) a.move.y = -1;
+             a.jump = t == 30 || t == 75;
+             return a;
+         }, [](game::World& w) {
+             const auto& mk = w.collision().markup;
+             for (size_t i = 0; i < mk.size(); ++i)
+                 if (mk[i].type == 1 && mk[i].id == 796) {
+                     game::PlayerState s = w.player().state();
+                     s.state = State::Hang, s.clip = "ledgeb_idle", s.loop = true, s.clipTime = 0;
+                     s.ledge = int(i), s.ledgeSeg = 1, s.ledgeT = 140, s.ledgeSide = -1, s.vel = game::vec3(0);
+                     w.restore(s, 3.1415927f, -0.25f);
+                 }
+         }, [](const game::World& w) { return w.player().state().state == State::WallJump; }},
         // A reveal camera playing: l1_kraken_room plane 37 starts camera spline 9 (GameReal.RevealCameraPlaysUnitSpline).
         {"l1_kraken_room", std::nullopt, 60, 300, idle, [](game::World& w) {
              w.tick({});

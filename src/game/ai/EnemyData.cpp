@@ -267,6 +267,40 @@ std::shared_ptr<const EnemyType> loadEnemyType(const cdc::BigfileSet& bigfile, c
     if (!t->jumpUp.valid() && !t->jumpDown.valid() && !t->jumpAcross.valid())
         t->jumpUp = t->jumpDown = t->jumpAcross = jumpSet("jump_start", "jump_loop", "jump_end");
 
+    // Adrenaline head shot record (list node +0x54, HeadShotMove). The hosted clips' events: the ObjectBase animation
+    // list (+0x54 count, +0x58 {i16 anim, i16, u32 event-list DTP id, char* name}), each list's command records (info & 3
+    // == 2: byte +8 = command, u16 +2 = frame; docs/formats/EFFECTS.md).
+    if (const auto p = field(0x54)) {
+        const cdc::Section& s = drm->sections[p->section];
+        auto& hs = t->tuning.headShot;
+        if (read<int16_t>(s, p->offset + 0xE) != -1) hs.distance = read<float>(s, p->offset + 0x10), hs.blend = read<float>(s, p->offset + 0x14) * (1.0f / 30.0f);
+        const auto eventFrame = [&](std::string_view clip, int command) -> float {
+            const cdc::Section& ob = drm->sections[*base];
+            const auto lp = ptrAt(*drm, *base, 0x58);
+            const uint32_t n = read<uint32_t>(ob, 0x54);
+            if (!lp || n > 4096) return -1;
+            for (uint32_t i = 0; i < n && i < list.size(); ++i) {
+                if (list[i].name != clip) continue;
+                const uint32_t id = read<uint32_t>(drm->sections[lp->section], lp->offset + 12 * i + 4);
+                for (const auto& ev : drm->sections) {
+                    if (ev.type != cdc::SectionType::DtpData || ev.id != id) continue;
+                    for (uint32_t at = 4; at + 8 <= ev.data.size();) {
+                        const auto info = read<uint16_t>(ev, at);
+                        if (info == 0xFFFF) break;
+                        if ((info & 3) == 2 && at + 9 <= ev.data.size() && ev.data[at + 8] == command) return float(read<uint16_t>(ev, at + 2)) / 30.0f;
+                        at += 8 + uint32_t(info >> 12) * 4;
+                    }
+                }
+            }
+            return -1;
+        };
+        static constexpr std::string_view kHosted[4] = {"hosted_enemy_aa_handguns", "hosted_enemy_aa_shotgun", "hosted_enemy_aa_rifle", "hosted_enemy_aa_hammer"};
+        for (size_t k = 0; k < 4 && hs.valid(); ++k)
+            if (loadClip(kHosted[k])) hs.clips[k] = {std::string(kHosted[k]), eventFrame(kHosted[k], 5), eventFrame(kHosted[k], 4)};
+        for (const std::string_view r : {"hitreact_vault_adren", "hit_react_vault_adren"})
+            if (hs.reaction.empty() && loadClip(r)) hs.reaction = r;
+    }
+
     // Patrol (list node +0x48) and search (+0xD8) parameters (Enemy.hpp PatrolStyle / SearchStyle). MoveNav sets
     // (0x61B0C0): the walk clip at +0x18 (+0x14 start, +0x1C stop, +0x20 end idle in every set read), the arrival
     // distance s16 max(+0x1C0, +0x1C2) (0x628990). Weighted lists (0x60F450): count +0x0C, entries at +0x10.

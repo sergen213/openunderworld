@@ -55,6 +55,7 @@ Actions readDevices(const Controls& c, const platform::DeviceState& d) {
     a.look = vec2(c.invertX ? look.x : -look.x, c.invertY ? -look.y : look.y) * kPadLookRate;
     a.walk = on(A::Walk), a.sprint = on(A::Sprint), a.jump = on(A::Jump), a.drop = on(A::Drop), a.interact = on(A::Interact);
     a.draw = on(A::Draw), a.fire = on(A::Fire), a.aim = on(A::Aim), a.switchTarget = on(A::Switch), a.weapon = on(A::Weapon);
+    a.manualAim = on(A::ManualAim);
     a.heal = on(A::Heal), a.grapple = on(A::Grapple), a.save = on(A::Save), a.load = on(A::Load);
     a.hint = on(A::Hint), a.answer = on(A::Answer), a.pda = on(A::Pda), a.light = on(A::Light), a.grenade = on(A::Grenade);
     a.recenter = on(A::Recenter), a.fieldCamera = on(A::Camera);
@@ -98,7 +99,7 @@ std::array<std::string, 28> promptNames(const Controls& c, bool gamepad, const l
     // Virtual button -> config::bindableActions() index (-1: none of ours), then the menu keys Return / Escape / BackSpace
     // (25..27: menu_accept / menu_back / menu_delete); and the placeholder naming it by default (tru.exe 0x8A9EF8
     // inverted), shown on the pad when it is unbound.
-    static constexpr int8_t kAction[28] = {8, 15, 7, 6, 11, 10, 5, 22, 23, 12, 25, 20, 14, 24, 21, 13, 3, 2, 1, 0, 4, 10, 7, 0, 1, 30, 31, 32};
+    static constexpr int8_t kAction[28] = {8, 15, 7, 6, 11, 10, 5, 22, 23, 34, 25, 20, 14, 24, 21, 13, 3, 2, 1, 0, 4, 10, 7, 0, 1, 30, 31, 32};
     static constexpr char32_t kIcon[28] = {0x1801, 0x1800, 0x1802, 0x1803, 0x1805, 0x1807, 0x1804, 0x1806, 0x180E, 0x180F, 0x1810, 0x1811, 0x1808,
                                            0x1809, 0x180B, 0x180A, 0x1817, 0x1816, 0x1815, 0x1814, 0, 0x1826, 0x1827, 0x1828, 0x1829,
                                            0x1803, 0x1802, 0x1801};
@@ -145,7 +146,7 @@ void unmap(config::InputConfig& c, const std::string& action, bool gamepad) {
 InputScript InputScript::parse(std::string_view text) {
     static constexpr std::string_view kActions[] = {"forward", "right", "walk", "jump", "drop", "lookx", "looky", "interact", "save",
                                                     "load", "draw", "fire", "aim", "switch", "weapon", "heal", "pause", "grapple", "sprint", "hint", "answer", "pda",
-                                                    "light", "grenade", "recenter", "camera"};
+                                                    "light", "grenade", "recenter", "camera", "manual"};
     InputScript s;
     std::istringstream in{std::string(text)};
     std::string line;
@@ -192,6 +193,7 @@ Actions InputScript::at(uint64_t tick) const {
         else if (e.action == "fire") a.fire = e.value != 0;
         else if (e.action == "aim") a.aim = e.value != 0;
         else if (e.action == "switch") a.switchTarget = e.value != 0;
+        else if (e.action == "manual") a.manualAim = e.value != 0;
         else if (e.action == "weapon") a.weapon = e.value != 0;
         else if (e.action == "heal") a.heal = e.value != 0;
         else if (e.action == "pause") a.pause = e.value != 0;

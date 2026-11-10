@@ -16,6 +16,9 @@ constexpr float kPi = 3.14159265f;
 // Surface swim turning: at most this / her speed rad/s (tru.exe under Wine, l1_seatop sea: 117.5 deg/s while she lags
 // the stick at full swim speed 1348.6 = 2765 units/s^2; faster when slow) [O-runtime; the 1 / speed form [I]].
 constexpr float kSwimTurnAccel = 2765.0f;
+// Under-water steering (Player::swim): how far above the camera's root-to-camera pitch she swims, and the pitches
+// between which that lead falls to nothing [O-runtime fit, Wine trace under1.txt].
+constexpr float kSwimSteerLead = 9.2f * kPi / 180, kSwimSteerLo = -14.0f * kPi / 180, kSwimSteerHi = 8.5f * kPi / 180;
 // Poles, tru.exe under Wine (2026-11-06, docs/GAMEPLAY.md "Poles"): the catch hands over to the idle
 // hang after kPoleAttachIdle; a fling leaves the pole kPoleFlingDelay after the press (0.64 s twice, 0.31 / 0.81 s
 // without a target: [I] the phase rule); q33's take-off (73.72 forward, 52.10 up a 30 Hz frame, lara.drm query
@@ -152,6 +155,7 @@ bool openBelow(const collision::CollisionMesh& col, const collision::Markup& m, 
 // tru.exe's jump-to-target solver 0x73EDC0: the velocity that carries the root by `delta` in `time` under gravity g.
 vec3 jumpVelocity(vec3 delta, float time, float g) { return vec3(xy(delta), delta.z + 0.5f * g * time * time) / time; }
 
+bool swanClip(std::string_view c) { return c.starts_with("ng_inair_swan_stage"); }
 bool swimSprintClip(std::string_view c) { return c == "swim_surface_sprint_forward" || c == "swim_submerged_sprint"; }
 bool swimExhaustedClip(std::string_view c) { return c == "swim_surface_exhausted" || c == "swim_submerged_exhausted"; }
 // Take-off clips of hang leaps whose root motion (and turn) plays before the launch (the wall-hug ones: lara.drm
@@ -170,7 +174,7 @@ std::string_view stateName(State s) {
                                              "swimclimbout", "dead", "crouch", "roll", "slide", "beam", "droptohang",
                                              "hangjump", "polehang", "climb", "ladder", "perch", "pillar", "grapplethrow",
                                              "grappleswing", "hit", "railslide", "grapplepull", "vehicle", "grapplerappel",
-                                             "use", "block", "wallhug", "melee", "knocked"};
+                                             "use", "block", "wallhug", "walljump", "swimdodge", "melee", "knocked"};
     return size_t(s) < std::size(k) ? k[size_t(s)] : "unknown";
 }
 
@@ -417,6 +421,14 @@ void Player::land(vec2 move) {
     s_.fallHeight = s_.fallStartZ - s_.pos.z;
     if (tryBeam("bbeam_jumpland", true)) return;
     const float speed = glm::length(xy(s_.vel));
+    // Out of a swan dive she tucks and rolls: ng_swan_land (request 66; root 591 forward in 11 frames), in wading water
+    // swim_land_swan_wading (843). The fall counts as any other (Combat: Health::fall on fallHeight).
+    if (swanClip(s_.clip) && anims_.find("ng_swan_land")) {
+        s_.vel = vec3(0);
+        s_.state = State::Roll;
+        play(wading() && anims_.find("swim_land_swan_wading") ? "swim_land_swan_wading" : "ng_swan_land", false);
+        return;
+    }
     s_.vel = vec3(0);
     if (wading() && anims_.find("swim_land_wading")) { // into class-0x100 water
         s_.state = State::Land;
@@ -1378,6 +1390,11 @@ Player::JumpTarget Player::ledgeOnArc(const JumpQuery& q) const {
         // (0x7296C0) [O: decomp]; ours keeps it for both to time the re-aimed flight (the record path's box test holds
         // at every time, its first hit is the take-off) [I]
         if (h.z < q.minZ || t >= best.frames || (q.falling && q.v.z - kQueryG * t >= 0.05f)) return;
+        if (q.sight) { // a ledge on the far side of what she jumps at is none (a ledge point lies on its wall: 100 short)
+            const vec3 d = h - from;
+            const float len = glm::length(d);
+            if (len > 100.0f && col_.raycast(from, d / len, len - 100.0f)) return;
+        }
         int entry = -1;
         const auto& m = col_.markup[size_t(li)];
         const vec2 sd = segDir(m, si), n(-sd.y, sd.x), toHit = xy(h - q.start);
@@ -1903,6 +1920,16 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     else if (s_.clip != "ng_sprint_to_exhaust" && s_.clip != "ng_run_exhaust" && !swimExhaustedClip(s_.clip))
         s_.sprintUsed = std::max(0.0f, s_.sprintUsed - dt);
     s_.regrabCooldown = std::max(0.0f, s_.regrabCooldown - dt);
+    // Chimney jumps (WallJump.cpp): where a jump takes off, and the count of wall jumps in a row, which tru.exe's
+    // chart keeps while the jump group's action 917 stays active (the jump flights and the wall-jump states) [I: read
+    // from the states' action lists].
+    if (s_.state != State::Jump) s_.jumpStart = s_.pos, s_.jumpTime = 0, s_.jumpAimed = false;
+    if (s_.state != State::Jump && s_.state != State::JumpPrep && s_.state != State::HangJump && s_.state != State::WallJump) {
+        s_.wallJumps = 0;
+        const bool hang = (s_.state == State::Hang || s_.state == State::Shimmy) && s_.ledge >= 0 && size_t(s_.ledge) < col_.markup.size();
+        s_.jumpFromLedge = hang;
+        s_.jumpLedge = hang ? pointOn(col_.markup[size_t(s_.ledge)], s_.ledgeSeg, s_.ledgeT) : vec3(0);
+    }
     const float mag = std::min(1.0f, glm::length(move));
     const float target = mag > 0.1f ? std::atan2(move.y, move.x) : s_.yaw;
     const bool wantsMove = mag > 0.1f, wantsWalk = a.walk || mag < 0.5f;
@@ -2087,6 +2114,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::WallHug:
         wallHug(move, jumpPressed, dropPressed, dt);
         break;
+    case State::WallJump:
+        wallJump(jumpPressed, dt);
+        break;
     case State::GrappleThrow:
     case State::GrapplePull:
     case State::GrappleSwing:
@@ -2116,7 +2146,9 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
         const bool aimed = running    ? aimGroundJump({90.25f, 42.54f}, 300.0f, false, glm::radians(90.0f), true)
                            : wantsMove ? aimGroundJump({40.0f, 50.0f}, 0.0f, false, glm::radians(90.0f))
                                        : aimGroundJump({0.0f, 48.04f}, 300.0f, true, glm::radians(120.0f));
+        const vec3 launch = s_.vel;
         if (!aimed) assistJump();
+        s_.jumpAimed = aimed || s_.vel != launch; // a markup target: no wall jump (chart cond 0x262)
         play(running ? "NG_InAir_Feet_Forward_stage1" : "NG_InAir_Feet_Forward_stage1_standing", false);
         if (s_.state == State::HangJump) break; // the running jump's straight rush (aimGroundJump)
         if (!running && !wantsMove && standJumpToLedge()) break;
@@ -2135,12 +2167,30 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
             s_.clip == "hpole_perch_Jump_back" || s_.clip == "hpole_perch_Jump_left" || s_.clip == "hpole_perch_Jump_right")
             advanceRoot(dt);
         else advanceClip(dt);
-        if (s_.state == State::Jump && clipDone())
+        // Swan dive (controls: moving forward, Jump then Crouch at once): crouch pressed while a forward ground jump
+        // still rises [I: the chart's window is not decoded] turns it into ng_inair_swan_stage1 -> _stage2 -> the
+        // _stage3 hold (lara.drm requests 67 / 69 / 68); the flight stays the jump's. It ends in land() (roll) or
+        // enterWater() (swim_swan_land).
+        if (s_.state == State::Jump && dropPressed && s_.vel.z > 0 && glm::length(xy(s_.vel)) > 1.0f &&
+            s_.clip.starts_with("NG_InAir_Feet_Forward") && anims_.find("ng_inair_swan_stage1") && anims_.find("ng_inair_swan_stage3"))
+            play("ng_inair_swan_stage1", false);
+        if (swanClip(s_.clip)) {
+            if (clipDone() && s_.clip == "ng_inair_swan_stage1" && anims_.find("ng_inair_swan_stage2")) play("ng_inair_swan_stage2", false);
+            else if (clipDone() && s_.clip != "ng_inair_swan_stage3") play("ng_inair_swan_stage3", true);
+        } else if (s_.state == State::Jump && clipDone())
             play(s_.clip == "NG_InAir_Feet_Forward_stage2" ? "NG_InAir_Feet_Forward_stage3" : "NG_InAir_Feet_Forward_stage2",
                  s_.clip == "NG_InAir_Feet_Forward_stage2");
         else if (s_.state == State::Fall && clipDone()) play("NG_InAir_Feet_Forward_stage3", true); // after a let-go clip
         if (s_.state == State::Jump && s_.clip.starts_with("NG_InAir") && tryPoleLeap()) break;
-        airMove(dt, move);
+        {
+            // tru.exe's chart tests the wall jump on its 30 Hz frames: a jump back off a wall (77.27 up a frame)
+            // comes inside the attach's zVel window (<= 9 x 5.72443) on its fifth, 314.8 higher.
+            const float frame = std::floor(s_.jumpTime * 30.0f + 1e-3f);
+            if (s_.state == State::Jump) s_.jumpTime += dt;
+            const bool test = s_.state == State::Jump && !s_.jumpAimed && std::floor(s_.jumpTime * 30.0f + 1e-3f) > frame;
+            airMove(dt, move);
+            if (test && s_.state == State::Jump && tryWallJump()) break;
+        }
         if ((s_.state == State::Jump || s_.state == State::Fall) && s_.vel.z <= 0) enterWater();
         break;
     case State::HangJump: {
@@ -2320,6 +2370,7 @@ void Player::tick(vec2 move, const Actions& a, float dt) {
     case State::SwimUnder:
     case State::Surfacing:
     case State::SwimClimbOut:
+    case State::SwimDodge:
         swim(move, a, jumpPressed, dropPressed, dt);
         break;
     case State::Hit: // hit reaction clip with its root motion, then back to idle / the swim state
@@ -2668,9 +2719,10 @@ bool Player::enterWater() {
     s_.water = w;
     s_.pitch = 0;
     s_.ledge = -1;
-    if (airborne) { // keep the plunge velocity; water drag stops it
+    if (airborne) { // keep the plunge velocity; water drag stops it. A swan dive goes in on swim_swan_land's root motion.
+        const bool swan = swanClip(s_.clip) && anims_.find("swim_swan_land");
         s_.state = State::SwimSplash;
-        play("swim_jump_land", false);
+        play(swan ? "swim_swan_land" : "swim_jump_land", false);
     } else if (s_.pos.z <= surf - t_.swimDepth) { // placed deep (275_hel_explosion's end): stays under, swimming
         s_.vel = vec3(0);
         s_.state = State::SwimUnder;
@@ -2699,10 +2751,10 @@ vec3 Player::swimSlide(vec3 pos, vec3 delta) const {
 // At the surface, facing a wall whose top is 50..400 above the water: swim_climbout. Its root rises 172.8
 // and moves 308.7 forward; the start is placed so its hands (at the start time) reach the edge and its
 // root ends on the top.
-bool Player::tryClimbOut() {
+bool Player::tryClimbOut(float reach) {
     const anim::Clip* c = anims_.find("swim_climbout");
     if (!c) return false;
-    const float surf = surfaceZ() + t_.swimSurfaceDepth, reach = 300.0f;
+    const float surf = surfaceZ() + t_.swimSurfaceDepth;
     const auto wall = col_.sweepSphere(s_.pos, t_.swimRadius, forward() * reach);
     if (!wall || std::abs(wall->normal.z) > 0.5f || glm::dot(xy(wall->normal), xy(forward())) > -0.5f) return false;
     const vec3 edge = wall->point;
@@ -2714,6 +2766,41 @@ bool Player::tryClimbOut() {
     s_.pos = vec3(xy(edge) - xy(forward()) * -hands.y, top->point.z - rise);
     s_.state = State::SwimClimbOut;
     s_.vel = vec3(0);
+    return true;
+}
+
+// Under-water evasive dodge. lara.drm chart [O]: from the submerged combat idle S185 the roll button (cond 0x98 = 51)
+// enters S167, the jump button (52) S196; there the stick's quadrant as on screen (cond 0x195: 450 up, 451 down, 452 /
+// 453 the sides) picks the state: up -> swim_submerged_dodge_up (request 878; root 883 up in 30 frames), down ->
+// _dodge_down (864; 881 down in 20), a side -> _dodge_side (876 / 877; 792 sideways in 30, mirrored for the other
+// side), no stick -> up (T996 / T1060); with cond 0x218 set (a flag of the aim controller, 0xFADFB0 + 0x50 + 0x195) the
+// sides are _dodge_forward (863; 468 ahead in 26) and _dodge_backward (875; 450 back). [I] 0x218 = she is side-on to
+// the camera (heading more than 45 deg off its view line), so the stick's side that runs along her heading is ahead.
+bool Player::startDodge(vec2 stick) {
+    std::string clip = "swim_submerged_dodge_up";
+    bool mirror = false;
+    if (glm::length(stick) > 0.3f) {
+        if (std::abs(stick.y) >= std::abs(stick.x)) clip = stick.y > 0 ? "swim_submerged_dodge_up" : "swim_submerged_dodge_down";
+        else {
+            // the stick's side in her own frame: the view line is yaw_cam; her right is (sin yaw, -cos yaw)
+            const float rel = wrapAngle(s_.yaw - cameraYaw_); // her heading from the camera's view line (+ = to its left)
+            const bool sideOn = std::abs(std::sin(rel)) > std::sin(glm::radians(45.0f));
+            if (sideOn) clip = (stick.x > 0) == (rel < 0) ? "swim_submerged_dodge_forward" : "swim_submerged_dodge_backward";
+            else {
+                clip = "swim_submerged_dodge_side";
+                const anim::Clip* c = anims_.find(clip);
+                if (!c) return false;
+                const bool wantRight = (stick.x > 0) == (std::cos(rel) > 0); // facing the camera swaps the sides
+                const vec3 d = rootTranslation(*c, c->durationSeconds(), false) - rootTranslation(*c, 0, false);
+                const bool clipRight = d.x < 0; // model frame: -y ahead, +x her left
+                mirror = wantRight != clipRight;
+            }
+        }
+    }
+    if (!anims_.find(clip)) return false;
+    s_.state = State::SwimDodge;
+    s_.vel = vec3(0);
+    play(clip, false, 1, mirror);
     return true;
 }
 
@@ -2764,6 +2851,15 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
     };
     switch (s_.state) {
     case State::SwimSplash: { // tru.exe SwimSplashDownState; drag constant [I]
+        if (s_.clip == "swim_swan_land") { // chart S105 (a submerged state): 268.5 forward, 437.7 down in 31 frames [O clip]
+            s_.pos = swimSlide(s_.pos, toWorld(advanceClip(dt)));
+            if (clipDone()) {
+                s_.vel = vec3(0), s_.pitch = 0;
+                s_.state = s_.pos.z < surf - 1 ? State::SwimUnder : State::SwimTread;
+                play(s_.state == State::SwimUnder ? "swim_submerged_idle" : "swim_surfaceidle", true);
+            }
+            break;
+        }
         advanceClip(dt);
         s_.vel *= std::exp(-3.0f * dt);
         s_.pos = swimSlide(s_.pos, s_.vel * dt);
@@ -2784,8 +2880,43 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
     case State::SwimSurface: {
         s_.pos.z = surf;
         s_.pitch += std::clamp(-s_.pitch, -t_.turnRate * dt, t_.turnRate * dt); // level out after surfacing
-        if (jumpPressed && tryClimbOut()) break;
-        if (dropPressed) { s_.state = State::SwimDive; s_.pitch = 0; play("swim_surfacedive", false); break; }
+        // Turning on the spot (chart surface group S115 -> S145 / S144 [O]: the stick to a side quadrant, MoveDir 412 /
+        // 413, plays swim_surface_idle_turn_90, request 832; behind her, 411, swim_surface_idle_turn_180, request 833;
+        // one of each pair mirrored, transition flags 2 / 5): the clip's root turn (a quarter right / a half left in 15
+        // frames, mirrored for the other way) turns her, then the stroke starts.
+        if (s_.clip == "swim_surface_idle_turn_90" || s_.clip == "swim_surface_idle_turn_180") {
+            if (!clipDone()) {
+                advanceRoot(dt);
+                s_.vel = vec3(0);
+                s_.pos = swimSlide(s_.pos, waterFlow(col_.markup[size_t(s_.water)], s_.pos) * dt);
+                s_.pos.z = surf;
+                break;
+            }
+            play("swim_surfaceidle", true);
+        }
+        if (wantsMove && s_.state == State::SwimTread && glm::length(xy(s_.vel)) < 1.0f) {
+            const float off = wrapAngle(target - s_.yaw);
+            if (std::abs(off) >= glm::radians(135.0f) && anims_.find("swim_surface_idle_turn_180")) {
+                play("swim_surface_idle_turn_180", false, 1, off < 0);
+                break;
+            }
+            if (std::abs(off) >= glm::radians(45.0f) && anims_.find("swim_surface_idle_turn_90")) {
+                play("swim_surface_idle_turn_90", false, 1, off > 0);
+                break;
+            }
+        }
+        // Climb out: swimming at an edge with the stick held toward it she climbs out by herself (controls; no button).
+        // [I] once the wall is within the clip's reach (its hands start 205.4 ahead of the root) and the stick points
+        // within 45 deg of her heading; the chart's conditions for requests 888-891 are not decoded.
+        if (wantsMove && std::abs(wrapAngle(target - s_.yaw)) < glm::radians(45.0f) && tryClimbOut(t_.swimRadius + 130.0f)) break;
+        // Surface dive (chart S115 -> S106, T887: the crouch button, cond 0x98 = 118, with the water's depth class
+        // 0x325, cond 0x323 = 805): only where the water is at least diveDepth (player data +0xB2 = 948) deep.
+        if (dropPressed && !col_.groundProbe(vec3(xy(s_.pos), surf + t_.swimSurfaceDepth), t_.diveDepth)) {
+            s_.state = State::SwimDive;
+            s_.pitch = 0;
+            play("swim_surfacedive", false);
+            break;
+        }
         float speed = 1;
         const float horiz = glm::length(xy(s_.vel));
         if (wantsMove) {
@@ -2818,10 +2949,23 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         // pitch turns towards the wish at turnRate. [I] the original's under-water control scheme. The model is
         // pitched by the swim pitch (Player::modelMatrix), so the level stroke swim_sub plays at every pitch:
         // its body is level (8.8 deg), swim_sub_up / _down tilt it +35 / -39 deg themselves and would double it.
+        // Evasive dodge (chart S185 -> S167 / S196: in combat mode, the roll or the jump button, cond 0x98 = 51 / 52).
+        if (a.aim && (dropPressed || jumpPressed) && startDodge(a.move)) break;
         const float h = wantsMove ? mag : 0.0f, v = float(a.jump) - float(a.drop);
         if (h > 0 || v != 0) {
             if (wantsMove) s_.yaw = approachAngle(s_.yaw, target, t_.turnRate * dt);
-            const float wish = std::atan2(v, h);
+            // The stick's forward share swims along the camera's view line (controls: Forward + the camera steer her),
+            // back against it. tru.exe under Wine (l2_cliffclimb sea: a dive, then forward and sprint held;
+            // openunderworld-work/scratch/swimsprint/under1.txt, velocity at player +0x2A0, camera position): with the
+            // camera looking down at her after the dive (root-to-camera pitch p) her velocity's pitch is p + 9.2 deg
+            // for p below -14 deg (-28.8 at -36.8, -21.3 at -30.5, -13.4 at -22.5, -5.5 at -13.9), and the lead shrinks
+            // to nothing at p = +8.5 (0.9 at -6.4, 5.7 at -0.3, 7.8 at 3.7, 8.2 at 7.5): she goes on down, levels out
+            // as the camera trails behind her and ends rising gently. Fitted: lead x sqrt((hi - p) / (hi - lo)) [I form].
+            const float along = wantsMove ? a.move.y / std::max(glm::length(a.move), 1e-4f) : 0.0f;
+            const float lead = kSwimSteerLead * std::sqrt(std::clamp((kSwimSteerHi - cameraPitch_) / (kSwimSteerHi - kSwimSteerLo), 0.0f, 1.0f));
+            const float view = cameraPitch_ + lead;
+            const float steer = view * along;
+            const float wish = std::atan2(v + h * std::sin(steer), h * std::cos(steer));
             s_.pitch += std::clamp(wish - s_.pitch, -t_.turnRate * dt, t_.turnRate * dt);
             const float k = stroke(false);
             swimTowards(forward() * std::cos(s_.pitch) + vec3(0, 0, std::sin(s_.pitch)), std::min(1.0f, std::hypot(h, v)) * k);
@@ -2837,6 +2981,14 @@ void Player::swim(vec2 move, const Actions& a, bool jumpPressed, bool dropPresse
         }
         break;
     }
+    case State::SwimDodge: // the dodge clip's root motion, slid along walls; then she idles where it left her
+        s_.pos = swimSlide(s_.pos, toWorld(advanceClip(dt)));
+        if (clipDone()) {
+            s_.vel = vec3(0), s_.pitch = 0;
+            s_.state = s_.pos.z < surf - 1 ? State::SwimUnder : State::SwimTread;
+            play(s_.state == State::SwimUnder ? "swim_submerged_idle" : "swim_surfaceidle", true);
+        }
+        break;
     case State::SwimClimbOut: // full root motion, no collision (as ClimbUp)
         s_.pos += toWorld(advanceClip(dt));
         if (clipDone()) {
