@@ -2546,11 +2546,11 @@ radii. Panther `run_forward_2` root speed 2323 units/s [O].
 | Stagger | after `block +0xC` damage (panther 80); 0 (thralls, spiders, sharks) = never; a reaction is not restarted by hits during it | [I] |
 | Generator trigger | Lara within 2528 (8 m), ±2000 z, once | [I] the real trigger is scripted/EnemySpawnData 0x614FB0 [U] |
 
-Checkpoints and streaming: `Enemies::checkpoint()` snapshots the dead uids when a new checkpoint is touched;
-`World::respawn` → `Enemies::reset()`: enemies dead at the checkpoint stay dead, the others are back at their placement
-with full health (`Enemy::start()`), generator spawns are removed and their generators re-armed [I: tru.exe restores
-the checkpoint save; the restore path was not traced]. Generator spawns are stashed with their generator's uid when
-their unit streams out and re-spawned when it streams back in.
+Checkpoints and streaming: a death restores the checkpoint save ("Checkpoints and respawn"), so every enemy is back
+as that save holds it (`World::restoreEnemies`): dead ones dead, the others where they were at that moment, generator
+spawns included. `Enemies::checkpoint()` / `Enemies::reset()` (the dead-at-checkpoint set; the others back at their
+placement with full health, generators re-armed) remain for a World without units. Generator spawns are stashed with
+their generator's uid when their unit streams out and re-spawned when it streams back in.
 
 Sharks [O]: enemy family, class 1, behaviour 2 (the bats' flyer tree), health 500 / 800, senses above, death record
 with four type-2 entries, no attack records (bite damage stays at the inferred 120 default [I]); clips
@@ -2754,6 +2754,116 @@ stairs to Lara while panthers 6531/6533 attack (50 per blow). Replay `tests/repl
 lets them bite was not rendered). Death poses, the bat bite in a real unit and the poacher bursts are covered by
 `AiReal.*` instead of screenshots; the panther's `death_static` end pose was not re-viewed.
 
+## Checkpoints and respawn
+
+What tru.exe does [O, decomp]:
+
+- **A checkpoint is a full save of the game.** The engine keeps two save buffers of 0x140004 bytes: the working one
+  (`0xC59258`) and the committed one (`0xC5925C`). "Save Game" `0x5570F0(0)` buffers every live instance (`0x5568C0`
+  -> `0x556680`: block types 2 script-saved, 3 full intro with the instance's own save data (message 0x17), 4 moved /
+  rotated only, 5 flags only; type 1 = a stream unit's moved terrain groups `0x5563D0`), the six script variable
+  tables (`0x555820`), the player's own save (vtable +0x5C) and the game state block type 6 (`0x555BE0`: version
+  0xC2C, the player's level data 0x62 = current unit name + checkpoint id, the clock `0xE7F154`, outfit id, reverb,
+  PDA map), then copies working -> committed.
+- **What saves:** (a) the checkpoint object (`checkpoint` / `invis_checkpoint`) on message **0x196 / 1**, posted by
+  the script native `checkpointbase` 3 (`NsCheckpointBase`, `0x776CB0`): the previous checkpoint gets 0x196 / 0, the
+  unit name and intro id go into the player's level data (+0, +0x80), the checkpoint's own music / reverb settings
+  apply (`0x698150`: data +0x78 -> `0x52E1B0`, `0x582B90`), the "activated" clip plays and `0x5570F0(0)` runs; there
+  is no "already active" test, so every activation saves; (b) **collecting a reward** for the first time
+  (`0x5DB6A0`, treasures and relics): it posts 0x196 / 1 to the *active* checkpoint again, so the game is saved as it
+  is at the pickup; (c) the **level start**: `0x5D40C0` births Lara and, when no checkpoint id is stored, calls
+  `0x5570F0`.
+- **Death:** DeathState entry `0x75AA50` starts wipe 10 to black over **90 frames** (death type 0, 3, 4 and the
+  default) or **210 frames** (type 1, which also zeroes her velocity [U: which deaths are type 1]); a negative
+  request plays a scripted death clip with its own frame count. `0x75AF90` waits for the wipe, then `0x6F55A0` sets
+  game flag 0x80000; messages 0x15 / 0x8A during the state reload at once [U: their senders]. The game loop
+  (`0x5DAB40` case 6) calls "Restore Game" `0x557130(0)`: committed -> working, the script tables back
+  (`0x5558A0`), `0x556E90` ("MAIN checkpoint restore %s ... ID wanted = %d": the clock, chapter, outfit, the ten
+  inventory words `0xE7EE76..`, reverb), and the level loads again: every instance is born from its saved block,
+  `0x5D40C0` puts Lara on the intro with the stored checkpoint id (`0x698180`), message 0x2A (`0x700060`) gives her
+  full health.
+
+So a death returns **the whole world to the last save point**: scripts, objects, enemies, pickups, weapons and
+rounds, music / reverb and the clock, with Lara standing on the checkpoint at full health. Rewards stay collected
+(they saved), and with them everything else done up to that pickup.
+
+Ours (`World::respawn`, `World::serializeCheckpoint` / `restoreCheckpointSave`, Stream.cpp):
+
+- The checkpoint save is an in-memory save body (`World::checkpointSave()`): the clock, `collected` / `born` /
+  `found`, grenades, the light, the script runtime (with music and reverb requests), enemies, vehicles, weapons with
+  clips / reserves / adrenaline, objects with the physics scene, hinge limits and scripted water levels. It is taken
+  at the end of the tick in which a checkpoint was activated (the script event of `checkpointbase` 3, every time; or
+  Lara within 250 / 400 units of a checkpoint intro not yet active [I]), in which a treasure or relic was collected
+  with a checkpoint active, and at the end of a level's first tick (the level start). Never of a dead Lara.
+- Death: the clip plays, the screen fades for 90 frames (`kDeathFade`), then `respawn()`: the clock goes back, the
+  checkpoint's unit loads afresh (`enterUnit`), the save is restored, Lara stands on the checkpoint intro (or the
+  start spawn) with full health, full air and empty hands (the weapon state of her hands - draw, lock, reload,
+  cooldowns - is not restored; her secondary, clips, reserves and meter are). The camera starts behind her.
+- [I] / differences: the PDA map's revealed points are kept (the original's save block holds its map); a bike she
+  was riding at the checkpoint comes back at its saved place with Lara on foot beside it; the 210-frame wipe and
+  the scripted death requests are not used (no death of ours asks for them).
+- Saves: the checkpoint save travels inside a save game (`checkpointSave`, format version 3, docs/SAVES.md), so a
+  loaded game dies back to the same world as the game it was saved from.
+- Tests: `Stream.DeathRestoresTheCheckpointSave` (synthetic: collected / found / grenades / light / weapons / clock,
+  twice, after a load, and with no checkpoint), `StreamReal.DeathRestoresTheCheckpointSave` (l3_chapel: switch 4819's
+  pillars 4837 and the shotgun's rounds come back, the switch works again, a save game carries it, a treasure
+  re-saves), `Save.MigratesVersion2`, `Combat.RespawnKeepsTheLoadout`, self-test `checkpoint_respawn` (l4_pool by
+  ordinary input: rounds fired, a grenade thrown and the torch put out after checkpoint 5502 are back after the
+  fall).
+
+## Loadout
+
+- [O] A level start (player message 0x23, `0x71FFE0` -> `0x7198D0`) gives the unit's loadout list (level settings
+  `+0x2B4`; the table under "Collectibles": wp_handgun + one secondary per area, the gadgets, from l5 Thor's gear,
+  from l6 Mjolnir) and then `0x6F57F0(1)`: each of the six ammunition slots gets its **start amount** (Lara data
+  u16 `+0x848` / `+0x85C` / `+0x852` + 2 x slot for AMMUNITION CAPACITY 0 / 1 / 2, `0x6EE930`) and its maximum
+  (`+0x868` / `+0x87C` / `+0x872`, `0x6EEAE0`). The data's start table **equals its maximum table**: uzi 400 / 240 /
+  160, shotgun 90 / 72 / 42, rifle 300 / 210 / 120, tranquilizer 25 / 15 / 10, speargun 40 / 25 / 15
+  (`CombatReal.WeaponData`), so every level starts full. Grenades: `g_grenade_thrower` 10 / 6 / 4. No list holds
+  `g_healthpack`: she starts each level without packs (cap 100).
+- [O] **The weapon chosen before a level.** `0xE7F204` holds an object id set by script native `0x77BD60` ->
+  `0x5D9F70(name)` (beside `0x77BD50`, which sets the outfit); a level started from the menu (`0x77E450` ->
+  `0x5DE9C0`) sets player `+0x7F0`, and `0x7198D0` then gives the list **without its last weapon and the chosen one
+  instead**. A level reached by playing on (`+0x7F0` clear) gets the list as it is. The other branch of message 0x23
+  (game state `+0x390` set) rebuilds the slots from a save and rescales the rounds to the capacity level
+  (`0x715EF0`); native `0x777F50` = `0x6F57F0(0)` refills keeping each slot's fill fraction (`0x6F56A0`).
+  [U] which script calls `0x77BD60` and what its screen looks like: locals.bin has no text for a weapon page other
+  than the PDA's WEAPON SELECTION / WEAPONS (1076, 1100); only g_pda imports the neighbouring costume natives.
+- [O] After a death the rounds, grenades and packs are the checkpoint save's ("Checkpoints and respawn").
+- Ours: `World::chapterLoadout(chapter, chosen)` (called by `startChapter`): every secondary a full clip [I] and
+  `WeaponDef::startReserve` at the capacity level, holstered; the secondary is `chapterSecondary` - shotgun
+  (prologue and Croft Manor: their units share one list), speargun, uzi, shotgun, tranquilizer, uzi, rifle,
+  speargun - or the weapon chosen. The choice is offered where ours starts a level from a menu: the PDA's REVISIT
+  LOCATION lists the chapters, then the secondaries under WEAPONS (`ui::Screen::RevisitWeapon`,
+  `Menus::revisitWeapon`) [I: the page's look]. In the level the PDA's WEAPON SELECTION still equips any of the five
+  (observed in the original after a fresh l4 load).
+- Tests: `Combat.LevelStartLoadout`, `CombatReal.WeaponData` (the start table), `Menus.MainCentreTreasureHuntAndRevisit`,
+  `Pickups.HealthPacksCapAndLevelStart`.
+
+## Player tailoring
+
+- [O] Game state `0xC59264`: `+0x3EF94` the preset last picked, `+0x3EF98` "EnemyHP", `+0x3EF9C` "AmmoAdj" (copied
+  to `+0x3EFA0` at a level load), `+0x3EFA4` "PlayerHP", `+0x3EFA8` "SavingGrabAdj", `+0x3EFAC` a fifth level, bytes
+  `+0x3EFB0` (GAME OPTIONS toggle beside it [I: "Meta Icons" / helper buttons, locals 369]) and `+0x3EFB1`
+  "TrainingText". Levels 0..2, 0 the lenient end; **defaults 1** and both toggles on (`0x6E7500`, run by the save
+  reset `0x556940`); a setter refuses values above 2.
+- [O] Script natives `uiexperienceadjustmentmenu` (registration `0x7AEDE0`): 0..3 the menu screen itself, 4 set
+  training text, 5 set `+0x3EFB0`, 6 EnemyHP, 7 AmmoAdj, 8 PlayerHP, 9 SavingGrabAdj, 10 the fifth, 11..17 read them
+  in the same order, 18 reads the preset. Unit scripts read 17 and compare it with 2.
+- [O] What each changes: enemy health = the enemy's health block [level] (`0x6E77B0`); ammunition capacity = the
+  start / maximum tables above and the grenade maximum 10 / 6 / 4 (`0x6E7760`); Lara's health = max health x
+  generalbank difficulty `+0x08` (1.3 / 1.0 / 0.8, `0x6E7960`), keeping her health fraction; saving grabs = the
+  window difficulty `+0x14` 90 / 50 / 15 frames [I: no exe reader of the level or of the table column was found; the
+  level is offered to scripts by native 16]; the fifth level has no exe reader either [U: what the unit scripts do
+  when native 17 returns 2]. Sidekick hints are not a tailoring level: FIELD ASSISTANCE is a PDA entry.
+- Ours: `game::Tailoring` (`World::setTailoring`, saved per game); the scripts read the real levels and toggles
+  (`script::Runtime::Experience`; until 0.43 every native read 0, the lenient level) and a script that sets one sets
+  the World's. Config `game.tailoring` = [enemy health, ammunition capacity, damage to Lara, saving grabs], each
+  0..2, default [1, 1, 1, 1]: the levels a game starts with; START NEW GAME's preset and GAME OPTIONS > PLAYER
+  TAILORING write the player's choice back, a loaded save brings its own without changing the config.
+  `game.training_text` / `game.helper_buttons` are the two toggles.
+- Tests: `Tailoring.PresetsScaleHealthAndCapacity`, `Tailoring.ScriptsAndConfigSeeTheLevels`, `Combat.LevelStartLoadout`.
+
 ## Combat (src/game/Combat.*)
 
 Health [O] (player globals `DAT_00fadb58`: health +0x628, regen clock +0x630/+0x634, invulnerability +0x638, last
@@ -2764,11 +2874,12 @@ damage type +0x63C):
   (`0x5D9E50` = (int) 1.0f at 0x8AB648), so it is always 1.0 [O].
 - PLAYER TAILORING [O] (`game::Tailoring`, `World::setTailoring`, saved per game): levels 0..2 in game state
   `DAT_00c59264` +0x3EF98 enemy health, +0x3EF9C ammunition capacity (copied to +0x3EFA0 at level load), +0x3EFA4 Lara's
-  health, +0x3EFA8 saving grabs, +0x3EFAC (no reader); `uiexperienceadjustmentmenu` natives 4..8; a preset (generalbank
+  health, +0x3EFA8 saving grabs, +0x3EFAC a fifth level read only by scripts; `uiexperienceadjustmentmenu` natives
+  6..10 set them ("Player tailoring"); a preset (generalbank
   script 132 fn 4, `SetPlayerTailoringLevel`) sets all five to 0 CASUAL EXPLORER / 1 TOMB RAIDER / 2 MASTER SURVIVALIST.
   Enemy health = the enemy's health block [level] (0x6E77B0, ≤ 0 → [1]). Capacity: Lara data u16 columns +0x868 / +0x87C /
   +0x872 per ammo slot (0x6EEAE0: uzi 400/240/160, shotgun 90/72/42, speargun 40/25/15), start amounts +0x848 / +0x85C /
-  +0x852 (0x6EE930, not used by ours), grenades g_grenade_thrower +0xE6 / +0xE4 / +0xE2 = 10 / 6 / 4 (0x6E7760).
+  +0x852 (0x6EE930: the same numbers, "Loadout"), grenades g_grenade_thrower +0xE6 / +0xE4 / +0xE2 = 10 / 6 / 4 (0x6E7760).
   Saving grabs [I]: difficulty `+0x14` frames 90 / 50 / 15 (TR7's savingGrabTime; no exe reader found, the getter
   0x6E7740 is only reachable from scripts): ours catches a ledge one-handed (`ledgeb_bad_attach_M`) when falling up to
   twice the grab limit (−13 → −26 units/frame [I]); jump plays `ledgeb_bad_attach_recover`, else she falls.
@@ -2790,7 +2901,7 @@ damage type +0x63C):
   +1 per pickup (+0xE8) and the empty start of every level: "Collectibles".
 - Death: at health ≤ 0 on the ground, `death_fall_normal` (fall) or `death_toknee` (other damage) plays [I]; DeathState
   (0x75AA50) fades the screen to black over 90 frames (wipe 10; `World::screenFade`) and respawns when it is black
-  (0x75AF90 -> 0x6F55A0 checkpoint reload, 3 s) [O]. The weapons, clips and reserves are kept [I].
+  (0x75AF90 -> 0x6F55A0 checkpoint reload, 3 s) [O]. The respawn restores the checkpoint save: "Checkpoints and respawn".
 - Hit reactions: the exe turns an accepted enemy hit (message 0x11C → 0x719DD0 → 0x6F5030) into a reaction by type
   (0x6EB590: type 1 light → state value +0x204, type 2 heavy → +0x208) and writes the attacker's angle from Lara's heading
   into the anim graph (0x6EB250; mirror flag 0x20 when positive), which picks the clip; the graph's thresholds are
@@ -2830,8 +2941,9 @@ pistols, 1 uzi/shotgun/speargun/rifle/tranq, 2 Thor's hammer; a new secondary re
   [O object deps of every pc-w\l<N>_*.drm unit: all load wp_handgun + wp_uzi; l1 / l7 wp_speargun, l3 wp_shotgun, l4
   wp_tranq, l6 wp_assault_rifle, l2 / l5 / l7_himalaya_end nothing else; no unit script names a wp_* but
   wp_thorhammer]: Mediterranean / Arctic speargun, Thailand / Jan Mayen / epilogue uzi, Croft Manor shotgun, Mexico
-  tranquilizer, Andaman Sea rifle; the prologue the pistols [I]. Every secondary starts the chapter with a full clip and
-  reserve [V: the original's WEAPON SELECTION after a fresh l4 load lists all five full, the tranquilizer equipped].
+  tranquilizer, Andaman Sea rifle; the prologue the shotgun (Croft Manor's list). Every secondary starts the chapter
+  with a full clip and its start amount = the maximum ("Loadout") [V: the original's WEAPON SELECTION after a fresh l4
+  load lists all five full, the tranquilizer equipped].
 - PDA WEAPON SELECTION's EQUIP (`World::equipWeapon`) makes the row's weapon the secondary with the rounds it has (no
   refill); in hand, Lara switches as with Change Weapon.
 - Saves: `combat` = weapon in hand, secondary, per weapon clips + reserve, adrenaline (`World::serializeCombat`); a load

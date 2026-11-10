@@ -132,6 +132,9 @@ struct GameConfig {
     bool subtitles = true, reticles = true, helperButtons = true, trainingText = true;
     // Text, voice and subtitle language: a locale::languageCode of locale::kInstallLanguages (ou-game rejects others).
     std::string language = "en";
+    // PLAYER TAILORING levels a game starts with (0 lenient .. 2 hard; 1 = the original's defaults): enemy health,
+    // ammunition capacity, damage to Lara, time for saving grabs. ou-game's menus write the player's choice back.
+    std::array<int, 4> tailoring{1, 1, 1, 1};
     bool operator==(const GameConfig&) const = default;
 };
 

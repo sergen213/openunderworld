@@ -889,10 +889,20 @@ public:
     // Drops every unit, loads `unit` at offset 0 + neighbours, spawns Lara (unit frame) at `spawn`, else
     // at checkpoint `checkpointId` of that unit, else at its player intro.
     void enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32_t checkpointId = 0);
-    // Respawn after death: last checkpoint, else the start unit's spawn (tru.exe restores the checkpoint save).
+    // Death (the black wipe's end, Combat.cpp) = tru.exe "Restore Game" 0x557130: the checkpoint save comes back
+    // (restoreCheckpointSave) and Lara is born at the checkpoint's intro, else the start unit's spawn, at full health.
     void respawn();
     const std::optional<CheckpointRef>& checkpoint() const { return checkpoint_; }
     void setCheckpoint(std::optional<CheckpointRef> c) { checkpoint_ = std::move(c); }
+    // The checkpoint save (docs/GAMEPLAY.md "Checkpoints and respawn"; tru.exe "Save Game" 0x5570F0): the world as it
+    // was at the end of the tick in which a checkpoint was activated, a reward was collected with a checkpoint active
+    // (0x5DB6A0 posts the checkpoint its activation again) or the level started (0x5D40C0 saves after Lara's birth):
+    // the clock, collected / born / found, grenades, the light, scripts (with music and reverb), enemies, vehicles,
+    // weapons with clips / reserves / adrenaline, objects with the physics scene, hinge limits and water levels.
+    // Null until the first tick ends (and after a load of a save without one: that tick's state stands in).
+    nlohmann::json serializeCheckpoint() const;
+    const nlohmann::json& checkpointSave() const { return checkpointSave_; }
+    void setCheckpointSave(nlohmann::json j) { checkpointSave_ = std::move(j), checkpointDue_ = false; }
     // Autosaves the scripts requested (uisavemenu 5, after cinematics); the app autosaves when it changes.
     uint32_t autosaveRequests() const { return autosaveRequests_; }
     std::set<int32_t> collected; // intro ids of picked-up items (Pickup::id); saved
@@ -933,8 +943,8 @@ public:
     // wetsuits' face mask (group 1) only while she swims and their stowed gear (2) never (GAMEPLAY.md "Thor's gear").
     uint32_t laraHiddenGroups() const;
     // Starts chapter `n` (kChapters) at its start unit's player intro and announces it; respawns fall back there.
-    // Throws as enterUnit.
-    void startChapter(int n);
+    // `chosen`: the secondary picked for a level started from the menu (chapterLoadout). Throws as enterUnit.
+    void startChapter(int n, std::optional<Weapon> chosen = std::nullopt);
     // The chapter-start message: generalbank's game script (type 6 fn 30) Sends id = chapter on its +924 channel
     // "mc_CinematicData"; the start unit's script receives it in OnMessage and enters state 1, which activates the
     // chapter's intro cinematic (l4 13929 -> 5484, l5 17775 -> 7530, l7 19597 -> 9071; GAMEPLAY.md "Chapter starts").
@@ -1042,9 +1052,10 @@ public:
     // PDA WEAPON SELECTION's EQUIP: `w` (a secondary, or Pistols for none) becomes the secondary with the clip and
     // reserve it already has (no refill); drawn, Lara switches to it as Change Weapon would.
     void equipWeapon(Weapon w);
-    // A chapter start: every secondary (uzi, shotgun, speargun, rifle, tranquilizer) full clip and reserve, the
-    // chapter's own one equipped (chapterSecondary) [I: the original's PDA lists them all, full, in a fresh l4 load].
-    void chapterLoadout(int chapter);
+    // A level start (tru.exe 0x7198D0): every secondary a full clip and its start amount in reserve (WeaponDef::
+    // startReserve at the AMMUNITION CAPACITY level), holstered; the secondary is `chosen` (the weapon picked for a
+    // level started from the menu) or else the level list's (chapterSecondary).
+    void chapterLoadout(int chapter, std::optional<Weapon> chosen = std::nullopt);
     // Weapons, clips, reserves and the adrenaline meter, for saves; restoreCombat holsters (nullptr / bad: unchanged).
     nlohmann::json serializeCombat() const;
     void restoreCombat(const nlohmann::json& j);
@@ -1054,9 +1065,12 @@ public:
     // Mjolnir carried: "wp_thorhammer" among her carried objects (250_val_hammer's end gives it; chapterGear from 6).
     bool hasHammer() const { return script_.playerObjects().contains("wp_thorhammer"); }
     // PLAYER TAILORING (Combat.hpp): Lara's max health (keeping its fraction), enemy health on (re)spawn, saving grab
-    // window, ammunition capacity (reserves / grenades over the new capacity are dropped). Saved with the game.
+    // window, ammunition capacity (reserves / grenades over the new capacity are dropped), and the levels the scripts
+    // read (uiexperienceadjustmentmenu; a script that sets one sets ours, World::tick). Saved with the game.
     void setTailoring(const Tailoring& t);
     const Tailoring& tailoring() const { return tailoring_; }
+    // GAME OPTIONS' training text and helper toggles as the scripts read them (uiexperienceadjustmentmenu 11 / 12).
+    void setHints(bool trainingText, bool metaIcons);
     int maxReserve(Weapon w) const { return anims_.weapons[size_t(w)].maxReserve[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
     int maxGrenades() const { return anims_.grenade.maxCarried[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
 
@@ -1180,6 +1194,8 @@ private:
     int32_t uberSectionJoint(int32_t uid, int32_t section) const; // the simulated joint moving the section, -1 none
     bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles): grip, push, let go
     void touchCheckpoints();
+    void restoreCheckpointSave(const nlohmann::json& save); // throws std::exception on a malformed one
+    void restoreWorldRuntime(const nlohmann::json& runtime); // serializeRuntime's hinge limits and water levels
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
     // Aim.cpp: manual aim, the head shot move, dual targeting, shot-only hit shapes, the two time scales.
@@ -1274,6 +1290,8 @@ private:
     std::optional<Spawn> startSpawn_;
     vec3 exteriorOrigin_{0};
     std::optional<CheckpointRef> checkpoint_;
+    nlohmann::json checkpointSave_; // serializeCheckpoint() of the last checkpoint save
+    bool checkpointDue_ = false;    // take it when this tick ends
     uint32_t autosaveRequests_ = 0;
     script::Runtime script_;
     ai::Enemies enemies_{&targets};

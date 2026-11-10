@@ -61,6 +61,7 @@ json toJson(const SaveGame& s) {
         {"camera", {{"yaw", s.cameraYaw}, {"pitch", s.cameraPitch}}},
         {"runtime", s.runtime},
         {"checkpoint", cp},
+        {"checkpointSave", s.checkpointSave},
         {"collected", s.collected},
         {"born", s.born},
         {"chapter", s.chapter},
@@ -87,6 +88,13 @@ json toJson(const SaveGame& s) {
 json migrate1to2(json j) {
     if (j.contains("checkpoint") && j["checkpoint"].is_number_integer())
         j["checkpoint"] = {{"unit", j.at("unit")}, {"id", j["checkpoint"]}};
+    return j;
+}
+
+// Version 2 had no checkpoint save (a death kept the world as it was): none, so the state the load's first tick ends
+// with stands in for it (World::tick).
+json migrate2to3(json j) {
+    j["checkpointSave"] = nullptr;
     return j;
 }
 
@@ -160,6 +168,17 @@ SaveGame fromJson(const json& j) {
     if (!s.combat.is_null() && !s.combat.is_object()) throw SaveError("combat state is not an object");
     s.objects = j.value("objects", json(nullptr));
     if (!s.objects.is_null() && !s.objects.is_object()) throw SaveError("object state is not an object");
+    s.checkpointSave = j.value("checkpointSave", json(nullptr));
+    if (!s.checkpointSave.is_null()) { // World::serializeCheckpoint's shape (World::respawn reads it)
+        const json& c = s.checkpointSave;
+        const auto has = [&](const char* key, bool (json::*is)() const noexcept) { return c.contains(key) && (c[key].*is)(); };
+        bool ok = c.is_object() && has("ticks", &json::is_number_unsigned) && has("collected", &json::is_array) && has("born", &json::is_array) &&
+                  has("found", &json::is_array) && c["found"].size() == 3 && has("grenades", &json::is_number_integer) &&
+                  has("flashlight", &json::is_boolean);
+        for (const char* key : {"script", "enemies", "vehicles", "combat", "objects", "runtime"}) ok = ok && has(key, &json::is_object);
+        ok = ok && c["runtime"].contains("playerUnit") && c["runtime"]["playerUnit"].is_string() && c["runtime"].contains("hingeLimits");
+        if (!ok) throw SaveError("bad checkpoint save");
+    }
     if (const auto r = j.find("reveal"); r != j.end() && r->is_object())
         for (const auto& [unit, points] : r->items())
             for (const auto& q : points) s.reveal[unit].push_back(vec(q));
@@ -287,6 +306,7 @@ SaveGame capture(const game::World& world) {
     s.cameraPitch = world.camera().pitch;
     s.runtime = world.serializeRuntime();
     s.checkpoint = world.checkpoint();
+    s.checkpointSave = world.checkpointSave();
     s.collected = world.collected;
     s.born = world.born;
     s.chapter = world.chapter;
@@ -342,6 +362,7 @@ void apply(const SaveGame& save, game::World& world) {
         world.restoreRuntime(save.runtime);
     }
     world.setCheckpoint(save.checkpoint);
+    world.setCheckpointSave(save.checkpointSave);
     world.collected = save.collected;
     world.born = save.born;
     world.chapter = save.chapter;
@@ -410,6 +431,7 @@ SaveGame parse(std::string_view bytes) {
         json j = json::parse(body);
         if (!j.is_object()) throw SaveError("body is not a JSON object");
         if (version == 1) j = migrate1to2(std::move(j));
+        if (version <= 2) j = migrate2to3(std::move(j));
         return fromJson(j);
     } catch (const json::exception& e) {
         throw SaveError(std::string("bad save data: ") + e.what());

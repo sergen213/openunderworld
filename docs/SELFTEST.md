@@ -209,6 +209,7 @@ speeds units/s; 3.1605 units = 1 cm. "Unavailable" probes report `null` and fail
 | `weapon.current`, `weapon.secondary` | `pistols uzi shotgun speargun thorhammer rifle tranquilizer` |
 | `weapon.drawn` | in hand (or being drawn) |
 | `weapon.clip`, `weapon.reserve` | rounds in the current weapon's gun(s); spare rounds |
+| `weapon.<name>.clip`, `weapon.<name>.reserve` | the same of the named weapon (`uzi`, `shotgun`, ...), in hand or not |
 | `weapon.grenades` | sticky grenades carried |
 | `weapon.shots_fired`, `weapon.health_packs_used` | counts since the level start |
 | `combat.has_target`, `combat.locked` | a soft or hard target; a hard lock |

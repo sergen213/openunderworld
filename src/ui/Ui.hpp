@@ -83,7 +83,10 @@ enum class Nav : uint8_t { Up, Down, Left, Right, Accept, Back, Delete, Alt };
 enum class Screen : uint8_t { None, Main, Pause, Load, Save, GameOptions, AudioVisual, Volume, Tailoring, Pda, Message, Confirm,
                               PdaSonar, PdaWeapons, PdaInventory, PdaItems, Revisit, Extras, ExtrasCategory, ExtrasView, Journal,
                               TailoringOptions, GfxDisplay, GfxSettings, GfxQuality, GfxRayTracing, GfxWater, GfxUpscaling,
-                              ControlConfig, ButtonConfig, GamepadConfig };
+                              ControlConfig, ButtonConfig, GamepadConfig, RevisitWeapon };
+// RevisitWeapon: after REVISIT LOCATION's chapter, the secondary weapon the level starts with (PdaData::weapons; tru.exe
+// keeps the choice for a level started from the menu at 0xE7F204, script native 0x77BD60, and gives it in place of the
+// level list's last weapon, 0x7198D0) [I: the page as the other PDA lists, not captured].
 // Continue: load the autosave, else the newest save (the app starts a new game when there is none). Save/Load/Delete act
 // on selectedSave() (Save: empty = a new slot). Hint/Answer: PDA Field Assistance.
 // Equip: PDA WEAPON SELECTION, the weapon in equipWeapon(). SonarReset: the sonar view's E (RESET VIEW). TreasureHunt: the
@@ -265,6 +268,7 @@ public:
     int equipWeapon() const { return equip_; }                     // after Action::Equip: PdaWeapon::weapon
     std::optional<PdaModel> pdaModel() const;                      // the model panel the current PDA page shows
     int revisitChapter() const { return revisit_; }                 // after Action::Revisit: kChapters index 1..7
+    int revisitWeapon() const { return revisitWeapon_; }            // and the PdaWeapon::weapon picked for it, -1 the level's own
     // The pc-w\image raw the EXTRAS screens show in uiImages[2] (the selected reward, "locked_concept" while locked);
     // empty elsewhere.
     std::string extrasImage() const;
@@ -342,6 +346,7 @@ private:
     int category_ = 0; // PdaItems: the INVENTORY category it shows
     int equip_ = 0;
     int revisit_ = 1;
+    int revisitWeapon_ = -1;
     int top_ = 0;          // PDA list pages, EXTRAS lists: first row shown
     int extras_ = 0;       // EXTRAS category (environment, character, gear, storyboards, trailers & credits, outfits)
     std::string selected_;

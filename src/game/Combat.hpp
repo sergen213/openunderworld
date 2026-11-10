@@ -20,8 +20,9 @@ namespace ou::game {
 // ---- PLAYER TAILORING (docs/GAMEPLAY.md "Player tailoring") ------------------------------------------
 // tru.exe keeps five levels 0..2 in its game state (DAT_00c59264): +0x3EF98 enemy health ("EnemyHP"), +0x3EF9C
 // ammunition capacity ("AmmoAdj"), +0x3EFA4 Lara's health ("PlayerHP", DAMAGE TO LARA), +0x3EFA8 saving grab time
-// ("SavingGrabAdj"), +0x3EFAC (no reader in tru.exe [U]); defaults 1 (0x6E7500). uiexperienceadjustmentmenu natives 4..8
-// set them; a preset sets all five to its level: 0 CASUAL EXPLORER, 1 TOMB RAIDER, 2 MASTER SURVIVALIST [O generalbank
+// ("SavingGrabAdj"), +0x3EFAC (`unknown`: no reader in tru.exe, unit scripts read it and compare with 2 [U what for]);
+// defaults 1 (0x6E7500). uiexperienceadjustmentmenu natives 6..10 set them, 13..17 read them (script::Runtime::
+// Experience); a preset sets all five to its level: 0 CASUAL EXPLORER, 1 TOMB RAIDER, 2 MASTER SURVIVALIST [O generalbank
 // script 132 fn 4]. Level 0 is the lenient end of each.
 struct Tailoring {
     int enemyHealth = 1, ammo = 1, laraHealth = 1, savingGrab = 1, unknown = 1;
@@ -197,6 +198,7 @@ struct WeaponDef {
     std::string object = "wp_handgun", ammo = "pr_handgunbullet";
     int ammoSlot = -1;            // S+0x04 (0xFF none): live count fadb58+0x51C + 2 slot, max-reserve table index
     std::array<int, 3> maxReserve{}; // Lara data +0x868 / +0x87C / +0x872 + 2 slot by Tailoring::ammo (0x6EEAE0); 0 without a slot
+    std::array<int, 3> startReserve{}; // a level start's count: +0x848 / +0x85C / +0x852 + 2 slot by Tailoring::ammo (0x6EE930)
     int pellets = 1;              // S+0x05
     int clip = 12;                // S+0x0B, rounds per gun; -1 (Mjolnir) no clip: never empties, never reloads
     bool infinite = true, dual = true; // S+0x88 bits 0x80 / 0x20
