@@ -2104,6 +2104,12 @@ int main(int argc, char** argv) {
                 if (const int level = (8000 - int(glm::distance(at, world->player().state().pos))) * int(c.a1) / 8000; level >= 1)
                     r.shock1(std::min<int>(c.a1, level + 0x32), c.a2 << 12);
         };
+        { // PLAYER TAILORING as the config has it (the original's defaults: every level 1); a loaded save brings its own
+            const auto& l = opt.game.tailoring;
+            ou::game::Tailoring t{l[0], l[1], l[2], l[3], 1};
+            if (const int p = t.preset(); p >= 0) t.unknown = p; // a preset sets the fifth level too
+            world->setTailoring(t);
+        }
         world->chapter = opt.level.empty() ? std::max(opt.chapter, 0) : std::max(0, ou::game::chapterOfUnit(unit));
         spawnFromIntro = !opt.spawn && world->currentUnit().data.spawn && world->currentUnit().data.spawn->fromIntro;
         world->script().setPlayerObjects(ou::game::chapterGear(world->chapter)); // a direct chapter start
@@ -2279,6 +2285,9 @@ int main(int argc, char** argv) {
     menus.sfxVolume = opt.game.sfxVolume, menus.musicVolume = opt.game.musicVolume, menus.cinematicVolume = opt.game.cinematicVolume;
     menus.subtitles = opt.game.subtitles, menus.reticles = opt.game.reticles;
     menus.helperButtons = opt.game.helperButtons, menus.trainingText = opt.game.trainingText;
+    menus.tailor = opt.game.tailoring; // PLAYER TAILORING; a loaded save's replace them in the menu, not in the config
+    if (const auto& l = menus.tailor; l[0] == l[1] && l[1] == l[2] && l[2] == l[3]) menus.tailoring = l[0];
+    std::array<int, 4> userTailor = opt.game.tailoring; // the levels the player last set: what the config keeps
     // GAME OPTIONS > CONTROL / GAMEPAD CONFIGURATION edit opt.input (mouse sensitivity 0..10 = 2^((v - 5) / 2.5), the
     // launcher's finer value staying until the slider moves; the stick layouts [I]; BUTTON CONFIGURATION rows: below).
     static constexpr struct { const char *move, *look, *name; } kStickLayouts[] = {
@@ -2393,7 +2402,8 @@ int main(int argc, char** argv) {
         if (menus.graphics != appliedGraphics) applyGraphics();
         const ou::config::GameConfig g{menus.sfxVolume, menus.musicVolume, menus.cinematicVolume, menus.subtitles,
                                        menus.reticles, menus.helperButtons, menus.trainingText,
-                                       std::string(ou::locale::languageCode(language))};
+                                       std::string(ou::locale::languageCode(language)), userTailor};
+        world->setHints(menus.trainingText, menus.helperButtons); // the scripts read both (uiexperienceadjustmentmenu 11 / 12)
         if (opt.configPath.empty() ||
             (g == opt.game && opt.input == opt.configInput && opt.gfx.brightness == opt.graphics.brightness && !graphicsDirty))
             return;
@@ -2654,13 +2664,14 @@ int main(int argc, char** argv) {
     std::optional<AutoKey> autoKey;
     auto autosaveKey = [&] { return AutoKey{world->chapter, world->checkpoint(), world->autosaveRequests()}; };
     auto autosaveHere = [&] { autoKey = autosaveKey(); };
-    auto startChapter = [&](int n, bool keepFinds) { // New Game / Treasure Hunt / REVISIT LOCATION
+    // New Game / Treasure Hunt / REVISIT LOCATION (`chosen`: the secondary picked on its weapon page)
+    auto startChapter = [&](int n, bool keepFinds, std::optional<ou::game::Weapon> chosen = std::nullopt) {
         showLoading(n);
         menuAudio(false, "game starts"), resetAudio("chapter start");
         try {
             if (!keepFinds) world->collected.clear(), world->found = {};
             world->script().restore(nlohmann::json::object());
-            world->startChapter(n);
+            world->startChapter(n, chosen);
             shownChapter = -1;
             autoKey = AutoKey{-1, {}, 0};
         } catch (const std::exception& e) {
@@ -2699,7 +2710,10 @@ int main(int argc, char** argv) {
             world->treasureHunt = true;
             startChapter(1, true);
             break;
-        case Action::Revisit: startChapter(menus.revisitChapter(), true); break; // PDA REVISIT LOCATION (Treasure Hunt)
+        case Action::Revisit: // PDA REVISIT LOCATION (Treasure Hunt): the chapter, then its secondary weapon
+            startChapter(menus.revisitChapter(), true,
+                         menus.revisitWeapon() >= 0 ? std::optional(ou::game::Weapon(menus.revisitWeapon())) : std::nullopt);
+            break;
         case Action::Outfit: { // EXTRAS OUTFITS: worn now (re-skinned next frame), kept in the profile
             world->wear(menus.outfit);
             auto p = profile;
@@ -2793,12 +2807,14 @@ int main(int argc, char** argv) {
         applyVolumes();
         if (std::exchange(languageChanged, false) | std::exchange(controlsChanged, false)) refreshPrompts();
         // PLAYER TAILORING: a preset picked (START NEW GAME) sets every level (game::Tailoring); GAME OPTIONS sets one.
-        if (menus.tailoring != tailoring || a == ou::ui::Action::NewGame)
+        if (menus.tailoring != tailoring || a == ou::ui::Action::NewGame) {
             world->setTailoring(ou::game::Tailoring::preset(menus.tailoring));
-        else if (menus.tailor != tailor) {
+            userTailor.fill(menus.tailoring), applyVolumes();
+        } else if (menus.tailor != tailor) {
             auto t = world->tailoring();
             t.enemyHealth = menus.tailor[0], t.ammo = menus.tailor[1], t.laraHealth = menus.tailor[2], t.savingGrab = menus.tailor[3];
             world->setTailoring(t);
+            userTailor = menus.tailor, applyVolumes();
         }
         act(a);
         const auto& t = world->tailoring(); // a loaded save's
@@ -3052,7 +3068,11 @@ int main(int argc, char** argv) {
             }
             if (opt.frames && frame > 30 && tickMs.empty()) world->tickTimes = {}; // after the warm-up frames, as frameMs
             const uint64_t tickStart = SDL_GetTicksNS(), unitsBefore = world->unitsVersion();
+            const uint32_t respawnsBefore = world->respawns();
             world->tick(a);
+            // A death restored the checkpoint save: the level reload stops every sound (tru.exe 0x5DAB40 -> 0x593D10) and
+            // the music / reverb are the save's again, as after a load.
+            if (world->respawns() != respawnsBefore) resetAudio("respawn"), resumeAudio("respawn");
             if (selfTest) selfTest->observe(*world);
             if (opt.frames && frame > 30) tickMs.push_back(double(SDL_GetTicksNS() - tickStart) * 1e-6);
             if (world->unitsVersion() != unitsBefore) // streaming cost on the main thread (ROADMAP "Unit streaming")
@@ -3436,7 +3456,7 @@ int main(int argc, char** argv) {
         const ou::ui::Screen scr = menus.screen();
         const bool pdaPage = scr == ou::ui::Screen::Pda || scr == ou::ui::Screen::PdaWeapons || scr == ou::ui::Screen::PdaInventory ||
                              scr == ou::ui::Screen::PdaItems || scr == ou::ui::Screen::Revisit ||
-                             scr == ou::ui::Screen::Journal;
+                             scr == ou::ui::Screen::RevisitWeapon || scr == ou::ui::Screen::Journal;
         if (scr == ou::ui::Screen::PdaSonar && shownScreen != scr) resetSonar(), shownSonarSize = {}; // opens behind Lara
         shownScreen = scr;
         if (pdaPage) // pda_bg_960 for narrow windows (ui::Menus::drawPda)

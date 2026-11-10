@@ -363,7 +363,8 @@ nlohmann::json stateOf(const Object& o) {
     }
     if (o.state == 0 && !o.inside && !o.firstIn && !o.hidden && !o.dead && o.engagement < 0 && o.offset == vec3(0) && fields.empty() && strings.empty() && properties.empty() && !o.spline &&
         (!o.joint || o.joint->position == 0) && !o.loose && o.holds.empty() && (!o.lastAt || *o.lastAt == o.pos + o.offset) &&
-        (!o.graph || (o.graph->state == o.graph->initial && o.graph->transition < 0 && o.graph->frames == 0 && o.graph->t == 0)))
+        (!o.graph || (o.graph->state == o.graph->initial && o.graph->transition < 0 && o.graph->frames == 0 && o.graph->t == 0 &&
+                      (o.graph->set->graph || o.graph->clip < 0)))) // a graphless object's single clip (`animated` 1) just started is state
         return nullptr; // birth state
     nlohmann::json out = {{"state", o.state}, {"t", o.t}, {"inside", o.inside}, {"firstIn", o.firstIn},
             {"offset", {o.offset.x, o.offset.y, o.offset.z}}, {"hidden", o.hidden}, {"dead", o.dead}, {"engagement", o.engagement}, {"scriptFields", std::move(fields)},
@@ -401,11 +402,12 @@ void applyState(Object& o, const nlohmann::json* s) {
     if (auto& g = o.graph) { // the intro's state (Runtime::addUnit), or the saved one
         g->state = g->initial, g->transition = -1, g->frames = 0, g->clip = -1, g->t = 0, g->loop = false;
         const auto* G = g->set->graph ? &*g->set->graph : nullptr;
+        // (An object without a graph plays single clips, `animated` 1: its clip and time are saved the same way.)
         if (const auto a = s && s->is_object() ? s->find("graph") : nlohmann::json::const_iterator{}; s && s->is_object() && a != s->end() &&
-            a->is_array() && a->size() == 6 && G) {
+            a->is_array() && a->size() == 6) {
             const int state = (*a)[0], transition = (*a)[1], clip = (*a)[3];
-            if (state >= 0 && size_t(state) < G->states.size()) g->state = state;
-            if (transition >= 0 && size_t(transition) < G->transitions.size()) g->transition = transition;
+            if (G && state >= 0 && size_t(state) < G->states.size()) g->state = state;
+            if (G && transition >= 0 && size_t(transition) < G->transitions.size()) g->transition = transition;
             g->frames = (*a)[2], g->t = (*a)[4], g->loop = (*a)[5];
             if (clip >= 0 && size_t(clip) < g->set->clips.size()) g->clip = clip;
         } else if (G && G->states[size_t(g->state)].anim >= 0) {
@@ -944,6 +946,12 @@ void Runtime::callback(int32_t uid, const char* base, size_t prototype, std::spa
         }
 }
 
+void Runtime::contactDamage(int32_t attacker) {
+    if (!playerScript_) return;
+    const std::array args{vm::Value::object(attacker), vm::Value::object(playerScript_->uid), vm::Value::scalar(0), vm::Value::scalar(0)};
+    callback(attacker, "instance", 34, args);
+}
+
 void Runtime::run(int32_t uid, int16_t vt, std::span<const vm::Value> args) {
     const auto self = instance(uid);
     if (!self || !self->program) return;
@@ -1123,9 +1131,11 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 weather_.lightningMin = int32_t(nc.args[0].bits), weather_.lightningMax = int32_t(nc.args[1].bits);
                 return true;
             }
-            if (!std::strcmp(name, "larabase") && (nc.function == 59 || nc.function == 60) && nc.args.empty()) {
-                // INSTANCE_Post(player, 0x1D5 | 0x1D6, 0) (0x778020 / 0x778040); the message's meaning is [U].
-                events_.push_back({EventKind::PlayerMessage, source, nc.function == 59 ? 0x1D5 : 0x1D6, tick_});
+            if (!std::strcmp(name, "larabase") && (nc.function == 58 || nc.function == 59 || nc.function == 60) && nc.args.empty()) {
+                // INSTANCE_Post(player, 0x1D4 | 0x1D5 | 0x1D6, 0) (0x778000 / 0x778020 / 0x778040); the messages' meaning
+                // is [U]. 0x1D4 comes from l5_valgrind's steam columns (fx_steam_val_column vt 14) just before they take
+                // 250 health: [I] the scald that makes her let go; ours only records it.
+                events_.push_back({EventKind::PlayerMessage, source, int32_t(0x1D4 + nc.function - 58), tick_});
                 return true;
             }
             // larabase 52 (thunk 0x79A4B0 -> 0x777DD0): INSTANCE_Post 0x85 to the bike in the instanceref argument and to
@@ -1615,11 +1625,22 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 nc.result = vm::Value::object(auxiliary(program, m->argTypeId)->uid);
                 return true;
             }
-            // Experience-adjustment settings (registration 0x7AEDE0; fns 13-18 read the options block at
-            // [0xC59264]+0x3EF94..0x3EFAC, e.g. fn 17 -> +0x3EFAC that unit Run() compares with 2 "master
-            // survivalist"). We have no such menu: every setting reads 0 [I: the defaults].
+            // Experience-adjustment settings (registration 0x7AEDE0, thunks 0x7A06B0..0x7A07F0 -> 0x77BA80..0x77BB60) [O]:
+            // 4 SetTrainingText (+0x3EFB1), 5 set +0x3EFB0, 6 EnemyHP (+0x3EF98), 7 AmmoAdj (+0x3EF9C), 8 PlayerHP
+            // (+0x3EFA4), 9 SavingGrabAdj (+0x3EFA8), 10 the fifth (+0x3EFAC); 11..17 read them in that order, 18 the
+            // preset (+0x3EF94). Levels above 2 are refused (0x6E75A0..). Unit Run() scripts compare 17 with 2.
+            // 0..3 [U] (the menu's own entries; ours is src/ui) read 0.
             if (!std::strcmp(name, "uiexperienceadjustmentmenu")) {
-                nc.result = vm::Value::scalar(0);
+                Experience& e = experience_;
+                const uint32_t fn = nc.function, arg = nc.args.empty() ? 0 : nc.args[0].bits;
+                uint32_t result = 0;
+                if (fn == 4 || fn == 5) (fn == 4 ? e.trainingText : e.metaIcons) = arg != 0, experienceSet_ = true;
+                else if (fn >= 6 && fn <= 10 && !nc.args.empty() && arg < 3) e.levels[fn - 6] = int(arg), experienceSet_ = true;
+                else if (fn == 11) result = e.trainingText;
+                else if (fn == 12) result = e.metaIcons;
+                else if (fn >= 13 && fn <= 17) result = uint32_t(e.levels[fn - 13]);
+                else if (fn == 18) result = uint32_t(e.preset);
+                nc.result = vm::Value::scalar(result);
                 return true;
             }
             if (!std::strcmp(name, "checkpointbase") && nc.function == 3 && nc.args.empty()) {

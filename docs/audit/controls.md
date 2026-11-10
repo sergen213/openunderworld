@@ -105,8 +105,8 @@ Status vocabulary: `NOT IMPLEMENTED`, `PARTIALLY IMPLEMENTED`, `IMPLEMENTED BUT 
 | Shoot | H / Left Mouse, one pistol | `fire` on the bike (pistols / uzi) | IMPLEMENTED | ROADMAP row "Motorcycle" | GAMEPLAY.md:541 still says "no bike shooting yet" (doc stale vs ROADMAP / Combat.cpp:1196) |
 | Headlight | F | `light` | unknown | part B | |
 | Accelerate / reverse / steer | W / S / A D | raw move stick | IMPLEMENTED | `tests/test_vehicle.cpp` | |
-| Brake / power slide | Space | hand brake on **drop (Ctrl)**; Space = hop [I] (Vehicle.cpp:319) | PARTIALLY IMPLEMENTED (works, differs from the original) | Vehicle.cpp:310-341 | Original binds Vehicle Brake to Space (button 22 [O]); ours moved it to Ctrl and gave Space a hop the original may not have |
-| Fast start / speed burst | Hold brake + Forward, release brake | `BikeStunt::Burnout` (throttle + hand brake, `burnoutCharge`) | IMPLEMENTED BUT UNVERIFIED | Vehicle.cpp:329-366; tuning record [O], state logic from 0x790E40 | Key differs as above |
+| Brake / power slide | Space | hand brake on the jump action (Space / pad A); no hop (Wine: GAMEPLAY.md "Motorcycle") | IMPLEMENTED | Vehicle.cpp:310-341 | Original binds Vehicle Brake to Space (button 22 [O]); ours moved it to Ctrl and gave Space a hop the original may not have |
+| Fast start / speed burst | Hold brake + Forward, release brake | burnout + launch charge (0x793680 bits 23 / 22): 10 x torque for 0.1 s | VERIFIED AGAINST ORIGINAL (Wine ref_launch.txt, `VehicleReal.LevelGroundManoeuvresMatchTheOriginal`) | Vehicle.cpp:329-366; tuning record [O], state logic from 0x790E40 | Key differs as above |
 | Donut / fast turn | Fast start + steer; or brake + steer at speed | `BikeStunt::Donut` / `PowerSlide` | IMPLEMENTED BUT UNVERIFIED | Vehicle.cpp:332-378 | ROADMAP "Planned" section still says not done (stale) |
 
 ## Rules (HUD, health, saving): pointers only, audited in part B

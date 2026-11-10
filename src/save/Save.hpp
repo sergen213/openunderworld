@@ -15,7 +15,7 @@
 
 namespace ou::save {
 
-inline constexpr int kVersion = 2; // written version; parse() migrates 1 -> 2
+inline constexpr int kVersion = 3; // written version; parse() migrates 1 -> 2 -> 3
 
 struct SaveError : std::runtime_error {
     using std::runtime_error::runtime_error;
@@ -34,6 +34,7 @@ struct SaveGame {
     float cameraYaw = 0, cameraPitch = -0.25f;
     nlohmann::json runtime; // World::serializeRuntime() (orbit camera lag, hair, scripts' player unit); null (older saves) = seeded afresh
     std::optional<game::CheckpointRef> checkpoint;
+    nlohmann::json checkpointSave; // World::checkpointSave() (what a death restores); null (version 2) = the state at the load
     std::set<int32_t> collected; // World::collected (pickup intro ids)
     std::set<int32_t> born;      // World::born (treasures out of their broken urns)
     int chapter = 0; // game::kChapters index; saves without it: chapterOfUnit(unit), else 0

@@ -25,6 +25,9 @@ public:
     //   wait SECONDS
     //   push FORWARD RIGHT SECONDS [ACTION] hold ACTION (interact), after 6 ticks the raw stick too (push blocks, handles)
     //   near R                      log the markup polylines within R units of Lara (poles, ledges)
+    //   ride X Y [R] [THROTTLE] [SPEED] on the motorcycle: steer to (X, Y) with the raw stick until within R (default 300),
+    //                               (or once past it), throttle THROTTLE (default 1) while slower than SPEED units/s,
+    //                               coasting above it, braking above 1.25 SPEED
     // A step that does not finish in 20 s fails the plan (logged; the script so far is still written).
     static Autopilot load(const std::filesystem::path& plan, std::filesystem::path out);
     // The same plan syntax from text, nothing written (ou-game --self-test steps, app/game/SelfTest.hpp). Throws
@@ -52,6 +55,7 @@ private:
     std::string failure_;
     std::filesystem::path out_;
     std::map<std::string, float> held_; // the recorded value of each action
+    glm::vec2 rideFrom_{0};             // `ride`: where the step began (a waypoint passed wide still counts)
     std::string script_;
     bool written_ = false;
 };

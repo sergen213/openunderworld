@@ -305,7 +305,7 @@ void pdaBackground(Canvas& c) {
 
 bool radial(Screen s) { return s == Screen::Main || s == Screen::Pause; }
 bool slots(Screen s) { return s == Screen::Load || s == Screen::Save; }
-bool pdaList(Screen s) { return s == Screen::Revisit || s == Screen::Journal; }
+bool pdaList(Screen s) { return s == Screen::Revisit || s == Screen::RevisitWeapon || s == Screen::Journal; }
 bool gfx(Screen s) { return s >= Screen::GfxDisplay && s <= Screen::GfxUpscaling; }
 int choiceIndex(const Item& it) {
     return std::clamp((*it.choice - it.choiceMin) / it.choiceStep, 0, std::max(0, int(it.choices.size()) - 1));
@@ -710,8 +710,15 @@ std::vector<Item> Menus::itemsOf(Screen screen) {
         return v;
     }
     case Screen::Revisit: { // the chapters by name (52..58), their loading-screen story beside [I: not captured]
+        std::vector<Item> v; // each opens the weapon choice when the PDA lists secondaries, else starts the chapter
+        for (int16_t c = 1; c <= 7; ++c)
+            v.push_back({.stringId = int16_t(51 + c), .action = Action::Revisit,
+                         .opens = pda.weapons.empty() ? Screen::None : Screen::RevisitWeapon, .message = int16_t(59 + c)});
+        return v;
+    }
+    case Screen::RevisitWeapon: { // the secondary the level starts with
         std::vector<Item> v;
-        for (int16_t c = 1; c <= 7; ++c) v.push_back({.stringId = int16_t(51 + c), .action = Action::Revisit, .message = int16_t(59 + c)});
+        for (const auto& w : pda.weapons) v.push_back({.stringId = w.name, .action = Action::Revisit});
         return v;
     }
     case Screen::None: break;
@@ -881,6 +888,7 @@ Action Menus::activate(Item it) {
     const Screen scr = screen();
     if (it.opens != Screen::None) {
         if (it.opens == Screen::Message) message_ = it.message;
+        if (it.opens == Screen::RevisitWeapon) revisit_ = cursor_ + 1;
         open(it.opens);
         return Action::None;
     }
@@ -901,7 +909,10 @@ Action Menus::activate(Item it) {
     }
     if (it.action == Action::Hint) return Action::Hint;
     if (it.action == Action::Equip) equip_ = pda.weapons[size_t(cursor_)].weapon;
-    if (it.action == Action::Revisit) revisit_ = cursor_ + 1;
+    if (it.action == Action::Revisit) {
+        if (scr == Screen::RevisitWeapon) revisitWeapon_ = pda.weapons[size_t(cursor_)].weapon;
+        else revisit_ = cursor_ + 1, revisitWeapon_ = -1;
+    }
     if (it.action == Action::Resume || it.action == Action::NewGame || it.action == Action::Continue || it.action == Action::Load ||
         it.action == Action::TreasureHunt || it.action == Action::Revisit)
         close();
@@ -1390,7 +1401,8 @@ void Menus::drawPdaList(Canvas& c, const locale::Strings& s) {
     const Screen scr = screen();
     const auto list = items();
     auto line = [&](float x0, float x1, float y, uint32_t col) { vrect(c, pdaX(x0), pdaY(y), (x1 - x0) * 2 / 3, pdaY(1.3f), col); };
-    capText(c, pdaX(kPdaListHeadX), pdaY(kPdaHeadCap), kPdaItemScale, s.get(scr == Screen::Revisit ? 1082 : 1144), kPdaHead);
+    capText(c, pdaX(kPdaListHeadX), pdaY(kPdaHeadCap), kPdaItemScale,
+            s.get(scr == Screen::Revisit ? 1082 : scr == Screen::RevisitWeapon ? 1100 : 1144), kPdaHead);
     line(kPdaListX, kPdaHeadRight, kPdaHeadLine, kPdaHead);
     for (int r = 0; r < kPdaListRows && top_ + r < int(list.size()); ++r) {
         const float cap = kPdaListCap + kPdaListStep * float(r);
@@ -1409,15 +1421,16 @@ void Menus::drawPdaList(Canvas& c, const locale::Strings& s) {
         capText(c, pdaX(kPdaPaneTitleX), pdaY(kPdaPaneTitleCap), kPdaPaneScale, s.get(it.stringId), kPdaHead, kPdaPaneTrack);
         line(kPdaPaneLineX, kPdaPaneRight, kPdaPaneLine, kPdaHead);
         float cap = kPdaPaneCap;
-        for (const auto& l : fontWrap(c, s.get(it.message), pdaY(kPdaPaneW), kPdaPaneScale, kPdaPaneTrack))
-            capText(c, pdaX(kPdaPaneX), pdaY(cap), kPdaPaneScale, l, kWhite, kPdaPaneTrack), cap += kPdaPaneStep;
+        if (it.message) // the weapon choice has a title only
+            for (const auto& l : fontWrap(c, s.get(it.message), pdaY(kPdaPaneW), kPdaPaneScale, kPdaPaneTrack))
+                capText(c, pdaX(kPdaPaneX), pdaY(cap), kPdaPaneScale, l, kWhite, kPdaPaneTrack), cap += kPdaPaneStep;
     }
     const float cap = pdaY(kPdaFootCap);
     auto left = [&](float x, int16_t id) {
         capText(c, pdaX(x), cap, kPdaSmall, s.get(id), kWhite, kPdaTracking);
     };
     left(kPdaFootBack, 375);
-    if (scr == Screen::Revisit) left(kPdaFootSelect, 120);
+    if (scr == Screen::Revisit || scr == Screen::RevisitWeapon) left(kPdaFootSelect, 120);
 }
 
 void Menus::drawMessage(Canvas& c, const locale::Strings& s) {

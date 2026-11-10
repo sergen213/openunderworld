@@ -1,5 +1,5 @@
 // Lara's motorcycle: tuning and Havok vehicle data from motorcycle.drm, mount / ride / dismount with the original clips,
-// the ride simulated by physics::Scene (Jolt vehicle on the level collision), hops, fall damage, ramming enemies, bike
+// the ride simulated by physics::Scene (Jolt vehicle on the level collision), the launch, fall damage, ramming enemies, bike
 // state in saves. Numbers and what is inferred: docs/GAMEPLAY.md "Motorcycle".
 #include "game/Game.hpp"
 
@@ -96,6 +96,8 @@ BikeTuning loadBikeTuning(const cdc::Drm& drm) {
     // ponytail: first gear only; the record has one (+0x70 = 1), more would need Jolt gears and 0x791D10's shift rpm.
     t.gearRatio = f(0x54);
     t.reverseRatio = f(0x6C), t.reverseSpeed = f(0x74) * kMphToUnits, t.reverseTorque = f(0xBC);
+    t.reverseDelay = (f(0x1F8) + 1) / 30;
+    t.launchRpm[0] = f(0x88), t.launchRpm[1] = f(0x8C), t.launchCharge = f(0x1C4), t.launchTime = f(0x1C0), t.launchTorque = f(0x0C);
     for (int i = 0; i < 3; ++i) t.rpm[i] = f(0x78 + 4 * uint32_t(i)), t.torque[i] = f(0x90 + 4 * uint32_t(i));
     t.springHz = f(0xA4), t.springDamping = f(0xA8);
     t.forceRaise = f(0x28);
@@ -307,16 +309,18 @@ void World::ramEnemies(Bike& b) {
 // The rider's input for the bike's next physics step (World::stepPhysics simulates it, readBikes takes the result).
 // Throttle / brake / reverse follow 0x790E40's states: back while rolling forward faster than stopSpeed (and throttle
 // while rolling back) brakes, back below it reverses; with no input under stopSpeed the brakes hold it; above it the
-// bike coasts. The brakes bite over brakeRamp (0x792900); the hand brake (drop) over handBrakeRamp, without drive.
+// bike coasts; standing, the reverse gear takes after the brake has been held reverseDelay. The brakes bite over
+// brakeRamp (0x792900); the hand brake over handBrakeRamp, without drive. The hand brake is the jump key: tru.exe's
+// "Vehicle Brake" (button 22, Space by default); the bike has no hop (none in 0x790E40's states or the record).
 // Stunts (0x790E40 states 7 / 11 / 10): throttle + hand brake = burnout (no drive, the rear wheel spins up); with the
 // stick past half (0x790920 / 0x7918B0) and below slideSpeed it becomes a donut; brake or hand brake with the stick
 // past half above slideSpeed is a power slide. Lean and air control: 0x793680 (BikeTuning).
-void World::driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt) {
+void World::driveBike(Bike& b, const Actions& a, float dt) {
     const BikeTuning& t = anims_.bike;
-    if (b.hopT >= 0) b.hopT += dt;
+    if (b.airT >= 0) b.airT += dt;
     if (b.landT >= 0) b.landT += dt;
     const float throttle = std::max(0.0f, a.move.y), back = std::max(0.0f, -a.move.y), v = b.speed, stick = -a.move.x;
-    const bool hand = a.drop, turning = std::abs(stick) > 0.5f, braking = (back > 0 && v > t.stopSpeed) || hand;
+    const bool hand = a.jump, turning = std::abs(stick) > 0.5f, braking = (back > 0 && v > t.stopSpeed) || hand;
     // Steering (tru.exe 0x793680): the wheel limit and its rate blend from the low- to the high-speed values over
     // [steerFraction, 1] * maxSpeed; Jolt turns the front wheel to it (+ steer = left).
     const float lo = t.steerFraction * t.maxSpeed;
@@ -350,15 +354,34 @@ void World::driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt) {
     const auto ramp = [](float x, float over) { return std::min(1.0f, x / std::max(over, 1e-3f)); };
     const int rear = int(std::ranges::find_if(t.wheels, [](const BikeTuning::Wheel& w) { return !(w.flags & 1); }) - t.wheels.begin());
     const float out = -float(b.stuntDir); // model +X is the bike's left; the rear swings out of the turn [I sign]
+    // Launch (0x793680 bits 23 / 22): revving against the brake charges it; the brake let go with the throttle held
+    // fires it, the throttle let go first drops it.
+    const bool revving = throttle > 0 && hand;
+    if (revving) {
+        if (b.launchCharge <= 0) b.launchRpm = std::max(t.rpm[2] * std::abs(v) / t.maxSpeed, t.launchRpm[0]); // +0x774: not below the engine's now
+        b.launchCharge = std::min(b.launchCharge + dt, t.launchCharge), b.launchT = -1;
+        b.launchRpm = std::max(b.launchRpm, std::min(glm::mix(t.launchRpm[0], t.launchRpm[1], b.launchCharge / std::max(t.launchCharge, 1e-3f)), t.launchRpm[1]));
+    } else if (b.launchT < 0 && b.launchCharge > 0) {
+        if (throttle > 0 && !b.air) b.launchT = 0;
+        else b.launchCharge = 0;
+    }
+    // 0x790E40 state 3: the counter runs while only the brake is held at a standstill and is cleared when the reverse
+    // gear takes, so a hold cut short keeps what it counted (Wine: 0.14 s after an earlier brake to a stop, else 0.25 s).
+    if (back > 0 && throttle == 0 && !hand && std::abs(v) < t.stopSpeed) b.reverseT += dt;
+    else if (b.reverseT > t.reverseDelay || throttle > 0 || std::abs(v) >= t.stopSpeed) b.reverseT = 0;
     bool brakes = false;
     switch (b.stunt) {
     case BikeStunt::None:
         if (hand) d.handBrake = ramp(b.brakeT, t.handBrakeRamp), brakes = true;
         else if (throttle > 0 && v > -t.stopSpeed) d.forward = throttle;
-        else if (back > 0 && v < t.stopSpeed) d.forward = back, d.reverse = true;
+        else if (back > 0 && (v <= -t.stopSpeed || b.reverseT > t.reverseDelay)) d.forward = back, d.reverse = true;
         else if (throttle > 0 || back > 0 || std::abs(v) < t.stopSpeed) {
             d.brake = ramp(b.brakeT, t.brakeRamp) * (throttle + back > 0 ? throttle + back : 1.0f);
             brakes = true;
+        }
+        if (b.launchT >= 0) {
+            if (b.launchT >= t.launchTime || d.forward <= 0 || d.reverse) b.launchT = -1, b.launchCharge = 0;
+            else d.rpm = b.launchRpm, d.torqueScale = t.launchTorque * std::min(1.0f, b.launchCharge / std::max(t.launchCharge, 1e-3f)), b.launchT += dt;
         }
         d.lean = b.air ? 0.0f : steerFrac * std::min(1.0f, std::abs(v) / std::max(1.0f, t.leanSpeed * t.maxSpeed)) * t.leanMax;
         break;
@@ -381,13 +404,13 @@ void World::driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt) {
         break;
     }
     b.brakeT = brakes ? b.brakeT + dt : 0.0f;
+    if (b.stunt != BikeStunt::None && !revving) b.launchT = -1, b.launchCharge = 0;
     if (b.air) { // air control (0x793680 with no wheel on the ground)
         const float k = steerFrac * v / t.maxSpeed;
         d.yawTorque = t.airYaw * k, d.sideForce = t.airSide * k;
     }
     d.right = -b.steer / std::max(t.steerLow, 1e-3f);
     b.drive = d, b.throttle = d.forward;
-    if (!b.air && jumpPressed) b.kick.z += t.hopSpeed, b.hopT = 0; // hop [I]
 }
 
 // The ridden bike for physics::Scene (its ride phase only; mounting, dismounting and parked bikes stand where they are).
@@ -421,10 +444,10 @@ void World::readBikes(float dt) {
     b.vel = st->vel, b.speed = glm::dot(st->vel, fwd);
     b.rpm = std::clamp(t.rpm[2] * std::abs(b.speed) / t.maxSpeed, t.rpm[0], t.rpm[2]); // 0x791D10: from the wheel speed
     const bool air = st->contacts == 0;
-    if (air && !b.air) b.airStartZ = p.z;
+    if (air && !b.air) b.airStartZ = p.z, b.airT = 0;
     if (air && b.airStartZ - p.z >= t.fallMax && !health_.dead()) damageLara(t.damageLethal, p, kDamageAbsolute); // in-air lethal check
     if (!air && b.air) { // landing damage (tru.exe 0x793680 state 2, fall = take-off z - landing z, damage type 8)
-        b.landT = 0, b.hopT = -1;
+        b.landT = 0, b.airT = -1;
         const float fall = b.airStartZ - p.z;
         if (fall > t.fallMin && !health_.dead()) {
             const float dmg = fall > t.fallMid
@@ -448,8 +471,8 @@ void World::readBikes(float dt) {
 }
 
 bool World::tickVehicles(const Actions& a, float dt) {
-    const bool interactPressed = a.interact && !bikeInteractHeld_, jumpPressed = a.jump && !bikeJumpHeld_;
-    bikeInteractHeld_ = a.interact, bikeJumpHeld_ = a.jump;
+    const bool interactPressed = a.interact && !bikeInteractHeld_;
+    bikeInteractHeld_ = a.interact;
     for (auto& [uid, b] : bikes_)
         b.prevPos = b.pos + bikeOffset(b), b.prevYaw = b.yaw, b.prevPitch = b.pitch, b.prevRoll = b.roll, b.prevSteer = b.steer,
         b.prevWheel = b.wheel, b.prevRearWheel = b.rearWheel;
@@ -507,21 +530,21 @@ bool World::tickVehicles(const Actions& a, float dt) {
         break;
     }
     case BikePhase::Ride: {
-        driveBike(b, a, jumpPressed, dt); // input; the step and Lara's seat follow in stepPhysics / readBikes
+        driveBike(b, a, dt); // input; the step and Lara's seat follow in stepPhysics / readBikes
         if (interactPressed && !b.air && std::abs(b.speed) < t.dismountSpeed)
             b.phase = BikePhase::Dismount, b.t = 0, b.speed = 0, b.vel = vec3(0), b.roll = b.prevRoll = 0, b.stunt = BikeStunt::None;
         s.pos = b.pos + bikeOffset(b), s.yaw = b.yaw, s.pitch = b.pitch, s.roll = b.roll;
         const float v = b.speed, steer = a.move.x;
         const double next = s.clipTime + dt;
         const auto side = [&](bool left, std::string_view l, std::string_view r) { playClip(left ? l : r, true, next); };
-        if (b.air && b.hopT >= 0 && b.hopT < 0.4f) playClip("motorcycle:motorcycle_jump", false, next);
+        if (b.air && b.airT >= 0 && b.airT < 0.4f) playClip("motorcycle:motorcycle_jump", false, next);
         else if (b.air && std::abs(steer) > 0.5f) side(steer < 0, "motorcycle:motorcycle_air_tilt_left", "motorcycle:motorcycle_air_tilt_right");
         else if (b.air) playClip("motorcycle:motorcycle_jump_inair", true, next);
         else if (b.landT >= 0 && b.landT < 0.6f) playClip("motorcycle:motorcycle_jump_land", false, next);
         else if (b.stunt == BikeStunt::Donut) side(b.stuntDir > 0, "motorcycle:motorcycle_donut_left", "motorcycle:motorcycle_donut_right");
         else if (b.stunt == BikeStunt::PowerSlide) side(b.stuntDir > 0, "motorcycle:motorcycle_power_skid_left", "motorcycle:motorcycle_power_skid_right");
         else if (b.stunt == BikeStunt::Burnout) playClip("motorcycle:motorcycle_accelerate_loop", true, next); // [I] clip
-        else if (a.drop && v > 300) playClip("motorcycle:motorcycle_hard_brake", true, next);
+        else if (a.jump && v > 300) playClip("motorcycle:motorcycle_hard_brake", true, next);
         else if (v < -60) side(steer < 0, "motorcycle:motorcycle_reverse_left", "motorcycle:motorcycle_reverse_right");
         else if (v < 60 && a.move.y <= 0) playClip("motorcycle:motorcycle_idle_foot_down", true, next);
         else if (a.move.y < 0 && v > 300) playClip("motorcycle:motorcycle_braking", true, next);
@@ -565,7 +588,8 @@ nlohmann::json World::serializeVehicles() const {
                          {"roll", b.roll}, {"speed", b.speed}, {"steer", b.steer}, {"wheel", b.wheel}, {"rearWheel", b.rearWheel}, {"air", b.air},
                          {"stunt", int(b.stunt)}, {"stuntT", b.stuntT}, {"stuntDir", b.stuntDir},
                          {"vel", {b.vel.x, b.vel.y, b.vel.z}}, {"airStartZ", b.airStartZ - bikeOffset(b).z},
-                         {"kick", {b.kick.x, b.kick.y, b.kick.z}}, {"brakeT", b.brakeT}, {"hopT", b.hopT}, {"landT", b.landT},
+                         {"kick", {b.kick.x, b.kick.y, b.kick.z}}, {"brakeT", b.brakeT}, {"airT", b.airT}, {"landT", b.landT},
+                         {"launchCharge", b.launchCharge}, {"launchT", b.launchT}, {"launchRpm", b.launchRpm}, {"reverseT", b.reverseT},
                          {"phase", std::string(bikePhaseName(b.phase))}, {"t", b.t}});
     return {{"riding", riding_}, {"mounts", bikeMounts}, {"bikes", bikes}};
 }
@@ -586,7 +610,9 @@ void World::restoreVehicles(const nlohmann::json& j) {
         b.air = e.value("air", false);
         if (e.contains("vel")) b.vel = v3(e["vel"]);
         if (e.contains("kick")) b.kick = v3(e["kick"]);
-        b.brakeT = e.value("brakeT", 0.0f), b.hopT = e.value("hopT", -1.0f), b.landT = e.value("landT", -1.0f);
+        b.brakeT = e.value("brakeT", 0.0f), b.airT = e.value("airT", -1.0f), b.landT = e.value("landT", -1.0f);
+        b.launchCharge = e.value("launchCharge", 0.0f), b.launchT = e.value("launchT", -1.0f), b.launchRpm = e.value("launchRpm", 0.0f);
+        b.reverseT = e.value("reverseT", 0.0f);
         const std::string phase = e.value("phase", std::string("parked"));
         b.phase = BikePhase::Parked;
         for (int p = 0; p < 4; ++p)
@@ -600,7 +626,7 @@ void World::restoreVehicles(const nlohmann::json& j) {
     riding_ = j.value("riding", 0);
     bikeMounts = j.value("mounts", 0);
     if (riding_ && !bikes_.contains(riding_)) throw std::runtime_error("vehicle state: ridden bike " + std::to_string(riding_) + " unknown");
-    bikeInteractHeld_ = bikeJumpHeld_ = true;
+    bikeInteractHeld_ = true;
 }
 
 } // namespace ou::game

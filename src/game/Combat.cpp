@@ -446,11 +446,14 @@ WeaponDef weaponDefaults(Weapon w) {
         d.refire = 3 / 30.0f;
         break;
     }
+    d.startReserve = d.maxReserve; // the data's start table (+0x848..) holds the same numbers as its maximum table
     return d;
 }
 
+// The secondary of each chapter's level loadout list (level settings +0x2B4, GAMEPLAY.md "Collectibles"); the
+// prologue runs in Croft Manor's units (their list: wp_handgun, wp_shotgun).
 Weapon chapterSecondary(int chapter) {
-    static constexpr Weapon k[] = {Weapon::Pistols, Weapon::Speargun, Weapon::Uzi, Weapon::Shotgun, Weapon::Tranquilizer,
+    static constexpr Weapon k[] = {Weapon::Shotgun, Weapon::Speargun, Weapon::Uzi, Weapon::Shotgun, Weapon::Tranquilizer,
                                    Weapon::Uzi, Weapon::AssaultRifle, Weapon::Speargun, Weapon::Uzi};
     return chapter >= 0 && size_t(chapter) < std::size(k) ? k[chapter] : Weapon::Pistols;
 }
@@ -577,13 +580,14 @@ std::optional<WeaponDef> loadWeapon(const cdc::BigfileSet& bf, std::string_view 
     WeaponDef def;
     def.object = std::string(object), def.ammo = ammoName->second;
     def.ammoSlot = *slot == 0xFF ? -1 : *slot;
-    if (def.ammoSlot >= 0) { // Lara's max-reserve table (0x6EEAE0): u16 per slot, a column per ammunition capacity level
+    if (def.ammoSlot >= 0) { // Lara's reserve tables: u16 per slot, a column per ammunition capacity level
         const auto lara = objectData(bf, "lara");
         for (size_t l = 0; l < 3; ++l) {
-            constexpr uint32_t kColumn[3] = {0x868, 0x87C, 0x872};
-            const auto max = lara ? lara->at<uint16_t>(kColumn[l] + 2 * uint32_t(def.ammoSlot)) : std::nullopt;
-            if (!max) return std::nullopt;
-            def.maxReserve[l] = *max;
+            constexpr uint32_t kMax[3] = {0x868, 0x87C, 0x872}, kStart[3] = {0x848, 0x85C, 0x852}; // 0x6EEAE0, 0x6EE930
+            const auto max = lara ? lara->at<uint16_t>(kMax[l] + 2 * uint32_t(def.ammoSlot)) : std::nullopt;
+            const auto start = lara ? lara->at<uint16_t>(kStart[l] + 2 * uint32_t(def.ammoSlot)) : std::nullopt;
+            if (!max || !start) return std::nullopt;
+            def.maxReserve[l] = *max, def.startReserve[l] = *start;
         }
     }
     def.pellets = *pellets, def.clip = *clip;
@@ -731,23 +735,24 @@ int hitReaction(int damageClass, float damage) {
     return 0;
 }
 
-void World::damageLara(float amount, vec3 from, int type) {
+bool World::damageLara(float amount, vec3 from, int type) {
     const int react = hitReaction(type, amount);
     const bool hurt = health_.damage(amount, type);
     if (hurt) endHeadShot(); // 0x71F1D0 message 0x11C -> 0x718FD0: a hit on her ends the move
-    if (!hurt || health_.dead() || !react) return;
+    if (!hurt || health_.dead() || !react) return hurt;
     const PlayerState& s = player_.state();
     const bool swim = s.water >= 0;
     if (swim ? !(swimHit(s.state) || s.state == State::SwimTread || s.state == State::SwimSurface)
              : !(s.state == State::Idle || s.state == State::Walk || s.state == State::Run || s.state == State::Stop ||
                  s.state == State::Turn || s.state == State::Land || s.state == State::Hit))
-        return;
+        return hurt;
     const float rel = wrapAngle(std::atan2(from.y - s.pos.y, from.x - s.pos.x) - s.yaw), a = std::abs(rel);
     const int dir = a <= 45 * kDeg ? 0 : a >= 135 * kDeg ? 1 : 2;
     static constexpr std::string_view kLight[] = {"hit_light_front", "hit_light_back", "hit_light_side"};
     static constexpr std::string_view kHeavy[] = {"hit_mediumfront", "hit_mediumback", "hit_mediumright"};
     // 0x6EB320: the anim graph's mirror flag 0x20 is set when the attacker's angle from her heading is positive (her left)
     player_.hitReact(std::string(react == 2 ? kHeavy[dir] : kLight[dir]) + (swim ? "_swim" : ""), rel > 0);
+    return hurt;
 }
 
 void World::kill() { health_.damage(health_.value(), kDamageKill); }
@@ -839,16 +844,21 @@ void World::equipWeapon(Weapon w) {
     c.secondary = w;
 }
 
-void World::chapterLoadout(int chapter) {
+// tru.exe 0x7198D0 (player message 0x23 at a level start): the level's weapon list (GAMEPLAY.md "Collectibles":
+// wp_handgun + one secondary; the last entry gives way to the weapon chosen for a level started from the menu,
+// 0xE7F204 with player +0x7F0), then 0x6F57F0(1): every ammunition slot's count = its start amount at the
+// AMMUNITION CAPACITY level (0x6EE930), its maximum 0x6EEAE0. Clips full [I: the guns are born loaded].
+void World::chapterLoadout(int chapter, std::optional<Weapon> chosen) {
     CombatState& c = combat_;
+    const auto level = size_t(std::clamp(tailoring_.ammo, 0, 2));
     for (const Weapon w : {Weapon::Uzi, Weapon::Shotgun, Weapon::Speargun, Weapon::AssaultRifle, Weapon::Tranquilizer}) {
         const WeaponDef& d = anims_.weapons[size_t(w)];
         c.clip[size_t(w)][0] = d.clip, c.clip[size_t(w)][1] = d.dual ? d.clip : 0;
-        c.reserve[size_t(w)] = maxReserve(w);
+        c.reserve[size_t(w)] = d.startReserve[level];
     }
     c.weapon = c.want = c.previous = Weapon::Pistols;
     c.drawn = c.redraw = false, c.drawT = 0, c.reload = 0, c.hammer = {};
-    c.secondary = chapterSecondary(chapter);
+    c.secondary = chosen && *chosen != Weapon::Pistols && *chosen != Weapon::ThorHammer ? *chosen : chapterSecondary(chapter);
 }
 
 nlohmann::json World::serializeCombat() const {
@@ -1017,6 +1027,17 @@ void World::setTailoring(const Tailoring& t) {
     for (int i = 0; i < kWeaponCount; ++i) // a smaller capacity drops what no longer fits
         if (const int max = anims_.weapons[size_t(i)].maxReserve[level(t.ammo)]; max > 0) combat_.reserve[i] = std::min(combat_.reserve[i], max);
     grenades = std::min(grenades, anims_.grenade.maxCarried[level(t.ammo)]);
+    // what the scripts read (uiexperienceadjustmentmenu 13..18); the preset is the last one picked (+0x3EF94)
+    auto e = script_.experience();
+    e.levels = {t.enemyHealth, t.ammo, t.laraHealth, t.savingGrab, t.unknown};
+    if (const int p = t.preset(); p >= 0 && t.unknown == p) e.preset = p;
+    script_.setExperience(e);
+}
+
+void World::setHints(bool trainingText, bool metaIcons) {
+    auto e = script_.experience();
+    e.trainingText = trainingText, e.metaIcons = metaIcons;
+    script_.setExperience(e);
 }
 
 void World::reloadWeapon() {
@@ -1366,7 +1387,9 @@ void World::tickCombat(const Actions& a, float dt) {
     };
     if (s.state == State::Dead) {
         c.deathTime += dt;
-        if (c.deathTime >= kDeathFade) respawn(); // the wipe is black (DeathState_Process 0x75AF90)
+        // The wipe is black (DeathState_Process 0x75AF90): the restore runs between ticks, as a load does (the physics
+        // scene and the units are replaced; nothing of this tick may touch them afterwards).
+        if (c.deathTime >= kDeathFade) respawnDue_ = true;
         return;
     }
     if (health_.dead() && !airborne(s.state)) { // [I] dies on the ground; fatal falls die on landing

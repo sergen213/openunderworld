@@ -6,6 +6,37 @@ All notable changes to OpenUnderworld are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-11-10
+
+Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.
+
+- Changed: dying restores the last checkpoint as the original does. The world goes back to how it was when the
+  checkpoint was reached (doors, puzzles, enemies, pickups, ammunition, water levels, music); Lara stands on the
+  checkpoint at full health with empty hands. Before, only Lara was moved back and the world stayed as it was.
+  Checkpoints are also taken at a level's start and when a treasure or relic is collected. Save games carry the
+  checkpoint (older saves still load).
+- Added: weapon choice when revisiting a location from the PDA (a WEAPONS page), and the levels start with the
+  original's loadout (full ammunition; the prologue's second weapon is the shotgun).
+- Added: Player Tailoring. The original's four settings (enemy health, ammunition, damage to Lara, saving grabs)
+  work from the options scripts and from the config key `game.tailoring`; the defaults are the original's.
+- Added: traps hurt. Spear and blade rows, rollers, flame jets, crushers, the weights' under-plates and the other
+  damaging parts of trap objects now hit Lara with the original's amounts when she touches them (solid ones only
+  while they move), with the half-second of grace between hits, and the trap scripts' sounds and follow-ups run.
+- Added: ledges, poles, ladders and handholds on moving objects move with them. Lara rides the thing she hangs on
+  (the Valgrind cog wheel's rim, sliding chains, the final tower's turning handholds), a jump or drop takes the
+  carrier's speed along, and a save made while riding restores her grip.
+- Added: Natla's fireballs. In the final fight she throws them at where Lara stands (no homing): the blast hurts
+  and throws Lara off her feet, the slow charged ball kills on a direct hit, and the patches she sets alight burn.
+  Every explosion now knocks Lara down when it is close enough. The arena's pool no longer floods the lower ring.
+  The fight is not yet playable to the end by hand: Natla cannot be hit and the way down to the lower ring is
+  missing.
+- Changed: the motorcycle follows measurements of the original. Vehicle Brake is on Jump (Space) and the made-up
+  hop is gone; revving against the brake and letting go launches the bike; holding the brake at a standstill
+  engages reverse; acceleration from a standing start matches. Still open: brake strength, slopes, coasting.
+- Fixed: scripts that poll for a long time (kill volumes, timers) stopped after about a minute and a half.
+- Fixed: loading a save into a running game could crash in rooms with hinged doors or levers.
+- For testers: self-test scenarios `checkpoint_respawn`, `hazards`, `moving_markup`, `natla_fight`, `bike_ride`.
+
 ## [0.44.0] - 2026-11-10
 
 Experimental. Requires your own legally owned copy of Tomb Raider: Underworld (GOG build); no game data is included.

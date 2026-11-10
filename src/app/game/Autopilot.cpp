@@ -37,7 +37,8 @@ Autopilot Autopilot::parse(std::string_view plan) {
         if (!(ls >> s.op)) continue;
         for (std::string w; ls >> w;) s.args.push_back(w);
         static const std::vector<std::pair<std::string, size_t>> kOps = {{"go", 2}, {"engage", 1}, {"face", 1}, {"press", 0},
-                                                                         {"hold", 2}, {"stick", 3}, {"run", 2}, {"push", 3}, {"wait", 1}, {"near", 1}};
+                                                                         {"hold", 2}, {"stick", 3}, {"run", 2}, {"push", 3}, {"wait", 1}, {"near", 1},
+                                                                         {"ride", 2}};
         const auto it = std::ranges::find(kOps, s.op, &std::pair<std::string, size_t>::first);
         if (it == kOps.end() || s.args.size() < it->second)
             throw std::runtime_error("autopilot plan line " + std::to_string(no) + ": unknown step or missing arguments");
@@ -188,6 +189,28 @@ game::Actions Autopilot::step(uint64_t tick, game::World& w) {
                 std::fprintf(stderr, "ou-game: autopilot markup %d %s:%s\n", m.id, std::string(collision::markupTypeName(m.type)).c_str(), pts.c_str());
             }
         next(tick, nullptr);
+    } else if (s.op == "ride") { // ride X Y [R] [THROTTLE] [SPEED]: steer the ridden bike to (X, Y) with the raw stick
+        const game::Bike* b = w.ridden();
+        const glm::vec2 to(std::stof(s.args[0]), std::stof(s.args[1]));
+        const float radius = s.args.size() > 2 ? std::stof(s.args[2]) : 300.0f, throttle = s.args.size() > 3 ? std::stof(s.args[3]) : 1.0f;
+        const float limit = s.args.size() > 4 ? std::stof(s.args[4]) : 1e9f;
+        const glm::vec2 d = to - glm::vec2(lara.pos);
+        if (t == 0) rideFrom_ = glm::vec2(lara.pos);
+        const bool passed = glm::dot(d, to - rideFrom_) < 0; // rode past it wide of the radius
+        if (!b || b->phase != game::BikePhase::Ride) {
+            if (t > 300) centre(), next(tick, "not riding");
+        } else if (glm::length(d) <= radius || passed) {
+            centre();
+            std::fprintf(stderr, "ou-game: autopilot tick %llu ride: at %.1f %.1f %.1f, %.0f units/s\n", (unsigned long long)tick, lara.pos.x,
+                         lara.pos.y, lara.pos.z, b->speed);
+            next(tick, nullptr);
+        } else if (t > kTimeout) {
+            centre(), next(tick, "timed out");
+        } else if (t % 2 == 0) { // the bike's stick is raw: forward = throttle, right = steering (- = left)
+            const float err = std::remainder(std::atan2(d.y, d.x) - lara.yaw, glm::two_pi<float>());
+            const auto q = [](float v) { return std::round(v * 20) / 20; };
+            set(tick, "forward", b->speed > 1.25f * limit ? -1.0f : b->speed > limit ? 0.0f : throttle, a), set(tick, "right", q(std::clamp(-2.5f * err, -1.0f, 1.0f)), a);
+        }
     } else if (s.op == "wait") {
         if (t >= ticks(s.args[0])) next(tick, nullptr);
     }

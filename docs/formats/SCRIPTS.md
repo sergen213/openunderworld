@@ -272,8 +272,10 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
 - [O] Function local records (+0x0C, DataMember like members, DXHR `cdc::Function::m_locals`) carry initial values;
   ours applies those of `symbol` locals (property names, e.g. 10814). PUSHL32 of a local holding a string keeps it a
   string (unit hint handlers compare/store their argument). `instanceref` natives accept a ref held as an object value
-  (`instance` 14/15 return the intro id, 0x4AB400). `uiexperienceadjustmentmenu` 0–18 read 0 (fns 13–18 read the
-  options block [0xC59264]+0x3EF94..; no such menu in ours) [I]. [O] The exe's CALL2/CALL3 (cases 0x66/0x67 of
+  (`instance` 14/15 return the intro id, 0x4AB400). `uiexperienceadjustmentmenu` [O registration 0x7AEDE0]: 4..10 set
+  and 11..17 read training text, the +0x3EFB0 toggle and the five PLAYER TAILORING levels, 18 reads the preset; ours
+  serves them from `script::Runtime::Experience` (docs/GAMEPLAY.md "Player tailoring"); 0..3 (the menu screen) read 0.
+  [O] The exe's CALL2/CALL3 (cases 0x66/0x67 of
   0x57CE50) look the callee up by vtable slot (virtual on `this`); ours keeps them direct because the virtual form
   stops l3 switch 4525 at a null CALL5 (test BedroomSwitchOpensHouseDoor) [U].
 - cdcEngineDXHR/cdcScript/ByteCodeEnum.h supplies the opcode numbering; no interpreter exists in the research
@@ -299,7 +301,7 @@ The runtime executes handlers through `script::vm` and retains static-link/nativ
   the target exists; `clock` 0–10 (Start/Stop/
   Pause/Resume/IsRunning/GetTime/GetAlarm/SetAlarm/same-clock, 0x4A3450..0x4A34F0, advanced per tick as 0x4A3960;
   reaching the alarm fires once and calls the owner's corebase prototype-25 slot with the clock, 0x7961A0); `globaleffect` FadeOut/FadeIn (5/6, 0x4A4EB0/0x4A4EF0 screen wipe → `Runtime::screenFade`,
-  not rendered yet); `larabase` 59/60 post messages 0x1D5/0x1D6 to Lara (`EventKind::PlayerMessage`, meaning [U]);
+  not rendered yet); `larabase` 58/59/60 post messages 0x1D4/0x1D5/0x1D6 to Lara (`0x778000` / `0x778020` / `0x778040`; `EventKind::PlayerMessage`, meaning [U]; 58 = the steam columns' scald, docs/GAMEPLAY.md "Hazards"); instance prototype 34 (vt 21, `0x7990A0`) is the engine's "a damaging primitive of yours touched an instance" callback (attacker, victim, two query-0xF7 values; `Runtime::contactDamage`);
   `markup` SetEnabled/IsEnabled (0/1, 0x4A56B0: box flag bit 31) → `World` keeps disabled (unit, markup id) pairs and
   gives that markup type 0xFF so no traversal query matches it; `triggervolumebase` Add/Remove instance (0/1) accept
   Lara or null (ours only test Lara), `triggerplanebase` 0/1 are empty in the exe; `health` 1/2 on Lara's health

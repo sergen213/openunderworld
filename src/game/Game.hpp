@@ -776,6 +776,27 @@ struct Wetness {
     void reset() { *this = {}; }          // larabase 68 (0x778150 -> 0x6ED460)
 };
 
+// A damaging collision primitive of a loaded object (Hazards.cpp; tru.exe 0x48E040 / 0x4923C0), posed this tick.
+struct HazardShape {
+    int32_t uid = 0;
+    int section = -1;  // uber section whose model holds it; -1 the object's own model
+    int segment = 0;
+    physics::PrimKind kind = physics::PrimKind::Box;
+    vec3 size{0};      // box: full side lengths
+    float radius = 0, length = 0;
+    float damage = 0;  // what a touch costs (12345: dead)
+    bool sensor = false;         // flag bytes 2-3 not 0: an overlap volume (flames, rollers); else solid collision
+    vec3 last{0};                // its centre a tick ago (solid ones hurt only while they move)
+    bool placed = false;         // `last` is set
+    glm::mat4 local{1}, bind{1}; // in its segment; the segment's bind frame in the model
+    int collider = -1;           // index of the collider carrying its segment, -1 none
+    glm::mat4 world{1};
+    bool active = false;         // its object is alive and present this tick
+};
+struct HazardHit { int32_t uid = 0; float damage = 0; uint64_t tick = 0; };
+// Distance from the segment a-b to the shape's surface (negative inside a sphere / capsule, 0 inside a box).
+float hazardDistance(const HazardShape& h, vec3 a, vec3 b);
+
 class World {
 public:
     World(collision::CollisionMesh col, AnimLibrary anims, Spawn spawn, Tuning tuning = defaultTuning());
@@ -917,6 +938,10 @@ public:
     std::optional<BreakPhase> breakablePhase(int32_t uid) const; // nullopt: not a breakable of the loaded units
     bool breakBreakable(int32_t uid, int actionId);
     const std::vector<int32_t>& brokenNow() const { return broken_; }
+    // Contact hazards (Hazards.cpp): the damaging collision primitives of the loaded objects as posed this tick, and
+    // the touches that hit Lara this tick.
+    const std::vector<HazardShape>& hazards() const { return hazards_; }
+    const std::vector<HazardHit>& hazardHits() const { return hazardHits_; }
     // An explosion record's area hit at `at` (0x69F1E0): targets, Lara, damageable objects, loose bodies.
     void blast(vec3 at, const ExplosionRecord& x);
     // Enemies of the loaded units (src/game/ai), ticked after Lara; registered in `targets`. Set its bigfile
@@ -971,10 +996,21 @@ public:
     // Drops every unit, loads `unit` at offset 0 + neighbours, spawns Lara (unit frame) at `spawn`, else
     // at checkpoint `checkpointId` of that unit, else at its player intro.
     void enterUnit(const std::string& unit, std::optional<Spawn> spawn, int32_t checkpointId = 0);
-    // Respawn after death: last checkpoint, else the start unit's spawn (tru.exe restores the checkpoint save).
+    // Death (the black wipe's end, Combat.cpp) = tru.exe "Restore Game" 0x557130: the checkpoint save comes back
+    // (restoreCheckpointSave) and Lara is born at the checkpoint's intro, else the start unit's spawn, at full health.
     void respawn();
+    uint32_t respawns() const { return respawns_; } // deaths restored so far (the app resets its audio as after a load)
     const std::optional<CheckpointRef>& checkpoint() const { return checkpoint_; }
     void setCheckpoint(std::optional<CheckpointRef> c) { checkpoint_ = std::move(c); }
+    // The checkpoint save (docs/GAMEPLAY.md "Checkpoints and respawn"; tru.exe "Save Game" 0x5570F0): the world as it
+    // was at the end of the tick in which a checkpoint was activated, a reward was collected with a checkpoint active
+    // (0x5DB6A0 posts the checkpoint its activation again) or the level started (0x5D40C0 saves after Lara's birth):
+    // the clock, collected / born / found, grenades, the light, scripts (with music and reverb), enemies, vehicles,
+    // weapons with clips / reserves / adrenaline, objects with the physics scene, hinge limits and water levels.
+    // Null until the first tick ends (and after a load of a save without one: that tick's state stands in).
+    nlohmann::json serializeCheckpoint() const;
+    const nlohmann::json& checkpointSave() const { return checkpointSave_; }
+    void setCheckpointSave(nlohmann::json j) { checkpointSave_ = std::move(j), checkpointDue_ = false; }
     // Autosaves the scripts requested (uisavemenu 5, after cinematics); the app autosaves when it changes.
     uint32_t autosaveRequests() const { return autosaveRequests_; }
     std::set<int32_t> collected; // intro ids of picked-up items (Pickup::id); saved
@@ -1015,8 +1051,8 @@ public:
     // wetsuits' face mask (group 1) only while she swims and their stowed gear (2) never (GAMEPLAY.md "Thor's gear").
     uint32_t laraHiddenGroups() const;
     // Starts chapter `n` (kChapters) at its start unit's player intro and announces it; respawns fall back there.
-    // Throws as enterUnit.
-    void startChapter(int n);
+    // `chosen`: the secondary picked for a level started from the menu (chapterLoadout). Throws as enterUnit.
+    void startChapter(int n, std::optional<Weapon> chosen = std::nullopt);
     // The chapter-start message: generalbank's game script (type 6 fn 30) Sends id = chapter on its +924 channel
     // "mc_CinematicData"; the start unit's script receives it in OnMessage and enters state 1, which activates the
     // chapter's intro cinematic (l4 13929 -> 5484, l5 17775 -> 7530, l7 19597 -> 9071; GAMEPLAY.md "Chapter starts").
@@ -1094,7 +1130,7 @@ public:
 
     // ---- combat (Combat.cpp; docs/GAMEPLAY.md "Combat") ----
     std::vector<Damageable*> targets; // lock-on / hitscan targets, non-owning (src/game/ai registers its enemies)
-    void damageLara(float amount, vec3 from, int type = kDamageLight); // enemy blows, hazards (tru.exe 0x6F5030)
+    bool damageLara(float amount, vec3 from, int type = kDamageLight); // enemy blows, hazards (tru.exe 0x6F5030); false: ignored
     void kill();                                                      // message 4: damage = current health
     const Health& health() const { return health_; }
     // saves (after restore(), which heals fully, and restoreCombat, which set the window / regeneration clocks)
@@ -1130,9 +1166,10 @@ public:
     // PDA WEAPON SELECTION's EQUIP: `w` (a secondary, or Pistols for none) becomes the secondary with the clip and
     // reserve it already has (no refill); drawn, Lara switches to it as Change Weapon would.
     void equipWeapon(Weapon w);
-    // A chapter start: every secondary (uzi, shotgun, speargun, rifle, tranquilizer) full clip and reserve, the
-    // chapter's own one equipped (chapterSecondary) [I: the original's PDA lists them all, full, in a fresh l4 load].
-    void chapterLoadout(int chapter);
+    // A level start (tru.exe 0x7198D0): every secondary a full clip and its start amount in reserve (WeaponDef::
+    // startReserve at the AMMUNITION CAPACITY level), holstered; the secondary is `chosen` (the weapon picked for a
+    // level started from the menu) or else the level list's (chapterSecondary).
+    void chapterLoadout(int chapter, std::optional<Weapon> chosen = std::nullopt);
     // Weapons, clips, reserves and the adrenaline meter, for saves; restoreCombat holsters (nullptr / bad: unchanged).
     nlohmann::json serializeCombat() const;
     void restoreCombat(const nlohmann::json& j);
@@ -1142,9 +1179,12 @@ public:
     // Mjolnir carried: "wp_thorhammer" among her carried objects (250_val_hammer's end gives it; chapterGear from 6).
     bool hasHammer() const { return script_.playerObjects().contains("wp_thorhammer"); }
     // PLAYER TAILORING (Combat.hpp): Lara's max health (keeping its fraction), enemy health on (re)spawn, saving grab
-    // window, ammunition capacity (reserves / grenades over the new capacity are dropped). Saved with the game.
+    // window, ammunition capacity (reserves / grenades over the new capacity are dropped), and the levels the scripts
+    // read (uiexperienceadjustmentmenu; a script that sets one sets ours, World::tick). Saved with the game.
     void setTailoring(const Tailoring& t);
     const Tailoring& tailoring() const { return tailoring_; }
+    // GAME OPTIONS' training text and helper toggles as the scripts read them (uiexperienceadjustmentmenu 11 / 12).
+    void setHints(bool trainingText, bool metaIcons);
     int maxReserve(Weapon w) const { return anims_.weapons[size_t(w)].maxReserve[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
     int maxGrenades() const { return anims_.grenade.maxCarried[size_t(std::clamp(tailoring_.ammo, 0, 2))]; }
 
@@ -1270,6 +1310,16 @@ private:
     void breakableColliders();   // syncObjects: the whole ones' piece collision
     void tickBreakableMarkup();  // tickObjectMarkup: their pieces' markup
     void tickBreakables(float dt);
+    // Where each damaging primitive stood a tick ago (what "it moves" is measured from): saved, so a loaded game hits
+    // on the same tick as the one that ran on.
+    nlohmann::json serializeHazards() const;
+    void restoreHazards(const nlohmann::json& j);
+    std::map<std::pair<int32_t, int>, vec3> hazardRestored_; // (uid, its n-th primitive) -> centre, until the next sync
+    void syncHazards();  // Hazards.cpp: the loaded objects' damaging collision primitives
+    void tickHazards();  // pose them; one touching Lara's capsule hits her (tru.exe 0x4923C0)
+    std::vector<HazardShape> hazards_;
+    std::vector<HazardHit> hazardHits_; // this tick's
+    size_t hazardObjects_ = ~size_t(0); // script object count hazards_ was built for
     void breakableLoose(std::vector<physics::Scene::Loose>& out) const; // stepPhysics: the broken ones' pieces
     void startBreak(int32_t uid, int action);
     void breakNow(int32_t uid);
@@ -1302,6 +1352,8 @@ private:
     void uberFreeSection(int32_t uid, int32_t section, const glm::mat4& pose, vec3 vel = vec3(0)); // its last joint went: a loose body
     bool pushUberHandle(const Actions& a, float speed); // kind-1 records (calendar push handles, Thor mechanisms): grip, push, let go
     void touchCheckpoints();
+    void restoreCheckpointSave(const nlohmann::json& save); // throws std::exception on a malformed one
+    void restoreWorldRuntime(const nlohmann::json& runtime); // serializeRuntime's hinge limits and water levels
     void recordReveal(); // mapReveal: Lara's unit-frame position once kSonarRevealStep from every recorded point
     void tickCombat(const Actions& a, float dt);
     // Aim.cpp: manual aim, the head shot move, dual targeting, shot-only hit shapes, the two time scales.
@@ -1404,7 +1456,11 @@ private:
     std::string playerUnit_; // unit the scripts were last told Lara is in (Runtime::setPlayerUnit); empty = level load
     std::optional<Spawn> startSpawn_;
     vec3 exteriorOrigin_{0};
+    uint32_t respawns_ = 0;
     std::optional<CheckpointRef> checkpoint_;
+    nlohmann::json checkpointSave_; // serializeCheckpoint() of the last checkpoint save
+    bool checkpointDue_ = false;    // take it when this tick ends
+    bool respawnDue_ = false;       // the death wipe is black: respawn() when the next tick starts
     uint32_t autosaveRequests_ = 0;
     script::Runtime script_;
     ai::Enemies enemies_{&targets};
@@ -1551,7 +1607,11 @@ private:
     // One per collision().dynamics entry: owner, model segment and its bind frame, hinge (-1 = posed by script()),
     // uber section (-1 = the object's own model: posed by its joint / script; else that section's model, posed by the
     // section's joint and clip).
-    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; };
+    struct ObjectCollider { int32_t uid; int segment; int hinge; glm::mat4 intro, frame; int section = -1; int jaw = 0; };
+    // Linked sliding bodies (Objects.cpp linkedJaws; ca_rb_crusher_slim): uid -> each model's slide axis in model space;
+    // the joint position (script::Object::Joint) moves model k along axis k.
+    std::map<int32_t, std::array<vec3, 2>> jaws_;
+    const physics::ObjectPhysics* modelPhysics(const std::string& name, uint32_t model); // modelPhysics_, loaded on first use
     std::vector<ObjectCollider> colliders_;
     size_t syncedAnchors_ = 0; // script anchors at the last syncObjects (riders of spline movers collide)
     // Hit shapes of objects that only shots meet (anim graphs leaving a state on damage whose object does not collide
@@ -1597,7 +1657,7 @@ private:
     bool ridingBike() const;                       // on a bike in its ride phase (not mounting / dismounting): guns allowed
     void syncVehicles();                           // register the loaded units' bike intros (after streaming)
     void mountBike(int32_t uid);                   // larabase 52: on the bike at once, riding (script_.takeMounts)
-    void driveBike(Bike& b, const Actions& a, bool jumpPressed, float dt); // rider input for the next physics step
+    void driveBike(Bike& b, const Actions& a, float dt); // rider input for the next physics step
     std::vector<physics::Scene::Vehicle> bikeVehicles(); // the ridden bike for physics_ (stepPhysics)
     void readBikes(float dt);                      // after the step: bike pose, landing, ramming; Lara on it
     void settleBike(Bike& b);                      // height and pitch from its wheels' ground contacts
@@ -1605,7 +1665,7 @@ private:
     vec3 bikeOffset(const Bike& b) const;          // its unit's stream offset (0 when not loaded)
     std::map<int32_t, Bike> bikes_;
     int32_t riding_ = 0;                           // uid of the bike Lara is on, 0 = none
-    bool bikeInteractHeld_ = true, bikeJumpHeld_ = true;
+    bool bikeInteractHeld_ = true;
     std::map<const Damageable*, uint64_t> rammed_; // target -> tick of the last ram (one hit per contact)
 };
 
