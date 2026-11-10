@@ -4279,3 +4279,130 @@ pulled back in flight; run and sprint stops, rolls, turns; falls of 200..2100 wi
 Forward, the crouch 0.35..0.61 s into the plain landing with Crouch held, the stumble then the crouch with Crouch held
 from the start: no roll); the pull-up tapped / held / with Forward; the shimmy with Interact tapped / held / Sprint.
 
+
+## Animation layers and IK (decoded 2026-11; src/anim/Ik.cpp, src/game/Ik.*, `World::limbLocks`)
+
+Sources: tru.exe (Ghidra export and disassembly at the addresses given), lara.drm object data (ObjectBase +0xC8; every
+outfit carries the same numbers), the player state chart. Nothing here was measured under Wine: every [O] below is
+read from code and data, and what the code was not followed far enough to say is [U].
+
+### The original
+
+- **Limb locks** [O]. Lara's IK is `cdc::GenericLimbLockController` (RTTI 0x843130, base `cdc::LimbLockController`;
+  constructor 0x445160, per-tick update 0x445350). The player set-up (0x6EFDA0) builds one per record of the object
+  data list **+0x5C8 (u16 count = 30) / +0x5CC (records of 0x4C bytes)** and keeps them at player +0xF34; +0xF20 /
+  +0xF24 / +0xF28 / +0xF2C cache the active one for the left foot / right foot / left hand / right hand (limb ids
+  0x30 / 0x31 / 0x40 / 0x41, 0x767280 → 0x6F1A60). Record layout (`game::LimbLock`): +0 IK chain of the instance's IK
+  system (instance +0x2E0, chains of 0x120 bytes solved joint by joint at 0x443D00), +4 type, +8 group, +0xC / +0xE
+  limb ids, +0x14 / +0x18 probe reach up / down, +0x1C offset, +0x28 / +0x2C blend in / out frames, +0x34 / +0x36
+  segments, +0x30 / +0x3C a list of further chains switched with it, +0x40 flags. The type picks the target callback
+  (controller +0x14C): 1 → 0x73E6F0 (the floor under a foot), 5 → 0x732EC0 (a markup box's segment), 6 → 0x7445A0,
+  7 → 0x737790 (the ledge under a hand), 8 → 0x735770, 9 → 0x741490 (the bike: hands to its grip segments, feet to its
+  pegs), 10 → 0x758CD0, 0xB → 0x7406E0 (wading).
+
+  | records | type | limbs | probe up / down | offset | in / out | flags | used by |
+  |---|---|---|---|---|---|---|---|
+  | 13, 15 | 1 | feet (segments 6 / 11) | 158.03 / 158.03 | z 26.86 | 2 / 3 | 0x1F | on from the start |
+  | 16, 17 | 1 | feet | 158.03 / 158.03 | z 32.60 | 2 / 6 | 0x0D | not found switched on [U] |
+  | 4, 7 | 7 | hands | — | — | 2 / 3 | 1 | ledge hang S460 / S530 / S531 |
+  | 5, 8, 12, 14 | 9 | hands, feet | 316 (feet) | z 8.74 (feet) | 2 / 3 | 1, 5 | S1329 / S1353 / S1354 (the bike) |
+  | 26..29 | 0xB | hands, feet | 158 / 31.6, 237 / 31.6 | z 9.48, 31.6 | 6 / 6 | 1 | S107 / S202 (wading) |
+  | 22..25 | 0 | left hand, left foot | 158 / 63.21 | — | 1 / 3 | 1 | S1291 `wall_jump_attach_air` |
+  | 0..3 | 5, 2 | hands, feet | 158 / 63.21, 316 | (−15.8, −9.48, 0) | 2 / 3 | 0 | S595 `death_shotunderwater` |
+  | 6, 9, 10, 11, 18..21 | 0, 6, 8 | hands, feet | | | | | not found switched on [U] |
+
+- **Which are on** [O]. A record with flags 1 and 2 is on from its construction (0x443C60): only the foot records
+  13 / 15. State property **0x141** (0x767390) switches a list of records on for a state, property **0x142** switches
+  a list, or with a bool all of them, off; leaving the state rebuilds the defaults. All-off states (46 of 1445):
+  the rappel tree (S309), ladders (S1051), pillar, perch, wall jump / wall slide, the swim climb-outs, the in-air
+  "feet up" stages, S1 (the cheat-mode start state). The four the cache names are re-read after every change.
+- **The foot lock's gate** [O]. Every controller but the wading ones carries the per-tick gate 0x6EFD60: a type-1
+  controller may lock only when Lara has a mount (player +0xF00: the bike), when the floor moved her this tick
+  (+0x11CC, set by the floor query 0x5DCE20 when it adds an instance's motion to her), or when an instance is under her
+  feet (the handle at +0x610, set by the same query when the floor hit is an object). **On unit terrain the foot locks
+  never engage: on slopes and stairs her feet are the clip's.** The lock itself (0x73E6F0 → 0x438F60): one ray along the
+  instance's up axis from `up` over the foot segment to `down` under it (collision mask 0x2C19E7; flag 8 lets object
+  hits count), the target = the hit + the hit's normal × offset z; flag 0x10 turns the foot to the normal (0x443B50 →
+  0x443A80). A foot is locked for its support phase: anim events 0x34 / 0x36 (and 0x35 = none; handler 0x716F30) set the support foot
+  (player +0xF3C, state property 0x12F with values 301..306 overrides it per state) and events send the controllers
+  messages 0x37 / 0x38 (0x767520 / 0x767570). There is **no pelvis bone offset**: +0xF1C, which looks like one, is the
+  root's own vertical correction of the tick (0x71BFA0), added to the probe reach.
+- **The support-foot root** [O existence, U rule]: player +0xF18 is a 0xD0-byte object (0x434F90, segments from data
+  +0x168 = 1 and +0x164 = 0) fed by the same events (0x435030); it belongs to the root motion, not to the pose.
+- **Hands on a ledge** [O]. Grabbing and moving on a ledge is root alignment by anim targets
+  (`HandMatchingFullAnimInterpTarget`, RTTI 0x85EC34, with the other attach targets): the clip's hands meet the ledge
+  because the root is put there. On top of that the hang idle states switch the type-7 locks on: 0x737790 takes the
+  ledge markup she is on (player +0xC94, flag 0x40000000) and her place on its polyline (+0xC98, segment + fraction)
+  and gives each hand (limb 0x40 / 0x41) a point on that polyline, 20 units inside a segment end when she is near
+  one. The exact point along the ledge is [U] (the callback's control flow did not decompile cleanly).
+- **Head look-at** [O] (0x6FD080, called by 0x6FD7D0 each tick): the head segment (data +0x1B0 = 17) is turned to the
+  combat target's marker 0xB (the targeting system's current target, player +0x854 → +0x128), or to a scripted
+  point (player message 0x72 stores it at +0x380 with a radius / timeout; message 0x69 clears it) when that point is
+  within 12000 units, in front of her and in sight from 60 units (+0xCC8) short of it. The one sender found is a
+  state-chart action of the player (0x76E190): the point at player +0xCA0 (what she is about to engage) plus a
+  per-case offset of 350 / 500 units, pulled back to the first collision hit. Which states run it is [U]. Angles are taken relative to
+  the neck segment (+0x1A8 = 16) and clamped to **±60° aside (+0xCD4) and ±15° up / down (+0xCD8)**; script variables
+  0xFE / 0xFF / 0x100 narrow them. The turn is a segment rotation override (mode 10) interpolated over **3 frames**
+  (+0xB6C), restarted when the wanted angle jumps by more than 30° (+0xB68), and released over 9 frames (900 anim
+  time units, 0x448710) when there is nothing to look at.
+- **Aim layers, draw / holster, blend times**: unchanged from the sections "Combat" (the aim grids over the spine-14
+  subtree, equip / unequip clips), "Manual aim, adrenaline inputs, dual targets" (0x7035F0 hands the second target to
+  one arm's aimer) and "Animation mapping" / docs/formats/ANIMATION.md "Transitions" (each anim request's interp
+  frames and start frame, [O]).
+
+### Ours
+
+- `anim::rotateBoneModel` / `translateBoneModel` / `solveTwoBone` (src/anim/Ik.cpp): bone turns in model space and an
+  analytic two-bone solver (the middle joint bends in the plane it is bent in, the upper bone swings, the end keeps
+  its facing; out of reach = 0.999 of full stretch) [I: the original's chain records are not decoded].
+- `game::loadIkTuning` reads the 30 records and the look-at numbers; `IkTuning`'s defaults are the same four records
+  and numbers for synthetic libraries.
+- `World::limbLocks` runs after the clips, the weapon layer and the throw layer, before the ragdoll and the hair:
+  - **feet** (`game::plantFeet`, records 13 / 15) in the on-foot states (idle, walk, run, stop, turn, land, jump
+    prep, crouch, use, block, hit) **when the floor under her root is an object** (the original's gate; the mount
+    case belongs to the bike records, below). Probe as the record. Where the original holds the ankle 26.86 off the
+    floor for the support phase, ours keeps the clip's ankle height, now over the floor found under that foot (plus
+    26.86 × (1/n.z − 1) for a tilted sole), fading out for a lifted foot between half and all of the probe's reach
+    under the ankle [I: no support events]; the pelvis (segment 1) comes down by what the lower foot needs [I: the
+    original has no such offset; without it a leg cannot reach a lower floor]; the foot turns to the normal.
+  - **hands** (`game::lockHands`, records 4 / 7) in the `ledgeb_idle` hang (not during a one-handed saving grab):
+    each hand (bones 55 / 80) to the nearest point of the ledge's polyline, at least 20 from its ends [O the line and
+    the 20; I the point along it = where the clip has the hand].
+  - **head** (`game::lookAt`): to the combat target's aim point within ±60° / ±15° of the neck, weighted by the
+    weapon layer's draw ramp [I: the original looks at the targeting system's target, its 3-frame interpolation is
+    replaced by that ramp]. Only the head bone turns; the clip's head roll is kept.
+  - **second arm** (`game::aimArm`): with a second target her left arm (the gun that fires at it) swings at the
+    shoulder from the primary target to the second, at most 90° [I].
+- The passes keep **no state**: a pose is a function of the game state (replays, saves and `stateHash` need nothing
+  new; no save version change). The price: no 2 / 3-frame fades in or out. They are visual only: the controller, the
+  collision capsule and the root motion never read the pose. What does read posed bones: a gun's muzzle (with a
+  second target the left gun's shots start from the swung arm) and the follow camera's sight ray from the pelvis
+  (lowered with it on an uneven object floor).
+- Cost (`GameReal.IkPassesAreCheap`, Release, one core, 153 bones): feet + pelvis + head + second arm together
+  **0.015 ms** a tick, the hands **0.005 ms** (a 60 Hz tick is 16.7 ms).
+- Probes: `ik.*` and `pose.bone.<segment>.x|y|z` (docs/SELFTEST.md); scenarios `ik_pose` (head limits on a target,
+  hands on ledge 973's line in l3_main_bedroom, shimmy without locks) and `ik_feet` (l1_baldrs_tomb: no foot pass
+  on terrain, both feet planted on press plate 219).
+- Tests: `Anim.RotateBoneModelTurnsTheSubtreeAboutTheBone`, `Anim.TwoBoneIk*` (synthetic leg);
+  `GameReal.IkTuningDecodesTheLimbLocks`, `GameReal.IkFeetFollowASlopeAndStairs` (ng_idle and ng_run on a 20° slope:
+  planted ankles within 1 unit of the wanted height, straight under the clip's, the sole turned 20°, the root bone
+  untouched; a 40-unit stair: left foot 40 down, pelvis 40 down, right foot in place; level floor: pose bit-identical),
+  `GameReal.IkHandsLockToTheLedgeLine` (a ledge 8 units off and 8° turned: both hands within 0.1 of the line, not
+  moved along it; the 20-unit end gap), `GameReal.IkHeadLooksAtATargetWithinItsLimits`,
+  `GameReal.IkLeftArmGoesToTheSecondTarget`.
+
+### Differences and open points
+
+| | original | ours |
+|---|---|---|
+| foot lock on terrain slopes / stairs | none (gate 0x6EFD60) | none |
+| foot lock on objects | support foot held at 26.86 off the hit, 2 / 3-frame blends | clip height over the hit, lifted feet fade, pelvis drop, no blends [I] |
+| hands on a ledge | type-7 lock in the hang idle states; point along the ledge [U] | same states' clip (`ledgeb_idle`); nearest point of the line |
+| hands in shimmy / corners / pole / ladder | clips + anim-target root alignment (`LadderRungAlignAnimTarget`, `HPoleAirAttachAnimTarget`, ...) | clips + root fit |
+| head | target marker 0xB or scripted point; 3-frame interp | combat target's aim point; draw ramp; scripted look-at point (message 0x72) not wired |
+| bike (type 9), wading (type 0xB), wall-jump (type 0) and death (types 5 / 2) records | on in their states | not applied: their callbacks (0x741490, 0x7406E0, the bike's grip / peg data +0x4C / +0x4D / +0x710) are the next thing to decode |
+| per-arm aim | one aimer per arm (0x7035F0) | grid for both arms + shoulder swing of the left to the second target |
+| anim support events 0x34..0x38, the +0xF18 support-foot root | drive the lock phase and part of the root motion | not decoded |
+
+No screenshot comparison against the original was made for these passes (the poses are checked by the tests' and the
+self-tests' numbers).

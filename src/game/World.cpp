@@ -471,6 +471,7 @@ AnimLibrary loadLaraAnims(const cdc::BigfileSet& bigfile, const std::string& out
     }
     if (auto t = loadGrappleTuning(bigfile)) lib.grapple = *t;
     if (auto t = loadAdrenalineTuning(bigfile)) lib.adrenaline = *t;
+    if (auto t = loadIkTuning(bigfile)) lib.ik = *t;
     rigOutfit(lib, drm);
     for (const auto& m : physics::loadObjectPhysics(drm).hmarkers) { // weapon mounts (WeaponDef::hand / stow)
         const glm::quat q = glm::angleAxis(m.rot.x, vec3(1, 0, 0)) * glm::angleAxis(m.rot.y, vec3(0, 1, 0)) *
@@ -1338,6 +1339,7 @@ void World::updatePose(float dt, bool reset) {
     throwLayer(local);
     if (!local.empty()) local[0] = {{0, 0, 0}, {1, 1, 1}, glm::make_vec3(anims_.skeleton.bones[0].pivot)}; // root motion is in pos
     auto m = anim::worldMatrices(anims_.skeleton, local);
+    limbLocks(local, m);
     // Her death ragdoll (combat_.ragdoll*) starts from the death clip's last pose once it is done: tru.exe's death state
     // builds it (0x6F1400 -> 0x4F1920) on message 1 (0x75B000; [I] sent at the clip's end) or at once for death
     // types 3 / 4 (DeathState_Entry 0x75AA50; which deaths those are [U]). Each segment then follows its nearest
@@ -1367,6 +1369,62 @@ void World::updatePose(float dt, bool reset) {
     hair_.apply(m, toWorld);
     prevBones_ = reset ? m : std::move(bones_);
     bones_ = std::move(m);
+}
+
+// tru.exe gives Lara 30 cdc::GenericLimbLockController records (lara.drm object data +0x5C8; Ik.hpp). Which are on:
+// - the foot records 13 / 15 (type 1) from the start (flags 1 | 2), in every state but the ones whose state-chart
+//   property 0x142 turns all locks off (0x767390: rappel, ladder, pillar, perch, wall jump, swim climb-out, ...); and
+//   each tick only through the gate 0x6EFD60: a type-1 lock needs an instance under her feet (player +0x610, set by
+//   the floor query when the floor is an object), a floor that carried her this tick (+0x11CC) or a mount (+0xF00).
+//   On unit terrain her feet follow the clip alone [O].
+// - the hand records 4 / 7 (type 7, the ledge's polyline at her place on it) by property 0x141 of the ledge hang
+//   states S460 / S530 / S531 [O]; the shimmy, corner and climb states leave the hands to their clips.
+// - the head (0x6FD080) to the combat target's marker 0xB, or to a script's look-at point (player message 0x72) [O];
+//   ours: the target's aim point, weighted by the weapon layer's ramp [I]; the scripted point is not wired.
+// - the arms: see the dual-target note below.
+// Ours fades nothing in or out (the records' 2 / 3 frames): the passes keep no state, so a pose depends on the game
+// state alone [I].
+void World::limbLocks(std::vector<anim::LocalTransform>& local, std::vector<glm::mat4>& bones) {
+    ik_ = {};
+    const PlayerState& s = player_.state();
+    const auto& sk = anims_.skeleton;
+    if (local.size() != sk.bones.size() || bones.size() != sk.bones.size() || s.state == State::Dead) return;
+    const glm::mat4 toWorld = player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll);
+    const Tuning& t = player_.tuning();
+    switch (s.state) {
+    case State::Idle: case State::Walk: case State::Run: case State::Stop: case State::Turn: case State::Land:
+    case State::JumpPrep: case State::Crouch: case State::Use: case State::Block: case State::Hit:
+        if (const auto g = col_.groundProbe(s.pos + vec3(0, 0, t.stepUp), t.stepUp + t.stepDown); g && g->dynamic >= 0) {
+            ik_.feet = true;
+            ik_.plant = plantFeet(sk, local, bones, toWorld, col_, anims_.ik, t.minFloorNormalZ);
+        }
+        break;
+    case State::Hang:
+        if (s.clip == "ledgeb_idle" && s.savingGrab <= 0 && s.ledge >= 0 && size_t(s.ledge) < col_.markup.size()) {
+            const auto& line = col_.markup[size_t(s.ledge)].points;
+            ik_.hands = true;
+            ik_.handBefore = lockHands(sk, local, bones, toWorld, line, anims_.ik);
+            ik_.handAfter = lockHands(sk, local, bones, toWorld, line, anims_.ik, 0);
+        }
+        break;
+    default: break;
+    }
+    if (combat_.target && combat_.drawT > 0 && s.state != State::Melee && s.state != State::Knocked) {
+        ik_.look = true;
+        ik_.lookAngles = lookAt(sk, local, bones, toWorld, combat_.target->aimPoint(), anims_.ik, combat_.drawT);
+    }
+    // Dual targeting (0x7035F0 gives the second target to an arm's aimer): the weapon layer's grid has both arms on the
+    // primary target; her left arm (the gun World::fire sends at the second target) goes over to it [I: by a swing at
+    // the shoulder, at most a quarter turn; the original's per-arm aim blend is not decoded].
+    if (combat_.target && combat_.second && combat_.drawT > 0 && s.state != State::Melee && s.state != State::Knocked)
+        ik_.secondArm = aimArm(sk, local, bones, toWorld, anims_.ik.hand[0], combat_.aimPoint, combat_.second->aimPoint(),
+                               kPi / 2, combat_.drawT);
+}
+
+std::optional<vec3> World::boneWorld(int bone) const {
+    if (bone < 0 || size_t(bone) >= bones_.size()) return std::nullopt;
+    const PlayerState& s = player_.state();
+    return vec3(player_.modelMatrix(s.pos, s.yaw, s.pitch, s.roll) * bones_[size_t(bone)][3]);
 }
 
 std::vector<glm::mat4> World::pose(double alpha) const {

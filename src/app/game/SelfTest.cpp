@@ -101,6 +101,8 @@ const std::set<std::string_view>& fixedProbes() {
         "player.saving_grab", "player.ledge", "player.fall_height",
         "weapon.current", "weapon.secondary", "weapon.drawn", "weapon.clip", "weapon.reserve", "weapon.grenades", "weapon.shots_fired",
         "weapon.health_packs_used",
+        "ik.feet", "ik.hands", "ik.look", "ik.pelvis", "ik.foot_planted.l", "ik.foot_planted.r", "ik.foot_error.l", "ik.foot_error.r",
+        "ik.hand_before.l", "ik.hand_before.r", "ik.hand_error.l", "ik.hand_error.r", "ik.look_yaw", "ik.look_pitch", "ik.second_arm",
         "combat.has_target", "combat.locked", "combat.target", "combat.target_health", "combat.adrenaline_mode", "combat.headshot_window",
         "combat.time_scale", "combat.world_scale", "combat.manual_aim", "combat.headshot", "combat.headshot_ready", "combat.second_target",
         "grapple.attached", "grapple.state", "grapple.target", "grapple.offered", "grapple.rope", "grapple.rope_max", "grapple.kind",
@@ -420,6 +422,7 @@ bool SelfTest::probeKnown(std::string_view name) {
     if (fixedProbes().contains(name)) return true;
     const auto p = split(name);
     if (p[0] == "step") return std::ranges::find(selftest::measurementNames(), name.substr(std::min<size_t>(5, name.size()))) != selftest::measurementNames().end();
+    if (p[0] == "pose") return p.size() == 4 && p[1] == "bone" && integer(p[2]) && axisName(p[3]);
     if (p.size() < 3 || !integer(p[1])) return false;
     const std::string_view f = p[2];
     if (p[0] == "object") {
@@ -483,6 +486,27 @@ Value SelfTest::probe(game::World& w, std::string_view name) const {
         if (f == "shots_fired") return num(c.shotsFired);
         if (f == "health_packs_used") return num(c.healthPacksUsed);
         return {};
+    }
+    if (p[0] == "ik") { // the limb locks / head look-at of the last tick (game::IkReport)
+        const game::IkReport& k = w.ik();
+        const std::string_view f = p[1];
+        const size_t side = p.size() > 2 && p[2] == "r" ? 1 : 0;
+        if (f == "feet") return k.feet;
+        if (f == "hands") return k.hands;
+        if (f == "look") return k.look;
+        if (f == "pelvis") return num(k.plant.pelvis);
+        if (f == "foot_planted") return bool(k.plant.planted[side]);
+        if (f == "foot_error") return k.feet && k.plant.planted[side] ? num(k.plant.error[side]) : Value();
+        if (f == "hand_before") return k.hands ? num(k.handBefore[side]) : Value();
+        if (f == "hand_error") return k.hands ? num(k.handAfter[side]) : Value();
+        if (f == "look_yaw") return k.look ? degrees(k.lookAngles.x) : Value();
+        if (f == "look_pitch") return k.look ? degrees(k.lookAngles.y) : Value();
+        if (f == "second_arm") return degrees(k.secondArm);
+        return {};
+    }
+    if (p[0] == "pose") { // pose.bone.<segment>.x|y|z: the bone's origin in the world
+        const auto b = w.boneWorld(int(std::strtol(std::string(p[2]).c_str(), nullptr, 10)));
+        return b ? component(*b, p[3]) : Value();
     }
     if (p[0] == "combat") {
         const auto& c = w.combat();

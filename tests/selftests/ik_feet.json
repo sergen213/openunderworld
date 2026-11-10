@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "ik_feet",
+  "chapter": "Animation layers and IK: the foot locks run on an object floor only",
+  "note": "l1_baldrs_tomb, press plate 219 (as carry_throw). tru.exe's type-1 limb locks (lara.drm object data records 13 / 15: probe 158 up / down of the ankle, 26.86 off the floor) pass their gate 0x6EFD60 only with an instance under her feet (player +0x610), a floor that carried her, or a mount [O]: on the unit's terrain the feet are the clip's, on the plate each planted ankle is at the height the pass wants over the plate.",
+  "level": "l1_baldrs_tomb",
+  "spawn": [-5000, -10000, 2560, 180],
+  "steps": [
+    {"step": "on_terrain", "duration": 0.5,
+     "expect": [{"probe": "player.state", "eq": "idle"},
+                {"probe": "ik.feet", "over": "all", "eq": false}]},
+    {"step": "onto_the_plate", "plan": ["go -5453 -10404 30 walk", "face 0", "wait 1"], "duration": 60,
+     "expect": [{"probe": "object.219.joint", "max": -30, "note": "she stands on the plate"},
+                {"probe": "player.state", "eq": "idle"},
+                {"probe": "ik.feet", "eq": true},
+                {"probe": "ik.foot_planted.l", "eq": true},
+                {"probe": "ik.foot_planted.r", "eq": true},
+                {"probe": "ik.foot_error.l", "near": 0, "tol": 0.5},
+                {"probe": "ik.foot_error.r", "near": 0, "tol": 0.5},
+                {"probe": "ik.pelvis", "max": 5, "note": "a level plate: next to nothing to make up"}]}
+  ]
+}
