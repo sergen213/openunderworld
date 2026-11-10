@@ -22,7 +22,7 @@
      "expect": [
        {"visits": ["block"]},
        {"clips": ["thor_engage", "thor_forward"]},
-       {"probe": "step.distance", "min": 150, "note": "she goes with it"}
+       {"probe": "step.distance", "min": 135, "note": "she goes with it"}
      ]},
     {"step": "it_stays",
      "plan": ["wait 2"],

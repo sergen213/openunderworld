@@ -148,8 +148,7 @@ type 2, is [I].
     internal edge removal so its boxes do not catch on the terrain's triangle seams, on a SixDOF constraint whose
     translation axes carry the limits, velocity motors and friction; layer of its own: terrain, colliders, loose
     bodies, vehicles, not Lara's proxy; it sleeps once it rests and a push or a running motor wakes it),
-    `World::makeUberJoint3` (not for script push blocks, `Kind::Block`, which carry the same joint but are moved by
-    src/script); saved (`joints3`, and its body in the scene state as `f<key>`). `Physics.ThreeAxisJointRestsSlidesStopsAndDrops`, `ProgressionReal.ThorPillarsSlideOnTheirPlane`,
+    `World::makeUberJoint3` (the push blocks too: docs/GAMEPLAY.md "Push and pull objects"); saved (`joints3`, and its body in the scene state as `f<key>`). `Physics.ThreeAxisJointRestsSlidesStopsAndDrops`, `ProgressionReal.ThorPillarsSlideOnTheirPlane`,
     `StreamReal.ThreeAxisJointSaveLoad` (saved moving: the whole state continues bit for bit; a save without
     `joints3`), `StreamReal.ThreeAxisJointAtRestSaveLoad` (saved settling: position and velocity bit for bit each tick).
   - [O] State entry action 11 (0x4D86A0 case 0xB): the composite's vt 1 with the action's word; [I] its command

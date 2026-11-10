@@ -2162,11 +2162,12 @@ std::vector<vec3> World::engagementCentres(int32_t uid, int kind) {
 // Uber section `section` of `o` in the world: the object's frame, moved with the joint carrying the section.
 std::optional<glm::mat4> World::uberSectionFrame(const script::Object& o, size_t section) {
     if (!prepareUber(o)) return std::nullopt;
-    // Object::body of an object whose model 0 rides a joint is that joint's motion (tickObjects), which the section's
-    // own body below already holds: applied once (twice, a block pushed 1900 units left its record 1900 behind it).
-    const glm::mat4 base = glm::translate(glm::mat4(1), o.offset) * introModel(o) * (uberJointPose(o.uid) ? glm::mat4(1) : o.body);
+    // A section moved by a joint has its whole motion in its own body; Object::body (the motion of the object's model 0:
+    // tickObjects) moves the sections that have none. Both at once applied model 0's joint twice, and a block pushed
+    // 1900 units left its record 1900 behind it.
+    const glm::mat4 intro = glm::translate(glm::mat4(1), o.offset) * introModel(o);
     const auto body = uberSectionBody(o.uid, int32_t(section));
-    return body ? base * *body : base;
+    return body ? intro * *body : intro * o.body;
 }
 
 const physics::EngagementSet* World::uberEngagement(int32_t uid, size_t section) {
