@@ -550,6 +550,7 @@ void World::restoreEnemies(const nlohmann::json& j) {
 }
 
 void World::tick(const Actions& input) {
+    if (std::exchange(respawnDue_, false)) respawn(); // the death wipe ended last tick (Combat.cpp)
     joinStreams(false); // background neighbour loads due this tick (Stream.cpp)
     prev_ = player_.state();
     prevCam_ = cam_;

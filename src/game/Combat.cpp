@@ -1279,7 +1279,9 @@ void World::tickCombat(const Actions& a, float dt) {
     };
     if (s.state == State::Dead) {
         c.deathTime += dt;
-        if (c.deathTime >= kDeathFade) respawn(); // the wipe is black (DeathState_Process 0x75AF90)
+        // The wipe is black (DeathState_Process 0x75AF90): the restore runs between ticks, as a load does (the physics
+        // scene and the units are replaced; nothing of this tick may touch them afterwards).
+        if (c.deathTime >= kDeathFade) respawnDue_ = true;
         return;
     }
     if (health_.dead() && !airborne(s.state)) { // [I] dies on the ground; fatal falls die on landing

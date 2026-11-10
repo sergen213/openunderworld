@@ -1294,6 +1294,7 @@ private:
     std::optional<CheckpointRef> checkpoint_;
     nlohmann::json checkpointSave_; // serializeCheckpoint() of the last checkpoint save
     bool checkpointDue_ = false;    // take it when this tick ends
+    bool respawnDue_ = false;       // the death wipe is black: respawn() when the next tick starts
     uint32_t autosaveRequests_ = 0;
     script::Runtime script_;
     ai::Enemies enemies_{&targets};
