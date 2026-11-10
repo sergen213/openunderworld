@@ -611,6 +611,9 @@ std::optional<physics::Joint3> World::makeUberJoint3(int32_t uid, int32_t index)
     const auto& u = *data->second;
     const auto& j = u.joints[size_t(index)];
     if (j.type != 7 || j.bodyB < 0 || j.bodyA >= 0) return std::nullopt; // [U] on a moving body A: none in the data
+    // Push blocks (script::Kind::Block: ca_pu_block_a, ma_rb_pushblock_training, ...) carry the same joint, but src/script
+    // moves them (Object::offset) on its own grid: no body here until that mover rides the joint.
+    if (o->kind == script::Kind::Block) return std::nullopt;
     physics::Joint3 out;
     const auto solid = [](const physics::ObjectPhysics* p) { return p && std::ranges::any_of(p->prims, &physics::Prim::solid); };
     std::vector<int32_t> sections{j.bodyB};

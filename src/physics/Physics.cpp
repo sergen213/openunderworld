@@ -984,7 +984,7 @@ Scene::Impl::Joint3E Scene::Impl::makeJoint3(uint64_t key, const Joint3& j) {
     s.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationY | JPH::EAllowedDOFs::TranslationZ;
     s.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
     s.mMassPropertiesOverride.mMass = mass, s.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
-    s.mAllowSleeping = false, s.mLinearDamping = 0, s.mAngularDamping = 0;
+    s.mAllowSleeping = true, s.mLinearDamping = 0, s.mAngularDamping = 0; // asleep once it rests; driveJoint3 wakes it
     s.mMotionQuality = JPH::EMotionQuality::LinearCast;
     s.mEnhancedInternalEdgeRemoval = true; // a box sliding over the terrain's triangle seams must not catch on them
     e.body = add(s, "f" + std::to_string(key), JPH::EActivation::Activate);
@@ -1014,6 +1014,7 @@ void Scene::Impl::driveJoint3(Joint3E& e, const Joint3& j) {
     }
     e.c->SetTranslationLimits(lo, hi);
     e.c->SetTargetVelocityCS(target);
+    if (!target.IsNearZero(0.0f) && !bi->IsActive(e.body)) bi->ActivateBody(e.body); // a push or a running motor wakes it
 }
 
 void Scene::setJoints3(std::vector<std::pair<uint64_t, Joint3*>> joints) {

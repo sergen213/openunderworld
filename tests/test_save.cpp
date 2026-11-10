@@ -1072,6 +1072,42 @@ TEST(StreamReal, ThreeAxisJointSaveLoad) {
     EXPECT_LT(glm::length(migrated->x), 25.0f) << "settled on the crypt floor (its collision reaches 17 under it)";
 }
 
+// ... and l4_pool's rune pillar 5610, settling on the pool floor when saved, continues bit for bit (with the fx object
+// 5596 anchored to it).
+TEST(StreamReal, ThreeAxisJointAtRestSaveLoad) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    const game::UnitLoader load([&](const std::string& n) { return game::loadUnitData(bf, n); });
+    const auto make = [&] {
+        auto w = std::make_unique<game::World>(load, "l4_pool", anims, game::Spawn{{-6000, 0, 2900}, 3.1415927f});
+        w->script().setBigfile(&bf);
+        w->onCinematic = [](const std::string&, bool) {};
+        return w;
+    };
+    auto a = make();
+    for (int i = 0; i < 60; ++i) a->tick({});
+    ASSERT_TRUE(a->uberJoint3(5610, 0));
+    const auto bytes = save::serialize(save::capture(*a));
+    auto b = make();
+    save::apply(save::parse(bytes), *b);
+    for (int i = 0; i < 240; ++i) {
+        if (i == 0) a->tick({}), b->tick({}); // the loaded world prepares its uber objects in its first tick
+        ASSERT_TRUE(b->uberJoint3(5610, 0));
+        const auto ja = *a->uberJoint3(5610, 0), jb = *b->uberJoint3(5610, 0);
+        ASSERT_EQ(std::memcmp(&ja.x, &jb.x, sizeof ja.x), 0) << i << " ticks after the load: " << ja.x.x << " " << ja.x.y << " " << ja.x.z << " / "
+                                                             << jb.x.x << " " << jb.x.y << " " << jb.x.z;
+        ASSERT_EQ(std::memcmp(&ja.v, &jb.v, sizeof ja.v), 0) << i << " ticks after the load: v " << ja.v.x << " " << ja.v.y << " " << ja.v.z << " / "
+                                                             << jb.v.x << " " << jb.v.y << " " << jb.v.z;
+        a->tick({}), b->tick({});
+    }
+    auto sa = a->serializeObjects(), sb = b->serializeObjects();
+    // The scene's recorded Jolt state is compared apart: the resting pillar's cached contact manifolds may differ in a
+    // loaded scene while every body moves alike (x and v above, bit for bit).
+    sa.erase("physics"), sb.erase("physics");
+    EXPECT_EQ(sa, sb);
+}
+
 // Ragdolls save and load mid-fall: l4_ballcourt poacher 6540 (born and killed by the scripts as Lara crosses plane 6546)
 // slides off its ledge as a ragdoll; a save while it falls restores its bodies (IDs, velocities, contacts) and its enemy
 // state, so the fall and the settled pose come out bit for bit, for every corpse (6540-6542) and the whole world (uber
