@@ -870,6 +870,8 @@ public:
     bool headShotAvailable() const;
     // Where manual aim points: the first thing the view's centre ray meets within the weapon's range (else its end).
     vec3 manualAimPoint() const;
+    // The hit shapes only shots meet (script object uid, shape, world frame): chain links and the like.
+    const std::vector<collision::Dynamic>& shotOnlyShapes() const { return shotOnly_; }
     // The screen wipe (1 = black): the scripts' FadeOut / FadeIn, and her death's 3 s fade (DeathState, Combat.cpp).
     float screenFade() const;
     // The upper-body combat clip aimLayer plays now (reload, equip / unequip) and its time; empty name when none.
@@ -1215,6 +1217,8 @@ private:
     // Hit shapes of objects that only shots meet (anim graphs leaving a state on damage whose object does not collide
     // otherwise: l1_kraken_room's chain links 61 / 62): World::shotRay tests them, nothing else does.
     std::vector<collision::Dynamic> shotOnly_;
+    std::vector<glm::mat4> shotOnlyLocal_; // each shape's segment frame in its object's model space
+    void poseShotOnly();                   // their world frames: the object's intro, or the marker it is anchored to
     std::map<std::string, std::shared_ptr<const physics::ObjectPhysics>> objectPhysics_; // by object name; null = none
     const physics::ObjectPhysics* objectPhysics(const std::string& name); // objectPhysics_, loaded on first use
     std::optional<glm::mat4> markerFrame(const script::Object& o, int id); // HInfo marker `id` of `o` in the world

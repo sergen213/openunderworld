@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <set>
@@ -659,6 +660,137 @@ TEST(Combat, TimeScaleSlowsLaraWithTheWorld) {
     const int normal = shots(false), slowed = shots(true);
     EXPECT_GE(normal, 8);
     EXPECT_NEAR(slowed * 2, normal, 2);
+}
+
+// Look input that turns the view's centre onto `at` (a player steering the reticle), per tick.
+static game::vec2 lookAt(const game::World& w, vec3 at) {
+    const auto& c = w.camera();
+    const vec3 now = glm::normalize(c.target - c.position), want = glm::normalize(at - c.position);
+    float dyaw = std::atan2(want.y, want.x) - std::atan2(now.y, now.x);
+    while (dyaw > 3.1415927f) dyaw -= 6.2831853f;
+    while (dyaw < -3.1415927f) dyaw += 6.2831853f;
+    const float dpitch = std::asin(want.z) - std::asin(now.z);
+    return {std::clamp(dyaw * 20.0f, -2.5f, 2.5f), std::clamp(dpitch * 20.0f, -2.5f, 2.5f)};
+}
+
+// Manual (precision) aim, state chart S718 / camera mode 23: Manual Aim without the target lock toggles the close view
+// (distance 632.11) and draws; there is no lock: shots go where the view's centre points and hit what it covers, nothing
+// else; Target Lock or Manual Aim again leaves it.
+TEST(Combat, ManualAimHitsWhatTheReticleCovers) {
+    CollisionMesh m;
+    addFloor(m, -9000, -9000, 9000, 9000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget a, b;
+    a.pos = {2500, -700, 0}, b.pos = {2500, 700, 0}; // both in the soft cone: the lock would take one of them
+    a.hp = b.hp = 1e6f;
+    w->targets.push_back(&a), w->targets.push_back(&b);
+    for (int i = 0; i < 30; ++i) w->tick({});
+    EXPECT_EQ(w->cameraMode(), 1);
+    EXPECT_NEAR(w->cameraDistance(), 1264.22f, 1.0f);
+    Actions press;
+    press.manualAim = true;
+    w->tick(press);
+    ASSERT_TRUE(w->combat().manualAim);
+    for (int i = 0; i < 90; ++i) w->tick({});
+    EXPECT_TRUE(w->combat().drawn);
+    EXPECT_EQ(w->cameraMode(), 23);
+    EXPECT_NEAR(w->cameraDistance(), 632.11f, 2.0f);
+    EXPECT_EQ(w->combat().target, nullptr) << "no soft target in the aim view";
+    const auto aimAt = [&](vec3 at, bool fire, int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            Actions in;
+            in.look = lookAt(*w, at);
+            in.fire = fire;
+            w->tick(in);
+        }
+    };
+    // between the two: nothing is hit
+    aimAt({2500, 0, 250}, false, 120);
+    aimAt({2500, 0, 250}, true, 90);
+    EXPECT_GT(w->combat().shotsFired, 3u);
+    EXPECT_EQ(a.hits, 0);
+    EXPECT_EQ(b.hits, 0);
+    EXPECT_NEAR(w->manualAimPoint().y, 0, 120.0f);
+    // onto b: only b
+    aimAt(b.aimPoint(), false, 120);
+    EXPECT_LT(glm::distance(w->manualAimPoint(), b.aimPoint()), b.r + 20);
+    aimAt(b.aimPoint(), true, 90);
+    EXPECT_GT(b.hits, 3);
+    EXPECT_EQ(a.hits, 0);
+    // onto a: only a from now on
+    const int hitsB = b.hits;
+    aimAt(a.aimPoint(), false, 120);
+    aimAt(a.aimPoint(), true, 90);
+    EXPECT_GT(a.hits, 3);
+    EXPECT_EQ(b.hits, hitsB);
+    // she turned to face the view while standing
+    EXPECT_NEAR(std::atan2(std::sin(w->player().state().yaw - w->camera().yaw), std::cos(w->player().state().yaw - w->camera().yaw)), 0, 0.3f);
+    // she steps in it, she does not run
+    Actions walk;
+    walk.move = {0, 1};
+    const vec3 from = w->player().state().pos;
+    for (int i = 0; i < 60; ++i) w->tick(walk);
+    EXPECT_TRUE(w->combat().manualAim);
+    EXPECT_LT(glm::distance(w->player().state().pos, from), 700.0f);
+    // Target Lock leaves it and locks as usual
+    w->tick(guns(false));
+    EXPECT_FALSE(w->combat().manualAim);
+    for (int i = 0; i < 60; ++i) w->tick(guns(false));
+    EXPECT_TRUE(w->combat().locked);
+    EXPECT_EQ(w->cameraMode(), 1);
+    // with the lock held the button is not the aim view
+    Actions both = guns(false);
+    both.manualAim = true;
+    w->tick(both);
+    EXPECT_FALSE(w->combat().manualAim);
+    // toggle on and off by the button
+    w->tick({}), w->tick(press);
+    EXPECT_TRUE(w->combat().manualAim);
+    w->tick({}), w->tick(press);
+    EXPECT_FALSE(w->combat().manualAim);
+    // not in the air
+    Actions jump;
+    jump.jump = true;
+    for (int i = 0; i < 20; ++i) w->tick(jump);
+    ASSERT_NE(w->player().state().state, State::Idle);
+    Actions pressAir = press;
+    w->tick({}), w->tick(pressAir);
+    EXPECT_FALSE(w->combat().manualAim);
+}
+
+// Dual targeting (0x71E490): with the two pistols and a primary target, the best other candidate in front of her is
+// the second target and the left gun fires at it; a one-gun weapon has none.
+TEST(Combat, DualTargetsTakeOneGunEach) {
+    CollisionMesh m;
+    addFloor(m, -9000, -9000, 9000, 9000, 0);
+    auto w = makeWorld(m, {0, 0, 0});
+    game::DummyTarget a, b;
+    a.pos = {2000, -300, 0}, b.pos = {2600, 500, 0};
+    a.hp = b.hp = 1e6f;
+    w->targets.push_back(&a), w->targets.push_back(&b);
+    for (int i = 0; i < 20; ++i) w->tick(guns(false));
+    ASSERT_EQ(w->combat().target, &a);
+    EXPECT_EQ(w->combat().second, &b);
+    for (int i = 0; i < 120; ++i) {
+        w->tick(guns(true));
+        for (const auto& s : w->combat().shots) EXPECT_EQ(s.target, s.hand == 1 ? &b : &a);
+    }
+    EXPECT_GT(a.hits, 2);
+    EXPECT_GT(b.hits, 2);
+    b.hp = 0; // the second one dies: both guns on the first
+    const int hitsA = a.hits;
+    for (int i = 0; i < 120; ++i) w->tick(guns(true));
+    EXPECT_EQ(w->combat().second, nullptr);
+    EXPECT_GT(a.hits, hitsA + 4);
+    // the shotgun (one gun): no second target
+    b.hp = 1e6f;
+    w->giveWeapon(game::Weapon::Shotgun, 20);
+    Actions sw = guns(false);
+    sw.weapon = true;
+    w->tick(sw);
+    for (int i = 0; i < 180; ++i) w->tick(guns(false));
+    ASSERT_EQ(w->combat().weapon, game::Weapon::Shotgun);
+    EXPECT_EQ(w->combat().second, nullptr);
 }
 
 TEST(Combat, ReplayWithSwitchingIndependentOfRenderRate) {

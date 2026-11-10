@@ -2101,3 +2101,137 @@ TEST(ProgressionReal, DumpUber) {
     for (const auto& d : w.collision().dynamics)
         if (d.id == uid) std::printf(" collider %d\n", d.id);
 }
+
+// l1_kraken_room, the kill (docs/PROGRESSION.md "Kraken"): switch 30 raises the sun-sphere platform 27 (section 0: state
+// 1 -> 2 over its raise clip); that arms its chain sections 2 / 3 (1 -> 0) and lowers the two weak links 61 / 62
+// (ms_ani_sunsphere_chain_shootable, riding the platform's markers 21 / 20) from the ceiling to the ends of the switch
+// ledge. They are no lock targets: Lara must aim by hand. A pistol hit on a link runs its graph (damage stimulus), its
+// script sends the platform command 5 / 6 (section 2 / 3: 0 -> 2, the chain goes), the first shifts the platform
+// (section 0: 2 -> 4 or 5), the second drops it (-> 3); the platform script counts the two events and starts the
+// kraken's death.
+TEST(ProgressionReal, KrakenChainLinksByManualAim) {
+    if (!gameDir()) GTEST_SKIP() << "OU_GAME_DIR not set";
+    const cdc::BigfileSet bf(gameDir());
+    const auto anims = game::loadLaraAnims(bf);
+    game::World w(game::UnitLoader([&](const std::string& n) { return game::loadUnitData(bf, n); }), "l1_kraken_room", anims);
+    w.script().setBigfile(&bf);
+    std::vector<std::string> cinematics;
+    w.onCinematic = [&](const std::string& n, bool) { cinematics.push_back(n); };
+    for (int i = 0; i < 60; ++i) w.tick({});
+    const auto centre = [&](int32_t uid) -> std::optional<vec3> {
+        for (const auto& d : w.shotOnlyShapes()) {
+            if (d.id != uid) continue;
+            vec3 lo(1e9f), hi(-1e9f);
+            for (const vec3 v : d.shape->vertices) lo = glm::min(lo, vec3(d.transform * glm::vec4(v, 1))), hi = glm::max(hi, vec3(d.transform * glm::vec4(v, 1)));
+            return (lo + hi) * 0.5f;
+        }
+        return std::nullopt;
+    };
+    ASSERT_TRUE(centre(61) && centre(62)) << "the links take shots";
+    EXPECT_TRUE(std::ranges::none_of(w.collision().dynamics, [](const auto& d) { return d.id == 61 || d.id == 62; })) << "and only shots";
+    EXPECT_EQ(w.script().anchor(61), (std::pair<int32_t, int32_t>{27, 21}));
+    EXPECT_EQ(w.script().anchor(62), (std::pair<int32_t, int32_t>{27, 20}));
+    const float high = centre(61)->z;
+    const auto state = [&](size_t section) { return (*w.uberState(27))[section]; };
+    EXPECT_EQ(state(2), 1u);
+    const auto* sw = w.script().find(30);
+    ASSERT_TRUE(sw);
+    place(w, sw->pos, 0);
+    game::Actions use;
+    use.interact = true;
+    for (int i = 0; i < 10; ++i) w.tick(use);
+    for (int i = 0; i < 3000 && state(0) != 2; ++i) w.tick({});
+    ASSERT_EQ(state(0), 2u) << "raised";
+    for (int i = 0; i < 30; ++i) w.tick({});
+    for (int i = 0; i < 1800 && (w.splineCameraActive() || w.player().state().state != game::State::Idle); ++i) w.tick({}); // the reveal ends
+    ASSERT_FALSE(w.splineCameraActive());
+    EXPECT_EQ(state(2), 0u) << "chains armed";
+    EXPECT_EQ(state(3), 0u);
+    EXPECT_LT(centre(61)->z, high - 2500) << "the links came down with the chains";
+    // The switch's origin lies in the wall behind the ledge (the gate fixture stood her there): she stands on the ledge
+    // in front of it.
+    {
+        const vec3 beside = sw->pos + vec3(0, 300, 300);
+        const auto floor = w.collision().raycast(beside, {0, 0, -1}, 3000, 0x0F);
+        ASSERT_TRUE(floor);
+        place(w, beside - vec3(0, 0, floor->t), 0);
+        for (int i = 0; i < 60; ++i) w.tick({});
+        ASSERT_EQ(w.player().state().state, game::State::Idle);
+    }
+    // the target lock finds nothing to lock: the links are no targets
+    game::Actions lock;
+    lock.aim = lock.fire = true;
+    for (int i = 0; i < 120; ++i) w.tick(lock);
+    EXPECT_EQ(w.combat().target, nullptr);
+    EXPECT_EQ(state(0), 2u);
+    for (int i = 0; i < 10; ++i) w.tick({});
+    // manual aim
+    game::Actions press;
+    press.manualAim = true;
+    w.tick(press);
+    ASSERT_TRUE(w.combat().manualAim);
+    const auto look = [&](vec3 at) {
+        const auto& c = w.camera();
+        const vec3 now = glm::normalize(c.target - c.position), want = glm::normalize(at - c.position);
+        float dyaw = std::atan2(want.y, want.x) - std::atan2(now.y, now.x);
+        while (dyaw > glm::pi<float>()) dyaw -= 2 * glm::pi<float>();
+        while (dyaw < -glm::pi<float>()) dyaw += 2 * glm::pi<float>();
+        return glm::vec2(std::clamp(dyaw * 20.0f, -2.5f, 2.5f), std::clamp((std::asin(want.z) - std::asin(now.z)) * 20.0f, -2.5f, 2.5f));
+    };
+    // She walks along the ledge (world +X / -X by the camera-relative stick) until nothing stands between her and the link.
+    const auto walkToSee = [&](int32_t uid, float sign) {
+        for (int i = 0; i < 600 && w.player().state().pos.y < sw->pos.y + 700; ++i) { // out from the wall, past the pillars
+            game::Actions in;
+            const float yaw = w.camera().yaw;
+            in.move = {-std::cos(yaw), std::sin(yaw)};
+            w.tick(in);
+        }
+        for (int i = 0; i < 1200; ++i) {
+            const vec3 chest = w.player().state().pos + vec3(0, 0, 400), to = *centre(uid) - chest;
+            if (!w.collision().raycast(chest, glm::normalize(to), glm::length(to) - 150, 0x0F) && glm::length(glm::vec2(to)) < 1200) break;
+            game::Actions in;
+            const float yaw = w.camera().yaw;
+            in.move = glm::vec2(std::sin(yaw), std::cos(yaw)) * sign;
+            w.tick(in);
+        }
+        for (int i = 0; i < 20; ++i) w.tick({});
+    };
+    const auto shoot = [&](int32_t uid, auto done) {
+        walkToSee(uid, uid == 61 ? 1.0f : -1.0f);
+        if (!w.combat().manualAim) w.tick(press), w.tick({}); // a reveal camera ended the aim view: again
+        ASSERT_TRUE(w.combat().manualAim);
+        for (int i = 0; i < 240; ++i) { // steer the reticle onto the link
+            game::Actions in;
+            in.look = look(*centre(uid));
+            w.tick(in);
+        }
+        EXPECT_LT(glm::distance(w.manualAimPoint(), *centre(uid)), 200.0f) << "the reticle covers link " << uid;
+        for (int i = 0; i < 600 && !done(); ++i) {
+            game::Actions in;
+            in.look = look(*centre(uid));
+            in.fire = true;
+            w.tick(in);
+            for (const auto& shot : w.combat().shots) EXPECT_LT(glm::distance(shot.to, *centre(uid)), 250.0f) << "every shot goes where the reticle is";
+        }
+        EXPECT_TRUE(w.combat().manualAim);
+    };
+    shoot(61, [&] { return state(2) == 2; });
+    ASSERT_EQ(state(2), 2u) << "link 61 shot: its chain section went";
+    EXPECT_EQ(w.combat().weapon, game::Weapon::Pistols);
+    for (int i = 0; i < 600 && (state(0) == 2 || state(0) == 0xFFFFFFFFu); ++i) w.tick({});
+    EXPECT_EQ(state(0), 4u) << "the platform shifted";
+    for (int i = 0; i < 1800 && w.splineCameraActive(); ++i) w.tick({}); // the reveal of the shifting platform
+    EXPECT_EQ(state(3), 0u);
+    EXPECT_TRUE(w.script().find(61)->dead);
+    shoot(62, [&] { return state(3) == 2; });
+    ASSERT_EQ(state(3), 2u);
+    for (int i = 0; i < 1200 && state(0) != 3; ++i) w.tick({});
+    EXPECT_EQ(state(0), 3u) << "the platform dropped";
+    for (int i = 0; i < 600; ++i) w.tick({});
+    for (const auto& [key, n] : w.script().failures()) {
+        EXPECT_NE(key.first, 27) << key.second;
+        EXPECT_NE(key.first, 61) << key.second;
+        EXPECT_NE(key.first, 62) << key.second;
+    }
+    EXPECT_TRUE(std::ranges::find(cinematics, "049_med_kraken_death") != cinematics.end()) << "the platform's script starts the kraken's death";
+}

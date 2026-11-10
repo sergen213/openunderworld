@@ -1605,8 +1605,13 @@ std::shared_ptr<vm::Machine> Runtime::makeMachine(int32_t source) {
                 return true;
             }
             // instance 21 (bool, 0x4A3FD0: clears/sets instance +0x1C flag 0x100), 18 (bool, 0x4A3F50: toggles the
-            // instance's +0x2D8 component via 0x5B5A60 / 0x5B5AB0) and 23 (calls vt +0x18 of a native object
-            // argument, 0x4A41D0): no modelled system reads them [U: their effect].
+            // instance's +0x2D8 component via 0x5B5A60 / 0x5B5AB0): no modelled system reads them [U: their effect].
+            // 23 (0x4A41D0) calls vt +0x18 of its native object argument with the instance: given a `uberobjectbase` 2
+            // marker anchor (0x4D3110 ModelMarkerAnchor) the instance rides that marker from then on (anchor()); other
+            // arguments [U].
+            if (!std::strcmp(name, "instance") && nc.function == 23 && nc.args.size() == 1 && nc.args[0].kind == vm::Value::Kind::Object &&
+                (nc.args[0].bits & kAnchorBit) && find(nc.args[0].uid))
+                anchors_[self->uid] = {nc.args[0].uid, int32_t(nc.args[0].bits & 0xFFFF)};
             if (!std::strcmp(name, "instance") && (nc.function == 18 || nc.function == 21 || nc.function == 23) &&
                 nc.args.size() == 1)
                 return true;
@@ -2683,7 +2688,7 @@ nlohmann::json Runtime::serialize() const {
                     {"fade", {fade_, fadeTarget_, fadeStep_}}, {"control", playerControl_}, {"uiFlag", uiFlag_},
                     {"unitEffect", unitEffect_}, {"last", {lastPos_.x, lastPos_.y, lastPos_.z, hasLast_}}, {"interactHeld", interactHeld_},
                     {"weather", {weather_.snow, weather_.rain, weather_.lightningMin, weather_.lightningMax}},
-                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}, {"born", born_}};
+                    {"deferredUnits", deferredUnits_}, {"grappleOff", grappleOff_}, {"born", born_}, {"anchors", anchors_}};
     return j;
 }
 
@@ -2816,6 +2821,7 @@ void Runtime::restoreRuntime(const nlohmann::json& r) {
         weather_ = {it->at(0).get<int32_t>(), it->at(1).get<int32_t>(), it->at(2).get<int32_t>(), it->at(3).get<int32_t>()};
     deferredUnits_ = r.value("deferredUnits", std::set<std::string>{});
     grappleOff_ = r.value("grappleOff", std::set<int32_t>{}); // older saves have none
+    anchors_ = r.value("anchors", std::map<int32_t, std::pair<int32_t, int32_t>>{});
 }
 
 } // namespace ou::script

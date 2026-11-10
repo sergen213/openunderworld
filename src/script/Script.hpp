@@ -460,6 +460,12 @@ public:
     void setPlayerObjects(std::set<std::string> objects) { playerObjects_ = std::move(objects); } // chapter starts
     uint32_t unitEffect() const { return unitEffect_; }
     bool grappleOff(int32_t uid) const { return grappleOff_.contains(uid); } // `unit` 13 dropped its markers (saved)
+    // instance 23 with a `uberobjectbase` 2 anchor: object `uid` rides HInfo marker `second` of object `first` (saved);
+    // nullopt when it is not anchored. l1_kraken_room's chain links 61 / 62 hang on platform 27's markers 21 / 20.
+    std::optional<std::pair<int32_t, int32_t>> anchor(int32_t uid) const {
+        const auto it = anchors_.find(uid);
+        return it == anchors_.end() ? std::nullopt : std::optional(it->second);
+    }
     // Script weather (globaleffect 8 / 11 / 12, docs/formats/EFFECTS.md "Weather"): snow / rain % and lightning
     // interval seconds (tru.exe's defaults 20 / 30 s, 0x53AB30's init).
     struct Weather { int32_t snow = 0, rain = 0, lightningMin = 20, lightningMax = 30; };
@@ -613,6 +619,7 @@ private:
     std::set<std::string> playerObjects_; // Thor gear objects Lara carries (larabase 37/38/42)
     uint32_t unitEffect_ = 0;
     std::set<int32_t> grappleOff_; // unit 13 / 12: grapple targets taken from / given back to Lara; saved
+    std::map<int32_t, std::pair<int32_t, int32_t>> anchors_; // anchor(): object -> {object, marker id}; saved
     Weather weather_;
     uint64_t tick_ = 0;
     std::map<std::pair<int32_t, std::string>, size_t> failures_;
